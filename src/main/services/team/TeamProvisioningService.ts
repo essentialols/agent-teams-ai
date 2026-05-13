@@ -12740,9 +12740,21 @@ export class TeamProvisioningService {
     const foregroundMessages = inboxMessages.filter(
       (message) => message.messageKind !== 'member_work_sync_nudge'
     );
-    const blockingForegroundMessages = foregroundMessages.filter(
-      (message) => !this.isCurrentReviewPickupRequestForegroundMessage(message, input)
-    );
+    const agendaSyncRecoveryBypassMessageIds =
+      await this.getOpenCodeAgendaSyncRecoveryBypassMessageIds({
+        teamName: input.teamName,
+        memberName: input.memberName,
+        workSyncIntent: input.workSyncIntent,
+        taskRefs: input.taskRefs,
+        foregroundMessages,
+      });
+    const blockingForegroundMessages = foregroundMessages.filter((message) => {
+      const messageId = typeof message.messageId === 'string' ? message.messageId.trim() : '';
+      return (
+        !agendaSyncRecoveryBypassMessageIds.has(messageId) &&
+        !this.isCurrentReviewPickupRequestForegroundMessage(message, input)
+      );
+    });
     const unreadForeground = blockingForegroundMessages.find(
       (message) =>
         !message.read &&
@@ -22132,6 +22144,144 @@ export class TeamProvisioningService {
     message: InboxMessage
   ): message is InboxMessage & { messageId: string } {
     return typeof message.messageId === 'string' && message.messageId.trim().length > 0;
+  }
+
+  private async getOpenCodeAgendaSyncRecoveryBypassMessageIds(input: {
+    teamName: string;
+    memberName: string;
+    workSyncIntent?: 'agenda_sync' | 'review_pickup';
+    taskRefs?: TaskRef[];
+    foregroundMessages: InboxMessage[];
+  }): Promise<Set<string>> {
+    const bypassMessageIds = new Set<string>();
+    if (input.workSyncIntent !== 'agenda_sync') {
+      return bypassMessageIds;
+    }
+
+    const expectedRefs = this.normalizeOpenCodeTaskRefsForComparison(input.taskRefs);
+    if (expectedRefs.length === 0) {
+      return bypassMessageIds;
+    }
+
+    const candidateMessages = input.foregroundMessages.filter(
+      (message): message is InboxMessage & { messageId: string } => {
+        if (!this.hasStableMessageId(message)) {
+          return false;
+        }
+        if (typeof message.text !== 'string' || message.text.trim().length === 0) {
+          return false;
+        }
+        if (Array.isArray(message.attachments) && message.attachments.length > 0) {
+          return false;
+        }
+        return true;
+      }
+    );
+    if (candidateMessages.length === 0) {
+      return bypassMessageIds;
+    }
+
+    const identity = await this.resolveOpenCodeMemberDeliveryIdentity(
+      input.teamName,
+      input.memberName
+    ).catch(() => null);
+    if (!identity?.ok) {
+      return bypassMessageIds;
+    }
+
+    const laneIndex = await readOpenCodeRuntimeLaneIndex(getTeamsBasePath(), input.teamName).catch(
+      () => null
+    );
+    if (laneIndex?.lanes[identity.laneId]?.state !== 'active') {
+      return bypassMessageIds;
+    }
+
+    const records = await this.createOpenCodePromptDeliveryLedger(input.teamName, identity.laneId)
+      .list()
+      .catch(() => null);
+    const proofMissingRecords = (records ?? []).filter(
+      (record) =>
+        record.teamName.trim().toLowerCase() === input.teamName.trim().toLowerCase() &&
+        record.memberName.trim().toLowerCase() ===
+          identity.canonicalMemberName.trim().toLowerCase() &&
+        record.laneId === identity.laneId &&
+        record.status === 'failed_terminal' &&
+        !record.inboxReadCommittedAt &&
+        this.openCodeTaskRefsOverlap(record.taskRefs, expectedRefs) &&
+        this.isOpenCodeProtocolProofMissingRecord(record)
+    );
+    if (proofMissingRecords.length === 0) {
+      return bypassMessageIds;
+    }
+
+    const proofMissingMessageIds = new Set(
+      proofMissingRecords.map((record) => record.inboxMessageId.trim()).filter(Boolean)
+    );
+    for (const message of candidateMessages) {
+      const messageId = message.messageId.trim();
+      if (
+        proofMissingMessageIds.has(messageId) ||
+        this.openCodeForegroundMessageMentionsAnyTaskRef(message, expectedRefs)
+      ) {
+        bypassMessageIds.add(messageId);
+      }
+    }
+
+    return bypassMessageIds;
+  }
+
+  private isOpenCodeProtocolProofMissingRecord(
+    record: OpenCodePromptDeliveryLedgerRecord
+  ): boolean {
+    return [record.lastReason, ...record.diagnostics].some(
+      (reason) =>
+        typeof reason === 'string' &&
+        classifyOpenCodeRuntimeDeliveryReasonCode(reason) === 'protocol_proof_missing'
+    );
+  }
+
+  private openCodeTaskRefsOverlap(
+    left: readonly TaskRef[] | undefined,
+    right: readonly TaskRef[] | undefined
+  ): boolean {
+    const leftRefs = this.normalizeOpenCodeTaskRefsForComparison(left);
+    const rightRefs = this.normalizeOpenCodeTaskRefsForComparison(right);
+    if (leftRefs.length === 0 || rightRefs.length === 0) {
+      return false;
+    }
+    const rightKeys = new Set(rightRefs.map((taskRef) => this.openCodeTaskRefKey(taskRef)));
+    return leftRefs.some((taskRef) => rightKeys.has(this.openCodeTaskRefKey(taskRef)));
+  }
+
+  private openCodeForegroundMessageMentionsAnyTaskRef(
+    message: InboxMessage,
+    taskRefs: readonly TaskRef[]
+  ): boolean {
+    const messageRefs = this.normalizeOpenCodeTaskRefsForComparison(message.taskRefs);
+    if (messageRefs.length > 0) {
+      return this.openCodeTaskRefsOverlap(messageRefs, taskRefs);
+    }
+
+    const summary = typeof message.summary === 'string' ? message.summary.trim() : '';
+    const text = typeof message.text === 'string' ? message.text : '';
+    return taskRefs.some((taskRef) =>
+      this.openCodeForegroundMessageTextMentionsTask({ summary, text, taskRef })
+    );
+  }
+
+  private openCodeForegroundMessageTextMentionsTask(input: {
+    summary: string;
+    text: string;
+    taskRef: TaskRef;
+  }): boolean {
+    const displayId = input.taskRef.displayId.trim();
+    const taskId = input.taskRef.taskId.trim();
+    const haystack = `${input.summary}\n${input.text}`;
+    return (
+      (displayId.length > 0 &&
+        (haystack.includes(`#${displayId}`) || haystack.includes(`task #${displayId}`))) ||
+      (taskId.length > 0 && haystack.includes(taskId))
+    );
   }
 
   private isCurrentReviewPickupRequestForegroundMessage(

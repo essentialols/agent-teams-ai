@@ -35,7 +35,7 @@ function normalizeHistoryPath(projectPath: string): string | null {
       normalizedPath = normalizedPath.slice(0, -1);
     }
   }
-  return normalizePathForComparison(normalizedPath);
+  return normalizedPath ? normalizePathForComparison(normalizedPath) : null;
 }
 
 function foldHistoryPath(projectPath: string): string {

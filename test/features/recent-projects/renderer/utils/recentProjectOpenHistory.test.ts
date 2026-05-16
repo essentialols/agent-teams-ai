@@ -166,4 +166,9 @@ describe('recentProjectOpenHistory', () => {
       )
     ).toBe(10_000);
   });
+
+  it('ignores blank project paths without throwing', () => {
+    expect(() => recordRecentProjectOpenPaths(['  '], 10_000)).not.toThrow();
+    expect(getRecentProjectLastOpenedAt(makeProject({ primaryPath: '  ', associatedPaths: ['  '] }))).toBe(0);
+  });
 });

@@ -17,7 +17,9 @@ export function buildDirectoryTree(
   const root: TreeNode = { name: '', path: '', isFile: false, children: new Map() };
 
   for (const injection of injections) {
-    const relativePath = getRelativePathWithinPrefix(projectRoot, injection.path) ?? injection.path;
+    const relativePath = projectRoot
+      ? getRelativePathWithinPrefix(projectRoot, injection.path) ?? injection.path
+      : injection.path;
 
     const parts = relativePath.split(/[\\/]/);
     let current = root;

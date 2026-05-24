@@ -93,9 +93,9 @@
       "install": {
         "checking": "Überprüfung",
         "downloading": "Herunterladen",
-        "installCli": "Codex herunterladen CLI",
+        "installCli": "Codex CLI installieren",
         "installing": "Installation",
-        "retryInstall": "Retry install"
+        "retryInstall": "Installation erneut versuchen"
       }
     }
   },
@@ -150,7 +150,7 @@
   "sessions": {
     "actions": {
       "hide": "Hirse",
-      "pin": "Pinguin",
+      "pin": "Anheften",
       "unhide": "Unhide"
     },
     "empty": {
@@ -228,7 +228,7 @@
     "largeContentTitle": "Großer Inhalt wird als roh dargestellt, um zu verhindern, dass UI friert",
     "raw": "Roh",
     "rawPreview": "Vorschau",
-    "renderMarkdown": "Render markdown",
+    "renderMarkdown": "Markdown rendern",
     "showAll": "Alle anzeigen",
     "showMore": "Mehr erfahren",
     "showRaw": "Roh",
@@ -587,7 +587,7 @@
       "projectsCount_few": "{{count}} Projekte",
       "projectsCount_many": "{{count}} Projekte",
       "upDownKey": "↑↓",
-      "escapeKey": "andere"
+      "escapeKey": "Esc"
     },
     "sessionsCount_few": "{{count}} Sitzungen",
     "sessionsCount_many": "{{count}} Sitzungen"
@@ -613,7 +613,7 @@
     "showMore": "Mehr erfahren",
     "showLess": "Weniger anzeigen",
     "deleteConfirm": {
-      "title": "Löschen der Aufgabe",
+      "title": "Aufgabe löschen",
       "message": "Aufgabe verschieben #{{taskId}} zum Müll?",
       "confirmLabel": "Löschen",
       "cancelLabel": "Abbrechen"
@@ -645,12 +645,12 @@
   },
   "taskContextMenu": {
     "unpin": "Unpin",
-    "pin": "Pinguin",
+    "pin": "Anheften",
     "rename": "Name",
-    "markUnread": "Mark als ungelesen",
-    "unarchive": "Archivierung",
+    "markUnread": "Als ungelesen markieren",
+    "unarchive": "Aus Archiv wiederherstellen",
     "archive": "Archiv",
-    "deleteTask": "Löschen der Aufgabe"
+    "deleteTask": "Aufgabe löschen"
   },
   "updateDialog": {
     "closeDialog": "Dialog schließen",
@@ -860,8 +860,8 @@
     "noChangesDetected": "Keine Änderungen erkannt"
   },
   "codexLogin": {
-    "copyLoginLinkAndCode": "Kopieren von ChatGPT Login-Link und Code",
-    "copyLoginLink": "Kopieren von ChatGPT Anmelden",
+    "copyLoginLinkAndCode": "ChatGPT-Anmeldelink und Code kopieren",
+    "copyLoginLink": "ChatGPT-Anmeldelink kopieren",
     "copyFailed": "Kopie fehlgeschlagen",
     "copyLinkAndCode": "Kopieren von Link und Code",
     "copyLink": "Link kopieren",

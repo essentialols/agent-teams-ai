@@ -91,7 +91,7 @@
     "resultsUpdateInstantly": "تُحدّثُ النتائجَ فوراً بينما تُصقلُ الرشّاتَ.",
     "searchPlaceholder": "فتّش...",
     "selectedCount": "{{count}} مختارة",
-    "showing": "عرض {{shown}} of of {{total}} البلوغ",
+    "showing": "عرض {{shown}} من {{total}} إضافة",
     "sort": {
       "category": "الفئة",
       "nameAsc": "الاسم A-Z",

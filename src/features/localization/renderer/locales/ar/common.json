@@ -93,23 +93,23 @@
       "install": {
         "checking": "التحقق",
         "downloading": "تحميل",
-        "installCli": "Install Codex CLI",
+        "installCli": "تثبيت Codex CLI",
         "installing": "التركيب",
-        "retryInstall": "إعادة تركيب"
+        "retryInstall": "إعادة محاولة التثبيت"
       }
     }
   },
   "search": {
     "noMatchingSuggestions": "لا اقتراحات مطابقة",
     "searching": "جار البحث...",
-    "searchingFiles": "ملفات البحث...",
-    "findInConversation": "ابحثي في المحادثة",
-    "resultCount": "{{current}} of of {{total}}",
-    "resultCountCapped": "{{current}} of of {{total}}+",
+    "searchingFiles": "جار البحث في الملفات...",
+    "findInConversation": "البحث في المحادثة...",
+    "resultCount": "{{current}} من {{total}}",
+    "resultCountCapped": "{{current}} من {{total}}+",
     "noResults": "لا توجد نتائج",
-    "previousResultShortcut": "النتيجة السابقة (السرقة + الانتر)",
-    "nextResultShortcut": "النتيجة التالية (بعد)",
-    "closeShortcut": "قريب (إكسس)",
+    "previousResultShortcut": "النتيجة السابقة (Shift+Enter)",
+    "nextResultShortcut": "النتيجة التالية (Enter)",
+    "closeShortcut": "إغلاق (Esc)",
     "nothingFound": "لم يتم العثور على شيء",
     "placeholder": "بحث..."
   },
@@ -119,7 +119,7 @@
       "clearFilters": "مرشحات واضحة",
       "createSchedule": "الجدول الزمني المحدد",
       "delete": "تحذف",
-      "edit": "Edit",
+      "edit": "تعديل",
       "pause": "وقف",
       "resume": "الاستهلاك",
       "runNow": "اركض الآن"
@@ -127,7 +127,7 @@
     "empty": {
       "description": "وضع جدول زمني لأي فريق لتشغيل (كلود) في تنفيذ المهمة بتعبيرات (كرون) الجداول من جميع الفرق ستظهر هنا",
       "noMatches": "لا جداول مطابقة للمرشحين الحاليين",
-      "title": "No scheduled tasks"
+      "title": "لا توجد مهام مجدولة"
     },
     "filters": {
       "allTeams": "جميع الفرق"
@@ -150,7 +150,7 @@
   "sessions": {
     "actions": {
       "hide": "اختبئ",
-      "pin": "Pin",
+      "pin": "تثبيت",
       "unhide": "Unhide"
     },
     "empty": {
@@ -197,7 +197,7 @@
       "showHidden": "جلسات مخفية"
     },
     "worktree": {
-      "switch": "Switch Worktree"
+      "switch": "تبديل Worktree"
     },
     "loadedMatchingMore_few": "{{count}} جلسات المطابقة التي تم تحميلها حتى الآن - تنزل إلى تحميل أكثر.",
     "loadedMatchingMore_many": "{{count}} جلسات المطابقة التي تم تحميلها حتى الآن - تنزل إلى تحميل أكثر.",
@@ -227,8 +227,8 @@
     "largeContentNotice": "المضمون كبير جدا{{count}} (شارز). تظهر العرض الأولي خام للحفاظ على استجابة UI.",
     "largeContentTitle": "ويظهر المحتوى الكبير على أنه خام لمنع تجميد اليورانيوم",
     "raw": "راو",
-    "rawPreview": "Raw preview",
-    "renderMarkdown": "الحد الأدنى",
+    "rawPreview": "معاينة خام",
+    "renderMarkdown": "عرض Markdown",
     "showAll": "أظهر كل شيء",
     "showMore": "أظهر المزيد",
     "showRaw": "عرض خام",
@@ -514,7 +514,7 @@
     }
   },
   "tmuxInstaller": {
-    "summaryTitle": "Tmux is not installed",
+    "summaryTitle": "tmux غير مثبت",
     "detectedOs": "محدد: {{os}}",
     "runtimePath": "الطريق السريع: {{path}}",
     "phase": "المرحلة: {{phase}}",
@@ -613,7 +613,7 @@
     "showMore": "أظهر المزيد",
     "showLess": "عرض أقل",
     "deleteConfirm": {
-      "title": "تحذف المهمة",
+      "title": "حذف المهمة",
       "message": "مهمة التحرك{{taskId}} إلى القمامة؟",
       "confirmLabel": "تحذف",
       "cancelLabel": "إلغاء"
@@ -645,12 +645,12 @@
   },
   "taskContextMenu": {
     "unpin": "Unpin",
-    "pin": "Pin",
+    "pin": "تثبيت",
     "rename": "الاسم",
     "markUnread": "علامة غير واضحة",
-    "unarchive": "Unarchive",
-    "archive": "المحفوظات",
-    "deleteTask": "تحذف المهمة"
+    "unarchive": "إلغاء الأرشفة",
+    "archive": "أرشفة",
+    "deleteTask": "حذف المهمة"
   },
   "updateDialog": {
     "closeDialog": "قفل الهاتف",
@@ -690,7 +690,7 @@
       "disabled": "المعوقين",
       "authRequired": "مطلوب",
       "runtimeMissing": "مفقود",
-      "degraded": "Degraded",
+      "degraded": "कमज़ोर",
       "unavailable": "غير متاح"
     }
   },
@@ -860,15 +860,15 @@
     "noChangesDetected": "لم تكتشف أي تغييرات"
   },
   "codexLogin": {
-    "copyLoginLinkAndCode": "Copy ChatGPT login link and code",
-    "copyLoginLink": "Copy ChatGPT login link",
+    "copyLoginLinkAndCode": "نسخ رابط تسجيل دخول ChatGPT والرمز",
+    "copyLoginLink": "نسخ رابط تسجيل دخول ChatGPT",
     "copyFailed": "النسخ فشلت",
     "copyLinkAndCode": "وصلة النسخ + الرمز",
     "copyLink": "وصلة نسخ",
     "enterCodeOnLoginPage": "Enter this code on the ChatGPT login page"
   },
   "window": {
-    "minimize": "الحد الأدنى",
+    "minimize": "عرض Markdown",
     "maximize": "الحد الأقصى",
     "restore": "Restore"
   },
@@ -905,7 +905,7 @@
       "yesterday": "أمس"
     },
     "reviewState": {
-      "needsFix": "الاحتياجات"
+      "needsFix": "يحتاج إلى إصلاحات"
     },
     "unassigned": "غير موقعة"
   }

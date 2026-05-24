@@ -671,14 +671,14 @@
       "install": {
         "checking": "التحقق",
         "downloading": "تحميل",
-        "installCli": "Install Codex CLI",
+        "installCli": "تثبيت Codex CLI",
         "installing": "التركيب",
-        "retryInstall": "إعادة تركيب",
-        "title": "Install Codex CLI في تطبيق البيانات"
+        "retryInstall": "إعادة محاولة التثبيت",
+        "title": "تثبيت Codex CLI في بيانات التطبيق"
       },
       "rateLimits": {
         "credits": "الأرصدة الدائنة",
-        "creditsDescription": "Credits are shown separately from window-based subscription usage and may be unavailable for plan-backed ChatGPT sessions.",
+        "creditsDescription": "تُعرض الأرصدة بشكل منفصل عن استخدام الاشتراك المعتمد على النوافذ، وقد لا تكون متاحة لجلسات ChatGPT المدعومة بخطة.",
         "noSecondaryWindow": "الكودوكس لم يعد نافذة ثانوية لهذا الحساب",
         "notReported": "لم يبلغ عنها",
         "primaryReset": "إعادة التوطين الابتدائي",

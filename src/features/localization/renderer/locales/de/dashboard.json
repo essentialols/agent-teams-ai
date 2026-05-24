@@ -11,7 +11,7 @@
       "extensions": "Erweiterungen",
       "login": "Anmelden",
       "manage": "Verwalten",
-      "manageProviders": "Manage Provider",
+      "manageProviders": "Anbieter verwalten",
       "plan": "Plan",
       "recheck": "Re-Check",
       "recheckProvider": "Re-Check {{provider}}",
@@ -39,7 +39,7 @@
       "codexFinishLogin": "Ende ChatGPT Anmeldung im Browser. Geben Sie den angezeigten Code ein, wenn Sie aufgefordert werden.",
       "codexNoActiveLogin": "Nutzungslimits erscheinen nur nach Codex CLI sieht einen aktiven ChatGPT Konto. Jetzt gibt es keinen aktiven ChatGPT Einloggen.",
       "codexNoActiveManagedSession": "Nutzungslimits erscheinen nur nach Codex CLI sieht einen aktiven ChatGPT Konto. Lokale Codex-Kontodaten gibt es, aber keine aktive verwaltete Sitzung wird jetzt ausgewählt.",
-      "codexReconnectNeeded": "Usage limits appear only after Codex refreshes the currently selected ChatGPT session. Right now the local session needs reconnect.",
+      "codexReconnectNeeded": "Nutzungslimits erscheinen erst, nachdem Codex die aktuell ausgewählte ChatGPT-Sitzung aktualisiert hat. Die lokale Sitzung muss jetzt erneut verbunden werden.",
       "firstCheckSlow": "Erste Prüfung kann bis zu 30 Sekunden dauern",
       "loginRequiredForTeams": "Browsing-Sessions und Projekte funktionieren ohne Anmeldung. Login ist nur erforderlich, um Agent-Teams zu führen.",
       "troubleshootTitle": "Wenn Sie sicher sind, dass Sie eingeloggt sind, versuchen Sie diese Schritte:"
@@ -112,13 +112,13 @@
     },
     "runtimeInstall": {
       "checking": "Überprüfung",
-      "codexTitle": "Codex herunterladen CLI in App-Daten",
+      "codexTitle": "Codex CLI in App-Daten installieren",
       "downloading": "Herunterladen",
       "downloadingPercent": "Herunterladen {{percent}}%",
       "install": "Installieren",
       "installing": "Installation",
       "openCodeTitle": "Installieren Sie die Runtime von OpenCode in App-Daten",
-      "retryInstall": "Retry install"
+      "retryInstall": "Installation erneut versuchen"
     },
     "troubleshoot": {
       "again": "wieder",

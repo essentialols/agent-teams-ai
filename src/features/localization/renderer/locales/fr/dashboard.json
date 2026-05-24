@@ -37,9 +37,9 @@
       "codexApiKeyFallback": "{{hint}} API clé de recul est disponible si vous changez de mode auth.",
       "codexAutoApiKey": "{{hint}} Auto continuera à utiliser la API touche jusqu'à ChatGPT est connecté.",
       "codexFinishLogin": "Finish ChatGPT login in the browser. Enter the shown code if prompted.",
-      "codexNoActiveLogin": "Usage limits appear only after Codex CLI sees an active ChatGPT account. Right now it reports no active ChatGPT login.",
-      "codexNoActiveManagedSession": "Usage limits appear only after Codex CLI sees an active ChatGPT account. Local Codex account data exists, but no active managed session is selected right now.",
-      "codexReconnectNeeded": "Usage limits appear only after Codex refreshes the currently selected ChatGPT session. Right now the local session needs reconnect.",
+      "codexNoActiveLogin": "Les limites d’utilisation n’apparaissent qu’après que Codex CLI détecte un compte ChatGPT actif. Aucun compte ChatGPT actif n’est détecté pour le moment.",
+      "codexNoActiveManagedSession": "Les limites d’utilisation n’apparaissent qu’après que Codex CLI détecte un compte ChatGPT actif. Des données de compte Codex locales existent, mais aucune session gérée active n’est sélectionnée pour le moment.",
+      "codexReconnectNeeded": "Les limites d’utilisation n’apparaissent qu’après l’actualisation par Codex de la session ChatGPT actuellement sélectionnée. La session locale doit être reconnectée.",
       "firstCheckSlow": "Le premier contrôle peut prendre jusqu'à 30 secondes",
       "loginRequiredForTeams": "Les sessions de navigation et les projets fonctionnent sans connexion. Il suffit de se connecter pour diriger des équipes d'agents.",
       "troubleshootTitle": "Si vous êtes sûr d'être connecté, essayez ces étapes :"
@@ -134,11 +134,11 @@
       "then": "puis"
     },
     "warnings": {
-      "multipleApiKeysMissing": "Un ou plusieurs fournisseurs sont mis à API mode clé, mais non API clé est configurée. Ouvrez Manage Providers pour ajouter des clés ou changer le mode de connexion.",
+      "multipleApiKeysMissing": "Un ou plusieurs fournisseurs sont mis à API mode clé, mais non API clé est configurée. Ouvrez Gérer les fournisseurs pour ajouter des clés ou changer le mode de connexion.",
       "multipleApiKeysNeedAttention": "Un ou plusieurs fournisseurs sont mis à API mode clé et besoin d'attention. Ouvrez Gérer les fournisseurs pour examiner les clés enregistrées ou changer le mode de connexion.",
       "notAuthenticated": "{{runtime}} est installé mais vous n'êtes pas authentifié. Une connexion est nécessaire pour la fourniture en équipe et les fonctionnalités d'IA.",
-      "singleApiKeyMissing": "{{provider}} est réglé à API mode clé, mais non API clé est configurée. Ouvrez Manage Providers pour ajouter une clé ou changer le mode de connexion.",
-      "singleApiKeyNeedsAttention": "{{provider}} est réglé à API mode clé, mais il n'est pas connecté. Ouvrez Manage Providers pour examiner la clé enregistrée ou changer le mode de connexion."
+      "singleApiKeyMissing": "{{provider}} est réglé à API mode clé, mais non API clé est configurée. Ouvrez Gérer les fournisseurs pour ajouter une clé ou changer le mode de connexion.",
+      "singleApiKeyNeedsAttention": "{{provider}} est réglé à API mode clé, mais il n'est pas connecté. Ouvrez Gérer les fournisseurs pour examiner la clé enregistrée ou changer le mode de connexion."
     }
   },
   "recentProjects": {

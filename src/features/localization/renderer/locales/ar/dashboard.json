@@ -11,7 +11,7 @@
       "extensions": "التمديدات",
       "login": "Login",
       "manage": "Manage",
-      "manageProviders": "مقدمو الخدمات",
+      "manageProviders": "إدارة مقدمي الخدمة",
       "plan": "الخطة",
       "recheck": "إعادة التدقيق",
       "recheckProvider": "إعادة التدقيق {{provider}}",
@@ -37,9 +37,9 @@
       "codexApiKeyFallback": "{{hint}} API التراجع الرئيسي متاح إذا كنت تبديل أسلوبك",
       "codexAutoApiKey": "{{hint}} Auto will keep using the API key until ChatGPT is connected.",
       "codexFinishLogin": "Finish ChatGPT login in the browser. Enter the shown code if prompted.",
-      "codexNoActiveLogin": "Usage limits appear only after Codex CLI sees an active ChatGPT account. Right now it reports no active ChatGPT login.",
-      "codexNoActiveManagedSession": "Usage limits appear only after Codex CLI sees an active ChatGPT account. Local Codex account data exists, but no active managed session is selected right now.",
-      "codexReconnectNeeded": "Usage limits appear only after Codex refreshes the currently selected ChatGPT session. Right now the local session needs reconnect.",
+      "codexNoActiveLogin": "تظهر حدود الاستخدام فقط بعد أن يرى Codex CLI حساب ChatGPT نشطًا. لا يوجد حاليًا تسجيل دخول ChatGPT نشط.",
+      "codexNoActiveManagedSession": "تظهر حدود الاستخدام فقط بعد أن يرى Codex CLI حساب ChatGPT نشطًا. توجد بيانات حساب Codex محلية، لكن لا توجد جلسة مُدارة نشطة محددة الآن.",
+      "codexReconnectNeeded": "تظهر حدود الاستخدام فقط بعد أن يحدّث Codex جلسة ChatGPT المحددة حاليًا. الجلسة المحلية تحتاج الآن إلى إعادة الاتصال.",
       "firstCheckSlow": "الشيك الأول قد يستغرق 30 ثانية",
       "loginRequiredForTeams": "وجلسات الحشد والمشاريع تعمل بدون دخول. (لوجين) مطلوب فقط لتشغيل فرق العملاء",
       "troubleshootTitle": "إذا كنتِ متأكدة من أنكِ مُسجلة، جربي هذه الخطوات:"
@@ -112,13 +112,13 @@
     },
     "runtimeInstall": {
       "checking": "التحقق",
-      "codexTitle": "Install Codex CLI في تطبيق البيانات",
+      "codexTitle": "تثبيت Codex CLI في بيانات التطبيق",
       "downloading": "تحميل",
       "downloadingPercent": "تحميل {{percent}}%",
       "install": "Install",
       "installing": "التركيب",
       "openCodeTitle": "Install OpenCode runtime into app data",
-      "retryInstall": "إعادة تركيب"
+      "retryInstall": "إعادة محاولة التثبيت"
     },
     "troubleshoot": {
       "again": "مرة أخرى",

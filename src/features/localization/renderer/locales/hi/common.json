@@ -95,7 +95,7 @@
         "downloading": "डाउनलोड",
         "installCli": "Codex CLI स्थापित करें",
         "installing": "स्थापना",
-        "retryInstall": "Retry install"
+        "retryInstall": "इंस्टॉल फिर से करें"
       }
     }
   },
@@ -246,7 +246,7 @@
     "closingInSeconds_one": "{{count}}s में समापन...",
     "closingInSeconds_other": "{{count}}s में समापन...",
     "completedSuccessfully": "सफलतापूर्वक पूरा",
-    "exitCode": "(exit code){{code}})",
+    "exitCode": "(exit code {{code}})",
     "processFailed": "प्रक्रिया विफल",
     "title": "टर्मिनल"
   },
@@ -266,12 +266,12 @@
     "total": "कुल",
     "userMessages": "उपयोगकर्ता संदेश",
     "visibleContext": "दृश्य",
-    "includesClaudeMd": "समावेश CLAUDEMD ×{{count}}",
-    "claudeMd": "CLAUDEMd",
-    "mentionedFiles": "@Palls",
-    "percentValue": "{{percent}}%)",
+    "includesClaudeMd": "CLAUDE.md शामिल ×{{count}}",
+    "claudeMd": "CLAUDE.md",
+    "mentionedFiles": "@ फ़ाइलें",
+    "percentValue": "({{percent}}%)",
     "approxTokens": "~{{tokens}} टोकन",
-    "approxTokensParenthesized": "{{tokens}}"
+    "approxTokensParenthesized": "(~{{tokens}})"
   },
   "list": {
     "actions": {
@@ -352,7 +352,7 @@
       "bySize": "आकार"
     },
     "metrics": {
-      "unavailable": "उपलब्ध",
+      "unavailable": "उपलब्ध नहीं",
       "contextUsed": "संदर्भ प्रयुक्त",
       "promptInput": "प्रॉम्प्ट इनपुट",
       "visibleContext": "दृश्य",
@@ -593,7 +593,7 @@
     "sessionsCount_many": "{{count}} सत्र"
   },
   "tasksPanel": {
-    "title": "कार्य",
+    "title": "कार्य हटाएँ",
     "searchPlaceholder": "कार्य खोजें...",
     "pinned": "पिन",
     "groupByLabel": "समूह द्वारा:",
@@ -613,7 +613,7 @@
     "showMore": "और देखो",
     "showLess": "कम दिखाएं",
     "deleteConfirm": {
-      "title": "कार्य",
+      "title": "कार्य हटाएँ",
       "message": "कार्य #{{taskId}} to trash?",
       "confirmLabel": "डिलीट",
       "cancelLabel": "रद्द करना"
@@ -648,9 +648,9 @@
     "pin": "पिन",
     "rename": "नाम बदलें",
     "markUnread": "बिना पढ़े",
-    "unarchive": "Unarchive",
-    "archive": "पुरालेख",
-    "deleteTask": "कार्य"
+    "unarchive": "आर्काइव से हटाएँ",
+    "archive": "आर्काइव करें",
+    "deleteTask": "कार्य हटाएँ"
   },
   "updateDialog": {
     "closeDialog": "संवाद",
@@ -678,7 +678,7 @@
     "resolved": "हल:{{backend}}",
     "current": "वर्तमान",
     "recommended": "अनुशंसित",
-    "unavailable": "उपलब्ध",
+    "unavailable": "उपलब्ध नहीं",
     "cannotSelectYet": "इस बैकएंड को अभी तक चुना नहीं जा सकता है।",
     "auto": "ऑटो",
     "autoCurrently": "ऑटो (वर्तमान में: {{backend}})",
@@ -690,13 +690,13 @@
       "disabled": "विकलांग",
       "authRequired": "आवश्यक",
       "runtimeMissing": "रनटाइम लापता",
-      "degraded": "Degraded",
-      "unavailable": "उपलब्ध"
+      "degraded": "कमज़ोर",
+      "unavailable": "उपलब्ध नहीं"
     }
   },
   "providerModelBadges": {
     "checking": "जांच",
-    "unavailable": "उपलब्ध",
+    "unavailable": "उपलब्ध नहीं",
     "checkFailed": "असफल",
     "free": "फ्री",
     "freeTooltip": "OpenCode मेटाडाटा द्वारा रिपोर्ट किया गया। उपलब्धता और सीमाएं बदल सकती हैं।"

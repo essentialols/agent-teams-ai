@@ -114,8 +114,8 @@
   "meta": {
     "homeTitle": "Agent Teams - AI Agen Orkestra untuk Pengembang",
     "homeDescription": "Aplikasi desktop open-source bebas untuk AI Agen tim. Mulai dengan model bebas tanpa auth, kemudian hubungkan Claude, Codex, atau OpenCode ketika Anda membutuhkan lebih banyak model.",
-    "downloadTitle": "Unduh Agent Teams untuk makOS, Windows, dan Linux",
-    "downloadDescription": "Unduh Agent Teams untuk makOS, Windows, dan Linux. Aplikasi desktop open-source bebas untuk Claude, Codex, dan OpenCode Agen tim."
+    "downloadTitle": "Unduh Agent Teams untuk macOS, Windows, dan Linux",
+    "downloadDescription": "Unduh Agent Teams untuk macOS, Windows, dan Linux. Aplikasi desktop open-source gratis untuk tim agen Claude, Codex, dan OpenCode."
   },
   "error": {
     "notFoundTitle": "Halaman tak ditemukan",

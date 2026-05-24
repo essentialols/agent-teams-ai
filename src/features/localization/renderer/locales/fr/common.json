@@ -516,7 +516,7 @@
   "tmuxInstaller": {
     "summaryTitle": "tmux n'est pas installé",
     "detectedOs": "Système d'exploitation détecté : {{os}}",
-    "runtimePath": "Chemin d'exécution & #160;: {{path}}",
+    "runtimePath": "Chemin d'exécution : {{path}}",
     "phase": "Phase : {{phase}}",
     "actions": {
       "cancel": "Annuler",
@@ -648,7 +648,7 @@
     "pin": "Épingle",
     "rename": "Renommer",
     "markUnread": "Marquer comme non lu",
-    "unarchive": "Unarchive",
+    "unarchive": "Désarchiver",
     "archive": "Archive",
     "deleteTask": "Supprimer la tâche"
   },
@@ -860,8 +860,8 @@
     "noChangesDetected": "Aucun changement détecté"
   },
   "codexLogin": {
-    "copyLoginLinkAndCode": "Copy ChatGPT login link and code",
-    "copyLoginLink": "Copy ChatGPT login link",
+    "copyLoginLinkAndCode": "Copier le lien de connexion ChatGPT et le code",
+    "copyLoginLink": "Copier le lien de connexion ChatGPT",
     "copyFailed": "La copie a échoué",
     "copyLinkAndCode": "Copier le lien + le code",
     "copyLink": "Copier le lien",

@@ -115,7 +115,7 @@
       "label": "Exécuter la commande après créer"
     },
     "localOnly": "Disponible uniquement en mode Electron local.",
-    "onDisk": "Sur disque & #160;:",
+    "onDisk": "Sur disque :",
     "placeholders": {
       "description": "Brève description du but de l'équipe",
       "prompt": "Instructions pour le chef d'équipe pendant la fourniture..."
@@ -198,8 +198,8 @@
       "liveRenameBlocked": "Live save est bloqué parce que les coéquipiers existants ont été renommés. Remettre ces changements d'identité ou arrêter l'équipe d'abord.",
       "newLiveTeammates": "De nouveaux coéquipiers ne peuvent pas être ajoutés de l'Edit Team pendant que l'équipe est en direct. Utilisez plutôt la boîte de dialogue Ajouter un membre.",
       "provisioning": "Le ravitaillement en équipe est toujours en cours. L'édition est temporairement verrouillée jusqu'à la fin du lancement.",
-      "restartMany": "L'enregistrement redémarre ou relance ces coéquipiers pour appliquer le rôle, le workflow, l'isolement d'un worktree, le fournisseur, le modèle, l'effort, ou MCP changements d'accès & #160;: {{names}}.",
-      "restartOne": "Enregistrer redémarrera ou relancera ce coéquipier pour appliquer le rôle, le workflow, l'isolement d'arbre de travail, le fournisseur, le modèle, l'effort, ou MCP changements d'accès & #160;: {{names}}.",
+      "restartMany": "L'enregistrement redémarre ou relance ces coéquipiers pour appliquer le rôle, le workflow, l'isolement d'un worktree, le fournisseur, le modèle, l'effort, ou MCP changements d'accès : {{names}}.",
+      "restartOne": "Enregistrer redémarrera ou relancera ce coéquipier pour appliquer le rôle, le workflow, l'isolement d'arbre de travail, le fournisseur, le modèle, l'effort, ou MCP changements d'accès : {{names}}.",
       "unsupportedMixedPrimaryMutation": "Les modifications/suppressions en direct pour les coéquipiers de premier plan dans les équipes mixtes OpenCode nécessitent l'arrêt et la relance de l'équipe: {{names}}."
     },
     "placeholders": {
@@ -468,7 +468,7 @@
       },
       "raw": {
         "show": "Afficher les données brutes de diff",
-        "file": "Dossier & #160;: {{file}}",
+        "file": "Dossier : {{file}}",
         "original": "--- Original",
         "modified": "+++ Modifié",
         "charsTotal": "... ({{count}} Nombre total de caractères)",
@@ -790,7 +790,7 @@
       },
       "summary": {
         "checking": "Statut OpenCode : vérifier l'exécution",
-        "status": "Statut OpenCode & #160;: {{parts}}"
+        "status": "Statut OpenCode : {{parts}}"
       },
       "summaryParts": {
         "teamLaunchBlocked": "lancement de l'équipe bloqué",
@@ -1134,7 +1134,7 @@
       "changed": "Le fichier a changé sur le disque.",
       "deleted": "Le fichier n'existe plus sur le disque."
     },
-    "saveFailed": "Enregistrer a échoué & #160;: {{error}}",
+    "saveFailed": "Enregistrer a échoué : {{error}}",
     "sidebar": {
       "explorer": "Explorateur",
       "hide": "Cacher la barre latérale",
@@ -1158,7 +1158,7 @@
       "resultsSummary_other": "{{count}} matches en {{fileCount}} fichiers"
     },
     "fileTree": {
-      "failedToLoadFiles": "Impossible de charger les fichiers & #160;: {{error}}",
+      "failedToLoadFiles": "Impossible de charger les fichiers : {{error}}",
       "loading": "Chargement des fichiers...",
       "empty": "Aucun fichier trouvé",
       "dropForProjectRoot": "Déposer ici pour le projet root",

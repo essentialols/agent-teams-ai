@@ -86,7 +86,7 @@
       "loading": "Chargement de la configuration du fournisseur..."
     },
     "summary": {
-      "defaultModel": "OpenCode par défaut & #160;: {{model}}",
+      "defaultModel": "OpenCode par défaut : {{model}}",
       "loading": "Chargement géré OpenCode runtime, fournisseurs connectés et modèles par défaut...",
       "source": "Source: {{source}}",
       "title": "Ouvrir le code d'exécution"
@@ -678,7 +678,7 @@
       },
       "rateLimits": {
         "credits": "Crédits",
-        "creditsDescription": "Credits are shown separately from window-based subscription usage and may be unavailable for plan-backed ChatGPT sessions.",
+        "creditsDescription": "Les crédits sont affichés séparément de l’utilisation de l’abonnement par fenêtre et peuvent être indisponibles pour les sessions ChatGPT adossées à un forfait.",
         "noSecondaryWindow": "Codex n'a pas retourné de fenêtre secondaire pour cet instantané de compte.",
         "notReported": "Non communiqué",
         "primaryReset": "Réinitialisation primaire",

@@ -729,7 +729,7 @@
       "local": "स्थानीय",
       "needsTest": "परीक्षण की आवश्यकता",
       "verified": "सत्यापित",
-      "unavailable": "उपलब्ध",
+      "unavailable": "उपलब्ध नहीं",
       "issue": "मुद्दा"
     },
     "customModelId": "कस्टम मॉडल आईडी",

@@ -228,7 +228,7 @@
       "edit": "Mettre à jour cette compétence, examiner les modifications de fichier résultant, puis enregistrer."
     },
     "extraFiles": {
-      "addedFiles": "Ajout de fichiers & #160;:",
+      "addedFiles": "Ajout de fichiers :",
       "assets": "Actifs",
       "assetsDescription": "Ajouter des captures d'écran ou des médias groupés seulement s'ils aident à expliquer le flux de travail.",
       "description": "Ajouter les documents, scripts ou actifs de support seulement si cette compétence en a vraiment besoin.",

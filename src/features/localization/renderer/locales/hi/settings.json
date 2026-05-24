@@ -673,7 +673,7 @@
         "downloading": "डाउनलोड",
         "installCli": "Codex CLI स्थापित करें",
         "installing": "स्थापना",
-        "retryInstall": "Retry install",
+        "retryInstall": "इंस्टॉल फिर से करें",
         "title": "Codex CLI को ऐप डेटा में इंस्टॉल करें"
       },
       "rateLimits": {

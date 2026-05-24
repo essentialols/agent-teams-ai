@@ -671,14 +671,14 @@
       "install": {
         "checking": "Überprüfung",
         "downloading": "Herunterladen",
-        "installCli": "Codex herunterladen CLI",
+        "installCli": "Codex CLI installieren",
         "installing": "Installation",
-        "retryInstall": "Retry install",
-        "title": "Codex herunterladen CLI in App-Daten"
+        "retryInstall": "Installation erneut versuchen",
+        "title": "Codex CLI in App-Daten installieren"
       },
       "rateLimits": {
         "credits": "Kredite",
-        "creditsDescription": "Credits are shown separately from window-based subscription usage and may be unavailable for plan-backed ChatGPT sessions.",
+        "creditsDescription": "Credits werden getrennt von der fensterbasierten Abonnementnutzung angezeigt und sind für planbasierte ChatGPT-Sitzungen möglicherweise nicht verfügbar.",
         "noSecondaryWindow": "Codex gab kein sekundäres Fenster für dieses Konto Snapshot zurück.",
         "notReported": "Nicht gemeldet",
         "primaryReset": "Primärrückstellung",
@@ -880,7 +880,7 @@
         "notConnected": "Nicht angeschlossen",
         "startingChatGptLogin": "Starting ChatGPT login...",
         "waitingForChatGptLogin": "Warten auf ChatGPT Einloggen...",
-        "chatGptVerificationDegraded": "ChatGPT Konto erkannt - Kontoverifikation wird derzeit abgebaut.",
+        "chatGptVerificationDegraded": "ChatGPT Konto erkannt - Kontoverifikation ist derzeit eingeschränkt.",
         "chatGptAccountReady": "ChatGPT Konto bereit",
         "apiKeyReady": "API Schlüssel bereit",
         "codexLocalAccountNeedsReconnect": "Codex hat einen lokal ausgewählten ChatGPT konto, aber die aktuelle Sitzung muss wieder verbinden.",

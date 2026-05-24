@@ -886,7 +886,7 @@
       "refreshShort": "التجديد",
       "reviewDiff": "إعادة الانتشار",
       "reviewTaskDiff": "مهمة الاستعراض",
-      "scannedCandidateTasks": "تم مسحها {{requested}} of of {{eligible}} المهام المرشحة",
+      "scannedCandidateTasks": "تم فحص {{requested}} من {{eligible}} مهام مرشحة",
       "tasksDeferred": "{{count}} المهام المؤجلة",
       "title": "التغييرات",
       "fileCount_few": "{{count}} الملفات",
@@ -1050,7 +1050,7 @@
         "ownerAria": "المهام الوظيفية للمالك",
         "statusAria": "المهام الوظيفية حسب المركز"
       },
-      "showing": "عرض {{shown}} of of {{total}}"
+      "showing": "عرض {{shown}} من {{total}}"
     },
     "status": {
       "completed": "أنجزت",

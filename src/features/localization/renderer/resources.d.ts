@@ -372,8 +372,11 @@ export default interface Resources {
       emptyMessage: 'No language found.';
       names: {
         en: 'English';
+        ja: 'Japanese';
+        ko: 'Korean';
         ru: 'Russian';
         system: 'System';
+        zh: 'Chinese';
       };
       searchPlaceholder: 'Search language...';
       selectPlaceholder: 'Select app language...';

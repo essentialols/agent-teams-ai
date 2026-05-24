@@ -1,3 +1,4 @@
+import { useAppTranslation } from '@features/localization/renderer';
 import { Badge } from '@renderer/components/ui/badge';
 import { cn } from '@renderer/lib/utils';
 
@@ -28,7 +29,8 @@ export function MemberWorkSyncBadge({
   viewModel,
   className,
 }: MemberWorkSyncBadgeProps): React.ReactElement {
-  const resolved = viewModel ?? toMemberWorkSyncStatusViewModel(status);
+  const { t } = useAppTranslation('team');
+  const resolved = viewModel ?? toMemberWorkSyncStatusViewModel(status, t);
 
   return (
     <Badge

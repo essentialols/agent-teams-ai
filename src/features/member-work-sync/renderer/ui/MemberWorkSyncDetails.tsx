@@ -25,7 +25,7 @@ export function MemberWorkSyncDetails({
   showDiagnostics = false,
 }: MemberWorkSyncDetailsProps): React.ReactElement {
   const { t } = useAppTranslation('team');
-  const viewModel = toMemberWorkSyncStatusViewModel(status);
+  const viewModel = toMemberWorkSyncStatusViewModel(status, t);
   const agendaItems = status?.agenda.items ?? [];
 
   return (

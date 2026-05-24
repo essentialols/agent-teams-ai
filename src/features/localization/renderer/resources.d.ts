@@ -4058,6 +4058,28 @@ export default interface Resources {
       };
       diagnosticsUnavailable: 'Member work sync diagnostics are unavailable.';
       loadingDiagnostics: 'Loading member work sync diagnostics.';
+      status: {
+        agendaItems: '{{count}} actionable work item.';
+        agendaItems_few: '{{count}} actionable work items.';
+        agendaItems_many: '{{count}} actionable work items.';
+        agendaItems_one: '{{count}} actionable work item.';
+        agendaItems_other: '{{count}} actionable work items.';
+        labels: {
+          blocked: 'Blocked';
+          needsSync: 'Needs sync';
+          synced: 'Synced';
+          unknown: 'Unknown';
+          working: 'Working';
+        };
+        tooltips: {
+          blocked: 'Member reported blocked on current agenda. {{agenda}}';
+          inactive: 'Member work sync is not active for this member. {{agenda}}';
+          needsSync: 'Shadow status only: current agenda has no valid member report. {{agenda}}';
+          notEvaluated: 'Member work sync status has not been evaluated yet.';
+          synced: 'Synced with current work agenda. {{agenda}}';
+          working: 'Member reported still working on current agenda. {{agenda}}';
+        };
+      };
       title: 'Member work sync';
     };
     members: {

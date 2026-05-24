@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 
+import { useAppTranslation } from '@features/localization/renderer';
 import { api } from '@renderer/api';
 
 import {
@@ -32,6 +33,7 @@ export function useMemberWorkSyncStatus({
   memberName,
   enabled = true,
 }: UseMemberWorkSyncStatusOptions): UseMemberWorkSyncStatusResult {
+  const { t } = useAppTranslation('team');
   const [status, setStatus] = useState<MemberWorkSyncStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -83,7 +85,7 @@ export function useMemberWorkSyncStatus({
 
   return {
     status,
-    viewModel: toMemberWorkSyncStatusViewModel(status),
+    viewModel: toMemberWorkSyncStatusViewModel(status, t),
     loading,
     error,
     refresh: () => setRefreshKey((current) => current + 1),

@@ -456,7 +456,11 @@
       "input": "Input"
     },
     "items": {
-      "empty": "No items to display"
+      "empty": "No items to display",
+      "input": "Input",
+      "output": "Output",
+      "thinking": "Thinking",
+      "slashOutput": "Slash Output"
     },
     "tools": {
       "teammateSpawned": "Teammate spawned",
@@ -639,6 +643,17 @@
     "unarchive": "Unarchive",
     "archive": "Archive",
     "deleteTask": "Delete task"
+  },
+  "sessionContextMenu": {
+    "openInCurrentPane": "Open in Current Pane",
+    "openInNewTab": "Open in New Tab",
+    "splitRightAndOpen": "Split Right and Open",
+    "pinSession": "Pin Session",
+    "unpinSession": "Unpin Session",
+    "hideSession": "Hide Session",
+    "unhideSession": "Unhide Session",
+    "copySessionId": "Copy Session ID",
+    "copyResumeCommand": "Copy Resume Command"
   },
   "updateDialog": {
     "closeDialog": "Close dialog",
@@ -841,7 +856,19 @@
     "bold": "Bold",
     "italic": "Italic",
     "strike": "Strike",
-    "code": "Code"
+    "code": "Code",
+    "boldShortcut": "Bold (⌘B)",
+    "italicShortcut": "Italic (⌘I)",
+    "strikeShortcut": "Strikethrough (⌘⇧S)",
+    "codeShortcut": "Code (⌘E)",
+    "codeBlockShortcut": "Code Block (⌘⌥C)",
+    "heading": "Heading {{level}}",
+    "bulletListShortcut": "Bullet List (⌘⇧8)",
+    "orderedListShortcut": "Ordered List (⌘⇧7)",
+    "blockquoteShortcut": "Blockquote (⌘⇧B)",
+    "horizontalRule": "Horizontal Rule",
+    "undoShortcut": "Undo (⌘Z)",
+    "redoShortcut": "Redo (⌘⇧Z)"
   },
   "diff": {
     "changed": "Changed",

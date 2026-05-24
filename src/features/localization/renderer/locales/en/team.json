@@ -1105,6 +1105,10 @@
       "save": "Save",
       "saveAllAndClose": "Save All & Close"
     },
+    "selectionMenu": {
+      "writeTeammate": "Write Teammate",
+      "createTask": "Create Task"
+    },
     "ariaLabel": "Project Editor",
     "dialogs": {
       "conflictDescription": "The file has been modified externally since you opened it. Overwrite with your changes?",
@@ -1686,6 +1690,12 @@
       "files": "Files",
       "toolCalls": "Tool Calls",
       "tokens": "Tokens",
+      "tokensShort": "Tokens",
+      "tasks": "Tasks",
+      "completed": "Completed",
+      "activity": "Activity",
+      "inProgress": "in progress: {{count}}",
+      "updated": "updated {{time}}",
       "toolUsage": "Tool Usage",
       "filesTouched": "Files Touched ({{count}})",
       "viewAllChanges": "View All Changes",
@@ -2133,6 +2143,7 @@
       "start": "Start",
       "complete": "Complete",
       "approve": "Approve",
+      "disapprove": "Disapprove",
       "requestReview": "Request review",
       "manualReview": "Manual review",
       "requestChanges": "Request changes"

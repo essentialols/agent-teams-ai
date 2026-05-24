@@ -300,7 +300,7 @@ const DisplayItemRow = memo(function DisplayItemRow({
       element = (
         <BaseItem
           icon={<MailOpen className="size-4" />}
-          label="Input"
+          label={t('chat.items.input')}
           summary={truncateText(inputContent, previewMaxLength ?? 80)}
           tokenCount={inputTokenCount}
           timestamp={item.timestamp}

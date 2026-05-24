@@ -1,5 +1,6 @@
 import React, { memo } from 'react';
 
+import { useAppTranslation } from '@features/localization/renderer';
 import { Slash } from 'lucide-react';
 
 import { MarkdownViewer } from '../viewers';
@@ -46,6 +47,7 @@ export const SlashItem = memo(
     notificationDotColor,
     titleText,
   }: SlashItemProps): React.JSX.Element => {
+    const { t } = useAppTranslation('common');
     const hasInstructions = !!slash.instructions;
 
     // Display args or message as the description
@@ -72,7 +74,7 @@ export const SlashItem = memo(
         {hasInstructions && (
           <MarkdownViewer
             content={slash.instructions!}
-            label="Slash Output"
+            label={t('chat.items.slashOutput')}
             maxHeight="max-h-96"
             copyable
           />

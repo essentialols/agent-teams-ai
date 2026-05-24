@@ -1,5 +1,6 @@
 import React from 'react';
 
+import { useAppTranslation } from '@features/localization/renderer';
 import { Brain } from 'lucide-react';
 
 import { highlightQueryInText } from '../searchHighlightUtils';
@@ -46,6 +47,7 @@ export const ThinkingItem: React.FC<ThinkingItemProps> = React.memo(
     notificationDotColor,
     titleText,
   }) => {
+    const { t } = useAppTranslation('common');
     const fullContent = step.content.thinkingText ?? preview;
     const summary = searchQueryOverride
       ? highlightQueryInText(preview, searchQueryOverride, `${markdownItemId ?? step.id}:summary`, {
@@ -59,7 +61,7 @@ export const ThinkingItem: React.FC<ThinkingItemProps> = React.memo(
     return (
       <BaseItem
         icon={<Brain className="size-4" />}
-        label="Thinking"
+        label={t('chat.items.thinking')}
         summary={summary}
         tokenCount={tokenCount}
         timestamp={timestamp}

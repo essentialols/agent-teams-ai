@@ -5,6 +5,7 @@
  * Uses onMouseDown preventDefault to avoid deselecting text in CM6.
  */
 
+import { useAppTranslation } from '@features/localization/renderer';
 import { Button } from '@renderer/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/components/ui/tooltip';
 import { ListTodo, MessageSquare } from 'lucide-react';
@@ -41,6 +42,7 @@ export const EditorSelectionMenu = ({
   onSendMessage,
   onCreateTask,
 }: EditorSelectionMenuProps): React.ReactElement | null => {
+  const { t } = useAppTranslation('team');
   if (!info.text.trim()) return null;
 
   // Convert viewport coords → container-relative
@@ -68,12 +70,12 @@ export const EditorSelectionMenu = ({
     >
       <MenuButton
         icon={<MessageSquare className="size-3.5" />}
-        label="Write Teammate"
+        label={t('editor.selectionMenu.writeTeammate')}
         onClick={onSendMessage}
       />
       <MenuButton
         icon={<ListTodo className="size-3.5" />}
-        label="Create Task"
+        label={t('editor.selectionMenu.createTask')}
         onClick={onCreateTask}
       />
     </div>

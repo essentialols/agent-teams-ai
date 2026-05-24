@@ -6,6 +6,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 
+import { useAppTranslation } from '@features/localization/renderer';
 import { MAX_PANES } from '@renderer/types/panes';
 import { formatShortcut } from '@renderer/utils/stringUtils';
 import { Check, ClipboardCopy, Eye, EyeOff, Pin, PinOff, Terminal } from 'lucide-react';
@@ -41,6 +42,7 @@ export const SessionContextMenu = ({
   onTogglePin,
   onToggleHide,
 }: SessionContextMenuProps): React.JSX.Element => {
+  const { t } = useAppTranslation('common');
   const menuRef = useRef<HTMLDivElement>(null);
   const [copiedField, setCopiedField] = useState<'id' | 'command' | null>(null);
 
@@ -98,32 +100,37 @@ export const SessionContextMenu = ({
         color: 'var(--color-text)',
       }}
     >
-      <MenuItem label="Open in Current Pane" onClick={handleClick(onOpenInCurrentPane)} />
       <MenuItem
-        label="Open in New Tab"
+        label={t('sessionContextMenu.openInCurrentPane')}
+        onClick={handleClick(onOpenInCurrentPane)}
+      />
+      <MenuItem
+        label={t('sessionContextMenu.openInNewTab')}
         shortcut={`${formatShortcut('')}Click`}
         onClick={handleClick(onOpenInNewTab)}
       />
       <div className="mx-2 my-1 border-t" style={{ borderColor: 'var(--color-border)' }} />
       <MenuItem
-        label="Split Right and Open"
+        label={t('sessionContextMenu.splitRightAndOpen')}
         onClick={handleClick(onSplitRightAndOpen)}
         disabled={atMaxPanes}
       />
       <div className="mx-2 my-1 border-t" style={{ borderColor: 'var(--color-border)' }} />
       <MenuItem
-        label={isPinned ? 'Unpin Session' : 'Pin Session'}
+        label={isPinned ? t('sessionContextMenu.unpinSession') : t('sessionContextMenu.pinSession')}
         icon={isPinned ? <PinOff className="size-4" /> : <Pin className="size-4" />}
         onClick={handleClick(onTogglePin)}
       />
       <MenuItem
-        label={isHidden ? 'Unhide Session' : 'Hide Session'}
+        label={
+          isHidden ? t('sessionContextMenu.unhideSession') : t('sessionContextMenu.hideSession')
+        }
         icon={isHidden ? <Eye className="size-4" /> : <EyeOff className="size-4" />}
         onClick={handleClick(onToggleHide)}
       />
       <div className="mx-2 my-1 border-t" style={{ borderColor: 'var(--color-border)' }} />
       <MenuItem
-        label={copiedField === 'id' ? 'Copied!' : 'Copy Session ID'}
+        label={copiedField === 'id' ? t('actions.copied') : t('sessionContextMenu.copySessionId')}
         icon={
           copiedField === 'id' ? (
             <Check className="size-4 text-green-400" />
@@ -134,7 +141,11 @@ export const SessionContextMenu = ({
         onClick={handleCopy(sessionId, 'id')}
       />
       <MenuItem
-        label={copiedField === 'command' ? 'Copied!' : 'Copy Resume Command'}
+        label={
+          copiedField === 'command'
+            ? t('actions.copied')
+            : t('sessionContextMenu.copyResumeCommand')
+        }
         icon={
           copiedField === 'command' ? (
             <Check className="size-4 text-green-400" />

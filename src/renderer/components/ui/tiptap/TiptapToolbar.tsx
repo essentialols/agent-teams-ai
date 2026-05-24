@@ -1,3 +1,4 @@
+import { useAppTranslation } from '@features/localization/renderer';
 import { cn } from '@renderer/lib/utils';
 import { useCurrentEditor, useEditorState } from '@tiptap/react';
 import {
@@ -71,6 +72,7 @@ const Divider = () => {
 };
 
 export const TiptapToolbar = ({ config }: TiptapToolbarProps) => {
+  const { t } = useAppTranslation('common');
   const { editor } = useCurrentEditor();
 
   // useEditorState — КРИТИЧНО для v3!
@@ -124,7 +126,7 @@ export const TiptapToolbar = ({ config }: TiptapToolbarProps) => {
         icon={<Bold size={14} />}
         active={state.isBold}
         onClick={() => editor.chain().focus().toggleBold().run()}
-        label="Bold (⌘B)"
+        label={t('editorFormatting.boldShortcut')}
       />
     );
   if (c.italic)
@@ -134,7 +136,7 @@ export const TiptapToolbar = ({ config }: TiptapToolbarProps) => {
         icon={<Italic size={14} />}
         active={state.isItalic}
         onClick={() => editor.chain().focus().toggleItalic().run()}
-        label="Italic (⌘I)"
+        label={t('editorFormatting.italicShortcut')}
       />
     );
   if (c.strike)
@@ -144,7 +146,7 @@ export const TiptapToolbar = ({ config }: TiptapToolbarProps) => {
         icon={<Strikethrough size={14} />}
         active={state.isStrike}
         onClick={() => editor.chain().focus().toggleStrike().run()}
-        label="Strikethrough (⌘⇧S)"
+        label={t('editorFormatting.strikeShortcut')}
       />
     );
   if (textGroup.length) groups.push(textGroup);
@@ -158,7 +160,7 @@ export const TiptapToolbar = ({ config }: TiptapToolbarProps) => {
         icon={<Code size={14} />}
         active={state.isCode}
         onClick={() => editor.chain().focus().toggleCode().run()}
-        label="Code (⌘E)"
+        label={t('editorFormatting.codeShortcut')}
       />
     );
   if (c.codeBlock)
@@ -168,7 +170,7 @@ export const TiptapToolbar = ({ config }: TiptapToolbarProps) => {
         icon={<FileCode2 size={14} />}
         active={state.isCodeBlock}
         onClick={() => editor.chain().focus().toggleCodeBlock().run()}
-        label="Code Block (⌘⌥C)"
+        label={t('editorFormatting.codeBlockShortcut')}
       />
     );
   if (codeGroup.length) groups.push(codeGroup);
@@ -183,7 +185,7 @@ export const TiptapToolbar = ({ config }: TiptapToolbarProps) => {
         icon={<Icon size={14} />}
         active={state.headingLevel === level}
         onClick={() => editor.chain().focus().toggleHeading({ level }).run()}
-        label={`Heading ${level}`}
+        label={t('editorFormatting.heading', { level })}
       />
     );
   });
@@ -198,7 +200,7 @@ export const TiptapToolbar = ({ config }: TiptapToolbarProps) => {
         icon={<List size={14} />}
         active={state.isBulletList}
         onClick={() => editor.chain().focus().toggleBulletList().run()}
-        label="Bullet List (⌘⇧8)"
+        label={t('editorFormatting.bulletListShortcut')}
       />
     );
   if (c.orderedList)
@@ -208,7 +210,7 @@ export const TiptapToolbar = ({ config }: TiptapToolbarProps) => {
         icon={<ListOrdered size={14} />}
         active={state.isOrderedList}
         onClick={() => editor.chain().focus().toggleOrderedList().run()}
-        label="Ordered List (⌘⇧7)"
+        label={t('editorFormatting.orderedListShortcut')}
       />
     );
   if (listGroup.length) groups.push(listGroup);
@@ -222,7 +224,7 @@ export const TiptapToolbar = ({ config }: TiptapToolbarProps) => {
         icon={<Quote size={14} />}
         active={state.isBlockquote}
         onClick={() => editor.chain().focus().toggleBlockquote().run()}
-        label="Blockquote (⌘⇧B)"
+        label={t('editorFormatting.blockquoteShortcut')}
       />
     );
   if (c.horizontalRule)
@@ -231,7 +233,7 @@ export const TiptapToolbar = ({ config }: TiptapToolbarProps) => {
         key="hr"
         icon={<Minus size={14} />}
         onClick={() => editor.chain().focus().setHorizontalRule().run()}
-        label="Horizontal Rule"
+        label={t('editorFormatting.horizontalRule')}
       />
     );
   if (blockGroup.length) groups.push(blockGroup);
@@ -244,14 +246,14 @@ export const TiptapToolbar = ({ config }: TiptapToolbarProps) => {
         icon={<Undo2 size={14} />}
         disabled={!state.canUndo}
         onClick={() => editor.chain().focus().undo().run()}
-        label="Undo (⌘Z)"
+        label={t('editorFormatting.undoShortcut')}
       />,
       <ToolbarButton
         key="redo"
         icon={<Redo2 size={14} />}
         disabled={!state.canRedo}
         onClick={() => editor.chain().focus().redo().run()}
-        label="Redo (⌘⇧Z)"
+        label={t('editorFormatting.redoShortcut')}
       />,
     ]);
   }

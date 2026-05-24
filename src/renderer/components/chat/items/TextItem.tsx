@@ -1,5 +1,6 @@
 import React from 'react';
 
+import { useAppTranslation } from '@features/localization/renderer';
 import { MessageSquare } from 'lucide-react';
 
 import { highlightQueryInText } from '../searchHighlightUtils';
@@ -46,6 +47,7 @@ export const TextItem: React.FC<TextItemProps> = React.memo(
     notificationDotColor,
     titleText,
   }) => {
+    const { t } = useAppTranslation('common');
     const fullContent = step.content.outputText ?? preview;
     const summary = searchQueryOverride
       ? highlightQueryInText(preview, searchQueryOverride, `${markdownItemId ?? step.id}:summary`, {
@@ -59,7 +61,7 @@ export const TextItem: React.FC<TextItemProps> = React.memo(
     return (
       <BaseItem
         icon={<MessageSquare className="size-4" />}
-        label="Output"
+        label={t('chat.items.output')}
         summary={summary}
         tokenCount={tokenCount}
         timestamp={timestamp}

@@ -56,6 +56,10 @@ export default interface Resources {
       };
       items: {
         empty: 'No items to display';
+        input: 'Input';
+        output: 'Output';
+        slashOutput: 'Slash Output';
+        thinking: 'Thinking';
       };
       lastOutput: {
         planReadyForApproval: 'Plan Ready for Approval';
@@ -241,10 +245,22 @@ export default interface Resources {
       noChangesDetected: 'No changes detected';
     };
     editorFormatting: {
+      blockquoteShortcut: 'Blockquote (⌘⇧B)';
       bold: 'Bold';
+      boldShortcut: 'Bold (⌘B)';
+      bulletListShortcut: 'Bullet List (⌘⇧8)';
       code: 'Code';
+      codeBlockShortcut: 'Code Block (⌘⌥C)';
+      codeShortcut: 'Code (⌘E)';
+      heading: 'Heading {{level}}';
+      horizontalRule: 'Horizontal Rule';
       italic: 'Italic';
+      italicShortcut: 'Italic (⌘I)';
+      orderedListShortcut: 'Ordered List (⌘⇧7)';
+      redoShortcut: 'Redo (⌘⇧Z)';
       strike: 'Strike';
+      strikeShortcut: 'Strikethrough (⌘⇧S)';
+      undoShortcut: 'Undo (⌘Z)';
     };
     errorBoundary: {
       componentStack: 'Component Stack';
@@ -623,6 +639,17 @@ export default interface Resources {
         flat: 'Flat';
         grouped: 'Grouped';
       };
+    };
+    sessionContextMenu: {
+      copyResumeCommand: 'Copy Resume Command';
+      copySessionId: 'Copy Session ID';
+      hideSession: 'Hide Session';
+      openInCurrentPane: 'Open in Current Pane';
+      openInNewTab: 'Open in New Tab';
+      pinSession: 'Pin Session';
+      splitRightAndOpen: 'Split Right and Open';
+      unhideSession: 'Unhide Session';
+      unpinSession: 'Unpin Session';
     };
     sessionFilters: {
       project: {
@@ -3539,6 +3566,10 @@ export default interface Resources {
         replaceNext: 'Replace Next';
         replacePlaceholder: 'Replace';
       };
+      selectionMenu: {
+        createTask: 'Create Task';
+        writeTeammate: 'Write Teammate';
+      };
       shortcuts: {
         actions: {
           closeEditor: 'Close Editor';
@@ -3673,6 +3704,7 @@ export default interface Resources {
         complete: 'Complete';
         confirm: 'Confirm';
         deleteTask: 'Delete task';
+        disapprove: 'Disapprove';
         keep: 'Keep';
         manualReview: 'Manual review';
         moveBackToTodoConfirm: 'Move this task back to TODO and notify the team?';
@@ -4128,6 +4160,8 @@ export default interface Resources {
         title: 'Local runtime load';
       };
       stats: {
+        activity: 'Activity';
+        completed: 'Completed';
         computing: 'Computing stats...';
         empty: 'No stats available';
         files: 'Files';
@@ -4137,13 +4171,17 @@ export default interface Resources {
         footer_many: '{{count}} sessions · computed {{computedAgo}}';
         footer_one: '{{count}} session · computed {{computedAgo}}';
         footer_other: '{{count}} sessions · computed {{computedAgo}}';
+        inProgress: 'in progress: {{count}}';
         lines: 'Lines';
         linesInfo: 'Approximate. Accurate for Edit and Write tools. Bash file writes are estimated from command patterns (heredoc, echo, sed) and may be underreported.';
         moreFiles: '+{{count}} more';
         showLess: 'Show less';
+        tasks: 'Tasks';
         tokens: 'Tokens';
+        tokensShort: 'Tokens';
         toolCalls: 'Tool Calls';
         toolUsage: 'Tool Usage';
+        updated: 'updated {{time}}';
         viewAllChanges: 'View All Changes';
       };
       tasks: {

@@ -456,7 +456,11 @@
       "input": "Ввод"
     },
     "items": {
-      "empty": "Нет элементов для отображения"
+      "empty": "Нет элементов для отображения",
+      "input": "Ввод",
+      "output": "Вывод",
+      "thinking": "Thinking",
+      "slashOutput": "Вывод slash-команды"
     },
     "tools": {
       "teammateSpawned": "Участник запущен",
@@ -639,6 +643,17 @@
     "unarchive": "Разархивировать",
     "archive": "Архивировать",
     "deleteTask": "Удалить задачу"
+  },
+  "sessionContextMenu": {
+    "openInCurrentPane": "Открыть в текущей панели",
+    "openInNewTab": "Открыть в новой вкладке",
+    "splitRightAndOpen": "Разделить справа и открыть",
+    "pinSession": "Закрепить сессию",
+    "unpinSession": "Открепить сессию",
+    "hideSession": "Скрыть сессию",
+    "unhideSession": "Показать сессию",
+    "copySessionId": "Скопировать ID сессии",
+    "copyResumeCommand": "Скопировать команду возобновления"
   },
   "updateDialog": {
     "closeDialog": "Закрыть диалог",
@@ -841,7 +856,19 @@
     "bold": "Жирный",
     "italic": "Курсив",
     "strike": "Зачеркнутый",
-    "code": "Код"
+    "code": "Код",
+    "boldShortcut": "Жирный (⌘B)",
+    "italicShortcut": "Курсив (⌘I)",
+    "strikeShortcut": "Зачеркнутый (⌘⇧S)",
+    "codeShortcut": "Код (⌘E)",
+    "codeBlockShortcut": "Блок кода (⌘⌥C)",
+    "heading": "Заголовок {{level}}",
+    "bulletListShortcut": "Маркированный список (⌘⇧8)",
+    "orderedListShortcut": "Нумерованный список (⌘⇧7)",
+    "blockquoteShortcut": "Цитата (⌘⇧B)",
+    "horizontalRule": "Горизонтальная линия",
+    "undoShortcut": "Отменить (⌘Z)",
+    "redoShortcut": "Повторить (⌘⇧Z)"
   },
   "diff": {
     "changed": "Изменено",

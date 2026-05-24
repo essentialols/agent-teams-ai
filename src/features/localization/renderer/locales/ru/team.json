@@ -1105,6 +1105,10 @@
       "save": "Сохранить",
       "saveAllAndClose": "Сохранить всё и закрыть"
     },
+    "selectionMenu": {
+      "writeTeammate": "Написать участнику",
+      "createTask": "Создать задачу"
+    },
     "ariaLabel": "Редактор проекта",
     "dialogs": {
       "conflictDescription": "Файл был изменён извне после открытия. Перезаписать его вашими изменениями?",
@@ -1686,6 +1690,12 @@
       "files": "Файлы",
       "toolCalls": "Вызовы инструментов",
       "tokens": "Токены",
+      "tokensShort": "Токены",
+      "tasks": "Задачи",
+      "completed": "Завершено",
+      "activity": "Активность",
+      "inProgress": "в работе: {{count}}",
+      "updated": "обновлено {{time}}",
       "toolUsage": "Использование инструментов",
       "filesTouched": "Затронутые файлы ({{count}})",
       "viewAllChanges": "Показать все изменения",
@@ -2133,6 +2143,7 @@
       "start": "Начать",
       "complete": "Завершить",
       "approve": "Одобрить",
+      "disapprove": "Отменить одобрение",
       "requestReview": "Запросить ревью",
       "manualReview": "Ручное ревью",
       "requestChanges": "Запросить правки"

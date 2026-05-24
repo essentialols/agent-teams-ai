@@ -579,7 +579,7 @@ export const KanbanTaskCard = memo(
 
             {columnId === 'approved' ? (
               <TaskActionIconButton
-                label="Disapprove"
+                label={t('kanban.taskCard.disapprove')}
                 icon={<RotateCcw size={11} />}
                 className="border-amber-500/40 text-amber-400 hover:bg-amber-500/10 hover:text-amber-300"
                 onClick={(e) => {

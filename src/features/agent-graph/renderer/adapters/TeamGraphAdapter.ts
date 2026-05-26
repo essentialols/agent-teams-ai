@@ -585,6 +585,7 @@ export class TeamGraphAdapter {
         spawnHardFailureReason: spawn?.hardFailureReason,
         spawnError: spawn?.error,
         spawnLivenessKind: spawn?.livenessKind,
+        spawnRuntimeDiagnosticSeverity: spawn?.runtimeDiagnosticSeverity,
         spawnFirstSpawnAcceptedAt: spawn?.firstSpawnAcceptedAt,
         spawnUpdatedAt: spawn?.updatedAt,
         runtimeEntry,
@@ -1274,8 +1275,11 @@ export class TeamGraphAdapter {
     spawn: MemberSpawnStatusEntry | undefined,
     pendingApproval: boolean
   ): Pick<GraphNode, 'exceptionTone' | 'exceptionLabel'> | undefined {
+    const hasUnsuppressedSpawnFailure =
+      !isBootstrapConfirmedProvisionedButNotAliveFailure(spawn) ||
+      spawn?.runtimeDiagnosticSeverity === 'error';
     if (
-      !isBootstrapConfirmedProvisionedButNotAliveFailure(spawn) &&
+      hasUnsuppressedSpawnFailure &&
       (spawn?.launchState === 'failed_to_start' || spawn?.status === 'error')
     ) {
       return { exceptionTone: 'error', exceptionLabel: 'spawn failed' };
@@ -1299,7 +1303,11 @@ export class TeamGraphAdapter {
   static #mapMemberStatus(status: string, spawn?: MemberSpawnStatusEntry): GraphNodeState {
     if (spawn?.launchState === 'runtime_pending_permission') return 'waiting';
     if (spawn?.status === 'spawning') return 'thinking';
-    if (spawn?.status === 'error' && !isBootstrapConfirmedProvisionedButNotAliveFailure(spawn)) {
+    if (
+      spawn?.status === 'error' &&
+      (!isBootstrapConfirmedProvisionedButNotAliveFailure(spawn) ||
+        spawn.runtimeDiagnosticSeverity === 'error')
+    ) {
       return 'error';
     }
     if (spawn?.status === 'waiting') return 'waiting';

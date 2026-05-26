@@ -16,7 +16,6 @@ import {
 } from '@renderer/utils/memberHelpers';
 import { buildTeamProvisioningPresentation } from '@renderer/utils/teamProvisioningPresentation';
 import { isDisplayableCurrentTask } from '@renderer/utils/teamTaskDisplayState';
-import { isBootstrapConfirmedProvisionedButNotAliveFailure } from '@shared/utils/teamLaunchFailureReason';
 import { ExternalLink, Loader2, MessageSquare, Plus, User } from 'lucide-react';
 
 import { isTaskInReviewCycle, resolveTaskReviewer } from '../../core/domain/taskGraphSemantics';
@@ -360,18 +359,14 @@ const MemberPopoverContent = ({
           t,
         })
       : null;
-  const bootstrapConfirmedProvisionedButNotAlive =
-    isBootstrapConfirmedProvisionedButNotAliveFailure(spawnEntry);
   const launchPresentation = member
     ? buildMemberLaunchPresentation({
         member:
           member.currentTaskId && !displayableCurrentTask
             ? { ...member, currentTaskId: null }
             : member,
-        spawnStatus: bootstrapConfirmedProvisionedButNotAlive ? 'online' : spawnEntry?.status,
-        spawnLaunchState: bootstrapConfirmedProvisionedButNotAlive
-          ? 'confirmed_alive'
-          : spawnEntry?.launchState,
+        spawnStatus: spawnEntry?.status,
+        spawnLaunchState: spawnEntry?.launchState,
         spawnLivenessSource: spawnEntry?.livenessSource,
         spawnRuntimeAlive: spawnEntry?.runtimeAlive,
         spawnBootstrapConfirmed: spawnEntry?.bootstrapConfirmed,
@@ -381,6 +376,7 @@ const MemberPopoverContent = ({
         spawnHardFailureReason: spawnEntry?.hardFailureReason,
         spawnError: spawnEntry?.error,
         spawnLivenessKind: spawnEntry?.livenessKind,
+        spawnRuntimeDiagnosticSeverity: spawnEntry?.runtimeDiagnosticSeverity,
         spawnFirstSpawnAcceptedAt: spawnEntry?.firstSpawnAcceptedAt,
         spawnUpdatedAt: spawnEntry?.updatedAt,
         runtimeEntry,

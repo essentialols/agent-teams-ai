@@ -30,10 +30,21 @@ export function buildLaunchDiagnosticsFromRun(
   const observedAt = (options.nowIso ?? defaultNowIso)();
   const items: TeamLaunchDiagnosticItem[] = [];
   for (const [memberName, entry] of memberSpawnStatuses.entries()) {
-    if (
-      entry.launchState === 'confirmed_alive' ||
-      isBootstrapConfirmedProvisionedButNotAliveFailure(entry)
-    ) {
+    const bootstrapConfirmedProvisionedButNotAlive =
+      isBootstrapConfirmedProvisionedButNotAliveFailure(entry);
+    if (bootstrapConfirmedProvisionedButNotAlive && entry.runtimeDiagnosticSeverity === 'error') {
+      items.push({
+        id: `${memberName}:bootstrap_stalled`,
+        memberName,
+        severity: 'error',
+        code: 'bootstrap_stalled',
+        label: `${memberName} - launch diagnostic error`,
+        detail: entry.runtimeDiagnostic ?? entry.hardFailureReason ?? entry.error,
+        observedAt,
+      });
+      continue;
+    }
+    if (entry.launchState === 'confirmed_alive' || bootstrapConfirmedProvisionedButNotAlive) {
       items.push({
         id: `${memberName}:bootstrap_confirmed`,
         memberName,

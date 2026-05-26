@@ -357,6 +357,17 @@ function areMemberRuntimeEntriesEquivalent(
   return true;
 }
 
+function hasStoppedRuntimeLivenessKind(
+  livenessKind: TeamAgentRuntimeEntry['livenessKind'] | undefined
+): boolean {
+  return (
+    livenessKind === 'not_found' ||
+    livenessKind === 'registered_only' ||
+    livenessKind === 'shell_only' ||
+    livenessKind === 'stale_metadata'
+  );
+}
+
 function isFiniteNonNegative(value: number | undefined): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0;
 }
@@ -929,16 +940,23 @@ export const MemberList = memo(function MemberList({
           const runtimeEntry = memberRuntimeEntries?.get(member.name);
           const bootstrapConfirmedProvisionedButNotAlive =
             isBootstrapConfirmedProvisionedButNotAliveFailure(spawnEntry);
-          const effectiveSpawnStatus = bootstrapConfirmedProvisionedButNotAlive
+          const hasStoppedRuntimeEvidence =
+            hasStoppedRuntimeLivenessKind(runtimeEntry?.livenessKind) ||
+            hasStoppedRuntimeLivenessKind(spawnEntry?.livenessKind);
+          const canPromoteBootstrapConfirmedVisualState =
+            bootstrapConfirmedProvisionedButNotAlive &&
+            spawnEntry?.runtimeDiagnosticSeverity !== 'error';
+          const effectiveSpawnStatus = canPromoteBootstrapConfirmedVisualState
             ? 'online'
             : spawnEntry?.status;
-          const effectiveSpawnLaunchState = bootstrapConfirmedProvisionedButNotAlive
+          const effectiveSpawnLaunchState = canPromoteBootstrapConfirmedVisualState
             ? 'confirmed_alive'
             : spawnEntry?.launchState;
           const useBootstrapConfirmedRuntimeAlive =
-            bootstrapConfirmedProvisionedButNotAlive &&
+            canPromoteBootstrapConfirmedVisualState &&
             runtimeEntry?.runtimeDiagnosticSeverity !== 'error' &&
-            spawnEntry?.runtimeDiagnosticSeverity !== 'error';
+            spawnEntry?.runtimeDiagnosticSeverity !== 'error' &&
+            !hasStoppedRuntimeEvidence;
           const effectiveSpawnRuntimeAlive = useBootstrapConfirmedRuntimeAlive
             ? true
             : spawnEntry?.runtimeAlive;
@@ -1018,7 +1036,7 @@ export const MemberList = memo(function MemberList({
               spawnStatus={effectiveSpawnStatus}
               spawnEntry={spawnEntry}
               spawnError={
-                bootstrapConfirmedProvisionedButNotAlive
+                canPromoteBootstrapConfirmedVisualState
                   ? undefined
                   : (spawnEntry?.error ?? spawnEntry?.hardFailureReason)
               }

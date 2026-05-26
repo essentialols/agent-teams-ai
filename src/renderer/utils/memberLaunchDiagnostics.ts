@@ -89,6 +89,15 @@ const SECRET_ENV_KEY_PARTS = [
   'PASSWORD',
   'AUTHORIZATION',
 ];
+
+function hasStoppedRuntimeLivenessKind(livenessKind: TeamAgentRuntimeLivenessKind | undefined) {
+  return (
+    livenessKind === 'not_found' ||
+    livenessKind === 'registered_only' ||
+    livenessKind === 'shell_only' ||
+    livenessKind === 'stale_metadata'
+  );
+}
 const OPENCODE_SESSION_REFRESH_REASON_MARKERS = [
   'resolved_behavior_changed',
   'opencode_app_mcp_transport_changed',
@@ -532,25 +541,29 @@ export function buildMemberLaunchDiagnosticsPayload(params: {
   const livenessKind = spawnEntry?.livenessKind ?? runtimeEntry?.livenessKind;
   const bootstrapConfirmedProvisionedButNotAlive =
     isBootstrapConfirmedProvisionedButNotAliveFailure(spawnEntry);
+  const hasStoppedRuntimeEvidence =
+    hasStoppedRuntimeLivenessKind(runtimeEntry?.livenessKind) ||
+    hasStoppedRuntimeLivenessKind(spawnEntry?.livenessKind);
+  const useBootstrapConfirmedVisualState =
+    bootstrapConfirmedProvisionedButNotAlive && spawnEntry?.runtimeDiagnosticSeverity !== 'error';
   const useBootstrapConfirmedRuntimeAlive =
-    bootstrapConfirmedProvisionedButNotAlive &&
+    useBootstrapConfirmedVisualState &&
     runtimeEntry?.runtimeDiagnosticSeverity !== 'error' &&
-    spawnEntry?.runtimeDiagnosticSeverity !== 'error';
+    spawnEntry?.runtimeDiagnosticSeverity !== 'error' &&
+    !hasStoppedRuntimeEvidence;
   const runtimeEntryDiagnostic = boundedString(runtimeEntry?.runtimeDiagnostic);
   const hasRuntimeDiagnosticEvidence =
     runtimeEntryDiagnostic != null || runtimeEntry?.runtimeDiagnosticSeverity != null;
   const useSpawnDiagnosticsForHealedEntry =
     bootstrapConfirmedProvisionedButNotAlive && !hasRuntimeDiagnosticEvidence;
-  const launchState = bootstrapConfirmedProvisionedButNotAlive
+  const launchState = useBootstrapConfirmedVisualState
     ? 'confirmed_alive'
     : (spawnEntry?.launchState ?? params.launchState);
-  const spawnStatus = bootstrapConfirmedProvisionedButNotAlive
+  const spawnStatus = useBootstrapConfirmedVisualState
     ? 'online'
     : (spawnEntry?.status ?? params.spawnStatus);
   const spawnRuntimeAlive = useBootstrapConfirmedRuntimeAlive ? true : spawnEntry?.runtimeAlive;
-  const spawnHardFailure = bootstrapConfirmedProvisionedButNotAlive
-    ? false
-    : spawnEntry?.hardFailure;
+  const spawnHardFailure = useBootstrapConfirmedVisualState ? false : spawnEntry?.hardFailure;
   const runtimeAdvisoryTitle = boundedString(params.runtimeAdvisoryTitle);
   const runtimeAdvisoryLabel = boundedString(params.runtimeAdvisoryLabel ?? undefined);
   const runtimeAdvisoryMessage = boundedString(runtimeAdvisory?.message);

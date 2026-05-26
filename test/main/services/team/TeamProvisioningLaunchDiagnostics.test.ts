@@ -21,7 +21,7 @@ function spawnEntry(overrides: Partial<MemberSpawnStatusEntry>): MemberSpawnStat
   };
 }
 
-function buildRun(entries: Array<[string, Partial<MemberSpawnStatusEntry>]>, isLaunch = true) {
+function buildRun(entries: [string, Partial<MemberSpawnStatusEntry>][], isLaunch = true) {
   return {
     isLaunch,
     memberSpawnStatuses: new Map(
@@ -243,6 +243,39 @@ describe('TeamProvisioningLaunchDiagnostics', () => {
         severity: 'info',
         code: 'bootstrap_confirmed',
         label: 'tom - bootstrap confirmed',
+        observedAt: NOW,
+      },
+    ]);
+  });
+
+  it('keeps error diagnostics for bootstrap-confirmed provisioned-but-not-alive entries', () => {
+    const diagnostics = buildLaunchDiagnosticsFromRun(
+      buildRun([
+        [
+          'tom',
+          {
+            status: 'error',
+            launchState: 'failed_to_start',
+            bootstrapConfirmed: true,
+            hardFailure: true,
+            hardFailureReason: 'CLI process exited (code 1) - team provisioned but not alive',
+            livenessKind: 'confirmed_bootstrap',
+            runtimeDiagnostic: 'Runtime process crashed',
+            runtimeDiagnosticSeverity: 'error',
+          },
+        ],
+      ]),
+      { nowIso }
+    );
+
+    expect(diagnostics).toEqual([
+      {
+        id: 'tom:bootstrap_stalled',
+        memberName: 'tom',
+        severity: 'error',
+        code: 'bootstrap_stalled',
+        label: 'tom - launch diagnostic error',
+        detail: 'Runtime process crashed',
         observedAt: NOW,
       },
     ]);

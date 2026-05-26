@@ -18,6 +18,7 @@ import type {
   MemberSpawnStatusEntry,
   MemberStatus,
   ResolvedTeamMember,
+  TeamAgentRuntimeDiagnosticSeverity,
   TeamAgentRuntimeEntry,
   TeamProviderId,
   TeamReviewState,
@@ -984,6 +985,17 @@ function getCurrentRuntimeOfflineVisualState(
   return null;
 }
 
+function hasStoppedRuntimeLivenessKind(
+  livenessKind: TeamAgentRuntimeEntry['livenessKind'] | undefined
+): boolean {
+  return (
+    livenessKind === 'not_found' ||
+    livenessKind === 'registered_only' ||
+    livenessKind === 'shell_only' ||
+    livenessKind === 'stale_metadata'
+  );
+}
+
 function isCodexNativeProcessTeammate(member: ResolvedTeamMember): boolean {
   if (isLeadMember(member)) {
     return false;
@@ -1119,9 +1131,13 @@ export function shouldDisplayMemberCurrentTask({
   }
   if (
     runtimeEntry?.livenessKind === 'shell_only' ||
+    spawnEntry?.livenessKind === 'shell_only' ||
     runtimeEntry?.livenessKind === 'registered_only' ||
+    spawnEntry?.livenessKind === 'registered_only' ||
     runtimeEntry?.livenessKind === 'stale_metadata' ||
-    runtimeEntry?.livenessKind === 'not_found'
+    spawnEntry?.livenessKind === 'stale_metadata' ||
+    runtimeEntry?.livenessKind === 'not_found' ||
+    spawnEntry?.livenessKind === 'not_found'
   ) {
     return false;
   }
@@ -1308,6 +1324,7 @@ export function buildMemberLaunchPresentation({
   spawnHardFailureReason,
   spawnError,
   spawnLivenessKind,
+  spawnRuntimeDiagnosticSeverity,
   spawnFirstSpawnAcceptedAt,
   spawnUpdatedAt,
   runtimeAdvisory,
@@ -1330,6 +1347,7 @@ export function buildMemberLaunchPresentation({
   spawnHardFailureReason?: string;
   spawnError?: string;
   spawnLivenessKind?: TeamAgentRuntimeEntry['livenessKind'];
+  spawnRuntimeDiagnosticSeverity?: TeamAgentRuntimeDiagnosticSeverity;
   spawnFirstSpawnAcceptedAt?: string;
   spawnUpdatedAt?: string;
   runtimeAdvisory: MemberRuntimeAdvisory | undefined;
@@ -1350,22 +1368,29 @@ export function buildMemberLaunchPresentation({
       bootstrapConfirmed: spawnBootstrapConfirmed,
       livenessKind: spawnLivenessKind ?? runtimeEntry?.livenessKind,
     });
+  const hasSpawnRuntimeErrorDiagnostic = spawnRuntimeDiagnosticSeverity === 'error';
+  const hasRuntimeErrorDiagnostic = runtimeEntry?.runtimeDiagnosticSeverity === 'error';
+  const hasStoppedRuntimeEvidence =
+    hasStoppedRuntimeLivenessKind(runtimeEntry?.livenessKind) ||
+    hasStoppedRuntimeLivenessKind(spawnLivenessKind);
+  const allowBootstrapConfirmedVisualPromotion =
+    bootstrapConfirmedProvisionedButNotAlive && !hasSpawnRuntimeErrorDiagnostic;
   const useBootstrapConfirmedRuntimeAlive =
-    bootstrapConfirmedProvisionedButNotAlive && runtimeEntry?.runtimeDiagnosticSeverity !== 'error';
+    allowBootstrapConfirmedVisualPromotion &&
+    !hasRuntimeErrorDiagnostic &&
+    !hasStoppedRuntimeEvidence;
   const suppressConfirmedLaunchRuntimeAlivePromotion =
-    bootstrapConfirmedProvisionedButNotAlive && runtimeEntry?.runtimeDiagnosticSeverity === 'error';
-  const visualSpawnStatus = bootstrapConfirmedProvisionedButNotAlive ? 'online' : spawnStatus;
-  const visualSpawnLaunchState = bootstrapConfirmedProvisionedButNotAlive
+    bootstrapConfirmedProvisionedButNotAlive && !useBootstrapConfirmedRuntimeAlive;
+  const visualSpawnStatus = allowBootstrapConfirmedVisualPromotion ? 'online' : spawnStatus;
+  const visualSpawnLaunchState = allowBootstrapConfirmedVisualPromotion
     ? 'confirmed_alive'
     : spawnLaunchState;
   const visualSpawnRuntimeAlive = useBootstrapConfirmedRuntimeAlive ? true : spawnRuntimeAlive;
-  const visualSpawnBootstrapConfirmed = bootstrapConfirmedProvisionedButNotAlive
+  const visualSpawnBootstrapConfirmed = allowBootstrapConfirmedVisualPromotion
     ? true
     : spawnBootstrapConfirmed;
-  const visualSpawnHardFailure = bootstrapConfirmedProvisionedButNotAlive
-    ? false
-    : spawnHardFailure;
-  const visualSpawnLivenessKind = bootstrapConfirmedProvisionedButNotAlive
+  const visualSpawnHardFailure = allowBootstrapConfirmedVisualPromotion ? false : spawnHardFailure;
+  const visualSpawnLivenessKind = allowBootstrapConfirmedVisualPromotion
     ? 'confirmed_bootstrap'
     : spawnLivenessKind;
   const visualRuntimeEntry =

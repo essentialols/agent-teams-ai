@@ -898,6 +898,7 @@ describe('memberHelpers spawn-aware presence', () => {
         spawnHardFailureReason: provisionedButNotAliveSpawn.hardFailureReason,
         spawnError: provisionedButNotAliveSpawn.error,
         spawnLivenessKind: provisionedButNotAliveSpawn.livenessKind,
+        spawnRuntimeDiagnosticSeverity: provisionedButNotAliveSpawn.runtimeDiagnosticSeverity,
         runtimeEntry: {
           ...processTableUnavailableRuntime,
           runtimeDiagnostic: 'Runtime process crashed',
@@ -913,6 +914,62 @@ describe('memberHelpers spawn-aware presence', () => {
       launchVisualState: 'stale_runtime',
       launchStatusLabel: 'stale runtime',
       spawnBadgeLabel: null,
+    });
+  });
+
+  it('keeps spawn diagnostic errors visible for bootstrap-confirmed provisioned-but-not-alive entries', () => {
+    expect(
+      buildMemberLaunchPresentation({
+        member,
+        spawnStatus: provisionedButNotAliveSpawn.status,
+        spawnLaunchState: provisionedButNotAliveSpawn.launchState,
+        spawnLivenessSource: provisionedButNotAliveSpawn.livenessSource,
+        spawnRuntimeAlive: provisionedButNotAliveSpawn.runtimeAlive,
+        spawnBootstrapConfirmed: provisionedButNotAliveSpawn.bootstrapConfirmed,
+        spawnBootstrapStalled: provisionedButNotAliveSpawn.bootstrapStalled,
+        spawnAgentToolAccepted: provisionedButNotAliveSpawn.agentToolAccepted,
+        spawnHardFailure: provisionedButNotAliveSpawn.hardFailure,
+        spawnHardFailureReason: provisionedButNotAliveSpawn.hardFailureReason,
+        spawnError: provisionedButNotAliveSpawn.error,
+        spawnLivenessKind: provisionedButNotAliveSpawn.livenessKind,
+        spawnRuntimeDiagnosticSeverity: 'error',
+        runtimeAdvisory: undefined,
+        isLaunchSettling: false,
+        isTeamAlive: true,
+        isTeamProvisioning: false,
+      })
+    ).toMatchObject({
+      presenceLabel: 'spawn failed',
+      launchVisualState: 'error',
+      launchStatusLabel: 'failed',
+    });
+  });
+
+  it('does not heal stopped runtime evidence for bootstrap-confirmed provisioned-but-not-alive entries', () => {
+    expect(
+      buildMemberLaunchPresentation({
+        member,
+        spawnStatus: provisionedButNotAliveSpawn.status,
+        spawnLaunchState: provisionedButNotAliveSpawn.launchState,
+        spawnLivenessSource: provisionedButNotAliveSpawn.livenessSource,
+        spawnRuntimeAlive: provisionedButNotAliveSpawn.runtimeAlive,
+        spawnBootstrapConfirmed: provisionedButNotAliveSpawn.bootstrapConfirmed,
+        spawnBootstrapStalled: provisionedButNotAliveSpawn.bootstrapStalled,
+        spawnAgentToolAccepted: provisionedButNotAliveSpawn.agentToolAccepted,
+        spawnHardFailure: provisionedButNotAliveSpawn.hardFailure,
+        spawnHardFailureReason: provisionedButNotAliveSpawn.hardFailureReason,
+        spawnError: provisionedButNotAliveSpawn.error,
+        spawnLivenessKind: 'not_found',
+        spawnRuntimeDiagnosticSeverity: 'warning',
+        runtimeAdvisory: undefined,
+        isLaunchSettling: false,
+        isTeamAlive: true,
+        isTeamProvisioning: false,
+      })
+    ).toMatchObject({
+      presenceLabel: 'stale runtime',
+      launchVisualState: 'stale_runtime',
+      launchStatusLabel: 'stale runtime',
     });
   });
 

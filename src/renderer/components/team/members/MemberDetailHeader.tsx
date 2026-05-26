@@ -25,6 +25,7 @@ import type {
   MemberSpawnLivenessSource,
   MemberSpawnStatus,
   ResolvedTeamMember,
+  TeamAgentRuntimeDiagnosticSeverity,
   TeamAgentRuntimeEntry,
 } from '@shared/types';
 
@@ -46,6 +47,7 @@ interface MemberDetailHeaderProps {
   spawnHardFailureReason?: string;
   spawnError?: string;
   spawnLivenessKind?: TeamAgentRuntimeEntry['livenessKind'];
+  spawnRuntimeDiagnosticSeverity?: TeamAgentRuntimeDiagnosticSeverity;
   spawnFirstSpawnAcceptedAt?: string;
   spawnUpdatedAt?: string;
   isLaunchSettling?: boolean;
@@ -71,6 +73,7 @@ export const MemberDetailHeader = ({
   spawnHardFailureReason,
   spawnError,
   spawnLivenessKind,
+  spawnRuntimeDiagnosticSeverity,
   spawnFirstSpawnAcceptedAt,
   spawnUpdatedAt,
   isLaunchSettling,
@@ -106,6 +109,7 @@ export const MemberDetailHeader = ({
     spawnHardFailureReason,
     spawnError,
     spawnLivenessKind,
+    spawnRuntimeDiagnosticSeverity,
     spawnFirstSpawnAcceptedAt,
     spawnUpdatedAt,
     runtimeEntry,

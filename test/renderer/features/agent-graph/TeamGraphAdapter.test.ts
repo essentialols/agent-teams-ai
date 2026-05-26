@@ -1777,6 +1777,33 @@ describe('TeamGraphAdapter particles', () => {
     });
   });
 
+  it('keeps bootstrap-confirmed spawn diagnostic errors in graph error state', () => {
+    const adapter = TeamGraphAdapter.create();
+    const graph = adapter.adapt(createBaseTeamData(), 'my-team', {
+      alice: {
+        status: 'error',
+        launchState: 'failed_to_start',
+        runtimeAlive: false,
+        bootstrapConfirmed: true,
+        hardFailure: true,
+        hardFailureReason: 'CLI process exited (code 1) - team provisioned but not alive',
+        livenessKind: 'confirmed_bootstrap',
+        runtimeDiagnostic: 'Runtime process crashed',
+        runtimeDiagnosticSeverity: 'error',
+        updatedAt: '2026-05-25T20:14:02.147Z',
+      },
+    });
+
+    expect(findNode(graph, 'member:my-team:alice')).toMatchObject({
+      state: 'error',
+      spawnStatus: 'error',
+      launchVisualState: 'error',
+      launchStatusLabel: 'failed',
+      exceptionTone: 'error',
+      exceptionLabel: 'spawn failed',
+    });
+  });
+
   it('treats permission-blocked spawn state as awaiting approval even without pending approval feed', () => {
     const adapter = TeamGraphAdapter.create();
     const teamData = createBaseTeamData();

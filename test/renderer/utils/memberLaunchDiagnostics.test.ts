@@ -197,11 +197,11 @@ describe('member launch diagnostics', () => {
     });
 
     expect(payload).toMatchObject({
-      launchState: 'confirmed_alive',
-      spawnStatus: 'online',
+      launchState: 'failed_to_start',
+      spawnStatus: 'error',
       runtimeAlive: false,
       bootstrapConfirmed: true,
-      hardFailure: false,
+      hardFailure: true,
       memberCardError: 'Runtime process crashed',
       runtimeDiagnostic: 'Runtime process crashed',
       runtimeDiagnosticSeverity: 'error',
@@ -269,10 +269,10 @@ describe('member launch diagnostics', () => {
     });
 
     expect(payload).toMatchObject({
-      launchState: 'confirmed_alive',
-      spawnStatus: 'online',
+      launchState: 'failed_to_start',
+      spawnStatus: 'error',
       runtimeAlive: false,
-      hardFailure: false,
+      hardFailure: true,
       runtimeDiagnostic: 'Runtime is no longer registered',
       runtimeDiagnosticSeverity: 'warning',
     });

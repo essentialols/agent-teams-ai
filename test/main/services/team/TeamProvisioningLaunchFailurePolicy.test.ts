@@ -111,7 +111,7 @@ describe('TeamProvisioningLaunchFailurePolicy', () => {
       isAutoClearableLaunchFailureReason(
         'CLI process exited (code 1) \u2014 team provisioned but not alive'
       )
-    ).toBe(true);
+    ).toBe(false);
     expect(isAutoClearableLaunchFailureReason('model not found')).toBe(false);
     expect(isAutoClearableLaunchFailureReason()).toBe(false);
   });

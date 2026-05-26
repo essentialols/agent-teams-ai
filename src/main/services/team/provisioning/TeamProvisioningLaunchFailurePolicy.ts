@@ -53,7 +53,6 @@ function isBaseAutoClearableLaunchFailureReason(reason?: string): boolean {
     isNeverSpawnedDuringLaunchReason(reason) ||
     isLaunchGraceWindowFailureReason(reason) ||
     isConfigRegistrationFailureReason(reason) ||
-    isProvisionedButNotAliveFailureReason(reason) ||
     isRegisteredRuntimeMetadataFailureReason(reason) ||
     isOpenCodeBridgeLaunchFailureReason(reason) ||
     isBootstrapMcpResourceReadFailureReason(reason) ||

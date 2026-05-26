@@ -547,7 +547,10 @@ export function buildMemberLaunchDiagnosticsPayload(params: {
     hasStoppedRuntimeLivenessKind(runtimeEntry?.livenessKind) ||
     hasStoppedRuntimeLivenessKind(spawnEntry?.livenessKind);
   const useBootstrapConfirmedVisualState =
-    bootstrapConfirmedProvisionedButNotAlive && spawnEntry?.runtimeDiagnosticSeverity !== 'error';
+    bootstrapConfirmedProvisionedButNotAlive &&
+    spawnEntry?.runtimeDiagnosticSeverity !== 'error' &&
+    runtimeEntry?.runtimeDiagnosticSeverity !== 'error' &&
+    !hasStoppedRuntimeEvidence;
   const useBootstrapConfirmedRuntimeAlive =
     useBootstrapConfirmedVisualState &&
     runtimeEntry?.runtimeDiagnosticSeverity !== 'error' &&

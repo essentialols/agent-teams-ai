@@ -11,6 +11,7 @@ import { buildMemberColorMap, shouldDisplayMemberCurrentTask } from '@renderer/u
 import { resolveMemberRuntimeSummary } from '@renderer/utils/memberRuntimeSummary';
 import { isDisplayableCurrentTask } from '@renderer/utils/teamTaskDisplayState';
 import { isLeadMember } from '@shared/utils/leadDetection';
+import { isBootstrapConfirmedProvisionedButNotAliveFailure } from '@shared/utils/teamLaunchFailureReason';
 import { getTeamTaskWorkflowColumn } from '@shared/utils/teamTaskState';
 
 import { MemberCard, type RuntimeTelemetryScale } from './MemberCard';
@@ -785,6 +786,7 @@ export const MemberList = memo(function MemberList({
         spawnStatus: spawnEntry?.status,
         spawnLaunchState: spawnEntry?.launchState,
         spawnRuntimeAlive: spawnEntry?.runtimeAlive,
+        spawnEntry,
         runtimeEntry,
       });
     },
@@ -837,6 +839,7 @@ export const MemberList = memo(function MemberList({
               spawnStatus: spawnEntry?.status,
               spawnLaunchState: spawnEntry?.launchState,
               spawnRuntimeAlive: spawnEntry?.runtimeAlive,
+              spawnEntry,
               runtimeEntry,
             });
           syncMemberActivityTimer({
@@ -924,6 +927,17 @@ export const MemberList = memo(function MemberList({
         {activeMembers.map((member) => {
           const spawnEntry = memberSpawnStatuses?.get(member.name);
           const runtimeEntry = memberRuntimeEntries?.get(member.name);
+          const bootstrapConfirmedProvisionedButNotAlive =
+            isBootstrapConfirmedProvisionedButNotAliveFailure(spawnEntry);
+          const effectiveSpawnStatus = bootstrapConfirmedProvisionedButNotAlive
+            ? 'online'
+            : spawnEntry?.status;
+          const effectiveSpawnLaunchState = bootstrapConfirmedProvisionedButNotAlive
+            ? 'confirmed_alive'
+            : spawnEntry?.launchState;
+          const effectiveSpawnRuntimeAlive = bootstrapConfirmedProvisionedButNotAlive
+            ? true
+            : spawnEntry?.runtimeAlive;
           const currentTaskCandidate =
             member.currentTaskId && taskMap ? (taskMap.get(member.currentTaskId) ?? null) : null;
           const currentTask =
@@ -931,9 +945,10 @@ export const MemberList = memo(function MemberList({
             shouldDisplayMemberCurrentTask({
               member,
               isTeamAlive,
-              spawnStatus: spawnEntry?.status,
-              spawnLaunchState: spawnEntry?.launchState,
-              spawnRuntimeAlive: spawnEntry?.runtimeAlive,
+              spawnStatus: effectiveSpawnStatus,
+              spawnLaunchState: effectiveSpawnLaunchState,
+              spawnRuntimeAlive: effectiveSpawnRuntimeAlive,
+              spawnEntry,
               runtimeEntry,
             })
               ? currentTaskCandidate
@@ -945,9 +960,10 @@ export const MemberList = memo(function MemberList({
             shouldDisplayMemberCurrentTask({
               member,
               isTeamAlive,
-              spawnStatus: spawnEntry?.status,
-              spawnLaunchState: spawnEntry?.launchState,
-              spawnRuntimeAlive: spawnEntry?.runtimeAlive,
+              spawnStatus: effectiveSpawnStatus,
+              spawnLaunchState: effectiveSpawnLaunchState,
+              spawnRuntimeAlive: effectiveSpawnRuntimeAlive,
+              spawnEntry,
               runtimeEntry,
             })
               ? reviewCandidate
@@ -995,12 +1011,16 @@ export const MemberList = memo(function MemberList({
               runtimeSummary={buildRuntimeSummary(member, spawnEntry, runtimeEntry)}
               runtimeEntry={runtimeEntry}
               runtimeRunId={runtimeRunId}
-              spawnStatus={spawnEntry?.status}
+              spawnStatus={effectiveSpawnStatus}
               spawnEntry={spawnEntry}
-              spawnError={spawnEntry?.error ?? spawnEntry?.hardFailureReason}
+              spawnError={
+                bootstrapConfirmedProvisionedButNotAlive
+                  ? undefined
+                  : (spawnEntry?.error ?? spawnEntry?.hardFailureReason)
+              }
               spawnLivenessSource={spawnEntry?.livenessSource}
-              spawnLaunchState={spawnEntry?.launchState}
-              spawnRuntimeAlive={spawnEntry?.runtimeAlive}
+              spawnLaunchState={effectiveSpawnLaunchState}
+              spawnRuntimeAlive={effectiveSpawnRuntimeAlive}
               isTeamAlive={isTeamAlive}
               isTeamProvisioning={isTeamProvisioning}
               leadActivity={leadActivity}

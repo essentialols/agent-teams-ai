@@ -28,6 +28,7 @@ import {
 import { getRuntimeMemorySourceLabel } from '@renderer/utils/memberRuntimeSummary';
 import { isLeadMember } from '@shared/utils/leadDetection';
 import { deriveTaskDisplayId } from '@shared/utils/taskIdentity';
+import { isBootstrapConfirmedProvisionedButNotAliveFailure } from '@shared/utils/teamLaunchFailureReason';
 import {
   Activity,
   AlertTriangle,
@@ -661,12 +662,19 @@ export const MemberCard = memo(function MemberCard({
     selectedTeamName ? selectResolvedMembersForTeamName(s, selectedTeamName) : []
   );
   const avatarMap = useMemo(() => buildMemberAvatarMap(teamMembers), [teamMembers]);
+  const bootstrapConfirmedProvisionedButNotAlive =
+    isBootstrapConfirmedProvisionedButNotAliveFailure(spawnEntry);
+  const effectiveSpawnStatus = bootstrapConfirmedProvisionedButNotAlive ? 'online' : spawnStatus;
+  const effectiveSpawnLaunchState = bootstrapConfirmedProvisionedButNotAlive
+    ? 'confirmed_alive'
+    : spawnLaunchState;
   const showTaskActivity = shouldDisplayMemberCurrentTask({
     member,
     isTeamAlive,
-    spawnStatus,
-    spawnLaunchState,
+    spawnStatus: effectiveSpawnStatus,
+    spawnLaunchState: effectiveSpawnLaunchState,
     spawnRuntimeAlive,
+    spawnEntry,
     runtimeEntry,
   });
   const visibleCurrentTask = showTaskActivity ? currentTask : null;
@@ -680,14 +688,16 @@ export const MemberCard = memo(function MemberCard({
       : member;
   const launchPresentation = buildMemberLaunchPresentation({
     member: presentationMember,
-    spawnStatus,
-    spawnLaunchState,
+    spawnStatus: effectiveSpawnStatus,
+    spawnLaunchState: effectiveSpawnLaunchState,
     spawnLivenessSource,
     spawnRuntimeAlive,
     spawnBootstrapConfirmed: spawnEntry?.bootstrapConfirmed,
     spawnBootstrapStalled: spawnEntry?.bootstrapStalled,
     spawnAgentToolAccepted: spawnEntry?.agentToolAccepted,
     spawnHardFailure: spawnEntry?.hardFailure,
+    spawnHardFailureReason: spawnEntry?.hardFailureReason,
+    spawnError: spawnEntry?.error,
     spawnLivenessKind: spawnEntry?.livenessKind,
     spawnFirstSpawnAcceptedAt: spawnEntry?.firstSpawnAcceptedAt,
     spawnUpdatedAt: spawnEntry?.updatedAt,
@@ -844,7 +854,7 @@ export const MemberCard = memo(function MemberCard({
   const showStartingSkeleton =
     !isRemoved &&
     presenceLabel === 'starting' &&
-    spawnLaunchState !== 'failed_to_start' &&
+    effectiveSpawnLaunchState !== 'failed_to_start' &&
     !activityTask &&
     !runtimeSummary;
   const usesLaunchSkeletonSurface = spawnCardClass.includes('member-waiting-shimmer');
@@ -869,8 +879,8 @@ export const MemberCard = memo(function MemberCard({
         runId: runtimeRunId,
         memberName: member.name,
         member,
-        spawnStatus,
-        launchState: spawnLaunchState,
+        spawnStatus: effectiveSpawnStatus,
+        launchState: effectiveSpawnLaunchState,
         livenessSource: spawnLivenessSource,
         spawnEntry,
         runtimeEntry,
@@ -886,9 +896,9 @@ export const MemberCard = memo(function MemberCard({
       runtimeRunId,
       selectedTeamName,
       spawnEntry,
-      spawnLaunchState,
+      effectiveSpawnLaunchState,
       spawnLivenessSource,
-      spawnStatus,
+      effectiveSpawnStatus,
     ]
   );
   const showCopyDiagnostics =
@@ -900,7 +910,9 @@ export const MemberCard = memo(function MemberCard({
     Boolean(runtimeAdvisoryLabel) &&
     runtimeAdvisoryTone === 'error' &&
     hasMemberLaunchDiagnosticsDetails(launchDiagnosticsPayload);
-  const isFailedLaunch = spawnStatus === 'error' || spawnLaunchState === 'failed_to_start';
+  const isFailedLaunch =
+    !bootstrapConfirmedProvisionedButNotAlive &&
+    (spawnStatus === 'error' || spawnLaunchState === 'failed_to_start');
   const isSkippedLaunch =
     spawnStatus === 'skipped' ||
     spawnLaunchState === 'skipped_for_launch' ||

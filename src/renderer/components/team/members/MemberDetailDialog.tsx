@@ -24,6 +24,7 @@ import {
 } from '@renderer/utils/memberRuntimeSummary';
 import { isDisplayableCurrentTask } from '@renderer/utils/teamTaskDisplayState';
 import { isLeadMember } from '@shared/utils/leadDetection';
+import { isBootstrapConfirmedProvisionedButNotAliveFailure } from '@shared/utils/teamLaunchFailureReason';
 import { isTeamTaskFinishedForDependency } from '@shared/utils/teamTaskState';
 import {
   BarChart3,
@@ -83,7 +84,9 @@ function isOpenCodeNoRuntimeEvidenceFailure(
   spawnEntry: MemberSpawnStatusEntry | undefined,
   runtimeEntry: TeamAgentRuntimeEntry | undefined
 ): boolean {
-  const failed = spawnEntry?.launchState === 'failed_to_start' || spawnEntry?.status === 'error';
+  const failed =
+    !isBootstrapConfirmedProvisionedButNotAliveFailure(spawnEntry) &&
+    (spawnEntry?.launchState === 'failed_to_start' || spawnEntry?.status === 'error');
   return member.providerId === 'opencode' && failed && !hasOpenCodeRuntimeEvidence(runtimeEntry);
 }
 
@@ -180,6 +183,7 @@ export const MemberDetailDialog = ({
       spawnStatus: spawnEntry?.status,
       spawnLaunchState: spawnEntry?.launchState,
       spawnRuntimeAlive: spawnEntry?.runtimeAlive,
+      spawnEntry,
       runtimeEntry,
     });
   const displayableCurrentTask =
@@ -303,6 +307,8 @@ export const MemberDetailDialog = ({
               spawnBootstrapStalled={spawnEntry?.bootstrapStalled}
               spawnAgentToolAccepted={spawnEntry?.agentToolAccepted}
               spawnHardFailure={spawnEntry?.hardFailure}
+              spawnHardFailureReason={spawnEntry?.hardFailureReason}
+              spawnError={spawnEntry?.error}
               spawnLivenessKind={spawnEntry?.livenessKind}
               spawnFirstSpawnAcceptedAt={spawnEntry?.firstSpawnAcceptedAt}
               spawnUpdatedAt={spawnEntry?.updatedAt}

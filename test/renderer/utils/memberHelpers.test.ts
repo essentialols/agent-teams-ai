@@ -11,7 +11,11 @@ import {
   shouldDisplayMemberCurrentTask,
 } from '@renderer/utils/memberHelpers';
 
-import type { ResolvedTeamMember } from '@shared/types';
+import type {
+  MemberSpawnStatusEntry,
+  ResolvedTeamMember,
+  TeamAgentRuntimeEntry,
+} from '@shared/types';
 
 const member: ResolvedTeamMember = {
   name: 'alice',
@@ -25,6 +29,28 @@ const member: ResolvedTeamMember = {
   role: 'Reviewer',
   providerId: 'gemini',
   removedAt: undefined,
+};
+
+const provisionedButNotAliveSpawn: MemberSpawnStatusEntry = {
+  status: 'error',
+  launchState: 'failed_to_start',
+  updatedAt: '2026-05-25T20:14:02.147Z',
+  runtimeAlive: false,
+  bootstrapConfirmed: true,
+  hardFailure: true,
+  hardFailureReason: 'CLI process exited (code 1) \u2014 team provisioned but not alive',
+  livenessKind: 'confirmed_bootstrap',
+};
+
+const processTableUnavailableRuntime: TeamAgentRuntimeEntry = {
+  memberName: 'alice',
+  alive: false,
+  restartable: true,
+  providerId: 'anthropic',
+  livenessKind: 'confirmed_bootstrap',
+  runtimeDiagnostic: 'runtime pid could not be verified because process table is unavailable',
+  runtimeDiagnosticSeverity: 'warning',
+  updatedAt: '2026-05-25T20:14:05.411Z',
 };
 
 describe('memberHelpers spawn-aware presence', () => {
@@ -117,6 +143,20 @@ describe('memberHelpers spawn-aware presence', () => {
           livenessKind: 'confirmed_bootstrap',
           updatedAt: '2026-04-24T12:00:00.000Z',
         },
+      })
+    ).toBe(true);
+  });
+
+  it('treats bootstrap-confirmed provisioned-but-not-alive entries as active for task display', () => {
+    expect(
+      shouldDisplayMemberCurrentTask({
+        member: { ...member, currentTaskId: 'task-1' },
+        isTeamAlive: true,
+        spawnStatus: provisionedButNotAliveSpawn.status,
+        spawnLaunchState: provisionedButNotAliveSpawn.launchState,
+        spawnRuntimeAlive: provisionedButNotAliveSpawn.runtimeAlive,
+        spawnEntry: provisionedButNotAliveSpawn,
+        runtimeEntry: processTableUnavailableRuntime,
       })
     ).toBe(true);
   });
@@ -777,6 +817,35 @@ describe('memberHelpers spawn-aware presence', () => {
       presenceLabel: 'spawn failed',
       launchVisualState: 'error',
       launchStatusLabel: 'failed',
+    });
+  });
+
+  it('does not render bootstrap-confirmed provisioned-but-not-alive entries as failed or stale', () => {
+    expect(
+      buildMemberLaunchPresentation({
+        member,
+        spawnStatus: provisionedButNotAliveSpawn.status,
+        spawnLaunchState: provisionedButNotAliveSpawn.launchState,
+        spawnLivenessSource: provisionedButNotAliveSpawn.livenessSource,
+        spawnRuntimeAlive: provisionedButNotAliveSpawn.runtimeAlive,
+        spawnBootstrapConfirmed: provisionedButNotAliveSpawn.bootstrapConfirmed,
+        spawnBootstrapStalled: provisionedButNotAliveSpawn.bootstrapStalled,
+        spawnAgentToolAccepted: provisionedButNotAliveSpawn.agentToolAccepted,
+        spawnHardFailure: provisionedButNotAliveSpawn.hardFailure,
+        spawnHardFailureReason: provisionedButNotAliveSpawn.hardFailureReason,
+        spawnError: provisionedButNotAliveSpawn.error,
+        spawnLivenessKind: provisionedButNotAliveSpawn.livenessKind,
+        runtimeEntry: processTableUnavailableRuntime,
+        runtimeAdvisory: undefined,
+        isLaunchSettling: false,
+        isTeamAlive: true,
+        isTeamProvisioning: false,
+      })
+    ).toMatchObject({
+      presenceLabel: 'idle',
+      launchVisualState: null,
+      launchStatusLabel: null,
+      spawnBadgeLabel: null,
     });
   });
 

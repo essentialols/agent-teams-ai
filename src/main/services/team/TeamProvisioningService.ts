@@ -231,6 +231,7 @@ import {
   isAutoClearableLaunchFailureReason,
   isCliProvisionedButNotAliveFailureReason,
   isNeverSpawnedDuringLaunchReason,
+  isProvisionedButNotAliveFailureReason,
 } from './provisioning/TeamProvisioningLaunchFailurePolicy';
 import {
   isOpenCodeOverlayMemberRemoved,
@@ -959,9 +960,16 @@ function isConfirmedBootstrapStaleRuntimeDiagnostic(reason?: string): boolean {
   return text === 'persisted runtime pid is not alive';
 }
 
+function isBootstrapProofClearableLaunchFailureReason(reason?: string): boolean {
+  return (
+    isAutoClearableLaunchFailureReason(reason) || isProvisionedButNotAliveFailureReason(reason)
+  );
+}
+
 function shouldClearRuntimeDiagnosticAfterBootstrapConfirmation(reason?: string): boolean {
   return (
-    isAutoClearableLaunchFailureReason(reason) || isConfirmedBootstrapStaleRuntimeDiagnostic(reason)
+    isBootstrapProofClearableLaunchFailureReason(reason) ||
+    isConfirmedBootstrapStaleRuntimeDiagnostic(reason)
   );
 }
 
@@ -6944,7 +6952,7 @@ export class TeamProvisioningService {
       return null;
     }
     const direct = candidates.find(([key]) => key === memberName);
-    const [key, member] = direct ?? candidates[0]!;
+    const [key, member] = direct ?? candidates[0];
     return { key, member };
   }
 
@@ -13599,7 +13607,7 @@ export class TeamProvisioningService {
       status: 'online',
       updatedAt,
       agentToolAccepted: true,
-      runtimeAlive: source === 'runtime-proof' ? true : prev.runtimeAlive === true,
+      runtimeAlive: true,
       bootstrapConfirmed: true,
       hardFailure: false,
       bootstrapStalled: undefined,
@@ -17061,7 +17069,7 @@ export class TeamProvisioningService {
       const canClearFailedBootstrap =
         current?.launchState === 'failed_to_start' &&
         current.agentToolAccepted === true &&
-        isAutoClearableLaunchFailureReason(failureReason);
+        isBootstrapProofClearableLaunchFailureReason(failureReason);
       if (
         !current ||
         (current.launchState === 'failed_to_start' && !canClearFailedBootstrap) ||
@@ -24261,7 +24269,7 @@ export class TeamProvisioningService {
       if (
         hasStrongEvidence &&
         current.launchState === 'failed_to_start' &&
-        isAutoClearableLaunchFailureReason(failureReason)
+        isBootstrapProofClearableLaunchFailureReason(failureReason)
       ) {
         nextEntry.status = 'online';
         nextEntry.agentToolAccepted = true;
@@ -24270,6 +24278,21 @@ export class TeamProvisioningService {
         nextEntry.hardFailureReason = undefined;
         nextEntry.error = undefined;
         nextEntry.livenessSource = current.bootstrapConfirmed ? current.livenessSource : 'process';
+        nextEntry.launchState = deriveMemberLaunchState(nextEntry);
+      }
+      if (
+        hasConfirmedBootstrap &&
+        current.hardFailure === true &&
+        isBootstrapProofClearableLaunchFailureReason(failureReason)
+      ) {
+        nextEntry.status = 'online';
+        nextEntry.agentToolAccepted = true;
+        nextEntry.runtimeAlive = true;
+        nextEntry.bootstrapConfirmed = true;
+        nextEntry.hardFailure = false;
+        nextEntry.hardFailureReason = undefined;
+        nextEntry.error = undefined;
+        nextEntry.bootstrapStalled = undefined;
         nextEntry.launchState = deriveMemberLaunchState(nextEntry);
       }
       if (hasWeakEvidence) {
@@ -26643,7 +26666,7 @@ export class TeamProvisioningService {
       const failureReason = current.hardFailureReason ?? current.error;
       if (
         current.launchState === 'failed_to_start' &&
-        !isAutoClearableLaunchFailureReason(failureReason)
+        !isBootstrapProofClearableLaunchFailureReason(failureReason)
       ) {
         continue;
       }
@@ -26753,12 +26776,13 @@ export class TeamProvisioningService {
           : undefined;
       const failureReason =
         current.hardFailureReason ?? persistedError ?? current.runtimeDiagnostic;
+      const provisionedButNotAliveFailure = isProvisionedButNotAliveFailureReason(failureReason);
       const hasFailure =
         current.launchState === 'failed_to_start' ||
         current.hardFailure === true ||
         typeof current.hardFailureReason === 'string' ||
         typeof persistedError === 'string';
-      if (hasFailure && !isAutoClearableLaunchFailureReason(failureReason)) {
+      if (hasFailure && !isBootstrapProofClearableLaunchFailureReason(failureReason)) {
         continue;
       }
 
@@ -26771,14 +26795,21 @@ export class TeamProvisioningService {
         ...current,
         launchState: 'confirmed_alive',
         agentToolAccepted: true,
-        runtimeAlive: current.runtimeAlive === true || bootstrapMember.runtimeAlive === true,
+        runtimeAlive:
+          current.runtimeAlive === true ||
+          bootstrapMember.runtimeAlive === true ||
+          provisionedButNotAliveFailure,
         bootstrapConfirmed: true,
         hardFailure: false,
         hardFailureReason: undefined,
-        runtimeDiagnostic: isAutoClearableLaunchFailureReason(current.runtimeDiagnostic)
+        runtimeDiagnostic: shouldClearRuntimeDiagnosticAfterBootstrapConfirmation(
+          current.runtimeDiagnostic
+        )
           ? undefined
           : current.runtimeDiagnostic,
-        runtimeDiagnosticSeverity: isAutoClearableLaunchFailureReason(current.runtimeDiagnostic)
+        runtimeDiagnosticSeverity: shouldClearRuntimeDiagnosticAfterBootstrapConfirmation(
+          current.runtimeDiagnostic
+        )
           ? undefined
           : current.runtimeDiagnosticSeverity,
         bootstrapStalled: undefined,
@@ -28564,7 +28595,9 @@ export class TeamProvisioningService {
         current.firstSpawnAcceptedAt != null ? Date.parse(current.firstSpawnAcceptedAt) : NaN;
       if (
         current.launchState !== 'failed_to_start' ||
-        isAutoClearableLaunchFailureReason(current.hardFailureReason ?? current.runtimeDiagnostic)
+        isBootstrapProofClearableLaunchFailureReason(
+          current.hardFailureReason ?? current.runtimeDiagnostic
+        )
       ) {
         const runtimeProofObservedAt = await this.findBootstrapRuntimeProofObservedAt(
           snapshot.teamName,
@@ -28979,9 +29012,10 @@ export class TeamProvisioningService {
         continue;
       }
       const failureReason = current.hardFailureReason ?? current.runtimeDiagnostic;
+      const provisionedButNotAliveFailure = isProvisionedButNotAliveFailureReason(failureReason);
       const canClearFailedBootstrap =
         current.launchState !== 'failed_to_start' ||
-        isAutoClearableLaunchFailureReason(failureReason);
+        isBootstrapProofClearableLaunchFailureReason(failureReason);
       if (!canClearFailedBootstrap) {
         continue;
       }
@@ -29009,7 +29043,9 @@ export class TeamProvisioningService {
         ...current,
         agentToolAccepted: true,
         bootstrapConfirmed: true,
-        runtimeAlive: runtimeProofObservedAt ? true : current.runtimeAlive === true,
+        runtimeAlive: runtimeProofObservedAt
+          ? true
+          : current.runtimeAlive === true || provisionedButNotAliveFailure,
         hardFailure: false,
         hardFailureReason: undefined,
         lastHeartbeatAt: current.lastHeartbeatAt ?? observedAt,
@@ -29066,7 +29102,7 @@ export class TeamProvisioningService {
         const failureReason = current.hardFailureReason ?? current.runtimeDiagnostic;
         const hasAutoClearableFailure =
           (current.launchState === 'failed_to_start' || current.hardFailure === true) &&
-          isAutoClearableLaunchFailureReason(failureReason);
+          isBootstrapProofClearableLaunchFailureReason(failureReason);
         if (!currentConfirmed || hasAutoClearableFailure) {
           return true;
         }
@@ -29498,8 +29534,11 @@ export class TeamProvisioningService {
       if (
         current.bootstrapConfirmed &&
         !isOpenCodeSecondaryLaneMember &&
-        isAutoClearableLaunchFailureReason(current.hardFailureReason)
+        isBootstrapProofClearableLaunchFailureReason(current.hardFailureReason)
       ) {
+        if (isProvisionedButNotAliveFailureReason(current.hardFailureReason)) {
+          current.runtimeAlive = true;
+        }
         current.hardFailure = false;
         current.hardFailureReason = undefined;
         if (current.sources) {
@@ -29520,7 +29559,7 @@ export class TeamProvisioningService {
         !heartbeatReason &&
         (current.launchState !== 'failed_to_start' ||
           hadAutoClearableFailure ||
-          isAutoClearableLaunchFailureReason(
+          isBootstrapProofClearableLaunchFailureReason(
             current.hardFailureReason ?? current.runtimeDiagnostic
           ));
       if (!current.bootstrapConfirmed && canApplyBootstrapSuccess) {
@@ -29540,7 +29579,9 @@ export class TeamProvisioningService {
         if (bootstrapObservedAt && !isOpenCodeSecondaryLaneMember) {
           current.bootstrapConfirmed = true;
           current.lastHeartbeatAt = current.lastHeartbeatAt ?? bootstrapObservedAt;
-          current.runtimeAlive = runtimeProofObservedAt ? true : current.runtimeAlive === true;
+          current.runtimeAlive = runtimeProofObservedAt
+            ? true
+            : current.runtimeAlive === true || requiresConfirmedBootstrapToClearFailure;
           current.lastRuntimeAliveAt = runtimeProofObservedAt
             ? (current.lastRuntimeAliveAt ?? bootstrapObservedAt)
             : current.lastRuntimeAliveAt;

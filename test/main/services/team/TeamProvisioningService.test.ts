@@ -495,8 +495,7 @@ async function writeCommittedOpenCodeSessionStore(input: {
     {
       clock: () => new Date('2026-04-22T12:00:00.000Z'),
       batchIdFactory: () => `batch-${input.runId}${input.batchKey ? `-${input.batchKey}` : ''}`,
-      receiptIdFactory: () =>
-        `receipt-${input.runId}${input.batchKey ? `-${input.batchKey}` : ''}`,
+      receiptIdFactory: () => `receipt-${input.runId}${input.batchKey ? `-${input.batchKey}` : ''}`,
     }
   );
   await writer.writeBatch({
@@ -618,11 +617,12 @@ type TeamProvisioningServicePrivateHarness = {
   applyBootstrapTranscriptEvidenceOverlay: (
     snapshot: ReturnType<typeof createPersistedLaunchSnapshot> | null
   ) => Promise<ReturnType<typeof createPersistedLaunchSnapshot> | null>;
+  applyProcessBootstrapTransportOverlay: (
+    input: Record<string, unknown>
+  ) => Record<string, unknown>;
 };
 
-function privateHarness(
-  svc: TeamProvisioningService
-): TeamProvisioningServicePrivateHarness {
+function privateHarness(svc: TeamProvisioningService): TeamProvisioningServicePrivateHarness {
   return svc as unknown as TeamProvisioningServicePrivateHarness;
 }
 
@@ -858,20 +858,12 @@ describe('TeamProvisioningService', () => {
         lastLeadTextEmitMs: 0,
       };
 
-      internals.pushLiveLeadTextMessage(
-        run,
-        'Соз',
-        undefined,
-        '2026-04-17T12:00:00.000Z',
-        { coalesceStreamChunk: true }
-      );
-      internals.pushLiveLeadTextMessage(
-        run,
-        'дал',
-        undefined,
-        '2026-04-17T12:00:00.010Z',
-        { coalesceStreamChunk: true }
-      );
+      internals.pushLiveLeadTextMessage(run, 'Соз', undefined, '2026-04-17T12:00:00.000Z', {
+        coalesceStreamChunk: true,
+      });
+      internals.pushLiveLeadTextMessage(run, 'дал', undefined, '2026-04-17T12:00:00.010Z', {
+        coalesceStreamChunk: true,
+      });
       internals.pushLiveLeadTextMessage(
         run,
         ' стартовую задачу',
@@ -2641,17 +2633,9 @@ describe('TeamProvisioningService', () => {
         internals.setLeadActivity(run, 'idle');
 
         expect(resumeSpy).toHaveBeenCalledTimes(1);
-        expect(resumeSpy).toHaveBeenCalledWith(
-          teamName,
-          'team-lead',
-          '2026-05-02T10:05:00.000Z'
-        );
+        expect(resumeSpy).toHaveBeenCalledWith(teamName, 'team-lead', '2026-05-02T10:05:00.000Z');
         expect(pauseSpy).toHaveBeenCalledTimes(1);
-        expect(pauseSpy).toHaveBeenCalledWith(
-          teamName,
-          'team-lead',
-          '2026-05-02T10:05:00.000Z'
-        );
+        expect(pauseSpy).toHaveBeenCalledWith(teamName, 'team-lead', '2026-05-02T10:05:00.000Z');
 
         const staleRun = toLeadActivityTestRun(
           {
@@ -8574,17 +8558,15 @@ describe('TeamProvisioningService', () => {
         generation: 2,
         observedAt: '2026-04-25T10:00:00.000Z',
       };
-      const transportSpy = vi
-        .spyOn(agentTeamsMcpHttpServer, 'getCurrentHandle')
-        .mockReturnValue({
-          url: currentTransportEvidence.url,
-          port: currentTransportEvidence.port,
-          child: { pid: 43123 },
-          generation: currentTransportEvidence.generation,
-          urlHash: currentTransportEvidence.urlHash,
-          transportEvidence: currentTransportEvidence,
-          diagnostics: [],
-        } as any);
+      const transportSpy = vi.spyOn(agentTeamsMcpHttpServer, 'getCurrentHandle').mockReturnValue({
+        url: currentTransportEvidence.url,
+        port: currentTransportEvidence.port,
+        child: { pid: 43123 },
+        generation: currentTransportEvidence.generation,
+        urlHash: currentTransportEvidence.urlHash,
+        transportEvidence: currentTransportEvidence,
+        diagnostics: [],
+      } as any);
 
       try {
         await expect(
@@ -8657,59 +8639,56 @@ describe('TeamProvisioningService', () => {
         generation: 3,
         observedAt: '2026-04-25T10:00:00.000Z',
       };
-      const transportSpy = vi
-        .spyOn(agentTeamsMcpHttpServer, 'getCurrentHandle')
-        .mockReturnValue({
-          url: currentTransportEvidence.url,
-          port: currentTransportEvidence.port,
-          child: { pid: 43124 },
-          generation: currentTransportEvidence.generation,
-          urlHash: currentTransportEvidence.urlHash,
-          transportEvidence: currentTransportEvidence,
-          diagnostics: [],
-        } as any);
+      const transportSpy = vi.spyOn(agentTeamsMcpHttpServer, 'getCurrentHandle').mockReturnValue({
+        url: currentTransportEvidence.url,
+        port: currentTransportEvidence.port,
+        child: { pid: 43124 },
+        generation: currentTransportEvidence.generation,
+        urlHash: currentTransportEvidence.urlHash,
+        transportEvidence: currentTransportEvidence,
+        diagnostics: [],
+      } as any);
       const directBridgeExecute = vi.fn(async () => {
         throw new Error('direct OpenCode bridge executor should not be used for acceptance send');
       });
-      const stateChangingExecute = vi.fn(async (input: {
-        command: string;
-        body: Record<string, unknown>;
-      }) => ({
-        ok: true as const,
-        schemaVersion: OPEN_CODE_BRIDGE_SCHEMA_VERSION,
-        requestId: 'send-refresh-command',
-        command: input.command as any,
-        completedAt: '2026-04-25T10:00:01.000Z',
-        durationMs: 10,
-        runtime: {
-          providerId: 'opencode' as const,
-          binaryPath: '/opt/homebrew/bin/opencode',
-          binaryFingerprint: 'test-opencode-binary',
-          version: '1.0.0',
-          capabilitySnapshotId: 'test-capability-snapshot',
-        },
-        diagnostics: [],
-        data: {
-          accepted: true,
-          memberName: 'bob',
-          sessionId: 'oc-session-bob-production-refresh',
-          runtimePid: 456,
-          runtimePromptMessageId: 'msg_prompt_production_refresh',
-          prePromptCursor: 'cursor-production-refresh',
-          responseObservation: {
-            state: 'pending',
-            deliveredUserMessageId: 'oc-user-production-refresh',
-            assistantMessageId: null,
-            toolCallNames: [],
-            visibleMessageToolCallId: null,
-            visibleReplyMessageId: null,
-            visibleReplyCorrelation: null,
-            latestAssistantPreview: null,
-            reason: 'assistant_response_pending',
+      const stateChangingExecute = vi.fn(
+        async (input: { command: string; body: Record<string, unknown> }) => ({
+          ok: true as const,
+          schemaVersion: OPEN_CODE_BRIDGE_SCHEMA_VERSION,
+          requestId: 'send-refresh-command',
+          command: input.command as any,
+          completedAt: '2026-04-25T10:00:01.000Z',
+          durationMs: 10,
+          runtime: {
+            providerId: 'opencode' as const,
+            binaryPath: '/opt/homebrew/bin/opencode',
+            binaryFingerprint: 'test-opencode-binary',
+            version: '1.0.0',
+            capabilitySnapshotId: 'test-capability-snapshot',
           },
           diagnostics: [],
-        },
-      }));
+          data: {
+            accepted: true,
+            memberName: 'bob',
+            sessionId: 'oc-session-bob-production-refresh',
+            runtimePid: 456,
+            runtimePromptMessageId: 'msg_prompt_production_refresh',
+            prePromptCursor: 'cursor-production-refresh',
+            responseObservation: {
+              state: 'pending',
+              deliveredUserMessageId: 'oc-user-production-refresh',
+              assistantMessageId: null,
+              toolCallNames: [],
+              visibleMessageToolCallId: null,
+              visibleReplyMessageId: null,
+              visibleReplyCorrelation: null,
+              latestAssistantPreview: null,
+              reason: 'assistant_response_pending',
+            },
+            diagnostics: [],
+          },
+        })
+      );
       const productionBridge = new OpenCodeReadinessBridge(
         { execute: directBridgeExecute },
         { stateChangingCommands: { execute: stateChangingExecute as any } }
@@ -8831,17 +8810,15 @@ describe('TeamProvisioningService', () => {
         generation: 7,
         observedAt: '2026-04-25T10:00:00.000Z',
       };
-      const transportSpy = vi
-        .spyOn(agentTeamsMcpHttpServer, 'getCurrentHandle')
-        .mockReturnValue({
-          url: currentTransportEvidence.url,
-          port: currentTransportEvidence.port,
-          child: { pid: 43128 },
-          generation: currentTransportEvidence.generation,
-          urlHash: currentTransportEvidence.urlHash,
-          transportEvidence: currentTransportEvidence,
-          diagnostics: [],
-        } as any);
+      const transportSpy = vi.spyOn(agentTeamsMcpHttpServer, 'getCurrentHandle').mockReturnValue({
+        url: currentTransportEvidence.url,
+        port: currentTransportEvidence.port,
+        child: { pid: 43128 },
+        generation: currentTransportEvidence.generation,
+        urlHash: currentTransportEvidence.urlHash,
+        transportEvidence: currentTransportEvidence,
+        diagnostics: [],
+      } as any);
 
       try {
         await expect(
@@ -9191,7 +9168,9 @@ describe('TeamProvisioningService', () => {
       {
         label: 'resolved behavior changes',
         staleReason: 'resolved_behavior_changed:old->new',
-        staleDiagnostics: ['OpenCode session reconcile skipped because the stored session is stale'],
+        staleDiagnostics: [
+          'OpenCode session reconcile skipped because the stored session is stale',
+        ],
       },
       {
         label: 'action-required reasons',
@@ -16545,9 +16524,7 @@ describe('TeamProvisioningService', () => {
       ] as never);
       mcpConfigBuilder.writeConfigFile.mockImplementation(async (_projectPath, policy) => {
         const mode = getMockMcpPolicyMode(policy);
-        return mode === 'appOnly'
-          ? '/mock/member-mcp-app-only.json'
-          : '/mock/lead-mcp-config.json';
+        return mode === 'appOnly' ? '/mock/member-mcp-app-only.json' : '/mock/lead-mcp-config.json';
       });
 
       const { runId } = await svc.launchTeam(
@@ -19392,9 +19369,7 @@ describe('TeamProvisioningService', () => {
     };
     expect(persisted.teamLaunchState).toBe('partial_failure');
     expect(persisted.members?.alice?.launchState).toBe('failed_to_start');
-    expect(persisted.members?.alice?.hardFailureReason).toContain(
-      'team provisioned but not alive'
-    );
+    expect(persisted.members?.alice?.hardFailureReason).toContain('team provisioned but not alive');
 
     const reconciled = await (svc as any).reconcilePersistedLaunchState(teamName);
     expect(reconciled.snapshot?.teamLaunchState).toBe('partial_failure');
@@ -20356,6 +20331,97 @@ describe('TeamProvisioningService', () => {
     expect(result.statuses.jack?.runtimeDiagnosticSeverity).toBeUndefined();
   });
 
+  it('heals provisioned-but-not-alive launch failures when bootstrap-state confirms the member', async () => {
+    allowConsoleLogs();
+    const teamName = 'zz-unit-provisioned-not-alive-bootstrap-state-heals';
+    const leadSessionId = 'lead-session';
+    const projectPath = '/Users/test/proj';
+    const acceptedAt = new Date(Date.now() - 90_000).toISOString();
+    const bootstrapAt = new Date(Date.now() - 60_000).toISOString();
+    const cleanupAt = new Date(Date.now() - 30_000).toISOString();
+    const runtimePid = 27_036;
+    const exitReason = 'CLI process exited (code 1) \u2014 team provisioned but not alive';
+    const processTableReason =
+      'runtime pid could not be verified because process table is unavailable';
+
+    writeLaunchConfig(teamName, projectPath, leadSessionId, ['tom']);
+    writeLaunchState(
+      teamName,
+      leadSessionId,
+      {
+        tom: {
+          providerId: 'anthropic',
+          model: 'sonnet',
+          laneId: 'primary',
+          laneKind: 'primary',
+          laneOwnerProviderId: 'anthropic',
+          launchState: 'failed_to_start',
+          agentToolAccepted: true,
+          runtimeAlive: false,
+          runtimePid,
+          bootstrapConfirmed: false,
+          hardFailure: true,
+          hardFailureReason: exitReason,
+          livenessKind: 'registered_only',
+          runtimeDiagnostic: processTableReason,
+          runtimeDiagnosticSeverity: 'warning',
+          firstSpawnAcceptedAt: acceptedAt,
+          lastEvaluatedAt: cleanupAt,
+        },
+      },
+      { launchPhase: 'finished', updatedAt: cleanupAt }
+    );
+    writeBootstrapState(
+      teamName,
+      [
+        {
+          name: 'tom',
+          status: 'bootstrap_confirmed',
+          lastAttemptAt: Date.parse(acceptedAt),
+          lastObservedAt: Date.parse(bootstrapAt),
+        },
+      ],
+      bootstrapAt
+    );
+
+    const svc = new TeamProvisioningService();
+    privateHarness(svc).getLiveTeamAgentRuntimeMetadata = vi.fn(
+      async () =>
+        new Map([
+          [
+            'tom',
+            {
+              alive: false,
+              backendType: 'process',
+              providerId: 'anthropic',
+              livenessKind: 'registered_only',
+              pidSource: 'persisted_metadata',
+              runtimeDiagnostic: processTableReason,
+              runtimeDiagnosticSeverity: 'warning',
+              metricsPid: runtimePid,
+              model: 'sonnet',
+            },
+          ],
+        ])
+    );
+
+    const result = await svc.getMemberSpawnStatuses(teamName);
+
+    expect(result.teamLaunchState).toBe('clean_success');
+    expect(result.statuses.tom).toMatchObject({
+      status: 'online',
+      launchState: 'confirmed_alive',
+      bootstrapConfirmed: true,
+      runtimeAlive: true,
+      livenessKind: 'confirmed_bootstrap',
+      hardFailure: false,
+      error: undefined,
+    });
+    expect(result.statuses.tom?.hardFailureReason).toBeUndefined();
+    expect(result.statuses.tom?.runtimeDiagnostic).toBeUndefined();
+    expect(result.statuses.tom?.runtimeDiagnosticSeverity).toBeUndefined();
+  });
+
   it('heals process-table unavailable failure when Anthropic bootstrap confirmation slightly predates delayed app acceptance', async () => {
     allowConsoleLogs();
     const teamName = 'zz-unit-process-table-unavailable-bootstrap-skew-heals';
@@ -21108,6 +21174,36 @@ describe('TeamProvisioningService', () => {
     expect(result.statuses.jack?.runtimeDiagnostic).toContain(
       'Bootstrap prompt has not been submitted yet. Last transport stage: bootstrap submit rejected'
     );
+  });
+
+  it('does not downgrade provisioned-but-not-alive failures from process transport progress alone', () => {
+    const svc = new TeamProvisioningService();
+    const reason = 'CLI process exited (code 1) \u2014 team provisioned but not alive';
+    const result = privateHarness(svc).applyProcessBootstrapTransportOverlay({
+      member: {
+        name: 'jack',
+        launchState: 'failed_to_start',
+        agentToolAccepted: true,
+        runtimeAlive: false,
+        bootstrapConfirmed: false,
+        hardFailure: true,
+        hardFailureReason: reason,
+        lastEvaluatedAt: '2026-05-25T20:14:05.411Z',
+      },
+      summary: {
+        hasProgress: true,
+        submitted: true,
+        lastStage: 'bootstrap submitted',
+      },
+      launchPhase: 'active',
+    });
+
+    expect(result).toMatchObject({
+      launchState: 'failed_to_start',
+      bootstrapConfirmed: false,
+      hardFailure: true,
+      hardFailureReason: reason,
+    });
   });
 
   it('uses the last process transport stage when active launch grace expires', async () => {
@@ -22436,7 +22532,7 @@ describe('TeamProvisioningService', () => {
     expect(run.memberSpawnStatuses.get('atlas')).toMatchObject({
       status: 'online',
       launchState: 'confirmed_alive',
-      runtimeAlive: false,
+      runtimeAlive: true,
       bootstrapConfirmed: true,
     });
     expect(run.provisioningOutputParts.join('\n')).toContain('bootstrap confirmed via transcript');
@@ -23114,7 +23210,11 @@ describe('TeamProvisioningService', () => {
     fs.mkdirSync(worktreeGitDir, { recursive: true });
     fs.writeFileSync(path.join(worktreeDir, '.git'), `gitdir: ${worktreeGitDir}\n`, 'utf8');
     fs.writeFileSync(path.join(worktreeGitDir, 'commondir'), '../..\n', 'utf8');
-    fs.writeFileSync(path.join(worktreeGitDir, 'gitdir'), `${path.join(worktreeDir, '.git')}\n`, 'utf8');
+    fs.writeFileSync(
+      path.join(worktreeGitDir, 'gitdir'),
+      `${path.join(worktreeDir, '.git')}\n`,
+      'utf8'
+    );
 
     const workspaces = await harness.collectWorkspaceTrustWorkspaces({
       cwd: repoDir,
@@ -23129,9 +23229,7 @@ describe('TeamProvisioningService', () => {
       gitRootConfigKey: repoDir,
       memberId: 'alice',
     });
-    expect(memberWorktrees.every((workspace) => workspace.gitRootConfigKey === repoDir)).toBe(
-      true
-    );
+    expect(memberWorktrees.every((workspace) => workspace.gitRootConfigKey === repoDir)).toBe(true);
   });
 
   it('degrades workspace trust planning failures without blocking launch preparation', async () => {
@@ -23762,7 +23860,8 @@ describe('TeamProvisioningService', () => {
             {
               alive: false,
               livenessKind: 'registered_only',
-              runtimeDiagnostic: 'runtime pid could not be verified because process table is unavailable',
+              runtimeDiagnostic:
+                'runtime pid could not be verified because process table is unavailable',
               runtimeDiagnosticSeverity: 'warning',
             },
           ],
@@ -23792,6 +23891,63 @@ describe('TeamProvisioningService', () => {
       livenessKind: 'registered_only',
       runtimeDiagnostic: 'runtime pid could not be verified because process table is unavailable',
       runtimeDiagnosticSeverity: 'warning',
+      livenessSource: undefined,
+    });
+  });
+
+  it('clears provisioned-but-not-alive failure from confirmed bootstrap even with weak metadata', async () => {
+    const svc = new TeamProvisioningService();
+    const harness = privateHarness(svc);
+    const processTableReason =
+      'runtime pid could not be verified because process table is unavailable';
+    const exitReason = 'CLI process exited (code 1) \u2014 team provisioned but not alive';
+    harness.getLiveTeamAgentRuntimeMetadata = vi.fn(
+      async () =>
+        new Map([
+          [
+            'tom',
+            {
+              alive: false,
+              model: 'sonnet',
+              livenessKind: 'registered_only',
+              pidSource: 'persisted_metadata',
+              runtimeDiagnostic: processTableReason,
+              runtimeDiagnosticSeverity: 'warning',
+            },
+          ],
+        ])
+    );
+
+    const result = await harness.attachLiveRuntimeMetadataToStatuses('signal-ops', {
+      tom: createMemberSpawnStatusEntry({
+        status: 'error',
+        launchState: 'failed_to_start',
+        error: exitReason,
+        hardFailure: true,
+        hardFailureReason: exitReason,
+        agentToolAccepted: true,
+        runtimeAlive: false,
+        bootstrapConfirmed: true,
+        livenessKind: 'confirmed_bootstrap',
+        runtimeDiagnostic: processTableReason,
+        runtimeDiagnosticSeverity: 'warning',
+        firstSpawnAcceptedAt: '2026-05-25T20:13:46.326Z',
+        lastHeartbeatAt: '2026-05-25T20:13:56.110Z',
+      }),
+    });
+
+    expect(result.tom).toMatchObject({
+      status: 'online',
+      launchState: 'confirmed_alive',
+      runtimeAlive: true,
+      bootstrapConfirmed: true,
+      hardFailure: false,
+      hardFailureReason: undefined,
+      error: undefined,
+      runtimeModel: 'sonnet',
+      livenessKind: 'confirmed_bootstrap',
+      runtimeDiagnostic: undefined,
+      runtimeDiagnosticSeverity: undefined,
       livenessSource: undefined,
     });
   });
@@ -26751,7 +26907,7 @@ describe('TeamProvisioningService', () => {
       status: 'online',
       launchState: 'confirmed_alive',
       bootstrapConfirmed: true,
-      runtimeAlive: false,
+      runtimeAlive: true,
       livenessKind: 'confirmed_bootstrap',
       hardFailure: false,
       error: undefined,
@@ -27087,9 +27243,7 @@ describe('TeamProvisioningService', () => {
       model: 'claude-opus-4-7',
       members: [],
     };
-    run.effectiveMembers = [
-      { name: 'jack', providerId: 'anthropic', model: 'claude-opus-4-7' },
-    ];
+    run.effectiveMembers = [{ name: 'jack', providerId: 'anthropic', model: 'claude-opus-4-7' }];
     fs.mkdirSync(path.join(tempTeamsBase, teamName), { recursive: true });
     writeBootstrapState(
       teamName,
@@ -27115,11 +27269,11 @@ describe('TeamProvisioningService', () => {
     ).persistLaunchStateSnapshot(run, 'finished');
 
     expect(snapshot).toBeNull();
-    await expect(fsPromises.readFile(getTeamLaunchStatePath(teamName), 'utf8')).rejects.toMatchObject(
-      {
-        code: 'ENOENT',
-      }
-    );
+    await expect(
+      fsPromises.readFile(getTeamLaunchStatePath(teamName), 'utf8')
+    ).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
   });
 
   it('includes queued OpenCode secondary lanes in live spawn statuses during createTeam runs', async () => {

@@ -1,3 +1,5 @@
+import { isBootstrapConfirmedProvisionedButNotAliveFailure } from '@shared/utils/teamLaunchFailureReason';
+
 import type { WorkspaceTrustExecutionResult } from '@features/workspace-trust/main';
 import type { MemberSpawnStatusEntry, TeamLaunchDiagnosticItem } from '@shared/types';
 
@@ -28,7 +30,10 @@ export function buildLaunchDiagnosticsFromRun(
   const observedAt = (options.nowIso ?? defaultNowIso)();
   const items: TeamLaunchDiagnosticItem[] = [];
   for (const [memberName, entry] of memberSpawnStatuses.entries()) {
-    if (entry.launchState === 'confirmed_alive') {
+    if (
+      entry.launchState === 'confirmed_alive' ||
+      isBootstrapConfirmedProvisionedButNotAliveFailure(entry)
+    ) {
       items.push({
         id: `${memberName}:bootstrap_confirmed`,
         memberName,

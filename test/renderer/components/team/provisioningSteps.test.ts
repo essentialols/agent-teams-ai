@@ -144,6 +144,43 @@ describe('getLaunchJoinMilestonesFromMembers', () => {
     expect(milestones.pendingSpawnCount).toBe(3);
   });
 
+  it('counts bootstrap-confirmed provisioned-but-not-alive entries as joined', () => {
+    const milestones = getLaunchJoinMilestonesFromMembers({
+      members: [{ name: 'tom' }],
+      memberSpawnStatuses: {
+        tom: {
+          status: 'error',
+          launchState: 'failed_to_start',
+          runtimeAlive: false,
+          bootstrapConfirmed: true,
+          hardFailure: true,
+          hardFailureReason: 'CLI process exited (code 1) \u2014 team provisioned but not alive',
+          livenessKind: 'confirmed_bootstrap',
+          runtimeDiagnostic:
+            'runtime pid could not be verified because process table is unavailable',
+          runtimeDiagnosticSeverity: 'warning',
+          updatedAt: '2026-05-25T20:14:02.147Z',
+        },
+      },
+      memberRuntimeEntries: {
+        tom: {
+          memberName: 'tom',
+          alive: false,
+          restartable: true,
+          livenessKind: 'confirmed_bootstrap',
+          runtimeDiagnostic:
+            'runtime pid could not be verified because process table is unavailable',
+          runtimeDiagnosticSeverity: 'warning',
+          updatedAt: '2026-05-25T20:14:03.317Z',
+        },
+      },
+    });
+
+    expect(milestones.heartbeatConfirmedCount).toBe(1);
+    expect(milestones.failedSpawnCount).toBe(0);
+    expect(milestones.pendingSpawnCount).toBe(0);
+  });
+
   it('does not let a stale clean snapshot hide live registered-only members', () => {
     const milestones = getLaunchJoinMilestonesFromMembers({
       members,

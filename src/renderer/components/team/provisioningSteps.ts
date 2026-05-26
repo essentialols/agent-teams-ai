@@ -1,4 +1,5 @@
 import { isLeadMember } from '@shared/utils/leadDetection';
+import { isBootstrapConfirmedProvisionedButNotAliveFailure } from '@shared/utils/teamLaunchFailureReason';
 
 import type {
   MemberSpawnStatusEntry,
@@ -80,6 +81,9 @@ function parseStatusUpdatedAtMs(value: string | undefined): number | null {
 }
 
 function isFailedSpawnEntry(entry: MemberSpawnStatusEntry | undefined): boolean {
+  if (isBootstrapConfirmedProvisionedButNotAliveFailure(entry)) {
+    return false;
+  }
   return entry?.launchState === 'failed_to_start' || entry?.status === 'error';
 }
 
@@ -92,13 +96,17 @@ function isStrongRuntimeProcessSpawnEntry(entry: MemberSpawnStatusEntry): boolea
 }
 
 function isConfirmedSpawnEntry(entry: MemberSpawnStatusEntry): boolean {
-  return entry.launchState === 'confirmed_alive' || entry.bootstrapConfirmed === true;
+  return (
+    entry.launchState === 'confirmed_alive' ||
+    entry.bootstrapConfirmed === true ||
+    isBootstrapConfirmedProvisionedButNotAliveFailure(entry)
+  );
 }
 
 function runtimeEntryContradictsConfirmedJoin(
   runtimeEntry: TeamAgentRuntimeEntry | undefined
 ): boolean {
-  return runtimeEntry?.alive === false;
+  return runtimeEntry?.alive === false && runtimeEntry.livenessKind !== 'confirmed_bootstrap';
 }
 
 function shouldPreferSnapshotEntryOverLive(
@@ -159,7 +167,7 @@ function summarizeLiveLaunchJoinMilestones(params: {
       continue;
     }
     observedTeammateCount += 1;
-    if (entry.launchState === 'failed_to_start') {
+    if (isFailedSpawnEntry(entry)) {
       failedSpawnCount += 1;
       continue;
     }
@@ -174,7 +182,7 @@ function summarizeLiveLaunchJoinMilestones(params: {
       pendingSpawnCount += 1;
       continue;
     }
-    if (entry.launchState === 'confirmed_alive') {
+    if (isConfirmedSpawnEntry(entry)) {
       heartbeatConfirmedCount += 1;
       continue;
     }

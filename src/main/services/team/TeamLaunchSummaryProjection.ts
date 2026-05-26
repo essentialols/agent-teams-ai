@@ -1,10 +1,23 @@
 import { isMixedOpenCodeSideLanePlan, planTeamRuntimeLanes } from '@features/team-runtime-lanes';
+import {
+  hasBootstrapConfirmationProofForLaunchFailure,
+  isProvisionedButNotAliveLaunchFailure,
+} from '@shared/utils/teamLaunchFailureReason';
 import { normalizeOptionalTeamProviderId } from '@shared/utils/teamProvider';
 
 import { shouldIgnoreTerminalBootstrapOnlyPendingSnapshot } from './TeamBootstrapStateReader';
-import { hasMixedPersistedLaunchMetadata } from './TeamLaunchStateEvaluator';
+import {
+  deriveTeamLaunchAggregateState,
+  hasMixedPersistedLaunchMetadata,
+  summarizePersistedLaunchMembers,
+} from './TeamLaunchStateEvaluator';
 
-import type { PersistedTeamLaunchSnapshot, TeamProviderId, TeamSummary } from '@shared/types';
+import type {
+  PersistedTeamLaunchMemberState,
+  PersistedTeamLaunchSnapshot,
+  TeamProviderId,
+  TeamSummary,
+} from '@shared/types';
 
 export const TEAM_LAUNCH_SUMMARY_FILE = 'launch-summary.json';
 const STALE_PENDING_SUMMARY_GRACE_MS = 5 * 60 * 1000;
@@ -41,6 +54,74 @@ function getPersistedLaunchMemberNames(snapshot: PersistedTeamLaunchSnapshot): s
   return Array.from(new Set([...snapshot.expectedMembers, ...Object.keys(snapshot.members)]));
 }
 
+function hasCompatibleRuntimeRunId(
+  member: PersistedTeamLaunchMemberState,
+  bootstrapMember: PersistedTeamLaunchMemberState | undefined
+): boolean {
+  if (!member.runtimeRunId || !bootstrapMember?.runtimeRunId) {
+    return true;
+  }
+  return member.runtimeRunId === bootstrapMember.runtimeRunId;
+}
+
+function hasBootstrapConfirmationProof(
+  member: PersistedTeamLaunchMemberState,
+  bootstrapMember: PersistedTeamLaunchMemberState | undefined
+): boolean {
+  if (hasBootstrapConfirmationProofForLaunchFailure(member)) {
+    return true;
+  }
+  return (
+    hasCompatibleRuntimeRunId(member, bootstrapMember) &&
+    hasBootstrapConfirmationProofForLaunchFailure(bootstrapMember)
+  );
+}
+
+function shouldProjectProvisionedButNotAliveAsConfirmed(params: {
+  member: PersistedTeamLaunchMemberState | undefined;
+  bootstrapMember?: PersistedTeamLaunchMemberState;
+}): params is { member: PersistedTeamLaunchMemberState } {
+  const member = params.member;
+  if (!member || member.launchState !== 'failed_to_start' || member.hardFailure !== true) {
+    return false;
+  }
+  return (
+    isProvisionedButNotAliveLaunchFailure(member) &&
+    hasBootstrapConfirmationProof(member, params.bootstrapMember)
+  );
+}
+
+function buildProjectedMembersForSummary(
+  snapshot: PersistedTeamLaunchSnapshot,
+  bootstrapSnapshot?: PersistedTeamLaunchSnapshot | null
+): Record<string, PersistedTeamLaunchMemberState> | null {
+  let changed = false;
+  const projectedMembers: Record<string, PersistedTeamLaunchMemberState> = {};
+  for (const [memberName, member] of Object.entries(snapshot.members)) {
+    if (
+      shouldProjectProvisionedButNotAliveAsConfirmed({
+        member,
+        bootstrapMember: bootstrapSnapshot?.members[memberName],
+      })
+    ) {
+      changed = true;
+      projectedMembers[memberName] = {
+        ...member,
+        launchState: 'confirmed_alive',
+        runtimeAlive: true,
+        bootstrapConfirmed: true,
+        hardFailure: false,
+        hardFailureReason: undefined,
+        runtimeDiagnostic: undefined,
+        runtimeDiagnosticSeverity: undefined,
+      };
+      continue;
+    }
+    projectedMembers[memberName] = member;
+  }
+  return changed ? projectedMembers : null;
+}
+
 function normalizeIsoDate(value: unknown): string | null {
   if (typeof value !== 'string') {
     return null;
@@ -57,42 +138,47 @@ function toMillis(value: string | undefined | null): number {
 }
 
 export function createLaunchStateSummary(
-  snapshot: PersistedTeamLaunchSnapshot
+  snapshot: PersistedTeamLaunchSnapshot,
+  options: { bootstrapSnapshot?: PersistedTeamLaunchSnapshot | null } = {}
 ): LaunchStateSummary {
   const persistedMemberNames = getPersistedLaunchMemberNames(snapshot);
+  const projectedMembers = buildProjectedMembersForSummary(snapshot, options.bootstrapSnapshot);
+  const members = projectedMembers ?? snapshot.members;
+  const summary = projectedMembers
+    ? summarizePersistedLaunchMembers(snapshot.expectedMembers, projectedMembers)
+    : snapshot.summary;
+  const teamLaunchState = projectedMembers
+    ? deriveTeamLaunchAggregateState(summary)
+    : snapshot.teamLaunchState;
   const missingMembers = persistedMemberNames.filter((name) => {
-    const member = snapshot.members[name];
+    const member = members[name];
     return member?.launchState === 'failed_to_start';
   });
   const skippedMembers = persistedMemberNames.filter((name) => {
-    const member = snapshot.members[name];
+    const member = members[name];
     return member?.launchState === 'skipped_for_launch' || member?.skippedForLaunch === true;
   });
 
   return {
-    ...(snapshot.teamLaunchState === 'partial_failure'
-      ? { partialLaunchFailure: true as const }
-      : {}),
+    ...(teamLaunchState === 'partial_failure' ? { partialLaunchFailure: true as const } : {}),
     ...(persistedMemberNames.length > 0
       ? { expectedMemberCount: persistedMemberNames.length }
       : {}),
-    ...(snapshot.summary.confirmedCount > 0
-      ? { confirmedMemberCount: snapshot.summary.confirmedCount }
-      : {}),
+    ...(summary.confirmedCount > 0 ? { confirmedMemberCount: summary.confirmedCount } : {}),
     ...(missingMembers.length > 0 ? { missingMembers } : {}),
     ...(skippedMembers.length > 0 ? { skippedMembers } : {}),
-    teamLaunchState: snapshot.teamLaunchState,
+    teamLaunchState,
     launchUpdatedAt: snapshot.updatedAt,
-    confirmedCount: snapshot.summary.confirmedCount,
-    pendingCount: snapshot.summary.pendingCount,
-    failedCount: snapshot.summary.failedCount,
-    skippedCount: snapshot.summary.skippedCount,
-    runtimeAlivePendingCount: snapshot.summary.runtimeAlivePendingCount,
-    shellOnlyPendingCount: snapshot.summary.shellOnlyPendingCount,
-    runtimeProcessPendingCount: snapshot.summary.runtimeProcessPendingCount,
-    runtimeCandidatePendingCount: snapshot.summary.runtimeCandidatePendingCount,
-    noRuntimePendingCount: snapshot.summary.noRuntimePendingCount,
-    permissionPendingCount: snapshot.summary.permissionPendingCount,
+    confirmedCount: summary.confirmedCount,
+    pendingCount: summary.pendingCount,
+    failedCount: summary.failedCount,
+    skippedCount: summary.skippedCount,
+    runtimeAlivePendingCount: summary.runtimeAlivePendingCount,
+    shellOnlyPendingCount: summary.shellOnlyPendingCount,
+    runtimeProcessPendingCount: summary.runtimeProcessPendingCount,
+    runtimeCandidatePendingCount: summary.runtimeCandidatePendingCount,
+    noRuntimePendingCount: summary.noRuntimePendingCount,
+    permissionPendingCount: summary.permissionPendingCount,
   };
 }
 
@@ -252,7 +338,9 @@ export function choosePreferredLaunchStateSummary(params: {
       ? null
       : (params.launchSnapshot ?? null);
   if (launchSnapshot) {
-    return createLaunchStateSummary(launchSnapshot);
+    return createLaunchStateSummary(launchSnapshot, {
+      bootstrapSnapshot: params.bootstrapSnapshot ?? null,
+    });
   }
 
   const bootstrapSnapshot = params.bootstrapSnapshot ?? null;

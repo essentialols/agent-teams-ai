@@ -38,6 +38,7 @@ import {
 import { isInboxNoiseMessage } from '@shared/utils/inboxNoise';
 import { isLeadMember } from '@shared/utils/leadDetection';
 import { buildOrderedVisibleTeamGraphOwnerIds } from '@shared/utils/teamGraphDefaultLayout';
+import { isBootstrapConfirmedProvisionedButNotAliveFailure } from '@shared/utils/teamLaunchFailureReason';
 import {
   isTeamTaskActivelyWorked,
   isTeamTaskNeedsFixActionable,
@@ -581,6 +582,8 @@ export class TeamGraphAdapter {
         spawnBootstrapStalled: spawn?.bootstrapStalled,
         spawnAgentToolAccepted: spawn?.agentToolAccepted,
         spawnHardFailure: spawn?.hardFailure,
+        spawnHardFailureReason: spawn?.hardFailureReason,
+        spawnError: spawn?.error,
         spawnLivenessKind: spawn?.livenessKind,
         spawnFirstSpawnAcceptedAt: spawn?.firstSpawnAcceptedAt,
         spawnUpdatedAt: spawn?.updatedAt,
@@ -1271,7 +1274,10 @@ export class TeamGraphAdapter {
     spawn: MemberSpawnStatusEntry | undefined,
     pendingApproval: boolean
   ): Pick<GraphNode, 'exceptionTone' | 'exceptionLabel'> | undefined {
-    if (spawn?.launchState === 'failed_to_start' || spawn?.status === 'error') {
+    if (
+      !isBootstrapConfirmedProvisionedButNotAliveFailure(spawn) &&
+      (spawn?.launchState === 'failed_to_start' || spawn?.status === 'error')
+    ) {
       return { exceptionTone: 'error', exceptionLabel: 'spawn failed' };
     }
     if (pendingApproval || spawn?.launchState === 'runtime_pending_permission') {
@@ -1293,7 +1299,9 @@ export class TeamGraphAdapter {
   static #mapMemberStatus(status: string, spawn?: MemberSpawnStatusEntry): GraphNodeState {
     if (spawn?.launchState === 'runtime_pending_permission') return 'waiting';
     if (spawn?.status === 'spawning') return 'thinking';
-    if (spawn?.status === 'error') return 'error';
+    if (spawn?.status === 'error' && !isBootstrapConfirmedProvisionedButNotAliveFailure(spawn)) {
+      return 'error';
+    }
     if (spawn?.status === 'waiting') return 'waiting';
     switch (status) {
       case 'active':

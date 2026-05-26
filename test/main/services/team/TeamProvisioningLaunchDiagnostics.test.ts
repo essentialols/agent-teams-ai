@@ -215,6 +215,39 @@ describe('TeamProvisioningLaunchDiagnostics', () => {
     ]);
   });
 
+  it('classifies bootstrap-confirmed provisioned-but-not-alive entries as confirmed', () => {
+    const diagnostics = buildLaunchDiagnosticsFromRun(
+      buildRun([
+        [
+          'tom',
+          {
+            status: 'error',
+            launchState: 'failed_to_start',
+            bootstrapConfirmed: true,
+            hardFailure: true,
+            hardFailureReason: 'CLI process exited (code 1) \u2014 team provisioned but not alive',
+            livenessKind: 'confirmed_bootstrap',
+            runtimeDiagnostic:
+              'runtime pid could not be verified because process table is unavailable',
+            runtimeDiagnosticSeverity: 'warning',
+          },
+        ],
+      ]),
+      { nowIso }
+    );
+
+    expect(diagnostics).toEqual([
+      {
+        id: 'tom:bootstrap_confirmed',
+        memberName: 'tom',
+        severity: 'info',
+        code: 'bootstrap_confirmed',
+        label: 'tom - bootstrap confirmed',
+        observedAt: NOW,
+      },
+    ]);
+  });
+
   it('uses failed launch error when hard failure reason is absent', () => {
     expect(
       buildLaunchDiagnosticsFromRun(

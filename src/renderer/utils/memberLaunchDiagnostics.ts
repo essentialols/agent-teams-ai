@@ -1,3 +1,5 @@
+import { isBootstrapConfirmedProvisionedButNotAliveFailure } from '@shared/utils/teamLaunchFailureReason';
+
 import { isHealthyOpenCodeAppMcpConnectivityAdvisory } from './openCodeAdvisoryHealth';
 
 import type {
@@ -94,7 +96,7 @@ const OPENCODE_SESSION_REFRESH_REASON_MARKERS = [
 const OPENCODE_SESSION_REFRESH_REASON_CHARS = 'abcdefghijklmnopqrstuvwxyz0123456789._~/=->';
 const OPENCODE_SESSION_REFRESH_FAILURE_PATTERN =
   // eslint-disable-next-line sonarjs/regex-complexity -- Keyword taxonomy is kept literal to preserve diagnostic behavior.
-  /(?:^|[_\s:;.\/()-])(?:permission[_\s-]?denied|permission[_\s-]?blocked|access[_\s-]?denied|auth[_\s-]?unavailable|authentication[_\s-]?failed|unauthorized|forbidden|401|403|login[_\s-]?required|not\s+logged\s+in|missing\s+credentials?|invalid\s+credentials?|credentials?[_\s-]?required|credentials?[_\s-]?unavailable|no auth available|authorization|auth(?:entication)?(?:[_\s-]?(?:failed|unavailable))?|invalid api[_\s-]?key|api[_\s-]?key|does not have access|quota|rate[_\s-]?(?:limit|limited)|too many requests|429|model cooldown|cooling down|enospc|no space left|disk is full|capacity exceeded|quota exhausted|usage exceeded|free usage exceeded|key limit exceeded|total limit|insufficient credits|subscribe to go|error|failed|failure|timeout|timed\s+out|network|connection|unable\s+to\s+connect|connect\s+failed|econn[a-z_]*|enotfound|fetch[_\s-]?failed|connection[_\s-]?(?:refused|reset)|aborted|cancel(?:ed|led)|interrupted|service[_\s-]?unavailable|temporarily\s+unavailable|overloaded|visible[_\s-]?reply(?:[_\s-][a-z0-9]+)*|task[_\s-]?refs|relayofmessageid|relay[_\s-]?of[_\s-]?message[_\s-]?id|message[_\s-]?send|non[_\s-]?visible[_\s-]?tool(?:[_\s-][a-z0-9]+)*|protocol[_\s-]?proof)(?=$|[_\s:;.\/(),-])/i;
+  /(?:^|[_\s:;./()-])(?:permission[_\s-]?denied|permission[_\s-]?blocked|access[_\s-]?denied|auth[_\s-]?unavailable|authentication[_\s-]?failed|unauthorized|forbidden|401|403|login[_\s-]?required|not\s+logged\s+in|missing\s+credentials?|invalid\s+credentials?|credentials?[_\s-]?required|credentials?[_\s-]?unavailable|no auth available|authorization|auth(?:entication)?(?:[_\s-]?(?:failed|unavailable))?|invalid api[_\s-]?key|api[_\s-]?key|does not have access|quota|rate[_\s-]?(?:limit|limited)|too many requests|429|model cooldown|cooling down|enospc|no space left|disk is full|capacity exceeded|quota exhausted|usage exceeded|free usage exceeded|key limit exceeded|total limit|insufficient credits|subscribe to go|error|failed|failure|timeout|timed\s+out|network|connection|unable\s+to\s+connect|connect\s+failed|econn[a-z_]*|enotfound|fetch[_\s-]?failed|connection[_\s-]?(?:refused|reset)|aborted|cancel(?:ed|led)|interrupted|service[_\s-]?unavailable|temporarily\s+unavailable|overloaded|visible[_\s-]?reply(?:[_\s-][a-z0-9]+)*|task[_\s-]?refs|relayofmessageid|relay[_\s-]?of[_\s-]?message[_\s-]?id|message[_\s-]?send|non[_\s-]?visible[_\s-]?tool(?:[_\s-][a-z0-9]+)*|protocol[_\s-]?proof)(?=$|[_\s:;./(),-])/i;
 const OPENCODE_SESSION_REFRESH_SAFE_MARKER_STATE_PATTERN =
   /\b(?:not_observed|pending|prompt_not_indexed|responded_tool_call|responded_visible_message|responded_non_visible_tool|responded_plain_text|permission_blocked|tool_error|empty_assistant_turn|prompt_delivered_no_assistant_message|session_stale|session_error|reconcile_failed)\b/g;
 
@@ -528,8 +530,14 @@ export function buildMemberLaunchDiagnosticsPayload(params: {
   const laneId = runtimeEntry?.laneId ?? params.member?.laneId;
   const laneKind = runtimeEntry?.laneKind ?? params.member?.laneKind;
   const livenessKind = spawnEntry?.livenessKind ?? runtimeEntry?.livenessKind;
-  const launchState = spawnEntry?.launchState ?? params.launchState;
-  const spawnStatus = spawnEntry?.status ?? params.spawnStatus;
+  const bootstrapConfirmedProvisionedButNotAlive =
+    isBootstrapConfirmedProvisionedButNotAliveFailure(spawnEntry);
+  const launchState = bootstrapConfirmedProvisionedButNotAlive
+    ? 'confirmed_alive'
+    : (spawnEntry?.launchState ?? params.launchState);
+  const spawnStatus = bootstrapConfirmedProvisionedButNotAlive
+    ? 'online'
+    : (spawnEntry?.status ?? params.spawnStatus);
   const runtimeAdvisoryTitle = boundedString(params.runtimeAdvisoryTitle);
   const runtimeAdvisoryLabel = boundedString(params.runtimeAdvisoryLabel ?? undefined);
   const runtimeAdvisoryMessage = boundedString(runtimeAdvisory?.message);
@@ -552,10 +560,13 @@ export function buildMemberLaunchDiagnosticsPayload(params: {
     !suppressOpenCodeAppMcpAdvisory && isRuntimeAdvisoryCardError(runtimeAdvisory, providerId)
       ? (runtimeAdvisoryTitle ?? runtimeAdvisoryLabel ?? runtimeAdvisoryMessage)
       : undefined;
-  const runtimeDiagnosticSeverity =
-    spawnEntry?.runtimeDiagnosticSeverity ?? runtimeEntry?.runtimeDiagnosticSeverity;
+  const runtimeDiagnosticSeverity = bootstrapConfirmedProvisionedButNotAlive
+    ? runtimeEntry?.runtimeDiagnosticSeverity
+    : (spawnEntry?.runtimeDiagnosticSeverity ?? runtimeEntry?.runtimeDiagnosticSeverity);
   const spawnRuntimeDiagnosticCardError = isRuntimeDiagnosticCardError({
-    runtimeDiagnostic: spawnEntry?.runtimeDiagnostic,
+    runtimeDiagnostic: bootstrapConfirmedProvisionedButNotAlive
+      ? undefined
+      : spawnEntry?.runtimeDiagnostic,
     runtimeDiagnosticSeverity: spawnEntry?.runtimeDiagnosticSeverity,
     launchState: spawnEntry?.launchState,
     spawnStatus: spawnEntry?.status,
@@ -572,19 +583,24 @@ export function buildMemberLaunchDiagnosticsPayload(params: {
     ? runtimeEntry?.runtimeDiagnostic
     : undefined;
   const runtimeDiagnostic =
-    boundedString(spawnEntry?.runtimeDiagnostic) ??
+    (bootstrapConfirmedProvisionedButNotAlive
+      ? undefined
+      : boundedString(spawnEntry?.runtimeDiagnostic)) ??
     boundedString(runtimeEntry?.runtimeDiagnostic) ??
-    boundedString(spawnEntry?.hardFailureReason) ??
-    boundedString(spawnEntry?.error) ??
+    (bootstrapConfirmedProvisionedButNotAlive
+      ? undefined
+      : (boundedString(spawnEntry?.hardFailureReason) ?? boundedString(spawnEntry?.error))) ??
     runtimeAdvisoryMessage;
   const memberCardError = firstMemberCardFailureReason({
-    candidates: [
-      spawnEntry?.error,
-      spawnEntry?.hardFailureReason,
-      spawnRuntimeDiagnosticCardError,
-      runtimeEntryDiagnosticCardError,
-      runtimeAdvisoryCardError,
-    ],
+    candidates: bootstrapConfirmedProvisionedButNotAlive
+      ? [runtimeEntryDiagnosticCardError, runtimeAdvisoryCardError]
+      : [
+          spawnEntry?.error,
+          spawnEntry?.hardFailureReason,
+          spawnRuntimeDiagnosticCardError,
+          runtimeEntryDiagnosticCardError,
+          runtimeAdvisoryCardError,
+        ],
     evidence: [
       spawnEntry?.runtimeDiagnostic,
       runtimeEntry?.runtimeDiagnostic,
@@ -601,8 +617,10 @@ export function buildMemberLaunchDiagnosticsPayload(params: {
     runtimeAdvisoryTitle ? [runtimeAdvisoryTitle] : undefined,
     runtimeAdvisoryLabel ? [runtimeAdvisoryLabel] : undefined,
     runtimeAdvisoryMessage ? [runtimeAdvisoryMessage] : undefined,
-    spawnEntry?.hardFailureReason ? [spawnEntry.hardFailureReason] : undefined,
-    spawnEntry?.error ? [spawnEntry.error] : undefined,
+    !bootstrapConfirmedProvisionedButNotAlive && spawnEntry?.hardFailureReason
+      ? [spawnEntry.hardFailureReason]
+      : undefined,
+    !bootstrapConfirmedProvisionedButNotAlive && spawnEntry?.error ? [spawnEntry.error] : undefined,
     runtimeEntry?.diagnostics
   );
   const runId = boundedString(params.runId ?? undefined);
@@ -658,7 +676,7 @@ export function buildMemberLaunchDiagnosticsPayload(params: {
       ? { agentToolAccepted: spawnEntry.agentToolAccepted }
       : {}),
     ...(typeof spawnEntry?.hardFailure === 'boolean'
-      ? { hardFailure: spawnEntry.hardFailure }
+      ? { hardFailure: bootstrapConfirmedProvisionedButNotAlive ? false : spawnEntry.hardFailure }
       : {}),
     ...(livenessKind ? { livenessKind } : {}),
     ...((spawnEntry?.livenessSource ?? params.livenessSource)
@@ -751,6 +769,9 @@ function parseStatusUpdatedAtMs(value: string | undefined): number | null {
 }
 
 function isFailedSpawnEntry(entry: MemberSpawnStatusEntry | undefined): boolean {
+  if (isBootstrapConfirmedProvisionedButNotAliveFailure(entry)) {
+    return false;
+  }
   return entry?.launchState === 'failed_to_start' || entry?.status === 'error';
 }
 

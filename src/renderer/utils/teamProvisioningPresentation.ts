@@ -5,6 +5,7 @@ import {
   getLaunchJoinState,
 } from '@renderer/components/team/provisioningSteps';
 import { isLeadMember } from '@shared/utils/leadDetection';
+import { isBootstrapConfirmedProvisionedButNotAliveFailure } from '@shared/utils/teamLaunchFailureReason';
 
 import type {
   MemberSpawnStatusEntry,
@@ -85,7 +86,18 @@ function parseStatusUpdatedAtMs(value: string | undefined): number | null {
 }
 
 function isFailedSpawnEntry(entry: MemberSpawnStatusEntry | undefined): boolean {
+  if (isBootstrapConfirmedProvisionedButNotAliveFailure(entry)) {
+    return false;
+  }
   return entry?.launchState === 'failed_to_start' || entry?.status === 'error';
+}
+
+function isConfirmedSpawnEntry(entry: MemberSpawnStatusEntry | undefined): boolean {
+  return (
+    entry?.launchState === 'confirmed_alive' ||
+    entry?.bootstrapConfirmed === true ||
+    isBootstrapConfirmedProvisionedButNotAliveFailure(entry)
+  );
 }
 
 function isSkippedSpawnEntry(entry: MemberSpawnStatusEntry | undefined): boolean {
@@ -125,7 +137,7 @@ function isOpenCodeSecondaryRetryCandidate(params: {
   ) {
     return false;
   }
-  return entry.launchState === 'failed_to_start' || entry.status === 'error';
+  return isFailedSpawnEntry(entry);
 }
 
 function shouldPreferSnapshotEntryOverLive(params: {
@@ -275,7 +287,7 @@ function getPendingDiagnosticNameGroups(params: {
     });
     if (
       !entry ||
-      entry.launchState === 'confirmed_alive' ||
+      isConfirmedSpawnEntry(entry) ||
       isFailedSpawnEntry(entry) ||
       isSkippedSpawnEntry(entry)
     ) {
@@ -328,7 +340,7 @@ function getPendingSpawnNames(params: {
     });
     return (
       entry != null &&
-      entry.launchState !== 'confirmed_alive' &&
+      !isConfirmedSpawnEntry(entry) &&
       !isFailedSpawnEntry(entry) &&
       !isSkippedSpawnEntry(entry)
     );
@@ -611,9 +623,7 @@ function getFailedSpawnDetails(params: {
         }),
       ] as const;
     })
-    .filter(
-      ([, entry]) => entry && (entry.launchState === 'failed_to_start' || entry.status === 'error')
-    )
+    .filter(([, entry]) => isFailedSpawnEntry(entry))
     .map(([name, entry]) => ({
       name,
       reason:

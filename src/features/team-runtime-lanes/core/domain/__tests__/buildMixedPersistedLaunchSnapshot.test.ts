@@ -258,6 +258,56 @@ describe('buildMixedPersistedLaunchSnapshot', () => {
     expect(snapshot.teamLaunchState).toBe('partial_failure');
   });
 
+  it('heals bootstrap-confirmed provisioned-but-not-alive primary status while building snapshots', () => {
+    const snapshot = buildMixedPersistedLaunchSnapshot({
+      teamName: 'signal-ops',
+      launchPhase: 'finished',
+      updatedAt: '2026-05-25T20:14:02.147Z',
+      leadDefaults: {
+        providerId: 'anthropic',
+        providerBackendId: null,
+        selectedFastMode: 'off',
+        resolvedFastMode: false,
+        launchIdentity: null,
+      },
+      primaryMembers: [{ name: 'tom', providerId: 'anthropic', model: 'sonnet', effort: 'medium' }],
+      primaryStatuses: {
+        tom: {
+          status: 'error',
+          launchState: 'failed_to_start',
+          agentToolAccepted: true,
+          runtimeAlive: false,
+          bootstrapConfirmed: true,
+          hardFailure: true,
+          hardFailureReason: 'CLI process exited (code 1) \u2014 team provisioned but not alive',
+          livenessKind: 'confirmed_bootstrap',
+          runtimeDiagnostic:
+            'runtime pid could not be verified because process table is unavailable',
+          runtimeDiagnosticSeverity: 'warning',
+          firstSpawnAcceptedAt: '2026-05-25T20:13:46.326Z',
+          lastHeartbeatAt: '2026-05-25T20:13:56.110Z',
+          updatedAt: '2026-05-25T20:14:02.147Z',
+        } as never,
+      },
+      secondaryMembers: [],
+    });
+
+    expect(snapshot.members.tom).toMatchObject({
+      launchState: 'confirmed_alive',
+      bootstrapConfirmed: true,
+      runtimeAlive: true,
+      hardFailure: false,
+      hardFailureReason: undefined,
+      livenessKind: 'confirmed_bootstrap',
+    });
+    expect(snapshot.summary).toMatchObject({
+      confirmedCount: 1,
+      failedCount: 0,
+      pendingCount: 0,
+    });
+    expect(snapshot.teamLaunchState).toBe('clean_success');
+  });
+
   it('preserves permission-blocked side-lane members as runtime_pending_permission', () => {
     const snapshot = buildMixedPersistedLaunchSnapshot({
       teamName: 'mixed-team',

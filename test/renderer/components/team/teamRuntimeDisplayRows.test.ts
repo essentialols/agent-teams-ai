@@ -30,7 +30,9 @@ function createRuntimeSnapshot(
   };
 }
 
-function createSpawnStatus(overrides: Partial<MemberSpawnStatusEntry> = {}): MemberSpawnStatusEntry {
+function createSpawnStatus(
+  overrides: Partial<MemberSpawnStatusEntry> = {}
+): MemberSpawnStatusEntry {
   return {
     status: 'spawning',
     launchState: 'starting',
@@ -247,6 +249,41 @@ describe('buildTeamRuntimeDisplayRows', () => {
       state: 'degraded',
       source: 'mixed',
       stateReason: 'Bootstrap command failed. Process is still alive.',
+      actionsAllowed: false,
+    });
+  });
+
+  it('does not degrade bootstrap-confirmed provisioned-but-not-alive rows', () => {
+    const rows = buildTeamRuntimeDisplayRows({
+      members: [{ name: 'alice' }],
+      runtimeSnapshot: createRuntimeSnapshot({
+        alice: createRuntimeEntry({
+          alive: false,
+          livenessKind: 'confirmed_bootstrap',
+          runtimeDiagnostic:
+            'runtime pid could not be verified because process table is unavailable',
+          runtimeDiagnosticSeverity: 'warning',
+        }),
+      }),
+      spawnStatuses: {
+        alice: createSpawnStatus({
+          status: 'error',
+          launchState: 'failed_to_start',
+          runtimeAlive: false,
+          bootstrapConfirmed: true,
+          hardFailure: true,
+          hardFailureReason: 'CLI process exited (code 1) \u2014 team provisioned but not alive',
+          livenessKind: 'confirmed_bootstrap',
+        }),
+      },
+    });
+
+    expect(rows[0]).toMatchObject({
+      memberName: 'alice',
+      state: 'running',
+      source: 'mixed',
+      stateReason: 'Bootstrap confirmed',
+      diagnosticSeverity: 'warning',
       actionsAllowed: false,
     });
   });

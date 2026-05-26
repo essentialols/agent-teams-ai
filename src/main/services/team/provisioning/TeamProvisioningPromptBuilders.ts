@@ -2,6 +2,7 @@ import { resolveTeamProviderId } from '@main/services/runtime/providerRuntimeEnv
 import { AGENT_BLOCK_CLOSE, AGENT_BLOCK_OPEN, wrapAgentBlock } from '@shared/constants/agentBlocks';
 import { CROSS_TEAM_PREFIX_TAG } from '@shared/constants/crossTeam';
 import { formatTaskDisplayLabel } from '@shared/utils/taskIdentity';
+import { isBootstrapConfirmedProvisionedButNotAliveFailure } from '@shared/utils/teamLaunchFailureReason';
 import {
   getTeamTaskWorkflowColumn,
   isTeamTaskActivelyWorked,
@@ -1038,10 +1039,11 @@ export function buildGeminiPostLaunchHydrationPrompt(
         .map((member) => {
           const status = run.memberSpawnStatuses.get(member.name);
           const label =
-            status?.launchState === 'failed_to_start'
-              ? `failed to start${status.hardFailureReason ? ` - ${status.hardFailureReason}` : status.error ? ` - ${status.error}` : ''}`
-              : status?.launchState === 'confirmed_alive'
-                ? 'bootstrap confirmed'
+            status?.launchState === 'confirmed_alive' ||
+            isBootstrapConfirmedProvisionedButNotAliveFailure(status)
+              ? 'bootstrap confirmed'
+              : status?.launchState === 'failed_to_start'
+                ? `failed to start${status.hardFailureReason ? ` - ${status.hardFailureReason}` : status.error ? ` - ${status.error}` : ''}`
                 : status?.launchState === 'runtime_pending_permission'
                   ? status?.runtimeAlive
                     ? 'runtime online and waiting for permission approval'

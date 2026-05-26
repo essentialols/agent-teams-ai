@@ -95,6 +95,30 @@ function preservesStrongRuntimeAlive(value: {
   );
 }
 
+function hasStoppedRuntimeLivenessKind(livenessKind: TeamAgentRuntimeLivenessKind | undefined) {
+  return (
+    livenessKind === 'not_found' ||
+    livenessKind === 'registered_only' ||
+    livenessKind === 'shell_only' ||
+    livenessKind === 'stale_metadata'
+  );
+}
+
+function canHealBootstrapConfirmedProvisionedButNotAliveFailure(
+  entry:
+    | (Parameters<typeof isBootstrapConfirmedProvisionedButNotAliveFailure>[0] & {
+        runtimeDiagnosticSeverity?: TeamAgentRuntimeDiagnosticSeverity;
+        livenessKind?: TeamAgentRuntimeLivenessKind;
+      })
+    | undefined
+): boolean {
+  return (
+    isBootstrapConfirmedProvisionedButNotAliveFailure(entry) &&
+    entry?.runtimeDiagnosticSeverity !== 'error' &&
+    !hasStoppedRuntimeLivenessKind(entry?.livenessKind)
+  );
+}
+
 function hasMaterializedOpenCodeRuntimeMarker(value: {
   runtimeAlive?: boolean;
   runtimePid?: number;
@@ -233,10 +257,10 @@ function createPrimaryLaneMemberState(params: {
   const runtime = params.status;
   const strongRuntimeAlive = preservesStrongRuntimeAlive(runtime ?? {});
   const sources = runtime ? createSourcesFromStatus(runtime) : undefined;
-  const bootstrapConfirmedProvisionedButNotAlive =
-    isBootstrapConfirmedProvisionedButNotAliveFailure(runtime);
-  const runtimeAlive = bootstrapConfirmedProvisionedButNotAlive || strongRuntimeAlive;
-  const launchState = bootstrapConfirmedProvisionedButNotAlive
+  const healBootstrapConfirmedProvisionedButNotAlive =
+    canHealBootstrapConfirmedProvisionedButNotAliveFailure(runtime);
+  const runtimeAlive = healBootstrapConfirmedProvisionedButNotAlive || strongRuntimeAlive;
+  const launchState = healBootstrapConfirmedProvisionedButNotAlive
     ? 'confirmed_alive'
     : (runtime?.launchState ??
       deriveMemberLaunchState({
@@ -247,7 +271,7 @@ function createPrimaryLaneMemberState(params: {
         pendingPermissionRequestIds: runtime?.pendingPermissionRequestIds,
       }));
   const hardFailure =
-    !bootstrapConfirmedProvisionedButNotAlive &&
+    !healBootstrapConfirmedProvisionedButNotAlive &&
     (runtime?.hardFailure === true || launchState === 'failed_to_start');
   const base: PersistedTeamLaunchMemberState = {
     name: params.member.name.trim(),
@@ -307,10 +331,10 @@ function createSecondaryLaneMemberState(
     normalizeOptionalTeamProviderId(params.member.providerId) ?? params.leadDefaults.providerId;
   const evidence = params.evidence;
   const strongRuntimeAlive = preservesStrongRuntimeAlive(evidence ?? {});
-  const bootstrapConfirmedProvisionedButNotAlive =
-    isBootstrapConfirmedProvisionedButNotAliveFailure(evidence ?? undefined);
-  const runtimeAlive = bootstrapConfirmedProvisionedButNotAlive || strongRuntimeAlive;
-  const launchState = bootstrapConfirmedProvisionedButNotAlive
+  const healBootstrapConfirmedProvisionedButNotAlive =
+    canHealBootstrapConfirmedProvisionedButNotAliveFailure(evidence ?? undefined);
+  const runtimeAlive = healBootstrapConfirmedProvisionedButNotAlive || strongRuntimeAlive;
+  const launchState = healBootstrapConfirmedProvisionedButNotAlive
     ? 'confirmed_alive'
     : (evidence?.launchState ??
       deriveMemberLaunchState({
@@ -321,7 +345,7 @@ function createSecondaryLaneMemberState(
         pendingPermissionRequestIds: evidence?.pendingPermissionRequestIds,
       }));
   const hardFailure =
-    !bootstrapConfirmedProvisionedButNotAlive &&
+    !healBootstrapConfirmedProvisionedButNotAlive &&
     (evidence?.hardFailure === true || launchState === 'failed_to_start');
   const hardFailureReason = hardFailure ? evidence?.hardFailureReason : undefined;
   const firstSpawnAcceptedAt = evidence
@@ -426,7 +450,7 @@ function summarizeMembers(
     }
     if (
       entry.launchState === 'confirmed_alive' ||
-      isBootstrapConfirmedProvisionedButNotAliveFailure(entry)
+      canHealBootstrapConfirmedProvisionedButNotAliveFailure(entry)
     ) {
       confirmedCount += 1;
       continue;

@@ -308,6 +308,116 @@ describe('buildMixedPersistedLaunchSnapshot', () => {
     expect(snapshot.teamLaunchState).toBe('clean_success');
   });
 
+  it('keeps bootstrap-confirmed provisioned-but-not-alive primary status failed when diagnostics are errors', () => {
+    const snapshot = buildMixedPersistedLaunchSnapshot({
+      teamName: 'signal-ops',
+      launchPhase: 'finished',
+      updatedAt: '2026-05-25T20:14:02.147Z',
+      leadDefaults: {
+        providerId: 'anthropic',
+        providerBackendId: null,
+        selectedFastMode: 'off',
+        resolvedFastMode: false,
+        launchIdentity: null,
+      },
+      primaryMembers: [{ name: 'tom', providerId: 'anthropic', model: 'sonnet', effort: 'medium' }],
+      primaryStatuses: {
+        tom: {
+          status: 'error',
+          launchState: 'failed_to_start',
+          agentToolAccepted: true,
+          runtimeAlive: false,
+          bootstrapConfirmed: true,
+          hardFailure: true,
+          hardFailureReason: 'CLI process exited (code 1) - team provisioned but not alive',
+          livenessKind: 'confirmed_bootstrap',
+          runtimeDiagnostic: 'Runtime process crashed',
+          runtimeDiagnosticSeverity: 'error',
+          updatedAt: '2026-05-25T20:14:02.147Z',
+        } as never,
+      },
+      secondaryMembers: [],
+    });
+
+    expect(snapshot.members.tom).toMatchObject({
+      launchState: 'failed_to_start',
+      bootstrapConfirmed: true,
+      runtimeAlive: false,
+      hardFailure: true,
+      hardFailureReason: 'CLI process exited (code 1) - team provisioned but not alive',
+      runtimeDiagnostic: 'Runtime process crashed',
+      runtimeDiagnosticSeverity: 'error',
+    });
+    expect(snapshot.summary).toMatchObject({
+      confirmedCount: 0,
+      failedCount: 1,
+      pendingCount: 0,
+    });
+    expect(snapshot.teamLaunchState).toBe('partial_failure');
+  });
+
+  it('keeps bootstrap-confirmed provisioned-but-not-alive secondary status failed when liveness is stopped', () => {
+    const snapshot = buildMixedPersistedLaunchSnapshot({
+      teamName: 'mixed-team',
+      launchPhase: 'finished',
+      updatedAt: '2026-05-25T20:14:02.147Z',
+      leadDefaults: {
+        providerId: 'codex',
+        providerBackendId: 'codex-native',
+        selectedFastMode: 'off',
+        resolvedFastMode: false,
+        launchIdentity: null,
+      },
+      primaryMembers: [],
+      primaryStatuses: {},
+      secondaryMembers: [
+        {
+          laneId: 'secondary:opencode:tom',
+          member: {
+            name: 'tom',
+            providerId: 'opencode',
+            model: 'minimax-m2.5-free',
+            effort: 'medium',
+          },
+          leadDefaults: {
+            providerId: 'codex',
+            providerBackendId: 'codex-native',
+            selectedFastMode: 'off',
+            resolvedFastMode: false,
+            launchIdentity: null,
+          },
+          evidence: {
+            status: 'error',
+            launchState: 'failed_to_start',
+            agentToolAccepted: true,
+            runtimeAlive: false,
+            bootstrapConfirmed: true,
+            hardFailure: true,
+            hardFailureReason: 'CLI process exited (code 1) - team provisioned but not alive',
+            livenessKind: 'not_found',
+            runtimeDiagnostic: 'Runtime is no longer registered',
+            runtimeDiagnosticSeverity: 'warning',
+          } as never,
+        },
+      ],
+    });
+
+    expect(snapshot.members.tom).toMatchObject({
+      laneKind: 'secondary',
+      launchState: 'failed_to_start',
+      runtimeAlive: false,
+      hardFailure: true,
+      livenessKind: 'not_found',
+      runtimeDiagnosticSeverity: 'warning',
+    });
+    expect(snapshot.summary).toMatchObject({
+      confirmedCount: 0,
+      failedCount: 1,
+      pendingCount: 0,
+    });
+    expect(snapshot.teamLaunchState).toBe('partial_failure');
+  });
+
   it('preserves permission-blocked side-lane members as runtime_pending_permission', () => {
     const snapshot = buildMixedPersistedLaunchSnapshot({
       teamName: 'mixed-team',

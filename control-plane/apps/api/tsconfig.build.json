@@ -9,11 +9,29 @@
       "@agent-teams-control-plane/features-system-health/interface/nest": [
         "packages/features/system-health/dist/interface/nest/index.d.ts"
       ],
+      "@agent-teams-control-plane/features-external-action-content/interface/nest": [
+        "packages/features/external-action-content/dist/interface/nest/index.d.ts"
+      ],
+      "@agent-teams-control-plane/features-outbox/interface/nest": [
+        "packages/features/outbox/dist/interface/nest/index.d.ts"
+      ],
       "@agent-teams-control-plane/platform-api": [
         "packages/platform/api/dist/index.d.ts"
       ],
       "@agent-teams-control-plane/platform-config": [
         "packages/platform/config/dist/index.d.ts"
+      ],
+      "@agent-teams-control-plane/platform-crypto": [
+        "packages/platform/crypto/dist/index.d.ts"
+      ],
+      "@agent-teams-control-plane/platform-crypto/nest": [
+        "packages/platform/crypto/dist/nest/index.d.ts"
+      ],
+      "@agent-teams-control-plane/platform-database": [
+        "packages/platform/database/dist/index.d.ts"
+      ],
+      "@agent-teams-control-plane/platform-database/nest": [
+        "packages/platform/database/dist/nest/index.d.ts"
       ],
       "@agent-teams-control-plane/platform-logger": [
         "packages/platform/logger/dist/index.d.ts"

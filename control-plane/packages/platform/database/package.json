@@ -1,0 +1,30 @@
+{
+  "name": "@agent-teams-control-plane/platform-database",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "production": "./dist/index.js",
+      "default": "./src/index.ts"
+    },
+    "./nest": {
+      "types": "./src/nest/index.ts",
+      "production": "./dist/nest/index.js",
+      "default": "./src/nest/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@agent-teams-control-plane/platform-config": "workspace:*",
+    "@agent-teams-control-plane/platform-logger": "workspace:*",
+    "@agent-teams-control-plane/shared": "workspace:*",
+    "@nestjs/common": "11.1.24",
+    "@prisma/adapter-pg": "7.8.0",
+    "@prisma/client": "7.8.0",
+    "pg": "8.21.0"
+  }
+}

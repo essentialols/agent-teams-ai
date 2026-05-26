@@ -21,6 +21,26 @@ export type ControlPlaneConfig = Readonly<{
     host: string;
     port: number;
   }>;
+  persistence: Readonly<{
+    enabled: boolean;
+  }>;
+  database: Readonly<{
+    url?: string;
+    sslMode: "disable" | "prefer" | "require";
+    poolMax: number;
+  }>;
+  outbox: Readonly<{
+    workerEnabled: boolean;
+    batchSize: number;
+    leaseSeconds: number;
+    pollIntervalMs: number;
+    maxAttempts: number;
+  }>;
+  retention: Readonly<{
+    completedOutboxDays?: number;
+    deadLetterDays?: number;
+    externalContentDays?: number;
+  }>;
   build: ControlPlaneBuildInfo;
   publicBaseUrl?: string;
   github: Readonly<{
@@ -33,6 +53,7 @@ export type ControlPlaneConfig = Readonly<{
     githubPrivateKey?: string;
     githubWebhookSecret?: string;
     githubOAuthClientSecret?: string;
+    encryptionMasterKey?: string;
   }>;
 }>;
 
@@ -45,6 +66,26 @@ export type SafeControlPlaneConfigSummary = Readonly<{
     createdAtConfigured: boolean;
   }>;
   publicBaseUrlConfigured: boolean;
+  persistence: Readonly<{
+    enabled: boolean;
+  }>;
+  database: Readonly<{
+    urlConfigured: boolean;
+    sslMode: ControlPlaneConfig["database"]["sslMode"];
+    poolMax: number;
+  }>;
+  outbox: Readonly<{
+    workerEnabled: boolean;
+    batchSize: number;
+    leaseSeconds: number;
+    pollIntervalMs: number;
+    maxAttempts: number;
+  }>;
+  retention: Readonly<{
+    completedOutboxConfigured: boolean;
+    deadLetterConfigured: boolean;
+    externalContentConfigured: boolean;
+  }>;
   github: Readonly<{
     restApiVersionConfigured: boolean;
     appIdConfigured: boolean;
@@ -53,6 +94,7 @@ export type SafeControlPlaneConfigSummary = Readonly<{
     privateKeyConfigured: boolean;
     webhookSecretConfigured: boolean;
     oauthClientSecretConfigured: boolean;
+    encryptionMasterKeyConfigured: boolean;
   }>;
 }>;
 
@@ -76,9 +118,25 @@ export class ControlPlaneConfigError extends Error {
   }
 }
 
+const optionalBoolean = z
+  .enum(["0", "1", "false", "true"])
+  .transform((value) => value === "1" || value === "true")
+  .optional();
+
+const optionalPositiveInteger = z.coerce.number().int().positive().optional();
+
 const rawConfigSchema = z.object({
   CONTROL_PLANE_BUILD_CREATED_AT: z.string().datetime().optional(),
   CONTROL_PLANE_BUILD_REVISION: z.string().min(1).max(128).optional(),
+  CONTROL_PLANE_COMPLETED_OUTBOX_RETENTION_DAYS: optionalPositiveInteger,
+  CONTROL_PLANE_DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(100).default(5),
+  CONTROL_PLANE_DATABASE_SSL_MODE: z
+    .enum(["disable", "prefer", "require"])
+    .default("disable"),
+  CONTROL_PLANE_DATABASE_URL: z.string().url().optional(),
+  CONTROL_PLANE_DEAD_LETTER_RETENTION_DAYS: optionalPositiveInteger,
+  CONTROL_PLANE_ENCRYPTION_MASTER_KEY: z.string().min(1).optional(),
+  CONTROL_PLANE_EXTERNAL_CONTENT_RETENTION_DAYS: optionalPositiveInteger,
   CONTROL_PLANE_GITHUB_APP_ID: z.string().min(1).optional(),
   CONTROL_PLANE_GITHUB_APP_SLUG: z.string().min(1).optional(),
   CONTROL_PLANE_GITHUB_OAUTH_CLIENT_ID: z.string().min(1).optional(),
@@ -92,6 +150,12 @@ const rawConfigSchema = z.object({
   CONTROL_PLANE_HTTP_HOST: z.string().min(1).default("127.0.0.1"),
   CONTROL_PLANE_HTTP_PORT: z.coerce.number().int().min(1).max(65535).default(3030),
   CONTROL_PLANE_MODE: z.enum(CONTROL_PLANE_MODES).default("local-disabled"),
+  CONTROL_PLANE_OUTBOX_BATCH_SIZE: z.coerce.number().int().min(1).max(100).default(10),
+  CONTROL_PLANE_OUTBOX_LEASE_SECONDS: z.coerce.number().int().min(1).default(300),
+  CONTROL_PLANE_OUTBOX_MAX_ATTEMPTS: z.coerce.number().int().min(1).default(10),
+  CONTROL_PLANE_OUTBOX_POLL_INTERVAL_MS: z.coerce.number().int().min(50).default(1000),
+  CONTROL_PLANE_OUTBOX_WORKER_ENABLED: optionalBoolean,
+  CONTROL_PLANE_PERSISTENCE_ENABLED: optionalBoolean,
   CONTROL_PLANE_PUBLIC_BASE_URL: z.string().url().optional(),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
 });
@@ -110,6 +174,11 @@ const hostedRequiredKeys = [
   "CONTROL_PLANE_GITHUB_OAUTH_CLIENT_SECRET",
 ] as const satisfies readonly RawConfigKey[];
 
+const persistenceRequiredKeys = [
+  "CONTROL_PLANE_DATABASE_URL",
+  "CONTROL_PLANE_ENCRYPTION_MASTER_KEY",
+] as const satisfies readonly RawConfigKey[];
+
 export function loadControlPlaneConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): ControlPlaneConfig {
@@ -119,7 +188,9 @@ export function loadControlPlaneConfig(
   }
 
   const raw = parsed.data;
-  const missingKeys = getMissingHostedKeys(raw);
+  const persistenceEnabled = isPersistenceEnabled(raw);
+  const outboxWorkerEnabled = isOutboxWorkerEnabled(raw, persistenceEnabled);
+  const missingKeys = getMissingRequiredKeys(raw, persistenceEnabled);
   if (missingKeys.length > 0) {
     throw new ControlPlaneConfigError(
       missingKeys.map((key) => ({
@@ -129,13 +200,24 @@ export function loadControlPlaneConfig(
       })),
     );
   }
+  const validationIssues = validateCrossFieldConfig(raw, {
+    outboxWorkerEnabled,
+    persistenceEnabled,
+  });
+  if (validationIssues.length > 0) {
+    throw new ControlPlaneConfigError(validationIssues);
+  }
 
   const build = buildBuildInfo(raw);
   const github = buildGitHubConfig(raw);
   const secrets = buildSecretConfig(raw);
+  const database = buildDatabaseConfig(raw);
+  const outbox = buildOutboxConfig(raw, outboxWorkerEnabled);
+  const retention = buildRetentionConfig(raw);
 
   const configBase = {
     build,
+    database,
     environment: raw.NODE_ENV,
     github,
     http: {
@@ -143,6 +225,11 @@ export function loadControlPlaneConfig(
       port: raw.CONTROL_PLANE_HTTP_PORT,
     },
     mode: raw.CONTROL_PLANE_MODE,
+    outbox,
+    persistence: {
+      enabled: persistenceEnabled,
+    },
+    retention,
     secrets,
   };
 
@@ -164,6 +251,11 @@ export function getSafeConfigSummary(
       createdAtConfigured: config.build.createdAt !== undefined,
       revisionConfigured: config.build.revision !== undefined,
     },
+    database: {
+      poolMax: config.database.poolMax,
+      sslMode: config.database.sslMode,
+      urlConfigured: config.database.url !== undefined,
+    },
     environment: config.environment,
     github: {
       appIdConfigured: config.github.appId !== undefined,
@@ -173,10 +265,18 @@ export function getSafeConfigSummary(
       privateKeyConfigured: config.secrets.githubPrivateKey !== undefined,
       restApiVersionConfigured: config.github.restApiVersion !== undefined,
       webhookSecretConfigured: config.secrets.githubWebhookSecret !== undefined,
+      encryptionMasterKeyConfigured: config.secrets.encryptionMasterKey !== undefined,
     },
     http: config.http,
     mode: config.mode,
+    outbox: config.outbox,
+    persistence: config.persistence,
     publicBaseUrlConfigured: config.publicBaseUrl !== undefined,
+    retention: {
+      completedOutboxConfigured: config.retention.completedOutboxDays !== undefined,
+      deadLetterConfigured: config.retention.deadLetterDays !== undefined,
+      externalContentConfigured: config.retention.externalContentDays !== undefined,
+    },
   };
 }
 
@@ -196,11 +296,15 @@ function formatValidationIssue(issue: ValidationIssue): string {
   return `${path}: ${issue.message}`;
 }
 
-function getMissingHostedKeys(raw: RawConfig): readonly RawConfigKey[] {
-  if (raw.CONTROL_PLANE_MODE === "local-disabled") {
-    return [];
-  }
-  return hostedRequiredKeys.filter((key) => !hasValue(raw[key]));
+function getMissingRequiredKeys(
+  raw: RawConfig,
+  persistenceEnabled: boolean,
+): readonly RawConfigKey[] {
+  const keys = [
+    ...(raw.CONTROL_PLANE_MODE === "local-disabled" ? [] : hostedRequiredKeys),
+    ...(persistenceEnabled ? persistenceRequiredKeys : []),
+  ];
+  return keys.filter((key) => !hasValue(raw[key]));
 }
 
 function hasValue(value: unknown): boolean {
@@ -221,6 +325,108 @@ function buildBuildInfo(raw: RawConfig): ControlPlaneBuildInfo {
   }
 
   return build;
+}
+
+function isPersistenceEnabled(raw: RawConfig): boolean {
+  return (
+    raw.CONTROL_PLANE_PERSISTENCE_ENABLED ?? raw.CONTROL_PLANE_MODE !== "local-disabled"
+  );
+}
+
+function isOutboxWorkerEnabled(raw: RawConfig, persistenceEnabled: boolean): boolean {
+  return raw.CONTROL_PLANE_OUTBOX_WORKER_ENABLED ?? persistenceEnabled;
+}
+
+function validateCrossFieldConfig(
+  raw: RawConfig,
+  flags: { persistenceEnabled: boolean; outboxWorkerEnabled: boolean },
+): readonly ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+
+  if (flags.outboxWorkerEnabled && !flags.persistenceEnabled) {
+    issues.push({
+      code: "invalid",
+      message:
+        "CONTROL_PLANE_OUTBOX_WORKER_ENABLED requires CONTROL_PLANE_PERSISTENCE_ENABLED.",
+      path: ["CONTROL_PLANE_OUTBOX_WORKER_ENABLED"],
+    });
+  }
+
+  if (flags.persistenceEnabled && raw.CONTROL_PLANE_ENCRYPTION_MASTER_KEY !== undefined) {
+    const decoded = decodeBase64(raw.CONTROL_PLANE_ENCRYPTION_MASTER_KEY);
+    if (decoded === undefined || decoded.byteLength !== 32) {
+      issues.push({
+        code: "invalid",
+        message:
+          "CONTROL_PLANE_ENCRYPTION_MASTER_KEY must be base64-encoded 32 bytes when persistence is enabled.",
+        path: ["CONTROL_PLANE_ENCRYPTION_MASTER_KEY"],
+      });
+    }
+  }
+
+  return issues;
+}
+
+function decodeBase64(value: string): Buffer | undefined {
+  try {
+    const normalized = value.trim();
+    if (normalized.length === 0) {
+      return undefined;
+    }
+    return Buffer.from(normalized, "base64");
+  } catch {
+    return undefined;
+  }
+}
+
+function buildDatabaseConfig(raw: RawConfig): ControlPlaneConfig["database"] {
+  const database: {
+    url?: string;
+    sslMode: "disable" | "prefer" | "require";
+    poolMax: number;
+  } = {
+    poolMax: raw.CONTROL_PLANE_DATABASE_POOL_MAX,
+    sslMode: raw.CONTROL_PLANE_DATABASE_SSL_MODE,
+  };
+
+  if (raw.CONTROL_PLANE_DATABASE_URL !== undefined) {
+    database.url = raw.CONTROL_PLANE_DATABASE_URL;
+  }
+
+  return database;
+}
+
+function buildOutboxConfig(
+  raw: RawConfig,
+  workerEnabled: boolean,
+): ControlPlaneConfig["outbox"] {
+  return {
+    batchSize: raw.CONTROL_PLANE_OUTBOX_BATCH_SIZE,
+    leaseSeconds: raw.CONTROL_PLANE_OUTBOX_LEASE_SECONDS,
+    maxAttempts: raw.CONTROL_PLANE_OUTBOX_MAX_ATTEMPTS,
+    pollIntervalMs: raw.CONTROL_PLANE_OUTBOX_POLL_INTERVAL_MS,
+    workerEnabled,
+  };
+}
+
+function buildRetentionConfig(raw: RawConfig): ControlPlaneConfig["retention"] {
+  const retention: {
+    completedOutboxDays?: number;
+    deadLetterDays?: number;
+    externalContentDays?: number;
+  } = {};
+
+  if (raw.CONTROL_PLANE_COMPLETED_OUTBOX_RETENTION_DAYS !== undefined) {
+    retention.completedOutboxDays = raw.CONTROL_PLANE_COMPLETED_OUTBOX_RETENTION_DAYS;
+  }
+  if (raw.CONTROL_PLANE_DEAD_LETTER_RETENTION_DAYS !== undefined) {
+    retention.deadLetterDays = raw.CONTROL_PLANE_DEAD_LETTER_RETENTION_DAYS;
+  }
+  if (raw.CONTROL_PLANE_EXTERNAL_CONTENT_RETENTION_DAYS !== undefined) {
+    retention.externalContentDays = raw.CONTROL_PLANE_EXTERNAL_CONTENT_RETENTION_DAYS;
+  }
+
+  return retention;
 }
 
 function buildGitHubConfig(raw: RawConfig): ControlPlaneConfig["github"] {
@@ -252,6 +458,7 @@ function buildSecretConfig(raw: RawConfig): ControlPlaneConfig["secrets"] {
     githubPrivateKey?: string;
     githubWebhookSecret?: string;
     githubOAuthClientSecret?: string;
+    encryptionMasterKey?: string;
   } = {};
 
   if (raw.CONTROL_PLANE_GITHUB_PRIVATE_KEY !== undefined) {
@@ -262,6 +469,9 @@ function buildSecretConfig(raw: RawConfig): ControlPlaneConfig["secrets"] {
   }
   if (raw.CONTROL_PLANE_GITHUB_OAUTH_CLIENT_SECRET !== undefined) {
     secrets.githubOAuthClientSecret = raw.CONTROL_PLANE_GITHUB_OAUTH_CLIENT_SECRET;
+  }
+  if (raw.CONTROL_PLANE_ENCRYPTION_MASTER_KEY !== undefined) {
+    secrets.encryptionMasterKey = raw.CONTROL_PLANE_ENCRYPTION_MASTER_KEY;
   }
 
   return secrets;

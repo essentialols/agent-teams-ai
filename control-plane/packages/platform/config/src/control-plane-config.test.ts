@@ -13,6 +13,9 @@ describe("loadControlPlaneConfig", () => {
     expect(config.mode).toBe("local-disabled");
     expect(config.http).toEqual({ host: "127.0.0.1", port: 3030 });
     expect(config.build).toEqual({});
+    expect(config.persistence.enabled).toBe(false);
+    expect(config.database.url).toBeUndefined();
+    expect(config.outbox.workerEnabled).toBe(false);
     expect(config.github).toEqual({});
     expect(config.secrets).toEqual({});
   });
@@ -30,6 +33,8 @@ describe("loadControlPlaneConfig", () => {
     const config = loadControlPlaneConfig({
       CONTROL_PLANE_BUILD_CREATED_AT: "2026-05-26T10:20:30.000Z",
       CONTROL_PLANE_BUILD_REVISION: "abc123",
+      CONTROL_PLANE_DATABASE_URL: "postgresql://user:pass@localhost:5432/db",
+      CONTROL_PLANE_ENCRYPTION_MASTER_KEY: Buffer.alloc(32, 7).toString("base64"),
       CONTROL_PLANE_GITHUB_APP_ID: "123",
       CONTROL_PLANE_GITHUB_APP_SLUG: "agent-teams",
       CONTROL_PLANE_GITHUB_OAUTH_CLIENT_ID: "client-id",
@@ -53,9 +58,12 @@ describe("loadControlPlaneConfig", () => {
       revisionConfigured: true,
     });
     expect(summary.github.privateKeyConfigured).toBe(true);
+    expect(summary.database.urlConfigured).toBe(true);
+    expect(summary.github.encryptionMasterKeyConfigured).toBe(true);
     expect(JSON.stringify(summary)).not.toContain("private-key");
     expect(JSON.stringify(summary)).not.toContain("webhook-secret");
     expect(JSON.stringify(summary)).not.toContain("oauth-secret");
+    expect(JSON.stringify(summary)).not.toContain("postgresql://user:pass");
     expect(JSON.stringify(summary)).not.toContain("abc123");
   });
 
@@ -82,5 +90,25 @@ describe("loadControlPlaneConfig", () => {
         expect(JSON.stringify(error.safeError)).not.toContain("not-an-iso-timestamp");
       }
     }
+  });
+
+  it("fails when persistence is enabled without database and encryption settings", () => {
+    expect(() =>
+      loadControlPlaneConfig({
+        CONTROL_PLANE_PERSISTENCE_ENABLED: "true",
+        NODE_ENV: "test",
+      }),
+    ).toThrow(ControlPlaneConfigError);
+  });
+
+  it("validates encryption master key length when persistence is enabled", () => {
+    expect(() =>
+      loadControlPlaneConfig({
+        CONTROL_PLANE_DATABASE_URL: "postgresql://user:pass@localhost:5432/db",
+        CONTROL_PLANE_ENCRYPTION_MASTER_KEY: Buffer.alloc(16, 7).toString("base64"),
+        CONTROL_PLANE_PERSISTENCE_ENABLED: "true",
+        NODE_ENV: "test",
+      }),
+    ).toThrow(ControlPlaneConfigError);
   });
 });

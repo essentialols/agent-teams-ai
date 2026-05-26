@@ -34,6 +34,10 @@ NestJS is an outer framework, not the business architecture. Domain and applicat
 - [Security And Privacy Model](docs/security-and-privacy.md)
 - [Public Error Contract](docs/error-contract.md)
 - [ADR-001: NestJS Modular Monolith](docs/decisions/001-nestjs-modular-monolith.md)
+- [ADR-002: Phase 4 Persistence Foundation](docs/decisions/002-phase-4-persistence-foundation.md)
+- [Persistence Runbook](docs/persistence-runbook.md)
+- [Outbox Worker Runbook](docs/outbox-worker-runbook.md)
+- [Encryption And Retention Policy](docs/encryption-retention-policy.md)
 
 ## Deployment Modes
 
@@ -78,7 +82,7 @@ control-plane/
   docs/
 ```
 
-Phase 1 provides the workspace scaffold, health feature, config/logger platform packages, and architecture guardrails. Phase 2 adds the dependency-free shared kernel, build metadata plumbing, safe error primitives, typed IDs, time helpers, validation helpers, and stricter shared-kernel guardrails. Phase 3 adds the API safe error boundary, request/correlation ids, request context, and safe request logging. GitHub, persistence, outbox, and external side effects are intentionally deferred.
+Phase 1 provides the workspace scaffold, health feature, config/logger platform packages, and architecture guardrails. Phase 2 adds the dependency-free shared kernel, build metadata plumbing, safe error primitives, typed IDs, time helpers, validation helpers, and stricter shared-kernel guardrails. Phase 3 adds the API safe error boundary, request/correlation ids, request context, and safe request logging. Phase 4 adds optional Postgres persistence, transactions, envelope-encrypted external action content, DB-backed outbox, dead-letter state, and worker claim/retry foundations. GitHub and other external side effects are intentionally deferred.
 
 `control-plane/` is a nested pnpm workspace on purpose. The desktop app remains the default root workspace, while the optional backend is developed and verified with `pnpm --dir control-plane ...` commands.
 
@@ -107,5 +111,17 @@ pnpm --dir control-plane api:smoke:dist
 pnpm --dir control-plane config:hosted-failfast
 ```
 
-Phase 1 intentionally adds no Prisma, Octokit, queue, messenger, or billing SDKs.
-Phase 2 keeps that restriction and also keeps `packages/shared` dependency-free.
+DB-specific commands:
+
+```bash
+pnpm --dir control-plane db:generate
+pnpm --dir control-plane db:migrate
+pnpm --dir control-plane db:test:prepare
+pnpm --dir control-plane test:db
+```
+
+`test:db` requires `CONTROL_PLANE_TEST_DATABASE_URL`. Normal local smoke tests
+run with persistence disabled and do not require Postgres.
+
+`packages/shared` remains dependency-free. Octokit, queue, messenger, and billing
+SDKs are still deferred to later connector phases.

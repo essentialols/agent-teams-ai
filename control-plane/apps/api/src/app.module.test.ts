@@ -74,6 +74,14 @@ describe("ApiAppModule", () => {
           name: "agent-teams-control-plane",
           version: "0.0.0",
         },
+        readiness: {
+          database: {
+            enabled: false,
+            migrationStatus: "not-checked",
+            status: "disabled",
+          },
+          status: "ready",
+        },
         status: "ok",
       });
       expect(JSON.stringify(body)).not.toContain("private-key-secret");
@@ -173,11 +181,15 @@ function setApiTestEnv(): () => void {
   const previousBuildCreatedAt = process.env.CONTROL_PLANE_BUILD_CREATED_AT;
   const previousBuildRevision = process.env.CONTROL_PLANE_BUILD_REVISION;
   const previousMode = process.env.CONTROL_PLANE_MODE;
+  const previousPersistenceEnabled = process.env.CONTROL_PLANE_PERSISTENCE_ENABLED;
+  const previousOutboxWorkerEnabled = process.env.CONTROL_PLANE_OUTBOX_WORKER_ENABLED;
   const previousPrivateKey = process.env.CONTROL_PLANE_GITHUB_PRIVATE_KEY;
   process.env.CONTROL_PLANE_BUILD_CREATED_AT = "2026-05-26T10:20:30.000Z";
   process.env.CONTROL_PLANE_BUILD_REVISION = "abc123";
   process.env.CONTROL_PLANE_GITHUB_PRIVATE_KEY = "private-key-secret";
   process.env.CONTROL_PLANE_MODE = "local-disabled";
+  process.env.CONTROL_PLANE_PERSISTENCE_ENABLED = "false";
+  process.env.CONTROL_PLANE_OUTBOX_WORKER_ENABLED = "false";
 
   return () => {
     if (previousBuildCreatedAt === undefined) {
@@ -199,6 +211,16 @@ function setApiTestEnv(): () => void {
       delete process.env.CONTROL_PLANE_GITHUB_PRIVATE_KEY;
     } else {
       process.env.CONTROL_PLANE_GITHUB_PRIVATE_KEY = previousPrivateKey;
+    }
+    if (previousPersistenceEnabled === undefined) {
+      delete process.env.CONTROL_PLANE_PERSISTENCE_ENABLED;
+    } else {
+      process.env.CONTROL_PLANE_PERSISTENCE_ENABLED = previousPersistenceEnabled;
+    }
+    if (previousOutboxWorkerEnabled === undefined) {
+      delete process.env.CONTROL_PLANE_OUTBOX_WORKER_ENABLED;
+    } else {
+      process.env.CONTROL_PLANE_OUTBOX_WORKER_ENABLED = previousOutboxWorkerEnabled;
     }
   };
 }

@@ -15,7 +15,7 @@ const app = await NestFactory.createApplicationContext(WorkerModule, {
 app.enableShutdownHooks();
 
 const runner = app.get(WorkerRunner);
-runner.run(workerMode);
+await runner.run(workerMode);
 
 if (workerMode === "smoke") {
   await app.close();

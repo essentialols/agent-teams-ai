@@ -44,6 +44,9 @@ yarn-error.log*
 # TypeScript
 *.tsbuildinfo
 
+# Generated control-plane clients
+control-plane/packages/platform/database/src/generated/
+
 .pnpm-store/
 /package-lock.json
 notification_example/

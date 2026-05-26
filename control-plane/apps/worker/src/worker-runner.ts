@@ -1,5 +1,6 @@
 import { Inject, Injectable } from "@nestjs/common";
 
+import { OutboxWorkerService } from "@agent-teams-control-plane/features-outbox/interface/nest";
 import { ControlPlaneConfigService } from "@agent-teams-control-plane/platform-config";
 import {
   CONTROL_PLANE_LOGGER,
@@ -10,7 +11,8 @@ export type WorkerRunMode = "serve" | "smoke";
 
 export type WorkerRunResult = Readonly<{
   mode: WorkerRunMode;
-  status: "idle";
+  status: "idle" | "processed-once";
+  outboxSkipped: boolean;
 }>;
 
 @Injectable()
@@ -20,12 +22,14 @@ export class WorkerRunner {
   public constructor(
     @Inject(ControlPlaneConfigService)
     private readonly configService: ControlPlaneConfigService,
+    @Inject(OutboxWorkerService)
+    private readonly outboxWorker: OutboxWorkerService,
     @Inject(CONTROL_PLANE_LOGGER) logger: ControlPlaneLogger,
   ) {
     this.logger = logger.child("worker");
   }
 
-  public run(mode: WorkerRunMode): WorkerRunResult {
+  public async run(mode: WorkerRunMode): Promise<WorkerRunResult> {
     const summary = this.configService.getSafeSummary();
 
     this.logger.info("Worker booted", {
@@ -33,9 +37,12 @@ export class WorkerRunner {
       workerMode: mode,
     });
 
+    const outboxResult = await this.outboxWorker.runOnce();
+
     return {
       mode,
-      status: "idle",
+      outboxSkipped: outboxResult.skipped,
+      status: outboxResult.skipped ? "idle" : "processed-once",
     };
   }
 }

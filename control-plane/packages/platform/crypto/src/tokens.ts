@@ -1,0 +1,1 @@
+export const ENVELOPE_ENCRYPTION = Symbol("ENVELOPE_ENCRYPTION");

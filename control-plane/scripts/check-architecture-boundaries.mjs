@@ -10,6 +10,7 @@ const appsRoot = join(root, "apps");
 const packagesRoot = join(root, "packages");
 const featuresRoot = join(packagesRoot, "features");
 const sharedRoot = join(packagesRoot, "shared");
+const platformDatabaseRoot = join(packagesRoot, "platform", "database");
 const sourceExtensions = new Set([".ts", ".tsx", ".mts", ".cts"]);
 const boundaryLayerSegments = new Set(["domain", "application"]);
 const privateFeatureExportSegments = new Set(["application", "domain", "infrastructure"]);
@@ -105,16 +106,13 @@ const forbiddenSharedImports = [
   },
 ];
 
-const forbiddenPhaseOneDependencies = [
+const forbiddenPhaseDependencies = [
   { pattern: /^@nestjs\/config$/, reason: "Use framework-free config validation first" },
   {
     pattern: /^@octokit(?:\/.*)?$/,
     reason: "GitHub SDKs start in the GitHub connector phase",
   },
   { pattern: /^octokit$/, reason: "GitHub SDKs start in the GitHub connector phase" },
-  { pattern: /^@prisma\/client$/, reason: "Prisma starts in the persistence phase" },
-  { pattern: /^prisma$/, reason: "Prisma starts in the persistence phase" },
-  { pattern: /^pg$/, reason: "Database clients start in the persistence phase" },
   {
     pattern: /^bullmq$/,
     reason: "Queue SDKs start after outbox requirements are proven",
@@ -146,6 +144,19 @@ const forbiddenPhaseOneDependencies = [
   },
 ];
 
+const databaseDependencies = [
+  { pattern: /^@prisma\/client$/, reason: "Prisma Client belongs to platform database" },
+  {
+    pattern: /^@prisma\/adapter-pg$/,
+    reason: "Prisma adapter belongs to platform database",
+  },
+  {
+    pattern: /^pg$/,
+    reason: "pg belongs to platform database if raw driver access is needed",
+  },
+  { pattern: /^prisma$/, reason: "Prisma CLI belongs to the control-plane root" },
+];
+
 const violations = [];
 
 const allSourceFiles = await collectSourceFiles([appsRoot, packagesRoot]);
@@ -166,13 +177,25 @@ for (const manifestPath of packageManifestFiles) {
     }
   }
   for (const dependencyName of listDependencyNames(manifest)) {
-    const match = forbiddenPhaseOneDependencies.find((item) =>
+    const match = forbiddenPhaseDependencies.find((item) =>
       item.pattern.test(dependencyName),
     );
     if (match) {
       violations.push({
         file: manifestPath,
         message: `declares ${dependencyName}: ${match.reason}`,
+      });
+    }
+    const databaseDependencyMatch = databaseDependencies.find((item) =>
+      item.pattern.test(dependencyName),
+    );
+    if (
+      databaseDependencyMatch &&
+      !isAllowedDatabaseDependencyManifest(manifestPath, dependencyName)
+    ) {
+      violations.push({
+        file: manifestPath,
+        message: `declares ${dependencyName}: ${databaseDependencyMatch.reason}`,
       });
     }
   }
@@ -221,6 +244,24 @@ for (const file of allSourceFiles) {
         message: `imports ${imported}: feature infrastructure is private to its bounded context`,
       });
     }
+    if (isPrismaClientImport(imported) && !isAllowedDatabaseSourceFile(file)) {
+      violations.push({
+        file,
+        message: `imports ${imported}: Prisma belongs to platform database infrastructure`,
+      });
+    }
+  }
+  if (usesUnsafeRawSql(source)) {
+    violations.push({
+      file,
+      message: "uses unsafe raw SQL helper; use parameterized Prisma raw queries",
+    });
+  }
+  if (createsPrismaClient(source) && !isAllowedDatabaseSourceFile(file)) {
+    violations.push({
+      file,
+      message: "creates PrismaClient outside platform database infrastructure",
+    });
   }
   if (/\bforwardRef\s*\(/.test(source)) {
     violations.push({
@@ -321,7 +362,8 @@ async function collectDirectorySourceFiles(directory) {
     if (
       entry.name === "dist" ||
       entry.name === "node_modules" ||
-      entry.name === "coverage"
+      entry.name === "coverage" ||
+      entry.name === "generated"
     ) {
       continue;
     }
@@ -411,6 +453,36 @@ function listDependencyNames(manifest) {
 
 function isSharedPackageManifest(file) {
   return normalize(file) === join(sharedRoot, "package.json");
+}
+
+function isAllowedDatabaseDependencyManifest(file, dependencyName) {
+  const normalizedFile = normalize(file);
+  if (dependencyName === "prisma") {
+    return normalizedFile === join(root, "package.json");
+  }
+  return normalizedFile === join(platformDatabaseRoot, "package.json");
+}
+
+function isAllowedDatabaseSourceFile(file) {
+  const relativePath = relative(platformDatabaseRoot, normalize(file));
+  return (
+    relativePath === "" ||
+    (!relativePath.startsWith("..") &&
+      !relativePath.startsWith("/") &&
+      relativePath.startsWith("src"))
+  );
+}
+
+function isPrismaClientImport(imported) {
+  return /^@prisma\/client(?:\/.*)?$/.test(imported);
+}
+
+function usesUnsafeRawSql(source) {
+  return /\$queryRawUnsafe\b|\$executeRawUnsafe\b/.test(source);
+}
+
+function createsPrismaClient(source) {
+  return /\bnew\s+PrismaClient\s*\(/.test(source);
 }
 
 function isSharedProductionFile(file) {

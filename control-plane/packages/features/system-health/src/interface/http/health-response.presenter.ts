@@ -6,12 +6,14 @@ export type HealthHttpResponse = Readonly<{
   mode: HealthReport["mode"];
   uptimeSeconds: number;
   configuration: HealthReport["configuration"];
+  readiness: HealthReport["readiness"];
 }>;
 
 export function presentHealthReport(report: HealthReport): HealthHttpResponse {
   return {
     configuration: report.configuration,
     mode: report.mode,
+    readiness: report.readiness,
     service: report.service,
     status: report.status,
     uptimeSeconds: report.uptimeSeconds,

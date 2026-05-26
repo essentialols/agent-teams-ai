@@ -6,8 +6,20 @@
     "noEmit": false,
     "outDir": "dist",
     "paths": {
+      "@agent-teams-control-plane/features-outbox": [
+        "packages/features/outbox/dist/index.d.ts"
+      ],
+      "@agent-teams-control-plane/features-outbox/interface/nest": [
+        "packages/features/outbox/dist/interface/nest/index.d.ts"
+      ],
       "@agent-teams-control-plane/platform-config": [
         "packages/platform/config/dist/index.d.ts"
+      ],
+      "@agent-teams-control-plane/platform-database": [
+        "packages/platform/database/dist/index.d.ts"
+      ],
+      "@agent-teams-control-plane/platform-database/nest": [
+        "packages/platform/database/dist/nest/index.d.ts"
       ],
       "@agent-teams-control-plane/platform-logger": [
         "packages/platform/logger/dist/index.d.ts"

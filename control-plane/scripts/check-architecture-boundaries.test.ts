@@ -104,6 +104,49 @@ describe("check-architecture-boundaries", () => {
     });
   });
 
+  it("allows Prisma dependencies only in the database package or root CLI package", async () => {
+    await writeFeature("beta", {
+      dependencies: {
+        "@prisma/client": "7.8.0",
+      },
+      files: {
+        "src/index.ts": "export const beta = true;\n",
+      },
+    });
+
+    await expect(runArchitectureCheck()).rejects.toMatchObject({
+      stderr: expect.stringContaining("Prisma Client belongs to platform database"),
+    });
+  });
+
+  it("fails when production code uses unsafe Prisma raw SQL", async () => {
+    await writeFeature("beta", {
+      files: {
+        "src/index.ts": "export const beta = true;\n",
+        "src/infrastructure/repository.ts":
+          "export const run = (client: { $queryRawUnsafe(sql: string): unknown }) => client.$queryRawUnsafe('select 1');\n",
+      },
+    });
+
+    await expect(runArchitectureCheck()).rejects.toMatchObject({
+      stderr: expect.stringContaining("unsafe raw SQL helper"),
+    });
+  });
+
+  it("fails when features instantiate Prisma clients directly", async () => {
+    await writeFeature("beta", {
+      files: {
+        "src/index.ts": "export const beta = true;\n",
+        "src/infrastructure/repository.ts":
+          "class PrismaClient {}\nexport const client = new PrismaClient();\n",
+      },
+    });
+
+    await expect(runArchitectureCheck()).rejects.toMatchObject({
+      stderr: expect.stringContaining("creates PrismaClient outside platform database"),
+    });
+  });
+
   it("fails when shared production code imports NestJS", async () => {
     await writeSharedFile(
       "src/framework-leak.ts",

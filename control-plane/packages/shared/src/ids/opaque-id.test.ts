@@ -4,6 +4,7 @@ import { isErr, isOk } from "../result/result.js";
 
 import {
   parseAgentActionId,
+  parseExternalActionContentId,
   parseWorkspaceId,
   type AgentActionId,
   type WorkspaceId,
@@ -41,6 +42,15 @@ describe("opaque IDs", () => {
 
     expect(acceptWorkspace(workspace)).toBe("workspace-1");
     expect(acceptAction(action)).toBe("action-1");
+  });
+
+  it("parses external action content ids for persistence references", () => {
+    const result = parseExternalActionContentId("content-1");
+
+    expect(isOk(result)).toBe(true);
+    if (isOk(result)) {
+      expect(result.value).toBe("content-1");
+    }
   });
 });
 

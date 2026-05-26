@@ -10,6 +10,7 @@ export type DesktopClientId = OpaqueId<"DesktopClientId">;
 export type IntegrationConnectionId = OpaqueId<"IntegrationConnectionId">;
 export type AgentActionId = OpaqueId<"AgentActionId">;
 export type OutboxEventId = OpaqueId<"OutboxEventId">;
+export type ExternalActionContentId = OpaqueId<"ExternalActionContentId">;
 export type AuditEventId = OpaqueId<"AuditEventId">;
 
 export function parseOpaqueId<TBrand extends string>(
@@ -48,6 +49,12 @@ export function parseAgentActionId(value: unknown): Result<AgentActionId, SafeEr
 
 export function parseOutboxEventId(value: unknown): Result<OutboxEventId, SafeError> {
   return parseOpaqueId("OutboxEventId", value);
+}
+
+export function parseExternalActionContentId(
+  value: unknown,
+): Result<ExternalActionContentId, SafeError> {
+  return parseOpaqueId("ExternalActionContentId", value);
 }
 
 export function parseAuditEventId(value: unknown): Result<AuditEventId, SafeError> {

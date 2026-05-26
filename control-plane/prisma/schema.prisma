@@ -1,0 +1,121 @@
+generator client {
+  provider            = "prisma-client"
+  output              = "../packages/platform/database/src/generated/prisma"
+  moduleFormat        = "esm"
+  importFileExtension = "js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model OutboxEvent {
+  id                   String    @id @db.Uuid
+  eventType            String    @map("event_type")
+  eventVersion         Int       @map("event_version")
+  status               String
+  aggregateKind        String?   @map("aggregate_kind")
+  aggregateId          String?   @map("aggregate_id")
+  workspaceId          String?   @map("workspace_id")
+  idempotencyKey       String    @map("idempotency_key")
+  payloadJson          Json      @map("payload_json")
+  contentRefId         String?   @map("content_ref_id") @db.Uuid
+  contentIntegrityHash String?   @map("content_integrity_hash")
+  attempts             Int       @default(0)
+  maxAttempts          Int       @default(10) @map("max_attempts")
+  nextAttemptAt        DateTime  @map("next_attempt_at") @db.Timestamptz(6)
+  lockedBy             String?   @map("locked_by")
+  lockedUntil          DateTime? @map("locked_until") @db.Timestamptz(6)
+  claimToken           String?   @map("claim_token")
+  lastErrorCode        String?   @map("last_error_code")
+  lastErrorCategory    String?   @map("last_error_category")
+  lastErrorMessage     String?   @map("last_error_message")
+  lastErrorRetryable   Boolean?  @map("last_error_retryable")
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  completedAt          DateTime? @map("completed_at") @db.Timestamptz(6)
+  deadLetteredAt       DateTime? @map("dead_lettered_at") @db.Timestamptz(6)
+
+  @@unique([idempotencyKey], map: "outbox_events_idempotency_key_key")
+  @@index([status, nextAttemptAt], map: "outbox_events_status_next_attempt_at_idx")
+  @@index([workspaceId, createdAt], map: "outbox_events_workspace_created_at_idx")
+  @@index([contentRefId], map: "outbox_events_content_ref_id_idx")
+  @@map("outbox_events")
+}
+
+model ExternalActionContent {
+  id                         String    @id @db.Uuid
+  contentKind                String    @map("content_kind")
+  ciphertext                 Bytes?
+  encryptedDataKey           Bytes?    @map("encrypted_data_key")
+  dataKeyAlgorithm           String    @map("data_key_algorithm")
+  contentEncryptionAlgorithm String    @map("content_encryption_algorithm")
+  contentNonce               Bytes?    @map("content_nonce")
+  contentAuthTag             Bytes?    @map("content_auth_tag")
+  dataKeyNonce               Bytes?    @map("data_key_nonce")
+  dataKeyAuthTag             Bytes?    @map("data_key_auth_tag")
+  ciphertextSha256           String    @map("ciphertext_sha256")
+  keyRef                     String    @map("key_ref")
+  expiresAt                  DateTime  @map("expires_at") @db.Timestamptz(6)
+  deletedAt                  DateTime? @map("deleted_at") @db.Timestamptz(6)
+  shreddedAt                 DateTime? @map("shredded_at") @db.Timestamptz(6)
+  createdAt                  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([expiresAt], map: "external_action_contents_expires_at_idx")
+  @@index([deletedAt], map: "external_action_contents_deleted_at_idx")
+  @@index([shreddedAt], map: "external_action_contents_shredded_at_idx")
+  @@map("external_action_contents")
+}
+
+model ExternalActionContentKeyRef {
+  keyRef     String    @id @map("key_ref")
+  keyVersion Int       @map("key_version")
+  algorithm  String
+  status     String
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  retiredAt  DateTime? @map("retired_at") @db.Timestamptz(6)
+
+  @@map("external_action_content_key_refs")
+}
+
+model DeadLetterEvent {
+  id               String   @id @db.Uuid
+  outboxEventId    String   @unique(map: "dead_letter_events_outbox_event_id_key") @map("outbox_event_id") @db.Uuid
+  eventType        String   @map("event_type")
+  eventVersion     Int      @map("event_version")
+  finalErrorJson   Json     @map("final_error_json")
+  attempts         Int
+  payloadSummary   Json     @map("payload_summary_json")
+  contentRefId     String?  @map("content_ref_id") @db.Uuid
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("dead_letter_events")
+}
+
+model AuditEvent {
+  id               String   @id @db.Uuid
+  eventType        String   @map("event_type")
+  actorKind        String   @map("actor_kind")
+  actorId          String?  @map("actor_id")
+  workspaceId      String?  @map("workspace_id")
+  subjectKind      String?  @map("subject_kind")
+  subjectId        String?  @map("subject_id")
+  safeMetadataJson Json     @map("safe_metadata_json")
+  correlationId    String?  @map("correlation_id")
+  requestId        String?  @map("request_id")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([workspaceId, createdAt], map: "audit_events_workspace_created_at_idx")
+  @@map("audit_events")
+}
+
+model DistributedLock {
+  name         String   @id
+  ownerId      String   @map("owner_id")
+  lockedUntil  DateTime @map("locked_until") @db.Timestamptz(6)
+  fencingToken BigInt   @map("fencing_token")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@map("distributed_locks")
+}

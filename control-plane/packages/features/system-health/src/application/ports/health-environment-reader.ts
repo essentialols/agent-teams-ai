@@ -8,8 +8,14 @@ export type HealthEnvironment = Readonly<{
   publicBaseUrlConfigured: boolean;
   githubRestApiVersionConfigured: boolean;
   uptimeSeconds: number;
+  database: Readonly<{
+    enabled: boolean;
+    status: "disabled" | "ready" | "unavailable";
+    migrationStatus: "not-checked";
+    reasonCode?: string;
+  }>;
 }>;
 
 export interface HealthEnvironmentReader {
-  read(): HealthEnvironment;
+  read(): Promise<HealthEnvironment>;
 }

@@ -8,6 +8,8 @@ const env = {
   ...process.env,
   CONTROL_PLANE_HTTP_PORT: String(port),
   CONTROL_PLANE_MODE: "local-disabled",
+  CONTROL_PLANE_OUTBOX_WORKER_ENABLED: "false",
+  CONTROL_PLANE_PERSISTENCE_ENABLED: "false",
 };
 const command = useDist ? process.execPath : "tsx";
 const args = useDist

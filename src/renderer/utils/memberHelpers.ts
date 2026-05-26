@@ -1380,6 +1380,7 @@ export function buildMemberLaunchPresentation({
   const allowBootstrapConfirmedVisualPromotion =
     bootstrapConfirmedProvisionedButNotAlive &&
     !hasSpawnRuntimeErrorDiagnostic &&
+    !hasRuntimeErrorDiagnostic &&
     !hasStoppedRuntimeEvidence;
   const useBootstrapConfirmedRuntimeAlive =
     allowBootstrapConfirmedVisualPromotion &&

@@ -948,10 +948,10 @@ describe('memberHelpers spawn-aware presence', () => {
         isTeamProvisioning: false,
       })
     ).toMatchObject({
-      presenceLabel: 'stale runtime',
-      launchVisualState: 'stale_runtime',
-      launchStatusLabel: 'stale runtime',
-      spawnBadgeLabel: null,
+      presenceLabel: 'spawn failed',
+      launchVisualState: 'error',
+      launchStatusLabel: 'failed',
+      spawnBadgeLabel: 'error',
     });
   });
 

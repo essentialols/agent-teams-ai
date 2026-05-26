@@ -110,6 +110,60 @@ describe("ProcessOutboxBatchUseCase", () => {
 
     expect(result).toMatchObject({ deadLettered: 1, retried: 0 });
   });
+
+  it("dead-letters retry results that carry non-retryable safe errors", async () => {
+    const calls: string[] = [];
+    const repository = createRepository(calls);
+    const handlers: OutboxHandlerRegistry = {
+      getHandler: () => ({
+        handle: async () => ({
+          error: createSafeError({
+            category: "validation",
+            code: "TEST_NOT_RETRYABLE",
+            message: "not retryable",
+            retryable: false,
+          }),
+          kind: "retry",
+        }),
+      }),
+    };
+    const useCase = new ProcessOutboxBatchUseCase(repository, handlers);
+
+    const result = await useCase.execute({ batch: [claimedEvent()] });
+
+    expect(result).toMatchObject({ deadLettered: 1, retried: 0 });
+    expect(calls).toEqual(["dead-letter"]);
+  });
+
+  it("sanitizes raw retry result errors as retryable handler failures", async () => {
+    const calls: string[] = [];
+    const repository = createRepository(calls);
+    let storedError: unknown;
+    repository.markFailedForRetry = async (input) => {
+      calls.push("retry");
+      storedError = input.safeError;
+      return "updated";
+    };
+    const handlers: OutboxHandlerRegistry = {
+      getHandler: () => ({
+        handle: async () => ({
+          error: new Error("raw retry result detail"),
+          kind: "retry",
+        }),
+      }),
+    };
+    const useCase = new ProcessOutboxBatchUseCase(repository, handlers);
+
+    const result = await useCase.execute({ batch: [claimedEvent()] });
+
+    expect(result).toMatchObject({ deadLettered: 0, retried: 1 });
+    expect(calls).toEqual(["retry"]);
+    expect(storedError).toMatchObject({
+      code: "CONTROL_PLANE_OUTBOX_HANDLER_FAILED",
+      retryable: true,
+    });
+    expect(JSON.stringify(storedError)).not.toContain("raw retry result detail");
+  });
 });
 
 function createRepository(calls: string[]): OutboxRepository {

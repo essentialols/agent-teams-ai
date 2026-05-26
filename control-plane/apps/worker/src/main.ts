@@ -24,7 +24,7 @@ if (workerMode === "smoke") {
   await waitForShutdownSignal();
   const result = await runner.stop(workerRun);
   if (result === undefined) {
-    process.exitCode = 1;
+    await closeAppAndExitAfterShutdownTimeout(app);
   }
   await app.close();
 }
@@ -40,4 +40,22 @@ async function waitForShutdownSignal(): Promise<void> {
     process.once("SIGINT", resolveOnce);
     process.once("SIGTERM", resolveOnce);
   });
+}
+
+async function closeAppAndExitAfterShutdownTimeout(appToClose: {
+  close(): Promise<void>;
+}): Promise<never> {
+  process.exitCode = 1;
+  const forceExitTimer = setTimeout(() => {
+    process.exit(1);
+  }, 1_000);
+  forceExitTimer.unref();
+
+  try {
+    await appToClose.close();
+  } finally {
+    clearTimeout(forceExitTimer);
+  }
+
+  process.exit(1);
 }

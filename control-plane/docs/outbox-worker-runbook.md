@@ -13,7 +13,9 @@ CONTROL_PLANE_WORKER_SHUTDOWN_TIMEOUT_MS=30000
 ```
 
 Disables new outbox claims while leaving the API and DB available.
-Shutdown waits for in-flight fake handlers only up to the configured timeout.
+Shutdown waits for in-flight fake handlers only up to the configured timeout. If
+the timeout elapses, the worker closes the Nest application context and exits
+non-zero instead of waiting indefinitely on active handles.
 
 ## Claim Safety
 

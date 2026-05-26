@@ -89,11 +89,21 @@ export class ProcessOutboxBatchUseCase {
           : "stale-claim";
       }
       if (result.kind === "retry") {
+        const safeError = toHandlerRetrySafeError(result.error);
+        if (!safeError.retryable) {
+          return (await this.repository.markDeadLettered({
+            event,
+            safeError,
+          })) === "updated"
+            ? "dead-lettered"
+            : "stale-claim";
+        }
+
         return mapRetryMutationResult(
           await this.repository.markFailedForRetry({
             claimToken: event.claimToken,
             eventId: event.id,
-            safeError: toSafeError(result.error),
+            safeError,
             workerId: event.lockedBy,
           }),
         );
@@ -105,7 +115,7 @@ export class ProcessOutboxBatchUseCase {
         ? "dead-lettered"
         : "stale-claim";
     } catch (error) {
-      const safeError = toHandlerFailureSafeError(error);
+      const safeError = toHandlerRetrySafeError(error);
       if (!safeError.retryable) {
         return (await this.repository.markDeadLettered({
           event,
@@ -136,11 +146,15 @@ function mapRetryMutationResult(
   return result;
 }
 
-function toHandlerFailureSafeError(error: unknown): SafeError {
+function toHandlerRetrySafeError(error: unknown): SafeError {
   if (isSafeError(error)) {
     return toSafeError(error);
   }
 
+  return createRetryableHandlerFailureSafeError();
+}
+
+function createRetryableHandlerFailureSafeError(): SafeError {
   return createSafeError({
     category: "internal",
     code: "CONTROL_PLANE_OUTBOX_HANDLER_FAILED",

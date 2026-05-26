@@ -58,6 +58,7 @@ GitHub user access tokens:
 - are not needed for posting agent comments in V1
 - must not be exposed to desktop, agents, local MCP, or runtime subprocesses
 - must not be persisted in V1 unless a future ADR adds retention, refresh, revocation, and audit rules
+- refresh tokens returned by claim OAuth must also be discarded in V1
 - OAuth authorization `state`, PKCE verifier, device codes, and user codes are short-lived secrets or secret-adjacent values
 - GitHub App OAuth client secret must stay server-side only
 
@@ -235,7 +236,8 @@ Pairing codes:
 
 - short-lived
 - single-use
-- stored hashed if practical
+- stored only as keyed hashes
+- protected by attempt limits and safe lockout
 - audited on successful pairing
 
 GitHub claim OAuth state:
@@ -244,7 +246,10 @@ GitHub claim OAuth state:
 - single-use
 - bound to pending installation claim
 - validates exact callback flow before exchanging code
+- uses `S256` PKCE, not `plain`
+- PKCE verifier is encrypted or stored through a short-lived secret adapter
 - PKCE verifier is never logged
+- refresh token, if returned, is discarded and not persisted
 
 Hosted setup sessions:
 
@@ -253,6 +258,17 @@ Hosted setup sessions:
 - resumable by authenticated desktop client after restart
 - setup session id is correlation data, not authentication
 - deep links and hosted completion pages must not contain OAuth codes, PKCE verifiers, desktop tokens, GitHub tokens, or client secrets
+
+Desktop client tokens:
+
+- returned only once from bootstrap, pairing, or rotation responses
+- stored server-side only as purpose-separated keyed hashes
+- accepted only through `Authorization: Bearer`, never query parameters
+- must be stored by desktop in OS-provided secure storage where available
+- must not be written into project files, team logs, shell env dumps, crash
+  reports, agent prompts, or reusable runtime artifacts
+- local development plaintext fallback, if ever added, must be explicit and
+  disabled for production builds
 
 Action idempotency keys:
 
@@ -338,7 +354,8 @@ Initial retention expectations:
 - outbox/dead-letter events: retained for operational recovery, with encrypted external action content only when required for retry
 - dispatched external action content: deleted or cryptographically shredded after successful dispatch and result persistence
 - desktop sessions/tokens: revocable, expired sessions cleaned up
-- unclaimed GitHub installations: expire or require periodic cleanup
+- untrusted unclaimed GitHub callback evidence: expire or require periodic
+  cleanup
 
 Exact retention windows can be configured later, but adding forbidden data requires an ADR first.
 

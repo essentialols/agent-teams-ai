@@ -37,6 +37,13 @@ export type ControlPlaneConfig = Readonly<{
     shutdownTimeoutMs: number;
     maxAttempts: number;
   }>;
+  featureGates: Readonly<{
+    desktopBootstrapEnabled: boolean;
+    desktopPairingEnabled: boolean;
+    githubSetupEnabled: boolean;
+    githubClaimOAuthEnabled: boolean;
+    githubUnclaimedCallbackRecordingEnabled: boolean;
+  }>;
   retention: Readonly<{
     completedOutboxDays?: number;
     deadLetterDays?: number;
@@ -83,6 +90,7 @@ export type SafeControlPlaneConfigSummary = Readonly<{
     shutdownTimeoutMs: number;
     maxAttempts: number;
   }>;
+  featureGates: ControlPlaneConfig["featureGates"];
   retention: Readonly<{
     completedOutboxConfigured: boolean;
     deadLetterConfigured: boolean;
@@ -139,6 +147,9 @@ const rawConfigSchema = z.object({
   CONTROL_PLANE_DEAD_LETTER_RETENTION_DAYS: optionalPositiveInteger,
   CONTROL_PLANE_ENCRYPTION_MASTER_KEY: z.string().min(1).optional(),
   CONTROL_PLANE_EXTERNAL_CONTENT_RETENTION_DAYS: optionalPositiveInteger,
+  CONTROL_PLANE_DESKTOP_BOOTSTRAP_ENABLED: optionalBoolean,
+  CONTROL_PLANE_DESKTOP_PAIRING_ENABLED: optionalBoolean,
+  CONTROL_PLANE_GITHUB_CLAIM_OAUTH_ENABLED: optionalBoolean,
   CONTROL_PLANE_GITHUB_APP_ID: z.string().min(1).optional(),
   CONTROL_PLANE_GITHUB_APP_SLUG: z.string().min(1).optional(),
   CONTROL_PLANE_GITHUB_OAUTH_CLIENT_ID: z.string().min(1).optional(),
@@ -148,6 +159,8 @@ const rawConfigSchema = z.object({
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
+  CONTROL_PLANE_GITHUB_SETUP_ENABLED: optionalBoolean,
+  CONTROL_PLANE_GITHUB_UNCLAIMED_CALLBACK_RECORDING_ENABLED: optionalBoolean,
   CONTROL_PLANE_GITHUB_WEBHOOK_SECRET: z.string().min(1).optional(),
   CONTROL_PLANE_HTTP_HOST: z.string().min(1).default("127.0.0.1"),
   CONTROL_PLANE_HTTP_PORT: z.coerce.number().int().min(1).max(65535).default(3030),
@@ -221,6 +234,7 @@ export function loadControlPlaneConfig(
   const secrets = buildSecretConfig(raw);
   const database = buildDatabaseConfig(raw);
   const outbox = buildOutboxConfig(raw, outboxWorkerEnabled);
+  const featureGates = buildFeatureGateConfig(raw);
   const retention = buildRetentionConfig(raw);
 
   const configBase = {
@@ -228,6 +242,7 @@ export function loadControlPlaneConfig(
     database,
     environment: raw.NODE_ENV,
     github,
+    featureGates,
     http: {
       host: raw.CONTROL_PLANE_HTTP_HOST,
       port: raw.CONTROL_PLANE_HTTP_PORT,
@@ -265,6 +280,7 @@ export function getSafeConfigSummary(
       urlConfigured: config.database.url !== undefined,
     },
     environment: config.environment,
+    featureGates: config.featureGates,
     github: {
       appIdConfigured: config.github.appId !== undefined,
       appSlugConfigured: config.github.appSlug !== undefined,
@@ -360,6 +376,26 @@ function validateCrossFieldConfig(
     });
   }
 
+  if (phase5FeatureGateEnabled(raw) && !flags.persistenceEnabled) {
+    issues.push({
+      code: "invalid",
+      message: "Phase 5 control-plane feature gates require persistence.",
+      path: ["CONTROL_PLANE_PERSISTENCE_ENABLED"],
+    });
+  }
+
+  if (
+    raw.CONTROL_PLANE_GITHUB_CLAIM_OAUTH_ENABLED === true &&
+    raw.CONTROL_PLANE_GITHUB_SETUP_ENABLED !== true
+  ) {
+    issues.push({
+      code: "invalid",
+      message:
+        "CONTROL_PLANE_GITHUB_CLAIM_OAUTH_ENABLED requires CONTROL_PLANE_GITHUB_SETUP_ENABLED.",
+      path: ["CONTROL_PLANE_GITHUB_CLAIM_OAUTH_ENABLED"],
+    });
+  }
+
   if (flags.persistenceEnabled && raw.CONTROL_PLANE_ENCRYPTION_MASTER_KEY !== undefined) {
     const decoded = decodeBase64(raw.CONTROL_PLANE_ENCRYPTION_MASTER_KEY);
     if (decoded === undefined || decoded.byteLength !== 32) {
@@ -371,8 +407,30 @@ function validateCrossFieldConfig(
       });
     }
   }
+  if (
+    raw.NODE_ENV === "production" &&
+    raw.CONTROL_PLANE_MODE !== "local-disabled" &&
+    raw.CONTROL_PLANE_PUBLIC_BASE_URL !== undefined &&
+    !raw.CONTROL_PLANE_PUBLIC_BASE_URL.startsWith("https://")
+  ) {
+    issues.push({
+      code: "invalid",
+      message: "CONTROL_PLANE_PUBLIC_BASE_URL must use https in production hosted modes.",
+      path: ["CONTROL_PLANE_PUBLIC_BASE_URL"],
+    });
+  }
 
   return issues;
+}
+
+function phase5FeatureGateEnabled(raw: RawConfig): boolean {
+  return (
+    raw.CONTROL_PLANE_DESKTOP_BOOTSTRAP_ENABLED === true ||
+    raw.CONTROL_PLANE_DESKTOP_PAIRING_ENABLED === true ||
+    raw.CONTROL_PLANE_GITHUB_SETUP_ENABLED === true ||
+    raw.CONTROL_PLANE_GITHUB_CLAIM_OAUTH_ENABLED === true ||
+    raw.CONTROL_PLANE_GITHUB_UNCLAIMED_CALLBACK_RECORDING_ENABLED === true
+  );
 }
 
 function decodeBase64(value: string): Buffer | undefined {
@@ -415,6 +473,17 @@ function buildOutboxConfig(
     pollIntervalMs: raw.CONTROL_PLANE_OUTBOX_POLL_INTERVAL_MS,
     shutdownTimeoutMs: raw.CONTROL_PLANE_WORKER_SHUTDOWN_TIMEOUT_MS,
     workerEnabled,
+  };
+}
+
+function buildFeatureGateConfig(raw: RawConfig): ControlPlaneConfig["featureGates"] {
+  return {
+    desktopBootstrapEnabled: raw.CONTROL_PLANE_DESKTOP_BOOTSTRAP_ENABLED ?? false,
+    desktopPairingEnabled: raw.CONTROL_PLANE_DESKTOP_PAIRING_ENABLED ?? false,
+    githubClaimOAuthEnabled: raw.CONTROL_PLANE_GITHUB_CLAIM_OAUTH_ENABLED ?? false,
+    githubSetupEnabled: raw.CONTROL_PLANE_GITHUB_SETUP_ENABLED ?? false,
+    githubUnclaimedCallbackRecordingEnabled:
+      raw.CONTROL_PLANE_GITHUB_UNCLAIMED_CALLBACK_RECORDING_ENABLED ?? false,
   };
 }
 

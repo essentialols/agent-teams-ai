@@ -16,6 +16,7 @@ describe("WorkerRunner", () => {
           revisionConfigured: false,
         },
         environment: "test",
+        featureGates: disabledFeatureGates(),
         github: {
           appIdConfigured: false,
           appSlugConfigured: false,
@@ -150,6 +151,7 @@ function createConfigService(input: {
         urlConfigured: false,
       },
       environment: "test",
+      featureGates: disabledFeatureGates(),
       github: {
         appIdConfigured: false,
         appSlugConfigured: false,
@@ -179,6 +181,16 @@ function createConfigService(input: {
       },
     }),
   } satisfies Pick<ControlPlaneConfigService, "getSafeSummary">;
+}
+
+function disabledFeatureGates() {
+  return {
+    desktopBootstrapEnabled: false,
+    desktopPairingEnabled: false,
+    githubClaimOAuthEnabled: false,
+    githubSetupEnabled: false,
+    githubUnclaimedCallbackRecordingEnabled: false,
+  };
 }
 
 function createSilentLogger(

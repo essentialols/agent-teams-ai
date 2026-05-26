@@ -15,6 +15,24 @@
       "@agent-teams-control-plane/features-outbox/interface/nest": [
         "packages/features/outbox/dist/interface/nest/index.d.ts"
       ],
+      "@agent-teams-control-plane/features-workspace-identity": [
+        "packages/features/workspace-identity/dist/index.d.ts"
+      ],
+      "@agent-teams-control-plane/features-workspace-identity/interface/nest": [
+        "packages/features/workspace-identity/dist/interface/nest/index.d.ts"
+      ],
+      "@agent-teams-control-plane/features-integration-connections": [
+        "packages/features/integration-connections/dist/index.d.ts"
+      ],
+      "@agent-teams-control-plane/features-integration-connections/interface/nest": [
+        "packages/features/integration-connections/dist/interface/nest/index.d.ts"
+      ],
+      "@agent-teams-control-plane/features-github-installation-setup": [
+        "packages/features/github-installation-setup/dist/index.d.ts"
+      ],
+      "@agent-teams-control-plane/features-github-installation-setup/interface/nest": [
+        "packages/features/github-installation-setup/dist/interface/nest/index.d.ts"
+      ],
       "@agent-teams-control-plane/platform-api": [
         "packages/platform/api/dist/index.d.ts"
       ],

@@ -55,7 +55,10 @@ Required decisions:
 - GitHub installation claim requires provider-side authority verification, not setup URL `installation_id` alone
 - GitHub user access tokens used for claim verification are not persisted in V1
 - GitHub App client secret remains hosted control-plane secret only
-- GitHub claim OAuth uses short-lived state and PKCE
+- GitHub claim OAuth uses hosted web application flow, short-lived state, and
+  `S256` PKCE
+- GitHub device flow is deferred unless a future ADR defines server-side claim
+  brokerage without exposing user tokens to desktop
 
 Deliverables:
 
@@ -275,7 +278,8 @@ Workspace
 DesktopClient
 IntegrationConnection
 AgentActionRequest
-GitHubInstallation
+GitHubSetupSession
+GitHubInstallationClaim
 ```
 
 Acceptance criteria:
@@ -302,37 +306,47 @@ Approximate change size:
 ~1200-2200 lines
 ```
 
-## Phase 5 - identity-access And desktop-pairing
+## Phase 5 - workspace-bound GitHub installation
+
+Detailed plan:
+[Phase 5 Workspace-Bound GitHub Installation Plan](phase-5-workspace-bound-github-installation-plan.md)
+
+The detailed plan is the canonical Phase 5 scope. It keeps agent action
+envelopes, GitHub comments, installation token issuance, and target enablement
+out of Phase 5.
 
 Goals:
 
 - introduce workspace identity
 - introduce desktop client identity
-- introduce external account identity link for provider claim flows
+- introduce verified GitHub App installation claim flow
 - implement short-lived pairing code
 - implement revocable desktop client token
 - implement resumable hosted setup session model for desktop-started integrations
-- implement trusted desktop/runtime action envelope shape
-- represent GitHub setup state ownership even before GitHub connector side effects
+- bind a verified GitHub App installation to a workspace
+- snapshot repository availability without granting target authorization
 
 Feature packages:
 
 ```text
-packages/features/identity-access
-packages/features/desktop-pairing
+packages/features/workspace-identity
+packages/features/integration-connections
+packages/features/github-installation-setup
 ```
 
 Use cases:
 
+- `BootstrapWorkspace`
 - `StartDesktopPairing`
 - `CompleteDesktopPairing`
 - `RotateDesktopClientToken`
 - `RevokeDesktopClient`
 - `ValidateDesktopClientSession`
-- `StartHostedIntegrationSetupSession`
-- `GetHostedIntegrationSetupSession`
-- `CancelHostedIntegrationSetupSession`
-- `LinkExternalAccountIdentity` later, when GitHub claim flow is implemented
+- `StartGitHubInstallationSetup`
+- `HandleGitHubSetupCallback`
+- `StartGitHubClaimOAuth`
+- `CompleteGitHubClaimOAuth`
+- `GetGitHubSetupStatus`
 
 Security rules:
 
@@ -345,6 +359,8 @@ Security rules:
 - paired desktop identity does not prove GitHub organization or repository authority
 - setup session id is correlation data, not authentication
 - hosted setup sessions expire and can be cancelled
+- setup URL `installation_id` is untrusted until GitHub user-token verification
+- repository availability is not target authorization
 
 Acceptance criteria:
 
@@ -352,27 +368,28 @@ Acceptance criteria:
 - integration tests for token validation
 - route tests for pairing endpoints
 - audit events for pairing complete and revoke
-- action envelope rejects free-form identity payloads that do not match schema
-- old/rotated desktop token cannot submit new external actions
-- GitHub installation binding cannot be completed with desktop token alone
+- old/rotated desktop token cannot start setup, pairing, or status flows
+- GitHub installation binding cannot be completed with desktop token or
+  `installation_id` alone
 - desktop can resume active setup session after app restart
 - expired/cancelled setup session cannot become connected later
+- repository availability snapshots use immutable GitHub repository ids
 
 Approximate change size:
 
 ```text
-🎯 9   🛡️ 9   🧠 7
-~1200-2200 lines
+🎯 10   🛡️ 10   🧠 7
+~2500-4000 lines
 ```
 
 ## Phase 6 - integration-registry
 
 Goals:
 
-- introduce generic integration model
+- introduce generic integration capability and target binding model
 - define capabilities
 - define external targets
-- bind workspace targets to integration connections
+- bind workspace targets to Phase 5 integration connections
 
 Feature package:
 
@@ -390,7 +407,6 @@ ExternalTarget = github_repository | github_pull_request | messenger_channel
 
 Use cases:
 
-- `RegisterIntegrationConnection`
 - `SetIntegrationCapabilityState`
 - `BindExternalTarget`
 - `ResolveGitHubTargetBinding`
@@ -401,6 +417,8 @@ Use cases:
 
 Acceptance criteria:
 
+- integration-registry does not own or duplicate `IntegrationConnection` rows
+- connection state is read through `integration-connections` public ports
 - GitHub-specific data does not leak into generic registry model
 - capability resolver can answer "can this workspace post PR comments?"
 - capability states include unclaimed, pending_claim, connected, suspended, permission_missing, target_not_enabled
@@ -469,26 +487,25 @@ Approximate change size:
 ~1500-2600 lines
 ```
 
-## Phase 8 - github-app Foundation
+## Phase 8 - github-runtime Foundation
+
+Build on Phase 5 workspace-bound installation ownership. Do not reimplement
+setup callbacks, claim OAuth, or workspace binding here.
 
 Goals:
 
-- implement GitHub App installation setup callback
-- implement signed setup state validation
-- implement unclaimed installation state for installs started from GitHub without desktop state
-- implement pending installation claim state for setup URL redirects
-- implement GitHub user authorization verification for claim completion
-- implement claim OAuth state and PKCE validation
 - implement webhook signature verification
 - implement webhook normalization
-- implement installation/repository sync
+- implement installation/repository change sync for already-bound connections
 - implement installation token issuer
 - implement scoped token request policy by target repository and permission set
+- expose GitHub runtime health/readiness for bound installations
+- map GitHub installation suspension/deletion to connection state
 
 Feature package:
 
 ```text
-packages/features/github-app
+packages/features/github-runtime
 ```
 
 Platform package:
@@ -499,15 +516,11 @@ packages/platform/github-sdk
 
 Use cases:
 
-- `HandleGitHubAppSetup`
-- `StartGitHubInstallationClaim`
-- `CompleteGitHubInstallationClaim`
-- `StartGitHubClaimOAuth`
-- `HandleGitHubClaimOAuthCallback`
 - `NormalizeGitHubWebhook`
 - `ProcessGitHubInstallationEvent`
 - `SyncGitHubInstallationRepositories`
 - `IssueGitHubRepositoryToken`
+- `GetGitHubRuntimeHealth`
 
 Security rules:
 
@@ -517,10 +530,11 @@ Security rules:
 - app suspended/deleted blocks actions
 - webhook verification uses raw request body and `X-Hub-Signature-256`
 - installation tokens are not persisted and are scoped to exact target repository where possible
-- setup URL `installation_id` is treated as untrusted until verified by GitHub-side authority check
-- GitHub user access token used for claim verification is not persisted in V1
-- GitHub App client secret is only read by server-side OAuth adapter
-- OAuth callback validates `state`, exact redirect URI assumptions, and PKCE verifier
+- installation token issuer accepts only a verified Phase 5 connection id plus a
+  Phase 6 target binding
+- GitHub user access tokens remain out of this phase
+- webhook payload can update only an already-bound connection for the matching
+  installation id
 
 Acceptance criteria:
 
@@ -529,27 +543,26 @@ Acceptance criteria:
 - installation deleted/suspended updates state
 - repo rename keeps immutable id authority
 - private key never appears in logs
-- setup state is single-use and expires
-- unclaimed installation cannot post comments
-- pending claim cannot bind installation without GitHub user authorization verification
-- repository already bound to another workspace fails closed
 - missing webhook secret fails readiness/startup for hosted GitHub mode
-- missing GitHub OAuth client secret fails readiness/startup for hosted claim mode
+- missing private key fails readiness/startup for token issuer mode
 - expired installation token retry remints token without duplicating side effect
-- OAuth-during-install is rejected by config/docs unless a future ADR switches to callback-only onboarding
+- webhook for unknown/unbound installation cannot create a connection
+- installation token is narrowed to repository id and permission set when target
+  repository is known
+- token issuer does not run before Phase 6 target authorization succeeds
 
 Approximate change size:
 
 ```text
-🎯 9   🛡️ 10   🧠 8
-~1800-3200 lines
+🎯 9   🛡️ 10   🧠 7
+~1200-2400 lines
 ```
 
 ## Phase 9 - GitHub Agent Comments V1
 
 Goals:
 
-- connect `agent-actions` to `github-app`
+- connect `agent-actions` to `github-runtime`
 - implement GitHub issue comment
 - implement GitHub PR top-level comment
 - render agent attribution card

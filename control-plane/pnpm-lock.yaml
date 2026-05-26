@@ -44,12 +44,21 @@ importers:
       '@agent-teams-control-plane/features-external-action-content':
         specifier: workspace:*
         version: link:../../packages/features/external-action-content
+      '@agent-teams-control-plane/features-github-installation-setup':
+        specifier: workspace:*
+        version: link:../../packages/features/github-installation-setup
+      '@agent-teams-control-plane/features-integration-connections':
+        specifier: workspace:*
+        version: link:../../packages/features/integration-connections
       '@agent-teams-control-plane/features-outbox':
         specifier: workspace:*
         version: link:../../packages/features/outbox
       '@agent-teams-control-plane/features-system-health':
         specifier: workspace:*
         version: link:../../packages/features/system-health
+      '@agent-teams-control-plane/features-workspace-identity':
+        specifier: workspace:*
+        version: link:../../packages/features/workspace-identity
       '@agent-teams-control-plane/platform-api':
         specifier: workspace:*
         version: link:../../packages/platform/api
@@ -129,6 +138,45 @@ importers:
         specifier: 11.1.24
         version: 11.1.24(reflect-metadata@0.2.2)(rxjs@7.8.2)
 
+  packages/features/github-installation-setup:
+    dependencies:
+      '@agent-teams-control-plane/features-integration-connections':
+        specifier: workspace:*
+        version: link:../integration-connections
+      '@agent-teams-control-plane/features-workspace-identity':
+        specifier: workspace:*
+        version: link:../workspace-identity
+      '@agent-teams-control-plane/platform-config':
+        specifier: workspace:*
+        version: link:../../platform/config
+      '@agent-teams-control-plane/platform-crypto':
+        specifier: workspace:*
+        version: link:../../platform/crypto
+      '@agent-teams-control-plane/platform-database':
+        specifier: workspace:*
+        version: link:../../platform/database
+      '@agent-teams-control-plane/shared':
+        specifier: workspace:*
+        version: link:../../shared
+      '@nestjs/common':
+        specifier: 11.1.24
+        version: 11.1.24(reflect-metadata@0.2.2)(rxjs@7.8.2)
+
+  packages/features/integration-connections:
+    dependencies:
+      '@agent-teams-control-plane/features-workspace-identity':
+        specifier: workspace:*
+        version: link:../workspace-identity
+      '@agent-teams-control-plane/platform-database':
+        specifier: workspace:*
+        version: link:../../platform/database
+      '@agent-teams-control-plane/shared':
+        specifier: workspace:*
+        version: link:../../shared
+      '@nestjs/common':
+        specifier: 11.1.24
+        version: 11.1.24(reflect-metadata@0.2.2)(rxjs@7.8.2)
+
   packages/features/outbox:
     dependencies:
       '@agent-teams-control-plane/platform-config':
@@ -152,6 +200,24 @@ importers:
       '@agent-teams-control-plane/platform-config':
         specifier: workspace:*
         version: link:../../platform/config
+      '@agent-teams-control-plane/platform-database':
+        specifier: workspace:*
+        version: link:../../platform/database
+      '@agent-teams-control-plane/shared':
+        specifier: workspace:*
+        version: link:../../shared
+      '@nestjs/common':
+        specifier: 11.1.24
+        version: 11.1.24(reflect-metadata@0.2.2)(rxjs@7.8.2)
+
+  packages/features/workspace-identity:
+    dependencies:
+      '@agent-teams-control-plane/platform-config':
+        specifier: workspace:*
+        version: link:../../platform/config
+      '@agent-teams-control-plane/platform-crypto':
+        specifier: workspace:*
+        version: link:../../platform/crypto
       '@agent-teams-control-plane/platform-database':
         specifier: workspace:*
         version: link:../../platform/database

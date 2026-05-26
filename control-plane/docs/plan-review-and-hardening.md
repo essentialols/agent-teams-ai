@@ -67,11 +67,11 @@ Correct rule:
 Weak assumption:
 
 - GitHub setup callback can always bind installation to the right workspace.
-- signed setup state is enough to trust the `installation_id`.
+- setup state is enough to trust the `installation_id`.
 
 Real cases:
 
-- user starts install from desktop with signed state
+- user starts install from desktop with opaque setup state
 - user starts install from GitHub App page without state
 - org admin installs app but desktop user is not authorized to bind that org
 - setup callback arrives twice
@@ -80,8 +80,8 @@ Real cases:
 
 Required approach:
 
-- signed setup state for happy path
-- unclaimed installation state for no-state installs
+- opaque setup state for happy path
+- untrusted unclaimed callback evidence for no-state installs
 - pending claim state after setup URL callback
 - GitHub user authorization verification before binding installation to workspace
 - explicit claim flow before repository actions are allowed
@@ -275,7 +275,7 @@ Required approach:
 
 - introduce a pending installation claim state
 - require GitHub-side verification before binding targets
-- discard user access token after claim verification in V1
+- discard user access token and refresh token after claim verification in V1
 - make "claim verification not completed" a first-class integration state in desktop UI/API
 
 ### 13. GitHub App Registration Settings Can Break The Flow
@@ -294,7 +294,7 @@ Required approach:
 
 - V1 uses setup URL plus separate controlled claim OAuth
 - V1 does not enable OAuth-during-install
-- claim OAuth uses short-lived `state`, exact `redirect_uri`, and PKCE
+- claim OAuth uses short-lived `state`, exact `redirect_uri`, and `S256` PKCE
 - GitHub App client secret stays only in hosted control-plane secrets
 - device flow is optional fallback and must obey provider polling interval/`slow_down`
 
@@ -347,7 +347,7 @@ Required approach:
 ### Option 1 - Control-plane resolves immutable GitHub ids and explicit target bindings
 
 🎯 10 🛡️ 10 🧠 6
-Approx changes: +800-1600 lines across integration-registry, github-app, agent-actions, and tests.
+Approx changes: +800-1600 lines across integration-registry, github-runtime, agent-actions, and tests.
 
 Desktop sends hints, but control-plane verifies installation repository access, resolves immutable repository id, checks `IntegrationTargetBinding`, and validates PR base repository before posting.
 
@@ -473,9 +473,10 @@ Do not start Phase 1 implementation until these are accepted or explicitly defer
 - webhook signature verification uses raw body and fails closed when secret is missing
 - GitHub API version is pinned explicitly during implementation
 - setup URL creates pending claim only; binding requires GitHub-side authority verification
-- GitHub user access tokens used for claim verification are not persisted in V1
+- GitHub user access tokens and refresh tokens used for claim verification are
+  not persisted in V1
 - GitHub App registration uses setup URL plus separate claim OAuth, not OAuth-during-install
-- claim OAuth uses short-lived `state`, exact `redirect_uri`, and PKCE
+- claim OAuth uses short-lived `state`, exact `redirect_uri`, and `S256` PKCE
 - desktop browser handoff uses authenticated setup-session polling, not local callback server
 - deep links/completion pages carry no secrets
 - target authorization uses immutable GitHub repository id and explicit target binding, not local git metadata
@@ -556,7 +557,7 @@ Acceptance:
 - key rotation/rewrap is documented or gated before public rollout
 - no in-memory lock is required for correctness
 
-### Phase 5 - Identity, Pairing, Setup State
+### Phase 5 - Workspace Identity, Pairing, Setup State
 
 Implement workspace/client identity and GitHub setup state before GitHub connector side effects.
 
@@ -564,9 +565,11 @@ Acceptance:
 
 - pairing code is single-use and expires
 - desktop token is scoped, revocable, and rotatable
-- GitHub setup state creates a pending claim only
+- GitHub setup state is opaque, server-side hashed, and creates a pending claim
+  only
 - installation binding requires GitHub-side authority verification
-- unclaimed and pending-claim installation flows are represented, even if UI is deferred
+- untrusted unclaimed callback evidence and pending-claim flows are represented,
+  even if UI is deferred
 
 ### Phase 6 - Generic Integration And Agent Actions
 
@@ -597,7 +600,7 @@ Acceptance:
 - claim completion verifies GitHub user/installation/repository access
 - transient GitHub user token is discarded after claim verification
 - OAuth-during-install is disabled for V1 setup URL flow
-- claim OAuth validates short-lived `state` and PKCE
+- claim OAuth validates short-lived `state` and `S256` PKCE
 - desktop setup session is resumable after restart
 - stale setup sessions cannot overwrite connected state
 

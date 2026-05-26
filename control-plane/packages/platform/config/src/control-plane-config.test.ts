@@ -17,6 +17,13 @@ describe("loadControlPlaneConfig", () => {
     expect(config.database.url).toBeUndefined();
     expect(config.outbox.workerEnabled).toBe(false);
     expect(config.outbox.shutdownTimeoutMs).toBe(30_000);
+    expect(config.featureGates).toEqual({
+      desktopBootstrapEnabled: false,
+      desktopPairingEnabled: false,
+      githubClaimOAuthEnabled: false,
+      githubSetupEnabled: false,
+      githubUnclaimedCallbackRecordingEnabled: false,
+    });
     expect(config.github).toEqual({});
     expect(config.secrets).toEqual({});
   });
@@ -51,6 +58,7 @@ describe("loadControlPlaneConfig", () => {
       CONTROL_PLANE_GITHUB_OAUTH_CLIENT_SECRET: "oauth-secret",
       CONTROL_PLANE_GITHUB_PRIVATE_KEY: "private-key",
       CONTROL_PLANE_GITHUB_REST_API_VERSION: "2099-01-01",
+      CONTROL_PLANE_GITHUB_SETUP_ENABLED: "true",
       CONTROL_PLANE_GITHUB_WEBHOOK_SECRET: "webhook-secret",
       CONTROL_PLANE_MODE: "hosted-official-app",
       CONTROL_PLANE_PUBLIC_BASE_URL: "https://control-plane.example.test",
@@ -70,6 +78,7 @@ describe("loadControlPlaneConfig", () => {
     expect(summary.github.privateKeyConfigured).toBe(true);
     expect(summary.database.urlConfigured).toBe(true);
     expect(summary.github.encryptionMasterKeyConfigured).toBe(true);
+    expect(summary.featureGates.githubSetupEnabled).toBe(true);
     expect(JSON.stringify(summary)).not.toContain("private-key");
     expect(JSON.stringify(summary)).not.toContain("webhook-secret");
     expect(JSON.stringify(summary)).not.toContain("oauth-secret");
@@ -118,6 +127,46 @@ describe("loadControlPlaneConfig", () => {
         CONTROL_PLANE_ENCRYPTION_MASTER_KEY: Buffer.alloc(16, 7).toString("base64"),
         CONTROL_PLANE_PERSISTENCE_ENABLED: "true",
         NODE_ENV: "test",
+      }),
+    ).toThrow(ControlPlaneConfigError);
+  });
+
+  it("fails fast when phase 5 feature gates are enabled without persistence", () => {
+    expect(() =>
+      loadControlPlaneConfig({
+        CONTROL_PLANE_DESKTOP_BOOTSTRAP_ENABLED: "true",
+        NODE_ENV: "test",
+      }),
+    ).toThrow(ControlPlaneConfigError);
+  });
+
+  it("requires GitHub setup when GitHub claim OAuth is enabled", () => {
+    expect(() =>
+      loadControlPlaneConfig({
+        CONTROL_PLANE_DATABASE_URL: "postgresql://user:pass@localhost:5432/db",
+        CONTROL_PLANE_ENCRYPTION_MASTER_KEY: Buffer.alloc(32, 7).toString("base64"),
+        CONTROL_PLANE_GITHUB_CLAIM_OAUTH_ENABLED: "true",
+        CONTROL_PLANE_PERSISTENCE_ENABLED: "true",
+        NODE_ENV: "test",
+      }),
+    ).toThrow(ControlPlaneConfigError);
+  });
+
+  it("requires https public base URL in production hosted modes", () => {
+    expect(() =>
+      loadControlPlaneConfig({
+        CONTROL_PLANE_DATABASE_URL: "postgresql://user:pass@localhost:5432/db",
+        CONTROL_PLANE_ENCRYPTION_MASTER_KEY: Buffer.alloc(32, 7).toString("base64"),
+        CONTROL_PLANE_GITHUB_APP_ID: "123",
+        CONTROL_PLANE_GITHUB_APP_SLUG: "agent-teams",
+        CONTROL_PLANE_GITHUB_OAUTH_CLIENT_ID: "client-id",
+        CONTROL_PLANE_GITHUB_OAUTH_CLIENT_SECRET: "oauth-secret",
+        CONTROL_PLANE_GITHUB_PRIVATE_KEY: "private-key",
+        CONTROL_PLANE_GITHUB_REST_API_VERSION: "2099-01-01",
+        CONTROL_PLANE_GITHUB_WEBHOOK_SECRET: "webhook-secret",
+        CONTROL_PLANE_MODE: "hosted-official-app",
+        CONTROL_PLANE_PUBLIC_BASE_URL: "http://control-plane.example.test",
+        NODE_ENV: "production",
       }),
     ).toThrow(ControlPlaneConfigError);
   });

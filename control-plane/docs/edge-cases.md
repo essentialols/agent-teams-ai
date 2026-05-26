@@ -154,7 +154,8 @@ Problem:
 
 - GitHub setup URL includes `installation_id`
 - an attacker can call the setup URL manually with a spoofed `installation_id`
-- signed state correlates a setup attempt but does not prove GitHub org/repo authority by itself
+- opaque setup state correlates a setup attempt but does not prove GitHub
+  org/repo authority by itself
 
 Required behavior:
 
@@ -186,15 +187,18 @@ Required behavior:
 - docs make OAuth-during-install a separate future ADR, not V1 default
 - callback-only flow cannot bind installation unless it passes the same claim authority checks
 
-### OAuth Claim State Or PKCE Mismatch
+### OAuth Claim Callback Failure
 
 Required behavior:
 
-- callback fails safe
-- GitHub authorization code is not exchanged
+- callback fails safe on state mismatch, missing state, provider `error`,
+  missing code, or duplicate query parameters
+- GitHub authorization code is not exchanged unless state and claim/session are
+  valid
 - pending claim remains pending or expires
 - user can restart claim flow
-- no token-like values are logged
+- no token-like values, raw query strings, or provider `error_description`
+  values are logged
 
 ### Device Flow Polling Too Fast
 

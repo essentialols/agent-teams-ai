@@ -28,10 +28,24 @@ const migrationsMissingErrorCode = "CONTROL_PLANE_DATABASE_MIGRATIONS_MISSING";
 const requiredMigrationTables = [
   "audit_events",
   "dead_letter_events",
+  "desktop_client_credentials",
+  "desktop_clients",
+  "desktop_pairing_sessions",
   "distributed_locks",
   "external_action_content_key_refs",
   "external_action_contents",
+  "github_installation_claims",
+  "github_installation_snapshots",
+  "github_oauth_claim_sessions",
+  "github_repository_snapshots",
+  "github_setup_sessions",
+  "github_unclaimed_installation_callbacks",
+  "integration_connections",
   "outbox_events",
+  "provider_account_snapshots",
+  "provider_repository_availability",
+  "provider_repository_sync_cursors",
+  "workspaces",
 ] as const;
 
 @Injectable()
@@ -154,13 +168,41 @@ export class PrismaDatabaseClient implements OnApplicationBootstrap, OnModuleDes
       UNION ALL
       SELECT to_regclass('public.dead_letter_events')::text AS table_name
       UNION ALL
+      SELECT to_regclass('public.desktop_client_credentials')::text AS table_name
+      UNION ALL
+      SELECT to_regclass('public.desktop_clients')::text AS table_name
+      UNION ALL
+      SELECT to_regclass('public.desktop_pairing_sessions')::text AS table_name
+      UNION ALL
       SELECT to_regclass('public.distributed_locks')::text AS table_name
       UNION ALL
       SELECT to_regclass('public.external_action_content_key_refs')::text AS table_name
       UNION ALL
       SELECT to_regclass('public.external_action_contents')::text AS table_name
       UNION ALL
+      SELECT to_regclass('public.github_installation_claims')::text AS table_name
+      UNION ALL
+      SELECT to_regclass('public.github_installation_snapshots')::text AS table_name
+      UNION ALL
+      SELECT to_regclass('public.github_oauth_claim_sessions')::text AS table_name
+      UNION ALL
+      SELECT to_regclass('public.github_repository_snapshots')::text AS table_name
+      UNION ALL
+      SELECT to_regclass('public.github_setup_sessions')::text AS table_name
+      UNION ALL
+      SELECT to_regclass('public.github_unclaimed_installation_callbacks')::text AS table_name
+      UNION ALL
+      SELECT to_regclass('public.integration_connections')::text AS table_name
+      UNION ALL
       SELECT to_regclass('public.outbox_events')::text AS table_name
+      UNION ALL
+      SELECT to_regclass('public.provider_account_snapshots')::text AS table_name
+      UNION ALL
+      SELECT to_regclass('public.provider_repository_availability')::text AS table_name
+      UNION ALL
+      SELECT to_regclass('public.provider_repository_sync_cursors')::text AS table_name
+      UNION ALL
+      SELECT to_regclass('public.workspaces')::text AS table_name
     `;
     const existingTables = new Set(
       rows.flatMap((row) => (row.table_name === null ? [] : [row.table_name])),

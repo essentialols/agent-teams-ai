@@ -15,7 +15,7 @@ apps/worker  - outbox processing, background jobs, retries, connector side effec
 
 Internally, it is organized as feature-first Clean Architecture packages. Each feature owns its domain, application use cases, ports, infrastructure adapters, and interface adapters.
 
-The system should be built as a modular monolith first, but with extractable module boundaries. GitHub is only the first connector. The center of the design is `agent-actions` plus `integration-registry`, so Telegram, Slack, Discord, billing, and future Rust runtime services can be added without turning GitHub into the center of the system.
+The system should be built as a modular monolith first, but with extractable module boundaries. GitHub is only the first connector. The center of the design is `agent-actions`, `integration-connections`, and `integration-registry`, so Telegram, Slack, Discord, billing, and future Rust runtime services can be added without turning GitHub into the center of the system.
 
 ## Why This Exists
 
@@ -68,11 +68,12 @@ control-plane/
 
   packages/
     features/
-      identity-access/
-      desktop-pairing/
+      workspace-identity/
+      integration-connections/
+      github-installation-setup/
       integration-registry/
       agent-actions/
-      github-app/
+      github-runtime/
       messenger-connectors/
       billing-entitlements/
       audit-log/
@@ -236,58 +237,78 @@ The control plane must not silently become the source of truth for local desktop
 
 ## Bounded Contexts
 
-### identity-access
+### workspace-identity
 
-Owns tenants, users, workspaces, service actors, desktop clients, and session identity.
+Owns workspaces, trusted desktop clients, desktop credentials, and pairing
+sessions.
 
 Core concepts:
 
 - `Workspace`
-- `WorkspaceMember`
 - `DesktopClient`
-- `ClientSession`
-- `ServiceActor`
-- `ExternalAccountIdentity`
+- `DesktopClientCredential`
+- `DesktopPairingSession`
 
 Responsibilities:
 
-- workspace membership
-- desktop client identity
-- client token validation
-- external user identity link at provider/account id level
-- role policy
-- service actor policy
+- bootstrap a workspace before hosted accounts exist
+- authenticate desktop API requests
+- rotate and revoke desktop credentials
+- create and consume short-lived pairing sessions
+- expose workspace/client identity to application use cases
 
 Does not know about GitHub comments, Telegram chats, or billing provider APIs.
 
-### desktop-pairing
+### integration-connections
 
-Owns pairing a local desktop client to the control plane.
-
-Core concepts:
-
-- `PairingCode`
-- `PairingSession`
-- `DesktopClientRegistration`
-
-Responsibilities:
-
-- start pairing
-- complete pairing
-- rotate client token
-- revoke desktop client
-
-Edge requirement: pairing codes must be short-lived and single-use.
-
-Also owns the trusted local-client envelope used by agent actions. The control plane may validate the desktop client and schema, but it should treat the agent/team fields as attribution snapshots from the paired local runtime, not as independent authorization.
-
-### integration-registry
-
-Owns which integrations are connected and which capabilities are enabled for a workspace.
+Owns provider-neutral integration connection records and provider availability
+snapshots.
 
 Core concepts:
 
 - `IntegrationConnection`
+- `ProviderAccountSnapshot`
+- `ProviderRepositoryAvailability`
+- `ProviderRepositorySyncCursor`
+
+Responsibilities:
+
+- represent a provider installation bound to a workspace
+- keep provider-specific setup details out of generic action flows
+- expose safe connection state to desktop UI
+- track repository availability without granting target authorization
+
+### github-installation-setup
+
+Owns GitHub-specific setup sessions, pending installation claims, and claim
+verification.
+
+Core concepts:
+
+- `GitHubSetupSession`
+- `GitHubInstallationClaim`
+- `GitHubOAuthClaimSession`
+- `GitHubInstallationSnapshot`
+- `GitHubRepositorySnapshot`
+
+Responsibilities:
+
+- generate GitHub App install URLs with opaque setup state
+- treat setup URL `installation_id` as untrusted until provider verification
+- run hosted web claim OAuth with `S256` PKCE
+- verify user/installation/repository authority with GitHub user-token endpoints
+- bind a verified installation through `integration-connections`
+
+Does not post comments and does not mint installation access tokens for agent
+actions.
+
+### integration-registry
+
+Owns capabilities and target bindings for already-connected integrations.
+Connection ownership stays in `integration-connections`.
+
+Core concepts:
+
 - `IntegrationCapability`
 - `ExternalTarget`
 - `TargetBinding`
@@ -296,7 +317,7 @@ Responsibilities:
 
 - GitHub repository target mapping
 - Telegram chat/channel target mapping
-- connector availability
+- connector availability read model through `integration-connections` ports
 - capability resolution
 - integration health summary
 
@@ -335,30 +356,28 @@ Responsibilities:
 
 This is the central workflow for GitHub comments and future messenger posts.
 
-### github-app
+### github-runtime
 
-Owns GitHub App installation lifecycle and GitHub-specific connector behavior.
+Owns GitHub-specific runtime behavior after Phase 5 has already verified and
+bound a GitHub App installation to a workspace.
 
 Core concepts:
 
-- `GitHubInstallation`
-- `GitHubRepositoryConnection`
 - `GitHubWebhookDelivery`
 - `GitHubInstallationToken`
 - `GitHubCommentTarget`
 
 Responsibilities:
 
-- GitHub App setup callback
-- signed setup state validation
-- unclaimed installation flow for installs started from GitHub without desktop state
-- installation/repository sync
+- installation/repository change sync for already-bound connections
 - webhook verification and normalization
 - installation token creation
 - GitHub comments, PR reviews, checks, statuses
 - GitHub permission and repository access checks
 
-Does not own generic agent authorization. It answers GitHub-specific capability questions and performs GitHub side effects through ports/adapters.
+Does not own setup-session correlation, claim OAuth, workspace binding, or
+generic agent authorization. It answers GitHub-specific runtime questions and
+performs GitHub side effects through ports/adapters.
 
 V1 scope:
 
@@ -526,7 +545,7 @@ If the team rejects temporary encrypted content persistence, then GitHub comment
 
 5. worker claims outbox event.
 
-6. github-app connector:
+6. github-runtime connector:
    - resolves installation and repo by immutable GitHub IDs
    - mints short-lived installation token
    - loads encrypted ExternalActionContent by content reference
@@ -544,14 +563,15 @@ Happy path:
 
 ```text
 1. Desktop starts GitHub integration setup through control-plane.
-2. control-plane creates short-lived signed setup state for workspace/client.
+2. control-plane creates short-lived opaque setup state for workspace/client.
 3. user installs the official GitHub App through GitHub.
 4. GitHub redirects to setup callback with installation id and state.
-5. github-app validates state and records pending installation claim.
-6. user completes GitHub-side authorization for claim verification.
-7. github-app verifies user/installation/repository authority with GitHub.
-8. integration-registry creates target bindings only for verified selected repositories.
-9. desktop sees connected state on next refresh.
+5. github-installation-setup validates state and records pending installation claim.
+6. user completes hosted GitHub web OAuth claim with `S256` PKCE.
+7. github-installation-setup verifies user/installation/repository authority with GitHub.
+8. integration-connections binds the verified installation to the workspace.
+9. integration-registry later creates target bindings only for explicitly enabled repositories.
+10. desktop sees connected state on next refresh.
 ```
 
 No-state path:
@@ -559,7 +579,7 @@ No-state path:
 ```text
 1. user installs GitHub App directly from GitHub.
 2. setup callback has no trusted workspace state.
-3. control-plane stores installation as unclaimed.
+3. control-plane stores short-retention untrusted callback evidence.
 4. no repository actions are allowed.
 5. user must claim/bind installation from a paired desktop or future dashboard.
 ```
@@ -569,7 +589,7 @@ Required invariants:
 - setup state is short-lived and single-use
 - installation binding is idempotent
 - a repository cannot silently move between workspaces
-- unclaimed installations cannot post comments
+- untrusted unclaimed callback evidence cannot post comments
 - pending claims cannot post comments
 - deleted or suspended installations block actions
 
@@ -587,13 +607,13 @@ Rules:
 Recommended V1 claim flow:
 
 ```text
-1. desktop starts GitHub setup and receives install URL with signed state.
+1. desktop starts GitHub setup and receives install URL with opaque setup state.
 2. user installs the app.
 3. GitHub redirects to setup URL with state and installation_id.
 4. control-plane verifies state and records a pending claim.
-5. user completes GitHub user authorization through web or device flow.
+5. user completes hosted GitHub web OAuth claim with `S256` PKCE.
 6. control-plane checks that the GitHub user can access the installation/repositories.
-7. only then integration-registry binds targets to the workspace.
+7. only then integration-connections binds the installation to the workspace.
 ```
 
 Allowed claim authorities:
@@ -605,7 +625,7 @@ Allowed claim authorities:
 Forbidden:
 
 - binding from `installation_id` alone
-- binding from signed setup state alone
+- binding from setup state alone
 - binding because the desktop client is paired
 - binding by repository `owner/name` without immutable GitHub repository id verification
 
@@ -626,7 +646,8 @@ Recommended protocol:
 2. control-plane creates SetupSession and returns installUrl, setupSessionId, expiresAt.
 3. desktop opens installUrl in the user's browser.
 4. GitHub redirects to hosted setup URL.
-5. hosted setup URL updates SetupSession to pending_claim or unclaimed.
+5. hosted setup URL updates SetupSession to pending_claim or records untrusted
+   unclaimed callback evidence.
 6. hosted claim OAuth updates SetupSession to connected, failed, or expired.
 7. desktop polls authenticated Desktop API for setupSessionId status.
 ```
@@ -669,7 +690,7 @@ V1 should use:
 - setup URL enabled
 - webhook active with webhook secret
 - callback URL for a separate claim OAuth flow
-- device flow optional as a fallback, not as the default path
+- device flow deferred behind a future ADR, not the default path
 
 V1 should not enable:
 
@@ -678,17 +699,20 @@ V1 should not enable:
 Reason:
 
 - GitHub's settings make OAuth-during-install and setup URL mutually exclusive
-- V1 needs setup URL because the install flow starts from desktop with signed state
-- claim authorization should be a separate controlled web flow where the control plane sets `redirect_uri`, `state`, and PKCE
+- V1 needs setup URL because the install flow starts from desktop with opaque
+  setup state
+- claim authorization should be a separate controlled web flow where the control
+  plane sets `redirect_uri`, `state`, and `S256` PKCE
 
 Claim OAuth rules:
 
 - OAuth `state` is short-lived and single-use
-- web OAuth flow should use PKCE
+- web OAuth flow uses `S256` PKCE
 - GitHub App `client_secret` is hosted control-plane secret only
 - callback `redirect_uri` must exactly match the configured GitHub App callback URL
 - after GitHub redirects back, control-plane exchanges the code server-side
-- user access token is used only to verify accessible installations/repositories, then discarded in V1
+- user access token and refresh token are used only to verify accessible
+  installations/repositories, then discarded in V1
 
 Device-flow fallback:
 
@@ -713,7 +737,7 @@ These facts must be re-checked against official GitHub docs during the implement
 - GitHub App install URLs can include `state` to correlate installation flow
 - GitHub setup URL includes `installation_id`, but GitHub warns it can be spoofed and must not be trusted alone
 - enabling GitHub App OAuth during installation redirects users to callback URL instead of setup URL
-- web OAuth claim flow supports `state`, exact `redirect_uri`, and PKCE
+- web OAuth claim flow supports `state`, exact `redirect_uri`, and `S256` PKCE
 - device flow is available only if enabled in the GitHub App settings and has strict polling rules
 
 V1 token rule:
@@ -980,19 +1004,18 @@ Initial tables should be designed around immutable IDs and tenant isolation.
 
 ```text
 Workspace
-WorkspaceMember
 DesktopClient
-DesktopClientSession
-PairingSession
-ExternalAccountIdentity
+DesktopClientCredential
+DesktopPairingSession
 
 IntegrationConnection
+ProviderRepositoryAvailability
 IntegrationTargetBinding
 IntegrationCapabilityState
 
-GitHubInstallation
+GitHubSetupSession
 GitHubInstallationClaim
-GitHubRepositoryConnection
+GitHubOAuthClaimSession
 GitHubWebhookDelivery
 GitHubNormalizedEvent
 
@@ -1092,7 +1115,7 @@ Design for future extraction:
 Potential future extractions:
 
 ```text
-github-app -> github connector service
+github-runtime -> github connector service
 messenger-connectors -> messenger connector service
 billing-entitlements -> billing service
 runtime-bridge -> runtime relay service

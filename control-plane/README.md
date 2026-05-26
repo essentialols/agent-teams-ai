@@ -30,6 +30,7 @@ NestJS is an outer framework, not the business architecture. Domain and applicat
 - [Implementation Plan](docs/implementation-plan.md)
 - [Plan Review And Hardening](docs/plan-review-and-hardening.md)
 - [Phase 4 Persistence, Transactions, Outbox, Locks Plan](docs/phase-4-persistence-transactions-outbox-locks-plan.md)
+- [Phase 5 Workspace-Bound GitHub Installation Plan](docs/phase-5-workspace-bound-github-installation-plan.md)
 - [Edge Cases And Failure Modes](docs/edge-cases.md)
 - [Security And Privacy Model](docs/security-and-privacy.md)
 - [Public Error Contract](docs/error-contract.md)
@@ -82,7 +83,7 @@ control-plane/
   docs/
 ```
 
-Phase 1 provides the workspace scaffold, health feature, config/logger platform packages, and architecture guardrails. Phase 2 adds the dependency-free shared kernel, build metadata plumbing, safe error primitives, typed IDs, time helpers, validation helpers, and stricter shared-kernel guardrails. Phase 3 adds the API safe error boundary, request/correlation ids, request context, and safe request logging. Phase 4 adds optional Postgres persistence, transactions, envelope-encrypted external action content, DB-backed outbox, dead-letter state, and worker claim/retry foundations. GitHub and other external side effects are intentionally deferred.
+Phase 1 provides the workspace scaffold, health feature, config/logger platform packages, and architecture guardrails. Phase 2 adds the dependency-free shared kernel, build metadata plumbing, safe error primitives, typed IDs, time helpers, validation helpers, and stricter shared-kernel guardrails. Phase 3 adds the API safe error boundary, request/correlation ids, request context, and safe request logging. Phase 4 adds optional Postgres persistence, transactions, envelope-encrypted external action content, DB-backed outbox, dead-letter state, and worker claim/retry foundations. Phase 5 adds workspace-bound GitHub App installation setup, desktop client identity, pairing, OAuth claim verification, and repository availability snapshots. Agent GitHub actions and outbound comments/reviews remain deferred.
 
 `control-plane/` is a nested pnpm workspace on purpose. The desktop app remains the default root workspace, while the optional backend is developed and verified with `pnpm --dir control-plane ...` commands.
 

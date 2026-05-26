@@ -79,15 +79,15 @@ model ExternalActionContentKeyRef {
 }
 
 model DeadLetterEvent {
-  id               String   @id @db.Uuid
-  outboxEventId    String   @unique(map: "dead_letter_events_outbox_event_id_key") @map("outbox_event_id") @db.Uuid
-  eventType        String   @map("event_type")
-  eventVersion     Int      @map("event_version")
-  finalErrorJson   Json     @map("final_error_json")
-  attempts         Int
-  payloadSummary   Json     @map("payload_summary_json")
-  contentRefId     String?  @map("content_ref_id") @db.Uuid
-  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  id             String   @id @db.Uuid
+  outboxEventId  String   @unique(map: "dead_letter_events_outbox_event_id_key") @map("outbox_event_id") @db.Uuid
+  eventType      String   @map("event_type")
+  eventVersion   Int      @map("event_version")
+  finalErrorJson Json     @map("final_error_json")
+  attempts       Int
+  payloadSummary Json     @map("payload_summary_json")
+  contentRefId   String?  @map("content_ref_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@map("dead_letter_events")
 }
@@ -118,4 +118,273 @@ model DistributedLock {
   updatedAt    DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
 
   @@map("distributed_locks")
+}
+
+model Workspace {
+  id                     String    @id @db.Uuid
+  displayName            String    @map("display_name")
+  status                 String
+  createdByBootstrapKind String    @map("created_by_bootstrap_kind")
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  deletedAt              DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  desktopClients           DesktopClient[]
+  desktopPairingSessions   DesktopPairingSession[]
+  integrationConnections   IntegrationConnection[]
+  githubSetupSessions      GitHubSetupSession[]
+  githubInstallationClaims GitHubInstallationClaim[]
+  githubOAuthClaimSessions GitHubOAuthClaimSession[]
+
+  @@index([status, createdAt], map: "workspaces_status_created_at_idx")
+  @@map("workspaces")
+}
+
+model DesktopClient {
+  id          String    @id @db.Uuid
+  workspaceId String    @map("workspace_id") @db.Uuid
+  displayName String    @map("display_name")
+  status      String
+  lastSeenAt  DateTime? @map("last_seen_at") @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  revokedAt   DateTime? @map("revoked_at") @db.Timestamptz(6)
+
+  workspace                Workspace                 @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  credentials              DesktopClientCredential[]
+  requestedPairingSessions DesktopPairingSession[]   @relation("RequestedDesktopPairingSessions")
+  consumedPairingSessions  DesktopPairingSession[]   @relation("ConsumedDesktopPairingSessions")
+
+  @@index([workspaceId, status], map: "desktop_clients_workspace_status_idx")
+  @@map("desktop_clients")
+}
+
+model DesktopClientCredential {
+  id                        String    @id @db.Uuid
+  desktopClientId           String    @map("desktop_client_id") @db.Uuid
+  tokenHash                 String    @map("token_hash")
+  lookupPrefix              String    @unique(map: "desktop_client_credentials_lookup_prefix_key") @map("lookup_prefix")
+  tokenVersion              Int       @map("token_version")
+  status                    String
+  rotationRequestId         String?   @map("rotation_request_id")
+  rotatedFromCredentialId   String?   @map("rotated_from_credential_id") @db.Uuid
+  issuedTokenCiphertextJson Json?     @map("issued_token_ciphertext_json")
+  createdAt                 DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  expiresAt                 DateTime? @map("expires_at") @db.Timestamptz(6)
+  revokedAt                 DateTime? @map("revoked_at") @db.Timestamptz(6)
+  lastUsedAt                DateTime? @map("last_used_at") @db.Timestamptz(6)
+
+  desktopClient DesktopClient @relation(fields: [desktopClientId], references: [id], onDelete: Restrict)
+
+  @@index([desktopClientId, status], map: "desktop_client_credentials_client_status_idx")
+  @@map("desktop_client_credentials")
+}
+
+model DesktopPairingSession {
+  id                         String    @id @db.Uuid
+  workspaceId                String    @map("workspace_id") @db.Uuid
+  requestedByDesktopClientId String    @map("requested_by_desktop_client_id") @db.Uuid
+  pairingCodeHash            String    @map("pairing_code_hash")
+  status                     String
+  attemptCount               Int       @default(0) @map("attempt_count")
+  maxAttempts                Int       @default(5) @map("max_attempts")
+  expiresAt                  DateTime  @map("expires_at") @db.Timestamptz(6)
+  consumedAt                 DateTime? @map("consumed_at") @db.Timestamptz(6)
+  consumedByDesktopClientId  String?   @map("consumed_by_desktop_client_id") @db.Uuid
+  createdAt                  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  failureSafeErrorJson       Json?     @map("failure_safe_error_json")
+
+  workspace                Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  requestedByDesktopClient DesktopClient  @relation("RequestedDesktopPairingSessions", fields: [requestedByDesktopClientId], references: [id], onDelete: Restrict)
+  consumedByDesktopClient  DesktopClient? @relation("ConsumedDesktopPairingSessions", fields: [consumedByDesktopClientId], references: [id], onDelete: Restrict)
+
+  @@index([workspaceId, status, expiresAt], map: "desktop_pairing_sessions_workspace_status_exp_idx")
+  @@map("desktop_pairing_sessions")
+}
+
+model IntegrationConnection {
+  id                       String    @id @db.Uuid
+  workspaceId              String    @map("workspace_id") @db.Uuid
+  provider                 String
+  providerConnectionKind   String    @map("provider_connection_kind")
+  providerInstallationId   String    @map("provider_installation_id")
+  status                   String
+  claimedByDesktopClientId String?   @map("claimed_by_desktop_client_id") @db.Uuid
+  createdAt                DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  suspendedAt              DateTime? @map("suspended_at") @db.Timestamptz(6)
+  deletedAt                DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  workspace                   Workspace                        @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  accountSnapshots            ProviderAccountSnapshot[]
+  repositoryAvailability      ProviderRepositoryAvailability[]
+  repositorySyncCursors       ProviderRepositorySyncCursor[]
+  githubInstallationSnapshots GitHubInstallationSnapshot[]
+  githubRepositorySnapshots   GitHubRepositorySnapshot[]
+
+  @@index([workspaceId, provider, status], map: "integration_connections_workspace_provider_status_idx")
+  @@map("integration_connections")
+}
+
+model ProviderAccountSnapshot {
+  id                      String   @id @db.Uuid
+  integrationConnectionId String   @map("integration_connection_id") @db.Uuid
+  providerAccountId       String   @map("provider_account_id")
+  providerAccountKind     String   @map("provider_account_kind")
+  displayLogin            String   @map("display_login")
+  avatarUrl               String?  @map("avatar_url")
+  lastVerifiedAt          DateTime @map("last_verified_at") @db.Timestamptz(6)
+
+  integrationConnection IntegrationConnection @relation(fields: [integrationConnectionId], references: [id], onDelete: Restrict)
+
+  @@unique([integrationConnectionId, providerAccountId], map: "provider_account_snapshots_connection_account_key")
+  @@map("provider_account_snapshots")
+}
+
+model ProviderRepositoryAvailability {
+  id                      String   @id @db.Uuid
+  integrationConnectionId String   @map("integration_connection_id") @db.Uuid
+  providerRepositoryId    String   @map("provider_repository_id")
+  displayOwner            String   @map("display_owner")
+  displayName             String   @map("display_name")
+  displayFullName         String   @map("display_full_name")
+  private                 Boolean
+  archived                Boolean
+  available               Boolean
+  lastVerifiedAt          DateTime @map("last_verified_at") @db.Timestamptz(6)
+
+  integrationConnection IntegrationConnection @relation(fields: [integrationConnectionId], references: [id], onDelete: Restrict)
+
+  @@unique([integrationConnectionId, providerRepositoryId], map: "provider_repository_availability_connection_repo_key")
+  @@index([integrationConnectionId, available], map: "provider_repository_availability_connection_available_idx")
+  @@map("provider_repository_availability")
+}
+
+model ProviderRepositorySyncCursor {
+  id                      String    @id @db.Uuid
+  integrationConnectionId String    @map("integration_connection_id") @db.Uuid
+  provider                String
+  cursorKind              String    @map("cursor_kind")
+  cursorValue             String?   @map("cursor_value")
+  status                  String
+  startedAt               DateTime  @map("started_at") @db.Timestamptz(6)
+  completedAt             DateTime? @map("completed_at") @db.Timestamptz(6)
+  safeErrorJson           Json?     @map("safe_error_json")
+
+  integrationConnection IntegrationConnection @relation(fields: [integrationConnectionId], references: [id], onDelete: Restrict)
+
+  @@unique([integrationConnectionId, provider, cursorKind], map: "provider_repository_sync_cursors_connection_kind_key")
+  @@map("provider_repository_sync_cursors")
+}
+
+model GitHubSetupSession {
+  id                   String    @id @db.Uuid
+  workspaceId          String    @map("workspace_id") @db.Uuid
+  desktopClientId      String    @map("desktop_client_id") @db.Uuid
+  setupStateHash       String    @map("setup_state_hash")
+  status               String
+  githubInstallationId String?   @map("github_installation_id")
+  expiresAt            DateTime  @map("expires_at") @db.Timestamptz(6)
+  consumedAt           DateTime? @map("consumed_at") @db.Timestamptz(6)
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  failureSafeErrorJson Json?     @map("failure_safe_error_json")
+
+  workspace Workspace                 @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  claims    GitHubInstallationClaim[]
+
+  @@index([workspaceId, desktopClientId, status, expiresAt], map: "github_setup_sessions_workspace_client_status_exp_idx")
+  @@map("github_setup_sessions")
+}
+
+model GitHubInstallationClaim {
+  id                          String    @id @db.Uuid
+  workspaceId                 String    @map("workspace_id") @db.Uuid
+  setupSessionId              String    @map("setup_session_id") @db.Uuid
+  githubInstallationId        String    @map("github_installation_id")
+  claimContinuationTokenHash  String    @map("claim_continuation_token_hash")
+  claimContinuationConsumedAt DateTime? @map("claim_continuation_consumed_at") @db.Timestamptz(6)
+  status                      String
+  claimAuthorityKind          String    @map("claim_authority_kind")
+  verifiedGithubUserId        String?   @map("verified_github_user_id")
+  verifiedGithubLoginSnapshot String?   @map("verified_github_login_snapshot")
+  verifiedAt                  DateTime? @map("verified_at") @db.Timestamptz(6)
+  createdAt                   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  failureSafeErrorJson        Json?     @map("failure_safe_error_json")
+
+  workspace     Workspace                 @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  setupSession  GitHubSetupSession        @relation(fields: [setupSessionId], references: [id], onDelete: Restrict)
+  oauthSessions GitHubOAuthClaimSession[]
+
+  @@unique([setupSessionId, githubInstallationId], map: "github_installation_claims_setup_installation_key")
+  @@index([workspaceId, status], map: "github_installation_claims_workspace_status_idx")
+  @@map("github_installation_claims")
+}
+
+model GitHubOAuthClaimSession {
+  id                        String    @id @db.Uuid
+  workspaceId               String    @map("workspace_id") @db.Uuid
+  desktopClientId           String    @map("desktop_client_id") @db.Uuid
+  githubInstallationClaimId String    @map("github_installation_claim_id") @db.Uuid
+  oauthStateHash            String    @map("oauth_state_hash")
+  pkceVerifierCiphertext    Json      @map("pkce_verifier_ciphertext")
+  redirectUriSnapshot       String    @map("redirect_uri_snapshot")
+  codeChallengeMethod       String    @map("code_challenge_method")
+  status                    String
+  providerErrorCode         String?   @map("provider_error_code")
+  expiresAt                 DateTime  @map("expires_at") @db.Timestamptz(6)
+  consumedAt                DateTime? @map("consumed_at") @db.Timestamptz(6)
+  createdAt                 DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  failureSafeErrorJson      Json?     @map("failure_safe_error_json")
+
+  workspace Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  claim     GitHubInstallationClaim @relation(fields: [githubInstallationClaimId], references: [id], onDelete: Restrict)
+
+  @@index([githubInstallationClaimId, status], map: "github_oauth_claim_sessions_claim_status_idx")
+  @@map("github_oauth_claim_sessions")
+}
+
+model GitHubUnclaimedInstallationCallback {
+  id                   String   @id @db.Uuid
+  githubInstallationId String?  @map("github_installation_id")
+  setupStatePresent    Boolean  @map("setup_state_present")
+  status               String
+  firstSeenAt          DateTime @map("first_seen_at") @db.Timestamptz(6)
+  lastSeenAt           DateTime @map("last_seen_at") @db.Timestamptz(6)
+  expiresAt            DateTime @map("expires_at") @db.Timestamptz(6)
+  safeMetadataJson     Json     @map("safe_metadata_json")
+
+  @@index([status, expiresAt], map: "github_unclaimed_callbacks_status_exp_idx")
+  @@map("github_unclaimed_installation_callbacks")
+}
+
+model GitHubInstallationSnapshot {
+  id                      String   @id @db.Uuid
+  integrationConnectionId String   @map("integration_connection_id") @db.Uuid
+  githubInstallationId    String   @map("github_installation_id")
+  githubAccountId         String   @map("github_account_id")
+  githubAccountLogin      String   @map("github_account_login")
+  githubAccountType       String   @map("github_account_type")
+  repositorySelection     String   @map("repository_selection")
+  lastVerifiedAt          DateTime @map("last_verified_at") @db.Timestamptz(6)
+
+  integrationConnection IntegrationConnection @relation(fields: [integrationConnectionId], references: [id], onDelete: Restrict)
+
+  @@unique([integrationConnectionId, githubInstallationId], map: "github_installation_snapshots_connection_installation_key")
+  @@map("github_installation_snapshots")
+}
+
+model GitHubRepositorySnapshot {
+  id                      String   @id @db.Uuid
+  integrationConnectionId String   @map("integration_connection_id") @db.Uuid
+  githubRepositoryId      String   @map("github_repository_id")
+  githubNodeId            String?  @map("github_node_id")
+  displayFullName         String   @map("display_full_name")
+  private                 Boolean
+  archived                Boolean
+  lastVerifiedAt          DateTime @map("last_verified_at") @db.Timestamptz(6)
+
+  integrationConnection IntegrationConnection @relation(fields: [integrationConnectionId], references: [id], onDelete: Restrict)
+
+  @@unique([integrationConnectionId, githubRepositoryId], map: "github_repository_snapshots_connection_repo_key")
+  @@map("github_repository_snapshots")
 }

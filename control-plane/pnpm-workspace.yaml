@@ -1,0 +1,10 @@
+packages:
+  - apps/*
+  - packages/features/*
+  - packages/platform/*
+  - packages/shared
+
+strictPeerDependencies: true
+ignoredBuiltDependencies:
+  - "@nestjs/core"
+  - esbuild

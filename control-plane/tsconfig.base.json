@@ -1,0 +1,41 @@
+{
+  "compilerOptions": {
+    "allowSyntheticDefaultImports": true,
+    "baseUrl": ".",
+    "declaration": true,
+    "emitDecoratorMetadata": true,
+    "esModuleInterop": true,
+    "exactOptionalPropertyTypes": true,
+    "experimentalDecorators": true,
+    "forceConsistentCasingInFileNames": true,
+    "ignoreDeprecations": "6.0",
+    "isolatedModules": true,
+    "lib": ["ES2022"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "noUncheckedIndexedAccess": true,
+    "paths": {
+      "@agent-teams-control-plane/features-system-health": [
+        "packages/features/system-health/src/index.ts"
+      ],
+      "@agent-teams-control-plane/features-system-health/interface/nest": [
+        "packages/features/system-health/src/interface/nest/index.ts"
+      ],
+      "@agent-teams-control-plane/platform-config": [
+        "packages/platform/config/src/index.ts"
+      ],
+      "@agent-teams-control-plane/platform-logger": [
+        "packages/platform/logger/src/index.ts"
+      ],
+      "@agent-teams-control-plane/shared": ["packages/shared/src/index.ts"]
+    },
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "target": "ES2022",
+    "types": ["node"],
+    "useDefineForClassFields": false
+  }
+}

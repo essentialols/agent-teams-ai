@@ -1,0 +1,20 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "declaration": true,
+    "declarationMap": true,
+    "noEmit": false,
+    "outDir": "dist",
+    "paths": {
+      "@agent-teams-control-plane/platform-config": [
+        "packages/platform/config/dist/index.d.ts"
+      ],
+      "@agent-teams-control-plane/platform-logger": [
+        "packages/platform/logger/dist/index.d.ts"
+      ]
+    },
+    "rootDir": "src",
+    "sourceMap": true
+  },
+  "exclude": ["src/**/*.test.ts"]
+}

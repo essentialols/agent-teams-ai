@@ -1,0 +1,39 @@
+{
+  "name": "agent-teams-control-plane",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.0",
+  "description": "Optional hosted integration control-plane for Agent Teams.",
+  "scripts": {
+    "architecture:check": "node scripts/check-architecture-boundaries.mjs",
+    "api:smoke": "node scripts/smoke-api.mjs",
+    "api:smoke:dist": "node scripts/smoke-api.mjs --dist",
+    "build": "pnpm --filter @agent-teams-control-plane/shared build && pnpm --filter @agent-teams-control-plane/platform-config build && pnpm --filter @agent-teams-control-plane/platform-logger build && pnpm --filter @agent-teams-control-plane/features-system-health build && pnpm --filter @agent-teams-control-plane/api build && pnpm --filter @agent-teams-control-plane/worker build",
+    "config:hosted-failfast": "node scripts/check-hosted-failfast.mjs",
+    "dev:api": "tsx watch apps/api/src/main.ts",
+    "dev:worker": "tsx watch apps/worker/src/main.ts",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint .",
+    "start:api": "tsx apps/api/src/main.ts",
+    "start:api:dist": "node --conditions=production apps/api/dist/main.js",
+    "start:worker": "tsx apps/worker/src/main.ts",
+    "worker:smoke:dist": "CONTROL_PLANE_WORKER_SMOKE=1 node --conditions=production apps/worker/dist/main.js",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "verify:phase1": "pnpm format:check && pnpm architecture:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm worker:smoke && pnpm worker:smoke:dist && pnpm api:smoke && pnpm api:smoke:dist && pnpm config:hosted-failfast",
+    "worker:smoke": "CONTROL_PLANE_WORKER_SMOKE=1 tsx apps/worker/src/main.ts"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@nestjs/testing": "11.1.24",
+    "@types/node": "25.9.1",
+    "eslint": "10.4.0",
+    "prettier": "3.8.3",
+    "tsx": "4.22.3",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.60.0",
+    "vitest": "4.1.7"
+  }
+}

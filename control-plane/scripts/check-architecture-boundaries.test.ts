@@ -185,6 +185,36 @@ describe("check-architecture-boundaries", () => {
     });
   });
 
+  it("fails when token broker desktop controllers expose raw token-shaped fields", async () => {
+    await writeFeature("github-token-broker", {
+      files: {
+        "src/index.ts": "export const broker = true;\n",
+        "src/interface/nest/github-token-broker.controller.ts":
+          "export class GitHubTokenBrokerController { readiness() { return { token: 'raw' }; } }\n",
+      },
+    });
+
+    await expect(runArchitectureCheck()).rejects.toMatchObject({
+      stderr: expect.stringContaining("desktop token broker APIs must not return token"),
+    });
+  });
+
+  it("fails when token broker desktop controllers expose the lease use case", async () => {
+    await writeFeature("github-token-broker", {
+      files: {
+        "src/application/use-cases/issue-github-installation-token.use-case.ts":
+          "export class IssueGitHubInstallationTokenUseCase {}\n",
+        "src/index.ts": "export const broker = true;\n",
+        "src/interface/nest/github-token-broker.controller.ts":
+          "import { IssueGitHubInstallationTokenUseCase } from '../../application/use-cases/issue-github-installation-token.use-case.js';\nexport class GitHubTokenBrokerController { constructor(readonly useCase: IssueGitHubInstallationTokenUseCase) {} }\n",
+      },
+    });
+
+    await expect(runArchitectureCheck()).rejects.toMatchObject({
+      stderr: expect.stringContaining("token broker lease use case must not be exposed"),
+    });
+  });
+
   async function runArchitectureCheck() {
     return execFileAsync("node", [scriptPath], {
       env: {

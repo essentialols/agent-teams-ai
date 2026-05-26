@@ -22,6 +22,7 @@ describe("loadControlPlaneConfig", () => {
       desktopPairingEnabled: false,
       githubClaimOAuthEnabled: false,
       githubSetupEnabled: false,
+      githubTokenBrokerEnabled: false,
       githubUnclaimedCallbackRecordingEnabled: false,
       integrationTargetsEnabled: false,
     });
@@ -57,12 +58,14 @@ describe("loadControlPlaneConfig", () => {
       CONTROL_PLANE_DATABASE_URL: "postgresql://user:pass@localhost:5432/db",
       CONTROL_PLANE_ENCRYPTION_MASTER_KEY: Buffer.alloc(32, 7).toString("base64"),
       CONTROL_PLANE_GITHUB_APP_ID: "123",
+      CONTROL_PLANE_GITHUB_APP_CLIENT_ID: "app-client-id",
       CONTROL_PLANE_GITHUB_APP_SLUG: "agent-teams",
       CONTROL_PLANE_GITHUB_OAUTH_CLIENT_ID: "client-id",
       CONTROL_PLANE_GITHUB_OAUTH_CLIENT_SECRET: "oauth-secret",
       CONTROL_PLANE_GITHUB_PRIVATE_KEY: "private-key",
       CONTROL_PLANE_GITHUB_REST_API_VERSION: "2099-01-01",
       CONTROL_PLANE_GITHUB_SETUP_ENABLED: "true",
+      CONTROL_PLANE_GITHUB_TOKEN_BROKER_ENABLED: "true",
       CONTROL_PLANE_GITHUB_WEBHOOK_SECRET: "webhook-secret",
       CONTROL_PLANE_INTEGRATION_TARGETS_ENABLED: "true",
       CONTROL_PLANE_MODE: "hosted-official-app",
@@ -82,9 +85,11 @@ describe("loadControlPlaneConfig", () => {
       revisionConfigured: true,
     });
     expect(summary.github.privateKeyConfigured).toBe(true);
+    expect(summary.github.appClientIdConfigured).toBe(true);
     expect(summary.database.urlConfigured).toBe(true);
     expect(summary.github.encryptionMasterKeyConfigured).toBe(true);
     expect(summary.featureGates.githubSetupEnabled).toBe(true);
+    expect(summary.featureGates.githubTokenBrokerEnabled).toBe(true);
     expect(summary.featureGates.integrationTargetsEnabled).toBe(true);
     expect(summary.integrationTargets.repositoryAvailabilityMaxAgeHours).toBe(48);
     expect(JSON.stringify(summary)).not.toContain("private-key");
@@ -167,6 +172,50 @@ describe("loadControlPlaneConfig", () => {
         NODE_ENV: "test",
       }),
     ).toThrow(ControlPlaneConfigError);
+  });
+
+  it("fails fast when GitHub token broker is enabled without integration targets", () => {
+    expect(() =>
+      loadControlPlaneConfig({
+        CONTROL_PLANE_DATABASE_URL: "postgresql://user:pass@localhost:5432/db",
+        CONTROL_PLANE_ENCRYPTION_MASTER_KEY: Buffer.alloc(32, 7).toString("base64"),
+        CONTROL_PLANE_GITHUB_APP_ID: "123",
+        CONTROL_PLANE_GITHUB_APP_PRIVATE_KEY: "private-key",
+        CONTROL_PLANE_GITHUB_APP_SLUG: "agent-teams",
+        CONTROL_PLANE_GITHUB_OAUTH_CLIENT_ID: "client-id",
+        CONTROL_PLANE_GITHUB_OAUTH_CLIENT_SECRET: "oauth-secret",
+        CONTROL_PLANE_GITHUB_REST_API_VERSION: "2099-01-01",
+        CONTROL_PLANE_GITHUB_TOKEN_BROKER_ENABLED: "true",
+        CONTROL_PLANE_GITHUB_WEBHOOK_SECRET: "webhook-secret",
+        CONTROL_PLANE_MODE: "hosted-official-app",
+        CONTROL_PLANE_PUBLIC_BASE_URL: "https://control-plane.example.test",
+        NODE_ENV: "test",
+      }),
+    ).toThrow(ControlPlaneConfigError);
+  });
+
+  it("accepts the token broker private key alias in hosted mode", () => {
+    const config = loadControlPlaneConfig({
+      CONTROL_PLANE_DATABASE_URL: "postgresql://user:pass@localhost:5432/db",
+      CONTROL_PLANE_ENCRYPTION_MASTER_KEY: Buffer.alloc(32, 7).toString("base64"),
+      CONTROL_PLANE_GITHUB_APP_CLIENT_ID: "app-client-id",
+      CONTROL_PLANE_GITHUB_APP_ID: "123",
+      CONTROL_PLANE_GITHUB_APP_PRIVATE_KEY: "private-key",
+      CONTROL_PLANE_GITHUB_APP_SLUG: "agent-teams",
+      CONTROL_PLANE_GITHUB_OAUTH_CLIENT_ID: "client-id",
+      CONTROL_PLANE_GITHUB_OAUTH_CLIENT_SECRET: "oauth-secret",
+      CONTROL_PLANE_GITHUB_REST_API_VERSION: "2099-01-01",
+      CONTROL_PLANE_GITHUB_TOKEN_BROKER_ENABLED: "true",
+      CONTROL_PLANE_GITHUB_WEBHOOK_SECRET: "webhook-secret",
+      CONTROL_PLANE_INTEGRATION_TARGETS_ENABLED: "true",
+      CONTROL_PLANE_MODE: "hosted-official-app",
+      CONTROL_PLANE_PUBLIC_BASE_URL: "https://control-plane.example.test",
+      NODE_ENV: "test",
+    });
+
+    expect(config.secrets.githubPrivateKey).toBe("private-key");
+    expect(config.github.appClientId).toBe("app-client-id");
+    expect(config.featureGates.githubTokenBrokerEnabled).toBe(true);
   });
 
   it("validates repository availability max age bounds", () => {

@@ -53,6 +53,12 @@
       "@agent-teams-control-plane/features-github-installation-setup/interface/nest": [
         "packages/features/github-installation-setup/src/interface/nest/index.ts"
       ],
+      "@agent-teams-control-plane/features-github-token-broker": [
+        "packages/features/github-token-broker/src/index.ts"
+      ],
+      "@agent-teams-control-plane/features-github-token-broker/interface/nest": [
+        "packages/features/github-token-broker/src/interface/nest/index.ts"
+      ],
       "@agent-teams-control-plane/features-integration-targets": [
         "packages/features/integration-targets/src/index.ts"
       ],

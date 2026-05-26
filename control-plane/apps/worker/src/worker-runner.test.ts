@@ -18,6 +18,7 @@ describe("WorkerRunner", () => {
         environment: "test",
         featureGates: disabledFeatureGates(),
         github: {
+          appClientIdConfigured: false,
           appIdConfigured: false,
           appSlugConfigured: false,
           oauthClientIdConfigured: false,
@@ -156,6 +157,7 @@ function createConfigService(input: {
       environment: "test",
       featureGates: disabledFeatureGates(),
       github: {
+        appClientIdConfigured: false,
         appIdConfigured: false,
         appSlugConfigured: false,
         encryptionMasterKeyConfigured: false,
@@ -195,6 +197,7 @@ function disabledFeatureGates() {
     desktopPairingEnabled: false,
     githubClaimOAuthEnabled: false,
     githubSetupEnabled: false,
+    githubTokenBrokerEnabled: false,
     githubUnclaimedCallbackRecordingEnabled: false,
     integrationTargetsEnabled: false,
   };

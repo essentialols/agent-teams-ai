@@ -47,6 +47,9 @@ importers:
       '@agent-teams-control-plane/features-github-installation-setup':
         specifier: workspace:*
         version: link:../../packages/features/github-installation-setup
+      '@agent-teams-control-plane/features-github-token-broker':
+        specifier: workspace:*
+        version: link:../../packages/features/github-token-broker
       '@agent-teams-control-plane/features-integration-connections':
         specifier: workspace:*
         version: link:../../packages/features/integration-connections
@@ -155,6 +158,27 @@ importers:
       '@agent-teams-control-plane/platform-crypto':
         specifier: workspace:*
         version: link:../../platform/crypto
+      '@agent-teams-control-plane/platform-database':
+        specifier: workspace:*
+        version: link:../../platform/database
+      '@agent-teams-control-plane/shared':
+        specifier: workspace:*
+        version: link:../../shared
+      '@nestjs/common':
+        specifier: 11.1.24
+        version: 11.1.24(reflect-metadata@0.2.2)(rxjs@7.8.2)
+
+  packages/features/github-token-broker:
+    dependencies:
+      '@agent-teams-control-plane/features-integration-targets':
+        specifier: workspace:*
+        version: link:../integration-targets
+      '@agent-teams-control-plane/features-workspace-identity':
+        specifier: workspace:*
+        version: link:../workspace-identity
+      '@agent-teams-control-plane/platform-config':
+        specifier: workspace:*
+        version: link:../../platform/config
       '@agent-teams-control-plane/platform-database':
         specifier: workspace:*
         version: link:../../platform/database

@@ -42,6 +42,7 @@ export type ControlPlaneConfig = Readonly<{
     desktopPairingEnabled: boolean;
     githubSetupEnabled: boolean;
     githubClaimOAuthEnabled: boolean;
+    githubTokenBrokerEnabled: boolean;
     githubUnclaimedCallbackRecordingEnabled: boolean;
     integrationTargetsEnabled: boolean;
   }>;
@@ -58,6 +59,7 @@ export type ControlPlaneConfig = Readonly<{
   github: Readonly<{
     restApiVersion?: string;
     appId?: string;
+    appClientId?: string;
     appSlug?: string;
     oauthClientId?: string;
   }>;
@@ -104,6 +106,7 @@ export type SafeControlPlaneConfigSummary = Readonly<{
   github: Readonly<{
     restApiVersionConfigured: boolean;
     appIdConfigured: boolean;
+    appClientIdConfigured: boolean;
     appSlugConfigured: boolean;
     oauthClientIdConfigured: boolean;
     privateKeyConfigured: boolean;
@@ -155,7 +158,9 @@ const rawConfigSchema = z.object({
   CONTROL_PLANE_DESKTOP_BOOTSTRAP_ENABLED: optionalBoolean,
   CONTROL_PLANE_DESKTOP_PAIRING_ENABLED: optionalBoolean,
   CONTROL_PLANE_GITHUB_CLAIM_OAUTH_ENABLED: optionalBoolean,
+  CONTROL_PLANE_GITHUB_APP_CLIENT_ID: z.string().min(1).optional(),
   CONTROL_PLANE_GITHUB_APP_ID: z.string().min(1).optional(),
+  CONTROL_PLANE_GITHUB_APP_PRIVATE_KEY: z.string().min(1).optional(),
   CONTROL_PLANE_GITHUB_APP_SLUG: z.string().min(1).optional(),
   CONTROL_PLANE_GITHUB_OAUTH_CLIENT_ID: z.string().min(1).optional(),
   CONTROL_PLANE_GITHUB_OAUTH_CLIENT_SECRET: z.string().min(1).optional(),
@@ -165,6 +170,7 @@ const rawConfigSchema = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
   CONTROL_PLANE_GITHUB_SETUP_ENABLED: optionalBoolean,
+  CONTROL_PLANE_GITHUB_TOKEN_BROKER_ENABLED: optionalBoolean,
   CONTROL_PLANE_GITHUB_UNCLAIMED_CALLBACK_RECORDING_ENABLED: optionalBoolean,
   CONTROL_PLANE_GITHUB_WEBHOOK_SECRET: z.string().min(1).optional(),
   CONTROL_PLANE_HTTP_HOST: z.string().min(1).default("127.0.0.1"),
@@ -201,7 +207,6 @@ const hostedRequiredKeys = [
   "CONTROL_PLANE_GITHUB_APP_ID",
   "CONTROL_PLANE_GITHUB_APP_SLUG",
   "CONTROL_PLANE_GITHUB_REST_API_VERSION",
-  "CONTROL_PLANE_GITHUB_PRIVATE_KEY",
   "CONTROL_PLANE_GITHUB_WEBHOOK_SECRET",
   "CONTROL_PLANE_GITHUB_OAUTH_CLIENT_ID",
   "CONTROL_PLANE_GITHUB_OAUTH_CLIENT_SECRET",
@@ -224,14 +229,26 @@ export function loadControlPlaneConfig(
   const persistenceEnabled = isPersistenceEnabled(raw);
   const outboxWorkerEnabled = isOutboxWorkerEnabled(raw, persistenceEnabled);
   const missingKeys = getMissingRequiredKeys(raw, persistenceEnabled);
-  if (missingKeys.length > 0) {
-    throw new ControlPlaneConfigError(
-      missingKeys.map((key) => ({
-        code: "required",
-        message: `${key} is required when CONTROL_PLANE_MODE=${raw.CONTROL_PLANE_MODE}`,
-        path: [key],
-      })),
-    );
+  const missingKeyIssues = [
+    ...missingKeys.map((key) => ({
+      code: "required",
+      message: `${key} is required when CONTROL_PLANE_MODE=${raw.CONTROL_PLANE_MODE}`,
+      path: [key],
+    })),
+    ...(raw.CONTROL_PLANE_MODE === "local-disabled" || githubPrivateKeyConfigured(raw)
+      ? []
+      : [
+          {
+            code: "required",
+            message:
+              "CONTROL_PLANE_GITHUB_APP_PRIVATE_KEY or CONTROL_PLANE_GITHUB_PRIVATE_KEY is required when CONTROL_PLANE_MODE=" +
+              raw.CONTROL_PLANE_MODE,
+            path: ["CONTROL_PLANE_GITHUB_APP_PRIVATE_KEY"],
+          },
+        ]),
+  ] satisfies ValidationIssue[];
+  if (missingKeyIssues.length > 0) {
+    throw new ControlPlaneConfigError(missingKeyIssues);
   }
   const validationIssues = validateCrossFieldConfig(raw, {
     outboxWorkerEnabled,
@@ -297,6 +314,7 @@ export function getSafeConfigSummary(
     featureGates: config.featureGates,
     integrationTargets: config.integrationTargets,
     github: {
+      appClientIdConfigured: config.github.appClientId !== undefined,
       appIdConfigured: config.github.appId !== undefined,
       appSlugConfigured: config.github.appSlug !== undefined,
       oauthClientIdConfigured: config.github.oauthClientId !== undefined,
@@ -407,6 +425,37 @@ function validateCrossFieldConfig(
     });
   }
 
+  if (githubTokenBrokerFeatureGateEnabled(raw) && !flags.persistenceEnabled) {
+    issues.push({
+      code: "invalid",
+      message: "GitHub token broker requires persistence.",
+      path: ["CONTROL_PLANE_PERSISTENCE_ENABLED"],
+    });
+  }
+
+  if (
+    githubTokenBrokerFeatureGateEnabled(raw) &&
+    raw.CONTROL_PLANE_INTEGRATION_TARGETS_ENABLED !== true
+  ) {
+    issues.push({
+      code: "invalid",
+      message:
+        "CONTROL_PLANE_GITHUB_TOKEN_BROKER_ENABLED requires CONTROL_PLANE_INTEGRATION_TARGETS_ENABLED.",
+      path: ["CONTROL_PLANE_GITHUB_TOKEN_BROKER_ENABLED"],
+    });
+  }
+
+  if (
+    githubTokenBrokerFeatureGateEnabled(raw) &&
+    raw.CONTROL_PLANE_MODE === "local-disabled"
+  ) {
+    issues.push({
+      code: "invalid",
+      message: "GitHub token broker requires a hosted control-plane mode.",
+      path: ["CONTROL_PLANE_MODE"],
+    });
+  }
+
   if (
     raw.CONTROL_PLANE_GITHUB_CLAIM_OAUTH_ENABLED === true &&
     raw.CONTROL_PLANE_GITHUB_SETUP_ENABLED !== true
@@ -460,6 +509,17 @@ function integrationTargetsFeatureGateEnabled(raw: RawConfig): boolean {
   return raw.CONTROL_PLANE_INTEGRATION_TARGETS_ENABLED === true;
 }
 
+function githubTokenBrokerFeatureGateEnabled(raw: RawConfig): boolean {
+  return raw.CONTROL_PLANE_GITHUB_TOKEN_BROKER_ENABLED === true;
+}
+
+function githubPrivateKeyConfigured(raw: RawConfig): boolean {
+  return (
+    hasValue(raw.CONTROL_PLANE_GITHUB_APP_PRIVATE_KEY) ||
+    hasValue(raw.CONTROL_PLANE_GITHUB_PRIVATE_KEY)
+  );
+}
+
 function decodeBase64(value: string): Buffer | undefined {
   try {
     const normalized = value.trim();
@@ -509,6 +569,7 @@ function buildFeatureGateConfig(raw: RawConfig): ControlPlaneConfig["featureGate
     desktopPairingEnabled: raw.CONTROL_PLANE_DESKTOP_PAIRING_ENABLED ?? false,
     githubClaimOAuthEnabled: raw.CONTROL_PLANE_GITHUB_CLAIM_OAUTH_ENABLED ?? false,
     githubSetupEnabled: raw.CONTROL_PLANE_GITHUB_SETUP_ENABLED ?? false,
+    githubTokenBrokerEnabled: raw.CONTROL_PLANE_GITHUB_TOKEN_BROKER_ENABLED ?? false,
     integrationTargetsEnabled: raw.CONTROL_PLANE_INTEGRATION_TARGETS_ENABLED ?? false,
     githubUnclaimedCallbackRecordingEnabled:
       raw.CONTROL_PLANE_GITHUB_UNCLAIMED_CALLBACK_RECORDING_ENABLED ?? false,
@@ -548,10 +609,14 @@ function buildGitHubConfig(raw: RawConfig): ControlPlaneConfig["github"] {
   const github: {
     restApiVersion?: string;
     appId?: string;
+    appClientId?: string;
     appSlug?: string;
     oauthClientId?: string;
   } = {};
 
+  if (raw.CONTROL_PLANE_GITHUB_APP_CLIENT_ID !== undefined) {
+    github.appClientId = raw.CONTROL_PLANE_GITHUB_APP_CLIENT_ID;
+  }
   if (raw.CONTROL_PLANE_GITHUB_REST_API_VERSION !== undefined) {
     github.restApiVersion = raw.CONTROL_PLANE_GITHUB_REST_API_VERSION;
   }
@@ -576,8 +641,10 @@ function buildSecretConfig(raw: RawConfig): ControlPlaneConfig["secrets"] {
     encryptionMasterKey?: string;
   } = {};
 
-  if (raw.CONTROL_PLANE_GITHUB_PRIVATE_KEY !== undefined) {
-    secrets.githubPrivateKey = raw.CONTROL_PLANE_GITHUB_PRIVATE_KEY;
+  const githubPrivateKey =
+    raw.CONTROL_PLANE_GITHUB_APP_PRIVATE_KEY ?? raw.CONTROL_PLANE_GITHUB_PRIVATE_KEY;
+  if (githubPrivateKey !== undefined) {
+    secrets.githubPrivateKey = githubPrivateKey;
   }
   if (raw.CONTROL_PLANE_GITHUB_WEBHOOK_SECRET !== undefined) {
     secrets.githubWebhookSecret = raw.CONTROL_PLANE_GITHUB_WEBHOOK_SECRET;

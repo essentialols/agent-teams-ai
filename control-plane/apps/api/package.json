@@ -10,6 +10,7 @@
     "@agent-teams-control-plane/features-system-health": "workspace:*",
     "@agent-teams-control-plane/features-external-action-content": "workspace:*",
     "@agent-teams-control-plane/features-github-installation-setup": "workspace:*",
+    "@agent-teams-control-plane/features-github-token-broker": "workspace:*",
     "@agent-teams-control-plane/features-integration-connections": "workspace:*",
     "@agent-teams-control-plane/features-integration-targets": "workspace:*",
     "@agent-teams-control-plane/features-outbox": "workspace:*",

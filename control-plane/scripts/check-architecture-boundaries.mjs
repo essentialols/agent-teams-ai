@@ -283,6 +283,22 @@ for (const file of allSourceFiles) {
         "uses Nest constructor injection without explicit @Inject(); keep DI wiring explicit for ESM/tsx runtime safety",
     });
   }
+  if (isGitHubTokenBrokerDesktopInterfaceFile(file)) {
+    if (/\bIssueGitHubInstallationTokenUseCase\b/.test(source)) {
+      violations.push({
+        file,
+        message:
+          "token broker lease use case must not be exposed by public desktop controllers",
+      });
+    }
+    if (hasForbiddenTokenBrokerResponseField(source)) {
+      violations.push({
+        file,
+        message:
+          "desktop token broker APIs must not return token, jwt, authorization, or privateKey shaped fields",
+      });
+    }
+  }
 }
 
 for (const featurePackage of featurePackages) {
@@ -507,6 +523,23 @@ function isFeatureDomainOrApplicationFile(file) {
   }
   const srcIndex = segments.indexOf("src");
   return srcIndex >= 0 && boundaryLayerSegments.has(segments[srcIndex + 1]);
+}
+
+function isGitHubTokenBrokerDesktopInterfaceFile(file) {
+  const relativePath = relative(
+    join(featuresRoot, "github-token-broker", "src", "interface", "nest"),
+    file,
+  );
+  return (
+    relativePath !== "" &&
+    !relativePath.startsWith("..") &&
+    !relativePath.startsWith("/") &&
+    file.endsWith(".controller.ts")
+  );
+}
+
+function hasForbiddenTokenBrokerResponseField(source) {
+  return /\b(?:token|jwt|authorization|privateKey)\s*:/.test(source);
 }
 
 function isDomainFile(file) {

@@ -1,3 +1,9 @@
+import {
+  createSafeError,
+  type ControlPlaneBuildInfo,
+  type SafeError,
+  type ValidationIssue,
+} from "@agent-teams-control-plane/shared";
 import { z } from "zod";
 
 export const CONTROL_PLANE_MODES = [
@@ -15,6 +21,7 @@ export type ControlPlaneConfig = Readonly<{
     host: string;
     port: number;
   }>;
+  build: ControlPlaneBuildInfo;
   publicBaseUrl?: string;
   github: Readonly<{
     restApiVersion?: string;
@@ -33,6 +40,10 @@ export type SafeControlPlaneConfigSummary = Readonly<{
   environment: ControlPlaneConfig["environment"];
   mode: ControlPlaneMode;
   http: ControlPlaneConfig["http"];
+  build: Readonly<{
+    revisionConfigured: boolean;
+    createdAtConfigured: boolean;
+  }>;
   publicBaseUrlConfigured: boolean;
   github: Readonly<{
     restApiVersionConfigured: boolean;
@@ -47,15 +58,27 @@ export type SafeControlPlaneConfigSummary = Readonly<{
 
 export class ControlPlaneConfigError extends Error {
   public readonly issues: readonly string[];
+  public readonly validationIssues: readonly ValidationIssue[];
+  public readonly safeError: SafeError;
 
-  public constructor(issues: readonly string[]) {
+  public constructor(validationIssues: readonly ValidationIssue[]) {
+    const issues = validationIssues.map(formatValidationIssue);
     super(`Invalid control-plane configuration: ${issues.join("; ")}`);
     this.name = "ControlPlaneConfigError";
     this.issues = issues;
+    this.validationIssues = validationIssues;
+    this.safeError = createSafeError({
+      category: "validation",
+      code: "CONTROL_PLANE_CONFIG_INVALID",
+      message: "Invalid control-plane configuration.",
+      safeDetails: { issueCount: validationIssues.length },
+    });
   }
 }
 
 const rawConfigSchema = z.object({
+  CONTROL_PLANE_BUILD_CREATED_AT: z.string().datetime().optional(),
+  CONTROL_PLANE_BUILD_REVISION: z.string().min(1).max(128).optional(),
   CONTROL_PLANE_GITHUB_APP_ID: z.string().min(1).optional(),
   CONTROL_PLANE_GITHUB_APP_SLUG: z.string().min(1).optional(),
   CONTROL_PLANE_GITHUB_OAUTH_CLIENT_ID: z.string().min(1).optional(),
@@ -92,25 +115,27 @@ export function loadControlPlaneConfig(
 ): ControlPlaneConfig {
   const parsed = rawConfigSchema.safeParse(env);
   if (!parsed.success) {
-    throw new ControlPlaneConfigError(
-      parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`),
-    );
+    throw new ControlPlaneConfigError(parsed.error.issues.map(toValidationIssue));
   }
 
   const raw = parsed.data;
   const missingKeys = getMissingHostedKeys(raw);
   if (missingKeys.length > 0) {
     throw new ControlPlaneConfigError(
-      missingKeys.map(
-        (key) => `${key} is required when CONTROL_PLANE_MODE=${raw.CONTROL_PLANE_MODE}`,
-      ),
+      missingKeys.map((key) => ({
+        code: "required",
+        message: `${key} is required when CONTROL_PLANE_MODE=${raw.CONTROL_PLANE_MODE}`,
+        path: [key],
+      })),
     );
   }
 
+  const build = buildBuildInfo(raw);
   const github = buildGitHubConfig(raw);
   const secrets = buildSecretConfig(raw);
 
   const configBase = {
+    build,
     environment: raw.NODE_ENV,
     github,
     http: {
@@ -135,6 +160,10 @@ export function getSafeConfigSummary(
   config: ControlPlaneConfig,
 ): SafeControlPlaneConfigSummary {
   return {
+    build: {
+      createdAtConfigured: config.build.createdAt !== undefined,
+      revisionConfigured: config.build.revision !== undefined,
+    },
     environment: config.environment,
     github: {
       appIdConfigured: config.github.appId !== undefined,
@@ -151,6 +180,22 @@ export function getSafeConfigSummary(
   };
 }
 
+function toValidationIssue(issue: z.core.$ZodIssue): ValidationIssue {
+  return {
+    code: issue.code,
+    message: issue.message,
+    path: issue.path.map(String),
+  };
+}
+
+function formatValidationIssue(issue: ValidationIssue): string {
+  const path = issue.path.join(".");
+  if (path.length === 0 || issue.message.startsWith(path)) {
+    return issue.message;
+  }
+  return `${path}: ${issue.message}`;
+}
+
 function getMissingHostedKeys(raw: RawConfig): readonly RawConfigKey[] {
   if (raw.CONTROL_PLANE_MODE === "local-disabled") {
     return [];
@@ -160,6 +205,22 @@ function getMissingHostedKeys(raw: RawConfig): readonly RawConfigKey[] {
 
 function hasValue(value: unknown): boolean {
   return typeof value === "string" ? value.trim().length > 0 : value !== undefined;
+}
+
+function buildBuildInfo(raw: RawConfig): ControlPlaneBuildInfo {
+  const build: {
+    revision?: string;
+    createdAt?: string;
+  } = {};
+
+  if (raw.CONTROL_PLANE_BUILD_REVISION !== undefined) {
+    build.revision = raw.CONTROL_PLANE_BUILD_REVISION;
+  }
+  if (raw.CONTROL_PLANE_BUILD_CREATED_AT !== undefined) {
+    build.createdAt = raw.CONTROL_PLANE_BUILD_CREATED_AT;
+  }
+
+  return build;
 }
 
 function buildGitHubConfig(raw: RawConfig): ControlPlaneConfig["github"] {

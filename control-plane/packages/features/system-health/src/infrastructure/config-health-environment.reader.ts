@@ -9,9 +9,11 @@ export class ConfigHealthEnvironmentReader implements HealthEnvironmentReader {
   public constructor(private readonly configService: ControlPlaneConfigService) {}
 
   public read(): HealthEnvironment {
+    const config = this.configService.getConfig();
     const summary = this.configService.getSafeSummary();
 
     return {
+      build: config.build,
       githubRestApiVersionConfigured: summary.github.restApiVersionConfigured,
       mode: summary.mode,
       publicBaseUrlConfigured: summary.publicBaseUrlConfigured,

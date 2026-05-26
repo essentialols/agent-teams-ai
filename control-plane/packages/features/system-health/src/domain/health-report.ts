@@ -1,3 +1,5 @@
+import type { ControlPlaneBuildInfo } from "@agent-teams-control-plane/shared";
+
 export type HealthStatus = "ok";
 export type HealthControlPlaneMode =
   | "local-disabled"
@@ -8,6 +10,7 @@ export type HealthReport = Readonly<{
   service: Readonly<{
     name: string;
     version: string;
+    build: ControlPlaneBuildInfo;
   }>;
   status: HealthStatus;
   mode: HealthControlPlaneMode;

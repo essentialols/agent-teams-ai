@@ -1,7 +1,4 @@
-import {
-  CONTROL_PLANE_SERVICE_NAME,
-  CONTROL_PLANE_SERVICE_VERSION,
-} from "@agent-teams-control-plane/shared";
+import { createControlPlaneServiceInfo } from "@agent-teams-control-plane/shared";
 
 import type { HealthReport } from "../../domain/health-report.js";
 import type { HealthEnvironmentReader } from "../ports/health-environment-reader.js";
@@ -18,10 +15,7 @@ export class GetHealthReportUseCase {
         publicBaseUrlConfigured: environment.publicBaseUrlConfigured,
       },
       mode: environment.mode,
-      service: {
-        name: CONTROL_PLANE_SERVICE_NAME,
-        version: CONTROL_PLANE_SERVICE_VERSION,
-      },
+      service: createControlPlaneServiceInfo(environment.build),
       status: "ok",
       uptimeSeconds: environment.uptimeSeconds,
     };

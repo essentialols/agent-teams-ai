@@ -11,7 +11,8 @@
       ],
       "@agent-teams-control-plane/platform-logger": [
         "packages/platform/logger/dist/index.d.ts"
-      ]
+      ],
+      "@agent-teams-control-plane/shared": ["packages/shared/dist/index.d.ts"]
     },
     "rootDir": "src",
     "sourceMap": true

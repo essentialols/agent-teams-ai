@@ -1,21 +1,23 @@
 {
-  "name": "@agent-teams-control-plane/api",
+  "name": "@agent-teams-control-plane/platform-api",
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "production": "./dist/index.js",
+      "default": "./src/index.ts"
+    }
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
-    "@agent-teams-control-plane/features-system-health": "workspace:*",
-    "@agent-teams-control-plane/platform-api": "workspace:*",
-    "@agent-teams-control-plane/platform-config": "workspace:*",
     "@agent-teams-control-plane/platform-logger": "workspace:*",
     "@agent-teams-control-plane/shared": "workspace:*",
     "@nestjs/common": "11.1.24",
     "@nestjs/core": "11.1.24",
-    "@nestjs/platform-fastify": "11.1.24",
-    "reflect-metadata": "0.2.2",
     "rxjs": "7.8.2"
   }
 }

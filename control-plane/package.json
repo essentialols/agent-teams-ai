@@ -9,7 +9,7 @@
     "architecture:check": "node scripts/check-architecture-boundaries.mjs",
     "api:smoke": "node scripts/smoke-api.mjs",
     "api:smoke:dist": "node scripts/smoke-api.mjs --dist",
-    "build": "pnpm --filter @agent-teams-control-plane/shared build && pnpm --filter @agent-teams-control-plane/platform-config build && pnpm --filter @agent-teams-control-plane/platform-logger build && pnpm --filter @agent-teams-control-plane/features-system-health build && pnpm --filter @agent-teams-control-plane/api build && pnpm --filter @agent-teams-control-plane/worker build",
+    "build": "pnpm --filter @agent-teams-control-plane/shared build && pnpm --filter @agent-teams-control-plane/platform-config build && pnpm --filter @agent-teams-control-plane/platform-logger build && pnpm --filter @agent-teams-control-plane/platform-api build && pnpm --filter @agent-teams-control-plane/features-system-health build && pnpm --filter @agent-teams-control-plane/api build && pnpm --filter @agent-teams-control-plane/worker build",
     "config:hosted-failfast": "node scripts/check-hosted-failfast.mjs",
     "dev:api": "tsx watch apps/api/src/main.ts",
     "dev:worker": "tsx watch apps/worker/src/main.ts",

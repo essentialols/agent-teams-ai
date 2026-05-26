@@ -356,6 +356,42 @@ describe('buildTeamRuntimeDisplayRows', () => {
     });
   });
 
+  it('does not let stopped provisioned-but-not-alive spawn evidence hide live runtime context', () => {
+    const rows = buildTeamRuntimeDisplayRows({
+      members: [{ name: 'alice' }],
+      runtimeSnapshot: createRuntimeSnapshot({
+        alice: createRuntimeEntry({
+          alive: true,
+          livenessKind: 'runtime_process',
+          runtimeDiagnostic: 'Runtime process is alive',
+          runtimeDiagnosticSeverity: 'info',
+        }),
+      }),
+      spawnStatuses: {
+        alice: createSpawnStatus({
+          status: 'error',
+          launchState: 'failed_to_start',
+          runtimeAlive: false,
+          bootstrapConfirmed: true,
+          hardFailure: true,
+          hardFailureReason: 'CLI process exited (code 1) - team provisioned but not alive',
+          livenessKind: 'not_found',
+          runtimeDiagnostic: 'Runtime is no longer registered',
+          runtimeDiagnosticSeverity: 'warning',
+        }),
+      },
+    });
+
+    expect(rows[0]).toMatchObject({
+      memberName: 'alice',
+      state: 'degraded',
+      source: 'mixed',
+      stateReason: 'Runtime is no longer registered. Process is still alive.',
+      diagnosticSeverity: 'warning',
+      actionsAllowed: false,
+    });
+  });
+
   it('keeps spawn-only runtime errors visible for provisioned-but-not-alive entries', () => {
     const rows = buildTeamRuntimeDisplayRows({
       members: [{ name: 'alice' }],

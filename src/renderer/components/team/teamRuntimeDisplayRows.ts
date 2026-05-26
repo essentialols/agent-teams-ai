@@ -143,11 +143,12 @@ function buildRuntimeBackedDisplayRow(
   const hasErrorDiagnostic = runtime.runtimeDiagnosticSeverity === 'error';
   const bootstrapConfirmedProvisionedButNotAlive =
     isBootstrapConfirmedProvisionedButNotAliveFailure(spawn);
+  const spawnDegradation = getSpawnDegradation(spawn);
   const useBootstrapConfirmedState =
     bootstrapConfirmedProvisionedButNotAlive &&
     !hasErrorDiagnostic &&
-    !hasRuntimeStoppedEvidence(runtime);
-  const spawnDegradation = getSpawnDegradation(spawn);
+    !hasRuntimeStoppedEvidence(runtime) &&
+    spawnDegradation == null;
   const spawnStoppedEvidence = spawnDegradation ? null : getSpawnStoppedEvidence(runtime, spawn);
   const state = useBootstrapConfirmedState
     ? 'running'

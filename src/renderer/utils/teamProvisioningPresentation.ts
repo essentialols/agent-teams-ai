@@ -87,17 +87,22 @@ function parseStatusUpdatedAtMs(value: string | undefined): number | null {
 
 function isFailedSpawnEntry(entry: MemberSpawnStatusEntry | undefined): boolean {
   if (isBootstrapConfirmedProvisionedButNotAliveFailure(entry)) {
-    return false;
+    return (
+      entry?.runtimeDiagnosticSeverity === 'error' ||
+      entry?.livenessKind === 'not_found' ||
+      entry?.livenessKind === 'registered_only' ||
+      entry?.livenessKind === 'shell_only' ||
+      entry?.livenessKind === 'stale_metadata'
+    );
   }
   return entry?.launchState === 'failed_to_start' || entry?.status === 'error';
 }
 
 function isConfirmedSpawnEntry(entry: MemberSpawnStatusEntry | undefined): boolean {
-  return (
-    entry?.launchState === 'confirmed_alive' ||
-    entry?.bootstrapConfirmed === true ||
-    isBootstrapConfirmedProvisionedButNotAliveFailure(entry)
-  );
+  if (isBootstrapConfirmedProvisionedButNotAliveFailure(entry)) {
+    return !isFailedSpawnEntry(entry);
+  }
+  return entry?.launchState === 'confirmed_alive' || entry?.bootstrapConfirmed === true;
 }
 
 function isSkippedSpawnEntry(entry: MemberSpawnStatusEntry | undefined): boolean {

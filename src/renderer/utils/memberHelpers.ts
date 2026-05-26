@@ -1378,7 +1378,9 @@ export function buildMemberLaunchPresentation({
     hasStoppedRuntimeLivenessKind(runtimeEntry?.livenessKind) ||
     hasStoppedRuntimeLivenessKind(spawnLivenessKind);
   const allowBootstrapConfirmedVisualPromotion =
-    bootstrapConfirmedProvisionedButNotAlive && !hasSpawnRuntimeErrorDiagnostic;
+    bootstrapConfirmedProvisionedButNotAlive &&
+    !hasSpawnRuntimeErrorDiagnostic &&
+    !hasStoppedRuntimeEvidence;
   const useBootstrapConfirmedRuntimeAlive =
     allowBootstrapConfirmedVisualPromotion &&
     !hasRuntimeErrorDiagnostic &&

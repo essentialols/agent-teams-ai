@@ -983,7 +983,7 @@ describe('memberHelpers spawn-aware presence', () => {
     });
   });
 
-  it('does not heal stopped runtime evidence for bootstrap-confirmed provisioned-but-not-alive entries', () => {
+  it('keeps stopped runtime evidence failed for bootstrap-confirmed provisioned-but-not-alive entries', () => {
     expect(
       buildMemberLaunchPresentation({
         member,
@@ -1005,9 +1005,10 @@ describe('memberHelpers spawn-aware presence', () => {
         isTeamProvisioning: false,
       })
     ).toMatchObject({
-      presenceLabel: 'stale runtime',
-      launchVisualState: 'stale_runtime',
-      launchStatusLabel: 'stale runtime',
+      presenceLabel: 'spawn failed',
+      launchVisualState: 'error',
+      launchStatusLabel: 'failed',
+      spawnBadgeLabel: 'error',
     });
   });
 

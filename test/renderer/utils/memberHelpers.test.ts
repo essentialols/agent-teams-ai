@@ -946,6 +946,38 @@ describe('memberHelpers spawn-aware presence', () => {
     });
   });
 
+  it('does not leak safe process-table liveness into healed member visuals', () => {
+    expect(
+      buildMemberLaunchPresentation({
+        member,
+        spawnStatus: provisionedButNotAliveSpawn.status,
+        spawnLaunchState: provisionedButNotAliveSpawn.launchState,
+        spawnLivenessSource: provisionedButNotAliveSpawn.livenessSource,
+        spawnRuntimeAlive: provisionedButNotAliveSpawn.runtimeAlive,
+        spawnBootstrapConfirmed: provisionedButNotAliveSpawn.bootstrapConfirmed,
+        spawnBootstrapStalled: provisionedButNotAliveSpawn.bootstrapStalled,
+        spawnAgentToolAccepted: provisionedButNotAliveSpawn.agentToolAccepted,
+        spawnHardFailure: provisionedButNotAliveSpawn.hardFailure,
+        spawnHardFailureReason: provisionedButNotAliveSpawn.hardFailureReason,
+        spawnError: provisionedButNotAliveSpawn.error,
+        spawnLivenessKind: provisionedButNotAliveSpawn.livenessKind,
+        runtimeEntry: {
+          ...processTableUnavailableRuntime,
+          livenessKind: 'registered_only',
+        },
+        runtimeAdvisory: undefined,
+        isLaunchSettling: false,
+        isTeamAlive: true,
+        isTeamProvisioning: false,
+      })
+    ).toMatchObject({
+      presenceLabel: 'idle',
+      launchVisualState: null,
+      launchStatusLabel: null,
+      spawnBadgeLabel: null,
+    });
+  });
+
   it('recognizes provisioned-but-not-alive when the reason is only in runtime diagnostics', () => {
     expect(
       buildMemberLaunchPresentation({

@@ -22,6 +22,21 @@ describe('teamLaunchFailureReason', () => {
     ).toBe(true);
   });
 
+  it('treats permission-blocked runtime liveness as unsafe provisioned-but-not-alive evidence', () => {
+    expect(
+      hasUnsafeProvisionedButNotAliveRuntimeEvidence({
+        bootstrapConfirmed: true,
+        hardFailure: true,
+        hardFailureReason: 'CLI process exited (code 1) - team provisioned but not alive',
+        launchState: 'failed_to_start',
+        livenessKind: 'permission_blocked',
+        runtimeDiagnostic: 'runtime is waiting for permission approval',
+        runtimeDiagnosticSeverity: 'warning',
+        status: 'error',
+      })
+    ).toBe(true);
+  });
+
   it('keeps process-table-unavailable registered metadata safe for bootstrap healing', () => {
     expect(
       hasUnsafeProvisionedButNotAliveRuntimeEvidence({

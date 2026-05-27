@@ -90,6 +90,7 @@ export function hasUnsafeProvisionedButNotAliveRuntimeEvidence(
   if (
     entry?.livenessKind === 'not_found' ||
     entry?.livenessKind === 'shell_only' ||
+    entry?.livenessKind === 'permission_blocked' ||
     entry?.livenessKind === 'runtime_process_candidate'
   ) {
     return true;

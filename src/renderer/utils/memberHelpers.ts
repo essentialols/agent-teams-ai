@@ -1437,7 +1437,7 @@ export function buildMemberLaunchPresentation({
       ? ({
           ...runtimeEntry,
           alive: true,
-          livenessKind: runtimeEntry.livenessKind ?? 'confirmed_bootstrap',
+          livenessKind: 'confirmed_bootstrap',
         } satisfies TeamAgentRuntimeEntry)
       : runtimeEntry;
   const currentRuntimeOfflineVisualState = getCurrentRuntimeOfflineVisualState(

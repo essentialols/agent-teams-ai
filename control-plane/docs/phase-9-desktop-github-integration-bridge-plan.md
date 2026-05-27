@@ -130,6 +130,9 @@ Weak spots studied in current code:
 - Backend action payload validation caps comment/check body fields at current
   server limits. Desktop should preflight those limits for UX, but backend
   remains authoritative and desktop must not silently truncate content.
+- Backend renders an attribution footer and `<!-- agent-teams-action:... -->`
+  marker after raw payload validation. Desktop preflight must account for final
+  rendered length and reserved marker collisions, not only raw body length.
 - Current GitHub comment/review dispatch treats unknown transport outcome as
   `CONTROL_PLANE_GITHUB_ACTION_UNKNOWN_RESULT` and does not retry without
   marker lookup. Desktop must not turn that into a new auto-submission.
@@ -369,8 +372,9 @@ Security rules:
   distinct actions
 - desktop may preflight server-known body limits, but it never mutates or
   truncates action content before submission without explicit user/agent action
-- backend renders final attribution and hidden markers; desktop must not let
-  agent-authored markdown provide those system blocks
+- backend renders final attribution and hidden markers; desktop must reject or
+  clearly flag agent-authored markdown that contains reserved Agent Teams marker
+  blocks
 
 Illustrative local bridge shape:
 
@@ -631,6 +635,21 @@ Provider mutation ambiguity:
 - explicit user retry after ambiguity creates a new logical action and must make
   possible duplication visible in the UI copy
 
+Rendered body boundary:
+
+- desktop raw body preflight mirrors the backend 60,000 character payload cap
+  for comment/review bodies and check output fields
+- desktop preview also computes the expected rendered body with attribution,
+  avatar fallback, separator, workspace action line, and hidden marker
+- final rendered preview must stay below the backend rendered-body cap currently
+  enforced by `CONTROL_PLANE_GITHUB_ACTION_RENDERED_BODY_TOO_LARGE`
+- body content containing reserved marker text such as
+  `<!-- agent-teams-action:` is blocked or requires an explicit safe rewrite
+  before submission
+- check-run `summary`, `title`, and `text` are validated independently because
+  the backend renders attribution into summary while preserving optional `text`
+  separately
+
 Runtime tool surface:
 
 - expose a narrow `request_github_action` style capability only when hosted
@@ -754,6 +773,11 @@ Critical edge cases:
   session
 - action payload exceeds server limit, includes binary-like data, or contains
   control characters in attribution fields
+- raw body is within payload cap but final rendered body exceeds attribution
+  renderer cap
+- action body includes an existing Agent Teams marker or footer-looking block
+- check-run summary passes but optional text/title pushes provider-facing output
+  close to backend caps
 - agent action request arrives after team run stopped or member was replaced
 - local repository remote changes after target was selected
 - two local worktrees point at different forks with the same repository name
@@ -791,6 +815,10 @@ Expected decisions:
   network retry
 - oversized action content fails locally with a safe validation message and is
   not truncated silently
+- rendered-body-too-large is surfaced as a distinct validation state from raw
+  body-too-large
+- reserved marker collision fails before content upload so cleanup/recovery
+  cannot confuse agent-authored markers with system markers
 - repository owner/name matching can suggest, but never authorize, a target
 - target binding must be refreshed by `targetId` before action submit
 - local project binding mismatch fails before sending action content
@@ -850,6 +878,9 @@ Unit tests:
 - target subject id mapper produces backend-compatible prefixes
 - target subject id mapper rejects raw `agentId`/`teamId` values and unsafe
   characters before content upload
+- rendered body preflight includes attribution/footer overhead, default avatar
+  fallback, and hidden marker length
+- reserved marker collision in user/agent body is rejected before backend upload
 - repository rename/fork/name collision cases do not authorize by display name
 - ambiguous provider outcome maps to a non-auto-retry desktop state
 - check-run retry guard refuses create retry when no `githubCheckRunId` or
@@ -876,11 +907,14 @@ Integration tests:
   submission
 - runtime raw id to policy subject mapping is stable across display rename and
   rejects invalid local ids
+- near-limit body test distinguishes raw payload limit from final rendered body
+  limit
 
 Security tests:
 
 - renderer-provided fake attribution is ignored
 - agent-authored markdown cannot set hidden attribution
+- agent-authored reserved marker text cannot be used as cleanup/retry evidence
 - local logs do not contain desktop session token, OAuth code, or GitHub token
 - unavailable control-plane does not create local durable GitHub action queue
 - renderer never receives the desktop token through preload API

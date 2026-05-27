@@ -134,6 +134,9 @@ Weak spots studied in current code:
 - Backend policy subjects require normalized prefixes such as `agent:` and
   `team:`. E2E must prove the desktop bridge maps runtime identities into these
   subjects instead of sending raw local ids.
+- Backend renders attribution, avatar fallback, footer, and hidden marker after
+  raw payload validation. E2E must prove near-limit content and reserved marker
+  input fail safely instead of producing ambiguous public markers.
 
 ## E2E Environment
 
@@ -262,6 +265,7 @@ Assertions:
 - audit record links action id, target id, and safe correlation id
 - backend audit/policy evidence uses normalized `agent:` or `team:` subject ids
   for agent/team requests
+- rendered GitHub body contains exactly one system-owned marker for the action
 - comment body is not asserted by raw full-body snapshot; assertions target
   marker, attribution, and safe expected snippets to avoid leaking content into
   artifacts
@@ -345,6 +349,8 @@ Critical failures:
   `githubCheckRunId` or `external_id` recovery
 - desktop submits raw runtime agent/team id where backend expects normalized
   policy subject id
+- raw body fits payload cap but rendered body exceeds attribution/footer cap
+- user or agent body includes reserved `agent-teams-action` marker text
 
 Expected behavior:
 
@@ -376,6 +382,8 @@ Expected behavior:
   dead-letter/blocked state rather than green retry evidence
 - raw local identity ids are rejected before content upload or converted to safe
   policy subject ids before submission
+- rendered-body-too-large and reserved marker collision fail before public
+  GitHub mutation and without logging raw content
 
 Failure injection guardrails:
 
@@ -587,6 +595,9 @@ Automated:
   post-write crash
 - desktop identity mapping test proves raw agent/team ids never reach backend
   action DTOs as policy subjects
+- near-limit rendered body test covers attribution/footer overhead
+- reserved marker collision test proves agent-authored marker text is not used
+  as cleanup/recovery evidence
 - bounded polling timeout tests
 - duplicate callback tests through mocked public callback route
 - cleanup classification tests
@@ -639,6 +650,8 @@ Manual:
 - release evidence distinguishes duplicate-safe retry from safe dead-letter on
   unknown provider outcome
 - release evidence includes one agent/team policy subject mapping assertion
+- release evidence includes one rendered-body boundary assertion and one
+  reserved marker collision assertion
 
 ## Rollout
 

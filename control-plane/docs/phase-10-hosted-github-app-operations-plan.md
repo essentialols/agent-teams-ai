@@ -136,6 +136,9 @@ Weak spots studied in current code:
 - Backend target policy rejects unprefixed subject ids. Hosted diagnostics must
   make `CONTROL_PLANE_TARGET_POLICY_SUBJECT_ID_INVALID` distinguishable from
   normal policy denial so desktop/runtime mapping bugs are visible.
+- Backend raw payload validation and final rendered-body validation are separate
+  gates. Operations must classify raw size failures, rendered attribution/footer
+  failures, and reserved marker collisions separately.
 
 ## Deployment Topology
 
@@ -457,6 +460,10 @@ Failure behavior:
   or manual recovery until marker lookup recovery is implemented
 - check-run create retry is allowed only after stored `githubCheckRunId` or
   `external_id` recovery proves the previous create can be updated
+- rendered-body-too-large is treated as client/content validation, not provider
+  outage, and must not enter retry loops
+- reserved Agent Teams marker collision is a safety validation failure because
+  cleanup and recovery depend on system-owned markers
 
 ## API Operations
 
@@ -565,6 +572,7 @@ Critical alerts:
 - worker processing events older than lease plus recovery window
 - callback abuse/replay spike
 - request body size rejection spike
+- rendered-body validation failure spike after desktop release
 - unknown-result dead-letter count above zero for public comment/review actions
 - target policy subject id validation failures spike after desktop release
 - provider 401/403 spike after token broker success
@@ -667,6 +675,8 @@ Automated tests:
 - backup/restore dry-run checklist before beta
 - public callback duplicate/replay tests
 - request size limit tests for setup/action endpoints
+- rendered body boundary tests for attribution/footer overhead and reserved
+  marker collision
 - provider 401/403/404 classification tests in GitHub action dispatcher
 - repository rename/transfer/archived-state runbook rehearsal in staging
 - ambiguous provider outcome runbook rehearsal using mocked post-write crash
@@ -715,6 +725,8 @@ Manual hosted smoke:
 - public callback replay and parameter pollution are tested
 - provider auth/not-found errors have distinct safe operational classification
 - request size limits are documented and verified before public beta
+- rendered-body validation and reserved marker validation have safe diagnostics
+  without raw content leakage
 - repository identity runbooks use immutable ids and cover rename/transfer
   cases
 - unknown-result comment/review dead-letter cannot be retried by an operator

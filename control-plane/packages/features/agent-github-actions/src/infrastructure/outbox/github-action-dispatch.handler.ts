@@ -34,6 +34,20 @@ export class GitHubActionDispatchHandler implements OutboxEventHandler {
       typeof event.payload.actionRequestId === "string"
         ? event.payload.actionRequestId
         : event.aggregateId;
+    if (
+      typeof event.payload.actionRequestId === "string" &&
+      event.aggregateId !== undefined &&
+      event.payload.actionRequestId !== event.aggregateId
+    ) {
+      return {
+        error: createSafeError({
+          category: "conflict",
+          code: "CONTROL_PLANE_GITHUB_ACTION_OUTBOX_ACTION_ID_MISMATCH",
+          message: "GitHub action outbox payload does not match its aggregate id.",
+        }),
+        kind: "dead-letter",
+      };
+    }
     if (actionRequestId === undefined) {
       return {
         error: createSafeError({
@@ -44,9 +58,22 @@ export class GitHubActionDispatchHandler implements OutboxEventHandler {
         kind: "dead-letter",
       };
     }
+    if (event.contentRefId === undefined || event.contentIntegrityHash === undefined) {
+      return {
+        error: createSafeError({
+          category: "validation",
+          code: "CONTROL_PLANE_GITHUB_ACTION_OUTBOX_CONTENT_REFERENCE_REQUIRED",
+          message:
+            "GitHub action outbox event requires content reference and integrity hash.",
+        }),
+        kind: "dead-letter",
+      };
+    }
     const result = await this.dispatchGitHubAction.execute({
       actionRequestId,
       attemptNumber: event.attempts,
+      contentIntegrityHash: event.contentIntegrityHash,
+      contentRefId: event.contentRefId,
     });
     if (result.kind === "completed") {
       return { kind: "completed" };

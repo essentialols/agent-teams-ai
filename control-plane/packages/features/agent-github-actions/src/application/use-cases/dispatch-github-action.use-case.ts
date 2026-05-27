@@ -31,6 +31,8 @@ import { decodeGitHubActionPayloadEnvelope } from "./action-content-codec.js";
 export type DispatchGitHubActionInput = Readonly<{
   actionRequestId: string;
   attemptNumber: number;
+  contentRefId: string;
+  contentIntegrityHash: string;
   correlationId?: string;
 }>;
 
@@ -91,6 +93,10 @@ export class DispatchGitHubActionUseCase {
             message: "GitHub action request is already terminal.",
           }),
       };
+    }
+    const contentBindingError = validateOutboxContentBinding(input, view.request);
+    if (contentBindingError !== undefined) {
+      return { kind: "dead-letter", safeError: contentBindingError };
     }
 
     const nowMs = this.clock.nowMs();
@@ -436,6 +442,25 @@ export class DispatchGitHubActionUseCase {
     });
     return { kind: "dead-letter", safeError: input.safeError };
   }
+}
+
+function validateOutboxContentBinding(
+  input: Pick<DispatchGitHubActionInput, "contentIntegrityHash" | "contentRefId">,
+  request: NonNullable<
+    Awaited<ReturnType<GitHubActionRepository["findForDispatch"]>>
+  >["request"],
+): SafeError | undefined {
+  if (
+    input.contentRefId === request.externalContentRefId &&
+    input.contentIntegrityHash === request.externalContentIntegrityHash
+  ) {
+    return undefined;
+  }
+  return createSafeError({
+    category: "conflict",
+    code: "CONTROL_PLANE_GITHUB_ACTION_OUTBOX_CONTENT_MISMATCH",
+    message: "GitHub action outbox content reference does not match the request.",
+  });
 }
 
 function optionalRenderedBody(

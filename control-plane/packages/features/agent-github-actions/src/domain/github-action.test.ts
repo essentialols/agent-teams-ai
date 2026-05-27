@@ -5,6 +5,8 @@ import {
   decodeGitHubActionPayload,
   renderGitHubActionBody,
   selectSafeAvatarUrl,
+  validateAttributionRendererSettings,
+  validateGitHubActionAttribution,
   validateGitHubActionPayload,
 } from "./index.js";
 
@@ -41,6 +43,27 @@ describe("agent GitHub action domain", () => {
         },
       }),
     ).toBe("https://avatars.example.test/agent.png");
+  });
+
+  it("rejects multi-line attribution display names", () => {
+    expect(
+      validateGitHubActionAttribution({
+        agentDisplayName: "Review Agent\nSpoofed Team",
+      }),
+    ).toMatchObject({
+      code: "CONTROL_PLANE_GITHUB_ACTION_AGENT_NAME_INVALID",
+    });
+  });
+
+  it("rejects unsafe default avatar settings", () => {
+    expect(
+      validateAttributionRendererSettings({
+        allowedAvatarOrigins: ["https://cdn.example.test"],
+        defaultAgentAvatarUrl: `https://cdn.example.test/${"a".repeat(2_100)}.png`,
+      }),
+    ).toMatchObject({
+      code: "CONTROL_PLANE_GITHUB_ACTION_DEFAULT_AVATAR_UNSAFE",
+    });
   });
 
   it("rejects unsupported pull request review events", () => {

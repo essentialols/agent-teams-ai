@@ -267,6 +267,32 @@ describe("loadControlPlaneConfig", () => {
     });
   });
 
+  it("rejects overlong GitHub action default avatar URLs", () => {
+    expect(() =>
+      loadControlPlaneConfig({
+        CONTROL_PLANE_AGENT_AVATAR_ALLOWED_ORIGINS: "https://cdn.example.test",
+        CONTROL_PLANE_DATABASE_URL: "postgresql://user:pass@localhost:5432/db",
+        CONTROL_PLANE_DEFAULT_AGENT_AVATAR_URL: `https://cdn.example.test/${"a".repeat(2_100)}.png`,
+        CONTROL_PLANE_ENCRYPTION_MASTER_KEY: Buffer.alloc(32, 7).toString("base64"),
+        CONTROL_PLANE_EXTERNAL_CONTENT_RETENTION_DAYS: "3",
+        CONTROL_PLANE_GITHUB_APP_ID: "123",
+        CONTROL_PLANE_GITHUB_APP_PRIVATE_KEY: "private-key",
+        CONTROL_PLANE_GITHUB_APP_SLUG: "agent-teams",
+        CONTROL_PLANE_GITHUB_OAUTH_CLIENT_ID: "client-id",
+        CONTROL_PLANE_GITHUB_OAUTH_CLIENT_SECRET: "oauth-secret",
+        CONTROL_PLANE_GITHUB_REST_API_VERSION: "2099-01-01",
+        CONTROL_PLANE_GITHUB_ACTIONS_ENABLED: "true",
+        CONTROL_PLANE_GITHUB_TOKEN_BROKER_ENABLED: "true",
+        CONTROL_PLANE_GITHUB_WEBHOOK_SECRET: "webhook-secret",
+        CONTROL_PLANE_INTEGRATION_TARGETS_ENABLED: "true",
+        CONTROL_PLANE_MODE: "hosted-official-app",
+        CONTROL_PLANE_OUTBOX_WORKER_ENABLED: "true",
+        CONTROL_PLANE_PUBLIC_BASE_URL: "https://control-plane.example.test",
+        NODE_ENV: "test",
+      }),
+    ).toThrow(ControlPlaneConfigError);
+  });
+
   it("accepts the token broker private key alias in hosted mode", () => {
     const config = loadControlPlaneConfig({
       CONTROL_PLANE_DATABASE_URL: "postgresql://user:pass@localhost:5432/db",

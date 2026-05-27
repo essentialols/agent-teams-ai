@@ -228,6 +228,7 @@ const persistenceRequiredKeys = [
   "CONTROL_PLANE_DATABASE_URL",
   "CONTROL_PLANE_ENCRYPTION_MASTER_KEY",
 ] as const satisfies readonly RawConfigKey[];
+const maxAgentAvatarUrlLength = 2_048;
 
 export function loadControlPlaneConfig(
   env: NodeJS.ProcessEnv = process.env,
@@ -750,11 +751,14 @@ function validateGitHubActionAvatarConfig(raw: RawConfig): readonly ValidationIs
     return issues;
   }
 
-  const defaultAvatar = parseHttpsUrl(raw.CONTROL_PLANE_DEFAULT_AGENT_AVATAR_URL);
+  const defaultAvatar =
+    raw.CONTROL_PLANE_DEFAULT_AGENT_AVATAR_URL.length > maxAgentAvatarUrlLength
+      ? undefined
+      : parseHttpsUrl(raw.CONTROL_PLANE_DEFAULT_AGENT_AVATAR_URL);
   if (defaultAvatar === undefined) {
     issues.push({
       code: "invalid",
-      message: "CONTROL_PLANE_DEFAULT_AGENT_AVATAR_URL must be an https URL.",
+      message: "CONTROL_PLANE_DEFAULT_AGENT_AVATAR_URL must be a bounded https URL.",
       path: ["CONTROL_PLANE_DEFAULT_AGENT_AVATAR_URL"],
     });
     return issues;

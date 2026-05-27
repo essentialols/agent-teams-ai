@@ -156,23 +156,19 @@ export function capabilityForGitHubActionType(type: GitHubActionType): string {
 export function validateGitHubActionAttribution(
   attribution: GitHubActionAttribution,
 ): SafeError | undefined {
-  const agentName = attribution.agentDisplayName.trim();
-  if (agentName.length === 0 || agentName.length > maxDisplayNameLength) {
-    return createSafeError({
-      category: "validation",
-      code: "CONTROL_PLANE_GITHUB_ACTION_AGENT_NAME_INVALID",
-      message: "Agent display name is required and must be bounded.",
-    });
+  const invalidAgentName = validateDisplayName({
+    code: "CONTROL_PLANE_GITHUB_ACTION_AGENT_NAME_INVALID",
+    message: "Agent display name is required, single-line, and bounded.",
+    value: attribution.agentDisplayName,
+  });
+  if (invalidAgentName !== undefined) {
+    return invalidAgentName;
   }
-  if (
-    attribution.teamDisplayName !== undefined &&
-    (attribution.teamDisplayName.trim().length === 0 ||
-      attribution.teamDisplayName.trim().length > maxDisplayNameLength)
-  ) {
-    return createSafeError({
-      category: "validation",
+  if (attribution.teamDisplayName !== undefined) {
+    return validateDisplayName({
       code: "CONTROL_PLANE_GITHUB_ACTION_TEAM_NAME_INVALID",
-      message: "Team display name must be bounded when provided.",
+      message: "Team display name must be single-line and bounded when provided.",
+      value: attribution.teamDisplayName,
     });
   }
   return undefined;
@@ -259,6 +255,36 @@ export function bodyFromActionPayload(payload: GitHubActionPayload): string | un
   return "body" in payload
     ? payload.body
     : (payload.text ?? payload.summary ?? payload.title ?? payload.name);
+}
+
+function validateDisplayName(input: {
+  value: string;
+  code: string;
+  message: string;
+}): SafeError | undefined {
+  const normalized = input.value.trim();
+  if (
+    normalized.length === 0 ||
+    normalized.length > maxDisplayNameLength ||
+    hasControlCharacter(normalized)
+  ) {
+    return createSafeError({
+      category: "validation",
+      code: input.code,
+      message: input.message,
+    });
+  }
+  return undefined;
+}
+
+function hasControlCharacter(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code <= 31 || code === 127) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function validateBodyActionPayload(number: number, body: string): SafeError | undefined {

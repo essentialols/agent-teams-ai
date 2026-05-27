@@ -2,6 +2,9 @@ import { createSafeError, type SafeError } from "@agent-teams-control-plane/shar
 
 import type { GitHubActionAttribution } from "./github-action.js";
 
+const maxAvatarUrlLength = 2_048;
+const maxRenderedBodyLength = 65_000;
+
 export type AgentAttributionRendererSettings = Readonly<{
   defaultAgentAvatarUrl: string;
   allowedAvatarOrigins: readonly string[];
@@ -36,7 +39,15 @@ export function renderGitHubActionBody(input: RenderGitHubActionBodyInput): stri
     lines.push(`Team: ${escapeMarkdownText(input.attribution.teamDisplayName)}`);
   }
   lines.push(`Workspace action: ${input.actionRequestId}`);
-  return `${lines.join("\n")}\n`;
+  const rendered = `${lines.join("\n")}\n`;
+  if (rendered.length > maxRenderedBodyLength) {
+    throw createSafeError({
+      category: "validation",
+      code: "CONTROL_PLANE_GITHUB_ACTION_RENDERED_BODY_TOO_LARGE",
+      message: "Rendered GitHub action body is too large.",
+    });
+  }
+  return rendered;
 }
 
 export function validateAttributionRendererSettings(
@@ -68,6 +79,9 @@ function parseSafeAvatarUrl(
   value: string,
   settings: AgentAttributionRendererSettings,
 ): string | undefined {
+  if (value.length > maxAvatarUrlLength) {
+    return undefined;
+  }
   try {
     const url = new URL(value);
     if (url.protocol !== "https:") {
@@ -86,7 +100,11 @@ function parseSafeAvatarUrl(
 }
 
 function escapeMarkdownText(value: string): string {
-  return value.trim().replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+  return value
+    .trim()
+    .replaceAll(/[\r\n]+/g, " ")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
 }
 
 function escapeHtmlAttribute(value: string): string {

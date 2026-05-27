@@ -1,0 +1,113 @@
+import { describe, expect, it } from "vitest";
+
+import type { ClaimedOutboxEvent } from "@agent-teams-control-plane/features-outbox";
+import { toUnixMilliseconds } from "@agent-teams-control-plane/shared";
+
+import {
+  GITHUB_ACTION_DISPATCH_EVENT_TYPE,
+  GITHUB_ACTION_DISPATCH_EVENT_VERSION,
+} from "../../application/ports/github-action-outbox.port.js";
+import type { DispatchGitHubActionUseCase } from "../../application/use-cases/dispatch-github-action.use-case.js";
+import { GitHubActionDispatchHandler } from "./github-action-dispatch.handler.js";
+
+describe("GitHubActionDispatchHandler", () => {
+  it("requires external content reference and integrity hash", async () => {
+    let called = false;
+    const handler = new GitHubActionDispatchHandler({
+      execute: async () => {
+        called = true;
+        return { kind: "completed" };
+      },
+    } as unknown as DispatchGitHubActionUseCase);
+
+    await expect(
+      handler.handle(claimedEvent({ withContentRef: false })),
+    ).resolves.toMatchObject({
+      error: {
+        code: "CONTROL_PLANE_GITHUB_ACTION_OUTBOX_CONTENT_REFERENCE_REQUIRED",
+      },
+      kind: "dead-letter",
+    });
+    expect(called).toBe(false);
+  });
+
+  it("rejects mismatched payload and aggregate action ids", async () => {
+    let called = false;
+    const handler = new GitHubActionDispatchHandler({
+      execute: async () => {
+        called = true;
+        return { kind: "completed" };
+      },
+    } as unknown as DispatchGitHubActionUseCase);
+
+    await expect(
+      handler.handle(
+        claimedEvent({
+          aggregateId: "action-1",
+          payload: { actionRequestId: "action-2" },
+        }),
+      ),
+    ).resolves.toMatchObject({
+      error: {
+        code: "CONTROL_PLANE_GITHUB_ACTION_OUTBOX_ACTION_ID_MISMATCH",
+      },
+      kind: "dead-letter",
+    });
+    expect(called).toBe(false);
+  });
+
+  it("passes action id and content binding into the dispatch use case", async () => {
+    const calls: Array<Parameters<DispatchGitHubActionUseCase["execute"]>[0]> = [];
+    const handler = new GitHubActionDispatchHandler({
+      execute: async (input: Parameters<DispatchGitHubActionUseCase["execute"]>[0]) => {
+        calls.push(input);
+        return { kind: "completed" };
+      },
+    } as unknown as DispatchGitHubActionUseCase);
+
+    await expect(handler.handle(claimedEvent())).resolves.toEqual({
+      kind: "completed",
+    });
+    expect(calls).toEqual([
+      {
+        actionRequestId: "action-1",
+        attemptNumber: 2,
+        contentIntegrityHash: "sha-1",
+        contentRefId: "content-1",
+      },
+    ]);
+  });
+});
+
+function claimedEvent(
+  input: {
+    withContentRef?: boolean;
+    aggregateId?: string;
+    payload?: ClaimedOutboxEvent["payload"];
+  } = {},
+): ClaimedOutboxEvent {
+  return {
+    aggregateId: input.aggregateId ?? "action-1",
+    attempts: 2,
+    claimToken: "claim-1",
+    createdAtMs: toUnixMilliseconds(0),
+    id: "event-1" as never,
+    idempotencyKey: "github-action-dispatch:workspace-1:action-1",
+    lockedBy: "worker-1",
+    lockedUntilMs: toUnixMilliseconds(10_000),
+    maxAttempts: 10,
+    nextAttemptAtMs: toUnixMilliseconds(0),
+    payload: input.payload ?? { actionRequestId: "action-1" },
+    status: "processing",
+    type: GITHUB_ACTION_DISPATCH_EVENT_TYPE,
+    updatedAtMs: toUnixMilliseconds(0),
+    version: GITHUB_ACTION_DISPATCH_EVENT_VERSION,
+    workspaceId: "workspace-1" as never,
+    ...(input.withContentRef === false
+      ? {}
+      : {
+          contentIntegrityHash: "sha-1",
+          contentRefId: "content-1" as never,
+        }),
+  };
+}

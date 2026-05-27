@@ -16,10 +16,7 @@ import { DispatchGitHubActionUseCase } from "./dispatch-github-action.use-case.j
 describe("DispatchGitHubActionUseCase", () => {
   it("dispatches through token broker, renders attribution, and shreds content on success", async () => {
     const harness = createHarness();
-    const result = await harness.useCase.execute({
-      actionRequestId: "action-1",
-      attemptNumber: 2,
-    });
+    const result = await harness.useCase.execute(dispatchInput({ attemptNumber: 2 }));
 
     expect(result).toEqual({ kind: "completed" });
     expect(harness.dispatchBodies[0]).toContain("<!-- agent-teams-action:action-1 -->");
@@ -39,9 +36,7 @@ describe("DispatchGitHubActionUseCase", () => {
   it("keeps worker events retryable while the feature gate is disabled", async () => {
     const harness = createHarness({ enabled: false });
 
-    await expect(
-      harness.useCase.execute({ actionRequestId: "action-1", attemptNumber: 1 }),
-    ).resolves.toMatchObject({
+    await expect(harness.useCase.execute(dispatchInput())).resolves.toMatchObject({
       kind: "retry",
       safeError: { code: "CONTROL_PLANE_GITHUB_ACTIONS_WORKER_PAUSED" },
     });
@@ -64,13 +59,34 @@ describe("DispatchGitHubActionUseCase", () => {
     });
 
     await expect(
-      harness.useCase.execute({ actionRequestId: "action-1", attemptNumber: 3 }),
+      harness.useCase.execute(dispatchInput({ attemptNumber: 3 })),
     ).resolves.toMatchObject({
       kind: "retry",
       retryAfterMs: 120_000,
     });
     expect(harness.operations).toContain("request:retryable-failure");
     expect(harness.operations).not.toContain("content:shred");
+  });
+
+  it("dead-letters stale outbox content bindings before loading content", async () => {
+    const harness = createHarness();
+
+    await expect(
+      harness.useCase.execute(
+        dispatchInput({
+          contentIntegrityHash: "stale-sha",
+          contentRefId: "stale-content",
+        }),
+      ),
+    ).resolves.toMatchObject({
+      kind: "dead-letter",
+      safeError: {
+        code: "CONTROL_PLANE_GITHUB_ACTION_OUTBOX_CONTENT_MISMATCH",
+      },
+    });
+    expect(harness.operations).toEqual([]);
+    expect(harness.tokenBrokerCalls).toEqual([]);
+    expect(harness.dispatchBodies).toEqual([]);
   });
 });
 
@@ -215,5 +231,17 @@ function createHarness(
       auditLog,
       new FixedClock(1000),
     ),
+  };
+}
+
+function dispatchInput(
+  overrides: Partial<Parameters<DispatchGitHubActionUseCase["execute"]>[0]> = {},
+): Parameters<DispatchGitHubActionUseCase["execute"]>[0] {
+  return {
+    actionRequestId: "action-1",
+    attemptNumber: 1,
+    contentIntegrityHash: "sha-1",
+    contentRefId: "content-1",
+    ...overrides,
   };
 }

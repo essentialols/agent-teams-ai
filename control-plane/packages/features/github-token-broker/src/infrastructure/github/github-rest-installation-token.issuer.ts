@@ -48,6 +48,7 @@ export class GitHubRestInstallationTokenIssuer implements GitHubInstallationToke
             accept: "application/vnd.github+json",
             authorization: `Bearer ${jwt.value}`,
             "content-type": "application/json",
+            "user-agent": "agent-teams-control-plane",
             ...(this.settings.restApiVersion() === undefined
               ? {}
               : { "x-github-api-version": this.settings.restApiVersion() }),

@@ -404,9 +404,10 @@ export class PrismaIntegrationTargetRepository implements IntegrationTargetRepos
         reasonCode: "CONTROL_PLANE_TARGET_POLICY_CONNECTION_SUSPENDED",
       };
     }
+    const repositorySyncCursors = row.integrationConnection.repositorySyncCursors;
     if (
-      row.integrationConnection.repositorySyncCursors !== undefined &&
-      !mapRepositorySyncStatus(row.integrationConnection.repositorySyncCursors).complete
+      repositorySyncCursors === undefined ||
+      !mapRepositorySyncStatus(repositorySyncCursors).complete
     ) {
       return {
         allowed: false,
@@ -665,7 +666,12 @@ async function loadTargetForPolicyEvaluation(
   const target = await client.integrationTarget.findFirst({
     include: {
       githubRepositoryBinding: true,
-      integrationConnection: { select: { status: true } },
+      integrationConnection: {
+        select: {
+          repositorySyncCursors: true,
+          status: true,
+        },
+      },
       targetPolicyRules: { orderBy: [{ subjectKind: "asc" }, { subjectId: "asc" }] },
     },
     where: {

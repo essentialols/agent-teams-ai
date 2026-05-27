@@ -28,6 +28,9 @@ import type { TargetPolicyEvaluatorPort } from "../ports/target-policy-evaluator
 import type { TransactionRunner } from "../ports/transaction-runner.js";
 import { decodeGitHubActionPayloadEnvelope } from "./action-content-codec.js";
 
+const defaultProviderBackoffMs = 60_000;
+const minimumPositiveProviderBackoffMs = 1_000;
+
 export type DispatchGitHubActionInput = Readonly<{
   actionRequestId: string;
   attemptNumber: number;
@@ -224,7 +227,11 @@ export class DispatchGitHubActionUseCase {
       if (safeError.retryable) {
         return this.finishRetryableFailure({
           attemptNumber: input.attemptNumber,
-          dispatch: { kind: "failure", safeError },
+          dispatch: {
+            kind: "failure",
+            safeError,
+            ...retryAfterFromSafeError(safeError, this.clock.nowMs()),
+          },
           view,
         });
       }
@@ -511,4 +518,43 @@ function requiredDefaultAvatar(settings: AgentGitHubActionsSettings): string {
     });
   }
   return value;
+}
+
+function retryAfterFromSafeError(
+  safeError: SafeError,
+  nowMs: number,
+): { retryAfterMs?: number } {
+  if (!safeError.retryable) {
+    return {};
+  }
+  const details = safeError.safeDetails;
+  const retryAfterSeconds =
+    typeof details?.retryAfterSeconds === "number"
+      ? details.retryAfterSeconds
+      : undefined;
+  if (retryAfterSeconds !== undefined) {
+    return {
+      retryAfterMs: normalizeProviderBackoffMs(retryAfterSeconds * 1000),
+    };
+  }
+  const resetSeconds =
+    typeof details?.rateLimitResetSeconds === "number"
+      ? details.rateLimitResetSeconds
+      : undefined;
+  if (resetSeconds !== undefined) {
+    return {
+      retryAfterMs: normalizeProviderBackoffMs(resetSeconds * 1000 - nowMs),
+    };
+  }
+  if (safeError.code === "CONTROL_PLANE_GITHUB_TOKEN_RATE_LIMITED") {
+    return { retryAfterMs: defaultProviderBackoffMs };
+  }
+  return {};
+}
+
+function normalizeProviderBackoffMs(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    return defaultProviderBackoffMs;
+  }
+  return Math.max(Math.ceil(value), minimumPositiveProviderBackoffMs);
 }

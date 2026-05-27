@@ -8,6 +8,7 @@ import {
 
 import type { GitHubActionContentStore } from "../ports/github-action-content-store.port.js";
 import type { GitHubActionDispatcher } from "../ports/github-action-dispatcher.port.js";
+import type { GitHubInstallationTokenBrokerPort } from "../ports/github-installation-token-broker.port.js";
 import type { GitHubActionRepository } from "../ports/github-action.repository.js";
 import type { AgentGitHubActionsAuditLog } from "../ports/policies.js";
 import { encodeGitHubActionPayloadEnvelope } from "./action-content-codec.js";
@@ -64,6 +65,33 @@ describe("DispatchGitHubActionUseCase", () => {
       kind: "retry",
       retryAfterMs: 120_000,
     });
+    expect(harness.operations).toContain("request:retryable-failure");
+    expect(harness.operations).not.toContain("content:shred");
+  });
+
+  it("preserves token broker retry-after metadata for outbox scheduling", async () => {
+    const harness = createHarness({
+      tokenBroker: async () => {
+        throw createSafeError({
+          category: "external",
+          code: "CONTROL_PLANE_GITHUB_TOKEN_RATE_LIMITED",
+          message: "rate limited",
+          retryable: true,
+          safeDetails: { retryAfterSeconds: 45 },
+        });
+      },
+    });
+
+    await expect(
+      harness.useCase.execute(dispatchInput({ attemptNumber: 3 })),
+    ).resolves.toMatchObject({
+      kind: "retry",
+      retryAfterMs: 45_000,
+      safeError: {
+        code: "CONTROL_PLANE_GITHUB_TOKEN_RATE_LIMITED",
+      },
+    });
+    expect(harness.dispatchBodies).toEqual([]);
     expect(harness.operations).toContain("request:retryable-failure");
     expect(harness.operations).not.toContain("content:shred");
   });
@@ -127,6 +155,7 @@ function createHarness(
   input: {
     enabled?: boolean;
     dispatcher?: GitHubActionDispatcher["dispatch"];
+    tokenBroker?: GitHubInstallationTokenBrokerPort["issue"];
   } = {},
 ) {
   const operations: string[] = [];
@@ -239,11 +268,13 @@ function createHarness(
             capability: brokerInput.capability,
             targetId: brokerInput.targetId,
           });
-          return {
-            expiresAtMs: 10_000,
-            githubInstallationId: "installation-1",
-            token: "server-only-token",
-          };
+          return input.tokenBroker === undefined
+            ? {
+                expiresAtMs: 10_000,
+                githubInstallationId: "installation-1",
+                token: "server-only-token",
+              }
+            : input.tokenBroker(brokerInput);
         },
       },
       {

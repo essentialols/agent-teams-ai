@@ -531,33 +531,43 @@ describe("PrismaIntegrationTargetRepository", () => {
     });
   });
 
-  it("denies policy evaluation when repository sync is incomplete", async () => {
+  it("loads repository sync cursors and denies policy evaluation when sync is incomplete", async () => {
+    const queries: Array<{
+      include?: {
+        integrationConnection?: {
+          select?: Record<string, boolean>;
+        };
+      };
+    }> = [];
     const repository = new PrismaIntegrationTargetRepository(
       fakeDatabase({
         integrationTarget: {
-          findFirst: async () => ({
-            ...targetRow({
-              policyVersion: 1,
-              targetPolicyRules: [
-                {
-                  capability: "github.issue_comment.request",
-                  effect: "allow",
-                  subjectId: "workspace:workspace-1",
-                  subjectKind: "workspace",
-                },
-              ],
-            }),
-            integrationConnection: {
-              repositorySyncCursors: [
-                {
-                  cursorKind: "github_installation_repositories",
-                  cursorValue: "next-page",
-                  status: "running",
-                },
-              ],
-              status: "active",
-            },
-          }),
+          findFirst: async (query: (typeof queries)[number]) => {
+            queries.push(query);
+            return {
+              ...targetRow({
+                policyVersion: 1,
+                targetPolicyRules: [
+                  {
+                    capability: "github.issue_comment.request",
+                    effect: "allow",
+                    subjectId: "workspace:workspace-1",
+                    subjectKind: "workspace",
+                  },
+                ],
+              }),
+              integrationConnection: {
+                repositorySyncCursors: [
+                  {
+                    cursorKind: "github_installation_repositories",
+                    cursorValue: "next-page",
+                    status: "running",
+                  },
+                ],
+                status: "active",
+              },
+            };
+          },
         },
       }),
     );
@@ -576,6 +586,10 @@ describe("PrismaIntegrationTargetRepository", () => {
       allowed: false,
       policyVersion: 1,
       reasonCode: "CONTROL_PLANE_TARGET_POLICY_TARGET_STALE",
+    });
+    expect(queries[0]?.include?.integrationConnection?.select).toMatchObject({
+      repositorySyncCursors: true,
+      status: true,
     });
   });
 

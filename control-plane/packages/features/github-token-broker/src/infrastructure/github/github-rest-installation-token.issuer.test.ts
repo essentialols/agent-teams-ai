@@ -56,6 +56,7 @@ describe("GitHubRestInstallationTokenIssuer", () => {
         accept: "application/vnd.github+json",
         authorization: "Bearer app-jwt",
         "content-type": "application/json",
+        "user-agent": "agent-teams-control-plane",
         "x-github-api-version": "2022-11-28",
       }),
       method: "POST",

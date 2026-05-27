@@ -121,6 +121,29 @@ describe("DispatchGitHubActionUseCase", () => {
     expect(harness.operations).not.toContain("content:shred");
   });
 
+  it("checks policy before loading action content for dispatch", async () => {
+    const harness = createHarness({ policyAllowed: false });
+
+    await expect(harness.useCase.execute(dispatchInput())).resolves.toMatchObject({
+      kind: "dead-letter",
+      safeError: {
+        code: "CONTROL_PLANE_TARGET_POLICY_DENIED",
+      },
+    });
+
+    expect(harness.contentLoadCalls).toBe(0);
+    expect(harness.tokenBrokerCalls).toEqual([]);
+    expect(harness.dispatchBodies).toEqual([]);
+    expect(harness.auditEvents).toContain("github_action.dispatch_denied");
+    expect(harness.operations).toEqual([
+      "attempt:started",
+      "request:dispatching",
+      "attempt:finished",
+      "content:shred",
+      "request:terminal-failure",
+    ]);
+  });
+
   it("dead-letters stale outbox content bindings before token broker and GitHub dispatch", async () => {
     const harness = createHarness();
 
@@ -180,12 +203,14 @@ function createHarness(
   input: {
     enabled?: boolean;
     dispatcher?: GitHubActionDispatcher["dispatch"];
+    policyAllowed?: boolean;
     request?: DispatchRequestOverride;
     tokenBroker?: GitHubInstallationTokenBrokerPort["issue"];
   } = {},
 ) {
   const operations: string[] = [];
   const auditEvents: string[] = [];
+  let contentLoadCalls = 0;
   const dispatchBodies: string[] = [];
   const tokenBrokerCalls: Array<{ capability: string; targetId: string }> = [];
   const tokenBrokerSubjects: Array<{
@@ -253,15 +278,18 @@ function createHarness(
     },
   };
   const contentStore: GitHubActionContentStore = {
-    load: async () => ({
-      plaintext: encodeGitHubActionPayloadEnvelope({
-        actionType: "github.issue_comment.create",
-        payload: {
-          body: "Dispatch body",
-          issueNumber: 7,
-        },
-      }),
-    }),
+    load: async () => {
+      contentLoadCalls += 1;
+      return {
+        plaintext: encodeGitHubActionPayloadEnvelope({
+          actionType: "github.issue_comment.create",
+          payload: {
+            body: "Dispatch body",
+            issueNumber: 7,
+          },
+        }),
+      };
+    },
     shred: async () => {
       operations.push("content:shred");
     },
@@ -276,6 +304,9 @@ function createHarness(
   };
   return {
     auditEvents,
+    get contentLoadCalls() {
+      return contentLoadCalls;
+    },
     dispatchBodies,
     operations,
     policyInputs,
@@ -302,9 +333,12 @@ function createHarness(
             subjectKind: policyInput.subjectKind,
           });
           return {
-            allowed: true,
+            allowed: input.policyAllowed ?? true,
             policyVersion: 1,
-            reasonCode: "allowed",
+            reasonCode:
+              input.policyAllowed === false
+                ? "CONTROL_PLANE_TARGET_POLICY_DENIED"
+                : "CONTROL_PLANE_TARGET_POLICY_ALLOWED",
           };
         },
       },

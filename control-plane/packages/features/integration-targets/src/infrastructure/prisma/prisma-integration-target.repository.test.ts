@@ -288,6 +288,113 @@ describe("PrismaIntegrationTargetRepository", () => {
     });
   });
 
+  it("rejects duplicate enable races before appending policy rules to the existing target", async () => {
+    const operations: string[] = [];
+    let targetFinds = 0;
+    const existing = targetRow({
+      policyVersion: 1,
+      targetPolicyRules: [
+        {
+          capability: "github.issue_comment.request",
+          effect: "allow",
+          subjectId: "workspace:workspace-1",
+          subjectKind: "workspace",
+        },
+      ],
+    });
+    const client = {
+      $queryRaw: async () => {
+        operations.push("lock");
+        return [];
+      },
+      gitHubRepositoryTargetBinding: {
+        createMany: async () => {
+          operations.push("binding:createMany");
+          throw new Error("binding must not be inserted for duplicate target");
+        },
+      },
+      integrationConnection: {
+        findFirst: async () => {
+          operations.push("connection:findFirst");
+          return {
+            provider: "github",
+            providerInstallationId: "installation-1",
+            repositoryAvailability: [
+              {
+                archived: false,
+                available: true,
+                displayFullName: "octo/repo",
+                displayName: "repo",
+                displayOwner: "octo",
+                id: "availability-1",
+                lastVerifiedAt: new Date(1000),
+                private: false,
+                providerRepositoryId: "repo-1",
+              },
+            ],
+            repositorySyncCursors: [
+              {
+                cursorKind: "github_installation_repositories",
+                cursorValue: null,
+                status: "completed",
+              },
+            ],
+            status: "active",
+          };
+        },
+      },
+      integrationTarget: {
+        createMany: async () => {
+          operations.push("target:createMany");
+        },
+        findFirst: async () => {
+          targetFinds += 1;
+          operations.push(`target:findFirst:${targetFinds}`);
+          return targetFinds === 1 ? null : existing;
+        },
+        update: async () => {
+          operations.push("target:update");
+          throw new Error("target must not be updated for incompatible policy");
+        },
+      },
+      targetPolicyRule: {
+        createMany: async () => {
+          operations.push("policy:createMany");
+          throw new Error("policy must not be inserted for duplicate target");
+        },
+      },
+    };
+    const repository = new PrismaIntegrationTargetRepository(fakeDatabase(client));
+    const runner = new PrismaTransactionRunner(fakeDatabaseWithTransaction(client));
+
+    await expect(
+      runner.runInTransaction((context) =>
+        repository.enableRepositoryTarget(
+          {
+            desktopClientId: desktopClientId("desktop-1"),
+            githubRepositoryId: "repo-1",
+            initialPolicyRules: [],
+            initialPolicyRulesProvided: true,
+            integrationConnectionId: connectionId("connection-1"),
+            nowMs: toUnixMilliseconds(1000),
+            repositoryAvailabilityMaxAgeMs: 60_000,
+            workspaceId: workspaceId("workspace-1"),
+          },
+          context,
+        ),
+      ),
+    ).rejects.toMatchObject({
+      code: "CONTROL_PLANE_TARGET_ALREADY_ENABLED_WITH_DIFFERENT_POLICY",
+    });
+    expect(operations).toEqual([
+      "lock",
+      "connection:findFirst",
+      "target:findFirst:1",
+      "target:createMany",
+      "target:findFirst:2",
+    ]);
+  });
+
   it("treats duplicate policy replacement as idempotent when expected version matches", async () => {
     const operations: string[] = [];
     const row = targetRow({

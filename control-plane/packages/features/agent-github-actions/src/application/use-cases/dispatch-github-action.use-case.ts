@@ -143,6 +143,16 @@ export class DispatchGitHubActionUseCase {
     }
 
     try {
+      const policyDenied = await this.recheckPolicy(view, input.correlationId);
+      if (policyDenied !== undefined) {
+        return this.finishTerminalFailure({
+          attemptNumber: input.attemptNumber,
+          safeError: policyDenied,
+          status: "dead_lettered",
+          view,
+        });
+      }
+
       const loaded = await this.contentStore.load({
         ref: {
           ciphertextSha256: view.request.externalContentIntegrityHash,
@@ -155,16 +165,6 @@ export class DispatchGitHubActionUseCase {
           category: "conflict",
           code: "CONTROL_PLANE_GITHUB_ACTION_TYPE_MISMATCH",
           message: "Stored GitHub action payload type does not match the request.",
-        });
-      }
-
-      const policyDenied = await this.recheckPolicy(view, input.correlationId);
-      if (policyDenied !== undefined) {
-        return this.finishTerminalFailure({
-          attemptNumber: input.attemptNumber,
-          safeError: policyDenied,
-          status: "dead_lettered",
-          view,
         });
       }
 

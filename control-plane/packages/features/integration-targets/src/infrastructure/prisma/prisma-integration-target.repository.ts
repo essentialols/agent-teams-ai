@@ -278,6 +278,9 @@ export class PrismaIntegrationTargetRepository implements IntegrationTargetRepos
         message: "Repository target could not be enabled.",
       });
     }
+    if (target.id !== targetId) {
+      return enableExistingTarget(client, input, target as TargetWithRelationsRow);
+    }
 
     await client.gitHubRepositoryTargetBinding.createMany({
       data: {

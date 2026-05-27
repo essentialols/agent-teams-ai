@@ -935,11 +935,7 @@ export const MemberList = memo(function MemberList({
           const hasUnsafeProvisionedButNotAliveEvidence =
             bootstrapConfirmedProvisionedButNotAlive &&
             (hasUnsafeProvisionedButNotAliveRuntimeEvidence(spawnEntry) ||
-              hasUnsafeProvisionedButNotAliveRuntimeEvidence({
-                runtimeDiagnostic: runtimeEntry?.runtimeDiagnostic,
-                runtimeDiagnosticSeverity: runtimeEntry?.runtimeDiagnosticSeverity,
-                livenessKind: runtimeEntry?.livenessKind,
-              }));
+              hasUnsafeProvisionedButNotAliveRuntimeEvidence(runtimeEntry));
           const canPromoteBootstrapConfirmedVisualState =
             bootstrapConfirmedProvisionedButNotAlive &&
             spawnEntry?.runtimeDiagnosticSeverity !== 'error' &&

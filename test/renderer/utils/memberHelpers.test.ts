@@ -161,6 +161,19 @@ describe('memberHelpers spawn-aware presence', () => {
     ).toBe(true);
   });
 
+  it('treats spawn-only bootstrap-confirmed provisioned-but-not-alive entries as active for task display', () => {
+    expect(
+      shouldDisplayMemberCurrentTask({
+        member: { ...member, currentTaskId: 'task-1' },
+        isTeamAlive: true,
+        spawnStatus: provisionedButNotAliveSpawn.status,
+        spawnLaunchState: provisionedButNotAliveSpawn.launchState,
+        spawnRuntimeAlive: provisionedButNotAliveSpawn.runtimeAlive,
+        spawnEntry: provisionedButNotAliveSpawn,
+      })
+    ).toBe(true);
+  });
+
   it('does not show task activity for provisioned-but-not-alive entries with runtime errors', () => {
     expect(
       shouldDisplayMemberCurrentTask({
@@ -933,6 +946,34 @@ describe('memberHelpers spawn-aware presence', () => {
         spawnError: provisionedButNotAliveSpawn.error,
         spawnLivenessKind: provisionedButNotAliveSpawn.livenessKind,
         runtimeEntry: processTableUnavailableRuntime,
+        runtimeAdvisory: undefined,
+        isLaunchSettling: false,
+        isTeamAlive: true,
+        isTeamProvisioning: false,
+      })
+    ).toMatchObject({
+      presenceLabel: 'idle',
+      launchVisualState: null,
+      launchStatusLabel: null,
+      spawnBadgeLabel: null,
+    });
+  });
+
+  it('does not render spawn-only bootstrap-confirmed provisioned-but-not-alive entries as failed or stale', () => {
+    expect(
+      buildMemberLaunchPresentation({
+        member,
+        spawnStatus: provisionedButNotAliveSpawn.status,
+        spawnLaunchState: provisionedButNotAliveSpawn.launchState,
+        spawnLivenessSource: provisionedButNotAliveSpawn.livenessSource,
+        spawnRuntimeAlive: provisionedButNotAliveSpawn.runtimeAlive,
+        spawnBootstrapConfirmed: provisionedButNotAliveSpawn.bootstrapConfirmed,
+        spawnBootstrapStalled: provisionedButNotAliveSpawn.bootstrapStalled,
+        spawnAgentToolAccepted: provisionedButNotAliveSpawn.agentToolAccepted,
+        spawnHardFailure: provisionedButNotAliveSpawn.hardFailure,
+        spawnHardFailureReason: provisionedButNotAliveSpawn.hardFailureReason,
+        spawnError: provisionedButNotAliveSpawn.error,
+        spawnLivenessKind: provisionedButNotAliveSpawn.livenessKind,
         runtimeAdvisory: undefined,
         isLaunchSettling: false,
         isTeamAlive: true,

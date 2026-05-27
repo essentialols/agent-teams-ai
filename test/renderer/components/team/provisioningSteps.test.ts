@@ -421,4 +421,88 @@ describe('getLaunchJoinMilestonesFromMembers', () => {
     expect(milestones.pendingSpawnCount).toBe(1);
     expect(milestones.expectedTeammateCount).toBe(4);
   });
+
+  it('does not count confirmed spawn as joined when stopped spawn metadata has no liveness kind', () => {
+    const milestones = getLaunchJoinMilestonesFromMembers({
+      members,
+      memberSpawnStatuses: {
+        alice: {
+          status: 'online',
+          launchState: 'confirmed_alive',
+          runtimeAlive: true,
+          bootstrapConfirmed: true,
+          updatedAt: '2026-04-24T12:00:00.000Z',
+        },
+        bob: {
+          status: 'online',
+          launchState: 'confirmed_alive',
+          runtimeAlive: false,
+          bootstrapConfirmed: true,
+          updatedAt: '2026-04-24T12:00:01.000Z',
+        },
+        tom: {
+          status: 'online',
+          launchState: 'confirmed_alive',
+          runtimeAlive: true,
+          bootstrapConfirmed: true,
+          updatedAt: '2026-04-24T12:00:00.000Z',
+        },
+        jane: {
+          status: 'online',
+          launchState: 'confirmed_alive',
+          runtimeAlive: true,
+          bootstrapConfirmed: true,
+          updatedAt: '2026-04-24T12:00:00.000Z',
+        },
+      },
+    });
+
+    expect(milestones.heartbeatConfirmedCount).toBe(3);
+    expect(milestones.pendingSpawnCount).toBe(1);
+    expect(milestones.expectedTeammateCount).toBe(4);
+  });
+
+  it('counts process-table-unavailable provisioned-but-not-alive spawn without liveness kind as joined', () => {
+    const milestones = getLaunchJoinMilestonesFromMembers({
+      members,
+      memberSpawnStatuses: {
+        alice: {
+          status: 'online',
+          launchState: 'confirmed_alive',
+          runtimeAlive: true,
+          bootstrapConfirmed: true,
+          updatedAt: '2026-04-24T12:00:00.000Z',
+        },
+        bob: {
+          status: 'error',
+          launchState: 'failed_to_start',
+          runtimeAlive: false,
+          bootstrapConfirmed: true,
+          hardFailure: true,
+          hardFailureReason:
+            'CLI process exited (code 1) - team provisioned but not alive; process table unavailable',
+          updatedAt: '2026-04-24T12:00:01.000Z',
+        },
+        tom: {
+          status: 'online',
+          launchState: 'confirmed_alive',
+          runtimeAlive: true,
+          bootstrapConfirmed: true,
+          updatedAt: '2026-04-24T12:00:00.000Z',
+        },
+        jane: {
+          status: 'online',
+          launchState: 'confirmed_alive',
+          runtimeAlive: true,
+          bootstrapConfirmed: true,
+          updatedAt: '2026-04-24T12:00:00.000Z',
+        },
+      },
+    });
+
+    expect(milestones.heartbeatConfirmedCount).toBe(4);
+    expect(milestones.pendingSpawnCount).toBe(0);
+    expect(milestones.failedSpawnCount).toBe(0);
+    expect(milestones.expectedTeammateCount).toBe(4);
+  });
 });

@@ -670,11 +670,7 @@ export const MemberCard = memo(function MemberCard({
   const hasUnsafeBootstrapConfirmedProvisionedButNotAlive =
     bootstrapConfirmedProvisionedButNotAlive &&
     (hasUnsafeProvisionedButNotAliveRuntimeEvidence(spawnEntry) ||
-      hasUnsafeProvisionedButNotAliveRuntimeEvidence({
-        runtimeDiagnostic: runtimeEntry?.runtimeDiagnostic,
-        runtimeDiagnosticSeverity: runtimeEntry?.runtimeDiagnosticSeverity,
-        livenessKind: runtimeEntry?.livenessKind,
-      }));
+      hasUnsafeProvisionedButNotAliveRuntimeEvidence(runtimeEntry));
   const effectiveSpawnStatus = spawnStatus;
   const effectiveSpawnLaunchState = spawnLaunchState;
   const showTaskActivity = shouldDisplayMemberCurrentTask({

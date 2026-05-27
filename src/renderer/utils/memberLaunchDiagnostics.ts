@@ -551,11 +551,7 @@ export function buildMemberLaunchDiagnosticsPayload(params: {
     hasUnsafeProvisionedButNotAliveRuntimeEvidence(spawnEntry);
   const hasUnsafeRuntimeProvisionedButNotAliveEvidence =
     bootstrapConfirmedProvisionedButNotAlive &&
-    hasUnsafeProvisionedButNotAliveRuntimeEvidence({
-      runtimeDiagnostic: runtimeEntry?.runtimeDiagnostic,
-      runtimeDiagnosticSeverity: runtimeEntry?.runtimeDiagnosticSeverity,
-      livenessKind: runtimeEntry?.livenessKind,
-    });
+    hasUnsafeProvisionedButNotAliveRuntimeEvidence(runtimeEntry);
   const hasUnsafeProvisionedButNotAliveEvidence =
     bootstrapConfirmedProvisionedButNotAlive &&
     (hasUnsafeSpawnProvisionedButNotAliveEvidence ||

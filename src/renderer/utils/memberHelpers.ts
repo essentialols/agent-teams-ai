@@ -1108,11 +1108,7 @@ export function shouldDisplayMemberCurrentTask({
   const unsafeProvisionedButNotAliveEvidence =
     bootstrapConfirmedProvisionedButNotAlive &&
     (hasUnsafeProvisionedButNotAliveRuntimeEvidence(spawnEntry) ||
-      hasUnsafeProvisionedButNotAliveRuntimeEvidence({
-        runtimeDiagnostic: runtimeEntry?.runtimeDiagnostic,
-        runtimeDiagnosticSeverity: runtimeEntry?.runtimeDiagnosticSeverity,
-        livenessKind: runtimeEntry?.livenessKind,
-      }));
+      hasUnsafeProvisionedButNotAliveRuntimeEvidence(runtimeEntry));
   const useBootstrapConfirmedVisualState =
     bootstrapConfirmedProvisionedButNotAlive && !unsafeProvisionedButNotAliveEvidence;
   const effectiveSpawnStatus = useBootstrapConfirmedVisualState ? 'online' : spawnStatus;
@@ -1281,11 +1277,7 @@ export function isOpenCodeRelaunchActionable({
   if (isBootstrapConfirmedProvisionedButNotAliveFailure(spawnEntry)) {
     return (
       hasUnsafeProvisionedButNotAliveRuntimeEvidence(spawnEntry) ||
-      hasUnsafeProvisionedButNotAliveRuntimeEvidence({
-        runtimeDiagnostic: runtimeEntry?.runtimeDiagnostic,
-        runtimeDiagnosticSeverity: runtimeEntry?.runtimeDiagnosticSeverity,
-        livenessKind: runtimeEntry?.livenessKind,
-      })
+      hasUnsafeProvisionedButNotAliveRuntimeEvidence(runtimeEntry)
     );
   }
   if (
@@ -1406,11 +1398,7 @@ export function buildMemberLaunchPresentation({
       bootstrapConfirmed: spawnBootstrapConfirmed,
       livenessKind: spawnLivenessKind,
     }) ||
-      hasUnsafeProvisionedButNotAliveRuntimeEvidence({
-        runtimeDiagnostic: runtimeEntry?.runtimeDiagnostic,
-        runtimeDiagnosticSeverity: runtimeEntry?.runtimeDiagnosticSeverity,
-        livenessKind: runtimeEntry?.livenessKind,
-      }));
+      hasUnsafeProvisionedButNotAliveRuntimeEvidence(runtimeEntry));
   const allowBootstrapConfirmedVisualPromotion =
     bootstrapConfirmedProvisionedButNotAlive &&
     !hasSpawnRuntimeErrorDiagnostic &&

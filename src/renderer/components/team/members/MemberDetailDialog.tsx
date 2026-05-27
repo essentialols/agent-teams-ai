@@ -92,11 +92,7 @@ function isOpenCodeNoRuntimeEvidenceFailure(
   const unsafeProvisionedButNotAlive =
     bootstrapConfirmedProvisionedButNotAlive &&
     (hasUnsafeProvisionedButNotAliveRuntimeEvidence(spawnEntry) ||
-      hasUnsafeProvisionedButNotAliveRuntimeEvidence({
-        runtimeDiagnostic: runtimeEntry?.runtimeDiagnostic,
-        runtimeDiagnosticSeverity: runtimeEntry?.runtimeDiagnosticSeverity,
-        livenessKind: runtimeEntry?.livenessKind,
-      }));
+      hasUnsafeProvisionedButNotAliveRuntimeEvidence(runtimeEntry));
   const failed =
     (!bootstrapConfirmedProvisionedButNotAlive || unsafeProvisionedButNotAlive) &&
     (spawnEntry?.launchState === 'failed_to_start' || spawnEntry?.status === 'error');

@@ -121,14 +121,17 @@ function spawnEntryContradictsConfirmedJoin(entry: MemberSpawnStatusEntry): bool
   ) {
     return true;
   }
+  const hasProcessTableUnavailableMarker =
+    mentionsProcessTableUnavailable(entry.runtimeDiagnostic) ||
+    mentionsProcessTableUnavailable(entry.hardFailureReason) ||
+    mentionsProcessTableUnavailable(entry.error);
+  if (!entry.livenessKind) {
+    return !hasProcessTableUnavailableMarker;
+  }
   if (entry.livenessKind !== 'registered_only' && entry.livenessKind !== 'stale_metadata') {
     return false;
   }
-  return !(
-    mentionsProcessTableUnavailable(entry.runtimeDiagnostic) ||
-    mentionsProcessTableUnavailable(entry.hardFailureReason) ||
-    mentionsProcessTableUnavailable(entry.error)
-  );
+  return !hasProcessTableUnavailableMarker;
 }
 
 function runtimeEntryContradictsConfirmedJoin(

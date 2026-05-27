@@ -57,7 +57,7 @@ export class GitHubRestInstallationTokenIssuer implements GitHubInstallationToke
     );
 
     if (!response.ok) {
-      throw githubTokenApiError(response.status);
+      throw githubTokenApiError(response);
     }
 
     const body = (await response.json()) as GitHubTokenResponse;
@@ -116,7 +116,17 @@ function parseGrantedRepositoryIds(value: GitHubTokenResponse["repositories"]): 
   };
 }
 
-function githubTokenApiError(status: number) {
+function githubTokenApiError(response: Response) {
+  if (isRateLimitedResponse(response)) {
+    return createSafeError({
+      category: "external",
+      code: "CONTROL_PLANE_GITHUB_TOKEN_RATE_LIMITED",
+      message: "GitHub installation token API rate limit was reached.",
+      retryable: true,
+      safeDetails: rateLimitSafeDetails(response),
+    });
+  }
+  const { status } = response;
   if (status === 401 || status === 403) {
     return createSafeError({
       category: "authorization",
@@ -137,4 +147,42 @@ function githubTokenApiError(status: number) {
     message: "GitHub installation token API request failed.",
     retryable: status === 429 || status >= 500,
   });
+}
+
+function isRateLimitedResponse(response: Response): boolean {
+  return (
+    response.status === 429 ||
+    (response.status === 403 &&
+      (response.headers.has("retry-after") ||
+        response.headers.get("x-ratelimit-remaining") === "0"))
+  );
+}
+
+function rateLimitSafeDetails(response: Response): Record<string, number> {
+  return {
+    providerStatus: response.status,
+    ...optionalHeaderNumber(response.headers, "retry-after", "retryAfterSeconds"),
+    ...optionalHeaderNumber(
+      response.headers,
+      "x-ratelimit-reset",
+      "rateLimitResetSeconds",
+    ),
+    ...optionalHeaderNumber(
+      response.headers,
+      "x-ratelimit-remaining",
+      "rateLimitRemaining",
+    ),
+  };
+}
+
+function optionalHeaderNumber(
+  headers: Headers,
+  headerName: string,
+  safeDetailName: string,
+): Record<string, number> {
+  const value = headers.get(headerName);
+  if (value === null || !/^\d+$/.test(value)) {
+    return {};
+  }
+  return { [safeDetailName]: Number(value) };
 }

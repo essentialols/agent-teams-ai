@@ -283,14 +283,17 @@ for (const file of allSourceFiles) {
         "uses Nest constructor injection without explicit @Inject(); keep DI wiring explicit for ESM/tsx runtime safety",
     });
   }
+  if (
+    isFeatureControllerFile(file) &&
+    /\bIssueGitHubInstallationTokenUseCase\b/.test(source)
+  ) {
+    violations.push({
+      file,
+      message:
+        "token broker lease use case must not be exposed by public desktop controllers",
+    });
+  }
   if (isGitHubTokenBrokerDesktopInterfaceFile(file)) {
-    if (/\bIssueGitHubInstallationTokenUseCase\b/.test(source)) {
-      violations.push({
-        file,
-        message:
-          "token broker lease use case must not be exposed by public desktop controllers",
-      });
-    }
     if (hasForbiddenTokenBrokerResponseField(source)) {
       violations.push({
         file,
@@ -523,6 +526,19 @@ function isFeatureDomainOrApplicationFile(file) {
   }
   const srcIndex = segments.indexOf("src");
   return srcIndex >= 0 && boundaryLayerSegments.has(segments[srcIndex + 1]);
+}
+
+function isFeatureControllerFile(file) {
+  const segments = relative(featuresRoot, file).split(/[\\/]/);
+  if (segments[0]?.startsWith("..")) {
+    return false;
+  }
+  const srcIndex = segments.indexOf("src");
+  return (
+    srcIndex >= 0 &&
+    segments[srcIndex + 1] === "interface" &&
+    file.endsWith(".controller.ts")
+  );
 }
 
 function isGitHubTokenBrokerDesktopInterfaceFile(file) {

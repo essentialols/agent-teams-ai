@@ -215,6 +215,27 @@ describe("check-architecture-boundaries", () => {
     });
   });
 
+  it("fails when any feature controller exposes the token broker lease use case", async () => {
+    await writeFeature("github-token-broker", {
+      files: {
+        "src/application/use-cases/issue-github-installation-token.use-case.ts":
+          "export class IssueGitHubInstallationTokenUseCase {}\n",
+        "src/index.ts": "export const broker = true;\n",
+      },
+    });
+    await writeFeature("beta", {
+      files: {
+        "src/index.ts": "export const beta = true;\n",
+        "src/interface/nest/beta.controller.ts":
+          "import { IssueGitHubInstallationTokenUseCase } from '@agent-teams-control-plane/features-github-token-broker';\nexport class BetaController { constructor(readonly useCase: IssueGitHubInstallationTokenUseCase) {} }\n",
+      },
+    });
+
+    await expect(runArchitectureCheck()).rejects.toMatchObject({
+      stderr: expect.stringContaining("token broker lease use case must not be exposed"),
+    });
+  });
+
   async function runArchitectureCheck() {
     return execFileAsync("node", [scriptPath], {
       env: {

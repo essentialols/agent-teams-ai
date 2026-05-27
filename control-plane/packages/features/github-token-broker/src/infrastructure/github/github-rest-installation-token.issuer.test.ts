@@ -82,6 +82,41 @@ describe("GitHubRestInstallationTokenIssuer", () => {
     });
   });
 
+  it("maps GitHub 403 rate-limit responses to retryable safe errors", async () => {
+    const issuer = new GitHubRestInstallationTokenIssuer(
+      settings(),
+      signer(),
+      (async () =>
+        new Response("rate limited", {
+          headers: {
+            "retry-after": "30",
+            "x-ratelimit-remaining": "0",
+            "x-ratelimit-reset": "1780000000",
+          },
+          status: 403,
+        })) as typeof fetch,
+    );
+
+    await expect(
+      issuer.issue({
+        githubInstallationId: "installation-1",
+        nowMs: toUnixMilliseconds(1_700_000_000_000),
+        permissions: { checks: "write" },
+        repositoryIds: [123456],
+      }),
+    ).rejects.toMatchObject({
+      category: "external",
+      code: "CONTROL_PLANE_GITHUB_TOKEN_RATE_LIMITED",
+      retryable: true,
+      safeDetails: {
+        providerStatus: 403,
+        rateLimitRemaining: 0,
+        rateLimitResetSeconds: 1_780_000_000,
+        retryAfterSeconds: 30,
+      },
+    });
+  });
+
   it("rejects invalid token responses without leaking response bodies", async () => {
     const issuer = new GitHubRestInstallationTokenIssuer(
       settings(),

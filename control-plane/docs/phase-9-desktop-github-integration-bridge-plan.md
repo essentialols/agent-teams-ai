@@ -130,6 +130,13 @@ Weak spots studied in current code:
 - Backend action payload validation caps comment/check body fields at current
   server limits. Desktop should preflight those limits for UX, but backend
   remains authoritative and desktop must not silently truncate content.
+- Target policy subject ids are prefix-sensitive in the backend
+  (`team:...`, `agent:...`, `desktop-client:...`, `workspace:...`). Desktop
+  must construct those ids deterministically from trusted runtime/team metadata,
+  not from display labels.
+- Local teams can run from different project roots/worktrees while sharing one
+  paired desktop token. The bridge must bind a local team/run to the intended
+  hosted workspace and repository target before it can submit an action.
 
 ## Clean Architecture Shape
 
@@ -177,6 +184,10 @@ Domain policies:
   snapshot from control-plane
 - action body and agent attribution are separate values
 - agent attribution is derived from trusted team/member metadata
+- local project binding is advisory for UX but required for desktop-side
+  submission safety
+- immutable GitHub repository id and control-plane `targetId` are canonical;
+  owner/name/remote URL are display and matching hints only
 
 ### Application
 
@@ -209,6 +220,9 @@ Application rules:
   place allowed to attach trusted team/member metadata
 - local feature state separates canonical server state, cached display state,
   and secret local session state
+- team/run action submission requires a local binding snapshot that includes
+  local project root, team name, runtime member id, hosted workspace id, and
+  control-plane target id
 
 ### Ports
 
@@ -223,6 +237,8 @@ Outbound ports:
 - `DesktopBrowserOpenPort`
 - `RuntimeAgentActionBridgePort`
 - `HostedIntegrationClockPort`
+- `LocalProjectRepositoryIdentityPort`
+- `HostedWorkspaceBindingStorePort`
 
 Inbound ports:
 
@@ -594,6 +610,57 @@ Runtime tool surface:
 - action content is not stored in local durable run manifests, inbox messages,
   or task logs unless it was already user-visible task content
 
+## Local Workspace And Target Binding
+
+The desktop app may know a local repository by path, git remote URL, worktree,
+or project metadata. The control-plane knows a GitHub repository target by
+immutable GitHub repository id and `targetId`. Phase 9 must keep that boundary
+explicit.
+
+Binding rules:
+
+- a hosted workspace connection is scoped to the paired desktop token
+- a local project/team must opt into a specific hosted workspace connection
+- a GitHub action request uses `targetId`, not repository owner/name text
+- local git remote matching can suggest a target, but cannot authorize one
+- repository rename or transfer must not break target identity if GitHub
+  repository id is unchanged
+- repository id mismatch blocks action submission even if owner/name looks the
+  same
+- multiple GitHub installations containing similar repo names must remain
+  distinguishable by connection id and target id
+
+Binding snapshot:
+
+```text
+localProjectRoot
+localGitRemoteFingerprint?
+teamName
+teamRunId
+runtimeMemberId
+hostedWorkspaceId
+integrationConnectionId
+targetId
+githubRepositoryId
+createdAt
+```
+
+The snapshot is used only by desktop/main for local safety and diagnostics. The
+backend still performs authoritative target policy evaluation.
+
+Subject id mapping:
+
+```text
+workspace -> workspace:<workspaceId>
+desktop_client -> desktop-client:<desktopClientId>
+team -> team:<stableTeamIdOrName>
+agent -> agent:<stableAgentId>
+```
+
+Use the backend-compatible prefixes consistently. Display names may change and
+must not be used as authorization subject ids unless they are already the
+stable team/agent id in the local model.
+
 ## Edge Cases
 
 Critical edge cases:
@@ -633,6 +700,12 @@ Critical edge cases:
 - action payload exceeds server limit, includes binary-like data, or contains
   control characters in attribution fields
 - agent action request arrives after team run stopped or member was replaced
+- local repository remote changes after target was selected
+- two local worktrees point at different forks with the same repository name
+- GitHub repository is renamed or transferred after target binding
+- local project is moved on disk while setup/action UI is open
+- same desktop is paired to one hosted workspace but user opens another local
+  workspace and tries to reuse the old target
 
 Expected decisions:
 
@@ -660,6 +733,11 @@ Expected decisions:
   network retry
 - oversized action content fails locally with a safe validation message and is
   not truncated silently
+- repository owner/name matching can suggest, but never authorize, a target
+- target binding must be refreshed by `targetId` before action submit
+- local project binding mismatch fails before sending action content
+- subject ids are normalized with backend-compatible prefixes before policy
+  evaluation or action request submission
 
 ## Architecture Guardrails
 
@@ -681,6 +759,9 @@ Add or extend checks so that:
 - hosted integration HTTP adapter cannot accept a URL argument from renderer
 - browser opener adapter cannot use generic `shell:openExternal` without
   setup-specific allowlist validation
+- local repository identity adapter cannot authorize GitHub actions by remote
+  URL alone
+- renderer cannot choose arbitrary `subjectId`; main/runtime bridge computes it
 
 ## Test Plan
 
@@ -703,6 +784,8 @@ Unit tests:
   private-network, fragment, and non-HTTPS non-localhost URLs
 - action payload preflight mirrors backend size/control-character limits without
   truncation
+- target subject id mapper produces backend-compatible prefixes
+- repository rename/fork/name collision cases do not authorize by display name
 
 Integration tests:
 
@@ -718,6 +801,9 @@ Integration tests:
 - app restart restores setup session id but not action content payload
 - HTTP adapter rejects Authorization-bearing cross-origin redirects
 - setup browser opener rejects unexpected origins and query logging
+- local project binding mismatch blocks action submission before content upload
+- multiple GitHub connections with same repo display name remain distinct by
+  connection id and target id
 
 Security tests:
 

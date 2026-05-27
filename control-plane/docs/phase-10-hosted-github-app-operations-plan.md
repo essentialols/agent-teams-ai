@@ -127,6 +127,9 @@ Weak spots studied in current code:
 - Public setup/OAuth callback URLs are externally reachable by design. Hosted
   operations must treat callback abuse, replay, and noisy scanners as normal
   production traffic, not exceptional incidents.
+- Repository owner/name can change while immutable GitHub repository ids remain
+  stable. Operations and runbooks must avoid diagnosing target issues by display
+  name alone.
 
 ## Deployment Topology
 
@@ -520,6 +523,10 @@ Runbook edge cases:
 - OAuth provider returns error with user-facing description
 - desktop client compromised but GitHub installation still valid
 - target policy accidentally too broad and needs emergency deny
+- repository renamed, transferred, archived, or made private after target was
+  enabled
+- two installations expose repositories with the same display full name over
+  time because of rename/transfer history
 
 ## Observability And Alerts
 
@@ -605,6 +612,8 @@ Review checklist:
 - public setup/OAuth callback handlers are safe under duplicate delivery and
   parameter pollution
 - request size limits exist before payloads reach expensive parsing or logging
+- operator and support workflows identify repositories by immutable GitHub
+  repository id plus connection id, not display name only
 
 Backup and restore gate:
 
@@ -637,6 +646,7 @@ Automated tests:
 - public callback duplicate/replay tests
 - request size limit tests for setup/action endpoints
 - provider 401/403/404 classification tests in GitHub action dispatcher
+- repository rename/transfer/archived-state runbook rehearsal in staging
 
 Manual hosted smoke:
 
@@ -681,6 +691,8 @@ Manual hosted smoke:
 - public callback replay and parameter pollution are tested
 - provider auth/not-found errors have distinct safe operational classification
 - request size limits are documented and verified before public beta
+- repository identity runbooks use immutable ids and cover rename/transfer
+  cases
 
 ## Rollout
 

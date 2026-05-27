@@ -124,6 +124,10 @@ Weak spots studied in current code:
 - Provider reads may be eventually consistent for a short period after writes.
   E2E should retry reads with bounded polling, but never hide duplicate writes
   behind retries.
+- The most likely real-world target confusion is same-name repositories across
+  forks, renamed repositories, transferred repositories, and multiple
+  installations. E2E must prove target identity with immutable ids where
+  possible.
 
 ## E2E Environment
 
@@ -147,6 +151,8 @@ Repository fixtures:
 - branch for check run tests
 - protected case for permission-denied tests if needed
 - repository target disabled case
+- optional same-name fork/rename fixture when staging organization policy allows
+  it
 
 Secrets:
 
@@ -224,6 +230,8 @@ Assertions:
 - repository targets use immutable GitHub repository ids
 - audit events exist
 - no token or OAuth code appears in logs
+- target list distinguishes connection id, target id, GitHub repository id, and
+  display full name
 
 ### Agent Issue Comment
 
@@ -309,6 +317,9 @@ Critical failures:
 - provider read-after-write initially misses the created comment
 - E2E process crashes after external mutation but before manifest finalization
 - stale run lock blocks a new run
+- repository display name changes after target enablement
+- same-name repository exists in another installation or fork
+- local project binding points at a different repository than selected target
 
 Expected behavior:
 
@@ -330,6 +341,10 @@ Expected behavior:
   safe ids
 - crash recovery resumes from manifest and does not repeat non-idempotent writes
 - stale run locks expire only after proving no active run owns them
+- immutable repository id mismatch blocks action submission
+- rename/fork confusion does not redirect action to a different target
+- evidence artifact records target id and GitHub repository id, not display name
+  only
 
 Failure injection guardrails:
 
@@ -543,6 +558,7 @@ Automated:
 - dry-run refuses non-sandbox repo test
 - resume-from-manifest test after simulated crash
 - forbidden artifact pattern scan test
+- target identity confusion test using mocked same-name/renamed repository data
 
 Manual:
 
@@ -558,6 +574,8 @@ Manual:
 - simulate app restart after setup start and before claim completion
 - kill the E2E harness after comment creation and verify resume does not create
   a duplicate
+- rename sandbox repository or use mocked rename fixture and verify target
+  identity remains immutable-id based
 
 ## Acceptance Criteria
 
@@ -582,6 +600,7 @@ Manual:
 - dry-run prevents accidental non-sandbox mutation
 - crash/resume path does not duplicate public GitHub writes
 - artifact redaction scan includes explicit forbidden-pattern checks
+- target identity evidence includes target id and immutable GitHub repository id
 
 ## Rollout
 

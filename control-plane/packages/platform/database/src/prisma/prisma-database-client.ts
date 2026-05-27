@@ -34,6 +34,8 @@ const requiredMigrationTables = [
   "distributed_locks",
   "external_action_content_key_refs",
   "external_action_contents",
+  "github_action_attempts",
+  "github_action_requests",
   "github_installation_claims",
   "github_installation_snapshots",
   "github_oauth_claim_sessions",

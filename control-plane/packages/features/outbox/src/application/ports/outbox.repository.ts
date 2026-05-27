@@ -27,6 +27,7 @@ export type RetryOutboxEventInput = Readonly<{
   workerId: string;
   claimToken: string;
   safeError: SafeError;
+  retryAfterMs?: number;
 }>;
 
 export type DeadLetterOutboxEventInput = Readonly<{

@@ -20,6 +20,7 @@ describe("loadControlPlaneConfig", () => {
     expect(config.featureGates).toEqual({
       desktopBootstrapEnabled: false,
       desktopPairingEnabled: false,
+      githubActionsEnabled: false,
       githubClaimOAuthEnabled: false,
       githubSetupEnabled: false,
       githubTokenBrokerEnabled: false,
@@ -28,6 +29,9 @@ describe("loadControlPlaneConfig", () => {
     });
     expect(config.integrationTargets).toEqual({
       repositoryAvailabilityMaxAgeHours: 24,
+    });
+    expect(config.githubActions).toEqual({
+      agentAvatarAllowedOrigins: [],
     });
     expect(config.github).toEqual({});
     expect(config.secrets).toEqual({});
@@ -60,17 +64,23 @@ describe("loadControlPlaneConfig", () => {
       CONTROL_PLANE_GITHUB_APP_ID: "123",
       CONTROL_PLANE_GITHUB_APP_CLIENT_ID: "app-client-id",
       CONTROL_PLANE_GITHUB_APP_SLUG: "agent-teams",
+      CONTROL_PLANE_AGENT_AVATAR_ALLOWED_ORIGINS: "https://cdn.example.test",
+      CONTROL_PLANE_DEFAULT_AGENT_AVATAR_URL:
+        "https://cdn.example.test/agent-teams/default-avatar.png",
       CONTROL_PLANE_GITHUB_OAUTH_CLIENT_ID: "client-id",
       CONTROL_PLANE_GITHUB_OAUTH_CLIENT_SECRET: "oauth-secret",
       CONTROL_PLANE_GITHUB_PRIVATE_KEY: "private-key",
       CONTROL_PLANE_GITHUB_REST_API_VERSION: "2099-01-01",
       CONTROL_PLANE_GITHUB_SETUP_ENABLED: "true",
+      CONTROL_PLANE_GITHUB_ACTIONS_ENABLED: "true",
       CONTROL_PLANE_GITHUB_TOKEN_BROKER_ENABLED: "true",
       CONTROL_PLANE_GITHUB_WEBHOOK_SECRET: "webhook-secret",
       CONTROL_PLANE_INTEGRATION_TARGETS_ENABLED: "true",
       CONTROL_PLANE_MODE: "hosted-official-app",
+      CONTROL_PLANE_OUTBOX_WORKER_ENABLED: "true",
       CONTROL_PLANE_PUBLIC_BASE_URL: "https://control-plane.example.test",
       CONTROL_PLANE_REPOSITORY_AVAILABILITY_MAX_AGE_HOURS: "48",
+      CONTROL_PLANE_EXTERNAL_CONTENT_RETENTION_DAYS: "7",
       NODE_ENV: "test",
     });
 
@@ -89,7 +99,12 @@ describe("loadControlPlaneConfig", () => {
     expect(summary.database.urlConfigured).toBe(true);
     expect(summary.github.encryptionMasterKeyConfigured).toBe(true);
     expect(summary.featureGates.githubSetupEnabled).toBe(true);
+    expect(summary.featureGates.githubActionsEnabled).toBe(true);
     expect(summary.featureGates.githubTokenBrokerEnabled).toBe(true);
+    expect(summary.githubActions).toEqual({
+      allowedOriginCount: 1,
+      defaultAgentAvatarConfigured: true,
+    });
     expect(summary.featureGates.integrationTargetsEnabled).toBe(true);
     expect(summary.integrationTargets.repositoryAvailabilityMaxAgeHours).toBe(48);
     expect(JSON.stringify(summary)).not.toContain("private-key");
@@ -192,6 +207,64 @@ describe("loadControlPlaneConfig", () => {
         NODE_ENV: "test",
       }),
     ).toThrow(ControlPlaneConfigError);
+  });
+
+  it("fails fast when GitHub actions are enabled without avatar and retention settings", () => {
+    expect(() =>
+      loadControlPlaneConfig({
+        CONTROL_PLANE_DATABASE_URL: "postgresql://user:pass@localhost:5432/db",
+        CONTROL_PLANE_ENCRYPTION_MASTER_KEY: Buffer.alloc(32, 7).toString("base64"),
+        CONTROL_PLANE_GITHUB_APP_ID: "123",
+        CONTROL_PLANE_GITHUB_APP_PRIVATE_KEY: "private-key",
+        CONTROL_PLANE_GITHUB_APP_SLUG: "agent-teams",
+        CONTROL_PLANE_GITHUB_OAUTH_CLIENT_ID: "client-id",
+        CONTROL_PLANE_GITHUB_OAUTH_CLIENT_SECRET: "oauth-secret",
+        CONTROL_PLANE_GITHUB_REST_API_VERSION: "2099-01-01",
+        CONTROL_PLANE_GITHUB_ACTIONS_ENABLED: "true",
+        CONTROL_PLANE_GITHUB_TOKEN_BROKER_ENABLED: "true",
+        CONTROL_PLANE_GITHUB_WEBHOOK_SECRET: "webhook-secret",
+        CONTROL_PLANE_INTEGRATION_TARGETS_ENABLED: "true",
+        CONTROL_PLANE_MODE: "hosted-official-app",
+        CONTROL_PLANE_OUTBOX_WORKER_ENABLED: "true",
+        CONTROL_PLANE_PUBLIC_BASE_URL: "https://control-plane.example.test",
+        NODE_ENV: "test",
+      }),
+    ).toThrow(ControlPlaneConfigError);
+  });
+
+  it("loads GitHub actions only with safe avatar origins and retention", () => {
+    const config = loadControlPlaneConfig({
+      CONTROL_PLANE_AGENT_AVATAR_ALLOWED_ORIGINS:
+        "https://cdn.example.test, https://avatars.example.test",
+      CONTROL_PLANE_DATABASE_URL: "postgresql://user:pass@localhost:5432/db",
+      CONTROL_PLANE_DEFAULT_AGENT_AVATAR_URL:
+        "https://cdn.example.test/agent-teams/default-avatar.png",
+      CONTROL_PLANE_ENCRYPTION_MASTER_KEY: Buffer.alloc(32, 7).toString("base64"),
+      CONTROL_PLANE_EXTERNAL_CONTENT_RETENTION_DAYS: "3",
+      CONTROL_PLANE_GITHUB_APP_ID: "123",
+      CONTROL_PLANE_GITHUB_APP_PRIVATE_KEY: "private-key",
+      CONTROL_PLANE_GITHUB_APP_SLUG: "agent-teams",
+      CONTROL_PLANE_GITHUB_OAUTH_CLIENT_ID: "client-id",
+      CONTROL_PLANE_GITHUB_OAUTH_CLIENT_SECRET: "oauth-secret",
+      CONTROL_PLANE_GITHUB_REST_API_VERSION: "2099-01-01",
+      CONTROL_PLANE_GITHUB_ACTIONS_ENABLED: "true",
+      CONTROL_PLANE_GITHUB_TOKEN_BROKER_ENABLED: "true",
+      CONTROL_PLANE_GITHUB_WEBHOOK_SECRET: "webhook-secret",
+      CONTROL_PLANE_INTEGRATION_TARGETS_ENABLED: "true",
+      CONTROL_PLANE_MODE: "hosted-official-app",
+      CONTROL_PLANE_OUTBOX_WORKER_ENABLED: "true",
+      CONTROL_PLANE_PUBLIC_BASE_URL: "https://control-plane.example.test",
+      NODE_ENV: "test",
+    });
+
+    expect(config.featureGates.githubActionsEnabled).toBe(true);
+    expect(config.githubActions).toEqual({
+      agentAvatarAllowedOrigins: [
+        "https://avatars.example.test",
+        "https://cdn.example.test",
+      ],
+      defaultAgentAvatarUrl: "https://cdn.example.test/agent-teams/default-avatar.png",
+    });
   });
 
   it("accepts the token broker private key alias in hosted mode", () => {

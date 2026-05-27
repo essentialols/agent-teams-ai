@@ -103,6 +103,9 @@ export class ProcessOutboxBatchUseCase {
           await this.repository.markFailedForRetry({
             claimToken: event.claimToken,
             eventId: event.id,
+            ...(result.retryAfterMs === undefined
+              ? {}
+              : { retryAfterMs: result.retryAfterMs }),
             safeError,
             workerId: event.lockedBy,
           }),

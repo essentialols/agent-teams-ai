@@ -1,0 +1,54 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "declaration": true,
+    "declarationMap": true,
+    "noEmit": false,
+    "outDir": "dist",
+    "paths": {
+      "@agent-teams-control-plane/features-external-action-content": [
+        "packages/features/external-action-content/dist/index.d.ts"
+      ],
+      "@agent-teams-control-plane/features-external-action-content/interface/nest": [
+        "packages/features/external-action-content/dist/interface/nest/index.d.ts"
+      ],
+      "@agent-teams-control-plane/features-github-token-broker": [
+        "packages/features/github-token-broker/dist/index.d.ts"
+      ],
+      "@agent-teams-control-plane/features-github-token-broker/interface/nest": [
+        "packages/features/github-token-broker/dist/interface/nest/index.d.ts"
+      ],
+      "@agent-teams-control-plane/features-integration-targets": [
+        "packages/features/integration-targets/dist/index.d.ts"
+      ],
+      "@agent-teams-control-plane/features-integration-targets/interface/nest": [
+        "packages/features/integration-targets/dist/interface/nest/index.d.ts"
+      ],
+      "@agent-teams-control-plane/features-outbox": [
+        "packages/features/outbox/dist/index.d.ts"
+      ],
+      "@agent-teams-control-plane/features-outbox/interface/nest": [
+        "packages/features/outbox/dist/interface/nest/index.d.ts"
+      ],
+      "@agent-teams-control-plane/features-workspace-identity": [
+        "packages/features/workspace-identity/dist/index.d.ts"
+      ],
+      "@agent-teams-control-plane/features-workspace-identity/interface/nest": [
+        "packages/features/workspace-identity/dist/interface/nest/index.d.ts"
+      ],
+      "@agent-teams-control-plane/platform-config": [
+        "packages/platform/config/dist/index.d.ts"
+      ],
+      "@agent-teams-control-plane/platform-database": [
+        "packages/platform/database/dist/index.d.ts"
+      ],
+      "@agent-teams-control-plane/platform-database/nest": [
+        "packages/platform/database/dist/nest/index.d.ts"
+      ],
+      "@agent-teams-control-plane/shared": ["packages/shared/dist/index.d.ts"]
+    },
+    "rootDir": "src",
+    "sourceMap": true
+  },
+  "exclude": ["src/**/*.test.ts"]
+}

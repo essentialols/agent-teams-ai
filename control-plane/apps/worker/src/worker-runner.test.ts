@@ -29,6 +29,10 @@ describe("WorkerRunner", () => {
           webhookSecretConfigured: false,
         },
         http: { host: "127.0.0.1", port: 3030 },
+        githubActions: {
+          allowedOriginCount: 0,
+          defaultAgentAvatarConfigured: false,
+        },
         integrationTargets: {
           repositoryAvailabilityMaxAgeHours: 24,
         },
@@ -168,6 +172,10 @@ function createConfigService(input: {
         webhookSecretConfigured: false,
       },
       http: { host: "127.0.0.1", port: 3030 },
+      githubActions: {
+        allowedOriginCount: 0,
+        defaultAgentAvatarConfigured: false,
+      },
       integrationTargets: {
         repositoryAvailabilityMaxAgeHours: 24,
       },
@@ -195,6 +203,7 @@ function disabledFeatureGates() {
   return {
     desktopBootstrapEnabled: false,
     desktopPairingEnabled: false,
+    githubActionsEnabled: false,
     githubClaimOAuthEnabled: false,
     githubSetupEnabled: false,
     githubTokenBrokerEnabled: false,

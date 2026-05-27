@@ -41,6 +41,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@agent-teams-control-plane/features-agent-github-actions':
+        specifier: workspace:*
+        version: link:../../packages/features/agent-github-actions
       '@agent-teams-control-plane/features-external-action-content':
         specifier: workspace:*
         version: link:../../packages/features/external-action-content
@@ -101,6 +104,9 @@ importers:
 
   apps/worker:
     dependencies:
+      '@agent-teams-control-plane/features-agent-github-actions':
+        specifier: workspace:*
+        version: link:../../packages/features/agent-github-actions
       '@agent-teams-control-plane/features-outbox':
         specifier: workspace:*
         version: link:../../packages/features/outbox
@@ -128,6 +134,36 @@ importers:
       rxjs:
         specifier: 7.8.2
         version: 7.8.2
+
+  packages/features/agent-github-actions:
+    dependencies:
+      '@agent-teams-control-plane/features-external-action-content':
+        specifier: workspace:*
+        version: link:../external-action-content
+      '@agent-teams-control-plane/features-github-token-broker':
+        specifier: workspace:*
+        version: link:../github-token-broker
+      '@agent-teams-control-plane/features-integration-targets':
+        specifier: workspace:*
+        version: link:../integration-targets
+      '@agent-teams-control-plane/features-outbox':
+        specifier: workspace:*
+        version: link:../outbox
+      '@agent-teams-control-plane/features-workspace-identity':
+        specifier: workspace:*
+        version: link:../workspace-identity
+      '@agent-teams-control-plane/platform-config':
+        specifier: workspace:*
+        version: link:../../platform/config
+      '@agent-teams-control-plane/platform-database':
+        specifier: workspace:*
+        version: link:../../platform/database
+      '@agent-teams-control-plane/shared':
+        specifier: workspace:*
+        version: link:../../shared
+      '@nestjs/common':
+        specifier: 11.1.24
+        version: 11.1.24(reflect-metadata@0.2.2)(rxjs@7.8.2)
 
   packages/features/external-action-content:
     dependencies:

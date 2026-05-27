@@ -183,6 +183,8 @@ export class PrismaOutboxRepository implements OutboxRepository {
           status = CASE WHEN attempts >= max_attempts THEN 'dead-lettered' ELSE 'pending' END,
           next_attempt_at = CASE
             WHEN attempts >= max_attempts THEN next_attempt_at
+            WHEN ${input.retryAfterMs ?? null}::integer IS NOT NULL
+              THEN now() + (${input.retryAfterMs ?? null}::integer * interval '1 millisecond')
             WHEN attempts <= 1 THEN now()
             WHEN attempts = 2 THEN now() + interval '30 seconds' + (random() * interval '5 seconds')
             WHEN attempts = 3 THEN now() + interval '2 minutes' + (random() * interval '5 seconds')

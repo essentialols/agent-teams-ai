@@ -13,11 +13,16 @@ import {
 import { AppendOutboxEventUseCase } from "../../application/use-cases/append-outbox-event.use-case.js";
 import { ProcessOutboxBatchUseCase } from "../../application/use-cases/process-outbox-batch.use-case.js";
 import { PrismaOutboxRepository } from "../../infrastructure/prisma/prisma-outbox.repository.js";
-import { NoopOutboxHandlerRegistry } from "../../infrastructure/worker/noop-outbox-handler-registry.js";
+import { CompositeOutboxHandlerRegistry } from "../../infrastructure/worker/composite-outbox-handler-registry.js";
 import { OutboxWorkerService } from "../../infrastructure/worker/outbox-worker.service.js";
 
 @Module({
-  exports: [AppendOutboxEventUseCase, ProcessOutboxBatchUseCase, OutboxWorkerService],
+  exports: [
+    AppendOutboxEventUseCase,
+    CompositeOutboxHandlerRegistry,
+    ProcessOutboxBatchUseCase,
+    OutboxWorkerService,
+  ],
   imports: [PlatformConfigModule, PlatformDatabaseModule, PlatformLoggerModule],
   providers: [
     PrismaOutboxRepository,
@@ -27,8 +32,9 @@ import { OutboxWorkerService } from "../../infrastructure/worker/outbox-worker.s
     },
     {
       provide: OUTBOX_HANDLER_REGISTRY,
-      useClass: NoopOutboxHandlerRegistry,
+      useExisting: CompositeOutboxHandlerRegistry,
     },
+    CompositeOutboxHandlerRegistry,
     {
       inject: [OUTBOX_REPOSITORY],
       provide: AppendOutboxEventUseCase,

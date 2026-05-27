@@ -31,6 +31,9 @@ NestJS is an outer framework, not the business architecture. Domain and applicat
 - [Plan Review And Hardening](docs/plan-review-and-hardening.md)
 - [Phase 4 Persistence, Transactions, Outbox, Locks Plan](docs/phase-4-persistence-transactions-outbox-locks-plan.md)
 - [Phase 5 Workspace-Bound GitHub Installation Plan](docs/phase-5-workspace-bound-github-installation-plan.md)
+- [Phase 6 Repository Target Binding Policy Plan](docs/phase-6-repository-target-binding-policy-plan.md)
+- [Phase 7 GitHub Installation Token Broker Plan](docs/phase-7-github-installation-token-broker-plan.md)
+- [Phase 8 Agent GitHub Actions Outbox Plan](docs/phase-8-agent-github-actions-outbox-plan.md)
 - [Edge Cases And Failure Modes](docs/edge-cases.md)
 - [Security And Privacy Model](docs/security-and-privacy.md)
 - [Public Error Contract](docs/error-contract.md)
@@ -83,7 +86,7 @@ control-plane/
   docs/
 ```
 
-Phase 1 provides the workspace scaffold, health feature, config/logger platform packages, and architecture guardrails. Phase 2 adds the dependency-free shared kernel, build metadata plumbing, safe error primitives, typed IDs, time helpers, validation helpers, and stricter shared-kernel guardrails. Phase 3 adds the API safe error boundary, request/correlation ids, request context, and safe request logging. Phase 4 adds optional Postgres persistence, transactions, envelope-encrypted external action content, DB-backed outbox, dead-letter state, and worker claim/retry foundations. Phase 5 adds workspace-bound GitHub App installation setup, desktop client identity, pairing, OAuth claim verification, and repository availability snapshots. Agent GitHub actions and outbound comments/reviews remain deferred.
+Phase 1 provides the workspace scaffold, health feature, config/logger platform packages, and architecture guardrails. Phase 2 adds the dependency-free shared kernel, build metadata plumbing, safe error primitives, typed IDs, time helpers, validation helpers, and stricter shared-kernel guardrails. Phase 3 adds the API safe error boundary, request/correlation ids, request context, and safe request logging. Phase 4 adds optional Postgres persistence, transactions, envelope-encrypted external action content, DB-backed outbox, dead-letter state, and worker claim/retry foundations. Phase 5 adds workspace-bound GitHub App installation setup, desktop client identity, pairing, OAuth claim verification, and repository availability snapshots. Phase 6 adds repository target binding and policy gates. Phase 7 adds the server-side GitHub installation token broker. Phase 8 adds outbox-backed Agent GitHub actions for comments, PR reviews, and check runs without exposing installation tokens to desktop or agents.
 
 `control-plane/` is a nested pnpm workspace on purpose. The desktop app remains the default root workspace, while the optional backend is developed and verified with `pnpm --dir control-plane ...` commands.
 

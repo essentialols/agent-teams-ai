@@ -136,6 +136,7 @@ model Workspace {
   githubInstallationClaims GitHubInstallationClaim[]
   githubOAuthClaimSessions GitHubOAuthClaimSession[]
   integrationTargets       IntegrationTarget[]
+  githubActionRequests     GitHubActionRequest[]
   targetPolicyRules        TargetPolicyRule[]
 
   @@index([status, createdAt], map: "workspaces_status_created_at_idx")
@@ -413,6 +414,7 @@ model IntegrationTarget {
   workspace                Workspace                         @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
   integrationConnection    IntegrationConnection             @relation(fields: [integrationConnectionId], references: [id], onDelete: Restrict)
   githubRepositoryBinding  GitHubRepositoryTargetBinding?
+  githubActionRequests     GitHubActionRequest[]
   targetPolicyRules        TargetPolicyRule[]
 
   @@index([workspaceId, status], map: "integration_targets_workspace_status_idx")
@@ -459,4 +461,58 @@ model TargetPolicyRule {
 
   @@index([workspaceId, integrationTargetId, subjectKind, subjectId, capability], map: "target_policy_rules_lookup_idx")
   @@map("target_policy_rules")
+}
+
+model GitHubActionRequest {
+  id                         String    @id @db.Uuid
+  workspaceId                String    @map("workspace_id") @db.Uuid
+  integrationTargetId        String    @map("integration_target_id") @db.Uuid
+  actionType                 String    @map("action_type")
+  requestedBySubjectKind     String    @map("requested_by_subject_kind")
+  requestedBySubjectId       String    @map("requested_by_subject_id")
+  assertedByDesktopClientId  String    @map("asserted_by_desktop_client_id") @db.Uuid
+  agentId                    String?   @map("agent_id")
+  agentDisplayName           String    @map("agent_display_name")
+  agentAvatarUrl             String?   @map("agent_avatar_url")
+  teamId                     String?   @map("team_id")
+  teamDisplayName            String?   @map("team_display_name")
+  idempotencyKey             String    @map("idempotency_key")
+  status                     String
+  externalContentRefId       String    @map("external_content_ref_id") @db.Uuid
+  externalContentIntegrityHash String  @map("external_content_integrity_hash")
+  githubDeliveryId           String?   @map("github_delivery_id")
+  githubCheckRunId           String?   @map("github_check_run_id")
+  githubUrl                  String?   @map("github_url")
+  contentShreddedAt          DateTime? @map("content_shredded_at") @db.Timestamptz(6)
+  safeErrorJson              Json?     @map("safe_error_json")
+  createdAt                  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                  DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  workspace         Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  integrationTarget IntegrationTarget     @relation(fields: [integrationTargetId], references: [id], onDelete: Restrict)
+  attempts          GitHubActionAttempt[]
+
+  @@unique([workspaceId, idempotencyKey], map: "github_action_requests_workspace_idempotency_key")
+  @@index([workspaceId, status, createdAt], map: "github_action_requests_workspace_status_created_idx")
+  @@index([integrationTargetId, status], map: "github_action_requests_target_status_idx")
+  @@index([workspaceId, actionType, githubCheckRunId], map: "github_action_requests_workspace_action_check_idx")
+  @@map("github_action_requests")
+}
+
+model GitHubActionAttempt {
+  id                    String    @id @db.Uuid
+  githubActionRequestId String    @map("github_action_request_id") @db.Uuid
+  attemptNumber         Int       @map("attempt_number")
+  status                String
+  startedAt             DateTime  @map("started_at") @db.Timestamptz(6)
+  finishedAt            DateTime? @map("finished_at") @db.Timestamptz(6)
+  safeErrorJson         Json?     @map("safe_error_json")
+  githubStatusCode      Int?      @map("github_status_code")
+  githubRequestId       String?   @map("github_request_id")
+
+  request GitHubActionRequest @relation(fields: [githubActionRequestId], references: [id], onDelete: Restrict)
+
+  @@unique([githubActionRequestId, attemptNumber], map: "github_action_attempts_request_attempt_key")
+  @@index([githubActionRequestId, status], map: "github_action_attempts_request_status_idx")
+  @@map("github_action_attempts")
 }

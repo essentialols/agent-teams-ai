@@ -198,6 +198,23 @@ Rules:
 - authorization still checks workspace, desktop client, integration target, capability, and entitlement
 - hidden comment markers are not secrets and must contain only opaque recovery metadata plus integrity digest
 
+## GitHub Action Dispatch V1
+
+GitHub comments, top-level PR conversation comments, PR review comments, and check runs are dispatched only by the server-side worker through the official GitHub App.
+
+Rules:
+
+- desktop/runtime submits a structured trusted action envelope
+- request path validates payload, target policy, attribution, and feature gates
+- raw action body is encrypted as external action content, not stored in outbox payloads
+- outbox events contain only ids, content reference, and integrity hash
+- worker re-checks target policy before dispatch
+- installation tokens are minted through the token broker and stay inside the server process
+- rendered GitHub body always includes Agent Teams attribution and a hidden idempotency marker
+- unsafe or missing agent avatar URLs fall back to the configured public default avatar
+- terminal success and dead-letter shred encrypted external action content
+- retry/dead-letter state stores only safe error codes and safe provider metadata
+
 ## Authorization Principles
 
 - UI filtering is not authorization.

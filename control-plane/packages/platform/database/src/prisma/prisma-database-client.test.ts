@@ -55,6 +55,8 @@ function requiredTableRows(): Array<{ table_name: string }> {
     { table_name: "distributed_locks" },
     { table_name: "external_action_content_key_refs" },
     { table_name: "external_action_contents" },
+    { table_name: "github_action_attempts" },
+    { table_name: "github_action_requests" },
     { table_name: "github_installation_claims" },
     { table_name: "github_installation_snapshots" },
     { table_name: "github_oauth_claim_sessions" },

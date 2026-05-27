@@ -43,8 +43,13 @@ export type ControlPlaneConfig = Readonly<{
     githubSetupEnabled: boolean;
     githubClaimOAuthEnabled: boolean;
     githubTokenBrokerEnabled: boolean;
+    githubActionsEnabled: boolean;
     githubUnclaimedCallbackRecordingEnabled: boolean;
     integrationTargetsEnabled: boolean;
+  }>;
+  githubActions: Readonly<{
+    defaultAgentAvatarUrl?: string;
+    agentAvatarAllowedOrigins: readonly string[];
   }>;
   integrationTargets: Readonly<{
     repositoryAvailabilityMaxAgeHours: number;
@@ -98,6 +103,10 @@ export type SafeControlPlaneConfigSummary = Readonly<{
   }>;
   featureGates: ControlPlaneConfig["featureGates"];
   integrationTargets: ControlPlaneConfig["integrationTargets"];
+  githubActions: Readonly<{
+    defaultAgentAvatarConfigured: boolean;
+    allowedOriginCount: number;
+  }>;
   retention: Readonly<{
     completedOutboxConfigured: boolean;
     deadLetterConfigured: boolean;
@@ -155,6 +164,8 @@ const rawConfigSchema = z.object({
   CONTROL_PLANE_DEAD_LETTER_RETENTION_DAYS: optionalPositiveInteger,
   CONTROL_PLANE_ENCRYPTION_MASTER_KEY: z.string().min(1).optional(),
   CONTROL_PLANE_EXTERNAL_CONTENT_RETENTION_DAYS: optionalPositiveInteger,
+  CONTROL_PLANE_AGENT_AVATAR_ALLOWED_ORIGINS: z.string().optional(),
+  CONTROL_PLANE_DEFAULT_AGENT_AVATAR_URL: z.string().url().optional(),
   CONTROL_PLANE_DESKTOP_BOOTSTRAP_ENABLED: optionalBoolean,
   CONTROL_PLANE_DESKTOP_PAIRING_ENABLED: optionalBoolean,
   CONTROL_PLANE_GITHUB_CLAIM_OAUTH_ENABLED: optionalBoolean,
@@ -169,6 +180,7 @@ const rawConfigSchema = z.object({
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
+  CONTROL_PLANE_GITHUB_ACTIONS_ENABLED: optionalBoolean,
   CONTROL_PLANE_GITHUB_SETUP_ENABLED: optionalBoolean,
   CONTROL_PLANE_GITHUB_TOKEN_BROKER_ENABLED: optionalBoolean,
   CONTROL_PLANE_GITHUB_UNCLAIMED_CALLBACK_RECORDING_ENABLED: optionalBoolean,
@@ -264,6 +276,7 @@ export function loadControlPlaneConfig(
   const database = buildDatabaseConfig(raw);
   const outbox = buildOutboxConfig(raw, outboxWorkerEnabled);
   const featureGates = buildFeatureGateConfig(raw);
+  const githubActions = buildGitHubActionsConfig(raw);
   const integrationTargets = buildIntegrationTargetsConfig(raw);
   const retention = buildRetentionConfig(raw);
 
@@ -273,6 +286,7 @@ export function loadControlPlaneConfig(
     environment: raw.NODE_ENV,
     github,
     featureGates,
+    githubActions,
     http: {
       host: raw.CONTROL_PLANE_HTTP_HOST,
       port: raw.CONTROL_PLANE_HTTP_PORT,
@@ -312,6 +326,11 @@ export function getSafeConfigSummary(
     },
     environment: config.environment,
     featureGates: config.featureGates,
+    githubActions: {
+      allowedOriginCount: config.githubActions.agentAvatarAllowedOrigins.length,
+      defaultAgentAvatarConfigured:
+        config.githubActions.defaultAgentAvatarUrl !== undefined,
+    },
     integrationTargets: config.integrationTargets,
     github: {
       appClientIdConfigured: config.github.appClientId !== undefined,
@@ -445,6 +464,49 @@ function validateCrossFieldConfig(
     });
   }
 
+  if (githubActionsFeatureGateEnabled(raw)) {
+    if (!flags.persistenceEnabled) {
+      issues.push({
+        code: "invalid",
+        message: "GitHub actions require persistence.",
+        path: ["CONTROL_PLANE_PERSISTENCE_ENABLED"],
+      });
+    }
+    if (!flags.outboxWorkerEnabled) {
+      issues.push({
+        code: "invalid",
+        message: "GitHub actions require the outbox worker.",
+        path: ["CONTROL_PLANE_OUTBOX_WORKER_ENABLED"],
+      });
+    }
+    if (raw.CONTROL_PLANE_INTEGRATION_TARGETS_ENABLED !== true) {
+      issues.push({
+        code: "invalid",
+        message:
+          "CONTROL_PLANE_GITHUB_ACTIONS_ENABLED requires CONTROL_PLANE_INTEGRATION_TARGETS_ENABLED.",
+        path: ["CONTROL_PLANE_GITHUB_ACTIONS_ENABLED"],
+      });
+    }
+    if (raw.CONTROL_PLANE_GITHUB_TOKEN_BROKER_ENABLED !== true) {
+      issues.push({
+        code: "invalid",
+        message:
+          "CONTROL_PLANE_GITHUB_ACTIONS_ENABLED requires CONTROL_PLANE_GITHUB_TOKEN_BROKER_ENABLED.",
+        path: ["CONTROL_PLANE_GITHUB_ACTIONS_ENABLED"],
+      });
+    }
+    if (raw.CONTROL_PLANE_EXTERNAL_CONTENT_RETENTION_DAYS === undefined) {
+      issues.push({
+        code: "required",
+        message:
+          "CONTROL_PLANE_EXTERNAL_CONTENT_RETENTION_DAYS is required when GitHub actions are enabled.",
+        path: ["CONTROL_PLANE_EXTERNAL_CONTENT_RETENTION_DAYS"],
+      });
+    }
+    const avatarValidation = validateGitHubActionAvatarConfig(raw);
+    issues.push(...avatarValidation);
+  }
+
   if (
     githubTokenBrokerFeatureGateEnabled(raw) &&
     raw.CONTROL_PLANE_MODE === "local-disabled"
@@ -513,6 +575,10 @@ function githubTokenBrokerFeatureGateEnabled(raw: RawConfig): boolean {
   return raw.CONTROL_PLANE_GITHUB_TOKEN_BROKER_ENABLED === true;
 }
 
+function githubActionsFeatureGateEnabled(raw: RawConfig): boolean {
+  return raw.CONTROL_PLANE_GITHUB_ACTIONS_ENABLED === true;
+}
+
 function githubPrivateKeyConfigured(raw: RawConfig): boolean {
   return (
     hasValue(raw.CONTROL_PLANE_GITHUB_APP_PRIVATE_KEY) ||
@@ -568,11 +634,24 @@ function buildFeatureGateConfig(raw: RawConfig): ControlPlaneConfig["featureGate
     desktopBootstrapEnabled: raw.CONTROL_PLANE_DESKTOP_BOOTSTRAP_ENABLED ?? false,
     desktopPairingEnabled: raw.CONTROL_PLANE_DESKTOP_PAIRING_ENABLED ?? false,
     githubClaimOAuthEnabled: raw.CONTROL_PLANE_GITHUB_CLAIM_OAUTH_ENABLED ?? false,
+    githubActionsEnabled: raw.CONTROL_PLANE_GITHUB_ACTIONS_ENABLED ?? false,
     githubSetupEnabled: raw.CONTROL_PLANE_GITHUB_SETUP_ENABLED ?? false,
     githubTokenBrokerEnabled: raw.CONTROL_PLANE_GITHUB_TOKEN_BROKER_ENABLED ?? false,
     integrationTargetsEnabled: raw.CONTROL_PLANE_INTEGRATION_TARGETS_ENABLED ?? false,
     githubUnclaimedCallbackRecordingEnabled:
       raw.CONTROL_PLANE_GITHUB_UNCLAIMED_CALLBACK_RECORDING_ENABLED ?? false,
+  };
+}
+
+function buildGitHubActionsConfig(raw: RawConfig): ControlPlaneConfig["githubActions"] {
+  const allowedOrigins = parseAllowedOrigins(
+    raw.CONTROL_PLANE_AGENT_AVATAR_ALLOWED_ORIGINS,
+  );
+  return {
+    agentAvatarAllowedOrigins: allowedOrigins,
+    ...(raw.CONTROL_PLANE_DEFAULT_AGENT_AVATAR_URL === undefined
+      ? {}
+      : { defaultAgentAvatarUrl: raw.CONTROL_PLANE_DEFAULT_AGENT_AVATAR_URL }),
   };
 }
 
@@ -657,4 +736,83 @@ function buildSecretConfig(raw: RawConfig): ControlPlaneConfig["secrets"] {
   }
 
   return secrets;
+}
+
+function validateGitHubActionAvatarConfig(raw: RawConfig): readonly ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (raw.CONTROL_PLANE_DEFAULT_AGENT_AVATAR_URL === undefined) {
+    issues.push({
+      code: "required",
+      message:
+        "CONTROL_PLANE_DEFAULT_AGENT_AVATAR_URL is required when GitHub actions are enabled.",
+      path: ["CONTROL_PLANE_DEFAULT_AGENT_AVATAR_URL"],
+    });
+    return issues;
+  }
+
+  const defaultAvatar = parseHttpsUrl(raw.CONTROL_PLANE_DEFAULT_AGENT_AVATAR_URL);
+  if (defaultAvatar === undefined) {
+    issues.push({
+      code: "invalid",
+      message: "CONTROL_PLANE_DEFAULT_AGENT_AVATAR_URL must be an https URL.",
+      path: ["CONTROL_PLANE_DEFAULT_AGENT_AVATAR_URL"],
+    });
+    return issues;
+  }
+
+  const allowedOrigins = parseAllowedOrigins(
+    raw.CONTROL_PLANE_AGENT_AVATAR_ALLOWED_ORIGINS,
+  );
+  if (allowedOrigins.length === 0) {
+    issues.push({
+      code: "required",
+      message:
+        "CONTROL_PLANE_AGENT_AVATAR_ALLOWED_ORIGINS is required when GitHub actions are enabled.",
+      path: ["CONTROL_PLANE_AGENT_AVATAR_ALLOWED_ORIGINS"],
+    });
+    return issues;
+  }
+  if (!allowedOrigins.includes(defaultAvatar.origin)) {
+    issues.push({
+      code: "invalid",
+      message:
+        "CONTROL_PLANE_AGENT_AVATAR_ALLOWED_ORIGINS must include the default avatar origin.",
+      path: ["CONTROL_PLANE_AGENT_AVATAR_ALLOWED_ORIGINS"],
+    });
+  }
+  return issues;
+}
+
+function parseAllowedOrigins(value: string | undefined): readonly string[] {
+  if (value === undefined) {
+    return [];
+  }
+  const seen = new Set<string>();
+  for (const item of value.split(",")) {
+    const origin = parseHttpsOrigin(item.trim());
+    if (origin !== undefined) {
+      seen.add(origin);
+    }
+  }
+  return [...seen].sort();
+}
+
+function parseHttpsOrigin(value: string): string | undefined {
+  const url = parseHttpsUrl(value);
+  if (url === undefined) {
+    return undefined;
+  }
+  if (url.pathname !== "/" || url.search.length > 0 || url.hash.length > 0) {
+    return undefined;
+  }
+  return url.origin;
+}
+
+function parseHttpsUrl(value: string): URL | undefined {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" ? url : undefined;
+  } catch {
+    return undefined;
+  }
 }

@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 
 import { ExternalActionContentModule } from "@agent-teams-control-plane/features-external-action-content/interface/nest";
 import { GitHubInstallationSetupModule } from "@agent-teams-control-plane/features-github-installation-setup/interface/nest";
+import { AgentGitHubActionsModule } from "@agent-teams-control-plane/features-agent-github-actions/interface/nest";
 import { GitHubTokenBrokerModule } from "@agent-teams-control-plane/features-github-token-broker/interface/nest";
 import { IntegrationConnectionsModule } from "@agent-teams-control-plane/features-integration-connections/interface/nest";
 import { IntegrationTargetsModule } from "@agent-teams-control-plane/features-integration-targets/interface/nest";
@@ -28,6 +29,7 @@ import { PlatformLoggerModule } from "@agent-teams-control-plane/platform-logger
     GitHubInstallationSetupModule,
     IntegrationTargetsModule,
     GitHubTokenBrokerModule,
+    AgentGitHubActionsModule,
     SystemHealthModule,
   ],
 })

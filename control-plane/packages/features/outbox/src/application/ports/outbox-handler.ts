@@ -2,7 +2,7 @@ import type { ClaimedOutboxEvent } from "./outbox.repository.js";
 
 export type OutboxHandlerResult =
   | Readonly<{ kind: "completed" }>
-  | Readonly<{ kind: "retry"; error: unknown }>
+  | Readonly<{ kind: "retry"; error: unknown; retryAfterMs?: number }>
   | Readonly<{ kind: "dead-letter"; error: unknown }>;
 
 export interface OutboxEventHandler {

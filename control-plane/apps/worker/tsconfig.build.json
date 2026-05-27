@@ -12,6 +12,42 @@
       "@agent-teams-control-plane/features-outbox/interface/nest": [
         "packages/features/outbox/dist/interface/nest/index.d.ts"
       ],
+      "@agent-teams-control-plane/features-agent-github-actions": [
+        "packages/features/agent-github-actions/dist/index.d.ts"
+      ],
+      "@agent-teams-control-plane/features-agent-github-actions/interface/nest": [
+        "packages/features/agent-github-actions/dist/interface/nest/index.d.ts"
+      ],
+      "@agent-teams-control-plane/features-external-action-content": [
+        "packages/features/external-action-content/dist/index.d.ts"
+      ],
+      "@agent-teams-control-plane/features-external-action-content/interface/nest": [
+        "packages/features/external-action-content/dist/interface/nest/index.d.ts"
+      ],
+      "@agent-teams-control-plane/features-github-token-broker": [
+        "packages/features/github-token-broker/dist/index.d.ts"
+      ],
+      "@agent-teams-control-plane/features-github-token-broker/interface/nest": [
+        "packages/features/github-token-broker/dist/interface/nest/index.d.ts"
+      ],
+      "@agent-teams-control-plane/features-integration-targets": [
+        "packages/features/integration-targets/dist/index.d.ts"
+      ],
+      "@agent-teams-control-plane/features-integration-targets/interface/nest": [
+        "packages/features/integration-targets/dist/interface/nest/index.d.ts"
+      ],
+      "@agent-teams-control-plane/features-workspace-identity": [
+        "packages/features/workspace-identity/dist/index.d.ts"
+      ],
+      "@agent-teams-control-plane/features-workspace-identity/interface/nest": [
+        "packages/features/workspace-identity/dist/interface/nest/index.d.ts"
+      ],
+      "@agent-teams-control-plane/platform-crypto": [
+        "packages/platform/crypto/dist/index.d.ts"
+      ],
+      "@agent-teams-control-plane/platform-crypto/nest": [
+        "packages/platform/crypto/dist/nest/index.d.ts"
+      ],
       "@agent-teams-control-plane/platform-config": [
         "packages/platform/config/dist/index.d.ts"
       ],

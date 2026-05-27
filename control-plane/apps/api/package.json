@@ -7,6 +7,7 @@
     "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
+    "@agent-teams-control-plane/features-agent-github-actions": "workspace:*",
     "@agent-teams-control-plane/features-system-health": "workspace:*",
     "@agent-teams-control-plane/features-external-action-content": "workspace:*",
     "@agent-teams-control-plane/features-github-installation-setup": "workspace:*",

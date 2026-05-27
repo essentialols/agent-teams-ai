@@ -161,27 +161,31 @@ export class IssueGitHubInstallationTokenUseCase {
       };
     } catch (error) {
       const safeError = isSafeError(error) ? error : toSafeError(error);
-      await this.auditLog.record({
-        capability: input.capability,
-        eventType: "github_token_broker.installation_token_requested",
-        integrationTargetId: targetId,
-        safeErrorCode: safeError.code,
-        status: safeError.category === "authorization" ? "denied" : "failed",
-        workspaceId: workspaceId.value,
-        ...(auditScope?.githubInstallationId === undefined
-          ? {}
-          : { githubInstallationId: auditScope.githubInstallationId }),
-        ...(auditScope?.permissionSummary === undefined
-          ? {}
-          : { permissionSummary: auditScope.permissionSummary }),
-        ...(auditScope?.repositoryCount === undefined
-          ? {}
-          : { repositoryCount: auditScope.repositoryCount }),
-        ...(input.correlationId === undefined
-          ? {}
-          : { correlationId: input.correlationId }),
-      });
-      throw error;
+      try {
+        await this.auditLog.record({
+          capability: input.capability,
+          eventType: "github_token_broker.installation_token_requested",
+          integrationTargetId: targetId,
+          safeErrorCode: safeError.code,
+          status: safeError.category === "authorization" ? "denied" : "failed",
+          workspaceId: workspaceId.value,
+          ...(auditScope?.githubInstallationId === undefined
+            ? {}
+            : { githubInstallationId: auditScope.githubInstallationId }),
+          ...(auditScope?.permissionSummary === undefined
+            ? {}
+            : { permissionSummary: auditScope.permissionSummary }),
+          ...(auditScope?.repositoryCount === undefined
+            ? {}
+            : { repositoryCount: auditScope.repositoryCount }),
+          ...(input.correlationId === undefined
+            ? {}
+            : { correlationId: input.correlationId }),
+        });
+      } catch {
+        // Failure audit must not leak or replace the original safe broker failure.
+      }
+      throw safeError;
     }
   }
 }

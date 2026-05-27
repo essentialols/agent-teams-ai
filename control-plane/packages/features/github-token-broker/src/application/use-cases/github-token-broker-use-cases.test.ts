@@ -147,6 +147,41 @@ describe("github token broker use cases", () => {
     expect(issuerCalls).toBe(0);
   });
 
+  it("blocks disabled and stale targets before GitHub HTTP", async () => {
+    for (const reasonCode of [
+      "CONTROL_PLANE_TARGET_POLICY_TARGET_DISABLED",
+      "CONTROL_PLANE_TARGET_POLICY_TARGET_STALE",
+    ]) {
+      let issuerCalls = 0;
+      const useCase = new IssueGitHubInstallationTokenUseCase(
+        enabledGate(),
+        {
+          authorize: async () => ({
+            allowed: false,
+            policyVersion: 4,
+            reasonCode,
+          }),
+        },
+        {
+          assertAllowed: async () => undefined,
+        },
+        {
+          issue: async () => {
+            issuerCalls += 1;
+            throw new Error("not used");
+          },
+        },
+        quietAuditLog(),
+        new FixedClock(1_700_000_000_000),
+      );
+
+      await expect(useCase.execute(baseInput())).rejects.toMatchObject({
+        code: reasonCode,
+      });
+      expect(issuerCalls).toBe(0);
+    }
+  });
+
   it("rejects broader scopes returned by GitHub before returning a lease", async () => {
     const useCase = new IssueGitHubInstallationTokenUseCase(
       enabledGate(),
@@ -192,9 +227,9 @@ describe("github token broker use cases", () => {
       new FixedClock(1_700_000_000_000),
     );
 
-    await expect(useCase.execute(baseInput())).rejects.toThrow(
-      "network socket leaked a raw error",
-    );
+    await expect(useCase.execute(baseInput())).rejects.toMatchObject({
+      code: "CONTROL_PLANE_INTERNAL_ERROR",
+    });
     expect(auditEvents).toEqual([
       expect.objectContaining({
         safeErrorCode: "CONTROL_PLANE_INTERNAL_ERROR",
@@ -202,6 +237,37 @@ describe("github token broker use cases", () => {
       }),
     ]);
     expect(JSON.stringify(auditEvents)).not.toContain("network socket leaked");
+  });
+
+  it("does not let failure-audit errors mask the original safe denial", async () => {
+    const useCase = new IssueGitHubInstallationTokenUseCase(
+      enabledGate(),
+      {
+        authorize: async () => ({
+          allowed: false,
+          policyVersion: 7,
+          reasonCode: "CONTROL_PLANE_TARGET_POLICY_NO_MATCHING_ALLOW",
+        }),
+      },
+      {
+        assertAllowed: async () => undefined,
+      },
+      {
+        issue: async () => {
+          throw new Error("not used");
+        },
+      },
+      {
+        record: async () => {
+          throw new Error("audit database unavailable");
+        },
+      },
+      new FixedClock(1_700_000_000_000),
+    );
+
+    await expect(useCase.execute(baseInput())).rejects.toMatchObject({
+      code: "CONTROL_PLANE_TARGET_POLICY_NO_MATCHING_ALLOW",
+    });
   });
 
   it("dry-runs safe scope summaries without issuing tokens", async () => {

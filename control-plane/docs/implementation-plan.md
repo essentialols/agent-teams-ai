@@ -477,151 +477,99 @@ Approximate change size:
 ~2000-3500 lines
 ```
 
-## Phase 9 - GitHub Agent Comments V1
+## Phase 9 - Desktop GitHub Integration Bridge
+
+Detailed plan:
+[Phase 9 Desktop GitHub Integration Bridge Plan](phase-9-desktop-github-integration-bridge-plan.md)
 
 Goals:
 
-- connect `agent-actions` to `github-runtime`
-- implement GitHub issue comment
-- implement GitHub PR top-level comment
-- render agent attribution card
-- support update-or-create by hidden marker
-
-Explicit non-goals:
-
-- no line-level PR review comments in V1
-- no multi-comment review submission in V1
-- no check runs/statuses in this phase
-- no broad GitHub token with all installation repositories when a single repository target is known
-
-Use cases:
-
-- `DispatchGitHubIssueComment`
-- `DispatchGitHubPullRequestComment`
-
-Ports:
-
-- `GitHubCommentGateway`
-- `GitHubCommentMarkerRepository` if needed
-
-Comment requirements:
-
-- app bot author in GitHub UI
-- body shows agent name
-- body shows team name
-- body shows role if available
-- body includes avatar
-- body includes hidden marker
-- attribution block is rendered by control-plane, not agent-authored markdown
-- hidden marker includes schema version, opaque public marker id, and integrity digest
-- hidden marker does not include internal workspace names, display names, prompts, code, diffs, tokens, reusable model-output logs, or raw external action content
-- GitHub permission mapping is explicit for issue comments vs future review comments
-- raw comment body is loaded only from encrypted ExternalActionContent during dispatch
-- successful dispatch deletes or cryptographically shreds stored content
-
-Acceptance criteria:
-
-- agent cannot post to unbound repo
-- agent cannot post without enabled capability
-- PR top-level comment validates the PR exists and belongs to the bound base repository before creating an issue comment
-- issue comment action does not accidentally comment on a PR unless that is explicitly allowed by the action kind
-- repeat action does not create duplicate comment
-- GitHub rate limit retries safely
-- result is auditable
-- if DB update fails after GitHub success, retry recovers by marker instead of posting duplicate
-- hidden marker deleted by a human leads to a safe duplicate-policy decision, not silent corruption
-- avatar fallback renders without local file paths
-- secondary rate limit or spam response backs off without creating duplicate comments
-- comment create/update uses the configured GitHub REST API version
-- result metadata keeps content hash and external ids, not raw body
-- dead-letter content retention is bounded and visible to authorized operators
+- connect the desktop app to hosted control-plane pairing/setup/status APIs
+- add the trusted runtime bridge that submits structured agent GitHub action
+  envelopes
+- keep desktop local-first and fully usable without control-plane
+- keep GitHub installation tokens server-side only
+- surface connected repositories, unavailable states, version mismatch, and
+  action status safely
 
 Approximate change size:
 
 ```text
-🎯 10   🛡️ 9   🧠 8
+🎯 10   🛡️ 10   🧠 7
 ~1600-2800 lines
 ```
 
-## Phase 10 - Desktop Integration
+## Phase 10 - Hosted GitHub App Operations
+
+Detailed plan:
+[Phase 10 Hosted GitHub App Operations Plan](phase-10-hosted-github-app-operations-plan.md)
 
 Goals:
 
-- expose desktop pairing UI hooks in desktop app
-- implement hosted GitHub setup session UI state machine
-- list connected integrations
-- surface GitHub connected repositories
-- inject safe control-plane endpoint/token into MCP/runtime when enabled
-- fail gracefully when control plane is not configured
-
-Important rule:
-
-Desktop remains fully usable without control-plane.
-
-Agent/runtime rule:
-
-- local agents do not receive GitHub tokens
-- local agents do not hand-write attribution metadata
-- desktop/runtime adapter sends a structured action request envelope
-- control-plane unavailable returns explicit "hosted integration unavailable" instead of queuing silently
-- desktop polls authenticated setup-session status instead of running a local callback server
-- deep links or completion pages never contain OAuth codes, PKCE verifiers, client tokens, or GitHub tokens
-
-Acceptance criteria:
-
-- app starts without control-plane env
-- GitHub actions unavailable state is clear
-- connected state is visible
-- token rotation/revoke handled
-- no GitHub token is exposed to agent
-- older desktop client receives stable version-mismatch error if API contract changes
-- setup can show pending_installation, pending_claim, connected, failed, expired, and cancelled states
-- desktop restart resumes active setup sessions
-- stale browser callback for expired setup cannot flip UI to connected
+- make the official hosted GitHub App path deployable and operable
+- document GitHub App registration, permissions, callbacks, and secret custody
+- harden hosted config, readiness, migration, worker, and runbook workflows
+- define critical metrics, alerts, and secret rotation procedures
+- prove staging deployment with the official/staging GitHub App
 
 Approximate change size:
 
 ```text
-🎯 9   🛡️ 8   🧠 7
-~1200-2400 lines
+🎯 10   🛡️ 9   🧠 6
+~1000-2200 lines
 ```
 
-## Phase 11 - Messenger Connector Foundation
+## Phase 11 - Live E2E Release Gate
 
-This phase validates that the architecture is not GitHub-centric.
+Detailed plan:
+[Phase 11 Live E2E Release Gate Plan](phase-11-live-e2e-release-gate-plan.md)
 
 Goals:
 
-- add messenger connector interface
-- add Telegram as first messenger candidate
-- normalize inbound webhook events
-- dispatch outbound agent messages
-
-Acceptance criteria:
-
-- no GitHub types in messenger domain
-- agent-actions can route to messenger through same generic flow
-- Telegram webhook raw body is not persisted
-- duplicate messenger webhook does not duplicate messages
+- prove the complete GitHub App flow against a sandbox GitHub organization
+- run golden-path install, claim, target enablement, and agent action scenarios
+- run critical retry, revocation, disabled target, worker crash, and redaction
+  checks
+- block public beta until live E2E, security/privacy, and recovery gates pass
 
 Approximate change size:
 
 ```text
-🎯 8   🛡️ 8   🧠 8
-~1800-3200 lines
+🎯 10   🛡️ 9   🧠 7
+~1200-2500 lines
 ```
 
-## Recommended First PRs
+## Deferred After GitHub V1
+
+These are intentionally not part of the critical GitHub App release path:
+
+- messenger connector foundation
+- Telegram/Slack/Discord integrations
+- billing and entitlements
+- BYO GitHub App
+- enterprise self-hosting
+- multi-region active-active deployment
+- broad product analytics
+- additional GitHub write actions beyond accepted V1 actions
+
+## Recommended PR Sequence
+
+Completed/foundation PRs:
 
 1. Documentation-only foundation.
 2. Decision-gate ADRs from Phase 0.5.
 3. Workspace scaffold with architecture check.
 4. Shared kernel and config/logger.
-5. Outbox/audit/dead-letter foundation.
-6. Desktop pairing.
-7. Integration registry.
-8. Agent actions.
-9. GitHub App foundation.
-10. GitHub comments V1.
+5. Persistence, transactions, outbox, and locks.
+6. Workspace-bound GitHub installation.
+7. Repository target binding and policy.
+8. GitHub installation token broker.
+9. Agent GitHub actions outbox.
+
+Critical next PRs:
+
+1. Desktop GitHub integration bridge.
+2. Hosted GitHub App operations.
+3. Live E2E release gate.
 
 Do not combine all phases into one PR.

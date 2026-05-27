@@ -1,0 +1,424 @@
+# Phase 9 - Desktop GitHub Integration Bridge Plan
+
+## Purpose
+
+Phase 9 connects the implemented control-plane GitHub backend to the desktop app
+and local agent runtime without weakening the security model.
+
+The backend can already own workspace identity, installation binding, target
+policy, token brokering, and outbox-backed GitHub actions. The missing critical
+piece is a trusted desktop/runtime bridge:
+
+```text
+desktop workspace
+  -> authenticated control-plane client
+  -> trusted agent action envelope
+  -> control-plane policy and outbox
+  -> GitHub App side effect
+```
+
+Desktop must remain local-first. If the control-plane is absent or disabled,
+normal local teams must keep working.
+
+## Summary
+
+Implement the minimal product path that lets a user:
+
+- see whether hosted GitHub integration is available
+- pair this desktop workspace with the hosted control-plane
+- start or resume GitHub App setup
+- see connected GitHub installations and enabled repositories
+- let trusted local agents request GitHub actions through structured envelopes
+- inspect action status and safe failure messages
+
+Do not expose GitHub installation tokens to Electron, local agent subprocesses,
+MCP tools, logs, or local config files.
+
+## Architecture Decision
+
+Recommended direction:
+
+```text
+Desktop-owned integration bridge
++ runtime action envelope port
++ control-plane HTTP adapter
++ no direct GitHub credentials locally
+```
+
+Options:
+
+- Desktop bridge through control-plane API
+  `🎯 10   🛡️ 10   🧠 7`
+  Approx changes: `1600-2800` lines.
+  Recommended. Keeps authorization, tokens, retries, and audit centralized.
+
+- Local backend proxy inside desktop
+  `🎯 5   🛡️ 5   🧠 7`
+  Approx changes: `1200-2200` lines.
+  Avoid for V1. It creates another trust boundary and makes users think local
+  server deployment is required.
+
+- Agents call GitHub or control-plane directly
+  `🎯 2   🛡️ 2   🧠 4`
+  Approx changes: `700-1400` lines.
+  Reject. Agent processes are not the authority boundary and must not hold
+  control-plane client tokens or GitHub tokens.
+
+## Critical Scope
+
+Phase 9 should implement only the pieces required for usable GitHub App flow:
+
+- desktop feature slice for hosted integrations
+- control-plane API client adapter in desktop main process
+- desktop token storage through existing secure app storage primitives
+- pairing/setup state machine in renderer
+- runtime action bridge from trusted team/member context to control-plane API
+- agent action envelope creation in desktop, not in agent-authored markdown
+- action status polling or subscription-shaped polling
+- safe user-facing unavailable/version-mismatch states
+- contract tests around envelope construction and token redaction
+
+Phase 9 should not implement:
+
+- new GitHub backend features
+- self-hosted official-app mode
+- BYO GitHub App setup UI
+- messenger connectors
+- billing, seats, quotas, or entitlements
+- broad observability dashboards
+- line-level PR review UX unless already supported by backend and explicitly
+  enabled
+
+## Clean Architecture Shape
+
+Desktop side should follow the repository feature standard.
+
+Recommended feature package:
+
+```text
+src/features/hosted-integrations/
+  contracts/
+  core/
+    domain/
+    application/
+    ports/
+  main/
+    adapters/
+    composition/
+  renderer/
+    adapters/
+    hooks/
+    ui/
+```
+
+The feature owns the desktop-facing integration workflow. It does not own
+GitHub provider logic. GitHub remains behind control-plane API contracts.
+
+### Domain
+
+Domain entities and value objects:
+
+- `HostedIntegrationConnection`
+- `HostedIntegrationSetupSession`
+- `DesktopControlPlaneSession`
+- `AgentGithubActionDraft`
+- `AgentActionSubmission`
+- `HostedIntegrationAvailability`
+- `ControlPlaneApiVersion`
+
+Domain policies:
+
+- desktop can be unpaired, paired, revoked, expired, or version-mismatched
+- setup can be idle, opening, pending installation, pending claim, connected,
+  failed, expired, or cancelled
+- GitHub action submission requires a connected workspace and enabled target
+  snapshot from control-plane
+- action body and agent attribution are separate values
+- agent attribution is derived from trusted team/member metadata
+
+### Application
+
+Use cases:
+
+- `LoadHostedIntegrationState`
+- `StartControlPlanePairing`
+- `CompleteControlPlanePairing`
+- `StartGitHubSetup`
+- `ResumeGitHubSetupSession`
+- `CancelGitHubSetupSession`
+- `RefreshGitHubConnections`
+- `ListGithubRepositoryTargets`
+- `SubmitAgentGithubAction`
+- `GetAgentGithubActionStatus`
+- `RevokeControlPlaneDesktopSession`
+
+Application rules:
+
+- use cases depend on ports, not Electron, HTTP, IPC, or React
+- no GitHub token type exists in desktop domain/application code
+- no control-plane token is passed into renderer unless existing project
+  security rules explicitly allow that class of token
+- raw action body can be sent to control-plane only as explicit user/agent
+  command payload, never persisted locally as reusable logs
+
+### Ports
+
+Outbound ports:
+
+- `ControlPlaneConnectionPort`
+- `ControlPlanePairingPort`
+- `ControlPlaneGithubSetupPort`
+- `ControlPlaneGithubTargetsPort`
+- `ControlPlaneAgentActionPort`
+- `DesktopSecureTokenStorePort`
+- `DesktopBrowserOpenPort`
+- `RuntimeAgentActionBridgePort`
+- `HostedIntegrationClockPort`
+
+Inbound ports:
+
+- IPC handlers for renderer setup/status commands
+- runtime bridge entrypoint used by team orchestration layer
+
+Adapters:
+
+- main-process HTTP adapter using the existing safe request utilities
+- secure token storage adapter
+- browser opener adapter for hosted setup URL
+- renderer query/hooks adapter
+- runtime bridge adapter near the team launch/runtime boundary
+
+## Control-Plane Contract Requirements
+
+Desktop should call explicit hosted integration APIs. It should not depend on
+database internals or GitHub provider details.
+
+Required API capabilities:
+
+```text
+GET  /v1/desktop/session
+POST /v1/desktop/pairing/start
+POST /v1/desktop/pairing/complete
+POST /v1/github/setup/start
+GET  /v1/github/setup-sessions/:setupSessionId
+POST /v1/github/setup-sessions/:setupSessionId/cancel
+GET  /v1/github/connections
+GET  /v1/github/targets
+POST /v1/github/agent-actions
+GET  /v1/github/agent-actions/:actionId
+POST /v1/desktop/session/revoke
+```
+
+If existing backend route names differ, desktop must adapt to the implemented
+public contracts rather than invent parallel endpoints.
+
+Contract invariants:
+
+- every request includes safe request/correlation ids
+- desktop session token is sent only over HTTPS outside local development
+- server returns stable `SafeError` codes
+- version mismatch returns a stable error code with minimum supported desktop
+  contract version
+- setup status is resumable after desktop restart
+- action status never returns raw GitHub token, raw private key material, or
+  raw encrypted action content
+
+## Trusted Agent Action Envelope
+
+The desktop/runtime bridge must build an envelope like this:
+
+```text
+workspaceId
+desktopClientId
+teamId
+teamName
+agentId
+agentName
+agentRole
+agentAvatarUrl?
+targetId
+actionKind
+idempotencyKey
+content
+contentHash
+localCorrelationId
+contractVersion
+```
+
+Security rules:
+
+- `workspaceId` and `desktopClientId` come from paired desktop session state
+- agent/team identity comes from trusted runtime metadata
+- agents may propose content, but not overwrite trusted attribution fields
+- idempotency key is generated by desktop/runtime bridge per logical action
+- content hash is computed before submission and verified by backend where
+  useful
+- local filesystem paths are forbidden in avatar URLs
+- avatar URLs must be HTTPS or omitted
+
+## UI Requirements
+
+Keep UI operational and compact. This is not a marketing screen.
+
+Required screens/states:
+
+- hosted integration unavailable
+- connect GitHub
+- pairing pending/failed
+- setup pending installation
+- setup pending claim
+- setup connected
+- setup expired/cancelled
+- repository targets list
+- enabled/disabled repository target state
+- action submitted, processing, succeeded, failed, dead-lettered
+- version mismatch requiring app update
+
+Required actions:
+
+- connect
+- resume setup
+- cancel setup
+- refresh status
+- revoke desktop connection
+- open GitHub setup page
+
+Do not show:
+
+- GitHub tokens
+- private keys
+- webhook secrets
+- raw OAuth codes
+- PKCE verifier
+- internal installation token response
+
+## Runtime Integration
+
+The runtime bridge should be explicit and narrow.
+
+Recommended behavior:
+
+- team runtime asks desktop main process to submit a GitHub action
+- desktop validates that hosted integration is connected
+- desktop builds the trusted envelope from runtime/team metadata
+- desktop sends envelope to control-plane
+- desktop returns action id/status to runtime
+- runtime displays safe status, not provider credentials
+
+Failure behavior:
+
+- control-plane unavailable: fail fast with `HOSTED_INTEGRATION_UNAVAILABLE`
+- target disabled: return policy failure without retrying locally
+- token revoked: clear local session and surface reconnect state
+- version mismatch: stop submission and show update-required state
+- duplicate idempotency key: return existing action status
+
+## Edge Cases
+
+Critical edge cases:
+
+- desktop restarts after setup start but before GitHub callback completes
+- browser callback arrives after setup expiry
+- user revokes desktop client from another machine
+- GitHub App installation is removed while UI still shows connected
+- repository target is disabled after agent action button is opened
+- action succeeds in GitHub but status polling temporarily fails
+- control-plane rotates API contract while old desktop is still running
+- renderer is compromised or sends modified attribution fields
+- agent subprocess tries to include fake agent/team in content markdown
+- network outage happens after request reaches control-plane
+
+Expected decisions:
+
+- desktop polls setup/action status by server ids, not by local browser state
+- backend remains source of truth for connection and target state
+- renderer input is never trusted for agent attribution
+- local retry of action submission uses same idempotency key
+
+## Architecture Guardrails
+
+Add or extend checks so that:
+
+- renderer cannot import control-plane token storage implementation
+- renderer cannot call backend HTTP adapter directly if main-process IPC is the
+  intended boundary
+- hosted integrations feature does not import GitHub SDKs
+- domain/application layers do not import Electron, React, HTTP clients, or
+  runtime process services
+- runtime bridge cannot accept raw GitHub credentials
+- tests assert redaction of session token and action content in logs
+
+## Test Plan
+
+Unit tests:
+
+- state machine transitions
+- envelope construction
+- idempotency key behavior
+- version mismatch mapping
+- safe error mapping
+- token redaction
+- avatar URL validation
+
+Integration tests:
+
+- IPC handler validates renderer input
+- secure token store read/write/revoke flow
+- control-plane adapter serializes headers and request ids
+- setup resume after app restart using mocked backend
+- runtime bridge submits an action with trusted agent metadata
+
+Security tests:
+
+- renderer-provided fake attribution is ignored
+- agent-authored markdown cannot set hidden attribution
+- local logs do not contain desktop session token, OAuth code, or GitHub token
+- unavailable control-plane does not create local durable GitHub action queue
+
+Smoke tests:
+
+- app starts with no control-plane config
+- app starts with hosted integration disabled
+- app shows connected GitHub state with mocked backend
+- submitting a mocked action shows processing and final status
+
+## Acceptance Criteria
+
+- desktop remains fully usable without control-plane
+- user can connect and resume hosted GitHub setup
+- user can see connected installation and repository target state
+- trusted runtime can submit a GitHub action through control-plane
+- local agents never receive GitHub installation tokens
+- renderer never receives GitHub installation tokens
+- desktop session token can be revoked and recovered by reconnect
+- stale setup sessions cannot become connected
+- action status is visible without raw content/token leakage
+- all public failures map to safe user-facing messages
+- architecture checks and focused tests pass
+
+## Rollout
+
+Recommended rollout:
+
+1. hidden feature flag for desktop integration UI
+2. mocked control-plane adapter smoke
+3. real hosted control-plane in developer environment
+4. sandbox GitHub installation
+5. limited internal dogfood
+6. public beta after Phase 10 and Phase 11 gates pass
+
+## Open Questions
+
+Only blockers before implementation:
+
+- exact desktop secure token store primitive to reuse
+- final backend route names after Phase 8 API surface review
+- whether action status should be polling-only in V1 or prepared for future
+  server-sent events
+
+Non-blocking:
+
+- richer repository target management UI
+- action history filters
+- per-team permission UI
+- BYO GitHub App

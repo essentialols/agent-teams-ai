@@ -24,7 +24,10 @@ import {
 } from '@renderer/utils/memberRuntimeSummary';
 import { isDisplayableCurrentTask } from '@renderer/utils/teamTaskDisplayState';
 import { isLeadMember } from '@shared/utils/leadDetection';
-import { isBootstrapConfirmedProvisionedButNotAliveFailure } from '@shared/utils/teamLaunchFailureReason';
+import {
+  hasUnsafeProvisionedButNotAliveRuntimeEvidence,
+  isBootstrapConfirmedProvisionedButNotAliveFailure,
+} from '@shared/utils/teamLaunchFailureReason';
 import { isTeamTaskFinishedForDependency } from '@shared/utils/teamTaskState';
 import {
   BarChart3,
@@ -84,8 +87,18 @@ function isOpenCodeNoRuntimeEvidenceFailure(
   spawnEntry: MemberSpawnStatusEntry | undefined,
   runtimeEntry: TeamAgentRuntimeEntry | undefined
 ): boolean {
+  const bootstrapConfirmedProvisionedButNotAlive =
+    isBootstrapConfirmedProvisionedButNotAliveFailure(spawnEntry);
+  const unsafeProvisionedButNotAlive =
+    bootstrapConfirmedProvisionedButNotAlive &&
+    (hasUnsafeProvisionedButNotAliveRuntimeEvidence(spawnEntry) ||
+      hasUnsafeProvisionedButNotAliveRuntimeEvidence({
+        runtimeDiagnostic: runtimeEntry?.runtimeDiagnostic,
+        runtimeDiagnosticSeverity: runtimeEntry?.runtimeDiagnosticSeverity,
+        livenessKind: runtimeEntry?.livenessKind,
+      }));
   const failed =
-    !isBootstrapConfirmedProvisionedButNotAliveFailure(spawnEntry) &&
+    (!bootstrapConfirmedProvisionedButNotAlive || unsafeProvisionedButNotAlive) &&
     (spawnEntry?.launchState === 'failed_to_start' || spawnEntry?.status === 'error');
   return member.providerId === 'opencode' && failed && !hasOpenCodeRuntimeEvidence(runtimeEntry);
 }

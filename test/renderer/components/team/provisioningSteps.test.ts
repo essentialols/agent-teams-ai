@@ -167,7 +167,7 @@ describe('getLaunchJoinMilestonesFromMembers', () => {
           memberName: 'tom',
           alive: false,
           restartable: true,
-          livenessKind: 'confirmed_bootstrap',
+          livenessKind: 'registered_only',
           runtimeDiagnostic:
             'runtime pid could not be verified because process table is unavailable',
           runtimeDiagnosticSeverity: 'warning',

@@ -106,9 +106,24 @@ function isConfirmedSpawnEntry(entry: MemberSpawnStatusEntry): boolean {
 }
 
 function runtimeEntryContradictsConfirmedJoin(
+  entry: MemberSpawnStatusEntry,
   runtimeEntry: TeamAgentRuntimeEntry | undefined
 ): boolean {
-  return runtimeEntry?.alive === false && runtimeEntry.livenessKind !== 'confirmed_bootstrap';
+  if (runtimeEntry?.alive !== false || runtimeEntry.livenessKind === 'confirmed_bootstrap') {
+    return false;
+  }
+  if (
+    isBootstrapConfirmedProvisionedButNotAliveFailure(entry) &&
+    !hasUnsafeProvisionedButNotAliveRuntimeEvidence(entry) &&
+    !hasUnsafeProvisionedButNotAliveRuntimeEvidence({
+      runtimeDiagnostic: runtimeEntry.runtimeDiagnostic,
+      runtimeDiagnosticSeverity: runtimeEntry.runtimeDiagnosticSeverity,
+      livenessKind: runtimeEntry.livenessKind,
+    })
+  ) {
+    return false;
+  }
+  return true;
 }
 
 function shouldPreferSnapshotEntryOverLive(
@@ -179,7 +194,10 @@ function summarizeLiveLaunchJoinMilestones(params: {
     }
     if (
       isConfirmedSpawnEntry(entry) &&
-      runtimeEntryContradictsConfirmedJoin(getRuntimeEntry(params.memberRuntimeEntries, memberName))
+      runtimeEntryContradictsConfirmedJoin(
+        entry,
+        getRuntimeEntry(params.memberRuntimeEntries, memberName)
+      )
     ) {
       pendingSpawnCount += 1;
       continue;

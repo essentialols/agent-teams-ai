@@ -94,6 +94,30 @@ Phase 11 should not implement:
 - broad analytics
 - enterprise self-hosting
 
+## Plan-Improve Findings
+
+Scope preserved:
+
+- Phase 11 remains a release gate and evidence phase.
+- It should not add product behavior beyond test harnesses, fixtures, runbooks,
+  and release gating.
+- It proves the path already built by Phases 5-10.
+
+Weak spots studied in current code:
+
+- The backend already uses request ids and idempotency for GitHub actions.
+  Live E2E must intentionally retry the same `requestId` and prove no duplicate
+  public GitHub output appears.
+- The public setup callback can return `restart_required` for untrusted
+  callbacks. E2E must cover this as a safe failure, not treat every callback as
+  success.
+- Action status is queried through `GET api/desktop/v1/github-actions/:id`.
+  E2E must assert status through backend as well as GitHub UI/API.
+- Target policy is enforced before enqueue and before dispatch. Live tests must
+  disable/revoke a target between enqueue and dispatch to prove the second gate.
+- Worker/outbox behavior is central. A release gate that only verifies API
+  responses is insufficient.
+
 ## E2E Environment
 
 Required accounts/resources:
@@ -124,6 +148,17 @@ Secrets:
 - never printed by the harness
 - redacted in failure artifacts
 
+Run isolation:
+
+- every live run uses a unique run id prefix
+- every GitHub comment/check marker includes the run id through existing
+  backend idempotency/marker behavior where safe
+- cleanup touches only resources with the current run id or a known sandbox
+  fixture allowlist
+- parallel runs either use separate sandbox repositories or acquire a run lock
+- failed cleanup must leave a visible artifact summary, not silently delete
+  evidence
+
 ## Golden Path Scenarios
 
 ### Setup And Pairing
@@ -144,6 +179,7 @@ Assertions:
 
 - setup status transitions are correct
 - `installation_id` alone is never accepted as trusted
+- untrusted setup callback returns restart-required or equivalent safe state
 - desktop token is created and scoped
 - repository targets use immutable GitHub repository ids
 - audit events exist
@@ -168,6 +204,8 @@ Assertions:
 - hidden marker does not leak internal ids or raw prompts
 - result metadata stores content hash/external ids, not raw body
 - encrypted content is deleted or crypto-shredded after success
+- backend action status reaches terminal success
+- audit record links action id, target id, and safe correlation id
 
 ### Agent PR Conversation Comment
 
@@ -186,6 +224,8 @@ Assertions:
 - issue comment action does not cross repository boundary
 - duplicate idempotency key returns existing status
 - unknown outcome retry uses marker recovery
+- retry after transient network failure reuses the same request id
+- second GitHub API read sees one matching marker, not two
 
 ### PR Review And Check Run
 
@@ -224,6 +264,21 @@ Expected behavior:
 - duplicate public comments are avoided
 - decryption failure fails closed
 - dead-letter is auditable and bounded by retention policy
+- target policy is rechecked during worker dispatch
+- action content remains encrypted until dispatch and is shredded/deleted after
+  success
+- dead-letter does not expose raw body in operator output
+
+Failure injection guardrails:
+
+- simulate worker crash by stopping only the staging worker process owned by the
+  test, not shared developer processes
+- simulate rate limit with adapter/test fixture when real GitHub rate limiting
+  would harm the sandbox account
+- simulate DB update-after-GitHub-success only in controlled staging or mocked
+  provider path
+- manual marker deletion is allowed only on sandbox comments created by the run
+- never run destructive installation removal against a non-sandbox account
 
 ## Privacy And Security Gate
 
@@ -267,6 +322,17 @@ Required dashboards or query snippets:
 - GitHub provider error classes
 - encrypted content cleanup lag
 
+Evidence artifact requirements:
+
+- artifact contains safe ids and timestamps
+- artifact contains GitHub URLs for sandbox outputs
+- artifact contains backend terminal statuses
+- artifact contains redaction scan result
+- artifact does not contain desktop token, OAuth code, PKCE verifier, GitHub
+  installation token, private key, raw webhook body, raw prompt, or raw action
+  body
+- artifact survives failed test runs for debugging
+
 ## Release Checklist
 
 Before public beta:
@@ -304,6 +370,36 @@ Rules:
 - scripts do not delete user resources
 - scripts are explicit about which GitHub org/repo they target
 - scripts can run locally by maintainers and in protected CI
+- scripts refuse to run when repository owner/name does not match configured
+  sandbox allowlist
+- scripts create a run manifest before first external mutation
+- scripts write final status even when a scenario fails
+- scripts have a dry-run mode for environment validation
+
+## Execution Ordering
+
+Recommended live gate order:
+
+1. environment validation dry-run
+2. desktop/control-plane contract version check
+3. setup and pairing golden path
+4. repository target enablement
+5. issue comment golden path
+6. PR conversation comment golden path
+7. idempotent retry scenario
+8. policy disabled-before-dispatch scenario
+9. worker crash recovery scenario
+10. privacy/redaction artifact scan
+11. operator runbook spot checks
+
+Ordering guards:
+
+- do not run action scenarios until setup and target enablement are green
+- do not run destructive failure scenarios before golden path evidence is saved
+- do not mark release green if any failure scenario was skipped without an
+  accepted risk note
+- reruns must use a new run id unless the script is explicitly resuming a failed
+  run
 
 ## Test Plan
 
@@ -314,6 +410,10 @@ Automated:
 - redaction tests for generated artifacts
 - contract tests for desktop/control-plane version compatibility
 - architecture checks after harness additions
+- run-id cleanup tests against mocked GitHub adapter
+- sandbox allowlist tests
+- manifest redaction tests
+- retry/idempotency live assertion for one public comment marker
 
 Manual:
 
@@ -323,6 +423,8 @@ Manual:
 - remove GitHub App installation
 - rotate staging webhook secret or private key
 - inspect runbook steps from a clean operator shell
+- delete a sandbox marker and verify duplicate policy behavior
+- review evidence artifact before marking release gate green
 
 ## Acceptance Criteria
 
@@ -337,6 +439,10 @@ Manual:
 - critical secrets never appear in logs, desktop, renderer, or artifacts
 - live E2E scripts and release checklist are documented
 - public beta is blocked until this gate is green
+- sandbox allowlist prevents accidental execution against real user repos
+- E2E artifact proves both GitHub-visible output and backend audit/status
+- one forced retry proves no duplicate public comment
+- one worker recovery test proves outbox lease recovery
 
 ## Rollout
 

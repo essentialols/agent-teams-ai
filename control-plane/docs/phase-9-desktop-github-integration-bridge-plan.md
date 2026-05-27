@@ -89,6 +89,34 @@ Phase 9 should not implement:
 - line-level PR review UX unless already supported by backend and explicitly
   enabled
 
+## Plan-Improve Findings
+
+Scope preserved:
+
+- Phase 9 remains a desktop/runtime bridge phase.
+- Backend GitHub domain behavior remains in Phases 5-8.
+- The bridge must reuse existing `api/desktop/v1` contracts where they already
+  exist.
+
+Weak spots studied in current code:
+
+- Current backend controllers already expose concrete desktop routes. The plan
+  must not invent parallel `/v1/...` routes unless a compatibility layer is
+  intentionally added.
+- `POST api/desktop/v1/github-actions` authenticates the desktop with bearer
+  token and derives `workspaceId` plus `desktopClientId` from that actor. The
+  desktop must not send these as trusted request body fields.
+- `pairing/start` requires an authenticated desktop actor, while
+  `pairing/complete` is public and returns a new desktop token. Fresh local
+  bootstrap and pairing-to-existing-workspace are different flows.
+- No server-side setup cancel route is currently present. If Phase 9 keeps
+  "cancel setup", it must either be a local "stop polling/dismiss" action or
+  add a small backend cancel use case before the UI presents cancellation as
+  authoritative.
+- Existing desktop feature slices use contracts, preload bridge, main IPC
+  registration, and renderer adapters. Phase 9 should follow that structure
+  instead of calling backend HTTP directly from renderer.
+
 ## Clean Architecture Shape
 
 Desktop side should follow the repository feature standard.
@@ -141,6 +169,7 @@ Domain policies:
 Use cases:
 
 - `LoadHostedIntegrationState`
+- `BootstrapLocalControlPlaneWorkspaceIfNeeded`
 - `StartControlPlanePairing`
 - `CompleteControlPlanePairing`
 - `StartGitHubSetup`
@@ -160,6 +189,10 @@ Application rules:
   security rules explicitly allow that class of token
 - raw action body can be sent to control-plane only as explicit user/agent
   command payload, never persisted locally as reusable logs
+- bootstrap creates a new hosted workspace, while pairing attaches this desktop
+  to an existing hosted workspace
+- renderer may request an action submission, but main/runtime bridge is the only
+  place allowed to attach trusted team/member metadata
 
 ### Ports
 
@@ -193,24 +226,39 @@ Adapters:
 Desktop should call explicit hosted integration APIs. It should not depend on
 database internals or GitHub provider details.
 
-Required API capabilities:
+Existing backend route capabilities to reuse:
 
 ```text
-GET  /v1/desktop/session
-POST /v1/desktop/pairing/start
-POST /v1/desktop/pairing/complete
-POST /v1/github/setup/start
-GET  /v1/github/setup-sessions/:setupSessionId
-POST /v1/github/setup-sessions/:setupSessionId/cancel
-GET  /v1/github/connections
-GET  /v1/github/targets
-POST /v1/github/agent-actions
-GET  /v1/github/agent-actions/:actionId
-POST /v1/desktop/session/revoke
+POST api/desktop/v1/workspaces/bootstrap
+GET  api/desktop/v1/me
+POST api/desktop/v1/pairing/start
+POST api/desktop/v1/pairing/complete
+POST api/desktop/v1/clients/:desktopClientId/rotate-token
+POST api/desktop/v1/clients/:desktopClientId/revoke
+POST api/desktop/v1/integrations/github/setup/start
+GET  api/desktop/v1/integrations/github/setup/:setupSessionId
+GET  api/desktop/v1/integrations/github/connections
+GET  api/desktop/v1/integrations/:connectionId/repository-targets/available
+POST api/desktop/v1/integrations/:connectionId/repository-targets
+GET  api/desktop/v1/repository-targets
+GET  api/desktop/v1/repository-targets/:targetId
+POST api/desktop/v1/repository-targets/:targetId/disable
+POST api/desktop/v1/repository-targets/:targetId/enable
+PUT  api/desktop/v1/repository-targets/:targetId/policy
+POST api/desktop/v1/repository-targets/:targetId/policy/evaluate
+POST api/desktop/v1/github-actions
+GET  api/desktop/v1/github-actions/:actionRequestId
 ```
 
 If existing backend route names differ, desktop must adapt to the implemented
 public contracts rather than invent parallel endpoints.
+
+Known backend gap:
+
+- no authoritative setup cancellation endpoint was found in the current
+  controller surface. Do not model UI "cancel" as server cancellation until
+  `CancelGitHubSetupSession` exists. Use "dismiss" or "stop polling" wording if
+  backend session expiry remains the source of truth.
 
 Contract invariants:
 
@@ -222,32 +270,42 @@ Contract invariants:
 - setup status is resumable after desktop restart
 - action status never returns raw GitHub token, raw private key material, or
   raw encrypted action content
+- bearer token defines the workspace/client actor
+- request body ids are authorization inputs only where backend already validates
+  them against the authenticated actor
 
 ## Trusted Agent Action Envelope
 
-The desktop/runtime bridge must build an envelope like this:
+The desktop/runtime bridge owns the local envelope, but the HTTP request body
+must match the current backend action contract:
 
 ```text
-workspaceId
-desktopClientId
-teamId
-teamName
-agentId
-agentName
-agentRole
-agentAvatarUrl?
-targetId
-actionKind
-idempotencyKey
-content
-contentHash
-localCorrelationId
-contractVersion
+Authorization: Bearer <desktopToken>
+
+{
+  requestId,
+  targetId,
+  actionType,
+  requestedBy: {
+    subjectKind,
+    subjectId,
+    teamId?,
+    agentId?
+  },
+  attribution: {
+    agentDisplayName,
+    agentAvatarUrl?,
+    teamDisplayName?
+  },
+  payload,
+  correlationId?
+}
 ```
 
 Security rules:
 
-- `workspaceId` and `desktopClientId` come from paired desktop session state
+- `workspaceId` and `desktopClientId` stay in paired desktop session state and
+  bearer-token authentication, not in the action request body
 - agent/team identity comes from trusted runtime metadata
 - agents may propose content, but not overwrite trusted attribution fields
 - idempotency key is generated by desktop/runtime bridge per logical action
@@ -255,6 +313,56 @@ Security rules:
   useful
 - local filesystem paths are forbidden in avatar URLs
 - avatar URLs must be HTTPS or omitted
+- `subjectKind` must match the existing target policy model
+- `subjectId` must use the same normalized form used when target policy rules
+  were created
+- `requestId` must be stable for retry of one logical action and unique for
+  distinct actions
+
+Illustrative local bridge shape:
+
+```ts
+type SubmitGitHubActionCommand = Readonly<{
+  targetId: string;
+  actionType: string;
+  payload: unknown;
+  localAttemptId: string;
+  runtimeMember: {
+    agentId: string;
+    agentName: string;
+    teamId: string;
+    teamName: string;
+    avatarUrl?: string;
+  };
+}>;
+```
+
+The exact code can differ, but the boundary rule cannot: renderer and agent text
+must not be the source of trusted attribution.
+
+## Implementation Ordering
+
+Recommended order:
+
+1. add contracts and DTO normalizers for hosted integration state
+2. add main-process HTTP adapter with safe error mapping and token redaction
+3. add secure desktop token store adapter
+4. add preload bridge and IPC handlers for setup/status only
+5. add renderer state machine using mocked main adapter
+6. wire real backend setup/status/target endpoints
+7. add runtime action bridge from trusted team/member metadata
+8. add action status polling and idempotent retry behavior
+9. enable behind a desktop feature flag
+
+Ordering guards:
+
+- do not expose action submission UI until connection and target state can be
+  refreshed from backend
+- do not pass desktop token into renderer while IPC main boundary is the chosen
+  model
+- do not start runtime action bridge until the API adapter has redaction tests
+- do not store action request payloads in local durable queues
+- do not treat local cached target state as authorization
 
 ## UI Requirements
 
@@ -317,11 +425,19 @@ Failure behavior:
 
 Critical edge cases:
 
+- fresh desktop has no hosted workspace and hosted bootstrap is disabled
+- user wants to pair this desktop to an existing workspace instead of creating a
+  new one
+- bootstrap succeeds but secure token store write fails
 - desktop restarts after setup start but before GitHub callback completes
 - browser callback arrives after setup expiry
+- user closes browser before claim OAuth starts
+- public callback returns `restart_required` for an untrusted setup callback
 - user revokes desktop client from another machine
+- desktop token rotates on server while app still holds the old token
 - GitHub App installation is removed while UI still shows connected
 - repository target is disabled after agent action button is opened
+- repository availability snapshot becomes stale between list and enable
 - action succeeds in GitHub but status polling temporarily fails
 - control-plane rotates API contract while old desktop is still running
 - renderer is compromised or sends modified attribution fields
@@ -334,6 +450,13 @@ Expected decisions:
 - backend remains source of truth for connection and target state
 - renderer input is never trusted for agent attribution
 - local retry of action submission uses same idempotency key
+- failed secure token store write invalidates the local session and asks the
+  user to retry pairing/bootstrap
+- target list cache is display-only and must be refreshed before action submit
+- setup dismiss does not imply server-side cancellation unless a backend cancel
+  use case exists
+- version mismatch stops mutating calls but can still allow read-only diagnostic
+  state when backend supports it
 
 ## Architecture Guardrails
 
@@ -347,6 +470,8 @@ Add or extend checks so that:
   runtime process services
 - runtime bridge cannot accept raw GitHub credentials
 - tests assert redaction of session token and action content in logs
+- IPC payload normalizers live in contracts or adapters, not renderer UI files
+- local action bridge cannot import control-plane backend packages directly
 
 ## Test Plan
 
@@ -359,6 +484,9 @@ Unit tests:
 - safe error mapping
 - token redaction
 - avatar URL validation
+- bootstrap vs pairing state transitions
+- setup dismiss vs server cancellation behavior
+- action request DTO normalizer rejects workspace/client ids in body
 
 Integration tests:
 
@@ -367,6 +495,9 @@ Integration tests:
 - control-plane adapter serializes headers and request ids
 - setup resume after app restart using mocked backend
 - runtime bridge submits an action with trusted agent metadata
+- token store write failure clears partial session state
+- revoked token maps to reconnect state
+- target cache refresh happens before action submit
 
 Security tests:
 
@@ -374,6 +505,8 @@ Security tests:
 - agent-authored markdown cannot set hidden attribution
 - local logs do not contain desktop session token, OAuth code, or GitHub token
 - unavailable control-plane does not create local durable GitHub action queue
+- renderer never receives the desktop token through preload API
+- renderer cannot directly call the HTTP adapter
 
 Smoke tests:
 

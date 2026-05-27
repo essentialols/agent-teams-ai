@@ -94,6 +94,32 @@ Phase 10 should not implement:
 - new queue service unless DB-backed outbox is proven insufficient
 - Kubernetes-specific assumptions unless that is the chosen deployment target
 
+## Plan-Improve Findings
+
+Scope preserved:
+
+- Phase 10 remains an operations hardening phase for the hosted GitHub App path.
+- It should not add new GitHub action types, desktop UX, billing, or messenger
+  connectors.
+- It can add operational scripts/docs/checks only when they reduce deployment,
+  secret, migration, or recovery risk.
+
+Weak spots studied in current code:
+
+- Hosted mode already has strict config gates for public URL, GitHub App
+  metadata, OAuth secret, database URL, encryption key, persistence, outbox,
+  integration targets, token broker, and GitHub actions.
+- The code exposes feature flags for desktop bootstrap/pairing, GitHub setup,
+  claim OAuth, integration targets, token broker, actions, and unclaimed
+  callback recording. Operations docs must define valid hosted combinations.
+- The API and worker are separate entrypoints in one workspace. Phase 10 should
+  deploy them from the same release revision, not split services yet.
+- Current route surface is desktop-token authenticated for app workflows and
+  public only for GitHub setup/OAuth callbacks. Hosted CORS and public callback
+  rules need explicit review.
+- `verify:phase1` is a full local gate, but production readiness also needs DB
+  migration, DB smoke, hosted config, and staging live smoke gates.
+
 ## Deployment Topology
 
 V1 topology:
@@ -123,6 +149,58 @@ Operational rules:
 - migrations run before new code starts processing new event versions
 - old workers must not process new unsupported event versions
 - hosted mode fails startup if required secrets are absent
+- API can deploy without worker only for read/setup maintenance windows
+- worker must not run with actions enabled if API has not applied the matching
+  migrations
+- worker scale-out requires proving DB-backed claims and locks in staging
+
+## Hosted Startup Matrix
+
+Document and test these valid hosted combinations:
+
+```text
+setup-only staging:
+  desktopBootstrap=true
+  desktopPairing=true
+  githubSetup=true
+  githubClaimOAuth=true
+  integrationTargets=false
+  githubTokenBroker=false
+  githubActions=false
+  outboxWorker=false
+
+target-management staging:
+  desktopBootstrap=true
+  desktopPairing=true
+  githubSetup=true
+  githubClaimOAuth=true
+  integrationTargets=true
+  githubTokenBroker=false
+  githubActions=false
+  outboxWorker=false
+
+actions staging or beta:
+  desktopBootstrap=true
+  desktopPairing=true
+  githubSetup=true
+  githubClaimOAuth=true
+  integrationTargets=true
+  githubTokenBroker=true
+  githubActions=true
+  persistence=true
+  outboxWorker=true
+```
+
+Invalid combinations must fail fast:
+
+- GitHub actions without persistence
+- GitHub actions without outbox worker
+- GitHub actions without token broker
+- token broker without integration targets
+- claim OAuth without GitHub setup
+- hosted mode without HTTPS public base URL
+- hosted mode without encryption master key
+- GitHub actions without default avatar URL and allowed origins
 
 ## GitHub App Registration Checklist
 
@@ -216,6 +294,9 @@ Validation output:
 - operator-friendly key names
 - fail fast in hosted mode
 - allow disabled/local mode for normal desktop development
+- safe summary shows whether values are configured, not the values themselves
+- operator docs map every required env var to owner, source, rotation cadence,
+  and blast radius
 
 ## Database And Migration Operations
 
@@ -236,6 +317,29 @@ Migration rules:
 - outbox event version changes must be backward compatible or gated
 - destructive migration requires explicit release gate
 - encrypted action content retention must survive deploy rollback safely
+
+Deployment ordering:
+
+1. build release artifact
+2. run local `verify:phase1`
+3. run DB migration in staging
+4. start API with actions disabled
+5. start worker with outbox worker disabled
+6. run setup/target smoke
+7. enable token broker
+8. enable GitHub actions and outbox worker together
+9. run live action smoke
+10. promote the same revision to production
+
+Rollback rules:
+
+- disabling `CONTROL_PLANE_GITHUB_ACTIONS_ENABLED` stops new action requests
+- disabling `CONTROL_PLANE_OUTBOX_WORKER_ENABLED` pauses dispatch without
+  deleting queued events
+- rolling back code must not downgrade schema unless a tested rollback exists
+- if a new outbox event version was introduced, keep old worker stopped until
+  unsupported events are drained, cancelled, or dead-lettered by policy
+- never rotate encryption keys as part of emergency app rollback
 
 ## Worker Operations
 
@@ -267,6 +371,11 @@ Failure behavior:
 - provider retry-after updates next attempt time
 - disabled feature flag pauses dispatch without losing queued events
 - decryption failure fails closed
+- private key parse failure fails readiness before dispatch
+- GitHub token broker repeated failures trigger alert before outbox max attempts
+  burn down
+- dead-letter inspection never decrypts action body by default
+- cleanup of completed encrypted content is observable and bounded
 
 ## API Operations
 
@@ -287,6 +396,9 @@ API metrics/logs:
 - GitHub setup state transitions
 - action enqueue outcomes
 - no raw comments, prompts, tokens, OAuth codes, or webhook payloads
+- public callback result class, not raw query values
+- desktop contract version and safe client build metadata when present
+- hosted feature gate state in startup logs only as booleans
 
 ## Admin And Recovery
 
@@ -308,6 +420,21 @@ Admin access rules:
 - prefer CLI or protected internal endpoint
 - every admin mutation writes audit event
 - admin output redacts action content and secrets
+- admin retry requires current target policy re-evaluation unless explicitly
+  documented otherwise
+- admin cancel keeps encrypted content retention/shred policy explicit
+- admin force-refresh repository availability must not silently enable targets
+
+Runbook edge cases:
+
+- lost GitHub App private key
+- leaked webhook secret
+- leaked OAuth client secret
+- database connection string rotation during worker processing
+- stuck processing event older than lease
+- dead-letter caused by decryption failure
+- connected installation deleted from GitHub side
+- public base URL changed while setup sessions are pending
 
 ## Observability And Alerts
 
@@ -324,6 +451,10 @@ Critical alerts:
 - encrypted content cleanup lag above retention
 - webhook signature verification failures spike
 - rate-limit backoff sustained above threshold
+- public callback error spike
+- desktop auth failures spike after deploy
+- setup sessions stuck in pending claim
+- worker processing events older than lease plus recovery window
 
 Dashboards:
 
@@ -363,6 +494,9 @@ Automated tests:
 - outbox lag/dead-letter metric tests where practical
 - smoke script using mocked GitHub provider
 - migration status command test where practical
+- startup matrix tests for valid and invalid feature-flag combinations
+- safe summary tests for no raw env values
+- admin/runbook command tests where commands are introduced
 
 Manual hosted smoke:
 
@@ -378,6 +512,9 @@ Manual hosted smoke:
 - submit check run if enabled
 - remove installation and verify failure state
 - rotate a non-production secret and verify recovery
+- pause worker, enqueue action, resume worker, verify delayed dispatch
+- disable actions gate, verify new requests fail safely and queued events remain
+  recoverable
 
 ## Acceptance Criteria
 
@@ -391,6 +528,9 @@ Manual hosted smoke:
 - migration and rollback stance is documented
 - no raw secret/content appears in health, logs, or diagnostics
 - operational smoke passes before public beta
+- documented startup matrix matches config validation behavior
+- rollback procedure can pause new requests and worker dispatch independently
+- staging proves API and worker run the same release revision
 
 ## Rollout
 

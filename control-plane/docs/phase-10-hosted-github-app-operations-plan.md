@@ -119,6 +119,11 @@ Weak spots studied in current code:
   rules need explicit review.
 - `verify:phase1` is a full local gate, but production readiness also needs DB
   migration, DB smoke, hosted config, and staging live smoke gates.
+- Some backend feature combinations are intentionally invalid. Operations
+  should document a startup matrix instead of letting deployers discover invalid
+  combinations through runtime failures.
+- API/worker revision skew is a real risk because the worker processes durable
+  outbox event versions. Deployment must make this skew visible and reversible.
 
 ## Deployment Topology
 
@@ -202,6 +207,15 @@ Invalid combinations must fail fast:
 - hosted mode without encryption master key
 - GitHub actions without default avatar URL and allowed origins
 
+Mode ownership:
+
+- `local-disabled` remains the default for local desktop development
+- `hosted-official-app` is the only V1 public shared GitHub App mode
+- `self-hosted-byo-app` must stay disabled or clearly documented as unsupported
+  until BYO key custody and registration docs exist
+- examples must never include a fake-looking private key that users might copy
+  into Electron or client config
+
 ## GitHub App Registration Checklist
 
 Document and verify:
@@ -239,6 +253,15 @@ Forbidden in V1 unless accepted by a separate plan:
 - actions write
 - merge/write capabilities
 
+Registration drift checks:
+
+- documented callback/setup/webhook URLs match deployed public base URL
+- documented permissions match enabled backend action types
+- disabled action types do not require their write permissions
+- staging and production GitHub Apps use different secrets and callback URLs
+- app visibility/public listing state is recorded before each rollout stage
+- organization ownership and emergency transfer contacts are current
+
 ## Secret Custody
 
 Secret classes:
@@ -269,6 +292,17 @@ Rotation runbooks:
 - desktop session signing key rotation
 - envelope encryption key rotation/rewrap or crypto-shred policy
 - database credential rotation
+
+Secret rotation guardrails:
+
+- rotate one secret class at a time in staging first
+- never rotate encryption master key and deploy code rollback in the same
+  maintenance window
+- private key rotation verifies both token broker readiness and one live action
+- webhook secret rotation keeps old/new validation overlap only if implemented
+  and documented
+- OAuth client secret rotation invalidates pending claim sessions unless a safe
+  overlap strategy exists
 
 ## Hosted Configuration
 
@@ -331,6 +365,14 @@ Deployment ordering:
 9. run live action smoke
 10. promote the same revision to production
 
+Revision skew controls:
+
+- API and worker expose the same build revision in health/startup logs
+- worker refuses or alerts on unknown event versions before burning retries
+- deploy tooling records which revision applied migrations
+- rollback notes include whether old code can read the current schema
+- outbox dispatch can be paused independently before rollback
+
 Rollback rules:
 
 - disabling `CONTROL_PLANE_GITHUB_ACTIONS_ENABLED` stops new action requests
@@ -340,6 +382,10 @@ Rollback rules:
 - if a new outbox event version was introduced, keep old worker stopped until
   unsupported events are drained, cancelled, or dead-lettered by policy
 - never rotate encryption keys as part of emergency app rollback
+- if setup callbacks fail after rollback, stop public setup links before users
+  enter OAuth
+- if token broker fails after rollback, pause action dispatch before retries
+  consume max attempts
 
 ## Worker Operations
 
@@ -435,6 +481,12 @@ Runbook edge cases:
 - dead-letter caused by decryption failure
 - connected installation deleted from GitHub side
 - public base URL changed while setup sessions are pending
+- staging/prod secret accidentally swapped
+- worker deployed without API deploy
+- API deployed without worker deploy
+- migration partially applied
+- encrypted content cleanup job disabled or failing
+- rate-limit retry-after longer than normal alert window
 
 ## Observability And Alerts
 
@@ -467,6 +519,18 @@ Dashboards:
 - GitHub provider error classes
 - API p95 latency
 
+Minimum metric dimensions:
+
+- environment
+- build revision
+- event type/action type
+- safe error code
+- provider response class
+- feature gate state
+
+Do not use high-cardinality labels for raw action ids, repository names, user
+names, prompts, comment bodies, or GitHub tokens.
+
 ## Security And Privacy Review
 
 Review checklist:
@@ -482,6 +546,22 @@ Review checklist:
 - desktop tokens are revocable
 - repository target policy fails closed
 - GitHub installation tokens never leave server process
+- setup and OAuth callbacks log only result class plus safe ids
+- desktop API rejects browser-origin credentialed calls unless explicitly
+  allowed by the deployment model
+- support bundles and failure artifacts run a redaction scan before upload or
+  sharing
+- backups include enough key material references for restore, but not plaintext
+  secrets in exported dumps
+
+Backup and restore gate:
+
+- restore staging database backup into an isolated environment
+- verify encrypted action content can be read only with expected key material
+- verify shredded/deleted content does not reappear after restore
+- verify restored outbox does not dispatch old public comments unless dispatch
+  is explicitly enabled
+- document how to freeze worker dispatch during restore
 
 ## Test Plan
 
@@ -497,6 +577,8 @@ Automated tests:
 - startup matrix tests for valid and invalid feature-flag combinations
 - safe summary tests for no raw env values
 - admin/runbook command tests where commands are introduced
+- build revision parity test for API/worker smoke where practical
+- backup/restore dry-run checklist before beta
 
 Manual hosted smoke:
 
@@ -515,6 +597,8 @@ Manual hosted smoke:
 - pause worker, enqueue action, resume worker, verify delayed dispatch
 - disable actions gate, verify new requests fail safely and queued events remain
   recoverable
+- deploy API-only maintenance state and verify worker remains paused
+- deploy worker-only rollback rehearsal in staging with dispatch disabled
 
 ## Acceptance Criteria
 
@@ -531,6 +615,9 @@ Manual hosted smoke:
 - documented startup matrix matches config validation behavior
 - rollback procedure can pause new requests and worker dispatch independently
 - staging proves API and worker run the same release revision
+- staging proves one restore drill or documents an accepted pre-beta blocker
+- metrics avoid high-cardinality/secrets-bearing labels
+- registration drift checklist is complete for staging and production apps
 
 ## Rollout
 

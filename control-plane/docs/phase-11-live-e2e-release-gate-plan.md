@@ -117,6 +117,10 @@ Weak spots studied in current code:
   disable/revoke a target between enqueue and dispatch to prove the second gate.
 - Worker/outbox behavior is central. A release gate that only verifies API
   responses is insufficient.
+- The live harness can cause public GitHub writes. It must have sandbox
+  allowlists, unique run ids, and cleanup rules before the first mutation.
+- Manual verification is still needed for browser/OAuth UX, but it cannot be the
+  only release evidence.
 
 ## E2E Environment
 
@@ -158,6 +162,26 @@ Run isolation:
 - parallel runs either use separate sandbox repositories or acquire a run lock
 - failed cleanup must leave a visible artifact summary, not silently delete
   evidence
+- cleanup never runs against repositories outside the explicit sandbox allowlist
+- every mutation writes a local manifest entry before calling GitHub or
+  control-plane
+
+Manifest shape:
+
+```json
+{
+  "runId": "github-app-e2e-...",
+  "environment": "staging",
+  "controlPlaneBaseUrl": "https://...",
+  "githubOwner": "sandbox-org",
+  "githubRepo": "sandbox-repo",
+  "startedAt": "2026-01-01T00:00:00.000Z",
+  "steps": []
+}
+```
+
+The manifest example is illustrative. Real artifacts must redact or omit
+secrets and raw action bodies.
 
 ## Golden Path Scenarios
 
@@ -226,6 +250,8 @@ Assertions:
 - unknown outcome retry uses marker recovery
 - retry after transient network failure reuses the same request id
 - second GitHub API read sees one matching marker, not two
+- backend audit/status and GitHub-visible comment agree on terminal outcome
+- cleanup can identify the comment from marker/run id without raw body matching
 
 ### PR Review And Check Run
 
@@ -254,6 +280,13 @@ Critical failures:
 - hidden marker is manually deleted
 - encrypted content decryption fails
 - webhook signature invalid if webhooks are enabled
+- duplicate setup callback delivery
+- duplicate OAuth callback delivery
+- stale setup session resumed by desktop after a successful connection already
+  exists
+- GitHub API returns success but response body parsing fails in adapter
+- GitHub comment exists but marker is malformed or from another run
+- cleanup fails after public comment creation
 
 Expected behavior:
 
@@ -268,6 +301,9 @@ Expected behavior:
 - action content remains encrypted until dispatch and is shredded/deleted after
   success
 - dead-letter does not expose raw body in operator output
+- duplicate callbacks are idempotent or rejected safely
+- malformed marker never causes update/delete of unrelated GitHub content
+- cleanup failure is reported as cleanup-failed, not test success
 
 Failure injection guardrails:
 
@@ -279,6 +315,10 @@ Failure injection guardrails:
   provider path
 - manual marker deletion is allowed only on sandbox comments created by the run
 - never run destructive installation removal against a non-sandbox account
+- do not intentionally exhaust real GitHub rate limits
+- prefer controlled adapter failures for rare provider edge cases
+- keep destructive cleanup behind a confirmation or protected CI environment
+  variable
 
 ## Privacy And Security Gate
 
@@ -332,6 +372,19 @@ Evidence artifact requirements:
   installation token, private key, raw webhook body, raw prompt, or raw action
   body
 - artifact survives failed test runs for debugging
+- artifact records which redaction rules ran
+- artifact records whether cleanup completed, partially completed, or was
+  skipped
+- artifact stores hashes for action content only when needed, not the content
+  itself
+
+Redaction scan inputs:
+
+- harness stdout/stderr
+- generated manifest
+- app/control-plane log excerpts collected for the run
+- failure screenshots if any
+- support bundles if generated
 
 ## Release Checklist
 
@@ -349,6 +402,9 @@ Before public beta:
 - rollback procedure documented
 - public error messages reviewed
 - support/debug artifact redaction verified
+- no open critical or high severity release gate findings
+- skipped scenarios have explicit accepted risk owner and expiry date
+- staging GitHub App settings were reviewed after the final deploy
 
 ## Harness Design
 
@@ -375,6 +431,11 @@ Rules:
 - scripts create a run manifest before first external mutation
 - scripts write final status even when a scenario fails
 - scripts have a dry-run mode for environment validation
+- scripts use bounded polling with explicit timeout reasons
+- scripts classify failures as setup, desktop, target-policy, outbox, provider,
+  cleanup, or redaction
+- scripts avoid test flakes by retrying reads, not mutating writes, unless the
+  scenario is explicitly an idempotency test
 
 ## Execution Ordering
 
@@ -400,6 +461,16 @@ Ordering guards:
   accepted risk note
 - reruns must use a new run id unless the script is explicitly resuming a failed
   run
+- destructive cleanup runs only after evidence artifact has been written
+- cleanup must not delete comments/checks from previous runs unless an explicit
+  stale-sandbox cleanup mode is used
+
+Timeout guidance:
+
+- setup/OAuth waits need human/browser-aware timeout messages
+- outbox dispatch polling should report last backend status and attempt count
+- GitHub read-after-write checks should allow short provider consistency delay
+- timeout does not imply cleanup success
 
 ## Test Plan
 
@@ -414,6 +485,9 @@ Automated:
 - sandbox allowlist tests
 - manifest redaction tests
 - retry/idempotency live assertion for one public comment marker
+- bounded polling timeout tests
+- duplicate callback tests through mocked public callback route
+- cleanup classification tests
 
 Manual:
 
@@ -425,6 +499,8 @@ Manual:
 - inspect runbook steps from a clean operator shell
 - delete a sandbox marker and verify duplicate policy behavior
 - review evidence artifact before marking release gate green
+- run browser setup with a second already-connected desktop open
+- simulate app restart after setup start and before claim completion
 
 ## Acceptance Criteria
 
@@ -443,6 +519,9 @@ Manual:
 - E2E artifact proves both GitHub-visible output and backend audit/status
 - one forced retry proves no duplicate public comment
 - one worker recovery test proves outbox lease recovery
+- bounded polling and cleanup behavior are tested
+- duplicate callback behavior is proven safe
+- release gate output classifies failures clearly enough for triage
 
 ## Rollout
 

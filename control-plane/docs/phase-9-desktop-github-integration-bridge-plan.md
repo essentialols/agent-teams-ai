@@ -116,6 +116,13 @@ Weak spots studied in current code:
 - Existing desktop feature slices use contracts, preload bridge, main IPC
   registration, and renderer adapters. Phase 9 should follow that structure
   instead of calling backend HTTP directly from renderer.
+- Current token rotation accepts a `rotationRequestId` and can return the same
+  rotated token for an already completed rotation. Desktop should use that to
+  recover from local secure-store write failures instead of creating ambiguous
+  multiple rotations.
+- Team runtime already has stable member metadata such as `agentId`,
+  `member.name`, role, team name, and provider runtime args. The GitHub bridge
+  should use this runtime/config metadata, not parsed transcript text.
 
 ## Clean Architecture Shape
 
@@ -193,6 +200,8 @@ Application rules:
   to an existing hosted workspace
 - renderer may request an action submission, but main/runtime bridge is the only
   place allowed to attach trusted team/member metadata
+- local feature state separates canonical server state, cached display state,
+  and secret local session state
 
 ### Ports
 
@@ -340,6 +349,77 @@ type SubmitGitHubActionCommand = Readonly<{
 The exact code can differ, but the boundary rule cannot: renderer and agent text
 must not be the source of trusted attribution.
 
+## Local Data Ownership
+
+Canonical server-side state:
+
+- workspace id
+- desktop client id
+- desktop credential status
+- GitHub setup session state
+- integration connection state
+- repository target state and policy
+- action request status
+
+Local secret state:
+
+- desktop bearer token only
+- stored in a main-process-only secure store
+- never returned by preload
+- never stored in renderer state, Zustand, localStorage, logs, or crash reports
+
+Local non-secret cache:
+
+- last known connection summary
+- last known target list
+- last known action statuses
+- active setup session id
+- contract version and availability summary
+
+Cache rules:
+
+- cache is display-only
+- cache must include `fetchedAt`
+- mutating calls refresh from backend or tolerate stale-state failure
+- missing cache never blocks normal local desktop/team workflows
+
+## Desktop Token Storage Decision
+
+Recommended option:
+
+- Main-process OS-backed secure store with non-secret metadata sidecar
+  `🎯 9   🛡️ 8   🧠 5`
+  Approx changes: `250-500` lines.
+  Recommended. Keeps token out of renderer and ordinary config files. Must fail
+  closed if the platform secure store is unavailable or locked.
+
+Alternatives:
+
+- Main-process encrypted file using an app-managed local key
+  `🎯 6   🛡️ 6   🧠 6`
+  Approx changes: `300-700` lines.
+  Accept only if OS secure storage is unavailable and the limitation is shown in
+  UI. Machine migration and backup behavior are weaker.
+
+- Plain JSON config or renderer storage
+  `🎯 1   🛡️ 1   🧠 2`
+  Approx changes: `80-200` lines.
+  Reject. It leaks the desktop control-plane credential to local files or
+  renderer compromise.
+
+Token lifecycle:
+
+- bootstrap/pairing returns token once; main stores it before reporting
+  connected to renderer
+- token rotation uses a stable `rotationRequestId` until local secure-store
+  write succeeds
+- if secure-store write fails after backend rotation, retry the same
+  `rotationRequestId` to recover the rotated token
+- revoke clears local token after backend revoke succeeds, or marks it
+  locally-revoked if backend is unreachable
+- auth failure clears only the hosted integration session, not local teams or
+  provider credentials
+
 ## Implementation Ordering
 
 Recommended order:
@@ -363,6 +443,11 @@ Ordering guards:
 - do not start runtime action bridge until the API adapter has redaction tests
 - do not store action request payloads in local durable queues
 - do not treat local cached target state as authorization
+- do not mark pairing/bootstrap complete in renderer until token store write has
+  completed
+- do not rotate token during a running setup/action mutation unless the adapter
+  can serialize those calls
+- serialize setup start/resume/cancel-like local dismiss actions per workspace
 
 ## UI Requirements
 
@@ -386,7 +471,8 @@ Required actions:
 
 - connect
 - resume setup
-- cancel setup
+- dismiss local setup state, or cancel setup only after a backend cancel endpoint
+  exists
 - refresh status
 - revoke desktop connection
 - open GitHub setup page
@@ -420,6 +506,27 @@ Failure behavior:
 - token revoked: clear local session and surface reconnect state
 - version mismatch: stop submission and show update-required state
 - duplicate idempotency key: return existing action status
+- secure token store locked/unavailable: stop hosted calls and show reconnect or
+  unlock guidance without affecting local teams
+
+Trusted identity source:
+
+- prefer configured member `agentId` when present
+- otherwise use the existing runtime convention equivalent to
+  `<memberName>@<teamName>`
+- use current team display name and member role from team config/meta
+- do not derive agent identity from JSONL transcript messages, GitHub comment
+  body, model output, or renderer-provided text
+- if a member was renamed, use the runtime member identity active for that
+  specific action attempt, not the newest display name retroactively
+
+Idempotency source:
+
+- one logical user/agent command gets one `requestId`
+- retry after IPC/network failure reuses the same `requestId`
+- double-click or duplicate renderer event collapses to the same pending
+  submission when command fingerprint matches
+- editing the action body or target creates a new `requestId`
 
 ## Edge Cases
 
@@ -429,6 +536,12 @@ Critical edge cases:
 - user wants to pair this desktop to an existing workspace instead of creating a
   new one
 - bootstrap succeeds but secure token store write fails
+- token rotation succeeds on backend but local secure token write fails
+- secure store is unavailable after OS login, keychain lock, Linux secret
+  service absence, or app sandbox change
+- two app windows start setup at the same time
+- two desktop clients are paired to the same hosted workspace and one revokes
+  the other
 - desktop restarts after setup start but before GitHub callback completes
 - browser callback arrives after setup expiry
 - user closes browser before claim OAuth starts
@@ -443,6 +556,10 @@ Critical edge cases:
 - renderer is compromised or sends modified attribution fields
 - agent subprocess tries to include fake agent/team in content markdown
 - network outage happens after request reaches control-plane
+- user changes team/member config between action draft and action submit
+- local clock is wrong and makes cached setup/action state look fresh or stale
+- control-plane public base URL changes while desktop has an active setup
+  session
 
 Expected decisions:
 
@@ -452,11 +569,18 @@ Expected decisions:
 - local retry of action submission uses same idempotency key
 - failed secure token store write invalidates the local session and asks the
   user to retry pairing/bootstrap
+- failed token rotation store write retries with the same `rotationRequestId`
+  before forcing reconnect
 - target list cache is display-only and must be refreshed before action submit
 - setup dismiss does not imply server-side cancellation unless a backend cancel
   use case exists
 - version mismatch stops mutating calls but can still allow read-only diagnostic
   state when backend supports it
+- local clock is never trusted for authorization; it only controls UI refresh
+  hints
+- concurrent setup starts are coalesced by active setup session id when possible
+- member rename after action submit does not rewrite existing action
+  attribution
 
 ## Architecture Guardrails
 
@@ -472,6 +596,9 @@ Add or extend checks so that:
 - tests assert redaction of session token and action content in logs
 - IPC payload normalizers live in contracts or adapters, not renderer UI files
 - local action bridge cannot import control-plane backend packages directly
+- hosted integration token store cannot be imported from renderer/preload
+- hosted integration feature cannot write to generic config files with token-like
+  values
 
 ## Test Plan
 
@@ -487,6 +614,9 @@ Unit tests:
 - bootstrap vs pairing state transitions
 - setup dismiss vs server cancellation behavior
 - action request DTO normalizer rejects workspace/client ids in body
+- token rotation recovery with repeated `rotationRequestId`
+- local cache freshness rules never authorize an action
+- runtime identity resolver handles member rename without transcript parsing
 
 Integration tests:
 
@@ -498,6 +628,8 @@ Integration tests:
 - token store write failure clears partial session state
 - revoked token maps to reconnect state
 - target cache refresh happens before action submit
+- two simultaneous renderer calls coalesce or serialize correctly
+- app restart restores setup session id but not action content payload
 
 Security tests:
 
@@ -507,6 +639,8 @@ Security tests:
 - unavailable control-plane does not create local durable GitHub action queue
 - renderer never receives the desktop token through preload API
 - renderer cannot directly call the HTTP adapter
+- persisted local hosted-integration files contain no bearer token
+- runtime subprocess environment contains no desktop token
 
 Smoke tests:
 

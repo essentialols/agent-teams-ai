@@ -333,6 +333,44 @@ describe("integration target use cases", () => {
     });
     expect(repositoryCalls).toBe(0);
   });
+
+  it("uses the authenticated desktop actor as the desktop policy subject", async () => {
+    let desktopClientSubjectId: string | undefined;
+    let subjectId: string | undefined;
+    const useCase = new EvaluateTargetPolicyUseCase(
+      {
+        evaluatePolicy: async (
+          input: Parameters<IntegrationTargetRepository["evaluatePolicy"]>[0],
+        ) => {
+          desktopClientSubjectId = input.desktopClientSubjectId;
+          subjectId = input.subjectId;
+          return {
+            allowed: true,
+            policyVersion: 1,
+            reasonCode: "CONTROL_PLANE_TARGET_POLICY_ALLOWED",
+          };
+        },
+      } as unknown as IntegrationTargetRepository,
+      enabledFeatureGate(),
+      settings(),
+    );
+
+    await expect(
+      useCase.execute({
+        actor: actor(),
+        capability: "github.issue_comment.request",
+        desktopClientSubjectId: "desktop-client:spoofed",
+        subjectId: "desktop-client:spoofed",
+        subjectKind: "desktop_client",
+        targetId: "target-1",
+      }),
+    ).resolves.toMatchObject({
+      allowed: true,
+    });
+
+    expect(desktopClientSubjectId).toBe("desktop-client:desktop-1");
+    expect(subjectId).toBe("desktop-client:desktop-1");
+  });
 });
 
 function actor(): DesktopClientActor {

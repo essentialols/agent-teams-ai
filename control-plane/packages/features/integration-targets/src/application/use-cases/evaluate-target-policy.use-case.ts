@@ -45,10 +45,7 @@ export class EvaluateTargetPolicyUseCase {
   ): Promise<TargetPolicyEvaluationView> {
     await this.featureGate.assertEnabled("integration-targets");
     const subjectKind = assertTargetPolicySubjectKind(input.subjectKind);
-    const subjectId = normalizeTargetPolicySubjectId({
-      subjectId: input.subjectId,
-      subjectKind,
-    });
+    const subjectId = normalizePolicySubjectId(input, subjectKind);
     const workspaceId = input.actor?.workspaceId ?? input.workspaceId;
     if (workspaceId === undefined) {
       throw createSafeError({
@@ -82,13 +79,25 @@ export class EvaluateTargetPolicyUseCase {
   }
 }
 
+function normalizePolicySubjectId(
+  input: EvaluateTargetPolicyInput,
+  subjectKind: ReturnType<typeof assertTargetPolicySubjectKind>,
+): string {
+  if (input.actor !== undefined && subjectKind === "desktop_client") {
+    return `desktop-client:${input.actor.desktopClientId}`;
+  }
+  return normalizeTargetPolicySubjectId({
+    subjectId: input.subjectId,
+    subjectKind,
+  });
+}
+
 function buildDesktopClientSubject(input: EvaluateTargetPolicyInput): {
   desktopClientSubjectId?: string;
 } {
   const subjectId =
-    input.desktopClientSubjectId ??
-    (input.actor === undefined
-      ? undefined
-      : `desktop-client:${input.actor.desktopClientId}`);
+    input.actor === undefined
+      ? input.desktopClientSubjectId
+      : `desktop-client:${input.actor.desktopClientId}`;
   return subjectId === undefined ? {} : { desktopClientSubjectId: subjectId };
 }

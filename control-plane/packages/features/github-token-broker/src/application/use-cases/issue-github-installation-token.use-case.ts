@@ -58,10 +58,7 @@ export class IssueGitHubInstallationTokenUseCase {
       throw workspaceId.error;
     }
     const targetId = parseIntegrationTargetId(input.targetId);
-    const subjectId = normalizeTargetPolicySubjectId({
-      subjectId: input.subjectId,
-      subjectKind: input.subjectKind,
-    });
+    const subjectId = normalizeTokenSubjectId(input);
     const permissions = mapCapabilityToGitHubPermissions(input.capability);
     const nowMs = this.clock.nowMs();
     let auditScope:
@@ -188,4 +185,20 @@ export class IssueGitHubInstallationTokenUseCase {
       throw safeError;
     }
   }
+}
+
+function normalizeTokenSubjectId(input: IssueGitHubInstallationTokenInput): string {
+  if (
+    input.subjectKind === "desktop_client" &&
+    input.desktopClientSubjectId !== undefined
+  ) {
+    return normalizeTargetPolicySubjectId({
+      subjectId: input.desktopClientSubjectId,
+      subjectKind: "desktop_client",
+    });
+  }
+  return normalizeTargetPolicySubjectId({
+    subjectId: input.subjectId,
+    subjectKind: input.subjectKind,
+  });
 }

@@ -123,10 +123,7 @@ export class RequestGitHubActionUseCase {
 
     const targetId = parseIntegrationTargetId(input.targetId);
     const subjectKind = assertTargetPolicySubjectKind(input.requestedBy.subjectKind);
-    const subjectId = normalizeTargetPolicySubjectId({
-      subjectId: input.requestedBy.subjectId,
-      subjectKind,
-    });
+    const subjectId = normalizeRequestedBySubjectId(input, subjectKind);
     const capability = capabilityForGitHubActionType(actionType);
     const policy = await this.targetPolicyEvaluator.evaluate({
       capability,
@@ -264,6 +261,19 @@ function decodeAndValidatePayload(
     throw invalid;
   }
   return payload;
+}
+
+function normalizeRequestedBySubjectId(
+  input: RequestGitHubActionInput,
+  subjectKind: ReturnType<typeof assertTargetPolicySubjectKind>,
+): string {
+  if (subjectKind === "desktop_client") {
+    return `desktop-client:${input.actor.desktopClientId}`;
+  }
+  return normalizeTargetPolicySubjectId({
+    subjectId: input.requestedBy.subjectId,
+    subjectKind,
+  });
 }
 
 function normalizeAttribution(

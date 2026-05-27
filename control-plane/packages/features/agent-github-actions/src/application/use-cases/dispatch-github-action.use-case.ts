@@ -45,6 +45,10 @@ export type DispatchGitHubActionResult =
   | Readonly<{ kind: "retry"; safeError: SafeError; retryAfterMs?: number }>
   | Readonly<{ kind: "dead-letter"; safeError: SafeError }>;
 
+type DispatchGitHubActionRequestView = NonNullable<
+  Awaited<ReturnType<GitHubActionRepository["findForDispatch"]>>
+>["request"];
+
 export class DispatchGitHubActionUseCase {
   public constructor(
     private readonly featureGate: AgentGitHubActionsFeatureGatePolicy,
@@ -165,11 +169,12 @@ export class DispatchGitHubActionUseCase {
       }
 
       const capability = capabilityForGitHubActionType(view.request.actionType);
+      const subject = buildDispatchSubject(view.request);
       const lease = await this.tokenBroker.issue({
         capability,
-        desktopClientSubjectId: `desktop-client:${view.request.assertedByDesktopClientId}`,
-        subjectId: view.request.requestedBySubjectId,
-        subjectKind: view.request.requestedBySubjectKind,
+        desktopClientSubjectId: subject.desktopClientSubjectId,
+        subjectId: subject.subjectId,
+        subjectKind: subject.subjectKind,
         targetId: view.request.integrationTargetId,
         workspaceId: view.request.workspaceId,
         ...(input.correlationId === undefined
@@ -253,11 +258,12 @@ export class DispatchGitHubActionUseCase {
     view: NonNullable<Awaited<ReturnType<GitHubActionRepository["findForDispatch"]>>>,
     correlationId: string | undefined,
   ): Promise<SafeError | undefined> {
+    const subject = buildDispatchSubject(view.request);
     const policy = await this.targetPolicyEvaluator.evaluate({
       capability: capabilityForGitHubActionType(view.request.actionType),
-      desktopClientSubjectId: `desktop-client:${view.request.assertedByDesktopClientId}`,
-      subjectId: view.request.requestedBySubjectId,
-      subjectKind: view.request.requestedBySubjectKind,
+      desktopClientSubjectId: subject.desktopClientSubjectId,
+      subjectId: subject.subjectId,
+      subjectKind: subject.subjectKind,
       targetId: view.request.integrationTargetId,
       workspaceId: view.request.workspaceId,
       ...(view.request.attribution.agentId === undefined
@@ -460,11 +466,29 @@ export class DispatchGitHubActionUseCase {
   }
 }
 
+function buildDispatchSubject(request: DispatchGitHubActionRequestView): {
+  desktopClientSubjectId: string;
+  subjectId: string;
+  subjectKind: DispatchGitHubActionRequestView["requestedBySubjectKind"];
+} {
+  const desktopClientSubjectId = `desktop-client:${request.assertedByDesktopClientId}`;
+  if (request.requestedBySubjectKind === "desktop_client") {
+    return {
+      desktopClientSubjectId,
+      subjectId: desktopClientSubjectId,
+      subjectKind: request.requestedBySubjectKind,
+    };
+  }
+  return {
+    desktopClientSubjectId,
+    subjectId: request.requestedBySubjectId,
+    subjectKind: request.requestedBySubjectKind,
+  };
+}
+
 function validateOutboxContentBinding(
   input: Pick<DispatchGitHubActionInput, "contentIntegrityHash" | "contentRefId">,
-  request: NonNullable<
-    Awaited<ReturnType<GitHubActionRepository["findForDispatch"]>>
-  >["request"],
+  request: DispatchGitHubActionRequestView,
 ): SafeError | undefined {
   if (input.contentRefId === undefined || input.contentIntegrityHash === undefined) {
     return createSafeError({

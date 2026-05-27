@@ -48,6 +48,28 @@ describe("RequestGitHubActionUseCase", () => {
     });
     expect(harness.storedPlaintexts).toHaveLength(0);
   });
+
+  it("derives desktop-client requestedBy subject from the authenticated actor", async () => {
+    const harness = createHarness();
+
+    await harness.useCase.execute({
+      ...validInput(),
+      requestedBy: {
+        subjectId: "desktop-client:spoofed",
+        subjectKind: "desktop_client",
+      },
+    });
+
+    expect(harness.policyInputs[0]).toMatchObject({
+      desktopClientSubjectId: "desktop-client:desktop-1",
+      subjectId: "desktop-client:desktop-1",
+      subjectKind: "desktop_client",
+    });
+    expect(harness.createdRequests[0]).toMatchObject({
+      requestedBySubjectId: "desktop-client:desktop-1",
+      requestedBySubjectKind: "desktop_client",
+    });
+  });
 });
 
 function createHarness(input: { policyAllowed?: boolean } = {}) {
@@ -56,6 +78,13 @@ function createHarness(input: { policyAllowed?: boolean } = {}) {
     Awaited<ReturnType<GitHubActionRepository["findByIdempotency"]>>
   >();
   const storedPlaintexts: string[] = [];
+  const createdRequests: Array<Parameters<GitHubActionRepository["createQueued"]>[0]> =
+    [];
+  const policyInputs: Array<{
+    desktopClientSubjectId: string | undefined;
+    subjectId: string;
+    subjectKind: string;
+  }> = [];
   const outboxPayloads: Array<{
     actionRequestId: string;
     contentRefId: string;
@@ -65,6 +94,7 @@ function createHarness(input: { policyAllowed?: boolean } = {}) {
   const ids = ["action-1", "content-1"];
   const repository: GitHubActionRepository = {
     createQueued: async (request) => {
+      createdRequests.push(request);
       const existing = requests.get(`${request.workspaceId}:${request.idempotencyKey}`);
       if (existing !== undefined) {
         return { created: false, request: existing };
@@ -121,7 +151,9 @@ function createHarness(input: { policyAllowed?: boolean } = {}) {
     record: async () => undefined,
   };
   return {
+    createdRequests,
     outboxPayloads,
+    policyInputs,
     storedPlaintexts,
     useCase: new RequestGitHubActionUseCase(
       { assertEnabled: async () => undefined, isEnabled: () => true },
@@ -132,11 +164,18 @@ function createHarness(input: { policyAllowed?: boolean } = {}) {
         githubRestApiVersion: () => "2022-11-28",
       },
       {
-        evaluate: async () => ({
-          allowed: input.policyAllowed ?? true,
-          policyVersion: 1,
-          reasonCode: "CONTROL_PLANE_TARGET_POLICY_DENIED",
-        }),
+        evaluate: async (policyInput) => {
+          policyInputs.push({
+            desktopClientSubjectId: policyInput.desktopClientSubjectId,
+            subjectId: policyInput.subjectId,
+            subjectKind: policyInput.subjectKind,
+          });
+          return {
+            allowed: input.policyAllowed ?? true,
+            policyVersion: 1,
+            reasonCode: "CONTROL_PLANE_TARGET_POLICY_DENIED",
+          };
+        },
       },
       contentStore,
       repository,

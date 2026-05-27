@@ -182,6 +182,51 @@ describe("github token broker use cases", () => {
     }
   });
 
+  it("derives desktop-client token subjects from the authenticated desktop subject", async () => {
+    let authorizationSubjectId: string | undefined;
+    const useCase = new IssueGitHubInstallationTokenUseCase(
+      enabledGate(),
+      {
+        authorize: async (input) => {
+          authorizationSubjectId = input.subjectId;
+          return {
+            allowed: true,
+            policyVersion: 3,
+            reasonCode: "CONTROL_PLANE_TARGET_POLICY_ALLOWED",
+            scope: {
+              githubInstallationId: "installation-1",
+              githubRepositoryId: "123456",
+              integrationTargetId: input.targetId,
+              workspaceId: input.workspaceId,
+            },
+          };
+        },
+      },
+      {
+        assertAllowed: async () => undefined,
+      },
+      {
+        issue: async () => ({
+          expiresAtMs: 1_700_000_600_000 as never,
+          grantedPermissions: { issues: "write" },
+          grantedRepositoryIds: [123456],
+          token: "installation-token",
+        }),
+      },
+      quietAuditLog(),
+      new FixedClock(1_700_000_000_000),
+    );
+
+    await useCase.execute({
+      ...baseInput(),
+      desktopClientSubjectId: "desktop-client:desktop-1",
+      subjectId: "desktop-client:spoofed",
+      subjectKind: "desktop_client",
+    });
+
+    expect(authorizationSubjectId).toBe("desktop-client:desktop-1");
+  });
+
   it("rejects broader scopes returned by GitHub before returning a lease", async () => {
     const useCase = new IssueGitHubInstallationTokenUseCase(
       enabledGate(),
@@ -284,6 +329,39 @@ describe("github token broker use cases", () => {
       reasonCode: "CONTROL_PLANE_GITHUB_TOKEN_SCOPE_ALLOWED",
       repositoryCount: 1,
     });
+  });
+
+  it("derives desktop-client dry-run subjects from the authenticated desktop subject", async () => {
+    let authorizationSubjectId: string | undefined;
+    const useCase = new DryRunGitHubTokenScopeUseCase(
+      enabledGate(),
+      {
+        authorize: async (input) => {
+          authorizationSubjectId = input.subjectId;
+          return {
+            allowed: true,
+            policyVersion: 3,
+            reasonCode: "CONTROL_PLANE_TARGET_POLICY_ALLOWED",
+            scope: {
+              githubInstallationId: "installation-1",
+              githubRepositoryId: "123456",
+              integrationTargetId: input.targetId,
+              workspaceId: input.workspaceId,
+            },
+          };
+        },
+      },
+      new FixedClock(1_700_000_000_000),
+    );
+
+    await useCase.execute({
+      ...baseInput(),
+      desktopClientSubjectId: "desktop-client:desktop-1",
+      subjectId: "desktop-client:spoofed",
+      subjectKind: "desktop_client",
+    });
+
+    expect(authorizationSubjectId).toBe("desktop-client:desktop-1");
   });
 
   it("dry-run denies unsupported repository ids without GitHub HTTP", async () => {

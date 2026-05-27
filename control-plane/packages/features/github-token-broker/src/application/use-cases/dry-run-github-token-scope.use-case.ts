@@ -53,10 +53,7 @@ export class DryRunGitHubTokenScopeUseCase {
     }
     const targetId = parseIntegrationTargetId(input.targetId);
     const permissions = mapCapabilityToGitHubPermissions(input.capability);
-    const subjectId = normalizeTargetPolicySubjectId({
-      subjectId: input.subjectId,
-      subjectKind: input.subjectKind,
-    });
+    const subjectId = normalizeDryRunSubjectId(input);
     const authorization = await this.targetAuthorization.authorize({
       capability: input.capability,
       nowMs: this.clock.nowMs(),
@@ -108,4 +105,20 @@ export class DryRunGitHubTokenScopeUseCase {
         : { policyVersion: authorization.policyVersion }),
     };
   }
+}
+
+function normalizeDryRunSubjectId(input: DryRunGitHubTokenScopeInput): string {
+  if (
+    input.subjectKind === "desktop_client" &&
+    input.desktopClientSubjectId !== undefined
+  ) {
+    return normalizeTargetPolicySubjectId({
+      subjectId: input.desktopClientSubjectId,
+      subjectKind: "desktop_client",
+    });
+  }
+  return normalizeTargetPolicySubjectId({
+    subjectId: input.subjectId,
+    subjectKind: input.subjectKind,
+  });
 }

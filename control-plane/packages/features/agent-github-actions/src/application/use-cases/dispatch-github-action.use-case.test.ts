@@ -34,6 +34,30 @@ describe("DispatchGitHubActionUseCase", () => {
     expect(harness.auditEvents).toContain("github_action.dispatch_succeeded");
   });
 
+  it("derives desktop-client dispatch subjects from the asserted desktop actor", async () => {
+    const harness = createHarness({
+      request: {
+        requestedBySubjectId: "desktop-client:spoofed",
+        requestedBySubjectKind: "desktop_client",
+      },
+    });
+
+    await expect(harness.useCase.execute(dispatchInput())).resolves.toEqual({
+      kind: "completed",
+    });
+
+    expect(harness.policyInputs[0]).toMatchObject({
+      desktopClientSubjectId: "desktop-client:desktop-1",
+      subjectId: "desktop-client:desktop-1",
+      subjectKind: "desktop_client",
+    });
+    expect(harness.tokenBrokerSubjects[0]).toMatchObject({
+      desktopClientSubjectId: "desktop-client:desktop-1",
+      subjectId: "desktop-client:desktop-1",
+      subjectKind: "desktop_client",
+    });
+  });
+
   it("keeps worker events retryable while the feature gate is disabled", async () => {
     const harness = createHarness({ enabled: false });
 
@@ -156,6 +180,7 @@ function createHarness(
   input: {
     enabled?: boolean;
     dispatcher?: GitHubActionDispatcher["dispatch"];
+    request?: DispatchRequestOverride;
     tokenBroker?: GitHubInstallationTokenBrokerPort["issue"];
   } = {},
 ) {
@@ -163,6 +188,16 @@ function createHarness(
   const auditEvents: string[] = [];
   const dispatchBodies: string[] = [];
   const tokenBrokerCalls: Array<{ capability: string; targetId: string }> = [];
+  const tokenBrokerSubjects: Array<{
+    desktopClientSubjectId: string | undefined;
+    subjectId: string;
+    subjectKind: string;
+  }> = [];
+  const policyInputs: Array<{
+    desktopClientSubjectId: string | undefined;
+    subjectId: string;
+    subjectKind: string;
+  }> = [];
   const request = {
     actionType: "github.issue_comment.create" as const,
     assertedByDesktopClientId: "desktop-1" as never,
@@ -181,6 +216,7 @@ function createHarness(
     status: "queued" as const,
     updatedAtMs: toUnixMilliseconds(0),
     workspaceId: "workspace-1" as never,
+    ...input.request,
   };
   const repository: GitHubActionRepository = {
     createQueued: async () => {
@@ -242,7 +278,9 @@ function createHarness(
     auditEvents,
     dispatchBodies,
     operations,
+    policyInputs,
     tokenBrokerCalls,
+    tokenBrokerSubjects,
     useCase: new DispatchGitHubActionUseCase(
       {
         assertEnabled: async () => undefined,
@@ -257,17 +295,29 @@ function createHarness(
       repository,
       contentStore,
       {
-        evaluate: async () => ({
-          allowed: true,
-          policyVersion: 1,
-          reasonCode: "allowed",
-        }),
+        evaluate: async (policyInput) => {
+          policyInputs.push({
+            desktopClientSubjectId: policyInput.desktopClientSubjectId,
+            subjectId: policyInput.subjectId,
+            subjectKind: policyInput.subjectKind,
+          });
+          return {
+            allowed: true,
+            policyVersion: 1,
+            reasonCode: "allowed",
+          };
+        },
       },
       {
         issue: async (brokerInput) => {
           tokenBrokerCalls.push({
             capability: brokerInput.capability,
             targetId: brokerInput.targetId,
+          });
+          tokenBrokerSubjects.push({
+            desktopClientSubjectId: brokerInput.desktopClientSubjectId,
+            subjectId: brokerInput.subjectId,
+            subjectKind: brokerInput.subjectKind,
           });
           return input.tokenBroker === undefined
             ? {
@@ -304,6 +354,10 @@ type DispatchInputOverride = {
     | Parameters<DispatchGitHubActionUseCase["execute"]>[0][Key]
     | undefined;
 };
+
+type DispatchRequestOverride = Partial<
+  NonNullable<Awaited<ReturnType<GitHubActionRepository["findForDispatch"]>>>["request"]
+>;
 
 function dispatchInput(
   overrides: DispatchInputOverride = {},

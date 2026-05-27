@@ -176,6 +176,7 @@ export class PrismaOutboxRepository implements OutboxRepository {
   public async markFailedForRetry(
     input: RetryOutboxEventInput,
   ): Promise<RetryClaimMutationResult> {
+    const retryAfterMs = normalizeExplicitRetryAfterMs(input.retryAfterMs);
     return this.databaseClient.getClient().$transaction(async (client) => {
       const rows = await client.$queryRaw<OutboxRow[]>`
         UPDATE outbox_events
@@ -183,8 +184,8 @@ export class PrismaOutboxRepository implements OutboxRepository {
           status = CASE WHEN attempts >= max_attempts THEN 'dead-lettered' ELSE 'pending' END,
           next_attempt_at = CASE
             WHEN attempts >= max_attempts THEN next_attempt_at
-            WHEN ${input.retryAfterMs ?? null}::integer IS NOT NULL
-              THEN now() + (${input.retryAfterMs ?? null}::integer * interval '1 millisecond')
+            WHEN ${retryAfterMs}::double precision IS NOT NULL
+              THEN now() + (${retryAfterMs}::double precision * interval '1 millisecond')
             WHEN attempts <= 1 THEN now()
             WHEN attempts = 2 THEN now() + interval '30 seconds' + (random() * interval '5 seconds')
             WHEN attempts = 3 THEN now() + interval '2 minutes' + (random() * interval '5 seconds')
@@ -448,6 +449,13 @@ function mapClaimedRow(row: OutboxRow): ClaimedOutboxEvent {
     lockedUntilMs: event.lockedUntilMs,
     status: "processing",
   };
+}
+
+function normalizeExplicitRetryAfterMs(value: number | undefined): number | null {
+  if (value === undefined || !Number.isFinite(value) || value < 0) {
+    return null;
+  }
+  return Math.ceil(value);
 }
 
 function mapRow(row: OutboxRow): OutboxEvent {

@@ -124,6 +124,48 @@ describe("PrismaOutboxRepository", () => {
       code: "CONTROL_PLANE_OUTBOX_IDEMPOTENCY_CONFLICT",
     });
   });
+
+  it("uses a wide SQL type for explicit retry-after scheduling", async () => {
+    let queryText = "";
+    const queryValues: unknown[] = [];
+    const repository = new PrismaOutboxRepository(
+      fakeDatabaseClient({
+        $transaction: async (work: (client: unknown) => Promise<unknown>) =>
+          work({
+            $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
+              queryText = strings.join("?");
+              queryValues.push(...values);
+              return [
+                outboxRow({
+                  ...newOutboxEvent(),
+                  createdAt: new Date(0),
+                  updatedAt: new Date(0),
+                }),
+              ];
+            },
+          }),
+      }),
+    );
+
+    await expect(
+      repository.markFailedForRetry({
+        claimToken: "claim-token",
+        eventId: "event-1" as never,
+        retryAfterMs: Number.MAX_SAFE_INTEGER,
+        safeError: createSafeError({
+          category: "external",
+          code: "TEST_RATE_LIMITED",
+          message: "rate limited",
+          retryable: true,
+        }),
+        workerId: "worker-1",
+      }),
+    ).resolves.toBe("updated");
+
+    expect(queryText).toContain("::double precision");
+    expect(queryText).not.toContain("::integer");
+    expect(queryValues).toContain(Number.MAX_SAFE_INTEGER);
+  });
 });
 
 function fakeDatabaseClient(client: unknown): PrismaDatabaseClient {

@@ -130,6 +130,9 @@ Weak spots studied in current code:
 - Repository owner/name can change while immutable GitHub repository ids remain
   stable. Operations and runbooks must avoid diagnosing target issues by display
   name alone.
+- Current GitHub action dispatch has an explicit unknown-result path for
+  comment/review writes when transport outcome is ambiguous. Operations must
+  treat this as a duplicate-write risk, not as a normal retryable outage.
 
 ## Deployment Topology
 
@@ -447,6 +450,10 @@ Failure behavior:
   or suspension by policy, not blind retry forever
 - provider 404 for repository/PR/issue is classified separately from network
   failure
+- unknown provider write outcome for comments/reviews goes to safe dead-letter
+  or manual recovery until marker lookup recovery is implemented
+- check-run create retry is allowed only after stored `githubCheckRunId` or
+  `external_id` recovery proves the previous create can be updated
 
 ## API Operations
 
@@ -527,6 +534,10 @@ Runbook edge cases:
   enabled
 - two installations expose repositories with the same display full name over
   time because of rename/transfer history
+- worker crashes after GitHub accepts a write but before local status
+  persistence completes
+- operator sees unknown-result dead-letter and must decide between marker lookup,
+  manual GitHub inspection, or explicit new action
 
 ## Observability And Alerts
 
@@ -549,6 +560,7 @@ Critical alerts:
 - worker processing events older than lease plus recovery window
 - callback abuse/replay spike
 - request body size rejection spike
+- unknown-result dead-letter count above zero for public comment/review actions
 - provider 401/403 spike after token broker success
 - production app registration drift detected
 
@@ -614,6 +626,8 @@ Review checklist:
 - request size limits exist before payloads reach expensive parsing or logging
 - operator and support workflows identify repositories by immutable GitHub
   repository id plus connection id, not display name only
+- unknown-result recovery runbook is explicit that blind retry can duplicate
+  public GitHub comments or reviews
 
 Backup and restore gate:
 
@@ -647,6 +661,7 @@ Automated tests:
 - request size limit tests for setup/action endpoints
 - provider 401/403/404 classification tests in GitHub action dispatcher
 - repository rename/transfer/archived-state runbook rehearsal in staging
+- ambiguous provider outcome runbook rehearsal using mocked post-write crash
 
 Manual hosted smoke:
 
@@ -693,6 +708,8 @@ Manual hosted smoke:
 - request size limits are documented and verified before public beta
 - repository identity runbooks use immutable ids and cover rename/transfer
   cases
+- unknown-result comment/review dead-letter cannot be retried by an operator
+  without an explicit recovery decision
 
 ## Rollout
 

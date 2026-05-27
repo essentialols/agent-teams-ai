@@ -130,6 +130,12 @@ Weak spots studied in current code:
 - Backend action payload validation caps comment/check body fields at current
   server limits. Desktop should preflight those limits for UX, but backend
   remains authoritative and desktop must not silently truncate content.
+- Current GitHub comment/review dispatch treats unknown transport outcome as
+  `CONTROL_PLANE_GITHUB_ACTION_UNKNOWN_RESULT` and does not retry without
+  marker lookup. Desktop must not turn that into a new auto-submission.
+- Check run create is only retry-safe after the backend has stored
+  `githubCheckRunId` or has a recovery lookup by `external_id`; otherwise a
+  crash after provider mutation can create duplicate check runs.
 - Target policy subject ids are prefix-sensitive in the backend
   (`team:...`, `agent:...`, `desktop-client:...`, `workspace:...`). Desktop
   must construct those ids deterministically from trusted runtime/team metadata,
@@ -595,6 +601,25 @@ Idempotency source:
 - double-click or duplicate renderer event collapses to the same pending
   submission when command fingerprint matches
 - editing the action body or target creates a new `requestId`
+- a backend terminal unknown-result status is not retried locally by creating a
+  new request id unless the user explicitly starts a new action after seeing the
+  ambiguity
+
+Provider mutation ambiguity:
+
+- desktop idempotency prevents duplicate enqueue for one logical request, but it
+  does not prove whether GitHub already mutated external state after an
+  ambiguous transport failure
+- for comment/review actions, automatic retry after
+  `CONTROL_PLANE_GITHUB_ACTION_UNKNOWN_RESULT` is forbidden until backend marker
+  lookup recovery exists
+- for check-run create, automatic retry is forbidden unless the backend can use
+  a stored `githubCheckRunId` or recover the existing check run by
+  `external_id`
+- desktop status UI should show a safe ambiguous-result state with action id,
+  target, and retry guidance, without raw action body or token-bearing details
+- explicit user retry after ambiguity creates a new logical action and must make
+  possible duplication visible in the UI copy
 
 Runtime tool surface:
 
@@ -688,6 +713,10 @@ Critical edge cases:
 - GitHub App installation is removed while UI still shows connected
 - repository target is disabled after agent action button is opened
 - repository availability snapshot becomes stale between list and enable
+- backend returns unknown-result/dead-letter after a possible public GitHub
+  mutation
+- worker writes a comment/check successfully, then crashes before action status
+  persistence or encrypted content shredding completes
 - action succeeds in GitHub but status polling temporarily fails
 - control-plane rotates API contract while old desktop is still running
 - renderer is compromised or sends modified attribution fields
@@ -738,6 +767,9 @@ Expected decisions:
 - local project binding mismatch fails before sending action content
 - subject ids are normalized with backend-compatible prefixes before policy
   evaluation or action request submission
+- unknown provider outcome blocks local automatic retry unless backend recovery
+  can prove the original mutation did not happen or can bind to the existing
+  mutation
 
 ## Architecture Guardrails
 
@@ -786,6 +818,9 @@ Unit tests:
   truncation
 - target subject id mapper produces backend-compatible prefixes
 - repository rename/fork/name collision cases do not authorize by display name
+- ambiguous provider outcome maps to a non-auto-retry desktop state
+- check-run retry guard refuses create retry when no `githubCheckRunId` or
+  backend `external_id` recovery proof is available
 
 Integration tests:
 
@@ -804,6 +839,8 @@ Integration tests:
 - local project binding mismatch blocks action submission before content upload
 - multiple GitHub connections with same repo display name remain distinct by
   connection id and target id
+- mocked backend unknown-result response does not create a second local action
+  submission
 
 Security tests:
 

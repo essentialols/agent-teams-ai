@@ -128,6 +128,9 @@ Weak spots studied in current code:
   forks, renamed repositories, transferred repositories, and multiple
   installations. E2E must prove target identity with immutable ids where
   possible.
+- Current backend dispatch does not implement marker lookup recovery for
+  unknown comment/review write outcomes. The release gate must not claim
+  duplicate-safe retry unless marker recovery is implemented and proven.
 
 ## E2E Environment
 
@@ -274,11 +277,23 @@ Assertions:
 - PR belongs to bound base repository
 - issue comment action does not cross repository boundary
 - duplicate idempotency key returns existing status
-- unknown outcome retry uses marker recovery
-- retry after transient network failure reuses the same request id
+- unknown outcome either uses implemented marker recovery or remains
+  terminal/ambiguous without a second write
+- retry after pre-write IPC/network failure reuses the same request id
 - second GitHub API read sees one matching marker, not two
 - backend audit/status and GitHub-visible comment agree on terminal outcome
 - cleanup can identify the comment from marker/run id without raw body matching
+
+Provider mutation ambiguity scenario:
+
+1. force a mocked post-write crash after GitHub accepts a comment/review action
+2. resume outbox processing for the same action
+3. verify the system either binds to the existing marker through implemented
+   recovery or dead-letters/blocks retry safely
+4. verify no second public marker appears
+
+This scenario is required because a backend idempotency key alone does not prove
+external idempotency after GitHub has accepted a write.
 
 ### PR Review And Check Run
 
@@ -320,6 +335,9 @@ Critical failures:
 - repository display name changes after target enablement
 - same-name repository exists in another installation or fork
 - local project binding points at a different repository than selected target
+- comment/review unknown outcome is retried without marker recovery
+- check-run create is retried after ambiguous success without stored
+  `githubCheckRunId` or `external_id` recovery
 
 Expected behavior:
 
@@ -345,6 +363,10 @@ Expected behavior:
 - rename/fork confusion does not redirect action to a different target
 - evidence artifact records target id and GitHub repository id, not display name
   only
+- ambiguous provider write outcome never creates a duplicate public marker in
+  the release gate
+- if marker/check-run recovery is not implemented, the gate records a safe
+  dead-letter/blocked state rather than green retry evidence
 
 Failure injection guardrails:
 
@@ -552,6 +574,8 @@ Automated:
 - sandbox allowlist tests
 - manifest redaction tests
 - retry/idempotency live assertion for one public comment marker
+- provider mutation ambiguity test proves no duplicate marker after mocked
+  post-write crash
 - bounded polling timeout tests
 - duplicate callback tests through mocked public callback route
 - cleanup classification tests
@@ -601,6 +625,8 @@ Manual:
 - crash/resume path does not duplicate public GitHub writes
 - artifact redaction scan includes explicit forbidden-pattern checks
 - target identity evidence includes target id and immutable GitHub repository id
+- release evidence distinguishes duplicate-safe retry from safe dead-letter on
+  unknown provider outcome
 
 ## Rollout
 

@@ -140,6 +140,9 @@ Weak spots studied in current code:
   (`team:...`, `agent:...`, `desktop-client:...`, `workspace:...`). Desktop
   must construct those ids deterministically from trusted runtime/team metadata,
   not from display labels.
+- `requestedBy.agentId` and `requestedBy.teamId` are reused by backend policy
+  checks as `agentSubjectId` and `teamSubjectId`. They must be normalized
+  subject ids (`agent:...`, `team:...`), not raw runtime ids.
 - Local teams can run from different project roots/worktrees while sharing one
   paired desktop token. The bridge must bind a local team/run to the intended
   hosted workspace and repository target before it can submit an action.
@@ -359,6 +362,9 @@ Security rules:
 - `subjectKind` must match the existing target policy model
 - `subjectId` must use the same normalized form used when target policy rules
   were created
+- `requestedBy.agentId` and `requestedBy.teamId`, when present, use normalized
+  policy subject id form. Keep raw runtime ids in local binding diagnostics, not
+  in the backend action DTO.
 - `requestId` must be stable for retry of one logical action and unique for
   distinct actions
 - desktop may preflight server-known body limits, but it never mutates or
@@ -589,6 +595,10 @@ Trusted identity source:
 - otherwise use the existing runtime convention equivalent to
   `<memberName>@<teamName>`
 - use current team display name and member role from team config/meta
+- convert raw runtime ids to backend policy subjects at the main-process
+  boundary: `agent:<stableAgentId>` and `team:<stableTeamId>`
+- keep display names, raw runtime ids, and policy subject ids as separate fields
+  in local code so a UI label change cannot affect authorization
 - do not derive agent identity from JSONL transcript messages, GitHub comment
   body, model output, or renderer-provided text
 - if a member was renamed, use the runtime member identity active for that
@@ -686,6 +696,22 @@ Use the backend-compatible prefixes consistently. Display names may change and
 must not be used as authorization subject ids unless they are already the
 stable team/agent id in the local model.
 
+Implementation guard:
+
+```ts
+type RuntimeAgentIdentity = Readonly<{
+  rawAgentId: string;
+  rawTeamId: string;
+  agentSubjectId: `agent:${string}`;
+  teamSubjectId: `team:${string}`;
+  agentDisplayName: string;
+  teamDisplayName: string;
+}>;
+```
+
+This type shape is illustrative. The important rule is that the adapter does not
+pass raw runtime ids into `requestedBy.agentId` or `requestedBy.teamId`.
+
 ## Edge Cases
 
 Critical edge cases:
@@ -735,6 +761,9 @@ Critical edge cases:
 - local project is moved on disk while setup/action UI is open
 - same desktop is paired to one hosted workspace but user opens another local
   workspace and tries to reuse the old target
+- raw runtime `agentId` or `teamId` lacks the backend policy prefix
+- runtime member id contains characters that are valid locally but invalid for
+  target policy subject ids
 
 Expected decisions:
 
@@ -767,6 +796,8 @@ Expected decisions:
 - local project binding mismatch fails before sending action content
 - subject ids are normalized with backend-compatible prefixes before policy
   evaluation or action request submission
+- if a raw runtime id cannot be mapped to a safe policy subject id, the action is
+  rejected before content upload with a validation state
 - unknown provider outcome blocks local automatic retry unless backend recovery
   can prove the original mutation did not happen or can bind to the existing
   mutation
@@ -817,6 +848,8 @@ Unit tests:
 - action payload preflight mirrors backend size/control-character limits without
   truncation
 - target subject id mapper produces backend-compatible prefixes
+- target subject id mapper rejects raw `agentId`/`teamId` values and unsafe
+  characters before content upload
 - repository rename/fork/name collision cases do not authorize by display name
 - ambiguous provider outcome maps to a non-auto-retry desktop state
 - check-run retry guard refuses create retry when no `githubCheckRunId` or
@@ -841,6 +874,8 @@ Integration tests:
   connection id and target id
 - mocked backend unknown-result response does not create a second local action
   submission
+- runtime raw id to policy subject mapping is stable across display rename and
+  rejects invalid local ids
 
 Security tests:
 

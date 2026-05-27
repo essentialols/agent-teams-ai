@@ -131,6 +131,9 @@ Weak spots studied in current code:
 - Current backend dispatch does not implement marker lookup recovery for
   unknown comment/review write outcomes. The release gate must not claim
   duplicate-safe retry unless marker recovery is implemented and proven.
+- Backend policy subjects require normalized prefixes such as `agent:` and
+  `team:`. E2E must prove the desktop bridge maps runtime identities into these
+  subjects instead of sending raw local ids.
 
 ## E2E Environment
 
@@ -257,6 +260,8 @@ Assertions:
 - encrypted content is deleted or crypto-shredded after success
 - backend action status reaches terminal success
 - audit record links action id, target id, and safe correlation id
+- backend audit/policy evidence uses normalized `agent:` or `team:` subject ids
+  for agent/team requests
 - comment body is not asserted by raw full-body snapshot; assertions target
   marker, attribution, and safe expected snippets to avoid leaking content into
   artifacts
@@ -338,6 +343,8 @@ Critical failures:
 - comment/review unknown outcome is retried without marker recovery
 - check-run create is retried after ambiguous success without stored
   `githubCheckRunId` or `external_id` recovery
+- desktop submits raw runtime agent/team id where backend expects normalized
+  policy subject id
 
 Expected behavior:
 
@@ -367,6 +374,8 @@ Expected behavior:
   the release gate
 - if marker/check-run recovery is not implemented, the gate records a safe
   dead-letter/blocked state rather than green retry evidence
+- raw local identity ids are rejected before content upload or converted to safe
+  policy subject ids before submission
 
 Failure injection guardrails:
 
@@ -576,6 +585,8 @@ Automated:
 - retry/idempotency live assertion for one public comment marker
 - provider mutation ambiguity test proves no duplicate marker after mocked
   post-write crash
+- desktop identity mapping test proves raw agent/team ids never reach backend
+  action DTOs as policy subjects
 - bounded polling timeout tests
 - duplicate callback tests through mocked public callback route
 - cleanup classification tests
@@ -627,6 +638,7 @@ Manual:
 - target identity evidence includes target id and immutable GitHub repository id
 - release evidence distinguishes duplicate-safe retry from safe dead-letter on
   unknown provider outcome
+- release evidence includes one agent/team policy subject mapping assertion
 
 ## Rollout
 

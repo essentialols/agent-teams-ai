@@ -133,6 +133,9 @@ Weak spots studied in current code:
 - Current GitHub action dispatch has an explicit unknown-result path for
   comment/review writes when transport outcome is ambiguous. Operations must
   treat this as a duplicate-write risk, not as a normal retryable outage.
+- Backend target policy rejects unprefixed subject ids. Hosted diagnostics must
+  make `CONTROL_PLANE_TARGET_POLICY_SUBJECT_ID_INVALID` distinguishable from
+  normal policy denial so desktop/runtime mapping bugs are visible.
 
 ## Deployment Topology
 
@@ -538,6 +541,8 @@ Runbook edge cases:
   persistence completes
 - operator sees unknown-result dead-letter and must decide between marker lookup,
   manual GitHub inspection, or explicit new action
+- desktop sends raw local agent/team ids instead of normalized policy subject
+  ids, causing validation failure before content should be accepted
 
 ## Observability And Alerts
 
@@ -561,6 +566,7 @@ Critical alerts:
 - callback abuse/replay spike
 - request body size rejection spike
 - unknown-result dead-letter count above zero for public comment/review actions
+- target policy subject id validation failures spike after desktop release
 - provider 401/403 spike after token broker success
 - production app registration drift detected
 
@@ -628,6 +634,8 @@ Review checklist:
   repository id plus connection id, not display name only
 - unknown-result recovery runbook is explicit that blind retry can duplicate
   public GitHub comments or reviews
+- support runbooks distinguish invalid subject id validation from target policy
+  no-match or explicit-deny outcomes
 
 Backup and restore gate:
 
@@ -662,6 +670,7 @@ Automated tests:
 - provider 401/403/404 classification tests in GitHub action dispatcher
 - repository rename/transfer/archived-state runbook rehearsal in staging
 - ambiguous provider outcome runbook rehearsal using mocked post-write crash
+- desktop subject-id mapping regression test covers raw ids rejected by backend
 
 Manual hosted smoke:
 
@@ -710,6 +719,8 @@ Manual hosted smoke:
   cases
 - unknown-result comment/review dead-letter cannot be retried by an operator
   without an explicit recovery decision
+- hosted diagnostics show safe validation code when desktop sends an invalid
+  subject id and do not log raw action content
 
 ## Rollout
 

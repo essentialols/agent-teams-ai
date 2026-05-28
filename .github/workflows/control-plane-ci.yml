@@ -1,0 +1,87 @@
+name: Control Plane CI
+
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - 'control-plane/**'
+      - '.github/workflows/control-plane-ci.yml'
+  pull_request:
+    paths:
+      - 'control-plane/**'
+      - '.github/workflows/control-plane-ci.yml'
+  workflow_dispatch:
+
+jobs:
+  verify:
+    name: Verify control-plane
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+          cache-dependency-path: control-plane/pnpm-lock.yaml
+
+      - name: Install control-plane dependencies
+        run: pnpm --dir control-plane install --frozen-lockfile
+
+      - name: Verify phase gate
+        run: pnpm --dir control-plane verify:phase1
+
+  db-gates:
+    name: DB gates
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: agent_teams_control_plane_test
+          POSTGRES_PASSWORD: control_plane
+          POSTGRES_USER: control_plane
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U control_plane -d agent_teams_control_plane_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      CONTROL_PLANE_DATABASE_URL: postgresql://control_plane:control_plane@127.0.0.1:5432/agent_teams_control_plane_test
+      CONTROL_PLANE_TEST_DATABASE_URL: postgresql://control_plane:control_plane@127.0.0.1:5432/agent_teams_control_plane_test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+          cache-dependency-path: control-plane/pnpm-lock.yaml
+
+      - name: Install control-plane dependencies
+        run: pnpm --dir control-plane install --frozen-lockfile
+
+      - name: Apply migrations
+        run: pnpm --dir control-plane db:migrate
+
+      - name: Run DB integration tests
+        run: pnpm --dir control-plane test:db
+
+      - name: Run worker DB smoke
+        run: pnpm --dir control-plane worker:smoke:db

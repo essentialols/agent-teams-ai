@@ -120,6 +120,16 @@ pnpm --dir control-plane api:smoke:dist
 pnpm --dir control-plane config:hosted-failfast
 ```
 
+GitHub Actions coverage:
+
+- `.github/workflows/control-plane-ci.yml` runs when `control-plane/**` changes.
+- The `verify` job runs `pnpm --dir control-plane verify:phase1`.
+- The `db-gates` job starts Postgres, applies migrations, then runs
+  `test:db` and `worker:smoke:db`.
+- Public beta still requires staging `hosted:smoke` and the live E2E release
+  evidence below. CI proves build and DB regressions, not GitHub App installation
+  in a real sandbox.
+
 Hosted staging smoke after deployment:
 
 ```bash

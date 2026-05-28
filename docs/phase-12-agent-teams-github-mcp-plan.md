@@ -492,6 +492,44 @@ Release-bundle rule:
 - tests should assert the package config contains both resource groups so this
   does not regress only in signed builds.
 
+## MCP SDK Compatibility
+
+Local code currently uses `fastmcp` `^3.35.0` in `agent-teams-mcp`. `pnpm info
+fastmcp version` reported `4.0.1` as the latest available version during this
+plan hardening pass.
+
+Do not upgrade FastMCP as part of the split unless implementation proves a
+required MCP feature is missing. This phase can stay on the existing dependency
+line because local `fastmcp/dist/FastMCP.d.ts` already exposes:
+
+- `Tool.annotations` with `readOnlyHint`, `destructiveHint`, `idempotentHint`,
+  and `openWorldHint`;
+- `ContentResult.isError`;
+- `Tool.outputSchema`.
+
+Important limitation:
+
+- the installed `ContentResult` type exposes only `content` and `isError`;
+- it does not expose `structuredContent` in the public result type inspected
+  locally;
+- therefore V1 should not depend on structured tool results unless FastMCP is
+  upgraded or the exact library support is verified in code.
+
+Recommendation:
+
+- keep JSON text content for compatibility;
+- add safe `isError` support;
+- add annotations immediately;
+- treat `outputSchema`/`structuredContent` as an optional follow-up unless the
+  current SDK path can be proven type-safe without broad casts.
+
+If a dependency upgrade becomes necessary:
+
+1. make it a separate explicit commit;
+2. check FastMCP release notes and type changes;
+3. run all existing MCP tests plus GitHub MCP tests;
+4. verify packaged HTTP and stdio transports still start.
+
 ## Tool Surface
 
 Common public parameters for mutating tools:
@@ -539,6 +577,88 @@ Tool implementation rule:
 - application use cases receive a fully resolved `RuntimeIdentity`;
 - explicit runtime fields are allowed only for tests/nonstandard launchers;
 - env/explicit conflicts fail closed before any local HTTP request.
+
+## Tool Metadata And Validation Contracts
+
+MCP tool descriptions are not enough for safe clients. Every GitHub MCP tool
+should include behavior annotations where the SDK supports them.
+
+Recommended annotations:
+
+| Tool                          | `readOnlyHint` | `destructiveHint` | `idempotentHint` | `openWorldHint` |
+| ----------------------------- | -------------- | ----------------- | ---------------- | --------------- |
+| `github_integration_status`   | true           | false             | true             | true            |
+| `github_action_status`        | true           | false             | true             | true            |
+| `github_comment_issue`        | false          | false             | true             | true            |
+| `github_comment_pull_request` | false          | false             | true             | true            |
+| `github_review_pull_request`  | false          | false             | true             | true            |
+| `github_create_check_run`     | false          | false             | true             | true            |
+| `github_raw_action_submit`    | false          | true              | false            | true            |
+
+Notes:
+
+- comments and reviews are additive, so `destructiveHint=false`;
+- idempotency is true only if the bridge always sends a stable
+  `localAttemptId` and backend dedupe is active;
+- raw submit is intentionally more dangerous because payload/action type are
+  open-ended.
+
+Illustrative FastMCP tool definition:
+
+```ts
+server.addTool({
+  name: 'github_comment_pull_request',
+  description:
+    'Post an additive top-level PR conversation comment through the connected Agent Teams GitHub App. The repository is resolved from the local git remote and enabled target.',
+  annotations: {
+    title: 'Comment on GitHub pull request',
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: true,
+  },
+  parameters: githubCommentPullRequestSchema,
+  execute: async (input) => githubToolResult(await commentPullRequestUseCase.execute(input)),
+});
+```
+
+Shared input schemas should be stricter than the current low-level tool:
+
+```ts
+const githubBodySchema = z
+  .string()
+  .transform((value) => value.replace(/\r\n/g, '\n').trim())
+  .pipe(z.string().min(1).max(58_000))
+  .refine((value) => !value.includes('\u0000'), 'Body must not contain NUL bytes')
+  .refine(
+    (value) => !value.includes('agent-teams-action'),
+    'Body must not contain reserved Agent Teams markers'
+  );
+
+const githubNumberSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
+
+const waitTimeoutMsSchema = z.number().int().min(1_000).max(600_000).optional();
+```
+
+Output contract:
+
+```ts
+type GitHubMcpToolEnvelope<T> = Readonly<{
+  ok: boolean;
+  data?: T;
+  safeError?: SafeToolError;
+  nextAction:
+    | 'none'
+    | 'poll_status'
+    | 'retry_same_local_attempt_id'
+    | 'ask_user_to_connect_github'
+    | 'ask_user_to_enable_target';
+}>;
+```
+
+For V1, return serialized JSON in `content[0].text`. If FastMCP structured
+results are verified or upgraded later, add `structuredContent` without
+removing the text fallback.
 
 ### Tool 1 - `github_integration_status`
 
@@ -1088,6 +1208,80 @@ UX consequences:
   MCP client;
 - status tool gives agents a safe explanation instead of leaking backend state.
 
+## Repository Target Resolution Contract
+
+The desktop bridge is the authority for mapping the local project to an enabled
+GitHub repository target. GitHub MCP should not duplicate this authorization
+logic, but the plan should make the parsing contract explicit because it is a
+major source of false positives.
+
+Current local implementation reads:
+
+```bash
+git -C <projectPath> config --get remote.origin.url
+```
+
+Then it accepts GitHub.com remotes equivalent to:
+
+```text
+git@github.com:Owner/Repo.git
+ssh://git@github.com/Owner/Repo.git
+git+ssh://git@github.com/Owner/Repo.git
+https://github.com/Owner/Repo.git
+https://user:token@github.com/Owner/Repo.git
+```
+
+And normalizes to:
+
+```text
+owner/repo
+```
+
+Rejected in V1:
+
+```text
+https://github.enterprise.example/Owner/Repo.git
+https://github.com/Owner/Repo/tree/main
+git@gitlab.com:Owner/Repo.git
+not-a-url
+```
+
+Hardening requirements:
+
+- keep target resolution in desktop/local bridge, not MCP;
+- compare only normalized full names against enabled targets;
+- never log the raw remote URL because it may contain credentials;
+- if an explicit `targetId` is supplied, still verify it matches the local
+  remote;
+- if multiple enabled targets normalize to the same full name, fail closed;
+- if GitHub Enterprise is added later, host policy must become explicit.
+
+Recommended extraction:
+
+```ts
+type GitHubRemoteParseResult =
+  | { ok: true; host: 'github.com'; fullName: `${string}/${string}` }
+  | { ok: false; reason: 'empty' | 'unsupported_host' | 'invalid_shape' };
+
+function parseGitHubRemoteFullName(value: string): GitHubRemoteParseResult {
+  // Existing desktop logic can be extracted from src/main/http/teams.ts and
+  // tested directly instead of remaining private inside route wiring.
+}
+```
+
+Test matrix:
+
+| Remote input                                       | Expected result                  |
+| -------------------------------------------------- | -------------------------------- |
+| `git@github.com:Owner/Repo.git`                    | `owner/repo`                     |
+| `ssh://git@github.com/Owner/Repo.git`              | `owner/repo`                     |
+| `git+ssh://git@github.com/Owner/Repo.git`          | `owner/repo`                     |
+| `https://github.com/Owner/Repo.git`                | `owner/repo`                     |
+| `https://token@github.com/Owner/Repo.git`          | `owner/repo`, raw URL not logged |
+| `https://github.com/Owner/Repo/tree/main`          | reject                           |
+| `git@gitlab.com:Owner/Repo.git`                    | reject                           |
+| `https://github.enterprise.example/Owner/Repo.git` | reject in V1                     |
+
 ## Provider Runtime Compatibility
 
 The plan cannot assume every provider consumes the generated `--mcp-config`
@@ -1330,6 +1524,105 @@ The exact FastMCP call shape can follow the existing `mcp-server/src/tools/*`
 pattern. The important contract is that backend action type strings stay inside
 the adapter and normal agents see intent-shaped tool names.
 
+## Agent-Facing Examples
+
+These examples should be used to refine tool descriptions and regression tests.
+They are not extra product scope.
+
+### Example 1 - PR comment happy path
+
+Agent tool call:
+
+```json
+{
+  "pullRequestNumber": 42,
+  "body": "I checked the retry path. The new guard looks correct.",
+  "localAttemptId": "review-pr-42-retry-guard-comment"
+}
+```
+
+MCP maps to backend:
+
+```json
+{
+  "actionType": "github.pull_request_comment.create_top_level",
+  "payload": {
+    "pullRequestNumber": 42,
+    "body": "I checked the retry path. The new guard looks correct."
+  },
+  "localAttemptId": "review-pr-42-retry-guard-comment"
+}
+```
+
+Tool result:
+
+```json
+{
+  "ok": true,
+  "actionRequestId": "github-action:review-pr-42-retry-guard-comment:...",
+  "localAttemptId": "review-pr-42-retry-guard-comment",
+  "status": "queued",
+  "nextAction": "poll_status"
+}
+```
+
+### Example 2 - GitHub disconnected
+
+Tool result:
+
+```json
+{
+  "ok": false,
+  "localAttemptId": "review-pr-42-retry-guard-comment",
+  "safeError": {
+    "code": "HOSTED_GITHUB_INTEGRATION_UNAVAILABLE",
+    "message": "GitHub integration is not connected for this workspace.",
+    "retryable": false
+  },
+  "nextAction": "ask_user_to_connect_github"
+}
+```
+
+Agent should say:
+
+```text
+GitHub integration is not connected for this workspace, so I cannot comment through the GitHub App yet.
+```
+
+Agent should not:
+
+- ask the user for a GitHub token;
+- use `gh` unless the user explicitly asks for a manual local action;
+- retry the same mutation with a new `localAttemptId`.
+
+### Example 3 - Unknown provider result after mutation
+
+Tool result:
+
+```json
+{
+  "ok": false,
+  "actionRequestId": "github-action:review-pr-42-retry-guard-comment:...",
+  "localAttemptId": "review-pr-42-retry-guard-comment",
+  "safeError": {
+    "code": "HOSTED_GITHUB_UNKNOWN_RESULT",
+    "message": "GitHub may have accepted the action, but the final result is not confirmed yet.",
+    "retryable": false
+  },
+  "nextAction": "poll_status"
+}
+```
+
+Agent should call:
+
+```json
+{
+  "actionRequestId": "github-action:review-pr-42-retry-guard-comment:..."
+}
+```
+
+Agent should not submit another comment.
+
 ## Mapping To Backend Actions
 
 | MCP tool                      | Backend action type                            | Transport             |
@@ -1467,6 +1760,48 @@ async function submitWithGeneratedAttemptId(input: PublicToolInput) {
       nextAction: 'retry_same_local_attempt_id',
     };
   }
+}
+```
+
+## Async Ordering And Timeout Semantics
+
+GitHub actions are external side effects and should be treated as async even
+when the local HTTP submit path returns quickly.
+
+Rules:
+
+- mutating tools submit once and return `actionRequestId` as soon as the action
+  is accepted by desktop/control-plane;
+- tools may wait briefly for a final status only when the bridge already
+  supports it and `waitTimeoutMs` is within the shared cap;
+- agents should use `github_action_status` for follow-up instead of re-calling
+  mutation tools;
+- local timeouts before submit can recommend retry with the same
+  `localAttemptId`;
+- unknown result after submit must recommend polling.
+
+Recommended timeout normalization:
+
+```ts
+const DEFAULT_GITHUB_MCP_WAIT_TIMEOUT_MS = 10_000;
+const MIN_GITHUB_MCP_WAIT_TIMEOUT_MS = 1_000;
+const MAX_GITHUB_MCP_WAIT_TIMEOUT_MS = 600_000;
+
+function normalizeWaitTimeoutMs(value: number | undefined): number {
+  if (value === undefined) return DEFAULT_GITHUB_MCP_WAIT_TIMEOUT_MS;
+  if (!Number.isInteger(value)) return DEFAULT_GITHUB_MCP_WAIT_TIMEOUT_MS;
+  return Math.min(MAX_GITHUB_MCP_WAIT_TIMEOUT_MS, Math.max(MIN_GITHUB_MCP_WAIT_TIMEOUT_MS, value));
+}
+```
+
+Ordering guard:
+
+```ts
+if (submitResult.ok && submitResult.status !== 'succeeded') {
+  return {
+    ...submitResult,
+    nextAction: 'poll_status',
+  };
 }
 ```
 
@@ -1940,6 +2275,88 @@ Expected behavior:
 - mutating tools return `nextAction: 'poll_status'` or a retry-after guidance,
   never a tight retry loop.
 
+### FastMCP structured content support is assumed but not present
+
+Risk:
+
+- implementation may add `structuredContent` based on the MCP spec but the
+  installed FastMCP result type does not expose it.
+
+Expected behavior:
+
+- V1 returns JSON text plus `isError`;
+- tests parse `content[0].text` and validate the envelope;
+- add structured results only after verifying or upgrading the SDK in a separate
+  dependency-aware change.
+
+### Tool annotations are missing or treated as authorization
+
+Risk:
+
+- clients lose useful safety hints if annotations are absent;
+- engineers may incorrectly treat annotations as access control.
+
+Expected behavior:
+
+- every GitHub MCP tool has explicit annotations;
+- annotations are documented as hints only;
+- desktop/control-plane policy remains authoritative.
+
+### Remote URL contains credentials
+
+Risk:
+
+- `https://token@github.com/owner/repo.git` can appear in local git config.
+
+Expected behavior:
+
+- parser may normalize it to `owner/repo`;
+- diagnostics never include the raw remote;
+- test asserts credential-looking input does not appear in thrown errors or
+  logs.
+
+### Target cache is stale while offline
+
+Risk:
+
+- local cached repository targets may say enabled even after server-side revoke;
+- launch preflight may inject GitHub MCP while control-plane would reject.
+
+Expected behavior:
+
+- launch preflight can use cache only as UX hint;
+- every mutation goes through control-plane authorization;
+- stale cache failures return safe unavailable/target-disabled errors;
+- do not queue offline GitHub actions for later replay.
+
+### Action status id belongs to another workspace or run
+
+Risk:
+
+- agents may paste or hallucinate an `actionRequestId`.
+
+Expected behavior:
+
+- desktop/control-plane scopes status lookup by paired workspace/desktop token;
+- status endpoint never reveals cross-workspace repository names or provider
+  URLs;
+- status for unknown or unauthorized id returns a safe not-found error.
+
+### Check run name exceeds GitHub retention behavior
+
+Risk:
+
+- GitHub limits check runs with the same name in a suite and can delete older
+  runs after the limit is exceeded.
+
+Expected behavior:
+
+- check-run names should be stable and bounded;
+- high-frequency per-agent check names should include a product-level prefix and
+  avoid unbounded dynamic names;
+- if this cannot be guaranteed, defer `github_create_check_run` from the first
+  split.
+
 ## Security Rules
 
 - GitHub MCP never imports Octokit, GraphQL client, REST client, or GitHub SDK.
@@ -2038,6 +2455,21 @@ From GitHub official docs:
 - Check runs are REST API territory in the current backend. GitHub says
   managing check runs requires a GitHub App with `checks:write`; only GitHub
   Apps can write check runs through that REST path.
+- GitHub check run status has provider-specific constraints. Only GitHub
+  Actions can set some statuses such as `requested`, `waiting`, or `pending`,
+  so the MCP schema should expose only the statuses the GitHub App can set.
+- GitHub can delete older check runs when too many check runs share the same
+  name in a suite, so check-run naming needs bounded product semantics before
+  broad agent use.
+
+From MCP official docs:
+
+- tool execution errors should be returned as tool results with `isError`;
+- tool annotations are hints, not authorization;
+- `listChanged` exists, but V1 should not rely on dynamic tool list refresh
+  across provider clients;
+- structured content and `outputSchema` are useful, but must be matched to the
+  actual MCP SDK capabilities in this repository.
 
 Plan consequence:
 
@@ -2194,6 +2626,14 @@ Potentially defer:
 
 - `github_create_check_run`, if check run update semantics are not clear enough.
 
+Tool metadata requirements:
+
+- add MCP annotations for every tool;
+- make status tools read-only and idempotent;
+- make normal write tools additive and idempotent;
+- keep `github_raw_action_submit` destructive/non-idempotent;
+- return text JSON plus `isError` for safe failures.
+
 Tool-to-action mapper sketch:
 
 ```ts
@@ -2251,6 +2691,14 @@ type HostedGitHubActionCommandDraft = Omit<HostedGitHubActionCommandDto, 'target
 Do not weaken `HostedGitHubActionCommandDto` globally unless every downstream
 consumer is ready for missing `targetId`. The resolved command should stay
 strict.
+
+Remote parser hardening:
+
+- extract and directly test GitHub remote normalization from desktop HTTP route
+  logic;
+- accept common GitHub.com SSH/HTTPS forms;
+- reject non-GitHub.com hosts in V1;
+- scrub credentials from every diagnostic path.
 
 ### Step 5 - Add conditional injection
 
@@ -2418,6 +2866,17 @@ Add tests for:
   acceptance-criteria note;
 - GitHub rate-limit response maps to safe retry guidance without raw provider
   headers.
+- every GitHub MCP tool declares expected annotations;
+- FastMCP result helper supports `isError` and does not rely on unverified
+  `structuredContent`;
+- body schema rejects empty, oversized, NUL-containing, and reserved-marker
+  content before bridge submission;
+- wait timeout is clamped to the same min/max as existing MCP runtime tools;
+- remote parser accepts SSH/HTTPS GitHub.com forms and rejects GitHub Enterprise
+  in V1;
+- raw remotes with credentials are never logged;
+- status lookup for unknown/cross-workspace action id returns safe not-found;
+- stale target cache cannot authorize a mutation without control-plane approval.
 
 ### Step 9 - Smoke checks
 
@@ -2459,6 +2918,16 @@ Provider smoke:
 - OpenCode multi-server env attaches both managed servers when enabled;
 - disabling target while agent runs leaves tools listed but returns safe
   unavailable results.
+
+Live E2E guardrails:
+
+- live E2E must use an explicit sandbox repository allowlist;
+- never run live mutation smoke against arbitrary `origin`;
+- require a test installation/target created for the sandbox;
+- write a unique marker into the comment body and clean it up only if the
+  cleanup path is already product-supported;
+- record the GitHub App actor and agent attribution in the test artifact;
+- skip live E2E when credentials or sandbox allowlist are absent.
 
 ## Open Decisions
 
@@ -2518,6 +2987,17 @@ real teammate runtime in this repo and does not rely only on generated
 as a follow-up and keep acceptance criteria scoped to config-file MCP providers.
 Do not solve it by duplicating GitHub tools back into the core MCP.
 
+### Decision 8 - Should this phase upgrade FastMCP?
+
+Recommendation:
+
+No by default. The current installed FastMCP version already supports the two
+features needed for this split: annotations and `isError`. Latest is newer, but
+upgrading the MCP SDK changes the runtime surface for every existing core tool.
+Only upgrade if implementation proves a required feature is impossible on the
+current version, and make that upgrade a separate dependency commit with full
+MCP regression coverage.
+
 ## Implementation Quality Bar
 
 - No GitHub SDK dependencies in GitHub MCP.
@@ -2544,6 +3024,11 @@ Do not solve it by duplicating GitHub tools back into the core MCP.
 - Kill switch disables only GitHub MCP injection and never breaks core team MCP.
 - Unknown provider mutation results lead to polling/status guidance, not blind
   duplicate mutations.
+- Tool annotations are present and covered by tests.
+- Remote target parsing is extracted or otherwise unit-tested directly.
+- GitHub MCP does not require a FastMCP major upgrade unless explicitly proven.
+- Live E2E has a sandbox allowlist and cannot mutate arbitrary real
+  repositories by accident.
 
 ## Acceptance Criteria
 
@@ -2572,13 +3057,21 @@ The phase is complete when:
   tests, and UI diagnostics.
 - Live sandbox E2E proves at least one comment/review action reaches GitHub
   through GitHub App identity before marking the integration product-ready.
+- Tool annotations, safe `isError` failures, timeout caps, body validation, and
+  remote parsing behavior have regression tests.
+- FastMCP dependency decision is documented: stay on current version or upgrade
+  in a separate verified commit.
 
 ## References Checked
 
 - GitHub GraphQL mutations: <https://docs.github.com/en/graphql/reference/mutations>
 - GitHub REST checks guide:
   <https://docs.github.com/en/rest/guides/using-the-rest-api-to-interact-with-checks>
+- GitHub REST checks endpoints:
+  <https://docs.github.com/en/rest/checks>
 - MCP tools specification:
   <https://modelcontextprotocol.io/specification/2025-11-25/server/tools>
+- MCP schema reference:
+  <https://modelcontextprotocol.io/specification/2025-11-25/schema>
 - MCP draft tools specification:
   <https://modelcontextprotocol.io/specification/draft/server/tools>

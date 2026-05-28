@@ -154,6 +154,37 @@ Problems in current MCP shape:
   state.
 - Agent prompt does not yet teach when to use GitHub MCP tools.
 
+Weak spots studied in local code:
+
+- `TeamMcpConfigBuilder.isWriteMcpConfigOptions()` currently recognizes only
+  `mcpPolicy` and `controlApiBaseUrl`. If implementation passes only
+  `hostedGithub`, it will be misread as a `TeamMemberMcpPolicy`. The plan must
+  update this guard before using the new option.
+- `TeamMcpConfigBuilder.readAgentTeamsMcpLaunchSpec()` validates only the
+  `agent-teams` server entry. Optional GitHub MCP validation needs a separate
+  reader/preflight path and must not break disconnected launches.
+- Packaged MCP copy logic is hard-coded to `process.resourcesPath/mcp-server`
+  and `userData/mcp-server/<appVersion>`. A second MCP bundle needs a reusable
+  packaged server copy helper keyed by package/resource name.
+- `src/main/http/teams.ts` accepts optional `targetId` at the local HTTP
+  boundary, but `HostedGitHubActionCommandDto` still requires `targetId` after
+  resolution. The split between draft command and resolved command must stay
+  explicit.
+- `agent-teams-controller/src/mcpToolCatalog.js` registers
+  `hosted_github_action_submit/status` under the general runtime group. Removing
+  them must update catalog expectations and any generated tool references.
+- `mcp-server/src/agent-teams-controller.d.ts` currently exposes the hosted
+  GitHub bridge on `ControllerRuntimeApi`. New status/capability bridge methods
+  need matching type declarations.
+- Existing required MCP preflight tools do not include hosted GitHub tools, so
+  removing old GitHub tools from the core MCP should not break launch preflight.
+  GitHub MCP should have its own optional preflight when injected.
+- Existing hosted action request id is stable over
+  `localAttemptId + targetId + actionType + payloadFingerprint`. This is good
+  after target resolution, but dangerous if MCP hides `localAttemptId` and then
+  loses it on timeout. The MCP must generate the id before transport and include
+  it in timeout-safe responses.
+
 Migration inventory:
 
 | Current place                                    | Current responsibility                          | Target place                                       | Target responsibility                                                                       |
@@ -301,6 +332,53 @@ Bridge rules:
 - adapters are replaceable, so a hosted desktop bridge can later be swapped for
   a remote runtime bridge without rewriting tools.
 
+Illustrative shared bridge contracts:
+
+```ts
+type SafeToolError = Readonly<{
+  code: string;
+  message: string;
+  retryable: boolean;
+  category?: string;
+}>;
+
+type GitHubMcpActionResult = Readonly<
+  | {
+      ok: true;
+      actionRequestId: string;
+      localAttemptId: string;
+      status: 'queued' | 'dispatching' | 'processing' | 'succeeded';
+      githubUrl?: string;
+    }
+  | {
+      ok: false;
+      localAttemptId?: string;
+      safeError: SafeToolError;
+      guidance: string;
+    }
+>;
+
+type RuntimeIdentity = Readonly<{
+  teamName: string;
+  memberName: string;
+  runId: string;
+  runtimeSessionId: string;
+}>;
+
+type GitHubMcpSubmitActionInput = RuntimeIdentity &
+  Readonly<{
+    actionType: GitHubMcpBackendActionType;
+    payload: unknown;
+    localAttemptId: string;
+    targetId?: string;
+    correlationId?: string;
+  }>;
+```
+
+The `localAttemptId` is required at the bridge boundary even if the public MCP
+tool accepts it as optional. Tool adapters may generate it, but use cases should
+not accept a missing id.
+
 ## Package Shape
 
 ```text
@@ -355,6 +433,52 @@ Root scripts update:
 ```
 
 ## Tool Surface
+
+Common public parameters for mutating tools:
+
+```ts
+type GitHubMcpCommonMutationInput = Readonly<{
+  localAttemptId?: string;
+  targetId?: string;
+  correlationId?: string;
+  waitTimeoutMs?: number;
+
+  // Test and nonstandard-launcher fallback only. Normal launches fill these
+  // from env and fail if explicit values conflict with env.
+  teamName?: string;
+  runId?: string;
+  runtimeSessionId?: string;
+  memberName?: string;
+  claudeDir?: string;
+  controlUrl?: string;
+}>;
+```
+
+Common result:
+
+```ts
+type GitHubMcpSubmitToolResult = Readonly<{
+  ok: boolean;
+  actionRequestId?: string;
+  localAttemptId: string;
+  status?: string;
+  githubUrl?: string;
+  safeError?: SafeToolError;
+  nextAction:
+    | 'none'
+    | 'poll_status'
+    | 'retry_same_local_attempt_id'
+    | 'ask_user_to_connect_github'
+    | 'ask_user_to_enable_target';
+}>;
+```
+
+Tool implementation rule:
+
+- public schemas may make runtime identity optional for agent UX;
+- application use cases receive a fully resolved `RuntimeIdentity`;
+- explicit runtime fields are allowed only for tests/nonstandard launchers;
+- env/explicit conflicts fail closed before any local HTTP request.
 
 ### Tool 1 - `github_integration_status`
 
@@ -730,6 +854,50 @@ Fallback:
 - Keep explicit fields accepted for tests and nonstandard launchers.
 - If env and explicit values conflict, fail closed.
 
+Illustrative runtime identity resolver:
+
+```ts
+function resolveRuntimeIdentity(input: {
+  explicit: Partial<RuntimeIdentity>;
+  env: NodeJS.ProcessEnv;
+}): RuntimeIdentity {
+  const fromEnv = {
+    teamName: input.env.AGENT_TEAMS_RUNTIME_TEAM_NAME,
+    memberName: input.env.AGENT_TEAMS_RUNTIME_MEMBER_NAME,
+    runId: input.env.AGENT_TEAMS_RUNTIME_RUN_ID,
+    runtimeSessionId: input.env.AGENT_TEAMS_RUNTIME_SESSION_ID,
+  };
+
+  for (const key of Object.keys(fromEnv) as (keyof RuntimeIdentity)[]) {
+    const envValue = fromEnv[key]?.trim();
+    const explicitValue = input.explicit[key]?.trim();
+    if (envValue && explicitValue && envValue !== explicitValue) {
+      throw new Error(`Runtime identity conflict for ${key}`);
+    }
+  }
+
+  const resolved = {
+    teamName: input.explicit.teamName ?? fromEnv.teamName,
+    memberName: input.explicit.memberName ?? fromEnv.memberName,
+    runId: input.explicit.runId ?? fromEnv.runId,
+    runtimeSessionId: input.explicit.runtimeSessionId ?? fromEnv.runtimeSessionId,
+  };
+
+  if (!resolved.teamName || !resolved.memberName || !resolved.runId || !resolved.runtimeSessionId) {
+    throw new Error('GitHub MCP runtime identity is incomplete');
+  }
+  return resolved as RuntimeIdentity;
+}
+```
+
+Implementation note:
+
+- do not pass trusted attribution fields directly from agent text;
+- MCP can pass runtime identity, but desktop still validates the runtime is
+  alive and member exists;
+- avatar URL should come from trusted member metadata/env, not from the
+  user-authored GitHub comment body.
+
 ## Conditional Enablement
 
 GitHub MCP should be injected only when:
@@ -766,6 +934,48 @@ interface WriteMcpConfigOptions {
     };
   };
 }
+```
+
+Required guard update:
+
+```ts
+function isWriteMcpConfigOptions(value: unknown): value is WriteMcpConfigOptions {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    ('mcpPolicy' in value || 'controlApiBaseUrl' in value || 'hostedGithub' in value)
+  );
+}
+```
+
+Multi-server config sketch:
+
+```ts
+const generatedServers: Record<string, McpServerConfig> = Object.create(null);
+
+generatedServers['agent-teams'] = buildAgentTeamsServerConfig({
+  launchSpec: await resolveAgentTeamsMcpLaunchSpec(),
+  claudeDir,
+  controlApiBaseUrl,
+});
+
+if (options.hostedGithub?.enabled) {
+  generatedServers['agent-teams-github'] = buildGitHubMcpServerConfig({
+    launchSpec: await resolveAgentTeamsGitHubMcpLaunchSpec(),
+    claudeDir,
+    controlApiBaseUrl,
+    runtimeIdentity: options.hostedGithub.runtimeIdentity,
+  });
+}
+```
+
+Name collision rule:
+
+```ts
+const RESERVED_GENERATED_MCP_SERVER_NAMES = new Set(['agent-teams', 'agent-teams-github']);
+
+// readAllowlistedServers must skip every reserved generated name, not only
+// "agent-teams". User config should not override managed runtime bridges.
 ```
 
 Launch behavior:
@@ -894,6 +1104,45 @@ Agent rule of thumb:
 - do not retry mutating calls with a new `localAttemptId` after an unknown
   timeout.
 
+Illustrative tool adapter:
+
+```ts
+const githubCommentPullRequestTool = {
+  name: 'github_comment_pull_request',
+  parameters: z.object({
+    pullRequestNumber: z.number().int().positive(),
+    body: z.string().min(1).max(58_000),
+    localAttemptId: z.string().min(1).optional(),
+    targetId: z.string().min(1).optional(),
+    correlationId: z.string().min(1).optional(),
+  }),
+  execute: async (input) => {
+    const identity = resolveRuntimeIdentity({
+      explicit: {},
+      env: process.env,
+    });
+    const localAttemptId =
+      input.localAttemptId ?? createLocalAttemptId('github_comment_pull_request');
+
+    return submitGitHubIntent({
+      ...identity,
+      actionType: 'github.pull_request_comment.create_top_level',
+      localAttemptId,
+      payload: {
+        pullRequestNumber: input.pullRequestNumber,
+        body: input.body,
+      },
+      ...(input.targetId ? { targetId: input.targetId } : {}),
+      ...(input.correlationId ? { correlationId: input.correlationId } : {}),
+    });
+  },
+};
+```
+
+The exact FastMCP call shape can follow the existing `mcp-server/src/tools/*`
+pattern. The important contract is that backend action type strings stay inside
+the adapter and normal agents see intent-shaped tool names.
+
 ## Mapping To Backend Actions
 
 | MCP tool                      | Backend action type                            | Transport             |
@@ -945,6 +1194,95 @@ Open edge:
 - For high-risk future actions like commits/merge, backend should enforce
   stronger idempotency and state checks before enabling tools.
 
+Important local implementation fact:
+
+- desktop currently derives stable `requestId` from
+  `localAttemptId + targetId + actionType + payloadFingerprint`;
+- `targetId` is resolved before `submitAgentGithubAction()`, so auto-target
+  still participates in idempotency;
+- if MCP generates `localAttemptId`, it must do so before the HTTP call and
+  include it in all safe error responses, including timeout errors.
+
+Decision options for public `localAttemptId`:
+
+### Option A - Require `localAttemptId` in every mutating tool
+
+🎯 8 🛡️ 9 🧠 3
+
+Approx changes: 80-160 lines.
+
+Pros:
+
+- strongest retry story with current backend;
+- simplest semantics;
+- no hidden duplicate risk.
+
+Cons:
+
+- worse agent UX;
+- agents may invent unstable ids anyway.
+
+### Option B - Optional `localAttemptId`, MCP generates UUID and returns it
+
+🎯 8 🛡️ 7 🧠 4
+
+Approx changes: 120-240 lines.
+
+Pros:
+
+- better agent UX;
+- works for normal successful calls;
+- can return the generated id when the local HTTP call fails or times out.
+
+Cons:
+
+- if MCP process crashes before returning the safe error, the id may be lost;
+- agent retries can still duplicate if it ignores returned id.
+
+### Option C - Optional `localAttemptId`, MCP derives deterministic key from payload
+
+🎯 5 🛡️ 6 🧠 6
+
+Approx changes: 180-320 lines.
+
+Pros:
+
+- fewer duplicates after process-local crashes;
+- no id burden for agents.
+
+Cons:
+
+- two intended identical comments can collapse into one action;
+- hard to define stable but non-surprising dedupe semantics.
+
+Recommendation:
+
+Use Option B for V1, but make the application bridge require a resolved
+`localAttemptId`. Add tool descriptions that tell agents to reuse returned
+`localAttemptId` when retrying an unknown result.
+
+Illustrative timeout-safe flow:
+
+```ts
+async function submitWithGeneratedAttemptId(input: PublicToolInput) {
+  const localAttemptId = input.localAttemptId ?? `github-mcp:${crypto.randomUUID()}`;
+
+  try {
+    return await bridge.submitAction({
+      ...mapInput(input),
+      localAttemptId,
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      localAttemptId,
+      safeError: toSafeToolError(error),
+      nextAction: 'retry_same_local_attempt_id',
+    };
+  }
+}
+```
+
 ## Error Model
 
 MCP tools should return safe JSON, not raw stack traces.
@@ -986,6 +1324,48 @@ Do not expose:
 - full control-plane URL with credentials;
 - raw provider response body if it may include private repository names outside
   the enabled target.
+
+HTTP/local bridge error mapping:
+
+```ts
+function toSafeToolError(error: unknown): SafeToolError {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes('inactive or stale runtime')) {
+    return {
+      code: 'AGENT_TEAMS_RUNTIME_STALE',
+      message: 'This agent runtime is no longer active.',
+      retryable: false,
+    };
+  }
+  if (message.includes('no enabled GitHub target matches')) {
+    return {
+      code: 'HOSTED_GITHUB_TARGET_NOT_ENABLED',
+      message: 'No enabled GitHub repository target matches this local project.',
+      retryable: false,
+    };
+  }
+  if (message.includes('local project GitHub remote is unknown')) {
+    return {
+      code: 'HOSTED_GITHUB_REMOTE_UNKNOWN',
+      message: 'The local project GitHub remote could not be resolved.',
+      retryable: false,
+    };
+  }
+  return {
+    code: 'HOSTED_GITHUB_ACTION_FAILED',
+    message: 'GitHub action could not be submitted safely.',
+    retryable: true,
+  };
+}
+```
+
+Implementation note:
+
+- use code-based errors when the bridge exposes them;
+- string matching is acceptable only as a temporary adapter around existing
+  local HTTP errors;
+- do not show the raw local project path in safe MCP output unless the user is
+  already operating inside that project path.
 
 ## Edge Cases
 
@@ -1103,6 +1483,91 @@ Expected behavior:
 - Agent should not ask for tokens or use `gh` for product-path actions unless
   user explicitly asks for local manual operation outside GitHub App identity.
 
+### Packaged app has one copied MCP bundle but source adds two
+
+Risk:
+
+- current packaged copy helper is specific to `mcp-server`;
+- adding `mcp-servers/github` without packaging changes can work in dev and fail
+  only after release packaging.
+
+Expected behavior:
+
+- create a reusable packaged MCP resolver that accepts resource name and package
+  name;
+- copy each bundle to an independent versioned stable directory;
+- validate both `index.js` and `package.json`;
+- packaged app should fail GitHub MCP injection safely if the optional bundle is
+  missing, without breaking `agent-teams` MCP.
+
+### Strict MCP allowlist contains a user server named `agent-teams-github`
+
+Expected behavior:
+
+- managed server names are reserved;
+- generated `agent-teams-github` wins;
+- user-configured server with the same name is ignored and logged at debug/warn
+  level;
+- no user MCP config can override the managed GitHub runtime bridge.
+
+### MCP config is regenerated after auth failure or stale file cleanup
+
+Risk:
+
+- existing regeneration paths may call `writeConfigFile()` with only old
+  options, losing `hostedGithub` injection state.
+
+Expected behavior:
+
+- persist enough launch context to regenerate the same managed server set;
+- if context is unavailable, regenerate only core `agent-teams` and tell the UI
+  teammate restart is required to regain GitHub tools.
+
+### GitHub MCP is injected but optional preflight fails
+
+Expected behavior:
+
+- core `agent-teams` preflight remains mandatory;
+- GitHub MCP preflight is mandatory only when `hostedGithub.enabled=true`;
+- if GitHub preflight fails, launch should fail with an actionable diagnostic
+  instead of silently launching an agent whose prompt mentions missing tools.
+
+### Runtime local remote changes while teammate is running
+
+Expected behavior:
+
+- launch-time injection is only a convenience preflight;
+- every mutating call still resolves current `remote.origin.url`;
+- if the remote no longer matches exactly one enabled target, fail closed.
+
+### `origin` points to a fork but user wants to comment on upstream PR
+
+Expected behavior:
+
+- V1 auto-target binds to local `origin`;
+- do not infer upstream/base repository from PR text;
+- user should enable the repository that matches the local working copy or wait
+  for an explicit advanced target selection flow.
+
+### Status polling after runtime becomes stale
+
+Expected behavior:
+
+- status polling may remain allowed because the action can outlive the runtime;
+- new mutation must still reject stale runtime;
+- status response must be scoped by desktop workspace/control-plane actor and
+  never by an arbitrary action id alone.
+
+### Old core MCP GitHub tools remain while new GitHub MCP is injected
+
+Expected behavior:
+
+- prompt prefers `agent-teams-github` tools;
+- old tools are marked deprecated;
+- tests verify the old low-level submit has optional `targetId` until removal;
+- removal is a later compatibility step after no launch prompt references old
+  names.
+
 ## Security Rules
 
 - GitHub MCP never imports Octokit, GraphQL client, REST client, or GitHub SDK.
@@ -1125,6 +1590,31 @@ Expected behavior:
   - action payload;
   - outbox idempotency.
 
+## External API Constraints Checked
+
+From GitHub official docs:
+
+- GraphQL has mutations for issue/PR comments and PR reviews:
+  `addComment`, `addPullRequestReview`, and related review-thread mutations.
+- GraphQL has future mutations for `createPullRequest`,
+  `createCommitOnBranch`, and `mergePullRequest`, but these should remain future
+  backend action types, not part of this split.
+- `createCommitOnBranch` authors commits as the credential owner and does not
+  support custom author/committer. That matters for future "push commits"
+  product UX.
+- Check runs are REST API territory in the current backend. GitHub says
+  managing check runs requires a GitHub App with `checks:write`; only GitHub
+  Apps can write check runs through that REST path.
+
+Plan consequence:
+
+- keep comment/review/check-run wrapper tools aligned to existing backend
+  dispatchers;
+- do not add create PR, merge, approve, request changes, or commit tools until
+  backend action types and permission policies exist;
+- mention in future plans that commit authorship will be the GitHub App
+  credential identity, not arbitrary agent/user identity.
+
 ## Migration Plan
 
 ### Step 1 - Add package scaffold
@@ -1142,6 +1632,38 @@ pnpm --filter agent-teams-github-mcp test
 pnpm --filter agent-teams-github-mcp build
 ```
 
+### Step 1.5 - Generalize MCP launch spec resolution
+
+Before wiring GitHub MCP into launch config, extract reusable helpers from
+`TeamMcpConfigBuilder`:
+
+```ts
+type ManagedMcpServerId = 'agent-teams' | 'agent-teams-github';
+
+interface ManagedMcpServerDescriptor {
+  id: ManagedMcpServerId;
+  packageDir: string;
+  resourceDirName: string;
+  packageName: string;
+}
+
+async function resolveManagedMcpLaunchSpec(
+  descriptor: ManagedMcpServerDescriptor,
+  options?: McpLaunchSpecResolveOptions
+): Promise<McpLaunchSpec> {
+  // same dev/source/built/packaged fallback order as agent-teams today,
+  // but parameterized by packageDir and resourceDirName.
+}
+```
+
+Guardrails:
+
+- keep `resolveAgentTeamsMcpLaunchSpec()` as a thin wrapper for compatibility;
+- add `resolveAgentTeamsGitHubMcpLaunchSpec()`;
+- keep Node 24 runtime validation shared;
+- do not make GitHub MCP package resolution a dependency of core MCP launch when
+  `hostedGithub.enabled=false`.
+
 ### Step 2 - Extract GitHub MCP bridge port
 
 Add a small port in GitHub MCP:
@@ -1158,6 +1680,34 @@ Implement with `agent-teams-controller.runtime.hostedGithubActionSubmit`.
 
 No direct GitHub or control-plane imports.
 
+Bridge adapter sketch:
+
+```ts
+export class AgentTeamsControllerGitHubBridge implements RuntimeGitHubBridge {
+  constructor(private readonly controllerFactory: ControllerFactory) {}
+
+  async submitAction(input: GitHubMcpSubmitActionInput) {
+    const controller = this.controllerFactory.create({
+      teamName: input.teamName,
+      claudeDir: input.claudeDir,
+    });
+
+    return controller.runtime.hostedGithubActionSubmit({
+      actionType: input.actionType,
+      payload: input.payload,
+      localAttemptId: input.localAttemptId,
+      runId: input.runId,
+      runtimeSessionId: input.runtimeSessionId,
+      memberName: input.memberName,
+      ...(input.targetId ? { targetId: input.targetId } : {}),
+      ...(input.correlationId ? { correlationId: input.correlationId } : {}),
+      ...(input.controlUrl ? { controlUrl: input.controlUrl } : {}),
+      ...(input.waitTimeoutMs ? { waitTimeoutMs: input.waitTimeoutMs } : {}),
+    });
+  }
+}
+```
+
 ### Step 3 - Add GitHub MCP tools
 
 Implement:
@@ -1173,6 +1723,40 @@ Potentially defer:
 
 - `github_create_check_run`, if check run update semantics are not clear enough.
 
+Tool-to-action mapper sketch:
+
+```ts
+function mapIntentToAction(input: GitHubIntent): GitHubBackendAction {
+  switch (input.kind) {
+    case 'commentIssue':
+      return {
+        actionType: 'github.issue_comment.create',
+        payload: {
+          issueNumber: input.issueNumber,
+          body: input.body,
+        },
+      };
+    case 'commentPullRequest':
+      return {
+        actionType: 'github.pull_request_comment.create_top_level',
+        payload: {
+          pullRequestNumber: input.pullRequestNumber,
+          body: input.body,
+        },
+      };
+    case 'reviewPullRequest':
+      return {
+        actionType: 'github.pull_request_review.create',
+        payload: {
+          pullRequestNumber: input.pullRequestNumber,
+          body: input.body,
+          event: 'COMMENT',
+        },
+      };
+  }
+}
+```
+
 ### Step 4 - Make `targetId` optional end-to-end
 
 Required changes:
@@ -1181,6 +1765,21 @@ Required changes:
 - `agent-teams-github-mcp`: all normal tools use optional `targetId`.
 - `agent-teams-controller` runtime bridge should omit `targetId` when undefined.
 - desktop bridge already supports optional target after auto-target work.
+
+Contract split:
+
+```ts
+type HostedGitHubActionCommandDraft = Omit<HostedGitHubActionCommandDto, 'targetId'> & {
+  readonly targetId?: string;
+};
+
+// local HTTP accepts draft, then resolveHostedGitHubActionCommandTarget()
+// returns the canonical HostedGitHubActionCommandDto with targetId required.
+```
+
+Do not weaken `HostedGitHubActionCommandDto` globally unless every downstream
+consumer is ready for missing `targetId`. The resolved command should stay
+strict.
 
 ### Step 5 - Add conditional injection
 
@@ -1202,6 +1801,32 @@ if (hostedGithub.enabled) {
 
 Inputs should come from launch-time hosted integration state and repository
 target preflight.
+
+Preflight helper sketch:
+
+```ts
+type HostedGitHubLaunchState =
+  | { enabled: false; reason: string }
+  | {
+      enabled: true;
+      target: {
+        targetId: string;
+        displayFullName: string;
+      };
+      runtimeIdentity: RuntimeIdentity;
+    };
+
+async function resolveHostedGitHubLaunchState(input: {
+  teamName: string;
+  memberName: string;
+  runId: string;
+  runtimeSessionId: string;
+  projectPath: string;
+}): Promise<HostedGitHubLaunchState> {
+  // Use cached state for UX, but never as final authorization.
+  // Final target resolution still happens on every mutation call.
+}
+```
 
 ### Step 6 - Update provisioning prompt
 
@@ -1225,6 +1850,13 @@ Later:
 
 - remove after tests and prompts no longer reference them.
 
+Deprecation sequencing:
+
+1. new GitHub MCP added and prompt prefers new tools;
+2. old tools kept in core MCP with optional `targetId`;
+3. telemetry/log search verifies no generated prompt references old names;
+4. remove old tools and remove them from `AGENT_TEAMS_RUNTIME_TOOL_NAMES`.
+
 ### Step 8 - Tests
 
 Add tests for:
@@ -1241,6 +1873,13 @@ Add tests for:
 - GitHub MCP present when connected and enabled target exists;
 - old low-level MCP tools still work during compatibility window;
 - prompt includes GitHub block only when GitHub MCP is injected.
+- `isWriteMcpConfigOptions()` recognizes `hostedGithub`-only input;
+- strict allowlist cannot override `agent-teams-github`;
+- packaged launch spec can resolve both MCP bundles independently;
+- preflight still passes when GitHub is disconnected;
+- GitHub preflight fails launch only when GitHub MCP was meant to be injected;
+- optional `targetId` is omitted from controller call when not supplied;
+- generated `localAttemptId` is returned in timeout-safe failures.
 
 ### Step 9 - Smoke checks
 
@@ -1297,6 +1936,22 @@ No for V1 normal tools. The app resolves current repository from local Git
 remote and enabled target. Add explicit owner/repo only for future admin tools
 and keep backend verification authoritative.
 
+### Decision 5 - Should GitHub MCP status call require live runtime identity?
+
+Recommendation:
+
+No for status polling, yes for mutations. Status should be scoped by desktop
+workspace/control-plane auth and action id. Mutations must require live runtime
+identity because they create new external side effects with agent attribution.
+
+### Decision 6 - Should GitHub MCP launch be mandatory if connected preflight is inconclusive?
+
+Recommendation:
+
+No. If launch-time target preflight cannot prove a single enabled repository,
+do not inject GitHub MCP. The user can restart after fixing integration state.
+This avoids prompting agents to use tools that are likely to fail.
+
 ## Implementation Quality Bar
 
 - No GitHub SDK dependencies in GitHub MCP.
@@ -1307,6 +1962,14 @@ and keep backend verification authoritative.
 - All mutating tools return status and status-check guidance.
 - GitHub MCP package can build and test independently.
 - Existing board/task MCP behavior remains unchanged.
+- Generated managed MCP server names are reserved and cannot be overridden by
+  user MCP config.
+- GitHub MCP launch spec resolution is optional when disconnected and mandatory
+  only when injection was requested.
+- Generated `localAttemptId` is available to the agent even on safe transport
+  failures.
+- Status polling and mutation submission have separate authorization/liveness
+  expectations.
 
 ## Acceptance Criteria
 
@@ -1323,3 +1986,14 @@ The phase is complete when:
 - GitHub disconnected launch does not expose GitHub MCP tools.
 - GitHub connected launch exposes GitHub MCP tools and status tool returns
   safe capabilities.
+- Packaged app has both MCP bundles copied/resolved in a stable way.
+- `agent-teams` MCP launch still works if GitHub MCP bundle is absent and GitHub
+  integration is not enabled.
+- Old low-level GitHub tools are either deprecated with compatibility tests or
+  removed only after prompts/tests stop referencing them.
+
+## References Checked
+
+- GitHub GraphQL mutations: <https://docs.github.com/en/graphql/reference/mutations>
+- GitHub REST checks guide:
+  <https://docs.github.com/en/rest/guides/using-the-rest-api-to-interact-with-checks>

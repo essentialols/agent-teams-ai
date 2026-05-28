@@ -594,6 +594,19 @@ function validateCrossFieldConfig(
       path: ["CONTROL_PLANE_PUBLIC_BASE_URL"],
     });
   }
+  if (
+    raw.NODE_ENV === "production" &&
+    raw.CONTROL_PLANE_MODE !== "local-disabled" &&
+    raw.CONTROL_PLANE_GITHUB_GRAPHQL_ENDPOINT !== undefined &&
+    !raw.CONTROL_PLANE_GITHUB_GRAPHQL_ENDPOINT.startsWith("https://")
+  ) {
+    issues.push({
+      code: "invalid",
+      message:
+        "CONTROL_PLANE_GITHUB_GRAPHQL_ENDPOINT must use https in production hosted modes.",
+      path: ["CONTROL_PLANE_GITHUB_GRAPHQL_ENDPOINT"],
+    });
+  }
 
   return issues;
 }

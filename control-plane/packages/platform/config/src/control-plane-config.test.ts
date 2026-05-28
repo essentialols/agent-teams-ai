@@ -393,6 +393,16 @@ describe("loadControlPlaneConfig", () => {
       }),
     ).toThrow(ControlPlaneConfigError);
   });
+
+  it("requires https GitHub GraphQL endpoint overrides in production hosted modes", () => {
+    expect(() =>
+      loadControlPlaneConfig({
+        ...hostedBaseEnv(),
+        CONTROL_PLANE_GITHUB_GRAPHQL_ENDPOINT: "http://github.example/graphql",
+        NODE_ENV: "production",
+      }),
+    ).toThrow(ControlPlaneConfigError);
+  });
 });
 
 function hostedBaseEnv(): NodeJS.ProcessEnv {

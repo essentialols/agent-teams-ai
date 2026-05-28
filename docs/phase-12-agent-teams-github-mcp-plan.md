@@ -184,6 +184,29 @@ Weak spots studied in local code:
   after target resolution, but dangerous if MCP hides `localAttemptId` and then
   loses it on timeout. The MCP must generate the id before transport and include
   it in timeout-safe responses.
+- Root `package.json` packages only `mcp-server/dist/index.js` and
+  `mcp-server/package.json` under `extraResources`. A new
+  `mcp-servers/github` package will not ship in packaged builds unless
+  `extraResources`, `prebuild`, `typecheck:workspace`, `build:workspace`,
+  `test:workspace`, and lint scripts are updated.
+- OpenCode runtime integration is not only `--mcp-config`. The desktop injects
+  core Agent Teams MCP into OpenCode through
+  `CLAUDE_MULTIMODEL_AGENT_TEAMS_MCP_*` env and the orchestrator
+  `OpenCodeMcpManager`, which currently owns one app MCP server name:
+  `agent-teams`. A separate GitHub MCP needs an explicit OpenCode path or the
+  feature will work for Claude-style MCP config but not for OpenCode teammates.
+- `AgentTeamsMcpHttpServer` starts one app-owned HTTP MCP process with one
+  launch spec and identity hash. If GitHub MCP should be available through the
+  OpenCode HTTP bridge, it needs a multi-managed-server model or a deliberate
+  decision to keep GitHub MCP stdio/local-config only for V1.
+- Current MCP utility `jsonTextContent()` serializes JSON as text but does not
+  mark tool-level failures with `isError`. MCP spec recommends tool-originated
+  errors be reported in the tool result, not as protocol-level JSON-RPC errors.
+  GitHub MCP should add a safe result helper that can set `isError` for failed
+  external actions when supported by FastMCP.
+- Existing auth-retry MCP config regeneration calls `writeConfigFile()` with
+  only `controlApiBaseUrl`, so it would drop GitHub MCP injection after a
+  regenerated config unless launch-time GitHub context is persisted on the run.
 
 Migration inventory:
 
@@ -431,6 +454,43 @@ Root scripts update:
   "lint:github-mcp": "pnpm --filter agent-teams-github-mcp lint"
 }
 ```
+
+Packaged resource update:
+
+```json
+{
+  "build": {
+    "extraResources": [
+      {
+        "from": "mcp-server/dist/index.js",
+        "to": "mcp-server/index.js"
+      },
+      {
+        "from": "mcp-server/package.json",
+        "to": "mcp-server/package.json"
+      },
+      {
+        "from": "mcp-servers/github/dist/index.js",
+        "to": "mcp-servers/github/index.js"
+      },
+      {
+        "from": "mcp-servers/github/package.json",
+        "to": "mcp-servers/github/package.json"
+      }
+    ]
+  }
+}
+```
+
+Release-bundle rule:
+
+- source/dev launch may resolve from workspace package directories;
+- packaged launch must resolve from `process.resourcesPath`;
+- a missing GitHub MCP packaged resource disables GitHub MCP injection only;
+- a missing core `agent-teams` packaged resource remains a launch-blocking
+  error;
+- tests should assert the package config contains both resource groups so this
+  does not regress only in signed builds.
 
 ## Tool Surface
 
@@ -1028,6 +1088,133 @@ UX consequences:
   MCP client;
 - status tool gives agents a safe explanation instead of leaking backend state.
 
+## Provider Runtime Compatibility
+
+The plan cannot assume every provider consumes the generated `--mcp-config`
+file. Local code has at least two runtime paths:
+
+| Runtime path                  | Current shape                                                               | GitHub MCP risk                                       |
+| ----------------------------- | --------------------------------------------------------------------------- | ----------------------------------------------------- |
+| Claude-style local MCP config | generated config can include multiple `mcpServers`                          | straightforward multi-server injection                |
+| OpenCode app MCP bridge       | desktop exports `CLAUDE_MULTIMODEL_AGENT_TEAMS_MCP_*` for one app-owned MCP | GitHub MCP is invisible unless bridge supports two    |
+| Other provider adapters       | may reuse config file, env bridge, or provider-specific launch arguments    | must be verified before claiming full provider parity |
+
+Top 3 implementation options:
+
+### Option 1 - Multi-managed OpenCode app MCP servers
+
+🎯 8 🛡️ 8 🧠 7
+
+Approx changes: 350-700 lines.
+
+Extend desktop and orchestrator OpenCode integration from one hard-coded
+`agent-teams` app MCP server to a list of managed app MCP servers. Keep the
+legacy env for backward compatibility and add a new JSON env for multiple
+servers.
+
+Illustrative env contract:
+
+```ts
+type ManagedOpenCodeMcpServerEnvSpec = Readonly<{
+  name: 'agent-teams' | 'agent-teams-github';
+  command?: string;
+  args?: readonly string[];
+  env?: Readonly<Record<string, string>>;
+  remoteUrl?: string;
+}>;
+
+const OPEN_CODE_MANAGED_MCP_SERVERS_ENV = 'CLAUDE_MULTIMODEL_APP_MCP_SERVERS_JSON';
+```
+
+Compatibility rule:
+
+- if `CLAUDE_MULTIMODEL_APP_MCP_SERVERS_JSON` exists, OpenCode uses the list;
+- else fallback to the current `CLAUDE_MULTIMODEL_AGENT_TEAMS_MCP_*` env;
+- the `agent-teams` entry stays mandatory;
+- `agent-teams-github` is optional and appears only when launch preflight
+  enables it.
+
+Recommendation:
+
+Use this if Phase 12 should be complete for OpenCode teammates too.
+
+### Option 2 - Config-file providers first, OpenCode explicit follow-up
+
+🎯 6 🛡️ 7 🧠 3
+
+Approx changes: 120-250 lines.
+
+Implement the separate GitHub MCP only for providers that receive generated MCP
+config. Mark OpenCode support as unsupported in the plan and UI copy until the
+OpenCode bridge is upgraded.
+
+Pros:
+
+- fastest delivery;
+- avoids cross-repo orchestrator changes in this phase.
+
+Cons:
+
+- feature is not fully available to all agents;
+- easy to overclaim "GitHub integration works" while OpenCode agents still have
+  only the core MCP.
+
+### Option 3 - Keep GitHub tools inside core MCP for OpenCode only
+
+🎯 4 🛡️ 5 🧠 5
+
+Approx changes: 250-450 lines.
+
+Keep the separate GitHub MCP for config-file providers but duplicate or expose
+GitHub tools through the core `agent-teams` MCP when the runtime is OpenCode.
+
+Pros:
+
+- avoids changing OpenCode app MCP manager.
+
+Cons:
+
+- violates the single-responsibility goal;
+- creates provider-specific tool surfaces;
+- doubles test matrix and makes future Telegram/Slack splits harder.
+
+Recommendation:
+
+Prefer Option 1 for architectural correctness. If the implementation budget is
+tight, choose Option 2 explicitly and do not call the feature complete for
+OpenCode. Avoid Option 3.
+
+## MCP Tool List Lifecycle
+
+MCP supports `tools/list` and optional tool-list changed notifications, but
+client support and provider refresh behavior vary. The latest stable MCP tools
+spec defines `listChanged` and tool execution errors with `isError`; the current
+draft also tightens stateful tool guidance. For V1, use process launch as the
+stable visibility boundary.
+
+Tool visibility states:
+
+```ts
+type GitHubMcpVisibility =
+  | 'not_in_config'
+  | 'configured_not_started'
+  | 'visible_after_restart'
+  | 'visible_active'
+  | 'listed_but_policy_disabled';
+```
+
+Rules:
+
+- do not depend on `notifications/tools/list_changed` for GitHub connect or
+  disconnect;
+- connect/enable target affects next teammate launch or restart;
+- disconnect/disable target affects policy immediately but may leave listed
+  tools visible until restart;
+- listed-but-disabled tools must return safe unavailable results, not attempt
+  provider calls;
+- prompt injection must follow the same launch decision that generated the MCP
+  config.
+
 ## Agent Prompt Additions
 
 Only add this block when GitHub MCP is injected:
@@ -1366,6 +1553,55 @@ Implementation note:
   local HTTP errors;
 - do not show the raw local project path in safe MCP output unless the user is
   already operating inside that project path.
+- expected tool failures should return MCP tool results with `isError: true`
+  when the SDK supports it, not throw JSON-RPC protocol errors;
+- protocol errors are reserved for malformed tool wiring, unsupported tool
+  names, invalid JSON-RPC, or other conditions where the MCP call itself cannot
+  be handled.
+
+Safe MCP result helper:
+
+```ts
+type JsonToolResult = Readonly<{
+  content: readonly [{ type: 'text'; text: string }];
+  isError?: boolean;
+}>;
+
+function jsonToolResult(value: unknown, options: { isError?: boolean } = {}): JsonToolResult {
+  return {
+    content: [{ type: 'text', text: JSON.stringify(value, null, 2) }],
+    ...(options.isError ? { isError: true } : {}),
+  };
+}
+
+function githubToolSuccess(value: GitHubMcpSubmitToolResult): JsonToolResult {
+  return jsonToolResult(value);
+}
+
+function githubToolFailure(value: GitHubMcpSubmitToolResult): JsonToolResult {
+  return jsonToolResult(value, { isError: true });
+}
+```
+
+Failure taxonomy:
+
+| Code family                       | `retryable` | `nextAction`                       |
+| --------------------------------- | ----------- | ---------------------------------- |
+| `HOSTED_GITHUB_INTEGRATION_*`     | false       | `ask_user_to_connect_github`       |
+| `HOSTED_GITHUB_TARGET_*`          | false       | `ask_user_to_enable_target`        |
+| `AGENT_TEAMS_RUNTIME_STALE`       | false       | `none`                             |
+| `HOSTED_GITHUB_VALIDATION_FAILED` | false       | `none`                             |
+| `HOSTED_GITHUB_RATE_LIMITED`      | true        | `poll_status` or retry after delay |
+| `HOSTED_GITHUB_UNKNOWN_RESULT`    | false       | `poll_status`                      |
+| `HOSTED_GITHUB_TRANSPORT_TIMEOUT` | true        | `retry_same_local_attempt_id`      |
+| `HOSTED_GITHUB_ACTION_FAILED`     | true        | `retry_same_local_attempt_id`      |
+
+Important guard:
+
+- if backend or dispatcher returns an unknown mutation result after reaching
+  GitHub, the tool should not tell the agent to submit a new mutation. It should
+  return `nextAction: 'poll_status'` with the same `actionRequestId` when
+  available.
 
 ## Edge Cases
 
@@ -1568,6 +1804,142 @@ Expected behavior:
 - removal is a later compatibility step after no launch prompt references old
   names.
 
+### OpenCode teammate gets only the core app MCP bridge
+
+Risk:
+
+- Claude-style providers can see `agent-teams-github` through generated MCP
+  config, but OpenCode still receives only the single hard-coded
+  `agent-teams` app MCP server.
+
+Expected behavior:
+
+- either implement multi-managed OpenCode MCP servers in the same phase;
+- or explicitly mark GitHub MCP unsupported for OpenCode in acceptance criteria
+  and UI/status copy until that bridge is upgraded;
+- do not silently claim GitHub MCP availability for OpenCode if the tool list
+  cannot expose it.
+
+### OpenCode app MCP HTTP bridge reuses stale identity hash
+
+Risk:
+
+- the app-owned HTTP MCP server has launch spec and identity hash reuse logic;
+- adding a second managed server or new env shape can accidentally reuse an old
+  handle without the GitHub MCP entry.
+
+Expected behavior:
+
+- identity hash includes the managed MCP server list, command, args, env, and
+  remote URL values after secret redaction;
+- changing GitHub MCP enabled state forces reattach/restart for the app MCP
+  bridge;
+- stale handle diagnostics include safe server names and reason codes only.
+
+### Packaged app resource exists in source but not in signed bundle
+
+Risk:
+
+- dev works because workspace paths exist;
+- packaged build fails only for installed users.
+
+Expected behavior:
+
+- packaged smoke validates both `mcp-server/index.js` and
+  `mcp-servers/github/index.js`;
+- optional GitHub MCP missing results in
+  `github_mcp_injection_skipped:bundle_missing`;
+- core teammate launch remains healthy when GitHub integration is disconnected.
+
+### MCP tool-list changed notifications are unsupported by a client
+
+Risk:
+
+- a provider may ignore `notifications/tools/list_changed` even if the server
+  can emit it.
+
+Expected behavior:
+
+- no V1 behavior relies on dynamic tool refresh;
+- UI and prompt copy use restart/relaunch as the supported path;
+- future dynamic refresh work must be provider-tested separately.
+
+### Auth retry regenerates MCP config without GitHub context
+
+Risk:
+
+- auth retry or stale config cleanup regenerates MCP config with only
+  `controlApiBaseUrl`, dropping `hostedGithub` options.
+
+Expected behavior:
+
+- launch context persists a redacted `hostedGithub` decision for config
+  regeneration;
+- if regeneration cannot prove the original GitHub context, it writes only core
+  MCP and returns a restart-required diagnostic;
+- tests cover a `hostedGithub`-only `WriteMcpConfigOptions` input.
+
+### Tool throws JSON-RPC error for expected GitHub failure
+
+Risk:
+
+- agents and clients may treat protocol errors as broken tooling instead of an
+  actionable integration state.
+
+Expected behavior:
+
+- expected failures return safe JSON with `isError: true`;
+- protocol throws are limited to malformed internal wiring or impossible
+  request handling;
+- every expected failure includes `safeError.code`, `retryable`, and
+  `nextAction`.
+
+### Provider result is unknown after GitHub mutation
+
+Risk:
+
+- GitHub accepted a comment/review/check-run request but the network failed
+  before the dispatcher confirmed the provider URL.
+
+Expected behavior:
+
+- backend marks request as unknown or processing, not immediate blind failure;
+- MCP returns `nextAction: 'poll_status'` if `actionRequestId` exists;
+- agent must not resubmit with a new `localAttemptId`;
+- backend idempotency must return the same request when the same
+  `localAttemptId` is retried.
+
+### Check run update needs a safe public contract
+
+Risk:
+
+- backend may store a GitHub check run id internally, but the agent-facing tool
+  cannot safely accept arbitrary `checkRunId` from model text.
+
+Expected behavior:
+
+- V1 either create-only check runs or updates only by backend-owned existing
+  action state;
+- do not expose raw `checkRunId` until backend validates ownership by target,
+  head SHA, check name, and previous action request;
+- if update semantics are unclear, defer `github_create_check_run` from the
+  first split and keep the plan honest.
+
+### GitHub rate limit or abuse detection
+
+Risk:
+
+- repeated agent actions can hit GitHub rate limits or secondary abuse
+  protection.
+
+Expected behavior:
+
+- backend maps rate limit headers and retry hints into safe status details;
+- MCP exposes only safe `retryAfterMs` and generic code, not raw provider
+  headers;
+- mutating tools return `nextAction: 'poll_status'` or a retry-after guidance,
+  never a tight retry loop.
+
 ## Security Rules
 
 - GitHub MCP never imports Octokit, GraphQL client, REST client, or GitHub SDK.
@@ -1589,6 +1961,67 @@ Expected behavior:
   - repository installation access;
   - action payload;
   - outbox idempotency.
+
+## Observability And Rollback
+
+Diagnostics should make the split debuggable without leaking secrets or private
+repository data.
+
+Safe diagnostic events:
+
+```text
+github_mcp_launch_state_resolved
+github_mcp_injection_skipped:<reason>
+github_mcp_bundle_missing
+github_mcp_preflight_failed:<safeCode>
+github_mcp_runtime_identity_conflict
+github_mcp_action_submit_failed:<safeCode>
+github_mcp_action_unknown_result
+github_mcp_action_status_failed:<safeCode>
+```
+
+Allowed diagnostic fields:
+
+- managed MCP server name;
+- boolean connected/enabled flags;
+- safe reason code;
+- provider family name, for example `github.com`;
+- target display name only when it is already visible in the UI;
+- action type string;
+- action request id;
+- generated `localAttemptId`;
+- safe retry-after milliseconds.
+
+Never log:
+
+- GitHub installation token;
+- desktop/control-plane tokens;
+- raw `Authorization` headers;
+- remotes with embedded credentials;
+- full provider error body;
+- arbitrary environment dumps.
+
+Kill switch:
+
+```text
+AGENT_TEAMS_GITHUB_MCP_DISABLE=1
+```
+
+Kill-switch behavior:
+
+- disables only `agent-teams-github` injection;
+- leaves core `agent-teams` MCP and board/task tools intact;
+- old compatibility tools remain available only if they are still intentionally
+  shipped;
+- prompt block is omitted;
+- diagnostic reason is `github_mcp_injection_skipped:kill_switch`.
+
+Rollback plan:
+
+1. Disable GitHub MCP injection through env/config kill switch.
+2. Keep backend/control-plane GitHub actions untouched.
+3. Keep deprecated core low-level tools for one compatibility window.
+4. Re-enable after fixing packaging/runtime bridge issues.
 
 ## External API Constraints Checked
 
@@ -1617,12 +2050,50 @@ Plan consequence:
 
 ## Migration Plan
 
+### Step 0 - Add read-only launch diagnostics
+
+Before behavior changes, add a diagnostic helper that computes the future
+GitHub MCP launch decision without injecting a new MCP server.
+
+```ts
+type HostedGitHubMcpLaunchDecision =
+  | { inject: true; reason: 'connected_target_ready'; targetId: string }
+  | {
+      inject: false;
+      reason:
+        | 'kill_switch'
+        | 'control_plane_unpaired'
+        | 'github_not_connected'
+        | 'no_enabled_target'
+        | 'remote_unknown'
+        | 'remote_not_github'
+        | 'multiple_targets'
+        | 'bundle_missing';
+    };
+```
+
+Rules:
+
+- this step emits safe diagnostics only;
+- no prompt, config, or tool behavior changes yet;
+- use it to verify real launch states before adding `agent-teams-github`;
+- keep private URLs and tokens out of diagnostics.
+
+Verification:
+
+- disconnected workspace reports `github_not_connected`;
+- connected workspace with no matching target reports `no_enabled_target` or
+  `remote_unknown`;
+- connected workspace with matching target reports `connected_target_ready`.
+
 ### Step 1 - Add package scaffold
 
 - Add `mcp-servers/github`.
 - Add package scripts: `build`, `typecheck`, `lint`, `test`.
 - Add root workspace entry.
 - Add root CI/workspace scripts.
+- Add root package `extraResources` entries for the GitHub MCP bundle.
+- Add a package-config regression test that proves both MCP bundles are shipped.
 
 Verification:
 
@@ -1828,6 +2299,55 @@ async function resolveHostedGitHubLaunchState(input: {
 }
 ```
 
+Config regeneration guard:
+
+- persist the redacted `HostedGitHubLaunchState` on the team launch context;
+- regenerate the same managed server set after auth retry when context is still
+  valid;
+- if context is missing, regenerate core MCP only and surface
+  `github_mcp_injection_skipped:context_missing`.
+
+### Step 5.5 - Add OpenCode provider compatibility
+
+Choose one of the Provider Runtime Compatibility options before claiming the
+feature works for every teammate runtime.
+
+Recommended implementation:
+
+- add multi-managed MCP server env for OpenCode;
+- preserve current single-server env fallback;
+- include `agent-teams` and optional `agent-teams-github` in the managed list;
+- include the managed server list in the app MCP HTTP identity hash;
+- ensure reattach happens when GitHub MCP enabled state changes.
+
+Illustrative launcher output:
+
+```ts
+const managedServers: ManagedOpenCodeMcpServerEnvSpec[] = [
+  {
+    name: 'agent-teams',
+    remoteUrl: coreMcpRemoteUrl,
+  },
+  ...(githubMcpEnabled
+    ? [
+        {
+          name: 'agent-teams-github' as const,
+          command: githubLaunchSpec.command,
+          args: githubLaunchSpec.args,
+          env: githubLaunchSpec.env,
+        },
+      ]
+    : []),
+];
+```
+
+If this step is deferred:
+
+- mark OpenCode unsupported in this phase;
+- acceptance criteria must say the feature is available only for config-file
+  MCP providers;
+- add a UI/status diagnostic that prevents silent confusion.
+
 ### Step 6 - Update provisioning prompt
 
 - Add GitHub MCP instructions only when GitHub MCP is injected.
@@ -1837,6 +2357,8 @@ async function resolveHostedGitHubLaunchState(input: {
   - do not use direct GitHub tokens;
   - current repo is resolved automatically;
   - use status tool if unsure.
+- The prompt decision must use the same launch decision as config injection.
+- Do not mention GitHub MCP when package resolution or optional preflight failed.
 
 ### Step 7 - Deprecate old low-level tools in `agent-teams-mcp`
 
@@ -1880,6 +2402,22 @@ Add tests for:
 - GitHub preflight fails launch only when GitHub MCP was meant to be injected;
 - optional `targetId` is omitted from controller call when not supplied;
 - generated `localAttemptId` is returned in timeout-safe failures.
+- root package `extraResources` includes both core and GitHub MCP bundles;
+- packaged resolver missing GitHub MCP bundle skips GitHub injection without
+  breaking core MCP launch;
+- `AGENT_TEAMS_GITHUB_MCP_DISABLE=1` prevents injection and omits prompt block;
+- OpenCode managed MCP env preserves legacy single-server behavior;
+- OpenCode multi-server env includes `agent-teams-github` only when enabled;
+- app MCP HTTP identity hash changes when the managed MCP server list changes;
+- auth retry config regeneration preserves GitHub context when available;
+- auth retry config regeneration drops only GitHub MCP when context is missing;
+- safe tool failures return JSON with `isError: true`;
+- unknown provider result returns `nextAction: 'poll_status'` instead of blind
+  resubmit guidance;
+- check-run tool is either create-only with tests or deferred with an explicit
+  acceptance-criteria note;
+- GitHub rate-limit response maps to safe retry guidance without raw provider
+  headers.
 
 ### Step 9 - Smoke checks
 
@@ -1903,6 +2441,24 @@ Runtime smoke:
 - call `github_comment_pull_request` against sandbox;
 - verify comment attribution and GitHub App actor through live E2E when staging
   credentials are available.
+
+Packaged smoke:
+
+- build packaged app artifacts;
+- verify `resources/mcp-server/index.js` exists;
+- verify `resources/mcp-servers/github/index.js` exists;
+- launch with GitHub disconnected and confirm core MCP still works;
+- launch with kill switch and connected GitHub, confirm prompt omits GitHub
+  tools;
+- launch with connected sandbox target and confirm GitHub MCP tools are visible.
+
+Provider smoke:
+
+- Claude-style generated config includes two managed MCP servers when enabled;
+- OpenCode legacy env still attaches core `agent-teams`;
+- OpenCode multi-server env attaches both managed servers when enabled;
+- disabling target while agent runs leaves tools listed but returns safe
+  unavailable results.
 
 ## Open Decisions
 
@@ -1952,6 +2508,16 @@ No. If launch-time target preflight cannot prove a single enabled repository,
 do not inject GitHub MCP. The user can restart after fixing integration state.
 This avoids prompting agents to use tools that are likely to fail.
 
+### Decision 7 - Should OpenCode support ship in the same phase?
+
+Recommendation:
+
+Yes if the product claim is "agents can use GitHub MCP", because OpenCode is a
+real teammate runtime in this repo and does not rely only on generated
+`--mcp-config`. If implementation needs to be sliced, explicitly mark OpenCode
+as a follow-up and keep acceptance criteria scoped to config-file MCP providers.
+Do not solve it by duplicating GitHub tools back into the core MCP.
+
 ## Implementation Quality Bar
 
 - No GitHub SDK dependencies in GitHub MCP.
@@ -1970,6 +2536,14 @@ This avoids prompting agents to use tools that are likely to fail.
   failures.
 - Status polling and mutation submission have separate authorization/liveness
   expectations.
+- Expected GitHub failures return safe JSON tool results with `isError: true`
+  when supported, not raw protocol exceptions.
+- Packaged app resource resolution is tested for both managed MCP packages.
+- OpenCode support is either implemented with multi-managed MCP servers or
+  explicitly excluded from the phase scope.
+- Kill switch disables only GitHub MCP injection and never breaks core team MCP.
+- Unknown provider mutation results lead to polling/status guidance, not blind
+  duplicate mutations.
 
 ## Acceptance Criteria
 
@@ -1991,9 +2565,20 @@ The phase is complete when:
   integration is not enabled.
 - Old low-level GitHub tools are either deprecated with compatibility tests or
   removed only after prompts/tests stop referencing them.
+- Kill switch and disconnected state omit both GitHub MCP config and prompt
+  block.
+- Expected tool failures are safe, structured, and marked as tool errors.
+- Provider compatibility is proven for OpenCode or explicitly deferred in docs,
+  tests, and UI diagnostics.
+- Live sandbox E2E proves at least one comment/review action reaches GitHub
+  through GitHub App identity before marking the integration product-ready.
 
 ## References Checked
 
 - GitHub GraphQL mutations: <https://docs.github.com/en/graphql/reference/mutations>
 - GitHub REST checks guide:
   <https://docs.github.com/en/rest/guides/using-the-rest-api-to-interact-with-checks>
+- MCP tools specification:
+  <https://modelcontextprotocol.io/specification/2025-11-25/server/tools>
+- MCP draft tools specification:
+  <https://modelcontextprotocol.io/specification/draft/server/tools>

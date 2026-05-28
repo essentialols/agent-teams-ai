@@ -78,7 +78,7 @@ describe('HostedIntegrationUseCases', () => {
 
 function command(): HostedGitHubActionCommandDto {
   return {
-    actionType: 'issue_comment',
+    actionType: 'github.issue_comment.create',
     localAttemptId: 'attempt_1',
     payload: { body: 'Ready for review' },
     runtimeMember: {

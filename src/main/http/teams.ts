@@ -576,13 +576,20 @@ function optionalStringField(value: unknown): string | undefined {
 
 function assertHostedGithubActionType(value: unknown): HostedGitHubActionCommandDto['actionType'] {
   const normalized = assertStringField(value, 'actionType');
+  if (normalized === 'github.issue_comment.create' || normalized === 'issue_comment') {
+    return 'github.issue_comment.create';
+  }
   if (
-    normalized === 'issue_comment' ||
-    normalized === 'pull_request_comment' ||
-    normalized === 'pull_request_review' ||
-    normalized === 'check_run'
+    normalized === 'github.pull_request_comment.create_top_level' ||
+    normalized === 'pull_request_comment'
   ) {
-    return normalized;
+    return 'github.pull_request_comment.create_top_level';
+  }
+  if (normalized === 'github.pull_request_review.create' || normalized === 'pull_request_review') {
+    return 'github.pull_request_review.create';
+  }
+  if (normalized === 'github.check_run.create_or_update' || normalized === 'check_run') {
+    return 'github.check_run.create_or_update';
   }
   throw new HttpBadRequestError('actionType is not supported');
 }

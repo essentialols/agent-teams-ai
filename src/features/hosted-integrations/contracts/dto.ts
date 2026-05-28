@@ -193,10 +193,10 @@ export interface GetHostedGitHubActionStatusRequestDto {
 }
 
 export type HostedGitHubActionType =
-  | 'issue_comment'
-  | 'pull_request_comment'
-  | 'pull_request_review'
-  | 'check_run';
+  | 'github.issue_comment.create'
+  | 'github.pull_request_comment.create_top_level'
+  | 'github.pull_request_review.create'
+  | 'github.check_run.create_or_update';
 
 export type HostedGitHubActionSubjectKind = 'agent' | 'team' | 'desktop-client' | 'workspace';
 

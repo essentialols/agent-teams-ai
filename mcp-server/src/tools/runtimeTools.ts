@@ -28,10 +28,10 @@ const runtimeDeliveryTargetSchema = z.union([
   }),
 ]);
 const hostedGithubActionTypeSchema = z.enum([
-  'issue_comment',
-  'pull_request_comment',
-  'pull_request_review',
-  'check_run',
+  'github.issue_comment.create',
+  'github.pull_request_comment.create_top_level',
+  'github.pull_request_review.create',
+  'github.check_run.create_or_update',
 ]);
 
 export function registerRuntimeTools(server: Pick<FastMCP, 'addTool'>) {

@@ -9,7 +9,7 @@ import {
 describe('hosted GitHub action policy', () => {
   it('builds trusted envelopes with normalized policy subject ids and attribution', () => {
     const envelope = buildTrustedAgentGithubActionEnvelope({
-      actionType: 'issue_comment',
+      actionType: 'github.issue_comment.create',
       localAttemptId: 'attempt-1',
       payload: { body: 'Ready for review' },
       requestId: 'github-action:attempt-1',
@@ -43,7 +43,7 @@ describe('hosted GitHub action policy', () => {
 
   it('rejects reserved markers, unsafe avatars, and oversized bodies before submission', () => {
     const base = {
-      actionType: 'issue_comment' as const,
+      actionType: 'github.issue_comment.create' as const,
       localAttemptId: 'attempt-1',
       requestId: 'request-1',
       targetId: 'target_1',
@@ -79,12 +79,12 @@ describe('hosted GitHub action policy', () => {
   it('creates stable action request ids for idempotent retries', () => {
     expect(
       createStableGithubActionRequestId({
-        actionType: 'issue_comment',
+        actionType: 'github.issue_comment.create',
         localAttemptId: 'Run 1',
         payloadFingerprint: 'sha256:abcd',
         targetId: 'Target 1',
       })
-    ).toBe('github-action:run-1:target-1:issue_comment:sha256:abcd');
+    ).toBe('github-action:run-1:target-1:github.issue_comment.create:sha256:abcd');
   });
 
   it('redacts hosted credentials and callback secrets from log text', () => {

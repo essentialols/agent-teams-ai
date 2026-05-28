@@ -4,6 +4,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { HostedIntegrationsPanel } from '@features/hosted-integrations/renderer';
 import { useAppTranslation } from '@features/localization/renderer';
 import { api, isElectronMode } from '@renderer/api';
 import appIcon from '@renderer/favicon.png';
@@ -167,6 +168,8 @@ export const AdvancedSection = ({
           </button>
         )}
       </div>
+
+      {isElectron && <HostedIntegrationsPanel />}
 
       <CliStatusSection />
 

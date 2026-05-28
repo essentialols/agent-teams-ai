@@ -11,6 +11,10 @@ const { createController } = controllerModule;
 const FORCED_CLAUDE_DIR_ENV = 'AGENT_TEAMS_MCP_CLAUDE_DIR';
 
 type WorkSyncCapableController = ReturnType<typeof createController> & {
+  runtime: ReturnType<typeof createController>['runtime'] & {
+    hostedGithubActionSubmit(flags: Record<string, unknown>): Promise<unknown>;
+    hostedGithubActionStatus(flags: Record<string, unknown>): Promise<unknown>;
+  };
   workSync: {
     memberWorkSyncStatus(flags: Record<string, unknown>): Promise<unknown>;
     memberWorkSyncReport(flags: Record<string, unknown>): Promise<unknown>;

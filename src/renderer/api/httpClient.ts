@@ -17,6 +17,7 @@ import type {
   CodexStartChatgptLoginOptions,
 } from '@features/codex-account/contracts';
 import type { CodexRuntimeAPI } from '@features/codex-runtime-installer/contracts';
+import type { HostedIntegrationsElectronApi } from '@features/hosted-integrations/contracts';
 import type { MemberLogStreamApi } from '@features/member-log-stream/contracts';
 import type { DashboardRecentProjectsPayload } from '@features/recent-projects/contracts';
 import type { RuntimeProviderManagementApi } from '@features/runtime-provider-management/contracts';
@@ -1392,6 +1393,78 @@ export class HttpAPIClient implements ElectronAPI {
         recoverable: true,
       },
     }),
+  };
+
+  private getHostedIntegrationsBrowserState() {
+    return Promise.resolve({
+      availability: {
+        contractVersion: 'desktop-hosted-integrations-v1',
+        status: 'unavailable' as const,
+        reason: {
+          category: 'unavailable' as const,
+          code: 'HOSTED_INTEGRATION_BROWSER_MODE_UNAVAILABLE',
+          message: 'Hosted integrations are available only in the desktop app.',
+        },
+      },
+      connections: [],
+      fetchedAt: new Date().toISOString(),
+      recentActions: [],
+      targets: [],
+    });
+  }
+
+  hostedIntegrations: HostedIntegrationsElectronApi = {
+    bootstrapWorkspace: async () => this.getHostedIntegrationsBrowserState(),
+    completePairing: async () => this.getHostedIntegrationsBrowserState(),
+    configure: async () => this.getHostedIntegrationsBrowserState(),
+    disableTarget: async () => {
+      throw new Error('Hosted integrations are not available in browser mode.');
+    },
+    dismissGitHubSetup: async () => this.getHostedIntegrationsBrowserState(),
+    enableTarget: async () => {
+      throw new Error('Hosted integrations are not available in browser mode.');
+    },
+    getActionStatus: async (input) => ({
+      actionRequestId: input.actionRequestId,
+      fetchedAt: new Date().toISOString(),
+      status: 'unknown',
+      safeError: {
+        category: 'unavailable',
+        code: 'HOSTED_INTEGRATION_BROWSER_MODE_UNAVAILABLE',
+        message: 'Hosted integrations are not available in browser mode.',
+      },
+    }),
+    getState: async () => this.getHostedIntegrationsBrowserState(),
+    listAvailableRepositories: async () => [],
+    listTargets: async () => [],
+    openSetupUrl: async () => {
+      throw new Error('Hosted integrations are not available in browser mode.');
+    },
+    refreshConnections: async () => [],
+    refreshGitHubSetup: async (input) => ({
+      fetchedAt: new Date().toISOString(),
+      setupSessionId: input.setupSessionId,
+      state: 'failed',
+      safeError: {
+        category: 'unavailable',
+        code: 'HOSTED_INTEGRATION_BROWSER_MODE_UNAVAILABLE',
+        message: 'Hosted integrations are not available in browser mode.',
+      },
+    }),
+    revokeSession: async () => null,
+    startGitHubSetup: async () => ({
+      fetchedAt: new Date().toISOString(),
+      setupSessionId: '',
+      state: 'failed',
+      safeError: {
+        category: 'unavailable',
+        code: 'HOSTED_INTEGRATION_BROWSER_MODE_UNAVAILABLE',
+        message: 'Hosted integrations are not available in browser mode.',
+      },
+    }),
+    startPairing: async () => {
+      throw new Error('Hosted integrations are not available in browser mode.');
+    },
   };
 
   memberWorkSync: MemberWorkSyncElectronApi = {

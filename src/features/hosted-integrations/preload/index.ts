@@ -1,0 +1,1 @@
+export { createHostedIntegrationsBridge } from './createHostedIntegrationsBridge';

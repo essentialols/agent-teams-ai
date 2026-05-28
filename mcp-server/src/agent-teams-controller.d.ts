@@ -43,7 +43,10 @@ declare module 'agent-teams-controller' {
     unlinkTask(taskId: string, targetId: string, linkType: string): unknown;
     memberBriefing(
       memberName: string,
-      options?: { runtimeProvider?: 'native' | 'opencode' | 'codex'; includeActiveProcesses?: boolean }
+      options?: {
+        runtimeProvider?: 'native' | 'opencode' | 'codex';
+        includeActiveProcesses?: boolean;
+      }
     ): Promise<string>;
     leadBriefing(): Promise<string>;
     taskBriefing(memberName: string): Promise<string>;
@@ -100,6 +103,8 @@ declare module 'agent-teams-controller' {
     runtimeDeliverMessage(flags: Record<string, unknown>): Promise<unknown>;
     runtimeTaskEvent(flags: Record<string, unknown>): Promise<unknown>;
     runtimeHeartbeat(flags: Record<string, unknown>): Promise<unknown>;
+    hostedGithubActionSubmit(flags: Record<string, unknown>): Promise<unknown>;
+    hostedGithubActionStatus(flags: Record<string, unknown>): Promise<unknown>;
   }
 
   export interface ControllerWorkSyncApi {

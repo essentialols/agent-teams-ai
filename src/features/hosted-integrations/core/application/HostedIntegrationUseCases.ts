@@ -180,6 +180,7 @@ export class HostedIntegrationUseCases {
     input: HostedGitHubActionCommandDto
   ): Promise<HostedGitHubActionStatusDto> {
     const token = await this.requireToken();
+    await this.assertTargetEnabledForSubmission(token, input.targetId);
     const requestId = await this.ports.idGenerator.stableActionRequestId(input);
     const envelope = buildTrustedAgentGithubActionEnvelope({ ...input, requestId });
     const status = await this.ports.actions.submitAgentGithubAction(token, envelope);
@@ -217,6 +218,21 @@ export class HostedIntegrationUseCases {
     await this.refreshConnections().catch(() => []);
     await this.listTargets().catch(() => []);
     return this.ports.stateStore.readState();
+  }
+
+  private async assertTargetEnabledForSubmission(token: string, targetId: string): Promise<void> {
+    const targets = await this.ports.targets.listTargets(token);
+    await this.ports.stateStore.saveTargets(targets);
+    const target = targets.find((item) => item.targetId === targetId.trim());
+    if (target?.status === 'enabled') return;
+    throwHostedIntegrationError(
+      hostedIntegrationError(
+        'HOSTED_GITHUB_ACTION_TARGET_NOT_ENABLED',
+        'GitHub repository target is not enabled for hosted agent actions.',
+        'validation',
+        { targetId: targetId.trim() }
+      )
+    );
   }
 
   private async assertSecureStoreAvailable(): Promise<void> {

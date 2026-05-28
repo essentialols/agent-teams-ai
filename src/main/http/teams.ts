@@ -15,6 +15,7 @@ import { access } from 'fs/promises';
 import { isAbsolute, join } from 'path';
 
 import type { HttpServices } from './index';
+import type { HostedGitHubActionCommandDto } from '@features/hosted-integrations/contracts';
 import type { MemberWorkSyncReportState } from '@features/member-work-sync/contracts';
 import type {
   EffortLevel,
@@ -518,6 +519,74 @@ function getMemberWorkSyncFeature(
   return services.memberWorkSyncFeature;
 }
 
+function getHostedIntegrationsFeature(
+  services: HttpServices
+): NonNullable<HttpServices['hostedIntegrationsFeature']> {
+  if (!services.hostedIntegrationsFeature) {
+    throw new HttpFeatureUnavailableError('Hosted integrations feature is unavailable');
+  }
+  return services.hostedIntegrationsFeature;
+}
+
+function parseHostedGitHubActionCommand(
+  teamName: string,
+  body: unknown
+): HostedGitHubActionCommandDto {
+  const payload = withRuntimeTeamName(teamName, body);
+  const runtimeMember = assertRecordField(payload.runtimeMember, 'runtimeMember');
+  return {
+    actionType: assertHostedGithubActionType(payload.actionType),
+    localAttemptId: assertStringField(payload.localAttemptId, 'localAttemptId'),
+    payload: payload.payload,
+    runtimeMember: {
+      agentId: optionalStringField(runtimeMember.agentId),
+      agentName:
+        optionalStringField(runtimeMember.agentName) ??
+        optionalStringField(runtimeMember.memberName) ??
+        '',
+      avatarUrl: optionalStringField(runtimeMember.avatarUrl),
+      memberName: optionalStringField(runtimeMember.memberName),
+      role: optionalStringField(runtimeMember.role),
+      teamId: optionalStringField(runtimeMember.teamId) ?? teamName,
+      teamName,
+    },
+    targetId: assertStringField(payload.targetId, 'targetId'),
+    ...(optionalStringField(payload.correlationId)
+      ? { correlationId: optionalStringField(payload.correlationId) }
+      : {}),
+  };
+}
+
+function assertRecordField(value: unknown, fieldName: string): Record<string, unknown> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  throw new HttpBadRequestError(`${fieldName} must be an object`);
+}
+
+function assertStringField(value: unknown, fieldName: string): string {
+  const normalized = optionalStringField(value);
+  if (normalized) return normalized;
+  throw new HttpBadRequestError(`${fieldName} must be a non-empty string`);
+}
+
+function optionalStringField(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function assertHostedGithubActionType(value: unknown): HostedGitHubActionCommandDto['actionType'] {
+  const normalized = assertStringField(value, 'actionType');
+  if (
+    normalized === 'issue_comment' ||
+    normalized === 'pull_request_comment' ||
+    normalized === 'pull_request_review' ||
+    normalized === 'check_run'
+  ) {
+    return normalized;
+  }
+  throw new HttpBadRequestError('actionType is not supported');
+}
+
 export function registerTeamRoutes(app: FastifyInstance, services: HttpServices): void {
   app.get('/api/teams', async (_request, reply) => {
     try {
@@ -785,6 +854,55 @@ export function registerTeamRoutes(app: FastifyInstance, services: HttpServices)
         if (shouldLogError(error)) {
           logger.error(
             `Error in POST /api/teams/${request.params.teamName}/opencode/runtime/heartbeat:`,
+            getErrorMessage(error)
+          );
+        }
+        return reply.status(getStatusCode(error)).send({ error: getErrorMessage(error) });
+      }
+    }
+  );
+
+  app.post<{ Params: { teamName: string }; Body: Record<string, unknown> }>(
+    '/api/teams/:teamName/hosted-integrations/github-actions',
+    async (request, reply) => {
+      try {
+        const validatedTeamName = validateTeamName(request.params.teamName);
+        if (!validatedTeamName.valid) {
+          return reply.status(400).send({ error: validatedTeamName.error });
+        }
+        const command = parseHostedGitHubActionCommand(validatedTeamName.value!, request.body);
+        return reply.send(
+          await getHostedIntegrationsFeature(services).submitAgentGithubAction(command)
+        );
+      } catch (error) {
+        if (shouldLogError(error)) {
+          logger.error(
+            `Error in POST /api/teams/${request.params.teamName}/hosted-integrations/github-actions:`,
+            getErrorMessage(error)
+          );
+        }
+        return reply.status(getStatusCode(error)).send({ error: getErrorMessage(error) });
+      }
+    }
+  );
+
+  app.get<{ Params: { teamName: string; actionRequestId: string } }>(
+    '/api/teams/:teamName/hosted-integrations/github-actions/:actionRequestId',
+    async (request, reply) => {
+      try {
+        const validatedTeamName = validateTeamName(request.params.teamName);
+        if (!validatedTeamName.valid) {
+          return reply.status(400).send({ error: validatedTeamName.error });
+        }
+        return reply.send(
+          await getHostedIntegrationsFeature(services).getActionStatus({
+            actionRequestId: assertStringField(request.params.actionRequestId, 'actionRequestId'),
+          })
+        );
+      } catch (error) {
+        if (shouldLogError(error)) {
+          logger.error(
+            `Error in GET /api/teams/${request.params.teamName}/hosted-integrations/github-actions/${request.params.actionRequestId}:`,
             getErrorMessage(error)
           );
         }

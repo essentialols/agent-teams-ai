@@ -33,6 +33,11 @@ import {
   createCodexModelCatalogFeature,
 } from '@features/codex-model-catalog/main';
 import {
+  createHostedIntegrationsFeature,
+  type HostedIntegrationsFeatureFacade,
+  registerHostedIntegrationsIpc,
+} from '@features/hosted-integrations/main';
+import {
   createMemberLogStreamFeature,
   registerMemberLogStreamIpc,
   removeMemberLogStreamIpc,
@@ -910,6 +915,7 @@ let codexAccountFeature: CodexAccountFeatureFacade | null = null;
 let codexModelCatalogFeature: CodexModelCatalogFeatureFacade | null = null;
 let recentProjectsFeature: RecentProjectsFeatureFacade;
 let runtimeProviderManagementFeature: RuntimeProviderManagementFeatureFacade;
+let hostedIntegrationsFeature: HostedIntegrationsFeatureFacade;
 let memberWorkSyncFeature: MemberWorkSyncFeatureFacade | null = null;
 let teamDataService: TeamDataService;
 let teamProvisioningService: TeamProvisioningService;
@@ -1852,6 +1858,10 @@ async function initializeServices(): Promise<void> {
     logger: createLogger('Feature:RecentProjects'),
   });
   runtimeProviderManagementFeature = createRuntimeProviderManagementFeature();
+  hostedIntegrationsFeature = createHostedIntegrationsFeature({
+    allowLocalhostHttp: process.env.NODE_ENV !== 'production',
+    userDataPath: app.getPath('userData'),
+  });
   const memberWorkSyncLogger = createLogger('Feature:MemberWorkSync');
   const hasMemberWorkSyncRuntimeActivity = async (teamName: string): Promise<boolean> => {
     try {
@@ -2195,6 +2205,7 @@ async function initializeServices(): Promise<void> {
   registerCodexAccountIpc(ipcMain, codexAccountFeature);
   registerRecentProjectsIpc(ipcMain, recentProjectsFeature);
   registerRuntimeProviderManagementIpc(ipcMain, runtimeProviderManagementFeature);
+  registerHostedIntegrationsIpc(ipcMain, hostedIntegrationsFeature);
   registerMemberWorkSyncIpc(ipcMain, memberWorkSyncFeature);
   registerMemberLogStreamIpc(ipcMain, memberLogStreamFeature);
 
@@ -2254,6 +2265,7 @@ async function startHttpServer(
         chunkBuilder: activeContext.chunkBuilder,
         dataCache: activeContext.dataCache,
         recentProjectsFeature,
+        hostedIntegrationsFeature,
         memberWorkSyncFeature: memberWorkSyncFeature ?? undefined,
         updaterService,
         sshConnectionManager,

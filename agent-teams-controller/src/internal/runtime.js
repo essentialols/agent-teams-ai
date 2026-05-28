@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const runtimeHelpers = require('./runtimeHelpers.js');
 
 const READY_STATES = new Set(['ready', 'failed', 'disconnected', 'cancelled']);
 const DEFAULT_WAIT_TIMEOUT_MS = 120000;
@@ -319,6 +320,38 @@ function compactBody(flags = {}, fields) {
   return body;
 }
 
+function buildHostedGithubRuntimeMember(context, flags = {}) {
+  const runtimeIdentity = runtimeHelpers.getCurrentRuntimeMemberIdentity();
+  const memberName =
+    (typeof flags.memberName === 'string' && flags.memberName.trim()) ||
+    (typeof flags.agentName === 'string' && flags.agentName.trim()) ||
+    (runtimeIdentity && runtimeIdentity.agentName) ||
+    '';
+  const agentName =
+    (runtimeIdentity && runtimeIdentity.agentName) ||
+    (typeof flags.agentName === 'string' && flags.agentName.trim()) ||
+    memberName;
+  const agentId =
+    (runtimeIdentity && runtimeIdentity.agentId) ||
+    (typeof flags.agentId === 'string' && flags.agentId.trim()) ||
+    agentName;
+  const teamName = (runtimeIdentity && runtimeIdentity.teamName) || context.teamName;
+
+  return {
+    agentId,
+    agentName,
+    memberName,
+    teamId:
+      (typeof flags.teamId === 'string' && flags.teamId.trim()) ||
+      (teamName ? `team:${teamName}` : context.teamName),
+    teamName: context.teamName,
+    ...(typeof flags.avatarUrl === 'string' && flags.avatarUrl.trim()
+      ? { avatarUrl: flags.avatarUrl.trim() }
+      : {}),
+    ...(typeof flags.role === 'string' && flags.role.trim() ? { role: flags.role.trim() } : {}),
+  };
+}
+
 async function postRuntimeTool(context, flags = {}, toolPath, body) {
   const baseUrls = resolveControlBaseUrls(context, flags);
   return requestJsonWithFallback(
@@ -575,6 +608,47 @@ async function runtimeHeartbeat(context, flags = {}) {
   );
 }
 
+async function hostedGithubActionSubmit(context, flags = {}) {
+  const baseUrls = resolveControlBaseUrls(context, flags);
+  return requestJsonWithFallback(
+    baseUrls,
+    `/api/teams/${encodeURIComponent(context.teamName)}/hosted-integrations/github-actions`,
+    {
+      method: 'POST',
+      body: {
+        actionType: flags.actionType,
+        correlationId: flags.correlationId,
+        localAttemptId: flags.localAttemptId,
+        payload: flags.payload,
+        runtimeMember: buildHostedGithubRuntimeMember(context, flags),
+        targetId: flags.targetId,
+        teamName: context.teamName,
+      },
+      timeoutMs: normalizeTimeoutMs(flags.waitTimeoutMs || flags['wait-timeout-ms'] || 10000),
+    }
+  );
+}
+
+async function hostedGithubActionStatus(context, flags = {}) {
+  const actionRequestId =
+    (typeof flags.actionRequestId === 'string' && flags.actionRequestId.trim()) ||
+    (typeof flags['action-request-id'] === 'string' && flags['action-request-id'].trim()) ||
+    '';
+  if (!actionRequestId) {
+    throw new Error('Missing actionRequestId');
+  }
+  const baseUrls = resolveControlBaseUrls(context, flags);
+  return requestJsonWithFallback(
+    baseUrls,
+    `/api/teams/${encodeURIComponent(
+      context.teamName
+    )}/hosted-integrations/github-actions/${encodeURIComponent(actionRequestId)}`,
+    {
+      timeoutMs: normalizeTimeoutMs(flags.waitTimeoutMs || flags['wait-timeout-ms'] || 10000),
+    }
+  );
+}
+
 module.exports = {
   listTeams,
   getTeam,
@@ -586,4 +660,6 @@ module.exports = {
   runtimeDeliverMessage,
   runtimeTaskEvent,
   runtimeHeartbeat,
+  hostedGithubActionSubmit,
+  hostedGithubActionStatus,
 };

@@ -58,6 +58,7 @@
     "lint:fast": "eslint --config eslint.fast.config.js --cache --cache-location .eslintcache-fast --cache-strategy content src/",
     "lint:fast:files": "eslint --config eslint.fast.config.js --cache --cache-location .eslintcache-fast --cache-strategy content",
     "lint:mcp": "pnpm --filter agent-teams-mcp lint",
+    "architecture:hosted-integrations": "node ./scripts/ci/check-hosted-integrations-boundaries.mjs",
     "lint:fix": "eslint src/ --fix --cache --cache-location .eslintcache --cache-strategy content",
     "format": "prettier --write \"src/**/*.{ts,tsx,js,jsx,json,css}\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,js,jsx,json,css}\"",

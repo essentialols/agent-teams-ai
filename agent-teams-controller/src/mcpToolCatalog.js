@@ -61,6 +61,8 @@ const AGENT_TEAMS_RUNTIME_TOOL_NAMES = [
   'runtime_deliver_message',
   'runtime_task_event',
   'runtime_heartbeat',
+  'hosted_github_action_submit',
+  'hosted_github_action_status',
 ];
 
 const AGENT_TEAMS_WORK_SYNC_TOOL_NAMES = ['member_work_sync_status', 'member_work_sync_report'];

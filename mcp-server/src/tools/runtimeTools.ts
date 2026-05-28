@@ -27,6 +27,12 @@ const runtimeDeliveryTargetSchema = z.union([
     teamName: z.string().min(1).optional(),
   }),
 ]);
+const hostedGithubActionTypeSchema = z.enum([
+  'issue_comment',
+  'pull_request_comment',
+  'pull_request_review',
+  'check_run',
+]);
 
 export function registerRuntimeTools(server: Pick<FastMCP, 'addTool'>) {
   server.addTool({
@@ -264,6 +270,81 @@ export function registerRuntimeTools(server: Pick<FastMCP, 'addTool'>) {
           ...(observedAt ? { observedAt } : {}),
           ...(status ? { status } : {}),
           ...(metadata ? { metadata } : {}),
+          ...(controlUrl ? { controlUrl } : {}),
+          ...(waitTimeoutMs ? { waitTimeoutMs } : {}),
+        })
+      );
+    },
+  });
+
+  server.addTool({
+    name: 'hosted_github_action_submit',
+    description:
+      'Submit a GitHub App action through the desktop hosted integration bridge. The desktop app attaches trusted team/member attribution and keeps hosted credentials out of the runtime.',
+    parameters: z.object({
+      ...toolContextSchema,
+      targetId: z.string().min(1),
+      actionType: hostedGithubActionTypeSchema,
+      payload: z.unknown(),
+      localAttemptId: z.string().min(1),
+      memberName: z.string().min(1),
+      agentId: z.string().min(1).optional(),
+      agentName: z.string().min(1).optional(),
+      teamId: z.string().min(1).optional(),
+      avatarUrl: z.string().min(1).optional(),
+      role: z.string().min(1).optional(),
+      correlationId: z.string().min(1).optional(),
+    }),
+    execute: async ({
+      teamName,
+      claudeDir,
+      controlUrl,
+      waitTimeoutMs,
+      targetId,
+      actionType,
+      payload,
+      localAttemptId,
+      memberName,
+      agentId,
+      agentName,
+      teamId,
+      avatarUrl,
+      role,
+      correlationId,
+    }) => {
+      assertConfiguredTeam(teamName, claudeDir);
+      return jsonTextContent(
+        await getController(teamName, claudeDir).runtime.hostedGithubActionSubmit({
+          targetId,
+          actionType,
+          payload,
+          localAttemptId,
+          memberName,
+          ...(agentId ? { agentId } : {}),
+          ...(agentName ? { agentName } : {}),
+          ...(teamId ? { teamId } : {}),
+          ...(avatarUrl ? { avatarUrl } : {}),
+          ...(role ? { role } : {}),
+          ...(correlationId ? { correlationId } : {}),
+          ...(controlUrl ? { controlUrl } : {}),
+          ...(waitTimeoutMs ? { waitTimeoutMs } : {}),
+        })
+      );
+    },
+  });
+
+  server.addTool({
+    name: 'hosted_github_action_status',
+    description: 'Get the safe desktop/control-plane status for a hosted GitHub App action.',
+    parameters: z.object({
+      ...toolContextSchema,
+      actionRequestId: z.string().min(1),
+    }),
+    execute: async ({ teamName, claudeDir, controlUrl, waitTimeoutMs, actionRequestId }) => {
+      assertConfiguredTeam(teamName, claudeDir);
+      return jsonTextContent(
+        await getController(teamName, claudeDir).runtime.hostedGithubActionStatus({
+          actionRequestId,
           ...(controlUrl ? { controlUrl } : {}),
           ...(waitTimeoutMs ? { waitTimeoutMs } : {}),
         })

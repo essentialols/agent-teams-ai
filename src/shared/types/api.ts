@@ -104,6 +104,7 @@ import type { TmuxAPI } from './tmux';
 import type { WaterfallData } from './visualization';
 import type { CodexAccountElectronApi } from '@features/codex-account/contracts';
 import type { CodexRuntimeAPI } from '@features/codex-runtime-installer/contracts';
+import type { HostedIntegrationsElectronApi } from '@features/hosted-integrations/contracts';
 import type { MemberLogStreamApi } from '@features/member-log-stream/contracts';
 import type {
   MemberWorkSyncMetricsRequest,
@@ -973,6 +974,9 @@ export interface ElectronAPI extends RecentProjectsElectronApi, CodexAccountElec
 
   // Runtime nested provider management API
   runtimeProviderManagement: RuntimeProviderManagementApi;
+
+  // Hosted integration control-plane bridge API
+  hostedIntegrations: HostedIntegrationsElectronApi;
 
   // Member actionable-work sync diagnostics API
   memberWorkSync: MemberWorkSyncElectronApi;

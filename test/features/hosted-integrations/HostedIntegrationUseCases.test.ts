@@ -144,7 +144,7 @@ describe('HostedIntegrationUseCases', () => {
     expect(stateStore.markSessionRevoked).not.toHaveBeenCalled();
   });
 
-  it('rotates the desktop token and refreshes the authenticated session', async () => {
+  it('fails closed before server rotation until desktop token rotation is recoverable', async () => {
     const stateStore = {
       ...createStateStore(),
       readState: vi.fn(async () =>
@@ -179,18 +179,17 @@ describe('HostedIntegrationUseCases', () => {
     const ports = createPorts({ connection, stateStore, tokenStore });
     const useCases = new HostedIntegrationUseCases(ports);
 
-    await useCases.rotateSessionToken();
+    await expect(useCases.rotateSessionToken()).rejects.toMatchObject({
+      safeError: expect.objectContaining({
+        category: 'security',
+        code: 'HOSTED_INTEGRATION_TOKEN_ROTATION_UNAVAILABLE',
+      }),
+    });
 
-    expect(connection.rotateSessionToken).toHaveBeenCalledWith(
-      'agtcp_old_secret',
-      'desktop_1',
-      'desktop-token-rotation:desktop_1:2026-01-01T00:00:00.000Z'
-    );
-    expect(tokenStore.writeToken).toHaveBeenCalledWith('agtcp_new_secret');
-    expect(connection.getMe).toHaveBeenCalledWith('agtcp_new_secret');
-    expect(stateStore.saveSession).toHaveBeenCalledWith(
-      expect.objectContaining({ desktopClientId: 'desktop_1' })
-    );
+    expect(connection.rotateSessionToken).not.toHaveBeenCalled();
+    expect(tokenStore.writeToken).not.toHaveBeenCalled();
+    expect(connection.getMe).not.toHaveBeenCalled();
+    expect(stateStore.saveSession).not.toHaveBeenCalled();
   });
 });
 

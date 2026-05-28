@@ -217,26 +217,13 @@ export class HostedIntegrationUseCases {
   }
 
   public async rotateSessionToken(): Promise<HostedIntegrationStateDto> {
-    await this.assertSecureStoreAvailable();
-    const state = await this.ports.stateStore.readState();
-    const token = await this.requireToken();
-    const desktopClientId = state.session?.desktopClientId?.trim();
-    if (!desktopClientId) {
-      throwHostedIntegrationError(
-        hostedIntegrationError(
-          'HOSTED_INTEGRATION_SESSION_REQUIRED',
-          'Hosted integration is not connected.',
-          'auth'
-        )
-      );
-    }
-    const rotation = await this.ports.connection.rotateSessionToken(
-      token,
-      desktopClientId,
-      buildRotationRequestId(desktopClientId, this.ports.clock.now())
+    throwHostedIntegrationError(
+      hostedIntegrationError(
+        'HOSTED_INTEGRATION_TOKEN_ROTATION_UNAVAILABLE',
+        'Desktop token rotation is disabled until recoverable rotation is available.',
+        'security'
+      )
     );
-    await this.ports.tokenStore.writeToken(rotation.token);
-    return this.refreshAfterAuthChange(rotation.token);
   }
 
   private async refreshAfterAuthChange(tokenOverride?: string): Promise<HostedIntegrationStateDto> {
@@ -297,8 +284,4 @@ function controlPlaneOriginChanged(
   } catch {
     return true;
   }
-}
-
-function buildRotationRequestId(desktopClientId: string, now: Date): string {
-  return `desktop-token-rotation:${desktopClientId}:${now.toISOString()}`;
 }

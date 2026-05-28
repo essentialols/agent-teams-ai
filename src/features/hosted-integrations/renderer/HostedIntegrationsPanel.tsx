@@ -306,15 +306,6 @@ export const HostedIntegrationsPanel = (): React.JSX.Element => {
           <button
             className={buttonClass}
             disabled={busy}
-            onClick={() => void actions.rotateSessionToken()}
-            style={{ borderColor: 'var(--color-border)', color: 'var(--color-text)' }}
-          >
-            <KeyRound className="size-3.5" />
-            Rotate token
-          </button>
-          <button
-            className={buttonClass}
-            disabled={busy}
             onClick={() => void actions.revokeSession()}
             style={{ borderColor: 'rgba(239,68,68,0.35)', color: '#f87171' }}
           >

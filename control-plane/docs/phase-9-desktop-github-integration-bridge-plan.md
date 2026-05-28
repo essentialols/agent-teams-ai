@@ -116,10 +116,10 @@ Weak spots studied in current code:
 - Existing desktop feature slices use contracts, preload bridge, main IPC
   registration, and renderer adapters. Phase 9 should follow that structure
   instead of calling backend HTTP directly from renderer.
-- Current token rotation accepts a `rotationRequestId` and can return the same
-  rotated token for an already completed rotation. Desktop should use that to
-  recover from local secure-store write failures instead of creating ambiguous
-  multiple rotations.
+- Backend token rotation accepts a `rotationRequestId`, but the V1 desktop bridge
+  must not expose it until rotation is recoverable after local secure-store write
+  failures. A failed local write after server rotation can otherwise strand the
+  desktop with a revoked credential.
 - Team runtime already has stable member metadata such as `agentId`,
   `member.name`, role, team name, and provider runtime args. The GitHub bridge
   should use this runtime/config metadata, not parsed transcript text.
@@ -462,10 +462,8 @@ Token lifecycle:
 
 - bootstrap/pairing returns token once; main stores it before reporting
   connected to renderer
-- token rotation uses a stable `rotationRequestId` until local secure-store
-  write succeeds
-- if secure-store write fails after backend rotation, retry the same
-  `rotationRequestId` to recover the rotated token
+- V1 desktop token rotation is fail-closed and hidden from UI until the server
+  supports a recoverable two-phase or old-token recovery flow
 - revoke clears local token after backend revoke succeeds, or marks it
   locally-revoked if backend is unreachable
 - auth failure clears only the hosted integration session, not local teams or
@@ -808,8 +806,8 @@ Expected decisions:
 - local retry of action submission uses same idempotency key
 - failed secure token store write invalidates the local session and asks the
   user to retry pairing/bootstrap
-- failed token rotation store write retries with the same `rotationRequestId`
-  before forcing reconnect
+- desktop token rotation remains disabled until failed secure-store writes can be
+  recovered without revoking the only usable credential
 - target list cache is display-only and must be refreshed before action submit
 - setup dismiss does not imply server-side cancellation unless a backend cancel
   use case exists
@@ -882,7 +880,7 @@ Unit tests:
 - bootstrap vs pairing state transitions
 - setup dismiss vs server cancellation behavior
 - action request DTO normalizer rejects workspace/client ids in body
-- token rotation recovery with repeated `rotationRequestId`
+- token rotation is fail-closed while recoverable rotation is not implemented
 - local cache freshness rules never authorize an action
 - runtime identity resolver handles member rename without transcript parsing
 - control-plane base URL normalization rejects credentialed, cross-origin,

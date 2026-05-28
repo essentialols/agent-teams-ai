@@ -10,9 +10,11 @@ import { getErrorMessage } from '@shared/utils/errorHandling';
 import { createLogger } from '@shared/utils/logger';
 import { isTeamProviderBackendId, migrateProviderBackendId } from '@shared/utils/providerBackend';
 import { isTeamProviderId } from '@shared/utils/teamProvider';
+import { execFile } from 'child_process';
 import { constants as fsConstants } from 'fs';
 import { access } from 'fs/promises';
 import { isAbsolute, join } from 'path';
+import { promisify } from 'util';
 
 import type { HttpServices } from './index';
 import type { HostedGitHubActionCommandDto } from '@features/hosted-integrations/contracts';
@@ -23,10 +25,13 @@ import type {
   TeamCreateRequest,
   TeamFastMode,
   TeamLaunchRequest,
+  TeamMemberSnapshot,
+  TeamViewSnapshot,
 } from '@shared/types/team';
 import type { FastifyInstance } from 'fastify';
 
 const logger = createLogger('HTTP:teams');
+const execFileAsync = promisify(execFile);
 
 type LaunchBody = Omit<TeamLaunchRequest, 'teamName'>;
 type CreateTeamBody = TeamCreateConfigRequest;
@@ -533,35 +538,28 @@ function parseHostedGitHubActionCommand(
   body: unknown
 ): HostedGitHubActionCommandDto {
   const payload = withRuntimeTeamName(teamName, body);
-  const runtimeMember = assertRecordField(payload.runtimeMember, 'runtimeMember');
+  const memberName = assertTeammateNameField(payload.memberName, 'memberName');
+  const runId = assertStringField(payload.runId, 'runId');
+  const runtimeSessionId = assertStringField(payload.runtimeSessionId, 'runtimeSessionId');
   return {
     actionType: assertHostedGithubActionType(payload.actionType),
     localAttemptId: assertStringField(payload.localAttemptId, 'localAttemptId'),
+    memberName,
     payload: payload.payload,
+    runId,
     runtimeMember: {
-      agentId: optionalStringField(runtimeMember.agentId),
-      agentName:
-        optionalStringField(runtimeMember.agentName) ??
-        optionalStringField(runtimeMember.memberName) ??
-        '',
-      avatarUrl: optionalStringField(runtimeMember.avatarUrl),
-      memberName: optionalStringField(runtimeMember.memberName),
-      role: optionalStringField(runtimeMember.role),
-      teamId: optionalStringField(runtimeMember.teamId) ?? teamName,
+      agentId: `${teamName}:${memberName}`,
+      agentName: memberName,
+      memberName,
+      teamId: teamName,
       teamName,
     },
+    runtimeSessionId,
     targetId: assertStringField(payload.targetId, 'targetId'),
     ...(optionalStringField(payload.correlationId)
       ? { correlationId: optionalStringField(payload.correlationId) }
       : {}),
   };
-}
-
-function assertRecordField(value: unknown, fieldName: string): Record<string, unknown> {
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    return value as Record<string, unknown>;
-  }
-  throw new HttpBadRequestError(`${fieldName} must be an object`);
 }
 
 function assertStringField(value: unknown, fieldName: string): string {
@@ -570,8 +568,108 @@ function assertStringField(value: unknown, fieldName: string): string {
   throw new HttpBadRequestError(`${fieldName} must be a non-empty string`);
 }
 
+function assertTeammateNameField(value: unknown, fieldName: string): string {
+  const validation = validateTeammateName(value);
+  if (!validation.valid) {
+    throw new HttpBadRequestError(validation.error ?? `${fieldName} is invalid`);
+  }
+  return validation.value!;
+}
+
 function optionalStringField(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+async function assertHostedGitHubActionRuntimeAllowed(
+  services: HttpServices,
+  command: HostedGitHubActionCommandDto
+): Promise<{ activeMember: TeamMemberSnapshot; snapshot: TeamViewSnapshot }> {
+  const teamName = command.runtimeMember.teamName;
+  const runtimeState = await getTeamProvisioningService(services).getRuntimeState(teamName);
+  if (runtimeState.isAlive !== true || runtimeState.runId !== command.runId) {
+    throw new HttpBadRequestError('hosted GitHub action rejected for inactive or stale runtime');
+  }
+
+  const snapshot = await getTeamDataService(services).getTeamData(teamName, {
+    includeMemberBranches: false,
+  });
+  const memberName = command.memberName ?? command.runtimeMember.memberName;
+  const activeMember = snapshot.members.find(
+    (member) => member.name === memberName && member.removedAt === undefined
+  );
+  if (!activeMember) {
+    throw new HttpBadRequestError('hosted GitHub action rejected for unknown team member');
+  }
+  return { activeMember, snapshot };
+}
+
+async function assertHostedGitHubActionTargetMatchesLocalProject(
+  feature: NonNullable<HttpServices['hostedIntegrationsFeature']>,
+  command: HostedGitHubActionCommandDto,
+  context: { activeMember: TeamMemberSnapshot; snapshot: TeamViewSnapshot }
+): Promise<void> {
+  const targets = await feature.listTargets();
+  const target = targets.find((item) => item.targetId === command.targetId.trim());
+  if (!target || target.status !== 'enabled') {
+    return;
+  }
+  const projectPath = context.activeMember.cwd ?? context.snapshot.config?.projectPath;
+  if (!projectPath) {
+    throw new HttpBadRequestError('hosted GitHub action rejected because team project is unknown');
+  }
+
+  const remoteFullName = await readLocalGitHubRemoteFullName(projectPath);
+  const targetFullName = normalizeGitHubFullName(target.displayFullName);
+  if (!remoteFullName || remoteFullName !== targetFullName) {
+    throw new HttpBadRequestError(
+      'hosted GitHub action rejected because local project does not match the enabled GitHub target'
+    );
+  }
+}
+
+async function readLocalGitHubRemoteFullName(projectPath: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync(
+      'git',
+      ['-C', projectPath, 'config', '--get', 'remote.origin.url'],
+      {
+        encoding: 'utf8',
+        timeout: 5000,
+      }
+    );
+    return parseGitHubRemoteFullName(stdout);
+  } catch {
+    return null;
+  }
+}
+
+function parseGitHubRemoteFullName(value: string): string | null {
+  const remote = value.trim();
+  const sshMatch = remote.match(/^git@github\.com:(.+)$/i);
+  if (sshMatch?.[1]) {
+    return normalizeGitHubFullName(stripGitSuffix(sshMatch[1]));
+  }
+  try {
+    const url = new URL(remote.replace(/^git\+ssh:\/\//i, 'ssh://'));
+    if (url.hostname.toLowerCase() !== 'github.com') {
+      return null;
+    }
+    return normalizeGitHubFullName(stripGitSuffix(url.pathname.replace(/^\/+/, '')));
+  } catch {
+    return null;
+  }
+}
+
+function stripGitSuffix(value: string): string {
+  return value.endsWith('.git') ? value.slice(0, -4) : value;
+}
+
+function normalizeGitHubFullName(value: string): string | null {
+  const [owner, name, ...rest] = value.trim().replace(/^\/+/, '').split('/').filter(Boolean);
+  if (!owner || !name || rest.length > 0) {
+    return null;
+  }
+  return `${owner.toLowerCase()}/${name.toLowerCase()}`;
 }
 
 function assertHostedGithubActionType(value: unknown): HostedGitHubActionCommandDto['actionType'] {
@@ -878,9 +976,10 @@ export function registerTeamRoutes(app: FastifyInstance, services: HttpServices)
           return reply.status(400).send({ error: validatedTeamName.error });
         }
         const command = parseHostedGitHubActionCommand(validatedTeamName.value!, request.body);
-        return reply.send(
-          await getHostedIntegrationsFeature(services).submitAgentGithubAction(command)
-        );
+        const feature = getHostedIntegrationsFeature(services);
+        const runtimeContext = await assertHostedGitHubActionRuntimeAllowed(services, command);
+        await assertHostedGitHubActionTargetMatchesLocalProject(feature, command, runtimeContext);
+        return reply.send(await feature.submitAgentGithubAction(command));
       } catch (error) {
         if (shouldLogError(error)) {
           logger.error(

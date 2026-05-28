@@ -1,7 +1,17 @@
+import { registerTeamRoutes } from '@main/http/teams';
+import { execFile } from 'child_process';
 import Fastify from 'fastify';
+import { mkdtemp, rm } from 'fs/promises';
+import { tmpdir } from 'os';
+import path from 'path';
+import { promisify } from 'util';
 import { describe, expect, it, vi } from 'vitest';
 
-import { registerTeamRoutes } from '@main/http/teams';
+import type {
+  HostedGitHubActionCommandDto,
+  HostedGitHubActionStatusDto,
+  HostedGitHubRepositoryTargetDto,
+} from '@features/hosted-integrations/contracts';
 import type { HttpServices } from '@main/http';
 import type {
   TeamCreateConfigRequest,
@@ -13,6 +23,8 @@ import type {
   TeamSummary,
   TeamViewSnapshot,
 } from '@shared/types/team';
+
+const execFileAsync = promisify(execFile);
 
 describe('HTTP team runtime routes', () => {
   function createServicesMock() {
@@ -35,11 +47,14 @@ describe('HTTP team runtime routes', () => {
         ) => Promise<TeamLaunchResponse>
       >();
     const listTeams = vi.fn<() => Promise<TeamSummary[]>>();
-    const getTeamData = vi.fn<(teamName: string) => Promise<TeamViewSnapshot>>();
+    const getTeamData = vi.fn<(teamName: string, options?: unknown) => Promise<TeamViewSnapshot>>();
     const getSavedRequest = vi.fn<(teamName: string) => Promise<TeamCreateRequest | null>>();
     const createTeamConfig = vi.fn<(request: TeamCreateConfigRequest) => Promise<void>>(() =>
       Promise.resolve()
     );
+    const submitAgentGithubAction =
+      vi.fn<(input: HostedGitHubActionCommandDto) => Promise<HostedGitHubActionStatusDto>>();
+    const listHostedTargets = vi.fn<() => Promise<readonly HostedGitHubRepositoryTargetDto[]>>();
     const teamProvisioningService = {
       createTeam,
       launchTeam,
@@ -76,6 +91,13 @@ describe('HTTP team runtime routes', () => {
       sshConnectionManager: {} as HttpServices['sshConnectionManager'],
       teamDataService,
       teamProvisioningService,
+      hostedIntegrationsFeature: {
+        listTargets: listHostedTargets,
+        submitAgentGithubAction,
+      } as Pick<
+        NonNullable<HttpServices['hostedIntegrationsFeature']>,
+        'listTargets' | 'submitAgentGithubAction'
+      > as HttpServices['hostedIntegrationsFeature'],
     } satisfies HttpServices;
 
     return {
@@ -90,6 +112,8 @@ describe('HTTP team runtime routes', () => {
       getTeamData,
       getSavedRequest,
       createTeamConfig,
+      listHostedTargets,
+      submitAgentGithubAction,
     };
   }
 
@@ -671,6 +695,112 @@ describe('HTTP team runtime routes', () => {
     }
   });
 
+  it('submits hosted GitHub actions only for the active runtime run and active member', async () => {
+    const { app, getRuntimeState, getTeamData, listHostedTargets, submitAgentGithubAction } =
+      await createApp();
+    const repoDir = await createTempGitHubRepository('https://github.com/org/repo.git');
+    getRuntimeState.mockResolvedValue({
+      teamName: 'demo-team',
+      isAlive: true,
+      runId: 'run-2',
+      progress: null,
+    });
+    getTeamData.mockResolvedValue({
+      config: { projectPath: repoDir },
+      members: [{ name: 'reviewer', currentTaskId: null, taskCount: 0 }],
+      teamName: 'demo-team',
+    } as unknown as TeamViewSnapshot);
+    listHostedTargets.mockResolvedValue([
+      {
+        connectionId: 'connection_1',
+        displayFullName: 'org/repo',
+        displayName: 'repo',
+        displayOwner: 'org',
+        fetchedAt: '2026-03-12T00:00:00.000Z',
+        githubRepositoryId: '123',
+        status: 'enabled',
+        targetId: 'target_1',
+      },
+    ]);
+    submitAgentGithubAction.mockResolvedValue({
+      actionRequestId: 'action_1',
+      fetchedAt: '2026-03-12T00:00:00.000Z',
+      status: 'queued',
+    });
+
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/teams/demo-team/hosted-integrations/github-actions',
+        payload: {
+          actionType: 'github.issue_comment.create',
+          agentId: 'spoofed-agent',
+          avatarUrl: 'https://evil.example/avatar.png',
+          localAttemptId: 'attempt_1',
+          memberName: 'reviewer',
+          payload: { body: 'Ready for review' },
+          runId: 'run-2',
+          runtimeSessionId: 'session_1',
+          targetId: 'target_1',
+          teamId: 'spoofed-team',
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(submitAgentGithubAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          memberName: 'reviewer',
+          runId: 'run-2',
+          runtimeMember: {
+            agentId: 'demo-team:reviewer',
+            agentName: 'reviewer',
+            memberName: 'reviewer',
+            teamId: 'demo-team',
+            teamName: 'demo-team',
+          },
+          runtimeSessionId: 'session_1',
+        })
+      );
+    } finally {
+      await app.close();
+      await rm(repoDir, { force: true, recursive: true });
+    }
+  });
+
+  it('rejects hosted GitHub actions from stale runtime runs', async () => {
+    const { app, getRuntimeState, submitAgentGithubAction } = await createApp();
+    getRuntimeState.mockResolvedValue({
+      teamName: 'demo-team',
+      isAlive: true,
+      runId: 'run-current',
+      progress: null,
+    });
+
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/teams/demo-team/hosted-integrations/github-actions',
+        payload: {
+          actionType: 'github.issue_comment.create',
+          localAttemptId: 'attempt_1',
+          memberName: 'reviewer',
+          payload: { body: 'Ready for review' },
+          runId: 'run-stale',
+          runtimeSessionId: 'session_1',
+          targetId: 'target_1',
+        },
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toEqual({
+        error: 'hosted GitHub action rejected for inactive or stale runtime',
+      });
+      expect(submitAgentGithubAction).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  });
+
   it('returns 501 when team runtime routes are registered without a runtime service', async () => {
     const app = Fastify();
     registerTeamRoutes(app, {
@@ -732,8 +862,8 @@ describe('HTTP team runtime routes', () => {
       reportRejectedCount: 0,
       recentEvents: [],
       phase2Readiness: {
-        state: 'collecting_shadow_data',
-        reasons: ['insufficient_members'],
+        state: 'collecting_shadow_data' as const,
+        reasons: ['insufficient_members' as const],
         thresholds: {
           minObservedMembers: 2,
           minStatusEvents: 10,
@@ -755,7 +885,7 @@ describe('HTTP team runtime routes', () => {
     const refreshedStatus = {
       teamName: 'demo-team',
       memberName: 'bob',
-      state: 'caught_up',
+      state: 'caught_up' as const,
       agenda: {
         teamName: 'demo-team',
         memberName: 'bob',
@@ -785,11 +915,15 @@ describe('HTTP team runtime routes', () => {
       buildRuntimeTurnSettledEnvironment: vi.fn(),
       drainRuntimeTurnSettledEvents: vi.fn(),
       getQueueDiagnostics: vi.fn(() => queueDiagnostics),
+      scheduleProofMissingRecovery: vi.fn(async () => ({
+        reason: 'scheduled' as const,
+        scheduled: true,
+      })),
       dispose: vi.fn(),
-    };
+    } satisfies NonNullable<HttpServices['memberWorkSyncFeature']>;
     registerTeamRoutes(app, {
       ...mocks.services,
-      memberWorkSyncFeature: memberWorkSyncFeature as any,
+      memberWorkSyncFeature,
     });
     await app.ready();
 
@@ -842,3 +976,10 @@ describe('HTTP team runtime routes', () => {
     }
   });
 });
+
+async function createTempGitHubRepository(remoteUrl: string): Promise<string> {
+  const repoDir = await mkdtemp(path.join(tmpdir(), 'hosted-github-action-'));
+  await execFileAsync('git', ['init'], { cwd: repoDir });
+  await execFileAsync('git', ['remote', 'add', 'origin', remoteUrl], { cwd: repoDir });
+  return repoDir;
+}

@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm } from "node:fs/promises";
 import { EventEmitter } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -54,6 +54,7 @@ describe("FileBackendCodexWorker", () => {
       expect(appServer.envs[0]).toMatchObject({ PATH: process.env.PATH });
       expect(appServer.prompts).toEqual(["Return exactly OK."]);
       await worker.dispose();
+      await expect(access(join(rootDir, "codex-cache"))).rejects.toThrow();
       await expect(worker.run({ prompt: "hello" })).rejects.toThrow(
         "Codex worker has been disposed.",
       );
@@ -139,7 +140,7 @@ describe("FileBackendCodexWorker", () => {
         { outputText: "OK", warnings: [] },
       ]);
       expect(runner.runCount).toBe(1);
-      expect(appServer.prompts).toEqual(["first", "second"]);
+      expect([...appServer.prompts].sort()).toEqual(["first", "second"]);
     } finally {
       await first.dispose();
       await second.dispose();

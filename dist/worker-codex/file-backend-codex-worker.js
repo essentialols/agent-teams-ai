@@ -69,7 +69,6 @@ export class FileBackendCodexWorker {
             sessionMaterializer: new CodexWorkerCacheSessionPoolMaterializer({
                 cacheKey: `codex:${options.providerInstanceId}`,
                 slots: options.sessionCacheSlots ?? 1,
-                rootDir: join(options.stateRootDir, "codex-cache", this.workerId),
             }),
             model: options.model ?? "gpt-5.5",
             reasoningEffort: options.reasoningEffort ?? "low",

@@ -4,6 +4,7 @@ import { createMemberLogStreamBridge } from '@features/member-log-stream/preload
 import { createMemberWorkSyncBridge } from '@features/member-work-sync/preload';
 import { createRecentProjectsBridge } from '@features/recent-projects/preload';
 import { createRuntimeProviderManagementBridge } from '@features/runtime-provider-management/preload';
+import { createTerminalPlatformIntegrationSampleBridge } from '@features/terminal-platform-integration-sample/preload';
 import { createTmuxInstallerBridge } from '@features/tmux-installer/preload';
 import { WINDOW_ZOOM_FACTOR_CHANGED_CHANNEL } from '@shared/constants';
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
@@ -499,6 +500,7 @@ const electronAPI: ElectronAPI = {
   }),
   ...createRecentProjectsBridge(),
   runtimeProviderManagement: createRuntimeProviderManagementBridge(ipcRenderer),
+  terminalPlatform: createTerminalPlatformIntegrationSampleBridge(ipcRenderer),
   memberWorkSync: createMemberWorkSyncBridge(ipcRenderer),
   memberLogStream: createMemberLogStreamBridge(),
   telemetry: {

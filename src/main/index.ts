@@ -60,6 +60,12 @@ import {
   removeRuntimeProviderManagementIpc,
   type RuntimeProviderManagementFeatureFacade,
 } from '@features/runtime-provider-management/main';
+import {
+  createTerminalPlatformIntegrationSampleFeature,
+  registerTerminalPlatformIntegrationSampleIpc,
+  removeTerminalPlatformIntegrationSampleIpc,
+  type TerminalPlatformIntegrationSampleFeatureFacade,
+} from '@features/terminal-platform-integration-sample/main';
 import { createWorkspaceTrustCoordinator } from '@features/workspace-trust/main';
 import { ensureOpenCodeBridgeRuntimeBinaryEnv } from '@main/services/runtime/openCodeBridgeRuntimeEnv';
 import { ClaudeMultimodelBridgeService } from '@main/services/runtime/ClaudeMultimodelBridgeService';
@@ -923,6 +929,8 @@ let codexAccountFeature: CodexAccountFeatureFacade | null = null;
 let codexModelCatalogFeature: CodexModelCatalogFeatureFacade | null = null;
 let recentProjectsFeature: RecentProjectsFeatureFacade;
 let runtimeProviderManagementFeature: RuntimeProviderManagementFeatureFacade;
+let terminalPlatformIntegrationSampleFeature: TerminalPlatformIntegrationSampleFeatureFacade | null =
+  null;
 let memberWorkSyncFeature: MemberWorkSyncFeatureFacade | null = null;
 let teamDataService: TeamDataService;
 let teamProvisioningService: TeamProvisioningService;
@@ -1883,6 +1891,9 @@ async function initializeServices(): Promise<void> {
     logger: createLogger('Feature:RecentProjects'),
   });
   runtimeProviderManagementFeature = createRuntimeProviderManagementFeature();
+  terminalPlatformIntegrationSampleFeature = createTerminalPlatformIntegrationSampleFeature({
+    logger: createLogger('Feature:TerminalPlatformSample'),
+  });
   const memberWorkSyncLogger = createLogger('Feature:MemberWorkSync');
   const getMemberWorkSyncRuntimeSnapshot = async (input: {
     teamName: string;
@@ -2335,6 +2346,7 @@ async function initializeServices(): Promise<void> {
   registerCodexAccountIpc(ipcMain, codexAccountFeature);
   registerRecentProjectsIpc(ipcMain, recentProjectsFeature);
   registerRuntimeProviderManagementIpc(ipcMain, runtimeProviderManagementFeature);
+  registerTerminalPlatformIntegrationSampleIpc(ipcMain, terminalPlatformIntegrationSampleFeature);
   registerMemberWorkSyncIpc(ipcMain, memberWorkSyncFeature);
   registerMemberLogStreamIpc(ipcMain, memberLogStreamFeature);
 
@@ -2529,6 +2541,10 @@ async function shutdownServices(): Promise<void> {
     codexModelCatalogFeature = null;
     await runShutdownStep('Codex account dispose', () => codexAccountFeature?.dispose());
     codexAccountFeature = null;
+    await runShutdownStep('terminal platform sample dispose', () =>
+      terminalPlatformIntegrationSampleFeature?.dispose()
+    );
+    terminalPlatformIntegrationSampleFeature = null;
     await runShutdownStep('member work sync dispose', () => memberWorkSyncFeature?.dispose());
     memberWorkSyncFeature = null;
 
@@ -2541,6 +2557,7 @@ async function shutdownServices(): Promise<void> {
       removeCodexAccountIpc(ipcMain);
       removeRecentProjectsIpc(ipcMain);
       removeRuntimeProviderManagementIpc(ipcMain);
+      removeTerminalPlatformIntegrationSampleIpc(ipcMain);
       removeMemberWorkSyncIpc(ipcMain);
       removeMemberLogStreamIpc(ipcMain);
     });

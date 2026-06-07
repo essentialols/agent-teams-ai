@@ -35,6 +35,7 @@
     "team:prove-launch-matrix": "pnpm exec vitest run --maxWorkers=1 test/main/services/team/TeamAgentLaunchMatrix.safe-e2e.test.ts",
     "team:smoke-changes-real-data": "tsx scripts/team-changes-real-data-smoke.ts",
     "smoke:codex-runtime-install": "tsx scripts/smoke/codex-runtime-install.ts",
+    "smoke:terminal-platform-sample": "tsx scripts/smoke/terminal-platform-integration-sample.ts",
     "prebuild": "node ./scripts/ci/verify-radix-presence-patch.mjs && tsx scripts/fetch-pricing-data.ts && pnpm --filter agent-teams-controller build && pnpm --filter agent-teams-mcp build",
     "build": "node --max-old-space-size=8192 ./node_modules/electron-vite/bin/electron-vite.js build",
     "postbuild": "node ./scripts/ci/verify-radix-renderer-bundle.mjs",

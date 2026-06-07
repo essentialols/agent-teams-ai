@@ -1,0 +1,1 @@
+export { createTerminalPlatformIntegrationSampleBridge } from './createTerminalPlatformIntegrationSampleBridge';

@@ -115,6 +115,7 @@ import type {
 } from '@features/member-work-sync/contracts';
 import type { RecentProjectsElectronApi } from '@features/recent-projects/contracts';
 import type { RuntimeProviderManagementApi } from '@features/runtime-provider-management/contracts';
+import type { TerminalPlatformIntegrationSampleApi } from '@features/terminal-platform-integration-sample/contracts';
 import type {
   ConversationGroup,
   FileChangeEvent,
@@ -983,6 +984,10 @@ export interface ElectronAPI extends RecentProjectsElectronApi, CodexAccountElec
 
   // tmux runtime diagnostics API
   tmux: TmuxAPI;
+
+  // Terminal Platform production integration sample API.
+  // Desktop-only because the integration owns an Electron main-process sidecar.
+  terminalPlatform?: TerminalPlatformIntegrationSampleApi;
 
   // Embedded Terminal API (xterm.js + node-pty)
   terminal: TerminalAPI;

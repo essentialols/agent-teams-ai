@@ -26,7 +26,8 @@
     "src/**/*",
     "test/**/*",
     "scripts/team-changes-real-data-smoke.ts",
-    "scripts/smoke/codex-runtime-install.ts"
+    "scripts/smoke/codex-runtime-install.ts",
+    "scripts/smoke/terminal-platform-integration-sample.ts"
   ],
   "exclude": ["node_modules", "dist", "dist-electron"]
 }

@@ -104,6 +104,7 @@ export type WorkerPoolOptions<Job, Result> = {
   readonly poolId: string;
   readonly slots: number;
   readonly workerFactory: SubscriptionWorkerFactory<Job, Result>;
+  readonly clock?: WorkerPoolClock;
   readonly slotSelector?: WorkerSlotSelector<Job>;
   readonly retryPolicy?: WorkerPoolRetryPolicy;
   readonly maxQueueSize?: number;
@@ -111,6 +112,10 @@ export type WorkerPoolOptions<Job, Result> = {
   readonly shutdownTimeoutMs?: number;
   readonly prewarmOnStart?: boolean;
   readonly observability?: ObservabilityPort;
+};
+
+export type WorkerPoolClock = {
+  now(): Date;
 };
 
 export type WorkerPoolRunOptions = {

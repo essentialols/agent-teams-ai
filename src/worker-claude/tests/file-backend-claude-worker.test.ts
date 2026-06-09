@@ -20,7 +20,11 @@ import type {
   ClaudeTaskExecutionEngine,
   ClaudeTaskExecutionResult,
 } from "@vioxen/subscription-runtime/provider-claude";
-import { BoundedSubscriptionWorkerPool } from "@vioxen/subscription-runtime/worker-core";
+import {
+  BoundedSubscriptionWorkerPool,
+  InMemoryWorkerAccountCapacityStore,
+  accountCapacityAwareWorkerFactory,
+} from "@vioxen/subscription-runtime/worker-core";
 import {
   FileBackendClaudeWorker,
   FileClaudeTranscriptBundleStore,
@@ -479,6 +483,91 @@ describe("FileBackendClaudeWorker", () => {
       expect(engines[0]!.records).toHaveLength(0);
       expect(engines[1]!.records.map((record) => record.prompt)).toEqual([
         "review",
+      ]);
+    } finally {
+      await pool.dispose();
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("propagates Claude account cooldown across same-token workers", async () => {
+    const rootDir = await tempRoot();
+    const clock = new MutableClock(new Date("2026-06-01T00:00:00.000Z"));
+    const resetAt = new Date("2026-06-01T01:00:00.000Z");
+    const accountCapacityStore = new InMemoryWorkerAccountCapacityStore();
+    const telemetry = [
+      new MutableRateLimitTelemetry(rateLimitSnapshot(clock.now(), {
+        five_hour: { usedPercentage: 92, resetsAt: resetAt },
+      })),
+      new MutableRateLimitTelemetry(rateLimitSnapshot(clock.now(), {
+        five_hour: { usedPercentage: 12, resetsAt: resetAt },
+      })),
+      new MutableRateLimitTelemetry(rateLimitSnapshot(clock.now(), {
+        five_hour: { usedPercentage: 12, resetsAt: resetAt },
+      })),
+    ];
+    const engines = [
+      new RecordingClaudeEngine({ outputText: "slot-1" }),
+      new RecordingClaudeEngine({ outputText: "slot-2" }),
+      new RecordingClaudeEngine({ outputText: "slot-3" }),
+    ];
+    const workers: FileBackendClaudeWorker[] = [];
+    const pool = new BoundedSubscriptionWorkerPool<
+      Parameters<FileBackendClaudeWorker["run"]>[0],
+      Awaited<ReturnType<FileBackendClaudeWorker["run"]>>
+    >({
+      poolId: "claude-account-aware-pool",
+      slots: 3,
+      clock,
+      workerFactory: accountCapacityAwareWorkerFactory({
+        accountCapacityStore,
+        clock,
+        workerFactory: ({ slotIndex, workerId }) => {
+          const worker = new FileBackendClaudeWorker({
+            workerId,
+            providerInstanceId: `claude-account-${slotIndex + 1}`,
+            stateRootDir: rootDir,
+            encryptionKey: encryptionKey(),
+            engine: engines[slotIndex]!,
+            rateLimitTelemetry: telemetry[slotIndex]!,
+            capacityPolicy: {
+              rateLimitMinRemainingPercent: 10,
+            },
+            clock,
+          });
+          workers.push(worker);
+          return worker;
+        },
+      }),
+    });
+
+    try {
+      await pool.start();
+      await workers[0]!.seedClaudeOAuth({ oauthToken: "shared-token" });
+      await workers[1]!.seedClaudeOAuth({ oauthToken: "shared-token" });
+      await workers[2]!.seedClaudeOAuth({ oauthToken: "other-token" });
+
+      await expect(pool.run({ prompt: "first" })).resolves.toMatchObject({
+        outputText: "slot-3",
+      });
+
+      expect(workers[0]!.capacity()).toMatchObject({
+        availability: "cooldown",
+        reason: "rate_limit_threshold",
+      });
+      expect(engines[0]!.records).toHaveLength(0);
+      expect(engines[1]!.records).toHaveLength(0);
+      expect(engines[2]!.records.map((record) => record.prompt)).toEqual([
+        "first",
+      ]);
+
+      clock.advanceMs(60 * 60 * 1000 + 1);
+
+      await expect(pool.run({ prompt: "after-reset" })).resolves.toMatchObject({
+        outputText: "slot-1",
+      });
+      expect(engines[0]!.records.map((record) => record.prompt)).toEqual([
+        "after-reset",
       ]);
     } finally {
       await pool.dispose();

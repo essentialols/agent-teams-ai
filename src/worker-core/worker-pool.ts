@@ -136,7 +136,7 @@ export class BoundedSubscriptionWorkerPool<Job, Result> {
       );
     }
 
-    const selected = this.selectAvailableSlot(job, new Date());
+    const selected = this.selectAvailableSlot(job, this.now());
     const available = selected.slot;
     if (available) {
       return this.runOnSlotWithRetry(available, job, options, 1);
@@ -271,7 +271,7 @@ export class BoundedSubscriptionWorkerPool<Job, Result> {
       poolId: this.options.poolId,
       status,
       state: this.poolState,
-      checkedAt: new Date(),
+      checkedAt: this.now(),
       slots: slotHealth,
       queued: this.queue.length,
       inFlight: this.inFlightCount,
@@ -371,7 +371,7 @@ export class BoundedSubscriptionWorkerPool<Job, Result> {
     while (this.queue.length > 0) {
       const next = this.queue[0];
       if (!next) return;
-      const selected = this.selectAvailableSlot(next.job, new Date());
+      const selected = this.selectAvailableSlot(next.job, this.now());
       if (!selected.slot) {
         this.scheduleCooldownDrain(selected.snapshots);
         return;
@@ -395,7 +395,7 @@ export class BoundedSubscriptionWorkerPool<Job, Result> {
       if (!this.shouldRetryOnAnotherSlot(slot, options, attempt)) {
         throw error;
       }
-      const selected = this.selectAvailableSlot(job, new Date());
+      const selected = this.selectAvailableSlot(job, this.now());
       if (!selected.slot) {
         this.scheduleCooldownDrain(selected.snapshots);
         throw error;
@@ -421,7 +421,7 @@ export class BoundedSubscriptionWorkerPool<Job, Result> {
     if (attempt >= policy.maxAttempts) return false;
     if (options.abortSignal?.aborted) return false;
     return (
-      this.slotCapacity(failedSlot, new Date()).availability !== "available"
+      this.slotCapacity(failedSlot, this.now()).availability !== "available"
     );
   }
 
@@ -524,7 +524,7 @@ export class BoundedSubscriptionWorkerPool<Job, Result> {
       this.cooldownDrainAt = null;
       this.cooldownDrainTimer = null;
       this.drainQueue();
-    }, Math.max(0, nextCooldownAt - Date.now()));
+    }, Math.max(0, nextCooldownAt - this.now().getTime()));
   }
 
   private clearCooldownDrainTimer(): void {
@@ -583,6 +583,10 @@ export class BoundedSubscriptionWorkerPool<Job, Result> {
         ...metadata,
       },
     });
+  }
+
+  private now(): Date {
+    return this.options.clock?.now() ?? new Date();
   }
 }
 

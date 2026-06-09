@@ -1,11 +1,19 @@
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type {
   ClockPort,
   ProviderTaskTelemetry,
+  WorkspacePort,
 } from "@vioxen/subscription-runtime/core";
 import type {
   ClaudeTaskEngineInput,
@@ -15,10 +23,13 @@ import type {
 import { BoundedSubscriptionWorkerPool } from "@vioxen/subscription-runtime/worker-core";
 import {
   FileBackendClaudeWorker,
+  FileClaudeTranscriptBundleStore,
   FileClaudeRateLimitTelemetry,
   type ClaudeRateLimitTelemetrySnapshot,
   type ClaudeRateLimitTelemetrySource,
   type ClaudeRateLimitWindowName,
+  type FileBackendClaudeWorkerThreadJob,
+  type FileBackendClaudeWorkerThreadResult,
 } from "../index";
 
 describe("FileBackendClaudeWorker", () => {
@@ -258,6 +269,46 @@ describe("FileBackendClaudeWorker", () => {
     }
   });
 
+  it("captures and materializes Claude transcript bundles", async () => {
+    const rootDir = await tempRoot();
+    const configA = join(rootDir, "config-a");
+    const configB = join(rootDir, "config-b");
+    const workspacePath = join(rootDir, "workspace");
+    const store = new FileClaudeTranscriptBundleStore(join(rootDir, "bundles"));
+
+    try {
+      await writeFakeClaudeTranscript({
+        configDir: configA,
+        workspacePath,
+        sessionId: "session-a",
+        text: "remember QTBUNDLE",
+      });
+
+      const bundle = await store.capture({
+        sourceConfigDir: configA,
+        cwd: workspacePath,
+        sessionId: "session-a",
+      });
+      await store.materialize({
+        bundleId: bundle.bundleId,
+        targetConfigDir: configB,
+      });
+
+      await expect(
+        readFile(
+          fakeClaudeTranscriptPath(configB, workspacePath, "session-a"),
+          "utf8",
+        ),
+      ).resolves.toContain("QTBUNDLE");
+      expect(bundle).toMatchObject({
+        cwd: await realpath(workspacePath),
+        sessionId: "session-a",
+      });
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
   it("reports cooldown from Claude rate-limit telemetry and restores after reset", async () => {
     const rootDir = await tempRoot();
     const clock = new MutableClock(new Date("2026-06-01T00:00:00.000Z"));
@@ -489,6 +540,107 @@ describe("FileBackendClaudeWorker", () => {
       await rm(rootDir, { recursive: true, force: true });
     }
   });
+
+  it("hands off one logical Claude thread to another worker after soft cooldown", async () => {
+    const rootDir = await tempRoot();
+    const sharedWorkspacePath = join(rootDir, "shared-workspace");
+    const engines = [
+      new RecordingClaudeEngine({
+        outputText: "first-worker",
+        sessionIds: ["session-a"],
+        writeTranscripts: true,
+      }),
+      new RecordingClaudeEngine({
+        outputText: "second-worker",
+        sessionIds: ["session-b"],
+        writeTranscripts: true,
+      }),
+    ];
+    const workers: FileBackendClaudeWorker[] = [];
+    const pool = new BoundedSubscriptionWorkerPool<
+      FileBackendClaudeWorkerThreadJob,
+      FileBackendClaudeWorkerThreadResult
+    >({
+      poolId: "claude-thread-pool",
+      slots: 2,
+      workerFactory: ({ slotIndex, workerId }) => {
+        const worker = new FileBackendClaudeWorker({
+          workerId,
+          providerInstanceId: `claude-thread-${slotIndex + 1}`,
+          stateRootDir: rootDir,
+          encryptionKey: encryptionKey(),
+          engine: engines[slotIndex]!,
+          workspace: new FixedWorkspace(sharedWorkspacePath),
+          workspacePath: sharedWorkspacePath,
+          capacityPolicy: {
+            softMaxRunsPerWindow: 1,
+            windowMs: 60_000,
+          },
+        });
+        workers.push(worker);
+        return worker;
+      },
+    });
+
+    try {
+      await pool.start();
+      await Promise.all(
+        workers.map((worker) =>
+          worker.seedClaudeOAuth({ oauthToken: `${worker.workerId}-token` }),
+        ),
+      );
+
+      const first = await pool.run({
+        threadId: "logical-review-thread",
+        prompt: "remember QTHREAD",
+      });
+      const second = await pool.run({
+        threadId: "logical-review-thread",
+        prompt: "recall QTHREAD",
+      });
+
+      expect(first).toMatchObject({
+        outputText: "first-worker",
+        thread: {
+          generation: 1,
+          latestSessionId: "session-a",
+          latestWorkerId: "claude-thread-pool:slot-1",
+        },
+      });
+      expect(second).toMatchObject({
+        outputText: "second-worker",
+        thread: {
+          generation: 2,
+          latestSessionId: "session-b",
+          latestWorkerId: "claude-thread-pool:slot-2",
+        },
+      });
+      expect(engines[0]!.records[0]?.runtimeThread).toEqual({
+        threadId: "logical-review-thread",
+      });
+      expect(engines[1]!.records[0]?.runtimeThread).toEqual({
+        threadId: "logical-review-thread",
+        resumeSessionId: "session-a",
+      });
+      await expect(
+        readFile(
+          fakeClaudeTranscriptPath(
+            workers[1]!.configDir,
+            sharedWorkspacePath,
+            "session-a",
+          ),
+          "utf8",
+        ),
+      ).resolves.toContain("remember QTHREAD");
+      expect(workers[0]!.capacity()).toMatchObject({
+        availability: "cooldown",
+        reason: "soft_run_limit",
+      });
+    } finally {
+      await pool.dispose();
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
 });
 
 class RecordingClaudeEngine implements ClaudeTaskExecutionEngine {
@@ -506,6 +658,8 @@ class RecordingClaudeEngine implements ClaudeTaskExecutionEngine {
     private readonly options: {
       readonly outputText?: string;
       readonly throwMessage?: string;
+      readonly sessionIds?: readonly string[];
+      readonly writeTranscripts?: boolean;
     } = {},
   ) {}
 
@@ -516,10 +670,25 @@ class RecordingClaudeEngine implements ClaudeTaskExecutionEngine {
     if (this.options.throwMessage) {
       throw new Error(this.options.throwMessage);
     }
+    const sessionId =
+      this.options.sessionIds?.[this.records.length - 1] ??
+      `session-${this.records.length}`;
+    if (this.options.writeTranscripts) {
+      if (!input.session.configDir) {
+        throw new Error("recording_claude_config_dir_required");
+      }
+      await writeFakeClaudeTranscript({
+        configDir: input.session.configDir,
+        workspacePath: input.workspacePath,
+        sessionId,
+        text: input.prompt,
+      });
+    }
     return {
       outputText: this.options.outputText ?? "ok",
       telemetry: {
         providerRunId: `run-${this.records.length}`,
+        providerSessionId: sessionId,
       } satisfies ProviderTaskTelemetry,
       warnings: [],
     };
@@ -560,6 +729,23 @@ class MutableRateLimitTelemetry implements ClaudeRateLimitTelemetrySource {
   }
 }
 
+class FixedWorkspace implements WorkspacePort {
+  readonly workspaceId = "fixed-workspace";
+  readonly capabilities = {
+    workspaceId: this.workspaceId,
+    supportsTempDir: false,
+    supportsExistingCheckout: true,
+    supportsContainer: false,
+  };
+
+  constructor(private readonly workspacePath: string) {}
+
+  async create() {
+    await mkdir(this.workspacePath, { recursive: true, mode: 0o700 });
+    return { path: this.workspacePath };
+  }
+}
+
 function rateLimitSnapshot(
   observedAt: Date,
   windows: Partial<
@@ -590,4 +776,40 @@ async function tempRoot(): Promise<string> {
 
 function encryptionKey(): Uint8Array {
   return new Uint8Array(32).fill(7);
+}
+
+async function writeFakeClaudeTranscript(input: {
+  readonly configDir: string;
+  readonly workspacePath: string;
+  readonly sessionId: string;
+  readonly text: string;
+}): Promise<void> {
+  const path = fakeClaudeTranscriptPath(
+    input.configDir,
+    input.workspacePath,
+    input.sessionId,
+  );
+  await mkdir(join(path, ".."), { recursive: true, mode: 0o700 });
+  await mkdir(input.workspacePath, { recursive: true, mode: 0o700 });
+  await writeFile(
+    path,
+    `${JSON.stringify({
+      type: "assistant",
+      sessionId: input.sessionId,
+      text: input.text,
+    })}\n`,
+    "utf8",
+  );
+}
+
+function fakeClaudeTranscriptPath(
+  configDir: string,
+  workspacePath: string,
+  sessionId: string,
+): string {
+  return join(configDir, "projects", fakeClaudeProjectKey(workspacePath), `${sessionId}.jsonl`);
+}
+
+function fakeClaudeProjectKey(workspacePath: string): string {
+  return workspacePath.replace(/[^A-Za-z0-9]/gu, "-");
 }

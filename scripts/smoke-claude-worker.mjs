@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { randomBytes } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -32,19 +32,37 @@ const [{ FileBackendClaudeWorker }, { BoundedSubscriptionWorkerPool }, provider]
 const rootStateDir = await mkdtemp(
   join(tmpdir(), "subscription-runtime-claude-smoke-"),
 );
+const smokeMode = process.env.CLAUDE_WORKER_SMOKE_MODE ?? "all";
+const keepTemp = process.env.CLAUDE_WORKER_SMOKE_KEEP_TMP === "1";
 
 try {
-  const single = await runSingleWorkerSmoke({
-    FileBackendClaudeWorker,
-    provider,
-    rootStateDir,
-    claudePath,
-    token: primaryToken,
-  });
-
-  const report = {
-    single,
-    multiWorker:
+  const report = {};
+  if (smokeMode === "all" || smokeMode === "single") {
+    report.single = await runSingleWorkerSmoke({
+      FileBackendClaudeWorker,
+      provider,
+      rootStateDir,
+      claudePath,
+      token: primaryToken,
+    });
+  }
+  if (smokeMode === "all" || smokeMode === "thread") {
+    report.threadHandoff = await runThreadHandoffSmoke({
+      FileBackendClaudeWorker,
+      BoundedSubscriptionWorkerPool,
+      provider,
+      rootStateDir,
+      claudePath,
+      tokens: [
+        primaryToken,
+        secondaryToken && secondaryToken !== primaryToken
+          ? secondaryToken
+          : primaryToken,
+      ],
+    });
+  }
+  if (smokeMode === "all" || smokeMode === "multi") {
+    report.multiWorker =
       secondaryToken && secondaryToken !== primaryToken
         ? await runMultiWorkerSmoke({
             FileBackendClaudeWorker,
@@ -59,17 +77,19 @@ try {
             reason: secondaryToken
               ? "secondary_token_matches_primary"
               : "CLAUDE_CODE_OAUTH_TOKEN_2 not provided",
-          },
-  };
+          };
+  }
 
   console.log(JSON.stringify(report, null, 2));
 } finally {
-  await rm(rootStateDir, {
-    recursive: true,
-    force: true,
-    maxRetries: 5,
-    retryDelay: 100,
-  });
+  if (!keepTemp) {
+    await rm(rootStateDir, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    });
+  }
 }
 
 async function runSingleWorkerSmoke(input) {
@@ -103,6 +123,88 @@ async function runSingleWorkerSmoke(input) {
     };
   } finally {
     await worker.dispose().catch(() => undefined);
+  }
+}
+
+async function runThreadHandoffSmoke(input) {
+  const workers = [];
+  const sharedWorkspacePath = join(input.rootStateDir, "thread-workspace");
+  const phrase = `QTHANDOFF-${randomBytes(4).toString("hex").toUpperCase()}`;
+  const pool = new input.BoundedSubscriptionWorkerPool({
+    poolId: "live-smoke-claude-thread-pool",
+    slots: 2,
+    retryPolicy: {
+      maxAttempts: 2,
+      retryOnSlotCapacityUnavailable: true,
+    },
+    workerFactory: ({ slotIndex, workerId }) => {
+      const worker = new input.FileBackendClaudeWorker({
+        workerId,
+        providerInstanceId: `live-smoke-claude-thread-${slotIndex + 1}`,
+        stateRootDir: join(input.rootStateDir, "thread"),
+        encryptionKey: randomBytes(32),
+        engine: createEngine(input.provider, {
+          claudePath: input.claudePath,
+          stateFilePath: join(
+            input.rootStateDir,
+            `thread-runtime-state-${slotIndex + 1}.json`,
+          ),
+        }),
+        model: process.env.CLAUDE_MODEL ?? "sonnet",
+        workspace: fixedWorkspace(sharedWorkspacePath),
+        workspacePath: sharedWorkspacePath,
+        capacityPolicy: { softMaxRunsPerWindow: 1, windowMs: 60_000 },
+      });
+      workers.push(worker);
+      return worker;
+    },
+  });
+
+  const startedAt = Date.now();
+  try {
+    await pool.start();
+    await Promise.all(
+      workers.map((worker, index) =>
+        worker.seedClaudeOAuth({ oauthToken: input.tokens[index] }),
+      ),
+    );
+    const first = await pool.run({
+      threadId: "live-smoke-logical-thread",
+      prompt:
+        `Remember this exact phrase: ${phrase}. ` +
+        "Reply exactly FIRST_READY and nothing else.",
+      controls: { maxTurns: 1, permissionMode: "read-only" },
+    });
+    const second = await pool.run({
+      threadId: "live-smoke-logical-thread",
+      prompt:
+        "What exact phrase were you asked to remember? " +
+        "Reply with only that phrase and nothing else.",
+      controls: { maxTurns: 1, permissionMode: "read-only" },
+    });
+    const secondOutput = second.outputText.trim();
+    if (!secondOutput.includes(phrase)) {
+      fail(
+        `Thread handoff resume failed. Expected ${phrase}, got ${secondOutput}`,
+      );
+    }
+
+    return {
+      ok: true,
+      durationMs: Date.now() - startedAt,
+      phrase,
+      outputs: [first.outputText.trim(), secondOutput],
+      firstThread: threadSummary(first.thread),
+      secondThread: threadSummary(second.thread),
+      capacities: workers.map((worker) => ({
+        workerId: worker.workerId,
+        capacity: worker.capacity(),
+      })),
+      configDirs: workers.map((worker) => worker.configDir),
+      sharedWorkspacePath,
+    };
+  } finally {
+    await pool.dispose().catch(() => undefined);
   }
 }
 
@@ -167,6 +269,22 @@ async function runMultiWorkerSmoke(input) {
   }
 }
 
+function fixedWorkspace(path) {
+  return {
+    workspaceId: "smoke-fixed-workspace",
+    capabilities: {
+      workspaceId: "smoke-fixed-workspace",
+      supportsTempDir: false,
+      supportsExistingCheckout: true,
+      supportsContainer: false,
+    },
+    async create() {
+      await mkdir(path, { recursive: true, mode: 0o700 });
+      return { path };
+    },
+  };
+}
+
 function createEngine(provider, input) {
   const runtimeModules = localRuntimeModules();
   return new provider.ClaudeRuntimeTaskExecutionEngine({
@@ -186,6 +304,15 @@ function createEngine(provider, input) {
         }
       : {}),
   });
+}
+
+function threadSummary(thread) {
+  return {
+    generation: thread?.generation,
+    latestSessionId: thread?.latestSessionId,
+    latestProviderInstanceId: thread?.latestProviderInstanceId,
+    latestWorkerId: thread?.latestWorkerId,
+  };
 }
 
 function localRuntimeModules() {

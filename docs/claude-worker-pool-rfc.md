@@ -120,6 +120,8 @@ Responsibilities:
 - compose `ClaudeSessionDriver`, `ClaudeTaskAgentDriver`,
   `ClaudeRuntimeTaskExecutionEngine`, runner and workspace;
 - expose `prewarm()`, `run()`, `health()`, `dispose()`;
+- expose `runThreadJob()` for logical Claude threads that must continue across
+  worker slots with explicit `--resume` session ids;
 - track local soft rotation counters;
 - classify Claude runtime warnings/failures into capacity state.
 - expose safe capacity details including `providerInstanceId`, `configDir` and
@@ -180,6 +182,22 @@ warmupPrompt?: string | false;
 `false` means context-only prewarm. A string means run a real task such as
 `Return exactly OK.` and therefore spend quota.
 
+## Logical Thread Handoff
+
+Claude Code resume is bound to the Claude session id and the project cwd.
+Worker handoff therefore uses:
+
+- one logical thread store: `threadId -> latestSessionId/latestBundleId`;
+- one transcript bundle store that copies Claude `projects/**/<session>.jsonl`
+  files from the previous worker config dir into the selected worker config dir;
+- explicit `provider.send()` follow-up calls with the previous provider session
+  id, instead of implicit `--continue`;
+- the same workspace path for every worker that can process one logical thread.
+
+The worker rejects a handoff when the stored thread cwd differs from the selected
+worker workspace path. This prevents a silent new Claude context when a pool is
+misconfigured with per-slot workspaces.
+
 ## Failure Semantics
 
 Recommended slot state transitions:
@@ -221,6 +239,8 @@ Provider tests:
 Live smoke:
 
 - one local Claude token: worker starts, prewarms and runs one task;
+- one local Claude token: two isolated Claude config dirs hand off the same
+  logical thread through a shared workspace and explicit resume;
 - two independent Claude tokens when available: two workers process jobs and
   rotation can be observed with an artificially low soft run limit.
 
@@ -230,6 +250,7 @@ Use the package smoke harness for local verification:
 export CLAUDE_CODE_OAUTH_TOKEN=...
 export CLAUDE_PATH="$(command -v claude)"
 npm run smoke:worker-claude
+npm run smoke:worker-claude-thread
 ```
 
 For a real two-worker smoke, also set `CLAUDE_CODE_OAUTH_TOKEN_2` to a distinct

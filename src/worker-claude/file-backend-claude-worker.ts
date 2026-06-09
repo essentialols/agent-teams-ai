@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir } from "node:fs/promises";
+import { mkdir, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import {
   createSubscriptionRuntime,
@@ -9,6 +9,7 @@ import {
   type ObservabilityPort,
   type ProviderFailure,
   type ProviderTask,
+  type ProviderTaskTelemetry,
   type RedactorPort,
   type RefreshThenRunResult,
   type RuntimeDeps,
@@ -18,6 +19,8 @@ import {
   ClaudeRuntimeTaskExecutionEngine,
   ClaudeSessionDriver,
   ClaudeTaskAgentDriver,
+  claudeRuntimeResumeSessionIdMetadataKey,
+  claudeRuntimeThreadIdMetadataKey,
   sessionArtifactFromClaudeOAuth,
   validateClaudeSessionArtifact,
   type ClaudeTaskExecutionEngine,
@@ -39,6 +42,13 @@ import {
   type ClaudeRateLimitTelemetrySource,
   type ClaudeRateLimitWindowName,
 } from "./rate-limit-telemetry";
+import {
+  FileClaudeLogicalThreadStore,
+  FileClaudeTranscriptBundleStore,
+  type ClaudeLogicalThreadState,
+  type ClaudeLogicalThreadStore,
+  type ClaudeTranscriptBundleStore,
+} from "./thread-handoff";
 
 export type ClaudeWorkerCapacityPolicy = {
   readonly softMaxRunsPerWindow?: number;
@@ -67,10 +77,13 @@ export type FileBackendClaudeWorkerOptions = {
   readonly pollIntervalMs?: number;
   readonly capacityPolicy?: ClaudeWorkerCapacityPolicy;
   readonly rateLimitTelemetry?: ClaudeRateLimitTelemetrySource;
+  readonly logicalThreadStore?: ClaudeLogicalThreadStore;
+  readonly transcriptBundleStore?: ClaudeTranscriptBundleStore;
   readonly engine?: ClaudeTaskExecutionEngine;
   readonly observability?: ObservabilityPort;
   readonly runner?: RuntimeDeps["runner"];
   readonly workspace?: RuntimeDeps["workspace"];
+  readonly workspacePath?: string;
   readonly clock?: ClockPort;
 };
 
@@ -87,11 +100,21 @@ export type FileBackendClaudeWorkerJob = {
 export type FileBackendClaudeWorkerResult = {
   readonly outputText: string;
   readonly structuredOutput?: unknown;
+  readonly telemetry?: ProviderTaskTelemetry;
   readonly warnings: readonly {
     readonly code: string;
     readonly safeMessage: string;
   }[];
 };
+
+export type FileBackendClaudeWorkerThreadJob = FileBackendClaudeWorkerJob & {
+  readonly threadId: string;
+};
+
+export type FileBackendClaudeWorkerThreadResult =
+  FileBackendClaudeWorkerResult & {
+    readonly thread: ClaudeLogicalThreadState;
+  };
 
 export class FileBackendClaudeWorker implements CapacityAwareSubscriptionWorker<
   FileBackendClaudeWorkerJob,
@@ -110,7 +133,10 @@ export class FileBackendClaudeWorker implements CapacityAwareSubscriptionWorker<
   private readonly sessionStore: NonNullable<RuntimeDeps["sessionStore"]>;
   private readonly runtime;
   private readonly ownedWorkspace: StableWorkerWorkspace | null;
+  private readonly stableWorkspacePath: string | null;
   private readonly rateLimitTelemetry: ClaudeRateLimitTelemetrySource | null;
+  private readonly logicalThreadStore: ClaudeLogicalThreadStore;
+  private readonly transcriptBundleStore: ClaudeTranscriptBundleStore;
   private capacityState: WorkerCapacitySnapshot = { availability: "available" };
   private windowStartedAtMs: number;
   private runsInWindow = 0;
@@ -125,12 +151,18 @@ export class FileBackendClaudeWorker implements CapacityAwareSubscriptionWorker<
       options.configDir ??
       join(options.stateRootDir, "claude-configs", hashText(this.workerId));
     this.runner = options.runner ?? new NodeProcessRunner();
+    const defaultWorkspacePath = join(
+      options.stateRootDir,
+      "workspaces",
+      hashText(this.workerId),
+    );
     this.ownedWorkspace = options.workspace
       ? null
-      : new StableWorkerWorkspace(
-          join(options.stateRootDir, "workspaces", hashText(this.workerId)),
-        );
+      : new StableWorkerWorkspace(defaultWorkspacePath);
     this.workspace = options.workspace ?? this.ownedWorkspace!;
+    this.stableWorkspacePath = options.workspace
+      ? (options.workspacePath ?? null)
+      : defaultWorkspacePath;
     this.observability = options.observability ?? new NullWorkerObservability();
     this.clock = options.clock ?? systemClock;
     this.windowStartedAtMs = this.clock.now().getTime();
@@ -141,6 +173,16 @@ export class FileBackendClaudeWorker implements CapacityAwareSubscriptionWorker<
             directory: join(this.configDir, "rate-limit-telemetry"),
           })
         : null);
+    this.logicalThreadStore =
+      options.logicalThreadStore ??
+      new FileClaudeLogicalThreadStore(
+        join(options.stateRootDir, "claude-logical-threads"),
+      );
+    this.transcriptBundleStore =
+      options.transcriptBundleStore ??
+      new FileClaudeTranscriptBundleStore(
+        join(options.stateRootDir, "claude-transcript-bundles"),
+      );
 
     const { sessionStore, leaseStore } = createLocalFileBackendRuntimeAdapters({
       providerId: "claude",
@@ -321,7 +363,16 @@ export class FileBackendClaudeWorker implements CapacityAwareSubscriptionWorker<
     }
   }
 
+  run(job: FileBackendClaudeWorkerThreadJob): Promise<FileBackendClaudeWorkerThreadResult>;
+  run(job: FileBackendClaudeWorkerJob): Promise<FileBackendClaudeWorkerResult>;
   async run(
+    job: FileBackendClaudeWorkerJob | FileBackendClaudeWorkerThreadJob,
+  ): Promise<FileBackendClaudeWorkerResult | FileBackendClaudeWorkerThreadResult> {
+    if (isThreadJob(job)) return this.runThreadJob(job);
+    return this.runProviderTask(job);
+  }
+
+  private async runProviderTask(
     job: FileBackendClaudeWorkerJob,
   ): Promise<FileBackendClaudeWorkerResult> {
     this.assertStarted();
@@ -355,6 +406,70 @@ export class FileBackendClaudeWorker implements CapacityAwareSubscriptionWorker<
     }
 
     return this.taskResultToOutput(result);
+  }
+
+  async runThreadJob(
+    job: FileBackendClaudeWorkerThreadJob,
+  ): Promise<FileBackendClaudeWorkerThreadResult> {
+    this.assertStarted();
+    const current = await this.logicalThreadStore.read(job.threadId);
+    const workspacePath = this.threadWorkspacePath(job.threadId);
+    const comparableWorkspacePath = current
+      ? await canonicalPath(workspacePath)
+      : workspacePath;
+    this.assertThreadWorkspaceCompatible(
+      job.threadId,
+      current,
+      comparableWorkspacePath,
+    );
+    if (current?.latestBundleId) {
+      await this.transcriptBundleStore.materialize({
+        bundleId: current.latestBundleId,
+        targetConfigDir: this.configDir,
+      });
+    }
+
+    const result = await this.runProviderTask({
+      ...job,
+      metadata: {
+        ...(job.metadata ?? {}),
+        [claudeRuntimeThreadIdMetadataKey]: job.threadId,
+        ...(current?.latestSessionId === undefined
+          ? {}
+          : {
+              [claudeRuntimeResumeSessionIdMetadataKey]:
+                current.latestSessionId,
+            }),
+      },
+    });
+    const latestSessionId = result.telemetry?.providerSessionId;
+    if (!latestSessionId) {
+      throw new SubscriptionWorkerError(
+        "subscription_worker_run_failed",
+        "Claude runtime did not return a provider session id for thread handoff.",
+      );
+    }
+
+    const bundle = await this.transcriptBundleStore.capture({
+      sourceConfigDir: this.configDir,
+      cwd: workspacePath,
+      sessionId: latestSessionId,
+    });
+    const thread = await this.logicalThreadStore.compareAndSwap({
+      threadId: job.threadId,
+      expectedGeneration: current?.generation ?? 0,
+      next: {
+        threadId: job.threadId,
+        cwd: bundle.cwd,
+        latestSessionId,
+        latestBundleId: bundle.bundleId,
+        latestProviderInstanceId: this.options.providerInstanceId,
+        latestWorkerId: this.workerId,
+        updatedAt: this.clock.now().toISOString(),
+      },
+    });
+
+    return { ...result, thread };
   }
 
   capacity(): WorkerCapacitySnapshot {
@@ -489,8 +604,39 @@ export class FileBackendClaudeWorker implements CapacityAwareSubscriptionWorker<
     return {
       outputText: result.task.outputText,
       structuredOutput: result.task.structuredOutput,
+      ...(result.task.telemetry === undefined
+        ? {}
+        : { telemetry: result.task.telemetry }),
       warnings: result.task.warnings,
     };
+  }
+
+  private assertThreadWorkspaceCompatible(
+    threadId: string,
+    state: ClaudeLogicalThreadState | null,
+    workspacePath: string,
+  ): void {
+    if (!state || state.cwd === workspacePath) return;
+    throw new SubscriptionWorkerError(
+      "subscription_worker_run_failed",
+      "Claude logical thread handoff requires all workers to use the same workspace path.",
+      {
+        details: {
+          threadId,
+          expectedCwd: state.cwd,
+          actualCwd: workspacePath,
+        },
+      },
+    );
+  }
+
+  private threadWorkspacePath(threadId: string): string {
+    if (this.stableWorkspacePath) return this.stableWorkspacePath;
+    throw new SubscriptionWorkerError(
+      "subscription_worker_run_failed",
+      "Claude logical thread handoff requires a stable workspacePath when a custom workspace is injected.",
+      { details: { threadId } },
+    );
   }
 
   private recordSuccessfulRun(): void {
@@ -740,6 +886,20 @@ function assertWorkerOptions(options: FileBackendClaudeWorkerOptions): void {
   }
   if (options.capacityPolicy?.rateLimitWindows?.length === 0) {
     throw new Error("file_backend_claude_rate_limit_windows_empty");
+  }
+}
+
+function isThreadJob(
+  job: FileBackendClaudeWorkerJob | FileBackendClaudeWorkerThreadJob,
+): job is FileBackendClaudeWorkerThreadJob {
+  return "threadId" in job && typeof job.threadId === "string";
+}
+
+async function canonicalPath(path: string): Promise<string> {
+  try {
+    return await realpath(path);
+  } catch {
+    return path;
   }
 }
 

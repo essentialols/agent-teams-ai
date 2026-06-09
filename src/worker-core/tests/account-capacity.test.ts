@@ -85,6 +85,69 @@ describe("AccountCapacityAwareWorker", () => {
     });
   });
 
+  it("normalizes account ids from explicit config and capacity details", () => {
+    const clock = new MutableClock(new Date("2026-06-01T00:00:00.000Z"));
+    const resetAt = new Date("2026-06-01T01:00:00.000Z");
+    const store = new InMemoryWorkerAccountCapacityStore();
+    const first = new AccountCapacityAwareWorker({
+      worker: new FakeWorker("worker-a1", "a1", {
+        availability: "cooldown",
+        reason: "rate_limit_threshold",
+        cooldownUntil: resetAt,
+      }),
+      accountCapacityStore: store,
+      accountId: " account-a ",
+      clock,
+    });
+    const second = accountAware(
+      new FakeWorker("worker-a2", "a2", {
+        availability: "available",
+        details: { accountId: "account-a" },
+      }),
+      store,
+      clock,
+    );
+
+    expect(first.capacity()).toMatchObject({
+      details: { accountId: "account-a" },
+    });
+    expect(second.capacity()).toMatchObject({
+      availability: "cooldown",
+      details: { accountId: "account-a" },
+    });
+  });
+
+  it("rejects direct runs before delegating when the account is unavailable", async () => {
+    const clock = new MutableClock(new Date("2026-06-01T00:00:00.000Z"));
+    const resetAt = new Date("2026-06-01T01:00:00.000Z");
+    const store = new InMemoryWorkerAccountCapacityStore();
+    store.observe({
+      accountId: "account-a",
+      observedAt: clock.now(),
+      sourceWorkerId: "limit-source",
+      capacity: {
+        availability: "cooldown",
+        reason: "rate_limit_threshold",
+        cooldownUntil: resetAt,
+      },
+    });
+    const inner = new FakeWorker("worker-a", "a", {
+      availability: "available",
+      details: { accountId: "account-a" },
+    });
+    const worker = accountAware(inner, store, clock);
+
+    await expect(worker.run("must-not-run")).rejects.toMatchObject({
+      code: "subscription_worker_account_unavailable",
+      details: {
+        accountId: "account-a",
+        availability: "cooldown",
+        reason: "rate_limit_threshold",
+      },
+    });
+    expect(inner.runCount).toBe(0);
+  });
+
   it("lets the generic pool pick a standby worker from another account", async () => {
     const clock = new MutableClock(new Date());
     const resetAt = new Date(Date.now() + 60 * 60 * 1000);
@@ -140,6 +203,7 @@ function accountAware(
 
 class FakeWorker implements SubscriptionWorker<string, string> {
   state: SubscriptionWorkerState = "created";
+  runCount = 0;
 
   constructor(
     readonly workerId: string,
@@ -161,6 +225,7 @@ class FakeWorker implements SubscriptionWorker<string, string> {
   }
 
   async run(job: string): Promise<string> {
+    this.runCount += 1;
     return `${this.resultPrefix}:${job}`;
   }
 

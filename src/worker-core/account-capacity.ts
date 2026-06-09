@@ -222,7 +222,8 @@ export class AccountCapacityAwareWorker<Job, Result>
   }
 
   private accountId(capacity: WorkerCapacitySnapshot): string | null {
-    if (this.options.accountId) return this.options.accountId;
+    const explicitAccountId = normalizeAccountId(this.options.accountId);
+    if (explicitAccountId) return explicitAccountId;
     return (
       this.options.accountIdFromCapacityDetails?.(capacity.details) ??
       defaultAccountIdFromCapacityDetails(capacity.details)
@@ -252,9 +253,14 @@ export function accountCapacityAwareWorkerFactory<Job, Result>(
 export function defaultAccountIdFromCapacityDetails(
   details: Readonly<Record<string, string>> | undefined,
 ): string | null {
-  const accountId =
-    details?.accountId ?? details?.quotaGroup ?? details?.subscriptionAccountId;
-  return accountId && accountId.trim() ? accountId : null;
+  return normalizeAccountId(
+    details?.accountId ?? details?.quotaGroup ?? details?.subscriptionAccountId,
+  );
+}
+
+function normalizeAccountId(value: string | null | undefined): string | null {
+  const normalized = value?.trim();
+  return normalized ? normalized : null;
 }
 
 function normalizeAccountCapacitySignal(

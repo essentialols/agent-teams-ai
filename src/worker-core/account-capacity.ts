@@ -59,35 +59,41 @@ export class InMemoryWorkerAccountCapacityStore
     readonly accountId: string;
     readonly now?: Date;
   }): WorkerCapacitySnapshot | null {
-    const current = this.records.get(input.accountId);
+    const accountId = normalizeAccountId(input.accountId);
+    if (!accountId) return null;
+    const current = this.records.get(accountId);
     if (!current) return null;
     const now = input.now ?? new Date();
     if (
       current.cooldownUntil &&
       current.cooldownUntil.getTime() <= now.getTime()
     ) {
-      this.records.delete(input.accountId);
+      this.records.delete(accountId);
       return null;
     }
     return current;
   }
 
   observe(input: WorkerAccountLimitSignal): void {
+    const accountId = normalizeAccountId(input.accountId);
+    if (!accountId) return;
     const capacity = normalizeAccountCapacitySignal(input);
     if (!capacity) return;
 
     const existing = this.read({
-      accountId: input.accountId,
+      accountId,
       now: input.observedAt,
     });
     if (existing && shouldKeepExistingAccountCapacity(existing, capacity)) {
       return;
     }
-    this.records.set(input.accountId, capacity);
+    this.records.set(accountId, capacity);
   }
 
   clear(input: { readonly accountId: string }): void {
-    this.records.delete(input.accountId);
+    const accountId = normalizeAccountId(input.accountId);
+    if (!accountId) return;
+    this.records.delete(accountId);
   }
 }
 
@@ -266,6 +272,8 @@ function normalizeAccountId(value: string | null | undefined): string | null {
 function normalizeAccountCapacitySignal(
   input: WorkerAccountLimitSignal,
 ): WorkerCapacitySnapshot | null {
+  const accountId = normalizeAccountId(input.accountId);
+  if (!accountId) return null;
   const capacity = input.capacity;
   if (!isPersistableAccountCapacity(capacity)) return null;
   if (
@@ -283,7 +291,7 @@ function normalizeAccountCapacitySignal(
     lastLimitSignalAt: input.observedAt,
     details: {
       ...(capacity.details ?? {}),
-      accountId: input.accountId,
+      accountId,
       ...(input.sourceWorkerId ? { sourceWorkerId: input.sourceWorkerId } : {}),
     },
   };

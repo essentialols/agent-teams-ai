@@ -117,6 +117,30 @@ describe("AccountCapacityAwareWorker", () => {
     });
   });
 
+  it("normalizes account ids at the shared capacity store boundary", () => {
+    const clock = new MutableClock(new Date("2026-06-01T00:00:00.000Z"));
+    const resetAt = new Date("2026-06-01T01:00:00.000Z");
+    const store = new InMemoryWorkerAccountCapacityStore();
+
+    store.observe({
+      accountId: " account-a ",
+      observedAt: clock.now(),
+      sourceWorkerId: "limit-source",
+      capacity: {
+        availability: "cooldown",
+        reason: "rate_limit_threshold",
+        cooldownUntil: resetAt,
+      },
+    });
+
+    expect(store.read({ accountId: "account-a", now: clock.now() })).toMatchObject({
+      availability: "cooldown",
+      details: { accountId: "account-a" },
+    });
+    store.clear({ accountId: " account-a " });
+    expect(store.read({ accountId: "account-a", now: clock.now() })).toBeNull();
+  });
+
   it("rejects direct runs before delegating when the account is unavailable", async () => {
     const clock = new MutableClock(new Date("2026-06-01T00:00:00.000Z"));
     const resetAt = new Date("2026-06-01T01:00:00.000Z");

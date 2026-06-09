@@ -720,6 +720,79 @@ describe("FileBackendClaudeWorker", () => {
     }
   });
 
+  it("retries quota-limited Claude work on a different account", async () => {
+    const rootDir = await tempRoot();
+    const clock = new MutableClock(new Date("2026-06-01T00:00:00.000Z"));
+    const accountCapacityStore = new InMemoryWorkerAccountCapacityStore();
+    const engines = [
+      new RecordingClaudeEngine({ throwMessage: "rate_limit_exceeded" }),
+      new RecordingClaudeEngine({ outputText: "same-account-slot-2" }),
+      new RecordingClaudeEngine({ outputText: "other-account-slot-3" }),
+    ];
+    const workers: FileBackendClaudeWorker[] = [];
+    const pool = new BoundedSubscriptionWorkerPool<
+      FileBackendClaudeWorkerJob,
+      FileBackendClaudeWorkerResult
+    >({
+      poolId: "claude-quota-account-aware-pool",
+      slots: 3,
+      clock,
+      retryPolicy: {
+        maxAttempts: 3,
+        retryOnSlotCapacityUnavailable: true,
+      },
+      workerFactory: accountCapacityAwareWorkerFactory({
+        accountCapacityStore,
+        clock,
+        workerFactory: ({ slotIndex, workerId }) => {
+          const worker = new FileBackendClaudeWorker({
+            workerId,
+            providerInstanceId: `claude-quota-account-${slotIndex + 1}`,
+            stateRootDir: rootDir,
+            encryptionKey: encryptionKey(),
+            engine: engines[slotIndex]!,
+            capacityPolicy: {
+              quotaCooldownMs: 60_000,
+            },
+            clock,
+          });
+          workers.push(worker);
+          return worker;
+        },
+      }),
+    });
+
+    try {
+      await pool.start();
+      await workers[0]!.seedClaudeOAuth({ oauthToken: "account-a-token" });
+      await workers[1]!.seedClaudeOAuth({ oauthToken: "account-a-token" });
+      await workers[2]!.seedClaudeOAuth({ oauthToken: "account-b-token" });
+
+      await expect(pool.run({ prompt: "review" })).resolves.toMatchObject({
+        outputText: "other-account-slot-3",
+      });
+
+      const accountId = workers[0]!.capacity().details?.quotaGroup;
+      expect(accountId).toBeTruthy();
+      expect(
+        accountCapacityStore.read({ accountId: accountId!, now: clock.now() }),
+      ).toMatchObject({
+        availability: "cooldown",
+        reason: "quota_limited",
+      });
+      expect(engines[0]!.records.map((record) => record.prompt)).toEqual([
+        "review",
+      ]);
+      expect(engines[1]!.records).toHaveLength(0);
+      expect(engines[2]!.records.map((record) => record.prompt)).toEqual([
+        "review",
+      ]);
+    } finally {
+      await pool.dispose();
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
   it("hands off one logical Claude thread to another worker after soft cooldown", async () => {
     const rootDir = await tempRoot();
     const sharedWorkspacePath = join(rootDir, "shared-workspace");

@@ -31,7 +31,9 @@ import {
   type ClaudeRuntimeModule,
 } from "./claude-bg-runtime-context";
 
-export type ClaudeRuntimeTaskExecutionEngineOptions = ClaudeBgRuntimeContextOptions;
+export type ClaudeRuntimeTaskExecutionEngineOptions = ClaudeBgRuntimeContextOptions & {
+  readonly settingsPath?: string;
+};
 
 export class ClaudeRuntimeTaskExecutionEngine
   implements ClaudeTaskExecutionEngine
@@ -215,6 +217,9 @@ export class ClaudeRuntimeTaskExecutionEngine
       model: input.model,
       permissionMode: mapPermissionMode(input.permissionMode),
       prompt: input.prompt,
+      ...(this.options.settingsPath === undefined
+        ? {}
+        : { settings: this.options.settingsPath }),
       ...(input.strictMcpConfig === undefined
         ? {}
         : { strictMcpConfig: input.strictMcpConfig }),

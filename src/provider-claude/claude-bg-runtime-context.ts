@@ -160,6 +160,7 @@ export interface AgentCommandLike {
   readonly model: string;
   readonly permissionMode: "default" | "acceptEdits" | "bypassPermissions" | "dontAsk";
   readonly prompt: string;
+  readonly settings?: string;
   readonly strictMcpConfig?: boolean;
   readonly threadId: string;
 }

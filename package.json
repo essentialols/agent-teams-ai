@@ -42,6 +42,11 @@
       "import": "./dist/worker-codex/index.js",
       "default": "./dist/worker-codex/index.js"
     },
+    "./worker-claude": {
+      "types": "./dist/worker-claude/index.d.ts",
+      "import": "./dist/worker-claude/index.js",
+      "default": "./dist/worker-claude/index.js"
+    },
     "./queue-core": {
       "types": "./dist/queue-core/index.d.ts",
       "import": "./dist/queue-core/index.js",
@@ -86,6 +91,7 @@
     "build": "tsc -p tsconfig.build.json && node scripts/rewrite-dist-esm-imports.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
+    "smoke:worker-claude": "npm run build && node scripts/smoke-claude-worker.mjs",
     "check:boundaries": "node scripts/check-boundaries.mjs",
     "check:dist": "node scripts/check-dist.mjs",
     "check:packed-consumer": "node scripts/check-packed-consumer.mjs",

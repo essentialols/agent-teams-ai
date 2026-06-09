@@ -146,6 +146,17 @@ describe("Claude provider adapter", () => {
     expect(classifyClaudeRuntimeFailure("You've hit your usage limit.")).toBe(
       "quota_limited",
     );
+    expect(classifyClaudeRuntimeFailure("rate_limit_exceeded")).toBe(
+      "quota_limited",
+    );
+    expect(classifyClaudeRuntimeFailure("Too many requests")).toBe(
+      "quota_limited",
+    );
+    expect(
+      classifyClaudeRuntimeFailure(
+        "5 messages remaining until your usage limit resets",
+      ),
+    ).toBe("quota_limited");
     expect(classifyClaudeRuntimeFailure("approval required")).toBe(
       "permission_required",
     );
@@ -327,6 +338,7 @@ describe("Claude provider adapter", () => {
       pollIntervalMs: 10,
       runtimeModuleLoader: async () => fakeRuntimeModule,
       providerModuleLoader: async () => fakeProviderModule(fakeProvider),
+      settingsPath: "/tmp/claude-statusline-settings.json",
       stateFilePath: "/tmp/subscription-runtime-claude-state.json",
     });
 
@@ -374,6 +386,7 @@ describe("Claude provider adapter", () => {
       model: "claude-sonnet-test",
       permissionMode: "dontAsk",
       prompt: "review",
+      settings: "/tmp/claude-statusline-settings.json",
       strictMcpConfig: true,
     });
     expect(fakeProvider.constructorOptions).toMatchObject({

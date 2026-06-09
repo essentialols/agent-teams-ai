@@ -245,6 +245,11 @@ values: text deltas, tool calls with redacted safe input, usage updates,
 warnings and final task completion. Claude daemon ids, transcript offsets and
 raw SDK payloads remain private.
 
+Backend worker pooling for Claude Code is a separate runtime concern from the
+provider adapter. The provider exposes task execution. The worker layer owns
+warm slots, capacity signals, cooldowns and rotation across independent Claude
+sessions. See `docs/claude-worker-pool-rfc.md`.
+
 ### provider-codex
 
 Keep Codex as task-first:

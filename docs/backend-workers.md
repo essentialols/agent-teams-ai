@@ -11,3 +11,8 @@ Recommended first deployment shape:
 - one Redis-backed queue;
 - N Codex worker slots with prewarm enabled;
 - async job API plus optional sync wait endpoint.
+
+Claude Code workers should follow the same backend-worker shape, but require
+capacity-aware slot selection before they are used for production scheduling.
+See `docs/claude-worker-pool-rfc.md` for the proposed Claude worker pool,
+prewarm and limit-rotation design.

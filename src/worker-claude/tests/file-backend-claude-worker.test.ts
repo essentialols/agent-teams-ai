@@ -660,6 +660,28 @@ describe("FileBackendClaudeWorker", () => {
           providerInstanceId: "claude-account-health-3",
         },
       });
+
+      clock.advanceMs(60 * 60 * 1000 + 1);
+
+      const recoveredHealth = await pool.health();
+
+      expect(recoveredHealth.status).toBe("healthy");
+      expect(recoveredHealth.slots).toHaveLength(3);
+      expect(recoveredHealth.slots.map((slot) => slot.status)).toEqual([
+        "healthy",
+        "healthy",
+        "healthy",
+      ]);
+      expect(recoveredHealth.slots[0]?.details).toMatchObject({
+        accountId: workers[0]!.capacity().details?.accountId,
+        quotaGroup: workers[0]!.capacity().details?.quotaGroup,
+        providerInstanceId: "claude-account-health-1",
+      });
+      expect(recoveredHealth.slots[1]?.details).toMatchObject({
+        accountId: workers[1]!.capacity().details?.accountId,
+        quotaGroup: workers[1]!.capacity().details?.quotaGroup,
+        providerInstanceId: "claude-account-health-2",
+      });
     } finally {
       await pool.dispose();
       await rm(rootDir, { recursive: true, force: true });

@@ -11,6 +11,7 @@ export type SubscriptionWorkerErrorCode =
   | "subscription_worker_pool_queue_full"
   | "subscription_worker_pool_run_aborted"
   | "subscription_worker_pool_empty"
+  | "subscription_worker_pool_selector_invalid"
   | "subscription_worker_pool_slot_busy"
   | "subscription_worker_pool_slot_not_found"
   | "subscription_worker_pool_slot_restart_failed"

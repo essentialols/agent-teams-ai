@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   BoundedSubscriptionWorkerPool,
   type SubscriptionWorker,
+  type WorkerCapacitySnapshot,
   type SubscriptionWorkerPrewarmResult,
   type SubscriptionWorkerState,
 } from "../index";
@@ -39,6 +40,138 @@ describe("BoundedSubscriptionWorkerPool", () => {
       failed: 0,
       state: "disposed",
     });
+  });
+
+  it("skips idle slots that report unavailable capacity", async () => {
+    const workers: FakeWorker[] = [];
+    const pool = new BoundedSubscriptionWorkerPool<string, string>({
+      poolId: "capacity",
+      slots: 2,
+      workerFactory: ({ workerId }) => {
+        const worker = new FakeWorker(
+          workerId,
+          async (job) => `${workerId}:${job}`,
+        );
+        workers.push(worker);
+        return worker;
+      },
+    });
+
+    await pool.start();
+    workers[0]!.capacitySnapshot = {
+      availability: "cooldown",
+      cooldownUntil: new Date(Date.now() + 60_000),
+    };
+    const result = await pool.run("job");
+    await pool.dispose();
+
+    expect(result).toBe("capacity:slot-2:job");
+  });
+
+  it("uses a slot selector to choose among available slots", async () => {
+    const pool = new BoundedSubscriptionWorkerPool<string, string>({
+      poolId: "selector",
+      slots: 3,
+      slotSelector: ({ slots }) =>
+        slots.find((slot) => slot.workerId === "selector:slot-3") ?? null,
+      workerFactory: ({ workerId }) =>
+        new FakeWorker(workerId, async (job) => `${workerId}:${job}`),
+    });
+
+    await pool.start();
+    const result = await pool.run("job");
+    await pool.dispose();
+
+    expect(result).toBe("selector:slot-3:job");
+  });
+
+  it("drains queued work after a cooldown expires", async () => {
+    const workers: FakeWorker[] = [];
+    const pool = new BoundedSubscriptionWorkerPool<string, string>({
+      poolId: "cooldown",
+      slots: 1,
+      workerFactory: ({ workerId }) => {
+        const worker = new FakeWorker(
+          workerId,
+          async (job) => `${workerId}:${job}`,
+        );
+        workers.push(worker);
+        return worker;
+      },
+    });
+
+    await pool.start();
+    workers[0]!.capacitySnapshot = {
+      availability: "cooldown",
+      cooldownUntil: new Date(Date.now() + 20),
+    };
+    const result = pool.run("later");
+
+    expect(pool.stats().queued).toBe(1);
+    await expect(result).resolves.toBe("cooldown:slot-1:later");
+    await pool.dispose();
+  });
+
+  it("retries a failed task on another slot when failed slot capacity becomes unavailable", async () => {
+    const seen: string[] = [];
+    const workers: FakeWorker[] = [];
+    const pool = new BoundedSubscriptionWorkerPool<string, string>({
+      poolId: "retry-capacity",
+      slots: 2,
+      retryPolicy: {
+        maxAttempts: 2,
+        retryOnSlotCapacityUnavailable: true,
+      },
+      workerFactory: ({ workerId, slotIndex }) => {
+        const worker = new FakeWorker(workerId, async (job) => {
+          seen.push(`${workerId}:${job}`);
+          if (slotIndex === 0) {
+            worker.capacitySnapshot = {
+              availability: "cooldown",
+              cooldownUntil: new Date(Date.now() + 60_000),
+            };
+            throw new Error("quota_limited");
+          }
+          return `${workerId}:${job}`;
+        });
+        workers.push(worker);
+        return worker;
+      },
+    });
+
+    await pool.start();
+    await expect(pool.run("job")).resolves.toBe("retry-capacity:slot-2:job");
+    await pool.dispose();
+
+    expect(seen).toEqual([
+      "retry-capacity:slot-1:job",
+      "retry-capacity:slot-2:job",
+    ]);
+    expect(workers[0]?.capacity()).toMatchObject({
+      availability: "cooldown",
+    });
+  });
+
+  it("does not retry slot failures unless retry policy opts in", async () => {
+    const seen: string[] = [];
+    const pool = new BoundedSubscriptionWorkerPool<string, string>({
+      poolId: "retry-disabled",
+      slots: 2,
+      workerFactory: ({ workerId, slotIndex }) =>
+        new FakeWorker(workerId, async (job) => {
+          seen.push(`${workerId}:${job}`);
+          if (slotIndex === 0) throw new Error("quota_limited");
+          return `${workerId}:${job}`;
+        }),
+    });
+
+    await pool.start();
+    await expect(pool.run("job")).rejects.toThrow(
+      "Worker pool slot failed to run a task.",
+    );
+    await pool.dispose();
+
+    expect(seen).toEqual(["retry-disabled:slot-1:job"]);
   });
 
   it("rejects work when the bounded queue is full", async () => {
@@ -251,6 +384,7 @@ class FakeWorker implements SubscriptionWorker<string, string> {
   prewarmed = false;
   failStart = false;
   startGate: Promise<void> | null = null;
+  capacitySnapshot: WorkerCapacitySnapshot | null = null;
 
   constructor(
     readonly workerId: string,
@@ -289,6 +423,10 @@ class FakeWorker implements SubscriptionWorker<string, string> {
       checkedAt: new Date(),
       warnings: [],
     };
+  }
+
+  capacity(): WorkerCapacitySnapshot {
+    return this.capacitySnapshot ?? { availability: "available" };
   }
 
   async dispose(): Promise<void> {

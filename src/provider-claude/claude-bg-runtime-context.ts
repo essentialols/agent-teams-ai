@@ -133,6 +133,12 @@ export interface AgentRuntimeProviderLike {
     readonly requestedAt: string;
     readonly threadId: string;
   }): Promise<AgentRunHandleLike>;
+  send?(request: {
+    readonly thread: AgentRuntimeThreadLike;
+    readonly command: AgentCommandLike;
+    readonly previousProviderSessionId?: string;
+    readonly requestedAt: string;
+  }): Promise<AgentRunHandleLike>;
   observe(
     handle: AgentRunHandleLike,
     options?: {
@@ -141,6 +147,16 @@ export interface AgentRuntimeProviderLike {
     },
   ): AsyncIterable<ClaudeRuntimeEventLike>;
   remove(handle: AgentRunHandleLike): Promise<unknown>;
+}
+
+export interface AgentRuntimeThreadLike {
+  readonly id: string;
+  readonly status: "done";
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly cwd: string;
+  readonly providerId: string;
+  readonly latestProviderSessionId?: string;
 }
 
 export interface AgentRunHandleLike {
@@ -156,7 +172,7 @@ export interface AgentCommandLike {
   readonly id: string;
   readonly maxTurns?: number;
   readonly mcpConfig?: readonly string[];
-  readonly mode: "initial";
+  readonly mode: "initial" | "followup";
   readonly model: string;
   readonly permissionMode: "default" | "acceptEdits" | "bypassPermissions" | "dontAsk";
   readonly prompt: string;

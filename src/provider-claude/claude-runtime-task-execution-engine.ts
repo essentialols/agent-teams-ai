@@ -27,6 +27,7 @@ import {
 import {
   createClaudeBgRuntimeContext,
   type AgentCommandLike,
+  type AgentRuntimeThreadLike,
   type ClaudeBgRuntimeContextOptions,
   type ClaudeRuntimeModule,
 } from "./claude-bg-runtime-context";
@@ -80,14 +81,26 @@ export class ClaudeRuntimeTaskExecutionEngine
     );
 
     const requestedAt = runtime.asIsoTimestamp(new Date().toISOString());
-    const threadId = runtime.asThreadId(`subscription-runtime-${randomUUID()}`);
+    const threadId = runtime.asThreadId(
+      input.runtimeThread?.threadId ?? `subscription-runtime-${randomUUID()}`,
+    );
     const command = this.buildCommand(input, runtime, requestedAt, threadId);
-    const handle = await provider.start({
-      command,
-      providerId: provider.id,
-      requestedAt,
-      threadId,
-    });
+    const handle =
+      input.runtimeThread?.resumeSessionId === undefined
+        ? await provider.start({
+            command,
+            providerId: provider.id,
+            requestedAt,
+            threadId,
+          })
+        : await sendFollowup({
+            command,
+            cwd: input.workspacePath,
+            provider,
+            requestedAt,
+            resumeSessionId: input.runtimeThread.resumeSessionId,
+            threadId,
+          });
 
     const textParts: string[] = [];
     const warnings: RuntimeWarning[] = [];
@@ -213,7 +226,10 @@ export class ClaudeRuntimeTaskExecutionEngine
       id: runtime.asCommandId(`subscription-runtime-${randomUUID()}`),
       ...(input.maxTurns === undefined ? {} : { maxTurns: input.maxTurns }),
       ...(input.mcpConfig === undefined ? {} : { mcpConfig: input.mcpConfig }),
-      mode: "initial",
+      mode:
+        input.runtimeThread?.resumeSessionId === undefined
+          ? "initial"
+          : "followup",
       model: input.model,
       permissionMode: mapPermissionMode(input.permissionMode),
       prompt: input.prompt,
@@ -267,4 +283,39 @@ function hasEquivalentTextPart(parts: readonly string[], text: string): boolean 
   const normalized = text.trim();
   if (normalized.length === 0) return false;
   return parts.some((part) => part.trim() === normalized);
+}
+
+async function sendFollowup(input: {
+  readonly command: AgentCommandLike;
+  readonly cwd: string;
+  readonly provider: {
+    readonly id: string;
+    readonly send?: (request: {
+      readonly thread: AgentRuntimeThreadLike;
+      readonly command: AgentCommandLike;
+      readonly previousProviderSessionId?: string;
+      readonly requestedAt: string;
+    }) => Promise<{ readonly runId: string; readonly providerSessionId?: string }>;
+  };
+  readonly requestedAt: string;
+  readonly resumeSessionId: string;
+  readonly threadId: string;
+}): Promise<{ readonly runId: string; readonly providerSessionId?: string }> {
+  if (!input.provider.send) {
+    throw new Error("claude_runtime_provider_send_required");
+  }
+  return input.provider.send({
+    command: input.command,
+    previousProviderSessionId: input.resumeSessionId,
+    requestedAt: input.requestedAt,
+    thread: {
+      id: input.threadId,
+      status: "done",
+      createdAt: input.requestedAt,
+      updatedAt: input.requestedAt,
+      cwd: input.cwd,
+      providerId: input.provider.id,
+      latestProviderSessionId: input.resumeSessionId,
+    },
+  });
 }

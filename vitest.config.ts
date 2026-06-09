@@ -4,6 +4,8 @@ const alias = {
   "@vioxen/subscription-runtime/core": "/src/core/index.ts",
   "@vioxen/subscription-runtime/provider-codex":
     "/src/provider-codex/index.ts",
+  "@vioxen/subscription-runtime/provider-claude":
+    "/src/provider-claude/index.ts",
   "@vioxen/subscription-runtime/worker-core": "/src/worker-core/index.ts",
   "@vioxen/subscription-runtime/worker-codex": "/src/worker-codex/index.ts",
   "@vioxen/subscription-runtime/queue-core": "/src/queue-core/index.ts",

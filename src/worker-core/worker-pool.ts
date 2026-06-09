@@ -252,8 +252,9 @@ export class BoundedSubscriptionWorkerPool<Job, Result> {
   }
 
   async health(): Promise<WorkerPoolHealth> {
+    const checkedAt = this.now();
     const slotHealth = await Promise.all(
-      this.slots.map((slot) => safeHealth(slot.worker)),
+      this.slots.map((slot) => safeHealth(slot.worker, checkedAt)),
     );
     const unhealthy = slotHealth.filter(
       (health) => health.status === "unhealthy",
@@ -271,7 +272,7 @@ export class BoundedSubscriptionWorkerPool<Job, Result> {
       poolId: this.options.poolId,
       status,
       state: this.poolState,
-      checkedAt: this.now(),
+      checkedAt,
       slots: slotHealth,
       queued: this.queue.length,
       inFlight: this.inFlightCount,
@@ -592,6 +593,7 @@ export class BoundedSubscriptionWorkerPool<Job, Result> {
 
 async function safeHealth<Job, Result>(
   worker: SubscriptionWorker<Job, Result>,
+  checkedAt: Date,
 ): Promise<SubscriptionWorkerHealth> {
   try {
     return await worker.health();
@@ -599,7 +601,7 @@ async function safeHealth<Job, Result>(
     return {
       status: "unhealthy",
       state: "failed",
-      checkedAt: new Date(),
+      checkedAt,
       failures: [
         {
           code: "subscription_worker_health_failed",

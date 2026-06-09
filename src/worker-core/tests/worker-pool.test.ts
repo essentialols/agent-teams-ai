@@ -283,6 +283,39 @@ describe("BoundedSubscriptionWorkerPool", () => {
     });
   });
 
+  it("uses the configured clock for pool and failed slot health", async () => {
+    const checkedAt = new Date("2026-06-01T12:34:56.000Z");
+    const workers: FakeWorker[] = [];
+    const pool = new BoundedSubscriptionWorkerPool<string, string>({
+      poolId: "health-clock",
+      slots: 1,
+      clock: { now: () => checkedAt },
+      workerFactory: ({ workerId }) => {
+        const worker = new FakeWorker(workerId);
+        workers.push(worker);
+        return worker;
+      },
+    });
+
+    await pool.start();
+    workers[0]!.healthError = new Error("health_failed");
+    const health = await pool.health();
+    await pool.dispose();
+
+    expect(health.checkedAt).toEqual(checkedAt);
+    expect(health).toMatchObject({
+      status: "unhealthy",
+      slots: [
+        {
+          status: "unhealthy",
+          state: "failed",
+          checkedAt,
+          failures: [{ code: "subscription_worker_health_failed" }],
+        },
+      ],
+    });
+  });
+
   it("restarts an idle slot and prewarms the replacement", async () => {
     const disposed: string[] = [];
     const workers: FakeWorker[] = [];
@@ -385,6 +418,7 @@ class FakeWorker implements SubscriptionWorker<string, string> {
   failStart = false;
   startGate: Promise<void> | null = null;
   capacitySnapshot: WorkerCapacitySnapshot | null = null;
+  healthError: Error | null = null;
 
   constructor(
     readonly workerId: string,
@@ -417,6 +451,7 @@ class FakeWorker implements SubscriptionWorker<string, string> {
   }
 
   async health() {
+    if (this.healthError) throw this.healthError;
     return {
       status: "healthy" as const,
       state: this.state,

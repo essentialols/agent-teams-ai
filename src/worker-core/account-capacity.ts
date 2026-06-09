@@ -329,13 +329,21 @@ function mergeWorkerAndAccountCapacity(
   worker: WorkerCapacitySnapshot,
   account: WorkerCapacitySnapshot,
 ): WorkerCapacitySnapshot {
-  if (worker.availability === "available") return account;
+  if (worker.availability === "available") {
+    return {
+      ...account,
+      details: {
+        ...(account.details ?? {}),
+        ...(worker.details ?? {}),
+      },
+    };
+  }
   if (severity(account) > severity(worker)) {
     return {
       ...account,
       details: {
-        ...(worker.details ?? {}),
         ...(account.details ?? {}),
+        ...(worker.details ?? {}),
       },
     };
   }
@@ -349,8 +357,8 @@ function mergeWorkerAndAccountCapacity(
     return {
       ...account,
       details: {
-        ...(worker.details ?? {}),
         ...(account.details ?? {}),
+        ...(worker.details ?? {}),
       },
     };
   }

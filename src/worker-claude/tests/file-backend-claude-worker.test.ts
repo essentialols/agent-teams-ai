@@ -579,6 +579,93 @@ describe("FileBackendClaudeWorker", () => {
     }
   });
 
+  it("surfaces Claude account cooldown in sibling worker health", async () => {
+    const rootDir = await tempRoot();
+    const clock = new MutableClock(new Date("2026-06-01T00:00:00.000Z"));
+    const resetAt = new Date("2026-06-01T01:00:00.000Z");
+    const accountCapacityStore = new InMemoryWorkerAccountCapacityStore();
+    const telemetry = [
+      new MutableRateLimitTelemetry(rateLimitSnapshot(clock.now(), {
+        five_hour: { usedPercentage: 92, resetsAt: resetAt },
+      })),
+      new MutableRateLimitTelemetry(rateLimitSnapshot(clock.now(), {
+        five_hour: { usedPercentage: 12, resetsAt: resetAt },
+      })),
+      new MutableRateLimitTelemetry(rateLimitSnapshot(clock.now(), {
+        five_hour: { usedPercentage: 12, resetsAt: resetAt },
+      })),
+    ];
+    const workers: FileBackendClaudeWorker[] = [];
+    const pool = new BoundedSubscriptionWorkerPool<
+      FileBackendClaudeWorkerJob,
+      FileBackendClaudeWorkerResult
+    >({
+      poolId: "claude-account-health-pool",
+      slots: 3,
+      clock,
+      workerFactory: accountCapacityAwareWorkerFactory({
+        accountCapacityStore,
+        clock,
+        workerFactory: ({ slotIndex, workerId }) => {
+          const worker = new FileBackendClaudeWorker({
+            workerId,
+            providerInstanceId: `claude-account-health-${slotIndex + 1}`,
+            stateRootDir: rootDir,
+            encryptionKey: encryptionKey(),
+            engine: new RecordingClaudeEngine({
+              outputText: `slot-${slotIndex + 1}`,
+            }),
+            rateLimitTelemetry: telemetry[slotIndex]!,
+            capacityPolicy: {
+              rateLimitMinRemainingPercent: 10,
+            },
+            clock,
+          });
+          workers.push(worker);
+          return worker;
+        },
+      }),
+    });
+
+    try {
+      await pool.start();
+      await workers[0]!.seedClaudeOAuth({ oauthToken: "shared-token" });
+      await workers[1]!.seedClaudeOAuth({ oauthToken: "shared-token" });
+      await workers[2]!.seedClaudeOAuth({ oauthToken: "other-token" });
+
+      const health = await pool.health();
+
+      expect(health.status).toBe("degraded");
+      expect(health.slots[0]).toMatchObject({
+        status: "degraded",
+        failures: [{ code: "rate_limit_threshold" }],
+        details: {
+          accountId: workers[0]!.capacity().details?.accountId,
+          quotaGroup: workers[0]!.capacity().details?.quotaGroup,
+          providerInstanceId: "claude-account-health-1",
+        },
+      });
+      expect(health.slots[1]).toMatchObject({
+        status: "degraded",
+        failures: [{ code: "rate_limit_threshold" }],
+        details: {
+          accountId: workers[0]!.capacity().details?.accountId,
+          quotaGroup: workers[0]!.capacity().details?.quotaGroup,
+          providerInstanceId: "claude-account-health-2",
+        },
+      });
+      expect(health.slots[2]).toMatchObject({
+        status: "healthy",
+        details: {
+          providerInstanceId: "claude-account-health-3",
+        },
+      });
+    } finally {
+      await pool.dispose();
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
   it("drains queued Claude account cooldown work after account reset", async () => {
     const rootDir = await tempRoot();
     const clock = new MutableClock(new Date("2026-06-01T00:00:00.000Z"));

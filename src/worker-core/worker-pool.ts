@@ -254,6 +254,7 @@ export class BoundedSubscriptionWorkerPool<Job, Result> {
 
   async health(): Promise<WorkerPoolHealth> {
     const checkedAt = this.now();
+    this.slotSnapshots(checkedAt);
     const slotHealth = await Promise.all(
       this.slots.map((slot) => safeHealth(slot.worker, checkedAt)),
     );

@@ -172,6 +172,26 @@ describe("AccountCapacityAwareWorker", () => {
     expect(inner.runCount).toBe(0);
   });
 
+  it("allows direct runs after the worker cooldown has expired", async () => {
+    const clock = new MutableClock(new Date("2026-06-01T01:00:00.001Z"));
+    const resetAt = new Date("2026-06-01T01:00:00.000Z");
+    const store = new InMemoryWorkerAccountCapacityStore();
+    const inner = new FakeWorker("worker-a", "a", {
+      availability: "cooldown",
+      reason: "rate_limit_threshold",
+      cooldownUntil: resetAt,
+      details: { accountId: "account-a" },
+    });
+    const worker = accountAware(inner, store, clock);
+
+    expect(worker.capacity()).toMatchObject({
+      availability: "available",
+      details: { accountId: "account-a" },
+    });
+    await expect(worker.run("after-reset")).resolves.toBe("a:after-reset");
+    expect(inner.runCount).toBe(1);
+  });
+
   it("lets the generic pool pick a standby worker from another account", async () => {
     const clock = new MutableClock(new Date());
     const resetAt = new Date(Date.now() + 60 * 60 * 1000);

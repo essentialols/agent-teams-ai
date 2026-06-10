@@ -117,14 +117,15 @@ export class AccountCapacityAwareWorker {
         };
     }
     capacity() {
-        const workerCapacity = this.workerCapacity();
+        const now = this.clock.now();
+        const workerCapacity = normalizeWorkerCapacity(this.workerCapacity(), now);
         this.observeWorkerCapacity(workerCapacity);
         const accountId = this.accountId(workerCapacity);
         if (!accountId)
             return workerCapacity;
         const accountCapacity = this.options.accountCapacityStore.read({
             accountId,
-            now: this.clock.now(),
+            now,
         });
         if (!accountCapacity) {
             return withAccountDetails(workerCapacity, accountId);
@@ -268,6 +269,18 @@ function withAccountDetails(capacity, accountId) {
             ...(capacity.details ?? {}),
             accountId,
         },
+    };
+}
+function normalizeWorkerCapacity(capacity, now) {
+    if (capacity.availability !== "cooldown" ||
+        !capacity.cooldownUntil ||
+        capacity.cooldownUntil.getTime() > now.getTime()) {
+        return capacity;
+    }
+    const { cooldownUntil: _cooldownUntil, ...rest } = capacity;
+    return {
+        ...rest,
+        availability: "available",
     };
 }
 function severity(capacity) {

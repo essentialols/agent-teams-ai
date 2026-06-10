@@ -515,6 +515,10 @@ export class FileBackendClaudeWorker implements CapacityAwareSubscriptionWorker<
     }
 
     this.rollCapacityWindow();
+    this.capacityState = normalizeResettableCapacity(
+      this.capacityState,
+      this.clock.now(),
+    );
     const capacity = {
       ...this.capacityState,
       recentRuns: this.runsInWindow,
@@ -969,11 +973,42 @@ function mergeCapacity(
   return base;
 }
 
+function normalizeResettableCapacity(
+  capacity: WorkerCapacitySnapshot,
+  now: Date,
+): WorkerCapacitySnapshot {
+  if (
+    !isResettableCapacity(capacity) ||
+    !capacity.cooldownUntil ||
+    capacity.cooldownUntil.getTime() > now.getTime()
+  ) {
+    return capacity;
+  }
+
+  const {
+    cooldownUntil: _cooldownUntil,
+    lastLimitSignalAt: _lastLimitSignalAt,
+    reason: _reason,
+    ...rest
+  } = capacity;
+  return {
+    ...rest,
+    availability: "available",
+  };
+}
+
 function isSevereCapacity(capacity: WorkerCapacitySnapshot): boolean {
   return (
     capacity.availability === "quota_exhausted" ||
     capacity.availability === "degraded" ||
     capacity.availability === "disabled"
+  );
+}
+
+function isResettableCapacity(capacity: WorkerCapacitySnapshot): boolean {
+  return (
+    capacity.availability === "cooldown" ||
+    capacity.availability === "quota_exhausted"
   );
 }
 

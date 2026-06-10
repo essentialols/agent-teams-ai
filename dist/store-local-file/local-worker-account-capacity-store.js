@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync, } from "node:fs";
 import { dirname, join } from "node:path";
-import { normalizeWorkerAccountCapacitySignal, normalizeWorkerAccountId, shouldKeepExistingWorkerAccountCapacity, } from "@vioxen/subscription-runtime/worker-core";
+import { isPersistableWorkerAccountAvailability, normalizeWorkerAccountCapacitySignal, normalizeWorkerAccountId, shouldKeepExistingWorkerAccountCapacity, } from "@vioxen/subscription-runtime/worker-core";
 const storageVersion = "local-file-worker-account-capacity-v1";
 export class LocalFileWorkerAccountCapacityStore {
     options;
@@ -118,7 +118,7 @@ function persistCapacity(capacity) {
     };
 }
 function parsePersistedCapacity(value) {
-    if (!isAvailability(value.availability))
+    if (!isPersistableWorkerAccountAvailability(value.availability))
         return null;
     if (value.reason !== undefined && typeof value.reason !== "string") {
         return null;
@@ -157,15 +157,6 @@ function optionalStringRecord(value) {
             return false;
     }
     return value;
-}
-function isAvailability(value) {
-    return (value === "available" ||
-        value === "busy" ||
-        value === "cooldown" ||
-        value === "degraded" ||
-        value === "disabled" ||
-        value === "quota_exhausted" ||
-        value === "warming");
 }
 function isRecord(value) {
     return value !== null && typeof value === "object" && !Array.isArray(value);

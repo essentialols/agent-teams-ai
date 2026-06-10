@@ -337,6 +337,7 @@ export class FileBackendClaudeWorker {
             });
         }
         this.rollCapacityWindow();
+        this.capacityState = normalizeResettableCapacity(this.capacityState, this.clock.now());
         const capacity = {
             ...this.capacityState,
             recentRuns: this.runsInWindow,
@@ -701,10 +702,26 @@ function mergeCapacity(base, telemetry) {
     }
     return base;
 }
+function normalizeResettableCapacity(capacity, now) {
+    if (!isResettableCapacity(capacity) ||
+        !capacity.cooldownUntil ||
+        capacity.cooldownUntil.getTime() > now.getTime()) {
+        return capacity;
+    }
+    const { cooldownUntil: _cooldownUntil, lastLimitSignalAt: _lastLimitSignalAt, reason: _reason, ...rest } = capacity;
+    return {
+        ...rest,
+        availability: "available",
+    };
+}
 function isSevereCapacity(capacity) {
     return (capacity.availability === "quota_exhausted" ||
         capacity.availability === "degraded" ||
         capacity.availability === "disabled");
+}
+function isResettableCapacity(capacity) {
+    return (capacity.availability === "cooldown" ||
+        capacity.availability === "quota_exhausted");
 }
 function assertWorkerOptions(options) {
     if (!options.providerInstanceId.trim()) {

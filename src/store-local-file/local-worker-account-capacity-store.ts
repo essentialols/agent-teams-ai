@@ -13,6 +13,7 @@ import type {
   WorkerCapacitySnapshot,
 } from "@vioxen/subscription-runtime/worker-core";
 import {
+  isPersistableWorkerAccountAvailability,
   normalizeWorkerAccountCapacitySignal,
   normalizeWorkerAccountId,
   shouldKeepExistingWorkerAccountCapacity,
@@ -176,7 +177,7 @@ function persistCapacity(
 function parsePersistedCapacity(
   value: PersistedWorkerCapacitySnapshot,
 ): WorkerCapacitySnapshot | null {
-  if (!isAvailability(value.availability)) return null;
+  if (!isPersistableWorkerAccountAvailability(value.availability)) return null;
   if (value.reason !== undefined && typeof value.reason !== "string") {
     return null;
   }
@@ -215,20 +216,6 @@ function optionalStringRecord(
     if (typeof entry !== "string") return false;
   }
   return value;
-}
-
-function isAvailability(
-  value: unknown,
-): value is WorkerCapacitySnapshot["availability"] {
-  return (
-    value === "available" ||
-    value === "busy" ||
-    value === "cooldown" ||
-    value === "degraded" ||
-    value === "disabled" ||
-    value === "quota_exhausted" ||
-    value === "warming"
-  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

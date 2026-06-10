@@ -284,7 +284,7 @@ export function normalizeWorkerAccountCapacitySignal(
   const accountId = normalizeWorkerAccountId(input.accountId);
   if (!accountId) return null;
   const capacity = input.capacity;
-  if (!isPersistableAccountCapacity(capacity)) return null;
+  if (!isPersistableWorkerAccountCapacity(capacity)) return null;
   if (
     capacity.cooldownUntil &&
     capacity.cooldownUntil.getTime() <= input.observedAt.getTime()
@@ -323,17 +323,23 @@ function isAccountLimitCapacity(
   capacity: WorkerCapacitySnapshot,
   limitReasons: readonly string[],
 ): boolean {
-  if (!isPersistableAccountCapacity(capacity)) return false;
+  if (!isPersistableWorkerAccountCapacity(capacity)) return false;
   if (!capacity.reason) return true;
   return limitReasons.includes(capacity.reason);
 }
 
-function isPersistableAccountCapacity(
+export function isPersistableWorkerAccountCapacity(
   capacity: WorkerCapacitySnapshot,
 ): boolean {
+  return isPersistableWorkerAccountAvailability(capacity.availability);
+}
+
+export function isPersistableWorkerAccountAvailability(
+  value: unknown,
+): value is WorkerCapacitySnapshot["availability"] {
   return (
-    capacity.availability === "cooldown" ||
-    capacity.availability === "quota_exhausted"
+    value === "cooldown" ||
+    value === "quota_exhausted"
   );
 }
 

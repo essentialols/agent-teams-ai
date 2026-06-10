@@ -188,7 +188,7 @@ export function normalizeWorkerAccountCapacitySignal(input) {
     if (!accountId)
         return null;
     const capacity = input.capacity;
-    if (!isPersistableAccountCapacity(capacity))
+    if (!isPersistableWorkerAccountCapacity(capacity))
         return null;
     if (capacity.cooldownUntil &&
         capacity.cooldownUntil.getTime() <= input.observedAt.getTime()) {
@@ -222,15 +222,18 @@ export function shouldKeepExistingWorkerAccountCapacity(existing, next) {
     return existingResetAt >= nextResetAt;
 }
 function isAccountLimitCapacity(capacity, limitReasons) {
-    if (!isPersistableAccountCapacity(capacity))
+    if (!isPersistableWorkerAccountCapacity(capacity))
         return false;
     if (!capacity.reason)
         return true;
     return limitReasons.includes(capacity.reason);
 }
-function isPersistableAccountCapacity(capacity) {
-    return (capacity.availability === "cooldown" ||
-        capacity.availability === "quota_exhausted");
+export function isPersistableWorkerAccountCapacity(capacity) {
+    return isPersistableWorkerAccountAvailability(capacity.availability);
+}
+export function isPersistableWorkerAccountAvailability(value) {
+    return (value === "cooldown" ||
+        value === "quota_exhausted");
 }
 function mergeWorkerAndAccountCapacity(worker, account) {
     if (worker.availability === "available") {

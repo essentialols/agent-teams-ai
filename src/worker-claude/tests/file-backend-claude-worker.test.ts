@@ -350,6 +350,7 @@ describe("FileBackendClaudeWorker", () => {
 
   it("marks quota-limited failures as cooldown capacity", async () => {
     const rootDir = await tempRoot();
+    const clock = new MutableClock(new Date("2026-06-01T00:00:00.000Z"));
     const worker = new FileBackendClaudeWorker({
       providerInstanceId: "claude-quota",
       stateRootDir: rootDir,
@@ -360,6 +361,7 @@ describe("FileBackendClaudeWorker", () => {
       capacityPolicy: {
         quotaCooldownMs: 60_000,
       },
+      clock,
     });
 
     try {
@@ -373,6 +375,14 @@ describe("FileBackendClaudeWorker", () => {
         availability: "cooldown",
         reason: "quota_limited",
       });
+
+      clock.advanceMs(60_001);
+      const capacity = worker.capacity();
+      expect(capacity).toMatchObject({
+        availability: "available",
+      });
+      expect(capacity).not.toHaveProperty("reason");
+      expect(capacity).not.toHaveProperty("cooldownUntil");
     } finally {
       await worker.dispose();
       await rm(rootDir, { recursive: true, force: true });

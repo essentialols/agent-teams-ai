@@ -61,4 +61,6 @@ export declare function defaultAccountIdFromCapacityDetails(details: Readonly<Re
 export declare function normalizeWorkerAccountId(value: string | null | undefined): string | null;
 export declare function normalizeWorkerAccountCapacitySignal(input: WorkerAccountLimitSignal): WorkerCapacitySnapshot | null;
 export declare function shouldKeepExistingWorkerAccountCapacity(existing: WorkerCapacitySnapshot, next: WorkerCapacitySnapshot): boolean;
+export declare function isPersistableWorkerAccountCapacity(capacity: WorkerCapacitySnapshot): boolean;
+export declare function isPersistableWorkerAccountAvailability(value: unknown): value is WorkerCapacitySnapshot["availability"];
 //# sourceMappingURL=account-capacity.d.ts.map

@@ -292,6 +292,39 @@ describe("Local file worker account capacity store", () => {
       await rm(rootDir, { recursive: true, force: true });
     }
   });
+
+  it("self-heals account records with non-persistable capacity states", async () => {
+    const rootDir = await tempRoot();
+    const store = new LocalFileWorkerAccountCapacityStore({ rootDir });
+    const recordPath = capacityRecordPath(rootDir, "account-a");
+
+    try {
+      await mkdir(join(rootDir, "account-capacity"), { recursive: true });
+      await writeFile(
+        recordPath,
+        `${JSON.stringify({
+          storageVersion: "local-file-worker-account-capacity-v1",
+          accountId: "account-a",
+          capacity: {
+            availability: "disabled",
+            reason: "tampered",
+          },
+          updatedAt: "2026-06-01T00:00:00.000Z",
+        })}\n`,
+        { mode: 0o600 },
+      );
+
+      expect(
+        store.read({
+          accountId: "account-a",
+          now: new Date("2026-06-01T00:00:00.000Z"),
+        }),
+      ).toBeNull();
+      await expect(readCapacityFiles(rootDir)).resolves.toEqual([]);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
 });
 
 async function tempRoot(): Promise<string> {

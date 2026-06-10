@@ -213,9 +213,13 @@ export function shouldKeepExistingWorkerAccountCapacity(existing, next) {
         return true;
     if (severity(existing) < severity(next))
         return false;
-    if (!existing.cooldownUntil || !next.cooldownUntil)
+    const existingResetAt = existing.cooldownUntil?.getTime();
+    const nextResetAt = next.cooldownUntil?.getTime();
+    if (nextResetAt === undefined)
         return true;
-    return existing.cooldownUntil.getTime() >= next.cooldownUntil.getTime();
+    if (existingResetAt === undefined)
+        return false;
+    return existingResetAt >= nextResetAt;
 }
 function isAccountLimitCapacity(capacity, limitReasons) {
     if (!isPersistableAccountCapacity(capacity))
@@ -247,8 +251,7 @@ function mergeWorkerAndAccountCapacity(worker, account) {
             },
         };
     }
-    if (worker.availability === "cooldown" &&
-        account.availability === "cooldown" &&
+    if (severity(account) === severity(worker) &&
         worker.cooldownUntil &&
         account.cooldownUntil &&
         account.cooldownUntil.getTime() > worker.cooldownUntil.getTime()) {
@@ -272,16 +275,20 @@ function withAccountDetails(capacity, accountId) {
     };
 }
 function normalizeWorkerCapacity(capacity, now) {
-    if (capacity.availability !== "cooldown" ||
+    if (!isResettableCapacity(capacity) ||
         !capacity.cooldownUntil ||
         capacity.cooldownUntil.getTime() > now.getTime()) {
         return capacity;
     }
-    const { cooldownUntil: _cooldownUntil, ...rest } = capacity;
+    const { cooldownUntil: _cooldownUntil, lastLimitSignalAt: _lastLimitSignalAt, reason: _reason, ...rest } = capacity;
     return {
         ...rest,
         availability: "available",
     };
+}
+function isResettableCapacity(capacity) {
+    return (capacity.availability === "cooldown" ||
+        capacity.availability === "quota_exhausted");
 }
 function severity(capacity) {
     switch (capacity.availability) {

@@ -353,7 +353,7 @@ export class BoundedSubscriptionWorkerPool {
     }
     scheduleCooldownDrain(snapshots) {
         const nextCooldownAt = snapshots.reduce((nextAt, snapshot) => {
-            if (snapshot.capacity.availability !== "cooldown" ||
+            if (!isResettableCapacity(snapshot.capacity) ||
                 !snapshot.capacity.cooldownUntil) {
                 return nextAt;
             }
@@ -468,15 +468,19 @@ function capacityAwareWorker(worker) {
     return null;
 }
 function normalizeCapacity(capacity, now) {
-    if (capacity.availability !== "cooldown" ||
+    if (!isResettableCapacity(capacity) ||
         !capacity.cooldownUntil ||
         capacity.cooldownUntil.getTime() > now.getTime()) {
         return capacity;
     }
-    const { cooldownUntil: _cooldownUntil, ...rest } = capacity;
+    const { cooldownUntil: _cooldownUntil, lastLimitSignalAt: _lastLimitSignalAt, reason: _reason, ...rest } = capacity;
     return {
         ...rest,
         availability: "available",
     };
+}
+function isResettableCapacity(capacity) {
+    return (capacity.availability === "cooldown" ||
+        capacity.availability === "quota_exhausted");
 }
 //# sourceMappingURL=worker-pool.js.map

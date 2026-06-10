@@ -112,6 +112,77 @@ describe("BoundedSubscriptionWorkerPool", () => {
     await pool.dispose();
   });
 
+  it("drains queued work after a resettable quota exhaustion expires", async () => {
+    const workers: FakeWorker[] = [];
+    const pool = new BoundedSubscriptionWorkerPool<string, string>({
+      poolId: "quota-reset",
+      slots: 1,
+      workerFactory: ({ workerId }) => {
+        const worker = new FakeWorker(
+          workerId,
+          async (job) => `${workerId}:${job}`,
+        );
+        workers.push(worker);
+        return worker;
+      },
+    });
+
+    await pool.start();
+    workers[0]!.capacitySnapshot = {
+      availability: "quota_exhausted",
+      reason: "quota_limited",
+      cooldownUntil: new Date(Date.now() + 20),
+    };
+    const result = pool.run("later");
+
+    expect(pool.stats().queued).toBe(1);
+    await expect(result).resolves.toBe("quota-reset:slot-1:later");
+    await pool.dispose();
+  });
+
+  it("normalizes expired cooldown snapshots before slot selection", async () => {
+    const resetAt = new Date("2026-06-01T00:00:00.000Z");
+    const selectedSnapshots: WorkerCapacitySnapshot[] = [];
+    const pool = new BoundedSubscriptionWorkerPool<string, string>({
+      poolId: "expired-cooldown",
+      slots: 1,
+      clock: {
+        now: () => new Date("2026-06-01T00:00:00.001Z"),
+      },
+      slotSelector: ({ slots }) => {
+        selectedSnapshots.push(slots[0]!.capacity);
+        return slots[0] ?? null;
+      },
+      workerFactory: ({ workerId }) => {
+        const worker = new FakeWorker(
+          workerId,
+          async (job) => `${workerId}:${job}`,
+        );
+        worker.capacitySnapshot = {
+          availability: "cooldown",
+          reason: "rate_limit_threshold",
+          cooldownUntil: resetAt,
+          lastLimitSignalAt: new Date("2026-05-31T23:59:00.000Z"),
+          details: { accountId: "account-a" },
+        };
+        return worker;
+      },
+    });
+
+    await pool.start();
+    await expect(pool.run("job")).resolves.toBe("expired-cooldown:slot-1:job");
+    await pool.dispose();
+
+    expect(selectedSnapshots).toHaveLength(1);
+    expect(selectedSnapshots[0]).toMatchObject({
+      availability: "available",
+      details: { accountId: "account-a" },
+    });
+    expect(selectedSnapshots[0]).not.toHaveProperty("reason");
+    expect(selectedSnapshots[0]).not.toHaveProperty("cooldownUntil");
+    expect(selectedSnapshots[0]).not.toHaveProperty("lastLimitSignalAt");
+  });
+
   it("retries a failed task on another slot when failed slot capacity becomes unavailable", async () => {
     const seen: string[] = [];
     const workers: FakeWorker[] = [];

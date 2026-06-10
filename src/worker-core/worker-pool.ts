@@ -503,7 +503,7 @@ export class BoundedSubscriptionWorkerPool<Job, Result> {
     const nextCooldownAt = snapshots.reduce<number | null>(
       (nextAt, snapshot) => {
         if (
-          snapshot.capacity.availability !== "cooldown" ||
+          !isResettableCapacity(snapshot.capacity) ||
           !snapshot.capacity.cooldownUntil
         ) {
           return nextAt;
@@ -671,16 +671,30 @@ function normalizeCapacity(
   now: Date,
 ): WorkerCapacitySnapshot {
   if (
-    capacity.availability !== "cooldown" ||
+    !isResettableCapacity(capacity) ||
     !capacity.cooldownUntil ||
     capacity.cooldownUntil.getTime() > now.getTime()
   ) {
     return capacity;
   }
 
-  const { cooldownUntil: _cooldownUntil, ...rest } = capacity;
+  const {
+    cooldownUntil: _cooldownUntil,
+    lastLimitSignalAt: _lastLimitSignalAt,
+    reason: _reason,
+    ...rest
+  } = capacity;
   return {
     ...rest,
     availability: "available",
   };
+}
+
+function isResettableCapacity(
+  capacity: WorkerCapacitySnapshot,
+): boolean {
+  return (
+    capacity.availability === "cooldown" ||
+    capacity.availability === "quota_exhausted"
+  );
 }

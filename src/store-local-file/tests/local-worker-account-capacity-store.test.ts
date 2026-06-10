@@ -114,6 +114,46 @@ describe("Local file worker account capacity store", () => {
     }
   });
 
+  it("replaces same-severity records when the next signal adds a reset time", async () => {
+    const rootDir = await tempRoot();
+    const observedAt = new Date("2026-06-01T00:00:00.000Z");
+    const resetAt = new Date("2026-06-01T01:00:00.000Z");
+    const store = new LocalFileWorkerAccountCapacityStore({ rootDir });
+
+    try {
+      store.observe({
+        accountId: "account-a",
+        observedAt,
+        capacity: {
+          availability: "quota_exhausted",
+        },
+      });
+      store.observe({
+        accountId: "account-a",
+        observedAt,
+        capacity: {
+          availability: "quota_exhausted",
+          cooldownUntil: resetAt,
+        },
+      });
+
+      expect(
+        store.read({ accountId: "account-a", now: observedAt }),
+      ).toMatchObject({
+        availability: "quota_exhausted",
+        cooldownUntil: resetAt,
+      });
+      expect(
+        store.read({
+          accountId: "account-a",
+          now: new Date(resetAt.getTime() + 1),
+        }),
+      ).toBeNull();
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
   it("clears normalized account records", async () => {
     const rootDir = await tempRoot();
     const now = new Date("2026-06-01T00:00:00.000Z");

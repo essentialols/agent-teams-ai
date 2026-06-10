@@ -141,6 +141,35 @@ describe("AccountCapacityAwareWorker", () => {
     expect(store.read({ accountId: "account-a", now: clock.now() })).toBeNull();
   });
 
+  it("replaces same-severity account limits when the next signal adds a reset time", () => {
+    const clock = new MutableClock(new Date("2026-06-01T00:00:00.000Z"));
+    const resetAt = new Date("2026-06-01T01:00:00.000Z");
+    const store = new InMemoryWorkerAccountCapacityStore();
+
+    store.observe({
+      accountId: "account-a",
+      observedAt: clock.now(),
+      capacity: {
+        availability: "quota_exhausted",
+      },
+    });
+    store.observe({
+      accountId: "account-a",
+      observedAt: clock.now(),
+      capacity: {
+        availability: "quota_exhausted",
+        cooldownUntil: resetAt,
+      },
+    });
+
+    expect(store.read({ accountId: "account-a", now: clock.now() })).toMatchObject({
+      availability: "quota_exhausted",
+      cooldownUntil: resetAt,
+    });
+    clock.advanceMs(60 * 60 * 1000 + 1);
+    expect(store.read({ accountId: "account-a", now: clock.now() })).toBeNull();
+  });
+
   it("rejects direct runs before delegating when the account is unavailable", async () => {
     const clock = new MutableClock(new Date("2026-06-01T00:00:00.000Z"));
     const resetAt = new Date("2026-06-01T01:00:00.000Z");
@@ -180,16 +209,85 @@ describe("AccountCapacityAwareWorker", () => {
       availability: "cooldown",
       reason: "rate_limit_threshold",
       cooldownUntil: resetAt,
+      lastLimitSignalAt: new Date("2026-06-01T00:30:00.000Z"),
       details: { accountId: "account-a" },
     });
     const worker = accountAware(inner, store, clock);
 
-    expect(worker.capacity()).toMatchObject({
+    const capacity = worker.capacity();
+    expect(capacity).toMatchObject({
       availability: "available",
       details: { accountId: "account-a" },
     });
+    expect(capacity).not.toHaveProperty("reason");
+    expect(capacity).not.toHaveProperty("cooldownUntil");
+    expect(capacity).not.toHaveProperty("lastLimitSignalAt");
     await expect(worker.run("after-reset")).resolves.toBe("a:after-reset");
     expect(inner.runCount).toBe(1);
+  });
+
+  it("allows direct runs after resettable worker quota exhaustion has expired", async () => {
+    const clock = new MutableClock(new Date("2026-06-01T01:00:00.001Z"));
+    const resetAt = new Date("2026-06-01T01:00:00.000Z");
+    const store = new InMemoryWorkerAccountCapacityStore();
+    const inner = new FakeWorker("worker-a", "a", {
+      availability: "quota_exhausted",
+      reason: "quota_limited",
+      cooldownUntil: resetAt,
+      lastLimitSignalAt: new Date("2026-06-01T00:00:00.000Z"),
+      details: { accountId: "account-a" },
+    });
+    const worker = accountAware(inner, store, clock);
+
+    const capacity = worker.capacity();
+    expect(capacity).toMatchObject({
+      availability: "available",
+      details: { accountId: "account-a" },
+    });
+    expect(capacity).not.toHaveProperty("reason");
+    expect(capacity).not.toHaveProperty("cooldownUntil");
+    expect(capacity).not.toHaveProperty("lastLimitSignalAt");
+    await expect(worker.run("after-quota-reset")).resolves.toBe(
+      "a:after-quota-reset",
+    );
+    expect(inner.runCount).toBe(1);
+  });
+
+  it("keeps a longer same-severity account quota reset over worker-local quota reset", () => {
+    const clock = new MutableClock(new Date("2026-06-01T00:00:00.000Z"));
+    const workerResetAt = new Date("2026-06-01T00:30:00.000Z");
+    const accountResetAt = new Date("2026-06-01T01:00:00.000Z");
+    const store = new InMemoryWorkerAccountCapacityStore();
+    store.observe({
+      accountId: "account-a",
+      observedAt: clock.now(),
+      sourceWorkerId: "worker-b",
+      capacity: {
+        availability: "quota_exhausted",
+        reason: "quota_limited",
+        cooldownUntil: accountResetAt,
+      },
+    });
+    const worker = accountAware(
+      new FakeWorker("worker-a", "a", {
+        availability: "quota_exhausted",
+        reason: "quota_limited",
+        cooldownUntil: workerResetAt,
+        details: { accountId: "account-a" },
+      }),
+      store,
+      clock,
+    );
+
+    expect(worker.capacity()).toMatchObject({
+      availability: "quota_exhausted",
+      reason: "quota_limited",
+      cooldownUntil: accountResetAt,
+      details: {
+        accountId: "account-a",
+        sourceWorkerId: "worker-b",
+      },
+    });
   });
 
   it("lets the generic pool pick a standby worker from another account", async () => {

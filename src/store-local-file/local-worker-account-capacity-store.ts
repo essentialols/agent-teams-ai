@@ -54,10 +54,17 @@ export class LocalFileWorkerAccountCapacityStore
     if (!accountId) return null;
 
     const record = this.readRecord(accountId);
-    if (!record || record.accountId !== accountId) return null;
+    if (!record) return null;
+    if (record.accountId !== accountId) {
+      this.clear({ accountId });
+      return null;
+    }
 
     const capacity = parsePersistedCapacity(record.capacity);
-    if (!capacity) return null;
+    if (!capacity) {
+      this.clear({ accountId });
+      return null;
+    }
 
     const now = input.now ?? new Date();
     if (
@@ -105,18 +112,28 @@ export class LocalFileWorkerAccountCapacityStore
   private readRecord(
     accountId: string,
   ): PersistedWorkerAccountCapacityRecord | null {
+    const path = this.recordPath(accountId);
     let parsed: unknown;
     try {
-      parsed = JSON.parse(readFileSync(this.recordPath(accountId), "utf8"));
+      parsed = JSON.parse(readFileSync(path, "utf8"));
     } catch (error) {
       if (isNodeError(error) && error.code === "ENOENT") return null;
+      if (error instanceof SyntaxError) {
+        rmSync(path, { force: true });
+        return null;
+      }
       throw error;
     }
-    if (!isRecord(parsed)) return null;
-    if (parsed.storageVersion !== storageVersion) return null;
-    if (typeof parsed.accountId !== "string") return null;
-    if (!isRecord(parsed.capacity)) return null;
-    if (typeof parsed.updatedAt !== "string") return null;
+    if (
+      !isRecord(parsed) ||
+      parsed.storageVersion !== storageVersion ||
+      typeof parsed.accountId !== "string" ||
+      !isRecord(parsed.capacity) ||
+      typeof parsed.updatedAt !== "string"
+    ) {
+      rmSync(path, { force: true });
+      return null;
+    }
     return parsed as PersistedWorkerAccountCapacityRecord;
   }
 

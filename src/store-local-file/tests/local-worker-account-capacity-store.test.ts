@@ -1,4 +1,5 @@
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -136,6 +137,121 @@ describe("Local file worker account capacity store", () => {
       await rm(rootDir, { recursive: true, force: true });
     }
   });
+
+  it("self-heals malformed account records", async () => {
+    const rootDir = await tempRoot();
+    const store = new LocalFileWorkerAccountCapacityStore({ rootDir });
+    const recordPath = capacityRecordPath(rootDir, "account-a");
+
+    try {
+      await mkdir(join(rootDir, "account-capacity"), { recursive: true });
+      await writeFile(recordPath, "{not-json\n", { mode: 0o600 });
+
+      expect(
+        store.read({
+          accountId: "account-a",
+          now: new Date("2026-06-01T00:00:00.000Z"),
+        }),
+      ).toBeNull();
+      await expect(readCapacityFiles(rootDir)).resolves.toEqual([]);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("self-heals structurally invalid account records", async () => {
+    const rootDir = await tempRoot();
+    const store = new LocalFileWorkerAccountCapacityStore({ rootDir });
+    const recordPath = capacityRecordPath(rootDir, "account-a");
+
+    try {
+      await mkdir(join(rootDir, "account-capacity"), { recursive: true });
+      await writeFile(
+        recordPath,
+        `${JSON.stringify({
+          storageVersion: "local-file-worker-account-capacity-v1",
+          accountId: "account-a",
+          updatedAt: "2026-06-01T00:00:00.000Z",
+        })}\n`,
+        { mode: 0o600 },
+      );
+
+      expect(
+        store.read({
+          accountId: "account-a",
+          now: new Date("2026-06-01T00:00:00.000Z"),
+        }),
+      ).toBeNull();
+      await expect(readCapacityFiles(rootDir)).resolves.toEqual([]);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("self-heals records written under the wrong account key", async () => {
+    const rootDir = await tempRoot();
+    const store = new LocalFileWorkerAccountCapacityStore({ rootDir });
+    const recordPath = capacityRecordPath(rootDir, "account-a");
+
+    try {
+      await mkdir(join(rootDir, "account-capacity"), { recursive: true });
+      await writeFile(
+        recordPath,
+        `${JSON.stringify({
+          storageVersion: "local-file-worker-account-capacity-v1",
+          accountId: "account-b",
+          capacity: {
+            availability: "quota_exhausted",
+            cooldownUntil: "2026-06-01T01:00:00.000Z",
+          },
+          updatedAt: "2026-06-01T00:00:00.000Z",
+        })}\n`,
+        { mode: 0o600 },
+      );
+
+      expect(
+        store.read({
+          accountId: "account-a",
+          now: new Date("2026-06-01T00:00:00.000Z"),
+        }),
+      ).toBeNull();
+      await expect(readCapacityFiles(rootDir)).resolves.toEqual([]);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("self-heals account records with invalid persisted capacity", async () => {
+    const rootDir = await tempRoot();
+    const store = new LocalFileWorkerAccountCapacityStore({ rootDir });
+    const recordPath = capacityRecordPath(rootDir, "account-a");
+
+    try {
+      await mkdir(join(rootDir, "account-capacity"), { recursive: true });
+      await writeFile(
+        recordPath,
+        `${JSON.stringify({
+          storageVersion: "local-file-worker-account-capacity-v1",
+          accountId: "account-a",
+          capacity: {
+            availability: "unknown",
+          },
+          updatedAt: "2026-06-01T00:00:00.000Z",
+        })}\n`,
+        { mode: 0o600 },
+      );
+
+      expect(
+        store.read({
+          accountId: "account-a",
+          now: new Date("2026-06-01T00:00:00.000Z"),
+        }),
+      ).toBeNull();
+      await expect(readCapacityFiles(rootDir)).resolves.toEqual([]);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
 });
 
 async function tempRoot(): Promise<string> {
@@ -148,4 +264,12 @@ async function readCapacityFiles(rootDir: string): Promise<readonly string[]> {
   } catch {
     return [];
   }
+}
+
+function capacityRecordPath(rootDir: string, accountId: string): string {
+  return join(
+    rootDir,
+    "account-capacity",
+    createHash("sha256").update(accountId).digest("hex"),
+  );
 }

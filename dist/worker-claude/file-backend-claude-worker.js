@@ -157,29 +157,8 @@ export class FileBackendClaudeWorker {
             purpose: "health-check",
         });
         if (existing) {
-            const updatedArtifact = this.withStoredCapacityAccountId(existing.artifact, capacityAccountId);
-            if (updatedArtifact) {
-                const write = await this.sessionStore.write({
-                    providerInstanceId: this.options.providerInstanceId,
-                    expectedGeneration: existing.generation,
-                    nextArtifact: updatedArtifact,
-                    idempotencyKey: `seed-capacity-account:${hashText(capacityAccountId)}`,
-                    leaseId: "seed-local-file-backend",
-                });
-                if (write.status === "accepted" ||
-                    write.status === "idempotent_replay") {
-                    this.rememberQuotaGroup(updatedArtifact);
-                    return;
-                }
-                const latest = await this.sessionStore.read({
-                    providerInstanceId: this.options.providerInstanceId,
-                    expectedProviderId: "claude",
-                    purpose: "health-check",
-                });
-                this.rememberQuotaGroup(latest?.artifact ?? existing.artifact, capacityAccountId);
-                return;
-            }
-            this.rememberQuotaGroup(existing.artifact, capacityAccountId);
+            const capacityArtifact = await this.persistStoredCapacityAccountId(existing, capacityAccountId);
+            this.rememberQuotaGroup(capacityArtifact, capacityAccountId);
             return;
         }
         const metadata = {
@@ -599,6 +578,36 @@ export class FileBackendClaudeWorker {
             this.quotaGroup = null;
             this.capacityAccountId = null;
         }
+    }
+    async persistStoredCapacityAccountId(session, capacityAccountId) {
+        if (!capacityAccountId)
+            return session.artifact;
+        let current = session;
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+            const updatedArtifact = this.withStoredCapacityAccountId(current.artifact, capacityAccountId);
+            if (!updatedArtifact)
+                return current.artifact;
+            const write = await this.sessionStore.write({
+                providerInstanceId: this.options.providerInstanceId,
+                expectedGeneration: current.generation,
+                nextArtifact: updatedArtifact,
+                idempotencyKey: `seed-capacity-account:${hashText(`${capacityAccountId}:${current.generationHash}`)}`,
+                leaseId: "seed-local-file-backend",
+            });
+            if (write.status === "accepted" ||
+                write.status === "idempotent_replay") {
+                return updatedArtifact;
+            }
+            const latest = await this.sessionStore.read({
+                providerInstanceId: this.options.providerInstanceId,
+                expectedProviderId: "claude",
+                purpose: "health-check",
+            });
+            if (!latest)
+                break;
+            current = latest;
+        }
+        throw new Error("claude_capacity_account_update_conflict");
     }
     withStoredCapacityAccountId(session, capacityAccountId) {
         if (!capacityAccountId)

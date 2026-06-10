@@ -13,8 +13,15 @@ import { describe, expect, it } from "vitest";
 import type {
   ClockPort,
   ProviderTaskTelemetry,
+  SessionArtifact,
+  SessionEnvelope,
+  SessionStorePort,
   WorkspacePort,
 } from "@vioxen/subscription-runtime/core";
+import {
+  sessionArtifactFromClaudeOAuth,
+  validateClaudeSessionArtifact,
+} from "@vioxen/subscription-runtime/provider-claude";
 import type {
   ClaudeTaskEngineInput,
   ClaudeTaskExecutionEngine,
@@ -228,6 +235,48 @@ describe("FileBackendClaudeWorker", () => {
         first.dispose().catch(() => undefined),
         restarted.dispose().catch(() => undefined),
       ]);
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("retries late capacity account id persistence after a stale generation", async () => {
+    const rootDir = await tempRoot();
+    const store = new StaleOnceSessionStore(
+      "claude-capacity-stale",
+      sessionArtifactFromClaudeOAuth({
+        oauthToken: "stale-oauth-token",
+        configDir: "/tmp/claude-config",
+      }),
+    );
+    const worker = new FileBackendClaudeWorker({
+      providerInstanceId: "claude-capacity-stale",
+      stateRootDir: rootDir,
+      encryptionKey: encryptionKey(),
+      engine: new RecordingClaudeEngine(),
+    });
+    (
+      worker as unknown as {
+        sessionStore: SessionStorePort;
+      }
+    ).sessionStore = store;
+
+    try {
+      await worker.start();
+      await worker.seedClaudeOAuth({
+        oauthToken: "stale-oauth-token",
+        capacityAccountId: "claude-account-main",
+      });
+
+      expect(store.writeCount).toBe(2);
+      expect(worker.capacity().details?.accountId).toBe(
+        "claude-account-main",
+      );
+      expect(
+        validateClaudeSessionArtifact(store.current.artifact).session.metadata
+          ?.capacityAccountId,
+      ).toBe("claude-account-main");
+    } finally {
+      await worker.dispose();
       await rm(rootDir, { recursive: true, force: true });
     }
   });
@@ -1673,6 +1722,91 @@ class FixedWorkspace implements WorkspacePort {
   async create() {
     await mkdir(this.workspacePath, { recursive: true, mode: 0o700 });
     return { path: this.workspacePath };
+  }
+}
+
+class StaleOnceSessionStore implements SessionStorePort {
+  readonly storeId = "stale-once-session-store";
+  readonly custody = "local-only" as const;
+  readonly capabilities = {
+    storeId: this.storeId,
+    custody: this.custody,
+    supportsRead: true,
+    supportsWriteback: true,
+    supportsCompareAndSwap: true,
+    supportsIdempotency: false,
+    supportsDelete: false,
+    supportsAuditLog: false,
+    supportsMetadataOnlyHealthCheck: false,
+    plaintextAvailableToBackend: true,
+    maxArtifactBytes: 256_000,
+  };
+  writeCount = 0;
+  current: SessionEnvelope;
+
+  constructor(
+    providerInstanceId: string,
+    artifact: SessionArtifact,
+  ) {
+    this.current = {
+      providerInstanceId,
+      providerId: "claude",
+      artifact,
+      generation: 1,
+      generationHash: "generation-1",
+      storageVersion: "stale-once-session-store-v1",
+      custody: this.custody,
+      metadata: {},
+    };
+  }
+
+  async read(input: {
+    readonly providerInstanceId: string;
+    readonly expectedProviderId?: string;
+  }): Promise<SessionEnvelope | null> {
+    if (input.providerInstanceId !== this.current.providerInstanceId) {
+      return null;
+    }
+    if (
+      input.expectedProviderId &&
+      input.expectedProviderId !== this.current.providerId
+    ) {
+      return null;
+    }
+    return this.current;
+  }
+
+  async write(input: {
+    readonly providerInstanceId: string;
+    readonly expectedGeneration: number;
+    readonly nextArtifact: SessionArtifact;
+  }) {
+    this.writeCount += 1;
+    if (this.writeCount === 1) {
+      this.current = {
+        ...this.current,
+        generation: this.current.generation + 1,
+        generationHash: "generation-2",
+      };
+      return {
+        status: "stale_generation" as const,
+        currentGeneration: this.current.generation,
+        currentGenerationHash: this.current.generationHash,
+      };
+    }
+
+    this.current = {
+      ...this.current,
+      providerInstanceId: input.providerInstanceId,
+      artifact: input.nextArtifact,
+      generation: input.expectedGeneration + 1,
+      generationHash: "generation-3",
+    };
+    return {
+      status: "accepted" as const,
+      generation: this.current.generation,
+      generationHash: this.current.generationHash,
+    };
   }
 }
 

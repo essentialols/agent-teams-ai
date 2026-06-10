@@ -123,7 +123,9 @@ available. This keeps host apps and generic queues free of Claude-specific
 state, while still allowing provider adapters to expose safe quota signals.
 Hosts should prefer `accountCapacityAwareWorkerFactory()` when wiring
 `BoundedSubscriptionWorkerPool`, so account policy stays outside provider
-worker constructors.
+worker constructors. For production local workers, use
+`LocalFileWorkerAccountCapacityStore` from `store-local-file` so cooldown and
+quota exhaustion survive process restarts.
 
 The pool can support a `slotSelector` policy:
 
@@ -152,9 +154,11 @@ Responsibilities:
   worker slots with explicit `--resume` session ids;
 - track local soft rotation counters;
 - classify Claude runtime warnings/failures into capacity state.
-- expose safe capacity details including `providerInstanceId`, `configDir` and
-  `quotaGroup` so duplicate OAuth sessions can be spotted without logging the
-  token.
+- expose safe capacity details including `providerInstanceId`, `configDir`,
+  `accountId` and `quotaGroup`. `accountId` is the scheduler quota domain and
+  can be set explicitly through `capacityAccountId`; `quotaGroup` remains a
+  token-derived diagnostic hash so duplicate OAuth sessions can be spotted
+  without logging the token.
 
 The public job/result shape should mirror Codex worker simplicity:
 
@@ -262,7 +266,12 @@ Unit tests:
   policy allows partial readiness;
 - all slots exhausted follows configured behavior: queue, fail or fallback;
 - one token across multiple Claude slots is surfaced in health/capacity details
-  as the same `quotaGroup`, not independent quota.
+  as the same `quotaGroup`, not independent quota;
+- multiple OAuth tokens for the same Claude account can be wired with the same
+  `capacityAccountId`, so they share account-level cooldown despite distinct
+  token-derived `quotaGroup` values;
+- local file account capacity records survive worker process restarts and expire
+  at the provider reset time.
 
 Provider tests:
 

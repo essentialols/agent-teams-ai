@@ -50,6 +50,8 @@ import {
   type ClaudeTranscriptBundleStore,
 } from "./thread-handoff";
 
+const claudeCapacityAccountIdMetadataKey = "capacityAccountId";
+
 export type ClaudeWorkerCapacityPolicy = {
   readonly softMaxRunsPerWindow?: number;
   readonly windowMs?: number;
@@ -64,6 +66,7 @@ export type FileBackendClaudeWorkerOptions = {
   readonly stateRootDir: string;
   readonly encryptionKey: Uint8Array | string;
   readonly configDir?: string;
+  readonly capacityAccountId?: string;
   readonly model?: string;
   readonly appendSystemPrompt?: string;
   readonly maxTurns?: number;
@@ -141,6 +144,7 @@ export class FileBackendClaudeWorker implements CapacityAwareSubscriptionWorker<
   private windowStartedAtMs: number;
   private runsInWindow = 0;
   private quotaGroup: string | null = null;
+  private capacityAccountId: string | null = null;
 
   constructor(private readonly options: FileBackendClaudeWorkerOptions) {
     this.workerId =
@@ -278,6 +282,7 @@ export class FileBackendClaudeWorker implements CapacityAwareSubscriptionWorker<
   async seedClaudeOAuth(input: {
     readonly oauthToken: string;
     readonly configDir?: string;
+    readonly capacityAccountId?: string;
     readonly refreshedAt?: string;
     readonly expiresAt?: string;
     readonly metadata?: Readonly<Record<string, string>>;
@@ -288,16 +293,25 @@ export class FileBackendClaudeWorker implements CapacityAwareSubscriptionWorker<
       purpose: "health-check",
     });
     if (existing) {
-      this.rememberQuotaGroup(existing.artifact);
+      this.rememberQuotaGroup(existing.artifact, input.capacityAccountId);
       return;
     }
 
+    const capacityAccountId = normalizeCapacityAccountId(
+      input.capacityAccountId ?? this.options.capacityAccountId,
+    );
+    const metadata = {
+      ...(input.metadata ?? {}),
+      ...(capacityAccountId
+        ? { [claudeCapacityAccountIdMetadataKey]: capacityAccountId }
+        : {}),
+    };
     const artifact = sessionArtifactFromClaudeOAuth({
       oauthToken: input.oauthToken,
       configDir: input.configDir ?? this.configDir,
       refreshedAt: input.refreshedAt ?? this.clock.now().toISOString(),
       ...(input.expiresAt ? { expiresAt: input.expiresAt } : {}),
-      ...(input.metadata ? { metadata: input.metadata } : {}),
+      ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
     });
     await this.sessionStore.write({
       providerInstanceId: this.options.providerInstanceId,
@@ -768,14 +782,25 @@ export class FileBackendClaudeWorker implements CapacityAwareSubscriptionWorker<
     }
   }
 
-  private rememberQuotaGroup(session: SessionArtifact): void {
+  private rememberQuotaGroup(
+    session: SessionArtifact,
+    capacityAccountIdOverride?: string,
+  ): void {
     try {
       const validation = validateClaudeSessionArtifact(session);
       this.quotaGroup = `claude-oauth:${hashText(
         validation.session.oauthToken,
       ).slice(0, 16)}`;
+      this.capacityAccountId =
+        normalizeCapacityAccountId(capacityAccountIdOverride) ??
+        normalizeCapacityAccountId(this.options.capacityAccountId) ??
+        normalizeCapacityAccountId(
+          validation.session.metadata?.[claudeCapacityAccountIdMetadataKey],
+        ) ??
+        this.quotaGroup;
     } catch {
       this.quotaGroup = null;
+      this.capacityAccountId = null;
     }
   }
 
@@ -788,9 +813,10 @@ export class FileBackendClaudeWorker implements CapacityAwareSubscriptionWorker<
         ...(capacity.details ?? {}),
         providerInstanceId: this.options.providerInstanceId,
         configDir: this.configDir,
-        ...(this.quotaGroup
-          ? { accountId: this.quotaGroup, quotaGroup: this.quotaGroup }
+        ...(this.capacityAccountId
+          ? { accountId: this.capacityAccountId }
           : {}),
+        ...(this.quotaGroup ? { quotaGroup: this.quotaGroup } : {}),
       },
     };
   }
@@ -907,6 +933,11 @@ async function canonicalPath(path: string): Promise<string> {
 
 function hashText(value: string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function normalizeCapacityAccountId(value: string | undefined): string | null {
+  const normalized = value?.trim();
+  return normalized ? normalized : null;
 }
 
 const systemClock: ClockPort = {

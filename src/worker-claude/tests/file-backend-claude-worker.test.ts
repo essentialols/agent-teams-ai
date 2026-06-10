@@ -141,6 +141,56 @@ describe("FileBackendClaudeWorker", () => {
     }
   });
 
+  it("supports an explicit capacity account id across distinct OAuth tokens", async () => {
+    const rootDir = await tempRoot();
+    const workers = [
+      new FileBackendClaudeWorker({
+        workerId: "claude-slot-a",
+        providerInstanceId: "claude-capacity-a",
+        stateRootDir: rootDir,
+        encryptionKey: encryptionKey(),
+        engine: new RecordingClaudeEngine(),
+        capacityAccountId: " claude-account-main ",
+      }),
+      new FileBackendClaudeWorker({
+        workerId: "claude-slot-b",
+        providerInstanceId: "claude-capacity-b",
+        stateRootDir: rootDir,
+        encryptionKey: encryptionKey(),
+        engine: new RecordingClaudeEngine(),
+      }),
+    ];
+
+    try {
+      await Promise.all(workers.map((worker) => worker.start()));
+      await workers[0]!.seedClaudeOAuth({ oauthToken: "first-oauth-token" });
+      await workers[1]!.seedClaudeOAuth({
+        oauthToken: "second-oauth-token",
+      });
+      expect(workers[1]!.capacity().details?.accountId).toBe(
+        workers[1]!.capacity().details?.quotaGroup,
+      );
+      await workers[1]!.seedClaudeOAuth({
+        oauthToken: "second-oauth-token",
+        capacityAccountId: "claude-account-main",
+      });
+
+      const firstCapacity = workers[0]!.capacity();
+      const secondCapacity = workers[1]!.capacity();
+
+      expect(firstCapacity.details?.accountId).toBe("claude-account-main");
+      expect(secondCapacity.details?.accountId).toBe("claude-account-main");
+      expect(firstCapacity.details?.quotaGroup).toBeTruthy();
+      expect(secondCapacity.details?.quotaGroup).toBeTruthy();
+      expect(firstCapacity.details?.quotaGroup).not.toBe(
+        secondCapacity.details?.quotaGroup,
+      );
+    } finally {
+      await Promise.all(workers.map((worker) => worker.dispose()));
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
   it("can opt into spending warmup prompt prewarm", async () => {
     const rootDir = await tempRoot();
     const engine = new RecordingClaudeEngine({ outputText: "OK" });

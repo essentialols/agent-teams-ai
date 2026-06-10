@@ -23,6 +23,16 @@ export type SubscriptionWorkerPrewarmResult = {
     readonly details?: Readonly<Record<string, string>>;
     readonly warnings: readonly RuntimeWarning[];
 };
+export type WorkerSlotAvailability = "available" | "busy" | "warming" | "cooldown" | "quota_exhausted" | "degraded" | "disabled";
+export type WorkerCapacitySnapshot = {
+    readonly availability: WorkerSlotAvailability;
+    readonly reason?: string;
+    readonly cooldownUntil?: Date;
+    readonly recentRuns?: number;
+    readonly softLimitRemainingRuns?: number;
+    readonly lastLimitSignalAt?: Date;
+    readonly details?: Readonly<Record<string, string>>;
+};
 export type SubscriptionWorkerRunOptions = {
     readonly abortSignal?: AbortSignal;
 };
@@ -35,23 +45,54 @@ export interface SubscriptionWorker<Job, Result> {
     health(): Promise<SubscriptionWorkerHealth>;
     dispose(): Promise<void>;
 }
+export interface CapacityAwareSubscriptionWorker<Job, Result> extends SubscriptionWorker<Job, Result> {
+    capacity(): WorkerCapacitySnapshot;
+}
 export type SubscriptionWorkerFactory<Job, Result> = (input: {
     readonly slotIndex: number;
     readonly workerId: string;
 }) => SubscriptionWorker<Job, Result>;
+export type WorkerPoolSlotSnapshot = {
+    readonly slotIndex: number;
+    readonly workerId: string;
+    readonly busy: boolean;
+    readonly capacity: WorkerCapacitySnapshot;
+};
+export type WorkerSlotSelector<Job> = (input: {
+    readonly slots: readonly WorkerPoolSlotSnapshot[];
+    readonly job: Job;
+    readonly now: Date;
+}) => WorkerPoolSlotSnapshot | null;
 export type WorkerPoolOptions<Job, Result> = {
     readonly poolId: string;
     readonly slots: number;
     readonly workerFactory: SubscriptionWorkerFactory<Job, Result>;
+    readonly clock?: WorkerPoolClock;
+    readonly scheduler?: WorkerPoolScheduler;
+    readonly slotSelector?: WorkerSlotSelector<Job>;
+    readonly retryPolicy?: WorkerPoolRetryPolicy;
     readonly maxQueueSize?: number;
     readonly startTimeoutMs?: number;
     readonly shutdownTimeoutMs?: number;
     readonly prewarmOnStart?: boolean;
     readonly observability?: ObservabilityPort;
 };
+export type WorkerPoolClock = {
+    now(): Date;
+};
+export type WorkerPoolScheduler = {
+    setTimeout(callback: () => void, delayMs: number): WorkerPoolTimerHandle;
+    clearTimeout(handle: WorkerPoolTimerHandle): void;
+};
+export type WorkerPoolTimerHandle = unknown;
 export type WorkerPoolRunOptions = {
     readonly idempotencyKey?: string;
     readonly abortSignal?: AbortSignal;
+    readonly retryPolicy?: WorkerPoolRetryPolicy;
+};
+export type WorkerPoolRetryPolicy = {
+    readonly maxAttempts?: number;
+    readonly retryOnSlotCapacityUnavailable?: boolean;
 };
 export type WorkerPoolHealth = {
     readonly poolId: string;

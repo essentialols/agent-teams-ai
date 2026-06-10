@@ -5,9 +5,9 @@ import { createSubscriptionRuntime, DefaultRedactor, DeterministicIdGenerator, }
 import { CodexAppServerExecutionEngine, CodexCliSessionDriver, CodexJsonAgentDriver, CodexWorkerCacheSessionPoolMaterializer, PackagedCodexJsonExecutionEngine, defaultCodexModel, sessionArtifactFromCodexAuthJson, } from "@vioxen/subscription-runtime/provider-codex";
 import { createLocalFileBackendRuntimeAdapters } from "@vioxen/subscription-runtime/store-local-file";
 import { SubscriptionWorkerError, } from "@vioxen/subscription-runtime/worker-core";
-import { NodeProcessRunner } from "./node-process-runner.js";
-import { NullWorkerObservability } from "./observability.js";
-import { StableWorkerWorkspace } from "./temp-workspace.js";
+import { NodeProcessRunner } from "../worker-local/node-process-runner.js";
+import { NullWorkerObservability } from "../worker-local/observability.js";
+import { StableWorkerWorkspace } from "../worker-local/temp-workspace.js";
 export class FileBackendCodexWorker {
     options;
     workerId;

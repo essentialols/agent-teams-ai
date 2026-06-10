@@ -42,14 +42,23 @@ export class ClaudeRuntimeTaskExecutionEngine {
             oauthToken: input.session.oauthToken,
         }, this.options);
         const requestedAt = runtime.asIsoTimestamp(new Date().toISOString());
-        const threadId = runtime.asThreadId(`subscription-runtime-${randomUUID()}`);
+        const threadId = runtime.asThreadId(input.runtimeThread?.threadId ?? `subscription-runtime-${randomUUID()}`);
         const command = this.buildCommand(input, runtime, requestedAt, threadId);
-        const handle = await provider.start({
-            command,
-            providerId: provider.id,
-            requestedAt,
-            threadId,
-        });
+        const handle = input.runtimeThread?.resumeSessionId === undefined
+            ? await provider.start({
+                command,
+                providerId: provider.id,
+                requestedAt,
+                threadId,
+            })
+            : await sendFollowup({
+                command,
+                cwd: input.workspacePath,
+                provider,
+                requestedAt,
+                resumeSessionId: input.runtimeThread.resumeSessionId,
+                threadId,
+            });
         const textParts = [];
         const warnings = [];
         let telemetry = {
@@ -167,10 +176,15 @@ export class ClaudeRuntimeTaskExecutionEngine {
             id: runtime.asCommandId(`subscription-runtime-${randomUUID()}`),
             ...(input.maxTurns === undefined ? {} : { maxTurns: input.maxTurns }),
             ...(input.mcpConfig === undefined ? {} : { mcpConfig: input.mcpConfig }),
-            mode: "initial",
+            mode: input.runtimeThread?.resumeSessionId === undefined
+                ? "initial"
+                : "followup",
             model: input.model,
             permissionMode: mapPermissionMode(input.permissionMode),
             prompt: input.prompt,
+            ...(this.options.settingsPath === undefined
+                ? {}
+                : { settings: this.options.settingsPath }),
             ...(input.strictMcpConfig === undefined
                 ? {}
                 : { strictMcpConfig: input.strictMcpConfig }),
@@ -212,5 +226,24 @@ function hasEquivalentTextPart(parts, text) {
     if (normalized.length === 0)
         return false;
     return parts.some((part) => part.trim() === normalized);
+}
+async function sendFollowup(input) {
+    if (!input.provider.send) {
+        throw new Error("claude_runtime_provider_send_required");
+    }
+    return input.provider.send({
+        command: input.command,
+        previousProviderSessionId: input.resumeSessionId,
+        requestedAt: input.requestedAt,
+        thread: {
+            id: input.threadId,
+            status: "done",
+            createdAt: input.requestedAt,
+            updatedAt: input.requestedAt,
+            cwd: input.cwd,
+            providerId: input.provider.id,
+            latestProviderSessionId: input.resumeSessionId,
+        },
+    });
 }
 //# sourceMappingURL=claude-runtime-task-execution-engine.js.map

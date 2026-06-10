@@ -6,6 +6,12 @@ export type ClaudeTaskExecutionResult = {
     readonly telemetry?: ProviderTaskTelemetry;
     readonly warnings: ProviderTaskResult["warnings"];
 };
+export declare const claudeRuntimeThreadIdMetadataKey = "claudeRuntimeThreadId";
+export declare const claudeRuntimeResumeSessionIdMetadataKey = "claudeRuntimeResumeSessionId";
+export type ClaudeRuntimeThreadInput = {
+    readonly threadId: string;
+    readonly resumeSessionId?: string;
+};
 export type ClaudeTaskEngineInput = {
     readonly prompt: string;
     readonly session: ClaudeOAuthSession;
@@ -20,6 +26,7 @@ export type ClaudeTaskEngineInput = {
     readonly permissionMode?: ProviderTaskControls["permissionMode"];
     readonly strictMcpConfig?: boolean;
     readonly outputSchemaName?: string;
+    readonly runtimeThread?: ClaudeRuntimeThreadInput;
     readonly abortSignal: AbortSignal;
 };
 export type ClaudeTaskExecutionEngine = {

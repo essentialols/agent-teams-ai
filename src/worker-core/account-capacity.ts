@@ -59,7 +59,7 @@ export class InMemoryWorkerAccountCapacityStore
     readonly accountId: string;
     readonly now?: Date;
   }): WorkerCapacitySnapshot | null {
-    const accountId = normalizeAccountId(input.accountId);
+    const accountId = normalizeWorkerAccountId(input.accountId);
     if (!accountId) return null;
     const current = this.records.get(accountId);
     if (!current) return null;
@@ -75,23 +75,26 @@ export class InMemoryWorkerAccountCapacityStore
   }
 
   observe(input: WorkerAccountLimitSignal): void {
-    const accountId = normalizeAccountId(input.accountId);
+    const accountId = normalizeWorkerAccountId(input.accountId);
     if (!accountId) return;
-    const capacity = normalizeAccountCapacitySignal(input);
+    const capacity = normalizeWorkerAccountCapacitySignal(input);
     if (!capacity) return;
 
     const existing = this.read({
       accountId,
       now: input.observedAt,
     });
-    if (existing && shouldKeepExistingAccountCapacity(existing, capacity)) {
+    if (
+      existing &&
+      shouldKeepExistingWorkerAccountCapacity(existing, capacity)
+    ) {
       return;
     }
     this.records.set(accountId, capacity);
   }
 
   clear(input: { readonly accountId: string }): void {
-    const accountId = normalizeAccountId(input.accountId);
+    const accountId = normalizeWorkerAccountId(input.accountId);
     if (!accountId) return;
     this.records.delete(accountId);
   }
@@ -228,7 +231,7 @@ export class AccountCapacityAwareWorker<Job, Result>
   }
 
   private accountId(capacity: WorkerCapacitySnapshot): string | null {
-    const explicitAccountId = normalizeAccountId(this.options.accountId);
+    const explicitAccountId = normalizeWorkerAccountId(this.options.accountId);
     if (explicitAccountId) return explicitAccountId;
     return (
       this.options.accountIdFromCapacityDetails?.(capacity.details) ??
@@ -259,20 +262,22 @@ export function accountCapacityAwareWorkerFactory<Job, Result>(
 export function defaultAccountIdFromCapacityDetails(
   details: Readonly<Record<string, string>> | undefined,
 ): string | null {
-  return normalizeAccountId(
+  return normalizeWorkerAccountId(
     details?.accountId ?? details?.quotaGroup ?? details?.subscriptionAccountId,
   );
 }
 
-function normalizeAccountId(value: string | null | undefined): string | null {
+export function normalizeWorkerAccountId(
+  value: string | null | undefined,
+): string | null {
   const normalized = value?.trim();
   return normalized ? normalized : null;
 }
 
-function normalizeAccountCapacitySignal(
+export function normalizeWorkerAccountCapacitySignal(
   input: WorkerAccountLimitSignal,
 ): WorkerCapacitySnapshot | null {
-  const accountId = normalizeAccountId(input.accountId);
+  const accountId = normalizeWorkerAccountId(input.accountId);
   if (!accountId) return null;
   const capacity = input.capacity;
   if (!isPersistableAccountCapacity(capacity)) return null;
@@ -297,7 +302,7 @@ function normalizeAccountCapacitySignal(
   };
 }
 
-function shouldKeepExistingAccountCapacity(
+export function shouldKeepExistingWorkerAccountCapacity(
   existing: WorkerCapacitySnapshot,
   next: WorkerCapacitySnapshot,
 ): boolean {

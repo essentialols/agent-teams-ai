@@ -1,5 +1,7 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
+  readdir,
   mkdir,
   mkdtemp,
   readFile,
@@ -36,6 +38,7 @@ import {
 } from "@vioxen/subscription-runtime/worker-core";
 import {
   FileBackendClaudeWorker,
+  FileClaudeLogicalThreadStore,
   FileClaudeTranscriptBundleStore,
   FileClaudeRateLimitTelemetry,
   type ClaudeRateLimitTelemetrySnapshot,
@@ -468,6 +471,103 @@ describe("FileBackendClaudeWorker", () => {
         cwd: await realpath(workspacePath),
         sessionId: "session-a",
       });
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects unsafe Claude transcript session ids before scanning projects", async () => {
+    const rootDir = await tempRoot();
+    const configDir = join(rootDir, "config");
+    const workspacePath = join(rootDir, "workspace");
+    const store = new FileClaudeTranscriptBundleStore(join(rootDir, "bundles"));
+
+    try {
+      await mkdir(configDir, { recursive: true });
+      await mkdir(workspacePath, { recursive: true });
+
+      await expect(
+        store.capture({
+          sourceConfigDir: configDir,
+          cwd: workspacePath,
+          sessionId: "../escape",
+        }),
+      ).rejects.toThrow("claude_safe_id_required");
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("recovers stale logical Claude thread locks", async () => {
+    const rootDir = await tempRoot();
+    const storeRoot = join(rootDir, "thread-store");
+    const store = new FileClaudeLogicalThreadStore(storeRoot);
+    const threadId = "stale-thread";
+    const lockPath = join(
+      storeRoot,
+      "locks",
+      `${hashStringForTest(threadId)}.lock`,
+    );
+
+    try {
+      await mkdir(lockPath, { recursive: true });
+      await writeFile(
+        join(lockPath, "owner.json"),
+        `${JSON.stringify({
+          storageVersion: "claude-logical-thread-lock-v1",
+          lockId: "stale-lock",
+          acquiredAt: "2000-01-01T00:00:00.000Z",
+          pid: 1,
+        })}\n`,
+      );
+
+      const state = await store.compareAndSwap({
+        threadId,
+        expectedGeneration: 0,
+        next: {
+          threadId,
+          cwd: rootDir,
+          latestSessionId: "session-a",
+          latestBundleId: "bundle-a",
+          latestProviderInstanceId: "claude-a",
+          latestWorkerId: "worker-a",
+          updatedAt: "2026-06-01T00:00:00.000Z",
+        },
+      });
+
+      expect(state).toMatchObject({ generation: 1, threadId });
+      await expect(readFile(lockPath, "utf8")).rejects.toThrow();
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed on invalid persisted logical Claude thread state", async () => {
+    const rootDir = await tempRoot();
+    const storeRoot = join(rootDir, "thread-store");
+    const store = new FileClaudeLogicalThreadStore(storeRoot);
+    const threadId = "invalid-state-thread";
+    const threadPath = join(
+      storeRoot,
+      "threads",
+      `${hashStringForTest(threadId)}.json`,
+    );
+
+    try {
+      await mkdir(join(storeRoot, "threads"), { recursive: true });
+      await writeFile(
+        threadPath,
+        `${JSON.stringify({
+          threadId,
+          cwd: "../relative",
+          generation: 1,
+          updatedAt: "2026-06-01T00:00:00.000Z",
+        })}\n`,
+      );
+
+      await expect(store.read(threadId)).rejects.toThrow(
+        "claude_logical_thread_state_invalid",
+      );
     } finally {
       await rm(rootDir, { recursive: true, force: true });
     }
@@ -1551,7 +1651,7 @@ describe("FileBackendClaudeWorker", () => {
     }
   });
 
-  it("protects logical Claude thread state from concurrent worker updates", async () => {
+  it("serializes concurrent logical Claude thread runs before provider execution", async () => {
     const rootDir = await tempRoot();
     const sharedWorkspacePath = join(rootDir, "shared-workspace");
     const engines = [
@@ -1598,7 +1698,7 @@ describe("FileBackendClaudeWorker", () => {
         ),
       );
 
-      const outcomes = await Promise.allSettled([
+      const results = await Promise.all([
         pool.run({
           threadId: "logical-concurrent-thread",
           prompt: "first concurrent",
@@ -1608,27 +1708,33 @@ describe("FileBackendClaudeWorker", () => {
           prompt: "second concurrent",
         }),
       ]);
-      const fulfilled = outcomes.filter(
-        (
-          outcome,
-        ): outcome is PromiseFulfilledResult<FileBackendClaudeWorkerThreadResult> =>
-          outcome.status === "fulfilled",
-      );
-      const rejected = outcomes.filter(
-        (outcome): outcome is PromiseRejectedResult =>
-          outcome.status === "rejected",
-      );
+      const sortedThreads = results
+        .map((result) => result.thread)
+        .sort((left, right) => left.generation - right.generation);
+      const firstThread = sortedThreads[0]!;
+      const secondThread = sortedThreads[1]!;
 
-      expect(fulfilled).toHaveLength(1);
-      expect(rejected).toHaveLength(1);
-      expect(fulfilled[0]!.value.thread).toMatchObject({
+      expect(firstThread).toMatchObject({
         generation: 1,
         threadId: "logical-concurrent-thread",
       });
-      expect(rejected[0]!.reason).toBeInstanceOf(Error);
-      expect((rejected[0]!.reason as Error).message).toContain(
-        "Worker pool slot failed to run a task.",
-      );
+      expect(secondThread).toMatchObject({
+        generation: 2,
+        threadId: "logical-concurrent-thread",
+      });
+      expect(await transcriptBundleIds(rootDir)).toHaveLength(1);
+      const records = engines.flatMap((engine) => engine.records);
+      expect(records).toHaveLength(2);
+      expect(
+        records.filter((record) => record.runtimeThread?.resumeSessionId),
+      ).toEqual([
+        expect.objectContaining({
+          runtimeThread: {
+            threadId: "logical-concurrent-thread",
+            resumeSessionId: firstThread.latestSessionId,
+          },
+        }),
+      ]);
 
       const afterConflict = await pool.run({
         threadId: "logical-concurrent-thread",
@@ -1644,19 +1750,22 @@ describe("FileBackendClaudeWorker", () => {
         );
 
       expect(afterConflict.thread).toMatchObject({
-        generation: 2,
+        generation: 3,
         latestSessionId: afterConflict.telemetry?.providerSessionId,
       });
+      expect(await transcriptBundleIds(rootDir)).toEqual([
+        afterConflict.thread.latestBundleId,
+      ]);
       expect(afterConflictRecord?.runtimeThread).toEqual({
         threadId: "logical-concurrent-thread",
-        resumeSessionId: fulfilled[0]!.value.thread.latestSessionId,
+        resumeSessionId: secondThread.latestSessionId,
       });
       await expect(
         readFile(
           fakeClaudeTranscriptPath(
             workers[afterConflictEngineIndex]!.configDir,
             sharedWorkspacePath,
-            fulfilled[0]!.value.thread.latestSessionId!,
+            secondThread.latestSessionId!,
           ),
           "utf8",
         ),
@@ -1919,6 +2028,21 @@ function rateLimitSnapshot(
 
 async function tempRoot(): Promise<string> {
   return mkdtemp(join(tmpdir(), "subscription-runtime-claude-worker-"));
+}
+
+function hashStringForTest(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+async function transcriptBundleIds(rootDir: string): Promise<readonly string[]> {
+  try {
+    return (await readdir(join(rootDir, "claude-transcript-bundles", "bundles"))).sort();
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return [];
+    }
+    throw error;
+  }
 }
 
 function encryptionKey(): Uint8Array {

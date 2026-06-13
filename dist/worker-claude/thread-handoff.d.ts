@@ -15,6 +15,16 @@ export interface ClaudeLogicalThreadStore {
         readonly expectedGeneration: number;
         readonly next: Omit<ClaudeLogicalThreadState, "generation">;
     }): Promise<ClaudeLogicalThreadState>;
+    updateExclusive<T>(input: {
+        readonly threadId: string;
+        readonly update: (current: ClaudeLogicalThreadState | null) => Promise<{
+            readonly next: Omit<ClaudeLogicalThreadState, "generation">;
+            readonly value: T;
+        }>;
+    }): Promise<{
+        readonly state: ClaudeLogicalThreadState;
+        readonly value: T;
+    }>;
 }
 export type ClaudeTranscriptBundle = {
     readonly bundleId: string;
@@ -34,6 +44,9 @@ export interface ClaudeTranscriptBundleStore {
         readonly bundleId: string;
         readonly targetConfigDir: string;
     }): Promise<ClaudeTranscriptBundle>;
+    remove?(input: {
+        readonly bundleId: string;
+    }): Promise<void>;
 }
 export declare class ClaudeLogicalThreadConflictError extends Error {
     readonly threadId: string;
@@ -52,6 +65,17 @@ export declare class FileClaudeLogicalThreadStore implements ClaudeLogicalThread
         readonly expectedGeneration: number;
         readonly next: Omit<ClaudeLogicalThreadState, "generation">;
     }): Promise<ClaudeLogicalThreadState>;
+    updateExclusive<T>(input: {
+        readonly threadId: string;
+        readonly update: (current: ClaudeLogicalThreadState | null) => Promise<{
+            readonly next: Omit<ClaudeLogicalThreadState, "generation">;
+            readonly value: T;
+        }>;
+    }): Promise<{
+        readonly state: ClaudeLogicalThreadState;
+        readonly value: T;
+    }>;
+    private writeNextState;
     private withThreadLock;
     private threadPath;
 }
@@ -68,6 +92,9 @@ export declare class FileClaudeTranscriptBundleStore implements ClaudeTranscript
         readonly bundleId: string;
         readonly targetConfigDir: string;
     }): Promise<ClaudeTranscriptBundle>;
+    remove(input: {
+        readonly bundleId: string;
+    }): Promise<void>;
     private bundleDir;
 }
 //# sourceMappingURL=thread-handoff.d.ts.map

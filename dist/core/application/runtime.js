@@ -119,8 +119,26 @@ class RuntimeKernel {
         }
         let leaseClosed = false;
         try {
+            const leasedSession = await sessionStore.read({
+                providerInstanceId: input.providerInstanceId,
+                expectedProviderId: sessionDriver.providerId,
+                purpose: "refresh",
+            });
+            if (!leasedSession) {
+                this.emitFailure("provider_reconnect_required", input.runContext.runId);
+                return blocked("provider_reconnect_required", "Provider session is missing.");
+            }
+            if (leasedSession.generationHash !== session.generationHash) {
+                this.deps.observability.count("subscription_runtime.stale_generation");
+                this.emitFailure("stale_generation", input.runContext.runId);
+                return {
+                    status: "skipped",
+                    reason: "stale_generation",
+                    warnings: [],
+                };
+            }
             const validation = await sessionDriver.validateSession({
-                session: session.artifact,
+                session: leasedSession.artifact,
                 redactor: this.deps.redactor,
             });
             if (validation.status === "invalid") {
@@ -136,10 +154,10 @@ class RuntimeKernel {
             try {
                 const refreshStartedAt = this.deps.clock.monotonicMs();
                 this.emit("provider.refresh.started", input.runContext.runId, {
-                    generation: String(session.generation),
+                    generation: String(leasedSession.generation),
                 });
                 const refreshed = await sessionDriver.refreshSession({
-                    session: session.artifact,
+                    session: leasedSession.artifact,
                     workspace,
                     runner: this.deps.runner,
                     redactor: this.deps.redactor,
@@ -172,42 +190,42 @@ class RuntimeKernel {
                     attempt: input.runContext.attempt,
                     purpose: "writeback",
                 });
-                if (nextHash === session.generationHash) {
+                if (nextHash === leasedSession.generationHash) {
                     await leaseStore.finalize({
                         leaseId: lease.leaseId,
-                        restoredGenerationHash: session.generationHash,
+                        restoredGenerationHash: leasedSession.generationHash,
                     });
                     await leaseStore.markWritebackCommitted({
                         leaseId: lease.leaseId,
-                        nextGenerationHash: session.generationHash,
+                        nextGenerationHash: leasedSession.generationHash,
                         idempotencyKey,
                     });
                     leaseClosed = true;
                     this.emit("session.writeback.completed", input.runContext.runId, {
                         status: "skipped_unchanged",
-                        generation: String(session.generation),
+                        generation: String(leasedSession.generation),
                     });
                     return {
                         status: "skipped",
                         reason: "session_unchanged",
-                        session,
+                        session: leasedSession,
                         warnings: refreshed.warnings,
                     };
                 }
                 await leaseStore.finalize({
                     leaseId: lease.leaseId,
-                    restoredGenerationHash: session.generationHash,
+                    restoredGenerationHash: leasedSession.generationHash,
                 });
                 this.emit("session.writeback.started", input.runContext.runId, {
                     leaseId: lease.leaseId,
-                    expectedGeneration: String(session.generation),
+                    expectedGeneration: String(leasedSession.generation),
                 });
                 await leaseStore.markWritebackStarted({
                     leaseId: lease.leaseId,
                 });
                 const writeback = await sessionStore.write({
                     providerInstanceId: input.providerInstanceId,
-                    expectedGeneration: session.generation,
+                    expectedGeneration: leasedSession.generation,
                     nextArtifact: refreshed.artifact,
                     idempotencyKey,
                     leaseId: lease.leaseId,
@@ -237,7 +255,7 @@ class RuntimeKernel {
                 this.deps.observability.count("subscription_runtime.refresh_success");
                 return {
                     status: "ready",
-                    session: nextEnvelope(session, refreshed.artifact, writeback),
+                    session: nextEnvelope(leasedSession, refreshed.artifact, writeback),
                     writeback,
                     warnings: refreshed.warnings,
                 };

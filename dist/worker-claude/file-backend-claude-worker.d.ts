@@ -103,6 +103,7 @@ export declare class FileBackendClaudeWorker implements CapacityAwareSubscriptio
     run(job: FileBackendClaudeWorkerJob): Promise<FileBackendClaudeWorkerResult>;
     private runProviderTask;
     runThreadJob(job: FileBackendClaudeWorkerThreadJob): Promise<FileBackendClaudeWorkerThreadResult>;
+    private removeTranscriptBundle;
     capacity(): WorkerCapacitySnapshot;
     health(): Promise<SubscriptionWorkerHealth>;
     dispose(): Promise<void>;

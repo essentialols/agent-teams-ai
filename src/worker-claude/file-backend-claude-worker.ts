@@ -431,64 +431,86 @@ export class FileBackendClaudeWorker implements CapacityAwareSubscriptionWorker<
     job: FileBackendClaudeWorkerThreadJob,
   ): Promise<FileBackendClaudeWorkerThreadResult> {
     this.assertStarted();
-    const current = await this.logicalThreadStore.read(job.threadId);
     const workspacePath = this.threadWorkspacePath(job.threadId);
-    const comparableWorkspacePath = current
-      ? await canonicalPath(workspacePath)
-      : workspacePath;
-    this.assertThreadWorkspaceCompatible(
-      job.threadId,
-      current,
-      comparableWorkspacePath,
-    );
-    if (current?.latestBundleId) {
-      await this.transcriptBundleStore.materialize({
-        bundleId: current.latestBundleId,
-        targetConfigDir: this.configDir,
-      });
-    }
-
-    const result = await this.runProviderTask({
-      ...job,
-      metadata: {
-        ...(job.metadata ?? {}),
-        [claudeRuntimeThreadIdMetadataKey]: job.threadId,
-        ...(current?.latestSessionId === undefined
-          ? {}
-          : {
-              [claudeRuntimeResumeSessionIdMetadataKey]:
-                current.latestSessionId,
-            }),
-      },
-    });
-    const latestSessionId = result.telemetry?.providerSessionId;
-    if (!latestSessionId) {
-      throw new SubscriptionWorkerError(
-        "subscription_worker_run_failed",
-        "Claude runtime did not return a provider session id for thread handoff.",
-      );
-    }
-
-    const bundle = await this.transcriptBundleStore.capture({
-      sourceConfigDir: this.configDir,
-      cwd: workspacePath,
-      sessionId: latestSessionId,
-    });
-    const thread = await this.logicalThreadStore.compareAndSwap({
-      threadId: job.threadId,
-      expectedGeneration: current?.generation ?? 0,
-      next: {
+    let capturedBundleId: string | undefined;
+    let previousBundleId: string | undefined;
+    try {
+      const updated = await this.logicalThreadStore.updateExclusive({
         threadId: job.threadId,
-        cwd: bundle.cwd,
-        latestSessionId,
-        latestBundleId: bundle.bundleId,
-        latestProviderInstanceId: this.options.providerInstanceId,
-        latestWorkerId: this.workerId,
-        updatedAt: this.clock.now().toISOString(),
-      },
-    });
+        update: async (current) => {
+          const comparableWorkspacePath = current
+            ? await canonicalPath(workspacePath)
+            : workspacePath;
+          this.assertThreadWorkspaceCompatible(
+            job.threadId,
+            current,
+            comparableWorkspacePath,
+          );
+          if (current?.latestBundleId) {
+            await this.transcriptBundleStore.materialize({
+              bundleId: current.latestBundleId,
+              targetConfigDir: this.configDir,
+            });
+          }
 
-    return { ...result, thread };
+          const result = await this.runProviderTask({
+            ...job,
+            metadata: {
+              ...(job.metadata ?? {}),
+              [claudeRuntimeThreadIdMetadataKey]: job.threadId,
+              ...(current?.latestSessionId === undefined
+                ? {}
+                : {
+                    [claudeRuntimeResumeSessionIdMetadataKey]:
+                      current.latestSessionId,
+                  }),
+            },
+          });
+          const latestSessionId = result.telemetry?.providerSessionId;
+          if (!latestSessionId) {
+            throw new SubscriptionWorkerError(
+              "subscription_worker_run_failed",
+              "Claude runtime did not return a provider session id for thread handoff.",
+            );
+          }
+
+          const bundle = await this.transcriptBundleStore.capture({
+            sourceConfigDir: this.configDir,
+            cwd: workspacePath,
+            sessionId: latestSessionId,
+          });
+          capturedBundleId = bundle.bundleId;
+          previousBundleId = current?.latestBundleId;
+          return {
+            next: {
+              threadId: job.threadId,
+              cwd: bundle.cwd,
+              latestSessionId,
+              latestBundleId: bundle.bundleId,
+              latestProviderInstanceId: this.options.providerInstanceId,
+              latestWorkerId: this.workerId,
+              updatedAt: this.clock.now().toISOString(),
+            },
+            value: result,
+          };
+        },
+      });
+      if (previousBundleId && previousBundleId !== updated.state.latestBundleId) {
+        await this.removeTranscriptBundle(previousBundleId);
+      }
+      return { ...updated.value, thread: updated.state };
+    } catch (error) {
+      if (capturedBundleId) {
+        await this.removeTranscriptBundle(capturedBundleId);
+      }
+      throw error;
+    }
+  }
+
+  private async removeTranscriptBundle(bundleId: string): Promise<void> {
+    await this.transcriptBundleStore.remove?.({ bundleId }).catch(() => {
+      // Best-effort cleanup; handoff correctness must not depend on GC.
+    });
   }
 
   capacity(): WorkerCapacitySnapshot {

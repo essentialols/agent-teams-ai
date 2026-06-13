@@ -1,6 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { cp, lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile, } from "node:fs/promises";
 import { dirname, isAbsolute, join, posix, relative, win32 } from "node:path";
+const defaultThreadLockAcquireTimeoutMs = 10_000;
+const defaultThreadLockTtlMs = 5 * 60_000;
+const defaultThreadLockHeartbeatMs = 30_000;
+const threadLockRecordFileName = "owner.json";
 export class ClaudeLogicalThreadConflictError extends Error {
     threadId;
     expectedGeneration;
@@ -33,49 +37,79 @@ export class FileClaudeLogicalThreadStore {
         }
     }
     async compareAndSwap(input) {
+        const result = await this.updateExclusive({
+            threadId: input.threadId,
+            update: async (current) => {
+                const actualGeneration = current?.generation ?? 0;
+                if (actualGeneration !== input.expectedGeneration) {
+                    throw new ClaudeLogicalThreadConflictError(input.threadId, input.expectedGeneration, actualGeneration);
+                }
+                return { next: input.next, value: undefined };
+            },
+        });
+        return result.state;
+    }
+    async updateExclusive(input) {
         return this.withThreadLock(input.threadId, async () => {
             const current = await this.read(input.threadId);
-            const actualGeneration = current?.generation ?? 0;
-            if (actualGeneration !== input.expectedGeneration) {
-                throw new ClaudeLogicalThreadConflictError(input.threadId, input.expectedGeneration, actualGeneration);
-            }
-            const next = {
-                ...input.next,
-                generation: actualGeneration + 1,
-            };
-            await mkdir(this.threadsDir, { recursive: true, mode: 0o700 });
-            const path = this.threadPath(input.threadId);
-            const tempPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
-            await writeFile(tempPath, `${JSON.stringify(next, null, 2)}\n`, {
-                mode: 0o600,
-            });
-            await rename(tempPath, path);
-            return next;
+            const { next, value } = await input.update(current);
+            const state = await this.writeNextState(input.threadId, current?.generation ?? 0, next);
+            return { state, value };
         });
+    }
+    async writeNextState(threadId, currentGeneration, next) {
+        const state = {
+            ...next,
+            generation: currentGeneration + 1,
+        };
+        await mkdir(this.threadsDir, { recursive: true, mode: 0o700 });
+        const path = this.threadPath(threadId);
+        const tempPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
+        await writeFile(tempPath, `${JSON.stringify(state, null, 2)}\n`, {
+            mode: 0o600,
+        });
+        await rename(tempPath, path);
+        return state;
     }
     async withThreadLock(threadId, action) {
         await mkdir(this.locksDir, { recursive: true, mode: 0o700 });
         const lockPath = join(this.locksDir, `${hashText(threadId)}.lock`);
-        const deadline = Date.now() + 10_000;
+        const lockId = `thread-lock:${randomUUID()}`;
+        const deadline = Date.now() + defaultThreadLockAcquireTimeoutMs;
         while (true) {
             try {
                 await mkdir(lockPath, { mode: 0o700 });
+                try {
+                    await writeThreadLockRecord(lockPath, {
+                        storageVersion: "claude-logical-thread-lock-v1",
+                        lockId,
+                        acquiredAt: new Date().toISOString(),
+                        pid: process.pid,
+                    });
+                }
+                catch (error) {
+                    await rm(lockPath, { recursive: true, force: true });
+                    throw error;
+                }
                 break;
             }
             catch (error) {
                 if (!isNodeError(error) || error.code !== "EEXIST")
                     throw error;
+                await removeStaleThreadLock(lockPath, new Date());
                 if (Date.now() >= deadline) {
                     throw new Error("claude_logical_thread_lock_timeout");
                 }
                 await delay(25);
             }
         }
+        const heartbeatTimer = startThreadLockHeartbeat(lockPath, lockId);
         try {
             return await action();
         }
         finally {
-            await rm(lockPath, { recursive: true, force: true });
+            heartbeatTimer.dispose();
+            await releaseThreadLock(lockPath, lockId);
         }
     }
     threadPath(threadId) {
@@ -90,14 +124,15 @@ export class FileClaudeTranscriptBundleStore {
         this.bundlesDir = join(rootDir, "bundles");
     }
     async capture(input) {
+        const sessionId = requireSafeId(input.sessionId);
         const sourceConfigDir = await realpath(input.sourceConfigDir);
-        const transcriptPath = await findTranscriptPath(sourceConfigDir, input.sessionId);
+        const transcriptPath = await findTranscriptPath(sourceConfigDir, sessionId);
         if (!transcriptPath) {
             throw new Error("claude_transcript_not_found");
         }
         const projectDir = dirname(transcriptPath);
-        const files = await transcriptBundleFiles(projectDir, input.sessionId);
-        const bundleId = `bundle-${hashText(`${input.cwd}:${input.sessionId}:${Date.now()}:${randomUUID()}`).slice(0, 24)}`;
+        const files = await transcriptBundleFiles(projectDir, sessionId);
+        const bundleId = `bundle-${hashText(`${input.cwd}:${sessionId}:${Date.now()}:${randomUUID()}`).slice(0, 24)}`;
         const bundleDir = this.bundleDir(bundleId);
         const filesDir = join(bundleDir, "files");
         await mkdir(filesDir, { recursive: true, mode: 0o700 });
@@ -112,7 +147,7 @@ export class FileClaudeTranscriptBundleStore {
         const bundle = {
             bundleId,
             cwd: await realpath(input.cwd),
-            sessionId: input.sessionId,
+            sessionId,
             sourceConfigDir,
             files: relativeFiles.sort(),
             capturedAt: new Date().toISOString(),
@@ -137,6 +172,9 @@ export class FileClaudeTranscriptBundleStore {
             await cp(sourcePath, targetPath, { force: true });
         }
         return bundle;
+    }
+    async remove(input) {
+        await rm(this.bundleDir(input.bundleId), { recursive: true, force: true });
     }
     bundleDir(bundleId) {
         return join(this.bundlesDir, requireSafeId(bundleId));
@@ -209,19 +247,214 @@ async function ensureRealDirectory(path) {
     await mkdir(path, { recursive: true, mode: 0o700 });
     return realpath(path);
 }
+async function writeThreadLockRecord(lockPath, record) {
+    await writeFile(join(lockPath, threadLockRecordFileName), `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
+}
+async function releaseThreadLock(lockPath, lockId) {
+    const record = await readThreadLockRecord(lockPath);
+    if (record && record.lockId !== lockId)
+        return;
+    await rm(lockPath, { recursive: true, force: true });
+}
+function startThreadLockHeartbeat(lockPath, lockId) {
+    const timer = setInterval(() => {
+        void refreshThreadLockHeartbeat(lockPath, lockId);
+    }, defaultThreadLockHeartbeatMs);
+    timer.unref();
+    return {
+        dispose() {
+            clearInterval(timer);
+        },
+    };
+}
+async function refreshThreadLockHeartbeat(lockPath, lockId) {
+    const record = await readThreadLockRecord(lockPath).catch(() => null);
+    if (!record || record.lockId !== lockId)
+        return;
+    await writeThreadLockRecord(lockPath, {
+        ...record,
+        heartbeatAt: new Date().toISOString(),
+    }).catch(() => {
+        // Best effort only. The stale-lock TTL still protects crashed workers.
+    });
+}
+async function removeStaleThreadLock(lockPath, now) {
+    if (!(await isThreadLockStale(lockPath, now)))
+        return false;
+    const stalePath = `${lockPath}.${process.pid}.${randomUUID()}.stale`;
+    try {
+        await rename(lockPath, stalePath);
+    }
+    catch (error) {
+        if (isNodeError(error) && error.code === "ENOENT")
+            return true;
+        if (isNodeError(error) && error.code === "EEXIST")
+            return false;
+        throw error;
+    }
+    await rm(stalePath, { recursive: true, force: true });
+    return true;
+}
+async function isThreadLockStale(lockPath, now) {
+    const record = await readThreadLockRecord(lockPath);
+    const lastSeenAtMs = record
+        ? Date.parse(record.heartbeatAt ?? record.acquiredAt)
+        : (await stat(lockPath)).mtimeMs;
+    if (Number.isNaN(lastSeenAtMs))
+        return true;
+    return now.getTime() - lastSeenAtMs >= defaultThreadLockTtlMs;
+}
+async function readThreadLockRecord(lockPath) {
+    try {
+        return parseThreadLockRecord(await readFile(join(lockPath, threadLockRecordFileName), "utf8"));
+    }
+    catch (error) {
+        if (isNodeError(error) && error.code === "ENOENT")
+            return null;
+        if (error instanceof SyntaxError)
+            return null;
+        if (error instanceof Error &&
+            error.message === "claude_logical_thread_lock_record_invalid") {
+            return null;
+        }
+        throw error;
+    }
+}
+function parseThreadLockRecord(raw) {
+    const value = JSON.parse(raw);
+    if (!isRecord(value)) {
+        throw new Error("claude_logical_thread_lock_record_invalid");
+    }
+    const lockId = nonEmptyString(value.lockId);
+    const acquiredAt = validIsoDateString(value.acquiredAt);
+    const heartbeatAt = optionalIsoDateString(value.heartbeatAt, "claude_logical_thread_lock_record_invalid");
+    const pid = value.pid;
+    if (value.storageVersion !== "claude-logical-thread-lock-v1" ||
+        lockId === null ||
+        acquiredAt === null ||
+        typeof pid !== "number" ||
+        !Number.isSafeInteger(pid)) {
+        throw new Error("claude_logical_thread_lock_record_invalid");
+    }
+    return {
+        storageVersion: "claude-logical-thread-lock-v1",
+        lockId,
+        acquiredAt,
+        ...(heartbeatAt === undefined ? {} : { heartbeatAt }),
+        pid,
+    };
+}
 function parseThreadState(raw) {
     const value = JSON.parse(raw);
-    if (!value.threadId || !Number.isInteger(value.generation)) {
+    if (!isRecord(value)) {
         throw new Error("claude_logical_thread_state_invalid");
     }
-    return value;
+    const threadId = nonEmptyString(value.threadId);
+    const cwd = absolutePathString(value.cwd);
+    const generation = value.generation;
+    const updatedAt = validIsoDateString(value.updatedAt);
+    const latestSessionId = optionalSafeId(value.latestSessionId, "claude_logical_thread_state_invalid");
+    const latestBundleId = optionalSafeId(value.latestBundleId, "claude_logical_thread_state_invalid");
+    const latestProviderInstanceId = optionalNonEmptyString(value.latestProviderInstanceId, "claude_logical_thread_state_invalid");
+    const latestWorkerId = optionalNonEmptyString(value.latestWorkerId, "claude_logical_thread_state_invalid");
+    if (threadId === null ||
+        cwd === null ||
+        typeof generation !== "number" ||
+        !Number.isSafeInteger(generation) ||
+        generation < 0 ||
+        updatedAt === null) {
+        throw new Error("claude_logical_thread_state_invalid");
+    }
+    return {
+        threadId,
+        cwd,
+        generation,
+        ...(latestSessionId === undefined ? {} : { latestSessionId }),
+        ...(latestBundleId === undefined ? {} : { latestBundleId }),
+        ...(latestProviderInstanceId === undefined
+            ? {}
+            : { latestProviderInstanceId }),
+        ...(latestWorkerId === undefined ? {} : { latestWorkerId }),
+        updatedAt,
+    };
+}
+function optionalSafeId(value, errorCode) {
+    if (value === undefined)
+        return undefined;
+    if (typeof value !== "string")
+        throw new Error(errorCode);
+    try {
+        return requireSafeId(value);
+    }
+    catch {
+        throw new Error(errorCode);
+    }
+}
+function optionalNonEmptyString(value, errorCode) {
+    if (value === undefined)
+        return undefined;
+    const string = nonEmptyString(value);
+    if (string === null)
+        throw new Error(errorCode);
+    return string;
+}
+function nonEmptyString(value) {
+    return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+function absolutePathString(value) {
+    const string = nonEmptyString(value);
+    if (!string)
+        return null;
+    return isAbsolute(string) || win32.isAbsolute(string) ? string : null;
+}
+function validIsoDateString(value) {
+    const string = nonEmptyString(value);
+    if (!string || Number.isNaN(Date.parse(string)))
+        return null;
+    return string;
+}
+function optionalIsoDateString(value, errorCode) {
+    if (value === undefined)
+        return undefined;
+    const string = validIsoDateString(value);
+    if (string === null)
+        throw new Error(errorCode);
+    return string;
+}
+function isRecord(value) {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function parseBundle(raw) {
     const value = JSON.parse(raw);
-    if (!value.bundleId || !value.sessionId || !Array.isArray(value.files)) {
+    if (!isRecord(value)) {
         throw new Error("claude_transcript_bundle_invalid");
     }
-    return value;
+    const bundleId = optionalSafeId(value.bundleId, "claude_transcript_bundle_invalid");
+    const sessionId = optionalSafeId(value.sessionId, "claude_transcript_bundle_invalid");
+    const cwd = absolutePathString(value.cwd);
+    const sourceConfigDir = absolutePathString(value.sourceConfigDir);
+    const capturedAt = validIsoDateString(value.capturedAt);
+    if (bundleId === undefined ||
+        sessionId === undefined ||
+        cwd === null ||
+        sourceConfigDir === null ||
+        capturedAt === null ||
+        !Array.isArray(value.files)) {
+        throw new Error("claude_transcript_bundle_invalid");
+    }
+    return {
+        bundleId,
+        cwd,
+        sessionId,
+        sourceConfigDir,
+        files: value.files.map((file) => {
+            if (typeof file !== "string") {
+                throw new Error("claude_transcript_bundle_invalid");
+            }
+            return requireSafeRelativePath(file);
+        }),
+        capturedAt,
+    };
 }
 function requireSafeId(value) {
     if (!/^[A-Za-z0-9_-]{1,128}$/u.test(value)) {

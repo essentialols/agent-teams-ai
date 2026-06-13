@@ -9,6 +9,7 @@ export type SubscriptionWorkerErrorCode =
   | "subscription_worker_account_unavailable"
   | "subscription_worker_shutdown_timeout"
   | "subscription_worker_pool_draining"
+  | "subscription_worker_pool_capacity_unavailable"
   | "subscription_worker_pool_queue_full"
   | "subscription_worker_pool_run_aborted"
   | "subscription_worker_pool_empty"

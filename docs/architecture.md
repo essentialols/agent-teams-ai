@@ -27,3 +27,7 @@ multi-agent reviewer/tribunal architecture.
 See `docs/claude-worker-pool-rfc.md` for the proposed Claude Code backend
 worker pool, including prewarm, capacity-aware slot selection and limit
 rotation.
+
+See `docs/host-app-integration-strategy.md` for the cross-repository adapter
+contract for `qa-rig`, `hib-pr-reviewer`, `quanta-pr-reviewer` and
+control-layer apps.

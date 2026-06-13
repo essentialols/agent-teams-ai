@@ -42,6 +42,7 @@ export class BoundedSubscriptionWorkerPool<Job, Result> {
   private inFlightCount = 0;
   private cooldownDrainAt: number | null = null;
   private cooldownDrainTimer: WorkerPoolTimerHandle | null = null;
+  private readonly idempotentRuns = new Map<string, Promise<Result>>();
 
   constructor(private readonly options: WorkerPoolOptions<Job, Result>) {
     if (!options.poolId.trim()) {
@@ -137,12 +138,36 @@ export class BoundedSubscriptionWorkerPool<Job, Result> {
       );
     }
 
+    const idempotencyKey = normalizeIdempotencyKey(options.idempotencyKey);
+    if (idempotencyKey) {
+      const existing = this.idempotentRuns.get(idempotencyKey);
+      if (existing) {
+        return waitForIdempotentRun(existing, options.abortSignal);
+      }
+    }
+
+    const run = this.startRun(job, options);
+    if (!idempotencyKey) return run;
+
+    this.idempotentRuns.set(idempotencyKey, run);
+    const cleanup = () => {
+      if (this.idempotentRuns.get(idempotencyKey) === run) {
+        this.idempotentRuns.delete(idempotencyKey);
+      }
+    };
+    run.then(cleanup, cleanup);
+    return run;
+  }
+
+  private startRun(job: Job, options: WorkerPoolRunOptions): Promise<Result> {
     const selected = this.selectAvailableSlot(job, this.now());
     const available = selected.slot;
     if (available) {
       return this.runOnSlotWithRetry(available, job, options, 1);
     }
     this.scheduleCooldownDrain(selected.snapshots);
+    const unavailableError = capacityUnavailableError(selected.snapshots);
+    if (unavailableError) return Promise.reject(unavailableError);
 
     if (
       this.queue.length >= (this.options.maxQueueSize ?? defaultMaxQueueSize)
@@ -328,6 +353,9 @@ export class BoundedSubscriptionWorkerPool<Job, Result> {
     job: Job,
     options: WorkerPoolRunOptions,
   ): Promise<Result> {
+    if (options.abortSignal?.aborted) {
+      return Promise.reject(runAbortedError());
+    }
     slot.busy = true;
     this.inFlightCount += 1;
     return slot.worker
@@ -377,9 +405,20 @@ export class BoundedSubscriptionWorkerPool<Job, Result> {
       const selected = this.selectAvailableSlot(next.job, this.now());
       if (!selected.slot) {
         this.scheduleCooldownDrain(selected.snapshots);
+        const unavailableError = capacityUnavailableError(selected.snapshots);
+        if (unavailableError) {
+          this.rejectQueued(unavailableError);
+        }
         return;
       }
+      if (this.queue[0] !== next) {
+        continue;
+      }
       this.queue.shift();
+      if (next.options.abortSignal?.aborted) {
+        next.reject(runAbortedError());
+        continue;
+      }
       void this.runOnSlotWithRetry(selected.slot, next.job, next.options, 1)
         .then(next.resolve)
         .catch(next.reject);
@@ -642,6 +681,38 @@ function runAbortedError(): SubscriptionWorkerError {
   );
 }
 
+function normalizeIdempotencyKey(value: string | undefined): string | null {
+  const normalized = value?.trim();
+  return normalized ? normalized : null;
+}
+
+function waitForIdempotentRun<Result>(
+  run: Promise<Result>,
+  abortSignal: AbortSignal | undefined,
+): Promise<Result> {
+  if (!abortSignal) return run;
+  if (abortSignal.aborted) return Promise.reject(runAbortedError());
+
+  return new Promise((resolve, reject) => {
+    const cleanup = () => abortSignal.removeEventListener("abort", abort);
+    const abort = () => {
+      cleanup();
+      reject(runAbortedError());
+    };
+    abortSignal.addEventListener("abort", abort, { once: true });
+    run.then(
+      (result) => {
+        cleanup();
+        resolve(result);
+      },
+      (error) => {
+        cleanup();
+        reject(error);
+      },
+    );
+  });
+}
+
 function retryPolicy(
   options: WorkerPoolRunOptions,
   poolPolicy: WorkerPoolRetryPolicy | undefined,
@@ -697,4 +768,50 @@ function isResettableCapacity(
     capacity.availability === "cooldown" ||
     capacity.availability === "quota_exhausted"
   );
+}
+
+function capacityUnavailableError(
+  snapshots: readonly WorkerPoolSlotSnapshot[],
+): SubscriptionWorkerError | null {
+  if (snapshots.some((snapshot) => snapshot.busy)) return null;
+  if (
+    snapshots.some(
+      (snapshot) =>
+        isResettableCapacity(snapshot.capacity) &&
+        snapshot.capacity.cooldownUntil,
+    )
+  ) {
+    return null;
+  }
+
+  const unavailable = snapshots.filter(
+    (snapshot) => snapshot.capacity.availability !== "available",
+  );
+  if (unavailable.length === 0) return null;
+
+  return new SubscriptionWorkerError(
+    "subscription_worker_pool_capacity_unavailable",
+    "Worker pool has no available or resettable-capacity slots.",
+    {
+      details: {
+        availability: summarizeAvailability(unavailable),
+      },
+    },
+  );
+}
+
+function summarizeAvailability(
+  snapshots: readonly WorkerPoolSlotSnapshot[],
+): string {
+  const counts = new Map<string, number>();
+  for (const snapshot of snapshots) {
+    counts.set(
+      snapshot.capacity.availability,
+      (counts.get(snapshot.capacity.availability) ?? 0) + 1,
+    );
+  }
+  return [...counts.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([availability, count]) => `${availability}:${count}`)
+    .join(",");
 }

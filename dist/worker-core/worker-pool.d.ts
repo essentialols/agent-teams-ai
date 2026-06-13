@@ -10,12 +10,14 @@ export declare class BoundedSubscriptionWorkerPool<Job, Result> {
     private inFlightCount;
     private cooldownDrainAt;
     private cooldownDrainTimer;
+    private readonly idempotentRuns;
     constructor(options: WorkerPoolOptions<Job, Result>);
     get poolId(): string;
     get state(): SubscriptionWorkerState;
     start(): Promise<void>;
     prewarm(): Promise<readonly SubscriptionWorkerPrewarmResult[]>;
     run(job: Job, options?: WorkerPoolRunOptions): Promise<Result>;
+    private startRun;
     restartSlot(slotIndex: number, options?: WorkerPoolRestartOptions): Promise<void>;
     health(): Promise<WorkerPoolHealth>;
     stats(): WorkerPoolStats;

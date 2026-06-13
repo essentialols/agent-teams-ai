@@ -10,6 +10,9 @@ export class BoundedSubscriptionWorkerPool {
     failedCount = 0;
     restartedCount = 0;
     inFlightCount = 0;
+    cooldownDrainAt = null;
+    cooldownDrainTimer = null;
+    idempotentRuns = new Map();
     constructor(options) {
         this.options = options;
         if (!options.poolId.trim()) {
@@ -73,10 +76,35 @@ export class BoundedSubscriptionWorkerPool {
         if (this.poolState === "draining") {
             return Promise.reject(new SubscriptionWorkerError("subscription_worker_pool_draining", "Worker pool is draining and does not accept new work."));
         }
-        const available = this.slots.find((slot) => !slot.busy);
-        if (available) {
-            return this.runOnSlot(available, job, options);
+        const idempotencyKey = normalizeIdempotencyKey(options.idempotencyKey);
+        if (idempotencyKey) {
+            const existing = this.idempotentRuns.get(idempotencyKey);
+            if (existing) {
+                return waitForIdempotentRun(existing, options.abortSignal);
+            }
         }
+        const run = this.startRun(job, options);
+        if (!idempotencyKey)
+            return run;
+        this.idempotentRuns.set(idempotencyKey, run);
+        const cleanup = () => {
+            if (this.idempotentRuns.get(idempotencyKey) === run) {
+                this.idempotentRuns.delete(idempotencyKey);
+            }
+        };
+        run.then(cleanup, cleanup);
+        return run;
+    }
+    startRun(job, options) {
+        const selected = this.selectAvailableSlot(job, this.now());
+        const available = selected.slot;
+        if (available) {
+            return this.runOnSlotWithRetry(available, job, options, 1);
+        }
+        this.scheduleCooldownDrain(selected.snapshots);
+        const unavailableError = capacityUnavailableError(selected.snapshots);
+        if (unavailableError)
+            return Promise.reject(unavailableError);
         if (this.queue.length >= (this.options.maxQueueSize ?? defaultMaxQueueSize)) {
             return Promise.reject(new SubscriptionWorkerError("subscription_worker_pool_queue_full", "Worker pool queue is full."));
         }
@@ -165,7 +193,9 @@ export class BoundedSubscriptionWorkerPool {
         this.drainQueue();
     }
     async health() {
-        const slotHealth = await Promise.all(this.slots.map((slot) => safeHealth(slot.worker)));
+        const checkedAt = this.now();
+        this.slotSnapshots(checkedAt);
+        const slotHealth = await Promise.all(this.slots.map((slot) => safeHealth(slot.worker, checkedAt)));
         const unhealthy = slotHealth.filter((health) => health.status === "unhealthy");
         const degraded = slotHealth.filter((health) => health.status === "degraded");
         const status = unhealthy.length > 0
@@ -177,7 +207,7 @@ export class BoundedSubscriptionWorkerPool {
             poolId: this.options.poolId,
             status,
             state: this.poolState,
-            checkedAt: new Date(),
+            checkedAt,
             slots: slotHealth,
             queued: this.queue.length,
             inFlight: this.inFlightCount,
@@ -199,6 +229,7 @@ export class BoundedSubscriptionWorkerPool {
         if (this.poolState === "disposed")
             return;
         this.poolState = "draining";
+        this.clearCooldownDrainTimer();
         const deadline = Date.now() + (this.options.shutdownTimeoutMs ?? defaultShutdownTimeoutMs);
         while (this.inFlightCount > 0 && Date.now() < deadline) {
             await delay(25);
@@ -214,6 +245,9 @@ export class BoundedSubscriptionWorkerPool {
         this.emit("subscription_worker_pool.disposed");
     }
     runOnSlot(slot, job, options) {
+        if (options.abortSignal?.aborted) {
+            return Promise.reject(runAbortedError());
+        }
         slot.busy = true;
         this.inFlightCount += 1;
         return slot.worker
@@ -252,16 +286,138 @@ export class BoundedSubscriptionWorkerPool {
     drainQueue() {
         if (this.poolState === "draining" || this.poolState === "disposed")
             return;
-        for (const slot of this.slots) {
-            if (slot.busy)
-                continue;
-            const next = this.queue.shift();
+        while (this.queue.length > 0) {
+            const next = this.queue[0];
             if (!next)
                 return;
-            void this.runOnSlot(slot, next.job, next.options)
+            const selected = this.selectAvailableSlot(next.job, this.now());
+            if (!selected.slot) {
+                this.scheduleCooldownDrain(selected.snapshots);
+                const unavailableError = capacityUnavailableError(selected.snapshots);
+                if (unavailableError) {
+                    this.rejectQueued(unavailableError);
+                }
+                return;
+            }
+            if (this.queue[0] !== next) {
+                continue;
+            }
+            this.queue.shift();
+            if (next.options.abortSignal?.aborted) {
+                next.reject(runAbortedError());
+                continue;
+            }
+            void this.runOnSlotWithRetry(selected.slot, next.job, next.options, 1)
                 .then(next.resolve)
                 .catch(next.reject);
         }
+    }
+    async runOnSlotWithRetry(slot, job, options, attempt) {
+        try {
+            return await this.runOnSlot(slot, job, options);
+        }
+        catch (error) {
+            if (!this.shouldRetryOnAnotherSlot(slot, options, attempt)) {
+                throw error;
+            }
+            const selected = this.selectAvailableSlot(job, this.now());
+            if (!selected.slot) {
+                this.scheduleCooldownDrain(selected.snapshots);
+                throw error;
+            }
+            this.emit("subscription_worker_pool.slot_retry", {
+                fromSlotIndex: String(slot.index),
+                fromWorkerId: slot.worker.workerId,
+                toSlotIndex: String(selected.slot.index),
+                toWorkerId: selected.slot.worker.workerId,
+                attempt: String(attempt + 1),
+            });
+            return this.runOnSlotWithRetry(selected.slot, job, options, attempt + 1);
+        }
+    }
+    shouldRetryOnAnotherSlot(failedSlot, options, attempt) {
+        const policy = retryPolicy(options, this.options.retryPolicy);
+        if (!policy.retryOnSlotCapacityUnavailable)
+            return false;
+        if (attempt >= policy.maxAttempts)
+            return false;
+        if (options.abortSignal?.aborted)
+            return false;
+        return (this.slotCapacity(failedSlot, this.now()).availability !== "available");
+    }
+    selectAvailableSlot(job, now) {
+        const snapshots = this.slotSnapshots(now);
+        const available = snapshots.filter((snapshot) => !snapshot.busy && snapshot.capacity.availability === "available");
+        if (available.length === 0) {
+            return { slot: null, snapshots };
+        }
+        const selected = this.options.slotSelector?.({ slots: snapshots, job, now }) ??
+            available[0] ??
+            null;
+        if (!selected) {
+            return { slot: null, snapshots };
+        }
+        const snapshot = snapshots.find((candidate) => candidate.slotIndex === selected.slotIndex);
+        if (!snapshot ||
+            snapshot.busy ||
+            snapshot.capacity.availability !== "available") {
+            throw new SubscriptionWorkerError("subscription_worker_pool_selector_invalid", "Worker pool slot selector returned an unavailable slot.", {
+                details: {
+                    slotIndex: String(selected.slotIndex),
+                    ...(snapshot ? { workerId: snapshot.workerId } : {}),
+                },
+            });
+        }
+        return {
+            slot: this.slots[snapshot.slotIndex] ?? null,
+            snapshots,
+        };
+    }
+    slotSnapshots(now) {
+        return this.slots.map((slot) => ({
+            slotIndex: slot.index,
+            workerId: slot.worker.workerId,
+            busy: slot.busy,
+            capacity: this.slotCapacity(slot, now),
+        }));
+    }
+    slotCapacity(slot, now) {
+        if (slot.busy)
+            return { availability: "busy" };
+        const worker = capacityAwareWorker(slot.worker);
+        if (!worker)
+            return { availability: "available" };
+        return normalizeCapacity(worker.capacity(), now);
+    }
+    scheduleCooldownDrain(snapshots) {
+        const nextCooldownAt = snapshots.reduce((nextAt, snapshot) => {
+            if (!isResettableCapacity(snapshot.capacity) ||
+                !snapshot.capacity.cooldownUntil) {
+                return nextAt;
+            }
+            const candidate = snapshot.capacity.cooldownUntil.getTime();
+            return nextAt === null ? candidate : Math.min(nextAt, candidate);
+        }, null);
+        if (nextCooldownAt === null)
+            return;
+        if (this.cooldownDrainAt !== null &&
+            this.cooldownDrainAt <= nextCooldownAt) {
+            return;
+        }
+        this.clearCooldownDrainTimer();
+        this.cooldownDrainAt = nextCooldownAt;
+        this.cooldownDrainTimer = this.setTimer(() => {
+            this.cooldownDrainAt = null;
+            this.cooldownDrainTimer = null;
+            this.drainQueue();
+        }, Math.max(0, nextCooldownAt - this.now().getTime()));
+    }
+    clearCooldownDrainTimer() {
+        if (this.cooldownDrainTimer) {
+            this.clearTimer(this.cooldownDrainTimer);
+            this.cooldownDrainTimer = null;
+        }
+        this.cooldownDrainAt = null;
     }
     assertRunnable() {
         if (this.poolState === "disposed") {
@@ -294,8 +450,22 @@ export class BoundedSubscriptionWorkerPool {
             },
         });
     }
+    now() {
+        return this.options.clock?.now() ?? new Date();
+    }
+    setTimer(callback, delayMs) {
+        return (this.options.scheduler?.setTimeout(callback, delayMs) ??
+            setTimeout(callback, delayMs));
+    }
+    clearTimer(handle) {
+        if (this.options.scheduler) {
+            this.options.scheduler.clearTimeout(handle);
+            return;
+        }
+        clearTimeout(handle);
+    }
 }
-async function safeHealth(worker) {
+async function safeHealth(worker, checkedAt) {
     try {
         return await worker.health();
     }
@@ -303,7 +473,7 @@ async function safeHealth(worker) {
         return {
             status: "unhealthy",
             state: "failed",
-            checkedAt: new Date(),
+            checkedAt,
             failures: [
                 {
                     code: "subscription_worker_health_failed",
@@ -319,5 +489,87 @@ function delay(ms) {
 }
 function runAbortedError() {
     return new SubscriptionWorkerError("subscription_worker_pool_run_aborted", "Worker pool run was aborted before it started.");
+}
+function normalizeIdempotencyKey(value) {
+    const normalized = value?.trim();
+    return normalized ? normalized : null;
+}
+function waitForIdempotentRun(run, abortSignal) {
+    if (!abortSignal)
+        return run;
+    if (abortSignal.aborted)
+        return Promise.reject(runAbortedError());
+    return new Promise((resolve, reject) => {
+        const cleanup = () => abortSignal.removeEventListener("abort", abort);
+        const abort = () => {
+            cleanup();
+            reject(runAbortedError());
+        };
+        abortSignal.addEventListener("abort", abort, { once: true });
+        run.then((result) => {
+            cleanup();
+            resolve(result);
+        }, (error) => {
+            cleanup();
+            reject(error);
+        });
+    });
+}
+function retryPolicy(options, poolPolicy) {
+    const maxAttempts = options.retryPolicy?.maxAttempts ?? poolPolicy?.maxAttempts ?? 1;
+    return {
+        maxAttempts: Math.max(1, maxAttempts),
+        retryOnSlotCapacityUnavailable: options.retryPolicy?.retryOnSlotCapacityUnavailable ??
+            poolPolicy?.retryOnSlotCapacityUnavailable ??
+            false,
+    };
+}
+function capacityAwareWorker(worker) {
+    if ("capacity" in worker && typeof worker.capacity === "function") {
+        return worker;
+    }
+    return null;
+}
+function normalizeCapacity(capacity, now) {
+    if (!isResettableCapacity(capacity) ||
+        !capacity.cooldownUntil ||
+        capacity.cooldownUntil.getTime() > now.getTime()) {
+        return capacity;
+    }
+    const { cooldownUntil: _cooldownUntil, lastLimitSignalAt: _lastLimitSignalAt, reason: _reason, ...rest } = capacity;
+    return {
+        ...rest,
+        availability: "available",
+    };
+}
+function isResettableCapacity(capacity) {
+    return (capacity.availability === "cooldown" ||
+        capacity.availability === "quota_exhausted");
+}
+function capacityUnavailableError(snapshots) {
+    if (snapshots.some((snapshot) => snapshot.busy))
+        return null;
+    if (snapshots.some((snapshot) => isResettableCapacity(snapshot.capacity) &&
+        snapshot.capacity.cooldownUntil)) {
+        return null;
+    }
+    const unavailable = snapshots.filter((snapshot) => snapshot.capacity.availability !== "available");
+    if (unavailable.length === 0)
+        return null;
+    return new SubscriptionWorkerError("subscription_worker_pool_capacity_unavailable", "Worker pool has no available or resettable-capacity slots.", {
+        details: {
+            availability: summarizeAvailability(unavailable),
+        },
+    });
+}
+function summarizeAvailability(snapshots) {
+    const counts = new Map();
+    for (const snapshot of snapshots) {
+        counts.set(snapshot.capacity.availability, (counts.get(snapshot.capacity.availability) ?? 0) + 1);
+    }
+    return [...counts.entries()]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([availability, count]) => `${availability}:${count}`)
+        .join(",");
 }
 //# sourceMappingURL=worker-pool.js.map

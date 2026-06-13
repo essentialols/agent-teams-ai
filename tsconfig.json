@@ -16,6 +16,9 @@
     "baseUrl": ".",
     "paths": {
       "@vioxen/subscription-runtime/core": ["src/core/index.ts"],
+      "@vioxen/subscription-runtime/agent-task": [
+        "src/agent-task/index.ts"
+      ],
       "@vioxen/subscription-runtime/provider-codex": [
         "src/provider-codex/index.ts"
       ],
@@ -27,6 +30,9 @@
       ],
       "@vioxen/subscription-runtime/worker-codex": [
         "src/worker-codex/index.ts"
+      ],
+      "@vioxen/subscription-runtime/worker-claude": [
+        "src/worker-claude/index.ts"
       ],
       "@vioxen/subscription-runtime/queue-core": [
         "src/queue-core/index.ts"

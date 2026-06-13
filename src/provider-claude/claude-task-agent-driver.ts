@@ -33,6 +33,15 @@ export type ClaudeTaskExecutionResult = {
   readonly warnings: ProviderTaskResult["warnings"];
 };
 
+export const claudeRuntimeThreadIdMetadataKey = "claudeRuntimeThreadId";
+export const claudeRuntimeResumeSessionIdMetadataKey =
+  "claudeRuntimeResumeSessionId";
+
+export type ClaudeRuntimeThreadInput = {
+  readonly threadId: string;
+  readonly resumeSessionId?: string;
+};
+
 export type ClaudeTaskEngineInput = {
   readonly prompt: string;
   readonly session: ClaudeOAuthSession;
@@ -47,6 +56,7 @@ export type ClaudeTaskEngineInput = {
   readonly permissionMode?: ProviderTaskControls["permissionMode"];
   readonly strictMcpConfig?: boolean;
   readonly outputSchemaName?: string;
+  readonly runtimeThread?: ClaudeRuntimeThreadInput;
   readonly abortSignal: AbortSignal;
 };
 
@@ -260,6 +270,10 @@ export class ClaudeTaskAgentDriver implements AgentDriver, StreamingAgentDriver 
     if (outputSchemaName !== undefined) {
       engineInput = { ...engineInput, outputSchemaName };
     }
+    const runtimeThread = runtimeThreadFromMetadata(input.task.metadata);
+    if (runtimeThread !== undefined) {
+      engineInput = { ...engineInput, runtimeThread };
+    }
     return {
       engineInput,
       warnings: validation.warnings,
@@ -464,4 +478,17 @@ function finishReasonForFailure(
   if (code === "task_cancelled") return "cancelled";
   if (code === "task_timeout") return "timeout";
   return "provider_error";
+}
+
+function runtimeThreadFromMetadata(
+  metadata: ProviderTask["metadata"],
+): ClaudeRuntimeThreadInput | undefined {
+  const threadId = metadata?.[claudeRuntimeThreadIdMetadataKey]?.trim();
+  if (!threadId) return undefined;
+  const resumeSessionId =
+    metadata?.[claudeRuntimeResumeSessionIdMetadataKey]?.trim();
+  return {
+    threadId,
+    ...(resumeSessionId ? { resumeSessionId } : {}),
+  };
 }

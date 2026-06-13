@@ -9,7 +9,9 @@ Allowed dependency direction:
 provider-codex -> core
 provider-claude -> core
 worker-core -> core
-worker-codex -> core + provider-codex + worker-core + store-local-file
+worker-local -> core
+worker-codex -> core + provider-codex + worker-core + worker-local + store-local-file
+worker-claude -> core + provider-claude + worker-core + worker-local + store-local-file
 queue-core -> worker-core types only
 queue-bullmq -> queue-core + worker-core
 stores -> core
@@ -21,3 +23,11 @@ adapters. Providers are sibling modules, not special cases inside `core`.
 
 See `docs/pluggable-agent-runtime.md` for the proposed Claude, Codex and
 multi-agent reviewer/tribunal architecture.
+
+See `docs/claude-worker-pool-rfc.md` for the proposed Claude Code backend
+worker pool, including prewarm, capacity-aware slot selection and limit
+rotation.
+
+See `docs/host-app-integration-strategy.md` for the cross-repository adapter
+contract for `qa-rig`, `hib-pr-reviewer`, `quanta-pr-reviewer` and
+control-layer apps.

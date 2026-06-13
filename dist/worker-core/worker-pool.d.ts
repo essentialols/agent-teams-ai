@@ -8,12 +8,16 @@ export declare class BoundedSubscriptionWorkerPool<Job, Result> {
     private failedCount;
     private restartedCount;
     private inFlightCount;
+    private cooldownDrainAt;
+    private cooldownDrainTimer;
+    private readonly idempotentRuns;
     constructor(options: WorkerPoolOptions<Job, Result>);
     get poolId(): string;
     get state(): SubscriptionWorkerState;
     start(): Promise<void>;
     prewarm(): Promise<readonly SubscriptionWorkerPrewarmResult[]>;
     run(job: Job, options?: WorkerPoolRunOptions): Promise<Result>;
+    private startRun;
     restartSlot(slotIndex: number, options?: WorkerPoolRestartOptions): Promise<void>;
     health(): Promise<WorkerPoolHealth>;
     stats(): WorkerPoolStats;
@@ -21,9 +25,19 @@ export declare class BoundedSubscriptionWorkerPool<Job, Result> {
     private runOnSlot;
     private createSlot;
     private drainQueue;
+    private runOnSlotWithRetry;
+    private shouldRetryOnAnotherSlot;
+    private selectAvailableSlot;
+    private slotSnapshots;
+    private slotCapacity;
+    private scheduleCooldownDrain;
+    private clearCooldownDrainTimer;
     private assertRunnable;
     private rejectQueued;
     private disposeStartedSlots;
     private emit;
+    private now;
+    private setTimer;
+    private clearTimer;
 }
 //# sourceMappingURL=worker-pool.d.ts.map

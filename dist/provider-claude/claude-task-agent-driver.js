@@ -2,6 +2,8 @@ import { claudeBgTaskAgentCapabilities, claudeBgTaskAgentId, claudeProviderId, }
 import { validateClaudeSessionArtifact, } from "./claude-session-codec.js";
 import { classifyClaudeFailure } from "./failure-classifier.js";
 import { registerClaudeSecrets } from "./claude-session-driver.js";
+export const claudeRuntimeThreadIdMetadataKey = "claudeRuntimeThreadId";
+export const claudeRuntimeResumeSessionIdMetadataKey = "claudeRuntimeResumeSessionId";
 export class ClaudeTaskAgentDriver {
     options;
     agentId = claudeBgTaskAgentId;
@@ -145,6 +147,10 @@ export class ClaudeTaskAgentDriver {
         }
         if (outputSchemaName !== undefined) {
             engineInput = { ...engineInput, outputSchemaName };
+        }
+        const runtimeThread = runtimeThreadFromMetadata(input.task.metadata);
+        if (runtimeThread !== undefined) {
+            engineInput = { ...engineInput, runtimeThread };
         }
         return {
             engineInput,
@@ -306,5 +312,15 @@ function finishReasonForFailure(code) {
     if (code === "task_timeout")
         return "timeout";
     return "provider_error";
+}
+function runtimeThreadFromMetadata(metadata) {
+    const threadId = metadata?.[claudeRuntimeThreadIdMetadataKey]?.trim();
+    if (!threadId)
+        return undefined;
+    const resumeSessionId = metadata?.[claudeRuntimeResumeSessionIdMetadataKey]?.trim();
+    return {
+        threadId,
+        ...(resumeSessionId ? { resumeSessionId } : {}),
+    };
 }
 //# sourceMappingURL=claude-task-agent-driver.js.map

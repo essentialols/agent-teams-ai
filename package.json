@@ -22,6 +22,11 @@
       "import": "./dist/core/index.js",
       "default": "./dist/core/index.js"
     },
+    "./agent-task": {
+      "types": "./dist/agent-task/index.d.ts",
+      "import": "./dist/agent-task/index.js",
+      "default": "./dist/agent-task/index.js"
+    },
     "./provider-codex": {
       "types": "./dist/provider-codex/index.d.ts",
       "import": "./dist/provider-codex/index.js",
@@ -41,6 +46,11 @@
       "types": "./dist/worker-codex/index.d.ts",
       "import": "./dist/worker-codex/index.js",
       "default": "./dist/worker-codex/index.js"
+    },
+    "./worker-claude": {
+      "types": "./dist/worker-claude/index.d.ts",
+      "import": "./dist/worker-claude/index.js",
+      "default": "./dist/worker-claude/index.js"
     },
     "./queue-core": {
       "types": "./dist/queue-core/index.d.ts",
@@ -76,6 +86,9 @@
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "subscription-runtime-agent-task": "./dist/agent-task/cli.js"
+  },
   "files": [
     "dist",
     "README.md",
@@ -86,7 +99,9 @@
     "build": "tsc -p tsconfig.build.json && node scripts/rewrite-dist-esm-imports.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
-    "check:boundaries": "node scripts/check-boundaries.mjs",
+    "smoke:worker-claude": "npm run build && node scripts/smoke-claude-worker.mjs",
+    "smoke:worker-claude-thread": "npm run build && CLAUDE_WORKER_SMOKE_MODE=thread node scripts/smoke-claude-worker.mjs",
+    "check:boundaries": "node scripts/check-boundaries.mjs && node scripts/check-boundaries-self-test.mjs",
     "check:dist": "node scripts/check-dist.mjs",
     "check:packed-consumer": "node scripts/check-packed-consumer.mjs",
     "check": "npm run typecheck && npm test && npm run build && npm run check:boundaries && npm pack --dry-run && npm run check:packed-consumer"

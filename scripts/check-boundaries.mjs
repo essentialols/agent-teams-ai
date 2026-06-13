@@ -126,7 +126,7 @@ const forbidden = [
         "(?:provider-|worker-(?:codex|claude)|queue-bullmq|store-|runner-)",
       ),
     ],
-    message: "queue-core must stay queue implementation neutral",
+    message: "queue-core must stay queue and provider implementation neutral",
   },
   {
     from: /^src\/runner-github-action\//,

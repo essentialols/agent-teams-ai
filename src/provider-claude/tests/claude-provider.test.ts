@@ -146,6 +146,17 @@ describe("Claude provider adapter", () => {
     expect(classifyClaudeRuntimeFailure("You've hit your usage limit.")).toBe(
       "quota_limited",
     );
+    expect(classifyClaudeRuntimeFailure("rate_limit_exceeded")).toBe(
+      "quota_limited",
+    );
+    expect(classifyClaudeRuntimeFailure("Too many requests")).toBe(
+      "quota_limited",
+    );
+    expect(
+      classifyClaudeRuntimeFailure(
+        "5 messages remaining until your usage limit resets",
+      ),
+    ).toBe("quota_limited");
     expect(classifyClaudeRuntimeFailure("approval required")).toBe(
       "permission_required",
     );
@@ -327,6 +338,7 @@ describe("Claude provider adapter", () => {
       pollIntervalMs: 10,
       runtimeModuleLoader: async () => fakeRuntimeModule,
       providerModuleLoader: async () => fakeProviderModule(fakeProvider),
+      settingsPath: "/tmp/claude-statusline-settings.json",
       stateFilePath: "/tmp/subscription-runtime-claude-state.json",
     });
 
@@ -374,6 +386,7 @@ describe("Claude provider adapter", () => {
       model: "claude-sonnet-test",
       permissionMode: "dontAsk",
       prompt: "review",
+      settings: "/tmp/claude-statusline-settings.json",
       strictMcpConfig: true,
     });
     expect(fakeProvider.constructorOptions).toMatchObject({
@@ -488,6 +501,57 @@ describe("Claude provider adapter", () => {
       },
     });
     expect(fakeProvider.removed).toBe(true);
+  });
+
+  it("resumes claude-runtime logical threads through provider send", async () => {
+    const fakeProvider = new FakeClaudeRuntimeProvider([
+      { type: "assistant_message", text: "resumed answer" },
+    ]);
+    const engine = new ClaudeRuntimeTaskExecutionEngine({
+      runtimeModuleLoader: async () => fakeRuntimeModule,
+      providerModuleLoader: async () => fakeProviderModule(fakeProvider),
+    });
+
+    const result = await engine.run({
+      abortSignal: new AbortController().signal,
+      model: "claude-sonnet-test",
+      prompt: "continue review",
+      redactor: new DefaultRedactor(),
+      runner: new StaticRunner(),
+      runtimeThread: {
+        threadId: "logical-review-thread",
+        resumeSessionId: "previous-claude-session",
+      },
+      session: {
+        authMode: "oauth",
+        configDir: "/tmp/claude-config",
+        oauthToken: "claude-oauth-secret",
+      },
+      workspacePath: "/tmp/workspace",
+    });
+
+    expect(result).toMatchObject({
+      outputText: "resumed answer",
+      telemetry: {
+        providerRunId: "run-2",
+        providerSessionId: "session-2",
+      },
+    });
+    expect(fakeProvider.startRequests).toHaveLength(0);
+    expect(fakeProvider.sendRequests).toHaveLength(1);
+    expect(fakeProvider.sendRequests[0]).toMatchObject({
+      previousProviderSessionId: "previous-claude-session",
+      thread: {
+        id: "logical-review-thread",
+        cwd: "/tmp/workspace",
+        latestProviderSessionId: "previous-claude-session",
+      },
+      command: {
+        mode: "followup",
+        prompt: "continue review",
+        threadId: "logical-review-thread",
+      },
+    });
   });
 
   it("builds claude-runtime BG provider context with default state isolation", async () => {
@@ -844,6 +908,10 @@ function fakeProviderModule(provider: FakeClaudeRuntimeProvider) {
         return provider.start(request);
       }
 
+      send(request: Parameters<FakeClaudeRuntimeProvider["send"]>[0]) {
+        return provider.send(request);
+      }
+
       observe() {
         return provider.observe();
       }
@@ -869,6 +937,12 @@ class FakeClaudeRuntimeProvider {
     readonly requestedAt: string;
     readonly threadId: string;
   }> = [];
+  readonly sendRequests: Array<{
+    readonly thread: unknown;
+    readonly command: unknown;
+    readonly previousProviderSessionId?: string;
+    readonly requestedAt: string;
+  }> = [];
   constructorOptions: Record<string, unknown> = {};
   removed = false;
 
@@ -882,6 +956,16 @@ class FakeClaudeRuntimeProvider {
   }) {
     this.startRequests.push(request);
     return { runId: "run-1", providerSessionId: "session-1" };
+  }
+
+  async send(request: {
+    readonly thread: unknown;
+    readonly command: unknown;
+    readonly previousProviderSessionId?: string;
+    readonly requestedAt: string;
+  }) {
+    this.sendRequests.push(request);
+    return { runId: "run-2", providerSessionId: "session-2" };
   }
 
   async *observe(): AsyncIterable<FakeClaudeRuntimeEvent> {

@@ -154,6 +154,7 @@ export interface AgentCommandLike {
   readonly createdAt: string;
   readonly cwd: string;
   readonly id: string;
+  readonly maxTurns?: number;
   readonly mcpConfig?: readonly string[];
   readonly mode: "initial";
   readonly model: string;

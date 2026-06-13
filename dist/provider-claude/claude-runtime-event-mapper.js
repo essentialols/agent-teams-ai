@@ -12,15 +12,18 @@ export function resultText(result) {
 }
 export function parseStructuredJson(value) {
     const direct = parseJson(value);
-    if (direct !== null)
-        return direct;
+    if (direct.ok)
+        return direct.value;
     const fence = value.match(/```(?:json)?\s*([\s\S]*?)```/);
     if (fence?.[1]) {
         const parsed = parseJson(fence[1].trim());
-        if (parsed !== null)
-            return parsed;
+        if (parsed.ok)
+            return parsed.value;
     }
-    return extractBalancedJson(value);
+    const balanced = extractBalancedJson(value);
+    if (balanced.ok)
+        return balanced.value;
+    throw new Error("claude_structured_output_invalid");
 }
 export function toolUseCall(event, redactor) {
     const safeInput = safeInputRecord(event.input, redactor);
@@ -42,6 +45,7 @@ export function toolResultCall(event, redactor) {
         status: event.isError === true ? "failed" : "completed",
         ...(safeInput === undefined ? {} : { safeInput }),
         safeInputPreview: stringifyPreview(event.output, redactor),
+        safeOutputPreview: stringifyPreview(event.output, redactor),
     };
 }
 export function runtimeUsage(usage) {
@@ -80,16 +84,16 @@ export function isResultAvailableEvent(event) {
 }
 function parseJson(value) {
     try {
-        return JSON.parse(value);
+        return { ok: true, value: JSON.parse(value) };
     }
     catch {
-        return null;
+        return { ok: false };
     }
 }
 function extractBalancedJson(value) {
     const start = value.indexOf("{");
     if (start === -1)
-        return null;
+        return { ok: false };
     let depth = 0;
     let inString = false;
     let escape = false;
@@ -115,13 +119,13 @@ function extractBalancedJson(value) {
             depth--;
             if (depth === 0) {
                 const parsed = parseJson(value.slice(start, index + 1));
-                if (parsed !== null)
+                if (parsed.ok)
                     return parsed;
                 return extractBalancedJson(value.slice(index + 1));
             }
         }
     }
-    return null;
+    return { ok: false };
 }
 function safeInputRecord(value, redactor) {
     const redacted = redactStructured(value, redactor);

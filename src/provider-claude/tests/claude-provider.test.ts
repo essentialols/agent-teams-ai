@@ -334,6 +334,7 @@ describe("Claude provider adapter", () => {
       allowedTools: ["Read", "Grep"],
       appendSystemPrompt: "system",
       abortSignal: new AbortController().signal,
+      maxTurns: 5,
       mcpConfig: ['{"mcpServers":{}}'],
       model: "claude-sonnet-test",
       outputSchemaName: "review-verdict",
@@ -369,6 +370,7 @@ describe("Claude provider adapter", () => {
       appendSystemPrompt: "system",
       cwd: "/tmp/workspace",
       mcpConfig: ['{"mcpServers":{}}'],
+      maxTurns: 5,
       model: "claude-sonnet-test",
       permissionMode: "dontAsk",
       prompt: "review",
@@ -380,6 +382,112 @@ describe("Claude provider adapter", () => {
       oauthToken: "claude-oauth-secret",
       pollIntervalMs: 10,
     });
+  });
+
+  it("rejects write-capable allowed tools when Claude permission mode is read-only", async () => {
+    const engine = new ClaudeRuntimeTaskExecutionEngine({
+      runtimeModuleLoader: async () => fakeRuntimeModule,
+      providerModuleLoader: async () =>
+        fakeProviderModule(new FakeClaudeRuntimeProvider([])),
+    });
+
+    await expect(
+      engine.run({
+        abortSignal: new AbortController().signal,
+        allowedTools: ["Read", "Bash", "Edit"],
+        model: "claude-sonnet-test",
+        permissionMode: "read-only",
+        prompt: "review",
+        redactor: new DefaultRedactor(),
+        runner: new StaticRunner(),
+        session: {
+          authMode: "oauth",
+          configDir: "/tmp/claude-config",
+          oauthToken: "claude-oauth-secret",
+        },
+        workspacePath: "/tmp/workspace",
+      }),
+    ).rejects.toThrow("claude_read_only_allowed_tools_unsafe:Bash,Edit");
+  });
+
+  it("maps preapproved Claude tasks to dontAsk for non-interactive allowlisted tools", async () => {
+    const fakeProvider = new FakeClaudeRuntimeProvider([
+      {
+        type: "result_available",
+        result: {
+          text: "done",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      },
+    ]);
+    const engine = new ClaudeRuntimeTaskExecutionEngine({
+      runtimeModuleLoader: async () => fakeRuntimeModule,
+      providerModuleLoader: async () => fakeProviderModule(fakeProvider),
+    });
+
+    await engine.run({
+      abortSignal: new AbortController().signal,
+      allowedTools: ["Bash", "mcp__memora__*"],
+      model: "claude-sonnet-test",
+      permissionMode: "preapproved",
+      prompt: "post review",
+      redactor: new DefaultRedactor(),
+      runner: new StaticRunner(),
+      session: {
+        authMode: "oauth",
+        configDir: "/tmp/claude-config",
+        oauthToken: "claude-oauth-secret",
+      },
+      workspacePath: "/tmp/workspace",
+    });
+
+    expect(fakeProvider.startRequests[0]?.command).toMatchObject({
+      allowedTools: ["Bash", "mcp__memora__*"],
+      permissionMode: "dontAsk",
+    });
+  });
+
+  it("fails structured Claude tasks when the runtime returns invalid JSON", async () => {
+    const fakeProvider = new FakeClaudeRuntimeProvider([
+      {
+        type: "result_available",
+        result: {
+          text: "not json",
+        },
+      },
+    ]);
+    const driver = new ClaudeTaskAgentDriver({
+      engine: new ClaudeRuntimeTaskExecutionEngine({
+        runtimeModuleLoader: async () => fakeRuntimeModule,
+        providerModuleLoader: async () => fakeProviderModule(fakeProvider),
+      }),
+    });
+
+    const result = await driver.runTask({
+      session: validSession,
+      task: {
+        kind: "structured-prompt",
+        prompt: "review",
+        outputSchemaName: "review-verdict",
+      },
+      workspace: { path: "/tmp/claude-workspace" },
+      runner: new StaticRunner(),
+      redactor: new DefaultRedactor(),
+      abortSignal: new AbortController().signal,
+    });
+
+    expect(result).toMatchObject({
+      status: "failed",
+      failure: {
+        code: "provider_output_invalid",
+        retryable: true,
+        reconnectRequired: false,
+      },
+      telemetry: {
+        finishReason: "provider_error",
+      },
+    });
+    expect(fakeProvider.removed).toBe(true);
   });
 
   it("builds claude-runtime BG provider context with default state isolation", async () => {
@@ -426,7 +534,7 @@ describe("Claude provider adapter", () => {
       {
         type: "tool_result",
         toolName: "mcp__memora__memory_get",
-        output: "ok",
+        output: "ok claude-oauth-secret",
       },
       {
         type: "usage",
@@ -482,6 +590,15 @@ describe("Claude provider adapter", () => {
           token: "[redacted:claude-token]",
         },
         status: "started",
+      },
+    });
+    expect(events[2]).toMatchObject({
+      type: "tool_call",
+      toolCall: {
+        name: "mcp__memora__memory_get",
+        safeInputPreview: "ok [redacted:claude-token]",
+        safeOutputPreview: "ok [redacted:claude-token]",
+        status: "completed",
       },
     });
     expect(events[4]).toMatchObject({

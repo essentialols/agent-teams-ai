@@ -63,7 +63,7 @@ export type ProviderTaskControls = {
   readonly model?: string;
   readonly maxTurns?: number;
   readonly allowedTools?: readonly string[];
-  readonly permissionMode?: "read-only" | "allow-edits" | "bypass" | "none";
+  readonly permissionMode?: "read-only" | "preapproved" | "allow-edits" | "bypass" | "none";
   readonly responseFormat?: "text" | "json";
   readonly outputSchemaName?: string;
 };
@@ -261,7 +261,7 @@ New providers should be classified by capabilities, not by provider name:
 - session mode: none, static, rotating.
 - history mode: none, host-managed-thread, provider-thread.
 - execution mode: process, app-server, remote HTTP, browser profile, container.
-- tool mode: no tools, read-only tools, write tools, MCP tools.
+- tool mode: no tools, read-only tools, preapproved non-interactive tools, write tools, MCP tools.
 - workspace mode: no workspace, read-only checkout, writable checkout,
   isolated temp workspace.
 - output mode: text, json, schema-enforced json, provider events.

@@ -264,6 +264,9 @@ function redactToolCall(toolCall, redactor) {
         ...(toolCall.safeInputPreview === undefined
             ? {}
             : { safeInputPreview: redactor.redact(toolCall.safeInputPreview) }),
+        ...(toolCall.safeOutputPreview === undefined
+            ? {}
+            : { safeOutputPreview: redactor.redact(toolCall.safeOutputPreview) }),
     };
 }
 function redactRuntimeWarning(warning, redactor) {

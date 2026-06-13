@@ -200,6 +200,7 @@ export class ClaudeRuntimeTaskExecutionEngine
     requestedAt: string,
     threadId: string,
   ): AgentCommandLike {
+    assertReadOnlyToolPolicy(input.permissionMode, input.allowedTools);
     return {
       ...(input.allowedTools === undefined ? {} : { allowedTools: input.allowedTools }),
       ...(input.appendSystemPrompt === undefined
@@ -208,6 +209,7 @@ export class ClaudeRuntimeTaskExecutionEngine
       createdAt: requestedAt,
       cwd: input.workspacePath,
       id: runtime.asCommandId(`subscription-runtime-${randomUUID()}`),
+      ...(input.maxTurns === undefined ? {} : { maxTurns: input.maxTurns }),
       ...(input.mcpConfig === undefined ? {} : { mcpConfig: input.mcpConfig }),
       mode: "initial",
       model: input.model,
@@ -226,8 +228,34 @@ function mapPermissionMode(
 ): AgentCommandLike["permissionMode"] {
   if (mode === "allow-edits") return "acceptEdits";
   if (mode === "bypass") return "bypassPermissions";
-  if (mode === "read-only") return "dontAsk";
+  if (mode === "read-only" || mode === "preapproved") return "dontAsk";
   return "default";
+}
+
+function assertReadOnlyToolPolicy(
+  permissionMode: ProviderTaskControls["permissionMode"] | undefined,
+  allowedTools: readonly string[] | undefined,
+): void {
+  if (permissionMode !== "read-only" || allowedTools === undefined) return;
+  const unsafe = allowedTools.filter((tool) => !isReadOnlyClaudeTool(tool));
+  if (unsafe.length === 0) return;
+  throw new Error(
+    `claude_read_only_allowed_tools_unsafe:${unsafe.join(",")}`,
+  );
+}
+
+const readOnlyClaudeTools = new Set([
+  "Glob",
+  "Grep",
+  "LS",
+  "Read",
+  "TodoRead",
+  "WebFetch",
+]);
+
+function isReadOnlyClaudeTool(tool: string): boolean {
+  const name = tool.split("(", 1)[0]?.trim();
+  return name !== undefined && readOnlyClaudeTools.has(name);
 }
 
 function hasEquivalentTextPart(parts: readonly string[], text: string): boolean {

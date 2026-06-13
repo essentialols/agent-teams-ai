@@ -305,13 +305,14 @@ export type AgentToolCall = {
   readonly status?: "started" | "completed" | "failed" | "denied";
   readonly safeInput?: Readonly<Record<string, unknown>>;
   readonly safeInputPreview?: string;
+  readonly safeOutputPreview?: string;
 };
 
 export type ProviderTaskControls = {
   readonly model?: string;
   readonly maxTurns?: number;
   readonly allowedTools?: readonly string[];
-  readonly permissionMode?: "read-only" | "allow-edits" | "bypass" | "none";
+  readonly permissionMode?: "read-only" | "preapproved" | "allow-edits" | "bypass" | "none";
   readonly responseFormat?: "text" | "json";
   readonly outputSchemaName?: string;
 };

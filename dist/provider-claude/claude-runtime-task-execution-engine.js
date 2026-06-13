@@ -156,6 +156,7 @@ export class ClaudeRuntimeTaskExecutionEngine {
         };
     }
     buildCommand(input, runtime, requestedAt, threadId) {
+        assertReadOnlyToolPolicy(input.permissionMode, input.allowedTools);
         return {
             ...(input.allowedTools === undefined ? {} : { allowedTools: input.allowedTools }),
             ...(input.appendSystemPrompt === undefined
@@ -164,6 +165,7 @@ export class ClaudeRuntimeTaskExecutionEngine {
             createdAt: requestedAt,
             cwd: input.workspacePath,
             id: runtime.asCommandId(`subscription-runtime-${randomUUID()}`),
+            ...(input.maxTurns === undefined ? {} : { maxTurns: input.maxTurns }),
             ...(input.mcpConfig === undefined ? {} : { mcpConfig: input.mcpConfig }),
             mode: "initial",
             model: input.model,
@@ -181,9 +183,29 @@ function mapPermissionMode(mode) {
         return "acceptEdits";
     if (mode === "bypass")
         return "bypassPermissions";
-    if (mode === "read-only")
+    if (mode === "read-only" || mode === "preapproved")
         return "dontAsk";
     return "default";
+}
+function assertReadOnlyToolPolicy(permissionMode, allowedTools) {
+    if (permissionMode !== "read-only" || allowedTools === undefined)
+        return;
+    const unsafe = allowedTools.filter((tool) => !isReadOnlyClaudeTool(tool));
+    if (unsafe.length === 0)
+        return;
+    throw new Error(`claude_read_only_allowed_tools_unsafe:${unsafe.join(",")}`);
+}
+const readOnlyClaudeTools = new Set([
+    "Glob",
+    "Grep",
+    "LS",
+    "Read",
+    "TodoRead",
+    "WebFetch",
+]);
+function isReadOnlyClaudeTool(tool) {
+    const name = tool.split("(", 1)[0]?.trim();
+    return name !== undefined && readOnlyClaudeTools.has(name);
 }
 function hasEquivalentTextPart(parts, text) {
     const normalized = text.trim();

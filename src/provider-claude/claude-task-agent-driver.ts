@@ -412,6 +412,9 @@ function redactToolCall(
     ...(toolCall.safeInputPreview === undefined
       ? {}
       : { safeInputPreview: redactor.redact(toolCall.safeInputPreview) }),
+    ...(toolCall.safeOutputPreview === undefined
+      ? {}
+      : { safeOutputPreview: redactor.redact(toolCall.safeOutputPreview) }),
   };
 }
 

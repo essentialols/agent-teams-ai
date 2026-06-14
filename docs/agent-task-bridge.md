@@ -113,7 +113,8 @@ normalizes them to agent-task JSON.
 `task.systemPrompt` carries higher-priority reviewer, tribunal or output-format
 instructions separately from the user/task prompt. Host adapters should use this
 field instead of prepending system text to `task.prompt`, so providers that
-support separate instruction channels can preserve that boundary.
+support separate instruction channels can preserve that boundary. This field is
+a host-controlled instruction channel; do not populate it from end-user input.
 
 `context.round.member` is the portable identity for tribunal/quorum/adversarial
 rounds. The runtime does not decide policy from it, but certification can prove

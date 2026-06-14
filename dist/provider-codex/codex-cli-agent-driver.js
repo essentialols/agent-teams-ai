@@ -1,9 +1,11 @@
+import { assertProviderTaskSystemPrompt, } from "@vioxen/subscription-runtime/core";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { codexAuthJsonFromArtifact } from "./codex-auth-json-codec.js";
 import { pruneCodexChildEnv } from "./codex-cli-domain.js";
 import { cleanupCodexRuntimeTempRoot } from "./codex-cli-temp-cleanup.js";
+import { composeCodexPrompt } from "./codex-prompt-composer.js";
 import { codexAgentCapabilities, codexAgentId, codexProviderId, defaultCodexModel, } from "./capabilities.js";
 import { classifyCodexFailure } from "./failure-classifier.js";
 export class CodexCliAgentDriver {
@@ -15,6 +17,7 @@ export class CodexCliAgentDriver {
         this.options = options;
     }
     async runTask(input) {
+        assertProviderTaskSystemPrompt(input.task.systemPrompt, "task.systemPrompt");
         if (!input.session) {
             return {
                 status: "failed",
@@ -43,8 +46,9 @@ export class CodexCliAgentDriver {
                     "--skip-git-repo-check",
                     "--model",
                     this.options.model ?? defaultCodexModel,
+                    // Verified with codex-cli 0.139.0: `codex exec -- -` reads the prompt from stdin.
                     "--",
-                    input.task.prompt,
+                    "-",
                 ],
                 cwd: input.workspace.path,
                 env: {
@@ -53,6 +57,10 @@ export class CodexCliAgentDriver {
                     CODEX_HOME: tempCodexHome,
                     CI: "true",
                 },
+                stdin: new TextEncoder().encode(composeCodexPrompt({
+                    prompt: input.task.prompt,
+                    systemPrompt: input.task.systemPrompt,
+                })),
                 timeoutMs: this.options.timeoutMs ?? this.capabilities.maxRuntimeMs,
                 abortSignal: input.abortSignal,
             });

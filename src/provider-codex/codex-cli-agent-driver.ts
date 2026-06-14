@@ -1,10 +1,11 @@
-import type {
-  AgentDriver,
-  ProviderFailure,
-  ProviderTask,
-  ProviderTaskResult,
-  SessionArtifact,
-  WorkspaceHandle,
+import {
+  assertProviderTaskSystemPrompt,
+  type AgentDriver,
+  type ProviderFailure,
+  type ProviderTask,
+  type ProviderTaskResult,
+  type SessionArtifact,
+  type WorkspaceHandle,
 } from "@vioxen/subscription-runtime/core";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -12,6 +13,7 @@ import { join } from "node:path";
 import { codexAuthJsonFromArtifact } from "./codex-auth-json-codec";
 import { pruneCodexChildEnv } from "./codex-cli-domain";
 import { cleanupCodexRuntimeTempRoot } from "./codex-cli-temp-cleanup";
+import { composeCodexPrompt } from "./codex-prompt-composer";
 import {
   codexAgentCapabilities,
   codexAgentId,
@@ -42,6 +44,8 @@ export class CodexCliAgentDriver implements AgentDriver {
     readonly redactor: Parameters<AgentDriver["runTask"]>[0]["redactor"];
     readonly abortSignal: AbortSignal;
   }): Promise<ProviderTaskResult> {
+    assertProviderTaskSystemPrompt(input.task.systemPrompt, "task.systemPrompt");
+
     if (!input.session) {
       return {
         status: "failed",
@@ -75,8 +79,9 @@ export class CodexCliAgentDriver implements AgentDriver {
           "--skip-git-repo-check",
           "--model",
           this.options.model ?? defaultCodexModel,
+          // Verified with codex-cli 0.139.0: `codex exec -- -` reads the prompt from stdin.
           "--",
-          input.task.prompt,
+          "-",
         ],
         cwd: input.workspace.path,
         env: {
@@ -85,6 +90,12 @@ export class CodexCliAgentDriver implements AgentDriver {
           CODEX_HOME: tempCodexHome,
           CI: "true",
         },
+        stdin: new TextEncoder().encode(
+          composeCodexPrompt({
+            prompt: input.task.prompt,
+            systemPrompt: input.task.systemPrompt,
+          }),
+        ),
         timeoutMs: this.options.timeoutMs ?? this.capabilities.maxRuntimeMs,
         abortSignal: input.abortSignal,
       });

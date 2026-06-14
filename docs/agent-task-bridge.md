@@ -66,6 +66,7 @@ const request = createAgentTaskRequest({
   timeoutMs: 120_000,
   task: {
     kind: "review",
+    systemPrompt: "Apply the review rubric and return JSON only.",
     prompt: "Review this diff.",
     controls: {
       model: "claude-sonnet",
@@ -108,6 +109,12 @@ const request = createAgentTaskRequest({
 Requests, results and events are JSON-safe and versioned with
 `protocolVersion: 1`. The bridge accepts provider-native task results/events and
 normalizes them to agent-task JSON.
+
+`task.systemPrompt` carries higher-priority reviewer, tribunal or output-format
+instructions separately from the user/task prompt. Host adapters should use this
+field instead of prepending system text to `task.prompt`, so providers that
+support separate instruction channels can preserve that boundary. This field is
+a host-controlled instruction channel; do not populate it from end-user input.
 
 `context.round.member` is the portable identity for tribunal/quorum/adversarial
 rounds. The runtime does not decide policy from it, but certification can prove

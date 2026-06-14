@@ -1,3 +1,4 @@
+import { assertProviderTaskSystemPrompt, } from "@vioxen/subscription-runtime/core";
 import { codexJsonAgentCapabilities, codexJsonAgentId, codexProviderId, defaultCodexModel, } from "./capabilities.js";
 import { classifyCodexFailure } from "./failure-classifier.js";
 import { PackagedCodexJsonExecutionEngine, codexExecutionFailure, } from "./codex-json-execution-engine.js";
@@ -27,6 +28,7 @@ export class CodexJsonAgentDriver {
             options.sessionMaterializer ?? new CodexEphemeralSessionMaterializer();
     }
     async runTask(input) {
+        assertProviderTaskSystemPrompt(input.task.systemPrompt, "task.systemPrompt");
         const startedAt = Date.now();
         if (!input.session) {
             return {
@@ -53,6 +55,9 @@ export class CodexJsonAgentDriver {
             const outputSchemaName = input.task.controls?.outputSchemaName ?? input.task.outputSchemaName;
             const result = await this.engine.run({
                 prompt: input.task.prompt,
+                ...(input.task.systemPrompt !== undefined
+                    ? { systemPrompt: input.task.systemPrompt }
+                    : {}),
                 outputSchema: outputSchemaName ? { name: outputSchemaName } : undefined,
                 session: materialized,
                 workspacePath: input.workspace.path,

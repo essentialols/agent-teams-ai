@@ -34,6 +34,7 @@ export type CodexExecutionEngine = {
     };
     run(input: {
         readonly prompt: string;
+        readonly systemPrompt?: string;
         readonly session: CodexMaterializedSession;
         readonly workspacePath: string;
         readonly runner: RunnerPort;
@@ -74,6 +75,7 @@ export declare class PackagedCodexJsonExecutionEngine implements CodexExecutionE
     constructor(options: PackagedCodexJsonExecutionEngineOptions);
     run(input: {
         readonly prompt: string;
+        readonly systemPrompt?: string;
         readonly session: CodexMaterializedSession;
         readonly workspacePath: string;
         readonly runner: RunnerPort;

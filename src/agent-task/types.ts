@@ -31,6 +31,7 @@ export type AgentTaskRequest = {
 export type AgentTaskPayload = {
   readonly kind: ProviderTaskKind;
   readonly prompt: string;
+  readonly systemPrompt?: string;
   readonly outputSchemaName?: string;
   readonly controls?: AgentTaskControls;
   readonly metadata?: Readonly<Record<string, string>>;

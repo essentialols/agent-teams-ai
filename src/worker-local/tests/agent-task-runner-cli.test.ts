@@ -40,6 +40,7 @@ describe("subscription runtime agent-task runner CLI", () => {
           task: {
             kind: "structured-prompt",
             prompt: "classify this failure",
+            systemPrompt: "return strict JSON",
             controls: {
               model: "opus",
               maxTurns: 1,
@@ -72,6 +73,7 @@ describe("subscription runtime agent-task runner CLI", () => {
     expect(calls.job).toMatchObject({
       runId: "run-1",
       prompt: "classify this failure",
+      systemPrompt: "return strict JSON",
       kind: "structured-prompt",
       controls: {
         model: "opus",

@@ -5,6 +5,7 @@ import type {
 } from "@vioxen/subscription-runtime/core";
 import { classifyCodexFailure } from "./failure-classifier";
 import { pruneCodexChildEnv } from "./codex-cli-domain";
+import { composeCodexPrompt } from "./codex-prompt-composer";
 
 export type CodexReasoningEffort =
   | "minimal"
@@ -50,6 +51,7 @@ export type CodexExecutionEngine = {
   };
   run(input: {
     readonly prompt: string;
+    readonly systemPrompt?: string;
     readonly session: CodexMaterializedSession;
     readonly workspacePath: string;
     readonly runner: RunnerPort;
@@ -102,6 +104,7 @@ export class PackagedCodexJsonExecutionEngine implements CodexExecutionEngine {
 
   async run(input: {
     readonly prompt: string;
+    readonly systemPrompt?: string;
     readonly session: CodexMaterializedSession;
     readonly workspacePath: string;
     readonly runner: RunnerPort;
@@ -126,7 +129,12 @@ export class PackagedCodexJsonExecutionEngine implements CodexExecutionEngine {
         ...input.session.env,
         CI: "true",
       },
-      stdin: new TextEncoder().encode(input.prompt),
+      stdin: new TextEncoder().encode(
+        composeCodexPrompt({
+          prompt: input.prompt,
+          systemPrompt: input.systemPrompt,
+        }),
+      ),
       timeoutMs: this.options.timeoutMs ?? defaultTimeoutMs,
       abortSignal: input.abortSignal,
     });

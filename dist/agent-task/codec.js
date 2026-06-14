@@ -1,3 +1,4 @@
+import { providerTaskSystemPromptValidationError, } from "@vioxen/subscription-runtime/core";
 import { agentTaskProtocolVersion, AgentTaskProtocolError, makeAgentTaskFailure, } from "./types.js";
 const providerTaskKinds = new Set([
     "review",
@@ -58,6 +59,9 @@ export function agentTaskRequestToProviderTask(request) {
     return {
         kind: request.task.kind,
         prompt: request.task.prompt,
+        ...(request.task.systemPrompt !== undefined
+            ? { systemPrompt: request.task.systemPrompt }
+            : {}),
         ...(request.task.outputSchemaName
             ? { outputSchemaName: request.task.outputSchemaName }
             : {}),
@@ -256,9 +260,16 @@ function parseAgentTaskPayload(value, path) {
     if (prompt.length === 0) {
         throw protocolError("agent_task_request_invalid", `${path}.prompt must not be empty`);
     }
+    const parsedSystemPrompt = optionalStringField(input, "systemPrompt", `${path}.systemPrompt`);
+    const systemPrompt = parsedSystemPrompt.systemPrompt;
+    const systemPromptError = providerTaskSystemPromptValidationError(systemPrompt, `${path}.systemPrompt`);
+    if (systemPromptError !== null) {
+        throw protocolError("agent_task_request_invalid", systemPromptError);
+    }
     return {
         kind: kind,
         prompt,
+        ...parsedSystemPrompt,
         ...optionalStringField(input, "outputSchemaName", `${path}.outputSchemaName`),
         ...optionalControlsField(input, "controls", `${path}.controls`),
         ...optionalMetadataField(input, "metadata", `${path}.metadata`),

@@ -83,6 +83,32 @@ describe("FileBackendCodexWorker", () => {
     }
   });
 
+  it("validates direct job system prompts before runtime dispatch", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "codex-worker-"));
+    const worker = new FileBackendCodexWorker({
+      providerInstanceId: "codex:test",
+      stateRootDir: rootDir,
+      codexBinaryPath: "codex",
+      encryptionKey: new Uint8Array(32).fill(6),
+    });
+
+    try {
+      await worker.start();
+      await expect(
+        worker.run({ prompt: "hello", systemPrompt: " " }),
+      ).rejects.toThrow("job.systemPrompt must not be empty");
+      await expect(
+        worker.run({
+          prompt: "hello",
+          systemPrompt: "x".repeat(256 * 1024 + 1),
+        }),
+      ).rejects.toThrow("job.systemPrompt exceeds 262144 bytes");
+    } finally {
+      await worker.dispose();
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
   it("waits and retries when another slot is refreshing the same provider session", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "codex-worker-"));
     const runner = new RefreshingFakeRunner();

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { createSubscriptionRuntime, DefaultRedactor, DeterministicIdGenerator, } from "@vioxen/subscription-runtime/core";
+import { createSubscriptionRuntime, DefaultRedactor, DeterministicIdGenerator, assertProviderTaskSystemPrompt, } from "@vioxen/subscription-runtime/core";
 import { CodexAppServerExecutionEngine, CodexCliSessionDriver, CodexJsonAgentDriver, CodexWorkerCacheSessionPoolMaterializer, PackagedCodexJsonExecutionEngine, defaultCodexModel, sessionArtifactFromCodexAuthJson, } from "@vioxen/subscription-runtime/provider-codex";
 import { createLocalFileBackendRuntimeAdapters } from "@vioxen/subscription-runtime/store-local-file";
 import { SubscriptionWorkerError, } from "@vioxen/subscription-runtime/worker-core";
@@ -192,6 +192,7 @@ export class FileBackendCodexWorker {
     }
     async run(job) {
         this.assertStarted();
+        assertProviderTaskSystemPrompt(job.systemPrompt, "job.systemPrompt");
         const runId = job.runId ?? `local-${randomUUID()}`;
         const abortSignal = job.abortSignal ?? new AbortController().signal;
         const startedAt = this.clock.monotonicMs();
@@ -203,6 +204,7 @@ export class FileBackendCodexWorker {
                 task: {
                     kind: job.kind ?? "structured-prompt",
                     prompt: job.prompt,
+                    ...(job.systemPrompt !== undefined ? { systemPrompt: job.systemPrompt } : {}),
                     ...(job.outputSchemaName
                         ? { outputSchemaName: job.outputSchemaName }
                         : {}),

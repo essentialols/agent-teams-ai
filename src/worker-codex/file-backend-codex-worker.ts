@@ -12,6 +12,7 @@ import {
   type RefreshThenRunResult,
   type RedactorPort,
   type RuntimeDeps,
+  assertProviderTaskSystemPrompt,
 } from "@vioxen/subscription-runtime/core";
 import {
   CodexAppServerExecutionEngine,
@@ -70,6 +71,7 @@ export type FileBackendCodexWorkerOptions = {
 export type FileBackendCodexWorkerJob = {
   readonly runId?: string;
   readonly prompt: string;
+  readonly systemPrompt?: string;
   readonly kind?: ProviderTask["kind"];
   readonly outputSchemaName?: string;
   readonly controls?: ProviderTask["controls"];
@@ -294,6 +296,7 @@ export class FileBackendCodexWorker implements SubscriptionWorker<
     job: FileBackendCodexWorkerJob,
   ): Promise<FileBackendCodexWorkerResult> {
     this.assertStarted();
+    assertProviderTaskSystemPrompt(job.systemPrompt, "job.systemPrompt");
     const runId = job.runId ?? `local-${randomUUID()}`;
     const abortSignal = job.abortSignal ?? new AbortController().signal;
     const startedAt = this.clock.monotonicMs();
@@ -306,6 +309,7 @@ export class FileBackendCodexWorker implements SubscriptionWorker<
         task: {
           kind: job.kind ?? "structured-prompt",
           prompt: job.prompt,
+          ...(job.systemPrompt !== undefined ? { systemPrompt: job.systemPrompt } : {}),
           ...(job.outputSchemaName
             ? { outputSchemaName: job.outputSchemaName }
             : {}),

@@ -88,6 +88,32 @@ describe("FileBackendClaudeWorker", () => {
     }
   });
 
+  it("validates direct job system prompts before runtime dispatch", async () => {
+    const rootDir = await tempRoot();
+    const worker = new FileBackendClaudeWorker({
+      providerInstanceId: "claude-main",
+      stateRootDir: rootDir,
+      encryptionKey: encryptionKey(),
+      engine: new RecordingClaudeEngine(),
+    });
+
+    try {
+      await worker.start();
+      await expect(
+        worker.run({ prompt: "review", systemPrompt: "" }),
+      ).rejects.toThrow("job.systemPrompt must not be empty");
+      await expect(
+        worker.run({
+          prompt: "review",
+          systemPrompt: "x".repeat(256 * 1024 + 1),
+        }),
+      ).rejects.toThrow("job.systemPrompt exceeds 262144 bytes");
+    } finally {
+      await worker.dispose();
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
   it("surfaces shared Claude quota groups without sharing config dirs", async () => {
     const rootDir = await tempRoot();
     const workers = [

@@ -1,16 +1,17 @@
-import type {
-  AgentCost,
-  AgentToolCall,
-  AgentUsage,
-  ProviderFailure,
-  ProviderFailureCode,
-  ProviderTask,
-  ProviderTaskControls,
-  ProviderTaskEvent,
-  ProviderTaskKind,
-  ProviderTaskResult,
-  ProviderTaskTelemetry,
-  RuntimeWarning,
+import {
+  providerTaskSystemPromptValidationError,
+  type AgentCost,
+  type AgentToolCall,
+  type AgentUsage,
+  type ProviderFailure,
+  type ProviderFailureCode,
+  type ProviderTask,
+  type ProviderTaskControls,
+  type ProviderTaskEvent,
+  type ProviderTaskKind,
+  type ProviderTaskResult,
+  type ProviderTaskTelemetry,
+  type RuntimeWarning,
 } from "@vioxen/subscription-runtime/core";
 import {
   agentTaskProtocolVersion,
@@ -100,6 +101,9 @@ export function agentTaskRequestToProviderTask(
   return {
     kind: request.task.kind,
     prompt: request.task.prompt,
+    ...(request.task.systemPrompt !== undefined
+      ? { systemPrompt: request.task.systemPrompt }
+      : {}),
     ...(request.task.outputSchemaName
       ? { outputSchemaName: request.task.outputSchemaName }
       : {}),
@@ -340,9 +344,26 @@ function parseAgentTaskPayload(value: unknown, path: string): AgentTaskPayload {
       `${path}.prompt must not be empty`,
     );
   }
+  const parsedSystemPrompt = optionalStringField(
+    input,
+    "systemPrompt",
+    `${path}.systemPrompt`,
+  );
+  const systemPrompt = parsedSystemPrompt.systemPrompt;
+  const systemPromptError = providerTaskSystemPromptValidationError(
+    systemPrompt,
+    `${path}.systemPrompt`,
+  );
+  if (systemPromptError !== null) {
+    throw protocolError(
+      "agent_task_request_invalid",
+      systemPromptError,
+    );
+  }
   return {
     kind: kind as ProviderTaskKind,
     prompt,
+    ...parsedSystemPrompt,
     ...optionalStringField(input, "outputSchemaName", `${path}.outputSchemaName`),
     ...optionalControlsField(input, "controls", `${path}.controls`),
     ...optionalMetadataField(input, "metadata", `${path}.metadata`),

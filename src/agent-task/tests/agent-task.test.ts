@@ -29,6 +29,7 @@ describe("agent-task JSON adapter kit", () => {
       task: {
         kind: "structured-prompt",
         prompt: "Return OK.",
+        systemPrompt: "System rules stay separate.",
         controls: {
           model: "test-model",
           responseFormat: "json",
@@ -74,6 +75,7 @@ describe("agent-task JSON adapter kit", () => {
       task: {
         kind: "structured-prompt",
         prompt: "Return OK.",
+        systemPrompt: "System rules stay separate.",
       },
       context: {
         round: {
@@ -86,7 +88,7 @@ describe("agent-task JSON adapter kit", () => {
 
     const run = await runAgentTaskBridge(request, async (received) => ({
       status: "completed",
-      outputText: `handled:${received.task.prompt}`,
+      outputText: `handled:${received.task.systemPrompt}:${received.task.prompt}`,
       structuredOutput: { ok: true },
       telemetry: {
         turns: 1,
@@ -98,7 +100,7 @@ describe("agent-task JSON adapter kit", () => {
     expect(run.result).toMatchObject({
       protocolVersion: agentTaskProtocolVersion,
       status: "completed",
-      outputText: "handled:Return OK.",
+      outputText: "handled:System rules stay separate.:Return OK.",
       structuredOutput: { ok: true },
     });
     expect(run.events.map((event) => event.type)).toEqual([
@@ -148,6 +150,32 @@ describe("agent-task JSON adapter kit", () => {
       "completed",
     ]);
     expect(run.events[0]?.occurredAt).toBe("2026-06-13T12:00:00.000Z");
+  });
+
+  it("rejects oversized task system prompts before provider dispatch", () => {
+    expect(() =>
+      parseAgentTaskRequest({
+        protocolVersion: agentTaskProtocolVersion,
+        task: {
+          kind: "review",
+          prompt: "Review this diff.",
+          systemPrompt: "x".repeat(256 * 1024 + 1),
+        },
+      }),
+    ).toThrow("request.task.systemPrompt exceeds 262144 bytes");
+  });
+
+  it("rejects empty task system prompts before provider dispatch", () => {
+    expect(() =>
+      parseAgentTaskRequest({
+        protocolVersion: agentTaskProtocolVersion,
+        task: {
+          kind: "review",
+          prompt: "Review this diff.",
+          systemPrompt: "  ",
+        },
+      }),
+    ).toThrow("request.task.systemPrompt must not be empty");
   });
 
   it("turns an unterminated provider stream into a failed terminal event", async () => {

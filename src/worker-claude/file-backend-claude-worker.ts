@@ -15,6 +15,7 @@ import {
   type RuntimeDeps,
   type SessionEnvelope,
   type SessionArtifact,
+  assertProviderTaskSystemPrompt,
 } from "@vioxen/subscription-runtime/core";
 import {
   ClaudeRuntimeTaskExecutionEngine,
@@ -94,6 +95,7 @@ export type FileBackendClaudeWorkerOptions = {
 export type FileBackendClaudeWorkerJob = {
   readonly runId?: string;
   readonly prompt: string;
+  readonly systemPrompt?: string;
   readonly kind?: ProviderTask["kind"];
   readonly outputSchemaName?: string;
   readonly controls?: ProviderTask["controls"];
@@ -395,6 +397,7 @@ export class FileBackendClaudeWorker implements CapacityAwareSubscriptionWorker<
     job: FileBackendClaudeWorkerJob,
   ): Promise<FileBackendClaudeWorkerResult> {
     this.assertStarted();
+    assertProviderTaskSystemPrompt(job.systemPrompt, "job.systemPrompt");
     const runId = job.runId ?? `local-${randomUUID()}`;
     const abortSignal = job.abortSignal ?? new AbortController().signal;
     const result = await this.runtime.refreshThenRunTask({
@@ -402,6 +405,7 @@ export class FileBackendClaudeWorker implements CapacityAwareSubscriptionWorker<
       task: {
         kind: job.kind ?? "structured-prompt",
         prompt: job.prompt,
+        ...(job.systemPrompt !== undefined ? { systemPrompt: job.systemPrompt } : {}),
         ...(job.outputSchemaName
           ? { outputSchemaName: job.outputSchemaName }
           : {}),

@@ -1,18 +1,19 @@
-import type {
-  AgentDriver,
-  AgentToolCall,
-  ProviderFailure,
-  ProviderTask,
-  ProviderTaskEvent,
-  ProviderTaskControls,
-  ProviderTaskResult,
-  ProviderTaskTelemetry,
-  RedactorPort,
-  RuntimeWarning,
-  RunnerPort,
-  SessionArtifact,
-  StreamingAgentDriver,
-  WorkspaceHandle,
+import {
+  assertProviderTaskSystemPrompt,
+  type AgentDriver,
+  type AgentToolCall,
+  type ProviderFailure,
+  type ProviderTask,
+  type ProviderTaskEvent,
+  type ProviderTaskControls,
+  type ProviderTaskResult,
+  type ProviderTaskTelemetry,
+  type RedactorPort,
+  type RuntimeWarning,
+  type RunnerPort,
+  type SessionArtifact,
+  type StreamingAgentDriver,
+  type WorkspaceHandle,
 } from "@vioxen/subscription-runtime/core";
 import {
   claudeBgTaskAgentCapabilities,
@@ -102,6 +103,8 @@ export class ClaudeTaskAgentDriver implements AgentDriver, StreamingAgentDriver 
     readonly redactor: RedactorPort;
     readonly abortSignal: AbortSignal;
   }): Promise<ProviderTaskResult> {
+    assertProviderTaskSystemPrompt(input.task.systemPrompt, "task.systemPrompt");
+
     const startedAt = Date.now();
     if (!input.session) {
       return failedClaudeTask(
@@ -145,6 +148,8 @@ export class ClaudeTaskAgentDriver implements AgentDriver, StreamingAgentDriver 
     readonly redactor: RedactorPort;
     readonly abortSignal: AbortSignal;
   }): AsyncIterable<ProviderTaskEvent> {
+    assertProviderTaskSystemPrompt(input.task.systemPrompt, "task.systemPrompt");
+
     const startedAt = Date.now();
     if (!input.session) {
       yield {
@@ -243,10 +248,14 @@ export class ClaudeTaskAgentDriver implements AgentDriver, StreamingAgentDriver 
     const permissionMode = input.task.controls?.permissionMode;
     const outputSchemaName =
       input.task.controls?.outputSchemaName ?? input.task.outputSchemaName;
-    if (this.options.appendSystemPrompt !== undefined) {
+    const appendSystemPrompt = mergeSystemPrompts(
+      this.options.appendSystemPrompt,
+      input.task.systemPrompt,
+    );
+    if (appendSystemPrompt !== undefined) {
       engineInput = {
         ...engineInput,
-        appendSystemPrompt: this.options.appendSystemPrompt,
+        appendSystemPrompt,
       };
     }
     if (maxTurns !== undefined) {
@@ -279,6 +288,17 @@ export class ClaudeTaskAgentDriver implements AgentDriver, StreamingAgentDriver 
       warnings: validation.warnings,
     };
   }
+}
+
+function mergeSystemPrompts(
+  base: string | undefined,
+  task: string | undefined,
+): string | undefined {
+  const parts = [base, task]
+    .map((value) => value?.trim())
+    .filter((value): value is string => !!value);
+  if (parts.length === 0) return undefined;
+  return parts.join("\n\n");
 }
 
 function failedClaudeTask(

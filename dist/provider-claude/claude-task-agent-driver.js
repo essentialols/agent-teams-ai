@@ -1,3 +1,4 @@
+import { assertProviderTaskSystemPrompt, } from "@vioxen/subscription-runtime/core";
 import { claudeBgTaskAgentCapabilities, claudeBgTaskAgentId, claudeProviderId, } from "./capabilities.js";
 import { validateClaudeSessionArtifact, } from "./claude-session-codec.js";
 import { classifyClaudeFailure } from "./failure-classifier.js";
@@ -15,6 +16,7 @@ export class ClaudeTaskAgentDriver {
         this.model = options.model ?? "sonnet";
     }
     async runTask(input) {
+        assertProviderTaskSystemPrompt(input.task.systemPrompt, "task.systemPrompt");
         const startedAt = Date.now();
         if (!input.session) {
             return failedClaudeTask({
@@ -47,6 +49,7 @@ export class ClaudeTaskAgentDriver {
         }
     }
     async *streamTask(input) {
+        assertProviderTaskSystemPrompt(input.task.systemPrompt, "task.systemPrompt");
         const startedAt = Date.now();
         if (!input.session) {
             yield {
@@ -121,10 +124,11 @@ export class ClaudeTaskAgentDriver {
         const allowedTools = input.task.controls?.allowedTools ?? this.options.allowedTools;
         const permissionMode = input.task.controls?.permissionMode;
         const outputSchemaName = input.task.controls?.outputSchemaName ?? input.task.outputSchemaName;
-        if (this.options.appendSystemPrompt !== undefined) {
+        const appendSystemPrompt = mergeSystemPrompts(this.options.appendSystemPrompt, input.task.systemPrompt);
+        if (appendSystemPrompt !== undefined) {
             engineInput = {
                 ...engineInput,
-                appendSystemPrompt: this.options.appendSystemPrompt,
+                appendSystemPrompt,
             };
         }
         if (maxTurns !== undefined) {
@@ -157,6 +161,14 @@ export class ClaudeTaskAgentDriver {
             warnings: validation.warnings,
         };
     }
+}
+function mergeSystemPrompts(base, task) {
+    const parts = [base, task]
+        .map((value) => value?.trim())
+        .filter((value) => !!value);
+    if (parts.length === 0)
+        return undefined;
+    return parts.join("\n\n");
 }
 function failedClaudeTask(failure, startedAt) {
     return {

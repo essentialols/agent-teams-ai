@@ -48,6 +48,7 @@ export type RuntimeAgentTaskWorker = {
 export type RuntimeAgentTaskWorkerJob = {
   readonly runId?: string;
   readonly prompt: string;
+  readonly systemPrompt?: string;
   readonly kind?: ProviderTask["kind"];
   readonly outputSchemaName?: string;
   readonly controls?: ProviderTask["controls"];
@@ -388,6 +389,7 @@ async function runWorkerTask(input: {
     const result = await input.worker.run({
       runId: input.request.runId ?? `agent-task-${randomUUID()}`,
       prompt: task.prompt,
+      ...(task.systemPrompt !== undefined ? { systemPrompt: task.systemPrompt } : {}),
       kind: task.kind,
       ...(task.outputSchemaName ? { outputSchemaName: task.outputSchemaName } : {}),
       ...(task.controls ? { controls: task.controls } : {}),

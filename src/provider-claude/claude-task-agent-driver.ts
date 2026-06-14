@@ -1,18 +1,19 @@
-import type {
-  AgentDriver,
-  AgentToolCall,
-  ProviderFailure,
-  ProviderTask,
-  ProviderTaskEvent,
-  ProviderTaskControls,
-  ProviderTaskResult,
-  ProviderTaskTelemetry,
-  RedactorPort,
-  RuntimeWarning,
-  RunnerPort,
-  SessionArtifact,
-  StreamingAgentDriver,
-  WorkspaceHandle,
+import {
+  assertProviderTaskSystemPrompt,
+  type AgentDriver,
+  type AgentToolCall,
+  type ProviderFailure,
+  type ProviderTask,
+  type ProviderTaskEvent,
+  type ProviderTaskControls,
+  type ProviderTaskResult,
+  type ProviderTaskTelemetry,
+  type RedactorPort,
+  type RuntimeWarning,
+  type RunnerPort,
+  type SessionArtifact,
+  type StreamingAgentDriver,
+  type WorkspaceHandle,
 } from "@vioxen/subscription-runtime/core";
 import {
   claudeBgTaskAgentCapabilities,
@@ -102,6 +103,8 @@ export class ClaudeTaskAgentDriver implements AgentDriver, StreamingAgentDriver 
     readonly redactor: RedactorPort;
     readonly abortSignal: AbortSignal;
   }): Promise<ProviderTaskResult> {
+    assertProviderTaskSystemPrompt(input.task.systemPrompt, "task.systemPrompt");
+
     const startedAt = Date.now();
     if (!input.session) {
       return failedClaudeTask(
@@ -145,6 +148,8 @@ export class ClaudeTaskAgentDriver implements AgentDriver, StreamingAgentDriver 
     readonly redactor: RedactorPort;
     readonly abortSignal: AbortSignal;
   }): AsyncIterable<ProviderTaskEvent> {
+    assertProviderTaskSystemPrompt(input.task.systemPrompt, "task.systemPrompt");
+
     const startedAt = Date.now();
     if (!input.session) {
       yield {

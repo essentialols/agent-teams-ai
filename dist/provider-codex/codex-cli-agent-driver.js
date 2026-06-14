@@ -1,3 +1,4 @@
+import { assertProviderTaskSystemPrompt, } from "@vioxen/subscription-runtime/core";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,6 +17,7 @@ export class CodexCliAgentDriver {
         this.options = options;
     }
     async runTask(input) {
+        assertProviderTaskSystemPrompt(input.task.systemPrompt, "task.systemPrompt");
         if (!input.session) {
             return {
                 status: "failed",
@@ -44,6 +46,7 @@ export class CodexCliAgentDriver {
                     "--skip-git-repo-check",
                     "--model",
                     this.options.model ?? defaultCodexModel,
+                    // Verified with codex-cli 0.139.0: `codex exec -- -` reads the prompt from stdin.
                     "--",
                     "-",
                 ],

@@ -1,3 +1,4 @@
+import { assertProviderTaskSystemPrompt, } from "@vioxen/subscription-runtime/core";
 import { claudeBgTaskAgentCapabilities, claudeBgTaskAgentId, claudeProviderId, } from "./capabilities.js";
 import { validateClaudeSessionArtifact, } from "./claude-session-codec.js";
 import { classifyClaudeFailure } from "./failure-classifier.js";
@@ -15,6 +16,7 @@ export class ClaudeTaskAgentDriver {
         this.model = options.model ?? "sonnet";
     }
     async runTask(input) {
+        assertProviderTaskSystemPrompt(input.task.systemPrompt, "task.systemPrompt");
         const startedAt = Date.now();
         if (!input.session) {
             return failedClaudeTask({
@@ -47,6 +49,7 @@ export class ClaudeTaskAgentDriver {
         }
     }
     async *streamTask(input) {
+        assertProviderTaskSystemPrompt(input.task.systemPrompt, "task.systemPrompt");
         const startedAt = Date.now();
         if (!input.session) {
             yield {

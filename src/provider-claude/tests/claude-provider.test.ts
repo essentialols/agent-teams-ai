@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DefaultRedactor,
+  providerTaskSystemPromptMaxBytes,
   type ProviderTaskEvent,
   type ProcessResult,
   type RunnerCapabilities,
@@ -243,6 +244,53 @@ describe("Claude provider adapter", () => {
       prompt: "inspect diff",
       appendSystemPrompt: "default system\n\ntask-specific system",
     });
+  });
+
+  it("rejects direct Claude system prompts before calling the engine", async () => {
+    const engine = new RecordingClaudeEngine();
+    const driver = new ClaudeTaskAgentDriver({ engine });
+
+    await expect(
+      driver.runTask({
+        session: validSession,
+        task: {
+          kind: "review",
+          prompt: "inspect diff",
+          systemPrompt: "x".repeat(providerTaskSystemPromptMaxBytes + 1),
+        },
+        workspace: { path: "/tmp/claude-workspace" },
+        runner: new StaticRunner(),
+        redactor: new DefaultRedactor(),
+        abortSignal: new AbortController().signal,
+      }),
+    ).rejects.toThrow(
+      `task.systemPrompt exceeds ${providerTaskSystemPromptMaxBytes} bytes`,
+    );
+    expect(engine.records).toEqual([]);
+  });
+
+  it("rejects streamed Claude system prompts before calling the engine", async () => {
+    const engine = new StreamingClaudeEngine();
+    const driver = new ClaudeTaskAgentDriver({ engine });
+    const iterator = driver
+      .streamTask({
+        session: validSession,
+        task: {
+          kind: "review",
+          prompt: "inspect diff",
+          systemPrompt: " ",
+        },
+        workspace: { path: "/tmp/claude-workspace" },
+        runner: new StaticRunner(),
+        redactor: new DefaultRedactor(),
+        abortSignal: new AbortController().signal,
+      })
+      [Symbol.asyncIterator]();
+
+    await expect(iterator.next()).rejects.toThrow(
+      "task.systemPrompt must not be empty",
+    );
+    expect(engine.records).toEqual([]);
   });
 
   it("fails clearly when a Claude task has no session", async () => {

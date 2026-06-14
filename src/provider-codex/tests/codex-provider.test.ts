@@ -3,7 +3,10 @@ import { EventEmitter } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { DefaultRedactor } from "@vioxen/subscription-runtime/core";
+import {
+  DefaultRedactor,
+  providerTaskSystemPromptMaxBytes,
+} from "@vioxen/subscription-runtime/core";
 import {
   agentDriverContract,
   providerSessionDriverContract,
@@ -357,6 +360,38 @@ describe("Codex provider adapter", () => {
     }
   });
 
+  it("rejects direct Codex CLI system prompts before spawning the runner", async () => {
+    const runner = new StaticRunner("unused");
+    const workspace = await mkdtemp(
+      join(tmpdir(), "codex-agent-system-invalid-test-"),
+    );
+    const driver = new CodexCliAgentDriver({
+      codexBinaryPath: "/bin/codex-test",
+      model: "gpt-test",
+    });
+
+    try {
+      await expect(
+        driver.runTask({
+          session: sessionArtifactFromCodexAuthJson(validAuthJson),
+          task: {
+            kind: "review",
+            prompt: "inspect diff",
+            systemPrompt: "   ",
+          },
+          workspace: { path: workspace },
+          runner,
+          redactor: new DefaultRedactor(),
+          abortSignal: new AbortController().signal,
+        }),
+      ).rejects.toThrow("task.systemPrompt must not be empty");
+      expect(runner.lastArgs).toEqual([]);
+      expect(runner.lastStdin).toBeNull();
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("fences task prompts that try to spoof system instruction labels", async () => {
     const runner = new StaticRunner("review output");
     const workspace = await mkdtemp(join(tmpdir(), "codex-agent-spoof-test-"));
@@ -521,6 +556,41 @@ describe("Codex provider adapter", () => {
 
       expect(engine.prompts).toEqual(["inspect diff"]);
       expect(engine.systemPrompts).toEqual(["return only the verdict"]);
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects direct Codex JSON system prompts before calling the engine", async () => {
+    const engine = new RecordingJsonEngine();
+    const workspace = await mkdtemp(
+      join(tmpdir(), "codex-json-system-invalid-test-"),
+    );
+    const driver = new CodexJsonAgentDriver({
+      engine,
+      model: "gpt-test",
+      reasoningEffort: "low",
+    });
+
+    try {
+      await expect(
+        driver.runTask({
+          session: sessionArtifactFromCodexAuthJson(validAuthJson),
+          task: {
+            kind: "review",
+            prompt: "inspect diff",
+            systemPrompt: "x".repeat(providerTaskSystemPromptMaxBytes + 1),
+          },
+          workspace: { path: workspace },
+          runner: new StaticRunner(""),
+          redactor: new DefaultRedactor(),
+          abortSignal: new AbortController().signal,
+        }),
+      ).rejects.toThrow(
+        `task.systemPrompt exceeds ${providerTaskSystemPromptMaxBytes} bytes`,
+      );
+      expect(engine.prompts).toEqual([]);
+      expect(engine.systemPrompts).toEqual([]);
     } finally {
       await rm(workspace, { recursive: true, force: true });
     }

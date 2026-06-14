@@ -1,11 +1,12 @@
-import type {
-  AgentDriver,
-  ProviderFailure,
-  ProviderTask,
-  ProviderTaskResult,
-  RedactorPort,
-  SessionArtifact,
-  WorkspaceHandle,
+import {
+  assertProviderTaskSystemPrompt,
+  type AgentDriver,
+  type ProviderFailure,
+  type ProviderTask,
+  type ProviderTaskResult,
+  type RedactorPort,
+  type SessionArtifact,
+  type WorkspaceHandle,
 } from "@vioxen/subscription-runtime/core";
 import {
   codexJsonAgentCapabilities,
@@ -78,6 +79,8 @@ export class CodexJsonAgentDriver implements AgentDriver {
     readonly redactor: RedactorPort;
     readonly abortSignal: AbortSignal;
   }): Promise<ProviderTaskResult> {
+    assertProviderTaskSystemPrompt(input.task.systemPrompt, "task.systemPrompt");
+
     const startedAt = Date.now();
     if (!input.session) {
       return {

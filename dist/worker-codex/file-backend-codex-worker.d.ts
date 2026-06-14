@@ -33,6 +33,7 @@ export type FileBackendCodexWorkerOptions = {
 export type FileBackendCodexWorkerJob = {
     readonly runId?: string;
     readonly prompt: string;
+    readonly systemPrompt?: string;
     readonly kind?: ProviderTask["kind"];
     readonly outputSchemaName?: string;
     readonly controls?: ProviderTask["controls"];

@@ -287,6 +287,7 @@ export type ProviderTaskEvent = {
 export type ProviderTask = {
     readonly kind: ProviderTaskKind;
     readonly prompt: string;
+    readonly systemPrompt?: string;
     readonly outputSchemaName?: string;
     readonly controls?: ProviderTaskControls;
     readonly metadata?: Readonly<Record<string, string>>;

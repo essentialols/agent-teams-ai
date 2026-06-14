@@ -42,6 +42,7 @@ export type FileBackendClaudeWorkerOptions = {
 export type FileBackendClaudeWorkerJob = {
     readonly runId?: string;
     readonly prompt: string;
+    readonly systemPrompt?: string;
     readonly kind?: ProviderTask["kind"];
     readonly outputSchemaName?: string;
     readonly controls?: ProviderTask["controls"];

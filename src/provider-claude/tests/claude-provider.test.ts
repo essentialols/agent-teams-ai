@@ -219,6 +219,32 @@ describe("Claude provider adapter", () => {
     });
   });
 
+  it("lets per-task system prompts override configured Claude runtime prompts", async () => {
+    const engine = new RecordingClaudeEngine();
+    const driver = new ClaudeTaskAgentDriver({
+      appendSystemPrompt: "default system",
+      engine,
+    });
+
+    await driver.runTask({
+      session: validSession,
+      task: {
+        kind: "review",
+        prompt: "inspect diff",
+        systemPrompt: "task-specific system",
+      },
+      workspace: { path: "/tmp/claude-workspace" },
+      runner: new StaticRunner(),
+      redactor: new DefaultRedactor(),
+      abortSignal: new AbortController().signal,
+    });
+
+    expect(engine.records[0]).toMatchObject({
+      prompt: "inspect diff",
+      appendSystemPrompt: "task-specific system",
+    });
+  });
+
   it("fails clearly when a Claude task has no session", async () => {
     const result = await new ClaudeTaskAgentDriver({
       engine: new RecordingClaudeEngine(),

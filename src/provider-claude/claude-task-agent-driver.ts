@@ -249,6 +249,12 @@ export class ClaudeTaskAgentDriver implements AgentDriver, StreamingAgentDriver 
         appendSystemPrompt: this.options.appendSystemPrompt,
       };
     }
+    if (input.task.systemPrompt !== undefined) {
+      engineInput = {
+        ...engineInput,
+        appendSystemPrompt: input.task.systemPrompt,
+      };
+    }
     if (maxTurns !== undefined) {
       engineInput = { ...engineInput, maxTurns };
     }

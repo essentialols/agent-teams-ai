@@ -259,6 +259,7 @@ async function runWorkerTask(input) {
         const result = await input.worker.run({
             runId: input.request.runId ?? `agent-task-${randomUUID()}`,
             prompt: task.prompt,
+            ...(task.systemPrompt !== undefined ? { systemPrompt: task.systemPrompt } : {}),
             kind: task.kind,
             ...(task.outputSchemaName ? { outputSchemaName: task.outputSchemaName } : {}),
             ...(task.controls ? { controls: task.controls } : {}),

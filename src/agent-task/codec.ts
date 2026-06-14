@@ -100,6 +100,9 @@ export function agentTaskRequestToProviderTask(
   return {
     kind: request.task.kind,
     prompt: request.task.prompt,
+    ...(request.task.systemPrompt !== undefined
+      ? { systemPrompt: request.task.systemPrompt }
+      : {}),
     ...(request.task.outputSchemaName
       ? { outputSchemaName: request.task.outputSchemaName }
       : {}),
@@ -343,6 +346,7 @@ function parseAgentTaskPayload(value: unknown, path: string): AgentTaskPayload {
   return {
     kind: kind as ProviderTaskKind,
     prompt,
+    ...optionalStringField(input, "systemPrompt", `${path}.systemPrompt`),
     ...optionalStringField(input, "outputSchemaName", `${path}.outputSchemaName`),
     ...optionalControlsField(input, "controls", `${path}.controls`),
     ...optionalMetadataField(input, "metadata", `${path}.metadata`),

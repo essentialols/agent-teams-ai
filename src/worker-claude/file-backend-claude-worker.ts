@@ -94,6 +94,7 @@ export type FileBackendClaudeWorkerOptions = {
 export type FileBackendClaudeWorkerJob = {
   readonly runId?: string;
   readonly prompt: string;
+  readonly systemPrompt?: string;
   readonly kind?: ProviderTask["kind"];
   readonly outputSchemaName?: string;
   readonly controls?: ProviderTask["controls"];
@@ -402,6 +403,7 @@ export class FileBackendClaudeWorker implements CapacityAwareSubscriptionWorker<
       task: {
         kind: job.kind ?? "structured-prompt",
         prompt: job.prompt,
+        ...(job.systemPrompt !== undefined ? { systemPrompt: job.systemPrompt } : {}),
         ...(job.outputSchemaName
           ? { outputSchemaName: job.outputSchemaName }
           : {}),

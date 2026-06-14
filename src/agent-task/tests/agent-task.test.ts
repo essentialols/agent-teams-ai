@@ -29,6 +29,7 @@ describe("agent-task JSON adapter kit", () => {
       task: {
         kind: "structured-prompt",
         prompt: "Return OK.",
+        systemPrompt: "System rules stay separate.",
         controls: {
           model: "test-model",
           responseFormat: "json",
@@ -74,6 +75,7 @@ describe("agent-task JSON adapter kit", () => {
       task: {
         kind: "structured-prompt",
         prompt: "Return OK.",
+        systemPrompt: "System rules stay separate.",
       },
       context: {
         round: {
@@ -86,7 +88,7 @@ describe("agent-task JSON adapter kit", () => {
 
     const run = await runAgentTaskBridge(request, async (received) => ({
       status: "completed",
-      outputText: `handled:${received.task.prompt}`,
+      outputText: `handled:${received.task.systemPrompt}:${received.task.prompt}`,
       structuredOutput: { ok: true },
       telemetry: {
         turns: 1,
@@ -98,7 +100,7 @@ describe("agent-task JSON adapter kit", () => {
     expect(run.result).toMatchObject({
       protocolVersion: agentTaskProtocolVersion,
       status: "completed",
-      outputText: "handled:Return OK.",
+      outputText: "handled:System rules stay separate.:Return OK.",
       structuredOutput: { ok: true },
     });
     expect(run.events.map((event) => event.type)).toEqual([

@@ -203,6 +203,7 @@ export class FileBackendCodexWorker {
                 task: {
                     kind: job.kind ?? "structured-prompt",
                     prompt: job.prompt,
+                    ...(job.systemPrompt !== undefined ? { systemPrompt: job.systemPrompt } : {}),
                     ...(job.outputSchemaName
                         ? { outputSchemaName: job.outputSchemaName }
                         : {}),

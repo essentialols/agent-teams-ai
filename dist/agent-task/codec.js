@@ -1,3 +1,4 @@
+import { providerTaskSystemPromptValidationError, } from "@vioxen/subscription-runtime/core";
 import { agentTaskProtocolVersion, AgentTaskProtocolError, makeAgentTaskFailure, } from "./types.js";
 const providerTaskKinds = new Set([
     "review",
@@ -35,7 +36,6 @@ const failureCodes = new Set([
     "backend_unavailable",
     "unknown_runtime_failure",
 ]);
-const agentTaskSystemPromptMaxBytes = 256 * 1024;
 export function createAgentTaskRequest(input) {
     return parseAgentTaskRequest({
         protocolVersion: agentTaskProtocolVersion,
@@ -262,9 +262,9 @@ function parseAgentTaskPayload(value, path) {
     }
     const parsedSystemPrompt = optionalStringField(input, "systemPrompt", `${path}.systemPrompt`);
     const systemPrompt = parsedSystemPrompt.systemPrompt;
-    if (systemPrompt !== undefined &&
-        Buffer.byteLength(systemPrompt, "utf8") > agentTaskSystemPromptMaxBytes) {
-        throw protocolError("agent_task_request_invalid", `${path}.systemPrompt exceeds ${agentTaskSystemPromptMaxBytes} bytes`);
+    const systemPromptError = providerTaskSystemPromptValidationError(systemPrompt, `${path}.systemPrompt`);
+    if (systemPromptError !== null) {
+        throw protocolError("agent_task_request_invalid", systemPromptError);
     }
     return {
         kind: kind,

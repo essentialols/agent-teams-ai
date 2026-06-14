@@ -165,6 +165,19 @@ describe("agent-task JSON adapter kit", () => {
     ).toThrow("request.task.systemPrompt exceeds 262144 bytes");
   });
 
+  it("rejects empty task system prompts before provider dispatch", () => {
+    expect(() =>
+      parseAgentTaskRequest({
+        protocolVersion: agentTaskProtocolVersion,
+        task: {
+          kind: "review",
+          prompt: "Review this diff.",
+          systemPrompt: "  ",
+        },
+      }),
+    ).toThrow("request.task.systemPrompt must not be empty");
+  });
+
   it("turns an unterminated provider stream into a failed terminal event", async () => {
     const request = createAgentTaskRequest({
       task: {

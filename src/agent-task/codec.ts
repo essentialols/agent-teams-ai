@@ -1,16 +1,17 @@
-import type {
-  AgentCost,
-  AgentToolCall,
-  AgentUsage,
-  ProviderFailure,
-  ProviderFailureCode,
-  ProviderTask,
-  ProviderTaskControls,
-  ProviderTaskEvent,
-  ProviderTaskKind,
-  ProviderTaskResult,
-  ProviderTaskTelemetry,
-  RuntimeWarning,
+import {
+  providerTaskSystemPromptValidationError,
+  type AgentCost,
+  type AgentToolCall,
+  type AgentUsage,
+  type ProviderFailure,
+  type ProviderFailureCode,
+  type ProviderTask,
+  type ProviderTaskControls,
+  type ProviderTaskEvent,
+  type ProviderTaskKind,
+  type ProviderTaskResult,
+  type ProviderTaskTelemetry,
+  type RuntimeWarning,
 } from "@vioxen/subscription-runtime/core";
 import {
   agentTaskProtocolVersion,
@@ -66,8 +67,6 @@ const failureCodes = new Set<ProviderFailureCode>([
   "backend_unavailable",
   "unknown_runtime_failure",
 ]);
-
-const agentTaskSystemPromptMaxBytes = 256 * 1024;
 
 export function createAgentTaskRequest(
   input: Omit<AgentTaskRequest, "protocolVersion">,
@@ -351,13 +350,14 @@ function parseAgentTaskPayload(value: unknown, path: string): AgentTaskPayload {
     `${path}.systemPrompt`,
   );
   const systemPrompt = parsedSystemPrompt.systemPrompt;
-  if (
-    systemPrompt !== undefined &&
-    Buffer.byteLength(systemPrompt, "utf8") > agentTaskSystemPromptMaxBytes
-  ) {
+  const systemPromptError = providerTaskSystemPromptValidationError(
+    systemPrompt,
+    `${path}.systemPrompt`,
+  );
+  if (systemPromptError !== null) {
     throw protocolError(
       "agent_task_request_invalid",
-      `${path}.systemPrompt exceeds ${agentTaskSystemPromptMaxBytes} bytes`,
+      systemPromptError,
     );
   }
   return {

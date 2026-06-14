@@ -15,6 +15,7 @@ import {
   type RuntimeDeps,
   type SessionEnvelope,
   type SessionArtifact,
+  assertProviderTaskSystemPrompt,
 } from "@vioxen/subscription-runtime/core";
 import {
   ClaudeRuntimeTaskExecutionEngine,
@@ -396,6 +397,7 @@ export class FileBackendClaudeWorker implements CapacityAwareSubscriptionWorker<
     job: FileBackendClaudeWorkerJob,
   ): Promise<FileBackendClaudeWorkerResult> {
     this.assertStarted();
+    assertProviderTaskSystemPrompt(job.systemPrompt, "job.systemPrompt");
     const runId = job.runId ?? `local-${randomUUID()}`;
     const abortSignal = job.abortSignal ?? new AbortController().signal;
     const result = await this.runtime.refreshThenRunTask({

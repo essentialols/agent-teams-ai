@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, realpath } from "node:fs/promises";
 import { join } from "node:path";
-import { createSubscriptionRuntime, DefaultRedactor, DeterministicIdGenerator, } from "@vioxen/subscription-runtime/core";
+import { createSubscriptionRuntime, DefaultRedactor, DeterministicIdGenerator, assertProviderTaskSystemPrompt, } from "@vioxen/subscription-runtime/core";
 import { ClaudeRuntimeTaskExecutionEngine, ClaudeSessionDriver, ClaudeTaskAgentDriver, claudeRuntimeResumeSessionIdMetadataKey, claudeRuntimeThreadIdMetadataKey, sessionArtifactFromClaudeOAuth, validateClaudeSessionArtifact, } from "@vioxen/subscription-runtime/provider-claude";
 import { createLocalFileBackendRuntimeAdapters } from "@vioxen/subscription-runtime/store-local-file";
 import { SubscriptionWorkerError, } from "@vioxen/subscription-runtime/worker-core";
@@ -239,6 +239,7 @@ export class FileBackendClaudeWorker {
     }
     async runProviderTask(job) {
         this.assertStarted();
+        assertProviderTaskSystemPrompt(job.systemPrompt, "job.systemPrompt");
         const runId = job.runId ?? `local-${randomUUID()}`;
         const abortSignal = job.abortSignal ?? new AbortController().signal;
         const result = await this.runtime.refreshThenRunTask({

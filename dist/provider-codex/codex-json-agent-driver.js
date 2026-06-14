@@ -53,6 +53,9 @@ export class CodexJsonAgentDriver {
             const outputSchemaName = input.task.controls?.outputSchemaName ?? input.task.outputSchemaName;
             const result = await this.engine.run({
                 prompt: input.task.prompt,
+                ...(input.task.systemPrompt !== undefined
+                    ? { systemPrompt: input.task.systemPrompt }
+                    : {}),
                 outputSchema: outputSchemaName ? { name: outputSchemaName } : undefined,
                 session: materialized,
                 workspacePath: input.workspace.path,

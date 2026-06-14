@@ -91,6 +91,7 @@ Then evolve `ProviderTask` and `ProviderTaskResult` without provider fields:
 export type ProviderTask = {
   readonly kind: ProviderTaskKind;
   readonly prompt: string;
+  readonly systemPrompt?: string;
   readonly outputSchemaName?: string; // legacy compatibility during migration
   readonly controls?: ProviderTaskControls;
   readonly metadata?: Readonly<Record<string, string>>;

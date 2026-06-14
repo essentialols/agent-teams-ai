@@ -324,6 +324,42 @@ describe("Codex provider adapter", () => {
     }
   });
 
+  it("passes task system prompts through the legacy Codex CLI task path", async () => {
+    const runner = new StaticRunner("review output");
+    const workspace = await mkdtemp(join(tmpdir(), "codex-agent-system-test-"));
+    const driver = new CodexCliAgentDriver({
+      codexBinaryPath: "/bin/codex-test",
+      model: "gpt-test",
+    });
+
+    try {
+      await driver.runTask({
+        session: sessionArtifactFromCodexAuthJson(validAuthJson),
+        task: {
+          kind: "review",
+          prompt: "inspect diff",
+          systemPrompt: "return only the verdict",
+        },
+        workspace: { path: workspace },
+        runner,
+        redactor: new DefaultRedactor(),
+        abortSignal: new AbortController().signal,
+      });
+
+      expect(runner.lastArgs.at(-1)).toBe(
+        [
+          "System instructions:",
+          "return only the verdict",
+          "",
+          "User task:",
+          "inspect diff",
+        ].join("\n"),
+      );
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("uses the shared Codex default model when none is configured", async () => {
     const runner = new StaticRunner("review output");
     const workspace = await mkdtemp(join(tmpdir(), "codex-agent-default-model-"));
@@ -426,6 +462,79 @@ describe("Codex provider adapter", () => {
       expect(runner.lastArgs).toContain("-");
       expect(runner.lastStdin).toBe("inspect diff");
       expect(runner.lastEnv?.CODEX_HOME).toBeTruthy();
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("passes task system prompts through Codex JSON task engines", async () => {
+    const engine = new RecordingJsonEngine();
+    const workspace = await mkdtemp(join(tmpdir(), "codex-json-system-test-"));
+    const driver = new CodexJsonAgentDriver({
+      engine,
+      model: "gpt-test",
+      reasoningEffort: "low",
+    });
+
+    try {
+      await driver.runTask({
+        session: sessionArtifactFromCodexAuthJson(validAuthJson),
+        task: {
+          kind: "review",
+          prompt: "inspect diff",
+          systemPrompt: "return only the verdict",
+        },
+        workspace: { path: workspace },
+        runner: new StaticRunner(""),
+        redactor: new DefaultRedactor(),
+        abortSignal: new AbortController().signal,
+      });
+
+      expect(engine.prompts).toEqual(["inspect diff"]);
+      expect(engine.systemPrompts).toEqual(["return only the verdict"]);
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps task system prompts separate in packaged Codex JSON stdin", async () => {
+    const runner = new StaticRunner(
+      `${JSON.stringify({ type: "agent_message", message: "json review output" })}\n`,
+    );
+    const workspace = await mkdtemp(
+      join(tmpdir(), "codex-json-stdin-system-test-"),
+    );
+    const driver = new CodexJsonAgentDriver({
+      engine: new PackagedCodexJsonExecutionEngine({
+        codexBinaryPath: "/bin/codex-test",
+      }),
+      model: "gpt-test",
+      reasoningEffort: "low",
+    });
+
+    try {
+      await driver.runTask({
+        session: sessionArtifactFromCodexAuthJson(validAuthJson),
+        task: {
+          kind: "review",
+          prompt: "inspect diff",
+          systemPrompt: "return only the verdict",
+        },
+        workspace: { path: workspace },
+        runner,
+        redactor: new DefaultRedactor(),
+        abortSignal: new AbortController().signal,
+      });
+
+      expect(runner.lastStdin).toBe(
+        [
+          "System instructions:",
+          "return only the verdict",
+          "",
+          "User task:",
+          "inspect diff",
+        ].join("\n"),
+      );
     } finally {
       await rm(workspace, { recursive: true, force: true });
     }
@@ -764,6 +873,105 @@ describe("Codex provider adapter", () => {
     } finally {
       await driver.dispose();
       await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("adds task system prompts to app-server developer instructions", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "codex-app-system-test-"));
+    const fakeFactory = new FakeAppServerFactory();
+    const driver = new CodexJsonAgentDriver({
+      engine: new CodexAppServerExecutionEngine({
+        codexBinaryPath: "/bin/codex-test",
+        processFactory: fakeFactory.create,
+        cleanThreadPrewarm: false,
+      }),
+      model: "gpt-test",
+      reasoningEffort: "low",
+    });
+
+    try {
+      await driver.runTask({
+        session: sessionArtifactFromCodexAuthJson(validAuthJson),
+        task: {
+          kind: "review",
+          prompt: "system task",
+          systemPrompt: "return only the verdict",
+        },
+        workspace: { path: workspace },
+        runner: new StaticRunner(""),
+        redactor: new DefaultRedactor(),
+        abortSignal: new AbortController().signal,
+      });
+
+      const threadStart = fakeFactory.requests.find(
+        (request) => request.method === "thread/start",
+      );
+      expect(threadStart?.params?.developerInstructions).toEqual(
+        expect.stringContaining("non-interactive subscription runtime worker"),
+      );
+      expect(threadStart?.params?.developerInstructions).toEqual(
+        expect.stringContaining("return only the verdict"),
+      );
+    } finally {
+      await driver.dispose();
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("does not reuse prewarmed app-server threads across system prompts", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "codex-app-system-prewarm-test-"),
+    );
+    const cacheRoot = await mkdtemp(
+      join(tmpdir(), "codex-app-system-prewarm-root-"),
+    );
+    const fakeFactory = new FakeAppServerFactory();
+    const driver = new CodexJsonAgentDriver({
+      engine: new CodexAppServerExecutionEngine({
+        codexBinaryPath: "/bin/codex-test",
+        processFactory: fakeFactory.create,
+      }),
+      sessionMaterializer: new CodexWorkerCacheSessionPoolMaterializer({
+        cacheKey: "provider-account:codex-system-prewarm-test",
+        slots: 1,
+        rootDir: cacheRoot,
+      }),
+      model: "gpt-test",
+      reasoningEffort: "low",
+    });
+
+    try {
+      await driver.prewarmSession({
+        session: sessionArtifactFromCodexAuthJson(validAuthJson),
+        redactor: new DefaultRedactor(),
+        workspacePath: workspace,
+        runner: new StaticRunner(""),
+        abortSignal: new AbortController().signal,
+      });
+
+      await driver.runTask({
+        session: sessionArtifactFromCodexAuthJson(validAuthJson),
+        task: {
+          kind: "review",
+          prompt: "system task",
+          systemPrompt: "return only the verdict",
+        },
+        workspace: { path: workspace },
+        runner: new StaticRunner(""),
+        redactor: new DefaultRedactor(),
+        abortSignal: new AbortController().signal,
+      });
+
+      const realTaskTurn = fakeFactory.requests.find(
+        (request) =>
+          request.method === "turn/start" &&
+          extractFakePrompt(request.params) === "system task",
+      );
+      expect(realTaskTurn?.params?.threadId).toBe("thread-2");
+    } finally {
+      await driver.dispose();
+      await rm(workspace, { recursive: true, force: true });
+      await rm(cacheRoot, { recursive: true, force: true });
     }
   });
 
@@ -1154,12 +1362,14 @@ class RecordingJsonEngine implements CodexExecutionEngine {
   } as const;
   readonly codexHomes: string[] = [];
   readonly prompts: string[] = [];
+  readonly systemPrompts: Array<string | undefined> = [];
 
   constructor(private readonly fixedOutputText?: string) {}
 
   async run(input: Parameters<CodexExecutionEngine["run"]>[0]) {
     this.codexHomes.push(input.session.codexHome);
     this.prompts.push(input.prompt);
+    this.systemPrompts.push(input.systemPrompt);
     return {
       outputText: this.fixedOutputText ?? `json output:${input.prompt}`,
       warnings: [],

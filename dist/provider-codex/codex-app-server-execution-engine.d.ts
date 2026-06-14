@@ -49,6 +49,7 @@ export declare class CodexAppServerExecutionEngine implements CodexExecutionEngi
     constructor(options: CodexAppServerExecutionEngineOptions);
     run(input: {
         readonly prompt: string;
+        readonly systemPrompt?: string;
         readonly session: CodexMaterializedSession;
         readonly workspacePath: string;
         readonly runner: RunnerPort;

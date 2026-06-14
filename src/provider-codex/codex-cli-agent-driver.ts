@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { codexAuthJsonFromArtifact } from "./codex-auth-json-codec";
 import { pruneCodexChildEnv } from "./codex-cli-domain";
 import { cleanupCodexRuntimeTempRoot } from "./codex-cli-temp-cleanup";
+import { composeCodexPrompt } from "./codex-prompt-composer";
 import {
   codexAgentCapabilities,
   codexAgentId,
@@ -76,7 +77,10 @@ export class CodexCliAgentDriver implements AgentDriver {
           "--model",
           this.options.model ?? defaultCodexModel,
           "--",
-          input.task.prompt,
+          composeCodexPrompt({
+            prompt: input.task.prompt,
+            systemPrompt: input.task.systemPrompt,
+          }),
         ],
         cwd: input.workspace.path,
         env: {

@@ -75,10 +75,26 @@ type PreparedThread = {
   readonly workspacePath: string;
   readonly model: string;
   readonly reasoningEffort: CodexReasoningEffort;
+  readonly systemPrompt: string | null;
 };
 
 const defaultTimeoutMs = 10 * 60 * 1000;
 const defaultMaxOutputBytes = 512 * 1024;
+
+function normalizeSystemPrompt(value: string | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
+function mergeDeveloperInstructions(input: {
+  readonly base: string | null;
+  readonly systemPrompt?: string | undefined;
+}): string | null {
+  const systemPrompt = normalizeSystemPrompt(input.systemPrompt);
+  if (!systemPrompt) return input.base;
+  if (!input.base) return systemPrompt;
+  return `${input.base}\n\n${systemPrompt}`;
+}
 
 export class CodexAppServerExecutionEngine implements CodexExecutionEngine {
   readonly kind = "app-server-pool" as const;
@@ -104,6 +120,7 @@ export class CodexAppServerExecutionEngine implements CodexExecutionEngine {
 
   async run(input: {
     readonly prompt: string;
+    readonly systemPrompt?: string;
     readonly session: CodexMaterializedSession;
     readonly workspacePath: string;
     readonly runner: RunnerPort;
@@ -198,6 +215,7 @@ export class CodexAppServerExecutionEngine implements CodexExecutionEngine {
 
   private async runViaAppServer(input: {
     readonly prompt: string;
+    readonly systemPrompt?: string;
     readonly session: CodexMaterializedSession;
     readonly workspacePath: string;
     readonly redactor: RedactorPort;
@@ -209,6 +227,9 @@ export class CodexAppServerExecutionEngine implements CodexExecutionEngine {
     const slot = await this.ensureSlot(input);
     const result = await slot.client.runCleanTurn({
       prompt: input.prompt,
+      ...(input.systemPrompt !== undefined
+        ? { systemPrompt: input.systemPrompt }
+        : {}),
       workspacePath: input.workspacePath,
       model: input.model,
       reasoningEffort: input.reasoningEffort,
@@ -376,6 +397,7 @@ class CodexAppServerClient {
 
   async runCleanTurn(input: {
     readonly prompt: string;
+    readonly systemPrompt?: string;
     readonly workspacePath: string;
     readonly model: string;
     readonly reasoningEffort: CodexReasoningEffort;
@@ -462,6 +484,7 @@ class CodexAppServerClient {
     readonly workspacePath: string;
     readonly model: string;
     readonly reasoningEffort: CodexReasoningEffort;
+    readonly systemPrompt?: string;
   }): PreparedThread | null {
     const prepared = this.preparedThread;
     if (!prepared) return null;
@@ -469,7 +492,8 @@ class CodexAppServerClient {
     if (
       prepared.workspacePath !== input.workspacePath ||
       prepared.model !== input.model ||
-      prepared.reasoningEffort !== input.reasoningEffort
+      prepared.reasoningEffort !== input.reasoningEffort ||
+      prepared.systemPrompt !== normalizeSystemPrompt(input.systemPrompt)
     ) {
       this.backgroundWarnings.push({
         code: "codex_app_server_prepared_thread_discarded",
@@ -485,6 +509,7 @@ class CodexAppServerClient {
     readonly workspacePath: string;
     readonly model: string;
     readonly reasoningEffort: CodexReasoningEffort;
+    readonly systemPrompt?: string;
     readonly timeoutMs: number;
     readonly abortSignal: AbortSignal;
   }): void {
@@ -498,6 +523,7 @@ class CodexAppServerClient {
     readonly workspacePath: string;
     readonly model: string;
     readonly reasoningEffort: CodexReasoningEffort;
+    readonly systemPrompt?: string;
     readonly timeoutMs: number;
     readonly abortSignal: AbortSignal;
   }): Promise<void> {
@@ -512,6 +538,7 @@ class CodexAppServerClient {
           workspacePath: input.workspacePath,
           model: input.model,
           reasoningEffort: input.reasoningEffort,
+          systemPrompt: normalizeSystemPrompt(input.systemPrompt),
         };
       })
       .finally(() => {
@@ -524,11 +551,13 @@ class CodexAppServerClient {
     readonly workspacePath: string;
     readonly model: string;
     readonly reasoningEffort: CodexReasoningEffort;
+    readonly systemPrompt?: string;
   }): boolean {
     return (
       this.preparedThread?.workspacePath === input.workspacePath &&
       this.preparedThread.model === input.model &&
-      this.preparedThread.reasoningEffort === input.reasoningEffort
+      this.preparedThread.reasoningEffort === input.reasoningEffort &&
+      this.preparedThread.systemPrompt === normalizeSystemPrompt(input.systemPrompt)
     );
   }
 
@@ -540,6 +569,7 @@ class CodexAppServerClient {
     readonly workspacePath: string;
     readonly model: string;
     readonly reasoningEffort: CodexReasoningEffort;
+    readonly systemPrompt?: string;
     readonly timeoutMs: number;
     readonly abortSignal: AbortSignal;
   }): Promise<string> {
@@ -580,7 +610,12 @@ class CodexAppServerClient {
         serviceName: "subscription-runtime",
         baseInstructions: this.options.executionProfile.baseInstructions,
         developerInstructions:
-          this.options.executionProfile.developerInstructions,
+          mergeDeveloperInstructions({
+            base: this.options.executionProfile.developerInstructions,
+            ...(input.systemPrompt !== undefined
+              ? { systemPrompt: input.systemPrompt }
+              : {}),
+          }),
         personality: null,
         ephemeral: true,
         sessionStartSource: "startup",

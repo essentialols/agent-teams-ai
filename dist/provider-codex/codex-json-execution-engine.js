@@ -1,5 +1,6 @@
 import { classifyCodexFailure } from "./failure-classifier.js";
 import { pruneCodexChildEnv } from "./codex-cli-domain.js";
+import { composeCodexPrompt } from "./codex-prompt-composer.js";
 const defaultTimeoutMs = 10 * 60 * 1000;
 const defaultMaxOutputBytes = 512 * 1024;
 export class PackagedCodexJsonExecutionEngine {
@@ -32,7 +33,10 @@ export class PackagedCodexJsonExecutionEngine {
                 ...input.session.env,
                 CI: "true",
             },
-            stdin: new TextEncoder().encode(input.prompt),
+            stdin: new TextEncoder().encode(composeCodexPrompt({
+                prompt: input.prompt,
+                systemPrompt: input.systemPrompt,
+            })),
             timeoutMs: this.options.timeoutMs ?? defaultTimeoutMs,
             abortSignal: input.abortSignal,
         });

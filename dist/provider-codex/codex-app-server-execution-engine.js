@@ -4,6 +4,18 @@ import { pruneCodexChildEnv } from "./codex-cli-domain.js";
 import { resolveCodexExecutionProfile } from "./codex-execution-profile.js";
 const defaultTimeoutMs = 10 * 60 * 1000;
 const defaultMaxOutputBytes = 512 * 1024;
+function normalizeSystemPrompt(value) {
+    const trimmed = value?.trim();
+    return trimmed ? trimmed : null;
+}
+function mergeDeveloperInstructions(input) {
+    const systemPrompt = normalizeSystemPrompt(input.systemPrompt);
+    if (!systemPrompt)
+        return input.base;
+    if (!input.base)
+        return systemPrompt;
+    return `${input.base}\n\n${systemPrompt}`;
+}
 export class CodexAppServerExecutionEngine {
     options;
     kind = "app-server-pool";
@@ -95,6 +107,9 @@ export class CodexAppServerExecutionEngine {
         const slot = await this.ensureSlot(input);
         const result = await slot.client.runCleanTurn({
             prompt: input.prompt,
+            ...(input.systemPrompt !== undefined
+                ? { systemPrompt: input.systemPrompt }
+                : {}),
             workspacePath: input.workspacePath,
             model: input.model,
             reasoningEffort: input.reasoningEffort,
@@ -287,7 +302,8 @@ class CodexAppServerClient {
         this.preparedThread = null;
         if (prepared.workspacePath !== input.workspacePath ||
             prepared.model !== input.model ||
-            prepared.reasoningEffort !== input.reasoningEffort) {
+            prepared.reasoningEffort !== input.reasoningEffort ||
+            prepared.systemPrompt !== normalizeSystemPrompt(input.systemPrompt)) {
             this.backgroundWarnings.push({
                 code: "codex_app_server_prepared_thread_discarded",
                 safeMessage: "Codex app-server discarded a prepared thread because the next task used a different runtime context.",
@@ -317,6 +333,7 @@ class CodexAppServerClient {
                 workspacePath: input.workspacePath,
                 model: input.model,
                 reasoningEffort: input.reasoningEffort,
+                systemPrompt: normalizeSystemPrompt(input.systemPrompt),
             };
         })
             .finally(() => {
@@ -327,7 +344,8 @@ class CodexAppServerClient {
     preparedThreadMatches(input) {
         return (this.preparedThread?.workspacePath === input.workspacePath &&
             this.preparedThread.model === input.model &&
-            this.preparedThread.reasoningEffort === input.reasoningEffort);
+            this.preparedThread.reasoningEffort === input.reasoningEffort &&
+            this.preparedThread.systemPrompt === normalizeSystemPrompt(input.systemPrompt));
     }
     cleanThreadPrewarmEnabled() {
         return this.options.cleanThreadPrewarm ?? true;
@@ -367,7 +385,12 @@ class CodexAppServerClient {
             },
             serviceName: "subscription-runtime",
             baseInstructions: this.options.executionProfile.baseInstructions,
-            developerInstructions: this.options.executionProfile.developerInstructions,
+            developerInstructions: mergeDeveloperInstructions({
+                base: this.options.executionProfile.developerInstructions,
+                ...(input.systemPrompt !== undefined
+                    ? { systemPrompt: input.systemPrompt }
+                    : {}),
+            }),
             personality: null,
             ephemeral: true,
             sessionStartSource: "startup",

@@ -14,6 +14,8 @@ Rules:
 Provider task adapters should follow `docs/pluggable-agent-runtime.md`:
 
 - keep task execution as the default public contract;
+- preserve `ProviderTask.systemPrompt` separately from `ProviderTask.prompt`
+  whenever the underlying runtime has a distinct instruction/developer channel;
 - keep provider-specific run lifecycles private unless at least two providers or
   one product workflow need a public managed-run port;
 - report provider-neutral telemetry instead of encoding provider details in

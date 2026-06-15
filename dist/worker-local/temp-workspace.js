@@ -43,4 +43,26 @@ export class StableWorkerWorkspace {
         await rm(this.rootDir, { recursive: true, force: true });
     }
 }
+export class BorrowedRunTaskWorkspace {
+    runTaskPath;
+    fallbackWorkspace;
+    workspaceId = "borrowed-run-task-workspace";
+    capabilities;
+    constructor(runTaskPath, fallbackWorkspace) {
+        this.runTaskPath = runTaskPath;
+        this.fallbackWorkspace = fallbackWorkspace;
+        this.capabilities = {
+            workspaceId: this.workspaceId,
+            supportsTempDir: fallbackWorkspace.capabilities.supportsTempDir,
+            supportsExistingCheckout: true,
+            supportsContainer: fallbackWorkspace.capabilities.supportsContainer,
+        };
+    }
+    async create(input) {
+        if (input.purpose === "run-task") {
+            return { path: this.runTaskPath };
+        }
+        return this.fallbackWorkspace.create(input);
+    }
+}
 //# sourceMappingURL=temp-workspace.js.map

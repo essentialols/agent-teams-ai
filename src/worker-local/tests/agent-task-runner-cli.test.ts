@@ -1,4 +1,13 @@
-import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  mkdir,
+  mkdtemp,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -122,6 +131,177 @@ describe("subscription runtime agent-task runner CLI", () => {
         outputText: "worker:review this",
       },
     });
+  });
+
+  it("runs the default Codex worker in the borrowed request cwd without deleting it", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "subscription-runtime-codex-cli-"));
+    const workspaceDir = join(tempDir, "workspace");
+    const authPath = join(tempDir, "auth.json");
+    const codexPath = join(tempDir, "fake-codex.mjs");
+    const canaryPath = join(workspaceDir, "canary.txt");
+    await mkdir(workspaceDir);
+    await writeFile(canaryPath, "safe", "utf8");
+    await writeFile(authPath, validCodexAuthJson(), "utf8");
+    await writeFakeCodexBinary(codexPath);
+
+    try {
+      const stdout: string[] = [];
+      const exitCode = await runSubscriptionAgentTaskCli(
+        [
+          "--provider",
+          "codex",
+          "--ephemeral",
+          "--codex-binary",
+          codexPath,
+          "--format",
+          "result-json",
+        ],
+        fakeIo({
+          cwd: workspaceDir,
+          stdout,
+          stdin: JSON.stringify({
+            protocolVersion: 1,
+            cwd: ".",
+            providerInstanceId: "codex:e2e",
+            task: {
+              kind: "structured-prompt",
+              prompt: "hello-from-sandbox",
+            },
+          }),
+          env: {
+            PATH: process.env.PATH ?? "/usr/bin:/bin",
+            CODEX_AUTH_JSON_PATH: authPath,
+          },
+        }),
+      );
+
+      expect(exitCode, stdout.join("")).toBe(0);
+      expect(JSON.parse(stdout.join(""))).toMatchObject({
+        protocolVersion: 1,
+        status: "completed",
+        outputText: `fake-codex-ok:${await realpath(workspaceDir)}:hello-from-sandbox`,
+      });
+      await expect(access(canaryPath)).resolves.toBeUndefined();
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves the borrowed request cwd when the default Codex worker fails", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "subscription-runtime-codex-cli-"));
+    const workspaceDir = join(tempDir, "workspace");
+    const authPath = join(tempDir, "auth.json");
+    const codexPath = join(tempDir, "fake-codex.mjs");
+    const canaryPath = join(workspaceDir, "canary.txt");
+    await mkdir(workspaceDir);
+    await writeFile(canaryPath, "safe", "utf8");
+    await writeFile(authPath, validCodexAuthJson(), "utf8");
+    await writeFakeCodexBinary(codexPath, {
+      appServerTurnFails: true,
+      fallbackExecFails: true,
+    });
+
+    try {
+      const stdout: string[] = [];
+      const exitCode = await runSubscriptionAgentTaskCli(
+        [
+          "--provider",
+          "codex",
+          "--ephemeral",
+          "--codex-binary",
+          codexPath,
+          "--format",
+          "result-json",
+        ],
+        fakeIo({
+          cwd: workspaceDir,
+          stdout,
+          stdin: JSON.stringify({
+            protocolVersion: 1,
+            cwd: ".",
+            providerInstanceId: "codex:e2e",
+            task: {
+              kind: "structured-prompt",
+              prompt: "must-fail",
+            },
+          }),
+          env: {
+            PATH: process.env.PATH ?? "/usr/bin:/bin",
+            CODEX_AUTH_JSON_PATH: authPath,
+          },
+        }),
+      );
+
+      expect(exitCode).toBe(1);
+      expect(JSON.parse(stdout.join(""))).toMatchObject({
+        protocolVersion: 1,
+        status: "failed",
+        failure: {
+          code: "unknown_runtime_failure",
+        },
+      });
+      await expect(access(canaryPath)).resolves.toBeUndefined();
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("runs the Codex exec fallback in the borrowed request cwd", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "subscription-runtime-codex-cli-"));
+    const workspaceDir = join(tempDir, "workspace");
+    const authPath = join(tempDir, "auth.json");
+    const codexPath = join(tempDir, "fake-codex.mjs");
+    const canaryPath = join(workspaceDir, "canary.txt");
+    await mkdir(workspaceDir);
+    await writeFile(canaryPath, "safe", "utf8");
+    await writeFile(authPath, validCodexAuthJson(), "utf8");
+    await writeFakeCodexBinary(codexPath, {
+      appServerTurnFails: true,
+    });
+
+    try {
+      const stdout: string[] = [];
+      const exitCode = await runSubscriptionAgentTaskCli(
+        [
+          "--provider",
+          "codex",
+          "--ephemeral",
+          "--codex-binary",
+          codexPath,
+          "--format",
+          "result-json",
+        ],
+        fakeIo({
+          cwd: workspaceDir,
+          stdout,
+          stdin: JSON.stringify({
+            protocolVersion: 1,
+            cwd: ".",
+            providerInstanceId: "codex:e2e",
+            task: {
+              kind: "structured-prompt",
+              prompt: "hello-from-fallback",
+            },
+          }),
+          env: {
+            PATH: process.env.PATH ?? "/usr/bin:/bin",
+            CODEX_AUTH_JSON_PATH: authPath,
+          },
+        }),
+      );
+
+      const result = JSON.parse(stdout.join("")) as {
+        readonly status: string;
+        readonly outputText?: string;
+      };
+      expect(exitCode, stdout.join("")).toBe(0);
+      expect(result.status).toBe("completed");
+      expect(result.outputText).toContain(`fake-codex-exec-ok:${await realpath(workspaceDir)}:`);
+      expect(result.outputText).toContain("hello-from-fallback");
+      await expect(access(canaryPath)).resolves.toBeUndefined();
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 
   it("uses request timeout unless the CLI timeout overrides it", async () => {
@@ -335,4 +515,132 @@ function fakeIo(input: {
       return input.env;
     },
   };
+}
+
+function validCodexAuthJson(): string {
+  return JSON.stringify({
+    auth_mode: "chatgpt",
+    tokens: {
+      refresh_token: "refresh-token",
+      access_token: "access-token",
+      expiry: "2027-05-31T23:00:00.000Z",
+    },
+    last_refresh: "2026-05-31T00:00:00.000Z",
+  });
+}
+
+async function writeFakeCodexBinary(
+  path: string,
+  input: {
+    readonly appServerTurnFails?: boolean;
+    readonly fallbackExecFails?: boolean;
+  } = {},
+): Promise<void> {
+  await writeFile(
+    path,
+    `#!/usr/bin/env node
+import readline from "node:readline";
+
+const appServerTurnFails = ${JSON.stringify(Boolean(input.appServerTurnFails))};
+const fallbackExecFails = ${JSON.stringify(Boolean(input.fallbackExecFails))};
+
+if (process.argv[2] === "exec") {
+  const isJsonExec = process.argv.includes("--json");
+  if (isJsonExec && fallbackExecFails) {
+    process.stderr.write("forced fallback failure");
+    process.exit(7);
+  }
+  let stdin = "";
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk) => {
+    stdin += chunk;
+  });
+  process.stdin.on("end", () => {
+    process.stdout.write(JSON.stringify({
+      message: "fake-codex-exec-ok:" + process.cwd() + ":" + stdin.trim(),
+    }) + "\\n");
+  });
+  process.stdin.resume();
+} else if (process.argv[2] !== "app-server") {
+  process.stderr.write("unexpected fake codex args: " + process.argv.slice(2).join(" "));
+  process.exit(2);
+} else {
+  runAppServer();
+}
+
+function runAppServer() {
+  let nextThreadId = 1;
+  let nextTurnId = 1;
+  const threadCwds = new Map();
+  const rl = readline.createInterface({
+    input: process.stdin,
+    terminal: false,
+  });
+
+  function write(message) {
+    process.stdout.write(JSON.stringify(message) + "\\n");
+  }
+
+  function promptFromParams(params) {
+    const input = params?.input;
+    if (!Array.isArray(input)) return "";
+    const first = input[0];
+    return typeof first?.text === "string" ? first.text : "";
+  }
+
+  rl.on("line", (line) => {
+    if (!line.trim()) return;
+    const request = JSON.parse(line);
+    if (request.method === "initialize") {
+      write({ id: request.id, result: { userAgent: "fake-codex-e2e" } });
+      return;
+    }
+    if (request.method === "thread/start") {
+      const threadId = "thread-" + nextThreadId;
+      nextThreadId += 1;
+      if (typeof request.params?.cwd === "string") {
+        threadCwds.set(threadId, request.params.cwd);
+      }
+      write({ id: request.id, result: { thread: { id: threadId } } });
+      return;
+    }
+    if (request.method === "turn/start") {
+      if (appServerTurnFails) {
+        write({
+          id: request.id,
+          error: {
+            message: "forced app-server turn failure",
+          },
+        });
+        return;
+      }
+      const turnId = "turn-" + nextTurnId;
+      nextTurnId += 1;
+      const prompt = promptFromParams(request.params);
+      const cwd = threadCwds.get(request.params?.threadId) ?? "cwd-missing";
+      write({ id: request.id, result: { turn: { id: turnId } } });
+      setTimeout(() => {
+        write({
+          method: "item/agentMessage/delta",
+          params: {
+            turnId,
+            delta: "fake-codex-ok:" + cwd + ":" + prompt,
+          },
+        });
+        write({
+          method: "turn/completed",
+          params: {
+            turn: { id: turnId, status: { type: "completed" } },
+          },
+        });
+      }, 1);
+      return;
+    }
+    write({ id: request.id, result: {} });
+  });
+}
+`,
+    "utf8",
+  );
+  await chmod(path, 0o700);
 }

@@ -1,4 +1,4 @@
-import { access, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { EventEmitter } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -109,6 +109,74 @@ describe("FileBackendCodexWorker", () => {
     }
   });
 
+  it("runs tasks in a borrowed caller workspace without deleting it", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "codex-worker-"));
+    const callerWorkspace = await mkdtemp(join(tmpdir(), "codex-caller-workspace-"));
+    const appServer = new FakeAppServerFactory();
+    const worker = new FileBackendCodexWorker({
+      providerInstanceId: "codex:test",
+      stateRootDir: rootDir,
+      workspacePath: callerWorkspace,
+      codexBinaryPath: "codex",
+      encryptionKey: new Uint8Array(32).fill(5),
+      appServerProcessFactory: appServer.create,
+      clock: {
+        now: () => new Date("2026-05-31T00:05:00.000Z"),
+        monotonicMs: () => 1,
+      },
+    });
+    const canaryPath = join(callerWorkspace, "canary.txt");
+    await writeFile(canaryPath, "safe", "utf8");
+
+    try {
+      await worker.start();
+      await worker.seedCodexAuthJson(validAuthJson);
+      await expect(worker.run({ prompt: "hello" })).resolves.toEqual({
+        outputText: "OK",
+        warnings: [],
+      });
+      expect(appServer.threadCwds).toContain(callerWorkspace);
+      await worker.dispose();
+      await expect(access(canaryPath)).resolves.toBeUndefined();
+    } finally {
+      await worker.dispose();
+      await rm(rootDir, { recursive: true, force: true });
+      await rm(callerWorkspace, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps prewarm work out of the borrowed caller workspace", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "codex-worker-"));
+    const callerWorkspace = await mkdtemp(join(tmpdir(), "codex-caller-workspace-"));
+    const appServer = new FakeAppServerFactory();
+    const worker = new FileBackendCodexWorker({
+      providerInstanceId: "codex:test",
+      stateRootDir: rootDir,
+      workspacePath: callerWorkspace,
+      codexBinaryPath: "codex",
+      encryptionKey: new Uint8Array(32).fill(4),
+      appServerProcessFactory: appServer.create,
+      clock: {
+        now: () => new Date("2026-05-31T00:05:00.000Z"),
+        monotonicMs: () => 1,
+      },
+    });
+
+    try {
+      await worker.start();
+      await worker.seedCodexAuthJson(validAuthJson);
+      await expect(worker.prewarm()).resolves.toMatchObject({
+        status: "ready",
+      });
+      expect(appServer.threadCwds.length).toBeGreaterThan(0);
+      expect(appServer.threadCwds).not.toContain(callerWorkspace);
+    } finally {
+      await worker.dispose();
+      await rm(rootDir, { recursive: true, force: true });
+      await rm(callerWorkspace, { recursive: true, force: true });
+    }
+  });
+
   it("waits and retries when another slot is refreshing the same provider session", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "codex-worker-"));
     const runner = new RefreshingFakeRunner();
@@ -178,6 +246,7 @@ describe("FileBackendCodexWorker", () => {
 class FakeAppServerFactory {
   spawnCount = 0;
   readonly prompts: string[] = [];
+  readonly threadCwds: string[] = [];
   readonly envs: Readonly<Record<string, string>>[] = [];
 
   readonly create = (input: {
@@ -185,7 +254,10 @@ class FakeAppServerFactory {
   }) => {
     this.spawnCount += 1;
     this.envs.push(input.env);
-    return new FakeAppServerProcess((prompt) => this.prompts.push(prompt));
+    return new FakeAppServerProcess(
+      (prompt) => this.prompts.push(prompt),
+      (cwd) => this.threadCwds.push(cwd),
+    );
   };
 }
 
@@ -203,7 +275,10 @@ class FakeAppServerProcess extends EventEmitter {
   private nextThreadId = 1;
   private nextTurnId = 1;
 
-  constructor(private readonly onPrompt: (prompt: string) => void) {
+  constructor(
+    private readonly onPrompt: (prompt: string) => void,
+    private readonly onThreadCwd: (cwd: string) => void,
+  ) {
     super();
   }
 
@@ -227,6 +302,10 @@ class FakeAppServerProcess extends EventEmitter {
       if (request.method === "thread/start") {
         const threadId = `thread-${this.nextThreadId}`;
         this.nextThreadId += 1;
+        const cwd = request.params?.cwd;
+        if (typeof cwd === "string") {
+          this.onThreadCwd(cwd);
+        }
         this.respond(request.id, { thread: { id: threadId } });
         continue;
       }

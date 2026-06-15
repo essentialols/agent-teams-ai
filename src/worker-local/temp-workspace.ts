@@ -48,3 +48,30 @@ export class StableWorkerWorkspace implements WorkspacePort {
     await rm(this.rootDir, { recursive: true, force: true });
   }
 }
+
+export class BorrowedRunTaskWorkspace implements WorkspacePort {
+  readonly workspaceId = "borrowed-run-task-workspace";
+  readonly capabilities: WorkspacePort["capabilities"];
+
+  constructor(
+    private readonly runTaskPath: string,
+    private readonly fallbackWorkspace: WorkspacePort,
+  ) {
+    this.capabilities = {
+      workspaceId: this.workspaceId,
+      supportsTempDir: fallbackWorkspace.capabilities.supportsTempDir,
+      supportsExistingCheckout: true,
+      supportsContainer: fallbackWorkspace.capabilities.supportsContainer,
+    };
+  }
+
+  async create(input: {
+    readonly purpose: "refresh" | "run-task";
+    readonly isolation: "temp-dir" | "existing-checkout" | "container";
+  }): Promise<WorkspaceHandle> {
+    if (input.purpose === "run-task") {
+      return { path: this.runTaskPath };
+    }
+    return this.fallbackWorkspace.create(input);
+  }
+}

@@ -7,7 +7,7 @@ import { createLocalFileBackendRuntimeAdapters } from "@vioxen/subscription-runt
 import { SubscriptionWorkerError, } from "@vioxen/subscription-runtime/worker-core";
 import { NodeProcessRunner } from "../worker-local/node-process-runner.js";
 import { NullWorkerObservability } from "../worker-local/observability.js";
-import { StableWorkerWorkspace } from "../worker-local/temp-workspace.js";
+import { BorrowedRunTaskWorkspace, StableWorkerWorkspace, } from "../worker-local/temp-workspace.js";
 export class FileBackendCodexWorker {
     options;
     workerId;
@@ -22,6 +22,7 @@ export class FileBackendCodexWorker {
     sessionStore;
     runtime;
     ownedWorkspace;
+    prewarmWorkspace;
     constructor(options) {
         this.options = options;
         this.workerId =
@@ -29,23 +30,18 @@ export class FileBackendCodexWorker {
                 `file-backend-codex:${hashText(options.providerInstanceId).slice(0, 12)}`;
         assertWorkerOptions(options);
         this.runner = options.runner ?? new NodeProcessRunner();
-        // SAFETY (iliya — data-loss fix): derive a PRIVATE workspace path under
-        // stateRootDir; do NOT fall back to `options.workspacePath`. The owned
-        // StableWorkerWorkspace `rm -rf`s its rootDir on dispose, so when the caller
-        // passes its real cwd as workspacePath (the agent-task-runner-cli does:
-        // `workspacePath: input.cwd`), disposing this worker DELETES the caller's
-        // working directory — observed wiping a whole repo checkout on a *failed*
-        // codex run (the dispose runs on the failure path too). The claude worker
-        // (file-backend-claude-worker.ts:161-168) already derives a private path for
-        // exactly this reason; this matches it. `options.workspacePath` (an existing
-        // caller checkout) must never be owned/deleted by the worker. Suggest also
-        // hardening StableWorkerWorkspace.dispose() to refuse paths it didn't create
-        // / outside the state+temp roots, as defense-in-depth.
         const defaultWorkspacePath = join(options.stateRootDir, "workspaces", hashText(this.workerId));
         this.ownedWorkspace = options.workspace
             ? null
-            : new StableWorkerWorkspace(defaultWorkspacePath);
-        this.workspace = options.workspace ?? this.ownedWorkspace;
+            : new StableWorkerWorkspace(defaultWorkspacePath, {
+                allowedRootDir: options.stateRootDir,
+            });
+        this.workspace =
+            options.workspace ??
+                (options.workspacePath
+                    ? new BorrowedRunTaskWorkspace(options.workspacePath, this.ownedWorkspace)
+                    : this.ownedWorkspace);
+        this.prewarmWorkspace = options.workspace ?? this.ownedWorkspace;
         this.observability = options.observability ?? new NullWorkerObservability();
         this.clock = options.clock ?? systemClock;
         const { sessionStore, leaseStore } = createLocalFileBackendRuntimeAdapters({
@@ -165,7 +161,7 @@ export class FileBackendCodexWorker {
             this.workerState = "failed";
             throw new SubscriptionWorkerError("subscription_worker_prewarm_failed", "Codex session is missing.");
         }
-        const workspace = await this.workspace.create({
+        const workspace = await this.prewarmWorkspace.create({
             purpose: "run-task",
             isolation: "temp-dir",
         });
@@ -344,6 +340,9 @@ function assertWorkerOptions(options) {
     }
     if (!options.codexBinaryPath.trim()) {
         throw new Error("file_backend_codex_binary_required");
+    }
+    if (options.workspace && options.workspacePath) {
+        throw new Error("file_backend_codex_workspace_conflict");
     }
 }
 function hashText(value) {

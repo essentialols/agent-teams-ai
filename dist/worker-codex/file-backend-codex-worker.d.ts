@@ -62,6 +62,7 @@ export declare class FileBackendCodexWorker implements SubscriptionWorker<FileBa
     private readonly sessionStore;
     private readonly runtime;
     private readonly ownedWorkspace;
+    private readonly prewarmWorkspace;
     constructor(options: FileBackendCodexWorkerOptions);
     get state(): SubscriptionWorkerState;
     start(): Promise<void>;

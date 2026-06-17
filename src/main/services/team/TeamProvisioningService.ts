@@ -27428,10 +27428,10 @@ export class TeamProvisioningService {
       return cached.rows;
     }
 
-    let rows = canUseCached ? cached.rows : null;
-    let runtimeProcessTableAvailable = canUseCached ? cached.rows !== null : false;
+    let rows = canUseCached && cached.rows ? cached.rows : null;
+    let runtimeProcessTableAvailable = rows != null;
     try {
-      if (!canUseCached) {
+      if (!rows) {
         rows =
           this.normalizeRuntimeProcessRowsForTelemetry(
             await this.withRuntimeTelemetryTimeout(

@@ -4830,6 +4830,50 @@ describe('TeamProvisioningService', () => {
       }
     });
 
+    it('retries WSL process rows when a Windows host telemetry read follows a cached failure', async () => {
+      const originalPlatform = process.platform;
+      Object.defineProperty(process, 'platform', {
+        value: 'win32',
+        configurable: true,
+      });
+      try {
+        const svc = new TeamProvisioningService();
+        vi.mocked(listRuntimeProcessTableForCurrentPlatform)
+          .mockRejectedValueOnce(new Error('wsl process table unavailable'))
+          .mockResolvedValueOnce([{ pid: 111, ppid: 1, command: 'wsl-runtime' }]);
+        vi.mocked(listWindowsProcessTable).mockResolvedValueOnce([
+          { pid: 333, ppid: 1, command: 'opencode.exe serve' },
+        ]);
+
+        const failedRows = await (svc as any).readRuntimeProcessRowsForUsageSnapshot(
+          'runtime-team'
+        );
+        const recoveredRows = await (svc as any).readRuntimeProcessRowsForUsageSnapshot(
+          'runtime-team',
+          {
+            includeWindowsHostRows: true,
+          }
+        );
+
+        expect(failedRows).toBeNull();
+        expect(listRuntimeProcessTableForCurrentPlatform).toHaveBeenCalledTimes(2);
+        expect(recoveredRows).toEqual([
+          { pid: 111, ppid: 1, command: 'wsl-runtime', runtimeTelemetrySource: 'wsl' },
+          {
+            pid: 333,
+            ppid: 1,
+            command: 'opencode.exe serve',
+            runtimeTelemetrySource: 'windows-host',
+          },
+        ]);
+      } finally {
+        Object.defineProperty(process, 'platform', {
+          value: originalPlatform,
+          configurable: true,
+        });
+      }
+    });
+
     it('does not mix WSL and Windows PID namespaces when building telemetry trees on Windows', () => {
       const originalPlatform = process.platform;
       Object.defineProperty(process, 'platform', {
@@ -5024,7 +5068,9 @@ describe('TeamProvisioningService', () => {
       try {
         const snapshot = await svc.getTeamAgentRuntimeSnapshot('runtime-team');
 
-        expect(listRuntimeProcessTableForCurrentPlatform).toHaveBeenCalledTimes(1);
+        expect(listRuntimeProcessTableForCurrentPlatform).toHaveBeenCalledTimes(
+          process.platform === 'win32' ? 2 : 1
+        );
         expect(snapshot.members['team-lead']).toMatchObject({
           alive: true,
           pid: 111,

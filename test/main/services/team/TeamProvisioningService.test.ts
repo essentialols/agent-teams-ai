@@ -5025,6 +5025,115 @@ describe('TeamProvisioningService', () => {
       });
     });
 
+    it('throttles runtime resource history samples within the minimum interval', () => {
+      const svc = new TeamProvisioningService();
+
+      const firstHistory = (svc as any).recordAgentRuntimeResourceSample({
+        teamName: 'runtime-team',
+        memberName: 'alice',
+        timestamp: '2026-04-24T12:00:00.000Z',
+        cpuPercent: 4,
+        rssBytes: 100_000_000,
+        pidSource: 'tmux_child',
+        pid: 222,
+      });
+      const throttledHistory = (svc as any).recordAgentRuntimeResourceSample({
+        teamName: 'runtime-team',
+        memberName: 'alice',
+        timestamp: '2026-04-24T12:00:01.000Z',
+        cpuPercent: 99,
+        rssBytes: 999_000_000,
+        pidSource: 'tmux_child',
+        pid: 222,
+      });
+
+      expect(firstHistory).toEqual(throttledHistory);
+      expect(throttledHistory).toHaveLength(1);
+      expect(throttledHistory?.[0]).toMatchObject({
+        cpuPercent: 4,
+        rssBytes: 100_000_000,
+      });
+    });
+
+    it('ignores invalid runtime resource metrics while preserving existing history', () => {
+      const svc = new TeamProvisioningService();
+
+      const firstHistory = (svc as any).recordAgentRuntimeResourceSample({
+        teamName: 'runtime-team',
+        memberName: 'alice',
+        timestamp: '2026-04-24T12:00:00.000Z',
+        cpuPercent: 4,
+        rssBytes: 100_000_000,
+        pidSource: 'tmux_child',
+        pid: 222,
+      });
+      const invalidHistory = (svc as any).recordAgentRuntimeResourceSample({
+        teamName: 'runtime-team',
+        memberName: 'alice',
+        timestamp: '2026-04-24T12:01:00.000Z',
+        cpuPercent: Number.NaN,
+        rssBytes: -1,
+        pidSource: 'tmux_child',
+        pid: 222,
+      });
+      const missingHistory = (svc as any).recordAgentRuntimeResourceSample({
+        teamName: 'runtime-team',
+        memberName: 'bob',
+        timestamp: '2026-04-24T12:01:00.000Z',
+        cpuPercent: Number.NaN,
+        rssBytes: -1,
+        pidSource: 'tmux_child',
+        pid: 333,
+      });
+
+      expect(invalidHistory).toEqual(firstHistory);
+      expect(missingHistory).toBeUndefined();
+    });
+
+    it('prunes inactive runtime resource history keys', () => {
+      const svc = new TeamProvisioningService();
+      const activeKeys = new Set<string>();
+
+      (svc as any).recordAgentRuntimeResourceSample({
+        teamName: 'runtime-team',
+        memberName: 'alice',
+        timestamp: '2026-04-24T12:00:00.000Z',
+        cpuPercent: 4,
+        rssBytes: 100_000_000,
+        pidSource: 'tmux_child',
+        pid: 222,
+        activeKeys,
+      });
+      (svc as any).recordAgentRuntimeResourceSample({
+        teamName: 'runtime-team',
+        memberName: 'bob',
+        timestamp: '2026-04-24T12:00:00.000Z',
+        cpuPercent: 5,
+        rssBytes: 200_000_000,
+        pidSource: 'agent_process_table',
+        pid: 333,
+      });
+
+      (svc as any).pruneAgentRuntimeResourceHistory('runtime-team', activeKeys);
+      const aliceHistory = (svc as any).recordAgentRuntimeResourceSample({
+        teamName: 'runtime-team',
+        memberName: 'alice',
+        timestamp: '2026-04-24T12:01:00.000Z',
+        pidSource: 'tmux_child',
+        pid: 222,
+      });
+      const bobHistory = (svc as any).recordAgentRuntimeResourceSample({
+        teamName: 'runtime-team',
+        memberName: 'bob',
+        timestamp: '2026-04-24T12:01:00.000Z',
+        pidSource: 'agent_process_table',
+        pid: 333,
+      });
+
+      expect(aliceHistory).toHaveLength(1);
+      expect(bobHistory).toBeUndefined();
+    });
+
     it('does not send legacy process backend pane markers to tmux liveness lookup', async () => {
       const svc = new TeamProvisioningService();
       (svc as any).configReader = {

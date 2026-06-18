@@ -33,9 +33,11 @@ function nonNegativeFiniteNumber(value: unknown): number | undefined {
 }
 
 function positiveInteger(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0
-    ? Math.floor(value)
-    : undefined;
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return undefined;
+  }
+  const integer = Math.floor(value);
+  return integer > 0 ? integer : undefined;
 }
 
 export class TeamAgentRuntimeResourceHistory {
@@ -50,14 +52,7 @@ export class TeamAgentRuntimeResourceHistory {
     pidSource?: TeamAgentRuntimePidSource;
   }): string | null {
     const memberName = params.memberName.trim();
-    const usagePid =
-      typeof params.pid === 'number' && Number.isFinite(params.pid) && params.pid > 0
-        ? params.pid
-        : typeof params.runtimePid === 'number' &&
-            Number.isFinite(params.runtimePid) &&
-            params.runtimePid > 0
-          ? params.runtimePid
-          : null;
+    const usagePid = positiveInteger(params.pid) ?? positiveInteger(params.runtimePid);
     if (!memberName || usagePid == null) {
       return null;
     }
@@ -80,6 +75,8 @@ export class TeamAgentRuntimeResourceHistory {
     const childCpuPercent = nonNegativeFiniteNumber(params.childCpuPercent);
     const childRssBytes = nonNegativeFiniteNumber(params.childRssBytes);
     const processCount = positiveInteger(params.processCount);
+    const pid = positiveInteger(params.pid);
+    const runtimePid = positiveInteger(params.runtimePid);
     let historyByKey = this.historyByTeam.get(params.teamName);
     if (!historyByKey) {
       historyByKey = new Map<string, TeamAgentRuntimeResourceSample[]>();
@@ -104,8 +101,8 @@ export class TeamAgentRuntimeResourceHistory {
       ...(params.runtimeLoadScope ? { runtimeLoadScope: params.runtimeLoadScope } : {}),
       ...(params.runtimeLoadTruncated ? { runtimeLoadTruncated: true } : {}),
       ...(params.pidSource ? { pidSource: params.pidSource } : {}),
-      ...(params.pid ? { pid: params.pid } : {}),
-      ...(params.runtimePid ? { runtimePid: params.runtimePid } : {}),
+      ...(pid != null ? { pid } : {}),
+      ...(runtimePid != null ? { runtimePid } : {}),
     };
     const lastSample = existingHistory.at(-1);
     const lastSampleMs = lastSample ? Date.parse(lastSample.timestamp) : Number.NaN;
@@ -118,7 +115,10 @@ export class TeamAgentRuntimeResourceHistory {
     if (sampledRecently) {
       return existingHistory.map((entry) => ({ ...entry }));
     }
-    const nextHistory = [...existingHistory, sample].slice(-this.options.historyLimit);
+    const historyLimit = Number.isFinite(this.options.historyLimit)
+      ? Math.max(0, Math.floor(this.options.historyLimit))
+      : 0;
+    const nextHistory = historyLimit === 0 ? [] : [...existingHistory, sample].slice(-historyLimit);
     historyByKey.set(key, nextHistory);
     return nextHistory.map((entry) => ({ ...entry }));
   }

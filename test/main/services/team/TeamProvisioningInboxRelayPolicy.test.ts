@@ -37,9 +37,14 @@ describe('TeamProvisioningInboxRelayPolicy', () => {
       { ...baseMessage, messageId: 'normal-older', timestamp: '2026-04-24T12:01:00.000Z' },
     ];
 
-    expect(
-      messages.sort(compareOpenCodeInboxRelayMessagesByPriority).map((m) => m.messageId)
-    ).toEqual(['nudge', 'system', 'normal-older', 'normal-newer']);
+    const sorted = [...messages].sort(compareOpenCodeInboxRelayMessagesByPriority);
+
+    expect(sorted.map((m) => m.messageId)).toEqual([
+      'nudge',
+      'system',
+      'normal-older',
+      'normal-newer',
+    ]);
   });
 
   it('uses member and lead relay priorities without system notification boost', () => {
@@ -59,15 +64,12 @@ describe('TeamProvisioningInboxRelayPolicy', () => {
       { ...baseMessage, messageId: 'normal', timestamp: '2026-04-24T12:00:00.000Z' },
     ];
 
-    expect(
-      messages.sort(compareMemberInboxRelayMessagesByPriority).map((m) => m.messageId)
-    ).toEqual(['nudge', 'normal', 'system']);
-    expect(getLeadInboxRelayPriority(messages[0])).toBe(30);
-    expect(messages.sort(compareLeadInboxRelayMessagesByPriority).map((m) => m.messageId)).toEqual([
-      'nudge',
-      'normal',
-      'system',
-    ]);
+    const memberSorted = [...messages].sort(compareMemberInboxRelayMessagesByPriority);
+    const leadSorted = [...messages].sort(compareLeadInboxRelayMessagesByPriority);
+
+    expect(memberSorted.map((m) => m.messageId)).toEqual(['nudge', 'normal', 'system']);
+    expect(getLeadInboxRelayPriority(memberSorted[0])).toBe(30);
+    expect(leadSorted.map((m) => m.messageId)).toEqual(['nudge', 'normal', 'system']);
   });
 
   it('falls back to message id when relay timestamps are equal or invalid', () => {
@@ -76,9 +78,9 @@ describe('TeamProvisioningInboxRelayPolicy', () => {
       { ...baseMessage, messageId: 'a', timestamp: 'invalid' },
     ];
 
-    expect(
-      messages.sort(compareOpenCodeInboxRelayMessagesByPriority).map((m) => m.messageId)
-    ).toEqual(['a', 'b']);
+    const sorted = [...messages].sort(compareOpenCodeInboxRelayMessagesByPriority);
+
+    expect(sorted.map((m) => m.messageId)).toEqual(['a', 'b']);
   });
 
   it('suppresses unverified lead relay state claims but keeps ordinary text', () => {

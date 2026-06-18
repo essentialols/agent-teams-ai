@@ -19,6 +19,8 @@ describe('TeamRuntimeTelemetry', () => {
       normalizeRuntimeProcessRowsForTelemetry(
         [
           { pid: '111', ppid: '1', command: ' node app.js ', memory: '123', cpu: '4.5' },
+          { pid: '111.5', ppid: '1', command: 'fractional-pid' },
+          { pid: 222, ppid: 1.5, command: 'fractional-ppid' },
           { pid: -1, ppid: 1, command: 'bad' },
           { pid: 222, ppid: 111, command: ' ' },
         ],

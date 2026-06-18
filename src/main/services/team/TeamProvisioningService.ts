@@ -16,6 +16,7 @@ import {
   resolveCodexFastMode,
   resolveCodexRuntimeSelection,
 } from '@features/codex-runtime-profile/main';
+import { type RuntimeTurnSettledProvider } from '@features/member-work-sync/main';
 import {
   buildOpenCodeSecondaryLaneId,
   buildPlannedMemberLaneIdentity,
@@ -543,7 +544,6 @@ import type {
   TeamRuntimePrepareResult,
   TeamRuntimeStopInput,
 } from './runtime';
-import type { RuntimeTurnSettledProvider } from '@features/member-work-sync/main';
 
 export type { RuntimeBootstrapMemberMcpLaunchConfig } from './provisioning/TeamProvisioningBootstrapSpec';
 export { buildDirectTmuxRestartEnvAssignments } from './provisioning/TeamProvisioningDirectRestart';

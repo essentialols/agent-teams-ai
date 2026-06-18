@@ -1,4 +1,7 @@
-import { commandArgEquals, extractCliArgValues } from './TeamRuntimeLivenessResolver';
+import {
+  commandArgEquals,
+  extractCliArgValues,
+} from '@main/services/team/TeamRuntimeLivenessResolver';
 
 import type { RuntimeProcessTableRow } from '@features/tmux-installer/main';
 import type { TeamAgentRuntimeLoadScope } from '@shared/types/team';
@@ -88,8 +91,10 @@ export function normalizeRuntimeProcessRowsForTelemetry(
       continue;
     }
     const candidate = row as Partial<RuntimeTelemetryProcessTableRow>;
-    const pid = normalizeRuntimeTelemetryNumber(candidate.pid);
-    const ppid = normalizeRuntimeTelemetryNumber(candidate.ppid);
+    const rawPid = normalizeRuntimeTelemetryNumber(candidate.pid);
+    const rawPpid = normalizeRuntimeTelemetryNumber(candidate.ppid);
+    const pid = Number.isInteger(rawPid) ? rawPid : undefined;
+    const ppid = Number.isInteger(rawPpid) ? rawPpid : undefined;
     const command = typeof candidate.command === 'string' ? candidate.command.trim() : '';
     if (pid != null && pid > 0 && ppid != null && ppid >= 0 && command.length > 0) {
       const runtimeTelemetrySource =
@@ -101,8 +106,8 @@ export function normalizeRuntimeProcessRowsForTelemetry(
           : undefined);
       const usageStats = normalizeRuntimeProcessUsageStats(candidate);
       normalizedRows.push({
-        pid: Math.floor(pid),
-        ppid: Math.floor(ppid),
+        pid,
+        ppid,
         command,
         ...(usageStats ?? {}),
         ...(runtimeTelemetrySource ? { runtimeTelemetrySource } : {}),

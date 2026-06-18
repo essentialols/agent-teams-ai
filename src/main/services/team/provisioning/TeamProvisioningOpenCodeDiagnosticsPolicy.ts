@@ -192,9 +192,8 @@ export function isOpenCodeModelVerificationTimeoutDiagnostic(
 export function selectOpenCodePrepareProviderDiagnostic(
   prepare: Pick<TeamRuntimePrepareResult, 'diagnostics' | 'warnings'>
 ): string | undefined {
-  return [...prepare.diagnostics, ...prepare.warnings].find(
-    (entry) =>
-      isOpenCodeBridgeNoOutputDiagnostic(entry) || isOpenCodeWindowsAccessDeniedDiagnostic(entry)
+  return [...prepare.diagnostics, ...prepare.warnings].find((entry) =>
+    looksLikeOpenCodeProviderPrepareDiagnostic(entry)
   );
 }
 

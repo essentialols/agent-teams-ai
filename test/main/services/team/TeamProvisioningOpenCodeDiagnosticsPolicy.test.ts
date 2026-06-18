@@ -170,6 +170,14 @@ describe('TeamProvisioningOpenCodeDiagnosticsPolicy', () => {
 
     expect(selectOpenCodePrepareProviderDiagnostic(prepare)).toBe('bridge stdout was empty');
     expect(selectOpenCodeModelPreparePrimaryReason(prepare)).toBe('bridge stdout was empty');
+
+    const mcpPrepare = {
+      ...prepare,
+      warnings: ['mcp_unavailable'],
+    } satisfies Extract<TeamRuntimePrepareResult, { ok: false }>;
+
+    expect(selectOpenCodePrepareProviderDiagnostic(mcpPrepare)).toBe('mcp_unavailable');
+    expect(selectOpenCodeModelPreparePrimaryReason(mcpPrepare)).toBe('mcp_unavailable');
   });
 
   it('defers retryable busy prepare failures without hiding model verification timeouts', () => {

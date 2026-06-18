@@ -1,10 +1,16 @@
-import { TeamAgentRuntimeResourceHistory } from '@main/services/team/TeamAgentRuntimeResourceHistory';
+import {
+  TeamAgentRuntimeResourceHistory,
+  type TeamAgentRuntimeResourceHistoryOptions,
+} from '@main/services/team/TeamAgentRuntimeResourceHistory';
 import { describe, expect, it } from 'vitest';
 
-function createHistory(): TeamAgentRuntimeResourceHistory {
+function createHistory(
+  overrides: Partial<TeamAgentRuntimeResourceHistoryOptions> = {}
+): TeamAgentRuntimeResourceHistory {
   return new TeamAgentRuntimeResourceHistory({
     historyLimit: 3,
     minSampleIntervalMs: 30_000,
+    ...overrides,
   });
 }
 
@@ -25,6 +31,32 @@ describe('TeamAgentRuntimeResourceHistory', () => {
     );
     expect(history.buildKey({ memberName: ' ', pid: 222 })).toBeNull();
     expect(history.buildKey({ memberName: 'alice' })).toBeNull();
+  });
+
+  it('normalizes fractional pids before keying and storing samples', () => {
+    const history = createHistory();
+
+    expect(
+      history.buildKey({
+        memberName: 'alice',
+        pid: 222.9,
+        runtimePid: 333.9,
+        pidSource: 'agent_process_table',
+      })
+    ).toBe(['alice', 222, 'agent_process_table'].join('\0'));
+    expect(history.buildKey({ memberName: 'alice', pid: 0.9 })).toBeNull();
+
+    const samples = history.record({
+      teamName: 'runtime-team',
+      memberName: 'alice',
+      timestamp: '2026-04-24T12:00:00.000Z',
+      cpuPercent: 4,
+      rssBytes: 100,
+      pid: 222.9,
+      runtimePid: 333.9,
+    });
+
+    expect(samples).toEqual([expect.objectContaining({ pid: 222, runtimePid: 333 })]);
   });
 
   it('caps history and keeps defensive return copies', () => {
@@ -60,6 +92,29 @@ describe('TeamAgentRuntimeResourceHistory', () => {
       expect.objectContaining({ cpuPercent: 3, rssBytes: 103 }),
       expect.objectContaining({ cpuPercent: 4, rssBytes: 104 }),
     ]);
+  });
+
+  it('keeps history bounded when historyLimit is zero', () => {
+    const history = createHistory({ historyLimit: 0 });
+
+    const samples = history.record({
+      teamName: 'runtime-team',
+      memberName: 'alice',
+      timestamp: '2026-04-24T12:00:00.000Z',
+      cpuPercent: 4,
+      rssBytes: 100,
+      pid: 222,
+    });
+
+    expect(samples).toEqual([]);
+    expect(
+      history.record({
+        teamName: 'runtime-team',
+        memberName: 'alice',
+        timestamp: '2026-04-24T12:01:00.000Z',
+        pid: 222,
+      })
+    ).toBeUndefined();
   });
 
   it('throttles samples inside the minimum interval', () => {

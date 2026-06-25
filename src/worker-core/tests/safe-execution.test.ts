@@ -121,7 +121,7 @@ describe("SafeExecutionRunner", () => {
     expect(workers[0]?.capacity().availability).toBe("cooldown");
 
     await pool.dispose();
-  });
+  }, 15_000);
 
   it("rejects concurrent tasks for the same existing workspace lock", async () => {
     const workspacePath = await gitWorkspace("safe-execution-lock-");

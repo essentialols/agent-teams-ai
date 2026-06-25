@@ -66,6 +66,7 @@ export type FileBackendCodexWorkerOptions = {
   readonly maxSessionAgeMs?: number;
   readonly refreshConflictRetryMaxMs?: number;
   readonly sourceEnv?: Readonly<Record<string, string | undefined>>;
+  readonly executionEngine?: CodexWorkerExecutionEngine;
   readonly appServerProcessFactory?: CodexAppServerProcessFactory;
   readonly executionProfile?: CodexExecutionProfile;
   readonly cleanThreadPrewarm?: boolean;
@@ -77,6 +78,8 @@ export type FileBackendCodexWorkerOptions = {
   readonly capacityAccountId?: string;
   readonly capacityPolicy?: CodexWorkerCapacityPolicy;
 };
+
+export type CodexWorkerExecutionEngine = "app-server" | "packaged-exec";
 
 export type CodexWorkerCapacityPolicy = {
   readonly softMaxRunsPerWindow?: number;
@@ -171,25 +174,28 @@ export class FileBackendCodexWorker implements CapacityAwareSubscriptionWorker<
       refreshMode: "lazy-refresh",
     });
 
-    const fallback = new PackagedCodexJsonExecutionEngine({
+    const packagedExec = new PackagedCodexJsonExecutionEngine({
       codexBinaryPath: options.codexBinaryPath,
       ...(options.sourceEnv ? { sourceEnv: options.sourceEnv } : {}),
       ...(options.taskTimeoutMs ? { timeoutMs: options.taskTimeoutMs } : {}),
     });
+    const executionEngine = options.executionEngine ?? "app-server";
     this.agentDriver = new CodexJsonAgentDriver({
-      engine: new CodexAppServerExecutionEngine({
-        codexBinaryPath: options.codexBinaryPath,
-        ...(options.sourceEnv ? { sourceEnv: options.sourceEnv } : {}),
-        ...(options.taskTimeoutMs ? { timeoutMs: options.taskTimeoutMs } : {}),
-        ...(options.appServerProcessFactory
-          ? { processFactory: options.appServerProcessFactory }
-          : {}),
-        ...(options.executionProfile
-          ? { executionProfile: options.executionProfile }
-          : {}),
-        cleanThreadPrewarm: options.cleanThreadPrewarm ?? true,
-        fallback,
-      }),
+      engine: executionEngine === "packaged-exec"
+        ? packagedExec
+        : new CodexAppServerExecutionEngine({
+            codexBinaryPath: options.codexBinaryPath,
+            ...(options.sourceEnv ? { sourceEnv: options.sourceEnv } : {}),
+            ...(options.taskTimeoutMs ? { timeoutMs: options.taskTimeoutMs } : {}),
+            ...(options.appServerProcessFactory
+              ? { processFactory: options.appServerProcessFactory }
+              : {}),
+            ...(options.executionProfile
+              ? { executionProfile: options.executionProfile }
+              : {}),
+            cleanThreadPrewarm: options.cleanThreadPrewarm ?? true,
+            fallback: packagedExec,
+          }),
       sessionMaterializer: new CodexWorkerCacheSessionPoolMaterializer({
         cacheKey: `codex:${options.providerInstanceId}`,
         slots: options.sessionCacheSlots ?? 1,
@@ -699,6 +705,13 @@ function assertWorkerOptions(options: FileBackendCodexWorkerOptions): void {
   }
   if (options.workspace && options.workspacePath) {
     throw new Error("file_backend_codex_workspace_conflict");
+  }
+  if (
+    options.executionEngine !== undefined &&
+    options.executionEngine !== "app-server" &&
+    options.executionEngine !== "packaged-exec"
+  ) {
+    throw new Error("file_backend_codex_execution_engine_invalid");
   }
   const softMaxRuns = options.capacityPolicy?.softMaxRunsPerWindow;
   if (

@@ -64,25 +64,28 @@ export class FileBackendCodexWorker {
             ...(options.sourceEnv ? { sourceEnv: options.sourceEnv } : {}),
             refreshMode: "lazy-refresh",
         });
-        const fallback = new PackagedCodexJsonExecutionEngine({
+        const packagedExec = new PackagedCodexJsonExecutionEngine({
             codexBinaryPath: options.codexBinaryPath,
             ...(options.sourceEnv ? { sourceEnv: options.sourceEnv } : {}),
             ...(options.taskTimeoutMs ? { timeoutMs: options.taskTimeoutMs } : {}),
         });
+        const executionEngine = options.executionEngine ?? "app-server";
         this.agentDriver = new CodexJsonAgentDriver({
-            engine: new CodexAppServerExecutionEngine({
-                codexBinaryPath: options.codexBinaryPath,
-                ...(options.sourceEnv ? { sourceEnv: options.sourceEnv } : {}),
-                ...(options.taskTimeoutMs ? { timeoutMs: options.taskTimeoutMs } : {}),
-                ...(options.appServerProcessFactory
-                    ? { processFactory: options.appServerProcessFactory }
-                    : {}),
-                ...(options.executionProfile
-                    ? { executionProfile: options.executionProfile }
-                    : {}),
-                cleanThreadPrewarm: options.cleanThreadPrewarm ?? true,
-                fallback,
-            }),
+            engine: executionEngine === "packaged-exec"
+                ? packagedExec
+                : new CodexAppServerExecutionEngine({
+                    codexBinaryPath: options.codexBinaryPath,
+                    ...(options.sourceEnv ? { sourceEnv: options.sourceEnv } : {}),
+                    ...(options.taskTimeoutMs ? { timeoutMs: options.taskTimeoutMs } : {}),
+                    ...(options.appServerProcessFactory
+                        ? { processFactory: options.appServerProcessFactory }
+                        : {}),
+                    ...(options.executionProfile
+                        ? { executionProfile: options.executionProfile }
+                        : {}),
+                    cleanThreadPrewarm: options.cleanThreadPrewarm ?? true,
+                    fallback: packagedExec,
+                }),
             sessionMaterializer: new CodexWorkerCacheSessionPoolMaterializer({
                 cacheKey: `codex:${options.providerInstanceId}`,
                 slots: options.sessionCacheSlots ?? 1,
@@ -520,6 +523,11 @@ function assertWorkerOptions(options) {
     }
     if (options.workspace && options.workspacePath) {
         throw new Error("file_backend_codex_workspace_conflict");
+    }
+    if (options.executionEngine !== undefined &&
+        options.executionEngine !== "app-server" &&
+        options.executionEngine !== "packaged-exec") {
+        throw new Error("file_backend_codex_execution_engine_invalid");
     }
     const softMaxRuns = options.capacityPolicy?.softMaxRunsPerWindow;
     if (softMaxRuns !== undefined &&

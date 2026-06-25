@@ -21,6 +21,7 @@ export type FileBackendCodexWorkerOptions = {
     readonly maxSessionAgeMs?: number;
     readonly refreshConflictRetryMaxMs?: number;
     readonly sourceEnv?: Readonly<Record<string, string | undefined>>;
+    readonly executionEngine?: CodexWorkerExecutionEngine;
     readonly appServerProcessFactory?: CodexAppServerProcessFactory;
     readonly executionProfile?: CodexExecutionProfile;
     readonly cleanThreadPrewarm?: boolean;
@@ -32,6 +33,7 @@ export type FileBackendCodexWorkerOptions = {
     readonly capacityAccountId?: string;
     readonly capacityPolicy?: CodexWorkerCapacityPolicy;
 };
+export type CodexWorkerExecutionEngine = "app-server" | "packaged-exec";
 export type CodexWorkerCapacityPolicy = {
     readonly softMaxRunsPerWindow?: number;
     readonly windowMs?: number;

@@ -13,7 +13,7 @@ import {
   accountCapacityAwareWorkerFactory,
 } from "@vioxen/subscription-runtime/worker-core";
 import { describe, expect, it } from "vitest";
-import { FileBackendCodexWorker } from "../index";
+import { FileBackendCodexSafeExecutor, FileBackendCodexWorker } from "../index";
 import { NodeProcessRunner } from "../node-process-runner";
 
 const validAuthJson = codexAuthJson("refresh-token");
@@ -106,6 +106,85 @@ describe("FileBackendCodexWorker", () => {
     } finally {
       await worker.dispose();
       await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects unknown Codex execution engines", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "codex-worker-"));
+
+    try {
+      expect(() => new FileBackendCodexWorker({
+        providerInstanceId: "codex:test",
+        stateRootDir: rootDir,
+        codexBinaryPath: "codex",
+        encryptionKey: new Uint8Array(32).fill(12),
+        executionEngine: "unknown" as never,
+      })).toThrow("file_backend_codex_execution_engine_invalid");
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("runs coding work through packaged Codex exec when selected", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "codex-worker-"));
+    const callerWorkspace = await mkdtemp(join(tmpdir(), "codex-exec-workspace-"));
+    const appServer = new FakeAppServerFactory();
+    const runner = new StaticRunner({
+      exitCode: 0,
+      stdout: `${JSON.stringify({
+        type: "agent_message",
+        message: "packaged exec output",
+      })}\n`,
+      stderr: "",
+    });
+    const worker = new FileBackendCodexWorker({
+      providerInstanceId: "codex:packaged-exec",
+      stateRootDir: rootDir,
+      workspacePath: callerWorkspace,
+      codexBinaryPath: "codex",
+      model: "gpt-test",
+      encryptionKey: new Uint8Array(32).fill(11),
+      executionEngine: "packaged-exec",
+      appServerProcessFactory: appServer.create,
+      runner,
+    });
+
+    try {
+      await worker.start();
+      await worker.seedCodexAuthJson(validAuthJson);
+      await expect(worker.prewarm()).resolves.toMatchObject({
+        status: "ready",
+        details: {
+          engine: "packaged-json",
+          engineReusable: "false",
+        },
+      });
+      await expect(
+        worker.run({
+          prompt: "make a coding edit",
+          controls: { permissionMode: "allow-edits" },
+        }),
+      ).resolves.toMatchObject({
+        outputText: "packaged exec output",
+      });
+
+      expect(appServer.spawnCount).toBe(0);
+      expect(runner.lastArgs).toEqual(
+        expect.arrayContaining([
+          "exec",
+          "--json",
+          "--model",
+          "gpt-test",
+          "--sandbox",
+          "workspace-write",
+        ]),
+      );
+      expect(runner.lastCwd).toBe(callerWorkspace);
+      expect(runner.lastStdin).toContain("make a coding edit");
+    } finally {
+      await worker.dispose();
+      await rm(rootDir, { recursive: true, force: true });
+      await rm(callerWorkspace, { recursive: true, force: true });
     }
   });
 
@@ -352,6 +431,327 @@ describe("FileBackendCodexWorker", () => {
       await rm(rootDir, { recursive: true, force: true });
     }
   });
+
+  it("self-switches safe Codex work to another account with a continuation packet", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "codex-safe-executor-"));
+    const workspacePath = await mkdtemp(join(tmpdir(), "codex-safe-workspace-"));
+    const clock = {
+      now: () => new Date("2026-05-31T00:05:00.000Z"),
+      monotonicMs: () => performance.now(),
+    };
+    const appServers = [
+      new FakeAppServerFactory({
+        emitTopLevelErrorOnTurn: "You've hit your usage limit.",
+      }),
+      new FakeAppServerFactory(),
+    ];
+    const executor = new FileBackendCodexSafeExecutor({
+      stateRootDir: rootDir,
+      workspacePath,
+      accounts: appServers.map((appServer, index) => ({
+        codexAuthJson: codexAuthJson(`safe-account-${index + 1}`),
+        worker: {
+          providerInstanceId: `codex-safe-account-${index + 1}`,
+          stateRootDir: rootDir,
+          codexBinaryPath: "codex",
+          encryptionKey: new Uint8Array(32).fill(index + 20),
+          appServerProcessFactory: appServer.create,
+          runner: new StaticRunner({
+            exitCode: index === 0 ? 1 : 0,
+            stdout: "",
+            stderr: index === 0 ? "You've hit your usage limit." : "",
+          }),
+          capacityPolicy: {
+            quotaCooldownMs: 60_000,
+          },
+          clock,
+        },
+      })),
+      clock,
+    });
+
+    try {
+      const result = await executor.run({
+        taskId: "codex-safe-switch-task",
+        prompt: "Implement the safe task.",
+        controls: { permissionMode: "allow-edits" },
+      });
+
+      if (result.status !== "completed") {
+        throw new Error(`expected completed: ${result.reason}:${result.safeMessage}`);
+      }
+      expect(result.replayed).toBe(false);
+      expect(result.task.effectMode).toBe("workspace_patch");
+      expect(result.attempts).toHaveLength(2);
+      expect(result.attempts[0]?.failureReason).toBe("quota_limited");
+      expect(appServers[0]!.prompts).toEqual(["Implement the safe task."]);
+      expect(appServers[1]!.prompts[0]).toContain("Continue the same task");
+      expect(appServers[1]!.prompts[0]).toContain("Do not restart from scratch");
+      expect(appServers[0]!.threadCwds).toContain(workspacePath);
+      expect(appServers[1]!.threadCwds).toContain(workspacePath);
+
+      const replayed = await executor.run({
+        taskId: "codex-safe-switch-task",
+        prompt: "Implement the safe task.",
+        controls: { permissionMode: "allow-edits" },
+      });
+      expect(replayed.status).toBe("completed");
+      if (replayed.status !== "completed") throw new Error("expected replay");
+      expect(replayed.replayed).toBe(true);
+      expect(appServers[1]!.prompts).toHaveLength(1);
+    } finally {
+      await executor.dispose();
+      await rm(rootDir, { recursive: true, force: true });
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it("cycles safe Codex work through accounts for three rounds by default", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "codex-safe-cycle-"));
+    const workspacePath = await mkdtemp(join(tmpdir(), "codex-safe-cycle-workspace-"));
+    const clock = {
+      now: () => new Date("2026-05-31T00:05:00.000Z"),
+      monotonicMs: () => performance.now(),
+    };
+    const appServers = [
+      new FakeAppServerFactory({
+        emitTopLevelErrorOnTurn: "You've hit your usage limit.",
+      }),
+      new FakeAppServerFactory({
+        emitTopLevelErrorOnTurn: "You've hit your usage limit.",
+      }),
+    ];
+    const executor = new FileBackendCodexSafeExecutor({
+      stateRootDir: rootDir,
+      workspacePath,
+      accounts: appServers.map((appServer, index) => ({
+        codexAuthJson: codexAuthJson(`cycle-account-${index + 1}`),
+        worker: {
+          providerInstanceId: `codex-cycle-account-${index + 1}`,
+          stateRootDir: rootDir,
+          codexBinaryPath: "codex",
+          encryptionKey: new Uint8Array(32).fill(index + 30),
+          appServerProcessFactory: appServer.create,
+          runner: new StaticRunner({
+            exitCode: 1,
+            stdout: "",
+            stderr: "You've hit your usage limit.",
+          }),
+          capacityPolicy: {
+            quotaCooldownMs: 0,
+          },
+          clock,
+        },
+      })),
+      clock,
+    });
+
+    try {
+      const result = await executor.run({
+        taskId: "codex-safe-cycle-default-task",
+        prompt: "Implement the safe cyclic task.",
+        controls: { permissionMode: "allow-edits" },
+      });
+
+      expect(result.status).toBe("partial");
+      if (result.status !== "partial") throw new Error("expected partial");
+      expect(result.attempts).toHaveLength(6);
+      expect(result.reason).toBe("quota_limited");
+      expect(result.safeMessage).toBe("Safe execution has no attempts remaining.");
+      expect(result.attempts.map((attempt) => attempt.failureReason)).toEqual([
+        "quota_limited",
+        "quota_limited",
+        "quota_limited",
+        "quota_limited",
+        "quota_limited",
+        "quota_limited",
+      ]);
+      expect(appServers[0]!.prompts).toHaveLength(3);
+      expect(appServers[1]!.prompts).toHaveLength(3);
+      expect(appServers[0]!.prompts[0]).toBe("Implement the safe cyclic task.");
+      expect(appServers[1]!.prompts[0]).toContain("Continue the same task");
+    } finally {
+      await executor.dispose();
+      await rm(rootDir, { recursive: true, force: true });
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it("allows safe Codex account cycles to be bounded per executor", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "codex-safe-cycle-one-"));
+    const workspacePath = await mkdtemp(join(tmpdir(), "codex-safe-cycle-one-workspace-"));
+    const clock = {
+      now: () => new Date("2026-05-31T00:05:00.000Z"),
+      monotonicMs: () => performance.now(),
+    };
+    const appServers = [
+      new FakeAppServerFactory({
+        emitTopLevelErrorOnTurn: "You've hit your usage limit.",
+      }),
+      new FakeAppServerFactory({
+        emitTopLevelErrorOnTurn: "You've hit your usage limit.",
+      }),
+    ];
+    const executor = new FileBackendCodexSafeExecutor({
+      stateRootDir: rootDir,
+      workspacePath,
+      maxAccountCycles: 1,
+      accounts: appServers.map((appServer, index) => ({
+        codexAuthJson: codexAuthJson(`single-cycle-account-${index + 1}`),
+        worker: {
+          providerInstanceId: `codex-single-cycle-account-${index + 1}`,
+          stateRootDir: rootDir,
+          codexBinaryPath: "codex",
+          encryptionKey: new Uint8Array(32).fill(index + 40),
+          appServerProcessFactory: appServer.create,
+          runner: new StaticRunner({
+            exitCode: 1,
+            stdout: "",
+            stderr: "You've hit your usage limit.",
+          }),
+          capacityPolicy: {
+            quotaCooldownMs: 0,
+          },
+          clock,
+        },
+      })),
+      clock,
+    });
+
+    try {
+      const result = await executor.run({
+        taskId: "codex-safe-cycle-one-task",
+        prompt: "Implement the one-cycle task.",
+        controls: { permissionMode: "allow-edits" },
+      });
+
+      expect(result.status).toBe("partial");
+      expect(result.attempts).toHaveLength(2);
+      expect(appServers[0]!.prompts).toHaveLength(1);
+      expect(appServers[1]!.prompts).toHaveLength(1);
+    } finally {
+      await executor.dispose();
+      await rm(rootDir, { recursive: true, force: true });
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it("resumes a partial safe Codex goal on another account after executor restart", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "codex-safe-goal-"));
+    const workspacePath = await mkdtemp(join(tmpdir(), "codex-safe-goal-workspace-"));
+    const clock = {
+      now: () => new Date("2026-05-31T00:05:00.000Z"),
+      monotonicMs: () => performance.now(),
+    };
+    const firstAccountServer = new FakeAppServerFactory({
+      emitTopLevelErrorOnTurn: "You've hit your usage limit.",
+    });
+    const firstExecutor = new FileBackendCodexSafeExecutor({
+      stateRootDir: rootDir,
+      workspacePath,
+      maxAccountCycles: 1,
+      accounts: [
+        {
+          codexAuthJson: codexAuthJson("goal-account-a"),
+          worker: {
+            providerInstanceId: "codex-goal-account-a",
+            stateRootDir: rootDir,
+            codexBinaryPath: "codex",
+            encryptionKey: new Uint8Array(32).fill(31),
+            appServerProcessFactory: firstAccountServer.create,
+            runner: new StaticRunner({
+              exitCode: 1,
+              stdout: "",
+              stderr: "You've hit your usage limit.",
+            }),
+            capacityPolicy: {
+              quotaCooldownMs: 60_000,
+            },
+            clock,
+          },
+        },
+      ],
+      clock,
+    });
+
+    try {
+      const first = await firstExecutor.run({
+        taskId: "codex-goal-until-done",
+        prompt: "Finish the long goal.",
+        controls: { permissionMode: "allow-edits" },
+      });
+
+      expect(first.status).toBe("partial");
+      if (first.status !== "partial") throw new Error("expected partial");
+      expect(first.reason).toBe("quota_limited");
+      expect(first.attempts).toHaveLength(1);
+      expect(firstAccountServer.prompts).toEqual(["Finish the long goal."]);
+    } finally {
+      await firstExecutor.dispose();
+    }
+
+    const secondAccountServers = [
+      new FakeAppServerFactory({
+        emitTopLevelErrorOnTurn: "You've hit your usage limit.",
+      }),
+      new FakeAppServerFactory(),
+    ];
+    const secondExecutor = new FileBackendCodexSafeExecutor({
+      stateRootDir: rootDir,
+      workspacePath,
+      accounts: secondAccountServers.map((appServer, index) => ({
+        codexAuthJson: codexAuthJson(
+          index === 0 ? "goal-account-a" : "goal-account-b",
+        ),
+        worker: {
+          providerInstanceId: `codex-goal-account-${index + 1}`,
+          stateRootDir: rootDir,
+          codexBinaryPath: "codex",
+          encryptionKey: new Uint8Array(32).fill(index + 40),
+          appServerProcessFactory: appServer.create,
+          runner: new StaticRunner({
+            exitCode: index === 0 ? 1 : 0,
+            stdout: "",
+            stderr: index === 0 ? "You've hit your usage limit." : "",
+          }),
+          capacityPolicy: {
+            quotaCooldownMs: 60_000,
+          },
+          clock,
+        },
+      })),
+      clock,
+    });
+
+    try {
+      const resumed = await secondExecutor.run({
+        taskId: "codex-goal-until-done",
+        prompt: "Finish the long goal.",
+        controls: { permissionMode: "allow-edits" },
+      });
+
+      if (resumed.status !== "completed") {
+        throw new Error(
+          `expected completed after resume: ${resumed.reason}:${resumed.safeMessage}`,
+        );
+      }
+      expect(resumed.replayed).toBe(false);
+      expect(resumed.attempts).toHaveLength(2);
+      expect(resumed.attempts[0]?.failureReason).toBe("quota_limited");
+      expect(secondAccountServers[0]!.prompts).toEqual([]);
+      expect(secondAccountServers[1]!.prompts[0]).toContain(
+        "Continue the same task",
+      );
+      expect(secondAccountServers[1]!.prompts[0]).toContain(
+        "Previous attempt stopped because: quota_limited",
+      );
+      expect(secondAccountServers[1]!.threadCwds).toContain(workspacePath);
+    } finally {
+      await secondExecutor.dispose();
+      await rm(rootDir, { recursive: true, force: true });
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
 });
 
 type FakeAppServerFactoryOptions = {
@@ -496,7 +896,14 @@ class StaticRunner implements RunnerPort {
     },
   ) {}
 
-  async run() {
+  lastArgs: readonly string[] = [];
+  lastCwd = "";
+  lastStdin = "";
+
+  async run(input: Parameters<RunnerPort["run"]>[0]) {
+    this.lastArgs = input.args;
+    this.lastCwd = input.cwd;
+    this.lastStdin = new TextDecoder().decode(input.stdin);
     return {
       ...this.result,
       durationMs: 1,

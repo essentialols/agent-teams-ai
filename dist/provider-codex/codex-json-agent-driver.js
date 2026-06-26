@@ -11,6 +11,7 @@ export class CodexJsonAgentDriver {
     engine;
     model;
     reasoningEffort;
+    serviceTier;
     sessionMaterializer;
     constructor(options) {
         this.options = options;
@@ -24,6 +25,7 @@ export class CodexJsonAgentDriver {
                 });
         this.model = options.model ?? defaultCodexModel;
         this.reasoningEffort = options.reasoningEffort ?? "low";
+        this.serviceTier = options.serviceTier;
         this.sessionMaterializer =
             options.sessionMaterializer ?? new CodexEphemeralSessionMaterializer();
     }
@@ -53,8 +55,10 @@ export class CodexJsonAgentDriver {
                 redactor: input.redactor,
             });
             const outputSchemaName = input.task.controls?.outputSchemaName ?? input.task.outputSchemaName;
+            const goalObjective = readTaskGoalObjective(input.task);
             const result = await this.engine.run({
                 prompt: input.task.prompt,
+                ...(goalObjective ? { goalObjective } : {}),
                 ...(input.task.systemPrompt !== undefined
                     ? { systemPrompt: input.task.systemPrompt }
                     : {}),
@@ -65,6 +69,9 @@ export class CodexJsonAgentDriver {
                 redactor: input.redactor,
                 model: input.task.controls?.model ?? this.model,
                 reasoningEffort: this.reasoningEffort,
+                ...(this.serviceTier === undefined
+                    ? {}
+                    : { serviceTier: this.serviceTier }),
                 sandboxMode: codexSandboxModeForPermissionMode(input.task.controls?.permissionMode),
                 abortSignal: input.abortSignal,
             });
@@ -115,6 +122,9 @@ export class CodexJsonAgentDriver {
                 redactor: input.redactor,
                 model: this.model,
                 reasoningEffort: this.reasoningEffort,
+                ...(this.serviceTier === undefined
+                    ? {}
+                    : { serviceTier: this.serviceTier }),
                 ...(this.options.warmupPrompt
                     ? { warmupPrompt: this.options.warmupPrompt }
                     : {}),
@@ -164,6 +174,13 @@ export class CodexJsonAgentDriver {
             throw error;
         }
     }
+}
+function readTaskGoalObjective(task) {
+    const value = task.metadata?.codexGoalObjective;
+    if (typeof value !== "string")
+        return null;
+    const trimmed = value.trim();
+    return trimmed ? trimmed : null;
 }
 function finishReasonForFailure(code) {
     if (code === "task_cancelled")

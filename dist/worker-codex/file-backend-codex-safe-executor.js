@@ -152,6 +152,9 @@ export class FileBackendCodexSafeExecutor {
         const available = slots.filter((slot) => !slot.busy && slot.capacity.availability === "available");
         if (available.length === 0)
             return null;
+        const reconnectRetry = available.find((slot) => slot.capacity.reason === "reconnect_retry_pending");
+        if (reconnectRetry)
+            return reconnectRetry;
         for (let offset = 0; offset < slots.length; offset += 1) {
             const index = (this.roundRobinSlotCursor + offset) % slots.length;
             const slot = slots.find((candidate) => candidate.slotIndex === index);
@@ -194,7 +197,7 @@ function mergedSafeExecutionPolicy(input) {
         retryOnCapacity: true,
         retryOnAccountUnavailable: true,
         retryOnReconnectRequired: true,
-        retryUnknownCleanWorkspace: true,
+        retryUnknownCleanWorkspace: false,
         retryUnknownChangedWorkspace: false,
         continuationMode: "packet_first",
         ...(input.base ?? {}),

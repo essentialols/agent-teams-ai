@@ -1,6 +1,6 @@
 import type { RedactorPort, RunnerPort } from "@vioxen/subscription-runtime/core";
 import type { CodexExecutionProfile } from "./codex-execution-profile.js";
-import type { CodexExecutionEngine, CodexExecutionPrewarmResult, CodexExecutionResult, CodexMaterializedSession, CodexReasoningEffort, CodexSandboxMode } from "./codex-json-execution-engine.js";
+import type { CodexExecutionEngine, CodexExecutionPrewarmResult, CodexExecutionResult, CodexMaterializedSession, CodexReasoningEffort, CodexSandboxMode, CodexServiceTier } from "./codex-json-execution-engine.js";
 export type CodexAppServerExecutionEngineOptions = {
     readonly codexBinaryPath: string;
     readonly sourceEnv?: Readonly<Record<string, string | undefined>>;
@@ -10,6 +10,9 @@ export type CodexAppServerExecutionEngineOptions = {
     readonly processFactory?: CodexAppServerProcessFactory;
     readonly executionProfile?: CodexExecutionProfile;
     readonly cleanThreadPrewarm?: boolean;
+    readonly goalMode?: boolean;
+    readonly maxGoalTurns?: number;
+    readonly goalContinuePrompt?: string;
 };
 export type CodexAppServerProcessFactory = (input: {
     readonly command: string;
@@ -37,7 +40,7 @@ export type CodexAppServerChildProcess = {
 };
 export declare class CodexAppServerExecutionEngine implements CodexExecutionEngine {
     private readonly options;
-    readonly kind: "app-server-pool";
+    readonly kind: "app-server-pool" | "app-server-goal";
     readonly capabilities: {
         readonly supportsStructuredOutput: true;
         readonly supportsJsonEvents: true;
@@ -49,6 +52,7 @@ export declare class CodexAppServerExecutionEngine implements CodexExecutionEngi
     constructor(options: CodexAppServerExecutionEngineOptions);
     run(input: {
         readonly prompt: string;
+        readonly goalObjective?: string;
         readonly systemPrompt?: string;
         readonly session: CodexMaterializedSession;
         readonly workspacePath: string;
@@ -56,6 +60,7 @@ export declare class CodexAppServerExecutionEngine implements CodexExecutionEngi
         readonly redactor: RedactorPort;
         readonly model: string;
         readonly reasoningEffort: CodexReasoningEffort;
+        readonly serviceTier?: CodexServiceTier;
         readonly sandboxMode?: CodexSandboxMode;
         readonly outputSchema?: unknown;
         readonly abortSignal: AbortSignal;
@@ -68,6 +73,7 @@ export declare class CodexAppServerExecutionEngine implements CodexExecutionEngi
         readonly redactor: RedactorPort;
         readonly model: string;
         readonly reasoningEffort: CodexReasoningEffort;
+        readonly serviceTier?: CodexServiceTier;
         readonly warmupPrompt?: string;
         readonly abortSignal: AbortSignal;
     }): Promise<CodexExecutionPrewarmResult>;

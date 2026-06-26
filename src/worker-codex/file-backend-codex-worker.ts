@@ -14,6 +14,7 @@ import {
   type RedactorPort,
   type RuntimeDeps,
   type SessionArtifact,
+  type SessionEnvelope,
   assertProviderTaskSystemPrompt,
 } from "@vioxen/subscription-runtime/core";
 import {
@@ -27,8 +28,10 @@ import {
   defaultCodexModel,
   type CodexAppServerProcessFactory,
   type CodexReasoningEffort,
+  type CodexServiceTier,
   sessionArtifactFromCodexAuthJson,
   codexAuthJsonFromArtifact,
+  readCodexAuthJsonFreshness,
   validateCodexAuthJsonBytes,
 } from "@vioxen/subscription-runtime/provider-codex";
 import { createLocalFileBackendRuntimeAdapters } from "@vioxen/subscription-runtime/store-local-file";
@@ -55,6 +58,7 @@ export type FileBackendCodexWorkerOptions = {
   readonly encryptionKey: Uint8Array | string;
   readonly model?: string;
   readonly reasoningEffort?: CodexReasoningEffort;
+  readonly serviceTier?: CodexServiceTier;
   readonly sessionCacheSlots?: number;
   /**
    * Prompt used to fully warm the Codex app-server and model path.
@@ -82,6 +86,7 @@ export type FileBackendCodexWorkerOptions = {
 
 export type CodexWorkerExecutionEngine =
   | "app-server"
+  | "app-server-goal"
   | "packaged-exec"
   | "plain-exec";
 
@@ -89,6 +94,8 @@ export type CodexWorkerCapacityPolicy = {
   readonly softMaxRunsPerWindow?: number;
   readonly windowMs?: number;
   readonly quotaCooldownMs?: number;
+  readonly reconnectCooldownMs?: number;
+  readonly maxReconnectRetriesPerAccount?: number;
 };
 
 export type FileBackendCodexWorkerJob = {
@@ -131,6 +138,7 @@ export class FileBackendCodexWorker implements CapacityAwareSubscriptionWorker<
   private capacityState: WorkerCapacitySnapshot = { availability: "available" };
   private windowStartedAtMs: number;
   private runsInWindow = 0;
+  private consecutiveReconnectFailures = 0;
   private quotaGroup: string | null = null;
   private capacityAccountId: string | null = null;
 
@@ -206,7 +214,10 @@ export class FileBackendCodexWorker implements CapacityAwareSubscriptionWorker<
                 ? { executionProfile: options.executionProfile }
                 : {}),
               cleanThreadPrewarm: options.cleanThreadPrewarm ?? true,
-              fallback: packagedExec,
+              goalMode: executionEngine === "app-server-goal",
+              ...(executionEngine === "app-server-goal"
+                ? {}
+                : { fallback: packagedExec }),
             }),
         sessionMaterializer: new CodexWorkerCacheSessionPoolMaterializer({
           cacheKey: `codex:${options.providerInstanceId}`,
@@ -214,6 +225,9 @@ export class FileBackendCodexWorker implements CapacityAwareSubscriptionWorker<
         }),
         model: options.model ?? defaultCodexModel,
         reasoningEffort: options.reasoningEffort ?? "low",
+        ...(options.serviceTier === undefined
+          ? {}
+          : { serviceTier: options.serviceTier }),
         ...(options.warmupPrompt === false
           ? {}
           : { warmupPrompt: options.warmupPrompt ?? defaultWarmupPrompt }),
@@ -277,17 +291,34 @@ export class FileBackendCodexWorker implements CapacityAwareSubscriptionWorker<
   }
 
   async seedCodexAuthJson(authJson: string): Promise<void> {
+    const artifact = sessionArtifactFromCodexAuthJson(authJson);
     const existing = await this.sessionStore.read({
       providerInstanceId: this.options.providerInstanceId,
       expectedProviderId: "codex",
       purpose: "health-check",
     });
     if (existing) {
+      if (
+        shouldReplaceSeededCodexSession({
+          existing,
+          incoming: artifact,
+          now: this.clock.now(),
+        })
+      ) {
+        await this.sessionStore.write({
+          providerInstanceId: this.options.providerInstanceId,
+          expectedGeneration: existing.generation,
+          nextArtifact: artifact,
+          idempotencyKey: `seed:${hashText(authJson)}`,
+          leaseId: "seed-local-file-backend",
+        });
+        this.rememberQuotaGroup(artifact);
+        return;
+      }
       this.rememberQuotaGroup(existing.artifact);
       return;
     }
 
-    const artifact = sessionArtifactFromCodexAuthJson(authJson);
     await this.sessionStore.write({
       providerInstanceId: this.options.providerInstanceId,
       expectedGeneration: 0,
@@ -520,10 +551,18 @@ export class FileBackendCodexWorker implements CapacityAwareSubscriptionWorker<
     }
 
     this.rollCapacityWindow();
+    const previousCapacity = this.capacityState;
     this.capacityState = normalizeResettableCapacity(
       this.capacityState,
       this.clock.now(),
     );
+    if (
+      previousCapacity.availability === "cooldown" &&
+      previousCapacity.reason === "session_unhealthy" &&
+      this.capacityState.availability === "available"
+    ) {
+      this.consecutiveReconnectFailures = 0;
+    }
     return this.withCapacityDetails({
       ...this.capacityState,
       recentRuns: this.runsInWindow,
@@ -560,6 +599,10 @@ export class FileBackendCodexWorker implements CapacityAwareSubscriptionWorker<
 
   private recordSuccessfulRun(): void {
     this.rollCapacityWindow();
+    this.consecutiveReconnectFailures = 0;
+    if (this.capacityState.reason === "reconnect_retry_pending") {
+      this.capacityState = { availability: "available" };
+    }
     this.runsInWindow += 1;
     const maxRuns = this.options.capacityPolicy?.softMaxRunsPerWindow;
     if (maxRuns === undefined || this.runsInWindow < maxRuns) return;
@@ -585,11 +628,15 @@ export class FileBackendCodexWorker implements CapacityAwareSubscriptionWorker<
       };
       return;
     }
-    if (failure.reconnectRequired) {
+    if (failure.code === "provider_session_invalid") {
       this.capacityState = {
         availability: "disabled",
         reason: failure.code,
       };
+      return;
+    }
+    if (failure.reconnectRequired) {
+      this.recordReconnectRequired(failure.code);
       return;
     }
     if (!failure.retryable) {
@@ -613,11 +660,43 @@ export class FileBackendCodexWorker implements CapacityAwareSubscriptionWorker<
       return;
     }
     if (reason === "provider_reconnect_required") {
-      this.capacityState = {
-        availability: "disabled",
-        reason,
-      };
+      this.recordReconnectRequired(reason);
     }
+  }
+
+  private recordReconnectRequired(reason: string): void {
+    const maxRetries =
+      this.options.capacityPolicy?.maxReconnectRetriesPerAccount ?? 1;
+    if (this.consecutiveReconnectFailures < maxRetries) {
+      this.consecutiveReconnectFailures += 1;
+      this.capacityState = {
+        availability: "available",
+        reason: "reconnect_retry_pending",
+        lastLimitSignalAt: this.clock.now(),
+        details: {
+          reconnectReason: reason,
+          reconnectRetry: String(this.consecutiveReconnectFailures),
+          maxReconnectRetries: String(maxRetries),
+        },
+      };
+      return;
+    }
+
+    this.capacityState = {
+      availability: "cooldown",
+      reason: "session_unhealthy",
+      cooldownUntil: new Date(
+        this.clock.now().getTime() +
+          (this.options.capacityPolicy?.reconnectCooldownMs ??
+            this.options.capacityPolicy?.quotaCooldownMs ??
+            15 * 60 * 1000),
+      ),
+      lastLimitSignalAt: this.clock.now(),
+      details: {
+        reconnectReason: reason,
+        maxReconnectRetries: String(maxRetries),
+      },
+    };
   }
 
   private rollCapacityWindow(): void {
@@ -700,6 +779,66 @@ function shouldRetryRefreshConflict(result: RefreshThenRunResult): boolean {
   );
 }
 
+function shouldReplaceSeededCodexSession(input: {
+  readonly existing: SessionEnvelope;
+  readonly incoming: SessionArtifact;
+  readonly now: Date;
+}): boolean {
+  if (sameArtifactBytes(input.existing.artifact, input.incoming)) return false;
+
+  const existingFreshness = safeReadCodexArtifactFreshness({
+    artifact: input.existing.artifact,
+    now: input.now,
+  });
+  if (!existingFreshness) return true;
+
+  const incomingFreshness = safeReadCodexArtifactFreshness({
+    artifact: input.incoming,
+    now: input.now,
+  });
+  if (!incomingFreshness) return false;
+
+  const existingLastRefresh = existingFreshness.lastRefreshAt?.getTime() ?? null;
+  const incomingLastRefresh = incomingFreshness.lastRefreshAt?.getTime() ?? null;
+  if (
+    incomingLastRefresh !== null &&
+    (existingLastRefresh === null || incomingLastRefresh >= existingLastRefresh)
+  ) {
+    return true;
+  }
+  if (existingLastRefresh === null && incomingLastRefresh === null) {
+    return true;
+  }
+
+  const existingExpiry = existingFreshness.expiresAt?.getTime() ?? null;
+  const incomingExpiry = incomingFreshness.expiresAt?.getTime() ?? null;
+  return (
+    incomingExpiry !== null &&
+    (existingExpiry === null || incomingExpiry > existingExpiry)
+  );
+}
+
+function safeReadCodexArtifactFreshness(input: {
+  readonly artifact: SessionArtifact;
+  readonly now: Date;
+}): ReturnType<typeof readCodexAuthJsonFreshness> | null {
+  try {
+    return readCodexAuthJsonFreshness({
+      authJsonBytes: codexAuthJsonFromArtifact(input.artifact),
+      now: input.now,
+    });
+  } catch {
+    return null;
+  }
+}
+
+function sameArtifactBytes(
+  left: SessionArtifact,
+  right: SessionArtifact,
+): boolean {
+  return Buffer.from(left.bytes).equals(Buffer.from(right.bytes));
+}
+
 function refreshConflictDelayMs(attempt: number): number {
   return Math.min(1_000, 100 * 2 ** Math.max(0, attempt - 1));
 }
@@ -737,6 +876,7 @@ function assertWorkerOptions(options: FileBackendCodexWorkerOptions): void {
   if (
     options.executionEngine !== undefined &&
     options.executionEngine !== "app-server" &&
+    options.executionEngine !== "app-server-goal" &&
     options.executionEngine !== "packaged-exec" &&
     options.executionEngine !== "plain-exec"
   ) {

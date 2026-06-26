@@ -121,6 +121,9 @@ export function classifyCodexRuntimeFailure(message: string): string {
   if (isCodexQuotaOrRateLimitFailure(normalized)) {
     return "quota_limited";
   }
+  if (isCodexInvalidatedAuthFailure(normalized)) {
+    return "provider_session_invalid";
+  }
   if (
     normalized.includes("unauthorized") ||
     normalized.includes("invalid_grant") ||
@@ -144,7 +147,8 @@ function isCodexCancelledFailure(normalizedMessage: string): boolean {
     normalizedMessage.includes("node_process_runner_aborted") ||
     normalizedMessage.includes("subscription_worker_run_aborted") ||
     normalizedMessage.includes("codex_app_server_aborted") ||
-    normalizedMessage.includes("codex_app_server_turn_aborted") ||
+    (normalizedMessage.includes("codex_app_server_turn_aborted") &&
+      !normalizedMessage.includes("codex_app_server_turn_aborted:replaced")) ||
     normalizedMessage.includes("aborterror") ||
     /\baborted\b/.test(normalizedMessage)
   );
@@ -167,6 +171,7 @@ function isCodexInvalidOutputFailure(normalizedMessage: string): boolean {
     normalizedMessage.includes("codex_structured_output_invalid") ||
     normalizedMessage.includes("codex_json_output_too_large") ||
     normalizedMessage.includes("codex_app_server_final_message_missing") ||
+    normalizedMessage.includes("codex_app_server_goal_turn_output_missing") ||
     normalizedMessage.includes("codex_app_server_structured_output_invalid") ||
     normalizedMessage.includes("codex_app_server_output_too_large")
   );
@@ -174,6 +179,9 @@ function isCodexInvalidOutputFailure(normalizedMessage: string): boolean {
 
 function isCodexQuotaOrRateLimitFailure(normalizedMessage: string): boolean {
   return (
+    normalizedMessage.includes("usagelimitexceeded") ||
+    normalizedMessage.includes("ratelimitexceeded") ||
+    normalizedMessage.includes("codex_app_server_goal_usagelimited") ||
     /\b(?:429|too many requests|rate[_ -]?limit(?:ed| exceeded)?|rate_limit_exceeded)\b/.test(
       normalizedMessage,
     ) ||
@@ -189,6 +197,17 @@ function isCodexQuotaOrRateLimitFailure(normalizedMessage: string): boolean {
     /\b(?:billing_hard_limit|payment required|billing (?:limit|quota|hard limit|not active|required))\b/.test(
       normalizedMessage,
     )
+  );
+}
+
+function isCodexInvalidatedAuthFailure(normalizedMessage: string): boolean {
+  return (
+    normalizedMessage.includes("token_invalidated") ||
+    normalizedMessage.includes("refresh_token_invalidated") ||
+    normalizedMessage.includes("refresh token was revoked") ||
+    normalizedMessage.includes("authentication token has been invalidated") ||
+    normalizedMessage.includes("access token could not be refreshed") ||
+    normalizedMessage.includes("please log out and sign in again")
   );
 }
 

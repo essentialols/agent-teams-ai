@@ -18,6 +18,7 @@ import { classifyCodexFailure } from "./failure-classifier";
 import {
   type CodexExecutionEngine,
   type CodexReasoningEffort,
+  type CodexServiceTier,
   PackagedCodexJsonExecutionEngine,
   codexSandboxModeForPermissionMode,
   codexExecutionFailure,
@@ -32,6 +33,7 @@ import {
 type CodexJsonAgentDriverBaseOptions = {
   readonly model?: string;
   readonly reasoningEffort?: CodexReasoningEffort;
+  readonly serviceTier?: CodexServiceTier;
   readonly warmupPrompt?: string;
   readonly sessionMaterializer?: CodexSessionMaterializer;
 };
@@ -55,6 +57,7 @@ export class CodexJsonAgentDriver implements AgentDriver {
   private readonly engine: CodexExecutionEngine;
   private readonly model: string;
   private readonly reasoningEffort: CodexReasoningEffort;
+  private readonly serviceTier: CodexServiceTier | undefined;
   private readonly sessionMaterializer: CodexSessionMaterializer;
 
   constructor(private readonly options: CodexJsonAgentDriverOptions) {
@@ -68,6 +71,7 @@ export class CodexJsonAgentDriver implements AgentDriver {
           });
     this.model = options.model ?? defaultCodexModel;
     this.reasoningEffort = options.reasoningEffort ?? "low";
+    this.serviceTier = options.serviceTier;
     this.sessionMaterializer =
       options.sessionMaterializer ?? new CodexEphemeralSessionMaterializer();
   }
@@ -110,8 +114,10 @@ export class CodexJsonAgentDriver implements AgentDriver {
       });
       const outputSchemaName =
         input.task.controls?.outputSchemaName ?? input.task.outputSchemaName;
+      const goalObjective = readTaskGoalObjective(input.task);
       const result = await this.engine.run({
         prompt: input.task.prompt,
+        ...(goalObjective ? { goalObjective } : {}),
         ...(input.task.systemPrompt !== undefined
           ? { systemPrompt: input.task.systemPrompt }
           : {}),
@@ -122,6 +128,9 @@ export class CodexJsonAgentDriver implements AgentDriver {
         redactor: input.redactor,
         model: input.task.controls?.model ?? this.model,
         reasoningEffort: this.reasoningEffort,
+        ...(this.serviceTier === undefined
+          ? {}
+          : { serviceTier: this.serviceTier }),
         sandboxMode: codexSandboxModeForPermissionMode(
           input.task.controls?.permissionMode,
         ),
@@ -185,6 +194,9 @@ export class CodexJsonAgentDriver implements AgentDriver {
         redactor: input.redactor,
         model: this.model,
         reasoningEffort: this.reasoningEffort,
+        ...(this.serviceTier === undefined
+          ? {}
+          : { serviceTier: this.serviceTier }),
         ...(this.options.warmupPrompt
           ? { warmupPrompt: this.options.warmupPrompt }
           : {}),
@@ -243,6 +255,13 @@ export class CodexJsonAgentDriver implements AgentDriver {
       throw error;
     }
   }
+}
+
+function readTaskGoalObjective(task: ProviderTask): string | null {
+  const value = task.metadata?.codexGoalObjective;
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
 }
 
 function finishReasonForFailure(

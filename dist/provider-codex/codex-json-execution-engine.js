@@ -23,6 +23,9 @@ export class PackagedCodexJsonExecutionEngine {
             jsonFlag: this.options.jsonFlag ?? "--json",
             model: input.model,
             reasoningEffort: input.reasoningEffort,
+            ...(input.serviceTier === undefined
+                ? {}
+                : { serviceTier: input.serviceTier }),
             ...(input.sandboxMode === undefined
                 ? {}
                 : { sandboxMode: input.sandboxMode }),
@@ -91,6 +94,15 @@ export function buildCodexJsonExecArgs(input) {
         'approval_policy="never"',
         "--config",
         `model_reasoning_effort=${JSON.stringify(input.reasoningEffort)}`,
+        ...(input.serviceTier
+            ? [
+                "--config",
+                `service_tier=${JSON.stringify(input.serviceTier)}`,
+                ...(input.serviceTier === "fast"
+                    ? ["--config", "features.fast_mode=true"]
+                    : []),
+            ]
+            : []),
         "--config",
         'model_verbosity="low"',
         "--config",

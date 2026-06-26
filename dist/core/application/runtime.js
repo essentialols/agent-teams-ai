@@ -703,7 +703,6 @@ function sessionForPostRefreshTask(refresh) {
 }
 function shouldGuardedRefresh(failure) {
     return (failure.code === "needs_reconnect" ||
-        failure.code === "provider_session_invalid" ||
         failure.causeCategory === "needs_reconnect");
 }
 function blocked(reason, safeMessage, warnings = []) {

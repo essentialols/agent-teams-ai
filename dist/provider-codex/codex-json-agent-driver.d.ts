@@ -1,9 +1,10 @@
 import { type AgentDriver, type ProviderFailure, type ProviderTask, type ProviderTaskResult, type RedactorPort, type SessionArtifact, type WorkspaceHandle } from "@vioxen/subscription-runtime/core";
-import { type CodexExecutionEngine, type CodexReasoningEffort } from "./codex-json-execution-engine.js";
+import { type CodexExecutionEngine, type CodexReasoningEffort, type CodexServiceTier } from "./codex-json-execution-engine.js";
 import { type CodexSessionMaterializer, type CodexSessionPrewarmResult } from "./codex-session-materializer.js";
 type CodexJsonAgentDriverBaseOptions = {
     readonly model?: string;
     readonly reasoningEffort?: CodexReasoningEffort;
+    readonly serviceTier?: CodexServiceTier;
     readonly warmupPrompt?: string;
     readonly sessionMaterializer?: CodexSessionMaterializer;
 };
@@ -22,6 +23,7 @@ export declare class CodexJsonAgentDriver implements AgentDriver {
     private readonly engine;
     private readonly model;
     private readonly reasoningEffort;
+    private readonly serviceTier;
     private readonly sessionMaterializer;
     constructor(options: CodexJsonAgentDriverOptions);
     runTask(input: {

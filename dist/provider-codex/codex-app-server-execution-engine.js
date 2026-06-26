@@ -3,7 +3,10 @@ import { once as onceEvent } from "node:events";
 import { pruneCodexChildEnv } from "./codex-cli-domain.js";
 import { resolveCodexExecutionProfile } from "./codex-execution-profile.js";
 const defaultTimeoutMs = 10 * 60 * 1000;
+const defaultControlRequestTimeoutMs = 30 * 1000;
 const defaultMaxOutputBytes = 512 * 1024;
+const defaultMaxGoalTurns = 20;
+const defaultGoalContinuePrompt = "Continue working toward the active goal. If the goal is complete, mark it complete and summarize the result.";
 function normalizeSystemPrompt(value) {
     const trimmed = value?.trim();
     return trimmed ? trimmed : null;
@@ -18,7 +21,7 @@ function mergeDeveloperInstructions(input) {
 }
 export class CodexAppServerExecutionEngine {
     options;
-    kind = "app-server-pool";
+    kind;
     capabilities = {
         supportsStructuredOutput: true,
         supportsJsonEvents: true,
@@ -32,6 +35,7 @@ export class CodexAppServerExecutionEngine {
         if (!options.codexBinaryPath.trim()) {
             throw new Error("codex_app_server_binary_required");
         }
+        this.kind = options.goalMode ? "app-server-goal" : "app-server-pool";
         this.executionProfile = resolveCodexExecutionProfile(options.executionProfile);
     }
     async run(input) {
@@ -75,6 +79,9 @@ export class CodexAppServerExecutionEngine {
                     workspacePath: input.workspacePath,
                     model: input.model,
                     reasoningEffort: input.reasoningEffort,
+                    ...(input.serviceTier === undefined
+                        ? {}
+                        : { serviceTier: input.serviceTier }),
                     sandboxMode: "read-only",
                     timeoutMs: this.options.timeoutMs ?? defaultTimeoutMs,
                     abortSignal: input.abortSignal,
@@ -89,6 +96,9 @@ export class CodexAppServerExecutionEngine {
                 workspacePath: input.workspacePath,
                 model: input.model,
                 reasoningEffort: input.reasoningEffort,
+                ...(input.serviceTier === undefined
+                    ? {}
+                    : { serviceTier: input.serviceTier }),
                 timeoutMs: this.options.timeoutMs ?? defaultTimeoutMs,
                 abortSignal: input.abortSignal,
             })));
@@ -106,18 +116,31 @@ export class CodexAppServerExecutionEngine {
     }
     async runViaAppServer(input) {
         const slot = await this.ensureSlot(input);
-        const result = await slot.client.runCleanTurn({
+        const common = {
             prompt: input.prompt,
+            ...(input.goalObjective !== undefined
+                ? { goalObjective: input.goalObjective }
+                : {}),
             ...(input.systemPrompt !== undefined
                 ? { systemPrompt: input.systemPrompt }
                 : {}),
             workspacePath: input.workspacePath,
             model: input.model,
             reasoningEffort: input.reasoningEffort,
+            ...(input.serviceTier === undefined
+                ? {}
+                : { serviceTier: input.serviceTier }),
             sandboxMode: input.sandboxMode ?? "read-only",
             timeoutMs: this.options.timeoutMs ?? defaultTimeoutMs,
             abortSignal: input.abortSignal,
-        });
+        };
+        const result = this.options.goalMode
+            ? await slot.client.runGoal({
+                ...common,
+                maxGoalTurns: this.options.maxGoalTurns ?? defaultMaxGoalTurns,
+                goalContinuePrompt: this.options.goalContinuePrompt ?? defaultGoalContinuePrompt,
+            })
+            : await slot.client.runCleanTurn(common);
         const outputText = input.redactor.redact(result.outputText);
         input.redactor.assertNoKnownSecret(outputText, "codex-app-server-output");
         assertOutputWithinBounds(outputText, this.options.maxOutputBytes);
@@ -168,6 +191,8 @@ class CodexAppServerClient {
     stdoutBuffer = "";
     pending = new Map();
     turns = new Map();
+    pendingTurnIdsByThread = new Map();
+    turnIdAliases = new Map();
     serverRequests = [];
     backgroundWarnings = [];
     preparedThread = null;
@@ -258,6 +283,54 @@ class CodexAppServerClient {
             warnings,
         };
     }
+    async runGoal(input) {
+        const warnings = this.drainWarnings();
+        const threadId = await this.startThread({
+            ...input,
+            goalMode: true,
+        });
+        await this.setGoal({
+            threadId,
+            objective: input.goalObjective ?? input.prompt,
+            status: "active",
+            timeoutMs: input.timeoutMs,
+            abortSignal: input.abortSignal,
+        });
+        let outputText = "";
+        for (let turnNumber = 1; turnNumber <= input.maxGoalTurns; turnNumber += 1) {
+            const turn = await this.startTurn({
+                ...input,
+                threadId,
+                goalMode: true,
+                prompt: turnNumber === 1 ? input.prompt : input.goalContinuePrompt,
+            });
+            if (turn.error)
+                throw turn.error;
+            outputText = turn.outputText;
+            const goal = await this.getGoal({
+                threadId,
+                timeoutMs: controlRequestTimeoutMs(input.timeoutMs),
+                abortSignal: input.abortSignal,
+            });
+            if (!goal) {
+                throw new Error("codex_app_server_goal_missing");
+            }
+            if (goal.status === "complete") {
+                warnings.push(...this.drainWarnings());
+                return {
+                    outputText,
+                    warnings,
+                };
+            }
+            if (goal.status !== "active") {
+                throw new Error(`codex_app_server_goal_${goal.status}`);
+            }
+            if (!outputText.trim()) {
+                throw new Error("codex_app_server_goal_turn_output_missing");
+            }
+        }
+        throw new Error(`codex_app_server_goal_max_turns_exceeded:${input.maxGoalTurns}`);
+    }
     async prewarmCleanThread(input) {
         if (!this.cleanThreadPrewarmEnabled())
             return [];
@@ -305,6 +378,7 @@ class CodexAppServerClient {
         if (prepared.workspacePath !== input.workspacePath ||
             prepared.model !== input.model ||
             prepared.reasoningEffort !== input.reasoningEffort ||
+            prepared.serviceTier !== input.serviceTier ||
             prepared.sandboxMode !== (input.sandboxMode ?? "read-only") ||
             prepared.systemPrompt !== normalizeSystemPrompt(input.systemPrompt)) {
             this.backgroundWarnings.push({
@@ -336,6 +410,9 @@ class CodexAppServerClient {
                 workspacePath: input.workspacePath,
                 model: input.model,
                 reasoningEffort: input.reasoningEffort,
+                ...(input.serviceTier === undefined
+                    ? {}
+                    : { serviceTier: input.serviceTier }),
                 sandboxMode: input.sandboxMode ?? "read-only",
                 systemPrompt: normalizeSystemPrompt(input.systemPrompt),
             };
@@ -349,6 +426,7 @@ class CodexAppServerClient {
         return (this.preparedThread?.workspacePath === input.workspacePath &&
             this.preparedThread.model === input.model &&
             this.preparedThread.reasoningEffort === input.reasoningEffort &&
+            this.preparedThread.serviceTier === input.serviceTier &&
             this.preparedThread.sandboxMode === (input.sandboxMode ?? "read-only") &&
             this.preparedThread.systemPrompt === normalizeSystemPrompt(input.systemPrompt));
     }
@@ -356,10 +434,21 @@ class CodexAppServerClient {
         return this.options.cleanThreadPrewarm ?? true;
     }
     async startThread(input) {
+        const disableTools = this.options.executionProfile.disableTools && input.goalMode !== true;
+        const features = {
+            apps: false,
+            hooks: false,
+            memories: false,
+            multi_agent: false,
+            shell_snapshot: false,
+            skill_mcp_dependency_install: false,
+            ...(input.serviceTier === "fast" ? { fast_mode: true } : {}),
+            ...(input.goalMode ? { goals: true } : {}),
+        };
         const response = await this.send("thread/start", {
             model: input.model,
             modelProvider: null,
-            serviceTier: null,
+            serviceTier: input.serviceTier ?? null,
             cwd: input.workspacePath,
             runtimeWorkspaceRoots: [input.workspacePath],
             approvalPolicy: "never",
@@ -369,17 +458,13 @@ class CodexAppServerClient {
             config: {
                 model_reasoning_effort: input.reasoningEffort,
                 model_verbosity: "low",
+                ...(input.serviceTier === undefined
+                    ? {}
+                    : { service_tier: input.serviceTier }),
                 approval_policy: "never",
                 sandbox_mode: input.sandboxMode ?? "read-only",
                 web_search: "disabled",
-                features: {
-                    apps: false,
-                    hooks: false,
-                    memories: false,
-                    multi_agent: false,
-                    shell_snapshot: false,
-                    skill_mcp_dependency_install: false,
-                },
+                features,
                 apps: {
                     _default: {
                         enabled: false,
@@ -397,12 +482,16 @@ class CodexAppServerClient {
                     : {}),
             }),
             personality: null,
-            ephemeral: true,
+            ephemeral: input.goalMode ? false : true,
             sessionStartSource: "startup",
             threadSource: "user",
-            environments: [],
-            dynamicTools: [],
-            experimentalRawEvents: false,
+            ...(disableTools
+                ? {
+                    environments: [],
+                    dynamicTools: [],
+                    experimentalRawEvents: false,
+                }
+                : {}),
         }, input);
         if (response.error) {
             throw new Error(`codex_app_server_thread_start_failed:${response.error.message ?? "unknown"}`);
@@ -412,7 +501,31 @@ class CodexAppServerClient {
             throw new Error("codex_app_server_thread_id_missing");
         return threadId;
     }
+    async setGoal(input) {
+        const response = await this.send("thread/goal/set", {
+            threadId: input.threadId,
+            objective: input.objective,
+            status: input.status,
+        }, input);
+        if (response.error) {
+            throw new Error(`codex_app_server_goal_set_failed:${response.error.message ?? "unknown"}`);
+        }
+        const goal = readGoal(response.result?.goal);
+        if (!goal)
+            throw new Error("codex_app_server_goal_set_missing");
+        return goal;
+    }
+    async getGoal(input) {
+        const response = await this.send("thread/goal/get", {
+            threadId: input.threadId,
+        }, input);
+        if (response.error) {
+            throw new Error(`codex_app_server_goal_get_failed:${response.error.message ?? "unknown"}`);
+        }
+        return readGoal(response.result?.goal);
+    }
     async startTurn(input) {
+        const disableTools = this.options.executionProfile.disableTools && input.goalMode !== true;
         const response = await this.send("turn/start", {
             threadId: input.threadId,
             input: [
@@ -424,7 +537,7 @@ class CodexAppServerClient {
             ],
             responsesapiClientMetadata: null,
             additionalContext: null,
-            environments: [],
+            ...(disableTools ? { environments: [] } : {}),
             cwd: null,
             runtimeWorkspaceRoots: null,
             approvalPolicy: "never",
@@ -432,7 +545,7 @@ class CodexAppServerClient {
             sandboxPolicy: null,
             permissions: null,
             model: input.model,
-            serviceTier: null,
+            serviceTier: input.serviceTier ?? null,
             effort: input.reasoningEffort,
             summary: "none",
             personality: null,
@@ -486,11 +599,13 @@ class CodexAppServerClient {
         return new Promise((resolve, reject) => {
             const timer = setTimeout(() => {
                 this.turns.delete(turnId);
+                this.pendingTurnIdsByThread.delete(input.threadId);
                 reject(new Error(`codex_app_server_turn_timeout:${turnId}`));
             }, input.timeoutMs);
             const abort = () => {
                 clearTimeout(timer);
                 this.turns.delete(turnId);
+                this.pendingTurnIdsByThread.delete(input.threadId);
                 reject(new Error(`codex_app_server_turn_aborted:${turnId}`));
             };
             input.abortSignal.addEventListener("abort", abort, { once: true });
@@ -499,9 +614,11 @@ class CodexAppServerClient {
                 clearTimeout(timer);
                 input.abortSignal.removeEventListener("abort", abort);
                 this.turns.delete(turnId);
+                this.pendingTurnIdsByThread.delete(input.threadId);
                 resolve(state);
             });
             this.turns.set(turnId, turn);
+            this.pendingTurnIdsByThread.set(input.threadId, turnId);
         });
     }
     onStdout(chunk) {
@@ -549,6 +666,18 @@ class CodexAppServerClient {
             turn.outputText += stringField(params, "delta") ?? "";
             return;
         }
+        if (record.method === "turn/started") {
+            const threadId = stringField(params, "threadId");
+            const turn = readRecord(params?.turn);
+            const actualTurnId = stringField(turn, "id");
+            const expectedTurnId = threadId
+                ? this.pendingTurnIdsByThread.get(threadId)
+                : undefined;
+            if (actualTurnId && expectedTurnId && actualTurnId !== expectedTurnId) {
+                this.turnIdAliases.set(actualTurnId, expectedTurnId);
+            }
+            return;
+        }
         if (record.method === "item/completed") {
             const turnId = stringField(params, "turnId");
             const item = readRecord(params?.item);
@@ -564,9 +693,29 @@ class CodexAppServerClient {
             state.completed = true;
             const status = readRecord(turn?.status);
             if (status?.type === "failed") {
-                state.error = new Error("codex_app_server_turn_failed");
+                state.error = new Error(`codex_app_server_turn_failed:${safeMessage(turn?.error ?? status ?? params ?? record)}`);
             }
             this.resolveTurn(state);
+            return;
+        }
+        if (record.method === "turn/aborted" || record.method === "turn_aborted") {
+            const turnId = stringField(params, "turnId") ??
+                stringField(params, "turn_id") ??
+                stringField(readRecord(params?.turn), "id");
+            const reason = stringField(params, "reason") ??
+                stringField(readRecord(params?.status), "reason") ??
+                "unknown";
+            const error = new Error(`codex_app_server_turn_aborted:${reason}:${turnId ?? "unknown"}`);
+            if (!turnId) {
+                for (const turn of this.turns.values()) {
+                    turn.error = error;
+                    this.resolveTurn(turn);
+                }
+                return;
+            }
+            const turn = this.ensureTurn(turnId);
+            turn.error = error;
+            this.resolveTurn(turn);
             return;
         }
         if (record.method === "error") {
@@ -600,10 +749,11 @@ class CodexAppServerClient {
     ensureTurn(turnId) {
         if (!turnId)
             return createTurnState();
-        let turn = this.turns.get(turnId);
+        const canonicalTurnId = this.turnIdAliases.get(turnId) ?? turnId;
+        let turn = this.turns.get(canonicalTurnId);
         if (!turn) {
             turn = createTurnState();
-            this.turns.set(turnId, turn);
+            this.turns.set(canonicalTurnId, turn);
         }
         return turn;
     }
@@ -676,6 +826,29 @@ function stringField(record, field) {
     const value = record?.[field];
     return typeof value === "string" ? value : null;
 }
+function readGoal(value) {
+    const goal = readRecord(value);
+    if (!goal)
+        return null;
+    const threadId = stringField(goal, "threadId");
+    const objective = stringField(goal, "objective");
+    const status = stringField(goal, "status");
+    if (!threadId || !objective || !isGoalStatus(status))
+        return null;
+    return {
+        threadId,
+        objective,
+        status,
+    };
+}
+function isGoalStatus(value) {
+    return (value === "active" ||
+        value === "paused" ||
+        value === "blocked" ||
+        value === "usageLimited" ||
+        value === "budgetLimited" ||
+        value === "complete");
+}
 function parseStructuredOutput(outputText) {
     try {
         return JSON.parse(outputText);
@@ -690,6 +863,9 @@ function assertOutputWithinBounds(output, maxOutputBytes = defaultMaxOutputBytes
     if (Buffer.byteLength(output, "utf8") > maxOutputBytes) {
         throw new Error("codex_app_server_output_too_large");
     }
+}
+function controlRequestTimeoutMs(taskTimeoutMs) {
+    return Math.min(taskTimeoutMs, defaultControlRequestTimeoutMs);
 }
 function throwIfAborted(signal) {
     if (signal?.aborted)

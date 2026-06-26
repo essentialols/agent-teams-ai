@@ -1316,6 +1316,12 @@ function classifyWorkerFailureCode(
         safeMessage,
         retryable: true,
       };
+    case "provider_session_invalid":
+      return {
+        reason: "account_unavailable",
+        safeMessage,
+        retryable: true,
+      };
     case "permission_required":
       return {
         reason: "permission_required",

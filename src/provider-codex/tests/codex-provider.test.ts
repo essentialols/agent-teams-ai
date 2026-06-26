@@ -109,6 +109,30 @@ describe("Codex provider adapter", () => {
     expect(
       classifyCodexRuntimeFailure("codex_app_server_structured_output_invalid"),
     ).toBe("provider_output_invalid");
+    expect(
+      classifyCodexRuntimeFailure("codex_app_server_goal_turn_output_missing"),
+    ).toBe("provider_output_invalid");
+    expect(
+      classifyCodexRuntimeFailure(
+        "codex_app_server_turn_aborted:replaced:turn-2",
+      ),
+    ).toBe("unknown_auth_state");
+  });
+
+  it("classifies revoked Codex auth separately from transient reconnects", () => {
+    expect(
+      classifyCodexRuntimeFailure(
+        "refresh_token_invalidated: Your refresh token was revoked.",
+      ),
+    ).toBe("provider_session_invalid");
+    expect(
+      classifyCodexRuntimeFailure(
+        "Your authentication token has been invalidated. Please try signing in again.",
+      ),
+    ).toBe("provider_session_invalid");
+    expect(classifyCodexRuntimeFailure("login required")).toBe(
+      "needs_reconnect",
+    );
   });
 
   it("recognizes transient Codex temp cleanup races", () => {
@@ -856,6 +880,238 @@ describe("Codex provider adapter", () => {
     }
   });
 
+  it("runs first-class Codex goal mode through the app-server protocol", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "codex-app-goal-test-"));
+    const fakeFactory = new FakeAppServerFactory();
+    const driver = new CodexJsonAgentDriver({
+      engine: new CodexAppServerExecutionEngine({
+        codexBinaryPath: "/bin/codex-test",
+        processFactory: fakeFactory.create,
+        cleanThreadPrewarm: false,
+        goalMode: true,
+      }),
+      model: "gpt-test",
+      reasoningEffort: "low",
+    });
+
+    try {
+      const result = await driver.runTask({
+        session: sessionArtifactFromCodexAuthJson(validAuthJson),
+        task: {
+          kind: "structured-prompt",
+          prompt: "finish the benchmark goal with full instructions",
+          metadata: {
+            codexGoalObjective: "short benchmark goal",
+          },
+          controls: { permissionMode: "allow-edits" },
+        },
+        workspace: { path: workspace },
+        runner: new StaticRunner(""),
+        redactor: new DefaultRedactor(),
+        abortSignal: new AbortController().signal,
+      });
+
+      expect(result).toMatchObject({
+        status: "completed",
+        outputText: "app-server output:finish the benchmark goal with full instructions",
+      });
+      expect(fakeFactory.requests.map((request) => request.method)).toEqual(
+        expect.arrayContaining([
+          "thread/start",
+          "thread/goal/set",
+          "turn/start",
+          "thread/goal/get",
+        ]),
+      );
+      expect(
+        fakeFactory.requests.find(
+          (request) => request.method === "thread/goal/set",
+        )?.params,
+      ).toMatchObject({
+        objective: "short benchmark goal",
+        status: "active",
+      });
+      expect(
+        fakeFactory.requests.find(
+          (request) => request.method === "thread/start",
+        )?.params,
+      ).toMatchObject({
+        ephemeral: false,
+        config: {
+          features: {
+            goals: true,
+          },
+        },
+      });
+      const threadStart = fakeFactory.requests.find(
+        (request) => request.method === "thread/start",
+      );
+      expect(threadStart?.params).not.toHaveProperty("environments");
+      expect(threadStart?.params).not.toHaveProperty("dynamicTools");
+      expect(threadStart?.params).not.toHaveProperty("experimentalRawEvents");
+      const turnStart = fakeFactory.requests.find(
+        (request) => request.method === "turn/start",
+      );
+      expect(turnStart?.params).not.toHaveProperty("environments");
+    } finally {
+      await driver.dispose();
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("continues an active Codex app-server goal until the goal is complete", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "codex-app-goal-loop-test-"),
+    );
+    const fakeFactory = new FakeAppServerFactory({
+      goalStatusesAfterTurns: ["active", "complete"],
+      mismatchTurnStartResponseId: true,
+    });
+    const driver = new CodexJsonAgentDriver({
+      engine: new CodexAppServerExecutionEngine({
+        codexBinaryPath: "/bin/codex-test",
+        processFactory: fakeFactory.create,
+        cleanThreadPrewarm: false,
+        goalMode: true,
+        maxGoalTurns: 2,
+      }),
+      model: "gpt-test",
+      reasoningEffort: "low",
+    });
+
+    try {
+      const result = await driver.runTask({
+        session: sessionArtifactFromCodexAuthJson(validAuthJson),
+        task: {
+          kind: "structured-prompt",
+          prompt: "keep going until done",
+          controls: { permissionMode: "allow-edits" },
+        },
+        workspace: { path: workspace },
+        runner: new StaticRunner(""),
+        redactor: new DefaultRedactor(),
+        abortSignal: new AbortController().signal,
+      });
+
+      expect(result).toMatchObject({
+        status: "completed",
+        outputText: expect.stringContaining("Continue working toward"),
+      });
+      expect(fakeFactory.prompts).toEqual([
+        "keep going until done",
+        expect.stringContaining("Continue working toward"),
+      ]);
+      expect(
+        fakeFactory.requests.filter(
+          (request) => request.method === "thread/goal/get",
+        ),
+      ).toHaveLength(2);
+    } finally {
+      await driver.dispose();
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("fails fast when an app-server goal continuation is replaced", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "codex-app-goal-replaced-test-"),
+    );
+    const fakeFactory = new FakeAppServerFactory({
+      goalStatusesAfterTurns: ["active"],
+      abortTurnNumbers: [2],
+      abortTurnReason: "replaced",
+    });
+    const driver = new CodexJsonAgentDriver({
+      engine: new CodexAppServerExecutionEngine({
+        codexBinaryPath: "/bin/codex-test",
+        processFactory: fakeFactory.create,
+        cleanThreadPrewarm: false,
+        goalMode: true,
+        maxGoalTurns: 3,
+      }),
+      model: "gpt-test",
+      reasoningEffort: "low",
+    });
+
+    try {
+      const result = await driver.runTask({
+        session: sessionArtifactFromCodexAuthJson(validAuthJson),
+        task: {
+          kind: "structured-prompt",
+          prompt: "work until interrupted",
+          controls: { permissionMode: "allow-edits" },
+        },
+        workspace: { path: workspace },
+        runner: new StaticRunner(""),
+        redactor: new DefaultRedactor(),
+        abortSignal: new AbortController().signal,
+      });
+
+      expect(result).toMatchObject({
+        status: "failed",
+        failure: {
+          code: "unknown_runtime_failure",
+          retryable: true,
+          safeMessage: "Codex runtime failed.",
+        },
+      });
+      expect(fakeFactory.prompts).toEqual([
+        "work until interrupted",
+        expect.stringContaining("Continue working toward"),
+      ]);
+    } finally {
+      await driver.dispose();
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("classifies app-server goal usage limits before empty output", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "codex-app-goal-usage-limit-test-"),
+    );
+    const fakeFactory = new FakeAppServerFactory({
+      goalStatusesAfterTurns: ["usageLimited"],
+      suppressOutputTurnNumbers: [1],
+    });
+    const driver = new CodexJsonAgentDriver({
+      engine: new CodexAppServerExecutionEngine({
+        codexBinaryPath: "/bin/codex-test",
+        processFactory: fakeFactory.create,
+        cleanThreadPrewarm: false,
+        goalMode: true,
+        maxGoalTurns: 1,
+      }),
+      model: "gpt-test",
+      reasoningEffort: "low",
+    });
+
+    try {
+      const result = await driver.runTask({
+        session: sessionArtifactFromCodexAuthJson(validAuthJson),
+        task: {
+          kind: "structured-prompt",
+          prompt: "hit the account limit",
+          controls: { permissionMode: "allow-edits" },
+        },
+        workspace: { path: workspace },
+        runner: new StaticRunner(""),
+        redactor: new DefaultRedactor(),
+        abortSignal: new AbortController().signal,
+      });
+
+      expect(result).toMatchObject({
+        status: "failed",
+        failure: {
+          code: "quota_limited",
+          safeMessage: "Codex quota or billing limit was reached.",
+        },
+      });
+    } finally {
+      await driver.dispose();
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("fully prewarms reusable app-server slots before the first task", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "codex-app-warm-test-"));
     const cacheRoot = await mkdtemp(join(tmpdir(), "codex-app-warm-root-"));
@@ -1586,6 +1842,11 @@ type FakeAppServerFactoryOptions = {
   readonly failThreadStart?: boolean;
   readonly failThreadStartNumbers?: readonly number[];
   readonly emitTopLevelErrorOnTurn?: string;
+  readonly abortTurnNumbers?: readonly number[];
+  readonly abortTurnReason?: string;
+  readonly suppressOutputTurnNumbers?: readonly number[];
+  readonly goalStatusesAfterTurns?: readonly string[];
+  readonly mismatchTurnStartResponseId?: boolean;
   readonly onPrompt?: (prompt: string) => void;
   readonly onRequest?: (request: FakeAppServerRequest) => void;
 };
@@ -1634,6 +1895,11 @@ class FakeAppServerProcess extends EventEmitter {
   private nextThreadId = 1;
   private nextTurnId = 1;
   private threadStartCount = 0;
+  private completedTurnCount = 0;
+  private readonly goals = new Map<
+    string,
+    { objective: string; status: string }
+  >();
 
   constructor(private readonly options: FakeAppServerFactoryOptions) {
     super();
@@ -1672,15 +1938,62 @@ class FakeAppServerProcess extends EventEmitter {
         });
         continue;
       }
+      if (request.method === "thread/goal/set") {
+        const threadId = String(request.params?.threadId ?? "");
+        const objective = String(request.params?.objective ?? "");
+        const status = String(request.params?.status ?? "active");
+        this.goals.set(threadId, { objective, status });
+        this.respond(request.id, {
+          goal: {
+            threadId,
+            objective,
+            status,
+            tokenBudget: null,
+            tokensUsed: 0,
+            timeUsedSeconds: 0,
+            createdAt: 0,
+            updatedAt: 0,
+          },
+        });
+        continue;
+      }
+      if (request.method === "thread/goal/get") {
+        const threadId = String(request.params?.threadId ?? "");
+        const goal = this.goals.get(threadId);
+        this.respond(request.id, {
+          goal: goal
+            ? {
+                threadId,
+                objective: goal.objective,
+                status: goal.status,
+                tokenBudget: null,
+                tokensUsed: 0,
+                timeUsedSeconds: 0,
+                createdAt: 0,
+                updatedAt: 0,
+              }
+            : null,
+        });
+        continue;
+      }
       if (request.method === "turn/start") {
-        const turnId = `turn-${this.nextTurnId}`;
+        const turnNumber = this.nextTurnId;
+        const turnId = `turn-${turnNumber}`;
         this.nextTurnId += 1;
         const prompt = extractFakePrompt(request.params);
         this.options.onPrompt?.(prompt);
         this.respond(request.id, {
-          turn: { id: turnId },
+          turn: {
+            id: this.options.mismatchTurnStartResponseId
+              ? `response-${turnId}`
+              : turnId,
+          },
         });
         setTimeout(() => {
+          this.notify("turn/started", {
+            threadId: String(request.params?.threadId ?? ""),
+            turn: { id: turnId, status: "inProgress" },
+          });
           if (this.options.emitTopLevelErrorOnTurn) {
             this.stdout.emit(
               "data",
@@ -1691,10 +2004,20 @@ class FakeAppServerProcess extends EventEmitter {
             );
             return;
           }
-          this.notify("item/agentMessage/delta", {
-            turnId,
-            delta: `app-server output:${prompt}`,
-          });
+          if (this.options.abortTurnNumbers?.includes(turnNumber)) {
+            this.notify("turn/aborted", {
+              turnId,
+              reason: this.options.abortTurnReason ?? "aborted",
+            });
+            return;
+          }
+          this.markGoalAfterCompletedTurn(String(request.params?.threadId ?? ""));
+          if (!this.options.suppressOutputTurnNumbers?.includes(turnNumber)) {
+            this.notify("item/agentMessage/delta", {
+              turnId,
+              delta: `app-server output:${prompt}`,
+            });
+          }
           this.notify("turn/completed", {
             turn: { id: turnId, status: { type: "completed" } },
           });
@@ -1703,6 +2026,33 @@ class FakeAppServerProcess extends EventEmitter {
       }
       this.respondError(request.id, `unsupported:${request.method}`);
     }
+  }
+
+  private markGoalAfterCompletedTurn(threadId: string): void {
+    const goal = this.goals.get(threadId);
+    if (!goal) return;
+    const nextStatus =
+      this.options.goalStatusesAfterTurns?.[this.completedTurnCount] ??
+      "complete";
+    this.completedTurnCount += 1;
+    this.goals.set(threadId, {
+      ...goal,
+      status: nextStatus,
+    });
+    this.notify("thread/goal/updated", {
+      threadId,
+      turnId: null,
+      goal: {
+        threadId,
+        objective: goal.objective,
+        status: nextStatus,
+        tokenBudget: null,
+        tokensUsed: 0,
+        timeUsedSeconds: 0,
+        createdAt: 0,
+        updatedAt: 0,
+      },
+    });
   }
 
   private respond(id: number, result: Record<string, unknown>): void {

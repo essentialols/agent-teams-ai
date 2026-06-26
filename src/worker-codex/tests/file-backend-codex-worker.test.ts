@@ -64,6 +64,38 @@ describe("FileBackendCodexWorker", () => {
     }
   });
 
+  it("replaces an older persisted Codex session with newer explicit auth json", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "codex-worker-reseed-"));
+    const worker = new FileBackendCodexWorker({
+      providerInstanceId: "codex:reseed",
+      stateRootDir: rootDir,
+      codexBinaryPath: "codex",
+      encryptionKey: new Uint8Array(32).fill(9),
+      clock: {
+        now: () => new Date("2026-05-31T00:10:00.000Z"),
+        monotonicMs: () => 1,
+      },
+    });
+
+    try {
+      await worker.start();
+      await worker.seedCodexAuthJson(
+        codexAuthJsonAt("old-refresh-token", "2026-05-31T00:00:00.000Z"),
+      );
+      const oldQuotaGroup = worker.capacity().details?.quotaGroup;
+
+      await worker.seedCodexAuthJson(
+        codexAuthJsonAt("new-refresh-token", "2026-05-31T00:10:00.000Z"),
+      );
+
+      expect(worker.capacity().details?.quotaGroup).toBeDefined();
+      expect(worker.capacity().details?.quotaGroup).not.toBe(oldQuotaGroup);
+    } finally {
+      await worker.dispose();
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
   it("requires explicit start before running work", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "codex-worker-"));
     const worker = new FileBackendCodexWorker({
@@ -241,6 +273,50 @@ describe("FileBackendCodexWorker", () => {
       expect(runner.lastArgs).not.toContain("--json");
       expect(runner.lastCwd).toBe(callerWorkspace);
       expect(runner.lastStdin).toContain("make a coding edit");
+    } finally {
+      await worker.dispose();
+      await rm(rootDir, { recursive: true, force: true });
+      await rm(callerWorkspace, { recursive: true, force: true });
+    }
+  });
+
+  it("runs coding work through first-class app-server goal mode when selected", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "codex-worker-"));
+    const callerWorkspace = await mkdtemp(join(tmpdir(), "codex-goal-workspace-"));
+    const appServer = new FakeAppServerFactory();
+    const clock = {
+      now: () => new Date("2026-05-31T00:05:00.000Z"),
+      monotonicMs: () => performance.now(),
+    };
+    const worker = new FileBackendCodexWorker({
+      providerInstanceId: "codex:app-server-goal",
+      stateRootDir: rootDir,
+      workspacePath: callerWorkspace,
+      codexBinaryPath: "codex",
+      model: "gpt-test",
+      encryptionKey: new Uint8Array(32).fill(14),
+      executionEngine: "app-server-goal",
+      appServerProcessFactory: appServer.create,
+      clock,
+    });
+
+    try {
+      await worker.start();
+      await worker.seedCodexAuthJson(validAuthJson);
+      await expect(
+        worker.run({
+          prompt: "finish the persistent goal",
+          controls: { permissionMode: "allow-edits" },
+        }),
+      ).resolves.toMatchObject({
+        outputText: "OK",
+      });
+
+      expect(appServer.goalObjectives).toEqual([
+        "finish the persistent goal",
+      ]);
+      expect(appServer.prompts).toEqual(["finish the persistent goal"]);
+      expect(appServer.threadCwds).toContain(callerWorkspace);
     } finally {
       await worker.dispose();
       await rm(rootDir, { recursive: true, force: true });
@@ -633,6 +709,269 @@ describe("FileBackendCodexWorker", () => {
     }
   });
 
+  it("does not switch accounts for clean unknown Codex output by default", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "codex-safe-clean-unknown-"));
+    const workspacePath = await mkdtemp(
+      join(tmpdir(), "codex-safe-clean-unknown-workspace-"),
+    );
+    const clock = {
+      now: () => new Date("2026-05-31T00:05:00.000Z"),
+      monotonicMs: () => performance.now(),
+    };
+    const appServers = [
+      new FakeAppServerFactory({
+        emitTopLevelErrorOnTurn: "Codex provider output was invalid.",
+      }),
+      new FakeAppServerFactory(),
+    ];
+    const executor = new FileBackendCodexSafeExecutor({
+      stateRootDir: rootDir,
+      workspacePath,
+      accounts: appServers.map((appServer, index) => ({
+        codexAuthJson: codexAuthJson(`clean-unknown-account-${index + 1}`),
+        worker: {
+          providerInstanceId: `codex-clean-unknown-account-${index + 1}`,
+          stateRootDir: rootDir,
+          codexBinaryPath: "codex",
+          encryptionKey: new Uint8Array(32).fill(index + 64),
+          appServerProcessFactory: appServer.create,
+          runner: new StaticRunner({
+            exitCode: index === 0 ? 1 : 0,
+            stdout: "",
+            stderr:
+              index === 0 ? "Codex provider output was invalid." : "",
+          }),
+          clock,
+        },
+      })),
+      clock,
+    });
+
+    try {
+      const result = await executor.run({
+        taskId: "codex-safe-clean-unknown-task",
+        prompt: "Implement the clean unknown task.",
+        controls: { permissionMode: "allow-edits" },
+      });
+
+      expect(result.status).toBe("failed");
+      if (result.status !== "failed") {
+        throw new Error(`expected failed: ${result.status}`);
+      }
+      expect(result.reason).toBe("unknown_error");
+      expect(result.safeMessage).toBe("Codex runtime failed.");
+      expect(result.attempts).toHaveLength(1);
+      expect(result.attempts[0]?.failureReason).toBe("unknown_error");
+      expect(appServers[0]!.prompts).toEqual([
+        "Implement the clean unknown task.",
+      ]);
+      expect(appServers[1]!.prompts).toEqual([]);
+      expect(appServers[1]!.threadCwds).toEqual([]);
+    } finally {
+      await executor.dispose();
+      await rm(rootDir, { recursive: true, force: true });
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it("repairs a reconnect-required Codex session once on the same account", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "codex-safe-reconnect-repair-"));
+    const workspacePath = await mkdtemp(
+      join(tmpdir(), "codex-safe-reconnect-repair-workspace-"),
+    );
+    const clock = {
+      now: () => new Date("2026-05-31T00:05:00.000Z"),
+      monotonicMs: () => performance.now(),
+    };
+    const appServers = [
+      new FakeAppServerFactory({
+        emitTopLevelErrorsOnTurns: ["login required", "login required", null],
+      }),
+      new FakeAppServerFactory(),
+    ];
+    const executor = new FileBackendCodexSafeExecutor({
+      stateRootDir: rootDir,
+      workspacePath,
+      accounts: appServers.map((appServer, index) => ({
+        codexAuthJson: codexAuthJson(`reconnect-repair-account-${index + 1}`),
+        worker: {
+          providerInstanceId: `codex-reconnect-repair-account-${index + 1}`,
+          stateRootDir: rootDir,
+          codexBinaryPath: "codex",
+          encryptionKey: new Uint8Array(32).fill(index + 66),
+          appServerProcessFactory: appServer.create,
+          runner: new StaticRunner({
+            exitCode: index === 0 ? 1 : 0,
+            stdout: "",
+            stderr: index === 0 ? "login required" : "",
+          }),
+          capacityPolicy: {
+            reconnectCooldownMs: 60_000,
+          },
+          clock,
+        },
+      })),
+      clock,
+    });
+
+    try {
+      const result = await executor.run({
+        taskId: "codex-safe-reconnect-repair-task",
+        prompt: "Implement the reconnect repair task.",
+        controls: { permissionMode: "allow-edits" },
+      });
+
+      if (result.status !== "completed") {
+        throw new Error(`expected completed: ${result.reason}:${result.safeMessage}`);
+      }
+      expect(result.attempts).toHaveLength(2);
+      expect(result.attempts[0]?.failureReason).toBe("reconnect_required");
+      expect(appServers[0]!.prompts).toHaveLength(3);
+      expect(appServers[0]!.prompts[0]).toBe(
+        "Implement the reconnect repair task.",
+      );
+      expect(appServers[0]!.prompts[1]).toBe(
+        "Implement the reconnect repair task.",
+      );
+      expect(appServers[0]!.prompts[2]).toContain("Continue the same task");
+      expect(appServers[1]!.prompts).toEqual([]);
+    } finally {
+      await executor.dispose();
+      await rm(rootDir, { recursive: true, force: true });
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it("switches accounts after the reconnect repair budget is exhausted", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "codex-safe-reconnect-switch-"));
+    const workspacePath = await mkdtemp(
+      join(tmpdir(), "codex-safe-reconnect-switch-workspace-"),
+    );
+    const clock = {
+      now: () => new Date("2026-05-31T00:05:00.000Z"),
+      monotonicMs: () => performance.now(),
+    };
+    const appServers = [
+      new FakeAppServerFactory({
+        emitTopLevelErrorsOnTurns: [
+          "login required",
+          "login required",
+          "login required",
+          "login required",
+        ],
+      }),
+      new FakeAppServerFactory(),
+    ];
+    const executor = new FileBackendCodexSafeExecutor({
+      stateRootDir: rootDir,
+      workspacePath,
+      accounts: appServers.map((appServer, index) => ({
+        codexAuthJson: codexAuthJson(`reconnect-switch-account-${index + 1}`),
+        worker: {
+          providerInstanceId: `codex-reconnect-switch-account-${index + 1}`,
+          stateRootDir: rootDir,
+          codexBinaryPath: "codex",
+          encryptionKey: new Uint8Array(32).fill(index + 68),
+          appServerProcessFactory: appServer.create,
+          runner: new StaticRunner({
+            exitCode: index === 0 ? 1 : 0,
+            stdout: "",
+            stderr: index === 0 ? "login required" : "",
+          }),
+          capacityPolicy: {
+            reconnectCooldownMs: 60_000,
+          },
+          clock,
+        },
+      })),
+      clock,
+    });
+
+    try {
+      const result = await executor.run({
+        taskId: "codex-safe-reconnect-switch-task",
+        prompt: "Implement the reconnect switch task.",
+        controls: { permissionMode: "allow-edits" },
+      });
+
+      if (result.status !== "completed") {
+        throw new Error(`expected completed: ${result.reason}:${result.safeMessage}`);
+      }
+      expect(result.attempts).toHaveLength(3);
+      expect(result.attempts[0]?.failureReason).toBe("reconnect_required");
+      expect(result.attempts[1]?.failureReason).toBe("reconnect_required");
+      expect(appServers[0]!.prompts).toHaveLength(4);
+      expect(appServers[1]!.prompts).toHaveLength(1);
+      expect(appServers[1]!.prompts[0]).toContain("Continue the same task");
+    } finally {
+      await executor.dispose();
+      await rm(rootDir, { recursive: true, force: true });
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it("switches accounts for invalid Codex auth without retrying the broken account", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "codex-safe-auth-invalid-"));
+    const workspacePath = await mkdtemp(
+      join(tmpdir(), "codex-safe-auth-invalid-workspace-"),
+    );
+    const clock = {
+      now: () => new Date("2026-05-31T00:05:00.000Z"),
+      monotonicMs: () => performance.now(),
+    };
+    const appServers = [
+      new FakeAppServerFactory({
+        emitTopLevelErrorOnTurn:
+          "refresh_token_invalidated: Your refresh token was revoked.",
+      }),
+      new FakeAppServerFactory(),
+    ];
+    const executor = new FileBackendCodexSafeExecutor({
+      stateRootDir: rootDir,
+      workspacePath,
+      accounts: appServers.map((appServer, index) => ({
+        codexAuthJson: codexAuthJson(`auth-invalid-account-${index + 1}`),
+        worker: {
+          providerInstanceId: `codex-auth-invalid-account-${index + 1}`,
+          stateRootDir: rootDir,
+          codexBinaryPath: "codex",
+          encryptionKey: new Uint8Array(32).fill(index + 70),
+          appServerProcessFactory: appServer.create,
+          runner: new StaticRunner({
+            exitCode: index === 0 ? 1 : 0,
+            stdout: "",
+            stderr:
+              index === 0
+                ? "refresh_token_invalidated: Your refresh token was revoked."
+                : "",
+          }),
+          clock,
+        },
+      })),
+      clock,
+    });
+
+    try {
+      const result = await executor.run({
+        taskId: "codex-safe-auth-invalid-task",
+        prompt: "Implement the auth invalid task.",
+        controls: { permissionMode: "allow-edits" },
+      });
+
+      if (result.status !== "completed") {
+        throw new Error(`expected completed: ${result.reason}:${result.safeMessage}`);
+      }
+      expect(result.attempts).toHaveLength(2);
+      expect(result.attempts[0]?.failureReason).toBe("account_unavailable");
+      expect(appServers[0]!.prompts).toEqual(["Implement the auth invalid task."]);
+      expect(appServers[1]!.prompts[0]).toContain("Continue the same task");
+    } finally {
+      await executor.dispose();
+      await rm(rootDir, { recursive: true, force: true });
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
   it("continues dirty unknown safe Codex work when explicitly allowed", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "codex-safe-unknown-opt-in-"));
     const workspacePath = await mkdtemp(
@@ -833,6 +1172,84 @@ describe("FileBackendCodexWorker", () => {
     }
   });
 
+  it("continues a native Codex goal on the next account after a usage limit", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "codex-safe-live-goal-"));
+    const workspacePath = await mkdtemp(
+      join(tmpdir(), "codex-safe-live-goal-workspace-"),
+    );
+    const clock = {
+      now: () => new Date("2026-05-31T00:05:00.000Z"),
+      monotonicMs: () => performance.now(),
+    };
+    const appServers = [
+      new FakeAppServerFactory({
+        emitTopLevelErrorOnTurn: "You've hit your usage limit.",
+      }),
+      new FakeAppServerFactory(),
+    ];
+    const executor = new FileBackendCodexSafeExecutor({
+      stateRootDir: rootDir,
+      workspacePath,
+      maxAccountCycles: 1,
+      accounts: appServers.map((appServer, index) => ({
+        codexAuthJson: codexAuthJson(`live-goal-account-${index + 1}`),
+        worker: {
+          providerInstanceId: `codex-live-goal-account-${index + 1}`,
+          stateRootDir: rootDir,
+          codexBinaryPath: "codex",
+          encryptionKey: new Uint8Array(32).fill(index + 50),
+          executionEngine: "app-server-goal",
+          serviceTier: "fast",
+          reasoningEffort: "xhigh",
+          appServerProcessFactory: appServer.create,
+          runner: new StaticRunner({
+            exitCode: index === 0 ? 1 : 0,
+            stdout: "",
+            stderr: index === 0 ? "You've hit your usage limit." : "",
+          }),
+          capacityPolicy: {
+            quotaCooldownMs: 0,
+          },
+          clock,
+        },
+      })),
+      clock,
+    });
+
+    try {
+      const result = await executor.run({
+        taskId: "codex-live-goal-until-done",
+        prompt: "Finish the native goal.",
+        controls: { permissionMode: "allow-edits" },
+        metadata: {
+          codexGoalObjective: "Finish the native goal objective.",
+        },
+      });
+
+      if (result.status !== "completed") {
+        throw new Error(
+          `expected completed after live handoff: ${result.reason}:${result.safeMessage}`,
+        );
+      }
+      expect(result.replayed).toBe(false);
+      expect(result.attempts).toHaveLength(2);
+      expect(result.attempts[0]?.failureReason).toBe("quota_limited");
+      expect(appServers[0]!.prompts).toEqual(["Finish the native goal."]);
+      expect(appServers[1]!.prompts[0]).toContain("Continue the same task");
+      expect(appServers[1]!.prompts[0]).toContain(
+        "Previous attempt stopped because: quota_limited",
+      );
+      expect(appServers[1]!.goalObjectives).toEqual([
+        "Finish the native goal objective.",
+      ]);
+      expect(appServers[1]!.threadCwds).toContain(workspacePath);
+    } finally {
+      await executor.dispose();
+      await rm(rootDir, { recursive: true, force: true });
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
   it("resumes a partial safe Codex goal on another account after executor restart", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "codex-safe-goal-"));
     const workspacePath = await mkdtemp(join(tmpdir(), "codex-safe-goal-workspace-"));
@@ -953,6 +1370,7 @@ describe("FileBackendCodexWorker", () => {
 
 type FakeAppServerFactoryOptions = {
   readonly emitTopLevelErrorOnTurn?: string;
+  readonly emitTopLevelErrorsOnTurns?: readonly (string | null)[];
   readonly writeFileOnTurn?: {
     readonly relativePath: string;
     readonly content: string;
@@ -964,6 +1382,8 @@ class FakeAppServerFactory {
   readonly prompts: string[] = [];
   readonly threadCwds: string[] = [];
   readonly envs: Readonly<Record<string, string>>[] = [];
+  readonly goalObjectives: string[] = [];
+  private emittedTurnErrors = 0;
 
   constructor(private readonly options: FakeAppServerFactoryOptions = {}) {}
 
@@ -975,9 +1395,21 @@ class FakeAppServerFactory {
     return new FakeAppServerProcess(
       (prompt) => this.prompts.push(prompt),
       (cwd) => this.threadCwds.push(cwd),
+      (objective) => this.goalObjectives.push(objective),
+      () => this.configuredTurnError(),
       this.options,
     );
   };
+
+  private configuredTurnError(): string | null {
+    const sequence = this.options.emitTopLevelErrorsOnTurns;
+    if (sequence) {
+      const value = sequence[this.emittedTurnErrors];
+      this.emittedTurnErrors += 1;
+      return value ?? null;
+    }
+    return this.options.emitTopLevelErrorOnTurn ?? null;
+  }
 }
 
 class FakeAppServerProcess extends EventEmitter {
@@ -994,10 +1426,16 @@ class FakeAppServerProcess extends EventEmitter {
   private nextThreadId = 1;
   private nextTurnId = 1;
   private readonly threadCwdsById = new Map<string, string>();
+  private readonly goals = new Map<
+    string,
+    { objective: string; status: string }
+  >();
 
   constructor(
     private readonly onPrompt: (prompt: string) => void,
     private readonly onThreadCwd: (cwd: string) => void,
+    private readonly onGoalObjective: (objective: string) => void,
+    private readonly nextTurnError: () => string | null,
     private readonly options: FakeAppServerFactoryOptions,
   ) {
     super();
@@ -1031,6 +1469,45 @@ class FakeAppServerProcess extends EventEmitter {
         this.respond(request.id, { thread: { id: threadId } });
         continue;
       }
+      if (request.method === "thread/goal/set") {
+        const threadId = String(request.params?.threadId ?? "");
+        const objective = String(request.params?.objective ?? "");
+        const status = String(request.params?.status ?? "active");
+        this.goals.set(threadId, { objective, status });
+        this.onGoalObjective(objective);
+        this.respond(request.id, {
+          goal: {
+            threadId,
+            objective,
+            status,
+            tokenBudget: null,
+            tokensUsed: 0,
+            timeUsedSeconds: 0,
+            createdAt: 0,
+            updatedAt: 0,
+          },
+        });
+        continue;
+      }
+      if (request.method === "thread/goal/get") {
+        const threadId = String(request.params?.threadId ?? "");
+        const goal = this.goals.get(threadId);
+        this.respond(request.id, {
+          goal: goal
+            ? {
+                threadId,
+                objective: goal.objective,
+                status: goal.status,
+                tokenBudget: null,
+                tokensUsed: 0,
+                timeUsedSeconds: 0,
+                createdAt: 0,
+                updatedAt: 0,
+              }
+            : null,
+        });
+        continue;
+      }
       if (request.method === "turn/start") {
         const turnId = `turn-${this.nextTurnId}`;
         this.nextTurnId += 1;
@@ -1039,16 +1516,18 @@ class FakeAppServerProcess extends EventEmitter {
         this.respond(request.id, { turn: { id: turnId } });
         setTimeout(() => {
           void this.writeConfiguredTurnFile(request.params).then(() => {
-            if (this.options.emitTopLevelErrorOnTurn) {
+            const errorMessage = this.nextTurnError();
+            if (errorMessage) {
               this.stdout.emit(
                 "data",
                 `${JSON.stringify({
                   method: "error",
-                  message: this.options.emitTopLevelErrorOnTurn,
+                  message: errorMessage,
                 })}\n`,
               );
               return;
             }
+            this.markGoalComplete(String(request.params?.threadId ?? ""));
             this.notify("item/agentMessage/delta", {
               turnId,
               delta: "OK",
@@ -1062,6 +1541,12 @@ class FakeAppServerProcess extends EventEmitter {
       }
       this.respond(request.id, {});
     }
+  }
+
+  private markGoalComplete(threadId: string): void {
+    const goal = this.goals.get(threadId);
+    if (!goal) return;
+    this.goals.set(threadId, { ...goal, status: "complete" });
   }
 
   private async writeConfiguredTurnFile(
@@ -1164,6 +1649,10 @@ class RefreshingFakeRunner implements RunnerPort {
 }
 
 function codexAuthJson(refreshToken: string): string {
+  return codexAuthJsonAt(refreshToken, "2026-05-31T00:00:00.000Z");
+}
+
+function codexAuthJsonAt(refreshToken: string, lastRefresh: string): string {
   return JSON.stringify({
     auth_mode: "chatgpt",
     tokens: {
@@ -1171,7 +1660,7 @@ function codexAuthJson(refreshToken: string): string {
       access_token: "access-token",
       expiry: "2026-05-31T23:00:00.000Z",
     },
-    last_refresh: "2026-05-31T00:00:00.000Z",
+    last_refresh: lastRefresh,
   });
 }
 

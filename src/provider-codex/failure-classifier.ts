@@ -38,6 +38,14 @@ export function classifyCodexFailure(error: unknown): ProviderFailure {
         safeMessage: "Codex session needs reconnect.",
         causeCategory: state,
       };
+    case "provider_session_invalid":
+      return {
+        code: "provider_session_invalid",
+        retryable: false,
+        reconnectRequired: true,
+        safeMessage: "Codex session is invalid.",
+        causeCategory: state,
+      };
     case "quota_limited":
       return {
         code: "quota_limited",

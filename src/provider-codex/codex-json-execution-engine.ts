@@ -15,6 +15,8 @@ export type CodexReasoningEffort =
   | "high"
   | "xhigh";
 
+export type CodexServiceTier = string;
+
 export type CodexSandboxMode = "read-only" | "workspace-write";
 
 export type CodexMaterializedSession = {
@@ -54,6 +56,7 @@ export type CodexExecutionEngine = {
   };
   run(input: {
     readonly prompt: string;
+    readonly goalObjective?: string;
     readonly systemPrompt?: string;
     readonly session: CodexMaterializedSession;
     readonly workspacePath: string;
@@ -61,6 +64,7 @@ export type CodexExecutionEngine = {
     readonly redactor: RedactorPort;
     readonly model: string;
     readonly reasoningEffort: CodexReasoningEffort;
+    readonly serviceTier?: CodexServiceTier;
     readonly sandboxMode?: CodexSandboxMode;
     readonly outputSchema?: unknown;
     readonly abortSignal: AbortSignal;
@@ -72,6 +76,7 @@ export type CodexExecutionEngine = {
     readonly redactor: RedactorPort;
     readonly model: string;
     readonly reasoningEffort: CodexReasoningEffort;
+    readonly serviceTier?: CodexServiceTier;
     readonly warmupPrompt?: string;
     readonly abortSignal: AbortSignal;
   }): Promise<CodexExecutionPrewarmResult>;
@@ -108,6 +113,7 @@ export class PackagedCodexJsonExecutionEngine implements CodexExecutionEngine {
 
   async run(input: {
     readonly prompt: string;
+    readonly goalObjective?: string;
     readonly systemPrompt?: string;
     readonly session: CodexMaterializedSession;
     readonly workspacePath: string;
@@ -115,6 +121,7 @@ export class PackagedCodexJsonExecutionEngine implements CodexExecutionEngine {
     readonly redactor: RedactorPort;
     readonly model: string;
     readonly reasoningEffort: CodexReasoningEffort;
+    readonly serviceTier?: CodexServiceTier;
     readonly sandboxMode?: CodexSandboxMode;
     readonly outputSchema?: unknown;
     readonly abortSignal: AbortSignal;
@@ -123,6 +130,9 @@ export class PackagedCodexJsonExecutionEngine implements CodexExecutionEngine {
       jsonFlag: this.options.jsonFlag ?? "--json",
       model: input.model,
       reasoningEffort: input.reasoningEffort,
+      ...(input.serviceTier === undefined
+        ? {}
+        : { serviceTier: input.serviceTier }),
       ...(input.sandboxMode === undefined
         ? {}
         : { sandboxMode: input.sandboxMode }),
@@ -195,6 +205,7 @@ export function buildCodexJsonExecArgs(input: {
   readonly jsonFlag: "--json" | "--experimental-json";
   readonly model: string;
   readonly reasoningEffort: CodexReasoningEffort;
+  readonly serviceTier?: CodexServiceTier;
   readonly sandboxMode?: CodexSandboxMode;
 }): readonly string[] {
   return [
@@ -208,6 +219,15 @@ export function buildCodexJsonExecArgs(input: {
     'approval_policy="never"',
     "--config",
     `model_reasoning_effort=${JSON.stringify(input.reasoningEffort)}`,
+    ...(input.serviceTier
+      ? [
+          "--config",
+          `service_tier=${JSON.stringify(input.serviceTier)}`,
+          ...(input.serviceTier === "fast"
+            ? ["--config", "features.fast_mode=true"]
+            : []),
+        ]
+      : []),
     "--config",
     'model_verbosity="low"',
     "--config",

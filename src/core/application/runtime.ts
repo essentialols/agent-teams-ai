@@ -949,7 +949,6 @@ function sessionForPostRefreshTask(
 function shouldGuardedRefresh(failure: ProviderFailure): boolean {
   return (
     failure.code === "needs_reconnect" ||
-    failure.code === "provider_session_invalid" ||
     failure.causeCategory === "needs_reconnect"
   );
 }

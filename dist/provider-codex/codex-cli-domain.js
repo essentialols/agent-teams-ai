@@ -68,6 +68,9 @@ export function classifyCodexRuntimeFailure(message) {
     if (isCodexQuotaOrRateLimitFailure(normalized)) {
         return "quota_limited";
     }
+    if (isCodexInvalidatedAuthFailure(normalized)) {
+        return "provider_session_invalid";
+    }
     if (normalized.includes("unauthorized") ||
         normalized.includes("invalid_grant") ||
         normalized.includes("refresh token") ||
@@ -85,7 +88,8 @@ function isCodexCancelledFailure(normalizedMessage) {
     return (normalizedMessage.includes("node_process_runner_aborted") ||
         normalizedMessage.includes("subscription_worker_run_aborted") ||
         normalizedMessage.includes("codex_app_server_aborted") ||
-        normalizedMessage.includes("codex_app_server_turn_aborted") ||
+        (normalizedMessage.includes("codex_app_server_turn_aborted") &&
+            !normalizedMessage.includes("codex_app_server_turn_aborted:replaced")) ||
         normalizedMessage.includes("aborterror") ||
         /\baborted\b/.test(normalizedMessage));
 }
@@ -102,17 +106,29 @@ function isCodexInvalidOutputFailure(normalizedMessage) {
         normalizedMessage.includes("codex_structured_output_invalid") ||
         normalizedMessage.includes("codex_json_output_too_large") ||
         normalizedMessage.includes("codex_app_server_final_message_missing") ||
+        normalizedMessage.includes("codex_app_server_goal_turn_output_missing") ||
         normalizedMessage.includes("codex_app_server_structured_output_invalid") ||
         normalizedMessage.includes("codex_app_server_output_too_large"));
 }
 function isCodexQuotaOrRateLimitFailure(normalizedMessage) {
-    return (/\b(?:429|too many requests|rate[_ -]?limit(?:ed| exceeded)?|rate_limit_exceeded)\b/.test(normalizedMessage) ||
+    return (normalizedMessage.includes("usagelimitexceeded") ||
+        normalizedMessage.includes("ratelimitexceeded") ||
+        normalizedMessage.includes("codex_app_server_goal_usagelimited") ||
+        /\b(?:429|too many requests|rate[_ -]?limit(?:ed| exceeded)?|rate_limit_exceeded)\b/.test(normalizedMessage) ||
         /\b(?:rate[_ -]?limits?|not enough retry quota|usage[_ -]?limit(?: reached| exceeded)?|limit reached)\b/.test(normalizedMessage) ||
         /\b(?:insufficient_quota|quota_exceeded|exceeded (?:your )?(?:current )?quota|quota (?:limit|exceeded))\b/.test(normalizedMessage) ||
         /\byou(?:'|’)ve hit your usage limit\b/.test(normalizedMessage) ||
         /\b(?:purchase|buy|add|get) more credits\b/.test(normalizedMessage) ||
         /\bout of credits\b/.test(normalizedMessage) ||
         /\b(?:billing_hard_limit|payment required|billing (?:limit|quota|hard limit|not active|required))\b/.test(normalizedMessage));
+}
+function isCodexInvalidatedAuthFailure(normalizedMessage) {
+    return (normalizedMessage.includes("token_invalidated") ||
+        normalizedMessage.includes("refresh_token_invalidated") ||
+        normalizedMessage.includes("refresh token was revoked") ||
+        normalizedMessage.includes("authentication token has been invalidated") ||
+        normalizedMessage.includes("access token could not be refreshed") ||
+        normalizedMessage.includes("please log out and sign in again"));
 }
 export function pruneCodexChildEnv(env) {
     const allowed = {};

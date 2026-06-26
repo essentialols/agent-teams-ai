@@ -1,5 +1,5 @@
 import { type ClockPort, type ObservabilityPort, type ProviderTask, type RuntimeDeps } from "@vioxen/subscription-runtime/core";
-import { type CodexExecutionProfile, type CodexAppServerProcessFactory, type CodexReasoningEffort } from "@vioxen/subscription-runtime/provider-codex";
+import { type CodexExecutionProfile, type CodexAppServerProcessFactory, type CodexReasoningEffort, type CodexServiceTier } from "@vioxen/subscription-runtime/provider-codex";
 import { type CapacityAwareSubscriptionWorker, type SubscriptionWorkerHealth, type SubscriptionWorkerPrewarmResult, type SubscriptionWorkerState, type WorkerCapacitySnapshot } from "@vioxen/subscription-runtime/worker-core";
 export type FileBackendCodexWorkerOptions = {
     readonly workerId?: string;
@@ -9,6 +9,7 @@ export type FileBackendCodexWorkerOptions = {
     readonly encryptionKey: Uint8Array | string;
     readonly model?: string;
     readonly reasoningEffort?: CodexReasoningEffort;
+    readonly serviceTier?: CodexServiceTier;
     readonly sessionCacheSlots?: number;
     /**
      * Prompt used to fully warm the Codex app-server and model path.
@@ -33,11 +34,13 @@ export type FileBackendCodexWorkerOptions = {
     readonly capacityAccountId?: string;
     readonly capacityPolicy?: CodexWorkerCapacityPolicy;
 };
-export type CodexWorkerExecutionEngine = "app-server" | "packaged-exec" | "plain-exec";
+export type CodexWorkerExecutionEngine = "app-server" | "app-server-goal" | "packaged-exec" | "plain-exec";
 export type CodexWorkerCapacityPolicy = {
     readonly softMaxRunsPerWindow?: number;
     readonly windowMs?: number;
     readonly quotaCooldownMs?: number;
+    readonly reconnectCooldownMs?: number;
+    readonly maxReconnectRetriesPerAccount?: number;
 };
 export type FileBackendCodexWorkerJob = {
     readonly runId?: string;
@@ -75,6 +78,7 @@ export declare class FileBackendCodexWorker implements CapacityAwareSubscription
     private capacityState;
     private windowStartedAtMs;
     private runsInWindow;
+    private consecutiveReconnectFailures;
     private quotaGroup;
     private capacityAccountId;
     constructor(options: FileBackendCodexWorkerOptions);
@@ -91,6 +95,7 @@ export declare class FileBackendCodexWorker implements CapacityAwareSubscription
     private recordSuccessfulRun;
     private recordFailure;
     private recordBlocked;
+    private recordReconnectRequired;
     private rollCapacityWindow;
     private rememberStoredQuotaGroup;
     private rememberQuotaGroup;

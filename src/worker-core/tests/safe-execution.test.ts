@@ -359,6 +359,27 @@ describe("SafeExecutionRunner", () => {
     });
   });
 
+  it("classifies invalid auth from wrapped plain error causes", () => {
+    const authFailure = new Error(
+      "node_process_runner_failed:1: HTTP error: 401 Unauthorized. " +
+        "refresh_token_invalidated: Your session has ended. Please log out and sign in again.",
+    );
+    const poolFailure = new SubscriptionWorkerError(
+      "subscription_worker_pool_slot_failed",
+      "Worker pool slot failed to run a task.",
+      {
+        cause: authFailure,
+        details: { workerId: "worker-a", slotIndex: "0" },
+      },
+    );
+
+    expect(defaultSafeExecutionErrorClassifier(poolFailure)).toEqual({
+      reason: "account_unavailable",
+      safeMessage: "Provider account session is unavailable.",
+      retryable: true,
+    });
+  });
+
   it("marks retryable partial work when no continuation job can be built", async () => {
     const workspacePath = await gitWorkspace("safe-execution-no-continuation-");
     const journal = new InMemoryAttemptJournal();

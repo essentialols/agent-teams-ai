@@ -1258,36 +1258,56 @@ export function defaultSafeExecutionErrorClassifier(
     if (classified) return classified;
   }
 
-  const message = error instanceof Error ? error.message : String(error);
-  if (/abort/i.test(message)) {
+  const messages = chain.map(errorMessage);
+  const message = messages.find((candidate) => candidate.trim()) ?? "";
+  const authInvalidMessage = messages.find((candidate) =>
+    /refresh_token_invalidated|token_invalidated|refresh token (?:was )?revoked|session has ended|log (?:out|in) and sign in again|access token could not be refreshed|401 unauthorized/i.test(
+      candidate,
+    ),
+  );
+  if (authInvalidMessage) {
+    return {
+      reason: "account_unavailable",
+      safeMessage: "Provider account session is unavailable.",
+      retryable: true,
+    };
+  }
+  if (messages.some((candidate) => /abort/i.test(candidate))) {
     return {
       reason: "user_abort",
       safeMessage: message,
       retryable: false,
     };
   }
-  if (/quota|rate limit|allowance/i.test(message)) {
+  const quotaMessage = messages.find((candidate) =>
+    /quota|rate limit|allowance/i.test(candidate),
+  );
+  if (quotaMessage) {
     return {
       reason: "quota_limited",
-      safeMessage: message,
+      safeMessage: quotaMessage,
       retryable: true,
     };
   }
-  if (/\btimeout\b|\btimed out\b/i.test(message)) {
+  const timeoutMessage = messages.find((candidate) =>
+    /\btimeout\b|\btimed out\b/i.test(candidate),
+  );
+  if (timeoutMessage) {
     return {
       reason: "unknown_error",
-      safeMessage: message,
+      safeMessage: timeoutMessage,
       retryable: true,
     };
   }
-  if (
+  const invalidOutputMessage = messages.find((candidate) =>
     /final_message_missing|structured_output_invalid|output_too_large|provider output was invalid/i.test(
-      message,
-    )
-  ) {
+      candidate,
+    ),
+  );
+  if (invalidOutputMessage) {
     return {
       reason: "unknown_error",
-      safeMessage: message,
+      safeMessage: invalidOutputMessage,
       retryable: true,
     };
   }
@@ -1601,6 +1621,10 @@ function errorChain(error: unknown): readonly unknown[] {
         : undefined;
   }
   return chain;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function attemptMetadataFromError(error: unknown): {

@@ -408,24 +408,45 @@ export class FileBackendCodexWorker implements CapacityAwareSubscriptionWorker<
     let attempt = 1;
 
     while (true) {
-      const result = await this.runtime.refreshThenRunTask({
-        providerInstanceId: this.options.providerInstanceId,
-        task: {
-          kind: job.kind ?? "structured-prompt",
-          prompt: job.prompt,
-          ...(job.systemPrompt !== undefined ? { systemPrompt: job.systemPrompt } : {}),
-          ...(job.outputSchemaName
-            ? { outputSchemaName: job.outputSchemaName }
-            : {}),
-          ...(job.controls ? { controls: job.controls } : {}),
-          ...(job.metadata ? { metadata: job.metadata } : {}),
-        },
-        runContext: {
-          runId,
-          attempt,
-          abortSignal,
-        },
-      });
+      let result: RefreshThenRunResult;
+      try {
+        result = await this.runtime.refreshThenRunTask({
+          providerInstanceId: this.options.providerInstanceId,
+          task: {
+            kind: job.kind ?? "structured-prompt",
+            prompt: job.prompt,
+            ...(job.systemPrompt !== undefined
+              ? { systemPrompt: job.systemPrompt }
+              : {}),
+            ...(job.outputSchemaName
+              ? { outputSchemaName: job.outputSchemaName }
+              : {}),
+            ...(job.controls ? { controls: job.controls } : {}),
+            ...(job.metadata ? { metadata: job.metadata } : {}),
+          },
+          runContext: {
+            runId,
+            attempt,
+            abortSignal,
+          },
+        });
+      } catch (error) {
+        const failure = this.agentDriver.classifyRunFailure(error);
+        this.recordFailure(failure);
+        throw new SubscriptionWorkerError(
+          "subscription_worker_run_failed",
+          failure.safeMessage,
+          {
+            cause: error,
+            details: {
+              reason: failure.code,
+              ...(this.capacityAccountId
+                ? { accountId: this.capacityAccountId }
+                : {}),
+            },
+          },
+        );
+      }
 
       if (result.status === "completed") {
         return this.taskResultToOutput(result.task);

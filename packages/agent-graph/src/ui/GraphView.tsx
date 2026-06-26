@@ -15,6 +15,12 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { autoUpdate, computePosition, flip, offset, shift } from '@floating-ui/dom';
 
 import {
+  findGroupFrameAt,
+  findGroupFrameHitAt,
+  getPaddedGroupFrameBounds,
+  prepareGroupFrame,
+} from '../canvas/group-frames';
+import {
   collectInteractiveEdgesInViewport,
   findEdgeAt,
   findNodeAt,
@@ -38,11 +44,26 @@ import type { GraphDataPort } from '../ports/GraphDataPort';
 import type { GraphEventPort } from '../ports/GraphEventPort';
 import type {
   GraphEdge,
+  GraphGroupFrame,
   GraphLayoutMode,
   GraphNode,
   GraphOwnerSlotAssignment,
 } from '../ports/types';
 import type { TransientHandoffCard } from './transientHandoffs';
+
+export interface GraphScreenBounds {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  width: number;
+  height: number;
+}
+
+export interface GraphGroupFrameScreenPlacement {
+  frame: GraphGroupFrame;
+  bounds: GraphScreenBounds;
+}
 
 export interface GraphViewProps {
   data: GraphDataPort;
@@ -87,6 +108,7 @@ export interface GraphViewProps {
     ) => { x: number; y: number; scale: number; visible: boolean } | null;
     getActivityWorldRect: (ownerNodeId: string) => StableRect | null;
     getLogWorldRect: (ownerNodeId: string) => StableRect | null;
+    getGroupFrameScreenPlacements: () => GraphGroupFrameScreenPlacement[];
     getTransientHandoffSnapshot: (options?: {
       focusNodeIds?: ReadonlySet<string> | null;
       focusEdgeIds?: ReadonlySet<string> | null;
@@ -184,9 +206,10 @@ export function GraphView({
             ...data.layout,
             showActivity: filters.showActivity,
             showLogs: filters.showLogs,
+            showTasks: data.layout.showTasks ?? filters.showTasks,
           }
         : data.layout,
-    [data.layout, filters.showActivity, filters.showLogs]
+    [data.layout, filters.showActivity, filters.showLogs, filters.showTasks]
   );
 
   // Ref mirror of selectedNodeId — read by RAF loop to avoid recreating animate on selection change
@@ -195,6 +218,7 @@ export function GraphView({
   const selectedEdgeIdRef = useRef<string | null>(null);
   selectedEdgeIdRef.current = selectedEdgeId;
   const hoveredEdgeIdRef = useRef<string | null>(null);
+  const hoveredGroupFrameIdRef = useRef<string | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasHandle = useRef<GraphCanvasHandle>(null);
@@ -302,7 +326,7 @@ export function GraphView({
         right: (rect.width - transform.x) / transform.zoom,
         bottom: (rect.height - transform.y) / transform.zoom,
       };
-      return collectInteractiveEdgesInViewport(edges, nodeMap, bounds);
+      return collectInteractiveEdgesInViewport(edges, nodeMap, bounds, transform.zoom);
     },
     [camera.transformRef, getNodeMap]
   );
@@ -365,6 +389,45 @@ export function GraphView({
     }
     return { x: node.x, y: node.y };
   }, []);
+  const getGroupFrameScreenPlacements = useCallback((): GraphGroupFrameScreenPlacement[] => {
+    const groupFrames = data.groupFrames ?? [];
+    if (groupFrames.length === 0) {
+      return [];
+    }
+
+    const visibleNodes = getVisibleNodes(simulationRef.current.stateRef.current.nodes);
+    const nodeMap = getNodeMap(visibleNodes);
+    const zoom = cameraRef.current.transformRef.current.zoom;
+
+    return groupFrames.flatMap((frame) => {
+      const prepared = prepareGroupFrame(frame, nodeMap);
+      if (!prepared) {
+        return [];
+      }
+
+      const worldBounds = getPaddedGroupFrameBounds(prepared.bounds, zoom, frame);
+      const topLeft = cameraRef.current.worldToScreen(worldBounds.left, worldBounds.top);
+      const bottomRight = cameraRef.current.worldToScreen(worldBounds.right, worldBounds.bottom);
+      const left = Math.min(topLeft.x, bottomRight.x);
+      const top = Math.min(topLeft.y, bottomRight.y);
+      const right = Math.max(topLeft.x, bottomRight.x);
+      const bottom = Math.max(topLeft.y, bottomRight.y);
+
+      return [
+        {
+          frame,
+          bounds: {
+            left,
+            top,
+            right,
+            bottom,
+            width: right - left,
+            height: bottom - top,
+          },
+        },
+      ];
+    });
+  }, [data.groupFrames, getNodeMap, getVisibleNodes]);
 
   const setInteractionSelectionDisabled = useCallback((disabled: boolean) => {
     if (typeof document === 'undefined') {
@@ -425,6 +488,7 @@ export function GraphView({
     // 4. Draw canvas imperatively (NO React re-render)
     canvasHandle.current?.draw({
       teamName: data.teamName,
+      groupFrames: data.groupFrames ?? [],
       nodes: visibleNodes,
       edges: visibleEdges,
       particles: state.particles,
@@ -433,6 +497,7 @@ export function GraphView({
       camera: cameraRef.current.transformRef.current,
       selectedNodeId: selectedNodeIdRef.current,
       hoveredNodeId: interaction.hoveredNodeId.current,
+      hoveredGroupFrameId: hoveredGroupFrameIdRef.current,
       selectedEdgeId: selectedEdgeIdRef.current,
       hoveredEdgeId: hoveredEdgeIdRef.current,
       focusNodeIds: focusState.focusNodeIds,
@@ -443,6 +508,7 @@ export function GraphView({
 
     rafRef.current = requestAnimationFrame(animate);
   }, [
+    data.groupFrames,
     data.teamName,
     focusState.focusEdgeIds,
     focusState.focusNodeIds,
@@ -534,6 +600,7 @@ export function GraphView({
     dragPreviewRef.current = null;
     isPanningRef.current = false;
     edgeMouseDownRef.current = null;
+    groupFrameMouseDownRef.current = null;
     setInteractionGuards(false);
   }, [isSurfaceActive, setInteractionGuards]);
 
@@ -548,6 +615,13 @@ export function GraphView({
   // ─── Mouse handlers (Figma-style: drag empty space = pan, drag node = move) ─
   const isPanningRef = useRef(false);
   const edgeMouseDownRef = useRef<{
+    id: string;
+    worldX: number;
+    worldY: number;
+    clientX: number;
+    clientY: number;
+  } | null>(null);
+  const groupFrameMouseDownRef = useRef<{
     id: string;
     worldX: number;
     worldY: number;
@@ -584,32 +658,70 @@ export function GraphView({
         markUserInteracted();
         isPanningRef.current = false;
         edgeMouseDownRef.current = null;
+        groupFrameMouseDownRef.current = null;
         hoveredEdgeIdRef.current = null;
+        hoveredGroupFrameIdRef.current = null;
       } else {
-        const hitEdge = findEdgeAt(world.x, world.y, interactiveEdges, nodeMap);
-        if (hitEdge) {
+        const hitGroupFrame = findGroupFrameHitAt(
+          world.x,
+          world.y,
+          data.groupFrames ?? [],
+          nodeMap,
+          camera.transformRef.current.zoom
+        );
+        const hitEdge =
+          !hitGroupFrame || hitGroupFrame.target === 'fill'
+            ? findEdgeAt(
+                world.x,
+                world.y,
+                interactiveEdges,
+                nodeMap,
+                camera.transformRef.current.zoom
+              )
+            : null;
+        if (hitGroupFrame && !hitEdge) {
           markUserInteracted();
           isPanningRef.current = false;
-          edgeMouseDownRef.current = {
-            id: hitEdge,
+          edgeMouseDownRef.current = null;
+          groupFrameMouseDownRef.current = {
+            id: hitGroupFrame.frame.id,
             worldX: world.x,
             worldY: world.y,
             clientX: e.clientX,
             clientY: e.clientY,
           };
-          hoveredEdgeIdRef.current = hitEdge;
-        } else {
-          // Hit empty space → pan
-          markUserInteracted();
-          isPanningRef.current = true;
-          edgeMouseDownRef.current = null;
           hoveredEdgeIdRef.current = null;
-          camera.handlePanStart(e.clientX, e.clientY);
+          hoveredGroupFrameIdRef.current = hitGroupFrame.frame.id;
+        } else {
+          if (hitEdge) {
+            markUserInteracted();
+            isPanningRef.current = false;
+            edgeMouseDownRef.current = {
+              id: hitEdge,
+              worldX: world.x,
+              worldY: world.y,
+              clientX: e.clientX,
+              clientY: e.clientY,
+            };
+            groupFrameMouseDownRef.current = null;
+            hoveredEdgeIdRef.current = hitEdge;
+            hoveredGroupFrameIdRef.current = null;
+          } else {
+            // Hit empty space → pan
+            markUserInteracted();
+            isPanningRef.current = true;
+            edgeMouseDownRef.current = null;
+            groupFrameMouseDownRef.current = null;
+            hoveredEdgeIdRef.current = null;
+            hoveredGroupFrameIdRef.current = null;
+            camera.handlePanStart(e.clientX, e.clientY);
+          }
         }
       }
     },
     [
       camera,
+      data.groupFrames,
       getInteractiveEdges,
       getNodeMap,
       getVisibleEdges,
@@ -643,6 +755,27 @@ export function GraphView({
           edgeMouseDownRef.current = null;
           isPanningRef.current = true;
           camera.handlePanStart(edgeMouseDown.clientX, edgeMouseDown.clientY);
+          camera.handlePanMove(clientX, clientY);
+          return true;
+        }
+      }
+
+      const groupFrameMouseDown = groupFrameMouseDownRef.current;
+      if (
+        groupFrameMouseDown &&
+        !interaction.dragNodeId.current &&
+        !interaction.isDragging.current
+      ) {
+        const dx = clientX - groupFrameMouseDown.clientX;
+        const dy = clientY - groupFrameMouseDown.clientY;
+        if (dx * dx + dy * dy > ANIM.dragThresholdPx * ANIM.dragThresholdPx) {
+          if (typeof document !== 'undefined') {
+            document.getSelection()?.removeAllRanges();
+          }
+          hoveredGroupFrameIdRef.current = null;
+          groupFrameMouseDownRef.current = null;
+          isPanningRef.current = true;
+          camera.handlePanStart(groupFrameMouseDown.clientX, groupFrameMouseDown.clientY);
           camera.handlePanMove(clientX, clientY);
           return true;
         }
@@ -715,6 +848,7 @@ export function GraphView({
         setSelectedNodeId(null);
         setSelectedEdgeId(null);
         edgeMouseDownRef.current = null;
+        groupFrameMouseDownRef.current = null;
         interaction.handleMouseUp();
         return;
       }
@@ -744,6 +878,7 @@ export function GraphView({
               });
               dragPreviewRef.current = null;
               edgeMouseDownRef.current = null;
+              groupFrameMouseDownRef.current = null;
               return;
             }
           }
@@ -764,12 +899,14 @@ export function GraphView({
             });
             dragPreviewRef.current = null;
             edgeMouseDownRef.current = null;
+            groupFrameMouseDownRef.current = null;
             return;
           }
         }
         simulation.clearNodePosition(draggedNodeId);
         dragPreviewRef.current = null;
         edgeMouseDownRef.current = null;
+        groupFrameMouseDownRef.current = null;
         return;
       }
 
@@ -780,20 +917,38 @@ export function GraphView({
         const node = simulation.stateRef.current.nodes.find((n) => n.id === clickedId);
         if (node) events?.onNodeClick?.(node.domainRef);
       } else {
-        const canvas = canvasHandle.current?.getCanvas();
         let clickedEdgeId: string | null = null;
-        if (canvas && edgeMouseDownRef.current && !interaction.isDragging.current) {
-          const rect = canvas.getBoundingClientRect();
-          const world = camera.screenToWorld(clientX - rect.left, clientY - rect.top);
-          const dx = world.x - edgeMouseDownRef.current.worldX;
-          const dy = world.y - edgeMouseDownRef.current.worldY;
-          if (dx * dx + dy * dy <= 25) {
+        let clickedGroupFrameId: string | null = null;
+        if (groupFrameMouseDownRef.current && !interaction.isDragging.current) {
+          const dx = clientX - groupFrameMouseDownRef.current.clientX;
+          const dy = clientY - groupFrameMouseDownRef.current.clientY;
+          if (dx * dx + dy * dy <= ANIM.dragThresholdPx * ANIM.dragThresholdPx) {
+            clickedGroupFrameId = groupFrameMouseDownRef.current.id;
+          }
+        }
+        if (
+          !clickedGroupFrameId &&
+          edgeMouseDownRef.current &&
+          !interaction.isDragging.current
+        ) {
+          const dx = clientX - edgeMouseDownRef.current.clientX;
+          const dy = clientY - edgeMouseDownRef.current.clientY;
+          if (dx * dx + dy * dy <= ANIM.dragThresholdPx * ANIM.dragThresholdPx) {
             clickedEdgeId = edgeMouseDownRef.current.id;
           }
         }
         edgeMouseDownRef.current = null;
+        groupFrameMouseDownRef.current = null;
 
-        if (clickedEdgeId) {
+        if (clickedGroupFrameId) {
+          setSelectedNodeId(clickedGroupFrameId);
+          setSelectedEdgeId(null);
+          const frame =
+            data.groupFrames?.find((candidate) => candidate.id === clickedGroupFrameId) ?? null;
+          if (frame) {
+            events?.onGroupFrameClick?.(frame);
+          }
+        } else if (clickedEdgeId) {
           setSelectedNodeId(null);
           setSelectedEdgeId(clickedEdgeId);
           const edge = simulation.stateRef.current.edges.find(
@@ -806,7 +961,7 @@ export function GraphView({
           setSelectedNodeId(null);
           setSelectedEdgeId(null);
         }
-        if (!interaction.isDragging.current && !clickedEdgeId) {
+        if (!interaction.isDragging.current && !clickedEdgeId && !clickedGroupFrameId) {
           events?.onBackgroundClick?.();
         }
       }
@@ -814,6 +969,7 @@ export function GraphView({
     },
     [
       camera,
+      data.groupFrames,
       events,
       interaction,
       layoutMode,
@@ -847,17 +1003,44 @@ export function GraphView({
 
       if (hoveredNodeId) {
         hoveredEdgeIdRef.current = null;
+        hoveredGroupFrameIdRef.current = null;
         canvas.style.cursor = 'pointer';
         return;
       }
 
       const nodeMap = getNodeMap(nodes);
+      const hoveredGroupFrame = findGroupFrameHitAt(
+        world.x,
+        world.y,
+        data.groupFrames ?? [],
+        nodeMap,
+        camera.transformRef.current.zoom
+      );
       const interactiveEdges = getInteractiveEdges(canvas, nodes, edges);
-      hoveredEdgeIdRef.current = findEdgeAt(world.x, world.y, interactiveEdges, nodeMap);
+      const hoveredEdgeId =
+        !hoveredGroupFrame || hoveredGroupFrame.target === 'fill'
+          ? findEdgeAt(
+              world.x,
+              world.y,
+              interactiveEdges,
+              nodeMap,
+              camera.transformRef.current.zoom
+            )
+          : null;
+      if (hoveredGroupFrame && !hoveredEdgeId) {
+        hoveredEdgeIdRef.current = null;
+        hoveredGroupFrameIdRef.current = hoveredGroupFrame.frame.id;
+        canvas.style.cursor = 'pointer';
+        return;
+      }
+
+      hoveredEdgeIdRef.current = hoveredEdgeId;
+      hoveredGroupFrameIdRef.current = null;
       canvas.style.cursor = hoveredEdgeIdRef.current ? 'pointer' : 'grab';
     },
     [
       camera,
+      data.groupFrames,
       getInteractiveEdges,
       getNodeMap,
       getVisibleEdges,
@@ -882,7 +1065,8 @@ export function GraphView({
         !isPanningRef.current &&
         !interactionRef.current.dragNodeId.current &&
         !interactionRef.current.isDragging.current &&
-        !edgeMouseDownRef.current
+        !edgeMouseDownRef.current &&
+        !groupFrameMouseDownRef.current
       ) {
         return;
       }
@@ -896,7 +1080,8 @@ export function GraphView({
         !isPanningRef.current &&
         !interactionRef.current.dragNodeId.current &&
         !interactionRef.current.isDragging.current &&
-        !edgeMouseDownRef.current
+        !edgeMouseDownRef.current &&
+        !groupFrameMouseDownRef.current
       ) {
         setInteractionGuards(false);
         return;
@@ -916,6 +1101,7 @@ export function GraphView({
       cameraRef.current.handlePanEnd();
       isPanningRef.current = false;
       edgeMouseDownRef.current = null;
+      groupFrameMouseDownRef.current = null;
       dragPreviewRef.current = null;
       setInteractionGuards(false);
     };
@@ -960,9 +1146,33 @@ export function GraphView({
           }
           events?.onNodeDoubleClick?.(node.domainRef);
         }
+        return;
+      }
+
+      const nodes = getVisibleNodes(simulation.stateRef.current.nodes);
+      const nodeMap = getNodeMap(nodes);
+      const groupFrame = findGroupFrameAt(
+        world.x,
+        world.y,
+        data.groupFrames ?? [],
+        nodeMap,
+        camera.transformRef.current.zoom
+      );
+      if (groupFrame) {
+        setSelectedNodeId(groupFrame.id);
+        setSelectedEdgeId(null);
+        events?.onGroupFrameDoubleClick?.(groupFrame);
       }
     },
-    [camera, events, getVisibleNodes, interaction, simulation.stateRef]
+    [
+      camera,
+      data.groupFrames,
+      events,
+      getNodeMap,
+      getVisibleNodes,
+      interaction,
+      simulation.stateRef,
+    ]
   );
 
   // ─── Keyboard ───────────────────────────────────────────────────────────
@@ -1142,6 +1352,7 @@ export function GraphView({
             getLaunchAnchorScreenPlacement,
             getActivityWorldRect,
             getLogWorldRect,
+            getGroupFrameScreenPlacements,
             getTransientHandoffSnapshot,
             getCameraZoom,
             worldToScreen: camera.worldToScreen,

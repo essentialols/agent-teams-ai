@@ -241,6 +241,8 @@ export const HIT_DETECTION = {
   taskPadding: 4,
   /** Extra padding around curved edges for easier inspection */
   edgePadding: 6,
+  /** Minimum screen-space hit target for runtime message edges */
+  messageEdgeMinScreenRadius: 12,
 } as const;
 
 // ─── Background ─────────────────────────────────────────────────────────────

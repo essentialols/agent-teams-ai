@@ -6,6 +6,7 @@
 // ─── Node Kinds ──────────────────────────────────────────────────────────────
 
 export type GraphNodeKind = 'lead' | 'member' | 'task' | 'process' | 'crossteam';
+export type GraphNodeVisualVariant = 'agent' | 'team' | 'container' | 'organization';
 
 export type GraphNodeState =
   | 'idle'
@@ -68,8 +69,19 @@ export interface GraphLayoutPort {
   mode?: GraphLayoutMode;
   showActivity?: boolean;
   showLogs?: boolean;
+  showTasks?: boolean;
+  alignGridColumns?: boolean;
   ownerOrder: string[];
   slotAssignments: Record<string, GraphOwnerSlotAssignment>;
+}
+
+export interface GraphGroupFrame {
+  id: string;
+  label: string;
+  nodeIds: string[];
+  color?: string;
+  depth?: number;
+  priority?: 'primary' | 'normal';
 }
 
 // ─── Graph Node ──────────────────────────────────────────────────────────────
@@ -83,6 +95,8 @@ export interface GraphNode {
 
   /** Node color override (e.g., member.color hex value) */
   color?: string;
+  /** Optional host-provided visual treatment. Keeps graph kinds generic while allowing hierarchy UIs. */
+  visualVariant?: GraphNodeVisualVariant;
 
   // ─── Member/Lead-specific ──────────────────────────────────────────────
   /** Agent role description */
@@ -116,7 +130,7 @@ export interface GraphNode {
     source: 'runtime' | 'member_log' | 'inbox';
   };
   /** Recent completed tool activity for popovers and secondary UI */
-  recentTools?: Array<{
+  recentTools?: {
     name: string;
     preview?: string;
     state: 'complete' | 'error';
@@ -124,7 +138,7 @@ export interface GraphNode {
     finishedAt: string;
     resultPreview?: string;
     source: 'runtime' | 'member_log' | 'inbox';
-  }>;
+  }[];
   /** Compact abnormal-state indicator */
   exceptionTone?: 'warning' | 'error';
   /** Short human-readable abnormal-state label */

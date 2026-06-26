@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createSubscriptionRuntime, DefaultRedactor, DeterministicIdGenerator, assertProviderTaskSystemPrompt, } from "@vioxen/subscription-runtime/core";
-import { CodexAppServerExecutionEngine, CodexCliSessionDriver, CodexJsonAgentDriver, CodexWorkerCacheSessionPoolMaterializer, PackagedCodexJsonExecutionEngine, defaultCodexModel, sessionArtifactFromCodexAuthJson, codexAuthJsonFromArtifact, validateCodexAuthJsonBytes, } from "@vioxen/subscription-runtime/provider-codex";
+import { CodexAppServerExecutionEngine, CodexCliAgentDriver, CodexCliSessionDriver, CodexJsonAgentDriver, CodexWorkerCacheSessionPoolMaterializer, PackagedCodexJsonExecutionEngine, defaultCodexModel, sessionArtifactFromCodexAuthJson, codexAuthJsonFromArtifact, validateCodexAuthJsonBytes, } from "@vioxen/subscription-runtime/provider-codex";
 import { createLocalFileBackendRuntimeAdapters } from "@vioxen/subscription-runtime/store-local-file";
 import { SubscriptionWorkerError, } from "@vioxen/subscription-runtime/worker-core";
 import { NodeProcessRunner } from "../worker-local/node-process-runner.js";
@@ -64,38 +64,48 @@ export class FileBackendCodexWorker {
             ...(options.sourceEnv ? { sourceEnv: options.sourceEnv } : {}),
             refreshMode: "lazy-refresh",
         });
-        const packagedExec = new PackagedCodexJsonExecutionEngine({
-            codexBinaryPath: options.codexBinaryPath,
-            ...(options.sourceEnv ? { sourceEnv: options.sourceEnv } : {}),
-            ...(options.taskTimeoutMs ? { timeoutMs: options.taskTimeoutMs } : {}),
-        });
         const executionEngine = options.executionEngine ?? "app-server";
-        this.agentDriver = new CodexJsonAgentDriver({
-            engine: executionEngine === "packaged-exec"
-                ? packagedExec
-                : new CodexAppServerExecutionEngine({
-                    codexBinaryPath: options.codexBinaryPath,
-                    ...(options.sourceEnv ? { sourceEnv: options.sourceEnv } : {}),
-                    ...(options.taskTimeoutMs ? { timeoutMs: options.taskTimeoutMs } : {}),
-                    ...(options.appServerProcessFactory
-                        ? { processFactory: options.appServerProcessFactory }
-                        : {}),
-                    ...(options.executionProfile
-                        ? { executionProfile: options.executionProfile }
-                        : {}),
-                    cleanThreadPrewarm: options.cleanThreadPrewarm ?? true,
-                    fallback: packagedExec,
+        if (executionEngine === "plain-exec") {
+            this.agentDriver = new CodexCliAgentDriver({
+                codexBinaryPath: options.codexBinaryPath,
+                model: options.model ?? defaultCodexModel,
+                ...(options.sourceEnv ? { sourceEnv: options.sourceEnv } : {}),
+                ...(options.taskTimeoutMs ? { timeoutMs: options.taskTimeoutMs } : {}),
+            });
+        }
+        else {
+            const packagedExec = new PackagedCodexJsonExecutionEngine({
+                codexBinaryPath: options.codexBinaryPath,
+                ...(options.sourceEnv ? { sourceEnv: options.sourceEnv } : {}),
+                ...(options.taskTimeoutMs ? { timeoutMs: options.taskTimeoutMs } : {}),
+            });
+            this.agentDriver = new CodexJsonAgentDriver({
+                engine: executionEngine === "packaged-exec"
+                    ? packagedExec
+                    : new CodexAppServerExecutionEngine({
+                        codexBinaryPath: options.codexBinaryPath,
+                        ...(options.sourceEnv ? { sourceEnv: options.sourceEnv } : {}),
+                        ...(options.taskTimeoutMs ? { timeoutMs: options.taskTimeoutMs } : {}),
+                        ...(options.appServerProcessFactory
+                            ? { processFactory: options.appServerProcessFactory }
+                            : {}),
+                        ...(options.executionProfile
+                            ? { executionProfile: options.executionProfile }
+                            : {}),
+                        cleanThreadPrewarm: options.cleanThreadPrewarm ?? true,
+                        fallback: packagedExec,
+                    }),
+                sessionMaterializer: new CodexWorkerCacheSessionPoolMaterializer({
+                    cacheKey: `codex:${options.providerInstanceId}`,
+                    slots: options.sessionCacheSlots ?? 1,
                 }),
-            sessionMaterializer: new CodexWorkerCacheSessionPoolMaterializer({
-                cacheKey: `codex:${options.providerInstanceId}`,
-                slots: options.sessionCacheSlots ?? 1,
-            }),
-            model: options.model ?? defaultCodexModel,
-            reasoningEffort: options.reasoningEffort ?? "low",
-            ...(options.warmupPrompt === false
-                ? {}
-                : { warmupPrompt: options.warmupPrompt ?? defaultWarmupPrompt }),
-        });
+                model: options.model ?? defaultCodexModel,
+                reasoningEffort: options.reasoningEffort ?? "low",
+                ...(options.warmupPrompt === false
+                    ? {}
+                    : { warmupPrompt: options.warmupPrompt ?? defaultWarmupPrompt }),
+            });
+        }
         this.runtime = createSubscriptionRuntime({
             policy: {
                 custodyMode: "local-only",
@@ -175,6 +185,18 @@ export class FileBackendCodexWorker {
             throw new SubscriptionWorkerError("subscription_worker_prewarm_failed", "Codex session is missing.");
         }
         this.rememberQuotaGroup(session.artifact);
+        if (!("prewarmSession" in this.agentDriver)) {
+            this.workerState = "ready";
+            return {
+                status: "skipped",
+                warmedAt: this.clock.now(),
+                warnings: [],
+                details: {
+                    engine: "plain-exec",
+                    engineReusable: "false",
+                },
+            };
+        }
         const workspace = await this.prewarmWorkspace.create({
             purpose: "run-task",
             isolation: "temp-dir",
@@ -322,7 +344,9 @@ export class FileBackendCodexWorker {
             return;
         this.workerState = "draining";
         try {
-            await this.agentDriver.dispose();
+            if ("dispose" in this.agentDriver) {
+                await this.agentDriver.dispose();
+            }
         }
         finally {
             await this.ownedWorkspace?.dispose();
@@ -526,7 +550,8 @@ function assertWorkerOptions(options) {
     }
     if (options.executionEngine !== undefined &&
         options.executionEngine !== "app-server" &&
-        options.executionEngine !== "packaged-exec") {
+        options.executionEngine !== "packaged-exec" &&
+        options.executionEngine !== "plain-exec") {
         throw new Error("file_backend_codex_execution_engine_invalid");
     }
     const softMaxRuns = options.capacityPolicy?.softMaxRunsPerWindow;

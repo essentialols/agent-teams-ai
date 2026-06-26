@@ -33,7 +33,7 @@ export type FileBackendCodexWorkerOptions = {
     readonly capacityAccountId?: string;
     readonly capacityPolicy?: CodexWorkerCapacityPolicy;
 };
-export type CodexWorkerExecutionEngine = "app-server" | "packaged-exec";
+export type CodexWorkerExecutionEngine = "app-server" | "packaged-exec" | "plain-exec";
 export type CodexWorkerCapacityPolicy = {
     readonly softMaxRunsPerWindow?: number;
     readonly windowMs?: number;

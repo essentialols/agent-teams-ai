@@ -18,6 +18,7 @@ import {
 } from "@vioxen/subscription-runtime/core";
 import {
   CodexAppServerExecutionEngine,
+  CodexCliAgentDriver,
   CodexCliSessionDriver,
   type CodexExecutionProfile,
   CodexJsonAgentDriver,
@@ -79,7 +80,10 @@ export type FileBackendCodexWorkerOptions = {
   readonly capacityPolicy?: CodexWorkerCapacityPolicy;
 };
 
-export type CodexWorkerExecutionEngine = "app-server" | "packaged-exec";
+export type CodexWorkerExecutionEngine =
+  | "app-server"
+  | "packaged-exec"
+  | "plain-exec";
 
 export type CodexWorkerCapacityPolicy = {
   readonly softMaxRunsPerWindow?: number;
@@ -119,7 +123,7 @@ export class FileBackendCodexWorker implements CapacityAwareSubscriptionWorker<
   private readonly observability: ObservabilityPort;
   private readonly clock: ClockPort;
   private readonly sessionDriver: CodexCliSessionDriver;
-  private readonly agentDriver: CodexJsonAgentDriver;
+  private readonly agentDriver: CodexJsonAgentDriver | CodexCliAgentDriver;
   private readonly sessionStore: NonNullable<RuntimeDeps["sessionStore"]>;
   private readonly runtime;
   private readonly ownedWorkspace: StableWorkerWorkspace | null;
@@ -174,38 +178,47 @@ export class FileBackendCodexWorker implements CapacityAwareSubscriptionWorker<
       refreshMode: "lazy-refresh",
     });
 
-    const packagedExec = new PackagedCodexJsonExecutionEngine({
-      codexBinaryPath: options.codexBinaryPath,
-      ...(options.sourceEnv ? { sourceEnv: options.sourceEnv } : {}),
-      ...(options.taskTimeoutMs ? { timeoutMs: options.taskTimeoutMs } : {}),
-    });
     const executionEngine = options.executionEngine ?? "app-server";
-    this.agentDriver = new CodexJsonAgentDriver({
-      engine: executionEngine === "packaged-exec"
-        ? packagedExec
-        : new CodexAppServerExecutionEngine({
-            codexBinaryPath: options.codexBinaryPath,
-            ...(options.sourceEnv ? { sourceEnv: options.sourceEnv } : {}),
-            ...(options.taskTimeoutMs ? { timeoutMs: options.taskTimeoutMs } : {}),
-            ...(options.appServerProcessFactory
-              ? { processFactory: options.appServerProcessFactory }
-              : {}),
-            ...(options.executionProfile
-              ? { executionProfile: options.executionProfile }
-              : {}),
-            cleanThreadPrewarm: options.cleanThreadPrewarm ?? true,
-            fallback: packagedExec,
-          }),
-      sessionMaterializer: new CodexWorkerCacheSessionPoolMaterializer({
-        cacheKey: `codex:${options.providerInstanceId}`,
-        slots: options.sessionCacheSlots ?? 1,
-      }),
-      model: options.model ?? defaultCodexModel,
-      reasoningEffort: options.reasoningEffort ?? "low",
-      ...(options.warmupPrompt === false
-        ? {}
-        : { warmupPrompt: options.warmupPrompt ?? defaultWarmupPrompt }),
-    });
+    if (executionEngine === "plain-exec") {
+      this.agentDriver = new CodexCliAgentDriver({
+        codexBinaryPath: options.codexBinaryPath,
+        model: options.model ?? defaultCodexModel,
+        ...(options.sourceEnv ? { sourceEnv: options.sourceEnv } : {}),
+        ...(options.taskTimeoutMs ? { timeoutMs: options.taskTimeoutMs } : {}),
+      });
+    } else {
+      const packagedExec = new PackagedCodexJsonExecutionEngine({
+        codexBinaryPath: options.codexBinaryPath,
+        ...(options.sourceEnv ? { sourceEnv: options.sourceEnv } : {}),
+        ...(options.taskTimeoutMs ? { timeoutMs: options.taskTimeoutMs } : {}),
+      });
+      this.agentDriver = new CodexJsonAgentDriver({
+        engine: executionEngine === "packaged-exec"
+          ? packagedExec
+          : new CodexAppServerExecutionEngine({
+              codexBinaryPath: options.codexBinaryPath,
+              ...(options.sourceEnv ? { sourceEnv: options.sourceEnv } : {}),
+              ...(options.taskTimeoutMs ? { timeoutMs: options.taskTimeoutMs } : {}),
+              ...(options.appServerProcessFactory
+                ? { processFactory: options.appServerProcessFactory }
+                : {}),
+              ...(options.executionProfile
+                ? { executionProfile: options.executionProfile }
+                : {}),
+              cleanThreadPrewarm: options.cleanThreadPrewarm ?? true,
+              fallback: packagedExec,
+            }),
+        sessionMaterializer: new CodexWorkerCacheSessionPoolMaterializer({
+          cacheKey: `codex:${options.providerInstanceId}`,
+          slots: options.sessionCacheSlots ?? 1,
+        }),
+        model: options.model ?? defaultCodexModel,
+        reasoningEffort: options.reasoningEffort ?? "low",
+        ...(options.warmupPrompt === false
+          ? {}
+          : { warmupPrompt: options.warmupPrompt ?? defaultWarmupPrompt }),
+      });
+    }
 
     this.runtime = createSubscriptionRuntime({
       policy: {
@@ -301,6 +314,19 @@ export class FileBackendCodexWorker implements CapacityAwareSubscriptionWorker<
       );
     }
     this.rememberQuotaGroup(session.artifact);
+
+    if (!("prewarmSession" in this.agentDriver)) {
+      this.workerState = "ready";
+      return {
+        status: "skipped",
+        warmedAt: this.clock.now(),
+        warnings: [],
+        details: {
+          engine: "plain-exec",
+          engineReusable: "false",
+        },
+      };
+    }
 
     const workspace = await this.prewarmWorkspace.create({
       purpose: "run-task",
@@ -461,7 +487,9 @@ export class FileBackendCodexWorker implements CapacityAwareSubscriptionWorker<
     if (this.workerState === "disposed") return;
     this.workerState = "draining";
     try {
-      await this.agentDriver.dispose();
+      if ("dispose" in this.agentDriver) {
+        await this.agentDriver.dispose();
+      }
     } finally {
       await this.ownedWorkspace?.dispose();
       this.workerState = "disposed";
@@ -709,7 +737,8 @@ function assertWorkerOptions(options: FileBackendCodexWorkerOptions): void {
   if (
     options.executionEngine !== undefined &&
     options.executionEngine !== "app-server" &&
-    options.executionEngine !== "packaged-exec"
+    options.executionEngine !== "packaged-exec" &&
+    options.executionEngine !== "plain-exec"
   ) {
     throw new Error("file_backend_codex_execution_engine_invalid");
   }

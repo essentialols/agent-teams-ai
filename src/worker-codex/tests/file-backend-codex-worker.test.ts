@@ -188,6 +188,66 @@ describe("FileBackendCodexWorker", () => {
     }
   });
 
+  it("runs coding work through plain Codex exec when selected", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "codex-worker-"));
+    const callerWorkspace = await mkdtemp(join(tmpdir(), "codex-plain-workspace-"));
+    const runner = new StaticRunner({
+      exitCode: 0,
+      stdout: "plain exec output",
+      stderr: "",
+    });
+    const worker = new FileBackendCodexWorker({
+      providerInstanceId: "codex:plain-exec",
+      stateRootDir: rootDir,
+      workspacePath: callerWorkspace,
+      codexBinaryPath: "codex",
+      model: "gpt-test",
+      encryptionKey: new Uint8Array(32).fill(13),
+      executionEngine: "plain-exec",
+      runner,
+    });
+
+    try {
+      await worker.start();
+      await worker.seedCodexAuthJson(validAuthJson);
+      await expect(worker.prewarm()).resolves.toMatchObject({
+        status: "skipped",
+        details: {
+          engine: "plain-exec",
+          engineReusable: "false",
+        },
+      });
+      await expect(
+        worker.run({
+          prompt: "make a coding edit",
+          controls: { permissionMode: "allow-edits" },
+        }),
+      ).resolves.toMatchObject({
+        outputText: "plain exec output",
+      });
+
+      expect(runner.lastArgs).toEqual(
+        expect.arrayContaining([
+          "exec",
+          "--skip-git-repo-check",
+          "--sandbox",
+          "workspace-write",
+          "--model",
+          "gpt-test",
+          "--",
+          "-",
+        ]),
+      );
+      expect(runner.lastArgs).not.toContain("--json");
+      expect(runner.lastCwd).toBe(callerWorkspace);
+      expect(runner.lastStdin).toContain("make a coding edit");
+    } finally {
+      await worker.dispose();
+      await rm(rootDir, { recursive: true, force: true });
+      await rm(callerWorkspace, { recursive: true, force: true });
+    }
+  });
+
   it("rejects ambiguous custom workspace options", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "codex-worker-"));
     const customWorkspace: WorkspacePort = {

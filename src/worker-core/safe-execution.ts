@@ -41,6 +41,7 @@ export type SafeExecutionPolicy = {
   readonly retryOnAccountUnavailable?: boolean;
   readonly retryOnReconnectRequired?: boolean;
   readonly retryUnknownCleanWorkspace?: boolean;
+  readonly retryUnknownChangedWorkspace?: boolean;
   readonly maxAttempts?: number;
   readonly continuationMode?: ContinuationMode;
 };
@@ -1250,28 +1251,11 @@ export function defaultSafeExecutionErrorClassifier(
         retryable: true,
       };
     }
-    const reason = item.details.reason ?? item.details.code;
-    if (reason === "quota_limited") {
-      return {
-        reason: "quota_limited",
-        safeMessage: item.message,
-        retryable: true,
-      };
-    }
-    if (reason === "provider_reconnect_required") {
-      return {
-        reason: "reconnect_required",
-        safeMessage: item.message,
-        retryable: true,
-      };
-    }
-    if (reason === "permission_required") {
-      return {
-        reason: "permission_required",
-        safeMessage: item.message,
-        retryable: false,
-      };
-    }
+    const classified = classifyWorkerFailureCode(
+      item.details.reason ?? item.details.code,
+      item.message,
+    );
+    if (classified) return classified;
   }
 
   const message = error instanceof Error ? error.message : String(error);
@@ -1289,11 +1273,72 @@ export function defaultSafeExecutionErrorClassifier(
       retryable: true,
     };
   }
+  if (/\btimeout\b|\btimed out\b/i.test(message)) {
+    return {
+      reason: "unknown_error",
+      safeMessage: message,
+      retryable: true,
+    };
+  }
+  if (
+    /final_message_missing|structured_output_invalid|output_too_large|provider output was invalid/i.test(
+      message,
+    )
+  ) {
+    return {
+      reason: "unknown_error",
+      safeMessage: message,
+      retryable: true,
+    };
+  }
   return {
     reason: "unknown_error",
     safeMessage: message,
     retryable: false,
   };
+}
+
+function classifyWorkerFailureCode(
+  code: string | undefined,
+  safeMessage: string,
+): SafeExecutionFailureClassification | null {
+  switch (code) {
+    case "quota_limited":
+      return {
+        reason: "quota_limited",
+        safeMessage,
+        retryable: true,
+      };
+    case "provider_reconnect_required":
+    case "needs_reconnect":
+      return {
+        reason: "reconnect_required",
+        safeMessage,
+        retryable: true,
+      };
+    case "permission_required":
+      return {
+        reason: "permission_required",
+        safeMessage,
+        retryable: false,
+      };
+    case "task_cancelled":
+      return {
+        reason: "user_abort",
+        safeMessage,
+        retryable: false,
+      };
+    case "task_timeout":
+    case "provider_output_invalid":
+    case "unknown_runtime_failure":
+      return {
+        reason: "unknown_error",
+        safeMessage,
+        retryable: true,
+      };
+    default:
+      return null;
+  }
 }
 
 function validateRunInput<Job, Result>(
@@ -1337,6 +1382,8 @@ function normalizePolicy<Job, Result>(
     retryOnAccountUnavailable: policy.retryOnAccountUnavailable ?? true,
     retryOnReconnectRequired: policy.retryOnReconnectRequired ?? true,
     retryUnknownCleanWorkspace: policy.retryUnknownCleanWorkspace ?? true,
+    retryUnknownChangedWorkspace:
+      policy.retryUnknownChangedWorkspace ?? false,
     maxAttempts: Math.max(1, policy.maxAttempts ?? 1),
     continuationMode:
       input.continuationMode ?? policy.continuationMode ?? "packet_first",
@@ -1377,15 +1424,19 @@ function shouldContinueAfterFailure(input: {
     case "reconnect_required":
       return { allowed: input.policy.retryOnReconnectRequired };
     case "unknown_error":
+      if (input.workspaceChanged) {
+        return {
+          allowed: input.policy.retryUnknownChangedWorkspace,
+          ...(input.policy.retryUnknownChangedWorkspace
+            ? {}
+            : {
+                safeMessage:
+                  "Safe execution stopped after an unknown error changed the workspace.",
+              }),
+        };
+      }
       return {
-        allowed:
-          !input.workspaceChanged && input.policy.retryUnknownCleanWorkspace,
-        ...(input.workspaceChanged
-          ? {
-              safeMessage:
-                "Safe execution stopped after an unknown error changed the workspace.",
-            }
-          : {}),
+        allowed: input.policy.retryUnknownCleanWorkspace,
       };
     case "permission_required":
     case "user_abort":

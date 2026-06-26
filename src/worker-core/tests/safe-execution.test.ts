@@ -17,6 +17,7 @@ import {
   LocalFileAttemptJournal,
   SafeExecutionRunner,
   SubscriptionWorkerError,
+  defaultSafeExecutionErrorClassifier,
   type CapacityAwareSubscriptionWorker,
   type SubscriptionWorkerHealth,
   type SubscriptionWorkerPrewarmResult,
@@ -278,6 +279,84 @@ describe("SafeExecutionRunner", () => {
     expect(result.safeMessage).toContain("unknown error changed the workspace");
     expect(result.attempts).toHaveLength(1);
     expect(runs).toBe(1);
+  });
+
+  it("continues dirty unknown work when the policy explicitly allows it", async () => {
+    const workspacePath = await gitWorkspace("safe-execution-unknown-continue-");
+    let runs = 0;
+    let resumedPrompt = "";
+    const pool = {
+      async run(job: PromptJob): Promise<PromptResult> {
+        runs += 1;
+        if (runs === 1) {
+          await writeFile(join(job.workspacePath, "unknown.txt"), "partial\n");
+          throw new Error("transient runtime failure");
+        }
+        resumedPrompt = job.prompt;
+        expect(await readFile(join(job.workspacePath, "unknown.txt"), "utf8"))
+          .toBe("partial\n");
+        await writeFile(join(job.workspacePath, "unknown.txt"), "done\n");
+        return { output: "continued" };
+      },
+    };
+    const runner = new SafeExecutionRunner({
+      lockStore: new InMemoryWorkspaceLockStore(),
+      journal: new InMemoryAttemptJournal(),
+    });
+
+    const result = await runner.run({
+      taskId: "task-unknown-continue",
+      workspace: { mode: "existing_locked", path: workspacePath },
+      effectMode: "workspace_patch",
+      provider: "codex",
+      pool,
+      job: { prompt: "make change", workspacePath },
+      originalPrompt: "make change",
+      policy: {
+        maxAttempts: 2,
+        retryUnknownChangedWorkspace: true,
+      },
+      continuationJobFactory: ({ continuationPacket }) => ({
+        prompt: continuationPacket.message,
+        workspacePath,
+      }),
+      summarizeResult: (value) => value.output,
+    });
+
+    if (result.status !== "completed") throw new Error("expected completed");
+    expect(result.attempts).toHaveLength(2);
+    expect(result.attempts[0]?.failureReason).toBe("unknown_error");
+    expect(result.attempts[0]?.failureMessage).toBe("transient runtime failure");
+    expect(resumedPrompt).toContain("Continue the same task");
+    expect(resumedPrompt).toContain(
+      "Previous attempt stopped because: unknown_error",
+    );
+    expect(await readFile(join(workspacePath, "unknown.txt"), "utf8")).toBe(
+      "done\n",
+    );
+    expect(runs).toBe(2);
+  });
+
+  it("classifies wrapped provider failures from worker pool causes", () => {
+    const providerFailure = new SubscriptionWorkerError(
+      "subscription_worker_run_failed",
+      "Codex task timed out.",
+      { details: { code: "task_timeout" } },
+    );
+    const poolFailure = new SubscriptionWorkerError(
+      "subscription_worker_pool_slot_failed",
+      "Worker pool slot failed to run a task.",
+      {
+        cause: providerFailure,
+        details: { workerId: "worker-a", slotIndex: "0" },
+      },
+    );
+
+    expect(defaultSafeExecutionErrorClassifier(poolFailure)).toEqual({
+      reason: "unknown_error",
+      safeMessage: "Codex task timed out.",
+      retryable: true,
+    });
   });
 
   it("marks retryable partial work when no continuation job can be built", async () => {

@@ -506,6 +506,73 @@ describe("FileBackendCodexWorker", () => {
     }
   });
 
+  it("continues dirty unknown safe Codex work by default", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "codex-safe-unknown-"));
+    const workspacePath = await mkdtemp(join(tmpdir(), "codex-safe-unknown-workspace-"));
+    const clock = {
+      now: () => new Date("2026-05-31T00:05:00.000Z"),
+      monotonicMs: () => performance.now(),
+    };
+    const appServers = [
+      new FakeAppServerFactory({
+        emitTopLevelErrorOnTurn: "transient runtime failure",
+        writeFileOnTurn: {
+          relativePath: "partial.txt",
+          content: "partial\n",
+        },
+      }),
+      new FakeAppServerFactory(),
+    ];
+    const executor = new FileBackendCodexSafeExecutor({
+      stateRootDir: rootDir,
+      workspacePath,
+      accounts: appServers.map((appServer, index) => ({
+        codexAuthJson: codexAuthJson(`unknown-account-${index + 1}`),
+        worker: {
+          providerInstanceId: `codex-unknown-account-${index + 1}`,
+          stateRootDir: rootDir,
+          codexBinaryPath: "codex",
+          encryptionKey: new Uint8Array(32).fill(index + 60),
+          appServerProcessFactory: appServer.create,
+          runner: new StaticRunner({
+            exitCode: index === 0 ? 1 : 0,
+            stdout: "",
+            stderr: index === 0 ? "transient runtime failure" : "",
+          }),
+          clock,
+        },
+      })),
+      clock,
+    });
+
+    try {
+      const result = await executor.run({
+        taskId: "codex-safe-unknown-task",
+        prompt: "Implement the unknown-retry task.",
+        controls: { permissionMode: "allow-edits" },
+      });
+
+      if (result.status !== "completed") {
+        throw new Error(`expected completed: ${result.reason}:${result.safeMessage}`);
+      }
+      expect(result.attempts).toHaveLength(2);
+      expect(result.attempts[0]?.failureReason).toBe("unknown_error");
+      expect(result.attempts[0]?.failureMessage).toBe("Codex runtime failed.");
+      expect(appServers[0]!.prompts).toEqual([
+        "Implement the unknown-retry task.",
+      ]);
+      expect(appServers[1]!.prompts[0]).toContain("Continue the same task");
+      expect(appServers[1]!.prompts[0]).toContain(
+        "Previous attempt stopped because: unknown_error",
+      );
+      expect(appServers[1]!.threadCwds).toContain(workspacePath);
+    } finally {
+      await executor.dispose();
+      await rm(rootDir, { recursive: true, force: true });
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
   it("cycles safe Codex work through accounts for three rounds by default", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "codex-safe-cycle-"));
     const workspacePath = await mkdtemp(join(tmpdir(), "codex-safe-cycle-workspace-"));
@@ -756,6 +823,10 @@ describe("FileBackendCodexWorker", () => {
 
 type FakeAppServerFactoryOptions = {
   readonly emitTopLevelErrorOnTurn?: string;
+  readonly writeFileOnTurn?: {
+    readonly relativePath: string;
+    readonly content: string;
+  };
 };
 
 class FakeAppServerFactory {
@@ -792,6 +863,7 @@ class FakeAppServerProcess extends EventEmitter {
   };
   private nextThreadId = 1;
   private nextTurnId = 1;
+  private readonly threadCwdsById = new Map<string, string>();
 
   constructor(
     private readonly onPrompt: (prompt: string) => void,
@@ -824,6 +896,7 @@ class FakeAppServerProcess extends EventEmitter {
         const cwd = request.params?.cwd;
         if (typeof cwd === "string") {
           this.onThreadCwd(cwd);
+          this.threadCwdsById.set(threadId, cwd);
         }
         this.respond(request.id, { thread: { id: threadId } });
         continue;
@@ -835,28 +908,42 @@ class FakeAppServerProcess extends EventEmitter {
         this.onPrompt(prompt);
         this.respond(request.id, { turn: { id: turnId } });
         setTimeout(() => {
-          if (this.options.emitTopLevelErrorOnTurn) {
-            this.stdout.emit(
-              "data",
-              `${JSON.stringify({
-                method: "error",
-                message: this.options.emitTopLevelErrorOnTurn,
-              })}\n`,
-            );
-            return;
-          }
-          this.notify("item/agentMessage/delta", {
-            turnId,
-            delta: "OK",
-          });
-          this.notify("turn/completed", {
-            turn: { id: turnId, status: { type: "completed" } },
+          void this.writeConfiguredTurnFile(request.params).then(() => {
+            if (this.options.emitTopLevelErrorOnTurn) {
+              this.stdout.emit(
+                "data",
+                `${JSON.stringify({
+                  method: "error",
+                  message: this.options.emitTopLevelErrorOnTurn,
+                })}\n`,
+              );
+              return;
+            }
+            this.notify("item/agentMessage/delta", {
+              turnId,
+              delta: "OK",
+            });
+            this.notify("turn/completed", {
+              turn: { id: turnId, status: { type: "completed" } },
+            });
           });
         }, 1);
         continue;
       }
       this.respond(request.id, {});
     }
+  }
+
+  private async writeConfiguredTurnFile(
+    params: Record<string, unknown> | undefined,
+  ): Promise<void> {
+    const write = this.options.writeFileOnTurn;
+    if (!write) return;
+    const threadId = params?.threadId;
+    if (typeof threadId !== "string") return;
+    const cwd = this.threadCwdsById.get(threadId);
+    if (!cwd) return;
+    await writeFile(join(cwd, write.relativePath), write.content, "utf8");
   }
 
   private respond(id: number, result: Record<string, unknown>): void {

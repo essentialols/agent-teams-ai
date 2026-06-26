@@ -14,6 +14,7 @@ export type SafeExecutionPolicy = {
     readonly retryOnAccountUnavailable?: boolean;
     readonly retryOnReconnectRequired?: boolean;
     readonly retryUnknownCleanWorkspace?: boolean;
+    readonly retryUnknownChangedWorkspace?: boolean;
     readonly maxAttempts?: number;
     readonly continuationMode?: ContinuationMode;
 };

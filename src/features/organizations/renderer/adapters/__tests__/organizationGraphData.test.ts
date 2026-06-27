@@ -1075,10 +1075,13 @@ describe('buildOrganizationGraphData', () => {
     expect(graph.layout?.mode).toBe('grid-under-lead');
     expect(slots['team:alpha']?.ringIndex).toBe(slots['team:beta']?.ringIndex);
     expect(slots['team:alpha']?.sectorIndex).toBeLessThan(slots['team:beta']?.sectorIndex ?? -1);
+    expect(
+      (slots['team:beta']?.sectorIndex ?? 0) - (slots['team:alpha']?.sectorIndex ?? 0)
+    ).toBeGreaterThanOrEqual(4);
     expect(slots['team:beta']?.ringIndex).toBeLessThan(slots['team:gamma']?.ringIndex ?? -1);
     expect(
       (slots['team:gamma']?.ringIndex ?? 0) - (slots['team:beta']?.ringIndex ?? 0)
-    ).toBeGreaterThanOrEqual(6);
+    ).toBeGreaterThanOrEqual(10);
   });
 
   it('packs narrow sibling groups side by side in rows layout', () => {

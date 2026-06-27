@@ -22,6 +22,8 @@ const ORGANIZATION_GRID_MAX_COLUMN_COUNT = 12;
 const ORGANIZATION_GRID_TOP_ROW_OFFSET = 2;
 const ORGANIZATION_GRID_BLOCK_ROW_GAP = 6;
 const ORGANIZATION_GRID_BLOCK_COLUMN_GAP = 1;
+const ORGANIZATION_GRID_TOP_LEVEL_ORG_ROW_GAP = 10;
+const ORGANIZATION_GRID_TOP_LEVEL_ORG_COLUMN_GAP = 4;
 const ORGANIZATION_GRID_SIDE_BY_SIDE_MAX_BLOCK_WIDTH = 3;
 const ORGANIZATION_GRID_SIDE_BY_SIDE_MAX_BLOCK_HEIGHT = 3;
 const ORGANIZATION_GRID_SIDE_BY_SIDE_MAX_ROW_WIDTH = 7;
@@ -564,6 +566,8 @@ interface OrganizationGridPackingOptions {
   maxBlockHeight?: number;
   maxBlocksPerRow?: number;
   maxRowWidth?: number;
+  rowGap?: number;
+  columnGap?: number;
 }
 
 function canPackOrganizationGridBlockSideBySide(
@@ -575,10 +579,13 @@ function canPackOrganizationGridBlockSideBySide(
   return block.packable === true && block.width <= maxBlockWidth && block.height <= maxBlockHeight;
 }
 
-function getPackedOrganizationGridRowWidth(blocks: readonly OrganizationGridBlock[]): number {
+function getPackedOrganizationGridRowWidth(
+  blocks: readonly OrganizationGridBlock[],
+  columnGap = ORGANIZATION_GRID_BLOCK_COLUMN_GAP
+): number {
   return (
     blocks.reduce((sum, block) => sum + block.width, 0) +
-    Math.max(0, blocks.length - 1) * ORGANIZATION_GRID_BLOCK_COLUMN_GAP
+    Math.max(0, blocks.length - 1) * columnGap
   );
 }
 
@@ -596,6 +603,7 @@ function packOrganizationGridRows(
       continue;
     }
     const maxRowWidth = options.maxRowWidth ?? ORGANIZATION_GRID_SIDE_BY_SIDE_MAX_ROW_WIDTH;
+    const columnGap = options.columnGap ?? ORGANIZATION_GRID_BLOCK_COLUMN_GAP;
 
     if (options.maxBlocksPerRow && canPackOrganizationGridBlockSideBySide(block, options)) {
       const row = [block];
@@ -607,8 +615,7 @@ function packOrganizationGridRows(
         if (!nextBlock || !canPackOrganizationGridBlockSideBySide(nextBlock, options)) {
           break;
         }
-        const nextRowWidth =
-          rowWidth + ORGANIZATION_GRID_BLOCK_COLUMN_GAP + nextBlock.width;
+        const nextRowWidth = rowWidth + columnGap + nextBlock.width;
         if (nextRowWidth > maxRowWidth) {
           break;
         }
@@ -626,7 +633,7 @@ function packOrganizationGridRows(
       canPackOrganizationGridBlockSideBySide(block, options) &&
       nextBlock &&
       canPackOrganizationGridBlockSideBySide(nextBlock, options) &&
-      getPackedOrganizationGridRowWidth([block, nextBlock]) <= maxRowWidth
+      getPackedOrganizationGridRowWidth([block, nextBlock], columnGap) <= maxRowWidth
     ) {
       rows.push([block, nextBlock]);
       cursor += 2;
@@ -652,12 +659,14 @@ function stackOrganizationGridBlocks(
   const rows = options.packSiblings
     ? packOrganizationGridRows(visibleBlocks, options)
     : visibleBlocks.map((block) => [block]);
-  const width = Math.max(...rows.map(getPackedOrganizationGridRowWidth));
+  const columnGap = options.columnGap ?? ORGANIZATION_GRID_BLOCK_COLUMN_GAP;
+  const rowGap = options.rowGap ?? ORGANIZATION_GRID_BLOCK_ROW_GAP;
+  const width = Math.max(...rows.map((row) => getPackedOrganizationGridRowWidth(row, columnGap)));
   let rowOffset = 0;
   const assignments: OrganizationGridBlock['assignments'] = [];
 
   rows.forEach((rowBlocks, rowIndex) => {
-    const rowWidth = getPackedOrganizationGridRowWidth(rowBlocks);
+    const rowWidth = getPackedOrganizationGridRowWidth(rowBlocks, columnGap);
     const rowHeight = Math.max(...rowBlocks.map((block) => block.height));
     let columnOffset = Math.floor((width - rowWidth) / 2);
 
@@ -669,10 +678,10 @@ function stackOrganizationGridBlocks(
           columnIndex: columnOffset + assignment.columnIndex,
         }))
       );
-      columnOffset += block.width + ORGANIZATION_GRID_BLOCK_COLUMN_GAP;
+      columnOffset += block.width + columnGap;
     }
 
-    rowOffset += rowHeight + (rowIndex === rows.length - 1 ? 0 : ORGANIZATION_GRID_BLOCK_ROW_GAP);
+    rowOffset += rowHeight + (rowIndex === rows.length - 1 ? 0 : rowGap);
   });
 
   return {
@@ -763,6 +772,10 @@ function buildNestedOrganizationGridBlock(
       : packsAllScopeOrganizationSections
         ? ORGANIZATION_GRID_ALL_SCOPE_ORG_SECTION_MAX_ROW_WIDTH
         : undefined,
+    rowGap: packsTopLevelOrganizations ? ORGANIZATION_GRID_TOP_LEVEL_ORG_ROW_GAP : undefined,
+    columnGap: packsTopLevelOrganizations
+      ? ORGANIZATION_GRID_TOP_LEVEL_ORG_COLUMN_GAP
+      : undefined,
   });
 }
 

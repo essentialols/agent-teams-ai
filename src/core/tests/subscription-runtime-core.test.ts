@@ -378,6 +378,50 @@ describe("subscription runtime use cases", () => {
     expect(next?.generation).toBe(2);
   });
 
+  it("writes back a session update captured during task execution", async () => {
+    const store = new InMemorySessionStore();
+    store.seed({
+      providerInstanceId: "provider-instance-1",
+      artifact: makeFakeArtifact("session-v1"),
+    });
+    const observability = new MemoryObservability();
+    const agent = new (class extends FakeAgentDriver {
+      override async runTask(input: { readonly task: { readonly prompt: string } }) {
+        const result = await super.runTask(input);
+        if (result.status !== "completed") return result;
+        return {
+          ...result,
+          sessionUpdate: makeFakeArtifact("session-v3"),
+        };
+      }
+    })();
+    const runtime = createSubscriptionRuntime(
+      makeFakeRuntimeDeps({ store, agent, observability }),
+    );
+
+    const result = await runtime.refreshThenRunTask({
+      providerInstanceId: "provider-instance-1",
+      task: { kind: "review", prompt: "inspect diff" },
+      runContext: {
+        runId: "run-task-session-update",
+        attempt: 1,
+        abortSignal: new AbortController().signal,
+      },
+    });
+
+    expect(result.status).toBe("completed");
+    const next = await store.read({
+      providerInstanceId: "provider-instance-1",
+      expectedProviderId: "fake",
+      purpose: "health-check",
+    });
+    expect(next?.generation).toBe(3);
+    expect(new TextDecoder().decode(next?.artifact.bytes)).toBe("session-v3");
+    expect(observability.events.map((event) => event.name)).toContain(
+      "session.task_update.writeback.completed",
+    );
+  });
+
   it("emits structured observability events without session bytes", async () => {
     const store = new InMemorySessionStore();
     store.seed({

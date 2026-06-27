@@ -296,6 +296,15 @@ export type ProviderTaskResult = {
     readonly status: "completed";
     readonly outputText: string;
     readonly structuredOutput?: unknown;
+    /**
+     * Optional refreshed session captured during task execution.
+     *
+     * Some local CLIs rotate auth files while a task is running, not only
+     * during the explicit refresh step. Runtime stores may persist this
+     * update after a successful task using the same CAS/writeback path as
+     * normal refresh.
+     */
+    readonly sessionUpdate?: SessionArtifact;
     readonly telemetry?: ProviderTaskTelemetry;
     readonly warnings: readonly RuntimeWarning[];
 } | {

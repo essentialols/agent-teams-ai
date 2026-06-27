@@ -323,6 +323,7 @@ class RuntimeKernel {
         }
         return this.runTaskWithSession({
             session: session.artifact,
+            sessionEnvelope: session,
             task: input.task,
             runContext: input.runContext,
         });
@@ -359,6 +360,7 @@ class RuntimeKernel {
             refresh.session) {
             const task = await this.runTaskWithSession({
                 session: refresh.session.artifact,
+                sessionEnvelope: refresh.session,
                 task: input.task,
                 runContext: input.runContext,
             });
@@ -390,6 +392,7 @@ class RuntimeKernel {
             refresh.session) {
             const task = await this.runTaskWithSession({
                 session: refresh.session.artifact,
+                sessionEnvelope: refresh.session,
                 task: input.task,
                 runContext: input.runContext,
             });
@@ -430,6 +433,7 @@ class RuntimeKernel {
                 }
                 const retriedTask = await this.runTaskWithSession({
                     session: guardedSession.artifact,
+                    sessionEnvelope: guardedSession,
                     task: input.task,
                     runContext: input.runContext,
                 });
@@ -456,6 +460,7 @@ class RuntimeKernel {
         }
         const task = await this.runTaskWithSession({
             session: session.artifact,
+            sessionEnvelope: session,
             task: input.task,
             runContext: input.runContext,
         });
@@ -530,10 +535,143 @@ class RuntimeKernel {
                 status: result.status,
             }, this.deps.clock.monotonicMs() - taskStartedAt);
             this.deps.observability.timing("subscription_runtime.provider_task_ms", this.deps.clock.monotonicMs() - taskStartedAt);
-            return result;
+            return this.maybeWritebackTaskSessionUpdate({
+                result,
+                ...(input.sessionEnvelope
+                    ? { sessionEnvelope: input.sessionEnvelope }
+                    : {}),
+                runContext: input.runContext,
+            });
         }
         finally {
             await workspace.dispose?.();
+        }
+    }
+    async maybeWritebackTaskSessionUpdate(input) {
+        if (input.result.status !== "completed" ||
+            !input.result.sessionUpdate ||
+            !input.sessionEnvelope) {
+            return input.result;
+        }
+        const warnings = await this.writebackTaskSessionUpdate({
+            sessionEnvelope: input.sessionEnvelope,
+            sessionUpdate: input.result.sessionUpdate,
+            runContext: input.runContext,
+        });
+        if (warnings.length === 0) {
+            return input.result;
+        }
+        return {
+            ...input.result,
+            warnings: [...input.result.warnings, ...warnings],
+        };
+    }
+    async writebackTaskSessionUpdate(input) {
+        if (this.executionPlan.kind !== "rotating-session") {
+            return [
+                {
+                    code: "task_session_update_ignored",
+                    safeMessage: "Task session update was ignored because the runtime session does not rotate.",
+                },
+            ];
+        }
+        if (input.sessionUpdate.providerId !== input.sessionEnvelope.providerId) {
+            return [
+                {
+                    code: "task_session_update_provider_mismatch",
+                    safeMessage: "Task session update was ignored because the provider did not match.",
+                },
+            ];
+        }
+        const nextHash = computeSessionGenerationHash({
+            artifact: input.sessionUpdate,
+        });
+        if (nextHash === input.sessionEnvelope.generationHash) {
+            return [];
+        }
+        const sessionStore = this.requireSessionStore();
+        const leaseStore = this.requireLeaseStore();
+        const lease = await leaseStore.acquire({
+            providerInstanceId: input.sessionEnvelope.providerInstanceId,
+            runId: input.runContext.runId,
+            attempt: input.runContext.attempt,
+            ttlMs: this.policy.timeoutMs,
+            restoredGenerationHash: input.sessionEnvelope.generationHash,
+        });
+        if (lease.status !== "granted") {
+            return [
+                {
+                    code: `task_session_update_writeback_${lease.status}`,
+                    safeMessage: "Task session update could not be written back because the session lease was unavailable.",
+                },
+            ];
+        }
+        let leaseClosed = false;
+        const idempotencyKey = `${this.deps.idGenerator.idempotencyKey({
+            providerInstanceId: input.sessionEnvelope.providerInstanceId,
+            runId: input.runContext.runId,
+            attempt: input.runContext.attempt,
+            purpose: "writeback",
+        })}:task-session-update:${nextHash.slice(0, 16)}`;
+        try {
+            await leaseStore.finalize({
+                leaseId: lease.leaseId,
+                restoredGenerationHash: input.sessionEnvelope.generationHash,
+            });
+            this.emit("session.task_update.writeback.started", input.runContext.runId, {
+                leaseId: lease.leaseId,
+                expectedGeneration: String(input.sessionEnvelope.generation),
+            });
+            await leaseStore.markWritebackStarted({
+                leaseId: lease.leaseId,
+            });
+            const writeback = await sessionStore.write({
+                providerInstanceId: input.sessionEnvelope.providerInstanceId,
+                expectedGeneration: input.sessionEnvelope.generation,
+                nextArtifact: input.sessionUpdate,
+                idempotencyKey,
+                leaseId: lease.leaseId,
+            });
+            if (writeback.status === "stale_generation") {
+                return [
+                    {
+                        code: "task_session_update_writeback_stale_generation",
+                        safeMessage: "Task session update was skipped because a newer session generation already exists.",
+                    },
+                ];
+            }
+            await leaseStore.markWritebackCommitted({
+                leaseId: lease.leaseId,
+                nextGenerationHash: writeback.generationHash,
+                idempotencyKey,
+            });
+            leaseClosed = true;
+            this.emit("session.task_update.writeback.completed", input.runContext.runId, {
+                status: writeback.status,
+                generation: String(writeback.generation),
+            });
+            this.deps.observability.count("subscription_runtime.task_session_update_writeback_success");
+            return [];
+        }
+        catch (error) {
+            this.emit("session.task_update.writeback.failed", input.runContext.runId, {
+                reason: error instanceof Error ? error.message.slice(0, 120) : "unknown",
+            });
+            return [
+                {
+                    code: "task_session_update_writeback_failed",
+                    safeMessage: "Task session update could not be written back after task execution.",
+                },
+            ];
+        }
+        finally {
+            if (!leaseClosed) {
+                await this.releaseLeaseQuietly({
+                    leaseId: lease.leaseId,
+                    runId: input.runContext.runId,
+                    reason: "task_session_update_writeback_not_committed",
+                });
+            }
         }
     }
     async inspectFreshness(input) {

@@ -1,4 +1,4 @@
-import type { ProviderTaskControls, ProviderTaskResult, RedactorPort, RunnerPort } from "@vioxen/subscription-runtime/core";
+import type { ProviderTaskControls, ProviderTaskResult, RedactorPort, RunnerPort, SessionArtifact } from "@vioxen/subscription-runtime/core";
 export type CodexReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
 export type CodexServiceTier = string;
 export type CodexSandboxMode = "read-only" | "workspace-write";
@@ -7,6 +7,7 @@ export type CodexMaterializedSession = {
     readonly codexHome: string;
     readonly sessionHash?: string;
     readonly env: Readonly<Record<string, string>>;
+    snapshotSession?(): Promise<SessionArtifact | null>;
     release(): Promise<void>;
 };
 export type CodexExecutionResult = {

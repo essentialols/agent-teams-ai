@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { codexAuthJsonFromArtifact } from "./codex-auth-json-codec.js";
+import { codexAuthJsonFromArtifact, sessionArtifactFromCodexAuthJson, } from "./codex-auth-json-codec.js";
 import { cleanupCodexRuntimeTempRoot } from "./codex-cli-temp-cleanup.js";
 export class CodexEphemeralSessionMaterializer {
     mode = "ephemeral";
@@ -23,6 +23,7 @@ export class CodexEphemeralSessionMaterializer {
                 HOME: home,
                 CODEX_HOME: codexHome,
             },
+            snapshotSession: () => snapshotCodexSession({ codexHome }),
             release: once(async () => {
                 try {
                     await cleanupCodexRuntimeTempRoot({
@@ -79,6 +80,7 @@ export class CodexWorkerCacheSessionMaterializer {
                     HOME: entry.home,
                     CODEX_HOME: entry.codexHome,
                 },
+                snapshotSession: () => snapshotCodexSession({ codexHome: entry.codexHome }),
                 release: once(async () => {
                     released = true;
                     releaseLock();
@@ -289,6 +291,10 @@ export async function writeCodexJsonHomeSnapshot(input) {
 }
 export async function writeCodexAuthJson(input) {
     await writeFileAtomic(join(input.codexHome, "auth.json"), input.authJson);
+}
+async function snapshotCodexSession(input) {
+    const authJson = await readFile(join(input.codexHome, "auth.json"), "utf8");
+    return sessionArtifactFromCodexAuthJson(authJson);
 }
 export function sessionArtifactHash(session) {
     return stableHash(new TextDecoder().decode(session.bytes));

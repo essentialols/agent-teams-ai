@@ -1631,6 +1631,49 @@ describe("Codex provider adapter", () => {
     }
   });
 
+  it("captures Codex auth changes written during task execution", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "codex-task-update-test-"));
+    const cacheRoot = await mkdtemp(join(tmpdir(), "codex-task-update-root-"));
+    const engine = new (class extends RecordingJsonEngine {
+      override async run(input: Parameters<CodexExecutionEngine["run"]>[0]) {
+        await writeFile(join(input.session.codexHome, "auth.json"), refreshedAuthJson);
+        return super.run(input);
+      }
+    })();
+    const driver = new CodexJsonAgentDriver({
+      engine,
+      sessionMaterializer: new CodexWorkerCacheSessionMaterializer({
+        cacheKey: "provider-account:codex-test:slot:snapshot",
+        rootDir: cacheRoot,
+      }),
+      model: "gpt-test",
+      reasoningEffort: "low",
+    });
+
+    try {
+      const result = await driver.runTask({
+        session: sessionArtifactFromCodexAuthJson(validAuthJson),
+        task: { kind: "review", prompt: "capture auth update" },
+        workspace: { path: workspace },
+        runner: new StaticRunner(""),
+        redactor: new DefaultRedactor(),
+        abortSignal: new AbortController().signal,
+      });
+
+      expect(result.status).toBe("completed");
+      if (result.status === "completed") {
+        expect(result.sessionUpdate).toBeTruthy();
+        expect(new TextDecoder().decode(result.sessionUpdate!.bytes)).toContain(
+          "refreshed-refresh-token",
+        );
+      }
+    } finally {
+      await driver.dispose();
+      await rm(workspace, { recursive: true, force: true });
+      await rm(cacheRoot, { recursive: true, force: true });
+    }
+  });
+
   it("serializes concurrent worker-cache use for one warmed worker slot", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "codex-worker-lock-test-"));
     const cacheRoot = await mkdtemp(join(tmpdir(), "codex-worker-lock-root-"));

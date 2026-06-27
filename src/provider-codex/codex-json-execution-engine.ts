@@ -3,6 +3,7 @@ import type {
   ProviderTaskResult,
   RedactorPort,
   RunnerPort,
+  SessionArtifact,
 } from "@vioxen/subscription-runtime/core";
 import { classifyCodexFailure } from "./failure-classifier";
 import { pruneCodexChildEnv } from "./codex-cli-domain";
@@ -24,6 +25,7 @@ export type CodexMaterializedSession = {
   readonly codexHome: string;
   readonly sessionHash?: string;
   readonly env: Readonly<Record<string, string>>;
+  snapshotSession?(): Promise<SessionArtifact | null>;
   release(): Promise<void>;
 };
 

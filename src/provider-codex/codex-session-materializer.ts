@@ -3,10 +3,13 @@ import type {
   SessionArtifact,
 } from "@vioxen/subscription-runtime/core";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { codexAuthJsonFromArtifact } from "./codex-auth-json-codec";
+import {
+  codexAuthJsonFromArtifact,
+  sessionArtifactFromCodexAuthJson,
+} from "./codex-auth-json-codec";
 import { cleanupCodexRuntimeTempRoot } from "./codex-cli-temp-cleanup";
 import type { CodexMaterializedSession } from "./codex-json-execution-engine";
 
@@ -67,6 +70,7 @@ export class CodexEphemeralSessionMaterializer implements CodexSessionMaterializ
         HOME: home,
         CODEX_HOME: codexHome,
       },
+      snapshotSession: () => snapshotCodexSession({ codexHome }),
       release: once(async () => {
         try {
           await cleanupCodexRuntimeTempRoot({
@@ -160,6 +164,8 @@ export class CodexWorkerCacheSessionMaterializer implements CodexSessionMaterial
           HOME: entry.home,
           CODEX_HOME: entry.codexHome,
         },
+        snapshotSession: () =>
+          snapshotCodexSession({ codexHome: entry.codexHome }),
         release: once(async () => {
           released = true;
           releaseLock();
@@ -413,6 +419,13 @@ export async function writeCodexAuthJson(input: {
   readonly authJson: string;
 }): Promise<void> {
   await writeFileAtomic(join(input.codexHome, "auth.json"), input.authJson);
+}
+
+async function snapshotCodexSession(input: {
+  readonly codexHome: string;
+}): Promise<SessionArtifact> {
+  const authJson = await readFile(join(input.codexHome, "auth.json"), "utf8");
+  return sessionArtifactFromCodexAuthJson(authJson);
 }
 
 export function sessionArtifactHash(session: SessionArtifact): string {

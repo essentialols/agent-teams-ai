@@ -75,15 +75,23 @@ export class CodexJsonAgentDriver {
                 sandboxMode: codexSandboxModeForPermissionMode(input.task.controls?.permissionMode),
                 abortSignal: input.abortSignal,
             });
+            const snapshot = await snapshotSessionUpdate({
+                materialized,
+                previousSession: input.session,
+                redactor: input.redactor,
+            });
             return {
                 status: "completed",
                 outputText: result.outputText,
                 structuredOutput: result.structuredOutput,
+                ...(snapshot.sessionUpdate
+                    ? { sessionUpdate: snapshot.sessionUpdate }
+                    : {}),
                 telemetry: {
                     durationMs: Date.now() - startedAt,
                     finishReason: "completed",
                 },
-                warnings: result.warnings,
+                warnings: [...result.warnings, ...snapshot.warnings],
             };
         }
         catch (error) {
@@ -173,6 +181,32 @@ export class CodexJsonAgentDriver {
             error.code = "codex_json_agent_dispose_failed";
             throw error;
         }
+    }
+}
+async function snapshotSessionUpdate(input) {
+    if (!input.materialized.snapshotSession) {
+        return { warnings: [] };
+    }
+    try {
+        const snapshot = await input.materialized.snapshotSession();
+        if (!snapshot) {
+            return { warnings: [] };
+        }
+        input.redactor.registerSecret(snapshot.bytes, "codex-session-snapshot");
+        if (sessionArtifactHash(snapshot) === sessionArtifactHash(input.previousSession)) {
+            return { warnings: [] };
+        }
+        return { sessionUpdate: snapshot, warnings: [] };
+    }
+    catch {
+        return {
+            warnings: [
+                {
+                    code: "codex_session_snapshot_failed",
+                    safeMessage: "Codex session snapshot could not be captured after task execution.",
+                },
+            ],
+        };
     }
 }
 function readTaskGoalObjective(task) {

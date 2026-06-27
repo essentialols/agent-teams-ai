@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { createSubscriptionRuntime, DefaultRedactor, DeterministicIdGenerator, assertProviderTaskSystemPrompt, } from "@vioxen/subscription-runtime/core";
 import { CodexAppServerExecutionEngine, CodexCliAgentDriver, CodexCliSessionDriver, CodexJsonAgentDriver, CodexWorkerCacheSessionPoolMaterializer, PackagedCodexJsonExecutionEngine, defaultCodexModel, sessionArtifactFromCodexAuthJson, codexAuthJsonFromArtifact, readCodexAuthJsonFreshness, validateCodexAuthJsonBytes, } from "@vioxen/subscription-runtime/provider-codex";
 import { createLocalFileBackendRuntimeAdapters } from "@vioxen/subscription-runtime/store-local-file";
@@ -29,6 +29,7 @@ export class FileBackendCodexWorker {
     consecutiveReconnectFailures = 0;
     quotaGroup = null;
     capacityAccountId = null;
+    seededCodexAuthJsonPath = null;
     constructor(options) {
         this.options = options;
         this.workerId =
@@ -156,6 +157,7 @@ export class FileBackendCodexWorker {
         this.workerState = "started";
     }
     async seedCodexAuthJsonFile(authJsonPath) {
+        this.seededCodexAuthJsonPath = authJsonPath;
         const authJson = await readFile(authJsonPath, "utf8");
         await this.seedCodexAuthJson(authJson);
     }
@@ -209,15 +211,20 @@ export class FileBackendCodexWorker {
         this.rememberQuotaGroup(session.artifact);
         if (!("prewarmSession" in this.agentDriver)) {
             this.workerState = "ready";
-            return {
-                status: "skipped",
-                warmedAt: this.clock.now(),
-                warnings: [],
-                details: {
-                    engine: "plain-exec",
-                    engineReusable: "false",
-                },
-            };
+            try {
+                return {
+                    status: "skipped",
+                    warmedAt: this.clock.now(),
+                    warnings: [],
+                    details: {
+                        engine: "plain-exec",
+                        engineReusable: "false",
+                    },
+                };
+            }
+            finally {
+                await this.exportSeededCodexAuthJsonFileQuietly("prewarm");
+            }
         }
         const workspace = await this.prewarmWorkspace.create({
             purpose: "run-task",
@@ -254,6 +261,7 @@ export class FileBackendCodexWorker {
         }
         finally {
             await workspace.dispose?.();
+            await this.exportSeededCodexAuthJsonFileQuietly("prewarm");
         }
     }
     async run(job) {
@@ -265,55 +273,60 @@ export class FileBackendCodexWorker {
         const startedAt = this.clock.monotonicMs();
         const retryMaxMs = this.options.refreshConflictRetryMaxMs ?? 30_000;
         let attempt = 1;
-        while (true) {
-            let result;
-            try {
-                result = await this.runtime.refreshThenRunTask({
-                    providerInstanceId: this.options.providerInstanceId,
-                    task: {
-                        kind: job.kind ?? "structured-prompt",
-                        prompt: job.prompt,
-                        ...(job.systemPrompt !== undefined
-                            ? { systemPrompt: job.systemPrompt }
-                            : {}),
-                        ...(job.outputSchemaName
-                            ? { outputSchemaName: job.outputSchemaName }
-                            : {}),
-                        ...(job.controls ? { controls: job.controls } : {}),
-                        ...(job.metadata ? { metadata: job.metadata } : {}),
-                    },
-                    runContext: {
-                        runId,
-                        attempt,
-                        abortSignal,
-                    },
-                });
+        try {
+            while (true) {
+                let result;
+                try {
+                    result = await this.runtime.refreshThenRunTask({
+                        providerInstanceId: this.options.providerInstanceId,
+                        task: {
+                            kind: job.kind ?? "structured-prompt",
+                            prompt: job.prompt,
+                            ...(job.systemPrompt !== undefined
+                                ? { systemPrompt: job.systemPrompt }
+                                : {}),
+                            ...(job.outputSchemaName
+                                ? { outputSchemaName: job.outputSchemaName }
+                                : {}),
+                            ...(job.controls ? { controls: job.controls } : {}),
+                            ...(job.metadata ? { metadata: job.metadata } : {}),
+                        },
+                        runContext: {
+                            runId,
+                            attempt,
+                            abortSignal,
+                        },
+                    });
+                }
+                catch (error) {
+                    const failure = this.agentDriver.classifyRunFailure(error);
+                    this.recordFailure(failure);
+                    throw new SubscriptionWorkerError("subscription_worker_run_failed", failure.safeMessage, {
+                        cause: error,
+                        details: {
+                            reason: failure.code,
+                            ...(this.capacityAccountId
+                                ? { accountId: this.capacityAccountId }
+                                : {}),
+                        },
+                    });
+                }
+                if (result.status === "completed") {
+                    return this.taskResultToOutput(result.task);
+                }
+                if (shouldRetryRefreshConflict(result) &&
+                    !abortSignal.aborted &&
+                    this.clock.monotonicMs() - startedAt < retryMaxMs) {
+                    await delay(refreshConflictDelayMs(attempt), abortSignal);
+                    attempt += 1;
+                    continue;
+                }
+                this.recordBlocked(result.reason);
+                throw new SubscriptionWorkerError("subscription_worker_run_failed", result.safeMessage, { details: { reason: result.reason } });
             }
-            catch (error) {
-                const failure = this.agentDriver.classifyRunFailure(error);
-                this.recordFailure(failure);
-                throw new SubscriptionWorkerError("subscription_worker_run_failed", failure.safeMessage, {
-                    cause: error,
-                    details: {
-                        reason: failure.code,
-                        ...(this.capacityAccountId
-                            ? { accountId: this.capacityAccountId }
-                            : {}),
-                    },
-                });
-            }
-            if (result.status === "completed") {
-                return this.taskResultToOutput(result.task);
-            }
-            if (shouldRetryRefreshConflict(result) &&
-                !abortSignal.aborted &&
-                this.clock.monotonicMs() - startedAt < retryMaxMs) {
-                await delay(refreshConflictDelayMs(attempt), abortSignal);
-                attempt += 1;
-                continue;
-            }
-            this.recordBlocked(result.reason);
-            throw new SubscriptionWorkerError("subscription_worker_run_failed", result.safeMessage, { details: { reason: result.reason } });
+        }
+        finally {
+            await this.exportSeededCodexAuthJsonFileQuietly("run");
         }
     }
     async health() {
@@ -571,6 +584,36 @@ export class FileBackendCodexWorker {
             this.capacityAccountId = normalizeCapacityAccountId(this.options.capacityAccountId);
         }
     }
+    async exportSeededCodexAuthJsonFileQuietly(context) {
+        if (!this.seededCodexAuthJsonPath)
+            return;
+        try {
+            const session = await this.sessionStore.read({
+                providerInstanceId: this.options.providerInstanceId,
+                expectedProviderId: "codex",
+                purpose: "health-check",
+            });
+            if (!session)
+                return;
+            const authJsonBytes = codexAuthJsonFromArtifact(session.artifact);
+            validateCodexAuthJsonBytes({ authJsonBytes });
+            const existing = await readFile(this.seededCodexAuthJsonPath, "utf8").catch(() => null);
+            if (existing === authJsonBytes)
+                return;
+            await writeCodexAuthJsonFileAtomic(this.seededCodexAuthJsonPath, authJsonBytes);
+            this.observability.count("subscription_runtime.codex_auth_path_exported");
+        }
+        catch {
+            this.observability.count("subscription_runtime.codex_auth_path_export_failed");
+            this.observability.emit({
+                name: "codex.auth_path.export_failed",
+                providerId: "codex",
+                agentId: this.agentDriver.agentId,
+                storeId: this.sessionStore.storeId,
+                metadata: { context },
+            });
+        }
+    }
     withCapacityDetails(capacity) {
         return {
             ...capacity,
@@ -725,6 +768,12 @@ function hashText(value) {
 function normalizeCapacityAccountId(value) {
     const normalized = value?.trim();
     return normalized ? normalized : null;
+}
+async function writeCodexAuthJsonFileAtomic(authJsonPath, authJson) {
+    await mkdir(dirname(authJsonPath), { recursive: true, mode: 0o700 });
+    const tempPath = `${authJsonPath}.${process.pid}.${randomUUID()}.tmp`;
+    await writeFile(tempPath, authJson, { mode: 0o600 });
+    await rename(tempPath, authJsonPath);
 }
 const systemClock = {
     now: () => new Date(),

@@ -5,6 +5,7 @@ import {
   type ProviderTask,
   type ProviderTaskResult,
   type RedactorPort,
+  type RuntimeWarning,
   type SessionArtifact,
   type WorkspaceHandle,
 } from "@vioxen/subscription-runtime/core";
@@ -136,16 +137,24 @@ export class CodexJsonAgentDriver implements AgentDriver {
         ),
         abortSignal: input.abortSignal,
       });
+      const snapshot = await snapshotSessionUpdate({
+        materialized,
+        previousSession: input.session,
+        redactor: input.redactor,
+      });
 
       return {
         status: "completed",
         outputText: result.outputText,
         structuredOutput: result.structuredOutput,
+        ...(snapshot.sessionUpdate
+          ? { sessionUpdate: snapshot.sessionUpdate }
+          : {}),
         telemetry: {
           durationMs: Date.now() - startedAt,
           finishReason: "completed",
         },
-        warnings: result.warnings,
+        warnings: [...result.warnings, ...snapshot.warnings],
       };
     } catch (error) {
       const failure = codexExecutionFailure(error);
@@ -254,6 +263,45 @@ export class CodexJsonAgentDriver implements AgentDriver {
       error.code = "codex_json_agent_dispose_failed";
       throw error;
     }
+  }
+}
+
+async function snapshotSessionUpdate(input: {
+  readonly materialized: Awaited<
+    ReturnType<CodexSessionMaterializer["materialize"]>
+  >;
+  readonly previousSession: SessionArtifact;
+  readonly redactor: RedactorPort;
+}): Promise<{
+  readonly sessionUpdate?: SessionArtifact;
+  readonly warnings: readonly RuntimeWarning[];
+}> {
+  if (!input.materialized.snapshotSession) {
+    return { warnings: [] };
+  }
+
+  try {
+    const snapshot = await input.materialized.snapshotSession();
+    if (!snapshot) {
+      return { warnings: [] };
+    }
+    input.redactor.registerSecret(snapshot.bytes, "codex-session-snapshot");
+    if (
+      sessionArtifactHash(snapshot) === sessionArtifactHash(input.previousSession)
+    ) {
+      return { warnings: [] };
+    }
+    return { sessionUpdate: snapshot, warnings: [] };
+  } catch {
+    return {
+      warnings: [
+        {
+          code: "codex_session_snapshot_failed",
+          safeMessage:
+            "Codex session snapshot could not be captured after task execution.",
+        },
+      ],
+    };
   }
 }
 

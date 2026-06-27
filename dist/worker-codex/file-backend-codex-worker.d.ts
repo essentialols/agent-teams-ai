@@ -81,6 +81,7 @@ export declare class FileBackendCodexWorker implements CapacityAwareSubscription
     private consecutiveReconnectFailures;
     private quotaGroup;
     private capacityAccountId;
+    private seededCodexAuthJsonPath;
     constructor(options: FileBackendCodexWorkerOptions);
     get state(): SubscriptionWorkerState;
     start(): Promise<void>;
@@ -99,6 +100,7 @@ export declare class FileBackendCodexWorker implements CapacityAwareSubscription
     private rollCapacityWindow;
     private rememberStoredQuotaGroup;
     private rememberQuotaGroup;
+    private exportSeededCodexAuthJsonFileQuietly;
     private withCapacityDetails;
     private assertStarted;
 }

@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import {
   createSubscriptionRuntime,
   DefaultRedactor,
@@ -141,6 +141,7 @@ export class FileBackendCodexWorker implements CapacityAwareSubscriptionWorker<
   private consecutiveReconnectFailures = 0;
   private quotaGroup: string | null = null;
   private capacityAccountId: string | null = null;
+  private seededCodexAuthJsonPath: string | null = null;
 
   constructor(private readonly options: FileBackendCodexWorkerOptions) {
     this.workerId =
@@ -286,6 +287,7 @@ export class FileBackendCodexWorker implements CapacityAwareSubscriptionWorker<
   }
 
   async seedCodexAuthJsonFile(authJsonPath: string): Promise<void> {
+    this.seededCodexAuthJsonPath = authJsonPath;
     const authJson = await readFile(authJsonPath, "utf8");
     await this.seedCodexAuthJson(authJson);
   }
@@ -348,15 +350,19 @@ export class FileBackendCodexWorker implements CapacityAwareSubscriptionWorker<
 
     if (!("prewarmSession" in this.agentDriver)) {
       this.workerState = "ready";
-      return {
-        status: "skipped",
-        warmedAt: this.clock.now(),
-        warnings: [],
-        details: {
-          engine: "plain-exec",
-          engineReusable: "false",
-        },
-      };
+      try {
+        return {
+          status: "skipped",
+          warmedAt: this.clock.now(),
+          warnings: [],
+          details: {
+            engine: "plain-exec",
+            engineReusable: "false",
+          },
+        };
+      } finally {
+        await this.exportSeededCodexAuthJsonFileQuietly("prewarm");
+      }
     }
 
     const workspace = await this.prewarmWorkspace.create({
@@ -392,6 +398,7 @@ export class FileBackendCodexWorker implements CapacityAwareSubscriptionWorker<
       throw error;
     } finally {
       await workspace.dispose?.();
+      await this.exportSeededCodexAuthJsonFileQuietly("prewarm");
     }
   }
 
@@ -407,67 +414,71 @@ export class FileBackendCodexWorker implements CapacityAwareSubscriptionWorker<
     const retryMaxMs = this.options.refreshConflictRetryMaxMs ?? 30_000;
     let attempt = 1;
 
-    while (true) {
-      let result: RefreshThenRunResult;
-      try {
-        result = await this.runtime.refreshThenRunTask({
-          providerInstanceId: this.options.providerInstanceId,
-          task: {
-            kind: job.kind ?? "structured-prompt",
-            prompt: job.prompt,
-            ...(job.systemPrompt !== undefined
-              ? { systemPrompt: job.systemPrompt }
-              : {}),
-            ...(job.outputSchemaName
-              ? { outputSchemaName: job.outputSchemaName }
-              : {}),
-            ...(job.controls ? { controls: job.controls } : {}),
-            ...(job.metadata ? { metadata: job.metadata } : {}),
-          },
-          runContext: {
-            runId,
-            attempt,
-            abortSignal,
-          },
-        });
-      } catch (error) {
-        const failure = this.agentDriver.classifyRunFailure(error);
-        this.recordFailure(failure);
+    try {
+      while (true) {
+        let result: RefreshThenRunResult;
+        try {
+          result = await this.runtime.refreshThenRunTask({
+            providerInstanceId: this.options.providerInstanceId,
+            task: {
+              kind: job.kind ?? "structured-prompt",
+              prompt: job.prompt,
+              ...(job.systemPrompt !== undefined
+                ? { systemPrompt: job.systemPrompt }
+                : {}),
+              ...(job.outputSchemaName
+                ? { outputSchemaName: job.outputSchemaName }
+                : {}),
+              ...(job.controls ? { controls: job.controls } : {}),
+              ...(job.metadata ? { metadata: job.metadata } : {}),
+            },
+            runContext: {
+              runId,
+              attempt,
+              abortSignal,
+            },
+          });
+        } catch (error) {
+          const failure = this.agentDriver.classifyRunFailure(error);
+          this.recordFailure(failure);
+          throw new SubscriptionWorkerError(
+            "subscription_worker_run_failed",
+            failure.safeMessage,
+            {
+              cause: error,
+              details: {
+                reason: failure.code,
+                ...(this.capacityAccountId
+                  ? { accountId: this.capacityAccountId }
+                  : {}),
+              },
+            },
+          );
+        }
+
+        if (result.status === "completed") {
+          return this.taskResultToOutput(result.task);
+        }
+
+        if (
+          shouldRetryRefreshConflict(result) &&
+          !abortSignal.aborted &&
+          this.clock.monotonicMs() - startedAt < retryMaxMs
+        ) {
+          await delay(refreshConflictDelayMs(attempt), abortSignal);
+          attempt += 1;
+          continue;
+        }
+
+        this.recordBlocked(result.reason);
         throw new SubscriptionWorkerError(
           "subscription_worker_run_failed",
-          failure.safeMessage,
-          {
-            cause: error,
-            details: {
-              reason: failure.code,
-              ...(this.capacityAccountId
-                ? { accountId: this.capacityAccountId }
-                : {}),
-            },
-          },
+          result.safeMessage,
+          { details: { reason: result.reason } },
         );
       }
-
-      if (result.status === "completed") {
-        return this.taskResultToOutput(result.task);
-      }
-
-      if (
-        shouldRetryRefreshConflict(result) &&
-        !abortSignal.aborted &&
-        this.clock.monotonicMs() - startedAt < retryMaxMs
-      ) {
-        await delay(refreshConflictDelayMs(attempt), abortSignal);
-        attempt += 1;
-        continue;
-      }
-
-      this.recordBlocked(result.reason);
-      throw new SubscriptionWorkerError(
-        "subscription_worker_run_failed",
-        result.safeMessage,
-        { details: { reason: result.reason } },
-      );
+    } finally {
+      await this.exportSeededCodexAuthJsonFileQuietly("run");
     }
   }
 
@@ -759,6 +770,43 @@ export class FileBackendCodexWorker implements CapacityAwareSubscriptionWorker<
     }
   }
 
+  private async exportSeededCodexAuthJsonFileQuietly(
+    context: "prewarm" | "run",
+  ): Promise<void> {
+    if (!this.seededCodexAuthJsonPath) return;
+    try {
+      const session = await this.sessionStore.read({
+        providerInstanceId: this.options.providerInstanceId,
+        expectedProviderId: "codex",
+        purpose: "health-check",
+      });
+      if (!session) return;
+      const authJsonBytes = codexAuthJsonFromArtifact(session.artifact);
+      validateCodexAuthJsonBytes({ authJsonBytes });
+      const existing = await readFile(
+        this.seededCodexAuthJsonPath,
+        "utf8",
+      ).catch(() => null);
+      if (existing === authJsonBytes) return;
+      await writeCodexAuthJsonFileAtomic(
+        this.seededCodexAuthJsonPath,
+        authJsonBytes,
+      );
+      this.observability.count("subscription_runtime.codex_auth_path_exported");
+    } catch {
+      this.observability.count(
+        "subscription_runtime.codex_auth_path_export_failed",
+      );
+      this.observability.emit({
+        name: "codex.auth_path.export_failed",
+        providerId: "codex",
+        agentId: this.agentDriver.agentId,
+        storeId: this.sessionStore.storeId,
+        metadata: { context },
+      });
+    }
+  }
+
   private withCapacityDetails(
     capacity: WorkerCapacitySnapshot,
   ): WorkerCapacitySnapshot {
@@ -978,6 +1026,16 @@ function normalizeCapacityAccountId(
 ): string | null {
   const normalized = value?.trim();
   return normalized ? normalized : null;
+}
+
+async function writeCodexAuthJsonFileAtomic(
+  authJsonPath: string,
+  authJson: string,
+): Promise<void> {
+  await mkdir(dirname(authJsonPath), { recursive: true, mode: 0o700 });
+  const tempPath = `${authJsonPath}.${process.pid}.${randomUUID()}.tmp`;
+  await writeFile(tempPath, authJson, { mode: 0o600 });
+  await rename(tempPath, authJsonPath);
 }
 
 const systemClock: ClockPort = {

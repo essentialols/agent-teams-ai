@@ -642,6 +642,82 @@ describe("FileBackendCodexWorker", () => {
     }
   });
 
+  it("rejects duplicate Codex account identities before starting safe work", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "codex-safe-duplicate-"));
+    const workspacePath = await mkdtemp(join(tmpdir(), "codex-safe-duplicate-workspace-"));
+    const appServers = [new FakeAppServerFactory(), new FakeAppServerFactory()];
+    const executor = new FileBackendCodexSafeExecutor({
+      stateRootDir: rootDir,
+      workspacePath,
+      accounts: appServers.map((appServer, index) => ({
+        codexAuthJson: codexAuthJsonForAccount(
+          `duplicate-refresh-${index + 1}`,
+          "acct-duplicate",
+        ),
+        worker: {
+          providerInstanceId: `codex-duplicate-account-${index + 1}`,
+          stateRootDir: rootDir,
+          codexBinaryPath: "codex",
+          encryptionKey: new Uint8Array(32).fill(index + 67),
+          appServerProcessFactory: appServer.create,
+          runner: new StaticRunner({ exitCode: 0, stdout: "", stderr: "" }),
+        },
+      })),
+    });
+
+    try {
+      await expect(executor.start()).rejects.toMatchObject({
+        code: "subscription_worker_start_failed",
+        details: {
+          code: "file_backend_codex_duplicate_account_identity",
+          accounts: "codex-duplicate-account-1,codex-duplicate-account-2",
+          identitySource: "id_token_account_id",
+        },
+      });
+      expect(appServers[0]!.spawnCount).toBe(0);
+      expect(appServers[1]!.spawnCount).toBe(0);
+    } finally {
+      await executor.dispose();
+      await rm(rootDir, { recursive: true, force: true });
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it("allows duplicate Codex account identities only when explicitly enabled", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "codex-safe-duplicate-allowed-"));
+    const workspacePath = await mkdtemp(
+      join(tmpdir(), "codex-safe-duplicate-allowed-workspace-"),
+    );
+    const appServers = [new FakeAppServerFactory(), new FakeAppServerFactory()];
+    const executor = new FileBackendCodexSafeExecutor({
+      stateRootDir: rootDir,
+      workspacePath,
+      allowDuplicateAccountIdentities: true,
+      accounts: appServers.map((appServer, index) => ({
+        codexAuthJson: codexAuthJsonForAccount(
+          `allowed-duplicate-refresh-${index + 1}`,
+          "acct-duplicate-allowed",
+        ),
+        worker: {
+          providerInstanceId: `codex-duplicate-allowed-${index + 1}`,
+          stateRootDir: rootDir,
+          codexBinaryPath: "codex",
+          encryptionKey: new Uint8Array(32).fill(index + 69),
+          appServerProcessFactory: appServer.create,
+          runner: new StaticRunner({ exitCode: 0, stdout: "", stderr: "" }),
+        },
+      })),
+    });
+
+    try {
+      await expect(executor.start()).resolves.toBeUndefined();
+    } finally {
+      await executor.dispose();
+      await rm(rootDir, { recursive: true, force: true });
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
   it("stops dirty unknown safe Codex work by default", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "codex-safe-unknown-"));
     const workspacePath = await mkdtemp(join(tmpdir(), "codex-safe-unknown-workspace-"));
@@ -1652,6 +1728,19 @@ function codexAuthJson(refreshToken: string): string {
   return codexAuthJsonAt(refreshToken, "2026-05-31T00:00:00.000Z");
 }
 
+function codexAuthJsonForAccount(
+  refreshToken: string,
+  accountId: string,
+): string {
+  const auth = JSON.parse(codexAuthJson(refreshToken)) as {
+    tokens: { id_token?: string };
+  };
+  auth.tokens.id_token = fakeJwt({
+    "https://api.openai.com/auth.chatgpt_account_id": accountId,
+  });
+  return JSON.stringify(auth);
+}
+
 function codexAuthJsonAt(refreshToken: string, lastRefresh: string): string {
   return JSON.stringify({
     auth_mode: "chatgpt",
@@ -1662,6 +1751,12 @@ function codexAuthJsonAt(refreshToken: string, lastRefresh: string): string {
     },
     last_refresh: lastRefresh,
   });
+}
+
+function fakeJwt(payload: Record<string, unknown>): string {
+  const encode = (value: Record<string, unknown>) =>
+    Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
+  return `${encode({ alg: "none", typ: "JWT" })}.${encode(payload)}.signature`;
 }
 
 function extractFakePrompt(

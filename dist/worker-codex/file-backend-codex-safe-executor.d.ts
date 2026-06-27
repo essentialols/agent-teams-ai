@@ -10,6 +10,11 @@ export type FileBackendCodexSafeExecutorOptions = {
     readonly stateRootDir: string;
     readonly workspacePath: string;
     readonly accounts: readonly FileBackendCodexSafeExecutorAccount[];
+    /**
+     * Safe default is false. Multiple slots for one Codex account can race the
+     * same refresh chain and make every copy stale.
+     */
+    readonly allowDuplicateAccountIdentities?: boolean;
     readonly accountCapacityStore?: WorkerAccountCapacityStore;
     readonly lockStore?: WorkspaceLockStore;
     readonly journal?: AttemptJournal;

@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { validateCodexAuthJsonBytes, } from "@vioxen/subscription-runtime/provider-codex";
 import { LocalFileWorkerAccountCapacityStore } from "@vioxen/subscription-runtime/store-local-file";
 import { accountCapacityAwareWorkerFactory, BoundedSubscriptionWorkerPool, LocalFileAttemptJournal, LocalFileWorkspaceLockStore, SafeExecutionRunner, SubscriptionWorkerError, } from "@vioxen/subscription-runtime/worker-core";
 import { FileBackendCodexWorker, } from "./file-backend-codex-worker.js";
@@ -132,6 +134,7 @@ export class FileBackendCodexSafeExecutor {
         await this.pool.dispose();
     }
     async startOnce() {
+        await assertUniqueCodexAccountIdentities(this.options);
         await this.pool.start();
         await this.seedAccounts();
         if (this.options.prewarmOnStart) {
@@ -230,6 +233,131 @@ function assertMaxAccountCycles(value) {
         (!Number.isInteger(value) || value <= 0)) {
         throw new Error("file_backend_codex_safe_max_account_cycles_invalid");
     }
+}
+async function assertUniqueCodexAccountIdentities(options) {
+    if (options.allowDuplicateAccountIdentities)
+        return;
+    const identities = (await Promise.all(options.accounts.map(async (account, index) => codexAccountIdentityFromSafeExecutorAccount(account, index)))).filter((identity) => identity !== null);
+    const byKey = new Map();
+    for (const identity of identities) {
+        const existing = byKey.get(identity.key);
+        if (existing) {
+            existing.push(identity);
+        }
+        else {
+            byKey.set(identity.key, [identity]);
+        }
+    }
+    const duplicateGroups = [...byKey.values()].filter((group) => group.length > 1);
+    if (duplicateGroups.length === 0)
+        return;
+    const firstGroup = duplicateGroups[0];
+    const duplicateLabels = firstGroup.map((identity) => identity.label).join(",");
+    throw new SubscriptionWorkerError("subscription_worker_start_failed", `Duplicate Codex account identity across safe executor accounts: ${duplicateLabels}. Re-login duplicate slots with different accounts or remove them from the pool.`, {
+        details: {
+            code: "file_backend_codex_duplicate_account_identity",
+            accounts: duplicateLabels,
+            identityHash: firstGroup[0].hash,
+            identitySource: firstGroup[0].source,
+        },
+    });
+}
+async function codexAccountIdentityFromSafeExecutorAccount(account, index) {
+    const authJson = await readSafeExecutorAccountAuthJson(account);
+    if (!authJson)
+        return null;
+    return codexAccountIdentityFromAuthJson({
+        authJson,
+        label: safeExecutorAccountLabel(account, index),
+    });
+}
+async function readSafeExecutorAccountAuthJson(account) {
+    if (account.codexAuthJson !== undefined)
+        return account.codexAuthJson;
+    if (account.codexAuthJsonPath !== undefined) {
+        return readFile(account.codexAuthJsonPath, "utf8");
+    }
+    return null;
+}
+function safeExecutorAccountLabel(account, index) {
+    return (account.worker.capacityAccountId?.trim() ||
+        account.worker.providerInstanceId.trim() ||
+        `slot-${index + 1}`);
+}
+function codexAccountIdentityFromAuthJson(input) {
+    const validation = validateCodexAuthJsonBytes({
+        authJsonBytes: input.authJson,
+    });
+    const identity = resolveCodexAccountIdentity(validation.parsed);
+    return {
+        label: input.label,
+        key: identity.key,
+        hash: hashText(identity.key).slice(0, 16),
+        source: identity.source,
+    };
+}
+function resolveCodexAccountIdentity(authJson) {
+    const directAccountId = firstNonEmptyString(authJson.tokens.account_id, authJson.tokens.chatgpt_account_id, authJson.account_id, authJson.chatgpt_account_id);
+    if (directAccountId) {
+        return {
+            key: `account:${directAccountId.toLowerCase()}`,
+            source: "auth_json_account_id",
+        };
+    }
+    const idTokenClaims = decodeJwtClaims(authJson.tokens.id_token);
+    if (idTokenClaims) {
+        const authNamespace = objectClaim(idTokenClaims["https://api.openai.com/auth"]);
+        const accountId = firstNonEmptyString(idTokenClaims["https://api.openai.com/auth.chatgpt_account_id"], idTokenClaims["chatgpt_account_id"], idTokenClaims["account_id"], authNamespace?.chatgpt_account_id, authNamespace?.account_id, idTokenClaims["sub"]);
+        if (accountId) {
+            return {
+                key: `account:${accountId.toLowerCase()}`,
+                source: "id_token_account_id",
+            };
+        }
+        const email = firstNonEmptyString(idTokenClaims["https://api.openai.com/profile.email"], idTokenClaims["email"], authNamespace?.email);
+        if (email) {
+            return {
+                key: `email:${email.toLowerCase()}`,
+                source: "id_token_email",
+            };
+        }
+    }
+    return {
+        key: `refresh:${hashText(authJson.tokens.refresh_token)}`,
+        source: "refresh_token_hash",
+    };
+}
+function decodeJwtClaims(token) {
+    if (!token)
+        return null;
+    const parts = token.split(".");
+    const payload = parts[1];
+    if (!payload)
+        return null;
+    try {
+        const decoded = Buffer.from(payload, "base64url").toString("utf8");
+        const parsed = JSON.parse(decoded);
+        return isRecord(parsed) ? parsed : null;
+    }
+    catch {
+        return null;
+    }
+}
+function objectClaim(value) {
+    return isRecord(value) ? value : null;
+}
+function firstNonEmptyString(...values) {
+    for (const value of values) {
+        if (typeof value !== "string")
+            continue;
+        const trimmed = value.trim();
+        if (trimmed)
+            return trimmed;
+    }
+    return null;
+}
+function isRecord(value) {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function hashText(value) {
     return createHash("sha256").update(value).digest("hex");

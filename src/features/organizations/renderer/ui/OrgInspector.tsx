@@ -1,11 +1,15 @@
 import { useAppTranslation } from '@features/localization/renderer';
+import { KanbanTaskCard } from '@renderer/components/team/kanban/KanbanTaskCard';
 import { Badge } from '@renderer/components/ui/badge';
 import { Button } from '@renderer/components/ui/button';
+import { getTeamTaskWorkflowColumn } from '@shared/utils/teamTaskState';
 import { Activity, ChevronDown, ChevronRight, ExternalLink, Network, Users, X } from 'lucide-react';
 
 import { getNodeDisplayLabel } from '../adapters/organizationMapViewModel';
+import { useOrganizationInspectorTasks } from '../hooks/useOrganizationInspectorTasks';
 
-import type { OrganizationNodeDto } from '../../contracts';
+import type { OrganizationAgentTaskDto, OrganizationNodeDto } from '../../contracts';
+import type { KanbanColumnId, TeamTaskWithKanban } from '@shared/types';
 
 interface OrgInspectorProps {
   node: OrganizationNodeDto | null;
@@ -37,6 +41,18 @@ function renderStatusBadge(isOnline: boolean, label: string): React.JSX.Element 
   );
 }
 
+function resolveKanbanColumn(task: TeamTaskWithKanban): KanbanColumnId {
+  const workflowColumn = getTeamTaskWorkflowColumn(task);
+  if (workflowColumn) return workflowColumn;
+  if (task.status === 'in_progress') return 'in_progress';
+  if (task.status === 'completed') return 'done';
+  return 'todo';
+}
+
+function matchesTaskSummary(task: TeamTaskWithKanban, summary: OrganizationAgentTaskDto): boolean {
+  return task.id === summary.id || task.displayId === summary.id;
+}
+
 export const OrgInspector = ({
   node,
   childCount,
@@ -48,6 +64,8 @@ export const OrgInspector = ({
   onClose,
 }: OrgInspectorProps): React.JSX.Element | null => {
   const { t } = useAppTranslation('team');
+  const teamName = node?.team?.teamName ?? '';
+  const inspectorTasks = useOrganizationInspectorTasks(teamName);
 
   if (!node) {
     return null;
@@ -131,7 +149,7 @@ export const OrgInspector = ({
   }
 
   const team = node.team;
-  const activeAgents = team.agents.filter((agent) => agent.status === 'active');
+  const activeAgents = team.agents.filter((agent) => agent.currentTasks.length > 0);
 
   return (
     <aside className={INSPECTOR_PANEL_CLASS}>
@@ -234,16 +252,42 @@ export const OrgInspector = ({
                     {agent.activeTaskCount}
                   </Badge>
                 </div>
-                <div className="mt-1 space-y-1">
-                  {agent.currentTasks.map((task) => (
-                    <div
-                      key={task.id}
-                      className="line-clamp-2 text-[11px] leading-4 text-[var(--color-text-muted)]"
-                      title={task.subject}
-                    >
-                      {task.subject}
-                    </div>
-                  ))}
+                <div className="mt-2 space-y-2">
+                  {agent.currentTasks.map((task) => {
+                    const fullTask = inspectorTasks.tasks.find((candidate) =>
+                      matchesTaskSummary(candidate, task)
+                    );
+                    return fullTask ? (
+                      <KanbanTaskCard
+                        key={`${agent.id}:${task.id}`}
+                        task={fullTask}
+                        teamName={team.teamName}
+                        columnId={resolveKanbanColumn(fullTask)}
+                        kanbanTaskState={inspectorTasks.kanbanTaskStateById?.[fullTask.id]}
+                        hasReviewers={false}
+                        taskMap={inspectorTasks.taskMap}
+                        memberColorMap={inspectorTasks.memberColorMap}
+                        onTaskClick={inspectorTasks.openTaskDetail}
+                        onStartTask={inspectorTasks.onStartTask}
+                        onCompleteTask={inspectorTasks.onCompleteTask}
+                        onCancelTask={inspectorTasks.onCancelTask}
+                        onApprove={inspectorTasks.onApproveTask}
+                        onRequestReview={inspectorTasks.onRequestReview}
+                        onRequestChanges={inspectorTasks.onRequestChanges}
+                        onMoveBackToDone={inspectorTasks.onMoveBackToDone}
+                      />
+                    ) : (
+                      <button
+                        key={`${agent.id}:${task.id}`}
+                        type="button"
+                        className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface-raised)] px-2 py-2 text-left text-xs text-[var(--color-text)] transition-colors hover:border-[var(--color-border-emphasis)]"
+                        title={task.subject}
+                        onClick={() => inspectorTasks.openTaskSummaryDetail(task)}
+                      >
+                        <span className="line-clamp-2">{task.subject}</span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             ))

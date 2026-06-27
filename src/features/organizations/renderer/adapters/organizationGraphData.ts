@@ -73,6 +73,7 @@ export interface OrganizationGraphRenderProfile {
 
 interface OrganizationGraphBuildContext extends OrganizationGraphRenderProfile {
   visibleOrganizationNodeIds: Set<string>;
+  collapsedVisibleContainerNodeIds: Set<string>;
   visibleTeamNodes: OrganizationNodeDto[];
   renderedAgentTeamIds: Set<string>;
   ownerOrder: string[];
@@ -212,9 +213,63 @@ function buildTeamNode(node: OrganizationNodeDto, text: OrganizationGraphText): 
   };
 }
 
+function collectDescendantTeamStats(
+  viewModel: OrganizationMapViewModel,
+  nodeId: string,
+  seen = new Set<string>()
+): { teamCount: number; activeAgentCount: number } {
+  if (seen.has(nodeId)) {
+    return { teamCount: 0, activeAgentCount: 0 };
+  }
+  seen.add(nodeId);
+
+  const node = viewModel.nodeById.get(nodeId);
+  if (node?.kind === 'team') {
+    return {
+      teamCount: 1,
+      activeAgentCount: node.team?.agents.filter((agent) => agent.status === 'active').length ?? 0,
+    };
+  }
+
+  return (viewModel.childNodeIdsByParentId.get(nodeId) ?? []).reduce(
+    (total, childNodeId) => {
+      const childStats = collectDescendantTeamStats(viewModel, childNodeId, seen);
+      return {
+        teamCount: total.teamCount + childStats.teamCount,
+        activeAgentCount: total.activeAgentCount + childStats.activeAgentCount,
+      };
+    },
+    { teamCount: 0, activeAgentCount: 0 }
+  );
+}
+
+function buildCollapsedContainerNode(
+  node: OrganizationNodeDto,
+  viewModel: OrganizationMapViewModel,
+  text: OrganizationGraphText
+): GraphNode {
+  const stats = collectDescendantTeamStats(viewModel, node.id);
+  return {
+    id: node.id,
+    kind: 'member',
+    visualVariant: node.kind === 'organization' ? 'organization' : 'container',
+    label: getOrganizationContainerLabel(node, text),
+    state: stats.activeAgentCount > 0 ? 'active' : 'idle',
+    color: node.color ?? (node.kind === 'organization' ? '#4f8cff' : '#8bd3ff'),
+    role: text.teams(stats.teamCount),
+    runtimeLabel: stats.activeAgentCount > 0 ? text.activeAgents(stats.activeAgentCount) : undefined,
+    domainRef: {
+      kind: 'member',
+      teamName: node.id,
+      memberName: node.id,
+    },
+  };
+}
+
 function buildOrgGraphNode(
   node: OrganizationNodeDto,
   viewModel: OrganizationMapViewModel,
+  collapsedVisibleContainerNodeIds: ReadonlySet<string>,
   text: OrganizationGraphText
 ): GraphNode | null {
   if (node.id === viewModel.rootNode?.id) {
@@ -222,6 +277,9 @@ function buildOrgGraphNode(
   }
   if (node.kind === 'team') {
     return buildTeamNode(node, text);
+  }
+  if (collapsedVisibleContainerNodeIds.has(node.id)) {
+    return buildCollapsedContainerNode(node, viewModel, text);
   }
   return null;
 }
@@ -597,8 +655,8 @@ function buildNestedOrganizationGridBlock(
       continue;
     }
 
-    if (childNode.kind === 'team') {
-      if (ownerOrderSet.has(childNode.id) && !seen.has(childNode.id)) {
+    if (ownerOrderSet.has(childNode.id)) {
+      if (!seen.has(childNode.id)) {
         seen.add(childNode.id);
         directTeamNodeIds.push(childNode.id);
       }
@@ -690,6 +748,7 @@ function collectVisibleOwnerSubtreeNodeIds(
   viewModel: OrganizationMapViewModel,
   nodeId: string,
   visibleNodeIds: ReadonlySet<string>,
+  ownerNodeIds: ReadonlySet<string>,
   rootNodeId: string | undefined,
   seen: Set<string>
 ): string[] {
@@ -698,12 +757,22 @@ function collectVisibleOwnerSubtreeNodeIds(
   }
   seen.add(nodeId);
 
-  const node = viewModel.nodeById.get(nodeId);
+  if (ownerNodeIds.has(nodeId)) {
+    return [nodeId];
+  }
+
   const childOwnerNodeIds = (viewModel.childNodeIdsByParentId.get(nodeId) ?? []).flatMap(
     (childId) =>
-      collectVisibleOwnerSubtreeNodeIds(viewModel, childId, visibleNodeIds, rootNodeId, seen)
+      collectVisibleOwnerSubtreeNodeIds(
+        viewModel,
+        childId,
+        visibleNodeIds,
+        ownerNodeIds,
+        rootNodeId,
+        seen
+      )
   );
-  return node?.kind === 'team' ? [nodeId, ...childOwnerNodeIds] : childOwnerNodeIds;
+  return childOwnerNodeIds;
 }
 
 function buildGroupedOwnerOrder(
@@ -712,6 +781,7 @@ function buildGroupedOwnerOrder(
   fallbackOwnerOrder: readonly string[]
 ): string[] {
   const rootNodeId = viewModel.rootNode?.id;
+  const ownerNodeIds = new Set(fallbackOwnerOrder);
   const topLevelNodeIds = rootNodeId
     ? (viewModel.childNodeIdsByParentId.get(rootNodeId) ?? []).filter((nodeId) =>
         visibleNodeIds.has(nodeId)
@@ -725,7 +795,14 @@ function buildGroupedOwnerOrder(
   const seen = new Set<string>();
   const topLevelGroups = topLevelNodeIds
     .map((nodeId) =>
-      collectVisibleOwnerSubtreeNodeIds(viewModel, nodeId, visibleNodeIds, rootNodeId, seen)
+      collectVisibleOwnerSubtreeNodeIds(
+        viewModel,
+        nodeId,
+        visibleNodeIds,
+        ownerNodeIds,
+        rootNodeId,
+        seen
+      )
     )
     .filter((group) => group.length > 0);
   if (topLevelGroups.length === 0) {
@@ -765,6 +842,11 @@ function buildOrganizationGraphContext(
     viewModel,
     options.collapsedNodeIds ?? new Set()
   );
+  const collapsedVisibleContainerNodeIds = getCollapsedVisibleContainerNodeIds(
+    viewModel,
+    visibleOrganizationNodeIds,
+    options.collapsedNodeIds ?? new Set()
+  );
   const visibleTeamNodes = viewModel.teamNodes.filter((node) =>
     visibleOrganizationNodeIds.has(node.id)
   );
@@ -773,7 +855,8 @@ function buildOrganizationGraphContext(
     (nodeId) =>
       nodeId !== rootNodeId &&
       visibleOrganizationNodeIds.has(nodeId) &&
-      viewModel.nodeById.get(nodeId)?.kind === 'team'
+      (viewModel.nodeById.get(nodeId)?.kind === 'team' ||
+        collapsedVisibleContainerNodeIds.has(nodeId))
   );
   const ownerOrder = buildGroupedOwnerOrder(
     viewModel,
@@ -814,6 +897,7 @@ function buildOrganizationGraphContext(
       ? MAX_PARTICLES_COMPACT_MAP
       : MAX_PARTICLES_DETAILED_MAP,
     visibleOrganizationNodeIds,
+    collapsedVisibleContainerNodeIds,
     visibleTeamNodes,
     renderedAgentTeamIds,
     ownerOrder,
@@ -894,6 +978,27 @@ function getVisibleOrganizationNodeIds(
     }
   }
   return visible;
+}
+
+function getCollapsedVisibleContainerNodeIds(
+  viewModel: OrganizationMapViewModel,
+  visibleNodeIds: ReadonlySet<string>,
+  collapsedNodeIds: ReadonlySet<string>
+): Set<string> {
+  const rootNodeId = viewModel.rootNode?.id;
+  return new Set(
+    [...collapsedNodeIds].filter((nodeId) => {
+      if (nodeId === rootNodeId || !visibleNodeIds.has(nodeId)) {
+        return false;
+      }
+      const node = viewModel.nodeById.get(nodeId);
+      return (
+        node !== undefined &&
+        node.kind !== 'team' &&
+        (viewModel.childNodeIdsByParentId.get(nodeId)?.length ?? 0) > 0
+      );
+    })
+  );
 }
 
 function resolveVisibleEndpoint(
@@ -1120,7 +1225,9 @@ export function buildOrganizationGraphData(
       (node): node is OrganizationNodeDto =>
         node !== undefined && visibleOrganizationNodeIds.has(node.id)
     )
-    .map((node) => buildOrgGraphNode(node, viewModel, text))
+    .map((node) =>
+      buildOrgGraphNode(node, viewModel, context.collapsedVisibleContainerNodeIds, text)
+    )
     .filter((node): node is GraphNode => Boolean(node));
   const renderedAgentTeamNodes = visibleTeamNodes.filter((node) =>
     renderedAgentTeamIds.has(node.id)

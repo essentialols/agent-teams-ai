@@ -578,7 +578,15 @@ export const OrgGraphSurface = ({
         onSelectNode(getOrganizationNodeIdFromGraphRef(viewModel, ref));
       },
       onNodeDoubleClick: (ref: GraphDomainRef) => {
-        onSelectNode(getOrganizationNodeIdFromGraphRef(viewModel, ref));
+        const nodeId = getOrganizationNodeIdFromGraphRef(viewModel, ref);
+        onSelectNode(nodeId);
+        if (
+          nodeId &&
+          nodeId !== viewModel.rootNode?.id &&
+          (viewModel.childNodeIdsByParentId.get(nodeId)?.length ?? 0) > 0
+        ) {
+          onToggleNodeCollapse(nodeId);
+        }
       },
       onGroupFrameClick: (frame) => {
         onSelectNode(frame.id);

@@ -881,16 +881,42 @@ describe('buildOrganizationGraphData', () => {
     ).toBe('team:dream-team');
   });
 
-  it('drops communication edges when a collapsed endpoint has no visible graph node', () => {
+  it('renders collapsed containers as selectable nodes and reroutes communication edges', () => {
     const viewModel = buildOrganizationMapViewModel(buildNestedPayload());
     const graph = buildOrganizationGraphData(viewModel, {
       collapsedNodeIds: new Set(['unit:engineering']),
     });
 
     expect(graph.nodes.map((node) => node.id)).not.toContain('team:alpha');
-    expect(graph.nodes.map((node) => node.id)).not.toContain('unit:engineering');
-    expect(graph.edges.some((edge) => edge.type === 'message')).toBe(false);
-    expect(graph.particles).toEqual([]);
+    expect(graph.nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'unit:engineering',
+          kind: 'member',
+          visualVariant: 'container',
+          role: expect.stringContaining('1'),
+        }),
+      ])
+    );
+    expect(graph.layout?.ownerOrder).toContain('unit:engineering');
+    expect(graph.layout?.slotAssignments['unit:engineering']).toBeDefined();
+    expect(graph.edges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: 'unit:engineering',
+          target: 'team:beta',
+          type: 'message',
+        }),
+      ])
+    );
+    expect(graph.particles).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          edgeId:
+            'org-message:rel:communicates:unit:engineering->team:beta:unit:engineering->team:beta',
+        }),
+      ])
+    );
   });
 
   it('renders containers as group frames instead of graph nodes', () => {
@@ -923,6 +949,15 @@ describe('buildOrganizationGraphData', () => {
     const collapsedGraph = buildOrganizationGraphData(viewModel, {
       collapsedNodeIds: new Set(['unit:engineering']),
     });
+    expect(collapsedGraph.nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'unit:engineering',
+          kind: 'member',
+          visualVariant: 'container',
+        }),
+      ])
+    );
     expect(collapsedGraph.groupFrames).toEqual([]);
   });
 
@@ -1145,7 +1180,7 @@ describe('buildOrganizationGraphData', () => {
     expect(new Set(relationEdges.map((edge) => edge.id)).size).toBe(relationEdges.length);
   });
 
-  it('drops manual relation edges when a collapsed endpoint has no visible graph node', () => {
+  it('reroutes manual relation edges to collapsed container nodes', () => {
     const payload = buildNestedPayload();
     payload.relations.push({
       id: 'rel:observes:team:alpha->team:beta',
@@ -1160,13 +1195,19 @@ describe('buildOrganizationGraphData', () => {
       collapsedNodeIds: new Set(['unit:engineering']),
     });
 
-    expect(graph.edges.some((edge) => edge.id === 'rel:observes:unit:engineering->team:beta')).toBe(
-      false
+    expect(graph.edges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: 'unit:engineering',
+          target: 'team:beta',
+          type: 'related',
+          aggregateCount: 1,
+        }),
+      ])
     );
-    expect(graph.edges.some((edge) => edge.type === 'related')).toBe(false);
   });
 
-  it('omits aggregated manual relation edges when collapse reroutes them to a hidden container', () => {
+  it('aggregates manual relation edges when collapse reroutes them to a container', () => {
     const payload = buildNestedPayload();
     payload.nodes.push({
       ...payload.nodes.find((node) => node.id === 'team:alpha')!,
@@ -1211,8 +1252,13 @@ describe('buildOrganizationGraphData', () => {
     });
 
     expect(
-      graph.edges.filter((edge) => edge.id === 'rel:observes:unit:engineering->team:beta')
-    ).toHaveLength(0);
+      graph.edges.filter(
+        (edge) =>
+          edge.source === 'unit:engineering' &&
+          edge.target === 'team:beta' &&
+          edge.type === 'related'
+      )
+    ).toEqual([expect.objectContaining({ aggregateCount: 2 })]);
   });
 
   it('renders bounded in-progress agent task lanes for large organization maps', () => {

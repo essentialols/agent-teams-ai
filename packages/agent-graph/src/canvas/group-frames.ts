@@ -33,12 +33,12 @@ type MeasureTextWidth = (label: string, fontSize: number) => number;
 
 const GROUP_FRAME_PADDING_MIN_ZOOM = 0.42;
 export const GROUP_FRAME_RENDER_MIN_ZOOM = 0.015;
-const GROUP_FRAME_LABEL_MIN_SCALE_ZOOM = 0.02;
+const GROUP_FRAME_LABEL_MIN_SCALE_ZOOM = GROUP_FRAME_RENDER_MIN_ZOOM;
 const GROUP_FRAME_PRIMARY_LABEL_MIN_ZOOM = 0.015;
 const GROUP_FRAME_NESTED_PRIMARY_LABEL_MIN_ZOOM = 0.015;
-const GROUP_FRAME_NORMAL_LABEL_MIN_ZOOM = 0.04;
-const GROUP_FRAME_NORMAL_LABEL_DEPTH_STEP = 0.015;
-const GROUP_FRAME_NORMAL_LABEL_MAX_ZOOM = 0.1;
+const GROUP_FRAME_NORMAL_LABEL_MIN_ZOOM = GROUP_FRAME_RENDER_MIN_ZOOM;
+const GROUP_FRAME_NORMAL_LABEL_DEPTH_STEP = 0;
+const GROUP_FRAME_NORMAL_LABEL_MAX_ZOOM = GROUP_FRAME_RENDER_MIN_ZOOM;
 
 function getDepthLevel(frame: GraphGroupFrame, fallbackDepth: number): number {
   if (typeof frame.depth !== 'number' || !Number.isFinite(frame.depth)) {

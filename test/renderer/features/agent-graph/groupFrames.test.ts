@@ -19,11 +19,12 @@ function groupFrame(overrides: Partial<GraphGroupFrame> = {}): GraphGroupFrame {
 
 describe('group frame labels', () => {
   it('keeps normal group labels visible while zoomed out', () => {
+    expect(shouldRenderGroupFrameLabel(groupFrame(), 0.02)).toBe(true);
     expect(shouldRenderGroupFrameLabel(groupFrame(), 0.06)).toBe(true);
-    expect(shouldRenderGroupFrameLabel(groupFrame({ depth: 3 }), 0.09)).toBe(true);
+    expect(shouldRenderGroupFrameLabel(groupFrame({ depth: 3 }), 0.02)).toBe(true);
   });
 
   it('keeps labels readable at far zoom', () => {
-    expect(getGroupFrameLabelScaleZoom(0.01)).toBe(0.02);
+    expect(getGroupFrameLabelScaleZoom(0.01)).toBe(0.015);
   });
 });

@@ -92,7 +92,7 @@ function getRelationOverlayLabel(edge: GraphEdge): string | null {
   if (edge.type === 'message') {
     return edge.aggregateCount && edge.aggregateCount > 1 ? `messages ${edge.aggregateCount}` : null;
   }
-  return edge.label?.split(':', 1)[0]?.trim() || 'relation';
+  return null;
 }
 
 function getRelationOverlayLabelWidth(label: string | null): number {
@@ -499,6 +499,33 @@ const OrgRelationLinksHud = ({
   );
 };
 
+const OrgRelationLegendHud = ({
+  mode,
+}: {
+  mode: OrganizationRelationViewMode;
+}): React.JSX.Element | null => {
+  if (mode === 'structure') {
+    return null;
+  }
+
+  return (
+    <div className="absolute bottom-4 left-4 flex max-w-[calc(100%-2rem)] flex-wrap items-center gap-x-3 gap-y-1 text-[10px] font-medium text-[var(--color-text-muted)] drop-shadow-[0_1px_2px_rgba(0,0,0,0.7)]">
+      {[
+        ['#f59e0b', 'depends'],
+        ['#22c55e', 'delegates'],
+        ['#38bdf8', 'observes'],
+        ['#94a3b8', 'communicates'],
+        ['#8b9cff', 'messages'],
+      ].map(([color, label]) => (
+        <span key={label} className="inline-flex items-center gap-1.5">
+          <span className="h-px w-5 rounded-full" style={{ backgroundColor: color }} />
+          {label}
+        </span>
+      ))}
+    </div>
+  );
+};
+
 const OrgGroupFrameCreateHud = ({
   viewModel,
   isActive,
@@ -788,22 +815,6 @@ export const OrgGraphSurface = ({
             );
           })}
         </div>
-        {relationViewMode !== 'structure' ? (
-          <div className="flex max-w-[520px] flex-wrap items-center justify-center gap-x-2.5 gap-y-1 rounded-md border border-sky-300/10 bg-[var(--color-surface-overlay)] px-2 py-1 text-[10px] font-medium text-[var(--color-text-muted)] shadow-md shadow-black/15 backdrop-blur-md">
-            {[
-              ['#f59e0b', 'depends'],
-              ['#22c55e', 'delegates'],
-              ['#38bdf8', 'observes'],
-              ['#94a3b8', 'communicates'],
-              ['#8b9cff', 'messages'],
-            ].map(([color, label]) => (
-              <span key={label} className="inline-flex items-center gap-1.5">
-                <span className="h-px w-4 rounded-full" style={{ backgroundColor: color }} />
-                {label}
-              </span>
-            ))}
-          </div>
-        ) : null}
       </div>
     ),
     [canExploreRelations, relationViewMode]
@@ -875,6 +886,7 @@ export const OrgGraphSurface = ({
             worldToScreen={worldToScreen}
             getViewportSize={getViewportSize}
           />
+          <OrgRelationLegendHud mode={relationViewMode} />
           {onCreateTeamHere ? (
             <OrgGroupFrameCreateHud
               viewModel={viewModel}

@@ -19,6 +19,7 @@ import type {
   GraphGroupFrameScreenPlacement,
   GraphLayoutMode,
   GraphNode,
+  GraphParticle,
 } from '@claude-teams/agent-graph';
 
 type OrganizationRelationViewMode = 'structure' | 'relations' | 'explorer';
@@ -44,12 +45,100 @@ interface GroupCreateButton {
   placement: OrganizationPlacementSelection;
 }
 
+interface RelationOverlayLink {
+  id: string;
+  path: string;
+  label: string | null;
+  labelX: number;
+  labelY: number;
+  stroke: string;
+  strokeWidth: number;
+  dashArray?: string;
+  arrow: boolean;
+}
+
 const MIN_CREATE_BUTTON_FRAME_WIDTH = 112;
 const MIN_CREATE_BUTTON_FRAME_HEIGHT = 60;
 const RELATION_EDGE_TYPES = new Set<GraphEdge['type']>(['blocking', 'related', 'message']);
+const RELATION_OVERLAY_PADDING = 160;
 
 function isRelationEdge(edge: GraphEdge): boolean {
   return RELATION_EDGE_TYPES.has(edge.type);
+}
+
+function getRelationFocusParticleColor(edge: GraphEdge): string {
+  if (edge.type === 'blocking') {
+    return edge.color ?? '#f59e0b';
+  }
+  if (edge.type === 'message') {
+    return edge.color ?? '#8fd3ff';
+  }
+  return edge.color ?? '#38bdf8';
+}
+
+function buildRelationFocusParticles(
+  graphData: ReturnType<typeof buildOrganizationGraphData>,
+  visibleRelationEdgeIds: ReadonlySet<string>
+): GraphParticle[] {
+  const particles = graphData.particles.filter((particle) =>
+    visibleRelationEdgeIds.has(particle.edgeId)
+  );
+  const particleEdgeIds = new Set(particles.map((particle) => particle.edgeId));
+  const syntheticParticles = graphData.edges
+    .filter((edge) => visibleRelationEdgeIds.has(edge.id) && !particleEdgeIds.has(edge.id))
+    .map((edge, index) => ({
+      id: `org-relation-focus:${edge.id}`,
+      edgeId: edge.id,
+      progress: 0.2 + (index % 4) * 0.18,
+      kind: 'inbox_message' as const,
+      color: getRelationFocusParticleColor(edge),
+      size: edge.type === 'blocking' ? 1.05 : 0.85,
+      label:
+        edge.aggregateCount && edge.aggregateCount > 1 ? String(edge.aggregateCount) : undefined,
+    }));
+
+  return [...particles, ...syntheticParticles];
+}
+
+function getRelationOverlayStroke(edge: GraphEdge): string {
+  return edge.color ?? getRelationFocusParticleColor(edge);
+}
+
+function getRelationOverlayWidth(edge: GraphEdge): number {
+  if (edge.type === 'blocking') return 2.6;
+  if (edge.type === 'message') return 2.2;
+  return 2;
+}
+
+function getRelationOverlayLabel(edge: GraphEdge): string | null {
+  if (edge.type === 'blocking') return 'depends';
+  if (edge.aggregateCount && edge.aggregateCount > 1) return String(edge.aggregateCount);
+  return null;
+}
+
+function areRelationOverlayLinksEqual(
+  leftLinks: readonly RelationOverlayLink[],
+  rightLinks: readonly RelationOverlayLink[]
+): boolean {
+  if (leftLinks.length !== rightLinks.length) {
+    return false;
+  }
+
+  return leftLinks.every((left, index) => {
+    const right = rightLinks[index];
+    return (
+      right !== undefined &&
+      left.id === right.id &&
+      left.path === right.path &&
+      left.label === right.label &&
+      left.labelX === right.labelX &&
+      left.labelY === right.labelY &&
+      left.stroke === right.stroke &&
+      left.strokeWidth === right.strokeWidth &&
+      left.dashArray === right.dashArray &&
+      left.arrow === right.arrow
+    );
+  });
 }
 
 function collectDescendantTeamNodeIds(
@@ -166,7 +255,7 @@ function buildRelationModeGraphData(
     groupFrames,
     nodes: visibleGraphNodes,
     edges: graphData.edges.filter((edge) => visibleRelationEdgeIds.has(edge.id)),
-    particles: graphData.particles.filter((particle) => visibleRelationEdgeIds.has(particle.edgeId)),
+    particles: buildRelationFocusParticles(graphData, visibleRelationEdgeIds),
     layout,
   };
 }
@@ -236,6 +325,181 @@ function areCreateButtonsEqual(
     );
   });
 }
+
+const OrgRelationLinksHud = ({
+  isActive,
+  mode,
+  edges,
+  getNodeWorldPosition,
+  worldToScreen,
+  getViewportSize,
+}: {
+  isActive: boolean;
+  mode: OrganizationRelationViewMode;
+  edges: readonly GraphEdge[];
+  getNodeWorldPosition: (nodeId: string) => { x: number; y: number } | null;
+  worldToScreen: (x: number, y: number) => { x: number; y: number };
+  getViewportSize: () => { width: number; height: number };
+}): React.JSX.Element | null => {
+  const [links, setLinks] = useState<RelationOverlayLink[]>([]);
+
+  useEffect(() => {
+    if (!isActive || mode === 'structure' || edges.length === 0) {
+      setLinks([]);
+      return undefined;
+    }
+
+    let frameId = 0;
+    const update = (): void => {
+      const viewport = getViewportSize();
+      const nextLinks = edges.flatMap((edge): RelationOverlayLink[] => {
+        const source = getNodeWorldPosition(edge.source);
+        const target = getNodeWorldPosition(edge.target);
+        if (!source || !target) {
+          return [];
+        }
+
+        const start = worldToScreen(source.x, source.y);
+        const end = worldToScreen(target.x, target.y);
+        if (
+          Math.max(start.x, end.x) < -RELATION_OVERLAY_PADDING ||
+          Math.max(start.y, end.y) < -RELATION_OVERLAY_PADDING ||
+          Math.min(start.x, end.x) > viewport.width + RELATION_OVERLAY_PADDING ||
+          Math.min(start.y, end.y) > viewport.height + RELATION_OVERLAY_PADDING
+        ) {
+          return [];
+        }
+
+        const dx = end.x - start.x;
+        const dy = end.y - start.y;
+        const distance = Math.max(Math.hypot(dx, dy), 1);
+        const curve = Math.min(Math.max(distance * 0.16, 34), 120);
+        const normalX = -dy / distance;
+        const normalY = dx / distance;
+        const cp1 = {
+          x: start.x + dx * 0.32 + normalX * curve,
+          y: start.y + dy * 0.32 + normalY * curve,
+        };
+        const cp2 = {
+          x: start.x + dx * 0.68 + normalX * curve,
+          y: start.y + dy * 0.68 + normalY * curve,
+        };
+        const labelX = Math.round((start.x + 3 * cp1.x + 3 * cp2.x + end.x) / 8);
+        const labelY = Math.round((start.y + 3 * cp1.y + 3 * cp2.y + end.y) / 8);
+
+        return [
+          {
+            id: edge.id,
+            path: [
+              `M ${Math.round(start.x)} ${Math.round(start.y)}`,
+              `C ${Math.round(cp1.x)} ${Math.round(cp1.y)}`,
+              `${Math.round(cp2.x)} ${Math.round(cp2.y)}`,
+              `${Math.round(end.x)} ${Math.round(end.y)}`,
+            ].join(' '),
+            label: getRelationOverlayLabel(edge),
+            labelX,
+            labelY,
+            stroke: getRelationOverlayStroke(edge),
+            strokeWidth: getRelationOverlayWidth(edge),
+            dashArray: edge.type === 'related' ? '7 6' : undefined,
+            arrow: edge.type === 'blocking',
+          },
+        ];
+      });
+
+      setLinks((current) =>
+        areRelationOverlayLinksEqual(current, nextLinks) ? current : nextLinks
+      );
+      frameId = window.requestAnimationFrame(update);
+    };
+
+    update();
+    return () => window.cancelAnimationFrame(frameId);
+  }, [edges, getNodeWorldPosition, getViewportSize, isActive, mode, worldToScreen]);
+
+  if (mode === 'structure' || links.length === 0) {
+    return null;
+  }
+
+  return (
+    <svg
+      className="absolute inset-0 size-full"
+      aria-hidden="true"
+      focusable="false"
+      role="presentation"
+    >
+      <defs>
+        <filter id="org-relation-link-glow" x="-40%" y="-40%" width="180%" height="180%">
+          <feGaussianBlur stdDeviation="2.4" result="blur" />
+          <feMerge>
+            <feMergeNode in="blur" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
+        <marker
+          id="org-relation-dependency-arrow"
+          markerWidth="10"
+          markerHeight="10"
+          refX="8"
+          refY="5"
+          orient="auto"
+          markerUnits="strokeWidth"
+        >
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#f59e0b" />
+        </marker>
+      </defs>
+      {links.map((link) => (
+        <g key={link.id}>
+          <path
+            d={link.path}
+            fill="none"
+            stroke={link.stroke}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeOpacity="0.22"
+            strokeWidth={link.strokeWidth + 6}
+            filter="url(#org-relation-link-glow)"
+          />
+          <path
+            d={link.path}
+            fill="none"
+            stroke={link.stroke}
+            strokeDasharray={link.dashArray}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeOpacity="0.9"
+            strokeWidth={link.strokeWidth}
+            markerEnd={link.arrow ? 'url(#org-relation-dependency-arrow)' : undefined}
+          />
+          {link.label ? (
+            <g transform={`translate(${link.labelX} ${link.labelY})`}>
+              <rect
+                x="-26"
+                y="-11"
+                width="52"
+                height="22"
+                rx="6"
+                fill="rgba(7, 11, 22, 0.84)"
+                stroke={link.stroke}
+                strokeOpacity="0.55"
+              />
+              <text
+                textAnchor="middle"
+                dominantBaseline="central"
+                fill="#e5f6ff"
+                fontFamily="monospace"
+                fontSize="10"
+                fontWeight="700"
+              >
+                {link.label}
+              </text>
+            </g>
+          ) : null}
+        </g>
+      ))}
+    </svg>
+  );
+};
 
 const OrgGroupFrameCreateHud = ({
   viewModel,
@@ -567,23 +831,36 @@ export const OrgGraphSurface = ({
       renderTopToolbarContent={() => relationToolbar}
       renderOverlay={renderNodeOverlay}
       renderEdgeOverlay={(overlayProps) => renderEdgeOverlay(overlayProps, edgeOverlayText)}
-      renderHud={
-        onCreateTeamHere
-          ? ({ getGroupFrameScreenPlacements, getViewportSize }) => (
-              <OrgGroupFrameCreateHud
-                viewModel={viewModel}
-                isActive={isActive}
-                targetFrameId={createTeamFrameId}
-                getGroupFrameScreenPlacements={getGroupFrameScreenPlacements}
-                getViewportSize={getViewportSize}
-                onCreateTeamHere={onCreateTeamHere}
-                getCreateTeamLabel={(label) =>
-                  t('organizations.graph.actions.createTeamIn', { label })
-                }
-              />
-            )
-          : undefined
-      }
+      renderHud={({
+        getGroupFrameScreenPlacements,
+        getNodeWorldPosition,
+        getViewportSize,
+        worldToScreen,
+      }) => (
+        <>
+          <OrgRelationLinksHud
+            isActive={isActive}
+            mode={relationViewMode}
+            edges={displayedGraphData.edges}
+            getNodeWorldPosition={getNodeWorldPosition}
+            worldToScreen={worldToScreen}
+            getViewportSize={getViewportSize}
+          />
+          {onCreateTeamHere ? (
+            <OrgGroupFrameCreateHud
+              viewModel={viewModel}
+              isActive={isActive}
+              targetFrameId={createTeamFrameId}
+              getGroupFrameScreenPlacements={getGroupFrameScreenPlacements}
+              getViewportSize={getViewportSize}
+              onCreateTeamHere={onCreateTeamHere}
+              getCreateTeamLabel={(label) =>
+                t('organizations.graph.actions.createTeamIn', { label })
+              }
+            />
+          ) : null}
+        </>
+      )}
     />
   );
 };

@@ -149,31 +149,6 @@ function getTeamSummaryLine(
   return text.agents(team.memberCount);
 }
 
-function buildRootNode(
-  viewModel: OrganizationMapViewModel,
-  text: OrganizationGraphText
-): GraphNode | null {
-  const root = viewModel.rootNode;
-  if (!root) return null;
-  const isAllOrganizationsScope = viewModel.payload.scope === 'all';
-
-  return {
-    id: root.id,
-    kind: 'lead',
-    visualVariant: 'organization',
-    label: getOrganizationContainerLabel(root, text),
-    state: viewModel.stats.activeAgentCount > 0 ? 'active' : 'idle',
-    color: root.color ?? '#4f8cff',
-    role: isAllOrganizationsScope ? undefined : text.teams(viewModel.stats.teamCount),
-    runtimeLabel: undefined,
-    domainRef: {
-      kind: 'lead',
-      teamName: viewModel.payload.activeOrganizationId,
-      memberName: root.id,
-    },
-  };
-}
-
 function buildTeamNode(node: OrganizationNodeDto, text: OrganizationGraphText): GraphNode | null {
   const team = node.team;
   if (!team) {
@@ -219,7 +194,7 @@ function buildOrgGraphNode(
   text: OrganizationGraphText
 ): GraphNode | null {
   if (node.id === viewModel.rootNode?.id) {
-    return buildRootNode(viewModel, text);
+    return null;
   }
   if (node.kind === 'team') {
     return buildTeamNode(node, text);
@@ -1073,9 +1048,6 @@ export function buildOrganizationGraphData(
     )
     .map((node) => buildOrgGraphNode(node, viewModel, text))
     .filter((node): node is GraphNode => Boolean(node));
-  const rootNode = viewModel.rootNode
-    ? (orgNodes.find((node) => node.id === viewModel.rootNode?.id) ?? null)
-    : null;
   const renderedAgentTeamNodes = visibleTeamNodes.filter((node) =>
     renderedAgentTeamIds.has(node.id)
   );
@@ -1091,7 +1063,7 @@ export function buildOrganizationGraphData(
 
   return {
     teamName: text.organizationMap,
-    teamColor: rootNode?.color,
+    teamColor: viewModel.rootNode?.color,
     isAlive: viewModel.stats.onlineTeamCount > 0,
     groupFrames: buildOrganizationGroupFrames(viewModel, context, text),
     nodes,

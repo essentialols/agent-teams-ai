@@ -80,6 +80,8 @@ export interface GraphViewProps {
   onCreateTask?: () => void;
   onToggleSidebar?: () => void;
   isSidebarVisible?: boolean;
+  focusNodeIds?: ReadonlySet<string> | null;
+  focusEdgeIds?: ReadonlySet<string> | null;
   renderTopToolbarContent?: () => React.ReactNode;
   onLayoutModeChange?: (mode: GraphLayoutMode) => void;
   onOwnerSlotDrop?: (payload: {
@@ -160,6 +162,16 @@ export function isEditableGraphShortcutTarget(event: KeyboardEvent): boolean {
   });
 }
 
+function mergeFocusSets(
+  left: ReadonlySet<string> | null,
+  right: ReadonlySet<string> | null | undefined
+): ReadonlySet<string> | null {
+  if (!left && !right) {
+    return null;
+  }
+  return new Set([...(left ?? []), ...(right ?? [])]);
+}
+
 export function GraphView({
   data,
   events,
@@ -174,6 +186,8 @@ export function GraphView({
   onCreateTask,
   onToggleSidebar,
   isSidebarVisible = true,
+  focusNodeIds,
+  focusEdgeIds,
   renderTopToolbarContent,
   onLayoutModeChange,
   onOwnerSlotDrop,
@@ -299,8 +313,18 @@ export function GraphView({
 
   // ─── UNIFIED RAF LOOP: tick simulation + draw canvas ────────────────────
   const focusState = useMemo(
-    () => buildFocusState(selectedNodeId, selectedEdgeId, data.nodes, data.edges),
-    [selectedEdgeId, selectedNodeId, data.edges, data.nodes]
+    () => {
+      const selectionFocus = buildFocusState(selectedNodeId, selectedEdgeId, data.nodes, data.edges);
+      if (!focusNodeIds && !focusEdgeIds) {
+        return selectionFocus;
+      }
+
+      return {
+        focusNodeIds: mergeFocusSets(selectionFocus.focusNodeIds, focusNodeIds),
+        focusEdgeIds: mergeFocusSets(selectionFocus.focusEdgeIds, focusEdgeIds),
+      };
+    },
+    [focusEdgeIds, focusNodeIds, selectedEdgeId, selectedNodeId, data.edges, data.nodes]
   );
 
   const getNodeMap = useCallback((nodes: GraphNode[]): Map<string, GraphNode> => {

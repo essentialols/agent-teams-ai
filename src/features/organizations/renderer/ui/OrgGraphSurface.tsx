@@ -21,6 +21,8 @@ import type {
   GraphNode,
 } from '@claude-teams/agent-graph';
 
+type OrganizationRelationViewMode = 'structure' | 'relations' | 'explorer';
+
 interface OrgGraphSurfaceProps {
   viewModel: OrganizationMapViewModel;
   isActive: boolean;
@@ -44,6 +46,95 @@ interface GroupCreateButton {
 
 const MIN_CREATE_BUTTON_FRAME_WIDTH = 112;
 const MIN_CREATE_BUTTON_FRAME_HEIGHT = 60;
+const RELATION_EDGE_TYPES = new Set<GraphEdge['type']>(['blocking', 'related', 'message']);
+
+function isRelationEdge(edge: GraphEdge): boolean {
+  return RELATION_EDGE_TYPES.has(edge.type);
+}
+
+function collectDescendantTeamNodeIds(
+  viewModel: OrganizationMapViewModel,
+  nodeId: string,
+  seen = new Set<string>()
+): string[] {
+  if (seen.has(nodeId)) {
+    return [];
+  }
+  seen.add(nodeId);
+
+  const node = viewModel.nodeById.get(nodeId);
+  if (node?.kind === 'team') {
+    return [node.id];
+  }
+
+  return (viewModel.childNodeIdsByParentId.get(nodeId) ?? []).flatMap((childNodeId) =>
+    collectDescendantTeamNodeIds(viewModel, childNodeId, seen)
+  );
+}
+
+function buildRelationsFocus(
+  mode: OrganizationRelationViewMode,
+  graphData: ReturnType<typeof buildOrganizationGraphData>,
+  viewModel: OrganizationMapViewModel,
+  selectedNodeId: string | null
+): { focusNodeIds: ReadonlySet<string> | null; focusEdgeIds: ReadonlySet<string> | null } {
+  if (mode === 'structure') {
+    return { focusNodeIds: null, focusEdgeIds: null };
+  }
+
+  const relationEdges = graphData.edges.filter(isRelationEdge);
+  if (relationEdges.length === 0) {
+    return { focusNodeIds: null, focusEdgeIds: null };
+  }
+
+  if (mode === 'relations' || !selectedNodeId) {
+    return {
+      focusNodeIds: new Set(relationEdges.flatMap((edge) => [edge.source, edge.target])),
+      focusEdgeIds: new Set(relationEdges.map((edge) => edge.id)),
+    };
+  }
+
+  const selectedTeamNodeIds = new Set(collectDescendantTeamNodeIds(viewModel, selectedNodeId));
+  const focusedEdges = relationEdges.filter(
+    (edge) => selectedTeamNodeIds.has(edge.source) || selectedTeamNodeIds.has(edge.target)
+  );
+  if (focusedEdges.length === 0) {
+    return {
+      focusNodeIds: new Set([selectedNodeId, ...selectedTeamNodeIds]),
+      focusEdgeIds: new Set(),
+    };
+  }
+
+  return {
+    focusNodeIds: new Set([
+      selectedNodeId,
+      ...selectedTeamNodeIds,
+      ...focusedEdges.flatMap((edge) => [edge.source, edge.target]),
+    ]),
+    focusEdgeIds: new Set(focusedEdges.map((edge) => edge.id)),
+  };
+}
+
+function buildRelationModeGraphData(
+  mode: OrganizationRelationViewMode,
+  graphData: ReturnType<typeof buildOrganizationGraphData>,
+  focusEdgeIds: ReadonlySet<string> | null,
+  selectedNodeId: string | null
+): ReturnType<typeof buildOrganizationGraphData> {
+  if (mode === 'structure') {
+    return graphData;
+  }
+
+  const relationEdgeIds = new Set(graphData.edges.filter(isRelationEdge).map((edge) => edge.id));
+  const visibleRelationEdgeIds =
+    mode === 'explorer' && selectedNodeId && focusEdgeIds ? focusEdgeIds : relationEdgeIds;
+
+  return {
+    ...graphData,
+    edges: graphData.edges.filter((edge) => visibleRelationEdgeIds.has(edge.id)),
+    particles: graphData.particles.filter((particle) => visibleRelationEdgeIds.has(particle.edgeId)),
+  };
+}
 
 function getCreateTeamFrameId(
   viewModel: OrganizationMapViewModel,
@@ -290,6 +381,8 @@ export const OrgGraphSurface = ({
   onCreateTeamHere,
 }: OrgGraphSurfaceProps): React.JSX.Element => {
   const { t } = useAppTranslation('team');
+  const [relationViewMode, setRelationViewMode] =
+    useState<OrganizationRelationViewMode>('structure');
   const edgeOverlayText = useMemo(
     () => ({
       runtimeMessages: t('organizations.graph.edgeOverlay.runtimeMessages'),
@@ -342,6 +435,50 @@ export const OrgGraphSurface = ({
       }),
     [collapsedNodeIds, graphText, layoutMode, selectedNodeId, showSelectedTeamDetails, viewModel]
   );
+  const relationFocus = useMemo(
+    () => buildRelationsFocus(relationViewMode, graphData, viewModel, selectedNodeId),
+    [graphData, relationViewMode, selectedNodeId, viewModel]
+  );
+  const displayedGraphData = useMemo(
+    () =>
+      buildRelationModeGraphData(
+        relationViewMode,
+        graphData,
+        relationFocus.focusEdgeIds,
+        selectedNodeId
+      ),
+    [graphData, relationFocus.focusEdgeIds, relationViewMode, selectedNodeId]
+  );
+  const relationToolbar = useMemo(
+    () => (
+      <div className="mx-auto inline-flex max-w-full items-center rounded-lg border border-sky-300/15 bg-[var(--color-surface-overlay)] p-0.5 text-[11px] font-medium shadow-lg shadow-black/20 backdrop-blur-md">
+        {(
+          [
+            ['structure', 'Structure'],
+            ['relations', 'Relations'],
+            ['explorer', 'Explorer'],
+          ] as const
+        ).map(([mode, label]) => {
+          const active = relationViewMode === mode;
+          return (
+            <button
+              key={mode}
+              type="button"
+              className={`h-6 rounded-md px-2.5 transition-colors ${
+                active
+                  ? 'bg-sky-400/18 text-sky-100 shadow-sm shadow-sky-500/10'
+                  : 'text-[var(--color-text-muted)] hover:bg-white/5 hover:text-[var(--color-text)]'
+              }`}
+              onClick={() => setRelationViewMode(mode)}
+            >
+              {label}
+            </button>
+          );
+        })}
+      </div>
+    ),
+    [relationViewMode]
+  );
   const createTeamFrameId = useMemo(
     () => getCreateTeamFrameId(viewModel, selectedNodeId),
     [selectedNodeId, viewModel]
@@ -370,7 +507,7 @@ export const OrgGraphSurface = ({
 
   return (
     <GraphView
-      data={graphData}
+      data={displayedGraphData}
       events={events}
       className="size-full"
       suspendAnimation={!isActive}
@@ -389,6 +526,9 @@ export const OrgGraphSurface = ({
         bloomIntensity: 0.25,
       }}
       onLayoutModeChange={onLayoutModeChange}
+      focusNodeIds={relationFocus.focusNodeIds}
+      focusEdgeIds={relationFocus.focusEdgeIds}
+      renderTopToolbarContent={() => relationToolbar}
       renderOverlay={renderNodeOverlay}
       renderEdgeOverlay={(overlayProps) => renderEdgeOverlay(overlayProps, edgeOverlayText)}
       renderHud={

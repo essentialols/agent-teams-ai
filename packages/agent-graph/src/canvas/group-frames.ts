@@ -33,6 +33,7 @@ type MeasureTextWidth = (label: string, fontSize: number) => number;
 
 const GROUP_FRAME_PADDING_MIN_ZOOM = 0.42;
 export const GROUP_FRAME_RENDER_MIN_ZOOM = 0.015;
+const GROUP_FRAME_LABEL_MIN_SCALE_ZOOM = 0.04;
 const GROUP_FRAME_PRIMARY_LABEL_MIN_ZOOM = 0.015;
 const GROUP_FRAME_NESTED_PRIMARY_LABEL_MIN_ZOOM = 0.015;
 const GROUP_FRAME_NORMAL_LABEL_MIN_ZOOM = 0.32;
@@ -52,6 +53,10 @@ export function getGroupFrameLabelVerticalOffsetPx(_frame: GraphGroupFrame): num
 
 export function getGroupFrameLabelHorizontalOffsetPx(_frame: GraphGroupFrame): number {
   return 0;
+}
+
+export function getGroupFrameLabelScaleZoom(zoom: number): number {
+  return Math.max(zoom, GROUP_FRAME_LABEL_MIN_SCALE_ZOOM);
 }
 
 export function prepareGroupFrame(
@@ -129,7 +134,7 @@ export function getPaddedGroupFrameBounds(
 }
 
 export function shouldRenderGroupFrameLabel(frame: GraphGroupFrame, zoom: number): boolean {
-  const safeZoom = Math.max(zoom, 0.1);
+  const safeZoom = getGroupFrameLabelScaleZoom(zoom);
   const depth = getDepthLevel(frame, 0);
   if (frame.priority === 'primary') {
     return (
@@ -154,7 +159,7 @@ export function getGroupFrameLabelBounds(
   measureTextWidth: MeasureTextWidth = estimateLabelWidth,
   options: { horizontalOffsetPx?: number; verticalOffsetPx?: number } = {}
 ): GroupFrameLabelBounds {
-  const safeZoom = Math.max(zoom, 0.1);
+  const safeZoom = getGroupFrameLabelScaleZoom(zoom);
   const fontSize = 11 / safeZoom;
   const horizontalPadding = 7 / safeZoom;
   const verticalPadding = 4 / safeZoom;

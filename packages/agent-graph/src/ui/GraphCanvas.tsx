@@ -29,6 +29,7 @@ import { drawColumnHeaders, drawTasks } from '../canvas/draw-tasks';
 import {
   getGroupFrameLabelBounds,
   getGroupFrameLabelHorizontalOffsetPx,
+  getGroupFrameLabelScaleZoom,
   getGroupFrameLabelVerticalOffsetPx,
   getPaddedGroupFrameBounds,
   GROUP_FRAME_RENDER_MIN_ZOOM,
@@ -550,6 +551,8 @@ interface GroupFrameDrawStyle {
   strokeAlpha: number;
 }
 
+const GROUP_FRAME_OVERVIEW_ZOOM = 0.08;
+
 function getPreparedGroupFrameDrawStyle(params: {
   prepared: PreparedGroupFrame;
   zoom: number;
@@ -584,6 +587,13 @@ function getPreparedGroupFrameDrawStyle(params: {
     alpha = 1;
   }
 
+  if (zoom < GROUP_FRAME_OVERVIEW_ZOOM) {
+    const overviewBoost = Math.min(1, (GROUP_FRAME_OVERVIEW_ZOOM - zoom) / 0.06);
+    alpha = Math.max(alpha, isPrimary ? 0.82 : 0.72);
+    fillAlpha += overviewBoost * (isPrimary ? 0.08 : 0.06);
+    strokeAlpha += overviewBoost * (isPrimary ? 0.24 : 0.18);
+  }
+
   return {
     alpha,
     strokeWidth,
@@ -605,7 +615,7 @@ function drawPreparedGroupFrame(
   }
 ): void {
   const color = prepared.frame.color ?? '#8bd3ff';
-  const zoom = Math.max(args.zoom, 0.1);
+  const zoom = Math.max(args.zoom, GROUP_FRAME_RENDER_MIN_ZOOM);
   const selected = args.selectedNodeId === prepared.frame.id;
   const hovered = args.hoveredGroupFrameId === prepared.frame.id;
   const focused =
@@ -656,7 +666,8 @@ function drawGroupFrameLabel(
     return;
   }
 
-  const fontSize = (prepared.frame.priority === 'primary' ? 12 : 11) / zoom;
+  const labelScaleZoom = getGroupFrameLabelScaleZoom(zoom);
+  const fontSize = (prepared.frame.priority === 'primary' ? 12 : 11) / labelScaleZoom;
   const label = prepared.frame.label;
 
   ctx.save();
@@ -675,11 +686,17 @@ function drawGroupFrameLabel(
   );
 
   ctx.beginPath();
-  ctx.roundRect(labelBounds.left, labelBounds.top, labelBounds.width, labelBounds.height, 5 / zoom);
+  ctx.roundRect(
+    labelBounds.left,
+    labelBounds.top,
+    labelBounds.width,
+    labelBounds.height,
+    5 / labelScaleZoom
+  );
   ctx.fillStyle = 'rgba(8, 12, 28, 0.78)';
   ctx.fill();
   ctx.strokeStyle = hexWithAlpha(color, selected ? 0.7 : 0.42);
-  ctx.lineWidth = 1 / zoom;
+  ctx.lineWidth = 1 / labelScaleZoom;
   ctx.stroke();
   ctx.fillStyle = hexWithAlpha(color, selected ? 0.98 : 0.86);
   ctx.fillText(label, labelBounds.textX, labelBounds.textY);

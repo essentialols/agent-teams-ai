@@ -132,7 +132,7 @@ export function filterVisibleGraphEdges(
   activeParticleEdgeIds?: ReadonlySet<string>
 ): GraphEdge[] {
   return edges.filter((edge) => {
-    if (!showEdges && !activeParticleEdgeIds?.has(edge.id)) {
+    if (!showEdges && !activeParticleEdgeIds?.has(edge.id) && !edge.alwaysVisible) {
       return false;
     }
     return visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target);

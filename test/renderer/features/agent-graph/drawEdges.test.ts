@@ -89,4 +89,17 @@ describe('drawEdges', () => {
     expect(ctx.beginPath).toHaveBeenCalled();
     expect(ctx.fill).toHaveBeenCalled();
   });
+
+  it('draws always-visible idle message edges', () => {
+    const ctx = createMockContext();
+    const nodeMap = new Map([
+      [messageEdge.source, createNode(messageEdge.source, 0, 0)],
+      [messageEdge.target, createNode(messageEdge.target, 100, 0)],
+    ]);
+
+    drawEdges(ctx, [{ ...messageEdge, alwaysVisible: true }], nodeMap, 0, new Set());
+
+    expect(ctx.beginPath).toHaveBeenCalled();
+    expect(ctx.fill).toHaveBeenCalled();
+  });
 });

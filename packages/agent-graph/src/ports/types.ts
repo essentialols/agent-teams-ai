@@ -227,6 +227,8 @@ export interface GraphEdge {
   color?: string;
   /** Number of aggregated raw relations behind this visual edge */
   aggregateCount?: number;
+  /** Draw this edge even when the global edge filter is off or a message edge has no active particle. */
+  alwaysVisible?: boolean;
   /** Raw source-side task ids represented by this visual edge */
   sourceTaskIds?: string[];
   /** Raw target-side task ids represented by this visual edge */

@@ -21,7 +21,7 @@ import type {
   GraphNode,
 } from '@claude-teams/agent-graph';
 
-type OrganizationRelationViewMode = 'structure' | 'relations' | 'explorer';
+type OrganizationRelationViewMode = 'structure' | 'relations';
 
 interface OrgGraphSurfaceProps {
   viewModel: OrganizationMapViewModel;
@@ -47,41 +47,13 @@ interface GroupCreateButton {
 const MIN_CREATE_BUTTON_FRAME_WIDTH = 112;
 const MIN_CREATE_BUTTON_FRAME_HEIGHT = 60;
 const RELATION_EDGE_TYPES = new Set<GraphEdge['type']>(['blocking', 'related', 'message']);
-const ALL_ORGANIZATIONS_ROOT_NODE_ID = 'org:__all-organizations__';
-
 function isRelationEdge(edge: GraphEdge): boolean {
   return RELATION_EDGE_TYPES.has(edge.type);
 }
 
-function isRelationExplorerAvailable(selectedNodeId: string | null): selectedNodeId is string {
-  return selectedNodeId !== null && selectedNodeId !== ALL_ORGANIZATIONS_ROOT_NODE_ID;
-}
-
-function collectDescendantTeamNodeIds(
-  viewModel: OrganizationMapViewModel,
-  nodeId: string,
-  seen = new Set<string>()
-): string[] {
-  if (seen.has(nodeId)) {
-    return [];
-  }
-  seen.add(nodeId);
-
-  const node = viewModel.nodeById.get(nodeId);
-  if (node?.kind === 'team') {
-    return [node.id];
-  }
-
-  return (viewModel.childNodeIdsByParentId.get(nodeId) ?? []).flatMap((childNodeId) =>
-    collectDescendantTeamNodeIds(viewModel, childNodeId, seen)
-  );
-}
-
 function buildRelationsFocus(
   mode: OrganizationRelationViewMode,
-  graphData: ReturnType<typeof buildOrganizationGraphData>,
-  viewModel: OrganizationMapViewModel,
-  selectedNodeId: string | null
+  graphData: ReturnType<typeof buildOrganizationGraphData>
 ): { focusNodeIds: ReadonlySet<string> | null; focusEdgeIds: ReadonlySet<string> | null } {
   if (mode === 'structure') {
     return { focusNodeIds: null, focusEdgeIds: null };
@@ -92,63 +64,29 @@ function buildRelationsFocus(
     return { focusNodeIds: null, focusEdgeIds: null };
   }
 
-  if (mode === 'relations') {
-    return {
-      focusNodeIds: new Set(relationEdges.flatMap((edge) => [edge.source, edge.target])),
-      focusEdgeIds: new Set(relationEdges.map((edge) => edge.id)),
-    };
-  }
-
-  if (!isRelationExplorerAvailable(selectedNodeId)) {
-    return {
-      focusNodeIds: new Set(),
-      focusEdgeIds: new Set(),
-    };
-  }
-
-  const selectedTeamNodeIds = new Set(collectDescendantTeamNodeIds(viewModel, selectedNodeId));
-  const focusedEdges = relationEdges.filter(
-    (edge) => selectedTeamNodeIds.has(edge.source) || selectedTeamNodeIds.has(edge.target)
-  );
-  if (focusedEdges.length === 0) {
-    return {
-      focusNodeIds: new Set([selectedNodeId, ...selectedTeamNodeIds]),
-      focusEdgeIds: new Set(),
-    };
-  }
-
   return {
-    focusNodeIds: new Set([
-      selectedNodeId,
-      ...selectedTeamNodeIds,
-      ...focusedEdges.flatMap((edge) => [edge.source, edge.target]),
-    ]),
-    focusEdgeIds: new Set(focusedEdges.map((edge) => edge.id)),
+    focusNodeIds: new Set(relationEdges.flatMap((edge) => [edge.source, edge.target])),
+    focusEdgeIds: new Set(relationEdges.map((edge) => edge.id)),
   };
 }
 
 function buildRelationModeGraphData(
   mode: OrganizationRelationViewMode,
   graphData: ReturnType<typeof buildOrganizationGraphData>,
-  focusNodeIds: ReadonlySet<string> | null,
-  focusEdgeIds: ReadonlySet<string> | null
+  focusNodeIds: ReadonlySet<string> | null
 ): ReturnType<typeof buildOrganizationGraphData> {
   if (mode === 'structure') {
     return graphData;
   }
 
   const relationEdgeIds = new Set(graphData.edges.filter(isRelationEdge).map((edge) => edge.id));
-  const visibleRelationEdgeIds =
-    mode === 'explorer' ? (focusEdgeIds ?? new Set<string>()) : relationEdgeIds;
+  const visibleRelationEdgeIds = relationEdgeIds;
   const relationNodeIds = new Set(
     graphData.edges
       .filter((edge) => visibleRelationEdgeIds.has(edge.id))
       .flatMap((edge) => [edge.source, edge.target])
   );
-  const visibleNodeIds = new Set<string>([
-    ...relationNodeIds,
-    ...(mode === 'explorer' ? (focusNodeIds ?? []) : []),
-  ]);
+  const visibleNodeIds = new Set<string>([...relationNodeIds, ...(focusNodeIds ?? [])]);
   const visibleGraphNodes = graphData.nodes.filter(
     (node) => node.layoutOnly || (node.kind === 'member' && visibleNodeIds.has(node.id))
   );
@@ -176,7 +114,9 @@ function buildRelationModeGraphData(
     ...graphData,
     groupFrames,
     nodes: visibleGraphNodes,
-    edges: graphData.edges.filter((edge) => visibleRelationEdgeIds.has(edge.id)),
+    edges: graphData.edges
+      .filter((edge) => visibleRelationEdgeIds.has(edge.id))
+      .map((edge) => ({ ...edge, alwaysVisible: true })),
     particles: graphData.particles.filter((particle) => visibleRelationEdgeIds.has(particle.edgeId)),
     layout,
   };
@@ -456,12 +396,6 @@ export const OrgGraphSurface = ({
   const { t } = useAppTranslation('team');
   const [relationViewMode, setRelationViewMode] =
     useState<OrganizationRelationViewMode>('structure');
-  const canExploreRelations = isRelationExplorerAvailable(selectedNodeId);
-  useEffect(() => {
-    if (relationViewMode === 'explorer' && !canExploreRelations) {
-      setRelationViewMode('relations');
-    }
-  }, [canExploreRelations, relationViewMode]);
   const edgeOverlayText = useMemo(
     () => ({
       runtimeMessages: t('organizations.graph.edgeOverlay.runtimeMessages'),
@@ -515,18 +449,17 @@ export const OrgGraphSurface = ({
     [collapsedNodeIds, graphText, layoutMode, selectedNodeId, showSelectedTeamDetails, viewModel]
   );
   const relationFocus = useMemo(
-    () => buildRelationsFocus(relationViewMode, graphData, viewModel, selectedNodeId),
-    [graphData, relationViewMode, selectedNodeId, viewModel]
+    () => buildRelationsFocus(relationViewMode, graphData),
+    [graphData, relationViewMode]
   );
   const displayedGraphData = useMemo(
     () =>
       buildRelationModeGraphData(
         relationViewMode,
         graphData,
-        relationFocus.focusNodeIds,
-        relationFocus.focusEdgeIds
+        relationFocus.focusNodeIds
       ),
-    [graphData, relationFocus.focusEdgeIds, relationFocus.focusNodeIds, relationViewMode]
+    [graphData, relationFocus.focusNodeIds, relationViewMode]
   );
   const relationToolbar = useMemo(
     () => (
@@ -536,27 +469,20 @@ export const OrgGraphSurface = ({
             [
               ['structure', 'Structure'],
               ['relations', 'Relations'],
-              ['explorer', 'Explorer'],
             ] as const
           ).map(([mode, label]) => {
             const active = relationViewMode === mode;
-            const disabled = mode === 'explorer' && !canExploreRelations;
             return (
               <button
                 key={mode}
                 type="button"
-                disabled={disabled}
                 className={`h-6 rounded-md px-2.5 transition-colors ${
                   active
                     ? 'bg-sky-400/18 text-sky-100 shadow-sm shadow-sky-500/10'
-                    : disabled
-                      ? 'cursor-not-allowed text-[var(--color-text-muted)] opacity-40'
-                      : 'text-[var(--color-text-muted)] hover:bg-white/5 hover:text-[var(--color-text)]'
+                    : 'text-[var(--color-text-muted)] hover:bg-white/5 hover:text-[var(--color-text)]'
                 }`}
                 onClick={() => {
-                  if (!disabled) {
-                    setRelationViewMode(mode);
-                  }
+                  setRelationViewMode(mode);
                 }}
               >
                 {label}
@@ -566,7 +492,7 @@ export const OrgGraphSurface = ({
         </div>
       </div>
     ),
-    [canExploreRelations, relationViewMode]
+    [relationViewMode]
   );
   const createTeamFrameId = useMemo(
     () => getCreateTeamFrameId(viewModel, selectedNodeId),

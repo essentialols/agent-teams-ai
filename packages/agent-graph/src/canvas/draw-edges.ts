@@ -94,7 +94,7 @@ export function drawEdges(
     const isActive = hasActiveParticles.has(edge.id);
     const isSelected = selectedEdgeId === edge.id;
     const isHovered = !isSelected && hoveredEdgeId === edge.id;
-    if (edge.type === 'message' && !isActive && !isSelected && !isHovered) {
+    if (edge.type === 'message' && !isActive && !isSelected && !isHovered && !edge.alwaysVisible) {
       continue;
     }
     // Pulse alpha when particles are travelling: base 0.3 + 0.2 * sin wave

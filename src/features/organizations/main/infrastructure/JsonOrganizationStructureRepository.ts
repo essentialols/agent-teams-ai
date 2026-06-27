@@ -56,6 +56,31 @@ function normalizeSourceKind(value: unknown): OrgRelationSourceKind {
   return 'manual';
 }
 
+function encodeRelationIdPart(value: string): string {
+  return encodeURIComponent(value.trim()).replace(/%/g, '~');
+}
+
+function getImportedRelationId(params: {
+  organizationId: string | undefined;
+  sourceNodeId: string;
+  targetNodeId: string;
+  kind: string;
+  sourceKind: OrgRelationSourceKind;
+  label: string | undefined;
+}): string {
+  return [
+    'relation',
+    params.organizationId ?? 'unscoped',
+    params.sourceKind,
+    params.kind,
+    params.sourceNodeId,
+    params.targetNodeId,
+    params.label ?? '',
+  ]
+    .map(encodeRelationIdPart)
+    .join(':');
+}
+
 function normalizeOrganization(value: unknown): OrgSummaryModel | null {
   const record = asRecord(value);
   if (!record) return null;
@@ -125,19 +150,31 @@ function normalizeRelation(
 
   const weight =
     typeof record.weight === 'number' && Number.isFinite(record.weight) ? record.weight : undefined;
+  const rawOrganizationId = readString(record, ['organizationId']);
+  const organizationId = rawOrganizationId
+    ? normalizeOrganizationId(rawOrganizationId, fallbackOrganizationId)
+    : undefined;
+  const sourceKind = normalizeSourceKind(record.sourceKind ?? record.source);
+  const label = readString(record, ['label']);
 
   return {
-    id: readString(record, ['id']),
-    organizationId: normalizeOrganizationId(
-      readString(record, ['organizationId']),
-      fallbackOrganizationId
-    ),
+    id:
+      readString(record, ['id']) ??
+      getImportedRelationId({
+        organizationId,
+        sourceNodeId,
+        targetNodeId,
+        kind,
+        sourceKind,
+        label,
+      }),
+    organizationId,
     sourceNodeId,
     targetNodeId,
     kind,
-    sourceKind: normalizeSourceKind(record.sourceKind ?? record.source),
+    sourceKind,
     weight,
-    label: readString(record, ['label']),
+    label,
   };
 }
 

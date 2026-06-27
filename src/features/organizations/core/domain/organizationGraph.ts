@@ -291,6 +291,13 @@ export function buildAllOrganizationsGraph(
       const rawNodeIds = unitNodeIdsByRawId.get(unit.id) ?? new Set<string>();
       rawNodeIds.add(nodeId);
       unitNodeIdsByRawId.set(unit.id, rawNodeIds);
+      if (unit.kind === 'team') {
+        const teamName = getTeamNameForUnit(unit);
+        scopedUnitNodeIdByKey.set(getScopedUnitKey(organization.id, teamName), nodeId);
+        const teamNodeIds = unitNodeIdsByRawId.get(teamName) ?? new Set<string>();
+        teamNodeIds.add(nodeId);
+        unitNodeIdsByRawId.set(teamName, teamNodeIds);
+      }
     }
   }
 
@@ -311,7 +318,8 @@ export function buildAllOrganizationsGraph(
 
       const teamName = unit.kind === 'team' ? getTeamNameForUnit(unit) : undefined;
       const team = teamName ? teamsByName.get(teamName) : undefined;
-      if (teamName && renderedTeamNameSet.has(teamName)) {
+      const teamPlacementKey = teamName ? `${organization.id}\0${teamName}` : undefined;
+      if (teamPlacementKey && renderedTeamNameSet.has(teamPlacementKey)) {
         warnings.push(`Skipped duplicate team reference "${teamName}".`);
         continue;
       }
@@ -322,7 +330,7 @@ export function buildAllOrganizationsGraph(
         continue;
       }
       if (teamName && team) {
-        renderedTeamNameSet.add(teamName);
+        renderedTeamNameSet.add(teamPlacementKey!);
         if (shouldProjectTeam) {
           renderedTeamNames.push(teamName);
         }
@@ -431,7 +439,6 @@ export function buildAllOrganizationsGraph(
       nodeById,
       scopedUnitNodeIdByKey,
       unitNodeIdsByRawId,
-      teamsByName,
       warnings,
     })
   );
@@ -481,7 +488,7 @@ function buildConfiguredOrganizationGraph(
   const teamsByName = new Map(input.teams.map((team) => [team.teamName, team]));
   const sortedTeams = sortTeamsForDefaultOrg(input.teams);
   const units = normalizeOrganizationUnits(input.structure, organization);
-  const globallyReferencedTeamNames = collectReferencedTeamNames(input.structure.units);
+  const referencedTeamNames = collectReferencedTeamNames(units);
   const unitNodeIdById = new Map(units.map((unit) => [unit.id, getNodeIdForUnit(unit)]));
   const rootNodeId = unitNodeIdById.get(organization.rootNodeId) ?? organization.rootNodeId;
   const nodeById = new Map<string, OrgNodeModel>();
@@ -567,7 +574,7 @@ function buildConfiguredOrganizationGraph(
 
   const remainingSlots = Math.max(0, input.maxTeams - renderedTeamNames.length);
   const unassignedTeams = sortedTeams
-    .filter((team) => !globallyReferencedTeamNames.has(team.teamName))
+    .filter((team) => !referencedTeamNames.has(team.teamName))
     .slice(0, remainingSlots);
   if (unassignedTeams.length > 0) {
     const unassignedNodeId = getAvailableNodeId(
@@ -667,7 +674,7 @@ function getAllScopeNodeIdForUnit(unit: OrgUnitModel, organizationId: string): s
     return getAllScopeOrganizationNodeId(organizationId);
   }
   if (unit.kind === 'team') {
-    return getTeamNodeId(getTeamNameForUnit(unit));
+    return getOrgUnitNodeId(`${organizationId}:${unit.id}`);
   }
   return getOrgUnitNodeId(`${organizationId}:${unit.id}`);
 }
@@ -836,7 +843,6 @@ function resolveAllScopeRelationNodeId(params: {
   nodeById: ReadonlyMap<string, OrgNodeModel>;
   scopedUnitNodeIdByKey: ReadonlyMap<string, string>;
   unitNodeIdsByRawId: ReadonlyMap<string, ReadonlySet<string>>;
-  teamsByName: ReadonlyMap<string, OrgTeamCandidate>;
   warnings: string[];
 }): string | null {
   if (params.nodeById.has(params.rawNodeId)) {
@@ -854,16 +860,6 @@ function resolveAllScopeRelationNodeId(params: {
       return organizationNodeId;
     }
   }
-  if (params.teamsByName.has(params.rawNodeId)) {
-    const teamNodeId = getTeamNodeId(params.rawNodeId);
-    return params.nodeById.has(teamNodeId) ? teamNodeId : null;
-  }
-
-  const teamNodeId = getTeamNodeId(params.rawNodeId);
-  if (params.nodeById.has(teamNodeId)) {
-    return teamNodeId;
-  }
-
   const rawUnitMatches = params.unitNodeIdsByRawId.get(params.rawNodeId);
   if (rawUnitMatches?.size === 1) {
     const [nodeId] = rawUnitMatches;
@@ -872,6 +868,11 @@ function resolveAllScopeRelationNodeId(params: {
   if (rawUnitMatches && rawUnitMatches.size > 1) {
     params.warnings.push(`Skipped ambiguous organization relation endpoint "${params.rawNodeId}".`);
     return null;
+  }
+
+  const teamNodeId = getTeamNodeId(params.rawNodeId);
+  if (params.nodeById.has(teamNodeId)) {
+    return teamNodeId;
   }
 
   const genericNodeId = getOrgUnitNodeId(params.rawNodeId);
@@ -883,7 +884,6 @@ function projectAllScopeConfiguredRelations(params: {
   nodeById: ReadonlyMap<string, OrgNodeModel>;
   scopedUnitNodeIdByKey: ReadonlyMap<string, string>;
   unitNodeIdsByRawId: ReadonlyMap<string, ReadonlySet<string>>;
-  teamsByName: ReadonlyMap<string, OrgTeamCandidate>;
   warnings: string[];
 }): OrgRelationModel[] {
   const projected: OrgRelationModel[] = [];
@@ -898,7 +898,6 @@ function projectAllScopeConfiguredRelations(params: {
       nodeById: params.nodeById,
       scopedUnitNodeIdByKey: params.scopedUnitNodeIdByKey,
       unitNodeIdsByRawId: params.unitNodeIdsByRawId,
-      teamsByName: params.teamsByName,
       warnings: params.warnings,
     });
     const targetNodeId = resolveAllScopeRelationNodeId({
@@ -907,7 +906,6 @@ function projectAllScopeConfiguredRelations(params: {
       nodeById: params.nodeById,
       scopedUnitNodeIdByKey: params.scopedUnitNodeIdByKey,
       unitNodeIdsByRawId: params.unitNodeIdsByRawId,
-      teamsByName: params.teamsByName,
       warnings: params.warnings,
     });
 

@@ -356,15 +356,10 @@ export default defineConfig([
           patterns: [
             {
               group: [
-                '@features/organizations/contracts',
                 '@features/organizations/contracts/**',
-                '@features/organizations/core',
                 '@features/organizations/core/**',
-                '@features/organizations/main',
                 '@features/organizations/main/**',
-                '@features/organizations/preload',
                 '@features/organizations/preload/**',
-                '@features/organizations/renderer',
                 '@features/organizations/renderer/**',
               ],
               message:

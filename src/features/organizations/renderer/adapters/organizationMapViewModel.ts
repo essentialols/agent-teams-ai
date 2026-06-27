@@ -40,8 +40,9 @@ export function buildOrganizationMapViewModel(
 ): OrganizationMapViewModel {
   const nodeById = new Map(payload.nodes.map((node) => [node.id, node]));
   const activeOrganization =
-    payload.organizations.find((organization) => organization.id === payload.activeOrganizationId) ??
-    payload.organizations[0];
+    payload.organizations.find(
+      (organization) => organization.id === payload.activeOrganizationId
+    ) ?? payload.organizations[0];
   const rootNode =
     (payload.rootNodeId ? (nodeById.get(payload.rootNodeId) ?? null) : null) ??
     payload.nodes.find((node) => node.id === activeOrganization?.rootNodeId) ??
@@ -58,7 +59,7 @@ export function buildOrganizationMapViewModel(
     childNodeIdsByParentId,
   });
   const communicationRelations = payload.relations
-    .filter((relation) => relation.kind === 'communicates')
+    .filter((relation) => relation.kind === 'communicates' && relation.sourceKind === 'runtime')
     .sort((left, right) => getTimeMs(right.lastActivityAt) - getTimeMs(left.lastActivityAt));
   const manualRelations = payload.relations.filter(
     (relation) => relation.sourceKind === 'manual' && relation.kind !== 'contains'

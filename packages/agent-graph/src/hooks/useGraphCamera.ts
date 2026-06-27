@@ -18,7 +18,7 @@ export interface CameraTransform {
 }
 
 export interface UseGraphCameraResult {
-  transformRef: React.MutableRefObject<CameraTransform>;
+  transformRef: React.RefObject<CameraTransform>;
   screenToWorld: (sx: number, sy: number) => { x: number; y: number };
   worldToScreen: (wx: number, wy: number) => { x: number; y: number };
   handleWheel: (e: WheelEvent) => void;
@@ -41,7 +41,7 @@ export function useGraphCamera(): UseGraphCameraResult {
     x: 0,
     y: 0,
     zoom: 1,
-  }) as React.MutableRefObject<CameraTransform>;
+  });
   const panStartRef = useRef<{ x: number; y: number; camX: number; camY: number } | null>(null);
   const velocityRef = useRef({ vx: 0, vy: 0 });
 
@@ -143,12 +143,12 @@ export function useGraphCamera(): UseGraphCameraResult {
       for (const n of nodes) {
         const x = n.x ?? 0;
         const y = n.y ?? 0;
-        const pad =
-          n.kind === 'task'
-            ? TASK_PILL.width / 2
-            : n.kind === 'lead'
-              ? NODE.radiusLead
-              : NODE.radiusMember;
+        let pad: number = NODE.radiusMember;
+        if (n.kind === 'task') {
+          pad = TASK_PILL.width / 2;
+        } else if (n.kind === 'lead') {
+          pad = NODE.radiusLead;
+        }
         minX = Math.min(minX, x - pad);
         minY = Math.min(minY, y - pad);
         maxX = Math.max(maxX, x + pad);

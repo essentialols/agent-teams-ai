@@ -203,7 +203,7 @@ describe('organizations domain', () => {
     expect(graph.renderedTeamNames).toEqual(['platform', 'growth']);
   });
 
-  it('does not show teams assigned to other organizations as unassigned', () => {
+  it('shows teams assigned to other organizations as locally unassigned', () => {
     const graph = buildOrganizationGraph({
       generatedAt: '2026-06-24T10:00:00.000Z',
       maxTeams: 4,
@@ -261,11 +261,14 @@ describe('organizations domain', () => {
     });
 
     expect(graph.nodes.map((node) => node.id)).toEqual(
-      expect.arrayContaining(['org:default', 'team:platform'])
+      expect.arrayContaining([
+        'org:default',
+        'team:platform',
+        'unit:default:unassigned-teams',
+        'team:research',
+      ])
     );
-    expect(graph.nodes.map((node) => node.id)).not.toContain('team:research');
-    expect(graph.nodes.map((node) => node.id)).not.toContain('unit:default:unassigned-teams');
-    expect(graph.renderedTeamNames).toEqual(['platform']);
+    expect(graph.renderedTeamNames).toEqual(['platform', 'research']);
   });
 
   it('does not overwrite a configured unit when adding the unassigned teams bucket', () => {
@@ -454,8 +457,8 @@ describe('organizations domain', () => {
         ['org:quality', 'organization', 'org:__all-organizations__'],
         ['unit:product:group', 'container', 'org:product'],
         ['unit:quality:group', 'container', 'org:quality'],
-        ['team:platform', 'team', 'unit:product:group'],
-        ['team:growth', 'team', 'unit:quality:group'],
+        ['unit:product:platform-slot', 'team', 'unit:product:group'],
+        ['unit:quality:growth-slot', 'team', 'unit:quality:group'],
         ['unit:__all-organizations__:unassigned-teams', 'container', 'org:__all-organizations__'],
         ['team:qa', 'team', 'unit:__all-organizations__:unassigned-teams'],
       ])
@@ -463,8 +466,8 @@ describe('organizations domain', () => {
     expect(graph.relations).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          sourceNodeId: 'team:platform',
-          targetNodeId: 'team:growth',
+          sourceNodeId: 'unit:product:platform-slot',
+          targetNodeId: 'unit:quality:growth-slot',
           kind: 'depends_on',
         }),
       ])
@@ -533,8 +536,8 @@ describe('organizations domain', () => {
       expect.arrayContaining([
         ['org:holding', 'organization', 'org:__all-organizations__'],
         ['org:product', 'organization', 'org:holding'],
-        ['team:growth', 'team', 'org:holding'],
-        ['team:platform', 'team', 'org:product'],
+        ['unit:holding:team:growth', 'team', 'org:holding'],
+        ['unit:product:team:platform', 'team', 'org:product'],
       ])
     );
     expect(graph.relations).toEqual(

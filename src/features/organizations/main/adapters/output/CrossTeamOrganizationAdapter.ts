@@ -58,6 +58,7 @@ export class CrossTeamOrganizationAdapter implements OrganizationsCrossTeamMessa
     teamNames: readonly string[];
     maxMessages: number;
   }): Promise<CrossTeamMessageCandidate[]> {
+    const visibleTeamNames = new Set(input.teamNames);
     const batches = await mapLimit(
       input.teamNames,
       CROSS_TEAM_OUTBOX_CONCURRENCY,
@@ -77,6 +78,9 @@ export class CrossTeamOrganizationAdapter implements OrganizationsCrossTeamMessa
     return batches
       .flat()
       .map(toCandidate)
+      .filter(
+        (message) => visibleTeamNames.has(message.fromTeam) && visibleTeamNames.has(message.toTeam)
+      )
       .sort((left, right) => getTimestampMs(right.timestamp) - getTimestampMs(left.timestamp))
       .slice(0, input.maxMessages);
   }

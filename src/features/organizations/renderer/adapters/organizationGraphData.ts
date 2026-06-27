@@ -259,7 +259,8 @@ function buildCollapsedContainerNode(
     state: stats.activeAgentCount > 0 ? 'active' : 'idle',
     color: node.color ?? (node.kind === 'organization' ? '#4f8cff' : '#8bd3ff'),
     role: text.teams(stats.teamCount),
-    runtimeLabel: stats.activeAgentCount > 0 ? text.activeAgents(stats.activeAgentCount) : undefined,
+    runtimeLabel:
+      stats.activeAgentCount > 0 ? text.activeAgents(stats.activeAgentCount) : undefined,
     domainRef: {
       kind: 'member',
       teamName: node.id,
@@ -280,7 +281,8 @@ function buildOrgGraphNode(
   if (node.kind === 'team') {
     return buildTeamNode(node, text);
   }
-  if (collapsedVisibleContainerNodeIds.has(node.id)) {
+  const childCount = viewModel.childNodeIdsByParentId.get(node.id)?.length ?? 0;
+  if (collapsedVisibleContainerNodeIds.has(node.id) || childCount === 0) {
     return buildCollapsedContainerNode(node, viewModel, text);
   }
   return null;
@@ -584,8 +586,7 @@ function getPackedOrganizationGridRowWidth(
   columnGap = ORGANIZATION_GRID_BLOCK_COLUMN_GAP
 ): number {
   return (
-    blocks.reduce((sum, block) => sum + block.width, 0) +
-    Math.max(0, blocks.length - 1) * columnGap
+    blocks.reduce((sum, block) => sum + block.width, 0) + Math.max(0, blocks.length - 1) * columnGap
   );
 }
 
@@ -773,9 +774,7 @@ function buildNestedOrganizationGridBlock(
         ? ORGANIZATION_GRID_ALL_SCOPE_ORG_SECTION_MAX_ROW_WIDTH
         : undefined,
     rowGap: packsTopLevelOrganizations ? ORGANIZATION_GRID_TOP_LEVEL_ORG_ROW_GAP : undefined,
-    columnGap: packsTopLevelOrganizations
-      ? ORGANIZATION_GRID_TOP_LEVEL_ORG_COLUMN_GAP
-      : undefined,
+    columnGap: packsTopLevelOrganizations ? ORGANIZATION_GRID_TOP_LEVEL_ORG_COLUMN_GAP : undefined,
   });
 }
 
@@ -1256,7 +1255,7 @@ function buildOrganizationGroupFrames(
         node.id,
         context.visibleOrganizationNodeIds
       );
-      if (context.collapsedVisibleContainerNodeIds.has(node.id)) {
+      if (context.collapsedVisibleContainerNodeIds.has(node.id) || descendantNodeIds.length === 0) {
         return {
           id: node.id,
           label: getOrganizationContainerLabel(node, text),

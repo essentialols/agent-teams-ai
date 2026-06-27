@@ -206,7 +206,7 @@ function collectTextMentionTeamNames(textContent: string | null): Set<string> {
     }
   }
 
-  const parentheticalPattern = /\(([^()\r\n]{1,160})\)/g;
+  const parentheticalPattern = /\b(?:team name|on team|team)\s*\(([^()\r\n]{1,160})\)/g;
   while ((match = parentheticalPattern.exec(normalizedText))) {
     addTextMentionTeamName(teamNames, match[1] ?? '');
     if (hasReachedTextMentionTeamNameLimit(teamNames)) {

@@ -117,7 +117,9 @@ function buildRelationModeGraphData(
     edges: graphData.edges
       .filter((edge) => visibleRelationEdgeIds.has(edge.id))
       .map((edge) => ({ ...edge, alwaysVisible: true })),
-    particles: graphData.particles.filter((particle) => visibleRelationEdgeIds.has(particle.edgeId)),
+    particles: graphData.particles.filter((particle) =>
+      visibleRelationEdgeIds.has(particle.edgeId)
+    ),
     layout,
   };
 }
@@ -345,7 +347,10 @@ function renderEdgeOverlay(
     messages: (count: number) => string;
     weight: (count: number) => string;
   }
-): React.JSX.Element {
+): React.ReactNode {
+  if (!isRelationEdge(edge)) {
+    return null;
+  }
   const isMessageEdge = edge.type === 'message';
   return (
     <div className="w-72 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-overlay)] p-3 text-xs shadow-xl">
@@ -453,12 +458,7 @@ export const OrgGraphSurface = ({
     [graphData, relationViewMode]
   );
   const displayedGraphData = useMemo(
-    () =>
-      buildRelationModeGraphData(
-        relationViewMode,
-        graphData,
-        relationFocus.focusNodeIds
-      ),
+    () => buildRelationModeGraphData(relationViewMode, graphData, relationFocus.focusNodeIds),
     [graphData, relationFocus.focusNodeIds, relationViewMode]
   );
   const relationToolbar = useMemo(
@@ -554,10 +554,7 @@ export const OrgGraphSurface = ({
       renderTopToolbarContent={() => relationToolbar}
       renderOverlay={renderNodeOverlay}
       renderEdgeOverlay={(overlayProps) => renderEdgeOverlay(overlayProps, edgeOverlayText)}
-      renderHud={({
-        getGroupFrameScreenPlacements,
-        getViewportSize,
-      }) => (
+      renderHud={({ getGroupFrameScreenPlacements, getViewportSize }) => (
         <>
           <OrgRelationLegendHud mode={relationViewMode} />
           {onCreateTeamHere ? (

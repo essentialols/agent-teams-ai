@@ -381,6 +381,9 @@ function slug(value, fallback = 'item') {
 }
 
 function getAppDataBasePath() {
+  if (process.env.AGENT_TEAMS_ELECTRON_USER_DATA_DIR) {
+    return process.env.AGENT_TEAMS_ELECTRON_USER_DATA_DIR;
+  }
   if (process.env.AGENT_TEAMS_APP_DATA_DIR) {
     return process.env.AGENT_TEAMS_APP_DATA_DIR;
   }
@@ -399,6 +402,14 @@ function getAppDataBasePath() {
   );
 }
 
+function getClaudeRootPath() {
+  const override = process.env.AGENT_TEAMS_ELECTRON_CLAUDE_ROOT?.trim();
+  if (override && path.isAbsolute(override)) {
+    return path.resolve(override);
+  }
+  return path.join(os.homedir(), '.claude');
+}
+
 async function pathExists(filePath) {
   try {
     await stat(filePath);
@@ -409,7 +420,7 @@ async function pathExists(filePath) {
 }
 
 async function readTeamNames() {
-  const teamsDir = path.join(os.homedir(), '.claude', 'teams');
+  const teamsDir = path.join(getClaudeRootPath(), 'teams');
   const entries = await readdir(teamsDir, { withFileTypes: true }).catch(() => []);
   const teamNames = [];
 
@@ -702,6 +713,12 @@ async function seedDemoMap(mapPath, backupPath) {
         organizations,
         units,
         relations,
+        availableTeams: teamNames.map((teamName) => ({
+          teamName,
+          displayName: teamName,
+          isOnline: false,
+        })),
+        source: 'configured',
         activeOrganizationId: DEMO_ORGANIZATIONS[0].id,
         updatedAt: now,
       },

@@ -75,7 +75,10 @@ export function useOrganizationCreateTeamDialog(): UseOrganizationCreateTeamDial
     [teams]
   );
   const createTeamWithPlacement = useCallback(
-    async (request: TeamCreateRequest, placement?: OrganizationPlacementSelection): Promise<void> => {
+    async (
+      request: TeamCreateRequest,
+      placement?: OrganizationPlacementSelection
+    ): Promise<void> => {
       await createTeam(request);
       if (!placement) {
         return;

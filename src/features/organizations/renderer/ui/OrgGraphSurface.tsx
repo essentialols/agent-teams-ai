@@ -118,6 +118,7 @@ function buildRelationsFocus(
 function buildRelationModeGraphData(
   mode: OrganizationRelationViewMode,
   graphData: ReturnType<typeof buildOrganizationGraphData>,
+  focusNodeIds: ReadonlySet<string> | null,
   focusEdgeIds: ReadonlySet<string> | null,
   selectedNodeId: string | null
 ): ReturnType<typeof buildOrganizationGraphData> {
@@ -128,11 +129,45 @@ function buildRelationModeGraphData(
   const relationEdgeIds = new Set(graphData.edges.filter(isRelationEdge).map((edge) => edge.id));
   const visibleRelationEdgeIds =
     mode === 'explorer' && selectedNodeId && focusEdgeIds ? focusEdgeIds : relationEdgeIds;
+  const relationNodeIds = new Set(
+    graphData.edges
+      .filter((edge) => visibleRelationEdgeIds.has(edge.id))
+      .flatMap((edge) => [edge.source, edge.target])
+  );
+  const visibleNodeIds = new Set<string>([
+    ...relationNodeIds,
+    ...(mode === 'explorer' ? (focusNodeIds ?? []) : []),
+  ]);
+  const visibleGraphNodes = graphData.nodes.filter(
+    (node) => node.layoutOnly || (node.kind === 'member' && visibleNodeIds.has(node.id))
+  );
+  const visibleGraphNodeIds = new Set(visibleGraphNodes.map((node) => node.id));
+  const groupFrames = (graphData.groupFrames ?? [])
+    .map((frame) => ({
+      ...frame,
+      nodeIds: frame.nodeIds.filter((nodeId) => visibleGraphNodeIds.has(nodeId)),
+    }))
+    .filter((frame) => frame.nodeIds.length > 0);
+  const layout = graphData.layout
+    ? {
+        ...graphData.layout,
+        showTasks: false,
+        ownerOrder: graphData.layout.ownerOrder.filter((nodeId) => visibleGraphNodeIds.has(nodeId)),
+        slotAssignments: Object.fromEntries(
+          Object.entries(graphData.layout.slotAssignments).filter(([nodeId]) =>
+            visibleGraphNodeIds.has(nodeId)
+          )
+        ),
+      }
+    : undefined;
 
   return {
     ...graphData,
+    groupFrames,
+    nodes: visibleGraphNodes,
     edges: graphData.edges.filter((edge) => visibleRelationEdgeIds.has(edge.id)),
     particles: graphData.particles.filter((particle) => visibleRelationEdgeIds.has(particle.edgeId)),
+    layout,
   };
 }
 
@@ -444,10 +479,11 @@ export const OrgGraphSurface = ({
       buildRelationModeGraphData(
         relationViewMode,
         graphData,
+        relationFocus.focusNodeIds,
         relationFocus.focusEdgeIds,
         selectedNodeId
       ),
-    [graphData, relationFocus.focusEdgeIds, relationViewMode, selectedNodeId]
+    [graphData, relationFocus.focusEdgeIds, relationFocus.focusNodeIds, relationViewMode, selectedNodeId]
   );
   const relationToolbar = useMemo(
     () => (
@@ -517,7 +553,7 @@ export const OrgGraphSurface = ({
         showActivity: false,
         showLogs: false,
         showProcesses: false,
-        showTasks: true,
+        showTasks: relationViewMode === 'structure',
         showEdges: true,
         showEdgeLabels: false,
         showHexGrid: false,

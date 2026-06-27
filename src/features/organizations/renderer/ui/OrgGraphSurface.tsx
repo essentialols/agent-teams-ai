@@ -19,7 +19,6 @@ import type {
   GraphGroupFrameScreenPlacement,
   GraphLayoutMode,
   GraphNode,
-  GraphParticle,
 } from '@claude-teams/agent-graph';
 
 type OrganizationRelationViewMode = 'structure' | 'relations' | 'explorer';
@@ -49,6 +48,7 @@ interface RelationOverlayLink {
   id: string;
   path: string;
   label: string | null;
+  labelWidth: number;
   labelX: number;
   labelY: number;
   stroke: string;
@@ -60,7 +60,8 @@ interface RelationOverlayLink {
 const MIN_CREATE_BUTTON_FRAME_WIDTH = 112;
 const MIN_CREATE_BUTTON_FRAME_HEIGHT = 60;
 const RELATION_EDGE_TYPES = new Set<GraphEdge['type']>(['blocking', 'related', 'message']);
-const RELATION_OVERLAY_PADDING = 160;
+const ALL_ORGANIZATIONS_ROOT_NODE_ID = 'org:__all-organizations__';
+const RELATION_OVERLAY_ENDPOINT_MARGIN = 36;
 
 function isRelationEdge(edge: GraphEdge): boolean {
   return RELATION_EDGE_TYPES.has(edge.type);
@@ -76,44 +77,45 @@ function getRelationFocusParticleColor(edge: GraphEdge): string {
   return edge.color ?? '#38bdf8';
 }
 
-function buildRelationFocusParticles(
-  graphData: ReturnType<typeof buildOrganizationGraphData>,
-  visibleRelationEdgeIds: ReadonlySet<string>
-): GraphParticle[] {
-  const particles = graphData.particles.filter((particle) =>
-    visibleRelationEdgeIds.has(particle.edgeId)
-  );
-  const particleEdgeIds = new Set(particles.map((particle) => particle.edgeId));
-  const syntheticParticles = graphData.edges
-    .filter((edge) => visibleRelationEdgeIds.has(edge.id) && !particleEdgeIds.has(edge.id))
-    .map((edge, index) => ({
-      id: `org-relation-focus:${edge.id}`,
-      edgeId: edge.id,
-      progress: 0.2 + (index % 4) * 0.18,
-      kind: 'inbox_message' as const,
-      color: getRelationFocusParticleColor(edge),
-      size: edge.type === 'blocking' ? 1.05 : 0.85,
-      label:
-        edge.aggregateCount && edge.aggregateCount > 1 ? String(edge.aggregateCount) : undefined,
-    }));
-
-  return [...particles, ...syntheticParticles];
-}
-
 function getRelationOverlayStroke(edge: GraphEdge): string {
   return edge.color ?? getRelationFocusParticleColor(edge);
 }
 
 function getRelationOverlayWidth(edge: GraphEdge): number {
-  if (edge.type === 'blocking') return 2.6;
-  if (edge.type === 'message') return 2.2;
-  return 2;
+  if (edge.type === 'blocking') return 2.2;
+  if (edge.type === 'message') return 1.8;
+  return 1.6;
 }
 
 function getRelationOverlayLabel(edge: GraphEdge): string | null {
   if (edge.type === 'blocking') return 'depends';
-  if (edge.aggregateCount && edge.aggregateCount > 1) return String(edge.aggregateCount);
-  return null;
+  if (edge.type === 'message') {
+    return edge.aggregateCount && edge.aggregateCount > 1 ? `messages ${edge.aggregateCount}` : null;
+  }
+  return edge.label?.split(':', 1)[0]?.trim() || 'relation';
+}
+
+function getRelationOverlayLabelWidth(label: string | null): number {
+  if (!label) {
+    return 0;
+  }
+  return Math.max(54, Math.min(116, label.length * 7 + 20));
+}
+
+function isRelationExplorerAvailable(selectedNodeId: string | null): selectedNodeId is string {
+  return selectedNodeId !== null && selectedNodeId !== ALL_ORGANIZATIONS_ROOT_NODE_ID;
+}
+
+function isPointNearViewport(
+  point: { x: number; y: number },
+  viewport: { width: number; height: number }
+): boolean {
+  return (
+    point.x >= -RELATION_OVERLAY_ENDPOINT_MARGIN &&
+    point.y >= -RELATION_OVERLAY_ENDPOINT_MARGIN &&
+    point.x <= viewport.width + RELATION_OVERLAY_ENDPOINT_MARGIN &&
+    point.y <= viewport.height + RELATION_OVERLAY_ENDPOINT_MARGIN
+  );
 }
 
 function areRelationOverlayLinksEqual(
@@ -131,6 +133,7 @@ function areRelationOverlayLinksEqual(
       left.id === right.id &&
       left.path === right.path &&
       left.label === right.label &&
+      left.labelWidth === right.labelWidth &&
       left.labelX === right.labelX &&
       left.labelY === right.labelY &&
       left.stroke === right.stroke &&
@@ -176,10 +179,17 @@ function buildRelationsFocus(
     return { focusNodeIds: null, focusEdgeIds: null };
   }
 
-  if (mode === 'relations' || !selectedNodeId) {
+  if (mode === 'relations') {
     return {
       focusNodeIds: new Set(relationEdges.flatMap((edge) => [edge.source, edge.target])),
       focusEdgeIds: new Set(relationEdges.map((edge) => edge.id)),
+    };
+  }
+
+  if (!isRelationExplorerAvailable(selectedNodeId)) {
+    return {
+      focusNodeIds: new Set(),
+      focusEdgeIds: new Set(),
     };
   }
 
@@ -208,8 +218,7 @@ function buildRelationModeGraphData(
   mode: OrganizationRelationViewMode,
   graphData: ReturnType<typeof buildOrganizationGraphData>,
   focusNodeIds: ReadonlySet<string> | null,
-  focusEdgeIds: ReadonlySet<string> | null,
-  selectedNodeId: string | null
+  focusEdgeIds: ReadonlySet<string> | null
 ): ReturnType<typeof buildOrganizationGraphData> {
   if (mode === 'structure') {
     return graphData;
@@ -217,7 +226,7 @@ function buildRelationModeGraphData(
 
   const relationEdgeIds = new Set(graphData.edges.filter(isRelationEdge).map((edge) => edge.id));
   const visibleRelationEdgeIds =
-    mode === 'explorer' && selectedNodeId && focusEdgeIds ? focusEdgeIds : relationEdgeIds;
+    mode === 'explorer' ? (focusEdgeIds ?? new Set<string>()) : relationEdgeIds;
   const relationNodeIds = new Set(
     graphData.edges
       .filter((edge) => visibleRelationEdgeIds.has(edge.id))
@@ -255,7 +264,7 @@ function buildRelationModeGraphData(
     groupFrames,
     nodes: visibleGraphNodes,
     edges: graphData.edges.filter((edge) => visibleRelationEdgeIds.has(edge.id)),
-    particles: buildRelationFocusParticles(graphData, visibleRelationEdgeIds),
+    particles: graphData.particles.filter((particle) => visibleRelationEdgeIds.has(particle.edgeId)),
     layout,
   };
 }
@@ -361,29 +370,25 @@ const OrgRelationLinksHud = ({
 
         const start = worldToScreen(source.x, source.y);
         const end = worldToScreen(target.x, target.y);
-        if (
-          Math.max(start.x, end.x) < -RELATION_OVERLAY_PADDING ||
-          Math.max(start.y, end.y) < -RELATION_OVERLAY_PADDING ||
-          Math.min(start.x, end.x) > viewport.width + RELATION_OVERLAY_PADDING ||
-          Math.min(start.y, end.y) > viewport.height + RELATION_OVERLAY_PADDING
-        ) {
+        if (!isPointNearViewport(start, viewport) || !isPointNearViewport(end, viewport)) {
           return [];
         }
 
         const dx = end.x - start.x;
         const dy = end.y - start.y;
         const distance = Math.max(Math.hypot(dx, dy), 1);
-        const curve = Math.min(Math.max(distance * 0.16, 34), 120);
+        const curve = Math.min(Math.max(distance * 0.08, 16), 54);
         const normalX = -dy / distance;
         const normalY = dx / distance;
         const cp1 = {
-          x: start.x + dx * 0.32 + normalX * curve,
-          y: start.y + dy * 0.32 + normalY * curve,
+          x: start.x + dx * 0.34 + normalX * curve,
+          y: start.y + dy * 0.34 + normalY * curve,
         };
         const cp2 = {
-          x: start.x + dx * 0.68 + normalX * curve,
-          y: start.y + dy * 0.68 + normalY * curve,
+          x: start.x + dx * 0.66 + normalX * curve,
+          y: start.y + dy * 0.66 + normalY * curve,
         };
+        const label = getRelationOverlayLabel(edge);
         const labelX = Math.round((start.x + 3 * cp1.x + 3 * cp2.x + end.x) / 8);
         const labelY = Math.round((start.y + 3 * cp1.y + 3 * cp2.y + end.y) / 8);
 
@@ -396,7 +401,8 @@ const OrgRelationLinksHud = ({
               `${Math.round(cp2.x)} ${Math.round(cp2.y)}`,
               `${Math.round(end.x)} ${Math.round(end.y)}`,
             ].join(' '),
-            label: getRelationOverlayLabel(edge),
+            label,
+            labelWidth: getRelationOverlayLabelWidth(label),
             labelX,
             labelY,
             stroke: getRelationOverlayStroke(edge),
@@ -429,23 +435,16 @@ const OrgRelationLinksHud = ({
       role="presentation"
     >
       <defs>
-        <filter id="org-relation-link-glow" x="-40%" y="-40%" width="180%" height="180%">
-          <feGaussianBlur stdDeviation="2.4" result="blur" />
-          <feMerge>
-            <feMergeNode in="blur" />
-            <feMergeNode in="SourceGraphic" />
-          </feMerge>
-        </filter>
         <marker
           id="org-relation-dependency-arrow"
-          markerWidth="10"
-          markerHeight="10"
-          refX="8"
-          refY="5"
+          markerWidth="7"
+          markerHeight="7"
+          refX="5.8"
+          refY="3.5"
           orient="auto"
           markerUnits="strokeWidth"
         >
-          <path d="M 0 0 L 10 5 L 0 10 z" fill="#f59e0b" />
+          <path d="M 0 0 L 7 3.5 L 0 7 z" fill="#f59e0b" fillOpacity="0.88" />
         </marker>
       </defs>
       {links.map((link) => (
@@ -456,9 +455,8 @@ const OrgRelationLinksHud = ({
             stroke={link.stroke}
             strokeLinecap="round"
             strokeLinejoin="round"
-            strokeOpacity="0.22"
-            strokeWidth={link.strokeWidth + 6}
-            filter="url(#org-relation-link-glow)"
+            strokeOpacity="0.18"
+            strokeWidth={link.strokeWidth + 3}
           />
           <path
             d={link.path}
@@ -467,21 +465,21 @@ const OrgRelationLinksHud = ({
             strokeDasharray={link.dashArray}
             strokeLinecap="round"
             strokeLinejoin="round"
-            strokeOpacity="0.9"
+            strokeOpacity="0.74"
             strokeWidth={link.strokeWidth}
             markerEnd={link.arrow ? 'url(#org-relation-dependency-arrow)' : undefined}
           />
           {link.label ? (
             <g transform={`translate(${link.labelX} ${link.labelY})`}>
               <rect
-                x="-26"
+                x={-link.labelWidth / 2}
                 y="-11"
-                width="52"
+                width={link.labelWidth}
                 height="22"
-                rx="6"
+                rx="5"
                 fill="rgba(7, 11, 22, 0.84)"
                 stroke={link.stroke}
-                strokeOpacity="0.55"
+                strokeOpacity="0.5"
               />
               <text
                 textAnchor="middle"
@@ -682,6 +680,12 @@ export const OrgGraphSurface = ({
   const { t } = useAppTranslation('team');
   const [relationViewMode, setRelationViewMode] =
     useState<OrganizationRelationViewMode>('structure');
+  const canExploreRelations = isRelationExplorerAvailable(selectedNodeId);
+  useEffect(() => {
+    if (relationViewMode === 'explorer' && !canExploreRelations) {
+      setRelationViewMode('relations');
+    }
+  }, [canExploreRelations, relationViewMode]);
   const edgeOverlayText = useMemo(
     () => ({
       runtimeMessages: t('organizations.graph.edgeOverlay.runtimeMessages'),
@@ -744,40 +748,65 @@ export const OrgGraphSurface = ({
         relationViewMode,
         graphData,
         relationFocus.focusNodeIds,
-        relationFocus.focusEdgeIds,
-        selectedNodeId
+        relationFocus.focusEdgeIds
       ),
-    [graphData, relationFocus.focusEdgeIds, relationFocus.focusNodeIds, relationViewMode, selectedNodeId]
+    [graphData, relationFocus.focusEdgeIds, relationFocus.focusNodeIds, relationViewMode]
   );
   const relationToolbar = useMemo(
     () => (
-      <div className="mx-auto inline-flex max-w-full items-center rounded-lg border border-sky-300/15 bg-[var(--color-surface-overlay)] p-0.5 text-[11px] font-medium shadow-lg shadow-black/20 backdrop-blur-md">
-        {(
-          [
-            ['structure', 'Structure'],
-            ['relations', 'Relations'],
-            ['explorer', 'Explorer'],
-          ] as const
-        ).map(([mode, label]) => {
-          const active = relationViewMode === mode;
-          return (
-            <button
-              key={mode}
-              type="button"
-              className={`h-6 rounded-md px-2.5 transition-colors ${
-                active
-                  ? 'bg-sky-400/18 text-sky-100 shadow-sm shadow-sky-500/10'
-                  : 'text-[var(--color-text-muted)] hover:bg-white/5 hover:text-[var(--color-text)]'
-              }`}
-              onClick={() => setRelationViewMode(mode)}
-            >
-              {label}
-            </button>
-          );
-        })}
+      <div className="mx-auto flex max-w-full flex-col items-center gap-1">
+        <div className="inline-flex max-w-full items-center rounded-lg border border-sky-300/15 bg-[var(--color-surface-overlay)] p-0.5 text-[11px] font-medium shadow-lg shadow-black/20 backdrop-blur-md">
+          {(
+            [
+              ['structure', 'Structure'],
+              ['relations', 'Relations'],
+              ['explorer', 'Explorer'],
+            ] as const
+          ).map(([mode, label]) => {
+            const active = relationViewMode === mode;
+            const disabled = mode === 'explorer' && !canExploreRelations;
+            return (
+              <button
+                key={mode}
+                type="button"
+                disabled={disabled}
+                className={`h-6 rounded-md px-2.5 transition-colors ${
+                  active
+                    ? 'bg-sky-400/18 text-sky-100 shadow-sm shadow-sky-500/10'
+                    : disabled
+                      ? 'cursor-not-allowed text-[var(--color-text-muted)] opacity-40'
+                      : 'text-[var(--color-text-muted)] hover:bg-white/5 hover:text-[var(--color-text)]'
+                }`}
+                onClick={() => {
+                  if (!disabled) {
+                    setRelationViewMode(mode);
+                  }
+                }}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+        {relationViewMode !== 'structure' ? (
+          <div className="flex max-w-[520px] flex-wrap items-center justify-center gap-x-2.5 gap-y-1 rounded-md border border-sky-300/10 bg-[var(--color-surface-overlay)] px-2 py-1 text-[10px] font-medium text-[var(--color-text-muted)] shadow-md shadow-black/15 backdrop-blur-md">
+            {[
+              ['#f59e0b', 'depends'],
+              ['#22c55e', 'delegates'],
+              ['#38bdf8', 'observes'],
+              ['#94a3b8', 'communicates'],
+              ['#8b9cff', 'messages'],
+            ].map(([color, label]) => (
+              <span key={label} className="inline-flex items-center gap-1.5">
+                <span className="h-px w-4 rounded-full" style={{ backgroundColor: color }} />
+                {label}
+              </span>
+            ))}
+          </div>
+        ) : null}
       </div>
     ),
-    [relationViewMode]
+    [canExploreRelations, relationViewMode]
   );
   const createTeamFrameId = useMemo(
     () => getCreateTeamFrameId(viewModel, selectedNodeId),

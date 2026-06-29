@@ -1,5 +1,8 @@
 import type { OpenCodeDeliveryResponseState } from '../bridge/OpenCodeBridgeCommandContract';
-import type { OpenCodePromptDeliveryStatus } from './OpenCodePromptDeliveryLedger';
+import type {
+  OpenCodePromptDeliveryLedgerRecord,
+  OpenCodePromptDeliveryStatus,
+} from './OpenCodePromptDeliveryLedger';
 import type { AgentActionMode, InboxMessage, TaskRef } from '@shared/types/team';
 
 export const OPENCODE_PROMPT_DELIVERY_OBSERVE_DELAY_MS = 3_000;
@@ -124,6 +127,42 @@ export function isOpenCodePromptDeliveryObserveLaterResponseState(
     state === 'permission_blocked' ||
     state === 'session_stale'
   );
+}
+
+export function buildOpenCodePromptDeliveryActiveBusyStatus(input: {
+  teamName: string;
+  memberName: string;
+  retryAfterIso: string;
+  activeRecord: OpenCodePromptDeliveryLedgerRecord;
+  scheduleWake: (input: {
+    teamName: string;
+    memberName: string;
+    messageId: string;
+    delayMs?: number;
+  }) => void;
+}): {
+  busy: true;
+  reason: string;
+  retryAfterIso: string;
+  activeMessageId: string;
+  activeMessageKind: string | null;
+} {
+  const nextAttemptMs = input.activeRecord.nextAttemptAt
+    ? Date.parse(input.activeRecord.nextAttemptAt)
+    : NaN;
+  input.scheduleWake({
+    teamName: input.teamName,
+    memberName: input.memberName,
+    messageId: input.activeRecord.inboxMessageId,
+    delayMs: Number.isFinite(nextAttemptMs) ? Math.max(500, nextAttemptMs - Date.now()) : 500,
+  });
+  return {
+    busy: true,
+    reason: `opencode_prompt_delivery_active:${input.activeRecord.messageKind ?? 'default'}`,
+    retryAfterIso: input.activeRecord.nextAttemptAt ?? input.retryAfterIso,
+    activeMessageId: input.activeRecord.inboxMessageId,
+    activeMessageKind: input.activeRecord.messageKind,
+  };
 }
 
 function looksLikeNarrowAckOnly(text: string): boolean {

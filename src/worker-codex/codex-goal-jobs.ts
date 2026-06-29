@@ -21,6 +21,8 @@ export type CodexGoalJobManifest = {
   readonly taskId: string;
   readonly accounts: readonly string[];
   readonly outputPath?: string;
+  readonly progressPath?: string;
+  readonly progressHeartbeatMs?: number;
   readonly codexBinaryPath?: string;
   readonly model?: string;
   readonly reasoningEffort?: CodexGoalRunConfig["reasoningEffort"];
@@ -206,6 +208,8 @@ export function codexGoalJobToArgs(
     taskId: manifest.taskId,
     accounts: manifest.accounts,
     outputPath: manifest.outputPath,
+    progressPath: manifest.progressPath,
+    progressHeartbeatMs: manifest.progressHeartbeatMs,
     codexBinaryPath: manifest.codexBinaryPath,
     model: manifest.model,
     reasoningEffort: manifest.reasoningEffort,
@@ -280,6 +284,13 @@ export function parseCodexGoalJobManifest(
     ...(optionalString(value.outputPath) === undefined
       ? {}
       : { outputPath: optionalString(value.outputPath) as string }),
+    ...(optionalString(value.progressPath) === undefined
+      ? {}
+      : { progressPath: optionalString(value.progressPath) as string }),
+    ...optionalPositiveIntegerProperty(
+      value.progressHeartbeatMs,
+      "progressHeartbeatMs",
+    ),
     ...(optionalString(value.codexBinaryPath) === undefined
       ? {}
       : { codexBinaryPath: optionalString(value.codexBinaryPath) as string }),
@@ -372,7 +383,7 @@ function readStringArray(value: unknown, field: string): readonly string[] {
 
 function optionalPositiveIntegerProperty(
   value: unknown,
-  key: "taskTimeoutMs" | "staleLockMs" | "maxAccountCycles",
+  key: "taskTimeoutMs" | "staleLockMs" | "maxAccountCycles" | "progressHeartbeatMs",
 ): Partial<Pick<CodexGoalJobManifest, typeof key>> {
   if (value === undefined) return {};
   if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {

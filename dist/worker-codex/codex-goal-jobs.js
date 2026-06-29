@@ -99,6 +99,8 @@ export function codexGoalJobToArgs(manifest) {
         taskId: manifest.taskId,
         accounts: manifest.accounts,
         outputPath: manifest.outputPath,
+        progressPath: manifest.progressPath,
+        progressHeartbeatMs: manifest.progressHeartbeatMs,
         codexBinaryPath: manifest.codexBinaryPath,
         model: manifest.model,
         reasoningEffort: manifest.reasoningEffort,
@@ -168,6 +170,10 @@ export function parseCodexGoalJobManifest(value) {
         ...(optionalString(value.outputPath) === undefined
             ? {}
             : { outputPath: optionalString(value.outputPath) }),
+        ...(optionalString(value.progressPath) === undefined
+            ? {}
+            : { progressPath: optionalString(value.progressPath) }),
+        ...optionalPositiveIntegerProperty(value.progressHeartbeatMs, "progressHeartbeatMs"),
         ...(optionalString(value.codexBinaryPath) === undefined
             ? {}
             : { codexBinaryPath: optionalString(value.codexBinaryPath) }),

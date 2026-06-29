@@ -3,8 +3,10 @@ import { createHash } from "node:crypto";
 import { access, readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { DefaultRedactor } from "@vioxen/subscription-runtime/core";
 import { readCodexAuthJsonFreshness, validateCodexAuthJsonBytes, } from "@vioxen/subscription-runtime/provider-codex";
 import { LocalFileWorkerAccountCapacityStore } from "@vioxen/subscription-runtime/store-local-file";
+import { codexGoalProgressPath, } from "./codex-goal-runner.js";
 const execFileAsync = promisify(execFile);
 export function buildCodexGoalNoTmuxCommand(input) {
     const config = input.config;
@@ -29,12 +31,14 @@ export function buildCodexGoalNoTmuxCommand(input) {
     ];
     pushOptional(args, "--state-root", config.stateRootDir);
     pushOptional(args, "--output", config.outputPath);
+    pushOptional(args, "--progress", config.progressPath);
     pushOptional(args, "--codex-binary", config.codexBinaryPath);
     pushOptional(args, "--model", config.model);
     pushOptional(args, "--effort", config.reasoningEffort);
     pushOptional(args, "--service-tier", config.serviceTier);
     pushOptional(args, "--execution-engine", config.executionEngine);
     pushOptionalNumber(args, "--timeout-ms", config.taskTimeoutMs);
+    pushOptionalNumber(args, "--progress-heartbeat-ms", config.progressHeartbeatMs);
     pushOptionalNumber(args, "--stale-lock-ms", config.staleLockMs);
     pushOptionalNumber(args, "--max-account-cycles", config.maxAccountCycles);
     pushOptional(args, "--permission-mode", config.permissionMode);
@@ -70,6 +74,21 @@ export async function startCodexGoalTmux(input) {
     await execFileAsync("tmux", command.args);
     return command;
 }
+export function buildCodexGoalStopTmuxCommand(tmuxSession) {
+    if (!tmuxSession.trim()) {
+        throw new Error("codex_goal_tmux_session_required");
+    }
+    const args = ["kill-session", "-t", tmuxSession];
+    return {
+        args,
+        preview: `tmux ${args.map(shellQuote).join(" ")}`,
+    };
+}
+export async function stopCodexGoalTmux(tmuxSession) {
+    const command = buildCodexGoalStopTmuxCommand(tmuxSession);
+    await execFileAsync("tmux", command.args);
+    return command;
+}
 export async function collectCodexGoalStatus(input) {
     const warnings = [];
     const resultPath = input.jobRootDir && input.taskId
@@ -94,6 +113,15 @@ export async function collectCodexGoalStatus(input) {
         ? join(input.jobRootDir, `${input.taskId}.log`)
         : undefined);
     const logStatus = log ? await logFileStatus(log) : {};
+    const progressPath = input.progressPath ?? (input.jobRootDir && input.taskId
+        ? codexGoalProgressPath({
+            jobRootDir: input.jobRootDir,
+            taskId: input.taskId,
+        })
+        : undefined);
+    const progress = progressPath ? await readCodexGoalProgressSummary(progressPath) : {};
+    if (progress.warning)
+        warnings.push(progress.warning);
     return {
         ...(tmuxAlive === undefined ? {} : { tmuxAlive }),
         ...(resultPath === undefined ? {} : { resultPath }),
@@ -109,6 +137,31 @@ export async function collectCodexGoalStatus(input) {
         ...(logStatus.updatedAt === undefined
             ? {}
             : { logUpdatedAt: logStatus.updatedAt }),
+        ...(logStatus.byteLength === undefined
+            ? {}
+            : { logByteLength: logStatus.byteLength }),
+        ...(progressPath === undefined ? {} : { progressPath }),
+        ...(progress.exists === undefined ? {} : { progressExists: progress.exists }),
+        ...(progress.status === undefined ? {} : { progressStatus: progress.status }),
+        ...(progress.updatedAt === undefined
+            ? {}
+            : { progressUpdatedAt: progress.updatedAt }),
+        ...(progress.heartbeatAgeMs === undefined
+            ? {}
+            : { progressHeartbeatAgeMs: progress.heartbeatAgeMs }),
+        ...(progress.pid === undefined ? {} : { progressPid: progress.pid }),
+        ...(progress.resultStatus === undefined
+            ? {}
+            : { progressResultStatus: progress.resultStatus }),
+        ...(progress.reason === undefined
+            ? {}
+            : { progressResultReason: progress.reason }),
+        ...(progress.attemptCount === undefined
+            ? {}
+            : { progressAttemptCount: progress.attemptCount }),
+        ...(progress.currentAccount === undefined
+            ? {}
+            : { progressCurrentAccount: progress.currentAccount }),
         recommendedAction: recommendCodexGoalAction({
             ...(tmuxAlive === undefined ? {} : { tmuxAlive }),
             ...(result.status === undefined ? {} : { resultStatus: result.status }),
@@ -312,6 +365,59 @@ async function readCodexGoalResultSummary(path) {
         return {};
     }
 }
+async function readCodexGoalProgressSummary(path) {
+    try {
+        const [item, parsed] = await Promise.all([
+            stat(path),
+            readCodexGoalProgressFile(path),
+        ]);
+        const updatedAt = parsed.updatedAt ?? item.mtime.toISOString();
+        const updatedAtMs = Date.parse(updatedAt);
+        return {
+            exists: item.isFile(),
+            ...(parsed.status ? { status: parsed.status } : {}),
+            updatedAt,
+            ...(Number.isFinite(updatedAtMs)
+                ? { heartbeatAgeMs: Date.now() - updatedAtMs }
+                : {}),
+            ...(typeof parsed.pid === "number" ? { pid: parsed.pid } : {}),
+            ...(parsed.resultStatus ? { resultStatus: parsed.resultStatus } : {}),
+            ...(parsed.reason ? { reason: redactStatusText(parsed.reason) } : {}),
+            ...(typeof parsed.attemptCount === "number"
+                ? { attemptCount: parsed.attemptCount }
+                : {}),
+            ...(parsed.currentAccount ? { currentAccount: parsed.currentAccount } : {}),
+        };
+    }
+    catch (error) {
+        const safeMessage = error instanceof Error ? error.message : "progress_unreadable";
+        return safeMessage.includes("ENOENT")
+            ? { exists: false }
+            : { exists: false, warning: `progress file is unreadable: ${safeMessage}` };
+    }
+}
+async function readCodexGoalProgressFile(path) {
+    const parsed = JSON.parse(await readFile(path, "utf8"));
+    if (!isRecord(parsed))
+        return {};
+    return {
+        ...(typeof parsed.status === "string" ? { status: parsed.status } : {}),
+        ...(typeof parsed.updatedAt === "string" ? { updatedAt: parsed.updatedAt } : {}),
+        ...(typeof parsed.pid === "number" ? { pid: parsed.pid } : {}),
+        ...(typeof parsed.resultStatus === "string"
+            ? { resultStatus: parsed.resultStatus }
+            : {}),
+        ...(typeof parsed.reason === "string"
+            ? { reason: redactStatusText(parsed.reason) }
+            : {}),
+        ...(typeof parsed.attemptCount === "number"
+            ? { attemptCount: parsed.attemptCount }
+            : {}),
+        ...(typeof parsed.currentAccount === "string"
+            ? { currentAccount: parsed.currentAccount }
+            : {}),
+    };
+}
 async function gitWorkspaceStatus(path) {
     try {
         const { stdout } = await execFileAsync("git", [
@@ -343,6 +449,7 @@ async function logFileStatus(path) {
         return {
             exists: item.isFile(),
             ...(item.isFile() ? { updatedAt: item.mtime.toISOString() } : {}),
+            ...(item.isFile() ? { byteLength: item.size } : {}),
         };
     }
     catch {
@@ -422,6 +529,9 @@ function isAttemptFailureReason(value) {
         value === "provider_output_invalid" ||
         value === "user_abort" ||
         value === "unknown_error");
+}
+function redactStatusText(value) {
+    return new DefaultRedactor().redact(value);
 }
 function pushOptional(args, flagName, value) {
     if (value === undefined)

@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { codexGoalAccountSlots, runCodexGoal, } from "./codex-goal-runner.js";
 import { buildCodexGoalNoTmuxCommand, buildCodexGoalTmuxCommand, collectCodexGoalStatus, doctorCodexGoal, tailCodexGoalLog, } from "./codex-goal-ops.js";
-import { callCodexGoalMcpTool, getCodexGoalMcpPrompt, listCodexGoalMcpPrompts, listCodexGoalMcpResources, listCodexGoalMcpTools, readCodexGoalMcpResource, } from "./codex-goal-mcp-client.js";
+import { callCodexGoalMcpTool, doctorCodexGoalControlSurface, getCodexGoalMcpPrompt, listCodexGoalMcpPrompts, listCodexGoalMcpResources, listCodexGoalMcpTools, readCodexGoalMcpResource, } from "./codex-goal-mcp-client.js";
 const execFileAsync = promisify(execFile);
 export async function runCodexGoalCli(argv = process.argv.slice(2), io = defaultIo) {
     try {
@@ -59,6 +59,11 @@ export async function runCodexGoalCli(argv = process.argv.slice(2), io = default
                 args: await readJsonArgs(command, io),
             }), io);
             return 0;
+        }
+        if (command.kind === "control-doctor") {
+            const result = await doctorCodexGoalControlSurface();
+            writeJsonOrText(command.format, result, io);
+            return result.ok ? 0 : 1;
         }
         if (command.tmuxSession) {
             const tmuxCommand = buildTmuxCommand(command);
@@ -124,6 +129,12 @@ export function parseCodexGoalCliArgs(argv, io = defaultIo) {
     if (commandName === "prompt") {
         return parseMcpPrompt(rest, io);
     }
+    if (commandName === "doctor-control" || commandName === "control-doctor") {
+        return parseControlDoctor(rest, io);
+    }
+    const shortcut = parseMcpShortcut(commandName, rest, io);
+    if (shortcut)
+        return shortcut;
     throw new Error(`unknown command: ${commandName}`);
 }
 export function buildTmuxCommand(command) {
@@ -201,12 +212,14 @@ function parseStatus(argv, io) {
         "MEMO_STACK_GOAL_WORKSPACE_PATH",
     ]);
     const tmuxSession = option(values, env, "--tmux-session", []);
+    const progressPath = option(values, env, "--progress", []);
     return {
         kind: "status",
         ...(jobRootDir ? { jobRootDir } : {}),
         ...(taskId ? { taskId } : {}),
         ...(workspacePath ? { workspacePath } : {}),
         ...(tmuxSession ? { tmuxSession } : {}),
+        ...(progressPath ? { progressPath: resolvePath(io.cwd(), progressPath) } : {}),
         format: outputFormat(option(values, env, "--format", []) ?? "text"),
     };
 }
@@ -286,6 +299,160 @@ function parseMcpPrompt(argv, io) {
         format: outputFormat(option(values, io.env(), "--format", []) ?? "json"),
     };
 }
+function parseControlDoctor(argv, io) {
+    const values = parseFlags(argv);
+    return {
+        kind: "control-doctor",
+        format: outputFormat(option(values, io.env(), "--format", []) ?? "json"),
+    };
+}
+function parseMcpShortcut(commandName, argv, io) {
+    if (commandName === "overview") {
+        const values = parseFlags(argv);
+        return {
+            kind: "mcp-tool",
+            name: "codex_goal_overview",
+            argsJson: JSON.stringify({
+                ...registryArg(values),
+                ...optionalNumberArg(values, "--stale-after-ms", "staleAfterMs"),
+                ...optionalNumberArg(values, "--tail-lines", "tailLines"),
+                ...optionalNumberArg(values, "--limit", "limit"),
+            }),
+            format: outputFormat(option(values, io.env(), "--format", []) ?? "json"),
+        };
+    }
+    if (commandName === "brief") {
+        return parseJobShortcut({
+            kind: "brief",
+            tool: "codex_goal_brief",
+            argv,
+            io,
+            extraArgs: (values) => ({
+                ...optionalNumberArg(values, "--stale-after-ms", "staleAfterMs"),
+                ...optionalNumberArg(values, "--tail-lines", "tailLines"),
+            }),
+        });
+    }
+    if (commandName === "handoff") {
+        return parseJobShortcut({
+            kind: "handoff",
+            tool: "codex_goal_handoff",
+            argv,
+            io,
+            extraArgs: (values) => ({
+                includeCliFallback: !flag(values, "--no-cli-fallback"),
+                ...optionalNumberArg(values, "--stale-after-ms", "staleAfterMs"),
+                ...optionalNumberArg(values, "--tail-lines", "tailLines"),
+            }),
+        });
+    }
+    if (commandName === "accounts") {
+        return parseJobShortcut({
+            kind: "accounts",
+            tool: "codex_goal_accounts_status",
+            argv,
+            io,
+        });
+    }
+    if (commandName === "continue-job") {
+        return parseJobShortcut({
+            kind: "continue-job",
+            tool: "codex_goal_continue",
+            argv,
+            io,
+            extraArgs: (values) => ({
+                ...(flag(values, "--confirm") ? { confirmContinue: true } : {}),
+                ...(flag(values, "--force") ? { forceStart: true } : {}),
+                ...(flag(values, "--skip-doctor") ? { skipDoctor: true } : {}),
+            }),
+        });
+    }
+    if (commandName === "recover-job") {
+        return parseJobShortcut({
+            kind: "recover-job",
+            tool: "codex_goal_recover",
+            argv,
+            io,
+            extraArgs: (values) => ({
+                ...(flag(values, "--confirm") ? { confirmRecover: true } : {}),
+                ...(flag(values, "--force") ? { forceStart: true } : {}),
+                ...(flag(values, "--skip-doctor") ? { skipDoctor: true } : {}),
+            }),
+        });
+    }
+    if (commandName === "stop-job") {
+        return parseJobShortcut({
+            kind: "stop-job",
+            tool: "codex_goal_stop",
+            argv,
+            io,
+            extraArgs: (values) => ({
+                ...(flag(values, "--confirm") ? { confirmStop: true } : {}),
+                ...(flag(values, "--force") ? { forceStop: true } : {}),
+                ...optionalNumberArg(values, "--stale-after-ms", "staleAfterMs"),
+                ...optionalNumberArg(values, "--tail-lines", "tailLines"),
+            }),
+        });
+    }
+    if (commandName === "mark-reviewed") {
+        return parseJobShortcut({
+            kind: "mark-reviewed",
+            tool: "codex_goal_mark_reviewed",
+            argv,
+            io,
+            extraArgs: (values) => ({
+                ...(values.values.get("--note")
+                    ? { note: values.values.get("--note") }
+                    : {}),
+            }),
+        });
+    }
+    if (commandName === "relogin") {
+        const jobId = argv[0];
+        if (!jobId || jobId.startsWith("--"))
+            throw new Error("jobId is required");
+        const account = argv[1]?.startsWith("--") ? undefined : argv[1];
+        const flagArgs = account ? argv.slice(2) : argv.slice(1);
+        const values = parseFlags(flagArgs);
+        return {
+            kind: "mcp-tool",
+            name: "codex_goal_accounts_relogin_instructions",
+            argsJson: JSON.stringify({
+                jobId,
+                ...registryArg(values),
+                ...(account ? { account } : {}),
+            }),
+            format: outputFormat(option(values, io.env(), "--format", []) ?? "json"),
+        };
+    }
+    return undefined;
+}
+function parseJobShortcut(input) {
+    const jobId = input.argv[0];
+    if (!jobId || jobId.startsWith("--"))
+        throw new Error("jobId is required");
+    const values = parseFlags(input.argv.slice(1));
+    return {
+        kind: "mcp-tool",
+        name: input.tool,
+        argsJson: JSON.stringify({
+            jobId,
+            ...registryArg(values),
+            ...(input.extraArgs?.(values) ?? {}),
+        }),
+        format: outputFormat(option(values, input.io.env(), "--format", []) ?? "json"),
+    };
+}
+function registryArg(values) {
+    const registryRootDir = values.values.get("--registry-root");
+    return registryRootDir ? { registryRootDir } : {};
+}
+function optionalNumberArg(values, flagName, key) {
+    const value = values.values.get(flagName);
+    return value === undefined
+        ? {}
+        : { [key]: parsePositiveInteger(value, flagName) };
+}
 function jsonArgsSource(values) {
     const argsJson = values.values.get("--args-json");
     const argsFile = values.values.get("--args-file");
@@ -348,6 +515,8 @@ function runConfigFromFlags(values, env, cwd, jobRootDir, taskId) {
         accounts,
         outputPath: resolvePath(cwd, option(values, env, "--output", []) ??
             join(resolvePath(cwd, jobRootDir), `${taskId}.latest-result.json`)),
+        progressPath: resolvePath(cwd, option(values, env, "--progress", []) ??
+            join(resolvePath(cwd, jobRootDir), `${taskId}.progress.json`)),
         model: option(values, env, "--model", ["CODEX_MODEL"]) ?? "gpt-5.5",
         ...(reasoningEffort ? { reasoningEffort } : {}),
         ...(serviceTier ? { serviceTier } : {}),
@@ -361,6 +530,9 @@ function runConfigFromFlags(values, env, cwd, jobRootDir, taskId) {
             "SUBSCRIPTION_RUNTIME_TASK_TIMEOUT_MS",
             "MEMO_STACK_GOAL_TASK_TIMEOUT_MS",
         ]), "--timeout-ms") ?? parseDurationMs(option(values, env, "--timeout", []) ?? "72h"),
+        progressHeartbeatMs: parseOptionalPositiveInteger(option(values, env, "--progress-heartbeat-ms", [
+            "SUBSCRIPTION_RUNTIME_PROGRESS_HEARTBEAT_MS",
+        ]), "--progress-heartbeat-ms") ?? 60_000,
         maxAccountCycles: parseOptionalPositiveInteger(option(values, env, "--max-account-cycles", [
             "SUBSCRIPTION_RUNTIME_MAX_ACCOUNT_CYCLES",
         ]), "--max-account-cycles") ?? 3,
@@ -574,6 +746,15 @@ function usage() {
   subscription-runtime-codex-goal status --job-root <dir> --task-id <id> [--workspace <dir>] [--tmux-session <name>]
   subscription-runtime-codex-goal doctor --job-root <dir> --workspace <dir> --prompt <file> --task-id <id> --accounts account-a,account-b
   subscription-runtime-codex-goal tail --job-root <dir> --task-id <id> [--lines 100]
+  subscription-runtime-codex-goal doctor-control
+  subscription-runtime-codex-goal overview [--registry-root <dir>]
+  subscription-runtime-codex-goal brief <jobId> [--registry-root <dir>]
+  subscription-runtime-codex-goal handoff <jobId> [--registry-root <dir>]
+  subscription-runtime-codex-goal accounts <jobId> [--registry-root <dir>]
+  subscription-runtime-codex-goal relogin <jobId> [account] [--registry-root <dir>]
+  subscription-runtime-codex-goal continue-job <jobId> --confirm [--registry-root <dir>]
+  subscription-runtime-codex-goal recover-job <jobId> --confirm [--registry-root <dir>]
+  subscription-runtime-codex-goal stop-job <jobId> --confirm [--registry-root <dir>]
   subscription-runtime-codex-goal tools
   subscription-runtime-codex-goal tool <mcp_tool_name> [--args-json '{"jobId":"..."}' | --args-file args.json]
   subscription-runtime-codex-goal resources
@@ -590,6 +771,7 @@ escape hatches:
 MCP fallback:
   use tool/resources/prompts when native MCP tools are unavailable in a Codex thread.
   These commands call the same in-process MCP server via the SDK, so the API surface matches MCP.
+  Shortcuts like overview, brief, handoff, accounts, continue-job, recover-job and stop-job are thin wrappers around MCP tools.
 `;
 }
 function isRecord(value) {

@@ -174,6 +174,63 @@ describe("codex goal ops", () => {
     expect(JSON.stringify(brief)).not.toContain("rawBearerSecret");
   });
 
+  it("uses runner progress as the strongest observable progress signal", async () => {
+    const fixture = await createGoalFixture();
+    const launch = launchInput(fixture.config, fixture.root);
+    await writeFile(
+      fixture.config.progressPath!,
+      `${JSON.stringify({
+        schemaVersion: 1,
+        taskId: fixture.config.taskId,
+        status: "running",
+        updatedAt: "2026-06-02T00:00:00.000Z",
+        pid: 12345,
+        reason: "still running token=raw-secret",
+      })}\n`,
+    );
+    await writeFile(
+      launch.config.outputPath!,
+      `${JSON.stringify({
+        status: "partial",
+        reason: "quota_limited",
+        task: { updatedAt: "2026-06-01T00:00:00.000Z" },
+      })}\n`,
+    );
+
+    const status = await collectCodexGoalStatus({
+      jobRootDir: fixture.config.jobRootDir,
+      taskId: fixture.config.taskId,
+      workspacePath: fixture.config.workspacePath,
+      logPath: launch.logPath,
+      progressPath: fixture.config.progressPath!,
+    });
+    const brief = await buildCodexGoalBrief({
+      jobId: "job-from-registry",
+      launch,
+      status,
+      accounts: [accountStatus("account-a", {})],
+      staleAfterMs: 60_000,
+      tailLines: 20,
+    });
+
+    expect(status).toMatchObject({
+      progressExists: true,
+      progressStatus: "running",
+      progressUpdatedAt: "2026-06-02T00:00:00.000Z",
+      progressPid: 12345,
+      progressResultReason: "still running token=[redacted:token-field]",
+    });
+    expect(brief).toMatchObject({
+      lastProgressAt: "2026-06-02T00:00:00.000Z",
+      progressStatus: "running",
+      progressUpdatedAt: "2026-06-02T00:00:00.000Z",
+      progressPid: 12345,
+    });
+    expect(String(brief.text)).toContain("progressStatus running");
+    expect(JSON.stringify(status)).not.toContain("raw-secret");
+    expect(JSON.stringify(brief)).not.toContain("raw-secret");
+  });
+
   it("does not mark continuation safe when all configured accounts are unavailable", async () => {
     const fixture = await createGoalFixture();
     const launch = launchInput(fixture.config, fixture.root);
@@ -334,6 +391,7 @@ async function createGoalFixture(): Promise<{
       taskId: "task-1",
       accounts: codexGoalAccountSlots(["account-a"]),
       outputPath: join(jobRootDir, "task-1.latest-result.json"),
+      progressPath: join(jobRootDir, "task-1.progress.json"),
       model: "gpt-5.5",
       reasoningEffort: "xhigh",
       serviceTier: "fast",

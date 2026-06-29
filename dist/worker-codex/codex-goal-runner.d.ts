@@ -17,6 +17,8 @@ export type CodexGoalRunConfig = {
     readonly taskId: string;
     readonly accounts: readonly CodexGoalAccountSlot[];
     readonly outputPath?: string;
+    readonly progressPath?: string;
+    readonly progressHeartbeatMs?: number;
     readonly executorId?: string;
     readonly codexBinaryPath?: string;
     readonly model?: string;
@@ -39,6 +41,18 @@ export type CodexGoalRunConfig = {
     readonly prewarmOnStart?: boolean;
     readonly sourceEnv?: Readonly<Record<string, string | undefined>>;
 };
+export type CodexGoalProgressStatus = "starting" | "running" | "completed" | "partial" | "failed" | "aborted";
+export type CodexGoalProgressSnapshot = {
+    readonly schemaVersion: 1;
+    readonly taskId: string;
+    readonly status: CodexGoalProgressStatus;
+    readonly updatedAt: string;
+    readonly pid: number;
+    readonly reason?: string;
+    readonly resultStatus?: string;
+    readonly attemptCount?: number;
+    readonly currentAccount?: string;
+};
 export type CodexGoalRunDeps = {
     readonly createExecutor?: (options: FileBackendCodexSafeExecutorOptions) => CodexGoalExecutor;
 };
@@ -53,5 +67,6 @@ export declare function buildCodexGoalExecutorOptions(input: {
     readonly encryptionKey: Uint8Array;
 }): FileBackendCodexSafeExecutorOptions;
 export declare function readOrCreateCodexGoalEncryptionKey(keyPath: string): Promise<Uint8Array>;
+export declare function codexGoalProgressPath(config: Pick<CodexGoalRunConfig, "jobRootDir" | "taskId" | "progressPath">): string;
 export declare function codexGoalAccountSlots(accounts: readonly string[]): readonly CodexGoalAccountSlot[];
 //# sourceMappingURL=codex-goal-runner.d.ts.map

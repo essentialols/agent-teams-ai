@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -7,11 +7,253 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
 import { LocalFileWorkerAccountCapacityStore } from "@vioxen/subscription-runtime/store-local-file";
-import { createCodexGoalMcpServer } from "../codex-goal-mcp";
+import {
+  buildCodexGoalBrief,
+  createCodexGoalMcpServer,
+} from "../codex-goal-mcp";
 
 const execFileAsync = promisify(execFile);
 
 describe("codex goal MCP server", () => {
+  it("flags alive workers with stale logs as silent-stale", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-silent-stale-"));
+    const logPath = join(root, "task.log");
+    const promptPath = join(root, "prompt.md");
+    const staleLogTime = new Date(Date.now() - 10_000);
+    try {
+      await writeFile(logPath, "");
+      await writeFile(promptPath, "Do a sandbox task.\n");
+      await utimes(logPath, staleLogTime, staleLogTime);
+
+      const brief = await buildCodexGoalBrief({
+        jobId: "job-silent-stale",
+        launch: {
+          cwd: root,
+          logPath,
+          cliCommand: ["subscription-runtime-codex-goal"],
+          config: {
+            jobRootDir: root,
+            authRootDir: root,
+            workspacePath: root,
+            promptPath,
+            taskId: "task",
+            accounts: [{ name: "account-a" }],
+          },
+        },
+        status: {
+          tmuxAlive: true,
+          resultExists: false,
+          workspaceDirty: false,
+          changedFiles: [],
+          logPath,
+          logExists: true,
+          logUpdatedAt: staleLogTime.toISOString(),
+          logByteLength: 0,
+          recommendedAction: "wait_for_worker",
+          warnings: [],
+        },
+        accounts: [{
+          name: "account-a",
+          authJsonPath: join(root, "account-a", "auth.json"),
+          status: "ready",
+          warnings: [],
+          safeMessage: "account-a is ready",
+        }],
+        staleAfterMs: 1_000,
+        tailLines: 20,
+      });
+
+      expect(brief).toMatchObject({
+        isStale: true,
+        silentStale: true,
+        logByteLength: 0,
+        safeToContinue: false,
+        nextBestTool: "manual_review",
+        nextBestReason: "silent_stale_worker",
+        nextBestCommand: "manual_review_silent_stale_worker",
+      });
+      expect(String(brief.text)).toContain("silentStale true");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("records an audit event when stopping a sandbox tmux worker", async () => {
+    if (!(await hasTmux())) return;
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-stop-event-"));
+    const registryRootDir = join(root, "registry");
+    const jobRootDir = join(root, "job");
+    const stateRootDir = join(root, "state");
+    const authRootDir = join(root, "auth");
+    const workspacePath = join(root, "workspace");
+    const promptPath = join(jobRootDir, "prompt.md");
+    const taskId = "sandbox-stop-task";
+    const tmuxSession = `subscription-runtime-stop-${process.pid}-${Date.now()}`;
+
+    try {
+      await mkdir(jobRootDir, { recursive: true });
+      await mkdir(workspacePath, { recursive: true });
+      await execFileAsync("git", ["init"], { cwd: workspacePath });
+      await writeFile(promptPath, "Do a sandbox task.\n");
+      await writeFakeAuth(authRootDir, "account-a", {
+        lastRefresh: "2026-06-03T00:00:00.000Z",
+      });
+      await execFileAsync("tmux", [
+        "new-session",
+        "-d",
+        "-s",
+        tmuxSession,
+        "-c",
+        root,
+        "sleep 300",
+      ]);
+
+      const server = createCodexGoalMcpServer();
+      const client = new Client({ name: "subscription-runtime-test", version: "0.0.0" });
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+      await Promise.all([
+        server.connect(serverTransport),
+        client.connect(clientTransport),
+      ]);
+
+      try {
+        await callToolJson(client, "codex_goal_create_job", {
+          registryRootDir,
+          jobId: "job-stop",
+          jobRootDir,
+          authRootDir,
+          stateRootDir,
+          workspacePath,
+          promptPath,
+          taskId,
+          accounts: ["account-a"],
+          logPath: join(jobRootDir, `${taskId}.log`),
+          tmuxSession,
+        });
+
+        const stopped = await callToolJson(client, "codex_goal_stop", {
+          registryRootDir,
+          jobId: "job-stop",
+          confirmStop: true,
+          forceStop: true,
+        });
+
+        expect(stopped).toMatchObject({
+          ok: true,
+          mode: "stop",
+          jobId: "job-stop",
+          tmuxSession,
+        });
+        const stopEventPath = String(stopped.stopEventPath);
+        expect(stopEventPath).toContain(`${taskId}.stop-event.json`);
+        const stopEvent = JSON.parse(await readFile(stopEventPath, "utf8"));
+        expect(stopEvent).toMatchObject({
+          schemaVersion: 1,
+          jobId: "job-stop",
+          taskId,
+          tmuxSession,
+          forceStop: true,
+          reason: "manual_force_stop",
+        });
+        expect(JSON.stringify(stopEvent)).not.toContain("refresh-secret");
+        expect(JSON.stringify(stopEvent)).not.toContain("access-secret");
+      } finally {
+        await client.close();
+        await server.close();
+      }
+    } finally {
+      await execFileAsync("tmux", ["kill-session", "-t", tmuxSession]).catch(() => undefined);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks overview continuation hints when multiple jobs share one workspace", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-workspace-conflict-"));
+    const registryRootDir = join(root, "registry");
+    const authRootDir = join(root, "auth");
+    const workspacePath = join(root, "workspace");
+    const jobRootA = join(root, "job-a");
+    const jobRootB = join(root, "job-b");
+
+    try {
+      await mkdir(jobRootA, { recursive: true });
+      await mkdir(jobRootB, { recursive: true });
+      await mkdir(workspacePath, { recursive: true });
+      await execFileAsync("git", ["init"], { cwd: workspacePath });
+      await writeFile(join(jobRootA, "prompt.md"), "Do sandbox task A.\n");
+      await writeFile(join(jobRootB, "prompt.md"), "Do sandbox task B.\n");
+      await writeFakeAuth(authRootDir, "account-a", {
+        lastRefresh: "2026-06-03T00:00:00.000Z",
+      });
+
+      const server = createCodexGoalMcpServer();
+      const client = new Client({ name: "subscription-runtime-test", version: "0.0.0" });
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+      await Promise.all([
+        server.connect(serverTransport),
+        client.connect(clientTransport),
+      ]);
+
+      try {
+        for (const [jobId, jobRootDir, taskId] of [
+          ["job-a", jobRootA, "task-a"],
+          ["job-b", jobRootB, "task-b"],
+        ] as const) {
+          await callToolJson(client, "codex_goal_create_job", {
+            registryRootDir,
+            jobId,
+            jobRootDir,
+            authRootDir,
+            workspacePath,
+            promptPath: join(jobRootDir, "prompt.md"),
+            taskId,
+            accounts: ["account-a"],
+            tmuxSession: `${jobId}-worker`,
+          });
+        }
+
+        const overview = await callToolJson(client, "codex_goal_overview", {
+          registryRootDir,
+        });
+
+        expect(overview).toMatchObject({
+          ok: true,
+          safeToOperate: false,
+          summary: {
+            workspaceConflicts: 1,
+            blockedBySingleWriter: 2,
+            safeToContinue: 0,
+          },
+        });
+        expect(overview.workspaceConflicts).toEqual([
+          expect.objectContaining({
+            workspacePath,
+            jobIds: expect.arrayContaining(["job-a", "job-b"]),
+            safeToContinueJobIds: expect.arrayContaining(["job-a", "job-b"]),
+            reason: "multiple_potential_writers_share_workspace",
+          }),
+        ]);
+        const overviewJobs = overview.jobs as readonly Record<string, unknown>[];
+        for (const job of overviewJobs) {
+          expect(job).toMatchObject({
+            blockedBySingleWriter: true,
+            workspaceConflict: true,
+            safeToContinue: false,
+            nextBestTool: "manual_review",
+            nextBestReason: "single_writer_workspace_conflict",
+            nextBestCommand: "manual_review_single_writer_workspace_conflict",
+          });
+          expect((job.commands as Record<string, unknown>).continue).toBeUndefined();
+        }
+      } finally {
+        await client.close();
+        await server.close();
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("exposes job account tools without requiring manual auth or state paths", async () => {
     const root = await mkdtemp(join(tmpdir(), "subscription-runtime-mcp-"));
     const registryRootDir = join(root, "registry");
@@ -81,8 +323,31 @@ describe("codex goal MCP server", () => {
           maxAccountCycles: 3,
           requireGitWorkspace: true,
           prewarmOnStart: false,
+          tmuxSession: "sandbox-task-worker",
           outputFormat: "json",
         });
+        await writeFile(
+          join(jobRootDir, `${taskId}.pause-request.json`),
+          `${JSON.stringify({
+            schemaVersion: 1,
+            jobId: "job-a",
+            taskId,
+            requestedAt: "2026-06-29T10:00:00.000Z",
+            mode: "soft_pause_only",
+            note: "pause after current audit window",
+          })}\n`,
+        );
+        await writeFile(
+          join(jobRootDir, `${taskId}.review.json`),
+          `${JSON.stringify({
+            schemaVersion: 1,
+            jobId: "job-a",
+            taskId,
+            reviewedAt: "2026-06-29T11:00:00.000Z",
+            note: "reviewed sandbox state",
+            status: { safe: true, token: "access-secret" },
+          })}\n`,
+        );
 
         const job = await callToolJson(client, "codex_goal_get_job", {
           registryRootDir,
@@ -104,11 +369,90 @@ describe("codex goal MCP server", () => {
           safeToContinue: false,
           hasAvailableAccount: false,
           availableDedupedAccounts: [],
+          lifecycleMarkerTypes: ["review", "pause_request"],
           nextBestTool: "codex_goal_accounts_status",
         });
+        expect(briefBody.lifecycleMarkers).toEqual([
+          expect.objectContaining({
+            type: "review",
+            timestamp: "2026-06-29T11:00:00.000Z",
+            note: "reviewed sandbox state",
+          }),
+          expect.objectContaining({
+            type: "pause_request",
+            timestamp: "2026-06-29T10:00:00.000Z",
+            mode: "soft_pause_only",
+          }),
+        ]);
         expect(String(briefBody.nextBestCommand)).toContain("codex_goal_accounts_status");
         expect(String(briefBody.nextBestCommand)).toContain("job-a");
         expect(String(briefBody.nextBestCommand)).not.toContain("authRootDir");
+        expect(JSON.stringify(brief)).not.toContain("access-secret");
+
+        const overview = await callToolJson(client, "codex_goal_overview", {
+          registryRootDir,
+        });
+        expect(overview).toMatchObject({
+          ok: true,
+          registryRootDir,
+          totalJobs: 1,
+          returnedJobs: 1,
+          summary: {
+            running: 0,
+            safeToContinue: 0,
+            needsHumanRelogin: 1,
+          },
+        });
+        const overviewJobs = overview.jobs as readonly Record<string, unknown>[];
+        expect(overviewJobs[0]).toMatchObject({
+          ok: true,
+          jobId: "job-a",
+          workerAlive: false,
+          hasAvailableAccount: false,
+          lifecycleMarkerTypes: ["review", "pause_request"],
+          nextBestTool: "codex_goal_accounts_status",
+        });
+        expect(overviewJobs[0]?.lifecycleMarkers).toEqual([
+          expect.objectContaining({ type: "review" }),
+          expect.objectContaining({ type: "pause_request" }),
+        ]);
+        expect(String((overviewJobs[0]?.commands as Record<string, unknown>).brief))
+          .toContain("registryRootDir");
+        expect(JSON.stringify(overview)).not.toContain("refresh-secret");
+        expect(JSON.stringify(overview)).not.toContain("access-secret");
+
+        const handoff = await callToolJson(client, "codex_goal_handoff", {
+          registryRootDir,
+          jobId: "job-a",
+        });
+        const handoffBody = handoff.handoff as Record<string, unknown>;
+        expect(String(handoffBody.text)).toContain("Codex goal handoff: job-a");
+        expect(String(handoffBody.text)).toContain("subscription-runtime-codex-goal tool codex_goal_brief");
+        expect(String(handoffBody.text)).toContain("Do not run two writer workers");
+        expect(String(handoffBody.text)).toContain("lifecycleMarkers: review, pause_request");
+        expect(String(handoffBody.text)).not.toContain("refresh-secret");
+        expect(String(handoffBody.text)).not.toContain("access-secret");
+        expect(String(handoffBody.text)).not.toContain("secret@example.com");
+        expect(handoffBody.summary).toMatchObject({
+          jobId: "job-a",
+          registryRootDir,
+          safeToContinue: false,
+          hasAvailableAccount: false,
+          lifecycleMarkerTypes: ["review", "pause_request"],
+        });
+
+        const stop = await callToolJson(client, "codex_goal_stop", {
+          registryRootDir,
+          jobId: "job-a",
+          confirmStop: true,
+        });
+        expect(stop).toMatchObject({
+          ok: false,
+          reason: "worker_not_running",
+          jobId: "job-a",
+          tmuxSession: "sandbox-task-worker",
+        });
+        expect(String(stop.stopCommand)).toContain("tmux kill-session -t sandbox-task-worker");
 
         const status = await callToolJson(client, "codex_goal_accounts_status", {
           registryRootDir,
@@ -213,6 +557,15 @@ async function callToolJson(
     | undefined;
   if (first?.type !== "text") throw new Error("expected text MCP response");
   return JSON.parse(first.text ?? "{}") as Record<string, unknown>;
+}
+
+async function hasTmux(): Promise<boolean> {
+  try {
+    await execFileAsync("tmux", ["-V"]);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function writeFakeAuth(

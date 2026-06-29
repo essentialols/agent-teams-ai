@@ -1,5 +1,5 @@
 import type { AttemptFailureReason } from "@vioxen/subscription-runtime/worker-core";
-import type { CodexGoalRunConfig } from "./codex-goal-runner.js";
+import { type CodexGoalRunConfig } from "./codex-goal-runner.js";
 export type CodexGoalOutputFormat = "text" | "json";
 export type CodexGoalLaunchInput = {
     readonly config: CodexGoalRunConfig;
@@ -19,6 +19,7 @@ export type CodexGoalStatusInput = {
     readonly workspacePath?: string;
     readonly tmuxSession?: string;
     readonly logPath?: string;
+    readonly progressPath?: string;
 };
 export type CodexGoalRecommendedAction = "start_worker" | "wait_for_worker" | "review_completed" | "continue_after_capacity" | "continue_after_timeout" | "inspect_dirty_workspace" | "inspect_dirty_failure" | "inspect_failure" | "check_log_or_result";
 export type CodexGoalStatus = {
@@ -32,6 +33,17 @@ export type CodexGoalStatus = {
     readonly logPath?: string;
     readonly logExists?: boolean;
     readonly logUpdatedAt?: string;
+    readonly logByteLength?: number;
+    readonly progressPath?: string;
+    readonly progressExists?: boolean;
+    readonly progressStatus?: string;
+    readonly progressUpdatedAt?: string;
+    readonly progressHeartbeatAgeMs?: number;
+    readonly progressPid?: number;
+    readonly progressResultStatus?: string;
+    readonly progressResultReason?: string;
+    readonly progressAttemptCount?: number;
+    readonly progressCurrentAccount?: string;
     readonly recommendedAction: CodexGoalRecommendedAction;
     readonly warnings: readonly string[];
 };
@@ -70,6 +82,8 @@ export type CodexGoalAccountStatusInput = {
 export declare function buildCodexGoalNoTmuxCommand(input: CodexGoalLaunchInput): string;
 export declare function buildCodexGoalTmuxCommand(input: CodexGoalLaunchInput): CodexGoalTmuxCommand;
 export declare function startCodexGoalTmux(input: CodexGoalLaunchInput): Promise<CodexGoalTmuxCommand>;
+export declare function buildCodexGoalStopTmuxCommand(tmuxSession: string): CodexGoalTmuxCommand;
+export declare function stopCodexGoalTmux(tmuxSession: string): Promise<CodexGoalTmuxCommand>;
 export declare function collectCodexGoalStatus(input: CodexGoalStatusInput): Promise<CodexGoalStatus>;
 export declare function doctorCodexGoal(input: {
     readonly config: CodexGoalRunConfig;

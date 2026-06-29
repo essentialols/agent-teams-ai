@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { type CodexGoalRunConfig } from "./codex-goal-runner.js";
 type OutputFormat = "text" | "json";
-type CodexGoalCliCommand = RunCommand | StatusCommand | DoctorCommand | TailCommand | McpToolsCommand | McpToolCommand | McpResourcesCommand | McpResourceCommand | McpPromptsCommand | McpPromptCommand | HelpCommand;
+type CodexGoalCliCommand = RunCommand | StatusCommand | DoctorCommand | TailCommand | McpToolsCommand | McpToolCommand | McpResourcesCommand | McpResourceCommand | McpPromptsCommand | McpPromptCommand | ControlDoctorCommand | HelpCommand;
 type RunCommand = {
     readonly kind: "run";
     readonly config: CodexGoalRunConfig;
@@ -18,6 +18,7 @@ type StatusCommand = {
     readonly taskId?: string;
     readonly workspacePath?: string;
     readonly tmuxSession?: string;
+    readonly progressPath?: string;
     readonly format: OutputFormat;
 };
 type DoctorCommand = {
@@ -60,6 +61,10 @@ type McpPromptCommand = {
     readonly name: string;
     readonly argsJson?: string;
     readonly argsFile?: string;
+    readonly format: OutputFormat;
+};
+type ControlDoctorCommand = {
+    readonly kind: "control-doctor";
     readonly format: OutputFormat;
 };
 type HelpCommand = {

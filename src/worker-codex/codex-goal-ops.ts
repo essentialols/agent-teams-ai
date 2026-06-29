@@ -3,13 +3,17 @@ import { createHash } from "node:crypto";
 import { access, readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { DefaultRedactor } from "@vioxen/subscription-runtime/core";
 import {
   readCodexAuthJsonFreshness,
   validateCodexAuthJsonBytes,
 } from "@vioxen/subscription-runtime/provider-codex";
 import { LocalFileWorkerAccountCapacityStore } from "@vioxen/subscription-runtime/store-local-file";
 import type { AttemptFailureReason } from "@vioxen/subscription-runtime/worker-core";
-import type { CodexGoalRunConfig } from "./codex-goal-runner";
+import {
+  codexGoalProgressPath,
+  type CodexGoalRunConfig,
+} from "./codex-goal-runner";
 
 const execFileAsync = promisify(execFile);
 
@@ -35,6 +39,7 @@ export type CodexGoalStatusInput = {
   readonly workspacePath?: string;
   readonly tmuxSession?: string;
   readonly logPath?: string;
+  readonly progressPath?: string;
 };
 
 export type CodexGoalRecommendedAction =
@@ -59,6 +64,17 @@ export type CodexGoalStatus = {
   readonly logPath?: string;
   readonly logExists?: boolean;
   readonly logUpdatedAt?: string;
+  readonly logByteLength?: number;
+  readonly progressPath?: string;
+  readonly progressExists?: boolean;
+  readonly progressStatus?: string;
+  readonly progressUpdatedAt?: string;
+  readonly progressHeartbeatAgeMs?: number;
+  readonly progressPid?: number;
+  readonly progressResultStatus?: string;
+  readonly progressResultReason?: string;
+  readonly progressAttemptCount?: number;
+  readonly progressCurrentAccount?: string;
   readonly recommendedAction: CodexGoalRecommendedAction;
   readonly warnings: readonly string[];
 };
@@ -126,12 +142,14 @@ export function buildCodexGoalNoTmuxCommand(input: CodexGoalLaunchInput): string
   ];
   pushOptional(args, "--state-root", config.stateRootDir);
   pushOptional(args, "--output", config.outputPath);
+  pushOptional(args, "--progress", config.progressPath);
   pushOptional(args, "--codex-binary", config.codexBinaryPath);
   pushOptional(args, "--model", config.model);
   pushOptional(args, "--effort", config.reasoningEffort);
   pushOptional(args, "--service-tier", config.serviceTier);
   pushOptional(args, "--execution-engine", config.executionEngine);
   pushOptionalNumber(args, "--timeout-ms", config.taskTimeoutMs);
+  pushOptionalNumber(args, "--progress-heartbeat-ms", config.progressHeartbeatMs);
   pushOptionalNumber(args, "--stale-lock-ms", config.staleLockMs);
   pushOptionalNumber(args, "--max-account-cycles", config.maxAccountCycles);
   pushOptional(args, "--permission-mode", config.permissionMode);
@@ -171,6 +189,27 @@ export async function startCodexGoalTmux(
   return command;
 }
 
+export function buildCodexGoalStopTmuxCommand(
+  tmuxSession: string,
+): CodexGoalTmuxCommand {
+  if (!tmuxSession.trim()) {
+    throw new Error("codex_goal_tmux_session_required");
+  }
+  const args = ["kill-session", "-t", tmuxSession] as const;
+  return {
+    args,
+    preview: `tmux ${args.map(shellQuote).join(" ")}`,
+  };
+}
+
+export async function stopCodexGoalTmux(
+  tmuxSession: string,
+): Promise<CodexGoalTmuxCommand> {
+  const command = buildCodexGoalStopTmuxCommand(tmuxSession);
+  await execFileAsync("tmux", command.args);
+  return command;
+}
+
 export async function collectCodexGoalStatus(
   input: CodexGoalStatusInput,
 ): Promise<CodexGoalStatus> {
@@ -195,6 +234,14 @@ export async function collectCodexGoalStatus(
     ? join(input.jobRootDir, `${input.taskId}.log`)
     : undefined);
   const logStatus = log ? await logFileStatus(log) : {};
+  const progressPath = input.progressPath ?? (input.jobRootDir && input.taskId
+    ? codexGoalProgressPath({
+        jobRootDir: input.jobRootDir,
+        taskId: input.taskId,
+      })
+    : undefined);
+  const progress = progressPath ? await readCodexGoalProgressSummary(progressPath) : {};
+  if (progress.warning) warnings.push(progress.warning);
   return {
     ...(tmuxAlive === undefined ? {} : { tmuxAlive }),
     ...(resultPath === undefined ? {} : { resultPath }),
@@ -210,6 +257,31 @@ export async function collectCodexGoalStatus(
     ...(logStatus.updatedAt === undefined
       ? {}
       : { logUpdatedAt: logStatus.updatedAt }),
+    ...(logStatus.byteLength === undefined
+      ? {}
+      : { logByteLength: logStatus.byteLength }),
+    ...(progressPath === undefined ? {} : { progressPath }),
+    ...(progress.exists === undefined ? {} : { progressExists: progress.exists }),
+    ...(progress.status === undefined ? {} : { progressStatus: progress.status }),
+    ...(progress.updatedAt === undefined
+      ? {}
+      : { progressUpdatedAt: progress.updatedAt }),
+    ...(progress.heartbeatAgeMs === undefined
+      ? {}
+      : { progressHeartbeatAgeMs: progress.heartbeatAgeMs }),
+    ...(progress.pid === undefined ? {} : { progressPid: progress.pid }),
+    ...(progress.resultStatus === undefined
+      ? {}
+      : { progressResultStatus: progress.resultStatus }),
+    ...(progress.reason === undefined
+      ? {}
+      : { progressResultReason: progress.reason }),
+    ...(progress.attemptCount === undefined
+      ? {}
+      : { progressAttemptCount: progress.attemptCount }),
+    ...(progress.currentAccount === undefined
+      ? {}
+      : { progressCurrentAccount: progress.currentAccount }),
     recommendedAction: recommendCodexGoalAction({
       ...(tmuxAlive === undefined ? {} : { tmuxAlive }),
       ...(result.status === undefined ? {} : { resultStatus: result.status }),
@@ -454,6 +526,80 @@ async function readCodexGoalResultSummary(path: string): Promise<{
   }
 }
 
+async function readCodexGoalProgressSummary(path: string): Promise<{
+  readonly exists?: boolean;
+  readonly status?: string;
+  readonly updatedAt?: string;
+  readonly heartbeatAgeMs?: number;
+  readonly pid?: number;
+  readonly resultStatus?: string;
+  readonly reason?: string;
+  readonly attemptCount?: number;
+  readonly currentAccount?: string;
+  readonly warning?: string;
+}> {
+  try {
+    const [item, parsed] = await Promise.all([
+      stat(path),
+      readCodexGoalProgressFile(path),
+    ]);
+    const updatedAt = parsed.updatedAt ?? item.mtime.toISOString();
+    const updatedAtMs = Date.parse(updatedAt);
+    return {
+      exists: item.isFile(),
+      ...(parsed.status ? { status: parsed.status } : {}),
+      updatedAt,
+      ...(Number.isFinite(updatedAtMs)
+        ? { heartbeatAgeMs: Date.now() - updatedAtMs }
+        : {}),
+      ...(typeof parsed.pid === "number" ? { pid: parsed.pid } : {}),
+      ...(parsed.resultStatus ? { resultStatus: parsed.resultStatus } : {}),
+      ...(parsed.reason ? { reason: redactStatusText(parsed.reason) } : {}),
+      ...(typeof parsed.attemptCount === "number"
+        ? { attemptCount: parsed.attemptCount }
+        : {}),
+      ...(parsed.currentAccount ? { currentAccount: parsed.currentAccount } : {}),
+    };
+  } catch (error) {
+    const safeMessage = error instanceof Error ? error.message : "progress_unreadable";
+    return safeMessage.includes("ENOENT")
+      ? { exists: false }
+      : { exists: false, warning: `progress file is unreadable: ${safeMessage}` };
+  }
+}
+
+async function readCodexGoalProgressFile(
+  path: string,
+): Promise<{
+  readonly status?: string;
+  readonly updatedAt?: string;
+  readonly pid?: number;
+  readonly resultStatus?: string;
+  readonly reason?: string;
+  readonly attemptCount?: number;
+  readonly currentAccount?: string;
+}> {
+  const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
+  if (!isRecord(parsed)) return {};
+  return {
+    ...(typeof parsed.status === "string" ? { status: parsed.status } : {}),
+    ...(typeof parsed.updatedAt === "string" ? { updatedAt: parsed.updatedAt } : {}),
+    ...(typeof parsed.pid === "number" ? { pid: parsed.pid } : {}),
+    ...(typeof parsed.resultStatus === "string"
+      ? { resultStatus: parsed.resultStatus }
+      : {}),
+    ...(typeof parsed.reason === "string"
+      ? { reason: redactStatusText(parsed.reason) }
+      : {}),
+    ...(typeof parsed.attemptCount === "number"
+      ? { attemptCount: parsed.attemptCount }
+      : {}),
+    ...(typeof parsed.currentAccount === "string"
+      ? { currentAccount: parsed.currentAccount }
+      : {}),
+  };
+}
+
 async function gitWorkspaceStatus(path: string): Promise<{
   readonly dirty?: boolean;
   readonly changedFiles?: readonly string[];
@@ -486,12 +632,14 @@ async function gitWorkspaceStatus(path: string): Promise<{
 async function logFileStatus(path: string): Promise<{
   readonly exists?: boolean;
   readonly updatedAt?: string;
+  readonly byteLength?: number;
 }> {
   try {
     const item = await stat(path);
     return {
       exists: item.isFile(),
       ...(item.isFile() ? { updatedAt: item.mtime.toISOString() } : {}),
+      ...(item.isFile() ? { byteLength: item.size } : {}),
     };
   } catch {
     return { exists: false };
@@ -582,6 +730,10 @@ function isAttemptFailureReason(value: unknown): value is AttemptFailureReason {
     value === "user_abort" ||
     value === "unknown_error"
   );
+}
+
+function redactStatusText(value: string): string {
+  return new DefaultRedactor().redact(value);
 }
 
 function pushOptional(

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { mkdir, readdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { execPath } from "node:process";
@@ -9,11 +9,28 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { DefaultRedactor } from "@vioxen/subscription-runtime/core";
 import { codexGoalJobToArgs, createCodexGoalJob, defaultCodexGoalJobRoot, listCodexGoalJobs, readCodexGoalJob, resolveCodexGoalJobRegistryRoot, summarizeCodexGoalJob, updateCodexGoalJob, } from "./codex-goal-jobs.js";
-import { codexGoalAccountSlots } from "./codex-goal-runner.js";
-import { buildCodexGoalNoTmuxCommand, buildCodexGoalTmuxCommand, collectCodexGoalStatus, doctorCodexGoal, listCodexGoalAccountStatuses, shellQuote, startCodexGoalTmux, tailCodexGoalLog, } from "./codex-goal-ops.js";
+import { codexGoalAccountSlots, codexGoalProgressPath, } from "./codex-goal-runner.js";
+import { buildCodexGoalNoTmuxCommand, buildCodexGoalStopTmuxCommand, buildCodexGoalTmuxCommand, collectCodexGoalStatus, doctorCodexGoal, listCodexGoalAccountStatuses, shellQuote, startCodexGoalTmux, stopCodexGoalTmux, tailCodexGoalLog, } from "./codex-goal-ops.js";
 const serverVersion = "0.1.0-main.2";
 const defaultAuthRoot = "~/.cache/subscription-runtime/live-codex-auth";
 const defaultTimeoutMs = 72 * 60 * 60 * 1000;
+const lifecycleMarkerSpecs = [
+    {
+        type: "pause_request",
+        suffix: "pause-request.json",
+        timestampKeys: ["requestedAt"],
+    },
+    {
+        type: "review",
+        suffix: "review.json",
+        timestampKeys: ["reviewedAt"],
+    },
+    {
+        type: "stop_event",
+        suffix: "stop-event.json",
+        timestampKeys: ["stoppedAt"],
+    },
+];
 export function createCodexGoalMcpServer() {
     const server = new McpServer({
         name: "subscription-runtime-codex-goal",
@@ -62,6 +79,19 @@ export function createCodexGoalMcpServer() {
         const registryRootDir = registryRootFromArgs(args);
         const jobs = await listCodexGoalJobs({ registryRootDir });
         return mcpJson({ ok: true, registryRootDir, jobs });
+    }));
+    server.registerTool("codex_goal_overview", {
+        title: "Codex Goal Overview",
+        description: "Summarize all stored Codex goal jobs with compact status, account and next-action hints.",
+        inputSchema: {
+            ...jobRegistryInputSchema(),
+            staleAfterMs: z.number().int().positive().optional(),
+            tailLines: z.number().int().positive().optional(),
+            limit: z.number().int().positive().optional(),
+        },
+    }, async (args) => withMcpErrors(async () => {
+        const overview = await buildCodexGoalOverview(args);
+        return mcpJson(overview);
     }));
     server.registerTool("codex_goal_get_job", {
         title: "Get Codex Goal Job",
@@ -209,6 +239,17 @@ export function createCodexGoalMcpServer() {
         confirmKey: "confirmRecover",
         mode: "recover",
     })));
+    server.registerTool("codex_goal_stop", {
+        title: "Stop Codex Goal Worker",
+        description: "Stop a stored job's tmux worker after explicit confirmation. Default guard allows silent-stale workers only.",
+        inputSchema: {
+            ...jobIdInputSchema(),
+            confirmStop: z.boolean().optional(),
+            forceStop: z.boolean().optional(),
+            staleAfterMs: z.number().int().positive().optional(),
+            tailLines: z.number().int().positive().optional(),
+        },
+    }, async (args) => withMcpErrors(async () => stopStoredJob(args)));
     server.registerTool("codex_goal_pause", {
         title: "Soft Pause Codex Goal",
         description: "Write a soft pause request marker. This never kills a running worker.",
@@ -285,6 +326,49 @@ export function createCodexGoalMcpServer() {
             ok: true,
             registryRootDir: loaded.registryRootDir,
             jobId: loaded.manifest.jobId,
+            brief,
+            status,
+        });
+    }));
+    server.registerTool("codex_goal_handoff", {
+        title: "Codex Goal Handoff",
+        description: "Build a copy-paste safe handoff bundle for another agent by jobId.",
+        inputSchema: {
+            ...jobIdInputSchema(),
+            staleAfterMs: z.number().int().positive().optional(),
+            tailLines: z.number().int().positive().optional(),
+            includeCliFallback: z.boolean().optional(),
+        },
+    }, async (args) => withMcpErrors(async () => {
+        const loaded = await loadJobLaunch(args);
+        const status = await collectCodexGoalStatus(statusInput(loaded.launch));
+        const accounts = await listCodexGoalAccountStatuses({
+            authRootDir: loaded.launch.config.authRootDir,
+            accounts: loaded.launch.config.accounts.map((account) => account.name),
+            stateRootDir: codexGoalStateRootDir(loaded.launch),
+        });
+        const brief = await buildCodexGoalBrief({
+            jobId: loaded.manifest.jobId,
+            launch: loaded.launch,
+            status,
+            accounts,
+            staleAfterMs: numberValue(args.staleAfterMs) ?? 10 * 60_000,
+            tailLines: numberValue(args.tailLines) ?? 20,
+        });
+        const handoff = buildCodexGoalHandoff({
+            registryRootDir: loaded.registryRootDir,
+            manifest: loaded.manifest,
+            launch: loaded.launch,
+            brief,
+            status,
+            accounts,
+            includeCliFallback: booleanValue(args.includeCliFallback) ?? true,
+        });
+        return mcpJson({
+            ok: true,
+            registryRootDir: loaded.registryRootDir,
+            jobId: loaded.manifest.jobId,
+            handoff,
             brief,
             status,
         });
@@ -473,6 +557,9 @@ export function createCodexGoalMcpServer() {
             ...(stringValue(args.logPath)
                 ? { logPath: resolvePath(cwd, stringValue(args.logPath)) }
                 : {}),
+            ...(stringValue(args.progressPath)
+                ? { progressPath: resolvePath(cwd, stringValue(args.progressPath)) }
+                : {}),
         }));
     }));
     server.registerTool("codex_goal_doctor", {
@@ -598,6 +685,8 @@ async function goalLaunchInput(args) {
         accounts,
         outputPath: resolvePath(cwd, stringValue(merged.outputPath) ??
             join(jobRootDir, `${taskId}.latest-result.json`)),
+        progressPath: resolvePath(cwd, stringValue(merged.progressPath) ??
+            codexGoalProgressPath({ jobRootDir, taskId })),
         model: stringValue(merged.model) ?? "gpt-5.5",
         reasoningEffort: (stringValue(merged.reasoningEffort) ?? "xhigh"),
         serviceTier: (stringValue(merged.serviceTier) ?? "fast"),
@@ -605,6 +694,7 @@ async function goalLaunchInput(args) {
         codexBinaryPath: stringValue(merged.codexBinaryPath) ?? "codex",
         permissionMode: (stringValue(merged.permissionMode) ?? "allow-edits"),
         taskTimeoutMs: numberValue(merged.taskTimeoutMs) ?? defaultTimeoutMs,
+        progressHeartbeatMs: numberValue(merged.progressHeartbeatMs) ?? 60_000,
         ...(numberValue(merged.staleLockMs) === undefined
             ? {}
             : { staleLockMs: numberValue(merged.staleLockMs) }),
@@ -750,6 +840,321 @@ async function continueStoredJob(args, options) {
         statusBefore: status,
     });
 }
+async function stopStoredJob(args) {
+    const loaded = await loadJobLaunch(args);
+    const status = await collectCodexGoalStatus(statusInput(loaded.launch));
+    const accounts = await listCodexGoalAccountStatuses({
+        authRootDir: loaded.launch.config.authRootDir,
+        accounts: loaded.launch.config.accounts.map((account) => account.name),
+        stateRootDir: codexGoalStateRootDir(loaded.launch),
+    });
+    const brief = await buildCodexGoalBrief({
+        jobId: loaded.manifest.jobId,
+        launch: loaded.launch,
+        status,
+        accounts,
+        staleAfterMs: numberValue(args.staleAfterMs) ?? 10 * 60_000,
+        tailLines: numberValue(args.tailLines) ?? 20,
+    });
+    if (!loaded.launch.tmuxSession) {
+        return mcpJson({
+            ok: false,
+            reason: "tmux_session_required",
+            jobId: loaded.manifest.jobId,
+            status,
+            brief,
+        });
+    }
+    const stopCommand = buildCodexGoalStopTmuxCommand(loaded.launch.tmuxSession);
+    if (!status.tmuxAlive) {
+        return mcpJson({
+            ok: false,
+            reason: "worker_not_running",
+            jobId: loaded.manifest.jobId,
+            tmuxSession: loaded.launch.tmuxSession,
+            stopCommand: stopCommand.preview,
+            status,
+            brief,
+        });
+    }
+    if (!brief.silentStale && !args.forceStop) {
+        return mcpJson({
+            ok: false,
+            reason: "worker_not_silent_stale",
+            jobId: loaded.manifest.jobId,
+            tmuxSession: loaded.launch.tmuxSession,
+            requiredOverride: "forceStop",
+            stopCommand: stopCommand.preview,
+            status,
+            brief,
+        });
+    }
+    if (!args.confirmStop) {
+        return mcpJson({
+            ok: false,
+            reason: "confirm_stop_required",
+            jobId: loaded.manifest.jobId,
+            tmuxSession: loaded.launch.tmuxSession,
+            stopCommand: stopCommand.preview,
+            status,
+            brief,
+        });
+    }
+    const command = await stopCodexGoalTmux(loaded.launch.tmuxSession);
+    const statusAfter = await collectCodexGoalStatus(statusInput(loaded.launch));
+    const stopEventPath = await writeCodexGoalStopEvent({
+        jobId: loaded.manifest.jobId,
+        taskId: loaded.launch.config.taskId,
+        jobRootDir: loaded.launch.config.jobRootDir,
+        tmuxSession: loaded.launch.tmuxSession,
+        stopCommand: command.preview,
+        forceStop: Boolean(args.forceStop),
+        statusBefore: status,
+        statusAfter,
+        brief,
+    });
+    return mcpJson({
+        ok: true,
+        mode: "stop",
+        jobId: loaded.manifest.jobId,
+        taskId: loaded.launch.config.taskId,
+        tmuxSession: loaded.launch.tmuxSession,
+        stopCommand: command.preview,
+        stopEventPath,
+        statusBefore: status,
+        statusAfter,
+        brief,
+        safeMessage: "Stopped the tmux worker session. Review workspace/log/result before continuing or recovery.",
+    });
+}
+async function writeCodexGoalStopEvent(input) {
+    await mkdir(input.jobRootDir, { recursive: true, mode: 0o700 });
+    const path = join(input.jobRootDir, `${input.taskId}.stop-event.json`);
+    await writeFile(path, `${JSON.stringify({
+        schemaVersion: 1,
+        jobId: input.jobId,
+        taskId: input.taskId,
+        stoppedAt: new Date().toISOString(),
+        tmuxSession: input.tmuxSession,
+        stopCommand: input.stopCommand,
+        forceStop: input.forceStop,
+        reason: input.brief.silentStale
+            ? "silent_stale_worker"
+            : "manual_force_stop",
+        brief: {
+            silentStale: input.brief.silentStale,
+            lastProgressAt: input.brief.lastProgressAt,
+            lastProgressAgeMs: input.brief.lastProgressAgeMs,
+            staleAfterMs: input.brief.staleAfterMs,
+            logByteLength: input.brief.logByteLength,
+            workspaceDirty: input.statusBefore.workspaceDirty,
+            changedFiles: input.statusBefore.changedFiles ?? [],
+        },
+        statusBefore: input.statusBefore,
+        statusAfter: input.statusAfter,
+    }, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+    return path;
+}
+async function buildCodexGoalOverview(args) {
+    const registryRootDir = registryRootFromArgs(args);
+    const summaries = await listCodexGoalJobs({ registryRootDir });
+    const limit = numberValue(args.limit);
+    const selectedSummaries = limit ? summaries.slice(0, limit) : summaries;
+    const staleAfterMs = numberValue(args.staleAfterMs) ?? 10 * 60_000;
+    const tailLines = numberValue(args.tailLines) ?? 5;
+    const rawJobs = await Promise.all(selectedSummaries.map((summary) => buildCodexGoalOverviewItem({
+        registryRootDir,
+        jobId: summary.jobId,
+        staleAfterMs,
+        tailLines,
+    })));
+    const workspaceConflicts = await buildCodexGoalWorkspaceConflicts(rawJobs);
+    const conflictJobIds = workspaceConflictJobIds(workspaceConflicts);
+    const jobs = rawJobs.map((job) => applyWorkspaceConflictToOverviewJob({
+        job,
+        conflictJobIds,
+    }));
+    const okJobs = jobs.filter((job) => job.ok);
+    return {
+        ok: jobs.every((job) => job.ok),
+        safeToOperate: workspaceConflicts.length === 0,
+        registryRootDir,
+        totalJobs: summaries.length,
+        returnedJobs: jobs.length,
+        truncated: selectedSummaries.length < summaries.length,
+        summary: {
+            running: okJobs.filter((job) => job.workerAlive).length,
+            silentStale: okJobs.filter((job) => job.silentStale).length,
+            safeToContinue: okJobs.filter((job) => job.safeToContinue).length,
+            needsHumanRelogin: okJobs.filter((job) => job.needsHumanRelogin).length,
+            manualReview: okJobs.filter((job) => job.nextBestTool === "manual_review").length,
+            completed: okJobs.filter((job) => job.resultStatus === "completed").length,
+            workspaceConflicts: workspaceConflicts.length,
+            blockedBySingleWriter: okJobs.filter((job) => job.blockedBySingleWriter).length,
+            unavailable: jobs.filter((job) => !job.ok).length,
+        },
+        workspaceConflicts,
+        jobs,
+    };
+}
+async function buildCodexGoalWorkspaceConflicts(jobs) {
+    const candidates = jobs.filter((job) => job.ok === true &&
+        typeof job.jobId === "string" &&
+        typeof job.workspacePath === "string" &&
+        (job.workerAlive === true || job.safeToContinue === true));
+    const keyed = await Promise.all(candidates.map(async (job) => ({
+        job,
+        workspaceKey: await workspaceConflictKey(String(job.workspacePath)),
+    })));
+    const groups = new Map();
+    for (const item of keyed) {
+        groups.set(item.workspaceKey, [...(groups.get(item.workspaceKey) ?? []), item]);
+    }
+    return [...groups.values()]
+        .filter((group) => group.length > 1)
+        .map((group) => ({
+        workspacePath: group[0]?.job.workspacePath,
+        workspaceKey: group[0]?.workspaceKey,
+        jobIds: group.map((item) => item.job.jobId).filter((jobId) => typeof jobId === "string"),
+        runningJobIds: group
+            .filter((item) => item.job.workerAlive === true)
+            .map((item) => item.job.jobId)
+            .filter((jobId) => typeof jobId === "string"),
+        safeToContinueJobIds: group
+            .filter((item) => item.job.safeToContinue === true)
+            .map((item) => item.job.jobId)
+            .filter((jobId) => typeof jobId === "string"),
+        reason: "multiple_potential_writers_share_workspace",
+        safeMessage: "Multiple stored jobs can write to the same workspace. Continue only one writer after manual review.",
+    }));
+}
+async function workspaceConflictKey(workspacePath) {
+    try {
+        return await realpath(workspacePath);
+    }
+    catch {
+        return resolve(process.cwd(), workspacePath);
+    }
+}
+function workspaceConflictJobIds(conflicts) {
+    const ids = new Set();
+    for (const conflict of conflicts) {
+        const jobIds = Array.isArray(conflict.jobIds) ? conflict.jobIds : [];
+        for (const jobId of jobIds) {
+            if (typeof jobId === "string")
+                ids.add(jobId);
+        }
+    }
+    return ids;
+}
+function applyWorkspaceConflictToOverviewJob(input) {
+    const jobId = typeof input.job.jobId === "string" ? input.job.jobId : undefined;
+    if (!jobId || !input.conflictJobIds.has(jobId))
+        return input.job;
+    const commands = isRecord(input.job.commands)
+        ? omitJsonKey(input.job.commands, "continue")
+        : input.job.commands;
+    return {
+        ...input.job,
+        safeToContinue: false,
+        blockedBySingleWriter: true,
+        workspaceConflict: true,
+        nextBestTool: "manual_review",
+        nextBestReason: "single_writer_workspace_conflict",
+        nextBestCommand: "manual_review_single_writer_workspace_conflict",
+        ...(commands ? { commands } : {}),
+    };
+}
+function omitJsonKey(value, key) {
+    const copy = { ...value };
+    delete copy[key];
+    return copy;
+}
+async function buildCodexGoalOverviewItem(input) {
+    try {
+        const manifest = await readCodexGoalJob({
+            registryRootDir: input.registryRootDir,
+            jobId: input.jobId,
+        });
+        const launch = await goalLaunchInput(codexGoalJobToArgs(manifest));
+        const status = await collectCodexGoalStatus(statusInput(launch));
+        const accounts = await listCodexGoalAccountStatuses({
+            authRootDir: launch.config.authRootDir,
+            accounts: launch.config.accounts.map((account) => account.name),
+            stateRootDir: codexGoalStateRootDir(launch),
+        });
+        const brief = await buildCodexGoalBrief({
+            jobId: manifest.jobId,
+            launch,
+            status,
+            accounts,
+            staleAfterMs: input.staleAfterMs,
+            tailLines: input.tailLines,
+        });
+        const registryArgs = {
+            registryRootDir: input.registryRootDir,
+            jobId: manifest.jobId,
+        };
+        return {
+            ok: true,
+            jobId: manifest.jobId,
+            description: manifest.description,
+            tags: manifest.tags ?? [],
+            workspacePath: launch.config.workspacePath,
+            taskId: launch.config.taskId,
+            tmuxSession: launch.tmuxSession,
+            workerAlive: Boolean(status.tmuxAlive),
+            recommendedAction: status.recommendedAction,
+            resultStatus: status.resultStatus,
+            resultReason: status.resultReason,
+            progressPath: status.progressPath,
+            progressExists: status.progressExists,
+            progressStatus: status.progressStatus,
+            progressUpdatedAt: status.progressUpdatedAt,
+            progressHeartbeatAgeMs: status.progressHeartbeatAgeMs,
+            progressPid: status.progressPid,
+            workspaceDirty: status.workspaceDirty,
+            changedFilesCount: (status.changedFiles ?? []).length,
+            changedFiles: status.changedFiles ?? [],
+            lastProgressAt: brief.lastProgressAt,
+            lastProgressAgeMs: brief.lastProgressAgeMs,
+            isStale: brief.isStale,
+            silentStale: brief.silentStale,
+            safeToContinue: brief.safeToContinue,
+            hasAvailableAccount: brief.hasAvailableAccount,
+            needsHumanRelogin: brief.needsHumanRelogin,
+            availableDedupedAccounts: brief.availableDedupedAccounts,
+            invalidAccounts: brief.invalidAccounts,
+            lifecycleMarkers: brief.lifecycleMarkers,
+            lifecycleMarkerTypes: brief.lifecycleMarkerTypes,
+            nextBestTool: brief.nextBestTool,
+            nextBestReason: brief.nextBestReason,
+            nextBestCommand: brief.nextBestCommand,
+            commands: {
+                brief: `codex_goal_brief(${JSON.stringify(registryArgs)})`,
+                handoff: `codex_goal_handoff(${JSON.stringify(registryArgs)})`,
+                accounts: `codex_goal_accounts_status(${JSON.stringify(registryArgs)})`,
+                ...(brief.safeToContinue
+                    ? {
+                        continue: `codex_goal_continue(${JSON.stringify({ ...registryArgs, confirmContinue: true })})`,
+                    }
+                    : {}),
+                ...(brief.silentStale
+                    ? {
+                        stop: `codex_goal_stop(${JSON.stringify({ ...registryArgs, confirmStop: true })})`,
+                    }
+                    : {}),
+            },
+        };
+    }
+    catch (error) {
+        return {
+            ok: false,
+            jobId: input.jobId,
+            safeMessage: error instanceof Error ? error.message : String(error),
+        };
+    }
+}
 function jobRegistryInputSchema() {
     return {
         registryRootDir: z.string().optional(),
@@ -784,6 +1189,8 @@ function jobManifestInputFromArgs(args) {
         taskId: args.taskId ?? jobId,
         accounts: accountNames(args.accounts),
         ...(args.outputPath ? { outputPath: resolvePath(cwd, args.outputPath) } : {}),
+        ...(args.progressPath ? { progressPath: resolvePath(cwd, args.progressPath) } : {}),
+        progressHeartbeatMs: args.progressHeartbeatMs ?? 60_000,
         ...(args.codexBinaryPath ? { codexBinaryPath: args.codexBinaryPath } : {}),
         model: args.model ?? "gpt-5.5",
         reasoningEffort: args.reasoningEffort ?? "xhigh",
@@ -818,6 +1225,8 @@ function jobManifestPatchFromArgs(args) {
     if (args.accounts !== undefined)
         patch.accounts = accountNames(args.accounts);
     putIfDefined(patch, "outputPath", args.outputPath && resolvePath(cwd, args.outputPath));
+    putIfDefined(patch, "progressPath", args.progressPath && resolvePath(cwd, args.progressPath));
+    putIfDefined(patch, "progressHeartbeatMs", numberValue(args.progressHeartbeatMs));
     putIfDefined(patch, "codexBinaryPath", stringValue(args.codexBinaryPath));
     putIfDefined(patch, "model", stringValue(args.model));
     putIfDefined(patch, "reasoningEffort", stringValue(args.reasoningEffort));
@@ -840,11 +1249,21 @@ export async function buildCodexGoalBrief(input) {
     const result = input.status.resultPath
         ? await readRuntimeResultBrief(input.status.resultPath)
         : {};
-    const lastProgressAt = input.status.logUpdatedAt ?? result.updatedAt;
+    const lastProgressAt = latestIsoDate([
+        input.status.progressUpdatedAt,
+        input.status.logUpdatedAt,
+        result.updatedAt,
+    ]);
     const lastProgressMs = lastProgressAt ? Date.parse(lastProgressAt) : NaN;
+    const lastProgressAgeMs = Number.isFinite(lastProgressMs)
+        ? Date.now() - lastProgressMs
+        : undefined;
     const isStale = Number.isFinite(lastProgressMs)
-        ? Date.now() - lastProgressMs > input.staleAfterMs
+        ? (lastProgressAgeMs ?? 0) > input.staleAfterMs
         : false;
+    const silentStale = Boolean(input.status.tmuxAlive &&
+        input.status.recommendedAction === "wait_for_worker" &&
+        isStale);
     const invalidAccounts = input.accounts.filter((slot) => slot.status !== "ready");
     const capacityBlockedAccounts = input.accounts.filter((slot) => slot.capacityAvailability && slot.capacityAvailability !== "available");
     const duplicateAccounts = duplicateAccountGroups(input.accounts);
@@ -852,27 +1271,64 @@ export async function buildCodexGoalBrief(input) {
     const availableDedupedAccounts = availableCodexGoalAccountSlots(dedupedAccounts);
     const safeStatusToContinue = !input.status.tmuxAlive && isSafeStartAction(input.status.recommendedAction);
     const hasAvailableAccount = availableDedupedAccounts.length > 0;
-    const next = safeStatusToContinue && !hasAvailableAccount
+    const lifecycleMarkers = await readCodexGoalLifecycleMarkers({
+        jobRootDir: input.launch.config.jobRootDir,
+        taskId: input.launch.config.taskId,
+    });
+    const lifecycleMarkerTypes = lifecycleMarkers
+        .map((marker) => marker.type)
+        .filter((type) => typeof type === "string");
+    const next = silentStale
         ? {
-            tool: "codex_goal_accounts_status",
-            reason: "no available account slots for this job",
+            tool: "manual_review",
+            reason: "silent_stale_worker",
         }
-        : nextActionForStatus(input.status.recommendedAction);
+        : safeStatusToContinue && !hasAvailableAccount
+            ? {
+                tool: "codex_goal_accounts_status",
+                reason: "no available account slots for this job",
+            }
+            : nextActionForStatus(input.status.recommendedAction);
     const recentLogTail = redactLogTail(await safeTail(input.launch.logPath, input.tailLines));
     return {
         text: [
             input.status.tmuxAlive ? "worker alive" : "worker not running",
             `recommendedAction ${input.status.recommendedAction}`,
             lastProgressAt ? `lastProgressAt ${lastProgressAt}` : "lastProgressAt unknown",
+            input.status.progressUpdatedAt
+                ? `progressUpdatedAt ${input.status.progressUpdatedAt}`
+                : "progressUpdatedAt unknown",
+            input.status.progressStatus
+                ? `progressStatus ${input.status.progressStatus}`
+                : "progressStatus unknown",
             input.status.workspaceDirty === undefined
                 ? "workspace dirty unknown"
                 : `workspace dirty ${input.status.workspaceDirty}`,
             input.status.changedFiles?.length
                 ? `changed files ${input.status.changedFiles.length}`
                 : "changed files 0",
+            silentStale ? "silentStale true" : "silentStale false",
+            lifecycleMarkerTypes.length
+                ? `lifecycle markers ${lifecycleMarkerTypes.join(",")}`
+                : "lifecycle markers none",
         ].join(", "),
         lastProgressAt,
+        lastProgressAgeMs,
+        staleAfterMs: input.staleAfterMs,
         isStale,
+        silentStale,
+        logExists: input.status.logExists,
+        logByteLength: input.status.logByteLength,
+        progressPath: input.status.progressPath,
+        progressExists: input.status.progressExists,
+        progressStatus: input.status.progressStatus,
+        progressUpdatedAt: input.status.progressUpdatedAt,
+        progressHeartbeatAgeMs: input.status.progressHeartbeatAgeMs,
+        progressPid: input.status.progressPid,
+        progressResultStatus: input.status.progressResultStatus,
+        progressResultReason: input.status.progressResultReason,
+        progressAttemptCount: input.status.progressAttemptCount,
+        progressCurrentAccount: input.status.progressCurrentAccount,
         currentAccount: result.currentAccount,
         lastFailureReason: input.status.resultReason ?? result.lastFailureReason,
         changedFiles: input.status.changedFiles ?? [],
@@ -884,6 +1340,8 @@ export async function buildCodexGoalBrief(input) {
         needsHumanRelogin: invalidAccounts.length > 0,
         invalidAccounts: invalidAccounts.map((slot) => slot.name),
         duplicateAccounts,
+        lifecycleMarkers,
+        lifecycleMarkerTypes,
         capacityBlockedAccounts: capacityBlockedAccounts.map((slot) => ({
             name: slot.name,
             availability: slot.capacityAvailability,
@@ -901,6 +1359,231 @@ export async function buildCodexGoalBrief(input) {
         }),
         recentLogTail,
     };
+}
+function buildCodexGoalHandoff(input) {
+    const registryArgs = {
+        registryRootDir: input.registryRootDir,
+        jobId: input.manifest.jobId,
+    };
+    const cliFallbackCommands = input.includeCliFallback
+        ? [
+            cliFallbackToolCommand("codex_goal_get_job", registryArgs),
+            cliFallbackToolCommand("codex_goal_brief", registryArgs),
+            cliFallbackToolCommand("codex_goal_accounts_status", registryArgs),
+            cliFallbackToolCommand("codex_goal_continue", {
+                ...registryArgs,
+                confirmContinue: true,
+            }),
+            cliFallbackToolCommand("codex_goal_handoff", registryArgs),
+        ]
+        : [];
+    const stopArgs = { ...registryArgs, confirmStop: true };
+    const reviewCommands = input.brief.silentStale
+        ? [
+            `codex_goal_stop(${JSON.stringify(stopArgs)})`,
+            `subscription-runtime-codex-goal stop-job ${shellText(input.manifest.jobId)} --registry-root ${shellText(input.registryRootDir)} --confirm`,
+        ]
+        : [];
+    const mcpCommands = [
+        `codex_goal_get_job(${JSON.stringify(registryArgs)})`,
+        `codex_goal_brief(${JSON.stringify(registryArgs)})`,
+        `codex_goal_accounts_status(${JSON.stringify(registryArgs)})`,
+        input.brief.safeToContinue
+            ? `codex_goal_continue(${JSON.stringify({ ...registryArgs, confirmContinue: true })})`
+            : String(input.brief.nextBestCommand),
+    ];
+    const text = [
+        `# Codex goal handoff: ${input.manifest.jobId}`,
+        "",
+        "Use subscription-runtime Codex goal controls. Native MCP is preferred; CLI fallback calls the same MCP server through the SDK.",
+        "",
+        "## Job",
+        `- registryRootDir: ${input.registryRootDir}`,
+        `- workspacePath: ${input.launch.config.workspacePath}`,
+        `- jobRootDir: ${input.launch.config.jobRootDir}`,
+        `- stateRootDir: ${codexGoalStateRootDir(input.launch)}`,
+        `- taskId: ${input.launch.config.taskId}`,
+        `- tmuxSession: ${input.launch.tmuxSession ?? ""}`,
+        `- model: ${input.launch.config.model ?? ""}`,
+        `- reasoningEffort: ${input.launch.config.reasoningEffort ?? ""}`,
+        `- serviceTier: ${input.launch.config.serviceTier ?? ""}`,
+        `- taskTimeoutMs: ${input.launch.config.taskTimeoutMs}`,
+        `- maxAccountCycles: ${input.launch.config.maxAccountCycles}`,
+        `- accounts: ${input.launch.config.accounts.map((account) => account.name).join(", ")}`,
+        "",
+        "## Current State",
+        `- worker: ${input.status.tmuxAlive ? "alive" : "not running"}`,
+        `- recommendedAction: ${input.status.recommendedAction}`,
+        `- resultStatus: ${input.status.resultStatus ?? ""}`,
+        `- resultReason: ${input.status.resultReason ?? ""}`,
+        `- workspaceDirty: ${String(input.status.workspaceDirty)}`,
+        `- changedFiles: ${(input.status.changedFiles ?? []).length}`,
+        `- silentStale: ${String(input.brief.silentStale)}`,
+        `- lastProgressAt: ${String(input.brief.lastProgressAt ?? "")}`,
+        `- progressStatus: ${String(input.brief.progressStatus ?? "")}`,
+        `- progressUpdatedAt: ${String(input.brief.progressUpdatedAt ?? "")}`,
+        `- progressHeartbeatAgeMs: ${String(input.brief.progressHeartbeatAgeMs ?? "")}`,
+        `- logByteLength: ${String(input.brief.logByteLength ?? "")}`,
+        `- lifecycleMarkers: ${input.brief.lifecycleMarkerTypes.join(", ") || "none"}`,
+        `- safeToContinue: ${String(input.brief.safeToContinue)}`,
+        `- hasAvailableAccount: ${String(input.brief.hasAvailableAccount)}`,
+        `- availableDedupedAccounts: ${input.brief.availableDedupedAccounts.join(", ")}`,
+        `- invalidAccounts: ${input.brief.invalidAccounts.join(", ")}`,
+        `- nextBestTool: ${String(input.brief.nextBestTool)}`,
+        `- nextBestCommand: ${String(input.brief.nextBestCommand)}`,
+        "",
+        "## Native MCP",
+        ...mcpCommands.map((command) => `- ${command}`),
+        ...(reviewCommands.length
+            ? [
+                "",
+                "## After Manual Review",
+                ...reviewCommands.map((command) => `- ${command}`),
+            ]
+            : []),
+        ...(cliFallbackCommands.length
+            ? [
+                "",
+                "## CLI Fallback",
+                ...cliFallbackCommands.map((command) => `- ${command}`),
+            ]
+            : []),
+        "",
+        "## Safety Rules",
+        "- Do not run two writer workers in the same worktree.",
+        "- Continue only when brief.safeToContinue is true.",
+        "- If hasAvailableAccount is false, inspect accounts before continuing.",
+        "- Dirty, provider output invalid, unknown runtime, test and benchmark failures require manual review.",
+        "- Never print auth.json, access tokens, refresh tokens, id tokens or raw provider payloads.",
+    ].join("\n");
+    return {
+        text,
+        mcpCommands,
+        reviewCommands,
+        cliFallbackCommands,
+        summary: {
+            jobId: input.manifest.jobId,
+            registryRootDir: input.registryRootDir,
+            workspacePath: input.launch.config.workspacePath,
+            taskId: input.launch.config.taskId,
+            tmuxSession: input.launch.tmuxSession,
+            recommendedAction: input.status.recommendedAction,
+            resultStatus: input.status.resultStatus,
+            resultReason: input.status.resultReason,
+            workspaceDirty: input.status.workspaceDirty,
+            changedFiles: input.status.changedFiles ?? [],
+            silentStale: input.brief.silentStale,
+            lastProgressAt: input.brief.lastProgressAt,
+            lastProgressAgeMs: input.brief.lastProgressAgeMs,
+            staleAfterMs: input.brief.staleAfterMs,
+            logExists: input.brief.logExists,
+            logByteLength: input.brief.logByteLength,
+            progressPath: input.brief.progressPath,
+            progressExists: input.brief.progressExists,
+            progressStatus: input.brief.progressStatus,
+            progressUpdatedAt: input.brief.progressUpdatedAt,
+            progressHeartbeatAgeMs: input.brief.progressHeartbeatAgeMs,
+            progressPid: input.brief.progressPid,
+            lifecycleMarkers: input.brief.lifecycleMarkers,
+            lifecycleMarkerTypes: input.brief.lifecycleMarkerTypes,
+            safeToContinue: input.brief.safeToContinue,
+            hasAvailableAccount: input.brief.hasAvailableAccount,
+            availableDedupedAccounts: input.brief.availableDedupedAccounts,
+            invalidAccounts: input.brief.invalidAccounts,
+            nextBestTool: input.brief.nextBestTool,
+            nextBestCommand: input.brief.nextBestCommand,
+        },
+        accounts: input.accounts.map((account) => ({
+            name: account.name,
+            status: account.status,
+            capacityAvailability: account.capacityAvailability,
+            capacityReason: account.capacityReason,
+            capacityCooldownUntil: account.capacityCooldownUntil,
+            identityHashPrefix: account.identityHashPrefix,
+            safeMessage: account.safeMessage,
+        })),
+    };
+}
+async function readCodexGoalLifecycleMarkers(input) {
+    const markers = await Promise.all(lifecycleMarkerSpecs.map((spec) => readCodexGoalLifecycleMarker({
+        ...input,
+        spec,
+    })));
+    return markers
+        .filter((marker) => marker !== undefined)
+        .sort((left, right) => Date.parse(String(right.timestamp ?? right.updatedAt ?? "0")) -
+        Date.parse(String(left.timestamp ?? left.updatedAt ?? "0")));
+}
+async function readCodexGoalLifecycleMarker(input) {
+    const markerPath = join(input.jobRootDir, `${input.taskId}.${input.spec.suffix}`);
+    try {
+        const [metadata, raw] = await Promise.all([
+            stat(markerPath),
+            readFile(markerPath, "utf8"),
+        ]);
+        const parsed = parseLifecycleMarker(raw);
+        const timestamp = firstStringKey(parsed, input.spec.timestampKeys);
+        const brief = isRecord(parsed.brief) ? parsed.brief : {};
+        return {
+            type: input.spec.type,
+            markerPath,
+            updatedAt: metadata.mtime.toISOString(),
+            ...(timestamp ? { timestamp } : {}),
+            ...(typeof parsed.reason === "string" ? { reason: redactText(parsed.reason) } : {}),
+            ...(typeof parsed.mode === "string" ? { mode: redactText(parsed.mode) } : {}),
+            ...(typeof parsed.note === "string" ? { note: truncateText(redactText(parsed.note), 300) } : {}),
+            ...(typeof parsed.forceStop === "boolean" ? { forceStop: parsed.forceStop } : {}),
+            ...(typeof brief.silentStale === "boolean" ? { silentStale: brief.silentStale } : {}),
+            ...(typeof brief.lastProgressAt === "string"
+                ? { lastProgressAt: brief.lastProgressAt }
+                : {}),
+            ...(typeof brief.lastProgressAgeMs === "number"
+                ? { lastProgressAgeMs: brief.lastProgressAgeMs }
+                : {}),
+            ...(typeof brief.logByteLength === "number"
+                ? { logByteLength: brief.logByteLength }
+                : {}),
+            ...(typeof parsed.schemaVersion === "number" ? { schemaVersion: parsed.schemaVersion } : {}),
+        };
+    }
+    catch {
+        return undefined;
+    }
+}
+function parseLifecycleMarker(raw) {
+    try {
+        const parsed = JSON.parse(raw);
+        return isRecord(parsed) ? parsed : {};
+    }
+    catch {
+        return {};
+    }
+}
+function latestIsoDate(values) {
+    const latest = values
+        .map((value) => value ? { value, time: Date.parse(value) } : undefined)
+        .filter((value) => value !== undefined && Number.isFinite(value.time))
+        .sort((left, right) => right.time - left.time)[0];
+    return latest?.value;
+}
+function firstStringKey(record, keys) {
+    for (const key of keys) {
+        const value = record[key];
+        if (typeof value === "string" && value.trim())
+            return redactText(value.trim());
+    }
+    return undefined;
+}
+function redactText(value) {
+    return new DefaultRedactor().redact(value);
+}
+function truncateText(value, maxLength) {
+    if (value.length <= maxLength)
+        return value;
+    return `${value.slice(0, Math.max(0, maxLength - 3))}...`;
+}
+function cliFallbackToolCommand(tool, args) {
+    return `subscription-runtime-codex-goal tool ${tool} --args-json ${shellText(JSON.stringify(args))}`;
 }
 async function readRuntimeResultBrief(path) {
     try {
@@ -971,6 +1654,10 @@ function nextBestCommand(input) {
     }
     if (tool === "codex_goal_accounts_status") {
         return `codex_goal_accounts_status({ jobId: ${JSON.stringify(input.jobId)} })`;
+    }
+    if (tool === "manual_review" &&
+        input.action.reason === "silent_stale_worker") {
+        return "manual_review_silent_stale_worker";
     }
     if (input.status.workspaceDirty) {
         return "manual_review_dirty_worktree";
@@ -1167,12 +1854,12 @@ function codexGoalPromptText(name, jobId) {
     const id = jobId?.trim() || "<jobId>";
     const shared = `Use the subscription-runtime Codex goal MCP tools for jobId ${id}. ` +
         "Never print auth.json or tokens. Do not run two writer workers in the same worktree. " +
-        "Treat codex_goal_brief as the source of truth for safeToContinue, hasAvailableAccount and nextBestCommand.";
+        "Treat codex_goal_overview as the registry monitor and codex_goal_brief as the single-job source of truth for safeToContinue, hasAvailableAccount, progressHeartbeatAgeMs and nextBestCommand.";
     if (name === "start_codex_goal_worker") {
         return `${shared} First call codex_goal_brief. Start or continue only when safeToContinue is true, otherwise follow nextBestCommand. If no job exists yet, create one with model gpt-5.5, reasoningEffort xhigh, serviceTier fast, app-server-goal behavior and 72h timeout.`;
     }
     if (name === "monitor_codex_goal_worker") {
-        return `${shared} Call codex_goal_brief. If worker is alive, keep monitoring instead of starting another worker. If isStale is true, verify tmux, runner process, app-server process, recent log tail and git status before recovery.`;
+        return `${shared} Call codex_goal_overview for pool-level status, then codex_goal_brief for the job that needs action. If worker is alive and silentStale is false, keep monitoring instead of starting another worker. If silentStale is true, verify progress heartbeat, tmux, runner process, app-server process, recent log tail and git status before stopping or recovery.`;
     }
     if (name === "recover_codex_goal_worker") {
         return `${shared} Use codex_goal_recover only for safe capacity, auth, reconnect or timeout states and only when safeToContinue is true. If hasAvailableAccount is false, call codex_goal_accounts_status for the job. Inspect dirty, provider_output_invalid, unknown runtime, test and benchmark failures manually.`;
@@ -1196,6 +1883,8 @@ function goalInputSchema() {
         taskId: z.string().optional(),
         accounts: z.union([z.string(), z.array(z.string())]).optional(),
         outputPath: z.string().optional(),
+        progressPath: z.string().optional(),
+        progressHeartbeatMs: z.number().int().positive().optional(),
         codexBinaryPath: z.string().optional(),
         model: z.string().optional(),
         reasoningEffort: z.string().optional(),
@@ -1221,6 +1910,7 @@ function statusInputSchema() {
         workspacePath: z.string().optional(),
         tmuxSession: z.string().optional(),
         logPath: z.string().optional(),
+        progressPath: z.string().optional(),
         cwd: z.string().optional(),
     };
 }
@@ -1231,6 +1921,7 @@ function statusInput(launch) {
         workspacePath: launch.config.workspacePath,
         ...(launch.tmuxSession ? { tmuxSession: launch.tmuxSession } : {}),
         logPath: launch.logPath,
+        ...(launch.config.progressPath ? { progressPath: launch.config.progressPath } : {}),
     };
 }
 function isSafeStartAction(action) {
@@ -1249,6 +1940,8 @@ function launchSummary(launch) {
         serviceTier: launch.config.serviceTier,
         executionEngine: launch.config.executionEngine ?? "app-server-goal",
         taskTimeoutMs: launch.config.taskTimeoutMs,
+        progressPath: launch.config.progressPath,
+        progressHeartbeatMs: launch.config.progressHeartbeatMs,
         maxAccountCycles: launch.config.maxAccountCycles,
         tmuxSession: launch.tmuxSession,
         logPath: launch.logPath,

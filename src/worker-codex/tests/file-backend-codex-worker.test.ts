@@ -934,7 +934,7 @@ describe("FileBackendCodexWorker", () => {
             stderr: index === 0 ? "login required" : "",
           }),
           capacityPolicy: {
-            reconnectCooldownMs: 60_000,
+            reconnectCooldownMs: 10,
           },
           clock,
         },
@@ -1007,7 +1007,7 @@ describe("FileBackendCodexWorker", () => {
             stderr: index === 0 ? "login required" : "",
           }),
           capacityPolicy: {
-            reconnectCooldownMs: 60_000,
+            reconnectCooldownMs: 10,
           },
           clock,
         },

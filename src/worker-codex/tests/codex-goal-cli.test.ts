@@ -46,6 +46,8 @@ describe("codex goal cli", () => {
       serviceTier: "fast",
       executionEngine: "app-server-goal",
       taskTimeoutMs: 72 * 60 * 60 * 1000,
+      progressPath: "/tmp/job/task-1.progress.json",
+      progressHeartbeatMs: 60_000,
       maxAccountCycles: 3,
       requireGitWorkspace: true,
     });
@@ -122,6 +124,7 @@ describe("codex goal cli", () => {
     expect(noTmux).toContain("--effort xhigh");
     expect(noTmux).toContain("--service-tier fast");
     expect(noTmux).toContain("--execution-engine app-server-goal");
+    expect(noTmux).toContain("--progress /tmp/job/task-1.progress.json");
 
     const tmux = buildTmuxCommand(command);
     expect(tmux.args).toEqual(
@@ -141,8 +144,10 @@ describe("codex goal cli", () => {
     expect(output.tools).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ name: "codex_goal_brief" }),
+        expect.objectContaining({ name: "codex_goal_overview" }),
         expect.objectContaining({ name: "codex_goal_accounts_status" }),
         expect.objectContaining({ name: "codex_goal_continue" }),
+        expect.objectContaining({ name: "codex_goal_stop" }),
       ]),
     );
   });
@@ -168,6 +173,111 @@ describe("codex goal cli", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+
+  it("builds shortcut commands for common agent operations", () => {
+    const overview = parseCodexGoalCliArgs([
+      "overview",
+      "--registry-root",
+      "/tmp/registry",
+      "--limit",
+      "5",
+    ], fakeIo());
+    expect(overview).toMatchObject({
+      kind: "mcp-tool",
+      name: "codex_goal_overview",
+      format: "json",
+    });
+    if (overview.kind !== "mcp-tool") return;
+    expect(JSON.parse(overview.argsJson ?? "{}")).toEqual({
+      registryRootDir: "/tmp/registry",
+      limit: 5,
+    });
+
+    const brief = parseCodexGoalCliArgs([
+      "brief",
+      "job-a",
+      "--registry-root",
+      "/tmp/registry",
+      "--tail-lines",
+      "50",
+    ], fakeIo());
+    expect(brief).toMatchObject({
+      kind: "mcp-tool",
+      name: "codex_goal_brief",
+      format: "json",
+    });
+    if (brief.kind !== "mcp-tool") return;
+    expect(JSON.parse(brief.argsJson ?? "{}")).toEqual({
+      jobId: "job-a",
+      registryRootDir: "/tmp/registry",
+      tailLines: 50,
+    });
+
+    const continueJob = parseCodexGoalCliArgs([
+      "continue-job",
+      "job-a",
+      "--confirm",
+      "--skip-doctor",
+    ], fakeIo());
+    expect(continueJob).toMatchObject({
+      kind: "mcp-tool",
+      name: "codex_goal_continue",
+    });
+    if (continueJob.kind !== "mcp-tool") return;
+    expect(JSON.parse(continueJob.argsJson ?? "{}")).toEqual({
+      jobId: "job-a",
+      confirmContinue: true,
+      skipDoctor: true,
+    });
+
+    const stopJob = parseCodexGoalCliArgs([
+      "stop-job",
+      "job-a",
+      "--confirm",
+      "--force",
+      "--stale-after-ms",
+      "1000",
+    ], fakeIo());
+    expect(stopJob).toMatchObject({
+      kind: "mcp-tool",
+      name: "codex_goal_stop",
+    });
+    if (stopJob.kind !== "mcp-tool") return;
+    expect(JSON.parse(stopJob.argsJson ?? "{}")).toEqual({
+      jobId: "job-a",
+      confirmStop: true,
+      forceStop: true,
+      staleAfterMs: 1000,
+    });
+
+    const relogin = parseCodexGoalCliArgs([
+      "relogin",
+      "job-a",
+      "account-c",
+    ], fakeIo());
+    expect(relogin).toMatchObject({
+      kind: "mcp-tool",
+      name: "codex_goal_accounts_relogin_instructions",
+    });
+    if (relogin.kind !== "mcp-tool") return;
+    expect(JSON.parse(relogin.argsJson ?? "{}")).toEqual({
+      jobId: "job-a",
+      account: "account-c",
+    });
+  });
+
+  it("doctors the SDK-backed control surface", async () => {
+    const io = captureIo();
+
+    const exitCode = await runCodexGoalCli(["doctor-control"], io);
+
+    expect(exitCode).toBe(0);
+    expect(JSON.parse(io.stdout)).toMatchObject({
+      ok: true,
+      mode: "sdk-in-process",
+      missingTools: [],
+    });
   });
 });
 

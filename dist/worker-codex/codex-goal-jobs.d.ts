@@ -16,6 +16,8 @@ export type CodexGoalJobManifest = {
     readonly taskId: string;
     readonly accounts: readonly string[];
     readonly outputPath?: string;
+    readonly progressPath?: string;
+    readonly progressHeartbeatMs?: number;
     readonly codexBinaryPath?: string;
     readonly model?: string;
     readonly reasoningEffort?: CodexGoalRunConfig["reasoningEffort"];

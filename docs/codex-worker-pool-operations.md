@@ -233,7 +233,14 @@ It launches the same server in-process through the SDK, so it has the same tool
 surface:
 
 ```sh
+subscription-runtime-codex-goal doctor-control
 subscription-runtime-codex-goal tools
+subscription-runtime-codex-goal overview
+subscription-runtime-codex-goal brief memo-locomo-cat1-recall
+subscription-runtime-codex-goal handoff memo-locomo-cat1-recall
+subscription-runtime-codex-goal accounts memo-locomo-cat1-recall
+subscription-runtime-codex-goal continue-job memo-locomo-cat1-recall --confirm
+subscription-runtime-codex-goal stop-job memo-locomo-cat1-recall --confirm
 subscription-runtime-codex-goal tool codex_goal_brief --args-json '{"jobId":"memo-locomo-cat1-recall"}'
 subscription-runtime-codex-goal tool codex_goal_accounts_status --args-json '{"jobId":"memo-locomo-cat1-recall"}'
 subscription-runtime-codex-goal tool codex_goal_continue --args-json '{"jobId":"memo-locomo-cat1-recall","confirmContinue":true}'
@@ -325,9 +332,14 @@ Job registry tools:
 - `codex_goal_get_job`: read one `job.json`.
 - `codex_goal_create_job`: create a new stored job.
 - `codex_goal_update_job`: patch a stored job.
+- `codex_goal_overview`: summarize all stored jobs in a registry with compact
+  status, account availability, stale/silent-stale flags and ready-to-call
+  next-action commands.
 - `codex_goal_status_by_id`: inspect a job by `jobId`.
 - `codex_goal_brief`: compact operator summary with stale/progress/account
   hints, recent commands and the next safe job-level command.
+- `codex_goal_handoff`: build a copy-paste safe handoff bundle with job
+  paths, status, account summary, next commands and CLI fallback commands.
 - `codex_goal_accounts_status`: inspect the stored job's configured account
   slots by `jobId`, including job-specific cooldown/quota state.
 - `codex_goal_accounts_list_pools`: list account pools for the stored job by
@@ -341,6 +353,10 @@ Lifecycle tools:
   job.
 - `codex_goal_continue`: restart a stopped safe continuation.
 - `codex_goal_recover`: same safety checks, but explicitly marked as recovery.
+- `codex_goal_stop`: stop a stored job's tmux worker after explicit
+  confirmation. By default it allows silent-stale workers only; use `forceStop`
+  only after manual review. A successful stop writes
+  `<taskId>.stop-event.json` in the job root.
 - `codex_goal_pause`: soft pause marker for human handoff. It does not kill
   tmux or discard work.
 - `codex_goal_mark_reviewed`: mark completed worker output as reviewed.
@@ -358,21 +374,42 @@ Prefer the `codex_goal_accounts_*` tools when a `jobId` exists. Use the raw
 `codex_accounts_*` tools only for pool discovery, manual cleanup or operating
 outside a stored job.
 
-`codex_goal_brief` should be the default monitor response for agents. It
-returns:
+`codex_goal_overview` should be the default registry monitor when an agent does
+not know which job needs attention or is watching multiple workers. It returns
+aggregate counts for running, silent-stale, safe-to-continue, relogin-needed,
+manual-review and completed jobs, plus per-job command hints and lifecycle
+markers. It also returns `workspaceConflicts` and `safeToOperate`; if two
+potential writer jobs share one workspace, overview blocks their continuation
+hints until a single writer is chosen.
+
+`codex_goal_brief` should be the default single-job monitor response for
+agents. It returns:
 
 - `lastProgressAt`
+- `lastProgressAgeMs`
 - `isStale`
+- `silentStale`
+- `progressStatus`
+- `progressUpdatedAt`
+- `progressHeartbeatAgeMs`
+- `logByteLength`
 - `currentAccount`
 - `lastFailureReason`
 - `recentCommands`
 - `changedFiles`
+- `lifecycleMarkers`
+- `lifecycleMarkerTypes`
 - `safeToContinue`
 - `hasAvailableAccount`
 - `availableDedupedAccounts`
 - `capacityBlockedAccounts`
 - `needsHumanRelogin`
 - `nextBestCommand`
+
+`codex_goal_handoff` should be the default handoff response. It returns a
+`handoff.text` block that is safe to paste into another agent thread, plus
+structured `summary`, `mcpCommands`, `reviewCommands`, `cliFallbackCommands`
+and sanitized account status.
 
 `codex_accounts_status` returns `dedupedAccountNames` and
 `availableDedupedAccountNames` for worker pool inputs. If the same sanitized
@@ -423,31 +460,44 @@ occasional overrides.
 
 Recommended agent loop:
 
-1. Call `codex_goal_brief` when a `jobId` exists, otherwise call
-   `codex_goal_status`.
+1. Call `codex_goal_overview` for multiple jobs or unknown state. Call
+   `codex_goal_brief` when a specific `jobId` needs attention.
+   If `overview.safeToOperate` is false, resolve `overview.workspaceConflicts`
+   before starting or continuing any writer.
 2. If `recommendedAction` is `wait_for_worker`, do not start another writer in
-   that worktree.
-3. If `brief.hasAvailableAccount` is false, do not continue. Use
+   that worktree while `brief.silentStale` is false.
+3. If `brief.silentStale` is true, inspect tmux, process tree, app-server,
+   recent log tail and git status. If it is truly stuck, call
+   `codex_goal_stop({ jobId, confirmStop: true })` before recovery and preserve
+   the generated stop-event JSON.
+   Check `brief.lifecycleMarkers` first: it shows sanitized pause, review and
+   stop-event markers that explain recent operator actions without opening
+   jobRootDir manually.
+   Also check `brief.progressUpdatedAt` and `brief.progressHeartbeatAgeMs`.
+   Fresh progress means a quiet stdout/log is not enough evidence to stop.
+4. If `brief.hasAvailableAccount` is false, do not continue. Use
    `codex_goal_accounts_status`, then ask for relogin or wait for cooldown.
-4. If `recommendedAction` is `start_worker`, use `codex_goal_continue` for
+5. If `recommendedAction` is `start_worker`, use `codex_goal_continue` for
    stored jobs, or `codex_goal_dry_run` then `codex_goal_start` for direct
    launch config.
-5. If it is `continue_after_capacity` or `continue_after_timeout`, restart the
+6. If it is `continue_after_capacity` or `continue_after_timeout`, restart the
    same task with the same prompt, task id, workspace and account pool only
    when `brief.safeToContinue` is true.
-6. If it is `inspect_dirty_workspace` or `inspect_dirty_failure`, inspect the
+7. If it is `inspect_dirty_workspace` or `inspect_dirty_failure`, inspect the
    diff and log before retrying.
-7. Use `codex_accounts_status` before asking a human to relogin slots.
+8. Use `codex_accounts_status` before asking a human to relogin slots.
 
 ### Agent recipes by task type
 
 Long coding or refactor task:
 
 1. Create one job per worktree with `codex_goal_create_job`.
-2. Use `codex_goal_brief` as the only periodic monitor unless it asks for
+2. Use `codex_goal_overview` for pool-level checks and `codex_goal_brief` for
+   the specific job that needs action.
+3. Use `codex_goal_brief` as the only periodic single-job monitor unless it asks for
    another tool.
-3. Continue only on `brief.safeToContinue === true`.
-4. On completion, inspect git diff and tests before `codex_goal_mark_reviewed`.
+4. Continue only on `brief.safeToContinue === true`.
+5. On completion, inspect git diff and tests before `codex_goal_mark_reviewed`.
 
 Benchmark improvement task:
 
@@ -718,6 +768,7 @@ pgrep -P <tmux-pane-pid> -laf .
 ps -o pid,ppid,stat,etime,pcpu,pmem,command -p <runner-pid>,<app-server-pid>
 git -C /path/to/project-worktree status --short --branch
 tail -100 ~/.cache/subscription-runtime/my-job/my-task-001.log
+cat ~/.cache/subscription-runtime/my-job/my-task-001.progress.json
 ls -l ~/.cache/subscription-runtime/my-job/my-task-001.latest-result.json
 node ~/.cache/subscription-runtime/my-job/check-codex-accounts.mjs
 ```
@@ -727,13 +778,15 @@ Healthy signs:
 - tmux pane is alive;
 - `run-goal.mjs` is a child of the pane shell;
 - an app-server process exists for the active attempt;
+- `<task-id>.progress.json` has a fresh `updatedAt` heartbeat;
 - the worktree is either clean at start or has expected WIP;
 - files change over time, or the app-server has CPU activity;
 - result JSON is absent while running or has a recent terminal summary after
   completion.
 
 Quiet logs are not always bad. The app-server goal path often writes the final
-summary only when the attempt finishes.
+summary only when the attempt finishes. A fresh progress heartbeat is stronger
+evidence than stdout silence.
 
 ## Restart policy
 
@@ -744,8 +797,12 @@ Restart or continue only when evidence shows:
 - runner process exited;
 - tmux pane died;
 - result JSON says capacity/auth/reconnect failure;
-- no file changes, no CPU, no result and no active app-server for a long window;
+- no fresh progress heartbeat, no file changes, no CPU, no result and no active
+  app-server for a long window;
 - account pool changed and the old attempt cannot continue.
+
+Never restart through a workspace conflict. If `codex_goal_overview` reports
+`workspaceConflicts`, choose one writer job first, then continue only that job.
 
 Error handling policy:
 

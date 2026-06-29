@@ -47,7 +47,13 @@ calls the same MCP server in-process through the SDK and exposes the same tool
 surface:
 
 ```sh
+subscription-runtime-codex-goal doctor-control
 subscription-runtime-codex-goal tools
+subscription-runtime-codex-goal overview
+subscription-runtime-codex-goal brief my-task
+subscription-runtime-codex-goal handoff my-task
+subscription-runtime-codex-goal accounts my-task
+subscription-runtime-codex-goal stop-job my-task --confirm
 subscription-runtime-codex-goal tool codex_goal_brief --args-json '{"jobId":"my-task"}'
 subscription-runtime-codex-goal tool codex_goal_accounts_status --args-json '{"jobId":"my-task"}'
 subscription-runtime-codex-goal tool codex_goal_continue --args-json '{"jobId":"my-task","confirmContinue":true}'
@@ -56,20 +62,33 @@ subscription-runtime-codex-goal tool codex_goal_continue --args-json '{"jobId":"
 ## Default loop
 
 1. Get the `jobId`.
-2. Call `codex_goal_get_job({ jobId })`.
-3. Call `codex_goal_brief({ jobId })`.
-4. If the worker is alive, do not start another writer. Monitor later.
-5. If `brief.safeToContinue === true`, call
+2. For multiple jobs or unknown state, call `codex_goal_overview()`.
+   If `overview.safeToOperate === false` or `workspaceConflicts` is non-empty,
+   stop and resolve the single-writer conflict before continuing any job.
+3. Call `codex_goal_get_job({ jobId })`.
+4. Call `codex_goal_brief({ jobId })`.
+5. For handoff, call `codex_goal_handoff({ jobId })` and pass its `text`.
+6. If the worker is alive, do not start another writer. Monitor later.
+7. If `brief.silentStale === true`, inspect tmux, process tree, app-server,
+   recent log tail and git status. If it is truly stuck, call
+   `codex_goal_stop({ jobId, confirmStop: true })` before recovery. Successful
+   stops write `<taskId>.stop-event.json` in the job root.
+   `brief.lifecycleMarkers` and `codex_goal_overview.jobs[].lifecycleMarkers`
+   show existing pause, review and stop markers so agents do not have to inspect
+   jobRootDir by hand.
+   Prefer `brief.progressUpdatedAt` and `brief.progressHeartbeatAgeMs` over
+   stdout silence when deciding whether a worker is actually stale.
+8. If `brief.safeToContinue === true`, call
    `codex_goal_continue({ jobId, confirmContinue: true })`.
-6. If `brief.hasAvailableAccount === false`, call
+9. If `brief.hasAvailableAccount === false`, call
    `codex_goal_accounts_status({ jobId })`.
-7. If account status shows invalid auth, call
+10. If account status shows invalid auth, call
    `codex_goal_accounts_relogin_instructions({ jobId, account })` and ask the
    human to login.
-8. If the status is dirty, provider output invalid, unknown runtime, test
+11. If the status is dirty, provider output invalid, unknown runtime, test
    failure or benchmark failure, inspect the worktree and logs manually before
    retrying.
-9. After completion, review diff and verification evidence, then call
+12. After completion, review diff and verification evidence, then call
    `codex_goal_mark_reviewed({ jobId })`.
 
 ## Starting a new job
@@ -86,6 +105,8 @@ Create one stored job per logical goal and per writer worktree:
   "workspacePath": "/path/to/project-worktree",
   "promptPath": "/Users/belief/.cache/subscription-runtime/my-task/prompt.md",
   "taskId": "my-task",
+  "progressPath": "/Users/belief/.cache/subscription-runtime/my-task/my-task.progress.json",
+  "progressHeartbeatMs": 60000,
   "accounts": ["account-a", "account-b", "account-c"],
   "tmuxSession": "my-task",
   "model": "gpt-5.5",
@@ -101,6 +122,7 @@ Then call:
 
 ```txt
 codex_goal_create_job(...)
+codex_goal_overview()
 codex_goal_brief({ jobId: "my-task" })
 codex_goal_continue({ jobId: "my-task", confirmContinue: true })
 ```
@@ -109,8 +131,10 @@ Without native MCP, call the same tools through the CLI:
 
 ```sh
 subscription-runtime-codex-goal tool codex_goal_create_job --args-file job.json
-subscription-runtime-codex-goal tool codex_goal_brief --args-json '{"jobId":"my-task"}'
-subscription-runtime-codex-goal tool codex_goal_continue --args-json '{"jobId":"my-task","confirmContinue":true}'
+subscription-runtime-codex-goal overview
+subscription-runtime-codex-goal brief my-task
+subscription-runtime-codex-goal handoff my-task
+subscription-runtime-codex-goal continue-job my-task --confirm
 ```
 
 ## Recovery rules
@@ -118,6 +142,17 @@ subscription-runtime-codex-goal tool codex_goal_continue --args-json '{"jobId":"
 - quota, capacity, auth broken or reconnect: use the pool continuation path;
 - no available accounts: use `codex_goal_accounts_status`, then relogin or
   wait for cooldown;
+- `brief.silentStale === true`: worker is alive but has no fresh observable
+  progress; inspect tmux/process/log/worktree, then use `codex_goal_stop`
+  before recovery if it is truly stuck; keep the generated stop-event JSON as
+  the audit trail;
+- `brief.lifecycleMarkers` shows sanitized pause, review and stop-event markers
+  for the job. Treat them as operator context, not as token-bearing logs;
+- `brief.progressUpdatedAt` comes from the runner heartbeat and may be fresh
+  even when stdout is quiet. Treat a quiet log as stale only when progress,
+  result and process evidence are all stale;
+- `overview.workspaceConflicts` means multiple stored jobs can write to the
+  same workspace. Do not continue either job until one writer is chosen;
 - provider output invalid, unknown runtime, code failure, test failure or
   benchmark failure: do not switch accounts automatically;
 - dirty worktree means the next attempt must understand it is mid-task;

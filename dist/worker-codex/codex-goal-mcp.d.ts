@@ -12,7 +12,22 @@ export declare function buildCodexGoalBrief(input: {
 }): Promise<{
     text: string;
     lastProgressAt: string | undefined;
+    lastProgressAgeMs: number | undefined;
+    staleAfterMs: number;
     isStale: boolean;
+    silentStale: boolean;
+    logExists: boolean | undefined;
+    logByteLength: number | undefined;
+    progressPath: string | undefined;
+    progressExists: boolean | undefined;
+    progressStatus: string | undefined;
+    progressUpdatedAt: string | undefined;
+    progressHeartbeatAgeMs: number | undefined;
+    progressPid: number | undefined;
+    progressResultStatus: string | undefined;
+    progressResultReason: string | undefined;
+    progressAttemptCount: number | undefined;
+    progressCurrentAccount: string | undefined;
     currentAccount: string | undefined;
     lastFailureReason: string | undefined;
     changedFiles: readonly string[];
@@ -24,6 +39,8 @@ export declare function buildCodexGoalBrief(input: {
     needsHumanRelogin: boolean;
     invalidAccounts: string[];
     duplicateAccounts: readonly Readonly<Record<string, unknown>>[];
+    lifecycleMarkers: readonly Readonly<Record<string, unknown>>[];
+    lifecycleMarkerTypes: string[];
     capacityBlockedAccounts: {
         name: string;
         availability: string | undefined;

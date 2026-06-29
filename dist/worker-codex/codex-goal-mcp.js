@@ -601,6 +601,7 @@ async function goalLaunchInput(args) {
         model: stringValue(merged.model) ?? "gpt-5.5",
         reasoningEffort: (stringValue(merged.reasoningEffort) ?? "xhigh"),
         serviceTier: (stringValue(merged.serviceTier) ?? "fast"),
+        executionEngine: (stringValue(merged.executionEngine) ?? "app-server-goal"),
         codexBinaryPath: stringValue(merged.codexBinaryPath) ?? "codex",
         permissionMode: (stringValue(merged.permissionMode) ?? "allow-edits"),
         taskTimeoutMs: numberValue(merged.taskTimeoutMs) ?? defaultTimeoutMs,
@@ -787,6 +788,7 @@ function jobManifestInputFromArgs(args) {
         model: args.model ?? "gpt-5.5",
         reasoningEffort: args.reasoningEffort ?? "xhigh",
         serviceTier: args.serviceTier ?? "fast",
+        executionEngine: args.executionEngine ?? "app-server-goal",
         taskTimeoutMs: args.taskTimeoutMs ?? defaultTimeoutMs,
         ...(args.staleLockMs ? { staleLockMs: args.staleLockMs } : {}),
         maxAccountCycles: args.maxAccountCycles ?? 3,
@@ -820,6 +822,7 @@ function jobManifestPatchFromArgs(args) {
     putIfDefined(patch, "model", stringValue(args.model));
     putIfDefined(patch, "reasoningEffort", stringValue(args.reasoningEffort));
     putIfDefined(patch, "serviceTier", stringValue(args.serviceTier));
+    putIfDefined(patch, "executionEngine", stringValue(args.executionEngine));
     putIfDefined(patch, "taskTimeoutMs", numberValue(args.taskTimeoutMs));
     putIfDefined(patch, "staleLockMs", numberValue(args.staleLockMs));
     putIfDefined(patch, "maxAccountCycles", numberValue(args.maxAccountCycles));
@@ -1197,6 +1200,7 @@ function goalInputSchema() {
         model: z.string().optional(),
         reasoningEffort: z.string().optional(),
         serviceTier: z.string().optional(),
+        executionEngine: z.string().optional(),
         taskTimeoutMs: z.number().int().positive().optional(),
         staleLockMs: z.number().int().positive().optional(),
         maxAccountCycles: z.number().int().positive().optional(),
@@ -1243,6 +1247,7 @@ function launchSummary(launch) {
         model: launch.config.model,
         reasoningEffort: launch.config.reasoningEffort,
         serviceTier: launch.config.serviceTier,
+        executionEngine: launch.config.executionEngine ?? "app-server-goal",
         taskTimeoutMs: launch.config.taskTimeoutMs,
         maxAccountCycles: launch.config.maxAccountCycles,
         tmuxSession: launch.tmuxSession,

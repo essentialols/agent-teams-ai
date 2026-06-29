@@ -103,6 +103,7 @@ export function codexGoalJobToArgs(manifest) {
         model: manifest.model,
         reasoningEffort: manifest.reasoningEffort,
         serviceTier: manifest.serviceTier,
+        executionEngine: manifest.executionEngine,
         taskTimeoutMs: manifest.taskTimeoutMs,
         staleLockMs: manifest.staleLockMs,
         maxAccountCycles: manifest.maxAccountCycles,
@@ -182,6 +183,11 @@ export function parseCodexGoalJobManifest(value) {
             ? {}
             : {
                 serviceTier: optionalString(value.serviceTier),
+            }),
+        ...(optionalString(value.executionEngine) === undefined
+            ? {}
+            : {
+                executionEngine: optionalString(value.executionEngine),
             }),
         ...optionalPositiveIntegerProperty(value.taskTimeoutMs, "taskTimeoutMs"),
         ...optionalPositiveIntegerProperty(value.staleLockMs, "staleLockMs"),

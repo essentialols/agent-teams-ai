@@ -33,6 +33,7 @@ export function buildCodexGoalNoTmuxCommand(input) {
     pushOptional(args, "--model", config.model);
     pushOptional(args, "--effort", config.reasoningEffort);
     pushOptional(args, "--service-tier", config.serviceTier);
+    pushOptional(args, "--execution-engine", config.executionEngine);
     pushOptionalNumber(args, "--timeout-ms", config.taskTimeoutMs);
     pushOptionalNumber(args, "--stale-lock-ms", config.staleLockMs);
     pushOptionalNumber(args, "--max-account-cycles", config.maxAccountCycles);

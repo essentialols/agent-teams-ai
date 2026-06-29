@@ -20,6 +20,7 @@ export type CodexGoalJobManifest = {
     readonly model?: string;
     readonly reasoningEffort?: CodexGoalRunConfig["reasoningEffort"];
     readonly serviceTier?: CodexGoalRunConfig["serviceTier"];
+    readonly executionEngine?: CodexGoalRunConfig["executionEngine"];
     readonly taskTimeoutMs?: number;
     readonly staleLockMs?: number;
     readonly maxAccountCycles?: number;

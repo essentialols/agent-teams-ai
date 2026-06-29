@@ -607,6 +607,53 @@ describe("SafeExecutionRunner", () => {
     expect(resumedRuns).toBe(0);
   });
 
+  it("does not rerun an interrupted running task with unrecorded workspace changes", async () => {
+    const workspacePath = await gitWorkspace("safe-execution-interrupted-dirty-");
+    const journal = new InMemoryAttemptJournal();
+    await journal.startTask({
+      taskId: "task-interrupted-dirty",
+      workspaceRunId: "workspace:interrupted",
+      workspacePath,
+      effectMode: "workspace_patch",
+      provider: "codex",
+      now: new Date("2026-05-31T00:00:00.000Z"),
+    });
+    await writeFile(join(workspacePath, "worker-output.txt"), "partial\n");
+
+    let runs = 0;
+    const runner = new SafeExecutionRunner({
+      lockStore: new InMemoryWorkspaceLockStore(),
+      journal,
+    });
+    const result = await runner.run({
+      taskId: "task-interrupted-dirty",
+      workspace: { mode: "existing_locked", path: workspacePath },
+      effectMode: "workspace_patch",
+      provider: "codex",
+      pool: {
+        async run(): Promise<PromptResult> {
+          runs += 1;
+          return { output: "should not run" };
+        },
+      },
+      job: { prompt: "finish interrupted task", workspacePath },
+      originalPrompt: "finish interrupted task",
+      policy: { maxAttempts: 1 },
+    });
+
+    if (result.status !== "partial") throw new Error("expected partial");
+    expect(result.reason).toBe("unknown_error");
+    expect(result.safeMessage).toContain("interrupted running task");
+    expect(result.task.status).toBe("partial");
+    expect(result.attempts).toHaveLength(0);
+    expect(result.failureDetails).toMatchObject({
+      workspaceMode: "git",
+      changedFileCount: "1",
+      changedFiles: "worker-output.txt",
+    });
+    expect(runs).toBe(0);
+  });
+
   it("resumes a partial task from the local file journal with a continuation packet", async () => {
     const workspacePath = await gitWorkspace("safe-execution-journal-");
     const stateRoot = await tempPath("safe-execution-state-");

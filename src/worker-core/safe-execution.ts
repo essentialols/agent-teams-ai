@@ -991,6 +991,38 @@ export class SafeExecutionRunner {
           return this.failStartedTask({ input, error });
         }
       }
+      if (existing?.status === "running" && existing.attempts.length === 0) {
+        let snapshot: WorkspaceSnapshot;
+        try {
+          snapshot = await this.snapshotter.capture({
+            workspacePath,
+            includeDiff: true,
+            ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
+          });
+        } catch (error) {
+          return this.failStartedTask({ input, error });
+        }
+        if (snapshot.dirty) {
+          const safeMessage =
+            "Safe execution found an interrupted running task with unrecorded workspace changes.";
+          task = await this.options.journal.markPartial({
+            taskId: input.taskId,
+            status: "partial",
+            reason: "unknown_error",
+            message: safeMessage,
+            details: interruptedWorkspaceDetails(snapshot),
+            now: this.clock.now(),
+          });
+          return {
+            status: "partial",
+            task,
+            attempts: task.attempts,
+            reason: "unknown_error",
+            safeMessage,
+            failureDetails: interruptedWorkspaceDetails(snapshot),
+          };
+        }
+      }
 
       const policy = normalizePolicy(input);
       let job = input.job;
@@ -1743,6 +1775,16 @@ function changedFilesDelta(
   return after
     .filter((file) => !beforeFiles.has(file))
     .sort((left, right) => left.localeCompare(right));
+}
+
+function interruptedWorkspaceDetails(
+  snapshot: WorkspaceSnapshot,
+): Readonly<Record<string, string>> {
+  return {
+    workspaceMode: snapshot.mode,
+    changedFileCount: String(snapshot.changedFiles.length),
+    changedFiles: snapshot.changedFiles.slice(0, 20).join(","),
+  };
 }
 
 function requireTaskRecord(

@@ -168,7 +168,7 @@ describe("Codex provider adapter", () => {
       "json",
       "schema-json",
     ]);
-    expect(defaultCodexModel).toBe("gpt-5-codex");
+    expect(defaultCodexModel).toBe("gpt-5.5");
   });
 
   it("supports lazy refresh freshness checks from Codex auth metadata", async () => {

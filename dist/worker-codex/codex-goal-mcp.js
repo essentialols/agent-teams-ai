@@ -434,11 +434,21 @@ export function createCodexGoalMcpServer() {
         description: "List account auth pools under a root directory without printing tokens.",
         inputSchema: {
             poolRootDir: z.string().optional(),
+            stateRootDir: z.string().optional(),
         },
     }, async (args) => withMcpErrors(async () => {
         const poolRootDir = accountPoolRootFromArgs(args);
-        const pools = await listAccountPools(poolRootDir);
-        return mcpJson({ ok: true, poolRootDir, pools });
+        const stateRootDir = stringValue(args.stateRootDir)
+            ? resolvePath(process.cwd(), stringValue(args.stateRootDir))
+            : undefined;
+        const pools = await listAccountPools(poolRootDir, stateRootDir);
+        return mcpJson({
+            ok: true,
+            poolRootDir,
+            capacityAware: Boolean(stateRootDir),
+            ...(stateRootDir ? { stateRootDir } : {}),
+            pools,
+        });
     }));
     server.registerTool("codex_accounts_status", {
         title: "Codex Account Slot Status",
@@ -466,6 +476,7 @@ export function createCodexGoalMcpServer() {
         return mcpJson({
             ok: availableDedupedSlots.length > 0,
             authRootDir,
+            capacityAware: Boolean(args.stateRootDir),
             slots,
             duplicates,
             dedupedAccountNames: dedupedSlots.map((slot) => slot.name),
@@ -729,7 +740,17 @@ export async function buildCodexGoalBrief(input) {
         : false;
     const invalidAccounts = input.accounts.filter((slot) => slot.status !== "ready");
     const capacityBlockedAccounts = input.accounts.filter((slot) => slot.capacityAvailability && slot.capacityAvailability !== "available");
-    const next = nextActionForStatus(input.status.recommendedAction);
+    const duplicateAccounts = duplicateAccountGroups(input.accounts);
+    const dedupedAccounts = dedupeCodexGoalAccountSlots(input.accounts);
+    const availableDedupedAccounts = availableCodexGoalAccountSlots(dedupedAccounts);
+    const safeStatusToContinue = !input.status.tmuxAlive && isSafeStartAction(input.status.recommendedAction);
+    const hasAvailableAccount = availableDedupedAccounts.length > 0;
+    const next = safeStatusToContinue && !hasAvailableAccount
+        ? {
+            tool: "codex_accounts_status",
+            reason: "no available account slots for this job",
+        }
+        : nextActionForStatus(input.status.recommendedAction);
     const recentLogTail = redactLogTail(await safeTail(input.launch.logPath, input.tailLines));
     return {
         text: [
@@ -748,9 +769,14 @@ export async function buildCodexGoalBrief(input) {
         currentAccount: result.currentAccount,
         lastFailureReason: input.status.resultReason ?? result.lastFailureReason,
         changedFiles: input.status.changedFiles ?? [],
-        safeToContinue: !input.status.tmuxAlive && isSafeStartAction(input.status.recommendedAction),
+        safeToContinue: safeStatusToContinue && hasAvailableAccount,
+        hasAvailableAccount,
+        configuredAccounts: input.accounts.map((slot) => slot.name),
+        dedupedAccounts: dedupedAccounts.map((slot) => slot.name),
+        availableDedupedAccounts: availableDedupedAccounts.map((slot) => slot.name),
         needsHumanRelogin: invalidAccounts.length > 0,
         invalidAccounts: invalidAccounts.map((slot) => slot.name),
+        duplicateAccounts,
         capacityBlockedAccounts: capacityBlockedAccounts.map((slot) => ({
             name: slot.name,
             availability: slot.capacityAvailability,
@@ -764,6 +790,7 @@ export async function buildCodexGoalBrief(input) {
             jobId: input.jobId,
             action: next,
             status: input.status,
+            launch: input.launch,
         }),
         recentLogTail,
     };
@@ -835,6 +862,12 @@ function nextBestCommand(input) {
     if (tool === "codex_goal_brief") {
         return `codex_goal_brief({ jobId: ${JSON.stringify(input.jobId)} })`;
     }
+    if (tool === "codex_accounts_status") {
+        const stateRootDir = input.launch.config.stateRootDir ??
+            join(input.launch.config.jobRootDir, "state");
+        const accounts = input.launch.config.accounts.map((account) => account.name);
+        return `codex_accounts_status({ authRootDir: ${JSON.stringify(input.launch.config.authRootDir)}, stateRootDir: ${JSON.stringify(stateRootDir)}, accounts: ${JSON.stringify(accounts)} })`;
+    }
     if (input.status.workspaceDirty) {
         return "manual_review_dirty_worktree";
     }
@@ -850,7 +883,7 @@ function accountAuthRootFromArgs(args) {
         return join(accountPoolRootFromArgs(args), args.pool);
     return resolvePath(process.cwd(), defaultAuthRoot);
 }
-async function listAccountPools(poolRootDir) {
+async function listAccountPools(poolRootDir, stateRootDir) {
     let entries;
     try {
         entries = await readdir(poolRootDir, { withFileTypes: true });
@@ -862,7 +895,10 @@ async function listAccountPools(poolRootDir) {
         .filter((entry) => entry.isDirectory())
         .map(async (entry) => {
         const authRootDir = join(poolRootDir, entry.name);
-        const slots = await listCodexGoalAccountStatuses({ authRootDir });
+        const slots = await listCodexGoalAccountStatuses({
+            authRootDir,
+            ...(stateRootDir ? { stateRootDir } : {}),
+        });
         const visibleSlots = visibleCodexGoalAccountPoolSlots(entry.name, slots);
         const dedupedSlots = dedupeCodexGoalAccountSlots(visibleSlots);
         const availableDedupedSlots = availableCodexGoalAccountSlots(dedupedSlots);
@@ -1026,20 +1062,21 @@ function registerCodexGoalPrompts(server) {
 function codexGoalPromptText(name, jobId) {
     const id = jobId?.trim() || "<jobId>";
     const shared = `Use the subscription-runtime Codex goal MCP tools for jobId ${id}. ` +
-        "Never print auth.json or tokens. Do not run two writer workers in the same worktree.";
+        "Never print auth.json or tokens. Do not run two writer workers in the same worktree. " +
+        "Treat codex_goal_brief as the source of truth for safeToContinue, hasAvailableAccount and nextBestCommand.";
     if (name === "start_codex_goal_worker") {
-        return `${shared} First call codex_goal_status_by_id, then codex_goal_continue only if the status recommendation allows it.`;
+        return `${shared} First call codex_goal_brief. Start or continue only when safeToContinue is true, otherwise follow nextBestCommand. If no job exists yet, create one with model gpt-5.5, reasoningEffort xhigh, serviceTier fast, app-server-goal behavior and 72h timeout.`;
     }
     if (name === "monitor_codex_goal_worker") {
-        return `${shared} Call codex_goal_brief and follow recommendedAction. If worker is alive, keep monitoring instead of starting another worker.`;
+        return `${shared} Call codex_goal_brief. If worker is alive, keep monitoring instead of starting another worker. If isStale is true, verify tmux, runner process, app-server process, recent log tail and git status before recovery.`;
     }
     if (name === "recover_codex_goal_worker") {
-        return `${shared} Use codex_goal_recover for quota, capacity, reconnect or timeout states. Inspect dirty or unknown failures manually.`;
+        return `${shared} Use codex_goal_recover only for safe capacity, auth, reconnect or timeout states and only when safeToContinue is true. If hasAvailableAccount is false, call codex_accounts_status with the job authRootDir, stateRootDir and configured accounts. Inspect dirty, provider_output_invalid, unknown runtime, test and benchmark failures manually.`;
     }
     if (name === "handoff_codex_goal_job") {
-        return `${shared} Provide the jobId, registryRootDir if non-default, current status, branch/worktree, and the next safe tool.`;
+        return `${shared} Provide jobId, registryRootDir if non-default, worktree, branch, tmux session, task id, prompt path, accounts, model, effort, service tier, brief.safeToContinue, brief.hasAvailableAccount, nextBestCommand and any dirty files.`;
     }
-    return `${shared} Inspect git diff and test evidence before merging. Use codex_goal_mark_reviewed only after review.`;
+    return `${shared} Inspect git diff, result JSON, recent commands and test evidence before merging. Use codex_goal_mark_reviewed only after the worker output has been reviewed.`;
 }
 function shellText(value) {
     return shellQuote(value);

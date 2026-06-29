@@ -62,7 +62,8 @@ If you inherit a running Codex worker pool, do this first:
 6. Use `codex_accounts_status` for the selected pool. It must print only slot
    status and sanitized metadata.
 7. If the runner stopped because of quota, capacity, auth or reconnect, restart
-   a continuation through `codex_goal_continue` with the same stored job.
+   a continuation through `codex_goal_continue` with the same stored job only
+   when `codex_goal_brief.safeToContinue` is true.
 8. If the runner stopped because of provider output, runtime, code, test or
    benchmark failure, inspect the dirty work before retrying.
 9. Keep model `gpt-5.5`, reasoning effort `xhigh`, service tier `fast`, engine
@@ -160,7 +161,8 @@ Recommended flow:
 1. `codex_goal_create_job` once per logical goal.
 2. `codex_goal_get_job` or `codex_goal_list_jobs` for handoff.
 3. `codex_goal_brief` for the compact current state.
-4. `codex_goal_continue` with `confirmContinue: true` only when recommended.
+4. `codex_goal_continue` with `confirmContinue: true` only when
+   `brief.safeToContinue` is true.
 5. `codex_goal_mark_reviewed` after a completed worker was inspected.
 
 Minimal `codex_goal_create_job` input:
@@ -255,6 +257,9 @@ returns:
 - `recentCommands`
 - `changedFiles`
 - `safeToContinue`
+- `hasAvailableAccount`
+- `availableDedupedAccounts`
+- `capacityBlockedAccounts`
 - `needsHumanRelogin`
 - `nextBestCommand`
 
@@ -264,6 +269,13 @@ identity appears in multiple slots, the deduped list keeps the newest ready
 slot for that identity and leaves the older duplicate visible for manual
 cleanup. Agents should use `availableDedupedAccountNames` for new worker runs
 because it also excludes cooldown, quota exhausted and auth-broken slots.
+Pass the job `stateRootDir` whenever you care about quota/cooldown state;
+without it, account tools can validate auth files but cannot see worker
+capacity records.
+
+`codex_accounts_list_pools` also accepts `stateRootDir`. Use it when choosing
+between pools for a specific job. Its response includes `capacityAware` so an
+agent can tell whether capacity records were considered.
 
 Prompt templates:
 
@@ -304,14 +316,50 @@ Recommended agent loop:
    `codex_goal_status`.
 2. If `recommendedAction` is `wait_for_worker`, do not start another writer in
    that worktree.
-3. If `recommendedAction` is `start_worker`, use `codex_goal_continue` for
+3. If `brief.hasAvailableAccount` is false, do not continue. Use
+   `codex_accounts_status` with the job `authRootDir`, `stateRootDir` and
+   configured accounts, then ask for relogin or wait for cooldown.
+4. If `recommendedAction` is `start_worker`, use `codex_goal_continue` for
    stored jobs, or `codex_goal_dry_run` then `codex_goal_start` for direct
    launch config.
-4. If it is `continue_after_capacity` or `continue_after_timeout`, restart the
-   same task with the same prompt, task id, workspace and account pool.
-5. If it is `inspect_dirty_workspace` or `inspect_dirty_failure`, inspect the
+5. If it is `continue_after_capacity` or `continue_after_timeout`, restart the
+   same task with the same prompt, task id, workspace and account pool only
+   when `brief.safeToContinue` is true.
+6. If it is `inspect_dirty_workspace` or `inspect_dirty_failure`, inspect the
    diff and log before retrying.
-6. Use `codex_accounts_status` before asking a human to relogin slots.
+7. Use `codex_accounts_status` before asking a human to relogin slots.
+
+### Agent recipes by task type
+
+Long coding or refactor task:
+
+1. Create one job per worktree with `codex_goal_create_job`.
+2. Use `codex_goal_brief` as the only periodic monitor unless it asks for
+   another tool.
+3. Continue only on `brief.safeToContinue === true`.
+4. On completion, inspect git diff and tests before `codex_goal_mark_reviewed`.
+
+Benchmark improvement task:
+
+1. Put targeted slice commands in the prompt.
+2. Tell the worker not to run full benchmarks repeatedly.
+3. Monitor with `codex_goal_brief`; use `recentCommands` to detect accidental
+   full-benchmark loops.
+4. Full benchmark should be a deliberate final verification, not the main loop.
+
+Parallel worker split:
+
+1. Create separate git worktrees and separate `jobId`s.
+2. Give each job a focused prompt and its own tmux session.
+3. Never run two writer workers in one worktree.
+4. Merge or cherry-pick only after each worker has a stable commit and focused
+   verification.
+
+Read-only or analysis task:
+
+1. Usually do not use the pool workflow.
+2. If a long read-only task still needs a worker, set a read-only permission
+   mode and require a clean worktree before start.
 
 Security rules:
 

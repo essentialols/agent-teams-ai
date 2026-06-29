@@ -17,8 +17,13 @@ export declare function buildCodexGoalBrief(input: {
     lastFailureReason: string | undefined;
     changedFiles: readonly string[];
     safeToContinue: boolean;
+    hasAvailableAccount: boolean;
+    configuredAccounts: string[];
+    dedupedAccounts: string[];
+    availableDedupedAccounts: string[];
     needsHumanRelogin: boolean;
     invalidAccounts: string[];
+    duplicateAccounts: readonly Readonly<Record<string, unknown>>[];
     capacityBlockedAccounts: {
         name: string;
         availability: string | undefined;

@@ -160,6 +160,8 @@ describe("codex goal ops", () => {
       currentAccount: "account-a",
       lastFailureReason: "quota_limited",
       safeToContinue: true,
+      hasAvailableAccount: true,
+      availableDedupedAccounts: ["account-a"],
       needsHumanRelogin: false,
       nextBestCommand:
         'codex_goal_continue({ jobId: "job-from-registry", confirmContinue: true })',
@@ -170,6 +172,62 @@ describe("codex goal ops", () => {
     );
     expect(JSON.stringify(brief)).not.toContain("raw-secret");
     expect(JSON.stringify(brief)).not.toContain("rawBearerSecret");
+  });
+
+  it("does not mark continuation safe when all configured accounts are unavailable", async () => {
+    const fixture = await createGoalFixture();
+    const launch = launchInput(fixture.config, fixture.root);
+    await writeFile(
+      launch.config.outputPath!,
+      `${JSON.stringify({
+        status: "partial",
+        reason: "quota_limited",
+        attempts: [{ accountId: "account-a" }],
+        task: { updatedAt: new Date().toISOString() },
+      })}\n`,
+    );
+    const status = await collectCodexGoalStatus({
+      jobRootDir: fixture.config.jobRootDir,
+      taskId: fixture.config.taskId,
+      workspacePath: fixture.config.workspacePath,
+      logPath: launch.logPath,
+    });
+    const accounts = [
+      accountStatus("account-a", {
+        capacityAvailability: "cooldown",
+        capacityReason: "quota_limited",
+      }),
+      accountStatus("account-b", {
+        status: "auth_invalid",
+      }),
+    ];
+
+    const brief = await buildCodexGoalBrief({
+      jobId: "job-from-registry",
+      launch: {
+        ...launch,
+        config: {
+          ...launch.config,
+          accounts: codexGoalAccountSlots(["account-a", "account-b"]),
+        },
+      },
+      status,
+      accounts,
+      staleAfterMs: 60_000,
+      tailLines: 20,
+    });
+
+    expect(brief).toMatchObject({
+      safeToContinue: false,
+      hasAvailableAccount: false,
+      availableDedupedAccounts: [],
+      invalidAccounts: ["account-b"],
+      nextBestTool: "codex_accounts_status",
+      nextBestReason: "no available account slots for this job",
+    });
+    expect(brief.nextBestCommand).toContain("codex_accounts_status");
+    expect(brief.nextBestCommand).toContain("account-a");
+    expect(brief.nextBestCommand).toContain("account-b");
   });
 
   it("dedupes account slots by sanitized identity and prefers newest ready auth", () => {

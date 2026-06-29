@@ -8,6 +8,7 @@ import {
 import type { OpenCodePromptDeliveryLedgerRecord } from './OpenCodePromptDeliveryLedger';
 import type {
   MemberRuntimeAdvisory,
+  OpenCodeRuntimeDeliveryStatus,
   OpenCodeRuntimeDeliveryUserVisibleImpact,
 } from '@shared/types';
 
@@ -268,4 +269,173 @@ export function toOpenCodeRuntimeDeliveryUserVisibleImpact(
     observedAt: decision.observedAt,
     nextReviewAt: decision.nextReviewAt,
   };
+}
+
+export function isOpenCodeAttachmentDeliveryFailureReason(reason: string | undefined): boolean {
+  return (
+    reason === 'opencode_attachment_delivery_prepare_failed' ||
+    reason?.startsWith('attachment_') === true
+  );
+}
+
+export function selectOpenCodeAttachmentDeliveryUserVisibleMessage(input: {
+  reason?: string;
+  diagnostics?: string[];
+}): string | undefined {
+  const reason = input.reason?.trim();
+  const isAttachmentFailure =
+    isOpenCodeAttachmentDeliveryFailureReason(reason) ||
+    input.diagnostics?.some((diagnostic) =>
+      diagnostic.trim().startsWith('opencode_attachment_delivery_prepare_failed:')
+    ) === true;
+  if (!isAttachmentFailure) {
+    return undefined;
+  }
+
+  const diagnosticMessage = input.diagnostics
+    ?.map((diagnostic) => diagnostic.trim())
+    .find((diagnostic) => diagnostic.startsWith('opencode_attachment_delivery_prepare_failed:'));
+  const strippedDiagnostic = diagnosticMessage
+    ?.slice('opencode_attachment_delivery_prepare_failed:'.length)
+    .trim();
+  if (strippedDiagnostic) {
+    return strippedDiagnostic;
+  }
+
+  if (reason === 'attachment_model_unsupported') {
+    return 'This OpenCode model is not verified for image attachments. Choose a vision-capable model or remove the image.';
+  }
+  if (reason === 'attachment_type_unsupported') {
+    return 'This OpenCode model cannot receive this attachment type. Remove the attachment or choose a supported image model.';
+  }
+  if (reason === 'attachment_too_large') {
+    return 'The attachment is too large for live OpenCode delivery. Reduce the image size or remove the attachment.';
+  }
+  if (reason === 'attachment_artifact_missing' || reason === 'attachment_artifact_path_unsafe') {
+    return 'The attachment file is not available for live OpenCode delivery. Reattach the file and try again.';
+  }
+  if (reason === 'attachment_optimization_failed') {
+    return 'The attachment could not be optimized for live OpenCode delivery. Try a smaller image or remove the attachment.';
+  }
+  if (reason === 'attachment_provider_rejected') {
+    return 'The OpenCode provider rejected the attachment. Choose a different model or remove the attachment.';
+  }
+  if (reason === 'attachment_runtime_transport_failed') {
+    return 'OpenCode could not transport the attachment to the runtime. Try again or remove the attachment.';
+  }
+  return undefined;
+}
+
+export function selectOpenCodeRuntimeDeliveryUserVisibleMessage(input: {
+  reason?: string;
+  diagnostics?: string[];
+}): string | undefined {
+  return selectOpenCodeAttachmentDeliveryUserVisibleMessage(input) ?? input.reason;
+}
+
+export function buildOpenCodeRuntimeDeliveryUserVisibleImpact(input: {
+  delivered?: boolean;
+  responsePending?: boolean;
+  acceptanceUnknown?: boolean;
+  responseState?: OpenCodePromptDeliveryLedgerRecord['responseState'];
+  ledgerStatus?: OpenCodePromptDeliveryLedgerRecord['status'];
+  reason?: string;
+  diagnostics?: string[];
+  queuedBehindMessageId?: string;
+  policyImpact?: OpenCodeRuntimeDeliveryUserVisibleImpact;
+}): OpenCodeRuntimeDeliveryUserVisibleImpact {
+  if (input.policyImpact) {
+    return input.policyImpact;
+  }
+  if (
+    input.responsePending === true ||
+    input.acceptanceUnknown === true ||
+    Boolean(input.queuedBehindMessageId)
+  ) {
+    return {
+      state: 'checking',
+      reasonCode: input.reason
+        ? classifyOpenCodeRuntimeDeliveryReasonCode(input.reason)
+        : undefined,
+      message: selectOpenCodeRuntimeDeliveryUserVisibleMessage(input),
+    };
+  }
+  if (input.delivered === false) {
+    const reason = input.reason ?? input.diagnostics?.find((diagnostic) => diagnostic.trim());
+    if (
+      input.ledgerStatus === 'failed_terminal' &&
+      isDeferredGenericOpenCodeRuntimeDeliveryReason(reason)
+    ) {
+      return {
+        state: 'checking',
+        reasonCode: classifyOpenCodeRuntimeDeliveryReasonCode(reason),
+        message: selectOpenCodeRuntimeDeliveryUserVisibleMessage(input),
+      };
+    }
+    return {
+      state: 'error',
+      reasonCode: classifyOpenCodeRuntimeDeliveryReasonCode(reason),
+      message: selectOpenCodeRuntimeDeliveryUserVisibleMessage(input),
+    };
+  }
+  return input.policyImpact ?? { state: 'none' };
+}
+
+export function toOpenCodeRuntimeDeliveryStatus(input: {
+  record: OpenCodePromptDeliveryLedgerRecord;
+  decision?: OpenCodeRuntimeDeliveryAdvisoryDecision;
+}): OpenCodeRuntimeDeliveryStatus {
+  const failed = input.record.status === 'failed_terminal';
+  const responded =
+    input.record.status === 'responded' &&
+    Boolean(input.record.inboxReadCommittedAt || input.record.visibleReplyMessageId);
+  const policyImpact = input.decision
+    ? toOpenCodeRuntimeDeliveryUserVisibleImpact(input.decision)
+    : undefined;
+  const userVisibleImpact = buildOpenCodeRuntimeDeliveryUserVisibleImpact({
+    delivered: !failed,
+    responsePending: !failed && !responded,
+    acceptanceUnknown: input.record.acceptanceUnknown,
+    responseState: input.record.responseState,
+    ledgerStatus: input.record.status,
+    reason: input.record.lastReason ?? undefined,
+    diagnostics: input.record.diagnostics,
+    policyImpact,
+  });
+  return {
+    messageId: input.record.inboxMessageId,
+    providerId: 'opencode',
+    attempted: true,
+    delivered: !failed,
+    responsePending: !failed && !responded,
+    responseState: input.record.responseState,
+    ledgerStatus: input.record.status,
+    visibleReplyMessageId: input.record.visibleReplyMessageId ?? undefined,
+    visibleReplyCorrelation: input.record.visibleReplyCorrelation ?? undefined,
+    acceptanceUnknown: input.record.acceptanceUnknown,
+    reason: input.record.lastReason ?? undefined,
+    diagnostics: input.record.diagnostics,
+    userVisibleImpact,
+  };
+}
+
+export function getOpenCodeRuntimeDeliveryAdvisoryReasonKey(input: {
+  record: OpenCodePromptDeliveryLedgerRecord;
+  decision?: OpenCodeRuntimeDeliveryAdvisoryDecision;
+}): string {
+  const reason =
+    input.decision?.reason ??
+    selectOpenCodeRuntimeDeliveryReason(input.record) ??
+    input.record.responseState ??
+    input.record.status;
+  const action = input.decision
+    ? `${input.decision.action}:${input.decision.severity ?? 'none'}`
+    : 'record:none';
+  const normalized = reason
+    .toLowerCase()
+    .replace(/https?:\/\/\S+/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 96);
+  return `${action}:${normalized || 'unknown'}`;
 }

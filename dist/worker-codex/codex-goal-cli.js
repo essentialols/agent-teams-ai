@@ -333,6 +333,21 @@ function parseMcpShortcut(commandName, argv, io) {
             }),
         });
     }
+    if (commandName === "decision") {
+        return parseJobShortcut({
+            kind: "decision",
+            tool: "codex_goal_decision",
+            argv,
+            io,
+            extraArgs: (values) => ({
+                ...optionalNumberArg(values, "--stale-after-ms", "staleAfterMs"),
+                ...optionalNumberArg(values, "--tail-lines", "tailLines"),
+                ...(flag(values, "--no-registry-conflicts")
+                    ? { includeRegistryConflicts: false }
+                    : {}),
+            }),
+        });
+    }
     if (commandName === "handoff") {
         return parseJobShortcut({
             kind: "handoff",
@@ -749,6 +764,7 @@ function usage() {
   subscription-runtime-codex-goal doctor-control
   subscription-runtime-codex-goal overview [--registry-root <dir>]
   subscription-runtime-codex-goal brief <jobId> [--registry-root <dir>]
+  subscription-runtime-codex-goal decision <jobId> [--registry-root <dir>]
   subscription-runtime-codex-goal handoff <jobId> [--registry-root <dir>]
   subscription-runtime-codex-goal accounts <jobId> [--registry-root <dir>]
   subscription-runtime-codex-goal relogin <jobId> [account] [--registry-root <dir>]
@@ -771,7 +787,7 @@ escape hatches:
 MCP fallback:
   use tool/resources/prompts when native MCP tools are unavailable in a Codex thread.
   These commands call the same in-process MCP server via the SDK, so the API surface matches MCP.
-  Shortcuts like overview, brief, handoff, accounts, continue-job, recover-job and stop-job are thin wrappers around MCP tools.
+  Shortcuts like overview, brief, decision, handoff, accounts, continue-job, recover-job and stop-job are thin wrappers around MCP tools.
 `;
 }
 function isRecord(value) {

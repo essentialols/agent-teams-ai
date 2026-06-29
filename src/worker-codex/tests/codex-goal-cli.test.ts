@@ -144,6 +144,7 @@ describe("codex goal cli", () => {
     expect(output.tools).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ name: "codex_goal_brief" }),
+        expect.objectContaining({ name: "codex_goal_decision" }),
         expect.objectContaining({ name: "codex_goal_overview" }),
         expect.objectContaining({ name: "codex_goal_accounts_status" }),
         expect.objectContaining({ name: "codex_goal_continue" }),
@@ -212,6 +213,28 @@ describe("codex goal cli", () => {
       jobId: "job-a",
       registryRootDir: "/tmp/registry",
       tailLines: 50,
+    });
+
+    const decision = parseCodexGoalCliArgs([
+      "decision",
+      "job-a",
+      "--registry-root",
+      "/tmp/registry",
+      "--no-registry-conflicts",
+      "--stale-after-ms",
+      "2000",
+    ], fakeIo());
+    expect(decision).toMatchObject({
+      kind: "mcp-tool",
+      name: "codex_goal_decision",
+      format: "json",
+    });
+    if (decision.kind !== "mcp-tool") return;
+    expect(JSON.parse(decision.argsJson ?? "{}")).toEqual({
+      jobId: "job-a",
+      registryRootDir: "/tmp/registry",
+      includeRegistryConflicts: false,
+      staleAfterMs: 2000,
     });
 
     const continueJob = parseCodexGoalCliArgs([

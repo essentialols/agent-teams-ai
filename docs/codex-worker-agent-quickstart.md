@@ -51,6 +51,7 @@ subscription-runtime-codex-goal doctor-control
 subscription-runtime-codex-goal tools
 subscription-runtime-codex-goal overview
 subscription-runtime-codex-goal brief my-task
+subscription-runtime-codex-goal decision my-task
 subscription-runtime-codex-goal handoff my-task
 subscription-runtime-codex-goal accounts my-task
 subscription-runtime-codex-goal stop-job my-task --confirm
@@ -67,9 +68,12 @@ subscription-runtime-codex-goal tool codex_goal_continue --args-json '{"jobId":"
    stop and resolve the single-writer conflict before continuing any job.
 3. Call `codex_goal_get_job({ jobId })`.
 4. Call `codex_goal_brief({ jobId })`.
-5. For handoff, call `codex_goal_handoff({ jobId })` and pass its `text`.
-6. If the worker is alive, do not start another writer. Monitor later.
-7. If `brief.silentStale === true`, inspect tmux, process tree, app-server,
+5. Call `codex_goal_decision({ jobId })` when you need to act. It returns
+   `decision.action`, `decision.severity`, `decision.blockers`, `decision.evidence`,
+   `decision.checklist` and `decision.nextBestCommand`.
+6. For handoff, call `codex_goal_handoff({ jobId })` and pass its `text`.
+7. If the worker is alive, do not start another writer. Monitor later.
+8. If `brief.silentStale === true`, inspect tmux, process tree, app-server,
    recent log tail and git status. If it is truly stuck, call
    `codex_goal_stop({ jobId, confirmStop: true })` before recovery. Successful
    stops write `<taskId>.stop-event.json` in the job root.
@@ -78,17 +82,17 @@ subscription-runtime-codex-goal tool codex_goal_continue --args-json '{"jobId":"
    jobRootDir by hand.
    Prefer `brief.progressUpdatedAt` and `brief.progressHeartbeatAgeMs` over
    stdout silence when deciding whether a worker is actually stale.
-8. If `brief.safeToContinue === true`, call
+9. If `brief.safeToContinue === true`, call
    `codex_goal_continue({ jobId, confirmContinue: true })`.
-9. If `brief.hasAvailableAccount === false`, call
+10. If `brief.hasAvailableAccount === false`, call
    `codex_goal_accounts_status({ jobId })`.
-10. If account status shows invalid auth, call
+11. If account status shows invalid auth, call
    `codex_goal_accounts_relogin_instructions({ jobId, account })` and ask the
    human to login.
-11. If the status is dirty, provider output invalid, unknown runtime, test
+12. If the status is dirty, provider output invalid, unknown runtime, test
    failure or benchmark failure, inspect the worktree and logs manually before
    retrying.
-12. After completion, review diff and verification evidence, then call
+13. After completion, review diff and verification evidence, then call
    `codex_goal_mark_reviewed({ jobId })`.
 
 ## Starting a new job
@@ -124,6 +128,7 @@ Then call:
 codex_goal_create_job(...)
 codex_goal_overview()
 codex_goal_brief({ jobId: "my-task" })
+codex_goal_decision({ jobId: "my-task" })
 codex_goal_continue({ jobId: "my-task", confirmContinue: true })
 ```
 
@@ -133,6 +138,7 @@ Without native MCP, call the same tools through the CLI:
 subscription-runtime-codex-goal tool codex_goal_create_job --args-file job.json
 subscription-runtime-codex-goal overview
 subscription-runtime-codex-goal brief my-task
+subscription-runtime-codex-goal decision my-task
 subscription-runtime-codex-goal handoff my-task
 subscription-runtime-codex-goal continue-job my-task --confirm
 ```

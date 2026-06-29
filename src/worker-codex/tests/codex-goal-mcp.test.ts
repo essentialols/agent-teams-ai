@@ -245,6 +245,31 @@ describe("codex goal MCP server", () => {
           });
           expect((job.commands as Record<string, unknown>).continue).toBeUndefined();
         }
+
+        const decision = await callToolJson(client, "codex_goal_decision", {
+          registryRootDir,
+          jobId: "job-a",
+        });
+        const decisionBody = decision.decision as Record<string, unknown>;
+        expect(decisionBody).toMatchObject({
+          action: "manual_review_single_writer_conflict",
+          decision: "manual_review_single_writer_conflict",
+          severity: "critical",
+          safeToContinue: false,
+          safeToOperate: false,
+          nextBestTool: "manual_review",
+          nextBestReason: "single_writer_workspace_conflict",
+          nextBestCommand: "manual_review_single_writer_workspace_conflict",
+        });
+        expect(decisionBody.blockers).toEqual([
+          expect.objectContaining({
+            code: "single_writer_workspace_conflict",
+            severity: "critical",
+          }),
+        ]);
+        expect(String(JSON.stringify(decisionBody.commands))).not.toContain(
+          "codex_goal_continue",
+        );
       } finally {
         await client.close();
         await server.close();
@@ -388,6 +413,33 @@ describe("codex goal MCP server", () => {
         expect(String(briefBody.nextBestCommand)).toContain("job-a");
         expect(String(briefBody.nextBestCommand)).not.toContain("authRootDir");
         expect(JSON.stringify(brief)).not.toContain("access-secret");
+
+        const decision = await callToolJson(client, "codex_goal_decision", {
+          registryRootDir,
+          jobId: "job-a",
+        });
+        const decisionBody = decision.decision as Record<string, unknown>;
+        expect(decisionBody).toMatchObject({
+          action: "fix_accounts",
+          decision: "fix_accounts",
+          severity: "blocked",
+          safeToContinue: false,
+          safeToOperate: true,
+          nextBestTool: "codex_goal_accounts_status",
+        });
+        expect(decisionBody.blockers).toEqual([
+          expect.objectContaining({
+            code: "no_available_accounts",
+            severity: "blocked",
+          }),
+        ]);
+        expect(String(JSON.stringify(decisionBody.commands))).toContain(
+          "codex_goal_accounts_status",
+        );
+        expect(String(JSON.stringify(decisionBody.commands))).toContain(
+          "codex_goal_accounts_relogin_instructions",
+        );
+        expect(String(JSON.stringify(decision))).not.toContain("access-secret");
 
         const overview = await callToolJson(client, "codex_goal_overview", {
           registryRootDir,

@@ -125,6 +125,10 @@ type JobBriefMcpArgs = JobIdMcpArgs & {
   readonly tailLines?: number;
 };
 
+type JobDecisionMcpArgs = JobBriefMcpArgs & {
+  readonly includeRegistryConflicts?: boolean;
+};
+
 type JobHandoffMcpArgs = JobBriefMcpArgs & {
   readonly includeCliFallback?: boolean;
 };
@@ -564,6 +568,65 @@ export function createCodexGoalMcpServer(): McpServer {
         ok: true,
         registryRootDir: loaded.registryRootDir,
         jobId: loaded.manifest.jobId,
+        brief,
+        status,
+      });
+    }),
+  );
+
+  server.registerTool(
+    "codex_goal_decision",
+    {
+      title: "Codex Goal Decision",
+      description:
+        "Return a conservative agent decision report with blockers, evidence and exact next command.",
+      inputSchema: {
+        ...jobIdInputSchema(),
+        staleAfterMs: z.number().int().positive().optional(),
+        tailLines: z.number().int().positive().optional(),
+        includeRegistryConflicts: z.boolean().optional(),
+      },
+    },
+    async (args) => withMcpErrors(async () => {
+      const decisionArgs = args as JobDecisionMcpArgs;
+      const loaded = await loadJobLaunch(decisionArgs);
+      const status = await collectCodexGoalStatus(statusInput(loaded.launch));
+      const accounts = await listCodexGoalAccountStatuses({
+        authRootDir: loaded.launch.config.authRootDir,
+        accounts: loaded.launch.config.accounts.map((account) => account.name),
+        stateRootDir: codexGoalStateRootDir(loaded.launch),
+      });
+      const staleAfterMs = numberValue(decisionArgs.staleAfterMs) ?? 10 * 60_000;
+      const tailLines = numberValue(decisionArgs.tailLines) ?? 20;
+      const brief = await buildCodexGoalBrief({
+        jobId: loaded.manifest.jobId,
+        launch: loaded.launch,
+        status,
+        accounts,
+        staleAfterMs,
+        tailLines,
+      });
+      const overview = booleanValue(decisionArgs.includeRegistryConflicts) === false
+        ? undefined
+        : await buildCodexGoalOverview({
+            registryRootDir: loaded.registryRootDir,
+            staleAfterMs,
+            tailLines: Math.min(tailLines, 5),
+          });
+      const decision = buildCodexGoalDecision({
+        registryRootDir: loaded.registryRootDir,
+        manifest: loaded.manifest,
+        launch: loaded.launch,
+        status,
+        accounts,
+        brief,
+        ...(overview ? { overview } : {}),
+      });
+      return mcpJson({
+        ok: true,
+        registryRootDir: loaded.registryRootDir,
+        jobId: loaded.manifest.jobId,
+        decision,
         brief,
         status,
       });
@@ -1804,6 +1867,304 @@ export async function buildCodexGoalBrief(input: {
   };
 }
 
+function buildCodexGoalDecision(input: {
+  readonly registryRootDir: string;
+  readonly manifest: CodexGoalJobManifest;
+  readonly launch: CodexGoalLaunchInput;
+  readonly status: Awaited<ReturnType<typeof collectCodexGoalStatus>>;
+  readonly accounts: Awaited<ReturnType<typeof listCodexGoalAccountStatuses>>;
+  readonly brief: Awaited<ReturnType<typeof buildCodexGoalBrief>>;
+  readonly overview?: JsonObject;
+}): JsonObject {
+  const registryArgs = {
+    registryRootDir: input.registryRootDir,
+    jobId: input.manifest.jobId,
+  };
+  const workspaceConflict = findWorkspaceConflictForJob(
+    input.overview,
+    input.manifest.jobId,
+  );
+  const blockedBySingleWriter = workspaceConflict !== undefined;
+  const safeToContinue = input.brief.safeToContinue && !blockedBySingleWriter;
+  const blockers: JsonObject[] = [];
+  const warnings: JsonObject[] = [];
+  const evidence: JsonObject[] = [
+    {
+      code: "worker_state",
+      workerAlive: Boolean(input.status.tmuxAlive),
+      recommendedAction: input.status.recommendedAction,
+      resultStatus: input.status.resultStatus,
+      resultReason: redactOptional(input.status.resultReason),
+    },
+    {
+      code: "workspace_state",
+      workspacePath: input.launch.config.workspacePath,
+      workspaceDirty: input.status.workspaceDirty,
+      changedFilesCount: (input.status.changedFiles ?? []).length,
+    },
+    {
+      code: "progress_state",
+      lastProgressAt: input.brief.lastProgressAt,
+      lastProgressAgeMs: input.brief.lastProgressAgeMs,
+      staleAfterMs: input.brief.staleAfterMs,
+      progressUpdatedAt: input.brief.progressUpdatedAt,
+      progressHeartbeatAgeMs: input.brief.progressHeartbeatAgeMs,
+      progressStatus: input.brief.progressStatus,
+      logByteLength: input.brief.logByteLength,
+      silentStale: input.brief.silentStale,
+    },
+    {
+      code: "account_state",
+      configuredAccounts: input.brief.configuredAccounts,
+      dedupedAccounts: input.brief.dedupedAccounts,
+      availableDedupedAccounts: input.brief.availableDedupedAccounts,
+      invalidAccounts: input.brief.invalidAccounts,
+      hasAvailableAccount: input.brief.hasAvailableAccount,
+    },
+  ];
+  if (input.brief.lifecycleMarkerTypes.length) {
+    evidence.push({
+      code: "lifecycle_markers",
+      lifecycleMarkerTypes: input.brief.lifecycleMarkerTypes,
+      lifecycleMarkers: input.brief.lifecycleMarkers,
+    });
+  }
+  if (workspaceConflict) {
+    blockers.push({
+      code: "single_writer_workspace_conflict",
+      severity: "critical",
+      message:
+        "Multiple stored jobs can write to the same workspace. Do not continue this job until one writer is selected.",
+      conflict: workspaceConflict,
+    });
+  }
+  if (input.brief.silentStale) {
+    blockers.push({
+      code: "silent_stale_worker",
+      severity: "blocked",
+      message:
+        "The worker process appears alive but observable progress is stale. Inspect process, app-server, log and worktree before stopping or recovery.",
+    });
+  }
+  if (input.status.workspaceDirty && !input.status.tmuxAlive) {
+    blockers.push({
+      code: "dirty_worktree_requires_review",
+      severity: "blocked",
+      message:
+        "The workspace has uncommitted changes and no active worker. Review changes before starting another writer.",
+      changedFiles: input.status.changedFiles ?? [],
+    });
+  }
+  if (!input.brief.hasAvailableAccount && isSafeStartAction(input.status.recommendedAction)) {
+    blockers.push({
+      code: "no_available_accounts",
+      severity: "blocked",
+      message:
+        "The job is otherwise continuable, but no deduped account slot is currently available.",
+      invalidAccounts: input.brief.invalidAccounts,
+      capacityBlockedAccounts: input.brief.capacityBlockedAccounts,
+    });
+  }
+  if (input.brief.needsHumanRelogin && input.brief.hasAvailableAccount) {
+    warnings.push({
+      code: "some_accounts_need_relogin",
+      severity: "warning",
+      message:
+        "Some configured accounts are invalid, but at least one deduped account is still available.",
+      invalidAccounts: input.brief.invalidAccounts,
+    });
+  }
+  if (input.brief.duplicateAccounts.length) {
+    warnings.push({
+      code: "duplicate_account_identity",
+      severity: "warning",
+      message:
+        "Multiple slots appear to share one account identity. Deduped availability is lower than configured slot count.",
+      duplicateAccounts: input.brief.duplicateAccounts,
+    });
+  }
+  const decision = codexGoalDecisionKind({
+    blockedBySingleWriter,
+    brief: input.brief,
+    status: input.status,
+    safeToContinue,
+  });
+  const severity = codexGoalDecisionSeverity(decision, blockers, warnings);
+  const commands = codexGoalDecisionCommands({
+    registryArgs,
+    safeToContinue,
+    silentStale: input.brief.silentStale,
+    hasInvalidAccounts: input.brief.invalidAccounts.length > 0,
+  });
+  return {
+    action: decision,
+    decision,
+    severity,
+    safeToContinue,
+    safeToOperate: !blockedBySingleWriter,
+    jobId: input.manifest.jobId,
+    taskId: input.launch.config.taskId,
+    workspacePath: input.launch.config.workspacePath,
+    tmuxSession: input.launch.tmuxSession,
+    nextBestTool: blockedBySingleWriter
+      ? "manual_review"
+      : input.brief.nextBestTool,
+    nextBestReason: blockedBySingleWriter
+      ? "single_writer_workspace_conflict"
+      : input.brief.nextBestReason,
+    nextBestCommand: blockedBySingleWriter
+      ? "manual_review_single_writer_workspace_conflict"
+      : safeToContinue
+      ? commands.continue
+      : input.brief.nextBestCommand,
+    blockers,
+    warnings,
+    evidence,
+    checklist: codexGoalDecisionChecklist({
+      decision,
+      commands,
+      invalidAccounts: input.brief.invalidAccounts,
+    }),
+    commands,
+    recentCommands: input.brief.recentCommands,
+  };
+}
+
+function codexGoalDecisionKind(input: {
+  readonly blockedBySingleWriter: boolean;
+  readonly brief: Awaited<ReturnType<typeof buildCodexGoalBrief>>;
+  readonly status: Awaited<ReturnType<typeof collectCodexGoalStatus>>;
+  readonly safeToContinue: boolean;
+}): string {
+  if (input.blockedBySingleWriter) return "manual_review_single_writer_conflict";
+  if (input.brief.silentStale) return "manual_review_silent_stale";
+  if (input.status.tmuxAlive) return "wait_for_worker";
+  if (input.status.recommendedAction === "review_completed") return "review_completed";
+  if (!input.brief.hasAvailableAccount && isSafeStartAction(input.status.recommendedAction)) {
+    return "fix_accounts";
+  }
+  if (input.safeToContinue) return "continue";
+  if (input.status.workspaceDirty) return "manual_review_dirty_worktree";
+  return "manual_review";
+}
+
+function codexGoalDecisionSeverity(
+  decision: string,
+  blockers: readonly JsonObject[],
+  warnings: readonly JsonObject[],
+): string {
+  if (blockers.some((blocker) => blocker.severity === "critical")) return "critical";
+  if (blockers.length) return "blocked";
+  if (decision.startsWith("manual_review")) return "blocked";
+  if (warnings.length) return "warning";
+  return "info";
+}
+
+function codexGoalDecisionCommands(input: {
+  readonly registryArgs: JsonObject;
+  readonly safeToContinue: boolean;
+  readonly silentStale: boolean;
+  readonly hasInvalidAccounts: boolean;
+}): JsonObject {
+  return {
+    overview: `codex_goal_overview(${JSON.stringify({
+      registryRootDir: input.registryArgs.registryRootDir,
+    })})`,
+    decision: `codex_goal_decision(${JSON.stringify(input.registryArgs)})`,
+    brief: `codex_goal_brief(${JSON.stringify(input.registryArgs)})`,
+    handoff: `codex_goal_handoff(${JSON.stringify(input.registryArgs)})`,
+    accounts: `codex_goal_accounts_status(${JSON.stringify(input.registryArgs)})`,
+    ...(input.safeToContinue
+      ? {
+          continue:
+            `codex_goal_continue(${JSON.stringify({ ...input.registryArgs, confirmContinue: true })})`,
+        }
+      : {}),
+    ...(input.silentStale
+      ? {
+          stopAfterManualReview:
+            `codex_goal_stop(${JSON.stringify({ ...input.registryArgs, confirmStop: true })})`,
+        }
+      : {}),
+    ...(input.hasInvalidAccounts
+      ? {
+          reloginInstructions:
+            `codex_goal_accounts_relogin_instructions(${JSON.stringify(input.registryArgs)})`,
+        }
+      : {}),
+  };
+}
+
+function codexGoalDecisionChecklist(input: {
+  readonly decision: string;
+  readonly commands: JsonObject;
+  readonly invalidAccounts: readonly string[];
+}): readonly string[] {
+  if (input.decision === "continue") {
+    return [
+      `Call ${String(input.commands.continue)}.`,
+      "Monitor with codex_goal_brief and do not start another writer in the same worktree.",
+    ];
+  }
+  if (input.decision === "wait_for_worker") {
+    return [
+      "Keep monitoring with codex_goal_brief.",
+      "Do not start or recover another writer while the worker is alive and not silent-stale.",
+    ];
+  }
+  if (input.decision === "fix_accounts") {
+    return [
+      `Call ${String(input.commands.accounts)}.`,
+      input.invalidAccounts.length
+        ? `Relogin invalid slots with ${String(input.commands.reloginInstructions)}.`
+        : "Wait for account capacity cooldown or add a valid account slot.",
+      "Re-run codex_goal_decision before continuing.",
+    ];
+  }
+  if (input.decision === "manual_review_silent_stale") {
+    return [
+      "Inspect process tree, app-server, log tail and git status.",
+      `If stale is confirmed, call ${String(input.commands.stopAfterManualReview)}.`,
+      "After stop, re-run codex_goal_decision before continuing.",
+    ];
+  }
+  if (input.decision === "manual_review_single_writer_conflict") {
+    return [
+      `Call ${String(input.commands.overview)}.`,
+      "Choose exactly one writer job for the shared workspace.",
+      "Do not continue any conflicted job until the conflict is resolved.",
+    ];
+  }
+  if (input.decision === "review_completed") {
+    return [
+      "Review the result, workspace diff and project checks.",
+      "If accepted, call codex_goal_mark_reviewed for this job.",
+    ];
+  }
+  return [
+    "Inspect brief, status, recent log tail and workspace diff manually.",
+    "Do not continue until the blocking state is understood.",
+  ];
+}
+
+function findWorkspaceConflictForJob(
+  overview: JsonObject | undefined,
+  jobId: string,
+): JsonObject | undefined {
+  const conflicts = Array.isArray(overview?.workspaceConflicts)
+    ? overview.workspaceConflicts
+    : [];
+  return conflicts.find((conflict): conflict is JsonObject =>
+    isRecord(conflict) &&
+      Array.isArray(conflict.jobIds) &&
+      conflict.jobIds.includes(jobId)
+  );
+}
+
+function redactOptional(value: string | undefined): string | undefined {
+  return value ? redactText(value) : undefined;
+}
+
 function buildCodexGoalHandoff(input: {
   readonly registryRootDir: string;
   readonly manifest: CodexGoalJobManifest;
@@ -2379,18 +2740,18 @@ function codexGoalPromptText(name: string, jobId: string | undefined): string {
   const shared =
     `Use the subscription-runtime Codex goal MCP tools for jobId ${id}. ` +
     "Never print auth.json or tokens. Do not run two writer workers in the same worktree. " +
-    "Treat codex_goal_overview as the registry monitor and codex_goal_brief as the single-job source of truth for safeToContinue, hasAvailableAccount, progressHeartbeatAgeMs and nextBestCommand.";
+    "Treat codex_goal_overview as the registry monitor, codex_goal_brief as the single-job monitor, and codex_goal_decision as the read-only action gate for safeToContinue, blockers, evidence and nextBestCommand.";
   if (name === "start_codex_goal_worker") {
-    return `${shared} First call codex_goal_brief. Start or continue only when safeToContinue is true, otherwise follow nextBestCommand. If no job exists yet, create one with model gpt-5.5, reasoningEffort xhigh, serviceTier fast, app-server-goal behavior and 72h timeout.`;
+    return `${shared} First call codex_goal_decision. Start or continue only when decision.safeToContinue is true, otherwise follow decision.checklist and decision.nextBestCommand. If no job exists yet, create one with model gpt-5.5, reasoningEffort xhigh, serviceTier fast, app-server-goal behavior and 72h timeout.`;
   }
   if (name === "monitor_codex_goal_worker") {
-    return `${shared} Call codex_goal_overview for pool-level status, then codex_goal_brief for the job that needs action. If worker is alive and silentStale is false, keep monitoring instead of starting another worker. If silentStale is true, verify progress heartbeat, tmux, runner process, app-server process, recent log tail and git status before stopping or recovery.`;
+    return `${shared} Call codex_goal_overview for pool-level status, codex_goal_brief for monitoring, and codex_goal_decision before taking action. If worker is alive and silentStale is false, keep monitoring instead of starting another worker. If silentStale is true, verify progress heartbeat, tmux, runner process, app-server process, recent log tail and git status before stopping or recovery.`;
   }
   if (name === "recover_codex_goal_worker") {
-    return `${shared} Use codex_goal_recover only for safe capacity, auth, reconnect or timeout states and only when safeToContinue is true. If hasAvailableAccount is false, call codex_goal_accounts_status for the job. Inspect dirty, provider_output_invalid, unknown runtime, test and benchmark failures manually.`;
+    return `${shared} Use codex_goal_recover only for safe capacity, auth, reconnect or timeout states and only when decision.safeToContinue is true. If decision.action is fix_accounts, call codex_goal_accounts_status for the job. Inspect dirty, provider_output_invalid, unknown runtime, test and benchmark failures manually.`;
   }
   if (name === "handoff_codex_goal_job") {
-    return `${shared} Provide jobId, registryRootDir if non-default, worktree, branch, tmux session, task id, prompt path, accounts, model, effort, service tier, brief.safeToContinue, brief.hasAvailableAccount, nextBestCommand and any dirty files.`;
+    return `${shared} Provide jobId, registryRootDir if non-default, worktree, branch, tmux session, task id, prompt path, accounts, model, effort, service tier, decision.action, decision.safeToContinue, decision.nextBestCommand and any dirty files.`;
   }
   return `${shared} Inspect git diff, result JSON, recent commands and test evidence before merging. Use codex_goal_mark_reviewed only after the worker output has been reviewed.`;
 }

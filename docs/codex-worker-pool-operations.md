@@ -338,6 +338,10 @@ Job registry tools:
 - `codex_goal_status_by_id`: inspect a job by `jobId`.
 - `codex_goal_brief`: compact operator summary with stale/progress/account
   hints, recent commands and the next safe job-level command.
+- `codex_goal_decision`: read-only decision report for agents. It combines
+  brief, account state and registry-level single-writer conflicts into
+  `decision.action`, `decision.severity`, `decision.blockers`, `decision.evidence`,
+  `decision.checklist` and an exact `decision.nextBestCommand`.
 - `codex_goal_handoff`: build a copy-paste safe handoff bundle with job
   paths, status, account summary, next commands and CLI fallback commands.
 - `codex_goal_accounts_status`: inspect the stored job's configured account
@@ -406,6 +410,13 @@ agents. It returns:
 - `needsHumanRelogin`
 - `nextBestCommand`
 
+`codex_goal_decision` should be the default single-job action gate. Use it
+when a worker needs attention and an agent must decide whether to wait,
+continue, fix accounts or stop for manual review. It is read-only and does not
+start or stop tmux. Its `decision.safeToContinue` already accounts for
+registry-level workspace conflicts, so agents should prefer it over checking
+`brief.safeToContinue` alone before acting.
+
 `codex_goal_handoff` should be the default handoff response. It returns a
 `handoff.text` block that is safe to paste into another agent thread, plus
 structured `summary`, `mcpCommands`, `reviewCommands`, `cliFallbackCommands`
@@ -461,9 +472,12 @@ occasional overrides.
 Recommended agent loop:
 
 1. Call `codex_goal_overview` for multiple jobs or unknown state. Call
-   `codex_goal_brief` when a specific `jobId` needs attention.
+   `codex_goal_brief` when a specific `jobId` needs monitoring.
    If `overview.safeToOperate` is false, resolve `overview.workspaceConflicts`
    before starting or continuing any writer.
+   Call `codex_goal_decision` when the job needs action. Follow
+   `decision.checklist` and `decision.nextBestCommand`; do not continue when
+   `decision.severity` is `blocked` or `critical`.
 2. If `recommendedAction` is `wait_for_worker`, do not start another writer in
    that worktree while `brief.silentStale` is false.
 3. If `brief.silentStale` is true, inspect tmux, process tree, app-server,

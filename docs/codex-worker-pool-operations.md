@@ -50,25 +50,26 @@ monitoring, and deciding when to restart.
 
 If you inherit a running Codex worker pool, do this first:
 
-1. Read the handoff text and identify the worktree, branch, tmux session, task
-   id, prompt path, log path and allowed account slots.
-2. Check the tmux pane and runner process. Do not start another writer in the
+1. Ask for or discover the `jobId`. Prefer `codex_goal_get_job` over copying
+   paths from chat.
+2. Call `codex_goal_brief` or `codex_goal_status_by_id` for the stored job.
+3. Check the tmux pane and runner process. Do not start another writer in the
    same worktree while the current runner is alive.
-3. Check `git status --short --branch` in the worktree. Treat dirty files as
+4. Check `git status --short --branch` in the worktree. Treat dirty files as
    active work unless the result file proves the task is done or failed.
-4. Check the latest result JSON if it exists. If it does not exist, the task is
+5. Check the latest result JSON if it exists. If it does not exist, the task is
    usually still running.
-5. Run the safe account checker. It must print only slot status and sanitized
-   metadata.
-6. If the runner stopped because of quota, capacity, auth or reconnect, restart
-   a continuation through the pool with the same prompt and workspace.
-7. If the runner stopped because of provider output, runtime, code, test or
+6. Use `codex_accounts_status` for the selected pool. It must print only slot
+   status and sanitized metadata.
+7. If the runner stopped because of quota, capacity, auth or reconnect, restart
+   a continuation through `codex_goal_continue` with the same stored job.
+8. If the runner stopped because of provider output, runtime, code, test or
    benchmark failure, inspect the dirty work before retrying.
-8. Keep model `gpt-5.5`, reasoning effort `xhigh`, service tier `fast`, engine
+9. Keep model `gpt-5.5`, reasoning effort `xhigh`, service tier `fast`, engine
    `app-server-goal`, and a 72 hour task timeout unless the task owner changed
    them explicitly.
-9. Verify with targeted tests before full benchmarks.
-10. Commit only stable, reviewed worker changes with a conventional commit.
+10. Verify with targeted tests before full benchmarks.
+11. Commit only stable, reviewed worker changes with a conventional commit.
 
 The safe default is: continue capacity failures automatically, inspect unknown
 failures manually.
@@ -148,7 +149,58 @@ The MCP adapter is the agent-facing control plane. It shares the same
 application operations as the CLI, so operator behavior stays consistent while
 agents get typed tools and structured results instead of long shell snippets.
 
-Available tools:
+### Job registry happy path
+
+The first-class agent workflow is a versioned `job.json` manifest. It keeps
+paths, account slots, model settings and tmux session in one place so another
+agent can continue by `jobId` without reconstructing shell commands from chat.
+
+Recommended flow:
+
+1. `codex_goal_create_job` once per logical goal.
+2. `codex_goal_get_job` or `codex_goal_list_jobs` for handoff.
+3. `codex_goal_brief` for the compact current state.
+4. `codex_goal_continue` with `confirmContinue: true` only when recommended.
+5. `codex_goal_mark_reviewed` after a completed worker was inspected.
+
+Minimal `codex_goal_create_job` input:
+
+```json
+{
+  "jobId": "memo-locomo-cat1-recall",
+  "description": "Improve LoCoMo category 1 recall",
+  "tags": ["memo-stack", "locomo", "cat1"],
+  "jobRootDir": "/Users/me/.cache/subscription-runtime/memo-locomo-cat1-recall",
+  "authRootDir": "/Users/me/.cache/subscription-runtime/live-codex-auth",
+  "stateRootDir": "/Users/me/.cache/subscription-runtime/memo-locomo-cat1-recall/state",
+  "workspacePath": "/path/to/project-worktree",
+  "promptPath": "/Users/me/.cache/subscription-runtime/memo-locomo-cat1-recall/prompt.md",
+  "taskId": "memo-locomo-cat1-recall",
+  "accounts": ["account-a", "account-b", "account-c"],
+  "tmuxSession": "memo-locomo-cat1-recall",
+  "model": "gpt-5.5",
+  "reasoningEffort": "xhigh",
+  "serviceTier": "fast",
+  "taskTimeoutMs": 259200000,
+  "maxAccountCycles": 3
+}
+```
+
+The manifest is stored under:
+
+```txt
+~/.cache/subscription-runtime/codex-goal-jobs/<jobId>/job.json
+```
+
+Agents can also read it as an MCP resource:
+
+```txt
+codex-goal://jobs/<jobId>
+```
+
+### MCP tools
+
+Core launch and inspection tools:
 
 - `codex_goal_dry_run`: build the no-tmux and tmux commands without starting
   anything.
@@ -161,8 +213,45 @@ Available tools:
 - `codex_goal_doctor`: validate prompt, job root, auth root, workspace and
   account auth files.
 - `codex_goal_tail`: read the last log lines.
-- `codex_accounts_status`: inspect slot auth health without printing token
-  material.
+- `codex_accounts_status`: inspect slot auth health, capacity cooldowns and
+  sanitized identity hashes without printing token material.
+
+Job registry tools:
+
+- `codex_goal_list_jobs`: list stored jobs.
+- `codex_goal_get_job`: read one `job.json`.
+- `codex_goal_create_job`: create a new stored job.
+- `codex_goal_update_job`: patch a stored job.
+- `codex_goal_status_by_id`: inspect a job by `jobId`.
+- `codex_goal_brief`: compact operator summary with stale/progress/account
+  hints.
+
+Lifecycle tools:
+
+- `codex_goal_recommend_next_action`: explain the safe next tool for a stored
+  job.
+- `codex_goal_continue`: restart a stopped safe continuation.
+- `codex_goal_recover`: same safety checks, but explicitly marked as recovery.
+- `codex_goal_pause`: soft pause marker for human handoff. It does not kill
+  tmux or discard work.
+- `codex_goal_mark_reviewed`: mark completed worker output as reviewed.
+- `codex_goal_assert_single_writer`: verify that the tmux session is the only
+  intended writer for that worktree.
+
+Account pool tools:
+
+- `codex_accounts_list_pools`: list pools under a root cache directory.
+- `codex_accounts_status`: inspect a specific pool or auth root.
+- `codex_accounts_relogin_instructions`: generate safe relogin commands for a
+  slot without exposing token material.
+
+Prompt templates:
+
+- `start_codex_goal_worker`
+- `monitor_codex_goal_worker`
+- `recover_codex_goal_worker`
+- `handoff_codex_goal_job`
+- `review_worker_changes`
 
 Minimal MCP `codex_goal_start` input:
 
@@ -191,11 +280,13 @@ occasional overrides.
 
 Recommended agent loop:
 
-1. Call `codex_goal_status`.
+1. Call `codex_goal_brief` when a `jobId` exists, otherwise call
+   `codex_goal_status`.
 2. If `recommendedAction` is `wait_for_worker`, do not start another writer in
    that worktree.
-3. If `recommendedAction` is `start_worker`, run `codex_goal_dry_run`, then
-   `codex_goal_start` with `confirmStart: true`.
+3. If `recommendedAction` is `start_worker`, use `codex_goal_continue` for
+   stored jobs, or `codex_goal_dry_run` then `codex_goal_start` for direct
+   launch config.
 4. If it is `continue_after_capacity` or `continue_after_timeout`, restart the
    same task with the same prompt, task id, workspace and account pool.
 5. If it is `inspect_dirty_workspace` or `inspect_dirty_failure`, inspect the

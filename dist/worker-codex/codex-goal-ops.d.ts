@@ -51,14 +51,21 @@ export type CodexGoalAccountSlotStatus = {
     readonly status: CodexGoalAccountStatus;
     readonly byteLength?: number;
     readonly authJsonSha256Prefix?: string;
+    readonly identitySource?: string;
+    readonly identityHashPrefix?: string;
     readonly lastRefreshAt?: string;
     readonly expiresAt?: string;
+    readonly capacityAvailability?: string;
+    readonly capacityReason?: string;
+    readonly capacityCooldownUntil?: string;
+    readonly capacityLastLimitSignalAt?: string;
     readonly warnings: readonly string[];
     readonly safeMessage: string;
 };
 export type CodexGoalAccountStatusInput = {
     readonly authRootDir: string;
     readonly accounts?: readonly string[];
+    readonly stateRootDir?: string;
 };
 export declare function buildCodexGoalNoTmuxCommand(input: CodexGoalLaunchInput): string;
 export declare function buildCodexGoalTmuxCommand(input: CodexGoalLaunchInput): CodexGoalTmuxCommand;

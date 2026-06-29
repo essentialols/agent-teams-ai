@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
+import { LocalFileWorkerAccountCapacityStore } from "@vioxen/subscription-runtime/store-local-file";
 import { codexGoalAccountSlots, type CodexGoalRunConfig } from "../codex-goal-runner";
 import {
   buildCodexGoalNoTmuxCommand,
@@ -34,6 +35,18 @@ describe("codex goal ops", () => {
 
   it("doctors a sandbox worker layout and reports sanitized account status", async () => {
     const fixture = await createGoalFixture();
+    const cooldownUntil = new Date(Date.now() + 60_000);
+    new LocalFileWorkerAccountCapacityStore({
+      rootDir: join(fixture.root, "state", "worker-account-capacity"),
+    }).observe({
+      accountId: "account-a",
+      observedAt: new Date(),
+      capacity: {
+        availability: "cooldown",
+        reason: "quota_limited",
+        cooldownUntil,
+      },
+    });
 
     const doctor = await doctorCodexGoal({
       config: fixture.config,
@@ -41,13 +54,22 @@ describe("codex goal ops", () => {
     });
     const accounts = await listCodexGoalAccountStatuses({
       authRootDir: fixture.config.authRootDir,
+      stateRootDir: join(fixture.root, "state"),
       accounts: ["account-a"],
     });
 
     expect(doctor.ok).toBe(true);
     expect(accounts).toHaveLength(1);
     expect(accounts[0]?.status).toBe("ready");
+    expect(accounts[0]?.identitySource).toBe("chatgpt_account_id");
+    expect(accounts[0]?.identityHashPrefix).toHaveLength(16);
+    expect(accounts[0]?.capacityAvailability).toBe("cooldown");
+    expect(accounts[0]?.capacityReason).toBe("quota_limited");
+    expect(accounts[0]?.capacityCooldownUntil).toBe(cooldownUntil.toISOString());
     expect(JSON.stringify(accounts)).not.toContain("refresh-secret");
+    expect(JSON.stringify(accounts)).not.toContain("access-secret");
+    expect(JSON.stringify(accounts)).not.toContain("secret@example.com");
+    expect(JSON.stringify(accounts)).not.toContain("chatgpt-account-secret");
   });
 
   it("recommends inspection instead of account switching for dirty unknown failures", async () => {
@@ -111,6 +133,14 @@ async function createGoalFixture(): Promise<{
       tokens: {
         refresh_token: "refresh-secret",
         access_token: "access-secret",
+        id_token: fakeJwt({
+          email: "secret@example.com",
+          sub: "oauth-sub-secret",
+          "https://api.openai.com/auth": {
+            chatgpt_account_id: "chatgpt-account-secret",
+            chatgpt_user_id: "chatgpt-user-secret",
+          },
+        }),
         expiry: Math.floor(Date.now() / 1000) + 3600,
       },
     })}\n`,
@@ -135,6 +165,19 @@ async function createGoalFixture(): Promise<{
       requireGitWorkspace: true,
     },
   };
+}
+
+function fakeJwt(claims: Readonly<Record<string, unknown>>): string {
+  return [
+    base64UrlJson({ alg: "none", typ: "JWT" }),
+    base64UrlJson(claims),
+    "",
+  ].join(".");
+}
+
+function base64UrlJson(value: unknown): string {
+  return Buffer.from(JSON.stringify(value), "utf8")
+    .toString("base64url");
 }
 
 function launchInput(

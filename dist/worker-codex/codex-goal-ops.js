@@ -1,8 +1,10 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { access, readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { readCodexAuthJsonFreshness, validateCodexAuthJsonBytes, } from "@vioxen/subscription-runtime/provider-codex";
+import { LocalFileWorkerAccountCapacityStore } from "@vioxen/subscription-runtime/store-local-file";
 const execFileAsync = promisify(execFile);
 export function buildCodexGoalNoTmuxCommand(input) {
     const config = input.config;
@@ -143,7 +145,11 @@ export async function listCodexGoalAccountStatuses(input) {
     const accountNames = input.accounts?.length
         ? input.accounts
         : await listAccountDirectories(input.authRootDir);
-    return Promise.all(accountNames.map((name) => inspectCodexGoalAccount(input.authRootDir, name)));
+    return Promise.all(accountNames.map((name) => inspectCodexGoalAccount({
+        authRootDir: input.authRootDir,
+        name,
+        ...(input.stateRootDir ? { stateRootDir: input.stateRootDir } : {}),
+    })));
 }
 export function recommendCodexGoalAction(input) {
     if (input.tmuxAlive)
@@ -173,24 +179,41 @@ export function shellQuote(value) {
         return value;
     return `'${value.replace(/'/g, "'\\''")}'`;
 }
-async function inspectCodexGoalAccount(authRootDir, name) {
-    const authJsonPath = join(authRootDir, name, "auth.json");
+async function inspectCodexGoalAccount(input) {
+    const authJsonPath = join(input.authRootDir, input.name, "auth.json");
     try {
         const authJsonBytes = await readFile(authJsonPath, "utf8");
         const validation = validateCodexAuthJsonBytes({ authJsonBytes });
         const freshness = readCodexAuthJsonFreshness({ authJsonBytes });
+        const identity = sanitizedCodexIdentity(validation.parsed.tokens.id_token);
+        const capacity = readAccountCapacity({
+            accountName: input.name,
+            ...(input.stateRootDir ? { stateRootDir: input.stateRootDir } : {}),
+        });
         const warnings = [...validation.warnings, ...freshness.warnings];
         return {
-            name,
+            name: input.name,
             authJsonPath,
             status: "ready",
             byteLength: validation.byteLength,
             authJsonSha256Prefix: validation.exactBytesSha256.slice(0, 12),
+            ...(identity ? { identitySource: identity.source } : {}),
+            ...(identity ? { identityHashPrefix: identity.hashPrefix } : {}),
             ...(freshness.lastRefreshAt
                 ? { lastRefreshAt: freshness.lastRefreshAt.toISOString() }
                 : {}),
             ...(freshness.expiresAt
                 ? { expiresAt: freshness.expiresAt.toISOString() }
+                : {}),
+            ...(capacity?.availability
+                ? { capacityAvailability: capacity.availability }
+                : {}),
+            ...(capacity?.reason ? { capacityReason: capacity.reason } : {}),
+            ...(capacity?.cooldownUntil
+                ? { capacityCooldownUntil: capacity.cooldownUntil.toISOString() }
+                : {}),
+            ...(capacity?.lastLimitSignalAt
+                ? { capacityLastLimitSignalAt: capacity.lastLimitSignalAt.toISOString() }
                 : {}),
             warnings,
             safeMessage: warnings.length
@@ -201,7 +224,7 @@ async function inspectCodexGoalAccount(authRootDir, name) {
     catch (error) {
         const safeMessage = error instanceof Error ? error.message : "auth_invalid";
         return {
-            name,
+            name: input.name,
             authJsonPath,
             status: safeMessage.includes("ENOENT") ? "auth_missing" : "auth_invalid",
             warnings: [],
@@ -209,6 +232,57 @@ async function inspectCodexGoalAccount(authRootDir, name) {
                 ? "auth.json is missing"
                 : safeMessage,
         };
+    }
+}
+function sanitizedCodexIdentity(idToken) {
+    if (!idToken)
+        return null;
+    const claims = decodeJwtClaims(idToken);
+    if (!claims)
+        return null;
+    const authClaims = isRecord(claims["https://api.openai.com/auth"])
+        ? claims["https://api.openai.com/auth"]
+        : {};
+    const candidates = [
+        ["chatgpt_account_id", authClaims.chatgpt_account_id],
+        ["chatgpt_user_id", authClaims.chatgpt_user_id],
+        ["sub", claims.sub],
+        ["email", claims.email],
+    ];
+    for (const [source, value] of candidates) {
+        if (typeof value !== "string" || !value.trim())
+            continue;
+        return {
+            source,
+            hashPrefix: hashText(`${source}:${value}`).slice(0, 16),
+        };
+    }
+    return null;
+}
+function decodeJwtClaims(token) {
+    const payload = token.split(".")[1];
+    if (!payload)
+        return null;
+    try {
+        const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+        const padded = normalized.padEnd(normalized.length + ((4 - (normalized.length % 4)) % 4), "=");
+        const parsed = JSON.parse(Buffer.from(padded, "base64").toString("utf8"));
+        return isRecord(parsed) ? parsed : null;
+    }
+    catch {
+        return null;
+    }
+}
+function readAccountCapacity(input) {
+    if (!input.stateRootDir)
+        return null;
+    try {
+        return new LocalFileWorkerAccountCapacityStore({
+            rootDir: join(input.stateRootDir, "worker-account-capacity"),
+        }).read({ accountId: input.accountName });
+    }
+    catch {
+        return null;
     }
 }
 async function listAccountDirectories(authRootDir) {
@@ -360,5 +434,8 @@ function pushOptionalNumber(args, flagName, value) {
 }
 function isRecord(value) {
     return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function hashText(value) {
+    return createHash("sha256").update(value).digest("hex");
 }
 //# sourceMappingURL=codex-goal-ops.js.map

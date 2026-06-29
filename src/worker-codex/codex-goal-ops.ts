@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { access, readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -6,6 +7,7 @@ import {
   readCodexAuthJsonFreshness,
   validateCodexAuthJsonBytes,
 } from "@vioxen/subscription-runtime/provider-codex";
+import { LocalFileWorkerAccountCapacityStore } from "@vioxen/subscription-runtime/store-local-file";
 import type { AttemptFailureReason } from "@vioxen/subscription-runtime/worker-core";
 import type { CodexGoalRunConfig } from "./codex-goal-runner";
 
@@ -83,8 +85,14 @@ export type CodexGoalAccountSlotStatus = {
   readonly status: CodexGoalAccountStatus;
   readonly byteLength?: number;
   readonly authJsonSha256Prefix?: string;
+  readonly identitySource?: string;
+  readonly identityHashPrefix?: string;
   readonly lastRefreshAt?: string;
   readonly expiresAt?: string;
+  readonly capacityAvailability?: string;
+  readonly capacityReason?: string;
+  readonly capacityCooldownUntil?: string;
+  readonly capacityLastLimitSignalAt?: string;
   readonly warnings: readonly string[];
   readonly safeMessage: string;
 };
@@ -92,6 +100,7 @@ export type CodexGoalAccountSlotStatus = {
 export type CodexGoalAccountStatusInput = {
   readonly authRootDir: string;
   readonly accounts?: readonly string[];
+  readonly stateRootDir?: string;
 };
 
 export function buildCodexGoalNoTmuxCommand(input: CodexGoalLaunchInput): string {
@@ -254,7 +263,13 @@ export async function listCodexGoalAccountStatuses(
     ? input.accounts
     : await listAccountDirectories(input.authRootDir);
   return Promise.all(
-    accountNames.map((name) => inspectCodexGoalAccount(input.authRootDir, name)),
+    accountNames.map((name) =>
+      inspectCodexGoalAccount({
+        authRootDir: input.authRootDir,
+        name,
+        ...(input.stateRootDir ? { stateRootDir: input.stateRootDir } : {}),
+      }),
+    ),
   );
 }
 
@@ -294,27 +309,46 @@ export function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
-async function inspectCodexGoalAccount(
-  authRootDir: string,
-  name: string,
+async function inspectCodexGoalAccount(input: {
+  readonly authRootDir: string;
+  readonly name: string;
+  readonly stateRootDir?: string;
+}
 ): Promise<CodexGoalAccountSlotStatus> {
-  const authJsonPath = join(authRootDir, name, "auth.json");
+  const authJsonPath = join(input.authRootDir, input.name, "auth.json");
   try {
     const authJsonBytes = await readFile(authJsonPath, "utf8");
     const validation = validateCodexAuthJsonBytes({ authJsonBytes });
     const freshness = readCodexAuthJsonFreshness({ authJsonBytes });
+    const identity = sanitizedCodexIdentity(validation.parsed.tokens.id_token);
+    const capacity = readAccountCapacity({
+      accountName: input.name,
+      ...(input.stateRootDir ? { stateRootDir: input.stateRootDir } : {}),
+    });
     const warnings = [...validation.warnings, ...freshness.warnings];
     return {
-      name,
+      name: input.name,
       authJsonPath,
       status: "ready",
       byteLength: validation.byteLength,
       authJsonSha256Prefix: validation.exactBytesSha256.slice(0, 12),
+      ...(identity ? { identitySource: identity.source } : {}),
+      ...(identity ? { identityHashPrefix: identity.hashPrefix } : {}),
       ...(freshness.lastRefreshAt
         ? { lastRefreshAt: freshness.lastRefreshAt.toISOString() }
         : {}),
       ...(freshness.expiresAt
         ? { expiresAt: freshness.expiresAt.toISOString() }
+        : {}),
+      ...(capacity?.availability
+        ? { capacityAvailability: capacity.availability }
+        : {}),
+      ...(capacity?.reason ? { capacityReason: capacity.reason } : {}),
+      ...(capacity?.cooldownUntil
+        ? { capacityCooldownUntil: capacity.cooldownUntil.toISOString() }
+        : {}),
+      ...(capacity?.lastLimitSignalAt
+        ? { capacityLastLimitSignalAt: capacity.lastLimitSignalAt.toISOString() }
         : {}),
       warnings,
       safeMessage: warnings.length
@@ -324,7 +358,7 @@ async function inspectCodexGoalAccount(
   } catch (error) {
     const safeMessage = error instanceof Error ? error.message : "auth_invalid";
     return {
-      name,
+      name: input.name,
       authJsonPath,
       status: safeMessage.includes("ENOENT") ? "auth_missing" : "auth_invalid",
       warnings: [],
@@ -332,6 +366,62 @@ async function inspectCodexGoalAccount(
         ? "auth.json is missing"
         : safeMessage,
     };
+  }
+}
+
+function sanitizedCodexIdentity(idToken: string | undefined): {
+  readonly source: string;
+  readonly hashPrefix: string;
+} | null {
+  if (!idToken) return null;
+  const claims = decodeJwtClaims(idToken);
+  if (!claims) return null;
+  const authClaims = isRecord(claims["https://api.openai.com/auth"])
+    ? claims["https://api.openai.com/auth"]
+    : {};
+  const candidates = [
+    ["chatgpt_account_id", authClaims.chatgpt_account_id],
+    ["chatgpt_user_id", authClaims.chatgpt_user_id],
+    ["sub", claims.sub],
+    ["email", claims.email],
+  ] as const;
+  for (const [source, value] of candidates) {
+    if (typeof value !== "string" || !value.trim()) continue;
+    return {
+      source,
+      hashPrefix: hashText(`${source}:${value}`).slice(0, 16),
+    };
+  }
+  return null;
+}
+
+function decodeJwtClaims(token: string): Record<string, unknown> | null {
+  const payload = token.split(".")[1];
+  if (!payload) return null;
+  try {
+    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(
+      normalized.length + ((4 - (normalized.length % 4)) % 4),
+      "=",
+    );
+    const parsed: unknown = JSON.parse(Buffer.from(padded, "base64").toString("utf8"));
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function readAccountCapacity(input: {
+  readonly stateRootDir?: string;
+  readonly accountName: string;
+}) {
+  if (!input.stateRootDir) return null;
+  try {
+    return new LocalFileWorkerAccountCapacityStore({
+      rootDir: join(input.stateRootDir, "worker-account-capacity"),
+    }).read({ accountId: input.accountName });
+  } catch {
+    return null;
   }
 }
 
@@ -513,4 +603,8 @@ function pushOptionalNumber(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hashText(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
 }

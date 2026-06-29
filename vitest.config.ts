@@ -22,7 +22,9 @@ const alias = {
 export default defineConfig({
   test: {
     include: ["src/**/*.test.ts"],
+    fileParallelism: false,
     globals: true,
+    testTimeout: 60_000,
   },
   resolve: {
     alias,

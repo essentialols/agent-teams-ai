@@ -113,6 +113,9 @@ describe("Codex provider adapter", () => {
     expect(
       classifyCodexRuntimeFailure("codex_app_server_goal_turn_output_missing"),
     ).toBe("provider_output_invalid");
+    expect(classifyCodexRuntimeFailure("codex_app_server_goal_blocked")).toBe(
+      "backend_unavailable",
+    );
     expect(
       classifyCodexRuntimeFailure(
         "codex_app_server_turn_aborted:replaced:turn-2",
@@ -134,6 +137,26 @@ describe("Codex provider adapter", () => {
         exitCode: "7",
         stderrTail: "forced fallback failure",
         rawCause: "forced fallback failure",
+      },
+    });
+  });
+
+  it("classifies Codex app-server goal blocks as retryable backend unavailability", () => {
+    expect(
+      classifyCodexFailure({
+        exitCode: 1,
+        stdout: "",
+        stderr: "codex_app_server_goal_blocked",
+      }),
+    ).toMatchObject({
+      code: "backend_unavailable",
+      retryable: true,
+      reconnectRequired: false,
+      safeMessage: "Codex app-server goal backend is temporarily blocked.",
+      details: {
+        exitCode: "1",
+        stderrTail: "codex_app_server_goal_blocked",
+        rawCause: "codex_app_server_goal_blocked",
       },
     });
   });

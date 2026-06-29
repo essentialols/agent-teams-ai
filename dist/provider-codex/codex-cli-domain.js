@@ -68,6 +68,9 @@ export function classifyCodexRuntimeFailure(message) {
     if (isCodexQuotaOrRateLimitFailure(normalized)) {
         return "quota_limited";
     }
+    if (normalized.includes("codex_app_server_goal_blocked")) {
+        return "backend_unavailable";
+    }
     if (isCodexInvalidatedAuthFailure(normalized)) {
         return "provider_session_invalid";
     }

@@ -52,6 +52,15 @@ export function classifyCodexFailure(error) {
                 safeMessage: "Codex quota or billing limit was reached.",
                 causeCategory: state,
             };
+        case "backend_unavailable":
+            return {
+                code: "backend_unavailable",
+                retryable: true,
+                reconnectRequired: false,
+                safeMessage: "Codex app-server goal backend is temporarily blocked.",
+                causeCategory: state,
+                ...(details === undefined ? {} : { details }),
+            };
         case "permission_required":
             return {
                 code: "permission_required",

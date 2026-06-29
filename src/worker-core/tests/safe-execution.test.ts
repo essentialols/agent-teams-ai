@@ -463,6 +463,29 @@ describe("SafeExecutionRunner", () => {
     });
   });
 
+  it("classifies Codex app-server goal blocks as capacity unavailability", () => {
+    const providerFailure = new SubscriptionWorkerError(
+      "subscription_worker_run_failed",
+      "Codex app-server goal backend is temporarily blocked.",
+      {
+        details: {
+          code: "backend_unavailable",
+          rawCause: "codex_app_server_goal_blocked",
+        },
+      },
+    );
+
+    expect(defaultSafeExecutionErrorClassifier(providerFailure)).toMatchObject({
+      reason: "capacity_unavailable",
+      safeMessage: "Codex app-server goal backend is temporarily blocked.",
+      retryable: true,
+      details: {
+        code: "backend_unavailable",
+        rawCause: "codex_app_server_goal_blocked",
+      },
+    });
+  });
+
   it("classifies invalid auth from wrapped plain error causes", () => {
     const authFailure = new Error(
       "node_process_runner_failed:1: HTTP error: 401 Unauthorized. " +

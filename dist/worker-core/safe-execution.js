@@ -987,6 +987,13 @@ function classifyWorkerFailureCode(code, safeMessage, details) {
                 safeMessage,
                 retryable: true,
             };
+        case "backend_unavailable":
+            return {
+                reason: "capacity_unavailable",
+                safeMessage,
+                retryable: true,
+                ...optionalFailureDetails(details),
+            };
         case "permission_required":
             return {
                 reason: "permission_required",

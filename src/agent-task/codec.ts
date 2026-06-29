@@ -285,6 +285,7 @@ export function makeFailedAgentTaskResult(input: {
   readonly retryable?: boolean;
   readonly reconnectRequired?: boolean;
   readonly causeCategory?: string;
+  readonly details?: Readonly<Record<string, string>>;
   readonly warnings?: readonly RuntimeWarning[];
   readonly telemetry?: ProviderTaskTelemetry;
 }): AgentTaskResult {
@@ -495,6 +496,7 @@ function parseFailure(value: unknown, path: string): ProviderFailure {
     ),
     safeMessage: stringAt(input.safeMessage, `${path}.safeMessage`),
     ...optionalStringField(input, "causeCategory", `${path}.causeCategory`),
+    ...optionalMetadataField(input, "details", `${path}.details`),
   };
 }
 

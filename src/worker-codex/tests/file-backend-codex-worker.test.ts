@@ -1,8 +1,10 @@
-import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execPath } from "node:process";
+import { promisify } from "node:util";
 import type {
   RunnerPort,
   WorkspacePort,
@@ -17,6 +19,7 @@ import { FileBackendCodexSafeExecutor, FileBackendCodexWorker } from "../index";
 import { NodeProcessRunner } from "../node-process-runner";
 
 const validAuthJson = codexAuthJson("refresh-token");
+const execFileAsync = promisify(execFile);
 
 describe("FileBackendCodexWorker", () => {
   it("exposes lifecycle, seed, prewarm, health, and dispose", async () => {
@@ -570,7 +573,7 @@ describe("FileBackendCodexWorker", () => {
 
   it("self-switches safe Codex work to another account with a continuation packet", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "codex-safe-executor-"));
-    const workspacePath = await mkdtemp(join(tmpdir(), "codex-safe-workspace-"));
+    const workspacePath = await gitWorkspace("codex-safe-workspace-");
     const clock = {
       now: () => new Date("2026-05-31T00:05:00.000Z"),
       monotonicMs: () => performance.now(),
@@ -635,6 +638,55 @@ describe("FileBackendCodexWorker", () => {
       if (replayed.status !== "completed") throw new Error("expected replay");
       expect(replayed.replayed).toBe(true);
       expect(appServers[1]!.prompts).toHaveLength(1);
+    } finally {
+      await executor.dispose();
+      await rm(rootDir, { recursive: true, force: true });
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it("fails safe Codex work before starting accounts when the workspace is not git", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "codex-safe-not-git-"));
+    const workspacePath = await mkdtemp(join(tmpdir(), "codex-safe-not-git-workspace-"));
+    const appServer = new FakeAppServerFactory();
+    const executor = new FileBackendCodexSafeExecutor({
+      stateRootDir: rootDir,
+      workspacePath,
+      accounts: [
+        {
+          codexAuthJson: codexAuthJson("not-git-account"),
+          worker: {
+            providerInstanceId: "codex-not-git-account",
+            stateRootDir: rootDir,
+            codexBinaryPath: "codex",
+            encryptionKey: new Uint8Array(32).fill(71),
+            appServerProcessFactory: appServer.create,
+            runner: new StaticRunner({ exitCode: 0, stdout: "", stderr: "" }),
+          },
+        },
+      ],
+    });
+
+    try {
+      const result = await executor.run({
+        taskId: "codex-safe-not-git-task",
+        prompt: "This should not start.",
+        controls: { permissionMode: "allow-edits" },
+      });
+
+      expect(result.status).toBe("failed");
+      if (result.status !== "failed") throw new Error("expected failed");
+      expect(result.reason).toBe("unknown_error");
+      expect(result.safeMessage).toBe(
+        "Safe execution requires a git worktree workspace.",
+      );
+      expect(result.attempts).toHaveLength(0);
+      expect(result.failureDetails).toMatchObject({
+        safeExecutionCode: "safe_execution_workspace_not_git",
+        workspacePath: await realpath(workspacePath),
+      });
+      expect(appServer.spawnCount).toBe(0);
+      expect(appServer.prompts).toEqual([]);
     } finally {
       await executor.dispose();
       await rm(rootDir, { recursive: true, force: true });
@@ -720,7 +772,7 @@ describe("FileBackendCodexWorker", () => {
 
   it("stops dirty unknown safe Codex work by default", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "codex-safe-unknown-"));
-    const workspacePath = await mkdtemp(join(tmpdir(), "codex-safe-unknown-workspace-"));
+    const workspacePath = await gitWorkspace("codex-safe-unknown-workspace-");
     const clock = {
       now: () => new Date("2026-05-31T00:05:00.000Z"),
       monotonicMs: () => performance.now(),
@@ -787,8 +839,8 @@ describe("FileBackendCodexWorker", () => {
 
   it("does not switch accounts for clean unknown Codex output by default", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "codex-safe-clean-unknown-"));
-    const workspacePath = await mkdtemp(
-      join(tmpdir(), "codex-safe-clean-unknown-workspace-"),
+    const workspacePath = await gitWorkspace(
+      "codex-safe-clean-unknown-workspace-",
     );
     const clock = {
       now: () => new Date("2026-05-31T00:05:00.000Z"),
@@ -852,8 +904,8 @@ describe("FileBackendCodexWorker", () => {
 
   it("repairs a reconnect-required Codex session once on the same account", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "codex-safe-reconnect-repair-"));
-    const workspacePath = await mkdtemp(
-      join(tmpdir(), "codex-safe-reconnect-repair-workspace-"),
+    const workspacePath = await gitWorkspace(
+      "codex-safe-reconnect-repair-workspace-",
     );
     const clock = {
       now: () => new Date("2026-05-31T00:05:00.000Z"),
@@ -920,8 +972,8 @@ describe("FileBackendCodexWorker", () => {
 
   it("switches accounts after the reconnect repair budget is exhausted", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "codex-safe-reconnect-switch-"));
-    const workspacePath = await mkdtemp(
-      join(tmpdir(), "codex-safe-reconnect-switch-workspace-"),
+    const workspacePath = await gitWorkspace(
+      "codex-safe-reconnect-switch-workspace-",
     );
     const clock = {
       now: () => new Date("2026-05-31T00:05:00.000Z"),
@@ -988,8 +1040,8 @@ describe("FileBackendCodexWorker", () => {
 
   it("switches accounts for invalid Codex auth without retrying the broken account", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "codex-safe-auth-invalid-"));
-    const workspacePath = await mkdtemp(
-      join(tmpdir(), "codex-safe-auth-invalid-workspace-"),
+    const workspacePath = await gitWorkspace(
+      "codex-safe-auth-invalid-workspace-",
     );
     const clock = {
       now: () => new Date("2026-05-31T00:05:00.000Z"),
@@ -1050,8 +1102,8 @@ describe("FileBackendCodexWorker", () => {
 
   it("continues dirty unknown safe Codex work when explicitly allowed", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "codex-safe-unknown-opt-in-"));
-    const workspacePath = await mkdtemp(
-      join(tmpdir(), "codex-safe-unknown-opt-in-workspace-"),
+    const workspacePath = await gitWorkspace(
+      "codex-safe-unknown-opt-in-workspace-",
     );
     const clock = {
       now: () => new Date("2026-05-31T00:05:00.000Z"),
@@ -1120,7 +1172,7 @@ describe("FileBackendCodexWorker", () => {
 
   it("cycles safe Codex work through accounts for three rounds by default", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "codex-safe-cycle-"));
-    const workspacePath = await mkdtemp(join(tmpdir(), "codex-safe-cycle-workspace-"));
+    const workspacePath = await gitWorkspace("codex-safe-cycle-workspace-");
     const clock = {
       now: () => new Date("2026-05-31T00:05:00.000Z"),
       monotonicMs: () => performance.now(),
@@ -1191,7 +1243,7 @@ describe("FileBackendCodexWorker", () => {
 
   it("allows safe Codex account cycles to be bounded per executor", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "codex-safe-cycle-one-"));
-    const workspacePath = await mkdtemp(join(tmpdir(), "codex-safe-cycle-one-workspace-"));
+    const workspacePath = await gitWorkspace("codex-safe-cycle-one-workspace-");
     const clock = {
       now: () => new Date("2026-05-31T00:05:00.000Z"),
       monotonicMs: () => performance.now(),
@@ -1250,8 +1302,8 @@ describe("FileBackendCodexWorker", () => {
 
   it("continues a native Codex goal on the next account after a usage limit", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "codex-safe-live-goal-"));
-    const workspacePath = await mkdtemp(
-      join(tmpdir(), "codex-safe-live-goal-workspace-"),
+    const workspacePath = await gitWorkspace(
+      "codex-safe-live-goal-workspace-",
     );
     const clock = {
       now: () => new Date("2026-05-31T00:05:00.000Z"),
@@ -1328,7 +1380,7 @@ describe("FileBackendCodexWorker", () => {
 
   it("resumes a partial safe Codex goal on another account after executor restart", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "codex-safe-goal-"));
-    const workspacePath = await mkdtemp(join(tmpdir(), "codex-safe-goal-workspace-"));
+    const workspacePath = await gitWorkspace("codex-safe-goal-workspace-");
     const clock = {
       now: () => new Date("2026-05-31T00:05:00.000Z"),
       monotonicMs: () => performance.now(),
@@ -1757,6 +1809,27 @@ function fakeJwt(payload: Record<string, unknown>): string {
   const encode = (value: Record<string, unknown>) =>
     Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
   return `${encode({ alg: "none", typ: "JWT" })}.${encode(payload)}.signature`;
+}
+
+async function gitWorkspace(prefix: string): Promise<string> {
+  const workspacePath = await mkdtemp(join(tmpdir(), prefix));
+  await execFileAsync("git", ["init"], { cwd: workspacePath });
+  await writeFile(join(workspacePath, "README.md"), "base\n", "utf8");
+  await execFileAsync("git", ["add", "README.md"], { cwd: workspacePath });
+  await execFileAsync(
+    "git",
+    [
+      "-c",
+      "user.name=Subscription Runtime Tests",
+      "-c",
+      "user.email=tests@example.com",
+      "commit",
+      "-m",
+      "Initial commit",
+    ],
+    { cwd: workspacePath },
+  );
+  return workspacePath;
 }
 
 function extractFakePrompt(

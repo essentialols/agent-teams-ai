@@ -47,6 +47,7 @@ export type AttemptRecord = {
     readonly status: AttemptStatus;
     readonly failureReason?: AttemptFailureReason;
     readonly failureMessage?: string;
+    readonly failureDetails?: Readonly<Record<string, string>>;
     readonly workspaceDirtyBefore: boolean;
     readonly workspaceDirtyAfter?: boolean;
     readonly changedFiles: readonly string[];
@@ -79,6 +80,7 @@ export type SafeExecutionTaskRecord = {
     readonly outputSummary?: string;
     readonly lastFailureReason?: AttemptFailureReason;
     readonly lastFailureMessage?: string;
+    readonly lastFailureDetails?: Readonly<Record<string, string>>;
 };
 export type WorkspaceLockRecord = {
     readonly taskId: TaskRunId;
@@ -129,6 +131,7 @@ export interface AttemptJournal {
         readonly status: Exclude<SafeExecutionTaskStatus, "running" | "completed">;
         readonly reason: AttemptFailureReason;
         readonly message?: string;
+        readonly details?: Readonly<Record<string, string>>;
         readonly now: Date;
     }): Promise<SafeExecutionTaskRecord>;
 }
@@ -165,6 +168,7 @@ export type SafeExecutionFailureClassification = {
     readonly reason: AttemptFailureReason;
     readonly safeMessage: string;
     readonly retryable: boolean;
+    readonly details?: Readonly<Record<string, string>>;
 };
 export type SafeExecutionWorkerPool<Job, Result> = {
     run(job: Job, options?: WorkerPoolRunOptions): Promise<Result>;
@@ -208,6 +212,7 @@ export type SafeExecutionRunResult<Result> = {
     readonly attempts: readonly AttemptRecord[];
     readonly reason: AttemptFailureReason;
     readonly safeMessage: string;
+    readonly failureDetails?: Readonly<Record<string, string>>;
     readonly error?: unknown;
 };
 export type SafeExecutionRunnerOptions = {
@@ -273,6 +278,7 @@ export declare class InMemoryAttemptJournal implements AttemptJournal {
         readonly status: Exclude<SafeExecutionTaskStatus, "running" | "completed">;
         readonly reason: AttemptFailureReason;
         readonly message?: string;
+        readonly details?: Readonly<Record<string, string>>;
         readonly now: Date;
     }): Promise<SafeExecutionTaskRecord>;
 }
@@ -306,6 +312,7 @@ export declare class LocalFileAttemptJournal implements AttemptJournal {
         readonly status: Exclude<SafeExecutionTaskStatus, "running" | "completed">;
         readonly reason: AttemptFailureReason;
         readonly message?: string;
+        readonly details?: Readonly<Record<string, string>>;
         readonly now: Date;
     }): Promise<SafeExecutionTaskRecord>;
     private taskPath;
@@ -359,6 +366,7 @@ export declare class SafeExecutionRunner {
     private readonly clock;
     constructor(options: SafeExecutionRunnerOptions);
     run<Job, Result>(input: SafeExecutionRunInput<Job, Result>): Promise<SafeExecutionRunResult<Result>>;
+    private failStartedTask;
 }
 export declare function promptContinuationJobFactory<Job extends {
     readonly prompt: string;

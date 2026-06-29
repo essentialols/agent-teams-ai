@@ -86,7 +86,6 @@ export class FileBackendCodexSafeExecutor {
         await this.pool.prewarm();
     }
     async run(input) {
-        await this.start();
         const { job, taskId, originalPrompt, effectMode, staleLockMs, maxAccountCycles, policy, } = codexSafeExecutionInput(input);
         return this.runner.run({
             taskId,
@@ -94,15 +93,20 @@ export class FileBackendCodexSafeExecutor {
                 mode: "existing_locked",
                 path: this.options.workspacePath,
                 ...(staleLockMs === undefined ? {} : { staleLockMs }),
-                ...(this.options.requireGitWorkspace
-                    ? { requireGitWorkspace: true }
-                    : {}),
+                ...(this.options.requireGitWorkspace === false
+                    ? {}
+                    : { requireGitWorkspace: true }),
             },
             effectMode: effectMode ??
                 this.options.effectMode ??
                 codexEffectModeFromJobControls(job),
             provider: "codex",
-            pool: this.pool,
+            pool: {
+                run: async (runJob, runOptions) => {
+                    await this.start();
+                    return this.pool.run(runJob, runOptions);
+                },
+            },
             job,
             originalPrompt,
             policy: mergedSafeExecutionPolicy({

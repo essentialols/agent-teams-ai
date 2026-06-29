@@ -54,7 +54,7 @@ export type FileBackendCodexSafeExecutorOptions = {
   readonly journal?: AttemptJournal;
   readonly safeExecutionPolicy?: SafeExecutionPolicy;
   /**
-   * When true, the borrowed workspace must be an existing git worktree.
+   * Defaults to true: the borrowed workspace must be an existing git worktree.
    * This prevents broad filesystem snapshots from being mistaken for worker
    * changes when callers accidentally point at a repo parent or temp folder.
    */
@@ -185,7 +185,6 @@ export class FileBackendCodexSafeExecutor {
   async run(
     input: FileBackendCodexSafeExecutorRunInput,
   ): Promise<SafeExecutionRunResult<FileBackendCodexWorkerResult>> {
-    await this.start();
     const {
       job,
       taskId,
@@ -202,16 +201,21 @@ export class FileBackendCodexSafeExecutor {
         mode: "existing_locked",
         path: this.options.workspacePath,
         ...(staleLockMs === undefined ? {} : { staleLockMs }),
-        ...(this.options.requireGitWorkspace
-          ? { requireGitWorkspace: true }
-          : {}),
+        ...(this.options.requireGitWorkspace === false
+          ? {}
+          : { requireGitWorkspace: true }),
       },
       effectMode:
         effectMode ??
         this.options.effectMode ??
         codexEffectModeFromJobControls(job),
       provider: "codex",
-      pool: this.pool,
+      pool: {
+        run: async (runJob, runOptions) => {
+          await this.start();
+          return this.pool.run(runJob, runOptions);
+        },
+      },
       job,
       originalPrompt,
       policy: mergedSafeExecutionPolicy({
@@ -297,7 +301,6 @@ export class FileBackendCodexSafeExecutor {
     return fallback;
   }
 }
-
 function codexSafeExecutionInput(input: FileBackendCodexSafeExecutorRunInput): {
   readonly taskId: string;
   readonly job: FileBackendCodexWorkerJob;

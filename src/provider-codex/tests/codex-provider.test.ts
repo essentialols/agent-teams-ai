@@ -26,6 +26,7 @@ import {
   CodexJsonAgentDriver,
   PackagedCodexJsonExecutionEngine,
   buildCodexJsonExecArgs,
+  classifyCodexFailure,
   codexAgentCapabilities,
   codexEnvironmentPolicy,
   codexJsonAgentCapabilities,
@@ -117,6 +118,24 @@ describe("Codex provider adapter", () => {
         "codex_app_server_turn_aborted:replaced:turn-2",
       ),
     ).toBe("unknown_auth_state");
+  });
+
+  it("preserves raw Codex process metadata for unknown failures", () => {
+    expect(
+      classifyCodexFailure({
+        exitCode: 7,
+        stdout: "",
+        stderr: "forced fallback failure",
+      }),
+    ).toMatchObject({
+      code: "unknown_runtime_failure",
+      safeMessage: "Codex runtime failed.",
+      details: {
+        exitCode: "7",
+        stderrTail: "forced fallback failure",
+        rawCause: "forced fallback failure",
+      },
+    });
   });
 
   it("classifies revoked Codex auth separately from transient reconnects", () => {

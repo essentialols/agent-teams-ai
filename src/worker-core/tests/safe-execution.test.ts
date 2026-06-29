@@ -221,24 +221,77 @@ describe("SafeExecutionRunner", () => {
       journal: new InMemoryAttemptJournal(),
     });
 
-    await expect(
-      runner.run({
-        taskId: "task-require-git",
-        workspace: {
-          mode: "existing_locked",
-          path: workspacePath,
-          requireGitWorkspace: true,
-        },
-        effectMode: "workspace_patch",
-        provider: "codex",
-        pool,
-        job: { prompt: "do work", workspacePath },
-        originalPrompt: "do work",
-        policy: { maxAttempts: 1 },
-      }),
-    ).rejects.toMatchObject({
-      code: "safe_execution_workspace_not_git",
+    const result = await runner.run({
+      taskId: "task-require-git",
+      workspace: {
+        mode: "existing_locked",
+        path: workspacePath,
+        requireGitWorkspace: true,
+      },
+      effectMode: "workspace_patch",
+      provider: "codex",
+      pool,
+      job: { prompt: "do work", workspacePath },
+      originalPrompt: "do work",
+      policy: { maxAttempts: 1 },
     });
+
+    expect(result.status).toBe("failed");
+    if (result.status !== "failed") throw new Error("expected failed result");
+    expect(result.failureDetails).toMatchObject({
+      safeExecutionCode: "safe_execution_workspace_not_git",
+    });
+    expect(runs).toBe(0);
+  });
+
+  it("returns a structured failure when the initial workspace snapshot fails", async () => {
+    const workspacePath = await gitWorkspace("safe-execution-snapshot-fail-");
+    const journal = new InMemoryAttemptJournal();
+    let runs = 0;
+    const runner = new SafeExecutionRunner({
+      lockStore: new InMemoryWorkspaceLockStore(),
+      journal,
+      snapshotter: {
+        async capture(): Promise<WorkspaceSnapshot> {
+          throw Object.assign(new Error("git status failed"), {
+            exitCode: 128,
+            stderr: "fatal: bad revision\n",
+          });
+        },
+      },
+    });
+
+    const result = await runner.run({
+      taskId: "task-snapshot-fail",
+      workspace: { mode: "existing_locked", path: workspacePath },
+      effectMode: "workspace_patch",
+      provider: "codex",
+      pool: {
+        async run(): Promise<PromptResult> {
+          runs += 1;
+          return { output: "should not run" };
+        },
+      },
+      job: { prompt: "do work", workspacePath },
+      originalPrompt: "do work",
+      policy: { maxAttempts: 1 },
+    });
+
+    expect(result.status).toBe("failed");
+    if (result.status !== "failed") throw new Error("expected failed");
+    expect(result.reason).toBe("unknown_error");
+    expect(result.safeMessage).toBe("git status failed");
+    expect(result.attempts).toHaveLength(0);
+    expect(result.failureDetails).toMatchObject({
+      exitCode: "128",
+      stderrTail: "fatal: bad revision",
+      rawCause: "git status failed",
+    });
+    expect(result.task.status).toBe("failed");
+    expect(
+      (await journal.readTask({ taskId: "task-snapshot-fail" }))
+        ?.lastFailureDetails,
+    ).toMatchObject({ exitCode: "128" });
     expect(runs).toBe(0);
   });
 
@@ -428,6 +481,33 @@ describe("SafeExecutionRunner", () => {
       reason: "account_unavailable",
       safeMessage: "Provider account session is unavailable.",
       retryable: true,
+    });
+  });
+
+  it("preserves unknown runtime failure cause metadata", () => {
+    const providerFailure = new SubscriptionWorkerError(
+      "subscription_worker_run_failed",
+      "Codex runtime failed.",
+      {
+        details: {
+          reason: "unknown_runtime_failure",
+          exitCode: "7",
+          stderrTail: "forced fallback failure",
+          rawCause: "codex_json_exec_failed:7:forced fallback failure",
+        },
+      },
+    );
+
+    expect(defaultSafeExecutionErrorClassifier(providerFailure)).toMatchObject({
+      reason: "unknown_error",
+      safeMessage: "Codex runtime failed.",
+      retryable: true,
+      details: {
+        reason: "unknown_runtime_failure",
+        exitCode: "7",
+        stderrTail: "forced fallback failure",
+        rawCause: "codex_json_exec_failed:7:forced fallback failure",
+      },
     });
   });
 

@@ -238,6 +238,10 @@ describe("subscription runtime agent-task runner CLI", () => {
         status: "failed",
         failure: {
           code: "unknown_runtime_failure",
+          details: {
+            exitCode: "7",
+            stderrTail: "forced fallback failure",
+          },
         },
       });
       await expect(access(canaryPath)).resolves.toBeUndefined();

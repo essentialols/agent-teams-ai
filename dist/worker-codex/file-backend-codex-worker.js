@@ -305,6 +305,7 @@ export class FileBackendCodexWorker {
                         cause: error,
                         details: {
                             reason: failure.code,
+                            ...(failure.details ?? {}),
                             ...(this.capacityAccountId
                                 ? { accountId: this.capacityAccountId }
                                 : {}),
@@ -450,7 +451,12 @@ export class FileBackendCodexWorker {
     taskResultToOutput(result) {
         if (result.status === "failed") {
             this.recordFailure(result.failure);
-            throw new SubscriptionWorkerError("subscription_worker_run_failed", result.failure.safeMessage, { details: { code: result.failure.code } });
+            throw new SubscriptionWorkerError("subscription_worker_run_failed", result.failure.safeMessage, {
+                details: {
+                    code: result.failure.code,
+                    ...(result.failure.details ?? {}),
+                },
+            });
         }
         this.recordSuccessfulRun();
         return {

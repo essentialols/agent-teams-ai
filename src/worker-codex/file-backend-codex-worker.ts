@@ -448,6 +448,7 @@ export class FileBackendCodexWorker implements CapacityAwareSubscriptionWorker<
               cause: error,
               details: {
                 reason: failure.code,
+                ...(failure.details ?? {}),
                 ...(this.capacityAccountId
                   ? { accountId: this.capacityAccountId }
                   : {}),
@@ -618,7 +619,12 @@ export class FileBackendCodexWorker implements CapacityAwareSubscriptionWorker<
       throw new SubscriptionWorkerError(
         "subscription_worker_run_failed",
         result.failure.safeMessage,
-        { details: { code: result.failure.code } },
+        {
+          details: {
+            code: result.failure.code,
+            ...(result.failure.details ?? {}),
+          },
+        },
       );
     }
     this.recordSuccessfulRun();

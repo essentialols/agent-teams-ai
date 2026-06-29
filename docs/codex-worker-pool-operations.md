@@ -283,6 +283,7 @@ Minimal `codex_goal_create_job` input:
   "model": "gpt-5.5",
   "reasoningEffort": "xhigh",
   "serviceTier": "fast",
+  "executionEngine": "app-server-goal",
   "taskTimeoutMs": 259200000,
   "maxAccountCycles": 3
 }

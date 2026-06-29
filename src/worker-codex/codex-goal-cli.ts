@@ -527,6 +527,9 @@ function runConfigFromFlags(
   const serviceTier = (option(values, env, "--service-tier", [
     "CODEX_SERVICE_TIER",
   ]) ?? "fast") as CodexGoalRunConfig["serviceTier"];
+  const executionEngine = (option(values, env, "--execution-engine", [
+    "CODEX_EXECUTION_ENGINE",
+  ]) ?? "app-server-goal") as CodexGoalRunConfig["executionEngine"];
   const staleLockMs = parseOptionalPositiveInteger(
     option(values, env, "--stale-lock-ms", []),
     "--stale-lock-ms",
@@ -558,6 +561,7 @@ function runConfigFromFlags(
     model: option(values, env, "--model", ["CODEX_MODEL"]) ?? "gpt-5.5",
     ...(reasoningEffort ? { reasoningEffort } : {}),
     ...(serviceTier ? { serviceTier } : {}),
+    ...(executionEngine ? { executionEngine } : {}),
     codexBinaryPath: option(values, env, "--codex-binary", [
       "CODEX_BINARY_PATH",
     ]) ?? "codex",
@@ -854,7 +858,7 @@ function usage(): string {
   subscription-runtime-codex-goal prompt <mcp_prompt_name> [--args-json '{"jobId":"..."}' | --args-file args.json]
 
 defaults:
-  --model gpt-5.5 --effort xhigh --service-tier fast --timeout 72h --max-account-cycles 3
+  --model gpt-5.5 --effort xhigh --service-tier fast --execution-engine app-server-goal --timeout 72h --max-account-cycles 3
 
 escape hatches:
   --dry-run, --print-command, --no-tmux, --no-require-git-workspace

@@ -25,6 +25,7 @@ export type CodexGoalJobManifest = {
   readonly model?: string;
   readonly reasoningEffort?: CodexGoalRunConfig["reasoningEffort"];
   readonly serviceTier?: CodexGoalRunConfig["serviceTier"];
+  readonly executionEngine?: CodexGoalRunConfig["executionEngine"];
   readonly taskTimeoutMs?: number;
   readonly staleLockMs?: number;
   readonly maxAccountCycles?: number;
@@ -209,6 +210,7 @@ export function codexGoalJobToArgs(
     model: manifest.model,
     reasoningEffort: manifest.reasoningEffort,
     serviceTier: manifest.serviceTier,
+    executionEngine: manifest.executionEngine,
     taskTimeoutMs: manifest.taskTimeoutMs,
     staleLockMs: manifest.staleLockMs,
     maxAccountCycles: manifest.maxAccountCycles,
@@ -296,6 +298,13 @@ export function parseCodexGoalJobManifest(
       : {
           serviceTier: optionalString(value.serviceTier) as NonNullable<
             CodexGoalRunConfig["serviceTier"]
+          >,
+        }),
+    ...(optionalString(value.executionEngine) === undefined
+      ? {}
+      : {
+          executionEngine: optionalString(value.executionEngine) as NonNullable<
+            CodexGoalRunConfig["executionEngine"]
           >,
         }),
     ...optionalPositiveIntegerProperty(value.taskTimeoutMs, "taskTimeoutMs"),

@@ -44,6 +44,7 @@ describe("codex goal cli", () => {
       model: "gpt-5.5",
       reasoningEffort: "xhigh",
       serviceTier: "fast",
+      executionEngine: "app-server-goal",
       taskTimeoutMs: 72 * 60 * 60 * 1000,
       maxAccountCycles: 3,
       requireGitWorkspace: true,
@@ -120,6 +121,7 @@ describe("codex goal cli", () => {
     expect(noTmux).toContain("--accounts account-a,account-b");
     expect(noTmux).toContain("--effort xhigh");
     expect(noTmux).toContain("--service-tier fast");
+    expect(noTmux).toContain("--execution-engine app-server-goal");
 
     const tmux = buildTmuxCommand(command);
     expect(tmux.args).toEqual(

@@ -76,11 +76,23 @@ describe("codex goal MCP server", () => {
           model: "gpt-5.5",
           reasoningEffort: "xhigh",
           serviceTier: "fast",
+          executionEngine: "app-server-goal",
           taskTimeoutMs: 72 * 60 * 60 * 1000,
           maxAccountCycles: 3,
           requireGitWorkspace: true,
           prewarmOnStart: false,
           outputFormat: "json",
+        });
+
+        const job = await callToolJson(client, "codex_goal_get_job", {
+          registryRootDir,
+          jobId: "job-a",
+        });
+        expect(job.manifest).toMatchObject({
+          model: "gpt-5.5",
+          reasoningEffort: "xhigh",
+          serviceTier: "fast",
+          executionEngine: "app-server-goal",
         });
 
         const brief = await callToolJson(client, "codex_goal_brief", {

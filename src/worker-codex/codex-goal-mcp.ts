@@ -57,6 +57,7 @@ type GoalMcpArgs = {
   readonly model?: string;
   readonly reasoningEffort?: CodexGoalRunConfig["reasoningEffort"];
   readonly serviceTier?: CodexGoalRunConfig["serviceTier"];
+  readonly executionEngine?: CodexGoalRunConfig["executionEngine"];
   readonly taskTimeoutMs?: number;
   readonly staleLockMs?: number;
   readonly maxAccountCycles?: number;
@@ -891,6 +892,8 @@ async function goalLaunchInput(args: GoalMcpArgs): Promise<CodexGoalLaunchInput>
       (stringValue(merged.reasoningEffort) ?? "xhigh") as NonNullable<CodexGoalRunConfig["reasoningEffort"]>,
     serviceTier:
       (stringValue(merged.serviceTier) ?? "fast") as NonNullable<CodexGoalRunConfig["serviceTier"]>,
+    executionEngine:
+      (stringValue(merged.executionEngine) ?? "app-server-goal") as NonNullable<CodexGoalRunConfig["executionEngine"]>,
     codexBinaryPath: stringValue(merged.codexBinaryPath) ?? "codex",
     permissionMode:
       (stringValue(merged.permissionMode) ?? "allow-edits") as NonNullable<CodexGoalRunConfig["permissionMode"]>,
@@ -1115,6 +1118,7 @@ function jobManifestInputFromArgs(args: JobCreateMcpArgs): CodexGoalJobManifestI
     model: args.model ?? "gpt-5.5",
     reasoningEffort: args.reasoningEffort ?? "xhigh",
     serviceTier: args.serviceTier ?? "fast",
+    executionEngine: args.executionEngine ?? "app-server-goal",
     taskTimeoutMs: args.taskTimeoutMs ?? defaultTimeoutMs,
     ...(args.staleLockMs ? { staleLockMs: args.staleLockMs } : {}),
     maxAccountCycles: args.maxAccountCycles ?? 3,
@@ -1147,6 +1151,7 @@ function jobManifestPatchFromArgs(args: JobUpdateMcpArgs): CodexGoalJobManifestP
   putIfDefined(patch, "model", stringValue(args.model));
   putIfDefined(patch, "reasoningEffort", stringValue(args.reasoningEffort));
   putIfDefined(patch, "serviceTier", stringValue(args.serviceTier));
+  putIfDefined(patch, "executionEngine", stringValue(args.executionEngine));
   putIfDefined(patch, "taskTimeoutMs", numberValue(args.taskTimeoutMs));
   putIfDefined(patch, "staleLockMs", numberValue(args.staleLockMs));
   putIfDefined(patch, "maxAccountCycles", numberValue(args.maxAccountCycles));
@@ -1590,6 +1595,7 @@ function goalInputSchema(): Record<string, z.ZodTypeAny> {
     model: z.string().optional(),
     reasoningEffort: z.string().optional(),
     serviceTier: z.string().optional(),
+    executionEngine: z.string().optional(),
     taskTimeoutMs: z.number().int().positive().optional(),
     staleLockMs: z.number().int().positive().optional(),
     maxAccountCycles: z.number().int().positive().optional(),
@@ -1642,6 +1648,7 @@ function launchSummary(launch: CodexGoalLaunchInput): JsonObject {
     model: launch.config.model,
     reasoningEffort: launch.config.reasoningEffort,
     serviceTier: launch.config.serviceTier,
+    executionEngine: launch.config.executionEngine ?? "app-server-goal",
     taskTimeoutMs: launch.config.taskTimeoutMs,
     maxAccountCycles: launch.config.maxAccountCycles,
     tmuxSession: launch.tmuxSession,

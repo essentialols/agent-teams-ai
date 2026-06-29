@@ -91,6 +91,7 @@ Create one stored job per logical goal and per writer worktree:
   "model": "gpt-5.5",
   "reasoningEffort": "xhigh",
   "serviceTier": "fast",
+  "executionEngine": "app-server-goal",
   "taskTimeoutMs": 259200000,
   "maxAccountCycles": 3
 }

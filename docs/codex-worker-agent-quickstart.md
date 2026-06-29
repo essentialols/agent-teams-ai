@@ -35,6 +35,24 @@ If the package binary is installed in PATH, this is also valid:
 
 Make sure `npm run build` has been run after source changes.
 
+For Codex CLI/Desktop user config, this server can be installed with:
+
+```sh
+codex mcp add subscription-runtime-codex-goal -- "$(command -v node)" /Users/belief/dev/projects/subscription-runtime/dist/worker-codex/codex-goal-mcp.js
+codex mcp get subscription-runtime-codex-goal
+```
+
+If native MCP tools do not appear in a Codex thread, use the CLI fallback. It
+calls the same MCP server in-process through the SDK and exposes the same tool
+surface:
+
+```sh
+subscription-runtime-codex-goal tools
+subscription-runtime-codex-goal tool codex_goal_brief --args-json '{"jobId":"my-task"}'
+subscription-runtime-codex-goal tool codex_goal_accounts_status --args-json '{"jobId":"my-task"}'
+subscription-runtime-codex-goal tool codex_goal_continue --args-json '{"jobId":"my-task","confirmContinue":true}'
+```
+
 ## Default loop
 
 1. Get the `jobId`.
@@ -86,6 +104,14 @@ codex_goal_brief({ jobId: "my-task" })
 codex_goal_continue({ jobId: "my-task", confirmContinue: true })
 ```
 
+Without native MCP, call the same tools through the CLI:
+
+```sh
+subscription-runtime-codex-goal tool codex_goal_create_job --args-file job.json
+subscription-runtime-codex-goal tool codex_goal_brief --args-json '{"jobId":"my-task"}'
+subscription-runtime-codex-goal tool codex_goal_continue --args-json '{"jobId":"my-task","confirmContinue":true}'
+```
+
 ## Recovery rules
 
 - quota, capacity, auth broken or reconnect: use the pool continuation path;
@@ -102,10 +128,11 @@ codex_goal_continue({ jobId: "my-task", confirmContinue: true })
 
 Use tools in this order:
 
-1. MCP tools for agents.
-2. CLI `subscription-runtime-codex-goal` for shell/tmux scripts.
-3. `runCodexGoal()` TypeScript API for host apps that own scheduling or UI.
-4. `FileBackendCodexSafeExecutor` only for advanced custom account or policy
+1. Native MCP tools for agents.
+2. CLI MCP fallback: `subscription-runtime-codex-goal tool <name>`.
+3. CLI direct run/status commands for shell/tmux scripts.
+4. `runCodexGoal()` TypeScript API for host apps that own scheduling or UI.
+5. `FileBackendCodexSafeExecutor` only for advanced custom account or policy
    control.
 
 Direct API integrations must preserve the same safety gates:

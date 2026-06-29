@@ -148,16 +148,29 @@ Use the highest-level surface that still gives the operator enough control:
 | Surface | Best for | Tradeoff |
 | --- | --- | --- |
 | MCP `subscription-runtime-codex-goal-mcp` | Agents that need structured start, monitor, recover and handoff tools | Requires an MCP-capable host |
-| CLI `subscription-runtime-codex-goal` | Humans, shell scripts, tmux and simple cron monitors | Less structured than MCP, but easy to inspect |
+| CLI MCP fallback `subscription-runtime-codex-goal tool <name>` | Agents in Codex threads where native MCP tools did not load | Same MCP server via SDK, but called through shell commands |
+| CLI direct commands `subscription-runtime-codex-goal run/status/doctor/tail` | Humans, shell scripts, tmux and simple cron monitors | Smaller surface than MCP, but easy to inspect |
 | `runCodexGoal()` TypeScript API | Host apps or orchestrators that want to own scheduling, UI, notifications or persistence | Caller must preserve the safety policy and account status checks |
 | `FileBackendCodexSafeExecutor` | Advanced integrations that need custom workers, custom account definitions or custom execution policy | Most flexible, most responsibility |
 
-The recommended order for agents is MCP first, CLI second, direct API only
-when the agent is editing a host integration. Direct API should not be used as
-a shortcut to bypass `codex_goal_brief.safeToContinue`, single-writer checks,
-capacity-aware account status or dirty-worktree review.
+The recommended order for agents is native MCP first, CLI MCP fallback second,
+direct API only when the agent is editing a host integration. Direct API should
+not be used as a shortcut to bypass `codex_goal_brief.safeToContinue`,
+single-writer checks, capacity-aware account status or dirty-worktree review.
 
 ### Flexible and custom integrations
+
+Use the SDK MCP client when a host or agent cannot access native MCP tools but
+still wants the same control plane:
+
+```ts
+import { callCodexGoalMcpTool } from "@vioxen/subscription-runtime/worker-codex";
+
+const brief = await callCodexGoalMcpTool({
+  name: "codex_goal_brief",
+  args: { jobId: "my-job" },
+});
+```
 
 Use `runCodexGoal()` when a host app wants the same Codex goal behavior but
 needs to customize process supervision, notifications, job storage or UI:
@@ -214,6 +227,28 @@ subscription-runtime-codex-goal-mcp
 The MCP adapter is the agent-facing control plane. It shares the same
 application operations as the CLI, so operator behavior stays consistent while
 agents get typed tools and structured results instead of long shell snippets.
+
+If native MCP tools do not appear in a Codex thread, use the CLI MCP fallback.
+It launches the same server in-process through the SDK, so it has the same tool
+surface:
+
+```sh
+subscription-runtime-codex-goal tools
+subscription-runtime-codex-goal tool codex_goal_brief --args-json '{"jobId":"memo-locomo-cat1-recall"}'
+subscription-runtime-codex-goal tool codex_goal_accounts_status --args-json '{"jobId":"memo-locomo-cat1-recall"}'
+subscription-runtime-codex-goal tool codex_goal_continue --args-json '{"jobId":"memo-locomo-cat1-recall","confirmContinue":true}'
+subscription-runtime-codex-goal resource codex-goal://jobs/memo-locomo-cat1-recall
+subscription-runtime-codex-goal prompts
+```
+
+For Codex CLI/Desktop user config, install or verify the native server with:
+
+```sh
+codex mcp add subscription-runtime-codex-goal -- "$(command -v node)" /Users/belief/dev/projects/subscription-runtime/dist/worker-codex/codex-goal-mcp.js
+codex mcp get subscription-runtime-codex-goal
+```
+
+After editing source, run `npm run build`; new Codex threads use `dist`.
 
 ### Job registry happy path
 

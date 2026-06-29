@@ -1,8 +1,12 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   buildNoTmuxShellCommand,
   buildTmuxCommand,
   parseCodexGoalCliArgs,
+  runCodexGoalCli,
   type CodexGoalCliIo,
 } from "../codex-goal-cli";
 
@@ -124,6 +128,45 @@ describe("codex goal cli", () => {
     expect(tmux.preview).toContain("tmux new-session");
     expect(tmux.preview).toContain("tee -a /tmp/job/task-1.log");
   });
+
+  it("exposes the full MCP tool surface through the CLI fallback", async () => {
+    const io = captureIo();
+
+    const exitCode = await runCodexGoalCli(["tools"], io);
+
+    expect(exitCode).toBe(0);
+    const output = JSON.parse(io.stdout);
+    expect(output.tools).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "codex_goal_brief" }),
+        expect.objectContaining({ name: "codex_goal_accounts_status" }),
+        expect.objectContaining({ name: "codex_goal_continue" }),
+      ]),
+    );
+  });
+
+  it("calls MCP job tools through the CLI fallback with JSON args", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-cli-mcp-"));
+    const io = captureIo();
+
+    try {
+      const exitCode = await runCodexGoalCli([
+        "tool",
+        "codex_goal_list_jobs",
+        "--args-json",
+        JSON.stringify({ registryRootDir: root }),
+      ], io);
+
+      expect(exitCode).toBe(0);
+      expect(JSON.parse(io.stdout)).toMatchObject({
+        ok: true,
+        registryRootDir: root,
+        jobs: [],
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
 
 function fakeIo(
@@ -137,6 +180,36 @@ function fakeIo(
     },
     env(): Readonly<Record<string, string | undefined>> {
       return env;
+    },
+  };
+}
+
+function captureIo(
+  env: Readonly<Record<string, string | undefined>> = {},
+): CodexGoalCliIo & {
+  readonly stdout: string;
+  readonly stderr: string;
+} {
+  let stdout = "";
+  let stderr = "";
+  return {
+    writeStdout(chunk): void {
+      stdout += chunk;
+    },
+    writeStderr(chunk): void {
+      stderr += chunk;
+    },
+    cwd(): string {
+      return "/tmp";
+    },
+    env(): Readonly<Record<string, string | undefined>> {
+      return env;
+    },
+    get stdout(): string {
+      return stdout;
+    },
+    get stderr(): string {
+      return stderr;
     },
   };
 }

@@ -1,6 +1,7 @@
 export * from "./codex-goal-runner";
 export * from "./codex-goal-jobs";
 export * from "./codex-goal-ops";
+export * from "./codex-goal-mcp-client";
 export * from "./file-backend-codex-safe-executor";
 export * from "./file-backend-codex-worker";
 export * from "./node-process-runner";

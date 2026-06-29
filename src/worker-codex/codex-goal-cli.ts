@@ -18,6 +18,14 @@ import {
   doctorCodexGoal,
   tailCodexGoalLog,
 } from "./codex-goal-ops";
+import {
+  callCodexGoalMcpTool,
+  getCodexGoalMcpPrompt,
+  listCodexGoalMcpPrompts,
+  listCodexGoalMcpResources,
+  listCodexGoalMcpTools,
+  readCodexGoalMcpResource,
+} from "./codex-goal-mcp-client";
 
 const execFileAsync = promisify(execFile);
 
@@ -27,6 +35,12 @@ type CodexGoalCliCommand =
   | StatusCommand
   | DoctorCommand
   | TailCommand
+  | McpToolsCommand
+  | McpToolCommand
+  | McpResourcesCommand
+  | McpResourceCommand
+  | McpPromptsCommand
+  | McpPromptCommand
   | HelpCommand;
 
 type RunCommand = {
@@ -62,6 +76,43 @@ type TailCommand = {
   readonly lines: number;
 };
 
+type McpToolsCommand = {
+  readonly kind: "mcp-tools";
+  readonly format: OutputFormat;
+};
+
+type McpToolCommand = {
+  readonly kind: "mcp-tool";
+  readonly name: string;
+  readonly argsJson?: string;
+  readonly argsFile?: string;
+  readonly format: OutputFormat;
+};
+
+type McpResourcesCommand = {
+  readonly kind: "mcp-resources";
+  readonly format: OutputFormat;
+};
+
+type McpResourceCommand = {
+  readonly kind: "mcp-resource";
+  readonly uri: string;
+  readonly format: OutputFormat;
+};
+
+type McpPromptsCommand = {
+  readonly kind: "mcp-prompts";
+  readonly format: OutputFormat;
+};
+
+type McpPromptCommand = {
+  readonly kind: "mcp-prompt";
+  readonly name: string;
+  readonly argsJson?: string;
+  readonly argsFile?: string;
+  readonly format: OutputFormat;
+};
+
 type HelpCommand = {
   readonly kind: "help";
 };
@@ -94,6 +145,48 @@ export async function runCodexGoalCli(
     }
     if (command.kind === "tail") {
       io.writeStdout(await tailFile(command.logPath, command.lines));
+      return 0;
+    }
+    if (command.kind === "mcp-tools") {
+      writeJsonOrText(command.format, await listCodexGoalMcpTools(), io);
+      return 0;
+    }
+    if (command.kind === "mcp-tool") {
+      writeJsonOrText(
+        command.format,
+        await callCodexGoalMcpTool({
+          name: command.name,
+          args: await readJsonArgs(command, io),
+        }),
+        io,
+      );
+      return 0;
+    }
+    if (command.kind === "mcp-resources") {
+      writeJsonOrText(command.format, await listCodexGoalMcpResources(), io);
+      return 0;
+    }
+    if (command.kind === "mcp-resource") {
+      writeJsonOrText(
+        command.format,
+        await readCodexGoalMcpResource({ uri: command.uri }),
+        io,
+      );
+      return 0;
+    }
+    if (command.kind === "mcp-prompts") {
+      writeJsonOrText(command.format, await listCodexGoalMcpPrompts(), io);
+      return 0;
+    }
+    if (command.kind === "mcp-prompt") {
+      writeJsonOrText(
+        command.format,
+        await getCodexGoalMcpPrompt({
+          name: command.name,
+          args: await readJsonArgs(command, io),
+        }),
+        io,
+      );
       return 0;
     }
     if (command.tmuxSession) {
@@ -146,6 +239,24 @@ export function parseCodexGoalCliArgs(
   }
   if (commandName === "tail") {
     return parseTail(rest, io);
+  }
+  if (commandName === "tools") {
+    return parseMcpTools(rest, io);
+  }
+  if (commandName === "tool" || commandName === "call") {
+    return parseMcpTool(rest, io);
+  }
+  if (commandName === "resources") {
+    return parseMcpResources(rest, io);
+  }
+  if (commandName === "resource") {
+    return parseMcpResource(rest, io);
+  }
+  if (commandName === "prompts") {
+    return parseMcpPrompts(rest, io);
+  }
+  if (commandName === "prompt") {
+    return parseMcpPrompt(rest, io);
   }
   throw new Error(`unknown command: ${commandName}`);
 }
@@ -273,6 +384,123 @@ function parseTail(
     logPath,
     lines: parsePositiveInteger(option(values, env, "--lines", []) ?? "100", "--lines"),
   };
+}
+
+function parseMcpTools(
+  argv: readonly string[],
+  io: CodexGoalCliIo,
+): McpToolsCommand {
+  const values = parseFlags(argv);
+  return {
+    kind: "mcp-tools",
+    format: outputFormat(option(values, io.env(), "--format", []) ?? "json"),
+  };
+}
+
+function parseMcpTool(
+  argv: readonly string[],
+  io: CodexGoalCliIo,
+): McpToolCommand {
+  const name = argv[0];
+  if (!name || name.startsWith("--")) throw new Error("tool name is required");
+  const values = parseFlags(argv.slice(1));
+  return {
+    kind: "mcp-tool",
+    name,
+    ...jsonArgsSource(values),
+    format: outputFormat(option(values, io.env(), "--format", []) ?? "json"),
+  };
+}
+
+function parseMcpResources(
+  argv: readonly string[],
+  io: CodexGoalCliIo,
+): McpResourcesCommand {
+  const values = parseFlags(argv);
+  return {
+    kind: "mcp-resources",
+    format: outputFormat(option(values, io.env(), "--format", []) ?? "json"),
+  };
+}
+
+function parseMcpResource(
+  argv: readonly string[],
+  io: CodexGoalCliIo,
+): McpResourceCommand {
+  const uri = argv[0];
+  if (!uri || uri.startsWith("--")) throw new Error("resource uri is required");
+  const values = parseFlags(argv.slice(1));
+  return {
+    kind: "mcp-resource",
+    uri,
+    format: outputFormat(option(values, io.env(), "--format", []) ?? "json"),
+  };
+}
+
+function parseMcpPrompts(
+  argv: readonly string[],
+  io: CodexGoalCliIo,
+): McpPromptsCommand {
+  const values = parseFlags(argv);
+  return {
+    kind: "mcp-prompts",
+    format: outputFormat(option(values, io.env(), "--format", []) ?? "json"),
+  };
+}
+
+function parseMcpPrompt(
+  argv: readonly string[],
+  io: CodexGoalCliIo,
+): McpPromptCommand {
+  const name = argv[0];
+  if (!name || name.startsWith("--")) throw new Error("prompt name is required");
+  const values = parseFlags(argv.slice(1));
+  return {
+    kind: "mcp-prompt",
+    name,
+    ...jsonArgsSource(values),
+    format: outputFormat(option(values, io.env(), "--format", []) ?? "json"),
+  };
+}
+
+function jsonArgsSource(values: ParsedFlags): {
+  readonly argsJson?: string;
+  readonly argsFile?: string;
+} {
+  const argsJson = values.values.get("--args-json");
+  const argsFile = values.values.get("--args-file");
+  if (argsJson && argsFile) {
+    throw new Error("use only one of --args-json or --args-file");
+  }
+  return {
+    ...(argsJson ? { argsJson } : {}),
+    ...(argsFile ? { argsFile } : {}),
+  };
+}
+
+async function readJsonArgs(
+  command: Pick<McpToolCommand | McpPromptCommand, "argsJson" | "argsFile">,
+  io: CodexGoalCliIo,
+): Promise<Record<string, unknown>> {
+  if (command.argsJson) return parseJsonObject(command.argsJson, "--args-json");
+  if (command.argsFile) {
+    const path = resolvePath(io.cwd(), command.argsFile);
+    return parseJsonObject(await readFile(path, "utf8"), "--args-file");
+  }
+  return {};
+}
+
+function parseJsonObject(value: string, source: string): Record<string, unknown> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch (error) {
+    throw new Error(`${source} must be valid JSON: ${
+      error instanceof Error ? error.message : "parse failed"
+    }`);
+  }
+  if (!isRecord(parsed)) throw new Error(`${source} must be a JSON object`);
+  return parsed;
 }
 
 function runConfigFromFlags(
@@ -618,12 +846,22 @@ function usage(): string {
   subscription-runtime-codex-goal status --job-root <dir> --task-id <id> [--workspace <dir>] [--tmux-session <name>]
   subscription-runtime-codex-goal doctor --job-root <dir> --workspace <dir> --prompt <file> --task-id <id> --accounts account-a,account-b
   subscription-runtime-codex-goal tail --job-root <dir> --task-id <id> [--lines 100]
+  subscription-runtime-codex-goal tools
+  subscription-runtime-codex-goal tool <mcp_tool_name> [--args-json '{"jobId":"..."}' | --args-file args.json]
+  subscription-runtime-codex-goal resources
+  subscription-runtime-codex-goal resource <mcp_resource_uri>
+  subscription-runtime-codex-goal prompts
+  subscription-runtime-codex-goal prompt <mcp_prompt_name> [--args-json '{"jobId":"..."}' | --args-file args.json]
 
 defaults:
   --model gpt-5.5 --effort xhigh --service-tier fast --timeout 72h --max-account-cycles 3
 
 escape hatches:
   --dry-run, --print-command, --no-tmux, --no-require-git-workspace
+
+MCP fallback:
+  use tool/resources/prompts when native MCP tools are unavailable in a Codex thread.
+  These commands call the same in-process MCP server via the SDK, so the API surface matches MCP.
 `;
 }
 

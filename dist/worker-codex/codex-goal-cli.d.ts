@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { type CodexGoalRunConfig } from "./codex-goal-runner.js";
 type OutputFormat = "text" | "json";
-type CodexGoalCliCommand = RunCommand | StatusCommand | DoctorCommand | TailCommand | HelpCommand;
+type CodexGoalCliCommand = RunCommand | StatusCommand | DoctorCommand | TailCommand | McpToolsCommand | McpToolCommand | McpResourcesCommand | McpResourceCommand | McpPromptsCommand | McpPromptCommand | HelpCommand;
 type RunCommand = {
     readonly kind: "run";
     readonly config: CodexGoalRunConfig;
@@ -30,6 +30,37 @@ type TailCommand = {
     readonly kind: "tail";
     readonly logPath: string;
     readonly lines: number;
+};
+type McpToolsCommand = {
+    readonly kind: "mcp-tools";
+    readonly format: OutputFormat;
+};
+type McpToolCommand = {
+    readonly kind: "mcp-tool";
+    readonly name: string;
+    readonly argsJson?: string;
+    readonly argsFile?: string;
+    readonly format: OutputFormat;
+};
+type McpResourcesCommand = {
+    readonly kind: "mcp-resources";
+    readonly format: OutputFormat;
+};
+type McpResourceCommand = {
+    readonly kind: "mcp-resource";
+    readonly uri: string;
+    readonly format: OutputFormat;
+};
+type McpPromptsCommand = {
+    readonly kind: "mcp-prompts";
+    readonly format: OutputFormat;
+};
+type McpPromptCommand = {
+    readonly kind: "mcp-prompt";
+    readonly name: string;
+    readonly argsJson?: string;
+    readonly argsFile?: string;
+    readonly format: OutputFormat;
 };
 type HelpCommand = {
     readonly kind: "help";

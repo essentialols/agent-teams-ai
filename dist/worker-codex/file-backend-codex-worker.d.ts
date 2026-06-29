@@ -1,4 +1,4 @@
-import { type ClockPort, type ObservabilityPort, type ProviderTask, type RuntimeDeps } from "@vioxen/subscription-runtime/core";
+import { type ClockPort, type ManagedRunInputRequest, type ManagedRunRecoveryPacket, type ManagedRunResumeHandle, type ObservabilityPort, type ProviderTask, type RuntimeDeps } from "@vioxen/subscription-runtime/core";
 import { type CodexExecutionProfile, type CodexAppServerProcessFactory, type CodexReasoningEffort, type CodexServiceTier } from "@vioxen/subscription-runtime/provider-codex";
 import { type CapacityAwareSubscriptionWorker, type SubscriptionWorkerHealth, type SubscriptionWorkerPrewarmResult, type SubscriptionWorkerState, type WorkerCapacitySnapshot } from "@vioxen/subscription-runtime/worker-core";
 export type FileBackendCodexWorkerOptions = {
@@ -51,14 +51,36 @@ export type FileBackendCodexWorkerJob = {
     readonly controls?: ProviderTask["controls"];
     readonly abortSignal?: AbortSignal;
     readonly metadata?: Readonly<Record<string, string>>;
+    readonly recoveryPacket?: ManagedRunRecoveryPacket;
 };
 export type FileBackendCodexWorkerResult = {
+    readonly status?: "completed";
     readonly outputText: string;
     readonly structuredOutput?: unknown;
     readonly warnings: readonly {
         readonly code: string;
         readonly safeMessage: string;
     }[];
+} | {
+    readonly status: "waiting_for_input";
+    readonly runId: string;
+    readonly outputText: string;
+    readonly request: ManagedRunInputRequest;
+    readonly resumeHandle: ManagedRunResumeHandle;
+    readonly structuredOutput?: unknown;
+    readonly warnings: readonly {
+        readonly code: string;
+        readonly safeMessage: string;
+    }[];
+};
+export type FileBackendCodexManagedRunResumeInput = {
+    readonly runId: string;
+    readonly requestId: string;
+    readonly answer: string;
+    readonly resumeHandle: ManagedRunResumeHandle;
+    readonly outputSchemaName?: string;
+    readonly controls?: ProviderTask["controls"];
+    readonly abortSignal?: AbortSignal;
 };
 export declare class FileBackendCodexWorker implements CapacityAwareSubscriptionWorker<FileBackendCodexWorkerJob, FileBackendCodexWorkerResult> {
     private readonly options;
@@ -72,6 +94,7 @@ export declare class FileBackendCodexWorker implements CapacityAwareSubscription
     private readonly sessionDriver;
     private readonly agentDriver;
     private readonly sessionStore;
+    private readonly managedRunStore;
     private readonly runtime;
     private readonly ownedWorkspace;
     private readonly prewarmWorkspace;
@@ -89,10 +112,17 @@ export declare class FileBackendCodexWorker implements CapacityAwareSubscription
     seedCodexAuthJson(authJson: string): Promise<void>;
     prewarm(): Promise<SubscriptionWorkerPrewarmResult>;
     run(job: FileBackendCodexWorkerJob): Promise<FileBackendCodexWorkerResult>;
+    resumeManagedRun(input: FileBackendCodexManagedRunResumeInput): Promise<FileBackendCodexWorkerResult>;
     health(): Promise<SubscriptionWorkerHealth>;
     dispose(): Promise<void>;
     capacity(): WorkerCapacitySnapshot;
+    private recoverManagedRun;
     private taskResultToOutput;
+    private persistResumeSessionUpdate;
+    private persistWaitingManagedRun;
+    private workerWaitingResult;
+    private workerResumeHandle;
+    private assertResumeHandleMatchesWorker;
     private recordSuccessfulRun;
     private recordFailure;
     private recordBlocked;

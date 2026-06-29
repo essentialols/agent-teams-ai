@@ -20,6 +20,7 @@ export class FileBackendCodexWorker {
     sessionDriver;
     agentDriver;
     sessionStore;
+    managedRunStore;
     runtime;
     ownedWorkspace;
     prewarmWorkspace;
@@ -60,6 +61,7 @@ export class FileBackendCodexWorker {
             metadata: { adapter: "file-backend-codex-worker" },
         });
         this.sessionStore = sessionStore;
+        this.managedRunStore = new LocalFileManagedRunStore(join(options.stateRootDir, "managed-runs"));
         this.sessionDriver = new CodexCliSessionDriver({
             codexBinaryPath: options.codexBinaryPath,
             model: options.model ?? defaultCodexModel,
@@ -96,6 +98,7 @@ export class FileBackendCodexWorker {
                             : {}),
                         cleanThreadPrewarm: options.cleanThreadPrewarm ?? true,
                         goalMode: executionEngine === "app-server-goal",
+                        runStore: this.managedRunStore,
                         ...(executionEngine === "app-server-goal"
                             ? {}
                             : { fallback: packagedExec }),
@@ -289,7 +292,10 @@ export class FileBackendCodexWorker {
                                 ? { outputSchemaName: job.outputSchemaName }
                                 : {}),
                             ...(job.controls ? { controls: job.controls } : {}),
-                            ...(job.metadata ? { metadata: job.metadata } : {}),
+                            metadata: {
+                                ...(job.metadata ?? {}),
+                                codexManagedRunId: runId,
+                            },
                         },
                         runContext: {
                             runId,
@@ -312,7 +318,12 @@ export class FileBackendCodexWorker {
                     });
                 }
                 if (result.status === "completed") {
-                    return this.taskResultToOutput(result.task);
+                    return await this.taskResultToOutput(result.task, {
+                        kind: "run",
+                        runId,
+                        job,
+                        attempt,
+                    });
                 }
                 if (shouldRetryRefreshConflict(result) &&
                     !abortSignal.aborted &&
@@ -326,6 +337,63 @@ export class FileBackendCodexWorker {
             }
         }
         finally {
+            await this.exportSeededCodexAuthJsonFileQuietly("run");
+        }
+    }
+    async resumeManagedRun(input) {
+        this.assertStarted();
+        if (!(this.agentDriver instanceof CodexJsonAgentDriver)) {
+            throw new SubscriptionWorkerError("subscription_worker_run_failed", "Selected Codex worker engine does not support managed run resume.", { details: { reason: "task_mode_unsupported" } });
+        }
+        this.assertResumeHandleMatchesWorker(input.resumeHandle);
+        const abortSignal = input.abortSignal ?? new AbortController().signal;
+        const durableRecord = await this.managedRunStore.get({ runId: input.runId });
+        const session = await this.sessionStore.read({
+            providerInstanceId: this.options.providerInstanceId,
+            expectedProviderId: "codex",
+            purpose: "run",
+        });
+        if (!session) {
+            throw new SubscriptionWorkerError("subscription_worker_run_failed", "Codex session is missing.", { details: { reason: "needs_reconnect" } });
+        }
+        if (!this.agentDriver.hasManagedRunSession(input.runId)) {
+            return await this.recoverManagedRun({ input, record: durableRecord });
+        }
+        const workspace = { path: input.resumeHandle.workspacePath };
+        try {
+            const result = await this.agentDriver.resumeManagedRun({
+                session: session.artifact,
+                runId: input.runId,
+                requestId: input.requestId,
+                answer: input.answer,
+                resumeHandle: input.resumeHandle,
+                task: {
+                    ...(input.outputSchemaName
+                        ? { outputSchemaName: input.outputSchemaName }
+                        : {}),
+                    ...(input.controls ? { controls: input.controls } : {}),
+                },
+                workspace,
+                runner: this.runner,
+                redactor: this.redactor,
+                abortSignal,
+            });
+            const persisted = await this.persistResumeSessionUpdate({
+                result,
+                session,
+                runId: input.runId,
+            });
+            if (persisted.status === "failed" && canRecoverManagedRun(input, durableRecord)) {
+                return await this.recoverManagedRun({ input, record: durableRecord });
+            }
+            return await this.taskResultToOutput(persisted, {
+                kind: "resume",
+                input,
+                previousRecord: durableRecord,
+            });
+        }
+        finally {
+            await workspace.dispose?.();
             await this.exportSeededCodexAuthJsonFileQuietly("run");
         }
     }
@@ -447,17 +515,155 @@ export class FileBackendCodexWorker {
                 }),
         });
     }
-    taskResultToOutput(result) {
+    async recoverManagedRun(input) {
+        const record = input.record;
+        if (!canRecoverManagedRun(input.input, record)) {
+            throw new SubscriptionWorkerError("subscription_worker_run_failed", "Managed run cannot be recovered from durable state.", { details: { reason: "managed_run_recovery_unavailable" } });
+        }
+        const packet = record.recoveryPacket;
+        const outputSchemaName = input.input.outputSchemaName ?? packet.outputSchemaName;
+        const controls = input.input.controls ?? packet.controls;
+        return await this.run({
+            runId: input.input.runId,
+            prompt: buildManagedRunRecoveryPrompt({
+                packet,
+                answer: input.input.answer,
+                requestId: input.input.requestId,
+            }),
+            ...(packet.systemPrompt === undefined
+                ? {}
+                : { systemPrompt: packet.systemPrompt }),
+            kind: packet.kind ?? "structured-prompt",
+            ...(outputSchemaName ? { outputSchemaName } : {}),
+            ...(controls ? { controls } : {}),
+            metadata: {
+                ...(packet.metadata ?? {}),
+                codexManagedRecovery: "true",
+                codexManagedRecoveryRequestId: input.input.requestId,
+                ...(packet.goalObjective
+                    ? { codexGoalObjective: packet.goalObjective }
+                    : {}),
+            },
+            ...(input.input.abortSignal ? { abortSignal: input.input.abortSignal } : {}),
+            recoveryPacket: packet,
+        });
+    }
+    async taskResultToOutput(result, context) {
         if (result.status === "failed") {
             this.recordFailure(result.failure);
             throw new SubscriptionWorkerError("subscription_worker_run_failed", result.failure.safeMessage, { details: { code: result.failure.code } });
         }
+        if (result.status === "waiting_for_input") {
+            const waiting = this.workerWaitingResult(result);
+            if (context) {
+                await this.persistWaitingManagedRun({ result: waiting, context });
+            }
+            return {
+                status: "waiting_for_input",
+                runId: waiting.runId,
+                outputText: waiting.outputText,
+                request: waiting.request,
+                resumeHandle: waiting.resumeHandle,
+                ...(waiting.structuredOutput === undefined
+                    ? {}
+                    : { structuredOutput: waiting.structuredOutput }),
+                warnings: waiting.warnings,
+            };
+        }
         this.recordSuccessfulRun();
         return {
             outputText: result.outputText,
-            structuredOutput: result.structuredOutput,
+            ...(result.structuredOutput === undefined
+                ? {}
+                : { structuredOutput: result.structuredOutput }),
             warnings: result.warnings,
         };
+    }
+    async persistResumeSessionUpdate(input) {
+        if (input.result.status !== "completed" ||
+            !input.result.sessionUpdate ||
+            sameArtifactBytes(input.result.sessionUpdate, input.session.artifact)) {
+            return input.result;
+        }
+        if (input.result.sessionUpdate.providerId !== input.session.providerId) {
+            return appendWarnings(input.result, [
+                {
+                    code: "managed_run_session_update_provider_mismatch",
+                    safeMessage: "Managed run session update was ignored because the provider did not match.",
+                },
+            ]);
+        }
+        const updateHash = hashArtifact(input.result.sessionUpdate);
+        const writebackKey = hashText(`${this.options.providerInstanceId}:${input.runId}:${updateHash}`);
+        try {
+            const writeback = await this.sessionStore.write({
+                providerInstanceId: this.options.providerInstanceId,
+                expectedGeneration: input.session.generation,
+                nextArtifact: input.result.sessionUpdate,
+                idempotencyKey: `managed-run-resume:${writebackKey.slice(0, 32)}`,
+                leaseId: `managed-run-resume:${writebackKey.slice(0, 32)}`,
+            });
+            if (writeback.status === "stale_generation") {
+                return appendWarnings(input.result, [
+                    {
+                        code: "managed_run_session_update_stale_generation",
+                        safeMessage: "Managed run session update was skipped because a newer session generation already exists.",
+                    },
+                ]);
+            }
+            return input.result;
+        }
+        catch {
+            return appendWarnings(input.result, [
+                {
+                    code: "managed_run_session_update_writeback_failed",
+                    safeMessage: "Managed run session update could not be written back after resume.",
+                },
+            ]);
+        }
+    }
+    async persistWaitingManagedRun(input) {
+        const recoveryPacket = buildManagedRunRecoveryPacket({
+            result: input.result,
+            context: input.context,
+        });
+        await this.managedRunStore.saveWaitingInput({
+            runId: input.result.runId,
+            request: input.result.request,
+            resumeHandle: input.result.resumeHandle,
+            recoveryPacket,
+            taskId: input.result.runId,
+            assignedWorkerId: this.workerId,
+            providerInstanceId: this.options.providerInstanceId,
+            workspacePath: input.result.resumeHandle.workspacePath,
+            ...(input.result.outputText.trim()
+                ? { outputText: input.result.outputText }
+                : {}),
+            now: this.clock.now(),
+        });
+    }
+    workerWaitingResult(result) {
+        return {
+            ...result,
+            resumeHandle: this.workerResumeHandle(result.resumeHandle),
+        };
+    }
+    workerResumeHandle(resumeHandle) {
+        return {
+            ...resumeHandle,
+            providerInstanceId: this.options.providerInstanceId,
+            workerId: this.workerId,
+        };
+    }
+    assertResumeHandleMatchesWorker(resumeHandle) {
+        if (resumeHandle.providerInstanceId !== undefined &&
+            resumeHandle.providerInstanceId !== this.options.providerInstanceId) {
+            throw new SubscriptionWorkerError("subscription_worker_run_failed", "Managed run belongs to a different provider instance.", { details: { reason: "managed_run_provider_instance_mismatch" } });
+        }
+        if (resumeHandle.workerId !== undefined &&
+            resumeHandle.workerId !== this.workerId) {
+            throw new SubscriptionWorkerError("subscription_worker_run_failed", "Managed run belongs to a different worker.", { details: { reason: "managed_run_worker_mismatch" } });
+        }
     }
     recordSuccessfulRun() {
         this.rollCapacityWindow();
@@ -636,6 +842,98 @@ export class FileBackendCodexWorker {
         }
     }
 }
+class LocalFileManagedRunStore {
+    rootDir;
+    constructor(rootDir) {
+        this.rootDir = rootDir;
+    }
+    async get(input) {
+        const raw = await readFile(this.recordPath(input.runId), "utf8").catch((error) => {
+            if (isNodeErrorCode(error, "ENOENT"))
+                return null;
+            throw error;
+        });
+        if (raw === null)
+            return null;
+        return parseManagedRunRecord(JSON.parse(raw));
+    }
+    async saveWaitingInput(input) {
+        const current = await this.get({ runId: input.runId });
+        const recoveryPacket = input.recoveryPacket ?? current?.recoveryPacket;
+        const taskId = input.taskId ?? current?.taskId;
+        const assignedWorkerId = input.assignedWorkerId ?? current?.assignedWorkerId;
+        const providerInstanceId = input.providerInstanceId ?? current?.providerInstanceId;
+        const workspacePath = input.workspacePath ?? current?.workspacePath;
+        const outputText = input.outputText ?? current?.outputText;
+        const record = {
+            runId: input.runId,
+            status: "waiting_for_input",
+            request: input.request,
+            resumeHandle: input.resumeHandle,
+            ...(recoveryPacket === undefined ? {} : { recoveryPacket }),
+            ...(taskId === undefined ? {} : { taskId }),
+            ...(assignedWorkerId === undefined ? {} : { assignedWorkerId }),
+            ...(providerInstanceId === undefined ? {} : { providerInstanceId }),
+            ...(workspacePath === undefined ? {} : { workspacePath }),
+            ...(outputText === undefined ? {} : { outputText }),
+            updatedAt: input.now,
+        };
+        await this.writeRecord(record);
+        return record;
+    }
+    async resume(input) {
+        const current = await this.get({ runId: input.runId });
+        if (!current ||
+            current.status !== "waiting_for_input" ||
+            current.request?.id !== input.requestId) {
+            throw new Error("managed_run_request_mismatch");
+        }
+        const { request: _request, ...currentWithoutRequest } = current;
+        const record = {
+            ...currentWithoutRequest,
+            status: "active",
+            updatedAt: input.now,
+        };
+        await this.writeRecord(record);
+        return record;
+    }
+    async complete(input) {
+        const current = await this.get({ runId: input.runId });
+        const record = {
+            ...(current ?? { runId: input.runId }),
+            runId: input.runId,
+            status: "completed",
+            outputText: input.outputText,
+            updatedAt: input.now,
+        };
+        await this.writeRecord(record);
+        return record;
+    }
+    async fail(input) {
+        const current = await this.get({ runId: input.runId });
+        const record = {
+            ...(current ?? { runId: input.runId }),
+            runId: input.runId,
+            status: "failed",
+            failure: input.failure,
+            updatedAt: input.now,
+        };
+        await this.writeRecord(record);
+        return record;
+    }
+    recordPath(runId) {
+        return join(this.rootDir, `${hashText(runId)}.json`);
+    }
+    async writeRecord(record) {
+        const path = this.recordPath(record.runId);
+        await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+        const tempPath = `${path}.${randomUUID()}.tmp`;
+        await writeFile(tempPath, `${JSON.stringify(record, null, 2)}\n`, {
+            mode: 0o600,
+        });
+        await rename(tempPath, path);
+    }
+}
 function shouldRetryRefreshConflict(result) {
     if (result.status !== "blocked")
         return false;
@@ -643,6 +941,116 @@ function shouldRetryRefreshConflict(result) {
         return true;
     return (result.reason === "permission_required" &&
         /session refresh is already leased/i.test(result.safeMessage));
+}
+function canRecoverManagedRun(input, record) {
+    if (!record?.recoveryPacket)
+        return false;
+    if (record.status === "completed" || record.status === "aborted")
+        return false;
+    if (record.runId !== input.runId)
+        return false;
+    if (record.request && record.request.id !== input.requestId)
+        return false;
+    if (record.resumeHandle?.runId && record.resumeHandle.runId !== input.runId) {
+        return false;
+    }
+    return true;
+}
+function buildManagedRunRecoveryPacket(input) {
+    const previous = input.context.kind === "resume"
+        ? input.context.previousRecord?.recoveryPacket
+        : input.context.job.recoveryPacket;
+    const job = input.context.kind === "run" ? input.context.job : null;
+    const controls = input.context.kind === "resume"
+        ? input.context.input.controls ?? previous?.controls
+        : job?.controls ?? previous?.controls;
+    const outputSchemaName = input.context.kind === "resume"
+        ? input.context.input.outputSchemaName ?? previous?.outputSchemaName
+        : job?.outputSchemaName ?? previous?.outputSchemaName;
+    const metadata = input.context.kind === "run"
+        ? job?.metadata ?? previous?.metadata
+        : previous?.metadata;
+    const goalObjective = metadata?.codexGoalObjective ?? previous?.goalObjective;
+    const kind = job?.kind ?? previous?.kind;
+    const systemPrompt = job?.systemPrompt ?? previous?.systemPrompt;
+    return {
+        originalPrompt: previous?.originalPrompt ?? job?.prompt ?? input.result.outputText,
+        ...(goalObjective ? { goalObjective } : {}),
+        lastOutput: input.result.outputText,
+        blockerQuestion: input.result.request.question,
+        ...(input.result.request.contextSummary
+            ? { contextSummary: input.result.request.contextSummary }
+            : previous?.contextSummary
+                ? { contextSummary: previous.contextSummary }
+                : {}),
+        attemptSummary: managedRunAttemptSummary(input.context),
+        ...(kind ? { kind } : {}),
+        ...(systemPrompt ? { systemPrompt } : {}),
+        ...(outputSchemaName ? { outputSchemaName } : {}),
+        ...(controls ? { controls } : {}),
+        ...(metadata ? { metadata } : {}),
+    };
+}
+function managedRunAttemptSummary(context) {
+    if (context.kind === "run") {
+        return `Blocked during worker attempt ${context.attempt}.`;
+    }
+    const answerPreview = context.input.answer.trim().slice(0, 240);
+    return [
+        `Recovered after answering request ${context.input.requestId}.`,
+        answerPreview ? `Answer preview: ${answerPreview}` : "Answer preview: (empty answer)",
+    ].join("\n");
+}
+function buildManagedRunRecoveryPrompt(input) {
+    return [
+        "Continue a previously blocked managed run.",
+        "",
+        "Original task:",
+        input.packet.originalPrompt,
+        "",
+        ...(input.packet.goalObjective
+            ? ["Goal objective:", input.packet.goalObjective, ""]
+            : []),
+        "Last worker output before the blocker:",
+        input.packet.lastOutput || "(no output)",
+        "",
+        "Blocking request:",
+        `Request id: ${input.requestId}`,
+        input.packet.blockerQuestion,
+        "",
+        ...(input.packet.contextSummary
+            ? ["Context summary:", input.packet.contextSummary, ""]
+            : []),
+        ...(input.packet.attemptSummary
+            ? ["Attempt summary:", input.packet.attemptSummary, ""]
+            : []),
+        "Answer from orchestrator:",
+        input.answer.trim() || "(empty answer)",
+        "",
+        "Use the answer above and continue the original task from the recovered state. Do not restart from scratch unless the recovered context is insufficient.",
+    ].join("\n");
+}
+function parseManagedRunRecord(value) {
+    if (!value || typeof value !== "object") {
+        throw new Error("managed_run_record_invalid");
+    }
+    const record = value;
+    if (typeof record.runId !== "string") {
+        throw new Error("managed_run_record_run_id_invalid");
+    }
+    if (typeof record.status !== "string") {
+        throw new Error("managed_run_record_status_invalid");
+    }
+    return {
+        ...record,
+        updatedAt: new Date(String(record.updatedAt)),
+    };
+}
+function isNodeErrorCode(error, code) {
+    return (typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === code);
 }
 function shouldReplaceSeededCodexSession(input) {
     if (sameArtifactBytes(input.existing.artifact, input.incoming))
@@ -686,6 +1094,17 @@ function safeReadCodexArtifactFreshness(input) {
 }
 function sameArtifactBytes(left, right) {
     return Buffer.from(left.bytes).equals(Buffer.from(right.bytes));
+}
+function appendWarnings(result, warnings) {
+    if (warnings.length === 0)
+        return result;
+    return {
+        ...result,
+        warnings: [...result.warnings, ...warnings],
+    };
+}
+function hashArtifact(artifact) {
+    return createHash("sha256").update(artifact.bytes).digest("hex");
 }
 function refreshConflictDelayMs(attempt) {
     return Math.min(1_000, 100 * 2 ** Math.max(0, attempt - 1));

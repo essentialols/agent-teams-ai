@@ -324,6 +324,248 @@ describe("FileBackendCodexWorker", () => {
     }
   });
 
+  it("returns waiting input for a blocked Codex goal and resumes it", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "codex-worker-managed-goal-"));
+    const callerWorkspace = await mkdtemp(
+      join(tmpdir(), "codex-managed-goal-workspace-"),
+    );
+    const appServer = new FakeAppServerFactory({
+      goalStatusesAfterTurns: ["blocked", "complete"],
+    });
+    const clock = {
+      now: () => new Date("2026-05-31T00:05:00.000Z"),
+      monotonicMs: () => performance.now(),
+    };
+    const worker = new FileBackendCodexWorker({
+      providerInstanceId: "codex:managed-goal",
+      stateRootDir: rootDir,
+      workspacePath: callerWorkspace,
+      codexBinaryPath: "codex",
+      model: "gpt-test",
+      encryptionKey: new Uint8Array(32).fill(15),
+      executionEngine: "app-server-goal",
+      appServerProcessFactory: appServer.create,
+      clock,
+    });
+
+    try {
+      await worker.start();
+      await worker.seedCodexAuthJson(validAuthJson);
+      const waiting = await worker.run({
+        runId: "worker-managed-goal-1",
+        prompt: "finish after blocked goal",
+        controls: { permissionMode: "allow-edits" },
+      });
+
+      expect(waiting).toMatchObject({
+        status: "waiting_for_input",
+        runId: "worker-managed-goal-1",
+        request: {
+          kind: "missing_context",
+          audience: "orchestrator",
+        },
+        resumeHandle: {
+          providerInstanceId: "codex:managed-goal",
+          workerId: worker.workerId,
+          workspacePath: callerWorkspace,
+          threadId: "thread-1",
+        },
+      });
+      if (waiting.status !== "waiting_for_input") {
+        throw new Error("expected waiting result");
+      }
+
+      const resumed = await worker.resumeManagedRun({
+        runId: waiting.runId,
+        requestId: waiting.request.id,
+        answer: "Use the billing workspace.",
+        resumeHandle: waiting.resumeHandle,
+        controls: { permissionMode: "allow-edits" },
+      });
+
+      expect(resumed).toMatchObject({
+        outputText: "OK",
+      });
+      expect(appServer.prompts).toEqual([
+        "finish after blocked goal",
+        expect.stringContaining("Use the billing workspace."),
+      ]);
+    } finally {
+      await worker.dispose();
+      await rm(rootDir, { recursive: true, force: true });
+      await rm(callerWorkspace, { recursive: true, force: true });
+    }
+  });
+
+  it("resumes a managed Codex goal in the workspace from its resume handle", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "codex-worker-managed-handle-"));
+    const firstWorkspace = await mkdtemp(
+      join(tmpdir(), "codex-managed-handle-workspace-"),
+    );
+    const unexpectedWorkspace = await mkdtemp(
+      join(tmpdir(), "codex-managed-handle-unexpected-"),
+    );
+    const refreshWorkspace = await mkdtemp(
+      join(tmpdir(), "codex-managed-handle-refresh-"),
+    );
+    const appServer = new FakeAppServerFactory({
+      goalStatusesAfterTurns: ["blocked", "complete"],
+    });
+    let runTaskWorkspaceCreates = 0;
+    const workspace: WorkspacePort = {
+      workspaceId: "managed-handle-test-workspace",
+      capabilities: {
+        workspaceId: "managed-handle-test-workspace",
+        supportsTempDir: true,
+        supportsExistingCheckout: true,
+        supportsContainer: false,
+      },
+      async create(input) {
+        if (input.purpose !== "run-task") {
+          return { path: refreshWorkspace };
+        }
+        runTaskWorkspaceCreates += 1;
+        return {
+          path: runTaskWorkspaceCreates === 1 ? firstWorkspace : unexpectedWorkspace,
+        };
+      },
+    };
+    const worker = new FileBackendCodexWorker({
+      providerInstanceId: "codex:managed-handle",
+      stateRootDir: rootDir,
+      workspace,
+      codexBinaryPath: "codex",
+      model: "gpt-test",
+      encryptionKey: new Uint8Array(32).fill(16),
+      executionEngine: "app-server-goal",
+      appServerProcessFactory: appServer.create,
+      clock: {
+        now: () => new Date("2026-05-31T00:05:00.000Z"),
+        monotonicMs: () => performance.now(),
+      },
+    });
+
+    try {
+      await worker.start();
+      await worker.seedCodexAuthJson(validAuthJson);
+      const waiting = await worker.run({
+        runId: "worker-managed-handle-1",
+        prompt: "finish in original workspace",
+        controls: { permissionMode: "allow-edits" },
+      });
+
+      if (waiting.status !== "waiting_for_input") {
+        throw new Error("expected waiting result");
+      }
+      expect(waiting.resumeHandle.workspacePath).toBe(firstWorkspace);
+      expect(waiting.resumeHandle).toMatchObject({
+        providerInstanceId: "codex:managed-handle",
+        workerId: worker.workerId,
+      });
+
+      const resumed = await worker.resumeManagedRun({
+        runId: waiting.runId,
+        requestId: waiting.request.id,
+        answer: "Use the original workspace.",
+        resumeHandle: waiting.resumeHandle,
+        controls: { permissionMode: "allow-edits" },
+      });
+
+      expect(resumed).toMatchObject({ outputText: "OK" });
+      expect(runTaskWorkspaceCreates).toBe(1);
+      expect(appServer.threadCwds).toEqual([firstWorkspace]);
+    } finally {
+      await worker.dispose();
+      await rm(rootDir, { recursive: true, force: true });
+      await rm(firstWorkspace, { recursive: true, force: true });
+      await rm(unexpectedWorkspace, { recursive: true, force: true });
+      await rm(refreshWorkspace, { recursive: true, force: true });
+    }
+  });
+
+  it("recovers a waiting managed Codex goal after worker restart", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "codex-worker-managed-recover-"));
+    const callerWorkspace = await mkdtemp(
+      join(tmpdir(), "codex-managed-recover-workspace-"),
+    );
+    const firstAppServer = new FakeAppServerFactory({
+      goalStatusesAfterTurns: ["blocked"],
+    });
+    const secondAppServer = new FakeAppServerFactory({
+      goalStatusesAfterTurns: ["complete"],
+    });
+    const clock = {
+      now: () => new Date("2026-05-31T00:05:00.000Z"),
+      monotonicMs: () => performance.now(),
+    };
+    const firstWorker = new FileBackendCodexWorker({
+      providerInstanceId: "codex:managed-recover",
+      stateRootDir: rootDir,
+      workspacePath: callerWorkspace,
+      codexBinaryPath: "codex",
+      model: "gpt-test",
+      encryptionKey: new Uint8Array(32).fill(17),
+      executionEngine: "app-server-goal",
+      appServerProcessFactory: firstAppServer.create,
+      clock,
+    });
+
+    try {
+      await firstWorker.start();
+      await firstWorker.seedCodexAuthJson(validAuthJson);
+      const waiting = await firstWorker.run({
+        runId: "worker-managed-recover-1",
+        prompt: "finish after worker restart",
+        controls: { permissionMode: "allow-edits" },
+      });
+
+      if (waiting.status !== "waiting_for_input") {
+        throw new Error("expected waiting result");
+      }
+      await firstWorker.dispose();
+
+      const secondWorker = new FileBackendCodexWorker({
+        providerInstanceId: "codex:managed-recover",
+        stateRootDir: rootDir,
+        workspacePath: callerWorkspace,
+        codexBinaryPath: "codex",
+        model: "gpt-test",
+        encryptionKey: new Uint8Array(32).fill(17),
+        executionEngine: "app-server-goal",
+        appServerProcessFactory: secondAppServer.create,
+        clock,
+      });
+
+      try {
+        await secondWorker.start();
+        const recovered = await secondWorker.resumeManagedRun({
+          runId: waiting.runId,
+          requestId: waiting.request.id,
+          answer: "Use the recovered billing context.",
+          resumeHandle: waiting.resumeHandle,
+          controls: { permissionMode: "allow-edits" },
+        });
+
+        expect(recovered).toMatchObject({ outputText: "OK" });
+        expect(secondAppServer.prompts[0]).toContain(
+          "Continue a previously blocked managed run.",
+        );
+        expect(secondAppServer.prompts[0]).toContain(
+          "finish after worker restart",
+        );
+        expect(secondAppServer.prompts[0]).toContain(
+          "Use the recovered billing context.",
+        );
+      } finally {
+        await secondWorker.dispose();
+      }
+    } finally {
+      await firstWorker.dispose();
+      await rm(rootDir, { recursive: true, force: true });
+      await rm(callerWorkspace, { recursive: true, force: true });
+    }
+  });
+
   it("rejects ambiguous custom workspace options", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "codex-worker-"));
     const customWorkspace: WorkspacePort = {
@@ -1447,6 +1689,7 @@ describe("FileBackendCodexWorker", () => {
 type FakeAppServerFactoryOptions = {
   readonly emitTopLevelErrorOnTurn?: string;
   readonly emitTopLevelErrorsOnTurns?: readonly (string | null)[];
+  readonly goalStatusesAfterTurns?: readonly string[];
   readonly writeFileOnTurn?: {
     readonly relativePath: string;
     readonly content: string;
@@ -1501,6 +1744,7 @@ class FakeAppServerProcess extends EventEmitter {
   };
   private nextThreadId = 1;
   private nextTurnId = 1;
+  private completedTurnCount = 0;
   private readonly threadCwdsById = new Map<string, string>();
   private readonly goals = new Map<
     string,
@@ -1603,7 +1847,9 @@ class FakeAppServerProcess extends EventEmitter {
               );
               return;
             }
-            this.markGoalComplete(String(request.params?.threadId ?? ""));
+            this.markGoalAfterCompletedTurn(
+              String(request.params?.threadId ?? ""),
+            );
             this.notify("item/agentMessage/delta", {
               turnId,
               delta: "OK",
@@ -1619,10 +1865,14 @@ class FakeAppServerProcess extends EventEmitter {
     }
   }
 
-  private markGoalComplete(threadId: string): void {
+  private markGoalAfterCompletedTurn(threadId: string): void {
     const goal = this.goals.get(threadId);
     if (!goal) return;
-    this.goals.set(threadId, { ...goal, status: "complete" });
+    const nextStatus =
+      this.options.goalStatusesAfterTurns?.[this.completedTurnCount] ??
+      "complete";
+    this.completedTurnCount += 1;
+    this.goals.set(threadId, { ...goal, status: nextStatus });
   }
 
   private async writeConfiguredTurnFile(

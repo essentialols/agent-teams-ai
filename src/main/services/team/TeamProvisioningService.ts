@@ -292,10 +292,7 @@ import {
   cleanupProvisioningRun,
   clearPostCompactReminderState,
 } from './provisioning/TeamProvisioningCleanup';
-import {
-  buildCliExitFailurePresentation,
-  buildCombinedLogs,
-} from './provisioning/TeamProvisioningCliExitPresentation';
+import { buildCombinedLogs } from './provisioning/TeamProvisioningCliExitPresentation';
 import { hasAnthropicCompatibleAuthTokenEnv } from './provisioning/TeamProvisioningDirectRestart';
 import {
   startProvisioningFilesystemMonitor,
@@ -436,6 +433,13 @@ import {
   summarizeRuntimeLaunchResultMembers,
 } from './provisioning/TeamProvisioningOpenCodeRuntimeEvidencePolicy';
 import {
+  handleProvisioningProcessExit,
+  pathExists as provisioningPathExists,
+  tryCompleteAfterTimeout as tryCompleteAfterTimeoutHelper,
+  waitForMissingInboxes as waitForMissingInboxesHelper,
+  waitForTeamInList as waitForTeamInListHelper,
+} from './provisioning/TeamProvisioningProcessExit';
+import {
   appendProvisioningTrace,
   boundLiveLeadProcessMessage,
   boundLiveLeadProcessText,
@@ -513,6 +517,11 @@ import {
   readRuntimeProcessRowsForUsageSnapshot as readRuntimeProcessRowsForUsageSnapshotHelper,
   type RuntimeProcessUsageStatsCacheEntry,
 } from './provisioning/TeamProvisioningRuntimeSnapshot';
+import {
+  stopAllTeamsFlow,
+  stopPersistentTeamMembersFlow,
+  stopTeamFlow,
+} from './provisioning/TeamProvisioningStopFlow';
 import {
   extractStreamUserText,
   getStableLeadThoughtMessageId,
@@ -21640,64 +21649,33 @@ export class TeamProvisioningService {
    * Always uses SIGKILL via killTeamProcess() to prevent CLI cleanup.
    */
   async stopTeam(teamName: string): Promise<void> {
-    this.invalidateRuntimeSnapshotCaches(teamName);
-    this.taskActivityIntervalService.pauseActiveIntervalsForTeam(teamName);
-    this.stopPersistentTeamMembers(teamName);
-
-    const runId = this.getTrackedRunId(teamName);
-    if (!runId) {
-      if (this.hasSecondaryRuntimeRuns(teamName)) {
-        await this.stopMixedSecondaryRuntimeLanes(teamName);
-      }
-      await this.cleanupAnthropicApiKeyHelperMaterialForStoppedTeam(teamName);
-      return;
-    }
-    const run = this.runs.get(runId);
-    if (!run) {
-      const runtimeProgress = this.runtimeAdapterProgressByRunId.get(runId);
-      if (runtimeProgress && this.isCancellableRuntimeAdapterProgress(runtimeProgress)) {
-        await this.cancelRuntimeAdapterProvisioning(runId, runtimeProgress);
-        await this.cleanupAnthropicApiKeyHelperMaterialForStoppedTeam(teamName);
-        return;
-      }
-      const runtimeRun = this.runtimeAdapterRunByTeam.get(teamName);
-      if (runtimeRun?.runId === runId && runtimeRun.providerId === 'opencode') {
-        await this.withTeamLock(teamName, async () => {
-          const currentRuntimeRun = this.runtimeAdapterRunByTeam.get(teamName);
-          if (currentRuntimeRun?.runId === runId && currentRuntimeRun.providerId === 'opencode') {
-            await this.stopOpenCodeRuntimeAdapterTeam(teamName, runId);
-          }
-        });
-        await this.cleanupAnthropicApiKeyHelperMaterialForStoppedTeam(teamName);
-        return;
-      }
-      if (this.hasSecondaryRuntimeRuns(teamName)) {
-        await this.stopMixedSecondaryRuntimeLanes(teamName);
-      }
-      this.provisioningRunByTeam.delete(teamName);
-      this.deleteAliveRunId(teamName);
-      await this.cleanupAnthropicApiKeyHelperMaterialForStoppedTeam(teamName);
-      return;
-    }
-    if (run.processKilled || run.cancelRequested) {
-      if (this.hasSecondaryRuntimeRuns(teamName)) {
-        await this.stopMixedSecondaryRuntimeLanes(teamName);
-      }
-      await this.cleanupAnthropicApiKeyHelperMaterialForStoppedTeam(teamName);
-      return;
-    }
-    run.processKilled = true;
-    run.cancelRequested = true;
-    killTeamProcess(run.child);
-    const stopSecondaryRuntimeLanes = this.hasSecondaryRuntimeRuns(teamName)
-      ? this.stopMixedSecondaryRuntimeLanes(teamName)
-      : null;
-    const progress = updateProgress(run, 'disconnected', 'Team stopped by user');
-    run.onProgress(progress);
-    this.cleanupRun(run);
-    logger.info(`[${teamName}] Process stopped (SIGKILL)`);
-    await stopSecondaryRuntimeLanes;
-    await this.cleanupAnthropicApiKeyHelperMaterialForStoppedTeam(teamName);
+    await stopTeamFlow(teamName, {
+      invalidateRuntimeSnapshotCaches: (teamName) => this.invalidateRuntimeSnapshotCaches(teamName),
+      pauseActiveIntervalsForTeam: (teamName) =>
+        this.taskActivityIntervalService.pauseActiveIntervalsForTeam(teamName),
+      stopPersistentTeamMembers: (teamName) => this.stopPersistentTeamMembers(teamName),
+      getTrackedRunId: (teamName) => this.getTrackedRunId(teamName),
+      runs: this.runs,
+      runtimeAdapterProgressByRunId: this.runtimeAdapterProgressByRunId,
+      isCancellableRuntimeAdapterProgress: (progress) =>
+        this.isCancellableRuntimeAdapterProgress(progress),
+      cancelRuntimeAdapterProvisioning: (runId, progress) =>
+        this.cancelRuntimeAdapterProvisioning(runId, progress),
+      cleanupAnthropicApiKeyHelperMaterialForStoppedTeam: (teamName) =>
+        this.cleanupAnthropicApiKeyHelperMaterialForStoppedTeam(teamName),
+      runtimeAdapterRunByTeam: this.runtimeAdapterRunByTeam,
+      withTeamLock: (teamName, fn) => this.withTeamLock(teamName, fn),
+      stopOpenCodeRuntimeAdapterTeam: (teamName, runId) =>
+        this.stopOpenCodeRuntimeAdapterTeam(teamName, runId),
+      hasSecondaryRuntimeRuns: (teamName) => this.hasSecondaryRuntimeRuns(teamName),
+      stopMixedSecondaryRuntimeLanes: (teamName) => this.stopMixedSecondaryRuntimeLanes(teamName),
+      provisioningRunByTeam: this.provisioningRunByTeam,
+      deleteAliveRunId: (teamName) => this.deleteAliveRunId(teamName),
+      killTeamProcess,
+      updateProgress,
+      cleanupRun: (run) => this.cleanupRun(run),
+      logger,
+    });
   }
 
   private getShutdownTrackedTeamNames(): string[] {
@@ -21969,11 +21947,12 @@ export class TeamProvisioningService {
   }
 
   private stopPersistentTeamMembers(teamName: string): void {
-    const members = this.readPersistedRuntimeMembers(teamName);
-    if (members.length > 0) {
-      this.killPersistedPaneMembers(teamName, members);
-    }
-    this.killOrphanedTeamAgentProcesses(teamName);
+    stopPersistentTeamMembersFlow(teamName, {
+      readPersistedRuntimeMembers: (teamName) => this.readPersistedRuntimeMembers(teamName),
+      killPersistedPaneMembers: (teamName, members) =>
+        this.killPersistedPaneMembers(teamName, members),
+      killOrphanedTeamAgentProcesses: (teamName) => this.killOrphanedTeamAgentProcesses(teamName),
+    });
   }
 
   private async cleanupAnthropicApiKeyHelperMaterialForStoppedTeam(
@@ -22164,34 +22143,26 @@ export class TeamProvisioningService {
    * without CLI cleanup that would delete team files.
    */
   async stopAllTeams(): Promise<void> {
-    this.stopAllTeamsGeneration += 1;
-    for (const teamName of this.getShutdownTrackedTeamNames()) {
-      this.taskActivityIntervalService.pauseActiveIntervalsForTeam(teamName);
-    }
-    killTrackedCliProcesses('SIGKILL');
-    this.killTransientProbeProcessesForShutdown();
-
-    const initialTracked = await this.stopTrackedTeamsForShutdown('Shutdown');
-    await this.cancelPendingRuntimeAdapterLaunchesForShutdown();
-
-    // A create/launch may have been inside a per-team lock before it exposed a
-    // run in provisioningRunByTeam. Wait briefly, then rescan to catch anything
-    // that became visible while shutdown was already in progress.
-    await this.waitForInFlightTeamOperationsForShutdown();
-    await this.cancelPendingRuntimeAdapterLaunchesForShutdown();
-    await this.stopTrackedTeamsForShutdown('Shutdown follow-up');
-
-    const persistedTeamNames = this.listPersistedTeamNames();
-    const tracked = new Set([...initialTracked, ...this.getShutdownTrackedTeamNames()]);
-    const orphanOnly = persistedTeamNames.filter((teamName) => !tracked.has(teamName));
-    if (orphanOnly.length > 0) {
-      logger.info(`Cleaning up persisted teammate runtimes on shutdown: ${orphanOnly.join(', ')}`);
-      for (const teamName of orphanOnly) {
-        this.taskActivityIntervalService.pauseActiveIntervalsForTeam(teamName);
-        this.stopPersistentTeamMembers(teamName);
-        await this.cleanupAnthropicApiKeyHelperMaterialForStoppedTeam(teamName);
-      }
-    }
+    await stopAllTeamsFlow({
+      incrementStopAllTeamsGeneration: () => {
+        this.stopAllTeamsGeneration += 1;
+      },
+      getShutdownTrackedTeamNames: () => this.getShutdownTrackedTeamNames(),
+      pauseActiveIntervalsForTeam: (teamName) =>
+        this.taskActivityIntervalService.pauseActiveIntervalsForTeam(teamName),
+      killTrackedCliProcesses,
+      killTransientProbeProcessesForShutdown: () => this.killTransientProbeProcessesForShutdown(),
+      stopTrackedTeamsForShutdown: (label) => this.stopTrackedTeamsForShutdown(label),
+      cancelPendingRuntimeAdapterLaunchesForShutdown: () =>
+        this.cancelPendingRuntimeAdapterLaunchesForShutdown(),
+      waitForInFlightTeamOperationsForShutdown: () =>
+        this.waitForInFlightTeamOperationsForShutdown(),
+      listPersistedTeamNames: () => this.listPersistedTeamNames(),
+      stopPersistentTeamMembers: (teamName) => this.stopPersistentTeamMembers(teamName),
+      cleanupAnthropicApiKeyHelperMaterialForStoppedTeam: (teamName) =>
+        this.cleanupAnthropicApiKeyHelperMaterialForStoppedTeam(teamName),
+      logger,
+    });
   }
 
   /**
@@ -24361,177 +24332,37 @@ export class TeamProvisioningService {
     stopProvisioningFilesystemMonitor(run);
   }
 
-  private isProvisioningRunFailed(run: ProvisioningRun): boolean {
-    return run.progress.state === 'failed';
-  }
-
   private async handleProcessExit(run: ProvisioningRun, code: number | null): Promise<void> {
-    if (run.finalizingByTimeout) {
-      return;
-    }
-    if (run.progress.state === 'failed' || run.cancelRequested) {
-      return;
-    }
-    // Skip if respawn after auth failure is in progress — the old process is being replaced
-    if (run.authRetryInProgress) {
-      logger.info(
-        `[${run.teamName}] Process exited (code ${code ?? '?'}) during auth-failure respawn — ignoring`
-      );
-      return;
-    }
-    if (
-      (typeof run.stdoutParserCarry === 'string' ? run.stdoutParserCarry.trim() : '') &&
-      !run.stdoutParserCarryIsCompleteJson &&
-      run.stdoutParserCarryLooksLikeClaudeJson
-    ) {
-      logger.warn(
-        `[${run.teamName}] Process closed with incomplete stream-json stdout carry`,
-        this.buildStdoutCarryDiagnostic(run)
-      );
-    }
-    this.flushStdoutParserCarry(run);
-    run.processClosed = true;
-    if (
-      this.isProvisioningRunFailed(run) ||
-      run.cancelRequested ||
-      run.processKilled ||
-      run.authRetryInProgress
-    ) {
-      return;
-    }
-
-    // IMPORTANT: stopStallWatchdog MUST be AFTER authRetryInProgress guard above!
-    // During respawn, the old process exit fires but run.stallCheckHandle already
-    // points to the NEW process's watchdog. Stopping it here would kill the wrong timer.
-    // The authRetryInProgress guard returns early, keeping the new watchdog alive.
-    this.stopStallWatchdog(run);
-
-    // === Process exited AFTER provisioning completed ===
-    // This means the team went offline (crash, kill, or natural exit).
-    if (run.provisioningComplete) {
-      const message =
-        code === 0
-          ? 'Team process exited normally'
-          : `Team process exited unexpectedly (code ${code ?? 'unknown'})`;
-      logger.info(`[${run.teamName}] ${message}`);
-      const progress = updateProgress(run, 'disconnected', message, {
-        cliLogsTail: extractCliLogsFromRun(run),
-      });
-      run.onProgress(progress);
-      this.cleanupRun(run);
-      return;
-    }
-
-    // === Process exited DURING provisioning ===
-    // Try to verify if files were created before the process died.
-    updateProgress(run, 'verifying', 'Process exited — verifying provisioning results');
-    run.onProgress(run.progress);
-
-    if (run.cancelRequested) {
-      return;
-    }
-
-    const configProbe = await this.waitForValidConfig(run);
-    if (run.cancelRequested) {
-      return;
-    }
-
-    if (configProbe.ok && configProbe.location === 'default') {
-      const configuredTeamsBasePath = getTeamsBasePath();
-      const progress = updateProgress(run, 'failed', 'Provisioning failed validation', {
-        error:
-          `TeamCreate produced config.json under a different Claude root (${configProbe.configPath}). ` +
-          `This app is configured to read teams from ${configuredTeamsBasePath}. ` +
-          'Align the app Claude root setting with the CLI, then retry.',
-        cliLogsTail: extractCliLogsFromRun(run),
-      });
-      run.onProgress(progress);
-      this.cleanupRun(run);
-      return;
-    }
-
-    const visibleInList =
-      configProbe.ok && configProbe.location === 'configured'
-        ? await this.waitForTeamInList(run.teamName, run)
-        : false;
-    if (run.cancelRequested) {
-      return;
-    }
-
-    if (configProbe.ok && visibleInList) {
-      // Files exist but process died — provisioned but not alive.
-      const warnings: string[] = [
-        `CLI process exited (code ${code ?? 'unknown'}) — team provisioned but not alive`,
-      ];
-      const missingInboxes = await this.waitForMissingInboxes(run);
-      if (run.cancelRequested) {
-        return;
-      }
-      if (missingInboxes.length > 0) {
-        warnings.push('Some inboxes not created yet');
-      }
-      if (!run.isLaunch) {
-        await this.persistMembersMeta(run.teamName, run.request);
-      }
-      // Mark as disconnected since the process is dead
-      const progress = updateProgress(
-        run,
-        'disconnected',
-        'Team provisioned but process is no longer alive',
-        {
-          warnings,
-          cliLogsTail: extractCliLogsFromRun(run),
-        }
-      );
-      await this.finalizeIncompleteLaunchStateBeforeCleanup(run, warnings[0]);
-      run.onProgress(progress);
-      this.cleanupRun(run);
-      return;
-    }
-
-    if (code === 0) {
-      const configuredConfigPath = path.join(getTeamsBasePath(), run.teamName, 'config.json');
-      const defaultTeamsBasePath = path.join(getAutoDetectedClaudeBasePath(), 'teams');
-      const defaultConfigPath = path.join(defaultTeamsBasePath, run.teamName, 'config.json');
-      const combinedLogs = buildCombinedLogs(run.stdoutBuffer, run.stderrBuffer);
-      const cleanupHint = logsSuggestShutdownOrCleanup(combinedLogs)
-        ? ' CLI output suggests the team was shut down / cleaned up, so no persisted config was left on disk.'
-        : '';
-
-      const errorMessage = !configProbe.ok
-        ? `No valid config.json found at ${configuredConfigPath}${
-            path.resolve(defaultTeamsBasePath) === path.resolve(getTeamsBasePath())
-              ? ''
-              : ` (also checked ${defaultConfigPath})`
-          } within ${Math.round(VERIFY_TIMEOUT_MS / 1000)}s.${cleanupHint}`
-        : 'Team did not appear in team:list after provisioning';
-      const progress = updateProgress(run, 'failed', 'Provisioning failed validation', {
-        error: errorMessage,
-        cliLogsTail: extractCliLogsFromRun(run),
-      });
-      run.onProgress(progress);
-      this.cleanupRun(run);
-      return;
-    }
-
-    const failurePresentation = buildCliExitFailurePresentation(run, code, {
-      cliCommandLabel: getConfiguredCliCommandLabel(),
+    await handleProvisioningProcessExit(run, code, {
+      logger,
+      buildStdoutCarryDiagnostic: (run) => this.buildStdoutCarryDiagnostic(run),
+      flushStdoutParserCarry: (run) => this.flushStdoutParserCarry(run),
+      stopStallWatchdog: (run) => this.stopStallWatchdog(run),
+      waitForValidConfig: (run) => this.waitForValidConfig(run),
+      waitForTeamInList: (teamName, run) => this.waitForTeamInList(teamName, run),
+      waitForMissingInboxes: (run) => this.waitForMissingInboxes(run),
+      persistMembersMeta: (teamName, request) => this.persistMembersMeta(teamName, request),
+      updateConfigPostLaunch: (teamName, cwd, detectedSessionId, color, options) =>
+        this.updateConfigPostLaunch(teamName, cwd, detectedSessionId, color, options),
+      refreshMemberSpawnStatusesFromLeadInbox: (run) =>
+        this.refreshMemberSpawnStatusesFromLeadInbox(run),
+      maybeAuditMemberSpawnStatuses: (run, options) =>
+        this.maybeAuditMemberSpawnStatuses(run, options),
+      finalizeMissingRegisteredMembersAsFailed: (run) =>
+        this.finalizeMissingRegisteredMembersAsFailed(run),
+      persistLaunchStateSnapshot: (run, phase) => this.persistLaunchStateSnapshot(run, phase),
+      updateProgress,
+      cleanupRun: (run) => this.cleanupRun(run),
+      getTeamsBasePath,
+      getAutoDetectedClaudeBasePath,
+      getConfiguredCliCommandLabel,
+      getRunRuntimeFailureLabel,
+      getVerificationTimeoutMs: () => VERIFY_TIMEOUT_MS,
+      extractCliLogsFromRun,
+      logsSuggestShutdownOrCleanup,
+      finalizeIncompleteLaunchStateBeforeCleanup: (run, fallbackReason) =>
+        this.finalizeIncompleteLaunchStateBeforeCleanup(run, fallbackReason),
     });
-    const runtimeFailureLabel = getRunRuntimeFailureLabel(run);
-    const progress = updateProgress(
-      run,
-      'failed',
-      failurePresentation.message ?? `${runtimeFailureLabel} exited with an error`,
-      {
-        error: failurePresentation.error,
-        cliLogsTail: extractCliLogsFromRun(run),
-      }
-    );
-    run.onProgress(progress);
-    this.cleanupRun(run);
-    logger.warn(
-      `Provisioning failed for ${run.teamName}: ${progress.error ?? failurePresentation.error}`
-    );
   }
 
   private async waitForValidConfig(
@@ -24575,115 +24406,47 @@ export class TeamProvisioningService {
   }
 
   private async waitForTeamInList(teamName: string, run?: ProvisioningRun): Promise<boolean> {
-    const deadline = Date.now() + VERIFY_TIMEOUT_MS;
-    while (Date.now() < deadline) {
-      if (run?.cancelRequested) {
-        return false;
-      }
-      try {
-        const teams = await this.configReader.listTeams();
-        if (teams.some((team) => team.teamName === teamName)) {
-          return true;
-        }
-      } catch {
-        // Keep polling until deadline.
-      }
-      await sleep(VERIFY_POLL_MS);
-    }
-    return false;
+    return waitForTeamInListHelper(teamName, {
+      listTeams: () => this.configReader.listTeams(),
+      timeoutMs: VERIFY_TIMEOUT_MS,
+      pollMs: VERIFY_POLL_MS,
+      isCancelled: () => run?.cancelRequested === true,
+      sleep,
+    });
   }
 
   private async waitForMissingInboxes(run: ProvisioningRun): Promise<string[]> {
-    if (run.expectedMembers.length === 0) {
-      return [];
-    }
-    const inboxDir = path.join(getTeamsBasePath(), run.teamName, 'inboxes');
-    const deadline = Date.now() + VERIFY_TIMEOUT_MS;
-    let missing = new Set(run.expectedMembers);
-
-    while (Date.now() < deadline && missing.size > 0) {
-      if (run.cancelRequested || run.progress.state === 'cancelled') {
-        return Array.from(missing);
-      }
-      const nextMissing = new Set<string>();
-      for (const member of missing) {
-        const inboxPath = path.join(inboxDir, `${member}.json`);
-        if (!(await this.pathExists(inboxPath))) {
-          nextMissing.add(member);
-        }
-      }
-      missing = nextMissing;
-      if (missing.size === 0) {
-        break;
-      }
-      await sleep(VERIFY_POLL_MS);
-    }
-
-    return Array.from(missing);
+    return waitForMissingInboxesHelper(run, {
+      getTeamsBasePath,
+      pathExists: (filePath) => this.pathExists(filePath),
+      timeoutMs: VERIFY_TIMEOUT_MS,
+      pollMs: VERIFY_POLL_MS,
+      sleep,
+    });
   }
 
   private async tryCompleteAfterTimeout(run: ProvisioningRun): Promise<boolean> {
-    if (run.cancelRequested) {
-      return false;
-    }
-
-    const configProbe = await this.waitForValidConfig(run);
-    if (!configProbe.ok || configProbe.location !== 'configured') {
-      return false;
-    }
-
-    const visibleInList = await this.waitForTeamInList(run.teamName);
-    if (!visibleInList) {
-      return false;
-    }
-
-    const warnings: string[] = [
-      'CLI timed out after config was created — team provisioned but process killed',
-    ];
-    const missingInboxes = await this.waitForMissingInboxes(run);
-    if (run.cancelRequested) {
-      return false;
-    }
-    if (missingInboxes.length > 0) {
-      warnings.push('Some inboxes not created yet');
-    }
-
-    if (!run.isLaunch) {
-      await this.persistMembersMeta(run.teamName, run.request);
-    }
-    // Persist team color even on timeout path
-    await this.updateConfigPostLaunch(
-      run.teamName,
-      run.request.cwd,
-      run.detectedSessionId,
-      run.request.color,
-      {
-        providerId: run.request.providerId,
-        model: run.request.model,
-        effort: run.request.effort,
-        members: run.allEffectiveMembers,
-      }
-    );
-    await this.refreshMemberSpawnStatusesFromLeadInbox(run);
-    await this.maybeAuditMemberSpawnStatuses(run, { force: true });
-    await this.finalizeMissingRegisteredMembersAsFailed(run);
-    await this.persistLaunchStateSnapshot(run, 'finished');
-    // Process was killed by timeout — mark as disconnected, not ready
-    const progress = updateProgress(run, 'disconnected', 'Team provisioned but process timed out', {
-      warnings,
+    return tryCompleteAfterTimeoutHelper(run, {
+      waitForValidConfig: (run) => this.waitForValidConfig(run),
+      waitForTeamInList: (teamName, run) => this.waitForTeamInList(teamName, run),
+      waitForMissingInboxes: (run) => this.waitForMissingInboxes(run),
+      persistMembersMeta: (teamName, request) => this.persistMembersMeta(teamName, request),
+      updateConfigPostLaunch: (teamName, cwd, detectedSessionId, color, options) =>
+        this.updateConfigPostLaunch(teamName, cwd, detectedSessionId, color, options),
+      refreshMemberSpawnStatusesFromLeadInbox: (run) =>
+        this.refreshMemberSpawnStatusesFromLeadInbox(run),
+      maybeAuditMemberSpawnStatuses: (run, options) =>
+        this.maybeAuditMemberSpawnStatuses(run, options),
+      finalizeMissingRegisteredMembersAsFailed: (run) =>
+        this.finalizeMissingRegisteredMembersAsFailed(run),
+      persistLaunchStateSnapshot: (run, phase) => this.persistLaunchStateSnapshot(run, phase),
+      updateProgress,
+      cleanupRun: (run) => this.cleanupRun(run),
     });
-    run.onProgress(progress);
-    this.cleanupRun(run);
-    return true;
   }
 
   private async pathExists(filePath: string): Promise<boolean> {
-    try {
-      await fs.promises.access(filePath, fs.constants.F_OK);
-      return true;
-    } catch {
-      return false;
-    }
+    return provisioningPathExists(filePath);
   }
 
   private async buildProvisioningEnv(

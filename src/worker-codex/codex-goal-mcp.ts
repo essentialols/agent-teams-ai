@@ -1784,6 +1784,11 @@ export async function buildCodexGoalBrief(input: {
   const lifecycleMarkerTypes = lifecycleMarkers
     .map((marker) => marker.type)
     .filter((type): type is string => typeof type === "string");
+  const reviewedWithoutResult = Boolean(
+    lifecycleMarkerTypes.includes("review") &&
+      !input.status.resultExists &&
+      !input.status.tmuxAlive,
+  );
   const next = silentStale
     ? {
         tool: "manual_review",
@@ -1793,6 +1798,11 @@ export async function buildCodexGoalBrief(input: {
     ? {
         tool: "codex_goal_accounts_status",
         reason: "no available account slots for this job",
+      }
+    : reviewedWithoutResult
+    ? {
+        tool: "manual_review",
+        reason: "reviewed_no_result",
       }
     : nextActionForStatus(input.status.recommendedAction);
   const recentLogTail = redactLogTail(await safeTail(input.launch.logPath, input.tailLines));
@@ -1817,6 +1827,7 @@ export async function buildCodexGoalBrief(input: {
       lifecycleMarkerTypes.length
         ? `lifecycle markers ${lifecycleMarkerTypes.join(",")}`
         : "lifecycle markers none",
+      reviewedWithoutResult ? "reviewedWithoutResult true" : "reviewedWithoutResult false",
     ].join(", "),
     lastProgressAt,
     lastProgressAgeMs,
@@ -1838,7 +1849,7 @@ export async function buildCodexGoalBrief(input: {
     currentAccount: result.currentAccount,
     lastFailureReason: input.status.resultReason ?? result.lastFailureReason,
     changedFiles: input.status.changedFiles ?? [],
-    safeToContinue: safeStatusToContinue && hasAvailableAccount,
+    safeToContinue: safeStatusToContinue && hasAvailableAccount && !reviewedWithoutResult,
     hasAvailableAccount,
     configuredAccounts: input.accounts.map((slot) => slot.name),
     dedupedAccounts: dedupedAccounts.map((slot) => slot.name),

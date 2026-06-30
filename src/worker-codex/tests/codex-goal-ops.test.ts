@@ -174,6 +174,47 @@ describe("codex goal ops", () => {
     expect(JSON.stringify(brief)).not.toContain("rawBearerSecret");
   });
 
+  it("holds reviewed no-result jobs for manual review instead of restart", async () => {
+    const fixture = await createGoalFixture();
+    const launch = launchInput(fixture.config, fixture.root);
+    await writeFile(
+      join(fixture.config.jobRootDir, `${fixture.config.taskId}.review.json`),
+      `${JSON.stringify({
+        reviewedAt: "2026-06-30T00:00:00.000Z",
+        note: "manual audit completed",
+      })}\n`,
+    );
+
+    const status = await collectCodexGoalStatus({
+      jobRootDir: fixture.config.jobRootDir,
+      taskId: fixture.config.taskId,
+      workspacePath: fixture.config.workspacePath,
+      logPath: launch.logPath,
+    });
+    const brief = await buildCodexGoalBrief({
+      jobId: "job-from-registry",
+      launch,
+      status,
+      accounts: [accountStatus("account-a", {})],
+      staleAfterMs: 60_000,
+      tailLines: 20,
+    });
+
+    expect(status).toMatchObject({
+      resultExists: false,
+      workspaceDirty: false,
+      recommendedAction: "start_worker",
+    });
+    expect(brief).toMatchObject({
+      safeToContinue: false,
+      lifecycleMarkerTypes: ["review"],
+      nextBestTool: "manual_review",
+      nextBestReason: "reviewed_no_result",
+      nextBestCommand: "manual_review_status",
+    });
+    expect(String(brief.text)).toContain("reviewedWithoutResult true");
+  });
+
   it("uses runner progress as the strongest observable progress signal", async () => {
     const fixture = await createGoalFixture();
     const launch = launchInput(fixture.config, fixture.root);

@@ -125,6 +125,119 @@ describe("SafeExecutionRunner", () => {
     await pool.dispose();
   }, 15_000);
 
+  it("injects worker control inbox guidance into continuation prompts", async () => {
+    const workspacePath = await gitWorkspace("safe-execution-control-");
+    let runs = 0;
+    let consumed = 0;
+    const pool = {
+      async run(job: PromptJob): Promise<PromptResult> {
+        runs += 1;
+        if (runs === 1) {
+          throw new SubscriptionWorkerError(
+            "subscription_worker_run_failed",
+            "Quota limited.",
+            { details: { reason: "quota_limited" } },
+          );
+        }
+        expect(job.prompt).toContain("Runtime control inbox instructions");
+        expect(job.prompt).toContain("Focus on temporal normalization first.");
+        return { output: "done with guidance" };
+      },
+    };
+    const runner = new SafeExecutionRunner({
+      lockStore: new InMemoryWorkspaceLockStore(),
+      journal: new InMemoryAttemptJournal(),
+      controlInbox: {
+        async consumeForContinuation(input) {
+          consumed += 1;
+          return {
+            target: input.target,
+            deliveryAttemptId: input.deliveryAttemptId,
+            signals: [],
+            signalIds: ["signal-guidance"],
+            message:
+              "Runtime control inbox instructions:\nFocus on temporal normalization first.",
+          };
+        },
+      },
+    });
+
+    const result = await runner.run({
+      taskId: "task-control",
+      workspace: { mode: "existing_locked", path: workspacePath },
+      effectMode: "workspace_patch",
+      provider: "codex",
+      pool,
+      job: { prompt: "Improve benchmark.", workspacePath },
+      originalPrompt: "Improve benchmark.",
+      controlTarget: {
+        jobId: "job-control",
+        taskId: "task-control",
+        workspaceId: workspacePath,
+      },
+      policy: { maxAttempts: 2 },
+    });
+
+    expect(result.status).toBe("completed");
+    expect(consumed).toBe(1);
+  });
+
+  it("does not consume control inbox guidance for reconnect repair continuations", async () => {
+    const workspacePath = await gitWorkspace("safe-execution-control-reconnect-");
+    let runs = 0;
+    let consumed = 0;
+    const pool = {
+      async run(job: PromptJob): Promise<PromptResult> {
+        runs += 1;
+        if (runs === 1) {
+          throw new SubscriptionWorkerError(
+            "subscription_worker_run_failed",
+            "Provider session needs reconnect.",
+            { details: { reason: "needs_reconnect" } },
+          );
+        }
+        expect(job.prompt.includes("Runtime control inbox instructions")).toBe(false);
+        return { output: "done after reconnect repair" };
+      },
+    };
+    const runner = new SafeExecutionRunner({
+      lockStore: new InMemoryWorkspaceLockStore(),
+      journal: new InMemoryAttemptJournal(),
+      controlInbox: {
+        async consumeForContinuation(input) {
+          consumed += 1;
+          return {
+            target: input.target,
+            deliveryAttemptId: input.deliveryAttemptId,
+            signals: [],
+            signalIds: ["signal-guidance"],
+            message:
+              "Runtime control inbox instructions:\nThis should not be consumed.",
+          };
+        },
+      },
+    });
+
+    const result = await runner.run({
+      taskId: "task-control-reconnect",
+      workspace: { mode: "existing_locked", path: workspacePath },
+      effectMode: "workspace_patch",
+      provider: "codex",
+      pool,
+      job: { prompt: "Repair account.", workspacePath },
+      originalPrompt: "Repair account.",
+      controlTarget: {
+        jobId: "job-control-reconnect",
+        taskId: "task-control-reconnect",
+        workspaceId: workspacePath,
+      },
+      policy: { maxAttempts: 2 },
+    });
+
+    expect(result.status).toBe("completed");
+    expect(consumed).toBe(0);
+  });
+
   it("rejects concurrent tasks for the same existing workspace lock", async () => {
     const workspacePath = await gitWorkspace("safe-execution-lock-");
     const gate = deferred<void>();

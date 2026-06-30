@@ -26,14 +26,21 @@ import {
   sessionArtifactFromClaudeOAuth,
   validateClaudeSessionArtifact,
   type ClaudeTaskExecutionEngine,
+  type ClaudeRuntimeTaskExecutionEngineOptions,
 } from "@vioxen/subscription-runtime/provider-claude";
-import { createLocalFileBackendRuntimeAdapters } from "@vioxen/subscription-runtime/store-local-file";
+import {
+  createLocalFileBackendRuntimeAdapters,
+  LocalFileWorkerControlInboxStore,
+} from "@vioxen/subscription-runtime/store-local-file";
 import {
   SubscriptionWorkerError,
+  WorkerControlService,
   type CapacityAwareSubscriptionWorker,
   type SubscriptionWorkerHealth,
   type SubscriptionWorkerPrewarmResult,
   type SubscriptionWorkerState,
+  type WorkerControlContinuationSource,
+  type WorkerControlTarget,
   type WorkerCapacitySnapshot,
 } from "@vioxen/subscription-runtime/worker-core";
 import { NodeProcessRunner } from "../worker-local/node-process-runner";
@@ -83,6 +90,8 @@ export type FileBackendClaudeWorkerOptions = {
   readonly taskTimeoutMs?: number;
   readonly baseEnv?: Readonly<Record<string, string | undefined>>;
   readonly claudePath?: string;
+  readonly runtimeModuleLoader?: ClaudeRuntimeTaskExecutionEngineOptions["runtimeModuleLoader"];
+  readonly providerModuleLoader?: ClaudeRuntimeTaskExecutionEngineOptions["providerModuleLoader"];
   readonly pollIntervalMs?: number;
   readonly capacityPolicy?: ClaudeWorkerCapacityPolicy;
   readonly rateLimitTelemetry?: ClaudeRateLimitTelemetrySource;
@@ -94,6 +103,7 @@ export type FileBackendClaudeWorkerOptions = {
   readonly workspace?: RuntimeDeps["workspace"];
   readonly workspacePath?: string;
   readonly clock?: ClockPort;
+  readonly controlInbox?: WorkerControlContinuationSource;
   readonly runArtifactsRootDir?: string;
   readonly runArtifactHeartbeatMs?: number;
 };
@@ -108,12 +118,14 @@ export type FileBackendClaudeWorkerJob = {
   readonly controls?: ProviderTask["controls"];
   readonly abortSignal?: AbortSignal;
   readonly metadata?: Readonly<Record<string, string>>;
+  readonly controlTarget?: WorkerControlTarget;
 };
 
 export type FileBackendClaudeWorkerResult = {
   readonly outputText: string;
   readonly structuredOutput?: unknown;
   readonly telemetry?: ProviderTaskTelemetry;
+  readonly workerControlSignalIds?: readonly string[];
   readonly warnings: readonly {
     readonly code: string;
     readonly safeMessage: string;
@@ -141,6 +153,7 @@ export class FileBackendClaudeWorker implements CapacityAwareSubscriptionWorker<
   private readonly workspace: RuntimeDeps["workspace"];
   private readonly observability: ObservabilityPort;
   private readonly clock: ClockPort;
+  private readonly controlInbox: WorkerControlContinuationSource | null;
   private readonly sessionDriver = new ClaudeSessionDriver();
   private readonly agentDriver: ClaudeTaskAgentDriver;
   private readonly sessionStore: NonNullable<RuntimeDeps["sessionStore"]>;
@@ -183,6 +196,14 @@ export class FileBackendClaudeWorker implements CapacityAwareSubscriptionWorker<
       : defaultWorkspacePath;
     this.observability = options.observability ?? new NullWorkerObservability();
     this.clock = options.clock ?? systemClock;
+    this.controlInbox =
+      options.controlInbox ??
+      new WorkerControlService({
+        store: new LocalFileWorkerControlInboxStore({
+          rootDir: options.stateRootDir,
+        }),
+        ...(options.clock ? { clock: options.clock } : {}),
+      });
     this.windowStartedAtMs = this.clock.now().getTime();
     this.rateLimitTelemetry =
       options.rateLimitTelemetry ??
@@ -223,6 +244,12 @@ export class FileBackendClaudeWorker implements CapacityAwareSubscriptionWorker<
         new ClaudeRuntimeTaskExecutionEngine({
           ...(options.baseEnv ? { baseEnv: options.baseEnv } : {}),
           ...(options.claudePath ? { claudePath: options.claudePath } : {}),
+          ...(options.runtimeModuleLoader
+            ? { runtimeModuleLoader: options.runtimeModuleLoader }
+            : {}),
+          ...(options.providerModuleLoader
+            ? { providerModuleLoader: options.providerModuleLoader }
+            : {}),
           ...(options.taskTimeoutMs
             ? { commandTimeoutMs: options.taskTimeoutMs }
             : {}),
@@ -420,6 +447,19 @@ export class FileBackendClaudeWorker implements CapacityAwareSubscriptionWorker<
     const runId = job.runId ?? `local-${randomUUID()}`;
     const abortSignal = job.abortSignal ?? new AbortController().signal;
     const workspaceId = input.workspaceId ?? this.stableWorkspacePath ?? undefined;
+    const controlBatch = this.controlInbox
+      ? await this.controlInbox.consumeForContinuation({
+          target: job.controlTarget ??
+            claudeControlTarget({
+              job,
+              runId,
+              workerId: this.workerId,
+              ...(workspaceId === undefined ? {} : { workspaceId }),
+            }),
+          deliveryAttemptId: `${runId}:worker-control`,
+          now: this.clock.now(),
+        })
+      : undefined;
     await this.runArtifacts.startRun({
       runId,
       providerInstanceId: this.options.providerInstanceId,
@@ -433,6 +473,9 @@ export class FileBackendClaudeWorker implements CapacityAwareSubscriptionWorker<
         : {}),
       workerState: this.workerState,
       capacity: this.capacity(),
+      ...(controlBatch?.signalIds.length
+        ? { controlSignalIds: controlBatch.signalIds }
+        : {}),
     });
     const heartbeat = this.runArtifacts.startHeartbeat({
       runId,
@@ -440,6 +483,9 @@ export class FileBackendClaudeWorker implements CapacityAwareSubscriptionWorker<
       snapshot: () => ({
         workerState: this.workerState,
         capacity: this.capacity(),
+        ...(controlBatch?.signalIds.length
+          ? { controlSignalIds: controlBatch.signalIds }
+          : {}),
       }),
     });
     let terminalRecorded = false;
@@ -448,7 +494,7 @@ export class FileBackendClaudeWorker implements CapacityAwareSubscriptionWorker<
         providerInstanceId: this.options.providerInstanceId,
         task: {
           kind: job.kind ?? "structured-prompt",
-          prompt: job.prompt,
+          prompt: appendWorkerControlPrompt(job.prompt, controlBatch?.message),
           ...(job.systemPrompt !== undefined ? { systemPrompt: job.systemPrompt } : {}),
           ...(job.outputSchemaName
             ? { outputSchemaName: job.outputSchemaName }
@@ -492,6 +538,9 @@ export class FileBackendClaudeWorker implements CapacityAwareSubscriptionWorker<
           status: "failed",
           reason: result.task.failure.code,
           safeMessage: result.task.failure.safeMessage,
+          ...(result.task.failure.details === undefined
+            ? {}
+            : { failureDetails: result.task.failure.details }),
           ...(result.task.telemetry === undefined
             ? {}
             : { telemetry: result.task.telemetry }),
@@ -506,7 +555,7 @@ export class FileBackendClaudeWorker implements CapacityAwareSubscriptionWorker<
         );
       }
 
-      const output = this.taskResultToOutput(result);
+      const output = this.taskResultToOutput(result, controlBatch?.signalIds ?? []);
       terminalRecorded = true;
       heartbeat.stop();
       await this.runArtifacts.completeRun({
@@ -744,6 +793,7 @@ export class FileBackendClaudeWorker implements CapacityAwareSubscriptionWorker<
 
   private taskResultToOutput(
     result: Extract<RefreshThenRunResult, { readonly status: "completed" }>,
+    workerControlSignalIds: readonly string[] = [],
   ): FileBackendClaudeWorkerResult {
     if (result.task.status === "failed") {
       this.recordFailure(result.task.failure);
@@ -761,6 +811,9 @@ export class FileBackendClaudeWorker implements CapacityAwareSubscriptionWorker<
       ...(result.task.telemetry === undefined
         ? {}
         : { telemetry: result.task.telemetry }),
+      ...(workerControlSignalIds.length === 0
+        ? {}
+        : { workerControlSignalIds }),
       warnings: result.task.warnings,
     };
   }
@@ -1161,6 +1214,29 @@ function assertWorkerOptions(options: FileBackendClaudeWorkerOptions): void {
   if (options.capacityPolicy?.rateLimitWindows?.length === 0) {
     throw new Error("file_backend_claude_rate_limit_windows_empty");
   }
+}
+
+function appendWorkerControlPrompt(
+  prompt: string,
+  controlMessage: string | undefined,
+): string {
+  if (!controlMessage) return prompt;
+  return [prompt.trimEnd(), controlMessage.trim()].join("\n\n");
+}
+
+function claudeControlTarget(input: {
+  readonly job: FileBackendClaudeWorkerJob | FileBackendClaudeWorkerThreadJob;
+  readonly runId: string;
+  readonly workerId: string;
+  readonly workspaceId?: string;
+}): WorkerControlTarget {
+  const threadId = isThreadJob(input.job) ? input.job.threadId : undefined;
+  return {
+    jobId: input.job.jobId ?? threadId ?? input.job.runId ?? input.runId,
+    taskId: input.job.runId ?? threadId ?? input.runId,
+    workerId: input.workerId,
+    ...(input.workspaceId === undefined ? {} : { workspaceId: input.workspaceId }),
+  };
 }
 
 function isThreadJob(

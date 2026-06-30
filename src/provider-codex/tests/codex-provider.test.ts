@@ -175,6 +175,12 @@ describe("Codex provider adapter", () => {
     expect(classifyCodexRuntimeFailure("login required")).toBe(
       "needs_reconnect",
     );
+    expect(classifyCodexRuntimeFailure("missing field `id_token`")).toBe(
+      "needs_reconnect",
+    );
+    expect(
+      classifyCodexRuntimeFailure("codex_auth_json_invalid_auth_mode"),
+    ).toBe("provider_session_invalid");
   });
 
   it("recognizes transient Codex temp cleanup races", () => {

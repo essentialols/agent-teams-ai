@@ -103,7 +103,9 @@ type LegacyWatchableJobDecision = RunReconcilePreviewDecision extends infer Deci
       : never
   : never;
 
-function toLegacyDecision(decision: RunReconcilePreviewDecision): WatchableJobDecision {
+function toLegacyDecision(
+  decision: RunReconcilePreviewDecision,
+): WatchableJobDecision {
   if ("status" in decision) {
     const { runId, status, ...rest } = decision;
     const { runId: _runId, ...legacyStatus } = status;

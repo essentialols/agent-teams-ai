@@ -20,6 +20,7 @@ export declare class CodexRunObservationAdapter implements RunObservationPort {
     constructor(options?: CodexRunObservationAdapterOptions);
     listRunIds(): Promise<readonly string[]>;
     observeRun(request: RunObservationRequest): Promise<RunObservationSnapshot>;
+    private controlInboxSummary;
     private capacityHints;
     private logExcerpt;
 }

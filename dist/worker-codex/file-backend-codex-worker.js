@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { createSubscriptionRuntime, DefaultRedactor, DeterministicIdGenerator, assertProviderTaskSystemPrompt, } from "@vioxen/subscription-runtime/core";
-import { CodexAppServerExecutionEngine, CodexCliAgentDriver, CodexCliSessionDriver, CodexJsonAgentDriver, CodexWorkerCacheSessionPoolMaterializer, PackagedCodexJsonExecutionEngine, defaultCodexModel, sessionArtifactFromCodexAuthJson, codexAuthJsonFromArtifact, readCodexAuthJsonFreshness, validateCodexAuthJsonBytes, } from "@vioxen/subscription-runtime/provider-codex";
+import { CodexAppServerExecutionEngine, CodexCliAgentDriver, CodexCliSessionDriver, CodexJsonAgentDriver, CodexWorkerCacheSessionPoolMaterializer, PackagedCodexJsonExecutionEngine, defaultCodexModel, classifyCodexFailure, sessionArtifactFromCodexAuthJson, codexAuthJsonFromArtifact, readCodexAuthJsonFreshness, validateCodexAuthJsonBytes, } from "@vioxen/subscription-runtime/provider-codex";
 import { createLocalFileBackendRuntimeAdapters } from "@vioxen/subscription-runtime/store-local-file";
 import { SubscriptionWorkerError, } from "@vioxen/subscription-runtime/worker-core";
 import { NodeProcessRunner } from "../worker-local/node-process-runner.js";
@@ -158,11 +158,25 @@ export class FileBackendCodexWorker {
     }
     async seedCodexAuthJsonFile(authJsonPath) {
         this.seededCodexAuthJsonPath = authJsonPath;
-        const authJson = await readFile(authJsonPath, "utf8");
+        let authJson;
+        try {
+            authJson = await readFile(authJsonPath, "utf8");
+        }
+        catch {
+            this.recordFailure(codexSeedSessionInvalidFailure());
+            return;
+        }
         await this.seedCodexAuthJson(authJson);
     }
     async seedCodexAuthJson(authJson) {
-        const artifact = sessionArtifactFromCodexAuthJson(authJson);
+        let artifact;
+        try {
+            artifact = sessionArtifactFromCodexAuthJson(authJson);
+        }
+        catch (error) {
+            this.recordFailure(classifyCodexFailure(error));
+            return;
+        }
         const existing = await this.sessionStore.read({
             providerInstanceId: this.options.providerInstanceId,
             expectedProviderId: "codex",
@@ -641,6 +655,15 @@ export class FileBackendCodexWorker {
             throw new SubscriptionWorkerError("subscription_worker_not_started", "Codex worker has not been started.");
         }
     }
+}
+function codexSeedSessionInvalidFailure() {
+    return {
+        code: "provider_session_invalid",
+        retryable: false,
+        reconnectRequired: true,
+        safeMessage: "Codex session is invalid.",
+        causeCategory: "provider_session_invalid",
+    };
 }
 function shouldRetryRefreshConflict(result) {
     if (result.status !== "blocked")

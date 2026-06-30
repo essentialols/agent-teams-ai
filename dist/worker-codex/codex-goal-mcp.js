@@ -8,8 +8,9 @@ import { McpServer, ResourceTemplate, } from "@modelcontextprotocol/sdk/server/m
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { DefaultRedactor } from "@vioxen/subscription-runtime/core";
-import { RunObservationService, reconcileRunPreview, } from "@vioxen/subscription-runtime/worker-core";
-import { watchClaudeRuns } from "../worker-local/agent-run-watch.js";
+import { LocalFileWorkerControlInboxStore } from "@vioxen/subscription-runtime/store-local-file";
+import { watchClaudeRuns, } from "@vioxen/subscription-runtime/worker-local";
+import { RunObservationService, WorkerControlService, decideRunObservation, reconcileRunPreview, } from "@vioxen/subscription-runtime/worker-core";
 import { codexGoalJobToArgs, createCodexGoalJob, defaultCodexGoalJobRoot, listCodexGoalJobs, readCodexGoalJob, resolveCodexGoalJobRegistryRoot, summarizeCodexGoalJob, updateCodexGoalJob, } from "./codex-goal-jobs.js";
 import { codexGoalAccountSlots, codexGoalProgressPath, } from "./codex-goal-runner.js";
 import { buildCodexGoalNoTmuxCommand, buildCodexGoalStopTmuxCommand, buildCodexGoalTmuxCommand, collectCodexGoalStatus, doctorCodexGoal, listCodexGoalAccountStatuses, shellQuote, startCodexGoalTmux, stopCodexGoalTmux, tailCodexGoalLog, } from "./codex-goal-ops.js";
@@ -136,7 +137,7 @@ export function createCodexGoalMcpServer() {
     server.registerTool("codex_goal_run_watch", {
         ...agentRunWatchTool,
         title: "Codex Goal Run Watch",
-        description: "Compatibility alias for agent_run_watch scoped to Codex goal jobs. Read-only; never starts, stops, continues, recovers or delivers work.",
+        description: "Codex-scoped read-only run observation. Reports status, liveness, progress, logs, workspace changes, capacity hints and read-only recommendations without starting, stopping or continuing workers.",
     }, async (args) => withMcpErrors(async () => {
         const watch = await watchAgentRuns(args);
         return mcpJson(watch);
@@ -307,6 +308,15 @@ export function createCodexGoalMcpServer() {
         await mkdir(loaded.launch.config.jobRootDir, { recursive: true, mode: 0o700 });
         const pausePath = join(loaded.launch.config.jobRootDir, `${loaded.launch.config.taskId}.pause-request.json`);
         const status = await collectCodexGoalStatus(statusInput(loaded.launch));
+        const controlSignal = await codexGoalWorkerControlService(loaded.launch)
+            .enqueueSignal({
+            target: codexGoalWorkerControlTarget(loaded),
+            intent: "pause_requested",
+            deliveryMode: "next_safe_point",
+            body: "Soft pause was requested by the operator. Pause at the next safe point if the provider/session supports it; otherwise preserve this request in the continuation context.",
+            createdBy: "operator",
+            priority: "normal",
+        });
         await writeFile(pausePath, `${JSON.stringify({
             schemaVersion: 1,
             jobId: loaded.manifest.jobId,
@@ -319,8 +329,187 @@ export function createCodexGoalMcpServer() {
             ok: true,
             jobId: loaded.manifest.jobId,
             pausePath,
+            controlSignal: workerControlSignalJson(controlSignal, false),
             status,
             safeMessage: "Soft pause marker written. No tmux session or worker process was killed.",
+        });
+    }));
+    server.registerTool("codex_goal_control_enqueue", {
+        title: "Enqueue Codex Goal Control Signal",
+        description: "Durably enqueue guidance or a control request for a stored Codex goal job. Default delivery is next safe continuation.",
+        inputSchema: {
+            ...jobIdInputSchema(),
+            intent: z.enum([
+                "guidance",
+                "pause_requested",
+                "stop_requested",
+                "cancel_requested",
+                "resume_requested",
+                "repair_requested",
+                "policy_update",
+                "operator_note",
+            ]),
+            deliveryMode: z.enum([
+                "record_only",
+                "next_safe_point",
+                "pause_then_continue",
+                "idle_turn_if_supported",
+                "live_if_supported",
+            ]).optional(),
+            body: z.string(),
+            createdBy: z.enum(["user", "operator", "orchestrator", "runtime", "agent"]).optional(),
+            callerKind: z.enum(["user", "operator", "orchestrator", "runtime", "agent"]).optional(),
+            callerActor: z.enum(["user", "operator", "orchestrator", "runtime", "agent"]).optional(),
+            callerId: z.string().optional(),
+            priority: z.enum(["low", "normal", "high"]).optional(),
+            idempotencyKey: z.string().optional(),
+            expiresAt: z.string().optional(),
+            supersedesSignalIds: z.union([z.string(), z.array(z.string())]).optional(),
+        },
+    }, async (args) => withMcpErrors(async () => {
+        const loaded = await loadJobLaunch(args);
+        const control = codexGoalWorkerControlService(loaded.launch);
+        const controlArgs = args;
+        const enqueueInput = {
+            target: codexGoalWorkerControlTarget(loaded),
+            intent: requiredRawString(controlArgs.intent, "intent"),
+            ...(stringValue(controlArgs.deliveryMode)
+                ? {
+                    deliveryMode: stringValue(controlArgs.deliveryMode),
+                }
+                : {}),
+            body: requiredRawString(controlArgs.body, "body"),
+            ...(stringValue(controlArgs.createdBy)
+                ? { createdBy: stringValue(controlArgs.createdBy) }
+                : {}),
+            ...workerControlCallerArgs(controlArgs),
+            ...(stringValue(controlArgs.priority)
+                ? { priority: stringValue(controlArgs.priority) }
+                : {}),
+            ...(stringValue(controlArgs.idempotencyKey)
+                ? { idempotencyKey: stringValue(controlArgs.idempotencyKey) }
+                : {}),
+            ...(stringValue(controlArgs.expiresAt)
+                ? { expiresAt: parseIsoDate(stringValue(controlArgs.expiresAt), "expiresAt") }
+                : {}),
+            supersedesSignalIds: signalIdList(controlArgs.supersedesSignalIds),
+        };
+        const signal = await control.enqueueSignal(enqueueInput);
+        const decision = await control.getDecision({
+            target: codexGoalWorkerControlTarget(loaded),
+        });
+        return mcpJson({
+            ok: true,
+            registryRootDir: loaded.registryRootDir,
+            jobId: loaded.manifest.jobId,
+            taskId: loaded.launch.config.taskId,
+            signal: workerControlSignalJson(signal, false),
+            decision: workerControlDecisionJson(decision, false),
+        });
+    }));
+    server.registerTool("codex_goal_control_list", {
+        title: "List Codex Goal Control Signals",
+        description: "List durable control inbox signals for a stored Codex goal job.",
+        inputSchema: {
+            ...jobIdInputSchema(),
+            includeBodies: z.boolean().optional(),
+        },
+    }, async (args) => withMcpErrors(async () => {
+        const loaded = await loadJobLaunch(args);
+        const control = codexGoalWorkerControlService(loaded.launch);
+        const includeBodies = booleanValue(args.includeBodies) ?? false;
+        const signals = await control.listSignals({
+            target: codexGoalWorkerControlTarget(loaded),
+            includeBodies,
+            includeExpired: true,
+        });
+        return mcpJson({
+            ok: true,
+            registryRootDir: loaded.registryRootDir,
+            jobId: loaded.manifest.jobId,
+            taskId: loaded.launch.config.taskId,
+            signals: signals.map((view) => workerControlSignalViewJson(view, includeBodies)),
+        });
+    }));
+    server.registerTool("codex_goal_control_decision", {
+        title: "Codex Goal Control Decision",
+        description: "Inspect pending control inbox signals and whether they are safe for next continuation.",
+        inputSchema: jobIdInputSchema(),
+    }, async (args) => withMcpErrors(async () => {
+        const loaded = await loadJobLaunch(args);
+        const control = codexGoalWorkerControlService(loaded.launch);
+        const decision = await control.getDecision({
+            target: codexGoalWorkerControlTarget(loaded),
+        });
+        return mcpJson({
+            ok: true,
+            registryRootDir: loaded.registryRootDir,
+            jobId: loaded.manifest.jobId,
+            taskId: loaded.launch.config.taskId,
+            decision: workerControlDecisionJson(decision, false),
+        });
+    }));
+    server.registerTool("codex_goal_control_reconcile", {
+        title: "Reconcile Codex Goal Control Inbox",
+        description: "Return derived control inbox counts for a stored Codex goal job. With repair, stale accepted local delivery claims can be released back to pending.",
+        inputSchema: {
+            ...jobIdInputSchema(),
+            repair: z.boolean().optional(),
+            acceptedStaleAfterMs: z.number().int().positive().optional(),
+        },
+    }, async (args) => withMcpErrors(async () => {
+        const controlArgs = args;
+        const loaded = await loadJobLaunch(controlArgs);
+        const control = codexGoalWorkerControlService(loaded.launch);
+        const report = await control.reconcile({
+            target: codexGoalWorkerControlTarget(loaded),
+            ...(controlArgs.repair === undefined ? {} : { repair: controlArgs.repair }),
+            ...(controlArgs.acceptedStaleAfterMs === undefined
+                ? {}
+                : { acceptedStaleAfterMs: controlArgs.acceptedStaleAfterMs }),
+        });
+        return mcpJson({
+            ok: true,
+            registryRootDir: loaded.registryRootDir,
+            jobId: loaded.manifest.jobId,
+            taskId: loaded.launch.config.taskId,
+            report,
+        });
+    }));
+    server.registerTool("codex_goal_control_supersede", {
+        title: "Supersede Codex Goal Control Signal",
+        description: "Mark a pending control inbox signal as superseded for a stored Codex goal job.",
+        inputSchema: {
+            ...jobIdInputSchema(),
+            signalId: z.string(),
+            supersededBySignalId: z.string().optional(),
+            reason: z.string().optional(),
+            callerKind: z.enum(["user", "operator", "orchestrator", "runtime", "agent"]).optional(),
+            callerActor: z.enum(["user", "operator", "orchestrator", "runtime", "agent"]).optional(),
+            callerId: z.string().optional(),
+        },
+    }, async (args) => withMcpErrors(async () => {
+        const loaded = await loadJobLaunch(args);
+        const control = codexGoalWorkerControlService(loaded.launch);
+        const receipt = await control.markSuperseded({
+            target: codexGoalWorkerControlTarget(loaded),
+            signalId: requiredRawString(args.signalId, "signalId"),
+            ...(stringValue(args.supersededBySignalId)
+                ? {
+                    supersededBySignalId: stringValue(args.supersededBySignalId),
+                }
+                : {}),
+            ...(stringValue(args.reason)
+                ? { reason: stringValue(args.reason) }
+                : {}),
+            ...workerControlCallerArgs(args),
+        });
+        return mcpJson({
+            ok: true,
+            registryRootDir: loaded.registryRootDir,
+            jobId: loaded.manifest.jobId,
+            taskId: loaded.launch.config.taskId,
+            receipt: workerControlReceiptJson(receipt),
         });
     }));
     server.registerTool("codex_goal_mark_reviewed", {
@@ -771,6 +960,7 @@ async function goalLaunchInput(args) {
     const merged = mergeDefined(fileConfig, args);
     const jobRootDir = requiredString(merged.jobRootDir, "jobRootDir", cwd);
     const taskId = requiredRawString(merged.taskId, "taskId");
+    const jobId = stringValue(merged.jobId);
     const authRootDir = resolvePath(cwd, stringValue(merged.authRootDir) ?? defaultAuthRoot);
     const workspacePath = requiredString(merged.workspacePath, "workspacePath", cwd);
     const promptPath = requiredString(merged.promptPath, "promptPath", cwd);
@@ -778,6 +968,7 @@ async function goalLaunchInput(args) {
     if (!accounts.length)
         throw new Error("accounts are required");
     const config = {
+        ...(jobId === undefined ? {} : { jobId }),
         jobRootDir,
         authRootDir,
         workspacePath,
@@ -829,6 +1020,20 @@ async function loadJobLaunch(args) {
         registryRootDir,
         manifest,
         launch: await goalLaunchInput(codexGoalJobToArgs(manifest)),
+    };
+}
+function codexGoalWorkerControlService(launch) {
+    return new WorkerControlService({
+        store: new LocalFileWorkerControlInboxStore({
+            rootDir: codexGoalStateRootDir(launch),
+        }),
+    });
+}
+function codexGoalWorkerControlTarget(input) {
+    return {
+        jobId: input.manifest.jobId,
+        taskId: input.launch.config.taskId,
+        workspaceId: input.launch.config.workspacePath,
     };
 }
 function codexGoalStateRootDir(launch) {
@@ -1173,22 +1378,34 @@ function reconcilePreviewDecisionJson(decision) {
 async function watchAgentRuns(args) {
     const providerKind = stringValue(args.providerKind) ?? "codex";
     if (providerKind === "claude") {
-        return await watchClaudeRuns({
+        const jobId = stringValue(args.jobId);
+        const staleAfterMs = numberValue(args.staleAfterMs);
+        const tailLines = numberValue(args.tailLines);
+        const limit = numberValue(args.limit);
+        return watchClaudeRuns({
+            includeChangedFiles: booleanValue(args.includeChangedFiles) === true,
+            includeLogTail: booleanValue(args.includeLogTail) === true,
             ...(args.stateRootDir === undefined ? {} : { stateRootDir: args.stateRootDir }),
             ...(args.runArtifactsRootDir === undefined
                 ? {}
                 : { runArtifactsRootDir: args.runArtifactsRootDir }),
-            ...(stringValue(args.jobId) ? { jobId: stringValue(args.jobId) } : {}),
+            ...(jobId === undefined ? {} : { jobId }),
             ...(args.jobIds === undefined ? {} : { jobIds: args.jobIds }),
-            ...(args.staleAfterMs === undefined ? {} : { staleAfterMs: args.staleAfterMs }),
-            ...(args.tailLines === undefined ? {} : { tailLines: args.tailLines }),
-            ...(args.limit === undefined ? {} : { limit: args.limit }),
-            includeChangedFiles: booleanValue(args.includeChangedFiles) === true,
-            includeLogTail: booleanValue(args.includeLogTail) === true,
+            ...(staleAfterMs === undefined ? {} : { staleAfterMs }),
+            ...(tailLines === undefined ? {} : { tailLines }),
+            ...(limit === undefined ? {} : { limit }),
         });
     }
     if (providerKind !== "codex") {
-        throw new Error(`unsupported providerKind: ${providerKind}`);
+        return {
+            ok: false,
+            mode: "read_only",
+            sideEffects: [],
+            providerKind,
+            supportedProviderKinds: ["codex", "claude"],
+            reason: "provider_observation_not_implemented",
+            safeMessage: `Run observation for provider '${providerKind}' is not implemented yet. Watch did not start, stop, continue, recover or deliver work.`,
+        };
     }
     const registryRootDir = registryRootFromArgs(args);
     const staleAfterMs = numberValue(args.staleAfterMs);
@@ -1211,14 +1428,31 @@ async function watchAgentRuns(args) {
     const runIds = limit === undefined
         ? listedRunIds
         : listedRunIds.slice(0, limit);
-    const snapshots = await service.observeRuns({
-        runIds,
-        ...(tailLines === undefined ? {} : { tailLines }),
-        includeChangedFiles: booleanValue(args.includeChangedFiles) === true,
-        includeLogTail: booleanValue(args.includeLogTail) === true,
-    });
+    const snapshots = await Promise.all(runIds.map(async (runId) => {
+        try {
+            return await service.observeRun({
+                runId,
+                ...(tailLines === undefined ? {} : { tailLines }),
+                includeChangedFiles: booleanValue(args.includeChangedFiles) === true,
+                includeLogTail: booleanValue(args.includeLogTail) === true,
+            });
+        }
+        catch (error) {
+            return failedRunObservationSnapshot({
+                runId,
+                providerKind,
+                error,
+            });
+        }
+    }));
+    const observationFailures = snapshots
+        .filter((snapshot) => snapshot.warnings.some((warning) => warning.code === "run_observation_failed"))
+        .map((snapshot) => ({
+        runId: snapshot.runId,
+        warnings: snapshot.warnings.filter((warning) => warning.code === "run_observation_failed"),
+    }));
     return {
-        ok: true,
+        ok: observationFailures.length === 0,
         mode: "read_only",
         sideEffects: [],
         providerKind: "codex",
@@ -1227,8 +1461,37 @@ async function watchAgentRuns(args) {
         returnedRuns: snapshots.length,
         truncated: limit === undefined ? false : listedRunIds.length > runIds.length,
         summary: summarizeRunObservationSnapshots(snapshots),
+        ...(observationFailures.length ? { observationFailures } : {}),
         snapshots,
     };
+}
+function failedRunObservationSnapshot(input) {
+    const message = safeObservationErrorMessage(input.error);
+    const warnings = [{
+            code: "run_observation_failed",
+            message,
+            severity: "warning",
+        }];
+    const manualReviewReasons = ["run_observation_failed"];
+    return {
+        runId: input.runId,
+        providerKind: input.providerKind,
+        observedAt: new Date().toISOString(),
+        status: "unknown",
+        liveness: "unknown",
+        warnings,
+        manualReviewReasons,
+        readOnlyDecision: decideRunObservation({
+            status: "unknown",
+            liveness: "unknown",
+            manualReviewReasons,
+            warnings,
+        }),
+    };
+}
+function safeObservationErrorMessage(error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return new DefaultRedactor().redact(message);
 }
 function summarizeRunObservationSnapshots(snapshots) {
     return {
@@ -2414,6 +2677,7 @@ function shellText(value) {
 }
 function goalInputSchema() {
     return {
+        jobId: z.string().optional(),
         configPath: z.string().optional(),
         jobRootDir: z.string().optional(),
         authRootDir: z.string().optional(),
@@ -2472,6 +2736,7 @@ function isSafeStartAction(action) {
 }
 function launchSummary(launch) {
     return {
+        ...(launch.config.jobId ? { jobId: launch.config.jobId } : {}),
         taskId: launch.config.taskId,
         workspacePath: launch.config.workspacePath,
         promptPath: launch.config.promptPath,
@@ -2518,6 +2783,90 @@ function accountNames(value) {
         return value.split(",").map((item) => item.trim()).filter(Boolean);
     }
     return [];
+}
+function signalIdList(value) {
+    return accountNames(value);
+}
+function workerControlCallerArgs(args) {
+    const callerKind = (stringValue(args.callerKind) ?? stringValue(args.callerActor));
+    const callerId = stringValue(args.callerId);
+    if (!callerKind && !callerId)
+        return {};
+    const createdBy = stringValue(args.createdBy);
+    return {
+        caller: {
+            kind: callerKind ?? createdBy ?? "operator",
+            ...(callerId ? { id: callerId } : {}),
+        },
+    };
+}
+function parseIsoDate(value, name) {
+    const date = new Date(value);
+    if (!Number.isFinite(date.getTime())) {
+        throw new Error(`${name} must be an ISO date string`);
+    }
+    return date;
+}
+function workerControlDecisionJson(decision, includeBodies) {
+    return {
+        target: decision.target,
+        safeToContinue: decision.safeToContinue,
+        pendingCount: decision.pendingSignals.length,
+        deliverableCount: decision.deliverableSignals.length,
+        blockedCount: decision.blockedSignals.length,
+        recordOnlyCount: decision.recordOnlySignals.length,
+        warnings: decision.warnings,
+        pendingSignals: decision.pendingSignals.map((view) => workerControlSignalViewJson(view, includeBodies)),
+        deliverableSignalIds: decision.deliverableSignals.map((view) => view.signal.signalId),
+        blockedSignals: decision.blockedSignals.map((view) => workerControlSignalViewJson(view, includeBodies)),
+    };
+}
+function workerControlSignalViewJson(view, includeBody) {
+    return {
+        signal: workerControlSignalJson(view.signal, includeBody),
+        state: view.state,
+        expired: view.expired,
+        deliverable: view.deliverable,
+        ...(view.blockedReason ? { blockedReason: view.blockedReason } : {}),
+        ...(view.latestReceipt
+            ? { latestReceipt: workerControlReceiptJson(view.latestReceipt) }
+            : {}),
+    };
+}
+function workerControlSignalJson(signal, includeBody) {
+    return {
+        signalId: signal.signalId,
+        idempotencyKey: signal.idempotencyKey,
+        target: signal.target,
+        intent: signal.intent,
+        deliveryMode: signal.deliveryMode,
+        createdAt: signal.createdAt.toISOString(),
+        createdBy: signal.createdBy,
+        priority: signal.priority,
+        ...(signal.expiresAt ? { expiresAt: signal.expiresAt.toISOString() } : {}),
+        supersedesSignalIds: signal.supersedesSignalIds,
+        metadata: signal.metadata,
+        ...(includeBody ? { body: signal.body } : {}),
+    };
+}
+function workerControlReceiptJson(receipt) {
+    return {
+        receiptId: receipt.receiptId,
+        signalId: receipt.signalId,
+        target: receipt.target,
+        state: receipt.state,
+        createdAt: receipt.createdAt.toISOString(),
+        ...(receipt.deliveryAttemptId
+            ? { deliveryAttemptId: receipt.deliveryAttemptId }
+            : {}),
+        ...(receipt.deliveredAt
+            ? { deliveredAt: receipt.deliveredAt.toISOString() }
+            : {}),
+        ...(receipt.appliedAt ? { appliedAt: receipt.appliedAt.toISOString() } : {}),
+        ...(receipt.rejectedReason ? { rejectedReason: receipt.rejectedReason } : {}),
+        ...(receipt.failure ? { failure: receipt.failure } : {}),
+        metadata: receipt.metadata,
+    };
 }
 function jobIdsFromValue(value) {
     return accountNames(value);

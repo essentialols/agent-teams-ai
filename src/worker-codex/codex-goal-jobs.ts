@@ -200,6 +200,7 @@ export function codexGoalJobToArgs(
   manifest: CodexGoalJobManifest,
 ): Readonly<Record<string, unknown>> {
   return {
+    jobId: manifest.jobId,
     jobRootDir: manifest.jobRootDir,
     authRootDir: manifest.authRootDir,
     stateRootDir: manifest.stateRootDir,

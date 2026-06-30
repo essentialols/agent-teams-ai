@@ -27,6 +27,7 @@ export type CodexGoalAccountSlot = {
 };
 
 export type CodexGoalRunConfig = {
+  readonly jobId?: string;
   readonly jobRootDir: string;
   readonly stateRootDir?: string;
   readonly encryptionKeyPath?: string;
@@ -125,6 +126,7 @@ export async function runCodexGoal(
   try {
     progressHeartbeat.start();
     const result = await executor.run({
+      ...(config.jobId === undefined ? {} : { jobId: config.jobId }),
       taskId: config.taskId,
       prompt,
       originalPrompt: prompt,

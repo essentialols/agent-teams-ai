@@ -25,6 +25,7 @@ export async function runCodexGoal(config, deps = {}) {
     try {
         progressHeartbeat.start();
         const result = await executor.run({
+            ...(config.jobId === undefined ? {} : { jobId: config.jobId }),
             taskId: config.taskId,
             prompt,
             originalPrompt: prompt,

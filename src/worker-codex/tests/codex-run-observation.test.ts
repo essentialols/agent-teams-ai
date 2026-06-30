@@ -4,8 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
-import { LocalFileWorkerAccountCapacityStore } from "@vioxen/subscription-runtime/store-local-file";
-import { RunObservationService } from "@vioxen/subscription-runtime/worker-core";
+import {
+  LocalFileWorkerAccountCapacityStore,
+  LocalFileWorkerControlInboxStore,
+} from "@vioxen/subscription-runtime/store-local-file";
+import {
+  RunObservationService,
+  WorkerControlService,
+} from "@vioxen/subscription-runtime/worker-core";
 import { createCodexGoalJob, type CodexGoalJobManifestInput } from "../codex-goal-jobs";
 import { CodexRunObservationAdapter } from "../codex-run-observation";
 
@@ -125,6 +131,47 @@ describe("CodexRunObservationAdapter", () => {
           kind: "review_completed",
         },
       });
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("surfaces control inbox summaries without leaking signal bodies", async () => {
+    const fixture = await createObservationFixture();
+    const control = new WorkerControlService({
+      store: new LocalFileWorkerControlInboxStore({
+        rootDir: fixture.manifest.stateRootDir!,
+      }),
+    });
+
+    try {
+      await control.enqueueSignal({
+        target: {
+          jobId: fixture.manifest.jobId,
+          taskId: fixture.manifest.taskId,
+          workspaceId: fixture.manifest.workspacePath,
+        },
+        intent: "guidance",
+        body: "Apply safe review guidance without leaking secret-guidance-token.",
+        createdBy: "operator",
+        createdAt: new Date("2026-06-30T00:00:10.000Z"),
+      });
+
+      const snapshot = await new RunObservationService(new CodexRunObservationAdapter({
+        registryRootDir: fixture.registryRootDir,
+      })).observeRun({ runId: "job-a" });
+
+      expect(snapshot.controlInbox).toMatchObject({
+        pendingCount: 1,
+        acceptedCount: 0,
+        deliverableCount: 1,
+        deliveredCount: 0,
+        failedCount: 0,
+        blockedDeliveryCount: 0,
+        safeToContinue: true,
+        latestSignalAt: "2026-06-30T00:00:10.000Z",
+      });
+      expect(JSON.stringify(snapshot).includes("secret-guidance-token")).toBe(false);
     } finally {
       await rm(fixture.root, { recursive: true, force: true });
     }

@@ -244,7 +244,7 @@ function parseMcpTools(argv, io) {
     const values = parseFlags(argv);
     return {
         kind: "mcp-tools",
-        format: outputFormat(option(values, io.env(), "--format", []) ?? "json"),
+        format: outputFormatFromFlags(values, io.env()),
     };
 }
 function parseMcpTool(argv, io) {
@@ -256,14 +256,14 @@ function parseMcpTool(argv, io) {
         kind: "mcp-tool",
         name,
         ...jsonArgsSource(values),
-        format: outputFormat(option(values, io.env(), "--format", []) ?? "json"),
+        format: outputFormatFromFlags(values, io.env()),
     };
 }
 function parseMcpResources(argv, io) {
     const values = parseFlags(argv);
     return {
         kind: "mcp-resources",
-        format: outputFormat(option(values, io.env(), "--format", []) ?? "json"),
+        format: outputFormatFromFlags(values, io.env()),
     };
 }
 function parseMcpResource(argv, io) {
@@ -274,14 +274,14 @@ function parseMcpResource(argv, io) {
     return {
         kind: "mcp-resource",
         uri,
-        format: outputFormat(option(values, io.env(), "--format", []) ?? "json"),
+        format: outputFormatFromFlags(values, io.env()),
     };
 }
 function parseMcpPrompts(argv, io) {
     const values = parseFlags(argv);
     return {
         kind: "mcp-prompts",
-        format: outputFormat(option(values, io.env(), "--format", []) ?? "json"),
+        format: outputFormatFromFlags(values, io.env()),
     };
 }
 function parseMcpPrompt(argv, io) {
@@ -293,14 +293,14 @@ function parseMcpPrompt(argv, io) {
         kind: "mcp-prompt",
         name,
         ...jsonArgsSource(values),
-        format: outputFormat(option(values, io.env(), "--format", []) ?? "json"),
+        format: outputFormatFromFlags(values, io.env()),
     };
 }
 function parseControlDoctor(argv, io) {
     const values = parseFlags(argv);
     return {
         kind: "control-doctor",
-        format: outputFormat(option(values, io.env(), "--format", []) ?? "json"),
+        format: outputFormatFromFlags(values, io.env()),
     };
 }
 function parseMcpShortcut(commandName, argv, io) {
@@ -315,7 +315,7 @@ function parseMcpShortcut(commandName, argv, io) {
                 ...optionalNumberArg(values, "--tail-lines", "tailLines"),
                 ...optionalNumberArg(values, "--limit", "limit"),
             }),
-            format: outputFormat(option(values, io.env(), "--format", []) ?? "json"),
+            format: outputFormatFromFlags(values, io.env()),
         };
     }
     if (commandName === "run-watch" || commandName === "agent-run-watch") {
@@ -346,7 +346,7 @@ function parseMcpShortcut(commandName, argv, io) {
                     ? { includeLogTail: true }
                     : {}),
             }),
-            format: outputFormat(option(values, io.env(), "--format", []) ?? "json"),
+            format: outputFormatFromFlags(values, io.env()),
         };
     }
     if (commandName === "reconcile-preview") {
@@ -364,7 +364,7 @@ function parseMcpShortcut(commandName, argv, io) {
                     : {}),
                 ...(flag(values, "--skip-doctor") ? { skipDoctor: true } : {}),
             }),
-            format: outputFormat(option(values, io.env(), "--format", []) ?? "json"),
+            format: outputFormatFromFlags(values, io.env()),
         };
     }
     if (commandName === "brief") {
@@ -413,6 +413,92 @@ function parseMcpShortcut(commandName, argv, io) {
             tool: "codex_goal_accounts_status",
             argv,
             io,
+        });
+    }
+    if (commandName === "control-enqueue" || commandName === "inbox-enqueue") {
+        return parseJobShortcut({
+            kind: "control-enqueue",
+            tool: "codex_goal_control_enqueue",
+            argv,
+            io,
+            extraArgs: (values) => ({
+                intent: values.values.get("--intent") ?? "guidance",
+                body: requiredFlagValue(values, "--body"),
+                ...(values.values.get("--delivery-mode")
+                    ? { deliveryMode: values.values.get("--delivery-mode") }
+                    : {}),
+                ...(values.values.get("--created-by")
+                    ? { createdBy: values.values.get("--created-by") }
+                    : {}),
+                ...callerArgs(values),
+                ...(values.values.get("--caller-id")
+                    ? { callerId: values.values.get("--caller-id") }
+                    : {}),
+                ...(values.values.get("--priority")
+                    ? { priority: values.values.get("--priority") }
+                    : {}),
+                ...(values.values.get("--idempotency-key")
+                    ? { idempotencyKey: values.values.get("--idempotency-key") }
+                    : {}),
+                ...(values.values.get("--expires-at")
+                    ? { expiresAt: values.values.get("--expires-at") }
+                    : {}),
+                ...(values.values.get("--supersedes")
+                    ? { supersedesSignalIds: values.values.get("--supersedes") }
+                    : {}),
+            }),
+        });
+    }
+    if (commandName === "control-list" || commandName === "inbox-list") {
+        return parseJobShortcut({
+            kind: "control-list",
+            tool: "codex_goal_control_list",
+            argv,
+            io,
+            extraArgs: (values) => ({
+                ...(flag(values, "--include-bodies") ? { includeBodies: true } : {}),
+            }),
+        });
+    }
+    if (commandName === "control-decision" || commandName === "inbox-decision") {
+        return parseJobShortcut({
+            kind: "control-decision",
+            tool: "codex_goal_control_decision",
+            argv,
+            io,
+        });
+    }
+    if (commandName === "control-reconcile" || commandName === "inbox-reconcile") {
+        return parseJobShortcut({
+            kind: "control-reconcile",
+            tool: "codex_goal_control_reconcile",
+            argv,
+            io,
+            extraArgs: (values) => ({
+                ...(flag(values, "--repair") ? { repair: true } : {}),
+                ...positiveIntegerArg(values, "--accepted-stale-after-ms"),
+            }),
+        });
+    }
+    if (commandName === "control-supersede" || commandName === "inbox-supersede") {
+        return parseJobShortcut({
+            kind: "control-supersede",
+            tool: "codex_goal_control_supersede",
+            argv,
+            io,
+            extraArgs: (values) => ({
+                signalId: requiredFlagValue(values, "--signal-id"),
+                ...(values.values.get("--superseded-by")
+                    ? { supersededBySignalId: values.values.get("--superseded-by") }
+                    : {}),
+                ...(values.values.get("--reason")
+                    ? { reason: values.values.get("--reason") }
+                    : {}),
+                ...callerArgs(values),
+                ...(values.values.get("--caller-id")
+                    ? { callerId: values.values.get("--caller-id") }
+                    : {}),
+            }),
         });
     }
     if (commandName === "continue-job") {
@@ -483,7 +569,7 @@ function parseMcpShortcut(commandName, argv, io) {
                 ...registryArg(values),
                 ...(account ? { account } : {}),
             }),
-            format: outputFormat(option(values, io.env(), "--format", []) ?? "json"),
+            format: outputFormatFromFlags(values, io.env()),
         };
     }
     return undefined;
@@ -501,18 +587,43 @@ function parseJobShortcut(input) {
             ...registryArg(values),
             ...(input.extraArgs?.(values) ?? {}),
         }),
-        format: outputFormat(option(values, input.io.env(), "--format", []) ?? "json"),
+        format: outputFormatFromFlags(values, input.io.env()),
     };
 }
 function registryArg(values) {
     const registryRootDir = values.values.get("--registry-root");
     return registryRootDir ? { registryRootDir } : {};
 }
+function callerArgs(values) {
+    const callerKind = values.values.get("--caller-kind") ?? values.values.get("--caller-actor");
+    const callerId = values.values.get("--caller-id");
+    return {
+        ...(callerKind ? { callerKind } : {}),
+        ...(callerId ? { callerId } : {}),
+    };
+}
+function positiveIntegerArg(values, name) {
+    const value = values.values.get(name);
+    if (value === undefined)
+        return {};
+    return { [camelCaseFlagName(name)]: parsePositiveInteger(value, name) };
+}
+function camelCaseFlagName(name) {
+    return name
+        .replace(/^--/, "")
+        .replace(/-([a-z])/g, (_, character) => character.toUpperCase());
+}
 function optionalNumberArg(values, flagName, key) {
     const value = values.values.get(flagName);
     return value === undefined
         ? {}
         : { [key]: parsePositiveInteger(value, flagName) };
+}
+function requiredFlagValue(values, flagName) {
+    const value = values.values.get(flagName);
+    if (!value)
+        throw new Error(`${flagName} is required`);
+    return value;
 }
 function jsonArgsSource(values) {
     const argsJson = values.values.get("--args-json");
@@ -562,6 +673,13 @@ function runConfigFromFlags(values, env, cwd, jobRootDir, taskId) {
     ]) ?? "app-server-goal");
     const staleLockMs = parseOptionalPositiveInteger(option(values, env, "--stale-lock-ms", []), "--stale-lock-ms");
     const config = {
+        ...(option(values, env, "--job-id", ["SUBSCRIPTION_RUNTIME_JOB_ID"]) === undefined
+            ? {}
+            : {
+                jobId: option(values, env, "--job-id", [
+                    "SUBSCRIPTION_RUNTIME_JOB_ID",
+                ]),
+            }),
         jobRootDir: resolvePath(cwd, jobRootDir),
         authRootDir,
         workspacePath: resolvePath(cwd, requiredOption(values, env, "--workspace", [
@@ -662,6 +780,24 @@ function option(flags, env, name, envNames) {
 function flag(flags, name) {
     return flags.flags.has(name);
 }
+function outputFormatFromFlags(flags, env, defaultFormat = "json") {
+    const explicitFormat = option(flags, env, "--format", []);
+    const json = flag(flags, "--json");
+    const text = flag(flags, "--text");
+    if (json && text)
+        throw new Error("use only one of --json or --text");
+    if (explicitFormat && json && explicitFormat !== "json") {
+        throw new Error("use only one of --format text or --json");
+    }
+    if (explicitFormat && text && explicitFormat !== "text") {
+        throw new Error("use only one of --format json or --text");
+    }
+    if (json)
+        return "json";
+    if (text)
+        return "text";
+    return outputFormat(explicitFormat ?? defaultFormat);
+}
 function outputFormat(value) {
     if (value === "text" || value === "json")
         return value;
@@ -736,12 +872,17 @@ function usage() {
   subscription-runtime-codex-goal tail --job-root <dir> --task-id <id> [--lines 100]
   subscription-runtime-codex-goal doctor-control
   subscription-runtime-codex-goal overview [--registry-root <dir>]
-  subscription-runtime-codex-goal run-watch [jobId] [--registry-root <dir>] [--include-log-tail] [--include-changed-files]
+  subscription-runtime-codex-goal run-watch [jobId] [--provider codex|claude|agent-task] [--registry-root <dir>] [--state-root <dir>] [--include-log-tail] [--include-changed-files] [--json|--text]
   subscription-runtime-codex-goal reconcile-preview [--registry-root <dir>] [--continue-safe-jobs]
   subscription-runtime-codex-goal brief <jobId> [--registry-root <dir>]
   subscription-runtime-codex-goal decision <jobId> [--registry-root <dir>]
   subscription-runtime-codex-goal handoff <jobId> [--registry-root <dir>]
   subscription-runtime-codex-goal accounts <jobId> [--registry-root <dir>]
+  subscription-runtime-codex-goal control-enqueue <jobId> --body <text> [--intent guidance] [--caller-kind user|operator|orchestrator|runtime|agent] [--caller-id <id>] [--registry-root <dir>]
+  subscription-runtime-codex-goal control-list <jobId> [--include-bodies] [--registry-root <dir>]
+  subscription-runtime-codex-goal control-decision <jobId> [--registry-root <dir>]
+  subscription-runtime-codex-goal control-reconcile <jobId> [--repair] [--accepted-stale-after-ms 300000] [--registry-root <dir>]
+  subscription-runtime-codex-goal control-supersede <jobId> --signal-id <id> [--caller-kind user|operator|orchestrator|runtime|agent] [--caller-id <id>] [--registry-root <dir>]
   subscription-runtime-codex-goal relogin <jobId> [account] [--registry-root <dir>]
   subscription-runtime-codex-goal continue-job <jobId> --confirm [--registry-root <dir>]
   subscription-runtime-codex-goal recover-job <jobId> --confirm [--registry-root <dir>]
@@ -762,7 +903,7 @@ escape hatches:
 MCP fallback:
   use tool/resources/prompts when native MCP tools are unavailable in a Codex thread.
   These commands call the same in-process MCP server via the SDK, so the API surface matches MCP.
-  Shortcuts like overview, run-watch, reconcile-preview, brief, decision, handoff, accounts, continue-job, recover-job and stop-job are thin wrappers around MCP tools.
+  Shortcuts like overview, run-watch, reconcile-preview, brief, decision, handoff, accounts, control-*, continue-job, recover-job and stop-job are thin wrappers around MCP tools.
 `;
 }
 function isRecord(value) {

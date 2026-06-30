@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 import { randomBytes, randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { agentTaskProtocolVersion, agentTaskRequestToProviderTask, parseAgentTaskRequest, providerTaskResultToAgentTaskResult, } from "@vioxen/subscription-runtime/agent-task";
 import { isSubscriptionWorkerError, } from "@vioxen/subscription-runtime/worker-core";
 import { FileBackendClaudeWorker, } from "../worker-claude/file-backend-claude-worker.js";
@@ -40,6 +41,9 @@ export async function runSubscriptionAgentTaskCli(argv = process.argv.slice(2), 
             ...(args.model ? { model: args.model } : {}),
             ...(timeoutMs ? { timeoutMs } : {}),
             ...(args.claudePath ? { claudePath: args.claudePath } : {}),
+            ...(env.CLAUDE_RUNTIME_DIST_DIR
+                ? { claudeRuntimeDistDir: env.CLAUDE_RUNTIME_DIST_DIR }
+                : {}),
             ...(args.codexBinaryPath ? { codexBinaryPath: args.codexBinaryPath } : {}),
         });
         try {
@@ -231,6 +235,7 @@ function parseArgs(argv) {
 }
 function createDefaultWorker(input) {
     if (input.provider === "claude") {
+        const runtimeModules = claudeRuntimeModuleLoaders(input.claudeRuntimeDistDir);
         return new FileBackendClaudeWorker({
             providerInstanceId: input.providerInstanceId,
             stateRootDir: input.stateRootDir,
@@ -240,6 +245,7 @@ function createDefaultWorker(input) {
             ...(input.model ? { model: input.model } : {}),
             ...(input.timeoutMs ? { taskTimeoutMs: input.timeoutMs } : {}),
             ...(input.claudePath ? { claudePath: input.claudePath } : {}),
+            ...runtimeModules,
         });
     }
     return new FileBackendCodexWorker({
@@ -252,6 +258,20 @@ function createDefaultWorker(input) {
         ...(input.model ? { model: input.model } : {}),
         ...(input.timeoutMs ? { taskTimeoutMs: input.timeoutMs } : {}),
     });
+}
+function claudeRuntimeModuleLoaders(distDir) {
+    if (!distDir)
+        return {};
+    const resolvedDistDir = resolve(distDir);
+    const runtimePath = join(resolvedDistDir, "index.js");
+    const providerPath = join(resolvedDistDir, "infrastructure", "claude-bg", "provider", "index.js");
+    if (!existsSync(runtimePath) || !existsSync(providerPath)) {
+        throw new Error("CLAUDE_RUNTIME_DIST_DIR must contain index.js and infrastructure/claude-bg/provider/index.js.");
+    }
+    return {
+        runtimeModuleLoader: async () => import(pathToFileURL(runtimePath).href),
+        providerModuleLoader: async () => import(pathToFileURL(providerPath).href),
+    };
 }
 async function seedWorker(input) {
     if (input.args.provider === "claude") {

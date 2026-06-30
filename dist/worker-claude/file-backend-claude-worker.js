@@ -3,8 +3,8 @@ import { mkdir, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { createSubscriptionRuntime, DefaultRedactor, DeterministicIdGenerator, assertProviderTaskSystemPrompt, } from "@vioxen/subscription-runtime/core";
 import { ClaudeRuntimeTaskExecutionEngine, ClaudeSessionDriver, ClaudeTaskAgentDriver, claudeRuntimeResumeSessionIdMetadataKey, claudeRuntimeThreadIdMetadataKey, sessionArtifactFromClaudeOAuth, validateClaudeSessionArtifact, } from "@vioxen/subscription-runtime/provider-claude";
-import { createLocalFileBackendRuntimeAdapters } from "@vioxen/subscription-runtime/store-local-file";
-import { SubscriptionWorkerError, } from "@vioxen/subscription-runtime/worker-core";
+import { createLocalFileBackendRuntimeAdapters, LocalFileWorkerControlInboxStore, } from "@vioxen/subscription-runtime/store-local-file";
+import { SubscriptionWorkerError, WorkerControlService, } from "@vioxen/subscription-runtime/worker-core";
 import { NodeProcessRunner } from "../worker-local/node-process-runner.js";
 import { NullWorkerObservability } from "../worker-local/observability.js";
 import { StableWorkerWorkspace } from "../worker-local/temp-workspace.js";
@@ -22,6 +22,7 @@ export class FileBackendClaudeWorker {
     workspace;
     observability;
     clock;
+    controlInbox;
     sessionDriver = new ClaudeSessionDriver();
     agentDriver;
     sessionStore;
@@ -60,6 +61,14 @@ export class FileBackendClaudeWorker {
             : defaultWorkspacePath;
         this.observability = options.observability ?? new NullWorkerObservability();
         this.clock = options.clock ?? systemClock;
+        this.controlInbox =
+            options.controlInbox ??
+                new WorkerControlService({
+                    store: new LocalFileWorkerControlInboxStore({
+                        rootDir: options.stateRootDir,
+                    }),
+                    ...(options.clock ? { clock: options.clock } : {}),
+                });
         this.windowStartedAtMs = this.clock.now().getTime();
         this.rateLimitTelemetry =
             options.rateLimitTelemetry ??
@@ -93,6 +102,12 @@ export class FileBackendClaudeWorker {
                 new ClaudeRuntimeTaskExecutionEngine({
                     ...(options.baseEnv ? { baseEnv: options.baseEnv } : {}),
                     ...(options.claudePath ? { claudePath: options.claudePath } : {}),
+                    ...(options.runtimeModuleLoader
+                        ? { runtimeModuleLoader: options.runtimeModuleLoader }
+                        : {}),
+                    ...(options.providerModuleLoader
+                        ? { providerModuleLoader: options.providerModuleLoader }
+                        : {}),
                     ...(options.taskTimeoutMs
                         ? { commandTimeoutMs: options.taskTimeoutMs }
                         : {}),
@@ -255,6 +270,19 @@ export class FileBackendClaudeWorker {
         const runId = job.runId ?? `local-${randomUUID()}`;
         const abortSignal = job.abortSignal ?? new AbortController().signal;
         const workspaceId = input.workspaceId ?? this.stableWorkspacePath ?? undefined;
+        const controlBatch = this.controlInbox
+            ? await this.controlInbox.consumeForContinuation({
+                target: job.controlTarget ??
+                    claudeControlTarget({
+                        job,
+                        runId,
+                        workerId: this.workerId,
+                        ...(workspaceId === undefined ? {} : { workspaceId }),
+                    }),
+                deliveryAttemptId: `${runId}:worker-control`,
+                now: this.clock.now(),
+            })
+            : undefined;
         await this.runArtifacts.startRun({
             runId,
             providerInstanceId: this.options.providerInstanceId,
@@ -268,6 +296,9 @@ export class FileBackendClaudeWorker {
                 : {}),
             workerState: this.workerState,
             capacity: this.capacity(),
+            ...(controlBatch?.signalIds.length
+                ? { controlSignalIds: controlBatch.signalIds }
+                : {}),
         });
         const heartbeat = this.runArtifacts.startHeartbeat({
             runId,
@@ -275,6 +306,9 @@ export class FileBackendClaudeWorker {
             snapshot: () => ({
                 workerState: this.workerState,
                 capacity: this.capacity(),
+                ...(controlBatch?.signalIds.length
+                    ? { controlSignalIds: controlBatch.signalIds }
+                    : {}),
             }),
         });
         let terminalRecorded = false;
@@ -283,7 +317,7 @@ export class FileBackendClaudeWorker {
                 providerInstanceId: this.options.providerInstanceId,
                 task: {
                     kind: job.kind ?? "structured-prompt",
-                    prompt: job.prompt,
+                    prompt: appendWorkerControlPrompt(job.prompt, controlBatch?.message),
                     ...(job.systemPrompt !== undefined ? { systemPrompt: job.systemPrompt } : {}),
                     ...(job.outputSchemaName
                         ? { outputSchemaName: job.outputSchemaName }
@@ -321,6 +355,9 @@ export class FileBackendClaudeWorker {
                     status: "failed",
                     reason: result.task.failure.code,
                     safeMessage: result.task.failure.safeMessage,
+                    ...(result.task.failure.details === undefined
+                        ? {}
+                        : { failureDetails: result.task.failure.details }),
                     ...(result.task.telemetry === undefined
                         ? {}
                         : { telemetry: result.task.telemetry }),
@@ -330,7 +367,7 @@ export class FileBackendClaudeWorker {
                 });
                 throw new SubscriptionWorkerError("subscription_worker_run_failed", result.task.failure.safeMessage, { details: { code: result.task.failure.code } });
             }
-            const output = this.taskResultToOutput(result);
+            const output = this.taskResultToOutput(result, controlBatch?.signalIds ?? []);
             terminalRecorded = true;
             heartbeat.stop();
             await this.runArtifacts.completeRun({
@@ -543,7 +580,7 @@ export class FileBackendClaudeWorker {
             this.workerState = "disposed";
         }
     }
-    taskResultToOutput(result) {
+    taskResultToOutput(result, workerControlSignalIds = []) {
         if (result.task.status === "failed") {
             this.recordFailure(result.task.failure);
             throw new SubscriptionWorkerError("subscription_worker_run_failed", result.task.failure.safeMessage, { details: { code: result.task.failure.code } });
@@ -555,6 +592,9 @@ export class FileBackendClaudeWorker {
             ...(result.task.telemetry === undefined
                 ? {}
                 : { telemetry: result.task.telemetry }),
+            ...(workerControlSignalIds.length === 0
+                ? {}
+                : { workerControlSignalIds }),
             warnings: result.task.warnings,
         };
     }
@@ -857,6 +897,20 @@ function assertWorkerOptions(options) {
     if (options.capacityPolicy?.rateLimitWindows?.length === 0) {
         throw new Error("file_backend_claude_rate_limit_windows_empty");
     }
+}
+function appendWorkerControlPrompt(prompt, controlMessage) {
+    if (!controlMessage)
+        return prompt;
+    return [prompt.trimEnd(), controlMessage.trim()].join("\n\n");
+}
+function claudeControlTarget(input) {
+    const threadId = isThreadJob(input.job) ? input.job.threadId : undefined;
+    return {
+        jobId: input.job.jobId ?? threadId ?? input.job.runId ?? input.runId,
+        taskId: input.job.runId ?? threadId ?? input.runId,
+        workerId: input.workerId,
+        ...(input.workspaceId === undefined ? {} : { workspaceId: input.workspaceId }),
+    };
 }
 function isThreadJob(job) {
     return "threadId" in job && typeof job.threadId === "string";

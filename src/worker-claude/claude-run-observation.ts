@@ -124,6 +124,9 @@ export class ClaudeRunObservationAdapter implements RunObservationPort {
         exists: result !== null,
         ...(result?.status === undefined ? {} : { status: result.status }),
         ...(result?.reason === undefined ? {} : { reason: result.reason }),
+        ...(result?.failureDetails === undefined
+          ? {}
+          : { details: result.failureDetails }),
         ...(result?.updatedAt === undefined ? {} : { updatedAt: result.updatedAt }),
         path: paths.resultPath,
       },

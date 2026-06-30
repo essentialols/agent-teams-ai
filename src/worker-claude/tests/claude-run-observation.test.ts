@@ -68,7 +68,7 @@ describe("ClaudeRunObservationAdapter", () => {
           status: "completed",
         },
         readOnlyDecision: {
-          kind: "manual_review_required",
+          kind: "review_completed",
         },
       });
       expect(snapshot.workspace?.changedFiles).toEqual(["?? changed.txt"]);

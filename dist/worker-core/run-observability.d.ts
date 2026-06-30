@@ -38,6 +38,7 @@ export type RunObservationResult = {
     readonly exists?: boolean;
     readonly status?: string;
     readonly reason?: string;
+    readonly details?: Readonly<Record<string, string>>;
     readonly updatedAt?: string;
     readonly path?: string;
     readonly warning?: string;
@@ -73,8 +74,14 @@ export type RunCapacityHint = {
 };
 export type RunControlInboxSummary = {
     readonly pendingCount?: number;
+    readonly acceptedCount?: number;
+    readonly deliverableCount?: number;
+    readonly deliveredCount?: number;
+    readonly failedCount?: number;
     readonly latestSignalAt?: string;
+    readonly latestDeliveredAt?: string;
     readonly blockedDeliveryCount?: number;
+    readonly safeToContinue?: boolean;
 };
 export type RunReadOnlyDecision = {
     readonly kind: RunReadOnlyDecisionKind;
@@ -135,6 +142,7 @@ export declare function decideRunObservation(input: {
     readonly progress?: RunObservationProgress;
     readonly result?: RunObservationResult;
     readonly capacity?: readonly RunCapacityHint[];
+    readonly controlInbox?: RunControlInboxSummary;
     readonly manualReviewReasons?: readonly string[];
     readonly warnings?: readonly RunObservationWarning[];
 }): RunReadOnlyDecision;

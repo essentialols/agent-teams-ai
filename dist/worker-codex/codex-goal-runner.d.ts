@@ -8,6 +8,7 @@ export type CodexGoalAccountSlot = {
     readonly authJsonPath?: string;
 };
 export type CodexGoalRunConfig = {
+    readonly jobId?: string;
     readonly jobRootDir: string;
     readonly stateRootDir?: string;
     readonly encryptionKeyPath?: string;

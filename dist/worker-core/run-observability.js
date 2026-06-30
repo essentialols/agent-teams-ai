@@ -40,6 +40,9 @@ export function decideRunObservation(input) {
     if (input.liveness === "stale" || input.progress?.silentStale) {
         return decision("stale_needs_inspection", "observable_progress_stale", "The worker may be alive, but observable progress is stale. Inspect logs, process tree and workspace before acting.", ["progress.heartbeatAgeMs", "progress.staleAfterMs"]);
     }
+    if (input.status === "completed") {
+        return decision("review_completed", "terminal_result_completed", "The run appears completed. Review outputs, logs and workspace before merging or marking reviewed.", ["result.status", "workspace.changedFiles"]);
+    }
     if (input.capacity?.some((hint) => isBlockedCapacity(hint)) === true) {
         return decision("capacity_blocked", "account_or_capacity_unavailable", "At least one account or capacity hint is blocked. Wait, relogin, or let a separate decision layer choose recovery.", ["capacity"]);
     }
@@ -49,14 +52,17 @@ export function decideRunObservation(input) {
     if (input.workspace?.dirty && input.status !== "running") {
         return decision("manual_review_required", "dirty_workspace_without_running_worker", "The workspace has changes and no active worker. Review the diff before taking any control action.", ["workspace.changedFiles"]);
     }
-    if (input.status === "completed") {
-        return decision("review_completed", "terminal_result_completed", "The run appears completed. Review outputs, logs and workspace before merging or marking reviewed.", ["result.status"]);
-    }
     if (input.status === "stopped") {
         return decision("manual_review_required", "stopped_without_terminal_result", "The run is stopped without a completed or failed terminal result. Inspect result, logs and workspace before any recovery.", ["status", "result.exists", "process.liveness"]);
     }
     if (input.status === "failed" || input.status === "unknown") {
         return decision("manual_review_required", input.result?.reason ?? "non_running_or_unknown_failure", "The run is failed or unknown. Inspect result, logs and workspace before any recovery.", ["result.reason", "status"]);
+    }
+    if ((input.controlInbox?.pendingCount ?? 0) > 0) {
+        return decision("keep_watching", "guidance_pending", "Control inbox guidance is pending. Continue watching until the next safe continuation or operator action.", ["controlInbox.pendingCount", "controlInbox.safeToContinue"]);
+    }
+    if ((input.controlInbox?.deliveredCount ?? 0) > 0) {
+        return decision("keep_watching", "guidance_delivered", "Control inbox guidance was delivered. Continue watching the worker result.", ["controlInbox.deliveredCount", "controlInbox.latestDeliveredAt"]);
     }
     return decision("keep_watching", "worker_observable", "The run is observable. Continue watching; no control action is implied by this read-only snapshot.", ["liveness", "progress"]);
 }
@@ -79,6 +85,9 @@ function normalizeRunObservation(input) {
             ...(input.snapshot.capacity === undefined
                 ? {}
                 : { capacity: input.snapshot.capacity }),
+            ...(input.snapshot.controlInbox === undefined
+                ? {}
+                : { controlInbox: input.snapshot.controlInbox }),
             manualReviewReasons,
             warnings,
         });

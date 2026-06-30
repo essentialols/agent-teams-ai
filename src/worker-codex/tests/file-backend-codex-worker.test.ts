@@ -12,8 +12,10 @@ import type {
 import {
   BoundedSubscriptionWorkerPool,
   InMemoryWorkerAccountCapacityStore,
+  WorkerControlService,
   accountCapacityAwareWorkerFactory,
 } from "@vioxen/subscription-runtime/worker-core";
+import { LocalFileWorkerControlInboxStore } from "@vioxen/subscription-runtime/store-local-file";
 import { describe, expect, it } from "vitest";
 import { FileBackendCodexSafeExecutor, FileBackendCodexWorker } from "../index";
 import { NodeProcessRunner } from "../node-process-runner";
@@ -61,6 +63,35 @@ describe("FileBackendCodexWorker", () => {
       await expect(worker.run({ prompt: "hello" })).rejects.toThrow(
         "Codex worker has been disposed.",
       );
+    } finally {
+      await worker.dispose();
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("marks invalid seeded Codex auth as disabled capacity without failing executor startup", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "codex-worker-invalid-seed-"));
+    const worker = new FileBackendCodexWorker({
+      providerInstanceId: "codex:invalid-seed",
+      stateRootDir: rootDir,
+      codexBinaryPath: "codex",
+      encryptionKey: new Uint8Array(32).fill(6),
+    });
+
+    try {
+      await worker.start();
+      await worker.seedCodexAuthJson(JSON.stringify({
+        auth_mode: "api-key",
+        tokens: {
+          access_token: "invalid-access-token",
+          refresh_token: "invalid-refresh-token",
+        },
+      }));
+
+      expect(worker.capacity()).toMatchObject({
+        availability: "disabled",
+        reason: "provider_session_invalid",
+      });
     } finally {
       await worker.dispose();
       await rm(rootDir, { recursive: true, force: true });
@@ -581,12 +612,33 @@ describe("FileBackendCodexWorker", () => {
     const appServers = [
       new FakeAppServerFactory({
         emitTopLevelErrorOnTurn: "You've hit your usage limit.",
+        writeFileOnTurn: {
+          relativePath: "wip.txt",
+          content: "partial implementation\n",
+        },
       }),
       new FakeAppServerFactory(),
     ];
+    const controlInbox = new WorkerControlService({
+      store: new LocalFileWorkerControlInboxStore({ rootDir }),
+      clock,
+      idFactory: sequentialIds("codex-control"),
+    });
+    await controlInbox.enqueueSignal({
+      target: { jobId: "codex-safe-switch-job" },
+      intent: "guidance",
+      body: "Preserve current WIP and continue with targeted tests first.",
+    });
+    const pauseSignal = await controlInbox.enqueueSignal({
+      target: { jobId: "codex-safe-switch-job" },
+      intent: "pause_requested",
+      deliveryMode: "pause_then_continue",
+      body: "Pause before continuation unless the provider explicitly supports it.",
+    });
     const executor = new FileBackendCodexSafeExecutor({
       stateRootDir: rootDir,
       workspacePath,
+      controlInbox,
       accounts: appServers.map((appServer, index) => ({
         codexAuthJson: codexAuthJson(`safe-account-${index + 1}`),
         worker: {
@@ -611,6 +663,7 @@ describe("FileBackendCodexWorker", () => {
 
     try {
       const result = await executor.run({
+        jobId: "codex-safe-switch-job",
         taskId: "codex-safe-switch-task",
         prompt: "Implement the safe task.",
         controls: { permissionMode: "allow-edits" },
@@ -624,12 +677,54 @@ describe("FileBackendCodexWorker", () => {
       expect(result.attempts).toHaveLength(2);
       expect(result.attempts[0]?.failureReason).toBe("quota_limited");
       expect(appServers[0]!.prompts).toEqual(["Implement the safe task."]);
-      expect(appServers[1]!.prompts[0]).toContain("Continue the same task");
-      expect(appServers[1]!.prompts[0]).toContain("Do not restart from scratch");
+      const continuationPrompt = appServers[1]!.prompts[0] ?? "";
+      const canonicalWorkspacePath = await realpath(workspacePath);
+      expect(continuationPrompt).toContain(
+        "Continue the same task in the current workspace.",
+      );
+      expect(continuationPrompt).toContain("Task id: codex-safe-switch-task");
+      expect(continuationPrompt).toContain("Attempt: 2");
+      expect(continuationPrompt).toContain("Provider: codex");
+      expect(continuationPrompt).toContain(`Workspace: ${canonicalWorkspacePath}`);
+      expect(continuationPrompt).toContain(
+        "Previous attempt stopped because: quota_limited",
+      );
+      expect(continuationPrompt).toContain("Original task:\nImplement the safe task.");
+      expect(continuationPrompt).toContain("Current workspace summary:");
+      expect(continuationPrompt).toContain("Git workspace has");
+      expect(continuationPrompt).toContain("Changed files:\n- wip.txt");
+      expect(continuationPrompt).toContain(
+        "Runtime control inbox instructions:",
+      );
+      expect(continuationPrompt).toContain("Signal id: codex-control-1");
+      expect(continuationPrompt).toContain(
+        "Preserve current WIP and continue with targeted tests first.",
+      );
+      expect(
+        continuationPrompt.includes(
+          "Pause before continuation unless the provider explicitly supports it.",
+        ),
+      ).toBe(false);
+      expect(continuationPrompt).toContain("Do not restart from scratch");
+      expect(continuationPrompt.includes("access_token")).toBe(false);
+      expect(continuationPrompt.includes("refresh_token")).toBe(false);
+      expect(continuationPrompt.includes("codexAuthJson")).toBe(false);
       expect(appServers[0]!.threadCwds).toContain(workspacePath);
       expect(appServers[1]!.threadCwds).toContain(workspacePath);
+      const controlViews = await controlInbox.listSignals({
+        target: { jobId: "codex-safe-switch-job" },
+        includeExpired: true,
+      });
+      const pauseView = controlViews.find((view) =>
+        view.signal.signalId === pauseSignal.signalId
+      );
+      expect(pauseView).toMatchObject({
+        state: "pending",
+        blockedReason: "pause_then_continue_not_supported",
+      });
 
       const replayed = await executor.run({
+        jobId: "codex-safe-switch-job",
         taskId: "codex-safe-switch-task",
         prompt: "Implement the safe task.",
         controls: { permissionMode: "allow-edits" },
@@ -638,6 +733,60 @@ describe("FileBackendCodexWorker", () => {
       if (replayed.status !== "completed") throw new Error("expected replay");
       expect(replayed.replayed).toBe(true);
       expect(appServers[1]!.prompts).toHaveLength(1);
+    } finally {
+      await executor.dispose();
+      await rm(rootDir, { recursive: true, force: true });
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it("skips invalid seeded Codex accounts and runs safe work on the next slot", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "codex-safe-invalid-seed-"));
+    const workspacePath = await gitWorkspace("codex-safe-invalid-seed-workspace-");
+    const clock = {
+      now: () => new Date("2026-05-31T00:05:00.000Z"),
+      monotonicMs: () => performance.now(),
+    };
+    const appServers = [
+      new FakeAppServerFactory(),
+      new FakeAppServerFactory(),
+    ];
+    const executor = new FileBackendCodexSafeExecutor({
+      stateRootDir: rootDir,
+      workspacePath,
+      accounts: appServers.map((appServer, index) => ({
+        codexAuthJson: index === 0
+          ? JSON.stringify({
+              auth_mode: "api-key",
+              tokens: {
+                access_token: "invalid-access-token",
+                refresh_token: "invalid-refresh-token",
+              },
+            })
+          : codexAuthJson("valid-second-account"),
+        worker: {
+          providerInstanceId: `codex-invalid-seed-account-${index + 1}`,
+          stateRootDir: rootDir,
+          codexBinaryPath: "codex",
+          encryptionKey: new Uint8Array(32).fill(index + 22),
+          appServerProcessFactory: appServer.create,
+          runner: new StaticRunner({ exitCode: 0, stdout: "OK", stderr: "" }),
+          clock,
+        },
+      })),
+      clock,
+    });
+
+    try {
+      const result = await executor.run({
+        taskId: "codex-safe-invalid-seed-task",
+        prompt: "Implement the safe task.",
+        controls: { permissionMode: "allow-edits" },
+      });
+
+      expect(result.status).toBe("completed");
+      expect(appServers[0]!.prompts).toEqual([]);
+      expect(appServers[1]!.prompts).toEqual(["Implement the safe task."]);
     } finally {
       await executor.dispose();
       await rm(rootDir, { recursive: true, force: true });
@@ -1846,6 +1995,11 @@ function extractFakePrompt(
   if (!Array.isArray(input)) return "";
   const first = input[0] as { text?: unknown } | undefined;
   return typeof first?.text === "string" ? first.text : "";
+}
+
+function sequentialIds(prefix: string): () => string {
+  let next = 0;
+  return () => `${prefix}-${++next}`;
 }
 
 describe("NodeProcessRunner", () => {

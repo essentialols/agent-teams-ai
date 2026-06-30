@@ -5,7 +5,10 @@ import {
   validateCodexAuthJsonBytes,
   type ValidatedCodexAuthJson,
 } from "@vioxen/subscription-runtime/provider-codex";
-import { LocalFileWorkerAccountCapacityStore } from "@vioxen/subscription-runtime/store-local-file";
+import {
+  LocalFileWorkerAccountCapacityStore,
+  LocalFileWorkerControlInboxStore,
+} from "@vioxen/subscription-runtime/store-local-file";
 import {
   accountCapacityAwareWorkerFactory,
   BoundedSubscriptionWorkerPool,
@@ -13,11 +16,14 @@ import {
   LocalFileWorkspaceLockStore,
   SafeExecutionRunner,
   SubscriptionWorkerError,
+  WorkerControlService,
   type AttemptJournal,
   type SafeExecutionPolicy,
   type SafeExecutionRunResult,
   type TaskEffectMode,
   type WorkerAccountCapacityStore,
+  type WorkerControlContinuationSource,
+  type WorkerControlTarget,
   type WorkerPoolHealth,
   type WorkerPoolSlotSnapshot,
   type WorkerPoolStats,
@@ -50,6 +56,7 @@ export type FileBackendCodexSafeExecutorOptions = {
    */
   readonly allowDuplicateAccountIdentities?: boolean;
   readonly accountCapacityStore?: WorkerAccountCapacityStore;
+  readonly controlInbox?: WorkerControlContinuationSource;
   readonly lockStore?: WorkspaceLockStore;
   readonly journal?: AttemptJournal;
   readonly safeExecutionPolicy?: SafeExecutionPolicy;
@@ -69,6 +76,7 @@ export type FileBackendCodexSafeExecutorOptions = {
 };
 
 export type FileBackendCodexSafeExecutorRunInput = FileBackendCodexWorkerJob & {
+  readonly jobId?: string;
   readonly taskId: string;
   readonly originalPrompt?: string;
   readonly effectMode?: TaskEffectMode;
@@ -154,6 +162,14 @@ export class FileBackendCodexSafeExecutor {
       journal:
         options.journal ??
         new LocalFileAttemptJournal(join(options.stateRootDir, "attempt-journal")),
+      controlInbox:
+        options.controlInbox ??
+        new WorkerControlService({
+          store: new LocalFileWorkerControlInboxStore({
+            rootDir: options.stateRootDir,
+          }),
+          ...(options.clock ? { clock: options.clock } : {}),
+        }),
       ...(options.clock ? { clock: options.clock } : {}),
       ownerId: this.executorId,
     });
@@ -187,6 +203,7 @@ export class FileBackendCodexSafeExecutor {
   ): Promise<SafeExecutionRunResult<FileBackendCodexWorkerResult>> {
     const {
       job,
+      jobId,
       taskId,
       originalPrompt,
       effectMode,
@@ -235,6 +252,11 @@ export class FileBackendCodexSafeExecutor {
         prompt: continuationPacket.message,
       }),
       summarizeResult: (result) => result.outputText,
+      controlTarget: codexControlTarget({
+        jobId,
+        taskId,
+        workspacePath: this.options.workspacePath,
+      }),
       ...(job.abortSignal ? { abortSignal: job.abortSignal } : {}),
     });
   }
@@ -302,6 +324,7 @@ export class FileBackendCodexSafeExecutor {
   }
 }
 function codexSafeExecutionInput(input: FileBackendCodexSafeExecutorRunInput): {
+  readonly jobId?: string;
   readonly taskId: string;
   readonly job: FileBackendCodexWorkerJob;
   readonly originalPrompt: string;
@@ -311,6 +334,7 @@ function codexSafeExecutionInput(input: FileBackendCodexSafeExecutorRunInput): {
   readonly policy?: SafeExecutionPolicy;
 } {
   const {
+    jobId,
     taskId,
     originalPrompt,
     effectMode,
@@ -325,6 +349,7 @@ function codexSafeExecutionInput(input: FileBackendCodexSafeExecutorRunInput): {
     runId: jobInput.runId ?? taskId,
   };
   return {
+    ...(jobId === undefined ? {} : { jobId }),
     taskId,
     job,
     originalPrompt: originalPrompt ?? job.prompt,
@@ -332,6 +357,18 @@ function codexSafeExecutionInput(input: FileBackendCodexSafeExecutorRunInput): {
     ...(staleLockMs === undefined ? {} : { staleLockMs }),
     ...(maxAccountCycles === undefined ? {} : { maxAccountCycles }),
     ...(safeExecutionPolicy === undefined ? {} : { policy: safeExecutionPolicy }),
+  };
+}
+
+function codexControlTarget(input: {
+  readonly jobId: string | undefined;
+  readonly taskId: string;
+  readonly workspacePath: string;
+}): WorkerControlTarget {
+  return {
+    jobId: input.jobId ?? input.taskId,
+    taskId: input.taskId,
+    workspaceId: input.workspacePath,
   };
 }
 
@@ -448,10 +485,14 @@ async function codexAccountIdentityFromSafeExecutorAccount(
 ): Promise<CodexAccountIdentity | null> {
   const authJson = await readSafeExecutorAccountAuthJson(account);
   if (!authJson) return null;
-  return codexAccountIdentityFromAuthJson({
-    authJson,
-    label: safeExecutorAccountLabel(account, index),
-  });
+  try {
+    return codexAccountIdentityFromAuthJson({
+      authJson,
+      label: safeExecutorAccountLabel(account, index),
+    });
+  } catch {
+    return null;
+  }
 }
 
 async function readSafeExecutorAccountAuthJson(

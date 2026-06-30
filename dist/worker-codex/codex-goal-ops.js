@@ -31,6 +31,7 @@ export function buildCodexGoalNoTmuxCommand(input) {
         input.format ?? "text",
     ];
     pushOptional(args, "--state-root", config.stateRootDir);
+    pushOptional(args, "--job-id", config.jobId);
     pushOptional(args, "--output", config.outputPath);
     pushOptional(args, "--progress", config.progressPath);
     pushOptional(args, "--codex-binary", config.codexBinaryPath);

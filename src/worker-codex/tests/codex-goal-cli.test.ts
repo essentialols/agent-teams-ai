@@ -207,6 +207,7 @@ describe("codex goal cli", () => {
       "--include-changed-files",
       "--tail-lines",
       "25",
+      "--json",
     ], fakeIo());
     expect(runWatch).toMatchObject({
       kind: "mcp-tool",
@@ -233,6 +234,7 @@ describe("codex goal cli", () => {
       "--run-artifacts-root",
       "/tmp/claude-artifacts",
       "--include-log-tail",
+      "--json",
     ], fakeIo());
     expect(claudeRunWatch).toMatchObject({
       kind: "mcp-tool",
@@ -345,6 +347,89 @@ describe("codex goal cli", () => {
       confirmStop: true,
       forceStop: true,
       staleAfterMs: 1000,
+    });
+
+    const controlEnqueue = parseCodexGoalCliArgs([
+      "control-enqueue",
+      "job-a",
+      "--body",
+      "Prefer targeted tests before full benchmark.",
+      "--intent",
+      "guidance",
+      "--idempotency-key",
+      "guidance-1",
+      "--caller-kind",
+      "agent",
+      "--caller-id",
+      "lead-agent",
+    ], fakeIo());
+    expect(controlEnqueue).toMatchObject({
+      kind: "mcp-tool",
+      name: "codex_goal_control_enqueue",
+    });
+    if (controlEnqueue.kind !== "mcp-tool") return;
+    expect(JSON.parse(controlEnqueue.argsJson ?? "{}")).toEqual({
+      jobId: "job-a",
+      intent: "guidance",
+      body: "Prefer targeted tests before full benchmark.",
+      idempotencyKey: "guidance-1",
+      callerKind: "agent",
+      callerId: "lead-agent",
+    });
+
+    const controlList = parseCodexGoalCliArgs([
+      "control-list",
+      "job-a",
+      "--include-bodies",
+    ], fakeIo());
+    expect(controlList).toMatchObject({
+      kind: "mcp-tool",
+      name: "codex_goal_control_list",
+    });
+    if (controlList.kind !== "mcp-tool") return;
+    expect(JSON.parse(controlList.argsJson ?? "{}")).toEqual({
+      jobId: "job-a",
+      includeBodies: true,
+    });
+
+    const controlReconcile = parseCodexGoalCliArgs([
+      "control-reconcile",
+      "job-a",
+      "--repair",
+      "--accepted-stale-after-ms",
+      "60000",
+    ], fakeIo());
+    expect(controlReconcile).toMatchObject({
+      kind: "mcp-tool",
+      name: "codex_goal_control_reconcile",
+    });
+    if (controlReconcile.kind !== "mcp-tool") return;
+    expect(JSON.parse(controlReconcile.argsJson ?? "{}")).toEqual({
+      jobId: "job-a",
+      repair: true,
+      acceptedStaleAfterMs: 60000,
+    });
+
+    const controlSupersede = parseCodexGoalCliArgs([
+      "control-supersede",
+      "job-a",
+      "--signal-id",
+      "signal-1",
+      "--caller-kind",
+      "user",
+      "--caller-id",
+      "local-user",
+    ], fakeIo());
+    expect(controlSupersede).toMatchObject({
+      kind: "mcp-tool",
+      name: "codex_goal_control_supersede",
+    });
+    if (controlSupersede.kind !== "mcp-tool") return;
+    expect(JSON.parse(controlSupersede.argsJson ?? "{}")).toEqual({
+      jobId: "job-a",
+      signalId: "signal-1",
+      callerKind: "user",
+      callerId: "local-user",
     });
 
     const relogin = parseCodexGoalCliArgs([

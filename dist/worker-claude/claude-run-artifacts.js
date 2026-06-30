@@ -154,6 +154,9 @@ export class FileClaudeRunArtifactStore {
             ...(input.safeMessage === undefined
                 ? {}
                 : { safeMessage: this.redactor.redact(input.safeMessage) }),
+            ...(input.failureDetails === undefined
+                ? {}
+                : { failureDetails: redactStringRecord(input.failureDetails, this.redactor) }),
             ...(input.telemetry === undefined ? {} : { telemetry: input.telemetry }),
             ...(input.warnings === undefined || input.warnings.length === 0
                 ? {}
@@ -177,6 +180,9 @@ export class FileClaudeRunArtifactStore {
             event: `run.${status}`,
             ...(input.reason === undefined ? {} : { reason: input.reason }),
             ...(input.safeMessage === undefined ? {} : { safeMessage: input.safeMessage }),
+            ...(input.failureDetails === undefined
+                ? {}
+                : { failureDetails: redactStringRecord(input.failureDetails, this.redactor) }),
         });
     }
     async writeProgress(input) {
@@ -302,6 +308,12 @@ function isArtifactStatus(value) {
 }
 function isRecord(value) {
     return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function redactStringRecord(record, redactor) {
+    return Object.fromEntries(Object.entries(record).map(([key, value]) => [
+        key,
+        redactor.redact(value),
+    ]));
 }
 function preview(value) {
     return value.length <= 4_000 ? value : `${value.slice(0, 4_000)}\n[truncated]`;

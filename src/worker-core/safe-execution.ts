@@ -13,6 +13,11 @@ import {
 } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
+import type {
+  WorkerControlContinuationBatch,
+  WorkerControlContinuationSource,
+  WorkerControlTarget,
+} from "./control";
 import { isSubscriptionWorkerError } from "./errors";
 import type { WorkerPoolRunOptions } from "./types";
 
@@ -111,6 +116,7 @@ export type ContinuationPacket = {
   readonly changedFiles: readonly string[];
   readonly workspaceSummary: string;
   readonly previousOutputSummary?: string;
+  readonly workerControlSignalIds?: readonly string[];
   readonly message: string;
 };
 
@@ -205,6 +211,7 @@ export interface ContinuationPacketBuilder {
     readonly previousFailureReason: AttemptFailureReason;
     readonly snapshot: WorkspaceSnapshot;
     readonly previousOutputSummary?: string;
+    readonly controlBatch?: WorkerControlContinuationBatch;
   }): ContinuationPacket;
 }
 
@@ -280,6 +287,7 @@ export type SafeExecutionRunInput<Job, Result> = {
   ) => SafeExecutionFailureClassification;
   readonly summarizeResult?: (result: Result) => string | undefined;
   readonly summarizeError?: (error: unknown) => string | undefined;
+  readonly controlTarget?: WorkerControlTarget;
   readonly abortSignal?: AbortSignal;
 };
 
@@ -306,6 +314,7 @@ export type SafeExecutionRunnerOptions = {
   readonly journal: AttemptJournal;
   readonly snapshotter?: WorkspaceSnapshotter;
   readonly continuationPacketBuilder?: ContinuationPacketBuilder;
+  readonly controlInbox?: WorkerControlContinuationSource;
   readonly ownerId?: string;
   readonly ownerPid?: number;
   readonly clock?: { now(): Date };
@@ -866,6 +875,7 @@ export class DefaultContinuationPacketBuilder
     readonly previousFailureReason: AttemptFailureReason;
     readonly snapshot: WorkspaceSnapshot;
     readonly previousOutputSummary?: string;
+    readonly controlBatch?: WorkerControlContinuationBatch;
   }): ContinuationPacket {
     const changedFiles = input.snapshot.changedFiles;
     const filesText =
@@ -877,6 +887,9 @@ export class DefaultContinuationPacketBuilder
       : "";
     const diffStatText = input.snapshot.diffStat
       ? `\nDiff stat:\n${input.snapshot.diffStat}\n`
+      : "";
+    const controlText = input.controlBatch?.message
+      ? `\n${input.controlBatch.message}\n`
       : "";
     const message = [
       "Continue the same task in the current workspace.",
@@ -894,6 +907,7 @@ export class DefaultContinuationPacketBuilder
       "Current workspace summary:",
       input.snapshot.summary,
       diffStatText.trimEnd(),
+      controlText.trimEnd(),
       "",
       "Changed files:",
       filesText,
@@ -916,6 +930,9 @@ export class DefaultContinuationPacketBuilder
       ...(input.previousOutputSummary === undefined
         ? {}
         : { previousOutputSummary: input.previousOutputSummary }),
+      ...(input.controlBatch?.signalIds.length
+        ? { workerControlSignalIds: input.controlBatch.signalIds }
+        : {}),
       message,
     };
   }
@@ -1044,7 +1061,7 @@ export class SafeExecutionRunner {
         } catch (error) {
           return this.failStartedTask({ input, error });
         }
-        const packet = this.continuationPacketBuilder.build({
+        const packet = await this.buildContinuationPacket({
           taskId: input.taskId,
           attemptNumber: firstAttemptNumber,
           provider: input.provider,
@@ -1055,6 +1072,9 @@ export class SafeExecutionRunner {
           ...(previousOutputSummary === undefined
             ? {}
             : { previousOutputSummary }),
+          ...(input.controlTarget === undefined
+            ? {}
+            : { controlTarget: input.controlTarget }),
         });
         const continuationJob = continuationJobFor({
           factory: input.continuationJobFactory,
@@ -1244,7 +1264,7 @@ export class SafeExecutionRunner {
             };
           }
 
-          const packet = this.continuationPacketBuilder.build({
+          const packet = await this.buildContinuationPacket({
             taskId: input.taskId,
             attemptNumber: attemptNumber + 1,
             provider: input.provider,
@@ -1255,6 +1275,9 @@ export class SafeExecutionRunner {
             ...(previousOutputSummary === undefined
               ? {}
               : { previousOutputSummary }),
+            ...(input.controlTarget === undefined
+              ? {}
+              : { controlTarget: input.controlTarget }),
           });
           const continuationJob = continuationJobFor({
             factory: input.continuationJobFactory,
@@ -1346,6 +1369,52 @@ export class SafeExecutionRunner {
       error: input.error,
     };
   }
+
+  private async buildContinuationPacket(input: {
+    readonly taskId: TaskRunId;
+    readonly attemptNumber: number;
+    readonly provider: string;
+    readonly workspacePath: string;
+    readonly originalPrompt: string;
+    readonly previousFailureReason: AttemptFailureReason;
+    readonly snapshot: WorkspaceSnapshot;
+    readonly previousOutputSummary?: string;
+    readonly controlTarget?: WorkerControlTarget;
+  }): Promise<ContinuationPacket> {
+    const controlBatch = this.options.controlInbox &&
+      shouldDeliverControlForContinuation(input.previousFailureReason)
+      ? await this.options.controlInbox.consumeForContinuation({
+          target: input.controlTarget ?? {
+            jobId: input.taskId,
+            workspaceId: input.workspacePath,
+          },
+          deliveryAttemptId: `${input.taskId}:attempt-${input.attemptNumber}`,
+          now: this.clock.now(),
+        })
+      : undefined;
+    return this.continuationPacketBuilder.build({
+      taskId: input.taskId,
+      attemptNumber: input.attemptNumber,
+      provider: input.provider,
+      workspacePath: input.workspacePath,
+      originalPrompt: input.originalPrompt,
+      previousFailureReason: input.previousFailureReason,
+      snapshot: input.snapshot,
+      ...(input.previousOutputSummary === undefined
+        ? {}
+        : { previousOutputSummary: input.previousOutputSummary }),
+      ...(controlBatch === undefined ? {} : { controlBatch }),
+    });
+  }
+}
+
+function shouldDeliverControlForContinuation(
+  previousFailureReason: AttemptFailureReason,
+): boolean {
+  return (
+    previousFailureReason !== "account_unavailable" &&
+    previousFailureReason !== "reconnect_required"
+  );
 }
 
 export function promptContinuationJobFactory<Job extends { readonly prompt: string }>(

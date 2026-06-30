@@ -1,3 +1,5 @@
+export * from "./claude-run-artifacts.js";
+export * from "./claude-run-observation.js";
 export * from "./file-backend-claude-worker.js";
 export * from "./claude-run-artifacts.js";
 export * from "./claude-run-observation.js";

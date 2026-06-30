@@ -7,7 +7,11 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
-import { LocalFileWorkerAccountCapacityStore } from "@vioxen/subscription-runtime/store-local-file";
+import {
+  LocalFileWorkerAccountCapacityStore,
+  LocalFileWorkerControlInboxStore,
+} from "@vioxen/subscription-runtime/store-local-file";
+import type { WorkerControlDeliveryReceipt } from "@vioxen/subscription-runtime/worker-core";
 import {
   buildCodexGoalBrief,
   createCodexGoalMcpServer,
@@ -117,7 +121,7 @@ describe("codex goal MCP server", () => {
       try {
         await callToolJson(client, "codex_goal_create_job", {
           registryRootDir,
-          jobId: "job-watch",
+          jobId: "job-observed",
           jobRootDir,
           authRootDir,
           stateRootDir,
@@ -130,7 +134,7 @@ describe("codex goal MCP server", () => {
 
         const watch = await callToolJson(client, "agent_run_watch", {
           registryRootDir,
-          jobId: "job-watch",
+          jobId: "job-observed",
           includeLogTail: true,
           tailLines: 5,
         });
@@ -146,7 +150,7 @@ describe("codex goal MCP server", () => {
         });
         const snapshots = watch.snapshots as readonly Record<string, unknown>[];
         expect(snapshots[0]).toMatchObject({
-          runId: "job-watch",
+          runId: "job-observed",
           providerKind: "codex",
           status: "completed",
           readOnlyDecision: {
@@ -222,7 +226,7 @@ describe("codex goal MCP server", () => {
             status: "completed",
           },
           readOnlyDecision: {
-            kind: "manual_review_required",
+            kind: "review_completed",
           },
         });
         expect(JSON.stringify(watch).includes("claude-oauth-secret")).toBe(false);
@@ -231,6 +235,83 @@ describe("codex goal MCP server", () => {
         await server.close();
       }
     } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reports unsupported provider run watch as read-only without side effects", async () => {
+    const server = createCodexGoalMcpServer();
+    const client = new Client({ name: "subscription-runtime-test", version: "0.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([
+      server.connect(serverTransport),
+      client.connect(clientTransport),
+    ]);
+
+    try {
+      const watch = await callToolJson(client, "agent_run_watch", {
+        providerKind: "local",
+      });
+
+      expect(watch).toMatchObject({
+        ok: false,
+        mode: "read_only",
+        sideEffects: [],
+        providerKind: "local",
+        supportedProviderKinds: ["codex", "claude"],
+        reason: "provider_observation_not_implemented",
+      });
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("keeps missing explicit run observations read-only and structured", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-run-watch-missing-"));
+    const server = createCodexGoalMcpServer();
+    const client = new Client({ name: "subscription-runtime-test", version: "0.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([
+      server.connect(serverTransport),
+      client.connect(clientTransport),
+    ]);
+
+    try {
+      const watch = await callToolJson(client, "agent_run_watch", {
+        registryRootDir: join(root, "registry"),
+        jobId: "missing-job",
+      });
+
+      expect(watch).toMatchObject({
+        ok: false,
+        mode: "read_only",
+        sideEffects: [],
+        providerKind: "codex",
+        summary: {
+          unknown: 1,
+          manualReview: 1,
+          warnings: 1,
+        },
+      });
+      const snapshots = watch.snapshots as readonly Record<string, unknown>[];
+      expect(snapshots[0]).toMatchObject({
+        runId: "missing-job",
+        status: "unknown",
+        liveness: "unknown",
+        readOnlyDecision: {
+          kind: "manual_review_required",
+          reason: "run_observation_failed",
+        },
+      });
+      expect(watch).toMatchObject({
+        observationFailures: [{
+          runId: "missing-job",
+        }],
+      });
+    } finally {
+      await client.close();
+      await server.close();
       await rm(root, { recursive: true, force: true });
     }
   });
@@ -320,6 +401,151 @@ describe("codex goal MCP server", () => {
       }
     } finally {
       await execFileAsync("tmux", ["kill-session", "-t", tmuxSession]).catch(() => undefined);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("exposes worker control inbox tools for stored Codex goal jobs", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-control-mcp-"));
+    const registryRootDir = join(root, "registry");
+    const jobRootDir = join(root, "job");
+    const stateRootDir = join(root, "state");
+    const authRootDir = join(root, "auth");
+    const workspacePath = join(root, "workspace");
+    const promptPath = join(jobRootDir, "prompt.md");
+    const taskId = "sandbox-control-task";
+
+    try {
+      await mkdir(jobRootDir, { recursive: true });
+      await mkdir(workspacePath, { recursive: true });
+      await execFileAsync("git", ["init"], { cwd: workspacePath });
+      await writeFile(promptPath, "Do a sandbox task.\n");
+      await writeFakeAuth(authRootDir, "account-a", {
+        lastRefresh: "2026-06-03T00:00:00.000Z",
+      });
+
+      const server = createCodexGoalMcpServer();
+      const client = new Client({ name: "subscription-runtime-test", version: "0.0.0" });
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+      await Promise.all([
+        server.connect(serverTransport),
+        client.connect(clientTransport),
+      ]);
+
+      try {
+        await callToolJson(client, "codex_goal_create_job", {
+          registryRootDir,
+          jobId: "job-control",
+          jobRootDir,
+          authRootDir,
+          stateRootDir,
+          workspacePath,
+          promptPath,
+          taskId,
+          accounts: ["account-a"],
+          logPath: join(jobRootDir, `${taskId}.log`),
+        });
+
+        const enqueued = await callToolJson(client, "codex_goal_control_enqueue", {
+          registryRootDir,
+          jobId: "job-control",
+          intent: "guidance",
+          body: "Prefer targeted tests before full benchmark.",
+          idempotencyKey: "guidance-targeted-tests",
+          callerKind: "agent",
+          callerId: "lead-agent",
+        });
+
+        expect(enqueued).toMatchObject({
+          ok: true,
+          jobId: "job-control",
+          taskId,
+          signal: {
+            idempotencyKey: "guidance-targeted-tests",
+            createdBy: "agent",
+          },
+          decision: {
+            safeToContinue: true,
+            deliverableCount: 1,
+          },
+        });
+        expect(JSON.stringify(enqueued).includes("Prefer targeted tests")).toBe(false);
+
+        const listed = await callToolJson(client, "codex_goal_control_list", {
+          registryRootDir,
+          jobId: "job-control",
+        });
+        const signals = listed.signals as readonly Record<string, unknown>[];
+        expect(signals).toHaveLength(1);
+        expect(signals[0]).toMatchObject({
+          state: "pending",
+          deliverable: true,
+        });
+        expect(JSON.stringify(signals[0])).toContain("guidance-targeted-tests");
+        expect(
+          JSON.stringify(signals[0]).includes("Prefer targeted tests"),
+        ).toBe(false);
+
+        const decision = await callToolJson(client, "codex_goal_control_decision", {
+          registryRootDir,
+          jobId: "job-control",
+        });
+        expect(decision).toMatchObject({
+          ok: true,
+          decision: {
+            safeToContinue: true,
+            pendingCount: 1,
+            deliverableCount: 1,
+          },
+        });
+
+        const signalId = String(
+          (signals[0]?.signal as { readonly signalId: string } | undefined)?.signalId,
+        );
+        expect(signalId).toMatch(/\S/);
+        const controlStore = new LocalFileWorkerControlInboxStore({
+          rootDir: stateRootDir,
+        });
+        await controlStore.tryClaimDelivery?.(workerControlReceipt({
+          signalId,
+          target: { jobId: "job-control" },
+          deliveryAttemptId: "attempt-crashed",
+          createdAt: new Date(Date.now() - 10 * 60 * 1000),
+        }));
+
+        const accepted = await callToolJson(client, "codex_goal_control_reconcile", {
+          registryRootDir,
+          jobId: "job-control",
+        });
+        expect(accepted).toMatchObject({
+          ok: true,
+          report: {
+            acceptedCount: 1,
+            repairedCount: 0,
+          },
+        });
+
+        const repaired = await callToolJson(client, "codex_goal_control_reconcile", {
+          registryRootDir,
+          jobId: "job-control",
+          repair: true,
+          acceptedStaleAfterMs: 60_000,
+        });
+        expect(repaired).toMatchObject({
+          ok: true,
+          report: {
+            acceptedCount: 0,
+            pendingCount: 1,
+            deliverableCount: 1,
+            repairedCount: 1,
+            repairedSignalIds: [signalId],
+          },
+        });
+      } finally {
+        await client.close();
+        await server.close();
+      }
+    } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
@@ -883,4 +1109,26 @@ function fakeJwt(claims: Readonly<Record<string, unknown>>): string {
 function base64UrlJson(value: unknown): string {
   return Buffer.from(JSON.stringify(value), "utf8")
     .toString("base64url");
+}
+
+function workerControlReceipt(input: {
+  readonly signalId: string;
+  readonly target: { readonly jobId: string };
+  readonly deliveryAttemptId: string;
+  readonly createdAt: Date;
+}): WorkerControlDeliveryReceipt {
+  return {
+    schemaVersion: 1,
+    receiptId: `${input.deliveryAttemptId}-receipt`,
+    signalId: input.signalId,
+    target: input.target,
+    state: "accepted",
+    createdAt: input.createdAt,
+    deliveryAttemptId: input.deliveryAttemptId,
+    metadata: {},
+  };
+}
+
+function hashText(value: string): string {
+  return createHash("sha256").update(value).digest("hex").slice(0, 32);
 }

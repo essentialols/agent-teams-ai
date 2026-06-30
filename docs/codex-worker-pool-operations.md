@@ -149,6 +149,80 @@ orchestrators; it only creates the same runtime shape with fewer manual env
 mistakes. The MCP adapter below uses the same application operations so humans
 and agents see the same safety checks and status recommendations.
 
+## Worker Control Inbox
+
+Use the control inbox when a human, orchestrator, or another agent needs to add
+durable guidance to a stored worker job without injecting a live message into an
+active provider turn.
+
+Safe default:
+
+```sh
+subscription-runtime-codex-goal control-enqueue my-job \
+  --body "Continue from current WIP. Prefer targeted tests before full benchmark." \
+  --idempotency-key my-job-guidance-001
+
+subscription-runtime-codex-goal control-decision my-job
+subscription-runtime-codex-goal control-list my-job
+subscription-runtime-codex-goal control-reconcile my-job
+```
+
+The default delivery mode is `next_safe_point`. The next safe continuation will
+include pending guidance in the continuation packet and mark the signal
+`delivered`. `record_only` signals are kept for audit and are not injected into
+worker prompts.
+
+For safety, enqueue responses and normal list responses do not echo signal
+bodies. Use `control-list --include-bodies` only when the operator explicitly
+needs to inspect the stored guidance text.
+
+If a worker crashes after claiming a signal but before recording delivery, the
+signal can remain in `accepted`. Use repair only after the attempt is confirmed
+dead or stale:
+
+```sh
+subscription-runtime-codex-goal control-reconcile my-job \
+  --repair \
+  --accepted-stale-after-ms 300000
+```
+
+Repair releases stale local delivery claims back to pending so the next safe
+continuation can receive the guidance. It does not inject a live message into an
+active turn.
+
+Native MCP equivalents:
+
+- `codex_goal_control_enqueue`
+- `codex_goal_control_list`
+- `codex_goal_control_decision`
+- `codex_goal_control_reconcile`
+- `codex_goal_control_supersede`
+
+Do not use the inbox as an agent-to-agent chat. It is for worker control signals
+targeted at one stored job. Shared or personal agent mailboxes belong in a
+higher-level orchestrator.
+
+## Live worker e2e harness
+
+The permanent live harness is intentionally opt-in. The default command builds
+the package and skips all real provider work:
+
+```sh
+npm run e2e:live-workers
+```
+
+To run it against real sandbox workers, use only explicit test/sandbox
+workspaces:
+
+```sh
+SUBSCRIPTION_RUNTIME_LIVE_WORKERS=1 npm run e2e:live-workers
+```
+
+The harness covers Codex app-server sandbox execution, broken-auth skip,
+quota-to-next-account continuation with inbox delivery, and Claude CLI
+safe-point inbox delivery. It redacts token-shaped strings from result output
+and should not be pointed at real user projects.
+
 ## Choosing the control surface
 
 Use the highest-level surface that still gives the operator enough control:
@@ -558,7 +632,13 @@ Recommended agent loop:
    CLI fallback:
 
    ```bash
-   subscription-runtime-codex-goal run-watch [jobId] --include-log-tail --tail-lines 20 --include-changed-files
+   subscription-runtime-codex-goal run-watch [jobId] --provider codex --include-log-tail --tail-lines 20 --include-changed-files --json
+   ```
+
+   Claude worker artifact fallback:
+
+   ```bash
+   subscription-runtime-codex-goal run-watch [runId] --provider claude --state-root <runtime-state-dir> --include-log-tail --include-changed-files --json
    ```
 
    Reconcile-preview fallback:

@@ -91,7 +91,7 @@ export async function doctorCodexGoalControlSurface(): Promise<{
     fallbackExamples: [
       "subscription-runtime-codex-goal tools",
       "subscription-runtime-codex-goal overview",
-      "subscription-runtime-codex-goal run-watch --include-log-tail --tail-lines 20",
+      "subscription-runtime-codex-goal run-watch --provider codex --include-log-tail --tail-lines 20 --json",
       "subscription-runtime-codex-goal reconcile-preview --registry-root <dir>",
       "subscription-runtime-codex-goal tool codex_goal_status_by_id --args-json '{\"jobId\":\"<jobId>\"}'",
       "subscription-runtime-codex-goal brief <jobId>",

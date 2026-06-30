@@ -2,8 +2,10 @@ import { realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { DefaultRedactor } from "@vioxen/subscription-runtime/core";
+import { LocalFileWorkerControlInboxStore } from "@vioxen/subscription-runtime/store-local-file";
 import {
   decideRunObservation,
+  WorkerControlService,
   type RunCapacityHint,
   type RunControlInboxSummary,
   type RunArtifactSummary,
@@ -183,7 +185,7 @@ export class CodexRunObservationAdapter implements RunObservationPort {
           runId: manifest.jobId,
           manifest,
         })
-      : undefined;
+      : await this.controlInboxSummary({ manifest, paths });
     const snapshotBase = {
       runId: manifest.jobId,
       providerKind: "codex",
@@ -215,9 +217,48 @@ export class CodexRunObservationAdapter implements RunObservationPort {
         progress: snapshotBase.progress,
         result: snapshotBase.result,
         capacity: snapshotBase.capacity,
+        ...(snapshotBase.controlInbox === undefined
+          ? {}
+          : { controlInbox: snapshotBase.controlInbox }),
         manualReviewReasons: snapshotBase.manualReviewReasons,
         warnings: snapshotBase.warnings,
       }),
+    };
+  }
+
+  private async controlInboxSummary(input: {
+    readonly manifest: CodexGoalJobManifest;
+    readonly paths: CodexManifestPaths;
+  }): Promise<RunControlInboxSummary | undefined> {
+    const control = new WorkerControlService({
+      store: new LocalFileWorkerControlInboxStore({
+        rootDir: input.paths.stateRootDir,
+      }),
+    });
+    const target = {
+      jobId: input.manifest.jobId,
+      taskId: input.manifest.taskId,
+      workspaceId: input.paths.workspacePath,
+    };
+    const [report, signals] = await Promise.all([
+      control.reconcile({ target }),
+      control.listSignals({ target, includeExpired: true, includeBodies: false }),
+    ]);
+    if (report.signalCount === 0) return undefined;
+    const latestSignalAt = latestIso(signals.map((view) => view.signal.createdAt));
+    const latestDeliveredAt = latestIso(signals
+      .map((view) => view.latestReceipt?.deliveredAt)
+      .filter((value): value is Date => value instanceof Date));
+    return {
+      pendingCount: report.pendingCount,
+      acceptedCount: report.acceptedCount,
+      deliverableCount: report.deliverableCount,
+      deliveredCount: report.deliveredCount,
+      failedCount: report.failedCount,
+      blockedDeliveryCount: report.blockedCount,
+      safeToContinue: report.blockedCount === 0,
+      ...(latestSignalAt === undefined ? {} : { latestSignalAt }),
+      ...(latestDeliveredAt === undefined ? {} : { latestDeliveredAt }),
     };
   }
 
@@ -418,4 +459,12 @@ function isoAgeMs(value: string | undefined): number | undefined {
   if (!value) return undefined;
   const time = Date.parse(value);
   return Number.isFinite(time) ? Date.now() - time : undefined;
+}
+
+function latestIso(values: readonly Date[]): string | undefined {
+  const latestTime = values
+    .map((value) => value.getTime())
+    .filter((value) => Number.isFinite(value))
+    .sort((a, b) => b - a)[0];
+  return latestTime === undefined ? undefined : new Date(latestTime).toISOString();
 }

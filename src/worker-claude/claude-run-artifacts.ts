@@ -61,6 +61,7 @@ export type ClaudeRunResult = {
   readonly updatedAt: string;
   readonly reason?: string;
   readonly safeMessage?: string;
+  readonly failureDetails?: Readonly<Record<string, string>>;
   readonly outputTextPreview?: string;
   readonly telemetry?: ProviderTaskTelemetry;
   readonly warnings?: readonly RuntimeWarning[];
@@ -254,6 +255,7 @@ export class FileClaudeRunArtifactStore {
     readonly status?: "failed" | "blocked";
     readonly reason?: string;
     readonly safeMessage?: string;
+    readonly failureDetails?: Readonly<Record<string, string>>;
     readonly telemetry?: ProviderTaskTelemetry;
     readonly warnings?: readonly RuntimeWarning[];
     readonly workerState?: string;
@@ -270,6 +272,9 @@ export class FileClaudeRunArtifactStore {
       ...(input.safeMessage === undefined
         ? {}
         : { safeMessage: this.redactor.redact(input.safeMessage) }),
+      ...(input.failureDetails === undefined
+        ? {}
+        : { failureDetails: redactStringRecord(input.failureDetails, this.redactor) }),
       ...(input.telemetry === undefined ? {} : { telemetry: input.telemetry }),
       ...(input.warnings === undefined || input.warnings.length === 0
         ? {}
@@ -293,6 +298,9 @@ export class FileClaudeRunArtifactStore {
       event: `run.${status}`,
       ...(input.reason === undefined ? {} : { reason: input.reason }),
       ...(input.safeMessage === undefined ? {} : { safeMessage: input.safeMessage }),
+      ...(input.failureDetails === undefined
+        ? {}
+        : { failureDetails: redactStringRecord(input.failureDetails, this.redactor) }),
     });
   }
 
@@ -442,6 +450,18 @@ function isArtifactStatus(value: unknown): value is ClaudeRunArtifactStatus {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function redactStringRecord(
+  record: Readonly<Record<string, string>>,
+  redactor: { readonly redact: (input: string) => string },
+): Readonly<Record<string, string>> {
+  return Object.fromEntries(
+    Object.entries(record).map(([key, value]) => [
+      key,
+      redactor.redact(value),
+    ]),
+  );
 }
 
 function preview(value: string): string {

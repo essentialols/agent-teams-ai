@@ -1,4 +1,4 @@
-import { type AttemptJournal, type SafeExecutionPolicy, type SafeExecutionRunResult, type TaskEffectMode, type WorkerAccountCapacityStore, type WorkerPoolHealth, type WorkerPoolStats, type WorkspaceLockStore } from "@vioxen/subscription-runtime/worker-core";
+import { type AttemptJournal, type SafeExecutionPolicy, type SafeExecutionRunResult, type TaskEffectMode, type WorkerAccountCapacityStore, type WorkerControlContinuationSource, type WorkerPoolHealth, type WorkerPoolStats, type WorkspaceLockStore } from "@vioxen/subscription-runtime/worker-core";
 import { type FileBackendCodexWorkerJob, type FileBackendCodexWorkerOptions, type FileBackendCodexWorkerResult } from "./file-backend-codex-worker.js";
 export type FileBackendCodexSafeExecutorAccount = {
     readonly worker: Omit<FileBackendCodexWorkerOptions, "workspace" | "workspacePath">;
@@ -16,6 +16,7 @@ export type FileBackendCodexSafeExecutorOptions = {
      */
     readonly allowDuplicateAccountIdentities?: boolean;
     readonly accountCapacityStore?: WorkerAccountCapacityStore;
+    readonly controlInbox?: WorkerControlContinuationSource;
     readonly lockStore?: WorkspaceLockStore;
     readonly journal?: AttemptJournal;
     readonly safeExecutionPolicy?: SafeExecutionPolicy;
@@ -36,6 +37,7 @@ export type FileBackendCodexSafeExecutorOptions = {
     };
 };
 export type FileBackendCodexSafeExecutorRunInput = FileBackendCodexWorkerJob & {
+    readonly jobId?: string;
     readonly taskId: string;
     readonly originalPrompt?: string;
     readonly effectMode?: TaskEffectMode;

@@ -2,7 +2,8 @@ import { realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { DefaultRedactor } from "@vioxen/subscription-runtime/core";
-import { decideRunObservation, } from "@vioxen/subscription-runtime/worker-core";
+import { LocalFileWorkerControlInboxStore } from "@vioxen/subscription-runtime/store-local-file";
+import { decideRunObservation, WorkerControlService, } from "@vioxen/subscription-runtime/worker-core";
 import { codexGoalJobToArgs, listCodexGoalJobs, readCodexGoalJob, resolveCodexGoalJobRegistryRoot, } from "./codex-goal-jobs.js";
 import { collectCodexGoalStatus, listCodexGoalAccountStatuses, tailCodexGoalLog, } from "./codex-goal-ops.js";
 import { codexGoalProgressPath } from "./codex-goal-runner.js";
@@ -142,7 +143,7 @@ export class CodexRunObservationAdapter {
                 runId: manifest.jobId,
                 manifest,
             })
-            : undefined;
+            : await this.controlInboxSummary({ manifest, paths });
         const snapshotBase = {
             runId: manifest.jobId,
             providerKind: "codex",
@@ -174,9 +175,45 @@ export class CodexRunObservationAdapter {
                 progress: snapshotBase.progress,
                 result: snapshotBase.result,
                 capacity: snapshotBase.capacity,
+                ...(snapshotBase.controlInbox === undefined
+                    ? {}
+                    : { controlInbox: snapshotBase.controlInbox }),
                 manualReviewReasons: snapshotBase.manualReviewReasons,
                 warnings: snapshotBase.warnings,
             }),
+        };
+    }
+    async controlInboxSummary(input) {
+        const control = new WorkerControlService({
+            store: new LocalFileWorkerControlInboxStore({
+                rootDir: input.paths.stateRootDir,
+            }),
+        });
+        const target = {
+            jobId: input.manifest.jobId,
+            taskId: input.manifest.taskId,
+            workspaceId: input.paths.workspacePath,
+        };
+        const [report, signals] = await Promise.all([
+            control.reconcile({ target }),
+            control.listSignals({ target, includeExpired: true, includeBodies: false }),
+        ]);
+        if (report.signalCount === 0)
+            return undefined;
+        const latestSignalAt = latestIso(signals.map((view) => view.signal.createdAt));
+        const latestDeliveredAt = latestIso(signals
+            .map((view) => view.latestReceipt?.deliveredAt)
+            .filter((value) => value instanceof Date));
+        return {
+            pendingCount: report.pendingCount,
+            acceptedCount: report.acceptedCount,
+            deliverableCount: report.deliverableCount,
+            deliveredCount: report.deliveredCount,
+            failedCount: report.failedCount,
+            blockedDeliveryCount: report.blockedCount,
+            safeToContinue: report.blockedCount === 0,
+            ...(latestSignalAt === undefined ? {} : { latestSignalAt }),
+            ...(latestDeliveredAt === undefined ? {} : { latestDeliveredAt }),
         };
     }
     async capacityHints(input) {
@@ -326,5 +363,12 @@ function isoAgeMs(value) {
         return undefined;
     const time = Date.parse(value);
     return Number.isFinite(time) ? Date.now() - time : undefined;
+}
+function latestIso(values) {
+    const latestTime = values
+        .map((value) => value.getTime())
+        .filter((value) => Number.isFinite(value))
+        .sort((a, b) => b - a)[0];
+    return latestTime === undefined ? undefined : new Date(latestTime).toISOString();
 }
 //# sourceMappingURL=codex-run-observation.js.map

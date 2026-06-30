@@ -96,6 +96,22 @@ describe("decideRunObservation", () => {
     });
   });
 
+  it("treats completed runs with workspace changes as ready for review", () => {
+    expect(decideRunObservation({
+      status: "completed",
+      liveness: "dead",
+      result: { exists: true, status: "completed" },
+      workspace: {
+        dirty: true,
+        changedFilesCount: 1,
+        changedFiles: ["M src/file.ts"],
+      },
+    })).toMatchObject({
+      kind: "review_completed",
+      reason: "terminal_result_completed",
+    });
+  });
+
   it("surfaces account and capacity blockers read-only", () => {
     expect(decideRunObservation({
       status: "stopped",
@@ -119,6 +135,37 @@ describe("decideRunObservation", () => {
     })).toMatchObject({
       kind: "manual_review_required",
       reason: "stopped_without_terminal_result",
+    });
+  });
+
+  it("keeps watching running workers with pending control inbox guidance", () => {
+    expect(decideRunObservation({
+      status: "running",
+      liveness: "alive",
+      controlInbox: {
+        pendingCount: 1,
+        deliverableCount: 1,
+        blockedDeliveryCount: 0,
+        safeToContinue: true,
+      },
+    })).toMatchObject({
+      kind: "keep_watching",
+      reason: "guidance_pending",
+    });
+  });
+
+  it("keeps watching after control inbox guidance was delivered", () => {
+    expect(decideRunObservation({
+      status: "running",
+      liveness: "alive",
+      controlInbox: {
+        pendingCount: 0,
+        deliveredCount: 1,
+        latestDeliveredAt: "2026-06-30T00:00:00.000Z",
+      },
+    })).toMatchObject({
+      kind: "keep_watching",
+      reason: "guidance_delivered",
     });
   });
 });

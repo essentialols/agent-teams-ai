@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   DefaultRedactor,
   providerTaskSystemPromptMaxBytes,
+  type ProviderFailure,
   type ProviderTaskEvent,
   type ProcessResult,
   type RunnerCapabilities,
@@ -14,6 +15,7 @@ import {
 import {
   ClaudeBgProviderDriver,
   ClaudeRuntimeTaskExecutionEngine,
+  ClaudeProviderFailureError,
   ClaudeSessionDriver,
   ClaudeTaskAgentDriver,
   claudeBgTaskAgentCapabilities,
@@ -338,6 +340,46 @@ describe("Claude provider adapter", () => {
       },
       telemetry: {
         finishReason: "cancelled",
+      },
+    });
+  });
+
+  it("preserves typed Claude runtime failure diagnostics", async () => {
+    const redactor = new DefaultRedactor();
+    redactor.registerSecret("raw-claude-token", "claude-token");
+    const result = await new ClaudeTaskAgentDriver({
+      engine: new RecordingClaudeEngine({
+        throwFailure: {
+          code: "permission_required",
+          retryable: false,
+          reconnectRequired: false,
+          safeMessage: "Claude permission required for raw-claude-token.",
+          causeCategory: "permission_required",
+          details: {
+            runtimeMessage: "approval required for raw-claude-token",
+          },
+        },
+      }),
+    }).runTask({
+      session: validSession,
+      task: { kind: "review", prompt: "inspect diff" },
+      workspace: { path: "/tmp/claude-workspace" },
+      runner: new StaticRunner(),
+      redactor,
+      abortSignal: new AbortController().signal,
+    });
+
+    expect(result).toMatchObject({
+      status: "failed",
+      failure: {
+        code: "permission_required",
+        safeMessage: "Claude permission required for [redacted:claude-token].",
+        details: {
+          runtimeMessage: "approval required for [redacted:claude-token]",
+        },
+      },
+      telemetry: {
+        finishReason: "provider_error",
       },
     });
   });
@@ -900,6 +942,7 @@ class RecordingClaudeEngine implements ClaudeTaskExecutionEngine {
       readonly outputText?: string;
       readonly structuredOutput?: unknown;
       readonly throwMessage?: string;
+      readonly throwFailure?: ProviderFailure;
     } = {},
   ) {}
 
@@ -907,6 +950,9 @@ class RecordingClaudeEngine implements ClaudeTaskExecutionEngine {
     this.records.push(input);
     if (this.behavior.throwMessage) {
       throw new Error(this.behavior.throwMessage);
+    }
+    if (this.behavior.throwFailure) {
+      throw new ClaudeProviderFailureError(this.behavior.throwFailure);
     }
     return {
       outputText: this.behavior.outputText ?? `claude:${input.prompt}`,

@@ -1,3 +1,4 @@
+import type { WorkerControlContinuationBatch, WorkerControlContinuationSource, WorkerControlTarget } from "./control/index.js";
 import type { WorkerPoolRunOptions } from "./types.js";
 export type TaskRunId = string;
 export type WorkspaceRunId = string;
@@ -63,6 +64,7 @@ export type ContinuationPacket = {
     readonly changedFiles: readonly string[];
     readonly workspaceSummary: string;
     readonly previousOutputSummary?: string;
+    readonly workerControlSignalIds?: readonly string[];
     readonly message: string;
 };
 export type SafeExecutionTaskRecord = {
@@ -152,6 +154,7 @@ export interface ContinuationPacketBuilder {
         readonly previousFailureReason: AttemptFailureReason;
         readonly snapshot: WorkspaceSnapshot;
         readonly previousOutputSummary?: string;
+        readonly controlBatch?: WorkerControlContinuationBatch;
     }): ContinuationPacket;
 }
 export type SafeExecutionErrorCode = "safe_execution_invalid_task" | "safe_execution_workspace_locked" | "safe_execution_workspace_not_git" | "safe_execution_external_retry_disabled" | "safe_execution_continuation_disabled" | "safe_execution_attempts_exhausted";
@@ -198,6 +201,7 @@ export type SafeExecutionRunInput<Job, Result> = {
     readonly classifyError?: (error: unknown) => SafeExecutionFailureClassification;
     readonly summarizeResult?: (result: Result) => string | undefined;
     readonly summarizeError?: (error: unknown) => string | undefined;
+    readonly controlTarget?: WorkerControlTarget;
     readonly abortSignal?: AbortSignal;
 };
 export type SafeExecutionRunResult<Result> = {
@@ -220,6 +224,7 @@ export type SafeExecutionRunnerOptions = {
     readonly journal: AttemptJournal;
     readonly snapshotter?: WorkspaceSnapshotter;
     readonly continuationPacketBuilder?: ContinuationPacketBuilder;
+    readonly controlInbox?: WorkerControlContinuationSource;
     readonly ownerId?: string;
     readonly ownerPid?: number;
     readonly clock?: {
@@ -355,6 +360,7 @@ export declare class DefaultContinuationPacketBuilder implements ContinuationPac
         readonly previousFailureReason: AttemptFailureReason;
         readonly snapshot: WorkspaceSnapshot;
         readonly previousOutputSummary?: string;
+        readonly controlBatch?: WorkerControlContinuationBatch;
     }): ContinuationPacket;
 }
 export declare class SafeExecutionRunner {
@@ -367,6 +373,7 @@ export declare class SafeExecutionRunner {
     constructor(options: SafeExecutionRunnerOptions);
     run<Job, Result>(input: SafeExecutionRunInput<Job, Result>): Promise<SafeExecutionRunResult<Result>>;
     private failStartedTask;
+    private buildContinuationPacket;
 }
 export declare function promptContinuationJobFactory<Job extends {
     readonly prompt: string;

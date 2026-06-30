@@ -60,6 +60,7 @@ export type RunObservationResult = {
   readonly exists?: boolean;
   readonly status?: string;
   readonly reason?: string;
+  readonly details?: Readonly<Record<string, string>>;
   readonly updatedAt?: string;
   readonly path?: string;
   readonly warning?: string;
@@ -99,8 +100,14 @@ export type RunCapacityHint = {
 
 export type RunControlInboxSummary = {
   readonly pendingCount?: number;
+  readonly acceptedCount?: number;
+  readonly deliverableCount?: number;
+  readonly deliveredCount?: number;
+  readonly failedCount?: number;
   readonly latestSignalAt?: string;
+  readonly latestDeliveredAt?: string;
   readonly blockedDeliveryCount?: number;
+  readonly safeToContinue?: boolean;
 };
 
 export type RunReadOnlyDecision = {
@@ -198,6 +205,7 @@ export function decideRunObservation(input: {
   readonly progress?: RunObservationProgress;
   readonly result?: RunObservationResult;
   readonly capacity?: readonly RunCapacityHint[];
+  readonly controlInbox?: RunControlInboxSummary;
   readonly manualReviewReasons?: readonly string[];
   readonly warnings?: readonly RunObservationWarning[];
 }): RunReadOnlyDecision {
@@ -225,6 +233,14 @@ export function decideRunObservation(input: {
       ["progress.heartbeatAgeMs", "progress.staleAfterMs"],
     );
   }
+  if (input.status === "completed") {
+    return decision(
+      "review_completed",
+      "terminal_result_completed",
+      "The run appears completed. Review outputs, logs and workspace before merging or marking reviewed.",
+      ["result.status", "workspace.changedFiles"],
+    );
+  }
   if (input.capacity?.some((hint) => isBlockedCapacity(hint)) === true) {
     return decision(
       "capacity_blocked",
@@ -249,14 +265,6 @@ export function decideRunObservation(input: {
       ["workspace.changedFiles"],
     );
   }
-  if (input.status === "completed") {
-    return decision(
-      "review_completed",
-      "terminal_result_completed",
-      "The run appears completed. Review outputs, logs and workspace before merging or marking reviewed.",
-      ["result.status"],
-    );
-  }
   if (input.status === "stopped") {
     return decision(
       "manual_review_required",
@@ -271,6 +279,22 @@ export function decideRunObservation(input: {
       input.result?.reason ?? "non_running_or_unknown_failure",
       "The run is failed or unknown. Inspect result, logs and workspace before any recovery.",
       ["result.reason", "status"],
+    );
+  }
+  if ((input.controlInbox?.pendingCount ?? 0) > 0) {
+    return decision(
+      "keep_watching",
+      "guidance_pending",
+      "Control inbox guidance is pending. Continue watching until the next safe continuation or operator action.",
+      ["controlInbox.pendingCount", "controlInbox.safeToContinue"],
+    );
+  }
+  if ((input.controlInbox?.deliveredCount ?? 0) > 0) {
+    return decision(
+      "keep_watching",
+      "guidance_delivered",
+      "Control inbox guidance was delivered. Continue watching the worker result.",
+      ["controlInbox.deliveredCount", "controlInbox.latestDeliveredAt"],
     );
   }
   return decision(
@@ -303,6 +327,9 @@ function normalizeRunObservation(input: {
       ...(input.snapshot.capacity === undefined
         ? {}
         : { capacity: input.snapshot.capacity }),
+      ...(input.snapshot.controlInbox === undefined
+        ? {}
+        : { controlInbox: input.snapshot.controlInbox }),
       manualReviewReasons,
       warnings,
     });

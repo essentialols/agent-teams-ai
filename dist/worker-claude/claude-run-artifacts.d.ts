@@ -36,6 +36,7 @@ export type ClaudeRunResult = {
     readonly updatedAt: string;
     readonly reason?: string;
     readonly safeMessage?: string;
+    readonly failureDetails?: Readonly<Record<string, string>>;
     readonly outputTextPreview?: string;
     readonly telemetry?: ProviderTaskTelemetry;
     readonly warnings?: readonly RuntimeWarning[];
@@ -96,6 +97,7 @@ export declare class FileClaudeRunArtifactStore {
         readonly status?: "failed" | "blocked";
         readonly reason?: string;
         readonly safeMessage?: string;
+        readonly failureDetails?: Readonly<Record<string, string>>;
         readonly telemetry?: ProviderTaskTelemetry;
         readonly warnings?: readonly RuntimeWarning[];
         readonly workerState?: string;

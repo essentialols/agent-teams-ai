@@ -91,6 +91,7 @@ export async function updateCodexGoalJob(input) {
 }
 export function codexGoalJobToArgs(manifest) {
     return {
+        jobId: manifest.jobId,
         jobRootDir: manifest.jobRootDir,
         authRootDir: manifest.authRootDir,
         stateRootDir: manifest.stateRootDir,

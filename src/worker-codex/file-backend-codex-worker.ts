@@ -29,6 +29,7 @@ import {
   type CodexAppServerProcessFactory,
   type CodexReasoningEffort,
   type CodexServiceTier,
+  classifyCodexFailure,
   sessionArtifactFromCodexAuthJson,
   codexAuthJsonFromArtifact,
   readCodexAuthJsonFreshness,
@@ -288,12 +289,24 @@ export class FileBackendCodexWorker implements CapacityAwareSubscriptionWorker<
 
   async seedCodexAuthJsonFile(authJsonPath: string): Promise<void> {
     this.seededCodexAuthJsonPath = authJsonPath;
-    const authJson = await readFile(authJsonPath, "utf8");
+    let authJson: string;
+    try {
+      authJson = await readFile(authJsonPath, "utf8");
+    } catch {
+      this.recordFailure(codexSeedSessionInvalidFailure());
+      return;
+    }
     await this.seedCodexAuthJson(authJson);
   }
 
   async seedCodexAuthJson(authJson: string): Promise<void> {
-    const artifact = sessionArtifactFromCodexAuthJson(authJson);
+    let artifact: SessionArtifact;
+    try {
+      artifact = sessionArtifactFromCodexAuthJson(authJson);
+    } catch (error) {
+      this.recordFailure(classifyCodexFailure(error));
+      return;
+    }
     const existing = await this.sessionStore.read({
       providerInstanceId: this.options.providerInstanceId,
       expectedProviderId: "codex",
@@ -843,6 +856,16 @@ export class FileBackendCodexWorker implements CapacityAwareSubscriptionWorker<
       );
     }
   }
+}
+
+function codexSeedSessionInvalidFailure(): ProviderFailure {
+  return {
+    code: "provider_session_invalid",
+    retryable: false,
+    reconnectRequired: true,
+    safeMessage: "Codex session is invalid.",
+    causeCategory: "provider_session_invalid",
+  };
 }
 
 function shouldRetryRefreshConflict(result: RefreshThenRunResult): boolean {

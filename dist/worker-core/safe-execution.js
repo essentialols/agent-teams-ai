@@ -445,6 +445,9 @@ export class DefaultContinuationPacketBuilder {
         const diffStatText = input.snapshot.diffStat
             ? `\nDiff stat:\n${input.snapshot.diffStat}\n`
             : "";
+        const controlText = input.controlBatch?.message
+            ? `\n${input.controlBatch.message}\n`
+            : "";
         const message = [
             "Continue the same task in the current workspace.",
             "",
@@ -461,6 +464,7 @@ export class DefaultContinuationPacketBuilder {
             "Current workspace summary:",
             input.snapshot.summary,
             diffStatText.trimEnd(),
+            controlText.trimEnd(),
             "",
             "Changed files:",
             filesText,
@@ -482,6 +486,9 @@ export class DefaultContinuationPacketBuilder {
             ...(input.previousOutputSummary === undefined
                 ? {}
                 : { previousOutputSummary: input.previousOutputSummary }),
+            ...(input.controlBatch?.signalIds.length
+                ? { workerControlSignalIds: input.controlBatch.signalIds }
+                : {}),
             message,
         };
     }
@@ -603,7 +610,7 @@ export class SafeExecutionRunner {
                 catch (error) {
                     return this.failStartedTask({ input, error });
                 }
-                const packet = this.continuationPacketBuilder.build({
+                const packet = await this.buildContinuationPacket({
                     taskId: input.taskId,
                     attemptNumber: firstAttemptNumber,
                     provider: input.provider,
@@ -614,6 +621,9 @@ export class SafeExecutionRunner {
                     ...(previousOutputSummary === undefined
                         ? {}
                         : { previousOutputSummary }),
+                    ...(input.controlTarget === undefined
+                        ? {}
+                        : { controlTarget: input.controlTarget }),
                 });
                 const continuationJob = continuationJobFor({
                     factory: input.continuationJobFactory,
@@ -785,7 +795,7 @@ export class SafeExecutionRunner {
                             error,
                         };
                     }
-                    const packet = this.continuationPacketBuilder.build({
+                    const packet = await this.buildContinuationPacket({
                         taskId: input.taskId,
                         attemptNumber: attemptNumber + 1,
                         provider: input.provider,
@@ -796,6 +806,9 @@ export class SafeExecutionRunner {
                         ...(previousOutputSummary === undefined
                             ? {}
                             : { previousOutputSummary }),
+                        ...(input.controlTarget === undefined
+                            ? {}
+                            : { controlTarget: input.controlTarget }),
                     });
                     const continuationJob = continuationJobFor({
                         factory: input.continuationJobFactory,
@@ -881,6 +894,36 @@ export class SafeExecutionRunner {
             error: input.error,
         };
     }
+    async buildContinuationPacket(input) {
+        const controlBatch = this.options.controlInbox &&
+            shouldDeliverControlForContinuation(input.previousFailureReason)
+            ? await this.options.controlInbox.consumeForContinuation({
+                target: input.controlTarget ?? {
+                    jobId: input.taskId,
+                    workspaceId: input.workspacePath,
+                },
+                deliveryAttemptId: `${input.taskId}:attempt-${input.attemptNumber}`,
+                now: this.clock.now(),
+            })
+            : undefined;
+        return this.continuationPacketBuilder.build({
+            taskId: input.taskId,
+            attemptNumber: input.attemptNumber,
+            provider: input.provider,
+            workspacePath: input.workspacePath,
+            originalPrompt: input.originalPrompt,
+            previousFailureReason: input.previousFailureReason,
+            snapshot: input.snapshot,
+            ...(input.previousOutputSummary === undefined
+                ? {}
+                : { previousOutputSummary: input.previousOutputSummary }),
+            ...(controlBatch === undefined ? {} : { controlBatch }),
+        });
+    }
+}
+function shouldDeliverControlForContinuation(previousFailureReason) {
+    return (previousFailureReason !== "account_unavailable" &&
+        previousFailureReason !== "reconnect_required");
 }
 export function promptContinuationJobFactory(input) {
     return {

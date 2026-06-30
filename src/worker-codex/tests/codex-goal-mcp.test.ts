@@ -170,6 +170,94 @@ describe("codex goal MCP server", () => {
     }
   });
 
+  it("creates a job manifest when starting a detached worker", async () => {
+    if (!(await hasTmux())) return;
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-start-job-"));
+    const registryRootDir = join(root, "registry");
+    const jobRootDir = join(root, "job");
+    const authRootDir = join(root, "auth");
+    const workspacePath = join(root, "workspace");
+    const promptPath = join(jobRootDir, "prompt.md");
+    const taskId = "sandbox-start-task";
+    const jobId = "job-started";
+    const tmuxSession = `subscription-runtime-start-job-${process.pid}-${Date.now()}`;
+
+    try {
+      await mkdir(jobRootDir, { recursive: true });
+      await mkdir(workspacePath, { recursive: true });
+      await writeFile(promptPath, "Return a tiny JSON status.\n");
+      await writeFakeAuth(authRootDir, "account-a", {
+        lastRefresh: "2026-06-03T00:00:00.000Z",
+      });
+
+      const server = createCodexGoalMcpServer();
+      const client = new Client({ name: "subscription-runtime-test", version: "0.0.0" });
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+      await Promise.all([
+        server.connect(serverTransport),
+        client.connect(clientTransport),
+      ]);
+
+      try {
+        const start = await callToolJson(client, "codex_goal_start", {
+          registryRootDir,
+          jobId,
+          jobRootDir,
+          authRootDir,
+          workspacePath,
+          promptPath,
+          taskId,
+          accounts: ["account-a"],
+          tmuxSession,
+          codexBinaryPath: "/bin/echo",
+          requireGitWorkspace: false,
+          skipDoctor: true,
+          confirmStart: true,
+          taskTimeoutMs: 1_000,
+          maxAccountCycles: 1,
+          outputFormat: "json",
+        });
+
+        expect(start).toMatchObject({
+          ok: true,
+          registryRootDir,
+          jobId,
+          taskId,
+          tmuxSession,
+        });
+
+        const job = await callToolJson(client, "codex_goal_get_job", {
+          registryRootDir,
+          jobId,
+        });
+
+        expect(job).toMatchObject({
+          ok: true,
+          registryRootDir,
+          manifest: {
+            jobId,
+            jobRootDir,
+            authRootDir,
+            workspacePath,
+            promptPath,
+            taskId,
+            accounts: ["account-a"],
+            tmuxSession,
+            codexBinaryPath: "/bin/echo",
+            requireGitWorkspace: false,
+            outputFormat: "json",
+          },
+        });
+      } finally {
+        await execFileAsync("tmux", ["kill-session", "-t", tmuxSession]).catch(() => undefined);
+        await client.close();
+        await server.close();
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("exposes Claude run watch snapshots through provider-neutral MCP", async () => {
     const root = await mkdtemp(join(tmpdir(), "subscription-runtime-claude-run-watch-"));
     const stateRootDir = join(root, "state");

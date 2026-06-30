@@ -109,6 +109,7 @@ type GoalMcpArgs = {
 };
 
 type StartMcpArgs = GoalMcpArgs & {
+  readonly registryRootDir?: string;
   readonly confirmStart?: boolean;
   readonly skipDoctor?: boolean;
   readonly forceStart?: boolean;
@@ -1233,6 +1234,7 @@ export function createCodexGoalMcpServer(
         "Start a detached tmux Codex goal worker after explicit confirmation.",
       inputSchema: {
         ...goalInputSchema(),
+        registryRootDir: z.string().optional(),
         confirmStart: z.boolean().optional(),
         skipDoctor: z.boolean().optional(),
         forceStart: z.boolean().optional(),
@@ -1287,12 +1289,20 @@ export function createCodexGoalMcpServer(
           });
         }
       }
+      const registryRootDir = registryRootFromArgs(args as StartMcpArgs);
+      const manifest = await upsertCodexGoalStartManifest({
+        registryRootDir,
+        launch,
+      });
       const command = await startCodexGoalTmux(launch);
       return mcpJson({
         ok: true,
+        registryRootDir,
+        jobId: manifest.jobId,
         taskId: launch.config.taskId,
         tmuxSession: launch.tmuxSession,
         tmuxCommand: command.preview,
+        manifest,
         summary: launchSummary(launch),
       });
     }),
@@ -2434,6 +2444,93 @@ function jobManifestPatchFromArgs(args: JobUpdateMcpArgs): CodexGoalJobManifestP
   putIfDefined(patch, "logPath", args.logPath && resolvePath(cwd, args.logPath));
   putIfDefined(patch, "outputFormat", stringValue(args.outputFormat));
   return patch as CodexGoalJobManifestPatch;
+}
+
+async function upsertCodexGoalStartManifest(input: {
+  readonly registryRootDir: string;
+  readonly launch: CodexGoalLaunchInput;
+}): Promise<CodexGoalJobManifest> {
+  const manifestInput = jobManifestInputFromLaunch(input.launch);
+  try {
+    return await createCodexGoalJob({
+      registryRootDir: input.registryRootDir,
+      manifest: manifestInput,
+    });
+  } catch (error) {
+    if (!isFileAlreadyExistsError(error)) throw error;
+    return await updateCodexGoalJob({
+      registryRootDir: input.registryRootDir,
+      jobId: manifestInput.jobId,
+      patch: codexGoalStartManifestPatch(manifestInput),
+    });
+  }
+}
+
+function jobManifestInputFromLaunch(
+  launch: CodexGoalLaunchInput,
+): CodexGoalJobManifestInput {
+  const jobId = launch.config.jobId ?? launch.config.taskId;
+  return {
+    jobId,
+    jobRootDir: launch.config.jobRootDir,
+    authRootDir: launch.config.authRootDir,
+    ...(launch.config.stateRootDir ? { stateRootDir: launch.config.stateRootDir } : {}),
+    workspacePath: launch.config.workspacePath,
+    promptPath: launch.config.promptPath,
+    taskId: launch.config.taskId,
+    accounts: launch.config.accounts.map((account) => account.name),
+    ...(launch.config.outputPath ? { outputPath: launch.config.outputPath } : {}),
+    ...(launch.config.progressPath ? { progressPath: launch.config.progressPath } : {}),
+    ...(launch.config.progressHeartbeatMs
+      ? { progressHeartbeatMs: launch.config.progressHeartbeatMs }
+      : {}),
+    ...(launch.config.codexBinaryPath
+      ? { codexBinaryPath: launch.config.codexBinaryPath }
+      : {}),
+    ...(launch.config.model ? { model: launch.config.model } : {}),
+    ...(launch.config.reasoningEffort
+      ? { reasoningEffort: launch.config.reasoningEffort }
+      : {}),
+    ...(launch.config.serviceTier ? { serviceTier: launch.config.serviceTier } : {}),
+    ...(launch.config.executionEngine
+      ? { executionEngine: launch.config.executionEngine }
+      : {}),
+    ...(launch.config.taskTimeoutMs ? { taskTimeoutMs: launch.config.taskTimeoutMs } : {}),
+    ...(launch.config.staleLockMs ? { staleLockMs: launch.config.staleLockMs } : {}),
+    ...(launch.config.maxAccountCycles
+      ? { maxAccountCycles: launch.config.maxAccountCycles }
+      : {}),
+    ...(launch.config.permissionMode ? { permissionMode: launch.config.permissionMode } : {}),
+    ...(launch.config.allowDuplicateAccountIdentities
+      ? { allowDuplicateAccountIdentities: launch.config.allowDuplicateAccountIdentities }
+      : {}),
+    ...(launch.config.requireGitWorkspace === undefined
+      ? {}
+      : { requireGitWorkspace: launch.config.requireGitWorkspace }),
+    ...(launch.config.prewarmOnStart
+      ? { prewarmOnStart: launch.config.prewarmOnStart }
+      : {}),
+    ...(launch.tmuxSession ? { tmuxSession: launch.tmuxSession } : {}),
+    cwd: launch.cwd,
+    logPath: launch.logPath,
+    ...(launch.format ? { outputFormat: launch.format } : {}),
+  };
+}
+
+function codexGoalStartManifestPatch(
+  manifest: CodexGoalJobManifestInput,
+): CodexGoalJobManifestPatch {
+  const { jobId: _jobId, createdAt: _createdAt, ...patch } = manifest;
+  return patch;
+}
+
+function isFileAlreadyExistsError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { readonly code?: unknown }).code === "EEXIST"
+  );
 }
 
 export async function buildCodexGoalBrief(input: {

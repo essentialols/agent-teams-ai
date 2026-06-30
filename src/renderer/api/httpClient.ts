@@ -32,6 +32,13 @@ import {
   type UpsertOrganizationRelationRequest,
   type UpsertOrganizationUnitRequest,
 } from '@features/organizations/contracts';
+import {
+  TOKEN_USAGE_SNAPSHOT_CHANGED,
+  TOKEN_USAGE_SNAPSHOT_ROUTE,
+  type TokenUsageAnalyticsSnapshotDto,
+  type TokenUsageElectronApi,
+  type TokenUsageSnapshotRequest,
+} from '@features/token-usage/contracts';
 
 import type {
   CodexAccountSnapshotDto,
@@ -127,6 +134,24 @@ import type {
 import type { AgentConfig, MemberWorkSyncElectronApi } from '@shared/types/api';
 import type { EditorAPI, ProjectAPI } from '@shared/types/editor';
 import type { TerminalAPI } from '@shared/types/terminal';
+
+function buildTokenUsageSnapshotRoute(request?: TokenUsageSnapshotRequest): string {
+  const query = new URLSearchParams();
+  if (request?.teamName) query.set('teamName', request.teamName);
+  for (const teamName of request?.teamNames ?? []) {
+    query.append('teamNames', teamName);
+  }
+  if (request?.agentId) query.set('agentId', request.agentId);
+  if (request?.commandId) query.set('commandId', request.commandId);
+  if (request?.commandInvocationId) {
+    query.set('commandInvocationId', request.commandInvocationId);
+  }
+  if (request?.nativeSessionId) query.set('nativeSessionId', request.nativeSessionId);
+  if (request?.from) query.set('from', request.from);
+  if (request?.to) query.set('to', request.to);
+  const suffix = query.toString();
+  return suffix ? `${TOKEN_USAGE_SNAPSHOT_ROUTE}?${suffix}` : TOKEN_USAGE_SNAPSHOT_ROUTE;
+}
 
 export class HttpAPIClient implements ElectronAPI {
   private baseUrl: string;
@@ -381,6 +406,18 @@ export class HttpAPIClient implements ElectronAPI {
     setMemberLogStreamTracking: async () => {
       // Not available in browser mode - no-op.
     },
+  };
+
+  tokenUsage: TokenUsageElectronApi['tokenUsage'] = {
+    getSnapshot: (request?: TokenUsageSnapshotRequest): Promise<TokenUsageAnalyticsSnapshotDto> =>
+      this.get<TokenUsageAnalyticsSnapshotDto>(buildTokenUsageSnapshotRoute(request)),
+    refreshSnapshot: (
+      request?: TokenUsageSnapshotRequest
+    ): Promise<TokenUsageAnalyticsSnapshotDto> =>
+      this.get<TokenUsageAnalyticsSnapshotDto>(buildTokenUsageSnapshotRoute(request)),
+    onSnapshotChanged: (
+      callback: (snapshot: TokenUsageAnalyticsSnapshotDto) => void
+    ): (() => void) => this.addEventListener(TOKEN_USAGE_SNAPSHOT_CHANGED, callback),
   };
 
   getProjects = (): Promise<Project[]> => this.get<Project[]>('/api/projects');

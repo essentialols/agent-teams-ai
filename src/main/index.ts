@@ -75,6 +75,13 @@ import {
   removeTerminalWorkspaceIpc,
   type TerminalWorkspaceFeatureFacade,
 } from '@features/terminal-workspace/main';
+import { TOKEN_USAGE_SNAPSHOT_CHANGED } from '@features/token-usage/contracts';
+import {
+  createTokenUsageFeature,
+  registerTokenUsageIpc,
+  removeTokenUsageIpc,
+  type TokenUsageFeatureFacade,
+} from '@features/token-usage/main';
 import { createWorkspaceTrustCoordinator } from '@features/workspace-trust/main';
 import { ensureOpenCodeBridgeRuntimeBinaryEnv } from '@main/services/runtime/openCodeBridgeRuntimeEnv';
 import { ClaudeMultimodelBridgeService } from '@main/services/runtime/ClaudeMultimodelBridgeService';
@@ -204,6 +211,7 @@ import { getAppIconPath } from './utils/appIcon';
 import { configureFatalDiagnosticReport } from './utils/fatalDiagnosticReport';
 import {
   getAutoDetectedClaudeBasePath,
+  getAppDataPath,
   getClaudeBasePath,
   getHomeDir,
   getProjectsBasePath,
@@ -299,6 +307,38 @@ function hasWarningRelayDiagnostics(diagnostics: readonly string[]): boolean {
   return diagnostics.some(
     (diagnostic) => !isInformationalOpenCodeRuntimeDeliveryDiagnostic(diagnostic)
   );
+}
+
+function readOptionalEnv(name: string): string | undefined {
+  const value = process.env[name]?.trim();
+  return value ? value : undefined;
+}
+
+function readOptionalEnvNumber(name: string): number | undefined {
+  const value = readOptionalEnv(name);
+  if (!value) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function readOptionalEnvArgs(name: string): string[] | undefined {
+  const value = readOptionalEnv(name);
+  if (!value) return undefined;
+  if (value.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      if (Array.isArray(parsed)) {
+        const args = parsed.filter(
+          (item): item is string => typeof item === 'string' && item.trim().length > 0
+        );
+        return args.length > 0 ? args : undefined;
+      }
+    } catch {
+      logger.warn(`Ignoring invalid JSON args in ${name}`);
+    }
+  }
+  const args = value.split(/\s+/).filter(Boolean);
+  return args.length > 0 ? args : undefined;
 }
 
 if (
@@ -955,6 +995,7 @@ let recentProjectsFeature: RecentProjectsFeatureFacade;
 let organizationsFeature: OrganizationsFeatureFacade;
 let runtimeProviderManagementFeature: RuntimeProviderManagementFeatureFacade;
 let terminalWorkspaceFeature: TerminalWorkspaceFeatureFacade | null = null;
+let tokenUsageFeature: TokenUsageFeatureFacade | null = null;
 let memberWorkSyncFeature: MemberWorkSyncFeatureFacade | null = null;
 let teamDataService: TeamDataService;
 let teamProvisioningService: TeamProvisioningService;
@@ -1983,6 +2024,27 @@ async function initializeServices(): Promise<void> {
     teamsBasePath: getTeamsBasePath(),
     logger: createLogger('Feature:TerminalWorkspace'),
   });
+  tokenUsageFeature = createTokenUsageFeature({
+    ledgerPath: join(getAppDataPath(), 'token-usage', 'ledger.json'),
+    teamsBasePath: getTeamsBasePath(),
+    claudeProjectsBasePath: getProjectsBasePath(),
+    ccusageJsonPath: process.env.AGENT_TEAMS_TOKEN_USAGE_CCUSAGE_JSON,
+    tokscaleJsonPath: process.env.AGENT_TEAMS_TOKEN_USAGE_TOKSCALE_JSON,
+    ccusageCommand: readOptionalEnv('AGENT_TEAMS_TOKEN_USAGE_CCUSAGE_COMMAND'),
+    ccusageArgs: readOptionalEnvArgs('AGENT_TEAMS_TOKEN_USAGE_CCUSAGE_ARGS'),
+    tokscaleCommand: readOptionalEnv('AGENT_TEAMS_TOKEN_USAGE_TOKSCALE_COMMAND'),
+    tokscaleArgs: readOptionalEnvArgs('AGENT_TEAMS_TOKEN_USAGE_TOKSCALE_ARGS'),
+    commandImporterRefreshIntervalMs: readOptionalEnvNumber(
+      'AGENT_TEAMS_TOKEN_USAGE_COMMAND_REFRESH_MS'
+    ),
+    publisher: {
+      publishSnapshot: (snapshot) => {
+        safeSendToRenderer(mainWindow, TOKEN_USAGE_SNAPSHOT_CHANGED, snapshot);
+        httpServer?.broadcast(TOKEN_USAGE_SNAPSHOT_CHANGED, snapshot);
+      },
+    },
+    logger: createLogger('Feature:TokenUsage'),
+  });
   const memberWorkSyncLogger = createLogger('Feature:MemberWorkSync');
   type MemberWorkSyncRuntimeSnapshot = Awaited<
     ReturnType<TeamProvisioningService['getTeamAgentRuntimeSnapshot']>
@@ -2468,6 +2530,9 @@ async function initializeServices(): Promise<void> {
   registerOrganizationsIpc(ipcMain, organizationsFeature);
   registerRuntimeProviderManagementIpc(ipcMain, runtimeProviderManagementFeature);
   registerTerminalWorkspaceIpc(ipcMain, terminalWorkspaceFeature);
+  if (tokenUsageFeature) {
+    registerTokenUsageIpc(ipcMain, tokenUsageFeature);
+  }
   registerMemberWorkSyncIpc(ipcMain, memberWorkSyncFeature);
   registerMemberLogStreamIpc(ipcMain, memberLogStreamFeature);
 
@@ -2528,6 +2593,7 @@ async function startHttpServer(
         dataCache: activeContext.dataCache,
         recentProjectsFeature,
         organizationsFeature,
+        tokenUsageFeature: tokenUsageFeature ?? undefined,
         memberWorkSyncFeature: memberWorkSyncFeature ?? undefined,
         updaterService,
         sshConnectionManager,
@@ -2679,6 +2745,7 @@ async function shutdownServices(): Promise<void> {
       removeOrganizationsIpc(ipcMain);
       removeRuntimeProviderManagementIpc(ipcMain);
       removeTerminalWorkspaceIpc(ipcMain);
+      removeTokenUsageIpc(ipcMain);
       removeMemberWorkSyncIpc(ipcMain);
       removeMemberLogStreamIpc(ipcMain);
     });

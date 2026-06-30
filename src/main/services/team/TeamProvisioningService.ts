@@ -550,6 +550,14 @@ import {
   type TeamProvisioningStreamEventPorts,
 } from './provisioning/TeamProvisioningStreamEvents';
 import {
+  buildAllowControlResponsePayload,
+  buildDenyControlResponsePayload,
+  buildToolApprovalAutoResolvedEvent,
+  formatToolApprovalBody,
+  resolveToolApprovalTimeoutAutoResolution,
+  TOOL_APPROVAL_TIMEOUT_CONTROL_DENY_MESSAGE,
+} from './provisioning/TeamProvisioningToolApprovalFlow';
+import {
   handleTeamProvisioningTurnComplete,
   type TeamProvisioningTurnCompletePorts,
 } from './provisioning/TeamProvisioningTurnComplete';
@@ -775,7 +783,6 @@ import type {
   TeamRuntimeState,
   TeamTask,
   ToolActivityEventPayload,
-  ToolApprovalAutoResolved,
   ToolApprovalEvent,
   ToolApprovalRequest,
   ToolApprovalSettings,
@@ -21831,13 +21838,14 @@ export class TeamProvisioningService {
     if (autoResult.autoAllow) {
       logger.info(`[${run.teamName}] Auto-allowing ${toolName} (${autoResult.reason})`);
       this.autoAllowControlRequest(run, requestId);
-      this.emitToolApprovalEvent({
-        autoResolved: true,
-        requestId,
-        runId: run.runId,
-        teamName: run.teamName,
-        reason: 'auto_allow_category',
-      } as ToolApprovalAutoResolved);
+      this.emitToolApprovalEvent(
+        buildToolApprovalAutoResolvedEvent({
+          requestId,
+          runId: run.runId,
+          teamName: run.teamName,
+          reason: 'auto_allow_category',
+        })
+      );
       return;
     }
 
@@ -21901,13 +21909,14 @@ export class TeamProvisioningService {
         perm.toolName,
         perm.input
       );
-      this.emitToolApprovalEvent({
-        autoResolved: true,
-        requestId: perm.requestId,
-        runId: run.runId,
-        teamName: run.teamName,
-        reason: 'auto_allow_category',
-      } as ToolApprovalAutoResolved);
+      this.emitToolApprovalEvent(
+        buildToolApprovalAutoResolvedEvent({
+          requestId: perm.requestId,
+          runId: run.runId,
+          teamName: run.teamName,
+          reason: 'auto_allow_category',
+        })
+      );
       return;
     }
 
@@ -21970,7 +21979,7 @@ export class TeamProvisioningService {
     const isLinux = process.platform === 'linux';
     const iconPath = isMac ? undefined : getAppIconPath();
     const teamLabel = approval.teamDisplayName ?? run?.request.displayName ?? approval.teamName;
-    const body = this.formatToolApprovalBody(approval.toolName, approval.toolInput);
+    const body = formatToolApprovalBody(approval.toolName, approval.toolInput);
 
     // Actions (Allow/Deny buttons) supported on macOS and Windows.
     // Linux libnotify doesn't fire the 'action' event — users get click-to-focus.
@@ -22054,46 +22063,6 @@ export class TeamProvisioningService {
     });
   }
 
-  private formatToolApprovalBody(toolName: string, toolInput: Record<string, unknown>): string {
-    switch (toolName) {
-      case 'AskUserQuestion':
-        return this.formatAskUserQuestionApprovalBody(toolInput);
-      case 'Bash':
-        return `Bash: ${typeof toolInput.command === 'string' ? toolInput.command.slice(0, 150) : 'command'}`;
-      case 'Write':
-      case 'Edit':
-      case 'Read':
-      case 'NotebookEdit':
-        return `${toolName}: ${typeof toolInput.file_path === 'string' ? toolInput.file_path : 'file'}`;
-      default:
-        return `${toolName}: ${JSON.stringify(toolInput).slice(0, 150)}`;
-    }
-  }
-
-  private formatAskUserQuestionApprovalBody(toolInput: Record<string, unknown>): string {
-    const rawQuestions = Array.isArray(toolInput.questions) ? toolInput.questions : [];
-    const questions = rawQuestions
-      .map((item) => {
-        if (!item || typeof item !== 'object') return null;
-        const question =
-          'question' in item && typeof item.question === 'string' ? item.question.trim() : null;
-        return question && question.length > 0 ? question.replace(/\s+/g, ' ') : null;
-      })
-      .filter((question): question is string => Boolean(question));
-
-    if (questions.length === 0) {
-      return 'Question: User input is required';
-    }
-
-    const firstQuestion = questions[0];
-    const truncatedQuestion =
-      firstQuestion.length > 140 ? `${firstQuestion.slice(0, 137)}...` : firstQuestion;
-
-    return questions.length === 1
-      ? `Question: ${truncatedQuestion}`
-      : `Questions (${questions.length}): ${truncatedQuestion}`;
-  }
-
   /**
    * Immediately sends an "allow" control_response for a non-tool control_request.
    * Prevents CLI deadlock for hook_callback and other non-`can_use_tool` subtypes.
@@ -22104,14 +22073,7 @@ export class TeamProvisioningService {
       return;
     }
 
-    const response = {
-      type: 'control_response',
-      response: {
-        subtype: 'success',
-        request_id: requestId,
-        response: { behavior: 'allow', updatedInput: {} },
-      },
-    };
+    const response = buildAllowControlResponsePayload(requestId);
 
     run.child.stdin.write(JSON.stringify(response) + '\n', (err) => {
       if (err) {
@@ -22140,12 +22102,18 @@ export class TeamProvisioningService {
 
       // Read CURRENT settings (not captured closure) in case user changed action
       const currentAction = this.getToolApprovalSettings(run.teamName).timeoutAction;
-      if (currentAction === 'wait') {
+      const resolution = resolveToolApprovalTimeoutAutoResolution({
+        timeoutAction: currentAction,
+        requestId,
+        runId: run.runId,
+        teamName: run.teamName,
+      });
+      if (!resolution) {
         // Settings changed to 'wait' but timer fired before reEvaluatePendingApprovals cleared it
         this.inFlightResponses.delete(requestId);
         return;
       }
-      const allow = currentAction === 'allow';
+      const { allow } = resolution;
       logger.info(`[${run.teamName}] Timeout ${allow ? 'allowing' : 'denying'} ${requestId}`);
 
       const approval = run.pendingApprovals.get(requestId);
@@ -22156,7 +22124,7 @@ export class TeamProvisioningService {
           approval.source,
           requestId,
           allow,
-          allow ? undefined : 'Timed out - auto-denied by settings',
+          allow ? undefined : resolution.teammateDenyMessage,
           approval.permissionSuggestions,
           approval.toolName,
           approval.toolInput
@@ -22164,13 +22132,7 @@ export class TeamProvisioningService {
           run.pendingApprovals.delete(requestId);
           this.inFlightResponses.delete(requestId);
           this.dismissApprovalNotification(requestId);
-          this.emitToolApprovalEvent({
-            autoResolved: true,
-            requestId,
-            runId: run.runId,
-            teamName: run.teamName,
-            reason: allow ? 'timeout_allow' : 'timeout_deny',
-          } as ToolApprovalAutoResolved);
+          this.emitToolApprovalEvent(resolution.event);
         });
         return;
       }
@@ -22184,13 +22146,7 @@ export class TeamProvisioningService {
       this.inFlightResponses.delete(requestId);
       this.dismissApprovalNotification(requestId);
 
-      this.emitToolApprovalEvent({
-        autoResolved: true,
-        requestId,
-        runId: run.runId,
-        teamName: run.teamName,
-        reason: allow ? 'timeout_allow' : 'timeout_deny',
-      } as ToolApprovalAutoResolved);
+      this.emitToolApprovalEvent(resolution.event);
     }, timeoutMs);
 
     this.pendingTimeouts.set(requestId, timer);
@@ -22210,14 +22166,10 @@ export class TeamProvisioningService {
       return;
     }
 
-    const response = {
-      type: 'control_response',
-      response: {
-        subtype: 'success',
-        request_id: requestId,
-        response: { behavior: 'deny', message: 'Timed out — auto-denied by settings' },
-      },
-    };
+    const response = buildDenyControlResponsePayload(
+      requestId,
+      TOOL_APPROVAL_TIMEOUT_CONTROL_DENY_MESSAGE
+    );
 
     run.child.stdin.write(JSON.stringify(response) + '\n', (err) => {
       if (err) {
@@ -22253,13 +22205,14 @@ export class TeamProvisioningService {
           }
           this.dismissApprovalNotification(requestId);
           toRemove.push(requestId);
-          this.emitToolApprovalEvent({
-            autoResolved: true,
-            requestId,
-            runId: run.runId,
-            teamName: run.teamName,
-            reason: 'auto_allow_category',
-          } as ToolApprovalAutoResolved);
+          this.emitToolApprovalEvent(
+            buildToolApprovalAutoResolvedEvent({
+              requestId,
+              runId: run.runId,
+              teamName: run.teamName,
+              reason: 'auto_allow_category',
+            })
+          );
         } else if (settings.timeoutAction !== 'wait' && !this.pendingTimeouts.has(requestId)) {
           // Settings changed from 'wait' to allow/deny — start timer for already pending items
           this.startApprovalTimeout(run, requestId);
@@ -22454,22 +22407,8 @@ export class TeamProvisioningService {
       }
     }
     const response = allow
-      ? {
-          type: 'control_response',
-          response: {
-            subtype: 'success',
-            request_id: requestId,
-            response: allowResponse,
-          },
-        }
-      : {
-          type: 'control_response',
-          response: {
-            subtype: 'success',
-            request_id: requestId,
-            response: { behavior: 'deny', message: message ?? 'User denied' },
-          },
-        };
+      ? buildAllowControlResponsePayload(requestId, allowResponse)
+      : buildDenyControlResponsePayload(requestId, message ?? 'User denied');
 
     const stdin = run.child.stdin;
     const responseJson = JSON.stringify(response) + '\n';

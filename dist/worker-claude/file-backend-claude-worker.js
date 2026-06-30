@@ -9,6 +9,7 @@ import { NodeProcessRunner } from "../worker-local/node-process-runner.js";
 import { NullWorkerObservability } from "../worker-local/observability.js";
 import { StableWorkerWorkspace } from "../worker-local/temp-workspace.js";
 import { FileClaudeRateLimitTelemetry, } from "./rate-limit-telemetry.js";
+import { FileClaudeRunArtifactStore, } from "./claude-run-artifacts.js";
 import { FileClaudeLogicalThreadStore, FileClaudeTranscriptBundleStore, } from "./thread-handoff.js";
 const claudeCapacityAccountIdMetadataKey = "capacityAccountId";
 export class FileBackendClaudeWorker {
@@ -30,6 +31,8 @@ export class FileBackendClaudeWorker {
     rateLimitTelemetry;
     logicalThreadStore;
     transcriptBundleStore;
+    runArtifacts;
+    runArtifactHeartbeatMs;
     capacityState = { availability: "available" };
     windowStartedAtMs;
     runsInWindow = 0;
@@ -71,6 +74,13 @@ export class FileBackendClaudeWorker {
         this.transcriptBundleStore =
             options.transcriptBundleStore ??
                 new FileClaudeTranscriptBundleStore(join(options.stateRootDir, "claude-transcript-bundles"));
+        this.runArtifacts = new FileClaudeRunArtifactStore({
+            rootDir: options.runArtifactsRootDir ??
+                join(options.stateRootDir, "claude-run-artifacts"),
+            ...(options.clock ? { clock: options.clock } : {}),
+            redactor: this.redactor,
+        });
+        this.runArtifactHeartbeatMs = options.runArtifactHeartbeatMs ?? 30_000;
         const { sessionStore, leaseStore } = createLocalFileBackendRuntimeAdapters({
             providerId: "claude",
             rootDir: join(options.stateRootDir, "sessions"),
@@ -239,34 +249,116 @@ export class FileBackendClaudeWorker {
             return this.runThreadJob(job);
         return this.runProviderTask(job);
     }
-    async runProviderTask(job) {
+    async runProviderTask(job, input = {}) {
         this.assertStarted();
         assertProviderTaskSystemPrompt(job.systemPrompt, "job.systemPrompt");
         const runId = job.runId ?? `local-${randomUUID()}`;
         const abortSignal = job.abortSignal ?? new AbortController().signal;
-        const result = await this.runtime.refreshThenRunTask({
+        const workspaceId = input.workspaceId ?? this.stableWorkspacePath ?? undefined;
+        await this.runArtifacts.startRun({
+            runId,
             providerInstanceId: this.options.providerInstanceId,
-            task: {
-                kind: job.kind ?? "structured-prompt",
-                prompt: job.prompt,
-                ...(job.systemPrompt !== undefined ? { systemPrompt: job.systemPrompt } : {}),
-                ...(job.outputSchemaName
-                    ? { outputSchemaName: job.outputSchemaName }
-                    : {}),
-                ...(job.controls ? { controls: job.controls } : {}),
-                ...(job.metadata ? { metadata: job.metadata } : {}),
-            },
-            runContext: {
-                runId,
-                attempt: 1,
-                abortSignal,
-            },
+            workerId: this.workerId,
+            configDir: this.configDir,
+            ...(workspaceId === undefined ? {} : { workspacePath: workspaceId }),
+            ...(job.jobId === undefined ? {} : { jobId: job.jobId }),
+            ...(isThreadJob(job) ? { threadId: job.threadId } : {}),
+            ...(this.capacityAccountId ?? this.options.capacityAccountId
+                ? { capacityAccountId: this.capacityAccountId ?? this.options.capacityAccountId }
+                : {}),
+            workerState: this.workerState,
+            capacity: this.capacity(),
         });
-        if (result.status === "blocked") {
-            this.recordBlocked(result.reason);
-            throw new SubscriptionWorkerError("subscription_worker_run_failed", result.safeMessage, { details: { reason: result.reason } });
+        const heartbeat = this.runArtifacts.startHeartbeat({
+            runId,
+            intervalMs: this.runArtifactHeartbeatMs,
+            snapshot: () => ({
+                workerState: this.workerState,
+                capacity: this.capacity(),
+            }),
+        });
+        let terminalRecorded = false;
+        try {
+            const result = await this.runtime.refreshThenRunTask({
+                providerInstanceId: this.options.providerInstanceId,
+                task: {
+                    kind: job.kind ?? "structured-prompt",
+                    prompt: job.prompt,
+                    ...(job.systemPrompt !== undefined ? { systemPrompt: job.systemPrompt } : {}),
+                    ...(job.outputSchemaName
+                        ? { outputSchemaName: job.outputSchemaName }
+                        : {}),
+                    ...(job.controls ? { controls: job.controls } : {}),
+                    ...(job.metadata ? { metadata: job.metadata } : {}),
+                },
+                runContext: {
+                    runId,
+                    attempt: 1,
+                    abortSignal,
+                },
+            });
+            if (result.status === "blocked") {
+                this.recordBlocked(result.reason);
+                terminalRecorded = true;
+                heartbeat.stop();
+                await this.runArtifacts.failRun({
+                    runId,
+                    status: "blocked",
+                    reason: result.reason,
+                    safeMessage: result.safeMessage,
+                    warnings: result.warnings,
+                    workerState: this.workerState,
+                    capacity: this.capacity(),
+                });
+                throw new SubscriptionWorkerError("subscription_worker_run_failed", result.safeMessage, { details: { reason: result.reason } });
+            }
+            if (result.task.status === "failed") {
+                this.recordFailure(result.task.failure);
+                terminalRecorded = true;
+                heartbeat.stop();
+                await this.runArtifacts.failRun({
+                    runId,
+                    status: "failed",
+                    reason: result.task.failure.code,
+                    safeMessage: result.task.failure.safeMessage,
+                    ...(result.task.telemetry === undefined
+                        ? {}
+                        : { telemetry: result.task.telemetry }),
+                    warnings: result.task.warnings,
+                    workerState: this.workerState,
+                    capacity: this.capacity(),
+                });
+                throw new SubscriptionWorkerError("subscription_worker_run_failed", result.task.failure.safeMessage, { details: { code: result.task.failure.code } });
+            }
+            const output = this.taskResultToOutput(result);
+            terminalRecorded = true;
+            heartbeat.stop();
+            await this.runArtifacts.completeRun({
+                runId,
+                outputText: output.outputText,
+                ...(output.telemetry === undefined ? {} : { telemetry: output.telemetry }),
+                warnings: output.warnings,
+                workerState: this.workerState,
+                capacity: this.capacity(),
+            });
+            return output;
         }
-        return this.taskResultToOutput(result);
+        catch (error) {
+            if (!terminalRecorded) {
+                await this.runArtifacts.failRun({
+                    runId,
+                    status: "failed",
+                    reason: errorCode(error),
+                    safeMessage: error instanceof Error ? error.message : "Claude worker task failed.",
+                    workerState: this.workerState,
+                    capacity: this.capacity(),
+                }).catch(() => undefined);
+            }
+            throw error;
+        }
+        finally {
+            heartbeat.stop();
+        }
     }
     async runThreadJob(job) {
         this.assertStarted();
@@ -298,7 +390,7 @@ export class FileBackendClaudeWorker {
                                     [claudeRuntimeResumeSessionIdMetadataKey]: current.latestSessionId,
                                 }),
                         },
-                    });
+                    }, { workspaceId: workspacePath });
                     const latestSessionId = result.telemetry?.providerSessionId;
                     if (!latestSessionId) {
                         throw new SubscriptionWorkerError("subscription_worker_run_failed", "Claude runtime did not return a provider session id for thread handoff.");
@@ -768,6 +860,13 @@ function assertWorkerOptions(options) {
 }
 function isThreadJob(job) {
     return "threadId" in job && typeof job.threadId === "string";
+}
+function errorCode(error) {
+    if (error instanceof SubscriptionWorkerError)
+        return error.code;
+    if (error instanceof Error && error.name)
+        return error.name;
+    return "unknown_runtime_failure";
 }
 async function canonicalPath(path) {
     try {

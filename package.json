@@ -52,6 +52,11 @@
       "import": "./dist/worker-claude/index.js",
       "default": "./dist/worker-claude/index.js"
     },
+    "./worker-local": {
+      "types": "./dist/worker-local/index.d.ts",
+      "import": "./dist/worker-local/index.js",
+      "default": "./dist/worker-local/index.js"
+    },
     "./queue-core": {
       "types": "./dist/queue-core/index.d.ts",
       "import": "./dist/queue-core/index.js",

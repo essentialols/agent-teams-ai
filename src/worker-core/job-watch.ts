@@ -54,11 +54,6 @@ export type ReconcileWatchableJobsResult = Omit<
   readonly decisions: readonly WatchableJobDecision[];
 };
 
-/**
- * @deprecated This is a compatibility alias for the legacy codex_goal_watch
- * control preview. Use reconcileRunPreview for new code, or
- * RunObservationService for true read-only watch.
- */
 export async function reconcileWatchableJobs(input: {
   readonly backend: WatchableJobBackend;
   readonly jobIds?: readonly string[];

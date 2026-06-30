@@ -344,18 +344,15 @@ Job registry tools:
   status, account availability, stale/silent-stale flags and ready-to-call
   next-action commands.
 - `agent_run_watch`: provider-neutral, read-only run observation. In the Codex
-  goal MCP server it reports Codex run status, liveness, heartbeat freshness,
-  result/failure, optional log tail, optional changed files, artifacts, capacity
-  hints, warnings and `readOnlyDecision`. It never starts, stops, continues,
-  recovers, writes inbox signals or delivers work.
-- `codex_goal_run_watch`: Codex-scoped alias for `agent_run_watch`.
+  goal MCP server it reports Codex and Claude run status, liveness, heartbeat
+  freshness, result/failure, optional log tail, optional changed files,
+  artifacts, capacity hints, warnings and `readOnlyDecision`. It never starts,
+  stops, continues, recovers, writes inbox signals or delivers work.
+- `codex_goal_run_watch`: Codex-scoped read-only run observation surface.
 - `codex_goal_reconcile_preview`: reconciliation-preview tool, not pure watch.
   It is dry-run by default. With `continueSafeJobs: true`, it continues only
   stopped jobs whose adapter reports `safeToContinue`, blocks same-workspace
   writer conflicts, and respects `maxContinuesPerRun`.
-- `codex_goal_watch`: deprecated compatibility alias for
-  `codex_goal_reconcile_preview`; prefer `agent_run_watch` for observation and
-  `codex_goal_reconcile_preview` for explicit control preview.
 - `codex_goal_status_by_id`: inspect a job by `jobId`.
 - `codex_goal_brief`: compact operator summary with stale/progress/account
   hints, recent commands and the next safe job-level command.
@@ -506,6 +503,13 @@ Recommended agent loop:
    Call `codex_goal_decision` when the job needs action. Follow
    `decision.checklist` and `decision.nextBestCommand`; do not continue when
    `decision.severity` is `blocked` or `critical`.
+
+   CLI fallback examples:
+
+   ```bash
+   subscription-runtime-codex-goal run-watch <jobId> --provider codex --include-log-tail --include-changed-files --json
+   subscription-runtime-codex-goal run-watch <runId> --provider claude --state-root <runtime-state-dir> --include-log-tail --include-changed-files --json
+   ```
 
    CLI fallback:
 

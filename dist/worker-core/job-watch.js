@@ -1,9 +1,4 @@
 import { reconcileRunPreview, } from "./run-reconcile-preview.js";
-/**
- * @deprecated This is a compatibility alias for the legacy codex_goal_watch
- * control preview. Use reconcileRunPreview for new code, or
- * RunObservationService for true read-only watch.
- */
 export async function reconcileWatchableJobs(input) {
     const backend = {
         listRunIds: () => input.backend.listJobIds(),

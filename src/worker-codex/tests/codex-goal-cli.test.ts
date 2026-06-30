@@ -147,7 +147,6 @@ describe("codex goal cli", () => {
         expect.objectContaining({ name: "codex_goal_run_watch" }),
         expect.objectContaining({ name: "codex_goal_reconcile_preview" }),
         expect.objectContaining({ name: "codex_goal_brief" }),
-        expect.objectContaining({ name: "codex_goal_watch" }),
         expect.objectContaining({ name: "codex_goal_decision" }),
         expect.objectContaining({ name: "codex_goal_overview" }),
         expect.objectContaining({ name: "codex_goal_accounts_status" }),
@@ -222,6 +221,31 @@ describe("codex goal cli", () => {
       includeLogTail: true,
       includeChangedFiles: true,
       tailLines: 25,
+    });
+
+    const claudeRunWatch = parseCodexGoalCliArgs([
+      "run-watch",
+      "claude-run-a",
+      "--provider",
+      "claude",
+      "--state-root",
+      "/tmp/claude-state",
+      "--run-artifacts-root",
+      "/tmp/claude-artifacts",
+      "--include-log-tail",
+    ], fakeIo());
+    expect(claudeRunWatch).toMatchObject({
+      kind: "mcp-tool",
+      name: "agent_run_watch",
+      format: "json",
+    });
+    if (claudeRunWatch.kind !== "mcp-tool") return;
+    expect(JSON.parse(claudeRunWatch.argsJson ?? "{}")).toEqual({
+      providerKind: "claude",
+      jobId: "claude-run-a",
+      stateRootDir: "/tmp/claude-state",
+      runArtifactsRootDir: "/tmp/claude-artifacts",
+      includeLogTail: true,
     });
 
     const reconcilePreview = parseCodexGoalCliArgs([

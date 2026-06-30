@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -153,6 +154,78 @@ describe("codex goal MCP server", () => {
           },
         });
         expect(JSON.stringify(watch).includes("rawBearerSecret")).toBe(false);
+      } finally {
+        await client.close();
+        await server.close();
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("exposes Claude run watch snapshots through provider-neutral MCP", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-claude-run-watch-"));
+    const stateRootDir = join(root, "state");
+    const workspacePath = join(root, "workspace");
+    const runArtifactsRootDir = join(stateRootDir, "claude-run-artifacts");
+
+    try {
+      await mkdir(workspacePath, { recursive: true });
+      await execFileAsync("git", ["init"], { cwd: workspacePath });
+      await writeFile(join(workspacePath, "dirty.txt"), "dirty\n");
+      await writeClaudeRunArtifacts({
+        rootDir: runArtifactsRootDir,
+        runId: "claude-watch-run",
+        providerInstanceId: "claude-main",
+        workerId: "claude-worker-a",
+        configDir: join(root, "config"),
+        workspacePath,
+      });
+
+      const server = createCodexGoalMcpServer();
+      const client = new Client({ name: "subscription-runtime-test", version: "0.0.0" });
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+      await Promise.all([
+        server.connect(serverTransport),
+        client.connect(clientTransport),
+      ]);
+
+      try {
+        const watch = await callToolJson(client, "agent_run_watch", {
+          providerKind: "claude",
+          stateRootDir,
+          jobId: "claude-watch-run",
+          includeChangedFiles: true,
+          includeLogTail: true,
+        });
+
+        expect(watch).toMatchObject({
+          ok: true,
+          mode: "read_only",
+          sideEffects: [],
+          providerKind: "claude",
+          summary: {
+            completed: 1,
+          },
+        });
+        const snapshots = watch.snapshots as readonly Record<string, unknown>[];
+        expect(snapshots[0]).toMatchObject({
+          runId: "claude-watch-run",
+          providerKind: "claude",
+          status: "completed",
+          workspace: {
+            dirty: true,
+            changedFilesCount: 1,
+          },
+          result: {
+            exists: true,
+            status: "completed",
+          },
+          readOnlyDecision: {
+            kind: "manual_review_required",
+          },
+        });
+        expect(JSON.stringify(watch).includes("claude-oauth-secret")).toBe(false);
       } finally {
         await client.close();
         await server.close();
@@ -731,6 +804,72 @@ async function writeFakeAuth(
       },
     })}\n`,
   );
+}
+
+async function writeClaudeRunArtifacts(input: {
+  readonly rootDir: string;
+  readonly runId: string;
+  readonly providerInstanceId: string;
+  readonly workerId: string;
+  readonly configDir: string;
+  readonly workspacePath: string;
+}): Promise<void> {
+  const now = "2026-06-30T00:00:00.000Z";
+  const runDir = join(input.rootDir, hashRunId(input.runId));
+  await mkdir(runDir, { recursive: true });
+  await writeFile(
+    join(runDir, "manifest.json"),
+    `${JSON.stringify({
+      schemaVersion: 1,
+      providerKind: "claude",
+      runId: input.runId,
+      createdAt: now,
+      updatedAt: now,
+      providerInstanceId: input.providerInstanceId,
+      workerId: input.workerId,
+      configDir: input.configDir,
+      workspacePath: input.workspacePath,
+    }, null, 2)}\n`,
+  );
+  await writeFile(
+    join(runDir, "progress.json"),
+    `${JSON.stringify({
+      schemaVersion: 1,
+      runId: input.runId,
+      status: "completed",
+      updatedAt: now,
+      pid: process.pid,
+      providerRunId: "provider-run-a",
+      providerSessionId: "provider-session-a",
+    }, null, 2)}\n`,
+  );
+  await writeFile(
+    join(runDir, "result.json"),
+    `${JSON.stringify({
+      schemaVersion: 1,
+      runId: input.runId,
+      status: "completed",
+      updatedAt: now,
+      outputTextPreview: "completed with redacted output",
+      telemetry: {
+        providerRunId: "provider-run-a",
+        providerSessionId: "provider-session-a",
+      },
+    }, null, 2)}\n`,
+  );
+  await writeFile(
+    join(runDir, "run.log"),
+    `${JSON.stringify({
+      occurredAt: now,
+      event: "run.completed",
+      providerRunId: "provider-run-a",
+      providerSessionId: "provider-session-a",
+    })}\n`,
+  );
+}
+
+function hashRunId(value: string): string {
+  return createHash("sha256").update(value).digest("hex").slice(0, 32);
 }
 
 function fakeJwt(claims: Readonly<Record<string, unknown>>): string {

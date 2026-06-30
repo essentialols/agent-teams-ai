@@ -17,6 +17,7 @@ import {
   type RunReconcilePreviewDecision,
   type RunReconcilePreviewStatus,
 } from "@vioxen/subscription-runtime/worker-core";
+import { watchClaudeRuns } from "../worker-local/agent-run-watch";
 import {
   codexGoalJobToArgs,
   createCodexGoalJob,
@@ -112,9 +113,11 @@ type JobWatchMcpArgs = JobOverviewMcpArgs & {
 };
 
 type AgentRunWatchMcpArgs = JobOverviewMcpArgs & {
-  readonly providerKind?: "codex";
+  readonly providerKind?: string;
   readonly jobId?: string;
   readonly jobIds?: string | readonly string[];
+  readonly stateRootDir?: string;
+  readonly runArtifactsRootDir?: string;
   readonly includeChangedFiles?: boolean;
   readonly includeLogTail?: boolean;
 };
@@ -295,37 +298,17 @@ export function createCodexGoalMcpServer(): McpServer {
     }),
   );
 
-  server.registerTool(
-    "codex_goal_watch",
-    {
-      title: "Watch Codex Goal Jobs",
-      description:
-        "Deprecated compatibility alias for codex_goal_reconcile_preview. Use agent_run_watch or codex_goal_run_watch for pure read-only observation.",
-      inputSchema: {
-        ...jobRegistryInputSchema(),
-        staleAfterMs: z.number().int().positive().optional(),
-        tailLines: z.number().int().positive().optional(),
-        jobIds: z.union([z.string(), z.array(z.string())]).optional(),
-        continueSafeJobs: z.boolean().optional(),
-        maxContinuesPerRun: z.number().int().positive().optional(),
-        skipDoctor: z.boolean().optional(),
-      },
-    },
-    async (args) => withMcpErrors(async () => {
-      const watch = await reconcilePreviewCodexGoalJobs(args as JobWatchMcpArgs);
-      return mcpJson(watch);
-    }),
-  );
-
   const agentRunWatchTool = {
     title: "Agent Run Watch",
     description:
       "Read-only provider-neutral run observation. Reports status, liveness, progress, logs, workspace changes, capacity hints and read-only recommendations without starting, stopping or continuing workers.",
     inputSchema: {
       ...jobRegistryInputSchema(),
-      providerKind: z.literal("codex").optional(),
+      providerKind: z.string().optional(),
       jobId: z.string().optional(),
       jobIds: z.union([z.string(), z.array(z.string())]).optional(),
+      stateRootDir: z.string().optional(),
+      runArtifactsRootDir: z.string().optional(),
       staleAfterMs: z.number().int().positive().optional(),
       tailLines: z.number().int().positive().optional(),
       limit: z.number().int().positive().optional(),
@@ -1641,8 +1624,24 @@ function reconcilePreviewDecisionJson(
 }
 
 async function watchAgentRuns(args: AgentRunWatchMcpArgs): Promise<JsonObject> {
-  if (args.providerKind && args.providerKind !== "codex") {
-    throw new Error(`unsupported providerKind: ${args.providerKind}`);
+  const providerKind = stringValue(args.providerKind) ?? "codex";
+  if (providerKind === "claude") {
+    return await watchClaudeRuns({
+      ...(args.stateRootDir === undefined ? {} : { stateRootDir: args.stateRootDir }),
+      ...(args.runArtifactsRootDir === undefined
+        ? {}
+        : { runArtifactsRootDir: args.runArtifactsRootDir }),
+      ...(stringValue(args.jobId) ? { jobId: stringValue(args.jobId) as string } : {}),
+      ...(args.jobIds === undefined ? {} : { jobIds: args.jobIds }),
+      ...(args.staleAfterMs === undefined ? {} : { staleAfterMs: args.staleAfterMs }),
+      ...(args.tailLines === undefined ? {} : { tailLines: args.tailLines }),
+      ...(args.limit === undefined ? {} : { limit: args.limit }),
+      includeChangedFiles: booleanValue(args.includeChangedFiles) === true,
+      includeLogTail: booleanValue(args.includeLogTail) === true,
+    });
+  }
+  if (providerKind !== "codex") {
+    throw new Error(`unsupported providerKind: ${providerKind}`);
   }
   const registryRootDir = registryRootFromArgs(args);
   const staleAfterMs = numberValue(args.staleAfterMs);

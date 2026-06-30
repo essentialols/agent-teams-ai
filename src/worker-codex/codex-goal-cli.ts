@@ -517,9 +517,17 @@ function parseMcpShortcut(
       kind: "mcp-tool",
       name: "agent_run_watch",
       argsJson: JSON.stringify({
-        providerKind: "codex",
+        providerKind: values.values.get("--provider") ??
+          values.values.get("--provider-kind") ??
+          "codex",
         ...(jobId ? { jobId } : {}),
         ...registryArg(values),
+        ...(values.values.get("--state-root")
+          ? { stateRootDir: values.values.get("--state-root") }
+          : {}),
+        ...(values.values.get("--run-artifacts-root")
+          ? { runArtifactsRootDir: values.values.get("--run-artifacts-root") }
+          : {}),
         ...optionalNumberArg(values, "--stale-after-ms", "staleAfterMs"),
         ...optionalNumberArg(values, "--tail-lines", "tailLines"),
         ...optionalNumberArg(values, "--limit", "limit"),

@@ -9,6 +9,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { DefaultRedactor } from "@vioxen/subscription-runtime/core";
 import { RunObservationService, reconcileRunPreview, } from "@vioxen/subscription-runtime/worker-core";
+import { watchClaudeRuns } from "../worker-local/agent-run-watch.js";
 import { codexGoalJobToArgs, createCodexGoalJob, defaultCodexGoalJobRoot, listCodexGoalJobs, readCodexGoalJob, resolveCodexGoalJobRegistryRoot, summarizeCodexGoalJob, updateCodexGoalJob, } from "./codex-goal-jobs.js";
 import { codexGoalAccountSlots, codexGoalProgressPath, } from "./codex-goal-runner.js";
 import { buildCodexGoalNoTmuxCommand, buildCodexGoalStopTmuxCommand, buildCodexGoalTmuxCommand, collectCodexGoalStatus, doctorCodexGoal, listCodexGoalAccountStatuses, shellQuote, startCodexGoalTmux, stopCodexGoalTmux, tailCodexGoalLog, } from "./codex-goal-ops.js";
@@ -111,30 +112,16 @@ export function createCodexGoalMcpServer() {
         const watch = await reconcilePreviewCodexGoalJobs(args);
         return mcpJson(watch);
     }));
-    server.registerTool("codex_goal_watch", {
-        title: "Watch Codex Goal Jobs",
-        description: "Deprecated compatibility alias for codex_goal_reconcile_preview. Use agent_run_watch or codex_goal_run_watch for pure read-only observation.",
-        inputSchema: {
-            ...jobRegistryInputSchema(),
-            staleAfterMs: z.number().int().positive().optional(),
-            tailLines: z.number().int().positive().optional(),
-            jobIds: z.union([z.string(), z.array(z.string())]).optional(),
-            continueSafeJobs: z.boolean().optional(),
-            maxContinuesPerRun: z.number().int().positive().optional(),
-            skipDoctor: z.boolean().optional(),
-        },
-    }, async (args) => withMcpErrors(async () => {
-        const watch = await reconcilePreviewCodexGoalJobs(args);
-        return mcpJson(watch);
-    }));
     const agentRunWatchTool = {
         title: "Agent Run Watch",
         description: "Read-only provider-neutral run observation. Reports status, liveness, progress, logs, workspace changes, capacity hints and read-only recommendations without starting, stopping or continuing workers.",
         inputSchema: {
             ...jobRegistryInputSchema(),
-            providerKind: z.literal("codex").optional(),
+            providerKind: z.string().optional(),
             jobId: z.string().optional(),
             jobIds: z.union([z.string(), z.array(z.string())]).optional(),
+            stateRootDir: z.string().optional(),
+            runArtifactsRootDir: z.string().optional(),
             staleAfterMs: z.number().int().positive().optional(),
             tailLines: z.number().int().positive().optional(),
             limit: z.number().int().positive().optional(),
@@ -1184,8 +1171,24 @@ function reconcilePreviewDecisionJson(decision) {
     };
 }
 async function watchAgentRuns(args) {
-    if (args.providerKind && args.providerKind !== "codex") {
-        throw new Error(`unsupported providerKind: ${args.providerKind}`);
+    const providerKind = stringValue(args.providerKind) ?? "codex";
+    if (providerKind === "claude") {
+        return await watchClaudeRuns({
+            ...(args.stateRootDir === undefined ? {} : { stateRootDir: args.stateRootDir }),
+            ...(args.runArtifactsRootDir === undefined
+                ? {}
+                : { runArtifactsRootDir: args.runArtifactsRootDir }),
+            ...(stringValue(args.jobId) ? { jobId: stringValue(args.jobId) } : {}),
+            ...(args.jobIds === undefined ? {} : { jobIds: args.jobIds }),
+            ...(args.staleAfterMs === undefined ? {} : { staleAfterMs: args.staleAfterMs }),
+            ...(args.tailLines === undefined ? {} : { tailLines: args.tailLines }),
+            ...(args.limit === undefined ? {} : { limit: args.limit }),
+            includeChangedFiles: booleanValue(args.includeChangedFiles) === true,
+            includeLogTail: booleanValue(args.includeLogTail) === true,
+        });
+    }
+    if (providerKind !== "codex") {
+        throw new Error(`unsupported providerKind: ${providerKind}`);
     }
     const registryRootDir = registryRootFromArgs(args);
     const staleAfterMs = numberValue(args.staleAfterMs);

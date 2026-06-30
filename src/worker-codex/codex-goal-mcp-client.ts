@@ -15,7 +15,6 @@ const requiredCodexGoalMcpTools = [
   "codex_goal_create_job",
   "codex_goal_status_by_id",
   "codex_goal_reconcile_preview",
-  "codex_goal_watch",
   "codex_goal_brief",
   "codex_goal_decision",
   "codex_goal_handoff",

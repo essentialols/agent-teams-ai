@@ -45,6 +45,10 @@ import {
   type ClaudeRateLimitWindowName,
 } from "./rate-limit-telemetry";
 import {
+  FileClaudeRunArtifactStore,
+  type ClaudeRunArtifactStoreOptions,
+} from "./claude-run-artifacts";
+import {
   FileClaudeLogicalThreadStore,
   FileClaudeTranscriptBundleStore,
   type ClaudeLogicalThreadState,
@@ -90,9 +94,12 @@ export type FileBackendClaudeWorkerOptions = {
   readonly workspace?: RuntimeDeps["workspace"];
   readonly workspacePath?: string;
   readonly clock?: ClockPort;
+  readonly runArtifactsRootDir?: string;
+  readonly runArtifactHeartbeatMs?: number;
 };
 
 export type FileBackendClaudeWorkerJob = {
+  readonly jobId?: string;
   readonly runId?: string;
   readonly prompt: string;
   readonly systemPrompt?: string;
@@ -143,6 +150,8 @@ export class FileBackendClaudeWorker implements CapacityAwareSubscriptionWorker<
   private readonly rateLimitTelemetry: ClaudeRateLimitTelemetrySource | null;
   private readonly logicalThreadStore: ClaudeLogicalThreadStore;
   private readonly transcriptBundleStore: ClaudeTranscriptBundleStore;
+  private readonly runArtifacts: FileClaudeRunArtifactStore;
+  private readonly runArtifactHeartbeatMs: number;
   private capacityState: WorkerCapacitySnapshot = { availability: "available" };
   private windowStartedAtMs: number;
   private runsInWindow = 0;
@@ -192,6 +201,13 @@ export class FileBackendClaudeWorker implements CapacityAwareSubscriptionWorker<
       new FileClaudeTranscriptBundleStore(
         join(options.stateRootDir, "claude-transcript-bundles"),
       );
+    this.runArtifacts = new FileClaudeRunArtifactStore({
+      rootDir: options.runArtifactsRootDir ??
+        join(options.stateRootDir, "claude-run-artifacts"),
+      ...(options.clock ? { clock: options.clock } : {}),
+      redactor: this.redactor,
+    } satisfies ClaudeRunArtifactStoreOptions);
+    this.runArtifactHeartbeatMs = options.runArtifactHeartbeatMs ?? 30_000;
 
     const { sessionStore, leaseStore } = createLocalFileBackendRuntimeAdapters({
       providerId: "claude",
@@ -396,41 +412,128 @@ export class FileBackendClaudeWorker implements CapacityAwareSubscriptionWorker<
   }
 
   private async runProviderTask(
-    job: FileBackendClaudeWorkerJob,
+    job: FileBackendClaudeWorkerJob | FileBackendClaudeWorkerThreadJob,
+    input: { readonly workspaceId?: string } = {},
   ): Promise<FileBackendClaudeWorkerResult> {
     this.assertStarted();
     assertProviderTaskSystemPrompt(job.systemPrompt, "job.systemPrompt");
     const runId = job.runId ?? `local-${randomUUID()}`;
     const abortSignal = job.abortSignal ?? new AbortController().signal;
-    const result = await this.runtime.refreshThenRunTask({
+    const workspaceId = input.workspaceId ?? this.stableWorkspacePath ?? undefined;
+    await this.runArtifacts.startRun({
+      runId,
       providerInstanceId: this.options.providerInstanceId,
-      task: {
-        kind: job.kind ?? "structured-prompt",
-        prompt: job.prompt,
-        ...(job.systemPrompt !== undefined ? { systemPrompt: job.systemPrompt } : {}),
-        ...(job.outputSchemaName
-          ? { outputSchemaName: job.outputSchemaName }
-          : {}),
-        ...(job.controls ? { controls: job.controls } : {}),
-        ...(job.metadata ? { metadata: job.metadata } : {}),
-      },
-      runContext: {
-        runId,
-        attempt: 1,
-        abortSignal,
-      },
+      workerId: this.workerId,
+      configDir: this.configDir,
+      ...(workspaceId === undefined ? {} : { workspacePath: workspaceId }),
+      ...(job.jobId === undefined ? {} : { jobId: job.jobId }),
+      ...(isThreadJob(job) ? { threadId: job.threadId } : {}),
+      ...(this.capacityAccountId ?? this.options.capacityAccountId
+        ? { capacityAccountId: this.capacityAccountId ?? this.options.capacityAccountId }
+        : {}),
+      workerState: this.workerState,
+      capacity: this.capacity(),
     });
+    const heartbeat = this.runArtifacts.startHeartbeat({
+      runId,
+      intervalMs: this.runArtifactHeartbeatMs,
+      snapshot: () => ({
+        workerState: this.workerState,
+        capacity: this.capacity(),
+      }),
+    });
+    let terminalRecorded = false;
+    try {
+      const result = await this.runtime.refreshThenRunTask({
+        providerInstanceId: this.options.providerInstanceId,
+        task: {
+          kind: job.kind ?? "structured-prompt",
+          prompt: job.prompt,
+          ...(job.systemPrompt !== undefined ? { systemPrompt: job.systemPrompt } : {}),
+          ...(job.outputSchemaName
+            ? { outputSchemaName: job.outputSchemaName }
+            : {}),
+          ...(job.controls ? { controls: job.controls } : {}),
+          ...(job.metadata ? { metadata: job.metadata } : {}),
+        },
+        runContext: {
+          runId,
+          attempt: 1,
+          abortSignal,
+        },
+      });
 
-    if (result.status === "blocked") {
-      this.recordBlocked(result.reason);
-      throw new SubscriptionWorkerError(
-        "subscription_worker_run_failed",
-        result.safeMessage,
-        { details: { reason: result.reason } },
-      );
+      if (result.status === "blocked") {
+        this.recordBlocked(result.reason);
+        terminalRecorded = true;
+        heartbeat.stop();
+        await this.runArtifacts.failRun({
+          runId,
+          status: "blocked",
+          reason: result.reason,
+          safeMessage: result.safeMessage,
+          warnings: result.warnings,
+          workerState: this.workerState,
+          capacity: this.capacity(),
+        });
+        throw new SubscriptionWorkerError(
+          "subscription_worker_run_failed",
+          result.safeMessage,
+          { details: { reason: result.reason } },
+        );
+      }
+
+      if (result.task.status === "failed") {
+        this.recordFailure(result.task.failure);
+        terminalRecorded = true;
+        heartbeat.stop();
+        await this.runArtifacts.failRun({
+          runId,
+          status: "failed",
+          reason: result.task.failure.code,
+          safeMessage: result.task.failure.safeMessage,
+          ...(result.task.telemetry === undefined
+            ? {}
+            : { telemetry: result.task.telemetry }),
+          warnings: result.task.warnings,
+          workerState: this.workerState,
+          capacity: this.capacity(),
+        });
+        throw new SubscriptionWorkerError(
+          "subscription_worker_run_failed",
+          result.task.failure.safeMessage,
+          { details: { code: result.task.failure.code } },
+        );
+      }
+
+      const output = this.taskResultToOutput(result);
+      terminalRecorded = true;
+      heartbeat.stop();
+      await this.runArtifacts.completeRun({
+        runId,
+        outputText: output.outputText,
+        ...(output.telemetry === undefined ? {} : { telemetry: output.telemetry }),
+        warnings: output.warnings,
+        workerState: this.workerState,
+        capacity: this.capacity(),
+      });
+      return output;
+    } catch (error) {
+      if (!terminalRecorded) {
+        await this.runArtifacts.failRun({
+          runId,
+          status: "failed",
+          reason: errorCode(error),
+          safeMessage:
+            error instanceof Error ? error.message : "Claude worker task failed.",
+          workerState: this.workerState,
+          capacity: this.capacity(),
+        }).catch(() => undefined);
+      }
+      throw error;
+    } finally {
+      heartbeat.stop();
     }
-
-    return this.taskResultToOutput(result);
   }
 
   async runThreadJob(
@@ -471,7 +574,7 @@ export class FileBackendClaudeWorker implements CapacityAwareSubscriptionWorker<
                       current.latestSessionId,
                   }),
             },
-          });
+          }, { workspaceId: workspacePath });
           const latestSessionId = result.telemetry?.providerSessionId;
           if (!latestSessionId) {
             throw new SubscriptionWorkerError(
@@ -1064,6 +1167,12 @@ function isThreadJob(
   job: FileBackendClaudeWorkerJob | FileBackendClaudeWorkerThreadJob,
 ): job is FileBackendClaudeWorkerThreadJob {
   return "threadId" in job && typeof job.threadId === "string";
+}
+
+function errorCode(error: unknown): string {
+  if (error instanceof SubscriptionWorkerError) return error.code;
+  if (error instanceof Error && error.name) return error.name;
+  return "unknown_runtime_failure";
 }
 
 async function canonicalPath(path: string): Promise<string> {

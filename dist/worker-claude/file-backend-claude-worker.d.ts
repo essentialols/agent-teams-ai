@@ -38,8 +38,11 @@ export type FileBackendClaudeWorkerOptions = {
     readonly workspace?: RuntimeDeps["workspace"];
     readonly workspacePath?: string;
     readonly clock?: ClockPort;
+    readonly runArtifactsRootDir?: string;
+    readonly runArtifactHeartbeatMs?: number;
 };
 export type FileBackendClaudeWorkerJob = {
+    readonly jobId?: string;
     readonly runId?: string;
     readonly prompt: string;
     readonly systemPrompt?: string;
@@ -83,6 +86,8 @@ export declare class FileBackendClaudeWorker implements CapacityAwareSubscriptio
     private readonly rateLimitTelemetry;
     private readonly logicalThreadStore;
     private readonly transcriptBundleStore;
+    private readonly runArtifacts;
+    private readonly runArtifactHeartbeatMs;
     private capacityState;
     private windowStartedAtMs;
     private runsInWindow;

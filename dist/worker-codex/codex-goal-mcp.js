@@ -13,6 +13,7 @@ import { watchClaudeRuns, } from "@vioxen/subscription-runtime/worker-local";
 import { RunObservationService, InterruptAndContinueWorkerUseCase, WorkerControlService, decideRunObservation, reconcileRunPreview, } from "@vioxen/subscription-runtime/worker-core";
 import { codexGoalJobToArgs, createCodexGoalJob, defaultCodexGoalJobRoot, listCodexGoalJobs, readCodexGoalJob, resolveCodexGoalJobRegistryRoot, summarizeCodexGoalJob, updateCodexGoalJob, } from "./codex-goal-jobs.js";
 import { codexGoalAccountSlots, codexGoalProgressPath, } from "./codex-goal-runner.js";
+import { optionalCodexGoalPermissionMode, parseCodexGoalPermissionMode, } from "./codex-goal-permission-mode.js";
 import { buildCodexGoalNoTmuxCommand, buildCodexGoalStopTmuxCommand, buildCodexGoalTmuxCommand, collectCodexGoalStatus, doctorCodexGoal, listCodexGoalAccountStatuses, prepareCodexGoalLaunchPaths, shellQuote, startCodexGoalTmux, stopCodexGoalTmux, tailCodexGoalLog, } from "./codex-goal-ops.js";
 import { CodexRunObservationAdapter } from "./codex-run-observation.js";
 const serverVersion = "0.1.0-main.2";
@@ -1071,7 +1072,7 @@ async function goalLaunchInput(args) {
         serviceTier: (stringValue(merged.serviceTier) ?? "fast"),
         executionEngine: (stringValue(merged.executionEngine) ?? "app-server-goal"),
         codexBinaryPath: stringValue(merged.codexBinaryPath) ?? "codex",
-        permissionMode: (stringValue(merged.permissionMode) ?? "allow-edits"),
+        permissionMode: parseCodexGoalPermissionMode(stringValue(merged.permissionMode) ?? "allow-edits", "permissionMode"),
         taskTimeoutMs: numberValue(merged.taskTimeoutMs) ?? defaultTimeoutMs,
         progressHeartbeatMs: numberValue(merged.progressHeartbeatMs) ?? 60_000,
         ...(numberValue(merged.staleLockMs) === undefined
@@ -2023,7 +2024,7 @@ function jobManifestInputFromArgs(args) {
         taskTimeoutMs: args.taskTimeoutMs ?? defaultTimeoutMs,
         ...(args.staleLockMs ? { staleLockMs: args.staleLockMs } : {}),
         maxAccountCycles: args.maxAccountCycles ?? 5,
-        permissionMode: args.permissionMode ?? "allow-edits",
+        permissionMode: parseCodexGoalPermissionMode(args.permissionMode ?? "allow-edits", "permissionMode"),
         allowDuplicateAccountIdentities: args.allowDuplicateAccountIdentities ?? false,
         requireGitWorkspace: args.requireGitWorkspace ?? true,
         prewarmOnStart: args.prewarmOnStart ?? false,
@@ -2059,7 +2060,7 @@ function jobManifestPatchFromArgs(args) {
     putIfDefined(patch, "taskTimeoutMs", numberValue(args.taskTimeoutMs));
     putIfDefined(patch, "staleLockMs", numberValue(args.staleLockMs));
     putIfDefined(patch, "maxAccountCycles", numberValue(args.maxAccountCycles));
-    putIfDefined(patch, "permissionMode", stringValue(args.permissionMode));
+    putIfDefined(patch, "permissionMode", optionalCodexGoalPermissionMode(stringValue(args.permissionMode), "permissionMode"));
     putIfDefined(patch, "allowDuplicateAccountIdentities", booleanValue(args.allowDuplicateAccountIdentities));
     putIfDefined(patch, "requireGitWorkspace", booleanValue(args.requireGitWorkspace));
     putIfDefined(patch, "prewarmOnStart", booleanValue(args.prewarmOnStart));

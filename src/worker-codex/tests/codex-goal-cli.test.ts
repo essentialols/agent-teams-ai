@@ -58,6 +58,31 @@ describe("codex goal cli", () => {
     expect(command.tmuxSession).toBe("goal-worker");
   });
 
+  it("rejects provider sandbox names passed as codex goal permission mode", () => {
+    expect(() =>
+      parseCodexGoalCliArgs(
+        [
+          "run",
+          "--job-root",
+          "/tmp/job",
+          "--auth-root",
+          "/tmp/auth",
+          "--workspace",
+          "/tmp/workspace",
+          "--prompt",
+          "/tmp/job/prompt.md",
+          "--task-id",
+          "task-1",
+          "--accounts",
+          "account-a",
+          "--permission-mode",
+          "danger-full-access",
+        ],
+        fakeIo(),
+      ),
+    ).toThrow(/Use allow-edits to permit workspace changes/);
+  });
+
   it("uses environment fallback names for continuation handoff", () => {
     const command = parseCodexGoalCliArgs(
       [

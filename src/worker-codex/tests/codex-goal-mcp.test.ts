@@ -241,6 +241,46 @@ describe("codex goal MCP server", () => {
     }
   });
 
+  it("rejects unsupported permission modes in codex goal job tools", async () => {
+    const root = await mkdtemp(
+      join(tmpdir(), "subscription-runtime-mcp-permission-"),
+    );
+    const server = createCodexGoalMcpServer();
+    const client = new Client({
+      name: "subscription-runtime-test",
+      version: "0.0.0",
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+    try {
+      await Promise.all([
+        server.connect(serverTransport),
+        client.connect(clientTransport),
+      ]);
+
+      const result = await callToolJson(client, "codex_goal_create_job", {
+        registryRootDir: join(root, "registry"),
+        jobId: "job-permission",
+        jobRootDir: join(root, "job"),
+        authRootDir: join(root, "auth"),
+        workspacePath: join(root, "workspace"),
+        promptPath: join(root, "job", "prompt.md"),
+        taskId: "task-permission",
+        accounts: ["account-a"],
+        permissionMode: "danger-full-access",
+      });
+
+      expect(result).toMatchObject({ ok: false });
+      expect(String(result.error)).toContain(
+        "Use allow-edits to permit workspace changes",
+      );
+    } finally {
+      await client.close();
+      await server.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("creates a job manifest when starting a detached worker", async () => {
     if (!(await hasTmux())) return;
     const root = await mkdtemp(join(tmpdir(), "subscription-runtime-start-job-"));

@@ -103,6 +103,12 @@ Defaults:
 - execution engine: `app-server-goal`;
 - permission mode: `allow-edits`.
 
+Permission mode is a subscription-runtime edit/effect policy, not the
+provider's low-level sandbox flag. Use `allow-edits` for workers that may create
+a workspace patch. Do not pass provider sandbox names such as
+`danger-full-access` as `permissionMode`; they are rejected because they do not
+mean "workspace patch allowed" in the safe executor.
+
 Escape hatches remain available:
 
 - `--dry-run` or `--print-command`: print the exact command without running it;

@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import type { CodexGoalRunConfig } from "./codex-goal-runner";
 import type { CodexGoalOutputFormat } from "./codex-goal-ops";
+import { optionalCodexGoalPermissionMode } from "./codex-goal-permission-mode";
 
 export const codexGoalJobManifestSchemaVersion = 1;
 
@@ -262,6 +263,10 @@ export function parseCodexGoalJobManifest(
   assertJobId(jobId);
   const accounts = readStringArray(value.accounts, "accounts");
   if (accounts.length === 0) throw new Error("codex_goal_job_accounts_required");
+  const permissionMode = optionalCodexGoalPermissionMode(
+    optionalString(value.permissionMode),
+    "permissionMode",
+  );
   const manifest: CodexGoalJobManifest = {
     schemaVersion: codexGoalJobManifestSchemaVersion,
     jobId,
@@ -322,13 +327,7 @@ export function parseCodexGoalJobManifest(
     ...optionalPositiveIntegerProperty(value.taskTimeoutMs, "taskTimeoutMs"),
     ...optionalPositiveIntegerProperty(value.staleLockMs, "staleLockMs"),
     ...optionalPositiveIntegerProperty(value.maxAccountCycles, "maxAccountCycles"),
-    ...(optionalString(value.permissionMode) === undefined
-      ? {}
-      : {
-          permissionMode: optionalString(value.permissionMode) as NonNullable<
-            CodexGoalRunConfig["permissionMode"]
-          >,
-        }),
+    ...(permissionMode === undefined ? {} : { permissionMode }),
     ...optionalBooleanProperty(
       value.allowDuplicateAccountIdentities,
       "allowDuplicateAccountIdentities",

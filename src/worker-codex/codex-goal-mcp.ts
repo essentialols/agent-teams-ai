@@ -56,6 +56,10 @@ import {
   type CodexGoalRunConfig,
 } from "./codex-goal-runner";
 import {
+  optionalCodexGoalPermissionMode,
+  parseCodexGoalPermissionMode,
+} from "./codex-goal-permission-mode";
+import {
   buildCodexGoalNoTmuxCommand,
   buildCodexGoalStopTmuxCommand,
   buildCodexGoalTmuxCommand,
@@ -1553,8 +1557,10 @@ async function goalLaunchInput(args: GoalMcpArgs): Promise<CodexGoalLaunchInput>
     executionEngine:
       (stringValue(merged.executionEngine) ?? "app-server-goal") as NonNullable<CodexGoalRunConfig["executionEngine"]>,
     codexBinaryPath: stringValue(merged.codexBinaryPath) ?? "codex",
-    permissionMode:
-      (stringValue(merged.permissionMode) ?? "allow-edits") as NonNullable<CodexGoalRunConfig["permissionMode"]>,
+    permissionMode: parseCodexGoalPermissionMode(
+      stringValue(merged.permissionMode) ?? "allow-edits",
+      "permissionMode",
+    ),
     taskTimeoutMs: numberValue(merged.taskTimeoutMs) ?? defaultTimeoutMs,
     progressHeartbeatMs: numberValue(merged.progressHeartbeatMs) ?? 60_000,
     ...(numberValue(merged.staleLockMs) === undefined
@@ -2678,7 +2684,10 @@ function jobManifestInputFromArgs(args: JobCreateMcpArgs): CodexGoalJobManifestI
     taskTimeoutMs: args.taskTimeoutMs ?? defaultTimeoutMs,
     ...(args.staleLockMs ? { staleLockMs: args.staleLockMs } : {}),
     maxAccountCycles: args.maxAccountCycles ?? 5,
-    permissionMode: args.permissionMode ?? "allow-edits",
+    permissionMode: parseCodexGoalPermissionMode(
+      args.permissionMode ?? "allow-edits",
+      "permissionMode",
+    ),
     allowDuplicateAccountIdentities: args.allowDuplicateAccountIdentities ?? false,
     requireGitWorkspace: args.requireGitWorkspace ?? true,
     prewarmOnStart: args.prewarmOnStart ?? false,
@@ -2713,7 +2722,14 @@ function jobManifestPatchFromArgs(args: JobUpdateMcpArgs): CodexGoalJobManifestP
   putIfDefined(patch, "taskTimeoutMs", numberValue(args.taskTimeoutMs));
   putIfDefined(patch, "staleLockMs", numberValue(args.staleLockMs));
   putIfDefined(patch, "maxAccountCycles", numberValue(args.maxAccountCycles));
-  putIfDefined(patch, "permissionMode", stringValue(args.permissionMode));
+  putIfDefined(
+    patch,
+    "permissionMode",
+    optionalCodexGoalPermissionMode(
+      stringValue(args.permissionMode),
+      "permissionMode",
+    ),
+  );
   putIfDefined(
     patch,
     "allowDuplicateAccountIdentities",

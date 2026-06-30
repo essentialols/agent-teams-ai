@@ -1,6 +1,7 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
+import { optionalCodexGoalPermissionMode } from "./codex-goal-permission-mode.js";
 export const codexGoalJobManifestSchemaVersion = 1;
 export function defaultCodexGoalJobRegistryRoot() {
     return join(homedir(), ".cache", "subscription-runtime", "codex-goal-jobs");
@@ -148,6 +149,7 @@ export function parseCodexGoalJobManifest(value) {
     const accounts = readStringArray(value.accounts, "accounts");
     if (accounts.length === 0)
         throw new Error("codex_goal_job_accounts_required");
+    const permissionMode = optionalCodexGoalPermissionMode(optionalString(value.permissionMode), "permissionMode");
     const manifest = {
         schemaVersion: codexGoalJobManifestSchemaVersion,
         jobId,
@@ -199,11 +201,7 @@ export function parseCodexGoalJobManifest(value) {
         ...optionalPositiveIntegerProperty(value.taskTimeoutMs, "taskTimeoutMs"),
         ...optionalPositiveIntegerProperty(value.staleLockMs, "staleLockMs"),
         ...optionalPositiveIntegerProperty(value.maxAccountCycles, "maxAccountCycles"),
-        ...(optionalString(value.permissionMode) === undefined
-            ? {}
-            : {
-                permissionMode: optionalString(value.permissionMode),
-            }),
+        ...(permissionMode === undefined ? {} : { permissionMode }),
         ...optionalBooleanProperty(value.allowDuplicateAccountIdentities, "allowDuplicateAccountIdentities"),
         ...optionalBooleanProperty(value.requireGitWorkspace, "requireGitWorkspace"),
         ...optionalBooleanProperty(value.prewarmOnStart, "prewarmOnStart"),

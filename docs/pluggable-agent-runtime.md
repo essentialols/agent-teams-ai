@@ -85,6 +85,11 @@ export type ProviderTaskTelemetry = {
 };
 ```
 
+`permissionMode` is the runtime's edit/effect policy. It is intentionally not a
+raw provider sandbox enum. For example, Codex `danger-full-access` is not a
+valid `permissionMode`; use `allow-edits` when a task is allowed to write a
+workspace patch.
+
 Then evolve `ProviderTask` and `ProviderTaskResult` without provider fields:
 
 ```ts

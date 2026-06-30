@@ -9,6 +9,7 @@ import {
   runCodexGoal,
   type CodexGoalRunConfig,
 } from "./codex-goal-runner";
+import { parseCodexGoalPermissionMode } from "./codex-goal-permission-mode";
 import {
   buildCodexGoalNoTmuxCommand,
   buildCodexGoalTmuxCommand,
@@ -973,8 +974,10 @@ function runConfigFromFlags(
     codexBinaryPath: option(values, env, "--codex-binary", [
       "CODEX_BINARY_PATH",
     ]) ?? "codex",
-    permissionMode: (option(values, env, "--permission-mode", []) ??
-      "allow-edits") as CodexGoalRunConfig["permissionMode"],
+    permissionMode: parseCodexGoalPermissionMode(
+      option(values, env, "--permission-mode", []) ?? "allow-edits",
+      "--permission-mode",
+    ),
     taskTimeoutMs: parseOptionalPositiveInteger(
       option(values, env, "--timeout-ms", [
         "SUBSCRIPTION_RUNTIME_TASK_TIMEOUT_MS",

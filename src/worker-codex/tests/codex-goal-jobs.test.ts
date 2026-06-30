@@ -123,6 +123,34 @@ describe("codex goal job registry", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it("rejects unsupported codex goal permission modes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-jobs-"));
+
+    try {
+      await expect(createCodexGoalJob({
+        registryRootDir: join(root, "registry"),
+        manifest: {
+          ...jobManifest(root),
+          permissionMode: "danger-full-access" as never,
+        },
+      })).rejects.toThrow(/provider sandbox option/);
+
+      const created = await createCodexGoalJob({
+        registryRootDir: join(root, "registry"),
+        manifest: jobManifest(root),
+      });
+      await expect(updateCodexGoalJob({
+        registryRootDir: join(root, "registry"),
+        jobId: created.jobId,
+        patch: {
+          permissionMode: "danger-full-access" as never,
+        },
+      })).rejects.toThrow(/Use allow-edits to permit workspace changes/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
 
 function jobManifest(root: string): CodexGoalJobManifestInput {

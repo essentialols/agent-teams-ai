@@ -5,6 +5,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { execPath } from "node:process";
 import { fileURLToPath } from "node:url";
 import { codexGoalAccountSlots, runCodexGoal, } from "./codex-goal-runner.js";
+import { parseCodexGoalPermissionMode } from "./codex-goal-permission-mode.js";
 import { buildCodexGoalNoTmuxCommand, buildCodexGoalTmuxCommand, collectCodexGoalStatus, doctorCodexGoal, startCodexGoalTmux, tailCodexGoalLog, } from "./codex-goal-ops.js";
 import { callCodexGoalMcpTool, doctorCodexGoalControlSurface, getCodexGoalMcpPrompt, listCodexGoalMcpPrompts, listCodexGoalMcpResources, listCodexGoalMcpTools, readCodexGoalMcpResource, } from "./codex-goal-mcp-client.js";
 export async function runCodexGoalCli(argv = process.argv.slice(2), io = defaultIo) {
@@ -727,8 +728,7 @@ function runConfigFromFlags(values, env, cwd, jobRootDir, taskId) {
         codexBinaryPath: option(values, env, "--codex-binary", [
             "CODEX_BINARY_PATH",
         ]) ?? "codex",
-        permissionMode: (option(values, env, "--permission-mode", []) ??
-            "allow-edits"),
+        permissionMode: parseCodexGoalPermissionMode(option(values, env, "--permission-mode", []) ?? "allow-edits", "--permission-mode"),
         taskTimeoutMs: parseOptionalPositiveInteger(option(values, env, "--timeout-ms", [
             "SUBSCRIPTION_RUNTIME_TASK_TIMEOUT_MS",
             "MEMO_STACK_GOAL_TASK_TIMEOUT_MS",

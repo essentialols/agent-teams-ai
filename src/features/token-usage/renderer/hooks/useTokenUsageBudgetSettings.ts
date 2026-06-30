@@ -20,15 +20,10 @@ export function useTokenUsageBudgetSettings({
   loadErrorMessage,
   saveErrorMessage,
 }: UseTokenUsageBudgetSettingsOptions): UseTokenUsageBudgetSettingsResult {
-  const [budgetConfig, setBudgetConfigState] = useState<TokenUsageBudgetLimits>({});
+  const [budgetConfig, setBudgetConfig] = useState<TokenUsageBudgetLimits>({});
   const [budgetConfigError, setBudgetConfigError] = useState<string | null>(null);
-  const budgetConfigRef = useRef<TokenUsageBudgetLimits>(budgetConfig);
+  const budgetConfigRef = useRef<TokenUsageBudgetLimits>({});
   const saveVersionRef = useRef(0);
-
-  const setBudgetConfig = useCallback((settings: TokenUsageBudgetLimits) => {
-    budgetConfigRef.current = settings;
-    setBudgetConfigState(settings);
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -42,6 +37,7 @@ export function useTokenUsageBudgetSettings({
     void getBudgetSettings()
       .then((settings) => {
         if (cancelled) return;
+        budgetConfigRef.current = settings;
         setBudgetConfig(settings);
         setBudgetConfigError(null);
       })
@@ -52,15 +48,17 @@ export function useTokenUsageBudgetSettings({
     return () => {
       cancelled = true;
     };
-  }, [loadErrorMessage, setBudgetConfig]);
+  }, [loadErrorMessage]);
 
   const updateBudgetConfig = useCallback(
     (action: React.SetStateAction<TokenUsageBudgetLimits>) => {
       const next = typeof action === 'function' ? action(budgetConfigRef.current) : action;
+      budgetConfigRef.current = next;
+      setBudgetConfig(next);
+
       const saveVersion = ++saveVersionRef.current;
       const updateBudgetSettings = (api.tokenUsage as Partial<typeof api.tokenUsage>)
         .updateBudgetSettings;
-      setBudgetConfig(next);
       setBudgetConfigError(null);
       if (typeof updateBudgetSettings !== 'function') {
         setBudgetConfigError(saveErrorMessage);
@@ -69,6 +67,7 @@ export function useTokenUsageBudgetSettings({
       void updateBudgetSettings(next)
         .then((settings) => {
           if (saveVersion === saveVersionRef.current) {
+            budgetConfigRef.current = settings;
             setBudgetConfig(settings);
           }
         })
@@ -78,7 +77,7 @@ export function useTokenUsageBudgetSettings({
           }
         });
     },
-    [saveErrorMessage, setBudgetConfig]
+    [saveErrorMessage]
   );
 
   return {

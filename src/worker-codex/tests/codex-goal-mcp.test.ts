@@ -546,6 +546,78 @@ describe("codex goal MCP server", () => {
     }
   });
 
+  it("observes explicit Codex artifact roots when the registry manifest is missing", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-run-watch-orphan-"));
+    const runArtifactsRootDir = join(root, "runs");
+    const jobId = "orphan-job";
+    const jobRootDir = join(runArtifactsRootDir, jobId);
+    const server = createCodexGoalMcpServer();
+    const client = new Client({ name: "subscription-runtime-test", version: "0.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([
+      server.connect(serverTransport),
+      client.connect(clientTransport),
+    ]);
+
+    try {
+      await mkdir(jobRootDir, { recursive: true });
+      await writeFile(join(jobRootDir, "worker.log"), "");
+      await writeFile(join(jobRootDir, "progress.json"), `${JSON.stringify({
+        schemaVersion: 1,
+        taskId: jobId,
+        updatedAt: new Date().toISOString(),
+        pid: process.pid,
+        status: "running",
+      })}\n`);
+
+      const watch = await callToolJson(client, "codex_goal_run_watch", {
+        registryRootDir: join(root, "registry"),
+        runArtifactsRootDir,
+        jobId,
+        staleAfterMs: 60_000,
+        includeLogTail: true,
+      });
+
+      expect(watch).toMatchObject({
+        ok: true,
+        mode: "read_only",
+        sideEffects: [],
+        providerKind: "codex",
+        summary: {
+          manualReview: 1,
+        },
+      });
+      const snapshots = watch.snapshots as readonly Record<string, unknown>[];
+      expect(snapshots[0]).toMatchObject({
+        runId: jobId,
+        providerKind: "codex",
+        liveness: "dead",
+        logs: {
+          exists: true,
+          path: join(jobRootDir, "worker.log"),
+        },
+        artifacts: expect.arrayContaining([
+          expect.objectContaining({
+            kind: "progress",
+            path: join(jobRootDir, "progress.json"),
+            exists: true,
+          }),
+        ]),
+        readOnlyDecision: {
+          kind: "manual_review_required",
+          reason: "missing_job_manifest",
+        },
+      });
+      const warnings = snapshots[0]!.warnings as readonly Record<string, unknown>[];
+      expect(warnings.map((warning) => warning.code)).toContain("codex_orphan_artifact_run");
+      expect(watch).not.toHaveProperty("observationFailures");
+    } finally {
+      await client.close();
+      await server.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("records an audit event when stopping a sandbox tmux worker", async () => {
     if (!(await hasTmux())) return;
     const root = await mkdtemp(join(tmpdir(), "subscription-runtime-stop-event-"));

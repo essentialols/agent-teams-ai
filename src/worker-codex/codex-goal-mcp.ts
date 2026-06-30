@@ -2119,6 +2119,15 @@ async function watchAgentRuns(args: AgentRunWatchMcpArgs): Promise<JsonObject> {
           includeLogTail: booleanValue(args.includeLogTail) === true,
         });
       } catch (error) {
+        const orphan = await observeOrphanCodexRun({
+          runId,
+          error,
+          args,
+          providerKind,
+          staleAfterMs: staleAfterMs ?? 10 * 60_000,
+          tailLines: tailLines ?? 20,
+        });
+        if (orphan) return orphan;
         return failedRunObservationSnapshot({
           runId,
           providerKind,
@@ -2150,6 +2159,205 @@ async function watchAgentRuns(args: AgentRunWatchMcpArgs): Promise<JsonObject> {
     ...(observationFailures.length ? { observationFailures } : {}),
     snapshots,
   };
+}
+
+async function observeOrphanCodexRun(input: {
+  readonly runId: string;
+  readonly error: unknown;
+  readonly args: AgentRunWatchMcpArgs;
+  readonly providerKind: string;
+  readonly staleAfterMs: number;
+  readonly tailLines: number;
+}): Promise<RunObservationSnapshot | null> {
+  if (!isMissingCodexGoalManifestError(input.error)) return null;
+  if (!stringValue(input.args.runArtifactsRootDir)) return null;
+  const cwd = resolvePath(
+    process.cwd(),
+    stringValue(input.args.cwd) ?? process.cwd(),
+  );
+  const jobRootDir = join(
+    resolvePath(cwd, stringValue(input.args.runArtifactsRootDir) as string),
+    input.runId,
+  );
+  try {
+    const rootStat = await stat(jobRootDir);
+    if (!rootStat.isDirectory()) return null;
+  } catch {
+    return null;
+  }
+  const status = await collectCodexGoalStatus({
+    jobRootDir,
+    taskId: input.runId,
+    resultPath: join(jobRootDir, "result.json"),
+    logPath: join(jobRootDir, "worker.log"),
+    progressPath: join(jobRootDir, "progress.json"),
+    tmuxSession: input.runId,
+  });
+  const logUpdatedAgeMs = isoAgeMsForMcp(status.logUpdatedAt);
+  const progressStale = status.progressHeartbeatAgeMs !== undefined &&
+    status.progressHeartbeatAgeMs > input.staleAfterMs;
+  const logStale = logUpdatedAgeMs !== undefined &&
+    logUpdatedAgeMs > input.staleAfterMs;
+  const heartbeatOnlyNoOutput = Boolean(
+    status.tmuxAlive &&
+      status.progressExists &&
+      !status.resultExists &&
+      (status.logByteLength ?? 0) === 0,
+  );
+  const warnings = [
+    {
+      code: "codex_orphan_artifact_run",
+      message:
+        "Codex run artifacts exist but the job registry manifest is missing; observing artifact paths read-only.",
+      severity: "warning" as const,
+    },
+    ...status.warnings.map((message) => ({
+      code: "codex_status_warning",
+      message,
+      severity: "warning" as const,
+    })),
+    ...(heartbeatOnlyNoOutput
+      ? [{
+          code: "heartbeat_only_no_output",
+          message:
+            "worker heartbeat is fresh, but there is no result, log output or workspace change",
+          severity: "blocked" as const,
+        }]
+      : []),
+  ];
+  const runStatus = status.resultStatus === "completed"
+    ? "completed"
+    : status.resultStatus === "failed"
+    ? "failed"
+    : status.tmuxAlive
+    ? "running"
+    : "unknown";
+  const liveness = status.tmuxAlive
+    ? (progressStale || logStale ? "stale" : "alive")
+    : "dead";
+  const manualReviewReasons = [
+    "missing_job_manifest",
+    ...(heartbeatOnlyNoOutput ? ["heartbeat_only_no_output"] : []),
+  ];
+  const snapshotBase = {
+    runId: input.runId,
+    providerKind: input.providerKind,
+    observedAt: new Date().toISOString(),
+    status: runStatus,
+    liveness,
+    process: {
+      supervisor: "tmux",
+      sessionId: input.runId,
+      ...(status.tmuxAlive === undefined ? {} : { alive: status.tmuxAlive }),
+      ...(status.progressPid === undefined ? {} : { pid: status.progressPid }),
+    },
+    progress: {
+      ...(status.progressStatus === undefined ? {} : { status: status.progressStatus }),
+      ...(status.progressUpdatedAt === undefined ? {} : { updatedAt: status.progressUpdatedAt }),
+      ...(status.progressHeartbeatAgeMs === undefined
+        ? {}
+        : { heartbeatAgeMs: status.progressHeartbeatAgeMs }),
+      staleAfterMs: input.staleAfterMs,
+      stale: progressStale,
+      silentStale: Boolean(status.tmuxAlive && (progressStale || logStale)),
+      heartbeatOnlyNoOutput,
+      ...(status.progressAttemptCount === undefined
+        ? {}
+        : { attemptCount: status.progressAttemptCount }),
+      ...(status.progressCurrentAccount === undefined
+        ? {}
+        : { currentAccount: status.progressCurrentAccount }),
+    },
+    result: {
+      ...(status.resultExists === undefined ? {} : { exists: status.resultExists }),
+      ...(status.resultStatus === undefined ? {} : { status: status.resultStatus }),
+      ...(status.resultReason === undefined ? {} : { reason: status.resultReason }),
+      ...(status.resultPath === undefined ? {} : { path: status.resultPath }),
+    },
+    logs: await orphanCodexLogExcerpt({
+      status,
+      includeLogTail: booleanValue(input.args.includeLogTail) === true,
+      tailLines: input.tailLines,
+    }),
+    artifacts: [
+      orphanArtifactSummary("result", status.resultPath, status.resultExists),
+      orphanArtifactSummary(
+        "progress",
+        status.progressPath,
+        status.progressExists,
+        status.progressUpdatedAt,
+      ),
+      orphanArtifactSummary(
+        "log",
+        status.logPath,
+        status.logExists,
+        status.logUpdatedAt,
+        status.logByteLength,
+      ),
+    ],
+    manualReviewReasons,
+    warnings,
+  } satisfies Omit<RunObservationSnapshot, "readOnlyDecision">;
+  return {
+    ...snapshotBase,
+    readOnlyDecision: {
+      kind: "manual_review_required",
+      reason: "missing_job_manifest",
+      safeMessage:
+        "This Codex run has artifacts but no job registry manifest. Watch remains read-only; review or recreate the job manifest before continuing.",
+      evidence: ["manualReviewReasons", "artifacts"],
+    },
+  };
+}
+
+function isMissingCodexGoalManifestError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("job.json") && message.includes("ENOENT");
+}
+
+async function orphanCodexLogExcerpt(input: {
+  readonly status: Awaited<ReturnType<typeof collectCodexGoalStatus>>;
+  readonly includeLogTail: boolean;
+  readonly tailLines: number;
+}) {
+  if (!input.status.logPath) return { exists: false };
+  if (!input.status.logExists) {
+    return { exists: false, path: input.status.logPath };
+  }
+  return {
+    exists: true,
+    path: input.status.logPath,
+    ...(input.status.logUpdatedAt ? { updatedAt: input.status.logUpdatedAt } : {}),
+    ...(input.status.logByteLength === undefined
+      ? {}
+      : { byteLength: input.status.logByteLength }),
+    ...(input.includeLogTail
+      ? { tail: await tailCodexGoalLog(input.status.logPath, input.tailLines) }
+      : {}),
+  };
+}
+
+function orphanArtifactSummary(
+  kind: string,
+  path: string | undefined,
+  exists: boolean | undefined,
+  updatedAt?: string,
+  byteLength?: number,
+) {
+  return {
+    kind,
+    ...(path === undefined ? {} : { path }),
+    ...(exists === undefined ? {} : { exists }),
+    ...(updatedAt === undefined ? {} : { updatedAt }),
+    ...(byteLength === undefined ? {} : { byteLength }),
+  };
+}
+
+function isoAgeMsForMcp(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const time = Date.parse(value);
+  if (!Number.isFinite(time)) return undefined;
+  return Date.now() - time;
 }
 
 function failedRunObservationSnapshot(input: {

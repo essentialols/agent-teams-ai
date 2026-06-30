@@ -160,6 +160,65 @@ describe('team provisioning inbox merge planning', () => {
     ]);
     expect(parseInboxMessageListRaw('{not json')).toEqual([]);
   });
+
+  it('dedupes legacy inbox rows without persisted messageId by effective identity', () => {
+    const canonical = parseInboxMessageListRaw(
+      JSON.stringify([
+        {
+          from: 'alice',
+          timestamp: '2026-01-01T00:00:00.000Z',
+          text: 'legacy duplicate',
+          read: false,
+          summary: 'old',
+        },
+        {
+          from: 'alice',
+          timestamp: '2026-01-01T00:00:01.000Z',
+          text: 'legacy distinct',
+          read: false,
+        },
+      ])
+    );
+    const duplicate = parseInboxMessageListRaw(
+      JSON.stringify([
+        {
+          from: 'alice',
+          timestamp: '2026-01-01T00:00:00.000Z',
+          text: 'legacy duplicate',
+          read: true,
+          summary: 'new',
+        },
+        {
+          from: 'alice',
+          timestamp: '2026-01-01T00:00:02.000Z',
+          text: 'legacy unique',
+          read: false,
+        },
+      ])
+    );
+
+    expect(mergeInboxMessageLists(canonical, [duplicate])).toEqual([
+      {
+        from: 'alice',
+        timestamp: '2026-01-01T00:00:02.000Z',
+        text: 'legacy unique',
+        read: false,
+      },
+      {
+        from: 'alice',
+        timestamp: '2026-01-01T00:00:01.000Z',
+        text: 'legacy distinct',
+        read: false,
+      },
+      {
+        from: 'alice',
+        timestamp: '2026-01-01T00:00:00.000Z',
+        text: 'legacy duplicate',
+        read: true,
+        summary: 'new',
+      },
+    ]);
+  });
 });
 
 describe('team provisioning members.meta payload planning', () => {

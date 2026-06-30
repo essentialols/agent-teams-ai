@@ -8,6 +8,8 @@ import { normalizeTeamMemberMcpPolicy } from '@shared/utils/teamMemberMcpPolicy'
 import { createCliAutoSuffixNameGuard } from '@shared/utils/teamMemberName';
 import { normalizeOptionalTeamProviderId } from '@shared/utils/teamProvider';
 
+import { getEffectiveInboxMessageId } from '../inboxMessageIdentity';
+
 import {
   getMixedLaunchFallbackRecoveryError,
   type TeamLaunchCompatibilityReport,
@@ -304,9 +306,9 @@ export function mergeInboxMessageLists(
     if (!item || typeof item !== 'object') {
       continue;
     }
-    const msg = item as { messageId?: unknown };
-    if (typeof msg.messageId === 'string' && msg.messageId.trim().length > 0) {
-      dedupById.set(msg.messageId, item);
+    const messageId = getEffectiveInboxMessageId(item);
+    if (messageId) {
+      dedupById.set(messageId, item);
     } else {
       noId.push(item);
     }

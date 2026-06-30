@@ -343,7 +343,13 @@ Job registry tools:
 - `codex_goal_overview`: summarize all stored jobs in a registry with compact
   status, account availability, stale/silent-stale flags and ready-to-call
   next-action commands.
-- `codex_goal_watch`: run one generic reconciliation pass over stored jobs.
+- `agent_run_watch`: provider-neutral, read-only run observation. In the Codex
+  goal MCP server it reports Codex run status, liveness, heartbeat freshness,
+  result/failure, optional log tail, optional changed files, artifacts, capacity
+  hints, warnings and `readOnlyDecision`. It never starts, stops, continues,
+  recovers, writes inbox signals or delivers work.
+- `codex_goal_run_watch`: Codex-scoped alias for `agent_run_watch`.
+- `codex_goal_watch`: legacy reconciliation-preview tool, not pure watch.
   It is dry-run by default. With `continueSafeJobs: true`, it continues only
   stopped jobs whose adapter reports `safeToContinue`, blocks same-workspace
   writer conflicts, and respects `maxContinuesPerRun`.
@@ -390,13 +396,15 @@ Prefer the `codex_goal_accounts_*` tools when a `jobId` exists. Use the raw
 `codex_accounts_*` tools only for pool discovery, manual cleanup or operating
 outside a stored job.
 
-`codex_goal_overview` should be the default registry monitor when an agent does
-not know which job needs attention or is watching multiple workers. It returns
-aggregate counts for running, silent-stale, safe-to-continue, relogin-needed,
-manual-review and completed jobs, plus per-job command hints and lifecycle
-markers. It also returns `workspaceConflicts` and `safeToOperate`; if two
-potential writer jobs share one workspace, overview blocks their continuation
-hints until a single writer is chosen.
+`agent_run_watch` should be the default read-only monitor when an agent needs
+to see what workers are doing. It returns normalized `RunObservationSnapshot`
+objects and read-only recommendations. `codex_goal_overview` is still useful
+for compact registry triage: it returns aggregate counts for running,
+silent-stale, safe-to-continue, relogin-needed, manual-review and completed
+jobs, plus per-job command hints and lifecycle markers. It also returns
+`workspaceConflicts` and `safeToOperate`; if two potential writer jobs share
+one workspace, overview blocks their continuation hints until a single writer
+is chosen.
 
 `codex_goal_brief` should be the default single-job monitor response for
 agents. It returns:
@@ -483,16 +491,24 @@ occasional overrides.
 
 Recommended agent loop:
 
-1. Call `codex_goal_overview` for multiple jobs or unknown state. Use
-   `codex_goal_watch` when a registrar wants a one-shot pool reconciliation;
-   keep it dry-run unless the run is explicitly allowed to continue safe jobs.
-   Call
+1. Call `agent_run_watch` first when you need pure observation of what workers
+   are doing. Use `--include-log-tail` and `--include-changed-files` only when
+   the extra data is needed. Call `codex_goal_overview` for compact registry
+   triage. Use `codex_goal_watch` only when a registrar wants a one-shot
+   reconciliation preview; keep it dry-run unless the run is explicitly allowed
+   to continue safe jobs. Call
    `codex_goal_brief` when a specific `jobId` needs monitoring.
    If `overview.safeToOperate` is false, resolve `overview.workspaceConflicts`
    before starting or continuing any writer.
    Call `codex_goal_decision` when the job needs action. Follow
    `decision.checklist` and `decision.nextBestCommand`; do not continue when
    `decision.severity` is `blocked` or `critical`.
+
+   CLI fallback:
+
+   ```bash
+   subscription-runtime-codex-goal run-watch [jobId] --include-log-tail --tail-lines 20 --include-changed-files
+   ```
 2. If `recommendedAction` is `wait_for_worker`, do not start another writer in
    that worktree while `brief.silentStale` is false.
 3. If `brief.silentStale` is true, inspect tmux, process tree, app-server,

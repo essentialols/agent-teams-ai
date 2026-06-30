@@ -3,5 +3,6 @@ export * from "./types";
 export * from "./account-capacity";
 export * from "./host-command";
 export * from "./job-watch";
+export * from "./run-observability";
 export * from "./safe-execution";
 export * from "./worker-pool";

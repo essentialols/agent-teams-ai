@@ -510,6 +510,29 @@ function parseMcpShortcut(
       format: outputFormat(option(values, io.env(), "--format", []) ?? "json"),
     };
   }
+  if (commandName === "run-watch" || commandName === "agent-run-watch") {
+    const jobId = argv[0]?.startsWith("--") ? undefined : argv[0];
+    const values = parseFlags(jobId ? argv.slice(1) : argv);
+    return {
+      kind: "mcp-tool",
+      name: "agent_run_watch",
+      argsJson: JSON.stringify({
+        providerKind: "codex",
+        ...(jobId ? { jobId } : {}),
+        ...registryArg(values),
+        ...optionalNumberArg(values, "--stale-after-ms", "staleAfterMs"),
+        ...optionalNumberArg(values, "--tail-lines", "tailLines"),
+        ...optionalNumberArg(values, "--limit", "limit"),
+        ...(flag(values, "--include-changed-files") || flag(values, "--changed-files")
+          ? { includeChangedFiles: true }
+          : {}),
+        ...(flag(values, "--include-log-tail") || flag(values, "--log-tail")
+          ? { includeLogTail: true }
+          : {}),
+      }),
+      format: outputFormat(option(values, io.env(), "--format", []) ?? "json"),
+    };
+  }
   if (commandName === "brief") {
     return parseJobShortcut({
       kind: "brief",
@@ -985,6 +1008,7 @@ function usage(): string {
   subscription-runtime-codex-goal tail --job-root <dir> --task-id <id> [--lines 100]
   subscription-runtime-codex-goal doctor-control
   subscription-runtime-codex-goal overview [--registry-root <dir>]
+  subscription-runtime-codex-goal run-watch [jobId] [--registry-root <dir>] [--include-log-tail] [--include-changed-files]
   subscription-runtime-codex-goal brief <jobId> [--registry-root <dir>]
   subscription-runtime-codex-goal decision <jobId> [--registry-root <dir>]
   subscription-runtime-codex-goal handoff <jobId> [--registry-root <dir>]
@@ -1001,7 +1025,7 @@ function usage(): string {
   subscription-runtime-codex-goal prompt <mcp_prompt_name> [--args-json '{"jobId":"..."}' | --args-file args.json]
 
 defaults:
-  --model gpt-5.5 --effort xhigh --service-tier fast --execution-engine app-server-goal --timeout 72h --max-account-cycles 3
+  --model gpt-5.5 --effort xhigh --service-tier fast --execution-engine app-server-goal --timeout 72h --max-account-cycles 5
 
 escape hatches:
   --dry-run, --print-command, --no-tmux, --no-require-git-workspace
@@ -1009,7 +1033,7 @@ escape hatches:
 MCP fallback:
   use tool/resources/prompts when native MCP tools are unavailable in a Codex thread.
   These commands call the same in-process MCP server via the SDK, so the API surface matches MCP.
-  Shortcuts like overview, brief, decision, handoff, accounts, continue-job, recover-job and stop-job are thin wrappers around MCP tools.
+  Shortcuts like overview, run-watch, brief, decision, handoff, accounts, continue-job, recover-job and stop-job are thin wrappers around MCP tools.
 `;
 }
 

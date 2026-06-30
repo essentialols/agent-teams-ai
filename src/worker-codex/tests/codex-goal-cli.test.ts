@@ -143,6 +143,8 @@ describe("codex goal cli", () => {
     const output = JSON.parse(io.stdout);
     expect(output.tools).toEqual(
       expect.arrayContaining([
+        expect.objectContaining({ name: "agent_run_watch" }),
+        expect.objectContaining({ name: "codex_goal_run_watch" }),
         expect.objectContaining({ name: "codex_goal_brief" }),
         expect.objectContaining({ name: "codex_goal_watch" }),
         expect.objectContaining({ name: "codex_goal_decision" }),
@@ -194,6 +196,31 @@ describe("codex goal cli", () => {
     expect(JSON.parse(overview.argsJson ?? "{}")).toEqual({
       registryRootDir: "/tmp/registry",
       limit: 5,
+    });
+
+    const runWatch = parseCodexGoalCliArgs([
+      "run-watch",
+      "job-a",
+      "--registry-root",
+      "/tmp/registry",
+      "--include-log-tail",
+      "--include-changed-files",
+      "--tail-lines",
+      "25",
+    ], fakeIo());
+    expect(runWatch).toMatchObject({
+      kind: "mcp-tool",
+      name: "agent_run_watch",
+      format: "json",
+    });
+    if (runWatch.kind !== "mcp-tool") return;
+    expect(JSON.parse(runWatch.argsJson ?? "{}")).toEqual({
+      providerKind: "codex",
+      jobId: "job-a",
+      registryRootDir: "/tmp/registry",
+      includeLogTail: true,
+      includeChangedFiles: true,
+      tailLines: 25,
     });
 
     const brief = parseCodexGoalCliArgs([

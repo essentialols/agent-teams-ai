@@ -6,6 +6,8 @@ import { createCodexGoalMcpServer } from "./codex-goal-mcp.js";
 const requiredCodexGoalMcpTools = [
     "codex_goal_list_jobs",
     "codex_goal_overview",
+    "agent_run_watch",
+    "codex_goal_run_watch",
     "codex_goal_get_job",
     "codex_goal_create_job",
     "codex_goal_status_by_id",
@@ -57,6 +59,7 @@ export async function doctorCodexGoalControlSurface() {
         fallbackExamples: [
             "subscription-runtime-codex-goal tools",
             "subscription-runtime-codex-goal overview",
+            "subscription-runtime-codex-goal run-watch --include-log-tail --tail-lines 20",
             "subscription-runtime-codex-goal tool codex_goal_watch --args-json '{\"continueSafeJobs\":false}'",
             "subscription-runtime-codex-goal tool codex_goal_status_by_id --args-json '{\"jobId\":\"<jobId>\"}'",
             "subscription-runtime-codex-goal brief <jobId>",

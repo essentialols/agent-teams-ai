@@ -12,6 +12,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { DefaultRedactor } from "@vioxen/subscription-runtime/core";
 import {
+  RunObservationService,
   reconcileWatchableJobs,
   type WatchableJobStatus,
 } from "@vioxen/subscription-runtime/worker-core";
@@ -47,6 +48,7 @@ import {
   type CodexGoalLaunchInput,
   type CodexGoalOutputFormat,
 } from "./codex-goal-ops";
+import { CodexRunObservationAdapter } from "./codex-run-observation";
 
 const serverVersion = "0.1.0-main.2";
 const defaultAuthRoot = "~/.cache/subscription-runtime/live-codex-auth";
@@ -106,6 +108,14 @@ type JobWatchMcpArgs = JobOverviewMcpArgs & {
   readonly continueSafeJobs?: boolean;
   readonly maxContinuesPerRun?: number;
   readonly skipDoctor?: boolean;
+};
+
+type AgentRunWatchMcpArgs = JobOverviewMcpArgs & {
+  readonly providerKind?: "codex";
+  readonly jobId?: string;
+  readonly jobIds?: string | readonly string[];
+  readonly includeChangedFiles?: boolean;
+  readonly includeLogTail?: boolean;
 };
 
 type JobIdMcpArgs = JobRegistryMcpArgs & {
@@ -280,6 +290,46 @@ export function createCodexGoalMcpServer(): McpServer {
     },
     async (args) => withMcpErrors(async () => {
       const watch = await watchCodexGoalJobs(args as JobWatchMcpArgs);
+      return mcpJson(watch);
+    }),
+  );
+
+  const agentRunWatchTool = {
+    title: "Agent Run Watch",
+    description:
+      "Read-only provider-neutral run observation. Reports status, liveness, progress, logs, workspace changes, capacity hints and read-only recommendations without starting, stopping or continuing workers.",
+    inputSchema: {
+      ...jobRegistryInputSchema(),
+      providerKind: z.literal("codex").optional(),
+      jobId: z.string().optional(),
+      jobIds: z.union([z.string(), z.array(z.string())]).optional(),
+      staleAfterMs: z.number().int().positive().optional(),
+      tailLines: z.number().int().positive().optional(),
+      limit: z.number().int().positive().optional(),
+      includeChangedFiles: z.boolean().optional(),
+      includeLogTail: z.boolean().optional(),
+    },
+  };
+
+  server.registerTool(
+    "agent_run_watch",
+    agentRunWatchTool,
+    async (args) => withMcpErrors(async () => {
+      const watch = await watchAgentRuns(args as AgentRunWatchMcpArgs);
+      return mcpJson(watch);
+    }),
+  );
+
+  server.registerTool(
+    "codex_goal_run_watch",
+    {
+      ...agentRunWatchTool,
+      title: "Codex Goal Run Watch",
+      description:
+        "Compatibility alias for agent_run_watch scoped to Codex goal jobs. Read-only; never starts, stops, continues, recovers or delivers work.",
+    },
+    async (args) => withMcpErrors(async () => {
+      const watch = await watchAgentRuns(args as AgentRunWatchMcpArgs);
       return mcpJson(watch);
     }),
   );
@@ -1545,6 +1595,75 @@ async function watchCodexGoalJobs(args: JobWatchMcpArgs): Promise<JsonObject> {
     checked: result.checked,
     continued: result.continued,
     decisions: result.decisions,
+  };
+}
+
+async function watchAgentRuns(args: AgentRunWatchMcpArgs): Promise<JsonObject> {
+  if (args.providerKind && args.providerKind !== "codex") {
+    throw new Error(`unsupported providerKind: ${args.providerKind}`);
+  }
+  const registryRootDir = registryRootFromArgs(args);
+  const staleAfterMs = numberValue(args.staleAfterMs);
+  const tailLines = numberValue(args.tailLines);
+  const adapter = new CodexRunObservationAdapter({
+    registryRootDir,
+    ...(args.cwd ? { cwd: args.cwd } : {}),
+    ...(staleAfterMs === undefined ? {} : { staleAfterMs }),
+    ...(tailLines === undefined ? {} : { tailLines }),
+  });
+  const service = new RunObservationService(adapter);
+  const explicitJobIds = [
+    ...(stringValue(args.jobId) ? [stringValue(args.jobId) as string] : []),
+    ...jobIdsFromValue(args.jobIds),
+  ];
+  const limit = numberValue(args.limit);
+  const listedRunIds = explicitJobIds.length
+    ? explicitJobIds
+    : await service.listRunIds();
+  const runIds = limit === undefined
+    ? listedRunIds
+    : listedRunIds.slice(0, limit);
+  const snapshots = await service.observeRuns({
+    runIds,
+    ...(tailLines === undefined ? {} : { tailLines }),
+    includeChangedFiles: booleanValue(args.includeChangedFiles) === true,
+    includeLogTail: booleanValue(args.includeLogTail) === true,
+  });
+  return {
+    ok: true,
+    mode: "read_only",
+    sideEffects: [],
+    providerKind: "codex",
+    registryRootDir,
+    totalRuns: listedRunIds.length,
+    returnedRuns: snapshots.length,
+    truncated: limit === undefined ? false : listedRunIds.length > runIds.length,
+    summary: summarizeRunObservationSnapshots(snapshots),
+    snapshots,
+  };
+}
+
+function summarizeRunObservationSnapshots(
+  snapshots: readonly { readonly status: string; readonly liveness: string; readonly readOnlyDecision: { readonly kind: string }; readonly warnings: readonly unknown[] }[],
+): JsonObject {
+  return {
+    running: snapshots.filter((snapshot) => snapshot.status === "running").length,
+    completed: snapshots.filter((snapshot) => snapshot.status === "completed").length,
+    failed: snapshots.filter((snapshot) => snapshot.status === "failed").length,
+    stopped: snapshots.filter((snapshot) => snapshot.status === "stopped").length,
+    unknown: snapshots.filter((snapshot) => snapshot.status === "unknown").length,
+    alive: snapshots.filter((snapshot) => snapshot.liveness === "alive").length,
+    stale: snapshots.filter((snapshot) => snapshot.liveness === "stale").length,
+    manualReview: snapshots.filter((snapshot) =>
+      snapshot.readOnlyDecision.kind === "manual_review_required"
+    ).length,
+    capacityBlocked: snapshots.filter((snapshot) =>
+      snapshot.readOnlyDecision.kind === "capacity_blocked"
+    ).length,
+    unsafeStateMismatch: snapshots.filter((snapshot) =>
+      snapshot.readOnlyDecision.kind === "unsafe_state_mismatch"
+    ).length,
+    warnings: snapshots.reduce((count, snapshot) => count + snapshot.warnings.length, 0),
   };
 }
 

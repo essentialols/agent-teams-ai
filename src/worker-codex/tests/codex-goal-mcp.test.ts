@@ -78,6 +78,90 @@ describe("codex goal MCP server", () => {
     }
   });
 
+  it("exposes read-only agent run watch snapshots without control actions", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-run-watch-"));
+    const registryRootDir = join(root, "registry");
+    const jobRootDir = join(root, "job");
+    const stateRootDir = join(root, "state");
+    const authRootDir = join(root, "auth");
+    const workspacePath = join(root, "workspace");
+    const promptPath = join(jobRootDir, "prompt.md");
+    const taskId = "sandbox-watch-task";
+
+    try {
+      await mkdir(jobRootDir, { recursive: true });
+      await mkdir(workspacePath, { recursive: true });
+      await execFileAsync("git", ["init"], { cwd: workspacePath });
+      await writeFile(promptPath, "Observe a sandbox task.\n");
+      await writeFakeAuth(authRootDir, "account-a", {
+        lastRefresh: "2026-06-03T00:00:00.000Z",
+      });
+      await writeFile(join(jobRootDir, `${taskId}.latest-result.json`), `${JSON.stringify({
+        status: "completed",
+        task: { updatedAt: "2026-06-30T00:00:00.000Z" },
+      })}\n`);
+      await writeFile(
+        join(jobRootDir, `${taskId}.log`),
+        "finished with Authorization: Bearer rawBearerSecret\n",
+      );
+
+      const server = createCodexGoalMcpServer();
+      const client = new Client({ name: "subscription-runtime-test", version: "0.0.0" });
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+      await Promise.all([
+        server.connect(serverTransport),
+        client.connect(clientTransport),
+      ]);
+
+      try {
+        await callToolJson(client, "codex_goal_create_job", {
+          registryRootDir,
+          jobId: "job-watch",
+          jobRootDir,
+          authRootDir,
+          stateRootDir,
+          workspacePath,
+          promptPath,
+          taskId,
+          accounts: ["account-a"],
+          logPath: join(jobRootDir, `${taskId}.log`),
+        });
+
+        const watch = await callToolJson(client, "agent_run_watch", {
+          registryRootDir,
+          jobId: "job-watch",
+          includeLogTail: true,
+          tailLines: 5,
+        });
+
+        expect(watch).toMatchObject({
+          ok: true,
+          mode: "read_only",
+          sideEffects: [],
+          providerKind: "codex",
+          summary: {
+            completed: 1,
+          },
+        });
+        const snapshots = watch.snapshots as readonly Record<string, unknown>[];
+        expect(snapshots[0]).toMatchObject({
+          runId: "job-watch",
+          providerKind: "codex",
+          status: "completed",
+          readOnlyDecision: {
+            kind: "review_completed",
+          },
+        });
+        expect(JSON.stringify(watch).includes("rawBearerSecret")).toBe(false);
+      } finally {
+        await client.close();
+        await server.close();
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("records an audit event when stopping a sandbox tmux worker", async () => {
     if (!(await hasTmux())) return;
     const root = await mkdtemp(join(tmpdir(), "subscription-runtime-stop-event-"));

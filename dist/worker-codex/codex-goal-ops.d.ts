@@ -22,7 +22,7 @@ export type CodexGoalStatusInput = {
     readonly logPath?: string;
     readonly progressPath?: string;
 };
-export type CodexGoalRecommendedAction = "start_worker" | "wait_for_worker" | "review_completed" | "continue_after_capacity" | "continue_after_timeout" | "inspect_dirty_workspace" | "inspect_dirty_failure" | "inspect_failure" | "check_log_or_result";
+export type CodexGoalRecommendedAction = "start_worker" | "wait_for_worker" | "review_completed" | "continue_after_capacity" | "continue_after_timeout" | "continue_after_provider_output" | "inspect_dirty_workspace" | "inspect_dirty_failure" | "inspect_failure" | "check_log_or_result";
 export type CodexGoalStatus = {
     readonly tmuxAlive?: boolean;
     readonly resultPath?: string;

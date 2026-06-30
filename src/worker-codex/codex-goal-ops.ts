@@ -53,6 +53,7 @@ export type CodexGoalRecommendedAction =
   | "review_completed"
   | "continue_after_capacity"
   | "continue_after_timeout"
+  | "continue_after_provider_output"
   | "inspect_dirty_workspace"
   | "inspect_dirty_failure"
   | "inspect_failure"
@@ -404,6 +405,11 @@ export function recommendCodexGoalAction(input: {
     return "continue_after_capacity";
   }
   if (input.resultReason === "task_timeout") return "continue_after_timeout";
+  if (input.resultReason === "provider_output_invalid") {
+    return input.workspaceDirty
+      ? "inspect_dirty_failure"
+      : "continue_after_provider_output";
+  }
   if (
     input.resultStatus === "partial" ||
     input.resultStatus === "failed" ||

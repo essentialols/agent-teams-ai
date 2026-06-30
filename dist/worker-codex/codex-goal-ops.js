@@ -242,6 +242,11 @@ export function recommendCodexGoalAction(input) {
     }
     if (input.resultReason === "task_timeout")
         return "continue_after_timeout";
+    if (input.resultReason === "provider_output_invalid") {
+        return input.workspaceDirty
+            ? "inspect_dirty_failure"
+            : "continue_after_provider_output";
+    }
     if (input.resultStatus === "partial" ||
         input.resultStatus === "failed" ||
         input.resultStatus === "aborted") {

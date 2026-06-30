@@ -2886,7 +2886,9 @@ function nextActionForStatus(action) {
     if (action === "start_worker") {
         return { tool: "codex_goal_continue", reason: "no result exists and workspace is clean" };
     }
-    if (action === "continue_after_capacity" || action === "continue_after_timeout") {
+    if (action === "continue_after_capacity" ||
+        action === "continue_after_timeout" ||
+        action === "continue_after_provider_output") {
         return { tool: "codex_goal_continue", reason: "safe continuation condition" };
     }
     if (action === "review_completed") {
@@ -3184,7 +3186,8 @@ function statusInput(launch) {
 function isSafeStartAction(action) {
     return (action === "start_worker" ||
         action === "continue_after_capacity" ||
-        action === "continue_after_timeout");
+        action === "continue_after_timeout" ||
+        action === "continue_after_provider_output");
 }
 function launchSummary(launch) {
     return {

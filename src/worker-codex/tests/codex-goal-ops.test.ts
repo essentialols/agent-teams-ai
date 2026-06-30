@@ -182,6 +182,41 @@ describe("codex goal ops", () => {
     expect(status.recommendedAction).toBe("inspect_dirty_failure");
   });
 
+  it("allows continuation for clean provider-output failures", async () => {
+    const fixture = await createGoalFixture();
+    await writeFile(
+      join(fixture.config.jobRootDir, `${fixture.config.taskId}.latest-result.json`),
+      `${JSON.stringify({
+        status: "failed",
+        reason: "provider_output_invalid",
+      })}\n`,
+    );
+
+    const status = await collectCodexGoalStatus({
+      jobRootDir: fixture.config.jobRootDir,
+      taskId: fixture.config.taskId,
+      workspacePath: fixture.config.workspacePath,
+    });
+    const launch = launchInput(fixture.config, fixture.root);
+    const brief = await buildCodexGoalBrief({
+      jobId: "job-from-registry",
+      launch,
+      status,
+      accounts: [accountStatus("account-a", {})],
+      staleAfterMs: 60_000,
+      tailLines: 20,
+    });
+
+    expect(status.resultStatus).toBe("failed");
+    expect(status.resultReason).toBe("provider_output_invalid");
+    expect(status.workspaceDirty).toBe(false);
+    expect(status.recommendedAction).toBe("continue_after_provider_output");
+    expect(brief.safeToContinue).toBe(true);
+    expect(brief.nextBestCommand).toBe(
+      'codex_goal_continue({ jobId: "job-from-registry", confirmContinue: true })',
+    );
+  });
+
   it("uses the configured result path for legacy stored jobs", async () => {
     const fixture = await createGoalFixture();
     const outputPath = join(fixture.config.jobRootDir, "output.json");

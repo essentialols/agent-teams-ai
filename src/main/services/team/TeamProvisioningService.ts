@@ -64,7 +64,6 @@ import {
   parseCrossTeamPrefix,
   stripCrossTeamPrefix,
 } from '@shared/constants/crossTeam';
-import { getMemberColorByName } from '@shared/constants/memberColors';
 import {
   type AttachmentMeta,
   type AttachmentPayload,
@@ -75,14 +74,13 @@ import { resolveAnthropicLaunchModel } from '@shared/utils/anthropicLaunchModel'
 import { parseCliArgs } from '@shared/utils/cliArgsParser';
 import { isUsableCodexModelCatalog } from '@shared/utils/codexModelCatalog';
 import { deriveContextMetrics } from '@shared/utils/contextMetrics';
-import { isTeamEffortLevel } from '@shared/utils/effortLevels';
 import { getErrorMessage } from '@shared/utils/errorHandling';
 import {
   isMeaningfulBootstrapCheckInMessage,
   type ParsedPermissionRequest,
   parsePermissionRequest,
 } from '@shared/utils/inboxNoise';
-import { isLeadAgentType, isLeadMember } from '@shared/utils/leadDetection';
+import { isLeadMember } from '@shared/utils/leadDetection';
 import { createLogger } from '@shared/utils/logger';
 import { migrateProviderBackendId } from '@shared/utils/providerBackend';
 import {
@@ -94,13 +92,12 @@ import {
   parseAllTeammateMessages,
   type ParsedTeammateContent,
 } from '@shared/utils/teammateMessageParser';
-import { buildTeamMemberColorMap } from '@shared/utils/teamMemberColors';
 import {
   buildTeamMemberMcpSettingSources,
   normalizeTeamMemberMcpPolicy,
   requiresStrictTeamMemberMcpConfig,
 } from '@shared/utils/teamMemberMcpPolicy';
-import { createCliAutoSuffixNameGuard, parseNumericSuffixName } from '@shared/utils/teamMemberName';
+import { parseNumericSuffixName } from '@shared/utils/teamMemberName';
 import {
   inferTeamProviderIdFromModel,
   normalizeOptionalTeamProviderId,
@@ -261,6 +258,21 @@ import {
   clearPostCompactReminderState,
 } from './provisioning/TeamProvisioningCleanup';
 import { buildCombinedLogs } from './provisioning/TeamProvisioningCliExitPresentation';
+import {
+  buildMembersMetaWritePayload,
+  collectConfigLaunchBaseNamesFromConfigMembers,
+  collectConfigLaunchBaseNamesFromMetaMembers,
+  createInboxJsonFileSet,
+  getPrelaunchConfigBackupPath,
+  mergeInboxMessageLists,
+  parseInboxMessageListRaw,
+  planCliAutoSuffixedConfigMemberCleanup,
+  planCliAutoSuffixedMetaMemberCleanup,
+  planInboxDuplicateMerge,
+  planTeamConfigLaunchNormalization,
+  resolveLaunchExpectedMembersFromCompatibilityReport,
+  selectMembersMetaTeammates,
+} from './provisioning/TeamProvisioningConfigLaunchNormalization';
 import {
   applyConfigPostLaunchMaterialization,
   buildConfigLaunchCompatibilityReport,
@@ -984,15 +996,6 @@ function pushUniqueSupportDiagnostics(
   }
 }
 
-function applyDistinctProvisioningMemberColors<
-  T extends { name: string; color?: string; removedAt?: number },
->(members: readonly T[]): T[] {
-  const colorMap = buildTeamMemberColorMap(members, { preferProvidedColors: false });
-  return members.map((member) => ({
-    ...member,
-    color: colorMap.get(member.name) ?? member.color ?? getMemberColorByName(member.name),
-  }));
-}
 const STALL_CHECK_INTERVAL_MS = 10_000;
 const STALL_WARNING_THRESHOLD_MS = 20_000;
 const APP_TEAM_RUNTIME_DISALLOWED_TOOLS =
@@ -5778,33 +5781,6 @@ export class TeamProvisioningService {
     for (const configPath of run.memberMcpConfigPaths?.splice(0) ?? []) {
       void this.mcpConfigBuilder.removeConfigFile(configPath);
     }
-  }
-
-  private buildMembersMetaWritePayload(members: TeamCreateRequest['members']): TeamMember[] {
-    return applyDistinctProvisioningMemberColors(
-      members.map((member) => ({
-        name: member.name.trim(),
-        role: member.role?.trim() || undefined,
-        workflow: member.workflow?.trim() || undefined,
-        isolation: member.isolation === 'worktree' ? ('worktree' as const) : undefined,
-        cwd: member.cwd?.trim() || undefined,
-        providerId: normalizeOptionalTeamProviderId(member.providerId),
-        providerBackendId: migrateProviderBackendId(member.providerId, member.providerBackendId),
-        model: member.model?.trim() || undefined,
-        effort: isTeamEffortLevel(member.effort) ? member.effort : undefined,
-        fastMode:
-          member.fastMode === 'inherit' || member.fastMode === 'on' || member.fastMode === 'off'
-            ? member.fastMode
-            : undefined,
-        mcpPolicy: normalizeTeamMemberMcpPolicy(member.mcpPolicy),
-        agentType: 'general-purpose' as const,
-        color: getMemberColorByName(member.name.trim()),
-        joinedAt:
-          typeof (member as { joinedAt?: unknown }).joinedAt === 'number'
-            ? (member as { joinedAt?: number }).joinedAt!
-            : Date.now(),
-      }))
-    );
   }
 
   private enrichRuntimeAdapterProgressTrace(
@@ -11421,7 +11397,7 @@ export class TeamProvisioningService {
           launchIdentity,
           createdAt: Date.now(),
         });
-        const membersToWrite = this.buildMembersMetaWritePayload(allEffectiveMemberSpecs);
+        const membersToWrite = buildMembersMetaWritePayload(allEffectiveMemberSpecs);
         await this.membersMetaStore.writeMembers(request.teamName, membersToWrite, {
           providerBackendId: request.providerBackendId,
         });
@@ -11753,7 +11729,7 @@ export class TeamProvisioningService {
       limitContext: launchRequest.limitContext,
       createdAt: Date.now(),
     });
-    const membersToWrite = this.buildMembersMetaWritePayload(effectiveMembers);
+    const membersToWrite = buildMembersMetaWritePayload(effectiveMembers);
     await this.membersMetaStore.writeMembers(launchRequest.teamName, membersToWrite, {
       providerBackendId: launchRequest.providerBackendId,
     });
@@ -13395,7 +13371,7 @@ export class TeamProvisioningService {
       });
       await this.membersMetaStore.writeMembers(
         request.teamName,
-        this.buildMembersMetaWritePayload(allEffectiveMemberSpecs),
+        buildMembersMetaWritePayload(allEffectiveMemberSpecs),
         {
           providerBackendId: request.providerBackendId,
         }
@@ -22547,48 +22523,20 @@ export class TeamProvisioningService {
   private async cleanupCliAutoSuffixedMembers(teamName: string): Promise<void> {
     const configPath = path.join(getTeamsBasePath(), teamName, 'config.json');
 
-    const removedFromConfig: string[] = [];
     try {
       const raw = await tryReadRegularFileUtf8(configPath, {
         timeoutMs: TEAM_JSON_READ_TIMEOUT_MS,
         maxBytes: TEAM_CONFIG_MAX_BYTES,
       });
       if (raw) {
-        const parsed = JSON.parse(raw) as Record<string, unknown>;
-        const membersRaw = Array.isArray(parsed.members)
-          ? (parsed.members as Record<string, unknown>[])
-          : [];
-        if (membersRaw.length > 0) {
-          const teammateNames = membersRaw
-            .map((m) => (typeof m.name === 'string' ? m.name.trim() : ''))
-            .filter(
-              (n) => n.length > 0 && n.toLowerCase() !== 'team-lead' && n.toLowerCase() !== 'user'
-            );
-
-          const keepName = createCliAutoSuffixNameGuard(teammateNames);
-          const nextMembers: Record<string, unknown>[] = [];
-          for (const m of membersRaw) {
-            const name = typeof m.name === 'string' ? m.name.trim() : '';
-            if (!name) continue;
-            if (isLeadMember(m) || name === 'user') {
-              nextMembers.push(m);
-              continue;
-            }
-            if (!keepName(name)) {
-              removedFromConfig.push(name);
-              continue;
-            }
-            nextMembers.push(m);
-          }
-
-          if (removedFromConfig.length > 0) {
-            parsed.members = nextMembers;
-            await atomicWriteAsync(configPath, JSON.stringify(parsed, null, 2));
-            TeamConfigReader.invalidateTeam(teamName);
-            logger.warn(
-              `[${teamName}] Removed CLI auto-suffixed members from config.json: ${removedFromConfig.join(', ')}`
-            );
-          }
+        const cleanupPlan = planCliAutoSuffixedConfigMemberCleanup(raw);
+        if (cleanupPlan) {
+          cleanupPlan.config.members = cleanupPlan.nextMembers;
+          await atomicWriteAsync(configPath, JSON.stringify(cleanupPlan.config, null, 2));
+          TeamConfigReader.invalidateTeam(teamName);
+          logger.warn(
+            `[${teamName}] Removed CLI auto-suffixed members from config.json: ${cleanupPlan.removedNames.join(', ')}`
+          );
         }
       }
     } catch {
@@ -22599,42 +22547,16 @@ export class TeamProvisioningService {
     try {
       const metaMembers = await this.membersMetaStore.getMembers(teamName);
       if (metaMembers.length > 0) {
-        const activeNames = metaMembers
-          .filter((m) => !m.removedAt)
-          .map((m) => m.name.trim())
-          .filter(
-            (n) => n.length > 0 && n.toLowerCase() !== 'team-lead' && n.toLowerCase() !== 'user'
-          );
+        const cleanupPlan = planCliAutoSuffixedMetaMemberCleanup(metaMembers);
 
-        const keepName = createCliAutoSuffixNameGuard(activeNames);
-        const removedFromMeta: string[] = [];
-        const nextMeta = metaMembers.filter((m) => {
-          const name = m.name?.trim() ?? '';
-          if (!name) return false;
-          const lower = name.toLowerCase();
-          if (lower === 'user' || isLeadMember(m)) return true;
-          if (!m.removedAt && !keepName(name)) {
-            removedFromMeta.push(name);
-            return false;
-          }
-          return true;
-        });
-
-        if (removedFromMeta.length > 0) {
-          await this.membersMetaStore.writeMembers(teamName, nextMeta);
+        if (cleanupPlan.removedNames.length > 0) {
+          await this.membersMetaStore.writeMembers(teamName, cleanupPlan.nextMembers);
           logger.warn(
-            `[${teamName}] Removed CLI auto-suffixed members from members.meta.json: ${removedFromMeta.join(', ')}`
+            `[${teamName}] Removed CLI auto-suffixed members from members.meta.json: ${cleanupPlan.removedNames.join(', ')}`
           );
         }
 
-        activeNamesForInboxCleanup = new Set(
-          nextMeta
-            .filter((m) => !m.removedAt)
-            .map((m) => m.name.trim())
-            .filter(
-              (n) => n.length > 0 && n.toLowerCase() !== 'team-lead' && n.toLowerCase() !== 'user'
-            )
-        );
+        activeNamesForInboxCleanup = cleanupPlan.activeNamesForInboxCleanup;
       }
     } catch {
       // best-effort
@@ -22735,95 +22657,20 @@ export class TeamProvisioningService {
 
   private async normalizeTeamConfigForLaunch(teamName: string, configRaw: string): Promise<void> {
     const configPath = path.join(getTeamsBasePath(), teamName, 'config.json');
-    const backupPath = `${configPath}.prelaunch.bak`;
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(configRaw) as unknown;
-    } catch {
-      return;
-    }
-    if (!parsed || typeof parsed !== 'object') {
-      return;
-    }
-
-    const config = parsed as Record<string, unknown>;
-    const members = Array.isArray(config.members)
-      ? (config.members as Record<string, unknown>[])
-      : [];
-    if (members.length === 0) {
-      return;
-    }
-
-    // Keep only the lead entry.
-    const leadMembers = members.filter((member) => {
-      const agentType = member.agentType;
-      if (typeof agentType === 'string' && isLeadAgentType(agentType)) {
-        return true;
-      }
-      // Also check by name (CLI may set agentType to "general-purpose" for leads)
-      const name = typeof member.name === 'string' ? member.name.trim().toLowerCase() : '';
-      if (name === 'team-lead') return true;
-      const leadAgentId = config.leadAgentId;
-      return (
-        typeof leadAgentId === 'string' &&
-        typeof member.agentId === 'string' &&
-        member.agentId === leadAgentId
-      );
-    });
-
-    // If already lead-only, no-op.
-    if (leadMembers.length === members.length) {
-      return;
-    }
+    const backupPath = getPrelaunchConfigBackupPath(configPath);
+    const normalizationPlan = planTeamConfigLaunchNormalization(configRaw);
+    if (!normalizationPlan) return;
 
     // Try to determine base teammate names for inbox cleanup (prefer meta).
-    const baseNames = new Set<string>();
+    let baseNames = new Set<string>();
     try {
       const metaMembers = await this.membersMetaStore.getMembers(teamName);
-      for (const member of metaMembers) {
-        const name = member.name.trim();
-        const lower = name.toLowerCase();
-        if (name.length > 0 && !member.removedAt && lower !== 'team-lead' && lower !== 'user') {
-          baseNames.add(name);
-        }
-      }
+      baseNames = collectConfigLaunchBaseNamesFromMetaMembers(metaMembers);
     } catch {
       // ignore
     }
     if (baseNames.size === 0) {
-      const allConfigNames = new Set<string>();
-      for (const member of members) {
-        const name = typeof member.name === 'string' ? member.name.trim() : '';
-        const agentType = typeof member.agentType === 'string' ? member.agentType : '';
-        if (
-          name &&
-          agentType &&
-          !isLeadAgentType(agentType) &&
-          name !== 'team-lead' &&
-          name !== 'user'
-        ) {
-          allConfigNames.add(name);
-        }
-      }
-      const allConfigNamesLower = new Set(Array.from(allConfigNames).map((n) => n.toLowerCase()));
-      for (const name of allConfigNames) {
-        const match = /^(.+)-(\d+)$/.exec(name);
-        if (!match?.[1] || !match[2]) {
-          baseNames.add(name);
-          continue;
-        }
-        const suffix = Number(match[2]);
-        // Only exclude CLI-suffixed names (alice-2) when the base name (alice) also exists
-        // (and only for -2+ to avoid excluding legitimate "dev-1"-style names).
-        if (!Number.isFinite(suffix) || suffix < 2) {
-          baseNames.add(name);
-          continue;
-        }
-        if (!allConfigNamesLower.has(match[1].toLowerCase())) {
-          baseNames.add(name);
-        }
-      }
+      baseNames = collectConfigLaunchBaseNamesFromConfigMembers(normalizationPlan.members);
     }
 
     // Backup current config on disk for crash recovery / debugging.
@@ -22838,12 +22685,12 @@ export class TeamProvisioningService {
     }
 
     // Write normalized config atomically.
-    config.members = leadMembers;
+    normalizationPlan.config.members = normalizationPlan.leadMembers;
     try {
-      await atomicWriteAsync(configPath, JSON.stringify(config, null, 2));
+      await atomicWriteAsync(configPath, JSON.stringify(normalizationPlan.config, null, 2));
       TeamConfigReader.invalidateTeam(teamName);
       logger.info(
-        `[${teamName}] Normalized config.json for launch: kept ${leadMembers.length} lead member(s)`
+        `[${teamName}] Normalized config.json for launch: kept ${normalizationPlan.leadMembers.length} lead member(s)`
       );
     } catch (error) {
       logger.warn(
@@ -22863,7 +22710,7 @@ export class TeamProvisioningService {
    */
   private async restorePrelaunchConfig(teamName: string): Promise<void> {
     const configPath = path.join(getTeamsBasePath(), teamName, 'config.json');
-    const backupPath = `${configPath}.prelaunch.bak`;
+    const backupPath = getPrelaunchConfigBackupPath(configPath);
     try {
       const backupRaw = await tryReadRegularFileUtf8(backupPath, {
         timeoutMs: TEAM_JSON_READ_TIMEOUT_MS,
@@ -22885,7 +22732,7 @@ export class TeamProvisioningService {
    */
   async cleanupPrelaunchBackup(teamName: string): Promise<void> {
     const configPath = path.join(getTeamsBasePath(), teamName, 'config.json');
-    const backupPath = `${configPath}.prelaunch.bak`;
+    const backupPath = getPrelaunchConfigBackupPath(configPath);
     try {
       await fs.promises.unlink(backupPath);
     } catch {
@@ -22907,23 +22754,13 @@ export class TeamProvisioningService {
       return;
     }
 
-    const existing = new Set(entries.filter((e) => e.endsWith('.json') && !e.startsWith('.')));
+    const existing = createInboxJsonFileSet(entries);
 
     for (const baseName of baseNames) {
-      const canonicalFile = `${baseName}.json`;
-      if (!existing.has(canonicalFile)) {
-        continue;
-      }
+      const mergePlan = planInboxDuplicateMerge(baseName, existing);
+      if (!mergePlan) continue;
 
-      const duplicates = Array.from(existing)
-        .filter((file) => file.startsWith(`${baseName}-`) && file.endsWith('.json'))
-        .filter((file) => /-\d+\.json$/.test(file));
-
-      if (duplicates.length === 0) {
-        continue;
-      }
-
-      const canonicalPath = path.join(inboxDir, canonicalFile);
+      const canonicalPath = path.join(inboxDir, mergePlan.canonicalFile);
       let canonicalRaw: string;
       try {
         const raw = await tryReadRegularFileUtf8(canonicalPath, {
@@ -22939,16 +22776,9 @@ export class TeamProvisioningService {
         continue;
       }
 
-      let canonicalParsed: unknown;
-      try {
-        canonicalParsed = JSON.parse(canonicalRaw) as unknown;
-      } catch {
-        canonicalParsed = [];
-      }
-      const canonicalList = Array.isArray(canonicalParsed) ? (canonicalParsed as unknown[]) : [];
-
-      const merged = [...canonicalList];
-      for (const dupFile of duplicates) {
+      const canonicalList = parseInboxMessageListRaw(canonicalRaw);
+      const duplicateLists: unknown[][] = [];
+      for (const dupFile of mergePlan.duplicateFiles) {
         const dupPath = path.join(inboxDir, dupFile);
         let dupRaw: string;
         try {
@@ -22964,49 +22794,10 @@ export class TeamProvisioningService {
           continue;
         }
 
-        let dupParsed: unknown;
-        try {
-          dupParsed = JSON.parse(dupRaw) as unknown;
-        } catch {
-          dupParsed = [];
-        }
-        if (Array.isArray(dupParsed)) {
-          const dupList = dupParsed as unknown[];
-          merged.push(...dupList);
-        }
+        duplicateLists.push(parseInboxMessageListRaw(dupRaw));
       }
 
-      // Dedup by messageId when available, then sort by timestamp desc.
-      const dedupById = new Map<string, unknown>();
-      const noId: unknown[] = [];
-      for (const item of merged) {
-        if (!item || typeof item !== 'object') {
-          continue;
-        }
-        const msg = item as { messageId?: unknown };
-        if (typeof msg.messageId === 'string' && msg.messageId.trim().length > 0) {
-          dedupById.set(msg.messageId, item);
-        } else {
-          noId.push(item);
-        }
-      }
-      const mergedDeduped = [...Array.from(dedupById.values()), ...noId];
-      mergedDeduped.sort((a, b) => {
-        const at =
-          a && typeof a === 'object'
-            ? Date.parse((a as { timestamp?: string }).timestamp ?? '')
-            : NaN;
-        const bt =
-          b && typeof b === 'object'
-            ? Date.parse((b as { timestamp?: string }).timestamp ?? '')
-            : NaN;
-        const atNaN = Number.isNaN(at);
-        const btNaN = Number.isNaN(bt);
-        if (atNaN && btNaN) return 0;
-        if (atNaN) return 1;
-        if (btNaN) return -1;
-        return bt - at;
-      });
+      const mergedDeduped = mergeInboxMessageLists(canonicalList, duplicateLists);
 
       try {
         await atomicWriteAsync(canonicalPath, JSON.stringify(mergedDeduped, null, 2));
@@ -23014,7 +22805,7 @@ export class TeamProvisioningService {
         continue;
       }
 
-      for (const dupFile of duplicates) {
+      for (const dupFile of mergePlan.duplicateFiles) {
         try {
           await fs.promises.unlink(path.join(inboxDir, dupFile));
           existing.delete(dupFile);
@@ -23026,11 +22817,7 @@ export class TeamProvisioningService {
   }
 
   private async persistMembersMeta(teamName: string, request: TeamCreateRequest): Promise<void> {
-    const teammateMembers = request.members.filter((member) => {
-      const trimmed = member.name.trim();
-      const lower = trimmed.toLowerCase();
-      return trimmed.length > 0 && lower !== 'team-lead' && lower !== 'user';
-    });
+    const teammateMembers = selectMembersMetaTeammates(request.members);
     if (teammateMembers.length === 0) {
       return;
     }
@@ -23038,7 +22825,7 @@ export class TeamProvisioningService {
     const joinedAt = Date.now();
 
     try {
-      const membersToWrite = this.buildMembersMetaWritePayload(
+      const membersToWrite = buildMembersMetaWritePayload(
         teammateMembers.map((member) => ({
           ...member,
           joinedAt,
@@ -23075,19 +22862,7 @@ export class TeamProvisioningService {
     source: 'members-meta' | 'inboxes' | 'config-fallback';
     warning?: string;
   } {
-    if (report.level === 'unsafe') {
-      throw new Error(report.blockers[0] ?? getMixedLaunchFallbackRecoveryError());
-    }
-    return {
-      members: report.members,
-      source:
-        report.rosterSource === 'members-meta'
-          ? 'members-meta'
-          : report.rosterSource === 'inboxes'
-            ? 'inboxes'
-            : 'config-fallback',
-      ...(report.warnings.length > 0 ? { warning: report.warnings.join(' ') } : {}),
-    };
+    return resolveLaunchExpectedMembersFromCompatibilityReport(report);
   }
 
   private async probeLaunchCompatibility(
@@ -23256,7 +23031,7 @@ export class TeamProvisioningService {
       return;
     }
     const joinedAt = Date.now();
-    const membersToWrite = this.buildMembersMetaWritePayload(
+    const membersToWrite = buildMembersMetaWritePayload(
       report.members.map((member) => ({
         ...member,
         joinedAt,

@@ -19,13 +19,7 @@ import {
 import { createTeamRuntimeLaneCoordinator } from '@features/team-runtime-lanes/main';
 import { killTmuxPaneForCurrentPlatformSync } from '@features/tmux-installer/main';
 import {
-  applyWorkspaceTrustLaunchArgPatches,
-  budgetWorkspaceTrustDiagnosticsManifest,
-  buildWorkspaceTrustPathCandidates,
-  buildWorkspaceTrustPreflightEnv,
-  resolveWorkspaceTrustCanonicalGitRoot,
   resolveWorkspaceTrustFeatureFlags,
-  resolveWorkspaceTrustFilesystemGitRoot,
   type WorkspaceTrustArgsOnlyPlanRequest,
   type WorkspaceTrustArgsOnlyPlanResult,
   type WorkspaceTrustCoordinator,
@@ -125,7 +119,7 @@ import {
   parseAgentToolResultStatus,
 } from '@shared/utils/toolSummary';
 import * as agentTeamsControllerModule from 'agent-teams-controller';
-import { type ChildProcess, execFile, execFileSync, type spawn } from 'child_process';
+import { type ChildProcess, execFileSync, type spawn } from 'child_process';
 import { randomUUID } from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -333,9 +327,7 @@ import {
 } from './provisioning/TeamProvisioningLaunchCompatibility';
 import {
   buildLaunchDiagnosticsFromRun,
-  buildWorkspaceTrustPreflightLaunchDiagnostic,
   mentionsProcessTableUnavailable,
-  mergeLaunchDiagnosticItem,
 } from './provisioning/TeamProvisioningLaunchDiagnostics';
 import {
   deriveMemberLaunchState,
@@ -507,6 +499,18 @@ import {
   handleTeamProvisioningTurnComplete,
   type TeamProvisioningTurnCompletePorts,
 } from './provisioning/TeamProvisioningTurnComplete';
+import {
+  applyWorkspaceTrustArgPatches as applyWorkspaceTrustArgPatchesHelper,
+  collectWorkspaceTrustProviders as collectWorkspaceTrustProvidersHelper,
+  collectWorkspaceTrustWorkspaces as collectWorkspaceTrustWorkspacesHelper,
+  createDefaultModelWorkspaceTrustProviderArgsResolver as createDefaultModelWorkspaceTrustProviderArgsResolverHelper,
+  planWorkspaceTrustArgsOnlySafely as planWorkspaceTrustArgsOnlySafelyHelper,
+  planWorkspaceTrustFullSafely as planWorkspaceTrustFullSafelyHelper,
+  prepareWorkspaceTrustForDeterministicRun as prepareWorkspaceTrustForDeterministicRunHelper,
+  resolveWorkspaceTrustGitRoot as resolveWorkspaceTrustGitRootHelper,
+  toWorkspaceTrustProvider as toWorkspaceTrustProviderHelper,
+  type WorkspaceTrustProviderArgsResolver,
+} from './provisioning/TeamProvisioningWorkspaceTrust';
 import { OpenCodeTaskLogAttributionStore } from './taskLogs/stream/OpenCodeTaskLogAttributionStore';
 import { getCurrentAgentTeamsMcpHttpTransportEvidence } from './AgentTeamsMcpHttpServer';
 import { isAgentTeamsToolUse } from './agentTeamsToolNames';
@@ -1482,12 +1486,6 @@ interface TeamRuntimeLaunchArgsPlan {
   inheritedProviderArgs: string[];
   appManagedSettingsPath: string | null;
 }
-
-type WorkspaceTrustProviderArgsResolver = (input: {
-  providerId: TeamProviderId;
-  providerArgs: string[];
-  phase: 'default-model-resolution';
-}) => string[];
 
 interface CrossProviderMemberArgsResult {
   args: string[];
@@ -3035,113 +3033,32 @@ export class TeamProvisioningService {
   }
 
   private toWorkspaceTrustProvider(providerId: TeamProviderId): WorkspaceTrustProvider {
-    return providerId === 'anthropic' ? 'claude' : providerId;
+    return toWorkspaceTrustProviderHelper(providerId);
   }
 
   private collectWorkspaceTrustProviders(input: {
     leadProviderId?: TeamProviderId;
     members: TeamCreateRequest['members'];
   }): WorkspaceTrustProvider[] {
-    const providers = new Set<WorkspaceTrustProvider>();
-    providers.add(this.toWorkspaceTrustProvider(resolveTeamProviderId(input.leadProviderId)));
-    for (const member of input.members) {
-      const providerId =
-        normalizeTeamMemberProviderId(member.providerId) ??
-        normalizeTeamMemberProviderId((member as { provider?: unknown }).provider);
-      if (providerId) {
-        providers.add(this.toWorkspaceTrustProvider(providerId));
-      }
-    }
-    if (providers.size === 0) {
-      providers.add('claude');
-    }
-    const providerOrder: WorkspaceTrustProvider[] = ['claude', 'codex', 'gemini', 'opencode'];
-    return providerOrder.filter((provider) => providers.has(provider));
+    return collectWorkspaceTrustProvidersHelper({
+      leadProviderId: resolveTeamProviderId(input.leadProviderId),
+      memberProviderIds: input.members.map(
+        (member) =>
+          normalizeTeamMemberProviderId(member.providerId) ??
+          normalizeTeamMemberProviderId((member as { provider?: unknown }).provider)
+      ),
+    });
   }
 
   private async resolveWorkspaceTrustGitRoot(cwd: string): Promise<string | null> {
-    const normalizedCwd = cwd.trim();
-    if (!normalizedCwd) {
-      return null;
-    }
-    const gitRoot = await new Promise<string | null>((resolve) => {
-      execFile(
-        'git',
-        ['-C', normalizedCwd, 'rev-parse', '--show-toplevel'],
-        {
-          encoding: 'utf8',
-          maxBuffer: 16 * 1024,
-          timeout: 1000,
-          windowsHide: true,
-        },
-        (error, stdout) => {
-          if (error) {
-            resolve(null);
-            return;
-          }
-          const gitRoot = stdout.trim();
-          resolve(gitRoot && path.isAbsolute(gitRoot) ? gitRoot : null);
-        }
-      );
-    });
-    return gitRoot ?? resolveWorkspaceTrustFilesystemGitRoot(normalizedCwd);
+    return resolveWorkspaceTrustGitRootHelper(cwd);
   }
 
   private async collectWorkspaceTrustWorkspaces(input: {
     cwd: string;
     members: TeamCreateRequest['members'];
   }): Promise<WorkspaceTrustWorkspace[]> {
-    const homeDir = getHomeDir();
-    const candidates: WorkspaceTrustWorkspace[] = [];
-    const gitRootCache = new Map<string, string | null>();
-    const addPath = async (
-      cwd: string,
-      source: WorkspaceTrustWorkspace['source'],
-      memberId?: string
-    ): Promise<void> => {
-      const realCwd = await fs.promises.realpath(cwd).catch(() => null);
-      let gitRoot = gitRootCache.get(cwd);
-      if (gitRoot === undefined) {
-        const resolvedGitRoot = await this.resolveWorkspaceTrustGitRoot(cwd);
-        const realGitRoot = resolvedGitRoot
-          ? await fs.promises.realpath(resolvedGitRoot).catch(() => resolvedGitRoot)
-          : null;
-        gitRoot = realGitRoot ? await resolveWorkspaceTrustCanonicalGitRoot(realGitRoot) : null;
-        gitRootCache.set(cwd, gitRoot);
-      }
-      candidates.push(
-        ...buildWorkspaceTrustPathCandidates({
-          cwd,
-          realCwd,
-          gitRoot,
-          homeDir,
-          source,
-          memberId,
-          platform: process.platform === 'win32' ? 'win32' : 'posix',
-        })
-      );
-    };
-
-    await addPath(input.cwd, 'team-root');
-    for (const member of input.members) {
-      const memberCwd = member.cwd?.trim();
-      if (!memberCwd) {
-        continue;
-      }
-      await addPath(
-        memberCwd,
-        member.isolation === 'worktree' ? 'member-worktree' : 'member-cwd',
-        member.name
-      );
-    }
-    const seen = new Set<string>();
-    return candidates.filter((workspace) => {
-      if (seen.has(workspace.comparisonKey)) {
-        return false;
-      }
-      seen.add(workspace.comparisonKey);
-      return true;
-    });
+    return collectWorkspaceTrustWorkspacesHelper(input);
   }
 
   private applyWorkspaceTrustArgPatches(input: {
@@ -3150,63 +3067,31 @@ export class TeamProvisioningService {
     targetProvider: TeamProviderId;
     targetSurface: WorkspaceTrustLaunchArgTargetSurface;
   }): string[] {
-    if (input.patches.length === 0) {
-      return input.args;
-    }
-    return applyWorkspaceTrustLaunchArgPatches({
-      args: input.args,
-      patches: input.patches,
-      targetProvider: this.toWorkspaceTrustProvider(input.targetProvider),
-      targetSurface: input.targetSurface,
-    }).args;
+    return applyWorkspaceTrustArgPatchesHelper(input);
   }
 
   private createDefaultModelWorkspaceTrustProviderArgsResolver(
     plan: Pick<WorkspaceTrustArgsOnlyPlanResult, 'launchArgPatches'>
   ): WorkspaceTrustProviderArgsResolver {
-    return (input) =>
-      this.applyWorkspaceTrustArgPatches({
-        args: input.providerArgs,
-        patches: plan.launchArgPatches,
-        targetProvider: input.providerId,
-        targetSurface: 'default_model_probe',
-      });
+    return createDefaultModelWorkspaceTrustProviderArgsResolverHelper(plan);
   }
 
   private async planWorkspaceTrustArgsOnlySafely(
     request: WorkspaceTrustArgsOnlyPlanRequest
   ): Promise<WorkspaceTrustArgsOnlyPlanResult> {
-    if (!this.workspaceTrustCoordinator) {
-      return { launchArgPatches: [] };
-    }
-    try {
-      return await this.workspaceTrustCoordinator.planArgsOnly(request);
-    } catch (error) {
-      logger.warn(
-        `Workspace trust args-only planning failed; continuing without trust arg patches: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
-      return { launchArgPatches: [] };
-    }
+    return planWorkspaceTrustArgsOnlySafelyHelper({
+      coordinator: this.workspaceTrustCoordinator,
+      request,
+    });
   }
 
   private async planWorkspaceTrustFullSafely(
     request: WorkspaceTrustFullPlanRequest
   ): Promise<WorkspaceTrustFullPlanResult | null> {
-    if (!this.workspaceTrustCoordinator) {
-      return null;
-    }
-    try {
-      return await this.workspaceTrustCoordinator.planFull(request);
-    } catch (error) {
-      logger.warn(
-        `Workspace trust full planning failed; continuing without trust arg patches: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
-      return { providers: request.providers, workspaces: request.workspaces, launchArgPatches: [] };
-    }
+    return planWorkspaceTrustFullSafelyHelper({
+      coordinator: this.workspaceTrustCoordinator,
+      request,
+    });
   }
 
   private isLaunchRunStillCurrent(run: ProvisioningRun): boolean {
@@ -3235,110 +3120,18 @@ export class TeamProvisioningService {
     featureFlags: WorkspaceTrustFeatureFlags;
     provisioningEnv: ProvisioningEnvResolution;
   }): Promise<void> {
-    if (
-      !this.workspaceTrustCoordinator ||
-      !input.workspaceTrustPlan ||
-      !input.featureFlags.enabled
-    ) {
-      return;
-    }
-
-    input.run.workspaceTrustPlan = input.workspaceTrustPlan;
-    updateProgress(input.run, 'spawning', 'Preparing workspace trust', {
-      warnings: input.run.progress.warnings,
+    await prepareWorkspaceTrustForDeterministicRunHelper(input, {
+      workspaceTrustCoordinator: this.workspaceTrustCoordinator,
+      stopAllTeamsGeneration: this.stopAllTeamsGeneration,
+      updateProgress,
+      boundLaunchDiagnostics,
+      isLaunchRunStillCurrent: (run) => this.isLaunchRunStillCurrent(run),
+      isRunStillTracked: (run) => this.runs.get(run.runId) === run,
+      cancelDeterministicRunBeforeSpawn: (run, cancelInput) =>
+        this.cancelDeterministicRunBeforeSpawn(run, cancelInput),
+      failDeterministicRunBeforeSpawn: (run, failInput) =>
+        this.failDeterministicRunBeforeSpawn(run, failInput),
     });
-    input.run.onProgress(input.run.progress);
-
-    let execution: WorkspaceTrustExecutionResult;
-    try {
-      execution = await this.workspaceTrustCoordinator.execute({
-        providers: input.workspaceTrustPlan.providers,
-        claudePath: input.claudePath,
-        workspaces: input.workspaceTrustPlan.workspaces,
-        env: buildWorkspaceTrustPreflightEnv(input.shellEnv),
-        featureFlags: input.featureFlags,
-        isCancelled: () =>
-          input.run.cancelRequested ||
-          input.run.processKilled ||
-          this.stopAllTeamsGeneration !== input.stopAllGenerationAtStart,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      execution = {
-        id: 'workspace-trust-coordinator',
-        provider: 'claude',
-        status: 'soft_failed',
-        workspaceIds: input.workspaceTrustPlan.workspaces.map((workspace) => workspace.id),
-        errorCode: 'workspace_trust_preflight_error',
-        errorMessage: message,
-        evidence: [message],
-      };
-    }
-    input.run.workspaceTrustExecution = execution;
-    input.run.workspaceTrustDiagnostics = budgetWorkspaceTrustDiagnosticsManifest({
-      attempt: 1,
-      featureFlags: input.featureFlags,
-      strategyResults: [execution],
-    });
-    const workspaceTrustLaunchDiagnostic = buildWorkspaceTrustPreflightLaunchDiagnostic(execution);
-    const workspaceTrustLaunchDiagnostics = workspaceTrustLaunchDiagnostic
-      ? boundLaunchDiagnostics(
-          mergeLaunchDiagnosticItem(
-            input.run.progress.launchDiagnostics,
-            workspaceTrustLaunchDiagnostic
-          )
-        )
-      : input.run.progress.launchDiagnostics;
-
-    if (!this.isLaunchRunStillCurrent(input.run)) {
-      if (this.runs.get(input.run.runId) === input.run) {
-        await this.cancelDeterministicRunBeforeSpawn(input.run, {
-          mode: input.mode,
-          provisioningEnv: input.provisioningEnv,
-        });
-      }
-      throw new Error('Team launch cancelled by app shutdown');
-    }
-
-    if (execution.status === 'cancelled') {
-      await this.cancelDeterministicRunBeforeSpawn(input.run, {
-        mode: input.mode,
-        provisioningEnv: input.provisioningEnv,
-      });
-    }
-
-    if (execution.status === 'blocked') {
-      await this.failDeterministicRunBeforeSpawn(input.run, {
-        mode: input.mode,
-        message: 'Workspace trust required',
-        error:
-          execution.errorMessage ||
-          execution.errorCode ||
-          'Workspace trust preflight blocked this launch.',
-        launchDiagnostics: workspaceTrustLaunchDiagnostics,
-        provisioningEnv: input.provisioningEnv,
-      });
-    }
-
-    if (execution.status === 'soft_failed') {
-      const warning =
-        execution.errorMessage ||
-        execution.errorCode ||
-        'Workspace trust preflight could not verify trust before launch.';
-      input.run.progress = {
-        ...input.run.progress,
-        warnings: mergeProvisioningWarnings(input.run.progress.warnings, warning),
-        launchDiagnostics: workspaceTrustLaunchDiagnostics,
-      };
-      input.run.onProgress(input.run.progress);
-    } else if (workspaceTrustLaunchDiagnostics) {
-      input.run.progress = {
-        ...input.run.progress,
-        updatedAt: nowIso(),
-        launchDiagnostics: workspaceTrustLaunchDiagnostics,
-      };
-      input.run.onProgress(input.run.progress);
-    }
   }
 
   private async failDeterministicRunBeforeSpawn(

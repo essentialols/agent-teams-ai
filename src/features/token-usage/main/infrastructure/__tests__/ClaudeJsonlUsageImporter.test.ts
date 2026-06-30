@@ -94,7 +94,7 @@ describe('ClaudeJsonlUsageImporter', () => {
           ...run(),
           sources: [
             {
-              ...run().sources[0]!,
+              ...run().sources[0],
               nativeLogPath: logPath,
             },
           ],

@@ -2495,6 +2495,50 @@ Messages:
     expect(nativeMatchSpy).toHaveBeenCalledWith(teamName, 'team-lead', []);
   });
 
+  it('keeps same-team native matches retryable when persisting read state fails', async () => {
+    const service = new TeamProvisioningService();
+    const teamName = 'my-team';
+    seedConfig(teamName);
+    const now = Date.now();
+    seedLeadInbox(teamName, [
+      {
+        from: 'alice',
+        to: 'team-lead',
+        text: 'Native delivered update',
+        summary: 'native update',
+        timestamp: new Date(now).toISOString(),
+        read: false,
+        messageId: 'same-team-native-persist-failed-1',
+      },
+    ]);
+    (service as any).recentSameTeamNativeFingerprints.set(teamName, [
+      {
+        id: 'fingerprint-1',
+        from: 'alice',
+        text: 'Native delivered update',
+        summary: 'native update',
+        seenAt: now,
+      },
+    ]);
+    vi.spyOn(service as any, 'markInboxMessagesRead').mockRejectedValue(new Error('write failed'));
+
+    await (service as any).reconcileSameTeamNativeDeliveries(teamName, 'team-lead');
+
+    expect((service as any).relayedLeadInboxMessageIds.has(teamName)).toBe(false);
+    expect((service as any).recentSameTeamNativeFingerprints.get(teamName)).toEqual([
+      expect.objectContaining({ id: 'fingerprint-1' }),
+    ]);
+    expect((service as any).pendingTimeouts.has(`same-team-persist:${teamName}`)).toBe(true);
+    const rows = JSON.parse(
+      hoisted.files.get(`/mock/teams/${teamName}/inboxes/team-lead.json`) ?? '[]'
+    );
+    expect(rows[0].read).toBe(false);
+
+    const retryTimer = (service as any).pendingTimeouts.get(`same-team-persist:${teamName}`);
+    clearTimeout(retryTimer);
+    (service as any).pendingTimeouts.delete(`same-team-persist:${teamName}`);
+  });
+
   it('does not let cross-team idle-shaped payloads inherit passive idle handling', async () => {
     const service = new TeamProvisioningService();
     const teamName = 'my-team';

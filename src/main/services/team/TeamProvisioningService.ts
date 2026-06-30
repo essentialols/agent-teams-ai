@@ -216,7 +216,6 @@ import {
 import {
   clearOpenCodeRuntimeLaneStorage,
   getOpenCodeLaneScopedRuntimeFilePath,
-  getOpenCodeRuntimeManifestPath,
   getOpenCodeRuntimeRunTombstonesPath,
   inspectOpenCodeRuntimeLaneStorage,
   migrateLegacyOpenCodeRuntimeState,
@@ -233,12 +232,6 @@ import {
   type RuntimeEvidenceKind,
   RuntimeStaleEvidenceError,
 } from './opencode/store/RuntimeRunTombstoneStore';
-import {
-  createRuntimeStoreManifestStore,
-  createRuntimeStoreReceiptStore,
-  OPENCODE_RUNTIME_STORE_DESCRIPTORS,
-  RuntimeStoreBatchWriter,
-} from './opencode/store/RuntimeStoreManifest';
 import { getSystemLocale } from './provisioning/TeamProvisioningAgentLanguage';
 import {
   buildDeterministicCreateBootstrapSpec,
@@ -353,7 +346,6 @@ import {
   matchesExactTeamMemberName,
   matchesObservedMemberNameForExpected,
   matchesTeamMemberIdentity,
-  namesMatchCaseInsensitive,
 } from './provisioning/TeamProvisioningMemberIdentity';
 import {
   type LiveRosterAttachReason,
@@ -397,9 +389,19 @@ import {
   shouldPreferCurrentLaunchMemberStatus,
 } from './provisioning/TeamProvisioningMemberStatusProjection';
 import {
+  commitOpenCodeRuntimeBootstrapSessionEvidence,
+  createDefaultOpenCodeRuntimeBootstrapEvidencePorts,
+  findDeliverableOpenCodeRuntimeBootstrapSessionEvidence,
+  getOpenCodeAppMcpTransportMismatchDiagnostic,
+  hasCommittedOpenCodeRuntimeBootstrapSessionEvidence,
+  type OpenCodeRuntimeBootstrapCheckinIdempotencyResult,
+  type OpenCodeRuntimeBootstrapEvidencePorts,
+  resolveOpenCodeRuntimeBootstrapCheckinIdempotencyFromMember,
+  stampOpenCodeAppMcpTransportEvidenceIfMissing,
+} from './provisioning/TeamProvisioningOpenCodeBootstrapEvidence';
+import {
   boundOpenCodeAppManagedBriefingText,
   hasRealOpenCodeFailureDiagnostic,
-  isFileLockTimeoutError,
   isPersistedOpenCodeSecondaryLaneMember,
   normalizeOpenCodePrepareDiagnostic,
   promoteOpenCodePersistedFailureReasonsFromDiagnostics,
@@ -571,7 +573,6 @@ import {
   type WorkspaceTrustProviderArgsResolver,
 } from './provisioning/TeamProvisioningWorkspaceTrust';
 import { OpenCodeTaskLogAttributionStore } from './taskLogs/stream/OpenCodeTaskLogAttributionStore';
-import { getCurrentAgentTeamsMcpHttpTransportEvidence } from './AgentTeamsMcpHttpServer';
 import { isAgentTeamsToolUse } from './agentTeamsToolNames';
 import { atomicWriteAsync } from './atomicWrite';
 import { peekAutoResumeService } from './AutoResumeService';
@@ -640,7 +641,6 @@ import { TeamTaskActivityIntervalService } from './TeamTaskActivityIntervalServi
 import { TeamTaskReader } from './TeamTaskReader';
 import { TeamTranscriptProjectResolver } from './TeamTranscriptProjectResolver';
 
-import type { OpenCodeCommittedBootstrapSessionRecord } from './opencode/store/OpenCodeRuntimeManifestEvidenceReader';
 import type {
   OpenCodeTeamRuntimeMessageInput,
   OpenCodeTeamRuntimeMessageResult,
@@ -1415,12 +1415,6 @@ interface TeamRuntimeLaunchArgsPlan {
   inheritedProviderArgs: string[];
   appManagedSettingsPath: string | null;
 }
-
-const OPENCODE_BOOTSTRAP_EVIDENCE_LOCK_OPTIONS = {
-  acquireTimeoutMs: 45_000,
-  staleTimeoutMs: 60_000,
-  retryIntervalMs: 50,
-} as const;
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -5009,6 +5003,13 @@ export class TeamProvisioningService {
     return scheduled;
   }
 
+  private createOpenCodeRuntimeBootstrapEvidencePorts(): OpenCodeRuntimeBootstrapEvidencePorts {
+    return createDefaultOpenCodeRuntimeBootstrapEvidencePorts({
+      teamsBasePath: getTeamsBasePath(),
+      warn: (message) => logger.warn(message),
+    });
+  }
+
   private createOpenCodeMemberMessageDeliveryService(): OpenCodeMemberMessageDeliveryService {
     return new OpenCodeMemberMessageDeliveryService({
       getOpenCodeRuntimeMessageAdapter: () => this.getOpenCodeRuntimeMessageAdapter(),
@@ -5035,11 +5036,18 @@ export class TeamProvisioningService {
       cleanupStoppedTeamOpenCodeRuntimeLanesInBackground: (teamName) =>
         this.cleanupStoppedTeamOpenCodeRuntimeLanesInBackground(teamName),
       findDeliverableOpenCodeRuntimeBootstrapSessionEvidence: (input) =>
-        this.findDeliverableOpenCodeRuntimeBootstrapSessionEvidence(input),
+        findDeliverableOpenCodeRuntimeBootstrapSessionEvidence(
+          input,
+          this.createOpenCodeRuntimeBootstrapEvidencePorts()
+        ),
       getOpenCodeAppMcpTransportMismatchDiagnostic: (session) =>
-        this.getOpenCodeAppMcpTransportMismatchDiagnostic(session),
+        getOpenCodeAppMcpTransportMismatchDiagnostic(session),
       stampOpenCodeAppMcpTransportEvidenceIfMissing: (session, options) =>
-        this.stampOpenCodeAppMcpTransportEvidenceIfMissing(session, options),
+        stampOpenCodeAppMcpTransportEvidenceIfMissing(
+          session,
+          this.createOpenCodeRuntimeBootstrapEvidencePorts(),
+          options
+        ),
       resolveControlApiBaseUrl: () => this.resolveControlApiBaseUrl(),
       sendOpenCodeMemberMessageToRuntimeSerialized: (input) =>
         this.sendOpenCodeMemberMessageToRuntimeSerialized(input),
@@ -7061,28 +7069,35 @@ export class TeamProvisioningService {
       memberName,
       runtimeSessionId,
     });
+    const bootstrapEvidencePorts = this.createOpenCodeRuntimeBootstrapEvidencePorts();
     await this.assertOpenCodeRuntimeMemberCheckinAllowed({
       teamName,
       memberName,
       previousMember: idempotent.previousMember,
     });
     if (idempotent.state === 'duplicate') {
-      const committed = await this.hasCommittedOpenCodeRuntimeBootstrapSessionEvidence({
-        teamName,
-        runId,
-        laneId,
-        memberName,
-        runtimeSessionId,
-      });
-      if (!committed) {
-        await this.commitOpenCodeRuntimeBootstrapSessionEvidence({
+      const committed = await hasCommittedOpenCodeRuntimeBootstrapSessionEvidence(
+        {
           teamName,
           runId,
           laneId,
           memberName,
           runtimeSessionId,
-          observedAt,
-        });
+        },
+        bootstrapEvidencePorts
+      );
+      if (!committed) {
+        await commitOpenCodeRuntimeBootstrapSessionEvidence(
+          {
+            teamName,
+            runId,
+            laneId,
+            memberName,
+            runtimeSessionId,
+            observedAt,
+          },
+          bootstrapEvidencePorts
+        );
       }
       await this.updateOpenCodeRuntimeMemberLiveness({
         teamName,
@@ -7114,14 +7129,17 @@ export class TeamProvisioningService {
         runId
       );
     }
-    await this.commitOpenCodeRuntimeBootstrapSessionEvidence({
-      teamName,
-      runId,
-      laneId,
-      memberName,
-      runtimeSessionId,
-      observedAt,
-    });
+    await commitOpenCodeRuntimeBootstrapSessionEvidence(
+      {
+        teamName,
+        runId,
+        laneId,
+        memberName,
+        runtimeSessionId,
+        observedAt,
+      },
+      bootstrapEvidencePorts
+    );
     await this.updateOpenCodeRuntimeMemberLiveness({
       teamName,
       runId,
@@ -7146,411 +7164,19 @@ export class TeamProvisioningService {
     };
   }
 
-  private async commitOpenCodeRuntimeBootstrapSessionEvidence(input: {
-    teamName: string;
-    runId: string;
-    laneId: string;
-    memberName: string;
-    runtimeSessionId: string;
-    observedAt: string;
-    source?: OpenCodeBootstrapEvidenceSource;
-    appManagedBootstrapCandidate?: OpenCodeAppManagedBootstrapCandidate;
-  }): Promise<void> {
-    const descriptor = OPENCODE_RUNTIME_STORE_DESCRIPTORS.find(
-      (candidate) => candidate.schemaName === 'opencode.sessionStore'
-    );
-    if (!descriptor) {
-      throw new Error('OpenCode runtime session store descriptor is not registered');
-    }
-
-    const manifestPath = getOpenCodeRuntimeManifestPath(
-      getTeamsBasePath(),
-      input.teamName,
-      input.laneId
-    );
-    const runtimeDirectory = path.dirname(manifestPath);
-    await fs.promises.mkdir(runtimeDirectory, { recursive: true });
-    const sessionStorePath = path.join(runtimeDirectory, descriptor.relativePath);
-    const existingSessions = await this.readOpenCodeRuntimeSessionStore(sessionStorePath);
-    const source = input.source ?? 'runtime_bootstrap_checkin';
-    const appMcpTransportEvidence =
-      source === 'app_managed_bootstrap' ? getCurrentAgentTeamsMcpHttpTransportEvidence() : null;
-    const session = {
-      id: input.runtimeSessionId,
-      teamName: input.teamName,
-      memberName: input.memberName,
-      runId: input.runId,
-      laneId: input.laneId,
-      providerId: 'opencode',
-      observedAt: input.observedAt,
-      source,
-      ...(source === 'app_managed_bootstrap' && input.appManagedBootstrapCandidate
-        ? { appManagedBootstrapCandidate: input.appManagedBootstrapCandidate }
-        : {}),
-      ...(appMcpTransportEvidence
-        ? {
-            appMcpTransportHash: appMcpTransportEvidence.urlHash,
-            appMcpTransportEvidence,
-          }
-        : {}),
-    };
-    const sessions = this.mergeOpenCodeRuntimeSessionRecords(existingSessions, session);
-    const manifestStore = createRuntimeStoreManifestStore({
-      filePath: manifestPath,
-      teamName: input.teamName,
-      lockOptions: OPENCODE_BOOTSTRAP_EVIDENCE_LOCK_OPTIONS,
-    });
-    const receiptStore = createRuntimeStoreReceiptStore({
-      filePath: path.join(runtimeDirectory, 'opencode-runtime-receipts.json'),
-      lockOptions: OPENCODE_BOOTSTRAP_EVIDENCE_LOCK_OPTIONS,
-    });
-    const writer = new RuntimeStoreBatchWriter(runtimeDirectory, manifestStore, receiptStore);
-
-    try {
-      await writer.writeBatch({
-        teamName: input.teamName,
-        runId: input.runId,
-        capabilitySnapshotId: null,
-        behaviorFingerprint: null,
-        reason: 'launch_checkpoint',
-        writes: [
-          {
-            descriptor,
-            data: { sessions },
-          },
-        ],
-      });
-    } catch (error) {
-      if (
-        isFileLockTimeoutError(error) &&
-        (await this.hasCommittedOpenCodeRuntimeBootstrapSessionEvidence(input))
-      ) {
-        return;
-      }
-      throw error;
-    }
-    if (!(await this.hasCommittedOpenCodeRuntimeBootstrapSessionEvidence(input))) {
-      throw new Error(
-        `OpenCode bootstrap session evidence write did not verify for ${input.memberName}`
-      );
-    }
-  }
-
-  private async hasCommittedOpenCodeRuntimeBootstrapSessionEvidence(input: {
-    teamName: string;
-    runId: string;
-    laneId: string;
-    memberName: string;
-    runtimeSessionId: string;
-    source?: OpenCodeBootstrapEvidenceSource;
-    appManagedBootstrapCandidate?: OpenCodeAppManagedBootstrapCandidate;
-  }): Promise<boolean> {
-    const evidence = await readCommittedOpenCodeBootstrapSessionEvidence({
-      teamsBasePath: getTeamsBasePath(),
-      teamName: input.teamName,
-      laneId: input.laneId,
-    }).catch(() => null);
-    if (!evidence?.committed) {
-      return false;
-    }
-    if (evidence.activeRunId && evidence.activeRunId.trim() !== input.runId) {
-      return false;
-    }
-    return evidence.sessions.some((session) => {
-      if (
-        session.id !== input.runtimeSessionId ||
-        session.runId !== input.runId ||
-        !namesMatchCaseInsensitive(session.memberName, input.memberName)
-      ) {
-        return false;
-      }
-      if (input.source && session.source !== input.source) {
-        return false;
-      }
-      if (input.source === 'app_managed_bootstrap' && input.appManagedBootstrapCandidate) {
-        const candidate = session.appManagedBootstrapCandidate;
-        return (
-          candidate?.runtimeSessionId === input.appManagedBootstrapCandidate.runtimeSessionId &&
-          candidate.messageID === input.appManagedBootstrapCandidate.messageID &&
-          candidate.contextHash === input.appManagedBootstrapCandidate.contextHash &&
-          candidate.briefingHash === input.appManagedBootstrapCandidate.briefingHash
-        );
-      }
-      return true;
-    });
-  }
-
-  private getOpenCodeAppMcpTransportMismatchDiagnostic(
-    session: OpenCodeCommittedBootstrapSessionRecord
-  ): string | null {
-    const committedHash = session.appMcpTransportHash?.trim();
-    const currentHash = getCurrentAgentTeamsMcpHttpTransportEvidence()?.urlHash?.trim();
-    if (!committedHash || !currentHash || committedHash === currentHash) {
-      return null;
-    }
-    return `opencode_app_mcp_transport_changed:${committedHash}->${currentHash}`;
-  }
-
-  private async stampOpenCodeAppMcpTransportEvidenceIfMissing(
-    session: OpenCodeCommittedBootstrapSessionRecord,
-    options: {
-      overwriteExistingHash?: boolean;
-      runtimeSessionId?: string | null;
-    } = {}
-  ): Promise<void> {
-    const overwriteExistingHash = options.overwriteExistingHash === true;
-    const runtimeSessionId = options.runtimeSessionId?.trim() || null;
-    if (session.appMcpTransportHash?.trim() && !overwriteExistingHash) {
-      return;
-    }
-    const appMcpTransportEvidence = getCurrentAgentTeamsMcpHttpTransportEvidence();
-    if (!appMcpTransportEvidence) {
-      return;
-    }
-    const descriptor = OPENCODE_RUNTIME_STORE_DESCRIPTORS.find(
-      (candidate) => candidate.schemaName === 'opencode.sessionStore'
-    );
-    if (!descriptor) {
-      return;
-    }
-
-    try {
-      const manifestPath = getOpenCodeRuntimeManifestPath(
-        getTeamsBasePath(),
-        session.teamName,
-        session.laneId
-      );
-      const runtimeDirectory = path.dirname(manifestPath);
-      const sessionStorePath = path.join(runtimeDirectory, descriptor.relativePath);
-      const existingSessions = await this.readOpenCodeRuntimeSessionStore(sessionStorePath);
-      let changed = false;
-      const sessions = existingSessions
-        .filter((record) => {
-          if (!runtimeSessionId || runtimeSessionId === session.id) {
-            return true;
-          }
-          const recordId = typeof record.id === 'string' ? record.id : '';
-          const recordRunId = typeof record.runId === 'string' ? record.runId : null;
-          const recordLaneId = typeof record.laneId === 'string' ? record.laneId : '';
-          const recordMemberName = typeof record.memberName === 'string' ? record.memberName : '';
-          return !(
-            recordId === runtimeSessionId &&
-            recordRunId === session.runId &&
-            recordLaneId === session.laneId &&
-            namesMatchCaseInsensitive(recordMemberName, session.memberName)
-          );
-        })
-        .map((record) => {
-          const recordId = typeof record.id === 'string' ? record.id : '';
-          const recordRunId = typeof record.runId === 'string' ? record.runId : null;
-          const recordLaneId = typeof record.laneId === 'string' ? record.laneId : '';
-          const recordMemberName = typeof record.memberName === 'string' ? record.memberName : '';
-          const hasTransportHash =
-            typeof record.appMcpTransportHash === 'string' &&
-            record.appMcpTransportHash.trim().length > 0;
-          if (
-            recordId !== session.id ||
-            recordRunId !== session.runId ||
-            recordLaneId !== session.laneId ||
-            !namesMatchCaseInsensitive(recordMemberName, session.memberName) ||
-            (hasTransportHash && !overwriteExistingHash)
-          ) {
-            return record;
-          }
-          changed = true;
-          return {
-            ...record,
-            ...(runtimeSessionId ? { id: runtimeSessionId } : {}),
-            appMcpTransportHash: appMcpTransportEvidence.urlHash,
-            appMcpTransportEvidence,
-          };
-        });
-      if (!changed) {
-        return;
-      }
-
-      const manifestStore = createRuntimeStoreManifestStore({
-        filePath: manifestPath,
-        teamName: session.teamName,
-        lockOptions: OPENCODE_BOOTSTRAP_EVIDENCE_LOCK_OPTIONS,
-      });
-      const receiptStore = createRuntimeStoreReceiptStore({
-        filePath: path.join(runtimeDirectory, 'opencode-runtime-receipts.json'),
-        lockOptions: OPENCODE_BOOTSTRAP_EVIDENCE_LOCK_OPTIONS,
-      });
-      const writer = new RuntimeStoreBatchWriter(runtimeDirectory, manifestStore, receiptStore);
-      await writer.writeBatch({
-        teamName: session.teamName,
-        runId: session.runId,
-        capabilitySnapshotId: null,
-        behaviorFingerprint: null,
-        reason: 'delivery_commit',
-        writes: [
-          {
-            descriptor,
-            data: { sessions },
-          },
-        ],
-      });
-    } catch (error) {
-      logger.warn(
-        `[${session.teamName}] Failed to stamp OpenCode app MCP transport evidence for ${session.memberName}: ${getErrorMessage(error)}`
-      );
-    }
-  }
-
-  private async findDeliverableOpenCodeRuntimeBootstrapSessionEvidence(input: {
-    teamName: string;
-    runId: string | null;
-    laneId: string;
-    memberName: string;
-  }): Promise<OpenCodeCommittedBootstrapSessionRecord | null> {
-    const evidence = await readCommittedOpenCodeBootstrapSessionEvidence({
-      teamsBasePath: getTeamsBasePath(),
-      teamName: input.teamName,
-      laneId: input.laneId,
-    }).catch(() => null);
-    if (!evidence?.committed) {
-      return null;
-    }
-    const activeRunId = evidence.activeRunId?.trim() || null;
-    if (activeRunId !== input.runId) {
-      return null;
-    }
-    return (
-      evidence.sessions.find(
-        (session) =>
-          session.runId === input.runId &&
-          namesMatchCaseInsensitive(session.memberName, input.memberName)
-      ) ?? null
-    );
-  }
-
-  private async hasDeliverableOpenCodeRuntimeBootstrapSessionEvidence(input: {
-    teamName: string;
-    runId: string | null;
-    laneId: string;
-    memberName: string;
-  }): Promise<boolean> {
-    return (await this.findDeliverableOpenCodeRuntimeBootstrapSessionEvidence(input)) != null;
-  }
-
-  private async readOpenCodeRuntimeSessionStore(
-    filePath: string
-  ): Promise<Record<string, unknown>[]> {
-    let raw: string;
-    try {
-      raw = await fs.promises.readFile(filePath, 'utf8');
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        return [];
-      }
-      throw error;
-    }
-
-    try {
-      const parsed = JSON.parse(raw) as unknown;
-      const record =
-        parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-          ? (parsed as Record<string, unknown>)
-          : null;
-      const data =
-        record && Object.prototype.hasOwnProperty.call(record, 'data') ? record.data : record;
-      const sessions =
-        data && typeof data === 'object' && !Array.isArray(data)
-          ? (data as Record<string, unknown>).sessions
-          : null;
-      return Array.isArray(sessions)
-        ? sessions.filter(
-            (session): session is Record<string, unknown> =>
-              Boolean(session) && typeof session === 'object' && !Array.isArray(session)
-          )
-        : [];
-    } catch {
-      return [];
-    }
-  }
-
-  private mergeOpenCodeRuntimeSessionRecords(
-    existingSessions: Record<string, unknown>[],
-    session: Record<string, unknown>
-  ): Record<string, unknown>[] {
-    const sessionId = typeof session.id === 'string' ? session.id.trim() : '';
-    const memberName = typeof session.memberName === 'string' ? session.memberName.trim() : '';
-    const runId = typeof session.runId === 'string' ? session.runId.trim() : '';
-    const laneId = typeof session.laneId === 'string' ? session.laneId.trim() : '';
-    const filtered = existingSessions.filter((candidate) => {
-      const candidateId = typeof candidate.id === 'string' ? candidate.id.trim() : '';
-      if (sessionId && candidateId === sessionId) {
-        return false;
-      }
-      const sameMember =
-        memberName &&
-        runId &&
-        laneId &&
-        candidate.memberName === memberName &&
-        candidate.runId === runId &&
-        candidate.laneId === laneId;
-      return !sameMember;
-    });
-    return [...filtered, session];
-  }
-
   private async resolveOpenCodeRuntimeBootstrapCheckinIdempotency(input: {
     teamName: string;
     runId: string;
     memberName: string;
     runtimeSessionId: string;
-  }): Promise<
-    | {
-        state: 'new';
-        previousMember?: PersistedTeamLaunchMemberState;
-      }
-    | {
-        state: 'duplicate';
-        previousMember: PersistedTeamLaunchMemberState;
-      }
-    | {
-        state: 'conflict';
-        previousMember: PersistedTeamLaunchMemberState;
-        existingRuntimeSessionId: string;
-      }
-  > {
+  }): Promise<OpenCodeRuntimeBootstrapCheckinIdempotencyResult> {
     const snapshot = await this.launchStateStore.read(input.teamName);
     const previousMember = snapshot?.members[input.memberName];
-    if (!previousMember) {
-      return { state: 'new' };
-    }
-
-    const existingRuntimeSessionId = previousMember.runtimeSessionId?.trim();
-    const existingRuntimeRunId =
-      typeof previousMember.runtimeRunId === 'string' ? previousMember.runtimeRunId.trim() : '';
-    const hasAcceptedBootstrap =
-      previousMember.bootstrapConfirmed === true ||
-      previousMember.livenessKind === 'confirmed_bootstrap' ||
-      previousMember.launchState === 'confirmed_alive';
-
-    if (!hasAcceptedBootstrap || !existingRuntimeSessionId) {
-      return { state: 'new', previousMember };
-    }
-
-    if (existingRuntimeRunId && existingRuntimeRunId !== input.runId) {
-      return { state: 'new', previousMember };
-    }
-
-    if (existingRuntimeSessionId === input.runtimeSessionId) {
-      return { state: 'duplicate', previousMember };
-    }
-
-    if (!existingRuntimeRunId) {
-      return { state: 'new', previousMember };
-    }
-
-    return {
-      state: 'conflict',
+    return resolveOpenCodeRuntimeBootstrapCheckinIdempotencyFromMember({
       previousMember,
-      existingRuntimeSessionId,
-    };
+      runId: input.runId,
+      runtimeSessionId: input.runtimeSessionId,
+    });
   }
 
   private async assertOpenCodeRuntimeMemberCheckinAllowed(input: {
@@ -13483,6 +13109,7 @@ export class TeamProvisioningService {
   }): Promise<TeamRuntimeLaunchResult> {
     let changed = false;
     const members: Record<string, TeamRuntimeMemberLaunchEvidence> = { ...params.result.members };
+    const bootstrapEvidencePorts = this.createOpenCodeRuntimeBootstrapEvidencePorts();
     for (const [memberName, evidence] of Object.entries(params.result.members)) {
       const runtimeSessionId = evidence.sessionId?.trim();
       const confirmed =
@@ -13510,29 +13137,35 @@ export class TeamProvisioningService {
       const source: OpenCodeBootstrapEvidenceSource = appManagedCandidateMatches
         ? 'app_managed_bootstrap'
         : (evidence.bootstrapEvidenceSource ?? 'runtime_bootstrap_checkin');
-      await this.commitOpenCodeRuntimeBootstrapSessionEvidence({
-        teamName: params.teamName,
-        runId: params.result.runId,
-        laneId: params.laneId,
-        memberName,
-        runtimeSessionId,
-        observedAt: nowIso(),
-        source,
-        appManagedBootstrapCandidate: appManagedCandidateMatches
-          ? appManagedCandidate
-          : evidence.appManagedBootstrapCandidate,
-      });
-      const verified = await this.hasCommittedOpenCodeRuntimeBootstrapSessionEvidence({
-        teamName: params.teamName,
-        runId: params.result.runId,
-        laneId: params.laneId,
-        memberName,
-        runtimeSessionId,
-        source,
-        appManagedBootstrapCandidate: appManagedCandidateMatches
-          ? appManagedCandidate
-          : evidence.appManagedBootstrapCandidate,
-      });
+      await commitOpenCodeRuntimeBootstrapSessionEvidence(
+        {
+          teamName: params.teamName,
+          runId: params.result.runId,
+          laneId: params.laneId,
+          memberName,
+          runtimeSessionId,
+          observedAt: nowIso(),
+          source,
+          appManagedBootstrapCandidate: appManagedCandidateMatches
+            ? appManagedCandidate
+            : evidence.appManagedBootstrapCandidate,
+        },
+        bootstrapEvidencePorts
+      );
+      const verified = await hasCommittedOpenCodeRuntimeBootstrapSessionEvidence(
+        {
+          teamName: params.teamName,
+          runId: params.result.runId,
+          laneId: params.laneId,
+          memberName,
+          runtimeSessionId,
+          source,
+          appManagedBootstrapCandidate: appManagedCandidateMatches
+            ? appManagedCandidate
+            : evidence.appManagedBootstrapCandidate,
+        },
+        bootstrapEvidencePorts
+      );
       if (appManagedCandidateMatches && verified && !confirmed) {
         members[memberName] = promoteCommittedOpenCodeAppManagedBootstrapEvidence(evidence);
         changed = true;

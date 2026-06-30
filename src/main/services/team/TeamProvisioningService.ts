@@ -285,15 +285,20 @@ import {
 } from './provisioning/TeamProvisioningConfigMaterialization';
 import {
   buildCrossTeamConversationKey as buildCrossTeamConversationKeyHelper,
+  clearPendingCrossTeamReplyExpectation as clearPendingCrossTeamReplyExpectationHelper,
   extractCrossTeamPseudoTargetTeam as extractCrossTeamPseudoTargetTeamHelper,
   getCrossTeamSourceTeam as getCrossTeamSourceTeamHelper,
+  getPendingCrossTeamReplyExpectationKeys as getPendingCrossTeamReplyExpectationKeysHelper,
   isCrossTeamPseudoRecipientName as isCrossTeamPseudoRecipientNameHelper,
   isCrossTeamToolRecipientName as isCrossTeamToolRecipientNameHelper,
   looksLikeQualifiedExternalRecipientName as looksLikeQualifiedExternalRecipientNameHelper,
   matchCrossTeamLeadInboxMessages as matchCrossTeamLeadInboxMessagesHelper,
   parseCrossTeamRecipient as parseCrossTeamRecipientHelper,
   parseCrossTeamTargetTeam as parseCrossTeamTargetTeamHelper,
+  registerPendingCrossTeamReplyExpectation as registerPendingCrossTeamReplyExpectationHelper,
+  rememberRecentCrossTeamLeadDeliveryMessageIds as rememberRecentCrossTeamLeadDeliveryMessageIdsHelper,
   resolveSingleActiveCrossTeamReplyHint as resolveSingleActiveCrossTeamReplyHintHelper,
+  wasRecentlyDeliveredToLead as wasRecentlyDeliveredToLeadHelper,
 } from './provisioning/TeamProvisioningCrossTeamRouting';
 import {
   buildCrossProviderMemberArgs as buildCrossProviderMemberArgsHelper,
@@ -6243,17 +6248,13 @@ export class TeamProvisioningService {
     otherTeam: string,
     conversationId: string
   ): void {
-    const normalizedTeam = teamName.trim();
-    const normalizedOtherTeam = otherTeam.trim();
-    const normalizedConversationId = conversationId.trim();
-    if (!normalizedTeam || !normalizedOtherTeam || !normalizedConversationId) return;
-    const teamMap =
-      this.pendingCrossTeamFirstReplies.get(normalizedTeam) ?? new Map<string, number>();
-    teamMap.set(
-      this.buildCrossTeamConversationKey(normalizedOtherTeam, normalizedConversationId),
+    registerPendingCrossTeamReplyExpectationHelper(
+      this.pendingCrossTeamFirstReplies,
+      teamName,
+      otherTeam,
+      conversationId,
       Date.now()
     );
-    this.pendingCrossTeamFirstReplies.set(normalizedTeam, teamMap);
   }
 
   clearPendingCrossTeamReplyExpectation(
@@ -6261,28 +6262,21 @@ export class TeamProvisioningService {
     otherTeam: string,
     conversationId: string
   ): void {
-    const teamMap = this.pendingCrossTeamFirstReplies.get(teamName.trim());
-    if (!teamMap) return;
-    teamMap.delete(this.buildCrossTeamConversationKey(otherTeam, conversationId));
-    if (teamMap.size === 0) {
-      this.pendingCrossTeamFirstReplies.delete(teamName.trim());
-    }
+    clearPendingCrossTeamReplyExpectationHelper(
+      this.pendingCrossTeamFirstReplies,
+      teamName,
+      otherTeam,
+      conversationId
+    );
   }
 
   private getPendingCrossTeamReplyExpectationKeys(teamName: string): Set<string> {
-    const teamMap = this.pendingCrossTeamFirstReplies.get(teamName.trim());
-    if (!teamMap) return new Set<string>();
-    const cutoff = Date.now() - TeamProvisioningService.RECENT_CROSS_TEAM_DELIVERY_TTL_MS;
-    for (const [key, createdAt] of teamMap.entries()) {
-      if (createdAt < cutoff) {
-        teamMap.delete(key);
-      }
-    }
-    if (teamMap.size === 0) {
-      this.pendingCrossTeamFirstReplies.delete(teamName.trim());
-      return new Set<string>();
-    }
-    return new Set(teamMap.keys());
+    return getPendingCrossTeamReplyExpectationKeysHelper(
+      this.pendingCrossTeamFirstReplies,
+      teamName,
+      Date.now(),
+      TeamProvisioningService.RECENT_CROSS_TEAM_DELIVERY_TTL_MS
+    );
   }
 
   private getRunLeadName(run: ProvisioningRun): string {
@@ -6294,39 +6288,23 @@ export class TeamProvisioningService {
     teamName: string,
     messageIds: string[]
   ): void {
-    const normalizedIds = messageIds.map((id) => id.trim()).filter((id) => id.length > 0);
-    if (normalizedIds.length === 0) return;
-    const teamKey = teamName.trim();
-    const current =
-      this.recentCrossTeamLeadDeliveryMessageIds.get(teamKey) ?? new Map<string, number>();
-    const now = Date.now();
-    const cutoff = now - TeamProvisioningService.RECENT_CROSS_TEAM_DELIVERY_TTL_MS;
-    for (const [key, createdAt] of current.entries()) {
-      if (createdAt < cutoff) current.delete(key);
-    }
-    for (const messageId of normalizedIds) {
-      current.set(messageId, now);
-    }
-    if (current.size > 0) {
-      this.recentCrossTeamLeadDeliveryMessageIds.set(teamKey, current);
-    }
+    rememberRecentCrossTeamLeadDeliveryMessageIdsHelper(
+      this.recentCrossTeamLeadDeliveryMessageIds,
+      teamName,
+      messageIds,
+      Date.now(),
+      TeamProvisioningService.RECENT_CROSS_TEAM_DELIVERY_TTL_MS
+    );
   }
 
   private wasRecentlyDeliveredToLead(teamName: string, messageId: string): boolean {
-    const normalizedMessageId = messageId.trim();
-    if (!normalizedMessageId) return false;
-    const teamKey = teamName.trim();
-    const current = this.recentCrossTeamLeadDeliveryMessageIds.get(teamKey);
-    if (!current) return false;
-    const cutoff = Date.now() - TeamProvisioningService.RECENT_CROSS_TEAM_DELIVERY_TTL_MS;
-    for (const [key, createdAt] of current.entries()) {
-      if (createdAt < cutoff) current.delete(key);
-    }
-    if (current.size === 0) {
-      this.recentCrossTeamLeadDeliveryMessageIds.delete(teamKey);
-      return false;
-    }
-    return current.has(normalizedMessageId);
+    return wasRecentlyDeliveredToLeadHelper(
+      this.recentCrossTeamLeadDeliveryMessageIds,
+      teamName,
+      messageId,
+      Date.now(),
+      TeamProvisioningService.RECENT_CROSS_TEAM_DELIVERY_TTL_MS
+    );
   }
 
   private parseCrossTeamTargetTeam(value: string | undefined): string | null {

@@ -2,15 +2,20 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildCrossTeamConversationKey,
+  clearPendingCrossTeamReplyExpectation,
   extractCrossTeamPseudoTargetTeam,
   getCrossTeamSourceTeam,
+  getPendingCrossTeamReplyExpectationKeys,
   isCrossTeamPseudoRecipientName,
   isCrossTeamToolRecipientName,
   looksLikeQualifiedExternalRecipientName,
   matchCrossTeamLeadInboxMessages,
   parseCrossTeamRecipient,
   parseCrossTeamTargetTeam,
+  registerPendingCrossTeamReplyExpectation,
+  rememberRecentCrossTeamLeadDeliveryMessageIds,
   resolveSingleActiveCrossTeamReplyHint,
+  wasRecentlyDeliveredToLead,
 } from '../TeamProvisioningCrossTeamRouting';
 
 import type { InboxMessage } from '@shared/types';
@@ -136,5 +141,54 @@ describe('cross-team routing policy', () => {
 
     expect(matches).toHaveLength(1);
     expect(matches[0]?.messageId).toBe('shared');
+  });
+
+  it('manages pending cross-team reply expectations with ttl pruning', () => {
+    const pendingReplies = new Map<string, Map<string, number>>();
+    const ttlMs = 1000;
+
+    registerPendingCrossTeamReplyExpectation(
+      pendingReplies,
+      ' local-team ',
+      ' peer-team ',
+      ' conv-1 ',
+      10_000
+    );
+    pendingReplies.get('local-team')?.set(buildCrossTeamConversationKey('old-team', 'old'), 1);
+
+    expect(
+      getPendingCrossTeamReplyExpectationKeys(pendingReplies, 'local-team', 10_500, ttlMs)
+    ).toEqual(new Set([buildCrossTeamConversationKey('peer-team', 'conv-1')]));
+
+    clearPendingCrossTeamReplyExpectation(pendingReplies, 'local-team', 'peer-team', 'conv-1');
+    expect(
+      getPendingCrossTeamReplyExpectationKeys(pendingReplies, 'local-team', 10_500, ttlMs)
+    ).toEqual(new Set());
+    expect(pendingReplies.has('local-team')).toBe(false);
+  });
+
+  it('tracks recent lead delivery message ids and prunes expired entries', () => {
+    const recentMessageIds = new Map<string, Map<string, number>>();
+    const ttlMs = 1000;
+
+    rememberRecentCrossTeamLeadDeliveryMessageIds(
+      recentMessageIds,
+      ' local-team ',
+      [' message-1 ', '', 'message-2'],
+      10_000,
+      ttlMs
+    );
+    recentMessageIds.get('local-team')?.set('expired', 1);
+
+    expect(
+      wasRecentlyDeliveredToLead(recentMessageIds, 'local-team', ' message-1 ', 10_500, ttlMs)
+    ).toBe(true);
+    expect(
+      wasRecentlyDeliveredToLead(recentMessageIds, 'local-team', 'expired', 10_500, ttlMs)
+    ).toBe(false);
+    expect(
+      wasRecentlyDeliveredToLead(recentMessageIds, 'local-team', 'message-2', 12_000, ttlMs)
+    ).toBe(false);
+    expect(recentMessageIds.has('local-team')).toBe(false);
   });
 });

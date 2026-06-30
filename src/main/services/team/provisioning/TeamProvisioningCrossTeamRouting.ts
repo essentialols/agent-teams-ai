@@ -112,6 +112,99 @@ export function buildCrossTeamConversationKey(otherTeam: string, conversationId:
   return `${otherTeam.trim()}\0${conversationId.trim()}`;
 }
 
+export function registerPendingCrossTeamReplyExpectation(
+  pendingReplies: Map<string, Map<string, number>>,
+  teamName: string,
+  otherTeam: string,
+  conversationId: string,
+  now: number
+): void {
+  const normalizedTeam = teamName.trim();
+  const normalizedOtherTeam = otherTeam.trim();
+  const normalizedConversationId = conversationId.trim();
+  if (!normalizedTeam || !normalizedOtherTeam || !normalizedConversationId) return;
+
+  const teamMap = pendingReplies.get(normalizedTeam) ?? new Map<string, number>();
+  teamMap.set(buildCrossTeamConversationKey(normalizedOtherTeam, normalizedConversationId), now);
+  pendingReplies.set(normalizedTeam, teamMap);
+}
+
+export function clearPendingCrossTeamReplyExpectation(
+  pendingReplies: Map<string, Map<string, number>>,
+  teamName: string,
+  otherTeam: string,
+  conversationId: string
+): void {
+  const normalizedTeam = teamName.trim();
+  const teamMap = pendingReplies.get(normalizedTeam);
+  if (!teamMap) return;
+  teamMap.delete(buildCrossTeamConversationKey(otherTeam, conversationId));
+  if (teamMap.size === 0) {
+    pendingReplies.delete(normalizedTeam);
+  }
+}
+
+export function getPendingCrossTeamReplyExpectationKeys(
+  pendingReplies: Map<string, Map<string, number>>,
+  teamName: string,
+  now: number,
+  ttlMs: number
+): Set<string> {
+  const normalizedTeam = teamName.trim();
+  const teamMap = pendingReplies.get(normalizedTeam);
+  if (!teamMap) return new Set<string>();
+
+  pruneExpiredMapEntries(teamMap, now - ttlMs);
+  if (teamMap.size === 0) {
+    pendingReplies.delete(normalizedTeam);
+    return new Set<string>();
+  }
+  return new Set(teamMap.keys());
+}
+
+export function rememberRecentCrossTeamLeadDeliveryMessageIds(
+  recentMessageIds: Map<string, Map<string, number>>,
+  teamName: string,
+  messageIds: readonly string[],
+  now: number,
+  ttlMs: number
+): void {
+  const normalizedIds = messageIds.map((id) => id.trim()).filter((id) => id.length > 0);
+  if (normalizedIds.length === 0) return;
+
+  const teamKey = teamName.trim();
+  const current = recentMessageIds.get(teamKey) ?? new Map<string, number>();
+  pruneExpiredMapEntries(current, now - ttlMs);
+  for (const messageId of normalizedIds) {
+    current.set(messageId, now);
+  }
+  if (current.size > 0) {
+    recentMessageIds.set(teamKey, current);
+  }
+}
+
+export function wasRecentlyDeliveredToLead(
+  recentMessageIds: Map<string, Map<string, number>>,
+  teamName: string,
+  messageId: string,
+  now: number,
+  ttlMs: number
+): boolean {
+  const normalizedMessageId = messageId.trim();
+  if (!normalizedMessageId) return false;
+
+  const teamKey = teamName.trim();
+  const current = recentMessageIds.get(teamKey);
+  if (!current) return false;
+
+  pruneExpiredMapEntries(current, now - ttlMs);
+  if (current.size === 0) {
+    recentMessageIds.delete(teamKey);
+    return false;
+  }
+  return current.has(normalizedMessageId);
+}
+
 export function parseCrossTeamTargetTeam(value: string | undefined): string | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
@@ -139,6 +232,14 @@ function hasStableInboxMessageId(
   message: InboxMessage
 ): message is InboxMessage & { messageId: string } {
   return typeof message.messageId === 'string' && message.messageId.trim().length > 0;
+}
+
+function pruneExpiredMapEntries(map: Map<string, number>, cutoff: number): void {
+  for (const [key, createdAt] of map.entries()) {
+    if (createdAt < cutoff) {
+      map.delete(key);
+    }
+  }
 }
 
 function getCrossTeamMessageConversationId(message: InboxMessage): string | undefined {

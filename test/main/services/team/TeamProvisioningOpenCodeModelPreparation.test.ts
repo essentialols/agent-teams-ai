@@ -122,6 +122,48 @@ describe('TeamProvisioningOpenCodeModelPreparation', () => {
     expect(debugEvents).toContain('opencode_compatibility_batch_complete');
   });
 
+  it('defers shared compatibility checks when OpenCode is busy', async () => {
+    const prepare = vi.fn<TeamLaunchRuntimeAdapter['prepare']>().mockResolvedValue({
+      ok: false,
+      providerId: 'opencode',
+      reason: 'unknown_error',
+      retryable: true,
+      diagnostics: ['OpenCode session status busy'],
+      warnings: [],
+    });
+    const adapter = createAdapter({ prepare });
+    const debugEvents: string[] = [];
+
+    const result = await prepareSelectedOpenCodeModelsForProvisioning({
+      adapter,
+      cwd: '/tmp/project',
+      modelIds: ['first-model', 'second-model'],
+      verificationMode: 'compatibility',
+      appendPreflightDebugLog: (event) => debugEvents.push(event),
+    });
+
+    expect(prepare).toHaveBeenCalledTimes(1);
+    expect(prepare.mock.calls[0]?.[0]).toMatchObject({
+      model: undefined,
+      runtimeOnly: true,
+    });
+    expect(result.blockingMessages).toEqual([]);
+    expect(result.warnings).toEqual([
+      'OpenCode is currently busy with another session. Deep model verification will retry when OpenCode is idle.',
+    ]);
+    expect(result.issues).toEqual([
+      {
+        providerId: 'opencode',
+        scope: 'provider',
+        severity: 'warning',
+        code: 'unknown_error',
+        message:
+          'OpenCode is currently busy with another session. Deep model verification will retry when OpenCode is idle.',
+      },
+    ]);
+    expect(debugEvents).toContain('opencode_compatibility_batch_busy_deferred');
+  });
+
   it('defers remaining deep verification when OpenCode is busy', async () => {
     const prepare = vi.fn<TeamLaunchRuntimeAdapter['prepare']>().mockResolvedValue({
       ok: false,

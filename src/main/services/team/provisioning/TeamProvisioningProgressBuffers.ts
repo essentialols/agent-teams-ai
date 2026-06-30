@@ -3,11 +3,12 @@ import {
   boundProgressLogLines,
   buildProgressLiveOutput,
   buildProgressTraceLine,
+  PROGRESS_RETAINED_LOG_LINE_CHARS,
 } from '../progressPayload';
 
 import type { InboxMessage, TeamProvisioningProgress, TeamProvisioningState } from '@shared/types';
 
-const CLI_LOG_LINE_CARRY_LIMIT = 64 * 1024;
+const CLI_LOG_LINE_CARRY_LIMIT = PROGRESS_RETAINED_LOG_LINE_CHARS;
 const STDOUT_PARSER_CARRY_LIMIT = 128 * 1024;
 const PROBE_OUTPUT_BUFFER_LIMIT = 128 * 1024;
 const LIVE_LEAD_PROCESS_MESSAGE_TEXT_LIMIT = 32 * 1024;

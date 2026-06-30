@@ -379,6 +379,23 @@ async function prepareSelectedOpenCodeModelsCompatibilityBatch({
         sharedPrepare.reason,
       sharedPrepare.reason
     );
+    if (isOpenCodeModelPrepareBusyDeferred(sharedPrepare, primaryReason)) {
+      const providerBusyLine = buildOpenCodeProviderVerificationDeferredLine(primaryReason);
+      pushUniqueLine(warnings, providerBusyLine);
+      issues.push({
+        providerId: 'opencode',
+        scope: 'provider',
+        severity: 'warning',
+        code: sharedPrepare.reason,
+        message: providerBusyLine,
+      });
+      appendPreflightDebugLog('opencode_compatibility_batch_busy_deferred', {
+        cwd,
+        modelIds,
+        reason: primaryReason,
+      });
+      return { details, warnings, blockingMessages, issues, supportDiagnostics };
+    }
     if (primaryReason.trim().length > 0) {
       details.push(primaryReason);
       blockingMessages.push(primaryReason);

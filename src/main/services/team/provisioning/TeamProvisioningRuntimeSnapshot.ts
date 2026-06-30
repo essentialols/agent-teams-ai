@@ -13,6 +13,8 @@ import {
 } from '@shared/utils/teamProvider';
 import pidusage from 'pidusage';
 
+const runtimePidusageOptions = process.platform === 'win32' ? { maxage: 10_000 } : { maxage: 0 };
+
 import {
   choosePreferredLaunchSnapshot,
   readBootstrapLaunchSnapshot,
@@ -24,8 +26,8 @@ import {
 import {
   addRuntimeRootOwnersFromProcessRows,
   buildProcessUsageStatsFromRows,
-  buildRuntimeProcessLoadStats,
-  buildRuntimeUsageProcessTrees,
+  buildRuntimeProcessLoadStats as buildRuntimeProcessLoadStatsDefault,
+  buildRuntimeUsageProcessTrees as buildRuntimeUsageProcessTreesDefault,
   isRuntimePidusageTelemetryEnabled,
   normalizeRuntimeProcessRowsForTelemetry,
   normalizeRuntimeProcessUsageStats,
@@ -271,6 +273,7 @@ function buildRuntimeProcessLoadStatsSafely(
     processTree?: { pids: number[]; truncated: boolean };
     scope?: TeamAgentRuntimeLoadScope;
   },
+  buildRuntimeProcessLoadStats: typeof buildRuntimeProcessLoadStatsDefault,
   logDebug: (message: string) => void
 ): RuntimeProcessLoadStats | undefined {
   try {
@@ -758,10 +761,9 @@ export async function readProcessUsageStatsByPid(
     }
   };
 
-  const options = process.platform === 'win32' ? { maxage: 10_000 } : { maxage: 0 };
   try {
     const statsByPid = await withRuntimeTelemetryTimeout(
-      pidusage(pidsToRead, options),
+      pidusage(pidsToRead, runtimePidusageOptions),
       params.batchTimeoutMs,
       'pidusage batch runtime telemetry'
     );
@@ -800,7 +802,7 @@ export async function readProcessUsageStatsByPid(
       chunk.map(async (pid) => {
         try {
           const stat = await withRuntimeTelemetryTimeout(
-            pidusage(pid, options),
+            pidusage(pid, runtimePidusageOptions),
             params.singleTimeoutMs,
             `pidusage runtime telemetry pid=${pid}`
           );
@@ -836,6 +838,8 @@ export async function buildTeamAgentRuntimeSnapshot(
       pids: readonly number[],
       cacheOptions?: { ignoreCachedMisses?: boolean }
     ): Promise<Map<number, RuntimeProcessUsageStats>>;
+    buildRuntimeUsageProcessTrees: typeof buildRuntimeUsageProcessTreesDefault;
+    buildRuntimeProcessLoadStats: typeof buildRuntimeProcessLoadStatsDefault;
     agentRuntimeResourceHistory: {
       record(
         params: TeamAgentRuntimeResourceHistoryRecordInput
@@ -943,7 +947,7 @@ export async function buildTeamAgentRuntimeSnapshot(
       rootOwnersByPid: runtimeRootOwnersByPid,
       platform: process.platform,
     });
-    runtimeUsageTreesByRootPid = buildRuntimeUsageProcessTrees({
+    runtimeUsageTreesByRootPid = params.buildRuntimeUsageProcessTrees({
       rootPids: [...runtimeUsageRootPids],
       processRows: runtimeProcessRows,
       rootOwnersByPid: runtimeRootOwnersByPid,
@@ -1078,6 +1082,7 @@ export async function buildTeamAgentRuntimeSnapshot(
               usageStatsByPid,
               processTree: runtimeUsageTreesByRootPid.get(pid),
             },
+            params.buildRuntimeProcessLoadStats,
             params.logDebug
           )
         : undefined;
@@ -1332,6 +1337,7 @@ export async function buildTeamAgentRuntimeSnapshot(
             processTree: runtimeUsageTreesByRootPid.get(rssPid),
             scope: isSharedOpenCodeHost ? 'shared-host' : undefined,
           },
+          params.buildRuntimeProcessLoadStats,
           params.logDebug
         )
       : undefined;

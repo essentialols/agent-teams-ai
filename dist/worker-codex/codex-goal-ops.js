@@ -91,9 +91,9 @@ export async function stopCodexGoalTmux(tmuxSession) {
 }
 export async function collectCodexGoalStatus(input) {
     const warnings = [];
-    const resultPath = input.jobRootDir && input.taskId
+    const resultPath = input.resultPath ?? (input.jobRootDir && input.taskId
         ? join(input.jobRootDir, `${input.taskId}.latest-result.json`)
-        : undefined;
+        : undefined);
     const resultExists = resultPath ? await fileExists(resultPath) : undefined;
     const result = resultPath && resultExists
         ? await readCodexGoalResultSummary(resultPath)

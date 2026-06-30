@@ -16,6 +16,7 @@ export type CodexGoalTmuxCommand = {
 export type CodexGoalStatusInput = {
     readonly jobRootDir?: string;
     readonly taskId?: string;
+    readonly resultPath?: string;
     readonly workspacePath?: string;
     readonly tmuxSession?: string;
     readonly logPath?: string;

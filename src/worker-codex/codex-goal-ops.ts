@@ -36,6 +36,7 @@ export type CodexGoalTmuxCommand = {
 export type CodexGoalStatusInput = {
   readonly jobRootDir?: string;
   readonly taskId?: string;
+  readonly resultPath?: string;
   readonly workspacePath?: string;
   readonly tmuxSession?: string;
   readonly logPath?: string;
@@ -214,9 +215,9 @@ export async function collectCodexGoalStatus(
   input: CodexGoalStatusInput,
 ): Promise<CodexGoalStatus> {
   const warnings: string[] = [];
-  const resultPath = input.jobRootDir && input.taskId
+  const resultPath = input.resultPath ?? (input.jobRootDir && input.taskId
     ? join(input.jobRootDir, `${input.taskId}.latest-result.json`)
-    : undefined;
+    : undefined);
   const resultExists = resultPath ? await fileExists(resultPath) : undefined;
   const result = resultPath && resultExists
     ? await readCodexGoalResultSummary(resultPath)

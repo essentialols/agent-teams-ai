@@ -101,6 +101,31 @@ describe("codex goal ops", () => {
     expect(status.recommendedAction).toBe("inspect_dirty_failure");
   });
 
+  it("uses the configured result path for legacy stored jobs", async () => {
+    const fixture = await createGoalFixture();
+    const outputPath = join(fixture.config.jobRootDir, "output.json");
+    await writeFile(
+      outputPath,
+      `${JSON.stringify({
+        status: "partial",
+        reason: "unknown_error",
+      })}\n`,
+    );
+
+    const status = await collectCodexGoalStatus({
+      jobRootDir: fixture.config.jobRootDir,
+      taskId: fixture.config.taskId,
+      resultPath: outputPath,
+      workspacePath: fixture.config.workspacePath,
+    });
+
+    expect(status.resultPath).toBe(outputPath);
+    expect(status.resultExists).toBe(true);
+    expect(status.resultStatus).toBe("partial");
+    expect(status.resultReason).toBe("unknown_error");
+    expect(status.recommendedAction).toBe("inspect_failure");
+  });
+
   it("does not recommend a first start when the workspace is already dirty", async () => {
     const fixture = await createGoalFixture();
     await writeFile(join(fixture.config.workspacePath, "untracked.txt"), "dirty\n");

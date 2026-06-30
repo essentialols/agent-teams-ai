@@ -1,4 +1,5 @@
 import { getTeamsBasePath } from '@main/utils/pathDecoder';
+import { isPathWithinRoot, validateFileName } from '@main/utils/pathValidation';
 import * as path from 'path';
 
 import { atomicWriteAsync } from '../atomicWrite';
@@ -26,15 +27,29 @@ export interface MarkTeamInboxMessagesReadInput {
   teamsBasePath?: string;
 }
 
+function resolveSafeInboxPath(input: MarkTeamInboxMessagesReadInput): string | null {
+  const teamName = input.teamName.trim();
+  const member = input.member.trim();
+  if (!validateFileName(teamName).valid || !validateFileName(member).valid) {
+    return null;
+  }
+
+  const teamsBasePath = input.teamsBasePath ?? getTeamsBasePath();
+  const inboxDir = path.join(teamsBasePath, teamName, 'inboxes');
+  const inboxPath = path.join(inboxDir, `${member}.json`);
+  if (!isPathWithinRoot(inboxDir, teamsBasePath) || !isPathWithinRoot(inboxPath, inboxDir)) {
+    return null;
+  }
+  return inboxPath;
+}
+
 export async function markTeamInboxMessagesRead(
   input: MarkTeamInboxMessagesReadInput
 ): Promise<void> {
-  const inboxPath = path.join(
-    input.teamsBasePath ?? getTeamsBasePath(),
-    input.teamName,
-    'inboxes',
-    `${input.member}.json`
-  );
+  const inboxPath = resolveSafeInboxPath(input);
+  if (!inboxPath) {
+    return;
+  }
 
   await withFileLock(inboxPath, async () => {
     await withInboxLock(inboxPath, async () => {

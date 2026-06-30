@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import * as path from 'path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { buildLegacyInboxMessageId } from '../../inboxMessageIdentity';
 import { markTeamInboxMessagesRead } from '../TeamProvisioningInboxPersistence';
@@ -73,7 +73,7 @@ describe('team inbox persistence', () => {
       maxBytes: 2 * 1024 * 1024,
     });
 
-    const rows = JSON.parse(await readFile(inboxPath, 'utf8')) as Array<{ read?: boolean }>;
+    const rows = JSON.parse(await readFile(inboxPath, 'utf8')) as { read?: boolean }[];
     expect(rows.map((row) => row.read)).toEqual([true, true, false]);
   });
 
@@ -147,5 +147,36 @@ describe('team inbox persistence', () => {
     });
 
     expect(await readFile(inboxPath, 'utf8')).toBe(raw);
+  });
+
+  it('rejects unsafe team and member path segments before reading inbox files', async () => {
+    const teamsRoot = await makeTeamsRoot();
+    const readFileSpy = vi.fn(readRegularFileUtf8);
+
+    await expect(
+      markTeamInboxMessagesRead({
+        teamName: '../outside',
+        member: 'lead',
+        teamsBasePath: teamsRoot,
+        messages: [{ messageId: 'stable-1' }],
+        readRegularFileUtf8: readFileSpy,
+        timeoutMs: 5_000,
+        maxBytes: 2 * 1024 * 1024,
+      })
+    ).resolves.toBeUndefined();
+
+    await expect(
+      markTeamInboxMessagesRead({
+        teamName: 'team-a',
+        member: '../lead',
+        teamsBasePath: teamsRoot,
+        messages: [{ messageId: 'stable-1' }],
+        readRegularFileUtf8: readFileSpy,
+        timeoutMs: 5_000,
+        maxBytes: 2 * 1024 * 1024,
+      })
+    ).resolves.toBeUndefined();
+
+    expect(readFileSpy).not.toHaveBeenCalled();
   });
 });

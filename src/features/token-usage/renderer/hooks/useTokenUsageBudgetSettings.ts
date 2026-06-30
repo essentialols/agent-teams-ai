@@ -22,6 +22,7 @@ export function useTokenUsageBudgetSettings({
 }: UseTokenUsageBudgetSettingsOptions): UseTokenUsageBudgetSettingsResult {
   const [budgetConfig, setBudgetConfig] = useState<TokenUsageBudgetLimits>({});
   const [budgetConfigError, setBudgetConfigError] = useState<string | null>(null);
+  const budgetConfigRef = useRef<TokenUsageBudgetLimits>({});
   const saveVersionRef = useRef(0);
 
   useEffect(() => {
@@ -36,6 +37,7 @@ export function useTokenUsageBudgetSettings({
     void getBudgetSettings()
       .then((settings) => {
         if (cancelled) return;
+        budgetConfigRef.current = settings;
         setBudgetConfig(settings);
         setBudgetConfigError(null);
       })
@@ -50,29 +52,30 @@ export function useTokenUsageBudgetSettings({
 
   const updateBudgetConfig = useCallback(
     (action: React.SetStateAction<TokenUsageBudgetLimits>) => {
-      setBudgetConfig((current) => {
-        const next = typeof action === 'function' ? action(current) : action;
-        const saveVersion = ++saveVersionRef.current;
-        const updateBudgetSettings = (api.tokenUsage as Partial<typeof api.tokenUsage>)
-          .updateBudgetSettings;
-        setBudgetConfigError(null);
-        if (typeof updateBudgetSettings !== 'function') {
-          setBudgetConfigError(saveErrorMessage);
-          return next;
-        }
-        void updateBudgetSettings(next)
-          .then((settings) => {
-            if (saveVersion === saveVersionRef.current) {
-              setBudgetConfig(settings);
-            }
-          })
-          .catch((error: unknown) => {
-            if (saveVersion === saveVersionRef.current) {
-              setBudgetConfigError(error instanceof Error ? error.message : saveErrorMessage);
-            }
-          });
-        return next;
-      });
+      const next = typeof action === 'function' ? action(budgetConfigRef.current) : action;
+      budgetConfigRef.current = next;
+      setBudgetConfig(next);
+
+      const saveVersion = ++saveVersionRef.current;
+      const updateBudgetSettings = (api.tokenUsage as Partial<typeof api.tokenUsage>)
+        .updateBudgetSettings;
+      setBudgetConfigError(null);
+      if (typeof updateBudgetSettings !== 'function') {
+        setBudgetConfigError(saveErrorMessage);
+        return;
+      }
+      void updateBudgetSettings(next)
+        .then((settings) => {
+          if (saveVersion === saveVersionRef.current) {
+            budgetConfigRef.current = settings;
+            setBudgetConfig(settings);
+          }
+        })
+        .catch((error: unknown) => {
+          if (saveVersion === saveVersionRef.current) {
+            setBudgetConfigError(error instanceof Error ? error.message : saveErrorMessage);
+          }
+        });
     },
     [saveErrorMessage]
   );

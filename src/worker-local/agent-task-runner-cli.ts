@@ -161,13 +161,24 @@ export async function runSubscriptionAgentTaskCli(
     });
 
     try {
-      await worker.start();
-      await seedWorker({ args, env, worker });
-      const result = await runWorkerTask({ request, worker });
+      const result = await runWorkerTaskWithTimeout({
+        ...(timeoutMs === undefined ? {} : { timeoutMs }),
+        run: async (abortSignal) => {
+          await worker.start();
+          throwIfAborted(abortSignal);
+          await seedWorker({ args, env, worker });
+          throwIfAborted(abortSignal);
+          return await runWorkerTask({ request, worker, abortSignal });
+        },
+      });
       await emitResult({ request, result, format: args.format, io });
       return result.status === "completed" ? 0 : 1;
     } finally {
-      await worker.dispose?.();
+      await disposeWorker({
+        worker,
+        ...(timeoutMs === undefined ? {} : { timeoutMs }),
+        io,
+      });
     }
   } catch (error) {
     const safeMessage =
@@ -449,6 +460,7 @@ async function seedWorker(input: {
 async function runWorkerTask(input: {
   readonly request: AgentTaskRequest;
   readonly worker: RuntimeAgentTaskWorker;
+  readonly abortSignal: AbortSignal;
 }): Promise<AgentTaskResult> {
   const task = agentTaskRequestToProviderTask(input.request);
   try {
@@ -460,7 +472,7 @@ async function runWorkerTask(input: {
       ...(task.outputSchemaName ? { outputSchemaName: task.outputSchemaName } : {}),
       ...(task.controls ? { controls: task.controls } : {}),
       ...(task.metadata ? { metadata: task.metadata } : {}),
-      abortSignal: new AbortController().signal,
+      abortSignal: input.abortSignal,
     });
     return providerTaskResultToAgentTaskResult(toProviderTaskResult(result));
   } catch (error) {
@@ -470,6 +482,80 @@ async function runWorkerTask(input: {
         error instanceof Error ? error.message : "subscription worker task failed",
       ...optionalFailureDetails(errorDetails(error)),
     });
+  }
+}
+
+async function runWorkerTaskWithTimeout(input: {
+  readonly timeoutMs?: number;
+  readonly run: (abortSignal: AbortSignal) => Promise<AgentTaskResult>;
+}): Promise<AgentTaskResult> {
+  const abortController = new AbortController();
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  try {
+    const run = input.run(abortController.signal);
+    run.catch(() => undefined);
+
+    return input.timeoutMs
+      ? await Promise.race([
+          run,
+          new Promise<never>((_, reject) => {
+            timeout = setTimeout(() => {
+              const error = new AgentTaskTimeoutError(input.timeoutMs!);
+              reject(error);
+              abortController.abort();
+            }, input.timeoutMs);
+          }),
+        ])
+      : await run;
+  } catch (error) {
+    if (!(error instanceof AgentTaskTimeoutError)) throw error;
+    return makeFailedAgentTaskResult({
+      code: "task_timeout",
+      safeMessage: error.message,
+    });
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+class AgentTaskTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`Agent task timed out after ${timeoutMs}ms.`);
+    this.name = "AgentTaskTimeoutError";
+  }
+}
+
+function throwIfAborted(signal: AbortSignal): void {
+  if (signal.aborted) throw new Error("subscription worker task aborted");
+}
+
+async function disposeWorker(input: {
+  readonly worker: RuntimeAgentTaskWorker;
+  readonly timeoutMs?: number;
+  readonly io: SubscriptionAgentTaskCliIo;
+}): Promise<void> {
+  if (!input.worker.dispose) return;
+  const timeoutMs = Math.min(input.timeoutMs ?? 5_000, 5_000);
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  try {
+    const dispose = Promise.resolve().then(() => input.worker.dispose?.());
+    dispose.catch(() => undefined);
+
+    await Promise.race([
+      dispose,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => {
+          reject(new Error(`subscription_worker_dispose_timeout:${timeoutMs}`));
+        }, timeoutMs);
+      }),
+    ]);
+  } catch (error) {
+    const message = error instanceof Error
+      ? error.message
+      : "subscription worker dispose failed";
+    input.io.writeStderr(`${message}\n`);
+  } finally {
+    if (timeout) clearTimeout(timeout);
   }
 }
 

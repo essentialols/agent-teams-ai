@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import {
   chmod,
+  mkdir,
   mkdtemp,
   readFile,
   rm,
@@ -567,22 +568,30 @@ describe("SafeExecutionRunner", () => {
     expect(runs).toBe(1);
   });
 
-  it("continues dirty unknown work when the policy explicitly allows it", async () => {
-    const workspacePath = await gitWorkspace("safe-execution-unknown-continue-");
+  it("stops after an unknown error when a clean workspace got a new commit", async () => {
+    const workspacePath = await gitWorkspace("safe-execution-commit-change-");
     let runs = 0;
-    let resumedPrompt = "";
     const pool = {
       async run(job: PromptJob): Promise<PromptResult> {
         runs += 1;
-        if (runs === 1) {
-          await writeFile(join(job.workspacePath, "unknown.txt"), "partial\n");
-          throw new Error("transient runtime failure");
-        }
-        resumedPrompt = job.prompt;
-        expect(await readFile(join(job.workspacePath, "unknown.txt"), "utf8"))
-          .toBe("partial\n");
-        await writeFile(join(job.workspacePath, "unknown.txt"), "done\n");
-        return { output: "continued" };
+        await writeFile(join(job.workspacePath, "committed.txt"), "done\n");
+        await execFileAsync("git", ["add", "committed.txt"], {
+          cwd: job.workspacePath,
+        });
+        await execFileAsync(
+          "git",
+          [
+            "-c",
+            "user.name=Subscription Runtime Tests",
+            "-c",
+            "user.email=tests@example.com",
+            "commit",
+            "-m",
+            "Worker committed change",
+          ],
+          { cwd: job.workspacePath },
+        );
+        throw new Error("provider_output_invalid");
       },
     };
     const runner = new SafeExecutionRunner({
@@ -591,37 +600,84 @@ describe("SafeExecutionRunner", () => {
     });
 
     const result = await runner.run({
-      taskId: "task-unknown-continue",
+      taskId: "task-commit-change",
       workspace: { mode: "existing_locked", path: workspacePath },
       effectMode: "workspace_patch",
       provider: "codex",
       pool,
-      job: { prompt: "make change", workspacePath },
-      originalPrompt: "make change",
-      policy: {
-        maxAttempts: 2,
-        retryUnknownChangedWorkspace: true,
-      },
-      continuationJobFactory: ({ continuationPacket }) => ({
-        prompt: continuationPacket.message,
-        workspacePath,
-      }),
-      summarizeResult: (value) => value.output,
+      job: { prompt: "commit then fail", workspacePath },
+      originalPrompt: "commit then fail",
+      policy: { maxAttempts: 2 },
     });
 
-    if (result.status !== "completed") throw new Error("expected completed");
-    expect(result.attempts).toHaveLength(2);
-    expect(result.attempts[0]?.failureReason).toBe("unknown_error");
-    expect(result.attempts[0]?.failureMessage).toBe("transient runtime failure");
-    expect(resumedPrompt).toContain("Continue the same task");
-    expect(resumedPrompt).toContain(
-      "Previous attempt stopped because: unknown_error",
-    );
-    expect(await readFile(join(workspacePath, "unknown.txt"), "utf8")).toBe(
-      "done\n",
-    );
-    expect(runs).toBe(2);
+    if (result.status !== "failed") throw new Error("expected failed");
+    expect(result.reason).toBe("unknown_error");
+    expect(result.safeMessage).toContain("unknown error changed the workspace");
+    expect(result.attempts).toHaveLength(1);
+    expect(result.attempts[0]?.workspaceDirtyBefore).toBe(false);
+    expect(result.attempts[0]?.workspaceDirtyAfter).toBe(false);
+    expect(runs).toBe(1);
   });
+
+  it(
+    "continues dirty unknown work when the policy explicitly allows it",
+    async () => {
+      const workspacePath = await gitWorkspace("safe-execution-unknown-continue-");
+      let runs = 0;
+      let resumedPrompt = "";
+      const pool = {
+        async run(job: PromptJob): Promise<PromptResult> {
+          runs += 1;
+          if (runs === 1) {
+            await writeFile(join(job.workspacePath, "unknown.txt"), "partial\n");
+            throw new Error("transient runtime failure");
+          }
+          resumedPrompt = job.prompt;
+          expect(await readFile(join(job.workspacePath, "unknown.txt"), "utf8"))
+            .toBe("partial\n");
+          await writeFile(join(job.workspacePath, "unknown.txt"), "done\n");
+          return { output: "continued" };
+        },
+      };
+      const runner = new SafeExecutionRunner({
+        lockStore: new InMemoryWorkspaceLockStore(),
+        journal: new InMemoryAttemptJournal(),
+      });
+
+      const result = await runner.run({
+        taskId: "task-unknown-continue",
+        workspace: { mode: "existing_locked", path: workspacePath },
+        effectMode: "workspace_patch",
+        provider: "codex",
+        pool,
+        job: { prompt: "make change", workspacePath },
+        originalPrompt: "make change",
+        policy: {
+          maxAttempts: 2,
+          retryUnknownChangedWorkspace: true,
+        },
+        continuationJobFactory: ({ continuationPacket }) => ({
+          prompt: continuationPacket.message,
+          workspacePath,
+        }),
+        summarizeResult: (value) => value.output,
+      });
+
+      if (result.status !== "completed") throw new Error("expected completed");
+      expect(result.attempts).toHaveLength(2);
+      expect(result.attempts[0]?.failureReason).toBe("unknown_error");
+      expect(result.attempts[0]?.failureMessage).toBe("transient runtime failure");
+      expect(resumedPrompt).toContain("Continue the same task");
+      expect(resumedPrompt).toContain(
+        "Previous attempt stopped because: unknown_error",
+      );
+      expect(await readFile(join(workspacePath, "unknown.txt"), "utf8")).toBe(
+        "done\n",
+      );
+      expect(runs).toBe(2);
+    },
+    15_000,
+  );
 
   it("classifies wrapped provider failures from worker pool causes", () => {
     const providerFailure = new SubscriptionWorkerError(
@@ -730,101 +786,109 @@ describe("SafeExecutionRunner", () => {
     });
   });
 
-  it("marks retryable partial work when no continuation job can be built", async () => {
-    const workspacePath = await gitWorkspace("safe-execution-no-continuation-");
-    const journal = new InMemoryAttemptJournal();
-    let runs = 0;
-    const runner = new SafeExecutionRunner({
-      lockStore: new InMemoryWorkspaceLockStore(),
-      journal,
-    });
+  it(
+    "marks retryable partial work when no continuation job can be built",
+    async () => {
+      const workspacePath = await gitWorkspace("safe-execution-no-continuation-");
+      const journal = new InMemoryAttemptJournal();
+      let runs = 0;
+      const runner = new SafeExecutionRunner({
+        lockStore: new InMemoryWorkspaceLockStore(),
+        journal,
+      });
 
-    const result = await runner.run({
-      taskId: "task-no-continuation",
-      workspace: { mode: "existing_locked", path: workspacePath },
-      effectMode: "workspace_patch",
-      provider: "codex",
-      pool: {
-        async run(job: { readonly workspacePath: string }): Promise<PromptResult> {
-          runs += 1;
-          await writeFile(join(job.workspacePath, "partial.txt"), "partial\n");
-          throw new SubscriptionWorkerError(
-            "subscription_worker_run_failed",
-            "Quota limited.",
-            { details: { reason: "quota_limited" } },
-          );
+      const result = await runner.run({
+        taskId: "task-no-continuation",
+        workspace: { mode: "existing_locked", path: workspacePath },
+        effectMode: "workspace_patch",
+        provider: "codex",
+        pool: {
+          async run(job: { readonly workspacePath: string }): Promise<PromptResult> {
+            runs += 1;
+            await writeFile(join(job.workspacePath, "partial.txt"), "partial\n");
+            throw new SubscriptionWorkerError(
+              "subscription_worker_run_failed",
+              "Quota limited.",
+              { details: { reason: "quota_limited" } },
+            );
+          },
         },
-      },
-      job: { workspacePath },
-      originalPrompt: "finish no-continuation task",
-      policy: { maxAttempts: 2 },
-    });
+        job: { workspacePath },
+        originalPrompt: "finish no-continuation task",
+        policy: { maxAttempts: 2 },
+      });
 
-    if (result.status !== "partial") throw new Error("expected partial");
-    expect(result.reason).toBe("quota_limited");
-    expect(result.safeMessage).toContain("continuationJobFactory");
-    expect(result.task.status).toBe("partial");
-    expect((await journal.readTask({ taskId: "task-no-continuation" }))?.status)
-      .toBe("partial");
-    expect(result.attempts).toHaveLength(1);
-    expect(runs).toBe(1);
-  });
+      if (result.status !== "partial") throw new Error("expected partial");
+      expect(result.reason).toBe("quota_limited");
+      expect(result.safeMessage).toContain("continuationJobFactory");
+      expect(result.task.status).toBe("partial");
+      expect((await journal.readTask({ taskId: "task-no-continuation" }))?.status)
+        .toBe("partial");
+      expect(result.attempts).toHaveLength(1);
+      expect(runs).toBe(1);
+    },
+    15_000,
+  );
 
-  it("keeps a resumed partial task partial when no continuation job can be built", async () => {
-    const workspacePath = await gitWorkspace("safe-execution-resume-no-continuation-");
-    const journal = new InMemoryAttemptJournal();
-    const firstRunner = new SafeExecutionRunner({
-      lockStore: new InMemoryWorkspaceLockStore(),
-      journal,
-    });
-    await firstRunner.run({
-      taskId: "task-resume-no-continuation",
-      workspace: { mode: "existing_locked", path: workspacePath },
-      effectMode: "workspace_patch",
-      provider: "codex",
-      pool: {
-        async run(job: PromptJob): Promise<PromptResult> {
-          await writeFile(join(job.workspacePath, "partial.txt"), "partial\n");
-          throw new SubscriptionWorkerError(
-            "subscription_worker_run_failed",
-            "Quota limited.",
-            { details: { reason: "quota_limited" } },
-          );
+  it(
+    "keeps a resumed partial task partial when no continuation job can be built",
+    async () => {
+      const workspacePath = await gitWorkspace("safe-execution-resume-no-continuation-");
+      const journal = new InMemoryAttemptJournal();
+      const firstRunner = new SafeExecutionRunner({
+        lockStore: new InMemoryWorkspaceLockStore(),
+        journal,
+      });
+      await firstRunner.run({
+        taskId: "task-resume-no-continuation",
+        workspace: { mode: "existing_locked", path: workspacePath },
+        effectMode: "workspace_patch",
+        provider: "codex",
+        pool: {
+          async run(job: PromptJob): Promise<PromptResult> {
+            await writeFile(join(job.workspacePath, "partial.txt"), "partial\n");
+            throw new SubscriptionWorkerError(
+              "subscription_worker_run_failed",
+              "Quota limited.",
+              { details: { reason: "quota_limited" } },
+            );
+          },
         },
-      },
-      job: { prompt: "make partial", workspacePath },
-      originalPrompt: "make partial",
-      policy: { maxAttempts: 1 },
-    });
+        job: { prompt: "make partial", workspacePath },
+        originalPrompt: "make partial",
+        policy: { maxAttempts: 1 },
+      });
 
-    let resumedRuns = 0;
-    const secondRunner = new SafeExecutionRunner({
-      lockStore: new InMemoryWorkspaceLockStore(),
-      journal,
-    });
-    const result = await secondRunner.run({
-      taskId: "task-resume-no-continuation",
-      workspace: { mode: "existing_locked", path: workspacePath },
-      effectMode: "workspace_patch",
-      provider: "codex",
-      pool: {
-        async run(): Promise<PromptResult> {
-          resumedRuns += 1;
-          return { output: "should not run" };
+      let resumedRuns = 0;
+      const secondRunner = new SafeExecutionRunner({
+        lockStore: new InMemoryWorkspaceLockStore(),
+        journal,
+      });
+      const result = await secondRunner.run({
+        taskId: "task-resume-no-continuation",
+        workspace: { mode: "existing_locked", path: workspacePath },
+        effectMode: "workspace_patch",
+        provider: "codex",
+        pool: {
+          async run(): Promise<PromptResult> {
+            resumedRuns += 1;
+            return { output: "should not run" };
+          },
         },
-      },
-      job: { workspacePath },
-      originalPrompt: "make partial",
-      policy: { maxAttempts: 2 },
-    });
+        job: { workspacePath },
+        originalPrompt: "make partial",
+        policy: { maxAttempts: 2 },
+      });
 
-    if (result.status !== "partial") throw new Error("expected partial");
-    expect(result.reason).toBe("quota_limited");
-    expect(result.safeMessage).toContain("continuationJobFactory");
-    expect(result.task.status).toBe("partial");
-    expect(result.attempts).toHaveLength(1);
-    expect(resumedRuns).toBe(0);
-  });
+      if (result.status !== "partial") throw new Error("expected partial");
+      expect(result.reason).toBe("quota_limited");
+      expect(result.safeMessage).toContain("continuationJobFactory");
+      expect(result.task.status).toBe("partial");
+      expect(result.attempts).toHaveLength(1);
+      expect(resumedRuns).toBe(0);
+    },
+    15_000,
+  );
 
   it("does not rerun an interrupted running task with unrecorded workspace changes", async () => {
     const workspacePath = await gitWorkspace("safe-execution-interrupted-dirty-");
@@ -873,64 +937,68 @@ describe("SafeExecutionRunner", () => {
     expect(runs).toBe(0);
   });
 
-  it("resumes a partial task from the local file journal with a continuation packet", async () => {
-    const workspacePath = await gitWorkspace("safe-execution-journal-");
-    const stateRoot = await tempPath("safe-execution-state-");
-    const journal = new LocalFileAttemptJournal(stateRoot);
-    const firstRunner = new SafeExecutionRunner({
-      lockStore: new InMemoryWorkspaceLockStore(),
-      journal,
-    });
-    await firstRunner.run({
-      taskId: "task-journal",
-      workspace: { mode: "existing_locked", path: workspacePath },
-      effectMode: "workspace_patch",
-      provider: "codex",
-      pool: {
-        async run(job: PromptJob): Promise<PromptResult> {
-          await writeFile(join(job.workspacePath, "journal.txt"), "partial\n");
-          throw new SubscriptionWorkerError(
-            "subscription_worker_run_failed",
-            "Quota limited.",
-            { details: { reason: "quota_limited" } },
-          );
+  it(
+    "resumes a partial task from the local file journal with a continuation packet",
+    async () => {
+      const workspacePath = await gitWorkspace("safe-execution-journal-");
+      const stateRoot = await tempPath("safe-execution-state-");
+      const journal = new LocalFileAttemptJournal(stateRoot);
+      const firstRunner = new SafeExecutionRunner({
+        lockStore: new InMemoryWorkspaceLockStore(),
+        journal,
+      });
+      await firstRunner.run({
+        taskId: "task-journal",
+        workspace: { mode: "existing_locked", path: workspacePath },
+        effectMode: "workspace_patch",
+        provider: "codex",
+        pool: {
+          async run(job: PromptJob): Promise<PromptResult> {
+            await writeFile(join(job.workspacePath, "journal.txt"), "partial\n");
+            throw new SubscriptionWorkerError(
+              "subscription_worker_run_failed",
+              "Quota limited.",
+              { details: { reason: "quota_limited" } },
+            );
+          },
         },
-      },
-      job: { prompt: "finish journal task", workspacePath },
-      originalPrompt: "finish journal task",
-      policy: { maxAttempts: 1 },
-    });
+        job: { prompt: "finish journal task", workspacePath },
+        originalPrompt: "finish journal task",
+        policy: { maxAttempts: 1 },
+      });
 
-    let resumedPrompt = "";
-    const secondRunner = new SafeExecutionRunner({
-      lockStore: new InMemoryWorkspaceLockStore(),
-      journal,
-    });
-    const result = await secondRunner.run({
-      taskId: "task-journal",
-      workspace: { mode: "existing_locked", path: workspacePath },
-      effectMode: "workspace_patch",
-      provider: "codex",
-      pool: {
-        async run(job: PromptJob): Promise<PromptResult> {
-          resumedPrompt = job.prompt;
-          await writeFile(join(job.workspacePath, "journal.txt"), "done\n");
-          return { output: "resumed" };
+      let resumedPrompt = "";
+      const secondRunner = new SafeExecutionRunner({
+        lockStore: new InMemoryWorkspaceLockStore(),
+        journal,
+      });
+      const result = await secondRunner.run({
+        taskId: "task-journal",
+        workspace: { mode: "existing_locked", path: workspacePath },
+        effectMode: "workspace_patch",
+        provider: "codex",
+        pool: {
+          async run(job: PromptJob): Promise<PromptResult> {
+            resumedPrompt = job.prompt;
+            await writeFile(join(job.workspacePath, "journal.txt"), "done\n");
+            return { output: "resumed" };
+          },
         },
-      },
-      job: { prompt: "finish journal task", workspacePath },
-      originalPrompt: "finish journal task",
-      policy: { maxAttempts: 2 },
-    });
+        job: { prompt: "finish journal task", workspacePath },
+        originalPrompt: "finish journal task",
+        policy: { maxAttempts: 2 },
+      });
 
-    expect(result.status).toBe("completed");
-    expect(result.attempts).toHaveLength(2);
-    expect(resumedPrompt).toContain("Continue the same task");
-    expect(resumedPrompt).toContain("Previous attempt stopped because: quota_limited");
-    expect(await readFile(join(workspacePath, "journal.txt"), "utf8")).toBe(
-      "done\n",
-    );
-  });
+      expect(result.status).toBe("completed");
+      expect(result.attempts).toHaveLength(2);
+      expect(resumedPrompt).toContain("Continue the same task");
+      expect(resumedPrompt).toContain("Previous attempt stopped because: quota_limited");
+      expect(await readFile(join(workspacePath, "journal.txt"), "utf8")).toBe(
+        "done\n",
+      );
+    },
+    15_000,
+  );
 
   it("uses only safe read-only git snapshot commands", async () => {
     const workspacePath = await tempPath("safe-execution-git-commands-");
@@ -943,8 +1011,9 @@ describe("SafeExecutionRunner", () => {
         "const fs = require('node:fs');",
         "const args = process.argv.slice(2);",
         "fs.appendFileSync(process.env.GIT_COMMAND_LOG, args.join(' ') + '\\n');",
-        "if (args[0] === 'rev-parse') { console.log('true'); process.exit(0); }",
-        "if (args[0] === 'status') { console.log(' M tracked.txt'); process.exit(0); }",
+        "if (args[0] === 'rev-parse' && args[1] === '--is-inside-work-tree') { console.log('true'); process.exit(0); }",
+        "if (args[0] === 'rev-parse' && args[1] === 'HEAD^{tree}') { console.log('tree-hash'); process.exit(0); }",
+        "if (args[0] === 'status') { process.stdout.write(' M tracked.txt\\0'); process.exit(0); }",
         "if (args[0] === 'diff' && args.includes('--name-only')) { console.log('tracked.txt'); process.exit(0); }",
         "if (args[0] === 'diff' && args.includes('--stat')) { console.log(' tracked.txt | 1 +'); process.exit(0); }",
         "if (args[0] === 'diff') { console.log('diff --git a/tracked.txt b/tracked.txt'); process.exit(0); }",
@@ -975,11 +1044,15 @@ describe("SafeExecutionRunner", () => {
 
     const commands = (await readFile(logPath, "utf8")).trim().split("\n");
     expect(commands).toEqual([
-      "rev-parse --is-inside-work-tree",
-      "status --porcelain",
-      "diff --name-only --no-ext-diff --",
-      "diff --stat --no-ext-diff",
-      "diff --no-ext-diff --",
+      "rev-parse --is-inside-work-tree --show-prefix --show-toplevel",
+      "status --porcelain=v1 -z --untracked-files=all -- .",
+      "rev-parse HEAD^{tree}",
+      "diff --relative --name-only --no-ext-diff -- .",
+      "diff --relative --cached --name-only --no-ext-diff -- .",
+      "diff --relative --stat --no-ext-diff -- .",
+      "diff --relative --cached --stat --no-ext-diff -- .",
+      "diff --relative --no-ext-diff -- .",
+      "diff --relative --cached --no-ext-diff -- .",
     ]);
     expect(commands.join("\n")).not.toMatch(/\b(reset|clean|checkout|apply)\b/);
   });
@@ -1146,6 +1219,168 @@ describe("SafeExecutionRunner", () => {
     if (result.status !== "completed") throw new Error("expected completed");
     expect(result.attempts[0]?.changedFiles).toEqual(["src/worker-output.ts"]);
   });
+
+  it(
+    "scopes git snapshots to the requested workspace subdirectory",
+    async () => {
+      const repoPath = await tempPath("safe-execution-git-scope-");
+      await execFileAsync("git", ["init"], { cwd: repoPath });
+      await mkdir(join(repoPath, "app"), { recursive: true });
+      await mkdir(join(repoPath, "other"), { recursive: true });
+      await writeFile(join(repoPath, "app", "inside.txt"), "base\n", "utf8");
+      await writeFile(join(repoPath, "app", "old name.txt"), "base\n", "utf8");
+      await writeFile(join(repoPath, "other", "outside.txt"), "base\n", "utf8");
+      await writeFile(join(repoPath, "app", "delete name.txt"), "base\n", "utf8");
+      await writeFile(
+        join(repoPath, "other", "outside old name.txt"),
+        "base\n",
+        "utf8",
+      );
+      await execFileAsync("git", ["add", "."], { cwd: repoPath });
+      await execFileAsync(
+        "git",
+        [
+          "-c",
+          "user.name=Subscription Runtime Tests",
+          "-c",
+          "user.email=tests@example.com",
+          "commit",
+          "-m",
+          "Initial commit",
+        ],
+        { cwd: repoPath },
+      );
+
+      await writeFile(join(repoPath, "app", "inside.txt"), "changed\n", "utf8");
+      await writeFile(join(repoPath, "app", "new.txt"), "new\n", "utf8");
+      await writeFile(join(repoPath, "app", "new file.txt"), "new\n", "utf8");
+      await mkdir(join(repoPath, "app", "nested"), { recursive: true });
+      await writeFile(
+        join(repoPath, "app", "nested", "untracked.txt"),
+        "new\n",
+        "utf8",
+      );
+      await writeFile(join(repoPath, "app", "staged.txt"), "staged\n", "utf8");
+      await rm(join(repoPath, "app", "delete name.txt"));
+      await writeFile(
+        join(repoPath, "other", "outside.txt"),
+        "changed\n",
+        "utf8",
+      );
+      await execFileAsync("git", ["mv", "app/old name.txt", "app/new name.txt"], {
+        cwd: repoPath,
+      });
+      await execFileAsync(
+        "git",
+        ["mv", "other/outside old name.txt", "other/outside new name.txt"],
+        { cwd: repoPath },
+      );
+      await execFileAsync("git", ["add", "app/staged.txt", "other/outside.txt"], {
+        cwd: repoPath,
+      });
+
+      const snapshot = await new DefaultWorkspaceSnapshotter().capture({
+        workspacePath: join(repoPath, "app"),
+        includeDiff: true,
+      });
+
+      expect(snapshot.changedFiles).toEqual([
+        "delete name.txt",
+        "inside.txt",
+        "nested/untracked.txt",
+        "new file.txt",
+        "new name.txt",
+        "new.txt",
+        "staged.txt",
+      ]);
+      expect(snapshot.summary).toBe("Git workspace has 7 changed file(s).");
+      expect(snapshot.diffStat).toContain("inside.txt");
+      expect(snapshot.diffStat).toContain("staged.txt");
+      expect(snapshot.diffStat).not.toContain("outside.txt");
+      expect(snapshot.shortDiff).toContain("diff --git a/inside.txt b/inside.txt");
+      expect(snapshot.shortDiff).toContain("diff --git a/staged.txt b/staged.txt");
+      expect(snapshot.shortDiff).not.toContain("outside.txt");
+    },
+    15_000,
+  );
+
+  it(
+    "fingerprints git snapshots using the requested workspace subtree",
+    async () => {
+      const repoPath = await tempPath("safe-execution-git-tree-scope-");
+      await execFileAsync("git", ["init"], { cwd: repoPath });
+      await mkdir(join(repoPath, "app"), { recursive: true });
+      await mkdir(join(repoPath, "other"), { recursive: true });
+      await writeFile(join(repoPath, "app", "inside.txt"), "base\n", "utf8");
+      await writeFile(join(repoPath, "other", "outside.txt"), "base\n", "utf8");
+      await execFileAsync("git", ["add", "."], { cwd: repoPath });
+      await execFileAsync(
+        "git",
+        [
+          "-c",
+          "user.name=Subscription Runtime Tests",
+          "-c",
+          "user.email=tests@example.com",
+          "commit",
+          "-m",
+          "Initial commit",
+        ],
+        { cwd: repoPath },
+      );
+
+      const snapshotter = new DefaultWorkspaceSnapshotter();
+      const before = await snapshotter.capture({
+        workspacePath: join(repoPath, "app"),
+      });
+
+      await writeFile(join(repoPath, "other", "outside.txt"), "outside\n", "utf8");
+      await execFileAsync("git", ["add", "other/outside.txt"], {
+        cwd: repoPath,
+      });
+      await execFileAsync(
+        "git",
+        [
+          "-c",
+          "user.name=Subscription Runtime Tests",
+          "-c",
+          "user.email=tests@example.com",
+          "commit",
+          "-m",
+          "Outside commit",
+        ],
+        { cwd: repoPath },
+      );
+      const afterOutsideCommit = await snapshotter.capture({
+        workspacePath: join(repoPath, "app"),
+      });
+
+      await writeFile(join(repoPath, "app", "inside.txt"), "inside\n", "utf8");
+      await execFileAsync("git", ["add", "app/inside.txt"], { cwd: repoPath });
+      await execFileAsync(
+        "git",
+        [
+          "-c",
+          "user.name=Subscription Runtime Tests",
+          "-c",
+          "user.email=tests@example.com",
+          "commit",
+          "-m",
+          "Inside commit",
+        ],
+        { cwd: repoPath },
+      );
+      const afterInsideCommit = await snapshotter.capture({
+        workspacePath: join(repoPath, "app"),
+      });
+
+      expect(before.dirty).toBe(false);
+      expect(afterOutsideCommit.dirty).toBe(false);
+      expect(afterInsideCommit.dirty).toBe(false);
+      expect(afterOutsideCommit.fingerprint).toBe(before.fingerprint);
+      expect(afterInsideCommit.fingerprint).not.toBe(before.fingerprint);
+    },
+    15_000,
+  );
 
   async function tempPath(prefix: string): Promise<string> {
     const path = await mkdtemp(join(tmpdir(), prefix));

@@ -32,6 +32,7 @@ export type FileBackendCodexSafeExecutorOptions = {
     readonly staleLockMs?: number;
     readonly prewarmOnStart?: boolean;
     readonly maxQueueSize?: number;
+    readonly startTimeoutMs?: number;
     readonly shutdownTimeoutMs?: number;
     readonly clock?: {
         now(): Date;

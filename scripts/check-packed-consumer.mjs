@@ -8,7 +8,6 @@ const rootDir = new URL("..", import.meta.url).pathname;
 const tempDir = await mkdtemp(join(tmpdir(), "subscription-runtime-consumer-"));
 
 try {
-  run("npm", ["run", "build"], { cwd: rootDir });
   const pack = spawnSync("npm", ["pack", "--json"], {
     cwd: rootDir,
     encoding: "utf8",
@@ -17,7 +16,7 @@ try {
     process.stderr.write(pack.stderr);
     process.exit(pack.status ?? 1);
   }
-  const [{ filename }] = JSON.parse(pack.stdout);
+  const [{ filename }] = parseNpmPackJson(pack.stdout);
   const tarball = join(rootDir, filename);
 
   await writeFile(
@@ -162,4 +161,10 @@ function run(command, args, options) {
   if (result.status !== 0) {
     process.exit(result.status ?? 1);
   }
+}
+
+function parseNpmPackJson(output) {
+  const trimmed = output.trim();
+  const jsonStart = trimmed.lastIndexOf("\n[");
+  return JSON.parse(jsonStart === -1 ? trimmed : trimmed.slice(jsonStart + 1));
 }

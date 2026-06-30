@@ -2,12 +2,14 @@ import type { OutputSink, ProcessResult, RedactorPort, RunnerPort } from "@vioxe
 export type GitHubActionRunnerOptions = {
     readonly redactor?: RedactorPort;
     readonly maxCapturedOutputBytes?: number;
+    readonly killGraceMs?: number;
 };
 export declare class GitHubActionRunner implements RunnerPort {
     readonly runnerId: string;
     readonly capabilities: import("@vioxen/subscription-runtime/core").RunnerCapabilities;
     private readonly redactor;
     private readonly maxCapturedOutputBytes;
+    private readonly killGraceMs;
     constructor(options?: GitHubActionRunnerOptions);
     run(input: {
         readonly command: string;

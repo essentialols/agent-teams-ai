@@ -1,0 +1,50 @@
+name: Publish Package
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing GitHub Release tag for attaching the package tarball.
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: publish-package-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.release_tag || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://npm.pkg.github.com
+          scope: "@vioxen"
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run check:boundaries
+      - id: pack
+        run: |
+          npm pack --json > pack.log
+          node -e "const fs=require('node:fs'); const output=fs.readFileSync('pack.log','utf8').trim(); const start=output.lastIndexOf('\n['); const [{filename}]=JSON.parse(start === -1 ? output : output.slice(start + 1)); fs.appendFileSync(process.env.GITHUB_OUTPUT, 'tarball=' + filename + '\n')"
+      - name: Publish to GitHub Packages
+        run: npm publish "${{ steps.pack.outputs.tarball }}" --registry=https://npm.pkg.github.com
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Attach tarball to release
+        if: ${{ github.event.release.tag_name || inputs.release_tag }}
+        run: gh release upload "${{ github.event.release.tag_name || inputs.release_tag }}" "${{ steps.pack.outputs.tarball }}" --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

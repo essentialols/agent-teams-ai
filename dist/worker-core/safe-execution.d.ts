@@ -345,10 +345,14 @@ export declare class DefaultWorkspaceSnapshotter implements WorkspaceSnapshotter
     }): Promise<WorkspaceSnapshot>;
     private captureGit;
     private captureFilesystem;
-    private isGitWorkspace;
+    private gitWorkspaceInfo;
     private git;
     private shortGitDiff;
     private gitDiffNameOnly;
+    private gitHeadTree;
+    private gitDiffStat;
+    private gitDiffOutputs;
+    private gitDiffOutput;
     private scanFilesystem;
 }
 export declare class DefaultContinuationPacketBuilder implements ContinuationPacketBuilder {

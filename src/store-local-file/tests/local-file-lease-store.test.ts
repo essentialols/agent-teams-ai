@@ -273,7 +273,10 @@ describe("Local file lease store", () => {
         attempt: 1,
         ttlMs: 60_000,
         restoredGenerationHash: "generation-1",
-      });
+      }).then(
+        () => ({ status: "resolved" as const }),
+        (error: unknown) => ({ status: "rejected" as const, error }),
+      );
 
       await delayForTest(25);
       await writeLockRecordForTest({
@@ -285,7 +288,15 @@ describe("Local file lease store", () => {
       });
       await rm(cleanupLockPath, { force: true });
 
-      await expect(acquire).rejects.toThrow("local_file_lease_lock_timeout");
+      const acquireResult = await acquire;
+      expect(acquireResult.status).toBe("rejected");
+      if (acquireResult.status !== "rejected") {
+        throw new Error("expected lock acquisition to time out");
+      }
+      expect(acquireResult.error).toBeInstanceOf(Error);
+      expect((acquireResult.error as Error).message).toContain(
+        "local_file_lease_lock_timeout",
+      );
       await expect(readFile(lockPath, "utf8")).resolves.toContain(freshLockId);
     } finally {
       await rm(rootDir, { recursive: true, force: true });

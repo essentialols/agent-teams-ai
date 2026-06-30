@@ -2,8 +2,10 @@ node_modules
 coverage
 .DS_Store
 .worktrees/
+dist
 .env
 .env.*
 *.log
+*.tgz
 tmp
 *.tsbuildinfo

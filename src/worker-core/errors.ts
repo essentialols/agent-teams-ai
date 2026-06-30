@@ -3,6 +3,7 @@ export type SubscriptionWorkerErrorCode =
   | "subscription_worker_already_started"
   | "subscription_worker_disposed"
   | "subscription_worker_start_failed"
+  | "subscription_worker_start_timeout"
   | "subscription_worker_prewarm_failed"
   | "subscription_worker_run_failed"
   | "subscription_worker_health_failed"

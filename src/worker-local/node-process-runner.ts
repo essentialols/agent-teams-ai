@@ -48,18 +48,19 @@ export class NodeProcessRunner implements RunnerPort {
 
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
-    child.stdout.on("data", (chunk: Buffer) => {
-      stdout.push(chunk);
-      input.stdout?.write(chunk);
-    });
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderr.push(chunk);
-      input.stderr?.write(chunk);
-    });
-
     let forceKillTimer: NodeJS.Timeout | null = null;
     let abortError: Error | null = null;
+    let childError: Error | null = null;
+    let outputSinkError: Error | null = null;
+    let stdinError: Error | null = null;
     let timedOut = false;
+    let terminalReason:
+      | "abort"
+      | "timeout"
+      | "child"
+      | "outputSink"
+      | "stdin"
+      | null = null;
     const terminate = () => {
       if (child.exitCode !== null || child.signalCode !== null) return;
       child.kill("SIGTERM");
@@ -69,32 +70,88 @@ export class NodeProcessRunner implements RunnerPort {
         }
       }, this.options.killGraceMs ?? 5_000);
     };
+    const writeOutputSink = (
+      streamName: "stdout" | "stderr",
+      sink: OutputSink | undefined,
+      chunk: Buffer,
+    ): void => {
+      if (!sink || outputSinkError) return;
+      try {
+        sink.write(chunk);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!terminalReason) {
+          terminalReason = "outputSink";
+          outputSinkError = new Error(
+            `node_process_runner_output_sink_failed:${streamName}:${message}`,
+          );
+        }
+        terminate();
+      }
+    };
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout.push(chunk);
+      writeOutputSink("stdout", input.stdout, chunk);
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr.push(chunk);
+      writeOutputSink("stderr", input.stderr, chunk);
+    });
+
     const timeout = setTimeout(() => {
-      timedOut = true;
+      if (!terminalReason) {
+        terminalReason = "timeout";
+        timedOut = true;
+      }
       terminate();
     }, input.timeoutMs);
     const abort = () => {
-      abortError = new Error("node_process_runner_aborted");
+      if (!terminalReason) {
+        terminalReason = "abort";
+        abortError = new Error("node_process_runner_aborted");
+      }
       terminate();
     };
     input.abortSignal.addEventListener("abort", abort, { once: true });
 
-    if (input.stdin) {
-      child.stdin.end(input.stdin);
-    } else {
-      child.stdin.end();
-    }
-
     try {
       const exit = await new Promise<{
         readonly exitCode: number;
-      }>((resolve, reject) => {
-        child.on("error", reject);
+      }>((resolve) => {
+        const failChild = (error: unknown) => {
+          if (!terminalReason) {
+            terminalReason = "child";
+            childError = error instanceof Error ? error : new Error(String(error));
+          }
+          terminate();
+        };
+        const failStdin = (error: unknown) => {
+          if (!terminalReason) {
+            terminalReason = "stdin";
+            stdinError = error instanceof Error ? error : new Error(String(error));
+          }
+          terminate();
+        };
+        child.on("error", failChild);
+        child.stdin.on("error", failStdin);
         child.on("close", (code) => resolve({ exitCode: code ?? 1 }));
+        try {
+          if (input.stdin) {
+            child.stdin.end(input.stdin);
+          } else {
+            child.stdin.end();
+          }
+        } catch (error) {
+          failStdin(error);
+        }
       });
-      if (abortError) throw abortError;
-      if (timedOut) {
+      if (terminalReason === "abort" && abortError) throw abortError;
+      if (terminalReason === "timeout" && timedOut) {
         throw new Error(`node_process_runner_timeout:${input.timeoutMs}`);
+      }
+      if (terminalReason === "child" && childError) throw childError;
+      if (terminalReason === "outputSink" && outputSinkError) {
+        throw outputSinkError;
       }
       const result = {
         exitCode: exit.exitCode,
@@ -102,17 +159,24 @@ export class NodeProcessRunner implements RunnerPort {
         stderr: Buffer.concat(stderr).toString("utf8"),
         durationMs: Date.now() - startedAt,
       };
+      const failureOutput = safeFailureOutput(`${result.stdout}\n${result.stderr}`);
+      if (
+        terminalReason === "stdin" &&
+        stdinError &&
+        failureOutput === "empty_process_output"
+      ) {
+        throw stdinError;
+      }
       if (exit.exitCode !== 0) {
         throw Object.assign(new Error(
-          `node_process_runner_failed:${exit.exitCode}:${safeFailureOutput(
-            `${result.stdout}\n${result.stderr}`,
-          )}`,
+          `node_process_runner_failed:${exit.exitCode}:${failureOutput}`,
         ), {
           exitCode: exit.exitCode,
           stdout: result.stdout,
           stderr: result.stderr,
         });
       }
+      if (terminalReason === "stdin" && stdinError) throw stdinError;
       return result;
     } finally {
       clearTimeout(timeout);

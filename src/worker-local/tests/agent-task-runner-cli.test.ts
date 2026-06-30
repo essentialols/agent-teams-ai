@@ -17,6 +17,7 @@ import {
   type RuntimeAgentTaskWorkerFactory,
   type RuntimeAgentTaskWorkerFactoryInput,
   type RuntimeAgentTaskWorkerJob,
+  type RuntimeAgentTaskWorkerResult,
   type SubscriptionAgentTaskCliIo,
 } from "../agent-task-runner-cli";
 
@@ -362,6 +363,363 @@ describe("subscription runtime agent-task runner CLI", () => {
 
     expect(overrideExitCode).toBe(0);
     expect(overrideCalls.factory?.timeoutMs).toBe(120_000);
+  });
+
+  it("returns a timeout result when the worker run never resolves", async () => {
+    const stdout: string[] = [];
+    let aborted = false;
+    let disposed = false;
+    const exitCode = await runSubscriptionAgentTaskCli(
+      [
+        "--provider",
+        "claude",
+        "--state-root",
+        "/tmp/runtime-state",
+        "--format",
+        "result-json",
+      ],
+      fakeIo({
+        stdout,
+        stdin: JSON.stringify({
+          protocolVersion: 1,
+          timeoutMs: 5,
+          task: {
+            kind: "structured-prompt",
+            prompt: "never finishes",
+          },
+        }),
+        env: {
+          SUBSCRIPTION_RUNTIME_LOCAL_ENCRYPTION_KEY:
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        },
+      }),
+      () => ({
+        async start() {},
+        async run(job) {
+          job.abortSignal?.addEventListener("abort", () => {
+            aborted = true;
+          });
+          return await new Promise<RuntimeAgentTaskWorkerResult>(() => {});
+        },
+        async dispose() {
+          disposed = true;
+        },
+      }),
+    );
+
+    expect(exitCode).toBe(1);
+    expect(aborted).toBe(true);
+    expect(disposed).toBe(true);
+    expect(JSON.parse(stdout.join(""))).toMatchObject({
+      status: "failed",
+      failure: {
+        code: "task_timeout",
+      },
+    });
+  });
+
+  it("returns a timeout result when the worker start never resolves", async () => {
+    const stdout: string[] = [];
+    let runCalled = false;
+    let disposed = false;
+    const exitCode = await runSubscriptionAgentTaskCli(
+      [
+        "--provider",
+        "claude",
+        "--state-root",
+        "/tmp/runtime-state",
+        "--format",
+        "result-json",
+      ],
+      fakeIo({
+        stdout,
+        stdin: JSON.stringify({
+          protocolVersion: 1,
+          timeoutMs: 5,
+          task: {
+            kind: "structured-prompt",
+            prompt: "never starts",
+          },
+        }),
+        env: {
+          SUBSCRIPTION_RUNTIME_LOCAL_ENCRYPTION_KEY:
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        },
+      }),
+      () => ({
+        async start() {
+          return await new Promise<void>(() => {});
+        },
+        async run() {
+          runCalled = true;
+          return {
+            outputText: "unexpected",
+            warnings: [],
+          };
+        },
+        async dispose() {
+          disposed = true;
+        },
+      }),
+    );
+
+    expect(exitCode).toBe(1);
+    expect(runCalled).toBe(false);
+    expect(disposed).toBe(true);
+    expect(JSON.parse(stdout.join(""))).toMatchObject({
+      status: "failed",
+      failure: {
+        code: "task_timeout",
+      },
+    });
+  });
+
+  it("returns a timeout result when worker auth seeding never resolves", async () => {
+    const stdout: string[] = [];
+    let runCalled = false;
+    let disposed = false;
+    const exitCode = await runSubscriptionAgentTaskCli(
+      [
+        "--provider",
+        "claude",
+        "--state-root",
+        "/tmp/runtime-state",
+        "--format",
+        "result-json",
+      ],
+      fakeIo({
+        stdout,
+        stdin: JSON.stringify({
+          protocolVersion: 1,
+          timeoutMs: 5,
+          task: {
+            kind: "structured-prompt",
+            prompt: "never seeds",
+          },
+        }),
+        env: {
+          CLAUDE_CODE_OAUTH_TOKEN: "token",
+          SUBSCRIPTION_RUNTIME_LOCAL_ENCRYPTION_KEY:
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        },
+      }),
+      () => ({
+        async start() {},
+        async seedClaudeOAuth() {
+          return await new Promise<void>(() => {});
+        },
+        async run() {
+          runCalled = true;
+          return {
+            outputText: "unexpected",
+            warnings: [],
+          };
+        },
+        async dispose() {
+          disposed = true;
+        },
+      }),
+    );
+
+    expect(exitCode).toBe(1);
+    expect(runCalled).toBe(false);
+    expect(disposed).toBe(true);
+    expect(JSON.parse(stdout.join(""))).toMatchObject({
+      status: "failed",
+      failure: {
+        code: "task_timeout",
+      },
+    });
+  });
+
+  it("emits event-ndjson timeout results", async () => {
+    const stdout: string[] = [];
+    const exitCode = await runSubscriptionAgentTaskCli(
+      ["--provider", "claude", "--state-root", "/tmp/runtime-state"],
+      fakeIo({
+        stdout,
+        stdin: JSON.stringify({
+          protocolVersion: 1,
+          timeoutMs: 5,
+          task: {
+            kind: "structured-prompt",
+            prompt: "never finishes",
+          },
+        }),
+        env: {
+          SUBSCRIPTION_RUNTIME_LOCAL_ENCRYPTION_KEY:
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        },
+      }),
+      () => ({
+        async start() {},
+        async run() {
+          return await new Promise<RuntimeAgentTaskWorkerResult>(() => {});
+        },
+      }),
+    );
+
+    expect(exitCode).toBe(1);
+    const events = stdout.join("").trim().split("\n").map((line) => JSON.parse(line));
+    expect(events).toHaveLength(2);
+    expect(events[0]).toMatchObject({ type: "started" });
+    expect(events[1]).toMatchObject({
+      type: "completed",
+      result: {
+        status: "failed",
+        failure: {
+          code: "task_timeout",
+        },
+      },
+    });
+  });
+
+  it("keeps the task result when worker dispose never resolves", async () => {
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const exitCode = await runSubscriptionAgentTaskCli(
+      [
+        "--provider",
+        "claude",
+        "--state-root",
+        "/tmp/runtime-state",
+        "--format",
+        "result-json",
+      ],
+      fakeIo({
+        stdout,
+        stderr,
+        stdin: JSON.stringify({
+          protocolVersion: 1,
+          timeoutMs: 5,
+          task: {
+            kind: "structured-prompt",
+            prompt: "finishes before cleanup hangs",
+          },
+        }),
+        env: {
+          SUBSCRIPTION_RUNTIME_LOCAL_ENCRYPTION_KEY:
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        },
+      }),
+      () => ({
+        async start() {},
+        async run() {
+          return {
+            outputText: "done",
+            warnings: [],
+          };
+        },
+        async dispose() {
+          return await new Promise<void>(() => {});
+        },
+      }),
+    );
+
+    expect(exitCode).toBe(0);
+    expect(JSON.parse(stdout.join(""))).toMatchObject({
+      status: "completed",
+      outputText: "done",
+    });
+    expect(stderr.join("")).toContain("subscription_worker_dispose_timeout:5");
+  });
+
+  it("keeps the task result when worker dispose fails", async () => {
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const exitCode = await runSubscriptionAgentTaskCli(
+      [
+        "--provider",
+        "claude",
+        "--state-root",
+        "/tmp/runtime-state",
+        "--format",
+        "result-json",
+      ],
+      fakeIo({
+        stdout,
+        stderr,
+        stdin: JSON.stringify({
+          protocolVersion: 1,
+          task: {
+            kind: "structured-prompt",
+            prompt: "finishes before cleanup fails",
+          },
+        }),
+        env: {
+          SUBSCRIPTION_RUNTIME_LOCAL_ENCRYPTION_KEY:
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        },
+      }),
+      () => ({
+        async start() {},
+        async run() {
+          return {
+            outputText: "done",
+            warnings: [],
+          };
+        },
+        async dispose() {
+          throw new Error("dispose exploded");
+        },
+      }),
+    );
+
+    expect(exitCode).toBe(0);
+    expect(JSON.parse(stdout.join(""))).toMatchObject({
+      status: "completed",
+      outputText: "done",
+    });
+    expect(stderr.join("")).toContain("dispose exploded");
+  });
+
+  it("keeps the task result when worker dispose throws synchronously", async () => {
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const exitCode = await runSubscriptionAgentTaskCli(
+      [
+        "--provider",
+        "claude",
+        "--state-root",
+        "/tmp/runtime-state",
+        "--format",
+        "result-json",
+      ],
+      fakeIo({
+        stdout,
+        stderr,
+        stdin: JSON.stringify({
+          protocolVersion: 1,
+          task: {
+            kind: "structured-prompt",
+            prompt: "finishes before cleanup throws",
+          },
+        }),
+        env: {
+          SUBSCRIPTION_RUNTIME_LOCAL_ENCRYPTION_KEY:
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        },
+      }),
+      () => ({
+        async start() {},
+        async run() {
+          return {
+            outputText: "done",
+            warnings: [],
+          };
+        },
+        dispose() {
+          throw new Error("dispose sync exploded");
+        },
+      }),
+    );
+
+    expect(exitCode).toBe(0);
+    expect(JSON.parse(stdout.join(""))).toMatchObject({
+      status: "completed",
+      outputText: "done",
+    });
+    expect(stderr.join("")).toContain("dispose sync exploded");
   });
 
   it("fails before constructing a durable worker when the encryption key env is missing", async () => {

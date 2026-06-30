@@ -85,16 +85,45 @@ export class BoundedSubscriptionWorkerPool<Job, Result> {
     try {
       for (let index = 0; index < this.options.slots; index += 1) {
         const slot = this.createSlot(index);
-        await slot.worker.start();
+        try {
+          await this.withStartTimeout(slot.worker.start(), {
+            phase: "start",
+            slotIndex: String(slot.index),
+            workerId: slot.worker.workerId,
+          });
+        } catch (error) {
+          if (isStartTimeoutError(error)) {
+            void slot.worker.dispose().catch(() => {
+              // Best-effort cleanup after a timed-out start.
+            });
+          } else {
+            await slot.worker.dispose().catch(() => {
+              // Best-effort cleanup after a failed start.
+            });
+          }
+          throw error;
+        }
         this.slots.push(slot);
       }
       this.poolState = "started";
       if (this.options.prewarmOnStart) {
-        await this.prewarm();
+        this.poolState = "prewarming";
+        await this.withStartTimeout(
+          Promise.all(this.slots.map((slot) => slot.worker.prewarm())),
+          { phase: "prewarm" },
+        );
+        this.poolState = "ready";
+        this.emit("subscription_worker_pool.prewarmed");
       }
       this.emit("subscription_worker_pool.started");
     } catch (error) {
       this.poolState = "failed";
+      if (isStartTimeoutError(error)) {
+        void this.disposeStartedSlots().catch(() => {
+          // Best-effort cleanup after a timed-out pool start.
+        });
+        throw error;
+      }
       await this.disposeStartedSlots();
       throw new SubscriptionWorkerError(
         "subscription_worker_start_failed",
@@ -645,6 +674,51 @@ export class BoundedSubscriptionWorkerPool<Job, Result> {
     }
     clearTimeout(handle as ReturnType<typeof setTimeout>);
   }
+
+  private withStartTimeout<T>(
+    operation: Promise<T>,
+    details: Readonly<Record<string, string>>,
+  ): Promise<T> {
+    const timeoutMs = this.options.startTimeoutMs;
+    if (
+      timeoutMs === undefined ||
+      !Number.isFinite(timeoutMs) ||
+      timeoutMs < 0
+    ) {
+      return operation;
+    }
+
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      let timer: WorkerPoolTimerHandle | null = null;
+      const settle = (callback: () => void) => {
+        if (settled) return;
+        settled = true;
+        if (timer !== null) this.clearTimer(timer);
+        callback();
+      };
+      timer = this.setTimer(() => {
+        settle(() =>
+          reject(
+            new SubscriptionWorkerError(
+              "subscription_worker_start_timeout",
+              `Worker pool start timed out after ${timeoutMs} ms.`,
+              {
+                details: {
+                  ...details,
+                  timeoutMs: String(timeoutMs),
+                },
+              },
+            ),
+          ),
+        );
+      }, timeoutMs);
+      operation.then(
+        (result) => settle(() => resolve(result)),
+        (error) => settle(() => reject(error)),
+      );
+    });
+  }
 }
 
 async function safeHealth<Job, Result>(
@@ -678,6 +752,13 @@ function runAbortedError(): SubscriptionWorkerError {
   return new SubscriptionWorkerError(
     "subscription_worker_pool_run_aborted",
     "Worker pool run was aborted before it started.",
+  );
+}
+
+function isStartTimeoutError(error: unknown): error is SubscriptionWorkerError {
+  return (
+    error instanceof SubscriptionWorkerError &&
+    error.code === "subscription_worker_start_timeout"
   );
 }
 

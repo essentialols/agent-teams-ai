@@ -296,26 +296,31 @@ export class DefaultWorkspaceSnapshotter {
     async capture(input) {
         const workspacePath = await canonicalWorkspacePath(input.workspacePath);
         const capturedAt = new Date();
-        if (await this.isGitWorkspace(workspacePath)) {
-            return this.captureGit({ ...input, workspacePath, capturedAt });
+        const gitWorkspace = await this.gitWorkspaceInfo(workspacePath);
+        if (gitWorkspace) {
+            return this.captureGit({
+                ...input,
+                workspacePath,
+                capturedAt,
+                workspaceRelativePrefix: gitWorkspace.relativePrefix,
+                gitRootPath: gitWorkspace.rootPath,
+            });
         }
         return this.captureFilesystem({ ...input, workspacePath, capturedAt });
     }
     async captureGit(input) {
         const status = await this.git(input.workspacePath, [
             "status",
-            "--porcelain",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+            "--",
+            ".",
         ]);
-        const statusLines = status.stdout
-            .split("\n")
-            .map((line) => line.trimEnd())
-            .filter(Boolean);
-        const changedFiles = mergeChangedFiles(gitStatusChangedFiles(statusLines), await this.gitDiffNameOnly(input.workspacePath));
-        const diffStat = await this.git(input.workspacePath, [
-            "diff",
-            "--stat",
-            "--no-ext-diff",
-        ]).then((result) => result.stdout.trim(), () => "");
+        const statusEntries = status.stdout.split("\0").filter(Boolean);
+        const headTree = await this.gitHeadTree(input.gitRootPath, input.workspaceRelativePrefix);
+        const changedFiles = mergeChangedFiles(gitStatusChangedFiles(statusEntries, input.workspaceRelativePrefix), await this.gitDiffNameOnly(input.workspacePath));
+        const diffStat = await this.gitDiffStat(input.workspacePath);
         const shortDiff = input.includeDiff
             ? await this.shortGitDiff(input.workspacePath)
             : undefined;
@@ -325,10 +330,10 @@ export class DefaultWorkspaceSnapshotter {
             capturedAt: input.capturedAt,
             dirty: changedFiles.length > 0,
             changedFiles,
-            fingerprint: hashText(statusLines.join("\n")),
-            summary: statusLines.length === 0
+            fingerprint: hashText([`head-tree:${headTree}`, ...statusEntries].join("\n")),
+            summary: changedFiles.length === 0
                 ? "Git workspace is clean."
-                : `Git workspace has ${statusLines.length} changed status entries.`,
+                : `Git workspace has ${changedFiles.length} changed file(s).`,
             ...(diffStat ? { diffStat } : {}),
             ...(shortDiff === undefined ? {} : { shortDiff: shortDiff.value }),
             ...(shortDiff?.truncated ? { truncated: true } : {}),
@@ -352,12 +357,18 @@ export class DefaultWorkspaceSnapshotter {
                 : {}),
         };
     }
-    async isGitWorkspace(workspacePath) {
+    async gitWorkspaceInfo(workspacePath) {
         const result = await this.git(workspacePath, [
             "rev-parse",
             "--is-inside-work-tree",
+            "--show-prefix",
+            "--show-toplevel",
         ]).catch(() => null);
-        return result?.stdout.trim() === "true";
+        const lines = result?.stdout.split("\n").map((line) => line.trimEnd()) ?? [];
+        if (lines[0] !== "true")
+            return null;
+        const prefix = normalizeRelativePath(lines[1] ?? "").replace(/\/$/, "");
+        return { relativePrefix: prefix, rootPath: lines[2] || workspacePath };
     }
     async git(cwd, args) {
         const result = await execFileAsync(this.gitBinaryPath, [...args], {
@@ -371,12 +382,7 @@ export class DefaultWorkspaceSnapshotter {
         };
     }
     async shortGitDiff(workspacePath) {
-        const result = await this.git(workspacePath, [
-            "diff",
-            "--no-ext-diff",
-            "--",
-        ]).catch(() => ({ stdout: "", stderr: "" }));
-        const value = result.stdout;
+        const value = await this.gitDiffOutputs(workspacePath, []);
         if (value.length <= this.maxDiffBytes) {
             return { value, truncated: false };
         }
@@ -386,17 +392,51 @@ export class DefaultWorkspaceSnapshotter {
         };
     }
     async gitDiffNameOnly(workspacePath) {
-        const result = await this.git(workspacePath, [
-            "diff",
-            "--name-only",
-            "--no-ext-diff",
-            "--",
-        ]).catch(() => ({ stdout: "", stderr: "" }));
-        return result.stdout
+        const value = await this.gitDiffOutputs(workspacePath, ["--name-only"]);
+        return value
             .split("\n")
             .map((line) => normalizeRelativePath(line.trim()))
             .filter(Boolean)
             .sort((left, right) => left.localeCompare(right));
+    }
+    async gitHeadTree(workspacePath, workspaceRelativePrefix) {
+        if (!workspaceRelativePrefix) {
+            const result = await this.git(workspacePath, [
+                "rev-parse",
+                "HEAD^{tree}",
+            ]).catch(() => ({ stdout: "", stderr: "" }));
+            return result.stdout.trim();
+        }
+        const result = await this.git(workspacePath, [
+            "ls-tree",
+            "HEAD",
+            "--",
+            workspaceRelativePrefix,
+        ]).catch(() => ({ stdout: "", stderr: "" }));
+        const match = result.stdout.match(/\s([0-9a-f]{40,64})\t/);
+        return match?.[1] ?? "";
+    }
+    async gitDiffStat(workspacePath) {
+        return (await this.gitDiffOutputs(workspacePath, ["--stat"])).trim();
+    }
+    async gitDiffOutputs(workspacePath, args) {
+        const outputs = [
+            await this.gitDiffOutput(workspacePath, args, false),
+            await this.gitDiffOutput(workspacePath, args, true),
+        ];
+        return outputs.filter(Boolean).join("\n");
+    }
+    async gitDiffOutput(workspacePath, args, cached) {
+        const result = await this.git(workspacePath, [
+            "diff",
+            "--relative",
+            ...(cached ? ["--cached"] : []),
+            ...args,
+            "--no-ext-diff",
+            "--",
+            ".",
+        ]).catch(() => ({ stdout: "", stderr: "" }));
+        return result.stdout;
     }
     async scanFilesystem(workspacePath) {
         const files = [];
@@ -1465,17 +1505,34 @@ function attemptMetadataFromError(error) {
         ...(accountId === undefined ? {} : { accountId }),
     };
 }
-function gitStatusChangedFiles(lines) {
+function gitStatusChangedFiles(entries, workspaceRelativePrefix = "") {
     const files = new Set();
-    for (const line of lines) {
-        const path = line.slice(3).trim();
+    for (let index = 0; index < entries.length; index += 1) {
+        const entry = entries[index];
+        const status = entry.slice(0, 2);
+        const path = entry.slice(3);
         if (!path)
             continue;
-        const renamed = path.includes(" -> ") ? path.split(" -> ").at(-1) : path;
-        if (renamed)
-            files.add(normalizeRelativePath(renamed));
+        if (status.includes("R") || status.includes("C")) {
+            index += 1;
+        }
+        const relativePath = stripWorkspacePrefix(path, workspaceRelativePrefix);
+        if (relativePath)
+            files.add(relativePath);
     }
     return [...files].sort((left, right) => left.localeCompare(right));
+}
+function stripWorkspacePrefix(path, workspaceRelativePrefix) {
+    const normalizedPath = normalizeRelativePath(path);
+    const normalizedPrefix = normalizeRelativePath(workspaceRelativePrefix);
+    if (!normalizedPrefix)
+        return normalizedPath;
+    if (normalizedPath === normalizedPrefix)
+        return basename(normalizedPath);
+    const prefix = `${normalizedPrefix}/`;
+    if (!normalizedPath.startsWith(prefix))
+        return null;
+    return normalizedPath.slice(prefix.length);
 }
 function mergeChangedFiles(left, right) {
     return [...new Set([...left, ...right])]

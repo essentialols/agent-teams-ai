@@ -39,5 +39,6 @@ export declare class BoundedSubscriptionWorkerPool<Job, Result> {
     private now;
     private setTimer;
     private clearTimer;
+    private withStartTimeout;
 }
 //# sourceMappingURL=worker-pool.d.ts.map

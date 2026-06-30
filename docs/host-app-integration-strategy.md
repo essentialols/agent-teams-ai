@@ -158,7 +158,6 @@ control-layer deployment topology are agreed.
 
 ## PR Hygiene
 
-This package exports `dist/*` and is consumed as a GitHub dependency. Source
-changes that affect public package output should be built and committed with
-the generated `dist` changes, or consumers can install a commit whose exported
-files do not match source.
+This package exports `dist/*` from the published package artifact. Source
+changes that affect public package output must pass build and pack checks before
+release, but generated `dist` files should not be committed to the source tree.

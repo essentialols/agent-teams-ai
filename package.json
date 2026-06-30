@@ -11,6 +11,9 @@
     "type": "git",
     "url": "git+https://github.com/vioxen/subscription-runtime.git"
   },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -120,16 +123,17 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && node scripts/rewrite-dist-esm-imports.mjs",
+    "clean:dist": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "npm run clean:dist && tsc -p tsconfig.build.json && node scripts/rewrite-dist-esm-imports.mjs",
+    "prepack": "npm run build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "e2e:live-workers": "npm run build && node scripts/e2e-live-workers/run.mjs",
     "smoke:worker-claude": "npm run build && node scripts/smoke-claude-worker.mjs",
     "smoke:worker-claude-thread": "npm run build && CLAUDE_WORKER_SMOKE_MODE=thread node scripts/smoke-claude-worker.mjs",
     "check:boundaries": "node scripts/check-boundaries.mjs && node scripts/check-boundaries-self-test.mjs",
-    "check:dist": "node scripts/check-dist.mjs",
     "check:packed-consumer": "node scripts/check-packed-consumer.mjs",
-    "check": "npm run typecheck && npm test && npm run build && npm run check:boundaries && npm pack --dry-run && npm run check:packed-consumer"
+    "check": "npm run typecheck && npm test && npm run check:boundaries && npm pack --dry-run && npm run check:packed-consumer"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

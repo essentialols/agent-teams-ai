@@ -85,6 +85,93 @@ describe("BoundedSubscriptionWorkerPool", () => {
     expect(result).toBe("selector:slot-3:job");
   });
 
+  it("times out a hung worker start without publishing the slot", async () => {
+    const startStarted = deferred<void>();
+    const neverStarted = deferred<void>();
+    const pool = new BoundedSubscriptionWorkerPool<string, string>({
+      poolId: "start-timeout",
+      slots: 1,
+      startTimeoutMs: 10,
+      workerFactory: ({ workerId }) => {
+        const worker = new FakeWorker(workerId);
+        worker.onStart = () => startStarted.resolve();
+        worker.startGate = neverStarted.promise;
+        return worker;
+      },
+    });
+
+    const started = pool.start();
+    await startStarted.promise;
+    await expect(started).rejects.toMatchObject({
+      code: "subscription_worker_start_timeout",
+      details: {
+        phase: "start",
+        slotIndex: "0",
+        workerId: "start-timeout:slot-1",
+        timeoutMs: "10",
+      },
+    });
+    expect(pool.stats()).toMatchObject({ state: "failed", slots: 0 });
+    await pool.dispose();
+  });
+
+  it("times out prewarm-on-start without waiting forever", async () => {
+    const prewarmStarted = deferred<void>();
+    const neverPrewarmed = deferred<void>();
+    const pool = new BoundedSubscriptionWorkerPool<string, string>({
+      poolId: "prewarm-timeout",
+      slots: 1,
+      prewarmOnStart: true,
+      startTimeoutMs: 10,
+      workerFactory: ({ workerId }) => {
+        const worker = new FakeWorker(workerId);
+        worker.onPrewarm = () => prewarmStarted.resolve();
+        worker.prewarmGate = neverPrewarmed.promise;
+        return worker;
+      },
+    });
+
+    const started = pool.start();
+    await prewarmStarted.promise;
+    await expect(started).rejects.toMatchObject({
+      code: "subscription_worker_start_timeout",
+      details: {
+        phase: "prewarm",
+        timeoutMs: "10",
+      },
+    });
+    expect(pool.stats()).toMatchObject({ state: "failed", slots: 0 });
+    await pool.dispose();
+  });
+
+  it("clears start timeout timers when a custom scheduler returns handle zero", async () => {
+    const clearedHandles: unknown[] = [];
+    const nativeTimers = new Map<number, ReturnType<typeof setTimeout>>();
+    const pool = new BoundedSubscriptionWorkerPool<string, string>({
+      poolId: "zero-handle-scheduler",
+      slots: 1,
+      startTimeoutMs: 100,
+      scheduler: {
+        setTimeout(callback, delayMs) {
+          nativeTimers.set(0, setTimeout(callback, delayMs));
+          return 0;
+        },
+        clearTimeout(handle) {
+          clearedHandles.push(handle);
+          clearTimeout(nativeTimers.get(handle as number));
+          nativeTimers.delete(handle as number);
+        },
+      },
+      workerFactory: ({ workerId }) => new FakeWorker(workerId),
+    });
+
+    await pool.start();
+    await pool.dispose();
+
+    expect(clearedHandles).toEqual([0]);
+    expect(nativeTimers.size).toBe(0);
+  });
+
   it("drains queued work after a cooldown expires", async () => {
     const workers: FakeWorker[] = [];
     const pool = new BoundedSubscriptionWorkerPool<string, string>({
@@ -641,6 +728,7 @@ class FakeWorker implements SubscriptionWorker<string, string> {
   prewarmed = false;
   failStart = false;
   startGate: Promise<void> | null = null;
+  prewarmGate: Promise<void> | null = null;
   capacitySnapshot: WorkerCapacitySnapshot | null = null;
   healthError: Error | null = null;
 
@@ -652,6 +740,7 @@ class FakeWorker implements SubscriptionWorker<string, string> {
 
   onDispose: (() => void) | null = null;
   onStart: (() => void) | null = null;
+  onPrewarm: (() => void) | null = null;
 
   async start(): Promise<void> {
     if (this.failStart) throw new Error("fake_start_failed");
@@ -661,6 +750,8 @@ class FakeWorker implements SubscriptionWorker<string, string> {
   }
 
   async prewarm(): Promise<SubscriptionWorkerPrewarmResult> {
+    this.onPrewarm?.();
+    await this.prewarmGate;
     this.prewarmed = true;
     this.state = "ready";
     return {

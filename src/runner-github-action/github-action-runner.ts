@@ -9,10 +9,12 @@ import { DefaultRedactor } from "@vioxen/subscription-runtime/core";
 import { githubActionRunnerCapabilities } from "./capabilities";
 
 const defaultMaxCapturedOutputBytes = 256_000;
+const defaultKillGraceMs = 5_000;
 
 export type GitHubActionRunnerOptions = {
   readonly redactor?: RedactorPort;
   readonly maxCapturedOutputBytes?: number;
+  readonly killGraceMs?: number;
 };
 
 export class GitHubActionRunner implements RunnerPort {
@@ -20,11 +22,13 @@ export class GitHubActionRunner implements RunnerPort {
   readonly capabilities = githubActionRunnerCapabilities;
   private readonly redactor: RedactorPort;
   private readonly maxCapturedOutputBytes: number;
+  private readonly killGraceMs: number;
 
   constructor(options: GitHubActionRunnerOptions = {}) {
     this.redactor = options.redactor ?? new DefaultRedactor();
     this.maxCapturedOutputBytes =
       options.maxCapturedOutputBytes ?? defaultMaxCapturedOutputBytes;
+    this.killGraceMs = options.killGraceMs ?? defaultKillGraceMs;
   }
 
   run(input: {
@@ -53,6 +57,8 @@ export class GitHubActionRunner implements RunnerPort {
       const stderrChunks: Buffer[] = [];
       let capturedBytes = 0;
       let settled = false;
+      let terminalError: Error | null = null;
+      let forceKillTimer: NodeJS.Timeout | null = null;
       const child = spawn(input.command, input.args, {
         cwd: input.cwd,
         env: input.env,
@@ -61,6 +67,7 @@ export class GitHubActionRunner implements RunnerPort {
 
       const cleanup = (): void => {
         clearTimeout(timer);
+        if (forceKillTimer) clearTimeout(forceKillTimer);
         input.abortSignal.removeEventListener("abort", abort);
       };
       const settleReject = (error: Error): void => {
@@ -69,19 +76,49 @@ export class GitHubActionRunner implements RunnerPort {
         cleanup();
         reject(error);
       };
-      const abort = (): void => {
+      const terminate = (): void => {
+        if (child.exitCode !== null || child.signalCode !== null) return;
         child.kill("SIGTERM");
-        settleReject(new Error("process_aborted"));
+        forceKillTimer ??= setTimeout(() => {
+          if (child.exitCode === null && child.signalCode === null) {
+            child.kill("SIGKILL");
+          }
+        }, this.killGraceMs);
+      };
+      const failAfterExit = (error: Error): void => {
+        if (settled || terminalError) return;
+        terminalError = error;
+        terminate();
+      };
+      const abort = (): void => {
+        failAfterExit(new Error("process_aborted"));
       };
       const timer = setTimeout(() => {
-        child.kill("SIGTERM");
-        settleReject(new Error("process_timeout"));
+        failAfterExit(new Error("process_timeout"));
       }, input.timeoutMs);
+      const failOutputSink = (
+        streamName: "stdout" | "stderr",
+        error: unknown,
+      ): void => {
+        const message = error instanceof Error ? error.message : String(error);
+        failAfterExit(
+          new Error(`process_output_sink_failed:${streamName}:${message}`),
+        );
+      };
+      const failStdin = (error: unknown): void => {
+        const message = error instanceof Error ? error.message : String(error);
+        failAfterExit(new Error(`process_stdin_failed:${message}`));
+      };
 
       input.abortSignal.addEventListener("abort", abort, { once: true });
       child.stdout.on("data", (chunk) => {
         const buffer = Buffer.from(chunk);
-        writeRedacted(input.stdout, this.redactor, buffer);
+        try {
+          writeRedacted(input.stdout, this.redactor, buffer);
+        } catch (error) {
+          failOutputSink("stdout", error);
+          return;
+        }
         capturedBytes = appendCapturedChunk(
           stdoutChunks,
           capturedBytes,
@@ -91,7 +128,12 @@ export class GitHubActionRunner implements RunnerPort {
       });
       child.stderr.on("data", (chunk) => {
         const buffer = Buffer.from(chunk);
-        writeRedacted(input.stderr, this.redactor, buffer);
+        try {
+          writeRedacted(input.stderr, this.redactor, buffer);
+        } catch (error) {
+          failOutputSink("stderr", error);
+          return;
+        }
         capturedBytes = appendCapturedChunk(
           stderrChunks,
           capturedBytes,
@@ -100,12 +142,18 @@ export class GitHubActionRunner implements RunnerPort {
         );
       });
       child.on("error", (error) => {
+        if (terminalError) return;
         settleReject(error instanceof Error ? error : new Error(String(error)));
       });
+      child.stdin.on("error", failStdin);
       child.on("close", (code) => {
         if (settled) return;
         settled = true;
         cleanup();
+        if (terminalError) {
+          reject(terminalError);
+          return;
+        }
         const stdout = this.redactor.redact(
           Buffer.concat(stdoutChunks).toString("utf8"),
         );
@@ -130,7 +178,11 @@ export class GitHubActionRunner implements RunnerPort {
           ),
         );
       });
-      child.stdin.end(input.stdin ? Buffer.from(input.stdin) : undefined);
+      try {
+        child.stdin.end(input.stdin ? Buffer.from(input.stdin) : undefined);
+      } catch (error) {
+        failStdin(error);
+      }
     });
   }
 }

@@ -54,6 +54,104 @@ describe("GitHub Action runner adapter", () => {
     ).rejects.toThrow("process_timeout");
   });
 
+  it("force-kills timed-out work that ignores SIGTERM", async () => {
+    const runner = new GitHubActionRunner({ killGraceMs: 25 });
+
+    await expect(
+      runner.run({
+        command: execPath,
+        args: [
+          "-e",
+          [
+            "process.on('SIGTERM', () => {});",
+            "setInterval(() => {}, 1000);",
+          ].join(" "),
+        ],
+        cwd: process.cwd(),
+        env: { PATH: process.env.PATH ?? "" },
+        timeoutMs: 10,
+        abortSignal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("process_timeout");
+  });
+
+  it("fails closed when stdout sink writes fail", async () => {
+    const runner = new GitHubActionRunner({ killGraceMs: 25 });
+
+    await expect(
+      runner.run({
+        command: execPath,
+        args: [
+          "-e",
+          [
+            "process.stdout.write('chunk');",
+            "process.on('SIGTERM', () => {});",
+            "setInterval(() => {}, 1000);",
+          ].join(" "),
+        ],
+        cwd: process.cwd(),
+        env: { PATH: process.env.PATH ?? "" },
+        timeoutMs: 30_000,
+        stdout: {
+          write: () => {
+            throw new Error("sink exploded");
+          },
+        },
+        abortSignal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("process_output_sink_failed:stdout:sink exploded");
+  });
+
+  it("fails closed when stderr sink writes fail", async () => {
+    const runner = new GitHubActionRunner({ killGraceMs: 25 });
+
+    await expect(
+      runner.run({
+        command: execPath,
+        args: [
+          "-e",
+          [
+            "process.stderr.write('chunk');",
+            "process.on('SIGTERM', () => {});",
+            "setInterval(() => {}, 1000);",
+          ].join(" "),
+        ],
+        cwd: process.cwd(),
+        env: { PATH: process.env.PATH ?? "" },
+        timeoutMs: 30_000,
+        stderr: {
+          write: () => {
+            throw new Error("sink exploded");
+          },
+        },
+        abortSignal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("process_output_sink_failed:stderr:sink exploded");
+  });
+
+  it("fails closed when stdin stream writes fail", async () => {
+    const runner = new GitHubActionRunner({ killGraceMs: 25 });
+
+    await expect(
+      runner.run({
+        command: execPath,
+        args: [
+          "-e",
+          [
+            "require('node:fs').closeSync(0);",
+            "process.on('SIGTERM', () => {});",
+            "setInterval(() => {}, 1000);",
+          ].join(" "),
+        ],
+        cwd: process.cwd(),
+        env: { PATH: process.env.PATH ?? "" },
+        timeoutMs: 30_000,
+        stdin: Buffer.alloc(16 * 1024 * 1024),
+        abortSignal: new AbortController().signal,
+      }),
+    ).rejects.toThrow(/process_stdin_failed:.*(EPIPE|broken pipe)/i);
+  });
+
   it("rejects forbidden host auth env before spawning a child process", async () => {
     const runner = new GitHubActionRunner();
 

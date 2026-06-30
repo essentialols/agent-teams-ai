@@ -457,9 +457,17 @@ async function removeStaleThreadLock(
 
 async function isThreadLockStale(lockPath: string, now: Date): Promise<boolean> {
   const record = await readThreadLockRecord(lockPath);
-  const lastSeenAtMs = record
-    ? Date.parse(record.heartbeatAt ?? record.acquiredAt)
-    : (await stat(lockPath)).mtimeMs;
+  let lastSeenAtMs: number;
+  if (record) {
+    lastSeenAtMs = Date.parse(record.heartbeatAt ?? record.acquiredAt);
+  } else {
+    try {
+      lastSeenAtMs = (await stat(lockPath)).mtimeMs;
+    } catch (error) {
+      if (isNodeError(error) && error.code === "ENOENT") return true;
+      throw error;
+    }
+  }
   if (Number.isNaN(lastSeenAtMs)) return true;
   return now.getTime() - lastSeenAtMs >= defaultThreadLockTtlMs;
 }

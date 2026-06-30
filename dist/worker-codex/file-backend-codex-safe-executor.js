@@ -34,6 +34,9 @@ export class FileBackendCodexSafeExecutor {
             ...(options.maxQueueSize === undefined
                 ? {}
                 : { maxQueueSize: options.maxQueueSize }),
+            ...(options.startTimeoutMs === undefined
+                ? {}
+                : { startTimeoutMs: options.startTimeoutMs }),
             ...(options.shutdownTimeoutMs === undefined
                 ? {}
                 : { shutdownTimeoutMs: options.shutdownTimeoutMs }),

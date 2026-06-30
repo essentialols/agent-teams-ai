@@ -726,6 +726,13 @@ describe("codex goal MCP server", () => {
             heartbeatOnlyNoOutput: true,
           },
         });
+        const stoppedProgress = JSON.parse(
+          await readFile(join(jobRootDir, `${taskId}.progress.json`), "utf8"),
+        );
+        expect(stoppedProgress).toMatchObject({
+          taskId,
+          status: "stopped",
+        });
       } finally {
         await client.close();
         await server.close();

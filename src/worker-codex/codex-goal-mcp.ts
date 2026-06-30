@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, realpath, rename, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { execPath } from "node:process";
@@ -1793,6 +1793,13 @@ async function stopStoredJob(args: JobLifecycleMcpArgs) {
     });
   }
   const command = await stopCodexGoalTmux(loaded.launch.tmuxSession);
+  await writeCodexGoalStoppedProgress({
+    progressPath: loaded.launch.config.progressPath ?? codexGoalProgressPath({
+      jobRootDir: loaded.launch.config.jobRootDir,
+      taskId: loaded.launch.config.taskId,
+    }),
+    taskId: loaded.launch.config.taskId,
+  });
   const statusAfter = await collectCodexGoalStatus(statusInput(loaded.launch));
   const stopEventPath = await writeCodexGoalStopEvent({
     jobId: loaded.manifest.jobId,
@@ -1865,6 +1872,26 @@ async function writeCodexGoalStopEvent(input: {
     { encoding: "utf8", mode: 0o600 },
   );
   return path;
+}
+
+async function writeCodexGoalStoppedProgress(input: {
+  readonly progressPath: string;
+  readonly taskId: string;
+}): Promise<void> {
+  await mkdir(dirname(input.progressPath), { recursive: true, mode: 0o700 });
+  const tempPath = `${input.progressPath}.${process.pid}.${Date.now()}.tmp`;
+  await writeFile(
+    tempPath,
+    `${JSON.stringify({
+      schemaVersion: 1,
+      taskId: input.taskId,
+      updatedAt: new Date().toISOString(),
+      pid: process.pid,
+      status: "stopped",
+    }, null, 2)}\n`,
+    { encoding: "utf8", mode: 0o600 },
+  );
+  await rename(tempPath, input.progressPath);
 }
 
 async function buildCodexGoalOverview(args: JobOverviewMcpArgs): Promise<JsonObject> {

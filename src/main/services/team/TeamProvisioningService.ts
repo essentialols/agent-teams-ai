@@ -36,7 +36,6 @@ import {
 import { ConfigManager } from '@main/services/infrastructure/ConfigManager';
 import { NotificationManager } from '@main/services/infrastructure/NotificationManager';
 import { notifyTeamWatchScopeChanged } from '@main/services/infrastructure/teamWatchScope';
-import { prepareAgentChildProcessWritableEnv } from '@main/services/runtime/agentChildProcessPreflight';
 import { getAppIconPath } from '@main/utils/appIcon';
 import {
   execCli,
@@ -50,14 +49,12 @@ import {
   extractBaseDir,
   getAutoDetectedClaudeBasePath,
   getClaudeBasePath,
-  getHomeDir,
   getProjectsBasePath,
   getTasksBasePath,
   getTeamsBasePath,
 } from '@main/utils/pathDecoder';
 import { isProcessAlive } from '@main/utils/processHealth';
 import { killProcessByPid } from '@main/utils/processKill';
-import { resolveInteractiveShellEnvBestEffort } from '@main/utils/shellEnv';
 import { shouldAutoAllow } from '@main/utils/toolApprovalRules';
 import { listWindowsProcessTableSync } from '@main/utils/windowsProcessTable';
 import { stripAgentBlocks, wrapAgentBlock } from '@shared/constants/agentBlocks';
@@ -131,16 +128,9 @@ import {
   cleanupAnthropicTeamApiKeyHelperForTeam,
   cleanupAnthropicTeamApiKeyHelperMaterial,
   cleanupStaleAnthropicTeamApiKeyHelpers,
-  DISABLE_ANTHROPIC_TEAM_API_KEY_HELPER_ENV,
-  materializeAnthropicTeamApiKeyHelper,
-  verifyAnthropicTeamApiKeyHelperMaterial,
 } from '../runtime/anthropicTeamApiKeyHelper';
 import { mergeJsonSettingsArgs } from '../runtime/cliSettingsArgs';
-import {
-  type GeminiRuntimeAuthState,
-  resolveGeminiRuntimeAuth,
-} from '../runtime/geminiRuntimeAuth';
-import { buildProviderAwareCliEnv } from '../runtime/providerAwareCliEnv';
+import { resolveGeminiRuntimeAuth } from '../runtime/geminiRuntimeAuth';
 import {
   buildProviderControlPlaneCliCommandArgs,
   buildProviderLaunchCliCommandArgs,
@@ -292,7 +282,16 @@ import {
   clearPostCompactReminderState,
 } from './provisioning/TeamProvisioningCleanup';
 import { buildCombinedLogs } from './provisioning/TeamProvisioningCliExitPresentation';
-import { hasAnthropicCompatibleAuthTokenEnv } from './provisioning/TeamProvisioningDirectRestart';
+import {
+  buildCrossProviderMemberArgs as buildCrossProviderMemberArgsHelper,
+  buildProvisioningEnv as buildProvisioningEnvHelper,
+  type CrossProviderMemberArgsResult,
+  isAnthropicDirectCredentialAuthSource,
+  type ProvisioningAuthSource,
+  type ProvisioningEnvResolution,
+  type TeamProvisioningEnvBuilderPorts,
+  type TeamRuntimeAuthContext,
+} from './provisioning/TeamProvisioningEnvBuilder';
 import {
   startProvisioningFilesystemMonitor,
   stopProvisioningFilesystemMonitor,
@@ -491,7 +490,6 @@ import {
 import {
   buildRuntimeLaunchWarning,
   getAnthropicFastModeDefault,
-  getConfiguredRuntimeBackend,
   getPromptSizeSummary,
   getTeamProviderLabel,
   logRuntimeLaunchSnapshot,
@@ -514,7 +512,6 @@ import {
   logsSuggestShutdownOrCleanup,
   normalizeProviderModelListModels,
   normalizeProvisioningModelCheckRequests,
-  normalizeTeamRuntimeNodeEnv,
   type ProviderModelListCommandResponse,
   resolveAnthropicSelectionFromFacts,
   resolveCodexSelectionFromFacts,
@@ -1398,67 +1395,6 @@ interface MixedSecondaryRuntimeLaneState {
 
 type LeadActivityState = 'active' | 'idle' | 'offline';
 
-type ProvisioningAuthSource =
-  | 'anthropic_api_key_helper'
-  | 'anthropic_api_key'
-  | 'anthropic_auth_token'
-  | 'configured_api_key_missing'
-  | 'codex_runtime'
-  | 'gemini_runtime'
-  | 'none';
-
-function isAnthropicApiKeyBackedAuthSource(authSource: unknown): boolean {
-  return authSource === 'anthropic_api_key' || authSource === 'anthropic_api_key_helper';
-}
-
-function isAnthropicDirectCredentialAuthSource(authSource: unknown): boolean {
-  return isAnthropicApiKeyBackedAuthSource(authSource) || authSource === 'anthropic_auth_token';
-}
-
-function buildAnthropicCrossProviderDirectAuthEnvPatch(
-  env: NodeJS.ProcessEnv,
-  authSource: ProvisioningAuthSource
-): NodeJS.ProcessEnv {
-  const envPatch: NodeJS.ProcessEnv = {};
-  const apiKey = env.ANTHROPIC_API_KEY?.trim();
-  if (apiKey) {
-    envPatch.ANTHROPIC_API_KEY = apiKey;
-  }
-  const baseUrl = env.ANTHROPIC_BASE_URL?.trim();
-  if (baseUrl) {
-    envPatch.ANTHROPIC_BASE_URL = baseUrl;
-  }
-  if (authSource === 'anthropic_auth_token' && hasAnthropicCompatibleAuthTokenEnv(env)) {
-    envPatch.ANTHROPIC_API_KEY = apiKey || '';
-    envPatch.ANTHROPIC_AUTH_TOKEN = env.ANTHROPIC_AUTH_TOKEN?.trim();
-    return envPatch;
-  }
-  for (const key of ANTHROPIC_HELPER_MODE_COMPETING_AUTH_ENV_KEYS) {
-    if (key !== 'ANTHROPIC_API_KEY') {
-      envPatch[key] = '';
-    }
-  }
-  return envPatch;
-}
-
-const CODEX_CROSS_PROVIDER_SAFE_ENV_KEYS = [
-  'CLAUDE_CODE_CODEX_BACKEND',
-  'CLAUDE_CODE_CODEX_FORCED_LOGIN_METHOD',
-  'CODEX_CLI_PATH',
-  'CODEX_HOME',
-] as const;
-
-function buildCodexCrossProviderSafeEnvPatch(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const envPatch: NodeJS.ProcessEnv = {};
-  for (const key of CODEX_CROSS_PROVIDER_SAFE_ENV_KEYS) {
-    const value = env[key]?.trim();
-    if (value) {
-      envPatch[key] = value;
-    }
-  }
-  return envPatch;
-}
-
 function applyAppManagedRuntimeSettingsPathEnv(
   env: NodeJS.ProcessEnv,
   settingsPath: string | null
@@ -1470,21 +1406,6 @@ function applyAppManagedRuntimeSettingsPathEnv(
   }
 }
 
-interface TeamRuntimeAuthContext {
-  teamName?: string;
-  authMaterialId?: string;
-  allowAnthropicApiKeyHelper?: boolean;
-}
-
-interface ProvisioningEnvResolution {
-  env: NodeJS.ProcessEnv;
-  authSource: ProvisioningAuthSource;
-  geminiRuntimeAuth: GeminiRuntimeAuthState | null;
-  providerArgs?: string[];
-  anthropicApiKeyHelper?: AnthropicTeamApiKeyHelperMaterial | null;
-  warning?: string;
-}
-
 interface TeamRuntimeLaunchArgsPlan {
   settingsArgs: string[];
   fastModeArgs: string[];
@@ -1493,13 +1414,6 @@ interface TeamRuntimeLaunchArgsPlan {
   extraArgs: string[];
   inheritedProviderArgs: string[];
   appManagedSettingsPath: string | null;
-}
-
-interface CrossProviderMemberArgsResult {
-  args: string[];
-  providerArgsByProvider: Map<TeamProviderId, string[]>;
-  envPatch: NodeJS.ProcessEnv;
-  usesAnthropicApiKeyHelper: boolean;
 }
 
 const OPENCODE_BOOTSTRAP_EVIDENCE_LOCK_OPTIONS = {
@@ -23612,6 +23526,16 @@ export class TeamProvisioningService {
     return provisioningPathExists(filePath);
   }
 
+  private getProvisioningEnvBuilderPorts(): TeamProvisioningEnvBuilderPorts {
+    return {
+      providerConnectionService: this.providerConnectionService,
+      buildRuntimeTurnSettledEnvironment: (providerId) =>
+        this.buildRuntimeTurnSettledEnvironment(providerId),
+      resolveControlApiBaseUrl: () => this.resolveControlApiBaseUrl(),
+      logger,
+    };
+  }
+
   private async buildProvisioningEnv(
     providerId: TeamProviderId | undefined = 'anthropic',
     providerBackendId?: string | null,
@@ -23620,226 +23544,12 @@ export class TeamProvisioningService {
       teamRuntimeAuth?: TeamRuntimeAuthContext;
     }
   ): Promise<ProvisioningEnvResolution> {
-    const shellEnv = await resolveInteractiveShellEnvBestEffort({
-      source: 'team-provisioning',
-      timeoutMs: 1_500,
-      fallbackEnv: process.env,
-      background: false,
-    });
-    // getHomeDir() uses Electron's app.getPath('home') which handles Unicode
-    // correctly on Windows. Prefer it over process.env which may be garbled.
-    const electronHome = getHomeDir();
-    const isWindows = process.platform === 'win32';
-    const home = shellEnv.HOME?.trim() || electronHome;
-    let osUsername = '';
-    try {
-      osUsername = os.userInfo().username;
-    } catch {
-      // os.userInfo() can throw SystemError in restricted environments (no passwd entry, Docker, etc.)
-    }
-    const user =
-      shellEnv.USER?.trim() ||
-      process.env.USER?.trim() ||
-      process.env.USERNAME?.trim() ||
-      osUsername ||
-      'unknown';
-
-    // Shell: on Windows there is no SHELL env var; use COMSPEC (cmd.exe / powershell).
-    // On Unix, prefer the user's login shell from env or fall back to /bin/zsh.
-    const shell = isWindows
-      ? (process.env.COMSPEC ?? 'powershell.exe')
-      : shellEnv.SHELL?.trim() || process.env.SHELL?.trim() || '/bin/zsh';
-
-    const env: NodeJS.ProcessEnv = {
-      ...process.env,
-      ...shellEnv,
-      HOME: home,
-      USERPROFILE: home,
-      USER: user,
-      LOGNAME: shellEnv.LOGNAME?.trim() || process.env.LOGNAME?.trim() || user,
-      TERM: shellEnv.TERM?.trim() || process.env.TERM?.trim() || 'xterm-256color',
-      // Only set CLAUDE_CONFIG_DIR when the user configured a custom path.
-      // Setting it to the default ~/.claude changes the macOS Keychain namespace
-      // for OAuth credential lookup, causing auth failures. (See issue #27)
-      ...(getClaudeBasePath() !== getAutoDetectedClaudeBasePath()
-        ? { CLAUDE_CONFIG_DIR: getClaudeBasePath() }
-        : {}),
-      CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
-    };
-    normalizeTeamRuntimeNodeEnv(env);
-    const resolvedProviderId = resolveTeamProviderId(providerId);
-    const providerEnvResult = await buildProviderAwareCliEnv({
+    return buildProvisioningEnvHelper({
       providerId,
       providerBackendId,
-      shellEnv,
-      env,
+      options,
+      ports: this.getProvisioningEnvBuilderPorts(),
     });
-    const providerConnectionIssue = providerEnvResult.connectionIssues[resolvedProviderId];
-    const providerEnv = providerEnvResult.env;
-    const writableEnvResult = await prepareAgentChildProcessWritableEnv(providerEnv, { home });
-    if (writableEnvResult.warning) {
-      logger.warn(`[TeamProvisioningService] ${writableEnvResult.warning}`);
-    }
-    if (options?.includeCodexTeammateAuth && resolvedProviderId !== 'codex') {
-      await this.providerConnectionService.augmentConfiguredConnectionEnv(
-        providerEnv,
-        'codex',
-        getConfiguredRuntimeBackend('codex')
-      );
-    }
-    Object.assign(providerEnv, await this.buildRuntimeTurnSettledEnvironment(resolvedProviderId));
-
-    const controlApiBaseUrl = await this.resolveControlApiBaseUrl();
-    if (controlApiBaseUrl) {
-      providerEnv.CLAUDE_TEAM_CONTROL_URL = controlApiBaseUrl;
-    }
-
-    // SHELL is a Unix concept — only set it on non-Windows platforms.
-    if (!isWindows) {
-      providerEnv.SHELL = shell;
-    }
-
-    // XDG directories are a freedesktop.org (Linux/macOS) convention.
-    // On Windows, these are unused by most tools and can cause confusion.
-    if (!isWindows) {
-      const xdgConfigHome =
-        shellEnv.XDG_CONFIG_HOME?.trim() ||
-        process.env.XDG_CONFIG_HOME?.trim() ||
-        `${home}/.config`;
-      const xdgStateHome =
-        shellEnv.XDG_STATE_HOME?.trim() ||
-        process.env.XDG_STATE_HOME?.trim() ||
-        `${home}/.local/state`;
-      providerEnv.XDG_CONFIG_HOME = xdgConfigHome;
-      providerEnv.XDG_STATE_HOME = xdgStateHome;
-    }
-
-    if (providerConnectionIssue) {
-      return {
-        env: providerEnv,
-        authSource: 'configured_api_key_missing',
-        geminiRuntimeAuth: null,
-        providerArgs: providerEnvResult.providerArgs,
-        warning: providerConnectionIssue,
-      };
-    }
-
-    if (resolvedProviderId === 'codex') {
-      return {
-        env: providerEnv,
-        authSource: 'codex_runtime',
-        geminiRuntimeAuth: null,
-        providerArgs: providerEnvResult.providerArgs,
-      };
-    }
-
-    if (resolvedProviderId === 'gemini') {
-      return {
-        env: providerEnv,
-        authSource: 'gemini_runtime',
-        geminiRuntimeAuth: await resolveGeminiRuntimeAuth(providerEnv),
-        providerArgs: providerEnvResult.providerArgs,
-      };
-    }
-
-    const teamRuntimeAuth = options?.teamRuntimeAuth;
-    const helperAllowed =
-      resolvedProviderId === 'anthropic' &&
-      teamRuntimeAuth?.allowAnthropicApiKeyHelper === true &&
-      typeof teamRuntimeAuth.teamName === 'string' &&
-      teamRuntimeAuth.teamName.trim().length > 0 &&
-      typeof teamRuntimeAuth.authMaterialId === 'string' &&
-      teamRuntimeAuth.authMaterialId.trim().length > 0 &&
-      !isWindows &&
-      process.env[DISABLE_ANTHROPIC_TEAM_API_KEY_HELPER_ENV] !== '1';
-
-    if (helperAllowed) {
-      const apiKey =
-        await this.providerConnectionService.getConfiguredAnthropicApiKeyForTeamRuntime(
-          providerEnv
-        );
-      if (apiKey) {
-        const helper = await materializeAnthropicTeamApiKeyHelper({
-          teamName: teamRuntimeAuth.teamName!,
-          authMaterialId: teamRuntimeAuth.authMaterialId!,
-          apiKey,
-          baseClaudeDir: getClaudeBasePath(),
-        });
-        try {
-          await verifyAnthropicTeamApiKeyHelperMaterial({
-            helperPath: helper.helperPath,
-            expectedApiKey: apiKey,
-          });
-        } catch (error) {
-          await cleanupAnthropicTeamApiKeyHelperMaterial({ directory: helper.directory });
-          throw error;
-        }
-
-        for (const key of ANTHROPIC_HELPER_MODE_COMPETING_AUTH_ENV_KEYS) {
-          delete providerEnv[key];
-        }
-        Object.assign(providerEnv, helper.envPatch);
-
-        return {
-          env: providerEnv,
-          authSource: 'anthropic_api_key_helper',
-          geminiRuntimeAuth: null,
-          providerArgs: [...(providerEnvResult.providerArgs ?? []), ...helper.settingsArgs],
-          anthropicApiKeyHelper: helper,
-        };
-      }
-    }
-
-    // 1. Explicit ANTHROPIC_API_KEY - works with `-p` mode directly
-    if (
-      typeof providerEnv.ANTHROPIC_API_KEY === 'string' &&
-      providerEnv.ANTHROPIC_API_KEY.trim().length > 0
-    ) {
-      return {
-        env: providerEnv,
-        authSource: 'anthropic_api_key',
-        geminiRuntimeAuth: null,
-        providerArgs: providerEnvResult.providerArgs,
-      };
-    }
-
-    // 2. Anthropic-compatible runtimes (Ollama/LM Studio/gateways) expect a bearer
-    //    token and often require ANTHROPIC_API_KEY to stay empty.
-    if (hasAnthropicCompatibleAuthTokenEnv(providerEnv)) {
-      return {
-        env: providerEnv,
-        authSource: 'anthropic_auth_token',
-        geminiRuntimeAuth: null,
-        providerArgs: providerEnvResult.providerArgs,
-      };
-    }
-
-    // 3. Proxy token (ANTHROPIC_AUTH_TOKEN) - `-p` mode does NOT read this var,
-    //    so we must copy it into ANTHROPIC_API_KEY for it to work.
-    if (
-      typeof providerEnv.ANTHROPIC_AUTH_TOKEN === 'string' &&
-      providerEnv.ANTHROPIC_AUTH_TOKEN.trim().length > 0
-    ) {
-      providerEnv.ANTHROPIC_API_KEY = providerEnv.ANTHROPIC_AUTH_TOKEN;
-      return {
-        env: providerEnv,
-        authSource: 'anthropic_auth_token',
-        geminiRuntimeAuth: null,
-        providerArgs: providerEnvResult.providerArgs,
-      };
-    }
-
-    // 4. No explicit API key - let the CLI handle its own OAuth auth.
-    //    Claude CLI reads credentials from its own storage and refreshes
-    //    tokens in-memory. Injecting CLAUDE_CODE_OAUTH_TOKEN from the
-    //    credentials file causes 401 errors because the stored token is
-    //    often stale (CLI refreshes in-memory but rarely writes back).
-    return {
-      env: providerEnv,
-      authSource: 'none',
-      geminiRuntimeAuth: null,
-      providerArgs: providerEnvResult.providerArgs,
-    };
   }
 
   private async buildCrossProviderMemberArgs(
@@ -23847,64 +23557,18 @@ export class TeamProvisioningService {
     memberSpecs: TeamCreateRequest['members'],
     options?: { teamRuntimeAuth?: TeamRuntimeAuthContext }
   ): Promise<CrossProviderMemberArgsResult> {
-    const crossProviderIds = new Set<TeamProviderId>();
-    for (const member of memberSpecs) {
-      const memberId = resolveTeamProviderId(
-        normalizeTeamMemberProviderId(member.providerId) ?? primaryProviderId
-      );
-      if (memberId !== primaryProviderId) {
-        crossProviderIds.add(memberId);
-      }
-    }
-    const args: string[] = [];
-    const providerArgsByProvider = new Map<TeamProviderId, string[]>();
-    const envPatch: NodeJS.ProcessEnv = {};
-    let usesAnthropicApiKeyHelper = false;
-    for (const providerId of crossProviderIds) {
-      let env: ProvisioningEnvResolution;
-      try {
-        env = await this.buildProvisioningEnv(providerId, undefined, {
-          teamRuntimeAuth: options?.teamRuntimeAuth,
-        });
-      } catch (error) {
-        console.error(
-          `[TeamProvisioningService] Failed to build cross-provider args for provider "${providerId}"`,
-          error
-        );
-        // Best-effort: don't block launch if cross-provider env resolution fails
-        // before the provider can report a concrete auth/readiness issue.
-        continue;
-      }
-      if (env.warning) {
-        throw new Error(`${getTeamProviderLabel(providerId)}: ${env.warning}`);
-      }
-      args.push(...(await this.buildRuntimeTurnSettledHookSettingsArgs(providerId)));
-      const providerArgs = env.providerArgs ?? [];
-      providerArgsByProvider.set(providerId, providerArgs);
-      if (providerId === 'codex') {
-        Object.assign(envPatch, buildCodexCrossProviderSafeEnvPatch(env.env));
-      }
-      if (env.anthropicApiKeyHelper) {
-        usesAnthropicApiKeyHelper = true;
-        Object.assign(envPatch, env.anthropicApiKeyHelper.envPatch);
-      } else if (
-        providerId === 'anthropic' &&
-        isAnthropicDirectCredentialAuthSource(env.authSource)
-      ) {
-        Object.assign(
-          envPatch,
-          buildAnthropicCrossProviderDirectAuthEnvPatch(env.env, env.authSource)
-        );
-      }
-      const flattenedArgs =
-        providerId === 'anthropic' && env.anthropicApiKeyHelper
-          ? filterOutSettingsPathArgs(providerArgs, env.anthropicApiKeyHelper.settingsPath)
-          : providerArgs;
-      if (flattenedArgs.length > 0) {
-        args.push(...flattenedArgs);
-      }
-    }
-    return { args, providerArgsByProvider, envPatch, usesAnthropicApiKeyHelper };
+    return buildCrossProviderMemberArgsHelper({
+      primaryProviderId,
+      memberSpecs,
+      options,
+      ports: {
+        buildProvisioningEnv: (providerIdForEnv, providerBackendId, buildOptions) =>
+          this.buildProvisioningEnv(providerIdForEnv, providerBackendId, buildOptions),
+        buildRuntimeTurnSettledHookSettingsArgs: (providerIdForArgs) =>
+          this.buildRuntimeTurnSettledHookSettingsArgs(providerIdForArgs),
+        logger,
+      },
+    });
   }
 
   private async resolveControlApiBaseUrl(): Promise<string | null> {

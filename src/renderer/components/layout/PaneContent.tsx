@@ -69,6 +69,11 @@ const OrganizationMapTab = lazy(() =>
     default: module.OrganizationMapTab,
   }))
 );
+const TokenUsageDashboard = lazy(() =>
+  import('@features/token-usage/renderer').then((module) => ({
+    default: module.TokenUsageDashboard,
+  }))
+);
 
 interface PaneContentProps {
   pane: Pane;
@@ -183,6 +188,7 @@ const PaneTabSlot = ({ tab, isActive, isPaneFocused }: PaneTabSlotProps): React.
             </TabUIProvider>
           )}
           {tab.type === 'schedules' && <SchedulesView />}
+          {tab.type === 'token-usage' && <TokenUsageDashboard />}
           {tab.type === 'graph' && (
             <TabUIProvider tabId={tab.id}>
               <TeamGraphTab

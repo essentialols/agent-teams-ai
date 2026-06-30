@@ -180,6 +180,9 @@ importers:
       '@codemirror/view':
         specifier: ^6.39.15
         version: 6.39.15
+      '@daypicker/react':
+        specifier: 10.0.1
+        version: 10.0.1(@types/react@19.2.14)(react@19.2.4)
       '@dnd-kit/core':
         specifier: ^6.3.1
         version: 6.3.1(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
@@ -1072,6 +1075,19 @@ packages:
 
   '@croct/json@2.1.0':
     resolution: {integrity: sha512-UrWfjNQVlBxN+OVcFwHmkjARMW55MBN04E9KfGac8ac8z1QnFVuiOOFtMWXCk3UwsyRqhsNaFoYLZC+xxqsVjQ==}
+
+  '@date-fns/tz@1.5.0':
+    resolution: {integrity: sha512-lwYN/vDPeNRULcepoE/LO2Pgx+7/RV+S9ARfbc9lr2DtGkOD7pAiruHvbR1RX3Qyf6ja47EWJDMsNK5vK08DJg==}
+
+  '@daypicker/react@10.0.1':
+    resolution: {integrity: sha512-lH4YQz4iMBWP8hsI1bD9Eg0T7t503IkSUR/WDGGkV5mKZvwVv+ukCkJz7yN+uVFBv7vHTK+ww7a5EvlkeFwPYQ==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      '@types/react': '>=16.8.0'
+      react: '>=16.8.0'
+    peerDependenciesMeta:
+      '@types/react':
+        optional: true
 
   '@develar/schema-utils@2.6.5':
     resolution: {integrity: sha512-0cp4PsWQ/9avqTVMCtZ+GirikIA36ikvjtHweU4/j8yLtgObI0+JUPhYFScgwlteveGB1rt3Cm8UhN04XayDig==}
@@ -5974,6 +5990,9 @@ packages:
   date-fns@3.6.0:
     resolution: {integrity: sha512-fRHTG8g/Gif+kSh50gaGEdToemgfj74aRX3swtiouboip5JDLAyDE9F11nHMIcvOaXeOC6D7SpNhi7uFyB7Uww==}
 
+  date-fns@4.4.0:
+    resolution: {integrity: sha512-+1UMbeh68lH1SegH83CGWwpb6OHHbpSgr3+s5Eww5M4CAgswBpoWS0AjTOfEJ33HiYKz1hdj/KTFprzXHmq/6w==}
+
   dayjs@1.11.19:
     resolution: {integrity: sha512-t5EcLVS6QPBNqM2z8fakk/NKel+Xzshgt8FFKAn+qwlD1pzZWxh0nVCrvFK7ZDb6XucZeF9z8C7CBWTRIVApAw==}
 
@@ -9276,6 +9295,16 @@ packages:
   rc9@3.0.1:
     resolution: {integrity: sha512-gMDyleLWVE+i6Sgtc0QbbY6pEKqYs97NGi6isHQPqYlLemPoO8dxQ3uGi0f4NiP98c+jMW6cG1Kx9dDwfvqARQ==}
 
+  react-day-picker@10.0.1:
+    resolution: {integrity: sha512-eNh6BlwcYInWaJtRv18mXQ06Ys/H6rdTZAnTaSdOYJuTpwP1JMCHNd1FDRadA+gbeinq+psdULN5Xnowy9mV8w==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      '@types/react': '>=16.8.0'
+      react: '>=16.8.0'
+    peerDependenciesMeta:
+      '@types/react':
+        optional: true
+
   react-dom@19.2.4:
     resolution: {integrity: sha512-AXJdLo8kgMbimY95O2aKQqsz2iWi9jMgKJhRBAxECE4IFxfcazB2LmzloIoibJI3C12IlY20+KFaLv+71bUJeQ==}
     peerDependencies:
@@ -11767,6 +11796,15 @@ snapshots:
       '@croct/json': 2.1.0
 
   '@croct/json@2.1.0': {}
+
+  '@date-fns/tz@1.5.0': {}
+
+  '@daypicker/react@10.0.1(@types/react@19.2.14)(react@19.2.4)':
+    dependencies:
+      react: 19.2.4
+      react-day-picker: 10.0.1(@types/react@19.2.14)(react@19.2.4)
+    optionalDependencies:
+      '@types/react': 19.2.14
 
   '@develar/schema-utils@2.6.5':
     dependencies:
@@ -15710,14 +15748,6 @@ snapshots:
     optionalDependencies:
       vite: 6.4.3(@types/node@24.12.4)(jiti@1.21.7)(sass@1.98.0)(terser@5.46.0)(tsx@4.21.0)(yaml@2.9.0)
 
-  '@vitest/mocker@3.2.6(vite@6.4.3(@types/node@24.12.4)(jiti@2.7.0)(sass@1.98.0)(terser@5.46.0)(tsx@4.21.0)(yaml@2.9.0))':
-    dependencies:
-      '@vitest/spy': 3.2.6
-      estree-walker: 3.0.3
-      magic-string: 0.30.21
-    optionalDependencies:
-      vite: 6.4.3(@types/node@24.12.4)(jiti@2.7.0)(sass@1.98.0)(terser@5.46.0)(tsx@4.21.0)(yaml@2.9.0)
-
   '@vitest/pretty-format@3.2.6':
     dependencies:
       tinyrainbow: 2.0.0
@@ -17176,6 +17206,8 @@ snapshots:
       is-data-view: 1.0.2
 
   date-fns@3.6.0: {}
+
+  date-fns@4.4.0: {}
 
   dayjs@1.11.19: {}
 
@@ -21493,6 +21525,14 @@ snapshots:
       defu: 6.1.5
       destr: 2.0.5
 
+  react-day-picker@10.0.1(@types/react@19.2.14)(react@19.2.4):
+    dependencies:
+      '@date-fns/tz': 1.5.0
+      date-fns: 4.4.0
+      react: 19.2.4
+    optionalDependencies:
+      '@types/react': 19.2.14
+
   react-dom@19.2.4(react@19.2.4):
     dependencies:
       react: 19.2.4
@@ -23419,7 +23459,7 @@ snapshots:
     dependencies:
       '@types/chai': 5.2.3
       '@vitest/expect': 3.2.6
-      '@vitest/mocker': 3.2.6(vite@6.4.3(@types/node@24.12.4)(jiti@2.7.0)(sass@1.98.0)(terser@5.46.0)(tsx@4.21.0)(yaml@2.9.0))
+      '@vitest/mocker': 3.2.6(vite@6.4.3(@types/node@24.12.4)(jiti@1.21.7)(sass@1.98.0)(terser@5.46.0)(tsx@4.21.0)(yaml@2.9.0))
       '@vitest/pretty-format': 3.2.6
       '@vitest/runner': 3.2.6
       '@vitest/snapshot': 3.2.6

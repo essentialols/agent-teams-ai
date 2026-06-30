@@ -7,10 +7,27 @@ import {
   isCrossTeamPseudoRecipientName,
   isCrossTeamToolRecipientName,
   looksLikeQualifiedExternalRecipientName,
+  matchCrossTeamLeadInboxMessages,
   parseCrossTeamRecipient,
   parseCrossTeamTargetTeam,
   resolveSingleActiveCrossTeamReplyHint,
 } from '../TeamProvisioningCrossTeamRouting';
+
+import type { InboxMessage } from '@shared/types';
+
+function inboxMessage(overrides: Partial<InboxMessage> = {}): InboxMessage {
+  return {
+    from: 'peer-team.lead',
+    to: 'team-lead',
+    text: 'hello',
+    timestamp: '2026-01-01T00:00:00.000Z',
+    read: false,
+    source: 'cross_team',
+    messageId: 'message-1',
+    conversationId: 'conv-1',
+    ...overrides,
+  };
+}
 
 describe('cross-team routing policy', () => {
   it('routes pseudo recipients to the target team lead outside the current team', () => {
@@ -68,5 +85,56 @@ describe('cross-team routing policy', () => {
     expect(parseCrossTeamTargetTeam('BadTeam.worker-1')).toBeNull();
     expect(getCrossTeamSourceTeam('peer-team.worker-1')).toBe('peer-team');
     expect(getCrossTeamSourceTeam('cross-team:peer-team')).toBeNull();
+  });
+
+  it('matches delivered cross-team blocks to lead inbox messages with exact text first', () => {
+    const matches = matchCrossTeamLeadInboxMessages(
+      [
+        inboxMessage({ messageId: 'fallback', text: 'different text' }),
+        inboxMessage({ messageId: 'exact', text: 'hello', read: true }),
+      ],
+      [
+        {
+          teammateId: 'peer-team.lead',
+          content: 'hello',
+          toTeam: 'peer-team',
+          conversationId: 'conv-1',
+        },
+      ]
+    );
+
+    expect(matches).toEqual([
+      {
+        teammateId: 'peer-team.lead',
+        content: 'hello',
+        toTeam: 'peer-team',
+        conversationId: 'conv-1',
+        messageId: 'exact',
+        wasRead: true,
+      },
+    ]);
+  });
+
+  it('deduplicates matched lead inbox messages across delivered blocks', () => {
+    const matches = matchCrossTeamLeadInboxMessages(
+      [inboxMessage({ messageId: 'shared', text: 'different text' })],
+      [
+        {
+          teammateId: 'peer-team.lead',
+          content: 'first',
+          toTeam: 'peer-team',
+          conversationId: 'conv-1',
+        },
+        {
+          teammateId: 'peer-team.lead',
+          content: 'second',
+          toTeam: 'peer-team',
+          conversationId: 'conv-1',
+        },
+      ]
+    );
+
+    expect(matches).toHaveLength(1);
+    expect(matches[0]?.messageId).toBe('shared');
   });
 });

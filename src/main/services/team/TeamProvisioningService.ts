@@ -290,6 +290,7 @@ import {
   isCrossTeamPseudoRecipientName as isCrossTeamPseudoRecipientNameHelper,
   isCrossTeamToolRecipientName as isCrossTeamToolRecipientNameHelper,
   looksLikeQualifiedExternalRecipientName as looksLikeQualifiedExternalRecipientNameHelper,
+  matchCrossTeamLeadInboxMessages as matchCrossTeamLeadInboxMessagesHelper,
   parseCrossTeamRecipient as parseCrossTeamRecipientHelper,
   parseCrossTeamTargetTeam as parseCrossTeamTargetTeamHelper,
   resolveSingleActiveCrossTeamReplyHint as resolveSingleActiveCrossTeamReplyHintHelper,
@@ -6364,44 +6365,7 @@ export class TeamProvisioningService {
       return [];
     }
 
-    const usedMessageIds = new Set<string>();
-    const matches: {
-      teammateId: string;
-      content: string;
-      toTeam: string;
-      conversationId: string;
-      messageId: string;
-      wasRead: boolean;
-    }[] = [];
-    for (const block of deliveredBlocks) {
-      const matchesBlock = (message: InboxMessage, requireExactText: boolean): boolean => {
-        if (message.source !== CROSS_TEAM_SOURCE) return false;
-        if (!hasStableInboxMessageId(message)) return false;
-        if (usedMessageIds.has(message.messageId)) return false;
-        if (message.from.trim() !== block.teammateId.trim()) return false;
-        const messageConversationId =
-          message.replyToConversationId?.trim() ??
-          message.conversationId?.trim() ??
-          parseCrossTeamPrefix(message.text)?.conversationId;
-        if (messageConversationId !== block.conversationId) return false;
-        return !requireExactText || message.text.trim() === block.content.trim();
-      };
-      const matched =
-        leadInboxMessages.find((message) => matchesBlock(message, true)) ??
-        leadInboxMessages.find((message) => matchesBlock(message, false));
-      if (!matched || !hasStableInboxMessageId(matched)) continue;
-      usedMessageIds.add(matched.messageId);
-      matches.push({
-        teammateId: block.teammateId,
-        content: block.content,
-        toTeam: block.toTeam,
-        conversationId: block.conversationId,
-        messageId: matched.messageId,
-        wasRead: matched.read === true,
-      });
-    }
-
-    return matches;
+    return matchCrossTeamLeadInboxMessagesHelper(leadInboxMessages, deliveredBlocks);
   }
 
   private handleNativeTeammateUserMessage(

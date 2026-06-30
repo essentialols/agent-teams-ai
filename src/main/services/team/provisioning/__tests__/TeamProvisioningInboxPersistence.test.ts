@@ -76,4 +76,76 @@ describe('team inbox persistence', () => {
     const rows = JSON.parse(await readFile(inboxPath, 'utf8')) as Array<{ read?: boolean }>;
     expect(rows.map((row) => row.read)).toEqual([true, true, false]);
   });
+
+  it('leaves malformed and non-array inbox files unchanged', async () => {
+    const teamsRoot = await makeTeamsRoot();
+    const inboxDir = path.join(teamsRoot, 'team-a', 'inboxes');
+    await mkdir(inboxDir, { recursive: true });
+
+    async function expectUnchanged(member: string, raw: string): Promise<void> {
+      const inboxPath = path.join(inboxDir, `${member}.json`);
+      await writeFile(inboxPath, raw);
+
+      await markTeamInboxMessagesRead({
+        teamName: 'team-a',
+        member,
+        teamsBasePath: teamsRoot,
+        messages: [{ messageId: 'stable-1' }],
+        readRegularFileUtf8,
+        timeoutMs: 5_000,
+        maxBytes: 2 * 1024 * 1024,
+      });
+
+      expect(await readFile(inboxPath, 'utf8')).toBe(raw);
+    }
+
+    await expectUnchanged('malformed', '{not-json');
+    await expectUnchanged('object', JSON.stringify({ messageId: 'stable-1', read: false }));
+  });
+
+  it('ignores missing inbox files and avoids writes when no ids match', async () => {
+    const teamsRoot = await makeTeamsRoot();
+
+    await expect(
+      markTeamInboxMessagesRead({
+        teamName: 'team-a',
+        member: 'missing',
+        teamsBasePath: teamsRoot,
+        messages: [{ messageId: 'stable-1' }],
+        readRegularFileUtf8,
+        timeoutMs: 5_000,
+        maxBytes: 2 * 1024 * 1024,
+      })
+    ).resolves.toBeUndefined();
+
+    const inboxDir = path.join(teamsRoot, 'team-a', 'inboxes');
+    const inboxPath = path.join(inboxDir, 'lead.json');
+    const raw = JSON.stringify(
+      [
+        {
+          messageId: 'stable-1',
+          from: 'worker-a',
+          timestamp: '2026-01-01T00:00:00.000Z',
+          text: 'stable',
+          read: false,
+        },
+      ],
+      null,
+      2
+    );
+    await mkdir(inboxDir, { recursive: true });
+    await writeFile(inboxPath, raw);
+
+    await markTeamInboxMessagesRead({
+      teamName: 'team-a',
+      member: 'lead',
+      teamsBasePath: teamsRoot,
+      messages: [{ messageId: '' }, { messageId: '   ' }, { messageId: 'missing' }],
+      readRegularFileUtf8,
+      timeoutMs: 5_000,
+      maxBytes: 2 * 1024 * 1024,
+    });
+
+    expect(await readFile(inboxPath, 'utf8')).toBe(raw);
+  });
 });

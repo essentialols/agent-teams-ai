@@ -266,7 +266,7 @@ export function planInboxDuplicateMerge(
 
   const duplicateFiles = Array.from(existing)
     .filter((file) => file.startsWith(`${baseName}-`) && file.endsWith('.json'))
-    .filter((file) => /-\d+\.json$/.test(file));
+    .filter((file) => /^\d+$/.test(file.slice(baseName.length + 1, -'.json'.length)));
 
   if (duplicateFiles.length === 0) {
     return null;

@@ -126,6 +126,16 @@ describe('team provisioning inbox merge planning', () => {
     expect(planInboxDuplicateMerge('Bob', existing)).toBeNull();
   });
 
+  it('does not merge hyphenated member inboxes into shorter base names', () => {
+    const existing = createInboxJsonFileSet(['Ann.json', 'Ann-2.json', 'Ann-Marie-2.json']);
+
+    expect(planInboxDuplicateMerge('Ann', existing)).toEqual({
+      baseName: 'Ann',
+      canonicalFile: 'Ann.json',
+      duplicateFiles: ['Ann-2.json'],
+    });
+  });
+
   it('merges inbox messages with messageId dedupe and descending timestamp order', () => {
     const canonical = parseInboxMessageListRaw(
       JSON.stringify([

@@ -4,6 +4,7 @@ import {
   buildLeadInboxRelayPrompt,
   buildMemberInboxRelayPrompt,
   collectConfirmedSameTeamPairs,
+  type NativeSameTeamFingerprint,
   type RelayInboxMessage,
   selectLeadInboxRelayBatch,
   selectMemberInboxRelayBatch,
@@ -75,6 +76,49 @@ describe('inbox relay unread policy', () => {
     expect([...result.matchedFingerprintIds]).toEqual(['fp-1', 'fp-2']);
   });
 
+  it('rejects same-team native matches when metadata or eligibility filters fail', () => {
+    const seenAt = Date.parse('2026-01-01T00:00:00.000Z');
+    const baseFingerprint: NativeSameTeamFingerprint = {
+      id: 'fp-1',
+      from: 'worker',
+      text: 'Done',
+      summary: 'expected',
+      seenAt,
+    };
+    const baseMessage = message({
+      messageId: 'candidate',
+      from: 'worker',
+      to: 'lead',
+      text: 'Done',
+      summary: 'expected',
+      timestamp: '2026-01-01T00:00:00.000Z',
+    });
+    const isConfirmed = (
+      messageOverrides: Partial<RelayInboxMessage> = {},
+      fingerprintOverrides: Partial<NativeSameTeamFingerprint> = {}
+    ): boolean => {
+      const candidate = { ...baseMessage, ...messageOverrides };
+      const result = collectConfirmedSameTeamPairs({
+        leadName: 'lead',
+        matchWindowMs: 30_000,
+        fingerprints: [{ ...baseFingerprint, ...fingerprintOverrides }],
+        messages: [candidate],
+      });
+      return result.confirmedMessageIds.has(candidate.messageId);
+    };
+
+    expect(isConfirmed()).toBe(true);
+    expect(isConfirmed({ summary: 'actual' })).toBe(false);
+    expect(isConfirmed({ timestamp: '2026-01-01T00:00:30.000Z' })).toBe(true);
+    expect(isConfirmed({ timestamp: '2026-01-01T00:00:30.001Z' })).toBe(false);
+    expect(isConfirmed({ read: true })).toBe(false);
+    expect(isConfirmed({ source: 'cross_team' })).toBe(false);
+    expect(isConfirmed({ from: 'lead' })).toBe(false);
+    expect(isConfirmed({ from: 'user' })).toBe(false);
+    expect(isConfirmed({ timestamp: 'not-a-date' })).toBe(false);
+    expect(isConfirmed({ messageId: '' })).toBe(false);
+  });
+
   it('defers recent same-team source-less messages inside the native delivery grace window', () => {
     const nowMs = Date.parse('2026-01-01T00:00:10.000Z');
 
@@ -110,6 +154,47 @@ describe('inbox relay unread policy', () => {
         nativeDeliveryGraceMs: 15_000,
       })
     ).toBe(false);
+  });
+
+  it('does not defer stale or ineligible same-team source-less messages', () => {
+    const nowMs = Date.parse('2026-01-01T00:00:10.000Z');
+    const runStartedAtMs = Date.parse('2026-01-01T00:00:00.000Z');
+    const baseMessage = message({
+      messageId: 'candidate',
+      from: 'worker',
+      to: 'lead',
+      timestamp: '2026-01-01T00:00:09.000Z',
+    });
+    const isDeferred = (
+      messageOverrides: Partial<RelayInboxMessage> = {},
+      inputOverrides: Partial<
+        Omit<Parameters<typeof shouldDeferSameTeamMessage>[0], 'message'>
+      > = {}
+    ): boolean =>
+      shouldDeferSameTeamMessage({
+        leadName: 'lead',
+        runStartedAtMs,
+        nowMs,
+        runStartSkewMs: 1_000,
+        nativeDeliveryGraceMs: 15_000,
+        ...inputOverrides,
+        message: { ...baseMessage, ...messageOverrides },
+      });
+
+    expect(isDeferred()).toBe(true);
+    expect(
+      isDeferred(
+        { timestamp: '2025-12-31T23:59:55.000Z' },
+        { runStartedAtMs: Date.parse('2025-12-31T23:59:00.000Z') }
+      )
+    ).toBe(false);
+    expect(isDeferred({ timestamp: '2025-12-31T23:59:58.000Z' })).toBe(false);
+    expect(isDeferred({ timestamp: '2026-01-01T00:00:11.000Z' })).toBe(false);
+    expect(isDeferred({ to: 'other-lead' })).toBe(false);
+    expect(isDeferred({ from: 'lead' })).toBe(false);
+    expect(isDeferred({ from: 'user' })).toBe(false);
+    expect(isDeferred({ source: 'cross_team' })).toBe(false);
+    expect(isDeferred({ timestamp: 'not-a-date' })).toBe(false);
   });
 
   it('splits unread member relay rows into silent, passive, and actionable buckets', () => {

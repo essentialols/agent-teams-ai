@@ -1,6 +1,8 @@
 import type {
   TokenUsageAnalyticsSnapshotDto,
   TokenUsageBreakdownItemDto,
+  TokenUsageBudgetLimitDto,
+  TokenUsageBudgetSettingsDto,
   TokenUsageCommandRunDto,
   TokenUsageRecentRunDto,
   TokenUsageSessionRunDto,
@@ -96,16 +98,8 @@ export interface TokenUsageBurnRateViewModel {
   monthForecastCost: string;
 }
 
-export interface TokenUsageBudgetLimit {
-  monthlyTokenLimit?: number;
-  monthlyApiEquivalentCostLimitUsd?: number;
-}
-
-export interface TokenUsageBudgetLimits {
-  global?: TokenUsageBudgetLimit;
-  teams?: Record<string, TokenUsageBudgetLimit>;
-  projects?: Record<string, TokenUsageBudgetLimit>;
-}
+export type TokenUsageBudgetLimit = TokenUsageBudgetLimitDto;
+export type TokenUsageBudgetLimits = TokenUsageBudgetSettingsDto;
 
 export interface TokenUsageBudgetAlertViewModel {
   id: string;

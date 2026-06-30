@@ -229,12 +229,15 @@
       "costLimit": "Лимит API-equivalent $",
       "costLimitDetail": "{{cost}} из {{limit}}",
       "critical": "Превышен бюджет",
+      "loadFailed": "Не удалось загрузить настройки бюджета",
       "noBudgets": "Бюджеты не настроены",
+      "notificationSettings": "Настройки уведомлений",
       "ok": "В норме",
+      "saveFailed": "Не удалось сохранить настройки бюджета",
       "team": "Команда",
       "tokenLimit": "Лимит токенов",
       "tokenLimitDetail": "{{tokens}} из {{limit}}",
-      "warning": "Warning",
+      "warning": "Предупреждение",
       "project": "Проект"
     },
     "dateRange": {

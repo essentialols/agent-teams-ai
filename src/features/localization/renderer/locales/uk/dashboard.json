@@ -229,12 +229,15 @@
       "costLimit": "Ліміт API-equivalent $",
       "costLimitDetail": "{{cost}} з {{limit}}",
       "critical": "Бюджет перевищено",
+      "loadFailed": "Не вдалося завантажити налаштування бюджету",
       "noBudgets": "Бюджети не налаштовані",
+      "notificationSettings": "Налаштування сповіщень",
       "ok": "У нормі",
+      "saveFailed": "Не вдалося зберегти налаштування бюджету",
       "team": "Команда",
       "tokenLimit": "Ліміт токенів",
       "tokenLimitDetail": "{{tokens}} з {{limit}}",
-      "warning": "Warning",
+      "warning": "Попередження",
       "project": "Проєкт"
     },
     "dateRange": {

@@ -351,7 +351,10 @@
       "tokenLimit": "Token limit",
       "tokenLimitDetail": "{{tokens}} of {{limit}}",
       "warning": "Warning",
-      "project": "Project"
+      "project": "Project",
+      "loadFailed": "Failed to load budget settings",
+      "notificationSettings": "Notification settings",
+      "saveFailed": "Failed to save budget settings"
     }
   }
 }

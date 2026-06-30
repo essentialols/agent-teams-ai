@@ -33,9 +33,11 @@ import {
   type UpsertOrganizationUnitRequest,
 } from '@features/organizations/contracts';
 import {
+  TOKEN_USAGE_BUDGET_SETTINGS_ROUTE,
   TOKEN_USAGE_SNAPSHOT_CHANGED,
   TOKEN_USAGE_SNAPSHOT_ROUTE,
   type TokenUsageAnalyticsSnapshotDto,
+  type TokenUsageBudgetSettingsDto,
   type TokenUsageElectronApi,
   type TokenUsageSnapshotRequest,
 } from '@features/token-usage/contracts';
@@ -415,6 +417,12 @@ export class HttpAPIClient implements ElectronAPI {
       request?: TokenUsageSnapshotRequest
     ): Promise<TokenUsageAnalyticsSnapshotDto> =>
       this.get<TokenUsageAnalyticsSnapshotDto>(buildTokenUsageSnapshotRoute(request)),
+    getBudgetSettings: (): Promise<TokenUsageBudgetSettingsDto> =>
+      this.get<TokenUsageBudgetSettingsDto>(TOKEN_USAGE_BUDGET_SETTINGS_ROUTE),
+    updateBudgetSettings: (
+      settings: TokenUsageBudgetSettingsDto
+    ): Promise<TokenUsageBudgetSettingsDto> =>
+      this.put<TokenUsageBudgetSettingsDto>(TOKEN_USAGE_BUDGET_SETTINGS_ROUTE, settings),
     onSnapshotChanged: (
       callback: (snapshot: TokenUsageAnalyticsSnapshotDto) => void
     ): (() => void) => this.addEventListener(TOKEN_USAGE_SNAPSHOT_CHANGED, callback),

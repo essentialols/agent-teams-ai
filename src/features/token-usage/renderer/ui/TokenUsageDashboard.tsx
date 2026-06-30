@@ -12,6 +12,7 @@ import {
   AlertTriangle,
   ArrowUpRight,
   BarChart3,
+  Bell,
   CalendarDays,
   Check,
   ChevronDown,
@@ -35,7 +36,9 @@ import {
   type TokenUsageDateRangeValue,
   tokenUsageSnapshotRequestForDateRange,
 } from '../adapters/tokenUsageDateRange';
+import { useOpenTokenUsageNotificationSettings } from '../hooks/useOpenTokenUsageNotificationSettings';
 import { useOpenTokenUsageTeam } from '../hooks/useOpenTokenUsageTeam';
+import { useTokenUsageBudgetSettings } from '../hooks/useTokenUsageBudgetSettings';
 import { useTokenUsageSnapshot } from '../hooks/useTokenUsageSnapshot';
 
 import type {
@@ -68,7 +71,6 @@ const MODEL_DONUT_CENTER = MODEL_DONUT_SIZE / 2;
 const MODEL_DONUT_RADIUS = 63;
 const MODEL_DONUT_STROKE_WIDTH = 30;
 const MODEL_DONUT_CIRCUMFERENCE = 2 * Math.PI * MODEL_DONUT_RADIUS;
-const TOKEN_USAGE_BUDGET_STORAGE_KEY = 'agent-teams.token-usage.budgets.v1';
 
 type TokenUsageStoredBudgetConfig = TokenUsageBudgetLimits;
 
@@ -79,14 +81,16 @@ export const TokenUsageDashboard = (): React.JSX.Element => {
     [t]
   );
   const openTeamTab = useOpenTokenUsageTeam();
+  const openNotificationSettings = useOpenTokenUsageNotificationSettings();
   const [dateRange, setDateRange] = useState<TokenUsageDateRangeValue>(() =>
     createDefaultTokenUsageDateRange()
   );
   const [selectedTeamNames, setSelectedTeamNames] = useState<string[]>([]);
   const [includeCacheTokens, setIncludeCacheTokens] = useState(true);
-  const [budgetConfig, setBudgetConfig] = useState<TokenUsageStoredBudgetConfig>(() =>
-    readStoredBudgetConfig()
-  );
+  const { budgetConfig, budgetConfigError, updateBudgetConfig } = useTokenUsageBudgetSettings({
+    loadErrorMessage: tokenUsageT('tokenUsage.budgets.loadFailed'),
+    saveErrorMessage: tokenUsageT('tokenUsage.budgets.saveFailed'),
+  });
   const [budgetTargetKey, setBudgetTargetKey] = useState('global:global');
   const viewModelOptions = useMemo<TokenUsageDashboardViewModelOptions>(
     () => ({
@@ -113,10 +117,6 @@ export const TokenUsageDashboard = (): React.JSX.Element => {
   useEffect(() => {
     setTeamOptions((current) => mergeTeamFilterOptions(current, viewModel.teamFilterOptions));
   }, [viewModel.teamFilterOptions]);
-
-  useEffect(() => {
-    writeStoredBudgetConfig(budgetConfig);
-  }, [budgetConfig]);
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-surface text-text">
@@ -187,8 +187,10 @@ export const TokenUsageDashboard = (): React.JSX.Element => {
               budgetConfig={budgetConfig}
               budgetTargetKey={budgetTargetKey}
               budgetTargetOptions={viewModel.budgetTargetOptions}
+              error={budgetConfigError}
               onBudgetTargetKeyChange={setBudgetTargetKey}
-              onBudgetConfigChange={setBudgetConfig}
+              onBudgetConfigChange={updateBudgetConfig}
+              onOpenNotificationSettings={openNotificationSettings}
               t={tokenUsageT}
             />
           </section>
@@ -837,16 +839,20 @@ const BudgetAlertsPanel = ({
   budgetConfig,
   budgetTargetKey,
   budgetTargetOptions,
+  error,
   onBudgetTargetKeyChange,
   onBudgetConfigChange,
+  onOpenNotificationSettings,
   t,
 }: {
   alerts: TokenUsageBudgetAlertViewModel[];
   budgetConfig: TokenUsageStoredBudgetConfig;
   budgetTargetKey: string;
   budgetTargetOptions: TokenUsageBudgetTargetOptionViewModel[];
+  error: string | null;
   onBudgetTargetKeyChange: (key: string) => void;
   onBudgetConfigChange: React.Dispatch<React.SetStateAction<TokenUsageStoredBudgetConfig>>;
+  onOpenNotificationSettings: () => void;
   t: TokenUsageT;
 }): React.JSX.Element => {
   const target = budgetEditorTarget(budgetTargetKey, budgetTargetOptions, t);
@@ -854,8 +860,32 @@ const BudgetAlertsPanel = ({
 
   return (
     <section className={PANEL_CLASS}>
-      <PanelTitle heading={t('tokenUsage.panels.budgetAlerts')} />
+      <PanelTitle
+        heading={t('tokenUsage.panels.budgetAlerts')}
+        action={
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={onOpenNotificationSettings}
+                className="inline-flex size-7 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-surface hover:text-text"
+                aria-label={t('tokenUsage.budgets.notificationSettings')}
+              >
+                <Bell className="size-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              {t('tokenUsage.budgets.notificationSettings')}
+            </TooltipContent>
+          </Tooltip>
+        }
+      />
       <div className="space-y-3 p-4">
+        {error && (
+          <div className="rounded-sm border border-red-500/30 bg-red-500/10 px-2 py-1.5 text-xs text-red-300">
+            {error}
+          </div>
+        )}
         <div className="bg-surface/60 rounded-sm border border-[var(--color-border)] p-3">
           <div className="mb-2 flex items-center justify-between gap-3">
             <span className="min-w-0 truncate text-xs font-medium text-text-secondary">
@@ -1729,10 +1759,17 @@ const RunsPanel = ({
   );
 };
 
-const PanelTitle = ({ heading }: { heading: string }): React.JSX.Element => {
+const PanelTitle = ({
+  heading,
+  action,
+}: {
+  heading: string;
+  action?: React.ReactNode;
+}): React.JSX.Element => {
   return (
     <div className="flex h-10 items-center justify-between border-b border-[var(--color-border)] px-4">
       <h2 className="text-xs font-medium uppercase tracking-wide text-text-muted">{heading}</h2>
+      {action}
     </div>
   );
 };
@@ -1899,69 +1936,6 @@ function mergeTeamFilterOptions(
   return [...byId.values()].sort(
     (left, right) => right.tokenValue - left.tokenValue || left.label.localeCompare(right.label)
   );
-}
-
-function readStoredBudgetConfig(): TokenUsageStoredBudgetConfig {
-  try {
-    const raw = globalThis.localStorage?.getItem(TOKEN_USAGE_BUDGET_STORAGE_KEY);
-    if (!raw) return {};
-    return normalizeStoredBudgetConfig(JSON.parse(raw));
-  } catch {
-    return {};
-  }
-}
-
-function writeStoredBudgetConfig(config: TokenUsageStoredBudgetConfig): void {
-  try {
-    const normalized = normalizeStoredBudgetConfig(config);
-    globalThis.localStorage?.setItem(TOKEN_USAGE_BUDGET_STORAGE_KEY, JSON.stringify(normalized));
-  } catch {
-    // localStorage can be unavailable in restricted renderer contexts.
-  }
-}
-
-function normalizeStoredBudgetConfig(value: unknown): TokenUsageStoredBudgetConfig {
-  const record = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
-  const global = normalizeStoredBudgetLimit(record.global);
-  const teamsRecord =
-    record.teams && typeof record.teams === 'object'
-      ? (record.teams as Record<string, unknown>)
-      : {};
-  const projectsRecord =
-    record.projects && typeof record.projects === 'object'
-      ? (record.projects as Record<string, unknown>)
-      : {};
-  const teams: NonNullable<TokenUsageStoredBudgetConfig['teams']> = {};
-  const projects: NonNullable<TokenUsageStoredBudgetConfig['projects']> = {};
-  for (const [teamName, limit] of Object.entries(teamsRecord)) {
-    const normalizedLimit = normalizeStoredBudgetLimit(limit);
-    if (normalizedLimit) teams[teamName] = normalizedLimit;
-  }
-  for (const [projectId, limit] of Object.entries(projectsRecord)) {
-    const normalizedLimit = normalizeStoredBudgetLimit(limit);
-    if (normalizedLimit) projects[projectId] = normalizedLimit;
-  }
-  return {
-    ...(global ? { global } : {}),
-    ...(Object.keys(teams).length > 0 ? { teams } : {}),
-    ...(Object.keys(projects).length > 0 ? { projects } : {}),
-  };
-}
-
-function normalizeStoredBudgetLimit(
-  value: unknown
-): NonNullable<TokenUsageStoredBudgetConfig['global']> | undefined {
-  const record = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
-  return pruneEmptyBudgetLimit({
-    monthlyTokenLimit: readStoredPositiveNumber(record.monthlyTokenLimit),
-    monthlyApiEquivalentCostLimitUsd: readStoredPositiveNumber(
-      record.monthlyApiEquivalentCostLimitUsd
-    ),
-  });
-}
-
-function readStoredPositiveNumber(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
 function buildDayPickerClassNames(): ClassNames {

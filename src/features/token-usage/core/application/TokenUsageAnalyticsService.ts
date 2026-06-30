@@ -2,12 +2,15 @@ import { buildTokenUsageSnapshot } from '../domain';
 
 import type {
   TokenUsageAnalyticsSnapshotDto,
+  TokenUsageBudgetSettingsDto,
   TokenUsageEventDto,
   TokenUsageRunDto,
   TokenUsageSnapshotRequest,
 } from '../../contracts';
 import type {
   TokenUsageAnalyticsServicePort,
+  TokenUsageBudgetNotificationEvaluatorPort,
+  TokenUsageBudgetSettingsRepositoryPort,
   TokenUsageClockPort,
   TokenUsageImporterPort,
   TokenUsageLedgerRepositoryPort,
@@ -21,6 +24,8 @@ export interface TokenUsageAnalyticsServiceDeps {
   discovery: TokenUsageRunSourceDiscoveryPort;
   importers: readonly TokenUsageImporterPort[];
   clock: TokenUsageClockPort;
+  budgets?: TokenUsageBudgetSettingsRepositoryPort;
+  budgetNotifications?: TokenUsageBudgetNotificationEvaluatorPort;
   publisher?: TokenUsageRealtimePublisherPort;
   logger?: TokenUsageLoggerPort;
 }
@@ -64,14 +69,27 @@ export class TokenUsageAnalyticsService implements TokenUsageAnalyticsServicePor
       }
     }
 
-    const snapshot = buildTokenUsageSnapshot({
-      runs: await this.deps.ledger.listRuns(),
-      events: await this.deps.ledger.listEvents(),
-      request,
+    const [nextRuns, nextEvents] = await Promise.all([
+      this.deps.ledger.listRuns(),
+      this.deps.ledger.listEvents(),
+    ]);
+    const canonicalSnapshot = buildTokenUsageSnapshot({
+      runs: nextRuns,
+      events: nextEvents,
       nowIso: this.deps.clock.now().toISOString(),
       degraded,
     });
-    this.deps.publisher?.publishSnapshot(snapshot);
+    const snapshot = request
+      ? buildTokenUsageSnapshot({
+          runs: nextRuns,
+          events: nextEvents,
+          request,
+          nowIso: canonicalSnapshot.updatedAt,
+          degraded,
+        })
+      : canonicalSnapshot;
+    this.deps.publisher?.publishSnapshot(canonicalSnapshot);
+    this.evaluateBudgetNotifications(canonicalSnapshot, 'snapshot');
     return snapshot;
   }
 
@@ -85,18 +103,41 @@ export class TokenUsageAnalyticsService implements TokenUsageAnalyticsServicePor
     await this.publishCurrentSnapshot();
   }
 
+  async getBudgetSettings(): Promise<TokenUsageBudgetSettingsDto> {
+    return this.deps.budgets?.getSettings() ?? {};
+  }
+
+  async updateBudgetSettings(
+    settings: TokenUsageBudgetSettingsDto
+  ): Promise<TokenUsageBudgetSettingsDto> {
+    const nextSettings = (await this.deps.budgets?.updateSettings(settings)) ?? {};
+    const snapshot = await this.getSnapshot();
+    this.evaluateBudgetNotifications(snapshot, 'settings');
+    return nextSettings;
+  }
+
   private async publishCurrentSnapshot(): Promise<void> {
     if (!this.deps.publisher) return;
     const [runs, events] = await Promise.all([
       this.deps.ledger.listRuns(),
       this.deps.ledger.listEvents(),
     ]);
-    this.deps.publisher.publishSnapshot(
-      buildTokenUsageSnapshot({
-        runs,
-        events,
-        nowIso: this.deps.clock.now().toISOString(),
-      })
-    );
+    const snapshot = buildTokenUsageSnapshot({
+      runs,
+      events,
+      nowIso: this.deps.clock.now().toISOString(),
+    });
+    this.deps.publisher.publishSnapshot(snapshot);
+    this.evaluateBudgetNotifications(snapshot, 'snapshot');
+  }
+
+  private evaluateBudgetNotifications(
+    snapshot: TokenUsageAnalyticsSnapshotDto,
+    reason: 'snapshot' | 'startup' | 'settings'
+  ): void {
+    if (!this.deps.budgetNotifications) return;
+    void this.deps.budgetNotifications.evaluate(snapshot, reason).catch((error: unknown) => {
+      this.deps.logger?.warn('Failed to evaluate token usage budget notifications', error);
+    });
   }
 }

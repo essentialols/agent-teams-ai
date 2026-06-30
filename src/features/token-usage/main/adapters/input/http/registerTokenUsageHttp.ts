@@ -1,9 +1,12 @@
 import { createLogger } from '@shared/utils/logger';
 
 import {
+  normalizeTokenUsageBudgetSettings,
   normalizeTokenUsageSnapshot,
+  TOKEN_USAGE_BUDGET_SETTINGS_ROUTE,
   TOKEN_USAGE_SNAPSHOT_ROUTE,
   type TokenUsageAnalyticsSnapshotDto,
+  type TokenUsageBudgetSettingsDto,
   type TokenUsageSnapshotRequest,
 } from '../../../../contracts';
 
@@ -77,6 +80,29 @@ export function registerTokenUsageHttp(
       };
     }
   });
+
+  app.get(TOKEN_USAGE_BUDGET_SETTINGS_ROUTE, async (): Promise<TokenUsageBudgetSettingsDto> => {
+    try {
+      return normalizeTokenUsageBudgetSettings(await feature.getBudgetSettings());
+    } catch (error) {
+      logger.error('Failed to load token usage budget settings via HTTP', error);
+      return {};
+    }
+  });
+
+  app.put<{ Body: TokenUsageBudgetSettingsDto }>(
+    TOKEN_USAGE_BUDGET_SETTINGS_ROUTE,
+    async (request): Promise<TokenUsageBudgetSettingsDto> => {
+      try {
+        return normalizeTokenUsageBudgetSettings(
+          await feature.updateBudgetSettings(normalizeTokenUsageBudgetSettings(request.body))
+        );
+      } catch (error) {
+        logger.error('Failed to update token usage budget settings via HTTP', error);
+        return normalizeTokenUsageBudgetSettings(request.body);
+      }
+    }
+  );
 }
 
 function readSnapshotRequest(query: unknown): TokenUsageSnapshotRequest | undefined {

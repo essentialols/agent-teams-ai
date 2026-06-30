@@ -2,6 +2,8 @@ import type {
   TokenUsageAnalyticsSnapshotDto,
   TokenUsageBillingMode,
   TokenUsageBreakdownItemDto,
+  TokenUsageBudgetLimitDto,
+  TokenUsageBudgetSettingsDto,
   TokenUsageCommandRunDto,
   TokenUsageRecentRunDto,
   TokenUsageRunSourceDto,
@@ -27,6 +29,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function readNumber(value: unknown, fallback = 0): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function readPositiveNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
 function readString(value: unknown): string | undefined {
@@ -300,6 +306,49 @@ export function normalizeTokenUsageSnapshot(value: unknown): TokenUsageAnalytics
     unmappedEventCount: readNumber(record?.unmappedEventCount),
     sourceCounts,
   };
+}
+
+export function normalizeTokenUsageBudgetLimit(
+  value: unknown
+): TokenUsageBudgetLimitDto | undefined {
+  const record = isRecord(value) ? value : {};
+  const limit: TokenUsageBudgetLimitDto = {};
+  const monthlyTokenLimit = readPositiveNumber(record.monthlyTokenLimit);
+  const monthlyApiEquivalentCostLimitUsd = readPositiveNumber(
+    record.monthlyApiEquivalentCostLimitUsd
+  );
+  if (monthlyTokenLimit !== undefined) limit.monthlyTokenLimit = monthlyTokenLimit;
+  if (monthlyApiEquivalentCostLimitUsd !== undefined) {
+    limit.monthlyApiEquivalentCostLimitUsd = monthlyApiEquivalentCostLimitUsd;
+  }
+  return Object.keys(limit).length > 0 ? limit : undefined;
+}
+
+export function normalizeTokenUsageBudgetSettings(
+  value: unknown,
+  updatedAt?: string
+): TokenUsageBudgetSettingsDto {
+  const record = isRecord(value) ? value : {};
+  const global = normalizeTokenUsageBudgetLimit(record.global);
+  const teams = normalizeBudgetLimitRecord(record.teams);
+  const projects = normalizeBudgetLimitRecord(record.projects);
+  return {
+    ...(global ? { global } : {}),
+    ...(Object.keys(teams).length > 0 ? { teams } : {}),
+    ...(Object.keys(projects).length > 0 ? { projects } : {}),
+    updatedAt: readString(record.updatedAt) ?? updatedAt,
+  };
+}
+
+function normalizeBudgetLimitRecord(value: unknown): Record<string, TokenUsageBudgetLimitDto> {
+  const record = isRecord(value) ? value : {};
+  const result: Record<string, TokenUsageBudgetLimitDto> = {};
+  for (const [key, limit] of Object.entries(record)) {
+    const id = key.trim();
+    const normalized = normalizeTokenUsageBudgetLimit(limit);
+    if (id && normalized) result[id] = normalized;
+  }
+  return result;
 }
 
 export const EMPTY_TOKEN_USAGE_TOKENS: TokenUsageTokenBreakdownDto = {

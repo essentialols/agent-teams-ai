@@ -1133,9 +1133,12 @@ export default interface Resources {
         costLimit: 'API-equivalent $ limit';
         costLimitDetail: '{{cost}} of {{limit}}';
         critical: 'Over budget';
+        loadFailed: 'Failed to load budget settings';
         noBudgets: 'No budgets configured';
+        notificationSettings: 'Notification settings';
         ok: 'On track';
         project: 'Project';
+        saveFailed: 'Failed to save budget settings';
         team: 'Team';
         tokenLimit: 'Token limit';
         tokenLimitDetail: '{{tokens}} of {{limit}}';
@@ -2693,6 +2696,27 @@ export default interface Resources {
         sending: 'Sending...';
         sent: 'Sent!';
         unknownError: 'Unknown error';
+      };
+      usageBudgets: {
+        critical: {
+          description: 'Create a notification when a configured usage budget reaches 100%.';
+          label: 'Notify at 100%';
+        };
+        enabled: {
+          description: 'Create notifications when Usage budgets cross configured thresholds.';
+          label: 'Enable budget notifications';
+        };
+        info: 'Usage budget checks run in the main process after snapshot refresh. API-equivalent cost is a shadow estimate, not a subscription bill.';
+        infoAriaLabel: 'Usage budget notification details';
+        nativeToast: {
+          description: 'Also show a native OS toast. In-app notifications are still created when this is off.';
+          label: 'Native OS toast';
+        };
+        title: 'Usage budgets';
+        warning: {
+          description: 'Create a notification when a configured usage budget reaches 80%.';
+          label: 'Notify at 80%';
+        };
       };
     };
     providerRuntime: {

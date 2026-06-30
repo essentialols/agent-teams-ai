@@ -23,6 +23,18 @@ export interface TokenUsageSnapshotRequest {
   to?: string;
 }
 
+export interface TokenUsageBudgetLimitDto {
+  monthlyTokenLimit?: number;
+  monthlyApiEquivalentCostLimitUsd?: number;
+}
+
+export interface TokenUsageBudgetSettingsDto {
+  global?: TokenUsageBudgetLimitDto;
+  teams?: Record<string, TokenUsageBudgetLimitDto>;
+  projects?: Record<string, TokenUsageBudgetLimitDto>;
+  updatedAt?: string;
+}
+
 export interface TokenUsageTokenBreakdownDto {
   inputTokens: number;
   outputTokens: number;

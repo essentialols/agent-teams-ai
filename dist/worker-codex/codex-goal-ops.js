@@ -77,7 +77,7 @@ export async function startCodexGoalTmux(input) {
     await execFileAsync(await resolveTmuxExecutable(), command.args);
     return command;
 }
-async function prepareCodexGoalLaunchPaths(input) {
+export async function prepareCodexGoalLaunchPaths(input) {
     const paths = [
         input.config.jobRootDir,
         input.logPath,

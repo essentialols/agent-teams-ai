@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -319,6 +319,74 @@ describe("codex goal MCP server", () => {
             outputFormat: "json",
           },
         });
+      } finally {
+        await execFileAsync("tmux", ["kill-session", "-t", tmuxSession]).catch(() => undefined);
+        await client.close();
+        await server.close();
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("creates missing jobRoot before doctoring a start request", async () => {
+    if (!(await hasTmux())) return;
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-start-missing-jobroot-"));
+    const registryRootDir = join(root, "registry");
+    const jobRootDir = join(root, "missing-job");
+    const authRootDir = join(root, "auth");
+    const workspacePath = join(root, "workspace");
+    const promptPath = join(root, "prompt.md");
+    const taskId = "sandbox-start-missing-jobroot";
+    const jobId = "job-start-missing-jobroot";
+    const tmuxSession = `subscription-runtime-start-missing-jobroot-${process.pid}-${Date.now()}`;
+
+    try {
+      await mkdir(workspacePath, { recursive: true });
+      await execFileAsync("git", ["init"], { cwd: workspacePath });
+      await writeFile(promptPath, "Return a tiny JSON status.\n");
+      await writeFakeAuth(authRootDir, "account-a", {
+        lastRefresh: "2026-06-03T00:00:00.000Z",
+      });
+
+      const server = createCodexGoalMcpServer();
+      const client = new Client({ name: "subscription-runtime-test", version: "0.0.0" });
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+      await Promise.all([
+        server.connect(serverTransport),
+        client.connect(clientTransport),
+      ]);
+
+      try {
+        const start = await callToolJson(client, "codex_goal_start", {
+          registryRootDir,
+          jobId,
+          jobRootDir,
+          authRootDir,
+          workspacePath,
+          promptPath,
+          taskId,
+          accounts: ["account-a"],
+          tmuxSession,
+          codexBinaryPath: "/bin/echo",
+          requireGitWorkspace: false,
+          confirmStart: true,
+          taskTimeoutMs: 1_000,
+          maxAccountCycles: 1,
+          outputFormat: "json",
+        });
+
+        if (!start.ok) {
+          throw new Error(JSON.stringify(start, null, 2));
+        }
+        expect(start).toMatchObject({
+          ok: true,
+          registryRootDir,
+          jobId,
+          taskId,
+          tmuxSession,
+        });
+        await access(jobRootDir);
       } finally {
         await execFileAsync("tmux", ["kill-session", "-t", tmuxSession]).catch(() => undefined);
         await client.close();

@@ -13,7 +13,7 @@ import { watchClaudeRuns, } from "@vioxen/subscription-runtime/worker-local";
 import { RunObservationService, InterruptAndContinueWorkerUseCase, WorkerControlService, decideRunObservation, reconcileRunPreview, } from "@vioxen/subscription-runtime/worker-core";
 import { codexGoalJobToArgs, createCodexGoalJob, defaultCodexGoalJobRoot, listCodexGoalJobs, readCodexGoalJob, resolveCodexGoalJobRegistryRoot, summarizeCodexGoalJob, updateCodexGoalJob, } from "./codex-goal-jobs.js";
 import { codexGoalAccountSlots, codexGoalProgressPath, } from "./codex-goal-runner.js";
-import { buildCodexGoalNoTmuxCommand, buildCodexGoalStopTmuxCommand, buildCodexGoalTmuxCommand, collectCodexGoalStatus, doctorCodexGoal, listCodexGoalAccountStatuses, shellQuote, startCodexGoalTmux, stopCodexGoalTmux, tailCodexGoalLog, } from "./codex-goal-ops.js";
+import { buildCodexGoalNoTmuxCommand, buildCodexGoalStopTmuxCommand, buildCodexGoalTmuxCommand, collectCodexGoalStatus, doctorCodexGoal, listCodexGoalAccountStatuses, prepareCodexGoalLaunchPaths, shellQuote, startCodexGoalTmux, stopCodexGoalTmux, tailCodexGoalLog, } from "./codex-goal-ops.js";
 import { CodexRunObservationAdapter } from "./codex-run-observation.js";
 const serverVersion = "0.1.0-main.2";
 const defaultAuthRoot = "~/.cache/subscription-runtime/live-codex-auth";
@@ -831,6 +831,9 @@ export function createCodexGoalMcpServer(options = {}) {
                 noTmuxCommand: buildCodexGoalNoTmuxCommand(launch),
             });
         }
+        if (args.confirmStart) {
+            await prepareCodexGoalLaunchPaths(launch);
+        }
         const statusBefore = await collectCodexGoalStatus(statusInput(launch));
         if (statusBefore.tmuxAlive) {
             return mcpJson({
@@ -1183,6 +1186,7 @@ async function continueStoredJob(args, options) {
         });
     }
     if (!args.skipDoctor) {
+        await prepareCodexGoalLaunchPaths(loaded.launch);
         const doctor = await doctorCodexGoal({
             config: loaded.launch.config,
             tmuxSession: loaded.launch.tmuxSession,

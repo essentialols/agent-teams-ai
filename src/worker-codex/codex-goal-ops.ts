@@ -196,7 +196,7 @@ export async function startCodexGoalTmux(
   return command;
 }
 
-async function prepareCodexGoalLaunchPaths(
+export async function prepareCodexGoalLaunchPaths(
   input: CodexGoalLaunchInput,
 ): Promise<void> {
   const paths = [

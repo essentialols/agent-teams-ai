@@ -62,6 +62,7 @@ import {
   collectCodexGoalStatus,
   doctorCodexGoal,
   listCodexGoalAccountStatuses,
+  prepareCodexGoalLaunchPaths,
   shellQuote,
   startCodexGoalTmux,
   stopCodexGoalTmux,
@@ -1249,6 +1250,9 @@ export function createCodexGoalMcpServer(
           noTmuxCommand: buildCodexGoalNoTmuxCommand(launch),
         });
       }
+      if ((args as StartMcpArgs).confirmStart) {
+        await prepareCodexGoalLaunchPaths(launch);
+      }
       const statusBefore = await collectCodexGoalStatus(statusInput(launch));
       if (statusBefore.tmuxAlive) {
         return mcpJson({
@@ -1702,6 +1706,7 @@ async function continueStoredJob(
     });
   }
   if (!args.skipDoctor) {
+    await prepareCodexGoalLaunchPaths(loaded.launch);
     const doctor = await doctorCodexGoal({
       config: loaded.launch.config,
       tmuxSession: loaded.launch.tmuxSession,

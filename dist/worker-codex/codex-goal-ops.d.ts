@@ -83,6 +83,7 @@ export type CodexGoalAccountStatusInput = {
 export declare function buildCodexGoalNoTmuxCommand(input: CodexGoalLaunchInput): string;
 export declare function buildCodexGoalTmuxCommand(input: CodexGoalLaunchInput): CodexGoalTmuxCommand;
 export declare function startCodexGoalTmux(input: CodexGoalLaunchInput): Promise<CodexGoalTmuxCommand>;
+export declare function prepareCodexGoalLaunchPaths(input: CodexGoalLaunchInput): Promise<void>;
 export declare function buildCodexGoalStopTmuxCommand(tmuxSession: string): CodexGoalTmuxCommand;
 export declare function stopCodexGoalTmux(tmuxSession: string): Promise<CodexGoalTmuxCommand>;
 export declare function collectCodexGoalStatus(input: CodexGoalStatusInput): Promise<CodexGoalStatus>;

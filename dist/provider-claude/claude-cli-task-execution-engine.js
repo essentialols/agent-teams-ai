@@ -86,32 +86,6 @@ export class ClaudeCliTaskExecutionEngine {
         });
     }
 }
-export class ClaudeRuntimeWithCliFallbackExecutionEngine {
-    input;
-    kind = "claude-runtime-bg-with-cli-fallback";
-    capabilities;
-    constructor(input) {
-        this.input = input;
-        this.capabilities = {
-            ...input.primary.capabilities,
-            supportsStreaming: false,
-        };
-    }
-    async run(input) {
-        try {
-            return await this.input.primary.run(input);
-        }
-        catch (error) {
-            if (!isMissingClaudeRuntimePeer(error))
-                throw error;
-            return this.input.fallback.run(input);
-        }
-    }
-    async dispose() {
-        await this.input.primary.dispose?.();
-        await this.input.fallback.dispose?.();
-    }
-}
 const defaultTimeoutMs = 30 * 60 * 1000;
 function mapPermissionMode(mode) {
     if (mode === "allow-edits")
@@ -147,7 +121,7 @@ function unsupportedWarnings(input) {
     if (input.maxTurns !== undefined) {
         warnings.push({
             code: "claude_cli_max_turns_unsupported",
-            safeMessage: "Claude CLI print fallback does not support maxTurns.",
+            safeMessage: "Claude CLI print engine does not support maxTurns.",
         });
     }
     return warnings;
@@ -183,11 +157,5 @@ function definedEnv(env) {
 }
 function preview(value) {
     return value.length <= 1000 ? value : `${value.slice(-1000)}`;
-}
-function isMissingClaudeRuntimePeer(error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return message.includes("claude-runtime") &&
-        (message.includes("Cannot find package") ||
-            message.includes("ERR_MODULE_NOT_FOUND"));
 }
 //# sourceMappingURL=claude-cli-task-execution-engine.js.map

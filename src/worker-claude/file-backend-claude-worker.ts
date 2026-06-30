@@ -18,9 +18,7 @@ import {
   assertProviderTaskSystemPrompt,
 } from "@vioxen/subscription-runtime/core";
 import {
-  ClaudeCliTaskExecutionEngine,
   ClaudeRuntimeTaskExecutionEngine,
-  ClaudeRuntimeWithCliFallbackExecutionEngine,
   ClaudeSessionDriver,
   ClaudeTaskAgentDriver,
   claudeRuntimeResumeSessionIdMetadataKey,
@@ -310,14 +308,7 @@ export class FileBackendClaudeWorker implements CapacityAwareSubscriptionWorker<
         : {}),
       stateFilePath: join(this.configDir, "subscription-runtime-state.json"),
     });
-    return new ClaudeRuntimeWithCliFallbackExecutionEngine({
-      primary,
-      fallback: new ClaudeCliTaskExecutionEngine({
-        ...(options.baseEnv ? { baseEnv: options.baseEnv } : {}),
-        ...(options.claudePath ? { claudePath: options.claudePath } : {}),
-        ...(options.taskTimeoutMs ? { timeoutMs: options.taskTimeoutMs } : {}),
-      }),
-    });
+    return primary;
   }
 
   get state(): SubscriptionWorkerState {

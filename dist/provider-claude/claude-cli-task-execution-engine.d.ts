@@ -20,21 +20,4 @@ export declare class ClaudeCliTaskExecutionEngine implements ClaudeTaskExecution
     private args;
     private env;
 }
-export declare class ClaudeRuntimeWithCliFallbackExecutionEngine implements ClaudeTaskExecutionEngine {
-    private readonly input;
-    readonly kind: "claude-runtime-bg-with-cli-fallback";
-    readonly capabilities: {
-        readonly supportsStreaming: false;
-        readonly supportsToolCalls: boolean;
-        readonly supportsUsage: boolean;
-        readonly supportsProviderRunId: boolean;
-        readonly supportsCleanup: boolean;
-    };
-    constructor(input: {
-        readonly primary: ClaudeTaskExecutionEngine;
-        readonly fallback: ClaudeTaskExecutionEngine;
-    });
-    run(input: ClaudeTaskEngineInput): Promise<ClaudeTaskExecutionResult>;
-    dispose(): Promise<void>;
-}
 //# sourceMappingURL=claude-cli-task-execution-engine.d.ts.map

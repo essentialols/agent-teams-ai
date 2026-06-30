@@ -16,7 +16,6 @@ import {
   ClaudeBgProviderDriver,
   ClaudeCliTaskExecutionEngine,
   ClaudeRuntimeTaskExecutionEngine,
-  ClaudeRuntimeWithCliFallbackExecutionEngine,
   ClaudeProviderFailureError,
   ClaudeSessionDriver,
   ClaudeTaskAgentDriver,
@@ -600,34 +599,6 @@ describe("Claude provider adapter", () => {
     ]);
   });
 
-  it("falls back to Claude CLI only when claude-runtime peer is missing", async () => {
-    const runner = new RecordingRunner({ stdout: "fallback output\n" });
-    const engine = new ClaudeRuntimeWithCliFallbackExecutionEngine({
-      primary: new RecordingClaudeEngine({
-        throwMessage:
-          "Cannot find package 'claude-runtime' imported from dist/provider-claude/claude-bg-runtime-context.js",
-      }),
-      fallback: new ClaudeCliTaskExecutionEngine({ claudePath: "claude" }),
-    });
-
-    const result = await engine.run({
-      abortSignal: new AbortController().signal,
-      model: "sonnet",
-      prompt: "review",
-      redactor: new DefaultRedactor(),
-      runner,
-      session: {
-        authMode: "oauth",
-        configDir: "/tmp/claude-config",
-        oauthToken: "claude-oauth-secret",
-      },
-      workspacePath: "/tmp/workspace",
-    });
-
-    expect(result.outputText).toBe("fallback output");
-    expect(runner.lastRun?.command).toBe("claude");
-  });
-
   it("rejects write-capable allowed tools when Claude permission mode is read-only", async () => {
     const engine = new ClaudeRuntimeTaskExecutionEngine({
       runtimeModuleLoader: async () => fakeRuntimeModule,
@@ -815,7 +786,7 @@ describe("Claude provider adapter", () => {
     });
     expect(fakeProvider.constructorOptions.fs).toBeDefined();
     expect(fakeProvider.constructorOptions.runner).toBeDefined();
-    expect(fakeProvider.constructorOptions.redactor).toBeDefined();
+    expect(Object.hasOwn(fakeProvider.constructorOptions, "redactor")).toBe(false);
   });
 
   it("streams claude-runtime BG events as provider-neutral task events", async () => {
@@ -1173,12 +1144,6 @@ function fakeProviderModule(provider: FakeClaudeRuntimeProvider) {
       remove() {
         return provider.remove();
       }
-    },
-    NodeProcessRunner: class {
-      constructor(readonly options?: Record<string, unknown>) {}
-    },
-    SecretRedactor: class {
-      constructor(readonly options?: { readonly secrets?: readonly string[] }) {}
     },
   };
 }

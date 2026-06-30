@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { createSubscriptionRuntime, DefaultRedactor, DeterministicIdGenerator, assertProviderTaskSystemPrompt, } from "@vioxen/subscription-runtime/core";
-import { ClaudeCliTaskExecutionEngine, ClaudeRuntimeTaskExecutionEngine, ClaudeRuntimeWithCliFallbackExecutionEngine, ClaudeSessionDriver, ClaudeTaskAgentDriver, claudeRuntimeResumeSessionIdMetadataKey, claudeRuntimeThreadIdMetadataKey, sessionArtifactFromClaudeOAuth, validateClaudeSessionArtifact, } from "@vioxen/subscription-runtime/provider-claude";
+import { ClaudeRuntimeTaskExecutionEngine, ClaudeSessionDriver, ClaudeTaskAgentDriver, claudeRuntimeResumeSessionIdMetadataKey, claudeRuntimeThreadIdMetadataKey, sessionArtifactFromClaudeOAuth, validateClaudeSessionArtifact, } from "@vioxen/subscription-runtime/provider-claude";
 import { createLocalFileBackendRuntimeAdapters, LocalFileWorkerControlInboxStore, } from "@vioxen/subscription-runtime/store-local-file";
 import { SubscriptionWorkerError, WorkerControlService, } from "@vioxen/subscription-runtime/worker-core";
 import { NodeProcessRunner } from "../worker-local/node-process-runner.js";
@@ -162,14 +162,7 @@ export class FileBackendClaudeWorker {
                 : {}),
             stateFilePath: join(this.configDir, "subscription-runtime-state.json"),
         });
-        return new ClaudeRuntimeWithCliFallbackExecutionEngine({
-            primary,
-            fallback: new ClaudeCliTaskExecutionEngine({
-                ...(options.baseEnv ? { baseEnv: options.baseEnv } : {}),
-                ...(options.claudePath ? { claudePath: options.claudePath } : {}),
-                ...(options.taskTimeoutMs ? { timeoutMs: options.taskTimeoutMs } : {}),
-            }),
-        });
+        return primary;
     }
     get state() {
         return this.workerState;

@@ -329,7 +329,7 @@ function fixedWorkspace(path) {
 
 function createEngine(provider, input) {
   const runtimeModules = localRuntimeModules();
-  const primary = new provider.ClaudeRuntimeTaskExecutionEngine({
+  return new provider.ClaudeRuntimeTaskExecutionEngine({
     claudePath: input.claudePath,
     baseEnv: {
       CI: "1",
@@ -345,18 +345,6 @@ function createEngine(provider, input) {
           providerModuleLoader: async () => import(runtimeModules.provider),
         }
       : {}),
-  });
-  if (input.requireRuntime) return primary;
-  return new provider.ClaudeRuntimeWithCliFallbackExecutionEngine({
-    primary,
-    fallback: new provider.ClaudeCliTaskExecutionEngine({
-      claudePath: input.claudePath,
-      baseEnv: {
-        CI: "1",
-        PATH: process.env.PATH,
-      },
-      timeoutMs: Number(process.env.CLAUDE_COMMAND_TIMEOUT_MS ?? 180_000),
-    }),
   });
 }
 

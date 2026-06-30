@@ -622,13 +622,14 @@ Recommended agent loop:
 
    ```bash
    export CLAUDE_CODE_OAUTH_TOKEN=...
+   export CLAUDE_RUNTIME_DIST_DIR=/path/to/test-claude-runtime/dist
    CLAUDE_WORKER_SMOKE_MODE=single npm run smoke:worker-claude
    ```
 
-   `single` mode falls back to `claude -p` when the optional
-   `claude-runtime` peer is not installed. Set
-   `CLAUDE_RUNTIME_DIST_DIR=/path/to/test-claude-runtime/dist` only when you
-   specifically need to prove the background runtime or thread handoff path.
+   Claude worker smoke uses `claude-runtime` as the required Claude Code
+   execution path. It does not fall back to `claude -p`. Set
+   `CLAUDE_RUNTIME_DIST_DIR=/path/to/test-claude-runtime/dist` when testing
+   against a local source checkout that is not installed as a package.
 
    The single-worker smoke now verifies both the real Claude worker result and
    the durable watch artifacts: `progress`, `result`, log tail and

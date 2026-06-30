@@ -109,39 +109,6 @@ export class ClaudeCliTaskExecutionEngine implements ClaudeTaskExecutionEngine {
   }
 }
 
-export class ClaudeRuntimeWithCliFallbackExecutionEngine
-  implements ClaudeTaskExecutionEngine
-{
-  readonly kind = "claude-runtime-bg-with-cli-fallback" as const;
-  readonly capabilities;
-
-  constructor(
-    private readonly input: {
-      readonly primary: ClaudeTaskExecutionEngine;
-      readonly fallback: ClaudeTaskExecutionEngine;
-    },
-  ) {
-    this.capabilities = {
-      ...input.primary.capabilities,
-      supportsStreaming: false,
-    } as const;
-  }
-
-  async run(input: ClaudeTaskEngineInput): Promise<ClaudeTaskExecutionResult> {
-    try {
-      return await this.input.primary.run(input);
-    } catch (error) {
-      if (!isMissingClaudeRuntimePeer(error)) throw error;
-      return this.input.fallback.run(input);
-    }
-  }
-
-  async dispose(): Promise<void> {
-    await this.input.primary.dispose?.();
-    await this.input.fallback.dispose?.();
-  }
-}
-
 const defaultTimeoutMs = 30 * 60 * 1000;
 
 function mapPermissionMode(
@@ -184,7 +151,7 @@ function unsupportedWarnings(input: ClaudeTaskEngineInput): RuntimeWarning[] {
   if (input.maxTurns !== undefined) {
     warnings.push({
       code: "claude_cli_max_turns_unsupported",
-      safeMessage: "Claude CLI print fallback does not support maxTurns.",
+      safeMessage: "Claude CLI print engine does not support maxTurns.",
     });
   }
   return warnings;
@@ -238,11 +205,4 @@ function definedEnv(
 
 function preview(value: string): string {
   return value.length <= 1000 ? value : `${value.slice(-1000)}`;
-}
-
-function isMissingClaudeRuntimePeer(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.includes("claude-runtime") &&
-    (message.includes("Cannot find package") ||
-      message.includes("ERR_MODULE_NOT_FOUND"));
 }

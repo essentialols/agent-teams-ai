@@ -1,6 +1,8 @@
 export * from "./errors.js";
 export * from "./types.js";
 export * from "./account-capacity.js";
+export * from "./host-command.js";
+export * from "./job-watch.js";
 export * from "./safe-execution.js";
 export * from "./worker-pool.js";
 //# sourceMappingURL=index.js.map

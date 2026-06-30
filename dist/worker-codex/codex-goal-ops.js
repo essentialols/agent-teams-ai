@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { DefaultRedactor } from "@vioxen/subscription-runtime/core";
 import { readCodexAuthJsonFreshness, validateCodexAuthJsonBytes, } from "@vioxen/subscription-runtime/provider-codex";
+import { hostExecutableNotFoundMessage, resolveHostExecutable, } from "@vioxen/subscription-runtime/worker-core";
 import { LocalFileWorkerAccountCapacityStore } from "@vioxen/subscription-runtime/store-local-file";
 import { codexGoalProgressPath, } from "./codex-goal-runner.js";
 const execFileAsync = promisify(execFile);
@@ -71,7 +72,7 @@ export function buildCodexGoalTmuxCommand(input) {
 }
 export async function startCodexGoalTmux(input) {
     const command = buildCodexGoalTmuxCommand(input);
-    await execFileAsync("tmux", command.args);
+    await execFileAsync(await resolveTmuxExecutable(), command.args);
     return command;
 }
 export function buildCodexGoalStopTmuxCommand(tmuxSession) {
@@ -86,7 +87,7 @@ export function buildCodexGoalStopTmuxCommand(tmuxSession) {
 }
 export async function stopCodexGoalTmux(tmuxSession) {
     const command = buildCodexGoalStopTmuxCommand(tmuxSession);
-    await execFileAsync("tmux", command.args);
+    await execFileAsync(await resolveTmuxExecutable(), command.args);
     return command;
 }
 export async function collectCodexGoalStatus(input) {
@@ -100,9 +101,12 @@ export async function collectCodexGoalStatus(input) {
         : {};
     let tmuxAlive;
     if (input.tmuxSession) {
-        tmuxAlive = await tmuxSessionAlive(input.tmuxSession);
+        const tmux = await inspectTmuxSession(input.tmuxSession);
+        tmuxAlive = tmux.alive;
         if (!tmuxAlive)
             warnings.push("tmux session is not alive");
+        if (tmux.warning)
+            warnings.push(tmux.warning);
     }
     const workspace = input.workspacePath
         ? await gitWorkspaceStatus(input.workspacePath)
@@ -492,7 +496,15 @@ async function checkGitWorkspace(path) {
     }
 }
 async function checkTmuxSessionAvailable(session) {
-    const alive = await tmuxSessionAlive(session);
+    const tmux = await inspectTmuxSession(session);
+    if (tmux.warning) {
+        return {
+            name: "tmuxSession",
+            ok: false,
+            message: tmux.warning,
+        };
+    }
+    const alive = tmux.alive;
     return {
         name: "tmuxSession",
         ok: !alive,
@@ -501,13 +513,43 @@ async function checkTmuxSessionAvailable(session) {
             : `${session} is available`,
     };
 }
-async function tmuxSessionAlive(session) {
+async function resolveTmuxExecutable() {
+    const resolution = await resolveTmux();
+    if (!resolution.found) {
+        throw new Error(hostExecutableNotFoundMessage(resolution));
+    }
+    return resolution.executable;
+}
+async function resolveTmux() {
+    return resolveHostExecutable({
+        name: "tmux",
+        envNames: [
+            "SUBSCRIPTION_RUNTIME_TMUX_PATH",
+            "TMUX_PATH",
+            "TMUX_BIN",
+        ],
+        additionalCandidates: [
+            "/opt/homebrew/bin/tmux",
+            "/usr/local/bin/tmux",
+            "/usr/bin/tmux",
+            "/bin/tmux",
+        ],
+    });
+}
+async function inspectTmuxSession(session) {
+    const resolution = await resolveTmux();
+    if (!resolution.found) {
+        return {
+            alive: false,
+            warning: hostExecutableNotFoundMessage(resolution),
+        };
+    }
     try {
-        await execFileAsync("tmux", ["has-session", "-t", session]);
-        return true;
+        await execFileAsync(resolution.executable, ["has-session", "-t", session]);
+        return { alive: true };
     }
     catch {
-        return false;
+        return { alive: false };
     }
 }
 async function fileExists(path) {

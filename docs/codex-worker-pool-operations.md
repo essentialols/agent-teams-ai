@@ -113,6 +113,14 @@ Escape hatches remain available:
 - manual runner: keep using a custom `run-goal.mjs` when a host app needs full
   control.
 
+`codex_goal_start`, `codex_goal_continue`, `codex_goal_stop` and direct CLI
+`--tmux-session` launches resolve tmux through `SUBSCRIPTION_RUNTIME_TMUX_PATH`,
+`TMUX_PATH`, `TMUX_BIN`, `PATH`, then common Homebrew and system paths. This
+keeps native MCP usable in desktop hosts that provide a minimal `PATH`. Inside
+the tmux pane, the runner command intentionally uses `run --no-tmux`; that
+means the detached process is already inside tmux and should not create a nested
+session.
+
 Useful operator commands:
 
 ```sh
@@ -335,6 +343,10 @@ Job registry tools:
 - `codex_goal_overview`: summarize all stored jobs in a registry with compact
   status, account availability, stale/silent-stale flags and ready-to-call
   next-action commands.
+- `codex_goal_watch`: run one generic reconciliation pass over stored jobs.
+  It is dry-run by default. With `continueSafeJobs: true`, it continues only
+  stopped jobs whose adapter reports `safeToContinue`, blocks same-workspace
+  writer conflicts, and respects `maxContinuesPerRun`.
 - `codex_goal_status_by_id`: inspect a job by `jobId`.
 - `codex_goal_brief`: compact operator summary with stale/progress/account
   hints, recent commands and the next safe job-level command.
@@ -471,7 +483,10 @@ occasional overrides.
 
 Recommended agent loop:
 
-1. Call `codex_goal_overview` for multiple jobs or unknown state. Call
+1. Call `codex_goal_overview` for multiple jobs or unknown state. Use
+   `codex_goal_watch` when a registrar wants a one-shot pool reconciliation;
+   keep it dry-run unless the run is explicitly allowed to continue safe jobs.
+   Call
    `codex_goal_brief` when a specific `jobId` needs monitoring.
    If `overview.safeToOperate` is false, resolve `overview.workspaceConflicts`
    before starting or continuing any writer.

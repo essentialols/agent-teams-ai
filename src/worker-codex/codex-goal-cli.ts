@@ -1,11 +1,9 @@
 #!/usr/bin/env node
-import { execFile } from "node:child_process";
-import { access, readFile, realpath, stat } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { execPath } from "node:process";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import {
   codexGoalAccountSlots,
   runCodexGoal,
@@ -16,6 +14,7 @@ import {
   buildCodexGoalTmuxCommand,
   collectCodexGoalStatus,
   doctorCodexGoal,
+  startCodexGoalTmux,
   tailCodexGoalLog,
 } from "./codex-goal-ops";
 import {
@@ -27,8 +26,6 @@ import {
   listCodexGoalMcpTools,
   readCodexGoalMcpResource,
 } from "./codex-goal-mcp-client";
-
-const execFileAsync = promisify(execFile);
 
 type OutputFormat = "text" | "json";
 type CodexGoalCliCommand =
@@ -208,7 +205,7 @@ export async function runCodexGoalCli(
         io.writeStdout(`${tmuxCommand.preview}\n`);
         return 0;
       }
-      await execFileAsync("tmux", tmuxCommand.args);
+      await startCodexGoalTmux(cliLaunchInput(command));
       io.writeStdout(
         `started ${command.tmuxSession} for ${command.config.taskId}\n`,
       );
@@ -835,90 +832,6 @@ async function doctor(command: DoctorCommand): Promise<{
   readonly checks: readonly { readonly name: string; readonly ok: boolean; readonly message: string }[];
 }> {
   return doctorCodexGoal(command);
-}
-
-async function checkFile(name: string, path: string): Promise<{
-  readonly name: string;
-  readonly ok: boolean;
-  readonly message: string;
-}> {
-  try {
-    const item = await stat(path);
-    return {
-      name,
-      ok: item.isFile(),
-      message: item.isFile() ? path : `${path} is not a file`,
-    };
-  } catch {
-    return { name, ok: false, message: `${path} is missing` };
-  }
-}
-
-async function checkDirectory(name: string, path: string): Promise<{
-  readonly name: string;
-  readonly ok: boolean;
-  readonly message: string;
-}> {
-  try {
-    const item = await stat(path);
-    return {
-      name,
-      ok: item.isDirectory(),
-      message: item.isDirectory() ? path : `${path} is not a directory`,
-    };
-  } catch {
-    return { name, ok: false, message: `${path} is missing` };
-  }
-}
-
-async function checkGitWorkspace(path: string): Promise<{
-  readonly name: string;
-  readonly ok: boolean;
-  readonly message: string;
-}> {
-  try {
-    await execFileAsync("git", ["-C", path, "rev-parse", "--is-inside-work-tree"]);
-    return { name: "workspace", ok: true, message: path };
-  } catch {
-    return { name: "workspace", ok: false, message: `${path} is not a git worktree` };
-  }
-}
-
-async function gitWorkspaceDirty(path: string): Promise<boolean> {
-  try {
-    const { stdout } = await execFileAsync("git", ["-C", path, "status", "--porcelain"]);
-    return stdout.trim().length > 0;
-  } catch {
-    return false;
-  }
-}
-
-async function tmuxSessionAlive(session: string): Promise<boolean> {
-  try {
-    await execFileAsync("tmux", ["has-session", "-t", session]);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function fileExists(path: string): Promise<boolean> {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function readResultStatus(path: string): Promise<string | undefined> {
-  try {
-    const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
-    if (isRecord(parsed) && typeof parsed.status === "string") return parsed.status;
-    return undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 async function tailFile(path: string, lines: number): Promise<string> {

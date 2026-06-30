@@ -144,6 +144,7 @@ describe("codex goal cli", () => {
     expect(output.tools).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ name: "codex_goal_brief" }),
+        expect.objectContaining({ name: "codex_goal_watch" }),
         expect.objectContaining({ name: "codex_goal_decision" }),
         expect.objectContaining({ name: "codex_goal_overview" }),
         expect.objectContaining({ name: "codex_goal_accounts_status" }),

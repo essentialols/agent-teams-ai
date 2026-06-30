@@ -8,6 +8,7 @@ import { McpServer, ResourceTemplate, } from "@modelcontextprotocol/sdk/server/m
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { DefaultRedactor } from "@vioxen/subscription-runtime/core";
+import { reconcileWatchableJobs, } from "@vioxen/subscription-runtime/worker-core";
 import { codexGoalJobToArgs, createCodexGoalJob, defaultCodexGoalJobRoot, listCodexGoalJobs, readCodexGoalJob, resolveCodexGoalJobRegistryRoot, summarizeCodexGoalJob, updateCodexGoalJob, } from "./codex-goal-jobs.js";
 import { codexGoalAccountSlots, codexGoalProgressPath, } from "./codex-goal-runner.js";
 import { buildCodexGoalNoTmuxCommand, buildCodexGoalStopTmuxCommand, buildCodexGoalTmuxCommand, collectCodexGoalStatus, doctorCodexGoal, listCodexGoalAccountStatuses, shellQuote, startCodexGoalTmux, stopCodexGoalTmux, tailCodexGoalLog, } from "./codex-goal-ops.js";
@@ -92,6 +93,22 @@ export function createCodexGoalMcpServer() {
     }, async (args) => withMcpErrors(async () => {
         const overview = await buildCodexGoalOverview(args);
         return mcpJson(overview);
+    }));
+    server.registerTool("codex_goal_watch", {
+        title: "Watch Codex Goal Jobs",
+        description: "Run one safe reconciliation pass over stored jobs. Dry-run by default; continues only when continueSafeJobs is true and each job is safe.",
+        inputSchema: {
+            ...jobRegistryInputSchema(),
+            staleAfterMs: z.number().int().positive().optional(),
+            tailLines: z.number().int().positive().optional(),
+            jobIds: z.union([z.string(), z.array(z.string())]).optional(),
+            continueSafeJobs: z.boolean().optional(),
+            maxContinuesPerRun: z.number().int().positive().optional(),
+            skipDoctor: z.boolean().optional(),
+        },
+    }, async (args) => withMcpErrors(async () => {
+        const watch = await watchCodexGoalJobs(args);
+        return mcpJson(watch);
     }));
     server.registerTool("codex_goal_get_job", {
         title: "Get Codex Goal Job",
@@ -1048,6 +1065,87 @@ async function buildCodexGoalOverview(args) {
         },
         workspaceConflicts,
         jobs,
+    };
+}
+async function watchCodexGoalJobs(args) {
+    const registryRootDir = registryRootFromArgs(args);
+    const staleAfterMs = numberValue(args.staleAfterMs) ?? 10 * 60_000;
+    const tailLines = numberValue(args.tailLines) ?? 5;
+    const explicitJobIds = jobIdsFromValue(args.jobIds);
+    const result = await reconcileWatchableJobs({
+        ...(explicitJobIds.length ? { jobIds: explicitJobIds } : {}),
+        policy: {
+            continueSafeJobs: booleanValue(args.continueSafeJobs) === true,
+            maxContinuesPerRun: numberValue(args.maxContinuesPerRun) ?? 1,
+        },
+        backend: {
+            async listJobIds() {
+                return (await listCodexGoalJobs({ registryRootDir }))
+                    .map((summary) => summary.jobId);
+            },
+            async inspectJob(jobId) {
+                const item = await buildCodexGoalOverviewItem({
+                    registryRootDir,
+                    jobId,
+                    staleAfterMs,
+                    tailLines,
+                });
+                return codexOverviewItemToWatchStatus(item);
+            },
+            async continueJob(jobId) {
+                const response = await continueStoredJob({
+                    registryRootDir,
+                    jobId,
+                    confirmContinue: true,
+                    ...(booleanValue(args.skipDoctor) === true ? { skipDoctor: true } : {}),
+                }, {
+                    confirmKey: "confirmContinue",
+                    mode: "continue",
+                });
+                const summary = response.structuredContent;
+                return {
+                    ok: summary.ok === true,
+                    ...(typeof summary.reason === "string" ? { reason: summary.reason } : {}),
+                    summary,
+                };
+            },
+        },
+    });
+    return {
+        ok: true,
+        safeToOperate: result.ok,
+        registryRootDir,
+        mode: booleanValue(args.continueSafeJobs) === true
+            ? "continue_safe_jobs"
+            : "dry_run",
+        checked: result.checked,
+        continued: result.continued,
+        decisions: result.decisions,
+    };
+}
+async function codexOverviewItemToWatchStatus(item) {
+    const jobId = stringValue(item.jobId) ?? "unknown";
+    const workspacePath = stringValue(item.workspacePath);
+    const recommendedAction = stringValue(item.recommendedAction);
+    const nextBestTool = stringValue(item.nextBestTool);
+    const requiresManualReview = nextBestTool === "manual_review" ||
+        recommendedAction === "inspect_dirty_workspace" ||
+        recommendedAction === "inspect_dirty_failure" ||
+        recommendedAction === "inspect_failure" ||
+        recommendedAction === "check_log_or_result";
+    return {
+        jobId,
+        workerAlive: item.workerAlive === true,
+        safeToContinue: item.safeToContinue === true,
+        ...(workspacePath ? { workspaceKey: await workspaceConflictKey(workspacePath) } : {}),
+        ...(item.workspaceDirty === undefined
+            ? {}
+            : { workspaceDirty: item.workspaceDirty === true }),
+        ...(requiresManualReview ? { requiresManualReview: true } : {}),
+        ...(requiresManualReview
+            ? { manualReviewReason: nextBestTool ?? recommendedAction ?? "manual_review" }
+            : {}),
+        summary: item,
     };
 }
 async function buildCodexGoalWorkspaceConflicts(jobs) {
@@ -2298,6 +2396,9 @@ function accountNames(value) {
         return value.split(",").map((item) => item.trim()).filter(Boolean);
     }
     return [];
+}
+function jobIdsFromValue(value) {
+    return accountNames(value);
 }
 function requiredString(value, name, cwd) {
     return resolvePath(cwd, requiredRawString(value, name));

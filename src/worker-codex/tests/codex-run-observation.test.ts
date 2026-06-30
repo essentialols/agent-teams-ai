@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -129,9 +129,126 @@ describe("CodexRunObservationAdapter", () => {
       await rm(fixture.root, { recursive: true, force: true });
     }
   });
+
+  it("requires manual review when a tmux-backed run is dead without a result", async () => {
+    const fixture = await createObservationFixture({
+      tmuxSession: `missing-session-${process.pid}-${Date.now()}`,
+    });
+
+    try {
+      const snapshot = await new RunObservationService(new CodexRunObservationAdapter({
+        registryRootDir: fixture.registryRootDir,
+      })).observeRun({ runId: "job-a" });
+
+      expect(snapshot).toMatchObject({
+        status: "stopped",
+        liveness: "dead",
+        result: {
+          exists: false,
+        },
+        readOnlyDecision: {
+          kind: "manual_review_required",
+          reason: "stopped_without_terminal_result",
+        },
+      });
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("surfaces invalid progress and missing workspace warnings read-only", async () => {
+    const fixture = await createObservationFixture();
+
+    try {
+      await writeFile(fixture.manifest.progressPath!, "{not-json\n");
+      await rm(fixture.manifest.workspacePath, { recursive: true, force: true });
+
+      const snapshot = await new RunObservationService(new CodexRunObservationAdapter({
+        registryRootDir: fixture.registryRootDir,
+      })).observeRun({ runId: "job-a" });
+
+      expect(snapshot.progress).toMatchObject({
+        staleAfterMs: 600_000,
+        stale: false,
+        silentStale: false,
+      });
+      expect(snapshot.warnings.map((warning) => warning.code)).toContain(
+        "codex_status_warning",
+      );
+      expect(snapshot.warnings.map((warning) => warning.message).join("\n"))
+        .toContain("progress file is unreadable");
+      expect(snapshot.warnings.map((warning) => warning.message).join("\n"))
+        .toContain("is not a readable git worktree");
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("surfaces stale stdout while a sandbox tmux worker is alive", async () => {
+    if (!(await hasTmux())) return;
+    const tmuxSession = `subscription-runtime-watch-${process.pid}-${Date.now()}`;
+    const fixture = await createObservationFixture({ tmuxSession });
+
+    try {
+      await execFileAsync("tmux", [
+        "new-session",
+        "-d",
+        "-s",
+        tmuxSession,
+        "-c",
+        fixture.root,
+        "sleep 300",
+      ]);
+      await writeFile(fixture.manifest.logPath!, "old output\n");
+      const staleTime = new Date(Date.now() - 120_000);
+      await utimes(fixture.manifest.logPath!, staleTime, staleTime);
+      await writeFile(fixture.manifest.progressPath!, `${JSON.stringify({
+        schemaVersion: 1,
+        taskId: fixture.manifest.taskId,
+        status: "running",
+        updatedAt: new Date().toISOString(),
+        pid: process.pid,
+      })}\n`);
+
+      const snapshot = await new RunObservationService(new CodexRunObservationAdapter({
+        registryRootDir: fixture.registryRootDir,
+        staleAfterMs: 1_000,
+      })).observeRun({
+        runId: "job-a",
+        includeLogTail: true,
+        tailLines: 5,
+      });
+
+      expect(snapshot).toMatchObject({
+        status: "running",
+        liveness: "stale",
+        progress: {
+          status: "running",
+          stale: false,
+          silentStale: true,
+        },
+        logs: {
+          staleAfterMs: 1_000,
+          stale: true,
+        },
+        readOnlyDecision: {
+          kind: "stale_needs_inspection",
+        },
+      });
+      expect(snapshot.warnings.map((warning) => warning.code)).toContain(
+        "log_stale_while_worker_alive",
+      );
+    } finally {
+      await execFileAsync("tmux", ["kill-session", "-t", tmuxSession])
+        .catch(() => undefined);
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
 });
 
-async function createObservationFixture(): Promise<{
+async function createObservationFixture(options: {
+  readonly tmuxSession?: string;
+} = {}): Promise<{
   readonly root: string;
   readonly registryRootDir: string;
   readonly manifest: CodexGoalJobManifestInput;
@@ -181,6 +298,7 @@ async function createObservationFixture(): Promise<{
     logPath: join(jobRootDir, "task-a.log"),
     cwd: root,
     requireGitWorkspace: true,
+    ...(options.tmuxSession ? { tmuxSession: options.tmuxSession } : {}),
   };
   await createCodexGoalJob({
     registryRootDir,
@@ -188,6 +306,15 @@ async function createObservationFixture(): Promise<{
     now: new Date("2026-06-30T00:00:00.000Z"),
   });
   return { root, registryRootDir, manifest };
+}
+
+async function hasTmux(): Promise<boolean> {
+  try {
+    await execFileAsync("tmux", ["-V"]);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function fakeJwt(claims: Readonly<Record<string, unknown>>): string {

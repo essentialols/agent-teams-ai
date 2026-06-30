@@ -52,6 +52,9 @@ export function decideRunObservation(input) {
     if (input.status === "completed") {
         return decision("review_completed", "terminal_result_completed", "The run appears completed. Review outputs, logs and workspace before merging or marking reviewed.", ["result.status"]);
     }
+    if (input.status === "stopped") {
+        return decision("manual_review_required", "stopped_without_terminal_result", "The run is stopped without a completed or failed terminal result. Inspect result, logs and workspace before any recovery.", ["status", "result.exists", "process.liveness"]);
+    }
     if (input.status === "failed" || input.status === "unknown") {
         return decision("manual_review_required", input.result?.reason ?? "non_running_or_unknown_failure", "The run is failed or unknown. Inspect result, logs and workspace before any recovery.", ["result.reason", "status"]);
     }

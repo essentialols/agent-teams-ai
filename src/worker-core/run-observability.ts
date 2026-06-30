@@ -69,6 +69,9 @@ export type RunLogExcerpt = {
   readonly path?: string;
   readonly exists?: boolean;
   readonly updatedAt?: string;
+  readonly updatedAgeMs?: number;
+  readonly staleAfterMs?: number;
+  readonly stale?: boolean;
   readonly byteLength?: number;
   readonly tailLines?: number;
   readonly tail?: string;
@@ -252,6 +255,14 @@ export function decideRunObservation(input: {
       "terminal_result_completed",
       "The run appears completed. Review outputs, logs and workspace before merging or marking reviewed.",
       ["result.status"],
+    );
+  }
+  if (input.status === "stopped") {
+    return decision(
+      "manual_review_required",
+      "stopped_without_terminal_result",
+      "The run is stopped without a completed or failed terminal result. Inspect result, logs and workspace before any recovery.",
+      ["status", "result.exists", "process.liveness"],
     );
   }
   if (input.status === "failed" || input.status === "unknown") {

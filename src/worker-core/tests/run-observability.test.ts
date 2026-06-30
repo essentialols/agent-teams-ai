@@ -110,6 +110,17 @@ describe("decideRunObservation", () => {
       kind: "capacity_blocked",
     });
   });
+
+  it("requires review for stopped runs without a terminal result", () => {
+    expect(decideRunObservation({
+      status: "stopped",
+      liveness: "dead",
+      result: { exists: false },
+    })).toMatchObject({
+      kind: "manual_review_required",
+      reason: "stopped_without_terminal_result",
+    });
+  });
 });
 
 function snapshot(input: {

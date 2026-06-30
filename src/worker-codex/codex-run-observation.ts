@@ -91,14 +91,37 @@ export class CodexRunObservationAdapter implements RunObservationPort {
       message,
       severity: "warning",
     }));
+    const logUpdatedAgeMs = isoAgeMs(status.logUpdatedAt);
+    const logStale = logUpdatedAgeMs !== undefined &&
+      logUpdatedAgeMs > this.staleAfterMs;
     const logs = await this.logExcerpt({
       status,
       request,
       warnings,
+      logUpdatedAgeMs,
+      logStale,
     });
     const progressStale = status.progressHeartbeatAgeMs !== undefined &&
       status.progressHeartbeatAgeMs > this.staleAfterMs;
-    const silentStale = Boolean(status.tmuxAlive && progressStale);
+    const silentStale = Boolean(status.tmuxAlive && (progressStale || logStale));
+    if (status.tmuxAlive && logStale) {
+      warnings.push({
+        code: "log_stale_while_worker_alive",
+        message: "worker appears alive but the log has not changed recently",
+        severity: "warning",
+      });
+    }
+    if (
+      (status.progressHeartbeatAgeMs !== undefined &&
+        status.progressHeartbeatAgeMs < -5_000) ||
+      (logUpdatedAgeMs !== undefined && logUpdatedAgeMs < -5_000)
+    ) {
+      warnings.push({
+        code: "clock_skew",
+        message: "observed progress or log timestamp is in the future",
+        severity: "warning",
+      });
+    }
     const liveness = codexLiveness({
       status,
       silentStale,
@@ -227,6 +250,8 @@ export class CodexRunObservationAdapter implements RunObservationPort {
     readonly status: CodexGoalStatus;
     readonly request: RunObservationRequest;
     readonly warnings: RunObservationWarning[];
+    readonly logUpdatedAgeMs?: number | undefined;
+    readonly logStale: boolean;
   }): Promise<RunLogExcerpt> {
     const log: RunLogExcerpt = {
       ...(input.status.logPath === undefined ? {} : { path: input.status.logPath }),
@@ -236,6 +261,11 @@ export class CodexRunObservationAdapter implements RunObservationPort {
       ...(input.status.logUpdatedAt === undefined
         ? {}
         : { updatedAt: input.status.logUpdatedAt }),
+      ...(input.logUpdatedAgeMs === undefined
+        ? {}
+        : { updatedAgeMs: input.logUpdatedAgeMs }),
+      staleAfterMs: this.staleAfterMs,
+      stale: input.logStale,
       ...(input.status.logByteLength === undefined
         ? {}
         : { byteLength: input.status.logByteLength }),
@@ -382,4 +412,10 @@ function resolvePath(cwd: string, value: string): string {
     ? join(homedir(), value.slice(2))
     : value;
   return isAbsolute(expanded) ? expanded : resolve(cwd, expanded);
+}
+
+function isoAgeMs(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const time = Date.parse(value);
+  return Number.isFinite(time) ? Date.now() - time : undefined;
 }

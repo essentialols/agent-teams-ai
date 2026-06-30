@@ -46,6 +46,9 @@ export type RunLogExcerpt = {
     readonly path?: string;
     readonly exists?: boolean;
     readonly updatedAt?: string;
+    readonly updatedAgeMs?: number;
+    readonly staleAfterMs?: number;
+    readonly stale?: boolean;
     readonly byteLength?: number;
     readonly tailLines?: number;
     readonly tail?: string;

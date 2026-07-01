@@ -3,7 +3,11 @@ import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import type { CodexGoalRunConfig } from "./codex-goal-runner";
 import type { CodexGoalOutputFormat } from "./codex-goal-ops";
-import { optionalCodexGoalPermissionMode } from "./codex-goal-permission-mode";
+import {
+  assertCodexGoalProviderSandboxModeAllowed,
+  optionalCodexGoalEditMode,
+  optionalCodexGoalProviderSandboxMode,
+} from "./codex-goal-control-modes";
 
 export const codexGoalJobManifestSchemaVersion = 1;
 
@@ -32,7 +36,8 @@ export type CodexGoalJobManifest = {
   readonly taskTimeoutMs?: number;
   readonly staleLockMs?: number;
   readonly maxAccountCycles?: number;
-  readonly permissionMode?: CodexGoalRunConfig["permissionMode"];
+  readonly editMode?: CodexGoalRunConfig["editMode"];
+  readonly providerSandboxMode?: CodexGoalRunConfig["providerSandboxMode"];
   readonly allowDuplicateAccountIdentities?: boolean;
   readonly requireGitWorkspace?: boolean;
   readonly prewarmOnStart?: boolean;
@@ -220,7 +225,8 @@ export function codexGoalJobToArgs(
     taskTimeoutMs: manifest.taskTimeoutMs,
     staleLockMs: manifest.staleLockMs,
     maxAccountCycles: manifest.maxAccountCycles,
-    permissionMode: manifest.permissionMode,
+    editMode: manifest.editMode,
+    providerSandboxMode: manifest.providerSandboxMode,
     allowDuplicateAccountIdentities: manifest.allowDuplicateAccountIdentities,
     requireGitWorkspace: manifest.requireGitWorkspace,
     prewarmOnStart: manifest.prewarmOnStart,
@@ -263,10 +269,22 @@ export function parseCodexGoalJobManifest(
   assertJobId(jobId);
   const accounts = readStringArray(value.accounts, "accounts");
   if (accounts.length === 0) throw new Error("codex_goal_job_accounts_required");
-  const permissionMode = optionalCodexGoalPermissionMode(
-    optionalString(value.permissionMode),
-    "permissionMode",
+  const editMode = optionalCodexGoalEditMode(
+    optionalString(value.editMode) ?? optionalString(value.permissionMode),
+    optionalString(value.editMode) === undefined &&
+      optionalString(value.permissionMode) !== undefined
+      ? "permissionMode"
+      : "editMode",
   );
+  const providerSandboxMode = optionalCodexGoalProviderSandboxMode(
+    optionalString(value.providerSandboxMode),
+    "providerSandboxMode",
+  );
+  assertCodexGoalProviderSandboxModeAllowed({
+    editMode,
+    providerSandboxMode,
+    fieldName: "providerSandboxMode",
+  });
   const manifest: CodexGoalJobManifest = {
     schemaVersion: codexGoalJobManifestSchemaVersion,
     jobId,
@@ -327,7 +345,8 @@ export function parseCodexGoalJobManifest(
     ...optionalPositiveIntegerProperty(value.taskTimeoutMs, "taskTimeoutMs"),
     ...optionalPositiveIntegerProperty(value.staleLockMs, "staleLockMs"),
     ...optionalPositiveIntegerProperty(value.maxAccountCycles, "maxAccountCycles"),
-    ...(permissionMode === undefined ? {} : { permissionMode }),
+    ...(editMode === undefined ? {} : { editMode }),
+    ...(providerSandboxMode === undefined ? {} : { providerSandboxMode }),
     ...optionalBooleanProperty(
       value.allowDuplicateAccountIdentities,
       "allowDuplicateAccountIdentities",

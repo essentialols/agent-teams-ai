@@ -23,7 +23,7 @@ import {
   type CodexReasoningEffort,
   type CodexServiceTier,
   PackagedCodexJsonExecutionEngine,
-  codexSandboxModeForPermissionMode,
+  codexSandboxModeForControls,
   codexExecutionFailure,
 } from "./codex-json-execution-engine";
 import {
@@ -140,9 +140,7 @@ export class CodexJsonAgentDriver implements AgentDriver {
         ...(this.serviceTier === undefined
           ? {}
           : { serviceTier: this.serviceTier }),
-        sandboxMode: codexSandboxModeForPermissionMode(
-          input.task.controls?.permissionMode,
-        ),
+        sandboxMode: codexSandboxModeForControls(input.task.controls),
         abortSignal: input.abortSignal,
       });
       if (result.status === "waiting_for_input") {
@@ -251,9 +249,7 @@ export class CodexJsonAgentDriver implements AgentDriver {
         ...(this.serviceTier === undefined
           ? {}
           : { serviceTier: this.serviceTier }),
-        sandboxMode: codexSandboxModeForPermissionMode(
-          input.task?.controls?.permissionMode,
-        ),
+        sandboxMode: codexSandboxModeForControls(input.task?.controls),
         outputSchema: outputSchemaName ? { name: outputSchemaName } : undefined,
         abortSignal: input.abortSignal,
       });

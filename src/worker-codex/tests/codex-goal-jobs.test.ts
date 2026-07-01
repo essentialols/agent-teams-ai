@@ -124,17 +124,18 @@ describe("codex goal job registry", () => {
     }
   });
 
-  it("rejects unsupported codex goal permission modes", async () => {
+  it("rejects unsupported codex goal control mode combinations", async () => {
     const root = await mkdtemp(join(tmpdir(), "subscription-runtime-jobs-"));
 
     try {
+      const { editMode: _editMode, ...legacyManifest } = jobManifest(root);
       await expect(createCodexGoalJob({
         registryRootDir: join(root, "registry"),
         manifest: {
-          ...jobManifest(root),
+          ...legacyManifest,
           permissionMode: "danger-full-access" as never,
-        },
-      })).rejects.toThrow(/provider sandbox option/);
+        } as unknown as CodexGoalJobManifestInput,
+      })).rejects.toThrow(/Use providerSandboxMode/);
 
       const created = await createCodexGoalJob({
         registryRootDir: join(root, "registry"),
@@ -144,9 +145,10 @@ describe("codex goal job registry", () => {
         registryRootDir: join(root, "registry"),
         jobId: created.jobId,
         patch: {
-          permissionMode: "danger-full-access" as never,
+          editMode: "read-only",
+          providerSandboxMode: "danger-full-access",
         },
-      })).rejects.toThrow(/Use allow-edits to permit workspace changes/);
+      })).rejects.toThrow(/requires editMode "allow-edits"/);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -172,7 +174,7 @@ function jobManifest(root: string): CodexGoalJobManifestInput {
     serviceTier: "fast",
     taskTimeoutMs: 72 * 60 * 60 * 1000,
     maxAccountCycles: 3,
-    permissionMode: "allow-edits",
+    editMode: "allow-edits",
     allowDuplicateAccountIdentities: false,
     requireGitWorkspace: true,
     prewarmOnStart: false,

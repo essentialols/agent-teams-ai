@@ -587,7 +587,7 @@ async function createGoalFixture(): Promise<{
       reasoningEffort: "xhigh",
       serviceTier: "fast",
       codexBinaryPath: "codex",
-      permissionMode: "allow-edits",
+      editMode: "allow-edits",
       taskTimeoutMs: 72 * 60 * 60 * 1000,
       maxAccountCycles: 3,
       requireGitWorkspace: true,

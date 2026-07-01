@@ -313,7 +313,8 @@ export type ProviderTaskControls = {
   readonly model?: string;
   readonly maxTurns?: number;
   readonly allowedTools?: readonly string[];
-  readonly permissionMode?: "read-only" | "preapproved" | "allow-edits" | "bypass" | "none";
+  readonly editMode?: "read-only" | "allow-edits";
+  readonly providerSandboxMode?: "workspace-write" | "danger-full-access";
   readonly responseFormat?: "text" | "json";
   readonly outputSchemaName?: string;
 };

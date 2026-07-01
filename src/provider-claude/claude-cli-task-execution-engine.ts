@@ -30,7 +30,7 @@ export class ClaudeCliTaskExecutionEngine implements ClaudeTaskExecutionEngine {
 
   async run(input: ClaudeTaskEngineInput): Promise<ClaudeTaskExecutionResult> {
     if (!input.session.configDir) throw new Error("claude_config_dir_required");
-    assertReadOnlyToolPolicy(input.permissionMode, input.allowedTools);
+    assertReadOnlyToolPolicy(input.editMode, input.allowedTools);
 
     const warnings = unsupportedWarnings(input);
     const result = await input.runner.run({
@@ -79,7 +79,7 @@ export class ClaudeCliTaskExecutionEngine implements ClaudeTaskExecutionEngine {
       "--model",
       input.model,
       "--permission-mode",
-      mapPermissionMode(input.permissionMode),
+      mapPermissionMode(input.editMode, input.providerSandboxMode),
     ];
     if (input.appendSystemPrompt !== undefined) {
       args.push("--append-system-prompt", input.appendSystemPrompt);
@@ -112,24 +112,38 @@ export class ClaudeCliTaskExecutionEngine implements ClaudeTaskExecutionEngine {
 const defaultTimeoutMs = 30 * 60 * 1000;
 
 function mapPermissionMode(
-  mode: ProviderTaskControls["permissionMode"] | undefined,
+  editMode: ProviderTaskControls["editMode"] | undefined,
+  providerSandboxMode:
+    | ProviderTaskControls["providerSandboxMode"]
+    | undefined,
 ): string {
-  if (mode === "allow-edits") return "acceptEdits";
-  if (mode === "bypass") return "bypassPermissions";
-  if (mode === "read-only" || mode === "preapproved") return "dontAsk";
+  assertProviderSandboxModeAllowed(editMode, providerSandboxMode);
+  if (providerSandboxMode === "danger-full-access") return "bypassPermissions";
+  if (editMode === "allow-edits") return "acceptEdits";
+  if (editMode === "read-only") return "dontAsk";
   return "default";
 }
 
 function assertReadOnlyToolPolicy(
-  permissionMode: ProviderTaskControls["permissionMode"] | undefined,
+  editMode: ProviderTaskControls["editMode"] | undefined,
   allowedTools: readonly string[] | undefined,
 ): void {
-  if (permissionMode !== "read-only" || allowedTools === undefined) return;
+  if (editMode !== "read-only" || allowedTools === undefined) return;
   const unsafe = allowedTools.filter((tool) => !isReadOnlyClaudeTool(tool));
   if (unsafe.length === 0) return;
   throw new Error(
     `claude_read_only_allowed_tools_unsafe:${unsafe.join(",")}`,
   );
+}
+
+function assertProviderSandboxModeAllowed(
+  editMode: ProviderTaskControls["editMode"] | undefined,
+  providerSandboxMode:
+    | ProviderTaskControls["providerSandboxMode"]
+    | undefined,
+): void {
+  if (providerSandboxMode === undefined || editMode === "allow-edits") return;
+  throw new Error("claude_provider_sandbox_mode_requires_allow_edits");
 }
 
 const readOnlyClaudeTools = new Set([

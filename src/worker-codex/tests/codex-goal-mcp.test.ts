@@ -241,7 +241,7 @@ describe("codex goal MCP server", () => {
     }
   });
 
-  it("rejects unsupported permission modes in codex goal job tools", async () => {
+  it("rejects unsupported edit modes in codex goal job tools", async () => {
     const root = await mkdtemp(
       join(tmpdir(), "subscription-runtime-mcp-permission-"),
     );
@@ -267,12 +267,12 @@ describe("codex goal MCP server", () => {
         promptPath: join(root, "job", "prompt.md"),
         taskId: "task-permission",
         accounts: ["account-a"],
-        permissionMode: "danger-full-access",
+        editMode: "danger-full-access",
       });
 
       expect(result).toMatchObject({ ok: false });
       expect(String(result.error)).toContain(
-        "Use allow-edits to permit workspace changes",
+        "Use providerSandboxMode",
       );
     } finally {
       await client.close();

@@ -9,7 +9,11 @@ import {
   runCodexGoal,
   type CodexGoalRunConfig,
 } from "./codex-goal-runner";
-import { parseCodexGoalPermissionMode } from "./codex-goal-permission-mode";
+import {
+  assertCodexGoalProviderSandboxModeAllowed,
+  optionalCodexGoalProviderSandboxMode,
+  parseCodexGoalEditMode,
+} from "./codex-goal-control-modes";
 import {
   buildCodexGoalNoTmuxCommand,
   buildCodexGoalTmuxCommand,
@@ -941,6 +945,23 @@ function runConfigFromFlags(
     option(values, env, "--stale-lock-ms", []),
     "--stale-lock-ms",
   );
+  const editModeFlag = option(values, env, "--edit-mode", []);
+  const legacyPermissionModeFlag = option(values, env, "--permission-mode", []);
+  const editMode = parseCodexGoalEditMode(
+    editModeFlag ?? legacyPermissionModeFlag ?? "allow-edits",
+    editModeFlag === undefined && legacyPermissionModeFlag !== undefined
+      ? "--permission-mode"
+      : "--edit-mode",
+  );
+  const providerSandboxMode = optionalCodexGoalProviderSandboxMode(
+    option(values, env, "--provider-sandbox-mode", []),
+    "--provider-sandbox-mode",
+  );
+  assertCodexGoalProviderSandboxModeAllowed({
+    editMode,
+    providerSandboxMode,
+    fieldName: "--provider-sandbox-mode",
+  });
   const config: CodexGoalRunConfig = {
     ...(option(values, env, "--job-id", ["SUBSCRIPTION_RUNTIME_JOB_ID"]) === undefined
       ? {}
@@ -984,10 +1005,8 @@ function runConfigFromFlags(
     codexBinaryPath: option(values, env, "--codex-binary", [
       "CODEX_BINARY_PATH",
     ]) ?? "codex",
-    permissionMode: parseCodexGoalPermissionMode(
-      option(values, env, "--permission-mode", []) ?? "allow-edits",
-      "--permission-mode",
-    ),
+    editMode,
+    ...(providerSandboxMode === undefined ? {} : { providerSandboxMode }),
     taskTimeoutMs: parseOptionalPositiveInteger(
       option(values, env, "--timeout-ms", [
         "SUBSCRIPTION_RUNTIME_TASK_TIMEOUT_MS",

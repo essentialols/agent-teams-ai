@@ -54,7 +54,7 @@ describe("subscription runtime agent-task runner CLI", () => {
             controls: {
               model: "opus",
               maxTurns: 1,
-              permissionMode: "preapproved",
+              editMode: "read-only",
             },
           },
         }),
@@ -90,7 +90,7 @@ describe("subscription runtime agent-task runner CLI", () => {
       controls: {
         model: "opus",
         maxTurns: 1,
-        permissionMode: "preapproved",
+        editMode: "read-only",
       },
     });
     expect(JSON.parse(stdout.join(""))).toMatchObject({

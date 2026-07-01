@@ -70,7 +70,7 @@ const request = createAgentTaskRequest({
     prompt: "Review this diff.",
     controls: {
       model: "claude-sonnet",
-      permissionMode: "read-only",
+      editMode: "read-only",
       responseFormat: "json",
     },
     metadata: {

@@ -750,7 +750,7 @@ describe("Codex provider adapter", () => {
           controls: {
             model: "task-model",
             outputSchemaName: "review-verdict",
-            permissionMode: "allow-edits",
+            editMode: "allow-edits",
           },
         },
         workspace: { path: workspace },
@@ -1502,7 +1502,7 @@ describe("Codex provider adapter", () => {
           metadata: {
             codexGoalObjective: "short benchmark goal",
           },
-          controls: { permissionMode: "allow-edits" },
+          controls: { editMode: "allow-edits" },
         },
         workspace: { path: workspace },
         runner: new StaticRunner(""),
@@ -1584,7 +1584,7 @@ describe("Codex provider adapter", () => {
         task: {
           kind: "structured-prompt",
           prompt: "keep going until done",
-          controls: { permissionMode: "allow-edits" },
+          controls: { editMode: "allow-edits" },
         },
         workspace: { path: workspace },
         runner: new StaticRunner(""),
@@ -1636,7 +1636,7 @@ describe("Codex provider adapter", () => {
         task: {
           kind: "structured-prompt",
           prompt: "finish after missing context",
-          controls: { permissionMode: "allow-edits" },
+          controls: { editMode: "allow-edits" },
           metadata: { codexManagedRunId: "managed-goal-1" },
         },
         workspace: { path: workspace },
@@ -1667,7 +1667,7 @@ describe("Codex provider adapter", () => {
         requestId: waiting.request.id,
         answer: "Use project alpha.",
         resumeHandle: waiting.resumeHandle,
-        task: { controls: { permissionMode: "allow-edits" } },
+        task: { controls: { editMode: "allow-edits" } },
         workspace: { path: workspace },
         runner: new StaticRunner(""),
         redactor: new DefaultRedactor(),
@@ -1718,7 +1718,7 @@ describe("Codex provider adapter", () => {
         task: {
           kind: "structured-prompt",
           prompt: "finish after resume failure",
-          controls: { permissionMode: "allow-edits" },
+          controls: { editMode: "allow-edits" },
           metadata: { codexManagedRunId: "managed-goal-failed-1" },
         },
         workspace: { path: workspace },
@@ -1736,7 +1736,7 @@ describe("Codex provider adapter", () => {
         requestId: waiting.request.id,
         answer: "Use project beta.",
         resumeHandle: waiting.resumeHandle,
-        task: { controls: { permissionMode: "allow-edits" } },
+        task: { controls: { editMode: "allow-edits" } },
         workspace: { path: workspace },
         runner: new StaticRunner(""),
         redactor: new DefaultRedactor(),
@@ -1758,7 +1758,7 @@ describe("Codex provider adapter", () => {
         requestId: waiting.request.id,
         answer: "Use project beta.",
         resumeHandle: waiting.resumeHandle,
-        task: { controls: { permissionMode: "allow-edits" } },
+        task: { controls: { editMode: "allow-edits" } },
         workspace: { path: workspace },
         runner: new StaticRunner(""),
         redactor: new DefaultRedactor(),
@@ -1806,7 +1806,7 @@ describe("Codex provider adapter", () => {
         task: {
           kind: "structured-prompt",
           prompt: "work until interrupted",
-          controls: { permissionMode: "allow-edits" },
+          controls: { editMode: "allow-edits" },
         },
         workspace: { path: workspace },
         runner: new StaticRunner(""),
@@ -1858,7 +1858,7 @@ describe("Codex provider adapter", () => {
         task: {
           kind: "structured-prompt",
           prompt: "hit the account limit",
-          controls: { permissionMode: "allow-edits" },
+          controls: { editMode: "allow-edits" },
         },
         workspace: { path: workspace },
         runner: new StaticRunner(""),
@@ -2037,7 +2037,7 @@ describe("Codex provider adapter", () => {
         task: {
           kind: "structured-prompt",
           prompt: "edit files",
-          controls: { permissionMode: "allow-edits" },
+          controls: { editMode: "allow-edits" },
         },
         workspace: { path: workspace },
         runner: new StaticRunner(""),
@@ -2052,6 +2052,51 @@ describe("Codex provider adapter", () => {
         sandbox: "workspace-write",
         config: {
           sandbox_mode: "workspace-write",
+        },
+      });
+    } finally {
+      await driver.dispose();
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("uses explicit danger-full-access provider sandbox for allow-edits Codex tasks", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "codex-app-danger-test-"));
+    const fakeFactory = new FakeAppServerFactory();
+    const driver = new CodexJsonAgentDriver({
+      engine: new CodexAppServerExecutionEngine({
+        codexBinaryPath: "/bin/codex-test",
+        processFactory: fakeFactory.create,
+        cleanThreadPrewarm: false,
+      }),
+      model: "gpt-test",
+      reasoningEffort: "low",
+    });
+
+    try {
+      await driver.runTask({
+        session: sessionArtifactFromCodexAuthJson(validAuthJson),
+        task: {
+          kind: "structured-prompt",
+          prompt: "edit files without sandbox",
+          controls: {
+            editMode: "allow-edits",
+            providerSandboxMode: "danger-full-access",
+          },
+        },
+        workspace: { path: workspace },
+        runner: new StaticRunner(""),
+        redactor: new DefaultRedactor(),
+        abortSignal: new AbortController().signal,
+      });
+
+      const threadStart = fakeFactory.requests.find(
+        (request) => request.method === "thread/start",
+      );
+      expect(threadStart?.params).toMatchObject({
+        sandbox: "danger-full-access",
+        config: {
+          sandbox_mode: "danger-full-access",
         },
       });
     } finally {

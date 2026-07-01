@@ -189,7 +189,7 @@ describe("Claude provider adapter", () => {
           model: "claude-task-model",
           maxTurns: 3,
           allowedTools: ["Read", "Grep"],
-          permissionMode: "read-only",
+          editMode: "read-only",
           outputSchemaName: "review-verdict",
         },
       },
@@ -217,7 +217,7 @@ describe("Claude provider adapter", () => {
       maxTurns: 3,
       allowedTools: ["Read", "Grep"],
       mcpConfig: ['{"mcpServers":{"memora":{"command":"memora-server"}}}'],
-      permissionMode: "read-only",
+      editMode: "read-only",
       strictMcpConfig: true,
       outputSchemaName: "review-verdict",
     });
@@ -468,7 +468,7 @@ describe("Claude provider adapter", () => {
       mcpConfig: ['{"mcpServers":{}}'],
       model: "claude-sonnet-test",
       outputSchemaName: "review-verdict",
-      permissionMode: "read-only",
+      editMode: "read-only",
       prompt: "review",
       redactor: new DefaultRedactor(),
       runner: new StaticRunner(),
@@ -543,7 +543,7 @@ describe("Claude provider adapter", () => {
       mcpConfig: ['{"mcpServers":{}}'],
       model: "sonnet",
       outputSchemaName: "review-verdict",
-      permissionMode: "read-only",
+      editMode: "read-only",
       prompt: "review",
       redactor,
       runner,
@@ -611,7 +611,7 @@ describe("Claude provider adapter", () => {
         abortSignal: new AbortController().signal,
         allowedTools: ["Read", "Bash", "Edit"],
         model: "claude-sonnet-test",
-        permissionMode: "read-only",
+        editMode: "read-only",
         prompt: "review",
         redactor: new DefaultRedactor(),
         runner: new StaticRunner(),
@@ -625,7 +625,7 @@ describe("Claude provider adapter", () => {
     ).rejects.toThrow("claude_read_only_allowed_tools_unsafe:Bash,Edit");
   });
 
-  it("maps preapproved Claude tasks to dontAsk for non-interactive allowlisted tools", async () => {
+  it("maps danger-full-access provider sandbox to bypassPermissions", async () => {
     const fakeProvider = new FakeClaudeRuntimeProvider([
       {
         type: "result_available",
@@ -643,8 +643,9 @@ describe("Claude provider adapter", () => {
     await engine.run({
       abortSignal: new AbortController().signal,
       allowedTools: ["Bash", "mcp__memora__*"],
+      editMode: "allow-edits",
       model: "claude-sonnet-test",
-      permissionMode: "preapproved",
+      providerSandboxMode: "danger-full-access",
       prompt: "post review",
       redactor: new DefaultRedactor(),
       runner: new StaticRunner(),
@@ -658,7 +659,7 @@ describe("Claude provider adapter", () => {
 
     expect(fakeProvider.startRequests[0]?.command).toMatchObject({
       allowedTools: ["Bash", "mcp__memora__*"],
-      permissionMode: "dontAsk",
+      permissionMode: "bypassPermissions",
     });
   });
 

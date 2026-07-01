@@ -51,7 +51,8 @@ export type CodexGoalRunConfig = {
   readonly quotaCooldownMs?: number;
   readonly reconnectCooldownMs?: number;
   readonly maxReconnectRetriesPerAccount?: number;
-  readonly permissionMode?: ProviderTaskControls["permissionMode"];
+  readonly editMode?: ProviderTaskControls["editMode"];
+  readonly providerSandboxMode?: ProviderTaskControls["providerSandboxMode"];
   readonly goalSummary?: string;
   readonly codexGoalObjective?: string;
   readonly effectMode?: TaskEffectMode;
@@ -141,7 +142,10 @@ export async function runCodexGoal(
         ? {}
         : { safeExecutionPolicy: config.safeExecutionPolicy }),
       controls: {
-        permissionMode: config.permissionMode ?? "allow-edits",
+        editMode: config.editMode ?? "allow-edits",
+        ...(config.providerSandboxMode === undefined
+          ? {}
+          : { providerSandboxMode: config.providerSandboxMode }),
       },
       systemPrompt: codexGoalWorkerSystemPrompt(config.taskId),
       metadata: {

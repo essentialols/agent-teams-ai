@@ -63,7 +63,8 @@ export type ProviderTaskControls = {
   readonly model?: string;
   readonly maxTurns?: number;
   readonly allowedTools?: readonly string[];
-  readonly permissionMode?: "read-only" | "preapproved" | "allow-edits" | "bypass" | "none";
+  readonly editMode?: "read-only" | "allow-edits";
+  readonly providerSandboxMode?: "workspace-write" | "danger-full-access";
   readonly responseFormat?: "text" | "json";
   readonly outputSchemaName?: string;
 };
@@ -85,10 +86,10 @@ export type ProviderTaskTelemetry = {
 };
 ```
 
-`permissionMode` is the runtime's edit/effect policy. It is intentionally not a
-raw provider sandbox enum. For example, Codex `danger-full-access` is not a
-valid `permissionMode`; use `allow-edits` when a task is allowed to write a
-workspace patch.
+`editMode` is the runtime's edit/effect policy. It is intentionally separate
+from raw provider sandbox controls. Use `allow-edits` when a task may write a
+workspace patch. Use `providerSandboxMode` only for the provider's low-level
+sandbox choice, such as Codex `danger-full-access`.
 
 Then evolve `ProviderTask` and `ProviderTaskResult` without provider fields:
 

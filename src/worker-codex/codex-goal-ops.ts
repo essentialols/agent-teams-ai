@@ -164,7 +164,8 @@ export function buildCodexGoalNoTmuxCommand(input: CodexGoalLaunchInput): string
   pushOptionalNumber(args, "--progress-heartbeat-ms", config.progressHeartbeatMs);
   pushOptionalNumber(args, "--stale-lock-ms", config.staleLockMs);
   pushOptionalNumber(args, "--max-account-cycles", config.maxAccountCycles);
-  pushOptional(args, "--permission-mode", config.permissionMode);
+  pushOptional(args, "--edit-mode", config.editMode);
+  pushOptional(args, "--provider-sandbox-mode", config.providerSandboxMode);
   if (config.allowDuplicateAccountIdentities) args.push("--allow-duplicate-accounts");
   if (config.requireGitWorkspace === false) args.push("--no-require-git-workspace");
   if (config.prewarmOnStart) args.push("--prewarm");

@@ -178,6 +178,22 @@ describe("agent-task JSON adapter kit", () => {
     ).toThrow("request.task.systemPrompt must not be empty");
   });
 
+  it("rejects provider sandbox mode without allow-edits", () => {
+    expect(() =>
+      parseAgentTaskRequest({
+        protocolVersion: agentTaskProtocolVersion,
+        task: {
+          kind: "review",
+          prompt: "Review this diff.",
+          controls: {
+            editMode: "read-only",
+            providerSandboxMode: "danger-full-access",
+          },
+        },
+      }),
+    ).toThrow(/providerSandboxMode requires request.task.controls.editMode/);
+  });
+
   it("turns an unterminated provider stream into a failed terminal event", async () => {
     const request = createAgentTaskRequest({
       task: {

@@ -36,12 +36,15 @@ const providerTaskKinds = new Set<ProviderTaskKind>([
   "structured-prompt",
   "health-check",
 ]);
-const permissionModes = new Set<NonNullable<ProviderTaskControls["permissionMode"]>>([
+const editModes = new Set<NonNullable<ProviderTaskControls["editMode"]>>([
   "read-only",
-  "preapproved",
   "allow-edits",
-  "bypass",
-  "none",
+]);
+const providerSandboxModes = new Set<
+  NonNullable<ProviderTaskControls["providerSandboxMode"]>
+>([
+  "workspace-write",
+  "danger-full-access",
 ]);
 const responseFormats = new Set<NonNullable<ProviderTaskControls["responseFormat"]>>([
   "text",
@@ -437,8 +440,9 @@ function providerTaskControls(controls: AgentTaskControls): ProviderTaskControls
     ...(controls.model ? { model: controls.model } : {}),
     ...(controls.maxTurns === undefined ? {} : { maxTurns: controls.maxTurns }),
     ...(controls.allowedTools ? { allowedTools: controls.allowedTools } : {}),
-    ...(controls.permissionMode
-      ? { permissionMode: controls.permissionMode }
+    ...(controls.editMode ? { editMode: controls.editMode } : {}),
+    ...(controls.providerSandboxMode
+      ? { providerSandboxMode: controls.providerSandboxMode }
       : {}),
     ...(controls.responseFormat
       ? { responseFormat: controls.responseFormat }
@@ -457,9 +461,15 @@ function parseControls(value: unknown, path: string): AgentTaskControls {
     ...optionalStringArrayField(input, "allowedTools", `${path}.allowedTools`),
     ...optionalEnumField(
       input,
-      "permissionMode",
-      `${path}.permissionMode`,
-      permissionModes,
+      "editMode",
+      `${path}.editMode`,
+      editModes,
+    ),
+    ...optionalEnumField(
+      input,
+      "providerSandboxMode",
+      `${path}.providerSandboxMode`,
+      providerSandboxModes,
     ),
     ...optionalEnumField(
       input,
@@ -470,7 +480,24 @@ function parseControls(value: unknown, path: string): AgentTaskControls {
     ...optionalStringField(input, "outputSchemaName", `${path}.outputSchemaName`),
     ...optionalJsonObjectField(input, "outputSchema", `${path}.outputSchema`),
   };
+  assertProviderSandboxModeAllowed(controls, path);
   return controls;
+}
+
+function assertProviderSandboxModeAllowed(
+  controls: AgentTaskControls,
+  path: string,
+): void {
+  if (
+    controls.providerSandboxMode === undefined ||
+    controls.editMode === "allow-edits"
+  ) {
+    return;
+  }
+  throw protocolError(
+    "agent_task_request_invalid",
+    `${path}.providerSandboxMode requires ${path}.editMode to be "allow-edits"`,
+  );
 }
 
 function parseContext(value: unknown, path: string): AgentTaskContext {

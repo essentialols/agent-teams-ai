@@ -230,7 +230,7 @@ describe("FileBackendCodexWorker", () => {
       await expect(
         worker.run({
           prompt: "make a coding edit",
-          controls: { permissionMode: "allow-edits" },
+          controls: { editMode: "allow-edits" },
         }),
       ).resolves.toMatchObject({
         outputText: "packaged exec output",
@@ -288,7 +288,7 @@ describe("FileBackendCodexWorker", () => {
       await expect(
         worker.run({
           prompt: "make a coding edit",
-          controls: { permissionMode: "allow-edits" },
+          controls: { editMode: "allow-edits" },
         }),
       ).resolves.toMatchObject({
         outputText: "plain exec output",
@@ -342,7 +342,7 @@ describe("FileBackendCodexWorker", () => {
       await expect(
         worker.run({
           prompt: "finish the persistent goal",
-          controls: { permissionMode: "allow-edits" },
+          controls: { editMode: "allow-edits" },
         }),
       ).resolves.toMatchObject({
         outputText: "OK",
@@ -390,7 +390,7 @@ describe("FileBackendCodexWorker", () => {
       const waiting = await worker.run({
         runId: "worker-managed-goal-1",
         prompt: "finish after blocked goal",
-        controls: { permissionMode: "allow-edits" },
+        controls: { editMode: "allow-edits" },
       });
 
       expect(waiting).toMatchObject({
@@ -416,7 +416,7 @@ describe("FileBackendCodexWorker", () => {
         requestId: waiting.request.id,
         answer: "Use the billing workspace.",
         resumeHandle: waiting.resumeHandle,
-        controls: { permissionMode: "allow-edits" },
+        controls: { editMode: "allow-edits" },
       });
 
       expect(resumed).toMatchObject({
@@ -487,7 +487,7 @@ describe("FileBackendCodexWorker", () => {
       const waiting = await worker.run({
         runId: "worker-managed-handle-1",
         prompt: "finish in original workspace",
-        controls: { permissionMode: "allow-edits" },
+        controls: { editMode: "allow-edits" },
       });
 
       if (waiting.status !== "waiting_for_input") {
@@ -504,7 +504,7 @@ describe("FileBackendCodexWorker", () => {
         requestId: waiting.request.id,
         answer: "Use the original workspace.",
         resumeHandle: waiting.resumeHandle,
-        controls: { permissionMode: "allow-edits" },
+        controls: { editMode: "allow-edits" },
       });
 
       expect(resumed).toMatchObject({ outputText: "OK" });
@@ -552,7 +552,7 @@ describe("FileBackendCodexWorker", () => {
       const waiting = await firstWorker.run({
         runId: "worker-managed-recover-1",
         prompt: "finish after worker restart",
-        controls: { permissionMode: "allow-edits" },
+        controls: { editMode: "allow-edits" },
       });
 
       if (waiting.status !== "waiting_for_input") {
@@ -579,7 +579,7 @@ describe("FileBackendCodexWorker", () => {
           requestId: waiting.request.id,
           answer: "Use the recovered billing context.",
           resumeHandle: waiting.resumeHandle,
-          controls: { permissionMode: "allow-edits" },
+          controls: { editMode: "allow-edits" },
         });
 
         expect(recovered).toMatchObject({ outputText: "OK" });
@@ -910,7 +910,7 @@ describe("FileBackendCodexWorker", () => {
         jobId: "codex-safe-switch-job",
         taskId: "codex-safe-switch-task",
         prompt: "Implement the safe task.",
-        controls: { permissionMode: "allow-edits" },
+        controls: { editMode: "allow-edits" },
       });
 
       if (result.status !== "completed") {
@@ -971,7 +971,7 @@ describe("FileBackendCodexWorker", () => {
         jobId: "codex-safe-switch-job",
         taskId: "codex-safe-switch-task",
         prompt: "Implement the safe task.",
-        controls: { permissionMode: "allow-edits" },
+        controls: { editMode: "allow-edits" },
       });
       expect(replayed.status).toBe("completed");
       if (replayed.status !== "completed") throw new Error("expected replay");
@@ -1044,7 +1044,7 @@ describe("FileBackendCodexWorker", () => {
         jobId: "codex-safe-interrupt-job",
         taskId: "codex-safe-interrupt-task",
         prompt: "Implement the interruptible safe task.",
-        controls: { permissionMode: "allow-edits" },
+        controls: { editMode: "allow-edits" },
         maxAccountCycles: 1,
       });
 
@@ -1142,7 +1142,7 @@ describe("FileBackendCodexWorker", () => {
       const result = await executor.run({
         taskId: "codex-safe-invalid-seed-task",
         prompt: "Implement the safe task.",
-        controls: { permissionMode: "allow-edits" },
+        controls: { editMode: "allow-edits" },
       });
 
       expect(result.status).toBe("completed");
@@ -1182,7 +1182,7 @@ describe("FileBackendCodexWorker", () => {
       const result = await executor.run({
         taskId: "codex-safe-not-git-task",
         prompt: "This should not start.",
-        controls: { permissionMode: "allow-edits" },
+        controls: { editMode: "allow-edits" },
       });
 
       expect(result.status).toBe("failed");
@@ -1324,7 +1324,7 @@ describe("FileBackendCodexWorker", () => {
       const result = await executor.run({
         taskId: "codex-safe-unknown-task",
         prompt: "Implement the unknown-retry task.",
-        controls: { permissionMode: "allow-edits" },
+        controls: { editMode: "allow-edits" },
       });
 
       expect(result.status).toBe("failed");
@@ -1390,7 +1390,7 @@ describe("FileBackendCodexWorker", () => {
       const result = await executor.run({
         taskId: "codex-safe-clean-unknown-task",
         prompt: "Implement the clean unknown task.",
-        controls: { permissionMode: "allow-edits" },
+        controls: { editMode: "allow-edits" },
       });
 
       expect(result.status).toBe("failed");
@@ -1458,7 +1458,7 @@ describe("FileBackendCodexWorker", () => {
       const result = await executor.run({
         taskId: "codex-safe-reconnect-repair-task",
         prompt: "Implement the reconnect repair task.",
-        controls: { permissionMode: "allow-edits" },
+        controls: { editMode: "allow-edits" },
       });
 
       if (result.status !== "completed") {
@@ -1532,7 +1532,7 @@ describe("FileBackendCodexWorker", () => {
       const result = await executor.run({
         taskId: "codex-safe-reconnect-switch-task",
         prompt: "Implement the reconnect switch task.",
-        controls: { permissionMode: "allow-edits" },
+        controls: { editMode: "allow-edits" },
       });
 
       if (result.status !== "completed") {
@@ -1596,7 +1596,7 @@ describe("FileBackendCodexWorker", () => {
       const result = await executor.run({
         taskId: "codex-safe-auth-invalid-task",
         prompt: "Implement the auth invalid task.",
-        controls: { permissionMode: "allow-edits" },
+        controls: { editMode: "allow-edits" },
       });
 
       if (result.status !== "completed") {
@@ -1658,7 +1658,7 @@ describe("FileBackendCodexWorker", () => {
       const result = await executor.run({
         taskId: "codex-safe-unknown-opt-in-task",
         prompt: "Implement the unknown-retry task.",
-        controls: { permissionMode: "allow-edits" },
+        controls: { editMode: "allow-edits" },
         safeExecutionPolicy: { retryUnknownChangedWorkspace: true },
       });
 
@@ -1727,7 +1727,7 @@ describe("FileBackendCodexWorker", () => {
       const result = await executor.run({
         taskId: "codex-safe-cycle-default-task",
         prompt: "Implement the safe cyclic task.",
-        controls: { permissionMode: "allow-edits" },
+        controls: { editMode: "allow-edits" },
       });
 
       expect(result.status).toBe("partial");
@@ -1803,7 +1803,7 @@ describe("FileBackendCodexWorker", () => {
       const result = await executor.run({
         taskId: "codex-safe-cycle-one-task",
         prompt: "Implement the one-cycle task.",
-        controls: { permissionMode: "allow-edits" },
+        controls: { editMode: "allow-edits" },
       });
 
       expect(result.status).toBe("partial");
@@ -1865,7 +1865,7 @@ describe("FileBackendCodexWorker", () => {
       const result = await executor.run({
         taskId: "codex-live-goal-until-done",
         prompt: "Finish the native goal.",
-        controls: { permissionMode: "allow-edits" },
+        controls: { editMode: "allow-edits" },
         metadata: {
           codexGoalObjective: "Finish the native goal objective.",
         },
@@ -1937,7 +1937,7 @@ describe("FileBackendCodexWorker", () => {
       const first = await firstExecutor.run({
         taskId: "codex-goal-until-done",
         prompt: "Finish the long goal.",
-        controls: { permissionMode: "allow-edits" },
+        controls: { editMode: "allow-edits" },
       });
 
       expect(first.status).toBe("partial");
@@ -1986,7 +1986,7 @@ describe("FileBackendCodexWorker", () => {
       const resumed = await secondExecutor.run({
         taskId: "codex-goal-until-done",
         prompt: "Finish the long goal.",
-        controls: { permissionMode: "allow-edits" },
+        controls: { editMode: "allow-edits" },
       });
 
       if (resumed.status !== "completed") {

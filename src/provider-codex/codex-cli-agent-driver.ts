@@ -14,7 +14,7 @@ import { codexAuthJsonFromArtifact } from "./codex-auth-json-codec";
 import { pruneCodexChildEnv } from "./codex-cli-domain";
 import { cleanupCodexRuntimeTempRoot } from "./codex-cli-temp-cleanup";
 import { composeCodexPrompt } from "./codex-prompt-composer";
-import { codexSandboxModeForPermissionMode } from "./codex-json-execution-engine";
+import { codexSandboxModeForControls } from "./codex-json-execution-engine";
 import {
   codexAgentCapabilities,
   codexAgentId,
@@ -72,9 +72,7 @@ export class CodexCliAgentDriver implements AgentDriver {
     await mkdir(tempCodexHome, { recursive: true, mode: 0o700 });
 
     try {
-      const sandboxMode = codexSandboxModeForPermissionMode(
-        input.task.controls?.permissionMode,
-      );
+      const sandboxMode = codexSandboxModeForControls(input.task.controls);
       await writeCodexHomeSnapshot({
         codexHome: tempCodexHome,
         authJson,
@@ -145,7 +143,7 @@ export class CodexCliAgentDriver implements AgentDriver {
 async function writeCodexHomeSnapshot(input: {
   readonly codexHome: string;
   readonly authJson: string;
-  readonly sandboxMode: ReturnType<typeof codexSandboxModeForPermissionMode>;
+  readonly sandboxMode: ReturnType<typeof codexSandboxModeForControls>;
 }): Promise<void> {
   const config = [
     'approval_policy = "never"',

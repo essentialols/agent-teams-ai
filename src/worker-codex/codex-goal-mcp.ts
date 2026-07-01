@@ -56,9 +56,11 @@ import {
   type CodexGoalRunConfig,
 } from "./codex-goal-runner";
 import {
-  optionalCodexGoalPermissionMode,
-  parseCodexGoalPermissionMode,
-} from "./codex-goal-permission-mode";
+  assertCodexGoalProviderSandboxModeAllowed,
+  optionalCodexGoalEditMode,
+  optionalCodexGoalProviderSandboxMode,
+  parseCodexGoalEditMode,
+} from "./codex-goal-control-modes";
 import {
   buildCodexGoalNoTmuxCommand,
   buildCodexGoalStopTmuxCommand,
@@ -103,7 +105,8 @@ type GoalMcpArgs = {
   readonly taskTimeoutMs?: number;
   readonly staleLockMs?: number;
   readonly maxAccountCycles?: number;
-  readonly permissionMode?: CodexGoalRunConfig["permissionMode"];
+  readonly editMode?: CodexGoalRunConfig["editMode"];
+  readonly providerSandboxMode?: CodexGoalRunConfig["providerSandboxMode"];
   readonly allowDuplicateAccountIdentities?: boolean;
   readonly requireGitWorkspace?: boolean;
   readonly prewarmOnStart?: boolean;
@@ -1533,6 +1536,7 @@ async function goalLaunchInput(args: GoalMcpArgs): Promise<CodexGoalLaunchInput>
   const promptPath = requiredString(merged.promptPath, "promptPath", cwd);
   const accounts = codexGoalAccountSlots(accountNames(merged.accounts));
   if (!accounts.length) throw new Error("accounts are required");
+  const controlModes = goalControlModesFromRecord(merged);
   const config: CodexGoalRunConfig = {
     ...(jobId === undefined ? {} : { jobId }),
     jobRootDir,
@@ -1559,10 +1563,7 @@ async function goalLaunchInput(args: GoalMcpArgs): Promise<CodexGoalLaunchInput>
     executionEngine:
       (stringValue(merged.executionEngine) ?? "app-server-goal") as NonNullable<CodexGoalRunConfig["executionEngine"]>,
     codexBinaryPath: stringValue(merged.codexBinaryPath) ?? "codex",
-    permissionMode: parseCodexGoalPermissionMode(
-      stringValue(merged.permissionMode) ?? "allow-edits",
-      "permissionMode",
-    ),
+    ...controlModes,
     taskTimeoutMs: numberValue(merged.taskTimeoutMs) ?? defaultTimeoutMs,
     progressHeartbeatMs: numberValue(merged.progressHeartbeatMs) ?? 60_000,
     ...(numberValue(merged.staleLockMs) === undefined
@@ -1590,6 +1591,32 @@ async function goalLaunchInput(args: GoalMcpArgs): Promise<CodexGoalLaunchInput>
     ),
     format: (stringValue(merged.outputFormat) ?? "json") as CodexGoalOutputFormat,
     cliCommand: defaultCliCommand(import.meta.url),
+  };
+}
+
+function goalControlModesFromRecord(
+  value: JsonObject,
+): Pick<CodexGoalRunConfig, "editMode" | "providerSandboxMode"> {
+  const editModeValue = stringValue(value.editMode);
+  const legacyPermissionModeValue = stringValue(value.permissionMode);
+  const editMode = parseCodexGoalEditMode(
+    editModeValue ?? legacyPermissionModeValue ?? "allow-edits",
+    editModeValue === undefined && legacyPermissionModeValue !== undefined
+      ? "permissionMode"
+      : "editMode",
+  );
+  const providerSandboxMode = optionalCodexGoalProviderSandboxMode(
+    stringValue(value.providerSandboxMode),
+    "providerSandboxMode",
+  );
+  assertCodexGoalProviderSandboxModeAllowed({
+    editMode,
+    providerSandboxMode,
+    fieldName: "providerSandboxMode",
+  });
+  return {
+    editMode,
+    ...(providerSandboxMode === undefined ? {} : { providerSandboxMode }),
   };
 }
 
@@ -2676,6 +2703,7 @@ function jobManifestInputFromArgs(args: JobCreateMcpArgs): CodexGoalJobManifestI
     cwd,
     args.jobRootDir ?? defaultCodexGoalJobRoot(jobId),
   );
+  const controlModes = goalControlModesFromRecord(args as unknown as JsonObject);
   return {
     jobId,
     ...(stringValue(args.description) ? { description: stringValue(args.description) as string } : {}),
@@ -2698,10 +2726,7 @@ function jobManifestInputFromArgs(args: JobCreateMcpArgs): CodexGoalJobManifestI
     taskTimeoutMs: args.taskTimeoutMs ?? defaultTimeoutMs,
     ...(args.staleLockMs ? { staleLockMs: args.staleLockMs } : {}),
     maxAccountCycles: args.maxAccountCycles ?? 5,
-    permissionMode: parseCodexGoalPermissionMode(
-      args.permissionMode ?? "allow-edits",
-      "permissionMode",
-    ),
+    ...controlModes,
     allowDuplicateAccountIdentities: args.allowDuplicateAccountIdentities ?? false,
     requireGitWorkspace: args.requireGitWorkspace ?? true,
     prewarmOnStart: args.prewarmOnStart ?? false,
@@ -2738,10 +2763,15 @@ function jobManifestPatchFromArgs(args: JobUpdateMcpArgs): CodexGoalJobManifestP
   putIfDefined(patch, "maxAccountCycles", numberValue(args.maxAccountCycles));
   putIfDefined(
     patch,
-    "permissionMode",
-    optionalCodexGoalPermissionMode(
-      stringValue(args.permissionMode),
-      "permissionMode",
+    "editMode",
+    optionalCodexGoalEditMode(stringValue(args.editMode), "editMode"),
+  );
+  putIfDefined(
+    patch,
+    "providerSandboxMode",
+    optionalCodexGoalProviderSandboxMode(
+      stringValue(args.providerSandboxMode),
+      "providerSandboxMode",
     ),
   );
   putIfDefined(
@@ -2812,7 +2842,10 @@ function jobManifestInputFromLaunch(
     ...(launch.config.maxAccountCycles
       ? { maxAccountCycles: launch.config.maxAccountCycles }
       : {}),
-    ...(launch.config.permissionMode ? { permissionMode: launch.config.permissionMode } : {}),
+    ...(launch.config.editMode ? { editMode: launch.config.editMode } : {}),
+    ...(launch.config.providerSandboxMode
+      ? { providerSandboxMode: launch.config.providerSandboxMode }
+      : {}),
     ...(launch.config.allowDuplicateAccountIdentities
       ? { allowDuplicateAccountIdentities: launch.config.allowDuplicateAccountIdentities }
       : {}),
@@ -4008,7 +4041,8 @@ function goalInputSchema(): Record<string, z.ZodTypeAny> {
     taskTimeoutMs: z.number().int().positive().optional(),
     staleLockMs: z.number().int().positive().optional(),
     maxAccountCycles: z.number().int().positive().optional(),
-    permissionMode: z.string().optional(),
+    editMode: z.string().optional(),
+    providerSandboxMode: z.string().optional(),
     allowDuplicateAccountIdentities: z.boolean().optional(),
     requireGitWorkspace: z.boolean().optional(),
     prewarmOnStart: z.boolean().optional(),

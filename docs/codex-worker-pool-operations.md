@@ -101,13 +101,12 @@ Defaults:
 - task timeout: `72h`;
 - max account cycles: `5`;
 - execution engine: `app-server-goal`;
-- permission mode: `allow-edits`.
+- edit mode: `allow-edits`.
 
-Permission mode is a subscription-runtime edit/effect policy, not the
-provider's low-level sandbox flag. Use `allow-edits` for workers that may create
-a workspace patch. Do not pass provider sandbox names such as
-`danger-full-access` as `permissionMode`; they are rejected because they do not
-mean "workspace patch allowed" in the safe executor.
+Edit mode is a subscription-runtime edit/effect policy, not the provider's
+low-level sandbox flag. Use `allow-edits` for workers that may create a
+workspace patch. Use `providerSandboxMode` only when the provider sandbox itself
+must be selected explicitly, such as Codex `danger-full-access`.
 
 Escape hatches remain available:
 
@@ -918,7 +917,7 @@ try {
     taskId,
     prompt,
     staleLockMs: 1,
-    controls: { permissionMode: "allow-edits" },
+    controls: { editMode: "allow-edits" },
     metadata: {
       goal: process.env.SUBSCRIPTION_RUNTIME_GOAL_SUMMARY ?? taskId,
       codexGoalObjective:

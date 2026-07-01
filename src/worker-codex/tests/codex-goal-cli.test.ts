@@ -49,6 +49,7 @@ describe("codex goal cli", () => {
       progressPath: "/tmp/job/task-1.progress.json",
       progressHeartbeatMs: 60_000,
       maxAccountCycles: 5,
+      editMode: "allow-edits",
       requireGitWorkspace: true,
     });
     expect(command.config.accounts.map((account) => account.name)).toEqual([
@@ -58,7 +59,7 @@ describe("codex goal cli", () => {
     expect(command.tmuxSession).toBe("goal-worker");
   });
 
-  it("rejects provider sandbox names passed as codex goal permission mode", () => {
+  it("rejects provider sandbox names passed as codex goal edit mode", () => {
     expect(() =>
       parseCodexGoalCliArgs(
         [
@@ -75,12 +76,12 @@ describe("codex goal cli", () => {
           "task-1",
           "--accounts",
           "account-a",
-          "--permission-mode",
+          "--edit-mode",
           "danger-full-access",
         ],
         fakeIo(),
       ),
-    ).toThrow(/Use allow-edits to permit workspace changes/);
+    ).toThrow(/Use providerSandboxMode/);
   });
 
   it("uses environment fallback names for continuation handoff", () => {

@@ -384,7 +384,7 @@ function codexControlTarget(input: {
 function codexEffectModeFromJobControls(
   job: FileBackendCodexWorkerJob,
 ): TaskEffectMode {
-  return job.controls?.permissionMode === "allow-edits"
+  return job.controls?.editMode === "allow-edits"
     ? "workspace_patch"
     : "read_only";
 }

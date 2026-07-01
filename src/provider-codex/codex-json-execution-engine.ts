@@ -21,7 +21,10 @@ export type CodexReasoningEffort =
 
 export type CodexServiceTier = string;
 
-export type CodexSandboxMode = "read-only" | "workspace-write";
+export type CodexSandboxMode =
+  | "read-only"
+  | "workspace-write"
+  | "danger-full-access";
 
 export type CodexMaterializedSession = {
   readonly home: string;
@@ -298,11 +301,33 @@ export function buildCodexJsonExecArgs(input: {
   ];
 }
 
-export function codexSandboxModeForPermissionMode(
-  mode: ProviderTaskControls["permissionMode"] | undefined,
+export function codexSandboxModeForControls(
+  controls: Pick<
+    ProviderTaskControls,
+    "editMode" | "providerSandboxMode"
+  > | undefined,
 ): CodexSandboxMode {
-  if (mode === "allow-edits") return "workspace-write";
+  assertProviderSandboxModeAllowed(controls);
+  if (controls?.providerSandboxMode !== undefined) {
+    return controls.providerSandboxMode;
+  }
+  if (controls?.editMode === "allow-edits") return "workspace-write";
   return "read-only";
+}
+
+function assertProviderSandboxModeAllowed(
+  controls: Pick<
+    ProviderTaskControls,
+    "editMode" | "providerSandboxMode"
+  > | undefined,
+): void {
+  if (
+    controls?.providerSandboxMode === undefined ||
+    controls.editMode === "allow-edits"
+  ) {
+    return;
+  }
+  throw new Error("codex_provider_sandbox_mode_requires_allow_edits");
 }
 
 export function codexExecutionFailure(

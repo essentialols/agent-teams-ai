@@ -54,7 +54,8 @@ export type ClaudeTaskEngineInput = {
   readonly maxTurns?: number;
   readonly allowedTools?: readonly string[];
   readonly mcpConfig?: readonly string[];
-  readonly permissionMode?: ProviderTaskControls["permissionMode"];
+  readonly editMode?: ProviderTaskControls["editMode"];
+  readonly providerSandboxMode?: ProviderTaskControls["providerSandboxMode"];
   readonly strictMcpConfig?: boolean;
   readonly outputSchemaName?: string;
   readonly runtimeThread?: ClaudeRuntimeThreadInput;
@@ -251,7 +252,8 @@ export class ClaudeTaskAgentDriver implements AgentDriver, StreamingAgentDriver 
     const maxTurns = input.task.controls?.maxTurns ?? this.options.maxTurns;
     const allowedTools =
       input.task.controls?.allowedTools ?? this.options.allowedTools;
-    const permissionMode = input.task.controls?.permissionMode;
+    const editMode = input.task.controls?.editMode;
+    const providerSandboxMode = input.task.controls?.providerSandboxMode;
     const outputSchemaName =
       input.task.controls?.outputSchemaName ?? input.task.outputSchemaName;
     const appendSystemPrompt = mergeSystemPrompts(
@@ -273,8 +275,11 @@ export class ClaudeTaskAgentDriver implements AgentDriver, StreamingAgentDriver 
     if (this.options.mcpConfig !== undefined) {
       engineInput = { ...engineInput, mcpConfig: this.options.mcpConfig };
     }
-    if (permissionMode !== undefined) {
-      engineInput = { ...engineInput, permissionMode };
+    if (editMode !== undefined) {
+      engineInput = { ...engineInput, editMode };
+    }
+    if (providerSandboxMode !== undefined) {
+      engineInput = { ...engineInput, providerSandboxMode };
     }
     if (this.options.strictMcpConfig !== undefined) {
       engineInput = {

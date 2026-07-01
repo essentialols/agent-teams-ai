@@ -4910,8 +4910,12 @@ export class TeamProvisioningService {
       await this.sendMessageToRun(run, message);
     } catch (error) {
       this.openCodeRuntimeDeliveryLeadNoticeSentAt.delete(noticeKey);
+      const errorMessage = getErrorMessage(error);
+      if (errorMessage.includes('process stdin is not writable')) {
+        return;
+      }
       logger.warn(
-        `[${input.record.teamName}] Failed to notify lead about OpenCode runtime delivery error for ${input.record.memberName}: ${getErrorMessage(error)}`
+        `[${input.record.teamName}] Failed to notify lead about OpenCode runtime delivery error for ${input.record.memberName}: ${errorMessage}`
       );
     }
   }

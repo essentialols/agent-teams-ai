@@ -3334,7 +3334,7 @@ async function handleSendMessage(
       }
     }
 
-    const result = await getTeamDataService().sendMessage(tn, {
+    const messageRequest: SendMessageRequest = {
       member: memberName,
       text: inboxText,
       summary: payload.summary,
@@ -3344,7 +3344,11 @@ async function handleSendMessage(
       taskRefs: validatedTaskRefs.value,
       ...(inboxMessageId ? { messageId: inboxMessageId } : {}),
       ...(validatedAttachments?.length ? { attachments: validatedAttachments } : {}),
-    });
+    };
+    const teamDataService = getTeamDataService();
+    const result = isOpenCodeRecipient
+      ? await teamDataService.sendRuntimeRecipientMessage(tn, messageRequest)
+      : await teamDataService.sendMessage(tn, messageRequest);
 
     // Teammate inbox relay DISABLED (2026-03-23).
     // Codex/Claude teammates read their own inbox files directly via fs.watch.

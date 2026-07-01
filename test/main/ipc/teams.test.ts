@@ -248,6 +248,17 @@ describe('ipc teams handlers', () => {
         ) => Promise<{ deliveredToInbox: boolean; messageId: string }>
       >
     >,
+    sendRuntimeRecipientMessage: vi.fn(async (_teamName: string, _request: unknown) => ({
+      deliveredToInbox: true,
+      messageId: 'm1',
+    })) as ReturnType<
+      typeof vi.fn<
+        (
+          teamName: string,
+          request: unknown
+        ) => Promise<{ deliveredToInbox: boolean; messageId: string }>
+      >
+    >,
     sendDirectToLead: vi.fn(async () => ({ deliveredToInbox: false, messageId: 'direct-1' })),
     createTask: vi.fn(async () => ({ id: '1', subject: 'Test', status: 'pending' })),
     requestReview: vi.fn(async () => undefined),
@@ -874,14 +885,15 @@ describe('ipc teams handlers', () => {
     })) as { success: boolean; data?: SendMessageResult };
 
     expect(result.success).toBe(true);
-    expect(service.sendMessage).toHaveBeenCalledWith(
+    expect(service.sendRuntimeRecipientMessage).toHaveBeenCalledWith(
       'my-team',
       expect.objectContaining({
         member: 'bob',
         text: 'Can you check this?',
       })
     );
-    expect(service.sendMessage).not.toHaveBeenCalledWith(
+    expect(service.sendMessage).not.toHaveBeenCalled();
+    expect(service.sendRuntimeRecipientMessage).not.toHaveBeenCalledWith(
       'my-team',
       expect.objectContaining({
         text: expect.stringContaining('SendMessage'),

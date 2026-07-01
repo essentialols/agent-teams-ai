@@ -13,7 +13,10 @@ import {
   buildOpenCodeSecondaryLaneId,
   buildPlannedMemberLaneIdentity,
   isOpenCodeSideLanePlan,
+  isPureOpenCodeSoloLanePlan,
   isPureOpenCodeWorktreeRootLanePlan,
+  OPEN_CODE_SOLO_MEMBER_NAME,
+  OPEN_CODE_SOLO_MEMBER_ROLE,
   type TeamRuntimeLanePlan,
 } from '@features/team-runtime-lanes';
 import { createTeamRuntimeLaneCoordinator } from '@features/team-runtime-lanes/main';
@@ -2484,6 +2487,74 @@ export class TeamProvisioningService {
     return { config, teamMeta, metaMembers };
   }
 
+  private isOpenCodeSoloRuntimeRoster(params: {
+    config?: TeamConfig | null;
+    teamMeta?: OpenCodeMemberDirectory['teamMeta'];
+    metaMembers: readonly TeamMember[];
+  }): boolean {
+    const leadMember = params.config?.members?.find((member) => isLeadMember(member));
+    const leadProviderId =
+      normalizeOptionalTeamProviderId(params.teamMeta?.launchIdentity?.providerId) ??
+      normalizeOptionalTeamProviderId(params.teamMeta?.providerId) ??
+      normalizeOptionalTeamProviderId(leadMember?.providerId) ??
+      inferTeamProviderIdFromModel(leadMember?.model);
+    if (leadProviderId !== 'opencode') {
+      return false;
+    }
+
+    const hasActiveConfigTeammate =
+      params.config?.members?.some(
+        (member) => !isLeadMember(member) && member.removedAt == null && member.name?.trim()
+      ) ?? false;
+    if (hasActiveConfigTeammate) {
+      return false;
+    }
+
+    return !params.metaMembers.some(
+      (member) => !isLeadMember(member) && member.removedAt == null && member.name?.trim()
+    );
+  }
+
+  private resolveOpenCodeSoloMemberIdentityFromDirectory(
+    memberName: string,
+    directory: OpenCodeMemberDirectory
+  ): OpenCodeMemberIdentityResolution | null {
+    if (memberName.trim().toLowerCase() !== OPEN_CODE_SOLO_MEMBER_NAME) {
+      return null;
+    }
+    if (
+      !this.isOpenCodeSoloRuntimeRoster({
+        config: directory.config,
+        teamMeta: directory.teamMeta,
+        metaMembers: directory.metaMembers,
+      })
+    ) {
+      return null;
+    }
+
+    const laneIdentity = buildPlannedMemberLaneIdentity({
+      leadProviderId: 'opencode',
+      member: {
+        name: OPEN_CODE_SOLO_MEMBER_NAME,
+        providerId: 'opencode',
+      },
+    });
+    const memberRuntimeCwd = directory.config?.projectPath?.trim();
+    return {
+      ok: true,
+      canonicalMemberName: OPEN_CODE_SOLO_MEMBER_NAME,
+      laneId: laneIdentity.laneId,
+      laneIdentity,
+      metaMember: {
+        name: OPEN_CODE_SOLO_MEMBER_NAME,
+        role: OPEN_CODE_SOLO_MEMBER_ROLE,
+        providerId: 'opencode',
+        ...(memberRuntimeCwd ? { cwd: memberRuntimeCwd } : {}),
+      },
+      ...(memberRuntimeCwd ? { memberRuntimeCwd } : {}),
+    };
+  }
+
   private getRuntimeSnapshotCacheGeneration(teamName: string): number {
     return this.runtimeSnapshotCacheGenerationByTeam.get(teamName) ?? 0;
   }
@@ -2564,6 +2635,13 @@ export class TeamProvisioningService {
       (member) => member.name?.trim().toLowerCase() === normalizedMemberName.toLowerCase()
     );
     if (!configMember && !metaMember) {
+      const soloIdentity = this.resolveOpenCodeSoloMemberIdentityFromDirectory(
+        normalizedMemberName,
+        directory
+      );
+      if (soloIdentity) {
+        return soloIdentity;
+      }
       return { ok: false, reason: 'opencode_recipient_unavailable' };
     }
 
@@ -3950,6 +4028,14 @@ export class TeamProvisioningService {
     );
     const configProvider = (configMember as { provider?: unknown } | undefined)?.provider;
     const metaProvider = (metaMember as { provider?: unknown } | undefined)?.provider;
+    if (
+      !configMember &&
+      !metaMember &&
+      normalizedMemberName === OPEN_CODE_SOLO_MEMBER_NAME &&
+      this.isOpenCodeSoloRuntimeRoster({ config, metaMembers })
+    ) {
+      return 'opencode';
+    }
     return (
       normalizeTeamProviderLike(metaMember?.providerId) ??
       normalizeTeamProviderLike(metaProvider) ??
@@ -10505,13 +10591,33 @@ export class TeamProvisioningService {
 
   private buildOpenCodeRuntimeAdapterLaunchMembers(
     request: TeamCreateRequest | TeamLaunchRequest,
-    members: TeamCreateRequest['members']
+    members: TeamCreateRequest['members'],
+    lanePlan?: TeamRuntimeLanePlan
   ): TeamCreateRequest['members'] {
     if (resolveTeamProviderId(request.providerId) !== 'opencode') {
       return members;
     }
-    if (members.some((member) => isLeadMember(member))) {
-      return members;
+    const runtimeMembers: TeamCreateRequest['members'] = [...members];
+    if (
+      lanePlan &&
+      isPureOpenCodeSoloLanePlan(lanePlan) &&
+      !runtimeMembers.some(
+        (member) => member.name.trim().toLowerCase() === OPEN_CODE_SOLO_MEMBER_NAME
+      )
+    ) {
+      runtimeMembers.push({
+        name: lanePlan.soloMember.name,
+        role: lanePlan.soloMember.role ?? OPEN_CODE_SOLO_MEMBER_ROLE,
+        providerId: 'opencode',
+        providerBackendId: request.providerBackendId,
+        model: lanePlan.soloMember.model ?? request.model,
+        effort: lanePlan.soloMember.effort ?? request.effort,
+        fastMode: lanePlan.soloMember.fastMode ?? request.fastMode,
+        cwd: lanePlan.soloMember.cwd?.trim() || request.cwd,
+      });
+    }
+    if (runtimeMembers.some((member) => isLeadMember(member))) {
+      return runtimeMembers;
     }
 
     return [
@@ -10522,7 +10628,7 @@ export class TeamProvisioningService {
         model: request.model,
         effort: request.effort,
       },
-      ...members,
+      ...runtimeMembers,
     ];
   }
 
@@ -11983,9 +12089,15 @@ export class TeamProvisioningService {
       leadProviderId: launchRequest.providerId,
       members: materialized.members,
     });
+    const lanePlan = this.planRuntimeLanesOrThrow(
+      launchRequest.providerId,
+      effectiveMembers,
+      launchRequest.cwd
+    );
     const runtimeLaunchMembers = this.buildOpenCodeRuntimeAdapterLaunchMembers(
       launchRequest,
-      effectiveMembers
+      effectiveMembers,
+      lanePlan
     );
     const teamDir = path.join(getTeamsBasePath(), launchRequest.teamName);
     const tasksDir = path.join(getTasksBasePath(), launchRequest.teamName);
@@ -12012,11 +12124,6 @@ export class TeamProvisioningService {
       providerBackendId: launchRequest.providerBackendId,
     });
     await this.writeOpenCodeTeamConfig(launchRequest, effectiveMembers);
-    const lanePlan = this.planRuntimeLanesOrThrow(
-      launchRequest.providerId,
-      effectiveMembers,
-      launchRequest.cwd
-    );
     if (isPureOpenCodeWorktreeRootLanePlan(lanePlan)) {
       return this.runOpenCodeWorktreeRootAggregateLaunch({
         request: launchRequest,
@@ -12066,9 +12173,15 @@ export class TeamProvisioningService {
       leadProviderId: launchRequest.providerId,
       members: materialized.members,
     });
+    const lanePlan = this.planRuntimeLanesOrThrow(
+      launchRequest.providerId,
+      effectiveMembers,
+      launchRequest.cwd
+    );
     const runtimeLaunchMembers = this.buildOpenCodeRuntimeAdapterLaunchMembers(
       launchRequest,
-      effectiveMembers
+      effectiveMembers,
+      lanePlan
     );
     await this.updateConfigProjectPath(launchRequest.teamName, launchRequest.cwd);
 
@@ -12085,11 +12198,6 @@ export class TeamProvisioningService {
       effectiveMembers,
       existingTasks,
       false
-    );
-    const lanePlan = this.planRuntimeLanesOrThrow(
-      launchRequest.providerId,
-      effectiveMembers,
-      launchRequest.cwd
     );
     if (isPureOpenCodeWorktreeRootLanePlan(lanePlan)) {
       return this.runOpenCodeWorktreeRootAggregateLaunch({

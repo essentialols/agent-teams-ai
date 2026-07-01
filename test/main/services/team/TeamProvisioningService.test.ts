@@ -1093,6 +1093,39 @@ describe('TeamProvisioningService', () => {
     });
   });
 
+  describe('OpenCode solo runtime recipients', () => {
+    it('resolves the solo runtime target only for empty OpenCode-led rosters', async () => {
+      const teamName = 'opencode-solo-recipient-team';
+      const teamDir = path.join(tempTeamsBase, teamName);
+      fs.mkdirSync(teamDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(teamDir, 'config.json'),
+        JSON.stringify({
+          name: teamName,
+          projectPath: '/tmp/opencode-solo-project',
+          members: [
+            {
+              name: 'team-lead',
+              role: 'Team Lead',
+              providerId: 'opencode',
+              model: 'opencode/big-pickle',
+            },
+          ],
+        }),
+        'utf8'
+      );
+
+      const svc = new TeamProvisioningService();
+
+      await expect(svc.resolveRuntimeRecipientProviderId(teamName, 'solo')).resolves.toBe(
+        'opencode'
+      );
+      await expect(svc.resolveRuntimeRecipientProviderId(teamName, 'alice')).resolves.toBe(
+        undefined
+      );
+    });
+  });
+
   describe('live lead messages', () => {
     it('updates one live message for Codex synthetic text chunks', () => {
       const svc = new TeamProvisioningService();

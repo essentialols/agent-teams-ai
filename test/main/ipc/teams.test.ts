@@ -915,6 +915,60 @@ describe('ipc teams handlers', () => {
     expect(provisioningService.getOpenCodeRuntimeDeliveryStatus).not.toHaveBeenCalled();
   });
 
+  it('hydrates bare OpenCode read-shortcut relay success from durable delivery status', async () => {
+    provisioningService.resolveRuntimeRecipientProviderId.mockResolvedValueOnce('opencode');
+    provisioningService.relayOpenCodeMemberInboxMessages.mockResolvedValueOnce({
+      relayed: 0,
+      attempted: 1,
+      delivered: 1,
+      failed: 0,
+      lastDelivery: { delivered: true },
+    });
+    provisioningService.getOpenCodeRuntimeDeliveryStatus.mockResolvedValueOnce({
+      messageId: 'm1',
+      providerId: 'opencode',
+      attempted: true,
+      delivered: true,
+      accepted: true,
+      responsePending: false,
+      responseState: 'responded_visible_message',
+      ledgerStatus: 'responded',
+      visibleReplyMessageId: 'reply-1',
+      visibleReplyCorrelation: 'relayOfMessageId',
+      ledgerRecordId: 'opencode-prompt:responded',
+      laneId: 'secondary:opencode:bob',
+      diagnostics: [],
+      userVisibleImpact: { state: 'none' },
+    });
+    const sendHandler = handlers.get(TEAM_SEND_MESSAGE);
+    expect(sendHandler).toBeDefined();
+
+    const result = (await sendHandler!({} as never, 'my-team', {
+      member: 'bob',
+      text: 'Ping bob',
+    })) as { success: boolean; data?: SendMessageResult };
+
+    expect(result.success).toBe(true);
+    expect(provisioningService.getOpenCodeRuntimeDeliveryStatus).toHaveBeenCalledWith(
+      'my-team',
+      'm1'
+    );
+    expect(result.data?.runtimeDelivery).toMatchObject({
+      providerId: 'opencode',
+      attempted: true,
+      delivered: true,
+      accepted: true,
+      responsePending: false,
+      responseState: 'responded_visible_message',
+      ledgerStatus: 'responded',
+      visibleReplyMessageId: 'reply-1',
+      visibleReplyCorrelation: 'relayOfMessageId',
+      ledgerRecordId: 'opencode-prompt:responded',
+      laneId: 'secondary:opencode:bob',
+      userVisibleImpact: { state: 'none' },
+    });
+  });
+
   it('returns runtimeDelivery failure without hiding the persisted OpenCode message', async () => {
     provisioningService.resolveRuntimeRecipientProviderId.mockResolvedValueOnce('opencode');
     provisioningService.relayOpenCodeMemberInboxMessages.mockResolvedValueOnce({

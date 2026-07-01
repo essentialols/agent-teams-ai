@@ -383,7 +383,10 @@ async function waitForOpenCodeRuntimeRelayForUi(input: {
     ]);
 
     if (outcome.kind === 'relay') {
-      return outcome.relay;
+      return await enrichBareOpenCodeRuntimeRelayResultForUi({
+        ...input,
+        relay: outcome.relay,
+      });
     }
 
     try {
@@ -411,6 +414,50 @@ async function waitForOpenCodeRuntimeRelayForUi(input: {
       clearTimeout(timer);
     }
   }
+}
+
+async function enrichBareOpenCodeRuntimeRelayResultForUi(input: {
+  provisioning: TeamProvisioningService;
+  teamName: string;
+  memberName: string;
+  messageId: string;
+  relay: OpenCodeMemberInboxRelayResult;
+}): Promise<OpenCodeMemberInboxRelayResult> {
+  if (!shouldLookupOpenCodeRuntimeDeliveryStatusAfterRelay(input.relay)) {
+    return input.relay;
+  }
+
+  try {
+    const status = await withTimeoutValue(
+      input.provisioning.getOpenCodeRuntimeDeliveryStatus(input.teamName, input.messageId),
+      OPENCODE_RUNTIME_DELIVERY_STATUS_AFTER_UI_TIMEOUT_MS,
+      null
+    );
+    return status ? openCodeRuntimeDeliveryStatusToRelayResult(status) : input.relay;
+  } catch (error) {
+    logger.warn(
+      `OpenCode runtime delivery status enrichment failed for teammate "${input.memberName}": ${getErrorMessage(error)}`
+    );
+    return input.relay;
+  }
+}
+
+function shouldLookupOpenCodeRuntimeDeliveryStatusAfterRelay(
+  relay: OpenCodeMemberInboxRelayResult
+): boolean {
+  const delivery = relay.lastDelivery;
+  if (!delivery?.delivered) {
+    return false;
+  }
+  return (
+    typeof delivery.accepted !== 'boolean' &&
+    typeof delivery.responsePending !== 'boolean' &&
+    !delivery.responseState &&
+    !delivery.ledgerStatus &&
+    !delivery.ledgerRecordId &&
+    !delivery.laneId &&
+    !delivery.userVisibleImpact
+  );
 }
 
 function openCodeRuntimeDeliveryStatusToRelayResult(

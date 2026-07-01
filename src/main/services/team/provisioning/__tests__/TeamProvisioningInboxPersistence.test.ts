@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'fs/promises';
+import { mkdir, mkdtemp, readFile, readlink, rm, symlink, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import * as path from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -178,5 +178,36 @@ describe('team inbox persistence', () => {
     ).resolves.toBeUndefined();
 
     expect(readFileSpy).not.toHaveBeenCalled();
+  });
+
+  it('does not follow symlinked inbox files when marking rows read', async () => {
+    const teamsRoot = await makeTeamsRoot();
+    const inboxDir = path.join(teamsRoot, 'team-a', 'inboxes');
+    const inboxPath = path.join(inboxDir, 'lead.json');
+    const outsidePath = path.join(teamsRoot, 'outside.json');
+    await mkdir(inboxDir, { recursive: true });
+    await writeFile(outsidePath, JSON.stringify([{ messageId: 'stable-1', read: false }], null, 2));
+    try {
+      await symlink(outsidePath, inboxPath);
+    } catch {
+      return;
+    }
+    const readFileSpy = vi.fn(readRegularFileUtf8);
+
+    await markTeamInboxMessagesRead({
+      teamName: 'team-a',
+      member: 'lead',
+      teamsBasePath: teamsRoot,
+      messages: [{ messageId: 'stable-1' }],
+      readRegularFileUtf8: readFileSpy,
+      timeoutMs: 5_000,
+      maxBytes: 2 * 1024 * 1024,
+    });
+
+    expect(readFileSpy).not.toHaveBeenCalled();
+    expect(await readlink(inboxPath)).toBe(outsidePath);
+    expect(JSON.parse(await readFile(outsidePath, 'utf8'))).toEqual([
+      { messageId: 'stable-1', read: false },
+    ]);
   });
 });

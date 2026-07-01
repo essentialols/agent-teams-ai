@@ -76,6 +76,18 @@ export interface OpenCodeSecondaryEvidenceOverlayClassifyParams {
   diagnostics: readonly string[];
 }
 
+function hasActiveOpenCodeOverlayMetaMember(
+  metaMembers: readonly { name?: string; removedAt?: unknown }[],
+  memberName: string
+): boolean {
+  return metaMembers.some(
+    (member) =>
+      typeof member.name === 'string' &&
+      namesMatchCaseInsensitive(member.name, memberName) &&
+      member.removedAt == null
+  );
+}
+
 export interface GuardCommittedOpenCodeSecondaryLaneEvidencePorts {
   commitOpenCodeRuntimeAdapterLaunchSessionEvidence(input: {
     teamName: string;
@@ -260,6 +272,9 @@ export async function applyOpenCodeSecondaryEvidenceOverlay(
     const previous = params.previousSnapshot?.members[memberName] ?? null;
     const baseMember = current ?? previous;
     if (!baseMember || !isPersistedOpenCodeSecondaryLaneMember(baseMember)) {
+      continue;
+    }
+    if (!current && !hasActiveOpenCodeOverlayMetaMember(metaMembers, memberName)) {
       continue;
     }
     const laneId = baseMember.laneId?.trim();

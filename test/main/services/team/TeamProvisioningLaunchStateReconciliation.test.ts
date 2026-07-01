@@ -323,6 +323,57 @@ describe('TeamProvisioningLaunchStateReconciliation', () => {
     expect(needsOpenCodeSecondaryEvidenceOverlay(snapshot.members.Builder, null)).toBe(true);
   });
 
+  it('does not resurrect previous-only OpenCode secondary members absent from current metadata', async () => {
+    const previousSnapshot = makeSnapshot(makeMember({ runtimeSessionId: 'session-1' }));
+    const currentSnapshot = createPersistedLaunchSnapshot({
+      teamName: 'demo',
+      expectedMembers: ['Reviewer'],
+      launchPhase: 'active',
+      members: {
+        Reviewer: {
+          name: 'Reviewer',
+          providerId: 'anthropic',
+          laneKind: 'primary',
+          laneOwnerProviderId: 'anthropic',
+          launchState: 'confirmed_alive',
+          agentToolAccepted: true,
+          runtimeAlive: true,
+          bootstrapConfirmed: true,
+          hardFailure: false,
+          lastEvaluatedAt: at,
+        },
+      },
+      updatedAt: at,
+    });
+    const readCommittedBootstrapSessionEvidence = vi.fn().mockResolvedValue({
+      committed: true,
+      activeRunId: 'run-1',
+      sessions: [makeSession()],
+      diagnostics: [],
+    });
+
+    const overlaid = await applyOpenCodeSecondaryEvidenceOverlay(
+      {
+        teamName: 'demo',
+        snapshot: currentSnapshot,
+        previousSnapshot,
+        metaMembers: [{ name: 'Reviewer' }],
+      },
+      {
+        readLaneIndex: vi.fn().mockResolvedValue({
+          lanes: { 'secondary:opencode:Builder': makeLaneEntry() },
+        }),
+        readCommittedBootstrapSessionEvidence,
+        hasBootstrapCheckinTombstone: vi.fn().mockResolvedValue(false),
+        nowIso: () => '2026-01-01T00:00:04.000Z',
+      }
+    );
+
+    expect(overlaid.members.Builder).toBeUndefined();
+    expect(overlaid.expectedMembers).toEqual(['Reviewer']);
+    expect(readCommittedBootstrapSessionEvidence).not.toHaveBeenCalled();
+  });
+
   it('downgrades claimed OpenCode bootstrap when durable lane evidence is missing', async () => {
     const committed = makeLaunchResult(makeEvidence({ diagnostics: ['committed diagnostic'] }), {
       diagnostics: ['result diagnostic'],

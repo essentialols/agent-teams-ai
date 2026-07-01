@@ -1,5 +1,6 @@
 import { getTeamsBasePath } from '@main/utils/pathDecoder';
 import { isPathWithinRoot, validateFileName } from '@main/utils/pathValidation';
+import { lstat } from 'fs/promises';
 import * as path from 'path';
 
 import { atomicWriteAsync } from '../atomicWrite';
@@ -53,6 +54,11 @@ export async function markTeamInboxMessagesRead(
 
   await withFileLock(inboxPath, async () => {
     await withInboxLock(inboxPath, async () => {
+      const stat = await lstat(inboxPath).catch(() => null);
+      if (!stat?.isFile()) {
+        return;
+      }
+
       const raw = await input.readRegularFileUtf8(inboxPath, {
         timeoutMs: input.timeoutMs,
         maxBytes: input.maxBytes,

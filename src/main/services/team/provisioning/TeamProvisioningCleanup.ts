@@ -167,8 +167,13 @@ export function cleanupProvisioningRun<TRun extends TeamProvisioningCleanupRun>(
   run: TRun,
   ports: TeamProvisioningCleanupPorts<TRun>
 ): void {
+  const currentProvisioningRunId = ports.provisioningRunByTeam.get(run.teamName) ?? null;
+  const currentAliveRunId = ports.aliveRunByTeam.get(run.teamName) ?? null;
   const currentTrackedRunId = ports.getTrackedRunId(run.teamName);
-  const hasNewerTrackedRun = currentTrackedRunId !== null && currentTrackedRunId !== run.runId;
+  const hasNewerTrackedRun =
+    (currentTrackedRunId !== null && currentTrackedRunId !== run.runId) ||
+    (currentProvisioningRunId !== null && currentProvisioningRunId !== run.runId) ||
+    (currentAliveRunId !== null && currentAliveRunId !== run.runId);
   const retainedClaudeLogs = hasNewerTrackedRun ? null : ports.buildRetainedClaudeLogsSnapshot(run);
 
   if (!hasNewerTrackedRun) {

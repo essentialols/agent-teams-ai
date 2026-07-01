@@ -23,6 +23,7 @@ export interface TeamProvisioningStopTeamPorts<TRun extends StopRun> {
   pauseActiveIntervalsForTeam(teamName: string): void;
   stopPersistentTeamMembers(teamName: string): void;
   getTrackedRunId(teamName: string): string | null;
+  getAliveRunId(teamName: string): string | null;
   runs: ReadonlyMap<string, TRun>;
   runtimeAdapterProgressByRunId: ReadonlyMap<string, TeamProvisioningProgress>;
   isCancellableRuntimeAdapterProgress(progress: TeamProvisioningProgress): boolean;
@@ -85,7 +86,7 @@ export async function stopTeamFlow<TRun extends StopRun>(
   ports.pauseActiveIntervalsForTeam(teamName);
   ports.stopPersistentTeamMembers(teamName);
 
-  const runId = ports.getTrackedRunId(teamName);
+  let runId = ports.getTrackedRunId(teamName);
   if (!runId) {
     if (ports.hasSecondaryRuntimeRuns(teamName)) {
       await ports.stopMixedSecondaryRuntimeLanes(teamName);
@@ -93,7 +94,15 @@ export async function stopTeamFlow<TRun extends StopRun>(
     await ports.cleanupAnthropicApiKeyHelperMaterialForStoppedTeam(teamName);
     return;
   }
-  const run = ports.runs.get(runId);
+  let run = ports.runs.get(runId);
+  const aliveRunId = ports.getAliveRunId(teamName);
+  if (!run && aliveRunId && aliveRunId !== runId) {
+    if (ports.provisioningRunByTeam.get(teamName) === runId) {
+      ports.provisioningRunByTeam.delete(teamName);
+    }
+    runId = aliveRunId;
+    run = ports.runs.get(runId);
+  }
   if (!run) {
     const runtimeProgress = ports.runtimeAdapterProgressByRunId.get(runId);
     if (runtimeProgress && ports.isCancellableRuntimeAdapterProgress(runtimeProgress)) {
@@ -115,8 +124,12 @@ export async function stopTeamFlow<TRun extends StopRun>(
     if (ports.hasSecondaryRuntimeRuns(teamName)) {
       await ports.stopMixedSecondaryRuntimeLanes(teamName);
     }
-    ports.provisioningRunByTeam.delete(teamName);
-    ports.deleteAliveRunId(teamName);
+    if (ports.provisioningRunByTeam.get(teamName) === runId) {
+      ports.provisioningRunByTeam.delete(teamName);
+    }
+    if (ports.getAliveRunId(teamName) === runId) {
+      ports.deleteAliveRunId(teamName);
+    }
     await ports.cleanupAnthropicApiKeyHelperMaterialForStoppedTeam(teamName);
     return;
   }

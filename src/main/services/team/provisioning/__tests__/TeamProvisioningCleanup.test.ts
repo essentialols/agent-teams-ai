@@ -346,5 +346,24 @@ describe('team provisioning cleanup policy', () => {
     }
     expect(ports.runs.has(cleanup.runId)).toBe(false);
   });
+
+  it('treats a newer alive run as current even when a stale provisioning id masks it', () => {
+    const cleanup = cleanupRun();
+    const ports = makeCleanupPorts(cleanup.runId);
+    seedTeamScopedCleanupState(ports, cleanup, cleanup.runId);
+    ports.aliveRunByTeam.set(cleanup.teamName, 'newer-alive-run');
+
+    cleanupProvisioningRun(cleanup, ports);
+
+    expect(ports.provisioningRunByTeam.has(cleanup.teamName)).toBe(false);
+    expect(ports.deleteAliveRunId).not.toHaveBeenCalled();
+    expect(ports.clearSecondaryRuntimeRuns).not.toHaveBeenCalled();
+    expect(ports.invalidateRuntimeSnapshotCaches).not.toHaveBeenCalled();
+    expect(ports.leadInboxRelayInFlight.get(cleanup.teamName)).toBe('lead');
+    expect(ports.memberInboxRelayInFlight.get(`${cleanup.teamName}:worker-a`)).toBe('member');
+    expect(ports.liveLeadProcessMessages.get(cleanup.teamName)).toBe('live');
+    expect(ports.pruneLiveLeadMessagesForCleanedRun).toHaveBeenCalledWith(cleanup);
+    expect(ports.runs.has(cleanup.runId)).toBe(false);
+  });
 });
 /* eslint-enable sonarjs/publicly-writable-directories -- Re-enable after temp-path fixtures. */

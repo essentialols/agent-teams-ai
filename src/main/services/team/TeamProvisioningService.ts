@@ -19900,6 +19900,7 @@ export class TeamProvisioningService {
         this.taskActivityIntervalService.pauseActiveIntervalsForTeam(teamName),
       stopPersistentTeamMembers: (teamName) => this.stopPersistentTeamMembers(teamName),
       getTrackedRunId: (teamName) => this.getTrackedRunId(teamName),
+      getAliveRunId: (teamName) => this.getAliveRunId(teamName),
       runs: this.runs,
       runtimeAdapterProgressByRunId: this.runtimeAdapterProgressByRunId,
       isCancellableRuntimeAdapterProgress: (progress) =>

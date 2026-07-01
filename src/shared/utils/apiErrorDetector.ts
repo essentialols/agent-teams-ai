@@ -1,13 +1,13 @@
-/**
- * Detects API error messages from Claude CLI output.
- * Pattern: "API Error: <status_code>" at the beginning of the text.
- */
+const API_ERROR_PATTERNS = [
+  /^API Error:\s*\d{3}/i,
+  /\byou're out of extra usage\b/i,
+  /\brate[_\s-]?limit(?:ed)?\b/i,
+  /\bquota (?:exhausted|exceeded)\b/i,
+];
 
-const API_ERROR_RE = /^API Error:\s*\d{3}/;
-
 /**
- * Returns true if the message text starts with "API Error: <status_code>".
+ * Returns true for provider/API failures that should render as error output.
  */
 export function isApiErrorMessage(text: string): boolean {
-  return API_ERROR_RE.test(text);
+  return API_ERROR_PATTERNS.some((pattern) => pattern.test(text));
 }

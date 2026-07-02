@@ -105,6 +105,8 @@ export interface TeamProvisioningProcessExitPorts<
   buildStdoutCarryDiagnostic(run: TRun): Record<string, unknown>;
   flushStdoutParserCarry(run: TRun): void;
   stopStallWatchdog(run: TRun): void;
+  hasSecondaryRuntimeRuns(teamName: string): boolean;
+  stopMixedSecondaryRuntimeLanes(teamName: string): Promise<void>;
   getTeamsBasePath(): string;
   getAutoDetectedClaudeBasePath(): string;
   getConfiguredCliCommandLabel(): string;
@@ -456,6 +458,21 @@ export async function handleProvisioningProcessExit<TRun extends TeamProvisionin
   // Keep this after the auth-retry guards. During respawn, the old process exit
   // can fire after run.stallCheckHandle has already been replaced by the new process.
   ports.stopStallWatchdog(run);
+
+  // A dead lead no longer owns its OpenCode secondary lanes. Mirror the cancel
+  // and stop flows and stop the lanes before cleanup wipes their tracking —
+  // otherwise the external runtime keeps orphan lane sessions that nothing in
+  // the UI can stop any more.
+  if (ports.hasSecondaryRuntimeRuns(run.teamName)) {
+    try {
+      await ports.stopMixedSecondaryRuntimeLanes(run.teamName);
+    } catch (error) {
+      ports.logger.warn(
+        `[${run.teamName}] Failed to stop secondary runtime lanes after lead process exit`,
+        error
+      );
+    }
+  }
 
   if (run.provisioningComplete) {
     const message = buildCompletedProcessExitMessage(code);

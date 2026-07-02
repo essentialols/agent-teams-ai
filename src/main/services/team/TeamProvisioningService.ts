@@ -21391,6 +21391,8 @@ export class TeamProvisioningService {
       buildStdoutCarryDiagnostic: (run) => this.buildStdoutCarryDiagnostic(run),
       flushStdoutParserCarry: (run) => this.flushStdoutParserCarry(run),
       stopStallWatchdog: (run) => this.stopStallWatchdog(run),
+      hasSecondaryRuntimeRuns: (teamName) => this.hasSecondaryRuntimeRuns(teamName),
+      stopMixedSecondaryRuntimeLanes: (teamName) => this.stopMixedSecondaryRuntimeLanes(teamName),
       waitForValidConfig: (run) => this.waitForValidConfig(run),
       waitForTeamInList: (teamName, run) => this.waitForTeamInList(teamName, run),
       waitForMissingInboxes: (run) => this.waitForMissingInboxes(run),

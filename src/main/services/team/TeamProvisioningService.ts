@@ -113,7 +113,6 @@ import {
   type OpenCodeMemberIdentityResolution,
   type OpenCodeMemberInboxDelivery,
   type OpenCodeMemberMessageDeliveryInput,
-  OpenCodeMemberMessageDeliveryService,
   type OpenCodeMemberMessageDeliverySource,
   type OpenCodeRuntimeMessageAdapter,
 } from './opencode/delivery/OpenCodeMemberMessageDeliveryService';
@@ -313,7 +312,6 @@ import {
   assertOpenCodeNotLaunchedThroughLegacyProvisioning,
   buildLargeDeterministicBootstrapWarning,
   getMixedLaunchFallbackRecoveryError,
-  isPureOpenCodeProvisioningRequest,
   mergeProvisioningWarnings,
   type TeamLaunchCompatibilityReport,
 } from './provisioning/TeamProvisioningLaunchCompatibility';
@@ -443,12 +441,8 @@ import {
 import { resolveOpenCodeInboxAttachmentPayloads as resolveOpenCodeInboxAttachmentPayloadsHelper } from './provisioning/TeamProvisioningOpenCodeAttachmentPayloads';
 import {
   commitOpenCodeRuntimeBootstrapSessionEvidence,
-  createDefaultOpenCodeRuntimeBootstrapEvidencePorts,
-  findDeliverableOpenCodeRuntimeBootstrapSessionEvidence,
-  getOpenCodeAppMcpTransportMismatchDiagnostic,
   hasCommittedOpenCodeRuntimeBootstrapSessionEvidence,
   type OpenCodeRuntimeBootstrapEvidencePorts,
-  stampOpenCodeAppMcpTransportEvidenceIfMissing,
 } from './provisioning/TeamProvisioningOpenCodeBootstrapEvidence';
 import {
   boundOpenCodeAppManagedBriefingText,
@@ -607,6 +601,14 @@ import {
   type RetainedClaudeLogsSnapshot,
 } from './provisioning/TeamProvisioningRetainedLogs';
 import {
+  createMixedSecondaryLaneStates as createMixedSecondaryLaneStatesHelper,
+  createOpenCodeMemberMessageDeliveryService as createOpenCodeMemberMessageDeliveryServiceHelper,
+  createOpenCodeRuntimeBootstrapEvidencePorts as createOpenCodeRuntimeBootstrapEvidencePortsHelper,
+  deliverOpenCodeMemberMessage as deliverOpenCodeMemberMessageHelper,
+  planRuntimeLanesOrThrow as planRuntimeLanesOrThrowHelper,
+  shouldRouteOpenCodeToRuntimeAdapter as shouldRouteOpenCodeToRuntimeAdapterHelper,
+} from './provisioning/TeamProvisioningRuntimeBootstrapDelivery';
+import {
   buildRuntimeLaunchWarning,
   getAnthropicFastModeDefault,
   getPromptSizeSummary,
@@ -671,7 +673,6 @@ import {
 import {
   clearSecondaryRuntimeRuns as clearSecondaryRuntimeRunsInMap,
   createMixedSecondaryLaneStateForMember as buildMixedSecondaryLaneStateForMember,
-  createMixedSecondaryLaneStates as buildMixedSecondaryLaneStates,
   deleteSecondaryRuntimeRun as deleteSecondaryRuntimeRunFromMap,
   getCurrentOpenCodeRuntimeRunId as resolveOpenCodeRuntimeRunIdFromMaps,
   getMixedSecondaryLaunchPhase as getMixedSecondaryLaunchPhaseFromRun,
@@ -3714,14 +3715,14 @@ export class TeamProvisioningService {
   }
 
   private createOpenCodeRuntimeBootstrapEvidencePorts(): OpenCodeRuntimeBootstrapEvidencePorts {
-    return createDefaultOpenCodeRuntimeBootstrapEvidencePorts({
+    return createOpenCodeRuntimeBootstrapEvidencePortsHelper({
       teamsBasePath: getTeamsBasePath(),
       warn: (message) => logger.warn(message),
     });
   }
 
-  private createOpenCodeMemberMessageDeliveryService(): OpenCodeMemberMessageDeliveryService {
-    return new OpenCodeMemberMessageDeliveryService({
+  private createOpenCodeMemberMessageDeliveryService() {
+    return createOpenCodeMemberMessageDeliveryServiceHelper({
       getOpenCodeRuntimeMessageAdapter: () => this.getOpenCodeRuntimeMessageAdapter(),
       readOpenCodeMemberDirectory: (teamName) => this.readOpenCodeMemberDirectory(teamName),
       resolveOpenCodeMemberIdentityFromDirectory: (teamName, memberName, directory) =>
@@ -3745,19 +3746,8 @@ export class TeamProvisioningService {
         this.deleteSecondaryRuntimeRun(teamName, laneId),
       cleanupStoppedTeamOpenCodeRuntimeLanesInBackground: (teamName) =>
         this.cleanupStoppedTeamOpenCodeRuntimeLanesInBackground(teamName),
-      findDeliverableOpenCodeRuntimeBootstrapSessionEvidence: (input) =>
-        findDeliverableOpenCodeRuntimeBootstrapSessionEvidence(
-          input,
-          this.createOpenCodeRuntimeBootstrapEvidencePorts()
-        ),
-      getOpenCodeAppMcpTransportMismatchDiagnostic: (session) =>
-        getOpenCodeAppMcpTransportMismatchDiagnostic(session),
-      stampOpenCodeAppMcpTransportEvidenceIfMissing: (session, options) =>
-        stampOpenCodeAppMcpTransportEvidenceIfMissing(
-          session,
-          this.createOpenCodeRuntimeBootstrapEvidencePorts(),
-          options
-        ),
+      createOpenCodeRuntimeBootstrapEvidencePorts: () =>
+        this.createOpenCodeRuntimeBootstrapEvidencePorts(),
       resolveControlApiBaseUrl: () => this.resolveControlApiBaseUrl(),
       sendOpenCodeMemberMessageToRuntimeSerialized: (input) =>
         this.sendOpenCodeMemberMessageToRuntimeSerialized(input),
@@ -3794,14 +3784,21 @@ export class TeamProvisioningService {
     teamName: string,
     input: OpenCodeMemberMessageDeliveryInput
   ): Promise<OpenCodeMemberInboxDelivery> {
-    return await this.createOpenCodeMemberMessageDeliveryService().deliver(teamName, input);
+    return await deliverOpenCodeMemberMessageHelper(
+      this.createOpenCodeMemberMessageDeliveryService(),
+      teamName,
+      input
+    );
   }
 
   private shouldRouteOpenCodeToRuntimeAdapter(request: {
     providerId?: TeamProviderId;
     members?: readonly { providerId?: TeamProviderId; provider?: TeamProviderId }[];
   }): boolean {
-    return isPureOpenCodeProvisioningRequest(request) && this.getOpenCodeRuntimeAdapter() !== null;
+    return shouldRouteOpenCodeToRuntimeAdapterHelper(
+      request,
+      this.getOpenCodeRuntimeAdapter() !== null
+    );
   }
 
   private planRuntimeLanesOrThrow(
@@ -3809,7 +3806,7 @@ export class TeamProvisioningService {
     members: TeamCreateRequest['members'],
     baseCwd?: string
   ): TeamRuntimeLanePlan {
-    return this.runtimeLaneCoordinator.planProvisioningMembers({
+    return planRuntimeLanesOrThrowHelper(this.runtimeLaneCoordinator, {
       leadProviderId,
       members,
       baseCwd,
@@ -3820,7 +3817,7 @@ export class TeamProvisioningService {
   private createMixedSecondaryLaneStates(
     plan: TeamRuntimeLanePlan
   ): MixedSecondaryRuntimeLaneState[] {
-    return buildMixedSecondaryLaneStates(plan);
+    return createMixedSecondaryLaneStatesHelper(plan);
   }
 
   private createMixedSecondaryLaneStateForMember(

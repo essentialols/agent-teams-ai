@@ -203,6 +203,7 @@ import {
   RuntimeStaleEvidenceError,
 } from './opencode/store/RuntimeRunTombstoneStore';
 import { getSystemLocale } from './provisioning/TeamProvisioningAgentLanguage';
+import { ensureCwdExists, sleep } from './provisioning/TeamProvisioningAsyncUtils';
 import { getOpenCodeBootstrapCheckinRetryMarker } from './provisioning/TeamProvisioningBootstrapCheckinMarker';
 import {
   buildDeterministicCreateBootstrapSpec,
@@ -300,6 +301,10 @@ import {
   type TeamProvisioningEnvBuilderPorts,
   type TeamRuntimeAuthContext,
 } from './provisioning/TeamProvisioningEnvBuilder';
+import {
+  applyAppManagedRuntimeSettingsPathEnv,
+  assertAppDeterministicBootstrapEnabled,
+} from './provisioning/TeamProvisioningEnvGuards';
 import {
   startProvisioningFilesystemMonitor,
   stopProvisioningFilesystemMonitor,
@@ -886,23 +891,10 @@ const STALL_CHECK_INTERVAL_MS = 10_000;
 const STALL_WARNING_THRESHOLD_MS = 20_000;
 const APP_TEAM_RUNTIME_DISALLOWED_TOOLS =
   'TeamDelete,TodoWrite,TaskCreate,TaskUpdate,mcp__agent-teams__team_launch,mcp__agent-teams__team_stop';
-const CLAUDE_TEAM_RUNTIME_SETTINGS_PATH_ENV = 'CLAUDE_TEAM_RUNTIME_SETTINGS_PATH';
 const TEAM_JSON_READ_TIMEOUT_MS = 5_000;
 const TEAM_CONFIG_MAX_BYTES = 10 * 1024 * 1024;
 const TEAM_INBOX_MAX_BYTES = 2 * 1024 * 1024;
 const MEMBER_SPAWN_AUDIT_MIN_INTERVAL_MS = 1_500;
-function assertAppDeterministicBootstrapEnabled(): void {
-  if (process.env.CLAUDE_APP_DISABLE_DETERMINISTIC_TEAM_BOOTSTRAP === '1') {
-    throw new Error(
-      'Deterministic team bootstrap is disabled by the app rollout flag (CLAUDE_APP_DISABLE_DETERMINISTIC_TEAM_BOOTSTRAP=1).'
-    );
-  }
-  if (process.env.CLAUDE_DISABLE_DETERMINISTIC_TEAM_BOOTSTRAP === '1') {
-    throw new Error(
-      'Deterministic team bootstrap is disabled by the runtime kill switch (CLAUDE_DISABLE_DETERMINISTIC_TEAM_BOOTSTRAP=1).'
-    );
-  }
-}
 
 function getRunRuntimeFailureLabel(run: ProvisioningRun): string {
   return getRuntimeFailureLabelForRequest(run.request);
@@ -1149,16 +1141,6 @@ interface MixedSecondaryRuntimeLaneState {
 
 type LeadActivityState = 'active' | 'idle' | 'offline';
 
-function applyAppManagedRuntimeSettingsPathEnv(
-  env: NodeJS.ProcessEnv,
-  settingsPath: string | null
-): void {
-  if (settingsPath) {
-    env[CLAUDE_TEAM_RUNTIME_SETTINGS_PATH_ENV] = settingsPath;
-  } else {
-    delete env[CLAUDE_TEAM_RUNTIME_SETTINGS_PATH_ENV];
-  }
-}
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -1175,9 +1157,6 @@ interface PendingMemberRestartContext {
 
 type LeadInboxMemberSpawnMessage = InboxMessage & { messageId: string };
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 async function tryReadRegularFileUtf8(
   filePath: string,
@@ -1210,13 +1189,6 @@ async function tryReadRegularFileUtf8(
   }
 }
 
-async function ensureCwdExists(cwd: string): Promise<void> {
-  await fs.promises.mkdir(cwd, { recursive: true });
-  const stat = await fs.promises.stat(cwd);
-  if (!stat.isDirectory()) {
-    throw new Error('cwd must be a directory');
-  }
-}
 
 /** @deprecated Use wrapAgentBlock from @shared/constants/agentBlocks instead. */
 const wrapInAgentBlock = wrapAgentBlock;

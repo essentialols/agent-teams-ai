@@ -43,8 +43,6 @@ import {
 } from '@main/utils/childProcess';
 import { FileReadTimeoutError, readFileUtf8WithTimeout } from '@main/utils/fsRead';
 import {
-  encodePath,
-  extractBaseDir,
   getAutoDetectedClaudeBasePath,
   getClaudeBasePath,
   getProjectsBasePath,
@@ -593,6 +591,7 @@ import {
   readRuntimeProcessRowsForUsageSnapshot as readRuntimeProcessRowsForUsageSnapshotHelper,
   type RuntimeProcessUsageStatsCacheEntry,
 } from './provisioning/TeamProvisioningRuntimeSnapshot';
+import { scanForNewestProjectSession } from './provisioning/TeamProvisioningSessionDiscovery';
 import {
   stopAllTeamsFlow,
   stopPersistentTeamMembersFlow,
@@ -22312,31 +22311,15 @@ export class TeamProvisioningService {
     projectPath: string,
     knownSessions: string[]
   ): Promise<string | null> {
-    try {
-      const projectId = encodePath(projectPath);
-      const baseDir = extractBaseDir(projectId);
-      const projectDir = path.join(getProjectsBasePath(), baseDir);
-      const entries = await fs.promises.readdir(projectDir);
-
-      const knownSet = new Set(knownSessions);
-      let newest: { id: string; mtime: number } | null = null;
-
-      for (const entry of entries) {
-        if (!entry.endsWith('.jsonl')) continue;
-        const sessionId = entry.replace('.jsonl', '');
-        if (knownSet.has(sessionId)) continue;
-
-        const filePath = path.join(projectDir, entry);
-        const stat = await fs.promises.stat(filePath);
-        if (!newest || stat.mtimeMs > newest.mtime) {
-          newest = { id: sessionId, mtime: stat.mtimeMs };
-        }
-      }
-
-      return newest?.id ?? null;
-    } catch {
-      return null;
-    }
+    return scanForNewestProjectSession({
+      projectPath,
+      knownSessions,
+      projectsBasePath: getProjectsBasePath(),
+      ports: {
+        readDir: (dirPath) => fs.promises.readdir(dirPath),
+        stat: (filePath) => fs.promises.stat(filePath),
+      },
+    });
   }
 
   private async assertConfigLeadOnlyForLaunch(teamName: string): Promise<void> {

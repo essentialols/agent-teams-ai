@@ -16,7 +16,7 @@ import {
   rememberRecentCrossTeamLeadDeliveryMessageIds,
   resolveSingleActiveCrossTeamReplyHint,
   wasRecentlyDeliveredToLead,
-} from '../TeamProvisioningCrossTeamRouting';
+} from '../TeamProvisioningCrossTeamRelayHelpers';
 
 import type { InboxMessage } from '@shared/types';
 
@@ -34,7 +34,7 @@ function inboxMessage(overrides: Partial<InboxMessage> = {}): InboxMessage {
   };
 }
 
-describe('cross-team routing policy', () => {
+describe('cross-team relay helpers', () => {
   it('routes pseudo recipients to the target team lead outside the current team', () => {
     expect(parseCrossTeamRecipient('local-team', 'cross-team:peer-team', new Set())).toEqual({
       teamName: 'peer-team',

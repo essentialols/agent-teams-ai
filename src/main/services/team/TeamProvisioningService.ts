@@ -255,22 +255,22 @@ import {
   updateTeamConfigPostLaunch,
 } from './provisioning/TeamProvisioningConfigMaterialization';
 import {
-  buildCrossTeamConversationKey as buildCrossTeamConversationKeyHelper,
-  clearPendingCrossTeamReplyExpectation as clearPendingCrossTeamReplyExpectationHelper,
-  extractCrossTeamPseudoTargetTeam as extractCrossTeamPseudoTargetTeamHelper,
-  getCrossTeamSourceTeam as getCrossTeamSourceTeamHelper,
-  getPendingCrossTeamReplyExpectationKeys as getPendingCrossTeamReplyExpectationKeysHelper,
-  isCrossTeamPseudoRecipientName as isCrossTeamPseudoRecipientNameHelper,
-  isCrossTeamToolRecipientName as isCrossTeamToolRecipientNameHelper,
-  looksLikeQualifiedExternalRecipientName as looksLikeQualifiedExternalRecipientNameHelper,
+  buildCrossTeamConversationKey,
+  clearPendingCrossTeamReplyExpectation as clearPendingCrossTeamReplyExpectationInState,
+  type CrossTeamDeliveredLeadBlock,
+  getCrossTeamSourceTeam,
+  getPendingCrossTeamReplyExpectationKeys,
+  isCrossTeamPseudoRecipientName,
+  isCrossTeamToolRecipientName,
+  looksLikeQualifiedExternalRecipientName,
   matchCrossTeamLeadInboxMessages as matchCrossTeamLeadInboxMessagesHelper,
-  parseCrossTeamRecipient as parseCrossTeamRecipientHelper,
-  parseCrossTeamTargetTeam as parseCrossTeamTargetTeamHelper,
-  registerPendingCrossTeamReplyExpectation as registerPendingCrossTeamReplyExpectationHelper,
-  rememberRecentCrossTeamLeadDeliveryMessageIds as rememberRecentCrossTeamLeadDeliveryMessageIdsHelper,
-  resolveSingleActiveCrossTeamReplyHint as resolveSingleActiveCrossTeamReplyHintHelper,
-  wasRecentlyDeliveredToLead as wasRecentlyDeliveredToLeadHelper,
-} from './provisioning/TeamProvisioningCrossTeamRouting';
+  parseCrossTeamRecipient,
+  parseCrossTeamTargetTeam,
+  registerPendingCrossTeamReplyExpectation as registerPendingCrossTeamReplyExpectationInState,
+  rememberRecentCrossTeamLeadDeliveryMessageIds,
+  resolveSingleActiveCrossTeamReplyHint,
+  wasRecentlyDeliveredToLead,
+} from './provisioning/TeamProvisioningCrossTeamRelayHelpers';
 import {
   buildProvisioningTraceDetail,
   pushUniqueSupportDiagnostics,
@@ -4879,46 +4879,12 @@ export class TeamProvisioningService {
     this.teamChangeEmitter = emitter;
   }
 
-  private parseCrossTeamRecipient(
-    currentTeam: string,
-    recipient: string,
-    localRecipientNames: Set<string>
-  ): { teamName: string; memberName: string } | null {
-    return parseCrossTeamRecipientHelper(currentTeam, recipient, localRecipientNames);
-  }
-
-  private extractCrossTeamPseudoTargetTeam(value: string): string | null {
-    return extractCrossTeamPseudoTargetTeamHelper(value);
-  }
-
-  private isCrossTeamToolRecipientName(name: string): boolean {
-    return isCrossTeamToolRecipientNameHelper(name);
-  }
-
-  private isCrossTeamPseudoRecipientName(name: string): boolean {
-    return isCrossTeamPseudoRecipientNameHelper(name);
-  }
-
-  private resolveSingleActiveCrossTeamReplyHint(
-    run: ProvisioningRun
-  ): { toTeam: string; conversationId: string } | null {
-    return resolveSingleActiveCrossTeamReplyHintHelper(run.activeCrossTeamReplyHints);
-  }
-
-  private looksLikeQualifiedExternalRecipientName(name: string): boolean {
-    return looksLikeQualifiedExternalRecipientNameHelper(name);
-  }
-
-  private buildCrossTeamConversationKey(otherTeam: string, conversationId: string): string {
-    return buildCrossTeamConversationKeyHelper(otherTeam, conversationId);
-  }
-
   registerPendingCrossTeamReplyExpectation(
     teamName: string,
     otherTeam: string,
     conversationId: string
   ): void {
-    registerPendingCrossTeamReplyExpectationHelper(
+    registerPendingCrossTeamReplyExpectationInState(
       this.pendingCrossTeamFirstReplies,
       teamName,
       otherTeam,
@@ -4932,20 +4898,11 @@ export class TeamProvisioningService {
     otherTeam: string,
     conversationId: string
   ): void {
-    clearPendingCrossTeamReplyExpectationHelper(
+    clearPendingCrossTeamReplyExpectationInState(
       this.pendingCrossTeamFirstReplies,
       teamName,
       otherTeam,
       conversationId
-    );
-  }
-
-  private getPendingCrossTeamReplyExpectationKeys(teamName: string): Set<string> {
-    return getPendingCrossTeamReplyExpectationKeysHelper(
-      this.pendingCrossTeamFirstReplies,
-      teamName,
-      Date.now(),
-      TeamProvisioningService.RECENT_CROSS_TEAM_DELIVERY_TTL_MS
     );
   }
 
@@ -4954,46 +4911,10 @@ export class TeamProvisioningService {
     return members.find((m) => m.role?.toLowerCase().includes('lead'))?.name || 'team-lead';
   }
 
-  private rememberRecentCrossTeamLeadDeliveryMessageIds(
-    teamName: string,
-    messageIds: string[]
-  ): void {
-    rememberRecentCrossTeamLeadDeliveryMessageIdsHelper(
-      this.recentCrossTeamLeadDeliveryMessageIds,
-      teamName,
-      messageIds,
-      Date.now(),
-      TeamProvisioningService.RECENT_CROSS_TEAM_DELIVERY_TTL_MS
-    );
-  }
-
-  private wasRecentlyDeliveredToLead(teamName: string, messageId: string): boolean {
-    return wasRecentlyDeliveredToLeadHelper(
-      this.recentCrossTeamLeadDeliveryMessageIds,
-      teamName,
-      messageId,
-      Date.now(),
-      TeamProvisioningService.RECENT_CROSS_TEAM_DELIVERY_TTL_MS
-    );
-  }
-
-  private parseCrossTeamTargetTeam(value: string | undefined): string | null {
-    return parseCrossTeamTargetTeamHelper(value);
-  }
-
-  private getCrossTeamSourceTeam(value: string | undefined): string | null {
-    return getCrossTeamSourceTeamHelper(value);
-  }
-
   private async matchCrossTeamLeadInboxMessages(
     teamName: string,
     leadName: string,
-    deliveredBlocks: {
-      teammateId: string;
-      content: string;
-      toTeam: string;
-      conversationId: string;
-    }[]
+    deliveredBlocks: CrossTeamDeliveredLeadBlock[]
   ): Promise<
     {
       teammateId: string;
@@ -5070,11 +4991,21 @@ export class TeamProvisioningService {
           }
         }
         const freshMatches = matches.filter(
-          (match) => !this.wasRecentlyDeliveredToLead(run.teamName, match.messageId)
+          (match) =>
+            !wasRecentlyDeliveredToLead(
+              this.recentCrossTeamLeadDeliveryMessageIds,
+              run.teamName,
+              match.messageId,
+              Date.now(),
+              TeamProvisioningService.RECENT_CROSS_TEAM_DELIVERY_TTL_MS
+            )
         );
-        this.rememberRecentCrossTeamLeadDeliveryMessageIds(
+        rememberRecentCrossTeamLeadDeliveryMessageIds(
+          this.recentCrossTeamLeadDeliveryMessageIds,
           run.teamName,
-          freshMatches.map((match) => match.messageId)
+          freshMatches.map((match) => match.messageId),
+          Date.now(),
+          TeamProvisioningService.RECENT_CROSS_TEAM_DELIVERY_TTL_MS
         );
         run.activeCrossTeamReplyHints = freshMatches.map((match) => ({
           toTeam: match.toTeam,
@@ -12004,8 +11935,8 @@ export class TeamProvisioningService {
 
   async relayMemberInboxMessages(teamName: string, memberName: string): Promise<number> {
     if (
-      this.isCrossTeamPseudoRecipientName(memberName) ||
-      this.isCrossTeamToolRecipientName(memberName)
+      isCrossTeamPseudoRecipientName(memberName) ||
+      isCrossTeamToolRecipientName(memberName)
     ) {
       return 0;
     }
@@ -12149,8 +12080,8 @@ export class TeamProvisioningService {
     options: OpenCodeMemberInboxRelayOptions = {}
   ): Promise<LiveInboxRelayResult> {
     if (
-      this.isCrossTeamPseudoRecipientName(inboxName) ||
-      this.isCrossTeamToolRecipientName(inboxName)
+      isCrossTeamPseudoRecipientName(inboxName) ||
+      isCrossTeamToolRecipientName(inboxName)
     ) {
       return { kind: 'ignored', relayed: 0 };
     }
@@ -13069,9 +13000,9 @@ export class TeamProvisioningService {
         if (!Number.isFinite(timestampMs)) continue;
         if (message.source === CROSS_TEAM_SENT_SOURCE) {
           const conversationId = message.conversationId?.trim();
-          const targetTeam = this.parseCrossTeamTargetTeam(message.to);
+          const targetTeam = parseCrossTeamTargetTeam(message.to);
           if (!conversationId || !targetTeam) continue;
-          const key = this.buildCrossTeamConversationKey(targetTeam, conversationId);
+          const key = buildCrossTeamConversationKey(targetTeam, conversationId);
           latestOutboundByConversation.set(
             key,
             Math.max(latestOutboundByConversation.get(key) ?? 0, timestampMs)
@@ -13083,9 +13014,9 @@ export class TeamProvisioningService {
             message.replyToConversationId?.trim() ??
             message.conversationId?.trim() ??
             parseCrossTeamPrefix(message.text)?.conversationId;
-          const sourceTeam = this.getCrossTeamSourceTeam(message.from);
+          const sourceTeam = getCrossTeamSourceTeam(message.from);
           if (!conversationId || !sourceTeam) continue;
-          const key = this.buildCrossTeamConversationKey(sourceTeam, conversationId);
+          const key = buildCrossTeamConversationKey(sourceTeam, conversationId);
           latestReadInboundByConversation.set(
             key,
             Math.max(latestReadInboundByConversation.get(key) ?? 0, timestampMs)
@@ -13097,13 +13028,24 @@ export class TeamProvisioningService {
           .filter(([key, sentAtMs]) => sentAtMs > (latestReadInboundByConversation.get(key) ?? 0))
           .map(([key]) => key)
       );
-      const pendingTransientReplies = this.getPendingCrossTeamReplyExpectationKeys(teamName);
+      const pendingTransientReplies = getPendingCrossTeamReplyExpectationKeys(
+        this.pendingCrossTeamFirstReplies,
+        teamName,
+        Date.now(),
+        TeamProvisioningService.RECENT_CROSS_TEAM_DELIVERY_TTL_MS
+      );
       const matchedTransientReplyKeys = new Set<string>();
 
       const wasRecentlyDeliveredCrossTeam = (message: InboxMessage): boolean => {
         if (message.source !== CROSS_TEAM_SOURCE) return false;
         if (!hasStableInboxMessageId(message)) return false;
-        return this.wasRecentlyDeliveredToLead(teamName, message.messageId);
+        return wasRecentlyDeliveredToLead(
+          this.recentCrossTeamLeadDeliveryMessageIds,
+          teamName,
+          message.messageId,
+          Date.now(),
+          TeamProvisioningService.RECENT_CROSS_TEAM_DELIVERY_TTL_MS
+        );
       };
       const isCrossTeamReplyToOwnOutbound = (message: InboxMessage): boolean => {
         if (message.source !== CROSS_TEAM_SOURCE) return false;
@@ -13112,9 +13054,9 @@ export class TeamProvisioningService {
           message.conversationId?.trim() ??
           parseCrossTeamPrefix(message.text)?.conversationId;
         if (!conversationId) return false;
-        const sourceTeam = this.getCrossTeamSourceTeam(message.from);
+        const sourceTeam = getCrossTeamSourceTeam(message.from);
         if (!sourceTeam) return false;
-        const key = this.buildCrossTeamConversationKey(sourceTeam, conversationId);
+        const key = buildCrossTeamConversationKey(sourceTeam, conversationId);
         if (pendingHistoricalReplies.has(key)) {
           return true;
         }
@@ -13303,11 +13245,14 @@ export class TeamProvisioningService {
         return 0;
       }
 
-      this.rememberRecentCrossTeamLeadDeliveryMessageIds(
+      rememberRecentCrossTeamLeadDeliveryMessageIds(
+        this.recentCrossTeamLeadDeliveryMessageIds,
         teamName,
         batch
           .filter((message) => message.source === CROSS_TEAM_SOURCE)
-          .map((message) => message.messageId)
+          .map((message) => message.messageId),
+        Date.now(),
+        TeamProvisioningService.RECENT_CROSS_TEAM_DELIVERY_TTL_MS
       );
 
       let replyText: string | null = null;
@@ -17095,11 +17040,11 @@ export class TeamProvisioningService {
       localRecipientNames.add('user');
       localRecipientNames.add('team-lead');
 
-      const mistakenToolHint = this.isCrossTeamToolRecipientName(recipient)
-        ? this.resolveSingleActiveCrossTeamReplyHint(run)
+      const mistakenToolHint = isCrossTeamToolRecipientName(recipient)
+        ? resolveSingleActiveCrossTeamReplyHint(run.activeCrossTeamReplyHints)
         : null;
       const crossTeamRecipient =
-        this.parseCrossTeamRecipient(run.teamName, recipient, localRecipientNames) ??
+        parseCrossTeamRecipient(run.teamName, recipient, localRecipientNames) ??
         (mistakenToolHint ? { teamName: mistakenToolHint.toTeam, memberName: 'team-lead' } : null);
       if (crossTeamRecipient && this.crossTeamSender) {
         const inferredReplyMeta =
@@ -17144,7 +17089,7 @@ export class TeamProvisioningService {
               from: leadName,
               to: recipient.startsWith('cross-team:')
                 ? recipient
-                : this.isCrossTeamToolRecipientName(recipient)
+                : isCrossTeamToolRecipientName(recipient)
                   ? `${crossTeamRecipient.teamName}.${crossTeamRecipient.memberName}`
                   : `${crossTeamRecipient.teamName}.${crossTeamRecipient.memberName}`,
               text: strippedCrossTeamContent,
@@ -17181,7 +17126,7 @@ export class TeamProvisioningService {
         continue;
       }
 
-      if (this.isCrossTeamToolRecipientName(recipient)) {
+      if (isCrossTeamToolRecipientName(recipient)) {
         continue;
       }
 
@@ -20403,9 +20348,9 @@ export class TeamProvisioningService {
       const inboxNameSetLower = new Set(allInboxNames.map((n) => n.toLowerCase()));
       const inboxNames = allInboxNames
         .filter((name) => name !== 'team-lead' && name !== 'user')
-        .filter((name) => !this.isCrossTeamPseudoRecipientName(name))
-        .filter((name) => !this.isCrossTeamToolRecipientName(name))
-        .filter((name) => !this.looksLikeQualifiedExternalRecipientName(name))
+        .filter((name) => !isCrossTeamPseudoRecipientName(name))
+        .filter((name) => !isCrossTeamToolRecipientName(name))
+        .filter((name) => !looksLikeQualifiedExternalRecipientName(name))
         .filter((name) => {
           const match = /^(.+)-(\d+)$/.exec(name);
           if (!match?.[1] || !match[2]) return true;

@@ -5,7 +5,6 @@ import {
 import {
   buildOpenCodeSecondaryLaneId,
   buildPlannedMemberLaneIdentity,
-  isOpenCodeSideLanePlan,
   isPureOpenCodeSoloLanePlan,
   isPureOpenCodeWorktreeRootLanePlan,
   OPEN_CODE_SOLO_MEMBER_NAME,
@@ -662,6 +661,21 @@ import {
   type RuntimeTurnSettledEnvironmentProvider,
   type RuntimeTurnSettledHookSettingsProvider,
 } from './provisioning/TeamProvisioningRuntimeTurnSettledPlanning';
+import {
+  clearSecondaryRuntimeRuns as clearSecondaryRuntimeRunsInMap,
+  createMixedSecondaryLaneStateForMember as buildMixedSecondaryLaneStateForMember,
+  createMixedSecondaryLaneStates as buildMixedSecondaryLaneStates,
+  deleteSecondaryRuntimeRun as deleteSecondaryRuntimeRunFromMap,
+  getCurrentOpenCodeRuntimeRunId as resolveOpenCodeRuntimeRunIdFromMaps,
+  getMixedSecondaryLaunchPhase as getMixedSecondaryLaunchPhaseFromRun,
+  getSecondaryRuntimeRuns as getSecondaryRuntimeRunsFromMap,
+  hasSecondaryRuntimeRuns as hasSecondaryRuntimeRunsInMap,
+  type MixedSecondaryRuntimeLaneState,
+  removeRunAllEffectiveMember as removeRunAllEffectiveMemberFromRun,
+  type SecondaryRuntimeRunEntry,
+  setSecondaryRuntimeRun as setSecondaryRuntimeRunInMap,
+  upsertRunAllEffectiveMember as upsertRunAllEffectiveMemberInRun,
+} from './provisioning/TeamProvisioningSecondaryRuntimeRuns';
 import { scanForNewestProjectSession } from './provisioning/TeamProvisioningSessionDiscovery';
 import {
   stopAllTeamsFlow,
@@ -1134,21 +1148,6 @@ interface ProvisioningRun {
   teamLaunchedNotificationFired?: boolean;
 }
 
-interface MixedSecondaryRuntimeLaneState {
-  laneId: string;
-  providerId: 'opencode';
-  member: TeamCreateRequest['members'][number];
-  runId: string | null;
-  state: 'queued' | 'launching' | 'finished';
-  result: TeamRuntimeLaunchResult | null;
-  warnings: string[];
-  diagnostics: string[];
-  launchScheduled?: boolean;
-  queuedAtMs?: number;
-  launchStartedAtMs?: number;
-  launchFinishedAtMs?: number;
-}
-
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -1411,10 +1410,7 @@ export class TeamProvisioningService {
   private readonly transientProbeProcesses = new Set<ReturnType<typeof spawn>>();
   private readonly secondaryRuntimeRunByTeam = new Map<
     string,
-    Map<
-      string,
-      { runId: string; providerId: 'opencode'; laneId: string; memberName: string; cwd?: string }
-    >
+    Map<string, SecondaryRuntimeRunEntry>
   >();
   private readonly stoppingSecondaryRuntimeTeams = new Set<string>();
   private readonly retainedClaudeLogsByTeam = new Map<string, RetainedClaudeLogsSnapshot>();
@@ -3817,234 +3813,68 @@ export class TeamProvisioningService {
   private createMixedSecondaryLaneStates(
     plan: TeamRuntimeLanePlan
   ): MixedSecondaryRuntimeLaneState[] {
-    if (!isOpenCodeSideLanePlan(plan)) {
-      return [];
-    }
-    return plan.sideLanes.map((sideLane) => ({
-      laneId: sideLane.laneId,
-      providerId: 'opencode',
-      member: {
-        ...sideLane.member,
-      },
-      runId: null,
-      state: 'queued',
-      result: null,
-      warnings: [],
-      diagnostics: [],
-    }));
+    return buildMixedSecondaryLaneStates(plan);
   }
 
   private createMixedSecondaryLaneStateForMember(
     run: Pick<ProvisioningRun, 'request' | 'mixedSecondaryLanes'>,
     member: TeamCreateRequest['members'][number]
   ): MixedSecondaryRuntimeLaneState {
-    const leadProviderId = resolveTeamProviderId(run.request.providerId);
-    const existingLane = (run.mixedSecondaryLanes ?? []).find((lane) =>
-      matchesTeamMemberIdentity(lane.member.name, member.name)
-    );
-    if (leadProviderId === 'opencode') {
-      const memberCwd = member.cwd?.trim();
-      const baseCwd = run.request.cwd?.trim();
-      const laneId =
-        existingLane?.laneId ??
-        (memberCwd && (!baseCwd || memberCwd !== baseCwd)
-          ? buildOpenCodeSecondaryLaneId(member)
-          : null);
-      if (!laneId) {
-        throw new Error(
-          `Member "${member.name}" is not eligible for an OpenCode secondary runtime lane`
-        );
-      }
-      return {
-        laneId,
-        providerId: 'opencode',
-        member: {
-          ...member,
-        },
-        runId: null,
-        state: 'queued',
-        result: null,
-        warnings: [],
-        diagnostics: [],
-      };
-    }
-
-    const laneIdentity = buildPlannedMemberLaneIdentity({
-      leadProviderId,
-      member: {
-        name: member.name,
-        providerId: normalizeOptionalTeamProviderId(member.providerId),
-      },
-    });
-
-    if (laneIdentity.laneKind !== 'secondary' || laneIdentity.laneOwnerProviderId !== 'opencode') {
-      throw new Error(
-        `Member "${member.name}" is not eligible for an OpenCode secondary runtime lane`
-      );
-    }
-
-    return {
-      laneId: laneIdentity.laneId,
-      providerId: 'opencode',
-      member: {
-        ...member,
-      },
-      runId: null,
-      state: 'queued',
-      result: null,
-      warnings: [],
-      diagnostics: [],
-    };
+    return buildMixedSecondaryLaneStateForMember(run, member);
   }
 
   private getMixedSecondaryLaunchPhase(run: ProvisioningRun): PersistedTeamLaunchPhase {
-    return (run.mixedSecondaryLanes ?? []).some(
-      (lane) =>
-        (!lane.result && lane.state !== 'finished') ||
-        lane.result?.teamLaunchState === 'partial_pending'
-    )
-      ? 'active'
-      : 'finished';
+    return getMixedSecondaryLaunchPhaseFromRun(run);
   }
 
   private upsertRunAllEffectiveMember(
     run: ProvisioningRun,
     member: TeamCreateRequest['members'][number]
   ): void {
-    const normalizedName = member.name.trim().toLowerCase();
-    const currentMembers = Array.isArray(run.allEffectiveMembers) ? run.allEffectiveMembers : [];
-    const nextMembers = currentMembers.filter(
-      (candidate) => candidate.name.trim().toLowerCase() !== normalizedName
-    );
-    nextMembers.push(member);
-    run.allEffectiveMembers = nextMembers;
-    run.request = {
-      ...run.request,
-      members: nextMembers,
-    };
-
-    const laneIdentity = buildPlannedMemberLaneIdentity({
-      leadProviderId: resolveTeamProviderId(run.request.providerId),
-      member: {
-        name: member.name,
-        providerId: normalizeOptionalTeamProviderId(member.providerId),
-      },
-    });
-    const currentPrimaryMembers = Array.isArray(run.effectiveMembers) ? run.effectiveMembers : [];
-    const nextPrimaryMembers = currentPrimaryMembers.filter(
-      (candidate) => candidate.name.trim().toLowerCase() !== normalizedName
-    );
-    const currentExpectedMembers = Array.isArray(run.expectedMembers) ? run.expectedMembers : [];
-    const nextExpectedMembers = currentExpectedMembers.filter(
-      (candidate) => candidate.trim().toLowerCase() !== normalizedName
-    );
-    if (laneIdentity.laneKind === 'primary') {
-      run.effectiveMembers = [...nextPrimaryMembers, member];
-      run.expectedMembers = [...nextExpectedMembers, member.name.trim()].filter(Boolean);
-    } else {
-      run.effectiveMembers = nextPrimaryMembers;
-      run.expectedMembers = nextExpectedMembers;
-    }
+    upsertRunAllEffectiveMemberInRun(run, member);
   }
 
   private removeRunAllEffectiveMember(run: ProvisioningRun, memberName: string): void {
-    const normalizedName = memberName.trim().toLowerCase();
-    const currentMembers = Array.isArray(run.allEffectiveMembers) ? run.allEffectiveMembers : [];
-    const nextMembers = currentMembers.filter(
-      (candidate) => candidate.name.trim().toLowerCase() !== normalizedName
-    );
-    run.allEffectiveMembers = nextMembers;
-    run.request = {
-      ...run.request,
-      members: nextMembers,
-    };
-    const currentPrimaryMembers = Array.isArray(run.effectiveMembers) ? run.effectiveMembers : [];
-    run.effectiveMembers = currentPrimaryMembers.filter(
-      (candidate) => candidate.name.trim().toLowerCase() !== normalizedName
-    );
-    const currentExpectedMembers = Array.isArray(run.expectedMembers) ? run.expectedMembers : [];
-    run.expectedMembers = currentExpectedMembers.filter(
-      (candidate) => candidate.trim().toLowerCase() !== normalizedName
-    );
+    removeRunAllEffectiveMemberFromRun(run, memberName);
   }
 
   private hasSecondaryRuntimeRuns(teamName: string): boolean {
-    const runs = this.secondaryRuntimeRunByTeam.get(teamName);
-    return Boolean(runs && runs.size > 0);
+    return hasSecondaryRuntimeRunsInMap(this.secondaryRuntimeRunByTeam, teamName);
   }
 
-  private getSecondaryRuntimeRuns(teamName: string): {
-    runId: string;
-    providerId: 'opencode';
-    laneId: string;
-    memberName: string;
-    cwd?: string;
-  }[] {
-    return Array.from(this.secondaryRuntimeRunByTeam.get(teamName)?.values() ?? []);
+  private getSecondaryRuntimeRuns(teamName: string): SecondaryRuntimeRunEntry[] {
+    return getSecondaryRuntimeRunsFromMap(this.secondaryRuntimeRunByTeam, teamName);
   }
 
-  private setSecondaryRuntimeRun(input: {
-    teamName: string;
-    runId: string;
-    providerId: 'opencode';
-    laneId: string;
-    memberName: string;
-    cwd?: string;
-  }): void {
-    const runs = this.secondaryRuntimeRunByTeam.get(input.teamName) ?? new Map();
-    runs.set(input.laneId, {
-      runId: input.runId,
-      providerId: input.providerId,
-      laneId: input.laneId,
-      memberName: input.memberName,
-      cwd: input.cwd,
-    });
-    this.secondaryRuntimeRunByTeam.set(input.teamName, runs);
+  private setSecondaryRuntimeRun(input: SecondaryRuntimeRunEntry & { teamName: string }): void {
+    setSecondaryRuntimeRunInMap(this.secondaryRuntimeRunByTeam, input);
   }
 
   private deleteSecondaryRuntimeRun(teamName: string, laneId: string): void {
     this.clearOpenCodeRuntimeToolApprovals(teamName, { laneId, emitDismiss: true });
-    const runs = this.secondaryRuntimeRunByTeam.get(teamName);
-    if (!runs) {
-      return;
-    }
-    runs.delete(laneId);
-    if (runs.size === 0) {
-      this.secondaryRuntimeRunByTeam.delete(teamName);
-    }
+    deleteSecondaryRuntimeRunFromMap(this.secondaryRuntimeRunByTeam, teamName, laneId);
   }
 
   private clearSecondaryRuntimeRuns(teamName: string): void {
     this.clearOpenCodeRuntimeToolApprovals(teamName, { emitDismiss: true });
-    this.secondaryRuntimeRunByTeam.delete(teamName);
+    clearSecondaryRuntimeRunsInMap(this.secondaryRuntimeRunByTeam, teamName);
   }
 
   private getCurrentOpenCodeRuntimeRunId(teamName: string, laneId: string): string | null {
-    if (laneId === 'primary') {
-      const trackedRunId = this.getTrackedRunId(teamName);
-      const trackedRun = trackedRunId ? this.runs.get(trackedRunId) : null;
-      if (trackedRun && this.shouldRouteOpenCodeToRuntimeAdapter(trackedRun.request)) {
-        return trackedRunId;
-      }
-      if (
-        trackedRunId &&
-        this.provisioningRunByTeam.get(teamName) === trackedRunId &&
-        this.runtimeAdapterProgressByRunId.has(trackedRunId)
-      ) {
-        const runtimeProgress = this.runtimeAdapterProgressByRunId.get(trackedRunId);
-        if (runtimeProgress && this.isCancellableRuntimeAdapterProgress(runtimeProgress)) {
-          return trackedRunId;
-        }
-      }
-      const runtimeRun = this.runtimeAdapterRunByTeam.get(teamName);
-      if (runtimeRun?.providerId === 'opencode') {
-        return runtimeRun.runId;
-      }
-      return null;
-    }
-
-    const secondaryLaneRun = this.secondaryRuntimeRunByTeam.get(teamName)?.get(laneId);
-    return secondaryLaneRun?.runId ?? null;
+    return resolveOpenCodeRuntimeRunIdFromMaps({
+      teamName,
+      laneId,
+      trackedRunId: this.getTrackedRunId(teamName),
+      runs: this.runs,
+      provisioningRunByTeam: this.provisioningRunByTeam,
+      runtimeAdapterProgressByRunId: this.runtimeAdapterProgressByRunId,
+      runtimeAdapterRunByTeam: this.runtimeAdapterRunByTeam,
+      secondaryRuntimeRunByTeam: this.secondaryRuntimeRunByTeam,
+      shouldRouteOpenCodeToRuntimeAdapter: (request) =>
+        this.shouldRouteOpenCodeToRuntimeAdapter(request),
+      isCancellableRuntimeAdapterProgress: (progress) =>
+        this.isCancellableRuntimeAdapterProgress(progress),
+    });
   }
 
   private async resolveCurrentOpenCodeRuntimeRunId(

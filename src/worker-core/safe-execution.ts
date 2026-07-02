@@ -1708,6 +1708,21 @@ export function defaultSafeExecutionErrorClassifier(
       retryable: true,
     };
   }
+  const rawDetails = unknownFailureDetails(chain);
+  const backendUnavailableMessage = [
+    ...messages,
+    rawDetails?.rawCause,
+    rawDetails?.stderrTail,
+    rawDetails?.stdoutTail,
+  ].find((candidate) => isBackendUnavailableMessage(candidate));
+  if (backendUnavailableMessage) {
+    return {
+      reason: "capacity_unavailable",
+      safeMessage: "Codex app-server goal backend is temporarily blocked.",
+      retryable: true,
+      ...optionalFailureDetails(rawDetails),
+    };
+  }
   const invalidOutputMessage = messages.find((candidate) =>
     /final_message_missing|structured_output_invalid|output_too_large|provider output was invalid/i.test(
       candidate,
@@ -1724,8 +1739,17 @@ export function defaultSafeExecutionErrorClassifier(
     reason: "unknown_error",
     safeMessage: message,
     retryable: false,
-    ...optionalFailureDetails(unknownFailureDetails(chain)),
+    ...optionalFailureDetails(rawDetails),
   };
+}
+
+function isBackendUnavailableMessage(value: string | undefined): boolean {
+  return (
+    value !== undefined &&
+    /codex_app_server_goal_blocked|app-server goal backend is temporarily blocked/i.test(
+      value,
+    )
+  );
 }
 
 function classifyWorkerFailureCode(

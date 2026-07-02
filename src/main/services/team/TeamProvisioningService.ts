@@ -260,6 +260,7 @@ import {
 } from './provisioning/TeamProvisioningCleanup';
 import { buildCombinedLogs } from './provisioning/TeamProvisioningCliExitPresentation';
 import {
+  assertConfigRawLeadOnlyForLaunch,
   buildMembersMetaWritePayload,
   collectConfigLaunchBaseNamesFromConfigMembers,
   collectConfigLaunchBaseNamesFromMetaMembers,
@@ -22344,46 +22345,7 @@ export class TeamProvisioningService {
       timeoutMs: TEAM_JSON_READ_TIMEOUT_MS,
       maxBytes: TEAM_CONFIG_MAX_BYTES,
     });
-    if (!raw) {
-      throw new Error('config.json unreadable');
-    }
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw) as unknown;
-    } catch {
-      throw new Error('config.json could not be parsed');
-    }
-    if (!parsed || typeof parsed !== 'object') {
-      throw new Error('config.json has invalid shape');
-    }
-
-    const config = parsed as Record<string, unknown>;
-    const members = Array.isArray(config.members)
-      ? (config.members as Record<string, unknown>[])
-      : [];
-    if (members.length === 0) return;
-
-    for (const member of members) {
-      const name = typeof member.name === 'string' ? member.name.trim() : '';
-      if (!name) continue;
-      const lower = name.toLowerCase();
-
-      if (isLeadMember(member) || lower === 'user') continue;
-
-      const leadAgentId = config.leadAgentId;
-      if (
-        typeof leadAgentId === 'string' &&
-        typeof member.agentId === 'string' &&
-        member.agentId === leadAgentId
-      ) {
-        continue;
-      }
-
-      throw new Error(
-        `Refusing to launch: config.json still contains teammates (e.g. "${name}"), which can trigger CLI auto-suffixes like "${name}-2".`
-      );
-    }
+    assertConfigRawLeadOnlyForLaunch(raw);
   }
 
   private async normalizeTeamConfigForLaunch(teamName: string, configRaw: string): Promise<void> {

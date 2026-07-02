@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  assertConfigRawLeadOnlyForLaunch,
   buildMembersMetaWritePayload,
   collectConfigLaunchBaseNamesFromConfigMembers,
   collectConfigLaunchBaseNamesFromMetaMembers,
@@ -20,6 +21,42 @@ function memberNames(members: readonly Record<string, unknown>[]): unknown[] {
 }
 
 describe('team provisioning config launch normalization planning', () => {
+  it('accepts lead-only launch configs and rejects teammate configs before launch', () => {
+    expect(() =>
+      assertConfigRawLeadOnlyForLaunch(
+        JSON.stringify({
+          leadAgentId: 'lead-123',
+          members: [
+            { name: 'Lead Alias', agentType: 'general-purpose', agentId: 'lead-123' },
+            { name: 'team-lead', agentType: 'general-purpose' },
+            { name: 'user' },
+          ],
+        })
+      )
+    ).not.toThrow();
+
+    expect(() =>
+      assertConfigRawLeadOnlyForLaunch(
+        JSON.stringify({
+          members: [
+            { name: 'team-lead', agentType: 'team-lead' },
+            { name: 'Alice', agentType: 'general-purpose' },
+          ],
+        })
+      )
+    ).toThrow(
+      'Refusing to launch: config.json still contains teammates (e.g. "Alice"), which can trigger CLI auto-suffixes like "Alice-2".'
+    );
+  });
+
+  it('preserves lead-only launch config parse failure messages', () => {
+    expect(() => assertConfigRawLeadOnlyForLaunch(null)).toThrow('config.json unreadable');
+    expect(() => assertConfigRawLeadOnlyForLaunch('{not json')).toThrow(
+      'config.json could not be parsed'
+    );
+    expect(() => assertConfigRawLeadOnlyForLaunch('42')).toThrow('config.json has invalid shape');
+  });
+
   it('plans CLI auto-suffixed config member cleanup without dropping intentional suffix names', () => {
     const plan = planCliAutoSuffixedConfigMemberCleanup(
       JSON.stringify({

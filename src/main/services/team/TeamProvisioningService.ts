@@ -589,6 +589,10 @@ import {
   readRuntimeProcessRowsForUsageSnapshot as readRuntimeProcessRowsForUsageSnapshotHelper,
   type RuntimeProcessUsageStatsCacheEntry,
 } from './provisioning/TeamProvisioningRuntimeSnapshot';
+import {
+  clearMemberSpawnToolTracking as clearMemberSpawnToolTrackingHelper,
+  resetRuntimeToolActivity as resetRuntimeToolActivityHelper,
+} from './provisioning/TeamProvisioningRuntimeToolActivity';
 import { scanForNewestProjectSession } from './provisioning/TeamProvisioningSessionDiscovery';
 import {
   stopAllTeamsFlow,
@@ -7887,41 +7891,16 @@ export class TeamProvisioningService {
   }
 
   private resetRuntimeToolActivity(run: ProvisioningRun, memberName?: string): void {
-    if (run.activeToolCalls.size === 0) return;
-
-    if (!memberName) {
-      run.activeToolCalls.clear();
-      this.emitToolActivity(run, { action: 'reset' });
-      return;
-    }
-
-    let removed = false;
-    for (const [toolUseId, active] of run.activeToolCalls.entries()) {
-      if (active.memberName !== memberName) continue;
-      run.activeToolCalls.delete(toolUseId);
-      removed = true;
-    }
-
-    if (removed) {
-      this.emitToolActivity(run, { action: 'reset', memberName });
-    }
+    resetRuntimeToolActivityHelper(run, memberName, {
+      emitToolActivity: (payload) => this.emitToolActivity(run, payload),
+    });
   }
 
   private clearMemberSpawnToolTracking(run: ProvisioningRun, memberName: string): void {
-    let removed = false;
-    for (const [toolUseId, trackedMemberName] of run.memberSpawnToolUseIds.entries()) {
-      if (trackedMemberName !== memberName) continue;
-      run.memberSpawnToolUseIds.delete(toolUseId);
-      removed = true;
-    }
-
-    if (removed) {
-      this.appendMemberBootstrapDiagnostic(
-        run,
-        memberName,
-        'cleared stale spawn tool tracking before manual restart'
-      );
-    }
+    clearMemberSpawnToolTrackingHelper(run, memberName, {
+      appendMemberBootstrapDiagnostic: (targetMemberName, text) =>
+        this.appendMemberBootstrapDiagnostic(run, targetMemberName, text),
+    });
   }
 
   private pauseMemberTaskActivityForRuntimeLoss(

@@ -379,17 +379,19 @@ import {
   toMemberSpawnInboxCursor,
 } from './provisioning/TeamProvisioningMemberSpawnCursor';
 import {
+  confirmMemberSpawnStatusFromTranscriptForRun,
+  getMemberSpawnStatusesSnapshot,
+  type MemberSpawnStatusesSnapshotPorts,
+  type MemberSpawnStatusMutationPorts,
+  setMemberSpawnStatusForRun,
+} from './provisioning/TeamProvisioningMemberSpawnSnapshots';
+import {
   buildRestartGraceTimeoutReason,
   createInitialMemberSpawnStatusEntry,
   MEMBER_LAUNCH_GRACE_MS,
   shouldWarnOnMissingRegisteredMember,
   shouldWarnOnUnreadableMemberAuditConfig,
-  summarizeMemberSpawnStatusRecord,
 } from './provisioning/TeamProvisioningMemberSpawnStatusPolicy';
-import {
-  buildMemberSpawnStatusTransition,
-  buildMemberSpawnTranscriptConfirmationTransition,
-} from './provisioning/TeamProvisioningMemberSpawnTransitions';
 import {
   buildEffectiveTeamMemberSpec,
   buildEffectiveTeamMemberSpecs,
@@ -1497,6 +1499,35 @@ export class TeamProvisioningService {
       persistLaunchStateSnapshot: (run, launchPhase) =>
         this.persistLaunchStateSnapshot(run, launchPhase),
     };
+  private readonly memberSpawnStatusMutationPorts: MemberSpawnStatusMutationPorts<ProvisioningRun> =
+    {
+      nowIso,
+      syncMemberTaskActivityForRuntimeTransition: (run, memberName, previous, next, observedAt) =>
+        this.syncMemberTaskActivityForRuntimeTransition(
+          run,
+          memberName,
+          previous,
+          next,
+          observedAt
+        ),
+      syncMemberLaunchGraceCheck: (run, memberName, next) =>
+        this.syncMemberLaunchGraceCheck(run, memberName, next),
+      updateLaunchDiagnostics: (run) => {
+        const launchDiagnostics = boundLaunchDiagnostics(buildLaunchDiagnosticsFromRun(run));
+        if (!launchDiagnostics) return;
+        run.progress = {
+          ...run.progress,
+          updatedAt: nowIso(),
+          launchDiagnostics,
+        };
+        run.onProgress(run.progress);
+      },
+      appendMemberBootstrapDiagnostic: (run, memberName, text) =>
+        this.appendMemberBootstrapDiagnostic(run, memberName, text),
+      isCurrentTrackedRun: (run) => this.isCurrentTrackedRun(run),
+      emitMemberSpawnChange: (run, memberName) => this.emitMemberSpawnChange(run, memberName),
+      persistLaunchStateSnapshot: (run, phase) => this.persistLaunchStateSnapshot(run, phase),
+    };
   private readonly openCodePromptDeliveryFollowUpPolicy = new OpenCodePromptDeliveryFollowUpPolicy({
     markFailedTerminal: (input) => this.markOpenCodePromptLedgerFailedTerminal(input),
     logEvent: (event, record, extra) => this.logOpenCodePromptDeliveryEvent(event, record, extra),
@@ -2144,24 +2175,62 @@ export class TeamProvisioningService {
     // TTL, while liveness only reuses rows through a short age gate.
   }
 
-  private cloneMemberSpawnStatusesSnapshot(
-    snapshot: MemberSpawnStatusesSnapshot
-  ): MemberSpawnStatusesSnapshot {
+  private createMemberSpawnStatusesSnapshotPorts(): MemberSpawnStatusesSnapshotPorts<ProvisioningRun> {
     return {
-      ...snapshot,
-      statuses: Object.fromEntries(
-        Object.entries(snapshot.statuses).map(([memberName, entry]) => [
-          memberName,
-          {
-            ...entry,
-            ...(entry.pendingPermissionRequestIds
-              ? { pendingPermissionRequestIds: [...entry.pendingPermissionRequestIds] }
-              : {}),
-          },
-        ])
-      ),
-      ...(snapshot.expectedMembers ? { expectedMembers: [...snapshot.expectedMembers] } : {}),
-      ...(snapshot.summary ? { summary: { ...snapshot.summary } } : {}),
+      getRun: (runId) => this.runs.get(runId),
+      cache: {
+        snapshotCache: this.memberSpawnStatusesSnapshotCache,
+        inFlightByTeam: this.memberSpawnStatusesInFlightByTeam,
+        getCacheGeneration: (teamName) => this.getMemberSpawnStatusesCacheGeneration(teamName),
+        getTrackedRunId: (teamName) => this.getTrackedRunId(teamName),
+        nowMs: () => Date.now(),
+        liveCacheTtlMs: TeamProvisioningService.MEMBER_SPAWN_STATUS_SNAPSHOT_CACHE_TTL_MS,
+        persistedCacheTtlMs:
+          TeamProvisioningService.PERSISTED_MEMBER_SPAWN_STATUS_SNAPSHOT_CACHE_TTL_MS,
+      },
+      persisted: {
+        readTaskActivityRepairLaunchSnapshot: (teamName) =>
+          this.readTaskActivityRepairLaunchSnapshot(teamName),
+        repairStaleTaskActivityIntervalsOnce: (teamName, launchSnapshot) =>
+          this.repairStaleTaskActivityIntervalsOnce(teamName, launchSnapshot),
+        reconcilePersistedLaunchState: (teamName) => this.reconcilePersistedLaunchState(teamName),
+        attachLiveRuntimeMetadataToStatuses: (teamName, statuses, options) =>
+          this.attachLiveRuntimeMetadataToStatuses(teamName, statuses, options),
+        getOpenCodeSecondaryBootstrapPendingMemberNames: (snapshot) =>
+          this.getOpenCodeSecondaryBootstrapPendingMemberNames(snapshot),
+        resumeActiveTaskActivityForMembers: (teamName, memberNames, observedAt) =>
+          this.taskActivityIntervalService.resumeActiveIntervalsForMembers(
+            teamName,
+            memberNames,
+            observedAt
+          ),
+      },
+      live: {
+        refreshMemberSpawnStatusesFromLeadInbox: (run) =>
+          this.refreshMemberSpawnStatusesFromLeadInbox(run),
+        maybeAuditMemberSpawnStatuses: (run) => this.maybeAuditMemberSpawnStatuses(run),
+        persistLaunchStateSnapshot: (run, phase) => this.persistLaunchStateSnapshot(run, phase),
+        readLaunchState: (teamName) => this.launchStateStore.read(teamName),
+        syncRunMemberSpawnStatusesFromSnapshot: (run, snapshot) =>
+          this.syncRunMemberSpawnStatusesFromSnapshot(run, snapshot),
+        buildLiveLaunchSnapshotForRun: (run, phase) =>
+          this.buildLiveLaunchSnapshotForRun(run, phase),
+        buildSnapshotFromRuntimeMemberStatuses: (input) => snapshotFromRuntimeMemberStatuses(input),
+        buildRuntimeSpawnStatusRecord: (run) => this.buildRuntimeSpawnStatusRecord(run),
+        getMembersMeta: (teamName) => this.membersMetaStore.getMembers(teamName),
+        filterRemovedMembersFromLaunchSnapshot: (snapshot, metaMembers) =>
+          snapshot
+            ? this.filterRemovedMembersFromLaunchSnapshot(
+                snapshot,
+                metaMembers as Awaited<ReturnType<TeamMembersMetaStore['getMembers']>>
+              )
+            : null,
+        snapshotToMemberSpawnStatuses,
+        getPersistedLaunchMemberNames: (snapshot) =>
+          snapshot ? this.getPersistedLaunchMemberNames(snapshot) : [],
+        deriveTeamLaunchAggregateState,
+      },
+      nowIso,
     };
   }
 
@@ -4755,52 +4824,17 @@ export class TeamProvisioningService {
     livenessSource?: MemberSpawnLivenessSource,
     heartbeatAt?: string
   ): void {
-    const prev = run.memberSpawnStatuses.get(memberName) ?? createInitialMemberSpawnStatusEntry();
-    const updatedAt = nowIso();
-    const transition = buildMemberSpawnStatusTransition({
-      previous: prev,
-      requestedStatus: status,
-      updatedAt,
-      error,
-      livenessSource,
-      heartbeatAt,
-      pendingRestart: run.pendingMemberRestarts?.get(memberName),
-    });
-    const { next } = transition;
-    if (!transition.changed) {
-      return;
-    }
-
-    this.syncMemberTaskActivityForRuntimeTransition(
-      run,
-      memberName,
-      prev,
-      next,
-      transition.runtimeTransitionAt
+    setMemberSpawnStatusForRun(
+      {
+        run,
+        memberName,
+        status,
+        error,
+        livenessSource,
+        heartbeatAt,
+      },
+      this.memberSpawnStatusMutationPorts
     );
-    run.memberSpawnStatuses.set(memberName, next);
-    if (transition.shouldClearPendingRestart) {
-      run.pendingMemberRestarts?.delete(memberName);
-    }
-    this.syncMemberLaunchGraceCheck(run, memberName, next);
-    const launchDiagnostics = boundLaunchDiagnostics(buildLaunchDiagnosticsFromRun(run));
-    if (launchDiagnostics) {
-      run.progress = {
-        ...run.progress,
-        updatedAt: nowIso(),
-        launchDiagnostics,
-      };
-      run.onProgress(run.progress);
-    }
-
-    if (transition.diagnosticText) {
-      this.appendMemberBootstrapDiagnostic(run, memberName, transition.diagnosticText);
-    }
-    if (!this.isCurrentTrackedRun(run)) return;
-    this.emitMemberSpawnChange(run, memberName);
-    if (run.isLaunch) {
-      void this.persistLaunchStateSnapshot(run, run.provisioningComplete ? 'finished' : 'active');
-    }
   }
 
   private confirmMemberSpawnStatusFromTranscript(
@@ -4809,35 +4843,15 @@ export class TeamProvisioningService {
     observedAt: string,
     source: 'transcript' | 'runtime-proof' = 'transcript'
   ): void {
-    const prev = run.memberSpawnStatuses.get(memberName) ?? createInitialMemberSpawnStatusEntry();
-    const updatedAt = nowIso();
-    const transition = buildMemberSpawnTranscriptConfirmationTransition({
-      previous: prev,
-      updatedAt,
-      observedAt,
-      source,
-    });
-    const { next } = transition;
-    if (!transition.changed) {
-      return;
-    }
-
-    this.syncMemberTaskActivityForRuntimeTransition(
-      run,
-      memberName,
-      prev,
-      next,
-      transition.runtimeTransitionAt
+    confirmMemberSpawnStatusFromTranscriptForRun(
+      {
+        run,
+        memberName,
+        observedAt,
+        source,
+      },
+      this.memberSpawnStatusMutationPorts
     );
-    run.memberSpawnStatuses.set(memberName, next);
-    run.pendingMemberRestarts?.delete(memberName);
-    this.syncMemberLaunchGraceCheck(run, memberName, next);
-    this.appendMemberBootstrapDiagnostic(run, memberName, transition.diagnosticText);
-    if (!this.isCurrentTrackedRun(run)) return;
-    this.emitMemberSpawnChange(run, memberName);
-    if (run.isLaunch) {
-      void this.persistLaunchStateSnapshot(run, run.provisioningComplete ? 'finished' : 'active');
-    }
   }
 
   /**
@@ -4854,194 +4868,7 @@ export class TeamProvisioningService {
     summary?: PersistedTeamLaunchSummary;
     source?: 'live' | 'persisted' | 'merged';
   }> {
-    const readPersistedStatuses = async (resolvedRunId: string | null) => {
-      const generationAtStart = this.getMemberSpawnStatusesCacheGeneration(teamName);
-      const cached = this.memberSpawnStatusesSnapshotCache.get(teamName);
-      if (
-        cached &&
-        cached.expiresAtMs > Date.now() &&
-        cached.runId === resolvedRunId &&
-        cached.generation === generationAtStart
-      ) {
-        return this.cloneMemberSpawnStatusesSnapshot(cached.snapshot);
-      }
-
-      const repairSnapshot = await this.readTaskActivityRepairLaunchSnapshot(teamName);
-      this.repairStaleTaskActivityIntervalsOnce(teamName, repairSnapshot);
-      const { snapshot, statuses } = await this.reconcilePersistedLaunchState(teamName);
-      const nextStatuses = await this.attachLiveRuntimeMetadataToStatuses(teamName, statuses, {
-        openCodeSecondaryBootstrapPendingMembers:
-          this.getOpenCodeSecondaryBootstrapPendingMemberNames(snapshot),
-      });
-      const runtimeObservedAt = nowIso();
-      const aliveMemberNames = Object.entries(nextStatuses)
-        .filter(([, entry]) => entry.runtimeAlive === true)
-        .map(([memberName]) => memberName);
-      if (aliveMemberNames.length > 0) {
-        // Resume all alive members in a single locked task-file pass per cycle
-        // instead of one synchronous lock + full task read per member.
-        this.taskActivityIntervalService.resumeActiveIntervalsForMembers(
-          teamName,
-          aliveMemberNames,
-          runtimeObservedAt
-        );
-      }
-      const expectedMembers = snapshot ? this.getPersistedLaunchMemberNames(snapshot) : undefined;
-      const summary = expectedMembers
-        ? summarizeMemberSpawnStatusRecord(expectedMembers, nextStatuses)
-        : undefined;
-      const persistedSnapshot = {
-        statuses: nextStatuses,
-        runId: resolvedRunId,
-        teamLaunchState: summary
-          ? deriveTeamLaunchAggregateState(summary)
-          : snapshot?.teamLaunchState,
-        launchPhase: snapshot?.launchPhase,
-        expectedMembers,
-        updatedAt: snapshot?.updatedAt,
-        summary: summary ?? snapshot?.summary,
-        source: 'persisted' as const,
-      };
-      if (
-        this.getMemberSpawnStatusesCacheGeneration(teamName) === generationAtStart &&
-        this.getTrackedRunId(teamName) === resolvedRunId
-      ) {
-        this.memberSpawnStatusesSnapshotCache.set(teamName, {
-          expiresAtMs:
-            Date.now() +
-            TeamProvisioningService.PERSISTED_MEMBER_SPAWN_STATUS_SNAPSHOT_CACHE_TTL_MS,
-          generation: generationAtStart,
-          runId: resolvedRunId,
-          snapshot: this.cloneMemberSpawnStatusesSnapshot(persistedSnapshot),
-        });
-      }
-      return persistedSnapshot;
-    };
-
-    const runId = this.getTrackedRunId(teamName);
-    if (!runId) {
-      return readPersistedStatuses(null);
-    }
-    const run = this.runs.get(runId);
-    if (!run) {
-      return readPersistedStatuses(runId);
-    }
-
-    if (!this.shouldCacheMemberSpawnStatusesSnapshot(run)) {
-      return this.buildMemberSpawnStatusesSnapshotForRun(run);
-    }
-
-    const generationAtStart = this.getMemberSpawnStatusesCacheGeneration(teamName);
-    const cached = this.memberSpawnStatusesSnapshotCache.get(teamName);
-    if (
-      cached &&
-      cached.expiresAtMs > Date.now() &&
-      cached.runId === run.runId &&
-      cached.generation === generationAtStart
-    ) {
-      return this.cloneMemberSpawnStatusesSnapshot(cached.snapshot);
-    }
-
-    const existingRequest = this.memberSpawnStatusesInFlightByTeam.get(teamName);
-    if (
-      existingRequest?.generationAtStart === generationAtStart &&
-      existingRequest.runIdAtStart === run.runId
-    ) {
-      const snapshot = await existingRequest.promise;
-      if (
-        this.getMemberSpawnStatusesCacheGeneration(teamName) === generationAtStart &&
-        this.getTrackedRunId(teamName) === run.runId
-      ) {
-        return this.cloneMemberSpawnStatusesSnapshot(snapshot);
-      }
-      return this.getMemberSpawnStatuses(teamName);
-    }
-
-    const request = this.buildMemberSpawnStatusesSnapshotForRun(run, generationAtStart).finally(
-      () => {
-        if (this.memberSpawnStatusesInFlightByTeam.get(teamName)?.promise === request) {
-          this.memberSpawnStatusesInFlightByTeam.delete(teamName);
-        }
-      }
-    );
-    this.memberSpawnStatusesInFlightByTeam.set(teamName, {
-      generationAtStart,
-      runIdAtStart: run.runId,
-      promise: request,
-    });
-    const snapshot = await request;
-    if (
-      this.getMemberSpawnStatusesCacheGeneration(teamName) === generationAtStart &&
-      this.getTrackedRunId(teamName) === run.runId
-    ) {
-      return this.cloneMemberSpawnStatusesSnapshot(snapshot);
-    }
-    return this.getMemberSpawnStatuses(teamName);
-  }
-
-  private shouldCacheMemberSpawnStatusesSnapshot(run: ProvisioningRun): boolean {
-    return run.isLaunch === true && run.provisioningComplete !== true;
-  }
-
-  private async buildMemberSpawnStatusesSnapshotForRun(
-    run: ProvisioningRun,
-    generationAtStart?: number
-  ): Promise<MemberSpawnStatusesSnapshot> {
-    const teamName = run.teamName;
-    await this.refreshMemberSpawnStatusesFromLeadInbox(run);
-    await this.maybeAuditMemberSpawnStatuses(run);
-    await this.persistLaunchStateSnapshot(run, run.provisioningComplete ? 'finished' : 'active');
-
-    const persisted = await this.launchStateStore.read(teamName);
-    if (persisted) {
-      this.syncRunMemberSpawnStatusesFromSnapshot(run, persisted);
-    }
-    const liveSnapshot =
-      this.buildLiveLaunchSnapshotForRun(run, run.provisioningComplete ? 'finished' : 'active') ??
-      snapshotFromRuntimeMemberStatuses({
-        teamName: run.teamName,
-        expectedMembers: run.expectedMembers,
-        leadSessionId: run.detectedSessionId ?? undefined,
-        launchPhase: run.provisioningComplete ? 'finished' : 'active',
-        statuses: this.buildRuntimeSpawnStatusRecord(run),
-      });
-    const rawSnapshot = liveSnapshot ?? persisted;
-    const metaMembers = await this.membersMetaStore.getMembers(teamName).catch(() => []);
-    const launchSnapshot = this.filterRemovedMembersFromLaunchSnapshot(rawSnapshot, metaMembers);
-    const statuses = await this.attachLiveRuntimeMetadataToStatuses(
-      teamName,
-      snapshotToMemberSpawnStatuses(launchSnapshot),
-      {
-        openCodeSecondaryBootstrapPendingMembers:
-          this.getOpenCodeSecondaryBootstrapPendingMemberNames(launchSnapshot),
-      }
-    );
-    const expectedMembers = this.getPersistedLaunchMemberNames(launchSnapshot);
-    const summary = summarizeMemberSpawnStatusRecord(expectedMembers, statuses);
-    const spawnSnapshot: MemberSpawnStatusesSnapshot = {
-      statuses,
-      runId: run.runId,
-      teamLaunchState: deriveTeamLaunchAggregateState(summary),
-      launchPhase: launchSnapshot.launchPhase,
-      expectedMembers,
-      updatedAt: launchSnapshot.updatedAt,
-      summary,
-      source: persisted ? 'merged' : 'live',
-    };
-    if (
-      generationAtStart != null &&
-      this.shouldCacheMemberSpawnStatusesSnapshot(run) &&
-      this.getMemberSpawnStatusesCacheGeneration(teamName) === generationAtStart &&
-      this.getTrackedRunId(teamName) === run.runId
-    ) {
-      this.memberSpawnStatusesSnapshotCache.set(teamName, {
-        expiresAtMs: Date.now() + TeamProvisioningService.MEMBER_SPAWN_STATUS_SNAPSHOT_CACHE_TTL_MS,
-        generation: generationAtStart,
-        runId: run.runId,
-        snapshot: this.cloneMemberSpawnStatusesSnapshot(spawnSnapshot),
-      });
-    }
-    return spawnSnapshot;
+    return getMemberSpawnStatusesSnapshot(teamName, this.createMemberSpawnStatusesSnapshotPorts());
   }
 
   async getTeamAgentRuntimeSnapshot(teamName: string): Promise<TeamAgentRuntimeSnapshot> {

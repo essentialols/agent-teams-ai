@@ -136,6 +136,20 @@ vi.mock('../../../../src/main/utils/fsRead', async (importOriginal) => {
   };
 });
 
+vi.mock(
+  '../../../../src/main/services/team/provisioning/TeamProvisioningInboxRelayPolicy',
+  async (importOriginal) => {
+    const actual =
+      await importOriginal<
+        typeof import('../../../../src/main/services/team/provisioning/TeamProvisioningInboxRelayPolicy')
+      >();
+    return {
+      ...actual,
+      inferOpenCodeInboxMessageTaskRefs: vi.fn(actual.inferOpenCodeInboxMessageTaskRefs),
+    };
+  }
+);
+
 vi.mock('agent-teams-controller', () => ({
   AGENT_TEAMS_TEAMMATE_OPERATIONAL_TOOL_NAMES: [] as readonly string[],
   AGENT_TEAMS_NAMESPACED_LEAD_BOOTSTRAP_TOOL_NAMES: [] as readonly string[],
@@ -158,6 +172,7 @@ vi.mock('agent-teams-controller', () => ({
 
 import { buildLegacyInboxMessageId } from '../../../../src/main/services/team/inboxMessageIdentity';
 import { isOpenCodePromptAcceptedByObservation } from '../../../../src/main/services/team/opencode/delivery/OpenCodePromptDeliveryReadCommitPolicy';
+import { inferOpenCodeInboxMessageTaskRefs } from '../../../../src/main/services/team/provisioning/TeamProvisioningInboxRelayPolicy';
 import * as OpenCodeRuntimeStore from '../../../../src/main/services/team/opencode/store/OpenCodeRuntimeManifestEvidenceReader';
 import { TeamRuntimeAdapterRegistry } from '../../../../src/main/services/team/runtime';
 import { TeamConfigReader } from '../../../../src/main/services/team/TeamConfigReader';
@@ -2680,9 +2695,9 @@ Messages:
         summary: 'Comment on #abcd1234',
       },
     ]);
-    const inferSpy = vi
-      .spyOn(service as any, 'inferOpenCodeInboxMessageTaskRefs')
-      .mockResolvedValue(taskRefs);
+    const inferMock = vi
+      .mocked(inferOpenCodeInboxMessageTaskRefs)
+      .mockResolvedValueOnce(taskRefs);
     const deliverSpy = vi
       .spyOn(service, 'deliverOpenCodeMemberMessage')
       .mockResolvedValue({ delivered: true, diagnostics: [] });
@@ -2690,10 +2705,12 @@ Messages:
     const relay = await service.relayOpenCodeMemberInboxMessages(teamName, 'jack');
 
     expect(relay).toMatchObject({ relayed: 1, attempted: 1, delivered: 1, failed: 0 });
-    expect(inferSpy).toHaveBeenCalledWith(
-      teamName,
-      expect.objectContaining({ messageId: 'opencode-relay-infer-1' }),
-      expect.any(Function)
+    expect(inferMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        teamName,
+        message: expect.objectContaining({ messageId: 'opencode-relay-infer-1' }),
+        readTasks: expect.any(Function),
+      })
     );
     expect(deliverSpy).toHaveBeenCalledWith(
       teamName,

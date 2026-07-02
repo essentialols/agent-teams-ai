@@ -401,6 +401,13 @@ import {
   summarizeMemberSpawnStatusRecord,
 } from './provisioning/TeamProvisioningMemberSpawnStatusPolicy';
 import {
+  compareMemberSpawnInboxCursor,
+  isMemberSpawnHeartbeatTimestampNewer,
+  type MemberSpawnInboxCursor,
+  maxMemberSpawnInboxCursor,
+  toMemberSpawnInboxCursor,
+} from './provisioning/TeamProvisioningMemberSpawnCursor';
+import {
   buildEffectiveTeamMemberSpec,
   buildEffectiveTeamMemberSpecs,
   getExplicitLaunchModelSelection,
@@ -1377,74 +1384,7 @@ interface PendingMemberRestartContext {
   >;
 }
 
-interface MemberSpawnInboxCursor {
-  timestamp: string;
-  messageId: string;
-}
-
 type LeadInboxMemberSpawnMessage = InboxMessage & { messageId: string };
-
-function compareMemberSpawnInboxCursor(
-  left: MemberSpawnInboxCursor,
-  right: MemberSpawnInboxCursor
-): number {
-  const leftMs = Date.parse(left.timestamp);
-  const rightMs = Date.parse(right.timestamp);
-  const leftValid = Number.isFinite(leftMs);
-  const rightValid = Number.isFinite(rightMs);
-
-  if (leftValid && rightValid && leftMs !== rightMs) {
-    return leftMs - rightMs;
-  }
-  if (leftValid !== rightValid) {
-    return leftValid ? -1 : 1;
-  }
-  return left.messageId.localeCompare(right.messageId);
-}
-
-function toMemberSpawnInboxCursor(
-  message: Pick<InboxMessage, 'timestamp' | 'messageId'>
-): MemberSpawnInboxCursor | null {
-  const messageId = typeof message.messageId === 'string' ? message.messageId.trim() : '';
-  if (!messageId) {
-    return null;
-  }
-  return {
-    timestamp: message.timestamp,
-    messageId,
-  };
-}
-
-function maxMemberSpawnInboxCursor(
-  left: MemberSpawnInboxCursor | undefined,
-  right: MemberSpawnInboxCursor
-): MemberSpawnInboxCursor {
-  if (!left) {
-    return right;
-  }
-  return compareMemberSpawnInboxCursor(left, right) >= 0 ? left : right;
-}
-
-function isMemberSpawnHeartbeatTimestampNewer(
-  previous: string | undefined,
-  incoming: string | undefined
-): boolean {
-  const normalizedIncoming = incoming?.trim();
-  if (!normalizedIncoming) {
-    return false;
-  }
-  const normalizedPrevious = previous?.trim();
-  if (!normalizedPrevious) {
-    return true;
-  }
-
-  const previousMs = Date.parse(normalizedPrevious);
-  const incomingMs = Date.parse(normalizedIncoming);
-  if (Number.isFinite(previousMs) && Number.isFinite(incomingMs)) {
-    return incomingMs > previousMs;
-  }
-  return normalizedIncoming > normalizedPrevious;
-}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

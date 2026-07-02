@@ -8,6 +8,7 @@ import {
   createUnexpectedMixedSecondaryLaneFailureResult,
   downgradeUncommittedOpenCodeBootstrapEvidence,
   formatOpenCodeLaneTimingMs,
+  getOpenCodeSecondaryBootstrapPendingMemberNames,
   getOpenCodeSecondaryBootstrapStallDiagnosticFromPersisted,
   hasMaterializedOpenCodeRuntimeForBootstrap,
   hasOpenCodeRuntimeEntryHandle,
@@ -662,6 +663,19 @@ describe('TeamProvisioningOpenCodeRuntimeEvidencePolicy', () => {
         updatedAt: '2026-01-01T00:05:01.000Z',
       })
     ).toBe(unchanged);
+  });
+
+  it('selects OpenCode secondary bootstrap-pending members from persisted snapshots', () => {
+    const snapshot = makeSnapshot({
+      Builder: makePersisted({ name: 'Builder' }),
+      Done: makePersisted({ name: 'Done', launchState: 'confirmed_alive' }),
+      Failed: makePersisted({ name: 'Failed', hardFailure: true }),
+      Primary: makePersisted({ name: 'Primary', laneKind: 'primary' }),
+      Codex: makePersisted({ name: 'Codex', providerId: 'codex' }),
+    });
+
+    expect([...getOpenCodeSecondaryBootstrapPendingMemberNames(snapshot)]).toEqual(['Builder']);
+    expect([...getOpenCodeSecondaryBootstrapPendingMemberNames(null)]).toEqual([]);
   });
 
   it('recognizes recoverable terminal persisted candidates and runtime evidence', () => {

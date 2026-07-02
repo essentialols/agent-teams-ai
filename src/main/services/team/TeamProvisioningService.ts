@@ -454,6 +454,7 @@ import {
   buildOpenCodeSecondaryLaneTimingDiagnostic,
   collectOpenCodeSecondaryLaneFailureDiagnostics,
   createUnexpectedMixedSecondaryLaneFailureResult,
+  getOpenCodeSecondaryBootstrapPendingMemberNames as getOpenCodeSecondaryBootstrapPendingMemberNamesHelper,
   getOpenCodeSecondaryBootstrapStallDiagnosticFromPersisted,
   isBootstrapMemberEvidenceCurrentForMember,
   isDefinitiveOpenCodePreLaunchFailure,
@@ -15576,22 +15577,7 @@ export class TeamProvisioningService {
   private getOpenCodeSecondaryBootstrapPendingMemberNames(
     snapshot: PersistedTeamLaunchSnapshot | null | undefined
   ): ReadonlySet<string> {
-    if (!snapshot) {
-      return new Set();
-    }
-    const names = Object.entries(snapshot.members)
-      .filter(([, member]) => {
-        return (
-          member.providerId === 'opencode' &&
-          member.laneKind === 'secondary' &&
-          member.laneOwnerProviderId === 'opencode' &&
-          member.launchState === 'runtime_pending_bootstrap' &&
-          member.bootstrapConfirmed !== true &&
-          member.hardFailure !== true
-        );
-      })
-      .map(([name]) => name);
-    return new Set(names);
+    return getOpenCodeSecondaryBootstrapPendingMemberNamesHelper(snapshot);
   }
 
   private applyOpenCodeSecondaryBootstrapStallOverlay(

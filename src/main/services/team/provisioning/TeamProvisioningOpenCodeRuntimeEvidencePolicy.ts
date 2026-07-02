@@ -694,6 +694,27 @@ export function applyOpenCodeSecondaryBootstrapStallOverlay(
   });
 }
 
+export function getOpenCodeSecondaryBootstrapPendingMemberNames(
+  snapshot: PersistedTeamLaunchSnapshot | null | undefined
+): ReadonlySet<string> {
+  if (!snapshot) {
+    return new Set();
+  }
+  const names = Object.entries(snapshot.members)
+    .filter(([, member]) => {
+      return (
+        member.providerId === 'opencode' &&
+        member.laneKind === 'secondary' &&
+        member.laneOwnerProviderId === 'opencode' &&
+        member.launchState === 'runtime_pending_bootstrap' &&
+        member.bootstrapConfirmed !== true &&
+        member.hardFailure !== true
+      );
+    })
+    .map(([name]) => name);
+  return new Set(names);
+}
+
 export function isRecoverablePersistedOpenCodeTerminalRuntimeCandidate(
   member: PersistedTeamLaunchMemberState | undefined | null
 ): boolean {

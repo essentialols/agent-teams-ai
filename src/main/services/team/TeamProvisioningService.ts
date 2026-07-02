@@ -700,6 +700,12 @@ import {
   type TeamProvisioningStreamEventPorts,
 } from './provisioning/TeamProvisioningStreamEvents';
 import {
+  readTaskActivityRepairLaunchSnapshot as readTaskActivityRepairLaunchSnapshotHelper,
+  repairStaleTaskActivityIntervalsBeforeSnapshot as repairStaleTaskActivityIntervalsBeforeSnapshotHelper,
+  repairStaleTaskActivityIntervalsOnce as repairStaleTaskActivityIntervalsOnceHelper,
+  writeLaunchFailureArtifactPackBestEffort as writeLaunchFailureArtifactPackBestEffortHelper,
+} from './provisioning/TeamProvisioningTaskActivityRepair';
+import {
   buildAllowControlResponsePayload,
   buildDenyControlResponsePayload,
   buildToolApprovalAutoResolvedEvent,
@@ -1963,33 +1969,23 @@ export class TeamProvisioningService {
     teamName: string,
     launchSnapshot?: PersistedTeamLaunchSnapshot | null
   ): boolean {
-    if (this.crashRepairedActivityIntervalsByTeam.has(teamName)) return true;
-    const repairSnapshot = this.pendingCrashRepairSnapshotByTeam.has(teamName)
-      ? this.pendingCrashRepairSnapshotByTeam.get(teamName)
-      : (launchSnapshot ?? null);
-    const result = this.taskActivityIntervalService.repairStaleIntervalsAfterCrash(
-      teamName,
-      repairSnapshot
-    );
-    if (result.failed) {
-      if (!this.pendingCrashRepairSnapshotByTeam.has(teamName)) {
-        this.pendingCrashRepairSnapshotByTeam.set(teamName, launchSnapshot ?? null);
-      }
-      return false;
-    }
-    this.pendingCrashRepairSnapshotByTeam.delete(teamName);
-    this.crashRepairedActivityIntervalsByTeam.add(teamName);
-    return true;
+    return repairStaleTaskActivityIntervalsOnceHelper(teamName, launchSnapshot, {
+      taskActivityIntervalService: this.taskActivityIntervalService,
+      tracking: {
+        repairedTeams: this.crashRepairedActivityIntervalsByTeam,
+        pendingSnapshots: this.pendingCrashRepairSnapshotByTeam,
+      },
+    });
   }
 
   private async readTaskActivityRepairLaunchSnapshot(
     teamName: string
   ): Promise<PersistedTeamLaunchSnapshot | null> {
-    const [bootstrapSnapshot, launchSnapshot] = await Promise.all([
-      readBootstrapLaunchSnapshot(teamName).catch(() => null),
-      this.launchStateStore.read(teamName).catch(() => null),
-    ]);
-    return choosePreferredLaunchSnapshot(bootstrapSnapshot, launchSnapshot);
+    return readTaskActivityRepairLaunchSnapshotHelper(teamName, {
+      readBootstrapLaunchSnapshot,
+      readLaunchState: (teamName) => this.launchStateStore.read(teamName),
+      choosePreferredLaunchSnapshot,
+    });
   }
 
   private writeLaunchFailureArtifactPackBestEffort(
@@ -1999,65 +1995,36 @@ export class TeamProvisioningService {
       launchSnapshot?: PersistedTeamLaunchSnapshot | null;
     }
   ): void {
-    const key = `${run.teamName}:${run.runId}`;
-    if (this.launchFailureArtifactPackRunIds.has(key)) return;
-    this.launchFailureArtifactPackRunIds.add(key);
-
-    const memberSpawnStatuses = Object.fromEntries(run.memberSpawnStatuses.entries());
-    const request = run.request as Partial<TeamCreateRequest> | undefined;
-    void writeTeamLaunchFailureArtifactPack({
-      teamName: run.teamName,
-      runId: run.runId,
-      reason: options.reason,
-      startedAt: run.startedAt,
-      cwd: request?.cwd ?? '',
-      pid: run.child?.pid ?? run.progress.pid ?? null,
-      providerId: request?.providerId,
-      providerBackendId: request?.providerBackendId,
-      model: request?.model,
-      expectedMembers: run.expectedMembers,
-      effectiveMembers: run.allEffectiveMembers,
-      progress: run.progress,
-      launchSnapshot: options.launchSnapshot ?? null,
-      launchDiagnostics: run.progress.launchDiagnostics ?? buildLaunchDiagnosticsFromRun(run),
-      memberSpawnStatuses,
-      cliLogs: extractCliLogsFromRun(run),
-      progressTraceLines: run.provisioningTraceLines,
-      runtimeAdapterTraceLines: this.runtimeAdapterTraceLinesByRunId.get(run.runId),
-      flags: {
-        isLaunch: run.isLaunch,
-        provisioningComplete: run.provisioningComplete,
-        deterministicBootstrap: run.deterministicBootstrap,
-        workspaceTrustPreflight: run.workspaceTrustDiagnostics ?? null,
-        processKilled: run.processKilled,
-        finalizingByTimeout: run.finalizingByTimeout,
-        cancelRequested: run.cancelRequested,
+    writeLaunchFailureArtifactPackBestEffortHelper(run, options, {
+      writtenRunIds: this.launchFailureArtifactPackRunIds,
+      artifactWriter: {
+        write: writeTeamLaunchFailureArtifactPack,
       },
-    }).catch((error: unknown) => {
-      this.launchFailureArtifactPackRunIds.delete(key);
-      logger.warn(
-        `[${run.teamName}] Failed to write launch failure artifact pack: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
+      buildLaunchDiagnosticsFromRun,
+      extractCliLogsFromRun,
+      getRuntimeAdapterTraceLines: (runId) => this.runtimeAdapterTraceLinesByRunId.get(runId),
+      onWriteError: (error) => {
+        logger.warn(
+          `[${run.teamName}] Failed to write launch failure artifact pack: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+      },
     });
   }
 
   async repairStaleTaskActivityIntervalsBeforeSnapshot(teamName: string): Promise<void> {
-    if (this.crashRepairedActivityIntervalsByTeam.has(teamName)) {
-      return;
-    }
-
-    const runId = this.getTrackedRunId(teamName);
-    if (runId && this.runs.has(runId)) {
-      return;
-    }
-
-    const repairSnapshot = await this.readTaskActivityRepairLaunchSnapshot(teamName);
-    const repaired = this.repairStaleTaskActivityIntervalsOnce(teamName, repairSnapshot);
-    if (!repaired) {
-      throw new Error(`Task activity interval repair failed before snapshot for team ${teamName}`);
-    }
+    return repairStaleTaskActivityIntervalsBeforeSnapshotHelper(teamName, {
+      tracking: {
+        repairedTeams: this.crashRepairedActivityIntervalsByTeam,
+        pendingSnapshots: this.pendingCrashRepairSnapshotByTeam,
+      },
+      getTrackedRunId: (teamName) => this.getTrackedRunId(teamName),
+      hasRun: (runId) => this.runs.has(runId),
+      readRepairLaunchSnapshot: (teamName) => this.readTaskActivityRepairLaunchSnapshot(teamName),
+      repairOnce: (teamName, launchSnapshot) =>
+        this.repairStaleTaskActivityIntervalsOnce(teamName, launchSnapshot),
+    });
   }
 
   private scheduleStaleAnthropicTeamApiKeyHelperCleanup(): void {

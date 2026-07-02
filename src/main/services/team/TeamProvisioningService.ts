@@ -185,7 +185,6 @@ import {
   getOpenCodeRuntimeRunTombstonesPath,
   inspectOpenCodeRuntimeLaneStorage,
   migrateLegacyOpenCodeRuntimeState,
-  OpenCodeRuntimeManifestEvidenceReader,
   prepareOpenCodeRuntimeLaneForLaunchGeneration,
   readCommittedOpenCodeBootstrapSessionEvidence,
   readOpenCodeRuntimeLaneIndex,
@@ -513,6 +512,7 @@ import {
   syncOpenCodeRuntimePermissionsAfterDelivery,
   syncOpenCodeRuntimePermissionSpawnStatuses as syncOpenCodeRuntimePermissionSpawnStatusesHelper,
 } from './provisioning/TeamProvisioningOpenCodeRuntimePermissions';
+import { createOpenCodeRuntimeRecoveryIdentityHelpers } from './provisioning/TeamProvisioningOpenCodeRuntimeRecoveryIdentity';
 import { resolveOpenCodeSoloRuntimeRecipientProviderId } from './provisioning/TeamProvisioningOpenCodeSoloRuntime';
 import {
   type AuthWarningSource,
@@ -1478,6 +1478,14 @@ export class TeamProvisioningService {
   private readonly openCodeRuntimeDeliveryLeadNoticeSentAt = new Map<string, number>();
   private readonly openCodeRuntimeDeliveryProofReader = new OpenCodeRuntimeDeliveryProofReader();
   private readonly openCodeVisibleReplyProofService: OpenCodeVisibleReplyProofService;
+  private readonly openCodeRuntimeRecoveryIdentity = createOpenCodeRuntimeRecoveryIdentityHelpers({
+    getTeamsBasePath,
+    getCurrentOpenCodeRuntimeRunId: (teamName, laneId) =>
+      this.getCurrentOpenCodeRuntimeRunId(teamName, laneId),
+    readOpenCodeMemberDirectory: (teamName) => this.readOpenCodeMemberDirectory(teamName),
+    resolveOpenCodeMemberIdentityFromDirectory: (teamName, memberName, directory) =>
+      this.resolveOpenCodeMemberIdentityFromDirectory(teamName, memberName, directory),
+  });
   private readonly openCodePromptDeliveryFollowUpPolicy = new OpenCodePromptDeliveryFollowUpPolicy({
     markFailedTerminal: (input) => this.markOpenCodePromptLedgerFailedTerminal(input),
     logEvent: (event, record, extra) => this.logOpenCodePromptDeliveryEvent(event, record, extra),
@@ -4201,25 +4209,10 @@ export class TeamProvisioningService {
     teamName: string,
     laneId: string
   ): Promise<string | null> {
-    const inMemoryRunId = this.getCurrentOpenCodeRuntimeRunId(teamName, laneId);
-    if (inMemoryRunId) {
-      return inMemoryRunId;
-    }
-
-    const laneIndex = await readOpenCodeRuntimeLaneIndex(getTeamsBasePath(), teamName).catch(
-      () => null
+    return this.openCodeRuntimeRecoveryIdentity.resolveCurrentOpenCodeRuntimeRunId(
+      teamName,
+      laneId
     );
-    if (laneIndex?.lanes[laneId]?.state !== 'active') {
-      return null;
-    }
-
-    const evidence = await new OpenCodeRuntimeManifestEvidenceReader({
-      teamsBasePath: getTeamsBasePath(),
-    })
-      .read(teamName, laneId)
-      .catch(() => null);
-    const durableRunId = evidence?.activeRunId?.trim();
-    return durableRunId || null;
   }
 
   private async resolveOpenCodeMemberDeliveryIdentity(
@@ -4239,61 +4232,27 @@ export class TeamProvisioningService {
           | 'opencode_recipient_unavailable';
       }
   > {
-    const directory = await this.readOpenCodeMemberDirectory(teamName);
-    const laneIdentity = this.resolveOpenCodeMemberIdentityFromDirectory(
+    return this.openCodeRuntimeRecoveryIdentity.resolveOpenCodeMemberDeliveryIdentity(
       teamName,
-      memberName,
-      directory
+      memberName
     );
-    if (!laneIdentity.ok) {
-      return laneIdentity;
-    }
-    return {
-      ok: true,
-      canonicalMemberName: laneIdentity.canonicalMemberName,
-      laneId: laneIdentity.laneId,
-    };
   }
 
   private async resolveOpenCodeMembersForRuntimeLane(
     teamName: string,
     laneId: string
   ): Promise<string[]> {
-    const directory = await this.readOpenCodeMemberDirectory(teamName);
-    const names = new Set<string>();
-    for (const member of directory.config?.members ?? []) {
-      if (member.name?.trim()) {
-        names.add(member.name.trim());
-      }
-    }
-    for (const member of directory.metaMembers) {
-      if (member.name?.trim()) {
-        names.add(member.name.trim());
-      }
-    }
-    const resolved: string[] = [];
-    for (const name of names) {
-      const identity = this.resolveOpenCodeMemberIdentityFromDirectory(teamName, name, directory);
-      if (identity.ok && identity.laneId === laneId) {
-        resolved.push(identity.canonicalMemberName);
-      }
-    }
-    if (resolved.length > 0) {
-      return [...new Set(resolved)];
-    }
-    const secondaryMatch = /^secondary:opencode:(.+)$/i.exec(laneId);
-    const fallbackMember = secondaryMatch?.[1]?.trim();
-    return fallbackMember ? [fallbackMember] : [];
+    return this.openCodeRuntimeRecoveryIdentity.resolveOpenCodeMembersForRuntimeLane(
+      teamName,
+      laneId
+    );
   }
 
   private async isOpenCodeRuntimeLaneIndexActive(
     teamName: string,
     laneId: string
   ): Promise<boolean> {
-    const laneIndex = await readOpenCodeRuntimeLaneIndex(getTeamsBasePath(), teamName).catch(
-      () => null
-    );
-    return laneIndex?.lanes[laneId]?.state === 'active';
+    return this.openCodeRuntimeRecoveryIdentity.isOpenCodeRuntimeLaneIndexActive(teamName, laneId);
   }
 
   private async tryRecoverOpenCodeRuntimeLaneBeforeDelivery(input: {

@@ -307,6 +307,15 @@ import {
 import { mergeAndRemoveDuplicateInboxes as mergeAndRemoveDuplicateInboxesHelper } from './provisioning/TeamProvisioningInboxDuplicateMerge';
 import { markTeamInboxMessagesRead } from './provisioning/TeamProvisioningInboxPersistence';
 import {
+  armSilentTeammateForward,
+  consumePendingInboxRelayCandidate,
+  forgetPendingInboxRelayCandidates,
+  isInboxRelayInFlightTimeoutError,
+  type PendingInboxRelayCandidate,
+  rememberPendingInboxRelayCandidates,
+  waitForInboxRelayInFlight,
+} from './provisioning/TeamProvisioningInboxRelayCandidates';
+import {
   buildLeadInboxRelayPrompt,
   buildMemberInboxRelayPrompt,
   collectConfirmedSameTeamPairs as collectConfirmedSameTeamPairsHelper,
@@ -1313,25 +1322,6 @@ interface ProbeResult {
 const cachedProbeResults = new Map<string, CachedProbeResult>();
 const probeInFlightByKey = new Map<string, Promise<ProbeResult | null>>();
 
-interface PendingInboxRelayCandidate {
-  recipient: string;
-  sourceMessageId: string;
-  normalizedText: string;
-  normalizedSummary: string;
-  queuedAtMs: number;
-}
-
-class InboxRelayInFlightTimeoutError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'InboxRelayInFlightTimeoutError';
-  }
-}
-
-function isInboxRelayInFlightTimeoutError(error: unknown): error is InboxRelayInFlightTimeoutError {
-  return error instanceof InboxRelayInFlightTimeoutError;
-}
-
 interface OpenCodeMemberInboxRelayResult {
   relayed: number;
   attempted: number;
@@ -1376,7 +1366,6 @@ export class TeamProvisioningService {
   private readonly providerConnectionService = ProviderConnectionService.getInstance();
 
   private static readonly RECENT_CROSS_TEAM_DELIVERY_TTL_MS = 10 * 60 * 1000;
-  private static readonly PENDING_INBOX_RELAY_TTL_MS = 2 * 60 * 1000;
   private static readonly SAME_TEAM_NATIVE_DELIVERY_GRACE_MS = 15_000;
   private static readonly SAME_TEAM_NATIVE_FINGERPRINT_TTL_MS = 60_000;
   private static readonly SAME_TEAM_MATCH_WINDOW_MS = 30_000;
@@ -1405,7 +1394,6 @@ export class TeamProvisioningService {
   private static readonly RETAINED_PROVISIONING_PROGRESS_TTL_MS = 5 * 60_000;
   private static readonly OPENCODE_RUNTIME_DELIVERY_ADVISORY_EVENT_TTL_MS = 24 * 60 * 60_000;
   private static readonly OPENCODE_RUNTIME_DELIVERY_LEAD_NOTICE_TTL_MS = 24 * 60 * 60_000;
-  private static readonly INBOX_RELAY_IN_FLIGHT_TIMEOUT_MS = 2 * 60_000;
 
   private readonly runs = new Map<string, ProvisioningRun>();
   private readonly provisioningRunByTeam = new Map<string, string>();
@@ -5345,138 +5333,6 @@ export class TeamProvisioningService {
         this.openCodeMemberSendInFlightByLane.delete(laneKey);
       }
     }
-  }
-
-  private async waitForInboxRelayInFlight<T>(input: {
-    promise: Promise<T>;
-    relayName: string;
-    relayKey: string;
-  }): Promise<T> {
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    try {
-      return await Promise.race([
-        input.promise,
-        new Promise<never>((_, reject) => {
-          timer = setTimeout(() => {
-            reject(
-              new InboxRelayInFlightTimeoutError(
-                `${input.relayName} timed out after ${TeamProvisioningService.INBOX_RELAY_IN_FLIGHT_TIMEOUT_MS}ms: ${input.relayKey}`
-              )
-            );
-          }, TeamProvisioningService.INBOX_RELAY_IN_FLIGHT_TIMEOUT_MS);
-          timer.unref?.();
-        }),
-      ]);
-    } finally {
-      if (timer) {
-        clearTimeout(timer);
-      }
-    }
-  }
-
-  private normalizeRelayCandidateText(text: string): string {
-    return stripAgentBlocks(String(text)).trim().replace(/\r\n/g, '\n');
-  }
-
-  private normalizeRelayCandidateSummary(summary?: string): string {
-    return typeof summary === 'string' ? summary.trim() : '';
-  }
-
-  private prunePendingInboxRelayCandidates(run: ProvisioningRun): PendingInboxRelayCandidate[] {
-    const cutoff = Date.now() - TeamProvisioningService.PENDING_INBOX_RELAY_TTL_MS;
-    run.pendingInboxRelayCandidates = (run.pendingInboxRelayCandidates ?? []).filter(
-      (candidate) => candidate.queuedAtMs >= cutoff
-    );
-    return run.pendingInboxRelayCandidates;
-  }
-
-  private rememberPendingInboxRelayCandidates(
-    run: ProvisioningRun,
-    recipient: string,
-    messages: Pick<InboxMessage, 'messageId' | 'text' | 'summary'>[]
-  ): string[] {
-    const candidates = this.prunePendingInboxRelayCandidates(run);
-    const queuedAtMs = Date.now();
-    const rememberedIds: string[] = [];
-    for (const message of messages) {
-      const sourceMessageId = typeof message.messageId === 'string' ? message.messageId.trim() : '';
-      const normalizedText = this.normalizeRelayCandidateText(message.text);
-      if (!sourceMessageId || !normalizedText) {
-        continue;
-      }
-      candidates.push({
-        recipient,
-        sourceMessageId,
-        normalizedText,
-        normalizedSummary: this.normalizeRelayCandidateSummary(message.summary),
-        queuedAtMs,
-      });
-      rememberedIds.push(sourceMessageId);
-    }
-    return rememberedIds;
-  }
-
-  private forgetPendingInboxRelayCandidates(
-    run: ProvisioningRun,
-    recipient: string,
-    sourceMessageIds: readonly string[]
-  ): void {
-    if (sourceMessageIds.length === 0) {
-      return;
-    }
-    const idSet = new Set(sourceMessageIds);
-    run.pendingInboxRelayCandidates = this.prunePendingInboxRelayCandidates(run).filter(
-      (candidate) => !(candidate.recipient === recipient && idSet.has(candidate.sourceMessageId))
-    );
-  }
-
-  private consumePendingInboxRelayCandidate(
-    run: ProvisioningRun,
-    recipient: string,
-    text: string,
-    summary?: string
-  ): string | undefined {
-    const normalizedText = this.normalizeRelayCandidateText(text);
-    if (!normalizedText) {
-      return undefined;
-    }
-    const normalizedSummary = this.normalizeRelayCandidateSummary(summary);
-    const candidates = this.prunePendingInboxRelayCandidates(run);
-    const exactSummaryIdx = candidates.findIndex(
-      (candidate) =>
-        candidate.recipient === recipient &&
-        candidate.normalizedText === normalizedText &&
-        candidate.normalizedSummary === normalizedSummary
-    );
-    const fallbackIdx =
-      exactSummaryIdx >= 0
-        ? exactSummaryIdx
-        : candidates.findIndex(
-            (candidate) =>
-              candidate.recipient === recipient && candidate.normalizedText === normalizedText
-          );
-    if (fallbackIdx < 0) {
-      return undefined;
-    }
-    const [matched] = candidates.splice(fallbackIdx, 1);
-    return matched?.sourceMessageId;
-  }
-
-  private armSilentTeammateForward(
-    run: ProvisioningRun,
-    teammateName: string,
-    mode: 'user_dm' | 'member_inbox_relay'
-  ): void {
-    run.silentUserDmForward = { target: teammateName, startedAt: nowIso(), mode };
-    if (run.silentUserDmForwardClearHandle) {
-      clearTimeout(run.silentUserDmForwardClearHandle);
-      run.silentUserDmForwardClearHandle = null;
-    }
-    run.silentUserDmForwardClearHandle = setTimeout(() => {
-      run.silentUserDmForward = null;
-      run.silentUserDmForwardClearHandle = null;
-    }, 60_000);
-    run.silentUserDmForwardClearHandle.unref();
   }
 
   private toolApprovalEventEmitter: ((event: ToolApprovalEvent) => void) | null = null;
@@ -12358,7 +12214,7 @@ export class TeamProvisioningService {
       return;
     }
 
-    this.armSilentTeammateForward(run, teammateName, 'user_dm');
+    armSilentTeammateForward(run, teammateName, 'user_dm', nowIso());
 
     const summaryLine = userSummary?.trim() ? `Summary: ${userSummary.trim()}` : null;
     const internal = wrapInAgentBlock(
@@ -12393,7 +12249,7 @@ export class TeamProvisioningService {
     const existing = this.memberInboxRelayInFlight.get(relayKey);
     if (existing) {
       try {
-        return await this.waitForInboxRelayInFlight({
+        return await waitForInboxRelayInFlight({
           promise: existing,
           relayName: 'member_inbox_relay',
           relayKey,
@@ -12466,15 +12322,15 @@ export class TeamProvisioningService {
 
       const batch = selectMemberInboxRelayBatch(actionableUnread, DEFAULT_INBOX_RELAY_BATCH_SIZE);
 
-      this.armSilentTeammateForward(run, memberName, 'member_inbox_relay');
-      const rememberedRelayIds = this.rememberPendingInboxRelayCandidates(run, memberName, batch);
+      armSilentTeammateForward(run, memberName, 'member_inbox_relay', nowIso());
+      const rememberedRelayIds = rememberPendingInboxRelayCandidates(run, memberName, batch);
 
       const message = buildMemberInboxRelayPrompt({ memberName, batch });
 
       try {
         await this.sendMessageToRun(run, message);
       } catch {
-        this.forgetPendingInboxRelayCandidates(run, memberName, rememberedRelayIds);
+        forgetPendingInboxRelayCandidates(run, memberName, rememberedRelayIds);
         return 0;
       }
 
@@ -12505,7 +12361,7 @@ export class TeamProvisioningService {
 
     this.memberInboxRelayInFlight.set(relayKey, work);
     try {
-      return await this.waitForInboxRelayInFlight({
+      return await waitForInboxRelayInFlight({
         promise: work,
         relayName: 'member_inbox_relay',
         relayKey,
@@ -12611,7 +12467,7 @@ export class TeamProvisioningService {
       const onlyMessageId = options.onlyMessageId?.trim();
       if (!onlyMessageId) {
         try {
-          return await this.waitForInboxRelayInFlight({
+          return await waitForInboxRelayInFlight({
             promise: existing,
             relayName: 'opencode_member_inbox_relay',
             relayKey,
@@ -13131,7 +12987,7 @@ export class TeamProvisioningService {
 
     this.openCodeMemberInboxRelayInFlight.set(relayKey, work);
     try {
-      return await this.waitForInboxRelayInFlight({
+      return await waitForInboxRelayInFlight({
         promise: work,
         relayName: 'opencode_member_inbox_relay',
         relayKey,
@@ -13328,7 +13184,7 @@ export class TeamProvisioningService {
     const existing = this.leadInboxRelayInFlight.get(teamName);
     if (existing) {
       try {
-        return await this.waitForInboxRelayInFlight({
+        return await waitForInboxRelayInFlight({
           promise: existing,
           relayName: 'lead_inbox_relay',
           relayKey: teamName,
@@ -13792,7 +13648,7 @@ export class TeamProvisioningService {
 
     this.leadInboxRelayInFlight.set(teamName, work);
     try {
-      return await this.waitForInboxRelayInFlight({
+      return await waitForInboxRelayInFlight({
         promise: work,
         relayName: 'lead_inbox_relay',
         relayKey: teamName,
@@ -17586,12 +17442,7 @@ export class TeamProvisioningService {
 
       const relayOfMessageId =
         recipient !== 'user'
-          ? this.consumePendingInboxRelayCandidate(
-              run,
-              recipient,
-              strippedCrossTeamContent,
-              summary
-            )
+          ? consumePendingInboxRelayCandidate(run, recipient, strippedCrossTeamContent, summary)
           : undefined;
 
       const msg: InboxMessage = {

@@ -420,7 +420,6 @@ import {
   buildEffectiveTeamMemberSpecs,
   getExplicitLaunchModelSelection,
   normalizeTeamMemberProviderId,
-  normalizeTeamProviderLike,
   teamRequestIncludesCodexMember,
 } from './provisioning/TeamProvisioningMemberSpecs';
 import {
@@ -530,7 +529,6 @@ import {
   tryRecoverOpenCodeRuntimeLanesForDeliveryWatchdog as tryRecoverOpenCodeRuntimeLanesForDeliveryWatchdogHelper,
 } from './provisioning/TeamProvisioningOpenCodeRuntimeRecoveryFlow';
 import { createOpenCodeRuntimeRecoveryIdentityHelpers } from './provisioning/TeamProvisioningOpenCodeRuntimeRecoveryIdentity';
-import { resolveOpenCodeSoloRuntimeRecipientProviderId } from './provisioning/TeamProvisioningOpenCodeSoloRuntime';
 import {
   type AuthWarningSource,
   buildStallProgressMessage,
@@ -647,6 +645,15 @@ import {
   readCachedRuntimeProcessRowsForLiveRuntimeMetadata,
   type RuntimeProcessRowsCacheEntry,
 } from './provisioning/TeamProvisioningRuntimeMetadataPolicy';
+import {
+  getOpenCodeRuntimeAdapter as getOpenCodeRuntimeAdapterHelper,
+  getOpenCodeRuntimeMessageAdapter as getOpenCodeRuntimeMessageAdapterHelper,
+  getOpenCodeRuntimePermissionListingAdapter as getOpenCodeRuntimePermissionListingAdapterHelper,
+  isOpenCodeRuntimeRecipient as isOpenCodeRuntimeRecipientHelper,
+  isOpenCodeRuntimeRecipientFromSources as isOpenCodeRuntimeRecipientFromSourcesHelper,
+  resolveRuntimeRecipientProviderId as resolveRuntimeRecipientProviderIdHelper,
+  resolveRuntimeRecipientProviderIdFromSources as resolveRuntimeRecipientProviderIdFromSourcesHelper,
+} from './provisioning/TeamProvisioningRuntimeRecipientResolution';
 import {
   attachLiveRuntimeMetadataToStatuses as attachLiveRuntimeMetadataToStatusesHelper,
   buildLiveTeamAgentRuntimeMetadata as buildLiveTeamAgentRuntimeMetadataHelper,
@@ -2645,26 +2652,15 @@ export class TeamProvisioningService {
   }
 
   private getOpenCodeRuntimeAdapter(): TeamLaunchRuntimeAdapter | null {
-    if (!this.runtimeAdapterRegistry?.has('opencode')) {
-      return null;
-    }
-    return this.runtimeAdapterRegistry.get('opencode');
+    return getOpenCodeRuntimeAdapterHelper(this.runtimeAdapterRegistry);
   }
 
   private getOpenCodeRuntimeMessageAdapter(): OpenCodeRuntimeMessageAdapter | null {
-    const adapter = this.getOpenCodeRuntimeAdapter();
-    if (!adapter || !('sendMessageToMember' in adapter)) {
-      return null;
-    }
-    return adapter as OpenCodeRuntimeMessageAdapter;
+    return getOpenCodeRuntimeMessageAdapterHelper(this.getOpenCodeRuntimeAdapter());
   }
 
   private getOpenCodeRuntimePermissionListingAdapter(): OpenCodeRuntimePermissionListingAdapter | null {
-    const adapter = this.getOpenCodeRuntimeAdapter();
-    if (!adapter || typeof adapter.listRuntimePermissions !== 'function') {
-      return null;
-    }
-    return adapter as OpenCodeRuntimePermissionListingAdapter;
+    return getOpenCodeRuntimePermissionListingAdapterHelper(this.getOpenCodeRuntimeAdapter());
   }
 
   private resolveRuntimeRecipientProviderIdFromSources(
@@ -2672,36 +2668,7 @@ export class TeamProvisioningService {
     config: TeamConfig | null | undefined,
     metaMembers: readonly TeamMember[]
   ): TeamProviderId | undefined {
-    const normalizedMemberName = memberName.trim().toLowerCase();
-    if (!normalizedMemberName) {
-      return undefined;
-    }
-    const configMember = config?.members?.find(
-      (member) => member.name?.trim().toLowerCase() === normalizedMemberName
-    );
-    const metaMember = metaMembers.find(
-      (member) => member.name?.trim().toLowerCase() === normalizedMemberName
-    );
-    const configProvider = (configMember as { provider?: unknown } | undefined)?.provider;
-    const metaProvider = (metaMember as { provider?: unknown } | undefined)?.provider;
-    if (
-      !configMember &&
-      !metaMember &&
-      resolveOpenCodeSoloRuntimeRecipientProviderId({
-        memberName: normalizedMemberName,
-        config,
-        metaMembers,
-      }) === 'opencode'
-    ) {
-      return 'opencode';
-    }
-    return (
-      normalizeTeamProviderLike(metaMember?.providerId) ??
-      normalizeTeamProviderLike(metaProvider) ??
-      normalizeTeamProviderLike(configMember?.providerId) ??
-      normalizeTeamProviderLike(configProvider) ??
-      inferTeamProviderIdFromModel(metaMember?.model ?? configMember?.model)
-    );
+    return resolveRuntimeRecipientProviderIdFromSourcesHelper({ memberName, config, metaMembers });
   }
 
   private isOpenCodeRuntimeRecipientFromSources(
@@ -2709,34 +2676,30 @@ export class TeamProvisioningService {
     config: TeamConfig | null | undefined,
     metaMembers: readonly TeamMember[]
   ): boolean {
-    return (
-      this.resolveRuntimeRecipientProviderIdFromSources(memberName, config, metaMembers) ===
-      'opencode'
-    );
+    return isOpenCodeRuntimeRecipientFromSourcesHelper({ memberName, config, metaMembers });
   }
 
   async resolveRuntimeRecipientProviderId(
     teamName: string,
     memberName: string
   ): Promise<TeamProviderId | undefined> {
-    const normalizedMemberName = memberName.trim().toLowerCase();
-    if (!normalizedMemberName) {
-      return undefined;
-    }
-
-    const [config, metaMembers] = await Promise.all([
-      this.readConfigSnapshot(teamName).catch(() => null),
-      this.membersMetaStore.getMembers(teamName).catch(() => []),
-    ]);
-    return this.resolveRuntimeRecipientProviderIdFromSources(
-      normalizedMemberName,
-      config,
-      metaMembers
+    return resolveRuntimeRecipientProviderIdHelper(
+      { teamName, memberName },
+      {
+        readConfigSnapshot: (candidateTeamName) => this.readConfigSnapshot(candidateTeamName),
+        readMembersMeta: (candidateTeamName) => this.membersMetaStore.getMembers(candidateTeamName),
+      }
     );
   }
 
   async isOpenCodeRuntimeRecipient(teamName: string, memberName: string): Promise<boolean> {
-    return (await this.resolveRuntimeRecipientProviderId(teamName, memberName)) === 'opencode';
+    return isOpenCodeRuntimeRecipientHelper(
+      { teamName, memberName },
+      {
+        readConfigSnapshot: (candidateTeamName) => this.readConfigSnapshot(candidateTeamName),
+        readMembersMeta: (candidateTeamName) => this.membersMetaStore.getMembers(candidateTeamName),
+      }
+    );
   }
   private async isOpenCodeDeliveryResponseReadCommitAllowed(input: {
     teamName?: string;

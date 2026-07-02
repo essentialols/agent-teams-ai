@@ -263,13 +263,9 @@ import {
   buildMembersMetaWritePayload,
   collectConfigLaunchBaseNamesFromConfigMembers,
   collectConfigLaunchBaseNamesFromMetaMembers,
-  createInboxJsonFileSet,
   getPrelaunchConfigBackupPath,
-  mergeInboxMessageLists,
-  parseInboxMessageListRaw,
   planCliAutoSuffixedConfigMemberCleanup,
   planCliAutoSuffixedMetaMemberCleanup,
-  planInboxDuplicateMerge,
   planTeamConfigLaunchNormalization,
   resolveLaunchExpectedMembersFromCompatibilityReport,
   selectMembersMetaTeammates,
@@ -315,6 +311,7 @@ import {
   startProvisioningFilesystemMonitor,
   stopProvisioningFilesystemMonitor,
 } from './provisioning/TeamProvisioningFilesystemMonitor';
+import { mergeAndRemoveDuplicateInboxes as mergeAndRemoveDuplicateInboxesHelper } from './provisioning/TeamProvisioningInboxDuplicateMerge';
 import { markTeamInboxMessagesRead } from './provisioning/TeamProvisioningInboxPersistence';
 import {
   buildLeadInboxRelayPrompt,
@@ -22478,76 +22475,18 @@ export class TeamProvisioningService {
     teamName: string,
     baseNames: Set<string>
   ): Promise<void> {
-    if (baseNames.size === 0) return;
-
-    const inboxDir = path.join(getTeamsBasePath(), teamName, 'inboxes');
-    let entries: string[];
-    try {
-      entries = await fs.promises.readdir(inboxDir);
-    } catch {
-      return;
-    }
-
-    const existing = createInboxJsonFileSet(entries);
-
-    for (const baseName of baseNames) {
-      const mergePlan = planInboxDuplicateMerge(baseName, existing);
-      if (!mergePlan) continue;
-
-      const canonicalPath = path.join(inboxDir, mergePlan.canonicalFile);
-      let canonicalRaw: string;
-      try {
-        const raw = await tryReadRegularFileUtf8(canonicalPath, {
-          timeoutMs: TEAM_JSON_READ_TIMEOUT_MS,
-          maxBytes: TEAM_INBOX_MAX_BYTES,
-        });
-        if (!raw) {
-          continue;
-        }
-        canonicalRaw = raw;
-      } catch {
-        // If cannot read, skip cleanup for this base.
-        continue;
-      }
-
-      const canonicalList = parseInboxMessageListRaw(canonicalRaw);
-      const duplicateLists: unknown[][] = [];
-      for (const dupFile of mergePlan.duplicateFiles) {
-        const dupPath = path.join(inboxDir, dupFile);
-        let dupRaw: string;
-        try {
-          const raw = await tryReadRegularFileUtf8(dupPath, {
-            timeoutMs: TEAM_JSON_READ_TIMEOUT_MS,
-            maxBytes: TEAM_INBOX_MAX_BYTES,
-          });
-          if (!raw) {
-            continue;
-          }
-          dupRaw = raw;
-        } catch {
-          continue;
-        }
-
-        duplicateLists.push(parseInboxMessageListRaw(dupRaw));
-      }
-
-      const mergedDeduped = mergeInboxMessageLists(canonicalList, duplicateLists);
-
-      try {
-        await atomicWriteAsync(canonicalPath, JSON.stringify(mergedDeduped, null, 2));
-      } catch {
-        continue;
-      }
-
-      for (const dupFile of mergePlan.duplicateFiles) {
-        try {
-          await fs.promises.unlink(path.join(inboxDir, dupFile));
-          existing.delete(dupFile);
-        } catch {
-          // Best-effort cleanup.
-        }
-      }
-    }
+    await mergeAndRemoveDuplicateInboxesHelper({
+      inboxDir: path.join(getTeamsBasePath(), teamName, 'inboxes'),
+      baseNames,
+      timeoutMs: TEAM_JSON_READ_TIMEOUT_MS,
+      maxBytes: TEAM_INBOX_MAX_BYTES,
+      ports: {
+        readDir: (dirPath) => fs.promises.readdir(dirPath),
+        readRegularFileUtf8: tryReadRegularFileUtf8,
+        writeFileUtf8: (filePath, contents) => atomicWriteAsync(filePath, contents),
+        unlink: (filePath) => fs.promises.unlink(filePath),
+      },
+    });
   }
 
   private async persistMembersMeta(teamName: string, request: TeamCreateRequest): Promise<void> {

@@ -506,6 +506,10 @@ import {
 } from './provisioning/TeamProvisioningOutputErrorPolicy';
 import { resolvePersistedRuntimeMemberIdentity as resolvePersistedRuntimeMemberIdentityHelper } from './provisioning/TeamProvisioningPersistedRuntimeMemberIdentity';
 import {
+  isBinaryProbeWarning,
+  isTransientProbeWarning,
+} from './provisioning/TeamProvisioningProbeWarnings';
+import {
   handleProvisioningProcessExit,
   pathExists as provisioningPathExists,
   tryCompleteAfterTimeout as tryCompleteAfterTimeoutHelper,
@@ -1493,31 +1497,6 @@ interface ProbeResult {
 
 const cachedProbeResults = new Map<string, CachedProbeResult>();
 const probeInFlightByKey = new Map<string, Promise<ProbeResult | null>>();
-
-function isTransientProbeWarning(warning: string): boolean {
-  const lower = warning.toLowerCase();
-  return (
-    lower.includes('timeout running:') ||
-    lower.includes('did not complete') ||
-    lower.includes('runtime status was unavailable') ||
-    lower.includes('runtime status check did not complete') ||
-    lower.includes('timed out') ||
-    lower.includes('etimedout') ||
-    lower.includes('econnreset') ||
-    lower.includes('eai_again')
-  );
-}
-
-function isBinaryProbeWarning(warning: string): boolean {
-  const lower = warning.toLowerCase();
-  return (
-    (lower.includes('spawn ') && lower.includes(' enoent')) ||
-    lower.includes('eacces') ||
-    lower.includes('enoexec') ||
-    lower.includes('bad cpu type in executable') ||
-    lower.includes('image not found')
-  );
-}
 
 interface PendingInboxRelayCandidate {
   recipient: string;

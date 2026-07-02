@@ -576,6 +576,10 @@ import {
   logRuntimeLaunchSnapshot,
 } from './provisioning/TeamProvisioningRuntimeDiagnostics';
 import {
+  buildMissingCliError,
+  getRuntimeFailureLabelForRequest,
+} from './provisioning/TeamProvisioningRuntimeFailureLabels';
+import {
   addModelCatalogLaunchModels,
   buildProviderModelLaunchIdentity as buildProviderModelLaunchIdentityHelper,
   buildTeamRuntimeLaunchArgsPlan as buildTeamRuntimeLaunchArgsPlanHelper,
@@ -667,11 +671,7 @@ import { isAgentTeamsToolUse } from './agentTeamsToolNames';
 import { atomicWriteAsync } from './atomicWrite';
 import { peekAutoResumeService } from './AutoResumeService';
 import { ClaudeBinaryResolver } from './ClaudeBinaryResolver';
-import {
-  getCliFlavorUiOptions,
-  getConfiguredCliCommandLabel,
-  getConfiguredCliFlavor,
-} from './cliFlavor';
+import { getConfiguredCliCommandLabel } from './cliFlavor';
 import { withFileLock } from './fileLock';
 import { withInboxLock } from './inboxLock';
 import { type ProcessBootstrapTransportSummary } from './ProcessBootstrapTransportEvidence';
@@ -909,48 +909,8 @@ function assertAppDeterministicBootstrapEnabled(): void {
   }
 }
 
-function getProviderRuntimeFailureLabel(providerId: TeamProviderId): string {
-  switch (providerId) {
-    case 'anthropic':
-      return 'Claude CLI';
-    case 'codex':
-      return 'Codex runtime';
-    case 'gemini':
-      return 'Gemini runtime';
-    case 'opencode':
-      return 'OpenCode runtime';
-  }
-}
-
 function getRunRuntimeFailureLabel(run: ProvisioningRun): string {
-  const providerIds = new Set<TeamProviderId>();
-  const addProvider = (providerId: TeamProviderId | undefined): void => {
-    if (providerId) {
-      providerIds.add(providerId);
-    }
-  };
-
-  addProvider(normalizeOptionalTeamProviderId(run.request.providerId));
-  addProvider(inferTeamProviderIdFromModel(run.request.model));
-  for (const member of run.request.members) {
-    addProvider(normalizeOptionalTeamProviderId(member.providerId));
-    addProvider(inferTeamProviderIdFromModel(member.model));
-  }
-
-  if (providerIds.size === 1) {
-    return getProviderRuntimeFailureLabel([...providerIds][0]);
-  }
-
-  return getCliFlavorUiOptions(getConfiguredCliFlavor()).displayName;
-}
-
-function buildMissingCliError(): Error {
-  if (getConfiguredCliFlavor() === 'agent_teams_orchestrator') {
-    return new Error(
-      'Multimodel runtime not found. The packaged app must include resources/runtime/claude-multimodel, or development must provide CLAUDE_AGENT_TEAMS_ORCHESTRATOR_CLI_PATH.'
-    );
-  }
-  return new Error('Claude CLI not found; install it or provide a valid path');
+  return getRuntimeFailureLabelForRequest(run.request);
 }
 
 const DETERMINISTIC_BOOTSTRAP_COMPLETION_RECOVERY_MS = 12_000;

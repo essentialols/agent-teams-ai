@@ -1,6 +1,6 @@
-import type { InboxMessage, TaskRef } from '@shared/types';
-
 import { sanitizeProcessCommandForDiagnostics } from '../TeamRuntimeLivenessResolver';
+
+import type { InboxMessage, TaskRef } from '@shared/types';
 
 function nowIso(): string {
   return new Date().toISOString();

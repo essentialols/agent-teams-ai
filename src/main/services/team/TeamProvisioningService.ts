@@ -203,6 +203,7 @@ import {
   RuntimeStaleEvidenceError,
 } from './opencode/store/RuntimeRunTombstoneStore';
 import { getSystemLocale } from './provisioning/TeamProvisioningAgentLanguage';
+import { getOpenCodeBootstrapCheckinRetryMarker } from './provisioning/TeamProvisioningBootstrapCheckinMarker';
 import {
   buildDeterministicCreateBootstrapSpec,
   buildDeterministicLaunchBootstrapSpec,
@@ -285,6 +286,10 @@ import {
   resolveSingleActiveCrossTeamReplyHint as resolveSingleActiveCrossTeamReplyHintHelper,
   wasRecentlyDeliveredToLead as wasRecentlyDeliveredToLeadHelper,
 } from './provisioning/TeamProvisioningCrossTeamRouting';
+import {
+  buildProvisioningTraceDetail,
+  pushUniqueSupportDiagnostics,
+} from './provisioning/TeamProvisioningDiagnosticsHelpers';
 import {
   buildCrossProviderMemberArgs as buildCrossProviderMemberArgsHelper,
   buildProvisioningEnv as buildProvisioningEnvHelper,
@@ -876,16 +881,6 @@ const PROVISIONING_TRACE_STORAGE_LIMIT = 500;
 // slow the cadence to ~1s so Zustand can keep up on large teams.
 const LOG_PROGRESS_THROTTLE_MS = 1000;
 const PROBE_CACHE_TTL_MS = 36 * 60 * 60 * 1000;
-function pushUniqueSupportDiagnostics(
-  diagnostics: TeamProvisioningSupportDiagnostic[],
-  incoming: readonly TeamProvisioningSupportDiagnostic[] | undefined
-): void {
-  for (const diagnostic of incoming ?? []) {
-    if (!diagnostics.some((existing) => existing.id === diagnostic.id)) {
-      diagnostics.push({ ...diagnostic });
-    }
-  }
-}
 
 const STALL_CHECK_INTERVAL_MS = 10_000;
 const STALL_WARNING_THRESHOLD_MS = 20_000;
@@ -1169,11 +1164,6 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
-const OPENCODE_BOOTSTRAP_CHECKIN_RETRY_SENT_PREFIX = 'opencode_bootstrap_checkin_retry_prompt_sent';
-
-function getOpenCodeBootstrapCheckinRetryMarker(runId: string, runtimeSessionId: string): string {
-  return `${OPENCODE_BOOTSTRAP_CHECKIN_RETRY_SENT_PREFIX}:${runId}:${runtimeSessionId}`;
-}
 
 interface PendingMemberRestartContext {
   requestedAt: string;
@@ -1230,23 +1220,6 @@ async function ensureCwdExists(cwd: string): Promise<void> {
 
 /** @deprecated Use wrapAgentBlock from @shared/constants/agentBlocks instead. */
 const wrapInAgentBlock = wrapAgentBlock;
-function buildProvisioningTraceDetail(
-  extras?: Pick<
-    TeamProvisioningProgress,
-    'pid' | 'error' | 'warnings' | 'configReady' | 'launchDiagnostics'
-  >
-): string | undefined {
-  const parts = [
-    extras?.pid != null ? `pid=${extras.pid}` : undefined,
-    extras?.configReady === true ? 'configReady=true' : undefined,
-    extras?.error ? `error=${extras.error}` : undefined,
-    extras?.warnings?.length ? `warnings=${extras.warnings.join('; ')}` : undefined,
-    extras?.launchDiagnostics?.length
-      ? `launchDiagnostics=${extras.launchDiagnostics.length}`
-      : undefined,
-  ].filter((part): part is string => Boolean(part));
-  return parts.length > 0 ? parts.join(' | ') : undefined;
-}
 
 function updateProgress(
   run: ProvisioningRun,

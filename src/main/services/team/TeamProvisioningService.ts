@@ -128,10 +128,7 @@ import {
 import { OpenCodePromptDeliveryWatchdogScheduler } from './opencode/delivery/OpenCodePromptDeliveryWatchdogScheduler';
 import {
   buildOpenCodeRuntimeDeliveryUserVisibleImpact,
-  decideOpenCodeRuntimeDeliveryAdvisory,
-  getOpenCodeRuntimeDeliveryAdvisoryReasonKey,
   isOpenCodeAttachmentDeliveryFailureReason,
-  isPotentialOpenCodeRuntimeDeliveryError,
   type OpenCodeRuntimeDeliveryAdvisoryDecision,
 } from './opencode/delivery/OpenCodeRuntimeDeliveryAdvisoryPolicy';
 import {
@@ -456,6 +453,10 @@ import {
   recoverOpenCodeRuntimeDeliveryJournal as recoverOpenCodeRuntimeDeliveryJournalHelper,
   tryGetActiveOpenCodePromptDeliveryRecord as tryGetActiveOpenCodePromptDeliveryRecordHelper,
 } from './provisioning/TeamProvisioningOpenCodeRuntimeDelivery';
+import {
+  type MemberWorkSyncProofMissingRecoveryScheduler,
+  TeamProvisioningOpenCodeRuntimeDeliveryAdvisory,
+} from './provisioning/TeamProvisioningOpenCodeRuntimeDeliveryAdvisory';
 import {
   appendDiagnosticOnce,
   applyOpenCodeSecondaryBootstrapStallOverlay as applyOpenCodeSecondaryBootstrapStallOverlayHelper,
@@ -1326,14 +1327,6 @@ interface OpenCodeMemberInboxRelayOptions {
   };
 }
 
-type MemberWorkSyncProofMissingRecoveryScheduler = (input: {
-  teamName: string;
-  memberName: string;
-  originalMessageId: string;
-  taskRefs?: TaskRef[];
-  reason?: string;
-}) => Promise<unknown> | unknown;
-
 type MemberWorkSyncAcceptedReportChecker = (input: {
   teamName: string;
   memberName: string;
@@ -1368,8 +1361,6 @@ export class TeamProvisioningService {
   private static readonly PERSISTED_MEMBER_SPAWN_STATUS_SNAPSHOT_CACHE_TTL_MS = 5_000;
   private static readonly LAUNCH_STATE_NOOP_REFRESH_MS = 15_000;
   private static readonly RETAINED_PROVISIONING_PROGRESS_TTL_MS = 5 * 60_000;
-  private static readonly OPENCODE_RUNTIME_DELIVERY_ADVISORY_EVENT_TTL_MS = 24 * 60 * 60_000;
-  private static readonly OPENCODE_RUNTIME_DELIVERY_LEAD_NOTICE_TTL_MS = 24 * 60 * 60_000;
 
   private readonly runs = new Map<string, ProvisioningRun>();
   private readonly provisioningRunByTeam = new Map<string, string>();
@@ -1458,10 +1449,41 @@ export class TeamProvisioningService {
     string,
     Promise<OpenCodeTeamRuntimeMessageResult>
   >();
-  private readonly openCodeRuntimeDeliveryAdvisoryReviewTimers = new Map<string, NodeJS.Timeout>();
-  private readonly openCodeRuntimeDeliveryAdvisoryEventSentAt = new Map<string, number>();
-  private readonly openCodeRuntimeDeliveryLeadNoticeSentAt = new Map<string, number>();
   private readonly openCodeRuntimeDeliveryProofReader = new OpenCodeRuntimeDeliveryProofReader();
+  private readonly openCodeRuntimeDeliveryAdvisory =
+    new TeamProvisioningOpenCodeRuntimeDeliveryAdvisory({
+      createOpenCodePromptDeliveryLedger: (teamName, laneId) =>
+        this.createOpenCodePromptDeliveryLedger(teamName, laneId),
+      readProofIndex: (input) => this.openCodeRuntimeDeliveryProofReader.readProofIndex(input),
+      readConfigSnapshot: (teamName) => this.readConfigSnapshot(teamName),
+      addTeamNotification: (notification) =>
+        NotificationManager.getInstance().addTeamNotification(notification),
+      emitTeamChange: (event) => {
+        this.teamChangeEmitter?.(event);
+      },
+      invalidateMemberRuntimeAdvisory: (teamName, memberName) => {
+        this.memberRuntimeAdvisoryInvalidator?.(teamName, memberName);
+      },
+      scheduleProofMissingWorkSyncRecovery: (input) =>
+        this.memberWorkSyncProofMissingRecoveryScheduler?.(input),
+      getLeadNoticeSink: (teamName) => {
+        const runId = this.getAliveRunId(teamName);
+        const run = runId ? this.runs.get(runId) : null;
+        if (!run || run.processKilled || run.cancelRequested) {
+          return null;
+        }
+        if (run.child && !run.child.stdin?.writable) {
+          return null;
+        }
+        return {
+          send: (message) => this.sendMessageToRun(run, message),
+        };
+      },
+      logInfo: (message, detail) =>
+        detail === undefined ? logger.info(message) : logger.info(message, detail),
+      logWarning: (message) => logger.warn(message),
+      getErrorMessage,
+    });
   private readonly openCodeVisibleReplyProofService: OpenCodeVisibleReplyProofService;
   private readonly openCodePromptDeliveryWatchdogCoordinator: OpenCodePromptDeliveryWatchdogCoordinator;
   private readonly openCodeRuntimeRecoveryIdentity = createOpenCodeRuntimeRecoveryIdentityHelpers({
@@ -2992,83 +3014,20 @@ export class TeamProvisioningService {
     record: OpenCodePromptDeliveryLedgerRecord,
     extra: Record<string, unknown> = {}
   ): void {
-    logger.info(
-      event,
-      JSON.stringify({
-        teamName: record.teamName,
-        memberName: record.memberName,
-        laneId: record.laneId,
-        runId: record.runId,
-        inboxMessageId: record.inboxMessageId,
-        runtimeSessionId: record.runtimeSessionId,
-        status: record.status,
-        responseState: record.responseState,
-        attempts: record.attempts,
-        nextAttemptAt: record.nextAttemptAt,
-        visibleReplyCorrelation: record.visibleReplyCorrelation,
-        reason: record.lastReason,
-        ...extra,
-      })
-    );
-    const shouldNotifyTerminalFailure =
-      event === 'opencode_prompt_delivery_terminal_failure' && record.status === 'failed_terminal';
-    const shouldNotifyActionRequiredRetry =
-      !shouldNotifyTerminalFailure && isPotentialOpenCodeRuntimeDeliveryError(record);
-    if (shouldNotifyTerminalFailure || shouldNotifyActionRequiredRetry) {
-      void this.handleOpenCodeRuntimeDeliveryUserFacingSideEffects(record).catch((error) => {
-        logger.warn(
-          `[${record.teamName}] Failed to handle OpenCode runtime delivery advisory side effects for ${record.memberName}: ${getErrorMessage(error)}`
-        );
-      });
-    }
+    this.openCodeRuntimeDeliveryAdvisory.logPromptDeliveryEvent(event, record, extra);
   }
 
   private emitOpenCodePromptDeliveryTaskLogChange(
     record: OpenCodePromptDeliveryLedgerRecord,
     detail: string
   ): void {
-    if (!record.runtimeSessionId?.trim() || record.taskRefs.length === 0) {
-      return;
-    }
-    const taskIds = new Set(
-      record.taskRefs
-        .map((taskRef) => taskRef.taskId?.trim() || taskRef.displayId?.trim())
-        .filter((taskId): taskId is string => Boolean(taskId))
-    );
-    for (const taskId of taskIds) {
-      this.teamChangeEmitter?.({
-        type: 'task-log-change',
-        teamName: record.teamName,
-        ...(record.runId ? { runId: record.runId } : {}),
-        taskId,
-        detail,
-        taskSignalKind: 'log',
-      });
-    }
+    this.openCodeRuntimeDeliveryAdvisory.emitPromptDeliveryTaskLogChange(record, detail);
   }
 
   private async handleOpenCodeRuntimeDeliveryUserFacingSideEffects(
     record: OpenCodePromptDeliveryLedgerRecord
   ): Promise<void> {
-    const { record: latestRecord, decision } =
-      await this.decideOpenCodeRuntimeDeliveryUserFacingAdvisory(record);
-    if (decision.action === 'defer') {
-      this.emitOpenCodeRuntimeDeliveryAdvisoryEvent(latestRecord, decision);
-      this.scheduleOpenCodeRuntimeDeliveryAdvisoryReview(latestRecord, decision);
-      return;
-    }
-    if (decision.action === 'suppress') {
-      this.emitOpenCodeRuntimeDeliveryAdvisoryEvent(latestRecord, decision);
-      return;
-    }
-
-    this.emitOpenCodeRuntimeDeliveryAdvisoryEvent(latestRecord, decision);
-    await this.scheduleOpenCodeProofMissingWorkSyncRecovery(latestRecord, decision);
-    if (decision.severity !== 'error') {
-      return;
-    }
-
-    await this.fireOpenCodeRuntimeDeliveryErrorNotification(latestRecord, decision);
+    await this.openCodeRuntimeDeliveryAdvisory.handleUserFacingSideEffects(record);
   }
 
   private async decideOpenCodeRuntimeDeliveryUserFacingAdvisory(
@@ -3077,226 +3036,42 @@ export class TeamProvisioningService {
     record: OpenCodePromptDeliveryLedgerRecord;
     decision: OpenCodeRuntimeDeliveryAdvisoryDecision;
   }> {
-    const memberKey = record.memberName.trim().toLowerCase();
-    let recordsForMember: OpenCodePromptDeliveryLedgerRecord[] = [record];
-    let ledgerReadSucceeded = false;
-    try {
-      const laneRecords = await this.createOpenCodePromptDeliveryLedger(
-        record.teamName,
-        record.laneId
-      ).list();
-      ledgerReadSucceeded = true;
-      recordsForMember = laneRecords.filter(
-        (candidate) => candidate.memberName.trim().toLowerCase() === memberKey
-      );
-    } catch {
-      recordsForMember = [record];
-    }
-    const latestRecord = recordsForMember.find((candidate) => candidate.id === record.id) ?? null;
-    if (!latestRecord && ledgerReadSucceeded) {
-      return {
-        record,
-        decision: { action: 'suppress' },
-      };
-    }
-    const recordForDecision = latestRecord ?? record;
-    const recordsByMember = new Map<string, readonly OpenCodePromptDeliveryLedgerRecord[]>([
-      [memberKey, recordsForMember.length > 0 ? recordsForMember : [recordForDecision]],
-    ]);
-    const activeMemberKeys = new Set([memberKey]);
-    const proofIndex = await this.openCodeRuntimeDeliveryProofReader
-      .readProofIndex({
-        teamName: recordForDecision.teamName,
-        activeMemberKeys,
-        recordsByMember,
-      })
-      .catch(() => null);
-    return {
-      record: recordForDecision,
-      decision: decideOpenCodeRuntimeDeliveryAdvisory({
-        record: recordForDecision,
-        proof: proofIndex?.getSnapshot(recordForDecision.memberName, recordForDecision),
-      }),
-    };
+    return await this.openCodeRuntimeDeliveryAdvisory.decideUserFacingAdvisory(record);
   }
 
   private async fireOpenCodeRuntimeDeliveryErrorNotification(
     record: OpenCodePromptDeliveryLedgerRecord,
     decision: OpenCodeRuntimeDeliveryAdvisoryDecision
   ): Promise<void> {
-    const reason = decision.reason;
-    if (!reason) {
-      return;
-    }
-
-    const config = await this.readConfigSnapshot(record.teamName).catch(() => null);
-    const teamDisplayName = config?.name?.trim() || record.teamName;
-    const taskLabel = record.taskRefs[0]?.displayId?.trim()
-      ? `#${record.taskRefs[0].displayId.trim()}`
-      : null;
-    const context = taskLabel ? ` while handling ${taskLabel}` : '';
-    const body = `Team ${teamDisplayName}: @${record.memberName} hit an OpenCode runtime delivery error${context}. ${reason}`;
-
-    try {
-      await NotificationManager.getInstance().addTeamNotification({
-        teamEventType: 'api_error',
-        teamName: record.teamName,
-        teamDisplayName,
-        from: record.memberName,
-        summary: taskLabel
-          ? `OpenCode runtime error ${taskLabel}`
-          : 'OpenCode runtime delivery error',
-        body,
-        dedupeKey: `opencode_runtime_delivery_error:${record.teamName}:${record.memberName}:${record.id}`,
-        target: {
-          kind: 'member',
-          teamName: record.teamName,
-          memberName: record.memberName,
-          focus: 'messages',
-        },
-        projectPath: config?.projectPath,
-      });
-    } catch (error) {
-      logger.warn(
-        `[${record.teamName}] Failed to store OpenCode runtime delivery error notification for ${record.memberName}: ${getErrorMessage(error)}`
-      );
-    }
-
-    await this.notifyLeadAboutOpenCodeRuntimeDeliveryError({
-      record,
-      reason,
-      taskLabel,
-    });
+    await this.openCodeRuntimeDeliveryAdvisory.fireErrorNotification(record, decision);
   }
 
   private async scheduleOpenCodeProofMissingWorkSyncRecovery(
     record: OpenCodePromptDeliveryLedgerRecord,
     decision: OpenCodeRuntimeDeliveryAdvisoryDecision
   ): Promise<void> {
-    if (decision.reasonCode !== 'protocol_proof_missing') {
-      return;
-    }
-    const scheduler = this.memberWorkSyncProofMissingRecoveryScheduler;
-    if (!scheduler) {
-      return;
-    }
-
-    try {
-      await scheduler({
-        teamName: record.teamName,
-        memberName: record.memberName,
-        originalMessageId: record.inboxMessageId,
-        taskRefs: record.taskRefs,
-        ...(decision.reason ? { reason: decision.reason } : {}),
-      });
-    } catch (error) {
-      logger.warn(
-        `[${record.teamName}] Failed to schedule OpenCode proof-missing work sync recovery for ${record.memberName}: ${getErrorMessage(error)}`
-      );
-    }
+    await this.openCodeRuntimeDeliveryAdvisory.scheduleProofMissingWorkSyncRecovery(
+      record,
+      decision
+    );
   }
 
   private emitOpenCodeRuntimeDeliveryAdvisoryEvent(
     record: OpenCodePromptDeliveryLedgerRecord,
     decision?: OpenCodeRuntimeDeliveryAdvisoryDecision
   ): void {
-    try {
-      this.memberRuntimeAdvisoryInvalidator?.(record.teamName, record.memberName);
-    } catch (error) {
-      logger.warn(
-        `[${record.teamName}] Failed to invalidate OpenCode runtime advisory cache for ${record.memberName}: ${getErrorMessage(error)}`
-      );
-    }
-
-    const reasonKey = getOpenCodeRuntimeDeliveryAdvisoryReasonKey({ record, decision });
-    const eventKey = `opencode_runtime_delivery_error:${record.teamName}:${record.memberName}:${record.id}:${reasonKey}`;
-    const now = Date.now();
-    this.pruneOpenCodeRuntimeDeliveryAdvisoryEventDedupe(now);
-    if (this.openCodeRuntimeDeliveryAdvisoryEventSentAt.has(eventKey)) {
-      return;
-    }
-
-    try {
-      this.teamChangeEmitter?.({
-        type: 'member-advisory',
-        teamName: record.teamName,
-        detail: `opencode-runtime-delivery-error:${record.memberName}:${record.id}`,
-      });
-      this.openCodeRuntimeDeliveryAdvisoryEventSentAt.set(eventKey, now);
-    } catch (error) {
-      logger.warn(
-        `[${record.teamName}] Failed to emit member advisory refresh for ${record.memberName}: ${getErrorMessage(error)}`
-      );
-    }
+    this.openCodeRuntimeDeliveryAdvisory.emitAdvisoryEvent(record, decision);
   }
 
   private emitRuntimeDeliveryReplyAdvisoryRefresh(teamName: string, message: InboxMessage): void {
-    if (
-      message.source !== 'runtime_delivery' ||
-      typeof message.relayOfMessageId !== 'string' ||
-      message.relayOfMessageId.trim().length === 0
-    ) {
-      return;
-    }
-
-    const memberName = message.from?.trim();
-    if (!memberName || memberName === 'user' || memberName === 'system') {
-      return;
-    }
-
-    try {
-      this.memberRuntimeAdvisoryInvalidator?.(teamName, memberName);
-    } catch (error) {
-      logger.warn(
-        `[${teamName}] Failed to invalidate runtime advisory after runtime delivery reply for ${memberName}: ${getErrorMessage(error)}`
-      );
-    }
-
-    try {
-      this.teamChangeEmitter?.({
-        type: 'member-advisory',
-        teamName,
-        detail: `runtime-delivery-reply:${memberName}:${message.relayOfMessageId.trim()}`,
-      });
-    } catch (error) {
-      logger.warn(
-        `[${teamName}] Failed to emit runtime advisory refresh after runtime delivery reply for ${memberName}: ${getErrorMessage(error)}`
-      );
-    }
-  }
-
-  private pruneOpenCodeRuntimeDeliveryAdvisoryEventDedupe(now: number): void {
-    const ttlMs = TeamProvisioningService.OPENCODE_RUNTIME_DELIVERY_ADVISORY_EVENT_TTL_MS;
-    for (const [key, sentAt] of this.openCodeRuntimeDeliveryAdvisoryEventSentAt) {
-      if (now - sentAt > ttlMs) {
-        this.openCodeRuntimeDeliveryAdvisoryEventSentAt.delete(key);
-      }
-    }
+    this.openCodeRuntimeDeliveryAdvisory.emitRuntimeDeliveryReplyAdvisoryRefresh(teamName, message);
   }
 
   private scheduleOpenCodeRuntimeDeliveryAdvisoryReview(
     record: OpenCodePromptDeliveryLedgerRecord,
     decision: OpenCodeRuntimeDeliveryAdvisoryDecision
   ): void {
-    const reviewAt = Date.parse(decision.nextReviewAt ?? '');
-    if (!Number.isFinite(reviewAt)) {
-      return;
-    }
-    const delayMs = Math.max(250, reviewAt - Date.now());
-    const timerKey = `${record.teamName}:${record.laneId}:${record.id}`;
-    const existing = this.openCodeRuntimeDeliveryAdvisoryReviewTimers.get(timerKey);
-    if (existing) {
-      clearTimeout(existing);
-    }
-    const timer = setTimeout(() => {
-      this.openCodeRuntimeDeliveryAdvisoryReviewTimers.delete(timerKey);
-      void this.handleOpenCodeRuntimeDeliveryUserFacingSideEffects(record).catch((error) => {
-        logger.warn(
-          `[${record.teamName}] Failed to refresh deferred OpenCode runtime delivery advisory for ${record.memberName}: ${getErrorMessage(error)}`
-        );
-      });
-    }, delayMs);
-    this.openCodeRuntimeDeliveryAdvisoryReviewTimers.set(timerKey, timer);
+    this.openCodeRuntimeDeliveryAdvisory.scheduleAdvisoryReview(record, decision);
   }
 
   private async notifyLeadAboutOpenCodeRuntimeDeliveryError(input: {
@@ -3304,52 +3079,7 @@ export class TeamProvisioningService {
     reason: string;
     taskLabel: string | null;
   }): Promise<void> {
-    const runId = this.getAliveRunId(input.record.teamName);
-    const run = runId ? this.runs.get(runId) : null;
-    if (!run || run.processKilled || run.cancelRequested) {
-      return;
-    }
-    if (run.child && !run.child.stdin?.writable) {
-      return;
-    }
-
-    const noticeKey = `opencode_runtime_delivery_error:${input.record.teamName}:${input.record.memberName}:${input.record.id}`;
-    const now = Date.now();
-    this.pruneOpenCodeRuntimeDeliveryLeadNoticeDedupe(now);
-    if (this.openCodeRuntimeDeliveryLeadNoticeSentAt.has(noticeKey)) {
-      return;
-    }
-
-    this.openCodeRuntimeDeliveryLeadNoticeSentAt.set(noticeKey, now);
-    const taskContext = input.taskLabel ? ` while handling ${input.taskLabel}` : '';
-    const message = [
-      `System notice: OpenCode teammate @${input.record.memberName} hit a runtime delivery error${taskContext}.`,
-      `Reason: ${input.reason}`,
-      `Treat @${input.record.memberName} as unavailable for that work until retry or restart succeeds.`,
-      `Do not message the human user solely because of this notice unless user action is required.`,
-    ].join(' ');
-
-    try {
-      await this.sendMessageToRun(run, message);
-    } catch (error) {
-      this.openCodeRuntimeDeliveryLeadNoticeSentAt.delete(noticeKey);
-      const errorMessage = getErrorMessage(error);
-      if (errorMessage.includes('process stdin is not writable')) {
-        return;
-      }
-      logger.warn(
-        `[${input.record.teamName}] Failed to notify lead about OpenCode runtime delivery error for ${input.record.memberName}: ${errorMessage}`
-      );
-    }
-  }
-
-  private pruneOpenCodeRuntimeDeliveryLeadNoticeDedupe(now: number): void {
-    const ttlMs = TeamProvisioningService.OPENCODE_RUNTIME_DELIVERY_LEAD_NOTICE_TTL_MS;
-    for (const [key, sentAt] of this.openCodeRuntimeDeliveryLeadNoticeSentAt) {
-      if (now - sentAt > ttlMs) {
-        this.openCodeRuntimeDeliveryLeadNoticeSentAt.delete(key);
-      }
-    }
+    await this.openCodeRuntimeDeliveryAdvisory.notifyLeadAboutError(input);
   }
 
   async scanOpenCodePromptDeliveryWatchdog(teamName: string): Promise<number> {
@@ -5101,8 +4831,7 @@ export class TeamProvisioningService {
           runtimeDiagnostic: bootstrapStalled
             ? (runtimeProcessStallDiagnostic ??
               OPENCODE_RUNTIME_PROCESS_BOOTSTRAP_STALLED_DIAGNOSTIC)
-            : (runtimeDiagnostic ??
-              OPENCODE_RUNTIME_PROCESS_BOOTSTRAP_PENDING_DIAGNOSTIC),
+            : (runtimeDiagnostic ?? OPENCODE_RUNTIME_PROCESS_BOOTSTRAP_PENDING_DIAGNOSTIC),
           runtimeDiagnosticSeverity: bootstrapStalled
             ? 'warning'
             : (metadata.runtimeDiagnosticSeverity ?? 'info'),
@@ -5280,33 +5009,27 @@ export class TeamProvisioningService {
     current: MemberSpawnStatusEntry,
     runtimeDiagnostic: string
   ): void {
-    setOpenCodeSecondaryBootstrapStalledStatusHelper(
-      run,
-      memberName,
-      current,
-      runtimeDiagnostic,
-      {
-        nowIso,
-        syncMemberTaskActivityForRuntimeTransition: (targetRun, targetMember, previous, next, at) =>
-          this.syncMemberTaskActivityForRuntimeTransition(
-            targetRun as ProvisioningRun,
-            targetMember,
-            previous,
-            next,
-            at
-          ),
-        updateLaunchDiagnostics: (targetRun, observedAt) =>
-          this.updateLaunchDiagnosticsForRun(targetRun as ProvisioningRun, observedAt),
-        appendMemberBootstrapDiagnostic: (targetRun, targetMember, text) =>
-          this.appendMemberBootstrapDiagnostic(targetRun as ProvisioningRun, targetMember, text),
-        isCurrentTrackedRun: (targetRun) => this.isCurrentTrackedRun(targetRun as ProvisioningRun),
-        emitMemberSpawnChange: (targetRun, targetMember) =>
-          this.emitMemberSpawnChange(targetRun as ProvisioningRun, targetMember),
-        persistLaunchStateSnapshot: (targetRun, phase) => {
-          void this.persistLaunchStateSnapshot(targetRun as ProvisioningRun, phase);
-        },
-      }
-    );
+    setOpenCodeSecondaryBootstrapStalledStatusHelper(run, memberName, current, runtimeDiagnostic, {
+      nowIso,
+      syncMemberTaskActivityForRuntimeTransition: (targetRun, targetMember, previous, next, at) =>
+        this.syncMemberTaskActivityForRuntimeTransition(
+          targetRun as ProvisioningRun,
+          targetMember,
+          previous,
+          next,
+          at
+        ),
+      updateLaunchDiagnostics: (targetRun, observedAt) =>
+        this.updateLaunchDiagnosticsForRun(targetRun as ProvisioningRun, observedAt),
+      appendMemberBootstrapDiagnostic: (targetRun, targetMember, text) =>
+        this.appendMemberBootstrapDiagnostic(targetRun as ProvisioningRun, targetMember, text),
+      isCurrentTrackedRun: (targetRun) => this.isCurrentTrackedRun(targetRun as ProvisioningRun),
+      emitMemberSpawnChange: (targetRun, targetMember) =>
+        this.emitMemberSpawnChange(targetRun as ProvisioningRun, targetMember),
+      persistLaunchStateSnapshot: (targetRun, phase) => {
+        void this.persistLaunchStateSnapshot(targetRun as ProvisioningRun, phase);
+      },
+    });
   }
 
   private async maybeSendOpenCodeSecondaryBootstrapCheckinRetryPrompt(input: {
@@ -11654,8 +11377,7 @@ export class TeamProvisioningService {
             runtimeDiagnostic: bootstrapStalled
               ? (runtimeProcessStallDiagnostic ??
                 OPENCODE_RUNTIME_PROCESS_BOOTSTRAP_STALLED_DIAGNOSTIC)
-              : (base.runtimeDiagnostic ??
-                OPENCODE_RUNTIME_PROCESS_BOOTSTRAP_PENDING_DIAGNOSTIC),
+              : (base.runtimeDiagnostic ?? OPENCODE_RUNTIME_PROCESS_BOOTSTRAP_PENDING_DIAGNOSTIC),
             runtimeDiagnosticSeverity: bootstrapStalled
               ? 'warning'
               : (base.runtimeDiagnosticSeverity ?? 'info'),

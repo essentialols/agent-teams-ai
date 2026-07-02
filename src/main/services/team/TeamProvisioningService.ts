@@ -60,11 +60,7 @@ import {
   parseCrossTeamPrefix,
   stripCrossTeamPrefix,
 } from '@shared/constants/crossTeam';
-import {
-  type AttachmentMeta,
-  type AttachmentPayload,
-  DEFAULT_TOOL_APPROVAL_SETTINGS,
-} from '@shared/types/team';
+import { type AttachmentPayload, DEFAULT_TOOL_APPROVAL_SETTINGS } from '@shared/types/team';
 import { resolveLanguageName } from '@shared/utils/agentLanguage';
 import { resolveAnthropicLaunchModel } from '@shared/utils/anthropicLaunchModel';
 import { parseCliArgs } from '@shared/utils/cliArgsParser';
@@ -427,6 +423,7 @@ import {
   resolveLeadMemberName,
   shouldPreferCurrentLaunchMemberStatus,
 } from './provisioning/TeamProvisioningMemberStatusProjection';
+import { resolveOpenCodeInboxAttachmentPayloads as resolveOpenCodeInboxAttachmentPayloadsHelper } from './provisioning/TeamProvisioningOpenCodeAttachmentPayloads';
 import {
   commitOpenCodeRuntimeBootstrapSessionEvidence,
   createDefaultOpenCodeRuntimeBootstrapEvidencePorts,
@@ -13863,67 +13860,9 @@ export class TeamProvisioningService {
     | { ok: true; attachments?: AttachmentPayload[] }
     | { ok: false; reason: string; diagnostics: string[] }
   > {
-    const metas = input.message.attachments ?? [];
-    if (metas.length === 0) {
-      return { ok: true };
-    }
-
-    let fileDataById: Map<string, { data: string; mimeType: string }> | null = null;
-    const payloads: AttachmentPayload[] = [];
-    const missingIds: string[] = [];
-    for (const meta of metas) {
-      const inlinePayload = this.asOpenCodeAttachmentPayload(meta);
-      if (inlinePayload) {
-        payloads.push(inlinePayload);
-        continue;
-      }
-
-      if (!fileDataById) {
-        let fileData: Awaited<ReturnType<TeamAttachmentStore['getAttachments']>>;
-        try {
-          fileData = await this.attachmentStore.getAttachments(
-            input.teamName,
-            input.message.messageId
-          );
-        } catch (error) {
-          const reason = `opencode_inbox_attachment_payload_read_failed: ${getErrorMessage(error)}`;
-          return { ok: false, reason, diagnostics: [reason] };
-        }
-        fileDataById = new Map(
-          fileData.map((attachment) => [
-            attachment.id,
-            { data: attachment.data, mimeType: attachment.mimeType },
-          ])
-        );
-      }
-      const data = fileDataById.get(meta.id);
-      if (!data) {
-        missingIds.push(meta.id);
-        continue;
-      }
-      payloads.push({
-        ...meta,
-        mimeType: meta.mimeType || data.mimeType,
-        data: data.data,
-      });
-    }
-
-    if (missingIds.length > 0) {
-      const reason = `opencode_inbox_attachment_payload_unavailable: ${missingIds.join(', ')}`;
-      return { ok: false, reason, diagnostics: [reason] };
-    }
-
-    return { ok: true, attachments: payloads };
-  }
-
-  private asOpenCodeAttachmentPayload(meta: AttachmentMeta): AttachmentPayload | null {
-    const data = (meta as Partial<AttachmentPayload>).data;
-    return typeof data === 'string'
-      ? {
-          ...meta,
-          data,
-        }
-      : null;
+    return resolveOpenCodeInboxAttachmentPayloadsHelper(input, {
+      attachmentStore: this.attachmentStore,
+    });
   }
 
   private async inferOpenCodeInboxMessageTaskRefs(

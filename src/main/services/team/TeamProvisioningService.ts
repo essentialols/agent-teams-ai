@@ -498,6 +498,7 @@ import {
   normalizeApiRetryErrorMessage,
   toMarkdownCodeSafe,
 } from './provisioning/TeamProvisioningOutputErrorPolicy';
+import { resolvePersistedRuntimeMemberIdentity as resolvePersistedRuntimeMemberIdentityHelper } from './provisioning/TeamProvisioningPersistedRuntimeMemberIdentity';
 import {
   handleProvisioningProcessExit,
   pathExists as provisioningPathExists,
@@ -7267,68 +7268,13 @@ export class TeamProvisioningService {
     memberName: string;
     previousMember?: PersistedTeamLaunchMemberState;
   }): Partial<PersistedTeamLaunchMemberState> {
-    if (params.previousMember) {
-      return {
-        providerId: params.previousMember.providerId,
-        providerBackendId: params.previousMember.providerBackendId,
-        model: params.previousMember.model,
-        effort: params.previousMember.effort,
-        selectedFastMode: params.previousMember.selectedFastMode,
-        resolvedFastMode: params.previousMember.resolvedFastMode,
-        laneId: params.previousMember.laneId,
-        laneKind: params.previousMember.laneKind,
-        laneOwnerProviderId: params.previousMember.laneOwnerProviderId,
-        launchIdentity: params.previousMember.launchIdentity,
-      };
-    }
-
     const trackedRunId = this.getTrackedRunId(params.teamName);
     const trackedRun = trackedRunId ? this.runs.get(trackedRunId) : null;
-    const secondaryLane = trackedRun?.mixedSecondaryLanes?.find(
-      (lane) => lane.member.name.trim() === params.memberName
-    );
-    if (secondaryLane) {
-      return {
-        providerId: 'opencode',
-        model: secondaryLane.member.model,
-        effort: secondaryLane.member.effort,
-        laneId: secondaryLane.laneId,
-        laneKind: 'secondary',
-        laneOwnerProviderId: 'opencode',
-      };
-    }
-
-    const primaryMember = trackedRun?.effectiveMembers?.find(
-      (member) => member.name.trim() === params.memberName
-    );
-    if (!primaryMember) {
-      return {};
-    }
-
-    const laneIdentity = buildPlannedMemberLaneIdentity({
-      leadProviderId: resolveTeamProviderId(trackedRun?.request.providerId),
-      member: {
-        name: primaryMember.name,
-        providerId: normalizeOptionalTeamProviderId(primaryMember.providerId),
-      },
+    return resolvePersistedRuntimeMemberIdentityHelper({
+      memberName: params.memberName,
+      previousMember: params.previousMember,
+      trackedRun,
     });
-    const providerId =
-      normalizeOptionalTeamProviderId(primaryMember.providerId) ??
-      resolveTeamProviderId(trackedRun?.request.providerId);
-
-    return {
-      providerId,
-      providerBackendId: migrateProviderBackendId(
-        providerId,
-        primaryMember.providerBackendId ?? trackedRun?.request.providerBackendId
-      ),
-      model: primaryMember.model,
-      effort: primaryMember.effort,
-      selectedFastMode: primaryMember.fastMode ?? trackedRun?.request.fastMode,
-      laneId: laneIdentity.laneId,
-      laneKind: laneIdentity.laneKind,
-      laneOwnerProviderId: laneIdentity.laneOwnerProviderId,
-    };
   }
 
   private createOpenCodeRuntimeDeliveryService(

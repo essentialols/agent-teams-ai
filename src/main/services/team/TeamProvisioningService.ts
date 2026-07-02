@@ -141,13 +141,15 @@ import {
   type OpenCodePromptDeliveryLedgerStore,
 } from './opencode/delivery/OpenCodePromptDeliveryLedger';
 import {
+  buildOpenCodeAcceptedDeliveryMissingPromptProofRetry,
+  buildOpenCodeNoAssistantTerminalDeliveryRequeuePlan,
+  buildOpenCodePromptLedgerFailedTerminalPlan,
+  buildOpenCodeRuntimeManifestWatermarkDeliveryRequeuePlan,
   getOpenCodeDeliveryPendingReason,
   hasOpenCodeObservedMessageSendToolCall,
   isLegacyOpenCodeMemberWorkSyncReadCommitAllowed,
   isOpenCodeDeliveryResponseReadCommitAllowed,
   isOpenCodeDirectUserPromptDelivery,
-  isOpenCodeNoAssistantTerminalDeliveryFailure,
-  isOpenCodeRuntimeManifestWatermarkDeliveryFailure,
   normalizeOpenCodeDeliveryResponseObservation,
 } from './opencode/delivery/OpenCodePromptDeliveryReadCommitPolicy';
 import {
@@ -3056,20 +3058,14 @@ export class TeamProvisioningService {
     ledgerRecord: OpenCodePromptDeliveryLedgerRecord;
     eventContext?: Record<string, unknown>;
   }): Promise<OpenCodePromptDeliveryLedgerRecord> {
-    const reason = 'opencode_prompt_acceptance_unknown_missing_runtime_prompt_id';
-    const now = nowIso();
-    const ledgerRecord = await input.ledger.markAcceptanceUnknown({
-      id: input.ledgerRecord.id,
-      reason,
-      nextAttemptAt: now,
-      diagnostics: ['opencode_accepted_prompt_missing_runtime_prompt_id_recovered'],
-      markedAt: now,
+    const retryPlan = buildOpenCodeAcceptedDeliveryMissingPromptProofRetry({
+      ledgerRecord: input.ledgerRecord,
+      now: nowIso(),
+      eventContext: input.eventContext,
     });
+    const ledgerRecord = await input.ledger.markAcceptanceUnknown(retryPlan.markInput);
     this.logOpenCodePromptDeliveryEvent('opencode_prompt_delivery_retry_scheduled', ledgerRecord, {
-      acceptanceUnknown: true,
-      recoveredLegacyAcceptedWithoutPromptProof: true,
-      ...input.eventContext,
-      reason,
+      ...retryPlan.eventExtra,
     });
     return ledgerRecord;
   }
@@ -3078,30 +3074,16 @@ export class TeamProvisioningService {
     ledger: OpenCodePromptDeliveryLedgerStore;
     ledgerRecord: OpenCodePromptDeliveryLedgerRecord;
   }): Promise<OpenCodePromptDeliveryLedgerRecord> {
-    if (!isOpenCodeNoAssistantTerminalDeliveryFailure(input.ledgerRecord)) {
+    const requeuePlan = buildOpenCodeNoAssistantTerminalDeliveryRequeuePlan({
+      ledgerRecord: input.ledgerRecord,
+      scheduledAt: nowIso(),
+    });
+    if (!requeuePlan) {
       return input.ledgerRecord;
     }
 
-    const scheduledAt = nowIso();
-    const requeued = await input.ledger.markNextAttemptScheduled({
-      id: input.ledgerRecord.id,
-      status: 'retry_scheduled',
-      nextAttemptAt: scheduledAt,
-      reason: 'opencode_prompt_delivery_requeued_after_terminal_no_assistant_response',
-      scheduledAt,
-    });
-    logger.info(
-      'opencode_prompt_delivery_requeued_after_terminal_no_assistant_response',
-      JSON.stringify({
-        teamName: requeued.teamName,
-        memberName: requeued.memberName,
-        laneId: requeued.laneId,
-        runId: requeued.runId,
-        inboxMessageId: requeued.inboxMessageId,
-        attempts: requeued.attempts,
-        maxAttempts: requeued.maxAttempts,
-      })
-    );
+    const requeued = await input.ledger.markNextAttemptScheduled(requeuePlan.markInput);
+    logger.info(requeuePlan.logEvent, JSON.stringify(requeuePlan.logContext));
     return requeued;
   }
 
@@ -3109,33 +3091,16 @@ export class TeamProvisioningService {
     ledger: OpenCodePromptDeliveryLedgerStore;
     ledgerRecord: OpenCodePromptDeliveryLedgerRecord;
   }): Promise<OpenCodePromptDeliveryLedgerRecord> {
-    if (
-      input.ledgerRecord.status !== 'failed_terminal' ||
-      input.ledgerRecord.inboxReadCommittedAt ||
-      !isOpenCodeRuntimeManifestWatermarkDeliveryFailure(input.ledgerRecord)
-    ) {
+    const requeuePlan = buildOpenCodeRuntimeManifestWatermarkDeliveryRequeuePlan({
+      ledgerRecord: input.ledgerRecord,
+      scheduledAt: nowIso(),
+    });
+    if (!requeuePlan) {
       return input.ledgerRecord;
     }
 
-    const scheduledAt = nowIso();
-    const requeued = await input.ledger.markNextAttemptScheduled({
-      id: input.ledgerRecord.id,
-      status: 'retry_scheduled',
-      nextAttemptAt: scheduledAt,
-      reason: 'opencode_prompt_delivery_requeued_after_runtime_manifest_high_watermark_fix',
-      scheduledAt,
-    });
-    logger.info(
-      'opencode_prompt_delivery_requeued_after_runtime_manifest_high_watermark_fix',
-      JSON.stringify({
-        teamName: requeued.teamName,
-        memberName: requeued.memberName,
-        laneId: requeued.laneId,
-        runId: requeued.runId,
-        inboxMessageId: requeued.inboxMessageId,
-        attempts: requeued.attempts,
-      })
-    );
+    const requeued = await input.ledger.markNextAttemptScheduled(requeuePlan.markInput);
+    logger.info(requeuePlan.logEvent, JSON.stringify(requeuePlan.logContext));
     return requeued;
   }
 
@@ -3147,15 +3112,16 @@ export class TeamProvisioningService {
     failedAt: string;
     eventContext?: Record<string, unknown>;
   }): Promise<OpenCodePromptDeliveryLedgerRecord> {
-    const failed = await input.ledger.markFailedTerminal({
+    const failurePlan = buildOpenCodePromptLedgerFailedTerminalPlan({
       id: input.id,
       reason: input.reason,
-      ...(input.diagnostics ? { diagnostics: input.diagnostics } : {}),
+      diagnostics: input.diagnostics,
       failedAt: input.failedAt,
+      eventContext: input.eventContext,
     });
+    const failed = await input.ledger.markFailedTerminal(failurePlan.markInput);
     this.logOpenCodePromptDeliveryEvent('opencode_prompt_delivery_terminal_failure', failed, {
-      reason: input.reason,
-      ...(input.eventContext ?? {}),
+      ...failurePlan.eventExtra,
     });
     return failed;
   }

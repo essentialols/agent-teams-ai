@@ -375,6 +375,7 @@ import {
   buildLeadContextUsagePayloadFromState,
   getInitialLeadContextWindowTokensForRequest,
 } from './provisioning/TeamProvisioningLeadContextUsage';
+import { extractLogsTail, sliceClaudeLogs } from './provisioning/TeamProvisioningLogSlice';
 import {
   matchesExactTeamMemberName,
   matchesObservedMemberNameForExpected,
@@ -874,7 +875,6 @@ const PROVISIONING_TRACE_STORAGE_LIMIT = 500;
 // lines). The tail cap in `emitLogsProgress` bounds each payload; we also
 // slow the cadence to ~1s so Zustand can keep up on large teams.
 const LOG_PROGRESS_THROTTLE_MS = 1000;
-const UI_LOGS_TAIL_LIMIT = 128 * 1024;
 const PROBE_CACHE_TTL_MS = 36 * 60 * 60 * 1000;
 function pushUniqueSupportDiagnostics(
   diagnostics: TeamProvisioningSupportDiagnostic[],
@@ -1334,17 +1334,6 @@ function updateProgress(
   return run.progress;
 }
 
-function extractLogsTail(
-  stdoutBuffer: string | undefined,
-  stderrBuffer: string | undefined
-): string | undefined {
-  const trimmed = buildCombinedLogs(stdoutBuffer, stderrBuffer).trim();
-  if (trimmed.length === 0) {
-    return undefined;
-  }
-  return trimmed.slice(-UI_LOGS_TAIL_LIMIT);
-}
-
 /**
  * Builds provisioning CLI logs from the line-buffered claudeLogLines array
  * instead of the byte-capped stdoutBuffer/stderrBuffer ring buffers.
@@ -1407,47 +1396,6 @@ function buildRetainedClaudeLogsSnapshot(run: ProvisioningRun): RetainedClaudeLo
   return {
     lines: boundProgressLogLines(lines),
     updatedAt: run.claudeLogsUpdatedAt ?? run.progress.updatedAt,
-  };
-}
-
-function sliceClaudeLogs(
-  linesChronological: string[],
-  updatedAt: string | undefined,
-  query?: { offset?: number; limit?: number }
-): { lines: string[]; total: number; hasMore: boolean; updatedAt?: string } {
-  const offsetRaw = query?.offset ?? 0;
-  const limitRaw = query?.limit ?? 100;
-  const offset = Number.isFinite(offsetRaw) ? Math.max(0, Math.floor(offsetRaw)) : 0;
-  const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(1000, Math.floor(limitRaw))) : 100;
-
-  const total = linesChronological.length;
-  if (total === 0) {
-    return { lines: [], total: 0, hasMore: false, updatedAt };
-  }
-
-  const newestExclusive = Math.max(0, total - offset);
-  const oldestInclusive = Math.max(0, newestExclusive - limit);
-  const normalizeLine = (line: string): string => {
-    // Back-compat: older builds prefixed every line with "[stdout] " / "[stderr] "
-    if (line.startsWith('[stdout] ') && line !== '[stdout]') {
-      return line.slice('[stdout] '.length);
-    }
-    if (line.startsWith('[stderr] ') && line !== '[stderr]') {
-      return line.slice('[stderr] '.length);
-    }
-    return line;
-  };
-
-  const lines = linesChronological
-    .slice(oldestInclusive, newestExclusive)
-    .map(normalizeLine)
-    .toReversed();
-
-  return {
-    lines,
-    total,
-    hasMore: oldestInclusive > 0,
-    updatedAt,
   };
 }
 

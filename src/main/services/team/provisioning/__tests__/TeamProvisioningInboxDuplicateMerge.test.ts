@@ -18,7 +18,7 @@ function createPorts(overrides: Partial<DuplicateInboxMergePorts> = {}): Duplica
 
 describe('TeamProvisioningInboxDuplicateMerge', () => {
   it('merges duplicate inbox files into the canonical inbox and removes duplicates', async () => {
-    const inboxDir = '/tmp/team/inboxes';
+    const inboxDir = '/fake/team/inboxes';
     const reads = new Map<string, string>([
       [
         'Alice.json',
@@ -71,7 +71,7 @@ describe('TeamProvisioningInboxDuplicateMerge', () => {
     });
 
     await mergeAndRemoveDuplicateInboxes({
-      inboxDir: '/tmp/missing/inboxes',
+      inboxDir: '/fake/missing/inboxes',
       baseNames: new Set(['Alice']),
       timeoutMs: 5_000,
       maxBytes: 1_000_000,
@@ -94,7 +94,7 @@ describe('TeamProvisioningInboxDuplicateMerge', () => {
     });
 
     await mergeAndRemoveDuplicateInboxes({
-      inboxDir: '/tmp/team/inboxes',
+      inboxDir: '/fake/team/inboxes',
       baseNames: new Set(['Alice']),
       timeoutMs: 5_000,
       maxBytes: 1_000_000,
@@ -105,7 +105,7 @@ describe('TeamProvisioningInboxDuplicateMerge', () => {
   });
 
   it('keeps an unreadable duplicate on disk so its messages are not destroyed unmerged', async () => {
-    const inboxDir = '/tmp/team/inboxes';
+    const inboxDir = '/fake/team/inboxes';
     const reads = new Map<string, string | null>([
       [
         'Alice.json',

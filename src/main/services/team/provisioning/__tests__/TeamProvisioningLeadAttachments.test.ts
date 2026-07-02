@@ -37,14 +37,14 @@ describe('lead attachment helpers', () => {
   it('maps Codex native image parts into content blocks', () => {
     expect(
       codexImagePartToContentBlock({
-        path: '/tmp/image.png',
+        path: '/fake/image.png',
         mimeType: 'image/png',
       })
     ).toEqual({
       type: 'image',
       source: {
         type: 'file',
-        path: '/tmp/image.png',
+        path: '/fake/image.png',
         media_type: 'image/png',
       },
     });

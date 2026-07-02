@@ -40,7 +40,7 @@ describe('OpenCode attachment payload helpers', () => {
 
     await expect(
       resolveOpenCodeInboxAttachmentPayloads(
-        { teamName: 'team', message: message(undefined) },
+        { teamName: 'team', message: message() },
         { attachmentStore: store }
       )
     ).resolves.toEqual({ ok: true });

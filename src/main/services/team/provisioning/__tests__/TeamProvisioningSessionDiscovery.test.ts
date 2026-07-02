@@ -6,8 +6,8 @@ import { scanForNewestProjectSession } from '../TeamProvisioningSessionDiscovery
 
 describe('TeamProvisioningSessionDiscovery', () => {
   it('returns the newest unknown JSONL session id from the encoded project directory', async () => {
-    const projectPath = '/tmp/my project';
-    const projectsBasePath = '/tmp/claude/projects';
+    const projectPath = '/fake/my project';
+    const projectsBasePath = '/fake/claude/projects';
     const projectDir = path.join(projectsBasePath, encodePath(projectPath));
     const statByFile = new Map<string, number>([
       ['known.jsonl', 300],
@@ -35,9 +35,9 @@ describe('TeamProvisioningSessionDiscovery', () => {
   it('returns null when there are no unknown JSONL sessions', async () => {
     await expect(
       scanForNewestProjectSession({
-        projectPath: '/tmp/project',
+        projectPath: '/fake/project',
         knownSessions: ['existing'],
-        projectsBasePath: '/tmp/claude/projects',
+        projectsBasePath: '/fake/claude/projects',
         ports: {
           readDir: vi.fn(async () => ['existing.jsonl', 'readme.md']),
           stat: vi.fn(async () => ({ mtimeMs: 1 })),
@@ -49,9 +49,9 @@ describe('TeamProvisioningSessionDiscovery', () => {
   it('returns null on filesystem errors', async () => {
     await expect(
       scanForNewestProjectSession({
-        projectPath: '/tmp/project',
+        projectPath: '/fake/project',
         knownSessions: [],
-        projectsBasePath: '/tmp/claude/projects',
+        projectsBasePath: '/fake/claude/projects',
         ports: {
           readDir: vi.fn(async () => {
             throw new Error('missing');

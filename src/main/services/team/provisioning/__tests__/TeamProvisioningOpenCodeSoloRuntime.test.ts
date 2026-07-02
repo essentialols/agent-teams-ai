@@ -11,7 +11,7 @@ import type { TeamConfig, TeamMember } from '@shared/types';
 function createOpenCodeLeadOnlyConfig(overrides: Partial<TeamConfig> = {}): TeamConfig {
   return {
     name: 'solo-team',
-    projectPath: '/tmp/solo-team',
+    projectPath: '/fake/solo-team',
     members: [
       {
         name: 'team-lead',
@@ -80,9 +80,9 @@ describe('TeamProvisioningOpenCodeSoloRuntime', () => {
         name: 'solo',
         role: 'Solo OpenCode Agent',
         providerId: 'opencode',
-        cwd: '/tmp/solo-team',
+        cwd: '/fake/solo-team',
       },
-      memberRuntimeCwd: '/tmp/solo-team',
+      memberRuntimeCwd: '/fake/solo-team',
     });
   });
 

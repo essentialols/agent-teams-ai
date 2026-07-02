@@ -15,7 +15,7 @@ function createDirectory(config: TeamConfig) {
 function createConfig(members: TeamConfig['members']): TeamConfig {
   return {
     name: 'identity-team',
-    projectPath: '/tmp/identity-team',
+    projectPath: '/fake/identity-team',
     members,
   };
 }
@@ -41,14 +41,14 @@ describe('TeamProvisioningOpenCodeMemberIdentity', () => {
       directory: createDirectory(
         createConfig([
           { name: 'lead', role: 'Team Lead', providerId: 'anthropic' },
-          { name: 'builder', role: 'Builder', providerId: 'opencode', cwd: '/tmp/config-cwd' },
+          { name: 'builder', role: 'Builder', providerId: 'opencode', cwd: '/fake/config-cwd' },
         ])
       ),
       secondaryRuntimeRuns: [
         {
           laneId: 'opencode-secondary-builder',
           memberName: 'builder-2',
-          cwd: '/tmp/runtime-cwd',
+          cwd: '/fake/runtime-cwd',
         },
       ],
     });
@@ -62,7 +62,7 @@ describe('TeamProvisioningOpenCodeMemberIdentity', () => {
         laneKind: 'secondary',
         laneOwnerProviderId: 'opencode',
       },
-      memberRuntimeCwd: '/tmp/runtime-cwd',
+      memberRuntimeCwd: '/fake/runtime-cwd',
     });
   });
 
@@ -72,7 +72,7 @@ describe('TeamProvisioningOpenCodeMemberIdentity', () => {
       directory: createDirectory(
         createConfig([
           { name: 'lead', role: 'Team Lead', providerId: 'opencode' },
-          { name: 'worker', role: 'Builder', providerId: 'opencode', cwd: '/tmp/worker' },
+          { name: 'worker', role: 'Builder', providerId: 'opencode', cwd: '/fake/worker' },
         ])
       ),
       runtimeAdapterProviderId: 'opencode',
@@ -84,7 +84,7 @@ describe('TeamProvisioningOpenCodeMemberIdentity', () => {
       laneIdentity: {
         laneOwnerProviderId: 'opencode',
       },
-      memberRuntimeCwd: '/tmp/worker',
+      memberRuntimeCwd: '/fake/worker',
     });
   });
 

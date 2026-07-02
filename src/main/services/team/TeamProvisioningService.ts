@@ -450,6 +450,7 @@ import { resolveOpenCodeMemberIdentityFromDirectory as resolveOpenCodeMemberIden
 import { prepareSelectedOpenCodeModelsForProvisioning } from './provisioning/TeamProvisioningOpenCodeModelPreparation';
 import {
   appendDiagnosticOnce,
+  applyOpenCodeSecondaryBootstrapStallOverlay as applyOpenCodeSecondaryBootstrapStallOverlayHelper,
   buildOpenCodeSecondaryLaneTimingDiagnostic,
   collectOpenCodeSecondaryLaneFailureDiagnostics,
   createUnexpectedMixedSecondaryLaneFailureResult,
@@ -467,7 +468,6 @@ import {
   normalizeRecoverableOpenCodeBootstrapPendingLaunchResult,
   OPENCODE_APP_MANAGED_BOOTSTRAP_STALLED_DIAGNOSTIC,
   promoteCommittedOpenCodeAppManagedBootstrapEvidence,
-  resolveOpenCodeBootstrapAcceptedAt,
   selectOpenCodeSecondaryBootstrapStallDiagnostic,
   shouldMarkPersistedOpenCodeBootstrapStalled,
   summarizeRuntimeLaunchResultMembers,
@@ -15597,75 +15597,9 @@ export class TeamProvisioningService {
   private applyOpenCodeSecondaryBootstrapStallOverlay(
     snapshot: PersistedTeamLaunchSnapshot | null
   ): PersistedTeamLaunchSnapshot | null {
-    if (!snapshot) {
-      return null;
-    }
-
-    const nowMs = Date.now();
-    const updatedAt = nowIso();
-    let changed = false;
-    const members: Record<string, PersistedTeamLaunchMemberState> = { ...snapshot.members };
-
-    for (const memberName of this.getPersistedLaunchMemberNames(snapshot)) {
-      let current = members[memberName];
-      if (!current) {
-        continue;
-      }
-
-      const stableFirstSpawnAcceptedAt = isPersistedOpenCodeSecondaryLaneMember(current)
-        ? resolveOpenCodeBootstrapAcceptedAt(current)
-        : undefined;
-      if (
-        stableFirstSpawnAcceptedAt &&
-        stableFirstSpawnAcceptedAt !== current.firstSpawnAcceptedAt
-      ) {
-        current = {
-          ...current,
-          firstSpawnAcceptedAt: stableFirstSpawnAcceptedAt,
-        };
-        members[memberName] = current;
-        changed = true;
-      }
-
-      if (!shouldMarkPersistedOpenCodeBootstrapStalled(current, nowMs)) {
-        continue;
-      }
-
-      const runtimeDiagnostic = getOpenCodeSecondaryBootstrapStallDiagnosticFromPersisted(current);
-      members[memberName] = {
-        ...current,
-        launchState: 'runtime_pending_bootstrap',
-        agentToolAccepted: true,
-        runtimeAlive: current.runtimeAlive === true && current.livenessKind === 'runtime_process',
-        bootstrapConfirmed: false,
-        hardFailure: false,
-        hardFailureReason: undefined,
-        livenessKind: current.livenessKind ?? 'registered_only',
-        runtimeDiagnostic,
-        runtimeDiagnosticSeverity: 'warning',
-        bootstrapStalled: true,
-        firstSpawnAcceptedAt: stableFirstSpawnAcceptedAt ?? current.firstSpawnAcceptedAt,
-        lastEvaluatedAt: updatedAt,
-        diagnostics: mergeRuntimeDiagnostics(current.diagnostics, [
-          runtimeDiagnostic,
-          'opencode_bootstrap_stalled',
-        ]),
-      };
-      changed = true;
-    }
-
-    if (!changed) {
-      return snapshot;
-    }
-
-    return createPersistedLaunchSnapshot({
-      teamName: snapshot.teamName,
-      expectedMembers: snapshot.expectedMembers,
-      bootstrapExpectedMembers: snapshot.bootstrapExpectedMembers,
-      leadSessionId: snapshot.leadSessionId,
-      launchPhase: snapshot.launchPhase,
-      members,
-      updatedAt,
+    return applyOpenCodeSecondaryBootstrapStallOverlayHelper(snapshot, {
+      nowMs: Date.now(),
+      updatedAt: nowIso(),
     });
   }
 

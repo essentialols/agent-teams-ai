@@ -1,5 +1,6 @@
 import {
   appendDiagnosticOnce,
+  applyOpenCodeSecondaryBootstrapStallOverlay,
   buildOpenCodeSecondaryLaneTimingDiagnostic,
   buildOpenCodeUncommittedBootstrapDiagnostic,
   collectOpenCodeSecondaryLaneFailureDiagnostics,
@@ -40,7 +41,7 @@ import type {
   TeamRuntimeLaunchResult,
   TeamRuntimeMemberLaunchEvidence,
 } from '@main/services/team/runtime/TeamRuntimeAdapter';
-import type { PersistedTeamLaunchMemberState } from '@shared/types';
+import type { PersistedTeamLaunchMemberState, PersistedTeamLaunchSnapshot } from '@shared/types';
 
 const acceptedAt = '2026-01-01T00:00:00.000Z';
 const stalledAtMs = Date.parse(acceptedAt) + MEMBER_BOOTSTRAP_STALL_MS + 1;
@@ -62,6 +63,26 @@ function makePersisted(
     firstSpawnAcceptedAt: acceptedAt,
     lastEvaluatedAt: acceptedAt,
     ...overrides,
+  };
+}
+
+function makeSnapshot(
+  members: Record<string, PersistedTeamLaunchMemberState>
+): PersistedTeamLaunchSnapshot {
+  return {
+    version: 2,
+    teamName: 'demo',
+    updatedAt: acceptedAt,
+    launchPhase: 'active',
+    expectedMembers: Object.keys(members),
+    members,
+    summary: {
+      confirmedCount: 0,
+      pendingCount: Object.keys(members).length,
+      failedCount: 0,
+      runtimeAlivePendingCount: 0,
+    },
+    teamLaunchState: 'partial_pending',
   };
 }
 
@@ -593,6 +614,54 @@ describe('TeamProvisioningOpenCodeRuntimeEvidencePolicy', () => {
         stalledAtMs
       )
     ).toBe(false);
+  });
+
+  it('applies OpenCode secondary bootstrap stall overlay to persisted launch snapshots', () => {
+    const original = makeSnapshot({
+      Builder: makePersisted({
+        runtimeAlive: true,
+        livenessKind: 'runtime_process',
+        firstSpawnAcceptedAt: '2026-01-01T00:10:00.000Z',
+        diagnostics: ['member_session_recorded at 2026-01-01T00:00:00.000Z'],
+      }),
+    });
+
+    const overlaid = applyOpenCodeSecondaryBootstrapStallOverlay(original, {
+      nowMs: stalledAtMs,
+      updatedAt: '2026-01-01T00:05:01.000Z',
+    });
+
+    expect(overlaid).not.toBe(original);
+    expect(overlaid?.updatedAt).toBe('2026-01-01T00:05:01.000Z');
+    expect(overlaid?.members.Builder).toMatchObject({
+      launchState: 'runtime_pending_bootstrap',
+      runtimeAlive: true,
+      bootstrapConfirmed: false,
+      hardFailure: false,
+      runtimeDiagnostic: OPENCODE_APP_MANAGED_BOOTSTRAP_STALLED_DIAGNOSTIC,
+      runtimeDiagnosticSeverity: 'warning',
+      bootstrapStalled: true,
+      firstSpawnAcceptedAt: '2026-01-01T00:00:00.000Z',
+      lastEvaluatedAt: '2026-01-01T00:05:01.000Z',
+      diagnostics: [
+        'member_session_recorded at 2026-01-01T00:00:00.000Z',
+        OPENCODE_APP_MANAGED_BOOTSTRAP_STALLED_DIAGNOSTIC,
+        'opencode_bootstrap_stalled',
+      ],
+    });
+
+    const unchanged = makeSnapshot({
+      Builder: makePersisted({
+        runtimeSessionId: 'runtime-session',
+        pendingPermissionRequestIds: ['perm-1'],
+      }),
+    });
+    expect(
+      applyOpenCodeSecondaryBootstrapStallOverlay(unchanged, {
+        nowMs: stalledAtMs,
+        updatedAt: '2026-01-01T00:05:01.000Z',
+      })
+    ).toBe(unchanged);
   });
 
   it('recognizes recoverable terminal persisted candidates and runtime evidence', () => {

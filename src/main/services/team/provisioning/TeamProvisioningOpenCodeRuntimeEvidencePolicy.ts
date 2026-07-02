@@ -1,3 +1,5 @@
+import { createPersistedLaunchSnapshot } from '../TeamLaunchStateEvaluator';
+
 import {
   hasRealOpenCodeFailureDiagnostic,
   isPersistedOpenCodeSecondaryLaneMember,
@@ -12,6 +14,7 @@ import type {
 } from '../runtime/TeamRuntimeAdapter';
 import type {
   PersistedTeamLaunchMemberState,
+  PersistedTeamLaunchSnapshot,
   TeamAgentRuntimeEntry,
   TeamLaunchAggregateState,
 } from '@shared/types';
@@ -617,6 +620,78 @@ export function shouldMarkPersistedOpenCodeBootstrapStalled(
       )
     )
   );
+}
+
+export function applyOpenCodeSecondaryBootstrapStallOverlay(
+  snapshot: PersistedTeamLaunchSnapshot | null,
+  options: { nowMs: number; updatedAt: string }
+): PersistedTeamLaunchSnapshot | null {
+  if (!snapshot) {
+    return null;
+  }
+
+  let changed = false;
+  const members: Record<string, PersistedTeamLaunchMemberState> = { ...snapshot.members };
+  const memberNames = Array.from(new Set([...snapshot.expectedMembers, ...Object.keys(members)]));
+
+  for (const memberName of memberNames) {
+    let current = members[memberName];
+    if (!current) {
+      continue;
+    }
+
+    const stableFirstSpawnAcceptedAt = isPersistedOpenCodeSecondaryLaneMember(current)
+      ? resolveOpenCodeBootstrapAcceptedAt(current)
+      : undefined;
+    if (stableFirstSpawnAcceptedAt && stableFirstSpawnAcceptedAt !== current.firstSpawnAcceptedAt) {
+      current = {
+        ...current,
+        firstSpawnAcceptedAt: stableFirstSpawnAcceptedAt,
+      };
+      members[memberName] = current;
+      changed = true;
+    }
+
+    if (!shouldMarkPersistedOpenCodeBootstrapStalled(current, options.nowMs)) {
+      continue;
+    }
+
+    const runtimeDiagnostic = getOpenCodeSecondaryBootstrapStallDiagnosticFromPersisted(current);
+    members[memberName] = {
+      ...current,
+      launchState: 'runtime_pending_bootstrap',
+      agentToolAccepted: true,
+      runtimeAlive: current.runtimeAlive === true && current.livenessKind === 'runtime_process',
+      bootstrapConfirmed: false,
+      hardFailure: false,
+      hardFailureReason: undefined,
+      livenessKind: current.livenessKind ?? 'registered_only',
+      runtimeDiagnostic,
+      runtimeDiagnosticSeverity: 'warning',
+      bootstrapStalled: true,
+      firstSpawnAcceptedAt: stableFirstSpawnAcceptedAt ?? current.firstSpawnAcceptedAt,
+      lastEvaluatedAt: options.updatedAt,
+      diagnostics: appendDiagnosticOnce(
+        appendDiagnosticOnce(current.diagnostics ?? [], runtimeDiagnostic),
+        'opencode_bootstrap_stalled'
+      ),
+    };
+    changed = true;
+  }
+
+  if (!changed) {
+    return snapshot;
+  }
+
+  return createPersistedLaunchSnapshot({
+    teamName: snapshot.teamName,
+    expectedMembers: snapshot.expectedMembers,
+    bootstrapExpectedMembers: snapshot.bootstrapExpectedMembers,
+    leadSessionId: snapshot.leadSessionId,
+    launchPhase: snapshot.launchPhase,
+    members,
+    updatedAt: options.updatedAt,
+  });
 }
 
 export function isRecoverablePersistedOpenCodeTerminalRuntimeCandidate(

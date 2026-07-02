@@ -62,7 +62,6 @@ import { type AttachmentPayload, DEFAULT_TOOL_APPROVAL_SETTINGS } from '@shared/
 import { resolveLanguageName } from '@shared/utils/agentLanguage';
 import { resolveAnthropicLaunchModel } from '@shared/utils/anthropicLaunchModel';
 import { parseCliArgs } from '@shared/utils/cliArgsParser';
-import { deriveContextMetrics } from '@shared/utils/contextMetrics';
 import { getErrorMessage } from '@shared/utils/errorHandling';
 import {
   isMeaningfulBootstrapCheckInMessage,
@@ -374,13 +373,24 @@ import {
   hasCommittedOpenCodeSecondaryEvidenceOverlayDelta,
 } from './provisioning/TeamProvisioningLaunchStateReconciliation';
 import {
+  type LeadActivityState,
+  setLeadActivity as setLeadActivityHelper,
+  syncLeadTaskActivityForState as syncLeadTaskActivityForStateHelper,
+} from './provisioning/TeamProvisioningLeadActivity';
+import {
   codexImagePartToContentBlock,
   toLeadAttachmentPayloads,
 } from './provisioning/TeamProvisioningLeadAttachments';
 import {
   buildLeadContextUsagePayloadFromState,
+  deriveLeadContextUsageStateFromUsage,
   getInitialLeadContextWindowTokensForRequest,
 } from './provisioning/TeamProvisioningLeadContextUsage';
+import {
+  getPreCompleteCliErrorTextFromRun,
+  getRunTrackedCwdFromRun,
+  isCurrentTrackedRunById,
+} from './provisioning/TeamProvisioningLeadRunDerivation';
 import { extractLogsTail, sliceClaudeLogs } from './provisioning/TeamProvisioningLogSlice';
 import {
   matchesExactTeamMemberName,
@@ -1161,8 +1171,6 @@ interface MixedSecondaryRuntimeLaneState {
   launchStartedAtMs?: number;
   launchFinishedAtMs?: number;
 }
-
-type LeadActivityState = 'active' | 'idle' | 'offline';
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -6110,76 +6118,24 @@ export class TeamProvisioningService {
     usage: Record<string, unknown>,
     modelName: string | undefined
   ): void {
-    const existingContextWindowTokens =
-      run.leadContextUsage?.contextWindowTokens ?? this.getInitialLeadContextWindowTokens(run);
-    const metrics = deriveContextMetrics({
+    run.leadContextUsage = deriveLeadContextUsageStateFromUsage({
+      previousUsage: run.leadContextUsage,
+      request: run.request,
       usage,
-      providerId: normalizeOptionalTeamProviderId(run.request.providerId),
       modelName,
-      contextWindowTokens: existingContextWindowTokens,
-      limitContext: run.request.limitContext === true,
     });
-
-    if (!run.leadContextUsage) {
-      run.leadContextUsage = {
-        promptInputTokens: metrics.promptInputTokens,
-        outputTokens: metrics.outputTokens,
-        contextUsedTokens: metrics.contextUsedTokens,
-        contextWindowTokens: metrics.contextWindowTokens,
-        promptInputSource: metrics.promptInputSource,
-        lastUsageMessageId: null,
-        lastEmittedAt: 0,
-      };
-      return;
-    }
-
-    run.leadContextUsage.promptInputTokens = metrics.promptInputTokens;
-    run.leadContextUsage.outputTokens = metrics.outputTokens;
-    run.leadContextUsage.contextUsedTokens = metrics.contextUsedTokens;
-    run.leadContextUsage.contextWindowTokens =
-      metrics.contextWindowTokens ?? run.leadContextUsage.contextWindowTokens;
-    run.leadContextUsage.promptInputSource = metrics.promptInputSource;
   }
 
   private isCurrentTrackedRun(run: ProvisioningRun): boolean {
-    return this.getTrackedRunId(run.teamName) === run.runId;
+    return isCurrentTrackedRunById(run, this.getTrackedRunId(run.teamName));
   }
 
   private getRunTrackedCwd(run: ProvisioningRun | null | undefined): string | null {
-    const requestCwd = typeof run?.request?.cwd === 'string' ? run.request.cwd.trim() : '';
-    if (requestCwd) return path.resolve(requestCwd);
-
-    const spawnCwd = typeof run?.spawnContext?.cwd === 'string' ? run.spawnContext.cwd.trim() : '';
-    if (spawnCwd) return path.resolve(spawnCwd);
-
-    return null;
+    return getRunTrackedCwdFromRun(run, path.resolve);
   }
 
   private getPreCompleteCliErrorText(run: ProvisioningRun): string {
-    const parts: string[] = [];
-    const stderrText = run.stderrBuffer.trim();
-    if (stderrText) {
-      parts.push(stderrText);
-    }
-
-    // Re-check only the parser-owned stdout carry that never became a newline-delimited message.
-    // If it is complete JSON or clearly looks like Claude stream-json structure, ignore it here.
-    // Otherwise treat it as trailing plaintext CLI output that should still participate in the
-    // final auth/API failure guard.
-    const trailingStdout = run.stdoutParserCarry.trim();
-    if (
-      trailingStdout &&
-      !run.stdoutParserCarryIsCompleteJson &&
-      !run.stdoutParserCarryLooksLikeClaudeJson
-    ) {
-      parts.push(trailingStdout);
-    }
-
-    return parts.join('\n').trim();
-  }
-
-  private getLeadTaskActivityRunKey(run: ProvisioningRun): string {
-    return `${run.teamName}\u0000${run.runId}`;
+    return getPreCompleteCliErrorTextFromRun(run);
   }
 
   private syncLeadTaskActivityForState(
@@ -6188,50 +6144,41 @@ export class TeamProvisioningService {
     previousState: 'active' | 'idle' | 'offline',
     at = nowIso()
   ): void {
-    const key = this.getLeadTaskActivityRunKey(run);
-    if (state === 'active') {
-      if (this.leadTaskActivitySyncedRunKeys.has(key)) return;
-      const result = this.taskActivityIntervalService.resumeActiveIntervalsForMember(
-        run.teamName,
-        this.getRunLeadName(run),
-        at
-      );
-      if (result.failed) return;
-      this.leadTaskActivitySyncedRunKeys.add(key);
-      return;
-    }
-
-    const wasSynced = this.leadTaskActivitySyncedRunKeys.has(key);
-    if (previousState !== 'active' && !wasSynced) return;
-    const result = this.taskActivityIntervalService.pauseActiveIntervalsForMember(
-      run.teamName,
-      this.getRunLeadName(run),
-      at
-    );
-    if (result.failed) {
-      this.leadTaskActivitySyncedRunKeys.add(key);
-      return;
-    }
-    this.leadTaskActivitySyncedRunKeys.delete(key);
+    syncLeadTaskActivityForStateHelper(run, state, previousState, this.createLeadActivityPorts(), at);
   }
 
   private setLeadActivity(run: ProvisioningRun, state: 'active' | 'idle' | 'offline'): void {
-    const previousState = run.leadActivityState;
-    const isCurrentRun = this.isCurrentTrackedRun(run);
-    if (isCurrentRun) {
-      this.syncLeadTaskActivityForState(run, state, previousState);
-    } else {
-      this.leadTaskActivitySyncedRunKeys.delete(this.getLeadTaskActivityRunKey(run));
-    }
-    if (previousState === state) return;
-    run.leadActivityState = state;
-    if (!isCurrentRun) return;
-    this.teamChangeEmitter?.({
-      type: 'lead-activity',
-      teamName: run.teamName,
-      runId: run.runId,
-      detail: state,
-    });
+    setLeadActivityHelper(run, state, this.createLeadActivityPorts());
+  }
+
+  private createLeadActivityPorts(): {
+    syncedRunKeys: Set<string>;
+    getRunLeadName: (run: ProvisioningRun) => string;
+    resumeActiveIntervalsForMember: (
+      teamName: string,
+      memberName: string,
+      at: string
+    ) => { failed?: boolean };
+    pauseActiveIntervalsForMember: (
+      teamName: string,
+      memberName: string,
+      at: string
+    ) => { failed?: boolean };
+    isCurrentTrackedRun: (run: ProvisioningRun) => boolean;
+    nowIso: () => string;
+    emitTeamChange: (event: TeamChangeEvent) => void;
+  } {
+    return {
+      syncedRunKeys: this.leadTaskActivitySyncedRunKeys,
+      getRunLeadName: (run) => this.getRunLeadName(run),
+      resumeActiveIntervalsForMember: (teamName, memberName, at) =>
+        this.taskActivityIntervalService.resumeActiveIntervalsForMember(teamName, memberName, at),
+      pauseActiveIntervalsForMember: (teamName, memberName, at) =>
+        this.taskActivityIntervalService.pauseActiveIntervalsForMember(teamName, memberName, at),
+      isCurrentTrackedRun: (run) => this.isCurrentTrackedRun(run),
+      nowIso,
+      emitTeamChange: (event) => this.teamChangeEmitter?.(event),
+    };
   }
 
   private emitToolActivity(run: ProvisioningRun, payload: ToolActivityEventPayload): void {

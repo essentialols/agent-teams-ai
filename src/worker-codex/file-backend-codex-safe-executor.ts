@@ -266,6 +266,7 @@ export class FileBackendCodexSafeExecutor {
         prompt: continuationPacket.message,
       }),
       summarizeResult: (result) => result.outputText,
+      summarizeErrorOutput: codexWorkerErrorOutputSummary,
       attemptUsage: codexWorkerResultUsage,
       controlTarget: codexControlTarget({
         jobId,
@@ -355,6 +356,31 @@ function codexWorkerResultUsage(
       ? {}
       : { totalTokens: usage.totalTokens }),
   };
+}
+
+function codexWorkerErrorOutputSummary(error: unknown): string | undefined {
+  for (const item of errorCauseChain(error)) {
+    if (!(item instanceof SubscriptionWorkerError)) continue;
+    const lastOutputTail = item.details.lastOutputTail?.trim();
+    if (lastOutputTail) {
+      return `Last Codex output before slice boundary:\n${lastOutputTail}`;
+    }
+  }
+  return undefined;
+}
+
+function errorCauseChain(error: unknown): readonly unknown[] {
+  const chain: unknown[] = [];
+  let current: unknown = error;
+  const seen = new Set<unknown>();
+  while (current && !seen.has(current)) {
+    chain.push(current);
+    seen.add(current);
+    current = current instanceof Error
+      ? (current as Error & { cause?: unknown }).cause
+      : undefined;
+  }
+  return chain;
 }
 
 function codexSafeExecutionInput(input: FileBackendCodexSafeExecutorRunInput): {

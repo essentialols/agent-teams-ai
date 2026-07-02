@@ -1,4 +1,7 @@
-import type { ProviderFailure } from "@vioxen/subscription-runtime/core";
+import {
+  isProviderFailureCode,
+  type ProviderFailure,
+} from "@vioxen/subscription-runtime/core";
 
 type FailureRedactor = {
   readonly redact: (input: string) => string;
@@ -175,22 +178,6 @@ function isProviderFailure(value: unknown): value is ProviderFailure {
     typeof value.reconnectRequired === "boolean" &&
     typeof value.safeMessage === "string"
   );
-}
-
-function isProviderFailureCode(value: unknown): value is ProviderFailure["code"] {
-  return typeof value === "string" && [
-    "needs_reconnect",
-    "quota_limited",
-    "permission_required",
-    "provider_session_invalid",
-    "provider_output_invalid",
-    "task_mode_unsupported",
-    "task_cancelled",
-    "task_timeout",
-    "stale_generation",
-    "backend_unavailable",
-    "unknown_runtime_failure",
-  ].includes(value);
 }
 
 function redactProviderFailure(

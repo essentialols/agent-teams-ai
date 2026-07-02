@@ -261,18 +261,31 @@ export type RuntimeExecutionPlan =
       readonly sessionForAgent: "refreshed";
     };
 
-export type ProviderFailureCode =
-  | "needs_reconnect"
-  | "quota_limited"
-  | "permission_required"
-  | "provider_session_invalid"
-  | "provider_output_invalid"
-  | "task_mode_unsupported"
-  | "task_cancelled"
-  | "task_timeout"
-  | "stale_generation"
-  | "backend_unavailable"
-  | "unknown_runtime_failure";
+export const providerFailureCodes = [
+  "needs_reconnect",
+  "quota_limited",
+  "permission_required",
+  "provider_session_invalid",
+  "provider_output_invalid",
+  "task_mode_unsupported",
+  "task_cancelled",
+  "task_timeout",
+  "stale_generation",
+  "backend_unavailable",
+  "goal_slice_exhausted",
+  "unknown_runtime_failure",
+] as const;
+
+export type ProviderFailureCode = (typeof providerFailureCodes)[number];
+
+export function isProviderFailureCode(
+  value: unknown,
+): value is ProviderFailureCode {
+  return (
+    typeof value === "string" &&
+    providerFailureCodes.includes(value as ProviderFailureCode)
+  );
+}
 
 export type ProviderFailure = {
   readonly code: ProviderFailureCode;

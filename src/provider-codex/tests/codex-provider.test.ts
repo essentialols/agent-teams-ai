@@ -122,6 +122,9 @@ describe("Codex provider adapter", () => {
       "backend_unavailable",
     );
     expect(
+      classifyCodexRuntimeFailure("codex_app_server_goal_max_turns_exceeded:20"),
+    ).toBe("goal_slice_exhausted");
+    expect(
       classifyCodexRuntimeFailure(
         "codex_app_server_turn_aborted:replaced:turn-2",
       ),
@@ -162,6 +165,26 @@ describe("Codex provider adapter", () => {
         exitCode: "1",
         stderrTail: "codex_app_server_goal_blocked",
         rawCause: "codex_app_server_goal_blocked",
+      },
+    });
+  });
+
+  it("classifies Codex app-server max goal turns as a retryable slice boundary", () => {
+    expect(
+      classifyCodexFailure({
+        exitCode: 1,
+        stdout: "",
+        stderr: "codex_app_server_goal_max_turns_exceeded:20",
+      }),
+    ).toMatchObject({
+      code: "goal_slice_exhausted",
+      retryable: true,
+      reconnectRequired: false,
+      safeMessage: "Codex app-server goal slice exhausted.",
+      details: {
+        exitCode: "1",
+        stderrTail: "codex_app_server_goal_max_turns_exceeded:20",
+        rawCause: "codex_app_server_goal_max_turns_exceeded:20",
       },
     });
   });
@@ -1828,6 +1851,60 @@ describe("Codex provider adapter", () => {
           (request) => request.method === "thread/goal/get",
         ),
       ).toHaveLength(2);
+    } finally {
+      await driver.dispose();
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("returns a retryable slice failure when app-server goal max turns are exhausted", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "codex-app-goal-max-turns-test-"),
+    );
+    const fakeFactory = new FakeAppServerFactory({
+      goalStatusesAfterTurns: ["active"],
+    });
+    const driver = new CodexJsonAgentDriver({
+      engine: new CodexAppServerExecutionEngine({
+        codexBinaryPath: "/bin/codex-test",
+        processFactory: fakeFactory.create,
+        cleanThreadPrewarm: false,
+        goalMode: true,
+        maxGoalTurns: 1,
+      }),
+      model: "gpt-test",
+      reasoningEffort: "low",
+    });
+
+    try {
+      const result = await driver.runTask({
+        session: sessionArtifactFromCodexAuthJson(validAuthJson),
+        task: {
+          kind: "structured-prompt",
+          prompt: "keep going beyond one slice",
+          controls: { editMode: "allow-edits" },
+        },
+        workspace: { path: workspace },
+        runner: new StaticRunner(""),
+        redactor: new DefaultRedactor(),
+        abortSignal: new AbortController().signal,
+      });
+
+      expect(result).toMatchObject({
+        status: "failed",
+        failure: {
+          code: "goal_slice_exhausted",
+          retryable: true,
+          reconnectRequired: false,
+          details: {
+            lastOutputTail: "app-server output:keep going beyond one slice",
+          },
+        },
+        telemetry: {
+          finishReason: "max_turns",
+        },
+      });
+      expect(fakeFactory.prompts).toEqual(["keep going beyond one slice"]);
     } finally {
       await driver.dispose();
       await rm(workspace, { recursive: true, force: true });

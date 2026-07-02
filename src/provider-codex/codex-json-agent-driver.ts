@@ -502,5 +502,6 @@ function finishReasonForFailure(
   | "provider_error" {
   if (code === "task_cancelled") return "cancelled";
   if (code === "task_timeout") return "timeout";
+  if (code === "goal_slice_exhausted") return "max_turns";
   return "provider_error";
 }

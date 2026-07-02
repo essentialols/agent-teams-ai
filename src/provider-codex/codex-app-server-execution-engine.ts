@@ -924,9 +924,10 @@ class CodexAppServerClient {
       }
     }
 
-    throw new Error(
-      `codex_app_server_goal_max_turns_exceeded:${input.maxGoalTurns}`,
-    );
+    throw goalMaxTurnsExceededError({
+      maxGoalTurns: input.maxGoalTurns,
+      outputText,
+    });
   }
 
   private async waitForGoalInput(input: {
@@ -1961,6 +1962,18 @@ function goalInputRequest(input: {
     contextSummary: `Goal: ${input.goal.objective}\nStatus: ${input.goal.status}`,
     audience: "orchestrator",
   };
+}
+
+function goalMaxTurnsExceededError(input: {
+  readonly maxGoalTurns: number;
+  readonly outputText: string;
+}): Error {
+  const error = new Error(
+    `codex_app_server_goal_max_turns_exceeded:${input.maxGoalTurns}`,
+  ) as Error & { lastOutputText?: string };
+  const outputText = input.outputText.trim();
+  if (outputText) error.lastOutputText = outputText;
+  return error;
 }
 
 function managedRunFailureFromError(error: unknown): ProviderFailure {

@@ -266,6 +266,78 @@ describe("SafeExecutionRunner", () => {
     expect(signals[0]?.state).toBe("delivered");
   });
 
+  it("continues dirty work after a goal slice exhausts max turns", async () => {
+    const workspacePath = await gitWorkspace("safe-execution-goal-slice-");
+    let runs = 0;
+    const prompts: string[] = [];
+    const pool = {
+      async run(job: PromptJob): Promise<PromptResult> {
+        runs += 1;
+        prompts.push(job.prompt);
+        if (runs === 1) {
+          await writeFile(join(job.workspacePath, "slice.txt"), "partial\n");
+          throw new SubscriptionWorkerError(
+            "subscription_worker_run_failed",
+            "Codex app-server goal slice exhausted.",
+            {
+              details: {
+                reason: "goal_slice_exhausted",
+                rawCause: "codex_app_server_goal_max_turns_exceeded:20",
+              },
+            },
+          );
+        }
+        expect(job.prompt).toContain("Continue the same task");
+        expect(job.prompt).toContain(
+          "Previous attempt stopped because: goal_slice_exhausted",
+        );
+        expect(job.prompt).toContain("Previous output summary:");
+        expect(job.prompt).toContain("Wrote slice.txt before the turn limit.");
+        expect(job.prompt).toContain("Changed files:\n- slice.txt");
+        expect(await readFile(join(job.workspacePath, "slice.txt"), "utf8"))
+          .toBe("partial\n");
+        await writeFile(join(job.workspacePath, "slice.txt"), "done\n");
+        return { output: "completed after next goal slice" };
+      },
+    };
+    const runner = new SafeExecutionRunner({
+      lockStore: new InMemoryWorkspaceLockStore(),
+      journal: new InMemoryAttemptJournal(),
+    });
+
+    const result = await runner.run({
+      taskId: "task-goal-slice",
+      workspace: { mode: "existing_locked", path: workspacePath },
+      effectMode: "workspace_patch",
+      provider: "codex",
+      pool,
+      job: { prompt: "Finish the long goal.", workspacePath },
+      originalPrompt: "Finish the long goal.",
+      policy: {
+        maxAttempts: 2,
+        retryUnknownChangedWorkspace: false,
+        retryUnknownCleanWorkspace: false,
+      },
+      summarizeErrorOutput: () => "Wrote slice.txt before the turn limit.",
+      summarizeResult: (value) => value.output,
+    });
+
+    if (result.status !== "completed") throw new Error("expected completed");
+    expect(runs).toBe(2);
+    expect(prompts[0]).toBe("Finish the long goal.");
+    expect(prompts[1]).toContain("Continue the same task");
+    expect(result.attempts).toHaveLength(2);
+    expect(result.attempts[0]?.failureReason).toBe("goal_slice_exhausted");
+    expect(result.attempts[0]?.failureMessage).toBe(
+      "Codex app-server goal slice exhausted.",
+    );
+    expect(result.attempts[0]?.workspaceDirtyAfter).toBe(true);
+    expect(result.attempts[1]?.status).toBe("completed");
+    expect(await readFile(join(workspacePath, "slice.txt"), "utf8")).toBe(
+      "done\n",
+    );
+  });
+
   it("does not consume control inbox guidance for reconnect repair continuations", async () => {
     const workspacePath = await gitWorkspace("safe-execution-control-reconnect-");
     let runs = 0;

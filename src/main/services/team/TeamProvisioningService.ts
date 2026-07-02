@@ -117,7 +117,6 @@ import {
   type OpenCodeRuntimeMessageAdapter,
 } from './opencode/delivery/OpenCodeMemberMessageDeliveryService';
 import {
-  isOpenCodePromptDeliveryWatchdogRecordTerminal,
   isOpenCodeSessionRefreshRetryRecord,
   OpenCodePromptDeliveryFollowUpPolicy,
 } from './opencode/delivery/OpenCodePromptDeliveryFollowUpPolicy';
@@ -126,22 +125,11 @@ import {
   type OpenCodePromptDeliveryLedgerRecord,
   type OpenCodePromptDeliveryLedgerStore,
 } from './opencode/delivery/OpenCodePromptDeliveryLedger';
+import { type OpenCodeVisibleReplyProof } from './opencode/delivery/OpenCodePromptDeliveryWatchdog';
 import {
-  buildOpenCodeAcceptedDeliveryMissingPromptProofRetry,
-  buildOpenCodeNoAssistantTerminalDeliveryRequeuePlan,
-  buildOpenCodePromptLedgerFailedTerminalPlan,
-  buildOpenCodeRuntimeManifestWatermarkDeliveryRequeuePlan,
-  getOpenCodeDeliveryPendingReason,
-  hasOpenCodeObservedMessageSendToolCall,
-  isLegacyOpenCodeMemberWorkSyncReadCommitAllowed,
-  isOpenCodeDeliveryResponseReadCommitAllowed,
-  isOpenCodeDirectUserPromptDelivery,
-  normalizeOpenCodeDeliveryResponseObservation,
-} from './opencode/delivery/OpenCodePromptDeliveryReadCommitPolicy';
-import {
-  OPENCODE_PROMPT_DELIVERY_OBSERVE_DELAY_MS,
-  type OpenCodeVisibleReplyProof,
-} from './opencode/delivery/OpenCodePromptDeliveryWatchdog';
+  createOpenCodePromptDeliveryWatchdogCoordinator,
+  type OpenCodePromptDeliveryWatchdogCoordinator,
+} from './opencode/delivery/OpenCodePromptDeliveryWatchdogCoordinator';
 import { OpenCodePromptDeliveryWatchdogScheduler } from './opencode/delivery/OpenCodePromptDeliveryWatchdogScheduler';
 import {
   buildOpenCodeRuntimeDeliveryUserVisibleImpact,
@@ -1456,6 +1444,7 @@ export class TeamProvisioningService {
   private readonly openCodeRuntimeDeliveryLeadNoticeSentAt = new Map<string, number>();
   private readonly openCodeRuntimeDeliveryProofReader = new OpenCodeRuntimeDeliveryProofReader();
   private readonly openCodeVisibleReplyProofService: OpenCodeVisibleReplyProofService;
+  private readonly openCodePromptDeliveryWatchdogCoordinator: OpenCodePromptDeliveryWatchdogCoordinator;
   private readonly openCodeRuntimeRecoveryIdentity = createOpenCodeRuntimeRecoveryIdentityHelpers({
     getTeamsBasePath,
     getCurrentOpenCodeRuntimeRunId: (teamName, laneId) =>
@@ -1709,6 +1698,49 @@ export class TeamProvisioningService {
       getErrorMessage,
       nowIso,
     });
+    this.openCodePromptDeliveryWatchdogCoordinator =
+      createOpenCodePromptDeliveryWatchdogCoordinator({
+        hasAcceptedMemberWorkSyncReport: (input) => this.hasAcceptedMemberWorkSyncReport(input),
+        taskRefsIncludeAll: openCodeTaskRefsIncludeAllValue,
+        visibleReplyProofService: this.openCodeVisibleReplyProofService,
+        maybeSyncRuntimePermissionsAfterDelivery: (input) =>
+          this.maybeSyncOpenCodeRuntimePermissionsAfterDelivery(input),
+        rememberRuntimePidFromBridge: (input) => this.rememberOpenCodeRuntimePidFromBridge(input),
+        watchdogScheduler: this.openCodePromptDeliveryWatchdogScheduler,
+        canDeliverToTeamRuntime: (teamName) => this.canDeliverToOpenCodeRuntimeForTeam(teamName),
+        recoverRuntimeLanesForWatchdog: (teamName, options) =>
+          this.tryRecoverOpenCodeRuntimeLanesForDeliveryWatchdog(teamName, options),
+        stopRuntimeLanesForStoppedTeam: (teamName) =>
+          this.stopOpenCodeRuntimeLanesForStoppedTeam(teamName),
+        readActiveRuntimeLaneIds: async (teamName) => {
+          const laneIndex = await readOpenCodeRuntimeLaneIndex(getTeamsBasePath(), teamName).catch(
+            () => null
+          );
+          if (!laneIndex) {
+            return null;
+          }
+          return Object.values(laneIndex.lanes)
+            .filter((lane) => lane.state === 'active')
+            .map((lane) => lane.laneId);
+        },
+        createLedger: (teamName, laneId) =>
+          this.createOpenCodePromptDeliveryLedger(teamName, laneId),
+        resolveMembersForRuntimeLane: (teamName, laneId) =>
+          this.resolveOpenCodeMembersForRuntimeLane(teamName, laneId),
+        getInboxMessages: (teamName, memberName) =>
+          this.inboxReader.getMessagesFor(teamName, memberName),
+        resolveCurrentRuntimeRunId: (teamName, laneId) =>
+          this.resolveCurrentOpenCodeRuntimeRunId(teamName, laneId),
+        hasStableInboxMessageId,
+        logPromptDeliveryEvent: (event, record, extra) =>
+          this.logOpenCodePromptDeliveryEvent(event, record, extra),
+        info: (message, context) =>
+          context === undefined ? logger.info(message) : logger.info(message, context),
+        warn: (message) => logger.warn(message),
+        nowIso,
+        sleep,
+        getErrorMessage,
+      });
     this.memberLogsFinder = new TeamMemberLogsFinder(
       this.configReader,
       this.inboxReader,
@@ -2679,11 +2711,9 @@ export class TeamProvisioningService {
     visibleReply?: OpenCodeVisibleReplyProof | null;
     ledgerRecord?: OpenCodePromptDeliveryLedgerRecord | null;
   }): Promise<boolean> {
-    return isOpenCodeDeliveryResponseReadCommitAllowed({
-      ...input,
-      hasAcceptedMemberWorkSyncReport: (report) => this.hasAcceptedMemberWorkSyncReport(report),
-      taskRefsIncludeAll: openCodeTaskRefsIncludeAllValue,
-    });
+    return this.openCodePromptDeliveryWatchdogCoordinator.isDeliveryResponseReadCommitAllowed(
+      input
+    );
   }
 
   private async isLegacyOpenCodeMemberWorkSyncReadCommitAllowed(input: {
@@ -2692,10 +2722,9 @@ export class TeamProvisioningService {
     workSyncIntent?: OpenCodeTeamRuntimeMessageInput['workSyncIntent'];
     responseObservation?: NonNullable<OpenCodeTeamRuntimeMessageResult['responseObservation']>;
   }): Promise<boolean> {
-    return isLegacyOpenCodeMemberWorkSyncReadCommitAllowed({
-      ...input,
-      hasAcceptedMemberWorkSyncReport: (report) => this.hasAcceptedMemberWorkSyncReport(report),
-    });
+    return this.openCodePromptDeliveryWatchdogCoordinator.isLegacyMemberWorkSyncReadCommitAllowed(
+      input
+    );
   }
 
   private getOpenCodeDeliveryPendingReason(input: {
@@ -2705,10 +2734,7 @@ export class TeamProvisioningService {
     visibleReply?: OpenCodeVisibleReplyProof | null;
     ledgerRecord?: OpenCodePromptDeliveryLedgerRecord | null;
   }): string {
-    return getOpenCodeDeliveryPendingReason({
-      ...input,
-      taskRefsIncludeAll: openCodeTaskRefsIncludeAllValue,
-    });
+    return this.openCodePromptDeliveryWatchdogCoordinator.getDeliveryPendingReason(input);
   }
 
   private async markOpenCodeAcceptedDeliveryMissingPromptProofForRetry(input: {
@@ -2716,50 +2742,27 @@ export class TeamProvisioningService {
     ledgerRecord: OpenCodePromptDeliveryLedgerRecord;
     eventContext?: Record<string, unknown>;
   }): Promise<OpenCodePromptDeliveryLedgerRecord> {
-    const retryPlan = buildOpenCodeAcceptedDeliveryMissingPromptProofRetry({
-      ledgerRecord: input.ledgerRecord,
-      now: nowIso(),
-      eventContext: input.eventContext,
-    });
-    const ledgerRecord = await input.ledger.markAcceptanceUnknown(retryPlan.markInput);
-    this.logOpenCodePromptDeliveryEvent('opencode_prompt_delivery_retry_scheduled', ledgerRecord, {
-      ...retryPlan.eventExtra,
-    });
-    return ledgerRecord;
+    return this.openCodePromptDeliveryWatchdogCoordinator.markAcceptedDeliveryMissingPromptProofForRetry(
+      input
+    );
   }
 
   private async requeueOpenCodeNoAssistantTerminalDeliveryIfNeeded(input: {
     ledger: OpenCodePromptDeliveryLedgerStore;
     ledgerRecord: OpenCodePromptDeliveryLedgerRecord;
   }): Promise<OpenCodePromptDeliveryLedgerRecord> {
-    const requeuePlan = buildOpenCodeNoAssistantTerminalDeliveryRequeuePlan({
-      ledgerRecord: input.ledgerRecord,
-      scheduledAt: nowIso(),
-    });
-    if (!requeuePlan) {
-      return input.ledgerRecord;
-    }
-
-    const requeued = await input.ledger.markNextAttemptScheduled(requeuePlan.markInput);
-    logger.info(requeuePlan.logEvent, JSON.stringify(requeuePlan.logContext));
-    return requeued;
+    return this.openCodePromptDeliveryWatchdogCoordinator.requeueNoAssistantTerminalDeliveryIfNeeded(
+      input
+    );
   }
 
   private async requeueOpenCodeRuntimeManifestWatermarkDeliveryIfNeeded(input: {
     ledger: OpenCodePromptDeliveryLedgerStore;
     ledgerRecord: OpenCodePromptDeliveryLedgerRecord;
   }): Promise<OpenCodePromptDeliveryLedgerRecord> {
-    const requeuePlan = buildOpenCodeRuntimeManifestWatermarkDeliveryRequeuePlan({
-      ledgerRecord: input.ledgerRecord,
-      scheduledAt: nowIso(),
-    });
-    if (!requeuePlan) {
-      return input.ledgerRecord;
-    }
-
-    const requeued = await input.ledger.markNextAttemptScheduled(requeuePlan.markInput);
-    logger.info(requeuePlan.logEvent, JSON.stringify(requeuePlan.logContext));
-    return requeued;
+    return this.openCodePromptDeliveryWatchdogCoordinator.requeueRuntimeManifestWatermarkDeliveryIfNeeded(
+      input
+    );
   }
 
   private async markOpenCodePromptLedgerFailedTerminal(input: {
@@ -2770,18 +2773,7 @@ export class TeamProvisioningService {
     failedAt: string;
     eventContext?: Record<string, unknown>;
   }): Promise<OpenCodePromptDeliveryLedgerRecord> {
-    const failurePlan = buildOpenCodePromptLedgerFailedTerminalPlan({
-      id: input.id,
-      reason: input.reason,
-      diagnostics: input.diagnostics,
-      failedAt: input.failedAt,
-      eventContext: input.eventContext,
-    });
-    const failed = await input.ledger.markFailedTerminal(failurePlan.markInput);
-    this.logOpenCodePromptDeliveryEvent('opencode_prompt_delivery_terminal_failure', failed, {
-      ...failurePlan.eventExtra,
-    });
-    return failed;
+    return this.openCodePromptDeliveryWatchdogCoordinator.markLedgerFailedTerminal(input);
   }
 
   private async observeOpenCodeDirectUserDeliveryInlineIfNeeded(input: {
@@ -2807,176 +2799,9 @@ export class TeamProvisioningService {
     ledgerRecord: OpenCodePromptDeliveryLedgerRecord;
     visibleReply: OpenCodeVisibleReplyProof | null;
   }> {
-    let ledgerRecord = input.ledgerRecord;
-    let visibleReply = input.visibleReply ?? null;
-    const observeMessageDelivery = input.adapter.observeMessageDelivery;
-    const readAllowed = await this.isOpenCodeDeliveryResponseReadCommitAllowed({
-      teamName: input.teamName,
-      memberName: input.memberName,
-      responseState: ledgerRecord.responseState,
-      actionMode: ledgerRecord.actionMode ?? undefined,
-      taskRefs: ledgerRecord.taskRefs,
-      visibleReply,
-      ledgerRecord,
-    });
-    const shouldObserveInline =
-      observeMessageDelivery &&
-      input.promptAccepted &&
-      isOpenCodeDirectUserPromptDelivery(ledgerRecord) &&
-      (ledgerRecord.source === 'manual' ||
-        (ledgerRecord.responseState === 'tool_error' &&
-          hasOpenCodeObservedMessageSendToolCall(ledgerRecord))) &&
-      !readAllowed &&
-      !visibleReply &&
-      !ledgerRecord.visibleReplyMessageId;
-
-    if (!shouldObserveInline || !observeMessageDelivery) {
-      return { ledgerRecord, visibleReply };
-    }
-
-    for (let inlineObserveAttempt = 1; inlineObserveAttempt <= 4; inlineObserveAttempt += 1) {
-      await sleep(OPENCODE_PROMPT_DELIVERY_OBSERVE_DELAY_MS);
-      let observed: OpenCodeTeamRuntimeMessageResult;
-      try {
-        observed = await observeMessageDelivery.call(input.adapter, {
-          ...(input.runtimeRunId ? { runId: input.runtimeRunId } : {}),
-          teamName: input.teamName,
-          laneId: input.laneId,
-          memberName: input.memberName,
-          cwd: input.cwd,
-          text: input.text,
-          messageId: input.messageId,
-          replyRecipient: input.replyRecipient ?? undefined,
-          actionMode: input.actionMode,
-          messageKind: input.messageKind,
-          workSyncIntent: input.workSyncIntent,
-          workSyncReviewRequestEventIds: input.workSyncReviewRequestEventIds,
-          taskRefs: input.taskRefs,
-          prePromptCursor: ledgerRecord.prePromptCursor,
-          sessionId: ledgerRecord.runtimeSessionId ?? undefined,
-          runtimePromptMessageId:
-            ledgerRecord.lastRuntimePromptMessageId ??
-            ledgerRecord.runtimePromptMessageId ??
-            undefined,
-        });
-      } catch (error) {
-        const reason = `opencode_direct_user_delivery_inline_observe_failed: ${getErrorMessage(
-          error
-        )}`;
-        await this.maybeSyncOpenCodeRuntimePermissionsAfterDelivery({
-          teamName: input.teamName,
-          runId: input.runtimeRunId,
-          laneId: input.laneId,
-          memberName: input.memberName,
-          cwd: input.cwd,
-          sessionId: ledgerRecord.runtimeSessionId,
-          reason,
-          diagnostics: [
-            `opencode_direct_user_delivery_inline_observe_attempt_${inlineObserveAttempt}`,
-            reason,
-          ],
-        });
-        ledgerRecord = await input.ledger.applyObservation({
-          id: ledgerRecord.id,
-          responseObservation: {
-            state: 'reconcile_failed',
-            deliveredUserMessageId: null,
-            assistantMessageId: null,
-            toolCallNames: [],
-            visibleMessageToolCallId: null,
-            visibleReplyMessageId: null,
-            visibleReplyCorrelation: null,
-            latestAssistantPreview: null,
-            reason,
-          },
-          diagnostics: [
-            `opencode_direct_user_delivery_inline_observe_attempt_${inlineObserveAttempt}`,
-            reason,
-          ],
-          observedAt: nowIso(),
-        });
-        break;
-      }
-      await this.rememberOpenCodeRuntimePidFromBridge({
-        teamName: input.teamName,
-        memberName: input.memberName,
-        laneId: input.laneId,
-        runId: input.runtimeRunId,
-        runtimeSessionId: observed.sessionId,
-        runtimePid: observed.runtimePid,
-        reason: 'opencode_delivery_inline_observe_runtime_pid_observed',
-      });
-      const observedResponse = normalizeOpenCodeDeliveryResponseObservation(
-        observed.responseObservation
-      );
-      await this.maybeSyncOpenCodeRuntimePermissionsAfterDelivery({
-        teamName: input.teamName,
-        runId: input.runtimeRunId,
-        laneId: input.laneId,
-        memberName: input.memberName,
-        cwd: input.cwd,
-        sessionId: observed.sessionId,
-        responseState: observedResponse?.state,
-        reason: observedResponse?.reason ?? observed.diagnostics[0],
-        diagnostics: observed.diagnostics,
-      });
-      const hadMessageSendToolError = hasOpenCodeObservedMessageSendToolCall(ledgerRecord);
-      ledgerRecord = await input.ledger.applyObservation({
-        id: ledgerRecord.id,
-        responseObservation: observedResponse ?? {
-          state: observed.ok ? 'not_observed' : 'reconcile_failed',
-          deliveredUserMessageId: null,
-          assistantMessageId: null,
-          toolCallNames: [],
-          visibleMessageToolCallId: null,
-          visibleReplyMessageId: null,
-          visibleReplyCorrelation: null,
-          latestAssistantPreview: null,
-          reason: observed.diagnostics[0] ?? null,
-        },
-        sessionId: observed.sessionId,
-        runtimePromptMessageId: observed.runtimePromptMessageId,
-        diagnostics: [
-          `opencode_direct_user_delivery_inline_observe_attempt_${inlineObserveAttempt}`,
-          ...(hadMessageSendToolError ? ['opencode_message_send_tool_error_inline_observe'] : []),
-          ...observed.diagnostics,
-        ],
-        observedAt: nowIso(),
-      });
-      const proof = await this.openCodeVisibleReplyProofService.applyDestinationProof({
-        ledger: input.ledger,
-        ledgerRecord,
-        teamName: input.teamName,
-        replyRecipient: input.replyRecipient,
-        memberName: input.memberName,
-      });
-      ledgerRecord = proof.ledgerRecord;
-      visibleReply = proof.visibleReply;
-      const materialized =
-        await this.openCodeVisibleReplyProofService.materializePlainTextReplyIfNeeded({
-          ledger: input.ledger,
-          ledgerRecord,
-          teamName: input.teamName,
-          memberName: input.memberName,
-          visibleReply,
-        });
-      ledgerRecord = materialized.ledgerRecord;
-      visibleReply = materialized.visibleReply;
-      const observedReadAllowed = await this.isOpenCodeDeliveryResponseReadCommitAllowed({
-        teamName: input.teamName,
-        memberName: input.memberName,
-        responseState: ledgerRecord.responseState,
-        actionMode: ledgerRecord.actionMode ?? undefined,
-        taskRefs: ledgerRecord.taskRefs,
-        visibleReply,
-        ledgerRecord,
-      });
-      if (observedReadAllowed) {
-        break;
-      }
-    }
-
-    return { ledgerRecord, visibleReply };
+    return this.openCodePromptDeliveryWatchdogCoordinator.observeDirectUserDeliveryInlineIfNeeded(
+      input
+    );
   }
 
   private scheduleOpenCodePromptDeliveryWatchdog(input: {
@@ -2985,7 +2810,7 @@ export class TeamProvisioningService {
     messageId?: string | null;
     delayMs: number;
   }): void {
-    this.openCodePromptDeliveryWatchdogScheduler.schedule(input);
+    this.openCodePromptDeliveryWatchdogCoordinator.schedule(input);
   }
 
   private async isStaleOpenCodePromptDeliveryWatchdogError(input: {
@@ -2994,7 +2819,7 @@ export class TeamProvisioningService {
     messageId: string;
     error: unknown;
   }): Promise<boolean> {
-    return this.openCodePromptDeliveryWatchdogScheduler.isStaleError(input);
+    return this.openCodePromptDeliveryWatchdogCoordinator.isStaleError(input);
   }
 
   private async rememberOpenCodeRuntimePidFromBridge(input: {
@@ -3507,142 +3332,14 @@ export class TeamProvisioningService {
   }
 
   async scanOpenCodePromptDeliveryWatchdog(teamName: string): Promise<number> {
-    if (!this.openCodePromptDeliveryWatchdogScheduler.isEnabled()) {
-      return 0;
-    }
-    const canDeliverToTeamRuntime = this.canDeliverToOpenCodeRuntimeForTeam(teamName);
-    const recoveredLaneIds = await this.tryRecoverOpenCodeRuntimeLanesForDeliveryWatchdog(
-      teamName,
-      { allowCommittedSessionRecoveryWithoutTeamRuntime: !canDeliverToTeamRuntime }
-    );
-    if (!canDeliverToTeamRuntime && recoveredLaneIds.length === 0) {
-      await this.stopOpenCodeRuntimeLanesForStoppedTeam(teamName);
-      return 0;
-    }
-    const laneIndex = await readOpenCodeRuntimeLaneIndex(getTeamsBasePath(), teamName).catch(
-      () => null
-    );
-    if (!laneIndex && recoveredLaneIds.length === 0) {
-      return 0;
-    }
-    let activeLaneIds = canDeliverToTeamRuntime
-      ? Object.values(laneIndex?.lanes ?? {})
-          .filter((lane) => lane.state === 'active')
-          .map((lane) => lane.laneId)
-      : [];
-    activeLaneIds = [...new Set([...activeLaneIds, ...recoveredLaneIds])];
-    return await this.scanOpenCodePromptDeliveryWatchdogForActiveLanes(teamName, activeLaneIds);
+    return await this.openCodePromptDeliveryWatchdogCoordinator.scan(teamName);
   }
 
   private async scanOpenCodePromptDeliveryWatchdogForActiveLanes(
     teamName: string,
     laneIds: string[]
   ): Promise<number> {
-    if (!this.openCodePromptDeliveryWatchdogScheduler.isEnabled()) {
-      return 0;
-    }
-    let scheduled = 0;
-    for (const laneId of [...new Set(laneIds.map((laneId) => laneId.trim()).filter(Boolean))]) {
-      const ledger = this.createOpenCodePromptDeliveryLedger(teamName, laneId);
-      await ledger.pruneTerminalRecords({ now: new Date() }).catch((error: unknown) => {
-        logger.warn(
-          `[${teamName}] OpenCode prompt delivery ledger prune failed for ${laneId}: ${getErrorMessage(error)}`
-        );
-      });
-      const records = await ledger.list().catch(() => []);
-      for (const record of records) {
-        if (isOpenCodePromptDeliveryWatchdogRecordTerminal(record)) {
-          continue;
-        }
-        const nextAttemptMs = record.nextAttemptAt ? Date.parse(record.nextAttemptAt) : NaN;
-        const delayMs = Number.isFinite(nextAttemptMs)
-          ? Math.max(500, nextAttemptMs - Date.now())
-          : OPENCODE_PROMPT_DELIVERY_OBSERVE_DELAY_MS;
-        this.scheduleOpenCodePromptDeliveryWatchdog({
-          teamName,
-          memberName: record.memberName,
-          messageId: record.inboxMessageId,
-          delayMs,
-        });
-        scheduled += 1;
-      }
-      const members = await this.resolveOpenCodeMembersForRuntimeLane(teamName, laneId);
-      for (const memberName of members) {
-        const inboxMessages = await this.inboxReader
-          .getMessagesFor(teamName, memberName)
-          .catch(() => []);
-        for (const message of inboxMessages) {
-          if (
-            message.read ||
-            typeof message.text !== 'string' ||
-            message.text.trim().length === 0 ||
-            !hasStableInboxMessageId(message)
-          ) {
-            continue;
-          }
-          const existing = await ledger
-            .getByInboxMessage({
-              teamName,
-              memberName,
-              laneId,
-              inboxMessageId: message.messageId,
-            })
-            .catch(() => null);
-          if (existing) {
-            continue;
-          }
-          const replyRecipient =
-            typeof message.from === 'string' &&
-            message.from.trim() &&
-            message.from.trim().toLowerCase() !== memberName.trim().toLowerCase()
-              ? message.from.trim()
-              : 'user';
-          const now = nowIso();
-          const record = await ledger.ensurePending({
-            teamName,
-            memberName,
-            laneId,
-            runId: await this.resolveCurrentOpenCodeRuntimeRunId(teamName, laneId),
-            inboxMessageId: message.messageId,
-            inboxTimestamp: message.timestamp,
-            source: 'watchdog',
-            replyRecipient,
-            actionMode: message.actionMode ?? null,
-            messageKind: message.messageKind ?? null,
-            workSyncIntent: message.workSyncIntent ?? null,
-            taskRefs: message.taskRefs ?? [],
-            payloadHash: hashOpenCodePromptDeliveryPayload({
-              text: message.text,
-              replyRecipient,
-              actionMode: message.actionMode ?? null,
-              taskRefs: message.taskRefs ?? [],
-              attachments: message.attachments,
-              source: 'watchdog',
-            }),
-            now,
-          });
-          const recovered = await ledger.markAcceptanceUnknown({
-            id: record.id,
-            reason: 'opencode_prompt_delivery_ledger_rebuilt_from_unread_inbox',
-            nextAttemptAt: now,
-            markedAt: now,
-          });
-          this.logOpenCodePromptDeliveryEvent(
-            'opencode_prompt_delivery_retry_scheduled',
-            recovered,
-            { acceptanceUnknown: true, reason: recovered.lastReason }
-          );
-          this.scheduleOpenCodePromptDeliveryWatchdog({
-            teamName,
-            memberName: recovered.memberName,
-            messageId: recovered.inboxMessageId,
-            delayMs: 500,
-          });
-          scheduled += 1;
-        }
-      }
-    }
-    return scheduled;
+    return await this.openCodePromptDeliveryWatchdogCoordinator.scanActiveLanes(teamName, laneIds);
   }
 
   private createOpenCodeRuntimeBootstrapEvidencePorts(): OpenCodeRuntimeBootstrapEvidencePorts {

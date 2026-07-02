@@ -514,14 +514,14 @@ import {
   tryStopPersistedOpenCodeRuntimePidForStoppedLane as tryStopPersistedOpenCodeRuntimePidForStoppedLaneHelper,
 } from './provisioning/TeamProvisioningOpenCodeRuntimeLaneCleanup';
 import {
-  buildOpenCodeRuntimePendingPermissionsLaunchSnapshot,
   findPersistedLaunchMemberForLane as findPersistedLaunchMemberForLaneHelper,
-  type OpenCodeRuntimePendingPermissionsPersistenceInput,
+  type OpenCodeRuntimePendingPermissionsPersistencePorts,
   type OpenCodeRuntimePermissionListingAdapter,
-  type OpenCodeRuntimePermissionSpawnStatusSyncInput,
+  type OpenCodeRuntimePermissionSpawnStatusPorts,
   type OpenCodeRuntimePermissionSyncInput,
+  persistOpenCodeRuntimePendingPermissions,
   syncOpenCodeRuntimePermissionsAfterDelivery,
-  syncOpenCodeRuntimePermissionSpawnStatuses as syncOpenCodeRuntimePermissionSpawnStatusesHelper,
+  syncOpenCodeRuntimePermissionSpawnStatusesForTrackedRun,
 } from './provisioning/TeamProvisioningOpenCodeRuntimePermissions';
 import { createOpenCodeRuntimeRecoveryIdentityHelpers } from './provisioning/TeamProvisioningOpenCodeRuntimeRecoveryIdentity';
 import { resolveOpenCodeSoloRuntimeRecipientProviderId } from './provisioning/TeamProvisioningOpenCodeSoloRuntime';
@@ -1460,6 +1460,36 @@ export class TeamProvisioningService {
     resolveOpenCodeMemberIdentityFromDirectory: (teamName, memberName, directory) =>
       this.resolveOpenCodeMemberIdentityFromDirectory(teamName, memberName, directory),
   });
+  private readonly openCodeRuntimePermissionPersistencePorts: OpenCodeRuntimePendingPermissionsPersistencePorts =
+    {
+      nowIso,
+      getTrackedRunId: (teamName) => this.getTrackedRunId(teamName),
+      enqueueLaunchStateStoreOperation: (teamName, operation) =>
+        this.enqueueLaunchStateStoreOperation(teamName, operation),
+      readLaunchState: (teamName) => this.launchStateStore.read(teamName).catch(() => null),
+      writeLaunchStateSnapshot: (teamName, snapshot) =>
+        this.writeLaunchStateSnapshotNow(teamName, snapshot),
+      invalidateRuntimeSnapshotCaches: (teamName) => this.invalidateRuntimeSnapshotCaches(teamName),
+      emitMemberSpawnChange: (input) => {
+        this.teamChangeEmitter?.({
+          type: 'member-spawn',
+          teamName: input.teamName,
+          ...(input.runId ? { runId: input.runId } : {}),
+          detail: input.memberName,
+        });
+      },
+      logDebug: (message) => logger.debug(message),
+    };
+  private readonly openCodeRuntimePermissionSpawnStatusPorts: OpenCodeRuntimePermissionSpawnStatusPorts<ProvisioningRun> =
+    {
+      nowIso,
+      getTrackedRunId: (teamName) => this.getTrackedRunId(teamName),
+      getRun: (runId) => this.runs.get(runId) ?? null,
+      isCurrentTrackedRun: (run) => this.isCurrentTrackedRun(run),
+      emitMemberSpawnChange: (run, memberName) => this.emitMemberSpawnChange(run, memberName),
+      persistLaunchStateSnapshot: (run, launchPhase) =>
+        this.persistLaunchStateSnapshot(run, launchPhase),
+    };
   private readonly openCodePromptDeliveryFollowUpPolicy = new OpenCodePromptDeliveryFollowUpPolicy({
     markFailedTerminal: (input) => this.markOpenCodePromptLedgerFailedTerminal(input),
     logEvent: (event, record, extra) => this.logOpenCodePromptDeliveryEvent(event, record, extra),
@@ -3133,83 +3163,19 @@ export class TeamProvisioningService {
         return trackedRunId ? (this.runs.get(trackedRunId) ?? null) : null;
       },
       getRuntimeAdapterRun: (teamName) => this.runtimeAdapterRunByTeam.get(teamName) ?? null,
-      persistPendingPermissions: (params) => this.persistOpenCodeRuntimePendingPermissions(params),
-      syncSpawnStatuses: (params) => this.syncOpenCodeRuntimePermissionSpawnStatuses(params),
+      persistPendingPermissions: (params) =>
+        persistOpenCodeRuntimePendingPermissions(
+          params,
+          this.openCodeRuntimePermissionPersistencePorts
+        ),
+      syncSpawnStatuses: (params) =>
+        syncOpenCodeRuntimePermissionSpawnStatusesForTrackedRun(
+          params,
+          this.openCodeRuntimePermissionSpawnStatusPorts
+        ),
       syncToolApprovals: (params) => this.syncOpenCodeRuntimeToolApprovals(params),
       logWarning: (message) => logger.warn(message),
     });
-  }
-
-  private async persistOpenCodeRuntimePendingPermissions(
-    input: OpenCodeRuntimePendingPermissionsPersistenceInput
-  ): Promise<void> {
-    if (!input.previousLaunchState) {
-      return;
-    }
-    const observedAt = nowIso();
-    try {
-      const changed = await this.enqueueLaunchStateStoreOperation(input.teamName, async () => {
-        const incomingRunId = input.runId?.trim();
-        if (incomingRunId && this.getTrackedRunId(input.teamName) !== incomingRunId) {
-          return false;
-        }
-        const previous = await this.launchStateStore.read(input.teamName).catch(() => null);
-        if (!previous) {
-          return false;
-        }
-        const nextSnapshot = buildOpenCodeRuntimePendingPermissionsLaunchSnapshot({
-          previous,
-          runId: input.runId,
-          laneId: input.laneId,
-          sessionId: input.sessionId,
-          permissionsByMember: input.permissionsByMember,
-          observedAt,
-        });
-        if (!nextSnapshot) {
-          return false;
-        }
-        await this.writeLaunchStateSnapshotNow(input.teamName, nextSnapshot);
-        return true;
-      });
-      if (changed) {
-        this.invalidateRuntimeSnapshotCaches(input.teamName);
-        for (const memberName of input.permissionsByMember.keys()) {
-          this.teamChangeEmitter?.({
-            type: 'member-spawn',
-            teamName: input.teamName,
-            ...(input.runId ? { runId: input.runId } : {}),
-            detail: memberName,
-          });
-        }
-      }
-    } catch (error) {
-      logger.debug(
-        `[${input.teamName}] Failed to persist OpenCode pending runtime permissions: ${getErrorMessage(error)}`
-      );
-    }
-  }
-
-  private syncOpenCodeRuntimePermissionSpawnStatuses(
-    input: OpenCodeRuntimePermissionSpawnStatusSyncInput
-  ): void {
-    const trackedRunId = this.getTrackedRunId(input.teamName);
-    const run = trackedRunId ? this.runs.get(trackedRunId) : null;
-    const result = syncOpenCodeRuntimePermissionSpawnStatusesHelper({
-      run: run ?? null,
-      expectedRunId: input.runId,
-      laneId: input.laneId,
-      permissionsByMember: input.permissionsByMember,
-      updatedAt: nowIso(),
-      isCurrentTrackedRun: () => (run ? this.isCurrentTrackedRun(run) : false),
-      emitMemberSpawnChange: (memberName) => {
-        if (run) {
-          this.emitMemberSpawnChange(run, memberName);
-        }
-      },
-    });
-    if (run && result.shouldPersistLaunchSnapshot) {
-      void this.persistLaunchStateSnapshot(run, run.provisioningComplete ? 'finished' : 'active');
-    }
   }
 
   private logOpenCodePromptDeliveryEvent(

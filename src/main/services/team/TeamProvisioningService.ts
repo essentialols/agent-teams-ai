@@ -449,6 +449,7 @@ import {
   promoteOpenCodePersistedFailureReasonsFromDiagnostics,
   selectOpenCodePrepareProviderDiagnostic,
 } from './provisioning/TeamProvisioningOpenCodeDiagnosticsPolicy';
+import { resolveOpenCodeMemberIdentityFromDirectory as resolveOpenCodeMemberIdentityFromDirectoryHelper } from './provisioning/TeamProvisioningOpenCodeMemberIdentity';
 import { prepareSelectedOpenCodeModelsForProvisioning } from './provisioning/TeamProvisioningOpenCodeModelPreparation';
 import {
   appendDiagnosticOnce,
@@ -485,10 +486,7 @@ import {
   syncOpenCodeRuntimePermissionsAfterDelivery,
   syncOpenCodeRuntimePermissionSpawnStatuses as syncOpenCodeRuntimePermissionSpawnStatusesHelper,
 } from './provisioning/TeamProvisioningOpenCodeRuntimePermissions';
-import {
-  resolveOpenCodeSoloMemberIdentityFromDirectory,
-  resolveOpenCodeSoloRuntimeRecipientProviderId,
-} from './provisioning/TeamProvisioningOpenCodeSoloRuntime';
+import { resolveOpenCodeSoloRuntimeRecipientProviderId } from './provisioning/TeamProvisioningOpenCodeSoloRuntime';
 import {
   type AuthWarningSource,
   buildStallProgressMessage,
@@ -2552,109 +2550,12 @@ export class TeamProvisioningService {
     memberName: string,
     directory: OpenCodeMemberDirectory
   ): OpenCodeMemberIdentityResolution {
-    const normalizedMemberName = memberName.trim();
-    const configMember = directory.config?.members?.find(
-      (member) => member.name?.trim().toLowerCase() === normalizedMemberName.toLowerCase()
-    );
-    const metaMember = directory.metaMembers.find(
-      (member) => member.name?.trim().toLowerCase() === normalizedMemberName.toLowerCase()
-    );
-    if (!configMember && !metaMember) {
-      const soloIdentity = resolveOpenCodeSoloMemberIdentityFromDirectory(
-        normalizedMemberName,
-        directory
-      );
-      if (soloIdentity) {
-        return soloIdentity;
-      }
-      return { ok: false, reason: 'opencode_recipient_unavailable' };
-    }
-
-    const configProvider = (configMember as { provider?: unknown } | undefined)?.provider;
-    const metaProvider = (metaMember as { provider?: unknown } | undefined)?.provider;
-    const providerId =
-      normalizeTeamProviderLike(metaMember?.providerId) ??
-      normalizeTeamProviderLike(metaProvider) ??
-      normalizeTeamProviderLike(configMember?.providerId) ??
-      normalizeTeamProviderLike(configProvider) ??
-      inferTeamProviderIdFromModel(metaMember?.model ?? configMember?.model);
-    if (providerId !== 'opencode') {
-      return { ok: false, reason: 'recipient_is_not_opencode' };
-    }
-
-    const removedAt =
-      metaMember != null
-        ? metaMember.removedAt
-        : (configMember as { removedAt?: unknown } | undefined)?.removedAt;
-    if (removedAt != null) {
-      return { ok: false, reason: 'recipient_removed' };
-    }
-
-    const canonicalMemberName =
-      metaMember?.name?.trim() || configMember?.name?.trim() || normalizedMemberName;
-    const secondaryRuntimeRun = this.getSecondaryRuntimeRuns(teamName).find((run) =>
-      matchesTeamMemberIdentity(run.memberName, canonicalMemberName)
-    );
-    if (secondaryRuntimeRun) {
-      const memberRuntimeCwd =
-        secondaryRuntimeRun.cwd?.trim() || metaMember?.cwd?.trim() || configMember?.cwd?.trim();
-      return {
-        ok: true,
-        canonicalMemberName,
-        laneId: secondaryRuntimeRun.laneId,
-        laneIdentity: {
-          laneId: secondaryRuntimeRun.laneId,
-          laneKind: 'secondary',
-          laneOwnerProviderId: 'opencode',
-        },
-        ...(configMember ? { configMember } : {}),
-        ...(metaMember ? { metaMember } : {}),
-        ...(memberRuntimeCwd ? { memberRuntimeCwd } : {}),
-      };
-    }
-    const runtimeRun = this.runtimeAdapterRunByTeam.get(teamName);
-    if (runtimeRun?.providerId === 'opencode') {
-      const laneIdentity = buildPlannedMemberLaneIdentity({
-        leadProviderId: 'opencode',
-        member: {
-          name: canonicalMemberName,
-          providerId: 'opencode',
-        },
-      });
-      const memberRuntimeCwd = metaMember?.cwd?.trim() || configMember?.cwd?.trim();
-      return {
-        ok: true,
-        canonicalMemberName,
-        laneId: laneIdentity.laneId,
-        laneIdentity,
-        ...(configMember ? { configMember } : {}),
-        ...(metaMember ? { metaMember } : {}),
-        ...(memberRuntimeCwd ? { memberRuntimeCwd } : {}),
-      };
-    }
-
-    const leadMember = directory.config?.members?.find((member) => isLeadMember(member));
-    const leadProviderId =
-      normalizeOptionalTeamProviderId(directory.teamMeta?.launchIdentity?.providerId) ??
-      normalizeOptionalTeamProviderId(directory.teamMeta?.providerId) ??
-      normalizeOptionalTeamProviderId(leadMember?.providerId);
-    const laneIdentity = buildPlannedMemberLaneIdentity({
-      leadProviderId,
-      member: {
-        name: canonicalMemberName,
-        providerId,
-      },
+    return resolveOpenCodeMemberIdentityFromDirectoryHelper({
+      memberName,
+      directory,
+      secondaryRuntimeRuns: this.getSecondaryRuntimeRuns(teamName),
+      runtimeAdapterProviderId: this.runtimeAdapterRunByTeam.get(teamName)?.providerId ?? null,
     });
-    const memberRuntimeCwd = metaMember?.cwd?.trim() || configMember?.cwd?.trim();
-    return {
-      ok: true,
-      canonicalMemberName,
-      laneId: laneIdentity.laneId,
-      laneIdentity,
-      ...(configMember ? { configMember } : {}),
-      ...(metaMember ? { metaMember } : {}),
-      ...(memberRuntimeCwd ? { memberRuntimeCwd } : {}),
-    };
   }
 
   setRuntimeAdapterRegistry(registry: TeamRuntimeAdapterRegistry | null): void {

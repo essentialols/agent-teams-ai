@@ -27,9 +27,14 @@ import { randomUUID } from 'crypto';
 import * as os from 'os';
 import * as path from 'path';
 
+import { type AnthropicTeamApiKeyHelperMaterial } from '../../runtime/anthropicTeamApiKeyHelper';
 import { parseJsonSettingsObject } from '../../runtime/cliSettingsArgs';
 import { resolveTeamProviderId } from '../../runtime/providerRuntimeEnv';
-import { type TeamRuntimeSettingsJson } from '../../runtime/teamRuntimeSettingsBundle';
+import {
+  materializeTeamRuntimeSettingsBundle,
+  splitSettingsJsonArgs,
+  type TeamRuntimeSettingsJson,
+} from '../../runtime/teamRuntimeSettingsBundle';
 
 import { getExplicitLaunchModelSelection } from './TeamProvisioningMemberSpecs';
 
@@ -65,6 +70,39 @@ export interface RuntimeProviderLaunchFacts {
   providerStatus?:
     | (Partial<CliProviderStatus> & { providerId?: CliProviderStatus['providerId'] })
     | null;
+}
+
+export interface TeamRuntimeLaunchArgsPlan {
+  settingsArgs: string[];
+  fastModeArgs: string[];
+  runtimeTurnSettledHookArgs: string[];
+  providerArgs: string[];
+  extraArgs: string[];
+  inheritedProviderArgs: string[];
+  appManagedSettingsPath: string | null;
+}
+
+export interface TeamRuntimeLaunchArgsPlanEnvResolutionLike {
+  anthropicApiKeyHelper?: AnthropicTeamApiKeyHelperMaterial | null;
+  providerArgs?: string[];
+}
+
+export interface BuildTeamRuntimeLaunchArgsPlanInput {
+  teamName: string;
+  providerId: TeamProviderId;
+  launchIdentity?: ProviderModelLaunchIdentity | null;
+  envResolution: TeamRuntimeLaunchArgsPlanEnvResolutionLike;
+  extraArgs?: string[];
+  inheritedProviderArgs?: string[];
+  includeAnthropicHelper: boolean;
+  contextLabel: string;
+}
+
+export interface BuildTeamRuntimeLaunchArgsPlanPorts {
+  buildRuntimeTurnSettledHookSettingsArgs(providerId: TeamProviderId): Promise<string[]>;
+  buildRuntimeTurnSettledHookSettingsObject(
+    providerId: TeamProviderId
+  ): Promise<TeamRuntimeSettingsJson | null>;
 }
 
 export interface ProviderSelectedModelCheck {
@@ -453,6 +491,87 @@ export function hasPathBasedSettingsArgs(args: string[]): boolean {
     index += 1;
   }
   return false;
+}
+
+export async function buildTeamRuntimeLaunchArgsPlan(
+  input: BuildTeamRuntimeLaunchArgsPlanInput,
+  ports: BuildTeamRuntimeLaunchArgsPlanPorts
+): Promise<TeamRuntimeLaunchArgsPlan> {
+  const resolvedProviderId = resolveTeamProviderId(input.providerId);
+  const helper =
+    input.includeAnthropicHelper && resolvedProviderId === 'anthropic'
+      ? (input.envResolution.anthropicApiKeyHelper ?? null)
+      : null;
+  const rawProviderArgs = input.envResolution.providerArgs ?? [];
+  const rawExtraArgs = input.extraArgs ?? [];
+  const rawInheritedProviderArgs = input.inheritedProviderArgs ?? [];
+
+  if (!helper && resolvedProviderId !== 'anthropic') {
+    return {
+      settingsArgs: [],
+      fastModeArgs: buildProviderFastModeArgs(resolvedProviderId, input.launchIdentity),
+      runtimeTurnSettledHookArgs:
+        await ports.buildRuntimeTurnSettledHookSettingsArgs(resolvedProviderId),
+      providerArgs: rawProviderArgs,
+      extraArgs: rawExtraArgs,
+      inheritedProviderArgs: rawInheritedProviderArgs,
+      appManagedSettingsPath: null,
+    };
+  }
+
+  const providerArgsWithoutHelper = filterOutSettingsPathArgs(
+    rawProviderArgs,
+    helper?.settingsPath
+  );
+  const splitProviderArgs = splitSettingsJsonArgs(providerArgsWithoutHelper);
+  const splitExtraArgs = splitSettingsJsonArgs(rawExtraArgs);
+  const splitInheritedArgs = splitSettingsJsonArgs(rawInheritedProviderArgs);
+  const shouldCoalesceInheritedSettings = splitInheritedArgs.settingsFragments.length > 0;
+  if (
+    helper &&
+    (hasPathBasedSettingsArgs(splitProviderArgs.passthroughArgs) ||
+      hasPathBasedSettingsArgs(splitExtraArgs.passthroughArgs) ||
+      hasPathBasedSettingsArgs(splitInheritedArgs.passthroughArgs))
+  ) {
+    throw new Error(
+      `${input.contextLabel}: app-managed Anthropic API-key helper cannot be combined with path-based --settings. Use inline JSON settings or remove the custom --settings path.`
+    );
+  }
+  if (
+    shouldCoalesceInheritedSettings &&
+    !helper &&
+    (hasPathBasedSettingsArgs(splitProviderArgs.passthroughArgs) ||
+      hasPathBasedSettingsArgs(splitExtraArgs.passthroughArgs) ||
+      hasPathBasedSettingsArgs(splitInheritedArgs.passthroughArgs))
+  ) {
+    throw new Error(
+      `${input.contextLabel}: mixed-provider launch cannot combine app-managed inherited settings with path-based --settings. Use inline JSON settings or remove the custom --settings path.`
+    );
+  }
+
+  const settingsBundle = await materializeTeamRuntimeSettingsBundle({
+    teamName: input.teamName,
+    providerId: resolvedProviderId,
+    baseSettings: [
+      buildAnthropicSettingsObject(resolvedProviderId, input.launchIdentity),
+      await ports.buildRuntimeTurnSettledHookSettingsObject(resolvedProviderId),
+      ...splitProviderArgs.settingsFragments,
+      ...splitExtraArgs.settingsFragments,
+      ...splitInheritedArgs.settingsFragments,
+    ],
+    anthropicHelper: helper,
+    settingsDirectory: helper ? null : buildRuntimeSettingsTempDirectory(input.teamName),
+  });
+
+  return {
+    settingsArgs: settingsBundle?.args ?? [],
+    fastModeArgs: [],
+    runtimeTurnSettledHookArgs: [],
+    providerArgs: splitProviderArgs.passthroughArgs,
+    extraArgs: splitExtraArgs.passthroughArgs,
+    inheritedProviderArgs: splitInheritedArgs.passthroughArgs,
+    appManagedSettingsPath: settingsBundle?.settingsPath ?? null,
+  };
 }
 
 export function isProbeTimeoutMessage(message: string): boolean {

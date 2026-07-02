@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   applyConfigPostLaunchMaterialization,
@@ -8,6 +8,7 @@ import {
   collectPostLaunchSessionHistory,
   extractTeammateSpecsFromConfig,
   hasIncompleteOpenCodeLaunchCompatibilityMember,
+  updateTeamConfigPostLaunch,
 } from '../TeamProvisioningConfigMaterialization';
 import { getMixedLaunchFallbackRecoveryError } from '../TeamProvisioningLaunchCompatibility';
 
@@ -230,6 +231,85 @@ describe('team provisioning config materialization', () => {
       projectPath: '/repo/app',
       projectPathHistory: ['/repo/other', '/repo/app'],
     });
+  });
+
+  it('updates post-launch config through ports and scans when session id is missing', async () => {
+    let writtenRaw = '';
+    const invalidateTeam = vi.fn();
+    const scanForNewestSession = vi.fn().mockResolvedValue('scanned-session');
+    const info = vi.fn();
+
+    await updateTeamConfigPostLaunch(
+      {
+        teamName: 'runtime-team',
+        projectPath: '/repo/app',
+        detectedSessionId: null,
+        color: ' green ',
+      },
+      {
+        readConfig: vi.fn().mockResolvedValue(
+          JSON.stringify({
+            leadSessionId: 'previous-session',
+            sessionHistory: ['older-session'],
+            projectPathHistory: ['/repo/old'],
+          })
+        ),
+        writeConfig: vi.fn(async (raw: string) => {
+          writtenRaw = raw;
+        }),
+        invalidateTeam,
+        scanForNewestSession,
+        getLanguage: () => 'uk',
+        info,
+        warn: vi.fn(),
+      }
+    );
+
+    expect(scanForNewestSession).toHaveBeenCalledWith('/repo/app', [
+      'older-session',
+      'previous-session',
+    ]);
+    expect(JSON.parse(writtenRaw)).toMatchObject({
+      leadSessionId: 'scanned-session',
+      sessionHistory: ['older-session', 'previous-session', 'scanned-session'],
+      language: 'uk',
+      color: 'green',
+      projectPath: '/repo/app',
+      projectPathHistory: ['/repo/old', '/repo/app'],
+    });
+    expect(invalidateTeam).toHaveBeenCalledWith('runtime-team');
+    expect(info).toHaveBeenCalledWith(
+      '[runtime-team] Detected new session via project dir scan: scanned-session'
+    );
+  });
+
+  it('logs and skips post-launch config writes when config is unreadable', async () => {
+    const writeConfig = vi.fn();
+    const invalidateTeam = vi.fn();
+    const warn = vi.fn();
+
+    await updateTeamConfigPostLaunch(
+      {
+        teamName: 'runtime-team',
+        projectPath: '/repo/app',
+        detectedSessionId: 'session-1',
+      },
+      {
+        readConfig: vi.fn().mockResolvedValue(null),
+        writeConfig,
+        invalidateTeam,
+        scanForNewestSession: vi.fn(),
+        getLanguage: () => 'system',
+        info: vi.fn(),
+        warn,
+      }
+    );
+
+    expect(writeConfig).not.toHaveBeenCalled();
+    expect(invalidateTeam).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      '[runtime-team] Failed to update config post-launch: config.json unreadable'
+    );
   });
 
   it('keeps incomplete OpenCode config fallback members blocking', () => {

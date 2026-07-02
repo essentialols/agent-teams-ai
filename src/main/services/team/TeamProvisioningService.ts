@@ -260,14 +260,13 @@ import {
   selectMembersMetaTeammates,
 } from './provisioning/TeamProvisioningConfigLaunchNormalization';
 import {
-  applyConfigPostLaunchMaterialization,
   buildConfigLaunchCompatibilityReport,
   buildLaunchMembersFromMeta,
-  collectPostLaunchSessionHistory,
   extractTeammateSpecsFromConfig,
   hasIncompleteOpenCodeLaunchCompatibilityMember,
   isUnsafeMixedLaunchFallback,
   type TeamProvisioningEffectiveLaunchState,
+  updateTeamConfigPostLaunch,
 } from './provisioning/TeamProvisioningConfigMaterialization';
 import {
   buildCrossTeamConversationKey as buildCrossTeamConversationKeyHelper,
@@ -21728,56 +21727,32 @@ export class TeamProvisioningService {
     launchState?: TeamProvisioningEffectiveLaunchState
   ): Promise<void> {
     const configPath = path.join(getTeamsBasePath(), teamName, 'config.json');
-    try {
-      const raw = await tryReadRegularFileUtf8(configPath, {
-        timeoutMs: TEAM_JSON_READ_TIMEOUT_MS,
-        maxBytes: TEAM_CONFIG_MAX_BYTES,
-      });
-      if (!raw) {
-        throw new Error('config.json unreadable');
+    await updateTeamConfigPostLaunch(
+      { teamName, projectPath, detectedSessionId, color, launchState },
+      {
+        readConfig: () =>
+          tryReadRegularFileUtf8(configPath, {
+            timeoutMs: TEAM_JSON_READ_TIMEOUT_MS,
+            maxBytes: TEAM_CONFIG_MAX_BYTES,
+          }),
+        writeConfig: (raw) => atomicWriteAsync(configPath, raw),
+        invalidateTeam: (name) => TeamConfigReader.invalidateTeam(name),
+        scanForNewestSession: (scanProjectPath, knownSessions) =>
+          scanForNewestProjectSession({
+            projectPath: scanProjectPath,
+            knownSessions,
+            projectsBasePath: getProjectsBasePath(),
+            ports: {
+              readDir: (dirPath) => fs.promises.readdir(dirPath),
+              stat: (filePath) => fs.promises.stat(filePath),
+            },
+          }),
+        getLanguage: () =>
+          ConfigManager.getInstance().getConfig().general.agentLanguage || 'system',
+        info: (message) => logger.info(message),
+        warn: (message) => logger.warn(message),
       }
-      const config = JSON.parse(raw) as Record<string, unknown>;
-
-      const sessionHistory = collectPostLaunchSessionHistory(config);
-
-      // Update leadSessionId to the new session detected from stream-json
-      let newSessionId = detectedSessionId;
-
-      // Fallback: if stream-json didn't provide session_id, scan project dir for newest JSONL
-      if (!newSessionId && projectPath.trim()) {
-        const scannedId = await this.scanForNewestSession(projectPath, sessionHistory);
-        if (scannedId) {
-          newSessionId = scannedId;
-          logger.info(`[${teamName}] Detected new session via project dir scan: ${scannedId}`);
-        }
-      }
-
-      if (newSessionId) {
-        logger.info(`[${teamName}] Updated leadSessionId: ${newSessionId}`);
-      }
-
-      // Save current language setting
-      const langCode = ConfigManager.getInstance().getConfig().general.agentLanguage || 'system';
-      applyConfigPostLaunchMaterialization({
-        teamName,
-        config,
-        projectPath,
-        newSessionId,
-        sessionHistory,
-        language: langCode,
-        color,
-        launchState,
-      });
-
-      await atomicWriteAsync(configPath, JSON.stringify(config, null, 2));
-      TeamConfigReader.invalidateTeam(teamName);
-    } catch (error) {
-      logger.warn(
-        `[${teamName}] Failed to update config post-launch: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
-    }
+    );
   }
 
   private async cleanupCliAutoSuffixedMembers(teamName: string): Promise<void> {
@@ -21830,25 +21805,6 @@ export class TeamProvisioningService {
         // best-effort
       }
     }
-  }
-
-  /**
-   * Fallback: scan the project directory for the newest JSONL file
-   * that isn't already in sessionHistory. Returns the session ID or null.
-   */
-  private async scanForNewestSession(
-    projectPath: string,
-    knownSessions: string[]
-  ): Promise<string | null> {
-    return scanForNewestProjectSession({
-      projectPath,
-      knownSessions,
-      projectsBasePath: getProjectsBasePath(),
-      ports: {
-        readDir: (dirPath) => fs.promises.readdir(dirPath),
-        stat: (filePath) => fs.promises.stat(filePath),
-      },
-    });
   }
 
   private async assertConfigLeadOnlyForLaunch(teamName: string): Promise<void> {

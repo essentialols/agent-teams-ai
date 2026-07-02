@@ -39,6 +39,24 @@ interface PostLaunchConfigMaterializationParams extends TeamProvisioningConfigMa
   maxProjectPathHistory?: number;
 }
 
+export interface UpdateTeamConfigPostLaunchInput {
+  teamName: string;
+  projectPath: string;
+  detectedSessionId: string | null;
+  color?: string;
+  launchState?: TeamProvisioningEffectiveLaunchState;
+}
+
+export interface UpdateTeamConfigPostLaunchPorts {
+  readConfig(): Promise<string | null>;
+  writeConfig(raw: string): Promise<void>;
+  invalidateTeam(teamName: string): void;
+  scanForNewestSession(projectPath: string, knownSessions: string[]): Promise<string | null>;
+  getLanguage(): string;
+  info(message: string): void;
+  warn(message: string): void;
+}
+
 interface ConfigMemberInput {
   name?: string;
   role?: string;
@@ -251,6 +269,54 @@ export function applyConfigPostLaunchMaterialization({
   }
 
   applyEffectiveLaunchStateToConfig(teamName, config, launchState, { now });
+}
+
+export async function updateTeamConfigPostLaunch(
+  input: UpdateTeamConfigPostLaunchInput,
+  ports: UpdateTeamConfigPostLaunchPorts
+): Promise<void> {
+  const { teamName, projectPath, detectedSessionId, color, launchState } = input;
+  try {
+    const raw = await ports.readConfig();
+    if (!raw) {
+      throw new Error('config.json unreadable');
+    }
+    const config = JSON.parse(raw) as Record<string, unknown>;
+    const sessionHistory = collectPostLaunchSessionHistory(config);
+
+    let newSessionId = detectedSessionId;
+    if (!newSessionId && projectPath.trim()) {
+      const scannedId = await ports.scanForNewestSession(projectPath, [...sessionHistory]);
+      if (scannedId) {
+        newSessionId = scannedId;
+        ports.info(`[${teamName}] Detected new session via project dir scan: ${scannedId}`);
+      }
+    }
+
+    if (newSessionId) {
+      ports.info(`[${teamName}] Updated leadSessionId: ${newSessionId}`);
+    }
+
+    applyConfigPostLaunchMaterialization({
+      teamName,
+      config,
+      projectPath,
+      newSessionId,
+      sessionHistory,
+      language: ports.getLanguage(),
+      color,
+      launchState,
+    });
+
+    await ports.writeConfig(JSON.stringify(config, null, 2));
+    ports.invalidateTeam(teamName);
+  } catch (error) {
+    ports.warn(
+      `[${teamName}] Failed to update config post-launch: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
 }
 
 export function buildLaunchMembersFromMeta(

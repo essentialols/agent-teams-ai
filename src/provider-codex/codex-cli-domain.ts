@@ -124,6 +124,9 @@ export function classifyCodexRuntimeFailure(message: string): string {
   if (normalized.includes("codex_app_server_goal_blocked")) {
     return "backend_unavailable";
   }
+  if (normalized.includes("codex_app_server_goal_max_turns_exceeded")) {
+    return "goal_slice_exhausted";
+  }
   if (
     isCodexInvalidatedAuthFailure(normalized) ||
     isCodexInvalidAuthJsonFailure(normalized)

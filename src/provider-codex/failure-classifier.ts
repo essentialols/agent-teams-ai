@@ -64,6 +64,15 @@ export function classifyCodexFailure(error: unknown): ProviderFailure {
         causeCategory: state,
         ...(details === undefined ? {} : { details }),
       };
+    case "goal_slice_exhausted":
+      return {
+        code: "goal_slice_exhausted",
+        retryable: true,
+        reconnectRequired: false,
+        safeMessage: "Codex app-server goal slice exhausted.",
+        causeCategory: state,
+        ...(details === undefined ? {} : { details }),
+      };
     case "permission_required":
       return {
         code: "permission_required",
@@ -105,6 +114,10 @@ function codexFailureDetails(
   if (process?.stdout) {
     details.stdoutTail = safeTail(process.stdout);
   }
+  const lastOutputText = lastOutputTextFromError(error);
+  if (lastOutputText) {
+    details.lastOutputTail = safeTail(lastOutputText);
+  }
 
   const parsed = parseProcessFailureMessage(message);
   if (details.exitCode === undefined && parsed?.exitCode !== undefined) {
@@ -118,6 +131,12 @@ function codexFailureDetails(
   }
 
   return Object.keys(details).length === 0 ? undefined : details;
+}
+
+function lastOutputTextFromError(error: unknown): string | null {
+  if (typeof error !== "object" || error === null) return null;
+  const value = (error as { readonly lastOutputText?: unknown }).lastOutputText;
+  return typeof value === "string" && value.trim() ? value : null;
 }
 
 function processFailureLike(error: unknown): {

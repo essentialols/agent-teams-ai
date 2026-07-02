@@ -54,17 +54,21 @@ export type SafeExecutionPolicy = {
   readonly continuationMode?: ContinuationMode;
 };
 
-export type AttemptFailureReason =
-  | "quota_limited"
-  | "capacity_unavailable"
-  | "account_unavailable"
-  | "reconnect_required"
-  | "permission_required"
-  | "task_timeout"
-  | "provider_output_invalid"
-  | "runtime_interrupted"
-  | "user_abort"
-  | "unknown_error";
+export const attemptFailureReasons = [
+  "quota_limited",
+  "capacity_unavailable",
+  "account_unavailable",
+  "reconnect_required",
+  "permission_required",
+  "task_timeout",
+  "provider_output_invalid",
+  "runtime_interrupted",
+  "goal_slice_exhausted",
+  "user_abort",
+  "unknown_error",
+] as const;
+
+export type AttemptFailureReason = (typeof attemptFailureReasons)[number];
 
 export type AttemptStatus = "running" | "completed" | "blocked" | "failed";
 
@@ -324,6 +328,7 @@ export type SafeExecutionRunInput<Job, Result> = {
   readonly summarizeResult?: (result: Result) => string | undefined;
   readonly attemptUsage?: (result: Result) => AttemptUsage | undefined;
   readonly summarizeError?: (error: unknown) => string | undefined;
+  readonly summarizeErrorOutput?: (error: unknown) => string | undefined;
   readonly controlTarget?: WorkerControlTarget;
   readonly abortSignal?: AbortSignal;
 };
@@ -1341,8 +1346,9 @@ export class SafeExecutionRunner {
                   failureDetailsFromUnknown(afterCaptureError),
                 ),
           );
-          const failureMessage =
-            input.summarizeError?.(error) ?? classification.safeMessage;
+          const errorSummary = input.summarizeError?.(error);
+          const errorOutputSummary = input.summarizeErrorOutput?.(error);
+          const failureMessage = errorSummary ?? classification.safeMessage;
           const attempt = failedAttemptRecord({
             input,
             attemptNumber,
@@ -1394,6 +1400,11 @@ export class SafeExecutionRunner {
             };
           }
 
+          const continuationOutputSummary =
+            previousOutputSummary ??
+            (classification.reason === "goal_slice_exhausted"
+              ? errorOutputSummary
+              : undefined);
           const packet = await this.buildContinuationPacket({
             taskId: input.taskId,
             attemptNumber: attemptNumber + 1,
@@ -1402,9 +1413,9 @@ export class SafeExecutionRunner {
             originalPrompt: input.originalPrompt,
             previousFailureReason: classification.reason,
             snapshot: after,
-            ...(previousOutputSummary === undefined
+            ...(continuationOutputSummary === undefined
               ? {}
-              : { previousOutputSummary }),
+              : { previousOutputSummary: continuationOutputSummary }),
             ...(input.controlTarget === undefined
               ? {}
               : { controlTarget: input.controlTarget }),
@@ -1735,6 +1746,16 @@ export function defaultSafeExecutionErrorClassifier(
       retryable: true,
     };
   }
+  const goalSliceMessage = messages.find((candidate) =>
+    /goal slice exhausted/i.test(candidate),
+  );
+  if (goalSliceMessage) {
+    return {
+      reason: "goal_slice_exhausted",
+      safeMessage: goalSliceMessage,
+      retryable: true,
+    };
+  }
   return {
     reason: "unknown_error",
     safeMessage: message,
@@ -1799,6 +1820,13 @@ function classifyWorkerFailureCode(
     case "runtime_interrupted":
       return {
         reason: "runtime_interrupted",
+        safeMessage,
+        retryable: true,
+        ...optionalFailureDetails(details),
+      };
+    case "goal_slice_exhausted":
+      return {
+        reason: "goal_slice_exhausted",
         safeMessage,
         retryable: true,
         ...optionalFailureDetails(details),
@@ -1903,6 +1931,7 @@ function shouldContinueAfterFailure(input: {
   }
   switch (input.classification.reason) {
     case "runtime_interrupted":
+    case "goal_slice_exhausted":
       return { allowed: true };
     case "quota_limited":
     case "capacity_unavailable":
@@ -2780,16 +2809,8 @@ function requireAttemptStatus(value: unknown): AttemptStatus {
 
 function isAttemptFailureReason(value: unknown): value is AttemptFailureReason {
   return (
-    value === "quota_limited" ||
-    value === "capacity_unavailable" ||
-    value === "account_unavailable" ||
-    value === "reconnect_required" ||
-    value === "permission_required" ||
-    value === "task_timeout" ||
-    value === "provider_output_invalid" ||
-    value === "runtime_interrupted" ||
-    value === "user_abort" ||
-    value === "unknown_error"
+    typeof value === "string" &&
+    attemptFailureReasons.includes(value as AttemptFailureReason)
   );
 }
 

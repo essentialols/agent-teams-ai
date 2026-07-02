@@ -1,4 +1,5 @@
 import {
+  isProviderFailureCode,
   providerTaskSystemPromptValidationError,
   type AgentCost,
   type AgentToolCall,
@@ -66,20 +67,6 @@ const finishReasons = new Set<
   "timeout",
   "provider_error",
 ]);
-const failureCodes = new Set<ProviderFailureCode>([
-  "needs_reconnect",
-  "quota_limited",
-  "permission_required",
-  "provider_session_invalid",
-  "provider_output_invalid",
-  "task_mode_unsupported",
-  "task_cancelled",
-  "task_timeout",
-  "stale_generation",
-  "backend_unavailable",
-  "unknown_runtime_failure",
-]);
-
 export function createAgentTaskRequest(
   input: Omit<AgentTaskRequest, "protocolVersion">,
 ): AgentTaskRequest {
@@ -631,14 +618,14 @@ function parseWarning(value: unknown, path: string): RuntimeWarning {
 function parseFailure(value: unknown, path: string): ProviderFailure {
   const input = objectAt(value, path);
   const code = stringAt(input.code, `${path}.code`);
-  if (!failureCodes.has(code as ProviderFailureCode)) {
+  if (!isProviderFailureCode(code)) {
     throw protocolError(
       "agent_task_result_invalid",
       `${path}.code is unsupported`,
     );
   }
   return {
-    code: code as ProviderFailureCode,
+    code,
     retryable: booleanAt(input.retryable, `${path}.retryable`),
     reconnectRequired: booleanAt(
       input.reconnectRequired,

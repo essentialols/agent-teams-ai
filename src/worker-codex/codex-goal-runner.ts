@@ -679,6 +679,7 @@ function runtimeActionFromSafeExecutionResult(input: {
   ) {
     return "switch_account";
   }
+  if (input.reason === "goal_slice_exhausted") return "launch_next_slice";
   if (input.reason === "permission_required") return "ask_user";
   if (input.changedFilesCount > 0) return "preserve_patch";
   return input.status === "failed" ? "recover" : "continue";

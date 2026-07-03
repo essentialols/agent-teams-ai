@@ -145,6 +145,7 @@ import {
 } from './provisioning/TeamProvisioningCleanup';
 import { createTeamProvisioningCleanupRunPorts } from './provisioning/TeamProvisioningCleanupRunPortsFactory';
 import { buildCombinedLogs } from './provisioning/TeamProvisioningCliExitPresentation';
+import { getCliHelpOutputWithProvisioningPorts } from './provisioning/TeamProvisioningCliHelpOutputPortsFactory';
 import { buildMembersMetaWritePayload } from './provisioning/TeamProvisioningConfigLaunchNormalization';
 import { TeamProvisioningConfigMaintenance } from './provisioning/TeamProvisioningConfigMaintenance';
 import { type TeamProvisioningEffectiveLaunchState } from './provisioning/TeamProvisioningConfigMaterialization';
@@ -456,7 +457,6 @@ import {
   getCanonicalSendMessageToolRule,
 } from './provisioning/TeamProvisioningPromptBuilders';
 import { PREFLIGHT_AUTH_RETRY_DELAY_MS } from './provisioning/TeamProvisioningProviderDiagnostics';
-import { getCliHelpOutputForProvisioning } from './provisioning/TeamProvisioningProviderPreflight';
 import {
   createTeamProvisioningProviderRuntimeFacade,
   type TeamProvisioningProviderRuntimeFacade,
@@ -1654,8 +1654,7 @@ export class TeamProvisioningService {
     PersistedTeamLaunchSnapshot | null
   >();
   private teamChangeEmitter: ((event: TeamChangeEvent) => void) | null = null;
-  private helpOutputCache: string | null = null;
-  private helpOutputCacheTime = 0;
+  private readonly helpOutputCache = { output: null as string | null, cachedAtMs: 0 };
   private toolApprovalSettingsByTeam = new Map<string, ToolApprovalSettings>();
   private pendingTimeouts = new Map<string, NodeJS.Timeout>();
   private readonly toolApprovalTimeouts: TeamProvisioningToolApprovalTimeouts<ProvisioningRun>;
@@ -8178,23 +8177,12 @@ export class TeamProvisioningService {
    * Used by the validateCliArgs IPC handler to check user-entered flags.
    */
   async getCliHelpOutput(cwd?: string): Promise<string> {
-    const cache = {
-      output: this.helpOutputCache,
-      cachedAtMs: this.helpOutputCacheTime,
-    };
-    const output = await getCliHelpOutputForProvisioning({
+    return getCliHelpOutputWithProvisioningPorts({
       cwd,
-      cache,
-      ports: {
-        getCachedOrProbeResult: (targetCwd, providerId) =>
-          this.getCachedOrProbeResult(targetCwd, providerId),
-        buildProvisioningEnv: () => this.providerRuntime.buildProvisioningEnv(),
-        spawnProbe: (claudePath, args, targetCwd, env, timeoutMs) =>
-          this.providerRuntime.spawnProbe(claudePath, args, targetCwd, env, timeoutMs),
-      },
+      cache: this.helpOutputCache,
+      getCachedOrProbeResult: (targetCwd, providerId) =>
+        this.getCachedOrProbeResult(targetCwd, providerId),
+      providerRuntime: this.providerRuntime,
     });
-    this.helpOutputCache = cache.output;
-    this.helpOutputCacheTime = cache.cachedAtMs;
-    return output;
   }
 }

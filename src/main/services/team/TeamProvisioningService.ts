@@ -251,6 +251,7 @@ import {
   relayInboxFileToLiveRecipientWithPorts,
 } from './provisioning/TeamProvisioningLiveInboxRelayRouting';
 import { createTeamProvisioningLiveLeadMessagePortsBoundary } from './provisioning/TeamProvisioningLiveLeadMessagePortsFactory';
+import { createTeamProvisioningLiveRuntimeMetadataPorts } from './provisioning/TeamProvisioningLiveRuntimeMetadataPortsFactory';
 import { extractLogsTail, sliceClaudeLogs } from './provisioning/TeamProvisioningLogSlice';
 import { relayMemberInboxMessagesWithPorts } from './provisioning/TeamProvisioningMemberInboxRelayFlow';
 import {
@@ -503,7 +504,6 @@ import {
 import { TeamProvisioningRuntimeResourceSampling } from './provisioning/TeamProvisioningRuntimeResourceSampling';
 import {
   attachLiveRuntimeMetadataToStatuses as attachLiveRuntimeMetadataToStatusesHelper,
-  buildLiveTeamAgentRuntimeMetadata as buildLiveTeamAgentRuntimeMetadataHelper,
   buildTeamAgentRuntimeSnapshot as buildTeamAgentRuntimeSnapshotHelper,
   type PersistedRuntimeMemberLike,
 } from './provisioning/TeamProvisioningRuntimeSnapshot';
@@ -1590,14 +1590,6 @@ export class TeamProvisioningService {
       runId: string | null;
     }
   >();
-  private readonly liveTeamAgentRuntimeMetadataInFlightByTeam = new Map<
-    string,
-    {
-      generationAtStart: number;
-      runIdAtStart: string | null;
-      promise: Promise<Map<string, LiveTeamAgentRuntimeMetadata>>;
-    }
-  >();
   private readonly memberSpawnStatusesSnapshotCache = new Map<
     string,
     {
@@ -1628,6 +1620,9 @@ export class TeamProvisioningService {
     memberSpawnStatusesInFlightByTeam: this.memberSpawnStatusesInFlightByTeam,
   });
   private readonly launchStateStore = new TeamLaunchStateStore();
+  private readonly liveRuntimeMetadataPorts: ReturnType<
+    typeof createTeamProvisioningLiveRuntimeMetadataPorts
+  >;
   private readonly launchExpectedMembersPorts: TeamProvisioningLaunchExpectedMembersPorts =
     createTeamProvisioningLaunchExpectedMembersPorts({
       launchStateStore: this.launchStateStore,
@@ -1829,6 +1824,31 @@ export class TeamProvisioningService {
     private readonly memberWorktreeManager: TeamMemberWorktreeManager = new TeamMemberWorktreeManager(),
     private readonly attachmentStore: TeamAttachmentStore = new TeamAttachmentStore()
   ) {
+    this.liveRuntimeMetadataPorts = createTeamProvisioningLiveRuntimeMetadataPorts({
+      runs: this.runs,
+      runtimeAdapterRunByTeam: this.runtimeAdapterRunByTeam,
+      teamMetaStore: this.teamMetaStore,
+      membersMetaStore: this.membersMetaStore,
+      launchStateStore: this.launchStateStore,
+      readConfigSnapshot: (targetTeamName) => this.readConfigSnapshot(targetTeamName),
+      readPersistedRuntimeMembers: (targetTeamName) =>
+        this.readPersistedRuntimeMembers(targetTeamName),
+      liveTeamAgentRuntimeMetadataCache: this.liveTeamAgentRuntimeMetadataCache,
+      cloneLiveTeamAgentRuntimeMetadata: (metadata) =>
+        this.cloneLiveTeamAgentRuntimeMetadata(metadata),
+      readRuntimeProcessRowsForLiveRuntimeMetadata: (input) =>
+        this.runtimeResourceSampling.readRuntimeProcessRowsForLiveRuntimeMetadata(input),
+      readWindowsHostProcessRowsForLiveRuntimeMetadata: (targetTeamName) =>
+        this.runtimeResourceSampling.readWindowsHostProcessRowsForLiveRuntimeMetadata(
+          targetTeamName
+        ),
+      getRuntimeSnapshotCacheGeneration: (targetTeamName) =>
+        this.getRuntimeSnapshotCacheGeneration(targetTeamName),
+      getTrackedRunId: (targetTeamName) => this.runTracking.getTrackedRunId(targetTeamName),
+      getAgentRuntimeSnapshotCacheTtlMs: (targetTeamName, targetRunId) =>
+        this.runTracking.getAgentRuntimeSnapshotCacheTtlMs(targetTeamName, targetRunId),
+      logDebug: (message) => logger.debug(message),
+    });
     this.toolApprovalPortsBoundary =
       createTeamProvisioningToolApprovalPortsBoundary<ProvisioningRun>({
         logger,
@@ -6393,68 +6413,7 @@ export class TeamProvisioningService {
   private async getLiveTeamAgentRuntimeMetadata(
     teamName: string
   ): Promise<Map<string, LiveTeamAgentRuntimeMetadata>> {
-    const runId = this.runTracking.getTrackedRunId(teamName);
-    const cached = this.liveTeamAgentRuntimeMetadataCache.get(teamName);
-    if (cached && cached.expiresAtMs > Date.now() && cached.runId === runId) {
-      return this.cloneLiveTeamAgentRuntimeMetadata(cached.metadata);
-    }
-
-    const generationAtStart = this.getRuntimeSnapshotCacheGeneration(teamName);
-    const existingRequest = this.liveTeamAgentRuntimeMetadataInFlightByTeam.get(teamName);
-    if (existingRequest?.runIdAtStart === runId) {
-      return this.cloneLiveTeamAgentRuntimeMetadata(await existingRequest.promise);
-    }
-
-    const request = this.buildLiveTeamAgentRuntimeMetadata(
-      teamName,
-      runId,
-      generationAtStart
-    ).finally(() => {
-      if (this.liveTeamAgentRuntimeMetadataInFlightByTeam.get(teamName)?.promise === request) {
-        this.liveTeamAgentRuntimeMetadataInFlightByTeam.delete(teamName);
-      }
-    });
-    this.liveTeamAgentRuntimeMetadataInFlightByTeam.set(teamName, {
-      generationAtStart,
-      runIdAtStart: runId,
-      promise: request,
-    });
-    return this.cloneLiveTeamAgentRuntimeMetadata(await request);
-  }
-
-  private async buildLiveTeamAgentRuntimeMetadata(
-    teamName: string,
-    runId: string | null,
-    generationAtStart: number
-  ): Promise<Map<string, LiveTeamAgentRuntimeMetadata>> {
-    return buildLiveTeamAgentRuntimeMetadataHelper({
-      teamName,
-      runId,
-      generationAtStart,
-      runs: this.runs,
-      runtimeAdapterRunByTeam: this.runtimeAdapterRunByTeam,
-      teamMetaStore: this.teamMetaStore,
-      membersMetaStore: this.membersMetaStore,
-      launchStateStore: this.launchStateStore,
-      readConfigSnapshot: (targetTeamName) => this.readConfigSnapshot(targetTeamName),
-      readPersistedRuntimeMembers: (targetTeamName) =>
-        this.readPersistedRuntimeMembers(targetTeamName),
-      liveTeamAgentRuntimeMetadataCache: this.liveTeamAgentRuntimeMetadataCache,
-      cloneLiveTeamAgentRuntimeMetadata: (metadata) =>
-        this.cloneLiveTeamAgentRuntimeMetadata(metadata),
-      readRuntimeProcessRowsForLiveRuntimeMetadata: (input) =>
-        this.runtimeResourceSampling.readRuntimeProcessRowsForLiveRuntimeMetadata(input),
-      readWindowsHostProcessRowsForLiveRuntimeMetadata: (targetTeamName) =>
-        this.runtimeResourceSampling.readWindowsHostProcessRowsForLiveRuntimeMetadata(
-          targetTeamName
-        ),
-      getRuntimeSnapshotCacheGeneration: (targetTeamName) =>
-        this.getRuntimeSnapshotCacheGeneration(targetTeamName),
-      getTrackedRunId: (targetTeamName) => this.runTracking.getTrackedRunId(targetTeamName),
-      getAgentRuntimeSnapshotCacheTtlMs: (targetTeamName, targetRunId) =>
-        this.runTracking.getAgentRuntimeSnapshotCacheTtlMs(targetTeamName, targetRunId),
-      logDebug: (message) => logger.debug(message),
-    });
+    return this.liveRuntimeMetadataPorts.getLiveTeamAgentRuntimeMetadata(teamName);
   }
 
   private readRuntimeProcessRowsForUsageSnapshot(

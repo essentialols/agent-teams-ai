@@ -84,6 +84,7 @@ function makeDeps(): TeamProvisioningCleanupRunPortsFactoryDeps<CleanupRunWithLo
     openCodeMemberInboxRelayInFlight: new Map(),
     openCodeMemberSendInFlightByLane: new Map(),
     openCodePromptDeliveryWatchdogScheduler: { cancelTeam: vi.fn() },
+    openCodeRuntimeDeliveryAdvisory: { cancelTeam: vi.fn() },
     relayedMemberInboxMessageIds: new Map(),
     liveLeadProcessMessages: new Map(),
     pruneLiveLeadMessagesForCleanedRun: vi.fn(),

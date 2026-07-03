@@ -2454,6 +2454,7 @@ export class TeamProvisioningService {
       openCodeMemberInboxRelayInFlight: this.openCodeMemberInboxRelayInFlight,
       openCodeMemberSendInFlightByLane: this.openCodeMemberSendInFlightByLane,
       openCodePromptDeliveryWatchdogScheduler: this.openCodePromptDeliveryWatchdogScheduler,
+      openCodeRuntimeDeliveryAdvisory: this.openCodeRuntimeDeliveryAdvisory,
       relayedMemberInboxMessageIds: this.relayedMemberInboxMessageIds,
       liveLeadProcessMessages: this.liveLeadProcessMessages,
       pruneLiveLeadMessagesForCleanedRun: (run) => this.pruneLiveLeadMessagesForCleanedRun(run),

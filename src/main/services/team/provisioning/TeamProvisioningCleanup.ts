@@ -126,6 +126,7 @@ export interface TeamProvisioningCleanupPorts<TRun extends TeamProvisioningClean
   openCodeMemberInboxRelayInFlight: KeyedDeleteStringMap;
   openCodeMemberSendInFlightByLane: KeyedDeleteStringMap;
   openCodePromptDeliveryWatchdogScheduler: { cancelTeam(teamName: string): void };
+  openCodeRuntimeDeliveryAdvisory: { cancelTeam(teamName: string): void };
   relayedMemberInboxMessageIds: KeyedDeleteStringMap;
   liveLeadProcessMessages: DeleteStringMap;
   pruneLiveLeadMessagesForCleanedRun(run: TRun): void;
@@ -306,6 +307,7 @@ export function cleanupProvisioningRun<TRun extends TeamProvisioningCleanupRun>(
       }
     }
     ports.openCodePromptDeliveryWatchdogScheduler.cancelTeam(run.teamName);
+    ports.openCodeRuntimeDeliveryAdvisory.cancelTeam(run.teamName);
     for (const key of Array.from(ports.relayedMemberInboxMessageIds.keys())) {
       if (key.startsWith(`${run.teamName}:`)) {
         ports.relayedMemberInboxMessageIds.delete(key);

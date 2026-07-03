@@ -53,6 +53,57 @@ describe('TeamProvisioningOpenCodeRuntimeDeliveryAdvisory', () => {
     expect(ports.addTeamNotification).not.toHaveBeenCalled();
   });
 
+  it('cancels deferred advisory reviews for a cleaned team only', async () => {
+    const callbackByTimer = new Map<string, () => void>();
+    const clearedTimers = new Set<string>();
+    const clearTimeoutPort = vi.fn((timer: ReturnType<typeof setTimeout>) => {
+      clearedTimers.add(String(timer));
+    });
+    const setTimeoutPort = vi.fn((callback: () => void) => {
+      const timer = `timer-${callbackByTimer.size + 1}`;
+      callbackByTimer.set(timer, callback);
+      return timer as unknown as ReturnType<typeof setTimeout>;
+    });
+    const teamRecord = promptDeliveryRecord({
+      teamName: 'team-a',
+      laneId: 'lane-a',
+      id: 'delivery-a',
+      memberName: 'builder',
+    });
+    const otherTeamRecord = promptDeliveryRecord({
+      teamName: 'team-b',
+      laneId: 'lane-b',
+      id: 'delivery-b',
+      memberName: 'reviewer',
+    });
+    const ports = createPorts({
+      setTimeout: setTimeoutPort,
+      clearTimeout: clearTimeoutPort,
+    });
+    const helper = new TeamProvisioningOpenCodeRuntimeDeliveryAdvisory(ports);
+
+    helper.scheduleAdvisoryReview(teamRecord, {
+      action: 'defer',
+      nextReviewAt: '2026-01-01T00:02:00.000Z',
+    });
+    helper.scheduleAdvisoryReview(otherTeamRecord, {
+      action: 'defer',
+      nextReviewAt: '2026-01-01T00:02:00.000Z',
+    });
+
+    helper.cancelTeam('team-a');
+    for (const [timer, callback] of callbackByTimer) {
+      if (!clearedTimers.has(timer)) {
+        callback();
+      }
+    }
+
+    expect(clearTimeoutPort).toHaveBeenCalledWith('timer-1');
+    expect(clearTimeoutPort).not.toHaveBeenCalledWith('timer-2');
+    expect(ports.createOpenCodePromptDeliveryLedger).toHaveBeenCalledTimes(1);
+    expect(ports.createOpenCodePromptDeliveryLedger).toHaveBeenCalledWith('team-b', 'lane-b');
+  });
+
   it('schedules proof-missing recovery after grace without firing an error notification', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-01-01T00:02:01.000Z'));

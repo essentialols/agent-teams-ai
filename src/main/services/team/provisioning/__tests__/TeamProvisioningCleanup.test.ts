@@ -140,6 +140,7 @@ function makeCleanupPorts(
     openCodeMemberInboxRelayInFlight: new Map(),
     openCodeMemberSendInFlightByLane: new Map(),
     openCodePromptDeliveryWatchdogScheduler: { cancelTeam: vi.fn() },
+    openCodeRuntimeDeliveryAdvisory: { cancelTeam: vi.fn() },
     relayedMemberInboxMessageIds: new Map(),
     liveLeadProcessMessages: new Map(),
     pruneLiveLeadMessagesForCleanedRun: vi.fn(),
@@ -307,6 +308,7 @@ describe('team provisioning cleanup policy', () => {
     expect(ports.openCodePromptDeliveryWatchdogScheduler.cancelTeam).toHaveBeenCalledWith(
       cleanup.teamName
     );
+    expect(ports.openCodeRuntimeDeliveryAdvisory.cancelTeam).toHaveBeenCalledWith(cleanup.teamName);
     expect(ports.pruneLiveLeadMessagesForCleanedRun).not.toHaveBeenCalled();
     expect(ports.markIncompleteLaunchStateFinalized).toHaveBeenCalledWith(
       cleanup,

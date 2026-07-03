@@ -380,6 +380,17 @@ export class TeamProvisioningOpenCodeRuntimeDeliveryAdvisory {
     this.advisoryReviewTimers.set(timerKey, timer);
   }
 
+  cancelTeam(teamName: string): void {
+    const prefix = `${teamName}:`;
+    for (const [timerKey, timer] of this.advisoryReviewTimers) {
+      if (!timerKey.startsWith(prefix)) {
+        continue;
+      }
+      this.clearTimer(timer);
+      this.advisoryReviewTimers.delete(timerKey);
+    }
+  }
+
   async notifyLeadAboutError(input: {
     record: OpenCodePromptDeliveryLedgerRecord;
     reason: string;

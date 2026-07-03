@@ -28,6 +28,15 @@ export interface CrossTeamLeadInboxMatch extends CrossTeamDeliveredLeadBlock {
   wasRead: boolean;
 }
 
+export interface CrossTeamLeadMemberLike {
+  name?: string;
+  role?: string;
+}
+
+export interface CrossTeamLeadInboxReaderPort {
+  getMessagesFor(teamName: string, memberName: string): Promise<readonly InboxMessage[]>;
+}
+
 export interface CrossTeamLeadSuppressionState {
   pendingHistoricalReplies: Set<string>;
   pendingTransientReplies: Set<string>;
@@ -428,6 +437,16 @@ export function buildLeadActiveCrossTeamReplyHints(
   });
 }
 
+export function resolveCrossTeamLeadName(
+  members: readonly CrossTeamLeadMemberLike[] | null | undefined
+): string {
+  const normalizedMembers = Array.isArray(members) ? members : [];
+  return (
+    normalizedMembers.find((member) => member.role?.toLowerCase().includes('lead'))?.name ||
+    'team-lead'
+  );
+}
+
 export function matchCrossTeamLeadInboxMessages(
   leadInboxMessages: readonly InboxMessage[],
   deliveredBlocks: readonly CrossTeamDeliveredLeadBlock[]
@@ -462,4 +481,22 @@ export function matchCrossTeamLeadInboxMessages(
   }
 
   return matches;
+}
+
+export async function readAndMatchCrossTeamLeadInboxMessages(input: {
+  inboxReader: CrossTeamLeadInboxReaderPort;
+  teamName: string;
+  leadName: string;
+  deliveredBlocks: readonly CrossTeamDeliveredLeadBlock[];
+}): Promise<CrossTeamLeadInboxMatch[]> {
+  if (input.deliveredBlocks.length === 0) return [];
+
+  let leadInboxMessages: readonly InboxMessage[] = [];
+  try {
+    leadInboxMessages = await input.inboxReader.getMessagesFor(input.teamName, input.leadName);
+  } catch {
+    return [];
+  }
+
+  return matchCrossTeamLeadInboxMessages(leadInboxMessages, input.deliveredBlocks);
 }

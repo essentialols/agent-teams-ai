@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   buildCrossTeamConversationKey,
@@ -17,8 +17,10 @@ import {
   matchCrossTeamLeadInboxMessages,
   parseCrossTeamRecipient,
   parseCrossTeamTargetTeam,
+  readAndMatchCrossTeamLeadInboxMessages,
   registerPendingCrossTeamReplyExpectation,
   rememberRecentCrossTeamLeadDeliveryMessageIds,
+  resolveCrossTeamLeadName,
   resolveSingleActiveCrossTeamReplyHint,
   wasRecentlyDeliveredCrossTeamLeadMessage,
   wasRecentlyDeliveredToLead,
@@ -353,5 +355,91 @@ describe('cross-team relay helpers', () => {
       { toTeam: 'peer-team', conversationId: 'conv-1' },
       { toTeam: 'other-team', conversationId: 'conv-2' },
     ]);
+  });
+
+  it('resolves the run lead name from lead-like member roles with team-lead fallback', () => {
+    expect(
+      resolveCrossTeamLeadName([
+        { name: 'worker-1', role: 'worker' },
+        { name: 'custom-lead', role: 'Team Lead' },
+      ])
+    ).toBe('custom-lead');
+    expect(resolveCrossTeamLeadName([{ name: 'worker-1', role: 'worker' }])).toBe('team-lead');
+    expect(resolveCrossTeamLeadName([{ name: '', role: 'lead' }])).toBe('team-lead');
+    expect(resolveCrossTeamLeadName(null)).toBe('team-lead');
+  });
+
+  it('skips lead inbox reads when there are no delivered blocks', async () => {
+    const inboxReader = {
+      getMessagesFor: vi.fn(async () => [inboxMessage()]),
+    };
+
+    await expect(
+      readAndMatchCrossTeamLeadInboxMessages({
+        inboxReader,
+        teamName: 'local-team',
+        leadName: 'team-lead',
+        deliveredBlocks: [],
+      })
+    ).resolves.toEqual([]);
+    expect(inboxReader.getMessagesFor).not.toHaveBeenCalled();
+  });
+
+  it('returns no lead inbox matches when inbox reads fail', async () => {
+    const inboxReader = {
+      getMessagesFor: vi.fn(async () => {
+        throw new Error('read failed');
+      }),
+    };
+
+    await expect(
+      readAndMatchCrossTeamLeadInboxMessages({
+        inboxReader,
+        teamName: 'local-team',
+        leadName: 'team-lead',
+        deliveredBlocks: [
+          {
+            teammateId: 'peer-team.lead',
+            content: 'hello',
+            toTeam: 'peer-team',
+            conversationId: 'conv-1',
+          },
+        ],
+      })
+    ).resolves.toEqual([]);
+  });
+
+  it('reads the lead inbox and matches delivered blocks through the shared matcher', async () => {
+    const inboxReader = {
+      getMessagesFor: vi.fn(async () => [
+        inboxMessage({ messageId: 'exact', text: 'hello', read: true }),
+      ]),
+    };
+
+    await expect(
+      readAndMatchCrossTeamLeadInboxMessages({
+        inboxReader,
+        teamName: 'local-team',
+        leadName: 'custom-lead',
+        deliveredBlocks: [
+          {
+            teammateId: 'peer-team.lead',
+            content: 'hello',
+            toTeam: 'peer-team',
+            conversationId: 'conv-1',
+          },
+        ],
+      })
+    ).resolves.toEqual([
+      {
+        teammateId: 'peer-team.lead',
+        content: 'hello',
+        toTeam: 'peer-team',
+        conversationId: 'conv-1',
+        messageId: 'exact',
+        wasRead: true,
+      },
+    ]);
+    expect(inboxReader.getMessagesFor).toHaveBeenCalledWith('local-team', 'custom-lead');
   });
 });

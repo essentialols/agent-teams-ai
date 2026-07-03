@@ -179,8 +179,9 @@ import {
   type CrossTeamDeliveredLeadBlock,
   isCrossTeamPseudoRecipientName,
   isCrossTeamToolRecipientName,
-  matchCrossTeamLeadInboxMessages as matchCrossTeamLeadInboxMessagesHelper,
+  readAndMatchCrossTeamLeadInboxMessages,
   registerPendingCrossTeamReplyExpectation as registerPendingCrossTeamReplyExpectationInState,
+  resolveCrossTeamLeadName,
 } from './provisioning/TeamProvisioningCrossTeamRelayHelpers';
 import { buildProvisioningTraceDetail } from './provisioning/TeamProvisioningDiagnosticsHelpers';
 import {
@@ -3594,8 +3595,7 @@ export class TeamProvisioningService {
   }
 
   private getRunLeadName(run: ProvisioningRun): string {
-    const members = Array.isArray(run.request?.members) ? run.request.members : [];
-    return members.find((m) => m.role?.toLowerCase().includes('lead'))?.name || 'team-lead';
+    return resolveCrossTeamLeadName(run.request?.members);
   }
 
   private async matchCrossTeamLeadInboxMessages(
@@ -3612,16 +3612,12 @@ export class TeamProvisioningService {
       wasRead: boolean;
     }[]
   > {
-    if (deliveredBlocks.length === 0) return [];
-
-    let leadInboxMessages: Awaited<ReturnType<TeamInboxReader['getMessagesFor']>> = [];
-    try {
-      leadInboxMessages = await this.inboxReader.getMessagesFor(teamName, leadName);
-    } catch {
-      return [];
-    }
-
-    return matchCrossTeamLeadInboxMessagesHelper(leadInboxMessages, deliveredBlocks);
+    return readAndMatchCrossTeamLeadInboxMessages({
+      inboxReader: this.inboxReader,
+      teamName,
+      leadName,
+      deliveredBlocks,
+    });
   }
 
   private handleNativeTeammateUserMessage(

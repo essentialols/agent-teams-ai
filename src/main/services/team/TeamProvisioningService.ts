@@ -277,7 +277,7 @@ import {
   createInitialMemberSpawnStatusEntry,
   MEMBER_LAUNCH_GRACE_MS,
 } from './provisioning/TeamProvisioningMemberSpawnStatusPolicy';
-import { createTeamProvisioningMemberSpawnStatusesSnapshotPorts } from './provisioning/TeamProvisioningMemberSpawnStatusSnapshotPortsFactory';
+import { createTeamProvisioningMemberSpawnStatusesSnapshotPortsBoundary } from './provisioning/TeamProvisioningMemberSpawnStatusSnapshotPortsFactory';
 import {
   buildEffectiveTeamMemberSpec,
   normalizeTeamMemberProviderId,
@@ -2647,57 +2647,43 @@ export class TeamProvisioningService {
   }
 
   private createMemberSpawnStatusesSnapshotPorts() {
-    return createTeamProvisioningMemberSpawnStatusesSnapshotPorts<ProvisioningRun>({
-      getRun: (runId) => this.runs.get(runId),
+    return createTeamProvisioningMemberSpawnStatusesSnapshotPortsBoundary<ProvisioningRun>({
+      runs: this.runs,
       cache: {
         snapshotCache: this.memberSpawnStatusesSnapshotCache,
         inFlightByTeam: this.memberSpawnStatusesInFlightByTeam,
-        getCacheGeneration: (teamName) => this.getMemberSpawnStatusesCacheGeneration(teamName),
-        getTrackedRunId: (teamName) => this.runTracking.getTrackedRunId(teamName),
-        nowMs: () => Date.now(),
+      },
+      getCacheGeneration: (teamName) => this.getMemberSpawnStatusesCacheGeneration(teamName),
+      runTracking: this.runTracking,
+      ttl: {
         liveCacheTtlMs: TeamProvisioningService.MEMBER_SPAWN_STATUS_SNAPSHOT_CACHE_TTL_MS,
         persistedCacheTtlMs:
           TeamProvisioningService.PERSISTED_MEMBER_SPAWN_STATUS_SNAPSHOT_CACHE_TTL_MS,
       },
-      persisted: {
-        readTaskActivityRepairLaunchSnapshot: (teamName) =>
-          this.readTaskActivityRepairLaunchSnapshot(teamName),
-        repairStaleTaskActivityIntervalsOnce: (teamName, launchSnapshot) =>
-          this.repairStaleTaskActivityIntervalsOnce(teamName, launchSnapshot),
-        reconcilePersistedLaunchState: (teamName) => this.reconcilePersistedLaunchState(teamName),
-        attachLiveRuntimeMetadataToStatuses: (teamName, statuses, options) =>
-          this.attachLiveRuntimeMetadataToStatuses(teamName, statuses, options),
-        getOpenCodeSecondaryBootstrapPendingMemberNames: (snapshot) =>
-          this.getOpenCodeSecondaryBootstrapPendingMemberNames(snapshot),
-        resumeActiveTaskActivityForMembers: (teamName, memberNames, observedAt) =>
-          this.taskActivityIntervalService.resumeActiveIntervalsForMembers(
-            teamName,
-            memberNames,
-            observedAt
-          ),
-      },
-      live: {
-        refreshMemberSpawnStatusesFromLeadInbox: (run) =>
-          this.refreshMemberSpawnStatusesFromLeadInbox(run),
-        maybeAuditMemberSpawnStatuses: (run) => this.maybeAuditMemberSpawnStatuses(run),
-        persistLaunchStateSnapshot: (run, phase) => this.persistLaunchStateSnapshot(run, phase),
-        readLaunchState: (teamName) => this.launchStateStore.read(teamName),
-        syncRunMemberSpawnStatusesFromSnapshot: (run, snapshot) =>
-          this.syncRunMemberSpawnStatusesFromSnapshot(run, snapshot),
-        buildLiveLaunchSnapshotForRun: (run, phase) =>
-          this.buildLiveLaunchSnapshotForRun(run, phase),
-        buildRuntimeSpawnStatusRecord: (run) => this.buildRuntimeSpawnStatusRecord(run),
-        getMembersMeta: (teamName) => this.membersMetaStore.getMembers(teamName),
-        filterRemovedMembersFromLaunchSnapshot: (snapshot, metaMembers) =>
-          snapshot
-            ? this.filterRemovedMembersFromLaunchSnapshot(
-                snapshot,
-                metaMembers as Awaited<ReturnType<TeamMembersMetaStore['getMembers']>>
-              )
-            : null,
-        getPersistedLaunchMemberNames: (snapshot) =>
-          snapshot ? this.getPersistedLaunchMemberNames(snapshot) : [],
-      },
+      readTaskActivityRepairLaunchSnapshot: (teamName) =>
+        this.readTaskActivityRepairLaunchSnapshot(teamName),
+      repairStaleTaskActivityIntervalsOnce: (teamName, launchSnapshot) =>
+        this.repairStaleTaskActivityIntervalsOnce(teamName, launchSnapshot),
+      reconcilePersistedLaunchState: (teamName) => this.reconcilePersistedLaunchState(teamName),
+      attachLiveRuntimeMetadataToStatuses: (teamName, statuses, options) =>
+        this.attachLiveRuntimeMetadataToStatuses(teamName, statuses, options),
+      getOpenCodeSecondaryBootstrapPendingMemberNames: (snapshot) =>
+        this.getOpenCodeSecondaryBootstrapPendingMemberNames(snapshot),
+      taskActivityIntervalService: this.taskActivityIntervalService,
+      refreshMemberSpawnStatusesFromLeadInbox: (run) =>
+        this.refreshMemberSpawnStatusesFromLeadInbox(run),
+      maybeAuditMemberSpawnStatuses: (run) => this.maybeAuditMemberSpawnStatuses(run),
+      persistLaunchStateSnapshot: (run, phase) => this.persistLaunchStateSnapshot(run, phase),
+      launchStateStore: this.launchStateStore,
+      syncRunMemberSpawnStatusesFromSnapshot: (run, snapshot) =>
+        this.syncRunMemberSpawnStatusesFromSnapshot(run, snapshot),
+      buildLiveLaunchSnapshotForRun: (run, phase) => this.buildLiveLaunchSnapshotForRun(run, phase),
+      buildRuntimeSpawnStatusRecord: (run) => this.buildRuntimeSpawnStatusRecord(run),
+      membersMetaStore: this.membersMetaStore,
+      filterRemovedMembersFromLaunchSnapshot: (snapshot, metaMembers) =>
+        this.filterRemovedMembersFromLaunchSnapshot(snapshot, metaMembers),
+      getPersistedLaunchMemberNames: (snapshot) => this.getPersistedLaunchMemberNames(snapshot),
+      nowMs: () => Date.now(),
       nowIso,
     });
   }

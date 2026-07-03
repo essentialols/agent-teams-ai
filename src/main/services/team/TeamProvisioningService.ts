@@ -339,6 +339,12 @@ import {
   createTeamProvisioningOpenCodeMemberInboxRelayBoundary,
   type TeamProvisioningOpenCodeMemberInboxRelayHost,
 } from './provisioning/TeamProvisioningOpenCodeMemberInboxRelayBoundaryFactory';
+import {
+  createOpenCodeMemberMessageDeliveryServiceFromHost,
+  createOpenCodeRuntimeBootstrapEvidencePorts as createOpenCodeRuntimeBootstrapEvidencePortsHelper,
+  deliverOpenCodeMemberMessage as deliverOpenCodeMemberMessageHelper,
+  type TeamProvisioningOpenCodeMemberMessageDeliveryHost,
+} from './provisioning/TeamProvisioningOpenCodeMemberMessageDeliveryServiceFactory';
 import { OpenCodeMemberSendSerializer } from './provisioning/TeamProvisioningOpenCodeMemberSendSerialization';
 import { runOpenCodeTeamRuntimeAdapterLaunch as runOpenCodeTeamRuntimeAdapterLaunchHelper } from './provisioning/TeamProvisioningOpenCodeRuntimeAdapterLaunch';
 import { type OpenCodeRuntimeControlAck } from './provisioning/TeamProvisioningOpenCodeRuntimeCheckin';
@@ -461,9 +467,6 @@ import { createTeamProvisioningRuntimeAdapterCancellationPorts } from './provisi
 import { TeamProvisioningRuntimeAdapterProgressState } from './provisioning/TeamProvisioningRuntimeAdapterProgressState';
 import {
   createMixedSecondaryLaneStates as createMixedSecondaryLaneStatesHelper,
-  createOpenCodeMemberMessageDeliveryService as createOpenCodeMemberMessageDeliveryServiceHelper,
-  createOpenCodeRuntimeBootstrapEvidencePorts as createOpenCodeRuntimeBootstrapEvidencePortsHelper,
-  deliverOpenCodeMemberMessage as deliverOpenCodeMemberMessageHelper,
   planRuntimeLanesOrThrow as planRuntimeLanesOrThrowHelper,
   shouldRouteOpenCodeToRuntimeAdapter as shouldRouteOpenCodeToRuntimeAdapterHelper,
 } from './provisioning/TeamProvisioningRuntimeBootstrapDelivery';
@@ -3359,62 +3362,9 @@ export class TeamProvisioningService {
   }
 
   private createOpenCodeMemberMessageDeliveryService() {
-    return createOpenCodeMemberMessageDeliveryServiceHelper({
-      getOpenCodeRuntimeMessageAdapter: () => this.getOpenCodeRuntimeMessageAdapter(),
-      readOpenCodeMemberDirectory: (teamName) => this.readOpenCodeMemberDirectory(teamName),
-      resolveOpenCodeMemberIdentityFromDirectory: (teamName, memberName, directory) =>
-        this.resolveOpenCodeMemberIdentityFromDirectory(teamName, memberName, directory),
-      stoppingSecondaryRuntimeTeams: this.stoppingSecondaryRuntimeTeams,
-      readPersistedTeamProjectPath: (teamName) => this.readPersistedTeamProjectPath(teamName),
-      resolveDeliverableTrackedRuntimeRunId: (teamName) =>
-        this.runTracking.resolveDeliverableTrackedRuntimeRunId(teamName),
-      runs: this.runs,
-      getCurrentOpenCodeRuntimeRunId: (teamName, laneId) =>
-        this.getCurrentOpenCodeRuntimeRunId(teamName, laneId),
-      resolveCurrentOpenCodeRuntimeRunId: (teamName, laneId) =>
-        this.openCodeRuntimeRecoveryIdentity.resolveCurrentOpenCodeRuntimeRunId(teamName, laneId),
-      isOpenCodeRuntimeLaneIndexActive: (teamName, laneId) =>
-        this.openCodeRuntimeRecoveryIdentity.isOpenCodeRuntimeLaneIndexActive(teamName, laneId),
-      tryRecoverOpenCodeRuntimeLaneBeforeDelivery: (input) =>
-        this.tryRecoverOpenCodeRuntimeLaneBeforeDelivery(input),
-      tryRecoverOpenCodeRuntimeLaneFromCommittedSessionBeforeDelivery: (input) =>
-        this.tryRecoverOpenCodeRuntimeLaneFromCommittedSessionBeforeDelivery(input),
-      deleteSecondaryRuntimeRun: (teamName, laneId) =>
-        this.deleteSecondaryRuntimeRun(teamName, laneId),
-      cleanupStoppedTeamOpenCodeRuntimeLanesInBackground: (teamName) =>
-        this.cleanupStoppedTeamOpenCodeRuntimeLanesInBackground(teamName),
-      createOpenCodeRuntimeBootstrapEvidencePorts: () =>
-        this.createOpenCodeRuntimeBootstrapEvidencePorts(),
-      resolveControlApiBaseUrl: () => this.providerRuntime.resolveControlApiBaseUrl(),
-      sendOpenCodeMemberMessageToRuntimeSerialized: (input) =>
-        this.sendOpenCodeMemberMessageToRuntimeSerialized(input),
-      rememberOpenCodeRuntimePidFromBridge: (input) =>
-        this.rememberOpenCodeRuntimePidFromBridge(input),
-      maybeSyncOpenCodeRuntimePermissionsAfterDelivery: (input) =>
-        this.maybeSyncOpenCodeRuntimePermissionsAfterDelivery(input),
-      isLegacyOpenCodeMemberWorkSyncReadCommitAllowed: (input) =>
-        this.isLegacyOpenCodeMemberWorkSyncReadCommitAllowed(input),
-      createOpenCodePromptDeliveryLedger: (teamName, laneId) =>
-        this.createOpenCodePromptDeliveryLedger(teamName, laneId),
-      openCodeVisibleReplyProofService: this.openCodeVisibleReplyProofService,
-      openCodePromptDeliveryWatchdogScheduler: this.openCodePromptDeliveryWatchdogScheduler,
-      openCodePromptDeliveryFollowUpPolicy: this.openCodePromptDeliveryFollowUpPolicy,
-      isOpenCodeDeliveryResponseReadCommitAllowed: (input) =>
-        this.isOpenCodeDeliveryResponseReadCommitAllowed(input),
-      getOpenCodeDeliveryPendingReason: (input) => this.getOpenCodeDeliveryPendingReason(input),
-      markOpenCodeAcceptedDeliveryMissingPromptProofForRetry: (input) =>
-        this.markOpenCodeAcceptedDeliveryMissingPromptProofForRetry(input),
-      scheduleOpenCodePromptDeliveryWatchdog: (input) =>
-        this.scheduleOpenCodePromptDeliveryWatchdog(input),
-      logOpenCodePromptDeliveryEvent: (event, record, extra) =>
-        this.logOpenCodePromptDeliveryEvent(event, record, extra),
-      requeueOpenCodeRuntimeManifestWatermarkDeliveryIfNeeded: (input) =>
-        this.requeueOpenCodeRuntimeManifestWatermarkDeliveryIfNeeded(input),
-      emitOpenCodePromptDeliveryTaskLogChange: (record, detail) =>
-        this.emitOpenCodePromptDeliveryTaskLogChange(record, detail),
-      observeOpenCodeDirectUserDeliveryInlineIfNeeded: (input) =>
-        this.observeOpenCodeDirectUserDeliveryInlineIfNeeded(input),
-    });
+    return createOpenCodeMemberMessageDeliveryServiceFromHost(
+      this as unknown as TeamProvisioningOpenCodeMemberMessageDeliveryHost
+    );
   }
 
   async deliverOpenCodeMemberMessage(

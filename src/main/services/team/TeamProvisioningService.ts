@@ -92,14 +92,12 @@ import { OpenCodeRuntimeDeliveryProofReader } from './opencode/delivery/OpenCode
 import { OpenCodeVisibleReplyProofService } from './opencode/delivery/OpenCodeVisibleReplyProofService';
 import {
   clearOpenCodeRuntimeLaneStorage,
-  getOpenCodeRuntimeRunTombstonesPath,
   inspectOpenCodeRuntimeLaneStorage,
   migrateLegacyOpenCodeRuntimeState,
   readOpenCodeRuntimeLaneIndex,
   setOpenCodeRuntimeActiveRunManifest,
   upsertOpenCodeRuntimeLaneIndexEntry,
 } from './opencode/store/OpenCodeRuntimeManifestEvidenceReader';
-import { createRuntimeRunTombstoneStore } from './opencode/store/RuntimeRunTombstoneStore';
 import { getSystemLocale } from './provisioning/TeamProvisioningAgentLanguage';
 import { ensureCwdExists, sleep } from './provisioning/TeamProvisioningAsyncUtils';
 import { respawnCliAfterAuthFailure } from './provisioning/TeamProvisioningAuthRetryRecovery';
@@ -216,7 +214,6 @@ import {
 } from './provisioning/TeamProvisioningLaunchStateProjection';
 import {
   applyOpenCodeSecondaryEvidenceOverlay as applyOpenCodeSecondaryEvidenceOverlayHelper,
-  createDefaultOpenCodeSecondaryEvidenceOverlayPorts,
   finalizeMissingRegisteredMembersAsFailed as finalizeMissingRegisteredMembersAsFailedHelper,
   guardCommittedOpenCodeSecondaryLaneEvidence as guardCommittedOpenCodeSecondaryLaneEvidenceHelper,
 } from './provisioning/TeamProvisioningLaunchStateReconciliation';
@@ -384,6 +381,7 @@ import {
   tryRecoverOpenCodeRuntimeLanesForDeliveryWatchdog as tryRecoverOpenCodeRuntimeLanesForDeliveryWatchdogHelper,
 } from './provisioning/TeamProvisioningOpenCodeRuntimeRecoveryFlow';
 import { createOpenCodeRuntimeRecoveryIdentityHelpers } from './provisioning/TeamProvisioningOpenCodeRuntimeRecoveryIdentity';
+import { createTeamProvisioningOpenCodeSecondaryEvidenceOverlayPorts } from './provisioning/TeamProvisioningOpenCodeSecondaryEvidenceOverlayPortsFactory';
 import {
   type AuthWarningSource,
   buildStallProgressMessage,
@@ -1630,6 +1628,11 @@ export class TeamProvisioningService {
       membersMetaStore: this.membersMetaStore,
       inboxReader: this.inboxReader,
       logger,
+    });
+  private readonly openCodeSecondaryEvidenceOverlayPorts =
+    createTeamProvisioningOpenCodeSecondaryEvidenceOverlayPorts({
+      getTeamsBasePath,
+      nowIso,
     });
   private readonly launchStateStoreBoundary = new TeamProvisioningLaunchStateStoreBoundary({
     launchStateStore: this.launchStateStore,
@@ -6462,31 +6465,8 @@ export class TeamProvisioningService {
   }): Promise<PersistedTeamLaunchSnapshot> {
     return applyOpenCodeSecondaryEvidenceOverlayHelper(
       params,
-      createDefaultOpenCodeSecondaryEvidenceOverlayPorts({
-        teamsBasePath: getTeamsBasePath(),
-        hasBootstrapCheckinTombstone: ({ teamName, laneId, runId }) =>
-          this.hasOpenCodeBootstrapCheckinTombstone(teamName, laneId, runId),
-        nowIso,
-      })
+      this.openCodeSecondaryEvidenceOverlayPorts
     );
-  }
-
-  private async hasOpenCodeBootstrapCheckinTombstone(
-    teamName: string,
-    laneId: string | undefined,
-    runId: string
-  ): Promise<boolean> {
-    const tombstoneStore = createRuntimeRunTombstoneStore({
-      filePath: getOpenCodeRuntimeRunTombstonesPath(getTeamsBasePath(), teamName, laneId),
-    });
-    const tombstone = await tombstoneStore
-      .find({
-        teamName,
-        runId,
-        evidenceKind: 'bootstrap_checkin',
-      })
-      .catch(() => null);
-    return Boolean(tombstone);
   }
 
   private async writeLaunchStateSnapshot(

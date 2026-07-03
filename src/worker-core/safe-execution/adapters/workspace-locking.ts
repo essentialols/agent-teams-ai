@@ -34,9 +34,26 @@ export function workspaceLockedError(
         taskId: record.taskId,
         workspacePath: record.workspacePath,
         ownerId: record.ownerId,
+        ...(record.ownerPid === undefined
+          ? {}
+          : { ownerPid: String(record.ownerPid) }),
         acquiredAt: record.acquiredAt.toISOString(),
       },
     },
+  );
+}
+
+export function sameWorkspaceLock(
+  left: WorkspaceLockRecord,
+  right: WorkspaceLockRecord,
+): boolean {
+  return (
+    left.taskId === right.taskId &&
+    left.workspacePath === right.workspacePath &&
+    left.ownerId === right.ownerId &&
+    left.ownerPid === right.ownerPid &&
+    left.acquiredAt.getTime() === right.acquiredAt.getTime() &&
+    left.staleLockMs === right.staleLockMs
   );
 }
 

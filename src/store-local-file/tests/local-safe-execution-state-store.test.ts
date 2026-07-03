@@ -8,6 +8,8 @@ import {
   InMemoryWorkspaceLockStore,
   SafeExecutionRunner,
   SubscriptionWorkerError,
+  type WorkspaceLockHandle,
+  type WorkspaceLockStore,
   type WorkspaceSnapshot,
   type WorkspaceSnapshotter,
 } from "@vioxen/subscription-runtime/worker-core";
@@ -58,6 +60,131 @@ describe("local safe execution state stores", () => {
     expect(replacement.workspacePath).toBe(canonicalWorkspacePath);
     await replacement.release();
     await deadOwner.release();
+  });
+
+  it("does not replace a workspace lock owned by a live process", async () => {
+    const workspacePath = await tempDir("local-safe-execution-live-lock-");
+    const lockRoot = await tempDir("local-safe-execution-live-lock-store-");
+    const lockStore = new LocalFileWorkspaceLockStore(lockRoot);
+    const lock = await lockStore.acquire({
+      taskId: "task-live-lock-owner",
+      workspacePath,
+      ownerId: "live-owner",
+      ownerPid: process.pid,
+    });
+
+    try {
+      await expect(
+        lockStore.acquire({
+          taskId: "task-live-lock-replacement",
+          workspacePath,
+          ownerId: "replacement-owner",
+          ownerPid: process.pid,
+        }),
+      ).rejects.toMatchObject({
+        code: "safe_execution_workspace_locked",
+        details: expect.objectContaining({
+          taskId: "task-live-lock-owner",
+          ownerPid: String(process.pid),
+        }),
+      });
+    } finally {
+      await lock.release();
+    }
+  });
+
+  it("allows only one replacement for concurrent dead-process locks", async () => {
+    const workspacePath = await tempDir("local-safe-execution-race-lock-");
+    const lockRoot = await tempDir("local-safe-execution-race-lock-store-");
+    const lockStore = new LocalFileWorkspaceLockStore(lockRoot);
+
+    await lockStore.acquire({
+      taskId: "task-stale-race",
+      workspacePath,
+      ownerId: "old-owner",
+      ownerPid: 9_999_999,
+    });
+
+    const results = await Promise.allSettled([
+      lockStore.acquire({
+        taskId: "task-replacement-race-a",
+        workspacePath,
+        ownerId: "new-owner-a",
+        ownerPid: process.pid,
+      }),
+      lockStore.acquire({
+        taskId: "task-replacement-race-b",
+        workspacePath,
+        ownerId: "new-owner-b",
+        ownerPid: process.pid,
+      }),
+    ]);
+
+    const fulfilled = results.filter(
+      (result): result is PromiseFulfilledResult<WorkspaceLockHandle> =>
+        result.status === "fulfilled",
+    );
+    const rejected = results.filter(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]?.reason).toMatchObject({
+      code: "safe_execution_workspace_locked",
+    });
+    await fulfilled[0]!.value.release();
+  });
+
+  it("does not let stale handles release replacement workspace locks", async () => {
+    const stores: readonly {
+      readonly name: string;
+      create(): Promise<WorkspaceLockStore>;
+    }[] = [
+      {
+        name: "memory",
+        create: async () => new InMemoryWorkspaceLockStore(),
+      },
+      {
+        name: "file",
+        create: async () =>
+          new LocalFileWorkspaceLockStore(
+            await tempDir("local-safe-execution-stale-release-store-"),
+          ),
+      },
+    ];
+
+    for (const store of stores) {
+      const workspacePath = await tempDir(
+        `local-safe-execution-stale-release-${store.name}-`,
+      );
+      const lockStore = await store.create();
+      const stale = await lockStore.acquire({
+        taskId: "task-same-owner",
+        workspacePath,
+        ownerId: "same-owner",
+        ownerPid: 9_999_999,
+      });
+      const replacement = await lockStore.acquire({
+        taskId: "task-same-owner",
+        workspacePath,
+        ownerId: "same-owner",
+        ownerPid: process.pid,
+      });
+
+      await stale.release();
+      await expect(
+        lockStore.acquire({
+          taskId: "task-probe",
+          workspacePath,
+          ownerId: "probe-owner",
+          ownerPid: process.pid,
+        }),
+      ).rejects.toMatchObject({
+        code: "safe_execution_workspace_locked",
+      });
+      await replacement.release();
+    }
   });
 
   it("resumes a partial task from the local file journal with a continuation packet", async () => {

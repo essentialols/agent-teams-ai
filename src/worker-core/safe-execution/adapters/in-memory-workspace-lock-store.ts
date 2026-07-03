@@ -6,6 +6,7 @@ import type {
 import type { WorkspaceLockStore } from "../ports/safe-execution-ports";
 import {
   canReplaceLock,
+  sameWorkspaceLock,
   workspaceLockedError,
   workspaceLockKey,
 } from "./workspace-locking";
@@ -41,7 +42,7 @@ export class InMemoryWorkspaceLockStore implements WorkspaceLockStore {
       ...record,
       release: async () => {
         const current = this.locks.get(key);
-        if (current?.ownerId === record.ownerId && current.taskId === record.taskId) {
+        if (current && sameWorkspaceLock(current, record)) {
           this.locks.delete(key);
         }
       },

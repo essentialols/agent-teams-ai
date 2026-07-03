@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   mkdir,
   mkdtemp,
@@ -95,7 +95,13 @@ export class LocalFileWorkspaceLockStore implements WorkspaceLockStore {
         if (!isNodeErrorCode(error, "EEXIST")) throw error;
         const existing = await readLockRecord(lockFile, workspacePath);
         if (existing && canReplaceLock(existing, now)) {
-          await rm(lockDir, { recursive: true, force: true });
+          await removeReplaceableFileLock({
+            lockDir,
+            lockFile,
+            record: existing,
+            workspacePath,
+            now,
+          });
           continue;
         }
         throw workspaceLockedError(
@@ -321,6 +327,9 @@ function workspaceLockedError(record: WorkspaceLockRecord): SafeExecutionError {
         taskId: record.taskId,
         workspacePath: record.workspacePath,
         ownerId: record.ownerId,
+        ...(record.ownerPid === undefined
+          ? {}
+          : { ownerPid: String(record.ownerPid) }),
         acquiredAt: record.acquiredAt.toISOString(),
       },
     },
@@ -335,9 +344,63 @@ async function releaseFileLock(
   const current = await readLockRecord(lockFile, record.workspacePath).catch(
     () => null,
   );
-  if (current?.ownerId === record.ownerId && current.taskId === record.taskId) {
+  if (current && sameWorkspaceLock(current, record)) {
     await rm(lockDir, { recursive: true, force: true });
   }
+}
+
+async function removeReplaceableFileLock(input: {
+  readonly lockDir: string;
+  readonly lockFile: string;
+  readonly record: WorkspaceLockRecord;
+  readonly workspacePath: string;
+  readonly now: Date;
+}): Promise<void> {
+  const staleDir = `${input.lockDir}.${process.pid}.${randomUUID()}.stale`;
+  try {
+    await rename(input.lockDir, staleDir);
+  } catch (error) {
+    if (isNodeErrorCode(error, "ENOENT")) return;
+    throw error;
+  }
+
+  const staleFile = join(staleDir, basename(input.lockFile));
+  const current = await readLockRecord(staleFile, input.workspacePath).catch(
+    () => null,
+  );
+  if (
+    current &&
+    sameWorkspaceLock(current, input.record) &&
+    canReplaceLock(current, input.now)
+  ) {
+    await rm(staleDir, { recursive: true, force: true });
+    return;
+  }
+
+  try {
+    await rename(staleDir, input.lockDir);
+  } catch (error) {
+    if (isNodeErrorCode(error, "ENOENT")) return;
+    if (isNodeErrorCode(error, "EEXIST")) {
+      await rm(staleDir, { recursive: true, force: true });
+      return;
+    }
+    throw error;
+  }
+}
+
+function sameWorkspaceLock(
+  left: WorkspaceLockRecord,
+  right: WorkspaceLockRecord,
+): boolean {
+  return (
+    left.taskId === right.taskId &&
+    left.workspacePath === right.workspacePath &&
+    left.ownerId === right.ownerId &&
+    left.ownerPid === right.ownerPid &&
+    left.acquiredAt.getTime() === right.acquiredAt.getTime() &&
+    left.staleLockMs === right.staleLockMs
+  );
 }
 
 async function readLockRecord(

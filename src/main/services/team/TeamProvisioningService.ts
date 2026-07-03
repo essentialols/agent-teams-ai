@@ -3407,12 +3407,6 @@ export class TeamProvisioningService {
     this.openCodeRuntimeDeliveryAdvisory.emitPromptDeliveryTaskLogChange(record, detail);
   }
 
-  private async handleOpenCodeRuntimeDeliveryUserFacingSideEffects(
-    record: OpenCodePromptDeliveryLedgerRecord
-  ): Promise<void> {
-    await this.openCodeRuntimeDeliveryAdvisory.handleUserFacingSideEffects(record);
-  }
-
   private async decideOpenCodeRuntimeDeliveryUserFacingAdvisory(
     record: OpenCodePromptDeliveryLedgerRecord
   ): Promise<{
@@ -3429,23 +3423,6 @@ export class TeamProvisioningService {
     await this.openCodeRuntimeDeliveryAdvisory.fireErrorNotification(record, decision);
   }
 
-  private async scheduleOpenCodeProofMissingWorkSyncRecovery(
-    record: OpenCodePromptDeliveryLedgerRecord,
-    decision: OpenCodeRuntimeDeliveryAdvisoryDecision
-  ): Promise<void> {
-    await this.openCodeRuntimeDeliveryAdvisory.scheduleProofMissingWorkSyncRecovery(
-      record,
-      decision
-    );
-  }
-
-  private emitOpenCodeRuntimeDeliveryAdvisoryEvent(
-    record: OpenCodePromptDeliveryLedgerRecord,
-    decision?: OpenCodeRuntimeDeliveryAdvisoryDecision
-  ): void {
-    this.openCodeRuntimeDeliveryAdvisory.emitAdvisoryEvent(record, decision);
-  }
-
   private emitRuntimeDeliveryReplyAdvisoryRefresh(teamName: string, message: InboxMessage): void {
     this.openCodeRuntimeDeliveryAdvisory.emitRuntimeDeliveryReplyAdvisoryRefresh(teamName, message);
   }
@@ -3457,23 +3434,8 @@ export class TeamProvisioningService {
     this.openCodeRuntimeDeliveryAdvisory.scheduleAdvisoryReview(record, decision);
   }
 
-  private async notifyLeadAboutOpenCodeRuntimeDeliveryError(input: {
-    record: OpenCodePromptDeliveryLedgerRecord;
-    reason: string;
-    taskLabel: string | null;
-  }): Promise<void> {
-    await this.openCodeRuntimeDeliveryAdvisory.notifyLeadAboutError(input);
-  }
-
   async scanOpenCodePromptDeliveryWatchdog(teamName: string): Promise<number> {
     return await this.openCodePromptDeliveryWatchdogCoordinator.scan(teamName);
-  }
-
-  private async scanOpenCodePromptDeliveryWatchdogForActiveLanes(
-    teamName: string,
-    laneIds: string[]
-  ): Promise<number> {
-    return await this.openCodePromptDeliveryWatchdogCoordinator.scanActiveLanes(teamName, laneIds);
   }
 
   private createOpenCodeRuntimeBootstrapEvidencePorts(): OpenCodeRuntimeBootstrapEvidencePorts {

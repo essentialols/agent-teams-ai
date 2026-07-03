@@ -2,14 +2,20 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildMixedSecondaryLaunchSnapshotForRun,
+  hasMixedSecondaryLaunchReconcileHeartbeat,
+  type MixedSecondaryLaunchReconcileLeadInboxMessage,
+  type MixedSecondaryLaunchReconcileMessagePorts,
   type MixedSecondaryLaunchSnapshotPorts,
   type MixedSecondaryLaunchSnapshotRunLike,
+  selectLatestMixedSecondaryLaunchReconcileMessage,
+  shouldRecoverStalePersistedMixedLaunchSnapshot,
 } from '../TeamProvisioningMixedSecondaryLaunchReconciliation';
 
 import type { TeamRuntimeLaunchResult } from '../../runtime/TeamRuntimeAdapter';
 import type { MixedSecondaryRuntimeLaneState } from '../TeamProvisioningSecondaryRuntimeRuns';
 import type {
   MemberSpawnStatusEntry,
+  PersistedTeamLaunchMemberState,
   PersistedTeamLaunchSnapshot,
   TeamProvisioningMemberInput,
 } from '@shared/types';
@@ -50,6 +56,55 @@ function createSnapshot(params: SnapshotParams): PersistedTeamLaunchSnapshot {
     teamLaunchState: 'partial_pending',
   };
 }
+
+function createPersistedMember(
+  input: Partial<PersistedTeamLaunchMemberState> = {}
+): PersistedTeamLaunchMemberState {
+  return {
+    name: 'Bob',
+    providerId: 'opencode',
+    launchState: 'runtime_pending_bootstrap',
+    agentToolAccepted: true,
+    runtimeAlive: false,
+    bootstrapConfirmed: false,
+    hardFailure: false,
+    lastEvaluatedAt: '2026-07-02T00:00:00.000Z',
+    ...input,
+  };
+}
+
+function createPersistedSnapshot(input: {
+  updatedAt?: string;
+  teamLaunchState?: PersistedTeamLaunchSnapshot['teamLaunchState'];
+  members?: Record<string, PersistedTeamLaunchMemberState>;
+}): PersistedTeamLaunchSnapshot {
+  return {
+    version: 2,
+    teamName: 'team-a',
+    updatedAt: input.updatedAt ?? '2026-07-02T00:00:00.000Z',
+    launchPhase: 'active',
+    expectedMembers: Object.keys(input.members ?? {}),
+    members: input.members ?? {},
+    summary: {
+      confirmedCount: 0,
+      pendingCount: 0,
+      failedCount: 0,
+      runtimeAlivePendingCount: 0,
+      shellOnlyPendingCount: 0,
+      runtimeProcessPendingCount: 0,
+      runtimeCandidatePendingCount: 0,
+      noRuntimePendingCount: 0,
+      permissionPendingCount: 0,
+    },
+    teamLaunchState: input.teamLaunchState ?? 'partial_pending',
+  };
+}
+
+const reconcilePorts: MixedSecondaryLaunchReconcileMessagePorts = {
+  resolveExpectedLaunchMemberName: (expectedMembers, candidateName) =>
+    expectedMembers.find((memberName) => memberName === candidateName) ?? null,
+  isMeaningfulBootstrapCheckInMessage: (text) => text === 'meaningful-check-in',
+};
 
 function createPorts(): {
   ports: MixedSecondaryLaunchSnapshotPorts<MixedSecondaryLaunchSnapshotRunLike>;
@@ -260,5 +315,222 @@ describe('TeamProvisioningMixedSecondaryLaunchReconciliation', () => {
       },
       pendingReason: undefined,
     });
+  });
+
+  it('detects launch reconcile heartbeats only for meaningful expected member messages at or after first spawn acceptance', () => {
+    const snapshot = createPersistedSnapshot({
+      members: {
+        Bob: createPersistedMember({
+          name: 'Bob',
+          firstSpawnAcceptedAt: '2026-07-02T00:05:00.000Z',
+        }),
+      },
+    });
+    const beforeFirstSpawn: MixedSecondaryLaunchReconcileLeadInboxMessage = {
+      from: 'Bob',
+      text: 'meaningful-check-in',
+      timestamp: '2026-07-02T00:04:59.000Z',
+      messageId: 'before',
+    };
+    const ignoredMessages: MixedSecondaryLaunchReconcileLeadInboxMessage[] = [
+      beforeFirstSpawn,
+      {
+        from: 'Bob',
+        text: 'noise',
+        timestamp: '2026-07-02T00:06:00.000Z',
+        messageId: 'noise',
+      },
+      {
+        from: 'Alice',
+        text: 'meaningful-check-in',
+        timestamp: '2026-07-02T00:06:00.000Z',
+        messageId: 'unexpected',
+      },
+    ];
+
+    expect(
+      hasMixedSecondaryLaunchReconcileHeartbeat({
+        snapshot,
+        messages: ignoredMessages,
+        expectedMembers: ['Bob'],
+        ports: reconcilePorts,
+      })
+    ).toBe(false);
+
+    expect(
+      hasMixedSecondaryLaunchReconcileHeartbeat({
+        snapshot,
+        messages: [
+          ...ignoredMessages,
+          {
+            from: 'Bob',
+            text: 'meaningful-check-in',
+            timestamp: '2026-07-02T00:05:00.000Z',
+            messageId: 'at-boundary',
+          },
+        ],
+        expectedMembers: ['Bob'],
+        ports: reconcilePorts,
+      })
+    ).toBe(true);
+  });
+
+  it('selects the latest launch reconcile message by valid timestamp and message id tie-break', () => {
+    const oldValid: MixedSecondaryLaunchReconcileLeadInboxMessage = {
+      from: 'Bob',
+      text: 'meaningful-check-in',
+      timestamp: '2026-07-02T00:05:00.000Z',
+      messageId: 'old-valid',
+    };
+    const newerValid: MixedSecondaryLaunchReconcileLeadInboxMessage = {
+      from: 'Bob',
+      text: 'meaningful-check-in',
+      timestamp: '2026-07-02T00:06:00.000Z',
+      messageId: 'new-valid',
+    };
+    const invalidTimestamp: MixedSecondaryLaunchReconcileLeadInboxMessage = {
+      from: 'Bob',
+      text: 'meaningful-check-in',
+      timestamp: 'not-a-date',
+      messageId: 'zz-invalid',
+    };
+
+    expect(
+      selectLatestMixedSecondaryLaunchReconcileMessage({
+        messages: [oldValid, newerValid],
+        expectedMembers: ['Bob'],
+        expected: 'Bob',
+        ports: reconcilePorts,
+      })
+    ).toBe(newerValid);
+    expect(
+      selectLatestMixedSecondaryLaunchReconcileMessage({
+        messages: [invalidTimestamp, oldValid],
+        expectedMembers: ['Bob'],
+        expected: 'Bob',
+        ports: reconcilePorts,
+      })
+    ).toBe(oldValid);
+
+    const tiedLowId: MixedSecondaryLaunchReconcileLeadInboxMessage = {
+      from: 'Bob',
+      text: 'meaningful-check-in',
+      timestamp: 'not-a-date',
+      messageId: 'a',
+    };
+    const tiedHighId: MixedSecondaryLaunchReconcileLeadInboxMessage = {
+      from: 'Bob',
+      text: 'meaningful-check-in',
+      timestamp: 'not-a-date',
+      messageId: 'b',
+    };
+
+    expect(
+      selectLatestMixedSecondaryLaunchReconcileMessage({
+        messages: [tiedLowId, tiedHighId],
+        expectedMembers: ['Bob'],
+        expected: 'Bob',
+        ports: reconcilePorts,
+      })
+    ).toBe(tiedHighId);
+  });
+
+  it('recovers stale mixed snapshots with recoverable terminal OpenCode runtime candidates', () => {
+    const recoverableMember = createPersistedMember({
+      name: 'Bob',
+      launchState: 'failed_to_start',
+      hardFailure: true,
+    });
+
+    expect(
+      shouldRecoverStalePersistedMixedLaunchSnapshot({
+        snapshot: createPersistedSnapshot({
+          teamLaunchState: 'clean_success',
+          members: { Bob: recoverableMember },
+        }),
+        nowMs: Date.parse('2026-07-02T00:01:00.000Z'),
+        graceMs: 120_000,
+        isRecoverablePersistedOpenCodeTerminalRuntimeCandidate: (member) =>
+          member === recoverableMember,
+      })
+    ).toBe(true);
+  });
+
+  it('does not recover partial pending snapshots younger than launch grace', () => {
+    const snapshot = createPersistedSnapshot({
+      updatedAt: '2026-07-02T00:00:00.000Z',
+      members: {
+        Bob: createPersistedMember({
+          name: 'Bob',
+          laneKind: 'secondary',
+          laneOwnerProviderId: 'opencode',
+          laneId: 'secondary:opencode:bob',
+        }),
+      },
+    });
+
+    expect(
+      shouldRecoverStalePersistedMixedLaunchSnapshot({
+        snapshot,
+        nowMs: Date.parse('2026-07-02T00:01:59.999Z'),
+        graceMs: 120_000,
+        isRecoverablePersistedOpenCodeTerminalRuntimeCandidate: () => false,
+      })
+    ).toBe(false);
+  });
+
+  it('recovers stale partial pending secondary OpenCode lane members', () => {
+    const snapshot = createPersistedSnapshot({
+      updatedAt: '2026-07-02T00:00:00.000Z',
+      members: {
+        Bob: createPersistedMember({
+          name: 'Bob',
+          laneKind: 'secondary',
+          laneOwnerProviderId: 'opencode',
+          laneId: 'secondary:opencode:bob',
+        }),
+      },
+    });
+
+    expect(
+      shouldRecoverStalePersistedMixedLaunchSnapshot({
+        snapshot,
+        nowMs: Date.parse('2026-07-02T00:02:00.000Z'),
+        graceMs: 120_000,
+        isRecoverablePersistedOpenCodeTerminalRuntimeCandidate: () => false,
+      })
+    ).toBe(true);
+  });
+
+  it('ignores confirmed and failed members during stale mixed snapshot recovery', () => {
+    const snapshot = createPersistedSnapshot({
+      updatedAt: '2026-07-02T00:00:00.000Z',
+      members: {
+        Bob: createPersistedMember({
+          name: 'Bob',
+          launchState: 'confirmed_alive',
+          laneKind: 'secondary',
+          laneOwnerProviderId: 'opencode',
+          laneId: 'secondary:opencode:bob',
+        }),
+        Charlie: createPersistedMember({
+          name: 'Charlie',
+          launchState: 'failed_to_start',
+          hardFailure: true,
+          laneKind: 'secondary',
+          laneOwnerProviderId: 'opencode',
+          laneId: 'secondary:opencode:charlie',
+        }),
+      },
+    });
+
+    expect(
+      shouldRecoverStalePersistedMixedLaunchSnapshot({
+        snapshot,
+        nowMs: Date.parse('2026-07-02T00:02:00.000Z'),
+        graceMs: 120_000,
+        isRecoverablePersistedOpenCodeTerminalRuntimeCandidate: () => false,
+      })
+    ).toBe(false);
   });
 });

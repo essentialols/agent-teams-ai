@@ -400,7 +400,12 @@ import {
   type MemberWorkSyncAcceptedReportChecker,
   scheduleLeadProofMissingWorkSyncRecovery as scheduleLeadProofMissingWorkSyncRecoveryHelper,
 } from './provisioning/TeamProvisioningMemberWorkSyncProof';
-import { buildMixedSecondaryLaunchSnapshotForRun as buildMixedSecondaryLaunchSnapshotForRunHelper } from './provisioning/TeamProvisioningMixedSecondaryLaunchReconciliation';
+import {
+  buildMixedSecondaryLaunchSnapshotForRun as buildMixedSecondaryLaunchSnapshotForRunHelper,
+  hasMixedSecondaryLaunchReconcileHeartbeat as hasMixedSecondaryLaunchReconcileHeartbeatHelper,
+  selectLatestMixedSecondaryLaunchReconcileMessage as selectLatestMixedSecondaryLaunchReconcileMessageHelper,
+  shouldRecoverStalePersistedMixedLaunchSnapshot as shouldRecoverStalePersistedMixedLaunchSnapshotHelper,
+} from './provisioning/TeamProvisioningMixedSecondaryLaunchReconciliation';
 import { handleNativeTeammateUserMessage as handleNativeTeammateUserMessageHelper } from './provisioning/TeamProvisioningNativeTeammateMessages';
 import { getOpenCodeAgendaSyncRecoveryBypassMessageIds as getOpenCodeAgendaSyncRecoveryBypassMessageIdsHelper } from './provisioning/TeamProvisioningOpenCodeAgendaSyncRecovery';
 import {
@@ -10078,35 +10083,15 @@ export class TeamProvisioningService {
     messages: readonly LeadInboxLaunchReconcileMessage[]
   ): boolean {
     const expectedMembers = this.getPersistedLaunchMemberNames(snapshot);
-    if (expectedMembers.length === 0 || messages.length === 0) {
-      return false;
-    }
-
-    return messages.some((message) => {
-      if (
-        typeof message.from !== 'string' ||
-        typeof message.text !== 'string' ||
-        typeof message.timestamp !== 'string' ||
-        !isMeaningfulBootstrapCheckInMessage(message.text)
-      ) {
-        return false;
-      }
-
-      const expected = this.resolveExpectedLaunchMemberName(expectedMembers, message.from);
-      if (!expected) {
-        return false;
-      }
-
-      const current = snapshot.members[expected];
-      const firstAcceptedAt = current?.firstSpawnAcceptedAt
-        ? Date.parse(current.firstSpawnAcceptedAt)
-        : NaN;
-      const messageTs = Date.parse(message.timestamp);
-      return (
-        !Number.isFinite(firstAcceptedAt) ||
-        !Number.isFinite(messageTs) ||
-        messageTs >= firstAcceptedAt
-      );
+    return hasMixedSecondaryLaunchReconcileHeartbeatHelper({
+      snapshot,
+      messages,
+      expectedMembers,
+      ports: {
+        resolveExpectedLaunchMemberName: (members, candidateName) =>
+          this.resolveExpectedLaunchMemberName(members, candidateName),
+        isMeaningfulBootstrapCheckInMessage,
+      },
     });
   }
 
@@ -10116,72 +10101,27 @@ export class TeamProvisioningService {
     expected: string,
     firstSpawnAcceptedAt?: string
   ): LeadInboxLaunchReconcileMessage | null {
-    const firstAcceptedAt = firstSpawnAcceptedAt ? Date.parse(firstSpawnAcceptedAt) : NaN;
-    const candidates = messages.filter((message) => {
-      if (
-        typeof message.from !== 'string' ||
-        this.resolveExpectedLaunchMemberName(expectedMembers, message.from) !== expected
-      ) {
-        return false;
-      }
-      if (typeof message.text !== 'string' || !isMeaningfulBootstrapCheckInMessage(message.text)) {
-        return false;
-      }
-      const messageTs = Date.parse(message.timestamp);
-      if (
-        Number.isFinite(firstAcceptedAt) &&
-        Number.isFinite(messageTs) &&
-        messageTs < firstAcceptedAt
-      ) {
-        return false;
-      }
-      return true;
+    return selectLatestMixedSecondaryLaunchReconcileMessageHelper({
+      messages,
+      expectedMembers,
+      expected,
+      firstSpawnAcceptedAt,
+      ports: {
+        resolveExpectedLaunchMemberName: (members, candidateName) =>
+          this.resolveExpectedLaunchMemberName(members, candidateName),
+        isMeaningfulBootstrapCheckInMessage,
+      },
     });
-
-    return (
-      candidates.sort((left, right) => {
-        const leftMs = Date.parse(left.timestamp);
-        const rightMs = Date.parse(right.timestamp);
-        const leftValid = Number.isFinite(leftMs);
-        const rightValid = Number.isFinite(rightMs);
-        if (leftValid && rightValid && leftMs !== rightMs) {
-          return rightMs - leftMs;
-        }
-        if (leftValid !== rightValid) {
-          return leftValid ? -1 : 1;
-        }
-        return (right.messageId ?? '').localeCompare(left.messageId ?? '');
-      })[0] ?? null
-    );
   }
 
   private shouldRecoverStalePersistedMixedLaunchSnapshot(
     snapshot: PersistedTeamLaunchSnapshot
   ): boolean {
-    const hasRecoverableOpenCodeRuntimeCandidate = Object.values(snapshot.members).some((member) =>
-      isRecoverablePersistedOpenCodeTerminalRuntimeCandidate(member)
-    );
-    if (hasRecoverableOpenCodeRuntimeCandidate) {
-      return true;
-    }
-
-    if (snapshot.teamLaunchState !== 'partial_pending') {
-      return false;
-    }
-    const updatedAtMs = Date.parse(snapshot.updatedAt);
-    if (Number.isFinite(updatedAtMs) && Date.now() - updatedAtMs < MEMBER_LAUNCH_GRACE_MS) {
-      return false;
-    }
-
-    return Object.values(snapshot.members).some((member) => {
-      if (member.launchState === 'confirmed_alive' || member.launchState === 'failed_to_start') {
-        return false;
-      }
-      return (
-        member.laneKind === 'secondary' &&
-        member.laneOwnerProviderId === 'opencode' &&
-        typeof member.laneId === 'string'
-      );
+    return shouldRecoverStalePersistedMixedLaunchSnapshotHelper({
+      snapshot,
+      nowMs: Date.now(),
+      graceMs: MEMBER_LAUNCH_GRACE_MS,
+      isRecoverablePersistedOpenCodeTerminalRuntimeCandidate,
     });
   }
 

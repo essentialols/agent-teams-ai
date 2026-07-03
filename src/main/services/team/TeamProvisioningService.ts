@@ -294,7 +294,6 @@ import {
   getMemberSpawnStatusesSnapshot,
   maybeAuditMemberSpawnStatusesForRun,
   type MemberSpawnStatusAuditPorts,
-  type MemberSpawnStatusesSnapshotPorts,
   type MemberSpawnStatusMutationPorts,
   setMemberSpawnStatusForRun,
 } from './provisioning/TeamProvisioningMemberSpawnSnapshots';
@@ -302,6 +301,7 @@ import {
   createInitialMemberSpawnStatusEntry,
   MEMBER_LAUNCH_GRACE_MS,
 } from './provisioning/TeamProvisioningMemberSpawnStatusPolicy';
+import { createTeamProvisioningMemberSpawnStatusesSnapshotPorts } from './provisioning/TeamProvisioningMemberSpawnStatusSnapshotPortsFactory';
 import {
   buildEffectiveTeamMemberSpec,
   normalizeTeamMemberProviderId,
@@ -635,7 +635,6 @@ import { TeamInboxWriter } from './TeamInboxWriter';
 import { writeTeamLaunchFailureArtifactPack } from './TeamLaunchFailureArtifactPack';
 import {
   createPersistedLaunchSnapshot,
-  deriveTeamLaunchAggregateState,
   snapshotFromRuntimeMemberStatuses,
   snapshotToMemberSpawnStatuses,
 } from './TeamLaunchStateEvaluator';
@@ -2425,8 +2424,8 @@ export class TeamProvisioningService {
     this.runtimeSnapshotCacheBoundary.invalidateRuntimeSnapshotCaches(teamName);
   }
 
-  private createMemberSpawnStatusesSnapshotPorts(): MemberSpawnStatusesSnapshotPorts<ProvisioningRun> {
-    return {
+  private createMemberSpawnStatusesSnapshotPorts() {
+    return createTeamProvisioningMemberSpawnStatusesSnapshotPorts<ProvisioningRun>({
       getRun: (runId) => this.runs.get(runId),
       cache: {
         snapshotCache: this.memberSpawnStatusesSnapshotCache,
@@ -2465,7 +2464,6 @@ export class TeamProvisioningService {
           this.syncRunMemberSpawnStatusesFromSnapshot(run, snapshot),
         buildLiveLaunchSnapshotForRun: (run, phase) =>
           this.buildLiveLaunchSnapshotForRun(run, phase),
-        buildSnapshotFromRuntimeMemberStatuses: (input) => snapshotFromRuntimeMemberStatuses(input),
         buildRuntimeSpawnStatusRecord: (run) => this.buildRuntimeSpawnStatusRecord(run),
         getMembersMeta: (teamName) => this.membersMetaStore.getMembers(teamName),
         filterRemovedMembersFromLaunchSnapshot: (snapshot, metaMembers) =>
@@ -2475,13 +2473,11 @@ export class TeamProvisioningService {
                 metaMembers as Awaited<ReturnType<TeamMembersMetaStore['getMembers']>>
               )
             : null,
-        snapshotToMemberSpawnStatuses,
         getPersistedLaunchMemberNames: (snapshot) =>
           snapshot ? this.getPersistedLaunchMemberNames(snapshot) : [],
-        deriveTeamLaunchAggregateState,
       },
       nowIso,
-    };
+    });
   }
 
   private cloneLiveTeamAgentRuntimeMetadata(

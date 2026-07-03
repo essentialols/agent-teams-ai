@@ -667,6 +667,25 @@ describe("codex goal ops", () => {
     });
   });
 
+  it("does not treat fresh progress as liveness after tmux and pid are gone", () => {
+    expect(resolveCodexGoalWorkerLiveness({
+      status: {
+        tmuxAlive: false,
+        progressExists: true,
+        progressStatus: "running",
+        progressHeartbeatAgeMs: 1_000,
+        progressProcessAlive: false,
+      },
+      progressStale: false,
+    })).toMatchObject({
+      alive: false,
+      supervisorKind: RunProcessSupervisorKind.None,
+      processAlive: false,
+      freshProgressAlive: false,
+      aliveReason: RunProcessAliveReason.Unknown,
+    });
+  });
+
   it("does not treat maintenance-paused progress as a live worker", () => {
     expect(resolveCodexGoalWorkerLiveness({
       status: {

@@ -484,8 +484,11 @@ export function resolveCodexGoalWorkerLiveness(input: {
     input.status.progressStatus === "maintenance_paused";
   const processAlive = !terminalProgress &&
     (tmuxAlive || input.status.progressProcessAlive === true);
+  const explicitSupervisorDead = input.status.tmuxAlive === false &&
+    input.status.progressProcessAlive !== true;
   const freshProgressAlive = Boolean(
     !terminalProgress &&
+      !explicitSupervisorDead &&
       input.status.progressExists &&
       input.status.progressStatus === "running" &&
       input.status.progressHeartbeatAgeMs !== undefined &&

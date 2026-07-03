@@ -475,6 +475,7 @@ import {
 } from './provisioning/TeamProvisioningRuntimeFailureLabels';
 import {
   buildTeamRuntimeLaunchArgsPlan as buildTeamRuntimeLaunchArgsPlanHelper,
+  type BuildTeamRuntimeLaunchArgsPlanInput,
   getTeamsBasePathsToProbe,
   logsSuggestShutdownOrCleanup,
   type RuntimeProviderLaunchFacts,
@@ -1333,8 +1334,9 @@ export class TeamProvisioningService {
         this.createOpenCodePromptDeliveryLedger(teamName, laneId),
       readProofIndex: (input) => this.openCodeRuntimeDeliveryProofReader.readProofIndex(input),
       readConfigSnapshot: (teamName) => this.readConfigSnapshot(teamName),
-      addTeamNotification: (notification) =>
-        NotificationManager.getInstance().addTeamNotification(notification),
+      addTeamNotification: async (notification) => {
+        await NotificationManager.getInstance().addTeamNotification(notification);
+      },
       emitTeamChange: (event) => {
         this.teamChangeEmitter?.(event);
       },
@@ -1439,8 +1441,9 @@ export class TeamProvisioningService {
       enqueueLaunchStateStoreOperation: (teamName, operation) =>
         this.enqueueLaunchStateStoreOperation(teamName, operation),
       readLaunchState: (teamName) => this.launchStateStore.read(teamName).catch(() => null),
-      writeLaunchStateSnapshot: (teamName, snapshot) =>
-        this.writeLaunchStateSnapshotNow(teamName, snapshot),
+      writeLaunchStateSnapshot: async (teamName, snapshot) => {
+        await this.writeLaunchStateSnapshotNow(teamName, snapshot);
+      },
       invalidateRuntimeSnapshotCaches: (teamName) => this.invalidateRuntimeSnapshotCaches(teamName),
       emitMemberSpawnChange: (input) => {
         this.teamChangeEmitter?.({
@@ -1459,8 +1462,9 @@ export class TeamProvisioningService {
       getRun: (runId) => this.runs.get(runId) ?? null,
       isCurrentTrackedRun: (run) => this.isCurrentTrackedRun(run),
       emitMemberSpawnChange: (run, memberName) => this.emitMemberSpawnChange(run, memberName),
-      persistLaunchStateSnapshot: (run, launchPhase) =>
-        this.persistLaunchStateSnapshot(run, launchPhase),
+      persistLaunchStateSnapshot: async (run, launchPhase) => {
+        await this.persistLaunchStateSnapshot(run, launchPhase);
+      },
     };
   private readonly memberSpawnStatusMutationPorts: MemberSpawnStatusMutationPorts<ProvisioningRun> =
     {
@@ -1706,34 +1710,13 @@ export class TeamProvisioningService {
   private readonly liveRuntimeMetadataPorts: ReturnType<
     typeof createTeamProvisioningLiveRuntimeMetadataPorts
   >;
-  private readonly launchExpectedMembersPorts: TeamProvisioningLaunchExpectedMembersPorts =
-    createTeamProvisioningLaunchExpectedMembersPorts({
-      launchStateStore: this.launchStateStore,
-      readBootstrapLaunchSnapshot,
-      membersMetaStore: this.membersMetaStore,
-      inboxReader: this.inboxReader,
-      logger,
-    });
+  private readonly launchExpectedMembersPorts: TeamProvisioningLaunchExpectedMembersPorts;
   private readonly openCodeSecondaryEvidenceOverlayPorts =
     createTeamProvisioningOpenCodeSecondaryEvidenceOverlayPorts({
       getTeamsBasePath,
       nowIso,
     });
-  private readonly launchStateStoreBoundary = new TeamProvisioningLaunchStateStoreBoundary({
-    launchStateStore: this.launchStateStore,
-    membersMetaStore: this.membersMetaStore,
-    getTrackedRunId: (teamName) => this.runTracking.getTrackedRunId(teamName),
-    applyOpenCodeSecondaryEvidenceOverlay: (params) =>
-      this.applyOpenCodeSecondaryEvidenceOverlay(params),
-    applyBootstrapStallOverlay: (snapshot) =>
-      this.applyOpenCodeSecondaryBootstrapStallOverlay(snapshot),
-    areSnapshotsSemanticallyEqual: areLaunchStateSnapshotsSemanticallyEqual,
-    clearBootstrapState,
-    invalidateRuntimeSnapshotCaches: (teamName) => this.invalidateRuntimeSnapshotCaches(teamName),
-    logDebug: (message) => logger.debug(message),
-    nowMs: () => Date.now(),
-    noopRefreshMs: TeamProvisioningService.LAUNCH_STATE_NOOP_REFRESH_MS,
-  });
+  private readonly launchStateStoreBoundary: TeamProvisioningLaunchStateStoreBoundary;
   private readonly launchFailureArtifactPackRunIds = new Set<string>();
   private readonly failedOpenCodeSecondaryRetryInFlightByTeam = new Map<
     string,
@@ -2018,6 +2001,28 @@ export class TeamProvisioningService {
     private readonly memberWorktreeManager: TeamMemberWorktreeManager = new TeamMemberWorktreeManager(),
     private readonly attachmentStore: TeamAttachmentStore = new TeamAttachmentStore()
   ) {
+    this.launchExpectedMembersPorts = createTeamProvisioningLaunchExpectedMembersPorts({
+      launchStateStore: this.launchStateStore,
+      readBootstrapLaunchSnapshot,
+      membersMetaStore: this.membersMetaStore,
+      inboxReader: this.inboxReader,
+      logger,
+    });
+    this.launchStateStoreBoundary = new TeamProvisioningLaunchStateStoreBoundary({
+      launchStateStore: this.launchStateStore,
+      membersMetaStore: this.membersMetaStore,
+      getTrackedRunId: (teamName) => this.runTracking.getTrackedRunId(teamName),
+      applyOpenCodeSecondaryEvidenceOverlay: (params) =>
+        this.applyOpenCodeSecondaryEvidenceOverlay(params),
+      applyBootstrapStallOverlay: (snapshot) =>
+        this.applyOpenCodeSecondaryBootstrapStallOverlay(snapshot),
+      areSnapshotsSemanticallyEqual: areLaunchStateSnapshotsSemanticallyEqual,
+      clearBootstrapState,
+      invalidateRuntimeSnapshotCaches: (teamName) => this.invalidateRuntimeSnapshotCaches(teamName),
+      logDebug: (message) => logger.debug(message),
+      nowMs: () => Date.now(),
+      noopRefreshMs: TeamProvisioningService.LAUNCH_STATE_NOOP_REFRESH_MS,
+    });
     this.liveRuntimeMetadataPorts = createTeamProvisioningLiveRuntimeMetadataPorts({
       runs: this.runs,
       runtimeAdapterRunByTeam: this.runtimeAdapterRunByTeam,
@@ -2054,7 +2059,7 @@ export class TeamProvisioningService {
         maybeShowToolApprovalOsNotification: (run, approval) =>
           this.maybeShowToolApprovalOsNotification(run, approval),
         dismissApprovalNotification: (requestId) => this.dismissApprovalNotification(requestId),
-        getTrackedRunId: (teamName) => this.runTracking.getTrackedRunId(teamName),
+        getTrackedRunId: (teamName) => this.runTracking.getTrackedRunId(teamName) ?? undefined,
         getRun: (runId) => this.runs.get(runId),
         inFlightResponses: this.inFlightResponses,
         runtimeToolApprovalCoordinator: this.runtimeToolApprovalCoordinator,
@@ -2983,16 +2988,9 @@ export class TeamProvisioningService {
     throw new Error('Team launch cancelled by app shutdown');
   }
 
-  private async buildTeamRuntimeLaunchArgsPlan(input: {
-    teamName: string;
-    providerId: TeamProviderId;
-    launchIdentity?: ProviderModelLaunchIdentity | null;
-    envResolution: ProvisioningEnvResolution;
-    extraArgs?: string[];
-    inheritedProviderArgs?: string[];
-    includeAnthropicHelper: boolean;
-    contextLabel: string;
-  }): Promise<TeamRuntimeLaunchArgsPlan> {
+  private async buildTeamRuntimeLaunchArgsPlan(
+    input: BuildTeamRuntimeLaunchArgsPlanInput
+  ): Promise<TeamRuntimeLaunchArgsPlan> {
     return buildTeamRuntimeLaunchArgsPlanHelper(input, {
       buildRuntimeTurnSettledHookSettingsArgs: (providerId) =>
         buildRuntimeTurnSettledHookSettingsArgsHelper(
@@ -3343,8 +3341,9 @@ export class TeamProvisioningService {
       enqueueLaunchStateStoreOperation: (teamName, operation) =>
         this.enqueueLaunchStateStoreOperation(teamName, operation),
       readLaunchState: (teamName) => this.launchStateStore.read(teamName),
-      writeLaunchStateSnapshot: (teamName, snapshot) =>
-        this.writeLaunchStateSnapshotNow(teamName, snapshot),
+      writeLaunchStateSnapshot: async (teamName, snapshot) => {
+        await this.writeLaunchStateSnapshotNow(teamName, snapshot);
+      },
       invalidateRuntimeSnapshotCaches: (teamName) => this.invalidateRuntimeSnapshotCaches(teamName),
       emitTeamChange: (event) => this.teamChangeEmitter?.(event),
       logDebug: (message) => logger.debug(message),
@@ -3899,7 +3898,7 @@ export class TeamProvisioningService {
 
   private persistSentMessage(teamName: string, message: InboxMessage): void {
     persistTeamProvisioningSentMessage(teamName, message, {
-      createController,
+      createController: (input) => createController(input),
       getClaudeBasePath,
       logger,
     });
@@ -3907,7 +3906,7 @@ export class TeamProvisioningService {
 
   private persistInboxMessage(teamName: string, recipient: string, message: InboxMessage): void {
     persistTeamProvisioningInboxMessage(teamName, recipient, message, {
-      createController,
+      createController: (input) => createController(input),
       getClaudeBasePath,
       logger,
       emitRuntimeDeliveryReplyAdvisoryRefresh: (teamName, message) =>
@@ -4799,7 +4798,7 @@ export class TeamProvisioningService {
    * Reattaches all stream listeners and resends the prompt.
    */
   private async respawnAfterAuthFailure(run: ProvisioningRun): Promise<void> {
-    await respawnCliAfterAuthFailure(
+    await respawnCliAfterAuthFailure<ProvisioningRun>(
       run,
       {
         logger,
@@ -4830,20 +4829,27 @@ export class TeamProvisioningService {
         getStopAllTeamsGeneration: () => this.stopAllTeamsGeneration,
         isStopAllTeamsGenerationChanged: (stopAllGenerationAtStart) =>
           this.stopAllTeamsGeneration !== stopAllGenerationAtStart,
-        stopFilesystemMonitor: (provisioningRun) => this.stopFilesystemMonitor(provisioningRun),
-        stopStallWatchdog: (provisioningRun) => this.stopStallWatchdog(provisioningRun),
+        stopFilesystemMonitor: (provisioningRun) =>
+          this.stopFilesystemMonitor(provisioningRun as ProvisioningRun),
+        stopStallWatchdog: (provisioningRun) =>
+          this.stopStallWatchdog(provisioningRun as ProvisioningRun),
         killTeamProcess,
         updateProgress,
         extractCliLogsFromRun,
-        cleanupRun: (provisioningRun) => this.cleanupRun(provisioningRun),
-        attachStdoutHandler: (provisioningRun) => this.attachStdoutHandler(provisioningRun),
-        attachStderrHandler: (provisioningRun) => this.attachStderrHandler(provisioningRun),
-        startStallWatchdog: (provisioningRun) => this.startStallWatchdog(provisioningRun),
+        cleanupRun: (provisioningRun) => this.cleanupRun(provisioningRun as ProvisioningRun),
+        attachStdoutHandler: (provisioningRun) =>
+          this.attachStdoutHandler(provisioningRun as ProvisioningRun),
+        attachStderrHandler: (provisioningRun) =>
+          this.attachStderrHandler(provisioningRun as ProvisioningRun),
+        startStallWatchdog: (provisioningRun) =>
+          this.startStallWatchdog(provisioningRun as ProvisioningRun),
         startFilesystemMonitor: (provisioningRun, request) =>
-          this.startFilesystemMonitor(provisioningRun, request),
-        tryCompleteAfterTimeout: (provisioningRun) => this.tryCompleteAfterTimeout(provisioningRun),
+          this.startFilesystemMonitor(provisioningRun as ProvisioningRun, request),
+        tryCompleteAfterTimeout: (provisioningRun) =>
+          this.tryCompleteAfterTimeout(provisioningRun as ProvisioningRun),
         getProvisioningRunTimeoutMs,
-        handleProcessExit: (provisioningRun, code) => this.handleProcessExit(provisioningRun, code),
+        handleProcessExit: (provisioningRun, code) =>
+          this.handleProcessExit(provisioningRun as ProvisioningRun, code),
       },
       { preflightAuthRetryDelayMs: PREFLIGHT_AUTH_RETRY_DELAY_MS }
     );
@@ -5395,12 +5401,15 @@ export class TeamProvisioningService {
           logTaskReadWarning: (message) => logger.warn(message),
           buildNativeAppManagedBootstrapSpecsWithDiagnostics,
           buildRuntimeBootstrapMemberMcpLaunchConfigs: (input) =>
-            this.buildRuntimeBootstrapMemberMcpLaunchConfigs(input),
+            this.buildRuntimeBootstrapMemberMcpLaunchConfigs({
+              ...input,
+              run: input.run as ProvisioningRun,
+            }),
           validateAgentTeamsMcpRuntime: (createdMcpConfigPath, options) =>
             this.providerRuntime.validateAgentTeamsMcpRuntime(
-              claudePath,
+              setup.claudePath,
               request.cwd,
-              shellEnv,
+              setup.shellEnv,
               createdMcpConfigPath,
               options
             ),
@@ -5424,7 +5433,8 @@ export class TeamProvisioningService {
             this.seedLeadBootstrapPermissionRules(teamName, cwd),
           spawnCli,
           updateProgress,
-          attachStdoutHandler: (provisioningRun) => this.attachStdoutHandler(provisioningRun),
+          attachStdoutHandler: (provisioningRun) =>
+            this.attachStdoutHandler(provisioningRun as ProvisioningRun),
           attachStderrHandler: (provisioningRun) =>
             this.attachStderrHandler(provisioningRun as ProvisioningRun),
           startStallWatchdog: (provisioningRun) =>
@@ -5708,11 +5718,20 @@ export class TeamProvisioningService {
     foregroundMessages: InboxMessage[];
   }): Promise<Set<string>> {
     return getOpenCodeAgendaSyncRecoveryBypassMessageIdsHelper(input, {
-      resolveOpenCodeMemberDeliveryIdentity: (teamName, memberName) =>
-        this.openCodeRuntimeRecoveryIdentity.resolveOpenCodeMemberDeliveryIdentity(
-          teamName,
-          memberName
-        ),
+      resolveOpenCodeMemberDeliveryIdentity: async (teamName, memberName) => {
+        const identity =
+          await this.openCodeRuntimeRecoveryIdentity.resolveOpenCodeMemberDeliveryIdentity(
+            teamName,
+            memberName
+          );
+        return identity.ok
+          ? {
+              ok: true,
+              laneId: identity.laneId,
+              canonicalMemberName: identity.canonicalMemberName,
+            }
+          : null;
+      },
       readLaneState: async (teamName, laneId) => {
         const laneIndex = await readOpenCodeRuntimeLaneIndex(getTeamsBasePath(), teamName).catch(
           () => null
@@ -5781,7 +5800,9 @@ export class TeamProvisioningService {
       notifyAliveTeamsAboutLanguageChangeWithPorts(newLangCode, {
         getAliveTeams: () => this.getAliveTeams(),
         readConfigForStrictDecision: (teamName) => this.readConfigForStrictDecision(teamName),
-        updateConfig: (teamName, update) => this.configReader.updateConfig(teamName, update),
+        updateConfig: async (teamName, update) => {
+          await this.configReader.updateConfig(teamName, update);
+        },
         sendMessageToTeam: (teamName, message) => this.sendMessageToTeam(teamName, message),
         getSystemLocale,
         resolveLanguageName,
@@ -6242,7 +6263,7 @@ export class TeamProvisioningService {
   }
 
   private async recoverDeterministicBootstrapCompletion(run: ProvisioningRun): Promise<void> {
-    await recoverDeterministicBootstrapCompletionHelper(run, {
+    await recoverDeterministicBootstrapCompletionHelper<ProvisioningRun>(run, {
       isProvisioningRunPromotedToAlive: (targetRun) =>
         this.isProvisioningRunPromotedToAlive(targetRun),
       hasPendingDeterministicFirstRealTurn: (targetRun) =>

@@ -20,12 +20,11 @@ export interface TeamProvisioningMessagePersistencePorts {
   logger: TeamProvisioningMessagePersistenceLogger;
 }
 
-export interface TeamProvisioningInboxMessagePersistencePorts
-  extends TeamProvisioningMessagePersistencePorts {
+export interface TeamProvisioningInboxMessagePersistencePorts extends TeamProvisioningMessagePersistencePorts {
   emitRuntimeDeliveryReplyAdvisoryRefresh(teamName: string, message: InboxMessage): void;
 }
 
-export interface TeamProvisioningPersistedMessagePayload {
+export interface TeamProvisioningPersistedMessagePayload extends Record<string, unknown> {
   from: InboxMessage['from'];
   to: InboxMessage['to'];
   text: InboxMessage['text'];
@@ -57,7 +56,9 @@ export type TeamProvisioningPersistedInboxMessagePayload = Omit<
   member: string;
 };
 
-function mapControllerMessagePayload(message: InboxMessage): TeamProvisioningPersistedMessagePayload {
+function mapControllerMessagePayload(
+  message: InboxMessage
+): TeamProvisioningPersistedMessagePayload {
   return {
     from: message.from,
     to: message.to,

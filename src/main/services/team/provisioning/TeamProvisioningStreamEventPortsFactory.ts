@@ -1,4 +1,4 @@
-import { killTeamProcess } from '@main/utils/childProcess';
+import { killProcessTree } from '@main/utils/childProcess';
 
 import { boundProgressAssistantParts } from '../progressPayload';
 
@@ -25,6 +25,11 @@ import type {
   TeamProvisioningStreamEventPorts,
   TeamProvisioningStreamRun,
 } from './TeamProvisioningStreamEvents';
+import type { ChildProcess } from 'child_process';
+
+function killTeamProcess(child: ChildProcess | null | undefined): void {
+  killProcessTree(child, 'SIGKILL');
+}
 
 export type TeamProvisioningStreamEventPortsFactoryRun = TeamProvisioningStreamRun &
   TeamProvisioningTraceRun &

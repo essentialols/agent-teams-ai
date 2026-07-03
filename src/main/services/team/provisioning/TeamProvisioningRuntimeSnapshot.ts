@@ -10,6 +10,7 @@ import {
   normalizeOptionalTeamProviderId,
 } from '@shared/utils/teamProvider';
 
+import { type TeamAgentRuntimeResourceHistoryRecordInput } from '../TeamAgentRuntimeResourceHistory';
 import {
   choosePreferredLaunchSnapshot,
   readBootstrapLaunchSnapshot,

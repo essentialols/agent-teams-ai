@@ -3,7 +3,6 @@ import {
   buildPlannedMemberLaneIdentity,
 } from '@features/team-runtime-lanes';
 import { getTeamsBasePath } from '@main/utils/pathDecoder';
-import { createInitialMemberSpawnStatusEntry } from '@shared/types';
 import { isLeadMember } from '@shared/utils/leadDetection';
 import { randomUUID } from 'crypto';
 
@@ -15,8 +14,9 @@ import {
   recoverStaleOpenCodeRuntimeLaneIndexEntry,
   upsertOpenCodeRuntimeLaneIndexEntry,
 } from '../opencode/store/OpenCodeRuntimeManifestEvidenceReader';
+import { snapshotToMemberSpawnStatuses } from '../TeamLaunchStateEvaluator';
 
-import { snapshotToMemberSpawnStatuses } from './TeamProvisioningLaunchStateProjection';
+import { createInitialMemberSpawnStatusEntry } from './TeamProvisioningMemberSpawnStatusPolicy';
 import {
   launchSingleMixedSecondaryLaneWithPorts,
   type MixedSecondaryLaneLaunchFlowPorts,
@@ -42,8 +42,9 @@ import {
   type StaleMixedSecondaryRecoveryPorts,
 } from './TeamProvisioningStaleMixedSecondaryRecovery';
 
+import type { TeamRuntimeStopInput } from '../runtime';
 import type { MixedSecondaryRuntimeLaneState } from './TeamProvisioningSecondaryRuntimeRuns';
-import type { PersistedTeamLaunchSnapshot, TeamRuntimeStopInput } from '@shared/types';
+import type { PersistedTeamLaunchSnapshot } from '@shared/types';
 
 function nowIso(): string {
   return new Date().toISOString();

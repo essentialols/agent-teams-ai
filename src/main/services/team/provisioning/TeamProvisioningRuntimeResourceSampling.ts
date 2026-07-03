@@ -132,7 +132,7 @@ export class TeamProvisioningRuntimeResourceSampling {
       listWindowsProcessTable,
     },
     private readonly pidUsageReader: RuntimeResourceSamplingPidUsageReader = {
-      read: (pids, options) => pidusage(pids, options),
+      read: (pids, options) => pidusage(Array.isArray(pids) ? [...pids] : [pids], options),
     }
   ) {
     this.agentRuntimeResourceHistory = new TeamAgentRuntimeResourceHistory({
@@ -462,9 +462,18 @@ export class TeamProvisioningRuntimeResourceSampling {
     processRows?: readonly RuntimeTelemetryProcessTableRow[] | null,
     rootOwnersByPid?: ReadonlyMap<number, ReadonlySet<string>>
   ): Map<number, RuntimeUsageProcessTree> {
-    const treeInput = Array.isArray(input)
-      ? { rootPids: input, processRows: processRows ?? null, rootOwnersByPid }
-      : input;
+    type RuntimeUsageProcessTreeInputObject = {
+      rootPids: readonly number[];
+      processRows: readonly RuntimeTelemetryProcessTableRow[] | null;
+      rootOwnersByPid?: ReadonlyMap<number, ReadonlySet<string>>;
+    };
+    const treeInput: RuntimeUsageProcessTreeInputObject = Array.isArray(input)
+      ? {
+          rootPids: input as readonly number[],
+          processRows: processRows ?? null,
+          rootOwnersByPid,
+        }
+      : (input as RuntimeUsageProcessTreeInputObject);
     return buildRuntimeUsageProcessTrees({
       ...treeInput,
       limits: {

@@ -555,7 +555,6 @@ export async function updateOpenCodeRuntimeMemberLiveness<Run extends OpenCodeRu
       ? previousMember?.pidSource
       : undefined;
   const persistedIdentity = resolvePersistedRuntimeMemberIdentity({
-    teamName: input.teamName,
     memberName: input.memberName,
     previousMember,
     trackedRun: ports.getTrackedRun(input.teamName),
@@ -623,9 +622,7 @@ export function applyOpenCodeRuntimeBootstrapCheckinToTrackedRun<
   input: OpenCodeRuntimeLivenessInput,
   ports: Pick<
     OpenCodeRuntimeCheckinPorts<Run>,
-    | 'getTrackedRun'
-    | 'syncMemberTaskActivityForRuntimeTransition'
-    | 'syncMemberLaunchGraceCheck'
+    'getTrackedRun' | 'syncMemberTaskActivityForRuntimeTransition' | 'syncMemberLaunchGraceCheck'
   >
 ): { run: Run; changed: boolean } | null {
   const run = ports.getTrackedRun(input.teamName);

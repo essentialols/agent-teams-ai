@@ -93,6 +93,12 @@ describe('TeamProvisioningOpenCodeRuntimeRecoveryIdentity', () => {
       ok: true,
       canonicalMemberName: 'Bob',
       laneId: 'secondary:opencode:bob',
+      laneIdentity: {
+        laneId: 'secondary:opencode:bob',
+        laneKind: 'secondary',
+        laneOwnerProviderId: 'opencode',
+      },
+      memberRuntimeCwd: '/fake/member',
     });
   });
 
@@ -237,6 +243,12 @@ describe('TeamProvisioningOpenCodeRuntimeRecoveryIdentity', () => {
       ok: true,
       canonicalMemberName: 'Bob',
       laneId: 'secondary:opencode:bob',
+      laneIdentity: {
+        laneId: 'secondary:opencode:bob',
+        laneKind: 'secondary',
+        laneOwnerProviderId: 'opencode',
+      },
+      memberRuntimeCwd: '/fake/member',
     });
   });
 

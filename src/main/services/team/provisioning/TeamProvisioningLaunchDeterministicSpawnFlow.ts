@@ -80,12 +80,9 @@ export interface DeterministicLaunchMcpConfigBuilder {
   removeConfigFile(filePath: string): Promise<void> | void;
 }
 
-export interface DeterministicLaunchSpawnEnvResolution
-  extends TeamRuntimeLaunchArgsPlanEnvResolutionLike {
+export interface DeterministicLaunchSpawnEnvResolution extends TeamRuntimeLaunchArgsPlanEnvResolutionLike {
   env: NodeJS.ProcessEnv;
   geminiRuntimeAuth?: GeminiRuntimeAuthState | null;
-  anthropicApiKeyHelper?: { directory: string } | null;
-  [key: string]: unknown;
 }
 
 export interface RunDeterministicLaunchSpawnFlowInput<
@@ -147,11 +144,7 @@ export interface RunDeterministicLaunchSpawnFlowPorts<
   nowMs(): number;
   getStopAllTeamsGeneration(): number;
   seedLeadBootstrapPermissionRules(teamName: string, cwd: string): Promise<void>;
-  spawnCli(
-    command: string,
-    args: string[],
-    options: SpawnOptions
-  ): ChildProcess;
+  spawnCli(command: string, args: string[], options: SpawnOptions): ChildProcess;
   updateProgress(
     run: TRun,
     state: Exclude<TeamProvisioningState, 'idle'>,
@@ -218,9 +211,7 @@ export function isDeterministicLaunchSpawnCancelled(input: {
   );
 }
 
-async function cleanupAnthropicHelperIfPresent<
-  TRun extends DeterministicLaunchSpawnFlowRun,
->(
+async function cleanupAnthropicHelperIfPresent<TRun extends DeterministicLaunchSpawnFlowRun>(
   input: {
     provisioningEnv: DeterministicLaunchSpawnEnvResolution;
   },
@@ -370,9 +361,7 @@ export function registerDeterministicLaunchChildHandlers<
   });
 }
 
-export async function runDeterministicLaunchSpawnFlow<
-  TRun extends DeterministicLaunchSpawnFlowRun,
->(
+export async function runDeterministicLaunchSpawnFlow<TRun extends DeterministicLaunchSpawnFlowRun>(
   input: RunDeterministicLaunchSpawnFlowInput<TRun>,
   ports: RunDeterministicLaunchSpawnFlowPorts<TRun>
 ): Promise<TeamLaunchResponse> {
@@ -535,10 +524,7 @@ export async function runDeterministicLaunchSpawnFlow<
       stdio: ['pipe', 'pipe', 'pipe'],
     });
   } catch (error) {
-    await cleanupDeterministicLaunchSpawnFailure(
-      { request, run, runId, provisioningEnv },
-      ports
-    );
+    await cleanupDeterministicLaunchSpawnFailure({ request, run, runId, provisioningEnv }, ports);
     throw error;
   }
 

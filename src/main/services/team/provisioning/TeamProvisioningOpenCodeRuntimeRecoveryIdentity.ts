@@ -9,16 +9,7 @@ import type {
   OpenCodeMemberIdentityResolution,
 } from '../opencode/delivery/OpenCodeMemberMessageDeliveryService';
 
-export type OpenCodeMemberDeliveryIdentityResolution =
-  | {
-      ok: true;
-      canonicalMemberName: string;
-      laneId: string;
-    }
-  | {
-      ok: false;
-      reason: 'recipient_is_not_opencode' | 'recipient_removed' | 'opencode_recipient_unavailable';
-    };
+export type OpenCodeMemberDeliveryIdentityResolution = OpenCodeMemberIdentityResolution;
 
 export interface OpenCodeRuntimeManifestRunEvidence {
   activeRunId?: string | null;
@@ -69,14 +60,7 @@ export function resolveOpenCodeMemberDeliveryIdentityFromDirectory(input: {
     input.memberName,
     input.directory
   );
-  if (!laneIdentity.ok) {
-    return laneIdentity;
-  }
-  return {
-    ok: true,
-    canonicalMemberName: laneIdentity.canonicalMemberName,
-    laneId: laneIdentity.laneId,
-  };
+  return laneIdentity;
 }
 
 export function resolveOpenCodeMembersForRuntimeLaneFromDirectory(input: {

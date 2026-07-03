@@ -394,16 +394,14 @@ export async function reconcileBootstrapTranscriptSuccessesForRun<
       memberName,
       Number.isFinite(acceptedAtMs) ? acceptedAtMs : null
     );
-    if (transcriptOutcome?.kind !== 'success') {
+    if (!transcriptOutcome || !('observedAt' in transcriptOutcome)) {
       continue;
     }
     ports.confirmMemberSpawnStatusFromTranscript(run, memberName, transcriptOutcome.observedAt);
   }
 }
 
-export async function maybeAuditMemberSpawnStatusesForRun<
-  TRun extends MemberSpawnStatusAuditRun,
->(
+export async function maybeAuditMemberSpawnStatusesForRun<TRun extends MemberSpawnStatusAuditRun>(
   run: TRun,
   ports: MemberSpawnStatusAuditPorts<TRun>,
   options?: { force?: boolean }

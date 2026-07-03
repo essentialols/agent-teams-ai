@@ -18,6 +18,8 @@ export interface TeamProvisioningLeadRelayCaptureLike {
 export interface TeamProvisioningLeadAssistantOutputRun {
   provisioningOutputParts: string[];
   provisioningOutputIndexByMessageId: Map<string, number>;
+  stallWarningIndex: number | null;
+  apiRetryWarningIndex: number | null;
 }
 
 export interface TeamProvisioningLeadTextRun {
@@ -52,9 +54,7 @@ export interface PushLiveLeadProcessMessagePorts<TRun extends TeamProvisioningLi
   cacheLimit: number;
 }
 
-export interface LiveLeadProcessMessageStatePorts<
-  TRun extends TeamProvisioningLiveLeadMessageRun,
-> {
+export interface LiveLeadProcessMessageStatePorts<TRun extends TeamProvisioningLiveLeadMessageRun> {
   liveLeadProcessMessages: Map<string, InboxMessage[]>;
   getTrackedRunId(teamName: string): string | null;
   getRun(runId: string): TRun | undefined;
@@ -69,9 +69,7 @@ export interface PushLiveLeadTextMessagePorts<TRun extends TeamProvisioningLeadT
   leadTextEmitThrottleMs: number;
 }
 
-export function joinLeadRelayCaptureText(
-  capture: TeamProvisioningLeadRelayCaptureLike
-): string {
+export function joinLeadRelayCaptureText(capture: TeamProvisioningLeadRelayCaptureLike): string {
   return capture.textParts.join(capture.textJoinMode === 'stream' ? '' : '\n').trim();
 }
 

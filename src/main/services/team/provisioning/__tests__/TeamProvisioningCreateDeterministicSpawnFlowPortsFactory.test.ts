@@ -4,6 +4,7 @@ import {
   createTeamProvisioningCreateDeterministicSpawnFlowBoundary,
   type TeamProvisioningCreateDeterministicSpawnFlowBoundaryDeps,
 } from '../TeamProvisioningCreateDeterministicSpawnFlowPortsFactory';
+import { buildCreateTeamMetaPayload } from '../TeamProvisioningCreateTeamFlow';
 
 import type { DeterministicCreateSpawnFlowRun } from '../TeamProvisioningCreateDeterministicSpawnFlow';
 import type { TeamCreateRequest, TeamProvisioningProgress } from '@shared/types';
@@ -147,20 +148,16 @@ describe('createTeamProvisioningCreateDeterministicSpawnFlowBoundary', () => {
     const run = createRun();
     const cancellationOptions = { isCancelled: () => false };
 
-    await ports.teamMetaStore.writeMeta(request.teamName, {
-      cwd: request.cwd,
-      createdAt: 123,
-    });
+    const metaPayload = buildCreateTeamMetaPayload(request, null, 123);
+
+    await ports.teamMetaStore.writeMeta(request.teamName, metaPayload);
     await ports.validateAgentTeamsMcpRuntime('/tmp/mcp.json', cancellationOptions);
     ports.attachStdoutHandler(run);
     ports.startFilesystemMonitor(run, request);
     ports.cleanupRun(run);
     ports.unregisterRun(run.runId, request.teamName);
 
-    expect(deps.writeTeamMeta).toHaveBeenCalledWith(request.teamName, {
-      cwd: request.cwd,
-      createdAt: 123,
-    });
+    expect(deps.writeTeamMeta).toHaveBeenCalledWith(request.teamName, metaPayload);
     expect(deps.validateAgentTeamsMcpRuntime).toHaveBeenCalledWith({
       claudePath: '/bin/claude',
       cwd: request.cwd,

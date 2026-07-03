@@ -21,6 +21,7 @@ import {
 import {
   buildDeterministicCreateSpawnArgs,
   materializeDeterministicCreateTeamBootstrapFiles,
+  type TeamProvisioningCreateBootstrapRun,
   type TeamProvisioningCreateMcpConfigBuilder,
   type TeamProvisioningCreateMembersMetaStore,
   type TeamProvisioningCreateTeamMetaStore,
@@ -52,7 +53,7 @@ import type {
 
 type SpawnedChild = ReturnType<typeof spawn>;
 
-export interface DeterministicCreateSpawnFlowRun {
+export interface DeterministicCreateSpawnFlowRun extends TeamProvisioningCreateBootstrapRun {
   runId: string;
   teamName: string;
   progress: TeamProvisioningProgress;
@@ -219,9 +220,7 @@ async function cleanupDeterministicCreateMaterializationFailure<
   await cleanupDeterministicCreateMaterializedFiles(run, request, ports);
 }
 
-async function cleanupDeterministicCreateSpawnFailure<
-  TRun extends DeterministicCreateSpawnFlowRun,
->(
+async function cleanupDeterministicCreateSpawnFailure<TRun extends DeterministicCreateSpawnFlowRun>(
   run: TRun,
   request: TeamCreateRequest,
   provisioningEnv: ProvisioningEnvResolution,
@@ -254,9 +253,7 @@ async function cleanupDeterministicCreateMaterializedFiles<
   await fs.promises.rm(targets.tasksDir, { recursive: true, force: true }).catch(() => {});
   await removeDeterministicBootstrapSpecFile(targets.bootstrapSpecPath).catch(() => {});
   run.bootstrapSpecPath = null;
-  await removeDeterministicBootstrapUserPromptFile(targets.bootstrapUserPromptPath).catch(
-    () => {}
-  );
+  await removeDeterministicBootstrapUserPromptFile(targets.bootstrapUserPromptPath).catch(() => {});
   run.bootstrapUserPromptPath = null;
   if (targets.mcpConfigPath) {
     await ports.mcpConfigBuilder.removeConfigFile(targets.mcpConfigPath).catch(() => {});

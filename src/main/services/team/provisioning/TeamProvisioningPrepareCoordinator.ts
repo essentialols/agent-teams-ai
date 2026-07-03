@@ -473,7 +473,7 @@ export class TeamProvisioningPrepareCoordinator {
           targetCwd,
           resolvedEnv.env,
           providerId,
-          resolvedEnv.providerArgs
+          resolvedEnv.providerArgs ?? []
         );
         if (diagnostic.warning) {
           const prefixedWarning =

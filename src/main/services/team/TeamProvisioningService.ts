@@ -38,7 +38,6 @@ import {
 import { killProcessByPid } from '@main/utils/processKill';
 import { shouldAutoAllow } from '@main/utils/toolApprovalRules';
 import { wrapAgentBlock } from '@shared/constants/agentBlocks';
-import { CROSS_TEAM_SENT_SOURCE, CROSS_TEAM_SOURCE } from '@shared/constants/crossTeam';
 import { type AttachmentPayload, DEFAULT_TOOL_APPROVAL_SETTINGS } from '@shared/types/team';
 import { resolveLanguageName } from '@shared/utils/agentLanguage';
 import { parseCliArgs } from '@shared/utils/cliArgsParser';
@@ -46,7 +45,6 @@ import { getErrorMessage } from '@shared/utils/errorHandling';
 import {
   isMeaningfulBootstrapCheckInMessage,
   type ParsedPermissionRequest,
-  parsePermissionRequest,
 } from '@shared/utils/inboxNoise';
 import { isLeadMember } from '@shared/utils/leadDetection';
 import { createLogger } from '@shared/utils/logger';
@@ -182,17 +180,12 @@ import {
   materializeDeterministicCreateTeamBootstrapFiles,
 } from './provisioning/TeamProvisioningCreateTeamFlow';
 import {
-  buildLeadActiveCrossTeamReplyHints,
   clearPendingCrossTeamReplyExpectation as clearPendingCrossTeamReplyExpectationInState,
-  createCrossTeamLeadSuppressionState,
   type CrossTeamDeliveredLeadBlock,
   isCrossTeamPseudoRecipientName,
   isCrossTeamToolRecipientName,
-  markCrossTeamReplyToOwnOutbound,
   matchCrossTeamLeadInboxMessages as matchCrossTeamLeadInboxMessagesHelper,
   registerPendingCrossTeamReplyExpectation as registerPendingCrossTeamReplyExpectationInState,
-  rememberRecentCrossTeamLeadDeliveryMessageIds,
-  wasRecentlyDeliveredCrossTeamLeadMessage,
 } from './provisioning/TeamProvisioningCrossTeamRelayHelpers';
 import { buildProvisioningTraceDetail } from './provisioning/TeamProvisioningDiagnosticsHelpers';
 import {
@@ -222,17 +215,10 @@ import {
   waitForInboxRelayInFlight,
 } from './provisioning/TeamProvisioningInboxRelayCandidates';
 import {
-  buildLeadInboxRelayPrompt,
   buildMemberInboxRelayPrompt,
   DEFAULT_INBOX_RELAY_BATCH_SIZE,
-  getLeadInboxRelayNoiseIds,
-  getLeadRelayReadCommitBatch,
   hasStableInboxMessageId,
-  planLeadInboxRelayReadOnlyMessages,
-  selectActionableLeadRelayUnread,
-  selectLeadInboxRelayBatch,
   selectMemberInboxRelayBatch,
-  shouldDeferSameTeamMessage as shouldDeferSameTeamMessageHelper,
   splitMemberInboxRelayUnread,
 } from './provisioning/TeamProvisioningInboxRelayPolicy';
 import {
@@ -311,19 +297,17 @@ import {
   getLeadContextUsageForTeam,
   updateLeadContextUsageFromUsageForRun,
 } from './provisioning/TeamProvisioningLeadContextUsage';
-import { scanLeadInboxPermissionRequests } from './provisioning/TeamProvisioningLeadPermissionScan';
+import { relayLeadInboxMessagesForTeam } from './provisioning/TeamProvisioningLeadInboxRelayFlow';
 import {
   appendProvisioningAssistantText as appendProvisioningAssistantTextHelper,
   getCurrentLeadSessionId as getCurrentLeadSessionIdHelper,
   getLiveLeadProcessMessages as getLiveLeadProcessMessagesHelper,
-  joinLeadRelayCaptureText,
   pruneLiveLeadMessagesForCleanedRun as pruneLiveLeadMessagesForCleanedRunHelper,
   pushLiveLeadProcessMessage as pushLiveLeadProcessMessageHelper,
   pushLiveLeadTextMessage as pushLiveLeadTextMessageHelper,
   resetLiveLeadTextBuffer as resetLiveLeadTextBufferHelper,
   shiftProvisioningOutputIndexesAfterRemoval as shiftProvisioningOutputIndexesAfterRemovalHelper,
 } from './provisioning/TeamProvisioningLeadProcessMessages';
-import { projectLeadRelayReply } from './provisioning/TeamProvisioningLeadRelayProjection';
 import {
   getPreCompleteCliErrorTextFromRun,
   getRunTrackedCwdFromRun,
@@ -2138,29 +2122,6 @@ export class TeamProvisioningService {
     request: Parameters<typeof buildStallWarningText>[1]
   ): ReturnType<typeof buildStallWarningText> {
     return buildStallWarningText(silenceSec, request);
-  }
-
-  private getLeadRelayReadCommitBatch(
-    input: Omit<
-      Parameters<typeof getLeadRelayReadCommitBatch>[0],
-      'hasAcceptedLeadWorkSyncReport' | 'scheduleLeadProofMissingWorkSyncRecovery'
-    > &
-      Partial<
-        Pick<
-          Parameters<typeof getLeadRelayReadCommitBatch>[0],
-          'hasAcceptedLeadWorkSyncReport' | 'scheduleLeadProofMissingWorkSyncRecovery'
-        >
-      >
-  ): ReturnType<typeof getLeadRelayReadCommitBatch> {
-    return getLeadRelayReadCommitBatch({
-      ...input,
-      hasAcceptedLeadWorkSyncReport:
-        input.hasAcceptedLeadWorkSyncReport ??
-        ((report) => this.hasAcceptedLeadWorkSyncReport(report)),
-      scheduleLeadProofMissingWorkSyncRecovery:
-        input.scheduleLeadProofMissingWorkSyncRecovery ??
-        ((recoveryInput) => this.scheduleLeadProofMissingWorkSyncRecovery(recoveryInput)),
-    });
   }
 
   private handleDeterministicBootstrapEvent(
@@ -7496,365 +7457,49 @@ export class TeamProvisioningService {
       }
     }
 
-    const work = (async (): Promise<number> => {
-      const runId =
-        this.runTracking.getAliveRunId(teamName) ?? this.runTracking.getProvisioningRunId(teamName);
-      if (!runId) return 0;
-      const run = this.runs.get(runId);
-      if (!run?.child || run.processKilled || run.cancelRequested) return 0;
-      const isStaleRelayRun = (): boolean =>
-        !this.isCurrentTrackedRun(run) || !run.child || run.processKilled || run.cancelRequested;
-
-      // Permission request scan runs even during provisioning — teammates may need
-      // tool approval before the lead's first turn completes. CLI marks inbox messages
-      // as read after native delivery, so we must scan ALL messages (including read).
-      let config: Awaited<ReturnType<TeamConfigReader['getConfig']>> | null = null;
-      try {
-        config = await this.readConfigForObservation(teamName);
-      } catch {
-        // config not ready yet during early provisioning — skip scan
-      }
-      if (isStaleRelayRun()) return 0;
-      if (config) {
-        const leadName = config.members?.find((m) => isLeadMember(m))?.name?.trim() || 'team-lead';
-        const permissionScanResult = await scanLeadInboxPermissionRequests(
-          { teamName, leadName, run, isStaleRelayRun },
-          {
-            readLeadInboxMessages: (teamName, leadName) =>
-              this.inboxReader.getMessagesFor(teamName, leadName),
-            handleTeammatePermissionRequest: (run, permissionRequest, timestamp) =>
-              this.handleTeammatePermissionRequest(run, permissionRequest, timestamp),
-            markInboxMessagesRead: (teamName, leadName, messages) =>
-              this.markInboxMessagesRead(teamName, leadName, messages),
-          }
-        );
-        if (permissionScanResult === 'stale') return 0;
-      }
-
-      if (!run.provisioningComplete) return 0;
-
-      const relayedIds = this.relayedLeadInboxMessageIds.get(teamName) ?? new Set<string>();
-
-      // Re-read config if needed (already fetched above but guard provisioningComplete path)
-      if (!config) {
-        try {
-          config = await this.readConfigForObservation(teamName);
-        } catch {
-          return 0;
-        }
-      }
-      if (isStaleRelayRun()) return 0;
-      if (!config) return 0;
-
-      const leadName = config.members?.find((m) => isLeadMember(m))?.name?.trim() || 'team-lead';
-      let leadInboxMessages: Awaited<ReturnType<TeamInboxReader['getMessagesFor']>> = [];
-      try {
-        leadInboxMessages = await this.inboxReader.getMessagesFor(teamName, leadName);
-      } catch {
-        return 0;
-      }
-      if (isStaleRelayRun()) return 0;
-
-      await this.refreshMemberSpawnStatusesFromLeadInbox(run);
-      if (isStaleRelayRun()) return 0;
-
-      const unread = leadInboxMessages
-        .filter((m): m is InboxMessage & { messageId: string } => {
-          if (m.read) return false;
-          if (typeof m.text !== 'string' || m.text.trim().length === 0) return false;
-          if (!hasStableInboxMessageId(m)) return false;
-          return !relayedIds.has(m.messageId);
-        })
-        .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
-
-      if (unread.length === 0) return 0;
-
-      const { silentIdleIds, passiveIdleIds, coarseNonIdleNoiseIds } =
-        getLeadInboxRelayNoiseIds(unread);
-
-      const crossTeamSuppression = createCrossTeamLeadSuppressionState({
-        leadInboxMessages,
-        pendingReplies: this.pendingCrossTeamFirstReplies,
-        teamName,
-        now: Date.now(),
-        ttlMs: TeamProvisioningService.RECENT_CROSS_TEAM_DELIVERY_TTL_MS,
-      });
-
-      const wasRecentlyDeliveredCrossTeam = (message: InboxMessage): boolean => {
-        return wasRecentlyDeliveredCrossTeamLeadMessage({
-          message,
-          recentMessageIds: this.recentCrossTeamLeadDeliveryMessageIds,
-          teamName,
-          now: Date.now(),
-          ttlMs: TeamProvisioningService.RECENT_CROSS_TEAM_DELIVERY_TTL_MS,
-        });
-      };
-      const isCrossTeamReplyToOwnOutbound = (message: InboxMessage): boolean => {
-        return markCrossTeamReplyToOwnOutbound(message, crossTeamSuppression);
-      };
-
-      // Category 1: permanently ignored → mark as read.
-      // Includes noise (idle/shutdown), cross-team sender copies, cross-team reply dedup.
-      const { permanentlyIgnored, passiveIdleUnread, readOnlyIgnoredIds, remainingUnread } =
-        planLeadInboxRelayReadOnlyMessages({
-          unread,
-          silentIdleIds,
-          passiveIdleIds,
-          coarseNonIdleNoiseIds,
-          isPermanentlyIgnored: (message) =>
-            message.source === CROSS_TEAM_SENT_SOURCE ||
-            isCrossTeamReplyToOwnOutbound(message) ||
-            wasRecentlyDeliveredCrossTeam(message),
-        });
-      if (permanentlyIgnored.length > 0) {
-        try {
-          await this.markInboxMessagesRead(teamName, leadName, permanentlyIgnored);
-        } catch {
-          // best-effort
-        }
-        for (const key of crossTeamSuppression.matchedTransientReplyKeys) {
-          const [otherTeam, conversationId] = key.split('\0');
-          if (otherTeam && conversationId) {
-            this.clearPendingCrossTeamReplyExpectation(teamName, otherTeam, conversationId);
-          }
-        }
-      }
-
-      if (passiveIdleUnread.length > 0) {
-        try {
-          await this.markInboxMessagesRead(teamName, leadName, passiveIdleUnread);
-          logger.debug(
-            `[${teamName}] lead relay marked ${passiveIdleUnread.length} passive idle message(s) read without relay`
-          );
-        } catch (error) {
-          logger.debug(
-            `[${teamName}] lead relay failed to mark ${passiveIdleUnread.length} passive idle message(s) read: ${
-              error instanceof Error ? error.message : String(error)
-            }`
-          );
-        }
-      }
-
-      if (isStaleRelayRun()) return 0;
-
-      // Category 2: same-team native delivery confirmation (one-to-one pairing).
-      const { nativeMatchedMessageIds, persisted: sameTeamPersisted } =
-        await this.confirmSameTeamNativeMatches(teamName, leadName, remainingUnread);
-
-      // Category 3: deferred by age — source-less messages within grace window of CURRENT run.
-      // NOT marked read (crash safety: if native delivery fails, retry will relay).
-      const runStartedAtMs = Date.parse(run.startedAt);
-      const deferredByAge = remainingUnread.filter(
-        (message) =>
-          !nativeMatchedMessageIds.has(message.messageId) &&
-          shouldDeferSameTeamMessageHelper({
-            message,
-            leadName,
-            runStartedAtMs,
-            nowMs: Date.now(),
-            runStartSkewMs: TeamProvisioningService.SAME_TEAM_RUN_START_SKEW_MS,
-            nativeDeliveryGraceMs: TeamProvisioningService.SAME_TEAM_NATIVE_DELIVERY_GRACE_MS,
-          })
-      );
-      const deferredIds = new Set(deferredByAge.map((m) => m.messageId));
-
-      // Category 4: teammate permission requests — filter from actionable so they're
-      // NOT relayed to the lead. The actual interception + ToolApprovalRequest emission
-      // is handled by the early scan above (which checks processedPermissionRequestIds).
-      const permissionRequestIds = new Set(
-        remainingUnread
-          .filter((m) => !deferredIds.has(m.messageId) && parsePermissionRequest(m.text) !== null)
-          .map((m) => m.messageId)
-      );
-
-      // Actionable: everything not in any category.
-      const actionableUnread = selectActionableLeadRelayUnread({
-        remainingUnread,
-        nativeMatchedMessageIds,
-        deferredIds,
-        permissionRequestIds,
-      });
-
-      // Layer 3: schedule retry timers.
-      if (nativeMatchedMessageIds.size > 0 && !sameTeamPersisted) {
-        this.scheduleSameTeamPersistRetry(teamName);
-      }
-      if (deferredByAge.length > 0) {
-        this.scheduleSameTeamDeferredRetry(teamName);
-      }
-
-      if (actionableUnread.length === 0) return 0;
-
-      const { batch, replyVisibility, hasPendingFollowUpRelay } = selectLeadInboxRelayBatch({
-        actionableUnread,
-        unread,
-        readOnlyIgnoredIds,
-        maxRelay: DEFAULT_INBOX_RELAY_BATCH_SIZE,
-      });
-      const teammateRoster = (config.members ?? [])
-        .filter((member) => {
-          const name = member.name?.trim();
-          return name && name !== leadName;
-        })
-        .map((member) => ({
-          name: member.name.trim(),
-          ...(member.role?.trim() ? { role: member.role.trim() } : {}),
-        }));
-      const workSyncControlUrl = await this.providerRuntime.resolveControlApiBaseUrl();
-      run.activeCrossTeamReplyHints = buildLeadActiveCrossTeamReplyHints(batch);
-      const message = buildLeadInboxRelayPrompt({
-        teamName,
-        leadName,
-        batch,
-        replyVisibility,
-        teammates: teammateRoster,
-        workSyncControlUrl,
-      });
-
-      const captureTimeoutMs = 15_000;
-      const captureIdleMs = 800;
-      const capturePromise = new Promise<string>((resolve, reject) => {
-        const timeoutHandle = setTimeout(() => {
-          reject(new Error('Timed out waiting for lead reply'));
-        }, captureTimeoutMs);
-        const capture = {
-          leadName,
-          startedAt: nowIso(),
-          textParts: [] as string[],
-          replyVisibility,
-          hasVisibleSendMessage: false,
-          hasUserVisibleSendMessage: false,
-          settled: false,
-          idleHandle: null as NodeJS.Timeout | null,
-          idleMs: captureIdleMs,
-          timeoutHandle,
-          resolveOnce: (text: string) => {
-            if (capture.settled) return;
-            capture.settled = true;
-            if (capture.idleHandle) {
-              clearTimeout(capture.idleHandle);
-              capture.idleHandle = null;
-            }
-            clearTimeout(capture.timeoutHandle);
-            resolve(text);
-          },
-          rejectOnce: (error: string) => {
-            if (capture.settled) return;
-            capture.settled = true;
-            if (capture.idleHandle) {
-              clearTimeout(capture.idleHandle);
-              capture.idleHandle = null;
-            }
-            clearTimeout(capture.timeoutHandle);
-            reject(new Error(error));
-          },
-        };
-        run.leadRelayCapture = capture;
-      });
-
-      try {
-        await this.sendMessageToRun(run, message);
-      } catch {
-        if (run.leadRelayCapture) {
-          clearTimeout(run.leadRelayCapture.timeoutHandle);
-          run.leadRelayCapture = null;
-        }
-        return 0;
-      }
-
-      rememberRecentCrossTeamLeadDeliveryMessageIds(
-        this.recentCrossTeamLeadDeliveryMessageIds,
-        teamName,
-        batch
-          .filter((message) => message.source === CROSS_TEAM_SOURCE)
-          .map((message) => message.messageId),
-        Date.now(),
-        TeamProvisioningService.RECENT_CROSS_TEAM_DELIVERY_TTL_MS
-      );
-
-      let replyText: string | null = null;
-      let capturedVisibleSendMessage = false;
-      let capturedUserVisibleSendMessage = false;
-      try {
-        replyText = (await capturePromise).trim() || null;
-      } catch {
-        // Best-effort: if we captured some text but never got result.success, keep it.
-        const partial = run.leadRelayCapture
-          ? this.joinLeadRelayCaptureText(run.leadRelayCapture)
-          : null;
-        replyText = partial && partial.length > 0 ? partial : null;
-      } finally {
-        if (run.leadRelayCapture) {
-          capturedVisibleSendMessage = run.leadRelayCapture.hasVisibleSendMessage === true;
-          capturedUserVisibleSendMessage = run.leadRelayCapture.hasUserVisibleSendMessage === true;
-          if (run.leadRelayCapture.idleHandle) {
-            clearTimeout(run.leadRelayCapture.idleHandle);
-            run.leadRelayCapture.idleHandle = null;
-          }
-          clearTimeout(run.leadRelayCapture.timeoutHandle);
-          run.leadRelayCapture = null;
-        }
-      }
-
-      const readCommitBatch = await this.getLeadRelayReadCommitBatch({
-        teamName,
-        leadName,
-        batch,
-      });
-      for (const m of readCommitBatch) {
-        relayedIds.add(m.messageId);
-      }
-      this.relayedLeadInboxMessageIds.set(teamName, this.trimRelayedSet(relayedIds));
-      if (readCommitBatch.length > 0) {
-        try {
-          await this.markInboxMessagesRead(teamName, leadName, readCommitBatch);
-        } catch {
-          // Best-effort: relay succeeded; marking read failed.
-        }
-      }
-
-      const replyProjection = projectLeadRelayReply({
-        replyText,
-        relayPrompt: message,
-        replyVisibility,
-        capturedVisibleSendMessage,
-        capturedUserVisibleSendMessage,
-        leadName,
-        runId,
-        nowIso: nowIso(),
-        nowMs: Date.now(),
-      });
-      if (replyProjection.kind === 'suppressed') {
-        if (replyProjection.reason === 'internal_control') {
-          logger.debug(`[${teamName}] Suppressed internal lead relay echo`);
-        } else if (replyProjection.reason === 'visible_duplicate') {
-          logger.debug(`[${teamName}] Suppressed lead relay text duplicated by visible message`);
-        } else if (replyProjection.reason === 'unverified_state') {
-          logger.debug(`[${teamName}] Suppressed unverified lead relay state claim`);
-        }
-      } else if (replyProjection.kind === 'live_activity') {
-        this.pushLiveLeadTextMessage(
-          run,
-          replyProjection.text,
-          replyProjection.messageId,
-          replyProjection.timestamp
-        );
-      } else {
-        this.pushLiveLeadProcessMessage(teamName, replyProjection.message);
-        // Persist to disk so relayed replies survive app restart and trigger FileWatcher
-        this.persistSentMessage(teamName, replyProjection.message);
-        this.teamChangeEmitter?.({
-          type: 'inbox',
-          teamName,
-          detail: 'lead-process-reply',
-        });
-      }
-      if (hasPendingFollowUpRelay) {
-        this.scheduleLeadInboxFollowUpRelay(teamName);
-      }
-
-      return batch.length;
-    })();
+    const work = relayLeadInboxMessagesForTeam(teamName, {
+      getAliveRunId: (teamName) => this.runTracking.getAliveRunId(teamName),
+      getProvisioningRunId: (teamName) => this.runTracking.getProvisioningRunId(teamName),
+      getRun: (runId) => this.runs.get(runId),
+      isCurrentTrackedRun: (run) => this.isCurrentTrackedRun(run),
+      readConfigForObservation: (teamName) => this.readConfigForObservation(teamName),
+      readLeadInboxMessages: (teamName, leadName) =>
+        this.inboxReader.getMessagesFor(teamName, leadName),
+      markInboxMessagesRead: (teamName, leadName, messages) =>
+        this.markInboxMessagesRead(teamName, leadName, messages),
+      handleTeammatePermissionRequest: (run, permissionRequest, timestamp) =>
+        this.handleTeammatePermissionRequest(run, permissionRequest, timestamp),
+      refreshMemberSpawnStatusesFromLeadInbox: (run) =>
+        this.refreshMemberSpawnStatusesFromLeadInbox(run),
+      confirmSameTeamNativeMatches: (teamName, leadName, messages) =>
+        this.confirmSameTeamNativeMatches(teamName, leadName, messages),
+      scheduleSameTeamPersistRetry: (teamName) => this.scheduleSameTeamPersistRetry(teamName),
+      scheduleSameTeamDeferredRetry: (teamName) => this.scheduleSameTeamDeferredRetry(teamName),
+      resolveControlApiBaseUrl: () => this.providerRuntime.resolveControlApiBaseUrl(),
+      sendMessageToRun: (run, message) => this.sendMessageToRun(run, message),
+      hasAcceptedLeadWorkSyncReport: (input) => this.hasAcceptedLeadWorkSyncReport(input),
+      scheduleLeadProofMissingWorkSyncRecovery: (input) =>
+        this.scheduleLeadProofMissingWorkSyncRecovery(input),
+      pushLiveLeadTextMessage: (run, text, messageId, timestamp) =>
+        this.pushLiveLeadTextMessage(run, text, messageId, timestamp),
+      pushLiveLeadProcessMessage: (teamName, message) =>
+        this.pushLiveLeadProcessMessage(teamName, message),
+      persistSentMessage: (teamName, message) => this.persistSentMessage(teamName, message),
+      emitTeamChange: (event) => this.teamChangeEmitter?.(event),
+      scheduleLeadInboxFollowUpRelay: (teamName) => this.scheduleLeadInboxFollowUpRelay(teamName),
+      relayedLeadInboxMessageIds: this.relayedLeadInboxMessageIds,
+      trimRelayedSet: (relayedIds) => this.trimRelayedSet(relayedIds),
+      pendingCrossTeamFirstReplies: this.pendingCrossTeamFirstReplies,
+      recentCrossTeamLeadDeliveryMessageIds: this.recentCrossTeamLeadDeliveryMessageIds,
+      sameTeamRunStartSkewMs: TeamProvisioningService.SAME_TEAM_RUN_START_SKEW_MS,
+      sameTeamNativeDeliveryGraceMs: TeamProvisioningService.SAME_TEAM_NATIVE_DELIVERY_GRACE_MS,
+      recentCrossTeamDeliveryTtlMs: TeamProvisioningService.RECENT_CROSS_TEAM_DELIVERY_TTL_MS,
+      logger,
+      nowIso,
+      nowMs: () => Date.now(),
+      setTimeout: (callback, ms) => setTimeout(callback, ms),
+      clearTimeout: (handle) => clearTimeout(handle),
+    });
 
     this.leadInboxRelayInFlight.set(teamName, work);
     try {
@@ -10682,12 +10327,6 @@ export class TeamProvisioningService {
    * Used for both pre-ready (provisioning) and post-ready assistant text.
    * Emits a coalesced `lead-message` event for renderer refresh.
    */
-  private joinLeadRelayCaptureText(
-    capture: NonNullable<ProvisioningRun['leadRelayCapture']>
-  ): string {
-    return joinLeadRelayCaptureText(capture);
-  }
-
   private resetLiveLeadTextBuffer(run: ProvisioningRun): void {
     resetLiveLeadTextBufferHelper(run);
   }

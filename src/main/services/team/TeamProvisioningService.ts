@@ -440,7 +440,11 @@ import {
   applyPrimaryBootstrapTruthToLaunchReportingSnapshot as applyPrimaryBootstrapTruthToLaunchReportingSnapshotHelper,
   overlayPrimaryBootstrapTruthIntoRunStatusesFromBootstrapState as overlayPrimaryBootstrapTruthIntoRunStatusesFromBootstrapStateHelper,
 } from './provisioning/TeamProvisioningPrimaryBootstrapTruthReporting';
-import { handleProvisioningProcessExit } from './provisioning/TeamProvisioningProcessExit';
+import {
+  handleProvisioningProcessExit,
+  type TeamProvisioningProcessExitPorts,
+} from './provisioning/TeamProvisioningProcessExit';
+import { createTeamProvisioningProcessExitPorts } from './provisioning/TeamProvisioningProcessExitPortsFactory';
 import {
   appendProvisioningTrace,
   boundRunProvisioningOutputParts,
@@ -1655,6 +1659,7 @@ export class TeamProvisioningService {
   private readonly prepareCoordinator: TeamProvisioningPrepareCoordinator;
   private readonly configMaintenance: TeamProvisioningConfigMaintenance;
   private readonly verificationProbePorts: TeamProvisioningVerificationProbePorts<ProvisioningRun>;
+  private readonly processExitPorts: TeamProvisioningProcessExitPorts<ProvisioningRun>;
   private runtimeAdapterRegistry: TeamRuntimeAdapterRegistry | null = null;
   private controlApiBaseUrlResolver: (() => Promise<string | null>) | null = null;
   private workspaceTrustCoordinator: WorkspaceTrustCoordinator | null = null;
@@ -1869,6 +1874,29 @@ export class TeamProvisioningService {
       teamJsonReadTimeoutMs: TEAM_JSON_READ_TIMEOUT_MS,
       teamConfigMaxBytes: TEAM_CONFIG_MAX_BYTES,
       sleep,
+    });
+    this.processExitPorts = createTeamProvisioningProcessExitPorts<ProvisioningRun>({
+      service: {
+        buildStdoutCarryDiagnostic: (run) => this.buildStdoutCarryDiagnostic(run),
+        flushStdoutParserCarry: (run) => this.flushStdoutParserCarry(run),
+        stopStallWatchdog: (run) => this.stopStallWatchdog(run),
+        hasSecondaryRuntimeRuns: (teamName) => this.hasSecondaryRuntimeRuns(teamName),
+        stopMixedSecondaryRuntimeLanes: (teamName) => this.stopMixedSecondaryRuntimeLanes(teamName),
+        persistMembersMeta: (teamName, request) => this.persistMembersMeta(teamName, request),
+        finalizeIncompleteLaunchStateBeforeCleanup: (run, fallbackReason) =>
+          this.finalizeIncompleteLaunchStateBeforeCleanup(run, fallbackReason),
+        cleanupRun: (run) => this.cleanupRun(run),
+      },
+      verificationProbePorts: this.verificationProbePorts,
+      logger,
+      updateProgress,
+      getTeamsBasePath,
+      getAutoDetectedClaudeBasePath,
+      getConfiguredCliCommandLabel,
+      getRunRuntimeFailureLabel,
+      getVerificationTimeoutMs: () => VERIFY_TIMEOUT_MS,
+      extractCliLogsFromRun,
+      logsSuggestShutdownOrCleanup,
     });
     this.prepareCoordinator = new TeamProvisioningPrepareCoordinator(
       createDefaultTeamProvisioningPrepareCoordinatorPorts({
@@ -8064,38 +8092,7 @@ export class TeamProvisioningService {
   }
 
   private async handleProcessExit(run: ProvisioningRun, code: number | null): Promise<void> {
-    await handleProvisioningProcessExit(run, code, {
-      logger,
-      buildStdoutCarryDiagnostic: (run) => this.buildStdoutCarryDiagnostic(run),
-      flushStdoutParserCarry: (run) => this.flushStdoutParserCarry(run),
-      stopStallWatchdog: (run) => this.stopStallWatchdog(run),
-      hasSecondaryRuntimeRuns: (teamName) => this.hasSecondaryRuntimeRuns(teamName),
-      stopMixedSecondaryRuntimeLanes: (teamName) => this.stopMixedSecondaryRuntimeLanes(teamName),
-      waitForValidConfig: (run) => this.waitForValidConfig(run),
-      waitForTeamInList: (teamName, run) => this.waitForTeamInList(teamName, run),
-      waitForMissingInboxes: (run) => this.waitForMissingInboxes(run),
-      persistMembersMeta: (teamName, request) => this.persistMembersMeta(teamName, request),
-      updateConfigPostLaunch: (teamName, cwd, detectedSessionId, color, options) =>
-        this.updateConfigPostLaunch(teamName, cwd, detectedSessionId, color, options),
-      refreshMemberSpawnStatusesFromLeadInbox: (run) =>
-        this.refreshMemberSpawnStatusesFromLeadInbox(run),
-      maybeAuditMemberSpawnStatuses: (run, options) =>
-        this.maybeAuditMemberSpawnStatuses(run, options),
-      finalizeMissingRegisteredMembersAsFailed: (run) =>
-        this.finalizeMissingRegisteredMembersAsFailed(run),
-      persistLaunchStateSnapshot: (run, phase) => this.persistLaunchStateSnapshot(run, phase),
-      updateProgress,
-      cleanupRun: (run) => this.cleanupRun(run),
-      getTeamsBasePath,
-      getAutoDetectedClaudeBasePath,
-      getConfiguredCliCommandLabel,
-      getRunRuntimeFailureLabel,
-      getVerificationTimeoutMs: () => VERIFY_TIMEOUT_MS,
-      extractCliLogsFromRun,
-      logsSuggestShutdownOrCleanup,
-      finalizeIncompleteLaunchStateBeforeCleanup: (run, fallbackReason) =>
-        this.finalizeIncompleteLaunchStateBeforeCleanup(run, fallbackReason),
-    });
+    await handleProvisioningProcessExit(run, code, this.processExitPorts);
   }
 
   private async waitForValidConfig(

@@ -53,6 +53,8 @@ export interface TeamProvisioningProcessExitRun extends CliExitPresentationRun {
   processClosed: boolean;
   authRetryInProgress: boolean;
   isLaunch: boolean;
+  teamsBasePathsToProbe: WaitForValidConfigRun['teamsBasePathsToProbe'];
+  expectedMembers: string[];
   request: TeamCreateRequest;
   allEffectiveMembers: TeamCreateRequest['members'];
   detectedSessionId: string | null;
@@ -114,9 +116,20 @@ export interface TeamProvisioningTimeoutCompletionPorts<
   cleanupRun(run: TRun): void;
 }
 
+type TeamProvisioningProcessExitTimeoutPortKey =
+  | 'waitForValidConfig'
+  | 'waitForTeamInList'
+  | 'waitForMissingInboxes'
+  | 'persistMembersMeta'
+  | 'updateProgress'
+  | 'cleanupRun';
+
 export interface TeamProvisioningProcessExitPorts<
   TRun extends TeamProvisioningProcessExitRun,
-> extends TeamProvisioningTimeoutCompletionPorts<TRun> {
+> extends Pick<
+  TeamProvisioningTimeoutCompletionPorts<TRun>,
+  TeamProvisioningProcessExitTimeoutPortKey
+> {
   logger: {
     info(message: string): void;
     warn(message: string, details?: unknown): void;

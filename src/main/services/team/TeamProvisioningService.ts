@@ -60,7 +60,6 @@ import {
   RuntimeToolApprovalCoordinator,
   type RuntimeToolApprovalEntry,
 } from './approvals/RuntimeToolApprovalCoordinator';
-import { buildNativeAppManagedBootstrapSpecsWithDiagnostics } from './bootstrap/NativeAppManagedBootstrapContextBuilder';
 import { isOpenCodeServeCommand } from './opencode/bridge/OpenCodeManagedHostProcessCleanup';
 import {
   type OpenCodeMemberDirectory,
@@ -190,6 +189,11 @@ import {
   assertOpenCodeNotLaunchedThroughLegacyProvisioning,
   type TeamLaunchCompatibilityReport,
 } from './provisioning/TeamProvisioningLaunchCompatibility';
+import {
+  createTeamProvisioningLaunchDeterministicFlowBoundary,
+  type TeamProvisioningLaunchDeterministicFlowBoundary,
+  type TeamProvisioningLaunchDeterministicFlowHost,
+} from './provisioning/TeamProvisioningLaunchDeterministicFlowPortsFactory';
 import { runDeterministicLaunchRunFlow } from './provisioning/TeamProvisioningLaunchDeterministicRunFlow';
 import { prepareDeterministicLaunchSetup } from './provisioning/TeamProvisioningLaunchDeterministicSetupFlow';
 import { buildLaunchDiagnosticsFromRun } from './provisioning/TeamProvisioningLaunchDiagnostics';
@@ -1783,6 +1787,7 @@ export class TeamProvisioningService {
   private readonly idlePromptInjectionBoundary: TeamProvisioningIdlePromptInjectionBoundary<ProvisioningRun>;
   private readonly providerRuntime: TeamProvisioningProviderRuntimeFacade;
   private readonly deterministicCreateSpawnFlowBoundary: TeamProvisioningCreateDeterministicSpawnFlowBoundary<ProvisioningRun>;
+  private readonly deterministicLaunchFlowBoundary: TeamProvisioningLaunchDeterministicFlowBoundary<MixedSecondaryRuntimeLaneState>;
   private readonly prepareCoordinator: TeamProvisioningPrepareCoordinator;
   private readonly configMaintenance: TeamProvisioningConfigMaintenance;
   private readonly verificationProbePorts: TeamProvisioningVerificationProbePorts<ProvisioningRun>;
@@ -2156,6 +2161,75 @@ export class TeamProvisioningService {
           this.runtimeTurnSettledHookSettingsProvider,
         logger,
       }),
+    });
+    const deterministicLaunchFlowHost: TeamProvisioningLaunchDeterministicFlowHost<
+      ProvisioningRun,
+      MixedSecondaryRuntimeLaneState
+    > = {
+      runTracking: {
+        getAliveRunId: (teamName) => this.runTracking.getAliveRunId(teamName),
+      },
+      runs: this.runs,
+      provisioningRunByTeam: this.provisioningRunByTeam,
+      getStopAllTeamsGeneration: () => this.stopAllTeamsGeneration,
+      providerRuntime: this.providerRuntime,
+      workspaceTrustCoordinator: this.workspaceTrustCoordinator,
+      workspaceTrustWorkspaceCollectionPorts: this.workspaceTrustWorkspaceCollectionPorts,
+      runtimeTurnSettledEnvironmentProvider: this.runtimeTurnSettledEnvironmentProvider,
+      mcpConfigBuilder: this.mcpConfigBuilder,
+      teamMetaStore: this.teamMetaStore,
+      membersMetaStore: this.membersMetaStore,
+      getRunTrackedCwd: (run) => this.getRunTrackedCwd(run),
+      materializeLaunchCompatibilityRepair: (launchRequest, report) =>
+        this.materializeLaunchCompatibilityRepair(launchRequest, report),
+      normalizeTeamConfigForLaunch: (teamName, configRaw) =>
+        this.normalizeTeamConfigForLaunch(teamName, configRaw),
+      assertConfigLeadOnlyForLaunch: (teamName) => this.assertConfigLeadOnlyForLaunch(teamName),
+      updateConfigProjectPath: (teamName, cwd) => this.updateConfigProjectPath(teamName, cwd),
+      restorePrelaunchConfig: (teamName) => this.restorePrelaunchConfig(teamName),
+      materializeEffectiveTeamMemberSpecs: (params) =>
+        this.materializeEffectiveTeamMemberSpecs(params),
+      resolveOpenCodeMemberWorkspacesForRuntime: (params) =>
+        this.resolveOpenCodeMemberWorkspacesForRuntime(params),
+      planRuntimeLanesOrThrow: (leadProviderId, members, baseCwd) =>
+        this.planRuntimeLanesOrThrow(leadProviderId, members, baseCwd),
+      createMixedSecondaryLaneStates: (lanePlan) => this.createMixedSecondaryLaneStates(lanePlan),
+      resolveAndValidateLaunchIdentity: (params) => this.resolveAndValidateLaunchIdentity(params),
+      prepareWorkspaceTrustForDeterministicRun: (input) =>
+        this.prepareWorkspaceTrustForDeterministicRun(input),
+      resetTeamScopedTransientStateForNewRun: (teamName) =>
+        this.resetTeamScopedTransientStateForNewRun(teamName),
+      clearPersistedLaunchState: (teamName, options) =>
+        this.clearPersistedLaunchState(teamName, options),
+      publishMixedSecondaryLaneStatusChange: (run, lane) =>
+        this.publishMixedSecondaryLaneStatusChange(run, lane),
+      buildRuntimeBootstrapMemberMcpLaunchConfigs: (input) =>
+        this.buildRuntimeBootstrapMemberMcpLaunchConfigs(input),
+      buildTeamRuntimeLaunchArgsPlan: (input) => this.buildTeamRuntimeLaunchArgsPlan(input),
+      seedLeadBootstrapPermissionRules: (teamName, cwd) =>
+        this.seedLeadBootstrapPermissionRules(teamName, cwd),
+      attachStdoutHandler: (run) => this.attachStdoutHandler(run),
+      attachStderrHandler: (run) => this.attachStderrHandler(run),
+      startStallWatchdog: (run) => this.startStallWatchdog(run),
+      tryCompleteAfterTimeout: (run) => this.tryCompleteAfterTimeout(run),
+      cleanupRun: (run) => this.cleanupRun(run),
+      handleProcessExit: (run, code) => this.handleProcessExit(run, code),
+      removeRunMemberMcpConfigFiles: (run) => this.removeRunMemberMcpConfigFiles(run),
+    };
+    this.deterministicLaunchFlowBoundary = createTeamProvisioningLaunchDeterministicFlowBoundary<
+      ProvisioningRun,
+      MixedSecondaryRuntimeLaneState
+    >({
+      host: deterministicLaunchFlowHost,
+      launchExpectedMembersPorts: this.launchExpectedMembersPorts,
+      createInitialMemberSpawnStatusEntry,
+      randomUUID,
+      nowIso,
+      logger,
+      spawnCli,
+      updateProgress,
+      setTimeout: (callback, ms) => setTimeout(callback, ms),
+      killTeamProcess,
     });
     this.deterministicCreateSpawnFlowBoundary =
       createTeamProvisioningCreateDeterministicSpawnFlowBoundary<ProvisioningRun>({
@@ -5318,52 +5392,10 @@ export class TeamProvisioningService {
     this.provisioningRunByTeam.set(request.teamName, pendingKey);
 
     try {
-      const setup = await prepareDeterministicLaunchSetup(request, {
-        readTeamConfigRaw: (teamName) => {
-          const configPath = path.join(getTeamsBasePath(), teamName, 'config.json');
-          return tryReadRegularFileUtf8(configPath, {
-            timeoutMs: TEAM_JSON_READ_TIMEOUT_MS,
-            maxBytes: TEAM_CONFIG_MAX_BYTES,
-          });
-        },
-        getExistingAliveRunId: (teamName) => this.runTracking.getAliveRunId(teamName),
-        getExistingRun: (runId) => this.runs.get(runId),
-        getRunTrackedCwd: (existingRun) => this.getRunTrackedCwd(existingRun as ProvisioningRun),
-        deleteProvisioningRunByTeam: (teamName) => {
-          this.provisioningRunByTeam.delete(teamName);
-        },
-        launchExpectedMembersPorts: this.launchExpectedMembersPorts,
-        materializeLaunchCompatibilityRepair: (launchRequest, report) =>
-          this.materializeLaunchCompatibilityRepair(launchRequest, report),
-        normalizeTeamConfigForLaunch: (teamName, configRaw) =>
-          this.normalizeTeamConfigForLaunch(teamName, configRaw),
-        assertConfigLeadOnlyForLaunch: (teamName) => this.assertConfigLeadOnlyForLaunch(teamName),
-        updateConfigProjectPath: (teamName, cwd) => this.updateConfigProjectPath(teamName, cwd),
-        restorePrelaunchConfig: (teamName) => this.restorePrelaunchConfig(teamName),
-        resolveClaudePath: () => ClaudeBinaryResolver.resolve(),
-        buildProvisioningEnv: (providerId, providerBackendId, options) =>
-          this.providerRuntime.buildProvisioningEnv(providerId, providerBackendId, options),
-        workspaceTrustCoordinator: this.workspaceTrustCoordinator,
-        workspaceTrustWorkspaceCollectionPorts: this.workspaceTrustWorkspaceCollectionPorts,
-        materializeEffectiveTeamMemberSpecs: (params) =>
-          this.materializeEffectiveTeamMemberSpecs(params),
-        resolveOpenCodeMemberWorkspacesForRuntime: (params) =>
-          this.resolveOpenCodeMemberWorkspacesForRuntime(params),
-        runtimeTurnSettledEnvironmentProvider: this.runtimeTurnSettledEnvironmentProvider,
-        planRuntimeLanesOrThrow: (leadProviderId, members, baseCwd) =>
-          this.planRuntimeLanesOrThrow(leadProviderId, members, baseCwd),
-        createMixedSecondaryLaneStates: (lanePlan) => this.createMixedSecondaryLaneStates(lanePlan),
-        buildCrossProviderMemberArgs: (primaryProviderId, memberSpecs, options) =>
-          this.providerRuntime.buildCrossProviderMemberArgs(
-            primaryProviderId,
-            memberSpecs,
-            options
-          ),
-        resolveAndValidateLaunchIdentity: (params) => this.resolveAndValidateLaunchIdentity(params),
-        randomUUID,
-        nowIso,
-        logger,
-      });
+      const setup = await prepareDeterministicLaunchSetup(
+        request,
+        this.deterministicLaunchFlowBoundary.createSetupPorts()
+      );
       if (setup.kind === 'reuse') {
         return { runId: setup.runId };
       }
@@ -5376,77 +5408,7 @@ export class TeamProvisioningService {
           onProgress,
           teammateRuntimeDisallowedTools: APP_TEAM_RUNTIME_DISALLOWED_TOOLS,
         },
-        {
-          createInitialMemberSpawnStatusEntry,
-          prepareWorkspaceTrustForDeterministicRun: (input) =>
-            this.prepareWorkspaceTrustForDeterministicRun({
-              ...input,
-              run: input.run as ProvisioningRun,
-            }),
-          resetTeamScopedTransientStateForNewRun: (teamName) =>
-            this.resetTeamScopedTransientStateForNewRun(teamName),
-          registerRun: (nextRunId, nextRun) => {
-            this.runs.set(nextRunId, nextRun as ProvisioningRun);
-          },
-          setProvisioningRunByTeam: (teamName, nextRunId) => {
-            this.provisioningRunByTeam.set(teamName, nextRunId);
-          },
-          clearPersistedLaunchState: (teamName, options) =>
-            this.clearPersistedLaunchState(teamName, options),
-          publishMixedSecondaryLaneStatusChange: (nextRun, lane: MixedSecondaryRuntimeLaneState) =>
-            this.publishMixedSecondaryLaneStatusChange(nextRun as ProvisioningRun, lane),
-          logger,
-          mcpConfigBuilder: this.mcpConfigBuilder,
-          readTasks: (teamName) => new TeamTaskReader().getTasks(teamName),
-          logTaskReadWarning: (message) => logger.warn(message),
-          buildNativeAppManagedBootstrapSpecsWithDiagnostics,
-          buildRuntimeBootstrapMemberMcpLaunchConfigs: (input) =>
-            this.buildRuntimeBootstrapMemberMcpLaunchConfigs({
-              ...input,
-              run: input.run as ProvisioningRun,
-            }),
-          validateAgentTeamsMcpRuntime: (createdMcpConfigPath, options) =>
-            this.providerRuntime.validateAgentTeamsMcpRuntime(
-              setup.claudePath,
-              request.cwd,
-              setup.shellEnv,
-              createdMcpConfigPath,
-              options
-            ),
-          cleanupAnthropicApiKeyHelperMaterial: (directory) =>
-            cleanupAnthropicTeamApiKeyHelperMaterial({ directory }),
-          removeRunMemberMcpConfigFiles: (provisioningRun) =>
-            this.removeRunMemberMcpConfigFiles(provisioningRun as ProvisioningRun),
-          restorePrelaunchConfig: (teamName) => this.restorePrelaunchConfig(teamName),
-          deleteRun: (nextRunId) => {
-            this.runs.delete(nextRunId);
-          },
-          deleteProvisioningRunByTeam: (teamName) => {
-            this.provisioningRunByTeam.delete(teamName);
-          },
-          buildTeamRuntimeLaunchArgsPlan: (input) => this.buildTeamRuntimeLaunchArgsPlan(input),
-          teamMetaStore: this.teamMetaStore,
-          membersMetaStore: this.membersMetaStore,
-          nowMs: () => Date.now(),
-          getStopAllTeamsGeneration: () => this.stopAllTeamsGeneration,
-          seedLeadBootstrapPermissionRules: (teamName, cwd) =>
-            this.seedLeadBootstrapPermissionRules(teamName, cwd),
-          spawnCli,
-          updateProgress,
-          attachStdoutHandler: (provisioningRun) =>
-            this.attachStdoutHandler(provisioningRun as ProvisioningRun),
-          attachStderrHandler: (provisioningRun) =>
-            this.attachStderrHandler(provisioningRun as ProvisioningRun),
-          startStallWatchdog: (provisioningRun) =>
-            this.startStallWatchdog(provisioningRun as ProvisioningRun),
-          setTimeout: (callback, ms) => setTimeout(callback, ms),
-          tryCompleteAfterTimeout: (provisioningRun) =>
-            this.tryCompleteAfterTimeout(provisioningRun as ProvisioningRun),
-          killTeamProcess,
-          cleanupRun: (provisioningRun) => this.cleanupRun(provisioningRun as ProvisioningRun),
-          handleProcessExit: (provisioningRun, code) =>
-            this.handleProcessExit(provisioningRun as ProvisioningRun, code),
-        }
+        this.deterministicLaunchFlowBoundary.createRunFlowPorts({ request, setup })
       );
     } catch (error) {
       // Clean up pending key if failure occurred before runId was set

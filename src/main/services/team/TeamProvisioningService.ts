@@ -680,11 +680,14 @@ import {
   writeLaunchFailureArtifactPackBestEffort as writeLaunchFailureArtifactPackBestEffortHelper,
 } from './provisioning/TeamProvisioningTaskActivityRepair';
 import {
+  respondToTeammatePermission as respondToTeammatePermissionHelper,
+  type TeamProvisioningTeammatePermissionResponsePorts,
+} from './provisioning/TeamProvisioningTeammatePermissionResponse';
+import {
   buildAllowControlResponsePayload,
   buildDenyControlResponsePayload,
   buildLeadToolApprovalDecisionPayload,
   buildLeadToolApprovalRequest,
-  buildTeammatePermissionUpdatedInput,
   buildTeammateToolApprovalRequest,
   buildToolApprovalAutoResolvedEvent,
   planToolApprovalNotification,
@@ -1781,15 +1784,18 @@ export class TeamProvisioningService {
         autoAllowControlRequest: (run, requestId) => this.autoAllowControlRequest(run, requestId),
         autoDenyControlRequest: (run, requestId) => this.autoDenyControlRequest(run, requestId),
         respondToTeammatePermission: (run, approval, allow, message) =>
-          this.respondToTeammatePermission(
-            run,
-            approval.source,
-            approval.requestId,
-            allow,
-            message,
-            approval.permissionSuggestions,
-            approval.toolName,
-            approval.toolInput
+          respondToTeammatePermissionHelper(
+            {
+              run,
+              agentId: approval.source,
+              requestId: approval.requestId,
+              allow,
+              message,
+              permissionSuggestions: approval.permissionSuggestions,
+              toolName: approval.toolName,
+              toolInput: approval.toolInput,
+            },
+            this.getTeammatePermissionResponsePorts()
           ),
         dismissApprovalNotification: (requestId) => this.dismissApprovalNotification(requestId),
         emitToolApprovalEvent: (event) => this.emitToolApprovalEvent(event),
@@ -2312,6 +2318,22 @@ export class TeamProvisioningService {
 
   private readConfigForStrictDecision(teamName: string): Promise<TeamConfig | null> {
     return this.configReader.getConfig(teamName);
+  }
+
+  private getTeammatePermissionResponsePorts(): TeamProvisioningTeammatePermissionResponsePorts {
+    return {
+      readConfigForStrictDecision: (teamName) => this.readConfigForStrictDecision(teamName),
+      addPermissionRulesToSettings: (settingsPath, toolNames, behavior) =>
+        this.addPermissionRulesToSettings(settingsPath, toolNames, behavior),
+      persistInboxMessage: (teamName, recipient, message) =>
+        this.persistInboxMessage(teamName, recipient, message),
+      emitTeamChange: (event) => this.teamChangeEmitter?.(event),
+      logger,
+      nowIso,
+      nowMs: () => Date.now(),
+      joinPath: (...parts) => path.join(...parts),
+      teammateOperationalToolNames: AGENT_TEAMS_NAMESPACED_TEAMMATE_OPERATIONAL_TOOL_NAMES,
+    };
   }
 
   private async readOpenCodeMemberDirectory(teamName: string): Promise<OpenCodeMemberDirectory> {
@@ -12564,15 +12586,17 @@ export class TeamProvisioningService {
       logger.info(
         `[${run.teamName}] Auto-allowing teammate ${perm.agentId} ${perm.toolName} (${autoResult.reason})`
       );
-      void this.respondToTeammatePermission(
-        run,
-        perm.agentId,
-        perm.requestId,
-        true,
-        undefined,
-        perm.permissionSuggestions,
-        perm.toolName,
-        perm.input
+      void respondToTeammatePermissionHelper(
+        {
+          run,
+          agentId: perm.agentId,
+          requestId: perm.requestId,
+          allow: true,
+          permissionSuggestions: perm.permissionSuggestions,
+          toolName: perm.toolName,
+          toolInput: perm.input,
+        },
+        this.getTeammatePermissionResponsePorts()
       );
       this.emitToolApprovalEvent(
         buildToolApprovalAutoResolvedEvent({
@@ -12899,15 +12923,18 @@ export class TeamProvisioningService {
     // Teammate permission requests: apply permission_suggestions to project settings
     if (approval.source !== 'lead') {
       try {
-        await this.respondToTeammatePermission(
-          run,
-          approval.source,
-          requestId,
-          allow,
-          message,
-          approval.permissionSuggestions,
-          approval.toolName,
-          approval.toolInput
+        await respondToTeammatePermissionHelper(
+          {
+            run,
+            agentId: approval.source,
+            requestId,
+            allow,
+            message,
+            permissionSuggestions: approval.permissionSuggestions,
+            toolName: approval.toolName,
+            toolInput: approval.toolInput,
+          },
+          this.getTeammatePermissionResponsePorts()
         );
         this.inFlightResponses.delete(requestId);
         run.pendingApprovals.delete(requestId);
@@ -12971,226 +12998,6 @@ export class TeamProvisioningService {
     run.pendingApprovals.delete(requestId);
     this.inFlightResponses.delete(requestId);
     this.dismissApprovalNotification(requestId);
-  }
-
-  /**
-   * Respond to a teammate's permission_request by applying permission_suggestions.
-   *
-   * FACT: Claude Code teammate runtime sends permission_request via the inbox protocol.
-   * FACT: Teammates wait for permission_response in their own inbox.
-   * FACT: control_response via the lead stdin does not reliably reach teammate request ids.
-   * FACT: permission_suggestions.destination "localSettings" refers to {cwd}/.claude/settings.local.json.
-   * FACT: Claude Code CLI reads this file via --setting-sources user,project,local.
-   *
-   * When allow=true: applies permission_suggestions, then replies to the teammate.
-   * When allow=false: replies with an error so the teammate does not hang.
-   */
-  private async respondToTeammatePermission(
-    run: ProvisioningRun,
-    agentId: string,
-    requestId: string,
-    allow: boolean,
-    message?: string,
-    permissionSuggestions?: import('@shared/utils/inboxNoise').PermissionSuggestion[],
-    toolName?: string,
-    toolInput?: Record<string, unknown>
-  ): Promise<void> {
-    if (!allow) {
-      logger.info(`[${run.teamName}] Denied teammate ${agentId} permission ${requestId}`);
-      this.sendTeammatePermissionResponse(run, agentId, requestId, {
-        allow: false,
-        message,
-        toolName,
-      });
-      return;
-    }
-
-    const suggestions = permissionSuggestions ?? [];
-    const sendSuccessResponse = (): void => {
-      this.sendTeammatePermissionResponse(run, agentId, requestId, {
-        allow: true,
-        message,
-        permissionUpdates: suggestions,
-        toolName,
-        toolInput,
-      });
-    };
-
-    // Apply permission_suggestions: add tool rules to project settings file.
-    if (suggestions.length === 0) {
-      logger.info(
-        `[${run.teamName}] No permission_suggestions for ${requestId}; sending allow responses only`
-      );
-    } else {
-      // Resolve project cwd from team config
-      let projectCwd: string | undefined;
-      try {
-        const config = await this.readConfigForStrictDecision(run.teamName);
-        projectCwd = config?.projectPath ?? config?.members?.[0]?.cwd;
-      } catch {
-        // best-effort
-      }
-
-      if (!projectCwd) {
-        logger.warn(
-          `[${run.teamName}] Cannot resolve project cwd for permission rule; sending allow responses only`
-        );
-      } else {
-        for (const suggestion of suggestions) {
-          // Handle "setMode" suggestions (e.g. Write/Edit tools suggest acceptEdits mode)
-          // FACT: Write/Edit permission_requests have permission_suggestions:
-          //   { type: "setMode", mode: "acceptEdits", destination: "session" }
-          // Since we can't change session mode of a subprocess, we translate to addRules.
-          if (suggestion.type === 'setMode') {
-            const mode = typeof suggestion.mode === 'string' ? suggestion.mode : '';
-            let toolNames: string[] = [];
-            if (mode === 'acceptEdits') {
-              toolNames = ['Edit', 'Write', 'NotebookEdit'];
-            } else if (mode === 'bypassPermissions') {
-              // Broad approval - add common tools
-              toolNames = ['Edit', 'Write', 'NotebookEdit', 'Bash', 'Read', 'Grep', 'Glob'];
-            }
-            if (toolNames.length > 0) {
-              const settingsPath = path.join(projectCwd, '.claude', 'settings.local.json');
-              try {
-                await this.addPermissionRulesToSettings(settingsPath, toolNames, 'allow');
-                logger.info(
-                  `[${run.teamName}] Applied setMode "${mode}" for ${agentId}: ${toolNames.join(', ')} in ${settingsPath}`
-                );
-              } catch (error) {
-                logger.error(
-                  `[${run.teamName}] Failed to apply setMode: ${
-                    error instanceof Error ? error.message : String(error)
-                  }`
-                );
-              }
-            }
-            continue;
-          }
-
-          if (suggestion.type !== 'addRules' || !Array.isArray(suggestion.rules)) continue;
-
-          let toolNames = suggestion.rules
-            .map((r) => r.toolName)
-            .filter((name): name is string => typeof name === 'string' && name.length > 0);
-          if (toolNames.length === 0) continue;
-
-          // Expand teammate-safe operational tools only.
-          // This removes the bootstrap/task workflow race without accidentally granting
-          // admin/runtime tools like team_stop or kanban_clear.
-          if (
-            toolNames.some((name) =>
-              AGENT_TEAMS_NAMESPACED_TEAMMATE_OPERATIONAL_TOOL_NAMES.includes(name)
-            )
-          ) {
-            const merged = new Set([
-              ...toolNames,
-              ...AGENT_TEAMS_NAMESPACED_TEAMMATE_OPERATIONAL_TOOL_NAMES,
-            ]);
-            toolNames = Array.from(merged);
-          }
-
-          const behavior = suggestion.behavior ?? 'allow';
-          // FACT: observed destinations are "localSettings" (project-level .claude/settings.local.json)
-          const settingsPath =
-            suggestion.destination === 'localSettings'
-              ? path.join(projectCwd, '.claude', 'settings.local.json')
-              : path.join(projectCwd, '.claude', 'settings.local.json'); // default to local
-
-          try {
-            await this.addPermissionRulesToSettings(settingsPath, toolNames, behavior);
-            logger.info(
-              `[${run.teamName}] Added permission rules for ${agentId}: ${toolNames.join(', ')} -> ${behavior} in ${settingsPath}`
-            );
-          } catch (error) {
-            logger.error(
-              `[${run.teamName}] Failed to add permission rules: ${
-                error instanceof Error ? error.message : String(error)
-              }`
-            );
-          }
-        }
-      }
-    }
-
-    sendSuccessResponse();
-
-    // Also attempt control_response via stdin - the lead runtime MAY forward it
-    // to the teammate subprocess. This was broken before (missing updatedInput: {})
-    // but is now fixed. Belt-and-suspenders: settings handle future calls,
-    // control_response may unblock the CURRENT waiting prompt.
-    if (allow && run.child?.stdin?.writable) {
-      const updatedInput = buildTeammatePermissionUpdatedInput(toolName, toolInput, message) ?? {};
-      const controlResponse = {
-        type: 'control_response',
-        response: {
-          subtype: 'success',
-          request_id: requestId,
-          response: { behavior: 'allow', updatedInput },
-        },
-      };
-      run.child.stdin.write(JSON.stringify(controlResponse) + '\n', (err) => {
-        if (err) {
-          logger.warn(
-            `[${run.teamName}] control_response via stdin for teammate ${agentId} failed (non-critical): ${err.message}`
-          );
-        }
-      });
-    }
-  }
-
-  private sendTeammatePermissionResponse(
-    run: ProvisioningRun,
-    agentId: string,
-    requestId: string,
-    params: {
-      allow: boolean;
-      message?: string;
-      permissionUpdates?: unknown[];
-      toolName?: string;
-      toolInput?: Record<string, unknown>;
-    }
-  ): void {
-    const payload = params.allow
-      ? {
-          type: 'permission_response',
-          request_id: requestId,
-          subtype: 'success',
-          response: {
-            updated_input: buildTeammatePermissionUpdatedInput(
-              params.toolName,
-              params.toolInput,
-              params.message
-            ),
-            permission_updates: params.permissionUpdates ?? [],
-          },
-        }
-      : {
-          type: 'permission_response',
-          request_id: requestId,
-          subtype: 'error',
-          error: params.message ?? 'Permission denied',
-        };
-
-    this.persistInboxMessage(run.teamName, agentId, {
-      from:
-        run.request?.members.find((member) => member.role?.toLowerCase().includes('lead'))?.name ??
-        'team-lead',
-      to: agentId,
-      text: JSON.stringify(payload),
-      timestamp: nowIso(),
-      read: false,
-      summary: params.allow
-        ? `Approved ${params.toolName ?? 'tool'} request`
-        : `Denied ${params.toolName ?? 'tool'} request`,
-      messageId: `permission-response-${run.runId}-${requestId}-${Date.now()}`,
-      source: 'lead_process',
-    });
-    this.teamChangeEmitter?.({
-      type: 'inbox',
-      teamName: run.teamName,
-      detail: `inboxes/${agentId}.json`,
-    });
   }
 
   /**

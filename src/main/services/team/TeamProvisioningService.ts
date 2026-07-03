@@ -341,10 +341,7 @@ import {
 } from './provisioning/TeamProvisioningLeadRunDerivation';
 import { captureLeadSendMessages } from './provisioning/TeamProvisioningLeadSendMessageCapture';
 import { extractLogsTail, sliceClaudeLogs } from './provisioning/TeamProvisioningLogSlice';
-import {
-  matchesExactTeamMemberName,
-  matchesObservedMemberNameForExpected,
-} from './provisioning/TeamProvisioningMemberIdentity';
+import { matchesObservedMemberNameForExpected } from './provisioning/TeamProvisioningMemberIdentity';
 import {
   type LiveRosterAttachReason,
   type MemberLifecycleOperation,
@@ -354,12 +351,14 @@ import {
 } from './provisioning/TeamProvisioningMemberLifecycle';
 import { TeamProvisioningMemberMcpLaunchConfigProvisioner } from './provisioning/TeamProvisioningMemberMcpLaunchConfig';
 import {
-  compareMemberSpawnInboxCursor,
   isMemberSpawnHeartbeatTimestampNewer,
-  maxMemberSpawnInboxCursor,
   type MemberSpawnInboxCursor,
-  toMemberSpawnInboxCursor,
 } from './provisioning/TeamProvisioningMemberSpawnCursor';
+import {
+  applyLeadInboxSpawnSignal as applyLeadInboxSpawnSignalHelper,
+  refreshMemberSpawnStatusesFromLeadInbox as refreshMemberSpawnStatusesFromLeadInboxHelper,
+  resolveExpectedLaunchMemberName as resolveExpectedLaunchMemberNameHelper,
+} from './provisioning/TeamProvisioningMemberSpawnLeadInbox';
 import {
   confirmMemberSpawnStatusFromTranscriptForRun,
   getMemberSpawnStatusesSnapshot,
@@ -544,7 +543,6 @@ import {
   buildPersistentLeadContext,
   buildTaskBoardSnapshot,
   extractBootstrapFailureReason,
-  extractHeartbeatTimestamp,
   getCanonicalSendMessageFieldRule,
   getCanonicalSendMessageToolRule,
 } from './provisioning/TeamProvisioningPromptBuilders';
@@ -1133,8 +1131,6 @@ interface PendingMemberRestartContext {
     'name' | 'role' | 'workflow' | 'isolation' | 'providerId' | 'model' | 'effort'
   >;
 }
-
-type LeadInboxMemberSpawnMessage = InboxMessage & { messageId: string };
 
 async function tryReadRegularFileUtf8(
   filePath: string,
@@ -3667,120 +3663,31 @@ export class TeamProvisioningService {
   }
 
   private async refreshMemberSpawnStatusesFromLeadInbox(run: ProvisioningRun): Promise<void> {
-    const leadName = this.getRunLeadName(run);
-    let leadInboxMessages: Awaited<ReturnType<TeamInboxReader['getMessagesFor']>> = [];
-    try {
-      leadInboxMessages = await this.inboxReader.getMessagesFor(run.teamName, leadName);
-    } catch {
-      return;
-    }
-
-    const runStartedAtMs = Date.parse(run.startedAt);
-    const expectedMembers = Array.isArray(run.expectedMembers) ? run.expectedMembers : [];
-    const teammateMessages = leadInboxMessages
-      .filter((message): message is LeadInboxMemberSpawnMessage => {
-        const from = typeof message.from === 'string' ? message.from.trim() : '';
-        if (!from || from === leadName || from === 'user' || from === 'system') return false;
-        if (!this.resolveExpectedLaunchMemberName(expectedMembers, from)) return false;
-        if (typeof message.messageId !== 'string' || message.messageId.trim().length === 0) {
-          return false;
-        }
-        const messageTs = Date.parse(message.timestamp);
-        if (
-          Number.isFinite(messageTs) &&
-          Number.isFinite(runStartedAtMs) &&
-          messageTs < runStartedAtMs
-        ) {
-          return false;
-        }
-        return typeof message.text === 'string' && message.text.trim().length > 0;
-      })
-      .sort((left, right) =>
-        compareMemberSpawnInboxCursor(
-          { timestamp: left.timestamp, messageId: left.messageId },
-          { timestamp: right.timestamp, messageId: right.messageId }
-        )
-      );
-
-    const messagesByMember = new Map<string, LeadInboxMemberSpawnMessage[]>();
-    for (const message of teammateMessages) {
-      const memberName = this.resolveExpectedLaunchMemberName(expectedMembers, message.from);
-      if (!memberName) {
-        continue;
-      }
-      const bucket = messagesByMember.get(memberName) ?? [];
-      bucket.push(message);
-      messagesByMember.set(memberName, bucket);
-    }
-
-    for (const [memberName, messages] of messagesByMember.entries()) {
-      const currentCursor = run.memberSpawnLeadInboxCursorByMember.get(memberName);
-      let nextCursor = currentCursor;
-
-      for (const message of messages) {
-        const messageCursor = toMemberSpawnInboxCursor(message);
-        const effectiveCursor = nextCursor ?? currentCursor;
-        if (messageCursor && effectiveCursor) {
-          if (compareMemberSpawnInboxCursor(messageCursor, effectiveCursor) <= 0) {
-            continue;
-          }
-        }
-
-        this.applyLeadInboxSpawnSignal(run, memberName, message);
-        if (messageCursor) {
-          nextCursor = maxMemberSpawnInboxCursor(nextCursor, messageCursor);
-        }
-      }
-
-      if (
-        nextCursor &&
-        (currentCursor == null || compareMemberSpawnInboxCursor(nextCursor, currentCursor) > 0)
-      ) {
-        run.memberSpawnLeadInboxCursorByMember.set(memberName, nextCursor);
-      }
-    }
+    await refreshMemberSpawnStatusesFromLeadInboxHelper(run, {
+      getRunLeadName: (run) => this.getRunLeadName(run),
+      readLeadInboxMessages: (teamName, leadName) =>
+        this.inboxReader.getMessagesFor(teamName, leadName),
+      setMemberSpawnStatus: (run, memberName, status, error, source, heartbeatTimestamp) =>
+        this.setMemberSpawnStatus(run, memberName, status, error, source, heartbeatTimestamp),
+    });
   }
 
   private applyLeadInboxSpawnSignal(
     run: ProvisioningRun,
     memberName: string,
-    message: LeadInboxMemberSpawnMessage
+    message: InboxMessage & { messageId: string }
   ): void {
-    const reason = extractBootstrapFailureReason(message.text);
-    if (reason) {
-      this.setMemberSpawnStatus(run, memberName, 'error', reason);
-      return;
-    }
-    this.setMemberSpawnStatus(
-      run,
-      memberName,
-      'online',
-      undefined,
-      'heartbeat',
-      extractHeartbeatTimestamp(message.text, message.timestamp)
-    );
+    applyLeadInboxSpawnSignalHelper(run, memberName, message, {
+      setMemberSpawnStatus: (run, memberName, status, error, source, heartbeatTimestamp) =>
+        this.setMemberSpawnStatus(run, memberName, status, error, source, heartbeatTimestamp),
+    });
   }
 
   private resolveExpectedLaunchMemberName(
     expectedMembers: readonly string[] | undefined,
     candidateName: string
   ): string | null {
-    const trimmedCandidate = candidateName.trim();
-    if (!trimmedCandidate || !Array.isArray(expectedMembers) || expectedMembers.length === 0) {
-      return null;
-    }
-
-    const exact = expectedMembers.find((memberName) =>
-      matchesExactTeamMemberName(memberName, trimmedCandidate)
-    );
-    if (exact) {
-      return exact;
-    }
-
-    const matches = expectedMembers.filter((memberName) =>
-      matchesObservedMemberNameForExpected(trimmedCandidate, memberName)
-    );
-    return matches.length === 1 ? (matches[0] ?? null) : null;
+    return resolveExpectedLaunchMemberNameHelper(expectedMembers, candidateName);
   }
 
   private persistSentMessage(teamName: string, message: InboxMessage): void {

@@ -11,14 +11,17 @@ import {
 import {
   getLaunchModelArg,
   type TeamRuntimeLaunchArgsPlan,
+  type TeamsBaseLocation,
 } from './TeamProvisioningRuntimeLaunchSelection';
 
 import type { LaunchExpectedMembersResolution } from './TeamProvisioningConfigLaunchNormalization';
 import type {
+  MemberSpawnStatusEntry,
   ProviderModelLaunchIdentity,
   TeamCreateRequest,
   TeamLaunchRequest,
   TeamProviderId,
+  TeamProvisioningProgress,
 } from '@shared/types';
 
 export type LaunchRosterSource = LaunchExpectedMembersResolution['source'];
@@ -131,6 +134,143 @@ export function buildLaunchSyntheticRequest(input: {
   }
 
   return syntheticRequest;
+}
+
+export function createDeterministicLaunchProvisioningRun<
+  TMixedSecondaryLane,
+  TWorkspaceTrustPlan,
+  TAnthropicApiKeyHelper,
+>(input: {
+  runId: string;
+  teamName: string;
+  startedAt: string;
+  onProgress: (progress: TeamProvisioningProgress) => void;
+  teamsBasePathsToProbe: { location: TeamsBaseLocation; basePath: string }[];
+  syntheticRequest: TeamCreateRequest;
+  expectedMembers: string[];
+  effectiveMemberSpecs: TeamCreateRequest['members'];
+  allEffectiveMemberSpecs: TeamCreateRequest['members'];
+  launchIdentity: ProviderModelLaunchIdentity | null;
+  mixedSecondaryLanes: TMixedSecondaryLane[];
+  workspaceTrustFullPlan: TWorkspaceTrustPlan | null;
+  anthropicApiKeyHelper: TAnthropicApiKeyHelper | null;
+  initialLaunchWarnings: string[];
+  initialLaunchWarningSource: LaunchRosterSource;
+  createInitialMemberSpawnStatusEntry(): MemberSpawnStatusEntry;
+}) {
+  const progress: TeamProvisioningProgress = {
+    runId: input.runId,
+    teamName: input.teamName,
+    state: 'validating',
+    message: getInitialLaunchValidationMessage(input.initialLaunchWarningSource),
+    startedAt: input.startedAt,
+    updatedAt: input.startedAt,
+    warnings: input.initialLaunchWarnings.length > 0 ? input.initialLaunchWarnings : undefined,
+    cliLogsTail: undefined,
+  };
+
+  return {
+    runId: input.runId,
+    teamName: input.teamName,
+    startedAt: input.startedAt,
+    stdoutBuffer: '',
+    stderrBuffer: '',
+    claudeLogLines: [],
+    lastClaudeLogStream: null,
+    stdoutLogLineBuf: '',
+    stderrLogLineBuf: '',
+    stdoutParserCarry: '',
+    stdoutParserCarryIsCompleteJson: false,
+    stdoutParserCarryLooksLikeClaudeJson: false,
+    claudeLogsUpdatedAt: undefined,
+    deterministicBootstrapStartedAt: undefined,
+    lastDeterministicBootstrapEvent: undefined,
+    lastDeterministicBootstrapPhase: undefined,
+    deterministicBootstrapMemberSpawnSeen: false,
+    deterministicBootstrapMemberResultSeen: false,
+    processKilled: false,
+    finalizingByTimeout: false,
+    cancelRequested: false,
+    teamsBasePathsToProbe: input.teamsBasePathsToProbe,
+    child: null,
+    timeoutHandle: null,
+    fsMonitorHandle: null,
+    onProgress: input.onProgress,
+    expectedMembers: input.expectedMembers,
+    request: input.syntheticRequest,
+    allEffectiveMembers: input.allEffectiveMemberSpecs,
+    effectiveMembers: input.effectiveMemberSpecs,
+    launchIdentity: input.launchIdentity,
+    mixedSecondaryLanes: input.mixedSecondaryLanes,
+    lastLogProgressAt: 0,
+    lastDataReceivedAt: 0,
+    lastStdoutReceivedAt: 0,
+    stallCheckHandle: null,
+    stallWarningIndex: null,
+    preStallMessage: null,
+    lastRetryAt: 0,
+    apiRetryWarningIndex: null,
+    apiErrorWarningEmitted: false,
+    waitingTasksSince: null,
+    provisioningComplete: false,
+    processClosed: false,
+    requiresFirstRealTurnSuccess: false,
+    firstRealTurnSucceeded: false,
+    mcpConfigPath: null,
+    memberMcpConfigPaths: [],
+    bootstrapSpecPath: null,
+    bootstrapUserPromptPath: null,
+    isLaunch: true,
+    launchStateClearedForRun: false,
+    deterministicBootstrap: true,
+    workspaceTrustPlan: input.workspaceTrustFullPlan,
+    workspaceTrustExecution: null,
+    workspaceTrustDiagnostics: null,
+    workspaceTrustRetryAttempted: false,
+    fsPhase: 'waiting_members' as const,
+    leadRelayCapture: null,
+    activeCrossTeamReplyHints: [],
+    leadMsgSeq: 0,
+    liveLeadTextBuffer: null,
+    pendingToolCalls: [],
+    activeToolCalls: new Map<string, never>(),
+    pendingDirectCrossTeamSendRefresh: false,
+    lastLeadTextEmitMs: 0,
+    silentUserDmForward: null,
+    silentUserDmForwardClearHandle: null,
+    pendingInboxRelayCandidates: [],
+    provisioningOutputParts: [],
+    provisioningTraceLines: [],
+    lastProvisioningTraceKey: null,
+    provisioningOutputIndexByMessageId: new Map<string, number>(),
+    detectedSessionId: null,
+    leadActivityState: 'active' as const,
+    leadContextUsage: null,
+    authFailureRetried: false,
+    authRetryInProgress: false,
+    spawnContext: null,
+    anthropicApiKeyHelper: input.anthropicApiKeyHelper,
+    pendingApprovals: new Map<string, never>(),
+    processedPermissionRequestIds: new Set<string>(),
+    pendingPostCompactReminder: false,
+    postCompactReminderInFlight: false,
+    suppressPostCompactReminderOutput: false,
+    pendingGeminiPostLaunchHydration: false,
+    geminiPostLaunchHydrationInFlight: false,
+    geminiPostLaunchHydrationSent: false,
+    suppressGeminiPostLaunchHydrationOutput: false,
+    memberSpawnStatuses: new Map(
+      input.expectedMembers.map((name) => [name, input.createInitialMemberSpawnStatusEntry()])
+    ),
+    memberSpawnToolUseIds: new Map<string, string>(),
+    pendingMemberRestarts: new Map<string, never>(),
+    memberSpawnLeadInboxCursorByMember: new Map<string, never>(),
+    lastDeterministicBootstrapSeq: 0,
+    lastMemberSpawnAuditAt: 0,
+    lastMemberSpawnAuditConfigReadWarningAt: 0,
+    lastMemberSpawnAuditMissingWarningAt: new Map<string, number>(),
+    progress,
+  };
 }
 
 export async function prepareDeterministicLaunchRunState<

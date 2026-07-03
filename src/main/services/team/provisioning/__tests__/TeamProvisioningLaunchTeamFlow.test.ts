@@ -4,13 +4,19 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   buildDeterministicLaunchProcessArgs,
   buildLaunchSyntheticRequest,
+  createDeterministicLaunchProvisioningRun,
   getInitialLaunchValidationMessage,
   parseLaunchConfigProjectPath,
   prepareDeterministicLaunchRunState,
   resolveExistingLaunchRunReuse,
 } from '../TeamProvisioningLaunchTeamFlow';
 
-import type { ProviderModelLaunchIdentity, TeamProvisioningProgress } from '@shared/types';
+import type {
+  MemberSpawnStatusEntry,
+  ProviderModelLaunchIdentity,
+  TeamCreateRequest,
+  TeamProvisioningProgress,
+} from '@shared/types';
 
 const launchIdentity: ProviderModelLaunchIdentity = {
   providerId: 'codex',
@@ -23,6 +29,32 @@ const launchIdentity: ProviderModelLaunchIdentity = {
   catalogFetchedAt: null,
   selectedEffort: 'high',
   resolvedEffort: 'high',
+};
+
+function createSpawnStatus(label: string): MemberSpawnStatusEntry {
+  return {
+    status: 'offline',
+    launchState: 'starting',
+    agentToolAccepted: false,
+    runtimeAlive: false,
+    bootstrapConfirmed: false,
+    hardFailure: false,
+    updatedAt: `2026-01-01T00:00:0${label}.000Z`,
+  };
+}
+
+const syntheticRequest: TeamCreateRequest = {
+  teamName: 'demo',
+  cwd: '/repo',
+  providerId: 'codex',
+  model: 'gpt-5',
+  effort: 'high',
+  fastMode: 'off',
+  skipPermissions: false,
+  members: [
+    { name: 'Lead', role: 'Lead' },
+    { name: 'Builder', role: 'Build' },
+  ],
 };
 
 describe('TeamProvisioningLaunchTeamFlow', () => {
@@ -115,6 +147,174 @@ describe('TeamProvisioningLaunchTeamFlow', () => {
     );
     expect(getInitialLaunchValidationMessage('config-fallback')).toBe(
       'Validating team launch request (fallback members from config.json)'
+    );
+  });
+
+  it('creates the initial deterministic launch provisioning run state', () => {
+    let spawnIndex = 0;
+    const mixedSecondaryLanes = [{ lane: 'secondary-opencode' }];
+    const workspaceTrustFullPlan = {
+      launchArgPatches: [{ providerId: 'codex', args: ['--trust'] }],
+    };
+    const expectedMembers = ['Lead', 'Builder'];
+    const initialLaunchWarnings = ['Recovered roster', 'Large team'];
+    const effectiveMemberSpecs = [syntheticRequest.members[0]];
+    const run = createDeterministicLaunchProvisioningRun({
+      runId: 'run-1',
+      teamName: 'demo',
+      startedAt: '2026-01-01T00:00:00.000Z',
+      onProgress: vi.fn(),
+      teamsBasePathsToProbe: [{ location: 'configured', basePath: '/teams' }],
+      syntheticRequest,
+      expectedMembers,
+      effectiveMemberSpecs,
+      allEffectiveMemberSpecs: syntheticRequest.members,
+      launchIdentity,
+      mixedSecondaryLanes,
+      workspaceTrustFullPlan,
+      anthropicApiKeyHelper: { helper: 'material' },
+      initialLaunchWarnings,
+      initialLaunchWarningSource: 'members-meta',
+      createInitialMemberSpawnStatusEntry: () => createSpawnStatus(String(spawnIndex++)),
+    });
+
+    expect(run).toMatchObject({
+      runId: 'run-1',
+      teamName: 'demo',
+      startedAt: '2026-01-01T00:00:00.000Z',
+      stdoutBuffer: '',
+      stderrBuffer: '',
+      claudeLogLines: [],
+      lastClaudeLogStream: null,
+      stdoutLogLineBuf: '',
+      stderrLogLineBuf: '',
+      stdoutParserCarry: '',
+      stdoutParserCarryIsCompleteJson: false,
+      stdoutParserCarryLooksLikeClaudeJson: false,
+      deterministicBootstrapMemberSpawnSeen: false,
+      deterministicBootstrapMemberResultSeen: false,
+      processKilled: false,
+      finalizingByTimeout: false,
+      cancelRequested: false,
+      child: null,
+      timeoutHandle: null,
+      fsMonitorHandle: null,
+      lastLogProgressAt: 0,
+      lastDataReceivedAt: 0,
+      lastStdoutReceivedAt: 0,
+      stallCheckHandle: null,
+      stallWarningIndex: null,
+      preStallMessage: null,
+      lastRetryAt: 0,
+      apiRetryWarningIndex: null,
+      apiErrorWarningEmitted: false,
+      waitingTasksSince: null,
+      provisioningComplete: false,
+      processClosed: false,
+      requiresFirstRealTurnSuccess: false,
+      firstRealTurnSucceeded: false,
+      mcpConfigPath: null,
+      memberMcpConfigPaths: [],
+      bootstrapSpecPath: null,
+      bootstrapUserPromptPath: null,
+      isLaunch: true,
+      launchStateClearedForRun: false,
+      deterministicBootstrap: true,
+      workspaceTrustPlan: workspaceTrustFullPlan,
+      workspaceTrustExecution: null,
+      workspaceTrustDiagnostics: null,
+      workspaceTrustRetryAttempted: false,
+      fsPhase: 'waiting_members',
+      leadRelayCapture: null,
+      activeCrossTeamReplyHints: [],
+      leadMsgSeq: 0,
+      liveLeadTextBuffer: null,
+      pendingToolCalls: [],
+      pendingDirectCrossTeamSendRefresh: false,
+      lastLeadTextEmitMs: 0,
+      silentUserDmForward: null,
+      silentUserDmForwardClearHandle: null,
+      pendingInboxRelayCandidates: [],
+      provisioningOutputParts: [],
+      provisioningTraceLines: [],
+      lastProvisioningTraceKey: null,
+      detectedSessionId: null,
+      leadActivityState: 'active',
+      leadContextUsage: null,
+      authFailureRetried: false,
+      authRetryInProgress: false,
+      spawnContext: null,
+      anthropicApiKeyHelper: { helper: 'material' },
+      pendingPostCompactReminder: false,
+      postCompactReminderInFlight: false,
+      suppressPostCompactReminderOutput: false,
+      pendingGeminiPostLaunchHydration: false,
+      geminiPostLaunchHydrationInFlight: false,
+      geminiPostLaunchHydrationSent: false,
+      suppressGeminiPostLaunchHydrationOutput: false,
+      lastDeterministicBootstrapSeq: 0,
+      lastMemberSpawnAuditAt: 0,
+      lastMemberSpawnAuditConfigReadWarningAt: 0,
+      progress: {
+        runId: 'run-1',
+        teamName: 'demo',
+        state: 'validating',
+        message: 'Validating team launch request (members from members.meta.json)',
+        startedAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+        warnings: ['Recovered roster', 'Large team'],
+        cliLogsTail: undefined,
+      },
+    });
+    expect(run.request).toBe(syntheticRequest);
+    expect(run.expectedMembers).toBe(expectedMembers);
+    expect(run.progress.warnings).toBe(initialLaunchWarnings);
+    expect(run.effectiveMembers).toBe(effectiveMemberSpecs);
+    expect(run.allEffectiveMembers).toBe(syntheticRequest.members);
+    expect(run.launchIdentity).toBe(launchIdentity);
+    expect(run.mixedSecondaryLanes).toBe(mixedSecondaryLanes);
+    expect(run.activeToolCalls).toBeInstanceOf(Map);
+    expect(run.provisioningOutputIndexByMessageId).toBeInstanceOf(Map);
+    expect(run.pendingApprovals).toBeInstanceOf(Map);
+    expect(run.processedPermissionRequestIds).toBeInstanceOf(Set);
+    expect(run.memberSpawnToolUseIds).toBeInstanceOf(Map);
+    expect(run.pendingMemberRestarts).toBeInstanceOf(Map);
+    expect(run.memberSpawnLeadInboxCursorByMember).toBeInstanceOf(Map);
+    expect(run.lastMemberSpawnAuditMissingWarningAt).toBeInstanceOf(Map);
+    expect(Array.from(run.memberSpawnStatuses.keys())).toEqual(['Lead', 'Builder']);
+    expect(run.memberSpawnStatuses.get('Lead')?.updatedAt).toBe('2026-01-01T00:00:00.000Z');
+    expect(run.memberSpawnStatuses.get('Builder')?.updatedAt).toBe(
+      '2026-01-01T00:00:01.000Z'
+    );
+  });
+
+  it.each([
+    ['members-meta', 'Validating team launch request (members from members.meta.json)'],
+    ['inboxes', 'Validating team launch request (members from inboxes)'],
+    ['config-fallback', 'Validating team launch request (fallback members from config.json)'],
+  ] as const)('creates launch progress for %s roster source', (source, message) => {
+    const run = createDeterministicLaunchProvisioningRun({
+      runId: 'run-1',
+      teamName: 'demo',
+      startedAt: '2026-01-01T00:00:00.000Z',
+      onProgress: vi.fn(),
+      teamsBasePathsToProbe: [],
+      syntheticRequest,
+      expectedMembers: ['Lead'],
+      effectiveMemberSpecs: [syntheticRequest.members[0]],
+      allEffectiveMemberSpecs: syntheticRequest.members,
+      launchIdentity: null,
+      mixedSecondaryLanes: [],
+      workspaceTrustFullPlan: null,
+      anthropicApiKeyHelper: null,
+      initialLaunchWarnings: source === 'config-fallback' ? [] : ['Recovered roster'],
+      initialLaunchWarningSource: source,
+      createInitialMemberSpawnStatusEntry: () => createSpawnStatus('0'),
+    });
+
+    expect(run.progress.message).toBe(message);
+    expect(run.progress.warnings).toEqual(
+      source === 'config-fallback' ? undefined : ['Recovered roster']
     );
   });
 

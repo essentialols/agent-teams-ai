@@ -204,7 +204,6 @@ import {
 } from './provisioning/TeamProvisioningCrossTeamRelayHelpers';
 import { buildProvisioningTraceDetail } from './provisioning/TeamProvisioningDiagnosticsHelpers';
 import {
-  type CrossProviderMemberArgsResult,
   type ProvisioningEnvResolution,
   type TeamRuntimeAuthContext,
 } from './provisioning/TeamProvisioningEnvBuilder';
@@ -214,7 +213,6 @@ import {
 } from './provisioning/TeamProvisioningEnvGuards';
 import {
   createTeamProvisioningEnvRuntimePorts,
-  type TeamProvisioningEnvRuntimePorts,
 } from './provisioning/TeamProvisioningEnvRuntimePorts';
 import {
   startProvisioningFilesystemMonitor,
@@ -573,16 +571,12 @@ import {
   getCanonicalSendMessageFieldRule,
   getCanonicalSendMessageToolRule,
 } from './provisioning/TeamProvisioningPromptBuilders';
-import {
-  PREFLIGHT_AUTH_RETRY_DELAY_MS,
-  type SpawnProbeOptions,
-  type SpawnProbeResult,
-} from './provisioning/TeamProvisioningProviderDiagnostics';
-import {
-  createTeamProvisioningProviderDiagnosticsRuntime,
-  type TeamProvisioningProviderDiagnosticsRuntime,
-} from './provisioning/TeamProvisioningProviderDiagnosticsPorts';
+import { PREFLIGHT_AUTH_RETRY_DELAY_MS } from './provisioning/TeamProvisioningProviderDiagnostics';
 import { getCliHelpOutputForProvisioning } from './provisioning/TeamProvisioningProviderPreflight';
+import {
+  createTeamProvisioningProviderRuntimeFacade,
+  type TeamProvisioningProviderRuntimeFacade,
+} from './provisioning/TeamProvisioningProviderRuntimeFacade';
 import {
   buildRetainedClaudeLogsSnapshot,
   extractCliLogsFromRun,
@@ -1705,7 +1699,7 @@ export class TeamProvisioningService {
   private readonly toolApprovalTimeouts: TeamProvisioningToolApprovalTimeouts<ProvisioningRun>;
   private readonly transientRunState: TeamProvisioningTransientRunState;
   private inFlightResponses = new Set<string>();
-  private readonly provisioningEnvRuntimePorts: TeamProvisioningEnvRuntimePorts;
+  private readonly providerRuntime: TeamProvisioningProviderRuntimeFacade;
   private readonly prepareCoordinator: TeamProvisioningPrepareCoordinator;
   private runtimeAdapterRegistry: TeamRuntimeAdapterRegistry | null = null;
   private controlApiBaseUrlResolver: (() => Promise<string | null>) | null = null;
@@ -1769,24 +1763,39 @@ export class TeamProvisioningService {
         logInfo: (message) => logger.info(message),
       }
     );
-    this.provisioningEnvRuntimePorts = createTeamProvisioningEnvRuntimePorts({
-      providerConnectionService: this.providerConnectionService,
-      getControlApiBaseUrlResolver: () => this.controlApiBaseUrlResolver,
-      getRuntimeTurnSettledEnvironmentProvider: () => this.runtimeTurnSettledEnvironmentProvider,
-      getRuntimeTurnSettledHookSettingsProvider: () => this.runtimeTurnSettledHookSettingsProvider,
-      logger,
+    this.providerRuntime = createTeamProvisioningProviderRuntimeFacade({
+      diagnosticsRuntimeInput: {
+        transientProbeProcesses: this.transientProbeProcesses,
+        providerConnectionService: this.providerConnectionService,
+        logger,
+        isAuthFailureWarning,
+        normalizeApiRetryErrorMessage,
+      },
+      envRuntimePorts: createTeamProvisioningEnvRuntimePorts({
+        providerConnectionService: this.providerConnectionService,
+        getControlApiBaseUrlResolver: () => this.controlApiBaseUrlResolver,
+        getRuntimeTurnSettledEnvironmentProvider: () => this.runtimeTurnSettledEnvironmentProvider,
+        getRuntimeTurnSettledHookSettingsProvider: () => this.runtimeTurnSettledHookSettingsProvider,
+        logger,
+      }),
     });
     this.prepareCoordinator = new TeamProvisioningPrepareCoordinator(
       createDefaultTeamProvisioningPrepareCoordinatorPorts({
         getOpenCodeRuntimeAdapter: () => this.getOpenCodeRuntimeAdapter(),
         buildProvisioningEnv: (providerId, providerBackendId, options) =>
-          this.buildProvisioningEnv(providerId, providerBackendId, options),
+          this.providerRuntime.buildProvisioningEnv(providerId, providerBackendId, options),
         runProviderOneShotDiagnostic: (claudePath, cwd, env, providerId, providerArgs) =>
-          this.runProviderOneShotDiagnostic(claudePath, cwd, env, providerId, providerArgs),
+          this.providerRuntime.runProviderOneShotDiagnostic(
+            claudePath,
+            cwd,
+            env,
+            providerId,
+            providerArgs
+          ),
         readRuntimeProviderLaunchFacts: (params) => this.readRuntimeProviderLaunchFacts(params),
         resolveClaudeBinaryPath: () => ClaudeBinaryResolver.resolve(),
         probeClaudeRuntime: (claudePath, cwd, env, providerId, providerArgs) =>
-          this.probeClaudeRuntime(claudePath, cwd, env, providerId, providerArgs),
+          this.providerRuntime.probeClaudeRuntime(claudePath, cwd, env, providerId, providerArgs),
         ensureMemberWorktree: (input) => this.memberWorktreeManager.ensureMemberWorktree(input),
         execCli,
         validatePrepareCwd: (cwd) => this.validatePrepareCwd(cwd),
@@ -1818,7 +1827,7 @@ export class TeamProvisioningService {
     this.memberMcpLaunchConfigProvisioner = new TeamProvisioningMemberMcpLaunchConfigProvisioner({
       mcpConfigBuilder: this.mcpConfigBuilder,
       ensureCwdExists,
-      resolveControlApiBaseUrl: () => this.resolveControlApiBaseUrl(),
+      resolveControlApiBaseUrl: () => this.providerRuntime.resolveControlApiBaseUrl(),
       getAliveRun: (teamName) => {
         const runId = this.runTracking.getAliveRunId(teamName);
         return runId ? this.runs.get(runId) : undefined;
@@ -3155,7 +3164,7 @@ export class TeamProvisioningService {
         this.cleanupStoppedTeamOpenCodeRuntimeLanesInBackground(teamName),
       createOpenCodeRuntimeBootstrapEvidencePorts: () =>
         this.createOpenCodeRuntimeBootstrapEvidencePorts(),
-      resolveControlApiBaseUrl: () => this.resolveControlApiBaseUrl(),
+      resolveControlApiBaseUrl: () => this.providerRuntime.resolveControlApiBaseUrl(),
       sendOpenCodeMemberMessageToRuntimeSerialized: (input) =>
         this.sendOpenCodeMemberMessageToRuntimeSerialized(input),
       rememberOpenCodeRuntimePidFromBridge: (input) =>
@@ -4773,7 +4782,7 @@ export class TeamProvisioningService {
     return materializeOpenCodeRuntimeAdapterDefaultsHelper(params, {
       resolveClaudePath: () => ClaudeBinaryResolver.resolve(),
       buildProvisioningEnv: (providerId, providerBackendId) =>
-        this.buildProvisioningEnv(providerId, providerBackendId),
+        this.providerRuntime.buildProvisioningEnv(providerId, providerBackendId),
       resolveProviderDefaultModel: (claudePath, cwd, providerId, env, providerArgs, limitContext) =>
         this.resolveProviderDefaultModel(
           claudePath,
@@ -4933,7 +4942,13 @@ export class TeamProvisioningService {
         readBootstrapRealTaskSubmissionState,
         writeDeterministicBootstrapUserPromptFile,
         validateAgentTeamsMcpRuntime: (claudePath, cwd, env, mcpConfigPath, options) =>
-          this.validateAgentTeamsMcpRuntime(claudePath, cwd, env, mcpConfigPath, options),
+          this.providerRuntime.validateAgentTeamsMcpRuntime(
+            claudePath,
+            cwd,
+            env,
+            mcpConfigPath,
+            options
+          ),
         spawnCli,
         getStopAllTeamsGeneration: () => this.stopAllTeamsGeneration,
         isStopAllTeamsGenerationChanged: (stopAllGenerationAtStart) =>
@@ -5045,7 +5060,7 @@ export class TeamProvisioningService {
         authMaterialId: runtimeAuthMaterialId,
         allowAnthropicApiKeyHelper: true,
       };
-      const provisioningEnv = await this.buildProvisioningEnv(
+      const provisioningEnv = await this.providerRuntime.buildProvisioningEnv(
         request.providerId,
         request.providerBackendId,
         { includeCodexTeammateAuth: teamRequestIncludesCodexMember(request), teamRuntimeAuth }
@@ -5132,7 +5147,7 @@ export class TeamProvisioningService {
       assertDeterministicBootstrapPrimaryMemberLimit(effectiveMemberSpecs.length);
       const largeTeamWarning = buildLargeDeterministicBootstrapWarning(effectiveMemberSpecs.length);
       const resolvedProviderId = resolveTeamProviderId(request.providerId);
-      const crossProviderMemberArgs = await this.buildCrossProviderMemberArgs(
+      const crossProviderMemberArgs = await this.providerRuntime.buildCrossProviderMemberArgs(
         resolvedProviderId,
         effectiveMemberSpecs,
         { teamRuntimeAuth }
@@ -5354,7 +5369,7 @@ export class TeamProvisioningService {
               run,
             }),
           validateAgentTeamsMcpRuntime: (createdMcpConfigPath) =>
-            this.validateAgentTeamsMcpRuntime(
+            this.providerRuntime.validateAgentTeamsMcpRuntime(
               claudePath,
               request.cwd,
               shellEnv,
@@ -6563,7 +6578,7 @@ export class TeamProvisioningService {
         allowAnthropicApiKeyHelper: true,
       };
 
-      const provisioningEnv = await this.buildProvisioningEnv(
+      const provisioningEnv = await this.providerRuntime.buildProvisioningEnv(
         request.providerId,
         request.providerBackendId,
         { includeCodexTeammateAuth: teamRequestIncludesCodexMember(request), teamRuntimeAuth }
@@ -6655,7 +6670,7 @@ export class TeamProvisioningService {
       );
       const expectedMembers = effectiveMemberSpecs.map((member) => member.name);
       const resolvedProviderId = resolveTeamProviderId(request.providerId);
-      const crossProviderMemberArgs = await this.buildCrossProviderMemberArgs(
+      const crossProviderMemberArgs = await this.providerRuntime.buildCrossProviderMemberArgs(
         resolvedProviderId,
         effectiveMemberSpecs,
         { teamRuntimeAuth }
@@ -6933,12 +6948,18 @@ export class TeamProvisioningService {
         });
         run.mcpConfigPath = mcpConfigPath;
         emitProvisioningCheckpoint(run, 'Validating agent-teams MCP runtime');
-        await this.validateAgentTeamsMcpRuntime(claudePath, request.cwd, shellEnv, mcpConfigPath, {
-          isCancelled: () =>
-            run.cancelRequested ||
-            run.processKilled ||
-            this.stopAllTeamsGeneration !== stopAllGenerationAtStart,
-        });
+        await this.providerRuntime.validateAgentTeamsMcpRuntime(
+          claudePath,
+          request.cwd,
+          shellEnv,
+          mcpConfigPath,
+          {
+            isCancelled: () =>
+              run.cancelRequested ||
+              run.processKilled ||
+              this.stopAllTeamsGeneration !== stopAllGenerationAtStart,
+          }
+        );
       } catch (error) {
         this.runs.delete(runId);
         this.provisioningRunByTeam.delete(request.teamName);
@@ -8373,7 +8394,7 @@ export class TeamProvisioningService {
           name: member.name.trim(),
           ...(member.role?.trim() ? { role: member.role.trim() } : {}),
         }));
-      const workSyncControlUrl = await this.resolveControlApiBaseUrl();
+      const workSyncControlUrl = await this.providerRuntime.resolveControlApiBaseUrl();
       run.activeCrossTeamReplyHints = buildLeadActiveCrossTeamReplyHints(batch);
       const message = buildLeadInboxRelayPrompt({
         teamName,
@@ -14055,121 +14076,6 @@ export class TeamProvisioningService {
     return provisioningPathExists(filePath);
   }
 
-  private isAuthFailureWarning(text: string, source: AuthWarningSource): boolean {
-    return isAuthFailureWarning(text, source);
-  }
-
-  private normalizeApiRetryErrorMessage(text: string): string {
-    return normalizeApiRetryErrorMessage(text);
-  }
-
-  private getProviderDiagnosticsRuntime(): TeamProvisioningProviderDiagnosticsRuntime {
-    return createTeamProvisioningProviderDiagnosticsRuntime({
-      transientProbeProcesses: this.transientProbeProcesses,
-      providerConnectionService: this.providerConnectionService,
-      logger,
-      isAuthFailureWarning: (text, source) => this.isAuthFailureWarning(text, source),
-      normalizeApiRetryErrorMessage: (text) => this.normalizeApiRetryErrorMessage(text),
-    });
-  }
-
-  private async probeClaudeRuntime(
-    claudePath: string,
-    cwd: string,
-    env: NodeJS.ProcessEnv,
-    providerId: TeamProviderId | undefined = 'anthropic',
-    providerArgs: string[] = []
-  ): Promise<{ warning?: string }> {
-    return this.getProviderDiagnosticsRuntime().probeClaudeRuntime(
-      claudePath,
-      cwd,
-      env,
-      providerId,
-      providerArgs
-    );
-  }
-
-  private async runProviderOneShotDiagnostic(
-    claudePath: string,
-    cwd: string,
-    env: NodeJS.ProcessEnv,
-    providerId: TeamProviderId | undefined = 'anthropic',
-    providerArgs: string[] = []
-  ): Promise<{ warning?: string }> {
-    return this.getProviderDiagnosticsRuntime().runProviderOneShotDiagnostic(
-      claudePath,
-      cwd,
-      env,
-      providerId,
-      providerArgs
-    );
-  }
-
-  private async validateAgentTeamsMcpRuntime(
-    claudePath: string,
-    cwd: string,
-    env: NodeJS.ProcessEnv,
-    mcpConfigPath: string,
-    options: { isCancelled?: () => boolean } = {}
-  ): Promise<void> {
-    await this.getProviderDiagnosticsRuntime().validateAgentTeamsMcpRuntime(
-      claudePath,
-      cwd,
-      env,
-      mcpConfigPath,
-      options
-    );
-  }
-
-  private async spawnProbe(
-    claudePath: string,
-    args: string[],
-    cwd: string,
-    env: NodeJS.ProcessEnv,
-    timeoutMs: number,
-    options?: SpawnProbeOptions
-  ): Promise<SpawnProbeResult> {
-    return this.getProviderDiagnosticsRuntime().spawnProbe(
-      claudePath,
-      args,
-      cwd,
-      env,
-      timeoutMs,
-      options
-    );
-  }
-
-  private async buildProvisioningEnv(
-    providerId: TeamProviderId | undefined = 'anthropic',
-    providerBackendId?: string | null,
-    options?: {
-      includeCodexTeammateAuth?: boolean;
-      teamRuntimeAuth?: TeamRuntimeAuthContext;
-    }
-  ): Promise<ProvisioningEnvResolution> {
-    return this.provisioningEnvRuntimePorts.buildProvisioningEnv(
-      providerId,
-      providerBackendId,
-      options
-    );
-  }
-
-  private async buildCrossProviderMemberArgs(
-    primaryProviderId: TeamProviderId,
-    memberSpecs: TeamCreateRequest['members'],
-    options?: { teamRuntimeAuth?: TeamRuntimeAuthContext }
-  ): Promise<CrossProviderMemberArgsResult> {
-    return this.provisioningEnvRuntimePorts.buildCrossProviderMemberArgs(
-      primaryProviderId,
-      memberSpecs,
-      options
-    );
-  }
-
-  private async resolveControlApiBaseUrl(): Promise<string | null> {
-    return this.provisioningEnvRuntimePorts.resolveControlApiBaseUrl();
-  }
-
   /**
    * Immediately update projectPath in config.json at launch start, before CLI spawn.
    * Ensures TeamDetailView shows the correct project path even if provisioning
@@ -14499,9 +14405,9 @@ export class TeamProvisioningService {
       ports: {
         getCachedOrProbeResult: (targetCwd, providerId) =>
           this.getCachedOrProbeResult(targetCwd, providerId),
-        buildProvisioningEnv: () => this.buildProvisioningEnv(),
+        buildProvisioningEnv: () => this.providerRuntime.buildProvisioningEnv(),
         spawnProbe: (claudePath, args, targetCwd, env, timeoutMs) =>
-          this.spawnProbe(claudePath, args, targetCwd, env, timeoutMs),
+          this.providerRuntime.spawnProbe(claudePath, args, targetCwd, env, timeoutMs),
       },
     });
     this.helpOutputCache = cache.output;

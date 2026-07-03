@@ -2,9 +2,12 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   createOpenCodeRuntimeDeliveryPorts,
+  createTeamProvisioningOpenCodeRuntimeDeliveryBoundary,
   getOpenCodeRuntimeRecoveryLaneIds,
+  type TeamProvisioningOpenCodeRuntimeDeliveryBoundaryPorts,
 } from '../TeamProvisioningOpenCodeRuntimeDelivery';
 
+import type { OpenCodeRuntimeCheckinRun } from '../TeamProvisioningOpenCodeRuntimeCheckin';
 import type { PersistedTeamLaunchSnapshot } from '@shared/types';
 
 describe('TeamProvisioningOpenCodeRuntimeDelivery', () => {
@@ -29,6 +32,63 @@ describe('TeamProvisioningOpenCodeRuntimeDelivery', () => {
         'member_inbox',
         'cross_team_outbox',
       ]);
+    });
+  });
+
+  describe('createTeamProvisioningOpenCodeRuntimeDeliveryBoundary', () => {
+    it('normalizes member inbox delivery wake scheduling', () => {
+      const scheduleOpenCodePromptDeliveryWatchdog = vi.fn();
+      const boundary = createBoundary({
+        scheduleOpenCodePromptDeliveryWatchdog,
+      });
+
+      boundary.scheduleOpenCodeMemberInboxDeliveryWake({
+        teamName: ' Team ',
+        memberName: ' Builder ',
+        messageId: ' message-1 ',
+        delayMs: -25,
+      });
+      boundary.scheduleOpenCodeMemberInboxDeliveryWake({
+        teamName: 'Team',
+        memberName: 'Builder',
+        messageId: 'message-2',
+      });
+
+      expect(scheduleOpenCodePromptDeliveryWatchdog).toHaveBeenNthCalledWith(1, {
+        teamName: 'Team',
+        memberName: 'Builder',
+        messageId: 'message-1',
+        delayMs: 0,
+      });
+      expect(scheduleOpenCodePromptDeliveryWatchdog).toHaveBeenNthCalledWith(2, {
+        teamName: 'Team',
+        memberName: 'Builder',
+        messageId: 'message-2',
+        delayMs: 500,
+      });
+    });
+
+    it('does not schedule member inbox delivery wake when disabled or identifiers are blank', () => {
+      const scheduleOpenCodePromptDeliveryWatchdog = vi.fn();
+      const boundary = createBoundary({
+        isOpenCodePromptDeliveryWatchdogEnabled: () => false,
+        scheduleOpenCodePromptDeliveryWatchdog,
+      });
+
+      boundary.scheduleOpenCodeMemberInboxDeliveryWake({
+        teamName: 'Team',
+        memberName: 'Builder',
+        messageId: 'message-1',
+      });
+      createBoundary({
+        scheduleOpenCodePromptDeliveryWatchdog,
+      }).scheduleOpenCodeMemberInboxDeliveryWake({
+        teamName: 'Team',
+        memberName: ' ',
+        messageId: 'message-2',
+      });
+
+      expect(scheduleOpenCodePromptDeliveryWatchdog).not.toHaveBeenCalled();
     });
   });
 
@@ -86,6 +146,69 @@ describe('TeamProvisioningOpenCodeRuntimeDelivery', () => {
     });
   });
 });
+
+function createBoundary(
+  overrides: Partial<
+    TeamProvisioningOpenCodeRuntimeDeliveryBoundaryPorts<OpenCodeRuntimeCheckinRun>
+  > = {}
+) {
+  const ports: TeamProvisioningOpenCodeRuntimeDeliveryBoundaryPorts<OpenCodeRuntimeCheckinRun> = {
+    getTeamsBasePath: () => '/tmp/teams',
+    resolveOpenCodeRuntimeLaneId: async () => 'primary',
+    resolveCurrentOpenCodeRuntimeRunId: async () => 'run-1',
+    readLaunchState: async () => null,
+    writeLaunchState: async () => {},
+    readConfigForStrictDecision: async () => null,
+    readMetaMembers: async () => [],
+    readPersistedRuntimeMembers: () => [],
+    getTrackedRun: () => null,
+    persistTrackedRunLaunchState: async () => {},
+    invalidateRuntimeSnapshotCaches: () => {},
+    emitMemberSpawnChange: () => {},
+    emitTeamChange: () => {},
+    createOpenCodeRuntimeBootstrapEvidencePorts: () => {
+      throw new Error('unused');
+    },
+    upsertOpenCodeTaskRecord: async () => {
+      throw new Error('unused');
+    },
+    syncMemberTaskActivityForRuntimeTransition: () => {},
+    syncMemberLaunchGraceCheck: () => {},
+    sentMessagesStore: {
+      appendMessage: vi.fn(),
+      readMessages: vi.fn(),
+    },
+    inboxReader: {
+      getMessagesFor: vi.fn(),
+    },
+    inboxWriter: {
+      sendMessage: vi.fn(),
+    },
+    getCrossTeamSender: () => null,
+    logger: {
+      warn: vi.fn(),
+    },
+    isOpenCodeRuntimeRecipient: async () => true,
+    getOpenCodeAgendaSyncRecoveryBypassMessageIds: async () => new Set(),
+    resolveOpenCodeMemberDeliveryIdentity: async () => ({
+      ok: true,
+      canonicalMemberName: 'Builder',
+      laneId: 'primary',
+    }),
+    tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive: async () => true,
+    decideOpenCodeRuntimeDeliveryUserFacingAdvisory: async (record) => ({
+      record,
+      decision: { action: 'defer' },
+    }),
+    isOpenCodePromptDeliveryWatchdogEnabled: () => true,
+    scheduleOpenCodePromptDeliveryWatchdog: vi.fn(),
+    readLaunchStateForDeliveryRecovery: async () => null,
+    nowIso: () => '2026-01-01T00:00:00.000Z',
+    ...overrides,
+  };
+
+  return createTeamProvisioningOpenCodeRuntimeDeliveryBoundary(ports);
+}
 
 function snapshotWithMembers(
   members: Record<string, Partial<Pick<PersistedTeamLaunchSnapshot, 'members'>['members'][string]>>

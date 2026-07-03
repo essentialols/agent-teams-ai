@@ -31,12 +31,29 @@ import {
   isCurrentProofMissingRecoveryForegroundMessage,
   isCurrentReviewPickupRequestForegroundMessage,
 } from './TeamProvisioningInboxRelayPolicy';
+import {
+  assertOpenCodeRuntimeEvidenceAccepted,
+  createOpenCodeRuntimeCheckinPorts,
+  type OpenCodeRuntimeCheckinPortCallbacks,
+  type OpenCodeRuntimeCheckinPorts,
+  type OpenCodeRuntimeCheckinRun,
+  type OpenCodeRuntimeControlAck,
+  recordOpenCodeRuntimeBootstrapCheckin,
+  recordOpenCodeRuntimeHeartbeat,
+  recordOpenCodeRuntimeTaskEvent,
+} from './TeamProvisioningOpenCodeRuntimeCheckin';
+import {
+  asRuntimeRecord,
+  normalizeRuntimeIso,
+  requireRuntimeString,
+} from './TeamProvisioningRuntimeMetadata';
 
 import type {
   InboxMessage,
   OpenCodeRuntimeDeliveryStatus,
   PersistedTeamLaunchSnapshot,
   TaskRef,
+  TeamChangeEvent,
 } from '@shared/types';
 
 type RuntimeDeliveryLogger = Pick<Console, 'warn'>;
@@ -149,6 +166,249 @@ export interface OpenCodeRuntimeDeliveryJournalRecoveryPorts extends OpenCodeRun
   readLaunchState(teamName: string): Promise<PersistedTeamLaunchSnapshot | null>;
   nowIso(): string;
   logger: RuntimeDeliveryLogger;
+}
+
+export type TeamProvisioningOpenCodeRuntimeDeliveryBoundaryPorts<
+  Run extends OpenCodeRuntimeCheckinRun,
+> = Omit<OpenCodeRuntimeCheckinPortCallbacks<Run>, 'teamsBasePath'> &
+  OpenCodeRuntimeDeliveryPortsDependencies & {
+    getTeamsBasePath(): string;
+    logger: RuntimeDeliveryLogger;
+    isOpenCodeRuntimeRecipient(teamName: string, memberName: string): Promise<boolean>;
+    getOpenCodeAgendaSyncRecoveryBypassMessageIds(input: {
+      teamName: string;
+      memberName: string;
+      workSyncIntent?: 'agenda_sync' | 'review_pickup';
+      taskRefs?: TaskRef[];
+      foregroundMessages: InboxMessage[];
+    }): Promise<Set<string>>;
+    resolveOpenCodeMemberDeliveryIdentity(
+      teamName: string,
+      memberName: string
+    ): Promise<OpenCodeDeliveryIdentityResolution>;
+    tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive(input: {
+      teamName: string;
+      memberName: string;
+      laneId: string;
+    }): Promise<boolean>;
+    decideOpenCodeRuntimeDeliveryUserFacingAdvisory(
+      record: OpenCodePromptDeliveryLedgerRecord
+    ): Promise<{
+      record: OpenCodePromptDeliveryLedgerRecord;
+      decision: Parameters<typeof toOpenCodeRuntimeDeliveryStatus>[0]['decision'];
+    }>;
+    isOpenCodePromptDeliveryWatchdogEnabled(): boolean;
+    scheduleOpenCodePromptDeliveryWatchdog(input: {
+      teamName: string;
+      memberName: string;
+      messageId?: string | null;
+      delayMs: number;
+    }): void;
+    readLaunchStateForDeliveryRecovery(
+      teamName: string
+    ): Promise<PersistedTeamLaunchSnapshot | null>;
+    nowIso(): string;
+  };
+
+export function createTeamProvisioningOpenCodeRuntimeDeliveryBoundary<
+  Run extends OpenCodeRuntimeCheckinRun,
+>(ports: TeamProvisioningOpenCodeRuntimeDeliveryBoundaryPorts<Run>): {
+  createOpenCodeRuntimeCheckinPorts(): OpenCodeRuntimeCheckinPorts<Run>;
+  recordOpenCodeRuntimeBootstrapCheckin(raw: unknown): Promise<OpenCodeRuntimeControlAck>;
+  deliverOpenCodeRuntimeMessage(raw: unknown): Promise<OpenCodeRuntimeControlAck>;
+  recordOpenCodeRuntimeTaskEvent(raw: unknown): Promise<OpenCodeRuntimeControlAck>;
+  recordOpenCodeRuntimeHeartbeat(raw: unknown): Promise<OpenCodeRuntimeControlAck>;
+  createOpenCodeRuntimeDeliveryService(teamName: string, laneId: string): RuntimeDeliveryService;
+  createOpenCodePromptDeliveryLedger(
+    teamName: string,
+    laneId: string
+  ): OpenCodePromptDeliveryLedgerStore;
+  getOpenCodeRuntimeDeliveryStatus(
+    teamName: string,
+    messageId: string
+  ): Promise<OpenCodeRuntimeDeliveryStatus | null>;
+  tryGetActiveOpenCodePromptDeliveryRecord(input: {
+    teamName: string;
+    memberName: string;
+  }): Promise<OpenCodePromptDeliveryLedgerRecord | null>;
+  getOpenCodeMemberDeliveryBusyStatus(input: {
+    teamName: string;
+    memberName: string;
+    nowIso: string;
+    workSyncIntent?: 'agenda_sync' | 'review_pickup';
+    workSyncIntentKey?: string;
+    taskRefs?: TaskRef[];
+  }): Promise<OpenCodeMemberDeliveryBusyStatus>;
+  scheduleOpenCodeMemberInboxDeliveryWake(input: {
+    teamName: string;
+    memberName: string;
+    messageId: string;
+    delayMs?: number;
+  }): void;
+  createOpenCodeRuntimeDeliveryPorts(): RuntimeDeliveryDestinationPort[];
+  recoverOpenCodeRuntimeDeliveryJournal(teamName: string): Promise<{ recovered: true }>;
+} {
+  const createCheckinPorts = (): OpenCodeRuntimeCheckinPorts<Run> =>
+    createOpenCodeRuntimeCheckinPorts<Run>({
+      ...ports,
+      teamsBasePath: ports.getTeamsBasePath(),
+    });
+
+  const createDeliveryDestinationPorts = (): RuntimeDeliveryDestinationPort[] =>
+    createOpenCodeRuntimeDeliveryPorts({
+      sentMessagesStore: ports.sentMessagesStore,
+      inboxReader: ports.inboxReader,
+      inboxWriter: ports.inboxWriter,
+      getCrossTeamSender: ports.getCrossTeamSender,
+    });
+
+  const createDeliveryService = (teamName: string, laneId: string): RuntimeDeliveryService =>
+    createOpenCodeRuntimeDeliveryService(teamName, laneId, {
+      teamsBasePath: ports.getTeamsBasePath(),
+      resolveCurrentOpenCodeRuntimeRunId: (candidateTeamName, candidateLaneId) =>
+        ports.resolveCurrentOpenCodeRuntimeRunId(candidateTeamName, candidateLaneId),
+      createOpenCodeRuntimeDeliveryPorts: createDeliveryDestinationPorts,
+      emitTeamChange: (event) => {
+        ports.emitTeamChange({
+          type: event.type as TeamChangeEvent['type'],
+          teamName: event.teamName,
+          detail: typeof event.data?.detail === 'string' ? event.data.detail : undefined,
+        });
+      },
+      logger: ports.logger,
+    });
+
+  const createPromptDeliveryLedger = (
+    teamName: string,
+    laneId: string
+  ): OpenCodePromptDeliveryLedgerStore =>
+    createOpenCodePromptDeliveryLedger(teamName, laneId, {
+      teamsBasePath: ports.getTeamsBasePath(),
+    });
+
+  const tryGetActivePromptDeliveryRecord = (input: {
+    teamName: string;
+    memberName: string;
+  }): Promise<OpenCodePromptDeliveryLedgerRecord | null> =>
+    tryGetActiveOpenCodePromptDeliveryRecord(input, {
+      teamsBasePath: ports.getTeamsBasePath(),
+      resolveOpenCodeMemberDeliveryIdentity: (teamName, memberName) =>
+        ports.resolveOpenCodeMemberDeliveryIdentity(teamName, memberName),
+      tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive: (recoverInput) =>
+        ports.tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive(recoverInput),
+      createOpenCodePromptDeliveryLedger: createPromptDeliveryLedger,
+    });
+
+  const scheduleMemberInboxDeliveryWake = (input: {
+    teamName: string;
+    memberName: string;
+    messageId: string;
+    delayMs?: number;
+  }): void => {
+    const teamName = input.teamName.trim();
+    const memberName = input.memberName.trim();
+    const messageId = input.messageId.trim();
+    if (!teamName || !memberName || !messageId || !ports.isOpenCodePromptDeliveryWatchdogEnabled()) {
+      return;
+    }
+    ports.scheduleOpenCodePromptDeliveryWatchdog({
+      teamName,
+      memberName,
+      messageId,
+      delayMs: Math.max(0, input.delayMs ?? 500),
+    });
+  };
+
+  return {
+    createOpenCodeRuntimeCheckinPorts: createCheckinPorts,
+    recordOpenCodeRuntimeBootstrapCheckin: (raw) =>
+      recordOpenCodeRuntimeBootstrapCheckin(raw, createCheckinPorts()),
+    async deliverOpenCodeRuntimeMessage(raw) {
+      const payload = asRuntimeRecord(raw);
+      const teamName = requireRuntimeString(payload.teamName, 'teamName');
+      const runId = requireRuntimeString(payload.runId, 'runId');
+      const fromMemberName = requireRuntimeString(payload.fromMemberName, 'fromMemberName');
+      const laneId = await ports.resolveOpenCodeRuntimeLaneId({
+        teamName,
+        runId,
+        memberName: fromMemberName,
+      });
+      await assertOpenCodeRuntimeEvidenceAccepted(
+        {
+          teamName,
+          runId,
+          laneId,
+          evidenceKind: 'delivery_call',
+        },
+        createCheckinPorts()
+      );
+
+      const delivery = createDeliveryService(teamName, laneId);
+      const ack = await delivery.deliver({
+        ...payload,
+        teamName,
+        runId,
+        providerId: 'opencode',
+        createdAt: normalizeRuntimeIso(payload.createdAt),
+      });
+
+      if (!ack.ok) {
+        throw new Error(`OpenCode runtime delivery rejected: ${ack.reason}`);
+      }
+
+      return {
+        ok: true,
+        providerId: 'opencode',
+        teamName,
+        runId,
+        state: ack.delivered ? 'delivered' : 'duplicate',
+        idempotencyKey: ack.idempotencyKey,
+        location: ack.location,
+        diagnostics: ack.reason ? [ack.reason] : [],
+        observedAt: normalizeRuntimeIso(payload.createdAt),
+      };
+    },
+    recordOpenCodeRuntimeTaskEvent: (raw) =>
+      recordOpenCodeRuntimeTaskEvent(raw, createCheckinPorts()),
+    recordOpenCodeRuntimeHeartbeat: (raw) => recordOpenCodeRuntimeHeartbeat(raw, createCheckinPorts()),
+    createOpenCodeRuntimeDeliveryService: createDeliveryService,
+    createOpenCodePromptDeliveryLedger: createPromptDeliveryLedger,
+    getOpenCodeRuntimeDeliveryStatus: (teamName, messageId) =>
+      getOpenCodeRuntimeDeliveryStatus(teamName, messageId, {
+        teamsBasePath: ports.getTeamsBasePath(),
+        createOpenCodePromptDeliveryLedger: createPromptDeliveryLedger,
+        decideOpenCodeRuntimeDeliveryUserFacingAdvisory: (record) =>
+          ports.decideOpenCodeRuntimeDeliveryUserFacingAdvisory(record),
+      }),
+    tryGetActiveOpenCodePromptDeliveryRecord: tryGetActivePromptDeliveryRecord,
+    getOpenCodeMemberDeliveryBusyStatus: (input) =>
+      getOpenCodeMemberDeliveryBusyStatus(input, {
+        teamsBasePath: ports.getTeamsBasePath(),
+        isOpenCodeRuntimeRecipient: (teamName, memberName) =>
+          ports.isOpenCodeRuntimeRecipient(teamName, memberName),
+        inboxReader: ports.inboxReader,
+        getOpenCodeAgendaSyncRecoveryBypassMessageIds: (bypassInput) =>
+          ports.getOpenCodeAgendaSyncRecoveryBypassMessageIds(bypassInput),
+        tryGetActiveOpenCodePromptDeliveryRecord: tryGetActivePromptDeliveryRecord,
+        scheduleOpenCodeMemberInboxDeliveryWake: scheduleMemberInboxDeliveryWake,
+        resolveOpenCodeMemberDeliveryIdentity: (teamName, memberName) =>
+          ports.resolveOpenCodeMemberDeliveryIdentity(teamName, memberName),
+        tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive: (recoverInput) =>
+          ports.tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive(recoverInput),
+        createOpenCodePromptDeliveryLedger: createPromptDeliveryLedger,
+      }),
+    scheduleOpenCodeMemberInboxDeliveryWake: scheduleMemberInboxDeliveryWake,
+    createOpenCodeRuntimeDeliveryPorts: createDeliveryDestinationPorts,
+    recoverOpenCodeRuntimeDeliveryJournal: (teamName) =>
+      recoverOpenCodeRuntimeDeliveryJournal(teamName, {
+        teamsBasePath: ports.getTeamsBasePath(),
+        createOpenCodeRuntimeDeliveryPorts: createDeliveryDestinationPorts,
+        readLaunchState: (candidateTeamName) =>
+          ports.readLaunchStateForDeliveryRecovery(candidateTeamName),
+        nowIso: ports.nowIso,
+        logger: ports.logger,
+      }),
+  };
 }
 
 export function createOpenCodeRuntimeDeliveryService(

@@ -9,6 +9,7 @@ import {
   isOpenCodeRuntimeRecipientFromSources,
   resolveRuntimeRecipientProviderId,
   resolveRuntimeRecipientProviderIdFromSources,
+  type RuntimeRecipientProviderSourcePorts,
 } from '../TeamProvisioningRuntimeRecipientResolution';
 
 import type { TeamConfig, TeamMember } from '@shared/types';
@@ -182,10 +183,10 @@ describe('TeamProvisioningRuntimeRecipientResolution', () => {
       const ports = {
         readConfigSnapshot: vi.fn(async () => ({
           name: 'team-a',
-          members: [{ name: 'alice', providerId: 'codex' }],
+          members: [{ name: 'alice', providerId: 'codex' as const }],
         })),
-        readMembersMeta: vi.fn(async () => [{ name: 'alice', providerId: 'opencode' }]),
-      };
+        readMembersMeta: vi.fn(async () => [{ name: 'alice', providerId: 'opencode' as const }]),
+      } satisfies RuntimeRecipientProviderSourcePorts;
 
       await expect(
         resolveRuntimeRecipientProviderId({ teamName: 'team-a', memberName: 'Alice' }, ports)

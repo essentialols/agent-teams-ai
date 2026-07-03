@@ -710,9 +710,9 @@ import {
   buildTeammateToolApprovalRequest,
   buildToolApprovalAutoResolvedEvent,
   planToolApprovalNotification,
-  resolveToolApprovalTimeoutAutoResolution,
   TOOL_APPROVAL_TIMEOUT_CONTROL_DENY_MESSAGE,
 } from './provisioning/TeamProvisioningToolApprovalFlow';
+import { TeamProvisioningToolApprovalTimeouts } from './provisioning/TeamProvisioningToolApprovalTimeouts';
 import { TeamProvisioningTranscriptClaudeLogsCache } from './provisioning/TeamProvisioningTranscriptClaudeLogs';
 import {
   createTeamProvisioningTransientRunStatePorts,
@@ -1685,6 +1685,7 @@ export class TeamProvisioningService {
   private helpOutputCacheTime = 0;
   private toolApprovalSettingsByTeam = new Map<string, ToolApprovalSettings>();
   private pendingTimeouts = new Map<string, NodeJS.Timeout>();
+  private readonly toolApprovalTimeouts: TeamProvisioningToolApprovalTimeouts<ProvisioningRun>;
   private readonly transientRunState: TeamProvisioningTransientRunState;
   private inFlightResponses = new Set<string>();
   private readonly prepareCoordinator: TeamProvisioningPrepareCoordinator;
@@ -1725,6 +1726,31 @@ export class TeamProvisioningService {
     private readonly memberWorktreeManager: TeamMemberWorktreeManager = new TeamMemberWorktreeManager(),
     private readonly attachmentStore: TeamAttachmentStore = new TeamAttachmentStore()
   ) {
+    this.toolApprovalTimeouts = new TeamProvisioningToolApprovalTimeouts<ProvisioningRun>(
+      {
+        pendingTimeouts: this.pendingTimeouts,
+        inFlightResponses: this.inFlightResponses,
+      },
+      {
+        getSettings: (teamName) => this.getToolApprovalSettings(teamName),
+        autoAllowControlRequest: (run, requestId) => this.autoAllowControlRequest(run, requestId),
+        autoDenyControlRequest: (run, requestId) => this.autoDenyControlRequest(run, requestId),
+        respondToTeammatePermission: (run, approval, allow, message) =>
+          this.respondToTeammatePermission(
+            run,
+            approval.source,
+            approval.requestId,
+            allow,
+            message,
+            approval.permissionSuggestions,
+            approval.toolName,
+            approval.toolInput
+          ),
+        dismissApprovalNotification: (requestId) => this.dismissApprovalNotification(requestId),
+        emitToolApprovalEvent: (event) => this.emitToolApprovalEvent(event),
+        logInfo: (message) => logger.info(message),
+      }
+    );
     this.prepareCoordinator = new TeamProvisioningPrepareCoordinator(
       createDefaultTeamProvisioningPrepareCoordinatorPorts({
         getOpenCodeRuntimeAdapter: () => this.getOpenCodeRuntimeAdapter(),
@@ -13501,79 +13527,15 @@ export class TeamProvisioningService {
   }
 
   private tryClaimResponse(requestId: string): boolean {
-    if (this.inFlightResponses.has(requestId)) return false;
-    this.inFlightResponses.add(requestId);
-    return true;
+    return this.toolApprovalTimeouts.tryClaimResponse(requestId);
   }
 
   private startApprovalTimeout(run: ProvisioningRun, requestId: string): void {
-    const { timeoutAction, timeoutSeconds } = this.getToolApprovalSettings(run.teamName);
-    if (timeoutAction === 'wait') return;
-
-    const timeoutMs = timeoutSeconds * 1000;
-    const timer = setTimeout(() => {
-      this.pendingTimeouts.delete(requestId);
-      if (!run.pendingApprovals.has(requestId)) return;
-      if (!this.tryClaimResponse(requestId)) return;
-
-      // Read CURRENT settings (not captured closure) in case user changed action
-      const currentAction = this.getToolApprovalSettings(run.teamName).timeoutAction;
-      const resolution = resolveToolApprovalTimeoutAutoResolution({
-        timeoutAction: currentAction,
-        requestId,
-        runId: run.runId,
-        teamName: run.teamName,
-      });
-      if (!resolution) {
-        // Settings changed to 'wait' but timer fired before reEvaluatePendingApprovals cleared it
-        this.inFlightResponses.delete(requestId);
-        return;
-      }
-      const { allow } = resolution;
-      logger.info(`[${run.teamName}] Timeout ${allow ? 'allowing' : 'denying'} ${requestId}`);
-
-      const approval = run.pendingApprovals.get(requestId);
-      if (approval && approval.source !== 'lead') {
-        // Teammate request — apply permission_suggestions to project settings.
-        this.respondToTeammatePermission(
-          run,
-          approval.source,
-          requestId,
-          allow,
-          allow ? undefined : resolution.teammateDenyMessage,
-          approval.permissionSuggestions,
-          approval.toolName,
-          approval.toolInput
-        ).finally(() => {
-          run.pendingApprovals.delete(requestId);
-          this.inFlightResponses.delete(requestId);
-          this.dismissApprovalNotification(requestId);
-          this.emitToolApprovalEvent(resolution.event);
-        });
-        return;
-      }
-
-      if (allow) {
-        this.autoAllowControlRequest(run, requestId);
-      } else {
-        this.autoDenyControlRequest(run, requestId);
-      }
-      run.pendingApprovals.delete(requestId);
-      this.inFlightResponses.delete(requestId);
-      this.dismissApprovalNotification(requestId);
-
-      this.emitToolApprovalEvent(resolution.event);
-    }, timeoutMs);
-
-    this.pendingTimeouts.set(requestId, timer);
+    this.toolApprovalTimeouts.start(run, requestId);
   }
 
   private clearApprovalTimeout(requestId: string): void {
-    const timer = this.pendingTimeouts.get(requestId);
-    if (timer) {
-      clearTimeout(timer);
-      this.pendingTimeouts.delete(requestId);
-    }
+    this.toolApprovalTimeouts.clear(requestId);
   }
 
   private autoDenyControlRequest(run: ProvisioningRun, requestId: string): void {
@@ -13597,52 +13559,7 @@ export class TeamProvisioningService {
   }
 
   private reEvaluatePendingApprovals(): void {
-    for (const [, run] of this.runs) {
-      const settings = this.getToolApprovalSettings(run.teamName);
-      const toRemove: string[] = [];
-      for (const [requestId, approval] of run.pendingApprovals) {
-        const result = shouldAutoAllow(settings, approval.toolName, approval.toolInput);
-        if (result.autoAllow) {
-          this.clearApprovalTimeout(requestId);
-          if (!this.tryClaimResponse(requestId)) continue;
-          if (approval.source !== 'lead') {
-            void this.respondToTeammatePermission(
-              run,
-              approval.source,
-              requestId,
-              true,
-              undefined,
-              approval.permissionSuggestions,
-              approval.toolName,
-              approval.toolInput
-            );
-          } else {
-            this.autoAllowControlRequest(run, requestId);
-          }
-          this.dismissApprovalNotification(requestId);
-          toRemove.push(requestId);
-          this.emitToolApprovalEvent(
-            buildToolApprovalAutoResolvedEvent({
-              requestId,
-              runId: run.runId,
-              teamName: run.teamName,
-              reason: 'auto_allow_category',
-            })
-          );
-        } else if (settings.timeoutAction !== 'wait' && !this.pendingTimeouts.has(requestId)) {
-          // Settings changed from 'wait' to allow/deny — start timer for already pending items
-          this.startApprovalTimeout(run, requestId);
-        } else if (settings.timeoutAction === 'wait' && this.pendingTimeouts.has(requestId)) {
-          // Settings changed TO 'wait' — clear existing timers
-          this.clearApprovalTimeout(requestId);
-        }
-      }
-      for (const requestId of toRemove) {
-        run.pendingApprovals.delete(requestId);
-        this.inFlightResponses.delete(requestId);
-      }
-    }
-
+    this.toolApprovalTimeouts.reEvaluate(this.runs.values());
     this.runtimeToolApprovalCoordinator.reEvaluate();
   }
 

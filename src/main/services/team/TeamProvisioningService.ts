@@ -410,6 +410,10 @@ import {
   scheduleLeadProofMissingWorkSyncRecovery as scheduleLeadProofMissingWorkSyncRecoveryHelper,
 } from './provisioning/TeamProvisioningMemberWorkSyncProof';
 import {
+  launchMixedSecondaryLaneIfNeeded as launchMixedSecondaryLaneIfNeededHelper,
+  launchQueuedMixedSecondaryLaneInBackground as launchQueuedMixedSecondaryLaneInBackgroundHelper,
+} from './provisioning/TeamProvisioningMixedSecondaryLaunchQueue';
+import {
   buildMixedSecondaryLaunchSnapshotForRun as buildMixedSecondaryLaunchSnapshotForRunHelper,
   hasMixedSecondaryLaunchReconcileHeartbeat as hasMixedSecondaryLaunchReconcileHeartbeatHelper,
   selectLatestMixedSecondaryLaunchReconcileMessage as selectLatestMixedSecondaryLaunchReconcileMessageHelper,
@@ -10557,123 +10561,51 @@ export class TeamProvisioningService {
     run: ProvisioningRun,
     lane: MixedSecondaryRuntimeLaneState
   ): void {
-    if (lane.state !== 'queued' || lane.launchScheduled) {
-      return;
-    }
-
-    lane.queuedAtMs = lane.queuedAtMs ?? Date.now();
-    lane.launchScheduled = true;
-    lane.runId = lane.runId ?? randomUUID();
-
-    const launch = async () => {
-      try {
-        if (run.cancelRequested || run.processKilled) {
-          await clearOpenCodeRuntimeLaneStorage({
-            teamsBasePath: getTeamsBasePath(),
-            teamName: run.teamName,
-            laneId: lane.laneId,
-          }).catch(() => undefined);
-          this.deleteSecondaryRuntimeRun(run.teamName, lane.laneId);
-          lane.state = 'finished';
-          return;
-        }
-        lane.state = 'launching';
-        await this.launchSingleMixedSecondaryLane(run, lane);
-      } catch (error) {
-        if (run.cancelRequested || run.processKilled) {
-          await clearOpenCodeRuntimeLaneStorage({
-            teamsBasePath: getTeamsBasePath(),
-            teamName: run.teamName,
-            laneId: lane.laneId,
-          }).catch(() => undefined);
-          this.deleteSecondaryRuntimeRun(run.teamName, lane.laneId);
-          return;
-        }
-        const message = error instanceof Error ? error.message : String(error);
-        logger.warn(
-          `[${run.teamName}] OpenCode secondary lane ${lane.laneId} crashed during launch orchestration: ${message}`
-        );
-        lane.result = createUnexpectedMixedSecondaryLaneFailureResult({
-          runId: lane.runId ?? randomUUID(),
-          teamName: run.teamName,
-          memberName: lane.member.name,
-          message,
-        });
-        lane.warnings = [];
-        lane.diagnostics = [...lane.diagnostics, message];
-        await upsertOpenCodeRuntimeLaneIndexEntry({
-          teamsBasePath: getTeamsBasePath(),
-          teamName: run.teamName,
-          laneId: lane.laneId,
-          state: 'degraded',
-          diagnostics: [message],
-        }).catch(() => undefined);
-        this.deleteSecondaryRuntimeRun(run.teamName, lane.laneId);
-        await this.publishMixedSecondaryLaneStatusChange(run, lane).catch(() => undefined);
-        lane.state = 'finished';
-      }
-    };
-
-    const previousLaunch = run.mixedSecondaryLaneLaunchQueue ?? Promise.resolve();
-    const nextLaunch = previousLaunch.catch(() => undefined).then(launch);
-    run.mixedSecondaryLaneLaunchQueue = nextLaunch.catch((error) => {
-      logger.warn(
-        `[${run.teamName}] OpenCode secondary lane launch queue failed: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
+    launchQueuedMixedSecondaryLaneInBackgroundHelper(run, lane, {
+      nowMs: () => Date.now(),
+      randomUuid: () => randomUUID(),
+      teamsBasePath: () => getTeamsBasePath(),
+      clearOpenCodeRuntimeLaneStorage,
+      upsertOpenCodeRuntimeLaneIndexEntry,
+      deleteSecondaryRuntimeRun: (teamName, laneId) =>
+        this.deleteSecondaryRuntimeRun(teamName, laneId),
+      launchSingleMixedSecondaryLane: (nextRun, nextLane) =>
+        this.launchSingleMixedSecondaryLane(nextRun, nextLane),
+      publishMixedSecondaryLaneStatusChange: (nextRun, nextLane) =>
+        this.publishMixedSecondaryLaneStatusChange(nextRun, nextLane),
+      persistLaunchStateSnapshot: (nextRun, launchPhase) =>
+        this.persistLaunchStateSnapshot(nextRun, launchPhase),
+      readLaunchState: (teamName) => this.launchStateStore.read(teamName),
+      getOpenCodeRuntimeAdapter: () => this.getOpenCodeRuntimeAdapter(),
+      getMixedSecondaryLaunchPhase: (nextRun) => this.getMixedSecondaryLaunchPhase(nextRun),
+      createUnexpectedMixedSecondaryLaneFailureResult,
+      logger,
     });
-    void run.mixedSecondaryLaneLaunchQueue;
   }
 
   private async launchMixedSecondaryLaneIfNeeded(
     run: ProvisioningRun
   ): Promise<PersistedTeamLaunchSnapshot | null> {
-    if (run.cancelRequested || run.processKilled) {
-      return this.launchStateStore.read(run.teamName).catch(() => null);
-    }
-
-    const mixedSecondaryLanes = run.mixedSecondaryLanes ?? [];
-    if (mixedSecondaryLanes.length === 0) {
-      return this.persistLaunchStateSnapshot(run, 'finished');
-    }
-
-    const adapter = this.getOpenCodeRuntimeAdapter();
-    if (!adapter) {
-      for (const lane of mixedSecondaryLanes) {
-        lane.state = 'finished';
-        lane.result = {
-          runId: lane.runId ?? randomUUID(),
-          teamName: run.teamName,
-          launchPhase: 'finished',
-          teamLaunchState: 'partial_failure',
-          members: {
-            [lane.member.name]: {
-              memberName: lane.member.name,
-              providerId: 'opencode',
-              launchState: 'failed_to_start',
-              agentToolAccepted: false,
-              runtimeAlive: false,
-              bootstrapConfirmed: false,
-              hardFailure: true,
-              hardFailureReason: 'opencode_runtime_adapter_missing',
-              diagnostics: ['OpenCode runtime adapter is not registered for mixed team launch.'],
-            },
-          },
-          warnings: [],
-          diagnostics: ['OpenCode runtime adapter is not registered for mixed team launch.'],
-        };
-        lane.diagnostics = lane.result.diagnostics;
-        await this.publishMixedSecondaryLaneStatusChange(run, lane);
-      }
-      return this.persistLaunchStateSnapshot(run, 'finished');
-    }
-
-    for (const lane of mixedSecondaryLanes) {
-      this.launchQueuedMixedSecondaryLaneInBackground(run, lane);
-    }
-
-    return this.persistLaunchStateSnapshot(run, this.getMixedSecondaryLaunchPhase(run));
+    return launchMixedSecondaryLaneIfNeededHelper(run, {
+      nowMs: () => Date.now(),
+      randomUuid: () => randomUUID(),
+      teamsBasePath: () => getTeamsBasePath(),
+      clearOpenCodeRuntimeLaneStorage,
+      upsertOpenCodeRuntimeLaneIndexEntry,
+      deleteSecondaryRuntimeRun: (teamName, laneId) =>
+        this.deleteSecondaryRuntimeRun(teamName, laneId),
+      launchSingleMixedSecondaryLane: (nextRun, nextLane) =>
+        this.launchSingleMixedSecondaryLane(nextRun, nextLane),
+      publishMixedSecondaryLaneStatusChange: (nextRun, nextLane) =>
+        this.publishMixedSecondaryLaneStatusChange(nextRun, nextLane),
+      persistLaunchStateSnapshot: (nextRun, launchPhase) =>
+        this.persistLaunchStateSnapshot(nextRun, launchPhase),
+      readLaunchState: (teamName) => this.launchStateStore.read(teamName),
+      getOpenCodeRuntimeAdapter: () => this.getOpenCodeRuntimeAdapter(),
+      getMixedSecondaryLaunchPhase: (nextRun) => this.getMixedSecondaryLaunchPhase(nextRun),
+      createUnexpectedMixedSecondaryLaneFailureResult,
+      logger,
+    });
   }
 
   private async recoverStaleMixedSecondaryLaunchSnapshot(

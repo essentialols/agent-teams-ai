@@ -125,6 +125,7 @@ import {
 import { createRuntimeRunTombstoneStore } from './opencode/store/RuntimeRunTombstoneStore';
 import { getSystemLocale } from './provisioning/TeamProvisioningAgentLanguage';
 import { ensureCwdExists, sleep } from './provisioning/TeamProvisioningAsyncUtils';
+import { respawnCliAfterAuthFailure } from './provisioning/TeamProvisioningAuthRetryRecovery';
 import {
   buildDeterministicLaunchBootstrapSpec,
   getProvisioningRunTimeoutMs,
@@ -5328,272 +5329,49 @@ export class TeamProvisioningService {
    * Reattaches all stream listeners and resends the prompt.
    */
   private async respawnAfterAuthFailure(run: ProvisioningRun): Promise<void> {
-    const ctx = run.spawnContext;
-    const stopAllGenerationAtStart = this.stopAllTeamsGeneration;
-    if (!ctx) {
-      logger.error(`[${run.teamName}] Cannot respawn — no spawn context saved`);
-      run.authRetryInProgress = false;
-      return;
-    }
-
-    // Tear down current process without full cleanupRun (keep run alive)
-    if (run.timeoutHandle) {
-      clearTimeout(run.timeoutHandle);
-      run.timeoutHandle = null;
-    }
-    this.stopFilesystemMonitor(run);
-    this.stopStallWatchdog(run);
-    if (run.child) {
-      run.child.stdout?.removeAllListeners('data');
-      run.child.stderr?.removeAllListeners('data');
-      run.child.removeAllListeners('error');
-      run.child.removeAllListeners('exit');
-      run.child.removeAllListeners('close');
-      killTeamProcess(run.child);
-      run.child = null;
-    }
-
-    // Reset buffers for fresh attempt
-    run.stdoutBuffer = '';
-    run.stderrBuffer = '';
-    run.claudeLogLines = [];
-    run.lastClaudeLogStream = null;
-    run.stdoutLogLineBuf = '';
-    run.stderrLogLineBuf = '';
-    run.claudeLogsUpdatedAt = undefined;
-    run.authFailureRetried = true;
-    run.apiErrorWarningEmitted = false;
-
-    updateProgress(run, 'spawning', 'Auth failed — retrying after short delay');
-    run.onProgress(run.progress);
-
-    await sleep(PREFLIGHT_AUTH_RETRY_DELAY_MS);
-
-    if (run.cancelRequested) {
-      run.authRetryInProgress = false;
-      return;
-    }
-
-    // Verify --mcp-config still exists; regenerate if deleted (e.g. by stale GC)
-    const mcpFlagIdx = ctx.args.indexOf('--mcp-config');
-    const bootstrapPromptFlagIdx = ctx.args.indexOf('--team-bootstrap-user-prompt-file');
-    if (mcpFlagIdx !== -1 && mcpFlagIdx + 1 < ctx.args.length) {
-      const existingConfigPath = ctx.args[mcpFlagIdx + 1];
-      try {
-        await fs.promises.access(existingConfigPath, fs.constants.F_OK);
-      } catch {
-        logger.warn(`[${run.teamName}] MCP config ${existingConfigPath} missing, regenerating`);
-        try {
-          const newConfigPath = await this.mcpConfigBuilder.writeConfigFile(ctx.cwd, {
-            controlApiBaseUrl: ctx.env.CLAUDE_TEAM_CONTROL_URL,
-          });
-          ctx.args[mcpFlagIdx + 1] = newConfigPath;
-          run.mcpConfigPath = newConfigPath;
-          logger.info(`[${run.teamName}] Regenerated MCP config at ${newConfigPath}`);
-        } catch (regenErr) {
-          run.authRetryInProgress = false;
-          const progress = updateProgress(run, 'failed', 'Failed to regenerate MCP config', {
-            error: regenErr instanceof Error ? regenErr.message : String(regenErr),
-            cliLogsTail: extractCliLogsFromRun(run),
-          });
-          run.onProgress(progress);
-          this.cleanupRun(run);
-          return;
-        }
-      }
-    }
-
-    if (bootstrapPromptFlagIdx !== -1 && bootstrapPromptFlagIdx + 1 < ctx.args.length) {
-      const existingPromptPath = ctx.args[bootstrapPromptFlagIdx + 1];
-      try {
-        await fs.promises.access(existingPromptPath, fs.constants.F_OK);
-      } catch {
-        const submissionState = await readBootstrapRealTaskSubmissionState(run.teamName);
-        if (submissionState === 'submitted') {
-          ctx.args.splice(bootstrapPromptFlagIdx, 2);
-          ctx.prompt = '';
-          run.bootstrapUserPromptPath = null;
-        } else if (submissionState === 'unknown') {
-          run.authRetryInProgress = false;
-          const progress = updateProgress(
-            run,
-            'failed',
-            'Unable to safely retry first task after auth failure',
-            {
-              error:
-                'deterministic bootstrap recorded the first real task as unknown, so retry would risk a duplicate submission',
-              cliLogsTail: extractCliLogsFromRun(run),
-            }
-          );
-          run.onProgress(progress);
-          this.cleanupRun(run);
-          return;
-        } else if (ctx.prompt.trim().length === 0) {
-          run.authRetryInProgress = false;
-          const progress = updateProgress(
-            run,
-            'failed',
-            'Failed to restore deferred first task after auth retry',
-            {
-              error:
-                'deterministic bootstrap user prompt file was missing and no prompt was available to regenerate it',
-              cliLogsTail: extractCliLogsFromRun(run),
-            }
-          );
-          run.onProgress(progress);
-          this.cleanupRun(run);
-          return;
-        } else {
-          logger.warn(
-            `[${run.teamName}] Bootstrap user prompt file ${existingPromptPath} missing, regenerating`
-          );
+    await respawnCliAfterAuthFailure(
+      run,
+      {
+        logger,
+        clearTimeout: (handle) => clearTimeout(handle),
+        setTimeout: (callback, ms) => setTimeout(callback, ms),
+        nowMs: () => Date.now(),
+        sleep,
+        pathExists: async (filePath) => {
           try {
-            const newPromptPath = await writeDeterministicBootstrapUserPromptFile(ctx.prompt);
-            ctx.args[bootstrapPromptFlagIdx + 1] = newPromptPath;
-            run.bootstrapUserPromptPath = newPromptPath;
-          } catch (regenErr) {
-            run.authRetryInProgress = false;
-            const progress = updateProgress(
-              run,
-              'failed',
-              'Failed to regenerate deferred first task for auth retry',
-              {
-                error: regenErr instanceof Error ? regenErr.message : String(regenErr),
-                cliLogsTail: extractCliLogsFromRun(run),
-              }
-            );
-            run.onProgress(progress);
-            this.cleanupRun(run);
-            return;
+            await fs.promises.access(filePath, fs.constants.F_OK);
+            return true;
+          } catch {
+            return false;
           }
-        }
-      }
-    }
-
-    // Respawn with saved context — CLI handles its own auth refresh.
-    let child: ReturnType<typeof spawn>;
-    try {
-      if (mcpFlagIdx !== -1 && mcpFlagIdx + 1 < ctx.args.length) {
-        await this.validateAgentTeamsMcpRuntime(
-          ctx.claudePath,
-          ctx.cwd,
-          ctx.env,
-          ctx.args[mcpFlagIdx + 1],
-          {
-            isCancelled: () =>
-              run.cancelRequested ||
-              run.processKilled ||
-              this.stopAllTeamsGeneration !== stopAllGenerationAtStart,
-          }
-        );
-      }
-      if (
-        run.cancelRequested ||
-        run.processKilled ||
-        this.stopAllTeamsGeneration !== stopAllGenerationAtStart
-      ) {
-        throw new Error('Team launch cancelled by app shutdown');
-      }
-      child = spawnCli(ctx.claudePath, ctx.args, {
-        cwd: ctx.cwd,
-        env: { ...ctx.env },
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
-    } catch (error) {
-      run.authRetryInProgress = false;
-      const progress = updateProgress(run, 'failed', 'Failed to respawn Claude CLI', {
-        error: error instanceof Error ? error.message : String(error),
-      });
-      run.onProgress(progress);
-      this.cleanupRun(run);
-      return;
-    }
-
-    logger.info(
-      `[${run.teamName}] Respawned CLI process after auth failure (pid=${child.pid ?? '?'})`
-    );
-    run.child = child;
-    run.processClosed = false;
-    run.authRetryInProgress = false;
-
-    updateProgress(run, 'spawning', 'CLI respawned — sending prompt', {
-      pid: child.pid ?? undefined,
-    });
-    run.onProgress(run.progress);
-
-    // Resend prompt only for legacy direct-stdin flows. Deterministic bootstrap
-    // owns the first real task via --team-bootstrap-user-prompt-file.
-    if (bootstrapPromptFlagIdx === -1 && child.stdin?.writable) {
-      const message = JSON.stringify({
-        type: 'user',
-        message: {
-          role: 'user',
-          content: [{ type: 'text', text: ctx.prompt }],
         },
-      });
-      child.stdin.write(message + '\n');
-    }
-
-    // Reattach stdout handler
-    this.attachStdoutHandler(run);
-
-    // Reattach stderr handler
-    this.attachStderrHandler(run);
-
-    run.lastDataReceivedAt = Date.now();
-    run.lastStdoutReceivedAt = Date.now();
-    this.startStallWatchdog(run);
-
-    // Restart filesystem monitor for createTeam (launch skips it)
-    if (!run.isLaunch) {
-      updateProgress(run, 'configuring', 'Waiting for team configuration...');
-      run.onProgress(run.progress);
-      this.startFilesystemMonitor(run, run.request);
-    } else {
-      updateProgress(
-        run,
-        'configuring',
-        run.deterministicBootstrap
-          ? 'CLI running - deterministic launch in progress'
-          : 'CLI running - reconnecting with teammates'
-      );
-      run.onProgress(run.progress);
-    }
-
-    // Restart timeout
-    run.timeoutHandle = setTimeout(() => {
-      if (!run.processKilled && !run.provisioningComplete) {
-        run.processKilled = true;
-        run.finalizingByTimeout = true;
-        void (async () => {
-          const readyOnTimeout = await this.tryCompleteAfterTimeout(run);
-          killTeamProcess(run.child);
-          if (readyOnTimeout) return;
-
-          const hint = run.isLaunch ? ' (launch)' : '';
-          const progress = updateProgress(run, 'failed', `Timed out waiting for CLI${hint}`, {
-            error: `Timed out waiting for CLI${hint}.`,
-            cliLogsTail: extractCliLogsFromRun(run),
-          });
-          run.onProgress(progress);
-          this.cleanupRun(run);
-        })();
-      }
-    }, getProvisioningRunTimeoutMs(run));
-
-    child.once('error', (error) => {
-      const hint = run.isLaunch ? ' (launch)' : '';
-      const progress = updateProgress(run, 'failed', `Failed to start Claude CLI${hint}`, {
-        error: error.message,
-        cliLogsTail: extractCliLogsFromRun(run),
-      });
-      run.onProgress(progress);
-      this.cleanupRun(run);
-    });
-
-    child.once('close', (code) => {
-      void this.handleProcessExit(run, code);
-    });
+        mcpConfigBuilder: this.mcpConfigBuilder,
+        readBootstrapRealTaskSubmissionState,
+        writeDeterministicBootstrapUserPromptFile,
+        validateAgentTeamsMcpRuntime: (claudePath, cwd, env, mcpConfigPath, options) =>
+          this.validateAgentTeamsMcpRuntime(claudePath, cwd, env, mcpConfigPath, options),
+        spawnCli,
+        getStopAllTeamsGeneration: () => this.stopAllTeamsGeneration,
+        isStopAllTeamsGenerationChanged: (stopAllGenerationAtStart) =>
+          this.stopAllTeamsGeneration !== stopAllGenerationAtStart,
+        stopFilesystemMonitor: (provisioningRun) => this.stopFilesystemMonitor(provisioningRun),
+        stopStallWatchdog: (provisioningRun) => this.stopStallWatchdog(provisioningRun),
+        killTeamProcess,
+        updateProgress,
+        extractCliLogsFromRun,
+        cleanupRun: (provisioningRun) => this.cleanupRun(provisioningRun),
+        attachStdoutHandler: (provisioningRun) => this.attachStdoutHandler(provisioningRun),
+        attachStderrHandler: (provisioningRun) => this.attachStderrHandler(provisioningRun),
+        startStallWatchdog: (provisioningRun) => this.startStallWatchdog(provisioningRun),
+        startFilesystemMonitor: (provisioningRun, request) =>
+          this.startFilesystemMonitor(provisioningRun, request),
+        tryCompleteAfterTimeout: (provisioningRun) => this.tryCompleteAfterTimeout(provisioningRun),
+        getProvisioningRunTimeoutMs,
+        handleProcessExit: (provisioningRun, code) =>
+          this.handleProcessExit(provisioningRun, code),
+      },
+      { preflightAuthRetryDelayMs: PREFLIGHT_AUTH_RETRY_DELAY_MS }
+    );
   }
 
   /** Attaches the stdout stream-json parser to the current child process. */

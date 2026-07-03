@@ -659,6 +659,7 @@ import {
   upsertRunAllEffectiveMember as upsertRunAllEffectiveMemberInRun,
 } from './provisioning/TeamProvisioningSecondaryRuntimeRuns';
 import { scanForNewestProjectSession } from './provisioning/TeamProvisioningSessionDiscovery';
+import { createTeamProvisioningShutdownCoordination } from './provisioning/TeamProvisioningShutdownCoordination';
 import {
   stopAllTeamsFlow,
   stopPersistentTeamMembersFlow,
@@ -1382,6 +1383,26 @@ export class TeamProvisioningService {
     BootstrapTranscriptOutcomeLookupCacheEntry
   >();
   private readonly teamOpLocks = new Map<string, Promise<void>>();
+  private readonly shutdownCoordination = createTeamProvisioningShutdownCoordination(
+    {
+      provisioningRunByTeam: this.provisioningRunByTeam,
+      aliveRunByTeam: this.aliveRunByTeam,
+      runtimeAdapterRunByTeam: this.runtimeAdapterRunByTeam,
+      secondaryRuntimeRunByTeam: this.secondaryRuntimeRunByTeam,
+      teamOpLocks: this.teamOpLocks,
+      runtimeAdapterProgressByRunId: this.runtimeAdapterProgressByRunId,
+      transientProbeProcesses: this.transientProbeProcesses,
+    },
+    {
+      isCancellableRuntimeAdapterProgress: (progress) =>
+        this.isCancellableRuntimeAdapterProgress(progress),
+      stopTeam: (teamName) => this.stopTeam(teamName),
+      cancelRuntimeAdapterProvisioning: (runId, progress) =>
+        this.cancelRuntimeAdapterProvisioning(runId, progress),
+      killProcessTree,
+      logger,
+    }
+  );
   private readonly leadInboxRelayInFlight = new Map<string, Promise<number>>();
   private readonly relayedLeadInboxMessageIds = new Map<string, Set<string>>();
   private readonly memberInboxRelayInFlight = new Map<string, Promise<number>>();
@@ -7298,12 +7319,6 @@ export class TeamProvisioningService {
     }).catch(() => undefined);
   }
 
-  private getPendingRuntimeAdapterLaunchesForShutdown(): TeamProvisioningProgress[] {
-    return Array.from(this.runtimeAdapterProgressByRunId.values()).filter((progress) =>
-      this.isCancellableRuntimeAdapterProgress(progress)
-    );
-  }
-
   private async clearOpenCodeRuntimeAdapterPrimaryLaneIfOwned(
     teamName: string,
     runId: string
@@ -8606,7 +8621,7 @@ export class TeamProvisioningService {
    * and in-flight team operations that may expose a runtime shortly.
    */
   hasActiveTeamRuntimes(): boolean {
-    return this.getShutdownTrackedTeamNames().length > 0;
+    return this.shutdownCoordination.getShutdownTrackedTeamNames().length > 0;
   }
 
   async getRuntimeState(teamName: string): Promise<TeamRuntimeState> {
@@ -12092,106 +12107,6 @@ export class TeamProvisioningService {
     });
   }
 
-  private getShutdownTrackedTeamNames(): string[] {
-    const teamNames = new Set<string>();
-    for (const teamName of this.provisioningRunByTeam.keys()) teamNames.add(teamName);
-    for (const teamName of this.aliveRunByTeam.keys()) teamNames.add(teamName);
-    for (const teamName of this.runtimeAdapterRunByTeam.keys()) teamNames.add(teamName);
-    for (const teamName of this.secondaryRuntimeRunByTeam.keys()) teamNames.add(teamName);
-    for (const teamName of this.teamOpLocks.keys()) teamNames.add(teamName);
-    for (const progress of this.getPendingRuntimeAdapterLaunchesForShutdown()) {
-      teamNames.add(progress.teamName);
-    }
-    return Array.from(teamNames);
-  }
-
-  private async stopTrackedTeamsForShutdown(label: string): Promise<string[]> {
-    const teamNames = this.getShutdownTrackedTeamNames();
-    if (teamNames.length === 0) {
-      return teamNames;
-    }
-
-    logger.info(`${label}: stopping tracked team processes: ${teamNames.join(', ')}`);
-    await Promise.all(
-      teamNames.map((teamName) =>
-        this.stopTeam(teamName).catch((error) => {
-          logger.warn(
-            `[${teamName}] Failed to stop team during shutdown: ${
-              error instanceof Error ? error.message : String(error)
-            }`
-          );
-        })
-      )
-    );
-    return teamNames;
-  }
-
-  private async cancelPendingRuntimeAdapterLaunchesForShutdown(): Promise<void> {
-    const pendingRuntimeLaunches = this.getPendingRuntimeAdapterLaunchesForShutdown();
-    if (pendingRuntimeLaunches.length === 0) {
-      return;
-    }
-
-    logger.info(
-      `Cancelling pending OpenCode runtime adapter launches on shutdown: ${pendingRuntimeLaunches
-        .map((progress) => progress.teamName)
-        .join(', ')}`
-    );
-    await Promise.all(
-      pendingRuntimeLaunches.map((progress) =>
-        this.cancelRuntimeAdapterProvisioning(progress.runId, progress).catch((error) => {
-          logger.warn(
-            `[${progress.teamName}] Failed to cancel pending OpenCode runtime adapter launch on shutdown: ${
-              error instanceof Error ? error.message : String(error)
-            }`
-          );
-        })
-      )
-    );
-  }
-
-  private async waitForInFlightTeamOperationsForShutdown(timeoutMs = 2_000): Promise<void> {
-    const locks = Array.from(this.teamOpLocks.values());
-    if (locks.length === 0) {
-      return;
-    }
-
-    let timedOut = false;
-    let timeout: ReturnType<typeof setTimeout> | null = null;
-    await Promise.race([
-      Promise.allSettled(locks).then(() => undefined),
-      new Promise<void>((resolve) => {
-        timeout = setTimeout(() => {
-          timedOut = true;
-          resolve();
-        }, timeoutMs);
-        timeout.unref?.();
-      }),
-    ]);
-    if (timeout) {
-      clearTimeout(timeout);
-    }
-    if (timedOut) {
-      logger.warn(
-        `Timed out after ${timeoutMs}ms waiting for in-flight team operations during shutdown`
-      );
-    }
-  }
-
-  private killTransientProbeProcessesForShutdown(): void {
-    for (const child of Array.from(this.transientProbeProcesses)) {
-      try {
-        killProcessTree(child);
-      } catch (error) {
-        logger.debug(
-          `Failed to kill transient probe process during shutdown: ${
-            error instanceof Error ? error.message : String(error)
-          }`
-        );
-      }
-    }
-  }
-
   private async stopMixedSecondaryRuntimeLanes(teamName: string): Promise<void> {
     const secondaryRuns = this.getSecondaryRuntimeRuns(teamName);
     if (secondaryRuns.length === 0) {
@@ -12425,16 +12340,18 @@ export class TeamProvisioningService {
       incrementStopAllTeamsGeneration: () => {
         this.stopAllTeamsGeneration += 1;
       },
-      getShutdownTrackedTeamNames: () => this.getShutdownTrackedTeamNames(),
+      getShutdownTrackedTeamNames: () => this.shutdownCoordination.getShutdownTrackedTeamNames(),
       pauseActiveIntervalsForTeam: (teamName) =>
         this.taskActivityIntervalService.pauseActiveIntervalsForTeam(teamName),
       killTrackedCliProcesses,
-      killTransientProbeProcessesForShutdown: () => this.killTransientProbeProcessesForShutdown(),
-      stopTrackedTeamsForShutdown: (label) => this.stopTrackedTeamsForShutdown(label),
+      killTransientProbeProcessesForShutdown: () =>
+        this.shutdownCoordination.killTransientProbeProcessesForShutdown(),
+      stopTrackedTeamsForShutdown: (label) =>
+        this.shutdownCoordination.stopTrackedTeamsForShutdown(label),
       cancelPendingRuntimeAdapterLaunchesForShutdown: () =>
-        this.cancelPendingRuntimeAdapterLaunchesForShutdown(),
+        this.shutdownCoordination.cancelPendingRuntimeAdapterLaunchesForShutdown(),
       waitForInFlightTeamOperationsForShutdown: () =>
-        this.waitForInFlightTeamOperationsForShutdown(),
+        this.shutdownCoordination.waitForInFlightTeamOperationsForShutdown(),
       listPersistedTeamNames: () => this.listPersistedTeamNames(),
       stopPersistentTeamMembers: (teamName) => this.stopPersistentTeamMembers(teamName),
       cleanupAnthropicApiKeyHelperMaterialForStoppedTeam: (teamName) =>

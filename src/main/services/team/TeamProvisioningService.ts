@@ -2152,12 +2152,14 @@ export class TeamProvisioningService {
     });
     this.deterministicCreateSpawnFlowBoundary =
       createTeamProvisioningCreateDeterministicSpawnFlowBoundary<ProvisioningRun>({
-        writeTeamMeta: (teamName, payload) =>
-          this.teamMetaStore.writeMeta(
-            teamName,
-            payload as Parameters<typeof this.teamMetaStore.writeMeta>[1]
-          ),
-        deleteTeamMeta: (teamName) => this.teamMetaStore.deleteMeta(teamName),
+        teamMetaStore: {
+          writeMeta: (teamName, payload) =>
+            this.teamMetaStore.writeMeta(teamName, {
+              ...payload,
+              launchIdentity: payload.launchIdentity ?? undefined,
+            }),
+          deleteMeta: (teamName) => this.teamMetaStore.deleteMeta(teamName),
+        },
         membersMetaStore: this.membersMetaStore,
         mcpConfigBuilder: this.mcpConfigBuilder,
         buildMemberMcpLaunchConfigs: (input) =>

@@ -95,8 +95,10 @@ function createDeps(host: BoundCallbackHost): {
     deletedTeamNames,
     shellEnv,
     deps: {
-      writeTeamMeta: vi.fn(async () => undefined),
-      deleteTeamMeta: vi.fn(async () => undefined),
+      teamMetaStore: {
+        writeMeta: vi.fn(async () => undefined),
+        deleteMeta: vi.fn(async () => undefined),
+      },
       membersMetaStore: {
         writeMembers: vi.fn(async () => undefined),
       },
@@ -162,7 +164,7 @@ describe('createTeamProvisioningCreateDeterministicSpawnFlowBoundary', () => {
     ports.cleanupRun(run);
     ports.unregisterRun(run.runId, request.teamName);
 
-    expect(deps.writeTeamMeta).toHaveBeenCalledWith(request.teamName, metaPayload);
+    expect(deps.teamMetaStore.writeMeta).toHaveBeenCalledWith(request.teamName, metaPayload);
     expect(deps.validateAgentTeamsMcpRuntime).toHaveBeenCalledWith({
       claudePath: '/bin/claude',
       cwd: request.cwd,

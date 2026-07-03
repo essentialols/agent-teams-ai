@@ -16,8 +16,7 @@ type DeterministicCreateSpawnFlowTeamMetaStore<TRun extends DeterministicCreateS
 export interface TeamProvisioningCreateDeterministicSpawnFlowBoundaryDeps<
   TRun extends DeterministicCreateSpawnFlowRun,
 > {
-  writeTeamMeta: DeterministicCreateSpawnFlowTeamMetaStore<TRun>['writeMeta'];
-  deleteTeamMeta: DeterministicCreateSpawnFlowTeamMetaStore<TRun>['deleteMeta'];
+  teamMetaStore: DeterministicCreateSpawnFlowTeamMetaStore<TRun>;
   membersMetaStore: DeterministicCreateSpawnFlowPorts<TRun>['membersMetaStore'];
   mcpConfigBuilder: DeterministicCreateSpawnFlowPorts<TRun>['mcpConfigBuilder'];
   buildMemberMcpLaunchConfigs: DeterministicCreateSpawnFlowPorts<TRun>['buildMemberMcpLaunchConfigs'];
@@ -61,10 +60,7 @@ export function createTeamProvisioningCreateDeterministicSpawnFlowBoundary<
 ): TeamProvisioningCreateDeterministicSpawnFlowBoundary<TRun> {
   return {
     createSpawnFlowPorts: ({ request, claudePath, shellEnv }) => ({
-      teamMetaStore: {
-        writeMeta: (teamName, payload) => deps.writeTeamMeta(teamName, payload),
-        deleteMeta: (teamName) => deps.deleteTeamMeta(teamName),
-      },
+      teamMetaStore: deps.teamMetaStore,
       membersMetaStore: deps.membersMetaStore,
       mcpConfigBuilder: deps.mcpConfigBuilder,
       buildMemberMcpLaunchConfigs: (buildInput) => deps.buildMemberMcpLaunchConfigs(buildInput),

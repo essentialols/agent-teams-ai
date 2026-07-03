@@ -181,9 +181,7 @@ import {
 import { markTeamInboxMessagesRead } from './provisioning/TeamProvisioningInboxPersistence';
 import {
   armSilentTeammateForward,
-  isInboxRelayInFlightTimeoutError,
   type PendingInboxRelayCandidate,
-  waitForInboxRelayInFlight,
 } from './provisioning/TeamProvisioningInboxRelayCandidates';
 import { hasStableInboxMessageId } from './provisioning/TeamProvisioningInboxRelayPolicy';
 import { notifyAliveTeamsAboutLanguageChangeWithPorts } from './provisioning/TeamProvisioningLanguageChangeNotification';
@@ -246,7 +244,7 @@ import {
   buildLeadContextUsagePayloadForRun,
   getLeadContextUsageForTeam,
 } from './provisioning/TeamProvisioningLeadContextUsage';
-import { relayLeadInboxMessagesForTeam } from './provisioning/TeamProvisioningLeadInboxRelayFlow';
+import { createTeamProvisioningLeadInboxRelayPortsBoundary } from './provisioning/TeamProvisioningLeadInboxRelayPortsFactory';
 import {
   getPreCompleteCliErrorTextFromRun,
   getRunTrackedCwdFromRun,
@@ -1488,6 +1486,52 @@ export class TeamProvisioningService {
   private readonly relayedMemberInboxMessageIds = new Map<string, Set<string>>();
   private readonly pendingCrossTeamFirstReplies = new Map<string, Map<string, number>>();
   private readonly recentCrossTeamLeadDeliveryMessageIds = new Map<string, Map<string, number>>();
+  private readonly leadInboxRelayPortsBoundary =
+    createTeamProvisioningLeadInboxRelayPortsBoundary<ProvisioningRun>({
+      leadInboxRelayInFlight: this.leadInboxRelayInFlight,
+      getAliveRunId: (teamName) => this.runTracking.getAliveRunId(teamName),
+      getProvisioningRunId: (teamName) => this.runTracking.getProvisioningRunId(teamName),
+      getRun: (runId) => this.runs.get(runId),
+      isCurrentTrackedRun: (run) => this.isCurrentTrackedRun(run),
+      readConfigForObservation: (teamName) => this.readConfigForObservation(teamName),
+      readLeadInboxMessages: (teamName, leadName) =>
+        this.inboxReader.getMessagesFor(teamName, leadName),
+      markInboxMessagesRead: (teamName, leadName, messages) =>
+        this.markInboxMessagesRead(teamName, leadName, messages),
+      handleTeammatePermissionRequest: (run, permissionRequest, timestamp) =>
+        this.handleTeammatePermissionRequest(run, permissionRequest, timestamp),
+      refreshMemberSpawnStatusesFromLeadInbox: (run) =>
+        this.refreshMemberSpawnStatusesFromLeadInbox(run),
+      confirmSameTeamNativeMatches: (teamName, leadName, messages) =>
+        this.confirmSameTeamNativeMatches(teamName, leadName, messages),
+      scheduleSameTeamPersistRetry: (teamName) => this.scheduleSameTeamPersistRetry(teamName),
+      scheduleSameTeamDeferredRetry: (teamName) => this.scheduleSameTeamDeferredRetry(teamName),
+      resolveControlApiBaseUrl: () => this.providerRuntime.resolveControlApiBaseUrl(),
+      sendMessageToRun: (run, message) => this.sendMessageToRun(run, message),
+      hasAcceptedLeadWorkSyncReport: (input) => this.hasAcceptedLeadWorkSyncReport(input),
+      scheduleLeadProofMissingWorkSyncRecovery: (input) =>
+        this.scheduleLeadProofMissingWorkSyncRecovery(input),
+      pushLiveLeadTextMessage: (run, text, messageId, timestamp) =>
+        this.pushLiveLeadTextMessage(run, text, messageId, timestamp),
+      pushLiveLeadProcessMessage: (teamName, message) =>
+        this.pushLiveLeadProcessMessage(teamName, message),
+      persistSentMessage: (teamName, message) => this.persistSentMessage(teamName, message),
+      emitTeamChange: (event) => this.teamChangeEmitter?.(event),
+      scheduleLeadInboxFollowUpRelay: (teamName) => this.scheduleLeadInboxFollowUpRelay(teamName),
+      relayedLeadInboxMessageIds: this.relayedLeadInboxMessageIds,
+      trimRelayedSet: (relayedIds) => this.trimRelayedSet(relayedIds),
+      pendingCrossTeamFirstReplies: this.pendingCrossTeamFirstReplies,
+      recentCrossTeamLeadDeliveryMessageIds: this.recentCrossTeamLeadDeliveryMessageIds,
+      sameTeamRunStartSkewMs: TeamProvisioningService.SAME_TEAM_RUN_START_SKEW_MS,
+      sameTeamNativeDeliveryGraceMs: TeamProvisioningService.SAME_TEAM_NATIVE_DELIVERY_GRACE_MS,
+      recentCrossTeamDeliveryTtlMs: TeamProvisioningService.RECENT_CROSS_TEAM_DELIVERY_TTL_MS,
+      logger,
+      getErrorMessage,
+      nowIso,
+      nowMs: () => Date.now(),
+      setTimeout: (callback, ms) => setTimeout(callback, ms),
+      clearTimeout: (handle) => clearTimeout(handle),
+    });
   private readonly liveLeadProcessMessages = new Map<string, InboxMessage[]>();
   private readonly liveLeadMessagePortsBoundary =
     createTeamProvisioningLiveLeadMessagePortsBoundary<ProvisioningRun>({
@@ -5942,89 +5986,7 @@ export class TeamProvisioningService {
   }
 
   async relayLeadInboxMessages(teamName: string): Promise<number> {
-    const existing = this.leadInboxRelayInFlight.get(teamName);
-    if (existing) {
-      try {
-        return await waitForInboxRelayInFlight({
-          promise: existing,
-          relayName: 'lead_inbox_relay',
-          relayKey: teamName,
-        });
-      } catch (error) {
-        if (!isInboxRelayInFlightTimeoutError(error)) {
-          throw error;
-        }
-        logger.warn(`[${teamName}] lead_inbox_relay_timed_out: ${getErrorMessage(error)}`);
-        return 0;
-      } finally {
-        if (this.leadInboxRelayInFlight.get(teamName) === existing) {
-          this.leadInboxRelayInFlight.delete(teamName);
-        }
-      }
-    }
-
-    const work = relayLeadInboxMessagesForTeam(teamName, {
-      getAliveRunId: (teamName) => this.runTracking.getAliveRunId(teamName),
-      getProvisioningRunId: (teamName) => this.runTracking.getProvisioningRunId(teamName),
-      getRun: (runId) => this.runs.get(runId),
-      isCurrentTrackedRun: (run) => this.isCurrentTrackedRun(run),
-      readConfigForObservation: (teamName) => this.readConfigForObservation(teamName),
-      readLeadInboxMessages: (teamName, leadName) =>
-        this.inboxReader.getMessagesFor(teamName, leadName),
-      markInboxMessagesRead: (teamName, leadName, messages) =>
-        this.markInboxMessagesRead(teamName, leadName, messages),
-      handleTeammatePermissionRequest: (run, permissionRequest, timestamp) =>
-        this.handleTeammatePermissionRequest(run, permissionRequest, timestamp),
-      refreshMemberSpawnStatusesFromLeadInbox: (run) =>
-        this.refreshMemberSpawnStatusesFromLeadInbox(run),
-      confirmSameTeamNativeMatches: (teamName, leadName, messages) =>
-        this.confirmSameTeamNativeMatches(teamName, leadName, messages),
-      scheduleSameTeamPersistRetry: (teamName) => this.scheduleSameTeamPersistRetry(teamName),
-      scheduleSameTeamDeferredRetry: (teamName) => this.scheduleSameTeamDeferredRetry(teamName),
-      resolveControlApiBaseUrl: () => this.providerRuntime.resolveControlApiBaseUrl(),
-      sendMessageToRun: (run, message) => this.sendMessageToRun(run, message),
-      hasAcceptedLeadWorkSyncReport: (input) => this.hasAcceptedLeadWorkSyncReport(input),
-      scheduleLeadProofMissingWorkSyncRecovery: (input) =>
-        this.scheduleLeadProofMissingWorkSyncRecovery(input),
-      pushLiveLeadTextMessage: (run, text, messageId, timestamp) =>
-        this.pushLiveLeadTextMessage(run, text, messageId, timestamp),
-      pushLiveLeadProcessMessage: (teamName, message) =>
-        this.pushLiveLeadProcessMessage(teamName, message),
-      persistSentMessage: (teamName, message) => this.persistSentMessage(teamName, message),
-      emitTeamChange: (event) => this.teamChangeEmitter?.(event),
-      scheduleLeadInboxFollowUpRelay: (teamName) => this.scheduleLeadInboxFollowUpRelay(teamName),
-      relayedLeadInboxMessageIds: this.relayedLeadInboxMessageIds,
-      trimRelayedSet: (relayedIds) => this.trimRelayedSet(relayedIds),
-      pendingCrossTeamFirstReplies: this.pendingCrossTeamFirstReplies,
-      recentCrossTeamLeadDeliveryMessageIds: this.recentCrossTeamLeadDeliveryMessageIds,
-      sameTeamRunStartSkewMs: TeamProvisioningService.SAME_TEAM_RUN_START_SKEW_MS,
-      sameTeamNativeDeliveryGraceMs: TeamProvisioningService.SAME_TEAM_NATIVE_DELIVERY_GRACE_MS,
-      recentCrossTeamDeliveryTtlMs: TeamProvisioningService.RECENT_CROSS_TEAM_DELIVERY_TTL_MS,
-      logger,
-      nowIso,
-      nowMs: () => Date.now(),
-      setTimeout: (callback, ms) => setTimeout(callback, ms),
-      clearTimeout: (handle) => clearTimeout(handle),
-    });
-
-    this.leadInboxRelayInFlight.set(teamName, work);
-    try {
-      return await waitForInboxRelayInFlight({
-        promise: work,
-        relayName: 'lead_inbox_relay',
-        relayKey: teamName,
-      });
-    } catch (error) {
-      if (!isInboxRelayInFlightTimeoutError(error)) {
-        throw error;
-      }
-      logger.warn(`[${teamName}] lead_inbox_relay_timed_out: ${getErrorMessage(error)}`);
-      return 0;
-    } finally {
-      if (this.leadInboxRelayInFlight.get(teamName) === work) {
-        this.leadInboxRelayInFlight.delete(teamName);
-      }
-    }
+    return this.leadInboxRelayPortsBoundary.relayLeadInboxMessages(teamName);
   }
 
   /**

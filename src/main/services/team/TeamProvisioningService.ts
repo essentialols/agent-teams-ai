@@ -423,15 +423,17 @@ import {
 import { handleNativeTeammateUserMessage as handleNativeTeammateUserMessageHelper } from './provisioning/TeamProvisioningNativeTeammateMessages';
 import { getOpenCodeAgendaSyncRecoveryBypassMessageIds as getOpenCodeAgendaSyncRecoveryBypassMessageIdsHelper } from './provisioning/TeamProvisioningOpenCodeAgendaSyncRecovery';
 import {
+  commitOpenCodeRuntimeAdapterLaunchSessionEvidence as commitOpenCodeRuntimeAdapterLaunchSessionEvidenceHelper,
+  launchOpenCodeAggregatePrimaryLane as launchOpenCodeAggregatePrimaryLaneHelper,
+  persistOpenCodeRuntimeAdapterLaunchResult as persistOpenCodeRuntimeAdapterLaunchResultHelper,
+  summarizeOpenCodeAggregateLaunchState as summarizeOpenCodeAggregateLaunchStateHelper,
+} from './provisioning/TeamProvisioningOpenCodeAggregateLaunchPersistence';
+import {
   createOpenCodeAggregateProvisioningRun as createOpenCodeAggregateProvisioningRunHelper,
   type CreateOpenCodeAggregateProvisioningRunParams,
 } from './provisioning/TeamProvisioningOpenCodeAggregateRun';
 import { resolveOpenCodeInboxAttachmentPayloads as resolveOpenCodeInboxAttachmentPayloadsHelper } from './provisioning/TeamProvisioningOpenCodeAttachmentPayloads';
-import {
-  commitOpenCodeRuntimeBootstrapSessionEvidence,
-  hasCommittedOpenCodeRuntimeBootstrapSessionEvidence,
-  type OpenCodeRuntimeBootstrapEvidencePorts,
-} from './provisioning/TeamProvisioningOpenCodeBootstrapEvidence';
+import { type OpenCodeRuntimeBootstrapEvidencePorts } from './provisioning/TeamProvisioningOpenCodeBootstrapEvidence';
 import {
   buildOpenCodeSecondaryBootstrapStallDiagnostic as buildOpenCodeSecondaryBootstrapStallDiagnosticHelper,
   isOpenCodeBootstrapStallWindowElapsed as isOpenCodeBootstrapStallWindowElapsedHelper,
@@ -492,10 +494,7 @@ import {
   isRecoverablePersistedOpenCodeTerminalRuntimeCandidate,
   MEMBER_BOOTSTRAP_STALL_MS,
   normalizeRecoverableOpenCodeBootstrapPendingLaunchResult,
-  promoteCommittedOpenCodeAppManagedBootstrapEvidence,
   shouldMarkPersistedOpenCodeBootstrapStalled,
-  summarizeRuntimeLaunchResultMembers,
-  toOpenCodePersistedLaunchMember as toOpenCodePersistedLaunchMemberHelper,
 } from './provisioning/TeamProvisioningOpenCodeRuntimeEvidencePolicy';
 import {
   cleanupStoppedTeamOpenCodeRuntimeLanesInBackground as cleanupStoppedTeamOpenCodeRuntimeLanesInBackgroundHelper,
@@ -5822,109 +5821,27 @@ export class TeamProvisioningService {
     prompt: string;
     previousLaunchState: PersistedTeamLaunchSnapshot | null;
   }): Promise<TeamRuntimeLaunchResult | null> {
-    if (params.run.effectiveMembers.length === 0) {
-      return null;
-    }
-
-    const teamName = params.run.teamName;
-    const runId = params.run.runId;
-    const launchCwd = this.getOpenCodeRuntimeLaunchCwd(
-      params.run.request.cwd,
-      params.run.effectiveMembers
-    );
-    const migration = await migrateLegacyOpenCodeRuntimeState({
-      teamsBasePath: getTeamsBasePath(),
-      teamName,
-      laneId: 'primary',
+    return launchOpenCodeAggregatePrimaryLaneHelper(params, {
+      getTeamsBasePath,
+      getOpenCodeRuntimeLaunchCwd: (baseCwd, members) =>
+        this.getOpenCodeRuntimeLaunchCwd(baseCwd, members),
+      migrateLegacyOpenCodeRuntimeState,
+      upsertOpenCodeRuntimeLaneIndexEntry,
+      setOpenCodeRuntimeActiveRunManifest,
+      persistOpenCodeRuntimeAdapterLaunchResult: (result, launchInput) =>
+        this.persistOpenCodeRuntimeAdapterLaunchResult(result, launchInput),
+      syncOpenCodeRuntimeToolApprovals: (input) => this.syncOpenCodeRuntimeToolApprovals(input),
+      setRuntimeAdapterRunByTeam: (teamName, runtimeRun) => {
+        this.runtimeAdapterRunByTeam.set(teamName, runtimeRun);
+      },
     });
-    await upsertOpenCodeRuntimeLaneIndexEntry({
-      teamsBasePath: getTeamsBasePath(),
-      teamName,
-      laneId: 'primary',
-      state: migration.degraded ? 'degraded' : 'active',
-      diagnostics: migration.diagnostics,
-    });
-    await setOpenCodeRuntimeActiveRunManifest({
-      teamsBasePath: getTeamsBasePath(),
-      teamName,
-      laneId: 'primary',
-      runId,
-    });
-
-    const expectedMembers: TeamRuntimeMemberSpec[] = params.run.effectiveMembers.map((member) => ({
-      name: member.name,
-      role: member.role,
-      workflow: member.workflow,
-      isolation: member.isolation === 'worktree' ? ('worktree' as const) : undefined,
-      providerId: 'opencode',
-      model: member.model ?? params.run.request.model,
-      effort: member.effort ?? params.run.request.effort,
-      cwd: member.cwd?.trim() || launchCwd,
-    }));
-    const launchInput: TeamRuntimeLaunchInput = {
-      runId,
-      laneId: 'primary',
-      teamName,
-      cwd: launchCwd,
-      prompt: params.prompt,
-      providerId: 'opencode',
-      model: params.run.request.model,
-      effort: params.run.request.effort,
-      skipPermissions: params.run.request.skipPermissions !== false,
-      expectedMembers,
-      previousLaunchState: params.previousLaunchState,
-    };
-    const launchResult = await params.adapter.launch(launchInput);
-    const { snapshot, result } = await this.persistOpenCodeRuntimeAdapterLaunchResult(
-      launchResult,
-      launchInput
-    );
-    const snapshotStatuses = snapshotToMemberSpawnStatuses(snapshot);
-    for (const member of expectedMembers) {
-      const status = snapshotStatuses[member.name];
-      if (status) {
-        params.run.memberSpawnStatuses.set(member.name, status);
-      }
-    }
-    this.syncOpenCodeRuntimeToolApprovals({
-      teamName,
-      runId,
-      laneId: 'primary',
-      cwd: launchCwd,
-      members: result.members,
-      expectedMembers,
-      teamColor: params.run.request.color,
-      teamDisplayName: params.run.request.displayName,
-    });
-    if (result.teamLaunchState !== 'partial_failure') {
-      this.runtimeAdapterRunByTeam.set(teamName, {
-        runId,
-        providerId: 'opencode',
-        cwd: launchCwd,
-        members: result.members,
-      });
-    }
-    return result;
   }
 
   private summarizeOpenCodeAggregateLaunchState(input: {
     primaryResult: TeamRuntimeLaunchResult | null;
     lanes: readonly MixedSecondaryRuntimeLaneState[];
   }): TeamRuntimeLaunchResult['teamLaunchState'] {
-    const states = [
-      input.primaryResult?.teamLaunchState,
-      ...input.lanes.map((lane) => lane.result?.teamLaunchState),
-    ].filter((state): state is TeamRuntimeLaunchResult['teamLaunchState'] => Boolean(state));
-    if (states.length === 0 || states.some((state) => state === 'partial_failure')) {
-      return 'partial_failure';
-    }
-    if (
-      states.some((state) => state === 'partial_pending') ||
-      input.lanes.some((lane) => !lane.result)
-    ) {
-      return 'partial_pending';
-    }
-    return 'clean_success';
+    return summarizeOpenCodeAggregateLaunchStateHelper(input);
   }
 
   private async runOpenCodeWorktreeRootAggregateLaunch(input: {
@@ -6388,33 +6305,13 @@ export class TeamProvisioningService {
     snapshot: PersistedTeamLaunchSnapshot;
     result: TeamRuntimeLaunchResult;
   }> {
-    const committedResult = await this.commitOpenCodeRuntimeAdapterLaunchSessionEvidence({
-      teamName: input.teamName,
-      laneId: input.laneId?.trim() || 'primary',
-      result,
+    return persistOpenCodeRuntimeAdapterLaunchResultHelper(result, input, {
+      createOpenCodeRuntimeBootstrapEvidencePorts: () =>
+        this.createOpenCodeRuntimeBootstrapEvidencePorts(),
+      nowIso,
+      writeLaunchStateSnapshot: (teamName, snapshot) =>
+        this.writeLaunchStateSnapshot(teamName, snapshot),
     });
-    const members: Record<string, PersistedTeamLaunchMemberState> = {};
-    for (const member of input.expectedMembers) {
-      const evidence = committedResult.members[member.name];
-      members[member.name] = this.toOpenCodePersistedLaunchMember(
-        member,
-        evidence,
-        committedResult.runId
-      );
-    }
-    const snapshot = createPersistedLaunchSnapshot({
-      teamName: input.teamName,
-      expectedMembers: input.expectedMembers.map((member) => member.name),
-      bootstrapExpectedMembers: input.expectedMembers.map((member) => member.name),
-      includeLeadMembers: true,
-      leadSessionId: result.leadSessionId,
-      launchPhase: committedResult.launchPhase,
-      members,
-    });
-    return {
-      snapshot: await this.writeLaunchStateSnapshot(input.teamName, snapshot),
-      result: committedResult,
-    };
   }
 
   private async commitOpenCodeRuntimeAdapterLaunchSessionEvidence(params: {
@@ -6422,92 +6319,11 @@ export class TeamProvisioningService {
     laneId: string;
     result: TeamRuntimeLaunchResult;
   }): Promise<TeamRuntimeLaunchResult> {
-    let changed = false;
-    const members: Record<string, TeamRuntimeMemberLaunchEvidence> = { ...params.result.members };
-    const bootstrapEvidencePorts = this.createOpenCodeRuntimeBootstrapEvidencePorts();
-    for (const [memberName, evidence] of Object.entries(params.result.members)) {
-      const runtimeSessionId = evidence.sessionId?.trim();
-      const confirmed =
-        evidence.launchState === 'confirmed_alive' ||
-        evidence.bootstrapConfirmed === true ||
-        evidence.livenessKind === 'confirmed_bootstrap';
-      const appManagedCandidate =
-        evidence.bootstrapEvidenceSource === 'app_managed_bootstrap' &&
-        evidence.bootstrapMode === 'app_managed_context'
-          ? evidence.appManagedBootstrapCandidate
-          : undefined;
-      const appManagedCandidateMatches =
-        appManagedCandidate?.source === 'app_managed_bootstrap' &&
-        appManagedCandidate.teamName === params.teamName &&
-        appManagedCandidate.memberName === memberName &&
-        appManagedCandidate.runId === params.result.runId &&
-        appManagedCandidate.laneId === params.laneId &&
-        appManagedCandidate.runtimeSessionId === runtimeSessionId;
-      if ((!confirmed && !appManagedCandidateMatches) || !runtimeSessionId) {
-        continue;
-      }
-      // For app-managed bootstrap, promotion is intentionally two-phase:
-      // write the candidate as runtime evidence, then verify it using the same
-      // reader path used by later reconciliation/restart flows.
-      const source: OpenCodeBootstrapEvidenceSource = appManagedCandidateMatches
-        ? 'app_managed_bootstrap'
-        : (evidence.bootstrapEvidenceSource ?? 'runtime_bootstrap_checkin');
-      await commitOpenCodeRuntimeBootstrapSessionEvidence(
-        {
-          teamName: params.teamName,
-          runId: params.result.runId,
-          laneId: params.laneId,
-          memberName,
-          runtimeSessionId,
-          observedAt: nowIso(),
-          source,
-          appManagedBootstrapCandidate: appManagedCandidateMatches
-            ? appManagedCandidate
-            : evidence.appManagedBootstrapCandidate,
-        },
-        bootstrapEvidencePorts
-      );
-      const verified = await hasCommittedOpenCodeRuntimeBootstrapSessionEvidence(
-        {
-          teamName: params.teamName,
-          runId: params.result.runId,
-          laneId: params.laneId,
-          memberName,
-          runtimeSessionId,
-          source,
-          appManagedBootstrapCandidate: appManagedCandidateMatches
-            ? appManagedCandidate
-            : evidence.appManagedBootstrapCandidate,
-        },
-        bootstrapEvidencePorts
-      );
-      if (appManagedCandidateMatches && verified && !confirmed) {
-        members[memberName] = promoteCommittedOpenCodeAppManagedBootstrapEvidence(evidence);
-        changed = true;
-      }
-    }
-    if (!changed) {
-      return params.result;
-    }
-    const teamLaunchState = summarizeRuntimeLaunchResultMembers(members);
-    return {
-      ...params.result,
-      launchPhase: teamLaunchState === 'clean_success' ? 'finished' : params.result.launchPhase,
-      teamLaunchState,
-      members,
-      diagnostics: appendDiagnosticOnce(
-        params.result.diagnostics,
-        'OpenCode app-managed bootstrap evidence was committed and read back before readiness promotion.'
-      ),
-    };
-  }
-
-  private toOpenCodePersistedLaunchMember(
-    member: TeamRuntimeLaunchInput['expectedMembers'][number],
-    evidence: TeamRuntimeMemberLaunchEvidence | undefined,
-    runId?: string
-  ): PersistedTeamLaunchMemberState {
-    return toOpenCodePersistedLaunchMemberHelper(member, evidence, { runId, nowIso });
+    return commitOpenCodeRuntimeAdapterLaunchSessionEvidenceHelper(params, {
+      createOpenCodeRuntimeBootstrapEvidencePorts: () =>
+        this.createOpenCodeRuntimeBootstrapEvidencePorts(),
+      nowIso,
+    });
   }
 
   async launchTeam(

@@ -65,6 +65,36 @@ describe("WorkerControlService", () => {
     expect(secondBatch.signalIds).toEqual([]);
   });
 
+  it("does not report delivered signals as blocked during reconciliation", async () => {
+    const store = new InMemoryWorkerControlInboxStore();
+    const service = new WorkerControlService({
+      store,
+      clock: { now: () => new Date("2026-06-30T00:00:00.000Z") },
+      idFactory: sequentialIds("reconcile-delivered"),
+    });
+    const target = {
+      jobId: "job-reconcile",
+      taskId: "task-reconcile",
+      workspaceId: "/tmp/reconcile-work",
+    };
+
+    await service.enqueueSignal({
+      target,
+      intent: "guidance",
+      body: "Already delivered guidance.",
+    });
+    await service.consumeForContinuation({
+      target,
+      deliveryAttemptId: "attempt-delivered",
+    });
+
+    const report = await service.reconcile({ target });
+
+    expect(report.deliveredCount).toBe(1);
+    expect(report.blockedCount).toBe(0);
+    expect(report.warnings).toEqual([]);
+  });
+
   it("keeps record-only notes out of continuation batches", async () => {
     const store = new InMemoryWorkerControlInboxStore();
     const service = new WorkerControlService({

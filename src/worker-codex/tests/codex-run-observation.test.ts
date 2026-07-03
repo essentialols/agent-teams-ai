@@ -342,6 +342,66 @@ describe("CodexRunObservationAdapter", () => {
     }
   });
 
+  it("keeps fresh-heartbeat workers alive when only stdout is stale", async () => {
+    if (!(await hasTmux())) return;
+    const tmuxSession = `subscription-runtime-fresh-heartbeat-${process.pid}-${Date.now()}`;
+    const fixture = await createObservationFixture({ tmuxSession });
+
+    try {
+      await execFileAsync("tmux", [
+        "new-session",
+        "-d",
+        "-s",
+        tmuxSession,
+        "-c",
+        fixture.root,
+        "sleep 300",
+      ]);
+      await writeFile(fixture.manifest.logPath!, "old output\n");
+      const staleTime = new Date(Date.now() - 120_000);
+      await utimes(fixture.manifest.logPath!, staleTime, staleTime);
+      await writeFile(fixture.manifest.progressPath!, `${JSON.stringify({
+        schemaVersion: 1,
+        taskId: fixture.manifest.taskId,
+        status: "running",
+        updatedAt: new Date().toISOString(),
+        pid: process.pid,
+      })}\n`);
+
+      const snapshot = await new RunObservationService(new CodexRunObservationAdapter({
+        registryRootDir: fixture.registryRootDir,
+        staleAfterMs: 1_000,
+      })).observeRun({
+        runId: "job-a",
+        includeLogTail: true,
+        tailLines: 5,
+      });
+
+      expect(snapshot).toMatchObject({
+        status: "running",
+        liveness: "alive",
+        progress: {
+          status: "running",
+          stale: false,
+          silentStale: false,
+        },
+        logs: {
+          staleAfterMs: 1_000,
+          stale: true,
+        },
+      });
+      expect(snapshot.recommendedAction).not.toBe("recover");
+      expect(snapshot.readOnlyDecision.kind).not.toBe("stale_needs_inspection");
+      expect(snapshot.warnings.map((warning) => warning.code)).toContain(
+        "log_stale_while_worker_alive",
+      );
+    } finally {
+      await execFileAsync("tmux", ["kill-session", "-t", tmuxSession])
+        .catch(() => undefined);
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
   it("flags heartbeat-only workers without result, log output or workspace changes", async () => {
     if (!(await hasTmux())) return;
     const tmuxSession = `subscription-runtime-heartbeat-only-${process.pid}-${Date.now()}`;
@@ -362,7 +422,7 @@ describe("CodexRunObservationAdapter", () => {
         taskId: fixture.manifest.taskId,
         status: "running",
         updatedAt: new Date(Date.now() - 130_000).toISOString(),
-        pid: process.pid,
+        pid: 12345,
       })}\n`);
 
       const snapshot = await new RunObservationService(new CodexRunObservationAdapter({

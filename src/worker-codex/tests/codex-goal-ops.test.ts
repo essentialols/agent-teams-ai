@@ -716,6 +716,43 @@ describe("codex goal ops", () => {
     });
   });
 
+  it("does not flag a cpu-active app-server as heartbeat-only no-output", async () => {
+    const fixture = await createGoalFixture();
+    const launch = launchInput(fixture.config, fixture.root);
+    const brief = await buildCodexGoalBrief({
+      jobId: "job-cpu-active-empty-log",
+      launch,
+      status: {
+        tmuxAlive: true,
+        recommendedAction: "wait_for_worker",
+        workspaceDirty: false,
+        changedFiles: [],
+        resultExists: false,
+        logExists: true,
+        logByteLength: 0,
+        logUpdatedAt: new Date(Date.now() - 5 * 60_000).toISOString(),
+        progressExists: true,
+        progressStatus: "running",
+        progressUpdatedAt: new Date().toISOString(),
+        progressHeartbeatAgeMs: 1_000,
+        progressProcessAlive: true,
+        progressCpuActive: true,
+        warnings: [],
+      } as Awaited<ReturnType<typeof collectCodexGoalStatus>>,
+      accounts: [accountStatus("account-a", {})],
+      staleAfterMs: 60_000,
+      tailLines: 20,
+    });
+
+    expect(brief).toMatchObject({
+      workerAlive: true,
+      heartbeatOnlyNoOutput: false,
+      safeToContinue: false,
+      nextBestTool: "codex_goal_brief",
+      nextBestReason: "worker is already running",
+    });
+  });
+
   it("does not mark continuation safe when all configured accounts are unavailable", async () => {
     const fixture = await createGoalFixture();
     const launch = launchInput(fixture.config, fixture.root);

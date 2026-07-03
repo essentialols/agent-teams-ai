@@ -135,7 +135,7 @@ export class CodexRunObservationAdapter implements RunObservationPort {
       logUpdatedAgeMs,
       workerAlive: workerLiveness.alive,
     });
-    const silentStale = Boolean(workerLiveness.alive && (progressStale || logStale));
+    const silentStale = Boolean(workerLiveness.alive && progressStale);
     if (workerLiveness.alive && logStale) {
       warnings.push({
         code: "log_stale_while_worker_alive",
@@ -602,6 +602,7 @@ function isHeartbeatOnlyNoOutput(input: {
       status.progressExists &&
       status.progressStatus === "running" &&
       !input.progressStale &&
+      status.progressCpuActive !== true &&
       noOutputAgeMs !== undefined &&
       noOutputAgeMs >= heartbeatOnlyNoOutputAfterMs &&
       status.resultExists === false &&

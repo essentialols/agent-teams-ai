@@ -211,13 +211,18 @@ export class WorkerControlService {
     const views = repair.repairedSignalIds.length === 0
       ? initialViews
       : await this.signalViews({ target, capabilities, now });
+    const blockedSignals = views.filter((view) =>
+      view.state === "pending" &&
+      view.blockedReason &&
+      view.signal.deliveryMode !== "record_only"
+    );
     return {
       target,
       signalCount: views.length,
       pendingCount: views.filter((view) => view.state === "pending").length,
       acceptedCount: views.filter((view) => view.state === "accepted").length,
       deliverableCount: views.filter((view) => view.deliverable).length,
-      blockedCount: views.filter((view) => view.blockedReason).length,
+      blockedCount: blockedSignals.length,
       expiredCount: views.filter((view) => view.state === "expired").length,
       supersededCount: views.filter((view) => view.state === "superseded").length,
       deliveredCount: views.filter((view) => view.state === "delivered").length,
@@ -226,7 +231,7 @@ export class WorkerControlService {
       repairedCount: repair.repairedSignalIds.length,
       repairedSignalIds: repair.repairedSignalIds,
       warnings: [
-        ...(views.some((view) => view.blockedReason)
+        ...(blockedSignals.length
         ? ["One or more control signals cannot be delivered with current capabilities."]
         : []),
         ...repair.warnings,

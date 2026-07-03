@@ -3898,6 +3898,7 @@ function isHeartbeatOnlyNoOutputBrief(input: {
       noOutputAgeMs >= heartbeatOnlyNoOutputAfterMs &&
       status.progressHeartbeatAgeMs !== undefined &&
       status.progressHeartbeatAgeMs <= input.staleAfterMs &&
+      status.progressCpuActive !== true &&
       status.resultExists === false &&
       (status.logExists === false || status.logByteLength === 0) &&
       status.workspaceDirty === false &&

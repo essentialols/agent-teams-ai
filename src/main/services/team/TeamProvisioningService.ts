@@ -269,6 +269,7 @@ import {
   resolveDirectMemberLaunchIdentity as resolveDirectMemberLaunchIdentityHelper,
 } from './provisioning/TeamProvisioningLaunchIdentity';
 import { buildTeamLaunchIncompleteNotificationPayload } from './provisioning/TeamProvisioningLaunchIncompleteNotification';
+import { TeamProvisioningLaunchNotifications } from './provisioning/TeamProvisioningLaunchNotifications';
 import {
   buildAggregatePendingLaunchMessage as buildAggregatePendingLaunchMessageHelper,
   buildPendingBootstrapStatusMessage as buildPendingBootstrapStatusMessageHelper,
@@ -1466,6 +1467,16 @@ export class TeamProvisioningService {
       logWarning: (message) => logger.warn(message),
       getErrorMessage,
     });
+  private readonly launchNotifications = new TeamProvisioningLaunchNotifications<ProvisioningRun>({
+    getConfig: () => ConfigManager.getInstance().getConfig(),
+    addTeamNotification: (notification) =>
+      NotificationManager.getInstance().addTeamNotification(notification),
+    areAllExpectedLaunchMembersConfirmed: (run) => this.areAllExpectedLaunchMembersConfirmed(run),
+    buildLaunchIncompleteNotificationPayload: buildTeamLaunchIncompleteNotificationPayload,
+    logger: {
+      warn: (message) => logger.warn(message),
+    },
+  });
   private readonly openCodeVisibleReplyProofService: OpenCodeVisibleReplyProofService;
   private readonly openCodePromptDeliveryWatchdogCoordinator: OpenCodePromptDeliveryWatchdogCoordinator;
   private readonly openCodeRuntimeRecoveryIdentity = createOpenCodeRuntimeRecoveryIdentityHelpers({
@@ -13107,46 +13118,7 @@ export class TeamProvisioningService {
    * Uses the existing addTeamNotification() pipeline.
    */
   private async fireTeamLaunchedNotification(run: ProvisioningRun): Promise<void> {
-    if (run.teamLaunchedNotificationFired) {
-      return;
-    }
-
-    try {
-      const config = ConfigManager.getInstance().getConfig();
-      const suppressToast = !config.notifications.notifyOnTeamLaunched;
-      const displayName = run.request.displayName || run.teamName;
-      const joinedCount = run.expectedMembers?.length ?? 0;
-      const allJoined = joinedCount > 0 && this.areAllExpectedLaunchMembersConfirmed(run);
-      if (run.isLaunch && joinedCount > 0 && !allJoined) {
-        return;
-      }
-      run.teamLaunchedNotificationFired = true;
-      const body = run.isLaunch
-        ? allJoined
-          ? `Team "${displayName}" has been launched - all ${joinedCount} teammates joined and are ready for tasks.`
-          : `Team "${displayName}" has been launched and is ready for tasks.`
-        : `Team "${displayName}" has been provisioned and is ready for tasks.`;
-
-      await NotificationManager.getInstance().addTeamNotification({
-        teamEventType: 'team_launched',
-        teamName: run.teamName,
-        teamDisplayName: displayName,
-        from: 'system',
-        summary: run.isLaunch ? 'Team launched' : 'Team provisioned',
-        body,
-        dedupeKey: `team_launched:${run.teamName}:${run.runId}`,
-        target: { kind: 'team', teamName: run.teamName, section: 'overview' },
-        projectPath: run.request.cwd,
-        suppressToast,
-      });
-    } catch (error) {
-      run.teamLaunchedNotificationFired = false;
-      logger.warn(
-        `[${run.teamName}] Failed to fire team_launched notification: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
-    }
+    await this.launchNotifications.fireTeamLaunchedNotification(run);
   }
 
   private async fireTeamLaunchIncompleteNotification(
@@ -13161,28 +13133,12 @@ export class TeamProvisioningService {
     },
     snapshot?: PersistedTeamLaunchSnapshot | null
   ): Promise<void> {
-    try {
-      const config = ConfigManager.getInstance().getConfig();
-      const suppressToast = !config.notifications.notifyOnTeamLaunched;
-      const payload = buildTeamLaunchIncompleteNotificationPayload({
-        run,
-        failedMembers,
-        launchSummary,
-        snapshot,
-        suppressToast,
-      });
-      if (!payload) {
-        return;
-      }
-
-      await NotificationManager.getInstance().addTeamNotification(payload);
-    } catch (error) {
-      logger.warn(
-        `[${run.teamName}] Failed to fire team_launch_incomplete notification: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
-    }
+    await this.launchNotifications.fireTeamLaunchIncompleteNotification(
+      run,
+      failedMembers,
+      launchSummary,
+      snapshot
+    );
   }
 
   // ---------------------------------------------------------------------------

@@ -233,8 +233,10 @@ import {
   getLeadActivityStateForTeam,
   type LeadActivityState,
   setLeadActivity as setLeadActivityHelper,
+  type SetLeadActivityPorts,
   syncLeadTaskActivityForState as syncLeadTaskActivityForStateHelper,
 } from './provisioning/TeamProvisioningLeadActivity';
+import { createTeamProvisioningLeadActivityPorts } from './provisioning/TeamProvisioningLeadActivityPortsFactory';
 import {
   buildLeadMessageStdinPayload,
   toLeadAttachmentPayloads,
@@ -491,6 +493,7 @@ import {
   recordCancelledOpenCodeRuntimeAdapterLaunch as recordCancelledOpenCodeRuntimeAdapterLaunchHelper,
   type RuntimeAdapterCancellationPorts,
 } from './provisioning/TeamProvisioningRuntimeAdapterCancellation';
+import { createTeamProvisioningRuntimeAdapterCancellationPorts } from './provisioning/TeamProvisioningRuntimeAdapterCancellationPortsFactory';
 import { TeamProvisioningRuntimeAdapterProgressState } from './provisioning/TeamProvisioningRuntimeAdapterProgressState';
 import {
   createMixedSecondaryLaneStates as createMixedSecondaryLaneStatesHelper,
@@ -3857,34 +3860,15 @@ export class TeamProvisioningService {
     setLeadActivityHelper(run, state, this.createLeadActivityPorts());
   }
 
-  private createLeadActivityPorts(): {
-    syncedRunKeys: Set<string>;
-    getRunLeadName: (run: ProvisioningRun) => string;
-    resumeActiveIntervalsForMember: (
-      teamName: string,
-      memberName: string,
-      at: string
-    ) => { failed?: boolean };
-    pauseActiveIntervalsForMember: (
-      teamName: string,
-      memberName: string,
-      at: string
-    ) => { failed?: boolean };
-    isCurrentTrackedRun: (run: ProvisioningRun) => boolean;
-    nowIso: () => string;
-    emitTeamChange: (event: TeamChangeEvent) => void;
-  } {
-    return {
+  private createLeadActivityPorts(): SetLeadActivityPorts<ProvisioningRun> {
+    return createTeamProvisioningLeadActivityPorts({
       syncedRunKeys: this.leadTaskActivitySyncedRunKeys,
       getRunLeadName: (run) => this.getRunLeadName(run),
-      resumeActiveIntervalsForMember: (teamName, memberName, at) =>
-        this.taskActivityIntervalService.resumeActiveIntervalsForMember(teamName, memberName, at),
-      pauseActiveIntervalsForMember: (teamName, memberName, at) =>
-        this.taskActivityIntervalService.pauseActiveIntervalsForMember(teamName, memberName, at),
+      taskActivityIntervalService: this.taskActivityIntervalService,
       isCurrentTrackedRun: (run) => this.isCurrentTrackedRun(run),
       nowIso,
       emitTeamChange: (event) => this.teamChangeEmitter?.(event),
-    };
+    });
   }
 
   private startRuntimeToolActivity(
@@ -5568,12 +5552,11 @@ export class TeamProvisioningService {
   }
 
   private createRuntimeAdapterCancellationPorts(): RuntimeAdapterCancellationPorts {
-    return {
+    return createTeamProvisioningRuntimeAdapterCancellationPorts({
       cancelledRuntimeAdapterRunIds: this.cancelledRuntimeAdapterRunIds,
       runtimeAdapterRunByTeam: this.runtimeAdapterRunByTeam,
       provisioningRunByTeam: this.provisioningRunByTeam,
       aliveRunByTeam: this.aliveRunByTeam,
-      teamsBasePath: getTeamsBasePath(),
       nowIso,
       clearOpenCodeRuntimeToolApprovals: (teamName, options) =>
         this.clearOpenCodeRuntimeToolApprovals(teamName, options),
@@ -5585,9 +5568,8 @@ export class TeamProvisioningService {
       readLaunchState: (teamName) => this.launchStateStore.read(teamName),
       getOpenCodeRuntimeAdapter: () => this.getOpenCodeRuntimeAdapter(),
       readPersistedTeamProjectPath: (teamName) => this.readPersistedTeamProjectPath(teamName),
-      clearOpenCodeRuntimeLaneStorage,
       logWarning: (message) => logger.warn(message),
-    };
+    });
   }
 
   /**

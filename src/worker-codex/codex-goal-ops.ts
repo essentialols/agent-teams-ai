@@ -555,6 +555,15 @@ export async function reconcileCodexGoalRuntimeResult(
     status,
     progressStale: progressStaleForReconcile,
   });
+  const noOutputAgeMs = ageMsFromIso(status.logUpdatedAt) ?? status.progressHeartbeatAgeMs;
+  const heartbeatOnlyNoOutputForReconcile = Boolean(
+    input.heartbeatOnlyNoOutput ||
+      (status.resultExists === false &&
+        changedFiles.length === 0 &&
+        (status.logExists === false || status.logByteLength === 0) &&
+        noOutputAgeMs !== undefined &&
+        noOutputAgeMs > 10 * 60_000),
+  );
   const classification = classifyRuntimeRunState({
     status: workerLiveness.alive ? "running" : "failed",
     liveness: workerLiveness.alive ? "alive" : "dead",
@@ -566,7 +575,7 @@ export async function reconcileCodexGoalRuntimeResult(
     progressStatus: status.progressStatus,
     progressStale: progressStaleForReconcile,
     progressSilentStale: input.silentStale,
-    heartbeatOnlyNoOutput: input.heartbeatOnlyNoOutput,
+    heartbeatOnlyNoOutput: heartbeatOnlyNoOutputForReconcile,
     resultExists: status.resultExists,
     resultStatus: status.resultStatus,
     resultReason: status.resultReason,
@@ -618,6 +627,7 @@ export async function reconcileCodexGoalRuntimeResult(
       ...(status.logByteLength === undefined
         ? []
         : [`log_byte_length:${status.logByteLength}`]),
+      ...(heartbeatOnlyNoOutputForReconcile ? ["heartbeat_only_no_output"] : []),
       ...artifacts.map((artifact) => `patch_preserved:${artifact.path ?? ""}`),
       ...(changedFiles.length > 0 && artifacts.length === 0
         ? ["patch_preserve_unavailable"]
@@ -766,6 +776,13 @@ function reasonForReconciledResult(input: {
 function staleProgress(status: CodexGoalStatus): boolean {
   if (status.progressHeartbeatAgeMs === undefined) return false;
   return status.progressHeartbeatAgeMs > 10 * 60_000;
+}
+
+function ageMsFromIso(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const time = Date.parse(value);
+  if (!Number.isFinite(time)) return undefined;
+  return Math.max(0, Date.now() - time);
 }
 
 function isStrictRuntimeResultStatus(

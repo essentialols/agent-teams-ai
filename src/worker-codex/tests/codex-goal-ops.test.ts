@@ -400,6 +400,50 @@ describe("codex goal ops", () => {
     });
   });
 
+  it("reconciles long-running heartbeat-only workers as stale no-progress", async () => {
+    const fixture = await createGoalFixture();
+    const oldLogTime = new Date(Date.now() - 11 * 60_000).toISOString();
+
+    const reconciliation = await new CodexGoalRuntimeResultReconciler().reconcile({
+      config: fixture.config,
+      status: {
+        tmuxAlive: true,
+        resultExists: false,
+        workspaceDirty: false,
+        changedFiles: [],
+        logExists: true,
+        logByteLength: 0,
+        logUpdatedAt: oldLogTime,
+        progressStatus: "running",
+        progressProcessAlive: true,
+        progressHeartbeatAgeMs: 1_000,
+        recommendedAction: "wait_for_worker",
+        warnings: [],
+      },
+    });
+    const result = JSON.parse(await readFile(fixture.config.outputPath!, "utf8")) as
+      Record<string, unknown>;
+
+    expect(reconciliation).toMatchObject({
+      wrote: true,
+      reason: "missing_runtime_result",
+      classification: "stale_no_progress",
+      recommendedAction: "recover",
+    });
+    expect(result).toMatchObject({
+      status: "failed",
+      reason: "missing_runtime_result",
+      blockers: ["missing_runtime_result", "stale_no_progress"],
+      nextAction: "recover",
+    });
+    expect(result.evidence).toEqual(expect.arrayContaining([
+      "supervisor_reconciled_result",
+      "latest_result_missing",
+      "heartbeat_only_no_output",
+      "log_byte_length:0",
+    ]));
+  });
+
   it("does not rewrite an existing strict runtime result during reconcile", async () => {
     const fixture = await createGoalFixture();
     await writeFile(

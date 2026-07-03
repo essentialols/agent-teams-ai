@@ -1,12 +1,23 @@
-import { snapshotToMemberSpawnStatuses } from '../TeamLaunchStateEvaluator';
+import {
+  createPersistedLaunchSnapshot,
+  snapshotToMemberSpawnStatuses,
+} from '../TeamLaunchStateEvaluator';
 
+import {
+  type LaunchReconcileConfigMembers,
+  reconcilePersistedLaunchMember,
+  type ReconcilePersistedLaunchMemberPorts,
+} from './TeamProvisioningLaunchReconcileReporting';
 import {
   getPersistedLaunchMemberNames,
   hasMixedLaunchMetadata,
 } from './TeamProvisioningLaunchStateProjection';
 import { hasCommittedOpenCodeSecondaryEvidenceOverlayDelta } from './TeamProvisioningLaunchStateReconciliation';
 import { filterRemovedMembersFromLaunchSnapshot } from './TeamProvisioningMemberStatusProjection';
+import { promoteOpenCodePersistedFailureReasonsFromDiagnostics } from './TeamProvisioningOpenCodeDiagnosticsPolicy';
 
+import type { LeadInboxLaunchReconcileMessage } from './TeamProvisioningBootstrapTranscript';
+import type { LiveTeamAgentRuntimeMetadata } from './TeamProvisioningRuntimeMetadataPolicy';
 import type {
   MemberSpawnStatusEntry,
   PersistedTeamLaunchSnapshot,
@@ -38,6 +49,294 @@ export type PreferredBootstrapSnapshotDecision =
 export type FinalReconciledSnapshotDecision =
   | { kind: 'clear_persisted_state' }
   | { kind: 'write_snapshot' };
+
+export interface ReconcilePersistedLaunchStatePorts {
+  readBootstrapLaunchSnapshot(teamName: string): Promise<PersistedTeamLaunchSnapshot | null>;
+  readLaunchState(teamName: string): Promise<PersistedTeamLaunchSnapshot | null>;
+  readMembersMeta(teamName: string): Promise<readonly TeamMember[]>;
+  recoverStaleMixedSecondaryLaunchSnapshot(
+    teamName: string,
+    bootstrapSnapshot: PersistedTeamLaunchSnapshot | null,
+    persistedSnapshot: PersistedTeamLaunchSnapshot | null
+  ): Promise<PersistedTeamLaunchSnapshot | null>;
+  applyOpenCodeSecondaryEvidenceOverlay(input: {
+    teamName: string;
+    snapshot: PersistedTeamLaunchSnapshot;
+    previousSnapshot?: PersistedTeamLaunchSnapshot | null;
+    metaMembers?: readonly TeamMember[];
+  }): Promise<PersistedTeamLaunchSnapshot>;
+  applyOpenCodeSecondaryBootstrapStallOverlay(
+    snapshot: PersistedTeamLaunchSnapshot | null
+  ): PersistedTeamLaunchSnapshot | null;
+  writeLaunchStateSnapshot(
+    teamName: string,
+    snapshot: PersistedTeamLaunchSnapshot
+  ): Promise<PersistedTeamLaunchSnapshot>;
+  clearPersistedLaunchState(teamName: string): Promise<void>;
+  applyBootstrapTranscriptEvidenceOverlay(
+    snapshot: PersistedTeamLaunchSnapshot | null
+  ): Promise<PersistedTeamLaunchSnapshot | null>;
+  needsBootstrapAcceptanceReconcile(
+    snapshot: PersistedTeamLaunchSnapshot,
+    bootstrapSnapshot: PersistedTeamLaunchSnapshot | null
+  ): boolean;
+  needsConfirmedBootstrapDiagnosticReconcile(snapshot: PersistedTeamLaunchSnapshot): boolean;
+  cleanConfirmedBootstrapRuntimeDiagnostics(
+    snapshot: PersistedTeamLaunchSnapshot | null
+  ): PersistedTeamLaunchSnapshot | null;
+  hasBootstrapTranscriptLaunchReconcileOutcome(
+    snapshot: PersistedTeamLaunchSnapshot
+  ): Promise<boolean>;
+  choosePreferredLaunchSnapshot(
+    bootstrapSnapshot: PersistedTeamLaunchSnapshot | null,
+    persistedSnapshot: PersistedTeamLaunchSnapshot | null
+  ): PersistedTeamLaunchSnapshot | null;
+  createDefaultLaunchReconcileConfigMembers(): LaunchReconcileConfigMembers;
+  parseLaunchReconcileConfigMembers(raw: string): LaunchReconcileConfigMembers;
+  getTeamsBasePath(): string;
+  pathJoin(...parts: string[]): string;
+  readRegularFileUtf8(
+    filePath: string,
+    opts: { timeoutMs: number; maxBytes: number }
+  ): Promise<string | null>;
+  teamJsonReadTimeoutMs: number;
+  teamConfigMaxBytes: number;
+  readLeadInboxMessagesForLaunchReconcile(
+    teamName: string,
+    leadName: string
+  ): Promise<LeadInboxLaunchReconcileMessage[]>;
+  hasLeadInboxLaunchReconcileHeartbeat(
+    snapshot: PersistedTeamLaunchSnapshot,
+    messages: readonly LeadInboxLaunchReconcileMessage[]
+  ): boolean;
+  getLiveTeamAgentRuntimeMetadata(
+    teamName: string
+  ): Promise<ReadonlyMap<string, LiveTeamAgentRuntimeMetadata>>;
+  getPersistedLaunchMemberNames(snapshot: PersistedTeamLaunchSnapshot): string[];
+  selectLatestLeadInboxLaunchReconcileMessage: ReconcilePersistedLaunchMemberPorts['selectLatestLeadInboxLaunchReconcileMessage'];
+  findBootstrapRuntimeProofObservedAt: ReconcilePersistedLaunchMemberPorts['findBootstrapRuntimeProofObservedAt'];
+  findBootstrapTranscriptOutcome: ReconcilePersistedLaunchMemberPorts['findBootstrapTranscriptOutcome'];
+  readProcessBootstrapTransportSummary: ReconcilePersistedLaunchMemberPorts['readProcessBootstrapTransportSummary'];
+  applyProcessBootstrapTransportOverlay: ReconcilePersistedLaunchMemberPorts['applyProcessBootstrapTransportOverlay'];
+  nowIso(): string;
+  nowMs(): number;
+}
+
+export async function reconcilePersistedLaunchStateWithPorts(
+  teamName: string,
+  ports: ReconcilePersistedLaunchStatePorts
+): Promise<PersistedLaunchReconciliationResult> {
+  const bootstrapSnapshot = await ports.readBootstrapLaunchSnapshot(teamName);
+  const persisted = await ports.readLaunchState(teamName);
+  const metaMembers = await ports.readMembersMeta(teamName).catch(() => []);
+  const recoveredMixedSnapshot = await ports.recoverStaleMixedSecondaryLaunchSnapshot(
+    teamName,
+    bootstrapSnapshot,
+    persisted
+  );
+  const filteredRecoveredMixedSnapshot = filterOptionalRemovedMembersFromLaunchSnapshot(
+    recoveredMixedSnapshot,
+    metaMembers
+  );
+  const overlaidRecoveredMixedSnapshot = filteredRecoveredMixedSnapshot
+    ? await ports.applyOpenCodeSecondaryEvidenceOverlay({
+        teamName,
+        snapshot: filteredRecoveredMixedSnapshot,
+        previousSnapshot: persisted,
+        metaMembers,
+      })
+    : null;
+  const recoveredMixedSnapshotWithBootstrapStall =
+    ports.applyOpenCodeSecondaryBootstrapStallOverlay(overlaidRecoveredMixedSnapshot);
+  const recoveredCommittedEvidenceWriteDecision = getCommittedEvidenceOverlayWriteDecision({
+    snapshot: recoveredMixedSnapshotWithBootstrapStall,
+    previousSnapshot: persisted,
+    snapshotBeforeBootstrapStallOverlay: overlaidRecoveredMixedSnapshot,
+  });
+  const stableRecoveredMixedSnapshotWithCommittedEvidence =
+    recoveredMixedSnapshotWithBootstrapStall &&
+    recoveredCommittedEvidenceWriteDecision.shouldWrite
+      ? await ports.writeLaunchStateSnapshot(teamName, recoveredMixedSnapshotWithBootstrapStall)
+      : recoveredMixedSnapshotWithBootstrapStall;
+  const promotedRecoveredMixedSnapshot = promoteOpenCodePersistedFailureReasonsFromDiagnostics(
+    stableRecoveredMixedSnapshotWithCommittedEvidence
+  );
+  const cleanedRecoveredMixedSnapshot =
+    ports.cleanConfirmedBootstrapRuntimeDiagnostics(promotedRecoveredMixedSnapshot);
+  const recoveredPromotionCleanupWriteDecision = getPromotionCleanupWriteDecision({
+    baseSnapshot: stableRecoveredMixedSnapshotWithCommittedEvidence,
+    promotedSnapshot: promotedRecoveredMixedSnapshot,
+    cleanedSnapshot: cleanedRecoveredMixedSnapshot,
+  });
+  const stableRecoveredMixedSnapshot =
+    cleanedRecoveredMixedSnapshot && recoveredPromotionCleanupWriteDecision.shouldWrite
+      ? await ports.writeLaunchStateSnapshot(teamName, cleanedRecoveredMixedSnapshot)
+      : cleanedRecoveredMixedSnapshot;
+  const filteredBootstrapSnapshot = filterOptionalRemovedMembersFromLaunchSnapshot(
+    bootstrapSnapshot,
+    metaMembers
+  );
+  const overlaidBootstrapSnapshot =
+    await ports.applyBootstrapTranscriptEvidenceOverlay(filteredBootstrapSnapshot);
+  if (
+    await shouldReturnSnapshotBeforeRuntimeReconcileFromPorts({
+      snapshot: stableRecoveredMixedSnapshot,
+      bootstrapSnapshot: overlaidBootstrapSnapshot,
+      needsBootstrapAcceptanceReconcile: (snapshot, bootstrapSnapshot) =>
+        ports.needsBootstrapAcceptanceReconcile(snapshot, bootstrapSnapshot),
+      needsConfirmedBootstrapDiagnosticReconcile: (snapshot) =>
+        ports.needsConfirmedBootstrapDiagnosticReconcile(snapshot),
+      hasBootstrapTranscriptLaunchReconcileOutcome: (snapshot) =>
+        ports.hasBootstrapTranscriptLaunchReconcileOutcome(snapshot),
+    })
+  ) {
+    return projectPersistedLaunchReconciliationResult(stableRecoveredMixedSnapshot);
+  }
+  const filteredPersistedBase =
+    stableRecoveredMixedSnapshot ??
+    filterOptionalRemovedMembersFromLaunchSnapshot(persisted, metaMembers);
+  const filteredPersisted = filteredPersistedBase
+    ? await ports.applyOpenCodeSecondaryEvidenceOverlay({
+        teamName,
+        snapshot: filteredPersistedBase,
+        previousSnapshot: persisted,
+        metaMembers,
+      })
+    : null;
+  const filteredPersistedWithBootstrapStall =
+    ports.applyOpenCodeSecondaryBootstrapStallOverlay(filteredPersisted);
+  const committedEvidenceWriteDecision = getCommittedEvidenceOverlayWriteDecision({
+    snapshot: filteredPersistedWithBootstrapStall,
+    previousSnapshot: persisted,
+    snapshotBeforeBootstrapStallOverlay: filteredPersisted,
+  });
+  const promotedPersisted = promoteOpenCodePersistedFailureReasonsFromDiagnostics(
+    filteredPersistedWithBootstrapStall
+  );
+  const cleanedPersisted = ports.cleanConfirmedBootstrapRuntimeDiagnostics(promotedPersisted);
+  const promotionCleanupWriteDecision = getPromotionCleanupWriteDecision({
+    baseSnapshot: filteredPersistedWithBootstrapStall,
+    promotedSnapshot: promotedPersisted,
+    cleanedSnapshot: cleanedPersisted,
+  });
+  const persistedWriteDecision = combinePersistedLaunchSnapshotWriteDecisions(
+    committedEvidenceWriteDecision,
+    promotionCleanupWriteDecision
+  );
+  const persistedWithCommittedEvidence =
+    cleanedPersisted && persistedWriteDecision.shouldWrite
+      ? await ports.writeLaunchStateSnapshot(teamName, cleanedPersisted)
+      : cleanedPersisted;
+  const preferredSnapshot = ports.choosePreferredLaunchSnapshot(
+    overlaidBootstrapSnapshot,
+    persistedWithCommittedEvidence
+  );
+  const preferredBootstrapDecision = decidePreferredBootstrapSnapshot({
+    preferredSnapshot,
+    bootstrapSnapshot: overlaidBootstrapSnapshot,
+    persistedSnapshot: persistedWithCommittedEvidence,
+  });
+  if (preferredSnapshot && preferredBootstrapDecision.kind !== 'ignore') {
+    if (preferredBootstrapDecision.kind === 'clear_persisted_state') {
+      await ports.clearPersistedLaunchState(teamName);
+      return projectPersistedLaunchReconciliationResult(preferredSnapshot);
+    }
+    if (preferredBootstrapDecision.kind === 'write_snapshot') {
+      const writtenSnapshot = await ports.writeLaunchStateSnapshot(teamName, preferredSnapshot);
+      return projectPersistedLaunchReconciliationResult(writtenSnapshot);
+    }
+    return projectPersistedLaunchReconciliationResult(preferredSnapshot);
+  }
+  if (!persistedWithCommittedEvidence) {
+    return projectEmptyPersistedLaunchReconciliationResult();
+  }
+
+  const configPath = ports.pathJoin(ports.getTeamsBasePath(), teamName, 'config.json');
+  let launchReconcileConfigMembers = ports.createDefaultLaunchReconcileConfigMembers();
+  try {
+    const raw = await ports.readRegularFileUtf8(configPath, {
+      timeoutMs: ports.teamJsonReadTimeoutMs,
+      maxBytes: ports.teamConfigMaxBytes,
+    });
+    if (raw) {
+      launchReconcileConfigMembers = ports.parseLaunchReconcileConfigMembers(raw);
+    }
+  } catch {
+    // best-effort
+  }
+
+  const leadInboxMessages = await ports.readLeadInboxMessagesForLaunchReconcile(
+    teamName,
+    launchReconcileConfigMembers.leadName
+  );
+
+  if (
+    await shouldReturnSnapshotBeforeRuntimeReconcileFromPorts({
+      snapshot: persistedWithCommittedEvidence,
+      bootstrapSnapshot: overlaidBootstrapSnapshot,
+      requireMixedLaunchMetadata: true,
+      hasLeadInboxLaunchReconcileHeartbeat: ports.hasLeadInboxLaunchReconcileHeartbeat(
+        persistedWithCommittedEvidence,
+        leadInboxMessages
+      ),
+      needsBootstrapAcceptanceReconcile: (snapshot, bootstrapSnapshot) =>
+        ports.needsBootstrapAcceptanceReconcile(snapshot, bootstrapSnapshot),
+      needsConfirmedBootstrapDiagnosticReconcile: (snapshot) =>
+        ports.needsConfirmedBootstrapDiagnosticReconcile(snapshot),
+      hasBootstrapTranscriptLaunchReconcileOutcome: (snapshot) =>
+        ports.hasBootstrapTranscriptLaunchReconcileOutcome(snapshot),
+    })
+  ) {
+    return projectPersistedLaunchReconciliationResult(persistedWithCommittedEvidence);
+  }
+
+  const liveRuntimeByMember = await ports.getLiveTeamAgentRuntimeMetadata(teamName);
+  const nextMembers = { ...persistedWithCommittedEvidence.members };
+  const persistedMemberNames = ports.getPersistedLaunchMemberNames(persistedWithCommittedEvidence);
+  const now = ports.nowIso();
+  for (const expected of persistedMemberNames) {
+    nextMembers[expected] = await reconcilePersistedLaunchMember({
+      teamName,
+      expected,
+      current: nextMembers[expected],
+      bootstrapMember: bootstrapSnapshot?.members[expected],
+      persistedMemberNames,
+      configMembers: launchReconcileConfigMembers.configMembers,
+      configBootstrapRunIds: launchReconcileConfigMembers.configBootstrapRunIds,
+      leadInboxMessages,
+      liveRuntimeByMember,
+      launchPhase: persistedWithCommittedEvidence.launchPhase,
+      now,
+      ports: {
+        selectLatestLeadInboxLaunchReconcileMessage:
+          ports.selectLatestLeadInboxLaunchReconcileMessage,
+        findBootstrapRuntimeProofObservedAt: ports.findBootstrapRuntimeProofObservedAt,
+        findBootstrapTranscriptOutcome: ports.findBootstrapTranscriptOutcome,
+        readProcessBootstrapTransportSummary: ports.readProcessBootstrapTransportSummary,
+        applyProcessBootstrapTransportOverlay: ports.applyProcessBootstrapTransportOverlay,
+        nowMs: ports.nowMs,
+      },
+    });
+  }
+
+  const reconciled = createPersistedLaunchSnapshot({
+    teamName,
+    expectedMembers: persistedMemberNames,
+    leadSessionId: persistedWithCommittedEvidence.leadSessionId,
+    launchPhase: persistedWithCommittedEvidence.launchPhase,
+    members: nextMembers,
+    updatedAt: now,
+  });
+
+  const finalSnapshotDecision = decideFinalReconciledSnapshotWrite(reconciled);
+  if (finalSnapshotDecision.kind === 'clear_persisted_state') {
+    await ports.clearPersistedLaunchState(teamName);
+    return projectEmptyPersistedLaunchReconciliationResult();
+  }
+
+  const writtenSnapshot = await ports.writeLaunchStateSnapshot(teamName, reconciled);
+  return projectPersistedLaunchReconciliationResult(writtenSnapshot);
+}
 
 export function filterOptionalRemovedMembersFromLaunchSnapshot(
   snapshot: PersistedTeamLaunchSnapshot | null,

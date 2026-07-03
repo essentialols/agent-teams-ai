@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createPersistedLaunchSnapshot } from '../../TeamLaunchStateEvaluator';
 import {
@@ -9,6 +9,8 @@ import {
   getPromotionCleanupWriteDecision,
   projectEmptyPersistedLaunchReconciliationResult,
   projectPersistedLaunchReconciliationResult,
+  type ReconcilePersistedLaunchStatePorts,
+  reconcilePersistedLaunchStateWithPorts,
   shouldReturnSnapshotBeforeRuntimeReconcile,
 } from '../TeamProvisioningPersistedLaunchReconciliation';
 
@@ -61,6 +63,61 @@ function mixedSnapshot(): PersistedTeamLaunchSnapshot {
       }),
     },
   });
+}
+
+function createReconcilePorts(
+  overrides: Partial<ReconcilePersistedLaunchStatePorts> = {}
+): ReconcilePersistedLaunchStatePorts {
+  return {
+    readBootstrapLaunchSnapshot: vi.fn(async () => null),
+    readLaunchState: vi.fn(async () => null),
+    readMembersMeta: vi.fn(async () => []),
+    recoverStaleMixedSecondaryLaunchSnapshot: vi.fn(async () => null),
+    applyOpenCodeSecondaryEvidenceOverlay: vi.fn(async ({ snapshot }) => snapshot),
+    applyOpenCodeSecondaryBootstrapStallOverlay: vi.fn((launchSnapshot) => launchSnapshot),
+    writeLaunchStateSnapshot: vi.fn(async (_teamName, launchSnapshot) => launchSnapshot),
+    clearPersistedLaunchState: vi.fn(async () => undefined),
+    applyBootstrapTranscriptEvidenceOverlay: vi.fn(async (launchSnapshot) => launchSnapshot),
+    needsBootstrapAcceptanceReconcile: vi.fn(() => false),
+    needsConfirmedBootstrapDiagnosticReconcile: vi.fn(() => false),
+    cleanConfirmedBootstrapRuntimeDiagnostics: vi.fn((launchSnapshot) => launchSnapshot),
+    hasBootstrapTranscriptLaunchReconcileOutcome: vi.fn(async () => false),
+    choosePreferredLaunchSnapshot: vi.fn((bootstrapSnapshot, persistedSnapshot) =>
+      bootstrapSnapshot ?? persistedSnapshot
+    ),
+    createDefaultLaunchReconcileConfigMembers: vi.fn(() => ({
+      configMembers: new Set<string>(),
+      configBootstrapRunIds: new Map<string, string>(),
+      leadName: 'team-lead',
+    })),
+    parseLaunchReconcileConfigMembers: vi.fn(() => ({
+      configMembers: new Set<string>(),
+      configBootstrapRunIds: new Map<string, string>(),
+      leadName: 'team-lead',
+    })),
+    getTeamsBasePath: vi.fn(() => '/teams'),
+    pathJoin: vi.fn((...parts) => parts.join('/')),
+    readRegularFileUtf8: vi.fn(async () => null),
+    teamJsonReadTimeoutMs: 5_000,
+    teamConfigMaxBytes: 10 * 1024 * 1024,
+    readLeadInboxMessagesForLaunchReconcile: vi.fn(async () => []),
+    hasLeadInboxLaunchReconcileHeartbeat: vi.fn(() => false),
+    getLiveTeamAgentRuntimeMetadata: vi.fn(async () => new Map()),
+    getPersistedLaunchMemberNames: vi.fn((launchSnapshot) => [
+      ...launchSnapshot.expectedMembers,
+      ...Object.keys(launchSnapshot.members).filter(
+        (name) => !launchSnapshot.expectedMembers.includes(name)
+      ),
+    ]),
+    selectLatestLeadInboxLaunchReconcileMessage: vi.fn(() => null),
+    findBootstrapRuntimeProofObservedAt: vi.fn(async () => null),
+    findBootstrapTranscriptOutcome: vi.fn(async () => null),
+    readProcessBootstrapTransportSummary: vi.fn(async () => null),
+    applyProcessBootstrapTransportOverlay: vi.fn(({ member }) => member),
+    nowIso: vi.fn(() => at),
+    nowMs: vi.fn(() => Date.parse(at)),
+    ...overrides,
+  };
 }
 
 describe('persisted launch reconciliation helpers', () => {
@@ -216,5 +273,70 @@ describe('persisted launch reconciliation helpers', () => {
       kind: 'clear_persisted_state',
     });
     expect(decideFinalReconciledSnapshotWrite(persisted)).toEqual({ kind: 'write_snapshot' });
+  });
+
+  it('writes recovered mixed committed evidence overlay before returning early', async () => {
+    const recovered = mixedSnapshot();
+    const committed = snapshot({
+      members: {
+        Builder: member('Builder', {
+          providerId: 'opencode',
+          laneKind: 'secondary',
+          laneOwnerProviderId: 'opencode',
+          laneId: 'secondary:opencode:Builder',
+          launchState: 'confirmed_alive',
+          agentToolAccepted: true,
+          runtimeAlive: true,
+          bootstrapConfirmed: true,
+          livenessKind: 'confirmed_bootstrap',
+          diagnostics: ['opencode_bootstrap_evidence_committed'],
+        }),
+      },
+    });
+    const ports = createReconcilePorts({
+      recoverStaleMixedSecondaryLaunchSnapshot: vi.fn(async () => recovered),
+      applyOpenCodeSecondaryEvidenceOverlay: vi.fn(async () => committed),
+    });
+
+    const result = await reconcilePersistedLaunchStateWithPorts('demo', ports);
+
+    expect(ports.writeLaunchStateSnapshot).toHaveBeenCalledTimes(1);
+    expect(ports.writeLaunchStateSnapshot).toHaveBeenCalledWith('demo', committed);
+    expect(ports.readRegularFileUtf8).not.toHaveBeenCalled();
+    expect(ports.getLiveTeamAgentRuntimeMetadata).not.toHaveBeenCalled();
+    expect(result.snapshot).toBe(committed);
+    expect(result.statuses.Builder).toMatchObject({
+      launchState: 'confirmed_alive',
+      bootstrapConfirmed: true,
+    });
+  });
+
+  it('clears persisted state for final clean non-mixed reconciled snapshot', async () => {
+    const cleanPersisted = snapshot({
+      members: {
+        Builder: member('Builder', {
+          launchState: 'confirmed_alive',
+          agentToolAccepted: true,
+          runtimeAlive: true,
+          bootstrapConfirmed: true,
+          livenessKind: 'confirmed_bootstrap',
+        }),
+      },
+      launchPhase: 'finished',
+    });
+    const ports = createReconcilePorts({
+      readLaunchState: vi.fn(async () => cleanPersisted),
+      getLiveTeamAgentRuntimeMetadata: vi.fn(
+        async () =>
+          new Map([['Builder', { alive: true, livenessKind: 'confirmed_bootstrap' as const }]])
+      ),
+    });
+
+    const result = await reconcilePersistedLaunchStateWithPorts('demo', ports);
+
+    expect(ports.clearPersistedLaunchState).toHaveBeenCalledTimes(1);
+    expect(ports.clearPersistedLaunchState).toHaveBeenCalledWith('demo');
+    expect(ports.writeLaunchStateSnapshot).not.toHaveBeenCalled();
+    expect(result).toEqual({ snapshot: null, statuses: {} });
   });
 });

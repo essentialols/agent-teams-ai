@@ -150,6 +150,10 @@ import {
   type DeterministicCreateSpawnFlowPorts,
   runDeterministicCreateSpawnFlow,
 } from './provisioning/TeamProvisioningCreateDeterministicSpawnFlow';
+import {
+  createTeamProvisioningCreateDeterministicSpawnFlowBoundary,
+  type TeamProvisioningCreateDeterministicSpawnFlowBoundary,
+} from './provisioning/TeamProvisioningCreateDeterministicSpawnFlowPortsFactory';
 import { createDeterministicCreateProvisioningRun } from './provisioning/TeamProvisioningCreateTeamFlow';
 import {
   clearPendingCrossTeamReplyExpectation as clearPendingCrossTeamReplyExpectationInState,
@@ -1780,6 +1784,7 @@ export class TeamProvisioningService {
   private readonly toolApprovalPortsBoundary: TeamProvisioningToolApprovalPortsBoundary<ProvisioningRun>;
   private readonly idlePromptInjectionBoundary: TeamProvisioningIdlePromptInjectionBoundary<ProvisioningRun>;
   private readonly providerRuntime: TeamProvisioningProviderRuntimeFacade;
+  private readonly deterministicCreateSpawnFlowBoundary: TeamProvisioningCreateDeterministicSpawnFlowBoundary<ProvisioningRun>;
   private readonly prepareCoordinator: TeamProvisioningPrepareCoordinator;
   private readonly configMaintenance: TeamProvisioningConfigMaintenance;
   private readonly verificationProbePorts: TeamProvisioningVerificationProbePorts<ProvisioningRun>;
@@ -2093,6 +2098,48 @@ export class TeamProvisioningService {
         logger,
       }),
     });
+    this.deterministicCreateSpawnFlowBoundary =
+      createTeamProvisioningCreateDeterministicSpawnFlowBoundary<ProvisioningRun>({
+        writeTeamMeta: (teamName, payload) =>
+          this.teamMetaStore.writeMeta(
+            teamName,
+            payload as Parameters<typeof this.teamMetaStore.writeMeta>[1]
+          ),
+        deleteTeamMeta: (teamName) => this.teamMetaStore.deleteMeta(teamName),
+        membersMetaStore: this.membersMetaStore,
+        mcpConfigBuilder: this.mcpConfigBuilder,
+        buildMemberMcpLaunchConfigs: (input) =>
+          this.buildRuntimeBootstrapMemberMcpLaunchConfigs(input),
+        validateAgentTeamsMcpRuntime: ({ claudePath, cwd, shellEnv, mcpConfigPath, options }) =>
+          this.providerRuntime.validateAgentTeamsMcpRuntime(
+            claudePath,
+            cwd,
+            shellEnv,
+            mcpConfigPath,
+            options
+          ),
+        buildTeamRuntimeLaunchArgsPlan: (input) => this.buildTeamRuntimeLaunchArgsPlan(input),
+        seedLeadBootstrapPermissionRules: (teamName, cwd) =>
+          this.seedLeadBootstrapPermissionRules(teamName, cwd),
+        spawnCli,
+        updateProgress,
+        attachStdoutHandler: (run) => this.attachStdoutHandler(run),
+        attachStderrHandler: (run) => this.attachStderrHandler(run),
+        startStallWatchdog: (run) => this.startStallWatchdog(run),
+        startFilesystemMonitor: (run, request) => this.startFilesystemMonitor(run, request),
+        tryCompleteAfterTimeout: (run) => this.tryCompleteAfterTimeout(run),
+        handleProcessExit: (run, code) => this.handleProcessExit(run, code),
+        killTeamProcess,
+        cleanupRun: (run) => this.cleanupRun(run),
+        removeRunMemberMcpConfigFiles: (run) => this.removeRunMemberMcpConfigFiles(run),
+        deleteRun: (runId) => {
+          this.runs.delete(runId);
+        },
+        deleteProvisioningRunByTeam: (teamName) => {
+          this.provisioningRunByTeam.delete(teamName);
+        },
+        getStopAllTeamsGeneration: () => this.stopAllTeamsGeneration,
+      });
     this.configMaintenance = new TeamProvisioningConfigMaintenance({
       ports: {
         getTeamsBasePath,
@@ -4923,50 +4970,7 @@ export class TeamProvisioningService {
     claudePath: string;
     shellEnv: NodeJS.ProcessEnv;
   }): DeterministicCreateSpawnFlowPorts<ProvisioningRun> {
-    const { request, claudePath, shellEnv } = input;
-    return {
-      teamMetaStore: {
-        writeMeta: (teamName, payload) =>
-          this.teamMetaStore.writeMeta(
-            teamName,
-            payload as Parameters<typeof this.teamMetaStore.writeMeta>[1]
-          ),
-        deleteMeta: (teamName) => this.teamMetaStore.deleteMeta(teamName),
-      },
-      membersMetaStore: this.membersMetaStore,
-      mcpConfigBuilder: this.mcpConfigBuilder,
-      buildMemberMcpLaunchConfigs: (buildInput) =>
-        this.buildRuntimeBootstrapMemberMcpLaunchConfigs(buildInput),
-      validateAgentTeamsMcpRuntime: (createdMcpConfigPath, options) =>
-        this.providerRuntime.validateAgentTeamsMcpRuntime(
-          claudePath,
-          request.cwd,
-          shellEnv,
-          createdMcpConfigPath,
-          options
-        ),
-      buildTeamRuntimeLaunchArgsPlan: (buildInput) =>
-        this.buildTeamRuntimeLaunchArgsPlan(buildInput),
-      seedLeadBootstrapPermissionRules: (teamName, cwd) =>
-        this.seedLeadBootstrapPermissionRules(teamName, cwd),
-      spawnCli,
-      updateProgress,
-      attachStdoutHandler: (targetRun) => this.attachStdoutHandler(targetRun),
-      attachStderrHandler: (targetRun) => this.attachStderrHandler(targetRun),
-      startStallWatchdog: (targetRun) => this.startStallWatchdog(targetRun),
-      startFilesystemMonitor: (targetRun, targetRequest) =>
-        this.startFilesystemMonitor(targetRun, targetRequest),
-      tryCompleteAfterTimeout: (targetRun) => this.tryCompleteAfterTimeout(targetRun),
-      handleProcessExit: (targetRun, code) => this.handleProcessExit(targetRun, code),
-      killTeamProcess,
-      cleanupRun: (targetRun) => this.cleanupRun(targetRun),
-      removeRunMemberMcpConfigFiles: (targetRun) => this.removeRunMemberMcpConfigFiles(targetRun),
-      unregisterRun: (targetRunId, teamName) => {
-        this.runs.delete(targetRunId);
-        this.provisioningRunByTeam.delete(teamName);
-      },
-      getStopAllTeamsGeneration: () => this.stopAllTeamsGeneration,
-    };
+    return this.deterministicCreateSpawnFlowBoundary.createSpawnFlowPorts(input);
   }
 
   async createTeam(

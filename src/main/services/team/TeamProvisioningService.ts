@@ -234,10 +234,6 @@ import {
 } from './provisioning/TeamProvisioningLeadActivity';
 import { createTeamProvisioningLeadActivityPorts } from './provisioning/TeamProvisioningLeadActivityPortsFactory';
 import {
-  buildLeadMessageStdinPayload,
-  toLeadAttachmentPayloads,
-} from './provisioning/TeamProvisioningLeadAttachments';
-import {
   buildLeadContextUsagePayloadForRun,
   getLeadContextUsageForTeam,
 } from './provisioning/TeamProvisioningLeadContextUsage';
@@ -522,6 +518,7 @@ import {
   type SecondaryRuntimeRunEntry,
   upsertRunAllEffectiveMember as upsertRunAllEffectiveMemberInRun,
 } from './provisioning/TeamProvisioningSecondaryRuntimeRuns';
+import { createTeamProvisioningSendMessageToRunBoundary } from './provisioning/TeamProvisioningSendMessageToRunBoundaryFactory';
 import { scanForNewestProjectSession } from './provisioning/TeamProvisioningSessionDiscovery';
 import { createTeamProvisioningShutdownCoordination } from './provisioning/TeamProvisioningShutdownCoordination';
 import {
@@ -1270,6 +1267,11 @@ export class TeamProvisioningService {
   );
   private readonly leadInboxRelayInFlight = new Map<string, Promise<number>>();
   private readonly relayedLeadInboxMessageIds = new Map<string, Set<string>>();
+  private readonly sendMessageToRunBoundary =
+    createTeamProvisioningSendMessageToRunBoundary<ProvisioningRun>({
+      isCurrentTrackedRun: (run) => this.isCurrentTrackedRun(run),
+      setLeadActivity: (run, state) => this.setLeadActivity(run, state),
+    });
   private readonly memberInboxRelayInFlight = new Map<string, Promise<number>>();
   private readonly openCodeMemberInboxRelayInFlight = new Map<
     string,
@@ -5851,29 +5853,7 @@ export class TeamProvisioningService {
     message: string,
     attachments?: { data: string; mimeType: string; filename?: string }[]
   ): Promise<void> {
-    if (!this.isCurrentTrackedRun(run)) {
-      throw new Error(`Team "${run.teamName}" run "${run.runId}" is no longer current`);
-    }
-    if (run.processKilled || run.cancelRequested || !run.child?.stdin?.writable) {
-      throw new Error(`Team "${run.teamName}" process stdin is not writable`);
-    }
-
-    const attachmentPayloads = toLeadAttachmentPayloads(attachments);
-    const payload = await buildLeadMessageStdinPayload({
-      teamName: run.teamName,
-      runId: run.runId,
-      providerId: run.request.providerId,
-      text: message,
-      attachments: attachmentPayloads,
-    });
-    const stdin = run.child.stdin;
-    await new Promise<void>((resolve, reject) => {
-      stdin.write(payload + '\n', (err) => {
-        if (err) reject(err);
-        else resolve();
-      });
-    });
-    this.setLeadActivity(run, 'active');
+    await this.sendMessageToRunBoundary.sendMessageToRun(run, message, attachments);
   }
 
   /**

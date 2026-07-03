@@ -368,7 +368,7 @@ function createHost(options: {
     inboxWriter: {
       sendMessage: vi.fn(),
     },
-    crossTeamSender: 'cross-team-sender' as never,
+    getCrossTeamSender: vi.fn(() => 'cross-team-sender' as never),
     isOpenCodeRuntimeRecipient: vi.fn(async () => true),
     getOpenCodeAgendaSyncRecoveryBypassMessageIds: vi.fn(async () => new Set<string>()),
     tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive: vi.fn(async () => true),

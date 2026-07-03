@@ -94,7 +94,7 @@ export interface TeamProvisioningOpenCodeRuntimeDeliveryBoundaryHost<
   sentMessagesStore: DeliveryBoundaryPorts<Run>['sentMessagesStore'];
   inboxReader: DeliveryBoundaryPorts<Run>['inboxReader'];
   inboxWriter: DeliveryBoundaryPorts<Run>['inboxWriter'];
-  crossTeamSender: ReturnType<DeliveryBoundaryPorts<Run>['getCrossTeamSender']>;
+  getCrossTeamSender: DeliveryBoundaryPorts<Run>['getCrossTeamSender'];
   isOpenCodeRuntimeRecipient: DeliveryBoundaryPorts<Run>['isOpenCodeRuntimeRecipient'];
   getOpenCodeAgendaSyncRecoveryBypassMessageIds: DeliveryBoundaryPorts<Run>['getOpenCodeAgendaSyncRecoveryBypassMessageIds'];
   tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive: DeliveryBoundaryPorts<Run>['tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive'];
@@ -153,7 +153,7 @@ export function createTeamProvisioningOpenCodeRuntimeDeliveryBoundaryFromHost<
     sentMessagesStore: host.sentMessagesStore,
     inboxReader: host.inboxReader,
     inboxWriter: host.inboxWriter,
-    getCrossTeamSender: () => host.crossTeamSender,
+    getCrossTeamSender: () => host.getCrossTeamSender(),
     isOpenCodeRuntimeRecipient: (teamName, memberName) =>
       host.isOpenCodeRuntimeRecipient(teamName, memberName),
     getOpenCodeAgendaSyncRecoveryBypassMessageIds: (bypassInput) =>

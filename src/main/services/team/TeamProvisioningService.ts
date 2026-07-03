@@ -700,9 +700,13 @@ import {
   buildLeadToolApprovalRequest,
   buildTeammateToolApprovalRequest,
   buildToolApprovalAutoResolvedEvent,
-  planToolApprovalNotification,
   TOOL_APPROVAL_TIMEOUT_CONTROL_DENY_MESSAGE,
 } from './provisioning/TeamProvisioningToolApprovalFlow';
+import {
+  type TeamProvisioningToolApprovalNotification,
+  type TeamProvisioningToolApprovalNotificationConstructor,
+  TeamProvisioningToolApprovalNotifications,
+} from './provisioning/TeamProvisioningToolApprovalNotifications';
 import { TeamProvisioningToolApprovalTimeouts } from './provisioning/TeamProvisioningToolApprovalTimeouts';
 import { TeamProvisioningTranscriptClaudeLogsCache } from './provisioning/TeamProvisioningTranscriptClaudeLogs';
 import {
@@ -3814,7 +3818,30 @@ export class TeamProvisioningService {
 
   private toolApprovalEventEmitter: ((event: ToolApprovalEvent) => void) | null = null;
   private mainWindowRef: import('electron').BrowserWindow | null = null;
-  private activeApprovalNotifications = new Map<string, import('electron').Notification>();
+  private activeApprovalNotifications = new Map<string, TeamProvisioningToolApprovalNotification>();
+  private readonly toolApprovalOsNotifications =
+    new TeamProvisioningToolApprovalNotifications<ProvisioningRun>({
+      getMainWindow: () => this.mainWindowRef,
+      getNotificationSettings: () => ConfigManager.getInstance().getConfig().notifications,
+      getNotificationConstructor: () => {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { Notification: ElectronNotification } = require('electron') as Partial<
+          typeof import('electron')
+        >;
+        return (ElectronNotification ??
+          null) as TeamProvisioningToolApprovalNotificationConstructor | null;
+      },
+      getAppIconPath,
+      platform: process.platform,
+      activeApprovalNotifications: this.activeApprovalNotifications,
+      respondToToolApproval: (teamName, runId, requestId, allow, message) =>
+        this.respondToToolApproval(teamName, runId, requestId, allow, message),
+      logger: {
+        info: (message) => logger.info(message),
+        error: (message) => logger.error(message),
+      },
+      nowMs: () => Date.now(),
+    });
 
   setToolApprovalEventEmitter(emitter: (event: ToolApprovalEvent) => void): void {
     this.toolApprovalEventEmitter = emitter;
@@ -12541,93 +12568,7 @@ export class TeamProvisioningService {
     run: ProvisioningRun | undefined,
     approval: ToolApprovalRequest
   ): void {
-    const win = this.mainWindowRef;
-    const isWindowFocused = Boolean(win && !win.isDestroyed() && win.isFocused());
-    if (isWindowFocused) return;
-
-    const config = ConfigManager.getInstance().getConfig();
-    const notifications = config.notifications;
-    if (!notifications.enabled || !notifications.notifyOnToolApproval) return;
-
-    // Respect snooze - consistent with other notification types.
-    const snoozedUntil = notifications.snoozedUntil;
-    if (snoozedUntil && Date.now() < snoozedUntil) return;
-
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { Notification: ElectronNotification } = require('electron') as Partial<
-      typeof import('electron')
-    >;
-
-    const isMac = process.platform === 'darwin';
-    const iconPath = isMac ? undefined : getAppIconPath();
-    const plan = planToolApprovalNotification({
-      approval,
-      notifications,
-      isWindowFocused,
-      isNotificationSupported: Boolean(ElectronNotification?.isSupported?.()),
-      platform: process.platform,
-      iconPath,
-      teamLabel: approval.teamDisplayName ?? run?.request.displayName ?? approval.teamName,
-    });
-    if (!plan || !ElectronNotification) return;
-
-    const notification = new ElectronNotification({
-      title: plan.title,
-      body: plan.body,
-      sound: plan.sound,
-      ...(plan.icon ? { icon: plan.icon } : {}),
-      ...(plan.supportsActions
-        ? {
-            actions: [
-              { type: 'button' as const, text: 'Allow' },
-              { type: 'button' as const, text: 'Deny' },
-            ],
-          }
-        : {}),
-    });
-
-    // Track by requestId so we can close it when approval is resolved via UI
-    this.activeApprovalNotifications.set(approval.requestId, notification);
-    const cleanup = (): void => {
-      this.activeApprovalNotifications.delete(approval.requestId);
-    };
-
-    notification.on('click', () => {
-      cleanup();
-      // Use current mainWindowRef (not captured `win`) in case window was recreated
-      const currentWin = this.mainWindowRef;
-      if (currentWin && !currentWin.isDestroyed()) {
-        currentWin.show();
-        currentWin.focus();
-      }
-    });
-
-    notification.on('close', cleanup);
-
-    // Action buttons: Allow (index 0) / Deny (index 1)
-    // 'action' event fires on macOS and Windows (not Linux)
-    if (plan.supportsActions) {
-      notification.on('action', (_event, index) => {
-        cleanup();
-        const allow = index === 0;
-        logger.info(
-          `[${approval.teamName}] Tool approval ${allow ? 'allowed' : 'denied'} via OS notification`
-        );
-        void this.respondToToolApproval(
-          approval.teamName,
-          approval.runId,
-          approval.requestId,
-          allow,
-          allow ? undefined : 'Denied via notification'
-        ).catch((err) => {
-          logger.error(
-            `[${approval.teamName}] Failed to respond via notification: ${err instanceof Error ? err.message : String(err)}`
-          );
-        });
-      });
-    }
-
-    notification.show();
+    this.toolApprovalOsNotifications.maybeShow(run, approval);
   }
 
   /** Dismiss the OS notification for a resolved/dismissed approval. */

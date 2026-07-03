@@ -406,10 +406,7 @@ import {
   type ProbeResult,
   TeamProvisioningPrepareCoordinator,
 } from './provisioning/TeamProvisioningPrepareCoordinator';
-import {
-  applyPrimaryBootstrapTruthToLaunchReportingSnapshot as applyPrimaryBootstrapTruthToLaunchReportingSnapshotHelper,
-  overlayPrimaryBootstrapTruthIntoRunStatusesFromBootstrapState as overlayPrimaryBootstrapTruthIntoRunStatusesFromBootstrapStateHelper,
-} from './provisioning/TeamProvisioningPrimaryBootstrapTruthReporting';
+import { createTeamProvisioningPrimaryBootstrapTruthReportingBoundary } from './provisioning/TeamProvisioningPrimaryBootstrapTruthReportingPortsFactory';
 import {
   handleProvisioningProcessExit,
   type TeamProvisioningProcessExitPorts,
@@ -1338,6 +1335,32 @@ export class TeamProvisioningService {
       warn: (message) => logger.warn(message),
     },
   });
+  private readonly primaryBootstrapTruthReporting =
+    createTeamProvisioningPrimaryBootstrapTruthReportingBoundary<ProvisioningRun>({
+      service: {
+        isOpenCodeSecondaryLaneMemberInRun: (run, memberName) =>
+          this.isOpenCodeSecondaryLaneMemberInRun(run, memberName),
+        syncMemberTaskActivityForRuntimeTransition: (run, memberName, previous, next, observedAt) =>
+          this.syncMemberTaskActivityForRuntimeTransition(
+            run,
+            memberName,
+            previous,
+            next,
+            observedAt
+          ),
+        syncMemberLaunchGraceCheck: (run, memberName, next) =>
+          this.syncMemberLaunchGraceCheck(run, memberName, next),
+        syncRunMemberSpawnStatusesFromSnapshot: (run, snapshot) =>
+          this.syncRunMemberSpawnStatusesFromSnapshot(run, snapshot),
+      },
+      readBootstrapLaunchSnapshot,
+      writeLaunchStateSnapshot: (teamName, snapshot) =>
+        this.writeLaunchStateSnapshot(teamName, snapshot),
+      nowIso,
+      logger: {
+        warn: (message) => logger.warn(message),
+      },
+    });
   private readonly openCodeVisibleReplyProofService: OpenCodeVisibleReplyProofService;
   private readonly openCodePromptDeliveryWatchdogCoordinator: OpenCodePromptDeliveryWatchdogCoordinator;
   private readonly openCodeRuntimeRecoveryIdentity = createOpenCodeRuntimeRecoveryIdentityHelpers({
@@ -6567,67 +6590,11 @@ export class TeamProvisioningService {
     );
   }
 
-  private async overlayPrimaryBootstrapTruthIntoRunStatusesFromBootstrapState(
-    run: ProvisioningRun
-  ): Promise<void> {
-    await overlayPrimaryBootstrapTruthIntoRunStatusesFromBootstrapStateHelper(run, {
-      readBootstrapLaunchSnapshot,
-      nowIso,
-      isOpenCodeSecondaryLaneMemberInRun: (targetRun, memberName) =>
-        this.isOpenCodeSecondaryLaneMemberInRun(targetRun, memberName),
-      syncMemberTaskActivityForRuntimeTransition: (
-        targetRun,
-        memberName,
-        previous,
-        next,
-        observedAt
-      ) =>
-        this.syncMemberTaskActivityForRuntimeTransition(
-          targetRun,
-          memberName,
-          previous,
-          next,
-          observedAt
-        ),
-      syncMemberLaunchGraceCheck: (targetRun, memberName, next) =>
-        this.syncMemberLaunchGraceCheck(targetRun, memberName, next),
-    });
-  }
-
-  private async applyPrimaryBootstrapTruthToLaunchReportingSnapshot(
-    run: ProvisioningRun,
-    snapshot: PersistedTeamLaunchSnapshot | null
-  ): Promise<PersistedTeamLaunchSnapshot | null> {
-    return applyPrimaryBootstrapTruthToLaunchReportingSnapshotHelper(run, snapshot, {
-      readBootstrapLaunchSnapshot,
-      nowIso,
-      isOpenCodeSecondaryLaneMemberInRun: (targetRun, memberName) =>
-        this.isOpenCodeSecondaryLaneMemberInRun(targetRun, memberName),
-    });
-  }
-
   private async reconcileFinalLaunchReportingSnapshot(
     run: ProvisioningRun,
     snapshot: PersistedTeamLaunchSnapshot | null
   ): Promise<PersistedTeamLaunchSnapshot | null> {
-    const reconciled = await this.applyPrimaryBootstrapTruthToLaunchReportingSnapshot(
-      run,
-      snapshot
-    );
-    if (!reconciled || reconciled === snapshot) {
-      return reconciled;
-    }
-    this.syncRunMemberSpawnStatusesFromSnapshot(run, reconciled);
-    try {
-      return await this.writeLaunchStateSnapshot(run.teamName, reconciled);
-    } catch (error) {
-      logger.warn(
-        `[${run.teamName}] Failed to persist reconciled launch reporting snapshot: ${getErrorMessage(
-          error
-        )}`
-      );
-      return reconciled;
-    }
+    return this.primaryBootstrapTruthReporting.reconcileFinalLaunchReportingSnapshot(run, snapshot);
   }
 
   private scheduleDeterministicBootstrapCompletionRecovery(run: ProvisioningRun): void {
@@ -6952,7 +6919,9 @@ export class TeamProvisioningService {
     run: ProvisioningRun,
     launchPhase: 'active' | 'finished' | 'reconciled'
   ): Promise<PersistedTeamLaunchSnapshot | null> {
-    await this.overlayPrimaryBootstrapTruthIntoRunStatusesFromBootstrapState(run);
+    await this.primaryBootstrapTruthReporting.overlayPrimaryBootstrapTruthIntoRunStatusesFromBootstrapState(
+      run
+    );
     const snapshot = this.buildLiveLaunchSnapshotForRun(run, launchPhase);
     if (!snapshot) {
       if (run.isLaunch) {

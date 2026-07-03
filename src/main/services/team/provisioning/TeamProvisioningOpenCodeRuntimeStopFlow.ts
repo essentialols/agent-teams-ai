@@ -1,10 +1,18 @@
 import { createPersistedLaunchSnapshot } from '../TeamLaunchStateEvaluator';
 
-import type { TeamLaunchRuntimeAdapter, TeamRuntimeMemberLaunchEvidence } from '../runtime';
-import type { SecondaryRuntimeRunEntry } from './TeamProvisioningSecondaryRuntimeRuns';
+import type {
+  TeamLaunchRuntimeAdapter,
+  TeamRuntimeMemberLaunchEvidence,
+  TeamRuntimeStopInput,
+} from '../runtime';
+import type {
+  MixedSecondaryRuntimeLaneState,
+  SecondaryRuntimeRunEntry,
+} from './TeamProvisioningSecondaryRuntimeRuns';
 import type {
   PersistedTeamLaunchSnapshot,
   TeamChangeEvent,
+  TeamCreateRequest,
   TeamProviderId,
   TeamProvisioningProgress,
 } from '@shared/types';
@@ -51,6 +59,85 @@ export interface OpenCodeRuntimeStopFlowPorts {
   emitTeamChange(event: TeamChangeEvent): void;
   logger: StopLogger;
   nowIso(): string;
+}
+
+export interface SingleMixedSecondaryRuntimeLaneStopRun {
+  teamName: string;
+  request: Pick<TeamCreateRequest, 'cwd'>;
+}
+
+export interface SingleMixedSecondaryRuntimeLaneStopPorts {
+  teamsBasePath: string;
+  getOpenCodeRuntimeAdapter(): TeamLaunchRuntimeAdapter | null;
+  readLaunchState(teamName: string): Promise<PersistedTeamLaunchSnapshot | null>;
+  upsertOpenCodeRuntimeLaneIndexEntry(input: {
+    teamsBasePath: string;
+    teamName: string;
+    laneId: string;
+    state: 'stopped';
+    diagnostics: string[];
+  }): Promise<unknown>;
+  clearOpenCodeRuntimeLaneStorage(input: {
+    teamsBasePath: string;
+    teamName: string;
+    laneId: string;
+  }): Promise<unknown>;
+  deleteSecondaryRuntimeRun(teamName: string, laneId: string): void;
+  logger: StopLogger;
+}
+
+export async function stopSingleMixedSecondaryRuntimeLane(
+  run: SingleMixedSecondaryRuntimeLaneStopRun,
+  lane: MixedSecondaryRuntimeLaneState,
+  reason: TeamRuntimeStopInput['reason'],
+  ports: SingleMixedSecondaryRuntimeLaneStopPorts
+): Promise<void> {
+  const adapter = ports.getOpenCodeRuntimeAdapter();
+  const previousLaunchState = await ports.readLaunchState(run.teamName);
+  await ports
+    .upsertOpenCodeRuntimeLaneIndexEntry({
+      teamsBasePath: ports.teamsBasePath,
+      teamName: run.teamName,
+      laneId: lane.laneId,
+      state: 'stopped',
+      diagnostics: [`OpenCode lane stop requested: ${reason}`],
+    })
+    .catch(() => undefined);
+
+  try {
+    if (adapter && lane.runId) {
+      await adapter.stop({
+        runId: lane.runId,
+        laneId: lane.laneId,
+        teamName: run.teamName,
+        cwd: lane.member.cwd?.trim() || run.request.cwd,
+        providerId: 'opencode',
+        reason,
+        previousLaunchState,
+        force: true,
+      });
+    }
+  } catch (error) {
+    ports.logger.warn(
+      `[${run.teamName}] Failed to stop mixed OpenCode lane ${lane.laneId}: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  } finally {
+    await ports
+      .clearOpenCodeRuntimeLaneStorage({
+        teamsBasePath: ports.teamsBasePath,
+        teamName: run.teamName,
+        laneId: lane.laneId,
+      })
+      .catch(() => undefined);
+    ports.deleteSecondaryRuntimeRun(run.teamName, lane.laneId);
+    lane.runId = null;
+    lane.state = 'finished';
+    lane.result = null;
+    lane.warnings = [];
+    lane.diagnostics = [];
+  }
 }
 
 export async function stopMixedSecondaryRuntimeLanes(

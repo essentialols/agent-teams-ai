@@ -514,6 +514,7 @@ import { createOpenCodeRuntimeRecoveryIdentityHelpers } from './provisioning/Tea
 import {
   stopMixedSecondaryRuntimeLanes as stopMixedSecondaryRuntimeLanesHelper,
   stopOpenCodeRuntimeAdapterTeam as stopOpenCodeRuntimeAdapterTeamHelper,
+  stopSingleMixedSecondaryRuntimeLane as stopSingleMixedSecondaryRuntimeLaneHelper,
 } from './provisioning/TeamProvisioningOpenCodeRuntimeStopFlow';
 import {
   type AuthWarningSource,
@@ -10535,48 +10536,16 @@ export class TeamProvisioningService {
     lane: MixedSecondaryRuntimeLaneState,
     reason: TeamRuntimeStopInput['reason']
   ): Promise<void> {
-    const adapter = this.getOpenCodeRuntimeAdapter();
-    const previousLaunchState = await this.launchStateStore.read(run.teamName);
-    await upsertOpenCodeRuntimeLaneIndexEntry({
+    await stopSingleMixedSecondaryRuntimeLaneHelper(run, lane, reason, {
       teamsBasePath: getTeamsBasePath(),
-      teamName: run.teamName,
-      laneId: lane.laneId,
-      state: 'stopped',
-      diagnostics: [`OpenCode lane stop requested: ${reason}`],
-    }).catch(() => undefined);
-
-    try {
-      if (adapter && lane.runId) {
-        await adapter.stop({
-          runId: lane.runId,
-          laneId: lane.laneId,
-          teamName: run.teamName,
-          cwd: lane.member.cwd?.trim() || run.request.cwd,
-          providerId: 'opencode',
-          reason,
-          previousLaunchState,
-          force: true,
-        });
-      }
-    } catch (error) {
-      logger.warn(
-        `[${run.teamName}] Failed to stop mixed OpenCode lane ${lane.laneId}: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
-    } finally {
-      await clearOpenCodeRuntimeLaneStorage({
-        teamsBasePath: getTeamsBasePath(),
-        teamName: run.teamName,
-        laneId: lane.laneId,
-      }).catch(() => undefined);
-      this.deleteSecondaryRuntimeRun(run.teamName, lane.laneId);
-      lane.runId = null;
-      lane.state = 'finished';
-      lane.result = null;
-      lane.warnings = [];
-      lane.diagnostics = [];
-    }
+      getOpenCodeRuntimeAdapter: () => this.getOpenCodeRuntimeAdapter(),
+      readLaunchState: (teamName) => this.launchStateStore.read(teamName),
+      upsertOpenCodeRuntimeLaneIndexEntry,
+      clearOpenCodeRuntimeLaneStorage,
+      deleteSecondaryRuntimeRun: (teamName, laneId) =>
+        this.deleteSecondaryRuntimeRun(teamName, laneId),
+      logger,
+    });
   }
 
   private launchQueuedMixedSecondaryLaneInBackground(

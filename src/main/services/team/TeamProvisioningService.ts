@@ -228,7 +228,6 @@ import {
   getLeadInboxRelayNoiseIds,
   getLeadRelayReadCommitBatch,
   hasStableInboxMessageId,
-  inferOpenCodeInboxMessageTaskRefs,
   planLeadInboxRelayReadOnlyMessages,
   selectActionableLeadRelayUnread,
   selectLeadInboxRelayBatch,
@@ -448,21 +447,9 @@ import {
 } from './provisioning/TeamProvisioningOpenCodeDiagnosticsPolicy';
 import { resolveOpenCodeMemberIdentityFromDirectory as resolveOpenCodeMemberIdentityFromDirectoryHelper } from './provisioning/TeamProvisioningOpenCodeMemberIdentity';
 import {
-  buildOpenCodeInboxReadFailedResult,
-  buildOpenCodeMemberInboxAlreadyReadResult,
-  buildOpenCodeMemberInboxMessageMissingResult,
-  buildOpenCodeMemberInboxQueuedBehindResult,
-  buildOpenCodeMemberInboxRelayTimeoutResult,
-  buildOpenCodeMemberWorkSyncReadWaitingResult,
-  commitOpenCodeInboxRelayReadAfterDelivery,
-  createOpenCodeMemberInboxRelayResult,
-  dedupeOpenCodeMemberInboxRelayDiagnostics,
-  handleOpenCodeInboxAttachmentFailure,
   type OpenCodeMemberInboxRelayOptions,
   type OpenCodeMemberInboxRelayResult,
-  projectOpenCodeInboxDeliveryFailure,
-  resolveOpenCodeMemberInboxDeliveryDecision,
-  selectOpenCodeMemberInboxRelayUnreadMessages,
+  relayOpenCodeMemberInboxMessagesWithPorts,
 } from './provisioning/TeamProvisioningOpenCodeMemberInboxRelay';
 import { OpenCodeMemberSendSerializer } from './provisioning/TeamProvisioningOpenCodeMemberSendSerialization';
 import { runOpenCodeTeamRuntimeAdapterLaunch as runOpenCodeTeamRuntimeAdapterLaunchHelper } from './provisioning/TeamProvisioningOpenCodeRuntimeAdapterLaunch';
@@ -7370,389 +7357,52 @@ export class TeamProvisioningService {
     options: OpenCodeMemberInboxRelayOptions = {}
   ): Promise<OpenCodeMemberInboxRelayResult> {
     const relayKey = this.getOpenCodeMemberRelayKey(teamName, memberName);
-    const existing = this.openCodeMemberInboxRelayInFlight.get(relayKey);
-    if (existing) {
-      const onlyMessageId = options.onlyMessageId?.trim();
-      if (!onlyMessageId) {
-        try {
-          return await waitForInboxRelayInFlight({
-            promise: existing,
-            relayName: 'opencode_member_inbox_relay',
-            relayKey,
-          });
-        } catch (error) {
-          if (!isInboxRelayInFlightTimeoutError(error)) {
-            throw error;
-          }
-          const diagnostic = `opencode_member_inbox_relay_timed_out: ${getErrorMessage(error)}`;
-          logger.warn(`[${teamName}] ${diagnostic}`);
-          return buildOpenCodeMemberInboxRelayTimeoutResult({ diagnostic, attempted: 0 });
-        } finally {
-          if (this.openCodeMemberInboxRelayInFlight.get(relayKey) === existing) {
-            this.openCodeMemberInboxRelayInFlight.delete(relayKey);
-          }
-        }
-      }
-      const inboxMessages = await this.inboxReader
-        .getMessagesFor(teamName, memberName)
-        .catch(() => []);
-      const targetMessage = inboxMessages.find((message) => message.messageId === onlyMessageId);
-      if (targetMessage?.read) {
-        if (targetMessage.messageKind === 'member_work_sync_nudge') {
-          this.scheduleOpenCodeMemberInboxDeliveryWake({
+    return relayOpenCodeMemberInboxMessagesWithPorts(
+      { teamName, memberName, relayKey, options },
+      {
+        inFlight: this.openCodeMemberInboxRelayInFlight,
+        readInboxMessages: (teamName, memberName) =>
+          this.inboxReader.getMessagesFor(teamName, memberName),
+        scheduleOpenCodeMemberInboxDeliveryWake: (input) =>
+          this.scheduleOpenCodeMemberInboxDeliveryWake(input),
+        isOpenCodeRuntimeRecipient: (teamName, memberName) =>
+          this.isOpenCodeRuntimeRecipient(teamName, memberName),
+        resolveOpenCodeMemberDeliveryIdentity: (teamName, memberName) =>
+          this.openCodeRuntimeRecoveryIdentity.resolveOpenCodeMemberDeliveryIdentity(
             teamName,
-            memberName,
-            messageId: onlyMessageId,
-            delayMs: 500,
-          });
-          return buildOpenCodeMemberWorkSyncReadWaitingResult(onlyMessageId);
-        }
-        return buildOpenCodeMemberInboxAlreadyReadResult();
+            memberName
+          ),
+        createOpenCodePromptDeliveryLedger: (teamName, laneId) =>
+          this.createOpenCodePromptDeliveryLedger(teamName, laneId),
+        requeueOpenCodeRuntimeManifestWatermarkDeliveryIfNeeded: (input) =>
+          this.requeueOpenCodeRuntimeManifestWatermarkDeliveryIfNeeded(input),
+        requeueOpenCodeNoAssistantTerminalDeliveryIfNeeded: (input) =>
+          this.requeueOpenCodeNoAssistantTerminalDeliveryIfNeeded(input),
+        applyDestinationProof: (input) =>
+          this.openCodeVisibleReplyProofService.applyDestinationProof(input),
+        isOpenCodeDeliveryResponseReadCommitAllowed: (input) =>
+          this.isOpenCodeDeliveryResponseReadCommitAllowed(input),
+        markInboxMessagesRead: (teamName, memberName, messages) =>
+          this.markInboxMessagesRead(teamName, memberName, messages),
+        logOpenCodePromptDeliveryEvent: (event, record, extra) =>
+          this.logOpenCodePromptDeliveryEvent(event, record, extra),
+        readTaskRefInferenceTasks: (teamName) =>
+          new TeamTaskReader().getTasks(teamName).catch(() => []),
+        resolveOpenCodeInboxAttachmentPayloads: (input) =>
+          this.resolveOpenCodeInboxAttachmentPayloads(input),
+        resolveCurrentOpenCodeRuntimeRunId: (teamName, laneId) =>
+          this.openCodeRuntimeRecoveryIdentity.resolveCurrentOpenCodeRuntimeRunId(teamName, laneId),
+        markOpenCodePromptLedgerFailedTerminal: (input) =>
+          this.markOpenCodePromptLedgerFailedTerminal(input),
+        deliverOpenCodeMemberMessage: (teamName, input) =>
+          this.deliverOpenCodeMemberMessage(teamName, input),
+        suppressRuntimeInactiveWarning: (teamName) =>
+          this.cleanedStoppedTeamOpenCodeRuntimeLanes.has(teamName),
+        logWarning: (message) => logger.warn(message),
+        nowIso,
+        getErrorMessage,
       }
-      if (!targetMessage) {
-        return buildOpenCodeMemberInboxMessageMissingResult({
-          messageId: onlyMessageId,
-          reason: 'opencode_inbox_message_missing_after_inflight_relay',
-        });
-      }
-
-      this.scheduleOpenCodeMemberInboxDeliveryWake({
-        teamName,
-        memberName,
-        messageId: onlyMessageId,
-        delayMs: 500,
-      });
-      return buildOpenCodeMemberInboxQueuedBehindResult({ relayKey, messageId: onlyMessageId });
-    }
-
-    const work = (async (): Promise<OpenCodeMemberInboxRelayResult> => {
-      const result = createOpenCodeMemberInboxRelayResult();
-      if (!(await this.isOpenCodeRuntimeRecipient(teamName, memberName))) {
-        result.lastDelivery = { delivered: false, reason: 'recipient_is_not_opencode' };
-        return result;
-      }
-      const memberIdentity =
-        await this.openCodeRuntimeRecoveryIdentity.resolveOpenCodeMemberDeliveryIdentity(
-          teamName,
-          memberName
-        );
-      if (!memberIdentity.ok) {
-        result.lastDelivery = { delivered: false, reason: memberIdentity.reason };
-        return result;
-      }
-      const promptLedger = this.createOpenCodePromptDeliveryLedger(teamName, memberIdentity.laneId);
-
-      let inboxMessages: Awaited<ReturnType<TeamInboxReader['getMessagesFor']>> = [];
-      try {
-        inboxMessages = await this.inboxReader.getMessagesFor(teamName, memberName);
-      } catch (error) {
-        const diagnostic = `opencode_inbox_read_failed: ${getErrorMessage(error)}`;
-        return buildOpenCodeInboxReadFailedResult(diagnostic);
-      }
-
-      const onlyMessageId = options.onlyMessageId?.trim();
-      if (onlyMessageId) {
-        const targetMessage = inboxMessages.find((message) => message.messageId === onlyMessageId);
-        if (targetMessage?.read && targetMessage.messageKind !== 'member_work_sync_nudge') {
-          return buildOpenCodeMemberInboxAlreadyReadResult();
-        }
-        if (!targetMessage) {
-          return buildOpenCodeMemberInboxMessageMissingResult({
-            messageId: onlyMessageId,
-            reason: 'opencode_inbox_message_missing',
-          });
-        }
-      }
-      const unread = selectOpenCodeMemberInboxRelayUnreadMessages({
-        inboxMessages,
-        onlyMessageId,
-        maxRelay: DEFAULT_INBOX_RELAY_BATCH_SIZE,
-      });
-
-      let taskRefInferenceTasks: Promise<readonly TeamTask[]> | null = null;
-      const readTaskRefInferenceTasks = (): Promise<readonly TeamTask[]> => {
-        taskRefInferenceTasks ??= new TeamTaskReader().getTasks(teamName).catch(() => []);
-        return taskRefInferenceTasks;
-      };
-
-      for (const message of unread) {
-        let existingRecord = await promptLedger
-          .getByInboxMessage({
-            teamName,
-            memberName: memberIdentity.canonicalMemberName,
-            laneId: memberIdentity.laneId,
-            inboxMessageId: message.messageId,
-          })
-          .catch(() => null);
-        if (existingRecord?.status === 'failed_terminal') {
-          const requeuedRecord = await this.requeueOpenCodeRuntimeManifestWatermarkDeliveryIfNeeded(
-            {
-              ledger: promptLedger,
-              ledgerRecord: existingRecord,
-            }
-          );
-          if (requeuedRecord.status !== 'failed_terminal') {
-            existingRecord = requeuedRecord;
-          }
-        }
-        if (existingRecord?.status === 'failed_terminal') {
-          const requeuedRecord = await this.requeueOpenCodeNoAssistantTerminalDeliveryIfNeeded({
-            ledger: promptLedger,
-            ledgerRecord: existingRecord,
-          });
-          if (requeuedRecord.status !== 'failed_terminal') {
-            existingRecord = requeuedRecord;
-          }
-        }
-        if (existingRecord?.status === 'failed_terminal') {
-          let recoveredRecord: OpenCodePromptDeliveryLedgerRecord | null = null;
-          let recoveredVisibleReply: OpenCodeVisibleReplyProof | null = null;
-          if (typeof promptLedger.applyDestinationProof === 'function') {
-            try {
-              const proof = await this.openCodeVisibleReplyProofService.applyDestinationProof({
-                ledger: promptLedger,
-                ledgerRecord: existingRecord,
-                teamName,
-                replyRecipient: existingRecord.replyRecipient,
-                memberName: memberIdentity.canonicalMemberName,
-              });
-              recoveredRecord = proof.ledgerRecord;
-              recoveredVisibleReply = proof.visibleReply;
-            } catch {
-              recoveredRecord = null;
-              recoveredVisibleReply = null;
-            }
-          }
-          const recoveredReadAllowed = recoveredRecord
-            ? await this.isOpenCodeDeliveryResponseReadCommitAllowed({
-                teamName,
-                memberName: memberIdentity.canonicalMemberName,
-                responseState: recoveredRecord.responseState,
-                actionMode: recoveredRecord.actionMode ?? undefined,
-                taskRefs: recoveredRecord.taskRefs,
-                visibleReply: recoveredVisibleReply,
-                ledgerRecord: recoveredRecord,
-              })
-            : false;
-          if (recoveredRecord && recoveredReadAllowed) {
-            try {
-              await this.markInboxMessagesRead(teamName, memberName, [message]);
-              const committed = await promptLedger.markInboxReadCommitted({
-                id: recoveredRecord.id,
-                committedAt: nowIso(),
-              });
-              this.logOpenCodePromptDeliveryEvent(
-                'opencode_prompt_delivery_inbox_committed_read',
-                committed,
-                { recoveredTerminal: true }
-              );
-              result.delivered += 1;
-              result.relayed += 1;
-              result.lastDelivery = {
-                delivered: true,
-                accepted: true,
-                responsePending: false,
-                responseState: committed.responseState,
-                ledgerStatus: committed.status,
-                ledgerRecordId: committed.id,
-                laneId: memberIdentity.laneId,
-                visibleReplyMessageId: committed.visibleReplyMessageId ?? undefined,
-                visibleReplyCorrelation: committed.visibleReplyCorrelation ?? undefined,
-                diagnostics: committed.diagnostics,
-              };
-              break;
-            } catch (error) {
-              const diagnostic = `opencode_inbox_mark_read_failed_after_terminal_recovery: ${getErrorMessage(
-                error
-              )}`;
-              result.failed += 1;
-              result.lastDelivery = {
-                delivered: false,
-                reason: 'opencode_inbox_mark_read_failed_after_terminal_recovery',
-                diagnostics: [diagnostic],
-              };
-              result.diagnostics = [...(result.diagnostics ?? []), diagnostic];
-              break;
-            }
-          }
-          const diagnostic =
-            existingRecord.lastReason ??
-            `opencode_prompt_delivery_failed_terminal: ${message.messageId}`;
-          result.diagnostics = [...(result.diagnostics ?? []), diagnostic];
-          if (onlyMessageId) {
-            result.failed += 1;
-            result.lastDelivery = {
-              delivered: false,
-              accepted: false,
-              ledgerStatus: existingRecord.status,
-              ledgerRecordId: existingRecord.id,
-              laneId: memberIdentity.laneId,
-              reason: existingRecord.lastReason ?? 'opencode_prompt_delivery_failed_terminal',
-              diagnostics: existingRecord.diagnostics.length
-                ? existingRecord.diagnostics
-                : [diagnostic],
-            };
-          }
-          continue;
-        }
-        const existingTaskRefs = existingRecord?.taskRefs?.length
-          ? existingRecord.taskRefs
-          : undefined;
-        const metadataTaskRefs = options.deliveryMetadata?.taskRefs?.length
-          ? options.deliveryMetadata.taskRefs
-          : undefined;
-        const messageTaskRefs = message.taskRefs?.length ? message.taskRefs : undefined;
-        const inferredTaskRefs =
-          existingTaskRefs || metadataTaskRefs || messageTaskRefs
-            ? []
-            : await inferOpenCodeInboxMessageTaskRefs({
-                teamName,
-                message,
-                readTasks: readTaskRefInferenceTasks,
-              });
-        const deliveryDecision = resolveOpenCodeMemberInboxDeliveryDecision({
-          memberName,
-          message,
-          existingRecord,
-          deliveryMetadata: options.deliveryMetadata,
-          inferredTaskRefs,
-          source: options.source,
-        });
-        result.attempted += 1;
-        const attachmentPayloads = await this.resolveOpenCodeInboxAttachmentPayloads({
-          teamName,
-          message,
-        });
-        if (!attachmentPayloads.ok) {
-          const attachmentFailure = await handleOpenCodeInboxAttachmentFailure({
-            teamName,
-            canonicalMemberName: memberIdentity.canonicalMemberName,
-            laneId: memberIdentity.laneId,
-            message,
-            existingRecord,
-            decision: deliveryDecision,
-            attachmentPayloads,
-            ports: {
-              ledger: promptLedger,
-              resolveCurrentOpenCodeRuntimeRunId: (teamName, laneId) =>
-                this.openCodeRuntimeRecoveryIdentity.resolveCurrentOpenCodeRuntimeRunId(
-                  teamName,
-                  laneId
-                ),
-              markFailedTerminal: (input) => this.markOpenCodePromptLedgerFailedTerminal(input),
-              logPromptDeliveryEvent: (event, record, extra) =>
-                this.logOpenCodePromptDeliveryEvent(event, record, extra),
-              nowIso,
-              getErrorMessage,
-            },
-          });
-          result.failed += attachmentFailure.failed;
-          result.diagnostics = [
-            ...(result.diagnostics ?? []),
-            ...(attachmentFailure.diagnostics ?? []),
-          ];
-          result.lastDelivery = attachmentFailure.lastDelivery;
-          break;
-        }
-        const delivery = await this.deliverOpenCodeMemberMessage(teamName, {
-          memberName,
-          text: message.text,
-          messageId: message.messageId,
-          replyRecipient: deliveryDecision.replyRecipient,
-          actionMode: deliveryDecision.actionMode ?? undefined,
-          messageKind: message.messageKind,
-          workSyncIntent: message.workSyncIntent,
-          workSyncReviewRequestEventIds: message.workSyncReviewRequestEventIds,
-          taskRefs: deliveryDecision.taskRefs,
-          attachments: attachmentPayloads.attachments,
-          source: deliveryDecision.source,
-          inboxTimestamp: message.timestamp,
-        });
-        result.lastDelivery = delivery;
-        if (!delivery.delivered) {
-          const failureProjection = projectOpenCodeInboxDeliveryFailure({
-            delivery,
-            suppressRuntimeInactiveWarning:
-              this.cleanedStoppedTeamOpenCodeRuntimeLanes.has(teamName),
-          });
-          result.failed += failureProjection.result.failed;
-          result.diagnostics = [
-            ...(result.diagnostics ?? []),
-            ...(failureProjection.result.diagnostics ?? []),
-          ];
-          result.lastDelivery = failureProjection.result.lastDelivery;
-          if (failureProjection.shouldLogWarning) {
-            logger.warn(
-              `[${teamName}] OpenCode inbox relay failed for ${memberName}/${message.messageId}: ${
-                delivery.reason ?? 'unknown error'
-              }`
-            );
-          }
-          break;
-        }
-        if (delivery.responsePending) {
-          result.diagnostics = [
-            ...(result.diagnostics ?? []),
-            ...(delivery.diagnostics ?? [delivery.reason ?? 'opencode_delivery_response_pending']),
-          ];
-          break;
-        }
-        const readCommit = await commitOpenCodeInboxRelayReadAfterDelivery({
-          teamName,
-          memberName,
-          message,
-          delivery,
-          ports: {
-            markInboxMessagesRead: (teamName, memberName, messages) =>
-              this.markInboxMessagesRead(teamName, memberName, messages),
-            createOpenCodePromptDeliveryLedger: (teamName, laneId) =>
-              this.createOpenCodePromptDeliveryLedger(teamName, laneId),
-            logPromptDeliveryEvent: (event, record, extra) =>
-              this.logOpenCodePromptDeliveryEvent(event, record, extra),
-            nowIso,
-            getErrorMessage,
-          },
-        });
-        if (!readCommit.ok) {
-          result.failed += readCommit.result.failed;
-          result.lastDelivery = readCommit.result.lastDelivery;
-          result.diagnostics = [
-            ...(result.diagnostics ?? []),
-            ...(readCommit.result.diagnostics ?? []),
-          ];
-          logger.warn(`[${teamName}] ${readCommit.diagnostic}`);
-          break;
-        }
-        result.delivered += 1;
-        result.relayed += 1;
-        break;
-      }
-
-      return dedupeOpenCodeMemberInboxRelayDiagnostics(result);
-    })();
-
-    this.openCodeMemberInboxRelayInFlight.set(relayKey, work);
-    try {
-      return await waitForInboxRelayInFlight({
-        promise: work,
-        relayName: 'opencode_member_inbox_relay',
-        relayKey,
-      });
-    } catch (error) {
-      if (!isInboxRelayInFlightTimeoutError(error)) {
-        throw error;
-      }
-      const diagnostic = `opencode_member_inbox_relay_timed_out: ${getErrorMessage(error)}`;
-      logger.warn(`[${teamName}] ${diagnostic}`);
-      return buildOpenCodeMemberInboxRelayTimeoutResult({
-        diagnostic,
-        attempted: options.onlyMessageId ? 1 : 0,
-      });
-    } finally {
-      if (this.openCodeMemberInboxRelayInFlight.get(relayKey) === work) {
-        this.openCodeMemberInboxRelayInFlight.delete(relayKey);
-      }
-    }
+    );
   }
 
   /**

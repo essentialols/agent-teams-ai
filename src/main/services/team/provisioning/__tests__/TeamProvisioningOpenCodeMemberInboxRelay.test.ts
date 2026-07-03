@@ -4,6 +4,8 @@ import {
   commitOpenCodeInboxRelayReadAfterDelivery,
   handleOpenCodeInboxAttachmentFailure,
   projectOpenCodeInboxDeliveryFailure,
+  type RelayOpenCodeMemberInboxMessagesPorts,
+  relayOpenCodeMemberInboxMessagesWithPorts,
   resolveOpenCodeMemberInboxDeliveryDecision,
   selectOpenCodeMemberInboxRelayUnreadMessages,
 } from '../TeamProvisioningOpenCodeMemberInboxRelay';
@@ -51,7 +53,170 @@ function ledgerRecord(
   } as OpenCodePromptDeliveryLedgerRecord;
 }
 
+function createRelayPorts(
+  overrides: Partial<RelayOpenCodeMemberInboxMessagesPorts> = {}
+): RelayOpenCodeMemberInboxMessagesPorts {
+  return {
+    inFlight: new Map(),
+    readInboxMessages: vi.fn().mockResolvedValue([]),
+    scheduleOpenCodeMemberInboxDeliveryWake: vi.fn(),
+    isOpenCodeRuntimeRecipient: vi.fn().mockResolvedValue(true),
+    resolveOpenCodeMemberDeliveryIdentity: vi.fn().mockResolvedValue({
+      ok: true,
+      canonicalMemberName: 'worker',
+      laneId: 'lane-worker',
+      laneIdentity: { laneId: 'lane-worker', laneKind: 'secondary' },
+    }),
+    createOpenCodePromptDeliveryLedger: vi.fn(() => ({
+      getByInboxMessage: vi.fn().mockResolvedValue(null),
+    })) as unknown as RelayOpenCodeMemberInboxMessagesPorts['createOpenCodePromptDeliveryLedger'],
+    requeueOpenCodeRuntimeManifestWatermarkDeliveryIfNeeded: vi
+      .fn()
+      .mockImplementation(({ ledgerRecord }) => Promise.resolve(ledgerRecord)),
+    requeueOpenCodeNoAssistantTerminalDeliveryIfNeeded: vi
+      .fn()
+      .mockImplementation(({ ledgerRecord }) => Promise.resolve(ledgerRecord)),
+    applyDestinationProof: vi.fn().mockRejectedValue(new Error('unused')),
+    isOpenCodeDeliveryResponseReadCommitAllowed: vi.fn().mockResolvedValue(false),
+    markInboxMessagesRead: vi.fn().mockResolvedValue(undefined),
+    logOpenCodePromptDeliveryEvent: vi.fn(),
+    readTaskRefInferenceTasks: vi.fn().mockResolvedValue([]),
+    resolveOpenCodeInboxAttachmentPayloads: vi.fn().mockResolvedValue({
+      ok: true,
+      attachments: [],
+    }),
+    resolveCurrentOpenCodeRuntimeRunId: vi.fn().mockResolvedValue('run-1'),
+    markOpenCodePromptLedgerFailedTerminal: vi.fn(),
+    deliverOpenCodeMemberMessage: vi.fn().mockResolvedValue({ delivered: true }),
+    suppressRuntimeInactiveWarning: vi.fn().mockReturnValue(false),
+    logWarning: vi.fn(),
+    nowIso: () => '2026-01-01T00:00:00.000Z',
+    getErrorMessage: (error) => (error instanceof Error ? error.message : String(error)),
+    ...overrides,
+  };
+}
+
 describe('TeamProvisioningOpenCodeMemberInboxRelay', () => {
+  it('projects only-message delivery while another member relay is active', async () => {
+    const inFlight = new Map<string, Promise<never>>();
+    inFlight.set('team/worker', new Promise(() => {}));
+    const scheduleOpenCodeMemberInboxDeliveryWake = vi.fn();
+
+    await expect(
+      relayOpenCodeMemberInboxMessagesWithPorts(
+        {
+          teamName: 'team',
+          memberName: 'worker',
+          relayKey: 'team/worker',
+          options: { onlyMessageId: 'work-sync' },
+        },
+        createRelayPorts({
+          inFlight,
+          readInboxMessages: vi.fn().mockResolvedValue([
+            message({
+              messageId: 'work-sync',
+              read: true,
+              messageKind: 'member_work_sync_nudge',
+            }),
+          ]),
+          scheduleOpenCodeMemberInboxDeliveryWake,
+        })
+      )
+    ).resolves.toMatchObject({
+      attempted: 1,
+      lastDelivery: {
+        delivered: true,
+        responsePending: true,
+        reason: 'opencode_work_sync_read_commit_waiting_for_active_relay',
+      },
+    });
+    expect(scheduleOpenCodeMemberInboxDeliveryWake).toHaveBeenCalledWith({
+      teamName: 'team',
+      memberName: 'worker',
+      messageId: 'work-sync',
+      delayMs: 500,
+    });
+  });
+
+  it('recovers terminal ledger records and commits the inbox read before delivery retry', async () => {
+    const terminal = ledgerRecord({
+      status: 'failed_terminal',
+      lastReason: 'opencode_prompt_delivery_failed_terminal',
+      diagnostics: ['terminal'],
+    });
+    const recovered = ledgerRecord({
+      id: 'recovered-record',
+      status: 'responded',
+      responseState: 'responded_visible_message',
+    });
+    const committed = ledgerRecord({
+      ...recovered,
+      status: 'responded',
+      inboxReadCommittedAt: '2026-01-01T00:00:00.000Z',
+      visibleReplyMessageId: 'reply-1',
+      visibleReplyCorrelation: 'relayOfMessageId',
+      diagnostics: ['committed'],
+    });
+    const getByInboxMessage = vi.fn().mockResolvedValue(terminal);
+    const markInboxReadCommitted = vi.fn().mockResolvedValue(committed);
+    const applyDestinationProof = vi.fn();
+    const ledger = {
+      getByInboxMessage,
+      markInboxReadCommitted,
+      applyDestinationProof,
+    } as unknown as OpenCodePromptDeliveryLedgerStore;
+    const deliverOpenCodeMemberMessage = vi.fn();
+    const markInboxMessagesRead = vi.fn().mockResolvedValue(undefined);
+    const logOpenCodePromptDeliveryEvent = vi.fn();
+
+    const result = await relayOpenCodeMemberInboxMessagesWithPorts(
+      {
+        teamName: 'team',
+        memberName: 'worker',
+        relayKey: 'team/worker',
+        options: { onlyMessageId: 'message-1' },
+      },
+      createRelayPorts({
+        readInboxMessages: vi.fn().mockResolvedValue([message()]),
+        createOpenCodePromptDeliveryLedger: vi.fn(() => ledger),
+        applyDestinationProof: vi.fn().mockResolvedValue({
+          ledgerRecord: recovered,
+          visibleReply: {
+            inboxName: 'user',
+            message: message({ messageId: 'reply-1' }),
+          },
+        }),
+        isOpenCodeDeliveryResponseReadCommitAllowed: vi.fn().mockResolvedValue(true),
+        markInboxMessagesRead,
+        logOpenCodePromptDeliveryEvent,
+        deliverOpenCodeMemberMessage,
+      })
+    );
+
+    expect(markInboxMessagesRead).toHaveBeenCalledWith('team', 'worker', [message()]);
+    expect(markInboxReadCommitted).toHaveBeenCalledWith({
+      id: 'recovered-record',
+      committedAt: '2026-01-01T00:00:00.000Z',
+    });
+    expect(logOpenCodePromptDeliveryEvent).toHaveBeenCalledWith(
+      'opencode_prompt_delivery_inbox_committed_read',
+      committed,
+      { recoveredTerminal: true }
+    );
+    expect(deliverOpenCodeMemberMessage).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      relayed: 1,
+      delivered: 1,
+      lastDelivery: {
+        delivered: true,
+        accepted: true,
+        ledgerStatus: 'responded',
+        ledgerRecordId: 'recovered-record',
+        visibleReplyMessageId: 'reply-1',
+      },
+    });
+  });
+
   it('selects deliverable unread rows while preserving work-sync read retry semantics', () => {
     const rows = [
       message({ messageId: 'read-normal', read: true }),

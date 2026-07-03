@@ -12,10 +12,7 @@ import {
 
 import type { TeamLaunchRuntimeAdapter, TeamRuntimeLaunchResult } from '../../runtime';
 import type { TeamRuntimeLanePlan } from '@features/team-runtime-lanes';
-import type {
-  TeamCreateRequest,
-  TeamProvisioningProgress,
-} from '@shared/types';
+import type { TeamCreateRequest, TeamProvisioningProgress } from '@shared/types';
 
 type OpenCodeWorktreeLanePlan = Extract<
   TeamRuntimeLanePlan,
@@ -23,10 +20,7 @@ type OpenCodeWorktreeLanePlan = Extract<
 >;
 type OpenCodeWorktreeMember = OpenCodeWorktreeLanePlan['allMembers'][number];
 
-function member(
-  name: string,
-  extra: Partial<OpenCodeWorktreeMember> = {}
-): OpenCodeWorktreeMember {
+function member(name: string, extra: Partial<OpenCodeWorktreeMember> = {}): OpenCodeWorktreeMember {
   return {
     name,
     role: 'Engineer',
@@ -47,9 +41,7 @@ function progress(overrides: Partial<TeamProvisioningProgress> = {}): TeamProvis
   };
 }
 
-function runtimeResult(
-  overrides: Partial<TeamRuntimeLaunchResult> = {}
-): TeamRuntimeLaunchResult {
+function runtimeResult(overrides: Partial<TeamRuntimeLaunchResult> = {}): TeamRuntimeLaunchResult {
   return {
     runId: 'run-open-code',
     teamName: 'open-code-team',
@@ -500,7 +492,7 @@ function baseAggregatePorts(calls: string[]): OpenCodeWorktreeRootAggregateLaunc
   return {
     randomUUID: () => 'run-open-code',
     nowIso: () => '2026-01-01T00:00:00.000Z',
-    getStopAllTeamsGeneration: () => false,
+    getStopAllTeamsGeneration: () => 0,
     getRuntimeAdapterRun: () => undefined,
     stopOpenCodeRuntimeAdapterTeam: async () => {
       calls.push('stopPreviousRuntimeRun');

@@ -51,9 +51,9 @@ function createPorts(
       canonicalMemberName: 'dev',
     }),
     readLaneState: vi.fn().mockResolvedValue('active'),
-    tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive: vi.fn().mockResolvedValue(
-      false
-    ),
+    tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive: vi
+      .fn()
+      .mockResolvedValue(false),
     listOpenCodePromptDeliveryLedgerRecords: vi.fn().mockResolvedValue([createRecord()]),
     ...overrides,
   };
@@ -102,7 +102,18 @@ describe('OpenCode agenda sync recovery bypass helpers', () => {
         taskRefs: [taskRef],
         foregroundMessages: [
           createMessage({ messageId: undefined }),
-          createMessage({ messageId: 'msg-1', attachments: [{ path: '/tmp/a.txt', name: 'a.txt' }] }),
+          createMessage({
+            messageId: 'msg-1',
+            attachments: [
+              {
+                id: 'att-1',
+                filename: 'a.txt',
+                mimeType: 'text/plain',
+                size: 1,
+                filePath: '/tmp/a.txt',
+              },
+            ],
+          }),
         ],
       },
       ports
@@ -115,9 +126,9 @@ describe('OpenCode agenda sync recovery bypass helpers', () => {
   it('attempts lane recovery when the lane index is not active', async () => {
     const ports = createPorts({
       readLaneState: vi.fn().mockResolvedValue('stopped'),
-      tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive: vi.fn().mockResolvedValue(
-        true
-      ),
+      tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive: vi
+        .fn()
+        .mockResolvedValue(true),
     });
 
     const ids = await getOpenCodeAgendaSyncRecoveryBypassMessageIds(
@@ -131,9 +142,9 @@ describe('OpenCode agenda sync recovery bypass helpers', () => {
       ports
     );
 
-    expect(ports.tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive).toHaveBeenCalledWith(
-      { teamName: 'alpha', memberName: 'dev', laneId: 'lane-1' }
-    );
+    expect(
+      ports.tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive
+    ).toHaveBeenCalledWith({ teamName: 'alpha', memberName: 'dev', laneId: 'lane-1' });
     expect([...ids]).toEqual(['msg-1']);
   });
 
@@ -147,11 +158,13 @@ describe('OpenCode agenda sync recovery bypass helpers', () => {
         foregroundMessages: [createMessage()],
       },
       createPorts({
-        listOpenCodePromptDeliveryLedgerRecords: vi.fn().mockResolvedValue([
-          createRecord({ taskRefs: [{ teamName: 'alpha', taskId: 'task-2', displayId: 'T-2' }] }),
-          createRecord({ status: 'accepted' }),
-          createRecord({ lastReason: 'other failure' }),
-        ]),
+        listOpenCodePromptDeliveryLedgerRecords: vi
+          .fn()
+          .mockResolvedValue([
+            createRecord({ taskRefs: [{ teamName: 'alpha', taskId: 'task-2', displayId: 'T-2' }] }),
+            createRecord({ status: 'accepted' }),
+            createRecord({ lastReason: 'other failure' }),
+          ]),
       })
     );
 

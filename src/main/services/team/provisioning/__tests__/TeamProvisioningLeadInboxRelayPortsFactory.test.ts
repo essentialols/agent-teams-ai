@@ -91,14 +91,11 @@ describe('TeamProvisioningLeadInboxRelayPortsFactory', () => {
     const boundary = createTeamProvisioningLeadInboxRelayPortsBoundary(deps);
 
     await expect(boundary.relayLeadInboxMessages('alpha')).resolves.toBe(2);
-    expect(deps.relayLeadInboxMessagesForTeam).toHaveBeenCalledWith(
-      'alpha',
-      expect.any(Object)
-    );
+    expect(deps.relayLeadInboxMessagesForTeam).toHaveBeenCalledWith('alpha', expect.any(Object));
     expect(deps.leadInboxRelayInFlight.has('alpha')).toBe(false);
     expect(capturedPorts).not.toBeNull();
 
-    const ports = capturedPorts as LeadInboxRelayFlowPorts<LeadInboxRelayFlowRun>;
+    const ports = capturedPorts as unknown as LeadInboxRelayFlowPorts<LeadInboxRelayFlowRun>;
     expect(ports.getAliveRunId('alpha')).toBe('run-1');
     expect(ports.getProvisioningRunId('alpha')).toBeNull();
     expect(ports.getRun('run-1')).toEqual(expect.objectContaining({ runId: 'run-1' }));
@@ -120,9 +117,7 @@ describe('TeamProvisioningLeadInboxRelayPortsFactory', () => {
     expect(deps.emitTeamChange).toHaveBeenCalledWith(event);
     expect(ports.relayedLeadInboxMessageIds).toBe(relayedLeadInboxMessageIds);
     expect(ports.pendingCrossTeamFirstReplies).toBe(pendingCrossTeamFirstReplies);
-    expect(ports.recentCrossTeamLeadDeliveryMessageIds).toBe(
-      recentCrossTeamLeadDeliveryMessageIds
-    );
+    expect(ports.recentCrossTeamLeadDeliveryMessageIds).toBe(recentCrossTeamLeadDeliveryMessageIds);
     expect(ports.sameTeamRunStartSkewMs).toBe(1_000);
     expect(ports.sameTeamNativeDeliveryGraceMs).toBe(15_000);
     expect(ports.recentCrossTeamDeliveryTtlMs).toBe(600_000);

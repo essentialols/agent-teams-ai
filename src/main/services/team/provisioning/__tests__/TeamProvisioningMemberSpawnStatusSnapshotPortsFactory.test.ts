@@ -35,7 +35,7 @@ function run(overrides: Partial<MemberSpawnStatusRun> = {}): MemberSpawnStatusRu
       message: 'running',
       startedAt: NOW,
       updatedAt: NOW,
-    } as TeamProvisioningProgress,
+    } as unknown as TeamProvisioningProgress,
     onProgress: vi.fn(),
     expectedMembers: ['Builder'],
     detectedSessionId: 'session-1',

@@ -572,6 +572,7 @@ import {
   isTerminalFailureProvisioningState,
   looksLikeClaudeStdoutJsonFragment,
   shouldIgnoreProvisioningProgressRegression,
+  TeamProvisioningRetainedProgressState,
 } from './provisioning/TeamProvisioningProgressState';
 import {
   buildDeterministicLaunchHydrationPrompt,
@@ -1307,19 +1308,17 @@ export class TeamProvisioningService {
   private static readonly MEMBER_SPAWN_STATUS_SNAPSHOT_CACHE_TTL_MS = 500;
   private static readonly PERSISTED_MEMBER_SPAWN_STATUS_SNAPSHOT_CACHE_TTL_MS = 5_000;
   private static readonly LAUNCH_STATE_NOOP_REFRESH_MS = 15_000;
-  private static readonly RETAINED_PROVISIONING_PROGRESS_TTL_MS = 5 * 60_000;
-
   private readonly runs = new Map<string, ProvisioningRun>();
   private readonly provisioningRunByTeam = new Map<string, string>();
   private readonly aliveRunByTeam = new Map<string, string>();
   private readonly runtimeAdapterProgressByRunId = new Map<string, TeamProvisioningProgress>();
-  private retainedProvisioningProgressByRunId: Map<string, TeamProvisioningProgress> | undefined =
-    new Map<string, TeamProvisioningProgress>();
-  private retainedProvisioningProgressTimersByRunId:
-    | Map<string, ReturnType<typeof setTimeout>>
-    | undefined = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly runtimeAdapterTraceLinesByRunId = new Map<string, string[]>();
   private readonly runtimeAdapterTraceKeyByRunId = new Map<string, string>();
+  private readonly retainedProvisioningProgressState = new TeamProvisioningRetainedProgressState({
+    runtimeAdapterProgressByRunId: this.runtimeAdapterProgressByRunId,
+    runtimeAdapterTraceLinesByRunId: this.runtimeAdapterTraceLinesByRunId,
+    runtimeAdapterTraceKeyByRunId: this.runtimeAdapterTraceKeyByRunId,
+  });
   private readonly runtimeToolApprovalCoordinator = new RuntimeToolApprovalCoordinator({
     getSettings: (teamName) => this.getToolApprovalSettings(teamName),
     answerApproval: ({ entry, allow, message }) =>
@@ -1346,7 +1345,8 @@ export class TeamProvisioningService {
       runs: this.runs,
       runtimeAdapterProgressByRunId: this.runtimeAdapterProgressByRunId,
       runtimeAdapterRunByTeam: this.runtimeAdapterRunByTeam,
-      getRetainedProvisioningProgressMap: () => this.getRetainedProvisioningProgressMap(),
+      getRetainedProvisioningProgressMap: () =>
+        this.retainedProvisioningProgressState.getRetainedProvisioningProgressMap(),
     },
     ports: {
       notifyTeamWatchScopeChanged,
@@ -7497,64 +7497,11 @@ export class TeamProvisioningService {
   }
 
   async getProvisioningStatus(runId: string): Promise<TeamProvisioningProgress> {
-    const run = this.runs.get(runId);
-    if (run) {
-      return run.progress;
-    }
-    const runtimeProgress = this.runtimeAdapterProgressByRunId.get(runId);
-    if (runtimeProgress) {
-      return runtimeProgress;
-    }
-    const retainedProgress = this.getRetainedProvisioningProgressMap().get(runId);
-    if (retainedProgress) {
-      return retainedProgress;
-    }
-    throw new Error('Unknown runId');
-  }
-
-  private getRetainedProvisioningProgressMap(): Map<string, TeamProvisioningProgress> {
-    this.retainedProvisioningProgressByRunId ??= new Map<string, TeamProvisioningProgress>();
-    return this.retainedProvisioningProgressByRunId;
-  }
-
-  private getRetainedProvisioningProgressTimersMap(): Map<string, ReturnType<typeof setTimeout>> {
-    this.retainedProvisioningProgressTimersByRunId ??= new Map<
-      string,
-      ReturnType<typeof setTimeout>
-    >();
-    return this.retainedProvisioningProgressTimersByRunId;
+    return this.retainedProvisioningProgressState.getProvisioningStatus(runId, this.runs);
   }
 
   private retainProvisioningProgress(runId: string, progress: TeamProvisioningProgress): void {
-    const retainedProgress = this.getRetainedProvisioningProgressMap();
-    const retainedTimers = this.getRetainedProvisioningProgressTimersMap();
-    const previousTimer = retainedTimers.get(runId);
-    if (previousTimer) {
-      clearTimeout(previousTimer);
-    }
-
-    retainedProgress.set(runId, {
-      ...progress,
-      warnings: progress.warnings ? [...progress.warnings] : undefined,
-      launchDiagnostics: progress.launchDiagnostics ? [...progress.launchDiagnostics] : undefined,
-    });
-
-    const timer = setTimeout(() => {
-      retainedProgress.delete(runId);
-      retainedTimers.delete(runId);
-      // Adapter-run live progress and trace history share the retention
-      // window (native run ids are simply absent from these maps). Only a
-      // still-terminal entry may be dropped — a relaunch may have reused the
-      // run id for a live run in the meantime.
-      const liveProgress = this.runtimeAdapterProgressByRunId.get(runId);
-      if (liveProgress && ['disconnected', 'failed', 'cancelled'].includes(liveProgress.state)) {
-        this.runtimeAdapterProgressByRunId.delete(runId);
-        this.runtimeAdapterTraceLinesByRunId.delete(runId);
-        this.runtimeAdapterTraceKeyByRunId.delete(runId);
-      }
-    }, TeamProvisioningService.RETAINED_PROVISIONING_PROGRESS_TTL_MS);
-    timer.unref?.();
-    retainedTimers.set(runId, timer);
+    this.retainedProvisioningProgressState.retainProvisioningProgress(runId, progress);
   }
 
   async cancelProvisioning(runId: string): Promise<void> {
@@ -8986,7 +8933,9 @@ export class TeamProvisioningService {
         run?.progress ??
         (runId
           ? (this.runtimeAdapterProgressByRunId.get(runId) ??
-            this.getRetainedProvisioningProgressMap().get(runId) ??
+            this.retainedProvisioningProgressState
+              .getRetainedProvisioningProgressMap()
+              .get(runId) ??
             null)
           : null),
     };

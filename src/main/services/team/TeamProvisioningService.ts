@@ -1803,9 +1803,33 @@ export class TeamProvisioningService {
     null;
   private readonly stoppedTeamOpenCodeRuntimeCleanupInFlight = new Map<string, Promise<number>>();
   private readonly cleanedStoppedTeamOpenCodeRuntimeLanes = new Set<string>();
+  private readonly openCodeMemberInboxRelayHost: TeamProvisioningOpenCodeMemberInboxRelayHost = {
+    getOpenCodeMemberRelayKey: (teamName, memberName) =>
+      this.getOpenCodeMemberRelayKey(teamName, memberName),
+    scheduleOpenCodeMemberInboxDeliveryWake: (input) =>
+      this.scheduleOpenCodeMemberInboxDeliveryWake(input),
+    isOpenCodeRuntimeRecipient: (teamName, memberName) =>
+      this.isOpenCodeRuntimeRecipient(teamName, memberName),
+    createOpenCodePromptDeliveryLedger: (teamName, laneId) =>
+      this.createOpenCodePromptDeliveryLedger(teamName, laneId),
+    requeueOpenCodeRuntimeManifestWatermarkDeliveryIfNeeded: (input) =>
+      this.requeueOpenCodeRuntimeManifestWatermarkDeliveryIfNeeded(input),
+    requeueOpenCodeNoAssistantTerminalDeliveryIfNeeded: (input) =>
+      this.requeueOpenCodeNoAssistantTerminalDeliveryIfNeeded(input),
+    isOpenCodeDeliveryResponseReadCommitAllowed: (input) =>
+      this.isOpenCodeDeliveryResponseReadCommitAllowed(input),
+    markInboxMessagesRead: (teamName, memberName, messages) =>
+      this.markInboxMessagesRead(teamName, memberName, messages),
+    logOpenCodePromptDeliveryEvent: (event, record, extra) =>
+      this.logOpenCodePromptDeliveryEvent(event, record, extra),
+    markOpenCodePromptLedgerFailedTerminal: (input) =>
+      this.markOpenCodePromptLedgerFailedTerminal(input),
+    deliverOpenCodeMemberMessage: (teamName, input) =>
+      this.deliverOpenCodeMemberMessage(teamName, input),
+  };
   private readonly openCodeMemberInboxRelayBoundary =
     createTeamProvisioningOpenCodeMemberInboxRelayBoundary({
-      host: this as unknown as TeamProvisioningOpenCodeMemberInboxRelayHost,
+      host: this.openCodeMemberInboxRelayHost,
       inFlight: this.openCodeMemberInboxRelayInFlight,
       getInboxReader: () => this.inboxReader,
       openCodeRuntimeRecoveryIdentity: this.openCodeRuntimeRecoveryIdentity,

@@ -159,8 +159,16 @@ import { buildCombinedLogs } from './provisioning/TeamProvisioningCliExitPresent
 import { buildMembersMetaWritePayload } from './provisioning/TeamProvisioningConfigLaunchNormalization';
 import { TeamProvisioningConfigMaintenance } from './provisioning/TeamProvisioningConfigMaintenance';
 import { type TeamProvisioningEffectiveLaunchState } from './provisioning/TeamProvisioningConfigMaterialization';
+import {
+  createDefaultDeterministicCreateRunFlowPorts,
+  type DeterministicCreateRunFlowPorts,
+  runDeterministicCreateRunFlow,
+} from './provisioning/TeamProvisioningCreateDeterministicRunFlow';
 import { prepareDeterministicCreateSetupFlow } from './provisioning/TeamProvisioningCreateDeterministicSetupFlow';
-import { runDeterministicCreateSpawnFlow } from './provisioning/TeamProvisioningCreateDeterministicSpawnFlow';
+import {
+  type DeterministicCreateSpawnFlowPorts,
+  runDeterministicCreateSpawnFlow,
+} from './provisioning/TeamProvisioningCreateDeterministicSpawnFlow';
 import { createDeterministicCreateProvisioningRun } from './provisioning/TeamProvisioningCreateTeamFlow';
 import {
   clearPendingCrossTeamReplyExpectation as clearPendingCrossTeamReplyExpectationInState,
@@ -479,8 +487,6 @@ import {
   boundRunProvisioningOutputParts,
   boundStdoutParserCarry,
   buildProvisioningLiveOutput,
-  emitProvisioningCheckpoint,
-  initializeProvisioningTrace,
 } from './provisioning/TeamProvisioningProgressBuffers';
 import {
   isTerminalFailureProvisioningState,
@@ -4715,6 +4721,84 @@ export class TeamProvisioningService {
     this.createOutputRecoveryHelper().attachStderrHandler(run);
   }
 
+  private createDeterministicCreateRunFlowPorts(): DeterministicCreateRunFlowPorts<
+    ProvisioningRun,
+    MixedSecondaryRuntimeLaneState
+  > {
+    return createDefaultDeterministicCreateRunFlowPorts({
+      createProvisioningRun: (input) =>
+        createDeterministicCreateProvisioningRun({
+          ...input,
+          createInitialMemberSpawnStatusEntry,
+        }),
+      createInitialMemberSpawnStatusEntry,
+      resetTeamScopedTransientStateForNewRun: (teamName) =>
+        this.resetTeamScopedTransientStateForNewRun(teamName),
+      registerRun: (runId, run) => {
+        this.runs.set(runId, run);
+      },
+      setProvisioningRunByTeam: (teamName, runId) => {
+        this.provisioningRunByTeam.set(teamName, runId);
+      },
+      prepareWorkspaceTrustForDeterministicRun: (input) =>
+        this.prepareWorkspaceTrustForDeterministicRun(input),
+      clearPersistedLaunchState: (teamName, options) =>
+        this.clearPersistedLaunchState(teamName, options),
+      runDeterministicCreateSpawnFlow,
+    });
+  }
+
+  private createDeterministicCreateSpawnFlowPorts(input: {
+    request: TeamCreateRequest;
+    claudePath: string;
+    shellEnv: NodeJS.ProcessEnv;
+  }): DeterministicCreateSpawnFlowPorts<ProvisioningRun> {
+    const { request, claudePath, shellEnv } = input;
+    return {
+      teamMetaStore: {
+        writeMeta: (teamName, payload) =>
+          this.teamMetaStore.writeMeta(
+            teamName,
+            payload as Parameters<typeof this.teamMetaStore.writeMeta>[1]
+          ),
+        deleteMeta: (teamName) => this.teamMetaStore.deleteMeta(teamName),
+      },
+      membersMetaStore: this.membersMetaStore,
+      mcpConfigBuilder: this.mcpConfigBuilder,
+      buildMemberMcpLaunchConfigs: (buildInput) =>
+        this.buildRuntimeBootstrapMemberMcpLaunchConfigs(buildInput),
+      validateAgentTeamsMcpRuntime: (createdMcpConfigPath, options) =>
+        this.providerRuntime.validateAgentTeamsMcpRuntime(
+          claudePath,
+          request.cwd,
+          shellEnv,
+          createdMcpConfigPath,
+          options
+        ),
+      buildTeamRuntimeLaunchArgsPlan: (buildInput) =>
+        this.buildTeamRuntimeLaunchArgsPlan(buildInput),
+      seedLeadBootstrapPermissionRules: (teamName, cwd) =>
+        this.seedLeadBootstrapPermissionRules(teamName, cwd),
+      spawnCli,
+      updateProgress,
+      attachStdoutHandler: (targetRun) => this.attachStdoutHandler(targetRun),
+      attachStderrHandler: (targetRun) => this.attachStderrHandler(targetRun),
+      startStallWatchdog: (targetRun) => this.startStallWatchdog(targetRun),
+      startFilesystemMonitor: (targetRun, targetRequest) =>
+        this.startFilesystemMonitor(targetRun, targetRequest),
+      tryCompleteAfterTimeout: (targetRun) => this.tryCompleteAfterTimeout(targetRun),
+      handleProcessExit: (targetRun, code) => this.handleProcessExit(targetRun, code),
+      killTeamProcess,
+      cleanupRun: (targetRun) => this.cleanupRun(targetRun),
+      removeRunMemberMcpConfigFiles: (targetRun) => this.removeRunMemberMcpConfigFiles(targetRun),
+      unregisterRun: (targetRunId, teamName) => {
+        this.runs.delete(targetRunId);
+        this.provisioningRunByTeam.delete(teamName);
+      },
+      getStopAllTeamsGeneration: () => this.stopAllTeamsGeneration,
+    };
+  }
+
   async createTeam(
     request: TeamCreateRequest,
     onProgress: (progress: TeamProvisioningProgress) => void
@@ -4783,121 +4867,21 @@ export class TeamProvisioningService {
           logger,
         },
       });
-      const {
-        teamsBasePathsToProbe,
-        claudePath,
-        provisioningEnv,
-        shellEnv,
-        geminiRuntimeAuth,
-        resolvedProviderId,
-        providerArgsForLaunch,
-        inheritedProviderArgsForLaunch,
-        effectiveMemberSpecs,
-        allEffectiveMemberSpecs,
-        launchIdentity,
-        mixedSecondaryLanes,
-        workspaceTrustFeatureFlags,
-        workspaceTrustFullPlan,
-        largeTeamWarning,
-      } = createSetup;
-      const runId = randomUUID();
-      const startedAt = nowIso();
-      const run: ProvisioningRun = createDeterministicCreateProvisioningRun({
-        runId,
-        teamName: request.teamName,
+      return await runDeterministicCreateRunFlow({
         request,
-        startedAt,
-        teamsBasePathsToProbe,
         onProgress,
-        effectiveMemberSpecs,
-        allEffectiveMemberSpecs,
-        launchIdentity,
-        mixedSecondaryLanes,
-        workspaceTrustFullPlan,
-        largeTeamWarning,
-        anthropicApiKeyHelper: provisioningEnv.anthropicApiKeyHelper ?? null,
-        createInitialMemberSpawnStatusEntry,
-      });
-
-      this.resetTeamScopedTransientStateForNewRun(request.teamName);
-      this.runs.set(runId, run);
-      this.provisioningRunByTeam.set(request.teamName, runId);
-      initializeProvisioningTrace(run);
-      run.onProgress(run.progress);
-      await this.prepareWorkspaceTrustForDeterministicRun({
-        mode: 'create',
-        run,
-        claudePath,
-        shellEnv,
-        stopAllGenerationAtStart,
-        workspaceTrustPlan: workspaceTrustFullPlan,
-        featureFlags: workspaceTrustFeatureFlags,
-        provisioningEnv,
-      });
-      emitProvisioningCheckpoint(run, 'Clearing persisted launch state');
-      await this.clearPersistedLaunchState(request.teamName, { expectedRunId: run.runId });
-      run.launchStateClearedForRun = true;
-
-      return await runDeterministicCreateSpawnFlow({
-        request,
-        run,
-        runId,
-        effectiveMemberSpecs,
-        allEffectiveMemberSpecs,
-        launchIdentity,
-        provisioningEnv,
-        claudePath,
-        shellEnv,
-        resolvedProviderId,
-        providerArgsForLaunch,
-        inheritedProviderArgsForLaunch,
-        geminiRuntimeAuth,
+        createSetup,
+        runId: randomUUID(),
+        startedAt: nowIso(),
         stopAllGenerationAtStart,
         disallowedTools: APP_TEAM_RUNTIME_DISALLOWED_TOOLS,
         logger,
-        ports: {
-          teamMetaStore: {
-            writeMeta: (teamName, payload) =>
-              this.teamMetaStore.writeMeta(
-                teamName,
-                payload as Parameters<typeof this.teamMetaStore.writeMeta>[1]
-              ),
-            deleteMeta: (teamName) => this.teamMetaStore.deleteMeta(teamName),
-          },
-          membersMetaStore: this.membersMetaStore,
-          mcpConfigBuilder: this.mcpConfigBuilder,
-          buildMemberMcpLaunchConfigs: (input) =>
-            this.buildRuntimeBootstrapMemberMcpLaunchConfigs(input),
-          validateAgentTeamsMcpRuntime: (createdMcpConfigPath, options) =>
-            this.providerRuntime.validateAgentTeamsMcpRuntime(
-              claudePath,
-              request.cwd,
-              shellEnv,
-              createdMcpConfigPath,
-              options
-            ),
-          buildTeamRuntimeLaunchArgsPlan: (input) => this.buildTeamRuntimeLaunchArgsPlan(input),
-          seedLeadBootstrapPermissionRules: (teamName, cwd) =>
-            this.seedLeadBootstrapPermissionRules(teamName, cwd),
-          spawnCli,
-          updateProgress,
-          attachStdoutHandler: (targetRun) => this.attachStdoutHandler(targetRun),
-          attachStderrHandler: (targetRun) => this.attachStderrHandler(targetRun),
-          startStallWatchdog: (targetRun) => this.startStallWatchdog(targetRun),
-          startFilesystemMonitor: (targetRun, targetRequest) =>
-            this.startFilesystemMonitor(targetRun, targetRequest),
-          tryCompleteAfterTimeout: (targetRun) => this.tryCompleteAfterTimeout(targetRun),
-          handleProcessExit: (targetRun, code) => this.handleProcessExit(targetRun, code),
-          killTeamProcess,
-          cleanupRun: (targetRun) => this.cleanupRun(targetRun),
-          removeRunMemberMcpConfigFiles: (targetRun) =>
-            this.removeRunMemberMcpConfigFiles(targetRun),
-          unregisterRun: (targetRunId, teamName) => {
-            this.runs.delete(targetRunId);
-            this.provisioningRunByTeam.delete(teamName);
-          },
-          getStopAllTeamsGeneration: () => this.stopAllTeamsGeneration,
-        },
+        spawnPorts: this.createDeterministicCreateSpawnFlowPorts({
+          request,
+          claudePath: createSetup.claudePath,
+          shellEnv: createSetup.shellEnv,
+        }),
+        ports: this.createDeterministicCreateRunFlowPorts(),
       });
     } catch (error) {
       // Ensure the per-team lock doesn't get stuck on failures.

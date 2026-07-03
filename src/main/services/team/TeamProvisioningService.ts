@@ -312,7 +312,6 @@ import {
   type TeamProvisioningLeadToolApprovalResponsePorts,
 } from './provisioning/TeamProvisioningLeadToolApproval';
 import { extractLogsTail, sliceClaudeLogs } from './provisioning/TeamProvisioningLogSlice';
-import { matchesObservedMemberNameForExpected } from './provisioning/TeamProvisioningMemberIdentity';
 import { relayMemberInboxMessagesWithPorts } from './provisioning/TeamProvisioningMemberInboxRelayFlow';
 import {
   type LiveRosterAttachReason,
@@ -341,7 +340,6 @@ import {
   setMemberSpawnStatusForRun,
 } from './provisioning/TeamProvisioningMemberSpawnSnapshots';
 import {
-  buildRestartGraceTimeoutReason,
   createInitialMemberSpawnStatusEntry,
   MEMBER_LAUNCH_GRACE_MS,
 } from './provisioning/TeamProvisioningMemberSpawnStatusPolicy';
@@ -405,12 +403,10 @@ import { type OpenCodeRuntimeBootstrapEvidencePorts } from './provisioning/TeamP
 import {
   buildOpenCodeSecondaryBootstrapStallDiagnostic as buildOpenCodeSecondaryBootstrapStallDiagnosticHelper,
   isOpenCodeBootstrapStallWindowElapsed as isOpenCodeBootstrapStallWindowElapsedHelper,
-  markOpenCodeSecondaryBootstrapStalled as markOpenCodeSecondaryBootstrapStalledHelper,
   type MarkOpenCodeSecondaryBootstrapStalledPorts,
   maybeSendOpenCodeSecondaryBootstrapCheckinRetryPrompt as maybeSendOpenCodeSecondaryBootstrapCheckinRetryPromptHelper,
   type OpenCodeBootstrapStallStatusPorts,
   type ReconcileOpenCodeRuntimeProcessBootstrapPorts,
-  reconcileOpenCodeRuntimeProcessBootstrapStatus as reconcileOpenCodeRuntimeProcessBootstrapStatusHelper,
   scheduleOpenCodeBootstrapStallReevaluation as scheduleOpenCodeBootstrapStallReevaluationHelper,
   setOpenCodeRuntimePendingBootstrapStatus as setOpenCodeRuntimePendingBootstrapStatusHelper,
   setOpenCodeSecondaryBootstrapStalledStatus as setOpenCodeSecondaryBootstrapStalledStatusHelper,
@@ -443,7 +439,6 @@ import {
   isRecoverableOpenCodeRuntimeEvidence,
   isRecoverablePersistedOpenCodeRuntimeCandidate,
   isRecoverablePersistedOpenCodeTerminalRuntimeCandidate,
-  MEMBER_BOOTSTRAP_STALL_MS,
 } from './provisioning/TeamProvisioningOpenCodeRuntimeEvidencePolicy';
 import {
   cleanupStoppedTeamOpenCodeRuntimeLanesInBackground as cleanupStoppedTeamOpenCodeRuntimeLanesInBackgroundHelper,
@@ -541,6 +536,10 @@ import {
   createTeamProvisioningProviderRuntimeFacade,
   type TeamProvisioningProviderRuntimeFacade,
 } from './provisioning/TeamProvisioningProviderRuntimeFacade';
+import {
+  reevaluateMemberLaunchStatus as reevaluateMemberLaunchStatusHelper,
+  type ReevaluateMemberLaunchStatusPorts,
+} from './provisioning/TeamProvisioningReevaluateMemberLaunchStatus';
 import {
   auditRegisteredMemberSpawnStatuses as auditRegisteredMemberSpawnStatusesHelper,
   readRegisteredTeamMemberNamesFromConfig,
@@ -4294,141 +4293,57 @@ export class TeamProvisioningService {
     run: ProvisioningRun,
     memberName: string
   ): Promise<void> {
-    const current = run.memberSpawnStatuses.get(memberName);
-    if (!current) return;
-    if (
-      current.launchState === 'failed_to_start' ||
-      current.launchState === 'confirmed_alive' ||
-      !current.firstSpawnAcceptedAt
-    ) {
-      return;
-    }
-    await this.refreshMemberSpawnStatusesFromLeadInbox(run);
-    await this.maybeAuditMemberSpawnStatuses(run, { force: true });
-    const refreshed = run.memberSpawnStatuses.get(memberName);
-    if (!refreshed) return;
-    if (
-      refreshed.launchState === 'failed_to_start' ||
-      refreshed.launchState === 'confirmed_alive'
-    ) {
-      return;
-    }
-    const refreshedFirstSpawnAcceptedAt = refreshed.firstSpawnAcceptedAt;
-    if (!refreshedFirstSpawnAcceptedAt) {
-      return;
-    }
-    const restartPending = run.pendingMemberRestarts.has(memberName);
-    const runtimeByMember = await this.getLiveTeamAgentRuntimeMetadata(run.teamName);
-    const metadata =
-      runtimeByMember.get(memberName) ??
-      [...runtimeByMember.entries()].find(([candidateName]) =>
-        matchesObservedMemberNameForExpected(candidateName, memberName)
-      )?.[1];
-    const acceptedAtMs = Date.parse(refreshedFirstSpawnAcceptedAt);
-    const elapsedMs = Number.isFinite(acceptedAtMs) ? Date.now() - acceptedAtMs : Infinity;
-    const runtimeDiagnostic = metadata?.runtimeDiagnostic;
-    if (metadata?.livenessKind === 'runtime_process') {
-      if (this.isOpenCodeSecondaryLaneMemberInRun(run, memberName)) {
-        const bootstrapStalled = elapsedMs >= MEMBER_BOOTSTRAP_STALL_MS;
-        await reconcileOpenCodeRuntimeProcessBootstrapStatusHelper(
-          {
-            run,
-            memberName,
-            current: refreshed,
-            bootstrapStalled,
-            runtimeDiagnostic,
-            runtimeDiagnosticSeverity: metadata.runtimeDiagnosticSeverity,
-            runtimeSessionId: metadata.runtimeSessionId,
-            firstSpawnAcceptedAt: refreshedFirstSpawnAcceptedAt,
-            scheduleReevaluation: !bootstrapStalled,
-          },
-          this.getOpenCodeBootstrapStallReconciliationPorts()
-        );
-        return;
-      }
-      this.setMemberSpawnStatus(run, memberName, 'online', undefined, 'process');
-      return;
-    }
-    if (metadata?.livenessKind === 'permission_blocked') {
-      const next = {
-        ...refreshed,
-        livenessKind: metadata.livenessKind,
-        runtimeDiagnostic: runtimeDiagnostic ?? 'waiting for permission approval',
-        runtimeDiagnosticSeverity: metadata.runtimeDiagnosticSeverity ?? 'warning',
-        livenessLastCheckedAt: nowIso(),
-        launchState: 'runtime_pending_permission' as const,
-      };
-      run.memberSpawnStatuses.set(memberName, next);
-      this.emitMemberSpawnChange(run, memberName);
-      return;
-    }
-    if (
-      metadata?.livenessKind === 'runtime_process_candidate' &&
-      elapsedMs < MEMBER_BOOTSTRAP_STALL_MS
-    ) {
-      const next = {
-        ...refreshed,
-        livenessKind: metadata.livenessKind,
-        runtimeDiagnostic:
-          runtimeDiagnostic ?? 'Runtime process candidate detected, but bootstrap is unconfirmed.',
-        runtimeDiagnosticSeverity: metadata.runtimeDiagnosticSeverity ?? 'warning',
-        livenessLastCheckedAt: nowIso(),
-      };
-      run.memberSpawnStatuses.set(memberName, next);
-      this.emitMemberSpawnChange(run, memberName);
-      this.scheduleOpenCodeBootstrapStallReevaluation(
-        run,
-        memberName,
-        refreshedFirstSpawnAcceptedAt
-      );
-      return;
-    }
-    if (
-      await markOpenCodeSecondaryBootstrapStalledHelper(
-        {
-          run,
-          memberName,
-          current: refreshed,
-          isOpenCodeSecondaryLaneMember: this.isOpenCodeSecondaryLaneMemberInRun(run, memberName),
-          bootstrapStallWindowElapsed: elapsedMs >= MEMBER_BOOTSTRAP_STALL_MS,
-          runtimeMetadata: metadata,
-        },
-        this.getOpenCodeBootstrapStallReconciliationPorts()
-      )
-    ) {
-      return;
-    }
-    const strictReason = restartPending
-      ? buildRestartGraceTimeoutReason(memberName)
-      : (runtimeDiagnostic ??
-        (metadata?.livenessKind === 'shell_only'
-          ? 'Tmux pane is alive, but no teammate runtime process was found.'
-          : 'Teammate did not join within the launch grace window.'));
-    if (restartPending) {
-      run.pendingMemberRestarts.delete(memberName);
-    }
-    const livenessObservedAt = nowIso();
-    const nextRuntimeLostStatus: MemberSpawnStatusEntry = {
-      ...refreshed,
-      runtimeAlive: false,
-      livenessSource: undefined,
-      bootstrapConfirmed: false,
-      ...(metadata?.livenessKind ? { livenessKind: metadata.livenessKind } : {}),
-      ...(runtimeDiagnostic ? { runtimeDiagnostic } : {}),
-      ...(metadata?.runtimeDiagnosticSeverity
-        ? { runtimeDiagnosticSeverity: metadata.runtimeDiagnosticSeverity }
-        : {}),
-      livenessLastCheckedAt: livenessObservedAt,
-    };
-    this.syncMemberTaskActivityForRuntimeTransition(
+    await reevaluateMemberLaunchStatusHelper(
       run,
       memberName,
-      refreshed,
-      nextRuntimeLostStatus,
-      livenessObservedAt
+      this.getReevaluateMemberLaunchStatusPorts()
     );
-    run.memberSpawnStatuses.set(memberName, nextRuntimeLostStatus);
-    this.setMemberSpawnStatus(run, memberName, 'error', strictReason);
+  }
+
+  private getReevaluateMemberLaunchStatusPorts(): ReevaluateMemberLaunchStatusPorts<
+    ProvisioningRun
+  > {
+    return {
+      nowIso,
+      nowMs: () => Date.now(),
+      refreshMemberSpawnStatusesFromLeadInbox: (targetRun) =>
+        this.refreshMemberSpawnStatusesFromLeadInbox(targetRun as ProvisioningRun),
+      maybeAuditMemberSpawnStatuses: (targetRun, options) =>
+        this.maybeAuditMemberSpawnStatuses(targetRun as ProvisioningRun, options),
+      getLiveTeamAgentRuntimeMetadata: (teamName) =>
+        this.getLiveTeamAgentRuntimeMetadata(teamName),
+      isOpenCodeSecondaryLaneMemberInRun: (targetRun, targetMember) =>
+        this.isOpenCodeSecondaryLaneMemberInRun(targetRun as ProvisioningRun, targetMember),
+      reconcileOpenCodeBootstrapStallPorts: this.getOpenCodeBootstrapStallReconciliationPorts(),
+      setMemberSpawnStatus: (targetRun, targetMember, status, error, livenessSource) =>
+        this.setMemberSpawnStatus(
+          targetRun as ProvisioningRun,
+          targetMember,
+          status,
+          error,
+          livenessSource
+        ),
+      emitMemberSpawnChange: (targetRun, targetMember) =>
+        this.emitMemberSpawnChange(targetRun as ProvisioningRun, targetMember),
+      scheduleOpenCodeBootstrapStallReevaluation: (
+        targetRun,
+        targetMember,
+        firstSpawnAcceptedAt
+      ) =>
+        this.scheduleOpenCodeBootstrapStallReevaluation(
+          targetRun as ProvisioningRun,
+          targetMember,
+          firstSpawnAcceptedAt
+        ),
+      syncMemberTaskActivityForRuntimeTransition: (targetRun, targetMember, previous, next, at) =>
+        this.syncMemberTaskActivityForRuntimeTransition(
+          targetRun as ProvisioningRun,
+          targetMember,
+          previous,
+          next,
+          at
+        ),
+    };
   }
 
   private getOpenCodeBootstrapStallStatusPorts(): OpenCodeBootstrapStallStatusPorts {

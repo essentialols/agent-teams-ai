@@ -39,7 +39,6 @@ import { createLogger } from '@shared/utils/logger';
 import { migrateProviderBackendId } from '@shared/utils/providerBackend';
 import { type ParsedTeammateContent } from '@shared/utils/teammateMessageParser';
 import { normalizeTeamMemberMcpPolicy } from '@shared/utils/teamMemberMcpPolicy';
-import { normalizeOptionalTeamProviderId } from '@shared/utils/teamProvider';
 import * as agentTeamsControllerModule from 'agent-teams-controller';
 import { type ChildProcess, type spawn } from 'child_process';
 import { randomUUID } from 'crypto';
@@ -405,6 +404,7 @@ import {
 } from './provisioning/TeamProvisioningOpenCodeRuntimeRecoveryFlow';
 import { createOpenCodeRuntimeRecoveryIdentityHelpers } from './provisioning/TeamProvisioningOpenCodeRuntimeRecoveryIdentity';
 import { createTeamProvisioningOpenCodeSecondaryEvidenceOverlayPorts } from './provisioning/TeamProvisioningOpenCodeSecondaryEvidenceOverlayPortsFactory';
+import { writeOpenCodeTeamConfig } from './provisioning/TeamProvisioningOpenCodeTeamConfigWriter';
 import {
   type AuthWarningSource,
   isAuthFailureWarning,
@@ -5398,7 +5398,7 @@ export class TeamProvisioningService {
     await this.membersMetaStore.writeMembers(launchRequest.teamName, membersToWrite, {
       providerBackendId: launchRequest.providerBackendId,
     });
-    await this.writeOpenCodeTeamConfig(launchRequest, effectiveMembers);
+    await writeOpenCodeTeamConfig(launchRequest, effectiveMembers);
     if (isPureOpenCodeWorktreeRootLanePlan(lanePlan)) {
       return this.runOpenCodeWorktreeRootAggregateLaunch({
         request: launchRequest,
@@ -5526,43 +5526,6 @@ export class TeamProvisioningService {
     onProgress: (progress: TeamProvisioningProgress) => void;
   }): Promise<TeamLaunchResponse> {
     return this.openCodeLaunchWiring.runOpenCodeTeamRuntimeAdapterLaunch(input);
-  }
-
-  private async writeOpenCodeTeamConfig(
-    request: TeamCreateRequest,
-    members: TeamCreateRequest['members']
-  ): Promise<void> {
-    const configPath = path.join(getTeamsBasePath(), request.teamName, 'config.json');
-    const config: TeamConfig = {
-      name: request.displayName?.trim() || request.teamName,
-      description: request.description,
-      color: request.color,
-      projectPath: request.cwd,
-      members: [
-        {
-          name: 'team-lead',
-          role: 'Team Lead',
-          agentType: 'team-lead',
-          providerId: normalizeOptionalTeamProviderId(request.providerId),
-          model: request.model,
-          effort: request.effort,
-          cwd: request.cwd,
-        },
-        ...members.map((member) => ({
-          name: member.name,
-          role: member.role,
-          workflow: member.workflow,
-          isolation: member.isolation === 'worktree' ? ('worktree' as const) : undefined,
-          providerId: normalizeOptionalTeamProviderId(member.providerId),
-          model: member.model,
-          effort: member.effort,
-          mcpPolicy: normalizeTeamMemberMcpPolicy(member.mcpPolicy),
-          cwd: member.cwd?.trim() || undefined,
-        })),
-      ],
-    };
-    await atomicWriteAsync(configPath, `${JSON.stringify(config, null, 2)}\n`);
-    TeamConfigReader.invalidateTeam(request.teamName);
   }
 
   private async persistOpenCodeRuntimeAdapterLaunchResult(

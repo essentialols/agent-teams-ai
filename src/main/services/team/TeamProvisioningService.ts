@@ -651,6 +651,7 @@ import {
   buildTeamAgentRuntimeSnapshot as buildTeamAgentRuntimeSnapshotHelper,
   type PersistedRuntimeMemberLike,
 } from './provisioning/TeamProvisioningRuntimeSnapshot';
+import { TeamProvisioningRuntimeSnapshotCacheBoundary } from './provisioning/TeamProvisioningRuntimeSnapshotCache';
 import { createRuntimeToolActivityHandlers } from './provisioning/TeamProvisioningRuntimeToolActivity';
 import {
   buildRuntimeTurnSettledEnvironmentForMembers as buildRuntimeTurnSettledEnvironmentForMembersHelper,
@@ -1620,7 +1621,6 @@ export class TeamProvisioningService {
       promise: Promise<Map<string, LiveTeamAgentRuntimeMetadata>>;
     }
   >();
-  private readonly runtimeSnapshotCacheGenerationByTeam = new Map<string, number>();
   private readonly memberSpawnStatusesSnapshotCache = new Map<
     string,
     {
@@ -1638,7 +1638,18 @@ export class TeamProvisioningService {
       promise: Promise<MemberSpawnStatusesSnapshot>;
     }
   >();
-  private readonly memberSpawnStatusesCacheGenerationByTeam = new Map<string, number>();
+  private readonly runtimeSnapshotCacheBoundary = new TeamProvisioningRuntimeSnapshotCacheBoundary<
+    TeamAgentRuntimeSnapshot,
+    Map<string, LiveTeamAgentRuntimeMetadata>,
+    MemberSpawnStatusesSnapshot,
+    PersistedTeamConfigCacheEntry
+  >({
+    agentRuntimeSnapshotCache: this.agentRuntimeSnapshotCache,
+    liveTeamAgentRuntimeMetadataCache: this.liveTeamAgentRuntimeMetadataCache,
+    persistedTeamConfigCache: this.persistedTeamConfigCache,
+    memberSpawnStatusesSnapshotCache: this.memberSpawnStatusesSnapshotCache,
+    memberSpawnStatusesInFlightByTeam: this.memberSpawnStatusesInFlightByTeam,
+  });
   private readonly launchStateStore = new TeamLaunchStateStore();
   private readonly launchFailureArtifactPackRunIds = new Set<string>();
   private readonly launchStateStoreQueue = new Map<string, Promise<unknown>>();
@@ -2240,35 +2251,19 @@ export class TeamProvisioningService {
   }
 
   private getRuntimeSnapshotCacheGeneration(teamName: string): number {
-    return this.runtimeSnapshotCacheGenerationByTeam.get(teamName) ?? 0;
+    return this.runtimeSnapshotCacheBoundary.getRuntimeSnapshotCacheGeneration(teamName);
   }
 
   private getMemberSpawnStatusesCacheGeneration(teamName: string): number {
-    return this.memberSpawnStatusesCacheGenerationByTeam.get(teamName) ?? 0;
+    return this.runtimeSnapshotCacheBoundary.getMemberSpawnStatusesCacheGeneration(teamName);
   }
 
   private invalidateMemberSpawnStatusesCache(teamName: string): void {
-    this.memberSpawnStatusesCacheGenerationByTeam.set(
-      teamName,
-      this.getMemberSpawnStatusesCacheGeneration(teamName) + 1
-    );
-    this.memberSpawnStatusesSnapshotCache.delete(teamName);
-    this.memberSpawnStatusesInFlightByTeam.delete(teamName);
+    this.runtimeSnapshotCacheBoundary.invalidateMemberSpawnStatusesCache(teamName);
   }
 
   private invalidateRuntimeSnapshotCaches(teamName: string): void {
-    this.runtimeSnapshotCacheGenerationByTeam.set(
-      teamName,
-      this.getRuntimeSnapshotCacheGeneration(teamName) + 1
-    );
-    this.agentRuntimeSnapshotCache.delete(teamName);
-    this.liveTeamAgentRuntimeMetadataCache.delete(teamName);
-    this.persistedTeamConfigCache.delete(teamName);
-    // Keep in-flight runtime probes alive. Active teams can invalidate runtime
-    // caches faster than expensive process-table/snapshot probes complete; the
-    // generation guard in each builder prevents stale results from being cached.
-    // Process table rows are TTL-bound. Resource telemetry can use the longer
-    // TTL, while liveness only reuses rows through a short age gate.
+    this.runtimeSnapshotCacheBoundary.invalidateRuntimeSnapshotCaches(teamName);
   }
 
   private createMemberSpawnStatusesSnapshotPorts(): MemberSpawnStatusesSnapshotPorts<ProvisioningRun> {

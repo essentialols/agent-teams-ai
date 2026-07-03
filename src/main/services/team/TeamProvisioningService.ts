@@ -171,9 +171,9 @@ import {
   stopProvisioningFilesystemMonitor,
 } from './provisioning/TeamProvisioningFilesystemMonitor';
 import {
-  injectGeminiPostLaunchHydration as injectGeminiPostLaunchHydrationHelper,
-  injectPostCompactReminder as injectPostCompactReminderHelper,
-} from './provisioning/TeamProvisioningIdlePromptInjection';
+  createTeamProvisioningIdlePromptInjectionBoundary,
+  type TeamProvisioningIdlePromptInjectionBoundary,
+} from './provisioning/TeamProvisioningIdlePromptInjectionPortsFactory';
 import { markTeamInboxMessagesRead } from './provisioning/TeamProvisioningInboxPersistence';
 import {
   armSilentTeammateForward,
@@ -431,9 +431,6 @@ import {
 } from './provisioning/TeamProvisioningProgressState';
 import {
   buildDeterministicLaunchHydrationPrompt,
-  buildGeminiPostLaunchHydrationPrompt,
-  buildPersistentLeadContext,
-  buildTaskBoardSnapshot,
   getCanonicalSendMessageFieldRule,
   getCanonicalSendMessageToolRule,
 } from './provisioning/TeamProvisioningPromptBuilders';
@@ -473,7 +470,6 @@ import {
 } from './provisioning/TeamProvisioningRuntimeBootstrapDelivery';
 import {
   getAnthropicFastModeDefault,
-  getPromptSizeSummary,
   getTeamProviderLabel,
 } from './provisioning/TeamProvisioningRuntimeDiagnostics';
 import {
@@ -1697,6 +1693,7 @@ export class TeamProvisioningService {
   private readonly cleanupRunPorts: TeamProvisioningCleanupPorts<ProvisioningRun>;
   private inFlightResponses = new Set<string>();
   private readonly toolApprovalPortsBoundary: TeamProvisioningToolApprovalPortsBoundary<ProvisioningRun>;
+  private readonly idlePromptInjectionBoundary: TeamProvisioningIdlePromptInjectionBoundary<ProvisioningRun>;
   private readonly providerRuntime: TeamProvisioningProviderRuntimeFacade;
   private readonly prepareCoordinator: TeamProvisioningPrepareCoordinator;
   private readonly configMaintenance: TeamProvisioningConfigMaintenance;
@@ -1892,6 +1889,17 @@ export class TeamProvisioningService {
         nowMs: () => Date.now(),
         joinPath: (...parts) => path.join(...parts),
         teammateOperationalToolNames: AGENT_TEAMS_NAMESPACED_TEAMMATE_OPERATIONAL_TOOL_NAMES,
+      });
+    this.idlePromptInjectionBoundary =
+      createTeamProvisioningIdlePromptInjectionBoundary<ProvisioningRun>({
+        logger,
+        service: {
+          readConfigForObservation: (teamName) => this.readConfigForObservation(teamName),
+          setLeadActivity: (run, state) => this.setLeadActivity(run, state),
+          resetRuntimeToolActivity: (run, memberName) =>
+            this.resetRuntimeToolActivity(run, memberName),
+          getRunLeadName: (run) => this.getRunLeadName(run),
+        },
       });
     this.toolApprovalTimeouts = new TeamProvisioningToolApprovalTimeouts<ProvisioningRun>(
       {
@@ -7493,51 +7501,11 @@ export class TeamProvisioningService {
    * If the injection fails (stdin not writable, process killed), we do not retry.
    */
   private async injectPostCompactReminder(run: ProvisioningRun): Promise<void> {
-    await injectPostCompactReminderHelper(run, {
-      logger,
-      readConfigForObservation: (teamName) => this.readConfigForObservation(teamName),
-      readTasks: (teamName) => new TeamTaskReader().getTasks(teamName),
-      isLeadMember,
-      buildPersistentLeadContext,
-      buildTaskBoardSnapshot,
-      buildGeminiPostLaunchHydrationPrompt,
-      getPromptSizeSummary,
-      writeLeadStdin: (targetRun, payload) =>
-        new Promise<void>((resolve, reject) => {
-          targetRun.child!.stdin!.write(payload + '\n', (err) => {
-            if (err) reject(err);
-            else resolve();
-          });
-        }),
-      setLeadActivity: (targetRun, state) => this.setLeadActivity(targetRun, state),
-      resetRuntimeToolActivity: (targetRun, memberName) =>
-        this.resetRuntimeToolActivity(targetRun, memberName),
-      getRunLeadName: (targetRun) => this.getRunLeadName(targetRun),
-    });
+    await this.idlePromptInjectionBoundary.injectPostCompactReminder(run);
   }
 
   private async injectGeminiPostLaunchHydration(run: ProvisioningRun): Promise<void> {
-    await injectGeminiPostLaunchHydrationHelper(run, {
-      logger,
-      readConfigForObservation: (teamName) => this.readConfigForObservation(teamName),
-      readTasks: (teamName) => new TeamTaskReader().getTasks(teamName),
-      isLeadMember,
-      buildPersistentLeadContext,
-      buildTaskBoardSnapshot,
-      buildGeminiPostLaunchHydrationPrompt,
-      getPromptSizeSummary,
-      writeLeadStdin: (targetRun, payload) =>
-        new Promise<void>((resolve, reject) => {
-          targetRun.child!.stdin!.write(payload + '\n', (err) => {
-            if (err) reject(err);
-            else resolve();
-          });
-        }),
-      setLeadActivity: (targetRun, state) => this.setLeadActivity(targetRun, state),
-      resetRuntimeToolActivity: (targetRun, memberName) =>
-        this.resetRuntimeToolActivity(targetRun, memberName),
-      getRunLeadName: (targetRun) => this.getRunLeadName(targetRun),
-    });
+    await this.idlePromptInjectionBoundary.injectGeminiPostLaunchHydration(run);
   }
 
   /**

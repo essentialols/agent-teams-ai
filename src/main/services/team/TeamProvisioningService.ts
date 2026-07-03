@@ -1,6 +1,4 @@
 import {
-  buildOpenCodeSecondaryLaneId,
-  buildPlannedMemberLaneIdentity,
   isPureOpenCodeWorktreeRootLanePlan,
   type TeamRuntimeLanePlan,
 } from '@features/team-runtime-lanes';
@@ -97,9 +95,7 @@ import {
   getOpenCodeRuntimeRunTombstonesPath,
   inspectOpenCodeRuntimeLaneStorage,
   migrateLegacyOpenCodeRuntimeState,
-  prepareOpenCodeRuntimeLaneForLaunchGeneration,
   readOpenCodeRuntimeLaneIndex,
-  recoverStaleOpenCodeRuntimeLaneIndexEntry,
   setOpenCodeRuntimeActiveRunManifest,
   upsertOpenCodeRuntimeLaneIndexEntry,
 } from './opencode/store/OpenCodeRuntimeManifestEvidenceReader';
@@ -315,11 +311,7 @@ import {
   persistTeamProvisioningInboxMessage,
   persistTeamProvisioningSentMessage,
 } from './provisioning/TeamProvisioningMessagePersistence';
-import { launchSingleMixedSecondaryLaneWithPorts } from './provisioning/TeamProvisioningMixedSecondaryLaneLaunchFlow';
-import {
-  launchMixedSecondaryLaneIfNeeded as launchMixedSecondaryLaneIfNeededHelper,
-  launchQueuedMixedSecondaryLaneInBackground as launchQueuedMixedSecondaryLaneInBackgroundHelper,
-} from './provisioning/TeamProvisioningMixedSecondaryLaunchQueue';
+import { createTeamProvisioningMixedSecondaryLaneWiring } from './provisioning/TeamProvisioningMixedSecondaryLaneWiring';
 import {
   buildMixedSecondaryLaunchSnapshotForRun as buildMixedSecondaryLaunchSnapshotForRunHelper,
   shouldRecoverStalePersistedMixedLaunchSnapshot as shouldRecoverStalePersistedMixedLaunchSnapshotHelper,
@@ -358,8 +350,6 @@ import {
 import { createTeamProvisioningOpenCodeRuntimeDeliveryBoundaryFromPorts } from './provisioning/TeamProvisioningOpenCodeRuntimeDeliveryBoundaryFactory';
 import {
   applyOpenCodeSecondaryBootstrapStallOverlay as applyOpenCodeSecondaryBootstrapStallOverlayHelper,
-  buildOpenCodeSecondaryLaneTimingDiagnostic,
-  createUnexpectedMixedSecondaryLaneFailureResult,
   getOpenCodeSecondaryBootstrapPendingMemberNames as getOpenCodeSecondaryBootstrapPendingMemberNamesHelper,
   isRecoverableOpenCodeRuntimeEvidence,
   isRecoverablePersistedOpenCodeRuntimeCandidate,
@@ -393,7 +383,6 @@ import {
   tryRecoverOpenCodeRuntimeLanesForDeliveryWatchdog as tryRecoverOpenCodeRuntimeLanesForDeliveryWatchdogHelper,
 } from './provisioning/TeamProvisioningOpenCodeRuntimeRecoveryFlow';
 import { createOpenCodeRuntimeRecoveryIdentityHelpers } from './provisioning/TeamProvisioningOpenCodeRuntimeRecoveryIdentity';
-import { stopSingleMixedSecondaryRuntimeLane as stopSingleMixedSecondaryRuntimeLaneHelper } from './provisioning/TeamProvisioningOpenCodeRuntimeStopFlow';
 import {
   type AuthWarningSource,
   buildStallProgressMessage,
@@ -544,7 +533,6 @@ import {
 } from './provisioning/TeamProvisioningSecondaryRuntimeRuns';
 import { scanForNewestProjectSession } from './provisioning/TeamProvisioningSessionDiscovery';
 import { createTeamProvisioningShutdownCoordination } from './provisioning/TeamProvisioningShutdownCoordination';
-import { recoverStaleMixedSecondaryLaunchSnapshotWithPorts } from './provisioning/TeamProvisioningStaleMixedSecondaryRecovery';
 import {
   stopAllTeamsFlow,
   stopPersistentTeamMembersFlow,
@@ -1773,6 +1761,48 @@ export class TeamProvisioningService {
     logger,
     nowIso,
   });
+  private readonly mixedSecondaryLaneWiring =
+    createTeamProvisioningMixedSecondaryLaneWiring<ProvisioningRun>({
+      service: {
+        isStoppingSecondaryRuntimeTeam: (teamName) =>
+          this.stoppingSecondaryRuntimeTeams.has(teamName),
+        deleteSecondaryRuntimeRun: (teamName, laneId) =>
+          this.deleteSecondaryRuntimeRun(teamName, laneId),
+        getOpenCodeRuntimeAdapter: () => this.getOpenCodeRuntimeAdapter(),
+        publishMixedSecondaryLaneStatusChange: (run, lane) =>
+          this.publishMixedSecondaryLaneStatusChange(run, lane),
+        readLaunchState: (teamName) => this.launchStateStore.read(teamName),
+        setSecondaryRuntimeRun: (input) => this.setSecondaryRuntimeRun(input),
+        buildOpenCodeSecondaryAppManagedLaunchPrompt: (run, lane) =>
+          this.buildOpenCodeSecondaryAppManagedLaunchPrompt(run, lane),
+        guardCommittedOpenCodeSecondaryLaneEvidence: (input) =>
+          this.guardCommittedOpenCodeSecondaryLaneEvidence(input),
+        syncOpenCodeRuntimeToolApprovals: (input) => this.syncOpenCodeRuntimeToolApprovals(input),
+        launchSingleMixedSecondaryLane: (run, lane) =>
+          this.launchSingleMixedSecondaryLane(run, lane),
+        persistLaunchStateSnapshot: (run, launchPhase) =>
+          this.persistLaunchStateSnapshot(run, launchPhase),
+        getMixedSecondaryLaunchPhase: (run) => this.getMixedSecondaryLaunchPhase(run),
+        hasMixedSecondaryLaunchMetadata: (snapshot) =>
+          this.hasMixedSecondaryLaunchMetadata(snapshot),
+        shouldRecoverStalePersistedMixedLaunchSnapshot: (snapshot) =>
+          this.shouldRecoverStalePersistedMixedLaunchSnapshot(snapshot),
+        readTeamMeta: (teamName) => this.teamMetaStore.getMeta(teamName),
+        readMembersMeta: (teamName) => this.membersMetaStore.getMeta(teamName),
+        readPersistedTeamProjectPath: (teamName) => this.readPersistedTeamProjectPath(teamName),
+        tryRecoverMissingOpenCodeSecondaryLaneFromRuntime: (input) =>
+          this.tryRecoverMissingOpenCodeSecondaryLaneFromRuntime(input),
+        tryRecoverActiveOpenCodeSecondaryLaneFromRuntime: (input) =>
+          this.tryRecoverActiveOpenCodeSecondaryLaneFromRuntime(input),
+        resolveCurrentOpenCodeRuntimeRunId: (teamName, laneId) =>
+          this.openCodeRuntimeRecoveryIdentity.resolveCurrentOpenCodeRuntimeRunId(teamName, laneId),
+        buildAggregateLaunchSnapshot: (input) =>
+          this.runtimeLaneCoordinator.buildAggregateLaunchSnapshot(input),
+        writeLaunchStateSnapshot: (teamName, snapshot) =>
+          this.writeLaunchStateSnapshot(teamName, snapshot),
+      },
+      logger,
+    });
   private crossTeamSender:
     | ((request: {
         fromTeam: string;
@@ -7014,30 +7044,7 @@ export class TeamProvisioningService {
     run: ProvisioningRun,
     lane: MixedSecondaryRuntimeLaneState
   ): Promise<void> {
-    await launchSingleMixedSecondaryLaneWithPorts(run, lane, {
-      nowMs: () => Date.now(),
-      randomUuid: () => randomUUID(),
-      teamsBasePath: () => getTeamsBasePath(),
-      isStoppingSecondaryRuntimeTeam: (teamName) =>
-        this.stoppingSecondaryRuntimeTeams.has(teamName),
-      clearOpenCodeRuntimeLaneStorage,
-      deleteSecondaryRuntimeRun: (teamName, laneId) =>
-        this.deleteSecondaryRuntimeRun(teamName, laneId),
-      getOpenCodeRuntimeAdapter: () => this.getOpenCodeRuntimeAdapter(),
-      migrateLegacyOpenCodeRuntimeState,
-      upsertOpenCodeRuntimeLaneIndexEntry,
-      buildOpenCodeSecondaryLaneTimingDiagnostic,
-      publishMixedSecondaryLaneStatusChange: (nextRun, nextLane) =>
-        this.publishMixedSecondaryLaneStatusChange(nextRun, nextLane),
-      readLaunchState: (teamName) => this.launchStateStore.read(teamName),
-      setSecondaryRuntimeRun: (input) => this.setSecondaryRuntimeRun(input),
-      prepareOpenCodeRuntimeLaneForLaunchGeneration,
-      buildOpenCodeSecondaryAppManagedLaunchPrompt: (nextRun, nextLane) =>
-        this.buildOpenCodeSecondaryAppManagedLaunchPrompt(nextRun, nextLane),
-      guardCommittedOpenCodeSecondaryLaneEvidence: (input) =>
-        this.guardCommittedOpenCodeSecondaryLaneEvidence(input),
-      syncOpenCodeRuntimeToolApprovals: (input) => this.syncOpenCodeRuntimeToolApprovals(input),
-    });
+    await this.mixedSecondaryLaneWiring.launchSingleMixedSecondaryLane(run, lane);
   }
 
   private async stopSingleMixedSecondaryRuntimeLane(
@@ -7045,67 +7052,20 @@ export class TeamProvisioningService {
     lane: MixedSecondaryRuntimeLaneState,
     reason: TeamRuntimeStopInput['reason']
   ): Promise<void> {
-    await stopSingleMixedSecondaryRuntimeLaneHelper(run, lane, reason, {
-      teamsBasePath: getTeamsBasePath(),
-      getOpenCodeRuntimeAdapter: () => this.getOpenCodeRuntimeAdapter(),
-      readLaunchState: (teamName) => this.launchStateStore.read(teamName),
-      upsertOpenCodeRuntimeLaneIndexEntry,
-      clearOpenCodeRuntimeLaneStorage,
-      deleteSecondaryRuntimeRun: (teamName, laneId) =>
-        this.deleteSecondaryRuntimeRun(teamName, laneId),
-      logger,
-    });
+    await this.mixedSecondaryLaneWiring.stopSingleMixedSecondaryRuntimeLane(run, lane, reason);
   }
 
   private launchQueuedMixedSecondaryLaneInBackground(
     run: ProvisioningRun,
     lane: MixedSecondaryRuntimeLaneState
   ): void {
-    launchQueuedMixedSecondaryLaneInBackgroundHelper(run, lane, {
-      nowMs: () => Date.now(),
-      randomUuid: () => randomUUID(),
-      teamsBasePath: () => getTeamsBasePath(),
-      clearOpenCodeRuntimeLaneStorage,
-      upsertOpenCodeRuntimeLaneIndexEntry,
-      deleteSecondaryRuntimeRun: (teamName, laneId) =>
-        this.deleteSecondaryRuntimeRun(teamName, laneId),
-      launchSingleMixedSecondaryLane: (nextRun, nextLane) =>
-        this.launchSingleMixedSecondaryLane(nextRun, nextLane),
-      publishMixedSecondaryLaneStatusChange: (nextRun, nextLane) =>
-        this.publishMixedSecondaryLaneStatusChange(nextRun, nextLane),
-      persistLaunchStateSnapshot: (nextRun, launchPhase) =>
-        this.persistLaunchStateSnapshot(nextRun, launchPhase),
-      readLaunchState: (teamName) => this.launchStateStore.read(teamName),
-      getOpenCodeRuntimeAdapter: () => this.getOpenCodeRuntimeAdapter(),
-      getMixedSecondaryLaunchPhase: (nextRun) => this.getMixedSecondaryLaunchPhase(nextRun),
-      createUnexpectedMixedSecondaryLaneFailureResult,
-      logger,
-    });
+    this.mixedSecondaryLaneWiring.launchQueuedMixedSecondaryLaneInBackground(run, lane);
   }
 
   private async launchMixedSecondaryLaneIfNeeded(
     run: ProvisioningRun
   ): Promise<PersistedTeamLaunchSnapshot | null> {
-    return launchMixedSecondaryLaneIfNeededHelper(run, {
-      nowMs: () => Date.now(),
-      randomUuid: () => randomUUID(),
-      teamsBasePath: () => getTeamsBasePath(),
-      clearOpenCodeRuntimeLaneStorage,
-      upsertOpenCodeRuntimeLaneIndexEntry,
-      deleteSecondaryRuntimeRun: (teamName, laneId) =>
-        this.deleteSecondaryRuntimeRun(teamName, laneId),
-      launchSingleMixedSecondaryLane: (nextRun, nextLane) =>
-        this.launchSingleMixedSecondaryLane(nextRun, nextLane),
-      publishMixedSecondaryLaneStatusChange: (nextRun, nextLane) =>
-        this.publishMixedSecondaryLaneStatusChange(nextRun, nextLane),
-      persistLaunchStateSnapshot: (nextRun, launchPhase) =>
-        this.persistLaunchStateSnapshot(nextRun, launchPhase),
-      readLaunchState: (teamName) => this.launchStateStore.read(teamName),
-      getOpenCodeRuntimeAdapter: () => this.getOpenCodeRuntimeAdapter(),
-      getMixedSecondaryLaunchPhase: (nextRun) => this.getMixedSecondaryLaunchPhase(nextRun),
-      createUnexpectedMixedSecondaryLaneFailureResult,
-      logger,
-    });
+    return this.mixedSecondaryLaneWiring.launchMixedSecondaryLaneIfNeeded(run);
   }
 
   private async recoverStaleMixedSecondaryLaunchSnapshot(
@@ -7113,38 +7073,10 @@ export class TeamProvisioningService {
     bootstrapSnapshot: PersistedTeamLaunchSnapshot | null,
     persistedSnapshot: PersistedTeamLaunchSnapshot | null
   ): Promise<PersistedTeamLaunchSnapshot | null> {
-    return recoverStaleMixedSecondaryLaunchSnapshotWithPorts(
+    return this.mixedSecondaryLaneWiring.recoverStaleMixedSecondaryLaunchSnapshot(
       teamName,
       bootstrapSnapshot,
-      persistedSnapshot,
-      {
-        hasMixedSecondaryLaunchMetadata: (snapshot) =>
-          this.hasMixedSecondaryLaunchMetadata(snapshot),
-        shouldRecoverStalePersistedMixedLaunchSnapshot: (snapshot) =>
-          this.shouldRecoverStalePersistedMixedLaunchSnapshot(snapshot),
-        readTeamMeta: (teamName) => this.teamMetaStore.getMeta(teamName),
-        readMembersMeta: (teamName) => this.membersMetaStore.getMeta(teamName),
-        readPersistedTeamProjectPath: (teamName) => this.readPersistedTeamProjectPath(teamName),
-        readOpenCodeRuntimeLaneIndex,
-        buildPlannedMemberLaneIdentity,
-        buildOpenCodeSecondaryLaneId,
-        snapshotToMemberSpawnStatuses,
-        createInitialMemberSpawnStatusEntry,
-        isLeadMember,
-        tryRecoverMissingOpenCodeSecondaryLaneFromRuntime: (input) =>
-          this.tryRecoverMissingOpenCodeSecondaryLaneFromRuntime(input),
-        tryRecoverActiveOpenCodeSecondaryLaneFromRuntime: (input) =>
-          this.tryRecoverActiveOpenCodeSecondaryLaneFromRuntime(input),
-        resolveCurrentOpenCodeRuntimeRunId: (teamName, laneId) =>
-          this.openCodeRuntimeRecoveryIdentity.resolveCurrentOpenCodeRuntimeRunId(teamName, laneId),
-        recoverStaleOpenCodeRuntimeLaneIndexEntry,
-        nowIso,
-        getTeamsBasePath,
-        buildAggregateLaunchSnapshot: (params) =>
-          this.runtimeLaneCoordinator.buildAggregateLaunchSnapshot(params),
-        writeLaunchStateSnapshot: (teamName, snapshot) =>
-          this.writeLaunchStateSnapshot(teamName, snapshot),
-      }
+      persistedSnapshot
     );
   }
 

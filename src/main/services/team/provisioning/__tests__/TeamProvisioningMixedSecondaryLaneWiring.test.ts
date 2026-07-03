@@ -80,7 +80,7 @@ function createSnapshot(): PersistedTeamLaunchSnapshot {
     teamLaunchState: 'partial_failure',
     members: {},
     updatedAt: '2026-01-01T00:00:00.000Z',
-  } as PersistedTeamLaunchSnapshot;
+  } as unknown as PersistedTeamLaunchSnapshot;
 }
 
 function createService(
@@ -98,7 +98,7 @@ function createService(
     syncOpenCodeRuntimeToolApprovals: vi.fn(),
     launchSingleMixedSecondaryLane: vi.fn(async () => undefined),
     persistLaunchStateSnapshot: vi.fn(async () => createSnapshot()),
-    getMixedSecondaryLaunchPhase: vi.fn(() => 'active'),
+    getMixedSecondaryLaunchPhase: vi.fn(() => 'active' as const),
     hasMixedSecondaryLaunchMetadata: vi.fn(() => true),
     shouldRecoverStalePersistedMixedLaunchSnapshot: vi.fn(() => false),
     readTeamMeta: vi.fn(async () => null),
@@ -240,7 +240,7 @@ describe('TeamProvisioningMixedSecondaryLaneWiring', () => {
         teamName: 'atlas-hq',
         launchPhase: 'active',
         leadDefaults: {
-          providerId: 'claude',
+          providerId: 'anthropic',
           providerBackendId: null,
         },
         primaryMembers: [],

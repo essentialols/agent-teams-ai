@@ -196,10 +196,9 @@ import {
 } from './provisioning/TeamProvisioningLaunchExpectedMembers';
 import { createTeamProvisioningLaunchExpectedMembersPorts } from './provisioning/TeamProvisioningLaunchExpectedMembersPortsFactory';
 import {
-  readRuntimeProviderLaunchFacts as readRuntimeProviderLaunchFactsHelper,
-  resolveAndValidateLaunchIdentity as resolveAndValidateLaunchIdentityHelper,
-  resolveDirectMemberLaunchIdentity as resolveDirectMemberLaunchIdentityHelper,
-} from './provisioning/TeamProvisioningLaunchIdentity';
+  createTeamProvisioningLaunchIdentityBoundary,
+  type TeamProvisioningLaunchIdentityBoundary,
+} from './provisioning/TeamProvisioningLaunchIdentityBoundaryFactory';
 import { buildTeamLaunchIncompleteNotificationPayload } from './provisioning/TeamProvisioningLaunchIncompleteNotification';
 import { TeamProvisioningLaunchNotifications } from './provisioning/TeamProvisioningLaunchNotifications';
 import {
@@ -328,7 +327,10 @@ import {
 } from './provisioning/TeamProvisioningOpenCodeBootstrapStall';
 import { boundOpenCodeAppManagedBriefingText } from './provisioning/TeamProvisioningOpenCodeDiagnosticsPolicy';
 import { createTeamProvisioningOpenCodeInboxAttachmentPayloadBoundary } from './provisioning/TeamProvisioningOpenCodeInboxAttachmentPayloadBoundaryFactory';
-import { resolveOpenCodeMemberIdentityFromDirectory as resolveOpenCodeMemberIdentityFromDirectoryHelper } from './provisioning/TeamProvisioningOpenCodeMemberIdentity';
+import {
+  createTeamProvisioningOpenCodeMemberIdentityBoundary,
+  type TeamProvisioningOpenCodeMemberIdentityBoundary,
+} from './provisioning/TeamProvisioningOpenCodeMemberIdentityBoundaryFactory';
 import {
   type OpenCodeMemberInboxRelayOptions,
   type OpenCodeMemberInboxRelayResult,
@@ -468,14 +470,12 @@ import {
   getRuntimeFailureLabelForRequest,
 } from './provisioning/TeamProvisioningRuntimeFailureLabels';
 import {
-  buildProviderModelLaunchIdentity as buildProviderModelLaunchIdentityHelper,
   buildTeamRuntimeLaunchArgsPlan as buildTeamRuntimeLaunchArgsPlanHelper,
   getTeamsBasePathsToProbe,
   logsSuggestShutdownOrCleanup,
   type RuntimeProviderLaunchFacts,
   type TeamRuntimeLaunchArgsPlan,
   type TeamsBaseLocation,
-  validateRuntimeLaunchSelection as validateRuntimeLaunchSelectionHelper,
   type ValidConfigProbeResult,
 } from './provisioning/TeamProvisioningRuntimeLaunchSelection';
 import { type LiveTeamAgentRuntimeMetadata } from './provisioning/TeamProvisioningRuntimeMetadataPolicy';
@@ -1098,6 +1098,20 @@ function emitLogsProgress(run: ProvisioningRun): void {
 export class TeamProvisioningService {
   private readonly runtimeLaneCoordinator = createTeamRuntimeLaneCoordinator();
   private readonly providerConnectionService = ProviderConnectionService.getInstance();
+  private readonly launchIdentityBoundary: TeamProvisioningLaunchIdentityBoundary =
+    createTeamProvisioningLaunchIdentityBoundary({
+      execCli,
+      providerConnectionService: this.providerConnectionService,
+      getAnthropicFastModeDefault,
+      getProviderLabel: getTeamProviderLabel,
+      logger,
+    });
+  private readonly openCodeMemberIdentityBoundary: TeamProvisioningOpenCodeMemberIdentityBoundary =
+    createTeamProvisioningOpenCodeMemberIdentityBoundary({
+      getSecondaryRuntimeRuns: (teamName) => this.getSecondaryRuntimeRuns(teamName),
+      getRuntimeAdapterProviderId: (teamName) =>
+        this.runtimeAdapterRunByTeam.get(teamName)?.providerId ?? null,
+    });
 
   private static readonly RECENT_CROSS_TEAM_DELIVERY_TTL_MS = 10 * 60 * 1000;
   private static readonly SAME_TEAM_NATIVE_DELIVERY_GRACE_MS = 15_000;
@@ -2682,12 +2696,11 @@ export class TeamProvisioningService {
     memberName: string,
     directory: OpenCodeMemberDirectory
   ): OpenCodeMemberIdentityResolution {
-    return resolveOpenCodeMemberIdentityFromDirectoryHelper({
+    return this.openCodeMemberIdentityBoundary.resolveOpenCodeMemberIdentityFromDirectory(
+      teamName,
       memberName,
-      directory,
-      secondaryRuntimeRuns: this.getSecondaryRuntimeRuns(teamName),
-      runtimeAdapterProviderId: this.runtimeAdapterRunByTeam.get(teamName)?.providerId ?? null,
-    });
+      directory
+    );
   }
 
   setRuntimeAdapterRegistry(registry: TeamRuntimeAdapterRegistry | null): void {
@@ -2875,40 +2888,7 @@ export class TeamProvisioningService {
     providerArgs?: string[];
     limitContext?: boolean;
   }): Promise<RuntimeProviderLaunchFacts> {
-    return readRuntimeProviderLaunchFactsHelper(params, {
-      execCli,
-      getCodexModelCatalog: (input) => this.providerConnectionService.getCodexModelCatalog(input),
-      warn: (message) => logger.warn(message),
-    });
-  }
-
-  private buildProviderModelLaunchIdentity(params: {
-    request: Pick<
-      TeamCreateRequest,
-      'providerId' | 'providerBackendId' | 'model' | 'effort' | 'fastMode' | 'limitContext'
-    >;
-    facts: RuntimeProviderLaunchFacts;
-  }): ProviderModelLaunchIdentity {
-    return buildProviderModelLaunchIdentityHelper({
-      ...params,
-      anthropicFastModeDefault: getAnthropicFastModeDefault(),
-    });
-  }
-
-  private validateRuntimeLaunchSelection(params: {
-    actorLabel: string;
-    providerId: TeamProviderId;
-    model?: string;
-    effort?: EffortLevel;
-    fastMode?: TeamFastMode;
-    limitContext?: boolean;
-    facts: RuntimeProviderLaunchFacts;
-  }): void {
-    validateRuntimeLaunchSelectionHelper({
-      ...params,
-      anthropicFastModeDefault: getAnthropicFastModeDefault(),
-      getProviderLabel: getTeamProviderLabel,
-    });
+    return this.launchIdentityBoundary.readRuntimeProviderLaunchFacts(params);
   }
 
   private async resolveAndValidateLaunchIdentity(params: {
@@ -2922,11 +2902,7 @@ export class TeamProvisioningService {
     effectiveMembers: TeamCreateRequest['members'];
     providerArgsByProvider?: Map<TeamProviderId, string[]>;
   }): Promise<ProviderModelLaunchIdentity> {
-    return resolveAndValidateLaunchIdentityHelper(params, {
-      readRuntimeProviderLaunchFacts: (input) => this.readRuntimeProviderLaunchFacts(input),
-      buildProviderModelLaunchIdentity: (input) => this.buildProviderModelLaunchIdentity(input),
-      validateRuntimeLaunchSelection: (input) => this.validateRuntimeLaunchSelection(input),
-    });
+    return this.launchIdentityBoundary.resolveAndValidateLaunchIdentity(params);
   }
 
   private async resolveDirectMemberLaunchIdentity(input: {
@@ -2938,17 +2914,10 @@ export class TeamProvisioningService {
     memberSpec: TeamCreateRequest['members'][number];
     run: ProvisioningRun;
   }): Promise<ProviderModelLaunchIdentity> {
-    return resolveDirectMemberLaunchIdentityHelper(
-      {
-        ...input,
-        requestLimitContext: input.run.request.limitContext,
-      },
-      {
-        readRuntimeProviderLaunchFacts: (params) => this.readRuntimeProviderLaunchFacts(params),
-        buildProviderModelLaunchIdentity: (params) => this.buildProviderModelLaunchIdentity(params),
-        validateRuntimeLaunchSelection: (params) => this.validateRuntimeLaunchSelection(params),
-      }
-    );
+    return this.launchIdentityBoundary.resolveDirectMemberLaunchIdentity({
+      ...input,
+      requestLimitContext: input.run.request.limitContext,
+    });
   }
 
   async getClaudeLogs(

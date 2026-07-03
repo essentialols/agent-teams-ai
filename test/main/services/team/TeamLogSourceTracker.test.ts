@@ -1,17 +1,17 @@
 import { createHash } from 'crypto';
-import { mkdtemp, mkdir, rm, stat, writeFile } from 'fs/promises';
+import { mkdir, mkdtemp, rm, stat, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import * as path from 'path';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import {
-  getTeamsBasePath,
-  setClaudeBasePathOverride,
-} from '../../../../src/main/utils/pathDecoder';
-import {
   shouldIgnoreLogSourceWatcherPath,
   TeamLogSourceTracker,
 } from '../../../../src/main/services/team/TeamLogSourceTracker';
+import {
+  getTeamsBasePath,
+  setClaudeBasePathOverride,
+} from '../../../../src/main/utils/pathDecoder';
 
 import type { TeamMemberLogsFinder } from '../../../../src/main/services/team/TeamMemberLogsFinder';
 import type { TeamChangeEvent } from '../../../../src/shared/types';

@@ -646,6 +646,7 @@ import {
 } from './provisioning/TeamProvisioningSecondaryRuntimeRuns';
 import { scanForNewestProjectSession } from './provisioning/TeamProvisioningSessionDiscovery';
 import { createTeamProvisioningShutdownCoordination } from './provisioning/TeamProvisioningShutdownCoordination';
+import { recoverStaleMixedSecondaryLaunchSnapshotWithPorts } from './provisioning/TeamProvisioningStaleMixedSecondaryRecovery';
 import {
   stopAllTeamsFlow,
   stopPersistentTeamMembersFlow,
@@ -803,13 +804,10 @@ import type {
   EffortLevel,
   InboxMessage,
   LeadContextUsage,
-  MemberLaunchState,
   MemberSpawnLivenessSource,
   MemberSpawnStatus,
   MemberSpawnStatusEntry,
   MemberSpawnStatusesSnapshot,
-  OpenCodeAppManagedBootstrapCandidate,
-  OpenCodeBootstrapEvidenceSource,
   OpenCodeRuntimeDeliveryStatus,
   OpenCodeRuntimeDeliveryUserVisibleImpact,
   PersistedTeamLaunchMemberState,
@@ -819,9 +817,6 @@ import type {
   ProviderModelLaunchIdentity,
   RetryFailedOpenCodeSecondaryLanesResult,
   TaskRef,
-  TeamAgentRuntimeDiagnosticSeverity,
-  TeamAgentRuntimeLivenessKind,
-  TeamAgentRuntimePidSource,
   TeamAgentRuntimeSnapshot,
   TeamChangeEvent,
   TeamConfig,
@@ -8972,304 +8967,38 @@ export class TeamProvisioningService {
     bootstrapSnapshot: PersistedTeamLaunchSnapshot | null,
     persistedSnapshot: PersistedTeamLaunchSnapshot | null
   ): Promise<PersistedTeamLaunchSnapshot | null> {
-    if (
-      persistedSnapshot &&
-      this.hasMixedSecondaryLaunchMetadata(persistedSnapshot) &&
-      !this.shouldRecoverStalePersistedMixedLaunchSnapshot(persistedSnapshot)
-    ) {
-      return persistedSnapshot;
-    }
-
-    const teamMeta = await this.teamMetaStore.getMeta(teamName).catch(() => null);
-    const leadLaunchIdentity = teamMeta?.launchIdentity;
-    const leadProviderId =
-      normalizeOptionalTeamProviderId(leadLaunchIdentity?.providerId) ??
-      normalizeOptionalTeamProviderId(teamMeta?.providerId);
-    if (!leadProviderId) {
-      return null;
-    }
-
-    const membersMeta = await this.membersMetaStore.getMeta(teamName).catch(() => null);
-    const activeMembers = (membersMeta?.members ?? []).filter(
-      (member) => !member.removedAt && !isLeadMember({ name: member.name })
-    );
-    if (activeMembers.length === 0) {
-      return null;
-    }
-    const projectPath = this.readPersistedTeamProjectPath(teamName);
-
-    const laneIndex = await readOpenCodeRuntimeLaneIndex(getTeamsBasePath(), teamName).catch(
-      () => ({
-        version: 1 as const,
-        updatedAt: nowIso(),
-        lanes: {} as Record<
-          string,
-          {
-            laneId: string;
-            state: 'active' | 'stopped' | 'degraded';
-            updatedAt: string;
-            diagnostics?: string[];
-          }
-        >,
-      })
-    );
-    const bootstrapStatuses = snapshotToMemberSpawnStatuses(bootstrapSnapshot);
-    const leadDefaults = {
-      providerId: leadProviderId,
-      providerBackendId:
-        migrateProviderBackendId(
-          leadProviderId,
-          leadLaunchIdentity
-            ? (leadLaunchIdentity.providerBackendId ??
-                teamMeta?.providerBackendId ??
-                membersMeta?.providerBackendId)
-            : (teamMeta?.providerBackendId ?? membersMeta?.providerBackendId)
-        ) ?? null,
-      selectedFastMode: leadLaunchIdentity?.selectedFastMode ?? teamMeta?.fastMode,
-      resolvedFastMode:
-        typeof teamMeta?.launchIdentity?.resolvedFastMode === 'boolean'
-          ? teamMeta.launchIdentity.resolvedFastMode
-          : null,
-      launchIdentity: teamMeta?.launchIdentity ?? null,
-    };
-    const primaryMembers: TeamMember[] = [];
-    const secondaryMembers: {
-      laneId: string;
-      runtimeRunId?: string | null;
-      member: TeamMember;
-      leadDefaults: typeof leadDefaults;
-      evidence?: {
-        launchState?: MemberLaunchState;
-        agentToolAccepted?: boolean;
-        runtimeAlive?: boolean;
-        bootstrapConfirmed?: boolean;
-        hardFailure?: boolean;
-        hardFailureReason?: string;
-        pendingPermissionRequestIds?: string[];
-        runtimePid?: number;
-        sessionId?: string;
-        runtimeSessionId?: string;
-        bootstrapEvidenceSource?: OpenCodeBootstrapEvidenceSource;
-        bootstrapMode?: 'model_tool_checkin' | 'app_managed_context';
-        appManagedBootstrapCandidate?: OpenCodeAppManagedBootstrapCandidate;
-        livenessKind?: TeamAgentRuntimeLivenessKind;
-        pidSource?: TeamAgentRuntimePidSource;
-        runtimeDiagnostic?: string;
-        runtimeDiagnosticSeverity?: TeamAgentRuntimeDiagnosticSeverity;
-        firstSpawnAcceptedAt?: string;
-        diagnostics?: string[];
-      };
-      pendingReason?: string;
-    }[] = [];
-    let recoveredAny = false;
-
-    for (const member of activeMembers) {
-      const persistedMember =
-        persistedSnapshot?.members?.[member.name] ?? bootstrapSnapshot?.members?.[member.name];
-      const laneIdentity =
-        leadProviderId === 'opencode'
-          ? (() => {
-              const persistedLaneId = persistedMember?.laneId?.startsWith('secondary:opencode:')
-                ? persistedMember.laneId
-                : null;
-              const generatedLaneId = buildOpenCodeSecondaryLaneId(member);
-              const memberCwd = member.cwd?.trim();
-              const projectRoot = projectPath?.trim();
-              const hasWorktreeRoot =
-                Boolean(memberCwd) && (!projectRoot || memberCwd !== projectRoot);
-              if (!persistedLaneId && !laneIndex.lanes[generatedLaneId] && !hasWorktreeRoot) {
-                return {
-                  laneId: 'primary',
-                  laneKind: 'primary',
-                  laneOwnerProviderId: leadProviderId,
-                } as const;
-              }
-              return {
-                laneId: persistedLaneId ?? generatedLaneId,
-                laneKind: 'secondary',
-                laneOwnerProviderId: 'opencode',
-              } as const;
-            })()
-          : buildPlannedMemberLaneIdentity({
-              leadProviderId,
-              member: {
-                name: member.name,
-                providerId: normalizeOptionalTeamProviderId(member.providerId),
-              },
-            });
-
-      if (
-        laneIdentity.laneKind !== 'secondary' ||
-        laneIdentity.laneOwnerProviderId !== 'opencode'
-      ) {
-        primaryMembers.push(member);
-        continue;
-      }
-
-      let laneEntry = laneIndex.lanes[laneIdentity.laneId];
-      if (
-        !laneEntry &&
-        persistedMember &&
-        isRecoverablePersistedOpenCodeRuntimeCandidate(persistedMember) &&
-        persistedMember.laneId === laneIdentity.laneId
-      ) {
-        const runtimeEvidence = await this.tryRecoverMissingOpenCodeSecondaryLaneFromRuntime({
-          teamName,
-          laneId: laneIdentity.laneId,
-          member,
-          projectPath,
-          previousLaunchState: persistedSnapshot ?? bootstrapSnapshot,
-          persistedMember,
-        });
-        if (runtimeEvidence) {
-          recoveredAny = true;
-          secondaryMembers.push({
-            laneId: laneIdentity.laneId,
-            runtimeRunId: persistedMember.runtimeRunId,
-            member,
-            leadDefaults,
-            evidence: {
-              launchState: runtimeEvidence.launchState,
-              agentToolAccepted: runtimeEvidence.agentToolAccepted,
-              runtimeAlive: runtimeEvidence.runtimeAlive,
-              bootstrapConfirmed: runtimeEvidence.bootstrapConfirmed,
-              hardFailure: runtimeEvidence.hardFailure,
-              hardFailureReason: runtimeEvidence.hardFailureReason,
-              pendingPermissionRequestIds: runtimeEvidence.pendingPermissionRequestIds,
-              runtimePid: runtimeEvidence.runtimePid,
-              sessionId: runtimeEvidence.sessionId,
-              runtimeSessionId: runtimeEvidence.sessionId,
-              bootstrapEvidenceSource: runtimeEvidence.bootstrapEvidenceSource,
-              bootstrapMode: runtimeEvidence.bootstrapMode,
-              appManagedBootstrapCandidate: runtimeEvidence.appManagedBootstrapCandidate,
-              livenessKind: runtimeEvidence.livenessKind,
-              pidSource: runtimeEvidence.pidSource,
-              runtimeDiagnostic: runtimeEvidence.runtimeDiagnostic,
-              runtimeDiagnosticSeverity: runtimeEvidence.runtimeDiagnosticSeverity,
-              firstSpawnAcceptedAt: persistedMember.firstSpawnAcceptedAt,
-              diagnostics: runtimeEvidence.diagnostics,
-            },
-          });
-          continue;
-        }
-      }
-      if (laneEntry?.state === 'active') {
-        const runtimeEvidence = await this.tryRecoverActiveOpenCodeSecondaryLaneFromRuntime({
-          teamName,
-          laneId: laneIdentity.laneId,
-          member,
-          projectPath,
-          previousLaunchState: persistedSnapshot ?? bootstrapSnapshot,
-        });
-        if (isRecoverableOpenCodeRuntimeEvidence(runtimeEvidence)) {
-          recoveredAny = true;
-          const runtimeRunId =
-            runtimeEvidence.appManagedBootstrapCandidate?.runId ??
-            (await this.openCodeRuntimeRecoveryIdentity.resolveCurrentOpenCodeRuntimeRunId(
-              teamName,
-              laneIdentity.laneId
-            )) ??
-            persistedMember?.runtimeRunId?.trim() ??
-            undefined;
-          secondaryMembers.push({
-            laneId: laneIdentity.laneId,
-            runtimeRunId,
-            member,
-            leadDefaults,
-            evidence: {
-              launchState: runtimeEvidence.launchState,
-              agentToolAccepted: runtimeEvidence.agentToolAccepted,
-              runtimeAlive: runtimeEvidence.runtimeAlive,
-              bootstrapConfirmed: runtimeEvidence.bootstrapConfirmed,
-              hardFailure: runtimeEvidence.hardFailure,
-              hardFailureReason: runtimeEvidence.hardFailureReason,
-              pendingPermissionRequestIds: runtimeEvidence.pendingPermissionRequestIds,
-              runtimePid: runtimeEvidence.runtimePid,
-              sessionId: runtimeEvidence.sessionId,
-              bootstrapEvidenceSource: runtimeEvidence.bootstrapEvidenceSource,
-              bootstrapMode: runtimeEvidence.bootstrapMode,
-              appManagedBootstrapCandidate: runtimeEvidence.appManagedBootstrapCandidate,
-              livenessKind: runtimeEvidence.livenessKind,
-              pidSource: runtimeEvidence.pidSource,
-              runtimeDiagnostic: runtimeEvidence.runtimeDiagnostic,
-              runtimeDiagnosticSeverity: runtimeEvidence.runtimeDiagnosticSeverity,
-              firstSpawnAcceptedAt: persistedMember?.firstSpawnAcceptedAt,
-              diagnostics: runtimeEvidence.diagnostics,
-            },
-          });
-          continue;
-        }
-        const recovery = await recoverStaleOpenCodeRuntimeLaneIndexEntry({
-          teamsBasePath: getTeamsBasePath(),
-          teamName,
-          laneId: laneIdentity.laneId,
-        });
-        if (recovery.stale) {
-          recoveredAny = true;
-          laneEntry = {
-            laneId: laneIdentity.laneId,
-            state: 'degraded',
-            updatedAt: nowIso(),
-            diagnostics: recovery.diagnostics,
-          };
-        }
-      }
-
-      if (laneEntry?.state === 'degraded') {
-        recoveredAny = true;
-        const diagnostics = laneEntry.diagnostics?.length
-          ? [...laneEntry.diagnostics]
-          : [`OpenCode lane ${laneIdentity.laneId} is degraded and requires stop + relaunch.`];
-        secondaryMembers.push({
-          laneId: laneIdentity.laneId,
-          member,
-          leadDefaults,
-          evidence: {
-            launchState: 'failed_to_start',
-            agentToolAccepted: false,
-            runtimeAlive: false,
-            bootstrapConfirmed: false,
-            hardFailure: true,
-            hardFailureReason: diagnostics[0],
-            diagnostics,
-          },
-        });
-        continue;
-      }
-
-      secondaryMembers.push({
-        laneId: laneIdentity.laneId,
-        member,
-        leadDefaults,
-        pendingReason: 'Waiting for OpenCode secondary lane recovery.',
-      });
-    }
-
-    if (!recoveredAny) {
-      return null;
-    }
-
-    const primaryStatuses = Object.fromEntries(
-      primaryMembers.map((member) => [
-        member.name,
-        bootstrapStatuses[member.name] ?? createInitialMemberSpawnStatusEntry(),
-      ])
-    );
-    const recoveredSnapshot = this.runtimeLaneCoordinator.buildAggregateLaunchSnapshot({
+    return recoverStaleMixedSecondaryLaunchSnapshotWithPorts(
       teamName,
-      leadSessionId: persistedSnapshot?.leadSessionId ?? bootstrapSnapshot?.leadSessionId,
-      launchPhase:
-        persistedSnapshot?.launchPhase === 'active'
-          ? 'active'
-          : bootstrapSnapshot?.launchPhase === 'active'
-            ? 'active'
-            : 'reconciled',
-      leadDefaults,
-      primaryMembers,
-      primaryStatuses,
-      secondaryMembers,
-    });
-    return this.writeLaunchStateSnapshot(teamName, recoveredSnapshot);
+      bootstrapSnapshot,
+      persistedSnapshot,
+      {
+        hasMixedSecondaryLaunchMetadata: (snapshot) => this.hasMixedSecondaryLaunchMetadata(snapshot),
+        shouldRecoverStalePersistedMixedLaunchSnapshot: (snapshot) =>
+          this.shouldRecoverStalePersistedMixedLaunchSnapshot(snapshot),
+        readTeamMeta: (teamName) => this.teamMetaStore.getMeta(teamName),
+        readMembersMeta: (teamName) => this.membersMetaStore.getMeta(teamName),
+        readPersistedTeamProjectPath: (teamName) => this.readPersistedTeamProjectPath(teamName),
+        readOpenCodeRuntimeLaneIndex,
+        buildPlannedMemberLaneIdentity,
+        buildOpenCodeSecondaryLaneId,
+        snapshotToMemberSpawnStatuses,
+        createInitialMemberSpawnStatusEntry,
+        isLeadMember,
+        tryRecoverMissingOpenCodeSecondaryLaneFromRuntime: (input) =>
+          this.tryRecoverMissingOpenCodeSecondaryLaneFromRuntime(input),
+        tryRecoverActiveOpenCodeSecondaryLaneFromRuntime: (input) =>
+          this.tryRecoverActiveOpenCodeSecondaryLaneFromRuntime(input),
+        resolveCurrentOpenCodeRuntimeRunId: (teamName, laneId) =>
+          this.openCodeRuntimeRecoveryIdentity.resolveCurrentOpenCodeRuntimeRunId(teamName, laneId),
+        recoverStaleOpenCodeRuntimeLaneIndexEntry,
+        nowIso,
+        getTeamsBasePath,
+        buildAggregateLaunchSnapshot: (params) =>
+          this.runtimeLaneCoordinator.buildAggregateLaunchSnapshot(params),
+        writeLaunchStateSnapshot: (teamName, snapshot) =>
+          this.writeLaunchStateSnapshot(teamName, snapshot),
+      }
+    );
   }
 
   private async tryRecoverActiveOpenCodeSecondaryLaneFromRuntime(params: {

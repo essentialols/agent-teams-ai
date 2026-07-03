@@ -68,6 +68,108 @@ export interface TeamProvisioningStreamEventPortCallbacks<
   persistLaunchStateSnapshot: TeamProvisioningStreamEventPorts<TRun>['persistLaunchStateSnapshot'];
 }
 
+type StreamEventServicePortKey =
+  | 'resetLiveLeadTextBuffer'
+  | 'handleTeammatePermissionRequest'
+  | 'finishRuntimeToolActivity'
+  | 'handleNativeTeammateUserMessage'
+  | 'handleAuthFailureInOutput'
+  | 'failProvisioningWithApiError'
+  | 'appendProvisioningAssistantText'
+  | 'pushLiveLeadTextMessage'
+  | 'startRuntimeToolActivity'
+  | 'getRunLeadName'
+  | 'captureTeamSpawnEvents'
+  | 'captureSendMessages'
+  | 'emitLeadContextUsage'
+  | 'resetRuntimeToolActivity'
+  | 'setLeadActivity'
+  | 'pushLiveLeadProcessMessage'
+  | 'injectPostCompactReminder'
+  | 'injectGeminiPostLaunchHydration'
+  | 'completeProvisioningFromSuccessfulResult'
+  | 'handleControlRequest'
+  | 'handleProvisioningTurnComplete'
+  | 'cleanupRun'
+  | 'emitApiErrorWarning'
+  | 'setMemberSpawnStatus'
+  | 'appendMemberBootstrapDiagnostic'
+  | 'reevaluateMemberLaunchStatus'
+  | 'invalidateRuntimeSnapshotCaches'
+  | 'markUnconfirmedBootstrapMembersFailed'
+  | 'stopPersistentTeamMembers'
+  | 'persistLaunchStateSnapshot';
+
+export type TeamProvisioningStreamEventServiceAdapter<
+  TRun extends TeamProvisioningStreamEventPortsFactoryRun,
+> = Pick<TeamProvisioningStreamEventPorts<TRun>, StreamEventServicePortKey>;
+
+export interface TeamProvisioningStreamEventPortsBoundaryDeps<
+  TRun extends TeamProvisioningStreamEventPortsFactoryRun,
+> {
+  service: TeamProvisioningStreamEventServiceAdapter<TRun>;
+  updateProgress: TeamProvisioningStreamEventPorts<TRun>['updateProgress'];
+  emitTeamChange?: TeamProvisioningStreamEventPorts<TRun>['emitTeamChange'];
+}
+
+export function createTeamProvisioningStreamEventPortsBoundary<
+  TRun extends TeamProvisioningStreamEventPortsFactoryRun,
+>(
+  deps: TeamProvisioningStreamEventPortsBoundaryDeps<TRun>
+): TeamProvisioningStreamEventPorts<TRun> {
+  return createTeamProvisioningStreamEventPorts({
+    updateProgress: (run, state, message, extras) =>
+      deps.updateProgress(run, state, message, extras),
+    resetLiveLeadTextBuffer: (run) => deps.service.resetLiveLeadTextBuffer(run),
+    handleTeammatePermissionRequest: (run, permissionRequest, timestamp) =>
+      deps.service.handleTeammatePermissionRequest(run, permissionRequest, timestamp),
+    finishRuntimeToolActivity: (run, toolUseId, resultContent, isError) =>
+      deps.service.finishRuntimeToolActivity(run, toolUseId, resultContent, isError),
+    handleNativeTeammateUserMessage: (run, msg) =>
+      deps.service.handleNativeTeammateUserMessage(run, msg),
+    handleAuthFailureInOutput: (run, text, source) =>
+      deps.service.handleAuthFailureInOutput(run, text, source),
+    failProvisioningWithApiError: (run, text) =>
+      deps.service.failProvisioningWithApiError(run, text),
+    appendProvisioningAssistantText: (run, msg, text) =>
+      deps.service.appendProvisioningAssistantText(run, msg, text),
+    pushLiveLeadTextMessage: (run, text, messageId, timestamp, options) =>
+      deps.service.pushLiveLeadTextMessage(run, text, messageId, timestamp, options),
+    startRuntimeToolActivity: (run, memberName, block) =>
+      deps.service.startRuntimeToolActivity(run, memberName, block),
+    getRunLeadName: (run) => deps.service.getRunLeadName(run),
+    captureTeamSpawnEvents: (run, content) => deps.service.captureTeamSpawnEvents(run, content),
+    captureSendMessages: (run, content) => deps.service.captureSendMessages(run, content),
+    emitLeadContextUsage: (run) => deps.service.emitLeadContextUsage(run),
+    resetRuntimeToolActivity: (run, memberName) =>
+      deps.service.resetRuntimeToolActivity(run, memberName),
+    setLeadActivity: (run, state) => deps.service.setLeadActivity(run, state),
+    emitTeamChange: (event) => deps.emitTeamChange?.(event),
+    pushLiveLeadProcessMessage: (teamName, message) =>
+      deps.service.pushLiveLeadProcessMessage(teamName, message),
+    injectPostCompactReminder: (run) => deps.service.injectPostCompactReminder(run),
+    injectGeminiPostLaunchHydration: (run) => deps.service.injectGeminiPostLaunchHydration(run),
+    completeProvisioningFromSuccessfulResult: (run) =>
+      deps.service.completeProvisioningFromSuccessfulResult(run),
+    handleControlRequest: (run, msg) => deps.service.handleControlRequest(run, msg),
+    handleProvisioningTurnComplete: (run) => deps.service.handleProvisioningTurnComplete(run),
+    cleanupRun: (run) => deps.service.cleanupRun(run),
+    emitApiErrorWarning: (run, text) => deps.service.emitApiErrorWarning(run, text),
+    setMemberSpawnStatus: (run, memberName, status, error) =>
+      deps.service.setMemberSpawnStatus(run, memberName, status, error),
+    appendMemberBootstrapDiagnostic: (run, memberName, detail) =>
+      deps.service.appendMemberBootstrapDiagnostic(run, memberName, detail),
+    reevaluateMemberLaunchStatus: (run, memberName) =>
+      deps.service.reevaluateMemberLaunchStatus(run, memberName),
+    invalidateRuntimeSnapshotCaches: (teamName) =>
+      deps.service.invalidateRuntimeSnapshotCaches(teamName),
+    markUnconfirmedBootstrapMembersFailed: (run, reason, options) =>
+      deps.service.markUnconfirmedBootstrapMembersFailed(run, reason, options),
+    stopPersistentTeamMembers: (teamName) => deps.service.stopPersistentTeamMembers(teamName),
+    persistLaunchStateSnapshot: (run, phase) => deps.service.persistLaunchStateSnapshot(run, phase),
+  });
+}
+
 export function createTeamProvisioningStreamEventPorts<
   TRun extends TeamProvisioningStreamEventPortsFactoryRun,
 >(

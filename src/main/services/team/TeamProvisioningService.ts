@@ -530,7 +530,10 @@ import {
   killOrphanedTeamAgentProcesses as killOrphanedTeamAgentProcessesHelper,
   killPersistedPaneMembers as killPersistedPaneMembersHelper,
 } from './provisioning/TeamProvisioningStopProcessCleanup';
-import { createTeamProvisioningStreamEventPorts } from './provisioning/TeamProvisioningStreamEventPortsFactory';
+import {
+  createTeamProvisioningStreamEventPortsBoundary,
+  type TeamProvisioningStreamEventServiceAdapter,
+} from './provisioning/TeamProvisioningStreamEventPortsFactory';
 import {
   handleDeterministicBootstrapEvent,
   handleTeamProvisioningStreamJsonMessage,
@@ -7134,51 +7137,10 @@ export class TeamProvisioningService {
   }
 
   private getStreamJsonEventPorts(): TeamProvisioningStreamEventPorts<ProvisioningRun> {
-    return createTeamProvisioningStreamEventPorts({
+    return createTeamProvisioningStreamEventPortsBoundary({
+      service: this as TeamProvisioningStreamEventServiceAdapter<ProvisioningRun>,
       updateProgress,
-      resetLiveLeadTextBuffer: (run) => this.resetLiveLeadTextBuffer(run),
-      handleTeammatePermissionRequest: (run, permissionRequest, timestamp) =>
-        this.handleTeammatePermissionRequest(run, permissionRequest, timestamp),
-      finishRuntimeToolActivity: (run, toolUseId, resultContent, isError) =>
-        this.finishRuntimeToolActivity(run, toolUseId, resultContent, isError),
-      handleNativeTeammateUserMessage: (run, msg) => this.handleNativeTeammateUserMessage(run, msg),
-      handleAuthFailureInOutput: (run, text, source) =>
-        this.handleAuthFailureInOutput(run, text, source),
-      failProvisioningWithApiError: (run, text) => this.failProvisioningWithApiError(run, text),
-      appendProvisioningAssistantText: (run, msg, text) =>
-        this.appendProvisioningAssistantText(run, msg, text),
-      pushLiveLeadTextMessage: (run, text, messageId, timestamp, options) =>
-        this.pushLiveLeadTextMessage(run, text, messageId, timestamp, options),
-      startRuntimeToolActivity: (run, memberName, block) =>
-        this.startRuntimeToolActivity(run, memberName, block),
-      getRunLeadName: (run) => this.getRunLeadName(run),
-      captureTeamSpawnEvents: (run, content) => this.captureTeamSpawnEvents(run, content),
-      captureSendMessages: (run, content) => this.captureSendMessages(run, content),
-      emitLeadContextUsage: (run) => this.emitLeadContextUsage(run),
-      resetRuntimeToolActivity: (run, memberName) => this.resetRuntimeToolActivity(run, memberName),
-      setLeadActivity: (run, state) => this.setLeadActivity(run, state),
       emitTeamChange: (event) => this.teamChangeEmitter?.(event),
-      pushLiveLeadProcessMessage: (teamName, message) =>
-        this.pushLiveLeadProcessMessage(teamName, message),
-      injectPostCompactReminder: (run) => this.injectPostCompactReminder(run),
-      injectGeminiPostLaunchHydration: (run) => this.injectGeminiPostLaunchHydration(run),
-      completeProvisioningFromSuccessfulResult: (run) =>
-        this.completeProvisioningFromSuccessfulResult(run),
-      handleControlRequest: (run, msg) => this.handleControlRequest(run, msg),
-      handleProvisioningTurnComplete: (run) => this.handleProvisioningTurnComplete(run),
-      cleanupRun: (run) => this.cleanupRun(run),
-      emitApiErrorWarning: (run, text) => this.emitApiErrorWarning(run, text),
-      setMemberSpawnStatus: (run, memberName, status, error) =>
-        this.setMemberSpawnStatus(run, memberName, status, error),
-      appendMemberBootstrapDiagnostic: (run, memberName, detail) =>
-        this.appendMemberBootstrapDiagnostic(run, memberName, detail),
-      reevaluateMemberLaunchStatus: (run, memberName) =>
-        this.reevaluateMemberLaunchStatus(run, memberName),
-      invalidateRuntimeSnapshotCaches: (teamName) => this.invalidateRuntimeSnapshotCaches(teamName),
-      markUnconfirmedBootstrapMembersFailed: (run, reason, options) =>
-        this.markUnconfirmedBootstrapMembersFailed(run, reason, options),
-      stopPersistentTeamMembers: (teamName) => this.stopPersistentTeamMembers(teamName),
-      persistLaunchStateSnapshot: (run, phase) => this.persistLaunchStateSnapshot(run, phase),
     });
   }
 

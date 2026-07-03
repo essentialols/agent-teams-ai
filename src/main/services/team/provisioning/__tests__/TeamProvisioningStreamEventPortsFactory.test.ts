@@ -2,8 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   createTeamProvisioningStreamEventPorts,
+  createTeamProvisioningStreamEventPortsBoundary,
   type TeamProvisioningStreamEventPortCallbacks,
   type TeamProvisioningStreamEventPortsFactoryRun,
+  type TeamProvisioningStreamEventServiceAdapter,
 } from '../TeamProvisioningStreamEventPortsFactory';
 import { handleTeamProvisioningStreamJsonMessage } from '../TeamProvisioningStreamEvents';
 
@@ -113,6 +115,43 @@ function createCallbacks(
   };
 }
 
+function createServiceAdapter(
+  callbacks: TeamProvisioningStreamEventPortCallbacks<TestRun>
+): TeamProvisioningStreamEventServiceAdapter<TestRun> {
+  return {
+    resetLiveLeadTextBuffer: callbacks.resetLiveLeadTextBuffer,
+    handleTeammatePermissionRequest: callbacks.handleTeammatePermissionRequest,
+    finishRuntimeToolActivity: callbacks.finishRuntimeToolActivity,
+    handleNativeTeammateUserMessage: callbacks.handleNativeTeammateUserMessage,
+    handleAuthFailureInOutput: callbacks.handleAuthFailureInOutput,
+    failProvisioningWithApiError: callbacks.failProvisioningWithApiError,
+    appendProvisioningAssistantText: callbacks.appendProvisioningAssistantText,
+    pushLiveLeadTextMessage: callbacks.pushLiveLeadTextMessage,
+    startRuntimeToolActivity: callbacks.startRuntimeToolActivity,
+    getRunLeadName: callbacks.getRunLeadName,
+    captureTeamSpawnEvents: callbacks.captureTeamSpawnEvents,
+    captureSendMessages: callbacks.captureSendMessages,
+    emitLeadContextUsage: callbacks.emitLeadContextUsage,
+    resetRuntimeToolActivity: callbacks.resetRuntimeToolActivity,
+    setLeadActivity: callbacks.setLeadActivity,
+    pushLiveLeadProcessMessage: callbacks.pushLiveLeadProcessMessage,
+    injectPostCompactReminder: callbacks.injectPostCompactReminder,
+    injectGeminiPostLaunchHydration: callbacks.injectGeminiPostLaunchHydration,
+    completeProvisioningFromSuccessfulResult: callbacks.completeProvisioningFromSuccessfulResult,
+    handleControlRequest: callbacks.handleControlRequest,
+    handleProvisioningTurnComplete: callbacks.handleProvisioningTurnComplete,
+    cleanupRun: callbacks.cleanupRun,
+    emitApiErrorWarning: callbacks.emitApiErrorWarning,
+    setMemberSpawnStatus: callbacks.setMemberSpawnStatus,
+    appendMemberBootstrapDiagnostic: callbacks.appendMemberBootstrapDiagnostic,
+    reevaluateMemberLaunchStatus: callbacks.reevaluateMemberLaunchStatus,
+    invalidateRuntimeSnapshotCaches: callbacks.invalidateRuntimeSnapshotCaches,
+    markUnconfirmedBootstrapMembersFailed: callbacks.markUnconfirmedBootstrapMembersFailed,
+    stopPersistentTeamMembers: callbacks.stopPersistentTeamMembers,
+    persistLaunchStateSnapshot: callbacks.persistLaunchStateSnapshot,
+  };
+}
+
 describe('TeamProvisioningStreamEventPortsFactory', () => {
   it('wires service callbacks and shared provisioning helpers into stream event ports', () => {
     const callbacks = createCallbacks();
@@ -135,9 +174,45 @@ describe('TeamProvisioningStreamEventPortsFactory', () => {
     expect(ports.extractCliLogsFromRun(run)).toBe('first\nsecond');
   });
 
-  it('keeps assistant stream-json behavior routed through the extracted ports', () => {
+  it('builds stream event ports from a service adapter boundary', () => {
     const callbacks = createCallbacks();
-    const ports = createTeamProvisioningStreamEventPorts(callbacks);
+    const emitTeamChange = vi.fn();
+    const ports = createTeamProvisioningStreamEventPortsBoundary({
+      service: createServiceAdapter(callbacks),
+      updateProgress: callbacks.updateProgress,
+      emitTeamChange,
+    });
+    const run = createRun();
+
+    ports.setLeadActivity(run, 'active');
+    ports.emitTeamChange({ type: 'tasks', teamName: 'atlas-hq' });
+    ports.pushLiveLeadProcessMessage('atlas-hq', {
+      messageId: 'msg-1',
+      from: 'lead',
+      to: 'user',
+      text: 'hello',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      read: false,
+    });
+
+    expect(callbacks.setLeadActivity).toHaveBeenCalledWith(run, 'active');
+    expect(emitTeamChange).toHaveBeenCalledWith({ type: 'tasks', teamName: 'atlas-hq' });
+    expect(callbacks.pushLiveLeadProcessMessage).toHaveBeenCalledWith('atlas-hq', {
+      messageId: 'msg-1',
+      from: 'lead',
+      to: 'user',
+      text: 'hello',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      read: false,
+    });
+  });
+
+  it('keeps assistant stream-json behavior routed through the extracted service boundary', () => {
+    const callbacks = createCallbacks();
+    const ports = createTeamProvisioningStreamEventPortsBoundary({
+      service: createServiceAdapter(callbacks),
+      updateProgress: callbacks.updateProgress,
+    });
     const run = createRun();
     const msg = {
       type: 'assistant',

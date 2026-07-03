@@ -302,7 +302,6 @@ import {
   createDefaultOpenCodeSecondaryEvidenceOverlayPorts,
   finalizeMissingRegisteredMembersAsFailed as finalizeMissingRegisteredMembersAsFailedHelper,
   guardCommittedOpenCodeSecondaryLaneEvidence as guardCommittedOpenCodeSecondaryLaneEvidenceHelper,
-  hasCommittedOpenCodeSecondaryEvidenceOverlayDelta,
 } from './provisioning/TeamProvisioningLaunchStateReconciliation';
 import {
   buildDeterministicLaunchProcessArgs,
@@ -512,6 +511,17 @@ import {
   toMarkdownCodeSafe,
 } from './provisioning/TeamProvisioningOutputErrorPolicy';
 import { createTeamProvisioningOutputRecoveryHelper } from './provisioning/TeamProvisioningOutputRecovery';
+import {
+  combinePersistedLaunchSnapshotWriteDecisions,
+  decideFinalReconciledSnapshotWrite,
+  decidePreferredBootstrapSnapshot,
+  filterOptionalRemovedMembersFromLaunchSnapshot,
+  getCommittedEvidenceOverlayWriteDecision,
+  getPromotionCleanupWriteDecision,
+  projectEmptyPersistedLaunchReconciliationResult,
+  projectPersistedLaunchReconciliationResult,
+  shouldReturnSnapshotBeforeRuntimeReconcileFromPorts,
+} from './provisioning/TeamProvisioningPersistedLaunchReconciliation';
 import {
   type CachedProbeResult,
   createDefaultTeamProvisioningPrepareCoordinatorPorts,
@@ -10280,13 +10290,6 @@ export class TeamProvisioningService {
     );
   }
 
-  private hasCommittedOpenCodeSecondaryEvidenceOverlayDelta(
-    snapshot: PersistedTeamLaunchSnapshot | null,
-    previousSnapshot: PersistedTeamLaunchSnapshot | null
-  ): boolean {
-    return hasCommittedOpenCodeSecondaryEvidenceOverlayDelta(snapshot, previousSnapshot);
-  }
-
   private async hasOpenCodeBootstrapCheckinTombstone(
     teamName: string,
     laneId: string | undefined,
@@ -12332,9 +12335,10 @@ export class TeamProvisioningService {
       bootstrapSnapshot,
       persisted
     );
-    const filteredRecoveredMixedSnapshot = recoveredMixedSnapshot
-      ? this.filterRemovedMembersFromLaunchSnapshot(recoveredMixedSnapshot, metaMembers)
-      : null;
+    const filteredRecoveredMixedSnapshot = filterOptionalRemovedMembersFromLaunchSnapshot(
+      recoveredMixedSnapshot,
+      metaMembers
+    );
     const overlaidRecoveredMixedSnapshot = filteredRecoveredMixedSnapshot
       ? await this.applyOpenCodeSecondaryEvidenceOverlay({
           teamName,
@@ -12345,13 +12349,14 @@ export class TeamProvisioningService {
       : null;
     const recoveredMixedSnapshotWithBootstrapStall =
       this.applyOpenCodeSecondaryBootstrapStallOverlay(overlaidRecoveredMixedSnapshot);
+    const recoveredCommittedEvidenceWriteDecision = getCommittedEvidenceOverlayWriteDecision({
+      snapshot: recoveredMixedSnapshotWithBootstrapStall,
+      previousSnapshot: persisted,
+      snapshotBeforeBootstrapStallOverlay: overlaidRecoveredMixedSnapshot,
+    });
     const stableRecoveredMixedSnapshotWithCommittedEvidence =
       recoveredMixedSnapshotWithBootstrapStall &&
-      (this.hasCommittedOpenCodeSecondaryEvidenceOverlayDelta(
-        recoveredMixedSnapshotWithBootstrapStall,
-        persisted
-      ) ||
-        recoveredMixedSnapshotWithBootstrapStall !== overlaidRecoveredMixedSnapshot)
+      recoveredCommittedEvidenceWriteDecision.shouldWrite
         ? await this.writeLaunchStateSnapshot(teamName, recoveredMixedSnapshotWithBootstrapStall)
         : recoveredMixedSnapshotWithBootstrapStall;
     const promotedRecoveredMixedSnapshot = promoteOpenCodePersistedFailureReasonsFromDiagnostics(
@@ -12360,34 +12365,38 @@ export class TeamProvisioningService {
     const cleanedRecoveredMixedSnapshot = this.cleanConfirmedBootstrapRuntimeDiagnostics(
       promotedRecoveredMixedSnapshot
     );
+    const recoveredPromotionCleanupWriteDecision = getPromotionCleanupWriteDecision({
+      baseSnapshot: stableRecoveredMixedSnapshotWithCommittedEvidence,
+      promotedSnapshot: promotedRecoveredMixedSnapshot,
+      cleanedSnapshot: cleanedRecoveredMixedSnapshot,
+    });
     const stableRecoveredMixedSnapshot =
-      cleanedRecoveredMixedSnapshot &&
-      (promotedRecoveredMixedSnapshot !== stableRecoveredMixedSnapshotWithCommittedEvidence ||
-        cleanedRecoveredMixedSnapshot !== promotedRecoveredMixedSnapshot)
+      cleanedRecoveredMixedSnapshot && recoveredPromotionCleanupWriteDecision.shouldWrite
         ? await this.writeLaunchStateSnapshot(teamName, cleanedRecoveredMixedSnapshot)
         : cleanedRecoveredMixedSnapshot;
-    const filteredBootstrapSnapshot = bootstrapSnapshot
-      ? this.filterRemovedMembersFromLaunchSnapshot(bootstrapSnapshot, metaMembers)
-      : null;
+    const filteredBootstrapSnapshot = filterOptionalRemovedMembersFromLaunchSnapshot(
+      bootstrapSnapshot,
+      metaMembers
+    );
     const overlaidBootstrapSnapshot =
       await this.applyBootstrapTranscriptEvidenceOverlay(filteredBootstrapSnapshot);
     if (
-      stableRecoveredMixedSnapshot &&
-      !this.needsBootstrapAcceptanceReconcile(
-        stableRecoveredMixedSnapshot,
-        overlaidBootstrapSnapshot
-      ) &&
-      !this.needsConfirmedBootstrapDiagnosticReconcile(stableRecoveredMixedSnapshot) &&
-      !(await this.hasBootstrapTranscriptLaunchReconcileOutcome(stableRecoveredMixedSnapshot))
-    ) {
-      return {
+      await shouldReturnSnapshotBeforeRuntimeReconcileFromPorts({
         snapshot: stableRecoveredMixedSnapshot,
-        statuses: snapshotToMemberSpawnStatuses(stableRecoveredMixedSnapshot),
-      };
+        bootstrapSnapshot: overlaidBootstrapSnapshot,
+        needsBootstrapAcceptanceReconcile: (snapshot, bootstrapSnapshot) =>
+          this.needsBootstrapAcceptanceReconcile(snapshot, bootstrapSnapshot),
+        needsConfirmedBootstrapDiagnosticReconcile: (snapshot) =>
+          this.needsConfirmedBootstrapDiagnosticReconcile(snapshot),
+        hasBootstrapTranscriptLaunchReconcileOutcome: (snapshot) =>
+          this.hasBootstrapTranscriptLaunchReconcileOutcome(snapshot),
+      })
+    ) {
+      return projectPersistedLaunchReconciliationResult(stableRecoveredMixedSnapshot);
     }
     const filteredPersistedBase =
       stableRecoveredMixedSnapshot ??
-      (persisted ? this.filterRemovedMembersFromLaunchSnapshot(persisted, metaMembers) : null);
+      filterOptionalRemovedMembersFromLaunchSnapshot(persisted, metaMembers);
     const filteredPersisted = filteredPersistedBase
       ? await this.applyOpenCodeSecondaryEvidenceOverlay({
           teamName,
@@ -12398,67 +12407,50 @@ export class TeamProvisioningService {
       : null;
     const filteredPersistedWithBootstrapStall =
       this.applyOpenCodeSecondaryBootstrapStallOverlay(filteredPersisted);
-    const shouldPersistCommittedEvidenceOverlay =
-      this.hasCommittedOpenCodeSecondaryEvidenceOverlayDelta(
-        filteredPersistedWithBootstrapStall,
-        persisted
-      );
+    const committedEvidenceWriteDecision = getCommittedEvidenceOverlayWriteDecision({
+      snapshot: filteredPersistedWithBootstrapStall,
+      previousSnapshot: persisted,
+      snapshotBeforeBootstrapStallOverlay: filteredPersisted,
+    });
     const promotedPersisted = promoteOpenCodePersistedFailureReasonsFromDiagnostics(
       filteredPersistedWithBootstrapStall
     );
-    const shouldPersistFailureReasonPromotion =
-      promotedPersisted !== filteredPersistedWithBootstrapStall;
     const cleanedPersisted = this.cleanConfirmedBootstrapRuntimeDiagnostics(promotedPersisted);
-    const shouldPersistConfirmedBootstrapDiagnosticCleanup = cleanedPersisted !== promotedPersisted;
-    const shouldPersistBootstrapStallOverlay =
-      filteredPersistedWithBootstrapStall !== filteredPersisted;
+    const promotionCleanupWriteDecision = getPromotionCleanupWriteDecision({
+      baseSnapshot: filteredPersistedWithBootstrapStall,
+      promotedSnapshot: promotedPersisted,
+      cleanedSnapshot: cleanedPersisted,
+    });
+    const persistedWriteDecision = combinePersistedLaunchSnapshotWriteDecisions(
+      committedEvidenceWriteDecision,
+      promotionCleanupWriteDecision
+    );
     const persistedWithCommittedEvidence =
-      cleanedPersisted &&
-      (shouldPersistCommittedEvidenceOverlay ||
-        shouldPersistFailureReasonPromotion ||
-        shouldPersistConfirmedBootstrapDiagnosticCleanup ||
-        shouldPersistBootstrapStallOverlay)
+      cleanedPersisted && persistedWriteDecision.shouldWrite
         ? await this.writeLaunchStateSnapshot(teamName, cleanedPersisted)
         : cleanedPersisted;
     const preferredSnapshot = choosePreferredLaunchSnapshot(
       overlaidBootstrapSnapshot,
       persistedWithCommittedEvidence
     );
-    const bootstrapSelectionWouldCollapseMixedLaunch =
-      preferredSnapshot &&
-      preferredSnapshot === overlaidBootstrapSnapshot &&
-      preferredSnapshot.teamLaunchState === 'clean_success' &&
-      !this.hasMixedLaunchMetadata(preferredSnapshot) &&
-      this.hasMixedLaunchMetadata(persistedWithCommittedEvidence);
-    if (
-      preferredSnapshot &&
-      preferredSnapshot === overlaidBootstrapSnapshot &&
-      !bootstrapSelectionWouldCollapseMixedLaunch
-    ) {
-      if (persistedWithCommittedEvidence) {
-        if (
-          preferredSnapshot.teamLaunchState === 'clean_success' &&
-          !this.hasMixedLaunchMetadata(preferredSnapshot)
-        ) {
-          await this.clearPersistedLaunchState(teamName);
-          return {
-            snapshot: preferredSnapshot,
-            statuses: snapshotToMemberSpawnStatuses(preferredSnapshot),
-          };
-        }
-        const writtenSnapshot = await this.writeLaunchStateSnapshot(teamName, preferredSnapshot);
-        return {
-          snapshot: writtenSnapshot,
-          statuses: snapshotToMemberSpawnStatuses(writtenSnapshot),
-        };
+    const preferredBootstrapDecision = decidePreferredBootstrapSnapshot({
+      preferredSnapshot,
+      bootstrapSnapshot: overlaidBootstrapSnapshot,
+      persistedSnapshot: persistedWithCommittedEvidence,
+    });
+    if (preferredSnapshot && preferredBootstrapDecision.kind !== 'ignore') {
+      if (preferredBootstrapDecision.kind === 'clear_persisted_state') {
+        await this.clearPersistedLaunchState(teamName);
+        return projectPersistedLaunchReconciliationResult(preferredSnapshot);
       }
-      return {
-        snapshot: preferredSnapshot,
-        statuses: snapshotToMemberSpawnStatuses(preferredSnapshot),
-      };
+      if (preferredBootstrapDecision.kind === 'write_snapshot') {
+        const writtenSnapshot = await this.writeLaunchStateSnapshot(teamName, preferredSnapshot);
+        return projectPersistedLaunchReconciliationResult(writtenSnapshot);
+      }
+      return projectPersistedLaunchReconciliationResult(preferredSnapshot);
     }
     if (!persistedWithCommittedEvidence) {
-      return { snapshot: null, statuses: {} };
+      return projectEmptyPersistedLaunchReconciliationResult();
     }
 
     const configPath = path.join(getTeamsBasePath(), teamName, 'config.json');
@@ -12503,22 +12495,23 @@ export class TeamProvisioningService {
     );
 
     if (
-      this.hasMixedLaunchMetadata(persistedWithCommittedEvidence) &&
-      !this.hasLeadInboxLaunchReconcileHeartbeat(
-        persistedWithCommittedEvidence,
-        leadInboxMessages
-      ) &&
-      !this.needsBootstrapAcceptanceReconcile(
-        persistedWithCommittedEvidence,
-        overlaidBootstrapSnapshot
-      ) &&
-      !this.needsConfirmedBootstrapDiagnosticReconcile(persistedWithCommittedEvidence) &&
-      !(await this.hasBootstrapTranscriptLaunchReconcileOutcome(persistedWithCommittedEvidence))
-    ) {
-      return {
+      await shouldReturnSnapshotBeforeRuntimeReconcileFromPorts({
         snapshot: persistedWithCommittedEvidence,
-        statuses: snapshotToMemberSpawnStatuses(persistedWithCommittedEvidence),
-      };
+        bootstrapSnapshot: overlaidBootstrapSnapshot,
+        requireMixedLaunchMetadata: true,
+        hasLeadInboxLaunchReconcileHeartbeat: this.hasLeadInboxLaunchReconcileHeartbeat(
+          persistedWithCommittedEvidence,
+          leadInboxMessages
+        ),
+        needsBootstrapAcceptanceReconcile: (snapshot, bootstrapSnapshot) =>
+          this.needsBootstrapAcceptanceReconcile(snapshot, bootstrapSnapshot),
+        needsConfirmedBootstrapDiagnosticReconcile: (snapshot) =>
+          this.needsConfirmedBootstrapDiagnosticReconcile(snapshot),
+        hasBootstrapTranscriptLaunchReconcileOutcome: (snapshot) =>
+          this.hasBootstrapTranscriptLaunchReconcileOutcome(snapshot),
+      })
+    ) {
+      return projectPersistedLaunchReconciliationResult(persistedWithCommittedEvidence);
     }
 
     const liveRuntimeByMember = await this.getLiveTeamAgentRuntimeMetadata(teamName);
@@ -12849,19 +12842,14 @@ export class TeamProvisioningService {
       updatedAt: now,
     });
 
-    if (
-      reconciled.teamLaunchState === 'clean_success' &&
-      !this.hasMixedLaunchMetadata(reconciled)
-    ) {
+    const finalSnapshotDecision = decideFinalReconciledSnapshotWrite(reconciled);
+    if (finalSnapshotDecision.kind === 'clear_persisted_state') {
       await this.clearPersistedLaunchState(teamName);
-      return { snapshot: null, statuses: {} };
+      return projectEmptyPersistedLaunchReconciliationResult();
     }
 
     const writtenSnapshot = await this.writeLaunchStateSnapshot(teamName, reconciled);
-    return {
-      snapshot: writtenSnapshot,
-      statuses: snapshotToMemberSpawnStatuses(writtenSnapshot),
-    };
+    return projectPersistedLaunchReconciliationResult(writtenSnapshot);
   }
 
   private async findBootstrapTranscriptFailureReason(

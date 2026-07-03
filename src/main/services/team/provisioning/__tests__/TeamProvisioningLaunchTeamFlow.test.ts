@@ -6,16 +6,20 @@ import {
   buildLaunchSyntheticRequest,
   createDeterministicLaunchProvisioningRun,
   getInitialLaunchValidationMessage,
+  materializeDeterministicLaunchBootstrapFiles,
   parseLaunchConfigProjectPath,
   prepareDeterministicLaunchRunState,
   resolveExistingLaunchRunReuse,
+  type TeamProvisioningLaunchBootstrapRun,
 } from '../TeamProvisioningLaunchTeamFlow';
 
 import type {
   MemberSpawnStatusEntry,
   ProviderModelLaunchIdentity,
   TeamCreateRequest,
+  TeamLaunchRequest,
   TeamProvisioningProgress,
+  TeamTask,
 } from '@shared/types';
 
 const launchIdentity: ProviderModelLaunchIdentity = {
@@ -56,6 +60,47 @@ const syntheticRequest: TeamCreateRequest = {
     { name: 'Builder', role: 'Build' },
   ],
 };
+
+const launchRequest: TeamLaunchRequest = {
+  teamName: 'demo',
+  cwd: '/repo',
+  providerId: 'codex',
+  model: 'gpt-5',
+  effort: 'high',
+  fastMode: 'off',
+  skipPermissions: false,
+};
+
+function createLaunchBootstrapRun() {
+  const progress: TeamProvisioningProgress = {
+    runId: 'run-1',
+    teamName: 'demo',
+    state: 'validating',
+    message: 'Validating team launch request',
+    startedAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    warnings: ['Recovered roster'],
+  };
+
+  const run: TeamProvisioningLaunchBootstrapRun = {
+    runId: 'run-1',
+    progress,
+    bootstrapSpecPath: null,
+    bootstrapUserPromptPath: null,
+    mcpConfigPath: null,
+    requiresFirstRealTurnSuccess: false,
+    cancelRequested: false,
+    processKilled: false,
+    provisioningTraceLines: [],
+    provisioningOutputParts: [],
+    provisioningOutputIndexByMessageId: new Map<string, number>(),
+    stallWarningIndex: null,
+    apiRetryWarningIndex: null,
+    onProgress: vi.fn(),
+  };
+
+  return { run };
+}
 
 describe('TeamProvisioningLaunchTeamFlow', () => {
   it('parses launch config project paths defensively', () => {
@@ -382,6 +427,184 @@ describe('TeamProvisioningLaunchTeamFlow', () => {
     expect(run.launchStateClearedForRun).toBe(true);
     expect(run.progress.assistantOutput).toContain('Validating team launch request');
     expect(run.progress.assistantOutput).toContain('Publishing mixed secondary lane status');
+  });
+
+  it('materializes deterministic launch bootstrap files in legacy order', async () => {
+    const order: string[] = [];
+    const { run } = createLaunchBootstrapRun();
+    const existingTasks = [{ id: 'task-1', title: 'Resume work' } as unknown as TeamTask];
+    const isValidationCancelled = vi.fn(() => false);
+    const validationOptionsRef: { current?: { isCancelled(): boolean } } = {};
+
+    const result = await materializeDeterministicLaunchBootstrapFiles(
+      {
+        request: launchRequest,
+        run,
+        effectiveMemberSpecs: syntheticRequest.members,
+        controlApiBaseUrl: 'http://127.0.0.1:1234',
+        isValidationCancelled,
+      },
+      {
+        readTasks: vi.fn(async (teamName) => {
+          order.push(`read:${teamName}`);
+          return existingTasks;
+        }),
+        logTaskReadWarning: vi.fn(),
+        buildDeterministicLaunchHydrationPrompt: vi.fn((request, members, tasks, includeLead) => {
+          order.push(`prompt:${tasks.length}:${includeLead}`);
+          expect(request).toBe(launchRequest);
+          expect(members).toBe(syntheticRequest.members);
+          expect(tasks).toBe(existingTasks);
+          return 'hydrate\nprompt';
+        }),
+        getPromptSizeSummary: vi.fn((prompt) => {
+          order.push(`size:${prompt}`);
+          return { chars: 14, lines: 2 };
+        }),
+        buildNativeAppManagedBootstrapSpecsWithDiagnostics: vi.fn(async (input) => {
+          order.push(`native:${input.teamName}:${input.members.length}`);
+          return {
+            specs: new Map([
+              [
+                'Builder',
+                {
+                  schemaVersion: 1 as const,
+                  mode: 'startup_context_file' as const,
+                  contextText: 'ctx',
+                  contextHash: 'ctx-hash',
+                  briefingHash: 'briefing-hash',
+                  generatedAt: '2026-01-01T00:00:00.000Z',
+                },
+              ],
+            ]),
+            diagnostics: {
+              nativeMemberCount: 1,
+              totalContextChars: 2048,
+              totalContextLimitChars: 4096,
+              warning: 'Native context is large',
+            },
+          };
+        }),
+        buildRuntimeBootstrapMemberMcpLaunchConfigs: vi.fn(async (input) => {
+          order.push(`member-mcp:${input.controlApiBaseUrl}:${input.cwd}`);
+          expect(input.run).toBe(run);
+          return new Map([
+            [
+              'Builder',
+              {
+                mcpConfigPath: '/tmp/member-mcp.json',
+                mcpSettingSources: 'local',
+                strictMcpConfig: true,
+              },
+            ],
+          ]);
+        }),
+        writeDeterministicBootstrapSpecFile: vi.fn(async (spec) => {
+          order.push(`write-spec:${spec.mode}:${spec.runId}`);
+          expect(
+            spec.members.find((member: { name: string }) => member.name === 'Builder')
+          ).toMatchObject({
+            mcpConfigPath: '/tmp/member-mcp.json',
+            nativeAppManagedBootstrap: { contextText: 'ctx' },
+          });
+          return '/tmp/spec.json';
+        }),
+        writeDeterministicBootstrapUserPromptFile: vi.fn(async (prompt) => {
+          order.push(`write-prompt:${prompt}`);
+          return '/tmp/prompt.txt';
+        }),
+        mcpConfigBuilder: {
+          writeConfigFile: vi.fn(async (cwd, options) => {
+            order.push(`write-mcp:${cwd}:${options.controlApiBaseUrl}`);
+            return '/tmp/mcp.json';
+          }),
+        },
+        validateAgentTeamsMcpRuntime: vi.fn(async (mcpConfigPath, options) => {
+          order.push(`validate:${mcpConfigPath}`);
+          validationOptionsRef.current = options;
+        }),
+      }
+    );
+
+    expect(order).toEqual([
+      'read:demo',
+      'prompt:1:false',
+      'size:hydrate\nprompt',
+      'native:demo:2',
+      'member-mcp:http://127.0.0.1:1234:/repo',
+      'write-spec:launch:run-1',
+      'write-prompt:hydrate\nprompt',
+      'write-mcp:/repo:http://127.0.0.1:1234',
+      'validate:/tmp/mcp.json',
+    ]);
+    expect(
+      run.provisioningTraceLines.map((line) => line.replace(/^.* \[validating\] /, ''))
+    ).toEqual([
+      'Reading existing tasks for launch prompt',
+      'Building deterministic launch bootstrap spec - expectedMembers=2',
+      'Native bootstrap startup context is large - Native context is large',
+      'Writing deterministic bootstrap spec file',
+      'Writing launch hydration prompt file - chars=14 lines=2',
+      'Writing MCP config file',
+      'Validating agent-teams MCP runtime',
+    ]);
+    expect(run.progress.warnings).toEqual(['Recovered roster', 'Native context is large']);
+    expect(run.bootstrapSpecPath).toBe('/tmp/spec.json');
+    expect(run.bootstrapUserPromptPath).toBe('/tmp/prompt.txt');
+    expect(run.mcpConfigPath).toBe('/tmp/mcp.json');
+    expect(run.requiresFirstRealTurnSuccess).toBe(true);
+    expect(result).toEqual({
+      prompt: 'hydrate\nprompt',
+      promptSize: { chars: 14, lines: 2 },
+      mcpConfigPath: '/tmp/mcp.json',
+      bootstrapSpecPath: '/tmp/spec.json',
+      bootstrapUserPromptPath: '/tmp/prompt.txt',
+    });
+    expect(validationOptionsRef.current?.isCancelled).toBe(isValidationCancelled);
+  });
+
+  it('logs task read warnings and builds launch prompts with empty tasks', async () => {
+    const { run } = createLaunchBootstrapRun();
+    const logTaskReadWarning = vi.fn();
+    const buildPrompt = vi.fn(() => 'prompt');
+
+    await materializeDeterministicLaunchBootstrapFiles(
+      {
+        request: launchRequest,
+        run,
+        effectiveMemberSpecs: syntheticRequest.members,
+        isValidationCancelled: () => false,
+      },
+      {
+        readTasks: vi.fn(async () => {
+          throw new Error('read failed');
+        }),
+        logTaskReadWarning,
+        buildDeterministicLaunchHydrationPrompt: buildPrompt,
+        getPromptSizeSummary: vi.fn(() => ({ chars: 6, lines: 1 })),
+        buildNativeAppManagedBootstrapSpecsWithDiagnostics: vi.fn(async () => ({
+          specs: new Map(),
+          diagnostics: {
+            nativeMemberCount: 0,
+            totalContextChars: 0,
+            totalContextLimitChars: 0,
+            warning: null,
+          },
+        })),
+        buildRuntimeBootstrapMemberMcpLaunchConfigs: vi.fn(async () => new Map()),
+        writeDeterministicBootstrapSpecFile: vi.fn(async () => '/tmp/spec.json'),
+        writeDeterministicBootstrapUserPromptFile: vi.fn(async () => '/tmp/prompt.txt'),
+        mcpConfigBuilder: {
+          writeConfigFile: vi.fn(async () => '/tmp/mcp.json'),
+        },
+        validateAgentTeamsMcpRuntime: vi.fn(async () => undefined),
+      }
+    );
+
+    expect(logTaskReadWarning).toHaveBeenCalledWith(
+      '[demo] Failed to read tasks for launch prompt: Error: read failed'
+    );
+    expect(buildPrompt).toHaveBeenCalledWith(launchRequest, syntheticRequest.members, [], false);
   });
 
   it('builds deterministic launch process args in the legacy append order', () => {

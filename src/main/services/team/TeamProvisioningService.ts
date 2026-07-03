@@ -120,7 +120,6 @@ import { getSystemLocale } from './provisioning/TeamProvisioningAgentLanguage';
 import { ensureCwdExists, sleep } from './provisioning/TeamProvisioningAsyncUtils';
 import { respawnCliAfterAuthFailure } from './provisioning/TeamProvisioningAuthRetryRecovery';
 import {
-  buildDeterministicLaunchBootstrapSpec,
   getProvisioningRunTimeoutMs,
   removeDeterministicBootstrapSpecFile,
   removeDeterministicBootstrapUserPromptFile,
@@ -266,6 +265,7 @@ import {
   buildDeterministicLaunchProcessArgs,
   buildLaunchSyntheticRequest,
   createDeterministicLaunchProvisioningRun,
+  materializeDeterministicLaunchBootstrapFiles,
   parseLaunchConfigProjectPath,
   prepareDeterministicLaunchRunState,
   resolveExistingLaunchRunReuse,
@@ -6200,99 +6200,53 @@ export class TeamProvisioningService {
           this.publishMixedSecondaryLaneStatusChange(nextRun, lane),
       });
 
-      // Read existing tasks to include in teammate prompts for work resumption
-      emitProvisioningCheckpoint(run, 'Reading existing tasks for launch prompt');
-      const taskReader = new TeamTaskReader();
-      let existingTasks: TeamTask[] = [];
-      try {
-        existingTasks = await taskReader.getTasks(request.teamName);
-      } catch (error) {
-        logger.warn(
-          `[${request.teamName}] Failed to read tasks for launch prompt: ${String(error)}`
-        );
-      }
-
-      const prompt = buildDeterministicLaunchHydrationPrompt(
-        request,
-        effectiveMemberSpecs,
-        existingTasks,
-        false
-      );
-      const promptSize = getPromptSizeSummary(prompt);
       let child: ReturnType<typeof spawn>;
       shellEnv.CLAUDE_ENABLE_DETERMINISTIC_TEAM_BOOTSTRAP = '1';
       const teammateModeDecision = await resolveDesktopTeammateModeDecision(request.extraCliArgs);
       applyDesktopTeammateModeDecisionToEnv(shellEnv, teammateModeDecision);
+      let prompt!: string;
+      let promptSize!: ReturnType<typeof getPromptSizeSummary>;
       let mcpConfigPath: string;
       let bootstrapSpecPath: string;
       let bootstrapUserPromptPath: string | null = null;
       try {
-        emitProvisioningCheckpoint(
-          run,
-          'Building deterministic launch bootstrap spec',
-          `expectedMembers=${effectiveMemberSpecs.length}`
-        );
-        const nativeBootstrapBuild = await buildNativeAppManagedBootstrapSpecsWithDiagnostics({
-          teamName: request.teamName,
-          cwd: request.cwd,
-          members: effectiveMemberSpecs,
-        });
-        const memberMcpLaunchConfigs = await this.buildRuntimeBootstrapMemberMcpLaunchConfigs({
-          controlApiBaseUrl: provisioningEnv.env.CLAUDE_TEAM_CONTROL_URL,
-          cwd: request.cwd,
-          members: effectiveMemberSpecs,
-          run,
-        });
-        if (nativeBootstrapBuild.diagnostics.warning) {
-          run.progress = {
-            ...run.progress,
-            warnings: mergeProvisioningWarnings(
-              run.progress.warnings,
-              nativeBootstrapBuild.diagnostics.warning
-            ),
-          };
-          emitProvisioningCheckpoint(
-            run,
-            'Native bootstrap startup context is large',
-            nativeBootstrapBuild.diagnostics.warning
-          );
-        }
-        const bootstrapSpec = buildDeterministicLaunchBootstrapSpec(
-          runId,
-          request,
-          effectiveMemberSpecs,
-          nativeBootstrapBuild.specs,
-          memberMcpLaunchConfigs
-        );
-        emitProvisioningCheckpoint(run, 'Writing deterministic bootstrap spec file');
-        bootstrapSpecPath = await writeDeterministicBootstrapSpecFile(bootstrapSpec);
-        run.bootstrapSpecPath = bootstrapSpecPath;
-        emitProvisioningCheckpoint(
-          run,
-          'Writing launch hydration prompt file',
-          `chars=${promptSize.chars} lines=${promptSize.lines}`
-        );
-        bootstrapUserPromptPath = await writeDeterministicBootstrapUserPromptFile(prompt);
-        run.bootstrapUserPromptPath = bootstrapUserPromptPath;
-        run.requiresFirstRealTurnSuccess = true;
-        emitProvisioningCheckpoint(run, 'Writing MCP config file');
-        mcpConfigPath = await this.mcpConfigBuilder.writeConfigFile(request.cwd, {
-          controlApiBaseUrl: provisioningEnv.env.CLAUDE_TEAM_CONTROL_URL,
-        });
-        run.mcpConfigPath = mcpConfigPath;
-        emitProvisioningCheckpoint(run, 'Validating agent-teams MCP runtime');
-        await this.providerRuntime.validateAgentTeamsMcpRuntime(
-          claudePath,
-          request.cwd,
-          shellEnv,
-          mcpConfigPath,
+        const materializedBootstrapFiles = await materializeDeterministicLaunchBootstrapFiles(
           {
-            isCancelled: () =>
+            request,
+            run,
+            effectiveMemberSpecs,
+            controlApiBaseUrl: provisioningEnv.env.CLAUDE_TEAM_CONTROL_URL,
+            isValidationCancelled: () =>
               run.cancelRequested ||
               run.processKilled ||
               this.stopAllTeamsGeneration !== stopAllGenerationAtStart,
+          },
+          {
+            readTasks: (teamName) => new TeamTaskReader().getTasks(teamName),
+            logTaskReadWarning: (message) => logger.warn(message),
+            buildDeterministicLaunchHydrationPrompt,
+            getPromptSizeSummary,
+            buildNativeAppManagedBootstrapSpecsWithDiagnostics,
+            buildRuntimeBootstrapMemberMcpLaunchConfigs: (input) =>
+              this.buildRuntimeBootstrapMemberMcpLaunchConfigs(input),
+            writeDeterministicBootstrapSpecFile,
+            writeDeterministicBootstrapUserPromptFile,
+            mcpConfigBuilder: this.mcpConfigBuilder,
+            validateAgentTeamsMcpRuntime: (createdMcpConfigPath, options) =>
+              this.providerRuntime.validateAgentTeamsMcpRuntime(
+                claudePath,
+                request.cwd,
+                shellEnv,
+                createdMcpConfigPath,
+                options
+              ),
           }
         );
+        prompt = materializedBootstrapFiles.prompt;
+        promptSize = materializedBootstrapFiles.promptSize;
+        mcpConfigPath = materializedBootstrapFiles.mcpConfigPath;
+        bootstrapSpecPath = materializedBootstrapFiles.bootstrapSpecPath;
+        bootstrapUserPromptPath = materializedBootstrapFiles.bootstrapUserPromptPath;
       } catch (error) {
         this.runs.delete(runId);
         this.provisioningRunByTeam.delete(request.teamName);

@@ -1,13 +1,23 @@
 import * as path from 'path';
 
 import { mergeJsonSettingsArgs } from '../../runtime/cliSettingsArgs';
+import { buildNativeAppManagedBootstrapSpecsWithDiagnostics } from '../bootstrap/NativeAppManagedBootstrapContextBuilder';
 import { buildDesktopTeammateModeCliArgs } from '../runtimeTeammateMode';
 
+import {
+  buildDeterministicLaunchBootstrapSpec,
+  type RuntimeBootstrapMemberMcpLaunchConfig,
+  writeDeterministicBootstrapSpecFile,
+  writeDeterministicBootstrapUserPromptFile,
+} from './TeamProvisioningBootstrapSpec';
+import { mergeProvisioningWarnings } from './TeamProvisioningLaunchCompatibility';
 import {
   emitProvisioningCheckpoint,
   initializeProvisioningTrace,
   type TeamProvisioningCheckpointRun,
 } from './TeamProvisioningProgressBuffers';
+import { buildDeterministicLaunchHydrationPrompt } from './TeamProvisioningPromptBuilders';
+import { type PromptSizeSummary } from './TeamProvisioningRuntimeDiagnostics';
 import {
   getLaunchModelArg,
   type TeamRuntimeLaunchArgsPlan,
@@ -22,6 +32,7 @@ import type {
   TeamLaunchRequest,
   TeamProviderId,
   TeamProvisioningProgress,
+  TeamTask,
 } from '@shared/types';
 
 export type LaunchRosterSource = LaunchExpectedMembersResolution['source'];
@@ -37,6 +48,62 @@ export interface DeterministicLaunchStatePreparationRun extends TeamProvisioning
   teamName: string;
   launchStateClearedForRun: boolean;
   mixedSecondaryLanes?: readonly unknown[];
+}
+
+export interface TeamProvisioningLaunchBootstrapRun extends TeamProvisioningCheckpointRun {
+  runId: string;
+  progress: TeamProvisioningProgress;
+  bootstrapSpecPath: string | null;
+  bootstrapUserPromptPath: string | null;
+  mcpConfigPath: string | null;
+  requiresFirstRealTurnSuccess: boolean;
+  cancelRequested: boolean;
+  processKilled: boolean;
+}
+
+export interface TeamProvisioningLaunchMcpConfigBuilder {
+  writeConfigFile(cwd: string, options: { controlApiBaseUrl?: string }): Promise<string>;
+}
+
+export interface MaterializeDeterministicLaunchBootstrapFilesInput<
+  TRun extends TeamProvisioningLaunchBootstrapRun,
+> {
+  request: TeamLaunchRequest;
+  run: TRun;
+  effectiveMemberSpecs: TeamCreateRequest['members'];
+  controlApiBaseUrl?: string;
+  isValidationCancelled(): boolean;
+}
+
+export interface MaterializeDeterministicLaunchBootstrapFilesPorts<
+  TRun extends TeamProvisioningLaunchBootstrapRun,
+> {
+  readTasks(teamName: string): Promise<TeamTask[]>;
+  logTaskReadWarning(message: string): void;
+  buildDeterministicLaunchHydrationPrompt: typeof buildDeterministicLaunchHydrationPrompt;
+  getPromptSizeSummary(prompt: string): PromptSizeSummary;
+  buildNativeAppManagedBootstrapSpecsWithDiagnostics: typeof buildNativeAppManagedBootstrapSpecsWithDiagnostics;
+  buildRuntimeBootstrapMemberMcpLaunchConfigs(input: {
+    controlApiBaseUrl?: string | null;
+    cwd: string;
+    members: TeamCreateRequest['members'];
+    run: TRun;
+  }): Promise<ReadonlyMap<string, RuntimeBootstrapMemberMcpLaunchConfig>>;
+  writeDeterministicBootstrapSpecFile: typeof writeDeterministicBootstrapSpecFile;
+  writeDeterministicBootstrapUserPromptFile: typeof writeDeterministicBootstrapUserPromptFile;
+  mcpConfigBuilder: TeamProvisioningLaunchMcpConfigBuilder;
+  validateAgentTeamsMcpRuntime(
+    mcpConfigPath: string,
+    options: { isCancelled(): boolean }
+  ): Promise<void>;
+}
+
+export interface MaterializeDeterministicLaunchBootstrapFilesResult {
+  prompt: string;
+  promptSize: PromptSizeSummary;
+  mcpConfigPath: string;
+  bootstrapSpecPath: string;
+  bootstrapUserPromptPath: string | null;
 }
 
 export type ExistingLaunchRunReuseDecision =
@@ -301,6 +368,100 @@ export async function prepareDeterministicLaunchRunState<
   for (const lane of input.run.mixedSecondaryLanes ?? []) {
     await input.publishMixedSecondaryLaneStatusChange(input.run, lane);
   }
+}
+
+export async function materializeDeterministicLaunchBootstrapFiles<
+  TRun extends TeamProvisioningLaunchBootstrapRun,
+>(
+  input: MaterializeDeterministicLaunchBootstrapFilesInput<TRun>,
+  ports: MaterializeDeterministicLaunchBootstrapFilesPorts<TRun>
+): Promise<MaterializeDeterministicLaunchBootstrapFilesResult> {
+  const { request, run, effectiveMemberSpecs } = input;
+
+  emitProvisioningCheckpoint(run, 'Reading existing tasks for launch prompt');
+  let existingTasks: TeamTask[] = [];
+  try {
+    existingTasks = await ports.readTasks(request.teamName);
+  } catch (error) {
+    ports.logTaskReadWarning(
+      `[${request.teamName}] Failed to read tasks for launch prompt: ${String(error)}`
+    );
+  }
+
+  const prompt = ports.buildDeterministicLaunchHydrationPrompt(
+    request,
+    effectiveMemberSpecs,
+    existingTasks,
+    false
+  );
+  const promptSize = ports.getPromptSizeSummary(prompt);
+
+  emitProvisioningCheckpoint(
+    run,
+    'Building deterministic launch bootstrap spec',
+    `expectedMembers=${effectiveMemberSpecs.length}`
+  );
+  const nativeBootstrapBuild = await ports.buildNativeAppManagedBootstrapSpecsWithDiagnostics({
+    teamName: request.teamName,
+    cwd: request.cwd,
+    members: effectiveMemberSpecs,
+  });
+  const memberMcpLaunchConfigs = await ports.buildRuntimeBootstrapMemberMcpLaunchConfigs({
+    controlApiBaseUrl: input.controlApiBaseUrl,
+    cwd: request.cwd,
+    members: effectiveMemberSpecs,
+    run,
+  });
+  if (nativeBootstrapBuild.diagnostics.warning) {
+    run.progress = {
+      ...run.progress,
+      warnings: mergeProvisioningWarnings(
+        run.progress.warnings,
+        nativeBootstrapBuild.diagnostics.warning
+      ),
+    };
+    emitProvisioningCheckpoint(
+      run,
+      'Native bootstrap startup context is large',
+      nativeBootstrapBuild.diagnostics.warning
+    );
+  }
+  const bootstrapSpec = buildDeterministicLaunchBootstrapSpec(
+    run.runId,
+    request,
+    effectiveMemberSpecs,
+    nativeBootstrapBuild.specs,
+    memberMcpLaunchConfigs
+  );
+  emitProvisioningCheckpoint(run, 'Writing deterministic bootstrap spec file');
+  const bootstrapSpecPath = await ports.writeDeterministicBootstrapSpecFile(bootstrapSpec);
+  run.bootstrapSpecPath = bootstrapSpecPath;
+  emitProvisioningCheckpoint(
+    run,
+    'Writing launch hydration prompt file',
+    `chars=${promptSize.chars} lines=${promptSize.lines}`
+  );
+  const bootstrapUserPromptPath =
+    await ports.writeDeterministicBootstrapUserPromptFile(prompt);
+  run.bootstrapUserPromptPath = bootstrapUserPromptPath;
+  run.requiresFirstRealTurnSuccess = true;
+  emitProvisioningCheckpoint(run, 'Writing MCP config file');
+  const mcpConfigPath = await ports.mcpConfigBuilder.writeConfigFile(request.cwd, {
+    controlApiBaseUrl: input.controlApiBaseUrl,
+  });
+  run.mcpConfigPath = mcpConfigPath;
+  emitProvisioningCheckpoint(run, 'Validating agent-teams MCP runtime');
+  await ports.validateAgentTeamsMcpRuntime(mcpConfigPath, {
+    isCancelled: input.isValidationCancelled,
+  });
+
+  return {
+    prompt,
+    promptSize,
+    mcpConfigPath,
+    bootstrapSpecPath,
+    bootstrapUserPromptPath,
+  };
 }
 
 export function buildDeterministicLaunchProcessArgs(input: {

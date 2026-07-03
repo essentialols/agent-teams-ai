@@ -11,6 +11,8 @@ import {
   RunObservationService,
   type RunObservationSnapshot,
   type RunObservationWorkspace,
+  type RunProcessAliveReason,
+  type RunProcessSupervisorKind,
 } from "./run-observability";
 import {
   isRunEventProviderKind,
@@ -316,6 +318,9 @@ export type RunSafetyReadModel = {
 export type RunLivenessReadModel = {
   readonly status: RunLivenessStatus;
   readonly processAlive?: boolean;
+  readonly aliveReason?: RunProcessAliveReason;
+  readonly supervisor?: RunProcessSupervisorKind;
+  readonly processPid?: number;
   readonly heartbeatAgeMs?: number;
   readonly staleAfterMs?: number;
   readonly logByteLength?: number;
@@ -1099,6 +1104,13 @@ function livenessReadModelFromSnapshot(
   return {
     status,
     ...(snapshot.process?.alive === undefined ? {} : { processAlive: snapshot.process.alive }),
+    ...(snapshot.process?.aliveReason === undefined
+      ? {}
+      : { aliveReason: snapshot.process.aliveReason }),
+    ...(snapshot.process?.supervisor === undefined
+      ? {}
+      : { supervisor: snapshot.process.supervisor }),
+    ...(snapshot.process?.pid === undefined ? {} : { processPid: snapshot.process.pid }),
     ...(snapshot.progress?.heartbeatAgeMs === undefined
       ? {}
       : { heartbeatAgeMs: snapshot.progress.heartbeatAgeMs }),

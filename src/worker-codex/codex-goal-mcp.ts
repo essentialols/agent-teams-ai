@@ -26,6 +26,7 @@ import {
   RunEventCompactionSafetyMode,
   RunEventProviderKind,
   RunEventType,
+  RunProcessSupervisorKind,
   WorkerControlService,
   decideRunObservation,
   isRunEventCompactionSafetyMode,
@@ -86,6 +87,7 @@ import {
   listCodexGoalAccountStatuses,
   prepareCodexGoalLaunchPaths,
   reconcileCodexGoalRuntimeResult,
+  resolveCodexGoalWorkerLiveness,
   shellQuote,
   startCodexGoalTmux,
   stopCodexGoalTmux,
@@ -758,7 +760,14 @@ export function createCodexGoalMcpServer(
     async (args) => withMcpErrors(async () => {
       const loaded = await loadJobLaunch(args as JobIdMcpArgs);
       const status = await collectCodexGoalStatus(statusInput(loaded.launch));
-      const ok = !status.tmuxAlive && status.recommendedAction !== "wait_for_worker";
+      const progressStale = status.progressHeartbeatAgeMs !== undefined &&
+        status.progressHeartbeatAgeMs >
+          (numberValue((args as Record<string, unknown>).staleAfterMs) ?? 10 * 60_000);
+      const workerLiveness = resolveCodexGoalWorkerLiveness({
+        status,
+        progressStale,
+      });
+      const ok = !workerLiveness.alive && status.recommendedAction !== "wait_for_worker";
       return mcpJson({
         ok,
         registryRootDir: loaded.registryRootDir,
@@ -2021,12 +2030,19 @@ async function continueStoredJob(
 ) {
   const loaded = await loadJobLaunch(args);
   const status = await collectCodexGoalStatus(statusInput(loaded.launch));
-  if (status.tmuxAlive) {
+  const progressStale = status.progressHeartbeatAgeMs !== undefined &&
+    status.progressHeartbeatAgeMs > (numberValue(args.staleAfterMs) ?? 10 * 60_000);
+  const workerLiveness = resolveCodexGoalWorkerLiveness({
+    status,
+    progressStale,
+  });
+  if (workerLiveness.alive) {
     return mcpJson({
       ok: false,
       reason: "worker_already_running",
       jobId: loaded.manifest.jobId,
       status,
+      workerAliveReason: workerLiveness.aliveReason,
     });
   }
   if (
@@ -2133,7 +2149,7 @@ async function reconcileStoredJobRuntimeResult(args: JobResultReconcileMcpArgs) 
     staleAfterMs: numberValue(args.staleAfterMs) ?? 10 * 60_000,
     tailLines: numberValue(args.tailLines) ?? 20,
   });
-  if (status.tmuxAlive && !brief.silentStale && !brief.heartbeatOnlyNoOutput && !args.forceWrite) {
+  if (brief.workerAlive && !brief.silentStale && !brief.heartbeatOnlyNoOutput && !args.forceWrite) {
     return mcpJson({
       ok: false,
       reason: "worker_alive",
@@ -3017,8 +3033,12 @@ async function observeOrphanCodexRun(input: {
     status.progressHeartbeatAgeMs > input.staleAfterMs;
   const logStale = logUpdatedAgeMs !== undefined &&
     logUpdatedAgeMs > input.staleAfterMs;
+  const workerLiveness = resolveCodexGoalWorkerLiveness({
+    status,
+    progressStale,
+  });
   const heartbeatOnlyNoOutput = Boolean(
-    status.tmuxAlive &&
+    workerLiveness.alive &&
       status.progressExists &&
       !status.resultExists &&
       (status.logByteLength ?? 0) === 0,
@@ -3044,14 +3064,16 @@ async function observeOrphanCodexRun(input: {
         }]
       : []),
   ];
-  const runStatus = status.resultStatus === "completed"
+  const runStatus = workerLiveness.alive && status.progressStatus === "running"
+    ? "running"
+    : status.resultStatus === "completed"
     ? "completed"
     : status.resultStatus === "failed"
     ? "failed"
-    : status.tmuxAlive
+    : workerLiveness.alive
     ? "running"
     : "unknown";
-  const liveness = status.tmuxAlive
+  const liveness = workerLiveness.alive
     ? (progressStale || logStale ? "stale" : "alive")
     : "dead";
   const manualReviewReasons = [
@@ -3065,9 +3087,10 @@ async function observeOrphanCodexRun(input: {
     status: runStatus,
     liveness,
     process: {
-      supervisor: "tmux",
+      supervisor: RunProcessSupervisorKind.Tmux,
       sessionId: input.runId,
-      ...(status.tmuxAlive === undefined ? {} : { alive: status.tmuxAlive }),
+      alive: workerLiveness.alive,
+      aliveReason: workerLiveness.aliveReason,
       ...(status.progressPid === undefined ? {} : { pid: status.progressPid }),
     },
     progress: {
@@ -3078,7 +3101,7 @@ async function observeOrphanCodexRun(input: {
         : { heartbeatAgeMs: status.progressHeartbeatAgeMs }),
       staleAfterMs: input.staleAfterMs,
       stale: progressStale,
-      silentStale: Boolean(status.tmuxAlive && (progressStale || logStale)),
+      silentStale: Boolean(workerLiveness.alive && (progressStale || logStale)),
       heartbeatOnlyNoOutput,
       ...(status.progressAttemptCount === undefined
         ? {}
@@ -3387,7 +3410,7 @@ async function buildCodexGoalOverviewItem(input: {
     const recommendedAction =
       brief.lifecycleMarkerTypes.includes("review") &&
       !status.resultExists &&
-      !status.tmuxAlive
+      !brief.workerAlive
         ? "review_completed"
         : status.recommendedAction;
     return {
@@ -3398,7 +3421,10 @@ async function buildCodexGoalOverviewItem(input: {
       workspacePath: launch.config.workspacePath,
       taskId: launch.config.taskId,
       tmuxSession: launch.tmuxSession,
-      workerAlive: Boolean(status.tmuxAlive),
+      workerAlive: Boolean(brief.workerAlive),
+      workerAliveReason: brief.workerAliveReason,
+      workerProcessAlive: brief.workerProcessAlive,
+      workerFreshProgressAlive: brief.workerFreshProgressAlive,
       recommendedAction,
       resultStatus: status.resultStatus,
       resultReason: status.resultReason,
@@ -3408,6 +3434,7 @@ async function buildCodexGoalOverviewItem(input: {
       progressUpdatedAt: status.progressUpdatedAt,
       progressHeartbeatAgeMs: status.progressHeartbeatAgeMs,
       progressPid: status.progressPid,
+      progressProcessAlive: status.progressProcessAlive,
       workspaceDirty: status.workspaceDirty,
       changedFilesCount: (status.changedFiles ?? []).length,
       changedFiles: status.changedFiles ?? [],
@@ -3654,8 +3681,14 @@ export async function buildCodexGoalBrief(input: {
   const isStale = Number.isFinite(lastProgressMs)
     ? (lastProgressAgeMs ?? 0) > input.staleAfterMs
     : false;
+  const progressStale = input.status.progressHeartbeatAgeMs !== undefined &&
+    input.status.progressHeartbeatAgeMs > input.staleAfterMs;
+  const workerLiveness = resolveCodexGoalWorkerLiveness({
+    status: input.status,
+    progressStale,
+  });
   const silentStale = Boolean(
-    input.status.tmuxAlive &&
+    workerLiveness.alive &&
       input.status.recommendedAction === "wait_for_worker" &&
       isStale,
   );
@@ -3671,7 +3704,7 @@ export async function buildCodexGoalBrief(input: {
   const dedupedAccounts = dedupeCodexGoalAccountSlots(input.accounts);
   const availableDedupedAccounts = availableCodexGoalAccountSlots(dedupedAccounts);
   const safeStatusToContinue =
-    !input.status.tmuxAlive && isSafeStartAction(input.status.recommendedAction);
+    !workerLiveness.alive && isSafeStartAction(input.status.recommendedAction);
   const hasAvailableAccount = availableDedupedAccounts.length > 0;
   const lifecycleMarkers = await readCodexGoalLifecycleMarkers({
     jobRootDir: input.launch.config.jobRootDir,
@@ -3681,24 +3714,24 @@ export async function buildCodexGoalBrief(input: {
     .map((marker) => marker.type)
     .filter((type): type is string => typeof type === "string");
   const reviewed = lifecycleMarkerTypes.includes("review");
-  const reviewedStopped = Boolean(reviewed && !input.status.tmuxAlive);
+  const reviewedStopped = Boolean(reviewed && !workerLiveness.alive);
   const reviewedWithoutResult = Boolean(
     reviewedStopped &&
       !input.status.resultExists &&
-      !input.status.tmuxAlive,
+      !workerLiveness.alive,
   );
   const stoppedWithoutResult = Boolean(
     lifecycleMarkerTypes.includes("stop_event") &&
       !input.status.resultExists &&
-      !input.status.tmuxAlive,
+      !workerLiveness.alive,
   );
   const maintenancePaused = Boolean(
     lifecycleMarkerTypes.includes("maintenance_pause") &&
       input.status.progressStatus === "maintenance_paused" &&
-      !input.status.tmuxAlive,
+      !workerLiveness.alive,
   );
   const needsResultReconcile = Boolean(
-    !input.status.tmuxAlive &&
+    !workerLiveness.alive &&
       (
         (stoppedWithoutResult && !maintenancePaused) ||
         input.status.workspaceDirty ||
@@ -3741,7 +3774,7 @@ export async function buildCodexGoalBrief(input: {
   const recentLogTail = redactLogTail(await safeTail(input.launch.logPath, input.tailLines));
   return {
     text: [
-      input.status.tmuxAlive ? "worker alive" : "worker not running",
+      workerLiveness.alive ? "worker alive" : "worker not running",
       `recommendedAction ${input.status.recommendedAction}`,
       lastProgressAt ? `lastProgressAt ${lastProgressAt}` : "lastProgressAt unknown",
       input.status.progressUpdatedAt
@@ -3772,6 +3805,10 @@ export async function buildCodexGoalBrief(input: {
     lastProgressAgeMs,
     staleAfterMs: input.staleAfterMs,
     isStale,
+    workerAlive: workerLiveness.alive,
+    workerAliveReason: workerLiveness.aliveReason,
+    workerProcessAlive: workerLiveness.processAlive,
+    workerFreshProgressAlive: workerLiveness.freshProgressAlive,
     silentStale,
     heartbeatOnlyNoOutput,
     logExists: input.status.logExists,
@@ -3782,6 +3819,7 @@ export async function buildCodexGoalBrief(input: {
     progressUpdatedAt: input.status.progressUpdatedAt,
     progressHeartbeatAgeMs: input.status.progressHeartbeatAgeMs,
     progressPid: input.status.progressPid,
+    progressProcessAlive: input.status.progressProcessAlive,
     progressResultStatus: input.status.progressResultStatus,
     progressResultReason: input.status.progressResultReason,
     progressAttemptCount: input.status.progressAttemptCount,
@@ -3838,8 +3876,14 @@ function isHeartbeatOnlyNoOutputBrief(input: {
   const heartbeatOnlyNoOutputAfterMs = Math.min(input.staleAfterMs, 2 * 60_000);
   const logUpdatedAgeMs = isoAgeMs(status.logUpdatedAt);
   const noOutputAgeMs = logUpdatedAgeMs ?? status.progressHeartbeatAgeMs;
+  const progressStale = status.progressHeartbeatAgeMs !== undefined &&
+    status.progressHeartbeatAgeMs > input.staleAfterMs;
+  const workerLiveness = resolveCodexGoalWorkerLiveness({
+    status,
+    progressStale,
+  });
   return Boolean(
-    status.tmuxAlive &&
+    workerLiveness.alive &&
       status.progressExists &&
       status.progressStatus === "running" &&
       noOutputAgeMs !== undefined &&
@@ -3877,7 +3921,10 @@ function buildCodexGoalDecision(input: {
   const evidence: JsonObject[] = [
     {
       code: "worker_state",
-      workerAlive: Boolean(input.status.tmuxAlive),
+      workerAlive: Boolean(input.brief.workerAlive),
+      workerAliveReason: input.brief.workerAliveReason,
+      workerProcessAlive: input.brief.workerProcessAlive,
+      workerFreshProgressAlive: input.brief.workerFreshProgressAlive,
       recommendedAction: input.status.recommendedAction,
       resultStatus: input.status.resultStatus,
       resultReason: redactOptional(input.status.resultReason),
@@ -3948,7 +3995,7 @@ function buildCodexGoalDecision(input: {
   if (
     input.brief.lifecycleMarkerTypes.includes("stop_event") &&
     !input.status.resultExists &&
-    !input.status.tmuxAlive
+    !input.brief.workerAlive
   ) {
     blockers.push({
       code: "stopped_worker_requires_review",
@@ -3957,7 +4004,7 @@ function buildCodexGoalDecision(input: {
         "The worker was explicitly stopped before producing a result. Review the stop reason and workspace before starting a replacement worker.",
     });
   }
-  if (input.status.workspaceDirty && !input.status.tmuxAlive) {
+  if (input.status.workspaceDirty && !input.brief.workerAlive) {
     blockers.push({
       code: "dirty_worktree_requires_review",
       severity: "blocked",
@@ -4055,12 +4102,12 @@ function codexGoalDecisionKind(input: {
   if (input.blockedBySingleWriter) return "manual_review_single_writer_conflict";
   if (input.brief.silentStale) return "manual_review_silent_stale";
   if (input.brief.heartbeatOnlyNoOutput) return "manual_review_heartbeat_only_no_output";
-  if (input.status.tmuxAlive) return "wait_for_worker";
+  if (input.brief.workerAlive) return "wait_for_worker";
   if (input.status.recommendedAction === "review_completed") return "review_completed";
   if (
     input.brief.lifecycleMarkerTypes.includes("stop_event") &&
     !input.status.resultExists &&
-    !input.status.tmuxAlive
+    !input.brief.workerAlive
   ) {
     return "manual_review_stopped_worker";
   }
@@ -4263,7 +4310,8 @@ function buildCodexGoalHandoff(input: {
     `- accounts: ${input.launch.config.accounts.map((account) => account.name).join(", ")}`,
     "",
     "## Current State",
-    `- worker: ${input.status.tmuxAlive ? "alive" : "not running"}`,
+    `- worker: ${input.brief.workerAlive ? "alive" : "not running"}`,
+    `- workerAliveReason: ${String(input.brief.workerAliveReason ?? "")}`,
     `- recommendedAction: ${input.status.recommendedAction}`,
     `- resultStatus: ${input.status.resultStatus ?? ""}`,
     `- resultReason: ${input.status.resultReason ?? ""}`,

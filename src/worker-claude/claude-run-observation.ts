@@ -6,6 +6,7 @@ import { DefaultRedactor } from "@vioxen/subscription-runtime/core";
 import {
   decideRunObservation,
   RunEventProviderKind,
+  RunProcessSupervisorKind,
   type RunArtifactSummary,
   type RunCapacityHint,
   type RunLogExcerpt,
@@ -108,7 +109,7 @@ export class ClaudeRunObservationAdapter implements RunObservationPort {
       liveness,
       ...(workspace === undefined ? {} : { workspace }),
       process: {
-        supervisor: "process",
+        supervisor: RunProcessSupervisorKind.Process,
         ...(progress?.pid === undefined ? {} : { pid: progress.pid }),
         alive: processAliveNow,
       },

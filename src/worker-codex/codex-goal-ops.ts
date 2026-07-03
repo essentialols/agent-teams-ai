@@ -15,6 +15,7 @@ import {
   classifyRuntimeRunState,
   hostExecutableNotFoundMessage,
   resolveHostExecutable,
+  RunProcessAliveReason,
   type RunProgressClassification,
   type RuntimeRecommendedAction,
   type RuntimeResultEnvelope,
@@ -90,6 +91,7 @@ export type CodexGoalStatus = {
   readonly progressUpdatedAt?: string;
   readonly progressHeartbeatAgeMs?: number;
   readonly progressPid?: number;
+  readonly progressProcessAlive?: boolean;
   readonly progressCpuActive?: boolean;
   readonly progressCommand?: string;
   readonly progressResultStatus?: string;
@@ -153,8 +155,16 @@ export type CodexGoalProcessSnapshotRow = {
 };
 
 export type CodexGoalProcessSnapshot = {
+  readonly alive?: boolean;
   readonly cpuActive?: boolean;
   readonly command?: string;
+};
+
+export type CodexGoalWorkerLiveness = {
+  readonly alive: boolean;
+  readonly aliveReason: RunProcessAliveReason;
+  readonly processAlive: boolean;
+  readonly freshProgressAlive: boolean;
 };
 
 export type CodexGoalDoctorCheck = {
@@ -401,6 +411,9 @@ export async function collectCodexGoalStatus(
       ? {}
       : { progressHeartbeatAgeMs: progress.heartbeatAgeMs }),
     ...(progress.pid === undefined ? {} : { progressPid: progress.pid }),
+    ...(progressProcess.alive === undefined
+      ? {}
+      : { progressProcessAlive: progressProcess.alive }),
     ...(progressProcess.cpuActive === undefined
       ? {}
       : { progressCpuActive: progressProcess.cpuActive }),
@@ -452,6 +465,42 @@ export async function collectCodexGoalStatus(
   };
 }
 
+export function resolveCodexGoalWorkerLiveness(input: {
+  readonly status: Pick<
+    CodexGoalStatus,
+    | "tmuxAlive"
+    | "progressExists"
+    | "progressStatus"
+    | "progressHeartbeatAgeMs"
+    | "progressProcessAlive"
+  >;
+  readonly progressStale?: boolean;
+}): CodexGoalWorkerLiveness {
+  const tmuxAlive = input.status.tmuxAlive === true;
+  const processAlive = tmuxAlive || input.status.progressProcessAlive === true;
+  const freshProgressAlive = Boolean(
+    input.status.progressExists &&
+      input.status.progressStatus === "running" &&
+      input.status.progressHeartbeatAgeMs !== undefined &&
+      input.progressStale !== true,
+  );
+  const alive = processAlive || freshProgressAlive;
+  return {
+    alive,
+    aliveReason: tmuxAlive
+      ? RunProcessAliveReason.Tmux
+      : input.status.progressProcessAlive === true
+      ? RunProcessAliveReason.Pid
+      : freshProgressAlive
+      ? RunProcessAliveReason.FreshProgress
+      : input.status.progressStatus === "running" && input.progressStale === true
+      ? RunProcessAliveReason.StaleProgress
+      : RunProcessAliveReason.Unknown,
+    processAlive,
+    freshProgressAlive,
+  };
+}
+
 export async function reconcileCodexGoalRuntimeResult(
   input: CodexGoalRuntimeResultReconcileInput,
 ): Promise<CodexGoalRuntimeResultReconcileResult> {
@@ -479,16 +528,21 @@ export async function reconcileCodexGoalRuntimeResult(
 
   const changedFiles = status.changedFiles ?? [];
   const nonStrictExistingResult = status.resultExists === true && !existingStrictResult;
+  const progressStaleForReconcile = staleProgress(status);
+  const workerLiveness = resolveCodexGoalWorkerLiveness({
+    status,
+    progressStale: progressStaleForReconcile,
+  });
   const classification = classifyRuntimeRunState({
-    status: status.tmuxAlive ? "running" : "failed",
-    liveness: status.tmuxAlive ? "alive" : "dead",
+    status: workerLiveness.alive ? "running" : "failed",
+    liveness: workerLiveness.alive ? "alive" : "dead",
     workspaceDirty: status.workspaceDirty,
     changedFilesCount: changedFiles.length,
-    processAlive: status.tmuxAlive,
+    processAlive: workerLiveness.alive,
     processCpuActive: status.progressCpuActive,
     processCommand: status.progressCommand,
     progressStatus: status.progressStatus,
-    progressStale: staleProgress(status),
+    progressStale: progressStaleForReconcile,
     progressSilentStale: input.silentStale,
     heartbeatOnlyNoOutput: input.heartbeatOnlyNoOutput,
     resultExists: status.resultExists,
@@ -536,7 +590,7 @@ export async function reconcileCodexGoalRuntimeResult(
       ...(nonStrictExistingResult
         ? [`latest_result_non_strict:${status.resultStatus ?? "unknown"}`]
         : []),
-      ...(status.tmuxAlive === false ? ["worker_not_alive"] : []),
+      ...(!workerLiveness.alive ? ["worker_not_alive"] : []),
       ...(status.progressStatus ? [`progress_status:${status.progressStatus}`] : []),
       ...status.warnings.map((warning) => `status_warning:${warning}`),
       ...(status.logByteLength === undefined
@@ -1141,8 +1195,13 @@ async function inspectProcessSnapshot(
       pid,
       parseProcessSnapshotRows(stdout),
     );
-    if (summary.cpuActive !== undefined || summary.command !== undefined) {
+    if (
+      summary.alive !== undefined ||
+      summary.cpuActive !== undefined ||
+      summary.command !== undefined
+    ) {
       return {
+        ...(summary.alive === undefined ? {} : { alive: summary.alive }),
         ...(summary.cpuActive === undefined ? {} : { cpuActive: summary.cpuActive }),
         ...(summary.command === undefined ? {} : { command: redactStatusText(summary.command) }),
       };
@@ -1165,6 +1224,7 @@ async function inspectProcessSnapshot(
     const cpu = match ? Number(match[1]) : Number.NaN;
     const command = match?.[2]?.trim();
     return {
+      alive: true,
       ...(Number.isFinite(cpu) ? { cpuActive: cpu > 0.1 } : {}),
       ...(command ? { command: redactStatusText(command) } : {}),
     };
@@ -1198,6 +1258,7 @@ export function summarizeCodexGoalProcessTree(
   const totalCpu = treeRows.reduce((sum, row) => sum + row.cpu, 0);
   const commandRow = bestProcessCommandRow(activeRows.length > 0 ? activeRows : treeRows);
   return {
+    alive: true,
     cpuActive: activeRows.length > 0 || totalCpu > processCpuActiveThreshold,
     ...(commandRow?.command ? { command: commandRow.command } : {}),
   };

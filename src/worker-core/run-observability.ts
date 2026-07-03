@@ -19,6 +19,24 @@ export type RunObservationLiveness =
   | "stale"
   | "unknown";
 
+export enum RunProcessSupervisorKind {
+  Tmux = "tmux",
+  Process = "process",
+  Direct = "direct",
+  External = "external",
+  None = "none",
+  Unknown = "unknown",
+}
+
+export enum RunProcessAliveReason {
+  Tmux = "tmux",
+  Pid = "pid",
+  FreshProgress = "fresh_progress",
+  StaleProgress = "stale_progress",
+  TerminalResult = "terminal_result",
+  Unknown = "unknown",
+}
+
 export type RunReadOnlyDecisionKind =
   | "keep_watching"
   | "review_completed"
@@ -44,9 +62,10 @@ export type RunObservationWorkspace = {
 };
 
 export type RunObservationProcess = {
-  readonly supervisor?: string;
+  readonly supervisor?: RunProcessSupervisorKind;
   readonly sessionId?: string;
   readonly alive?: boolean;
+  readonly aliveReason?: RunProcessAliveReason;
   readonly pid?: number;
   readonly appServerPid?: number;
   readonly cpuActive?: boolean;

@@ -27,6 +27,7 @@ import {
   type RunObservationSnapshot,
   type RunObservationStatus,
   type RunObservationWarning,
+  RunProcessSupervisorKind,
 } from "@vioxen/subscription-runtime/worker-core";
 import {
   codexGoalJobToArgs,
@@ -38,6 +39,7 @@ import {
 import {
   collectCodexGoalStatus,
   listCodexGoalAccountStatuses,
+  resolveCodexGoalWorkerLiveness,
   tailCodexGoalLog,
   type CodexGoalStatus,
 } from "./codex-goal-ops";
@@ -124,13 +126,18 @@ export class CodexRunObservationAdapter implements RunObservationPort {
     });
     const progressStale = status.progressHeartbeatAgeMs !== undefined &&
       status.progressHeartbeatAgeMs > this.staleAfterMs;
+    const workerLiveness = resolveCodexGoalWorkerLiveness({
+      status,
+      progressStale,
+    });
     const heartbeatOnlyNoOutput = isHeartbeatOnlyNoOutput({
       status,
       progressStale,
       logUpdatedAgeMs,
+      workerAlive: workerLiveness.alive,
     });
-    const silentStale = Boolean(status.tmuxAlive && (progressStale || logStale));
-    if (status.tmuxAlive && logStale) {
+    const silentStale = Boolean(workerLiveness.alive && (progressStale || logStale));
+    if (workerLiveness.alive && logStale) {
       warnings.push({
         code: "log_stale_while_worker_alive",
         message: "worker appears alive but the log has not changed recently",
@@ -159,10 +166,16 @@ export class CodexRunObservationAdapter implements RunObservationPort {
     const liveness = codexLiveness({
       status,
       silentStale,
+      workerAlive: workerLiveness.alive,
     });
-    const runStatus = codexRunStatus({ status });
+    const runStatus = codexRunStatus({
+      status,
+      workerAlive: workerLiveness.alive,
+    });
     const changedFiles = status.changedFiles ?? [];
-    const manualReviewReasons = codexManualReviewReasons(status);
+    const manualReviewReasons = codexManualReviewReasons(status, {
+      workerAlive: workerLiveness.alive,
+    });
     const workspaceKey = await safeWorkspaceKey(paths.workspacePath);
     const workspace = {
       path: paths.workspacePath,
@@ -242,7 +255,7 @@ export class CodexRunObservationAdapter implements RunObservationPort {
       liveness,
       workspaceDirty: workspace.dirty,
       changedFilesCount: workspace.changedFilesCount,
-      processAlive: status.tmuxAlive,
+      processAlive: workerLiveness.alive,
       processCpuActive: status.progressCpuActive,
       processCommand: status.progressCommand,
       progressStatus: progress.status,
@@ -281,9 +294,14 @@ export class CodexRunObservationAdapter implements RunObservationPort {
       recommendedAction,
       workspace,
       process: {
-        supervisor: manifest.tmuxSession ? "tmux" : "none",
+        supervisor: manifest.tmuxSession
+          ? RunProcessSupervisorKind.Tmux
+          : workerLiveness.alive
+          ? RunProcessSupervisorKind.Direct
+          : RunProcessSupervisorKind.None,
         ...(manifest.tmuxSession ? { sessionId: manifest.tmuxSession } : {}),
-        ...(status.tmuxAlive === undefined ? {} : { alive: status.tmuxAlive }),
+        alive: workerLiveness.alive,
+        aliveReason: workerLiveness.aliveReason,
         ...(status.progressPid === undefined ? {} : { pid: status.progressPid }),
         ...(status.progressCpuActive === undefined
           ? {}
@@ -523,14 +541,16 @@ function codexManifestPaths(
 
 function codexRunStatus(input: {
   readonly status: CodexGoalStatus;
+  readonly workerAlive: boolean;
 }): RunObservationStatus {
+  if (input.workerAlive && input.status.progressStatus === "running") return "running";
   if (
     input.status.resultStatus === "done" ||
     input.status.resultStatus === "completed"
   ) {
     return "completed";
   }
-  if (input.status.tmuxAlive === true) return "running";
+  if (input.workerAlive) return "running";
   if (
     input.status.resultStatus === "failed" ||
     input.status.resultStatus === "partial" ||
@@ -548,16 +568,21 @@ function codexRunStatus(input: {
 function codexLiveness(input: {
   readonly status: CodexGoalStatus;
   readonly silentStale: boolean;
+  readonly workerAlive: boolean;
 }): RunObservationLiveness {
   if (input.silentStale) return "stale";
-  if (input.status.tmuxAlive === true) return "alive";
-  if (input.status.tmuxAlive === false) return "dead";
+  if (input.workerAlive) return "alive";
+  if (input.status.tmuxAlive === false || input.status.progressProcessAlive === false) {
+    return "dead";
+  }
   return "unknown";
 }
 
 function codexManualReviewReasons(
   status: CodexGoalStatus,
+  input: { readonly workerAlive: boolean },
 ): readonly string[] {
+  if (input.workerAlive && status.progressStatus === "running") return [];
   if (
     status.recommendedAction === "inspect_dirty_workspace" ||
     status.recommendedAction === "inspect_dirty_failure" ||
@@ -573,11 +598,12 @@ function isHeartbeatOnlyNoOutput(input: {
   readonly status: CodexGoalStatus;
   readonly progressStale: boolean;
   readonly logUpdatedAgeMs?: number | undefined;
+  readonly workerAlive: boolean;
 }): boolean {
   const status = input.status;
   const noOutputAgeMs = input.logUpdatedAgeMs ?? status.progressHeartbeatAgeMs;
   return Boolean(
-    status.tmuxAlive &&
+    input.workerAlive &&
       status.progressExists &&
       status.progressStatus === "running" &&
       !input.progressStale &&

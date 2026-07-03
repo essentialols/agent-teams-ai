@@ -126,6 +126,11 @@ the tmux pane, the runner command intentionally uses `run --no-tmux`; that
 means the detached process is already inside tmux and should not create a nested
 session.
 
+Do not infer worker liveness from the tmux flag alone. Registry read models use
+tmux state, progress heartbeat, recorded pid/process state, result files and
+workspace state together. A worker may be observable through fresh running
+progress even when the inner runner command includes `--no-tmux`.
+
 Useful operator commands:
 
 ```sh
@@ -1030,6 +1035,11 @@ Healthy signs:
 Quiet logs are not always bad. The app-server goal path often writes the final
 summary only when the attempt finishes. A fresh progress heartbeat is stronger
 evidence than stdout silence.
+
+For registry operations, prefer `codex_goal_brief`, `codex_goal_decision` or
+`codex_goal_overview` over manual tmux checks. These commands normalize
+`workerAlive` from tmux, pid/process and fresh running progress, so old terminal
+results from previous attempts do not hide an observable current attempt.
 
 ## Restart policy
 

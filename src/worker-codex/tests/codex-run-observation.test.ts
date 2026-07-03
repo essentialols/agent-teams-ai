@@ -11,6 +11,7 @@ import {
 } from "@vioxen/subscription-runtime/store-local-file";
 import {
   RunObservationService,
+  RunProcessAliveReason,
   WorkerControlService,
 } from "@vioxen/subscription-runtime/worker-core";
 import { createCodexGoalJob, type CodexGoalJobManifestInput } from "../codex-goal-jobs";
@@ -74,7 +75,7 @@ describe("CodexRunObservationAdapter", () => {
       expect(snapshot).toMatchObject({
         runId: "job-a",
         providerKind: "codex",
-        status: "failed",
+        status: "running",
         workspace: {
           dirty: true,
           changedFilesCount: 1,
@@ -99,8 +100,8 @@ describe("CodexRunObservationAdapter", () => {
           cooldownUntil: cooldownUntil.toISOString(),
         }],
         readOnlyDecision: {
-          kind: "unsafe_state_mismatch",
-          reason: "stopped_run_with_running_progress",
+          kind: "capacity_blocked",
+          reason: "account_or_capacity_unavailable",
         },
       });
       expect(snapshot?.workspace?.changedFiles).toEqual(["changed.txt"]);
@@ -202,6 +203,47 @@ describe("CodexRunObservationAdapter", () => {
         readOnlyDecision: {
           kind: "manual_review_required",
           reason: "stopped_without_terminal_result",
+        },
+      });
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps watching a fresh direct progress attempt even when an older failed result exists", async () => {
+    const fixture = await createObservationFixture();
+
+    try {
+      await writeFile(fixture.manifest.outputPath!, `${JSON.stringify({
+        status: "failed",
+        reason: "previous_attempt_failed",
+      })}\n`);
+      await writeFile(fixture.manifest.progressPath!, `${JSON.stringify({
+        schemaVersion: 1,
+        taskId: fixture.manifest.taskId,
+        status: "running",
+        updatedAt: new Date().toISOString(),
+      })}\n`);
+
+      const snapshot = await new RunObservationService(new CodexRunObservationAdapter({
+        registryRootDir: fixture.registryRootDir,
+        staleAfterMs: 600_000,
+      })).observeRun({ runId: "job-a" });
+
+      expect(snapshot).toMatchObject({
+        status: "running",
+        liveness: "alive",
+        process: {
+          alive: true,
+          aliveReason: RunProcessAliveReason.FreshProgress,
+        },
+        result: {
+          exists: true,
+          status: "failed",
+          reason: "previous_attempt_failed",
+        },
+        readOnlyDecision: {
+          kind: "keep_watching",
         },
       });
     } finally {

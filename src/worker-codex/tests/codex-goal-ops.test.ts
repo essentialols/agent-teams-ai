@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { LocalFileWorkerAccountCapacityStore } from "@vioxen/subscription-runtime/store-local-file";
+import { RunProcessAliveReason } from "@vioxen/subscription-runtime/worker-core";
 import { codexGoalAccountSlots, type CodexGoalRunConfig } from "../codex-goal-runner";
 import {
   buildCodexGoalNoTmuxCommand,
@@ -14,6 +15,7 @@ import {
   CodexGoalRuntimeResultReconciler,
   listCodexGoalAccountStatuses,
   reconcileCodexGoalRuntimeResult,
+  resolveCodexGoalWorkerLiveness,
   startCodexGoalTmux,
   summarizeCodexGoalProcessTree,
   type CodexGoalLaunchInput,
@@ -639,8 +641,25 @@ describe("codex goal ops", () => {
       { pid: 101, ppid: 100, cpu: 0, command: "sh -c npm test" },
       { pid: 102, ppid: 101, cpu: 84.2, command: "npm test -- --runInBand" },
     ])).toMatchObject({
+      alive: true,
       cpuActive: true,
       command: "npm test -- --runInBand",
+    });
+  });
+
+  it("treats fresh running progress as observable liveness without tmux", () => {
+    expect(resolveCodexGoalWorkerLiveness({
+      status: {
+        progressExists: true,
+        progressStatus: "running",
+        progressHeartbeatAgeMs: 1_000,
+      },
+      progressStale: false,
+    })).toMatchObject({
+      alive: true,
+      processAlive: false,
+      freshProgressAlive: true,
+      aliveReason: RunProcessAliveReason.FreshProgress,
     });
   });
 

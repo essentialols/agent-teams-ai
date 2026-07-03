@@ -37,12 +37,8 @@ import {
 } from '@main/utils/pathDecoder';
 import { killProcessByPid } from '@main/utils/processKill';
 import { shouldAutoAllow } from '@main/utils/toolApprovalRules';
-import { stripAgentBlocks, wrapAgentBlock } from '@shared/constants/agentBlocks';
-import {
-  CROSS_TEAM_SENT_SOURCE,
-  CROSS_TEAM_SOURCE,
-  parseCrossTeamPrefix,
-} from '@shared/constants/crossTeam';
+import { wrapAgentBlock } from '@shared/constants/agentBlocks';
+import { CROSS_TEAM_SENT_SOURCE, CROSS_TEAM_SOURCE } from '@shared/constants/crossTeam';
 import { type AttachmentPayload, DEFAULT_TOOL_APPROVAL_SETTINGS } from '@shared/types/team';
 import { resolveLanguageName } from '@shared/utils/agentLanguage';
 import { parseCliArgs } from '@shared/utils/cliArgsParser';
@@ -55,10 +51,6 @@ import {
 import { isLeadMember } from '@shared/utils/leadDetection';
 import { createLogger } from '@shared/utils/logger';
 import { migrateProviderBackendId } from '@shared/utils/providerBackend';
-import {
-  isTeamInternalControlMessageText,
-  stripExactInternalControlEchoPrefix,
-} from '@shared/utils/teamInternalControlMessages';
 import { hasUnsafeProvisionedButNotAliveRuntimeEvidence } from '@shared/utils/teamLaunchFailureReason';
 import { type ParsedTeammateContent } from '@shared/utils/teammateMessageParser';
 import { normalizeTeamMemberMcpPolicy } from '@shared/utils/teamMemberMcpPolicy';
@@ -119,9 +111,7 @@ import {
   isOpenCodeAttachmentDeliveryFailureReason,
   type OpenCodeRuntimeDeliveryAdvisoryDecision,
 } from './opencode/delivery/OpenCodeRuntimeDeliveryAdvisoryPolicy';
-import {
-  openCodeTaskRefsIncludeAll as openCodeTaskRefsIncludeAllValue,
-} from './opencode/delivery/OpenCodeRuntimeDeliveryProofMatching';
+import { openCodeTaskRefsIncludeAll as openCodeTaskRefsIncludeAllValue } from './opencode/delivery/OpenCodeRuntimeDeliveryProofMatching';
 import { OpenCodeRuntimeDeliveryProofReader } from './opencode/delivery/OpenCodeRuntimeDeliveryProofReader';
 import { OpenCodeVisibleReplyProofService } from './opencode/delivery/OpenCodeVisibleReplyProofService';
 import {
@@ -204,9 +194,11 @@ import {
   updateTeamConfigPostLaunch,
 } from './provisioning/TeamProvisioningConfigMaterialization';
 import {
+  buildLeadActiveCrossTeamReplyHints,
   clearPendingCrossTeamReplyExpectation as clearPendingCrossTeamReplyExpectationInState,
   createCrossTeamLeadSuppressionState,
   type CrossTeamDeliveredLeadBlock,
+  getPendingCrossTeamReplyExpectationKeys,
   isCrossTeamPseudoRecipientName,
   isCrossTeamToolRecipientName,
   looksLikeQualifiedExternalRecipientName,
@@ -254,11 +246,12 @@ import {
   inferOpenCodeInboxMessageTaskRefs,
   type NativeSameTeamFingerprint,
   normalizeSameTeamText,
+  planLeadInboxRelayReadOnlyMessages,
+  selectActionableLeadRelayUnread,
   selectLeadInboxRelayBatch,
   selectMemberInboxRelayBatch,
   selectOpenCodeInboxRelayBatch,
   shouldDeferSameTeamMessage as shouldDeferSameTeamMessageHelper,
-  shouldSuppressUnverifiedLeadRelayStateLine,
   splitMemberInboxRelayUnread,
 } from './provisioning/TeamProvisioningInboxRelayPolicy';
 import {
@@ -331,6 +324,7 @@ import {
   resetLiveLeadTextBuffer as resetLiveLeadTextBufferHelper,
   shiftProvisioningOutputIndexesAfterRemoval as shiftProvisioningOutputIndexesAfterRemovalHelper,
 } from './provisioning/TeamProvisioningLeadProcessMessages';
+import { projectLeadRelayReply } from './provisioning/TeamProvisioningLeadRelayProjection';
 import {
   getPreCompleteCliErrorTextFromRun,
   getRunTrackedCwdFromRun,
@@ -3603,6 +3597,15 @@ export class TeamProvisioningService {
       teamName,
       otherTeam,
       conversationId
+    );
+  }
+
+  private getPendingCrossTeamReplyExpectationKeys(teamName: string): Set<string> {
+    return getPendingCrossTeamReplyExpectationKeys(
+      this.pendingCrossTeamFirstReplies,
+      teamName,
+      Date.now(),
+      TeamProvisioningService.RECENT_CROSS_TEAM_DELIVERY_TTL_MS
     );
   }
 
@@ -9394,14 +9397,17 @@ export class TeamProvisioningService {
 
       // Category 1: permanently ignored → mark as read.
       // Includes noise (idle/shutdown), cross-team sender copies, cross-team reply dedup.
-      const permanentlyIgnored = unread.filter(
-        (m) =>
-          silentIdleIds.has(m.messageId) ||
-          coarseNonIdleNoiseIds.has(m.messageId) ||
-          m.source === CROSS_TEAM_SENT_SOURCE ||
-          isCrossTeamReplyToOwnOutbound(m) ||
-          wasRecentlyDeliveredCrossTeam(m)
-      );
+      const { permanentlyIgnored, passiveIdleUnread, readOnlyIgnoredIds, remainingUnread } =
+        planLeadInboxRelayReadOnlyMessages({
+          unread,
+          silentIdleIds,
+          passiveIdleIds,
+          coarseNonIdleNoiseIds,
+          isPermanentlyIgnored: (message) =>
+            message.source === CROSS_TEAM_SENT_SOURCE ||
+            isCrossTeamReplyToOwnOutbound(message) ||
+            wasRecentlyDeliveredCrossTeam(message),
+        });
       if (permanentlyIgnored.length > 0) {
         try {
           await this.markInboxMessagesRead(teamName, leadName, permanentlyIgnored);
@@ -9416,7 +9422,6 @@ export class TeamProvisioningService {
         }
       }
 
-      const passiveIdleUnread = unread.filter((m) => passiveIdleIds.has(m.messageId));
       if (passiveIdleUnread.length > 0) {
         try {
           await this.markInboxMessagesRead(teamName, leadName, passiveIdleUnread);
@@ -9432,11 +9437,6 @@ export class TeamProvisioningService {
         }
       }
 
-      const readOnlyIgnoredIds = new Set([
-        ...permanentlyIgnored.map((m) => m.messageId),
-        ...passiveIdleUnread.map((m) => m.messageId),
-      ]);
-      const remainingUnread = unread.filter((m) => !readOnlyIgnoredIds.has(m.messageId));
       if (isStaleRelayRun()) return 0;
 
       // Category 2: same-team native delivery confirmation (one-to-one pairing).
@@ -9470,12 +9470,12 @@ export class TeamProvisioningService {
       );
 
       // Actionable: everything not in any category.
-      const actionableUnread = remainingUnread.filter(
-        (m) =>
-          !nativeMatchedMessageIds.has(m.messageId) &&
-          !deferredIds.has(m.messageId) &&
-          !permissionRequestIds.has(m.messageId)
-      );
+      const actionableUnread = selectActionableLeadRelayUnread({
+        remainingUnread,
+        nativeMatchedMessageIds,
+        deferredIds,
+        permissionRequestIds,
+      });
 
       // Layer 3: schedule retry timers.
       if (nativeMatchedMessageIds.size > 0 && !sameTeamPersisted) {
@@ -9503,13 +9503,7 @@ export class TeamProvisioningService {
           ...(member.role?.trim() ? { role: member.role.trim() } : {}),
         }));
       const workSyncControlUrl = await this.resolveControlApiBaseUrl();
-      run.activeCrossTeamReplyHints = batch.flatMap((m) => {
-        if (m.source !== 'cross_team') return [];
-        const sourceTeam = m.from.includes('.') ? m.from.split('.', 1)[0] : '';
-        const conversationId = m.conversationId ?? parseCrossTeamPrefix(m.text)?.conversationId;
-        if (!sourceTeam || !conversationId) return [];
-        return [{ toTeam: sourceTeam, conversationId }];
-      });
+      run.activeCrossTeamReplyHints = buildLeadActiveCrossTeamReplyHints(batch);
       const message = buildLeadInboxRelayPrompt({
         teamName,
         leadName,
@@ -9604,13 +9598,10 @@ export class TeamProvisioningService {
         }
       }
 
-      const readCommitBatch = await getLeadRelayReadCommitBatch({
+      const readCommitBatch = await this.getLeadRelayReadCommitBatch({
         teamName,
         leadName,
         batch,
-        hasAcceptedLeadWorkSyncReport: (report) => this.hasAcceptedLeadWorkSyncReport(report),
-        scheduleLeadProofMissingWorkSyncRecovery: (recoveryInput) =>
-          this.scheduleLeadProofMissingWorkSyncRecovery(recoveryInput),
       });
       for (const m of readCommitBatch) {
         relayedIds.add(m.messageId);
@@ -9624,54 +9615,41 @@ export class TeamProvisioningService {
         }
       }
 
-      // Strip agent-only blocks — lead may respond with pure coordination content
-      // that is not meant for the human user.
-      const cleanReply = replyText
-        ? stripExactInternalControlEchoPrefix(
-            stripAgentBlocks(replyText),
-            stripAgentBlocks(message)
-          )
-        : null;
-      if (cleanReply) {
-        if (isTeamInternalControlMessageText(cleanReply)) {
+      const replyProjection = projectLeadRelayReply({
+        replyText,
+        relayPrompt: message,
+        replyVisibility,
+        capturedVisibleSendMessage,
+        capturedUserVisibleSendMessage,
+        leadName,
+        runId,
+        nowIso: nowIso(),
+        nowMs: Date.now(),
+      });
+      if (replyProjection.kind === 'suppressed') {
+        if (replyProjection.reason === 'internal_control') {
           logger.debug(`[${teamName}] Suppressed internal lead relay echo`);
-        } else if (
-          (replyVisibility === 'internal_activity' && capturedVisibleSendMessage) ||
-          (replyVisibility === 'user' && capturedUserVisibleSendMessage)
-        ) {
+        } else if (replyProjection.reason === 'visible_duplicate') {
           logger.debug(`[${teamName}] Suppressed lead relay text duplicated by visible message`);
-        } else if (
-          replyVisibility === 'internal_activity' &&
-          shouldSuppressUnverifiedLeadRelayStateLine(cleanReply)
-        ) {
+        } else if (replyProjection.reason === 'unverified_state') {
           logger.debug(`[${teamName}] Suppressed unverified lead relay state claim`);
-        } else if (replyVisibility === 'internal_activity') {
-          this.pushLiveLeadTextMessage(
-            run,
-            cleanReply,
-            `lead-relay-${runId}-${Date.now()}`,
-            nowIso()
-          );
-        } else {
-          const relayMsg: InboxMessage = {
-            from: leadName,
-            to: 'user',
-            text: cleanReply,
-            timestamp: nowIso(),
-            read: true,
-            summary: cleanReply.length > 60 ? cleanReply.slice(0, 57) + '...' : cleanReply,
-            messageId: `lead-process-${runId}-${Date.now()}`,
-            source: 'lead_process',
-          };
-          this.pushLiveLeadProcessMessage(teamName, relayMsg);
-          // Persist to disk so relayed replies survive app restart and trigger FileWatcher
-          this.persistSentMessage(teamName, relayMsg);
-          this.teamChangeEmitter?.({
-            type: 'inbox',
-            teamName,
-            detail: 'lead-process-reply',
-          });
         }
+      } else if (replyProjection.kind === 'live_activity') {
+        this.pushLiveLeadTextMessage(
+          run,
+          replyProjection.text,
+          replyProjection.messageId,
+          replyProjection.timestamp
+        );
+      } else {
+        this.pushLiveLeadProcessMessage(teamName, replyProjection.message);
+        // Persist to disk so relayed replies survive app restart and trigger FileWatcher
+        this.persistSentMessage(teamName, replyProjection.message);
+        this.teamChangeEmitter?.({
+          type: 'inbox',
+          teamName,
+          detail: 'lead-process-reply',
+        });
       }
       if (hasPendingFollowUpRelay) {
         this.scheduleLeadInboxFollowUpRelay(teamName);

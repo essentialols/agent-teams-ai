@@ -163,6 +163,11 @@ import {
   shouldClearRuntimeDiagnosticAfterBootstrapConfirmation,
 } from './provisioning/TeamProvisioningBootstrapTranscript';
 import {
+  addPermissionRulesToSettings as addClaudePermissionRulesToSettings,
+  type ClaudePermissionSettingsFilePorts,
+  seedLeadBootstrapPermissionRules as seedLeadBootstrapPermissionRulesHelper,
+} from './provisioning/TeamProvisioningClaudePermissionSettings';
+import {
   buildIncompleteLaunchCleanupReason as buildIncompleteLaunchCleanupReasonHelper,
   cleanupProvisioningRun,
   clearPostCompactReminderState,
@@ -881,6 +886,14 @@ const TEAM_JSON_READ_TIMEOUT_MS = 5_000;
 const TEAM_CONFIG_MAX_BYTES = 10 * 1024 * 1024;
 const TEAM_INBOX_MAX_BYTES = 2 * 1024 * 1024;
 const MEMBER_SPAWN_AUDIT_MIN_INTERVAL_MS = 1_500;
+
+const claudePermissionSettingsFilePorts: ClaudePermissionSettingsFilePorts = {
+  mkdirRecursive: async (directoryPath) => {
+    await fs.promises.mkdir(directoryPath, { recursive: true });
+  },
+  readFileUtf8: (filePath) => fs.promises.readFile(filePath, 'utf-8'),
+  writeFileUtf8: (filePath, contents) => atomicWriteAsync(filePath, contents),
+};
 
 function getRunRuntimeFailureLabel(run: ProvisioningRun): string {
   return getRuntimeFailureLabelForRequest(run.request);
@@ -13437,73 +13450,24 @@ export class TeamProvisioningService {
     toolNames: string[],
     behavior: string
   ): Promise<number> {
-    const dir = path.dirname(settingsPath);
-    await fs.promises.mkdir(dir, { recursive: true });
-
-    // Read existing settings (or start with empty object)
-    let settings: Record<string, unknown> = {};
-    try {
-      const raw = await fs.promises.readFile(settingsPath, 'utf-8');
-      const parsed = JSON.parse(raw) as unknown;
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        settings = parsed as Record<string, unknown>;
-      }
-    } catch {
-      // File doesn't exist or invalid JSON — start fresh
-    }
-
-    // Ensure permissions object exists
-    if (!settings.permissions || typeof settings.permissions !== 'object') {
-      settings.permissions = {};
-    }
-    const perms = settings.permissions as Record<string, unknown>;
-
-    // Target array: "allow" or "deny" based on behavior
-    const key = behavior === 'deny' ? 'deny' : 'allow';
-    if (!Array.isArray(perms[key])) {
-      perms[key] = [];
-    }
-    const list = perms[key] as string[];
-
-    // Add tool names that aren't already in the list
-    const existing = new Set(list);
-    let added = 0;
-    for (const name of toolNames) {
-      if (!existing.has(name)) {
-        list.push(name);
-        added++;
-      }
-    }
-
-    if (added === 0) return 0; // Nothing new to add
-
-    await atomicWriteAsync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
-    return added;
+    return addClaudePermissionRulesToSettings(
+      { settingsPath, toolNames, behavior },
+      claudePermissionSettingsFilePorts
+    );
   }
 
   private async seedLeadBootstrapPermissionRules(
     teamName: string,
     projectCwd: string
   ): Promise<void> {
-    const settingsPath = path.join(projectCwd, '.claude', 'settings.local.json');
-    try {
-      const allTools = [
-        ...AGENT_TEAMS_NAMESPACED_LEAD_BOOTSTRAP_TOOL_NAMES,
-        'Edit',
-        'Write',
-        'NotebookEdit',
-      ];
-      const added = await this.addPermissionRulesToSettings(settingsPath, allTools, 'allow');
-      logger.info(
-        `[${teamName}] Seeded lead bootstrap MCP rules in ${settingsPath} (${added} added)`
-      );
-    } catch (error) {
-      logger.warn(
-        `[${teamName}] Failed to seed lead bootstrap MCP rules: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
-    }
+    await seedLeadBootstrapPermissionRulesHelper(
+      {
+        teamName,
+        projectCwd,
+        bootstrapToolNames: AGENT_TEAMS_NAMESPACED_LEAD_BOOTSTRAP_TOOL_NAMES,
+      },
+      { ...claudePermissionSettingsFilePorts, logger }
+    );
   }
 
   /**

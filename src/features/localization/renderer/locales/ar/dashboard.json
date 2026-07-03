@@ -207,6 +207,12 @@
     "controls": {
       "includeCacheTokens": "تضمين رموز التخزين المؤقت"
     },
+    "tabs": {
+      "overview": "Overview",
+      "activity": "Activity",
+      "breakdowns": "Breakdowns",
+      "runs": "Runs"
+    },
     "dateRange": {
       "allCollectedUsage": "كل استخدام التطبيق المجمع",
       "customRange": "نطاق مخصص",

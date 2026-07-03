@@ -1154,6 +1154,12 @@ export default interface Resources {
       controls: {
         includeCacheTokens: 'Include cache tokens';
       };
+      tabs: {
+        activity: 'Activity';
+        breakdowns: 'Breakdowns';
+        overview: 'Overview';
+        runs: 'Runs';
+      };
       dateRange: {
         allCollectedUsage: 'All collected app usage';
         customRange: 'Custom range';

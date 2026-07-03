@@ -207,6 +207,12 @@
     "controls": {
       "includeCacheTokens": "Sertakan token cache"
     },
+    "tabs": {
+      "overview": "Overview",
+      "activity": "Activity",
+      "breakdowns": "Breakdowns",
+      "runs": "Runs"
+    },
     "dateRange": {
       "allCollectedUsage": "Semua penggunaan app yang dikumpul",
       "customRange": "Julat tersuai",

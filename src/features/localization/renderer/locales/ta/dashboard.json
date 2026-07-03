@@ -207,6 +207,12 @@
     "controls": {
       "includeCacheTokens": "cache tokens சேர்க்க"
     },
+    "tabs": {
+      "overview": "Overview",
+      "activity": "Activity",
+      "breakdowns": "Breakdowns",
+      "runs": "Runs"
+    },
     "dateRange": {
       "allCollectedUsage": "சேகரிக்கப்பட்ட முழு app பயன்பாடு",
       "customRange": "தனிப்பயன் வரம்பு",

@@ -5,6 +5,7 @@ import { useAppTranslation } from '@features/localization/renderer';
 import { MemberBadge } from '@renderer/components/team/MemberBadge';
 import { Button } from '@renderer/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@renderer/components/ui/popover';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@renderer/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/components/ui/tooltip';
 import { cn } from '@renderer/lib/utils';
 import {
@@ -71,8 +72,12 @@ const MODEL_DONUT_CENTER = MODEL_DONUT_SIZE / 2;
 const MODEL_DONUT_RADIUS = 63;
 const MODEL_DONUT_STROKE_WIDTH = 30;
 const MODEL_DONUT_CIRCUMFERENCE = 2 * Math.PI * MODEL_DONUT_RADIUS;
+const TOKEN_USAGE_TAB_TRIGGER_CLASS =
+  'gap-1.5 rounded-none border-b-2 border-transparent px-3 py-2 text-sm text-text-muted shadow-none data-[state=active]:border-fuchsia-400 data-[state=active]:bg-transparent data-[state=active]:text-text data-[state=active]:shadow-none';
+const TOKEN_USAGE_DASHBOARD_TABS = ['overview', 'activity', 'breakdowns', 'runs'] as const;
 
 type TokenUsageStoredBudgetConfig = TokenUsageBudgetLimits;
+type TokenUsageDashboardTab = (typeof TOKEN_USAGE_DASHBOARD_TABS)[number];
 
 export const TokenUsageDashboard = (): React.JSX.Element => {
   const { t, resolvedLanguage } = useAppTranslation('dashboard');
@@ -87,6 +92,7 @@ export const TokenUsageDashboard = (): React.JSX.Element => {
   );
   const [selectedTeamNames, setSelectedTeamNames] = useState<string[]>([]);
   const [includeCacheTokens, setIncludeCacheTokens] = useState(true);
+  const [activeDashboardTab, setActiveDashboardTab] = useState<TokenUsageDashboardTab>('overview');
   const { budgetConfig, budgetConfigError, updateBudgetConfig } = useTokenUsageBudgetSettings({
     loadErrorMessage: tokenUsageT('tokenUsage.budgets.loadFailed'),
     saveErrorMessage: tokenUsageT('tokenUsage.budgets.saveFailed'),
@@ -137,6 +143,11 @@ export const TokenUsageDashboard = (): React.JSX.Element => {
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          <TokenUsageCacheTokenToggle
+            checked={includeCacheTokens}
+            onChange={setIncludeCacheTokens}
+            t={tokenUsageT}
+          />
           <TeamFilterSelector
             options={teamOptions}
             selectedTeamNames={selectedTeamNames}
@@ -172,126 +183,155 @@ export const TokenUsageDashboard = (): React.JSX.Element => {
             </div>
           )}
 
-          <SummaryMetricsPanel
-            metrics={viewModel.metrics}
-            includeCacheTokens={includeCacheTokens}
-            onIncludeCacheTokensChange={setIncludeCacheTokens}
-            t={tokenUsageT}
-          />
-
-          <section className="grid gap-5 lg:grid-cols-3">
-            <BillingSplitPanel items={viewModel.billingSplit} t={tokenUsageT} />
-            <BurnRatePanel burnRate={viewModel.burnRate} t={tokenUsageT} />
-            <BudgetAlertsPanel
-              alerts={viewModel.budgetAlerts}
-              budgetConfig={budgetConfig}
-              budgetTargetKey={budgetTargetKey}
-              budgetTargetOptions={viewModel.budgetTargetOptions}
-              error={budgetConfigError}
-              onBudgetTargetKeyChange={setBudgetTargetKey}
-              onBudgetConfigChange={updateBudgetConfig}
-              onOpenNotificationSettings={openNotificationSettings}
-              t={tokenUsageT}
-            />
-          </section>
+          <SummaryMetricsPanel metrics={viewModel.metrics} />
 
           {loading && viewModel.empty ? (
             <LoadingPanel />
           ) : viewModel.empty ? (
             <EmptyPanel t={tokenUsageT} />
           ) : (
-            <>
-              <UsageOverviewPanel
-                modelSegments={viewModel.modelUsage}
-                modelBars={viewModel.modelBars}
-                t={tokenUsageT}
-              />
-              <ActivityHeatmapPanel days={viewModel.activityDays} t={tokenUsageT} />
+            <Tabs
+              value={activeDashboardTab}
+              onValueChange={(value) => {
+                if (isTokenUsageDashboardTab(value)) {
+                  setActiveDashboardTab(value);
+                }
+              }}
+              className="min-w-0"
+            >
+              <div className="-mb-1 overflow-x-auto border-b border-[var(--color-border)]">
+                <TabsList className="h-auto min-w-max justify-start gap-1 rounded-none bg-transparent p-0">
+                  <TabsTrigger value="overview" className={TOKEN_USAGE_TAB_TRIGGER_CLASS}>
+                    <Gauge className="size-3.5" />
+                    {tokenUsageT('tokenUsage.tabs.overview')}
+                  </TabsTrigger>
+                  <TabsTrigger value="activity" className={TOKEN_USAGE_TAB_TRIGGER_CLASS}>
+                    <Activity className="size-3.5" />
+                    {tokenUsageT('tokenUsage.tabs.activity')}
+                  </TabsTrigger>
+                  <TabsTrigger value="breakdowns" className={TOKEN_USAGE_TAB_TRIGGER_CLASS}>
+                    <Rows3 className="size-3.5" />
+                    {tokenUsageT('tokenUsage.tabs.breakdowns')}
+                  </TabsTrigger>
+                  <TabsTrigger value="runs" className={TOKEN_USAGE_TAB_TRIGGER_CLASS}>
+                    <Clock3 className="size-3.5" />
+                    {tokenUsageT('tokenUsage.tabs.runs')}
+                  </TabsTrigger>
+                </TabsList>
+              </div>
 
-              <section className="grid items-start gap-5 2xl:grid-cols-[minmax(0,1.4fr)_minmax(320px,0.6fr)]">
-                <TrendPanel points={viewModel.trendPoints} t={tokenUsageT} />
-                <div className="grid min-w-0 gap-5 md:grid-cols-2 2xl:grid-cols-1">
-                  <HorizontalBarsPanel
-                    heading={tokenUsageT('tokenUsage.panels.commandSpend')}
-                    items={viewModel.commandSpendBars}
+              <TabsContent value="overview" className="mt-5 space-y-5">
+                <section className="grid gap-5 lg:grid-cols-3">
+                  <BillingSplitPanel items={viewModel.billingSplit} t={tokenUsageT} />
+                  <BurnRatePanel burnRate={viewModel.burnRate} t={tokenUsageT} />
+                  <BudgetAlertsPanel
+                    alerts={viewModel.budgetAlerts}
+                    budgetConfig={budgetConfig}
+                    budgetTargetKey={budgetTargetKey}
+                    budgetTargetOptions={viewModel.budgetTargetOptions}
+                    error={budgetConfigError}
+                    onBudgetTargetKeyChange={setBudgetTargetKey}
+                    onBudgetConfigChange={updateBudgetConfig}
+                    onOpenNotificationSettings={openNotificationSettings}
+                    t={tokenUsageT}
+                  />
+                </section>
+                <UsageOverviewPanel
+                  modelSegments={viewModel.modelUsage}
+                  modelBars={viewModel.modelBars}
+                  t={tokenUsageT}
+                />
+              </TabsContent>
+
+              <TabsContent value="activity" className="mt-5 space-y-5">
+                <ActivityHeatmapPanel days={viewModel.activityDays} t={tokenUsageT} />
+                <section className="grid items-start gap-5 2xl:grid-cols-[minmax(0,1.4fr)_minmax(320px,0.6fr)]">
+                  <TrendPanel points={viewModel.trendPoints} t={tokenUsageT} />
+                  <div className="grid min-w-0 gap-5 md:grid-cols-2 2xl:grid-cols-1">
+                    <HorizontalBarsPanel
+                      heading={tokenUsageT('tokenUsage.panels.commandSpend')}
+                      items={viewModel.commandSpendBars}
+                      onOpenTeam={openTeamTab}
+                      t={tokenUsageT}
+                    />
+                    <HorizontalBarsPanel
+                      heading={tokenUsageT('tokenUsage.panels.runtimeMix')}
+                      items={viewModel.runtimeBars}
+                      t={tokenUsageT}
+                    />
+                  </div>
+                </section>
+              </TabsContent>
+
+              <TabsContent value="breakdowns" className="mt-5 space-y-5">
+                <section className="grid gap-5 xl:grid-cols-2">
+                  <BreakdownPanel
+                    heading={tokenUsageT('tokenUsage.panels.teams')}
+                    teamPanel
+                    rows={viewModel.teamRows}
                     onOpenTeam={openTeamTab}
                     t={tokenUsageT}
                   />
-                  <HorizontalBarsPanel
-                    heading={tokenUsageT('tokenUsage.panels.runtimeMix')}
-                    items={viewModel.runtimeBars}
+                  <BreakdownPanel
+                    heading={tokenUsageT('tokenUsage.panels.agents')}
+                    rows={viewModel.agentRows}
+                    onOpenTeam={openTeamTab}
+                    showMemberBadge
                     t={tokenUsageT}
                   />
-                </div>
-              </section>
+                </section>
 
-              <section className="grid gap-5 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
-                <RunsPanel
-                  heading={tokenUsageT('tokenUsage.panels.commandPeriods')}
-                  rows={viewModel.commandRuns}
-                  primary
-                  t={tokenUsageT}
-                />
-                <RunsPanel
-                  heading={tokenUsageT('tokenUsage.panels.sessions')}
-                  rows={viewModel.sessionRuns}
-                  t={tokenUsageT}
-                />
-              </section>
+                <section className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_300px]">
+                  <BreakdownPanel
+                    heading={tokenUsageT('tokenUsage.panels.commands')}
+                    rows={viewModel.commandBreakdownRows}
+                    compact
+                    t={tokenUsageT}
+                  />
+                  <SourceQualityPanel
+                    items={viewModel.sourceQuality}
+                    unmappedEventCount={viewModel.unmappedEventCount}
+                    t={tokenUsageT}
+                  />
+                </section>
 
-              <section className="grid gap-5 xl:grid-cols-2">
-                <BreakdownPanel
-                  heading={tokenUsageT('tokenUsage.panels.teams')}
-                  teamPanel
-                  rows={viewModel.teamRows}
-                  onOpenTeam={openTeamTab}
-                  t={tokenUsageT}
-                />
-                <BreakdownPanel
-                  heading={tokenUsageT('tokenUsage.panels.agents')}
-                  rows={viewModel.agentRows}
-                  onOpenTeam={openTeamTab}
-                  showMemberBadge
-                  t={tokenUsageT}
-                />
-              </section>
-
-              <section className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_300px]">
-                <BreakdownPanel
-                  heading={tokenUsageT('tokenUsage.panels.commands')}
-                  rows={viewModel.commandBreakdownRows}
-                  compact
-                  t={tokenUsageT}
-                />
-                <SourceQualityPanel
-                  items={viewModel.sourceQuality}
-                  unmappedEventCount={viewModel.unmappedEventCount}
-                  t={tokenUsageT}
-                />
-              </section>
-
-              <section className="grid gap-5 xl:grid-cols-[1fr_1fr]">
                 <BreakdownPanel
                   heading={tokenUsageT('tokenUsage.panels.sessions')}
                   rows={viewModel.sessionBreakdownRows}
                   compact
                   t={tokenUsageT}
                 />
-                <RunsPanel
-                  heading={tokenUsageT('tokenUsage.panels.recentRuns')}
-                  rows={viewModel.recentRuns}
-                  t={tokenUsageT}
-                />
-              </section>
+              </TabsContent>
 
-              <section>
-                <RunsPanel
-                  heading={tokenUsageT('tokenUsage.panels.expensiveRuns')}
-                  rows={viewModel.expensiveRuns}
-                  t={tokenUsageT}
-                />
-              </section>
-            </>
+              <TabsContent value="runs" className="mt-5 space-y-5">
+                <section className="grid gap-5 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
+                  <RunsPanel
+                    heading={tokenUsageT('tokenUsage.panels.commandPeriods')}
+                    rows={viewModel.commandRuns}
+                    primary
+                    t={tokenUsageT}
+                  />
+                  <RunsPanel
+                    heading={tokenUsageT('tokenUsage.panels.sessions')}
+                    rows={viewModel.sessionRuns}
+                    t={tokenUsageT}
+                  />
+                </section>
+
+                <section className="grid gap-5 xl:grid-cols-[1fr_1fr]">
+                  <RunsPanel
+                    heading={tokenUsageT('tokenUsage.panels.recentRuns')}
+                    rows={viewModel.recentRuns}
+                    t={tokenUsageT}
+                  />
+                  <RunsPanel
+                    heading={tokenUsageT('tokenUsage.panels.expensiveRuns')}
+                    rows={viewModel.expensiveRuns}
+                    t={tokenUsageT}
+                  />
+                </section>
+              </TabsContent>
+            </Tabs>
           )}
         </div>
       </main>
@@ -377,6 +417,10 @@ function localizedDateRangeDetail(value: TokenUsageDateRangeValue, t: TokenUsage
 
 function localizedDateRangeTitle(value: TokenUsageDateRangeValue, t: TokenUsageT): string {
   return `${localizedDateRangeLabel(value, t)}: ${localizedDateRangeDetail(value, t)}`;
+}
+
+function isTokenUsageDashboardTab(value: string): value is TokenUsageDashboardTab {
+  return (TOKEN_USAGE_DASHBOARD_TABS as readonly string[]).includes(value);
 }
 
 const TeamFilterSelector = ({
@@ -618,14 +662,8 @@ const DateRangeSelector = ({
 
 const SummaryMetricsPanel = ({
   metrics,
-  includeCacheTokens,
-  onIncludeCacheTokensChange,
-  t,
 }: {
   metrics: TokenUsageMetricViewModel[];
-  includeCacheTokens: boolean;
-  onIncludeCacheTokensChange: (include: boolean) => void;
-  t: TokenUsageT;
 }): React.JSX.Element => {
   return (
     <section
@@ -635,14 +673,7 @@ const SummaryMetricsPanel = ({
       )}
     >
       {metrics.map((metric, index) => (
-        <SummaryMetricCell
-          key={metric.id}
-          metric={metric}
-          index={index}
-          includeCacheTokens={includeCacheTokens}
-          onIncludeCacheTokensChange={onIncludeCacheTokensChange}
-          t={t}
-        />
+        <SummaryMetricCell key={metric.id} metric={metric} index={index} />
       ))}
     </section>
   );
@@ -651,15 +682,9 @@ const SummaryMetricsPanel = ({
 const SummaryMetricCell = ({
   metric,
   index,
-  includeCacheTokens,
-  onIncludeCacheTokensChange,
-  t,
 }: {
   metric: TokenUsageMetricViewModel;
   index: number;
-  includeCacheTokens: boolean;
-  onIncludeCacheTokensChange: (include: boolean) => void;
-  t: TokenUsageT;
 }): React.JSX.Element => {
   return (
     <div className={cn('min-w-0 p-4', summaryMetricCellBorderClass(index))}>
@@ -674,18 +699,6 @@ const SummaryMetricCell = ({
       </div>
       <div className="mt-3 text-2xl font-semibold text-text">{metric.value}</div>
       <div className="mt-1 truncate text-xs text-text-muted">{metric.detail}</div>
-      {metric.id === 'tokens' && (
-        <label className="mt-3 flex w-fit cursor-pointer items-center gap-2 text-xs text-text-muted transition-colors hover:text-text-secondary">
-          <input
-            type="checkbox"
-            checked={includeCacheTokens}
-            onChange={(event) => onIncludeCacheTokensChange(event.target.checked)}
-            className="size-3.5 rounded-sm border border-[var(--color-border-emphasis)] bg-surface accent-fuchsia-500"
-            aria-label={t('tokenUsage.controls.includeCacheTokens')}
-          />
-          <span>{t('tokenUsage.controls.includeCacheTokens')}</span>
-        </label>
-      )}
       {metric.rows && metric.rows.length > 0 && (
         <div className="mt-3 space-y-1.5 border-t border-[var(--color-border)] pt-2">
           {metric.rows.map((row) => (
@@ -726,6 +739,30 @@ const MetricInfoTooltip = ({ label, help }: { label: string; help: string }): Re
         {help}
       </TooltipContent>
     </Tooltip>
+  );
+};
+
+const TokenUsageCacheTokenToggle = ({
+  checked,
+  onChange,
+  t,
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  t: TokenUsageT;
+}): React.JSX.Element => {
+  const label = t('tokenUsage.controls.includeCacheTokens');
+  return (
+    <label className="flex h-9 cursor-pointer items-center gap-2 rounded-sm border border-[var(--color-border-emphasis)] bg-surface px-3 text-sm text-text-secondary transition-colors hover:bg-surface-raised hover:text-text">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+        className="size-3.5 rounded-sm border border-[var(--color-border-emphasis)] bg-surface accent-fuchsia-500"
+        aria-label={label}
+      />
+      <span className="whitespace-nowrap">{label}</span>
+    </label>
   );
 };
 

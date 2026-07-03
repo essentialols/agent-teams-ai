@@ -207,6 +207,12 @@
     "controls": {
       "includeCacheTokens": "cache tokens অন্তর্ভুক্ত করুন"
     },
+    "tabs": {
+      "overview": "Overview",
+      "activity": "Activity",
+      "breakdowns": "Breakdowns",
+      "runs": "Runs"
+    },
     "dateRange": {
       "allCollectedUsage": "সংগৃহীত সব app ব্যবহার",
       "customRange": "কাস্টম রেঞ্জ",

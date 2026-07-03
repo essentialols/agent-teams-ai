@@ -207,6 +207,12 @@
     "controls": {
       "includeCacheTokens": "کیش ٹوکن شامل کریں"
     },
+    "tabs": {
+      "overview": "Overview",
+      "activity": "Activity",
+      "breakdowns": "Breakdowns",
+      "runs": "Runs"
+    },
     "dateRange": {
       "allCollectedUsage": "ایپ کا تمام جمع شدہ استعمال",
       "customRange": "حسب ضرورت رینج",

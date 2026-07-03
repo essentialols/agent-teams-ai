@@ -207,6 +207,12 @@
     "controls": {
       "includeCacheTokens": "包含缓存 token"
     },
+    "tabs": {
+      "overview": "Overview",
+      "activity": "Activity",
+      "breakdowns": "Breakdowns",
+      "runs": "Runs"
+    },
     "dateRange": {
       "allCollectedUsage": "已收集的全部应用用量",
       "customRange": "自定义范围",

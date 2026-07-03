@@ -1,9 +1,7 @@
 import type { ToolApprovalAutoResolved, ToolApprovalTimeoutAction } from '@shared/types';
 
-export const TOOL_APPROVAL_TIMEOUT_CONTROL_DENY_MESSAGE =
-  'Timed out — auto-denied by settings';
-export const TOOL_APPROVAL_TIMEOUT_TEAMMATE_DENY_MESSAGE =
-  'Timed out - auto-denied by settings';
+export const TOOL_APPROVAL_TIMEOUT_CONTROL_DENY_MESSAGE = 'Timed out — auto-denied by settings';
+export const TOOL_APPROVAL_TIMEOUT_TEAMMATE_DENY_MESSAGE = 'Timed out - auto-denied by settings';
 
 export interface ToolApprovalControlResponsePayload {
   type: 'control_response';
@@ -119,9 +117,7 @@ export function resolveToolApprovalTimeoutAutoResolution(
       teamName: input.teamName,
       reason: allow ? 'timeout_allow' : 'timeout_deny',
     }),
-    ...(allow
-      ? {}
-      : { teammateDenyMessage: TOOL_APPROVAL_TIMEOUT_TEAMMATE_DENY_MESSAGE }),
+    ...(allow ? {} : { teammateDenyMessage: TOOL_APPROVAL_TIMEOUT_TEAMMATE_DENY_MESSAGE }),
   };
 }
 

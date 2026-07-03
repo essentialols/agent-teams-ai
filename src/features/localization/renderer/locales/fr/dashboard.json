@@ -207,6 +207,12 @@
     "controls": {
       "includeCacheTokens": "Inclure les tokens de cache"
     },
+    "tabs": {
+      "overview": "Overview",
+      "activity": "Activity",
+      "breakdowns": "Breakdowns",
+      "runs": "Runs"
+    },
     "dateRange": {
       "allCollectedUsage": "Toute l utilisation collectée de l app",
       "customRange": "Plage personnalisée",

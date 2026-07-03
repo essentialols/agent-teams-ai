@@ -292,6 +292,10 @@ import {
   guardCommittedOpenCodeSecondaryLaneEvidence as guardCommittedOpenCodeSecondaryLaneEvidenceHelper,
 } from './provisioning/TeamProvisioningLaunchStateReconciliation';
 import {
+  type LaunchStateWriteResult,
+  TeamProvisioningLaunchStateStoreBoundary,
+} from './provisioning/TeamProvisioningLaunchStateStoreBoundary';
+import {
   buildDeterministicLaunchProcessArgs,
   buildLaunchSyntheticRequest,
   getInitialLaunchValidationMessage,
@@ -804,11 +808,6 @@ export {
  */
 function killTeamProcess(child: ChildProcess | null | undefined): void {
   killProcessTree(child, 'SIGKILL');
-}
-
-interface LaunchStateWriteResult {
-  snapshot: PersistedTeamLaunchSnapshot;
-  wrote: boolean;
 }
 
 import type {
@@ -1693,9 +1692,22 @@ export class TeamProvisioningService {
     memberSpawnStatusesInFlightByTeam: this.memberSpawnStatusesInFlightByTeam,
   });
   private readonly launchStateStore = new TeamLaunchStateStore();
+  private readonly launchStateStoreBoundary = new TeamProvisioningLaunchStateStoreBoundary({
+    launchStateStore: this.launchStateStore,
+    membersMetaStore: this.membersMetaStore,
+    getTrackedRunId: (teamName) => this.runTracking.getTrackedRunId(teamName),
+    applyOpenCodeSecondaryEvidenceOverlay: (params) =>
+      this.applyOpenCodeSecondaryEvidenceOverlay(params),
+    applyBootstrapStallOverlay: (snapshot) =>
+      this.applyOpenCodeSecondaryBootstrapStallOverlay(snapshot),
+    areSnapshotsSemanticallyEqual: areLaunchStateSnapshotsSemanticallyEqual,
+    clearBootstrapState,
+    invalidateRuntimeSnapshotCaches: (teamName) => this.invalidateRuntimeSnapshotCaches(teamName),
+    logDebug: (message) => logger.debug(message),
+    nowMs: () => Date.now(),
+    noopRefreshMs: TeamProvisioningService.LAUNCH_STATE_NOOP_REFRESH_MS,
+  });
   private readonly launchFailureArtifactPackRunIds = new Set<string>();
-  private readonly launchStateStoreQueue = new Map<string, Promise<unknown>>();
-  private readonly launchStateWrittenRunIdByTeam = new Map<string, string>();
   private readonly failedOpenCodeSecondaryRetryInFlightByTeam = new Map<
     string,
     Promise<RetryFailedOpenCodeSecondaryLanesResult>
@@ -9222,43 +9234,24 @@ export class TeamProvisioningService {
     teamName: string,
     options?: { expectedRunId?: string }
   ): Promise<void> {
-    await this.enqueueLaunchStateStoreOperation(teamName, () =>
-      this.clearPersistedLaunchStateNow(teamName, options)
-    );
+    await this.launchStateStoreBoundary.clearPersistedLaunchState(teamName, options);
   }
 
   private canClearPersistedLaunchStateForRun(
     teamName: string,
     expectedRunId: string | undefined
   ): boolean {
-    if (!expectedRunId) {
-      return true;
-    }
-    const trackedRunId = this.runTracking.getTrackedRunId(teamName);
-    if (trackedRunId !== expectedRunId) {
-      return false;
-    }
-    const lastWrittenRunId = this.launchStateWrittenRunIdByTeam.get(teamName);
-    if (lastWrittenRunId && lastWrittenRunId !== expectedRunId) {
-      return false;
-    }
-    return true;
+    return this.launchStateStoreBoundary.canClearPersistedLaunchStateForRun(
+      teamName,
+      expectedRunId
+    );
   }
 
   private async clearPersistedLaunchStateNow(
     teamName: string,
     options?: { expectedRunId?: string }
   ): Promise<void> {
-    if (!this.canClearPersistedLaunchStateForRun(teamName, options?.expectedRunId)) {
-      logger.debug(
-        `[${teamName}] Skipping stale launch-state clear for run ${options?.expectedRunId}`
-      );
-      return;
-    }
-    await this.launchStateStore.clear(teamName);
-    this.launchStateWrittenRunIdByTeam.delete(teamName);
-    await clearBootstrapState(teamName);
-    this.invalidateRuntimeSnapshotCaches(teamName);
+    await this.launchStateStoreBoundary.clearPersistedLaunchStateNow(teamName, options);
   }
 
   private async applyOpenCodeSecondaryEvidenceOverlay(params: {
@@ -9300,14 +9293,7 @@ export class TeamProvisioningService {
     teamName: string,
     snapshot: PersistedTeamLaunchSnapshot
   ): Promise<PersistedTeamLaunchSnapshot> {
-    const result = await this.enqueueLaunchStateStoreOperation(teamName, async () => {
-      const writeResult = await this.writeLaunchStateSnapshotNow(teamName, snapshot);
-      if (writeResult.wrote) {
-        this.invalidateRuntimeSnapshotCaches(teamName);
-      }
-      return writeResult;
-    });
-    return result.snapshot;
+    return this.launchStateStoreBoundary.writeLaunchStateSnapshot(teamName, snapshot);
   }
 
   private async writeLaunchStateSnapshotNow(
@@ -9315,62 +9301,18 @@ export class TeamProvisioningService {
     snapshot: PersistedTeamLaunchSnapshot,
     options?: { allowNoopSkip?: boolean; runId?: string }
   ): Promise<LaunchStateWriteResult> {
-    const previousSnapshot = await this.launchStateStore.read(teamName).catch(() => null);
-    const metaMembers = await this.membersMetaStore.getMembers(teamName).catch(() => []);
-    const overlaidSnapshot = await this.applyOpenCodeSecondaryEvidenceOverlay({
-      teamName,
-      snapshot,
-      previousSnapshot,
-      metaMembers,
-    });
-    const normalizedSnapshot =
-      this.applyOpenCodeSecondaryBootstrapStallOverlay(overlaidSnapshot) ?? overlaidSnapshot;
-    if (
-      options?.allowNoopSkip === true &&
-      typeof options.runId === 'string' &&
-      this.launchStateWrittenRunIdByTeam.get(teamName) === options.runId &&
-      previousSnapshot &&
-      this.areLaunchStateSnapshotsSemanticallyEqual(previousSnapshot, normalizedSnapshot) &&
-      !this.isLaunchStateNoopRefreshDue(previousSnapshot)
-    ) {
-      return { snapshot: previousSnapshot, wrote: false };
-    }
-    await this.launchStateStore.write(teamName, normalizedSnapshot);
-    if (typeof options?.runId === 'string') {
-      this.launchStateWrittenRunIdByTeam.set(teamName, options.runId);
-    }
-    return { snapshot: normalizedSnapshot, wrote: true };
+    return this.launchStateStoreBoundary.writeLaunchStateSnapshotNow(teamName, snapshot, options);
   }
 
   private isLaunchStateNoopRefreshDue(snapshot: PersistedTeamLaunchSnapshot): boolean {
-    const updatedAtMs = Date.parse(snapshot.updatedAt);
-    return (
-      !Number.isFinite(updatedAtMs) ||
-      Date.now() - updatedAtMs >= TeamProvisioningService.LAUNCH_STATE_NOOP_REFRESH_MS
-    );
-  }
-
-  private areLaunchStateSnapshotsSemanticallyEqual(
-    left: PersistedTeamLaunchSnapshot,
-    right: PersistedTeamLaunchSnapshot
-  ): boolean {
-    return areLaunchStateSnapshotsSemanticallyEqual(left, right);
+    return this.launchStateStoreBoundary.isLaunchStateNoopRefreshDue(snapshot);
   }
 
   private async enqueueLaunchStateStoreOperation<T>(
     teamName: string,
     operation: () => Promise<T>
   ): Promise<T> {
-    const previous = this.launchStateStoreQueue.get(teamName);
-    const queued = (previous ?? Promise.resolve()).catch(() => undefined).then(operation);
-    this.launchStateStoreQueue.set(teamName, queued);
-    try {
-      return await queued;
-    } finally {
-      if (this.launchStateStoreQueue.get(teamName) === queued) {
-        this.launchStateStoreQueue.delete(teamName);
-      }
-    }
+    return this.launchStateStoreBoundary.enqueue(teamName, operation);
   }
 
   private getFailedSpawnMembers(

@@ -2459,6 +2459,9 @@ function workspaceLockKey(workspacePath: string): string {
 }
 
 function canReplaceLock(record: WorkspaceLockRecord, now: Date): boolean {
+  if (record.ownerPid !== undefined && !isProcessAlive(record.ownerPid)) {
+    return true;
+  }
   if (record.staleLockMs === undefined) return false;
   if (now.getTime() - record.acquiredAt.getTime() < record.staleLockMs) {
     return false;

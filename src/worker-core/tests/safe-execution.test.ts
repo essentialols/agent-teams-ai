@@ -18,6 +18,7 @@ import {
   InMemoryWorkspaceLockStore,
   InterruptAndContinueWorkerUseCase,
   LocalFileAttemptJournal,
+  LocalFileWorkspaceLockStore,
   SafeExecutionRunner,
   SubscriptionWorkerError,
   WorkerControlService,
@@ -439,6 +440,30 @@ describe("SafeExecutionRunner", () => {
 
     gate.resolve();
     await expect(first).resolves.toMatchObject({ status: "completed" });
+  });
+
+  it("replaces a file workspace lock owned by a dead process without requiring staleLockMs", async () => {
+    const workspacePath = await gitWorkspace("safe-execution-dead-lock-");
+    const lockRoot = await mkdtemp(join(tmpdir(), "safe-execution-lock-store-"));
+    cleanupPaths.push(lockRoot);
+    const lockStore = new LocalFileWorkspaceLockStore(lockRoot);
+    const deadOwner = await lockStore.acquire({
+      taskId: "task-dead-lock-owner",
+      workspacePath,
+      ownerId: "dead-owner",
+      ownerPid: 9_999_999,
+    });
+
+    const replacement = await lockStore.acquire({
+      taskId: "task-dead-lock-replacement",
+      workspacePath,
+      ownerId: "replacement-owner",
+      ownerPid: process.pid,
+    });
+
+    expect(replacement.taskId).toBe("task-dead-lock-replacement");
+    await replacement.release();
+    await deadOwner.release();
   });
 
   it("replays a completed task by taskId without running the worker again", async () => {

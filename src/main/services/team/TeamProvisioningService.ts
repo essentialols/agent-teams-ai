@@ -204,19 +204,11 @@ import {
 import { markTeamInboxMessagesRead } from './provisioning/TeamProvisioningInboxPersistence';
 import {
   armSilentTeammateForward,
-  forgetPendingInboxRelayCandidates,
   isInboxRelayInFlightTimeoutError,
   type PendingInboxRelayCandidate,
-  rememberPendingInboxRelayCandidates,
   waitForInboxRelayInFlight,
 } from './provisioning/TeamProvisioningInboxRelayCandidates';
-import {
-  buildMemberInboxRelayPrompt,
-  DEFAULT_INBOX_RELAY_BATCH_SIZE,
-  hasStableInboxMessageId,
-  selectMemberInboxRelayBatch,
-  splitMemberInboxRelayUnread,
-} from './provisioning/TeamProvisioningInboxRelayPolicy';
+import { hasStableInboxMessageId } from './provisioning/TeamProvisioningInboxRelayPolicy';
 import {
   assertDeterministicBootstrapPrimaryMemberLimit,
   assertOpenCodeNotLaunchedThroughLegacyProvisioning,
@@ -320,6 +312,7 @@ import {
 } from './provisioning/TeamProvisioningLeadToolApproval';
 import { extractLogsTail, sliceClaudeLogs } from './provisioning/TeamProvisioningLogSlice';
 import { matchesObservedMemberNameForExpected } from './provisioning/TeamProvisioningMemberIdentity';
+import { relayMemberInboxMessagesWithPorts } from './provisioning/TeamProvisioningMemberInboxRelayFlow';
 import {
   type LiveRosterAttachReason,
   type MemberLifecycleOperation,
@@ -7005,137 +6998,27 @@ export class TeamProvisioningService {
       return 0;
     }
     const relayKey = this.getMemberRelayKey(teamName, memberName);
-    const existing = this.memberInboxRelayInFlight.get(relayKey);
-    if (existing) {
-      try {
-        return await waitForInboxRelayInFlight({
-          promise: existing,
-          relayName: 'member_inbox_relay',
-          relayKey,
-        });
-      } catch (error) {
-        if (!isInboxRelayInFlightTimeoutError(error)) {
-          throw error;
-        }
-        logger.warn(`[${teamName}] member_inbox_relay_timed_out: ${getErrorMessage(error)}`);
-        return 0;
-      } finally {
-        if (this.memberInboxRelayInFlight.get(relayKey) === existing) {
-          this.memberInboxRelayInFlight.delete(relayKey);
-        }
+    return relayMemberInboxMessagesWithPorts(
+      { teamName, memberName, relayKey },
+      {
+        inFlight: this.memberInboxRelayInFlight,
+        getAliveRunId: (teamName) => this.runTracking.getAliveRunId(teamName),
+        getRun: (runId) => this.runs.get(runId),
+        isCurrentTrackedRun: (run) => this.isCurrentTrackedRun(run),
+        readInboxMessages: (teamName, memberName) =>
+          this.inboxReader.getMessagesFor(teamName, memberName),
+        markInboxMessagesRead: (teamName, memberName, messages) =>
+          this.markInboxMessagesRead(teamName, memberName, messages),
+        sendMessageToRun: (run, message) => this.sendMessageToRun(run, message),
+        hasAcceptedMemberWorkSyncReport: (input) =>
+          this.hasAcceptedMemberWorkSyncReport(input),
+        relayedMemberInboxMessageIds: this.relayedMemberInboxMessageIds,
+        trimRelayedSet: (relayedIds) => this.trimRelayedSet(relayedIds),
+        logger,
+        nowIso,
+        getErrorMessage,
       }
-    }
-
-    const work = (async (): Promise<number> => {
-      const runId = this.runTracking.getAliveRunId(teamName);
-      if (!runId) return 0;
-      const run = this.runs.get(runId);
-      if (!run?.child || run.processKilled || run.cancelRequested) return 0;
-      if (!run.provisioningComplete) return 0;
-      const isStaleRelayRun = (): boolean =>
-        !this.isCurrentTrackedRun(run) || !run.child || run.processKilled || run.cancelRequested;
-
-      const relayedIds = this.relayedMemberInboxMessageIds.get(relayKey) ?? new Set<string>();
-
-      let memberInboxMessages: Awaited<ReturnType<TeamInboxReader['getMessagesFor']>> = [];
-      try {
-        memberInboxMessages = await this.inboxReader.getMessagesFor(teamName, memberName);
-      } catch {
-        return 0;
-      }
-      if (isStaleRelayRun()) return 0;
-
-      const unread = memberInboxMessages
-        .filter((m): m is InboxMessage & { messageId: string } => {
-          if (m.read) return false;
-          if (typeof m.text !== 'string' || m.text.trim().length === 0) return false;
-          if (!hasStableInboxMessageId(m)) return false;
-          return !relayedIds.has(m.messageId);
-        })
-        .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
-
-      if (unread.length === 0) return 0;
-
-      const { passiveIdleUnread, actionableUnread, readOnlyIgnoredUnread } =
-        splitMemberInboxRelayUnread(unread);
-      if (isStaleRelayRun()) return 0;
-
-      if (readOnlyIgnoredUnread.length > 0) {
-        try {
-          await this.markInboxMessagesRead(teamName, memberName, readOnlyIgnoredUnread);
-          if (passiveIdleUnread.length > 0) {
-            logger.debug(
-              `[${teamName}] member relay marked ${passiveIdleUnread.length} passive idle message(s) read without relay for ${memberName}`
-            );
-          }
-        } catch (error) {
-          logger.debug(
-            `[${teamName}] member relay failed to mark ${readOnlyIgnoredUnread.length} ignored inbox message(s) read for ${memberName}: ${
-              error instanceof Error ? error.message : String(error)
-            }`
-          );
-        }
-      }
-
-      if (actionableUnread.length === 0) return 0;
-
-      const batch = selectMemberInboxRelayBatch(actionableUnread, DEFAULT_INBOX_RELAY_BATCH_SIZE);
-
-      armSilentTeammateForward(run, memberName, 'member_inbox_relay', nowIso());
-      const rememberedRelayIds = rememberPendingInboxRelayCandidates(run, memberName, batch);
-
-      const message = buildMemberInboxRelayPrompt({ memberName, batch });
-
-      try {
-        await this.sendMessageToRun(run, message);
-      } catch {
-        forgetPendingInboxRelayCandidates(run, memberName, rememberedRelayIds);
-        return 0;
-      }
-
-      const readCommitBatch: (InboxMessage & { messageId: string })[] = [];
-      for (const m of batch) {
-        if (m.messageKind !== 'member_work_sync_nudge') {
-          readCommitBatch.push(m);
-          relayedIds.add(m.messageId);
-          continue;
-        }
-        if (await this.hasAcceptedMemberWorkSyncReport({ teamName, memberName })) {
-          readCommitBatch.push(m);
-          relayedIds.add(m.messageId);
-        }
-      }
-      this.relayedMemberInboxMessageIds.set(relayKey, this.trimRelayedSet(relayedIds));
-
-      if (readCommitBatch.length > 0) {
-        try {
-          await this.markInboxMessagesRead(teamName, memberName, readCommitBatch);
-        } catch {
-          // Best-effort: relay succeeded; marking read failed.
-        }
-      }
-
-      return batch.length;
-    })();
-
-    this.memberInboxRelayInFlight.set(relayKey, work);
-    try {
-      return await waitForInboxRelayInFlight({
-        promise: work,
-        relayName: 'member_inbox_relay',
-        relayKey,
-      });
-    } catch (error) {
-      if (!isInboxRelayInFlightTimeoutError(error)) {
-        throw error;
-      }
-      logger.warn(`[${teamName}] member_inbox_relay_timed_out: ${getErrorMessage(error)}`);
-      return 0;
-    } finally {
-      if (this.memberInboxRelayInFlight.get(relayKey) === work) {
-        this.memberInboxRelayInFlight.delete(relayKey);
-      }
-    }
+    );
   }
 
   async relayInboxFileToLiveRecipient(

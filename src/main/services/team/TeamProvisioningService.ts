@@ -113,6 +113,11 @@ import {
   writeDeterministicBootstrapUserPromptFile,
 } from './provisioning/TeamProvisioningBootstrapSpec';
 import {
+  createTeamProvisioningOpenCodeBootstrapStallReconciliationPorts,
+  createTeamProvisioningOpenCodeBootstrapStallStatusPorts,
+  type TeamProvisioningOpenCodeBootstrapStallReconciliationPorts,
+} from './provisioning/TeamProvisioningBootstrapStallPortsFactory';
+import {
   BOOTSTRAP_FAILURE_TAIL_BYTES,
   BOOTSTRAP_TRANSCRIPT_MTIME_SLACK_MS,
   BOOTSTRAP_TRANSCRIPT_OUTCOME_CACHE_MAX_ENTRIES,
@@ -349,15 +354,9 @@ import { runOpenCodeWorktreeRootAggregateLaunch as runOpenCodeWorktreeRootAggreg
 import { resolveOpenCodeInboxAttachmentPayloads as resolveOpenCodeInboxAttachmentPayloadsHelper } from './provisioning/TeamProvisioningOpenCodeAttachmentPayloads';
 import { type OpenCodeRuntimeBootstrapEvidencePorts } from './provisioning/TeamProvisioningOpenCodeBootstrapEvidence';
 import {
-  buildOpenCodeSecondaryBootstrapStallDiagnostic as buildOpenCodeSecondaryBootstrapStallDiagnosticHelper,
   isOpenCodeBootstrapStallWindowElapsed as isOpenCodeBootstrapStallWindowElapsedHelper,
-  type MarkOpenCodeSecondaryBootstrapStalledPorts,
-  maybeSendOpenCodeSecondaryBootstrapCheckinRetryPrompt as maybeSendOpenCodeSecondaryBootstrapCheckinRetryPromptHelper,
   type OpenCodeBootstrapStallStatusPorts,
-  type ReconcileOpenCodeRuntimeProcessBootstrapPorts,
   scheduleOpenCodeBootstrapStallReevaluation as scheduleOpenCodeBootstrapStallReevaluationHelper,
-  setOpenCodeRuntimePendingBootstrapStatus as setOpenCodeRuntimePendingBootstrapStatusHelper,
-  setOpenCodeSecondaryBootstrapStalledStatus as setOpenCodeSecondaryBootstrapStalledStatusHelper,
 } from './provisioning/TeamProvisioningOpenCodeBootstrapStall';
 import { boundOpenCodeAppManagedBriefingText } from './provisioning/TeamProvisioningOpenCodeDiagnosticsPolicy';
 import { resolveOpenCodeMemberIdentityFromDirectory as resolveOpenCodeMemberIdentityFromDirectoryHelper } from './provisioning/TeamProvisioningOpenCodeMemberIdentity';
@@ -4289,78 +4288,47 @@ export class TeamProvisioningService {
   }
 
   private getOpenCodeBootstrapStallStatusPorts(): OpenCodeBootstrapStallStatusPorts {
-    return {
+    return createTeamProvisioningOpenCodeBootstrapStallStatusPorts<ProvisioningRun>({
       nowIso,
       syncMemberTaskActivityForRuntimeTransition: (targetRun, targetMember, previous, next, at) =>
         this.syncMemberTaskActivityForRuntimeTransition(
-          targetRun as ProvisioningRun,
+          targetRun,
           targetMember,
           previous,
           next,
           at
         ),
       updateLaunchDiagnostics: (targetRun, observedAt) =>
-        this.updateLaunchDiagnosticsForRun(targetRun as ProvisioningRun, observedAt),
+        this.updateLaunchDiagnosticsForRun(targetRun, observedAt),
       appendMemberBootstrapDiagnostic: (targetRun, targetMember, text) =>
-        this.appendMemberBootstrapDiagnostic(targetRun as ProvisioningRun, targetMember, text),
-      isCurrentTrackedRun: (targetRun) => this.isCurrentTrackedRun(targetRun as ProvisioningRun),
+        this.appendMemberBootstrapDiagnostic(targetRun, targetMember, text),
+      isCurrentTrackedRun: (targetRun) => this.isCurrentTrackedRun(targetRun),
       emitMemberSpawnChange: (targetRun, targetMember) =>
-        this.emitMemberSpawnChange(targetRun as ProvisioningRun, targetMember),
+        this.emitMemberSpawnChange(targetRun, targetMember),
       persistLaunchStateSnapshot: (targetRun, phase) => {
-        void this.persistLaunchStateSnapshot(targetRun as ProvisioningRun, phase);
+        void this.persistLaunchStateSnapshot(targetRun, phase);
       },
-    };
+    });
   }
 
-  private getOpenCodeBootstrapStallReconciliationPorts(): ReconcileOpenCodeRuntimeProcessBootstrapPorts &
-    MarkOpenCodeSecondaryBootstrapStalledPorts {
-    return {
-      buildOpenCodeSecondaryBootstrapStallDiagnostic: (targetRun, targetMember, targetCurrent) =>
-        buildOpenCodeSecondaryBootstrapStallDiagnosticHelper(
-          { run: targetRun, memberName: targetMember, current: targetCurrent },
-          {
-            findBootstrapTranscriptOutcome: (teamName, memberName, acceptedAtMs) =>
-              this.findBootstrapTranscriptOutcome(teamName, memberName, acceptedAtMs),
-          }
-        ),
-      setOpenCodeRuntimePendingBootstrapStatus: (targetRun, targetMember, current, options) =>
-        setOpenCodeRuntimePendingBootstrapStatusHelper(
-          targetRun,
-          targetMember,
-          current,
-          options,
-          this.getOpenCodeBootstrapStallStatusPorts()
-        ),
-      setOpenCodeSecondaryBootstrapStalledStatus: (
-        targetRun,
-        targetMember,
-        targetCurrent,
-        runtimeDiagnostic
-      ) =>
-        setOpenCodeSecondaryBootstrapStalledStatusHelper(
-          targetRun,
-          targetMember,
-          targetCurrent,
-          runtimeDiagnostic,
-          this.getOpenCodeBootstrapStallStatusPorts()
-        ),
-      maybeSendOpenCodeSecondaryBootstrapCheckinRetryPrompt: (retryInput) =>
-        maybeSendOpenCodeSecondaryBootstrapCheckinRetryPromptHelper(retryInput, {
-          getOpenCodeRuntimeMessageAdapter: () => this.getOpenCodeRuntimeMessageAdapter(),
-          sendOpenCodeMemberMessageToRuntimeSerialized: (sendInput) =>
-            this.sendOpenCodeMemberMessageToRuntimeSerialized(sendInput),
-          appendMemberBootstrapDiagnostic: (targetRun, targetMember, text) =>
-            this.appendMemberBootstrapDiagnostic(targetRun as ProvisioningRun, targetMember, text),
-          isCurrentTrackedRun: (targetRun) =>
-            this.isCurrentTrackedRun(targetRun as ProvisioningRun),
-        }),
+  private getOpenCodeBootstrapStallReconciliationPorts(): TeamProvisioningOpenCodeBootstrapStallReconciliationPorts {
+    return createTeamProvisioningOpenCodeBootstrapStallReconciliationPorts<ProvisioningRun>({
+      getOpenCodeBootstrapStallStatusPorts: () => this.getOpenCodeBootstrapStallStatusPorts(),
+      findBootstrapTranscriptOutcome: (teamName, memberName, acceptedAtMs) =>
+        this.findBootstrapTranscriptOutcome(teamName, memberName, acceptedAtMs),
+      getOpenCodeRuntimeMessageAdapter: () => this.getOpenCodeRuntimeMessageAdapter(),
+      sendOpenCodeMemberMessageToRuntimeSerialized: (sendInput) =>
+        this.sendOpenCodeMemberMessageToRuntimeSerialized(sendInput),
+      appendMemberBootstrapDiagnostic: (targetRun, targetMember, text) =>
+        this.appendMemberBootstrapDiagnostic(targetRun, targetMember, text),
+      isCurrentTrackedRun: (targetRun) => this.isCurrentTrackedRun(targetRun),
       scheduleOpenCodeBootstrapStallReevaluation: (targetRun, targetMember, firstSpawnAcceptedAt) =>
         this.scheduleOpenCodeBootstrapStallReevaluation(
-          targetRun as ProvisioningRun,
+          targetRun,
           targetMember,
           firstSpawnAcceptedAt
         ),
-    };
+    });
   }
 
   private scheduleOpenCodeBootstrapStallReevaluation(

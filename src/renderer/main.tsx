@@ -188,7 +188,11 @@ function mountApp(): void {
   // module-level side effect guarded by a global flag.
   if (!window.__claudeTeamsUiDidInit) {
     window.__claudeTeamsUiDidInit = true;
-    initializeNotificationListeners();
+    const cleanup = initializeNotificationListeners();
+    // Store cleanup for potential hot module reload or shutdown
+    if (typeof window !== 'undefined') {
+      (window as any).__claudeTeamsUiCleanup = cleanup;
+    }
   }
 
   root = ReactDOM.createRoot(document.getElementById('root')!);

@@ -10,8 +10,14 @@ describe('TeamProvisioningOpenCodeSecondaryEvidenceOverlayPortsFactory', () => {
       .fn()
       .mockReturnValueOnce('/teams/base-a')
       .mockReturnValueOnce('/teams/base-b');
-    const readLaneIndex = vi.fn(async () => ({ lanes: {} }));
+    const laneIndex = {
+      version: 1 as const,
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      lanes: {},
+    };
+    const readLaneIndex = vi.fn(async () => laneIndex);
     const readCommittedBootstrapSessionEvidence = vi.fn(async () => ({
+      state: 'healthy' as const,
       committed: true,
       activeRunId: 'run-1',
       sessions: [],
@@ -26,7 +32,7 @@ describe('TeamProvisioningOpenCodeSecondaryEvidenceOverlayPortsFactory', () => {
       readCommittedBootstrapSessionEvidence,
     });
 
-    await expect(ports.readLaneIndex('Team')).resolves.toEqual({ lanes: {} });
+    await expect(ports.readLaneIndex('Team')).resolves.toEqual(laneIndex);
     await expect(
       ports.readCommittedBootstrapSessionEvidence({ teamName: 'Team', laneId: 'lane-a' })
     ).resolves.toMatchObject({ committed: true, activeRunId: 'run-1' });
@@ -53,7 +59,7 @@ describe('TeamProvisioningOpenCodeSecondaryEvidenceOverlayPortsFactory', () => {
         }) as unknown as RuntimeRunTombstoneStore
     );
     const getRuntimeRunTombstonesPath = vi.fn(
-      (teamsBasePath: string, teamName: string, laneId?: string) =>
+      (teamsBasePath: string, teamName: string, laneId?: string | null) =>
         `${teamsBasePath}/${teamName}/${laneId ?? 'primary'}/tombstones.json`
     );
 

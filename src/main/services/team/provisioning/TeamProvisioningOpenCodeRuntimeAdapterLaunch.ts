@@ -26,10 +26,7 @@ export interface OpenCodeRuntimeAdapterLaunchInputParams {
   request: Pick<TeamCreateRequest | TeamLaunchRequest, 'model' | 'effort' | 'skipPermissions'>;
   members: TeamCreateRequest['members'];
   previousLaunchState: TeamRuntimeLaunchInput['previousLaunchState'];
-  getOpenCodeRuntimeLaunchCwd(
-    baseCwd: string,
-    members: TeamCreateRequest['members']
-  ): string;
+  getOpenCodeRuntimeLaunchCwd(baseCwd: string, members: TeamCreateRequest['members']): string;
 }
 
 export interface OpenCodeRuntimeAdapterFinalProgressInput {
@@ -39,7 +36,7 @@ export interface OpenCodeRuntimeAdapterFinalProgressInput {
 }
 
 export interface OpenCodeRuntimeAdapterLaunchPreflightPorts {
-  getStopAllTeamsGeneration(): boolean;
+  getStopAllTeamsGeneration(): number;
   getRuntimeAdapterRun(teamName: string): OpenCodeRuntimeAdapterRunEntry | undefined;
   stopOpenCodeRuntimeAdapterTeam(teamName: string, runId: string): Promise<void>;
   getProvisioningRun(teamName: string): string | undefined;
@@ -56,8 +53,7 @@ export interface OpenCodeRuntimeAdapterLaunchPreflightPorts {
   ): TeamLaunchResponse;
 }
 
-export interface OpenCodeRuntimeAdapterLaunchPorts
-  extends OpenCodeRuntimeAdapterLaunchPreflightPorts {
+export interface OpenCodeRuntimeAdapterLaunchPorts extends OpenCodeRuntimeAdapterLaunchPreflightPorts {
   randomUUID(): string;
   nowIso(): string;
   setProvisioningRun(teamName: string, runId: string): void;
@@ -80,10 +76,7 @@ export interface OpenCodeRuntimeAdapterLaunchPorts
     laneId: string;
     state: 'active';
   }): Promise<void>;
-  getOpenCodeRuntimeLaunchCwd(
-    baseCwd: string,
-    members: TeamCreateRequest['members']
-  ): string;
+  getOpenCodeRuntimeLaunchCwd(baseCwd: string, members: TeamCreateRequest['members']): string;
   setOpenCodeRuntimeActiveRunManifest(input: {
     teamsBasePath: string;
     teamName: string;
@@ -309,7 +302,10 @@ export async function runOpenCodeTeamRuntimeAdapterLaunch(
       runId,
     });
     const launchResult = await input.adapter.launch(launchInput);
-    if (ports.consumeCancelledRuntimeAdapterRunId(runId) || ports.getProvisioningRun(teamName) !== runId) {
+    if (
+      ports.consumeCancelledRuntimeAdapterRunId(runId) ||
+      ports.getProvisioningRun(teamName) !== runId
+    ) {
       await ports.clearOpenCodeRuntimeAdapterPrimaryLaneIfOwned(teamName, runId);
       return { runId };
     }
@@ -369,7 +365,10 @@ export async function runOpenCodeTeamRuntimeAdapterLaunch(
     });
     return { runId };
   } catch (error) {
-    if (ports.consumeCancelledRuntimeAdapterRunId(runId) || ports.getProvisioningRun(teamName) !== runId) {
+    if (
+      ports.consumeCancelledRuntimeAdapterRunId(runId) ||
+      ports.getProvisioningRun(teamName) !== runId
+    ) {
       await ports.clearOpenCodeRuntimeAdapterPrimaryLaneIfOwned(teamName, runId);
       return { runId };
     }

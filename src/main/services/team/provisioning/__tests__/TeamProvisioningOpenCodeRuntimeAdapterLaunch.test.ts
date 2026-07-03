@@ -28,9 +28,7 @@ function progress(overrides: Partial<TeamProvisioningProgress> = {}): TeamProvis
   };
 }
 
-function runtimeResult(
-  overrides: Partial<TeamRuntimeLaunchResult> = {}
-): TeamRuntimeLaunchResult {
+function runtimeResult(overrides: Partial<TeamRuntimeLaunchResult> = {}): TeamRuntimeLaunchResult {
   return {
     runId: 'run-1',
     teamName: 'team-a',
@@ -173,7 +171,7 @@ describe('TeamProvisioningOpenCodeRuntimeAdapterLaunch', () => {
 
   it('runs previous OpenCode cleanup and pending cancellation before recording stop-all cancellation', async () => {
     const calls: string[] = [];
-    let stopAllGeneration = false;
+    let stopAllGeneration = 0;
     const previousProgress = progress({ runId: 'pending-run', state: 'spawning' });
 
     const result = await prepareOpenCodeRuntimeAdapterLaunchPreflight(
@@ -193,7 +191,7 @@ describe('TeamProvisioningOpenCodeRuntimeAdapterLaunch', () => {
         isCancellableRuntimeAdapterProgress: () => true,
         cancelRuntimeAdapterProvisioning: async () => {
           calls.push('cancelPreviousPendingRun');
-          stopAllGeneration = true;
+          stopAllGeneration += 1;
         },
         recordCancelledOpenCodeRuntimeAdapterLaunch: (teamName, sourceWarning) => {
           calls.push('recordCancelledLaunch');
@@ -328,7 +326,7 @@ function basePorts(calls: string[]): OpenCodeRuntimeAdapterLaunchPorts {
   return {
     randomUUID: () => 'run-1',
     nowIso: () => '2026-01-01T00:00:00.000Z',
-    getStopAllTeamsGeneration: () => false,
+    getStopAllTeamsGeneration: () => 0,
     getRuntimeAdapterRun: () => undefined,
     stopOpenCodeRuntimeAdapterTeam: async () => {
       calls.push('stopPreviousRuntimeRun');

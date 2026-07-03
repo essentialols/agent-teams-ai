@@ -318,7 +318,6 @@ import {
   persistOpenCodeRuntimeAdapterLaunchResult as persistOpenCodeRuntimeAdapterLaunchResultHelper,
   summarizeOpenCodeAggregateLaunchState as summarizeOpenCodeAggregateLaunchStateHelper,
 } from './provisioning/TeamProvisioningOpenCodeAggregateLaunchPersistence';
-import { runOpenCodeWorktreeRootAggregateLaunch as runOpenCodeWorktreeRootAggregateLaunchHelper } from './provisioning/TeamProvisioningOpenCodeAggregateRun';
 import { type OpenCodeRuntimeBootstrapEvidencePorts } from './provisioning/TeamProvisioningOpenCodeBootstrapEvidence';
 import {
   isOpenCodeBootstrapStallWindowElapsed as isOpenCodeBootstrapStallWindowElapsedHelper,
@@ -327,6 +326,7 @@ import {
 } from './provisioning/TeamProvisioningOpenCodeBootstrapStall';
 import { boundOpenCodeAppManagedBriefingText } from './provisioning/TeamProvisioningOpenCodeDiagnosticsPolicy';
 import { createTeamProvisioningOpenCodeInboxAttachmentPayloadBoundary } from './provisioning/TeamProvisioningOpenCodeInboxAttachmentPayloadBoundaryFactory';
+import { createTeamProvisioningOpenCodeLaunchWiring } from './provisioning/TeamProvisioningOpenCodeLaunchWiring';
 import {
   createTeamProvisioningOpenCodeMemberIdentityBoundary,
   type TeamProvisioningOpenCodeMemberIdentityBoundary,
@@ -346,7 +346,6 @@ import {
   type TeamProvisioningOpenCodeMemberMessageDeliveryHost,
 } from './provisioning/TeamProvisioningOpenCodeMemberMessageDeliveryServiceFactory';
 import { OpenCodeMemberSendSerializer } from './provisioning/TeamProvisioningOpenCodeMemberSendSerialization';
-import { runOpenCodeTeamRuntimeAdapterLaunch as runOpenCodeTeamRuntimeAdapterLaunchHelper } from './provisioning/TeamProvisioningOpenCodeRuntimeAdapterLaunch';
 import { type OpenCodeRuntimeControlAck } from './provisioning/TeamProvisioningOpenCodeRuntimeCheckin';
 import { materializeOpenCodeRuntimeAdapterDefaults as materializeOpenCodeRuntimeAdapterDefaultsHelper } from './provisioning/TeamProvisioningOpenCodeRuntimeDefaults';
 import {
@@ -1897,6 +1896,54 @@ export class TeamProvisioningService {
           this.writeLaunchStateSnapshot(teamName, snapshot),
       },
       logger,
+    });
+  private readonly openCodeLaunchWiring =
+    createTeamProvisioningOpenCodeLaunchWiring<ProvisioningRun>({
+      runtimeAdapterRunByTeam: this.runtimeAdapterRunByTeam,
+      provisioningRunByTeam: this.provisioningRunByTeam,
+      runtimeAdapterProgressByRunId: this.runtimeAdapterProgressByRunId,
+      cancelledRuntimeAdapterRunIds: this.cancelledRuntimeAdapterRunIds,
+      runs: this.runs,
+      runtimeAdapterProgressState: this.runtimeAdapterProgressState,
+      runTracking: this.runTracking,
+      getOpenCodeRuntimeAdapter: () => this.getOpenCodeRuntimeAdapter(),
+      getStopAllTeamsGeneration: () => this.stopAllTeamsGeneration,
+      stopOpenCodeRuntimeAdapterTeam: (teamName, runId) =>
+        this.stopOpenCodeRuntimeAdapterTeam(teamName, runId),
+      hasSecondaryRuntimeRuns: (teamName) => this.hasSecondaryRuntimeRuns(teamName),
+      stopMixedSecondaryRuntimeLanes: (teamName) => this.stopMixedSecondaryRuntimeLanes(teamName),
+      isCancellableRuntimeAdapterProgress: (progress) =>
+        this.isCancellableRuntimeAdapterProgress(progress),
+      cancelRuntimeAdapterProvisioning: (runId, progress) =>
+        this.cancelRuntimeAdapterProvisioning(runId, progress),
+      recordCancelledOpenCodeRuntimeAdapterLaunch: (teamName, sourceWarning, onProgress) =>
+        this.recordCancelledOpenCodeRuntimeAdapterLaunch(teamName, sourceWarning, onProgress),
+      resetTeamScopedTransientStateForNewRun: (teamName) =>
+        this.resetTeamScopedTransientStateForNewRun(teamName),
+      readLaunchState: (teamName) => this.launchStateStore.read(teamName),
+      clearPersistedLaunchState: (teamName) => this.clearPersistedLaunchState(teamName),
+      invalidateRuntimeSnapshotCaches: (teamName) => this.invalidateRuntimeSnapshotCaches(teamName),
+      launchOpenCodeAggregatePrimaryLane: (input) => this.launchOpenCodeAggregatePrimaryLane(input),
+      launchSingleMixedSecondaryLane: (run, lane) => this.launchSingleMixedSecondaryLane(run, lane),
+      summarizeOpenCodeAggregateLaunchState: (input) =>
+        this.summarizeOpenCodeAggregateLaunchState(input),
+      persistLaunchStateSnapshot: (run, launchPhase) =>
+        this.persistLaunchStateSnapshot(run, launchPhase),
+      syncRunMemberSpawnStatusesFromSnapshot: (run, snapshot) =>
+        this.syncRunMemberSpawnStatusesFromSnapshot(run, snapshot),
+      deleteSecondaryRuntimeRun: (teamName, laneId) =>
+        this.deleteSecondaryRuntimeRun(teamName, laneId),
+      getOpenCodeRuntimeLaunchCwd: (baseCwd, members) =>
+        this.getOpenCodeRuntimeLaunchCwd(baseCwd, members),
+      clearOpenCodeRuntimeAdapterPrimaryLaneIfOwned: (teamName, runId) =>
+        this.clearOpenCodeRuntimeAdapterPrimaryLaneIfOwned(teamName, runId),
+      persistOpenCodeRuntimeAdapterLaunchResult: (result, launchInput) =>
+        this.persistOpenCodeRuntimeAdapterLaunchResult(result, launchInput),
+      syncOpenCodeRuntimeToolApprovals: (syncInput) =>
+        this.syncOpenCodeRuntimeToolApprovals(syncInput),
+      emitTeamChange: (event) => {
+        this.teamChangeEmitter?.(event);
+      },
     });
   private crossTeamSender:
     | ((request: {
@@ -5207,82 +5254,7 @@ export class TeamProvisioningService {
     sourceWarning?: string;
     onProgress: (progress: TeamProvisioningProgress) => void;
   }): Promise<TeamLaunchResponse> {
-    const adapter = this.getOpenCodeRuntimeAdapter();
-    if (!adapter) {
-      throw new Error('OpenCode runtime adapter is not registered');
-    }
-
-    return runOpenCodeWorktreeRootAggregateLaunchHelper(
-      { ...input, adapter },
-      {
-        randomUUID,
-        nowIso,
-        getStopAllTeamsGeneration: () => this.stopAllTeamsGeneration,
-        getRuntimeAdapterRun: (teamName) => this.runtimeAdapterRunByTeam.get(teamName),
-        stopOpenCodeRuntimeAdapterTeam: (teamName, runId) =>
-          this.stopOpenCodeRuntimeAdapterTeam(teamName, runId),
-        hasSecondaryRuntimeRuns: (teamName) => this.hasSecondaryRuntimeRuns(teamName),
-        stopMixedSecondaryRuntimeLanes: (teamName) => this.stopMixedSecondaryRuntimeLanes(teamName),
-        getProvisioningRun: (teamName) => this.provisioningRunByTeam.get(teamName),
-        getRuntimeAdapterProgress: (runId) => this.runtimeAdapterProgressByRunId.get(runId),
-        isCancellableRuntimeAdapterProgress: (progress) =>
-          this.isCancellableRuntimeAdapterProgress(progress),
-        cancelRuntimeAdapterProvisioning: (runId, progress) =>
-          this.cancelRuntimeAdapterProvisioning(runId, progress),
-        recordCancelledOpenCodeRuntimeAdapterLaunch: (teamName, sourceWarning, onProgress) =>
-          this.recordCancelledOpenCodeRuntimeAdapterLaunch(teamName, sourceWarning, onProgress),
-        setProvisioningRun: (teamName, runId) => {
-          this.provisioningRunByTeam.set(teamName, runId);
-        },
-        setRuntimeAdapterProgress: (progress, onProgress) =>
-          this.runtimeAdapterProgressState.setRuntimeAdapterProgress(progress, onProgress),
-        resetTeamScopedTransientStateForNewRun: (teamName) =>
-          this.resetTeamScopedTransientStateForNewRun(teamName),
-        readLaunchState: (teamName) => this.launchStateStore.read(teamName),
-        clearPersistedLaunchState: (teamName) => this.clearPersistedLaunchState(teamName),
-        setRun: (runId, run) => {
-          this.runs.set(runId, run as ProvisioningRun);
-        },
-        invalidateRuntimeSnapshotCaches: (teamName) =>
-          this.invalidateRuntimeSnapshotCaches(teamName),
-        launchOpenCodeAggregatePrimaryLane: (nextInput) =>
-          this.launchOpenCodeAggregatePrimaryLane({
-            ...nextInput,
-            run: nextInput.run as ProvisioningRun,
-          }),
-        launchSingleMixedSecondaryLane: (run, lane) =>
-          this.launchSingleMixedSecondaryLane(run as ProvisioningRun, lane),
-        summarizeOpenCodeAggregateLaunchState: (nextInput) =>
-          this.summarizeOpenCodeAggregateLaunchState(nextInput),
-        persistLaunchStateSnapshot: (run, launchPhase) =>
-          this.persistLaunchStateSnapshot(run as ProvisioningRun, launchPhase),
-        syncRunMemberSpawnStatusesFromSnapshot: (run, snapshot) =>
-          this.syncRunMemberSpawnStatusesFromSnapshot(run as ProvisioningRun, snapshot),
-        setAliveRunId: (teamName, runId) => {
-          this.runTracking.setAliveRunId(teamName, runId);
-        },
-        deleteAliveRunId: (teamName) => {
-          this.runTracking.deleteAliveRunId(teamName);
-        },
-        deleteRuntimeAdapterRun: (teamName) => {
-          this.runtimeAdapterRunByTeam.delete(teamName);
-        },
-        deleteProvisioningRunIfCurrent: (teamName, runId) => {
-          if (this.provisioningRunByTeam.get(teamName) === runId) {
-            this.provisioningRunByTeam.delete(teamName);
-          }
-        },
-        emitTeamProcessChange: (event) => {
-          this.teamChangeEmitter?.(event);
-        },
-        consumeCancelledRuntimeAdapterRunId: (runId) =>
-          this.cancelledRuntimeAdapterRunIds.delete(runId),
-        getTeamsBasePath,
-        clearOpenCodeRuntimeLaneStorage,
-        deleteSecondaryRuntimeRun: (teamName, laneId) =>
-          this.deleteSecondaryRuntimeRun(teamName, laneId),
-      }
-    );
+    return this.openCodeLaunchWiring.runOpenCodeWorktreeRootAggregateLaunch(input);
   }
 
   private async runOpenCodeTeamRuntimeAdapterLaunch(input: {
@@ -5292,76 +5264,7 @@ export class TeamProvisioningService {
     sourceWarning?: string;
     onProgress: (progress: TeamProvisioningProgress) => void;
   }): Promise<TeamLaunchResponse> {
-    const adapter = this.getOpenCodeRuntimeAdapter();
-    if (!adapter) {
-      throw new Error('OpenCode runtime adapter is not registered');
-    }
-
-    return runOpenCodeTeamRuntimeAdapterLaunchHelper(
-      { ...input, adapter },
-      {
-        randomUUID,
-        nowIso,
-        getStopAllTeamsGeneration: () => this.stopAllTeamsGeneration,
-        getRuntimeAdapterRun: (teamName) => this.runtimeAdapterRunByTeam.get(teamName),
-        stopOpenCodeRuntimeAdapterTeam: (teamName, runId) =>
-          this.stopOpenCodeRuntimeAdapterTeam(teamName, runId),
-        getProvisioningRun: (teamName) => this.provisioningRunByTeam.get(teamName),
-        getRuntimeAdapterProgress: (runId) => this.runtimeAdapterProgressByRunId.get(runId),
-        isCancellableRuntimeAdapterProgress: (progress) =>
-          this.isCancellableRuntimeAdapterProgress(progress),
-        cancelRuntimeAdapterProvisioning: (runId, progress) =>
-          this.cancelRuntimeAdapterProvisioning(runId, progress),
-        recordCancelledOpenCodeRuntimeAdapterLaunch: (teamName, sourceWarning, onProgress) =>
-          this.recordCancelledOpenCodeRuntimeAdapterLaunch(teamName, sourceWarning, onProgress),
-        setProvisioningRun: (teamName, runId) => {
-          this.provisioningRunByTeam.set(teamName, runId);
-        },
-        setRuntimeAdapterProgress: (progress, onProgress) =>
-          this.runtimeAdapterProgressState.setRuntimeAdapterProgress(progress, onProgress),
-        resetTeamScopedTransientStateForNewRun: (teamName) =>
-          this.resetTeamScopedTransientStateForNewRun(teamName),
-        readLaunchState: (teamName) => this.launchStateStore.read(teamName),
-        clearPersistedLaunchState: (teamName) => this.clearPersistedLaunchState(teamName),
-        getTeamsBasePath,
-        migrateLegacyOpenCodeRuntimeState,
-        upsertOpenCodeRuntimeLaneIndexEntry,
-        getOpenCodeRuntimeLaunchCwd: (baseCwd, members) =>
-          this.getOpenCodeRuntimeLaunchCwd(baseCwd, members),
-        setOpenCodeRuntimeActiveRunManifest,
-        consumeCancelledRuntimeAdapterRunId: (runId) =>
-          this.cancelledRuntimeAdapterRunIds.delete(runId),
-        clearOpenCodeRuntimeAdapterPrimaryLaneIfOwned: (teamName, runId) =>
-          this.clearOpenCodeRuntimeAdapterPrimaryLaneIfOwned(teamName, runId),
-        persistOpenCodeRuntimeAdapterLaunchResult: (result, launchInput) =>
-          this.persistOpenCodeRuntimeAdapterLaunchResult(result, launchInput),
-        syncOpenCodeRuntimeToolApprovals: (syncInput) =>
-          this.syncOpenCodeRuntimeToolApprovals(syncInput),
-        clearOpenCodeRuntimeLaneStorage,
-        deleteRuntimeAdapterRun: (teamName) => {
-          this.runtimeAdapterRunByTeam.delete(teamName);
-        },
-        setRuntimeAdapterRun: (teamName, runtimeRun) => {
-          this.runtimeAdapterRunByTeam.set(teamName, runtimeRun);
-        },
-        deleteAliveRunId: (teamName) => {
-          this.runTracking.deleteAliveRunId(teamName);
-        },
-        setAliveRunId: (teamName, runId) => {
-          this.runTracking.setAliveRunId(teamName, runId);
-        },
-        invalidateRuntimeSnapshotCaches: (teamName) =>
-          this.invalidateRuntimeSnapshotCaches(teamName),
-        deleteProvisioningRunIfCurrent: (teamName, runId) => {
-          if (this.provisioningRunByTeam.get(teamName) === runId) {
-            this.provisioningRunByTeam.delete(teamName);
-          }
-        },
-        emitTeamProcessChange: (event) => {
-          this.teamChangeEmitter?.(event);
-        },
-      }
-    );
+    return this.openCodeLaunchWiring.runOpenCodeTeamRuntimeAdapterLaunch(input);
   }
 
   private async writeOpenCodeTeamConfig(

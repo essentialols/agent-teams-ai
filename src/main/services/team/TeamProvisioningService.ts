@@ -3446,9 +3446,65 @@ export class TeamProvisioningService {
   }
 
   private createOpenCodeMemberMessageDeliveryService() {
-    return createOpenCodeMemberMessageDeliveryServiceFromHost(
-      this as unknown as TeamProvisioningOpenCodeMemberMessageDeliveryHost
-    );
+    const host: TeamProvisioningOpenCodeMemberMessageDeliveryHost = {
+      getOpenCodeRuntimeMessageAdapter: () => this.getOpenCodeRuntimeMessageAdapter(),
+      readOpenCodeMemberDirectory: (teamName) => this.readOpenCodeMemberDirectory(teamName),
+      resolveOpenCodeMemberIdentityFromDirectory: (teamName, memberName, directory) =>
+        this.resolveOpenCodeMemberIdentityFromDirectory(teamName, memberName, directory),
+      stoppingSecondaryRuntimeTeams: this.stoppingSecondaryRuntimeTeams,
+      readPersistedTeamProjectPath: (teamName) => this.readPersistedTeamProjectPath(teamName),
+      runTracking: {
+        resolveDeliverableTrackedRuntimeRunId: (teamName) =>
+          this.runTracking.resolveDeliverableTrackedRuntimeRunId(teamName),
+      },
+      runs: this.runs,
+      getCurrentOpenCodeRuntimeRunId: (teamName, laneId) =>
+        this.getCurrentOpenCodeRuntimeRunId(teamName, laneId),
+      openCodeRuntimeRecoveryIdentity: this.openCodeRuntimeRecoveryIdentity,
+      tryRecoverOpenCodeRuntimeLaneBeforeDelivery: (input) =>
+        this.tryRecoverOpenCodeRuntimeLaneBeforeDelivery(input),
+      tryRecoverOpenCodeRuntimeLaneFromCommittedSessionBeforeDelivery: (input) =>
+        this.tryRecoverOpenCodeRuntimeLaneFromCommittedSessionBeforeDelivery(input),
+      deleteSecondaryRuntimeRun: (teamName, laneId) =>
+        this.deleteSecondaryRuntimeRun(teamName, laneId),
+      cleanupStoppedTeamOpenCodeRuntimeLanesInBackground: (teamName) =>
+        this.cleanupStoppedTeamOpenCodeRuntimeLanesInBackground(teamName),
+      createOpenCodeRuntimeBootstrapEvidencePorts: () =>
+        this.createOpenCodeRuntimeBootstrapEvidencePorts(),
+      providerRuntime: {
+        resolveControlApiBaseUrl: () => this.providerRuntime.resolveControlApiBaseUrl(),
+      },
+      sendOpenCodeMemberMessageToRuntimeSerialized: (input) =>
+        this.sendOpenCodeMemberMessageToRuntimeSerialized(input),
+      rememberOpenCodeRuntimePidFromBridge: (input) =>
+        this.rememberOpenCodeRuntimePidFromBridge(input),
+      maybeSyncOpenCodeRuntimePermissionsAfterDelivery: (input) =>
+        this.maybeSyncOpenCodeRuntimePermissionsAfterDelivery(input),
+      isLegacyOpenCodeMemberWorkSyncReadCommitAllowed: (input) =>
+        this.isLegacyOpenCodeMemberWorkSyncReadCommitAllowed(input),
+      createOpenCodePromptDeliveryLedger: (teamName, laneId) =>
+        this.createOpenCodePromptDeliveryLedger(teamName, laneId),
+      openCodeVisibleReplyProofService: this.openCodeVisibleReplyProofService,
+      openCodePromptDeliveryWatchdogScheduler: this.openCodePromptDeliveryWatchdogScheduler,
+      openCodePromptDeliveryFollowUpPolicy: this.openCodePromptDeliveryFollowUpPolicy,
+      isOpenCodeDeliveryResponseReadCommitAllowed: (input) =>
+        this.isOpenCodeDeliveryResponseReadCommitAllowed(input),
+      getOpenCodeDeliveryPendingReason: (input) => this.getOpenCodeDeliveryPendingReason(input),
+      markOpenCodeAcceptedDeliveryMissingPromptProofForRetry: (input) =>
+        this.markOpenCodeAcceptedDeliveryMissingPromptProofForRetry(input),
+      scheduleOpenCodePromptDeliveryWatchdog: (input) =>
+        this.scheduleOpenCodePromptDeliveryWatchdog(input),
+      logOpenCodePromptDeliveryEvent: (event, record, extra) =>
+        this.logOpenCodePromptDeliveryEvent(event, record, extra),
+      requeueOpenCodeRuntimeManifestWatermarkDeliveryIfNeeded: (input) =>
+        this.requeueOpenCodeRuntimeManifestWatermarkDeliveryIfNeeded(input),
+      emitOpenCodePromptDeliveryTaskLogChange: (record, detail) =>
+        this.emitOpenCodePromptDeliveryTaskLogChange(record, detail),
+      observeOpenCodeDirectUserDeliveryInlineIfNeeded: (input) =>
+        this.observeOpenCodeDirectUserDeliveryInlineIfNeeded(input),
+    };
+
+    return createOpenCodeMemberMessageDeliveryServiceFromHost(host);
   }
 
   async deliverOpenCodeMemberMessage(

@@ -382,6 +382,10 @@ import {
   type MemberWorkSyncAcceptedReportChecker,
   scheduleLeadProofMissingWorkSyncRecovery as scheduleLeadProofMissingWorkSyncRecoveryHelper,
 } from './provisioning/TeamProvisioningMemberWorkSyncProof';
+import {
+  persistTeamProvisioningInboxMessage,
+  persistTeamProvisioningSentMessage,
+} from './provisioning/TeamProvisioningMessagePersistence';
 import { launchSingleMixedSecondaryLaneWithPorts } from './provisioning/TeamProvisioningMixedSecondaryLaneLaunchFlow';
 import {
   launchMixedSecondaryLaneIfNeeded as launchMixedSecondaryLaneIfNeededHelper,
@@ -3683,72 +3687,21 @@ export class TeamProvisioningService {
   }
 
   private persistSentMessage(teamName: string, message: InboxMessage): void {
-    try {
-      createController({
-        teamName,
-        claudeDir: getClaudeBasePath(),
-      }).messages.appendSentMessage({
-        from: message.from,
-        to: message.to,
-        text: message.text,
-        timestamp: message.timestamp,
-        summary: message.summary,
-        messageId: message.messageId,
-        relayOfMessageId: message.relayOfMessageId,
-        source: message.source,
-        leadSessionId: message.leadSessionId,
-        conversationId: message.conversationId,
-        replyToConversationId: message.replyToConversationId,
-        taskRefs: message.taskRefs,
-        attachments: message.attachments,
-        color: message.color,
-        toolSummary: message.toolSummary,
-        toolCalls: message.toolCalls,
-        messageKind: message.messageKind,
-        workSyncIntent: message.workSyncIntent,
-        workSyncIntentKey: message.workSyncIntentKey,
-        workSyncReviewRequestEventIds: message.workSyncReviewRequestEventIds,
-        slashCommand: message.slashCommand,
-        commandOutput: message.commandOutput,
-      });
-    } catch (error) {
-      logger.warn(`[${teamName}] sent-message persist failed: ${String(error)}`);
-    }
+    persistTeamProvisioningSentMessage(teamName, message, {
+      createController,
+      getClaudeBasePath,
+      logger,
+    });
   }
 
   private persistInboxMessage(teamName: string, recipient: string, message: InboxMessage): void {
-    try {
-      createController({
-        teamName,
-        claudeDir: getClaudeBasePath(),
-      }).messages.sendMessage({
-        member: recipient,
-        from: message.from,
-        text: message.text,
-        timestamp: message.timestamp,
-        summary: message.summary,
-        messageId: message.messageId,
-        relayOfMessageId: message.relayOfMessageId,
-        source: message.source,
-        leadSessionId: message.leadSessionId,
-        conversationId: message.conversationId,
-        replyToConversationId: message.replyToConversationId,
-        taskRefs: message.taskRefs,
-        attachments: message.attachments,
-        color: message.color,
-        toolSummary: message.toolSummary,
-        toolCalls: message.toolCalls,
-        messageKind: message.messageKind,
-        workSyncIntent: message.workSyncIntent,
-        workSyncIntentKey: message.workSyncIntentKey,
-        workSyncReviewRequestEventIds: message.workSyncReviewRequestEventIds,
-        slashCommand: message.slashCommand,
-        commandOutput: message.commandOutput,
-      });
-      this.emitRuntimeDeliveryReplyAdvisoryRefresh(teamName, message);
-    } catch (error) {
-      logger.warn(`[${teamName}] inbox-message persist for ${recipient} failed: ${String(error)}`);
-    }
+    persistTeamProvisioningInboxMessage(teamName, recipient, message, {
+      createController,
+      getClaudeBasePath,
+      logger,
+      emitRuntimeDeliveryReplyAdvisoryRefresh: (teamName, message) =>
+        this.emitRuntimeDeliveryReplyAdvisoryRefresh(teamName, message),
+    });
   }
 
   private getMemberRelayKey(teamName: string, memberName: string): string {

@@ -396,27 +396,71 @@ export function toTokenUsageDashboardViewModel(
     metrics,
     billingSplit: toBillingSplit(summary, text, locale),
     burnRate: toBurnRate(snapshot, includeCacheTokens, text, locale),
-    budgetAlerts: toBudgetAlerts(snapshot, options.budgetLimits, text, locale),
-    tokenMix: toTokenMix(summary, text, locale),
-    modelUsage: toModelUsageSegments(snapshot?.byModel ?? [], text, locale),
+    budgetAlerts: toBudgetAlerts(snapshot, options.budgetLimits, includeCacheTokens, text, locale),
+    tokenMix: toTokenMix(summary, includeCacheTokens, text, locale),
+    modelUsage: toModelUsageSegments(snapshot?.byModel ?? [], includeCacheTokens, text, locale),
     trendPoints: toTrendPoints(snapshot?.tokenTrend ?? [], includeCacheTokens, text, locale),
-    activityDays: toActivityDays(snapshot?.usageHeatmap ?? [], text, locale),
-    commandSpendBars: toBarChartItems(snapshot?.byCommand ?? [], 'command', 8, text, locale),
-    runtimeBars: toBarChartItems(snapshot?.byRuntime ?? [], 'runtime', 6, text, locale),
-    modelBars: toBarChartItems(snapshot?.byModel ?? [], 'model', 6, text, locale),
-    teamFilterOptions: toTeamFilterOptions(snapshot?.byTeam ?? [], text, locale),
-    budgetTargetOptions: toBudgetTargetOptions(snapshot, text, locale),
-    teamRows: toBreakdownRows(snapshot?.byTeam ?? [], text, locale),
-    agentRows: toBreakdownRows(snapshot?.byAgent ?? [], text, locale),
-    commandBreakdownRows: toBreakdownRows(snapshot?.byCommand ?? [], text, locale),
-    sessionBreakdownRows: toBreakdownRows(snapshot?.bySession ?? [], text, locale),
-    projectRows: toBreakdownRows(snapshot?.byProject ?? [], text, locale),
-    runtimeRows: toBreakdownRows(snapshot?.byRuntime ?? [], text, locale),
-    modelRows: toBreakdownRows(snapshot?.byModel ?? [], text, locale),
-    commandRuns: (snapshot?.commandRuns ?? []).map((run) => toCommandRunRow(run, text, locale)),
-    sessionRuns: (snapshot?.sessionRuns ?? []).map((run) => toSessionRunRow(run, text, locale)),
-    recentRuns: (snapshot?.recentRuns ?? []).map((run) => toRunRow(run, text, locale)),
-    expensiveRuns: (snapshot?.expensiveRuns ?? []).map((run) => toRunRow(run, text, locale)),
+    activityDays: toActivityDays(snapshot?.usageHeatmap ?? [], includeCacheTokens, text, locale),
+    commandSpendBars: toBarChartItems(
+      snapshot?.byCommand ?? [],
+      'command',
+      8,
+      includeCacheTokens,
+      text,
+      locale
+    ),
+    runtimeBars: toBarChartItems(
+      snapshot?.byRuntime ?? [],
+      'runtime',
+      6,
+      includeCacheTokens,
+      text,
+      locale
+    ),
+    modelBars: toBarChartItems(
+      snapshot?.byModel ?? [],
+      'model',
+      6,
+      includeCacheTokens,
+      text,
+      locale
+    ),
+    teamFilterOptions: toTeamFilterOptions(
+      snapshot?.byTeam ?? [],
+      includeCacheTokens,
+      text,
+      locale
+    ),
+    budgetTargetOptions: toBudgetTargetOptions(snapshot, includeCacheTokens, text, locale),
+    teamRows: toBreakdownRows(snapshot?.byTeam ?? [], includeCacheTokens, text, locale),
+    agentRows: toBreakdownRows(snapshot?.byAgent ?? [], includeCacheTokens, text, locale),
+    commandBreakdownRows: toBreakdownRows(
+      snapshot?.byCommand ?? [],
+      includeCacheTokens,
+      text,
+      locale
+    ),
+    sessionBreakdownRows: toBreakdownRows(
+      snapshot?.bySession ?? [],
+      includeCacheTokens,
+      text,
+      locale
+    ),
+    projectRows: toBreakdownRows(snapshot?.byProject ?? [], includeCacheTokens, text, locale),
+    runtimeRows: toBreakdownRows(snapshot?.byRuntime ?? [], includeCacheTokens, text, locale),
+    modelRows: toBreakdownRows(snapshot?.byModel ?? [], includeCacheTokens, text, locale),
+    commandRuns: (snapshot?.commandRuns ?? []).map((run) =>
+      toCommandRunRow(run, includeCacheTokens, text, locale)
+    ),
+    sessionRuns: (snapshot?.sessionRuns ?? []).map((run) =>
+      toSessionRunRow(run, includeCacheTokens, text, locale)
+    ),
+    recentRuns: (snapshot?.recentRuns ?? []).map((run) =>
+      toRunRow(run, includeCacheTokens, text, locale)
+    ),
+    expensiveRuns: (snapshot?.expensiveRuns ?? []).map((run) =>
+      toRunRow(run, includeCacheTokens, text, locale)
+    ),
     sourceQuality: toSourceQuality(snapshot?.sourceCounts, text),
     unmappedEventCount: snapshot?.unmappedEventCount ?? 0,
     updatedAtLabel: formatDateTime(snapshot?.updatedAt, text, locale),
@@ -524,6 +568,7 @@ function toBurnRate(
 function toBudgetAlerts(
   snapshot: TokenUsageAnalyticsSnapshotDto | null,
   limits: TokenUsageBudgetLimits | undefined,
+  includeCacheTokens: boolean,
   text: TokenUsageViewModelText,
   locale: string | undefined
 ): TokenUsageBudgetAlertViewModel[] {
@@ -536,6 +581,7 @@ function toBudgetAlerts(
         'global',
         snapshot?.summary ?? emptySummary(),
         limits.global,
+        includeCacheTokens,
         text,
         locale
       )
@@ -545,7 +591,18 @@ function toBudgetAlerts(
   for (const team of snapshot?.byTeam ?? []) {
     const teamLimit = limits?.teams?.[team.id];
     if (!teamLimit || !hasBudgetLimit(teamLimit)) continue;
-    alerts.push(toBudgetAlert(team.id, team.label, 'team', team.summary, teamLimit, text, locale));
+    alerts.push(
+      toBudgetAlert(
+        team.id,
+        team.label,
+        'team',
+        team.summary,
+        teamLimit,
+        includeCacheTokens,
+        text,
+        locale
+      )
+    );
   }
 
   for (const project of snapshot?.byProject ?? []) {
@@ -558,6 +615,7 @@ function toBudgetAlerts(
         'project',
         project.summary,
         projectLimit,
+        includeCacheTokens,
         text,
         locale
       )
@@ -578,12 +636,14 @@ function toBudgetAlert(
   scope: TokenUsageBudgetAlertViewModel['scope'],
   summary: TokenUsageSummaryDto,
   limit: TokenUsageBudgetLimit,
+  includeCacheTokens: boolean,
   text: TokenUsageViewModelText,
   locale: string | undefined
 ): TokenUsageBudgetAlertViewModel {
+  const visibleTokens = visibleTokenTotal(summary, includeCacheTokens);
   const tokenPercentValue =
     limit.monthlyTokenLimit && limit.monthlyTokenLimit > 0
-      ? (summary.totalTokens / limit.monthlyTokenLimit) * 100
+      ? (visibleTokens / limit.monthlyTokenLimit) * 100
       : 0;
   const costPercentValue =
     limit.monthlyApiEquivalentCostLimitUsd && limit.monthlyApiEquivalentCostLimitUsd > 0
@@ -591,7 +651,7 @@ function toBudgetAlert(
       : 0;
   const percent = Math.max(tokenPercentValue, costPercentValue);
   const severity = budgetSeverity(percent);
-  const tokens = formatCompactNumber(summary.totalTokens, locale);
+  const tokens = formatCompactNumber(visibleTokens, locale);
   const tokenLimit = limit.monthlyTokenLimit
     ? formatCompactNumber(limit.monthlyTokenLimit, locale)
     : undefined;
@@ -625,107 +685,135 @@ function toBudgetAlert(
 
 function toBreakdownRows(
   items: readonly TokenUsageBreakdownItemDto[],
+  includeCacheTokens: boolean,
   text: TokenUsageViewModelText,
   locale: string | undefined
 ): TokenUsageBreakdownRowViewModel[] {
-  const maxTokens = Math.max(0, ...items.map((item) => item.summary.totalTokens));
-  return items.map((item) => toBreakdownRow(item, maxTokens, text, locale));
+  const sortedItems = sortByVisibleTokens(items, includeCacheTokens);
+  const maxTokens = Math.max(
+    0,
+    ...sortedItems.map((item) => visibleTokenTotal(item.summary, includeCacheTokens))
+  );
+  return sortedItems.map((item) =>
+    toBreakdownRow(item, maxTokens, includeCacheTokens, text, locale)
+  );
 }
 
 function toTeamFilterOptions(
   items: readonly TokenUsageBreakdownItemDto[],
+  includeCacheTokens: boolean,
   text: TokenUsageViewModelText,
   locale: string | undefined
 ): TokenUsageTeamFilterOptionViewModel[] {
   return items
     .filter((item) => item.id !== 'unassigned')
-    .map((item) => ({
-      id: item.id,
-      label: item.label,
-      tokens: formatCompactNumber(item.summary.totalTokens, locale),
-      cost: formatCostLabel(item.summary, text, locale),
-      tokenValue: item.summary.totalTokens,
-    }));
+    .map((item) => {
+      const visibleTokens = visibleTokenTotal(item.summary, includeCacheTokens);
+      return {
+        id: item.id,
+        label: item.label,
+        tokens: formatCompactNumber(visibleTokens, locale),
+        cost: formatCostLabel(item.summary, text, locale),
+        tokenValue: visibleTokens,
+      };
+    });
 }
 
 function toBudgetTargetOptions(
   snapshot: TokenUsageAnalyticsSnapshotDto | null,
+  includeCacheTokens: boolean,
   text: TokenUsageViewModelText,
   locale: string | undefined
 ): TokenUsageBudgetTargetOptionViewModel[] {
   const summary = snapshot?.summary ?? emptySummary();
+  const visibleTokens = visibleTokenTotal(summary, includeCacheTokens);
   return [
     {
       scope: 'global',
       id: 'global',
       label: text.budgetAllTeams,
-      tokens: formatCompactNumber(summary.totalTokens, locale),
+      tokens: formatCompactNumber(visibleTokens, locale),
       cost: formatCostLabel(summary, text, locale),
-      tokenValue: summary.totalTokens,
+      tokenValue: visibleTokens,
     },
-    ...toScopedBudgetOptions('team', snapshot?.byTeam ?? [], text, locale),
-    ...toScopedBudgetOptions('project', snapshot?.byProject ?? [], text, locale),
+    ...toScopedBudgetOptions('team', snapshot?.byTeam ?? [], includeCacheTokens, text, locale),
+    ...toScopedBudgetOptions(
+      'project',
+      snapshot?.byProject ?? [],
+      includeCacheTokens,
+      text,
+      locale
+    ),
   ];
 }
 
 function toScopedBudgetOptions(
   scope: TokenUsageBudgetTargetOptionViewModel['scope'],
   items: readonly TokenUsageBreakdownItemDto[],
+  includeCacheTokens: boolean,
   text: TokenUsageViewModelText,
   locale: string | undefined
 ): TokenUsageBudgetTargetOptionViewModel[] {
   return items
     .filter((item) => item.id !== 'unassigned' && item.id !== 'unknown-project')
-    .map((item) => ({
-      scope,
-      id: item.id,
-      label: item.label,
-      tokens: formatCompactNumber(item.summary.totalTokens, locale),
-      cost: formatCostLabel(item.summary, text, locale),
-      tokenValue: item.summary.totalTokens,
-    }));
+    .map((item) => {
+      const visibleTokens = visibleTokenTotal(item.summary, includeCacheTokens);
+      return {
+        scope,
+        id: item.id,
+        label: item.label,
+        tokens: formatCompactNumber(visibleTokens, locale),
+        cost: formatCostLabel(item.summary, text, locale),
+        tokenValue: visibleTokens,
+      };
+    });
 }
 
 function toBreakdownRow(
   item: TokenUsageBreakdownItemDto,
   maxTokens: number,
+  includeCacheTokens: boolean,
   text: TokenUsageViewModelText,
   locale: string | undefined
 ): TokenUsageBreakdownRowViewModel {
+  const visibleTokens = visibleTokenTotal(item.summary, includeCacheTokens);
   return {
     id: item.id,
     label: item.label,
     teamName: item.teamName,
     agentName: item.agentName,
-    tokens: formatCompactNumber(item.summary.totalTokens, locale),
+    tokens: formatCompactNumber(visibleTokens, locale),
     cost: formatCostLabel(item.summary, text, locale),
     requests: formatCompactNumber(item.summary.requestCount, locale),
     lastActivity: formatDateTime(item.lastActivityAt, text, locale),
-    tokenValue: item.summary.totalTokens,
+    tokenValue: visibleTokens,
     costValue: item.summary.apiEquivalentCostUsd,
     percent:
-      maxTokens > 0 && item.summary.totalTokens > 0
-        ? Math.max(2, (item.summary.totalTokens / maxTokens) * 100)
-        : 0,
+      maxTokens > 0 && visibleTokens > 0 ? Math.max(2, (visibleTokens / maxTokens) * 100) : 0,
   };
 }
 
 function toModelUsageSegments(
   items: readonly TokenUsageBreakdownItemDto[],
+  includeCacheTokens: boolean,
   text: TokenUsageViewModelText,
   locale: string | undefined
 ): TokenUsageModelSegmentViewModel[] {
-  const totalTokens = items.reduce((sum, item) => sum + item.summary.totalTokens, 0);
-  const primaryItems = items.slice(0, MODEL_USAGE_COLORS.length - 1);
-  const remainingItems = items.slice(MODEL_USAGE_COLORS.length - 1);
+  const sortedItems = sortByVisibleTokens(items, includeCacheTokens);
+  const totalTokens = sortedItems.reduce(
+    (sum, item) => sum + visibleTokenTotal(item.summary, includeCacheTokens),
+    0
+  );
+  const primaryItems = sortedItems.slice(0, MODEL_USAGE_COLORS.length - 1);
+  const remainingItems = sortedItems.slice(MODEL_USAGE_COLORS.length - 1);
   const segments = primaryItems.map((item, index) =>
-    toModelUsageSegment(item, totalTokens, index, text, locale)
+    toModelUsageSegment(item, totalTokens, index, includeCacheTokens, text, locale)
   );
 
   if (remainingItems.length > 0) {
     const summary = remainingItems.reduce(
       (acc, item) => ({
-        totalTokens: acc.totalTokens + item.summary.totalTokens,
+        totalTokens: acc.totalTokens + visibleTokenTotal(item.summary, includeCacheTokens),
         estimatedCostUsd: acc.estimatedCostUsd + item.summary.apiEquivalentCostUsd,
         apiEquivalentCostUsd: acc.apiEquivalentCostUsd + item.summary.apiEquivalentCostUsd,
         costKnownEventCount: acc.costKnownEventCount + item.summary.costKnownEventCount,
@@ -749,21 +837,24 @@ function toModelUsageSegment(
   item: TokenUsageBreakdownItemDto,
   totalTokens: number,
   index: number,
+  includeCacheTokens: boolean,
   text: TokenUsageViewModelText,
   locale: string | undefined
 ): TokenUsageModelSegmentViewModel {
+  const visibleTokens = visibleTokenTotal(item.summary, includeCacheTokens);
   return {
     id: item.id,
     label: item.label,
-    tokens: formatCompactNumber(item.summary.totalTokens, locale),
+    tokens: formatCompactNumber(visibleTokens, locale),
     cost: formatCostLabel(item.summary, text, locale),
-    percent: tokenPercent(item.summary.totalTokens, totalTokens),
+    percent: tokenPercent(visibleTokens, totalTokens),
     color: MODEL_USAGE_COLORS[index % MODEL_USAGE_COLORS.length] ?? '#64748b',
   };
 }
 
 function toRunRow(
   run: TokenUsageRecentRunDto,
+  includeCacheTokens: boolean,
   text: TokenUsageViewModelText,
   locale: string | undefined
 ): TokenUsageRunRowViewModel {
@@ -776,7 +867,7 @@ function toRunRow(
     meta: model,
     period: formatPeriod(run.startedAt, run.endedAt, text, locale),
     duration: formatDuration(undefined, text),
-    tokens: formatCompactNumber(run.summary.totalTokens, locale),
+    tokens: formatCompactNumber(visibleTokenTotal(run.summary, includeCacheTokens), locale),
     cost: formatUsd(run.summary.apiEquivalentCostUsd, locale),
     status: run.status,
     statusLabel: formatStatusLabel(run.status, text),
@@ -786,6 +877,7 @@ function toRunRow(
 
 function toCommandRunRow(
   run: TokenUsageCommandRunDto,
+  includeCacheTokens: boolean,
   text: TokenUsageViewModelText,
   locale: string | undefined
 ): TokenUsageRunRowViewModel {
@@ -798,7 +890,7 @@ function toCommandRunRow(
     meta: [run.teamName, agents, models].filter(Boolean).join(' / '),
     period: formatPeriod(run.startedAt, run.endedAt, text, locale),
     duration: formatDuration(run.durationMs, text),
-    tokens: formatCompactNumber(run.summary.totalTokens, locale),
+    tokens: formatCompactNumber(visibleTokenTotal(run.summary, includeCacheTokens), locale),
     cost: formatUsd(run.summary.apiEquivalentCostUsd, locale),
     status: run.status,
     statusLabel: formatStatusLabel(run.status, text),
@@ -808,6 +900,7 @@ function toCommandRunRow(
 
 function toSessionRunRow(
   run: TokenUsageSessionRunDto,
+  includeCacheTokens: boolean,
   text: TokenUsageViewModelText,
   locale: string | undefined
 ): TokenUsageRunRowViewModel {
@@ -819,7 +912,7 @@ function toSessionRunRow(
     meta: `${team} / ${model}`,
     period: formatPeriod(run.startedAt, run.endedAt, text, locale),
     duration: formatDuration(run.durationMs, text),
-    tokens: formatCompactNumber(run.summary.totalTokens, locale),
+    tokens: formatCompactNumber(visibleTokenTotal(run.summary, includeCacheTokens), locale),
     cost: formatUsd(run.summary.apiEquivalentCostUsd, locale),
     status: run.status,
     statusLabel: formatStatusLabel(run.status, text),
@@ -829,41 +922,47 @@ function toSessionRunRow(
 
 function toTokenMix(
   summary: TokenUsageSummaryDto,
+  includeCacheTokens: boolean,
   text: TokenUsageViewModelText,
   locale: string | undefined
 ): TokenUsageMixSegmentViewModel[] {
   const cacheTokens = summary.cacheCreationTokens + summary.cacheReadTokens;
+  const visibleTokens = visibleTokenTotal(summary, includeCacheTokens);
   const segments: TokenUsageMixSegmentViewModel[] = [
     {
       id: 'input',
       label: text.input,
       value: formatCompactNumber(summary.inputTokens, locale),
-      percent: tokenPercent(summary.inputTokens, summary.totalTokens),
+      percent: tokenPercent(summary.inputTokens, visibleTokens),
       tone: 'input',
     },
     {
       id: 'output',
       label: text.output,
       value: formatCompactNumber(summary.outputTokens, locale),
-      percent: tokenPercent(summary.outputTokens, summary.totalTokens),
+      percent: tokenPercent(summary.outputTokens, visibleTokens),
       tone: 'output',
     },
-    {
-      id: 'cache',
-      label: text.cache,
-      value: formatCompactNumber(cacheTokens, locale),
-      percent: tokenPercent(cacheTokens, summary.totalTokens),
-      tone: 'cache',
-    },
+    ...(includeCacheTokens
+      ? [
+          {
+            id: 'cache' as const,
+            label: text.cache,
+            value: formatCompactNumber(cacheTokens, locale),
+            percent: tokenPercent(cacheTokens, visibleTokens),
+            tone: 'cache' as const,
+          },
+        ]
+      : []),
     {
       id: 'reasoning',
       label: text.reason,
       value: formatCompactNumber(summary.reasoningTokens, locale),
-      percent: tokenPercent(summary.reasoningTokens, summary.totalTokens),
+      percent: tokenPercent(summary.reasoningTokens, visibleTokens),
       tone: 'reasoning',
     },
   ];
-  return segments.filter((segment) => segment.percent > 0 || summary.totalTokens === 0);
+  return segments.filter((segment) => segment.percent > 0 || visibleTokens === 0);
 }
 
 function toSourceQuality(
@@ -945,12 +1044,16 @@ function toTrendSegment(
 
 function toActivityDays(
   points: NonNullable<TokenUsageAnalyticsSnapshotDto['usageHeatmap']>,
+  includeCacheTokens: boolean,
   text: TokenUsageViewModelText,
   locale: string | undefined
 ): TokenUsageActivityDayViewModel[] {
-  const maxTokens = Math.max(0, ...points.map((point) => point.summary.totalTokens));
+  const maxTokens = Math.max(
+    0,
+    ...points.map((point) => visibleTokenTotal(point.summary, includeCacheTokens))
+  );
   return points.map((point) => {
-    const tokens = point.summary.totalTokens;
+    const tokens = visibleTokenTotal(point.summary, includeCacheTokens);
     const intensity = activityIntensity(tokens, maxTokens);
     const label = formatDate(point.startedAt, text, locale);
     const fullLabel = formatDateWithYear(point.startedAt, text, locale);
@@ -977,13 +1080,18 @@ function toBarChartItems(
   rows: readonly TokenUsageBreakdownItemDto[],
   tone: TokenUsageBarChartItemViewModel['tone'],
   limit: number,
+  includeCacheTokens: boolean,
   text: TokenUsageViewModelText,
   locale: string | undefined
 ): TokenUsageBarChartItemViewModel[] {
-  const limitedRows = rows.slice(0, limit);
-  const maxTokens = Math.max(0, ...limitedRows.map((item) => item.summary.totalTokens));
+  const limitedRows = sortByVisibleTokens(rows, includeCacheTokens).slice(0, limit);
+  const maxTokens = Math.max(
+    0,
+    ...limitedRows.map((item) => visibleTokenTotal(item.summary, includeCacheTokens))
+  );
   return limitedRows.map((item) => {
-    const value = formatCompactNumber(item.summary.totalTokens, locale);
+    const tokenValue = visibleTokenTotal(item.summary, includeCacheTokens);
+    const value = formatCompactNumber(tokenValue, locale);
     const cost = formatCostLabel(item.summary, text, locale);
     const requests = text.requestCount(formatCompactNumber(item.summary.requestCount, locale));
     return {
@@ -995,10 +1103,7 @@ function toBarChartItems(
       requests,
       detail: `${cost} / ${requests}`,
       tooltip: text.tokenCostTooltip(item.label, value, cost, requests),
-      percent:
-        maxTokens > 0 && item.summary.totalTokens > 0
-          ? Math.max(2, (item.summary.totalTokens / maxTokens) * 100)
-          : 0,
+      percent: maxTokens > 0 && tokenValue > 0 ? Math.max(2, (tokenValue / maxTokens) * 100) : 0,
       tone,
     };
   });
@@ -1036,6 +1141,17 @@ function emptySummary(): TokenUsageSummaryDto {
 function visibleTokenTotal(summary: TokenUsageSummaryDto, includeCacheTokens: boolean): number {
   if (includeCacheTokens) return summary.totalTokens;
   return Math.max(0, summary.totalTokens - summary.cacheCreationTokens - summary.cacheReadTokens);
+}
+
+function sortByVisibleTokens<T extends { label?: string; summary: TokenUsageSummaryDto }>(
+  items: readonly T[],
+  includeCacheTokens: boolean
+): T[] {
+  return [...items].sort((left, right) => {
+    const rightTokens = visibleTokenTotal(right.summary, includeCacheTokens);
+    const leftTokens = visibleTokenTotal(left.summary, includeCacheTokens);
+    return rightTokens - leftTokens || left.label?.localeCompare(right.label ?? '') || 0;
+  });
 }
 
 function hasBudgetLimit(limit: TokenUsageBudgetLimit): boolean {

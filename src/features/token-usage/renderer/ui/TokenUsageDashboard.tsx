@@ -137,6 +137,11 @@ export const TokenUsageDashboard = (): React.JSX.Element => {
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          <TokenUsageCacheTokenToggle
+            checked={includeCacheTokens}
+            onChange={setIncludeCacheTokens}
+            t={tokenUsageT}
+          />
           <TeamFilterSelector
             options={teamOptions}
             selectedTeamNames={selectedTeamNames}
@@ -172,12 +177,7 @@ export const TokenUsageDashboard = (): React.JSX.Element => {
             </div>
           )}
 
-          <SummaryMetricsPanel
-            metrics={viewModel.metrics}
-            includeCacheTokens={includeCacheTokens}
-            onIncludeCacheTokensChange={setIncludeCacheTokens}
-            t={tokenUsageT}
-          />
+          <SummaryMetricsPanel metrics={viewModel.metrics} />
 
           <section className="grid gap-5 lg:grid-cols-3">
             <BillingSplitPanel items={viewModel.billingSplit} t={tokenUsageT} />
@@ -618,14 +618,8 @@ const DateRangeSelector = ({
 
 const SummaryMetricsPanel = ({
   metrics,
-  includeCacheTokens,
-  onIncludeCacheTokensChange,
-  t,
 }: {
   metrics: TokenUsageMetricViewModel[];
-  includeCacheTokens: boolean;
-  onIncludeCacheTokensChange: (include: boolean) => void;
-  t: TokenUsageT;
 }): React.JSX.Element => {
   return (
     <section
@@ -635,14 +629,7 @@ const SummaryMetricsPanel = ({
       )}
     >
       {metrics.map((metric, index) => (
-        <SummaryMetricCell
-          key={metric.id}
-          metric={metric}
-          index={index}
-          includeCacheTokens={includeCacheTokens}
-          onIncludeCacheTokensChange={onIncludeCacheTokensChange}
-          t={t}
-        />
+        <SummaryMetricCell key={metric.id} metric={metric} index={index} />
       ))}
     </section>
   );
@@ -651,15 +638,9 @@ const SummaryMetricsPanel = ({
 const SummaryMetricCell = ({
   metric,
   index,
-  includeCacheTokens,
-  onIncludeCacheTokensChange,
-  t,
 }: {
   metric: TokenUsageMetricViewModel;
   index: number;
-  includeCacheTokens: boolean;
-  onIncludeCacheTokensChange: (include: boolean) => void;
-  t: TokenUsageT;
 }): React.JSX.Element => {
   return (
     <div className={cn('min-w-0 p-4', summaryMetricCellBorderClass(index))}>
@@ -674,18 +655,6 @@ const SummaryMetricCell = ({
       </div>
       <div className="mt-3 text-2xl font-semibold text-text">{metric.value}</div>
       <div className="mt-1 truncate text-xs text-text-muted">{metric.detail}</div>
-      {metric.id === 'tokens' && (
-        <label className="mt-3 flex w-fit cursor-pointer items-center gap-2 text-xs text-text-muted transition-colors hover:text-text-secondary">
-          <input
-            type="checkbox"
-            checked={includeCacheTokens}
-            onChange={(event) => onIncludeCacheTokensChange(event.target.checked)}
-            className="size-3.5 rounded-sm border border-[var(--color-border-emphasis)] bg-surface accent-fuchsia-500"
-            aria-label={t('tokenUsage.controls.includeCacheTokens')}
-          />
-          <span>{t('tokenUsage.controls.includeCacheTokens')}</span>
-        </label>
-      )}
       {metric.rows && metric.rows.length > 0 && (
         <div className="mt-3 space-y-1.5 border-t border-[var(--color-border)] pt-2">
           {metric.rows.map((row) => (
@@ -726,6 +695,30 @@ const MetricInfoTooltip = ({ label, help }: { label: string; help: string }): Re
         {help}
       </TooltipContent>
     </Tooltip>
+  );
+};
+
+const TokenUsageCacheTokenToggle = ({
+  checked,
+  onChange,
+  t,
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  t: TokenUsageT;
+}): React.JSX.Element => {
+  const label = t('tokenUsage.controls.includeCacheTokens');
+  return (
+    <label className="flex h-9 cursor-pointer items-center gap-2 rounded-sm border border-[var(--color-border-emphasis)] bg-surface px-3 text-sm text-text-secondary transition-colors hover:bg-surface-raised hover:text-text">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+        className="size-3.5 rounded-sm border border-[var(--color-border-emphasis)] bg-surface accent-fuchsia-500"
+        aria-label={label}
+      />
+      <span className="whitespace-nowrap">{label}</span>
+    </label>
   );
 };
 

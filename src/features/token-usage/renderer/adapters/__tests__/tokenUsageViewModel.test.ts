@@ -58,6 +58,7 @@ function snapshot(): TokenUsageAnalyticsSnapshotDto {
         summary: {
           ...ZERO_SUMMARY,
           totalTokens: 300,
+          cacheReadTokens: 150,
           requestCount: 2,
           estimatedCostUsd: 1.25,
           apiEquivalentCostUsd: 1.25,
@@ -74,6 +75,7 @@ function snapshot(): TokenUsageAnalyticsSnapshotDto {
         summary: {
           ...ZERO_SUMMARY,
           totalTokens: 300,
+          cacheReadTokens: 150,
           requestCount: 2,
           estimatedCostUsd: 1.25,
           apiEquivalentCostUsd: 1.25,
@@ -89,6 +91,7 @@ function snapshot(): TokenUsageAnalyticsSnapshotDto {
         summary: {
           ...ZERO_SUMMARY,
           totalTokens: 300,
+          cacheReadTokens: 150,
           requestCount: 2,
           estimatedCostUsd: 1.25,
           apiEquivalentCostUsd: 1.25,
@@ -103,6 +106,7 @@ function snapshot(): TokenUsageAnalyticsSnapshotDto {
         summary: {
           ...ZERO_SUMMARY,
           totalTokens: 200,
+          cacheReadTokens: 150,
           requestCount: 1,
           estimatedCostUsd: 0.75,
           apiEquivalentCostUsd: 0.75,
@@ -130,6 +134,7 @@ function snapshot(): TokenUsageAnalyticsSnapshotDto {
         summary: {
           ...ZERO_SUMMARY,
           totalTokens: 300,
+          cacheReadTokens: 150,
           requestCount: 2,
           estimatedCostUsd: 1.25,
           apiEquivalentCostUsd: 1.25,
@@ -144,6 +149,7 @@ function snapshot(): TokenUsageAnalyticsSnapshotDto {
         summary: {
           ...ZERO_SUMMARY,
           totalTokens: 200,
+          cacheReadTokens: 150,
           requestCount: 1,
           estimatedCostUsd: 0.75,
           apiEquivalentCostUsd: 0.75,
@@ -169,8 +175,49 @@ function snapshot(): TokenUsageAnalyticsSnapshotDto {
         lastActivityAt: '2026-06-28T00:00:00.000Z',
       },
     ],
-    commandRuns: [],
-    sessionRuns: [],
+    commandRuns: [
+      {
+        id: 'command-run-a',
+        label: 'Command Run A',
+        teamName: 'alpha',
+        agentNames: ['builder'],
+        runtimeKinds: ['codex'],
+        models: ['gpt-5.4'],
+        runCount: 1,
+        startedAt: '2026-06-30T00:00:00.000Z',
+        durationMs: 1_000,
+        status: 'completed',
+        summary: {
+          ...ZERO_SUMMARY,
+          totalTokens: 100,
+          cacheReadTokens: 25,
+          requestCount: 1,
+          apiEquivalentCostUsd: 0.4,
+        },
+      },
+    ],
+    sessionRuns: [
+      {
+        id: 'session-a',
+        label: 'Session A',
+        appRunId: 'run-session-a',
+        teamName: 'alpha',
+        agentName: 'builder',
+        runtimeKind: 'codex',
+        model: 'gpt-5.4',
+        startedAt: '2026-06-30T00:00:00.000Z',
+        durationMs: 1_000,
+        status: 'completed',
+        summary: {
+          ...ZERO_SUMMARY,
+          totalTokens: 80,
+          cacheReadTokens: 30,
+          requestCount: 1,
+          apiEquivalentCostUsd: 0.3,
+        },
+        sources: [],
+      },
+    ],
     tokenTrend: [
       {
         id: '2026-06-29',
@@ -235,8 +282,44 @@ function snapshot(): TokenUsageAnalyticsSnapshotDto {
         },
       },
     ],
-    recentRuns: [],
-    expensiveRuns: [],
+    recentRuns: [
+      {
+        appRunId: 'run-a',
+        teamName: 'alpha',
+        agentName: 'builder',
+        runtimeKind: 'codex',
+        model: 'gpt-5.4',
+        status: 'completed',
+        startedAt: '2026-06-30T00:00:00.000Z',
+        summary: {
+          ...ZERO_SUMMARY,
+          totalTokens: 60,
+          cacheReadTokens: 10,
+          requestCount: 1,
+          apiEquivalentCostUsd: 0.2,
+        },
+        sources: [],
+      },
+    ],
+    expensiveRuns: [
+      {
+        appRunId: 'run-expensive-a',
+        teamName: 'alpha',
+        agentName: 'builder',
+        runtimeKind: 'codex',
+        model: 'gpt-5.4',
+        status: 'completed',
+        startedAt: '2026-06-30T00:00:00.000Z',
+        summary: {
+          ...ZERO_SUMMARY,
+          totalTokens: 40,
+          cacheReadTokens: 15,
+          requestCount: 1,
+          apiEquivalentCostUsd: 0.1,
+        },
+        sources: [],
+      },
+    ],
     unmappedEventCount: 3,
     sourceCounts: {
       sdk_exact: 0,
@@ -314,10 +397,26 @@ describe('toTokenUsageDashboardViewModel', () => {
     expect(viewModel.unmappedEventCount).toBe(3);
   });
 
-  it('excludes cache tokens from headline and trend points when disabled', () => {
-    const viewModel = toTokenUsageDashboardViewModel(snapshot(), { includeCacheTokens: false });
+  it('excludes cache tokens from dashboard token statistics when disabled', () => {
+    const viewModel = toTokenUsageDashboardViewModel(snapshot(), {
+      includeCacheTokens: false,
+      budgetLimits: {
+        global: { monthlyTokenLimit: 300 },
+        projects: { 'project:workspace-a': { monthlyTokenLimit: 300 } },
+        teams: { alpha: { monthlyTokenLimit: 200 } },
+      },
+    });
 
     expect(viewModel.metrics.find((metric) => metric.id === 'tokens')?.value).toBe('150');
+    expect(viewModel.tokenMix.map((segment) => segment.id)).toEqual(['input', 'output']);
+    expect(viewModel.tokenMix.find((segment) => segment.id === 'input')?.percent).toBeCloseTo(
+      66.67,
+      2
+    );
+    expect(viewModel.tokenMix.find((segment) => segment.id === 'output')?.percent).toBeCloseTo(
+      33.33,
+      2
+    );
     expect(viewModel.trendPoints[1]).toEqual(
       expect.objectContaining({
         tokenValue: 150,
@@ -328,6 +427,37 @@ describe('toTokenUsageDashboardViewModel', () => {
         ],
       })
     );
+    expect(viewModel.commandSpendBars.map((item) => item.id)).toEqual(['cmd-b', 'cmd-a']);
+    expect(viewModel.commandSpendBars.map((item) => item.value)).toEqual(['100', '50']);
+    expect(viewModel.commandSpendBars.map((item) => item.percent)).toEqual([100, 50]);
+    expect(viewModel.commandBreakdownRows.map((row) => row.id)).toEqual(['cmd-b', 'cmd-a']);
+    expect(viewModel.modelUsage.map((segment) => segment.id)).toEqual(['claude-sonnet', 'gpt-5.4']);
+    expect(viewModel.modelUsage.map((segment) => Math.round(segment.percent))).toEqual([67, 33]);
+    expect(viewModel.modelBars.map((item) => ({ id: item.id, value: item.value }))).toEqual([
+      { id: 'claude-sonnet', value: '100' },
+      { id: 'gpt-5.4', value: '50' },
+      { id: 'unused-model', value: '0' },
+    ]);
+    expect(viewModel.activityDays.map((day) => day.tokenValue)).toEqual([75, 150]);
+    expect(viewModel.teamRows[0]).toEqual(
+      expect.objectContaining({ id: 'alpha', tokenValue: 150 })
+    );
+    expect(viewModel.teamFilterOptions[0]).toEqual(
+      expect.objectContaining({ id: 'alpha', tokens: '150', tokenValue: 150 })
+    );
+    expect(
+      viewModel.budgetTargetOptions.map((option) => [option.scope, option.id, option.tokens])
+    ).toEqual([
+      ['global', 'global', '150'],
+      ['team', 'alpha', '150'],
+      ['project', 'project:workspace-a', '150'],
+    ]);
+    expect(viewModel.budgetAlerts.find((alert) => alert.id === 'global')?.percent).toBe(50);
+    expect(viewModel.budgetAlerts.find((alert) => alert.id === 'alpha')?.percent).toBe(75);
+    expect(viewModel.commandRuns[0]?.tokens).toBe('75');
+    expect(viewModel.sessionRuns[0]?.tokens).toBe('50');
+    expect(viewModel.recentRuns[0]?.tokens).toBe('50');
+    expect(viewModel.expensiveRuns[0]?.tokens).toBe('25');
   });
 
   it('builds billing split, burn rate, and budget alerts', () => {

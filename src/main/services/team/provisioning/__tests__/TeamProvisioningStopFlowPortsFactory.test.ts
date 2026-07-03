@@ -72,6 +72,7 @@ function makeAdapter(
 function createDeps(
   overrides: Partial<TeamProvisioningStopFlowFactoryDeps<StopFactoryRun>> = {}
 ): TeamProvisioningStopFlowFactoryDeps<StopFactoryRun> & {
+  mutableRuns: Map<string, StopFactoryRun>;
   aliveRunByTeam: Map<string, string>;
   emittedEvents: TeamChangeEvent[];
   progressUpdates: TeamProvisioningProgress[];
@@ -120,6 +121,7 @@ function createDeps(
       aliveRunByTeam.delete(teamName);
     }),
     runs,
+    mutableRuns: runs,
     provisioningRunByTeam,
     invalidateRuntimeSnapshotCaches: vi.fn(),
     pauseActiveIntervalsForTeam: vi.fn(),
@@ -199,7 +201,7 @@ describe('TeamProvisioningStopFlowPortsFactory', () => {
     const teamName = 'team-a';
     const run = makeRun('run-1', teamName);
     const deps = createDeps();
-    deps.runs.set(run.runId, run);
+    deps.mutableRuns.set(run.runId, run);
     deps.provisioningRunByTeam.set(teamName, run.runId);
     deps.aliveRunByTeam.set(teamName, run.runId);
 
@@ -237,7 +239,7 @@ describe('TeamProvisioningStopFlowPortsFactory', () => {
       teamName,
       expectedMembers: [],
       members: {},
-    } as PersistedTeamLaunchSnapshot;
+    } as unknown as PersistedTeamLaunchSnapshot;
     const deps = createDeps({
       getOpenCodeRuntimeAdapter: vi.fn(() => makeAdapter(stop)),
       readLaunchState: vi.fn(async () => previousLaunchState),

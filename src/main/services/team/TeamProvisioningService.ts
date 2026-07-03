@@ -439,14 +439,7 @@ import {
   applyPrimaryBootstrapTruthToLaunchReportingSnapshot as applyPrimaryBootstrapTruthToLaunchReportingSnapshotHelper,
   overlayPrimaryBootstrapTruthIntoRunStatusesFromBootstrapState as overlayPrimaryBootstrapTruthIntoRunStatusesFromBootstrapStateHelper,
 } from './provisioning/TeamProvisioningPrimaryBootstrapTruthReporting';
-import {
-  handleProvisioningProcessExit,
-  pathExists as provisioningPathExists,
-  tryCompleteAfterTimeout as tryCompleteAfterTimeoutHelper,
-  waitForMissingInboxes as waitForMissingInboxesHelper,
-  waitForTeamInList as waitForTeamInListHelper,
-  waitForValidConfig as waitForValidConfigHelper,
-} from './provisioning/TeamProvisioningProcessExit';
+import { handleProvisioningProcessExit } from './provisioning/TeamProvisioningProcessExit';
 import {
   appendProvisioningTrace,
   boundRunProvisioningOutputParts,
@@ -610,6 +603,10 @@ import {
   createTeamProvisioningTurnCompletePorts,
   type TeamProvisioningTurnCompleteServiceAdapter,
 } from './provisioning/TeamProvisioningTurnCompletePortsFactory';
+import {
+  createTeamProvisioningVerificationProbePorts,
+  type TeamProvisioningVerificationProbePorts,
+} from './provisioning/TeamProvisioningVerificationProbePortsFactory';
 import { prepareWorkspaceTrustForDeterministicRun as prepareWorkspaceTrustForDeterministicRunHelper } from './provisioning/TeamProvisioningWorkspaceTrust';
 import { createNodeWorkspaceTrustWorkspaceCollectionPorts } from './provisioning/TeamProvisioningWorkspaceTrustNodePorts';
 import { OpenCodeTaskLogAttributionStore } from './taskLogs/stream/OpenCodeTaskLogAttributionStore';
@@ -1648,6 +1645,7 @@ export class TeamProvisioningService {
   private readonly providerRuntime: TeamProvisioningProviderRuntimeFacade;
   private readonly prepareCoordinator: TeamProvisioningPrepareCoordinator;
   private readonly configMaintenance: TeamProvisioningConfigMaintenance;
+  private readonly verificationProbePorts: TeamProvisioningVerificationProbePorts<ProvisioningRun>;
   private runtimeAdapterRegistry: TeamRuntimeAdapterRegistry | null = null;
   private controlApiBaseUrlResolver: (() => Promise<string | null>) | null = null;
   private workspaceTrustCoordinator: WorkspaceTrustCoordinator | null = null;
@@ -1838,6 +1836,30 @@ export class TeamProvisioningService {
         teamConfigMaxBytes: TEAM_CONFIG_MAX_BYTES,
         teamInboxMaxBytes: TEAM_INBOX_MAX_BYTES,
       },
+    });
+    this.verificationProbePorts = createTeamProvisioningVerificationProbePorts<ProvisioningRun>({
+      service: {
+        persistMembersMeta: (teamName, request) => this.persistMembersMeta(teamName, request),
+        updateConfigPostLaunch: (teamName, cwd, detectedSessionId, color, options) =>
+          this.updateConfigPostLaunch(teamName, cwd, detectedSessionId, color, options),
+        refreshMemberSpawnStatusesFromLeadInbox: (run) =>
+          this.refreshMemberSpawnStatusesFromLeadInbox(run),
+        maybeAuditMemberSpawnStatuses: (run, options) =>
+          this.maybeAuditMemberSpawnStatuses(run, options),
+        finalizeMissingRegisteredMembersAsFailed: (run) =>
+          this.finalizeMissingRegisteredMembersAsFailed(run),
+        persistLaunchStateSnapshot: (run, phase) => this.persistLaunchStateSnapshot(run, phase),
+        cleanupRun: (run) => this.cleanupRun(run),
+      },
+      listTeams: () => this.configReader.listTeams(),
+      getTeamsBasePath,
+      readRegularFileUtf8: tryReadRegularFileUtf8,
+      updateProgress,
+      verifyTimeoutMs: VERIFY_TIMEOUT_MS,
+      verifyPollMs: VERIFY_POLL_MS,
+      teamJsonReadTimeoutMs: TEAM_JSON_READ_TIMEOUT_MS,
+      teamConfigMaxBytes: TEAM_CONFIG_MAX_BYTES,
+      sleep,
     });
     this.prepareCoordinator = new TeamProvisioningPrepareCoordinator(
       createDefaultTeamProvisioningPrepareCoordinatorPorts({
@@ -8109,58 +8131,23 @@ export class TeamProvisioningService {
     run: ProvisioningRun,
     timeoutMs: number = VERIFY_TIMEOUT_MS
   ): Promise<ValidConfigProbeResult> {
-    return waitForValidConfigHelper(run, {
-      readRegularFileUtf8: tryReadRegularFileUtf8,
-      timeoutMs,
-      pollMs: VERIFY_POLL_MS,
-      teamJsonReadTimeoutMs: TEAM_JSON_READ_TIMEOUT_MS,
-      teamConfigMaxBytes: TEAM_CONFIG_MAX_BYTES,
-      sleep,
-    });
+    return this.verificationProbePorts.waitForValidConfig(run, timeoutMs);
   }
 
   private async waitForTeamInList(teamName: string, run?: ProvisioningRun): Promise<boolean> {
-    return waitForTeamInListHelper(teamName, {
-      listTeams: () => this.configReader.listTeams(),
-      timeoutMs: VERIFY_TIMEOUT_MS,
-      pollMs: VERIFY_POLL_MS,
-      isCancelled: () => run?.cancelRequested === true,
-      sleep,
-    });
+    return this.verificationProbePorts.waitForTeamInList(teamName, run);
   }
 
   private async waitForMissingInboxes(run: ProvisioningRun): Promise<string[]> {
-    return waitForMissingInboxesHelper(run, {
-      getTeamsBasePath,
-      pathExists: (filePath) => this.pathExists(filePath),
-      timeoutMs: VERIFY_TIMEOUT_MS,
-      pollMs: VERIFY_POLL_MS,
-      sleep,
-    });
+    return this.verificationProbePorts.waitForMissingInboxes(run);
   }
 
   private async tryCompleteAfterTimeout(run: ProvisioningRun): Promise<boolean> {
-    return tryCompleteAfterTimeoutHelper(run, {
-      waitForValidConfig: (run) => this.waitForValidConfig(run),
-      waitForTeamInList: (teamName, run) => this.waitForTeamInList(teamName, run),
-      waitForMissingInboxes: (run) => this.waitForMissingInboxes(run),
-      persistMembersMeta: (teamName, request) => this.persistMembersMeta(teamName, request),
-      updateConfigPostLaunch: (teamName, cwd, detectedSessionId, color, options) =>
-        this.updateConfigPostLaunch(teamName, cwd, detectedSessionId, color, options),
-      refreshMemberSpawnStatusesFromLeadInbox: (run) =>
-        this.refreshMemberSpawnStatusesFromLeadInbox(run),
-      maybeAuditMemberSpawnStatuses: (run, options) =>
-        this.maybeAuditMemberSpawnStatuses(run, options),
-      finalizeMissingRegisteredMembersAsFailed: (run) =>
-        this.finalizeMissingRegisteredMembersAsFailed(run),
-      persistLaunchStateSnapshot: (run, phase) => this.persistLaunchStateSnapshot(run, phase),
-      updateProgress,
-      cleanupRun: (run) => this.cleanupRun(run),
-    });
+    return this.verificationProbePorts.tryCompleteAfterTimeout(run);
   }
 
   private async pathExists(filePath: string): Promise<boolean> {
-    return provisioningPathExists(filePath);
+    return this.verificationProbePorts.pathExists(filePath);
   }
 
   /**

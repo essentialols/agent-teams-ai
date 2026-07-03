@@ -263,7 +263,6 @@ import {
 import {
   buildLeadContextUsagePayloadForRun,
   getLeadContextUsageForTeam,
-  updateLeadContextUsageFromUsageForRun,
 } from './provisioning/TeamProvisioningLeadContextUsage';
 import { relayLeadInboxMessagesForTeam } from './provisioning/TeamProvisioningLeadInboxRelayFlow';
 import {
@@ -448,9 +447,7 @@ import {
   extractApiErrorSnippet,
   hasApiError,
   isAuthFailureWarning,
-  isQuotaRetryMessage,
   normalizeApiRetryErrorMessage,
-  toMarkdownCodeSafe,
 } from './provisioning/TeamProvisioningOutputErrorPolicy';
 import { createTeamProvisioningOutputRecoveryHelper } from './provisioning/TeamProvisioningOutputRecovery';
 import { reconcilePersistedLaunchStateWithPorts } from './provisioning/TeamProvisioningPersistedLaunchReconciliation';
@@ -608,6 +605,7 @@ import {
   killOrphanedTeamAgentProcesses as killOrphanedTeamAgentProcessesHelper,
   killPersistedPaneMembers as killPersistedPaneMembersHelper,
 } from './provisioning/TeamProvisioningStopProcessCleanup';
+import { createTeamProvisioningStreamEventPorts } from './provisioning/TeamProvisioningStreamEventPortsFactory';
 import {
   handleDeterministicBootstrapEvent,
   handleTeamProvisioningStreamJsonMessage,
@@ -664,11 +662,7 @@ import { getConfiguredCliCommandLabel } from './cliFlavor';
 import { withFileLock } from './fileLock';
 import { withInboxLock } from './inboxLock';
 import { type ProcessBootstrapTransportSummary } from './ProcessBootstrapTransportEvidence';
-import {
-  boundLaunchDiagnostics,
-  boundProgressAssistantParts,
-  buildProgressLogsTail,
-} from './progressPayload';
+import { boundLaunchDiagnostics, buildProgressLogsTail } from './progressPayload';
 import { TeamAttachmentStore } from './TeamAttachmentStore';
 import {
   choosePreferredLaunchSnapshot,
@@ -7792,13 +7786,8 @@ export class TeamProvisioningService {
   }
 
   private getStreamJsonEventPorts(): TeamProvisioningStreamEventPorts<ProvisioningRun> {
-    return {
+    return createTeamProvisioningStreamEventPorts({
       updateProgress,
-      extractCliLogsFromRun,
-      buildProvisioningLiveOutput,
-      boundRunProvisioningOutputParts,
-      boundProgressAssistantParts,
-      appendProvisioningTrace,
       resetLiveLeadTextBuffer: (run) => this.resetLiveLeadTextBuffer(run),
       handleTeammatePermissionRequest: (run, permissionRequest, timestamp) =>
         this.handleTeammatePermissionRequest(run, permissionRequest, timestamp),
@@ -7807,8 +7796,6 @@ export class TeamProvisioningService {
       handleNativeTeammateUserMessage: (run, msg) => this.handleNativeTeammateUserMessage(run, msg),
       handleAuthFailureInOutput: (run, text, source) =>
         this.handleAuthFailureInOutput(run, text, source),
-      hasApiError,
-      isAuthFailureWarning,
       failProvisioningWithApiError: (run, text) => this.failProvisioningWithApiError(run, text),
       appendProvisioningAssistantText: (run, msg, text) =>
         this.appendProvisioningAssistantText(run, msg, text),
@@ -7819,8 +7806,6 @@ export class TeamProvisioningService {
       getRunLeadName: (run) => this.getRunLeadName(run),
       captureTeamSpawnEvents: (run, content) => this.captureTeamSpawnEvents(run, content),
       captureSendMessages: (run, content) => this.captureSendMessages(run, content),
-      updateLeadContextUsageFromUsage: (run, usage, modelName) =>
-        updateLeadContextUsageFromUsageForRun(run, usage, modelName),
       emitLeadContextUsage: (run) => this.emitLeadContextUsage(run),
       resetRuntimeToolActivity: (run, memberName) => this.resetRuntimeToolActivity(run, memberName),
       setLeadActivity: (run, state) => this.setLeadActivity(run, state),
@@ -7834,10 +7819,6 @@ export class TeamProvisioningService {
       handleControlRequest: (run, msg) => this.handleControlRequest(run, msg),
       handleProvisioningTurnComplete: (run) => this.handleProvisioningTurnComplete(run),
       cleanupRun: (run) => this.cleanupRun(run),
-      killTeamProcess,
-      normalizeApiRetryErrorMessage,
-      isQuotaRetryMessage,
-      toMarkdownCodeSafe,
       emitApiErrorWarning: (run, text) => this.emitApiErrorWarning(run, text),
       setMemberSpawnStatus: (run, memberName, status, error) =>
         this.setMemberSpawnStatus(run, memberName, status, error),
@@ -7850,7 +7831,7 @@ export class TeamProvisioningService {
         this.markUnconfirmedBootstrapMembersFailed(run, reason, options),
       stopPersistentTeamMembers: (teamName) => this.stopPersistentTeamMembers(teamName),
       persistLaunchStateSnapshot: (run, phase) => this.persistLaunchStateSnapshot(run, phase),
-    };
+    });
   }
 
   private completeProvisioningFromSuccessfulResult(run: ProvisioningRun): void {

@@ -201,6 +201,7 @@ function createFakeBoundary() {
       runId: 'run-1',
       state: 'accepted',
       idempotencyKey: 'key',
+      diagnostics: [],
       observedAt: '2026-01-01T00:00:00.000Z',
     })),
     deliverOpenCodeRuntimeMessage: vi.fn(async () => ({
@@ -210,6 +211,7 @@ function createFakeBoundary() {
       runId: 'run-1',
       state: 'delivered',
       idempotencyKey: 'key',
+      diagnostics: [],
       observedAt: '2026-01-01T00:00:00.000Z',
     })),
     recordOpenCodeRuntimeTaskEvent: vi.fn(async () => ({
@@ -219,6 +221,7 @@ function createFakeBoundary() {
       runId: 'run-1',
       state: 'accepted',
       idempotencyKey: 'key',
+      diagnostics: [],
       observedAt: '2026-01-01T00:00:00.000Z',
     })),
     recordOpenCodeRuntimeHeartbeat: vi.fn(async () => ({
@@ -228,6 +231,7 @@ function createFakeBoundary() {
       runId: 'run-1',
       state: 'accepted',
       idempotencyKey: 'key',
+      diagnostics: [],
       observedAt: '2026-01-01T00:00:00.000Z',
     })),
     createOpenCodeRuntimeDeliveryService: vi.fn(),
@@ -238,7 +242,7 @@ function createFakeBoundary() {
     scheduleOpenCodeMemberInboxDeliveryWake: vi.fn(),
     createOpenCodeRuntimeDeliveryPorts: vi.fn(() => []),
     recoverOpenCodeRuntimeDeliveryJournal: vi.fn(async () => ({ recovered: true })),
-  } as ReturnType<typeof createTeamProvisioningOpenCodeRuntimeDeliveryBoundary>;
+  } as unknown as ReturnType<typeof createTeamProvisioningOpenCodeRuntimeDeliveryBoundary>;
 }
 
 function createPorts(
@@ -258,7 +262,7 @@ function createPorts(
     getTrackedRunId: vi.fn(() => null),
     getRun: vi.fn(() => null),
     persistLaunchStateSnapshot: vi.fn(async () => undefined),
-    getMixedSecondaryLaunchPhase: vi.fn(() => 'active'),
+    getMixedSecondaryLaunchPhase: vi.fn(() => 'active' as const),
     invalidateRuntimeSnapshotCaches: vi.fn(),
     emitMemberSpawnChange: vi.fn(),
     emitTeamChange: vi.fn(),
@@ -280,16 +284,16 @@ function createPorts(
     },
     getCrossTeamSender: vi.fn(() => 'cross-team-sender' as never),
     isOpenCodeRuntimeRecipient: vi.fn(async () => true),
-    getOpenCodeAgendaSyncRecoveryBypassMessageIds: vi.fn(async () => new Set()),
+    getOpenCodeAgendaSyncRecoveryBypassMessageIds: vi.fn(async () => new Set<string>()),
     resolveOpenCodeMemberDeliveryIdentity: vi.fn(async () => ({
-      ok: true,
+      ok: true as const,
       canonicalMemberName: 'Builder',
       laneId: 'lane-1',
     })),
     tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive: vi.fn(async () => true),
     decideOpenCodeRuntimeDeliveryUserFacingAdvisory: vi.fn(async (record) => ({
       record,
-      decision: { action: 'defer' },
+      decision: { action: 'defer' as const },
     })),
     isOpenCodePromptDeliveryWatchdogEnabled: vi.fn(() => true),
     scheduleOpenCodePromptDeliveryWatchdog: vi.fn(),
@@ -313,15 +317,15 @@ function createDeps() {
 
 function createHost(options: {
   run: OpenCodeRuntimeCheckinRun;
-  teamChangeEmitter: vi.Mock;
-  readLaunchState: vi.Mock;
+  teamChangeEmitter: ReturnType<typeof vi.fn>;
+  readLaunchState: ReturnType<typeof vi.fn>;
 }): TeamProvisioningOpenCodeRuntimeDeliveryBoundaryHost<OpenCodeRuntimeCheckinRun> {
   return {
     resolveOpenCodeRuntimeLaneId: vi.fn(async () => 'lane-1'),
     openCodeRuntimeRecoveryIdentity: {
       resolveCurrentOpenCodeRuntimeRunId: vi.fn(async () => 'run-1'),
       resolveOpenCodeMemberDeliveryIdentity: vi.fn(async () => ({
-        ok: true,
+        ok: true as const,
         canonicalMemberName: 'Builder',
         laneId: 'lane-1',
       })),
@@ -342,7 +346,7 @@ function createHost(options: {
       get: vi.fn(() => options.run),
     },
     persistLaunchStateSnapshot: vi.fn(async () => undefined),
-    getMixedSecondaryLaunchPhase: vi.fn(() => 'active'),
+    getMixedSecondaryLaunchPhase: vi.fn(() => 'active' as const),
     invalidateRuntimeSnapshotCaches: vi.fn(),
     emitMemberSpawnChange: vi.fn(),
     teamChangeEmitter: options.teamChangeEmitter,
@@ -366,11 +370,11 @@ function createHost(options: {
     },
     crossTeamSender: 'cross-team-sender' as never,
     isOpenCodeRuntimeRecipient: vi.fn(async () => true),
-    getOpenCodeAgendaSyncRecoveryBypassMessageIds: vi.fn(async () => new Set()),
+    getOpenCodeAgendaSyncRecoveryBypassMessageIds: vi.fn(async () => new Set<string>()),
     tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive: vi.fn(async () => true),
     decideOpenCodeRuntimeDeliveryUserFacingAdvisory: vi.fn(async (record) => ({
       record,
-      decision: { action: 'defer' },
+      decision: { action: 'defer' as const },
     })),
     openCodePromptDeliveryWatchdogScheduler: {
       isEnabled: vi.fn(() => true),
@@ -384,8 +388,8 @@ function createRun(): OpenCodeRuntimeCheckinRun {
     runId: 'run-1',
     teamName: 'Team',
     request: {
-      name: 'Team',
-      projectPath: '/tmp/project',
+      teamName: 'Team',
+      cwd: '/tmp/project',
       members: [],
     },
     effectiveMembers: [],

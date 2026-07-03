@@ -93,9 +93,9 @@ describe('TeamProvisioningLiveInboxRelayRouting', () => {
     });
     const deliveryMetadata = {
       replyRecipient: 'user',
-      actionMode: 'do',
+      actionMode: 'do' as const,
       taskRefs: [{ taskId: 'task-1', displayId: 'TASK-1', teamName: 'team-a' }],
-    } as const;
+    };
     const ports = createPorts({
       isOpenCodeRuntimeRecipientFromSources: vi.fn().mockReturnValue(true),
       relayOpenCodeMemberInboxMessages,

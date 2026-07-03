@@ -14,6 +14,7 @@ import {
 import type {
   MemberSpawnStatusEntry,
   PersistedTeamLaunchSnapshot,
+  TeamLaunchDiagnosticItem,
   TeamProvisioningProgress,
 } from '@shared/types';
 
@@ -59,7 +60,7 @@ function launchFailureRun(
       displayName: 'Team A',
       cwd: '/tmp/team-a',
       members: [],
-      providerId: 'claude',
+      providerId: 'anthropic',
       model: 'claude-sonnet-4',
     },
     child: { pid: 1234 },
@@ -70,8 +71,8 @@ function launchFailureRun(
       [
         'lead',
         {
-          status: 'registered',
-          launchState: 'registered',
+          status: 'waiting',
+          launchState: 'starting',
           updatedAt: '2026-01-01T00:00:01.000Z',
         },
       ],
@@ -201,7 +202,7 @@ describe('launch failure artifact pack helpers', () => {
       run,
       { reason: 'launch_progress_failed', launchSnapshot: null },
       {
-        buildLaunchDiagnosticsFromRun: vi.fn(() => [
+        buildLaunchDiagnosticsFromRun: vi.fn((): TeamLaunchDiagnosticItem[] => [
           {
             id: 'diag-1',
             severity: 'error',
@@ -221,7 +222,7 @@ describe('launch failure artifact pack helpers', () => {
       reason: 'launch_progress_failed',
       cwd: '/tmp/team-a',
       pid: 1234,
-      providerId: 'claude',
+      providerId: 'anthropic',
       model: 'claude-sonnet-4',
       expectedMembers: ['lead'],
       cliLogs: 'cli log',
@@ -239,8 +240,8 @@ describe('launch failure artifact pack helpers', () => {
     });
     expect(input.memberSpawnStatuses).toEqual({
       lead: {
-        status: 'registered',
-        launchState: 'registered',
+        status: 'waiting',
+        launchState: 'starting',
         updatedAt: '2026-01-01T00:00:01.000Z',
       },
     });
@@ -254,7 +255,7 @@ describe('launch failure artifact pack helpers', () => {
     const ports = {
       writtenRunIds,
       artifactWriter: { write },
-      buildLaunchDiagnosticsFromRun: vi.fn(() => []),
+      buildLaunchDiagnosticsFromRun: vi.fn((): TeamLaunchDiagnosticItem[] => []),
       extractCliLogsFromRun: vi.fn(() => undefined),
       getRuntimeAdapterTraceLines: vi.fn(() => undefined),
       onWriteError,

@@ -1,4 +1,14 @@
+import {
+  buildConfiguredProvisioningMember,
+  buildPrimaryOwnedMemberSpecForRuntime,
+} from './TeamProvisioningConfiguredMemberSpecs';
+import {
+  resolveEffectiveConfiguredMember,
+  resolveLeadMemberName,
+} from './TeamProvisioningMemberStatusProjection';
+
 import type { TeamProvisioningMemberLifecycleHost } from './TeamProvisioningMemberLifecycle';
+import type { TeamCreateRequest } from '@shared/types';
 
 type HostRun = NonNullable<Parameters<TeamProvisioningMemberLifecycleHost['getRunTrackedCwd']>[0]>;
 type HostMixedSecondaryLane = Parameters<
@@ -7,7 +17,17 @@ type HostMixedSecondaryLane = Parameters<
 
 type WithServiceRun<TInput, TRun> = Omit<TInput, 'run'> & { run: TRun };
 
-export interface TeamProvisioningMemberLifecycleHostFactoryService<TRun, TMixedSecondaryLane> {
+export interface TeamProvisioningMemberLifecycleHostFactoryRun {
+  request: Pick<
+    TeamCreateRequest,
+    'providerId' | 'providerBackendId' | 'model' | 'effort' | 'fastMode'
+  >;
+}
+
+export interface TeamProvisioningMemberLifecycleHostFactoryService<
+  TRun extends TeamProvisioningMemberLifecycleHostFactoryRun,
+  TMixedSecondaryLane,
+> {
   runs: TeamProvisioningMemberLifecycleHost['runs'];
   runtimeAdapterRunByTeam: TeamProvisioningMemberLifecycleHost['runtimeAdapterRunByTeam'];
   failedOpenCodeSecondaryRetryInFlightByTeam: TeamProvisioningMemberLifecycleHost['failedOpenCodeSecondaryRetryInFlightByTeam'];
@@ -40,12 +60,6 @@ export interface TeamProvisioningMemberLifecycleHostFactoryService<TRun, TMixedS
   getRunTrackedCwd(
     run: TRun | null | undefined
   ): ReturnType<TeamProvisioningMemberLifecycleHost['getRunTrackedCwd']>;
-  buildPrimaryOwnedMemberSpecForRuntime(
-    input: WithServiceRun<
-      Parameters<TeamProvisioningMemberLifecycleHost['buildPrimaryOwnedMemberSpecForRuntime']>[0],
-      TRun
-    >
-  ): ReturnType<TeamProvisioningMemberLifecycleHost['buildPrimaryOwnedMemberSpecForRuntime']>;
   materializeEffectiveTeamMemberSpecs: TeamProvisioningMemberLifecycleHost['materializeEffectiveTeamMemberSpecs'];
   resolveDirectMemberLaunchIdentity(
     input: WithServiceRun<
@@ -91,8 +105,6 @@ export interface TeamProvisioningMemberLifecycleHostFactoryService<TRun, TMixedS
     run: TRun
   ): ReturnType<TeamProvisioningMemberLifecycleHost['isCurrentTrackedRun']>;
   readConfigForStrictDecision: TeamProvisioningMemberLifecycleHost['readConfigForStrictDecision'];
-  resolveEffectiveConfiguredMember: TeamProvisioningMemberLifecycleHost['resolveEffectiveConfiguredMember'];
-  resolveLeadMemberName: TeamProvisioningMemberLifecycleHost['resolveLeadMemberName'];
   getLiveTeamAgentRuntimeMetadata: TeamProvisioningMemberLifecycleHost['getLiveTeamAgentRuntimeMetadata'];
   readPersistedRuntimeMembers: TeamProvisioningMemberLifecycleHost['readPersistedRuntimeMembers'];
   persistLaunchStateSnapshot(
@@ -105,7 +117,6 @@ export interface TeamProvisioningMemberLifecycleHostFactoryService<TRun, TMixedS
   ): ReturnType<TeamProvisioningMemberLifecycleHost['sendMessageToRun']>;
   getOpenCodeRuntimeAdapter: TeamProvisioningMemberLifecycleHost['getOpenCodeRuntimeAdapter'];
   resolveOpenCodeMemberWorkspacesForRuntime: TeamProvisioningMemberLifecycleHost['resolveOpenCodeMemberWorkspacesForRuntime'];
-  buildConfiguredProvisioningMember: TeamProvisioningMemberLifecycleHost['buildConfiguredProvisioningMember'];
   runOpenCodeTeamRuntimeAdapterLaunch: TeamProvisioningMemberLifecycleHost['runOpenCodeTeamRuntimeAdapterLaunch'];
   createMixedSecondaryLaneStateForMember(
     run: TRun,
@@ -148,7 +159,10 @@ function asServiceMixedSecondaryLane<TMixedSecondaryLane>(
   return lane as unknown as TMixedSecondaryLane;
 }
 
-export function createTeamProvisioningMemberLifecycleHost<TRun, TMixedSecondaryLane>(
+export function createTeamProvisioningMemberLifecycleHost<
+  TRun extends TeamProvisioningMemberLifecycleHostFactoryRun,
+  TMixedSecondaryLane,
+>(
   service: TeamProvisioningMemberLifecycleHostFactoryService<TRun, TMixedSecondaryLane>
 ): TeamProvisioningMemberLifecycleHost {
   return {
@@ -172,9 +186,9 @@ export function createTeamProvisioningMemberLifecycleHost<TRun, TMixedSecondaryL
     getRunTrackedCwd: (run) =>
       service.getRunTrackedCwd(asNullableServiceProvisioningRun<TRun>(run)),
     buildPrimaryOwnedMemberSpecForRuntime: (input) =>
-      service.buildPrimaryOwnedMemberSpecForRuntime({
-        ...input,
-        run: asServiceProvisioningRun<TRun>(input.run),
+      buildPrimaryOwnedMemberSpecForRuntime({
+        configuredMember: input.configuredMember,
+        request: asServiceProvisioningRun<TRun>(input.run).request,
       }),
     buildProvisioningEnv: (providerId, providerBackendId, options) =>
       service.providerRuntime.buildProvisioningEnv(providerId, providerBackendId, options),
@@ -220,9 +234,9 @@ export function createTeamProvisioningMemberLifecycleHost<TRun, TMixedSecondaryL
     isCurrentTrackedRun: (run) => service.isCurrentTrackedRun(asServiceProvisioningRun<TRun>(run)),
     readConfigForStrictDecision: (teamName) => service.readConfigForStrictDecision(teamName),
     resolveEffectiveConfiguredMember: (configMembers, metaMembers, memberName) =>
-      service.resolveEffectiveConfiguredMember(configMembers, metaMembers, memberName),
+      resolveEffectiveConfiguredMember(configMembers, metaMembers, memberName),
     resolveLeadMemberName: (configMembers, metaMembers) =>
-      service.resolveLeadMemberName(configMembers, metaMembers),
+      resolveLeadMemberName(configMembers, metaMembers),
     getLiveTeamAgentRuntimeMetadata: (teamName) =>
       service.getLiveTeamAgentRuntimeMetadata(teamName),
     readPersistedRuntimeMembers: (teamName) => service.readPersistedRuntimeMembers(teamName),
@@ -243,8 +257,7 @@ export function createTeamProvisioningMemberLifecycleHost<TRun, TMixedSecondaryL
     getOpenCodeRuntimeAdapter: () => service.getOpenCodeRuntimeAdapter(),
     resolveOpenCodeMemberWorkspacesForRuntime: (input) =>
       service.resolveOpenCodeMemberWorkspacesForRuntime(input),
-    buildConfiguredProvisioningMember: (member) =>
-      service.buildConfiguredProvisioningMember(member),
+    buildConfiguredProvisioningMember,
     runOpenCodeTeamRuntimeAdapterLaunch: (input) =>
       service.runOpenCodeTeamRuntimeAdapterLaunch(input),
     createMixedSecondaryLaneStateForMember: (run, member) =>

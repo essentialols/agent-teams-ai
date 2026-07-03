@@ -33,9 +33,7 @@ import { getErrorMessage } from '@shared/utils/errorHandling';
 import { type ParsedPermissionRequest } from '@shared/utils/inboxNoise';
 import { isLeadMember } from '@shared/utils/leadDetection';
 import { createLogger } from '@shared/utils/logger';
-import { migrateProviderBackendId } from '@shared/utils/providerBackend';
 import { type ParsedTeammateContent } from '@shared/utils/teammateMessageParser';
-import { normalizeTeamMemberMcpPolicy } from '@shared/utils/teamMemberMcpPolicy';
 import * as agentTeamsControllerModule from 'agent-teams-controller';
 import { type ChildProcess, type spawn } from 'child_process';
 import { randomUUID } from 'crypto';
@@ -49,7 +47,6 @@ import {
   cleanupStaleAnthropicTeamApiKeyHelpers,
 } from '../runtime/anthropicTeamApiKeyHelper';
 import { ProviderConnectionService } from '../runtime/ProviderConnectionService';
-import { resolveTeamProviderId } from '../runtime/providerRuntimeEnv';
 
 import { openCodeRuntimeApprovalProvider } from './approvals/OpenCodeRuntimeApprovalProvider';
 import {
@@ -205,7 +202,6 @@ import { buildTeamLaunchIncompleteNotificationPayload } from './provisioning/Tea
 import { TeamProvisioningLaunchNotifications } from './provisioning/TeamProvisioningLaunchNotifications';
 import {
   buildAggregatePendingLaunchMessage as buildAggregatePendingLaunchMessageHelper,
-  buildPendingBootstrapStatusMessage as buildPendingBootstrapStatusMessageHelper,
   hasPendingLaunchMembers as hasPendingLaunchMembersHelper,
 } from './provisioning/TeamProvisioningLaunchPendingMessage';
 import {
@@ -284,25 +280,9 @@ import {
 } from './provisioning/TeamProvisioningMemberSpawnStatusPolicy';
 import { createTeamProvisioningMemberSpawnStatusesSnapshotPortsBoundary } from './provisioning/TeamProvisioningMemberSpawnStatusSnapshotPortsFactory';
 import {
-  buildEffectiveTeamMemberSpec,
-  normalizeTeamMemberProviderId,
-} from './provisioning/TeamProvisioningMemberSpecs';
-import {
-  buildLaunchMemberSpawnStatus,
   buildRuntimeSpawnStatusRecord as buildRuntimeSpawnStatusRecordHelper,
   filterRemovedMembersFromLaunchSnapshot,
-  findConfiguredMemberModel,
-  findEffectiveRunMember,
-  findEffectiveRunMemberModel,
-  findMetaMemberModel,
-  findTrackedMemberSpawnStatus,
   getFailedSpawnMembersFromStatuses,
-  isLaunchMemberStatusRelevantToRuntimeRun,
-  isMemberRemovedInMeta,
-  projectPendingRestartStatusForSnapshot as projectPendingRestartStatusForSnapshotHelper,
-  resolveEffectiveConfiguredMember,
-  resolveLeadMemberName,
-  shouldPreferCurrentLaunchMemberStatus,
 } from './provisioning/TeamProvisioningMemberStatusProjection';
 import { type MemberWorkSyncAcceptedReportChecker } from './provisioning/TeamProvisioningMemberWorkSyncProof';
 import { createTeamProvisioningMemberWorkSyncProofBoundary } from './provisioning/TeamProvisioningMemberWorkSyncProofBoundaryFactory';
@@ -692,7 +672,6 @@ import type {
   TeamConfig,
   TeamCreateRequest,
   TeamCreateResponse,
-  TeamFastMode,
   TeamLaunchAggregateState,
   TeamLaunchDiagnosticItem,
   TeamLaunchRequest,
@@ -1392,12 +1371,12 @@ export class TeamProvisioningService {
   });
   private readonly liveLaunchSnapshotBoundary =
     createTeamProvisioningLiveLaunchSnapshotBoundary<ProvisioningRun>({
-      getPersistedLaunchMemberNames: (snapshot) => this.getPersistedLaunchMemberNames(snapshot),
+      getPersistedLaunchMemberNames,
       pauseMemberTaskActivityForRuntimeLoss: (run, memberName, previous, observedAt) =>
         this.pauseMemberTaskActivityForRuntimeLoss(run, memberName, previous, observedAt),
       buildMixedPersistedLaunchSnapshotForRun: (run, launchPhase) =>
         this.buildMixedPersistedLaunchSnapshotForRun(run, launchPhase),
-      buildRuntimeSpawnStatusRecord: (run) => this.buildRuntimeSpawnStatusRecord(run),
+      buildRuntimeSpawnStatusRecord: buildRuntimeSpawnStatusRecordHelper,
       invalidateMemberSpawnStatusesCache: (teamName) =>
         this.invalidateMemberSpawnStatusesCache(teamName),
       emitTeamChange: (event) => {
@@ -2951,11 +2930,15 @@ export class TeamProvisioningService {
       syncRunMemberSpawnStatusesFromSnapshot: (run, snapshot) =>
         this.syncRunMemberSpawnStatusesFromSnapshot(run, snapshot),
       buildLiveLaunchSnapshotForRun: (run, phase) => this.buildLiveLaunchSnapshotForRun(run, phase),
-      buildRuntimeSpawnStatusRecord: (run) => this.buildRuntimeSpawnStatusRecord(run),
+      buildRuntimeSpawnStatusRecord: buildRuntimeSpawnStatusRecordHelper,
       membersMetaStore: this.membersMetaStore,
       filterRemovedMembersFromLaunchSnapshot: (snapshot, metaMembers) =>
-        this.filterRemovedMembersFromLaunchSnapshot(snapshot, metaMembers),
-      getPersistedLaunchMemberNames: (snapshot) => this.getPersistedLaunchMemberNames(snapshot),
+        filterRemovedMembersFromLaunchSnapshot(
+          snapshot,
+          metaMembers,
+          getPersistedLaunchMemberNames(snapshot)
+        ),
+      getPersistedLaunchMemberNames,
       nowMs: () => Date.now(),
       nowIso,
     });
@@ -3816,63 +3799,6 @@ export class TeamProvisioningService {
       getRun: (runId) => this.runs.get(runId) ?? null,
       readLaunchState: (teamName) => this.launchStateStore.read(teamName),
     });
-  }
-
-  private buildConfiguredProvisioningMember(
-    configuredMember: NonNullable<
-      ReturnType<TeamProvisioningService['resolveEffectiveConfiguredMember']>
-    >
-  ): TeamCreateRequest['members'][number] {
-    return {
-      name: configuredMember.name,
-      ...(configuredMember.role ? { role: configuredMember.role } : {}),
-      ...(configuredMember.workflow ? { workflow: configuredMember.workflow } : {}),
-      ...(configuredMember.isolation === 'worktree' ? { isolation: 'worktree' as const } : {}),
-      ...(configuredMember.cwd ? { cwd: configuredMember.cwd } : {}),
-      ...(configuredMember.providerId ? { providerId: configuredMember.providerId } : {}),
-      ...(configuredMember.providerBackendId
-        ? { providerBackendId: configuredMember.providerBackendId }
-        : {}),
-      ...(configuredMember.model ? { model: configuredMember.model } : {}),
-      ...(configuredMember.effort ? { effort: configuredMember.effort } : {}),
-      ...(configuredMember.fastMode ? { fastMode: configuredMember.fastMode } : {}),
-      ...(configuredMember.mcpPolicy
-        ? { mcpPolicy: normalizeTeamMemberMcpPolicy(configuredMember.mcpPolicy) }
-        : {}),
-    };
-  }
-
-  private buildPrimaryOwnedMemberSpecForRuntime(input: {
-    configuredMember: NonNullable<
-      ReturnType<TeamProvisioningService['resolveEffectiveConfiguredMember']>
-    >;
-    run: ProvisioningRun;
-  }): TeamCreateRequest['members'][number] {
-    const configuredSpec = this.buildConfiguredProvisioningMember(input.configuredMember);
-    const defaultProviderId = resolveTeamProviderId(input.run.request.providerId);
-    const memberProviderId = normalizeTeamMemberProviderId(configuredSpec.providerId);
-    const inheritsDefaultRuntime =
-      memberProviderId == null || memberProviderId === defaultProviderId;
-    const effectiveSpec = buildEffectiveTeamMemberSpec(configuredSpec, {
-      providerId: defaultProviderId,
-      model: input.run.request.model,
-      effort: input.run.request.effort,
-    });
-    const effectiveProviderId = resolveTeamProviderId(effectiveSpec.providerId);
-    const providerBackendId =
-      migrateProviderBackendId(effectiveProviderId, configuredSpec.providerBackendId) ??
-      (inheritsDefaultRuntime
-        ? migrateProviderBackendId(effectiveProviderId, input.run.request.providerBackendId)
-        : undefined);
-    const fastMode =
-      configuredSpec.fastMode ?? (inheritsDefaultRuntime ? input.run.request.fastMode : undefined);
-
-    return {
-      ...effectiveSpec,
-      ...(providerBackendId ? { providerBackendId } : {}),
-      ...(fastMode ? { fastMode } : {}),
-      ...(input.configuredMember.agentType ? { agentType: input.configuredMember.agentType } : {}),
-    };
   }
 
   private async buildRuntimeBootstrapMemberMcpLaunchConfigs(input: {
@@ -5925,109 +5851,6 @@ export class TeamProvisioningService {
     );
   }
 
-  private findConfiguredMemberModel(
-    configuredMembers: TeamConfig['members'] | undefined,
-    memberName: string
-  ): string | undefined {
-    return findConfiguredMemberModel(configuredMembers, memberName);
-  }
-
-  private findMetaMemberModel(
-    metaMembers: Awaited<ReturnType<TeamMembersMetaStore['getMembers']>>,
-    memberName: string
-  ): string | undefined {
-    return findMetaMemberModel(metaMembers, memberName);
-  }
-
-  private resolveEffectiveConfiguredMember(
-    configuredMembers: TeamConfig['members'] | undefined,
-    metaMembers: Awaited<ReturnType<TeamMembersMetaStore['getMembers']>>,
-    memberName: string
-  ): {
-    name: string;
-    role?: string;
-    workflow?: string;
-    isolation?: 'worktree';
-    providerId?: TeamProviderId;
-    providerBackendId?: TeamProviderBackendId;
-    model?: string;
-    effort?: EffortLevel;
-    fastMode?: TeamFastMode;
-    mcpPolicy?: ReturnType<typeof normalizeTeamMemberMcpPolicy>;
-    cwd?: string;
-    agentType?: string;
-    removedAt?: number | string;
-  } | null {
-    return resolveEffectiveConfiguredMember(configuredMembers, metaMembers, memberName);
-  }
-
-  private resolveLeadMemberName(
-    configuredMembers: TeamConfig['members'] | undefined,
-    metaMembers: Awaited<ReturnType<TeamMembersMetaStore['getMembers']>>
-  ): string {
-    return resolveLeadMemberName(configuredMembers, metaMembers);
-  }
-
-  private isMemberRemovedInMeta(
-    metaMembers: Awaited<ReturnType<TeamMembersMetaStore['getMembers']>>,
-    memberName: string
-  ): boolean {
-    return isMemberRemovedInMeta(metaMembers, memberName);
-  }
-
-  private filterRemovedMembersFromLaunchSnapshot(
-    snapshot: PersistedTeamLaunchSnapshot,
-    metaMembers: Awaited<ReturnType<TeamMembersMetaStore['getMembers']>>
-  ): PersistedTeamLaunchSnapshot {
-    return filterRemovedMembersFromLaunchSnapshot(
-      snapshot,
-      metaMembers,
-      this.getPersistedLaunchMemberNames(snapshot)
-    );
-  }
-
-  private findEffectiveRunMemberModel(
-    run: ProvisioningRun | null,
-    memberName: string
-  ): string | undefined {
-    return findEffectiveRunMemberModel(run, memberName);
-  }
-
-  private findEffectiveRunMember(
-    run: ProvisioningRun | null,
-    memberName: string
-  ): TeamCreateRequest['members'][number] | undefined {
-    return findEffectiveRunMember(run, memberName);
-  }
-
-  private findTrackedMemberSpawnStatus(
-    run: ProvisioningRun | null,
-    memberName: string
-  ): MemberSpawnStatusEntry | undefined {
-    return findTrackedMemberSpawnStatus(run, memberName);
-  }
-
-  private buildLaunchMemberSpawnStatus(
-    member: PersistedTeamLaunchMemberState | undefined,
-    runtimeModel?: string
-  ): MemberSpawnStatusEntry | undefined {
-    return buildLaunchMemberSpawnStatus(member, runtimeModel);
-  }
-
-  private shouldPreferCurrentLaunchMemberStatus(
-    trackedStatus: MemberSpawnStatusEntry | undefined,
-    launchStatus: MemberSpawnStatusEntry | undefined
-  ): boolean {
-    return shouldPreferCurrentLaunchMemberStatus(trackedStatus, launchStatus);
-  }
-
-  private isLaunchMemberStatusRelevantToRuntimeRun(
-    member: PersistedTeamLaunchMemberState | undefined,
-    activeRuntimeRunId: string
-  ): boolean {
-    return isLaunchMemberStatusRelevantToRuntimeRun(member, activeRuntimeRunId);
-  }
-
   private async getLiveTeamAgentRuntimeMetadata(
     teamName: string
   ): Promise<Map<string, LiveTeamAgentRuntimeMetadata>> {
@@ -6131,24 +5954,6 @@ export class TeamProvisioningService {
     return getMemberLaunchSummaryHelper(run);
   }
 
-  private buildPendingBootstrapStatusMessage(
-    prefix: string,
-    run: ProvisioningRun,
-    launchSummary: {
-      confirmedCount: number;
-      pendingCount: number;
-      runtimeAlivePendingCount: number;
-      shellOnlyPendingCount?: number;
-      runtimeProcessPendingCount?: number;
-      runtimeCandidatePendingCount?: number;
-      noRuntimePendingCount?: number;
-      permissionPendingCount?: number;
-    },
-    snapshot?: PersistedTeamLaunchSnapshot | null
-  ): string {
-    return buildPendingBootstrapStatusMessageHelper({ prefix, run, launchSummary, snapshot });
-  }
-
   private buildAggregatePendingLaunchMessage(
     prefix: string,
     run: ProvisioningRun,
@@ -6168,18 +5973,6 @@ export class TeamProvisioningService {
     run: ProvisioningRun
   ): Record<string, MemberSpawnStatusEntry> {
     return buildRuntimeSpawnStatusRecordHelper(run);
-  }
-
-  private projectPendingRestartStatusForSnapshot(
-    run: ProvisioningRun,
-    memberName: string,
-    current: MemberSpawnStatusEntry
-  ): MemberSpawnStatusEntry {
-    return projectPendingRestartStatusForSnapshotHelper(
-      memberName,
-      current,
-      run.pendingMemberRestarts
-    );
   }
 
   private async reconcileFinalLaunchReportingSnapshot(
@@ -6222,11 +6015,16 @@ export class TeamProvisioningService {
       writeLaunchStateSnapshot: (teamName, snapshot) =>
         this.writeLaunchStateSnapshot(teamName, snapshot),
       nowIso,
-      getMemberLaunchSummary: (targetRun) => this.getMemberLaunchSummary(targetRun),
+      getMemberLaunchSummary: getMemberLaunchSummaryHelper,
       hasPendingLaunchMembers: (targetRun, launchSummary, snapshot) =>
         this.hasPendingLaunchMembers(targetRun, launchSummary, snapshot),
       buildAggregatePendingLaunchMessage: (prefix, targetRun, launchSummary, snapshot) =>
-        this.buildAggregatePendingLaunchMessage(prefix, targetRun, launchSummary, snapshot),
+        buildAggregatePendingLaunchMessageHelper({
+          prefix,
+          run: targetRun,
+          launchSummary,
+          snapshot,
+        }),
       updateProgress,
       extractCliLogsFromRun,
       deleteProvisioningRun: (teamName) => {
@@ -6308,10 +6106,6 @@ export class TeamProvisioningService {
     snapshot?: PersistedTeamLaunchSnapshot | null
   ): boolean {
     return hasPendingLaunchMembersHelper({ run, launchSummary, snapshot });
-  }
-
-  private getPersistedLaunchMemberNames(snapshot: PersistedTeamLaunchSnapshot): string[] {
-    return getPersistedLaunchMemberNames(snapshot);
   }
 
   private buildLiveLaunchSnapshotForRun(
@@ -6482,7 +6276,11 @@ export class TeamProvisioningService {
     }
 
     const metaMembers = await this.membersMetaStore.getMembers(run.teamName).catch(() => []);
-    const filteredSnapshot = this.filterRemovedMembersFromLaunchSnapshot(snapshot, metaMembers);
+    const filteredSnapshot = filterRemovedMembersFromLaunchSnapshot(
+      snapshot,
+      metaMembers,
+      getPersistedLaunchMemberNames(snapshot)
+    );
 
     if (filteredSnapshot.teamLaunchState === 'clean_success' && launchPhase !== 'active') {
       await this.clearPersistedLaunchStateNow(run.teamName, { expectedRunId: run.runId });

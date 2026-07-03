@@ -15,6 +15,13 @@ type HostMember = Parameters<Host['createMixedSecondaryLaneStateForMember']>[1];
 interface ServiceRun {
   id: string;
   cwd: string;
+  request: {
+    providerId: 'codex';
+    providerBackendId?: 'codex-native';
+    model: 'gpt-5';
+    effort: 'high';
+    fastMode: 'on';
+  };
 }
 
 interface ServiceMixedSecondaryLane {
@@ -34,7 +41,17 @@ type BuildTrackedMemberMcpLaunchConfigInput = Parameters<
 >[0];
 
 function createService(): ReceiverBoundService {
-  const serviceRun: ServiceRun = { id: 'run-1', cwd: '/project' };
+  const serviceRun: ServiceRun = {
+    id: 'run-1',
+    cwd: '/project',
+    request: {
+      providerId: 'codex',
+      providerBackendId: 'codex-native',
+      model: 'gpt-5',
+      effort: 'high',
+      fastMode: 'on',
+    },
+  };
   const expectedLane: ServiceMixedSecondaryLane = { laneId: 'lane-1' };
 
   return {
@@ -111,10 +128,6 @@ function createService(): ReceiverBoundService {
       this.events.push(`service:get-cwd:${run?.id ?? 'none'}`);
       return run?.cwd ?? null;
     },
-    buildPrimaryOwnedMemberSpecForRuntime(this: ReceiverBoundService, input) {
-      this.events.push(`service:build-primary:${input.run.id}`);
-      return input.configuredMember as ReturnType<Host['buildPrimaryOwnedMemberSpecForRuntime']>;
-    },
     async materializeEffectiveTeamMemberSpecs(input) {
       return input.members;
     },
@@ -159,12 +172,6 @@ function createService(): ReceiverBoundService {
     async readConfigForStrictDecision() {
       return null;
     },
-    resolveEffectiveConfiguredMember() {
-      return null;
-    },
-    resolveLeadMemberName() {
-      return 'Lead';
-    },
     async getLiveTeamAgentRuntimeMetadata() {
       return new Map();
     },
@@ -184,9 +191,6 @@ function createService(): ReceiverBoundService {
     },
     async resolveOpenCodeMemberWorkspacesForRuntime(input) {
       return input.members;
-    },
-    buildConfiguredProvisioningMember(member) {
-      return member as ReturnType<Host['buildConfiguredProvisioningMember']>;
     },
     async runOpenCodeTeamRuntimeAdapterLaunch() {
       return null;

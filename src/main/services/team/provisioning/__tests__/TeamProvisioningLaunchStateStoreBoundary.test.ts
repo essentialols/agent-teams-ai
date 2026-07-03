@@ -49,7 +49,7 @@ function deferred<T = void>(): {
   let resolve!: (value?: T | PromiseLike<T>) => void;
   let reject!: (reason?: unknown) => void;
   const promise = new Promise<T>((promiseResolve, promiseReject) => {
-    resolve = promiseResolve;
+    resolve = (value) => promiseResolve(value as T | PromiseLike<T>);
     reject = promiseReject;
   });
   return { promise, resolve, reject };
@@ -61,9 +61,7 @@ async function flushMicrotasks(times = 5): Promise<void> {
   }
 }
 
-function createBoundary(
-  overrides: Partial<TeamProvisioningLaunchStateStoreBoundaryPorts> = {}
-): {
+function createBoundary(overrides: Partial<TeamProvisioningLaunchStateStoreBoundaryPorts> = {}): {
   boundary: TeamProvisioningLaunchStateStoreBoundary;
   ports: TeamProvisioningLaunchStateStoreBoundaryPorts;
   setCurrentSnapshot(snapshot: PersistedTeamLaunchSnapshot | null): void;
@@ -85,7 +83,9 @@ function createBoundary(
       getMembers: vi.fn(async () => [{ name: 'Builder', joinedAt: 1 }]),
     },
     getTrackedRunId: vi.fn(() => trackedRunId),
-    applyOpenCodeSecondaryEvidenceOverlay: vi.fn(async ({ snapshot: inputSnapshot }) => inputSnapshot),
+    applyOpenCodeSecondaryEvidenceOverlay: vi.fn(
+      async ({ snapshot: inputSnapshot }) => inputSnapshot
+    ),
     applyBootstrapStallOverlay: vi.fn(() => null),
     areSnapshotsSemanticallyEqual: vi.fn(() => false),
     clearBootstrapState: vi.fn(async () => undefined),

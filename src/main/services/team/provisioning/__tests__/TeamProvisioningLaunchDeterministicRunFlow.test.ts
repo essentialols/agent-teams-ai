@@ -61,7 +61,16 @@ const setup: PreparedDeterministicLaunchSetup<TestLane> = {
     authSource: 'codex_runtime',
     geminiRuntimeAuth: null,
     providerArgs: ['--provider-arg'],
-    anthropicApiKeyHelper: { directory: '/tmp/helper' },
+    anthropicApiKeyHelper: {
+      teamName: 'team-a',
+      directory: '/tmp/helper',
+      helperPath: '/tmp/helper/helper.sh',
+      keyPath: '/tmp/helper/key',
+      settingsPath: '/tmp/helper/settings.json',
+      settingsObject: { apiKeyHelper: '/tmp/helper/helper.sh' },
+      settingsArgs: ['--settings', '/tmp/helper/settings.json'],
+      envPatch: { ANTHROPIC_API_KEY_HELPER: '/tmp/helper/helper.sh' },
+    },
   },
   workspaceTrustFeatureFlags: {
     enabled: true,

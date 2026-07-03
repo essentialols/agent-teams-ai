@@ -54,7 +54,13 @@ describe('TeamProvisioningPrepareCoordinator', () => {
     });
 
     await vi.waitFor(() => expect(releaseProbe).not.toBeNull());
-    releaseProbe?.({ claudePath: '/fake/claude', authSource: 'none' });
+    const release = releaseProbe as
+      | ((value: { claudePath: string; authSource: 'none' }) => void)
+      | null;
+    if (!release) {
+      throw new Error('Expected probe release callback to be registered.');
+    }
+    release({ claudePath: '/fake/claude', authSource: 'none' });
     const [firstResult, secondResult] = await Promise.all([first, second]);
 
     expect(getCachedOrProbeResult).toHaveBeenCalledOnce();

@@ -296,7 +296,11 @@ describe('TeamProvisioningLaunchDeterministicSpawnFlow', () => {
     child.emit('close', 7);
     expect(handleProcessExit).toHaveBeenCalledWith(run, 7);
 
-    timeoutCallback?.();
+    const triggerTimeout = timeoutCallback as (() => void) | null;
+    if (!triggerTimeout) {
+      throw new Error('Expected launch timeout callback to be registered.');
+    }
+    triggerTimeout();
     await Promise.resolve();
     await Promise.resolve();
     expect(run.processKilled).toBe(true);

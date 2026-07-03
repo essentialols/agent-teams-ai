@@ -419,6 +419,37 @@ describe('tabSlice', () => {
     });
   });
 
+  describe('setTokenUsageTeamFilter', () => {
+    it('should set selected team context on an existing token usage tab', () => {
+      store.getState().openTab({
+        type: 'token-usage',
+        label: 'Usage',
+      });
+      const tabId = store.getState().activeTabId!;
+
+      store.getState().setTokenUsageTeamFilter(tabId, 'best-team');
+
+      expect(store.getState().openTabs[0]).toMatchObject({
+        id: tabId,
+        type: 'token-usage',
+        teamName: 'best-team',
+      });
+    });
+
+    it('should clear selected team context on an existing token usage tab', () => {
+      store.getState().openTab({
+        type: 'token-usage',
+        label: 'Usage',
+        teamName: 'best-team',
+      });
+      const tabId = store.getState().activeTabId!;
+
+      store.getState().setTokenUsageTeamFilter(tabId, null);
+
+      expect(store.getState().openTabs[0].teamName).toBeUndefined();
+    });
+  });
+
   describe('setTabContextPanelVisible', () => {
     it('should set context panel visibility for a tab', () => {
       store.getState().openTab({

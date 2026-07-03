@@ -20,6 +20,7 @@ import type { AppState } from '../types';
 import type { ContextSnapshot } from '@renderer/services/contextStorage';
 import type { Project, RepositoryGroup } from '@renderer/types/data';
 import type { Pane } from '@renderer/types/panes';
+import type { Tab } from '@renderer/types/tabs';
 import type { ContextInfo } from '@shared/types/api';
 import type { StateCreator } from 'zustand';
 
@@ -93,6 +94,19 @@ function isContextSwitchRequestCurrent(
   );
 }
 
+function normalizeRestoredTab(tab: Tab): Tab {
+  if ((tab as { type?: string }).type !== 'usage') {
+    return tab;
+  }
+
+  const { teamName: _teamName, ...rest } = tab;
+  return {
+    ...rest,
+    type: 'token-usage',
+    label: 'Usage',
+  };
+}
+
 /**
  * Validate snapshot against fresh data from target context.
  * Filters invalid tabs, selections, and ensures at-least-one-pane invariant.
@@ -119,7 +133,7 @@ function validateSnapshot(
       : null;
 
   // Validate tabs — filter out session tabs referencing invalid projects
-  const validTabs = snapshot.openTabs.filter((tab) => {
+  const validTabs = snapshot.openTabs.map(normalizeRestoredTab).filter((tab) => {
     if (tab.type === 'session' && tab.projectId) {
       return validProjectIds.has(tab.projectId) || validWorktreeIds.has(tab.projectId);
     }
@@ -135,7 +149,7 @@ function validateSnapshot(
   // Validate pane layout tabs
   const validatedPanes = snapshot.paneLayout.panes
     .map((pane) => {
-      const paneTabs = pane.tabs.filter((tab) => {
+      const paneTabs = pane.tabs.map(normalizeRestoredTab).filter((tab) => {
         if (tab.type === 'session' && tab.projectId) {
           return validProjectIds.has(tab.projectId) || validWorktreeIds.has(tab.projectId);
         }

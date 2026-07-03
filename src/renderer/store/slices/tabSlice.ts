@@ -58,6 +58,7 @@ export interface TabSlice {
   enqueueTabNavigation: (tabId: string, request: TabNavigationRequest) => void;
   consumeTabNavigation: (tabId: string, requestId: string) => void;
   saveTabScrollPosition: (tabId: string, scrollTop: number) => void;
+  setTokenUsageTeamFilter: (tabId: string, teamName: string | null) => void;
 
   // Project context actions
   setActiveProject: (projectId: string) => void;
@@ -372,11 +373,11 @@ export const createTabSlice: StateCreator<AppState, [], [], TabSlice> = (set, ge
       }
     }
 
-    // For team, graph, and usage tabs, re-select the team so global selectedTeamData matches this tab.
+    // For team and graph tabs, re-select the team so global selectedTeamData matches this tab.
     // Without this, switching between team A and team B tabs leaves stale data
     // because each TeamDetailView is kept mounted (CSS display-toggle) and its
     // useEffect(teamName) only fires once on mount.
-    if ((tab.type === 'team' || tab.type === 'graph' || tab.type === 'usage') && tab.teamName) {
+    if ((tab.type === 'team' || tab.type === 'graph') && tab.teamName) {
       if (state.selectedTeamName !== tab.teamName) {
         // Different team -- full reload (also auto-selects project via selectTeam)
         void state.selectTeam(tab.teamName);
@@ -519,6 +520,20 @@ export const createTabSlice: StateCreator<AppState, [], [], TabSlice> = (set, ge
       ...tab,
       savedScrollTop: scrollTop,
     }));
+    set(syncFromLayout(newLayout));
+  },
+
+  // Update team filter for an existing token usage tab.
+  setTokenUsageTeamFilter: (tabId: string, teamName: string | null) => {
+    const { paneLayout } = get();
+    const newLayout = updateTabInLayout(paneLayout, tabId, (tab) =>
+      tab.type === 'token-usage'
+        ? {
+            ...tab,
+            teamName: teamName ?? undefined,
+          }
+        : tab
+    );
     set(syncFromLayout(newLayout));
   },
 

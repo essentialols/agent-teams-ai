@@ -88,8 +88,7 @@ export interface Tab {
     | 'extensions'
     | 'schedules'
     | 'graph'
-    | 'token-usage'
-    | 'usage';
+    | 'token-usage';
 
   /** Session ID (required when type === 'session') */
   sessionId?: string;
@@ -97,7 +96,7 @@ export interface Tab {
   /** Project ID (required when type === 'session') */
   projectId?: string;
 
-  /** Team name (required when type === 'team') */
+  /** Team name (required when type === 'team'; optional for graph/token-usage deep links) */
   teamName?: string;
 
   /** Display name for the tab (max 50 chars) */

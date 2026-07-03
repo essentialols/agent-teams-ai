@@ -660,6 +660,8 @@ function useTeamPendingReplies(teamName: string): Record<string, number> {
 }
 
 const EMPTY_MESSAGES_PANEL_TASKS: TeamTaskWithKanban[] = [];
+const TEAM_HEADER_INLINE_ACTION_CLASS =
+  'flex shrink-0 items-center gap-0.5 rounded border border-[var(--color-border-emphasis)] bg-[var(--color-surface-raised)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-border-emphasis)] hover:text-[var(--color-text)]';
 
 function buildMessagesPanelTasksSignature(tasks: readonly TeamTaskWithKanban[]): string {
   return JSON.stringify(
@@ -1439,10 +1441,16 @@ export const TeamDetailView = memo(function TeamDetailView({
   }, [teamName]);
   const handleOpenUsageTab = useCallback(() => {
     const state = useStore.getState();
-    const displayName = state.teamByName[teamName]?.displayName ?? teamName;
+    const existingUsageTab = state.getAllPaneTabs().find((tab) => tab.type === 'token-usage');
+    if (existingUsageTab) {
+      state.setTokenUsageTeamFilter(existingUsageTab.id, teamName);
+      state.setActiveTab(existingUsageTab.id);
+      return;
+    }
+
     state.openTab({
-      type: 'usage',
-      label: `${displayName} Usage`,
+      type: 'token-usage',
+      label: 'Usage',
       teamName,
     });
   }, [teamName]);
@@ -1465,26 +1473,6 @@ export const TeamDetailView = memo(function TeamDetailView({
           },
     [isLight]
   );
-  const usageButtonStyle = useMemo<CSSProperties>(
-    () =>
-      isLight
-        ? {
-            background:
-              'linear-gradient(135deg, rgba(16,185,129,0.13) 0%, rgba(59,130,246,0.12) 100%)',
-            borderColor: 'rgba(16,185,129,0.30)',
-            color: '#0f172a',
-            boxShadow: '0 10px 24px rgba(16,185,129,0.10)',
-          }
-        : {
-            background:
-              'linear-gradient(135deg, rgba(16,185,129,0.18) 0%, rgba(59,130,246,0.14) 100%)',
-            borderColor: 'rgba(52,211,153,0.34)',
-            color: 'rgba(236,253,245,0.96)',
-            boxShadow: '0 12px 28px rgba(16,185,129,0.18)',
-          },
-    [isLight]
-  );
-
   // Set inert on background content when editor/graph overlay is open (a11y focus trap)
   useEffect(() => {
     const el = contentRef.current;
@@ -2777,29 +2765,6 @@ export const TeamDetailView = memo(function TeamDetailView({
               'h-8 shrink-0 rounded-full border px-3.5 text-xs font-semibold tracking-[0.02em] transition-all',
               'hover:-translate-y-0.5 hover:brightness-[1.03] active:translate-y-0 active:brightness-[0.98]',
               isLight
-                ? 'hover:border-emerald-400/50'
-                : 'hover:border-emerald-300/50 hover:shadow-[0_14px_32px_rgba(16,185,129,0.24)]'
-            )}
-            style={usageButtonStyle}
-            onClick={handleOpenUsageTab}
-          >
-            <BarChart3 size={13} className="shrink-0" />
-            {t('detail.actions.usage', { defaultValue: 'Usage' })}
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent side="bottom">
-          {t('detail.tooltips.openTeamUsage', { defaultValue: 'Open team usage' })}
-        </TooltipContent>
-      </Tooltip>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="sm"
-            className={cn(
-              'h-8 shrink-0 rounded-full border px-3.5 text-xs font-semibold tracking-[0.02em] transition-all',
-              'hover:-translate-y-0.5 hover:brightness-[1.03] active:translate-y-0 active:brightness-[0.98]',
-              isLight
                 ? 'hover:border-sky-400/50'
                 : 'hover:border-cyan-300/50 hover:shadow-[0_14px_32px_rgba(8,145,178,0.28)]'
             )}
@@ -3001,7 +2966,7 @@ export const TeamDetailView = memo(function TeamDetailView({
               style={{ paddingBottom: floatingComposerScrollReserve }}
               data-team-name={teamName}
             >
-              <div className="relative -mx-4 -mt-4 mb-3 overflow-hidden border-b border-[var(--color-border)] px-4 py-3">
+              <div className="relative -mx-4 -mt-4 mb-3 overflow-hidden border-b border-[var(--color-border)] px-4 py-4">
                 {headerColorSet ? (
                   <div
                     className="pointer-events-none absolute inset-0 z-0"
@@ -3010,7 +2975,7 @@ export const TeamDetailView = memo(function TeamDetailView({
                 ) : null}
                 <div
                   className={cn(
-                    'flex items-start justify-between gap-2',
+                    'flex flex-wrap items-start justify-between gap-x-2 gap-y-2',
                     headerColorSet && 'relative z-10'
                   )}
                 >
@@ -3090,17 +3055,17 @@ export const TeamDetailView = memo(function TeamDetailView({
                 </div>
                 <div
                   className={cn(
-                    'mt-1 flex items-start justify-between gap-3',
+                    'mt-2 grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-2',
                     headerColorSet && 'relative z-10'
                   )}
                 >
                   <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-0.5">
                     {data.config.projectPath && (
-                      <span className="flex items-center gap-1 text-[11px] text-[var(--color-text-secondary)]">
+                      <span className="flex min-w-0 max-w-full items-center gap-1 text-[11px] text-[var(--color-text-secondary)]">
                         <FolderOpen size={11} className="shrink-0 text-[var(--color-text-muted)]" />
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <span className="max-w-60 truncate font-mono">
+                            <span className="min-w-0 max-w-60 flex-1 truncate font-mono">
                               {data.config.projectPath
                                 .replace(/\\/g, '/')
                                 .split('/')
@@ -3117,8 +3082,9 @@ export const TeamDetailView = memo(function TeamDetailView({
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <button
+                              type="button"
                               onClick={() => setEditorOpen(true)}
-                              className="ml-1 flex items-center gap-0.5 rounded border border-[var(--color-border-emphasis)] bg-[var(--color-surface-raised)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-border-emphasis)] hover:text-[var(--color-text)]"
+                              className={cn('ml-1', TEAM_HEADER_INLINE_ACTION_CLASS)}
                             >
                               <Code size={10} className="shrink-0" /> {t('detail.actions.editCode')}
                             </button>
@@ -3127,19 +3093,36 @@ export const TeamDetailView = memo(function TeamDetailView({
                         </Tooltip>
                       </span>
                     )}
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onClick={handleOpenUsageTab}
+                          className={TEAM_HEADER_INLINE_ACTION_CLASS}
+                        >
+                          <BarChart3 size={10} className="shrink-0" />
+                          {t('detail.actions.usage', { defaultValue: 'Usage' })}
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom">
+                        {t('detail.tooltips.openTeamUsage', {
+                          defaultValue: 'Open usage dashboard',
+                        })}
+                      </TooltipContent>
+                    </Tooltip>
                     {leadBranch && (
                       <span
-                        className="flex items-center gap-1 text-[11px] text-[var(--color-text-secondary)]"
+                        className="flex min-w-0 items-center gap-1 text-[11px] text-[var(--color-text-secondary)]"
                         title={leadBranch}
                       >
                         <GitBranch size={11} className="shrink-0 text-[var(--color-text-muted)]" />
-                        <span className="max-w-32 truncate">{leadBranch}</span>
+                        <span className="min-w-0 max-w-32 truncate">{leadBranch}</span>
                       </span>
                     )}
                   </div>
                   <div
                     ref={visualizeButtonAnchorRef}
-                    className="-mt-2 flex h-8 shrink-0 self-start"
+                    className="flex h-8 shrink-0 self-start justify-self-end"
                   >
                     {pinnedVisualizeButtonPosition ? null : renderTeamActionButtons(false)}
                   </div>

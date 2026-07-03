@@ -88,7 +88,13 @@ const TOKEN_USAGE_DASHBOARD_TABS = ['overview', 'activity', 'breakdowns', 'runs'
 type TokenUsageStoredBudgetConfig = TokenUsageBudgetLimits;
 type TokenUsageDashboardTab = (typeof TOKEN_USAGE_DASHBOARD_TABS)[number];
 
-export const TokenUsageDashboard = (): React.JSX.Element => {
+interface TokenUsageDashboardProps {
+  initialTeamName?: string | null;
+}
+
+export const TokenUsageDashboard = ({
+  initialTeamName = null,
+}: TokenUsageDashboardProps): React.JSX.Element => {
   const { t, resolvedLanguage } = useAppTranslation('dashboard');
   const tokenUsageT = useMemo<TokenUsageT>(
     () => (key, options) => String(t(key as never, options as never)),
@@ -100,7 +106,9 @@ export const TokenUsageDashboard = (): React.JSX.Element => {
   const [dateRange, setDateRange] = useState<TokenUsageDateRangeValue>(() =>
     createDefaultTokenUsageDateRange()
   );
-  const [selectedTeamNames, setSelectedTeamNames] = useState<string[]>([]);
+  const [selectedTeamNames, setSelectedTeamNames] = useState<string[]>(() =>
+    initialTeamName ? [initialTeamName] : []
+  );
   const [includeCacheTokens, setIncludeCacheTokens] = useState(false);
   const [activeDashboardTab, setActiveDashboardTab] = useState<TokenUsageDashboardTab>('overview');
   const { budgetConfig, budgetConfigError, updateBudgetConfig } = useTokenUsageBudgetSettings({
@@ -129,6 +137,10 @@ export const TokenUsageDashboard = (): React.JSX.Element => {
     viewModelOptions,
   });
   const [teamOptions, setTeamOptions] = useState<TokenUsageTeamFilterOptionViewModel[]>([]);
+
+  useEffect(() => {
+    setSelectedTeamNames(initialTeamName ? [initialTeamName] : []);
+  }, [initialTeamName]);
 
   useEffect(() => {
     setTeamOptions((current) => mergeTeamFilterOptions(current, viewModel.teamFilterOptions));

@@ -207,6 +207,12 @@
     "controls": {
       "includeCacheTokens": "Cache tokenlarını dahil et"
     },
+    "tabs": {
+      "overview": "Overview",
+      "activity": "Activity",
+      "breakdowns": "Breakdowns",
+      "runs": "Runs"
+    },
     "dateRange": {
       "allCollectedUsage": "Toplanan tüm app kullanımı",
       "customRange": "Özel aralık",

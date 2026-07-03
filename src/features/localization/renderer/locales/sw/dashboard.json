@@ -207,6 +207,12 @@
     "controls": {
       "includeCacheTokens": "Jumuisha cache tokens"
     },
+    "tabs": {
+      "overview": "Overview",
+      "activity": "Activity",
+      "breakdowns": "Breakdowns",
+      "runs": "Runs"
+    },
     "dateRange": {
       "allCollectedUsage": "Matumizi yote ya app yaliyokusanywa",
       "customRange": "Kipindi maalum",

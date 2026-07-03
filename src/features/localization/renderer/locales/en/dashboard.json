@@ -207,6 +207,12 @@
     "controls": {
       "includeCacheTokens": "Include cache tokens"
     },
+    "tabs": {
+      "overview": "Overview",
+      "activity": "Activity",
+      "breakdowns": "Breakdowns",
+      "runs": "Runs"
+    },
     "billingSplit": {
       "apiBillable": "API billable",
       "apiBillableHelp": "Actual provider or gateway API cost when reported by the runtime.",

@@ -207,6 +207,12 @@
     "controls": {
       "includeCacheTokens": "Bao gồm token cache"
     },
+    "tabs": {
+      "overview": "Overview",
+      "activity": "Activity",
+      "breakdowns": "Breakdowns",
+      "runs": "Runs"
+    },
     "dateRange": {
       "allCollectedUsage": "Toàn bộ mức dùng app đã thu thập",
       "customRange": "Khoảng tùy chỉnh",

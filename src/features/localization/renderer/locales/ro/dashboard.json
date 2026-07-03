@@ -207,6 +207,12 @@
     "controls": {
       "includeCacheTokens": "Include tokenii cache"
     },
+    "tabs": {
+      "overview": "Overview",
+      "activity": "Activity",
+      "breakdowns": "Breakdowns",
+      "runs": "Runs"
+    },
     "dateRange": {
       "allCollectedUsage": "Toată utilizarea colectată a aplicației",
       "customRange": "Interval personalizat",

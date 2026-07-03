@@ -207,6 +207,12 @@
     "controls": {
       "includeCacheTokens": "شامل توکن‌های کش"
     },
+    "tabs": {
+      "overview": "Overview",
+      "activity": "Activity",
+      "breakdowns": "Breakdowns",
+      "runs": "Runs"
+    },
     "dateRange": {
       "allCollectedUsage": "همه مصرف جمع‌آوری‌شده برنامه",
       "customRange": "بازه سفارشی",

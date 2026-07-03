@@ -207,6 +207,12 @@
     "controls": {
       "includeCacheTokens": "cache tokens చేర్చండి"
     },
+    "tabs": {
+      "overview": "Overview",
+      "activity": "Activity",
+      "breakdowns": "Breakdowns",
+      "runs": "Runs"
+    },
     "dateRange": {
       "allCollectedUsage": "సేకరించిన మొత్తం app వినియోగం",
       "customRange": "కస్టమ్ రేంజ్",

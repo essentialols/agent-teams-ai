@@ -207,6 +207,12 @@
     "controls": {
       "includeCacheTokens": "캐시 토큰 포함"
     },
+    "tabs": {
+      "overview": "Overview",
+      "activity": "Activity",
+      "breakdowns": "Breakdowns",
+      "runs": "Runs"
+    },
     "dateRange": {
       "allCollectedUsage": "수집된 전체 앱 사용량",
       "customRange": "사용자 지정 범위",

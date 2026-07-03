@@ -207,6 +207,12 @@
     "controls": {
       "includeCacheTokens": "Учитывать cache tokens"
     },
+    "tabs": {
+      "overview": "Обзор",
+      "activity": "Активность",
+      "breakdowns": "Разрезы",
+      "runs": "Запуски"
+    },
     "billingSplit": {
       "apiBillable": "API billable",
       "apiBillableHelp": "Реальная стоимость API от провайдера или gateway, если runtime ее отдал.",

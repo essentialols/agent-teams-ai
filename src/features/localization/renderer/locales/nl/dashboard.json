@@ -207,6 +207,12 @@
     "controls": {
       "includeCacheTokens": "Cachetokens meenemen"
     },
+    "tabs": {
+      "overview": "Overview",
+      "activity": "Activity",
+      "breakdowns": "Breakdowns",
+      "runs": "Runs"
+    },
     "dateRange": {
       "allCollectedUsage": "Alle verzamelde app-usage",
       "customRange": "Aangepast bereik",

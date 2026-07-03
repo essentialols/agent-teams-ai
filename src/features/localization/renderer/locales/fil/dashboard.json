@@ -207,6 +207,12 @@
     "controls": {
       "includeCacheTokens": "Isama ang cache tokens"
     },
+    "tabs": {
+      "overview": "Overview",
+      "activity": "Activity",
+      "breakdowns": "Breakdowns",
+      "runs": "Runs"
+    },
     "dateRange": {
       "allCollectedUsage": "Lahat ng nakolektang paggamit ng app",
       "customRange": "Custom range",

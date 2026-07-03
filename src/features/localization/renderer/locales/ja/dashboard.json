@@ -207,6 +207,12 @@
     "controls": {
       "includeCacheTokens": "キャッシュトークンを含める"
     },
+    "tabs": {
+      "overview": "Overview",
+      "activity": "Activity",
+      "breakdowns": "Breakdowns",
+      "runs": "Runs"
+    },
     "dateRange": {
       "allCollectedUsage": "収集済みの全アプリ使用量",
       "customRange": "カスタム範囲",

@@ -4,9 +4,14 @@ import {
   assertCreateTeamDoesNotExist,
   buildCreateTeamMetaPayload,
   buildDeterministicCreateSpawnArgs,
+  createDeterministicCreateProvisioningRun,
 } from '../TeamProvisioningCreateTeamFlow';
 
-import type { TeamCreateRequest } from '@shared/types';
+import type {
+  MemberSpawnStatusEntry,
+  ProviderModelLaunchIdentity,
+  TeamCreateRequest,
+} from '@shared/types';
 
 function buildRequest(overrides: Partial<TeamCreateRequest> = {}): TeamCreateRequest {
   return {
@@ -28,6 +33,51 @@ function buildRequest(overrides: Partial<TeamCreateRequest> = {}): TeamCreateReq
     members: [],
     ...overrides,
   } as TeamCreateRequest;
+}
+
+function buildCreateRunInput(overrides: Partial<TeamCreateRequest> = {}) {
+  const request = buildRequest(overrides);
+  const effectiveMemberSpecs: TeamCreateRequest['members'] = [
+    { name: 'Lead', role: 'Lead' },
+    { name: 'Builder', role: 'Build' },
+  ];
+  const allEffectiveMemberSpecs: TeamCreateRequest['members'] = [
+    ...effectiveMemberSpecs,
+    { name: 'Reviewer', role: 'Review', providerId: 'opencode' },
+  ];
+  const launchIdentity = {
+    requestedModel: 'gpt-5.4',
+    resolvedModel: 'gpt-5.4',
+  } as unknown as ProviderModelLaunchIdentity;
+  const mixedSecondaryLanes = [{ memberName: 'Reviewer' }];
+  const workspaceTrustFullPlan = { launchArgPatches: [] };
+  const anthropicApiKeyHelper = { helperMode: true };
+  let spawnStatusCount = 0;
+  const createInitialMemberSpawnStatusEntry = (): MemberSpawnStatusEntry => {
+    spawnStatusCount += 1;
+    return {
+      status: 'waiting',
+      launchState: 'starting',
+      updatedAt: '2026-07-03T09:00:00.000Z',
+    };
+  };
+
+  return {
+    runId: 'run-123',
+    teamName: request.teamName,
+    request,
+    startedAt: '2026-07-03T09:00:00.000Z',
+    onProgress: () => undefined,
+    teamsBasePathsToProbe: [{ location: 'configured' as const, basePath: '/teams' }],
+    effectiveMemberSpecs,
+    allEffectiveMemberSpecs,
+    launchIdentity,
+    mixedSecondaryLanes,
+    workspaceTrustFullPlan,
+    anthropicApiKeyHelper,
+    createInitialMemberSpawnStatusEntry,
+    getSpawnStatusCount: () => spawnStatusCount,
+  };
 }
 
 describe('TeamProvisioningCreateTeamFlow', () => {
@@ -65,6 +115,58 @@ describe('TeamProvisioningCreateTeamFlow', () => {
       launchIdentity: null,
       createdAt: 12345,
     });
+  });
+
+  it('creates the deterministic create-team run state without initial warnings', () => {
+    const input = buildCreateRunInput();
+    const run = createDeterministicCreateProvisioningRun(input);
+
+    expect(run.runId).toBe('run-123');
+    expect(run.teamName).toBe('runtime-team');
+    expect(run.startedAt).toBe('2026-07-03T09:00:00.000Z');
+    expect(run.request).toBe(input.request);
+    expect(run.teamsBasePathsToProbe).toBe(input.teamsBasePathsToProbe);
+    expect(run.expectedMembers).toEqual(['Lead', 'Builder']);
+    expect(run.effectiveMembers).toBe(input.effectiveMemberSpecs);
+    expect(run.allEffectiveMembers).toBe(input.allEffectiveMemberSpecs);
+    expect(run.launchIdentity).toBe(input.launchIdentity);
+    expect(run.mixedSecondaryLanes).toBe(input.mixedSecondaryLanes);
+    expect(run.workspaceTrustPlan).toBe(input.workspaceTrustFullPlan);
+    expect(run.anthropicApiKeyHelper).toBe(input.anthropicApiKeyHelper);
+    expect(run.isLaunch).toBe(false);
+    expect(run.fsPhase).toBe('waiting_config');
+    expect(run.deterministicBootstrap).toBe(true);
+    expect(run.child).toBeNull();
+    expect(run.workspaceTrustExecution).toBeNull();
+    expect(run.pendingApprovals.size).toBe(0);
+    expect(run.processedPermissionRequestIds.size).toBe(0);
+    expect(run.memberSpawnStatuses.size).toBe(2);
+    expect(run.memberSpawnStatuses.get('Lead')).toEqual({
+      status: 'waiting',
+      launchState: 'starting',
+      updatedAt: '2026-07-03T09:00:00.000Z',
+    });
+    expect(input.getSpawnStatusCount()).toBe(2);
+    expect(run.progress).toEqual({
+      runId: 'run-123',
+      teamName: 'runtime-team',
+      state: 'validating',
+      message: 'Validating team provisioning request',
+      startedAt: '2026-07-03T09:00:00.000Z',
+      updatedAt: '2026-07-03T09:00:00.000Z',
+      warnings: undefined,
+      cliLogsTail: undefined,
+    });
+  });
+
+  it('adds the large-team warning to deterministic create-team progress', () => {
+    const input = buildCreateRunInput();
+    const run = createDeterministicCreateProvisioningRun({
+      ...input,
+      largeTeamWarning: 'Large deterministic bootstrap warning',
+    });
+
+    expect(run.progress.warnings).toEqual(['Large deterministic bootstrap warning']);
   });
 
   it('builds deterministic create launch arguments in the expected order', () => {

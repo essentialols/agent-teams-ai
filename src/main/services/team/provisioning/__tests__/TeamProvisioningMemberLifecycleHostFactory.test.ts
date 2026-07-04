@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
   createTeamProvisioningMemberLifecycleHost,
+  createTeamProvisioningMemberLifecycleHostFromPortGroups,
+  createTeamProvisioningMemberLifecycleHostPortGroups,
+  TEAM_PROVISIONING_MEMBER_LIFECYCLE_HOST_FACTORY_PORT_KEYS,
+  TEAM_PROVISIONING_MEMBER_LIFECYCLE_HOST_FACTORY_PORT_KEYS_COVER_HOST,
   type TeamProvisioningMemberLifecycleHostFactoryService,
 } from '../TeamProvisioningMemberLifecycleHostFactory';
 
@@ -62,10 +66,11 @@ function createService(): ReceiverBoundService {
     failedOpenCodeSecondaryRetryInFlightByTeam: new Map(),
     memberLifecycleOperations: new Map(),
     mcpConfigBuilder: {
-      async writeConfigFile(projectPath) {
-        return `${projectPath}/.mcp.json`;
+      async writeConfigFile(this: { marker: string }, projectPath) {
+        return `${projectPath}/${this.marker}.json`;
       },
-    },
+      marker: 'mcp-builder',
+    } as ReceiverBoundService['mcpConfigBuilder'] & { marker: string },
     membersMetaStore: {
       async getMembers() {
         return [];
@@ -139,14 +144,16 @@ function createService(): ReceiverBoundService {
       this.events.push(`service:get-cwd:${run?.id ?? 'none'}`);
       return run?.cwd ?? null;
     },
-    async materializeEffectiveTeamMemberSpecs(input) {
+    async materializeEffectiveTeamMemberSpecs(this: ReceiverBoundService, input) {
+      this.events.push(`service:materialize:${input.cwd}`);
       return input.members;
     },
     async resolveDirectMemberLaunchIdentity(this: ReceiverBoundService, input) {
       this.events.push(`service:resolve-identity:${input.run.id}`);
       return null;
     },
-    async buildTeamRuntimeLaunchArgsPlan() {
+    async buildTeamRuntimeLaunchArgsPlan(this: ReceiverBoundService) {
+      this.events.push('service:args-plan');
       return {} as Awaited<ReturnType<Host['buildTeamRuntimeLaunchArgsPlan']>>;
     },
     persistInboxMessage(this: ReceiverBoundService, teamName, memberName) {
@@ -180,7 +187,8 @@ function createService(): ReceiverBoundService {
       this.events.push(`service:is-current:${run.id}`);
       return true;
     },
-    async getLiveTeamAgentRuntimeMetadata() {
+    async getLiveTeamAgentRuntimeMetadata(this: ReceiverBoundService, teamName) {
+      this.events.push(`service:metadata:${teamName}`);
       return new Map();
     },
     async persistLaunchStateSnapshot(this: ReceiverBoundService, run) {
@@ -191,13 +199,16 @@ function createService(): ReceiverBoundService {
       this.events.push(`service:send:${run.id}:${message}`);
       return null;
     },
-    getOpenCodeRuntimeAdapter() {
+    getOpenCodeRuntimeAdapter(this: ReceiverBoundService) {
+      this.events.push('service:adapter');
       return null;
     },
-    async resolveOpenCodeMemberWorkspacesForRuntime(input) {
+    async resolveOpenCodeMemberWorkspacesForRuntime(this: ReceiverBoundService, input) {
+      this.events.push(`service:workspaces:${input.teamName}`);
       return input.members;
     },
-    async runOpenCodeTeamRuntimeAdapterLaunch() {
+    async runOpenCodeTeamRuntimeAdapterLaunch(this: ReceiverBoundService) {
+      this.events.push('service:opencode-launch');
       return null;
     },
     createMixedSecondaryLaneStateForMember(this: ReceiverBoundService, run) {
@@ -216,9 +227,10 @@ function createService(): ReceiverBoundService {
     },
     getMixedSecondaryLaunchPhase(this: ReceiverBoundService, run) {
       this.events.push(`service:phase:${run.id}`);
-      return 'members_spawning' as ReturnType<Host['getMixedSecondaryLaunchPhase']>;
+      return 'active';
     },
-    async writeLaunchStateSnapshot() {
+    async writeLaunchStateSnapshot(this: ReceiverBoundService, teamName) {
+      this.events.push(`service:write-launch:${teamName}`);
       return null;
     },
   };
@@ -238,16 +250,34 @@ describe('TeamProvisioningMemberLifecycleHostFactory', () => {
     expect(host.memberLifecycleOperations).toBe(service.memberLifecycleOperations);
   });
 
-  it('forwards callbacks through the service receivers with run and lane casts intact', async () => {
+  it('groups every lifecycle host member exactly once', () => {
     const service = createService();
     const host = createTeamProvisioningMemberLifecycleHost(service);
+    const groupedKeys = Object.values(
+      TEAM_PROVISIONING_MEMBER_LIFECYCLE_HOST_FACTORY_PORT_KEYS
+    ).flat();
+
+    expect(TEAM_PROVISIONING_MEMBER_LIFECYCLE_HOST_FACTORY_PORT_KEYS_COVER_HOST).toBe(true);
+    expect(new Set(groupedKeys).size).toBe(groupedKeys.length);
+    expect(Object.keys(host).sort()).toEqual([...groupedKeys].sort());
+  });
+
+  it('forwards callbacks through the service receivers with run and lane casts intact', async () => {
+    const service = createService();
+    const portGroups = createTeamProvisioningMemberLifecycleHostPortGroups(service);
+    const host = createTeamProvisioningMemberLifecycleHostFromPortGroups(portGroups);
     const run = { id: 'run-2', cwd: '/other' } as unknown as HostRun;
     const lane = { laneId: 'lane-2' } as unknown as HostMixedSecondaryLane;
     const member = { name: 'Member' } as HostMember;
 
+    await expect(host.mcpConfigBuilder.writeConfigFile('/project')).resolves.toBe(
+      '/project/mcp-builder.json'
+    );
     expect(host.getRunTrackedCwd(run)).toBe('/other');
     expect(host.getRunTrackedCwd(null)).toBeNull();
     expect(host.getAliveRunId('team-a')).toBe('run-tracking:team-a:alive');
+    expect(host.getTrackedRunId('team-a')).toBe('run-tracking:team-a:tracked');
+    expect(host.getProvisioningRunId('team-a')).toBe('run-tracking:team-a:provisioning');
     await expect(
       host.buildProvisioningEnv('anthropic', undefined, {
         teamRuntimeAuth: {
@@ -264,17 +294,107 @@ describe('TeamProvisioningMemberLifecycleHostFactory', () => {
       mcpPolicy: undefined,
       run,
     });
+    await host.removeTrackedMemberMcpLaunchConfig(run, null);
+    await host.materializeEffectiveTeamMemberSpecs({
+      claudePath: '/bin/claude',
+      cwd: '/project',
+      members: [member],
+      defaults: { providerId: 'codex' },
+      primaryProviderId: 'codex',
+      primaryEnv: { env: {} },
+      teamRuntimeAuth: {
+        teamName: 'team-a',
+        authMaterialId: 'auth-2',
+        allowAnthropicApiKeyHelper: false,
+      },
+    });
+    await host.resolveDirectMemberLaunchIdentity({
+      claudePath: '/bin/claude',
+      cwd: '/project',
+      providerId: 'codex',
+      provisioningEnv: { env: {} },
+      memberSpec: member,
+      run,
+    });
+    await host.buildTeamRuntimeLaunchArgsPlan({
+      teamName: 'team-a',
+      providerId: 'codex',
+      launchIdentity: null,
+      envResolution: { env: {} },
+      extraArgs: [],
+      includeAnthropicHelper: false,
+      contextLabel: 'test',
+    });
+    host.persistInboxMessage('team-a', 'Member', {});
+    host.persistSentMessage('team-a', {});
+    host.appendMemberBootstrapDiagnostic(run, 'Member', 'diagnostic');
+    host.setMemberSpawnStatus(run, 'Member', 'waiting');
+    host.upsertRunAllEffectiveMember(run, member);
+    host.removeRunAllEffectiveMember(run, 'Member');
+    host.invalidateRuntimeSnapshotCaches('team-a');
+    host.resetRuntimeToolActivity(run);
+    host.clearMemberSpawnToolTracking(run, 'Member');
+    expect(host.isCurrentTrackedRun(run)).toBe(true);
+    await host.getLiveTeamAgentRuntimeMetadata('team-a');
+    await host.persistLaunchStateSnapshot(run, 'active');
+    await host.sendMessageToRun(run, 'hello');
+    expect(host.getOpenCodeRuntimeAdapter()).toBeNull();
+    await host.resolveOpenCodeMemberWorkspacesForRuntime({
+      teamName: 'team-a',
+      baseCwd: '/project',
+      leadProviderId: 'codex',
+      members: [member],
+    });
+    await host.runOpenCodeTeamRuntimeAdapterLaunch({
+      request: {
+        teamName: 'team-a',
+        cwd: '/project',
+        providerId: 'codex',
+        members: [member],
+      },
+      members: [member],
+      prompt: 'prompt',
+      onProgress: () => undefined,
+    });
     const createdLane = host.createMixedSecondaryLaneStateForMember(run, member);
     expect(createdLane).toBe(service.expectedLane);
     await host.stopSingleMixedSecondaryRuntimeLane(run, lane, 'relaunch');
+    expect(host.getRunLeadName(run)).toBe('Lead');
     await host.launchSingleMixedSecondaryLane(run, lane);
+    expect(host.getMixedSecondaryLaunchPhase(run)).toBe('active');
+    await host.writeLaunchStateSnapshot(
+      'team-a',
+      {} as Parameters<Host['writeLaunchStateSnapshot']>[1]
+    );
 
     expect(service.events).toEqual([
       'service:get-cwd:run-2',
       'service:get-cwd:none',
+      'service:materialize:/project',
+      'service:resolve-identity:run-2',
+      'service:args-plan',
+      'service:persist-inbox:team-a:Member',
+      'service:persist-sent:team-a',
+      'service:diagnostic:run-2:Member',
+      'service:spawn-status:run-2:Member:waiting',
+      'service:upsert:run-2',
+      'service:remove:run-2:Member',
+      'service:invalidate:team-a',
+      'service:reset-tool:run-2:all',
+      'service:clear-tool:run-2:Member',
+      'service:is-current:run-2',
+      'service:metadata:team-a',
+      'service:persist-launch:run-2',
+      'service:send:run-2:hello',
+      'service:adapter',
+      'service:workspaces:team-a',
+      'service:opencode-launch',
       'service:create-lane:run-2',
       'service:stop-lane:run-2:lane-2:relaunch',
+      'service:get-lead:run-2',
       'service:launch-lane:run-2:lane-2',
+      'service:phase:run-2',
+      'service:write-launch:team-a',
     ]);
     type MemberMcpLaunchConfigProvisionerWithEvents =
       ReceiverBoundService['memberMcpLaunchConfigProvisioner'] & {
@@ -283,6 +403,6 @@ describe('TeamProvisioningMemberLifecycleHostFactory', () => {
     expect(
       (service.memberMcpLaunchConfigProvisioner as MemberMcpLaunchConfigProvisionerWithEvents)
         .events
-    ).toEqual(['mcp-provisioner:build:run-2']);
+    ).toEqual(['mcp-provisioner:build:run-2', 'mcp-provisioner:remove:run-2']);
   });
 });

@@ -24,29 +24,48 @@ export interface TeamProvisioningMemberLifecycleHostFactoryRun {
   >;
 }
 
-export interface TeamProvisioningMemberLifecycleHostFactoryService<
-  TRun extends TeamProvisioningMemberLifecycleHostFactoryRun,
-  TMixedSecondaryLane,
-> {
+type HostSetMemberSpawnStatusRest =
+  Parameters<TeamProvisioningMemberLifecycleHost['setMemberSpawnStatus']> extends [
+    HostRun,
+    ...infer TRest,
+  ]
+    ? TRest
+    : never;
+
+export interface TeamProvisioningMemberLifecycleHostFactorySharedStatePorts {
   runs: TeamProvisioningMemberLifecycleHost['runs'];
   runtimeAdapterRunByTeam: TeamProvisioningMemberLifecycleHost['runtimeAdapterRunByTeam'];
   failedOpenCodeSecondaryRetryInFlightByTeam: TeamProvisioningMemberLifecycleHost['failedOpenCodeSecondaryRetryInFlightByTeam'];
   memberLifecycleOperations: TeamProvisioningMemberLifecycleHost['memberLifecycleOperations'];
+}
+
+export interface TeamProvisioningMemberLifecycleHostFactoryStorePorts {
   mcpConfigBuilder: TeamProvisioningMemberLifecycleHost['mcpConfigBuilder'];
   membersMetaStore: TeamProvisioningMemberLifecycleHost['membersMetaStore'];
   teamMetaStore: TeamProvisioningMemberLifecycleHost['teamMetaStore'];
-  launchStateStore: TeamProvisioningMemberLifecycleHost['launchStateStore'];
   configFacade: Pick<
     TeamProvisioningMemberLifecycleHost,
     'readConfigForStrictDecision' | 'readPersistedRuntimeMembers' | 'readPersistedTeamProjectPath'
   >;
+}
+
+export interface TeamProvisioningMemberLifecycleHostFactoryMemberSpecPorts {
+  materializeEffectiveTeamMemberSpecs: TeamProvisioningMemberLifecycleHost['materializeEffectiveTeamMemberSpecs'];
+}
+
+export interface TeamProvisioningMemberLifecycleHostFactoryRuntimeLaunchPorts<
+  TRun extends TeamProvisioningMemberLifecycleHostFactoryRun,
+> {
   providerRuntime: {
     buildProvisioningEnv: TeamProvisioningMemberLifecycleHost['buildProvisioningEnv'];
   };
-  runTracking: Pick<
-    TeamProvisioningMemberLifecycleHost,
-    'getAliveRunId' | 'getTrackedRunId' | 'getProvisioningRunId'
-  >;
+  resolveDirectMemberLaunchIdentity(
+    input: WithServiceRun<
+      Parameters<TeamProvisioningMemberLifecycleHost['resolveDirectMemberLaunchIdentity']>[0],
+      TRun
+    >
+  ): ReturnType<TeamProvisioningMemberLifecycleHost['resolveDirectMemberLaunchIdentity']>;
+  buildTeamRuntimeLaunchArgsPlan: TeamProvisioningMemberLifecycleHost['buildTeamRuntimeLaunchArgsPlan'];
   memberMcpLaunchConfigProvisioner: {
     buildTrackedMemberMcpLaunchConfig(
       input: WithServiceRun<
@@ -61,19 +80,33 @@ export interface TeamProvisioningMemberLifecycleHostFactoryService<
       >[1]
     ): ReturnType<TeamProvisioningMemberLifecycleHost['removeTrackedMemberMcpLaunchConfig']>;
   };
+  sendMessageToRun(
+    run: TRun,
+    message: string
+  ): ReturnType<TeamProvisioningMemberLifecycleHost['sendMessageToRun']>;
+}
+
+export interface TeamProvisioningMemberLifecycleHostFactoryLaunchStatePorts<
+  TRun extends TeamProvisioningMemberLifecycleHostFactoryRun,
+> {
+  launchStateStore: TeamProvisioningMemberLifecycleHost['launchStateStore'];
+  persistLaunchStateSnapshot(
+    run: TRun,
+    phase: Parameters<TeamProvisioningMemberLifecycleHost['persistLaunchStateSnapshot']>[1]
+  ): ReturnType<TeamProvisioningMemberLifecycleHost['persistLaunchStateSnapshot']>;
+  writeLaunchStateSnapshot: TeamProvisioningMemberLifecycleHost['writeLaunchStateSnapshot'];
+}
+
+export interface TeamProvisioningMemberLifecycleHostFactoryRunStatePorts<
+  TRun extends TeamProvisioningMemberLifecycleHostFactoryRun,
+> {
+  runTracking: Pick<
+    TeamProvisioningMemberLifecycleHost,
+    'getAliveRunId' | 'getTrackedRunId' | 'getProvisioningRunId'
+  >;
   getRunTrackedCwd(
     run: TRun | null | undefined
   ): ReturnType<TeamProvisioningMemberLifecycleHost['getRunTrackedCwd']>;
-  materializeEffectiveTeamMemberSpecs: TeamProvisioningMemberLifecycleHost['materializeEffectiveTeamMemberSpecs'];
-  resolveDirectMemberLaunchIdentity(
-    input: WithServiceRun<
-      Parameters<TeamProvisioningMemberLifecycleHost['resolveDirectMemberLaunchIdentity']>[0],
-      TRun
-    >
-  ): ReturnType<TeamProvisioningMemberLifecycleHost['resolveDirectMemberLaunchIdentity']>;
-  buildTeamRuntimeLaunchArgsPlan: TeamProvisioningMemberLifecycleHost['buildTeamRuntimeLaunchArgsPlan'];
-  persistInboxMessage: TeamProvisioningMemberLifecycleHost['persistInboxMessage'];
-  persistSentMessage: TeamProvisioningMemberLifecycleHost['persistSentMessage'];
   appendMemberBootstrapDiagnostic(
     run: TRun,
     memberName: string,
@@ -81,12 +114,7 @@ export interface TeamProvisioningMemberLifecycleHostFactoryService<
   ): ReturnType<TeamProvisioningMemberLifecycleHost['appendMemberBootstrapDiagnostic']>;
   setMemberSpawnStatus(
     run: TRun,
-    ...args: Parameters<TeamProvisioningMemberLifecycleHost['setMemberSpawnStatus']> extends [
-      HostRun,
-      ...infer TRest,
-    ]
-      ? TRest
-      : never
+    ...args: HostSetMemberSpawnStatusRest
   ): ReturnType<TeamProvisioningMemberLifecycleHost['setMemberSpawnStatus']>;
   upsertRunAllEffectiveMember(
     run: TRun,
@@ -109,17 +137,23 @@ export interface TeamProvisioningMemberLifecycleHostFactoryService<
     run: TRun
   ): ReturnType<TeamProvisioningMemberLifecycleHost['isCurrentTrackedRun']>;
   getLiveTeamAgentRuntimeMetadata: TeamProvisioningMemberLifecycleHost['getLiveTeamAgentRuntimeMetadata'];
-  persistLaunchStateSnapshot(
-    run: TRun,
-    phase: Parameters<TeamProvisioningMemberLifecycleHost['persistLaunchStateSnapshot']>[1]
-  ): ReturnType<TeamProvisioningMemberLifecycleHost['persistLaunchStateSnapshot']>;
-  sendMessageToRun(
-    run: TRun,
-    message: string
-  ): ReturnType<TeamProvisioningMemberLifecycleHost['sendMessageToRun']>;
+}
+
+export interface TeamProvisioningMemberLifecycleHostFactoryMessagingPorts {
+  persistInboxMessage: TeamProvisioningMemberLifecycleHost['persistInboxMessage'];
+  persistSentMessage: TeamProvisioningMemberLifecycleHost['persistSentMessage'];
+}
+
+export interface TeamProvisioningMemberLifecycleHostFactoryOpenCodeRuntimePorts {
   getOpenCodeRuntimeAdapter: TeamProvisioningMemberLifecycleHost['getOpenCodeRuntimeAdapter'];
   resolveOpenCodeMemberWorkspacesForRuntime: TeamProvisioningMemberLifecycleHost['resolveOpenCodeMemberWorkspacesForRuntime'];
   runOpenCodeTeamRuntimeAdapterLaunch: TeamProvisioningMemberLifecycleHost['runOpenCodeTeamRuntimeAdapterLaunch'];
+}
+
+export interface TeamProvisioningMemberLifecycleHostFactoryMixedSecondaryRuntimePorts<
+  TRun extends TeamProvisioningMemberLifecycleHostFactoryRun,
+  TMixedSecondaryLane,
+> {
   createMixedSecondaryLaneStateForMember(
     run: TRun,
     member: Parameters<
@@ -141,8 +175,120 @@ export interface TeamProvisioningMemberLifecycleHostFactoryService<
   getMixedSecondaryLaunchPhase(
     run: TRun
   ): ReturnType<TeamProvisioningMemberLifecycleHost['getMixedSecondaryLaunchPhase']>;
-  writeLaunchStateSnapshot: TeamProvisioningMemberLifecycleHost['writeLaunchStateSnapshot'];
 }
+
+export interface TeamProvisioningMemberLifecycleHostFactoryService<
+  TRun extends TeamProvisioningMemberLifecycleHostFactoryRun,
+  TMixedSecondaryLane,
+>
+  extends
+    TeamProvisioningMemberLifecycleHostFactorySharedStatePorts,
+    TeamProvisioningMemberLifecycleHostFactoryStorePorts,
+    TeamProvisioningMemberLifecycleHostFactoryMemberSpecPorts,
+    TeamProvisioningMemberLifecycleHostFactoryRuntimeLaunchPorts<TRun>,
+    TeamProvisioningMemberLifecycleHostFactoryLaunchStatePorts<TRun>,
+    TeamProvisioningMemberLifecycleHostFactoryRunStatePorts<TRun>,
+    TeamProvisioningMemberLifecycleHostFactoryMessagingPorts,
+    TeamProvisioningMemberLifecycleHostFactoryOpenCodeRuntimePorts,
+    TeamProvisioningMemberLifecycleHostFactoryMixedSecondaryRuntimePorts<
+      TRun,
+      TMixedSecondaryLane
+    > {}
+
+export interface TeamProvisioningMemberLifecycleHostFactoryPortGroups<
+  TRun extends TeamProvisioningMemberLifecycleHostFactoryRun,
+  TMixedSecondaryLane,
+> {
+  sharedState: TeamProvisioningMemberLifecycleHostFactorySharedStatePorts;
+  stores: TeamProvisioningMemberLifecycleHostFactoryStorePorts;
+  memberSpec: TeamProvisioningMemberLifecycleHostFactoryMemberSpecPorts;
+  runtimeLaunch: TeamProvisioningMemberLifecycleHostFactoryRuntimeLaunchPorts<TRun>;
+  launchState: TeamProvisioningMemberLifecycleHostFactoryLaunchStatePorts<TRun>;
+  runState: TeamProvisioningMemberLifecycleHostFactoryRunStatePorts<TRun>;
+  messaging: TeamProvisioningMemberLifecycleHostFactoryMessagingPorts;
+  openCodeRuntime: TeamProvisioningMemberLifecycleHostFactoryOpenCodeRuntimePorts;
+  mixedSecondaryRuntime: TeamProvisioningMemberLifecycleHostFactoryMixedSecondaryRuntimePorts<
+    TRun,
+    TMixedSecondaryLane
+  >;
+}
+
+export const TEAM_PROVISIONING_MEMBER_LIFECYCLE_HOST_FACTORY_PORT_KEYS = {
+  sharedState: [
+    'runs',
+    'runtimeAdapterRunByTeam',
+    'failedOpenCodeSecondaryRetryInFlightByTeam',
+    'memberLifecycleOperations',
+  ],
+  stores: [
+    'mcpConfigBuilder',
+    'membersMetaStore',
+    'teamMetaStore',
+    'readConfigForStrictDecision',
+    'readPersistedRuntimeMembers',
+    'readPersistedTeamProjectPath',
+  ],
+  memberSpec: [
+    'buildPrimaryOwnedMemberSpecForRuntime',
+    'materializeEffectiveTeamMemberSpecs',
+    'resolveEffectiveConfiguredMember',
+    'resolveLeadMemberName',
+    'buildConfiguredProvisioningMember',
+  ],
+  runtimeLaunch: [
+    'buildProvisioningEnv',
+    'resolveDirectMemberLaunchIdentity',
+    'buildTeamRuntimeLaunchArgsPlan',
+    'buildTrackedMemberMcpLaunchConfig',
+    'removeTrackedMemberMcpLaunchConfig',
+    'sendMessageToRun',
+  ],
+  launchState: ['launchStateStore', 'persistLaunchStateSnapshot', 'writeLaunchStateSnapshot'],
+  runState: [
+    'getRunTrackedCwd',
+    'appendMemberBootstrapDiagnostic',
+    'setMemberSpawnStatus',
+    'upsertRunAllEffectiveMember',
+    'removeRunAllEffectiveMember',
+    'invalidateRuntimeSnapshotCaches',
+    'resetRuntimeToolActivity',
+    'clearMemberSpawnToolTracking',
+    'getAliveRunId',
+    'getTrackedRunId',
+    'getProvisioningRunId',
+    'isCurrentTrackedRun',
+    'getLiveTeamAgentRuntimeMetadata',
+  ],
+  messaging: ['persistInboxMessage', 'persistSentMessage'],
+  openCodeRuntime: [
+    'getOpenCodeRuntimeAdapter',
+    'resolveOpenCodeMemberWorkspacesForRuntime',
+    'runOpenCodeTeamRuntimeAdapterLaunch',
+  ],
+  mixedSecondaryRuntime: [
+    'createMixedSecondaryLaneStateForMember',
+    'stopSingleMixedSecondaryRuntimeLane',
+    'getRunLeadName',
+    'launchSingleMixedSecondaryLane',
+    'getMixedSecondaryLaunchPhase',
+  ],
+} as const satisfies Record<
+  keyof TeamProvisioningMemberLifecycleHostFactoryPortGroups<
+    TeamProvisioningMemberLifecycleHostFactoryRun,
+    unknown
+  >,
+  readonly (keyof TeamProvisioningMemberLifecycleHost)[]
+>;
+
+type TeamProvisioningMemberLifecycleHostFactoryGroupedHostKey =
+  (typeof TEAM_PROVISIONING_MEMBER_LIFECYCLE_HOST_FACTORY_PORT_KEYS)[keyof typeof TEAM_PROVISIONING_MEMBER_LIFECYCLE_HOST_FACTORY_PORT_KEYS][number];
+
+export const TEAM_PROVISIONING_MEMBER_LIFECYCLE_HOST_FACTORY_PORT_KEYS_COVER_HOST: Exclude<
+  keyof TeamProvisioningMemberLifecycleHost,
+  TeamProvisioningMemberLifecycleHostFactoryGroupedHostKey
+> extends never
+  ? true
+  : never = true;
 
 function asServiceProvisioningRun<TRun>(run: HostRun): TRun {
   return run as unknown as TRun;
@@ -166,52 +312,95 @@ export function createTeamProvisioningMemberLifecycleHost<
 >(
   service: TeamProvisioningMemberLifecycleHostFactoryService<TRun, TMixedSecondaryLane>
 ): TeamProvisioningMemberLifecycleHost {
+  return createTeamProvisioningMemberLifecycleHostFromPortGroups(
+    createTeamProvisioningMemberLifecycleHostPortGroups(service)
+  );
+}
+
+export function createTeamProvisioningMemberLifecycleHostPortGroups<
+  TRun extends TeamProvisioningMemberLifecycleHostFactoryRun,
+  TMixedSecondaryLane,
+>(
+  service: TeamProvisioningMemberLifecycleHostFactoryService<TRun, TMixedSecondaryLane>
+): TeamProvisioningMemberLifecycleHostFactoryPortGroups<TRun, TMixedSecondaryLane> {
   return {
-    runs: service.runs,
-    runtimeAdapterRunByTeam: service.runtimeAdapterRunByTeam,
-    failedOpenCodeSecondaryRetryInFlightByTeam: service.failedOpenCodeSecondaryRetryInFlightByTeam,
-    memberLifecycleOperations: service.memberLifecycleOperations,
+    sharedState: service,
+    stores: service,
+    memberSpec: service,
+    runtimeLaunch: service,
+    launchState: service,
+    runState: service,
+    messaging: service,
+    openCodeRuntime: service,
+    mixedSecondaryRuntime: service,
+  };
+}
+
+export function createTeamProvisioningMemberLifecycleHostFromPortGroups<
+  TRun extends TeamProvisioningMemberLifecycleHostFactoryRun,
+  TMixedSecondaryLane,
+>(
+  portGroups: TeamProvisioningMemberLifecycleHostFactoryPortGroups<TRun, TMixedSecondaryLane>
+): TeamProvisioningMemberLifecycleHost {
+  const {
+    sharedState,
+    stores,
+    memberSpec,
+    runtimeLaunch,
+    launchState,
+    runState,
+    messaging,
+    openCodeRuntime,
+    mixedSecondaryRuntime,
+  } = portGroups;
+
+  return {
+    runs: sharedState.runs,
+    runtimeAdapterRunByTeam: sharedState.runtimeAdapterRunByTeam,
+    failedOpenCodeSecondaryRetryInFlightByTeam:
+      sharedState.failedOpenCodeSecondaryRetryInFlightByTeam,
+    memberLifecycleOperations: sharedState.memberLifecycleOperations,
     mcpConfigBuilder: {
       writeConfigFile: (projectPath, options) =>
-        service.mcpConfigBuilder.writeConfigFile(projectPath, options as never),
+        stores.mcpConfigBuilder.writeConfigFile(projectPath, options as never),
     },
     membersMetaStore: {
-      getMembers: (teamName) => service.membersMetaStore.getMembers(teamName),
+      getMembers: (teamName) => stores.membersMetaStore.getMembers(teamName),
     },
     teamMetaStore: {
-      getMeta: (teamName) => service.teamMetaStore.getMeta(teamName),
+      getMeta: (teamName) => stores.teamMetaStore.getMeta(teamName),
     },
     launchStateStore: {
-      read: (teamName) => service.launchStateStore.read(teamName),
+      read: (teamName) => launchState.launchStateStore.read(teamName),
     },
     getRunTrackedCwd: (run) =>
-      service.getRunTrackedCwd(asNullableServiceProvisioningRun<TRun>(run)),
+      runState.getRunTrackedCwd(asNullableServiceProvisioningRun<TRun>(run)),
     buildPrimaryOwnedMemberSpecForRuntime: (input) =>
       buildPrimaryOwnedMemberSpecForRuntime({
         configuredMember: input.configuredMember,
         request: asServiceProvisioningRun<TRun>(input.run).request,
       }),
     buildProvisioningEnv: (providerId, providerBackendId, options) =>
-      service.providerRuntime.buildProvisioningEnv(providerId, providerBackendId, options),
+      runtimeLaunch.providerRuntime.buildProvisioningEnv(providerId, providerBackendId, options),
     materializeEffectiveTeamMemberSpecs: (input) =>
-      service.materializeEffectiveTeamMemberSpecs(input),
+      memberSpec.materializeEffectiveTeamMemberSpecs(input),
     resolveDirectMemberLaunchIdentity: (input) =>
-      service.resolveDirectMemberLaunchIdentity({
+      runtimeLaunch.resolveDirectMemberLaunchIdentity({
         ...input,
         run: asServiceProvisioningRun<TRun>(input.run),
       }),
-    buildTeamRuntimeLaunchArgsPlan: (input) => service.buildTeamRuntimeLaunchArgsPlan(input),
+    buildTeamRuntimeLaunchArgsPlan: (input) => runtimeLaunch.buildTeamRuntimeLaunchArgsPlan(input),
     persistInboxMessage: (teamName, memberName, message) =>
-      service.persistInboxMessage(teamName, memberName, message),
-    persistSentMessage: (teamName, message) => service.persistSentMessage(teamName, message),
+      messaging.persistInboxMessage(teamName, memberName, message),
+    persistSentMessage: (teamName, message) => messaging.persistSentMessage(teamName, message),
     appendMemberBootstrapDiagnostic: (run, memberName, text) =>
-      service.appendMemberBootstrapDiagnostic(
+      runState.appendMemberBootstrapDiagnostic(
         asServiceProvisioningRun<TRun>(run),
         memberName,
         text
       ),
     setMemberSpawnStatus: (run, memberName, status, error, livenessSource, heartbeatAt) =>
-      service.setMemberSpawnStatus(
+      runState.setMemberSpawnStatus(
         asServiceProvisioningRun<TRun>(run),
         memberName,
         status,
@@ -220,71 +409,72 @@ export function createTeamProvisioningMemberLifecycleHost<
         heartbeatAt
       ),
     upsertRunAllEffectiveMember: (run, member) =>
-      service.upsertRunAllEffectiveMember(asServiceProvisioningRun<TRun>(run), member),
+      runState.upsertRunAllEffectiveMember(asServiceProvisioningRun<TRun>(run), member),
     removeRunAllEffectiveMember: (run, memberName) =>
-      service.removeRunAllEffectiveMember(asServiceProvisioningRun<TRun>(run), memberName),
+      runState.removeRunAllEffectiveMember(asServiceProvisioningRun<TRun>(run), memberName),
     invalidateRuntimeSnapshotCaches: (teamName) =>
-      service.invalidateRuntimeSnapshotCaches(teamName),
+      runState.invalidateRuntimeSnapshotCaches(teamName),
     resetRuntimeToolActivity: (run, memberName) =>
-      service.resetRuntimeToolActivity(asServiceProvisioningRun<TRun>(run), memberName),
+      runState.resetRuntimeToolActivity(asServiceProvisioningRun<TRun>(run), memberName),
     clearMemberSpawnToolTracking: (run, memberName) =>
-      service.clearMemberSpawnToolTracking(asServiceProvisioningRun<TRun>(run), memberName),
-    getAliveRunId: (teamName) => service.runTracking.getAliveRunId(teamName),
-    getTrackedRunId: (teamName) => service.runTracking.getTrackedRunId(teamName),
-    getProvisioningRunId: (teamName) => service.runTracking.getProvisioningRunId(teamName),
-    isCurrentTrackedRun: (run) => service.isCurrentTrackedRun(asServiceProvisioningRun<TRun>(run)),
+      runState.clearMemberSpawnToolTracking(asServiceProvisioningRun<TRun>(run), memberName),
+    getAliveRunId: (teamName) => runState.runTracking.getAliveRunId(teamName),
+    getTrackedRunId: (teamName) => runState.runTracking.getTrackedRunId(teamName),
+    getProvisioningRunId: (teamName) => runState.runTracking.getProvisioningRunId(teamName),
+    isCurrentTrackedRun: (run) => runState.isCurrentTrackedRun(asServiceProvisioningRun<TRun>(run)),
     readConfigForStrictDecision: (teamName) =>
-      service.configFacade.readConfigForStrictDecision(teamName),
+      stores.configFacade.readConfigForStrictDecision(teamName),
     resolveEffectiveConfiguredMember: (configMembers, metaMembers, memberName) =>
       resolveEffectiveConfiguredMember(configMembers, metaMembers, memberName),
     resolveLeadMemberName: (configMembers, metaMembers) =>
       resolveLeadMemberName(configMembers, metaMembers),
     getLiveTeamAgentRuntimeMetadata: (teamName) =>
-      service.getLiveTeamAgentRuntimeMetadata(teamName),
+      runState.getLiveTeamAgentRuntimeMetadata(teamName),
     readPersistedRuntimeMembers: (teamName) =>
-      service.configFacade.readPersistedRuntimeMembers(teamName),
+      stores.configFacade.readPersistedRuntimeMembers(teamName),
     persistLaunchStateSnapshot: (run, phase) =>
-      service.persistLaunchStateSnapshot(asServiceProvisioningRun<TRun>(run), phase),
+      launchState.persistLaunchStateSnapshot(asServiceProvisioningRun<TRun>(run), phase),
     buildTrackedMemberMcpLaunchConfig: (input) =>
-      service.memberMcpLaunchConfigProvisioner.buildTrackedMemberMcpLaunchConfig({
+      runtimeLaunch.memberMcpLaunchConfigProvisioner.buildTrackedMemberMcpLaunchConfig({
         ...input,
         run: asServiceProvisioningRun<TRun>(input.run),
       }),
     removeTrackedMemberMcpLaunchConfig: (run, config) =>
-      service.memberMcpLaunchConfigProvisioner.removeTrackedMemberMcpLaunchConfig(
+      runtimeLaunch.memberMcpLaunchConfigProvisioner.removeTrackedMemberMcpLaunchConfig(
         asServiceProvisioningRun<TRun>(run),
         config
       ),
     sendMessageToRun: (run, message) =>
-      service.sendMessageToRun(asServiceProvisioningRun<TRun>(run), message),
-    getOpenCodeRuntimeAdapter: () => service.getOpenCodeRuntimeAdapter(),
+      runtimeLaunch.sendMessageToRun(asServiceProvisioningRun<TRun>(run), message),
+    getOpenCodeRuntimeAdapter: () => openCodeRuntime.getOpenCodeRuntimeAdapter(),
     resolveOpenCodeMemberWorkspacesForRuntime: (input) =>
-      service.resolveOpenCodeMemberWorkspacesForRuntime(input),
+      openCodeRuntime.resolveOpenCodeMemberWorkspacesForRuntime(input),
     buildConfiguredProvisioningMember,
     runOpenCodeTeamRuntimeAdapterLaunch: (input) =>
-      service.runOpenCodeTeamRuntimeAdapterLaunch(input),
+      openCodeRuntime.runOpenCodeTeamRuntimeAdapterLaunch(input),
     createMixedSecondaryLaneStateForMember: (run, member) =>
-      service.createMixedSecondaryLaneStateForMember(
+      mixedSecondaryRuntime.createMixedSecondaryLaneStateForMember(
         asServiceProvisioningRun<TRun>(run),
         member
       ) as unknown as HostMixedSecondaryLane,
     stopSingleMixedSecondaryRuntimeLane: (run, lane, reason) =>
-      service.stopSingleMixedSecondaryRuntimeLane(
+      mixedSecondaryRuntime.stopSingleMixedSecondaryRuntimeLane(
         asServiceProvisioningRun<TRun>(run),
         asServiceMixedSecondaryLane<TMixedSecondaryLane>(lane),
         reason
       ),
-    getRunLeadName: (run) => service.getRunLeadName(asServiceProvisioningRun<TRun>(run)),
+    getRunLeadName: (run) =>
+      mixedSecondaryRuntime.getRunLeadName(asServiceProvisioningRun<TRun>(run)),
     launchSingleMixedSecondaryLane: (run, lane) =>
-      service.launchSingleMixedSecondaryLane(
+      mixedSecondaryRuntime.launchSingleMixedSecondaryLane(
         asServiceProvisioningRun<TRun>(run),
         asServiceMixedSecondaryLane<TMixedSecondaryLane>(lane)
       ),
     getMixedSecondaryLaunchPhase: (run) =>
-      service.getMixedSecondaryLaunchPhase(asServiceProvisioningRun<TRun>(run)),
+      mixedSecondaryRuntime.getMixedSecondaryLaunchPhase(asServiceProvisioningRun<TRun>(run)),
     writeLaunchStateSnapshot: (teamName, snapshot) =>
-      service.writeLaunchStateSnapshot(teamName, snapshot),
+      launchState.writeLaunchStateSnapshot(teamName, snapshot),
     readPersistedTeamProjectPath: (teamName) =>
-      service.configFacade.readPersistedTeamProjectPath(teamName),
+      stores.configFacade.readPersistedTeamProjectPath(teamName),
   };
 }

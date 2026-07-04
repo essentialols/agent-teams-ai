@@ -1217,6 +1217,7 @@ export class TeamProvisioningService {
       getTeamsBasePath,
       nowIso,
     });
+  private readonly launchStateWrittenRunIdByTeam = new Map<string, string>();
   private readonly launchStateStoreBoundary: TeamProvisioningLaunchStateStoreBoundary;
   private readonly taskActivityRepairBoundary!: TeamProvisioningTaskActivityRepairBoundary<ProvisioningRun>;
   private readonly failedOpenCodeSecondaryRetryInFlightByTeam = new Map<
@@ -1332,8 +1333,7 @@ export class TeamProvisioningService {
     readLaunchState: (teamName) => this.launchStateStore.read(teamName),
     writeLaunchStateSnapshot: (teamName, snapshot) =>
       this.writeLaunchStateSnapshot(teamName, snapshot),
-    readPersistedTeamProjectPath: (teamName) =>
-      this.configFacade.readPersistedTeamProjectPath(teamName),
+    readPersistedTeamProjectPath: (teamName) => this.readPersistedTeamProjectPath(teamName),
     clearOpenCodeRuntimeLaneStorage,
     deleteSecondaryRuntimeRun: (teamName, laneId) =>
       this.deleteSecondaryRuntimeRun(teamName, laneId),
@@ -1437,8 +1437,7 @@ export class TeamProvisioningService {
           this.shouldRecoverStalePersistedMixedLaunchSnapshot(snapshot),
         readTeamMeta: (teamName) => this.teamMetaStore.getMeta(teamName),
         readMembersMeta: (teamName) => this.membersMetaStore.getMeta(teamName),
-        readPersistedTeamProjectPath: (teamName) =>
-          this.configFacade.readPersistedTeamProjectPath(teamName),
+        readPersistedTeamProjectPath: (teamName) => this.readPersistedTeamProjectPath(teamName),
         tryRecoverMissingOpenCodeSecondaryLaneFromRuntime: (input) =>
           this.openCodeRuntimeRecoveryBoundary.tryRecoverMissingOpenCodeSecondaryLaneFromRuntime(
             input
@@ -1559,8 +1558,7 @@ export class TeamProvisioningService {
           this.configFacade.readConfigForObservation(teamName),
         teamMetaStore: this.teamMetaStore,
         membersMetaStore: this.membersMetaStore,
-        readPersistedTeamProjectPath: (teamName) =>
-          this.configFacade.readPersistedTeamProjectPath(teamName),
+        readPersistedTeamProjectPath: (teamName) => this.readPersistedTeamProjectPath(teamName),
         openCodeRuntimeRecoveryIdentity: this.openCodeRuntimeRecoveryIdentity,
       },
       {
@@ -1569,8 +1567,14 @@ export class TeamProvisioningService {
       }
     );
     this.launchStateStoreBoundary = new TeamProvisioningLaunchStateStoreBoundary({
-      launchStateStore: this.launchStateStore,
-      membersMetaStore: this.membersMetaStore,
+      launchStateStore: {
+        read: (teamName) => this.launchStateStore.read(teamName),
+        write: (teamName, snapshot) => this.launchStateStore.write(teamName, snapshot),
+        clear: (teamName) => this.launchStateStore.clear(teamName),
+      },
+      membersMetaStore: {
+        getMembers: (teamName) => this.membersMetaStore.getMembers(teamName),
+      },
       getTrackedRunId: (teamName) => this.runTracking.getTrackedRunId(teamName),
       applyOpenCodeSecondaryEvidenceOverlay: (params) =>
         this.applyOpenCodeSecondaryEvidenceOverlay(params),
@@ -1582,6 +1586,7 @@ export class TeamProvisioningService {
       logDebug: (message) => logger.debug(message),
       nowMs: () => Date.now(),
       noopRefreshMs: TeamProvisioningService.LAUNCH_STATE_NOOP_REFRESH_MS,
+      writtenRunIdByTeam: this.launchStateWrittenRunIdByTeam,
     });
     this.taskActivityRepairBoundary =
       new TeamProvisioningTaskActivityRepairBoundary<ProvisioningRun>({
@@ -1607,7 +1612,7 @@ export class TeamProvisioningService {
       launchStateStore: this.launchStateStore,
       readConfigSnapshot: (targetTeamName) => this.configFacade.readConfigSnapshot(targetTeamName),
       readPersistedRuntimeMembers: (targetTeamName) =>
-        this.configFacade.readPersistedRuntimeMembers(targetTeamName),
+        this.readPersistedRuntimeMembers(targetTeamName),
       liveTeamAgentRuntimeMetadataCache: this.liveTeamAgentRuntimeMetadataCache,
       cloneLiveTeamAgentRuntimeMetadata: (metadata) =>
         this.cloneLiveTeamAgentRuntimeMetadata(metadata),
@@ -1632,7 +1637,7 @@ export class TeamProvisioningService {
       launchStateStore: this.launchStateStore,
       readConfigSnapshot: (targetTeamName) => this.configFacade.readConfigSnapshot(targetTeamName),
       readPersistedRuntimeMembers: (targetTeamName) =>
-        this.configFacade.readPersistedRuntimeMembers(targetTeamName),
+        this.readPersistedRuntimeMembers(targetTeamName),
       getMemberSpawnStatuses: (targetTeamName) => this.getMemberSpawnStatuses(targetTeamName),
       getLiveTeamAgentRuntimeMetadata: (targetTeamName) =>
         this.getLiveTeamAgentRuntimeMetadata(targetTeamName),
@@ -1754,12 +1759,10 @@ export class TeamProvisioningService {
       materializeLaunchCompatibilityRepair: (launchRequest, report) =>
         this.configFacade.materializeLaunchCompatibilityRepair(launchRequest, report),
       normalizeTeamConfigForLaunch: (teamName, configRaw) =>
-        this.configFacade.normalizeTeamConfigForLaunch(teamName, configRaw),
-      assertConfigLeadOnlyForLaunch: (teamName) =>
-        this.configFacade.assertConfigLeadOnlyForLaunch(teamName),
-      updateConfigProjectPath: (teamName, cwd) =>
-        this.configFacade.updateConfigProjectPath(teamName, cwd),
-      restorePrelaunchConfig: (teamName) => this.configFacade.restorePrelaunchConfig(teamName),
+        this.normalizeTeamConfigForLaunch(teamName, configRaw),
+      assertConfigLeadOnlyForLaunch: (teamName) => this.assertConfigLeadOnlyForLaunch(teamName),
+      updateConfigProjectPath: (teamName, cwd) => this.updateConfigProjectPath(teamName, cwd),
+      restorePrelaunchConfig: (teamName) => this.restorePrelaunchConfig(teamName),
       materializeEffectiveTeamMemberSpecs: (params) =>
         this.prepareFacade.materializeEffectiveTeamMemberSpecs(params),
       resolveOpenCodeMemberWorkspacesForRuntime: (params) =>
@@ -1850,16 +1853,9 @@ export class TeamProvisioningService {
       });
     this.verificationProbePorts = createTeamProvisioningVerificationProbePorts<ProvisioningRun>({
       service: {
-        persistMembersMeta: (teamName, request) =>
-          this.configFacade.persistMembersMeta(teamName, request),
+        persistMembersMeta: (teamName, request) => this.persistMembersMeta(teamName, request),
         updateConfigPostLaunch: (teamName, cwd, detectedSessionId, color, options) =>
-          this.configFacade.updateConfigPostLaunch(
-            teamName,
-            cwd,
-            detectedSessionId,
-            color,
-            options
-          ),
+          this.updateConfigPostLaunch(teamName, cwd, detectedSessionId, color, options),
         refreshMemberSpawnStatusesFromLeadInbox: (run) =>
           this.refreshMemberSpawnStatusesFromLeadInbox(run),
         maybeAuditMemberSpawnStatuses: (run, options) =>
@@ -1887,8 +1883,7 @@ export class TeamProvisioningService {
         stopStallWatchdog: (run) => this.outputRecoveryFacade.stopStallWatchdog(run),
         hasSecondaryRuntimeRuns: (teamName) => this.hasSecondaryRuntimeRuns(teamName),
         stopMixedSecondaryRuntimeLanes: (teamName) => this.stopMixedSecondaryRuntimeLanes(teamName),
-        persistMembersMeta: (teamName, request) =>
-          this.configFacade.persistMembersMeta(teamName, request),
+        persistMembersMeta: (teamName, request) => this.persistMembersMeta(teamName, request),
         finalizeIncompleteLaunchStateBeforeCleanup: (run, fallbackReason) =>
           this.finalizeIncompleteLaunchStateBeforeCleanup(run, fallbackReason),
         cleanupRun: (run) => this.cleanupRun(run),
@@ -2172,6 +2167,14 @@ export class TeamProvisioningService {
     return { config, teamMeta, metaMembers };
   }
 
+  private readPersistedRuntimeMembers(teamName: string): PersistedRuntimeMemberLike[] {
+    return this.configFacade.readPersistedRuntimeMembers(teamName);
+  }
+
+  private readPersistedTeamProjectPath(teamName: string): string | null {
+    return this.configFacade.readPersistedTeamProjectPath(teamName);
+  }
+
   private getRuntimeSnapshotCacheGeneration(teamName: string): number {
     return this.runtimeSnapshotCacheBoundary.getRuntimeSnapshotCacheGeneration(teamName);
   }
@@ -2368,6 +2371,61 @@ export class TeamProvisioningService {
     return this.prepareFacade.resolveOpenCodeMemberWorkspacesForRuntime(params);
   }
 
+  private normalizeTeamConfigForLaunch(teamName: string, configRaw: string): Promise<void> {
+    return this.configFacade.normalizeTeamConfigForLaunch(teamName, configRaw);
+  }
+
+  private assertConfigLeadOnlyForLaunch(teamName: string): Promise<void> {
+    return this.configFacade.assertConfigLeadOnlyForLaunch(teamName);
+  }
+
+  private updateConfigProjectPath(teamName: string, cwd: string): Promise<void> {
+    return this.configFacade.updateConfigProjectPath(teamName, cwd);
+  }
+
+  private restorePrelaunchConfig(teamName: string): Promise<void> {
+    return this.configFacade.restorePrelaunchConfig(teamName);
+  }
+
+  private cleanupPrelaunchBackup(teamName: string): Promise<void> {
+    return this.configFacade.cleanupPrelaunchBackup(teamName);
+  }
+
+  private persistMembersMeta(teamName: string, request: TeamCreateRequest): Promise<void> {
+    return this.configFacade.persistMembersMeta(teamName, request);
+  }
+
+  private resolveLaunchExpectedMembers(
+    teamName: string,
+    configRaw: string,
+    leadProviderId?: TeamProviderId
+  ): ReturnType<TeamProvisioningConfigFacade['resolveLaunchExpectedMembers']> {
+    return this.configFacade.resolveLaunchExpectedMembers(teamName, configRaw, leadProviderId);
+  }
+
+  private updateConfigPostLaunch(
+    teamName: string,
+    projectPath: string,
+    detectedSessionId: string | null,
+    color?: string,
+    launchState?: Parameters<TeamProvisioningConfigFacade['updateConfigPostLaunch']>[4]
+  ): Promise<void> {
+    return this.configFacade.updateConfigPostLaunch(
+      teamName,
+      projectPath,
+      detectedSessionId,
+      color,
+      launchState
+    );
+  }
+
+  private writeOpenCodeTeamConfig(
+    launchRequest: Parameters<typeof writeOpenCodeTeamConfig>[0],
+    members: Parameters<typeof writeOpenCodeTeamConfig>[1]
+  ): ReturnType<typeof writeOpenCodeTeamConfig> {
+    return writeOpenCodeTeamConfig(launchRequest, members);
+  }
+
   private async prepareWorkspaceTrustForDeterministicRun(input: {
     mode: 'create' | 'launch';
     run: ProvisioningRun;
@@ -2415,7 +2473,7 @@ export class TeamProvisioningService {
       }).catch(() => undefined);
     }
     if (input.mode === 'launch') {
-      await this.configFacade.restorePrelaunchConfig(run.teamName).catch(() => undefined);
+      await this.restorePrelaunchConfig(run.teamName).catch(() => undefined);
     }
     this.cleanupRun(run);
     throw new Error(input.error);
@@ -2440,7 +2498,7 @@ export class TeamProvisioningService {
       }).catch(() => undefined);
     }
     if (input.mode === 'launch') {
-      await this.configFacade.restorePrelaunchConfig(run.teamName).catch(() => undefined);
+      await this.restorePrelaunchConfig(run.teamName).catch(() => undefined);
     }
     this.cleanupRun(run);
     throw new Error('Team launch cancelled by app shutdown');
@@ -2588,7 +2646,7 @@ export class TeamProvisioningService {
           this.configFacade.readConfigForObservation(candidateTeamName),
         readMembersMeta: (candidateTeamName) => this.membersMetaStore.getMembers(candidateTeamName),
         readPersistedTeamProjectPath: (candidateTeamName) =>
-          this.configFacade.readPersistedTeamProjectPath(candidateTeamName),
+          this.readPersistedTeamProjectPath(candidateTeamName),
         tryStopPersistedOpenCodeRuntimePidForStoppedLane: (input) =>
           tryStopPersistedOpenCodeRuntimePidForStoppedLaneHelper(input, {
             readProcessCommandByPid: readOpenCodeRuntimeLaneProcessCommandByPid,
@@ -2859,8 +2917,7 @@ export class TeamProvisioningService {
       resolveOpenCodeMemberIdentityFromDirectory: (teamName, memberName, directory) =>
         this.resolveOpenCodeMemberIdentityFromDirectory(teamName, memberName, directory),
       stoppingSecondaryRuntimeTeams: this.stoppingSecondaryRuntimeTeams,
-      readPersistedTeamProjectPath: (teamName) =>
-        this.configFacade.readPersistedTeamProjectPath(teamName),
+      readPersistedTeamProjectPath: (teamName) => this.readPersistedTeamProjectPath(teamName),
       runTracking: {
         resolveDeliverableTrackedRuntimeRunId: (teamName) =>
           this.runTracking.resolveDeliverableTrackedRuntimeRunId(teamName),
@@ -3342,8 +3399,7 @@ export class TeamProvisioningService {
       membersMetaStore: {
         getMembers: (teamName) => this.membersMetaStore.getMembers(teamName),
       },
-      readPersistedRuntimeMembers: (teamName) =>
-        this.configFacade.readPersistedRuntimeMembers(teamName),
+      readPersistedRuntimeMembers: (teamName) => this.readPersistedRuntimeMembers(teamName),
       runTracking: {
         getTrackedRunId: (teamName) => this.runTracking.getTrackedRunId(teamName),
       },
@@ -3892,7 +3948,7 @@ export class TeamProvisioningService {
       writeMembersMeta: (teamName, members, options) =>
         this.membersMetaStore.writeMembers(teamName, members, options),
       writeOpenCodeTeamConfig: (launchRequest, members) =>
-        writeOpenCodeTeamConfig(launchRequest, members),
+        this.writeOpenCodeTeamConfig(launchRequest, members),
       prepareOpenCodeRuntimeAdapterLaunch: (params) =>
         this.prepareFacade.prepareOpenCodeRuntimeAdapterLaunch(params),
       readTeamConfigRaw: (teamName) => {
@@ -3903,9 +3959,8 @@ export class TeamProvisioningService {
         });
       },
       resolveLaunchExpectedMembers: (teamName, configRaw, leadProviderId) =>
-        this.configFacade.resolveLaunchExpectedMembers(teamName, configRaw, leadProviderId),
-      updateConfigProjectPath: (teamName, cwd) =>
-        this.configFacade.updateConfigProjectPath(teamName, cwd),
+        this.resolveLaunchExpectedMembers(teamName, configRaw, leadProviderId),
+      updateConfigProjectPath: (teamName, cwd) => this.updateConfigProjectPath(teamName, cwd),
       readExistingTasks: (teamName) => new TeamTaskReader().getTasks(teamName),
       warn: (message) => {
         logger.warn(message);
@@ -4303,8 +4358,7 @@ export class TeamProvisioningService {
       emitTeamChange: (event) => this.teamChangeEmitter?.(event),
       readLaunchState: (teamName) => this.launchStateStore.read(teamName),
       getOpenCodeRuntimeAdapter: () => this.getOpenCodeRuntimeAdapter(),
-      readPersistedTeamProjectPath: (teamName) =>
-        this.configFacade.readPersistedTeamProjectPath(teamName),
+      readPersistedTeamProjectPath: (teamName) => this.readPersistedTeamProjectPath(teamName),
       logWarning: (message) => logger.warn(message),
     });
   }
@@ -5210,7 +5264,7 @@ export class TeamProvisioningService {
       teamName,
       memberName,
       member,
-      runtimeMembers: this.configFacade.readPersistedRuntimeMembers(teamName),
+      runtimeMembers: this.readPersistedRuntimeMembers(teamName),
     });
   }
 
@@ -5241,8 +5295,7 @@ export class TeamProvisioningService {
         this.findBootstrapRuntimeProofObservedAt(teamName, memberName, member),
       findBootstrapTranscriptOutcome: (teamName, memberName, sinceMs) =>
         this.findBootstrapTranscriptOutcome(teamName, memberName, sinceMs),
-      readPersistedRuntimeMembers: (teamName) =>
-        this.configFacade.readPersistedRuntimeMembers(teamName),
+      readPersistedRuntimeMembers: (teamName) => this.readPersistedRuntimeMembers(teamName),
     });
   }
 
@@ -5374,8 +5427,7 @@ export class TeamProvisioningService {
 
   private stopPersistentTeamMembers(teamName: string): void {
     stopPersistentTeamMembersFlow(teamName, {
-      readPersistedRuntimeMembers: (teamName) =>
-        this.configFacade.readPersistedRuntimeMembers(teamName),
+      readPersistedRuntimeMembers: (teamName) => this.readPersistedRuntimeMembers(teamName),
       killPersistedPaneMembers: (teamName, members) =>
         this.killPersistedPaneMembers(teamName, members),
       killOrphanedTeamAgentProcesses: (teamName) => this.killOrphanedTeamAgentProcesses(teamName),
@@ -5578,7 +5630,12 @@ export class TeamProvisioningService {
         SecondaryLaunchResult
       >,
       outputRecovery: this.outputRecoveryFacade,
-      config: this.configFacade,
+      config: {
+        updateConfigPostLaunch: (teamName, cwd, detectedSessionId, color, options) =>
+          this.updateConfigPostLaunch(teamName, cwd, detectedSessionId, color, options),
+        cleanupPrelaunchBackup: (teamName) => this.cleanupPrelaunchBackup(teamName),
+        persistMembersMeta: (teamName, request) => this.persistMembersMeta(teamName, request),
+      },
       updateProgress,
       provisioningRunByTeam: this.provisioningRunByTeam,
       setAliveRunId: (teamName, runId) => this.runTracking.setAliveRunId(teamName, runId),

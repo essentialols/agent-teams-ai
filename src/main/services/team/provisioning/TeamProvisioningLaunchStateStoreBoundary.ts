@@ -33,13 +33,16 @@ export interface TeamProvisioningLaunchStateStoreBoundaryPorts {
   logDebug(message: string): void;
   nowMs(): number;
   noopRefreshMs: number;
+  writtenRunIdByTeam?: Map<string, string>;
 }
 
 export class TeamProvisioningLaunchStateStoreBoundary {
   private readonly queue = new Map<string, Promise<unknown>>();
-  private readonly writtenRunIdByTeam = new Map<string, string>();
+  private readonly writtenRunIdByTeam: Map<string, string>;
 
-  constructor(private readonly ports: TeamProvisioningLaunchStateStoreBoundaryPorts) {}
+  constructor(private readonly ports: TeamProvisioningLaunchStateStoreBoundaryPorts) {
+    this.writtenRunIdByTeam = ports.writtenRunIdByTeam ?? new Map<string, string>();
+  }
 
   async clearPersistedLaunchState(
     teamName: string,
@@ -48,10 +51,7 @@ export class TeamProvisioningLaunchStateStoreBoundary {
     await this.enqueue(teamName, () => this.clearPersistedLaunchStateNow(teamName, options));
   }
 
-  canClearPersistedLaunchStateForRun(
-    teamName: string,
-    expectedRunId: string | undefined
-  ): boolean {
+  canClearPersistedLaunchStateForRun(teamName: string, expectedRunId: string | undefined): boolean {
     if (!expectedRunId) {
       return true;
     }
@@ -131,8 +131,7 @@ export class TeamProvisioningLaunchStateStoreBoundary {
   isLaunchStateNoopRefreshDue(snapshot: PersistedTeamLaunchSnapshot): boolean {
     const updatedAtMs = Date.parse(snapshot.updatedAt);
     return (
-      !Number.isFinite(updatedAtMs) ||
-      this.ports.nowMs() - updatedAtMs >= this.ports.noopRefreshMs
+      !Number.isFinite(updatedAtMs) || this.ports.nowMs() - updatedAtMs >= this.ports.noopRefreshMs
     );
   }
 

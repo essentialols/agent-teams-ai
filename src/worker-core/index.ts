@@ -5,6 +5,7 @@ export * from "./account-capacity";
 export * from "./abort-signal";
 export * from "./control";
 export * from "./host-command";
+export * from "./integration";
 export * from "./job-watch";
 export * from "./run-provider-kind";
 export * from "./run-observability";

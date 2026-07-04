@@ -145,6 +145,14 @@ The expected control loop is:
 7. integrate reviewed commits with `codex_goal_project_integrate_commit`;
 8. push allowed branches with `codex_goal_project_push_branch`.
 
+`codex_goal_project_integrate_commit` and `codex_goal_project_push_branch`
+are low-level broker operations. They validate scope, branch, remote and force
+policy, but they do not by themselves prove that a worker output has passed the
+full autonomous integration gate. Policy-controlled merge rights should use the
+Project Integration lifecycle in `worker-core/integration`: open attempt, apply
+worker output, run required checks, create a commit candidate, then push or
+reject.
+
 The broker rejects child manifests that try to override the controller-owned
 scope, request `danger_full_access`, request `project_scoped_control`, use
 unapproved accounts, write job roots outside the registry base, or use

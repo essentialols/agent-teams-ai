@@ -302,6 +302,12 @@ orchestrator strategy -> provider adapter internals
 The merge-rights feature should not be implemented as a single auto-merge
 script. It should be implemented as project integration capabilities.
 
+Current implementation status: the core `worker-core/integration` bounded
+context owns the domain model, ports and application use cases for the
+integration lifecycle. Provider-facing MCP/CLI tools and real git/check
+adapters should be added on top of that layer, without duplicating policy logic
+in handlers.
+
 ### Phase 1: domain model
 
 Add the project integration bounded context.

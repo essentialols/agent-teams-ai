@@ -1,0 +1,350 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  AccessBoundary,
+  CheckRunStatus,
+  IntegrationAuditEventType,
+  IntegrationAttemptStatus,
+  IntegrationError,
+  IntegrationErrorReason,
+  PushAttemptStatus,
+  ReviewDecisionStatus,
+  SecretScanStatus,
+  applyWorkerOutput,
+  commitApprovedChanges,
+  openProjectIntegrationAttempt,
+  pushApprovedCommit,
+  runRequiredChecks,
+  type CheckRun,
+  type CheckRunnerPort,
+  type GitPort,
+  type IntegrationAttempt,
+  type IntegrationAttemptStorePort,
+  type IntegrationAuditEvent,
+  type ProjectAccessScope,
+  type ProjectIntegrationCheckSpec,
+  type ProjectIntegrationPolicy,
+  type SecretScannerPort,
+  type WorkspaceLock,
+  type WorkspaceLockPort,
+} from "../../index";
+
+describe("project integration use cases", () => {
+  it("opens, applies, checks, commits and pushes a reviewed worker output", async () => {
+    const fixture = createFixture();
+
+    const opened = await openProjectIntegrationAttempt(fixture.deps(), input());
+    const applied = await applyWorkerOutput(fixture.deps(), {
+      attemptId: opened.attemptId,
+    });
+    const checked = await runRequiredChecks(fixture.deps(), {
+      attemptId: applied.attemptId,
+    });
+    const committed = await commitApprovedChanges(fixture.deps(), {
+      attemptId: checked.attemptId,
+      message: "fix(memory): integrate worker output",
+      policy: policy(),
+    });
+    const pushed = await pushApprovedCommit(fixture.deps(), {
+      attemptId: committed.attemptId,
+      policy: policy(),
+    });
+
+    expect(pushed).toMatchObject({
+      status: IntegrationAttemptStatus.Pushed,
+      pushAttempt: {
+        status: PushAttemptStatus.Pushed,
+        remote: "origin",
+        branch: "main",
+        commitSha: "abc123",
+      },
+    });
+    expect(fixture.git.calls).toEqual([
+      "status",
+      "apply",
+      "diffCheck",
+      "status",
+      "commit",
+      "branch",
+      "push",
+    ]);
+    expect(fixture.events.map((event) => event.type)).toEqual([
+      IntegrationAuditEventType.AttemptOpened,
+      IntegrationAuditEventType.AttemptApplied,
+      IntegrationAuditEventType.ChecksStarted,
+      IntegrationAuditEventType.ChecksPassed,
+      IntegrationAuditEventType.CommitCreated,
+      IntegrationAuditEventType.Pushed,
+    ]);
+  });
+
+  it("rejects dirty unrelated target workspaces before applying worker output", async () => {
+    const fixture = createFixture();
+    fixture.git.dirtyFiles = ["src/unrelated.ts"];
+    const opened = await openProjectIntegrationAttempt(fixture.deps(), input());
+
+    await expect(applyWorkerOutput(fixture.deps(), {
+      attemptId: opened.attemptId,
+    })).rejects.toMatchObject({
+      reason: IntegrationErrorReason.DirtyWorkspace,
+      evidence: ["src/unrelated.ts"],
+    });
+    expect(fixture.git.calls).toEqual(["status"]);
+  });
+
+  it("does not commit when required checks failed", async () => {
+    const fixture = createFixture({
+      checkStatus: CheckRunStatus.Failed,
+    });
+    const opened = await openProjectIntegrationAttempt(fixture.deps(), input());
+    const applied = await applyWorkerOutput(fixture.deps(), {
+      attemptId: opened.attemptId,
+    });
+    const checked = await runRequiredChecks(fixture.deps(), {
+      attemptId: applied.attemptId,
+    });
+
+    await expect(commitApprovedChanges(fixture.deps(), {
+      attemptId: checked.attemptId,
+      message: "fix(memory): integrate worker output",
+      policy: policy(),
+    })).rejects.toMatchObject({
+      reason: IntegrationErrorReason.InvalidTransition,
+    });
+    expect(fixture.git.calls).toEqual(["status", "apply"]);
+  });
+
+  it("blocks commit when secret scan fails", async () => {
+    const fixture = createFixture({
+      secretScanStatus: SecretScanStatus.Failed,
+    });
+    const opened = await openProjectIntegrationAttempt(fixture.deps(), input());
+    const applied = await applyWorkerOutput(fixture.deps(), {
+      attemptId: opened.attemptId,
+    });
+    const checked = await runRequiredChecks(fixture.deps(), {
+      attemptId: applied.attemptId,
+    });
+
+    await expect(commitApprovedChanges(fixture.deps(), {
+      attemptId: checked.attemptId,
+      message: "fix(memory): integrate worker output",
+      policy: policy(),
+    })).rejects.toMatchObject({
+      reason: IntegrationErrorReason.SecretScanFailed,
+    });
+    expect(fixture.git.calls).toEqual([
+      "status",
+      "apply",
+      "diffCheck",
+      "status",
+    ]);
+  });
+
+  it("fails closed when opening an attempt outside branch policy", async () => {
+    const fixture = createFixture();
+
+    await expect(openProjectIntegrationAttempt(fixture.deps(), {
+      ...input(),
+      targetBranch: "feature/outside",
+    })).rejects.toBeInstanceOf(IntegrationError);
+  });
+});
+
+function input() {
+  return {
+    policy: policy(),
+    attemptId: "attempt-1",
+    projectId: "infinity-context",
+    controllerJobId: "infinity-context-controller",
+    sourceWorkspacePath: "/work/infinity-context-child",
+    targetWorkspacePath: "/work/infinity-context-main",
+    targetBranch: "main",
+    targetRemote: "origin",
+    workerOutput: {
+      workerJobId: "infinity-context-child-v1",
+      workspacePath: "/work/infinity-context-child",
+      commitSha: "def456",
+      changedFiles: ["src/memory.ts"],
+    },
+    reviewDecision: {
+      reviewedBy: "controller",
+      decision: ReviewDecisionStatus.Approved,
+      reason: "focused worker output reviewed",
+      approvedFiles: ["src/memory.ts"],
+      requiredChecks: [
+        {
+          checkId: "test:memory",
+          command: ["npm", "test", "--", "memory"],
+        },
+      ],
+    },
+  };
+}
+
+function policy(): ProjectIntegrationPolicy {
+  return {
+    access: {
+      boundary: AccessBoundary.ProjectScopedControl,
+      scope: scope(),
+    },
+    allowedPathPrefixes: ["src"],
+    requiredCheckIds: ["test:memory"],
+  };
+}
+
+function scope(): ProjectAccessScope {
+  return {
+    projectId: "infinity-context",
+    workspaceRoots: [
+      "/work/infinity-context-main",
+      "/work/infinity-context-child",
+    ],
+    worktreeRoots: ["/work/infinity-context-child"],
+    registryRoot: "/var/data/worker-jobs/registry",
+    jobIdPrefixes: ["infinity-context-"],
+    tmuxSessionPrefixes: ["infinity-context-"],
+    allowedBranches: ["main"],
+    allowedGitRemotes: ["origin"],
+  };
+}
+
+function createFixture(options: {
+  readonly checkStatus?: CheckRunStatus;
+  readonly secretScanStatus?: SecretScanStatus;
+} = {}) {
+  const events: IntegrationAuditEvent[] = [];
+  const store = new MemoryAttemptStore(events);
+  const git = new FakeGit();
+  const locks = new FakeLocks();
+  const checks = new FakeChecks(options.checkStatus ?? CheckRunStatus.Passed);
+  const scanner = new FakeScanner(
+    options.secretScanStatus ?? SecretScanStatus.Passed,
+  );
+  return {
+    events,
+    git,
+    deps() {
+      return {
+        store,
+        git,
+        locks,
+        checks,
+        scanner,
+        clock: { now: () => new Date("2026-01-01T00:00:00.000Z") },
+      };
+    },
+  };
+}
+
+class MemoryAttemptStore implements IntegrationAttemptStorePort {
+  private attempts = new Map<string, IntegrationAttempt>();
+
+  constructor(private readonly events: IntegrationAuditEvent[]) {}
+
+  create(attempt: IntegrationAttempt): void {
+    if (this.attempts.has(attempt.attemptId)) throw new Error("duplicate");
+    this.attempts.set(attempt.attemptId, attempt);
+  }
+
+  get(attemptId: string): IntegrationAttempt | null {
+    return this.attempts.get(attemptId) ?? null;
+  }
+
+  update(attempt: IntegrationAttempt): void {
+    this.attempts.set(attempt.attemptId, attempt);
+  }
+
+  appendEvent(_attemptId: string, event: IntegrationAuditEvent): void {
+    this.events.push(event);
+  }
+}
+
+class FakeGit implements GitPort {
+  readonly calls: string[] = [];
+  dirtyFiles: readonly string[] = [];
+  branch = "main";
+
+  getStatus() {
+    this.calls.push("status");
+    return {
+      branch: this.branch,
+      dirtyFiles: this.dirtyFiles,
+    };
+  }
+
+  applyWorkerOutput() {
+    this.calls.push("apply");
+    this.dirtyFiles = ["src/memory.ts"];
+    return { changedFiles: ["src/memory.ts"] };
+  }
+
+  diffCheck() {
+    this.calls.push("diffCheck");
+    return { ok: true };
+  }
+
+  commit() {
+    this.calls.push("commit");
+    this.dirtyFiles = [];
+    return {
+      commitSha: "abc123",
+      diffStat: "1 file changed",
+    };
+  }
+
+  push() {
+    this.calls.push("push");
+  }
+
+  currentBranch() {
+    this.calls.push("branch");
+    return this.branch;
+  }
+}
+
+class FakeChecks implements CheckRunnerPort {
+  constructor(private readonly status: CheckRunStatus) {}
+
+  runCheck(input: {
+    readonly check: ProjectIntegrationCheckSpec;
+    readonly startedAt: string;
+  }): CheckRun {
+    return {
+      checkId: input.check.checkId,
+      command: input.check.command,
+      status: this.status,
+      startedAt: input.startedAt,
+      completedAt: input.startedAt,
+      exitCode: this.status === CheckRunStatus.Passed ? 0 : 1,
+    };
+  }
+}
+
+class FakeScanner implements SecretScannerPort {
+  constructor(private readonly status: SecretScanStatus) {}
+
+  scanFiles() {
+    return {
+      status: this.status,
+      ...(this.status === SecretScanStatus.Failed
+        ? { safeMessage: "secret-like content" }
+        : {}),
+    };
+  }
+}
+
+class FakeLocks implements WorkspaceLockPort {
+  acquire(input: {
+    readonly workspacePath: string;
+    readonly owner: string;
+  }): WorkspaceLock {
+    return {
+      lockId: "lock-1",
+      workspacePath: input.workspacePath,
+      owner: input.owner,
+    };
+  }
+
+  release(_lock: WorkspaceLock): void {}
+}

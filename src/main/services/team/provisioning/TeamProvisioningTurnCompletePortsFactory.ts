@@ -1,5 +1,10 @@
 import { killProcessTree } from '@main/utils/childProcess';
 
+import {
+  getPreCompleteCliErrorTextFromRun,
+  type PreCompleteCliErrorRunLike,
+} from './TeamProvisioningLeadRunDerivation';
+import { getFailedSpawnMembersFromStatuses } from './TeamProvisioningMemberStatusProjection';
 import { hasApiError, isAuthFailureWarning } from './TeamProvisioningOutputErrorPolicy';
 import { extractCliLogsFromRun, type RetainedLogsRunLike } from './TeamProvisioningRetainedLogs';
 
@@ -7,9 +12,13 @@ import type {
   TeamProvisioningTurnCompletePorts,
   TeamProvisioningTurnCompleteRun,
 } from './TeamProvisioningTurnComplete';
+import type { MemberSpawnStatusEntry } from '@shared/types';
 
 export type TeamProvisioningTurnCompletePortsFactoryRun = TeamProvisioningTurnCompleteRun &
-  RetainedLogsRunLike;
+  RetainedLogsRunLike &
+  PreCompleteCliErrorRunLike & {
+    memberSpawnStatuses?: Map<string, MemberSpawnStatusEntry>;
+  };
 
 export type TeamProvisioningTurnCompleteOutputRecoveryAdapter<
   TRun extends TeamProvisioningTurnCompletePortsFactoryRun,
@@ -22,7 +31,6 @@ export type TeamProvisioningTurnCompleteOutputRecoveryAdapter<
 type ServicePortKey =
   | 'hasPendingDeterministicFirstRealTurn'
   | 'isProvisioningRunStillPromotable'
-  | 'getPreCompleteCliErrorText'
   | 'scheduleDeterministicBootstrapCompletionRecovery'
   | 'resetRuntimeToolActivity'
   | 'getRunLeadName'
@@ -33,7 +41,6 @@ type ServicePortKey =
   | 'finalizeMissingRegisteredMembersAsFailed'
   | 'launchMixedSecondaryLaneIfNeeded'
   | 'reconcileFinalLaunchReportingSnapshot'
-  | 'getFailedSpawnMembers'
   | 'getMemberLaunchSummary'
   | 'hasPendingLaunchMembers'
   | 'isProvisioningRunPromotedToAlive'
@@ -102,7 +109,7 @@ export function createTeamProvisioningTurnCompletePorts<
     hasPendingDeterministicFirstRealTurn: (run) =>
       deps.service.hasPendingDeterministicFirstRealTurn(run),
     isProvisioningRunStillPromotable: (run) => deps.service.isProvisioningRunStillPromotable(run),
-    getPreCompleteCliErrorText: (run) => deps.service.getPreCompleteCliErrorText(run),
+    getPreCompleteCliErrorText: getPreCompleteCliErrorTextFromRun,
     hasApiError,
     isAuthFailureWarning,
     failProvisioningWithApiError: (run, text) =>
@@ -129,7 +136,7 @@ export function createTeamProvisioningTurnCompletePorts<
     launchMixedSecondaryLaneIfNeeded: (run) => deps.service.launchMixedSecondaryLaneIfNeeded(run),
     reconcileFinalLaunchReportingSnapshot: (run, secondaryLaunchResult) =>
       deps.service.reconcileFinalLaunchReportingSnapshot(run, secondaryLaunchResult),
-    getFailedSpawnMembers: (run) => deps.service.getFailedSpawnMembers(run),
+    getFailedSpawnMembers: (run) => getFailedSpawnMembersFromStatuses(run.memberSpawnStatuses),
     getMemberLaunchSummary: (run) => deps.service.getMemberLaunchSummary(run),
     hasPendingLaunchMembers: (run, launchSummary, snapshot) =>
       deps.service.hasPendingLaunchMembers(run, launchSummary, snapshot),

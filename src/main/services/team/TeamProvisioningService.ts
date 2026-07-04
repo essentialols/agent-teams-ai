@@ -196,7 +196,6 @@ import {
 } from './provisioning/TeamProvisioningLeadContextUsage';
 import { createTeamProvisioningLeadInboxRelayPortsBoundary } from './provisioning/TeamProvisioningLeadInboxRelayPortsFactory';
 import {
-  getPreCompleteCliErrorTextFromRun,
   getRunTrackedCwdFromRun,
   isCurrentTrackedRunById,
 } from './provisioning/TeamProvisioningLeadRunDerivation';
@@ -239,7 +238,6 @@ import { createTeamProvisioningMemberSpawnStatusesSnapshotPortsBoundary } from '
 import {
   buildRuntimeSpawnStatusRecord as buildRuntimeSpawnStatusRecordHelper,
   filterRemovedMembersFromLaunchSnapshot,
-  getFailedSpawnMembersFromStatuses,
 } from './provisioning/TeamProvisioningMemberStatusProjection';
 import { type MemberWorkSyncAcceptedReportChecker } from './provisioning/TeamProvisioningMemberWorkSyncProof';
 import { createTeamProvisioningMemberWorkSyncProofBoundary } from './provisioning/TeamProvisioningMemberWorkSyncProofBoundaryFactory';
@@ -3452,10 +3450,6 @@ export class TeamProvisioningService {
     return getRunTrackedCwdFromRun(run, path.resolve);
   }
 
-  private getPreCompleteCliErrorText(run: ProvisioningRun): string {
-    return getPreCompleteCliErrorTextFromRun(run);
-  }
-
   private syncLeadTaskActivityForState(
     run: ProvisioningRun,
     state: 'active' | 'idle' | 'offline',
@@ -4818,12 +4812,6 @@ export class TeamProvisioningService {
     operation: () => Promise<T>
   ): Promise<T> {
     return this.launchStateStoreBoundary.enqueue(teamName, operation);
-  }
-
-  private getFailedSpawnMembers(
-    run: ProvisioningRun
-  ): { name: string; error?: string; updatedAt: string }[] {
-    return getFailedSpawnMembersFromStatuses(run.memberSpawnStatuses);
   }
 
   private getMemberLaunchSummary(run: ProvisioningRun): {

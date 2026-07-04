@@ -7,7 +7,7 @@ import {
   type TeamProvisioningTurnCompleteServiceAdapter,
 } from '../TeamProvisioningTurnCompletePortsFactory';
 
-import type { TeamProvisioningProgress } from '@shared/types';
+import type { MemberSpawnStatusEntry, TeamProvisioningProgress } from '@shared/types';
 
 type TestRun = TeamProvisioningTurnCompletePortsFactoryRun;
 interface TestSecondaryLaunchResult {
@@ -57,6 +57,10 @@ function createRun(overrides: Partial<TestRun> = {}): TestRun {
     claudeLogLines: [],
     stdoutBuffer: '',
     stderrBuffer: '',
+    stdoutParserCarry: '',
+    stdoutParserCarryIsCompleteJson: false,
+    stdoutParserCarryLooksLikeClaudeJson: false,
+    memberSpawnStatuses: new Map(),
     ...overrides,
   } as TestRun;
 }
@@ -65,7 +69,6 @@ function createServiceAdapter(overrides: Partial<TestServiceAdapter> = {}): Test
   return {
     hasPendingDeterministicFirstRealTurn: vi.fn(() => false),
     isProvisioningRunStillPromotable: vi.fn(() => true),
-    getPreCompleteCliErrorText: vi.fn(() => ''),
     scheduleDeterministicBootstrapCompletionRecovery: vi.fn(),
     resetRuntimeToolActivity: vi.fn(),
     getRunLeadName: vi.fn(() => 'Lead'),
@@ -76,7 +79,6 @@ function createServiceAdapter(overrides: Partial<TestServiceAdapter> = {}): Test
     finalizeMissingRegisteredMembersAsFailed: vi.fn(async () => undefined),
     launchMixedSecondaryLaneIfNeeded: vi.fn(async () => ({ launched: true })),
     reconcileFinalLaunchReportingSnapshot: vi.fn(async () => null),
-    getFailedSpawnMembers: vi.fn(() => []),
     getMemberLaunchSummary: vi.fn(() => ({
       confirmedCount: 1,
       pendingCount: 0,
@@ -133,13 +135,50 @@ describe('TeamProvisioningTurnCompletePortsFactory', () => {
       emitTeamChange,
       killTeamProcess,
     });
-    const run = createRun({ claudeLogLines: ['first', 'second'] });
+    const run = createRun({
+      claudeLogLines: ['first', 'second'],
+      stderrBuffer: ' stderr auth failure ',
+      stdoutParserCarry: ' trailing stdout failure ',
+      memberSpawnStatuses: new Map<string, MemberSpawnStatusEntry>([
+        [
+          'zeta',
+          {
+            launchState: 'failed_to_start',
+            error: 'terminal error',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+          } as MemberSpawnStatusEntry,
+        ],
+        [
+          'alpha',
+          {
+            launchState: 'failed_to_start',
+            hardFailureReason: 'hard fail',
+            updatedAt: '2026-01-01T00:01:00.000Z',
+          } as MemberSpawnStatusEntry,
+        ],
+      ]),
+    });
 
     expect(ports.getRunLeadName(run)).toBe('Lead');
     expect(ports.updateProgress(run, 'ready', 'done')).toEqual(
       createProgress({ state: 'ready', message: 'done' })
     );
     expect(ports.extractCliLogsFromRun(run)).toBe('first\nsecond');
+    expect(ports.getPreCompleteCliErrorText(run)).toBe(
+      'stderr auth failure\ntrailing stdout failure'
+    );
+    expect(ports.getFailedSpawnMembers(run)).toEqual([
+      {
+        name: 'alpha',
+        error: 'hard fail',
+        updatedAt: '2026-01-01T00:01:00.000Z',
+      },
+      {
+        name: 'zeta',
+        error: 'terminal error',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+    ]);
     expect(ports.hasApiError('runtime emitted api error: 429 model cooldown')).toBe(true);
     expect(ports.isAuthFailureWarning('API Error: 401 Unauthorized', 'pre-complete')).toBe(true);
 

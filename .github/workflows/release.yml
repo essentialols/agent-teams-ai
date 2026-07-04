@@ -507,14 +507,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
-        run: |
-          set -euo pipefail
-          if [[ "${IS_RELEASE_BUILD}" == "true" ]]; then
-            TAG="${RELEASE_TAG}"
-            node ./scripts/stage-runtime.mjs --platform "darwin-${{ matrix.arch }}" --release-tag "$TAG"
-          else
-            node ./scripts/stage-runtime.mjs --platform "darwin-${{ matrix.arch }}"
-          fi
+        run: node ./scripts/stage-runtime.mjs --platform "darwin-${{ matrix.arch }}"
 
       - name: Stage terminal-platform runtime (macOS ${{ matrix.arch }})
         env:
@@ -642,14 +635,7 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          $ErrorActionPreference = "Stop"
-          if ($env:IS_RELEASE_BUILD -eq 'true') {
-            $tag = $env:RELEASE_TAG
-            node ./scripts/stage-runtime.mjs --platform win32-x64 --release-tag $tag
-          } else {
-            node ./scripts/stage-runtime.mjs --platform win32-x64
-          }
+        run: node ./scripts/stage-runtime.mjs --platform win32-x64
 
       - name: Stage terminal-platform runtime (Windows)
         shell: pwsh
@@ -779,14 +765,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
-        run: |
-          set -euo pipefail
-          if [[ "${IS_RELEASE_BUILD}" == "true" ]]; then
-            TAG="${RELEASE_TAG}"
-            node ./scripts/stage-runtime.mjs --platform linux-x64 --release-tag "$TAG"
-          else
-            node ./scripts/stage-runtime.mjs --platform linux-x64
-          fi
+        run: node ./scripts/stage-runtime.mjs --platform linux-x64
 
       - name: Stage terminal-platform runtime (Linux)
         env:

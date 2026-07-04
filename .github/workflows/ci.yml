@@ -62,6 +62,9 @@ jobs:
       - name: Guard runtime artifacts
         run: node ./scripts/ci/forbid-runtime-artifacts.cjs
 
+      - name: Verify runtime lock
+        run: node ./scripts/ci/verify-runtime-lock.mjs
+
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
 

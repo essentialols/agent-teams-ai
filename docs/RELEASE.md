@@ -411,17 +411,19 @@ After the runtime workflow succeeds, update this repo's `runtime.lock.json`:
 
 - `version`: the new runtime version, for example `0.0.52`
 - `sourceRef`: the matching runtime tag, for example `v0.0.52`
-- `releaseTag`: the app release tag that now contains the runtime assets, for
-  example `v2.4.0`
+- `releaseRepository`: the public repository that hosts runtime assets, normally
+  `777genius/agent-teams-ai`
+- `releaseTag`: the public runtime channel tag, for example `runtime-v0.0.52`
 - each `assets.*.file`: replace the old runtime version suffix with the new one
 
 Then verify the lock points at real uploaded assets:
 
 ```bash
-APP_VERSION=2.4.0
+RUNTIME_TAG="$(node scripts/runtime-lock.mjs release-tag)"
+RUNTIME_REPO="$(node scripts/runtime-lock.mjs release-repository)"
 
-gh release view "v$APP_VERSION" \
-  --repo 777genius/agent-teams-ai \
+gh release view "$RUNTIME_TAG" \
+  --repo "$RUNTIME_REPO" \
   --json assets \
   -q '.assets[].name' > /tmp/agent-teams-release-assets.txt
 
@@ -432,8 +434,12 @@ done
 node scripts/stage-runtime.mjs
 ```
 
-Do not create or hand off the app release while `runtime.lock.json` points at an
-older runtime tag than the orchestrator commits you intend to ship.
+Do not point `runtime.lock.json` at an unpublished app draft release. Development
+bootstrap uses direct GitHub release URLs, so `pnpm dev` must be able to download
+runtime assets from the lock without relying on draft-only app release assets. A
+runtime tag push publishes `runtime-v<runtime version>` assets to the public app
+repository, while the app release workflow separately ensures the same runtime
+asset names are present on the app release before publishing.
 
 ### 3. Create tag and push
 

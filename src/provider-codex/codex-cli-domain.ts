@@ -259,6 +259,7 @@ export function pruneCodexChildEnv(
 export function codexChildPath(
   env: Readonly<Record<string, string | undefined>>,
 ): string {
+  // Preserve caller PATH precedence, then add host fallbacks for pruned worker envs.
   return uniquePathEntries([
     ...(env.PATH ?? "").split(delimiter),
     ...standardHostPathEntries,

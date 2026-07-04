@@ -847,7 +847,7 @@ jobs:
     needs: [release-mac, release-win, release-linux]
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_release }}
 
     steps:
       - name: Upload stable download aliases
@@ -899,8 +899,17 @@ jobs:
               echo "Uploading ${label} alias: ${ALIAS_NAME} -> ${VERSIONED_NAME}"
               download_once "${VERSIONED_NAME}"
               cp "${TMP_DIR}/${VERSIONED_NAME}" "${TMP_DIR}/${ALIAS_NAME}"
-              gh release upload "${TAG}" "${TMP_DIR}/${ALIAS_NAME}" --repo "$REPO" --clobber
+              upload_release_asset "${TMP_DIR}/${ALIAS_NAME}"
             done
+          }
+
+          upload_release_asset() {
+            local path="$1"
+            timeout 300s gh release upload "${TAG}" "${path}" --repo "$REPO" --clobber || {
+              echo "Retrying upload for ${path}"
+              sleep 5
+              timeout 300s gh release upload "${TAG}" "${path}" --repo "$REPO" --clobber
+            }
           }
 
           download_once() {

@@ -26,6 +26,7 @@ import {
 } from './TeamProvisioningToolApprovalTimeouts';
 
 import type { OpenCodeRuntimeToolApprovalSyncInput } from './TeamProvisioningRuntimeToolApprovalAnswer';
+import type { ToolApprovalNotificationSettingsSnapshot } from './TeamProvisioningToolApprovalFlow';
 import type { ToolApprovalEvent, ToolApprovalRequest, ToolApprovalSettings } from '@shared/types';
 import type { ParsedPermissionRequest } from '@shared/utils/inboxNoise';
 import type { BrowserWindow } from 'electron';
@@ -34,13 +35,19 @@ export type TeamProvisioningToolApprovalFacadeRun = TeamProvisioningToolApproval
   TeamProvisioningToolApprovalTimeoutRun &
   TeamProvisioningToolApprovalNotificationRunLike;
 
-type TeamProvisioningToolApprovalBoundaryDeps<
-  TRun extends TeamProvisioningToolApprovalFacadeRun,
-> = TeamProvisioningToolApprovalPortsFactoryDeps<TRun>;
+type TeamProvisioningToolApprovalBoundaryDeps<TRun extends TeamProvisioningToolApprovalFacadeRun> =
+  TeamProvisioningToolApprovalPortsFactoryDeps<TRun>;
 
-export interface TeamProvisioningToolApprovalSyncInput
-  extends OpenCodeRuntimeToolApprovalSyncInput {
+export interface TeamProvisioningToolApprovalSyncInput extends OpenCodeRuntimeToolApprovalSyncInput {
   memberNames?: readonly string[];
+}
+
+export interface TeamProvisioningToolApprovalFacadeNotificationDeps {
+  getNotificationSettings?: () => ToolApprovalNotificationSettingsSnapshot;
+  getNotificationConstructor?: () => TeamProvisioningToolApprovalNotificationConstructor | null;
+  getAppIconPath?: () => string | undefined;
+  platform?: NodeJS.Platform;
+  nowMs?: () => number;
 }
 
 export interface TeamProvisioningToolApprovalFacadeDeps<
@@ -67,6 +74,7 @@ export interface TeamProvisioningToolApprovalFacadeDeps<
   nowMs: TeamProvisioningToolApprovalBoundaryDeps<TRun>['nowMs'];
   joinPath: TeamProvisioningToolApprovalBoundaryDeps<TRun>['joinPath'];
   teammateOperationalToolNames: TeamProvisioningToolApprovalBoundaryDeps<TRun>['teammateOperationalToolNames'];
+  notifications?: TeamProvisioningToolApprovalFacadeNotificationDeps;
 }
 
 export class TeamProvisioningToolApprovalFacade<
@@ -97,48 +105,45 @@ export class TeamProvisioningToolApprovalFacade<
       logWarning: (message) => this.deps.logger.warn(message),
     });
 
-    this.toolApprovalPortsBoundary =
-      createTeamProvisioningToolApprovalPortsBoundary<TRun>({
-        logger: this.deps.logger,
-        getToolApprovalSettings: (teamName) => this.getToolApprovalSettings(teamName),
-        emitToolApprovalEvent: (event) => this.emitToolApprovalEvent(event),
-        startApprovalTimeout: (run, requestId) => this.startApprovalTimeout(run, requestId),
-        clearApprovalTimeout: (requestId) => this.clearApprovalTimeout(requestId),
-        tryClaimResponse: (requestId) => this.tryClaimResponse(requestId),
-        maybeShowToolApprovalOsNotification: (run, approval) =>
-          this.maybeShowToolApprovalOsNotification(run, approval),
-        dismissApprovalNotification: (requestId) => this.dismissApprovalNotification(requestId),
-        getTrackedRunId: (teamName) => this.deps.getTrackedRunId(teamName),
-        getRun: (runId) => this.deps.getRun(runId),
-        inFlightResponses: this.inFlightResponses,
-        runtimeToolApprovalCoordinator: this.runtimeToolApprovalCoordinator,
-        getOpenCodeRuntimeAdapter: () => this.deps.getOpenCodeRuntimeAdapter(),
-        readLaunchState: (teamName) => this.deps.readLaunchState(teamName),
-        persistOpenCodeRuntimeAdapterLaunchResult: (result, input) =>
-          this.deps.persistOpenCodeRuntimeAdapterLaunchResult(result, input),
-        deleteRuntimeAdapterRunByTeam: (teamName) =>
-          this.deps.deleteRuntimeAdapterRunByTeam(teamName),
-        setRuntimeAdapterRunByTeam: (teamName, runtimeRun) =>
-          this.deps.setRuntimeAdapterRunByTeam(teamName, runtimeRun),
-        setAliveRunId: (teamName, runId) => this.deps.setAliveRunId(teamName, runId),
-        guardCommittedOpenCodeSecondaryLaneEvidence: (input) =>
-          this.deps.guardCommittedOpenCodeSecondaryLaneEvidence(input),
-        publishMixedSecondaryLaneStatusChange: (run, lane) =>
-          this.deps.publishMixedSecondaryLaneStatusChange(run, lane),
-        syncOpenCodeRuntimeToolApprovals: (input) =>
-          this.syncOpenCodeRuntimeToolApprovals(input),
-        emitTeamChange: (event) => this.deps.emitTeamChange(event),
-        readConfigForStrictDecision: (teamName) =>
-          this.deps.readConfigForStrictDecision(teamName),
-        addPermissionRulesToSettings: (settingsPath, toolNames, behavior) =>
-          this.deps.addPermissionRulesToSettings(settingsPath, toolNames, behavior),
-        persistInboxMessage: (teamName, recipient, message) =>
-          this.deps.persistInboxMessage(teamName, recipient, message),
-        nowIso: this.deps.nowIso,
-        nowMs: this.deps.nowMs,
-        joinPath: (...parts) => this.deps.joinPath(...parts),
-        teammateOperationalToolNames: this.deps.teammateOperationalToolNames,
-      });
+    this.toolApprovalPortsBoundary = createTeamProvisioningToolApprovalPortsBoundary<TRun>({
+      logger: this.deps.logger,
+      getToolApprovalSettings: (teamName) => this.getToolApprovalSettings(teamName),
+      emitToolApprovalEvent: (event) => this.emitToolApprovalEvent(event),
+      startApprovalTimeout: (run, requestId) => this.startApprovalTimeout(run, requestId),
+      clearApprovalTimeout: (requestId) => this.clearApprovalTimeout(requestId),
+      tryClaimResponse: (requestId) => this.tryClaimResponse(requestId),
+      maybeShowToolApprovalOsNotification: (run, approval) =>
+        this.maybeShowToolApprovalOsNotification(run, approval),
+      dismissApprovalNotification: (requestId) => this.dismissApprovalNotification(requestId),
+      getTrackedRunId: (teamName) => this.deps.getTrackedRunId(teamName),
+      getRun: (runId) => this.deps.getRun(runId),
+      inFlightResponses: this.inFlightResponses,
+      runtimeToolApprovalCoordinator: this.runtimeToolApprovalCoordinator,
+      getOpenCodeRuntimeAdapter: () => this.deps.getOpenCodeRuntimeAdapter(),
+      readLaunchState: (teamName) => this.deps.readLaunchState(teamName),
+      persistOpenCodeRuntimeAdapterLaunchResult: (result, input) =>
+        this.deps.persistOpenCodeRuntimeAdapterLaunchResult(result, input),
+      deleteRuntimeAdapterRunByTeam: (teamName) =>
+        this.deps.deleteRuntimeAdapterRunByTeam(teamName),
+      setRuntimeAdapterRunByTeam: (teamName, runtimeRun) =>
+        this.deps.setRuntimeAdapterRunByTeam(teamName, runtimeRun),
+      setAliveRunId: (teamName, runId) => this.deps.setAliveRunId(teamName, runId),
+      guardCommittedOpenCodeSecondaryLaneEvidence: (input) =>
+        this.deps.guardCommittedOpenCodeSecondaryLaneEvidence(input),
+      publishMixedSecondaryLaneStatusChange: (run, lane) =>
+        this.deps.publishMixedSecondaryLaneStatusChange(run, lane),
+      syncOpenCodeRuntimeToolApprovals: (input) => this.syncOpenCodeRuntimeToolApprovals(input),
+      emitTeamChange: (event) => this.deps.emitTeamChange(event),
+      readConfigForStrictDecision: (teamName) => this.deps.readConfigForStrictDecision(teamName),
+      addPermissionRulesToSettings: (settingsPath, toolNames, behavior) =>
+        this.deps.addPermissionRulesToSettings(settingsPath, toolNames, behavior),
+      persistInboxMessage: (teamName, recipient, message) =>
+        this.deps.persistInboxMessage(teamName, recipient, message),
+      nowIso: this.deps.nowIso,
+      nowMs: this.deps.nowMs,
+      joinPath: (...parts) => this.deps.joinPath(...parts),
+      teammateOperationalToolNames: this.deps.teammateOperationalToolNames,
+    });
 
     this.toolApprovalTimeouts = new TeamProvisioningToolApprovalTimeouts<TRun>(
       {
@@ -147,8 +152,7 @@ export class TeamProvisioningToolApprovalFacade<
       },
       {
         getSettings: (teamName) => this.getToolApprovalSettings(teamName),
-        autoAllowControlRequest: (run, requestId) =>
-          this.autoAllowControlRequest(run, requestId),
+        autoAllowControlRequest: (run, requestId) => this.autoAllowControlRequest(run, requestId),
         autoDenyControlRequest: (run, requestId) => this.autoDenyControlRequest(run, requestId),
         respondToTeammatePermission: (run, approval, allow, message) =>
           this.toolApprovalPortsBoundary.respondToTeammatePermission({
@@ -167,10 +171,16 @@ export class TeamProvisioningToolApprovalFacade<
       }
     );
 
+    const notificationDeps = this.deps.notifications;
     this.toolApprovalOsNotifications = new TeamProvisioningToolApprovalNotifications<TRun>({
       getMainWindow: () => this.mainWindowRef,
-      getNotificationSettings: () => ConfigManager.getInstance().getConfig().notifications,
+      getNotificationSettings: () =>
+        notificationDeps?.getNotificationSettings?.() ??
+        ConfigManager.getInstance().getConfig().notifications,
       getNotificationConstructor: () => {
+        if (notificationDeps?.getNotificationConstructor) {
+          return notificationDeps.getNotificationConstructor();
+        }
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         const { Notification: ElectronNotification } = require('electron') as Partial<
           typeof import('electron')
@@ -178,8 +188,8 @@ export class TeamProvisioningToolApprovalFacade<
         return (ElectronNotification ??
           null) as TeamProvisioningToolApprovalNotificationConstructor | null;
       },
-      getAppIconPath,
-      platform: process.platform,
+      getAppIconPath: notificationDeps?.getAppIconPath ?? getAppIconPath,
+      platform: notificationDeps?.platform ?? process.platform,
       activeApprovalNotifications: this.activeApprovalNotifications,
       respondToToolApproval: (teamName, runId, requestId, allow, message) =>
         this.respondToToolApproval(teamName, runId, requestId, allow, message),
@@ -187,7 +197,7 @@ export class TeamProvisioningToolApprovalFacade<
         info: (message) => this.deps.logger.info(message),
         error: (message) => this.deps.logger.error(message),
       },
-      nowMs: () => Date.now(),
+      nowMs: notificationDeps?.nowMs ?? (() => Date.now()),
     });
   }
 
@@ -252,10 +262,7 @@ export class TeamProvisioningToolApprovalFacade<
     });
   }
 
-  maybeShowToolApprovalOsNotification(
-    run: TRun | undefined,
-    approval: ToolApprovalRequest
-  ): void {
+  maybeShowToolApprovalOsNotification(run: TRun | undefined, approval: ToolApprovalRequest): void {
     this.toolApprovalOsNotifications.maybeShow(run, approval);
   }
 

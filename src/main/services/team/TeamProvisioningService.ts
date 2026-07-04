@@ -49,10 +49,7 @@ import {
   type OpenCodeMemberMessageDeliveryInput,
   type OpenCodeRuntimeMessageAdapter,
 } from './opencode/delivery/OpenCodeMemberMessageDeliveryService';
-import {
-  isOpenCodeSessionRefreshRetryRecord,
-  OpenCodePromptDeliveryFollowUpPolicy,
-} from './opencode/delivery/OpenCodePromptDeliveryFollowUpPolicy';
+import { OpenCodePromptDeliveryFollowUpPolicy } from './opencode/delivery/OpenCodePromptDeliveryFollowUpPolicy';
 import {
   type OpenCodePromptDeliveryLedgerRecord,
   type OpenCodePromptDeliveryLedgerStore,
@@ -2120,18 +2117,6 @@ export class TeamProvisioningService {
     input: Parameters<typeof buildOpenCodeRuntimeDeliveryUserVisibleImpact>[0]
   ): OpenCodeRuntimeDeliveryUserVisibleImpact {
     return buildOpenCodeRuntimeDeliveryUserVisibleImpact(input);
-  }
-
-  private scheduleOpenCodePromptLedgerFollowUp(
-    input: Parameters<OpenCodePromptDeliveryFollowUpPolicy['schedule']>[0]
-  ): ReturnType<OpenCodePromptDeliveryFollowUpPolicy['schedule']> {
-    return this.openCodePromptDeliveryFollowUpPolicy.schedule(input);
-  }
-
-  private isOpenCodeSessionRefreshRetryRecord(
-    ...args: Parameters<typeof isOpenCodeSessionRefreshRetryRecord>
-  ): ReturnType<typeof isOpenCodeSessionRefreshRetryRecord> {
-    return isOpenCodeSessionRefreshRetryRecord(...args);
   }
 
   private repairStaleTaskActivityIntervalsOnce(

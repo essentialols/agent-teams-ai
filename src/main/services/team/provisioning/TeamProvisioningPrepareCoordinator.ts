@@ -140,7 +140,7 @@ export interface TeamProvisioningPrepareCoordinatorPorts {
     providerId: TeamProviderId | undefined
   ): CachedProbeResult | null;
   clearProbeCache?(cwd: string, providerId: TeamProviderId | undefined): void;
-  getCachedOrProbeResult(
+  getCachedOrProbeResult?(
     cwd: string,
     providerId: TeamProviderId | undefined
   ): Promise<ProbeResult | null>;
@@ -189,7 +189,9 @@ export class TeamProvisioningPrepareCoordinator {
       ) {
         return;
       }
-      const result = await this.ports.getCachedOrProbeResult(cwd, providerId);
+      const result = await (
+        this.ports.getCachedOrProbeResult ?? this.getCachedOrProbeResult.bind(this)
+      )(cwd, providerId);
       if (!result) return;
       this.ports.info('CLI warmup completed');
     } catch (error) {
@@ -385,7 +387,11 @@ export class TeamProvisioningPrepareCoordinator {
         this.ports.getFreshCachedProbeResult ?? this.getFreshCachedProbeResult.bind(this)
       )(targetCwdForValidation, providerId);
       const probeResult =
-        cached ?? (await this.ports.getCachedOrProbeResult(targetCwd, providerId));
+        cached ??
+        (await (this.ports.getCachedOrProbeResult ?? this.getCachedOrProbeResult.bind(this))(
+          targetCwd,
+          providerId
+        ));
       if (!probeResult?.claudePath) {
         throw buildMissingCliError();
       }
@@ -1053,7 +1059,6 @@ export function createDefaultTeamProvisioningPrepareCoordinatorPorts(
       worktreePath: path.join(baseCwd, memberName),
     }),
     execCli: defaultExecCli,
-    getCachedOrProbeResult: async () => null,
     info: () => undefined,
     warn: () => undefined,
     ...overrides,

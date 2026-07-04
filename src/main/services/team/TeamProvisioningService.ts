@@ -148,10 +148,7 @@ import {
   resolveCrossTeamLeadName,
 } from './provisioning/TeamProvisioningCrossTeamRelayHelpers';
 import { recoverDeterministicBootstrapCompletion as recoverDeterministicBootstrapCompletionHelper } from './provisioning/TeamProvisioningDeterministicBootstrapCompletionRecovery';
-import {
-  type ProvisioningEnvResolution,
-  type TeamRuntimeAuthContext,
-} from './provisioning/TeamProvisioningEnvBuilder';
+import { type ProvisioningEnvResolution } from './provisioning/TeamProvisioningEnvBuilder';
 import { assertAppDeterministicBootstrapEnabled } from './provisioning/TeamProvisioningEnvGuards';
 import { createTeamProvisioningEnvRuntimePorts } from './provisioning/TeamProvisioningEnvRuntimePorts';
 import {
@@ -311,10 +308,6 @@ import {
 } from './provisioning/TeamProvisioningOpenCodeMemberMessageDeliveryServiceFactory';
 import { OpenCodeMemberSendSerializer } from './provisioning/TeamProvisioningOpenCodeMemberSendSerialization';
 import {
-  type PreparedOpenCodeRuntimeAdapterLaunch,
-  prepareOpenCodeRuntimeAdapterLaunch,
-} from './provisioning/TeamProvisioningOpenCodeRuntimeAdapterPreparation';
-import {
   createOpenCodeTeamThroughRuntimeAdapterFlow,
   launchOpenCodeTeamThroughRuntimeAdapterFlow,
   type OpenCodeRuntimeAdapterTeamFlowPorts,
@@ -379,13 +372,7 @@ import {
 } from './provisioning/TeamProvisioningOutputRecoveryBoundaryFactory';
 import { reconcilePersistedLaunchStateWithTeamProvisioningPorts } from './provisioning/TeamProvisioningPersistedLaunchReconcilePorts';
 import { type PersistedTeamConfigCacheEntry } from './provisioning/TeamProvisioningPersistedTeamConfigAccess';
-import {
-  type CachedProbeResult,
-  createDefaultTeamProvisioningPrepareCoordinatorPorts,
-  type PrepareForProvisioningOptions,
-  type ProbeResult,
-  TeamProvisioningPrepareCoordinator,
-} from './provisioning/TeamProvisioningPrepareCoordinator';
+import { TeamProvisioningPrepareFacade } from './provisioning/TeamProvisioningPrepareFacade';
 import { createTeamProvisioningPrimaryBootstrapTruthReportingBoundary } from './provisioning/TeamProvisioningPrimaryBootstrapTruthReportingPortsFactory';
 import {
   handleProvisioningProcessExit,
@@ -622,7 +609,6 @@ export {
 import type {
   AgentActionMode,
   CrossTeamSendResult,
-  EffortLevel,
   InboxMessage,
   LeadContextUsage,
   MemberSpawnLivenessSource,
@@ -652,7 +638,6 @@ import type {
   TeamProviderId,
   TeamProvisioningModelCheckRequest,
   TeamProvisioningModelVerificationMode,
-  TeamProvisioningPrepareIssue,
   TeamProvisioningPrepareResult,
   TeamProvisioningProgress,
   TeamRuntimeState,
@@ -1402,7 +1387,7 @@ export class TeamProvisioningService {
   private readonly authRetryRecoveryBoundary: TeamProvisioningAuthRetryRecoveryBoundary<ProvisioningRun>;
   private readonly deterministicCreateSpawnFlowBoundary: TeamProvisioningCreateDeterministicSpawnFlowBoundary<ProvisioningRun>;
   private readonly deterministicLaunchFlowBoundary: TeamProvisioningLaunchDeterministicFlowBoundary<MixedSecondaryRuntimeLaneState>;
-  private readonly prepareCoordinator: TeamProvisioningPrepareCoordinator;
+  private readonly prepareFacade!: TeamProvisioningPrepareFacade;
   private readonly verificationProbePorts: TeamProvisioningVerificationProbePorts<ProvisioningRun>;
   private readonly processExitPorts: TeamProvisioningProcessExitPorts<ProvisioningRun>;
   private runtimeAdapterRegistry: TeamRuntimeAdapterRegistry | null = null;
@@ -1620,7 +1605,7 @@ export class TeamProvisioningService {
       deleteSecondaryRuntimeRun: (teamName, laneId) =>
         this.deleteSecondaryRuntimeRun(teamName, laneId),
       getOpenCodeRuntimeLaunchCwd: (baseCwd, members) =>
-        this.getOpenCodeRuntimeLaunchCwd(baseCwd, members),
+        this.prepareFacade.getOpenCodeRuntimeLaunchCwd(baseCwd, members),
       clearOpenCodeRuntimeAdapterPrimaryLaneIfOwned: (teamName, runId) =>
         this.clearOpenCodeRuntimeAdapterPrimaryLaneIfOwned(teamName, runId),
       persistOpenCodeRuntimeAdapterLaunchResult: (result, launchInput) =>
@@ -1856,9 +1841,9 @@ export class TeamProvisioningService {
         this.configFacade.updateConfigProjectPath(teamName, cwd),
       restorePrelaunchConfig: (teamName) => this.configFacade.restorePrelaunchConfig(teamName),
       materializeEffectiveTeamMemberSpecs: (params) =>
-        this.materializeEffectiveTeamMemberSpecs(params),
+        this.prepareFacade.materializeEffectiveTeamMemberSpecs(params),
       resolveOpenCodeMemberWorkspacesForRuntime: (params) =>
-        this.resolveOpenCodeMemberWorkspacesForRuntime(params),
+        this.prepareFacade.resolveOpenCodeMemberWorkspacesForRuntime(params),
       planRuntimeLanesOrThrow: (leadProviderId, members, baseCwd) =>
         this.planRuntimeLanesOrThrow(leadProviderId, members, baseCwd),
       createMixedSecondaryLaneStates: (lanePlan) => this.createMixedSecondaryLaneStates(lanePlan),
@@ -1998,51 +1983,29 @@ export class TeamProvisioningService {
       extractCliLogsFromRun,
       logsSuggestShutdownOrCleanup,
     });
-    this.prepareCoordinator = new TeamProvisioningPrepareCoordinator(
-      createDefaultTeamProvisioningPrepareCoordinatorPorts({
-        getOpenCodeRuntimeAdapter: () => this.getOpenCodeRuntimeAdapter(),
-        buildProvisioningEnv: (providerId, providerBackendId, options) =>
-          this.providerRuntime.buildProvisioningEnv(providerId, providerBackendId, options),
-        runProviderOneShotDiagnostic: (claudePath, cwd, env, providerId, providerArgs) =>
-          this.providerRuntime.runProviderOneShotDiagnostic(
-            claudePath,
-            cwd,
-            env,
-            providerId,
-            providerArgs
-          ),
-        readRuntimeProviderLaunchFacts: (params) => this.readRuntimeProviderLaunchFacts(params),
-        resolveClaudeBinaryPath: () => ClaudeBinaryResolver.resolve(),
-        probeClaudeRuntime: (claudePath, cwd, env, providerId, providerArgs) =>
-          this.providerRuntime.probeClaudeRuntime(claudePath, cwd, env, providerId, providerArgs),
-        ensureMemberWorktree: (input) => this.memberWorktreeManager.ensureMemberWorktree(input),
-        execCli,
-        validatePrepareCwd: (cwd) => this.validatePrepareCwd(cwd),
-        getFreshCachedProbeResult: (cwd, providerId) =>
-          this.getFreshCachedProbeResult(cwd, providerId),
-        clearProbeCache: (cwd, providerId) => this.clearProbeCache(cwd, providerId),
-        getCachedOrProbeResult: (cwd, providerId) => this.getCachedOrProbeResult(cwd, providerId),
-        verifySelectedProviderModels: (input) => this.verifySelectedProviderModels(input),
-        resolveProviderDefaultModel: (
+    this.prepareFacade = new TeamProvisioningPrepareFacade({
+      getOpenCodeRuntimeAdapter: () => this.getOpenCodeRuntimeAdapter(),
+      buildProvisioningEnv: (providerId, providerBackendId, options) =>
+        this.providerRuntime.buildProvisioningEnv(providerId, providerBackendId, options),
+      runProviderOneShotDiagnostic: (claudePath, cwd, env, providerId, providerArgs) =>
+        this.providerRuntime.runProviderOneShotDiagnostic(
           claudePath,
           cwd,
-          providerId,
           env,
-          providerArgs,
-          limitContext
-        ) =>
-          this.resolveProviderDefaultModel(
-            claudePath,
-            cwd,
-            providerId,
-            env,
-            providerArgs,
-            limitContext
-          ),
-        info: (message) => logger.info(message),
-        warn: (message) => logger.warn(message),
-      })
-    );
+          providerId,
+          providerArgs
+        ),
+      readRuntimeProviderLaunchFacts: (params) => this.readRuntimeProviderLaunchFacts(params),
+      resolveClaudeBinaryPath: () => ClaudeBinaryResolver.resolve(),
+      probeClaudeRuntime: (claudePath, cwd, env, providerId, providerArgs) =>
+        this.providerRuntime.probeClaudeRuntime(claudePath, cwd, env, providerId, providerArgs),
+      ensureMemberWorktree: (input) => this.memberWorktreeManager.ensureMemberWorktree(input),
+      execCli,
+      planRuntimeLanesOrThrow: (leadProviderId, members, baseCwd) =>
+        this.planRuntimeLanesOrThrow(leadProviderId, members, baseCwd),
+      info: (message) => logger.info(message),
+      warn: (message) => logger.warn(message),
+    });
     this.memberMcpLaunchConfigProvisioner = new TeamProvisioningMemberMcpLaunchConfigProvisioner({
       mcpConfigBuilder: this.mcpConfigBuilder,
       ensureCwdExists,
@@ -4327,7 +4290,7 @@ export class TeamProvisioningService {
   }
 
   async warmup(): Promise<void> {
-    await this.prepareCoordinator.warmup();
+    await this.prepareFacade.warmup();
   }
 
   async prepareForProvisioning(
@@ -4342,156 +4305,7 @@ export class TeamProvisioningService {
       modelVerificationMode?: TeamProvisioningModelVerificationMode;
     }
   ): Promise<TeamProvisioningPrepareResult> {
-    return this.prepareCoordinator.prepareForProvisioning(cwd, opts);
-  }
-
-  private createPrepareForProvisioningInFlightKey(
-    cwd?: string,
-    opts?: {
-      forceFresh?: boolean;
-      providerId?: TeamProviderId;
-      providerIds?: TeamProviderId[];
-      modelIds?: string[];
-      modelChecks?: TeamProvisioningModelCheckRequest[];
-      limitContext?: boolean;
-      modelVerificationMode?: TeamProvisioningModelVerificationMode;
-    }
-  ): string {
-    return this.prepareCoordinator.createPrepareForProvisioningInFlightKey(cwd, opts);
-  }
-
-  private clonePrepareForProvisioningResult(
-    result: TeamProvisioningPrepareResult
-  ): TeamProvisioningPrepareResult {
-    return this.prepareCoordinator.clonePrepareForProvisioningResult(result);
-  }
-
-  private async prepareForProvisioningOnce(
-    cwd?: string,
-    opts?: PrepareForProvisioningOptions
-  ): Promise<TeamProvisioningPrepareResult> {
-    return this.prepareCoordinator.prepareForProvisioningOnce(cwd, opts);
-  }
-
-  private async verifySelectedProviderModels(input: {
-    claudePath: string;
-    cwd: string;
-    providerId: TeamProviderId;
-    modelIds: string[];
-    modelChecks?: { modelId: string; effort?: EffortLevel }[];
-    limitContext: boolean;
-  }): Promise<{
-    details: string[];
-    warnings: string[];
-    blockingMessages: string[];
-    issues?: TeamProvisioningPrepareIssue[];
-  }> {
-    return this.prepareCoordinator.verifySelectedProviderModels(input);
-  }
-
-  private async resolveProviderDefaultModel(
-    claudePath: string,
-    cwd: string,
-    providerId: TeamProviderId,
-    env: NodeJS.ProcessEnv,
-    providerArgs: string[] = [],
-    limitContext: boolean
-  ): Promise<string | null> {
-    return this.prepareCoordinator.resolveProviderDefaultModel(
-      claudePath,
-      cwd,
-      providerId,
-      env,
-      providerArgs,
-      limitContext
-    );
-  }
-
-  private async resolveProviderDefaultModelFromRuntimeStatus(
-    claudePath: string,
-    cwd: string,
-    providerId: TeamProviderId,
-    env: NodeJS.ProcessEnv,
-    providerArgs: string[] = [],
-    limitContext: boolean
-  ): Promise<string | null> {
-    return this.prepareCoordinator.resolveProviderDefaultModelFromRuntimeStatus(
-      claudePath,
-      cwd,
-      providerId,
-      env,
-      providerArgs,
-      limitContext
-    );
-  }
-
-  private async materializeEffectiveTeamMemberSpecs(params: {
-    claudePath: string;
-    cwd: string;
-    members: TeamCreateRequest['members'];
-    defaults: {
-      providerId?: TeamProviderId;
-      model?: string;
-      effort?: TeamCreateRequest['effort'];
-    };
-    primaryProviderId?: TeamProviderId;
-    primaryEnv?: ProvisioningEnvResolution;
-    teamRuntimeAuth?: TeamRuntimeAuthContext;
-    limitContext?: boolean;
-    providerArgsResolver?: (input: {
-      providerId: TeamProviderId;
-      providerArgs: string[];
-      phase: 'default-model-resolution';
-    }) => string[];
-  }): Promise<TeamCreateRequest['members']> {
-    return this.prepareCoordinator.materializeEffectiveTeamMemberSpecs(params);
-  }
-
-  private getOpenCodeRuntimeLaunchCwd(
-    fallbackCwd: string,
-    members: TeamCreateRequest['members']
-  ): string {
-    return this.prepareCoordinator.getOpenCodeRuntimeLaunchCwd(fallbackCwd, members);
-  }
-
-  private async prepareOpenCodeRuntimeAdapterLaunch<
-    TRequest extends TeamCreateRequest | TeamLaunchRequest,
-  >(params: {
-    request: TRequest;
-    members: TeamCreateRequest['members'];
-  }): Promise<PreparedOpenCodeRuntimeAdapterLaunch<TRequest>> {
-    return prepareOpenCodeRuntimeAdapterLaunch(params, {
-      resolveClaudePath: () => ClaudeBinaryResolver.resolve(),
-      buildProvisioningEnv: (providerId, providerBackendId) =>
-        this.providerRuntime.buildProvisioningEnv(providerId, providerBackendId),
-      resolveProviderDefaultModel: (claudePath, cwd, providerId, env, providerArgs, limitContext) =>
-        this.resolveProviderDefaultModel(
-          claudePath,
-          cwd,
-          providerId,
-          env,
-          providerArgs,
-          limitContext
-        ),
-      resolveOpenCodeMemberWorkspacesForRuntime: (workspaceParams) =>
-        this.resolveOpenCodeMemberWorkspacesForRuntime(workspaceParams),
-      planRuntimeLanesOrThrow: (leadProviderId, members, cwd) =>
-        this.planRuntimeLanesOrThrow(leadProviderId, members, cwd),
-      buildOpenCodeRuntimeAdapterLaunchMembers: (launchRequest, members, lanePlan) =>
-        this.buildOpenCodeRuntimeAdapterLaunchMembers(launchRequest, members, lanePlan),
-    });
-  }
-
-  private buildOpenCodeRuntimeAdapterLaunchMembers(
-    request: TeamCreateRequest | TeamLaunchRequest,
-    members: TeamCreateRequest['members'],
-    lanePlan?: TeamRuntimeLanePlan
-  ): TeamCreateRequest['members'] {
-    return this.prepareCoordinator.buildOpenCodeRuntimeAdapterLaunchMembers(
-      request,
-      members,
-      lanePlan
-    );
+    return this.prepareFacade.prepareForProvisioning(cwd, opts);
   }
 
   private createOpenCodeRuntimeAdapterTeamFlowPorts(): OpenCodeRuntimeAdapterTeamFlowPorts {
@@ -4511,7 +4325,7 @@ export class TeamProvisioningService {
       writeOpenCodeTeamConfig: (launchRequest, members) =>
         writeOpenCodeTeamConfig(launchRequest, members),
       prepareOpenCodeRuntimeAdapterLaunch: (params) =>
-        this.prepareOpenCodeRuntimeAdapterLaunch(params),
+        this.prepareFacade.prepareOpenCodeRuntimeAdapterLaunch(params),
       readTeamConfigRaw: (teamName) => {
         const configPath = path.join(getTeamsBasePath(), teamName, 'config.json');
         return tryReadRegularFileUtf8(configPath, {
@@ -4533,37 +4347,6 @@ export class TeamProvisioningService {
       runOpenCodeTeamRuntimeAdapterLaunch: (input) =>
         this.runOpenCodeTeamRuntimeAdapterLaunch(input),
     };
-  }
-
-  private async resolveOpenCodeMemberWorkspacesForRuntime(params: {
-    teamName: string;
-    baseCwd: string;
-    leadProviderId?: TeamProviderId;
-    members: TeamCreateRequest['members'];
-  }): Promise<TeamCreateRequest['members']> {
-    return this.prepareCoordinator.resolveOpenCodeMemberWorkspacesForRuntime(params);
-  }
-
-  private getFreshCachedProbeResult(
-    cwd: string,
-    providerId: TeamProviderId | undefined
-  ): CachedProbeResult | null {
-    return this.prepareCoordinator.getFreshCachedProbeResult(cwd, providerId);
-  }
-
-  private clearProbeCache(cwd: string, providerId: TeamProviderId | undefined): void {
-    this.prepareCoordinator.clearProbeCache(cwd, providerId);
-  }
-
-  private async validatePrepareCwd(cwd: string): Promise<void> {
-    await this.prepareCoordinator.validatePrepareCwd(cwd);
-  }
-
-  private async getCachedOrProbeResult(
-    cwd: string,
-    providerId: TeamProviderId | undefined
-  ): Promise<ProbeResult | null> {
-    return this.prepareCoordinator.getCachedOrProbeResult(cwd, providerId);
   }
 
   private failProvisioningWithApiError(run: ProvisioningRun, source: string): void {
@@ -4729,9 +4512,9 @@ export class TeamProvisioningService {
           buildProvisioningEnv: (providerId, providerBackendId, options) =>
             this.providerRuntime.buildProvisioningEnv(providerId, providerBackendId, options),
           materializeEffectiveTeamMemberSpecs: (params) =>
-            this.materializeEffectiveTeamMemberSpecs(params),
+            this.prepareFacade.materializeEffectiveTeamMemberSpecs(params),
           resolveOpenCodeMemberWorkspacesForRuntime: (params) =>
-            this.resolveOpenCodeMemberWorkspacesForRuntime(params),
+            this.prepareFacade.resolveOpenCodeMemberWorkspacesForRuntime(params),
           planRuntimeLanesOrThrow: (leadProviderId, members, cwd) =>
             this.planRuntimeLanesOrThrow(leadProviderId, members, cwd),
           buildCrossProviderMemberArgs: (primaryProviderId, memberSpecs, options) =>
@@ -4806,7 +4589,7 @@ export class TeamProvisioningService {
     return launchOpenCodeAggregatePrimaryLaneHelper(params, {
       getTeamsBasePath,
       getOpenCodeRuntimeLaunchCwd: (baseCwd, members) =>
-        this.getOpenCodeRuntimeLaunchCwd(baseCwd, members),
+        this.prepareFacade.getOpenCodeRuntimeLaunchCwd(baseCwd, members),
       migrateLegacyOpenCodeRuntimeState,
       upsertOpenCodeRuntimeLaneIndexEntry,
       setOpenCodeRuntimeActiveRunManifest,
@@ -6593,7 +6376,7 @@ export class TeamProvisioningService {
       cwd,
       cache: this.helpOutputCache,
       getCachedOrProbeResult: (targetCwd, providerId) =>
-        this.getCachedOrProbeResult(targetCwd, providerId),
+        this.prepareFacade.getCachedOrProbeResult(targetCwd, providerId),
       providerRuntime: this.providerRuntime,
     });
   }

@@ -229,7 +229,6 @@ import { relayMemberInboxMessagesWithPorts } from './provisioning/TeamProvisioni
 import {
   type LiveRosterAttachReason,
   type MemberLifecycleOperation,
-  type MemberLifecycleOperationKind,
   TeamProvisioningMemberLifecycleController,
 } from './provisioning/TeamProvisioningMemberLifecycle';
 import {
@@ -586,11 +585,6 @@ import type {
   TeamRuntimeMemberSpec,
   TeamRuntimeStopInput,
 } from './runtime';
-import type {
-  RuntimeTelemetryProcessTableRow,
-  RuntimeUsageProcessTree,
-} from './TeamRuntimeTelemetry';
-
 export type { RuntimeBootstrapMemberMcpLaunchConfig } from './provisioning/TeamProvisioningBootstrapSpec';
 export { buildDirectTmuxRestartEnvAssignments } from './provisioning/TeamProvisioningDirectRestart';
 export {
@@ -2210,51 +2204,6 @@ export class TeamProvisioningService {
     return isOpenCodeSessionRefreshRetryRecord(...args);
   }
 
-  private readCachedRuntimeProcessRowsForLiveRuntimeMetadata(
-    teamName: string,
-    runId: string | null
-  ): ReturnType<
-    TeamProvisioningRuntimeResourceSampling['readCachedRuntimeProcessRowsForLiveRuntimeMetadata']
-  > {
-    return this.runtimeResourceSampling.readCachedRuntimeProcessRowsForLiveRuntimeMetadata(
-      teamName,
-      runId
-    );
-  }
-
-  private buildRuntimeUsageProcessTrees(
-    rootPids: readonly number[],
-    processRows: readonly RuntimeTelemetryProcessTableRow[] | null,
-    rootOwnersByPid?: ReadonlyMap<number, ReadonlySet<string>>
-  ): Map<number, RuntimeUsageProcessTree> {
-    return this.runtimeResourceSampling.buildRuntimeUsageProcessTrees(
-      rootPids,
-      processRows,
-      rootOwnersByPid
-    );
-  }
-
-  private buildRuntimeProcessLoadStats(
-    input: Parameters<TeamProvisioningRuntimeResourceSampling['buildRuntimeProcessLoadStats']>[0]
-  ): ReturnType<TeamProvisioningRuntimeResourceSampling['buildRuntimeProcessLoadStats']> {
-    return this.runtimeResourceSampling.buildRuntimeProcessLoadStats(input);
-  }
-
-  private recordAgentRuntimeResourceSample(
-    input: Parameters<
-      TeamProvisioningRuntimeResourceSampling['recordAgentRuntimeResourceSample']
-    >[0]
-  ): ReturnType<TeamProvisioningRuntimeResourceSampling['recordAgentRuntimeResourceSample']> {
-    return this.runtimeResourceSampling.recordAgentRuntimeResourceSample(input);
-  }
-
-  private pruneAgentRuntimeResourceHistory(
-    teamName: string,
-    activeKeys: ReadonlySet<string>
-  ): void {
-    this.runtimeResourceSampling.pruneAgentRuntimeResourceHistory(teamName, activeKeys);
-  }
-
   private findOpenCodeVisibleReplyByRelayOfMessageId(
     input: Parameters<OpenCodeVisibleReplyProofService['findByRelayOfMessageId']>[0]
   ): ReturnType<OpenCodeVisibleReplyProofService['findByRelayOfMessageId']> {
@@ -2266,100 +2215,6 @@ export class TeamProvisioningService {
     msg: Record<string, unknown>
   ): ReturnType<typeof handleDeterministicBootstrapEvent> {
     return handleDeterministicBootstrapEvent(run, msg, this.getStreamJsonEventPorts());
-  }
-
-  private launchDirectProcessMemberRestart(
-    input: Parameters<
-      TeamProvisioningMemberLifecycleController['launchDirectProcessMemberRestartInternal']
-    >[0]
-  ): ReturnType<
-    TeamProvisioningMemberLifecycleController['launchDirectProcessMemberRestartInternal']
-  > {
-    return this.memberLifecycleController.launchDirectProcessMemberRestartInternal(input);
-  }
-
-  private persistOpenCodeMemberRestartSystemMessage(
-    input: Parameters<
-      TeamProvisioningMemberLifecycleController['persistOpenCodeMemberRestartSystemMessageInternal']
-    >[0]
-  ): void {
-    this.memberLifecycleController.persistOpenCodeMemberRestartSystemMessageInternal(input);
-  }
-
-  private runMemberLifecycleOperation<T>(
-    teamName: string,
-    memberName: string,
-    kind: MemberLifecycleOperationKind,
-    operation: () => Promise<T>
-  ): Promise<T> {
-    return this.memberLifecycleController.runMemberLifecycleOperationInternal(
-      teamName,
-      memberName,
-      kind,
-      operation
-    );
-  }
-
-  private stopPrimaryOwnedRosterRuntime(
-    input: Parameters<
-      TeamProvisioningMemberLifecycleController['stopPrimaryOwnedRosterRuntimeInternal']
-    >[0]
-  ): ReturnType<
-    TeamProvisioningMemberLifecycleController['stopPrimaryOwnedRosterRuntimeInternal']
-  > {
-    return this.memberLifecycleController.stopPrimaryOwnedRosterRuntimeInternal(input);
-  }
-
-  private collectFailedOpenCodeSecondaryRetryCandidates(
-    run: Parameters<
-      TeamProvisioningMemberLifecycleController['collectFailedOpenCodeSecondaryRetryCandidatesInternal']
-    >[0]
-  ): ReturnType<
-    TeamProvisioningMemberLifecycleController['collectFailedOpenCodeSecondaryRetryCandidatesInternal']
-  > {
-    return this.memberLifecycleController.collectFailedOpenCodeSecondaryRetryCandidatesInternal(
-      run
-    );
-  }
-
-  private reattachOpenCodeOwnedMemberLaneUnlocked(
-    ...args: Parameters<
-      TeamProvisioningMemberLifecycleController['reattachOpenCodeOwnedMemberLaneUnlockedInternal']
-    >
-  ): ReturnType<
-    TeamProvisioningMemberLifecycleController['reattachOpenCodeOwnedMemberLaneUnlockedInternal']
-  > {
-    return this.memberLifecycleController.reattachOpenCodeOwnedMemberLaneUnlockedInternal(...args);
-  }
-
-  private readOpenCodeSecondaryRetryOutcome(
-    ...args: Parameters<
-      TeamProvisioningMemberLifecycleController['readOpenCodeSecondaryRetryOutcomeInternal']
-    >
-  ): ReturnType<
-    TeamProvisioningMemberLifecycleController['readOpenCodeSecondaryRetryOutcomeInternal']
-  > {
-    return this.memberLifecycleController.readOpenCodeSecondaryRetryOutcomeInternal(...args);
-  }
-
-  private notifyLeadAboutConfirmedOpenCodeRetries(
-    ...args: Parameters<
-      TeamProvisioningMemberLifecycleController['notifyLeadAboutConfirmedOpenCodeRetriesInternal']
-    >
-  ): ReturnType<
-    TeamProvisioningMemberLifecycleController['notifyLeadAboutConfirmedOpenCodeRetriesInternal']
-  > {
-    return this.memberLifecycleController.notifyLeadAboutConfirmedOpenCodeRetriesInternal(...args);
-  }
-
-  private detachOpenCodeOwnedMemberLaneUnlocked(
-    ...args: Parameters<
-      TeamProvisioningMemberLifecycleController['detachOpenCodeOwnedMemberLaneUnlockedInternal']
-    >
-  ): ReturnType<
-    TeamProvisioningMemberLifecycleController['detachOpenCodeOwnedMemberLaneUnlockedInternal']
-  > {
-    return this.memberLifecycleController.detachOpenCodeOwnedMemberLaneUnlockedInternal(...args);
   }
 
   private repairStaleTaskActivityIntervalsOnce(
@@ -5248,20 +5103,6 @@ export class TeamProvisioningService {
     teamName: string
   ): Promise<Map<string, LiveTeamAgentRuntimeMetadata>> {
     return this.liveRuntimeMetadataPorts.getLiveTeamAgentRuntimeMetadata(teamName);
-  }
-
-  private readRuntimeProcessRowsForUsageSnapshot(
-    teamName: string,
-    options: { includeWindowsHostRows?: boolean } = {}
-  ): ReturnType<TeamProvisioningRuntimeResourceSampling['readRuntimeProcessRowsForUsageSnapshot']> {
-    return this.runtimeResourceSampling.readRuntimeProcessRowsForUsageSnapshot(teamName, options);
-  }
-
-  private readProcessUsageStatsByPid(
-    pids: readonly number[],
-    cacheOptions: { ignoreCachedMisses?: boolean } = {}
-  ): ReturnType<TeamProvisioningRuntimeResourceSampling['readProcessUsageStatsByPid']> {
-    return this.runtimeResourceSampling.readProcessUsageStatsByPid(pids, cacheOptions);
   }
 
   private async clearPersistedLaunchState(

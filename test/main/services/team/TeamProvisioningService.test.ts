@@ -205,6 +205,7 @@ import {
   PROGRESS_RETAINED_OUTPUT_PART_CHARS,
   PROGRESS_RETAINED_OUTPUT_PARTS,
 } from '@main/services/team/progressPayload';
+import { buildPrimaryOwnedMemberSpecForRuntime } from '@main/services/team/provisioning/TeamProvisioningConfiguredMemberSpecs';
 import {
   OpenCodeTeamRuntimeAdapter,
   type OpenCodeTeamRuntimeMessageResult,
@@ -237,6 +238,14 @@ import {
   AGENT_TEAMS_NAMESPACED_TEAMMATE_OPERATIONAL_TOOL_NAMES,
 } from 'agent-teams-controller';
 import pidusage from 'pidusage';
+
+import type { TeamProvisioningConfigFacade } from '@main/services/team/provisioning/TeamProvisioningConfigFacade';
+import type {
+  TeamProvisioningMemberLifecycleController,
+  TeamProvisioningMemberLifecycleHost,
+} from '@main/services/team/provisioning/TeamProvisioningMemberLifecycle';
+import type { TeamProvisioningRuntimeResourceSampling } from '@main/services/team/provisioning/TeamProvisioningRuntimeResourceSampling';
+import type { TeamConfig, TeamProvisioningMemberInput } from '@shared/types/team';
 
 const EXPECTED_RUNTIME_PIDUSAGE_OPTIONS =
   process.platform === 'win32' ? { maxage: 10_000 } : { maxage: 0 };
@@ -790,30 +799,11 @@ type TeamProvisioningServicePrivateHarness = {
     snapshot: null;
     statuses: Record<string, never>;
   }>;
-  readProcessUsageStatsByPid: (
-    pids: readonly number[]
-  ) => Promise<Map<number, { rssBytes?: number; cpuPercent?: number }>>;
-  readRuntimeProcessRowsForUsageSnapshot: (teamName: string) => Promise<unknown[] | null>;
-  readCachedRuntimeProcessRowsForLiveRuntimeMetadata: (
-    teamName: string,
-    runId: string | null
-  ) => { rows: RuntimeTelemetryProcessTableRow[] | null } | null;
   sendOpenCodeMemberMessageToRuntimeSerialized: (input: {
     teamName: string;
     laneId: string;
     send: () => Promise<OpenCodeTeamRuntimeMessageResult>;
   }) => Promise<OpenCodeTeamRuntimeMessageResult>;
-  runtimeProcessRowsForUsageSnapshotByTeam: Map<
-    string,
-    {
-      expiresAtMs: number;
-      generation: number;
-      runId: string | null;
-      sampledAtMs: number;
-      rows: RuntimeTelemetryProcessTableRow[] | null;
-      includesWindowsHostRows: boolean;
-    }
-  >;
   getRuntimeSnapshotCacheGeneration: (teamName: string) => number;
   invalidateRuntimeSnapshotCaches: (teamName: string) => void;
   aliveRunByTeam: Map<string, string>;
@@ -830,6 +820,54 @@ type TeamProvisioningServicePrivateHarness = {
 
 function privateHarness(svc: TeamProvisioningService): TeamProvisioningServicePrivateHarness {
   return svc as unknown as TeamProvisioningServicePrivateHarness;
+}
+
+function runtimeResourceSamplingHarness(
+  svc: TeamProvisioningService
+): TeamProvisioningRuntimeResourceSampling {
+  return (
+    svc as unknown as {
+      runtimeResourceSampling: TeamProvisioningRuntimeResourceSampling;
+    }
+  ).runtimeResourceSampling;
+}
+
+function memberLifecycleControllerHarness(
+  svc: TeamProvisioningService
+): TeamProvisioningMemberLifecycleController {
+  return (
+    svc as unknown as {
+      memberLifecycleController: TeamProvisioningMemberLifecycleController;
+    }
+  ).memberLifecycleController;
+}
+
+function memberLifecycleHostHarness(
+  svc: TeamProvisioningService
+): TeamProvisioningMemberLifecycleHost {
+  return (
+    svc as unknown as {
+      memberLifecycleHost: TeamProvisioningMemberLifecycleHost;
+    }
+  ).memberLifecycleHost;
+}
+
+function provisioningConfigFacadeHarness(
+  svc: TeamProvisioningService
+): TeamProvisioningConfigFacade {
+  return (
+    svc as unknown as {
+      configFacade: TeamProvisioningConfigFacade;
+    }
+  ).configFacade;
+}
+
+function createServiceWithConfig(config: unknown): TeamProvisioningService {
+  const configReader = {
+    getConfig: vi.fn(async () => config),
+    getConfigSnapshot: vi.fn(async () => config),
+  } as unknown as ConstructorParameters<typeof TeamProvisioningService>[0];
+  return new TeamProvisioningService(configReader);
 }
 
 function createMemberSpawnRun(params?: {
@@ -3810,23 +3848,25 @@ describe('TeamProvisioningService', () => {
 
   describe('getTeamAgentRuntimeSnapshot', () => {
     it('dedupes concurrent runtime snapshot probes for the same team', async () => {
-      const svc = new TeamProvisioningService();
-      (svc as any).configReader = {
-        getConfig: vi.fn(async () => ({
-          members: [
-            { name: 'team-lead', agentType: 'team-lead' },
-            { name: 'alice', model: 'gpt-5.4-mini' },
-          ],
-        })),
-      };
-      (svc as any).readPersistedRuntimeMembers = vi.fn(() => [
+      const svc = createServiceWithConfig({
+        members: [
+          { name: 'team-lead', agentType: 'team-lead' },
+          { name: 'alice', model: 'gpt-5.4-mini' },
+        ],
+      });
+      const persistedRuntimeMembers: ReturnType<
+        TeamProvisioningConfigFacade['readPersistedRuntimeMembers']
+      > = [
         {
           name: 'alice',
           agentId: 'alice@runtime-team',
           tmuxPaneId: '%1',
           backendType: 'tmux',
         },
-      ]);
+      ];
+      provisioningConfigFacadeHarness(svc).readPersistedRuntimeMembers = vi.fn(
+        () => persistedRuntimeMembers
+      );
       (svc as any).aliveRunByTeam.set('runtime-team', 'run-1');
       (svc as any).runs.set('run-1', {
         runId: 'run-1',
@@ -4277,6 +4317,7 @@ describe('TeamProvisioningService', () => {
       vi.setSystemTime(new Date('2026-05-03T12:00:00.000Z'));
       const svc = new TeamProvisioningService();
       const harness = privateHarness(svc);
+      const runtimeResourceSampling = runtimeResourceSamplingHarness(svc);
       harness.aliveRunByTeam.set('runtime-team', 'run-1');
       vi.mocked(listRuntimeProcessTableForCurrentPlatform).mockResolvedValueOnce([
         {
@@ -4288,10 +4329,12 @@ describe('TeamProvisioningService', () => {
         },
       ]);
 
-      const firstRows = await harness.readRuntimeProcessRowsForUsageSnapshot('runtime-team');
+      const firstRows =
+        await runtimeResourceSampling.readRuntimeProcessRowsForUsageSnapshot('runtime-team');
       harness.invalidateRuntimeSnapshotCaches('runtime-team');
       vi.setSystemTime(new Date('2026-05-03T12:00:05.000Z'));
-      const secondRows = await harness.readRuntimeProcessRowsForUsageSnapshot('runtime-team');
+      const secondRows =
+        await runtimeResourceSampling.readRuntimeProcessRowsForUsageSnapshot('runtime-team');
 
       expect(listRuntimeProcessTableForCurrentPlatform).toHaveBeenCalledTimes(1);
       expect(secondRows).toEqual(firstRows);
@@ -4303,6 +4346,7 @@ describe('TeamProvisioningService', () => {
       vi.setSystemTime(new Date('2026-05-03T12:00:00.000Z'));
       const svc = new TeamProvisioningService();
       const harness = privateHarness(svc);
+      const runtimeResourceSampling = runtimeResourceSamplingHarness(svc);
       const rows: RuntimeTelemetryProcessTableRow[] = [
         {
           pid: 111,
@@ -4313,7 +4357,7 @@ describe('TeamProvisioningService', () => {
           runtimeTelemetrySource: 'native',
         },
       ];
-      harness.runtimeProcessRowsForUsageSnapshotByTeam.set('runtime-team', {
+      runtimeResourceSampling.getRuntimeProcessRowsCache().set('runtime-team', {
         expiresAtMs: Date.now() + 60_000,
         generation: harness.getRuntimeSnapshotCacheGeneration('runtime-team'),
         runId: 'run-1',
@@ -4325,7 +4369,7 @@ describe('TeamProvisioningService', () => {
       harness.invalidateRuntimeSnapshotCaches('runtime-team');
       vi.setSystemTime(new Date('2026-05-03T12:00:04.000Z'));
 
-      const cached = harness.readCachedRuntimeProcessRowsForLiveRuntimeMetadata(
+      const cached = runtimeResourceSampling.readCachedRuntimeProcessRowsForLiveRuntimeMetadata(
         'runtime-team',
         'run-1'
       );
@@ -4728,6 +4772,7 @@ describe('TeamProvisioningService', () => {
 
     it('does not cut a same-member metrics root out of that member process tree', () => {
       const svc = new TeamProvisioningService();
+      const runtimeResourceSampling = runtimeResourceSamplingHarness(svc);
       const rows = [
         { pid: 111, ppid: 1, command: 'alice-runtime' },
         { pid: 222, ppid: 111, command: 'alice-metrics-runtime' },
@@ -4741,7 +4786,11 @@ describe('TeamProvisioningService', () => {
         [444, new Set(['bob'])],
       ]);
 
-      const trees = (svc as any).buildRuntimeUsageProcessTrees([111, 222, 444], rows, ownersByPid);
+      const trees = runtimeResourceSampling.buildRuntimeUsageProcessTrees(
+        [111, 222, 444],
+        rows,
+        ownersByPid
+      );
 
       expect(trees.get(111)).toEqual({ pids: [111, 222, 333], truncated: false });
       expect(trees.get(222)).toEqual({ pids: [222, 333], truncated: false });
@@ -4903,12 +4952,10 @@ describe('TeamProvisioningService', () => {
     });
 
     it('continues runtime snapshot when telemetry tree building fails', async () => {
-      const svc = new TeamProvisioningService();
-      (svc as any).configReader = {
-        getConfig: vi.fn(async () => ({
-          members: [{ name: 'team-lead', agentType: 'team-lead' }],
-        })),
-      };
+      const svc = createServiceWithConfig({
+        members: [{ name: 'team-lead', agentType: 'team-lead' }],
+      });
+      const runtimeResourceSampling = runtimeResourceSamplingHarness(svc);
       (svc as any).aliveRunByTeam.set('runtime-team', 'run-1');
       (svc as any).runs.set('run-1', {
         runId: 'run-1',
@@ -4918,7 +4965,7 @@ describe('TeamProvisioningService', () => {
         cancelRequested: false,
         spawnContext: null,
       });
-      (svc as any).buildRuntimeUsageProcessTrees = vi.fn(() => {
+      vi.spyOn(runtimeResourceSampling, 'buildRuntimeUsageProcessTrees').mockImplementation(() => {
         throw new Error('tree broke');
       });
 
@@ -4934,12 +4981,10 @@ describe('TeamProvisioningService', () => {
     });
 
     it('continues runtime snapshot when aggregate load stats fail for a member', async () => {
-      const svc = new TeamProvisioningService();
-      (svc as any).configReader = {
-        getConfig: vi.fn(async () => ({
-          members: [{ name: 'team-lead', agentType: 'team-lead' }],
-        })),
-      };
+      const svc = createServiceWithConfig({
+        members: [{ name: 'team-lead', agentType: 'team-lead' }],
+      });
+      const runtimeResourceSampling = runtimeResourceSamplingHarness(svc);
       (svc as any).aliveRunByTeam.set('runtime-team', 'run-1');
       (svc as any).runs.set('run-1', {
         runId: 'run-1',
@@ -4952,7 +4997,7 @@ describe('TeamProvisioningService', () => {
       vi.mocked(pidusage).mockResolvedValueOnce({
         '111': createPidusageStat(111, 100_000_000, 2),
       } as any);
-      (svc as any).buildRuntimeProcessLoadStats = vi.fn(() => {
+      vi.spyOn(runtimeResourceSampling, 'buildRuntimeProcessLoadStats').mockImplementation(() => {
         throw new Error('aggregate broke');
       });
 
@@ -4967,12 +5012,10 @@ describe('TeamProvisioningService', () => {
     });
 
     it('keeps current runtime metrics when telemetry history recording fails', async () => {
-      const svc = new TeamProvisioningService();
-      (svc as any).configReader = {
-        getConfig: vi.fn(async () => ({
-          members: [{ name: 'team-lead', agentType: 'team-lead' }],
-        })),
-      };
+      const svc = createServiceWithConfig({
+        members: [{ name: 'team-lead', agentType: 'team-lead' }],
+      });
+      const runtimeResourceSampling = runtimeResourceSamplingHarness(svc);
       (svc as any).aliveRunByTeam.set('runtime-team', 'run-1');
       (svc as any).runs.set('run-1', {
         runId: 'run-1',
@@ -4985,9 +5028,11 @@ describe('TeamProvisioningService', () => {
       vi.mocked(pidusage).mockResolvedValueOnce({
         '111': createPidusageStat(111, 100_000_000, 2),
       } as any);
-      (svc as any).recordAgentRuntimeResourceSample = vi.fn(() => {
-        throw new Error('history broke');
-      });
+      vi.spyOn(runtimeResourceSampling, 'recordAgentRuntimeResourceSample').mockImplementation(
+        () => {
+          throw new Error('history broke');
+        }
+      );
 
       const snapshot = await svc.getTeamAgentRuntimeSnapshot('runtime-team');
 
@@ -5001,12 +5046,10 @@ describe('TeamProvisioningService', () => {
     });
 
     it('keeps runtime snapshot when telemetry history pruning fails', async () => {
-      const svc = new TeamProvisioningService();
-      (svc as any).configReader = {
-        getConfig: vi.fn(async () => ({
-          members: [{ name: 'team-lead', agentType: 'team-lead' }],
-        })),
-      };
+      const svc = createServiceWithConfig({
+        members: [{ name: 'team-lead', agentType: 'team-lead' }],
+      });
+      const runtimeResourceSampling = runtimeResourceSamplingHarness(svc);
       (svc as any).aliveRunByTeam.set('runtime-team', 'run-1');
       (svc as any).runs.set('run-1', {
         runId: 'run-1',
@@ -5019,9 +5062,11 @@ describe('TeamProvisioningService', () => {
       vi.mocked(pidusage).mockResolvedValueOnce({
         '111': createPidusageStat(111, 100_000_000, 2),
       } as any);
-      (svc as any).pruneAgentRuntimeResourceHistory = vi.fn(() => {
-        throw new Error('prune broke');
-      });
+      vi.spyOn(runtimeResourceSampling, 'pruneAgentRuntimeResourceHistory').mockImplementation(
+        () => {
+          throw new Error('prune broke');
+        }
+      );
 
       const snapshot = await svc.getTeamAgentRuntimeSnapshot('runtime-team');
 
@@ -5033,6 +5078,7 @@ describe('TeamProvisioningService', () => {
 
     it('caps oversized runtime process trees without blocking the snapshot', () => {
       const svc = new TeamProvisioningService();
+      const runtimeResourceSampling = runtimeResourceSamplingHarness(svc);
       const rows = [
         { pid: 111, ppid: 1, command: 'claude' },
         ...Array.from({ length: 70 }, (_, index) => ({
@@ -5042,7 +5088,7 @@ describe('TeamProvisioningService', () => {
         })),
       ];
 
-      const trees = (svc as any).buildRuntimeUsageProcessTrees([111], rows);
+      const trees = runtimeResourceSampling.buildRuntimeUsageProcessTrees([111], rows);
       const tree = trees.get(111);
 
       expect(tree?.pids).toHaveLength(64);
@@ -5058,6 +5104,7 @@ describe('TeamProvisioningService', () => {
       });
       try {
         const svc = new TeamProvisioningService();
+        const runtimeResourceSampling = runtimeResourceSamplingHarness(svc);
         vi.mocked(listRuntimeProcessTableForCurrentPlatform).mockResolvedValueOnce([
           { pid: 111, ppid: 1, command: 'wsl-runtime' },
         ]);
@@ -5066,9 +5113,12 @@ describe('TeamProvisioningService', () => {
           { pid: 444, ppid: 333, command: 'node.exe tool.js' },
         ]);
 
-        const rows = await (svc as any).readRuntimeProcessRowsForUsageSnapshot('runtime-team', {
-          includeWindowsHostRows: true,
-        });
+        const rows = await runtimeResourceSampling.readRuntimeProcessRowsForUsageSnapshot(
+          'runtime-team',
+          {
+            includeWindowsHostRows: true,
+          }
+        );
 
         expect(listRuntimeProcessTableForCurrentPlatform).toHaveBeenCalledTimes(1);
         expect(listWindowsProcessTable).toHaveBeenCalledWith(1_500);
@@ -5106,6 +5156,7 @@ describe('TeamProvisioningService', () => {
       (TeamProvisioningService as any).RUNTIME_WINDOWS_PROCESS_TABLE_TIMEOUT_MS = 5;
       try {
         const svc = new TeamProvisioningService();
+        const runtimeResourceSampling = runtimeResourceSamplingHarness(svc);
         vi.mocked(listRuntimeProcessTableForCurrentPlatform).mockResolvedValueOnce([
           { pid: 111, ppid: 1, command: 'wsl-runtime' },
         ]);
@@ -5113,9 +5164,12 @@ describe('TeamProvisioningService', () => {
           () => new Promise(() => {}) as any
         );
 
-        const rows = await (svc as any).readRuntimeProcessRowsForUsageSnapshot('runtime-team', {
-          includeWindowsHostRows: true,
-        });
+        const rows = await runtimeResourceSampling.readRuntimeProcessRowsForUsageSnapshot(
+          'runtime-team',
+          {
+            includeWindowsHostRows: true,
+          }
+        );
 
         expect(rows).toEqual([
           { pid: 111, ppid: 1, command: 'wsl-runtime', runtimeTelemetrySource: 'wsl' },
@@ -5139,6 +5193,7 @@ describe('TeamProvisioningService', () => {
       });
       try {
         const svc = new TeamProvisioningService();
+        const runtimeResourceSampling = runtimeResourceSamplingHarness(svc);
         vi.mocked(listRuntimeProcessTableForCurrentPlatform)
           .mockRejectedValueOnce(new Error('wsl process table unavailable'))
           .mockResolvedValueOnce([{ pid: 111, ppid: 1, command: 'wsl-runtime' }]);
@@ -5146,10 +5201,10 @@ describe('TeamProvisioningService', () => {
           { pid: 333, ppid: 1, command: 'opencode.exe serve' },
         ]);
 
-        const failedRows = await (svc as any).readRuntimeProcessRowsForUsageSnapshot(
+        const failedRows = await runtimeResourceSampling.readRuntimeProcessRowsForUsageSnapshot(
           'runtime-team'
         );
-        const recoveredRows = await (svc as any).readRuntimeProcessRowsForUsageSnapshot(
+        const recoveredRows = await runtimeResourceSampling.readRuntimeProcessRowsForUsageSnapshot(
           'runtime-team',
           {
             includeWindowsHostRows: true,
@@ -5183,7 +5238,8 @@ describe('TeamProvisioningService', () => {
       });
       try {
         const svc = new TeamProvisioningService();
-        const rows = [
+        const runtimeResourceSampling = runtimeResourceSamplingHarness(svc);
+        const rows: RuntimeTelemetryProcessTableRow[] = [
           { pid: 111, ppid: 1, command: 'lead.exe', runtimeTelemetrySource: 'windows-host' },
           {
             pid: 222,
@@ -5195,7 +5251,7 @@ describe('TeamProvisioningService', () => {
           { pid: 444, ppid: 333, command: 'wsl-grandchild', runtimeTelemetrySource: 'wsl' },
         ];
 
-        const trees = (svc as any).buildRuntimeUsageProcessTrees([111, 333], rows);
+        const trees = runtimeResourceSampling.buildRuntimeUsageProcessTrees([111, 333], rows);
 
         expect(trees.get(111)).toEqual({ pids: [111, 222], truncated: false });
         expect(trees.get(333)).toEqual({ pids: [], truncated: false });
@@ -5209,8 +5265,9 @@ describe('TeamProvisioningService', () => {
 
     it('treats an empty telemetry process tree as explicitly unsampled', () => {
       const svc = new TeamProvisioningService();
+      const runtimeResourceSampling = runtimeResourceSamplingHarness(svc);
 
-      const stats = (svc as any).buildRuntimeProcessLoadStats({
+      const stats = runtimeResourceSampling.buildRuntimeProcessLoadStats({
         rootPid: 333,
         usageStatsByPid: new Map([[333, { rssBytes: 999_000_000, cpuPercent: 88 }]]),
         processTree: { pids: [], truncated: false },
@@ -5292,6 +5349,7 @@ describe('TeamProvisioningService', () => {
     it('ignores malformed process table rows before building runtime telemetry trees', async () => {
       setRuntimeTelemetryPlatformForTest('linux');
       const svc = new TeamProvisioningService();
+      const runtimeResourceSampling = runtimeResourceSamplingHarness(svc);
       vi.mocked(listRuntimeProcessTableForCurrentPlatform).mockResolvedValueOnce([
         { pid: 111, ppid: 1, command: 'claude' },
         null,
@@ -5301,8 +5359,9 @@ describe('TeamProvisioningService', () => {
         { pid: '444', ppid: '333', command: 'python worker.py' },
       ] as any);
 
-      const rows = await (svc as any).readRuntimeProcessRowsForUsageSnapshot('runtime-team');
-      const trees = (svc as any).buildRuntimeUsageProcessTrees([111], rows);
+      const rows =
+        await runtimeResourceSampling.readRuntimeProcessRowsForUsageSnapshot('runtime-team');
+      const trees = runtimeResourceSampling.buildRuntimeUsageProcessTrees([111], rows);
 
       expect(rows).toEqual([
         { pid: 111, ppid: 1, command: 'claude', runtimeTelemetrySource: 'native' },
@@ -5319,6 +5378,7 @@ describe('TeamProvisioningService', () => {
 
     it('fails soft when runtime process table lookup times out', async () => {
       const svc = new TeamProvisioningService();
+      const runtimeResourceSampling = runtimeResourceSamplingHarness(svc);
       const originalProcessTableTimeout = (TeamProvisioningService as any)
         .RUNTIME_PROCESS_TABLE_TIMEOUT_MS;
       (TeamProvisioningService as any).RUNTIME_PROCESS_TABLE_TIMEOUT_MS = 5;
@@ -5327,7 +5387,8 @@ describe('TeamProvisioningService', () => {
       );
 
       try {
-        const rows = await (svc as any).readRuntimeProcessRowsForUsageSnapshot('runtime-team');
+        const rows =
+          await runtimeResourceSampling.readRuntimeProcessRowsForUsageSnapshot('runtime-team');
 
         expect(rows).toBeNull();
         expect(listRuntimeProcessTableForCurrentPlatform).toHaveBeenCalledTimes(1);
@@ -5386,9 +5447,10 @@ describe('TeamProvisioningService', () => {
 
     it('caps runtime resource history per member and pid', () => {
       const svc = new TeamProvisioningService();
+      const runtimeResourceSampling = runtimeResourceSamplingHarness(svc);
       let history: unknown[] | undefined;
       for (let index = 0; index < 70; index += 1) {
-        history = (svc as any).recordAgentRuntimeResourceSample({
+        history = runtimeResourceSampling.recordAgentRuntimeResourceSample({
           teamName: 'runtime-team',
           memberName: 'alice',
           timestamp: `2026-04-24T12:${String(index).padStart(2, '0')}:00.000Z`,
@@ -5414,8 +5476,9 @@ describe('TeamProvisioningService', () => {
 
     it('throttles runtime resource history samples within the minimum interval', () => {
       const svc = new TeamProvisioningService();
+      const runtimeResourceSampling = runtimeResourceSamplingHarness(svc);
 
-      const firstHistory = (svc as any).recordAgentRuntimeResourceSample({
+      const firstHistory = runtimeResourceSampling.recordAgentRuntimeResourceSample({
         teamName: 'runtime-team',
         memberName: 'alice',
         timestamp: '2026-04-24T12:00:00.000Z',
@@ -5424,7 +5487,7 @@ describe('TeamProvisioningService', () => {
         pidSource: 'tmux_child',
         pid: 222,
       });
-      const throttledHistory = (svc as any).recordAgentRuntimeResourceSample({
+      const throttledHistory = runtimeResourceSampling.recordAgentRuntimeResourceSample({
         teamName: 'runtime-team',
         memberName: 'alice',
         timestamp: '2026-04-24T12:00:01.000Z',
@@ -5444,8 +5507,9 @@ describe('TeamProvisioningService', () => {
 
     it('ignores invalid runtime resource metrics while preserving existing history', () => {
       const svc = new TeamProvisioningService();
+      const runtimeResourceSampling = runtimeResourceSamplingHarness(svc);
 
-      const firstHistory = (svc as any).recordAgentRuntimeResourceSample({
+      const firstHistory = runtimeResourceSampling.recordAgentRuntimeResourceSample({
         teamName: 'runtime-team',
         memberName: 'alice',
         timestamp: '2026-04-24T12:00:00.000Z',
@@ -5454,7 +5518,7 @@ describe('TeamProvisioningService', () => {
         pidSource: 'tmux_child',
         pid: 222,
       });
-      const invalidHistory = (svc as any).recordAgentRuntimeResourceSample({
+      const invalidHistory = runtimeResourceSampling.recordAgentRuntimeResourceSample({
         teamName: 'runtime-team',
         memberName: 'alice',
         timestamp: '2026-04-24T12:01:00.000Z',
@@ -5463,7 +5527,7 @@ describe('TeamProvisioningService', () => {
         pidSource: 'tmux_child',
         pid: 222,
       });
-      const missingHistory = (svc as any).recordAgentRuntimeResourceSample({
+      const missingHistory = runtimeResourceSampling.recordAgentRuntimeResourceSample({
         teamName: 'runtime-team',
         memberName: 'bob',
         timestamp: '2026-04-24T12:01:00.000Z',
@@ -5479,9 +5543,10 @@ describe('TeamProvisioningService', () => {
 
     it('prunes inactive runtime resource history keys', () => {
       const svc = new TeamProvisioningService();
+      const runtimeResourceSampling = runtimeResourceSamplingHarness(svc);
       const activeKeys = new Set<string>();
 
-      (svc as any).recordAgentRuntimeResourceSample({
+      runtimeResourceSampling.recordAgentRuntimeResourceSample({
         teamName: 'runtime-team',
         memberName: 'alice',
         timestamp: '2026-04-24T12:00:00.000Z',
@@ -5491,7 +5556,7 @@ describe('TeamProvisioningService', () => {
         pid: 222,
         activeKeys,
       });
-      (svc as any).recordAgentRuntimeResourceSample({
+      runtimeResourceSampling.recordAgentRuntimeResourceSample({
         teamName: 'runtime-team',
         memberName: 'bob',
         timestamp: '2026-04-24T12:00:00.000Z',
@@ -5501,15 +5566,15 @@ describe('TeamProvisioningService', () => {
         pid: 333,
       });
 
-      (svc as any).pruneAgentRuntimeResourceHistory('runtime-team', activeKeys);
-      const aliceHistory = (svc as any).recordAgentRuntimeResourceSample({
+      runtimeResourceSampling.pruneAgentRuntimeResourceHistory('runtime-team', activeKeys);
+      const aliceHistory = runtimeResourceSampling.recordAgentRuntimeResourceSample({
         teamName: 'runtime-team',
         memberName: 'alice',
         timestamp: '2026-04-24T12:01:00.000Z',
         pidSource: 'tmux_child',
         pid: 222,
       });
-      const bobHistory = (svc as any).recordAgentRuntimeResourceSample({
+      const bobHistory = runtimeResourceSampling.recordAgentRuntimeResourceSample({
         teamName: 'runtime-team',
         memberName: 'bob',
         timestamp: '2026-04-24T12:01:00.000Z',
@@ -5703,13 +5768,14 @@ describe('TeamProvisioningService', () => {
 
     it('fails soft when batched pidusage sampling times out', async () => {
       const svc = new TeamProvisioningService();
+      const runtimeResourceSampling = runtimeResourceSamplingHarness(svc);
       const originalBatchTimeout = (TeamProvisioningService as any)
         .RUNTIME_PIDUSAGE_BATCH_TIMEOUT_MS;
       (TeamProvisioningService as any).RUNTIME_PIDUSAGE_BATCH_TIMEOUT_MS = 5;
       vi.mocked(pidusage).mockImplementation(() => new Promise(() => {}) as any);
 
       try {
-        const stats = await (svc as any).readProcessUsageStatsByPid([111, 222]);
+        const stats = await runtimeResourceSampling.readProcessUsageStatsByPid([111, 222]);
 
         expect(stats.size).toBe(0);
         expect(pidusage).toHaveBeenCalledTimes(1);
@@ -5721,13 +5787,14 @@ describe('TeamProvisioningService', () => {
 
     it('ignores malformed pidusage results while keeping valid runtime stats', async () => {
       const svc = new TeamProvisioningService();
+      const runtimeResourceSampling = runtimeResourceSamplingHarness(svc);
       vi.mocked(pidusage).mockResolvedValueOnce({
         '111': null,
         '222': { memory: 'bad', cpu: Number.NaN },
         '333': { memory: '123000000', cpu: '7' },
       } as any);
 
-      const stats = await (svc as any).readProcessUsageStatsByPid([111, 222, 333]);
+      const stats = await runtimeResourceSampling.readProcessUsageStatsByPid([111, 222, 333]);
 
       expect(stats.size).toBe(1);
       expect(stats.get(333)).toEqual({ rssBytes: 123_000_000, cpuPercent: 7 });
@@ -5740,9 +5807,9 @@ describe('TeamProvisioningService', () => {
       };
       vi.mocked(pidusage).mockResolvedValueOnce(usageByPid);
 
-      const harness = privateHarness(svc);
-      const first = await harness.readProcessUsageStatsByPid([111]);
-      const second = await harness.readProcessUsageStatsByPid([111]);
+      const runtimeResourceSampling = runtimeResourceSamplingHarness(svc);
+      const first = await runtimeResourceSampling.readProcessUsageStatsByPid([111]);
+      const second = await runtimeResourceSampling.readProcessUsageStatsByPid([111]);
 
       expect(pidusage).toHaveBeenCalledTimes(1);
       expect(pidusage).toHaveBeenCalledWith([111], EXPECTED_RUNTIME_PIDUSAGE_OPTIONS);
@@ -5762,10 +5829,11 @@ describe('TeamProvisioningService', () => {
       );
       vi.mocked(pidusage).mockResolvedValueOnce(usageByPid);
 
-      await privateHarness(svc).readProcessUsageStatsByPid(pids);
+      const runtimeResourceSampling = runtimeResourceSamplingHarness(svc);
+      await runtimeResourceSampling.readProcessUsageStatsByPid(pids);
 
       const cache = (
-        svc as unknown as {
+        runtimeResourceSampling as unknown as {
           runtimeProcessUsageStatsCacheByPid: Map<number, unknown>;
         }
       ).runtimeProcessUsageStatsCacheByPid;
@@ -7518,7 +7586,10 @@ describe('TeamProvisioningService', () => {
           }))
       );
       const persistRestartMessage = vi
-        .spyOn(svc as any, 'persistOpenCodeMemberRestartSystemMessage')
+        .spyOn(
+          memberLifecycleControllerHarness(svc),
+          'persistOpenCodeMemberRestartSystemMessageInternal'
+        )
         .mockImplementation(() => undefined);
       const runtimeRelaunch = vi
         .spyOn(svc as any, 'runOpenCodeTeamRuntimeAdapterLaunch')
@@ -17502,7 +17573,10 @@ describe('TeamProvisioningService', () => {
     it('fails early when the previous process backend runtime does not exit before restart', async () => {
       vi.useFakeTimers();
 
-      const svc = new TeamProvisioningService();
+      const svc = createServiceWithConfig({
+        name: 'Process Team',
+        members: [{ name: 'team-lead', agentType: 'team-lead' }],
+      });
       const run = createMemberSpawnRun({
         teamName: 'process-team',
         expectedMembers: ['forge'],
@@ -17514,12 +17588,6 @@ describe('TeamProvisioningService', () => {
 
       const sendMessageToRun = vi.fn(async () => {});
       (svc as any).sendMessageToRun = sendMessageToRun;
-      (svc as any).configReader = {
-        getConfig: vi.fn(async () => ({
-          name: 'Process Team',
-          members: [{ name: 'team-lead', agentType: 'team-lead' }],
-        })),
-      };
       (svc as any).membersMetaStore = {
         getMembers: vi.fn(async () => [
           {
@@ -17566,7 +17634,10 @@ describe('TeamProvisioningService', () => {
     it('bypasses stale live runtime metadata cache before restarting a process backend teammate', async () => {
       vi.useFakeTimers();
 
-      const svc = new TeamProvisioningService();
+      const svc = createServiceWithConfig({
+        name: 'Process Team',
+        members: [{ name: 'team-lead', agentType: 'team-lead' }],
+      });
       const run = createMemberSpawnRun({
         teamName: 'process-team',
         expectedMembers: ['forge'],
@@ -17578,12 +17649,6 @@ describe('TeamProvisioningService', () => {
 
       const sendMessageToRun = vi.fn(async () => {});
       (svc as any).sendMessageToRun = sendMessageToRun;
-      (svc as any).configReader = {
-        getConfig: vi.fn(async () => ({
-          name: 'Process Team',
-          members: [{ name: 'team-lead', agentType: 'team-lead' }],
-        })),
-      };
       (svc as any).membersMetaStore = {
         getMembers: vi.fn(async () => [
           {
@@ -17596,13 +17661,21 @@ describe('TeamProvisioningService', () => {
           },
         ]),
       };
-      (svc as any).readPersistedRuntimeMembers = vi.fn(() => [
+      const persistedRuntimeMembers: ReturnType<
+        TeamProvisioningConfigFacade['readPersistedRuntimeMembers']
+      > = [
         {
           name: 'forge',
           agentId: 'forge@process-team',
           backendType: 'process',
         },
-      ]);
+      ];
+      memberLifecycleHostHarness(svc).readPersistedRuntimeMembers = vi.fn(
+        () => persistedRuntimeMembers
+      );
+      provisioningConfigFacadeHarness(svc).readPersistedRuntimeMembers = vi.fn(
+        () => persistedRuntimeMembers
+      );
       vi.mocked(listRuntimeProcessTableForCurrentPlatform).mockResolvedValueOnce([
         {
           pid: process.pid,
@@ -17700,7 +17773,10 @@ describe('TeamProvisioningService', () => {
     });
 
     it('restarts a process backend teammate directly without asking the lead to respawn it', async () => {
-      const svc = new TeamProvisioningService();
+      const svc = createServiceWithConfig({
+        name: 'Process Team',
+        members: [{ name: 'team-lead', agentType: 'team-lead' }],
+      });
       const run = createMemberSpawnRun({
         teamName: 'process-team',
         expectedMembers: ['forge'],
@@ -17713,13 +17789,10 @@ describe('TeamProvisioningService', () => {
       const sendMessageToRun = vi.fn(async () => {});
       const directProcessRestart = vi.fn(async () => {});
       (svc as any).sendMessageToRun = sendMessageToRun;
-      (svc as any).launchDirectProcessMemberRestart = directProcessRestart;
-      (svc as any).configReader = {
-        getConfig: vi.fn(async () => ({
-          name: 'Process Team',
-          members: [{ name: 'team-lead', agentType: 'team-lead' }],
-        })),
-      };
+      vi.spyOn(
+        memberLifecycleControllerHarness(svc),
+        'launchDirectProcessMemberRestartInternal'
+      ).mockImplementation(directProcessRestart);
       (svc as any).membersMetaStore = {
         getMembers: vi.fn(async () => [
           {
@@ -17732,7 +17805,7 @@ describe('TeamProvisioningService', () => {
           },
         ]),
       };
-      (svc as any).readPersistedRuntimeMembers = vi.fn(() => [
+      memberLifecycleHostHarness(svc).readPersistedRuntimeMembers = vi.fn(() => [
         {
           name: 'forge',
           agentId: 'forge@process-team',
@@ -17763,7 +17836,18 @@ describe('TeamProvisioningService', () => {
       'attaches live primary-owned %s/%s teammate through direct process lifecycle',
       async (leadProviderId, memberProviderId, expectedProviderId) => {
         const teamName = `direct-live-${leadProviderId}-${memberProviderId ?? 'inherit'}`;
-        const svc = new TeamProvisioningService();
+        const svc = createServiceWithConfig({
+          name: 'Direct Live Team',
+          members: [
+            { name: 'team-lead', agentType: 'team-lead', providerId: leadProviderId },
+            {
+              name: 'forge',
+              role: 'Developer',
+              ...(memberProviderId ? { providerId: memberProviderId } : {}),
+              agentType: 'general-purpose',
+            },
+          ],
+        });
         const run = createMemberSpawnRun({
           teamName,
           expectedMembers: [],
@@ -17777,27 +17861,21 @@ describe('TeamProvisioningService', () => {
         (svc as any).runs.set(run.runId, run);
 
         const directProcessLaunch = vi.fn(async (input) => {
-          const memberSpec = (svc as any).buildPrimaryOwnedMemberSpecForRuntime({
+          const memberSpec = buildPrimaryOwnedMemberSpecForRuntime({
             configuredMember: input.configuredMember,
-            run: input.run,
+            request: input.run.request,
           });
           expect(memberSpec.providerId).toBe(expectedProviderId);
         });
         const opencodeReattach = vi.fn(async () => {});
-        (svc as any).launchDirectProcessMemberRestart = directProcessLaunch;
-        (svc as any).reattachOpenCodeOwnedMemberLaneUnlocked = opencodeReattach;
-        (svc as any).readConfigForStrictDecision = vi.fn(async () => ({
-          name: 'Direct Live Team',
-          members: [
-            { name: 'team-lead', agentType: 'team-lead', providerId: leadProviderId },
-            {
-              name: 'forge',
-              role: 'Developer',
-              ...(memberProviderId ? { providerId: memberProviderId } : {}),
-              agentType: 'general-purpose',
-            },
-          ],
-        }));
+        vi.spyOn(
+          memberLifecycleControllerHarness(svc),
+          'launchDirectProcessMemberRestartInternal'
+        ).mockImplementation(directProcessLaunch);
+        vi.spyOn(
+          memberLifecycleControllerHarness(svc),
+          'reattachOpenCodeOwnedMemberLaneUnlockedInternal'
+        ).mockImplementation(opencodeReattach);
         (svc as any).membersMetaStore = { getMembers: vi.fn(async () => []) };
         (svc as any).readPersistedRuntimeMembers = vi.fn(() => []);
         (svc as any).getLiveTeamAgentRuntimeMetadata = vi.fn(async () => new Map());
@@ -17820,7 +17898,18 @@ describe('TeamProvisioningService', () => {
 
     it('routes live OpenCode teammates through the OpenCode lane lifecycle', async () => {
       const teamName = 'direct-live-opencode-member';
-      const svc = new TeamProvisioningService();
+      const svc = createServiceWithConfig({
+        name: 'Direct Live OpenCode Team',
+        members: [
+          { name: 'team-lead', agentType: 'team-lead', providerId: 'codex' },
+          {
+            name: 'forge',
+            role: 'Developer',
+            providerId: 'opencode',
+            agentType: 'general-purpose',
+          },
+        ],
+      });
       const run = createMemberSpawnRun({
         teamName,
         expectedMembers: [],
@@ -17835,20 +17924,14 @@ describe('TeamProvisioningService', () => {
 
       const directProcessLaunch = vi.fn(async () => {});
       const opencodeReattach = vi.fn(async () => {});
-      (svc as any).launchDirectProcessMemberRestart = directProcessLaunch;
-      (svc as any).reattachOpenCodeOwnedMemberLaneUnlocked = opencodeReattach;
-      (svc as any).readConfigForStrictDecision = vi.fn(async () => ({
-        name: 'Direct Live OpenCode Team',
-        members: [
-          { name: 'team-lead', agentType: 'team-lead', providerId: 'codex' },
-          {
-            name: 'forge',
-            role: 'Developer',
-            providerId: 'opencode',
-            agentType: 'general-purpose',
-          },
-        ],
-      }));
+      vi.spyOn(
+        memberLifecycleControllerHarness(svc),
+        'launchDirectProcessMemberRestartInternal'
+      ).mockImplementation(directProcessLaunch);
+      vi.spyOn(
+        memberLifecycleControllerHarness(svc),
+        'reattachOpenCodeOwnedMemberLaneUnlockedInternal'
+      ).mockImplementation(opencodeReattach);
       (svc as any).membersMetaStore = { getMembers: vi.fn(async () => []) };
 
       await svc.attachLiveRosterMember(teamName, 'forge', { reason: 'member_added' });
@@ -17861,7 +17944,18 @@ describe('TeamProvisioningService', () => {
 
     it('blocks live primary-owned teammate attach for OpenCode-led teams', async () => {
       const teamName = 'opencode-led-live-primary-member';
-      const svc = new TeamProvisioningService();
+      const svc = createServiceWithConfig({
+        name: 'OpenCode Led Live Team',
+        members: [
+          { name: 'team-lead', agentType: 'team-lead', providerId: 'opencode' },
+          {
+            name: 'forge',
+            role: 'Developer',
+            providerId: 'codex',
+            agentType: 'general-purpose',
+          },
+        ],
+      });
       const run = createMemberSpawnRun({
         teamName,
         expectedMembers: [],
@@ -17876,20 +17970,14 @@ describe('TeamProvisioningService', () => {
 
       const directProcessLaunch = vi.fn(async () => {});
       const opencodeReattach = vi.fn(async () => {});
-      (svc as any).launchDirectProcessMemberRestart = directProcessLaunch;
-      (svc as any).reattachOpenCodeOwnedMemberLaneUnlocked = opencodeReattach;
-      (svc as any).readConfigForStrictDecision = vi.fn(async () => ({
-        name: 'OpenCode Led Live Team',
-        members: [
-          { name: 'team-lead', agentType: 'team-lead', providerId: 'opencode' },
-          {
-            name: 'forge',
-            role: 'Developer',
-            providerId: 'codex',
-            agentType: 'general-purpose',
-          },
-        ],
-      }));
+      vi.spyOn(
+        memberLifecycleControllerHarness(svc),
+        'launchDirectProcessMemberRestartInternal'
+      ).mockImplementation(directProcessLaunch);
+      vi.spyOn(
+        memberLifecycleControllerHarness(svc),
+        'reattachOpenCodeOwnedMemberLaneUnlockedInternal'
+      ).mockImplementation(opencodeReattach);
       (svc as any).membersMetaStore = { getMembers: vi.fn(async () => []) };
 
       await expect(
@@ -17902,7 +17990,18 @@ describe('TeamProvisioningService', () => {
 
     it('blocks live primary-owned teammate detach for OpenCode-led teams', async () => {
       const teamName = 'opencode-led-live-primary-detach';
-      const svc = new TeamProvisioningService();
+      const svc = createServiceWithConfig({
+        name: 'OpenCode Led Live Team',
+        members: [
+          { name: 'team-lead', agentType: 'team-lead', providerId: 'opencode' },
+          {
+            name: 'forge',
+            role: 'Developer',
+            providerId: 'codex',
+            agentType: 'general-purpose',
+          },
+        ],
+      });
       const run = createMemberSpawnRun({
         teamName,
         expectedMembers: ['forge'],
@@ -17917,20 +18016,14 @@ describe('TeamProvisioningService', () => {
 
       const opencodeDetach = vi.fn(async () => {});
       const stopPrimaryRuntime = vi.fn(async () => {});
-      (svc as any).detachOpenCodeOwnedMemberLaneUnlocked = opencodeDetach;
-      (svc as any).stopPrimaryOwnedRosterRuntime = stopPrimaryRuntime;
-      (svc as any).readConfigForStrictDecision = vi.fn(async () => ({
-        name: 'OpenCode Led Live Team',
-        members: [
-          { name: 'team-lead', agentType: 'team-lead', providerId: 'opencode' },
-          {
-            name: 'forge',
-            role: 'Developer',
-            providerId: 'codex',
-            agentType: 'general-purpose',
-          },
-        ],
-      }));
+      vi.spyOn(
+        memberLifecycleControllerHarness(svc),
+        'detachOpenCodeOwnedMemberLaneUnlockedInternal'
+      ).mockImplementation(opencodeDetach);
+      vi.spyOn(
+        memberLifecycleControllerHarness(svc),
+        'stopPrimaryOwnedRosterRuntimeInternal'
+      ).mockImplementation(stopPrimaryRuntime);
       (svc as any).membersMetaStore = { getMembers: vi.fn(async () => []) };
 
       await expect(svc.detachLiveRosterMember(teamName, 'forge')).rejects.toThrow(
@@ -17974,13 +18067,13 @@ describe('TeamProvisioningService', () => {
         model: 'gpt-5.4',
         effort: 'medium',
         agentType: 'general-purpose',
-      };
+      } satisfies TeamProvisioningMemberInput & { agentType: string };
       const config = {
         name: 'Process Flags Team',
         projectPath,
         leadSessionId: 'lead-session-1',
         members: [{ name: 'team-lead', agentType: 'team-lead' }, configuredMember],
-      };
+      } satisfies TeamConfig;
 
       (svc as any).buildProvisioningEnv = vi.fn(async () => ({
         env: { CODEX_API_KEY: 'test-openai-key' },
@@ -18011,7 +18104,7 @@ describe('TeamProvisioningService', () => {
       (svc as any).enqueueDirectRestartPrompt = vi.fn();
       (svc as any).appendDirectProcessRuntimeEvent = vi.fn(async () => {});
 
-      await (svc as any).launchDirectProcessMemberRestart({
+      await memberLifecycleControllerHarness(svc).launchDirectProcessMemberRestartInternal({
         run,
         teamName,
         displayName: 'Process Flags Team',
@@ -18097,13 +18190,13 @@ describe('TeamProvisioningService', () => {
         model: 'gpt-5.4',
         effort: 'medium',
         agentType: 'general-purpose',
-      };
+      } satisfies TeamProvisioningMemberInput & { agentType: string };
       const config = {
         name: 'Process Event Failure Team',
         projectPath,
         leadSessionId: 'lead-session-1',
         members: [{ name: 'team-lead', agentType: 'team-lead' }, configuredMember],
-      };
+      } satisfies TeamConfig;
 
       (svc as any).buildProvisioningEnv = vi.fn(async () => ({
         env: { CODEX_API_KEY: 'test-openai-key' },
@@ -18128,7 +18221,7 @@ describe('TeamProvisioningService', () => {
         .mockRejectedValueOnce(new Error('event write failed'));
 
       await expect(
-        (svc as any).launchDirectProcessMemberRestart({
+        memberLifecycleControllerHarness(svc).launchDirectProcessMemberRestartInternal({
           run,
           teamName,
           displayName: 'Process Event Failure Team',
@@ -18192,13 +18285,13 @@ describe('TeamProvisioningService', () => {
           scopes: { user: true, project: true, local: false },
           serverNames: ['github'],
         },
-      };
+      } satisfies TeamProvisioningMemberInput & { agentType: string };
       const config = {
         name: 'Process Strict MCP Team',
         projectPath,
         leadSessionId: 'lead-session-1',
         members: [{ name: 'team-lead', agentType: 'team-lead' }, configuredMember],
-      };
+      } satisfies TeamConfig;
 
       (svc as any).buildProvisioningEnv = vi.fn(async () => ({
         env: { CODEX_API_KEY: 'test-openai-key' },
@@ -18221,7 +18314,7 @@ describe('TeamProvisioningService', () => {
       (svc as any).enqueueDirectRestartPrompt = vi.fn();
       (svc as any).appendDirectProcessRuntimeEvent = vi.fn(async () => {});
 
-      await (svc as any).launchDirectProcessMemberRestart({
+      await memberLifecycleControllerHarness(svc).launchDirectProcessMemberRestartInternal({
         run,
         teamName,
         displayName: 'Process Strict MCP Team',
@@ -31667,24 +31760,28 @@ describe('TeamProvisioningService', () => {
     (svc as any).runs.set(run.runId, run);
     (svc as any).aliveRunByTeam.set(run.teamName, run.runId);
 
-    vi.spyOn(svc as any, 'collectFailedOpenCodeSecondaryRetryCandidates').mockResolvedValue([
+    const lifecycleController = memberLifecycleControllerHarness(svc);
+    vi.spyOn(
+      lifecycleController,
+      'collectFailedOpenCodeSecondaryRetryCandidatesInternal'
+    ).mockResolvedValue([
       { memberName: 'alice', laneId: 'secondary:opencode:alice' },
       { memberName: 'tom', laneId: 'secondary:opencode:tom' },
       { memberName: 'nova', laneId: 'secondary:opencode:nova' },
     ]);
     const reattach = vi
-      .spyOn(svc as any, 'reattachOpenCodeOwnedMemberLaneUnlocked')
+      .spyOn(lifecycleController, 'reattachOpenCodeOwnedMemberLaneUnlockedInternal')
       .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce(new Error('OpenCode bridge crashed'));
-    vi.spyOn(svc as any, 'readOpenCodeSecondaryRetryOutcome')
+    vi.spyOn(lifecycleController, 'readOpenCodeSecondaryRetryOutcomeInternal')
       .mockResolvedValueOnce({ launchState: 'confirmed_alive' })
       .mockResolvedValueOnce({
         launchState: 'failed_to_start',
         reason: 'Latest assistant message reported OpenRouter credits exhausted',
       });
     const notify = vi
-      .spyOn(svc as any, 'notifyLeadAboutConfirmedOpenCodeRetries')
+      .spyOn(lifecycleController, 'notifyLeadAboutConfirmedOpenCodeRetriesInternal')
       .mockResolvedValue(undefined);
 
     const result = await svc.retryFailedOpenCodeSecondaryLanes(run.teamName);
@@ -31775,8 +31872,9 @@ describe('TeamProvisioningService', () => {
 
   it('does not let one teammate lifecycle operation block another teammate or team', async () => {
     const svc = new TeamProvisioningService();
+    const lifecycleController = memberLifecycleControllerHarness(svc);
     const aliceDone = createDeferred<void>();
-    const firstOperation = (svc as any).runMemberLifecycleOperation(
+    const firstOperation = lifecycleController.runMemberLifecycleOperationInternal(
       'same-team',
       'alice',
       'manual_restart',
@@ -31784,7 +31882,7 @@ describe('TeamProvisioningService', () => {
     );
 
     await expect(
-      (svc as any).runMemberLifecycleOperation(
+      lifecycleController.runMemberLifecycleOperationInternal(
         'same-team',
         'bob',
         'manual_restart',
@@ -31793,7 +31891,7 @@ describe('TeamProvisioningService', () => {
     ).resolves.toBe('bob-ok');
 
     await expect(
-      (svc as any).runMemberLifecycleOperation(
+      lifecycleController.runMemberLifecycleOperationInternal(
         'other-team',
         'alice',
         'manual_restart',
@@ -31817,25 +31915,32 @@ describe('TeamProvisioningService', () => {
     (svc as any).runs.set(run.runId, run);
     (svc as any).aliveRunByTeam.set(run.teamName, run.runId);
 
+    const lifecycleController = memberLifecycleControllerHarness(svc);
     const busyDone = createDeferred<void>();
-    const busyOperation = (svc as any).runMemberLifecycleOperation(
+    const busyOperation = lifecycleController.runMemberLifecycleOperationInternal(
       run.teamName,
       'alice',
       'manual_restart',
       () => busyDone.promise
     );
 
-    vi.spyOn(svc as any, 'collectFailedOpenCodeSecondaryRetryCandidates').mockResolvedValue([
+    vi.spyOn(
+      lifecycleController,
+      'collectFailedOpenCodeSecondaryRetryCandidatesInternal'
+    ).mockResolvedValue([
       { memberName: 'alice', laneId: 'secondary:opencode:alice' },
       { memberName: 'tom', laneId: 'secondary:opencode:tom' },
     ]);
     const reattach = vi
-      .spyOn(svc as any, 'reattachOpenCodeOwnedMemberLaneUnlocked')
+      .spyOn(lifecycleController, 'reattachOpenCodeOwnedMemberLaneUnlockedInternal')
       .mockResolvedValue(undefined);
-    vi.spyOn(svc as any, 'readOpenCodeSecondaryRetryOutcome').mockResolvedValue({
+    vi.spyOn(lifecycleController, 'readOpenCodeSecondaryRetryOutcomeInternal').mockResolvedValue({
       launchState: 'confirmed_alive',
     });
-    vi.spyOn(svc as any, 'notifyLeadAboutConfirmedOpenCodeRetries').mockResolvedValue(undefined);
+    vi.spyOn(
+      lifecycleController,
+      'notifyLeadAboutConfirmedOpenCodeRetriesInternal'
+    ).mockResolvedValue(undefined);
 
     const result = await svc.retryFailedOpenCodeSecondaryLanes(run.teamName);
 
@@ -31858,8 +31963,9 @@ describe('TeamProvisioningService', () => {
 
   it('blocks manual restart while an OpenCode member update reattach is active', async () => {
     const svc = new TeamProvisioningService();
+    const lifecycleController = memberLifecycleControllerHarness(svc);
     const reattachDone = createDeferred<void>();
-    const reattachOperation = (svc as any).runMemberLifecycleOperation(
+    const reattachOperation = lifecycleController.runMemberLifecycleOperationInternal(
       'mixed-update-team',
       'bob',
       'opencode_member_updated',
@@ -31876,8 +31982,9 @@ describe('TeamProvisioningService', () => {
 
   it('blocks manual restart while an OpenCode member removal detach is active', async () => {
     const svc = new TeamProvisioningService();
+    const lifecycleController = memberLifecycleControllerHarness(svc);
     const detachDone = createDeferred<void>();
-    const detachOperation = (svc as any).runMemberLifecycleOperation(
+    const detachOperation = lifecycleController.runMemberLifecycleOperationInternal(
       'mixed-remove-team',
       'bob',
       'opencode_member_removed',
@@ -31910,7 +32017,9 @@ describe('TeamProvisioningService', () => {
       ]),
     });
     const lifecycleDone = createDeferred<void>();
-    const lifecycleOperation = (svc as any).runMemberLifecycleOperation(
+    const lifecycleOperation = memberLifecycleControllerHarness(
+      svc
+    ).runMemberLifecycleOperationInternal(
       run.teamName,
       'bob',
       'manual_restart',

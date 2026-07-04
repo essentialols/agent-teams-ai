@@ -61,9 +61,18 @@ class BoundCallbackHost {
     getAliveRunId: vi.fn(() => 'alive-1'),
   };
 
-  readonly workspaceTrustCoordinator = null;
+  workspaceTrustCoordinator: unknown = null;
   readonly workspaceTrustWorkspaceCollectionPorts = {};
-  readonly runtimeTurnSettledEnvironmentProvider = null;
+  runtimeTurnSettledEnvironmentProvider: unknown = null;
+
+  getWorkspaceTrustCoordinator(): unknown {
+    return this.workspaceTrustCoordinator;
+  }
+
+  getRuntimeTurnSettledEnvironmentProvider(): unknown {
+    return this.runtimeTurnSettledEnvironmentProvider;
+  }
+
   readonly mcpConfigBuilder = {
     writeConfigFile: vi.fn(async () => '/tmp/mcp.json'),
     removeConfigFile: vi.fn(async () => undefined),
@@ -296,5 +305,28 @@ describe('createTeamProvisioningLaunchDeterministicFlowBoundary', () => {
       'host-context:cleanup:run-1',
       'host-context:exit:run-1:0',
     ]);
+  });
+
+  it('reads mutable setup dependencies after boundary construction', () => {
+    const host = new BoundCallbackHost();
+    const boundary = createTeamProvisioningLaunchDeterministicFlowBoundary(createDeps(host));
+    const workspaceTrustCoordinator = {
+      planArgsOnly: vi.fn(),
+      planFull: vi.fn(),
+      execute: vi.fn(),
+    };
+    const runtimeTurnSettledEnvironmentProvider = vi.fn(async () => ({
+      RUNTIME_TURN_SETTLED_SPOOL_ROOT: '/tmp/spool',
+    }));
+
+    host.workspaceTrustCoordinator = workspaceTrustCoordinator;
+    host.runtimeTurnSettledEnvironmentProvider = runtimeTurnSettledEnvironmentProvider;
+
+    const setupPorts = boundary.createSetupPorts();
+
+    expect(setupPorts.workspaceTrustCoordinator).toBe(workspaceTrustCoordinator);
+    expect(setupPorts.runtimeTurnSettledEnvironmentProvider).toBe(
+      runtimeTurnSettledEnvironmentProvider
+    );
   });
 });

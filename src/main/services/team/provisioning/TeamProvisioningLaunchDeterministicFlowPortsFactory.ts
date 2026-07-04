@@ -51,9 +51,9 @@ export interface TeamProvisioningLaunchDeterministicFlowHost<
     TeamProvisioningProviderRuntimeFacade,
     'buildProvisioningEnv' | 'buildCrossProviderMemberArgs' | 'validateAgentTeamsMcpRuntime'
   >;
-  workspaceTrustCoordinator: WorkspaceTrustCoordinator | null;
+  getWorkspaceTrustCoordinator(): WorkspaceTrustCoordinator | null;
   workspaceTrustWorkspaceCollectionPorts: WorkspaceTrustWorkspaceCollectionPorts;
-  runtimeTurnSettledEnvironmentProvider?: RuntimeTurnSettledEnvironmentProvider | null;
+  getRuntimeTurnSettledEnvironmentProvider(): RuntimeTurnSettledEnvironmentProvider | null;
   mcpConfigBuilder: RunDeterministicLaunchRunFlowPorts<TMixedSecondaryLane>['mcpConfigBuilder'];
   teamMetaStore: RunDeterministicLaunchRunFlowPorts<TMixedSecondaryLane>['teamMetaStore'];
   membersMetaStore: RunDeterministicLaunchRunFlowPorts<TMixedSecondaryLane>['membersMetaStore'];
@@ -200,13 +200,13 @@ export function createTeamProvisioningLaunchDeterministicFlowBoundary<
       resolveClaudePath: () => ClaudeBinaryResolver.resolve(),
       buildProvisioningEnv: (providerId, providerBackendId, options) =>
         host.providerRuntime.buildProvisioningEnv(providerId, providerBackendId, options),
-      workspaceTrustCoordinator: host.workspaceTrustCoordinator,
+      workspaceTrustCoordinator: host.getWorkspaceTrustCoordinator(),
       workspaceTrustWorkspaceCollectionPorts: host.workspaceTrustWorkspaceCollectionPorts,
       materializeEffectiveTeamMemberSpecs: (params) =>
         host.materializeEffectiveTeamMemberSpecs(params),
       resolveOpenCodeMemberWorkspacesForRuntime: (params) =>
         host.resolveOpenCodeMemberWorkspacesForRuntime(params),
-      runtimeTurnSettledEnvironmentProvider: host.runtimeTurnSettledEnvironmentProvider,
+      runtimeTurnSettledEnvironmentProvider: host.getRuntimeTurnSettledEnvironmentProvider(),
       planRuntimeLanesOrThrow: (leadProviderId, members, baseCwd) =>
         host.planRuntimeLanesOrThrow(leadProviderId, members, baseCwd),
       createMixedSecondaryLaneStates: (lanePlan) => host.createMixedSecondaryLaneStates(lanePlan),

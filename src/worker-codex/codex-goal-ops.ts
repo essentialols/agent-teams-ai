@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
+import { constants } from "node:fs";
 import { access, mkdir, readdir, readFile, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
@@ -295,7 +296,12 @@ export async function startCodexGoalTmux(
   assertCodexGoalAccessLaunchAllowed(input.config);
   await prepareCodexGoalLaunchPaths(input);
   const command = buildCodexGoalTmuxCommand(input);
-  await execFileAsync(await resolveTmuxExecutable(), command.args);
+  const tmuxExecutable = await resolveTmuxExecutable();
+  try {
+    await execFileAsync(tmuxExecutable, command.args);
+  } catch (error) {
+    throw new Error(tmuxStartFailedMessage(error));
+  }
   return command;
 }
 
@@ -1366,13 +1372,21 @@ async function checkFile(
 ): Promise<CodexGoalDoctorCheck> {
   try {
     const item = await stat(path);
+    if (!item.isFile()) {
+      return { name, ok: false, message: `${path} is not a file` };
+    }
+    await access(path, constants.R_OK);
+    return { name, ok: true, message: path };
+  } catch (error) {
+    const code = safeErrorCode(error);
+    if (code === "ENOENT") {
+      return { name, ok: false, message: `${path} is missing` };
+    }
     return {
       name,
-      ok: item.isFile(),
-      message: item.isFile() ? path : `${path} is not a file`,
+      ok: false,
+      message: `${path} is not readable (${code})`,
     };
-  } catch {
-    return { name, ok: false, message: `${path} is missing` };
   }
 }
 
@@ -1464,9 +1478,54 @@ async function inspectTmuxSession(
   try {
     await execFileAsync(resolution.executable, ["has-session", "-t", session]);
     return { alive: true };
-  } catch {
+  } catch (error) {
+    if (isTmuxPermissionFailure(error)) {
+      return {
+        alive: false,
+        warning: tmuxUnavailableMessage(error),
+      };
+    }
     return { alive: false };
   }
+}
+
+function tmuxUnavailableMessage(error: unknown): string {
+  const detail = safeExecErrorMessage(error);
+  return [
+    "codex_goal_tmux_unavailable",
+    detail,
+    "Lane orchestrators inside app-server-goal cannot own child worker process supervision; request worker start, continue, stop and account actions through host-side subscription-runtime MCP or CLI controls.",
+  ].filter(Boolean).join(": ");
+}
+
+function tmuxStartFailedMessage(error: unknown): string {
+  if (isTmuxPermissionFailure(error)) return tmuxUnavailableMessage(error);
+  const detail = safeExecErrorMessage(error);
+  return ["codex_goal_tmux_start_failed", detail].filter(Boolean).join(": ");
+}
+
+function isTmuxPermissionFailure(error: unknown): boolean {
+  const message = safeExecErrorMessage(error).toLowerCase();
+  return message.includes("operation not permitted") ||
+    message.includes("permission denied") ||
+    message.includes("eacces") ||
+    safeErrorCode(error) === "EACCES" ||
+    safeErrorCode(error) === "EPERM";
+}
+
+function safeExecErrorMessage(error: unknown): string {
+  if (!isRecord(error)) {
+    return error instanceof Error ? redactStatusText(error.message) : "tmux failed";
+  }
+  const stderr = typeof error.stderr === "string" ? error.stderr.trim() : "";
+  const stdout = typeof error.stdout === "string" ? error.stdout.trim() : "";
+  const message = error instanceof Error ? error.message : "";
+  return redactStatusText(stderr || stdout || message || "tmux failed");
+}
+
+function safeErrorCode(error: unknown): string {
+  if (isRecord(error) && typeof error.code === "string") return error.code;
+  return "unknown_error";
 }
 
 async function fileExists(path: string): Promise<boolean> {

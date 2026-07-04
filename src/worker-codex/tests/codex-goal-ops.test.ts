@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { access, chmod, mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, chmod, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -110,6 +110,83 @@ describe("codex goal ops", () => {
     }
   });
 
+  it("reports tmux permission failures as unsupported child-worker control", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-tmux-denied-"));
+    const fakeTmux = join(root, "tmux-denied");
+    const previousTmuxPath = process.env.SUBSCRIPTION_RUNTIME_TMUX_PATH;
+    await writeFile(
+      fakeTmux,
+      "#!/bin/sh\nprintf 'tmux: Operation not permitted\\n' >&2\nexit 1\n",
+      { mode: 0o700 },
+    );
+    process.env.SUBSCRIPTION_RUNTIME_TMUX_PATH = fakeTmux;
+
+    try {
+      const status = await collectCodexGoalStatus({
+        tmuxSession: "sandbox-denied",
+      });
+
+      expect(status.tmuxAlive).toBe(false);
+      expect(status.warnings).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining("codex_goal_tmux_unavailable"),
+        ]),
+      );
+      expect(status.warnings.join("\n")).toContain("host-side subscription-runtime");
+    } finally {
+      if (previousTmuxPath === undefined) {
+        delete process.env.SUBSCRIPTION_RUNTIME_TMUX_PATH;
+      } else {
+        process.env.SUBSCRIPTION_RUNTIME_TMUX_PATH = previousTmuxPath;
+      }
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails tmux starts with a host-control guidance message when supervision is denied", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-start-denied-"));
+    const fakeTmux = join(root, "tmux-denied");
+    const previousTmuxPath = process.env.SUBSCRIPTION_RUNTIME_TMUX_PATH;
+    await writeFile(
+      fakeTmux,
+      "#!/bin/sh\nprintf 'tmux: Operation not permitted\\n' >&2\nexit 1\n",
+      { mode: 0o700 },
+    );
+    process.env.SUBSCRIPTION_RUNTIME_TMUX_PATH = fakeTmux;
+
+    try {
+      const jobRootDir = join(root, "job");
+      const launch: CodexGoalLaunchInput = {
+        config: {
+          jobRootDir,
+          authRootDir: join(root, "auth"),
+          workspacePath: join(root, "workspace"),
+          promptPath: join(root, "prompt.md"),
+          taskId: "task-1",
+          accounts: codexGoalAccountSlots(["account-a"]),
+          outputPath: join(jobRootDir, "task-1.latest-result.json"),
+          progressPath: join(jobRootDir, "task-1.progress.json"),
+          executionEngine: "app-server-goal",
+        },
+        tmuxSession: "sandbox-denied",
+        cwd: root,
+        logPath: join(jobRootDir, "task-1.log"),
+        cliCommand: ["/bin/true"],
+      };
+
+      await expect(startCodexGoalTmux(launch)).rejects.toThrow(
+        /codex_goal_tmux_unavailable.*host-side subscription-runtime/,
+      );
+    } finally {
+      if (previousTmuxPath === undefined) {
+        delete process.env.SUBSCRIPTION_RUNTIME_TMUX_PATH;
+      } else {
+        process.env.SUBSCRIPTION_RUNTIME_TMUX_PATH = previousTmuxPath;
+      }
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("doctors a sandbox worker layout and reports sanitized account status", async () => {
     const fixture = await createGoalFixture();
     const cooldownUntil = new Date(Date.now() + 60_000);
@@ -127,7 +204,6 @@ describe("codex goal ops", () => {
 
     const doctor = await doctorCodexGoal({
       config: fixture.config,
-      tmuxSession: "subscription-runtime-test-session",
     });
     const accounts = await listCodexGoalAccountStatuses({
       authRootDir: fixture.config.authRootDir,
@@ -954,8 +1030,18 @@ describe("codex goal ops", () => {
 });
 
 async function hasTmux(): Promise<boolean> {
+  const session = `subscription-runtime-tmux-probe-${process.pid}-${Date.now()}`;
   try {
-    await execFileAsync("tmux", ["-V"]);
+    await execFileAsync("tmux", [
+      "new-session",
+      "-d",
+      "-s",
+      session,
+      "/bin/true",
+    ], { timeout: 2_000 });
+    await execFileAsync("tmux", ["kill-session", "-t", session], {
+      timeout: 2_000,
+    }).catch(() => undefined);
     return true;
   } catch {
     return false;

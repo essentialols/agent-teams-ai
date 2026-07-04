@@ -6,6 +6,12 @@ export const GPT_5_1_CODEX_MINI_UI_DISABLED_MODEL = 'gpt-5.1-codex-mini';
 export const GPT_5_2_CODEX_UI_DISABLED_MODEL = 'gpt-5.2-codex';
 export const GPT_5_3_CODEX_SPARK_UI_DISABLED_MODEL = 'gpt-5.3-codex-spark';
 
+const ANTHROPIC_CLAUDE_CODE_REMOVED_MODEL_PREFIXES = [
+  'claude-opus-4-1',
+  'claude-opus-4-20250514',
+  'claude-sonnet-4-20250514',
+] as const;
+
 const UI_DISABLED_MODELS_BY_PROVIDER: Partial<Record<SupportedProviderId, readonly string[]>> = {
   codex: [
     GPT_5_3_CODEX_SPARK_UI_DISABLED_MODEL,
@@ -13,6 +19,21 @@ const UI_DISABLED_MODELS_BY_PROVIDER: Partial<Record<SupportedProviderId, readon
     GPT_5_1_CODEX_MINI_UI_DISABLED_MODEL,
   ],
 };
+
+function modelIdMatchesPrefix(modelId: string, prefix: string): boolean {
+  return modelId === prefix || modelId.startsWith(`${prefix}-`);
+}
+
+export function isAnthropicClaudeCodeRemovedModel(model: string | undefined): boolean {
+  const normalized = model?.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  return ANTHROPIC_CLAUDE_CODE_REMOVED_MODEL_PREFIXES.some((prefix) =>
+    modelIdMatchesPrefix(normalized, prefix)
+  );
+}
 
 export function isProviderRuntimeModelUiDisabled(
   providerId: SupportedProviderId | undefined,

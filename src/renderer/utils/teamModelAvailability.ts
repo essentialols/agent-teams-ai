@@ -1,4 +1,5 @@
 import { CLI_PROVIDER_STATUS_DEFERRED_MESSAGE } from '@shared/types/cliInstaller';
+import { isAnthropicClaudeCodeRemovedModel } from '@shared/utils/providerModelVisibility';
 
 import {
   getProviderScopedTeamModelLabel,
@@ -321,7 +322,18 @@ function getVisibleRuntimeCatalogModels(
   }
 
   const models = providerStatus.modelCatalog.models
-    .filter((model) => !model.hidden)
+    .filter((model) => {
+      if (model.hidden) {
+        return false;
+      }
+      if (providerStatus.modelCatalog?.source !== 'anthropic-models-api') {
+        return true;
+      }
+      return (
+        !isAnthropicClaudeCodeRemovedModel(model.launchModel) &&
+        !isAnthropicClaudeCodeRemovedModel(model.id)
+      );
+    })
     .map((model) => model.launchModel.trim() || model.id.trim())
     .filter(Boolean);
   return models.length > 0 ? models : null;
@@ -557,6 +569,9 @@ function getRuntimeModelAvailability(
 
     const firstPartyCatalogModels = getAnthropicFirstPartyRuntimeModels(providerStatus);
     if (firstPartyCatalogModels) {
+      if (!firstPartyCatalogModels.includes(model)) {
+        return null;
+      }
       const catalogModel = getAnthropicCatalogModel(model, providerStatus);
       if (!catalogModel || catalogModel.hidden) {
         return null;

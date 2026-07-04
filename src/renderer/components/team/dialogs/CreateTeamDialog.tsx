@@ -695,25 +695,6 @@ export const CreateTeamDialog = ({
     setCustomArgsRaw(localStorage.getItem(`team:lastCustomArgs:${advancedKey}`) ?? '');
   }, [advancedKey]);
 
-  const setSelectedModel = useCallback(
-    (value: string): void => {
-      const normalizedValue = normalizeExplicitTeamModelForUi(selectedProviderId, value);
-      setSelectedModelRaw(normalizedValue);
-      setStoredCreateTeamModel(selectedProviderId, normalizedValue);
-    },
-    [selectedProviderId]
-  );
-
-  const setSelectedProviderId = useCallback(
-    (value: TeamProviderId): void => {
-      const normalizedValue = normalizeLeadProviderForMode(value, multimodelEnabled);
-      setSelectedProviderIdRaw(normalizedValue);
-      setStoredCreateTeamProvider(normalizedValue);
-      setSelectedModelRaw(getStoredTeamModel(normalizedValue));
-    },
-    [multimodelEnabled]
-  );
-
   const setLimitContext = useCallback((value: boolean): void => {
     setLimitContextRaw(value);
     setStoredCreateTeamLimitContext(value);
@@ -871,6 +852,54 @@ export const CreateTeamDialog = ({
       ),
     [effectiveCliStatus?.providers]
   );
+
+  const setSelectedModel = useCallback(
+    (value: string): void => {
+      const normalizedValue = normalizeExplicitTeamModelForUi(selectedProviderId, value);
+      const nextEffort = getAvailableTeamEffortValue({
+        providerId: selectedProviderId,
+        model: normalizedValue,
+        limitContext: effectiveAnthropicRuntimeLimitContext,
+        providerStatus: runtimeProviderStatusById.get(selectedProviderId),
+        value: selectedEffort,
+      });
+      setSelectedModelRaw(normalizedValue);
+      setStoredCreateTeamModel(selectedProviderId, normalizedValue);
+      if (nextEffort !== selectedEffort) {
+        setSelectedEffortRaw(nextEffort);
+        setStoredCreateTeamEffort(nextEffort);
+      }
+    },
+    [
+      effectiveAnthropicRuntimeLimitContext,
+      runtimeProviderStatusById,
+      selectedEffort,
+      selectedProviderId,
+    ]
+  );
+
+  const setSelectedProviderId = useCallback(
+    (value: TeamProviderId): void => {
+      const normalizedValue = normalizeLeadProviderForMode(value, multimodelEnabled);
+      const nextModel = getStoredTeamModel(normalizedValue);
+      const nextEffort = getAvailableTeamEffortValue({
+        providerId: normalizedValue,
+        model: nextModel,
+        limitContext: normalizedValue === 'anthropic' ? limitContext : false,
+        providerStatus: runtimeProviderStatusById.get(normalizedValue),
+        value: selectedEffort,
+      });
+      setSelectedProviderIdRaw(normalizedValue);
+      setStoredCreateTeamProvider(normalizedValue);
+      setSelectedModelRaw(nextModel);
+      if (nextEffort !== selectedEffort) {
+        setSelectedEffortRaw(nextEffort);
+        setStoredCreateTeamEffort(nextEffort);
+      }
+    },
+    [limitContext, multimodelEnabled, runtimeProviderStatusById, selectedEffort]
+  );
+
   const runtimeProviderLoadingById = useMemo(
     () =>
       new Map(

@@ -721,15 +721,38 @@ export const LaunchTeamDialog = (props: LaunchTeamDialogProps): React.JSX.Elemen
     const normalizedValue = isLaunchMode
       ? normalizeLeadProviderForMode(value, multimodelEnabled)
       : normalizeOneShotProviderForMode(value, multimodelEnabled);
+    const nextModel = getStoredTeamModel(normalizedValue);
+    const nextEffort = getAvailableTeamEffortValue({
+      providerId: normalizedValue,
+      model: nextModel,
+      limitContext: normalizedValue === 'anthropic' ? limitContext : false,
+      providerStatus: runtimeProviderStatusById.get(normalizedValue),
+      value: selectedEffort,
+    });
     setSelectedProviderIdRaw(normalizedValue);
     localStorage.setItem('team:lastSelectedProvider', normalizedValue);
-    setSelectedModelRaw(getStoredTeamModel(normalizedValue));
+    setSelectedModelRaw(nextModel);
+    if (nextEffort !== selectedEffort) {
+      setSelectedEffortRaw(nextEffort);
+      localStorage.setItem('team:lastSelectedEffort', nextEffort);
+    }
   };
 
   const setSelectedModel = (value: string): void => {
     const normalizedValue = normalizeExplicitTeamModelForUi(selectedProviderId, value);
+    const nextEffort = getAvailableTeamEffortValue({
+      providerId: selectedProviderId,
+      model: normalizedValue,
+      limitContext: effectiveAnthropicRuntimeLimitContext,
+      providerStatus: runtimeProviderStatusById.get(selectedProviderId),
+      value: selectedEffort,
+    });
     setSelectedModelRaw(normalizedValue);
     localStorage.setItem(`team:lastSelectedModel:${selectedProviderId}`, normalizedValue);
+    if (nextEffort !== selectedEffort) {
+      setSelectedEffortRaw(nextEffort);
+      localStorage.setItem('team:lastSelectedEffort', nextEffort);
+    }
   };
 
   const setLimitContext = (value: boolean): void => {

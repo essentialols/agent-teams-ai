@@ -769,6 +769,74 @@ describe('teamModelAvailability', () => {
     ).toBeNull();
   });
 
+  it('hides Claude Code removed Anthropic models even when the API catalog still lists them', () => {
+    const providerStatus: TeamModelRuntimeProviderStatus = {
+      providerId: 'anthropic',
+      models: ['claude-fable-5', 'claude-opus-4-1-20250805'],
+      authMethod: 'oauth',
+      backend: null,
+      authenticated: true,
+      supported: true,
+      modelVerificationState: 'idle',
+      modelAvailability: [],
+      modelCatalog: {
+        schemaVersion: 1,
+        providerId: 'anthropic',
+        source: 'anthropic-models-api',
+        status: 'ready',
+        fetchedAt: '2026-07-04T00:00:00.000Z',
+        staleAt: '2026-07-04T00:10:00.000Z',
+        defaultModelId: 'claude-fable-5',
+        defaultLaunchModel: 'claude-fable-5',
+        diagnostics: {
+          configReadState: 'ready',
+          appServerState: 'healthy',
+        },
+        models: [
+          {
+            id: 'claude-fable-5',
+            launchModel: 'claude-fable-5',
+            displayName: 'Fable 5',
+            hidden: false,
+            supportedReasoningEfforts: ['low', 'medium', 'high', 'max'],
+            defaultReasoningEffort: 'high',
+            inputModalities: ['text', 'image'],
+            supportsPersonality: false,
+            isDefault: true,
+            upgrade: false,
+            source: 'anthropic-models-api',
+          },
+          {
+            id: 'claude-opus-4-1-20250805',
+            launchModel: 'claude-opus-4-1-20250805',
+            displayName: 'Opus 4.1',
+            hidden: false,
+            supportedReasoningEfforts: ['low', 'medium', 'high'],
+            defaultReasoningEffort: 'high',
+            inputModalities: ['text', 'image'],
+            supportsPersonality: false,
+            isDefault: false,
+            upgrade: false,
+            source: 'anthropic-models-api',
+          },
+        ],
+      },
+    };
+
+    const values = getAvailableTeamProviderModelOptions('anthropic', providerStatus).map(
+      (option) => option.value
+    );
+
+    expect(values).toContain('claude-fable-5');
+    expect(values).not.toContain('claude-opus-4-1-20250805');
+    expect(normalizeTeamModelForUi('anthropic', 'claude-opus-4-1-20250805', providerStatus)).toBe(
+      ''
+    );
+    expect(
+      getTeamModelSelectionError('anthropic', 'claude-opus-4-1-20250805', providerStatus)
+    ).toContain('not available');
+  });
+
   it('makes Mythos selectable when the first-party Anthropic catalog reports account access', () => {
     const providerStatus: TeamModelRuntimeProviderStatus = {
       providerId: 'anthropic',

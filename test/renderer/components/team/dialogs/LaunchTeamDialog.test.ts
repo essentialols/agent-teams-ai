@@ -979,6 +979,96 @@ describe('LaunchTeamDialog', () => {
     });
   });
 
+  it('clears stale lead effort immediately when selecting an Anthropic model without effort support', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    localStorage.setItem('team:lastSelectedProvider', 'anthropic');
+    localStorage.setItem('team:lastSelectedEffort', 'medium');
+    storeState.cliStatus = {
+      flavor: 'agent_teams_orchestrator',
+      providers: [
+        {
+          providerId: 'anthropic',
+          supported: true,
+          authenticated: true,
+          verificationState: 'verified',
+          models: ['claude-haiku-4-5-20251001'],
+          capabilities: { teamLaunch: true, oneShot: true },
+          modelCatalog: {
+            schemaVersion: 1,
+            providerId: 'anthropic',
+            source: 'anthropic-models-api',
+            status: 'ready',
+            fetchedAt: '2026-07-04T00:00:00.000Z',
+            staleAt: '2026-07-04T00:10:00.000Z',
+            defaultModelId: 'claude-haiku-4-5-20251001',
+            defaultLaunchModel: 'claude-haiku-4-5-20251001',
+            diagnostics: {
+              configReadState: 'ready',
+              appServerState: 'healthy',
+            },
+            models: [
+              {
+                id: 'claude-haiku-4-5-20251001',
+                launchModel: 'claude-haiku-4-5-20251001',
+                displayName: 'Haiku 4.5',
+                hidden: false,
+                supportedReasoningEfforts: [],
+                defaultReasoningEffort: null,
+                inputModalities: ['text', 'image'],
+                supportsPersonality: false,
+                isDefault: true,
+                upgrade: false,
+                source: 'anthropic-models-api',
+              },
+            ],
+          },
+          runtimeCapabilities: {
+            modelCatalog: {
+              dynamic: true,
+              source: 'anthropic-models-api',
+            },
+          },
+        },
+      ],
+    } as any;
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+
+    await act(async () => {
+      root.render(
+        React.createElement(LaunchTeamDialog, {
+          mode: 'launch',
+          open: true,
+          teamName: 'team-alpha',
+          members: [],
+          defaultProjectPath: '/tmp/project',
+          provisioningError: null,
+          clearProvisioningError: vi.fn(),
+          activeTeams: [],
+          onClose: vi.fn(),
+          onLaunch: vi.fn(async () => {}),
+        })
+      );
+      await flush();
+    });
+
+    await act(async () => {
+      teamRosterEditorSectionMock.lastProps?.onModelChange('claude-haiku-4-5-20251001');
+      await flush();
+    });
+
+    expect(teamRosterEditorSectionMock.lastProps?.model).toBe('claude-haiku-4-5-20251001');
+    expect(teamRosterEditorSectionMock.lastProps?.effort).toBeUndefined();
+    expect(localStorage.getItem('team:lastSelectedEffort')).toBe('');
+
+    await act(async () => {
+      root.unmount();
+      await flush();
+    });
+  });
+
   it('submits relaunch through onRelaunch without replacing members in-dialog', async () => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
 

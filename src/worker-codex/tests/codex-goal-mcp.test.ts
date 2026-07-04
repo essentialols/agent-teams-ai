@@ -1900,6 +1900,14 @@ describe("codex goal MCP server", () => {
           safeToContinue: false,
           safeToOperate: true,
           nextBestTool: "codex_goal_accounts_status",
+          controlSurface: {
+            executionEngine: "app-server-goal",
+            childWorkerSpawn: "host_control_surface_required",
+            hostAuthSurfaces: [
+              "github_tokens_not_inherited",
+              "codex_auth_root_host_owned",
+            ],
+          },
         });
         expect(decisionBody.blockers).toEqual([
           expect.objectContaining({
@@ -1956,10 +1964,16 @@ describe("codex goal MCP server", () => {
         expect(String(handoffBody.text)).toContain("Codex goal handoff: job-a");
         expect(String(handoffBody.text)).toContain("subscription-runtime-codex-goal tool codex_goal_brief");
         expect(String(handoffBody.text)).toContain("Do not run two writer workers");
+        expect(String(handoffBody.text)).toContain("childWorkerSpawn: host_control_surface_required");
+        expect(String(handoffBody.text)).toContain("github_tokens_not_inherited");
         expect(String(handoffBody.text)).toContain("lifecycleMarkers: review, pause_request");
         expect(String(handoffBody.text)).not.toContain("refresh-secret");
         expect(String(handoffBody.text)).not.toContain("access-secret");
         expect(String(handoffBody.text)).not.toContain("secret@example.com");
+        expect(handoffBody.controlSurface).toMatchObject({
+          executionEngine: "app-server-goal",
+          childWorkerSpawn: "host_control_surface_required",
+        });
         expect(handoffBody.summary).toMatchObject({
           jobId: "job-a",
           registryRootDir,

@@ -4079,6 +4079,7 @@ function buildCodexGoalDecision(input: {
     taskId: input.launch.config.taskId,
     workspacePath: input.launch.config.workspacePath,
     tmuxSession: input.launch.tmuxSession,
+    controlSurface: codexGoalControlSurface(input.launch),
     nextBestTool: blockedBySingleWriter
       ? "manual_review"
       : input.brief.nextBestTool,
@@ -4242,6 +4243,26 @@ function codexGoalDecisionChecklist(input: {
   ];
 }
 
+function codexGoalControlSurface(launch: CodexGoalLaunchInput): JsonObject {
+  const executionEngine = launch.config.executionEngine ?? "app-server-goal";
+  const appServerGoal = executionEngine === "app-server-goal";
+  return {
+    executionEngine,
+    childWorkerSpawn: appServerGoal
+      ? "host_control_surface_required"
+      : "runtime_adapter_owned",
+    hostAuthSurfaces: appServerGoal
+      ? [
+          "github_tokens_not_inherited",
+          "codex_auth_root_host_owned",
+        ]
+      : ["provider_environment_policy_applies"],
+    guidance: appServerGoal
+      ? "Lane orchestrators running inside app-server-goal should not spawn child workers or depend on host GH/auth surfaces. Request child worker, continue, stop and account actions through host-side subscription-runtime MCP or CLI controls."
+      : "Use the runtime adapter control surface for worker lifecycle and account actions.",
+  };
+}
+
 function findWorkspaceConflictForJob(
   overview: JsonObject | undefined,
   jobId: string,
@@ -4286,6 +4307,7 @@ function buildCodexGoalHandoff(input: {
       ]
     : [];
   const stopArgs = { ...registryArgs, confirmStop: true };
+  const controlSurface = codexGoalControlSurface(input.launch);
   const reviewCommands = input.brief.silentStale
     ? [
         `codex_goal_stop(${JSON.stringify(stopArgs)})`,
@@ -4318,6 +4340,7 @@ function buildCodexGoalHandoff(input: {
     `- taskTimeoutMs: ${input.launch.config.taskTimeoutMs}`,
     `- maxAccountCycles: ${input.launch.config.maxAccountCycles}`,
     `- accounts: ${input.launch.config.accounts.map((account) => account.name).join(", ")}`,
+    `- executionEngine: ${String(controlSurface.executionEngine)}`,
     "",
     "## Current State",
     `- worker: ${input.brief.workerAlive ? "alive" : "not running"}`,
@@ -4359,6 +4382,15 @@ function buildCodexGoalHandoff(input: {
         ]
       : []),
     "",
+    "## Control Surface",
+    `- childWorkerSpawn: ${String(controlSurface.childWorkerSpawn)}`,
+    `- hostAuthSurfaces: ${
+      Array.isArray(controlSurface.hostAuthSurfaces)
+        ? controlSurface.hostAuthSurfaces.join(", ")
+        : ""
+    }`,
+    `- guidance: ${String(controlSurface.guidance)}`,
+    "",
     "## Safety Rules",
     "- Do not run two writer workers in the same worktree.",
     "- Continue only when brief.safeToContinue is true.",
@@ -4371,6 +4403,7 @@ function buildCodexGoalHandoff(input: {
     mcpCommands,
     reviewCommands,
     cliFallbackCommands,
+    controlSurface,
     summary: {
       jobId: input.manifest.jobId,
       registryRootDir: input.registryRootDir,

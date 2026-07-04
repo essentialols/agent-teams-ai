@@ -111,8 +111,24 @@ vi.mock('@main/utils/childProcess', () => ({
 
 import { ProviderConnectionService } from '@main/services/runtime/ProviderConnectionService';
 import { ClaudeBinaryResolver } from '@main/services/team/ClaudeBinaryResolver';
+import { buildCrossProviderMemberArgs } from '@main/services/team/provisioning/TeamProvisioningEnvBuilder';
+import { updateLeadContextUsageFromUsageForRun } from '@main/services/team/provisioning/TeamProvisioningLeadContextUsage';
+import { materializeOpenCodeRuntimeAdapterDefaults } from '@main/services/team/provisioning/TeamProvisioningOpenCodeRuntimeDefaults';
 import { isAuthFailureWarning } from '@main/services/team/provisioning/TeamProvisioningOutputErrorPolicy';
 import { verifySelectedProviderModelsForProvisioning } from '@main/services/team/provisioning/TeamProvisioningProviderPreflight';
+import { getTeamProviderLabel } from '@main/services/team/provisioning/TeamProvisioningRuntimeDiagnostics';
+import {
+  buildProviderModelLaunchIdentity,
+  type RuntimeProviderLaunchFacts,
+  validateRuntimeLaunchSelection,
+} from '@main/services/team/provisioning/TeamProvisioningRuntimeLaunchSelection';
+import {
+  buildRuntimeTurnSettledEnvironmentForMembers,
+  buildRuntimeTurnSettledHookSettingsArgs,
+  type RuntimeTurnSettledEnvironmentProvider,
+  type RuntimeTurnSettledHookSettingsProvider,
+} from '@main/services/team/provisioning/TeamProvisioningRuntimeTurnSettledPlanning';
+import { applyWorkspaceTrustArgPatches } from '@main/services/team/provisioning/TeamProvisioningWorkspaceTrust';
 import {
   type TeamLaunchRuntimeAdapter,
   TeamRuntimeAdapterRegistry,
@@ -123,6 +139,16 @@ import {
 } from '@main/services/team/TeamProvisioningService';
 import { spawnCli } from '@main/utils/childProcess';
 import { resolveInteractiveShellEnvBestEffort } from '@main/utils/shellEnv';
+
+import type {
+  BuildProvisioningEnvOptions,
+  CrossProviderMemberArgsResult,
+  ProvisioningEnvResolution,
+} from '@main/services/team/provisioning/TeamProvisioningEnvBuilder';
+import type { ReadRuntimeProviderLaunchFactsInput } from '@main/services/team/provisioning/TeamProvisioningLaunchIdentity';
+import type { ProbeResult } from '@main/services/team/provisioning/TeamProvisioningPrepareCoordinator';
+import type { TeamProvisioningProviderDiagnosticsRuntime } from '@main/services/team/provisioning/TeamProvisioningProviderDiagnosticsPorts';
+import type { TeamCreateRequest, TeamProviderId } from '@shared/types';
 
 function getRealAgentTeamsMcpLaunchSpec(): { command: string; args: string[] } {
   const workspaceRoot = process.cwd();
@@ -439,6 +465,11 @@ function mockSpawnProbeOutput(stdoutText: string, stderrText: string, exitCode =
 type TeamProvisioningServicePrivate = {
   prepareFacade: TeamProvisioningPrepareFacadeHarness;
   providerRuntime: TeamProvisioningProviderRuntimeHarness;
+  runtimeTurnSettledEnvironmentProvider: RuntimeTurnSettledEnvironmentProvider | null;
+  runtimeTurnSettledHookSettingsProvider: RuntimeTurnSettledHookSettingsProvider | null;
+  readRuntimeProviderLaunchFacts(
+    params: ReadRuntimeProviderLaunchFactsInput
+  ): Promise<RuntimeProviderLaunchFacts>;
 };
 
 function asPrivateService(svc: TeamProvisioningService): TeamProvisioningServicePrivate {
@@ -447,22 +478,22 @@ function asPrivateService(svc: TeamProvisioningService): TeamProvisioningService
 
 interface TeamProvisioningProviderRuntimeHarness {
   buildProvisioningEnv(
-    providerId?: unknown,
-    providerBackendId?: unknown,
-    options?: unknown
-  ): Promise<Record<string, unknown>>;
+    providerId?: TeamProviderId,
+    providerBackendId?: string | null,
+    options?: BuildProvisioningEnvOptions
+  ): Promise<ProvisioningEnvResolution>;
   probeClaudeRuntime(
     claudePath: string,
     cwd: string,
     env: NodeJS.ProcessEnv,
-    providerId?: unknown,
+    providerId?: TeamProviderId,
     providerArgs?: string[]
   ): Promise<{ warning?: string }>;
   runProviderOneShotDiagnostic(
     claudePath: string,
     cwd: string,
     env: NodeJS.ProcessEnv,
-    providerId?: unknown,
+    providerId?: TeamProviderId,
     providerArgs?: string[]
   ): Promise<{ warning?: string }>;
   validateAgentTeamsMcpRuntime(
@@ -479,6 +510,12 @@ interface TeamProvisioningProviderRuntimeHarness {
     env: NodeJS.ProcessEnv,
     timeoutMs: number
   ): Promise<{ exitCode: number | null; stdout: string; stderr: string }>;
+  buildCrossProviderMemberArgs(
+    primaryProviderId: TeamProviderId,
+    memberSpecs: TeamCreateRequest['members'],
+    options?: { teamRuntimeAuth?: { teamName?: string; authMaterialId?: string } }
+  ): Promise<CrossProviderMemberArgsResult>;
+  getProviderDiagnosticsRuntime(): TeamProvisioningProviderDiagnosticsRuntime;
 }
 
 function providerRuntimeHarness(
@@ -488,11 +525,120 @@ function providerRuntimeHarness(
 }
 
 interface TeamProvisioningPrepareFacadeHarness {
-  getCachedOrProbeResult(cwd: string, providerId?: unknown): Promise<Record<string, unknown> | null>;
+  getCachedOrProbeResult(cwd: string, providerId?: TeamProviderId): Promise<ProbeResult | null>;
+}
+
+interface TeamProvisioningPrepareCoordinatorHarness {
+  resolveProviderDefaultModel(
+    claudePath: string,
+    cwd: string,
+    providerId: TeamProviderId,
+    env: NodeJS.ProcessEnv,
+    providerArgs: string[],
+    limitContext: boolean
+  ): Promise<string | null>;
 }
 
 function prepareFacadeHarness(svc: TeamProvisioningService): TeamProvisioningPrepareFacadeHarness {
   return asPrivateService(svc).prepareFacade;
+}
+
+function prepareCoordinatorHarness(
+  svc: TeamProvisioningService
+): TeamProvisioningPrepareCoordinatorHarness {
+  return (
+    prepareFacadeHarness(svc) as unknown as {
+      coordinator: TeamProvisioningPrepareCoordinatorHarness;
+    }
+  ).coordinator;
+}
+
+function providerDiagnosticsRuntimeHarness(
+  svc: TeamProvisioningService
+): TeamProvisioningProviderDiagnosticsRuntime {
+  return providerRuntimeHarness(svc).getProviderDiagnosticsRuntime();
+}
+
+function validateRuntimeLaunchSelectionForTest(
+  params: Omit<
+    Parameters<typeof validateRuntimeLaunchSelection>[0],
+    'anthropicFastModeDefault' | 'getProviderLabel'
+  >
+): void {
+  validateRuntimeLaunchSelection({
+    ...params,
+    anthropicFastModeDefault: false,
+    getProviderLabel: getTeamProviderLabel,
+  });
+}
+
+function buildProviderModelLaunchIdentityForTest(
+  params: Omit<Parameters<typeof buildProviderModelLaunchIdentity>[0], 'anthropicFastModeDefault'>
+): ReturnType<typeof buildProviderModelLaunchIdentity> {
+  return buildProviderModelLaunchIdentity({
+    ...params,
+    anthropicFastModeDefault: false,
+  });
+}
+
+function buildRuntimeTurnSettledEnvironmentForMembersForTest(
+  svc: TeamProvisioningService,
+  primaryProviderId: TeamProviderId | undefined,
+  memberSpecs: TeamCreateRequest['members']
+): Promise<Record<string, string>> {
+  return buildRuntimeTurnSettledEnvironmentForMembers(
+    { primaryProviderId, memberSpecs },
+    { environmentProvider: asPrivateService(svc).runtimeTurnSettledEnvironmentProvider }
+  );
+}
+
+function buildCrossProviderMemberArgsForTest(
+  svc: TeamProvisioningService,
+  primaryProviderId: TeamProviderId,
+  memberSpecs: TeamCreateRequest['members'],
+  options?: { teamRuntimeAuth?: { teamName?: string; authMaterialId?: string } }
+): Promise<CrossProviderMemberArgsResult> {
+  return buildCrossProviderMemberArgs({
+    primaryProviderId,
+    memberSpecs,
+    options,
+    ports: {
+      buildProvisioningEnv: (providerId, providerBackendId, buildOptions) =>
+        providerRuntimeHarness(svc).buildProvisioningEnv(
+          providerId,
+          providerBackendId,
+          buildOptions
+        ),
+      buildRuntimeTurnSettledHookSettingsArgs: (providerId) =>
+        buildRuntimeTurnSettledHookSettingsArgs(
+          { providerId },
+          { hookSettingsProvider: asPrivateService(svc).runtimeTurnSettledHookSettingsProvider }
+        ),
+      logger: {
+        error: vi.fn(),
+      },
+    },
+  });
+}
+
+function materializeOpenCodeRuntimeAdapterDefaultsForTest(
+  svc: TeamProvisioningService,
+  params: { request: TeamCreateRequest; members: TeamCreateRequest['members'] }
+): Promise<{ request: TeamCreateRequest; members: TeamCreateRequest['members'] }> {
+  return materializeOpenCodeRuntimeAdapterDefaults(params, {
+    resolveClaudePath: () => ClaudeBinaryResolver.resolve(),
+    buildProvisioningEnv: (providerId, providerBackendId) =>
+      providerRuntimeHarness(svc).buildProvisioningEnv(providerId, providerBackendId),
+    resolveProviderDefaultModel: (claudePath, cwd, providerId, env, providerArgs, limitContext) =>
+      prepareCoordinatorHarness(svc).resolveProviderDefaultModel(
+        claudePath,
+        cwd,
+        providerId,
+        env,
+        providerArgs,
+        limitContext
+      ),
+  });
 }
 
 interface TeamProvisioningOutputRecoveryFacadeHarness {
@@ -520,9 +666,7 @@ interface TeamProvisioningConfigFacadeHarness {
   cleanupPrelaunchBackup(teamName: string): Promise<void>;
 }
 
-function configFacadeHarness(
-  svc: TeamProvisioningService
-): TeamProvisioningConfigFacadeHarness {
+function configFacadeHarness(svc: TeamProvisioningService): TeamProvisioningConfigFacadeHarness {
   return (
     svc as unknown as {
       configFacade: TeamProvisioningConfigFacadeHarness;
@@ -707,7 +851,8 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
       },
     });
 
-    const result = await (svc as any).buildCrossProviderMemberArgs(
+    const result = await buildCrossProviderMemberArgsForTest(
+      svc,
       'codex',
       [{ name: 'alice', providerId: 'anthropic', model: 'opus' }],
       { teamRuntimeAuth: { teamName: 'mixed-team', authMaterialId: 'run-1' } }
@@ -738,7 +883,8 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
       providerArgs: ['--anthropic-safe-passthrough'],
     });
 
-    const result = await (svc as any).buildCrossProviderMemberArgs(
+    const result = await buildCrossProviderMemberArgsForTest(
+      svc,
       'codex',
       [{ name: 'bob', providerId: 'anthropic', model: 'haiku' }],
       { teamRuntimeAuth: { teamName: 'mixed-team', authMaterialId: 'run-1' } }
@@ -771,7 +917,8 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
       providerArgs: ['--settings', '{"codex":{"forced_login_method":"chatgpt"}}'],
     });
 
-    const result = await (svc as any).buildCrossProviderMemberArgs(
+    const result = await buildCrossProviderMemberArgsForTest(
+      svc,
       'anthropic',
       [{ name: 'jack', providerId: 'codex', model: 'gpt-5.4' }],
       { teamRuntimeAuth: { teamName: 'mixed-team', authMaterialId: 'run-1' } }
@@ -803,7 +950,8 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
       providerArgs: ['--anthropic-compatible-passthrough'],
     });
 
-    const result = await (svc as any).buildCrossProviderMemberArgs(
+    const result = await buildCrossProviderMemberArgsForTest(
+      svc,
       'codex',
       [{ name: 'bob', providerId: 'anthropic', model: 'qwen3.6' }],
       { teamRuntimeAuth: { teamName: 'mixed-team', authMaterialId: 'run-1' } }
@@ -955,7 +1103,7 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
           source: 'runtime',
         },
       },
-    };
+    } satisfies RuntimeProviderLaunchFacts;
 
     const materializedMembers = await (svc as any).materializeEffectiveTeamMemberSpecs({
       claudePath: '/fake/claude',
@@ -974,7 +1122,7 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
     ]);
 
     expect(() =>
-      (svc as any).validateRuntimeLaunchSelection({
+      validateRuntimeLaunchSelectionForTest({
         actorLabel: 'Team lead',
         providerId: 'anthropic',
         model: 'sonnet',
@@ -986,7 +1134,7 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
 
     for (const member of materializedMembers) {
       expect(() =>
-        (svc as any).validateRuntimeLaunchSelection({
+        validateRuntimeLaunchSelectionForTest({
           actorLabel: `Member ${member.name}`,
           providerId: member.providerId,
           model: member.model,
@@ -998,7 +1146,7 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
     }
 
     expect(() =>
-      (svc as any).validateRuntimeLaunchSelection({
+      validateRuntimeLaunchSelectionForTest({
         actorLabel: 'Member jack',
         providerId: 'anthropic',
         model: 'haiku',
@@ -1018,6 +1166,7 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
     vi.spyOn(providerRuntimeHarness(svc), 'buildProvisioningEnv').mockResolvedValue({
       env: {},
       authSource: 'none',
+      geminiRuntimeAuth: null,
     });
     vi.spyOn(providerRuntimeHarness(svc), 'probeClaudeRuntime').mockResolvedValue({});
 
@@ -2125,8 +2274,11 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
     vi.spyOn(providerRuntimeHarness(svc), 'buildProvisioningEnv').mockResolvedValue({
       env: {},
       authSource: 'none',
+      geminiRuntimeAuth: null,
     });
-    const probeSpy = vi.spyOn(providerRuntimeHarness(svc), 'probeClaudeRuntime').mockResolvedValue({});
+    const probeSpy = vi
+      .spyOn(providerRuntimeHarness(svc), 'probeClaudeRuntime')
+      .mockResolvedValue({});
 
     const cwdA = fs.mkdtempSync(path.join(tempRoot, 'a-'));
     const cwdB = fs.mkdtempSync(path.join(tempRoot, 'b-'));
@@ -2152,13 +2304,13 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
     const probeClaudeRuntime = vi
       .spyOn(providerRuntimeHarness(svc), 'probeClaudeRuntime')
       .mockImplementation(async (_claudePath, _cwd, _env, providerId) => {
-      if (providerId === 'codex') {
-        return {
-          warning: 'Not logged in to Codex runtime',
-        };
-      }
-      return {};
-    });
+        if (providerId === 'codex') {
+          return {
+            warning: 'Not logged in to Codex runtime',
+          };
+        }
+        return {};
+      });
 
     const result = await svc.prepareForProvisioning(tempRoot, {
       forceFresh: true,
@@ -2169,10 +2321,7 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
     expect(result.ready).toBe(false);
     expect(result.message).toBe('Codex: Not logged in to Codex runtime');
     expect(probeClaudeRuntime).toHaveBeenCalledTimes(2);
-    expect(probeClaudeRuntime.mock.calls.map((call) => call[3])).toEqual([
-      'anthropic',
-      'codex',
-    ]);
+    expect(probeClaudeRuntime.mock.calls.map((call) => call[3])).toEqual(['anthropic', 'codex']);
   });
 
   it('checks the selected Codex model from the runtime catalog during prepare', async () => {
@@ -2237,7 +2386,7 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
         PATH: '/usr/bin',
         SHELL: '/bin/zsh',
       },
-      authSource: 'oauth_token',
+      authSource: 'none',
       geminiRuntimeAuth: null,
     });
     vi.spyOn(providerRuntimeHarness(svc), 'probeClaudeRuntime').mockResolvedValue({});
@@ -2267,7 +2416,7 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
         PATH: '/usr/bin',
         SHELL: '/bin/zsh',
       },
-      authSource: 'oauth_token',
+      authSource: 'none',
       geminiRuntimeAuth: null,
     });
     vi.spyOn(providerRuntimeHarness(svc), 'probeClaudeRuntime').mockResolvedValue({});
@@ -2411,7 +2560,7 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
         PATH: '/usr/bin',
         SHELL: '/bin/zsh',
       },
-      authSource: 'oauth_token',
+      authSource: 'none',
       geminiRuntimeAuth: null,
     });
     vi.spyOn(providerRuntimeHarness(svc), 'probeClaudeRuntime').mockResolvedValue({});
@@ -2555,7 +2704,7 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
     });
 
     const svc = new TeamProvisioningService();
-    const result = await (svc as any).probeProviderRuntimeControlPlane({
+    const result = await providerDiagnosticsRuntimeHarness(svc).probeProviderRuntimeControlPlane({
       claudePath: '/fake/claude',
       cwd: tempRoot,
       env: {
@@ -2614,7 +2763,7 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
     });
 
     const svc = new TeamProvisioningService();
-    const result = await (svc as any).probeProviderRuntimeControlPlane({
+    const result = await providerDiagnosticsRuntimeHarness(svc).probeProviderRuntimeControlPlane({
       claudePath: '/fake/claude',
       cwd: tempRoot,
       env: {
@@ -2694,7 +2843,7 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
     });
 
     const svc = new TeamProvisioningService();
-    const result = await (svc as any).probeProviderRuntimeControlPlane({
+    const result = await providerDiagnosticsRuntimeHarness(svc).probeProviderRuntimeControlPlane({
       claudePath: '/fake/claude',
       cwd: tempRoot,
       env: {
@@ -2795,7 +2944,7 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
         PATH: '/usr/bin',
         SHELL: '/bin/zsh',
       },
-      authSource: 'oauth_token',
+      authSource: 'none',
       geminiRuntimeAuth: null,
     });
     vi.spyOn(providerRuntimeHarness(svc), 'probeClaudeRuntime').mockResolvedValue({
@@ -2916,9 +3065,7 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
       },
     });
 
-    expect(result.details).toEqual([
-      'Selected model claude-opus-4-6[1m] is available for launch.',
-    ]);
+    expect(result.details).toEqual(['Selected model claude-opus-4-6[1m] is available for launch.']);
     expect(result.blockingMessages).toEqual([]);
   });
 
@@ -3059,7 +3206,7 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
         buildProvisioningEnv: (providerId) =>
           providerRuntimeHarness(svc).buildProvisioningEnv(providerId),
         readRuntimeProviderLaunchFacts: (params) =>
-          (svc as any).readRuntimeProviderLaunchFacts(params),
+          asPrivateService(svc).readRuntimeProviderLaunchFacts(params),
       },
     });
 
@@ -3160,7 +3307,7 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
         buildProvisioningEnv: (providerId) =>
           providerRuntimeHarness(svc).buildProvisioningEnv(providerId),
         readRuntimeProviderLaunchFacts: (params) =>
-          (svc as any).readRuntimeProviderLaunchFacts(params),
+          asPrivateService(svc).readRuntimeProviderLaunchFacts(params),
       },
     });
 
@@ -3205,7 +3352,7 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
     });
 
     const svc = new TeamProvisioningService();
-    await (svc as any).readRuntimeProviderLaunchFacts({
+    await asPrivateService(svc).readRuntimeProviderLaunchFacts({
       claudePath: '/fake/claude',
       cwd: tempRoot,
       providerId: 'codex',
@@ -3249,13 +3396,15 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
       authSource: 'codex_runtime',
       geminiRuntimeAuth: null,
     }));
-    const readRuntimeProviderLaunchFacts = vi.fn(async () => ({
-      defaultModel: null,
-      modelIds: new Set(),
-      modelCatalog: null,
-      runtimeCapabilities: { modelCatalog: { dynamic: true, source: 'runtime' } },
-      providerStatus: null,
-    }));
+    const readRuntimeProviderLaunchFacts = vi.fn(
+      async (): Promise<RuntimeProviderLaunchFacts> => ({
+        defaultModel: null,
+        modelIds: new Set<string>(),
+        modelCatalog: null,
+        runtimeCapabilities: { modelCatalog: { dynamic: true, source: 'runtime' } },
+        providerStatus: null,
+      })
+    );
 
     const result = await verifySelectedProviderModelsForProvisioning({
       claudePath: '/fake/claude',
@@ -3372,18 +3521,8 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
     });
 
     const svc = new TeamProvisioningService();
-    const serviceWithDefaultModelResolver = svc as unknown as {
-      resolveProviderDefaultModel: (
-        claudePath: string,
-        cwd: string,
-        providerId: string,
-        env: NodeJS.ProcessEnv,
-        providerArgs: string[],
-        limitContext: boolean
-      ) => Promise<string | null>;
-    };
     await expect(
-      serviceWithDefaultModelResolver.resolveProviderDefaultModel(
+      prepareCoordinatorHarness(svc).resolveProviderDefaultModel(
         '/fake/claude',
         tempRoot,
         'opencode',
@@ -3460,19 +3599,9 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
     });
 
     const svc = new TeamProvisioningService();
-    const serviceWithDefaultModelResolver = svc as unknown as {
-      resolveProviderDefaultModel: (
-        claudePath: string,
-        cwd: string,
-        providerId: string,
-        env: NodeJS.ProcessEnv,
-        providerArgs: string[],
-        limitContext: boolean
-      ) => Promise<string | null>;
-    };
 
     await expect(
-      serviceWithDefaultModelResolver.resolveProviderDefaultModel(
+      prepareCoordinatorHarness(svc).resolveProviderDefaultModel(
         '/fake/claude',
         tempRoot,
         'opencode',
@@ -3522,19 +3651,9 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
     });
 
     const svc = new TeamProvisioningService();
-    const serviceWithDefaultModelResolver = svc as unknown as {
-      resolveProviderDefaultModel: (
-        claudePath: string,
-        cwd: string,
-        providerId: string,
-        env: NodeJS.ProcessEnv,
-        providerArgs: string[],
-        limitContext: boolean
-      ) => Promise<string | null>;
-    };
 
     await expect(
-      serviceWithDefaultModelResolver.resolveProviderDefaultModel(
+      prepareCoordinatorHarness(svc).resolveProviderDefaultModel(
         '/fake/claude',
         tempRoot,
         'opencode',
@@ -3572,30 +3691,13 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
     });
 
     const svc = new TeamProvisioningService();
-    const serviceWithMaterializer = svc as unknown as {
-      materializeOpenCodeRuntimeAdapterDefaults: (params: {
-        request: {
-          teamName: string;
-          cwd: string;
-          providerId: 'opencode';
-          skipPermissions: boolean;
-          model?: string;
-        };
-        members: Array<{
-          name: string;
-          providerId?: 'opencode';
-          model?: string;
-        }>;
-      }) => Promise<{
-        request: { model?: string };
-        members: Array<{ name: string; model?: string }>;
-      }>;
-    };
 
-    const result = await serviceWithMaterializer.materializeOpenCodeRuntimeAdapterDefaults({
+    const result = await materializeOpenCodeRuntimeAdapterDefaultsForTest(svc, {
       request: {
         teamName: 'default-opencode-team',
         cwd: tempRoot,
+        prompt: 'lead',
+        members: [],
         providerId: 'opencode',
         skipPermissions: true,
       },
@@ -3625,30 +3727,13 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
 
   it('materializes pure OpenCode runtime adapter root model from a saved teammate model', async () => {
     const svc = new TeamProvisioningService();
-    const serviceWithMaterializer = svc as unknown as {
-      materializeOpenCodeRuntimeAdapterDefaults: (params: {
-        request: {
-          teamName: string;
-          cwd: string;
-          providerId: 'opencode';
-          skipPermissions: boolean;
-          model?: string;
-        };
-        members: Array<{
-          name: string;
-          providerId?: 'opencode';
-          model?: string;
-        }>;
-      }) => Promise<{
-        request: { model?: string };
-        members: Array<{ name: string; model?: string }>;
-      }>;
-    };
 
-    const result = await serviceWithMaterializer.materializeOpenCodeRuntimeAdapterDefaults({
+    const result = await materializeOpenCodeRuntimeAdapterDefaultsForTest(svc, {
       request: {
         teamName: 'saved-opencode-team',
         cwd: tempRoot,
+        prompt: 'lead',
+        members: [],
         providerId: 'opencode',
         skipPermissions: true,
       },
@@ -3700,11 +3785,9 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
 
   it('does not materialize the Anthropic API-key helper for compatible endpoints without a token', async () => {
     const svc = new TeamProvisioningService();
-    const getConfiguredAnthropicApiKeyForTeamRuntime = vi.fn().mockResolvedValue(null);
-    (svc as any).providerConnectionService = {
-      getConfiguredAnthropicApiKeyForTeamRuntime,
-      augmentConfiguredConnectionEnv: vi.fn(),
-    };
+    const getConfiguredAnthropicApiKeyForTeamRuntime = vi
+      .spyOn(ProviderConnectionService.getInstance(), 'getConfiguredAnthropicApiKeyForTeamRuntime')
+      .mockResolvedValueOnce(null);
     buildProviderAwareCliEnvMock.mockResolvedValue({
       env: {
         ANTHROPIC_BASE_URL: 'http://localhost:1234',
@@ -3900,10 +3983,7 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
           '--provider-passthrough',
         ],
       },
-      extraArgs: [
-        '--settings={"codex":{"nested":{"extra":true}}}',
-        '--extra-passthrough',
-      ],
+      extraArgs: ['--settings={"codex":{"nested":{"extra":true}}}', '--extra-passthrough'],
       inheritedProviderArgs: [
         '--settings',
         '{"codex":{"forced_login_method":"chatgpt","nested":{"inherited":true}}}',
@@ -4048,8 +4128,8 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
   it('coalesces multiple non-primary provider settings without leaking provider secrets into env patch', async () => {
     const svc = new TeamProvisioningService();
     vi.spyOn(providerRuntimeHarness(svc), 'buildProvisioningEnv').mockImplementation(
-      (providerId: unknown) => {
-        const resolvedProviderId = typeof providerId === 'string' ? providerId : undefined;
+      (providerId?: TeamProviderId): Promise<ProvisioningEnvResolution> => {
+        const resolvedProviderId = providerId;
         if (resolvedProviderId === 'codex') {
           return Promise.resolve({
             env: {
@@ -4075,7 +4155,7 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
               GEMINI_API_KEY: 'gemini-should-not-leak',
               GOOGLE_APPLICATION_CREDENTIALS: '/tmp/gcp-creds.json',
             },
-            authSource: 'gemini_api_key',
+            authSource: 'gemini_runtime',
             geminiRuntimeAuth: null,
             providerArgs: [
               '--settings',
@@ -4093,7 +4173,8 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
       }
     );
 
-    const crossProvider = await (svc as any).buildCrossProviderMemberArgs(
+    const crossProvider = await buildCrossProviderMemberArgsForTest(
+      svc,
       'anthropic',
       [
         { name: 'cody', providerId: 'codex', model: 'gpt-5.4' },
@@ -4131,7 +4212,7 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
   it('coalesces workspace trust patches after inherited cross-provider args are patched', async () => {
     const svc = new TeamProvisioningService();
     const trustOverride = 'projects."/repo".trust_level="trusted"';
-    const inheritedProviderArgs = (svc as any).applyWorkspaceTrustArgPatches({
+    const inheritedProviderArgs = applyWorkspaceTrustArgPatches({
       args: ['--settings', '{"codex":{"forced_login_method":"chatgpt"}}'],
       patches: [
         {
@@ -4297,7 +4378,7 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
         : null
     );
 
-    const result = await (svc as any).buildRuntimeTurnSettledEnvironmentForMembers('anthropic', [
+    const result = await buildRuntimeTurnSettledEnvironmentForMembersForTest(svc, 'anthropic', [
       { name: 'alice', providerId: 'anthropic' },
       { name: 'jack', providerId: 'codex' },
     ]);
@@ -4322,7 +4403,7 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
     );
 
     await expect(
-      (svc as any).buildCrossProviderMemberArgs('anthropic', [
+      buildCrossProviderMemberArgsForTest(svc, 'anthropic', [
         { name: 'alice', providerId: 'anthropic' },
         { name: 'jack', providerId: 'codex' },
       ])
@@ -4337,7 +4418,7 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
         : null
     );
 
-    const result = await (svc as any).buildRuntimeTurnSettledEnvironmentForMembers('anthropic', [
+    const result = await buildRuntimeTurnSettledEnvironmentForMembersForTest(svc, 'anthropic', [
       { name: 'alice', providerId: 'anthropic' },
       { name: 'jack', model: 'gpt-5.4' },
     ]);
@@ -4354,7 +4435,7 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
     }));
     svc.setRuntimeTurnSettledEnvironmentProvider(provider);
 
-    const result = await (svc as any).buildRuntimeTurnSettledEnvironmentForMembers('anthropic', [
+    const result = await buildRuntimeTurnSettledEnvironmentForMembersForTest(svc, 'anthropic', [
       { name: 'alice', providerId: 'anthropic' },
       { name: 'bob', providerId: 'gemini' },
     ]);
@@ -4408,9 +4489,7 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
   });
 
   it('does not treat assistant-text 401 noise as an auth failure', () => {
-    expect(
-      isAuthFailureWarning('assistant mentioned 401 unauthorized', 'assistant')
-    ).toBe(false);
+    expect(isAuthFailureWarning('assistant mentioned 401 unauthorized', 'assistant')).toBe(false);
     expect(isAuthFailureWarning('invalid api key', 'stderr')).toBe(true);
   });
 
@@ -4547,7 +4626,6 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
   });
 
   it('preserves a requested 1M Anthropic window when runtime logs strip the [1m] suffix', () => {
-    const svc = new TeamProvisioningService();
     const run = {
       request: {
         providerId: 'anthropic',
@@ -4557,7 +4635,7 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
       leadContextUsage: null,
     } as any;
 
-    (svc as any).updateLeadContextUsageFromUsage(
+    updateLeadContextUsageFromUsageForRun(
       run,
       {
         input_tokens: 12,
@@ -4578,7 +4656,6 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
   });
 
   it('preserves a limited 200K Anthropic window when runtime logs strip the [1m] suffix', () => {
-    const svc = new TeamProvisioningService();
     const run = {
       request: {
         providerId: 'anthropic',
@@ -4588,7 +4665,7 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
       leadContextUsage: null,
     } as any;
 
-    (svc as any).updateLeadContextUsageFromUsage(
+    updateLeadContextUsageFromUsageForRun(
       run,
       {
         input_tokens: 12,
@@ -4609,8 +4686,7 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
   });
 
   it('builds Anthropic launch identity with exact max effort and resolved fast mode', () => {
-    const svc = new TeamProvisioningService();
-    const launchIdentity = (svc as any).buildProviderModelLaunchIdentity({
+    const launchIdentity = buildProviderModelLaunchIdentityForTest({
       request: {
         providerId: 'anthropic',
         model: 'claude-opus-4-6',
@@ -4682,8 +4758,7 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
   });
 
   it('builds Codex launch identity with explicit Fast only for eligible GPT-5.4 ChatGPT launches', () => {
-    const svc = new TeamProvisioningService();
-    const launchIdentity = (svc as any).buildProviderModelLaunchIdentity({
+    const launchIdentity = buildProviderModelLaunchIdentityForTest({
       request: {
         providerId: 'codex',
         providerBackendId: 'codex-native',
@@ -4766,14 +4841,6 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
               appServerState: 'healthy',
             },
           },
-          connection: {
-            codex: {
-              effectiveAuthMode: 'chatgpt',
-              launchAllowed: true,
-              launchIssueMessage: null,
-              launchReadinessState: 'ready_chatgpt',
-            },
-          },
         },
       },
     });
@@ -4792,7 +4859,6 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
   });
 
   it('allows explicit Codex Fast to downgrade before launch when auth or model eligibility is invalid', () => {
-    const svc = new TeamProvisioningService();
     const facts = {
       defaultModel: 'gpt-5.4-mini',
       modelIds: new Set(['gpt-5.4-mini']),
@@ -4840,19 +4906,11 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
         selectedBackendId: 'codex-native',
         resolvedBackendId: 'codex-native',
         modelCatalog: null,
-        connection: {
-          codex: {
-            effectiveAuthMode: 'api_key',
-            launchAllowed: true,
-            launchIssueMessage: null,
-            launchReadinessState: 'ready_api_key',
-          },
-        },
       },
-    };
+    } satisfies RuntimeProviderLaunchFacts;
 
     expect(() =>
-      (svc as any).validateRuntimeLaunchSelection({
+      validateRuntimeLaunchSelectionForTest({
         actorLabel: 'Team lead',
         providerId: 'codex',
         model: 'gpt-5.4-mini',
@@ -4862,7 +4920,7 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
     ).not.toThrow();
 
     expect(
-      (svc as any).buildProviderModelLaunchIdentity({
+      buildProviderModelLaunchIdentityForTest({
         request: {
           providerId: 'codex',
           providerBackendId: 'codex-native',
@@ -4883,7 +4941,6 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
   });
 
   it('rejects Anthropic max and fast when the exact resolved launch model does not support them', () => {
-    const svc = new TeamProvisioningService();
     const facts = {
       defaultModel: 'opus[1m]',
       modelIds: new Set(['opus[1m]']),
@@ -4931,10 +4988,10 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
           source: 'runtime',
         },
       },
-    };
+    } satisfies RuntimeProviderLaunchFacts;
 
     expect(() =>
-      (svc as any).validateRuntimeLaunchSelection({
+      validateRuntimeLaunchSelectionForTest({
         actorLabel: 'Team lead',
         providerId: 'anthropic',
         model: 'opus',
@@ -4945,7 +5002,7 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
     ).toThrow('does not support Anthropic effort "max" in the current runtime');
 
     expect(() =>
-      (svc as any).validateRuntimeLaunchSelection({
+      validateRuntimeLaunchSelectionForTest({
         actorLabel: 'Team lead',
         providerId: 'anthropic',
         model: 'opus',
@@ -4957,7 +5014,6 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
   });
 
   it('allows known Anthropic effort when runtime catalog is unavailable', () => {
-    const svc = new TeamProvisioningService();
     const facts = {
       defaultModel: null,
       modelIds: new Set<string>(),
@@ -4969,10 +5025,10 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
           configPassthrough: true,
         },
       },
-    };
+    } satisfies RuntimeProviderLaunchFacts;
 
     expect(() =>
-      (svc as any).validateRuntimeLaunchSelection({
+      validateRuntimeLaunchSelectionForTest({
         actorLabel: 'Team lead',
         providerId: 'anthropic',
         model: 'claude-opus-4-6[1m]',
@@ -4984,16 +5040,15 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
   });
 
   it('allows known Anthropic effort when catalog is missing and model list only exposes the base launch id', () => {
-    const svc = new TeamProvisioningService();
     const facts = {
       defaultModel: null,
       modelIds: new Set(['claude-opus-4-6']),
       modelCatalog: null,
       runtimeCapabilities: null,
-    };
+    } satisfies RuntimeProviderLaunchFacts;
 
     expect(() =>
-      (svc as any).validateRuntimeLaunchSelection({
+      validateRuntimeLaunchSelectionForTest({
         actorLabel: 'Team lead',
         providerId: 'anthropic',
         model: 'claude-opus-4-6[1m]',
@@ -5005,16 +5060,15 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
   });
 
   it('reports unknown Anthropic effort support as unverified when runtime catalog is unavailable', () => {
-    const svc = new TeamProvisioningService();
     const facts = {
       defaultModel: null,
       modelIds: new Set<string>(),
       modelCatalog: null,
       runtimeCapabilities: null,
-    };
+    } satisfies RuntimeProviderLaunchFacts;
 
     expect(() =>
-      (svc as any).validateRuntimeLaunchSelection({
+      validateRuntimeLaunchSelectionForTest({
         actorLabel: 'Team lead',
         providerId: 'anthropic',
         model: 'claude-experimental-5',
@@ -5029,9 +5083,9 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
     const svc = new TeamProvisioningService();
     const emitter = vi.fn();
     svc.setTeamChangeEmitter(emitter);
-    vi.spyOn(svc as any, 'updateConfigPostLaunch').mockResolvedValue(undefined);
-    vi.spyOn(svc as any, 'cleanupPrelaunchBackup').mockResolvedValue(undefined);
-    vi.spyOn(svc as any, 'relayLeadInboxMessages').mockResolvedValue(undefined);
+    vi.spyOn(configFacadeHarness(svc), 'updateConfigPostLaunch').mockResolvedValue(undefined);
+    vi.spyOn(configFacadeHarness(svc), 'cleanupPrelaunchBackup').mockResolvedValue(undefined);
+    vi.spyOn(svc, 'relayLeadInboxMessages').mockResolvedValue(0);
 
     const run = {
       runId: 'run-3',
@@ -5099,7 +5153,12 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
     mockMcpPreflightSpawn('complete');
 
     await expect(
-      providerRuntimeHarness(svc).validateAgentTeamsMcpRuntime('/fake/claude', tempRoot, process.env, configPath)
+      providerRuntimeHarness(svc).validateAgentTeamsMcpRuntime(
+        '/fake/claude',
+        tempRoot,
+        process.env,
+        configPath
+      )
     ).resolves.toBeUndefined();
   }, 45_000);
 
@@ -5110,7 +5169,12 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
     });
 
     await expect(
-      providerRuntimeHarness(svc).validateAgentTeamsMcpRuntime('/fake/claude', tempRoot, process.env, configPath)
+      providerRuntimeHarness(svc).validateAgentTeamsMcpRuntime(
+        '/fake/claude',
+        tempRoot,
+        process.env,
+        configPath
+      )
     ).rejects.toThrow('does not contain an "agent-teams" server entry');
   });
 
@@ -5126,7 +5190,12 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
     mockMcpPreflightSpawn('missing-member-briefing');
 
     await expect(
-      providerRuntimeHarness(svc).validateAgentTeamsMcpRuntime('/fake/claude', tempRoot, process.env, configPath)
+      providerRuntimeHarness(svc).validateAgentTeamsMcpRuntime(
+        '/fake/claude',
+        tempRoot,
+        process.env,
+        configPath
+      )
     ).rejects.toThrow('required tool(s): member_briefing');
   });
 
@@ -5171,7 +5240,12 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
     mockMcpPreflightSpawn('missing-lead-briefing');
 
     await expect(
-      providerRuntimeHarness(svc).validateAgentTeamsMcpRuntime('/fake/claude', tempRoot, process.env, configPath)
+      providerRuntimeHarness(svc).validateAgentTeamsMcpRuntime(
+        '/fake/claude',
+        tempRoot,
+        process.env,
+        configPath
+      )
     ).rejects.toThrow('required tool(s): lead_briefing');
   });
 
@@ -5187,7 +5261,12 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
     mockMcpPreflightSpawn('member-briefing-error');
 
     await expect(
-      providerRuntimeHarness(svc).validateAgentTeamsMcpRuntime('/fake/claude', tempRoot, process.env, configPath)
+      providerRuntimeHarness(svc).validateAgentTeamsMcpRuntime(
+        '/fake/claude',
+        tempRoot,
+        process.env,
+        configPath
+      )
     ).rejects.toThrow('mock member_briefing failure');
   });
 
@@ -5203,7 +5282,12 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
     mockMcpPreflightSpawn('lead-briefing-error');
 
     await expect(
-      providerRuntimeHarness(svc).validateAgentTeamsMcpRuntime('/fake/claude', tempRoot, process.env, configPath)
+      providerRuntimeHarness(svc).validateAgentTeamsMcpRuntime(
+        '/fake/claude',
+        tempRoot,
+        process.env,
+        configPath
+      )
     ).rejects.toThrow('mock lead_briefing failure');
   });
 

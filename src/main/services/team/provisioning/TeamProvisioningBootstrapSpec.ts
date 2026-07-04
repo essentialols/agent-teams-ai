@@ -77,7 +77,9 @@ export interface RuntimeBootstrapSpec {
 }
 
 const DETERMINISTIC_BOOTSTRAP_MIN_TIMEOUT_MS = 120_000;
-const DETERMINISTIC_BOOTSTRAP_TIMEOUT_PER_MEMBER_MS = 75_000;
+// Keep a modest app-side headroom for cold starts and slow Windows I/O. The
+// runtime still owns true per-member isolation and stale-bootstrap recovery.
+const DETERMINISTIC_BOOTSTRAP_TIMEOUT_PER_MEMBER_MS = 90_000;
 const DETERMINISTIC_BOOTSTRAP_MAX_TIMEOUT_MS = 900_000;
 const DETERMINISTIC_BOOTSTRAP_OUTER_TIMEOUT_GRACE_MS = 30_000;
 

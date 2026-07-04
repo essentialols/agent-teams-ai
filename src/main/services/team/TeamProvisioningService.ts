@@ -99,7 +99,10 @@ import {
   findBootstrapRuntimeProofObservedAt as findBootstrapRuntimeProofObservedAtHelper,
   type ParsedBootstrapTranscriptTailCacheEntry,
 } from './provisioning/TeamProvisioningBootstrapTranscript';
-import { TeamProvisioningBootstrapTranscriptFacade } from './provisioning/TeamProvisioningBootstrapTranscriptFacade';
+import {
+  TeamProvisioningBootstrapTranscriptFacade,
+  type TeamProvisioningBootstrapTranscriptMemberLogsPort,
+} from './provisioning/TeamProvisioningBootstrapTranscriptFacade';
 import {
   addPermissionRulesToSettings as addClaudePermissionRulesToSettings,
   type ClaudePermissionSettingsFilePorts,
@@ -812,6 +815,22 @@ export class TeamProvisioningService {
     return this.bootstrapTranscriptFacade.parsedBootstrapTranscriptTailCache;
   }
 
+  private get memberLogsFinder(): TeamProvisioningBootstrapTranscriptMemberLogsPort {
+    return (
+      this.bootstrapTranscriptFacade as unknown as {
+        memberLogsFinder: TeamProvisioningBootstrapTranscriptMemberLogsPort;
+      }
+    ).memberLogsFinder;
+  }
+
+  private set memberLogsFinder(value: TeamProvisioningBootstrapTranscriptMemberLogsPort) {
+    (
+      this.bootstrapTranscriptFacade as unknown as {
+        memberLogsFinder: TeamProvisioningBootstrapTranscriptMemberLogsPort;
+      }
+    ).memberLogsFinder = value;
+  }
+
   private readonly teamOpLocks = new Map<string, Promise<void>>();
   private readonly shutdownCoordination = createTeamProvisioningShutdownCoordination(
     {
@@ -1109,8 +1128,7 @@ export class TeamProvisioningService {
       scheduleSameTeamDeferredRetry: (teamName) => this.scheduleSameTeamDeferredRetry(teamName),
       resolveControlApiBaseUrl: () => this.resolveControlApiBaseUrl(),
       sendMessageToRun: (run, message) => this.sendMessageToRun(run, message),
-      hasAcceptedLeadWorkSyncReport: (input) =>
-        this.hasAcceptedLeadWorkSyncReport(input),
+      hasAcceptedLeadWorkSyncReport: (input) => this.hasAcceptedLeadWorkSyncReport(input),
       scheduleLeadProofMissingWorkSyncRecovery: (input) =>
         this.scheduleLeadProofMissingWorkSyncRecovery(input),
       pushLiveLeadTextMessage: (run, text, messageId, timestamp) =>
@@ -2533,7 +2551,9 @@ export class TeamProvisioningService {
   }
 
   private async respondToTeammatePermission(
-    run: Parameters<TeamProvisioningToolApprovalFacade<ProvisioningRun>["respondToTeammatePermission"]>[0]["run"],
+    run: Parameters<
+      TeamProvisioningToolApprovalFacade<ProvisioningRun>['respondToTeammatePermission']
+    >[0]['run'],
     agentId: string,
     requestId: string,
     allow: boolean,
@@ -2591,7 +2611,7 @@ export class TeamProvisioningService {
   private getLeadRelayReadCommitBatch(
     input: Omit<
       Parameters<typeof getLeadRelayReadCommitBatchHelper>[0],
-      "hasAcceptedLeadWorkSyncReport" | "scheduleLeadProofMissingWorkSyncRecovery"
+      'hasAcceptedLeadWorkSyncReport' | 'scheduleLeadProofMissingWorkSyncRecovery'
     >
   ): ReturnType<typeof getLeadRelayReadCommitBatchHelper> {
     return getLeadRelayReadCommitBatchHelper({

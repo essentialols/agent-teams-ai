@@ -54,7 +54,7 @@ function requireBootstrapTranscriptFacadeDependency<T>(
 }
 
 export class TeamProvisioningBootstrapTranscriptFacade {
-  private readonly memberLogsFinder: TeamProvisioningBootstrapTranscriptMemberLogsPort;
+  private memberLogsFinder: TeamProvisioningBootstrapTranscriptMemberLogsPort;
   private readonly transcriptProjectResolver: Pick<
     TeamTranscriptProjectResolver,
     'getContext'

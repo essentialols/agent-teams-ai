@@ -40,6 +40,7 @@ export interface TeamProvisioningStopFlowFactoryDeps<TRun extends TeamProvisioni
   invalidateRuntimeSnapshotCaches: OpenCodeRuntimeStopFlowPorts['invalidateRuntimeSnapshotCaches'];
   pauseActiveIntervalsForTeam: TeamProvisioningStopTeamPorts<TRun>['pauseActiveIntervalsForTeam'];
   stopPersistentTeamMembers: TeamProvisioningStopTeamPorts<TRun>['stopPersistentTeamMembers'];
+  openCodeRuntimeDeliveryAdvisory: TeamProvisioningStopTeamPorts<TRun>['openCodeRuntimeDeliveryAdvisory'];
   isCancellableRuntimeAdapterProgress: TeamProvisioningStopTeamPorts<TRun>['isCancellableRuntimeAdapterProgress'];
   cancelRuntimeAdapterProvisioning: TeamProvisioningStopTeamPorts<TRun>['cancelRuntimeAdapterProvisioning'];
   cleanupAnthropicApiKeyHelperMaterialForStoppedTeam: TeamProvisioningStopTeamPorts<TRun>['cleanupAnthropicApiKeyHelperMaterialForStoppedTeam'];
@@ -96,6 +97,7 @@ export function createTeamProvisioningStopTeamPortsFromDeps<TRun extends TeamPro
     invalidateRuntimeSnapshotCaches: (teamName) => deps.invalidateRuntimeSnapshotCaches(teamName),
     pauseActiveIntervalsForTeam: (teamName) => deps.pauseActiveIntervalsForTeam(teamName),
     stopPersistentTeamMembers: (teamName) => deps.stopPersistentTeamMembers(teamName),
+    openCodeRuntimeDeliveryAdvisory: deps.openCodeRuntimeDeliveryAdvisory,
     getTrackedRunId: (teamName) => deps.getTrackedRunId(teamName),
     getAliveRunId: (teamName) => deps.getAliveRunId(teamName),
     runs: deps.runs,

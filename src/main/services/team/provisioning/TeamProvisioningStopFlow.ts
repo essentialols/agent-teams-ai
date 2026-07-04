@@ -22,6 +22,7 @@ export interface TeamProvisioningStopTeamPorts<TRun extends TeamProvisioningStop
   invalidateRuntimeSnapshotCaches(teamName: string): void;
   pauseActiveIntervalsForTeam(teamName: string): void;
   stopPersistentTeamMembers(teamName: string): void;
+  openCodeRuntimeDeliveryAdvisory: { cancelTeam(teamName: string): void };
   getTrackedRunId(teamName: string): string | null;
   getAliveRunId(teamName: string): string | null;
   runs: ReadonlyMap<string, TRun>;
@@ -85,6 +86,7 @@ export async function stopTeamFlow<TRun extends TeamProvisioningStopRun>(
   ports.invalidateRuntimeSnapshotCaches(teamName);
   ports.pauseActiveIntervalsForTeam(teamName);
   ports.stopPersistentTeamMembers(teamName);
+  ports.openCodeRuntimeDeliveryAdvisory.cancelTeam(teamName);
 
   let runId = ports.getTrackedRunId(teamName);
   if (!runId) {

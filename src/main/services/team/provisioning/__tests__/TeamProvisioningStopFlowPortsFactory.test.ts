@@ -126,6 +126,7 @@ function createDeps(
     invalidateRuntimeSnapshotCaches: vi.fn(),
     pauseActiveIntervalsForTeam: vi.fn(),
     stopPersistentTeamMembers: vi.fn(),
+    openCodeRuntimeDeliveryAdvisory: { cancelTeam: vi.fn() },
     isCancellableRuntimeAdapterProgress: vi.fn(() => false),
     cancelRuntimeAdapterProvisioning: vi.fn(),
     cleanupAnthropicApiKeyHelperMaterialForStoppedTeam: vi.fn(),
@@ -210,6 +211,7 @@ describe('TeamProvisioningStopFlowPortsFactory', () => {
     expect(deps.invalidateRuntimeSnapshotCaches).toHaveBeenCalledWith(teamName);
     expect(deps.pauseActiveIntervalsForTeam).toHaveBeenCalledWith(teamName);
     expect(deps.stopPersistentTeamMembers).toHaveBeenCalledWith(teamName);
+    expect(deps.openCodeRuntimeDeliveryAdvisory.cancelTeam).toHaveBeenCalledWith(teamName);
     expect(deps.killTeamProcess).toHaveBeenCalledWith(run.child);
     expect(run.processKilled).toBe(true);
     expect(run.cancelRequested).toBe(true);
@@ -249,6 +251,7 @@ describe('TeamProvisioningStopFlowPortsFactory', () => {
 
     await createTeamProvisioningStopFlowBoundary(deps).stopTeam(teamName);
 
+    expect(deps.openCodeRuntimeDeliveryAdvisory.cancelTeam).toHaveBeenCalledWith(teamName);
     expect(deps.withTeamLock).toHaveBeenCalledWith(teamName, expect.any(Function));
     expect(stop).toHaveBeenCalledWith(
       expect.objectContaining({

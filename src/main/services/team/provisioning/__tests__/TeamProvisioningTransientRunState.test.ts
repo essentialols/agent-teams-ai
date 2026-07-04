@@ -50,6 +50,7 @@ function makePorts(
     openCodeMemberInboxRelayInFlight: new Map(),
     openCodeMemberSendInFlightByLane: new Map(),
     openCodePromptDeliveryWatchdogScheduler: { cancelTeam: vi.fn() },
+    openCodeRuntimeDeliveryAdvisory: { cancelTeam: vi.fn() },
     relayedMemberInboxMessageIds: new Map(),
     liveLeadProcessMessages: new Map(),
     relayLeadInboxMessages: vi.fn().mockResolvedValue(0),
@@ -152,6 +153,7 @@ describe('TeamProvisioningTransientRunState', () => {
     expect(ports.invalidateRuntimeSnapshotCaches).toHaveBeenCalledWith('alpha');
     expect(ports.persistedTranscriptClaudeLogs.invalidate).toHaveBeenCalledWith('alpha');
     expect(ports.openCodePromptDeliveryWatchdogScheduler.cancelTeam).toHaveBeenCalledWith('alpha');
+    expect(ports.openCodeRuntimeDeliveryAdvisory.cancelTeam).toHaveBeenCalledWith('alpha');
     expect(ports.pendingTimeouts.has('same-team-deferred:alpha')).toBe(false);
     expect(ports.pendingTimeouts.has('lead-inbox-follow-up:alpha')).toBe(false);
     expect(ports.pendingTimeouts.has('same-team-deferred:beta')).toBe(true);

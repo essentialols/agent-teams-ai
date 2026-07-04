@@ -1467,6 +1467,7 @@ export class TeamProvisioningService {
     pauseActiveIntervalsForTeam: (teamName) =>
       this.taskActivityIntervalService.pauseActiveIntervalsForTeam(teamName),
     stopPersistentTeamMembers: (teamName) => this.stopPersistentTeamMembers(teamName),
+    openCodeRuntimeDeliveryAdvisory: this.openCodeRuntimeDeliveryAdvisory,
     isCancellableRuntimeAdapterProgress: (progress) =>
       this.isCancellableRuntimeAdapterProgress(progress),
     cancelRuntimeAdapterProvisioning: (runId, progress) =>
@@ -2181,6 +2182,7 @@ export class TeamProvisioningService {
         openCodeMemberInboxRelayInFlight: this.openCodeMemberInboxRelayInFlight,
         openCodeMemberSendInFlightByLane: this.openCodeMemberSendInFlightByLane,
         openCodePromptDeliveryWatchdogScheduler: this.openCodePromptDeliveryWatchdogScheduler,
+        openCodeRuntimeDeliveryAdvisory: this.openCodeRuntimeDeliveryAdvisory,
         relayedMemberInboxMessageIds: this.relayedMemberInboxMessageIds,
         liveLeadProcessMessages: this.liveLeadProcessMessages,
         relayLeadInboxMessages: (teamName) => this.relayLeadInboxMessages(teamName),

@@ -2392,6 +2392,14 @@ export class TeamProvisioningService {
     return this.prepareFacade.materializeEffectiveTeamMemberSpecs(params);
   }
 
+  private resolveOpenCodeMemberWorkspacesForRuntime(
+    params: Parameters<
+      TeamProvisioningPrepareFacade['resolveOpenCodeMemberWorkspacesForRuntime']
+    >[0]
+  ): ReturnType<TeamProvisioningPrepareFacade['resolveOpenCodeMemberWorkspacesForRuntime']> {
+    return this.prepareFacade.resolveOpenCodeMemberWorkspacesForRuntime(params);
+  }
+
   private async prepareWorkspaceTrustForDeterministicRun(input: {
     mode: 'create' | 'launch';
     run: ProvisioningRun;

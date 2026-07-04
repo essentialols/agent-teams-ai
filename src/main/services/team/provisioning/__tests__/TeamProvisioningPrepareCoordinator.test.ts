@@ -249,7 +249,7 @@ describe('TeamProvisioningPrepareCoordinator', () => {
     expect(buildProvisioningEnv).toHaveBeenCalledOnce();
     expect(probeClaudeRuntime).toHaveBeenCalledOnce();
 
-    const release = releaseProbe;
+    const release = releaseProbe as ((value: { warning?: string }) => void) | null;
     if (!release) {
       throw new Error('Expected provider probe release callback to be registered.');
     }

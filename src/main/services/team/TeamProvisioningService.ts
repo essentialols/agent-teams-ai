@@ -3846,20 +3846,6 @@ export class TeamProvisioningService {
     return isOpenCodeBootstrapStallWindowElapsedHelper(firstSpawnAcceptedAt, Date.now());
   }
 
-  private shouldSkipMemberSpawnAudit(run: ProvisioningRun): boolean {
-    if (!run.expectedMembers || run.expectedMembers.length === 0) {
-      return true;
-    }
-    return run.expectedMembers.every((memberName) => {
-      const entry = run.memberSpawnStatuses.get(memberName);
-      return (
-        entry?.launchState === 'failed_to_start' ||
-        entry?.launchState === 'confirmed_alive' ||
-        entry?.launchState === 'skipped_for_launch'
-      );
-    });
-  }
-
   private async maybeAuditMemberSpawnStatuses(
     run: ProvisioningRun,
     options?: { force?: boolean }

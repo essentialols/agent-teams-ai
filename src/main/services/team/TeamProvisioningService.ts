@@ -139,10 +139,14 @@ import {
   isCrossTeamToolRecipientName,
   readAndMatchCrossTeamLeadInboxMessages,
   registerPendingCrossTeamReplyExpectation as registerPendingCrossTeamReplyExpectationInState,
+  rememberRecentCrossTeamLeadDeliveryMessageIds as rememberRecentCrossTeamLeadDeliveryMessageIdsHelper,
   resolveCrossTeamLeadName,
 } from './provisioning/TeamProvisioningCrossTeamRelayHelpers';
 import { recoverDeterministicBootstrapCompletion as recoverDeterministicBootstrapCompletionHelper } from './provisioning/TeamProvisioningDeterministicBootstrapCompletionRecovery';
-import { type ProvisioningEnvResolution } from './provisioning/TeamProvisioningEnvBuilder';
+import {
+  type BuildProvisioningEnvOptions,
+  type ProvisioningEnvResolution,
+} from './provisioning/TeamProvisioningEnvBuilder';
 import { assertAppDeterministicBootstrapEnabled } from './provisioning/TeamProvisioningEnvGuards';
 import { createTeamProvisioningEnvRuntimePorts } from './provisioning/TeamProvisioningEnvRuntimePorts';
 import {
@@ -829,6 +833,110 @@ export class TeamProvisioningService {
         memberLogsFinder: TeamProvisioningBootstrapTranscriptMemberLogsPort;
       }
     ).memberLogsFinder = value;
+  }
+
+  private get openCodeRuntimeDeliveryAdvisoryReviewTimers(): Map<
+    string,
+    ReturnType<typeof setTimeout>
+  > {
+    return (
+      this.openCodeRuntimeDeliveryAdvisory as unknown as {
+        advisoryReviewTimers: Map<string, ReturnType<typeof setTimeout>>;
+      }
+    ).advisoryReviewTimers;
+  }
+
+  private probeClaudeRuntime(
+    claudePath: string,
+    cwd: string,
+    env: NodeJS.ProcessEnv,
+    providerId: TeamProviderId | undefined = 'anthropic',
+    providerArgs: string[] = []
+  ): Promise<{ warning?: string }> {
+    return this.providerRuntime.probeClaudeRuntime(claudePath, cwd, env, providerId, providerArgs);
+  }
+
+  private runProviderOneShotDiagnostic(
+    claudePath: string,
+    cwd: string,
+    env: NodeJS.ProcessEnv,
+    providerId: TeamProviderId | undefined = 'anthropic',
+    providerArgs: string[] = []
+  ): Promise<{ warning?: string }> {
+    return this.providerRuntime.runProviderOneShotDiagnostic(
+      claudePath,
+      cwd,
+      env,
+      providerId,
+      providerArgs
+    );
+  }
+
+  private buildProvisioningEnv(
+    providerId: TeamProviderId | undefined = 'anthropic',
+    providerBackendId?: string | null,
+    options?: BuildProvisioningEnvOptions
+  ): Promise<ProvisioningEnvResolution> {
+    return this.providerRuntime.buildProvisioningEnv(providerId, providerBackendId, options);
+  }
+
+  private validateAgentTeamsMcpRuntime(
+    claudePath: string,
+    cwd: string,
+    env: NodeJS.ProcessEnv,
+    mcpConfigPath: string,
+    options: { isCancelled?: () => boolean } = {}
+  ): Promise<void> {
+    return this.providerRuntime.validateAgentTeamsMcpRuntime(
+      claudePath,
+      cwd,
+      env,
+      mcpConfigPath,
+      options
+    );
+  }
+
+  private get providerRuntimeCompatibility() {
+    const buildProvisioningEnv: TeamProvisioningProviderRuntimeFacade['buildProvisioningEnv'] = (
+      ...args
+    ) => this.buildProvisioningEnv(...args);
+
+    return {
+      buildProvisioningEnv,
+      buildCrossProviderMemberArgs: this.providerRuntime.buildCrossProviderMemberArgs.bind(
+        this.providerRuntime
+      ),
+      validateAgentTeamsMcpRuntime: (
+        claudePath: string,
+        cwd: string,
+        env: NodeJS.ProcessEnv,
+        mcpConfigPath: string,
+        options?: { isCancelled?: () => boolean }
+      ) => this.validateAgentTeamsMcpRuntime(claudePath, cwd, env, mcpConfigPath, options),
+    };
+  }
+
+  private getResolvableProvisioningRunId(teamName: string): string | null {
+    return this.runTracking.getResolvableProvisioningRunId(teamName);
+  }
+
+  private rememberRecentCrossTeamLeadDeliveryMessageIds(
+    teamName: string,
+    messageIds: readonly string[]
+  ): void {
+    rememberRecentCrossTeamLeadDeliveryMessageIdsHelper(
+      this.recentCrossTeamLeadDeliveryMessageIds,
+      teamName,
+      messageIds,
+      Date.now(),
+      TeamProvisioningService.RECENT_CROSS_TEAM_DELIVERY_TTL_MS
+    );
+  }
+
+  private async handleOpenCodeRuntimeDeliveryUserFacingSideEffects(
+    record: OpenCodePromptDeliveryLedgerRecord
+  ): Promise<void> {
+    await this.openCodeRuntimeDeliveryAdvisory.handleUserFacingSideEffects(record);
   }
 
   private readonly teamOpLocks = new Map<string, Promise<void>>();
@@ -1800,7 +1908,7 @@ export class TeamProvisioningService {
       },
       logger,
       mcpConfigBuilder: this.mcpConfigBuilder,
-      providerRuntime: this.providerRuntime,
+      providerRuntime: this.providerRuntimeCompatibility,
       killTeamProcess,
       updateProgress,
       nowIso,
@@ -1815,7 +1923,7 @@ export class TeamProvisioningService {
       runs: this.runs,
       provisioningRunByTeam: this.provisioningRunByTeam,
       getStopAllTeamsGeneration: () => this.stopAllTeamsGeneration,
-      providerRuntime: this.providerRuntime,
+      providerRuntime: this.providerRuntimeCompatibility,
       getWorkspaceTrustCoordinator: () => this.workspaceTrustCoordinator,
       workspaceTrustWorkspaceCollectionPorts: this.workspaceTrustWorkspaceCollectionPorts,
       getRuntimeTurnSettledEnvironmentProvider: () => this.runtimeTurnSettledEnvironmentProvider,
@@ -1889,13 +1997,7 @@ export class TeamProvisioningService {
         buildMemberMcpLaunchConfigs: (input) =>
           this.buildRuntimeBootstrapMemberMcpLaunchConfigs(input),
         validateAgentTeamsMcpRuntime: ({ claudePath, cwd, shellEnv, mcpConfigPath, options }) =>
-          this.providerRuntime.validateAgentTeamsMcpRuntime(
-            claudePath,
-            cwd,
-            shellEnv,
-            mcpConfigPath,
-            options
-          ),
+          this.validateAgentTeamsMcpRuntime(claudePath, cwd, shellEnv, mcpConfigPath, options),
         buildTeamRuntimeLaunchArgsPlan: (input) => this.buildTeamRuntimeLaunchArgsPlan(input),
         seedLeadBootstrapPermissionRules: (teamName, cwd) =>
           this.seedLeadBootstrapPermissionRules(teamName, cwd),
@@ -1969,19 +2071,13 @@ export class TeamProvisioningService {
     this.prepareFacade = new TeamProvisioningPrepareFacade({
       getOpenCodeRuntimeAdapter: () => this.getOpenCodeRuntimeAdapter(),
       buildProvisioningEnv: (providerId, providerBackendId, options) =>
-        this.providerRuntime.buildProvisioningEnv(providerId, providerBackendId, options),
+        this.buildProvisioningEnv(providerId, providerBackendId, options),
       runProviderOneShotDiagnostic: (claudePath, cwd, env, providerId, providerArgs) =>
-        this.providerRuntime.runProviderOneShotDiagnostic(
-          claudePath,
-          cwd,
-          env,
-          providerId,
-          providerArgs
-        ),
+        this.runProviderOneShotDiagnostic(claudePath, cwd, env, providerId, providerArgs),
       readRuntimeProviderLaunchFacts: (params) => this.readRuntimeProviderLaunchFacts(params),
       resolveClaudeBinaryPath: () => ClaudeBinaryResolver.resolve(),
       probeClaudeRuntime: (claudePath, cwd, env, providerId, providerArgs) =>
-        this.providerRuntime.probeClaudeRuntime(claudePath, cwd, env, providerId, providerArgs),
+        this.probeClaudeRuntime(claudePath, cwd, env, providerId, providerArgs),
       ensureMemberWorktree: (input) => this.memberWorktreeManager.ensureMemberWorktree(input),
       execCli,
       planRuntimeLanesOrThrow: (leadProviderId, members, baseCwd) =>
@@ -4326,7 +4422,7 @@ export class TeamProvisioningService {
           resolveClaudePath: () => ClaudeBinaryResolver.resolve(),
           buildMissingCliError,
           buildProvisioningEnv: (providerId, providerBackendId, options) =>
-            this.providerRuntime.buildProvisioningEnv(providerId, providerBackendId, options),
+            this.buildProvisioningEnv(providerId, providerBackendId, options),
           materializeEffectiveTeamMemberSpecs: (params) =>
             this.materializeEffectiveTeamMemberSpecs(params),
           resolveOpenCodeMemberWorkspacesForRuntime: (params) =>

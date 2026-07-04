@@ -516,6 +516,7 @@ export interface TeamProvisioningMemberLifecycleRuntimeLaunchPorts {
     includeAnthropicHelper: boolean;
     contextLabel: string;
   }): Promise<TeamRuntimeLaunchArgsPlan>;
+  updateDirectTmuxRestartMemberConfig?(input: DirectTmuxRestartMemberConfigInput): Promise<void>;
   buildTrackedMemberMcpLaunchConfig(input: {
     cwd: string;
     mcpPolicy: TeamCreateRequest['members'][number]['mcpPolicy'];
@@ -531,6 +532,7 @@ export interface TeamProvisioningMemberLifecycleRuntimeLaunchPorts {
 export interface TeamProvisioningMemberLifecycleMessagingPorts {
   persistInboxMessage(teamName: string, memberName: string, message: Record<string, unknown>): void;
   persistSentMessage(teamName: string, message: Record<string, unknown>): void;
+  enqueueDirectRestartPrompt?(input: DirectRestartPromptInput): void;
 }
 
 export interface TeamProvisioningMemberLifecycleOpenCodeRuntimePorts {

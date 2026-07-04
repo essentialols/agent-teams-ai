@@ -37,6 +37,7 @@ interface ReceiverBoundService extends TeamProvisioningMemberLifecycleHostFactor
   ServiceMixedSecondaryLane
 > {
   events: string[];
+  marker: string;
   expectedLane: ServiceMixedSecondaryLane;
 }
 
@@ -60,6 +61,7 @@ function createService(): ReceiverBoundService {
 
   return {
     events: [],
+    marker: 'provider-runtime',
     expectedLane,
     runs: new Map([['team-a', serviceRun as unknown as HostRun]]) as Host['runs'],
     runtimeAdapterRunByTeam: new Map(),
@@ -86,28 +88,23 @@ function createService(): ReceiverBoundService {
         return null;
       },
     },
-    configFacade: {
-      async readConfigForStrictDecision() {
-        return null;
-      },
-      readPersistedRuntimeMembers() {
-        return [];
-      },
-      readPersistedTeamProjectPath() {
-        return '/project';
-      },
+    async readConfigForStrictDecision() {
+      return null;
     },
-    providerRuntime: {
-      async buildProvisioningEnv(
-        this: { marker: string },
-        providerId: Parameters<Host['buildProvisioningEnv']>[0]
-      ) {
-        return {
-          env: { RECEIVER: this.marker, PROVIDER: providerId },
-        } as Awaited<ReturnType<Host['buildProvisioningEnv']>>;
-      },
-      marker: 'provider-runtime',
-    } as ReceiverBoundService['providerRuntime'] & { marker: string },
+    readPersistedRuntimeMembers() {
+      return [];
+    },
+    readPersistedTeamProjectPath() {
+      return '/project';
+    },
+    async buildProvisioningEnv(
+      this: { marker: string },
+      providerId: Parameters<Host['buildProvisioningEnv']>[0]
+    ) {
+      return {
+        env: { RECEIVER: this.marker, PROVIDER: providerId },
+      } as Awaited<ReturnType<Host['buildProvisioningEnv']>>;
+    },
     runTracking: {
       getAliveRunId(this: { marker: string }, teamName: string) {
         return `${this.marker}:${teamName}:alive`;

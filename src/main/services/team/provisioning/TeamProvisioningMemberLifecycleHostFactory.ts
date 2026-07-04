@@ -43,10 +43,9 @@ export interface TeamProvisioningMemberLifecycleHostFactoryStorePorts {
   mcpConfigBuilder: TeamProvisioningMemberLifecycleHost['mcpConfigBuilder'];
   membersMetaStore: TeamProvisioningMemberLifecycleHost['membersMetaStore'];
   teamMetaStore: TeamProvisioningMemberLifecycleHost['teamMetaStore'];
-  configFacade: Pick<
-    TeamProvisioningMemberLifecycleHost,
-    'readConfigForStrictDecision' | 'readPersistedRuntimeMembers' | 'readPersistedTeamProjectPath'
-  >;
+  readConfigForStrictDecision: TeamProvisioningMemberLifecycleHost['readConfigForStrictDecision'];
+  readPersistedRuntimeMembers: TeamProvisioningMemberLifecycleHost['readPersistedRuntimeMembers'];
+  readPersistedTeamProjectPath: TeamProvisioningMemberLifecycleHost['readPersistedTeamProjectPath'];
 }
 
 export interface TeamProvisioningMemberLifecycleHostFactoryMemberSpecPorts {
@@ -56,9 +55,7 @@ export interface TeamProvisioningMemberLifecycleHostFactoryMemberSpecPorts {
 export interface TeamProvisioningMemberLifecycleHostFactoryRuntimeLaunchPorts<
   TRun extends TeamProvisioningMemberLifecycleHostFactoryRun,
 > {
-  providerRuntime: {
-    buildProvisioningEnv: TeamProvisioningMemberLifecycleHost['buildProvisioningEnv'];
-  };
+  buildProvisioningEnv: TeamProvisioningMemberLifecycleHost['buildProvisioningEnv'];
   resolveDirectMemberLaunchIdentity(
     input: WithServiceRun<
       Parameters<TeamProvisioningMemberLifecycleHost['resolveDirectMemberLaunchIdentity']>[0],
@@ -66,6 +63,9 @@ export interface TeamProvisioningMemberLifecycleHostFactoryRuntimeLaunchPorts<
     >
   ): ReturnType<TeamProvisioningMemberLifecycleHost['resolveDirectMemberLaunchIdentity']>;
   buildTeamRuntimeLaunchArgsPlan: TeamProvisioningMemberLifecycleHost['buildTeamRuntimeLaunchArgsPlan'];
+  updateDirectTmuxRestartMemberConfig?: NonNullable<
+    TeamProvisioningMemberLifecycleHost['updateDirectTmuxRestartMemberConfig']
+  >;
   memberMcpLaunchConfigProvisioner: {
     buildTrackedMemberMcpLaunchConfig(
       input: WithServiceRun<
@@ -142,6 +142,9 @@ export interface TeamProvisioningMemberLifecycleHostFactoryRunStatePorts<
 export interface TeamProvisioningMemberLifecycleHostFactoryMessagingPorts {
   persistInboxMessage: TeamProvisioningMemberLifecycleHost['persistInboxMessage'];
   persistSentMessage: TeamProvisioningMemberLifecycleHost['persistSentMessage'];
+  enqueueDirectRestartPrompt?: NonNullable<
+    TeamProvisioningMemberLifecycleHost['enqueueDirectRestartPrompt']
+  >;
 }
 
 export interface TeamProvisioningMemberLifecycleHostFactoryOpenCodeRuntimePorts {
@@ -239,6 +242,7 @@ export const TEAM_PROVISIONING_MEMBER_LIFECYCLE_HOST_FACTORY_PORT_KEYS = {
     'buildProvisioningEnv',
     'resolveDirectMemberLaunchIdentity',
     'buildTeamRuntimeLaunchArgsPlan',
+    'updateDirectTmuxRestartMemberConfig',
     'buildTrackedMemberMcpLaunchConfig',
     'removeTrackedMemberMcpLaunchConfig',
     'sendMessageToRun',
@@ -259,7 +263,7 @@ export const TEAM_PROVISIONING_MEMBER_LIFECYCLE_HOST_FACTORY_PORT_KEYS = {
     'isCurrentTrackedRun',
     'getLiveTeamAgentRuntimeMetadata',
   ],
-  messaging: ['persistInboxMessage', 'persistSentMessage'],
+  messaging: ['persistInboxMessage', 'persistSentMessage', 'enqueueDirectRestartPrompt'],
   openCodeRuntime: [
     'getOpenCodeRuntimeAdapter',
     'resolveOpenCodeMemberWorkspacesForRuntime',
@@ -381,7 +385,7 @@ export function createTeamProvisioningMemberLifecycleHostFromPortGroups<
         request: asServiceProvisioningRun<TRun>(input.run).request,
       }),
     buildProvisioningEnv: (providerId, providerBackendId, options) =>
-      runtimeLaunch.providerRuntime.buildProvisioningEnv(providerId, providerBackendId, options),
+      runtimeLaunch.buildProvisioningEnv(providerId, providerBackendId, options),
     materializeEffectiveTeamMemberSpecs: (input) =>
       memberSpec.materializeEffectiveTeamMemberSpecs(input),
     resolveDirectMemberLaunchIdentity: (input) =>
@@ -390,9 +394,31 @@ export function createTeamProvisioningMemberLifecycleHostFromPortGroups<
         run: asServiceProvisioningRun<TRun>(input.run),
       }),
     buildTeamRuntimeLaunchArgsPlan: (input) => runtimeLaunch.buildTeamRuntimeLaunchArgsPlan(input),
+    get updateDirectTmuxRestartMemberConfig() {
+      const seam = runtimeLaunch.updateDirectTmuxRestartMemberConfig;
+      return seam
+        ? (
+            input: Parameters<
+              NonNullable<
+                TeamProvisioningMemberLifecycleHost['updateDirectTmuxRestartMemberConfig']
+              >
+            >[0]
+          ) => seam(input)
+        : undefined;
+    },
     persistInboxMessage: (teamName, memberName, message) =>
       messaging.persistInboxMessage(teamName, memberName, message),
     persistSentMessage: (teamName, message) => messaging.persistSentMessage(teamName, message),
+    get enqueueDirectRestartPrompt() {
+      const seam = messaging.enqueueDirectRestartPrompt;
+      return seam
+        ? (
+            input: Parameters<
+              NonNullable<TeamProvisioningMemberLifecycleHost['enqueueDirectRestartPrompt']>
+            >[0]
+          ) => seam(input)
+        : undefined;
+    },
     appendMemberBootstrapDiagnostic: (run, memberName, text) =>
       runState.appendMemberBootstrapDiagnostic(
         asServiceProvisioningRun<TRun>(run),
@@ -422,16 +448,14 @@ export function createTeamProvisioningMemberLifecycleHostFromPortGroups<
     getTrackedRunId: (teamName) => runState.runTracking.getTrackedRunId(teamName),
     getProvisioningRunId: (teamName) => runState.runTracking.getProvisioningRunId(teamName),
     isCurrentTrackedRun: (run) => runState.isCurrentTrackedRun(asServiceProvisioningRun<TRun>(run)),
-    readConfigForStrictDecision: (teamName) =>
-      stores.configFacade.readConfigForStrictDecision(teamName),
+    readConfigForStrictDecision: (teamName) => stores.readConfigForStrictDecision(teamName),
     resolveEffectiveConfiguredMember: (configMembers, metaMembers, memberName) =>
       resolveEffectiveConfiguredMember(configMembers, metaMembers, memberName),
     resolveLeadMemberName: (configMembers, metaMembers) =>
       resolveLeadMemberName(configMembers, metaMembers),
     getLiveTeamAgentRuntimeMetadata: (teamName) =>
       runState.getLiveTeamAgentRuntimeMetadata(teamName),
-    readPersistedRuntimeMembers: (teamName) =>
-      stores.configFacade.readPersistedRuntimeMembers(teamName),
+    readPersistedRuntimeMembers: (teamName) => stores.readPersistedRuntimeMembers(teamName),
     persistLaunchStateSnapshot: (run, phase) =>
       launchState.persistLaunchStateSnapshot(asServiceProvisioningRun<TRun>(run), phase),
     buildTrackedMemberMcpLaunchConfig: (input) =>
@@ -474,7 +498,6 @@ export function createTeamProvisioningMemberLifecycleHostFromPortGroups<
       mixedSecondaryRuntime.getMixedSecondaryLaunchPhase(asServiceProvisioningRun<TRun>(run)),
     writeLaunchStateSnapshot: (teamName, snapshot) =>
       launchState.writeLaunchStateSnapshot(teamName, snapshot),
-    readPersistedTeamProjectPath: (teamName) =>
-      stores.configFacade.readPersistedTeamProjectPath(teamName),
+    readPersistedTeamProjectPath: (teamName) => stores.readPersistedTeamProjectPath(teamName),
   };
 }

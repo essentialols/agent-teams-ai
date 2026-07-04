@@ -2,11 +2,12 @@
 
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
+
+import { formatGitHubReleaseDownloadError } from './lib/github-release-download-error.mjs';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, '..');
@@ -114,7 +115,7 @@ function cleanRuntimeDir() {
   }
 }
 
-async function downloadFile(url, destinationPath) {
+async function downloadFile(url, destinationPath, context = {}) {
   fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
   const response = await fetch(url, {
     headers: {
@@ -125,7 +126,17 @@ async function downloadFile(url, destinationPath) {
   });
 
   if (!response.ok || !response.body) {
-    throw new Error(`Failed to download runtime asset: ${response.status} ${response.statusText}`);
+    throw new Error(
+      formatGitHubReleaseDownloadError({
+        kind: 'runtime asset',
+        response,
+        url,
+        lockPath: runtimeLockPath,
+        notFoundHint:
+          '404 usually means the runtime release or asset is missing, private, or still a draft. runtime.lock.json must point at a published public runtime release.',
+        ...context,
+      })
+    );
   }
 
   await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(destinationPath));
@@ -240,7 +251,11 @@ async function stageRuntime(options) {
       `Downloading ${asset.file} from ${runtimeLock.releaseRepository}@${releaseTag}\n`
     );
     if (!downloadReleaseAssetWithGh(runtimeLock, releaseTag, asset, archivePath)) {
-      await downloadFile(url, archivePath);
+      await downloadFile(url, archivePath, {
+        repository: runtimeLock.releaseRepository,
+        releaseTag,
+        assetName: asset.file,
+      });
     }
 
     process.stdout.write(`Extracting ${asset.file}\n`);

@@ -8,6 +8,8 @@ import { pipeline } from 'node:stream/promises';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 
+import { formatGitHubReleaseDownloadError } from './lib/github-release-download-error.mjs';
+
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, '..');
 const lockPath = path.join(repoRoot, 'terminal-platform.lock.json');
@@ -165,7 +167,7 @@ async function acquireStageLock(lockFilePath) {
   }
 }
 
-async function downloadFile(url, destinationPath) {
+async function downloadFile(url, destinationPath, context = {}) {
   fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
   const response = await fetch(url, {
     headers: {
@@ -177,7 +179,13 @@ async function downloadFile(url, destinationPath) {
 
   if (!response.ok || !response.body) {
     throw new Error(
-      `Failed to download terminal-platform runtime asset: ${response.status} ${response.statusText}`
+      formatGitHubReleaseDownloadError({
+        kind: 'terminal-platform runtime asset',
+        response,
+        url,
+        lockPath,
+        ...context,
+      })
     );
   }
 
@@ -362,7 +370,11 @@ async function stageRuntime(options) {
           `Downloading ${asset.file} from ${lock.releaseRepository}@${releaseTag}\n`
         );
         if (!downloadReleaseAssetWithGh(lock, releaseTag, asset, archivePath)) {
-          await downloadFile(url, archivePath);
+          await downloadFile(url, archivePath, {
+            repository: lock.releaseRepository,
+            releaseTag,
+            assetName: asset.file,
+          });
         }
       }
 
@@ -410,7 +422,11 @@ async function resolveReleaseManifestAsset(lock, releaseTag, platformKey, asset,
     `Downloading ${manifestFile} from ${lock.releaseRepository}@${releaseTag}\n`
   );
   if (!downloadReleaseFileWithGh(lock, releaseTag, manifestFile, manifestPath)) {
-    await downloadFile(manifestUrl, manifestPath);
+    await downloadFile(manifestUrl, manifestPath, {
+      repository: lock.releaseRepository,
+      releaseTag,
+      assetName: manifestFile,
+    });
   }
 
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));

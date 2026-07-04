@@ -9,6 +9,7 @@ import { once } from 'node:events';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 
+import { formatGitHubReleaseDownloadError } from './lib/github-release-download-error.mjs';
 import { ensureMinimumNodeOldSpaceEnv } from './lib/node-options.mjs';
 import { spawnSyncWithWindowsShell } from './lib/windows-shell-spawn.mjs';
 
@@ -198,12 +199,18 @@ function getPlatformAssetKey() {
   }
 }
 
-function getReleaseAssetUrl(runtimeLock, asset) {
+function getReleaseAssetDownload(runtimeLock, asset) {
   const releaseTag =
     typeof runtimeLock.releaseTag === 'string' && runtimeLock.releaseTag.trim().length > 0
       ? runtimeLock.releaseTag.trim()
       : runtimeLock.sourceRef;
-  return `https://github.com/${runtimeLock.releaseRepository}/releases/download/${releaseTag}/${encodeURIComponent(asset.file)}`;
+  const url = `https://github.com/${runtimeLock.releaseRepository}/releases/download/${releaseTag}/${encodeURIComponent(asset.file)}`;
+  return {
+    url,
+    repository: runtimeLock.releaseRepository,
+    releaseTag,
+    assetName: asset.file,
+  };
 }
 
 function ensureDir(dirPath) {
@@ -403,8 +410,8 @@ function isCachedBinaryValid(binaryPath, expectedVersion) {
   }
 }
 
-async function downloadWithProgress(url, destinationPath) {
-  const response = await fetch(url, {
+async function downloadWithProgress(download, destinationPath) {
+  const response = await fetch(download.url, {
     headers: {
       'user-agent': 'claude-team-dev-runtime-bootstrap',
     },
@@ -412,7 +419,16 @@ async function downloadWithProgress(url, destinationPath) {
   });
 
   if (!response.ok || !response.body) {
-    throw new Error(`Failed to download runtime asset: ${response.status} ${response.statusText}`);
+    throw new Error(
+      formatGitHubReleaseDownloadError({
+        kind: 'runtime asset',
+        response,
+        lockPath: runtimeLockPath,
+        notFoundHint:
+          '404 usually means the runtime release or asset is missing, private, or still a draft. pnpm dev needs runtime.lock.json to point at a published public runtime release, for example runtime-v0.0.58.',
+        ...download,
+      })
+    );
   }
 
   const totalBytes = Number.parseInt(response.headers.get('content-length') ?? '', 10);
@@ -596,7 +612,7 @@ async function ensureBootstrappedRuntime() {
 
     try {
       const archivePath = path.join(workDir, asset.file);
-      await downloadWithProgress(getReleaseAssetUrl(runtimeLock, asset), archivePath);
+      await downloadWithProgress(getReleaseAssetDownload(runtimeLock, asset), archivePath);
 
       const extractDir = path.join(workDir, 'extracted');
       extractArchive(archivePath, extractDir, asset.archiveKind);

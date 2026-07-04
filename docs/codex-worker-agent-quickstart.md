@@ -125,9 +125,24 @@ Create one stored job per logical goal and per writer worktree:
   "serviceTier": "fast",
   "executionEngine": "app-server-goal",
   "taskTimeoutMs": 259200000,
-  "maxAccountCycles": 5
+  "maxAccountCycles": 5,
+  "accessBoundary": "isolated_workspace_write",
+  "projectAccessScope": {
+    "projectId": "my-project",
+    "workspaceRoots": ["/path/to/project-worktree"],
+    "jobIdPrefixes": ["my-task"],
+    "tmuxSessionPrefixes": ["my-task"],
+    "allowedBranches": ["main"],
+    "allowedGitRemotes": ["origin"]
+  },
+  "networkAccess": "restricted"
 }
 ```
+
+`accessBoundary` is the runtime contract. `providerSandboxMode` is only the
+low-level Codex sandbox selector. Do not use provider `danger-full-access`
+unless the job uses `accessBoundary: "danger_full_access"` with an explicit
+emergency acknowledgement.
 
 Then call:
 

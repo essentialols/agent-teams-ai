@@ -6,24 +6,98 @@ import { delimiter, join } from "node:path";
 import { execPath } from "node:process";
 import { promisify } from "node:util";
 import type {
+  ObservabilityPort,
+  RuntimeEvent,
+  RuntimeMetric,
   RunnerPort,
   WorkspacePort,
 } from "@vioxen/subscription-runtime/core";
 import {
+  AccessBoundary,
   BoundedSubscriptionWorkerPool,
   InMemoryActiveAttemptRegistry,
   InMemoryWorkerAccountCapacityStore,
   InterruptAndContinueWorkerUseCase,
+  LaunchPlanStatus,
   WorkerControlService,
   accountCapacityAwareWorkerFactory,
+  buildLaunchPlan,
 } from "@vioxen/subscription-runtime/worker-core";
 import { LocalFileWorkerControlInboxStore } from "@vioxen/subscription-runtime/store-local-file";
 import { describe, expect, it } from "vitest";
-import { FileBackendCodexSafeExecutor, FileBackendCodexWorker } from "../index";
+import {
+  CommandPolicyRunner,
+  FileBackendCodexSafeExecutor,
+  FileBackendCodexWorker,
+} from "../index";
 import { NodeProcessRunner } from "../node-process-runner";
 
 const validAuthJson = codexAuthJson("refresh-token");
 const execFileAsync = promisify(execFile);
+
+describe("CommandPolicyRunner", () => {
+  it("blocks denied commands before the inner runner is invoked", async () => {
+    const inner = new StaticRunner({ exitCode: 0, stdout: "", stderr: "" });
+    const runner = new CommandPolicyRunner(inner, isolatedWorkspaceCommandPolicy());
+
+    await expect(runner.run({
+      command: "git",
+      args: ["push", "origin", "main"],
+      cwd: "/tmp/project",
+      env: {},
+      timeoutMs: 1_000,
+      abortSignal: new AbortController().signal,
+    })).rejects.toThrow("command_policy_denied:denied_git_subcommand");
+    expect(inner.lastArgs).toEqual([]);
+  });
+
+  it("delegates allowed commands to the inner runner", async () => {
+    const inner = new StaticRunner({ exitCode: 0, stdout: "clean", stderr: "" });
+    const runner = new CommandPolicyRunner(inner, isolatedWorkspaceCommandPolicy());
+
+    await expect(runner.run({
+      command: "git",
+      args: ["status", "--short"],
+      cwd: "/tmp/project",
+      env: {},
+      timeoutMs: 1_000,
+      abortSignal: new AbortController().signal,
+    })).resolves.toMatchObject({ exitCode: 0, stdout: "clean" });
+    expect(inner.lastArgs).toEqual(["status", "--short"]);
+  });
+
+  it("emits a redacted audit event when a command is denied", async () => {
+    const inner = new StaticRunner({ exitCode: 0, stdout: "", stderr: "" });
+    const observability = new MemoryWorkerObservability();
+    const runner = new CommandPolicyRunner(inner, isolatedWorkspaceCommandPolicy(), {
+      observability,
+      providerId: "codex",
+      metadata: { workerId: "worker-a" },
+    });
+
+    await expect(runner.run({
+      command: "git",
+      args: ["push", "https://secret-token@example.com/repo.git", "main"],
+      cwd: "/tmp/project",
+      env: {},
+      timeoutMs: 1_000,
+      abortSignal: new AbortController().signal,
+    })).rejects.toThrow("command_policy_denied:denied_git_subcommand");
+
+    expect(observability.events).toHaveLength(1);
+    expect(observability.events[0]).toMatchObject({
+      name: "command_policy.denied",
+      providerId: "codex",
+      metadata: {
+        reason: "denied_git_subcommand",
+        executableName: "git",
+        runnerId: "node-process",
+        workerId: "worker-a",
+      },
+    });
+    expect(JSON.stringify(observability.events)).not.toContain("secret-token");
+  });
+});
 
 describe("FileBackendCodexWorker", () => {
   it("exposes lifecycle, seed, prewarm, health, and dispose", async () => {
@@ -2243,6 +2317,52 @@ class FakeReadable extends EventEmitter {
   setEncoding(): this {
     return this;
   }
+}
+
+class MemoryWorkerObservability implements ObservabilityPort {
+  readonly events: RuntimeEvent[] = [];
+  readonly metrics: Array<{ readonly metric: RuntimeMetric; readonly value?: number }> = [];
+  readonly timings: Array<{ readonly metric: RuntimeMetric; readonly durationMs: number }> = [];
+
+  emit(event: RuntimeEvent): void {
+    this.events.push(event);
+  }
+
+  count(metric: RuntimeMetric, value?: number): void {
+    this.metrics.push({ metric, ...(value === undefined ? {} : { value }) });
+  }
+
+  timing(metric: RuntimeMetric, durationMs: number): void {
+    this.timings.push({ metric, durationMs });
+  }
+}
+
+function isolatedWorkspaceCommandPolicy() {
+  const plan = buildLaunchPlan({
+    boundary: AccessBoundary.IsolatedWorkspaceWrite,
+    scope: {
+      projectId: "project",
+      readRoots: ["/tmp/project"],
+      isolatedWorkspaceRoot: "/tmp/project",
+      workspaceRoots: ["/tmp/project"],
+      worktreeRoots: ["/tmp/project-worktrees"],
+      registryRoot: "/tmp/worker-jobs",
+      allowedBranches: ["main"],
+      jobIdPrefixes: ["project-"],
+    },
+    adapter: {
+      canEnforceFilesystemPolicy: true,
+      canIsolateHome: true,
+      canIsolateTemp: true,
+      canDisableRawShell: true,
+      canBrokerProjectControl: true,
+      canRestrictNetwork: true,
+    },
+  });
+  if (plan.status !== LaunchPlanStatus.Ready) {
+    throw new Error("test_command_policy_launch_plan_blocked");
+  }
+  return plan.commandPolicy;
 }
 
 class StaticRunner implements RunnerPort {

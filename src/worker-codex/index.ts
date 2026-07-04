@@ -1,4 +1,5 @@
 export * from "./account-diagnostics-adapter";
+export * from "./command-policy-runner";
 export * from "./codex-goal-runner";
 export * from "./codex-goal-jobs";
 export * from "./codex-goal-ops";

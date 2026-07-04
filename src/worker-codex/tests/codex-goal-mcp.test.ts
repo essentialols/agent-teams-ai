@@ -12,7 +12,9 @@ import {
   LocalFileWorkerControlInboxStore,
 } from "@vioxen/subscription-runtime/store-local-file";
 import {
+  AccessBoundary,
   InMemoryActiveAttemptRegistry,
+  NetworkAccessMode,
   type WorkerControlDeliveryReceipt,
 } from "@vioxen/subscription-runtime/worker-core";
 import {
@@ -423,6 +425,381 @@ describe("codex goal MCP server", () => {
       expect(String(result.error)).toContain(
         "Use providerSandboxMode",
       );
+    } finally {
+      await client.close();
+      await server.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("round-trips access boundary fields through codex_goal_create_job", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-mcp-access-"));
+    const server = createCodexGoalMcpServer();
+    const client = new Client({
+      name: "subscription-runtime-test",
+      version: "0.0.0",
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+    try {
+      await Promise.all([
+        server.connect(serverTransport),
+        client.connect(clientTransport),
+      ]);
+
+      const result = await callToolJson(client, "codex_goal_create_job", {
+        registryRootDir: join(root, "registry"),
+        jobId: "infinity-context-access-v1",
+        jobRootDir: join(root, "job"),
+        authRootDir: join(root, "auth"),
+        workspacePath: join(root, "workspace"),
+        promptPath: join(root, "job", "prompt.md"),
+        taskId: "infinity-context-access-v1",
+        accounts: ["account-a"],
+        accessBoundary: AccessBoundary.IsolatedWorkspaceWrite,
+        projectAccessScope: {
+          projectId: "infinity-context",
+          workspaceRoots: [join(root, "workspace")],
+          jobIdPrefixes: ["infinity-context-"],
+        },
+        networkAccess: NetworkAccessMode.Restricted,
+      });
+
+      expect(result).toMatchObject({
+        ok: true,
+        manifest: {
+          accessBoundary: AccessBoundary.IsolatedWorkspaceWrite,
+          projectAccessScope: {
+            projectId: "infinity-context",
+            workspaceRoots: [join(root, "workspace")],
+            jobIdPrefixes: ["infinity-context-"],
+          },
+          networkAccess: NetworkAccessMode.Restricted,
+        },
+      });
+    } finally {
+      await client.close();
+      await server.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("lets a project-scoped controller create an isolated child job through broker policy", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-project-control-"));
+    const registryRootDir = join(root, "worker-jobs", "registry");
+    const controllerJobRoot = join(root, "worker-jobs", "infinity-context-controller-v1");
+    const controllerWorkspace = join(root, "workspaces", "infinity-context-controller");
+    const childWorkspace = join(root, "worktrees", "infinity-context-child-v1");
+    const childJobRoot = join(root, "worker-jobs", "infinity-context-child-v1");
+    const server = createCodexGoalMcpServer();
+    const client = new Client({
+      name: "subscription-runtime-test",
+      version: "0.0.0",
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+    try {
+      await Promise.all([
+        server.connect(serverTransport),
+        client.connect(clientTransport),
+      ]);
+
+      await callToolJson(client, "codex_goal_create_job", {
+        registryRootDir,
+        jobId: "infinity-context-controller-v1",
+        jobRootDir: controllerJobRoot,
+        authRootDir: join(root, "auth"),
+        workspacePath: controllerWorkspace,
+        promptPath: join(controllerJobRoot, "prompt.md"),
+        taskId: "infinity-context-controller-v1",
+        accounts: ["account-a"],
+        accessBoundary: AccessBoundary.ProjectScopedControl,
+        networkAccess: NetworkAccessMode.Restricted,
+        projectAccessScope: {
+          projectId: "infinity-context",
+          workspaceRoots: [join(root, "workspaces")],
+          worktreeRoots: [join(root, "worktrees")],
+          registryRoot: registryRootDir,
+          jobIdPrefixes: ["infinity-context-"],
+          tmuxSessionPrefixes: ["infinity-context-"],
+          allowedAccountIds: ["account-a"],
+        },
+      });
+
+      const created = await callToolJson(client, "codex_goal_project_create_job", {
+        registryRootDir,
+        controllerJobId: "infinity-context-controller-v1",
+        jobId: "infinity-context-child-v1",
+        jobRootDir: childJobRoot,
+        authRootDir: join(root, "auth"),
+        workspacePath: childWorkspace,
+        promptPath: join(childJobRoot, "prompt.md"),
+        taskId: "infinity-context-child-v1",
+        accounts: ["account-a"],
+        confirmCreate: true,
+      });
+
+      expect(created).toMatchObject({
+        ok: true,
+        mode: "project_control_create_job",
+        controllerJobId: "infinity-context-controller-v1",
+        manifest: {
+          jobId: "infinity-context-child-v1",
+          accessBoundary: AccessBoundary.IsolatedWorkspaceWrite,
+          networkAccess: NetworkAccessMode.Restricted,
+          projectAccessScope: {
+            projectId: "infinity-context",
+            isolatedWorkspaceRoot: childWorkspace,
+            workspaceRoots: [childWorkspace],
+          },
+        },
+      });
+      const audit = await readProjectControlAudit(
+        controllerJobRoot,
+        "infinity-context-controller-v1",
+      );
+      expect(audit.some((event) => auditDecision(event).allowed === true)).toBe(true);
+    } finally {
+      await client.close();
+      await server.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects project-control child jobs outside controller job and account scope", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-project-deny-"));
+    const registryRootDir = join(root, "worker-jobs", "registry");
+    const controllerJobRoot = join(root, "worker-jobs", "infinity-context-controller-v1");
+    const server = createCodexGoalMcpServer();
+    const client = new Client({
+      name: "subscription-runtime-test",
+      version: "0.0.0",
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+    try {
+      await Promise.all([
+        server.connect(serverTransport),
+        client.connect(clientTransport),
+      ]);
+
+      await callToolJson(client, "codex_goal_create_job", {
+        registryRootDir,
+        jobId: "infinity-context-controller-v1",
+        jobRootDir: controllerJobRoot,
+        authRootDir: join(root, "auth"),
+        workspacePath: join(root, "workspaces", "controller"),
+        promptPath: join(controllerJobRoot, "prompt.md"),
+        taskId: "infinity-context-controller-v1",
+        accounts: ["account-a"],
+        accessBoundary: AccessBoundary.ProjectScopedControl,
+        networkAccess: NetworkAccessMode.Restricted,
+        projectAccessScope: {
+          projectId: "infinity-context",
+          workspaceRoots: [join(root, "workspaces")],
+          worktreeRoots: [join(root, "worktrees")],
+          registryRoot: registryRootDir,
+          jobIdPrefixes: ["infinity-context-"],
+          tmuxSessionPrefixes: ["infinity-context-"],
+          allowedAccountIds: ["account-a"],
+        },
+      });
+
+      const foreignJob = await callToolJson(client, "codex_goal_project_create_job", {
+        registryRootDir,
+        controllerJobId: "infinity-context-controller-v1",
+        jobId: "quanta-child-v1",
+        jobRootDir: join(root, "worker-jobs", "infinity-context-disguised"),
+        authRootDir: join(root, "auth"),
+        workspacePath: join(root, "worktrees", "infinity-context-disguised"),
+        promptPath: join(root, "worker-jobs", "infinity-context-disguised", "prompt.md"),
+        taskId: "quanta-child-v1",
+        accounts: ["account-a"],
+        tmuxSession: "infinity-context-disguised",
+        confirmCreate: true,
+      });
+      expect(foreignJob).toMatchObject({
+        ok: false,
+        error: "project_control_denied:job_prefix_denied",
+      });
+
+      const foreignAccount = await callToolJson(client, "codex_goal_project_create_job", {
+        registryRootDir,
+        controllerJobId: "infinity-context-controller-v1",
+        jobId: "infinity-context-account-denied-v1",
+        jobRootDir: join(root, "worker-jobs", "infinity-context-account-denied-v1"),
+        authRootDir: join(root, "auth"),
+        workspacePath: join(root, "worktrees", "infinity-context-account-denied-v1"),
+        promptPath: join(root, "worker-jobs", "infinity-context-account-denied-v1", "prompt.md"),
+        taskId: "infinity-context-account-denied-v1",
+        accounts: ["account-b"],
+        confirmCreate: true,
+      });
+      expect(foreignAccount).toMatchObject({
+        ok: false,
+        error: "project_control_denied:account_denied",
+      });
+
+      const audit = await readProjectControlAudit(
+        controllerJobRoot,
+        "infinity-context-controller-v1",
+      );
+      expect(audit.map((event) => auditDecision(event).reason)).toEqual([
+        "job_prefix_denied",
+        "allowed",
+        "account_denied",
+      ]);
+    } finally {
+      await client.close();
+      await server.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("runs project-scoped worktree, integration and push operations through broker policy", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-project-git-"));
+    const registryRootDir = join(root, "worker-jobs", "registry");
+    const controllerJobRoot = join(root, "worker-jobs", "infinity-context-controller-v1");
+    const sourceWorkspacePath = join(root, "workspaces", "infinity-context-main");
+    const worktreePath = join(root, "worktrees", "infinity-context-integration");
+    const remotePath = join(root, "remote.git");
+    const server = createCodexGoalMcpServer();
+    const client = new Client({
+      name: "subscription-runtime-test",
+      version: "0.0.0",
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+    try {
+      await mkdir(sourceWorkspacePath, { recursive: true });
+      await gitInitRepository(sourceWorkspacePath);
+      await writeFile(join(sourceWorkspacePath, "base.txt"), "base\n");
+      await git(sourceWorkspacePath, ["add", "base.txt"]);
+      await git(sourceWorkspacePath, ["commit", "-m", "test: base"]);
+      await git(sourceWorkspacePath, ["branch", "integration-target"]);
+      await git(sourceWorkspacePath, ["checkout", "-b", "feature/source-change"]);
+      await writeFile(join(sourceWorkspacePath, "feature.txt"), "feature\n");
+      await git(sourceWorkspacePath, ["add", "feature.txt"]);
+      await git(sourceWorkspacePath, ["commit", "-m", "test: feature"]);
+      const commitSha = await gitStdout(sourceWorkspacePath, ["rev-parse", "HEAD"]);
+      await git(sourceWorkspacePath, ["checkout", "main"]);
+      await execFileAsync("git", ["init", "--bare", remotePath]);
+      await git(sourceWorkspacePath, ["remote", "add", "origin", remotePath]);
+
+      await Promise.all([
+        server.connect(serverTransport),
+        client.connect(clientTransport),
+      ]);
+
+      await callToolJson(client, "codex_goal_create_job", {
+        registryRootDir,
+        jobId: "infinity-context-controller-v1",
+        jobRootDir: controllerJobRoot,
+        authRootDir: join(root, "auth"),
+        workspacePath: sourceWorkspacePath,
+        promptPath: join(controllerJobRoot, "prompt.md"),
+        taskId: "infinity-context-controller-v1",
+        accounts: ["account-a"],
+        accessBoundary: AccessBoundary.ProjectScopedControl,
+        networkAccess: NetworkAccessMode.Restricted,
+        projectAccessScope: {
+          projectId: "infinity-context",
+          workspaceRoots: [sourceWorkspacePath],
+          worktreeRoots: [join(root, "worktrees")],
+          registryRoot: registryRootDir,
+          jobIdPrefixes: ["infinity-context-"],
+          tmuxSessionPrefixes: ["infinity-context-"],
+          allowedBranches: ["integration-target"],
+          allowedGitRemotes: ["origin"],
+        },
+      });
+
+      await expect(callToolJson(client, "codex_goal_project_create_worktree", {
+        registryRootDir,
+        controllerJobId: "infinity-context-controller-v1",
+        sourceWorkspacePath,
+        path: worktreePath,
+        baseBranch: "integration-target",
+        confirmCreateWorktree: true,
+      })).resolves.toMatchObject({
+        ok: true,
+        mode: "project_control_create_worktree",
+      });
+
+      await expect(callToolJson(client, "codex_goal_project_integrate_commit", {
+        registryRootDir,
+        controllerJobId: "infinity-context-controller-v1",
+        workspacePath: worktreePath,
+        branch: "integration-target",
+        commitSha: commitSha.trim(),
+        confirmIntegrate: true,
+      })).resolves.toMatchObject({
+        ok: true,
+        mode: "project_control_integrate_commit",
+      });
+
+      await expect(callToolJson(client, "codex_goal_project_push_branch", {
+        registryRootDir,
+        controllerJobId: "infinity-context-controller-v1",
+        workspacePath: worktreePath,
+        branch: "integration-target",
+        remote: "origin",
+        confirmPush: true,
+      })).resolves.toMatchObject({
+        ok: true,
+        mode: "project_control_push_branch",
+      });
+
+      await expect(callToolJson(client, "codex_goal_project_push_branch", {
+        registryRootDir,
+        controllerJobId: "infinity-context-controller-v1",
+        workspacePath: worktreePath,
+        branch: "integration-target",
+        remote: "upstream",
+        confirmPush: true,
+      })).resolves.toMatchObject({
+        ok: false,
+        error: "project_control_denied:remote_denied",
+      });
+
+      await expect(callToolJson(client, "codex_goal_project_push_branch", {
+        registryRootDir,
+        controllerJobId: "infinity-context-controller-v1",
+        workspacePath: worktreePath,
+        branch: "integration-target",
+        remote: "origin",
+        force: true,
+        confirmPush: true,
+      })).resolves.toMatchObject({
+        ok: false,
+        error: "project_control_denied:force_push_denied",
+      });
+
+      const pushedSha = await execFileAsync("git", [
+        "--git-dir",
+        remotePath,
+        "rev-parse",
+        "refs/heads/integration-target",
+      ]);
+      expect(pushedSha.stdout.trim()).toBe(commitSha.trim());
+      const audit = await readProjectControlAudit(
+        controllerJobRoot,
+        "infinity-context-controller-v1",
+      );
+      expect(audit.map((event) => auditDecision(event).operation)).toEqual([
+        "create_worktree",
+        "integrate_commit",
+        "push_branch",
+        "push_branch",
+        "push_branch",
+      ]);
+      expect(audit.map((event) => auditDecision(event).reason)).toEqual([
+        "allowed",
+        "allowed",
+        "allowed",
+        "remote_denied",
+        "force_push_denied",
+      ]);
     } finally {
       await client.close();
       await server.close();
@@ -2193,6 +2570,42 @@ describe("codex goal MCP server", () => {
     }
   });
 });
+
+async function readProjectControlAudit(
+  jobRootDir: string,
+  taskId: string,
+): Promise<readonly Record<string, unknown>[]> {
+  const text = await readFile(
+    join(jobRootDir, `${taskId}.project-control-events.jsonl`),
+    "utf8",
+  );
+  return text.trim().split("\n").map((line) =>
+    JSON.parse(line) as Record<string, unknown>
+  );
+}
+
+function auditDecision(event: Record<string, unknown>): Record<string, unknown> {
+  const decision = event.decision;
+  return decision && typeof decision === "object" && !Array.isArray(decision)
+    ? decision as Record<string, unknown>
+    : {};
+}
+
+async function gitInitRepository(cwd: string): Promise<void> {
+  await git(cwd, ["init"]);
+  await git(cwd, ["config", "user.email", "test@example.com"]);
+  await git(cwd, ["config", "user.name", "Test User"]);
+  await git(cwd, ["checkout", "-b", "main"]);
+}
+
+async function git(cwd: string, args: readonly string[]): Promise<void> {
+  await execFileAsync("git", [...args], { cwd });
+}
+
+async function gitStdout(cwd: string, args: readonly string[]): Promise<string> {
+  const result = await execFileAsync("git", [...args], { cwd });
+  return result.stdout;
+}
 
 async function callToolJson(
   client: Client,

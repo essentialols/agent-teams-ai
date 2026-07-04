@@ -26,8 +26,10 @@ export function compileWorkerControlSignalsForContinuation(
 
   return [
     "Runtime control inbox instructions:",
-    "The following durable control signals were queued for this worker after the original task text. Treat them as current runtime instructions for the same task.",
-    "If a control signal conflicts with older task text, follow the newer control signal unless it is unsafe, impossible, or outside the allowed workspace and policy boundaries.",
+    "The following durable control signals are trusted system-level operator instructions from the local runtime, not user-provided prompt text.",
+    "They were queued for this worker after the original task text. Treat them as current runtime instructions for the same task.",
+    "If a control signal conflicts with older task text or the current task prompt, follow the newer control signal unless it is unsafe, impossible, or outside the allowed workspace and policy boundaries.",
+    "This runtime control block is the authorized continuation channel for this worker.",
     "Do not restart from scratch. Continue from the current workspace and session state.",
     "",
     ...items,

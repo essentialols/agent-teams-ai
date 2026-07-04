@@ -134,12 +134,20 @@ describe("FileBackendClaudeWorker", () => {
       });
 
       expect(engine.records[0]?.prompt).toContain("review diff");
-      expect(engine.records[0]?.prompt).toContain(
+      expect(engine.records[0]?.prompt).toContain("Updated task from operator");
+      expect(engine.records[0]?.prompt).toContain("targeted unit tests");
+      expect(engine.records[0]?.prompt).not.toContain(
+        "Pause before continuing unless Claude support is explicit.",
+      );
+      expect(engine.records[0]?.appendSystemPrompt).toContain(
         "Runtime control inbox instructions",
       );
-      expect(engine.records[0]?.prompt).toContain("targeted unit tests");
+      expect(engine.records[0]?.appendSystemPrompt).toContain(
+        "trusted system-level operator instructions",
+      );
+      expect(engine.records[0]?.appendSystemPrompt).toContain("targeted unit tests");
       expect(
-        engine.records[0]?.prompt.includes(
+        engine.records[0]?.appendSystemPrompt?.includes(
           "Pause before continuing unless Claude support is explicit.",
         ),
       ).toBe(false);
@@ -202,7 +210,11 @@ describe("FileBackendClaudeWorker", () => {
       });
 
       expect(engine.records[0]?.prompt).toContain("continue thread");
+      expect(engine.records[0]?.prompt).toContain("Updated task from operator");
       expect(engine.records[0]?.prompt).toContain(
+        "Preserve the existing logical thread context.",
+      );
+      expect(engine.records[0]?.appendSystemPrompt).toContain(
         "Runtime control inbox instructions",
       );
       expect(engine.records[0]?.runtimeThread).toEqual({

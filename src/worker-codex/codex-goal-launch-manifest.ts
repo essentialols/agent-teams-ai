@@ -77,6 +77,16 @@ export function codexGoalLaunchManifestInputFromLaunch(
     ...(launch.config.providerSandboxMode
       ? { providerSandboxMode: launch.config.providerSandboxMode }
       : {}),
+    ...(launch.config.accessBoundary
+      ? { accessBoundary: launch.config.accessBoundary }
+      : {}),
+    ...(launch.config.projectAccessScope
+      ? { projectAccessScope: launch.config.projectAccessScope }
+      : {}),
+    ...(launch.config.allowDangerFullAccess === undefined
+      ? {}
+      : { allowDangerFullAccess: launch.config.allowDangerFullAccess }),
+    ...(launch.config.networkAccess ? { networkAccess: launch.config.networkAccess } : {}),
     ...(launch.config.allowDuplicateAccountIdentities
       ? { allowDuplicateAccountIdentities: launch.config.allowDuplicateAccountIdentities }
       : {}),

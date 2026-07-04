@@ -1,8 +1,27 @@
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  readdir,
+  readFile,
+  realpath,
+  writeFile,
+} from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
+import {
+  AccessBoundary,
+  createAccessPolicyService,
+  type NetworkAccessMode,
+  type ProjectAccessScope,
+} from "@vioxen/subscription-runtime/worker-core";
 import type { CodexGoalRunConfig } from "./codex-goal-runner";
 import type { CodexGoalOutputFormat } from "./codex-goal-ops";
+import {
+  assertCodexGoalStoredAccessBoundaryAllowed,
+  optionalCodexGoalAccessBoundary,
+  optionalCodexGoalNetworkAccess,
+  parseCodexGoalProjectAccessScope,
+} from "./codex-goal-access-plan";
 import {
   assertCodexGoalProviderSandboxModeAllowed,
   optionalCodexGoalEditMode,
@@ -38,6 +57,10 @@ export type CodexGoalJobManifest = {
   readonly maxAccountCycles?: number;
   readonly editMode?: CodexGoalRunConfig["editMode"];
   readonly providerSandboxMode?: CodexGoalRunConfig["providerSandboxMode"];
+  readonly accessBoundary?: AccessBoundary;
+  readonly projectAccessScope?: ProjectAccessScope;
+  readonly allowDangerFullAccess?: boolean;
+  readonly networkAccess?: NetworkAccessMode.Disabled | NetworkAccessMode.Restricted;
   readonly allowDuplicateAccountIdentities?: boolean;
   readonly requireGitWorkspace?: boolean;
   readonly prewarmOnStart?: boolean;
@@ -159,6 +182,8 @@ export async function createCodexGoalJob(input: {
     createdAt: input.manifest.createdAt ?? now,
     updatedAt: input.manifest.updatedAt ?? now,
   });
+  assertCodexGoalStoredAccessBoundaryAllowed(manifest);
+  await assertCodexGoalJobManifestAccessConsistency(manifest, registryRootDir);
   const path = codexGoalJobManifestPath({
     registryRootDir,
     jobId: manifest.jobId,
@@ -195,6 +220,8 @@ export async function updateCodexGoalJob(input: {
     createdAt: existing.createdAt,
     updatedAt: (input.now ?? new Date()).toISOString(),
   });
+  assertCodexGoalStoredAccessBoundaryAllowed(manifest);
+  await assertCodexGoalJobManifestAccessConsistency(manifest, registryRootDir);
   await writeFile(
     codexGoalJobManifestPath({ registryRootDir, jobId: input.jobId }),
     `${JSON.stringify(manifest, null, 2)}\n`,
@@ -228,6 +255,10 @@ export function codexGoalJobToArgs(
     maxAccountCycles: manifest.maxAccountCycles,
     editMode: manifest.editMode,
     providerSandboxMode: manifest.providerSandboxMode,
+    accessBoundary: manifest.accessBoundary,
+    projectAccessScope: manifest.projectAccessScope,
+    allowDangerFullAccess: manifest.allowDangerFullAccess,
+    networkAccess: manifest.networkAccess,
     allowDuplicateAccountIdentities: manifest.allowDuplicateAccountIdentities,
     requireGitWorkspace: manifest.requireGitWorkspace,
     prewarmOnStart: manifest.prewarmOnStart,
@@ -282,6 +313,11 @@ export function parseCodexGoalJobManifest(
     optionalString(value.providerSandboxMode),
     "providerSandboxMode",
   );
+  const accessBoundary = optionalCodexGoalAccessBoundary(value.accessBoundary);
+  const projectAccessScope = parseCodexGoalProjectAccessScope(
+    value.projectAccessScope,
+  );
+  const networkAccess = optionalCodexGoalNetworkAccess(value.networkAccess);
   assertCodexGoalProviderSandboxModeAllowed({
     editMode,
     providerSandboxMode,
@@ -349,6 +385,10 @@ export function parseCodexGoalJobManifest(
     ...optionalPositiveIntegerProperty(value.maxAccountCycles, "maxAccountCycles"),
     ...(editMode === undefined ? {} : { editMode }),
     ...(providerSandboxMode === undefined ? {} : { providerSandboxMode }),
+    ...(accessBoundary === undefined ? {} : { accessBoundary }),
+    ...(projectAccessScope === undefined ? {} : { projectAccessScope }),
+    ...optionalBooleanProperty(value.allowDangerFullAccess, "allowDangerFullAccess"),
+    ...(networkAccess === undefined ? {} : { networkAccess }),
     ...optionalBooleanProperty(
       value.allowDuplicateAccountIdentities,
       "allowDuplicateAccountIdentities",
@@ -378,6 +418,128 @@ export function parseCodexGoalJobManifest(
         }),
   };
   return manifest;
+}
+
+async function assertCodexGoalJobManifestAccessConsistency(
+  manifest: CodexGoalJobManifest,
+  registryRootDir: string,
+): Promise<void> {
+  if (
+    manifest.accessBoundary === undefined ||
+    manifest.accessBoundary === AccessBoundary.DangerFullAccess ||
+    manifest.projectAccessScope === undefined
+  ) {
+    return;
+  }
+  const scope = await scopeWithExistingCanonicalRoots(manifest.projectAccessScope);
+  const policy = createAccessPolicyService({
+    boundary: manifest.accessBoundary,
+    scope,
+  });
+  const workspaceRealPath = await optionalRealPath(manifest.workspacePath);
+  const workspacePathRequest = {
+    path: manifest.workspacePath,
+    ...(workspaceRealPath === undefined ? {} : { realPath: workspaceRealPath }),
+  };
+  const workspaceDecision =
+    manifest.accessBoundary === AccessBoundary.ReadOnly
+      ? policy.canReadPath(workspacePathRequest)
+      : policy.canWritePath(workspacePathRequest);
+  if (!workspaceDecision.allowed) {
+    throw new Error(
+      `codex_goal_job_workspacePath_denied:${workspaceDecision.reason}`,
+    );
+  }
+  for (const accountId of manifest.accounts) {
+    const accountDecision = policy.canUseAccount({ accountId });
+    if (!accountDecision.allowed) {
+      throw new Error(`codex_goal_job_account_denied:${accountDecision.reason}`);
+    }
+  }
+  if (manifest.accessBoundary !== AccessBoundary.ProjectScopedControl) return;
+  const createDecision = policy.canCreateJob({
+    jobId: manifest.jobId,
+    registryRoot: registryRootDir,
+    workspacePath: manifest.workspacePath,
+    ...(manifest.tmuxSession ? { tmuxSession: manifest.tmuxSession } : {}),
+  });
+  if (!createDecision.allowed) {
+    throw new Error(`codex_goal_job_create_denied:${createDecision.reason}`);
+  }
+}
+
+async function optionalRealPath(path: string): Promise<string | undefined> {
+  try {
+    return await realpath(path);
+  } catch {
+    return undefined;
+  }
+}
+
+async function scopeWithExistingCanonicalRoots(
+  scope: ProjectAccessScope,
+): Promise<ProjectAccessScope> {
+  const isolatedWorkspaceRoot = scope.isolatedWorkspaceRoot
+    ? await existingCanonicalNonSymlinkRoot(scope.isolatedWorkspaceRoot)
+    : undefined;
+  const workspaceRootAliases = await existingCanonicalNonSymlinkRoots([
+    ...(scope.workspaceRoots ?? []),
+    ...(isolatedWorkspaceRoot ? [isolatedWorkspaceRoot] : []),
+  ]);
+  const worktreeRootAliases = await existingCanonicalNonSymlinkRoots(
+    scope.worktreeRoots ?? [],
+  );
+  const readRootAliases = await existingCanonicalNonSymlinkRoots([
+    ...(scope.readRoots ?? []),
+    ...workspaceRootAliases,
+    ...worktreeRootAliases,
+  ]);
+  return {
+    ...scope,
+    ...(readRootAliases.length === 0
+      ? {}
+      : { readRoots: uniqueManifestStrings([...(scope.readRoots ?? []), ...readRootAliases]) }),
+    ...(workspaceRootAliases.length === 0
+      ? {}
+      : {
+          workspaceRoots: uniqueManifestStrings([
+            ...(scope.workspaceRoots ?? []),
+            ...workspaceRootAliases,
+          ]),
+        }),
+    ...(worktreeRootAliases.length === 0
+      ? {}
+      : {
+          worktreeRoots: uniqueManifestStrings([
+            ...(scope.worktreeRoots ?? []),
+            ...worktreeRootAliases,
+          ]),
+        }),
+  };
+}
+
+async function existingCanonicalNonSymlinkRoots(
+  roots: readonly string[],
+): Promise<readonly string[]> {
+  const canonical = await Promise.all(roots.map(existingCanonicalNonSymlinkRoot));
+  return uniqueManifestStrings(canonical.filter((root): root is string => root !== undefined));
+}
+
+async function existingCanonicalNonSymlinkRoot(
+  root: string,
+): Promise<string | undefined> {
+  try {
+    const stats = await lstat(root);
+    if (stats.isSymbolicLink()) return undefined;
+    const canonical = await realpath(root);
+    return canonical === root ? undefined : canonical;
+  } catch {
+    return undefined;
+  }
+}
+
+function uniqueManifestStrings(values: readonly string[]): readonly string[] {
+  return [...new Set(values.filter((value) => value.trim().length > 0))];
 }
 
 function assertJobId(value: string): void {
@@ -424,6 +586,7 @@ function optionalBooleanProperty(
   value: unknown,
   key:
     | "allowDuplicateAccountIdentities"
+    | "allowDangerFullAccess"
     | "requireGitWorkspace"
     | "prewarmOnStart",
 ): Partial<Pick<CodexGoalJobManifest, typeof key>> {

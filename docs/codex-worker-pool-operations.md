@@ -106,7 +106,9 @@ Defaults:
 Edit mode is a subscription-runtime edit/effect policy, not the provider's
 low-level sandbox flag. Use `allow-edits` for workers that may create a
 workspace patch. Use `providerSandboxMode` only when the provider sandbox itself
-must be selected explicitly, such as Codex `danger-full-access`.
+must be selected explicitly. Codex `danger-full-access` must be requested
+through `accessBoundary: "danger_full_access"` with explicit acknowledgement,
+not by setting provider sandbox alone.
 
 Escape hatches remain available:
 

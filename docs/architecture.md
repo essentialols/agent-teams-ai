@@ -37,3 +37,7 @@ rotation.
 See `docs/host-app-integration-strategy.md` for the cross-repository adapter
 contract for `qa-rig`, `hib-pr-reviewer`, `quanta-pr-reviewer` and
 control-layer apps.
+
+See `docs/project-access-boundaries.md` for the provider-neutral worker access
+model used to separate read-only observers, isolated workspace writers,
+project-scoped coordinators and explicit full-access escape hatches.

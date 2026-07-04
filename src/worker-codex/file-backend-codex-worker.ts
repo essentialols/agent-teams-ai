@@ -53,6 +53,7 @@ import {
   type SubscriptionWorkerRunOptions,
   type SubscriptionWorkerState,
   type WorkerCapacitySnapshot,
+  type CommandPolicy,
 } from "@vioxen/subscription-runtime/worker-core";
 import { NodeProcessRunner } from "../worker-local/node-process-runner";
 import { NullWorkerObservability } from "../worker-local/observability";
@@ -60,6 +61,7 @@ import {
   BorrowedRunTaskWorkspace,
   StableWorkerWorkspace,
 } from "../worker-local/temp-workspace";
+import { CommandPolicyRunner } from "./command-policy-runner";
 
 export type FileBackendCodexWorkerOptions = {
   readonly workerId?: string;
@@ -89,6 +91,7 @@ export type FileBackendCodexWorkerOptions = {
   readonly outputSchemas?: Readonly<Record<string, unknown>>;
   readonly observability?: ObservabilityPort;
   readonly runner?: RuntimeDeps["runner"];
+  readonly commandPolicy?: CommandPolicy;
   readonly workspace?: RuntimeDeps["workspace"];
   readonly workspacePath?: string;
   readonly clock?: ClockPort;
@@ -204,7 +207,18 @@ export class FileBackendCodexWorker implements CapacityAwareSubscriptionWorker<
       options.workerId ??
       `file-backend-codex:${hashText(options.providerInstanceId).slice(0, 12)}`;
     assertWorkerOptions(options);
-    this.runner = options.runner ?? new NodeProcessRunner();
+    this.observability = options.observability ?? new NullWorkerObservability();
+    const baseRunner = options.runner ?? new NodeProcessRunner();
+    this.runner = options.commandPolicy?.validateCommands
+      ? new CommandPolicyRunner(baseRunner, options.commandPolicy, {
+          observability: this.observability,
+          providerId: "codex",
+          metadata: {
+            workerId: this.workerId,
+            providerInstanceId: options.providerInstanceId,
+          },
+        })
+      : baseRunner;
     const defaultWorkspacePath = join(
       options.stateRootDir,
       "workspaces",
@@ -221,7 +235,6 @@ export class FileBackendCodexWorker implements CapacityAwareSubscriptionWorker<
         ? new BorrowedRunTaskWorkspace(options.workspacePath, this.ownedWorkspace!)
         : this.ownedWorkspace!);
     this.prewarmWorkspace = options.workspace ?? this.ownedWorkspace!;
-    this.observability = options.observability ?? new NullWorkerObservability();
     this.clock = options.clock ?? systemClock;
     this.windowStartedAtMs = this.clock.now().getTime();
     this.capacityAccountId = normalizeCapacityAccountId(

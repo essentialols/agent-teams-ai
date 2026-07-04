@@ -41,6 +41,7 @@ import {
   type SubscriptionWorkerPrewarmResult,
   type SubscriptionWorkerRunOptions,
   type SubscriptionWorkerState,
+  type WorkerControlContinuationBatch,
   type WorkerControlContinuationSource,
   type WorkerControlTarget,
   type WorkerCapacitySnapshot,
@@ -512,14 +513,24 @@ export class FileBackendClaudeWorker implements CapacityAwareSubscriptionWorker<
           : {}),
       }),
     });
+    const systemPrompt = appendWorkerControlSystemPrompt(
+      job.systemPrompt,
+      controlBatch?.message,
+    );
+    assertProviderTaskSystemPrompt(systemPrompt, "job.systemPrompt");
     let terminalRecorded = false;
     try {
       const result = await this.runtime.refreshThenRunTask({
         providerInstanceId: this.options.providerInstanceId,
         task: {
           kind: job.kind ?? "structured-prompt",
-          prompt: appendWorkerControlPrompt(job.prompt, controlBatch?.message),
-          ...(job.systemPrompt !== undefined ? { systemPrompt: job.systemPrompt } : {}),
+          prompt: appendWorkerControlPromptNotice(
+            job.prompt,
+            controlBatch?.message,
+            controlBatch?.signals,
+            shouldEchoWorkerControlInPrompt(job, this.options),
+          ),
+          ...(systemPrompt === undefined ? {} : { systemPrompt }),
           ...(job.outputSchemaName
             ? { outputSchemaName: job.outputSchemaName }
             : {}),
@@ -1247,12 +1258,48 @@ function assertWorkerOptions(options: FileBackendClaudeWorkerOptions): void {
   }
 }
 
-function appendWorkerControlPrompt(
+function appendWorkerControlSystemPrompt(
+  systemPrompt: string | undefined,
+  controlMessage: string | undefined,
+): string | undefined {
+  if (!controlMessage) return systemPrompt;
+  return [systemPrompt?.trim(), controlMessage.trim()].filter(Boolean).join("\n\n");
+}
+
+function appendWorkerControlPromptNotice(
   prompt: string,
   controlMessage: string | undefined,
+  signals: WorkerControlContinuationBatch["signals"] | undefined,
+  echoControlMessage: boolean,
 ): string {
   if (!controlMessage) return prompt;
-  return [prompt.trimEnd(), controlMessage.trim()].join("\n\n");
+  const signalBodies = signals?.map((signal) => signal.body.trim())
+    .filter(Boolean)
+    .join("\n\n");
+  const notice = [
+    "Important runtime note: a trusted operator control update is available in the system prompt for this run. That update is newer than the task text below and overrides any conflicting older task details. Execute the system-prompt control update now; do not execute older conflicting details from the task text below.",
+    "",
+  ];
+  if (signalBodies || echoControlMessage) {
+    return [
+      "Updated task from operator:",
+      signalBodies || controlMessage.trim(),
+      "",
+      "Previous task text:",
+      prompt,
+    ].join("\n");
+  }
+  return [...notice, prompt].join("\n");
+}
+
+function shouldEchoWorkerControlInPrompt(
+  job: FileBackendClaudeWorkerJob | FileBackendClaudeWorkerThreadJob,
+  options: FileBackendClaudeWorkerOptions,
+): boolean {
+  const tools = job.controls?.allowedTools ?? options.allowedTools;
+  return tools?.some((tool) =>
+    /(^|[,:\s])(Bash|Write|Edit|MultiEdit)(\(|$|[,:\s])/i.test(tool)
+  ) ?? false;
 }
 
 function claudeControlTarget(input: {

@@ -5,11 +5,16 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import {
+  AccessBoundary,
+  NetworkAccessMode,
+} from "@vioxen/subscription-runtime/worker-core";
+import {
   codexGoalAccountSlots,
   codexWorkerReportSchemaName,
   codexGoalProgressPath,
   codexGoalRuntimeEventsPath,
   runCodexGoal,
+  buildCodexGoalExecutorOptions,
   type CodexGoalRunConfig,
 } from "../codex-goal-runner";
 
@@ -256,6 +261,180 @@ describe("codex goal runner", () => {
         "model summary",
       ]));
       expect(result.blockers).toEqual([]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("maps isolated workspace boundary to Codex workspace-write controls", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-goal-access-"));
+    const promptPath = join(root, "prompt.md");
+    const config: CodexGoalRunConfig = {
+      jobRootDir: join(root, "job"),
+      authRootDir: join(root, "auth"),
+      workspacePath: join(root, "workspace"),
+      promptPath,
+      taskId: "task-access",
+      accounts: codexGoalAccountSlots(["account-a"]),
+      accessBoundary: AccessBoundary.IsolatedWorkspaceWrite,
+      networkAccess: NetworkAccessMode.Restricted,
+      projectAccessScope: {
+        projectId: "infinity-context",
+        isolatedWorkspaceRoot: join(root, "workspace"),
+        workspaceRoots: [join(root, "workspace")],
+      },
+    };
+
+    try {
+      await mkdir(config.jobRootDir, { recursive: true });
+      await mkdir(config.workspacePath, { recursive: true });
+      await writeFile(promptPath, "Do a sandbox task.\n");
+
+      await runCodexGoal(config, {
+        createExecutor: () => ({
+          async run(input) {
+            expect(input.controls).toEqual({
+              editMode: "allow-edits",
+              providerSandboxMode: "workspace-write",
+            });
+            return {
+              status: "completed",
+              attempts: [],
+              task: {
+                outputText: "done",
+              },
+            } as never;
+          },
+          async dispose() {},
+        }),
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed for Codex access-boundary jobs without explicit restricted network", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-goal-access-"));
+    const promptPath = join(root, "prompt.md");
+    const config: CodexGoalRunConfig = {
+      jobRootDir: join(root, "job"),
+      authRootDir: join(root, "auth"),
+      workspacePath: join(root, "workspace"),
+      promptPath,
+      taskId: "task-access-network",
+      accounts: codexGoalAccountSlots(["account-a"]),
+      accessBoundary: AccessBoundary.IsolatedWorkspaceWrite,
+      projectAccessScope: {
+        projectId: "infinity-context",
+        isolatedWorkspaceRoot: join(root, "workspace"),
+        workspaceRoots: [join(root, "workspace")],
+      },
+    };
+
+    try {
+      await mkdir(config.jobRootDir, { recursive: true });
+      await mkdir(config.workspacePath, { recursive: true });
+      await writeFile(promptPath, "Do a sandbox task.\n");
+
+      await expect(runCodexGoal(config, {
+        createExecutor: () => {
+          throw new Error("executor should not be created");
+        },
+      })).rejects.toThrow(/network_access=disabled/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("threads isolated workspace command policy into worker options", () => {
+    const root = "/tmp/subscription-runtime-goal-access";
+    const options = buildCodexGoalExecutorOptions({
+      stateRootDir: join(root, "state"),
+      encryptionKey: new Uint8Array(32).fill(1),
+      config: {
+        jobRootDir: join(root, "job"),
+        authRootDir: join(root, "auth"),
+        workspacePath: join(root, "workspace"),
+        promptPath: join(root, "prompt.md"),
+        taskId: "task-access",
+        accounts: codexGoalAccountSlots(["account-a"]),
+        accessBoundary: AccessBoundary.IsolatedWorkspaceWrite,
+        networkAccess: NetworkAccessMode.Restricted,
+        projectAccessScope: {
+          projectId: "infinity-context",
+          registryRoot: join(root, "registry"),
+          isolatedWorkspaceRoot: join(root, "workspace"),
+          workspaceRoots: [join(root, "workspace")],
+          worktreeRoots: [join(root, "worktrees")],
+          allowedBranches: ["main"],
+          jobIdPrefixes: ["infinity-context-"],
+        },
+      },
+    });
+
+    expect(options.accounts[0]?.worker.commandPolicy).toMatchObject({
+      validateCommands: true,
+      deniedGitSubcommands: ["push"],
+    });
+  });
+
+  it("fails closed for Codex project scoped control until broker-only tools are enforced", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-goal-access-"));
+    const promptPath = join(root, "prompt.md");
+    const config: CodexGoalRunConfig = {
+      jobRootDir: join(root, "job"),
+      authRootDir: join(root, "auth"),
+      workspacePath: join(root, "workspace"),
+      promptPath,
+      taskId: "task-project-control",
+      accounts: codexGoalAccountSlots(["account-a"]),
+      accessBoundary: AccessBoundary.ProjectScopedControl,
+      projectAccessScope: {
+        projectId: "infinity-context",
+        workspaceRoots: [join(root, "workspace")],
+        jobIdPrefixes: ["infinity-context-"],
+      },
+    };
+
+    try {
+      await mkdir(config.jobRootDir, { recursive: true });
+      await mkdir(config.workspacePath, { recursive: true });
+      await writeFile(promptPath, "Coordinate workers.\n");
+
+      await expect(runCodexGoal(config, {
+        createExecutor: () => {
+          throw new Error("executor should not be created");
+        },
+      })).rejects.toThrow(/codex_goal_access_boundary_blocked/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects raw danger provider sandbox without danger access boundary", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-goal-danger-"));
+    const promptPath = join(root, "prompt.md");
+    const config: CodexGoalRunConfig = {
+      jobRootDir: join(root, "job"),
+      authRootDir: join(root, "auth"),
+      workspacePath: join(root, "workspace"),
+      promptPath,
+      taskId: "task-raw-danger",
+      accounts: codexGoalAccountSlots(["account-a"]),
+      editMode: "allow-edits",
+      providerSandboxMode: "danger-full-access",
+    };
+
+    try {
+      await mkdir(config.jobRootDir, { recursive: true });
+      await mkdir(config.workspacePath, { recursive: true });
+      await writeFile(promptPath, "Do not run unrestricted.\n");
+
+      await expect(runCodexGoal(config, {
+        createExecutor: () => {
+          throw new Error("executor should not be created");
+        },
+      })).rejects.toThrow(/codex_goal_danger_full_access_requires_access_boundary/);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

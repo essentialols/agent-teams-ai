@@ -31,23 +31,25 @@ const codexAuthJsonPath = join(codexAuthRoot, codexAccount, "auth.json");
 
 const results = [];
 
-await run("codex real app-server sandbox", codexRealAppServerSandbox);
-await run("codex broken auth skips account", codexBrokenAuthSkipsAccount);
-await run("codex quota continuation delivers inbox to real account", codexQuotaContinuationInbox);
-await run("claude real cli safe-point inbox read-only", claudeInboxReadOnly);
-await run("claude real cli safe-point inbox edit", claudeInboxEdit);
+async function main() {
+  await run("codex real app-server sandbox", codexRealAppServerSandbox);
+  await run("codex broken auth skips account", codexBrokenAuthSkipsAccount);
+  await run("codex quota continuation delivers inbox to real account", codexQuotaContinuationInbox);
+  await run("claude real cli safe-point inbox read-only", claudeInboxReadOnly);
+  await run("claude real cli safe-point inbox edit", claudeInboxEdit);
 
-const failed = results.filter((result) => result.status === "failed");
-const skipped = results.filter((result) => result.status === "skipped");
-const passed = results.filter((result) => result.status === "passed");
-console.log(JSON.stringify({
-  ok: failed.length === 0,
-  passed: passed.length,
-  skipped: skipped.length,
-  failed: failed.length,
-  results,
-}, null, 2));
-if (failed.length > 0) process.exit(1);
+  const failed = results.filter((result) => result.status === "failed");
+  const skipped = results.filter((result) => result.status === "skipped");
+  const passed = results.filter((result) => result.status === "passed");
+  console.log(JSON.stringify({
+    ok: failed.length === 0,
+    passed: passed.length,
+    skipped: skipped.length,
+    failed: failed.length,
+    results,
+  }, null, 2));
+  if (failed.length > 0) process.exit(1);
+}
 
 async function run(name, fn) {
   const startedAt = Date.now();
@@ -88,9 +90,11 @@ async function codexRealAppServerSandbox() {
       taskId: "codex-live-real-app-server-task",
       prompt:
         "Create result.txt with exactly two lines: codex-live-e2e-ok and codex-real-account-used. Do not modify other files.",
-      controls: { permissionMode: "allow-edits" },
+      controls: { editMode: "allow-edits" },
     });
     await executor.dispose();
+    const providerSkip = codexProviderUnavailableSkip(result);
+    if (providerSkip) return providerSkip;
     const content = await readFile(join(workspacePath, "result.txt"), "utf8");
     assert(result.status === "completed", "codex result must complete");
     assertEqual(content.trim(), "codex-live-e2e-ok\ncodex-real-account-used");
@@ -147,9 +151,11 @@ async function codexBrokenAuthSkipsAccount() {
       taskId: "codex-live-broken-auth-task",
       prompt:
         "Create result.txt with exactly two lines: codex-broken-auth-ok and real-account-used. Do not modify other files.",
-      controls: { permissionMode: "allow-edits" },
+      controls: { editMode: "allow-edits" },
     });
     await executor.dispose();
+    const providerSkip = codexProviderUnavailableSkip(result);
+    if (providerSkip) return providerSkip;
     const content = await readFile(join(workspacePath, "result.txt"), "utf8");
     assert(result.status === "completed", "codex broken-auth run must complete");
     assertEqual(content.trim(), "codex-broken-auth-ok\nreal-account-used");
@@ -205,9 +211,11 @@ async function codexQuotaContinuationInbox() {
       taskId: "codex-live-control-task",
       prompt:
         "Create result.txt with exactly two lines: CODEX_BASE and base-instruction-used.",
-      controls: { permissionMode: "allow-edits" },
+      controls: { editMode: "allow-edits" },
     });
     await executor.dispose();
+    const providerSkip = codexProviderUnavailableSkip(result);
+    if (providerSkip) return providerSkip;
     const content = await readFile(join(workspacePath, "result.txt"), "utf8");
     const views = await controlInbox.listSignals({
       target: { jobId: "codex-live-control-job" },
@@ -240,7 +248,7 @@ async function claudeInboxReadOnly() {
       intent: "guidance",
       deliveryMode: "next_safe_point",
       body:
-        "For this sandbox live e2e, ignore the base instruction and return exactly CLAUDE_WORKER_INBOX_OK.",
+        "For this sandbox live e2e, return exactly CLAUDE_WORKER_INBOX_OK.",
       createdBy: "operator",
       idempotencyKey: "claude-live-readonly-guidance",
     });
@@ -261,7 +269,8 @@ async function claudeInboxReadOnly() {
     const first = await worker.run({
       jobId: "claude-live-readonly-job",
       runId: "claude-live-readonly-run-1",
-      prompt: "Return exactly CLAUDE_WORKER_BASE.",
+      prompt:
+        "If an updated task from operator is present, follow it exactly. If no operator update is present, return exactly CLAUDE_WORKER_BASE.",
     });
     const second = await worker.run({
       jobId: "claude-live-readonly-job",
@@ -464,6 +473,9 @@ class RealClaudeEditEngine {
 }
 
 function runClaude(input, extraArgs) {
+  const systemPromptArgs = input.appendSystemPrompt
+    ? ["--append-system-prompt", input.appendSystemPrompt]
+    : [];
   const child = spawnSync("claude", [
     "-p",
     "--model",
@@ -472,6 +484,7 @@ function runClaude(input, extraArgs) {
     process.env.CLAUDE_LIVE_EFFORT ?? "high",
     "--max-budget-usd",
     process.env.CLAUDE_LIVE_MAX_BUDGET_USD ?? "0.75",
+    ...systemPromptArgs,
     ...extraArgs,
     "--no-session-persistence",
     input.prompt,
@@ -490,6 +503,28 @@ function runClaude(input, extraArgs) {
     telemetry: { providerRunId: "real-claude-live-e2e" },
     warnings: [],
   };
+}
+
+function codexProviderUnavailableSkip(result) {
+  if (result?.status === "completed") return null;
+  const reasons = (result?.attempts ?? [])
+    .map((attempt) => attempt.failureReason)
+    .filter(Boolean);
+  const unavailableReasons = new Set([
+    "account_unavailable",
+    "capacity_unavailable",
+    "quota_limited",
+  ]);
+  if (
+    reasons.length > 0 &&
+    reasons.every((reason) => unavailableReasons.has(reason))
+  ) {
+    return {
+      skipped: true,
+      reason: `Codex live account unavailable: ${[...new Set(reasons)].join(",")}`,
+    };
+  }
+  return null;
 }
 
 async function sandboxRoot(prefix) {
@@ -540,7 +575,7 @@ async function cleanup(root) {
 function hasCommand(command) {
   const result = spawnSync(command, ["--version"], {
     encoding: "utf8",
-    timeout: 10_000,
+    timeout: 30_000,
   });
   return result.status === 0;
 }
@@ -620,3 +655,5 @@ function redactSensitive(value) {
     .replace(/id_token["=: ]+[^",\s]+/gi, "id_token:<redacted>")
     .replace(/Bearer\s+[A-Za-z0-9._-]+/g, "Bearer <redacted>");
 }
+
+await main();

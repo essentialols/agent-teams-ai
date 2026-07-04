@@ -29,6 +29,11 @@ import {
   parseCodexGoalEditMode,
 } from "./codex-goal-control-modes";
 import {
+  optionalCodexGoalAccessBoundary,
+  optionalCodexGoalNetworkAccess,
+  parseCodexGoalProjectAccessScopeJson,
+} from "./codex-goal-access-plan";
+import {
   buildCodexGoalNoTmuxCommand,
   buildCodexGoalTmuxCommand,
   collectCodexGoalStatus,
@@ -1255,6 +1260,24 @@ function runConfigFromFlags(
     providerSandboxMode,
     fieldName: "--provider-sandbox-mode",
   });
+  const accessBoundary = optionalCodexGoalAccessBoundary(
+    option(values, env, "--access-boundary", [
+      "SUBSCRIPTION_RUNTIME_ACCESS_BOUNDARY",
+    ]),
+    "--access-boundary",
+  );
+  const projectAccessScope = parseCodexGoalProjectAccessScopeJson(
+    option(values, env, "--project-access-scope-json", [
+      "SUBSCRIPTION_RUNTIME_PROJECT_ACCESS_SCOPE_JSON",
+    ]),
+    "--project-access-scope-json",
+  );
+  const networkAccess = optionalCodexGoalNetworkAccess(
+    option(values, env, "--network-access", [
+      "SUBSCRIPTION_RUNTIME_NETWORK_ACCESS",
+    ]),
+    "--network-access",
+  );
   const config: CodexGoalRunConfig = {
     ...(option(values, env, "--job-id", ["SUBSCRIPTION_RUNTIME_JOB_ID"]) === undefined
       ? {}
@@ -1300,6 +1323,10 @@ function runConfigFromFlags(
     ]) ?? "codex",
     editMode,
     ...(providerSandboxMode === undefined ? {} : { providerSandboxMode }),
+    ...(accessBoundary === undefined ? {} : { accessBoundary }),
+    ...(projectAccessScope === undefined ? {} : { projectAccessScope }),
+    allowDangerFullAccess: flag(values, "--allow-danger-full-access"),
+    ...(networkAccess === undefined ? {} : { networkAccess }),
     taskTimeoutMs: parseOptionalPositiveInteger(
       option(values, env, "--timeout-ms", [
         "SUBSCRIPTION_RUNTIME_TASK_TIMEOUT_MS",

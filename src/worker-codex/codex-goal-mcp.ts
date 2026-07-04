@@ -1,9 +1,11 @@
 #!/usr/bin/env node
-import { mkdir, readdir, readFile, realpath, rename, stat, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { appendFile, mkdir, readdir, readFile, realpath, rename, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { execPath } from "node:process";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import {
   McpServer,
   ResourceTemplate,
@@ -21,8 +23,11 @@ import {
   type ClaudeRunWatchArgs,
 } from "@vioxen/subscription-runtime/worker-local";
 import {
+  AccessBoundary,
+  NetworkAccessMode,
   RunObservationService,
   InterruptAndContinueWorkerUseCase,
+  ProjectControlBroker,
   RunEventCompactionSafetyMode,
   RunEventProviderKind,
   RunEventType,
@@ -38,6 +43,10 @@ import {
   type RunEventReadResult,
   type RunEventRetentionPolicy,
   type RunObservationSnapshot,
+  type ProjectAccessScope,
+  type ProjectControlBrokerEvent,
+  type ProjectControlBrokerPorts,
+  type ProjectControlOperationResult,
   type RunReconcilePreviewDecision,
   type RunReconcilePreviewStatus,
   type ActiveAttemptRegistry,
@@ -95,10 +104,16 @@ import {
   type CodexGoalOutputFormat,
 } from "./codex-goal-ops";
 import { CodexRunObservationAdapter } from "./codex-run-observation";
+import {
+  optionalCodexGoalAccessBoundary,
+  optionalCodexGoalNetworkAccess,
+  parseCodexGoalProjectAccessScope,
+} from "./codex-goal-access-plan";
 
 const serverVersion = "0.1.0-main.2";
 const defaultAuthRoot = "~/.cache/subscription-runtime/live-codex-auth";
 const defaultTimeoutMs = 72 * 60 * 60 * 1000;
+const execFileAsync = promisify(execFile);
 
 type JsonObject = Readonly<Record<string, unknown>>;
 
@@ -125,6 +140,10 @@ type GoalMcpArgs = {
   readonly maxAccountCycles?: number;
   readonly editMode?: CodexGoalRunConfig["editMode"];
   readonly providerSandboxMode?: CodexGoalRunConfig["providerSandboxMode"];
+  readonly accessBoundary?: CodexGoalRunConfig["accessBoundary"];
+  readonly projectAccessScope?: CodexGoalRunConfig["projectAccessScope"];
+  readonly allowDangerFullAccess?: boolean;
+  readonly networkAccess?: CodexGoalRunConfig["networkAccess"];
   readonly allowDuplicateAccountIdentities?: boolean;
   readonly requireGitWorkspace?: boolean;
   readonly prewarmOnStart?: boolean;
@@ -207,6 +226,29 @@ type JobCreateMcpArgs = GoalMcpArgs & JobIdMcpArgs & {
 };
 
 type JobUpdateMcpArgs = JobIdMcpArgs & Partial<JobCreateMcpArgs>;
+
+type ProjectControlMcpArgs = GoalMcpArgs & JobRegistryMcpArgs & {
+  readonly controllerJobId?: string;
+  readonly path?: string;
+  readonly sourceWorkspacePath?: string;
+  readonly baseBranch?: string;
+  readonly workspacePath?: string;
+  readonly branch?: string;
+  readonly remote?: string;
+  readonly force?: boolean;
+  readonly commitSha?: string;
+  readonly confirmCreate?: boolean;
+  readonly confirmCreateWorktree?: boolean;
+  readonly confirmIntegrate?: boolean;
+  readonly confirmPush?: boolean;
+  readonly confirmStart?: boolean;
+  readonly confirmStop?: boolean;
+  readonly forceStart?: boolean;
+  readonly forceStop?: boolean;
+  readonly skipDoctor?: boolean;
+  readonly note?: string;
+  readonly overwrite?: boolean;
+};
 
 type JobLifecycleMcpArgs = JobIdMcpArgs & {
   readonly confirmContinue?: boolean;
@@ -1614,6 +1656,143 @@ export function createCodexGoalMcpServer(
   );
 
   server.registerTool(
+    "codex_goal_project_create_job",
+    {
+      title: "Project Control Create Codex Goal Job",
+      description:
+        "Create a child Codex goal job through a ProjectScopedControl controller manifest and broker policy.",
+      inputSchema: {
+        ...goalInputSchema(),
+        ...jobRegistryInputSchema(),
+        controllerJobId: z.string().optional(),
+        description: z.string().optional(),
+        tags: z.union([z.string(), z.array(z.string())]).optional(),
+        overwrite: z.boolean().optional(),
+        confirmCreate: z.boolean().optional(),
+      },
+    },
+    async (args) => withMcpErrors(async () =>
+      projectControlCreateCodexGoalJob(args as ProjectControlMcpArgs),
+    ),
+  );
+
+  server.registerTool(
+    "codex_goal_project_start",
+    {
+      title: "Project Control Start Codex Goal Worker",
+      description:
+        "Start a stored Codex goal worker through a ProjectScopedControl controller manifest and broker policy.",
+      inputSchema: {
+        ...jobIdInputSchema(),
+        controllerJobId: z.string().optional(),
+        confirmStart: z.boolean().optional(),
+        forceStart: z.boolean().optional(),
+        skipDoctor: z.boolean().optional(),
+        staleAfterMs: z.number().int().positive().optional(),
+      },
+    },
+    async (args) => withMcpErrors(async () =>
+      projectControlStartStoredJob(args as ProjectControlMcpArgs),
+    ),
+  );
+
+  server.registerTool(
+    "codex_goal_project_create_worktree",
+    {
+      title: "Project Control Create Git Worktree",
+      description:
+        "Create a project git worktree through a ProjectScopedControl controller manifest and broker policy.",
+      inputSchema: {
+        ...jobRegistryInputSchema(),
+        controllerJobId: z.string().optional(),
+        sourceWorkspacePath: z.string().optional(),
+        path: z.string().optional(),
+        baseBranch: z.string().optional(),
+        confirmCreateWorktree: z.boolean().optional(),
+      },
+    },
+    async (args) => withMcpErrors(async () =>
+      projectControlCreateWorktree(args as ProjectControlMcpArgs),
+    ),
+  );
+
+  server.registerTool(
+    "codex_goal_project_integrate_commit",
+    {
+      title: "Project Control Integrate Git Commit",
+      description:
+        "Cherry-pick a reviewed commit into a scoped project worktree through broker policy.",
+      inputSchema: {
+        ...jobRegistryInputSchema(),
+        controllerJobId: z.string().optional(),
+        workspacePath: z.string().optional(),
+        branch: z.string().optional(),
+        commitSha: z.string().optional(),
+        confirmIntegrate: z.boolean().optional(),
+      },
+    },
+    async (args) => withMcpErrors(async () =>
+      projectControlIntegrateCommit(args as ProjectControlMcpArgs),
+    ),
+  );
+
+  server.registerTool(
+    "codex_goal_project_push_branch",
+    {
+      title: "Project Control Push Git Branch",
+      description:
+        "Push an allowed project branch through broker policy. Force uses --force-with-lease and must be allowed by scope.",
+      inputSchema: {
+        ...jobRegistryInputSchema(),
+        controllerJobId: z.string().optional(),
+        workspacePath: z.string().optional(),
+        branch: z.string().optional(),
+        remote: z.string().optional(),
+        force: z.boolean().optional(),
+        confirmPush: z.boolean().optional(),
+      },
+    },
+    async (args) => withMcpErrors(async () =>
+      projectControlPushBranch(args as ProjectControlMcpArgs),
+    ),
+  );
+
+  server.registerTool(
+    "codex_goal_project_stop",
+    {
+      title: "Project Control Stop Codex Goal Worker",
+      description:
+        "Stop a stored Codex goal worker through a ProjectScopedControl controller manifest and broker policy.",
+      inputSchema: {
+        ...jobIdInputSchema(),
+        controllerJobId: z.string().optional(),
+        confirmStop: z.boolean().optional(),
+        forceStop: z.boolean().optional(),
+      },
+    },
+    async (args) => withMcpErrors(async () =>
+      projectControlStopStoredJob(args as ProjectControlMcpArgs),
+    ),
+  );
+
+  server.registerTool(
+    "codex_goal_project_mark_reviewed",
+    {
+      title: "Project Control Mark Codex Goal Reviewed",
+      description:
+        "Write a review marker for a stored job through a ProjectScopedControl controller manifest and broker policy.",
+      inputSchema: {
+        ...jobIdInputSchema(),
+        controllerJobId: z.string().optional(),
+        note: z.string().optional(),
+      },
+    },
+    async (args) => withMcpErrors(async () =>
+      projectControlMarkReviewed(args as ProjectControlMcpArgs),
+    ),
+  );
+
+  server.registerTool(
     "codex_goal_status",
     {
       title: "Codex Goal Status",
@@ -1816,6 +1995,11 @@ async function goalLaunchInput(args: GoalMcpArgs): Promise<CodexGoalLaunchInput>
   const accounts = codexGoalAccountSlots(accountNames(merged.accounts));
   if (!accounts.length) throw new Error("accounts are required");
   const controlModes = goalControlModesFromRecord(merged);
+  const accessBoundary = optionalCodexGoalAccessBoundary(merged.accessBoundary);
+  const projectAccessScope = parseCodexGoalProjectAccessScope(
+    merged.projectAccessScope,
+  );
+  const networkAccess = optionalCodexGoalNetworkAccess(merged.networkAccess);
   const config: CodexGoalRunConfig = {
     ...(jobId === undefined ? {} : { jobId }),
     jobRootDir,
@@ -1843,6 +2027,10 @@ async function goalLaunchInput(args: GoalMcpArgs): Promise<CodexGoalLaunchInput>
       (stringValue(merged.executionEngine) ?? "app-server-goal") as NonNullable<CodexGoalRunConfig["executionEngine"]>,
     codexBinaryPath: stringValue(merged.codexBinaryPath) ?? "codex",
     ...controlModes,
+    ...(accessBoundary === undefined ? {} : { accessBoundary }),
+    ...(projectAccessScope === undefined ? {} : { projectAccessScope }),
+    allowDangerFullAccess: booleanValue(merged.allowDangerFullAccess) ?? false,
+    ...(networkAccess === undefined ? {} : { networkAccess }),
     taskTimeoutMs: numberValue(merged.taskTimeoutMs) ?? defaultTimeoutMs,
     progressHeartbeatMs: numberValue(merged.progressHeartbeatMs) ?? 60_000,
     ...(numberValue(merged.staleLockMs) === undefined
@@ -1917,6 +2105,901 @@ async function loadJobLaunch(args: JobIdMcpArgs): Promise<{
     manifest,
     launch: await goalLaunchInput(codexGoalJobToArgs(manifest)),
   };
+}
+
+async function loadProjectControlController(args: ProjectControlMcpArgs): Promise<{
+  readonly registryRootDir: string;
+  readonly controller: CodexGoalJobManifest;
+  readonly scope: ProjectAccessScope;
+}> {
+  const registryRootDir = registryRootFromArgs(args);
+  const controller = await readCodexGoalJob({
+    registryRootDir,
+    jobId: requiredRawString(args.controllerJobId, "controllerJobId"),
+  });
+  if (controller.accessBoundary !== AccessBoundary.ProjectScopedControl) {
+    throw new Error("project_control_controller_boundary_required");
+  }
+  if (!controller.projectAccessScope) {
+    throw new Error("project_control_controller_scope_required");
+  }
+  return {
+    registryRootDir,
+    controller,
+    scope: controller.projectAccessScope,
+  };
+}
+
+type CodexGoalProjectCreateWorktreeInput = {
+  readonly sourceWorkspacePath: string;
+  readonly path: string;
+  readonly baseBranch?: string;
+};
+
+type CodexGoalProjectIntegrateCommitInput = {
+  readonly workspacePath: string;
+  readonly branch: string;
+  readonly commitSha: string;
+};
+
+type CodexGoalProjectPushBranchInput = {
+  readonly workspacePath: string;
+  readonly branch: string;
+  readonly remote: string;
+  readonly force: boolean;
+};
+
+function codexProjectControlBroker(input: {
+  readonly registryRootDir: string;
+  readonly controller: CodexGoalJobManifest;
+  readonly scope: ProjectAccessScope;
+  readonly createManifest?: CodexGoalJobManifestInput;
+  readonly createOverwrite?: boolean;
+  readonly createWorktreeInput?: CodexGoalProjectCreateWorktreeInput;
+  readonly integrateCommitInput?: CodexGoalProjectIntegrateCommitInput;
+  readonly pushBranchInput?: CodexGoalProjectPushBranchInput;
+  readonly startLaunch?: CodexGoalLaunchInput;
+  readonly startSkipDoctor?: boolean;
+  readonly stopLaunch?: CodexGoalLaunchInput;
+  readonly reviewLaunch?: CodexGoalLaunchInput;
+  readonly reviewNote?: string;
+}): ProjectControlBroker {
+  return new ProjectControlBroker({
+    boundary: AccessBoundary.ProjectScopedControl,
+    scope: input.scope,
+  }, codexProjectControlPorts(input));
+}
+
+function codexProjectControlPorts(input: {
+  readonly registryRootDir: string;
+  readonly controller: CodexGoalJobManifest;
+  readonly createManifest?: CodexGoalJobManifestInput;
+  readonly createOverwrite?: boolean;
+  readonly createWorktreeInput?: CodexGoalProjectCreateWorktreeInput;
+  readonly integrateCommitInput?: CodexGoalProjectIntegrateCommitInput;
+  readonly pushBranchInput?: CodexGoalProjectPushBranchInput;
+  readonly startLaunch?: CodexGoalLaunchInput;
+  readonly startSkipDoctor?: boolean;
+  readonly stopLaunch?: CodexGoalLaunchInput;
+  readonly reviewLaunch?: CodexGoalLaunchInput;
+  readonly reviewNote?: string;
+}): ProjectControlBrokerPorts {
+  return {
+    audit: {
+      async record(event) {
+        await appendProjectControlAuditEvent(input.controller, event);
+      },
+    },
+    registry: {
+      async createJob() {
+        if (!input.createManifest) {
+          throw new Error("project_control_create_manifest_required");
+        }
+        const created = await createCodexGoalJob({
+          registryRootDir: input.registryRootDir,
+          manifest: input.createManifest,
+          overwrite: input.createOverwrite ?? false,
+        });
+        return operationResult(created.jobId);
+      },
+      async writeReviewMarker(marker) {
+        if (!input.reviewLaunch) {
+          throw new Error("project_control_review_launch_required");
+        }
+        const reviewPath = await writeCodexGoalReviewMarker({
+          jobId: marker.jobId,
+          launch: input.reviewLaunch,
+          note: input.reviewNote ?? marker.note ?? "project_control_reviewed",
+        });
+        return operationResult(reviewPath);
+      },
+    },
+    supervisor: {
+      async startWorker() {
+        if (!input.startLaunch) {
+          throw new Error("project_control_start_launch_required");
+        }
+        await prepareCodexGoalLaunchPaths(input.startLaunch);
+        if (!input.startSkipDoctor) {
+          const doctor = await doctorCodexGoal({
+            config: input.startLaunch.config,
+            ...(input.startLaunch.tmuxSession
+              ? { tmuxSession: input.startLaunch.tmuxSession }
+              : {}),
+          });
+          if (!doctor.ok) {
+            throw new Error(`project_control_doctor_failed:${JSON.stringify(doctor)}`);
+          }
+        }
+        const command = await startCodexGoalTmux(input.startLaunch);
+        return operationResult(command.preview);
+      },
+      async stopWorker() {
+        if (!input.stopLaunch?.tmuxSession) {
+          throw new Error("project_control_stop_tmux_required");
+        }
+        const command = await stopCodexGoalTmux(input.stopLaunch.tmuxSession);
+        return operationResult(command.preview);
+      },
+    },
+    workspace: {
+      async createWorktree() {
+        if (!input.createWorktreeInput) {
+          throw new Error("project_control_worktree_input_required");
+        }
+        await mkdir(dirname(input.createWorktreeInput.path), {
+          recursive: true,
+          mode: 0o700,
+        });
+        const args = [
+          "-C",
+          input.createWorktreeInput.sourceWorkspacePath,
+          "worktree",
+          "add",
+          input.createWorktreeInput.path,
+          ...(input.createWorktreeInput.baseBranch
+            ? [input.createWorktreeInput.baseBranch]
+            : []),
+        ];
+        await execGit(args);
+        return operationResult(input.createWorktreeInput.path);
+      },
+    },
+    git: {
+      async integrateCommit() {
+        if (!input.integrateCommitInput) {
+          throw new Error("project_control_integrate_commit_input_required");
+        }
+        await assertGitCurrentBranch({
+          workspacePath: input.integrateCommitInput.workspacePath,
+          branch: input.integrateCommitInput.branch,
+        });
+        await execGit([
+          "-C",
+          input.integrateCommitInput.workspacePath,
+          "cherry-pick",
+          "--ff",
+          input.integrateCommitInput.commitSha,
+        ]);
+        return operationResult(input.integrateCommitInput.commitSha);
+      },
+      async pushBranch() {
+        if (!input.pushBranchInput) {
+          throw new Error("project_control_push_branch_input_required");
+        }
+        await assertGitCurrentBranch({
+          workspacePath: input.pushBranchInput.workspacePath,
+          branch: input.pushBranchInput.branch,
+        });
+        await execGit([
+          "-C",
+          input.pushBranchInput.workspacePath,
+          "push",
+          ...(input.pushBranchInput.force ? ["--force-with-lease"] : []),
+          input.pushBranchInput.remote,
+          input.pushBranchInput.branch,
+        ]);
+        return operationResult(
+          `${input.pushBranchInput.remote}/${input.pushBranchInput.branch}`,
+        );
+      },
+    },
+  };
+}
+
+async function appendProjectControlAuditEvent(
+  controller: CodexGoalJobManifest,
+  event: ProjectControlBrokerEvent,
+): Promise<void> {
+  const auditPath = join(
+    controller.jobRootDir,
+    `${controller.taskId}.project-control-events.jsonl`,
+  );
+  await mkdir(dirname(auditPath), { recursive: true, mode: 0o700 });
+  await appendFile(auditPath, `${JSON.stringify(event)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+}
+
+function projectControlAuditPath(controller: CodexGoalJobManifest): string {
+  return join(
+    controller.jobRootDir,
+    `${controller.taskId}.project-control-events.jsonl`,
+  );
+}
+
+function operationResult(resourceId: string): ProjectControlOperationResult {
+  return {
+    status: "applied",
+    resourceId,
+  };
+}
+
+async function projectControlCreateCodexGoalJob(args: ProjectControlMcpArgs) {
+  const controller = await loadProjectControlController(args);
+  if (args.projectAccessScope !== undefined) {
+    throw new Error("project_control_child_scope_is_controller_owned");
+  }
+  if (args.allowDangerFullAccess === true) {
+    throw new Error("project_control_child_danger_full_access_denied");
+  }
+
+  const requested = jobManifestInputFromArgs(args as JobCreateMcpArgs);
+  if (
+    requested.accessBoundary === AccessBoundary.ProjectScopedControl ||
+    requested.accessBoundary === AccessBoundary.DangerFullAccess
+  ) {
+    throw new Error("project_control_child_boundary_denied");
+  }
+  const accessBoundary =
+    requested.accessBoundary ?? AccessBoundary.IsolatedWorkspaceWrite;
+  const createManifest: CodexGoalJobManifestInput = {
+    ...requested,
+    accessBoundary,
+    projectAccessScope: projectControlChildScope(
+      controller.scope,
+      requested.workspacePath,
+    ),
+    allowDangerFullAccess: false,
+    networkAccess: requested.networkAccess ?? NetworkAccessMode.Restricted,
+  };
+  assertProjectControlCreateManifestPaths({
+    scope: controller.scope,
+    registryRootDir: controller.registryRootDir,
+    manifest: createManifest,
+  });
+
+  if (!args.confirmCreate) {
+    return mcpJson({
+      ok: false,
+      reason: "confirm_create_required",
+      controllerJobId: controller.controller.jobId,
+      targetJobId: createManifest.jobId,
+      auditPath: projectControlAuditPath(controller.controller),
+      manifestPreview: createManifest as unknown as JsonObject,
+    });
+  }
+
+  const broker = codexProjectControlBroker({
+    registryRootDir: controller.registryRootDir,
+    controller: controller.controller,
+    scope: controller.scope,
+    createManifest,
+    createOverwrite: booleanValue(args.overwrite) ?? false,
+  });
+  const result = await broker.createJob({
+    jobId: createManifest.jobId,
+    registryRoot: controller.registryRootDir,
+    workspacePath: createManifest.workspacePath,
+    ...(createManifest.tmuxSession
+      ? { tmuxSession: createManifest.tmuxSession }
+      : {}),
+    accounts: createManifest.accounts,
+  });
+  const manifest = await readCodexGoalJob({
+    registryRootDir: controller.registryRootDir,
+    jobId: createManifest.jobId,
+  });
+  return mcpJson({
+    ok: true,
+    mode: "project_control_create_job",
+    controllerJobId: controller.controller.jobId,
+    registryRootDir: controller.registryRootDir,
+    auditPath: projectControlAuditPath(controller.controller),
+    result: result as unknown as JsonObject,
+    manifest,
+    summary: summarizeCodexGoalJob(manifest, controller.registryRootDir),
+  });
+}
+
+async function projectControlStartStoredJob(args: ProjectControlMcpArgs) {
+  const controller = await loadProjectControlController(args);
+  const loaded = await loadJobLaunch({
+    registryRootDir: controller.registryRootDir,
+    jobId: requiredRawString(args.jobId, "jobId"),
+  });
+  const status = await collectCodexGoalStatus(statusInput(loaded.launch));
+  const progressStale = status.progressHeartbeatAgeMs !== undefined &&
+    status.progressHeartbeatAgeMs > 10 * 60_000;
+  const workerLiveness = resolveCodexGoalWorkerLiveness({
+    status,
+    progressStale,
+  });
+  if (workerLiveness.alive) {
+    return mcpJson({
+      ok: false,
+      reason: "worker_already_running",
+      controllerJobId: controller.controller.jobId,
+      jobId: loaded.manifest.jobId,
+      status,
+    });
+  }
+  if (!loaded.launch.tmuxSession) {
+    return mcpJson({
+      ok: false,
+      reason: "tmux_session_required",
+      controllerJobId: controller.controller.jobId,
+      jobId: loaded.manifest.jobId,
+      noTmuxCommand: buildCodexGoalNoTmuxCommand(loaded.launch),
+    });
+  }
+  if (!isSafeStartAction(status.recommendedAction) && !args.forceStart) {
+    return mcpJson({
+      ok: false,
+      reason: "status_requires_review",
+      controllerJobId: controller.controller.jobId,
+      jobId: loaded.manifest.jobId,
+      status,
+      requiredOverride: "forceStart",
+    });
+  }
+  if (!args.confirmStart) {
+    return mcpJson({
+      ok: false,
+      reason: "confirm_start_required",
+      controllerJobId: controller.controller.jobId,
+      jobId: loaded.manifest.jobId,
+      auditPath: projectControlAuditPath(controller.controller),
+      tmuxCommand: buildCodexGoalTmuxCommand(loaded.launch).preview,
+      status,
+    });
+  }
+
+  const broker = codexProjectControlBroker({
+    registryRootDir: controller.registryRootDir,
+    controller: controller.controller,
+    scope: controller.scope,
+    startLaunch: loaded.launch,
+    startSkipDoctor: booleanValue(args.skipDoctor) ?? false,
+  });
+  const result = await broker.startWorker({
+    jobId: loaded.manifest.jobId,
+    registryRoot: controller.registryRootDir,
+    workspacePath: loaded.launch.config.workspacePath,
+    tmuxSession: loaded.launch.tmuxSession,
+  });
+  return mcpJson({
+    ok: true,
+    mode: "project_control_start",
+    controllerJobId: controller.controller.jobId,
+    registryRootDir: controller.registryRootDir,
+    auditPath: projectControlAuditPath(controller.controller),
+    jobId: loaded.manifest.jobId,
+    taskId: loaded.launch.config.taskId,
+    tmuxSession: loaded.launch.tmuxSession,
+    statusBefore: status,
+    result: result as unknown as JsonObject,
+  });
+}
+
+async function projectControlCreateWorktree(args: ProjectControlMcpArgs) {
+  const controller = await loadProjectControlController(args);
+  const sourceWorkspacePath = projectControlPathArg(
+    args,
+    args.sourceWorkspacePath,
+    "sourceWorkspacePath",
+  );
+  const path = projectControlPathArg(args, args.path, "path");
+  const baseBranch = stringValue(args.baseBranch);
+  if (baseBranch) assertSafeGitRefName(baseBranch, "baseBranch");
+  const createWorktreeInput: CodexGoalProjectCreateWorktreeInput = {
+    sourceWorkspacePath,
+    path,
+    ...(baseBranch ? { baseBranch } : {}),
+  };
+
+  if (!args.confirmCreateWorktree) {
+    return mcpJson({
+      ok: false,
+      reason: "confirm_create_worktree_required",
+      controllerJobId: controller.controller.jobId,
+      auditPath: projectControlAuditPath(controller.controller),
+      commandPreview: [
+        "git",
+        "-C",
+        sourceWorkspacePath,
+        "worktree",
+        "add",
+        path,
+        ...(baseBranch ? [baseBranch] : []),
+      ],
+    });
+  }
+
+  const broker = codexProjectControlBroker({
+    registryRootDir: controller.registryRootDir,
+    controller: controller.controller,
+    scope: controller.scope,
+    createWorktreeInput,
+  });
+  const result = await broker.createWorktree(createWorktreeInput);
+  return mcpJson({
+    ok: true,
+    mode: "project_control_create_worktree",
+    controllerJobId: controller.controller.jobId,
+    registryRootDir: controller.registryRootDir,
+    auditPath: projectControlAuditPath(controller.controller),
+    result: result as unknown as JsonObject,
+  });
+}
+
+async function projectControlIntegrateCommit(args: ProjectControlMcpArgs) {
+  const controller = await loadProjectControlController(args);
+  const workspacePath = projectControlPathArg(
+    args,
+    args.workspacePath,
+    "workspacePath",
+  );
+  const branch = requiredRawString(args.branch, "branch");
+  const commitSha = requiredRawString(args.commitSha, "commitSha");
+  assertSafeGitRefName(branch, "branch");
+  assertSafeGitCommitSha(commitSha);
+  const integrateCommitInput: CodexGoalProjectIntegrateCommitInput = {
+    workspacePath,
+    branch,
+    commitSha,
+  };
+
+  if (!args.confirmIntegrate) {
+    return mcpJson({
+      ok: false,
+      reason: "confirm_integrate_required",
+      controllerJobId: controller.controller.jobId,
+      auditPath: projectControlAuditPath(controller.controller),
+      commandPreview: ["git", "-C", workspacePath, "cherry-pick", "--ff", commitSha],
+    });
+  }
+
+  const broker = codexProjectControlBroker({
+    registryRootDir: controller.registryRootDir,
+    controller: controller.controller,
+    scope: controller.scope,
+    integrateCommitInput,
+  });
+  const result = await broker.integrateCommit(integrateCommitInput);
+  return mcpJson({
+    ok: true,
+    mode: "project_control_integrate_commit",
+    controllerJobId: controller.controller.jobId,
+    registryRootDir: controller.registryRootDir,
+    auditPath: projectControlAuditPath(controller.controller),
+    result: result as unknown as JsonObject,
+  });
+}
+
+async function projectControlPushBranch(args: ProjectControlMcpArgs) {
+  const controller = await loadProjectControlController(args);
+  const workspacePath = projectControlPathArg(
+    args,
+    args.workspacePath,
+    "workspacePath",
+  );
+  const branch = requiredRawString(args.branch, "branch");
+  const remote = stringValue(args.remote) ?? "origin";
+  const force = booleanValue(args.force) ?? false;
+  assertSafeGitRefName(branch, "branch");
+  assertSafeGitRemoteName(remote, "remote");
+  const pushBranchInput: CodexGoalProjectPushBranchInput = {
+    workspacePath,
+    branch,
+    remote,
+    force,
+  };
+
+  if (!args.confirmPush) {
+    return mcpJson({
+      ok: false,
+      reason: "confirm_push_required",
+      controllerJobId: controller.controller.jobId,
+      auditPath: projectControlAuditPath(controller.controller),
+      commandPreview: [
+        "git",
+        "-C",
+        workspacePath,
+        "push",
+        ...(force ? ["--force-with-lease"] : []),
+        remote,
+        branch,
+      ],
+    });
+  }
+
+  const broker = codexProjectControlBroker({
+    registryRootDir: controller.registryRootDir,
+    controller: controller.controller,
+    scope: controller.scope,
+    pushBranchInput,
+  });
+  const result = await broker.pushBranch(pushBranchInput);
+  return mcpJson({
+    ok: true,
+    mode: "project_control_push_branch",
+    controllerJobId: controller.controller.jobId,
+    registryRootDir: controller.registryRootDir,
+    auditPath: projectControlAuditPath(controller.controller),
+    result: result as unknown as JsonObject,
+  });
+}
+
+async function projectControlStopStoredJob(args: ProjectControlMcpArgs) {
+  const controller = await loadProjectControlController(args);
+  const loaded = await loadJobLaunch({
+    registryRootDir: controller.registryRootDir,
+    jobId: requiredRawString(args.jobId, "jobId"),
+  });
+  const status = await collectCodexGoalStatus(statusInput(loaded.launch));
+  const accounts = await listCodexGoalAccountStatuses({
+    authRootDir: loaded.launch.config.authRootDir,
+    accounts: loaded.launch.config.accounts.map((account) => account.name),
+    stateRootDir: codexGoalStateRootDir(loaded.launch),
+  });
+  const brief = await buildCodexGoalBrief({
+    jobId: loaded.manifest.jobId,
+    launch: loaded.launch,
+    status,
+    accounts,
+    staleAfterMs: 10 * 60_000,
+    tailLines: 20,
+  });
+  if (!loaded.launch.tmuxSession) {
+    return mcpJson({
+      ok: false,
+      reason: "tmux_session_required",
+      controllerJobId: controller.controller.jobId,
+      jobId: loaded.manifest.jobId,
+      status,
+      brief,
+    });
+  }
+  const stopCommand = buildCodexGoalStopTmuxCommand(loaded.launch.tmuxSession);
+  if (!status.tmuxAlive && !args.forceStop) {
+    return mcpJson({
+      ok: false,
+      reason: "worker_not_running",
+      controllerJobId: controller.controller.jobId,
+      jobId: loaded.manifest.jobId,
+      tmuxSession: loaded.launch.tmuxSession,
+      stopCommand: stopCommand.preview,
+      status,
+      brief,
+      requiredOverride: "forceStop",
+    });
+  }
+  if (!brief.silentStale && !brief.heartbeatOnlyNoOutput && !args.forceStop) {
+    return mcpJson({
+      ok: false,
+      reason: "worker_not_silent_stale_or_heartbeat_only_no_output",
+      controllerJobId: controller.controller.jobId,
+      jobId: loaded.manifest.jobId,
+      tmuxSession: loaded.launch.tmuxSession,
+      requiredOverride: "forceStop",
+      stopCommand: stopCommand.preview,
+      status,
+      brief,
+    });
+  }
+  if (!args.confirmStop) {
+    return mcpJson({
+      ok: false,
+      reason: "confirm_stop_required",
+      controllerJobId: controller.controller.jobId,
+      jobId: loaded.manifest.jobId,
+      tmuxSession: loaded.launch.tmuxSession,
+      stopCommand: stopCommand.preview,
+      auditPath: projectControlAuditPath(controller.controller),
+      status,
+      brief,
+    });
+  }
+
+  const broker = codexProjectControlBroker({
+    registryRootDir: controller.registryRootDir,
+    controller: controller.controller,
+    scope: controller.scope,
+    stopLaunch: loaded.launch,
+  });
+  const result = await broker.stopWorker({
+    jobId: loaded.manifest.jobId,
+    registryRoot: controller.registryRootDir,
+    workspacePath: loaded.launch.config.workspacePath,
+    tmuxSession: loaded.launch.tmuxSession,
+  });
+  await writeCodexGoalStoppedProgress({
+    progressPath: loaded.launch.config.progressPath ?? codexGoalProgressPath({
+      jobRootDir: loaded.launch.config.jobRootDir,
+      taskId: loaded.launch.config.taskId,
+    }),
+    taskId: loaded.launch.config.taskId,
+    status: "stopped",
+  });
+  const statusAfter = await collectCodexGoalStatus(statusInput(loaded.launch));
+  const stopEventPath = await writeCodexGoalStopEvent({
+    jobId: loaded.manifest.jobId,
+    taskId: loaded.launch.config.taskId,
+    jobRootDir: loaded.launch.config.jobRootDir,
+    tmuxSession: loaded.launch.tmuxSession,
+    stopCommand: String(result.resourceId ?? stopCommand.preview),
+    forceStop: Boolean(args.forceStop),
+    statusBefore: status,
+    statusAfter,
+    brief,
+  });
+  return mcpJson({
+    ok: true,
+    mode: "project_control_stop",
+    controllerJobId: controller.controller.jobId,
+    registryRootDir: controller.registryRootDir,
+    auditPath: projectControlAuditPath(controller.controller),
+    jobId: loaded.manifest.jobId,
+    taskId: loaded.launch.config.taskId,
+    tmuxSession: loaded.launch.tmuxSession,
+    stopEventPath,
+    statusBefore: status,
+    statusAfter,
+    result: result as unknown as JsonObject,
+  });
+}
+
+async function projectControlMarkReviewed(args: ProjectControlMcpArgs) {
+  const controller = await loadProjectControlController(args);
+  const loaded = await loadJobLaunch({
+    registryRootDir: controller.registryRootDir,
+    jobId: requiredRawString(args.jobId, "jobId"),
+  });
+  const broker = codexProjectControlBroker({
+    registryRootDir: controller.registryRootDir,
+    controller: controller.controller,
+    scope: controller.scope,
+    reviewLaunch: loaded.launch,
+    reviewNote: stringValue(args.note) ?? "project_control_reviewed",
+  });
+  const result = await broker.writeReviewMarker({
+    jobId: loaded.manifest.jobId,
+    registryRoot: controller.registryRootDir,
+    workspacePath: loaded.launch.config.workspacePath,
+    ...(loaded.launch.tmuxSession ? { tmuxSession: loaded.launch.tmuxSession } : {}),
+    markerType: "review",
+    note: stringValue(args.note) ?? "project_control_reviewed",
+  });
+  return mcpJson({
+    ok: true,
+    mode: "project_control_mark_reviewed",
+    controllerJobId: controller.controller.jobId,
+    registryRootDir: controller.registryRootDir,
+    auditPath: projectControlAuditPath(controller.controller),
+    jobId: loaded.manifest.jobId,
+    result: result as unknown as JsonObject,
+  });
+}
+
+function projectControlChildScope(
+  parent: ProjectAccessScope,
+  workspacePath: string,
+): ProjectAccessScope {
+  return {
+    projectId: parent.projectId,
+    ...(parent.projectSlug ? { projectSlug: parent.projectSlug } : {}),
+    readRoots: uniqueProjectControlStrings([
+      ...(parent.readRoots ?? []),
+      workspacePath,
+      ...(parent.registryRoot ? [parent.registryRoot] : []),
+    ]),
+    isolatedWorkspaceRoot: workspacePath,
+    workspaceRoots: [workspacePath],
+    ...(parent.registryRoot ? { registryRoot: parent.registryRoot } : {}),
+    ...(parent.authRoot ? { authRoot: parent.authRoot } : {}),
+    ...(parent.deniedRoots ? { deniedRoots: parent.deniedRoots } : {}),
+    ...(parent.allowedAccountIds
+      ? { allowedAccountIds: parent.allowedAccountIds }
+      : {}),
+  };
+}
+
+function uniqueProjectControlStrings(values: readonly string[]): readonly string[] {
+  return [...new Set(values.filter((value) => value.length > 0))];
+}
+
+function assertProjectControlCreateManifestPaths(input: {
+  readonly scope: ProjectAccessScope;
+  readonly registryRootDir: string;
+  readonly manifest: CodexGoalJobManifestInput;
+}): void {
+  const jobRootBase = dirname(input.scope.registryRoot ?? input.registryRootDir);
+  if (!pathInsideOrEqual(input.manifest.jobRootDir, jobRootBase)) {
+    throw new Error("project_control_job_root_outside_scope");
+  }
+  if (!matchesProjectControlPrefix(
+    basename(input.manifest.jobRootDir),
+    input.scope.jobIdPrefixes ?? [],
+  )) {
+    throw new Error("project_control_job_root_prefix_denied");
+  }
+  if (!pathInsideAnyProjectRoot(
+    input.manifest.workspacePath,
+    [
+      ...(input.scope.workspaceRoots ?? []),
+      ...(input.scope.worktreeRoots ?? []),
+      ...(input.scope.isolatedWorkspaceRoot ? [input.scope.isolatedWorkspaceRoot] : []),
+    ],
+  )) {
+    throw new Error("project_control_workspace_outside_scope");
+  }
+
+  for (const [field, value] of [
+    ["promptPath", input.manifest.promptPath],
+    ["outputPath", input.manifest.outputPath],
+    ["progressPath", input.manifest.progressPath],
+    ["logPath", input.manifest.logPath],
+    ["stateRootDir", input.manifest.stateRootDir],
+  ] as const) {
+    if (
+      value &&
+      !pathInsideAnyProjectRoot(value, [
+        input.manifest.jobRootDir,
+        input.manifest.workspacePath,
+      ])
+    ) {
+      throw new Error(`project_control_${field}_outside_scope`);
+    }
+  }
+
+  if (
+    input.scope.authRoot &&
+    input.manifest.authRootDir &&
+    resolve(input.manifest.authRootDir) !== resolve(input.scope.authRoot)
+  ) {
+    throw new Error("project_control_auth_root_outside_scope");
+  }
+}
+
+function pathInsideAnyProjectRoot(
+  path: string,
+  roots: readonly string[],
+): boolean {
+  return roots.some((root) => pathInsideOrEqual(path, root));
+}
+
+function pathInsideOrEqual(path: string, root: string): boolean {
+  const normalizedPath = resolve(path);
+  const normalizedRoot = resolve(root);
+  return normalizedPath === normalizedRoot ||
+    normalizedPath.startsWith(`${normalizedRoot}/`);
+}
+
+function matchesProjectControlPrefix(
+  value: string,
+  prefixes: readonly string[],
+): boolean {
+  return prefixes.length === 0 ||
+    prefixes.some((prefix) => value.startsWith(prefix));
+}
+
+function projectControlPathArg(
+  args: ProjectControlMcpArgs,
+  value: unknown,
+  fieldName: string,
+): string {
+  const cwd = resolvePath(process.cwd(), stringValue(args.cwd) ?? process.cwd());
+  return requiredString(value, fieldName, cwd);
+}
+
+function assertSafeGitRefName(value: string, fieldName: string): void {
+  if (
+    value.startsWith("-") ||
+    value.includes("..") ||
+    /[\s~^:?*\\[\]\x00-\x1f\x7f]/.test(value) ||
+    value.endsWith("/") ||
+    value.endsWith(".") ||
+    value.includes("//") ||
+    value.length > 200
+  ) {
+    throw new Error(`project_control_${fieldName}_invalid`);
+  }
+}
+
+function assertSafeGitRemoteName(value: string, fieldName: string): void {
+  if (
+    value.startsWith("-") ||
+    !/^[A-Za-z0-9._-]+$/.test(value) ||
+    value.length > 100
+  ) {
+    throw new Error(`project_control_${fieldName}_invalid`);
+  }
+}
+
+function assertSafeGitCommitSha(value: string): void {
+  if (!/^[0-9a-fA-F]{7,64}$/.test(value)) {
+    throw new Error("project_control_commit_sha_invalid");
+  }
+}
+
+async function assertGitCurrentBranch(input: {
+  readonly workspacePath: string;
+  readonly branch: string;
+}): Promise<void> {
+  const current = await execGitStdout([
+    "-C",
+    input.workspacePath,
+    "rev-parse",
+    "--abbrev-ref",
+    "HEAD",
+  ]);
+  if (current.trim() !== input.branch) {
+    throw new Error("project_control_branch_mismatch");
+  }
+}
+
+async function execGit(args: readonly string[]): Promise<void> {
+  await execGitStdout(args);
+}
+
+async function execGitStdout(args: readonly string[]): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync("git", [...args], {
+      timeout: 120_000,
+      maxBuffer: 1024 * 1024,
+    });
+    return stdout;
+  } catch {
+    throw new Error(`project_control_git_failed:${gitOperationLabel(args)}`);
+  }
+}
+
+function gitOperationLabel(args: readonly string[]): string {
+  const command = args.find((arg) =>
+    arg === "worktree" ||
+    arg === "cherry-pick" ||
+    arg === "push" ||
+    arg === "rev-parse"
+  );
+  return command ?? "unknown";
+}
+
+async function writeCodexGoalReviewMarker(input: {
+  readonly jobId: string;
+  readonly launch: CodexGoalLaunchInput;
+  readonly note: string;
+}): Promise<string> {
+  await mkdir(input.launch.config.jobRootDir, { recursive: true, mode: 0o700 });
+  const reviewPath = join(
+    input.launch.config.jobRootDir,
+    `${input.launch.config.taskId}.review.json`,
+  );
+  const status = await collectCodexGoalStatus(statusInput(input.launch));
+  await writeFile(
+    reviewPath,
+    `${JSON.stringify({
+      schemaVersion: 1,
+      jobId: input.jobId,
+      taskId: input.launch.config.taskId,
+      reviewedAt: new Date().toISOString(),
+      note: input.note,
+      status,
+    }, null, 2)}\n`,
+    { encoding: "utf8", mode: 0o600 },
+  );
+  return reviewPath;
 }
 
 function codexGoalWorkerControlService(
@@ -3583,6 +4666,11 @@ function jobManifestInputFromArgs(args: JobCreateMcpArgs): CodexGoalJobManifestI
     args.jobRootDir ?? defaultCodexGoalJobRoot(jobId),
   );
   const controlModes = goalControlModesFromRecord(args as unknown as JsonObject);
+  const accessBoundary = optionalCodexGoalAccessBoundary(args.accessBoundary);
+  const projectAccessScope = parseCodexGoalProjectAccessScope(
+    args.projectAccessScope,
+  );
+  const networkAccess = optionalCodexGoalNetworkAccess(args.networkAccess);
   return {
     jobId,
     ...(stringValue(args.description) ? { description: stringValue(args.description) as string } : {}),
@@ -3606,6 +4694,12 @@ function jobManifestInputFromArgs(args: JobCreateMcpArgs): CodexGoalJobManifestI
     ...(args.staleLockMs ? { staleLockMs: args.staleLockMs } : {}),
     maxAccountCycles: args.maxAccountCycles ?? 5,
     ...controlModes,
+    ...(accessBoundary === undefined ? {} : { accessBoundary }),
+    ...(projectAccessScope === undefined ? {} : { projectAccessScope }),
+    ...(args.allowDangerFullAccess === undefined
+      ? {}
+      : { allowDangerFullAccess: args.allowDangerFullAccess }),
+    ...(networkAccess === undefined ? {} : { networkAccess }),
     allowDuplicateAccountIdentities: args.allowDuplicateAccountIdentities ?? false,
     requireGitWorkspace: args.requireGitWorkspace ?? true,
     prewarmOnStart: args.prewarmOnStart ?? false,
@@ -3653,6 +4747,26 @@ function jobManifestPatchFromArgs(args: JobUpdateMcpArgs): CodexGoalJobManifestP
       stringValue(args.providerSandboxMode),
       "providerSandboxMode",
     ),
+  );
+  putIfDefined(
+    patch,
+    "accessBoundary",
+    optionalCodexGoalAccessBoundary(args.accessBoundary),
+  );
+  putIfDefined(
+    patch,
+    "projectAccessScope",
+    parseCodexGoalProjectAccessScope(args.projectAccessScope),
+  );
+  putIfDefined(
+    patch,
+    "allowDangerFullAccess",
+    booleanValue(args.allowDangerFullAccess),
+  );
+  putIfDefined(
+    patch,
+    "networkAccess",
+    optionalCodexGoalNetworkAccess(args.networkAccess),
   );
   putIfDefined(
     patch,
@@ -4988,6 +6102,10 @@ function goalInputSchema(): Record<string, z.ZodTypeAny> {
     maxAccountCycles: z.number().int().positive().optional(),
     editMode: z.string().optional(),
     providerSandboxMode: z.string().optional(),
+    accessBoundary: z.string().optional(),
+    projectAccessScope: z.record(z.string(), z.unknown()).optional(),
+    allowDangerFullAccess: z.boolean().optional(),
+    networkAccess: z.string().optional(),
     allowDuplicateAccountIdentities: z.boolean().optional(),
     requireGitWorkspace: z.boolean().optional(),
     prewarmOnStart: z.boolean().optional(),

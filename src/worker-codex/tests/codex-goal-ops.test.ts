@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { LocalFileWorkerAccountCapacityStore } from "@vioxen/subscription-runtime/store-local-file";
 import {
+  AccessBoundary,
   RunProcessAliveReason,
   RunProcessSupervisorKind,
 } from "@vioxen/subscription-runtime/worker-core";
@@ -46,6 +47,26 @@ describe("codex goal ops", () => {
     expect(noTmux).not.toContain("refresh-secret");
     expect(tmux.preview).toContain("tmux new-session");
     expect(tmux.preview).toContain("tee -a");
+  });
+
+  it("fails closed before building a Codex project-scoped-control launch command", async () => {
+    const fixture = await createGoalFixture();
+    const launch = launchInput({
+      ...fixture.config,
+      accessBoundary: AccessBoundary.ProjectScopedControl,
+      projectAccessScope: {
+        projectId: "infinity-context",
+        workspaceRoots: [fixture.config.workspacePath],
+        jobIdPrefixes: ["infinity-context-"],
+      },
+    }, fixture.root);
+
+    expect(() => buildCodexGoalNoTmuxCommand(launch)).toThrow(
+      /codex_goal_access_boundary_blocked/,
+    );
+    expect(() => buildCodexGoalTmuxCommand(launch)).toThrow(
+      /codex_goal_access_boundary_blocked/,
+    );
   });
 
   it("creates job-root and artifact directories before starting tmux", async () => {

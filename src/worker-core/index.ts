@@ -1,5 +1,6 @@
 export * from "./errors";
 export * from "./types";
+export * from "./access-control";
 export * from "./account-capacity";
 export * from "./abort-signal";
 export * from "./control";
@@ -11,4 +12,5 @@ export * from "./run-events";
 export * from "./run-reconcile-preview";
 export * from "./runtime-result";
 export * from "./safe-execution";
+export * from "./project-control-broker";
 export * from "./worker-pool";

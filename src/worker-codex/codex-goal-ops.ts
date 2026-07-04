@@ -29,6 +29,7 @@ import {
   codexGoalRuntimeEventsPath,
   type CodexGoalRunConfig,
 } from "./codex-goal-runner";
+import { assertCodexGoalAccessLaunchAllowed } from "./codex-goal-access-plan";
 
 const execFileAsync = promisify(execFile);
 const gitStatusTimeoutMs = 5_000;
@@ -216,6 +217,7 @@ export type CodexGoalAccountStatusInput = {
 
 export function buildCodexGoalNoTmuxCommand(input: CodexGoalLaunchInput): string {
   const config = input.config;
+  assertCodexGoalAccessLaunchAllowed(config);
   const args = [
     ...input.cliCommand,
     "run",
@@ -250,6 +252,15 @@ export function buildCodexGoalNoTmuxCommand(input: CodexGoalLaunchInput): string
   pushOptionalNumber(args, "--max-account-cycles", config.maxAccountCycles);
   pushOptional(args, "--edit-mode", config.editMode);
   pushOptional(args, "--provider-sandbox-mode", config.providerSandboxMode);
+  pushOptional(args, "--access-boundary", config.accessBoundary);
+  if (config.projectAccessScope) {
+    args.push(
+      "--project-access-scope-json",
+      JSON.stringify(config.projectAccessScope),
+    );
+  }
+  if (config.allowDangerFullAccess) args.push("--allow-danger-full-access");
+  pushOptional(args, "--network-access", config.networkAccess);
   if (config.allowDuplicateAccountIdentities) args.push("--allow-duplicate-accounts");
   if (config.requireGitWorkspace === false) args.push("--no-require-git-workspace");
   if (config.prewarmOnStart) args.push("--prewarm");
@@ -281,6 +292,7 @@ export function buildCodexGoalTmuxCommand(
 export async function startCodexGoalTmux(
   input: CodexGoalLaunchInput,
 ): Promise<CodexGoalTmuxCommand> {
+  assertCodexGoalAccessLaunchAllowed(input.config);
   await prepareCodexGoalLaunchPaths(input);
   const command = buildCodexGoalTmuxCommand(input);
   await execFileAsync(await resolveTmuxExecutable(), command.args);

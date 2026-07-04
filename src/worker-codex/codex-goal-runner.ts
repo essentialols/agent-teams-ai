@@ -6,6 +6,11 @@ import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import type { ProviderTaskControls } from "@vioxen/subscription-runtime/core";
 import type {
+  AccessBoundary,
+  NetworkAccessMode,
+  ProjectAccessScope,
+} from "@vioxen/subscription-runtime/worker-core";
+import type {
   CodexReasoningEffort,
   CodexServiceTier,
 } from "@vioxen/subscription-runtime/provider-codex";
@@ -16,6 +21,7 @@ import type {
 } from "@vioxen/subscription-runtime/worker-core";
 import {
   GitPatchPreserver,
+  LaunchPlanStatus,
   normalizeWorkerReport,
   StrictResultRecorder,
   type RuntimeRecommendedAction,
@@ -32,6 +38,11 @@ import type {
   CodexWorkerExecutionEngine,
   FileBackendCodexWorkerResult,
 } from "./file-backend-codex-worker";
+import {
+  assertCodexGoalAccessLaunchAllowed,
+  buildCodexGoalAccessLaunchPlan,
+  codexGoalControlsForAccessBoundary,
+} from "./codex-goal-access-plan";
 
 const execFileAsync = promisify(execFile);
 const gitStatusTimeoutMs = 5_000;
@@ -68,6 +79,10 @@ export type CodexGoalRunConfig = {
   readonly maxReconnectRetriesPerAccount?: number;
   readonly editMode?: ProviderTaskControls["editMode"];
   readonly providerSandboxMode?: ProviderTaskControls["providerSandboxMode"];
+  readonly accessBoundary?: AccessBoundary;
+  readonly projectAccessScope?: ProjectAccessScope;
+  readonly allowDangerFullAccess?: boolean;
+  readonly networkAccess?: NetworkAccessMode.Disabled | NetworkAccessMode.Restricted;
   readonly goalSummary?: string;
   readonly codexGoalObjective?: string;
   readonly effectMode?: TaskEffectMode;
@@ -167,6 +182,7 @@ export async function runCodexGoal(
   deps: CodexGoalRunDeps = {},
 ): Promise<SafeExecutionRunResult<FileBackendCodexWorkerResult>> {
   assertCodexGoalRunConfig(config);
+  assertCodexGoalAccessLaunchAllowed(config);
   const prompt = await readFile(config.promptPath, "utf8");
   const progressPath = codexGoalProgressPath(config);
   const runtimeEventsPath = codexGoalRuntimeEventsPath(config);
@@ -208,6 +224,7 @@ export async function runCodexGoal(
       jobId: config.jobId ?? config.taskId,
       executionEngine: config.executionEngine ?? "app-server-goal",
     });
+    const controls = codexGoalControlsForAccessBoundary(config);
     const result = await executor.run({
       ...(config.jobId === undefined ? {} : { jobId: config.jobId }),
       taskId: config.taskId,
@@ -229,10 +246,7 @@ export async function runCodexGoal(
           }
         : {}),
       controls: {
-        editMode: config.editMode ?? "allow-edits",
-        ...(config.providerSandboxMode === undefined
-          ? {}
-          : { providerSandboxMode: config.providerSandboxMode }),
+        ...controls,
       },
       systemPrompt: codexGoalRunSystemPrompt(config),
       metadata: {
@@ -278,6 +292,12 @@ export function buildCodexGoalExecutorOptions(input: {
   readonly encryptionKey: Uint8Array;
 }): FileBackendCodexSafeExecutorOptions {
   const { config } = input;
+  const accessLaunchPlan = buildCodexGoalAccessLaunchPlan(config);
+  const commandPolicy =
+    accessLaunchPlan?.status === LaunchPlanStatus.Ready &&
+    accessLaunchPlan.commandPolicy.validateCommands
+      ? accessLaunchPlan.commandPolicy
+      : undefined;
   return {
     ...(config.executorId ? { executorId: config.executorId } : {}),
     stateRootDir: input.stateRootDir,
@@ -310,6 +330,7 @@ export function buildCodexGoalExecutorOptions(input: {
         capacityAccountId: account.name,
         taskTimeoutMs: config.taskTimeoutMs ?? 72 * 60 * 60 * 1000,
         sourceEnv: config.sourceEnv ?? process.env,
+        ...(commandPolicy === undefined ? {} : { commandPolicy }),
         ...(config.model ? { model: config.model } : {}),
         ...(config.reasoningEffort
           ? { reasoningEffort: config.reasoningEffort }

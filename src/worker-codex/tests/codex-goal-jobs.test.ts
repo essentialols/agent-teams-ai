@@ -1,7 +1,11 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import {
+  AccessBoundary,
+  NetworkAccessMode,
+} from "@vioxen/subscription-runtime/worker-core";
 import {
   codexGoalJobManifestPath,
   codexGoalJobToArgs,
@@ -92,6 +96,13 @@ describe("codex goal job registry", () => {
         reasoningEffort: "xhigh",
         serviceTier: "fast",
         workerReportMode: "structured-output",
+        accessBoundary: AccessBoundary.IsolatedWorkspaceWrite,
+        projectAccessScope: {
+          projectId: "infinity-context",
+          workspaceRoots: [join(root, "workspace")],
+          jobIdPrefixes: ["infinity-context-"],
+        },
+        networkAccess: NetworkAccessMode.Restricted,
       });
       expect(args).not.toHaveProperty("schemaVersion");
       expect(args).not.toHaveProperty("createdAt");
@@ -150,6 +161,130 @@ describe("codex goal job registry", () => {
           providerSandboxMode: "danger-full-access",
         },
       })).rejects.toThrow(/requires editMode "allow-edits"/);
+
+      const {
+        accessBoundary: _accessBoundary,
+        projectAccessScope: _projectAccessScope,
+        ...manifestWithoutAccessBoundary
+      } = jobManifest(root);
+      await expect(createCodexGoalJob({
+        registryRootDir: join(root, "registry"),
+        manifest: {
+          ...manifestWithoutAccessBoundary,
+          jobId: "job-raw-danger",
+          providerSandboxMode: "danger-full-access",
+        },
+      })).rejects.toThrow(/codex_goal_danger_full_access_requires_access_boundary/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects access-boundary manifests that cannot be enforced", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-jobs-"));
+
+    try {
+      const { projectAccessScope: _scope, ...manifestWithoutScope } =
+        jobManifest(root);
+      await expect(createCodexGoalJob({
+        registryRootDir: join(root, "registry"),
+        manifest: manifestWithoutScope,
+      })).rejects.toThrow(/codex_goal_access_boundary_blocked:missing_project_scope/);
+
+      await expect(createCodexGoalJob({
+        registryRootDir: join(root, "registry"),
+        manifest: {
+          ...jobManifest(root),
+          jobId: "job-danger",
+          accessBoundary: AccessBoundary.DangerFullAccess,
+          allowDangerFullAccess: false,
+        },
+      })).rejects.toThrow(/codex_goal_access_boundary_blocked/);
+
+      await expect(createCodexGoalJob({
+        registryRootDir: join(root, "registry"),
+        manifest: {
+          ...jobManifest(root),
+          jobId: "job-outside-workspace",
+          workspacePath: join(root, "other-project"),
+        },
+      })).rejects.toThrow(/codex_goal_job_workspacePath_denied:path_outside_scope/);
+
+      const outsideWorkspace = join(root, "outside-workspace");
+      const workspaceLink = join(root, "workspace-link");
+      await mkdir(outsideWorkspace, { recursive: true });
+      await symlink(outsideWorkspace, workspaceLink, "dir");
+      await expect(createCodexGoalJob({
+        registryRootDir: join(root, "registry"),
+        manifest: {
+          ...jobManifest(root),
+          jobId: "job-symlink-workspace",
+          workspacePath: workspaceLink,
+          projectAccessScope: {
+            projectId: "infinity-context",
+            workspaceRoots: [workspaceLink],
+            jobIdPrefixes: ["infinity-context-"],
+          },
+        },
+      })).rejects.toThrow(/codex_goal_job_workspacePath_denied:path_outside_scope/);
+
+      await expect(createCodexGoalJob({
+        registryRootDir: join(root, "registry"),
+        manifest: {
+          ...jobManifest(root),
+          jobId: "job-account-denied",
+          projectAccessScope: {
+            projectId: "infinity-context",
+            workspaceRoots: [join(root, "workspace")],
+            jobIdPrefixes: ["infinity-context-"],
+            allowedAccountIds: ["account-a"],
+          },
+        },
+      })).rejects.toThrow(/codex_goal_job_account_denied:account_denied/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("allows brokered project-scoped control manifests but rejects missing scope", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-jobs-"));
+    const projectControlManifest = {
+      ...jobManifest(root),
+      jobId: "infinity-context-project-control",
+      tmuxSession: "infinity-context-project-control",
+      accessBoundary: AccessBoundary.ProjectScopedControl,
+      networkAccess: NetworkAccessMode.Restricted,
+      projectAccessScope: {
+        projectId: "infinity-context",
+        registryRoot: join(root, "registry"),
+        workspaceRoots: [join(root, "workspace")],
+        worktreeRoots: [join(root, "worktrees")],
+        jobIdPrefixes: ["infinity-context-"],
+        tmuxSessionPrefixes: ["infinity-context-"],
+        allowedBranches: ["main"],
+        allowedGitRemotes: ["origin"],
+        allowedAccountIds: ["account-a", "account-b"],
+      },
+    } satisfies CodexGoalJobManifestInput;
+
+    try {
+      await expect(createCodexGoalJob({
+        registryRootDir: join(root, "registry"),
+        manifest: projectControlManifest,
+      })).resolves.toMatchObject({
+        jobId: "infinity-context-project-control",
+        accessBoundary: AccessBoundary.ProjectScopedControl,
+      });
+
+      const { projectAccessScope: _scope, ...missingScope } =
+        projectControlManifest;
+      await expect(createCodexGoalJob({
+        registryRootDir: join(root, "registry"),
+        manifest: {
+          ...missingScope,
+          jobId: "project-control-no-scope",
+        },
+      })).rejects.toThrow(/codex_goal_access_boundary_blocked:missing_project_scope/);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -176,6 +311,13 @@ function jobManifest(root: string): CodexGoalJobManifestInput {
     taskTimeoutMs: 72 * 60 * 60 * 1000,
     maxAccountCycles: 3,
     editMode: "allow-edits",
+    accessBoundary: AccessBoundary.IsolatedWorkspaceWrite,
+    projectAccessScope: {
+      projectId: "infinity-context",
+      workspaceRoots: [join(root, "workspace")],
+      jobIdPrefixes: ["infinity-context-"],
+    },
+    networkAccess: NetworkAccessMode.Restricted,
     allowDuplicateAccountIdentities: false,
     requireGitWorkspace: true,
     prewarmOnStart: false,

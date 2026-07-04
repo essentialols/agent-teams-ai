@@ -56,12 +56,12 @@ vi.mock('../TeamProvisioningAuthRetryRecoveryBoundaryFactory', async (importOrig
 });
 
 type TestRun = TeamProvisioningOutputRecoveryFacadeRun;
-type OutputBoundaryDepsForTest = {
+interface OutputBoundaryDepsForTest {
   service: {
     respawnAfterAuthFailure(run: TestRun): Promise<void>;
   };
-};
-type AuthRetryBoundaryDepsForTest = {
+}
+interface AuthRetryBoundaryDepsForTest {
   service: {
     stopStallWatchdog(run: TestRun): void;
     attachStdoutHandler(run: TestRun): void;
@@ -72,7 +72,7 @@ type AuthRetryBoundaryDepsForTest = {
     tryCompleteAfterTimeout(run: TestRun): Promise<boolean>;
     handleProcessExit(run: TestRun, code: number | null): Promise<void> | void;
   };
-};
+}
 
 function progress(): TeamProvisioningProgress {
   return {
@@ -167,7 +167,7 @@ function makeFacade(service = makeService()): TeamProvisioningOutputRecoveryFaca
   return new TeamProvisioningOutputRecoveryFacade<TestRun>({
     service,
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
-    mcpConfigBuilder: { writeConfigFile: vi.fn(async () => '/tmp/mcp.json') },
+    mcpConfigBuilder: { writeConfigFile: vi.fn(async () => '/workspace/mcp.json') },
     providerRuntime: {
       validateAgentTeamsMcpRuntime: vi.fn(async () => undefined),
     },
@@ -229,7 +229,7 @@ describe('TeamProvisioningOutputRecoveryFacade', () => {
     const run = makeRun();
 
     const outputCalls = mocks.createOutputBoundary.mock
-      .calls as unknown as Array<[OutputBoundaryDepsForTest]>;
+      .calls as unknown as [OutputBoundaryDepsForTest][];
     const outputDeps = outputCalls.at(-1)?.[0];
     await outputDeps?.service.respawnAfterAuthFailure(run);
 
@@ -242,7 +242,7 @@ describe('TeamProvisioningOutputRecoveryFacade', () => {
     const run = makeRun();
 
     const authRetryCalls = mocks.createAuthRetryBoundary.mock
-      .calls as unknown as Array<[AuthRetryBoundaryDepsForTest]>;
+      .calls as unknown as [AuthRetryBoundaryDepsForTest][];
     const authRetryDeps = authRetryCalls.at(-1)?.[0];
     authRetryDeps?.service.stopStallWatchdog(run);
     authRetryDeps?.service.attachStdoutHandler(run);

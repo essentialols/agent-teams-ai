@@ -10,11 +10,14 @@ import {
 import type { TeamProvisioningProgress } from '@shared/types';
 
 type TestRun = TeamProvisioningTurnCompletePortsFactoryRun;
-type TestSecondaryLaunchResult = { launched: boolean };
+interface TestSecondaryLaunchResult {
+  launched: boolean;
+}
 type TestServiceAdapter = TeamProvisioningTurnCompleteServiceAdapter<
   TestRun,
   TestSecondaryLaunchResult
 >;
+const PROJECT_CWD = '/workspace/project';
 
 function createProgress(
   overrides: Partial<TeamProvisioningProgress> = {}
@@ -40,7 +43,7 @@ function createRun(overrides: Partial<TestRun> = {}): TestRun {
     timeoutHandle: null,
     isLaunch: true,
     request: {
-      cwd: '/tmp/project',
+      cwd: PROJECT_CWD,
       color: 'blue',
       members: [],
     },
@@ -140,7 +143,7 @@ describe('TeamProvisioningTurnCompletePortsFactory', () => {
     expect(ports.hasApiError('runtime emitted api error: 429 model cooldown')).toBe(true);
     expect(ports.isAuthFailureWarning('API Error: 401 Unauthorized', 'pre-complete')).toBe(true);
 
-    await ports.updateConfigPostLaunch('atlas-hq', '/tmp/project', 'session-1', 'blue', {
+    await ports.updateConfigPostLaunch('atlas-hq', PROJECT_CWD, 'session-1', 'blue', {
       providerId: undefined,
       model: undefined,
       effort: undefined,
@@ -155,7 +158,7 @@ describe('TeamProvisioningTurnCompletePortsFactory', () => {
 
     expect(config.updateConfigPostLaunch).toHaveBeenCalledWith(
       'atlas-hq',
-      '/tmp/project',
+      PROJECT_CWD,
       'session-1',
       'blue',
       {

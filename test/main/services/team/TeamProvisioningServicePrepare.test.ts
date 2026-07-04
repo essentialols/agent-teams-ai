@@ -363,6 +363,41 @@ function asPrivateService(svc: TeamProvisioningService): TeamProvisioningService
   return svc as unknown as TeamProvisioningServicePrivate;
 }
 
+interface TeamProvisioningOutputRecoveryFacadeHarness {
+  handleAuthFailureInOutput(run: unknown, text: string, source: string): void;
+}
+
+function outputRecoveryFacadeHarness(
+  svc: TeamProvisioningService
+): TeamProvisioningOutputRecoveryFacadeHarness {
+  return (
+    svc as unknown as {
+      outputRecoveryFacade: TeamProvisioningOutputRecoveryFacadeHarness;
+    }
+  ).outputRecoveryFacade;
+}
+
+interface TeamProvisioningConfigFacadeHarness {
+  updateConfigPostLaunch(
+    teamName: string,
+    cwd: string,
+    detectedSessionId: string | null,
+    color?: string,
+    options?: unknown
+  ): Promise<void>;
+  cleanupPrelaunchBackup(teamName: string): Promise<void>;
+}
+
+function configFacadeHarness(
+  svc: TeamProvisioningService
+): TeamProvisioningConfigFacadeHarness {
+  return (
+    svc as unknown as {
+      configFacade: TeamProvisioningConfigFacadeHarness;
+    }
+  ).configFacade;
+}
+
 async function removeTempRoot(dirPath: string): Promise<void> {
   if (!dirPath) {
     return;
@@ -4245,9 +4280,12 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
 
   it('does not re-check auth from stdout json noise during pre-complete finalization', async () => {
     const svc = new TeamProvisioningService();
-    const handleAuthFailureInOutput = vi.spyOn(svc as any, 'handleAuthFailureInOutput');
-    vi.spyOn(svc as any, 'updateConfigPostLaunch').mockResolvedValue(undefined);
-    vi.spyOn(svc as any, 'cleanupPrelaunchBackup').mockResolvedValue(undefined);
+    const handleAuthFailureInOutput = vi.spyOn(
+      outputRecoveryFacadeHarness(svc),
+      'handleAuthFailureInOutput'
+    );
+    vi.spyOn(configFacadeHarness(svc), 'updateConfigPostLaunch').mockResolvedValue(undefined);
+    vi.spyOn(configFacadeHarness(svc), 'cleanupPrelaunchBackup').mockResolvedValue(undefined);
     vi.spyOn(svc as any, 'relayLeadInboxMessages').mockResolvedValue(undefined);
 
     const run = {
@@ -4312,7 +4350,7 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
   it('re-checks a trailing plaintext stdout auth failure during pre-complete finalization', async () => {
     const svc = new TeamProvisioningService();
     const handleAuthFailureInOutput = vi
-      .spyOn(svc as any, 'handleAuthFailureInOutput')
+      .spyOn(outputRecoveryFacadeHarness(svc), 'handleAuthFailureInOutput')
       .mockImplementation(() => undefined);
 
     const run = {

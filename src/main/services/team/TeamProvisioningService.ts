@@ -350,7 +350,6 @@ import { createOpenCodeRuntimeRecoveryIdentityHelpers } from './provisioning/Tea
 import { createTeamProvisioningOpenCodeSecondaryEvidenceOverlayPorts } from './provisioning/TeamProvisioningOpenCodeSecondaryEvidenceOverlayPortsFactory';
 import { writeOpenCodeTeamConfig } from './provisioning/TeamProvisioningOpenCodeTeamConfigWriter';
 import {
-  type AuthWarningSource,
   isAuthFailureWarning,
   normalizeApiRetryErrorMessage,
 } from './provisioning/TeamProvisioningOutputErrorPolicy';
@@ -4087,66 +4086,6 @@ export class TeamProvisioningService {
       runOpenCodeTeamRuntimeAdapterLaunch: (input) =>
         this.runOpenCodeTeamRuntimeAdapterLaunch(input),
     };
-  }
-
-  private failProvisioningWithApiError(run: ProvisioningRun, source: string): void {
-    this.outputRecoveryFacade.failProvisioningWithApiError(run, source);
-  }
-
-  private emitApiErrorWarning(run: ProvisioningRun, text: string): void {
-    this.outputRecoveryFacade.emitApiErrorWarning(run, text);
-  }
-
-  private startStallWatchdog(run: ProvisioningRun): void {
-    this.outputRecoveryFacade.startStallWatchdog(run);
-  }
-
-  private stopStallWatchdog(run: ProvisioningRun): void {
-    this.outputRecoveryFacade.stopStallWatchdog(run);
-  }
-
-  private handleAuthFailureInOutput(
-    run: ProvisioningRun,
-    text: string,
-    source: AuthWarningSource
-  ): void {
-    this.outputRecoveryFacade.handleAuthFailureInOutput(run, text, source);
-  }
-
-  private async respawnAfterAuthFailure(run: ProvisioningRun): Promise<void> {
-    await this.outputRecoveryFacade.respawnAfterAuthFailure(run);
-  }
-
-  private attachStdoutHandler(run: ProvisioningRun): void {
-    this.outputRecoveryFacade.attachStdoutHandler(run);
-  }
-
-  private updateStdoutParserCarry(run: ProvisioningRun, carry: string): void {
-    this.outputRecoveryFacade.updateStdoutParserCarry(run, carry);
-  }
-
-  private flushStdoutParserCarry(run: ProvisioningRun): void {
-    this.outputRecoveryFacade.flushStdoutParserCarry(run);
-  }
-
-  private buildStdoutCarryDiagnostic(run: ProvisioningRun): Record<string, unknown> {
-    return this.outputRecoveryFacade.buildStdoutCarryDiagnostic(run);
-  }
-
-  private getUnconfirmedBootstrapMemberNames(run: ProvisioningRun): string[] {
-    return this.outputRecoveryFacade.getUnconfirmedBootstrapMemberNames(run);
-  }
-
-  private handleStdoutParserLine(run: ProvisioningRun, trimmed: string): void {
-    this.outputRecoveryFacade.handleStdoutParserLine(run, trimmed);
-  }
-
-  private handleParsedStdoutJsonMessage(run: ProvisioningRun, msg: Record<string, unknown>): void {
-    this.outputRecoveryFacade.handleParsedStdoutJsonMessage(run, msg);
-  }
-
-  private attachStderrHandler(run: ProvisioningRun): void {
-    this.outputRecoveryFacade.attachStderrHandler(run);
   }
 
   private createDeterministicCreateRunFlowPorts(): DeterministicCreateRunFlowPorts<

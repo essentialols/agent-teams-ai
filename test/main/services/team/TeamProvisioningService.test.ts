@@ -481,10 +481,14 @@ async function startDeterministicLaunchCloseHarness(options?: {
   (svc as any).assertConfigLeadOnlyForLaunch = vi.fn(async () => {});
   (svc as any).updateConfigProjectPath = vi.fn(async () => {});
   (svc as any).restorePrelaunchConfig = vi.fn(async () => {});
-  (svc as any).validateAgentTeamsMcpRuntime = vi.fn(async () => {});
+  vi.spyOn(providerRuntimeHarness(svc), 'validateAgentTeamsMcpRuntime').mockResolvedValue(
+    undefined
+  );
   (svc as any).persistLaunchStateSnapshot = vi.fn(async () => {});
   (svc as any).startFilesystemMonitor = vi.fn();
-  (svc as any).waitForValidConfig = vi.fn(async () => ({ ok: false }));
+  vi.spyOn(verificationProbePortsHarness(svc), 'waitForValidConfig').mockResolvedValue({
+    ok: false,
+  });
   (svc as any).pathExists = vi.fn(async (targetPath: string) =>
     targetPath.endsWith(`${leadSessionId}.jsonl`)
   );
@@ -821,6 +825,60 @@ type TeamProvisioningServicePrivateHarness = {
 
 function privateHarness(svc: TeamProvisioningService): TeamProvisioningServicePrivateHarness {
   return svc as unknown as TeamProvisioningServicePrivateHarness;
+}
+
+interface TeamProvisioningOutputRecoveryFacadeHarness {
+  updateStdoutParserCarry(run: unknown, carry: string): void;
+  flushStdoutParserCarry(run: unknown): void;
+  respawnAfterAuthFailure(run: unknown): Promise<void>;
+}
+
+function outputRecoveryFacadeHarness(
+  svc: TeamProvisioningService
+): TeamProvisioningOutputRecoveryFacadeHarness {
+  return (
+    svc as unknown as {
+      outputRecoveryFacade: TeamProvisioningOutputRecoveryFacadeHarness;
+    }
+  ).outputRecoveryFacade;
+}
+
+interface TeamProvisioningProviderRuntimeHarness {
+  validateAgentTeamsMcpRuntime(
+    claudePath: string,
+    cwd: string,
+    env: NodeJS.ProcessEnv,
+    mcpConfigPath: string,
+    options?: unknown
+  ): Promise<void>;
+}
+
+function providerRuntimeHarness(
+  svc: TeamProvisioningService
+): TeamProvisioningProviderRuntimeHarness {
+  return (
+    svc as unknown as {
+      providerRuntime: TeamProvisioningProviderRuntimeHarness;
+    }
+  ).providerRuntime;
+}
+
+interface TeamProvisioningVerificationProbePortsHarness {
+  waitForValidConfig(run: unknown): Promise<{
+    ok: boolean;
+    location?: string;
+    configPath?: string;
+  }>;
+}
+
+function verificationProbePortsHarness(
+  svc: TeamProvisioningService
+): TeamProvisioningVerificationProbePortsHarness {
+  return (
+    svc as unknown as {
+      verificationProbePorts: TeamProvisioningVerificationProbePortsHarness;
+    }
+  ).verificationProbePorts;
 }
 
 function runtimeResourceSamplingHarness(
@@ -2606,7 +2664,7 @@ describe('TeamProvisioningService', () => {
         PROGRESS_RETAINED_LOG_CHARS + 5_000
       )}`;
 
-      (svc as any).updateStdoutParserCarry(run, hugeIncompleteJson);
+      outputRecoveryFacadeHarness(svc).updateStdoutParserCarry(run, hugeIncompleteJson);
 
       expect(run.stdoutParserCarry.length).toBeLessThanOrEqual(PROGRESS_RETAINED_LOG_CHARS);
       expect(run.stdoutParserCarry).not.toBe(hugeIncompleteJson);
@@ -18694,7 +18752,9 @@ describe('TeamProvisioningService', () => {
       env: { ANTHROPIC_API_KEY: 'test' },
       authSource: 'anthropic_api_key',
     }));
-    (svc as any).validateAgentTeamsMcpRuntime = vi.fn(async () => {});
+    vi.spyOn(providerRuntimeHarness(svc), 'validateAgentTeamsMcpRuntime').mockResolvedValue(
+      undefined
+    );
     (svc as any).pathExists = vi.fn(async () => false);
 
     await expect(
@@ -18894,10 +18954,6 @@ describe('TeamProvisioningService', () => {
       (svc as any).pathExists = vi.fn(async () => false);
       (svc as any).startFilesystemMonitor = vi.fn();
       (svc as any).stopFilesystemMonitor = vi.fn();
-      (svc as any).startStallWatchdog = vi.fn();
-      (svc as any).stopStallWatchdog = vi.fn();
-      (svc as any).attachStdoutHandler = vi.fn();
-      (svc as any).attachStderrHandler = vi.fn();
       (svc as any).resolveAndValidateLaunchIdentity = vi.fn(async () => ({
         providerId: 'codex',
         providerBackendId: 'codex-native',
@@ -20519,14 +20575,12 @@ describe('TeamProvisioningService', () => {
       env: { ANTHROPIC_API_KEY: 'test' },
       authSource: 'anthropic_api_key',
     }));
-    (svc as any).validateAgentTeamsMcpRuntime = vi.fn(async () => {});
+    vi.spyOn(providerRuntimeHarness(svc), 'validateAgentTeamsMcpRuntime').mockResolvedValue(
+      undefined
+    );
     (svc as any).pathExists = vi.fn(async () => false);
     (svc as any).startFilesystemMonitor = vi.fn();
     (svc as any).stopFilesystemMonitor = vi.fn();
-    (svc as any).startStallWatchdog = vi.fn();
-    (svc as any).stopStallWatchdog = vi.fn();
-    (svc as any).attachStdoutHandler = vi.fn();
-    (svc as any).attachStderrHandler = vi.fn();
 
     const { runId } = await svc.createTeam(
       {
@@ -20546,7 +20600,7 @@ describe('TeamProvisioningService', () => {
     run.mcpConfigPath = run.spawnContext.args[mcpFlagIdx + 1];
     run.authRetryInProgress = true;
 
-    const respawnPromise = (svc as any).respawnAfterAuthFailure(run);
+    const respawnPromise = outputRecoveryFacadeHarness(svc).respawnAfterAuthFailure(run);
     await vi.advanceTimersByTimeAsync(2000);
     await respawnPromise;
 
@@ -21479,7 +21533,9 @@ describe('TeamProvisioningService', () => {
     (svc as any).assertConfigLeadOnlyForLaunch = vi.fn(async () => {});
     (svc as any).updateConfigProjectPath = vi.fn(async () => {});
     (svc as any).restorePrelaunchConfig = vi.fn(async () => {});
-    (svc as any).validateAgentTeamsMcpRuntime = vi.fn(async () => {});
+    vi.spyOn(providerRuntimeHarness(svc), 'validateAgentTeamsMcpRuntime').mockResolvedValue(
+      undefined
+    );
     (svc as any).persistLaunchStateSnapshot = vi.fn(async () => {});
     (svc as any).startFilesystemMonitor = vi.fn();
     (svc as any).pathExists = vi.fn(async (targetPath: string) =>
@@ -21523,7 +21579,9 @@ describe('TeamProvisioningService', () => {
     (svc as any).assertConfigLeadOnlyForLaunch = vi.fn(async () => {});
     (svc as any).updateConfigProjectPath = vi.fn(async () => {});
     (svc as any).restorePrelaunchConfig = vi.fn(async () => {});
-    (svc as any).validateAgentTeamsMcpRuntime = vi.fn(async () => {});
+    vi.spyOn(providerRuntimeHarness(svc), 'validateAgentTeamsMcpRuntime').mockResolvedValue(
+      undefined
+    );
     (svc as any).persistLaunchStateSnapshot = vi.fn(async () => {});
     (svc as any).startFilesystemMonitor = vi.fn();
     (svc as any).pathExists = vi.fn(async (targetPath: string) =>
@@ -21573,7 +21631,9 @@ describe('TeamProvisioningService', () => {
     (svc as any).assertConfigLeadOnlyForLaunch = vi.fn(async () => {});
     (svc as any).updateConfigProjectPath = vi.fn(async () => {});
     (svc as any).restorePrelaunchConfig = vi.fn(async () => {});
-    (svc as any).validateAgentTeamsMcpRuntime = vi.fn(async () => {});
+    vi.spyOn(providerRuntimeHarness(svc), 'validateAgentTeamsMcpRuntime').mockResolvedValue(
+      undefined
+    );
     (svc as any).persistLaunchStateSnapshot = vi.fn(async () => {});
     (svc as any).startFilesystemMonitor = vi.fn();
     (svc as any).pathExists = vi.fn(async (targetPath: string) =>
@@ -21605,7 +21665,7 @@ describe('TeamProvisioningService', () => {
     await Promise.resolve();
     expect(complete).not.toHaveBeenCalled();
 
-    (svc as any).flushStdoutParserCarry(run);
+    outputRecoveryFacadeHarness(svc).flushStdoutParserCarry(run);
 
     expect(complete).not.toHaveBeenCalled();
     expect(run.lastDeterministicBootstrapSeq).toBe(1);
@@ -21776,8 +21836,6 @@ describe('TeamProvisioningService', () => {
     (svc as any).validateAgentTeamsMcpRuntime = vi.fn(async () => {});
     (svc as any).pathExists = vi.fn(async () => false);
     (svc as any).startFilesystemMonitor = vi.fn();
-    (svc as any).startStallWatchdog = vi.fn();
-    (svc as any).stopStallWatchdog = vi.fn();
     (svc as any).resolveAndValidateLaunchIdentity = vi.fn(async () => ({
       providerId: 'codex',
       providerBackendId: 'codex-native',
@@ -21869,8 +21927,6 @@ describe('TeamProvisioningService', () => {
     (svc as any).validateAgentTeamsMcpRuntime = vi.fn(async () => {});
     (svc as any).pathExists = vi.fn(async () => false);
     (svc as any).startFilesystemMonitor = vi.fn();
-    (svc as any).startStallWatchdog = vi.fn();
-    (svc as any).stopStallWatchdog = vi.fn();
     (svc as any).resolveAndValidateLaunchIdentity = vi.fn(async () => ({
       providerId: 'codex',
       providerBackendId: 'codex-native',
@@ -21960,8 +22016,6 @@ describe('TeamProvisioningService', () => {
     (svc as any).validateAgentTeamsMcpRuntime = vi.fn(async () => {});
     (svc as any).pathExists = vi.fn(async () => false);
     (svc as any).startFilesystemMonitor = vi.fn();
-    (svc as any).startStallWatchdog = vi.fn();
-    (svc as any).stopStallWatchdog = vi.fn();
     (svc as any).resolveAndValidateLaunchIdentity = vi.fn(async () => ({
       providerId: 'codex',
       providerBackendId: 'codex-native',
@@ -22044,7 +22098,7 @@ describe('TeamProvisioningService', () => {
       targetPath.endsWith(`${leadSessionId}.jsonl`)
     );
     const waitForValidConfig = vi
-      .spyOn(svc as any, 'waitForValidConfig')
+      .spyOn(verificationProbePortsHarness(svc), 'waitForValidConfig')
       .mockResolvedValue({ ok: false });
     const progressStates: string[] = [];
 
@@ -22247,17 +22301,19 @@ describe('TeamProvisioningService', () => {
     (svc as any).assertConfigLeadOnlyForLaunch = vi.fn(async () => {});
     (svc as any).updateConfigProjectPath = vi.fn(async () => {});
     (svc as any).restorePrelaunchConfig = vi.fn(async () => {});
-    (svc as any).validateAgentTeamsMcpRuntime = vi.fn(async () => {});
+    vi.spyOn(providerRuntimeHarness(svc), 'validateAgentTeamsMcpRuntime').mockResolvedValue(
+      undefined
+    );
     (svc as any).persistLaunchStateSnapshot = vi.fn(async () => {});
     (svc as any).startFilesystemMonitor = vi.fn();
     (svc as any).pathExists = vi.fn(async (targetPath: string) =>
       targetPath.endsWith(`${leadSessionId}.jsonl`)
     );
     const waitForValidConfig = vi
-      .spyOn(svc as any, 'waitForValidConfig')
+      .spyOn(verificationProbePortsHarness(svc), 'waitForValidConfig')
       .mockResolvedValue({ ok: false });
     const respawnAfterAuthFailure = vi
-      .spyOn(svc as any, 'respawnAfterAuthFailure')
+      .spyOn(outputRecoveryFacadeHarness(svc), 'respawnAfterAuthFailure')
       .mockResolvedValue(undefined);
     const progressStates: string[] = [];
 
@@ -22478,11 +22534,16 @@ describe('TeamProvisioningService', () => {
 
   it('preserves the CLI login hint on launch process exit', async () => {
     allowConsoleLogs();
-    const { child, progressUpdates, svc } = await startDeterministicLaunchCloseHarness({
+    const { child, progressUpdates, run, svc } = await startDeterministicLaunchCloseHarness({
       teamName: 'launch-login-hint-preserved',
       members: ['alice'],
     });
-    vi.spyOn(svc as any, 'handleAuthFailureInOutput').mockImplementation(() => {});
+    vi.spyOn(outputRecoveryFacadeHarness(svc), 'respawnAfterAuthFailure').mockImplementation(
+      () => {
+        run.authRetryInProgress = false;
+        return Promise.resolve();
+      }
+    );
 
     child.stderr.emit('data', Buffer.from('Please run /login to continue\n', 'utf8'));
     child.emit('close', 1);

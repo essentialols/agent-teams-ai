@@ -81,6 +81,17 @@ function createService(): ReceiverBoundService {
         return null;
       },
     },
+    configFacade: {
+      async readConfigForStrictDecision() {
+        return null;
+      },
+      readPersistedRuntimeMembers() {
+        return [];
+      },
+      readPersistedTeamProjectPath() {
+        return '/project';
+      },
+    },
     providerRuntime: {
       async buildProvisioningEnv(
         this: { marker: string },
@@ -169,14 +180,8 @@ function createService(): ReceiverBoundService {
       this.events.push(`service:is-current:${run.id}`);
       return true;
     },
-    async readConfigForStrictDecision() {
-      return null;
-    },
     async getLiveTeamAgentRuntimeMetadata() {
       return new Map();
-    },
-    readPersistedRuntimeMembers() {
-      return [];
     },
     async persistLaunchStateSnapshot(this: ReceiverBoundService, run) {
       this.events.push(`service:persist-launch:${run.id}`);
@@ -215,9 +220,6 @@ function createService(): ReceiverBoundService {
     },
     async writeLaunchStateSnapshot() {
       return null;
-    },
-    readPersistedTeamProjectPath() {
-      return '/project';
     },
   };
 }

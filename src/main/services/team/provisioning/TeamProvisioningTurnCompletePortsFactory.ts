@@ -23,8 +23,6 @@ type ServicePortKey =
   | 'setLeadActivity'
   | 'stopFilesystemMonitor'
   | 'stopStallWatchdog'
-  | 'updateConfigPostLaunch'
-  | 'cleanupPrelaunchBackup'
   | 'refreshMemberSpawnStatusesFromLeadInbox'
   | 'maybeAuditMemberSpawnStatuses'
   | 'finalizeMissingRegisteredMembersAsFailed'
@@ -41,7 +39,6 @@ type ServicePortKey =
   | 'relayLeadInboxMessages'
   | 'injectGeminiPostLaunchHydration'
   | 'waitForValidConfig'
-  | 'persistMembersMeta'
   | 'writeLaunchFailureArtifactPackBestEffort'
   | 'cleanupRun';
 
@@ -55,6 +52,10 @@ export interface TeamProvisioningTurnCompletePortsFactoryDeps<
   TSecondaryLaunchResult,
 > {
   service: TeamProvisioningTurnCompleteServiceAdapter<TRun, TSecondaryLaunchResult>;
+  config: Pick<
+    TeamProvisioningTurnCompletePorts<TRun, TSecondaryLaunchResult>,
+    'updateConfigPostLaunch' | 'cleanupPrelaunchBackup' | 'persistMembersMeta'
+  >;
   updateProgress: TeamProvisioningTurnCompletePorts<TRun, TSecondaryLaunchResult>['updateProgress'];
   provisioningRunByTeam: TeamProvisioningTurnCompletePorts<
     TRun,
@@ -111,8 +112,8 @@ export function createTeamProvisioningTurnCompletePorts<
     stopFilesystemMonitor: (run) => deps.service.stopFilesystemMonitor(run),
     stopStallWatchdog: (run) => deps.service.stopStallWatchdog(run),
     updateConfigPostLaunch: (teamName, cwd, detectedSessionId, color, options) =>
-      deps.service.updateConfigPostLaunch(teamName, cwd, detectedSessionId, color, options),
-    cleanupPrelaunchBackup: (teamName) => deps.service.cleanupPrelaunchBackup(teamName),
+      deps.config.updateConfigPostLaunch(teamName, cwd, detectedSessionId, color, options),
+    cleanupPrelaunchBackup: (teamName) => deps.config.cleanupPrelaunchBackup(teamName),
     refreshMemberSpawnStatusesFromLeadInbox: (run) =>
       deps.service.refreshMemberSpawnStatusesFromLeadInbox(run),
     maybeAuditMemberSpawnStatuses: (run, options) =>
@@ -147,7 +148,7 @@ export function createTeamProvisioningTurnCompletePorts<
     relayLeadInboxMessages: (teamName) => deps.service.relayLeadInboxMessages(teamName),
     injectGeminiPostLaunchHydration: (run) => deps.service.injectGeminiPostLaunchHydration(run),
     waitForValidConfig: (run, timeoutMs) => deps.service.waitForValidConfig(run, timeoutMs),
-    persistMembersMeta: (teamName, request) => deps.service.persistMembersMeta(teamName, request),
+    persistMembersMeta: (teamName, request) => deps.config.persistMembersMeta(teamName, request),
     writeLaunchFailureArtifactPackBestEffort: (run, options) =>
       deps.service.writeLaunchFailureArtifactPackBestEffort(run, options),
     killTeamProcess: deps.killTeamProcess ?? defaultKillTeamProcess,

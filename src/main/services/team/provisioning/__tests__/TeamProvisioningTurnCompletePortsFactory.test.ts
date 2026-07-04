@@ -70,8 +70,6 @@ function createServiceAdapter(overrides: Partial<TestServiceAdapter> = {}): Test
     setLeadActivity: vi.fn(),
     stopFilesystemMonitor: vi.fn(),
     stopStallWatchdog: vi.fn(),
-    updateConfigPostLaunch: vi.fn(async () => undefined),
-    cleanupPrelaunchBackup: vi.fn(async () => undefined),
     refreshMemberSpawnStatusesFromLeadInbox: vi.fn(async () => undefined),
     maybeAuditMemberSpawnStatuses: vi.fn(async () => undefined),
     finalizeMissingRegisteredMembersAsFailed: vi.fn(async () => undefined),
@@ -93,7 +91,6 @@ function createServiceAdapter(overrides: Partial<TestServiceAdapter> = {}): Test
     relayLeadInboxMessages: vi.fn(async () => undefined),
     injectGeminiPostLaunchHydration: vi.fn(async () => undefined),
     waitForValidConfig: vi.fn(async () => ({ ok: true, location: 'configured' as const })),
-    persistMembersMeta: vi.fn(async () => undefined),
     writeLaunchFailureArtifactPackBestEffort: vi.fn(),
     cleanupRun: vi.fn(),
     ...overrides,
@@ -103,6 +100,11 @@ function createServiceAdapter(overrides: Partial<TestServiceAdapter> = {}): Test
 describe('TeamProvisioningTurnCompletePortsFactory', () => {
   it('wires service callbacks and shared provisioning helpers into turn-complete ports', async () => {
     const service = createServiceAdapter();
+    const config = {
+      updateConfigPostLaunch: vi.fn(async () => undefined),
+      cleanupPrelaunchBackup: vi.fn(async () => undefined),
+      persistMembersMeta: vi.fn(async () => undefined),
+    };
     const updateProgress = vi.fn((_run, state, message) => createProgress({ state, message }));
     const provisioningRunByTeam = new Map<string, TestRun>();
     const setAliveRunId = vi.fn();
@@ -110,6 +112,7 @@ describe('TeamProvisioningTurnCompletePortsFactory', () => {
     const killTeamProcess = vi.fn();
     const ports = createTeamProvisioningTurnCompletePorts({
       service,
+      config,
       updateProgress,
       provisioningRunByTeam,
       setAliveRunId,
@@ -139,7 +142,7 @@ describe('TeamProvisioningTurnCompletePortsFactory', () => {
     ports.emitTeamChange({ type: 'inbox', teamName: 'atlas-hq', detail: 'user.json' });
     ports.killTeamProcess(null);
 
-    expect(service.updateConfigPostLaunch).toHaveBeenCalledWith(
+    expect(config.updateConfigPostLaunch).toHaveBeenCalledWith(
       'atlas-hq',
       '/tmp/project',
       'session-1',

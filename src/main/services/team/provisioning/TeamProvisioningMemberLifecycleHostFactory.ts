@@ -36,6 +36,10 @@ export interface TeamProvisioningMemberLifecycleHostFactoryService<
   membersMetaStore: TeamProvisioningMemberLifecycleHost['membersMetaStore'];
   teamMetaStore: TeamProvisioningMemberLifecycleHost['teamMetaStore'];
   launchStateStore: TeamProvisioningMemberLifecycleHost['launchStateStore'];
+  configFacade: Pick<
+    TeamProvisioningMemberLifecycleHost,
+    'readConfigForStrictDecision' | 'readPersistedRuntimeMembers' | 'readPersistedTeamProjectPath'
+  >;
   providerRuntime: {
     buildProvisioningEnv: TeamProvisioningMemberLifecycleHost['buildProvisioningEnv'];
   };
@@ -104,9 +108,7 @@ export interface TeamProvisioningMemberLifecycleHostFactoryService<
   isCurrentTrackedRun(
     run: TRun
   ): ReturnType<TeamProvisioningMemberLifecycleHost['isCurrentTrackedRun']>;
-  readConfigForStrictDecision: TeamProvisioningMemberLifecycleHost['readConfigForStrictDecision'];
   getLiveTeamAgentRuntimeMetadata: TeamProvisioningMemberLifecycleHost['getLiveTeamAgentRuntimeMetadata'];
-  readPersistedRuntimeMembers: TeamProvisioningMemberLifecycleHost['readPersistedRuntimeMembers'];
   persistLaunchStateSnapshot(
     run: TRun,
     phase: Parameters<TeamProvisioningMemberLifecycleHost['persistLaunchStateSnapshot']>[1]
@@ -140,7 +142,6 @@ export interface TeamProvisioningMemberLifecycleHostFactoryService<
     run: TRun
   ): ReturnType<TeamProvisioningMemberLifecycleHost['getMixedSecondaryLaunchPhase']>;
   writeLaunchStateSnapshot: TeamProvisioningMemberLifecycleHost['writeLaunchStateSnapshot'];
-  readPersistedTeamProjectPath: TeamProvisioningMemberLifecycleHost['readPersistedTeamProjectPath'];
 }
 
 function asServiceProvisioningRun<TRun>(run: HostRun): TRun {
@@ -232,14 +233,16 @@ export function createTeamProvisioningMemberLifecycleHost<
     getTrackedRunId: (teamName) => service.runTracking.getTrackedRunId(teamName),
     getProvisioningRunId: (teamName) => service.runTracking.getProvisioningRunId(teamName),
     isCurrentTrackedRun: (run) => service.isCurrentTrackedRun(asServiceProvisioningRun<TRun>(run)),
-    readConfigForStrictDecision: (teamName) => service.readConfigForStrictDecision(teamName),
+    readConfigForStrictDecision: (teamName) =>
+      service.configFacade.readConfigForStrictDecision(teamName),
     resolveEffectiveConfiguredMember: (configMembers, metaMembers, memberName) =>
       resolveEffectiveConfiguredMember(configMembers, metaMembers, memberName),
     resolveLeadMemberName: (configMembers, metaMembers) =>
       resolveLeadMemberName(configMembers, metaMembers),
     getLiveTeamAgentRuntimeMetadata: (teamName) =>
       service.getLiveTeamAgentRuntimeMetadata(teamName),
-    readPersistedRuntimeMembers: (teamName) => service.readPersistedRuntimeMembers(teamName),
+    readPersistedRuntimeMembers: (teamName) =>
+      service.configFacade.readPersistedRuntimeMembers(teamName),
     persistLaunchStateSnapshot: (run, phase) =>
       service.persistLaunchStateSnapshot(asServiceProvisioningRun<TRun>(run), phase),
     buildTrackedMemberMcpLaunchConfig: (input) =>
@@ -281,6 +284,7 @@ export function createTeamProvisioningMemberLifecycleHost<
       service.getMixedSecondaryLaunchPhase(asServiceProvisioningRun<TRun>(run)),
     writeLaunchStateSnapshot: (teamName, snapshot) =>
       service.writeLaunchStateSnapshot(teamName, snapshot),
-    readPersistedTeamProjectPath: (teamName) => service.readPersistedTeamProjectPath(teamName),
+    readPersistedTeamProjectPath: (teamName) =>
+      service.configFacade.readPersistedTeamProjectPath(teamName),
   };
 }

@@ -1,5 +1,10 @@
 import type { OpenCodeRuntimeControlAck } from '../runtime-control/domain/RuntimeControlAck';
 import type {
+  LeadActivitySnapshot,
+  LeadContextUsageSnapshot,
+  MemberSpawnStatusesSnapshot,
+  RetryFailedOpenCodeSecondaryLanesResult,
+  TeamAgentRuntimeSnapshot,
   TeamCreateRequest,
   TeamCreateResponse,
   TeamLaunchRequest,
@@ -8,7 +13,7 @@ import type {
   TeamRuntimeState,
 } from '@shared/types/team';
 
-export interface TeamProvisioningStartApi {
+export interface TeamLaunchApi {
   createTeam(
     request: TeamCreateRequest,
     onProgress: (progress: TeamProvisioningProgress) => void
@@ -20,6 +25,8 @@ export interface TeamProvisioningStartApi {
   getProvisioningStatus(runId: string): Promise<TeamProvisioningProgress>;
   repairStaleTaskActivityIntervalsBeforeSnapshot?(teamName: string): Promise<void>;
 }
+
+export type TeamProvisioningStartApi = TeamLaunchApi;
 
 export type { OpenCodeRuntimeControlAck };
 
@@ -33,4 +40,66 @@ export interface TeamRuntimeApi {
   deliverOpenCodeRuntimeMessage(raw: unknown): Promise<OpenCodeRuntimeControlAck>;
   recordOpenCodeRuntimeTaskEvent(raw: unknown): Promise<OpenCodeRuntimeControlAck>;
   recordOpenCodeRuntimeHeartbeat(raw: unknown): Promise<OpenCodeRuntimeControlAck>;
+}
+
+export interface TeamMemberLifecycleApi {
+  getMemberSpawnStatuses(teamName: string): Promise<MemberSpawnStatusesSnapshot>;
+  restartMember(teamName: string, memberName: string): Promise<void>;
+  retryFailedOpenCodeSecondaryLanes(
+    teamName: string
+  ): Promise<RetryFailedOpenCodeSecondaryLanesResult>;
+  skipMemberForLaunch(teamName: string, memberName: string): Promise<void>;
+}
+
+export interface TeamDiagnosticsApi {
+  getLeadActivityState(teamName: string): LeadActivitySnapshot;
+  getLeadContextUsage(teamName: string): LeadContextUsageSnapshot;
+  getTeamAgentRuntimeSnapshot(teamName: string): Promise<TeamAgentRuntimeSnapshot>;
+}
+
+export function bindTeamLaunchApi(source: TeamLaunchApi): TeamLaunchApi {
+  const api: TeamLaunchApi = {
+    createTeam: source.createTeam.bind(source),
+    launchTeam: source.launchTeam.bind(source),
+    getProvisioningStatus: source.getProvisioningStatus.bind(source),
+  };
+  const repairStaleTaskActivityIntervalsBeforeSnapshot =
+    source.repairStaleTaskActivityIntervalsBeforeSnapshot;
+  if (repairStaleTaskActivityIntervalsBeforeSnapshot) {
+    api.repairStaleTaskActivityIntervalsBeforeSnapshot =
+      repairStaleTaskActivityIntervalsBeforeSnapshot.bind(source);
+  }
+  return api;
+}
+
+export function bindTeamRuntimeApi(source: TeamRuntimeApi): TeamRuntimeApi {
+  return {
+    getRuntimeState: source.getRuntimeState.bind(source),
+    stopTeam: source.stopTeam.bind(source),
+    isTeamAlive: source.isTeamAlive.bind(source),
+    getAliveTeams: source.getAliveTeams.bind(source),
+    getCurrentRunId: source.getCurrentRunId.bind(source),
+    recordOpenCodeRuntimeBootstrapCheckin:
+      source.recordOpenCodeRuntimeBootstrapCheckin.bind(source),
+    deliverOpenCodeRuntimeMessage: source.deliverOpenCodeRuntimeMessage.bind(source),
+    recordOpenCodeRuntimeTaskEvent: source.recordOpenCodeRuntimeTaskEvent.bind(source),
+    recordOpenCodeRuntimeHeartbeat: source.recordOpenCodeRuntimeHeartbeat.bind(source),
+  };
+}
+
+export function bindTeamMemberLifecycleApi(source: TeamMemberLifecycleApi): TeamMemberLifecycleApi {
+  return {
+    getMemberSpawnStatuses: source.getMemberSpawnStatuses.bind(source),
+    restartMember: source.restartMember.bind(source),
+    retryFailedOpenCodeSecondaryLanes: source.retryFailedOpenCodeSecondaryLanes.bind(source),
+    skipMemberForLaunch: source.skipMemberForLaunch.bind(source),
+  };
+}
+
+export function bindTeamDiagnosticsApi(source: TeamDiagnosticsApi): TeamDiagnosticsApi {
+  return {
+    getLeadActivityState: source.getLeadActivityState.bind(source),
+    getLeadContextUsage: source.getLeadContextUsage.bind(source),
+    getTeamAgentRuntimeSnapshot: source.getTeamAgentRuntimeSnapshot.bind(source),
+  };
 }

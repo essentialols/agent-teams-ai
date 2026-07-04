@@ -4,11 +4,14 @@ import {
   buildLeadContextUsagePayloadForRun,
   buildLeadContextUsagePayloadFromState,
   deriveLeadContextUsageStateFromUsage,
+  emitLeadContextUsageForRun,
   getInitialLeadContextWindowTokensForRequest,
   getInitialLeadContextWindowTokensForRun,
   getLeadContextUsageForTeam,
   updateLeadContextUsageFromUsageForRun,
 } from '../TeamProvisioningLeadContextUsage';
+
+import type { TeamChangeEvent } from '@shared/types';
 
 describe('lead context usage helpers', () => {
   it('builds an unavailable payload when no usage state exists', () => {
@@ -99,6 +102,129 @@ describe('lead context usage helpers', () => {
       promptInputSource: 'anthropic_usage',
       updatedAt: '2026-01-02T00:00:00.000Z',
     });
+  });
+
+  it('emits lead context usage for the current completed run', () => {
+    const emitted: TeamChangeEvent[] = [];
+    const run = {
+      teamName: 'team-a',
+      runId: 'run-1',
+      provisioningComplete: true,
+      request: {},
+      leadContextUsage: {
+        promptInputTokens: 100,
+        outputTokens: 25,
+        contextUsedTokens: 125,
+        contextWindowTokens: 1_000,
+        promptInputSource: 'anthropic_usage' as const,
+        lastUsageMessageId: 'msg-1',
+        lastEmittedAt: 10,
+      },
+    };
+
+    expect(
+      emitLeadContextUsageForRun(
+        run,
+        {
+          isCurrentTrackedRun: () => true,
+          nowMs: () => 3_000,
+          nowIso: () => '2026-01-03T00:00:00.000Z',
+          emitTeamChange: (event) => emitted.push(event),
+        },
+        2_000
+      )
+    ).toBe(true);
+
+    expect(run.leadContextUsage.lastEmittedAt).toBe(3_000);
+    expect(emitted).toEqual([
+      {
+        type: 'lead-context',
+        teamName: 'team-a',
+        runId: 'run-1',
+        detail: JSON.stringify({
+          promptInputTokens: 100,
+          outputTokens: 25,
+          contextUsedTokens: 125,
+          contextWindowTokens: 1_000,
+          contextUsedPercent: 13,
+          promptInputSource: 'anthropic_usage',
+          updatedAt: '2026-01-03T00:00:00.000Z',
+        }),
+      },
+    ]);
+  });
+
+  it('does not emit lead context usage without usage, completion, current run, or throttle clearance', () => {
+    const baseRun = {
+      teamName: 'team-a',
+      runId: 'run-1',
+      provisioningComplete: true,
+      request: {},
+      leadContextUsage: {
+        promptInputTokens: 100,
+        outputTokens: 25,
+        contextUsedTokens: 125,
+        contextWindowTokens: 1_000,
+        promptInputSource: 'anthropic_usage' as const,
+        lastUsageMessageId: 'msg-1',
+        lastEmittedAt: 1_500,
+      },
+    };
+    const emitTeamChange = () => {
+      throw new Error('unexpected lead-context emission');
+    };
+
+    expect(
+      emitLeadContextUsageForRun(
+        { ...baseRun, leadContextUsage: null },
+        {
+          isCurrentTrackedRun: () => true,
+          nowMs: () => 3_000,
+          nowIso: () => '2026-01-03T00:00:00.000Z',
+          emitTeamChange,
+        },
+        2_000
+      )
+    ).toBe(false);
+
+    expect(
+      emitLeadContextUsageForRun(
+        { ...baseRun, provisioningComplete: false },
+        {
+          isCurrentTrackedRun: () => true,
+          nowMs: () => 3_000,
+          nowIso: () => '2026-01-03T00:00:00.000Z',
+          emitTeamChange,
+        },
+        2_000
+      )
+    ).toBe(false);
+
+    expect(
+      emitLeadContextUsageForRun(
+        baseRun,
+        {
+          isCurrentTrackedRun: () => false,
+          nowMs: () => 3_000,
+          nowIso: () => '2026-01-03T00:00:00.000Z',
+          emitTeamChange,
+        },
+        2_000
+      )
+    ).toBe(false);
+
+    expect(
+      emitLeadContextUsageForRun(
+        baseRun,
+        {
+          isCurrentTrackedRun: () => true,
+          nowMs: () => 3_000,
+          nowIso: () => '2026-01-03T00:00:00.000Z',
+          emitTeamChange,
+        },
+        2_000
+      )
+    ).toBe(false);
   });
 
   it('returns null usage when there is no tracked run or no usable in-memory usage state', () => {

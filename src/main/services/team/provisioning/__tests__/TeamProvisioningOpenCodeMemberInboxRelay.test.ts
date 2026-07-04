@@ -7,6 +7,7 @@ import {
   type RelayOpenCodeMemberInboxMessagesPorts,
   relayOpenCodeMemberInboxMessagesWithPorts,
   resolveOpenCodeMemberInboxDeliveryDecision,
+  scheduleOpenCodeMemberInboxDeliveryWakeWithPorts,
   selectOpenCodeMemberInboxRelayUnreadMessages,
 } from '../TeamProvisioningOpenCodeMemberInboxRelay';
 
@@ -97,6 +98,111 @@ function createRelayPorts(
 }
 
 describe('TeamProvisioningOpenCodeMemberInboxRelay', () => {
+  it('sanitizes and schedules OpenCode member inbox delivery wakes', () => {
+    const scheduleWake = vi.fn();
+
+    expect(
+      scheduleOpenCodeMemberInboxDeliveryWakeWithPorts(
+        {
+          teamName: ' team ',
+          memberName: ' worker ',
+          messageId: ' message-1 ',
+        },
+        {
+          watchdogScheduler: { isEnabled: () => true },
+          scheduleWake,
+        }
+      )
+    ).toBe(true);
+
+    expect(scheduleWake).toHaveBeenCalledWith({
+      teamName: 'team',
+      memberName: 'worker',
+      messageId: 'message-1',
+      delayMs: 500,
+    });
+  });
+
+  it('clamps negative OpenCode member inbox delivery wake delays', () => {
+    const scheduleWake = vi.fn();
+
+    expect(
+      scheduleOpenCodeMemberInboxDeliveryWakeWithPorts(
+        {
+          teamName: 'team',
+          memberName: 'worker',
+          messageId: 'message-1',
+          delayMs: -25,
+        },
+        {
+          watchdogScheduler: { isEnabled: () => true },
+          scheduleWake,
+        }
+      )
+    ).toBe(true);
+
+    expect(scheduleWake).toHaveBeenCalledWith({
+      teamName: 'team',
+      memberName: 'worker',
+      messageId: 'message-1',
+      delayMs: 0,
+    });
+  });
+
+  it('skips OpenCode member inbox delivery wakes for empty fields or disabled scheduler', () => {
+    const scheduleWake = vi.fn();
+    const enabledPorts = {
+      watchdogScheduler: { isEnabled: () => true },
+      scheduleWake,
+    };
+
+    expect(
+      scheduleOpenCodeMemberInboxDeliveryWakeWithPorts(
+        {
+          teamName: '',
+          memberName: 'worker',
+          messageId: 'message-1',
+        },
+        enabledPorts
+      )
+    ).toBe(false);
+    expect(
+      scheduleOpenCodeMemberInboxDeliveryWakeWithPorts(
+        {
+          teamName: 'team',
+          memberName: ' ',
+          messageId: 'message-1',
+        },
+        enabledPorts
+      )
+    ).toBe(false);
+    expect(
+      scheduleOpenCodeMemberInboxDeliveryWakeWithPorts(
+        {
+          teamName: 'team',
+          memberName: 'worker',
+          messageId: ' ',
+        },
+        enabledPorts
+      )
+    ).toBe(false);
+    expect(
+      scheduleOpenCodeMemberInboxDeliveryWakeWithPorts(
+        {
+          teamName: 'team',
+          memberName: 'worker',
+          messageId: 'message-1',
+        },
+        {
+          watchdogScheduler: { isEnabled: () => false },
+          scheduleWake,
+        }
+      )
+    ).toBe(false);
+
+    expect(scheduleWake).not.toHaveBeenCalled();
+  });
+
   it('projects only-message delivery while another member relay is active', async () => {
     const inFlight = new Map<string, Promise<never>>();
     inFlight.set('team/worker', new Promise(() => {}));

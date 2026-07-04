@@ -2,7 +2,7 @@ import { getAnthropicDefaultTeamModel } from '@shared/utils/anthropicModelDefaul
 import { deriveContextMetrics, inferContextWindowTokens } from '@shared/utils/contextMetrics';
 import { normalizeOptionalTeamProviderId } from '@shared/utils/teamProvider';
 
-import type { LeadContextUsage } from '@shared/types';
+import type { LeadContextUsage, TeamChangeEvent } from '@shared/types';
 
 export interface LeadContextUsageRequestLike {
   providerId?: string;
@@ -28,6 +28,12 @@ export interface LeadContextUsageRunLike {
   leadContextUsage: StoredLeadContextUsageState | null;
 }
 
+export interface LeadContextUsageEmissionRunLike extends LeadContextUsageRunLike {
+  teamName: string;
+  runId: string;
+  provisioningComplete: boolean;
+}
+
 export interface LeadContextUsageAccessorRunLike extends LeadContextUsageRunLike {
   processKilled: boolean;
   cancelRequested: boolean;
@@ -37,6 +43,13 @@ export interface LeadContextUsageAccessorPorts<TRun extends LeadContextUsageAcce
   getTrackedRunId(teamName: string): string | null;
   getRun(runId: string): TRun | undefined;
   nowIso(): string;
+}
+
+export interface LeadContextUsageEmissionPorts<TRun extends LeadContextUsageEmissionRunLike> {
+  isCurrentTrackedRun(run: TRun): boolean;
+  nowMs(): number;
+  nowIso(): string;
+  emitTeamChange(event: TeamChangeEvent): void;
 }
 
 export function getInitialLeadContextWindowTokensForRequest(
@@ -101,6 +114,33 @@ export function buildLeadContextUsagePayloadForRun(
   nowIso: () => string = () => new Date().toISOString()
 ): LeadContextUsage {
   return buildLeadContextUsagePayloadFromState(run.leadContextUsage, nowIso());
+}
+
+export function emitLeadContextUsageForRun<TRun extends LeadContextUsageEmissionRunLike>(
+  run: TRun,
+  ports: LeadContextUsageEmissionPorts<TRun>,
+  throttleMs: number
+): boolean {
+  if (!run.leadContextUsage || !run.provisioningComplete) {
+    return false;
+  }
+  if (!ports.isCurrentTrackedRun(run)) {
+    return false;
+  }
+
+  const now = ports.nowMs();
+  if (now - run.leadContextUsage.lastEmittedAt < throttleMs) {
+    return false;
+  }
+
+  run.leadContextUsage.lastEmittedAt = now;
+  ports.emitTeamChange({
+    type: 'lead-context',
+    teamName: run.teamName,
+    runId: run.runId,
+    detail: JSON.stringify(buildLeadContextUsagePayloadForRun(run, ports.nowIso)),
+  });
+  return true;
 }
 
 export function getLeadContextUsageForTeam<TRun extends LeadContextUsageAccessorRunLike>(

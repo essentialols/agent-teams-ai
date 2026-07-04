@@ -163,6 +163,7 @@ import {
   getLeadRelayReadCommitBatch as getLeadRelayReadCommitBatchHelper,
   hasStableInboxMessageId,
   type NativeSameTeamFingerprint,
+  trimRelayedMessageIdSet,
 } from './provisioning/TeamProvisioningInboxRelayPolicy';
 import { notifyAliveTeamsAboutLanguageChangeWithPorts } from './provisioning/TeamProvisioningLanguageChangeNotification';
 import { assertOpenCodeNotLaunchedThroughLegacyProvisioning } from './provisioning/TeamProvisioningLaunchCompatibility';
@@ -210,7 +211,7 @@ import {
 } from './provisioning/TeamProvisioningLeadActivity';
 import { createTeamProvisioningLeadActivityPorts } from './provisioning/TeamProvisioningLeadActivityPortsFactory';
 import {
-  buildLeadContextUsagePayloadForRun,
+  emitLeadContextUsageForRun,
   getLeadContextUsageForTeam,
 } from './provisioning/TeamProvisioningLeadContextUsage';
 import { createTeamProvisioningLeadInboxRelayPortsBoundary } from './provisioning/TeamProvisioningLeadInboxRelayPortsFactory';
@@ -295,6 +296,7 @@ import {
 import {
   type OpenCodeMemberInboxRelayOptions,
   type OpenCodeMemberInboxRelayResult,
+  scheduleOpenCodeMemberInboxDeliveryWakeWithPorts,
 } from './provisioning/TeamProvisioningOpenCodeMemberInboxRelay';
 import {
   createTeamProvisioningOpenCodeMemberInboxRelayBoundary,
@@ -900,12 +902,12 @@ export class TeamProvisioningService {
     const buildProvisioningEnv: TeamProvisioningProviderRuntimeFacade['buildProvisioningEnv'] = (
       ...args
     ) => this.buildProvisioningEnv(...args);
+    const buildCrossProviderMemberArgs: TeamProvisioningProviderRuntimeFacade['buildCrossProviderMemberArgs'] =
+      (...args) => this.providerRuntime.buildCrossProviderMemberArgs(...args);
 
     return {
       buildProvisioningEnv,
-      buildCrossProviderMemberArgs: this.providerRuntime.buildCrossProviderMemberArgs.bind(
-        this.providerRuntime
-      ),
+      buildCrossProviderMemberArgs,
       validateAgentTeamsMcpRuntime: (
         claudePath: string,
         cwd: string,
@@ -3856,22 +3858,9 @@ export class TeamProvisioningService {
     messageId: string;
     delayMs?: number;
   }): void {
-    const teamName = input.teamName.trim();
-    const memberName = input.memberName.trim();
-    const messageId = input.messageId.trim();
-    if (
-      !teamName ||
-      !memberName ||
-      !messageId ||
-      !this.openCodePromptDeliveryWatchdogScheduler.isEnabled()
-    ) {
-      return;
-    }
-    this.scheduleOpenCodePromptDeliveryWatchdog({
-      teamName,
-      memberName,
-      messageId,
-      delayMs: Math.max(0, input.delayMs ?? 500),
+    scheduleOpenCodeMemberInboxDeliveryWakeWithPorts(input, {
+      watchdogScheduler: this.openCodePromptDeliveryWatchdogScheduler,
+      scheduleWake: (wakeInput) => this.scheduleOpenCodePromptDeliveryWatchdog(wakeInput),
     });
   }
 
@@ -4264,23 +4253,16 @@ export class TeamProvisioningService {
   private static readonly CONTEXT_EMIT_THROTTLE_MS = 2000;
 
   private emitLeadContextUsage(run: ProvisioningRun): void {
-    if (!run.leadContextUsage || !run.provisioningComplete) return;
-    if (!this.isCurrentTrackedRun(run)) return;
-    const now = Date.now();
-    if (
-      now - run.leadContextUsage.lastEmittedAt <
+    emitLeadContextUsageForRun(
+      run,
+      {
+        isCurrentTrackedRun: (targetRun) => this.isCurrentTrackedRun(targetRun),
+        nowMs: () => Date.now(),
+        nowIso: () => new Date().toISOString(),
+        emitTeamChange: (event) => this.teamChangeEmitter?.(event),
+      },
       TeamProvisioningService.CONTEXT_EMIT_THROTTLE_MS
-    ) {
-      return;
-    }
-    run.leadContextUsage.lastEmittedAt = now;
-    const payload = buildLeadContextUsagePayloadForRun(run);
-    this.teamChangeEmitter?.({
-      type: 'lead-context',
-      teamName: run.teamName,
-      runId: run.runId,
-      detail: JSON.stringify(payload),
-    });
+    );
   }
 
   async warmup(): Promise<void> {
@@ -5000,12 +4982,7 @@ export class TeamProvisioningService {
   }
 
   private trimRelayedSet(set: Set<string>): Set<string> {
-    const MAX_IDS = 2000;
-    if (set.size <= MAX_IDS) return set;
-    const next = new Set<string>();
-    const tail = Array.from(set).slice(-MAX_IDS);
-    for (const id of tail) next.add(id);
-    return next;
+    return trimRelayedMessageIdSet(set);
   }
 
   /**

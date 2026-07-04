@@ -138,6 +138,12 @@ import {
   initializeAutoResumeService,
 } from '../services/team/AutoResumeService';
 import {
+  bindTeamDiagnosticsApi,
+  bindTeamLaunchApi,
+  bindTeamMemberLifecycleApi,
+  bindTeamRuntimeApi,
+} from '../services/team/contracts/TeamProvisioningApis';
+import {
   cloneLaunchIoGovernorPayload,
   type LaunchIoGovernor,
 } from '../services/team/LaunchIoGovernor';
@@ -180,7 +186,12 @@ import type {
   TeamMemberLogsFinder,
   TeamProvisioningService,
 } from '../services';
-import type { TeamProvisioningStartApi } from '../services/team/contracts/TeamProvisioningApis';
+import type {
+  TeamDiagnosticsApi,
+  TeamLaunchApi,
+  TeamMemberLifecycleApi,
+  TeamRuntimeApi,
+} from '../services/team/contracts/TeamProvisioningApis';
 import type { TeamBackupService } from '../services/team/TeamBackupService';
 import type { TeamMembersMetaFile } from '../services/team/TeamMembersMetaStore';
 import type {
@@ -739,7 +750,10 @@ function buildLeadDirectDelegateAckBlock(actionMode?: AgentActionMode): string |
 
 let teamDataService: TeamDataService | null = null;
 let teamProvisioningService: TeamProvisioningService | null = null;
-let teamProvisioningStartApi: TeamProvisioningStartApi | null = null;
+let teamProvisioningStartApi: TeamLaunchApi | null = null;
+let teamRuntimeApi: TeamRuntimeApi | null = null;
+let teamMemberLifecycleApi: TeamMemberLifecycleApi | null = null;
+let teamDiagnosticsApi: TeamDiagnosticsApi | null = null;
 let teamMemberLogsFinder: TeamMemberLogsFinder | null = null;
 let memberStatsComputer: MemberStatsComputer | null = null;
 let teamBackupService: TeamBackupService | null = null;
@@ -804,7 +818,10 @@ export function initializeTeamHandlers(
 ): void {
   teamDataService = service;
   teamProvisioningService = provisioningService;
-  teamProvisioningStartApi = provisioningService;
+  teamProvisioningStartApi = bindTeamLaunchApi(provisioningService);
+  teamRuntimeApi = bindTeamRuntimeApi(provisioningService);
+  teamMemberLifecycleApi = bindTeamMemberLifecycleApi(provisioningService);
+  teamDiagnosticsApi = bindTeamDiagnosticsApi(provisioningService);
   initializeAutoResumeService(provisioningService);
   teamMemberLogsFinder = logsFinder ?? null;
   memberStatsComputer = statsComputer ?? null;
@@ -1008,11 +1025,32 @@ function getTeamProvisioningService(): TeamProvisioningService {
   return teamProvisioningService;
 }
 
-function getTeamProvisioningStartApi(): TeamProvisioningStartApi {
+function getTeamProvisioningStartApi(): TeamLaunchApi {
   if (!teamProvisioningStartApi) {
     throw new Error('Team provisioning handlers are not initialized');
   }
   return teamProvisioningStartApi;
+}
+
+function getTeamRuntimeApi(): TeamRuntimeApi {
+  if (!teamRuntimeApi) {
+    throw new Error('Team runtime handlers are not initialized');
+  }
+  return teamRuntimeApi;
+}
+
+function getTeamMemberLifecycleApi(): TeamMemberLifecycleApi {
+  if (!teamMemberLifecycleApi) {
+    throw new Error('Team member lifecycle handlers are not initialized');
+  }
+  return teamMemberLifecycleApi;
+}
+
+function getTeamDiagnosticsApi(): TeamDiagnosticsApi {
+  if (!teamDiagnosticsApi) {
+    throw new Error('Team diagnostics handlers are not initialized');
+  }
+  return teamDiagnosticsApi;
 }
 
 function getTeammateToolTracker(): TeammateToolTracker {
@@ -1464,7 +1502,7 @@ async function handleDeleteTeam(
   }
   return wrapTeamHandler('deleteTeam', async () => {
     getAutoResumeService().cancelPendingAutoResume(validated.value!);
-    await getTeamProvisioningService().stopTeam(validated.value!);
+    await getTeamRuntimeApi().stopTeam(validated.value!);
     await getTeamDataService().deleteTeam(validated.value!);
     getTeamDataWorkerClient().invalidateTeamConfig(validated.value!);
   });
@@ -3859,7 +3897,7 @@ async function handleProcessAlive(
     return { success: false, error: validatedTeamName.error ?? 'Invalid teamName' };
   }
   return wrapTeamHandler('processAlive', async () =>
-    getTeamProvisioningService().isTeamAlive(validatedTeamName.value!)
+    getTeamRuntimeApi().isTeamAlive(validatedTeamName.value!)
   );
 }
 
@@ -4311,7 +4349,7 @@ async function handleGetMemberStats(
 }
 
 async function handleAliveList(_event: IpcMainInvokeEvent): Promise<IpcResult<string[]>> {
-  return wrapTeamHandler('aliveList', async () => getTeamProvisioningService().getAliveTeams());
+  return wrapTeamHandler('aliveList', async () => getTeamRuntimeApi().getAliveTeams());
 }
 
 async function handleLeadActivity(
@@ -4323,7 +4361,7 @@ async function handleLeadActivity(
     return { success: false, error: validated.error ?? 'Invalid teamName' };
   }
   return wrapTeamHandler('leadActivity', async () =>
-    getTeamProvisioningService().getLeadActivityState(validated.value!)
+    getTeamDiagnosticsApi().getLeadActivityState(validated.value!)
   );
 }
 
@@ -4336,7 +4374,7 @@ async function handleLeadContext(
     return { success: false, error: validated.error ?? 'Invalid teamName' };
   }
   return wrapTeamHandler('leadContext', async () =>
-    getTeamProvisioningService().getLeadContextUsage(validated.value!)
+    getTeamDiagnosticsApi().getLeadContextUsage(validated.value!)
   );
 }
 
@@ -4349,7 +4387,7 @@ async function handleMemberSpawnStatuses(
     return { success: false, error: validated.error ?? 'Invalid teamName' };
   }
   return wrapTeamHandler('memberSpawnStatuses', async () =>
-    getTeamProvisioningService().getMemberSpawnStatuses(validated.value!)
+    getTeamMemberLifecycleApi().getMemberSpawnStatuses(validated.value!)
   );
 }
 
@@ -4362,7 +4400,7 @@ async function handleGetAgentRuntime(
     return { success: false, error: validated.error ?? 'Invalid teamName' };
   }
   return wrapTeamHandler('getAgentRuntime', async () =>
-    getTeamProvisioningService().getTeamAgentRuntimeSnapshot(validated.value!)
+    getTeamDiagnosticsApi().getTeamAgentRuntimeSnapshot(validated.value!)
   );
 }
 
@@ -4381,7 +4419,7 @@ async function handleRestartMember(
   }
   return wrapTeamHandler('restartMember', async () => {
     try {
-      await getTeamProvisioningService().restartMember(
+      await getTeamMemberLifecycleApi().restartMember(
         validatedTeamName.value!,
         validatedMemberName.value!
       );
@@ -4400,7 +4438,7 @@ async function handleRetryFailedOpenCodeSecondaryLanes(
     return { success: false, error: validatedTeamName.error ?? 'Invalid teamName' };
   }
   return wrapTeamHandler('retryFailedOpenCodeSecondaryLanes', async () =>
-    getTeamProvisioningService().retryFailedOpenCodeSecondaryLanes(validatedTeamName.value!)
+    getTeamMemberLifecycleApi().retryFailedOpenCodeSecondaryLanes(validatedTeamName.value!)
   );
 }
 
@@ -4418,7 +4456,7 @@ async function handleSkipMemberForLaunch(
     return { success: false, error: validatedMemberName.error ?? 'Invalid memberName' };
   }
   return wrapTeamHandler('skipMemberForLaunch', async () =>
-    getTeamProvisioningService().skipMemberForLaunch(
+    getTeamMemberLifecycleApi().skipMemberForLaunch(
       validatedTeamName.value!,
       validatedMemberName.value!
     )
@@ -4436,7 +4474,7 @@ async function handleStopTeam(
   return wrapTeamHandler('stop', async () => {
     addMainBreadcrumb('team', 'stop', { teamName: validated.value! });
     getAutoResumeService().cancelPendingAutoResume(validated.value!);
-    await getTeamProvisioningService().stopTeam(validated.value!);
+    await getTeamRuntimeApi().stopTeam(validated.value!);
   });
 }
 

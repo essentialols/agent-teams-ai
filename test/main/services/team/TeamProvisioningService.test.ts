@@ -280,6 +280,7 @@ import {
   providerRuntimeHarness,
   provisioningConfigFacadeHarness,
   runtimeResourceSamplingHarness,
+  stubMemberLifecycleHostOptionalSeam,
   stubMemberLifecyclePersistedRuntimeMembers,
   stubProvisioningConfigProjectPath,
   verificationProbePortsHarness,
@@ -17285,8 +17286,12 @@ describe('TeamProvisioningService', () => {
       }));
       (svc as any).materializeDirectProcessNativeBootstrapContext = vi.fn(async () => ({}));
       const hostSeams = memberLifecycleHostHarness(svc) as any;
-      hostSeams.updateDirectTmuxRestartMemberConfig = vi.fn(async () => {});
-      hostSeams.enqueueDirectRestartPrompt = vi.fn();
+      stubMemberLifecycleHostOptionalSeam(
+        svc,
+        'updateDirectTmuxRestartMemberConfig',
+        vi.fn(async () => {})
+      );
+      stubMemberLifecycleHostOptionalSeam(svc, 'enqueueDirectRestartPrompt', vi.fn());
       hostSeams.appendDirectProcessRuntimeEvent = vi.fn(async () => {});
 
       await memberLifecycleControllerHarness(svc).launchDirectProcessMemberRestartInternal({
@@ -17402,8 +17407,13 @@ describe('TeamProvisioningService', () => {
       }));
       (svc as any).materializeDirectProcessNativeBootstrapContext = vi.fn(async () => ({}));
       const hostSeams = memberLifecycleHostHarness(svc) as any;
-      hostSeams.updateDirectTmuxRestartMemberConfig = vi.fn(async () => {});
-      hostSeams.enqueueDirectRestartPrompt = vi.fn();
+      const updateDirectTmuxRestartMemberConfig = vi.fn(async () => {});
+      stubMemberLifecycleHostOptionalSeam(
+        svc,
+        'updateDirectTmuxRestartMemberConfig',
+        updateDirectTmuxRestartMemberConfig
+      );
+      stubMemberLifecycleHostOptionalSeam(svc, 'enqueueDirectRestartPrompt', vi.fn());
       hostSeams.appendDirectProcessRuntimeEvent = vi
         .fn()
         .mockRejectedValueOnce(new Error('event write failed'));
@@ -17423,7 +17433,7 @@ describe('TeamProvisioningService', () => {
       ).rejects.toThrow('event write failed');
 
       expect(killProcessByPid).toHaveBeenCalledWith(5678);
-      expect(hostSeams.updateDirectTmuxRestartMemberConfig).not.toHaveBeenCalled();
+      expect(updateDirectTmuxRestartMemberConfig).not.toHaveBeenCalled();
       expect(run.allEffectiveMembers ?? []).toEqual([]);
       await new Promise((resolve) => setTimeout(resolve, 25));
     });
@@ -17501,8 +17511,12 @@ describe('TeamProvisioningService', () => {
       }));
       (svc as any).materializeDirectProcessNativeBootstrapContext = vi.fn(async () => ({}));
       const hostSeams = memberLifecycleHostHarness(svc) as any;
-      hostSeams.updateDirectTmuxRestartMemberConfig = vi.fn(async () => {});
-      hostSeams.enqueueDirectRestartPrompt = vi.fn();
+      stubMemberLifecycleHostOptionalSeam(
+        svc,
+        'updateDirectTmuxRestartMemberConfig',
+        vi.fn(async () => {})
+      );
+      stubMemberLifecycleHostOptionalSeam(svc, 'enqueueDirectRestartPrompt', vi.fn());
       hostSeams.appendDirectProcessRuntimeEvent = vi.fn(async () => {});
 
       await memberLifecycleControllerHarness(svc).launchDirectProcessMemberRestartInternal({

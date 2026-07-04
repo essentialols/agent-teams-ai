@@ -101,6 +101,17 @@ export interface ConfirmedSameTeamPairs {
 }
 
 export const DEFAULT_INBOX_RELAY_BATCH_SIZE = 10;
+export const DEFAULT_RELAYED_MESSAGE_ID_SET_LIMIT = 2000;
+
+export function trimRelayedMessageIdSet(
+  set: Set<string>,
+  maxIds = DEFAULT_RELAYED_MESSAGE_ID_SET_LIMIT
+): Set<string> {
+  if (set.size <= maxIds) {
+    return set;
+  }
+  return new Set(Array.from(set).slice(-maxIds));
+}
 
 export function normalizeSameTeamText(text: string): string {
   return text.trim().replace(/\r\n/g, '\n');

@@ -22,6 +22,7 @@ export {
   providerRuntimeHarness,
   provisioningConfigFacadeHarness,
   runtimeResourceSamplingHarness,
+  stubMemberLifecycleHostOptionalSeam,
   stubMemberLifecyclePersistedRuntimeMembers,
   stubProvisioningConfigProjectPath,
   type TeamProvisioningOutputRecoveryFacadeHarness,

@@ -145,6 +145,25 @@ export function memberLifecycleHostHarness(
   ).memberLifecycleHost;
 }
 
+type MutableMemberLifecycleHostOptionalSeam =
+  | 'enqueueDirectRestartPrompt'
+  | 'updateDirectTmuxRestartMemberConfig';
+
+export function stubMemberLifecycleHostOptionalSeam<
+  TKey extends MutableMemberLifecycleHostOptionalSeam,
+>(
+  svc: TeamProvisioningService,
+  key: TKey,
+  seam: NonNullable<TeamProvisioningMemberLifecycleHost[TKey]>
+): NonNullable<TeamProvisioningMemberLifecycleHost[TKey]> {
+  Object.defineProperty(memberLifecycleHostHarness(svc), key, {
+    configurable: true,
+    writable: true,
+    value: seam,
+  });
+  return seam;
+}
+
 export function provisioningConfigFacadeHarness(
   svc: TeamProvisioningService
 ): TeamProvisioningConfigFacade {

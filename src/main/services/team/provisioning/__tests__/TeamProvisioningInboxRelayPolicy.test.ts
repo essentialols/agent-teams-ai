@@ -14,6 +14,7 @@ import {
   selectOpenCodeInboxRelayBatch,
   shouldDeferSameTeamMessage,
   splitMemberInboxRelayUnread,
+  trimRelayedMessageIdSet,
 } from '../TeamProvisioningInboxRelayPolicy';
 
 function message(overrides: Partial<RelayInboxMessage> = {}): RelayInboxMessage {
@@ -33,6 +34,19 @@ function ids(messages: readonly RelayInboxMessage[]): string[] {
 }
 
 describe('inbox relay unread policy', () => {
+  it('keeps small relayed message id sets by reference', () => {
+    const set = new Set(['a', 'b']);
+
+    expect(trimRelayedMessageIdSet(set, 3)).toBe(set);
+  });
+
+  it('trims relayed message id sets to the most recent ids in insertion order', () => {
+    const set = new Set(['a', 'b', 'c', 'd']);
+
+    expect([...trimRelayedMessageIdSet(set, 2)]).toEqual(['c', 'd']);
+    expect([...set]).toEqual(['a', 'b', 'c', 'd']);
+  });
+
   it('uses structured OpenCode inbox task refs without reading tasks', async () => {
     const taskRef = { teamName: 'team', taskId: 'task-1', displayId: '7' };
     const readTasks = vi.fn();

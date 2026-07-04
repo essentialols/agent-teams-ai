@@ -529,7 +529,6 @@ import type {
   TeamRuntimeLaunchInput,
   TeamRuntimeLaunchResult,
   TeamRuntimeMemberLaunchEvidence,
-  TeamRuntimeMemberSpec,
   TeamRuntimeStopInput,
 } from './runtime';
 export type { RuntimeBootstrapMemberMcpLaunchConfig } from './provisioning/TeamProvisioningBootstrapSpec';
@@ -743,7 +742,7 @@ export class TeamProvisioningService {
     secondaryRuntimeRunByTeam: this.secondaryRuntimeRunByTeam,
     ports: {
       clearOpenCodeRuntimeToolApprovals: (teamName, options) =>
-        this.clearOpenCodeRuntimeToolApprovals(teamName, options),
+        this.toolApprovalFacade.clearOpenCodeRuntimeToolApprovals(teamName, options),
     },
   });
   private readonly hasSecondaryRuntimeRuns = this.secondaryRuntimeRuns.hasSecondaryRuntimeRuns;
@@ -1337,7 +1336,7 @@ export class TeamProvisioningService {
     setRuntimeAdapterProgress: (progress) =>
       this.runtimeAdapterProgressState.setRuntimeAdapterProgress(progress),
     clearOpenCodeRuntimeToolApprovals: (teamName, options) =>
-      this.clearOpenCodeRuntimeToolApprovals(teamName, options),
+      this.toolApprovalFacade.clearOpenCodeRuntimeToolApprovals(teamName, options),
     getTrackedRunId: (teamName) => this.runTracking.getTrackedRunId(teamName),
     getAliveRunId: (teamName) => this.runTracking.getAliveRunId(teamName),
     deleteAliveRunId: (teamName) => this.runTracking.deleteAliveRunId(teamName),
@@ -1418,7 +1417,8 @@ export class TeamProvisioningService {
           this.buildOpenCodeSecondaryAppManagedLaunchPrompt(run, lane),
         guardCommittedOpenCodeSecondaryLaneEvidence: (input) =>
           this.guardCommittedOpenCodeSecondaryLaneEvidence(input),
-        syncOpenCodeRuntimeToolApprovals: (input) => this.syncOpenCodeRuntimeToolApprovals(input),
+        syncOpenCodeRuntimeToolApprovals: (input) =>
+          this.toolApprovalFacade.syncOpenCodeRuntimeToolApprovals(input),
         launchSingleMixedSecondaryLane: (run, lane) =>
           this.launchSingleMixedSecondaryLane(run, lane),
         persistLaunchStateSnapshot: (run, launchPhase) =>
@@ -1492,7 +1492,7 @@ export class TeamProvisioningService {
       persistOpenCodeRuntimeAdapterLaunchResult: (result, launchInput) =>
         this.persistOpenCodeRuntimeAdapterLaunchResult(result, launchInput),
       syncOpenCodeRuntimeToolApprovals: (syncInput) =>
-        this.syncOpenCodeRuntimeToolApprovals(syncInput),
+        this.toolApprovalFacade.syncOpenCodeRuntimeToolApprovals(syncInput),
       emitTeamChange: (event) => {
         this.teamChangeEmitter?.(event);
       },
@@ -2034,10 +2034,11 @@ export class TeamProvisioningService {
       relayedMemberInboxMessageIds: this.relayedMemberInboxMessageIds,
       liveLeadProcessMessages: this.liveLeadProcessMessages,
       pruneLiveLeadMessagesForCleanedRun: (run) => this.pruneLiveLeadMessagesForCleanedRun(run),
-      clearApprovalTimeout: (requestId) => this.clearApprovalTimeout(requestId),
+      clearApprovalTimeout: (requestId) => this.toolApprovalFacade.clearApprovalTimeout(requestId),
       inFlightResponses: this.toolApprovalFacade.inFlightResponsesForCleanup,
-      dismissApprovalNotification: (requestId) => this.dismissApprovalNotification(requestId),
-      emitToolApprovalEvent: (event) => this.emitToolApprovalEvent(event),
+      dismissApprovalNotification: (requestId) =>
+        this.toolApprovalFacade.dismissApprovalNotification(requestId),
+      emitToolApprovalEvent: (event) => this.toolApprovalFacade.emitToolApprovalEvent(event),
       mcpConfigBuilder: this.mcpConfigBuilder,
       removeRunMemberMcpConfigFilesLater: (run) => this.removeRunMemberMcpConfigFilesLater(run),
       retainedClaudeLogsByTeam: this.retainedClaudeLogsByTeam,
@@ -2052,7 +2053,7 @@ export class TeamProvisioningService {
         cancelPendingAutoResume: (teamName) =>
           peekAutoResumeService()?.cancelPendingAutoResume(teamName),
         clearOpenCodeRuntimeToolApprovals: (teamName, options) =>
-          this.clearOpenCodeRuntimeToolApprovals(teamName, options),
+          this.toolApprovalFacade.clearOpenCodeRuntimeToolApprovals(teamName, options),
         invalidateRuntimeSnapshotCaches: (teamName) =>
           this.invalidateRuntimeSnapshotCaches(teamName),
         clearRuntimeProcessRowsForTeam: (teamName) =>
@@ -2765,7 +2766,8 @@ export class TeamProvisioningService {
           params,
           this.openCodeRuntimePermissionSpawnStatusPorts
         ),
-      syncToolApprovals: (params) => this.syncOpenCodeRuntimeToolApprovals(params),
+      syncToolApprovals: (params) =>
+        this.toolApprovalFacade.syncOpenCodeRuntimeToolApprovals(params),
       logWarning: (message) => logger.warn(message),
     });
   }
@@ -3231,10 +3233,6 @@ export class TeamProvisioningService {
 
   updateToolApprovalSettings(teamName: string, settings: ToolApprovalSettings): void {
     this.toolApprovalFacade.updateToolApprovalSettings(teamName, settings);
-  }
-
-  private emitToolApprovalEvent(event: ToolApprovalEvent): void {
-    this.toolApprovalFacade.emitToolApprovalEvent(event);
   }
 
   getLiveLeadProcessMessages(teamName: string): InboxMessage[] {
@@ -4099,7 +4097,8 @@ export class TeamProvisioningService {
       setOpenCodeRuntimeActiveRunManifest,
       persistOpenCodeRuntimeAdapterLaunchResult: (result, launchInput) =>
         this.persistOpenCodeRuntimeAdapterLaunchResult(result, launchInput),
-      syncOpenCodeRuntimeToolApprovals: (input) => this.syncOpenCodeRuntimeToolApprovals(input),
+      syncOpenCodeRuntimeToolApprovals: (input) =>
+        this.toolApprovalFacade.syncOpenCodeRuntimeToolApprovals(input),
       setRuntimeAdapterRunByTeam: (teamName, runtimeRun) => {
         this.runtimeAdapterRunByTeam.set(teamName, runtimeRun);
       },
@@ -4310,7 +4309,7 @@ export class TeamProvisioningService {
       aliveRunByTeam: this.aliveRunByTeam,
       nowIso,
       clearOpenCodeRuntimeToolApprovals: (teamName, options) =>
-        this.clearOpenCodeRuntimeToolApprovals(teamName, options),
+        this.toolApprovalFacade.clearOpenCodeRuntimeToolApprovals(teamName, options),
       deleteAliveRunId: (teamName) => this.runTracking.deleteAliveRunId(teamName),
       invalidateRuntimeSnapshotCaches: (teamName) => this.invalidateRuntimeSnapshotCaches(teamName),
       setRuntimeAdapterProgress: (progress, onProgress) =>
@@ -5524,34 +5523,9 @@ export class TeamProvisioningService {
     this.toolApprovalFacade.handleTeammatePermissionRequest(run, perm, messageTimestamp);
   }
 
-  private syncOpenCodeRuntimeToolApprovals(input: {
-    teamName: string;
-    runId: string;
-    laneId: string;
-    cwd: string;
-    members: Record<string, TeamRuntimeMemberLaunchEvidence>;
-    expectedMembers: TeamRuntimeMemberSpec[];
-    memberNames?: readonly string[];
-    teamColor?: string;
-    teamDisplayName?: string;
-  }): void {
-    this.toolApprovalFacade.syncOpenCodeRuntimeToolApprovals(input);
-  }
-
   /** Dismiss the OS notification for a resolved/dismissed approval. */
   dismissApprovalNotification(requestId: string): void {
     this.toolApprovalFacade.dismissApprovalNotification(requestId);
-  }
-
-  private clearOpenCodeRuntimeToolApprovals(
-    teamName: string,
-    options: { runId?: string; laneId?: string; emitDismiss?: boolean } = {}
-  ): void {
-    this.toolApprovalFacade.clearOpenCodeRuntimeToolApprovals(teamName, options);
-  }
-
-  private clearApprovalTimeout(requestId: string): void {
-    this.toolApprovalFacade.clearApprovalTimeout(requestId);
   }
 
   /**

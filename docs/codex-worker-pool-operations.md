@@ -821,8 +821,12 @@ Parallel worker split:
    launcher, or a foreground debug mode when the caller accepts direct-process
    ownership.
 4. Never run two writer workers in one worktree.
-5. Merge or cherry-pick only after each worker has a stable commit and focused
-   verification.
+5. Integrate only after each worker has focused verification and a stable
+   handoff, patch or commit candidate. For strict `isolated_workspace_write`
+   linked worktrees, prefer handoff or patch and let the controller create the
+   commit through the Project Integration lifecycle. Worker-local commits are
+   appropriate only when the workspace is commit-capable, for example an
+   isolated clone with its own writable `.git` directory.
 
 Read-only or analysis task:
 
@@ -928,7 +932,10 @@ Good parallel split:
 - worker 2: reasoning/relationship/motivation;
 - worker 3: temporal/source-sibling/answer-shape.
 
-Merge only after each worker has a stable commit and focused verification.
+Merge only after each worker has a stable handoff, patch or commit candidate
+with focused verification. Do not require sandboxed linked-worktree workers to
+run `git add` or `git commit`; those operations may need shared `.git` metadata
+outside the writable workspace.
 
 ## Runner template
 

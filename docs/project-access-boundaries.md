@@ -95,6 +95,14 @@ Current Codex adapter status:
   App-server turns also receive a strict `workspaceWrite` sandbox policy with
   the active workspace as the only writable root, network disabled and `/tmp` /
   `TMPDIR` excluded from writable roots;
+- `isolated_workspace_write` workers are edit, test and handoff workers by
+  default. If the workspace is a linked git worktree, Git may need to write
+  common metadata outside the visible worktree, such as `.git/worktrees`,
+  `.git/objects`, refs and logs. Do not widen the sandbox to the shared `.git`
+  directory just to make `git add` or `git commit` work. The controller should
+  integrate the worker output through Project Integration lifecycle tools. If a
+  worker-local commit is required, use a commit-capable isolated clone where the
+  `.git` directory is inside the writable workspace;
 - Codex access-boundary jobs must set `networkAccess: "restricted"`.
   The adapter fails closed for implicit or explicit `disabled` network mode until
   a real OS/container egress sandbox exists;

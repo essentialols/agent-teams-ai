@@ -199,6 +199,14 @@ from the controller. They default to
 `accessBoundary: "isolated_workspace_write"` and cannot request
 `project_scoped_control` or `danger_full_access` through the controller path.
 
+These child jobs should normally produce a diff, patch or handoff, not their own
+commit. In a linked git worktree, `git add` and `git commit` can require writes
+to common `.git` metadata outside the child workspace, so a strict sandbox may
+deny the commit even after edits and tests succeeded. That is expected. Preserve
+the diff and let the project controller integrate through the Project
+Integration lifecycle. Use worker-local commits only for a commit-capable
+isolated clone whose `.git` directory is inside the writable workspace.
+
 ## Recovery rules
 
 - quota, capacity, auth broken or reconnect: use the pool continuation path;

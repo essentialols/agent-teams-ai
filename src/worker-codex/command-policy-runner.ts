@@ -25,7 +25,10 @@ export class CommandPolicyRunner implements RunnerPort {
     private readonly options: CommandPolicyRunnerOptions = {},
   ) {
     this.runnerId = `${inner.runnerId}:command-policy`;
-    this.capabilities = inner.capabilities;
+    this.capabilities = {
+      ...inner.capabilities,
+      runnerId: this.runnerId,
+    };
   }
 
   async run(input: Parameters<RunnerPort["run"]>[0]) {

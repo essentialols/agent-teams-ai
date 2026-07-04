@@ -36,6 +36,14 @@ const validAuthJson = codexAuthJson("refresh-token");
 const execFileAsync = promisify(execFile);
 
 describe("CommandPolicyRunner", () => {
+  it("exposes wrapper runner id in capabilities for runtime policy negotiation", () => {
+    const inner = new StaticRunner({ exitCode: 0, stdout: "", stderr: "" });
+    const runner = new CommandPolicyRunner(inner, isolatedWorkspaceCommandPolicy());
+
+    expect(runner.runnerId).toBe("node-process:command-policy");
+    expect(runner.capabilities.runnerId).toBe(runner.runnerId);
+  });
+
   it("blocks denied commands before the inner runner is invoked", async () => {
     const inner = new StaticRunner({ exitCode: 0, stdout: "", stderr: "" });
     const runner = new CommandPolicyRunner(inner, isolatedWorkspaceCommandPolicy());

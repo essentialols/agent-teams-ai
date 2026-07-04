@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   createDefaultTeamProvisioningPrepareCoordinatorPorts,
+  createInMemoryProviderProbeCachePort,
   TeamProvisioningPrepareCoordinator,
 } from '../TeamProvisioningPrepareCoordinator';
 
@@ -175,5 +176,89 @@ describe('TeamProvisioningPrepareCoordinator', () => {
     await coordinator.getCachedOrProbeResult(cwd, 'anthropic');
 
     expect(probeClaudeRuntime).toHaveBeenCalledTimes(3);
+  });
+
+  it('keeps provider probe cache timestamps inside the cache port', () => {
+    let now = 1_000;
+    const cache = createInMemoryProviderProbeCachePort({ ttlMs: 10, now: () => now });
+
+    cache.set('probe-key', {
+      claudePath: '/fake/claude',
+      authSource: 'none',
+    });
+
+    expect(cache.get('probe-key')).toMatchObject({ cachedAtMs: 1_000 });
+    now = 1_009;
+    expect(cache.get('probe-key')).not.toBeNull();
+    now = 1_010;
+    expect(cache.get('probe-key')).toBeNull();
+  });
+
+  it('isolates default provider probe caches per coordinator instance', async () => {
+    const cwd = '/tmp/probe-cache-isolated';
+    const probeClaudeRuntime = vi.fn().mockResolvedValue({});
+    const buildProvisioningEnv = vi.fn().mockResolvedValue({
+      env: { PATH: '/bin' },
+      authSource: 'codex_runtime',
+      geminiRuntimeAuth: null,
+      providerArgs: ['--codex'],
+    });
+    const overrides = {
+      resolveClaudeBinaryPath: vi.fn().mockResolvedValue('/fake/claude'),
+      buildProvisioningEnv,
+      probeClaudeRuntime,
+    };
+
+    const first = createCoordinator(overrides);
+    const second = createCoordinator(overrides);
+
+    await first.getCachedOrProbeResult(cwd, 'codex');
+    await first.getCachedOrProbeResult(cwd, 'codex');
+    await second.getCachedOrProbeResult(cwd, 'codex');
+    await second.getCachedOrProbeResult(cwd, 'codex');
+
+    expect(buildProvisioningEnv).toHaveBeenCalledTimes(2);
+    expect(probeClaudeRuntime).toHaveBeenCalledTimes(2);
+  });
+
+  it('dedupes in-flight provider probes within a coordinator cache', async () => {
+    const cwd = '/tmp/probe-cache-in-flight';
+    let releaseProbe: ((value: { warning?: string }) => void) | null = null;
+    const probeClaudeRuntime = vi.fn(
+      () =>
+        new Promise<{ warning?: string }>((resolve) => {
+          releaseProbe = resolve;
+        })
+    );
+    const buildProvisioningEnv = vi.fn().mockResolvedValue({
+      env: { PATH: '/bin' },
+      authSource: 'codex_runtime',
+      geminiRuntimeAuth: null,
+      providerArgs: ['--codex'],
+    });
+    const coordinator = createCoordinator({
+      resolveClaudeBinaryPath: vi.fn().mockResolvedValue('/fake/claude'),
+      buildProvisioningEnv,
+      probeClaudeRuntime,
+    });
+
+    const first = coordinator.getCachedOrProbeResult(cwd, 'codex');
+    const second = coordinator.getCachedOrProbeResult(cwd, 'codex');
+
+    await vi.waitFor(() => expect(releaseProbe).not.toBeNull());
+    expect(buildProvisioningEnv).toHaveBeenCalledOnce();
+    expect(probeClaudeRuntime).toHaveBeenCalledOnce();
+
+    const release = releaseProbe;
+    if (!release) {
+      throw new Error('Expected provider probe release callback to be registered.');
+    }
+    release({});
+
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      { claudePath: '/fake/claude', authSource: 'codex_runtime' },
+      { claudePath: '/fake/claude', authSource: 'codex_runtime' },
+    ]);
+    expect(probeClaudeRuntime).toHaveBeenCalledOnce();
   });
 });

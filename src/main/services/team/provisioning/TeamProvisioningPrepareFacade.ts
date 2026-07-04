@@ -9,8 +9,10 @@ import {
 } from './TeamProvisioningOpenCodeRuntimeAdapterPreparation';
 import {
   type CachedProbeResult,
+  createInMemoryProviderProbeCachePort,
   type PrepareForProvisioningOptions,
   type ProbeResult,
+  type ProviderProbeCachePort,
   TeamProvisioningPrepareCoordinator,
   type TeamProvisioningPrepareCoordinatorPorts,
 } from './TeamProvisioningPrepareCoordinator';
@@ -63,6 +65,7 @@ export interface TeamProvisioningPrepareFacadePorts {
     memberName: string;
     baseCwd: string;
   }): Promise<{ worktreePath: string }>;
+  providerProbeCache?: ProviderProbeCachePort;
   execCli?: TeamProvisioningPrepareCoordinatorPorts['execCli'];
   planRuntimeLanesOrThrow(
     leadProviderId: TeamProviderId | undefined,
@@ -82,6 +85,7 @@ export class TeamProvisioningPrepareFacade {
       ports.resolveClaudeBinaryPath ?? (() => ClaudeBinaryResolver.resolve());
     const execCli = ports.execCli ?? defaultExecCli;
     this.coordinator = new TeamProvisioningPrepareCoordinator({
+      providerProbeCache: ports.providerProbeCache ?? createInMemoryProviderProbeCachePort(),
       getOpenCodeRuntimeAdapter: () => ports.getOpenCodeRuntimeAdapter(),
       buildProvisioningEnv: (providerId, providerBackendId, options) =>
         ports.buildProvisioningEnv(providerId, providerBackendId, options),
@@ -131,10 +135,7 @@ export class TeamProvisioningPrepareFacade {
     return this.coordinator.materializeEffectiveTeamMemberSpecs(params);
   }
 
-  getOpenCodeRuntimeLaunchCwd(
-    fallbackCwd: string,
-    members: TeamCreateRequest['members']
-  ): string {
+  getOpenCodeRuntimeLaunchCwd(fallbackCwd: string, members: TeamCreateRequest['members']): string {
     return this.coordinator.getOpenCodeRuntimeLaunchCwd(fallbackCwd, members);
   }
 
@@ -162,11 +163,7 @@ export class TeamProvisioningPrepareFacade {
       planRuntimeLanesOrThrow: (leadProviderId, members, cwd) =>
         this.ports.planRuntimeLanesOrThrow(leadProviderId, members, cwd),
       buildOpenCodeRuntimeAdapterLaunchMembers: (launchRequest, members, lanePlan) =>
-        this.coordinator.buildOpenCodeRuntimeAdapterLaunchMembers(
-          launchRequest,
-          members,
-          lanePlan
-        ),
+        this.coordinator.buildOpenCodeRuntimeAdapterLaunchMembers(launchRequest, members, lanePlan),
     });
   }
 

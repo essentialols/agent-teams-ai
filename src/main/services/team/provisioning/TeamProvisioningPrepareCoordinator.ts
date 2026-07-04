@@ -81,8 +81,64 @@ export interface ProbeResult {
   warning?: string;
 }
 
-const cachedProbeResults = new Map<string, CachedProbeResult>();
-const probeInFlightByKey = new Map<string, Promise<ProbeResult | null>>();
+export interface ProviderProbeCachePort {
+  get(cacheKey: string): CachedProbeResult | null;
+  set(cacheKey: string, result: ProbeResult): void;
+  delete(cacheKey: string): void;
+  getOrCreateInFlight(
+    cacheKey: string,
+    create: () => Promise<ProbeResult | null>
+  ): Promise<ProbeResult | null>;
+  clear(): void;
+}
+
+export function createInMemoryProviderProbeCachePort({
+  ttlMs = PROBE_CACHE_TTL_MS,
+  now = Date.now,
+}: {
+  ttlMs?: number;
+  now?: () => number;
+} = {}): ProviderProbeCachePort {
+  const cachedProbeResults = new Map<string, CachedProbeResult>();
+  const probeInFlightByKey = new Map<string, Promise<ProbeResult | null>>();
+
+  return {
+    get(cacheKey) {
+      const cached = cachedProbeResults.get(cacheKey);
+      if (!cached) return null;
+      const ageMs = now() - cached.cachedAtMs;
+      if (ageMs >= ttlMs) {
+        cachedProbeResults.delete(cacheKey);
+        return null;
+      }
+      return cached;
+    },
+    set(cacheKey, result) {
+      cachedProbeResults.set(cacheKey, { cacheKey, ...result, cachedAtMs: now() });
+    },
+    delete(cacheKey) {
+      cachedProbeResults.delete(cacheKey);
+    },
+    getOrCreateInFlight(cacheKey, create) {
+      const existingProbe = probeInFlightByKey.get(cacheKey);
+      if (existingProbe) {
+        return existingProbe;
+      }
+
+      const probePromise = create().finally(() => {
+        if (probeInFlightByKey.get(cacheKey) === probePromise) {
+          probeInFlightByKey.delete(cacheKey);
+        }
+      });
+      probeInFlightByKey.set(cacheKey, probePromise);
+      return probePromise;
+    },
+    clear() {
+      cachedProbeResults.clear();
+      probeInFlightByKey.clear();
+    },
+  };
+}
 
 export interface PrepareForProvisioningOptions {
   forceFresh?: boolean;
@@ -95,6 +151,7 @@ export interface PrepareForProvisioningOptions {
 }
 
 export interface TeamProvisioningPrepareCoordinatorPorts {
+  providerProbeCache: ProviderProbeCachePort;
   getOpenCodeRuntimeAdapter(): TeamLaunchRuntimeAdapter | null;
   buildProvisioningEnv(
     providerId?: TeamProviderId,
@@ -943,18 +1000,11 @@ export class TeamProvisioningPrepareCoordinator {
     providerId: TeamProviderId | undefined
   ): CachedProbeResult | null {
     const cacheKey = createProbeCacheKey(cwd, providerId);
-    const cached = cachedProbeResults.get(cacheKey);
-    if (!cached) return null;
-    const ageMs = Date.now() - cached.cachedAtMs;
-    if (ageMs >= PROBE_CACHE_TTL_MS) {
-      cachedProbeResults.delete(cacheKey);
-      return null;
-    }
-    return cached;
+    return this.ports.providerProbeCache.get(cacheKey);
   }
 
   clearProbeCache(cwd: string, providerId: TeamProviderId | undefined): void {
-    cachedProbeResults.delete(createProbeCacheKey(cwd, providerId));
+    this.ports.providerProbeCache.delete(createProbeCacheKey(cwd, providerId));
   }
 
   async validatePrepareCwd(cwd: string): Promise<void> {
@@ -975,12 +1025,7 @@ export class TeamProvisioningPrepareCoordinator {
       };
     }
 
-    const existingProbe = probeInFlightByKey.get(cacheKey);
-    if (existingProbe) {
-      return await existingProbe;
-    }
-
-    const probePromise = (async () => {
+    return this.ports.providerProbeCache.getOrCreateInFlight(cacheKey, async () => {
       const claudePath = await this.ports.resolveClaudeBinaryPath();
       if (!claudePath) return null;
 
@@ -1018,20 +1063,13 @@ export class TeamProvisioningPrepareCoordinator {
           !isBinaryProbeWarning(probe.warning));
 
       if (shouldCache) {
-        cachedProbeResults.set(cacheKey, { cacheKey, ...result, cachedAtMs: Date.now() });
+        this.ports.providerProbeCache.set(cacheKey, result);
       } else {
-        cachedProbeResults.delete(cacheKey);
+        this.ports.providerProbeCache.delete(cacheKey);
       }
 
       return result;
-    })();
-    probeInFlightByKey.set(cacheKey, probePromise);
-
-    try {
-      return await probePromise;
-    } finally {
-      probeInFlightByKey.delete(cacheKey);
-    }
+    });
   }
 }
 
@@ -1039,6 +1077,7 @@ export function createDefaultTeamProvisioningPrepareCoordinatorPorts(
   overrides: Partial<TeamProvisioningPrepareCoordinatorPorts>
 ): TeamProvisioningPrepareCoordinatorPorts {
   return {
+    providerProbeCache: createInMemoryProviderProbeCachePort(),
     getOpenCodeRuntimeAdapter: () => null,
     buildProvisioningEnv: async () => ({
       env: process.env,

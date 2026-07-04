@@ -488,12 +488,7 @@ import {
   type TeamProvisioningStreamEventPorts,
 } from './provisioning/TeamProvisioningStreamEvents';
 import { captureTeamSpawnEvents as captureTeamSpawnEventsHelper } from './provisioning/TeamProvisioningStreamSpawnEvents';
-import {
-  readTaskActivityRepairLaunchSnapshot as readTaskActivityRepairLaunchSnapshotHelper,
-  repairStaleTaskActivityIntervalsBeforeSnapshot as repairStaleTaskActivityIntervalsBeforeSnapshotHelper,
-  repairStaleTaskActivityIntervalsOnce as repairStaleTaskActivityIntervalsOnceHelper,
-  writeLaunchFailureArtifactPackBestEffort as writeLaunchFailureArtifactPackBestEffortHelper,
-} from './provisioning/TeamProvisioningTaskActivityRepair';
+import { TeamProvisioningTaskActivityRepairBoundary } from './provisioning/TeamProvisioningTaskActivityRepairBoundary';
 import { TeamProvisioningToolApprovalFacade } from './provisioning/TeamProvisioningToolApprovalFacade';
 import { TeamProvisioningTranscriptClaudeLogsCache } from './provisioning/TeamProvisioningTranscriptClaudeLogs';
 import {
@@ -1255,7 +1250,7 @@ export class TeamProvisioningService {
       nowIso,
     });
   private readonly launchStateStoreBoundary: TeamProvisioningLaunchStateStoreBoundary;
-  private readonly launchFailureArtifactPackRunIds = new Set<string>();
+  private readonly taskActivityRepairBoundary!: TeamProvisioningTaskActivityRepairBoundary<ProvisioningRun>;
   private readonly failedOpenCodeSecondaryRetryInFlightByTeam = new Map<
     string,
     Promise<RetryFailedOpenCodeSecondaryLanesResult>
@@ -1301,11 +1296,6 @@ export class TeamProvisioningService {
       this.taskActivityIntervalService.resumeActiveIntervalsForMember(teamName, memberName, at),
   });
   private readonly leadTaskActivitySyncedRunKeys = new Set<string>();
-  private readonly crashRepairedActivityIntervalsByTeam = new Set<string>();
-  private readonly pendingCrashRepairSnapshotByTeam = new Map<
-    string,
-    PersistedTeamLaunchSnapshot | null
-  >();
   private teamChangeEmitter: ((event: TeamChangeEvent) => void) | null = null;
   private readonly helpOutputCache = { output: null as string | null, cachedAtMs: 0 };
   private pendingTimeouts = new Map<string, NodeJS.Timeout>();
@@ -1623,6 +1613,22 @@ export class TeamProvisioningService {
       nowMs: () => Date.now(),
       noopRefreshMs: TeamProvisioningService.LAUNCH_STATE_NOOP_REFRESH_MS,
     });
+    this.taskActivityRepairBoundary =
+      new TeamProvisioningTaskActivityRepairBoundary<ProvisioningRun>({
+        taskActivityIntervalService: this.taskActivityIntervalService,
+        runTracking: this.runTracking,
+        runs: this.runs,
+        readBootstrapLaunchSnapshot,
+        readLaunchState: (teamName) => this.launchStateStore.read(teamName),
+        choosePreferredLaunchSnapshot,
+        artifactWriter: {
+          write: writeTeamLaunchFailureArtifactPack,
+        },
+        buildLaunchDiagnosticsFromRun,
+        extractCliLogsFromRun,
+        getRuntimeAdapterTraceLines: (runId) => this.runtimeAdapterTraceLinesByRunId.get(runId),
+        warn: (message) => logger.warn(message),
+      });
     this.liveRuntimeMetadataPorts = createTeamProvisioningLiveRuntimeMetadataPorts({
       runs: this.runs,
       runtimeAdapterRunByTeam: this.runtimeAdapterRunByTeam,
@@ -2149,23 +2155,16 @@ export class TeamProvisioningService {
     teamName: string,
     launchSnapshot?: PersistedTeamLaunchSnapshot | null
   ): boolean {
-    return repairStaleTaskActivityIntervalsOnceHelper(teamName, launchSnapshot, {
-      taskActivityIntervalService: this.taskActivityIntervalService,
-      tracking: {
-        repairedTeams: this.crashRepairedActivityIntervalsByTeam,
-        pendingSnapshots: this.pendingCrashRepairSnapshotByTeam,
-      },
-    });
+    return this.taskActivityRepairBoundary.repairStaleTaskActivityIntervalsOnce(
+      teamName,
+      launchSnapshot
+    );
   }
 
   private async readTaskActivityRepairLaunchSnapshot(
     teamName: string
   ): Promise<PersistedTeamLaunchSnapshot | null> {
-    return readTaskActivityRepairLaunchSnapshotHelper(teamName, {
-      readBootstrapLaunchSnapshot,
-      readLaunchState: (teamName) => this.launchStateStore.read(teamName),
-      choosePreferredLaunchSnapshot,
-    });
+    return this.taskActivityRepairBoundary.readTaskActivityRepairLaunchSnapshot(teamName);
   }
 
   private writeLaunchFailureArtifactPackBestEffort(
@@ -2175,36 +2174,11 @@ export class TeamProvisioningService {
       launchSnapshot?: PersistedTeamLaunchSnapshot | null;
     }
   ): void {
-    writeLaunchFailureArtifactPackBestEffortHelper(run, options, {
-      writtenRunIds: this.launchFailureArtifactPackRunIds,
-      artifactWriter: {
-        write: writeTeamLaunchFailureArtifactPack,
-      },
-      buildLaunchDiagnosticsFromRun,
-      extractCliLogsFromRun,
-      getRuntimeAdapterTraceLines: (runId) => this.runtimeAdapterTraceLinesByRunId.get(runId),
-      onWriteError: (error) => {
-        logger.warn(
-          `[${run.teamName}] Failed to write launch failure artifact pack: ${
-            error instanceof Error ? error.message : String(error)
-          }`
-        );
-      },
-    });
+    this.taskActivityRepairBoundary.writeLaunchFailureArtifactPackBestEffort(run, options);
   }
 
   async repairStaleTaskActivityIntervalsBeforeSnapshot(teamName: string): Promise<void> {
-    return repairStaleTaskActivityIntervalsBeforeSnapshotHelper(teamName, {
-      tracking: {
-        repairedTeams: this.crashRepairedActivityIntervalsByTeam,
-        pendingSnapshots: this.pendingCrashRepairSnapshotByTeam,
-      },
-      getTrackedRunId: (teamName) => this.runTracking.getTrackedRunId(teamName),
-      hasRun: (runId) => this.runs.has(runId),
-      readRepairLaunchSnapshot: (teamName) => this.readTaskActivityRepairLaunchSnapshot(teamName),
-      repairOnce: (teamName, launchSnapshot) =>
-        this.repairStaleTaskActivityIntervalsOnce(teamName, launchSnapshot),
-    });
+    return this.taskActivityRepairBoundary.repairStaleTaskActivityIntervalsBeforeSnapshot(teamName);
   }
 
   private scheduleStaleAnthropicTeamApiKeyHelperCleanup(): void {

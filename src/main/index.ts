@@ -2694,6 +2694,7 @@ async function startHttpServer(
         sshConnectionManager,
         teamDataService,
         teamProvisioningService,
+        teamRuntimeApi: teamProvisioningService,
       },
       modeSwitchHandler,
       config.httpServer?.port ?? 3456

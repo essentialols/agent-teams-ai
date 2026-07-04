@@ -49,6 +49,13 @@ function getTeamProvisioningService(
   return services.teamProvisioningService;
 }
 
+function getTeamRuntimeApi(services: HttpServices): NonNullable<HttpServices['teamRuntimeApi']> {
+  if (!services.teamRuntimeApi) {
+    throw new HttpFeatureUnavailableError('Team runtime control is not available in this mode');
+  }
+  return services.teamRuntimeApi;
+}
+
 function getTeamDataService(services: HttpServices): NonNullable<HttpServices['teamDataService']> {
   if (!services.teamDataService) {
     throw new HttpFeatureUnavailableError('Team data control is not available in this mode');
@@ -524,10 +531,10 @@ async function getTeamDataWithRuntimeOverlay(
 ): Promise<Awaited<ReturnType<NonNullable<HttpServices['teamDataService']>['getTeamData']>>> {
   const data = await getTeamDataService(services).getTeamData(teamName);
   let runtimeState: Awaited<
-    ReturnType<NonNullable<HttpServices['teamProvisioningService']>['getRuntimeState']>
+    ReturnType<NonNullable<HttpServices['teamRuntimeApi']>['getRuntimeState']>
   > | null = null;
   try {
-    runtimeState = (await services.teamProvisioningService?.getRuntimeState(teamName)) ?? null;
+    runtimeState = (await services.teamRuntimeApi?.getRuntimeState(teamName)) ?? null;
   } catch {
     runtimeState = null;
   }
@@ -635,9 +642,9 @@ export function registerTeamRoutes(app: FastifyInstance, services: HttpServices)
           return reply.status(400).send({ error: validatedTeamName.error });
         }
 
-        const teamProvisioningService = getTeamProvisioningService(services);
-        await teamProvisioningService.stopTeam(validatedTeamName.value!);
-        return reply.send(await teamProvisioningService.getRuntimeState(validatedTeamName.value!));
+        const teamRuntimeApi = getTeamRuntimeApi(services);
+        await teamRuntimeApi.stopTeam(validatedTeamName.value!);
+        return reply.send(await teamRuntimeApi.getRuntimeState(validatedTeamName.value!));
       } catch (error) {
         if (shouldLogError(error)) {
           logger.error(
@@ -660,7 +667,7 @@ export function registerTeamRoutes(app: FastifyInstance, services: HttpServices)
         }
 
         return reply.send(
-          await getTeamProvisioningService(services).getRuntimeState(validatedTeamName.value!)
+          await getTeamRuntimeApi(services).getRuntimeState(validatedTeamName.value!)
         );
       } catch (error) {
         if (shouldLogError(error)) {
@@ -697,11 +704,9 @@ export function registerTeamRoutes(app: FastifyInstance, services: HttpServices)
 
   app.get('/api/teams/runtime/alive', async (_request, reply) => {
     try {
-      const teamProvisioningService = getTeamProvisioningService(services);
+      const teamRuntimeApi = getTeamRuntimeApi(services);
       const runtimeStates = await Promise.all(
-        teamProvisioningService
-          .getAliveTeams()
-          .map((teamName) => teamProvisioningService.getRuntimeState(teamName))
+        teamRuntimeApi.getAliveTeams().map((teamName) => teamRuntimeApi.getRuntimeState(teamName))
       );
       return reply.send(runtimeStates);
     } catch (error) {
@@ -721,7 +726,7 @@ export function registerTeamRoutes(app: FastifyInstance, services: HttpServices)
           return reply.status(400).send({ error: validatedTeamName.error });
         }
         return reply.send(
-          await getTeamProvisioningService(services).recordOpenCodeRuntimeBootstrapCheckin(
+          await getTeamRuntimeApi(services).recordOpenCodeRuntimeBootstrapCheckin(
             withRuntimeTeamName(validatedTeamName.value!, request.body)
           )
         );
@@ -746,7 +751,7 @@ export function registerTeamRoutes(app: FastifyInstance, services: HttpServices)
           return reply.status(400).send({ error: validatedTeamName.error });
         }
         return reply.send(
-          await getTeamProvisioningService(services).deliverOpenCodeRuntimeMessage(
+          await getTeamRuntimeApi(services).deliverOpenCodeRuntimeMessage(
             withRuntimeTeamName(validatedTeamName.value!, request.body)
           )
         );
@@ -771,7 +776,7 @@ export function registerTeamRoutes(app: FastifyInstance, services: HttpServices)
           return reply.status(400).send({ error: validatedTeamName.error });
         }
         return reply.send(
-          await getTeamProvisioningService(services).recordOpenCodeRuntimeTaskEvent(
+          await getTeamRuntimeApi(services).recordOpenCodeRuntimeTaskEvent(
             withRuntimeTeamName(validatedTeamName.value!, request.body)
           )
         );
@@ -796,7 +801,7 @@ export function registerTeamRoutes(app: FastifyInstance, services: HttpServices)
           return reply.status(400).send({ error: validatedTeamName.error });
         }
         return reply.send(
-          await getTeamProvisioningService(services).recordOpenCodeRuntimeHeartbeat(
+          await getTeamRuntimeApi(services).recordOpenCodeRuntimeHeartbeat(
             withRuntimeTeamName(validatedTeamName.value!, request.body)
           )
         );

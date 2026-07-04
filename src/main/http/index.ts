@@ -38,12 +38,32 @@ import type {
   UpdaterService,
 } from '../services';
 import type { SshConnectionManager } from '../services/infrastructure/SshConnectionManager';
+import type { TeamRuntimeApi } from '../services/team/contracts/TeamProvisioningApis';
 import type { TeamDataService } from '../services/team/TeamDataService';
-import type { TeamProvisioningService } from '../services/team/TeamProvisioningService';
 import type { MemberWorkSyncFeatureFacade } from '@features/member-work-sync/main';
+import type {
+  TeamCreateRequest,
+  TeamCreateResponse,
+  TeamLaunchRequest,
+  TeamLaunchResponse,
+  TeamProvisioningProgress,
+} from '@shared/types/team';
 import type { FastifyInstance } from 'fastify';
 
 const logger = createLogger('HTTP:routes');
+
+interface TeamHttpProvisioningApi {
+  createTeam(
+    request: TeamCreateRequest,
+    onProgress: (progress: TeamProvisioningProgress) => void
+  ): Promise<TeamCreateResponse>;
+  launchTeam(
+    request: TeamLaunchRequest,
+    onProgress: (progress: TeamProvisioningProgress) => void
+  ): Promise<TeamLaunchResponse>;
+  getProvisioningStatus(runId: string): Promise<TeamProvisioningProgress>;
+  repairStaleTaskActivityIntervalsBeforeSnapshot?(teamName: string): Promise<void>;
+}
 
 export interface HttpServices {
   projectScanner: ProjectScanner;
@@ -58,7 +78,8 @@ export interface HttpServices {
   updaterService: UpdaterService;
   sshConnectionManager: SshConnectionManager;
   teamDataService?: TeamDataService;
-  teamProvisioningService?: TeamProvisioningService;
+  teamProvisioningService?: TeamHttpProvisioningApi;
+  teamRuntimeApi?: TeamRuntimeApi;
 }
 
 export function registerHttpRoutes(
@@ -70,7 +91,7 @@ export function registerHttpRoutes(
   registerSessionRoutes(app, services);
   registerSearchRoutes(app, services);
   registerSubagentRoutes(app, services);
-  if (services.teamProvisioningService || services.teamDataService) {
+  if (services.teamDataService || services.teamProvisioningService || services.teamRuntimeApi) {
     registerTeamRoutes(app, services);
   }
   registerNotificationRoutes(app);

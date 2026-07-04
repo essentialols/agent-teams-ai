@@ -310,6 +310,10 @@ event logs. `worker-local` provides local Git/check/secret-scan/workspace-lock
 adapters for real sandbox repositories. `worker-codex` exposes structured MCP
 tools for the integration attempt lifecycle. CLI wrappers and live provider e2e
 coverage should be added without duplicating policy logic in handlers.
+`scripts/e2e-live-workers/run.mjs --only="codex project integration lifecycle tools"`
+exercises the structured tools through the built CLI against a sandbox git
+repository and verifies that an unapproved remote push is denied before the
+approved push succeeds.
 
 ### Phase 1: domain model
 
@@ -452,6 +456,13 @@ Required tests:
 - secret scan rejection tests;
 - live Codex project controller integration e2e;
 - live bypass attempt e2e where raw dangerous commands are rejected.
+
+Current e2e coverage:
+
+- `codex project integration lifecycle tools` runs open/apply/check/commit/push
+  through `subscription-runtime-codex-goal tool ...` on a sandbox repository;
+- the same scenario checks that `push_approved_commit` rejects an unapproved
+  remote before pushing the approved commit.
 
 Optional later:
 

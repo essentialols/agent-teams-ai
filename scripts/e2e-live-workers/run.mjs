@@ -36,6 +36,7 @@ async function main() {
   await run("codex real app-server sandbox", codexRealAppServerSandbox);
   await run("codex broken auth skips account", codexBrokenAuthSkipsAccount);
   await run("codex quota continuation delivers inbox to real account", codexQuotaContinuationInbox);
+  await run("codex project integration lifecycle tools", codexProjectIntegrationLifecycleTools);
   await run("codex project controller starts real child worker", codexProjectControllerStartsChildWorker);
   await run("claude real cli safe-point inbox read-only", claudeInboxReadOnly);
   await run("claude real cli safe-point inbox edit", claudeInboxEdit);
@@ -367,6 +368,139 @@ async function codexProjectControllerStartsChildWorker() {
     };
   } finally {
     if (childTmuxSession) killTmuxSession(childTmuxSession);
+    await cleanup(root);
+  }
+}
+
+async function codexProjectIntegrationLifecycleTools() {
+  const root = await sandboxRoot("codex-project-integration-");
+  try {
+    const workspacePath = await gitSandbox(join(root, "workspace"), {
+      "memory.txt": "before\n",
+    });
+    const branch = runChecked("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+      cwd: workspacePath,
+    }).stdout.trim();
+    const remotePath = join(root, "remote.git");
+    runChecked("git", ["init", "--bare", remotePath]);
+    runChecked("git", ["remote", "add", "origin", remotePath], {
+      cwd: workspacePath,
+    });
+    runChecked("git", ["checkout", "-b", "pc-integration-worker"], {
+      cwd: workspacePath,
+    });
+    await writeFile(join(workspacePath, "memory.txt"), "after\n");
+    runChecked("git", ["add", "memory.txt"], { cwd: workspacePath });
+    runChecked("git", ["commit", "-m", "fix: worker output"], {
+      cwd: workspacePath,
+    });
+    const workerCommitSha = runChecked("git", ["rev-parse", "HEAD"], {
+      cwd: workspacePath,
+    }).stdout.trim();
+    runChecked("git", ["checkout", branch], { cwd: workspacePath });
+
+    const registryRootDir = join(root, "registry");
+    const controllerJobId = "pc-integration-controller";
+    const controllerJobRoot = join(root, "jobs", controllerJobId);
+    await codexGoalTool("codex_goal_create_job", {
+      registryRootDir,
+      jobId: controllerJobId,
+      description: "Sandbox project integration lifecycle e2e",
+      jobRootDir: controllerJobRoot,
+      authRootDir: join(root, "auth"),
+      stateRootDir: join(controllerJobRoot, "state"),
+      workspacePath,
+      promptPath: join(controllerJobRoot, "prompt.md"),
+      taskId: controllerJobId,
+      accounts: ["account-a"],
+      accessBoundary: "project_scoped_control",
+      networkAccess: "restricted",
+      projectAccessScope: {
+        projectId: "codex-project-integration-e2e",
+        registryRoot: registryRootDir,
+        workspaceRoots: [workspacePath],
+        jobIdPrefixes: ["pc-integration-"],
+        tmuxSessionPrefixes: ["pc-integration-"],
+        allowedBranches: [branch],
+        allowedGitRemotes: ["origin"],
+      },
+      confirmCreate: true,
+    });
+
+    const attemptId = "pc-integration-attempt";
+    assertToolOk(codexGoalTool("codex_goal_project_open_integration_attempt", {
+      registryRootDir,
+      controllerJobId,
+      attemptId,
+      workerJobId: "pc-integration-worker",
+      workerWorkspacePath: workspacePath,
+      workerCommitSha,
+      targetWorkspacePath: workspacePath,
+      targetBranch: branch,
+      targetRemote: "origin",
+      changedFiles: ["memory.txt"],
+      approvedFiles: ["memory.txt"],
+      allowedPathPrefixes: ["memory.txt"],
+      requiredCheckIds: ["check:noop"],
+      requiredChecks: [{
+        checkId: "check:noop",
+        command: [process.execPath, "-e", "process.exit(0)"],
+      }],
+      confirmOpen: true,
+    }), "open integration attempt");
+    assertToolOk(codexGoalTool("codex_goal_project_apply_worker_output", {
+      registryRootDir,
+      controllerJobId,
+      attemptId,
+      confirmApply: true,
+    }), "apply worker output");
+    assertToolOk(codexGoalTool("codex_goal_project_run_required_checks", {
+      registryRootDir,
+      controllerJobId,
+      attemptId,
+      confirmRunChecks: true,
+    }), "run required checks");
+    const committed = assertToolOk(codexGoalTool(
+      "codex_goal_project_commit_approved_changes",
+      {
+        registryRootDir,
+        controllerJobId,
+        attemptId,
+        message: "fix(memory): integrate worker output",
+        allowedPathPrefixes: ["memory.txt"],
+        requiredCheckIds: ["check:noop"],
+        confirmCommit: true,
+      },
+    ), "commit approved changes");
+    const denied = codexGoalTool("codex_goal_project_push_approved_commit", {
+      registryRootDir,
+      controllerJobId,
+      attemptId,
+      remote: "upstream",
+      confirmPush: true,
+    });
+    assertEqual(denied.ok, false);
+    assert(
+      String(denied.error).includes("remote_denied"),
+      "push to unapproved remote must be denied",
+    );
+    assertToolOk(codexGoalTool("codex_goal_project_push_approved_commit", {
+      registryRootDir,
+      controllerJobId,
+      attemptId,
+      confirmPush: true,
+    }), "push approved commit");
+
+    const commitSha = committed.attempt?.commitCandidate?.commitSha;
+    const pushedSha = runChecked("git", [
+      "--git-dir",
+      remotePath,
+      "rev-parse",
+      `refs/heads/${branch}`,
+    ]).stdout.trim();
+    assertEqual(pushedSha, commitSha);
+    return { root: keepArtifacts ? root : undefined, branch };
+  } finally {
     await cleanup(root);
   }
 }
@@ -723,6 +857,13 @@ function codexGoalTool(name, args) {
   } catch {
     throw new Error(`${name} returned non-json output: ${safeTail(result.stdout)}`);
   }
+}
+
+function assertToolOk(result, label) {
+  if (result?.ok !== true) {
+    throw new Error(`${label} failed: ${safeTail(JSON.stringify(result))}`);
+  }
+  return result;
 }
 
 async function waitForCodexProjectChildResult(input) {

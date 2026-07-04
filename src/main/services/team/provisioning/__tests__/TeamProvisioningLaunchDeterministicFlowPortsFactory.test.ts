@@ -61,16 +61,22 @@ class BoundCallbackHost {
     getAliveRunId: vi.fn(() => 'alive-1'),
   };
 
-  workspaceTrustCoordinator: unknown = null;
+  private workspaceTrustCoordinatorValue: unknown = null;
+  private runtimeTurnSettledEnvironmentProviderValue: unknown = null;
   readonly workspaceTrustWorkspaceCollectionPorts = {};
-  runtimeTurnSettledEnvironmentProvider: unknown = null;
 
-  getWorkspaceTrustCoordinator(): unknown {
-    return this.workspaceTrustCoordinator;
-  }
+  readonly getWorkspaceTrustCoordinator = vi.fn(() => this.workspaceTrustCoordinatorValue);
+  readonly getRuntimeTurnSettledEnvironmentProvider = vi.fn(
+    () => this.runtimeTurnSettledEnvironmentProviderValue
+  );
 
-  getRuntimeTurnSettledEnvironmentProvider(): unknown {
-    return this.runtimeTurnSettledEnvironmentProvider;
+  setMutableSetupDependencies(input: {
+    workspaceTrustCoordinator?: unknown;
+    runtimeTurnSettledEnvironmentProvider?: unknown;
+  }): void {
+    this.workspaceTrustCoordinatorValue = input.workspaceTrustCoordinator ?? null;
+    this.runtimeTurnSettledEnvironmentProviderValue =
+      input.runtimeTurnSettledEnvironmentProvider ?? null;
   }
 
   readonly mcpConfigBuilder = {
@@ -319,11 +325,18 @@ describe('createTeamProvisioningLaunchDeterministicFlowBoundary', () => {
       RUNTIME_TURN_SETTLED_SPOOL_ROOT: '/tmp/spool',
     }));
 
-    host.workspaceTrustCoordinator = workspaceTrustCoordinator;
-    host.runtimeTurnSettledEnvironmentProvider = runtimeTurnSettledEnvironmentProvider;
+    expect(host.getWorkspaceTrustCoordinator).not.toHaveBeenCalled();
+    expect(host.getRuntimeTurnSettledEnvironmentProvider).not.toHaveBeenCalled();
+
+    host.setMutableSetupDependencies({
+      workspaceTrustCoordinator,
+      runtimeTurnSettledEnvironmentProvider,
+    });
 
     const setupPorts = boundary.createSetupPorts();
 
+    expect(host.getWorkspaceTrustCoordinator).toHaveBeenCalledTimes(1);
+    expect(host.getRuntimeTurnSettledEnvironmentProvider).toHaveBeenCalledTimes(1);
     expect(setupPorts.workspaceTrustCoordinator).toBe(workspaceTrustCoordinator);
     expect(setupPorts.runtimeTurnSettledEnvironmentProvider).toBe(
       runtimeTurnSettledEnvironmentProvider

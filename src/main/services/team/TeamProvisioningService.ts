@@ -1617,12 +1617,6 @@ export class TeamProvisioningService {
   });
 
   private createMemberLifecycleHost(): TeamProvisioningMemberLifecycleHost {
-    const optionalSeamSource = this as unknown as Partial<
-      Pick<
-        TeamProvisioningMemberLifecycleHost,
-        'enqueueDirectRestartPrompt' | 'updateDirectTmuxRestartMemberConfig'
-      >
-    >;
     const portGroups: TeamProvisioningMemberLifecycleHostFactoryPortGroups<
       ProvisioningRun,
       MixedSecondaryRuntimeLaneState
@@ -1669,10 +1663,6 @@ export class TeamProvisioningService {
           this.buildTeamRuntimeLaunchArgsPlan(
             input as Parameters<typeof this.buildTeamRuntimeLaunchArgsPlan>[0]
           ),
-        get updateDirectTmuxRestartMemberConfig() {
-          const seam = optionalSeamSource.updateDirectTmuxRestartMemberConfig;
-          return typeof seam === 'function' ? seam.bind(optionalSeamSource) : undefined;
-        },
         memberMcpLaunchConfigProvisioner: {
           buildTrackedMemberMcpLaunchConfig: (input) =>
             this.memberMcpLaunchConfigProvisioner.buildTrackedMemberMcpLaunchConfig(input),
@@ -1718,10 +1708,6 @@ export class TeamProvisioningService {
           this.persistInboxMessage(teamName, memberName, message as unknown as InboxMessage),
         persistSentMessage: (teamName, message) =>
           this.persistSentMessage(teamName, message as unknown as InboxMessage),
-        get enqueueDirectRestartPrompt() {
-          const seam = optionalSeamSource.enqueueDirectRestartPrompt;
-          return typeof seam === 'function' ? seam.bind(optionalSeamSource) : undefined;
-        },
       },
       openCodeRuntime: {
         getOpenCodeRuntimeAdapter: () => this.getOpenCodeRuntimeAdapter(),

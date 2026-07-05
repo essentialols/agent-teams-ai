@@ -13,8 +13,6 @@ type MemberLifecycleHostProbe = {
     teamMetaStore: {
       getMeta(teamName: string): Promise<unknown>;
     };
-    updateDirectTmuxRestartMemberConfig?: (input: unknown) => Promise<void>;
-    enqueueDirectRestartPrompt?: (input: unknown) => void;
   };
 };
 
@@ -71,7 +69,7 @@ describe('TeamProvisioningService member lifecycle host', () => {
     });
   });
 
-  it('keeps service-level optional lifecycle seams observable after construction', async () => {
+  it('does not expose service-level optional lifecycle seams after construction', () => {
     const service = new TeamProvisioningService();
     const serviceSeams = service as unknown as {
       marker: string;
@@ -87,16 +85,13 @@ describe('TeamProvisioningService member lifecycle host', () => {
       calls.push({ kind: 'enqueue', marker: this.marker, input });
     };
     const host = (service as unknown as MemberLifecycleHostProbe).memberLifecycleHost;
-    const updateDirectTmuxRestartMemberConfig =
-      host.updateDirectTmuxRestartMemberConfig?.bind(undefined);
-    const enqueueDirectRestartPrompt = host.enqueueDirectRestartPrompt?.bind(undefined);
 
-    await updateDirectTmuxRestartMemberConfig?.({ teamName: 'alpha' });
-    enqueueDirectRestartPrompt?.({ teamName: 'alpha' });
-
-    expect(calls).toEqual([
-      { kind: 'update', marker: 'service-seam-bound', input: { teamName: 'alpha' } },
-      { kind: 'enqueue', marker: 'service-seam-bound', input: { teamName: 'alpha' } },
-    ]);
+    expect(
+      (host as { updateDirectTmuxRestartMemberConfig?: unknown }).updateDirectTmuxRestartMemberConfig
+    ).toBeUndefined();
+    expect(
+      (host as { enqueueDirectRestartPrompt?: unknown }).enqueueDirectRestartPrompt
+    ).toBeUndefined();
+    expect(calls).toEqual([]);
   });
 });

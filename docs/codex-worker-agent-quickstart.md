@@ -172,6 +172,19 @@ that coordinates scoped project work through broker tools. Do not run it as a
 normal Codex writer with `codex_goal_continue`; ordinary launches fail closed
 because raw shell cannot enforce project-scoped control.
 
+The manifest is not a live LLM orchestrator. It does not schedule workers or call
+broker tools by itself. Treat it as the scoped identity and policy anchor that a
+host-side boss, daemon, MCP/CLI/SDK caller or future restricted LLM launcher uses
+when making broker calls.
+
+If status says a `project_scoped_control` controller manifest exists but no LLM
+orchestrator process is running, that can be a valid state. To get autonomous
+reasoning, start only a launcher that can hide raw shell, raw tmux, raw git,
+direct registry writes and auth roots while exposing read-only status plus
+`codex_goal_project_*` tools. If that launcher is unavailable, keep the boss or
+host supervisor calling broker tools directly. Never switch the controller to
+`danger_full_access` just to make it "alive".
+
 Controller manifest requirements:
 
 - `accessBoundary: "project_scoped_control"`;

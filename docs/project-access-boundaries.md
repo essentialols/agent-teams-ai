@@ -125,6 +125,12 @@ Current Codex adapter status:
   `codex_goal_project_integrate_commit` and
   `codex_goal_project_push_branch`.
 
+A stored `project_scoped_control` manifest is not a live autonomous LLM process.
+It does not think, loop, watch status, start children or call broker tools by
+itself. It is the policy identity used by a host-side boss, daemon, MCP/CLI/SDK
+surface or future restricted LLM launcher when those callers perform brokered
+project-control operations.
+
 Codex broker git/worktree operations use fixed structured requests and
 `execFile("git", args)` with no shell interpolation. The broker validates
 workspace roots, worktree roots, branches, remotes, force-push policy and
@@ -137,6 +143,18 @@ For a long-running project coordinator, create a stored controller job with
 `accessBoundary: "project_scoped_control"` and a tight `projectAccessScope`.
 The controller is a policy anchor for broker calls, not an ordinary raw-shell
 writer. It should coordinate child jobs only through project-control tools.
+
+Do not describe the controller as "running" only because the manifest exists in
+the registry. A live controller requires a separate execution surface:
+
+- host boss thread, daemon, MCP, CLI or SDK calling broker tools with the
+  controller job id;
+- or a restricted LLM launcher that exposes only read-only status tools and
+  `codex_goal_project_*` broker tools.
+
+If that restricted LLM launcher is not available, keep orchestration in the host
+boss/supervisor. Do not substitute `danger_full_access`; that creates an admin
+worker, not a project-scoped controller.
 
 Minimum safe scope:
 

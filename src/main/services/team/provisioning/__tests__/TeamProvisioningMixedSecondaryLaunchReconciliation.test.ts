@@ -303,14 +303,18 @@ describe('TeamProvisioningMixedSecondaryLaunchReconciliation', () => {
 
     expect(getFinishedParams()?.secondaryMembers?.[0]).toMatchObject({
       evidence: {
-        launchState: 'runtime_pending_bootstrap',
+        launchState: 'failed_to_start',
         agentToolAccepted: false,
         runtimeAlive: false,
         bootstrapConfirmed: false,
-        hardFailure: false,
+        hardFailure: true,
+        hardFailureReason: 'opencode_runtime_evidence_missing',
+        runtimeDiagnostic: 'OpenCode secondary lane finished without committed runtime evidence.',
+        runtimeDiagnosticSeverity: 'warning',
         bootstrapStalled: true,
         diagnostics: [
-          'OpenCode secondary lane finished without runtime evidence. Waiting for runtime reconciliation.',
+          'OpenCode secondary lane finished without committed runtime evidence.',
+          'Retry the OpenCode teammate or relaunch the team.',
         ],
       },
       pendingReason: undefined,

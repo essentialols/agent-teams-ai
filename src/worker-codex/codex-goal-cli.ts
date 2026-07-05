@@ -55,6 +55,10 @@ import {
   upsertCodexGoalLaunchManifest,
   type CodexGoalLaunchManifestMetadata,
 } from "./codex-goal-launch-manifest";
+import {
+  projectControlGenericScopeDenial,
+  projectControlGenericToolDenial,
+} from "./project-control-scope-guard";
 
 type OutputFormat = "text" | "json";
 type CodexGoalCliCommand =
@@ -297,6 +301,7 @@ export async function runCodexGoalCli(
         io.writeStdout(`${tmuxCommand.preview}\n`);
         return 0;
       }
+      await assertRunCommandProjectControlAllowed(command);
       await upsertRunCommandManifest(command);
       await startCodexGoalTmux(cliLaunchInput(command));
       io.writeStdout(
@@ -308,6 +313,7 @@ export async function runCodexGoalCli(
       io.writeStdout(`${buildNoTmuxShellCommand(command)}\n`);
       return 0;
     }
+    await assertRunCommandProjectControlAllowed(command);
     await upsertRunCommandManifest(command);
     const result = await runCodexGoal(command.config);
     writeJsonOrText(command.format, result, io);
@@ -419,6 +425,34 @@ export async function upsertRunCommandManifest(command: RunCommand) {
     launch: cliLaunchInput(command),
     ...(command.registryMetadata ? { metadata: command.registryMetadata } : {}),
   });
+}
+
+async function assertRunCommandProjectControlAllowed(command: RunCommand): Promise<void> {
+  const jobId = command.config.jobId ?? command.config.taskId;
+  const denial = command.registryRootDir === undefined
+    ? projectControlGenericToolDenial({
+        accessBoundary: command.config.accessBoundary,
+        projectAccessScope: command.config.projectAccessScope,
+        jobId,
+        requiredTool: "codex_goal_project_start",
+      })
+    : await projectControlGenericScopeDenial({
+        registryRootDir: command.registryRootDir,
+        jobId,
+        workspacePath: command.config.workspacePath,
+        accessBoundary: command.config.accessBoundary,
+        projectAccessScope: command.config.projectAccessScope,
+        requiredTool: "codex_goal_project_start",
+      });
+  if (!denial) return;
+  throw new Error(
+    [
+      denial.reason,
+      `requiredTool=${denial.requiredTool}`,
+      denial.controllerJobId ? `controllerJobId=${denial.controllerJobId}` : undefined,
+      denial.safeMessage,
+    ].filter((part): part is string => part !== undefined).join("; "),
+  );
 }
 
 function cliLaunchInput(command: RunCommand) {

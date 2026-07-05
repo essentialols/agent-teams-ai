@@ -230,6 +230,92 @@ describe("codex goal cli", () => {
     }
   });
 
+  it("denies registry-aware CLI run when an existing controller owns the scope", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-cli-project-scope-"));
+    const registryRoot = join(root, "registry");
+    const controllerJobRoot = join(root, "jobs", "infinity-context-controller-v1");
+    const sourceWorkspace = join(root, "workspaces", "infinity-context-main");
+    const worktreeRoot = join(root, "worktrees");
+    const childJobRoot = join(root, "jobs", "infinity-context-memory-child-v1");
+    const childPrompt = join(childJobRoot, "prompt.md");
+    const childJobJson = join(registryRoot, "infinity-context-memory-child-v1", "job.json");
+    const projectAccessScope = {
+      projectId: "infinity-context",
+      workspaceRoots: [sourceWorkspace],
+      worktreeRoots: [worktreeRoot],
+      registryRoot,
+      jobIdPrefixes: ["infinity-context-"],
+      tmuxSessionPrefixes: ["infinity-context-"],
+      allowedAccountIds: ["account-a"],
+    };
+    const controllerCommand = parseCodexGoalCliArgs(
+      [
+        "run",
+        "--job-root",
+        controllerJobRoot,
+        "--auth-root",
+        join(root, "auth"),
+        "--workspace",
+        sourceWorkspace,
+        "--prompt",
+        join(controllerJobRoot, "prompt.md"),
+        "--task-id",
+        "infinity-context-controller-v1",
+        "--job-id",
+        "infinity-context-controller-v1",
+        "--accounts",
+        "account-a",
+        "--registry-root",
+        registryRoot,
+        "--access-boundary",
+        "project_scoped_control",
+        "--project-access-scope-json",
+        JSON.stringify(projectAccessScope),
+        "--network-access",
+        "restricted",
+        "--no-require-git-workspace",
+      ],
+      fakeIo(),
+    );
+
+    try {
+      expect(controllerCommand.kind).toBe("run");
+      if (controllerCommand.kind !== "run") return;
+      await upsertRunCommandManifest(controllerCommand);
+
+      const io = captureIo();
+      const exitCode = await runCodexGoalCli([
+        "run",
+        "--job-root",
+        childJobRoot,
+        "--auth-root",
+        join(root, "auth"),
+        "--workspace",
+        join(worktreeRoot, "infinity-context-memory-child-v1"),
+        "--prompt",
+        childPrompt,
+        "--task-id",
+        "infinity-context-memory-child-v1",
+        "--job-id",
+        "infinity-context-memory-child-v1",
+        "--accounts",
+        "account-a",
+        "--tmux-session",
+        "infinity-context-memory-child-v1",
+        "--registry-root",
+        registryRoot,
+        "--no-require-git-workspace",
+      ], io);
+
+      expect(exitCode).toBe(2);
+      expect(io.stderr).toContain("project_control_broker_required");
+      expect(io.stderr).toContain("requiredTool=codex_goal_project_start");
+      await expect(readFile(childJobJson, "utf8")).rejects.toThrow(/ENOENT/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("exposes the full MCP tool surface through the CLI fallback", async () => {
     const io = captureIo();
 

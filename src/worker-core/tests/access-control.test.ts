@@ -137,6 +137,17 @@ describe("project access control", () => {
     })).toMatchObject({ allowed: true });
     expect(policy.canCreateWorktree({
       path: "/work/infinity-context-lane-a",
+      baseBranch: "origin/main",
+    })).toMatchObject({ allowed: true });
+    expect(policy.canCreateWorktree({
+      path: "/work/infinity-context-lane-a",
+      baseBranch: "upstream/main",
+    })).toMatchObject({
+      allowed: false,
+      reason: AccessDecisionReason.RemoteDenied,
+    });
+    expect(policy.canCreateWorktree({
+      path: "/work/infinity-context-lane-a",
       baseBranch: "release/private",
     })).toMatchObject({
       allowed: false,

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFile } from "node:child_process";
-import { appendFile, mkdir, readdir, readFile, realpath, rename, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { execPath } from "node:process";
@@ -2717,6 +2717,258 @@ function operationResult(resourceId: string): ProjectControlOperationResult {
   };
 }
 
+function noopOperationResult(
+  resourceId: string,
+  safeMessage: string,
+): ProjectControlOperationResult {
+  return {
+    status: "noop",
+    resourceId,
+    safeMessage,
+  };
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch (error) {
+    if (nodeErrorCode(error) === "ENOENT") return false;
+    throw error;
+  }
+}
+
+function nodeErrorCode(error: unknown): string | undefined {
+  return typeof error === "object" && error !== null &&
+      "code" in error &&
+      typeof (error as { readonly code?: unknown }).code === "string"
+    ? (error as { readonly code: string }).code
+    : undefined;
+}
+
+async function readTextFileIfExists(path: string): Promise<string | null> {
+  try {
+    return await readFile(path, "utf8");
+  } catch (error) {
+    if (nodeErrorCode(error) === "ENOENT") return null;
+    throw error;
+  }
+}
+
+async function assertReadablePrompt(input: {
+  readonly promptPath: string;
+  readonly expectedBody?: string;
+}): Promise<{ readonly promptPath: string; readonly bytes: number }> {
+  const body = await readTextFileIfExists(input.promptPath);
+  if (body === null || body.trim().length === 0) {
+    throw new Error("project_control_prompt_missing_before_start");
+  }
+  if (input.expectedBody !== undefined && body !== input.expectedBody) {
+    throw new Error("project_control_prompt_mismatch");
+  }
+  return {
+    promptPath: input.promptPath,
+    bytes: Buffer.byteLength(body, "utf8"),
+  };
+}
+
+async function createOrReuseProjectWorktree(input: {
+  readonly broker: ProjectControlBroker;
+  readonly createWorktreeInput: CodexGoalProjectCreateWorktreeInput;
+}): Promise<{
+  readonly result: ProjectControlOperationResult;
+  readonly created: boolean;
+}> {
+  if (await pathExists(input.createWorktreeInput.path)) {
+    await assertReusableProjectWorktree(input.createWorktreeInput.path);
+    return {
+      result: noopOperationResult(
+        input.createWorktreeInput.path,
+        "existing clean git worktree reused for idempotent refill",
+      ),
+      created: false,
+    };
+  }
+  try {
+    return {
+      result: await input.broker.createWorktree(input.createWorktreeInput),
+      created: true,
+    };
+  } catch (error) {
+    if (await pathExists(input.createWorktreeInput.path)) {
+      await assertReusableProjectWorktree(input.createWorktreeInput.path);
+      return {
+        result: noopOperationResult(
+          input.createWorktreeInput.path,
+          "existing clean git worktree reused after create race",
+        ),
+        created: false,
+      };
+    }
+    throw error;
+  }
+}
+
+async function assertReusableProjectWorktree(path: string): Promise<void> {
+  try {
+    await execGitStdout(["-C", path, "rev-parse", "--show-toplevel"]);
+    const status = await execGitStdout(["-C", path, "status", "--porcelain"]);
+    if (status.trim().length > 0) {
+      throw new Error("project_control_existing_worktree_dirty");
+    }
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === "project_control_existing_worktree_dirty"
+    ) {
+      throw error;
+    }
+    throw new Error("project_control_existing_worktree_invalid");
+  }
+}
+
+async function rollbackProjectRefillPartial(input: {
+  readonly sourceWorkspacePath: string;
+  readonly workspacePath: string;
+  readonly promptPath: string;
+  readonly registryRootDir: string;
+  readonly jobId: string;
+  readonly worktreeCreated: boolean;
+  readonly promptWritten: boolean;
+}): Promise<readonly string[]> {
+  const rolledBack: string[] = [];
+  if (input.promptWritten) {
+    await rm(input.promptPath, { force: true });
+    rolledBack.push("prompt");
+  }
+  await removeEmptyDir(dirname(input.promptPath));
+  await removeEmptyDir(join(input.registryRootDir, input.jobId));
+  if (input.worktreeCreated) {
+    try {
+      await execGit([
+        "-C",
+        input.sourceWorkspacePath,
+        "worktree",
+        "remove",
+        "--force",
+        input.workspacePath,
+      ]);
+      rolledBack.push("worktree");
+    } catch {
+      rolledBack.push("worktree-remove-failed");
+    }
+  }
+  return rolledBack;
+}
+
+async function createOrReuseProjectJob(input: {
+  readonly broker: ProjectControlBroker;
+  readonly registryRootDir: string;
+  readonly manifest: CodexGoalJobManifestInput;
+  readonly promptBody: string;
+}): Promise<{
+  readonly result: ProjectControlOperationResult;
+  readonly manifest: CodexGoalJobManifest;
+}> {
+  const existing = await readExistingCodexGoalJob({
+    registryRootDir: input.registryRootDir,
+    jobId: input.manifest.jobId,
+  });
+  if (existing) {
+    await assertExistingRefillJobMatches({
+      existing,
+      expected: input.manifest,
+      promptBody: input.promptBody,
+    });
+    return {
+      result: noopOperationResult(
+        existing.jobId,
+        "existing job manifest and prompt reused for idempotent refill",
+      ),
+      manifest: existing,
+    };
+  }
+  const result = await input.broker.createJob({
+    jobId: input.manifest.jobId,
+    registryRoot: input.registryRootDir,
+    workspacePath: input.manifest.workspacePath,
+    ...(input.manifest.tmuxSession
+      ? { tmuxSession: input.manifest.tmuxSession }
+      : {}),
+    accounts: input.manifest.accounts,
+  });
+  return {
+    result,
+    manifest: await readCodexGoalJob({
+      registryRootDir: input.registryRootDir,
+      jobId: input.manifest.jobId,
+    }),
+  };
+}
+
+async function readExistingCodexGoalJob(input: {
+  readonly registryRootDir: string;
+  readonly jobId: string;
+}): Promise<CodexGoalJobManifest | null> {
+  try {
+    return await readCodexGoalJob(input);
+  } catch (error) {
+    if (nodeErrorCode(error) === "ENOENT") return null;
+    throw error;
+  }
+}
+
+async function assertExistingRefillJobMatches(input: {
+  readonly existing: CodexGoalJobManifest;
+  readonly expected: CodexGoalJobManifestInput;
+  readonly promptBody: string;
+}): Promise<void> {
+  const mismatches = projectRefillJobMismatches(input.existing, input.expected);
+  if (mismatches.length > 0) {
+    throw new Error(`project_control_existing_job_mismatch:${mismatches.join(",")}`);
+  }
+  await assertReadablePrompt({
+    promptPath: input.expected.promptPath,
+    expectedBody: input.promptBody,
+  });
+}
+
+function projectRefillJobMismatches(
+  existing: CodexGoalJobManifest,
+  expected: CodexGoalJobManifestInput,
+): readonly string[] {
+  const mismatches: string[] = [];
+  const checks: Array<readonly [string, unknown, unknown]> = [
+    ["jobRootDir", existing.jobRootDir, expected.jobRootDir],
+    ["workspacePath", existing.workspacePath, expected.workspacePath],
+    ["promptPath", existing.promptPath, expected.promptPath],
+    ["taskId", existing.taskId, expected.taskId],
+    ["tmuxSession", existing.tmuxSession, expected.tmuxSession],
+    ["accessBoundary", existing.accessBoundary, expected.accessBoundary],
+    ["networkAccess", existing.networkAccess, expected.networkAccess],
+    ["allowDangerFullAccess", existing.allowDangerFullAccess, expected.allowDangerFullAccess],
+    ["accounts", existing.accounts, expected.accounts],
+    ["projectAccessScope", existing.projectAccessScope, expected.projectAccessScope],
+  ];
+  for (const [field, left, right] of checks) {
+    if (JSON.stringify(left ?? null) !== JSON.stringify(right ?? null)) {
+      mismatches.push(field);
+    }
+  }
+  return mismatches;
+}
+
+async function removeEmptyDir(path: string): Promise<void> {
+  try {
+    const entries = await readdir(path);
+    if (entries.length === 0) await rm(path, { recursive: false, force: true });
+  } catch (error) {
+    if (nodeErrorCode(error) !== "ENOENT" && nodeErrorCode(error) !== "ENOTDIR") {
+      throw error;
+    }
+  }
+}
+
 async function projectControllerLaunchPlan(args: ProjectControllerLaunchPlanMcpArgs) {
   const controller = await loadProjectControlController(args);
   const state = projectControllerState(args, controller);
@@ -3474,12 +3726,12 @@ async function projectControlRefillWorker(args: ProjectControlMcpArgs) {
     manifest: createManifest,
   });
 
-  const baseBranch = stringValue(args.baseBranch);
-  if (baseBranch) assertSafeGitRefName(baseBranch, "baseBranch");
+  const baseBranch = stringValue(args.baseBranch) ?? "origin/main";
+  assertSafeGitRefName(baseBranch, "baseBranch");
   const createWorktreeInput: CodexGoalProjectCreateWorktreeInput = {
     sourceWorkspacePath,
     path: createManifest.workspacePath,
-    ...(baseBranch ? { baseBranch } : {}),
+    baseBranch,
   };
 
   if (!args.confirmRefill) {
@@ -3504,37 +3756,72 @@ async function projectControlRefillWorker(args: ProjectControlMcpArgs) {
     scope: controller.scope,
     createWorktreeInput,
   });
-  const worktree = await worktreeBroker.createWorktree(createWorktreeInput);
+  let worktreeCreated = false;
+  let promptWritten = false;
+  let worktree: ProjectControlOperationResult;
+  let createJob: ProjectControlOperationResult;
+  let manifest: CodexGoalJobManifest;
+  let prompt: { readonly promptPath: string; readonly bytes: number };
+  try {
+    const worktreeResult = await createOrReuseProjectWorktree({
+      broker: worktreeBroker,
+      createWorktreeInput,
+    });
+    worktree = worktreeResult.result;
+    worktreeCreated = worktreeResult.created;
 
-  await mkdir(dirname(createManifest.promptPath), { recursive: true, mode: 0o700 });
-  await writeFile(createManifest.promptPath, promptBody, {
-    encoding: "utf8",
-    mode: 0o600,
-  });
+    const existingPrompt = await readTextFileIfExists(createManifest.promptPath);
+    if (existingPrompt !== null && existingPrompt !== promptBody) {
+      throw new Error("project_control_existing_prompt_mismatch");
+    }
+    if (existingPrompt === null) {
+      await mkdir(dirname(createManifest.promptPath), { recursive: true, mode: 0o700 });
+      await writeFile(createManifest.promptPath, promptBody, {
+        encoding: "utf8",
+        mode: 0o600,
+      });
+      promptWritten = true;
+    }
+    prompt = await assertReadablePrompt({
+      promptPath: createManifest.promptPath,
+      expectedBody: promptBody,
+    });
 
-  const createBroker = codexProjectControlBroker({
-    registryRootDir: controller.registryRootDir,
-    controller: controller.controller,
-    scope: controller.scope,
-    createManifest,
-    createOverwrite: booleanValue(args.overwrite) ?? false,
-  });
-  const createJob = await createBroker.createJob({
-    jobId: createManifest.jobId,
-    registryRoot: controller.registryRootDir,
-    workspacePath: createManifest.workspacePath,
-    ...(createManifest.tmuxSession
-      ? { tmuxSession: createManifest.tmuxSession }
-      : {}),
-    accounts: createManifest.accounts,
-  });
-  const manifest = await readCodexGoalJob({
-    registryRootDir: controller.registryRootDir,
-    jobId: createManifest.jobId,
-  });
+    const createBroker = codexProjectControlBroker({
+      registryRootDir: controller.registryRootDir,
+      controller: controller.controller,
+      scope: controller.scope,
+      createManifest,
+      createOverwrite: booleanValue(args.overwrite) ?? false,
+    });
+    const createResult = await createOrReuseProjectJob({
+      broker: createBroker,
+      registryRootDir: controller.registryRootDir,
+      manifest: createManifest,
+      promptBody,
+    });
+    createJob = createResult.result;
+    manifest = createResult.manifest;
+  } catch (error) {
+    const rolledBack = await rollbackProjectRefillPartial({
+      sourceWorkspacePath,
+      workspacePath: createManifest.workspacePath,
+      promptPath: createManifest.promptPath,
+      registryRootDir: controller.registryRootDir,
+      jobId: createManifest.jobId,
+      worktreeCreated,
+      promptWritten,
+    });
+    if (error instanceof Error && rolledBack.length > 0) {
+      error.message = `${error.message}; rollback=${rolledBack.join(",")}`;
+    }
+    throw error;
+  }
 
+  const accountCapacityFacts = await codexGoalAccountCapacityFacts(manifest);
   let start: ProjectControlOperationResult | undefined;
   if (booleanValue(args.startWorker) !== false) {
+    await assertReadablePrompt({ promptPath: manifest.promptPath });
     const launch = await goalLaunchInput(codexGoalJobToArgs(manifest));
     const startBroker = codexProjectControlBroker({
       registryRootDir: controller.registryRootDir,
@@ -3558,6 +3845,10 @@ async function projectControlRefillWorker(args: ProjectControlMcpArgs) {
     registryRootDir: controller.registryRootDir,
     auditPath: projectControlAuditPath(controller.controller),
     workerRole: role,
+    targetJobId: manifest.jobId,
+    baseBranch,
+    prompt,
+    accountCapacityFacts,
     jobId: manifest.jobId,
     worktree: worktree as unknown as JsonObject,
     createJob: createJob as unknown as JsonObject,
@@ -3569,10 +3860,29 @@ async function projectControlRefillWorker(args: ProjectControlMcpArgs) {
 
 async function projectControlStartStoredJob(args: ProjectControlMcpArgs) {
   const controller = await loadProjectControlController(args);
-  const loaded = await loadJobLaunch({
+  const jobId = requiredRawString(args.jobId, "jobId");
+  const manifest = await readCodexGoalJob({
     registryRootDir: controller.registryRootDir,
-    jobId: requiredRawString(args.jobId, "jobId"),
+    jobId,
   });
+  try {
+    await assertReadablePrompt({ promptPath: manifest.promptPath });
+  } catch (error) {
+    return mcpJson({
+      ok: false,
+      reason: error instanceof Error
+        ? error.message
+        : "project_control_prompt_missing_before_start",
+      mode: "project_control_start",
+      controllerJobId: controller.controller.jobId,
+      jobId: manifest.jobId,
+      promptPath: manifest.promptPath,
+    });
+  }
+  const loaded = {
+    manifest,
+    launch: await goalLaunchInput(codexGoalJobToArgs(manifest)),
+  };
   const status = await collectCodexGoalStatus(statusInput(loaded.launch));
   const progressStale = status.progressHeartbeatAgeMs !== undefined &&
     status.progressHeartbeatAgeMs > 10 * 60_000;
@@ -4347,8 +4657,10 @@ async function execGitStdout(args: readonly string[]): Promise<string> {
       maxBuffer: 1024 * 1024,
     });
     return stdout;
-  } catch {
-    throw new Error(`project_control_git_failed:${gitOperationLabel(args)}`);
+  } catch (error) {
+    throw new Error(
+      `project_control_git_failed:${gitOperationLabel(args)}:${gitErrorSummary(error)}`,
+    );
   }
 }
 
@@ -4360,6 +4672,26 @@ function gitOperationLabel(args: readonly string[]): string {
     arg === "rev-parse"
   );
   return command ?? "unknown";
+}
+
+function gitErrorSummary(error: unknown): string {
+  if (typeof error !== "object" || error === null) return "unknown";
+  const candidate = error as {
+    readonly code?: unknown;
+    readonly stderr?: unknown;
+    readonly message?: unknown;
+  };
+  const raw = typeof candidate.stderr === "string" && candidate.stderr.trim()
+    ? candidate.stderr
+    : typeof candidate.message === "string"
+    ? candidate.message
+    : typeof candidate.code === "string"
+    ? candidate.code
+    : "unknown";
+  return raw
+    .replace(/\s+/g, " ")
+    .replace(/["'`]/g, "")
+    .slice(0, 240);
 }
 
 async function writeCodexGoalReviewMarker(input: {
@@ -4427,6 +4759,38 @@ async function codexGoalAccountStatusPayload(
     accounts: launch.config.accounts.map((account) => account.name),
     ...options,
   });
+}
+
+async function codexGoalAccountCapacityFacts(
+  manifest: CodexGoalJobManifest,
+): Promise<JsonObject> {
+  try {
+    const launch = await goalLaunchInput(codexGoalJobToArgs(manifest));
+    const payload = await codexGoalAccountStatusPayload(launch, {
+      liveCheck: false,
+    });
+    const capacityBlockedAccounts = payload.accounts.filter((slot) =>
+      slot.capacityAvailability && slot.capacityAvailability !== "available"
+    );
+    return {
+      ok: true,
+      capacityAware: payload.capacityAware,
+      summary: payload.summary,
+      capacityBlockedAccounts: capacityBlockedAccounts.map((slot) => ({
+        name: slot.name,
+        availability: slot.capacityAvailability,
+        reason: slot.capacityReason,
+        cooldownUntil: slot.capacityCooldownUntil,
+      })),
+      availableDedupedAccountNames: payload.availableDedupedAccountNames,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      reason: "account_capacity_facts_unavailable",
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 async function codexAccountStatusPayload(input: {

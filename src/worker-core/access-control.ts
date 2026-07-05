@@ -503,7 +503,7 @@ class DefaultAccessPolicyService implements AccessPolicyService {
       );
     }
     const branchDecision = request.baseBranch
-      ? this.branchDecision(ProjectOperation.CreateWorktree, {
+      ? this.worktreeBaseBranchDecision(ProjectOperation.CreateWorktree, {
           ...(request.sourceWorkspacePath
             ? { workspacePath: request.sourceWorkspacePath }
             : {}),
@@ -610,6 +610,39 @@ class DefaultAccessPolicyService implements AccessPolicyService {
     ) {
       return this.deny(operation, AccessDecisionReason.TmuxPrefixDenied, [
         `tmux session ${request.tmuxSession} does not match project prefixes`,
+      ]);
+    }
+    return this.allow(operation);
+  }
+
+  private worktreeBaseBranchDecision(
+    operation: ProjectOperation,
+    request: ProjectGitAccessRequest,
+  ): PolicyDecision {
+    const scope = this.scope();
+    const remoteTracking = parseRemoteTrackingBranch(request.branch);
+    if (!remoteTracking || !scope) return this.branchDecision(operation, request);
+    if (
+      scope.allowedGitRemotes &&
+      !matchesAnyPattern(remoteTracking.remote, scope.allowedGitRemotes) &&
+      remoteTracking.branch !== "main"
+    ) {
+      return this.branchDecision(operation, request);
+    }
+    const remoteAllowed = scope.allowedGitRemotes
+      ? matchesAnyPattern(remoteTracking.remote, scope.allowedGitRemotes)
+      : remoteTracking.remote === "origin";
+    if (!remoteAllowed) {
+      return this.deny(operation, AccessDecisionReason.RemoteDenied, [
+        `remote ${remoteTracking.remote} is outside project remote scope`,
+      ]);
+    }
+    const branchAllowed = scope.allowedBranches
+      ? matchesAnyPattern(remoteTracking.branch, scope.allowedBranches)
+      : remoteTracking.branch === "main";
+    if (!branchAllowed) {
+      return this.deny(operation, AccessDecisionReason.BranchDenied, [
+        `branch ${remoteTracking.branch} is outside project branch scope`,
       ]);
     }
     return this.allow(operation);
@@ -985,6 +1018,17 @@ function matchesAnyPattern(value: string, patterns: readonly string[]): boolean 
     if (pattern.endsWith("*")) return value.startsWith(pattern.slice(0, -1));
     return value === pattern;
   });
+}
+
+function parseRemoteTrackingBranch(
+  value: string,
+): { readonly remote: string; readonly branch: string } | null {
+  const slash = value.indexOf("/");
+  if (slash <= 0 || slash === value.length - 1) return null;
+  return {
+    remote: value.slice(0, slash),
+    branch: value.slice(slash + 1),
+  };
 }
 
 function uniqueStrings(values: readonly string[]): readonly string[] {

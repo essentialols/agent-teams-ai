@@ -29358,7 +29358,7 @@ describe('TeamProvisioningService', () => {
     });
   });
 
-  it('keeps finished OpenCode secondary lanes pending when runtime evidence has not materialized yet', async () => {
+  it('marks finished OpenCode secondary lanes failed when runtime evidence is missing', async () => {
     const svc = new TeamProvisioningService();
     vi.spyOn(svc as any, 'refreshMemberSpawnStatusesFromLeadInbox').mockResolvedValue(undefined);
     vi.spyOn(svc as any, 'maybeAuditMemberSpawnStatuses').mockResolvedValue(undefined);
@@ -29419,17 +29419,17 @@ describe('TeamProvisioningService', () => {
 
     const result = await svc.getMemberSpawnStatuses(run.teamName);
 
-    expect(result.teamLaunchState).toBe('partial_pending');
+    expect(result.teamLaunchState).toBe('partial_failure');
     expect(result.expectedMembers).toEqual(expect.arrayContaining(['bob', 'atlas']));
     expect(result.statuses.bob).toMatchObject({
       status: 'online',
       launchState: 'confirmed_alive',
     });
     expect(result.statuses.atlas).toMatchObject({
-      status: 'waiting',
-      launchState: 'runtime_pending_bootstrap',
-      hardFailure: false,
-      hardFailureReason: undefined,
+      status: 'error',
+      launchState: 'failed_to_start',
+      hardFailure: true,
+      hardFailureReason: 'opencode_runtime_evidence_missing',
     });
   });
 

@@ -357,6 +357,8 @@ export function createTeamProvisioningMemberLifecycleHostFromPortGroups<
     openCodeRuntime,
     mixedSecondaryRuntime,
   } = portGroups;
+  const updateDirectTmuxRestartMemberConfigSeam = runtimeLaunch.updateDirectTmuxRestartMemberConfig;
+  const enqueueDirectRestartPromptSeam = messaging.enqueueDirectRestartPrompt;
 
   return {
     runs: sharedState.runs,
@@ -394,31 +396,15 @@ export function createTeamProvisioningMemberLifecycleHostFromPortGroups<
         run: asServiceProvisioningRun<TRun>(input.run),
       }),
     buildTeamRuntimeLaunchArgsPlan: (input) => runtimeLaunch.buildTeamRuntimeLaunchArgsPlan(input),
-    get updateDirectTmuxRestartMemberConfig() {
-      const seam = runtimeLaunch.updateDirectTmuxRestartMemberConfig;
-      return seam
-        ? (
-            input: Parameters<
-              NonNullable<
-                TeamProvisioningMemberLifecycleHost['updateDirectTmuxRestartMemberConfig']
-              >
-            >[0]
-          ) => seam(input)
-        : undefined;
-    },
+    updateDirectTmuxRestartMemberConfig: updateDirectTmuxRestartMemberConfigSeam
+      ? (input) => updateDirectTmuxRestartMemberConfigSeam.call(runtimeLaunch, input)
+      : undefined,
     persistInboxMessage: (teamName, memberName, message) =>
       messaging.persistInboxMessage(teamName, memberName, message),
     persistSentMessage: (teamName, message) => messaging.persistSentMessage(teamName, message),
-    get enqueueDirectRestartPrompt() {
-      const seam = messaging.enqueueDirectRestartPrompt;
-      return seam
-        ? (
-            input: Parameters<
-              NonNullable<TeamProvisioningMemberLifecycleHost['enqueueDirectRestartPrompt']>
-            >[0]
-          ) => seam(input)
-        : undefined;
-    },
+    enqueueDirectRestartPrompt: enqueueDirectRestartPromptSeam
+      ? (input) => enqueueDirectRestartPromptSeam.call(messaging, input)
+      : undefined,
     appendMemberBootstrapDiagnostic: (run, memberName, text) =>
       runState.appendMemberBootstrapDiagnostic(
         asServiceProvisioningRun<TRun>(run),

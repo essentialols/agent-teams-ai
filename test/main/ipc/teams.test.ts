@@ -371,6 +371,8 @@ describe('ipc teams handlers', () => {
     recordOpenCodeRuntimeTaskEvent: vi.fn(() => resolved({ accepted: true })),
     recordOpenCodeRuntimeHeartbeat: vi.fn(() => resolved({ accepted: true })),
     pushLiveLeadProcessMessage: vi.fn(),
+    respondToToolApproval: vi.fn(() => resolvedUndefined()),
+    updateToolApprovalSettings: vi.fn(),
     relayLeadInboxMessages: vi.fn(() => resolved(0)),
     relayMemberInboxMessages: vi.fn(() => resolved(0)),
     resolveRuntimeRecipientProviderId: vi.fn(

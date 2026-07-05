@@ -291,6 +291,10 @@ type ProjectControlMcpArgs = GoalMcpArgs & JobRegistryMcpArgs & {
   readonly skipDoctor?: boolean;
   readonly note?: string;
   readonly overwrite?: boolean;
+  readonly promptBody?: string;
+  readonly confirmRefill?: boolean;
+  readonly startWorker?: boolean;
+  readonly workerRole?: string;
 };
 
 type ProjectControllerLaunchPlanMcpArgs = ProjectControlMcpArgs & {
@@ -1774,6 +1778,33 @@ export function createCodexGoalMcpServer(
     },
     async (args) => withMcpErrors(async () =>
       projectControlCreateCodexGoalJob(args as ProjectControlMcpArgs),
+    ),
+  );
+
+  server.registerTool(
+    "codex_goal_project_refill_worker",
+    {
+      title: "Project Control Refill Worker",
+      description:
+        "Create a scoped worktree, write a prompt, create a child job and optionally start it through one ProjectScopedControl broker flow.",
+      inputSchema: {
+        ...goalInputSchema(),
+        ...jobRegistryInputSchema(),
+        controllerJobId: z.string().optional(),
+        sourceWorkspacePath: z.string().optional(),
+        baseBranch: z.string().optional(),
+        promptBody: z.string().optional(),
+        workerRole: z.enum(["producer", "fastgate", "reviewer"]).optional(),
+        description: z.string().optional(),
+        tags: z.union([z.string(), z.array(z.string())]).optional(),
+        overwrite: z.boolean().optional(),
+        skipDoctor: z.boolean().optional(),
+        startWorker: z.boolean().optional(),
+        confirmRefill: z.boolean().optional(),
+      },
+    },
+    async (args) => withMcpErrors(async () =>
+      projectControlRefillWorker(args as ProjectControlMcpArgs),
     ),
   );
 
@@ -3395,6 +3426,147 @@ async function projectControlCreateCodexGoalJob(args: ProjectControlMcpArgs) {
   });
 }
 
+async function projectControlRefillWorker(args: ProjectControlMcpArgs) {
+  const controller = await loadProjectControlController(args);
+  if (args.projectAccessScope !== undefined) {
+    throw new Error("project_control_child_scope_is_controller_owned");
+  }
+  if (args.allowDangerFullAccess === true) {
+    throw new Error("project_control_child_danger_full_access_denied");
+  }
+  const promptBody = requiredRawString(args.promptBody, "promptBody");
+  const sourceWorkspacePath = projectControlPathArg(
+    args,
+    args.sourceWorkspacePath,
+    "sourceWorkspacePath",
+  );
+
+  const requested = jobManifestInputFromArgs(args as JobCreateMcpArgs);
+  if (
+    requested.accessBoundary === AccessBoundary.ProjectScopedControl ||
+    requested.accessBoundary === AccessBoundary.DangerFullAccess
+  ) {
+    throw new Error("project_control_child_boundary_denied");
+  }
+  const role = projectControlWorkerRole(args.workerRole);
+  const accessBoundary =
+    requested.accessBoundary ?? AccessBoundary.IsolatedWorkspaceWrite;
+  const createManifest: CodexGoalJobManifestInput = {
+    ...requested,
+    tags: uniqueProjectControlStrings([
+      ...tagValues(requested.tags),
+      "project-control-refill",
+      `worker-role-${role}`,
+    ]),
+    accessBoundary,
+    projectAccessScope: projectControlChildScope(
+      controller.scope,
+      requested.workspacePath,
+    ),
+    allowDangerFullAccess: false,
+    networkAccess: requested.networkAccess ?? NetworkAccessMode.Restricted,
+    reasoningEffort: requested.reasoningEffort ?? "high",
+    serviceTier: requested.serviceTier ?? "fast",
+  };
+  assertProjectControlCreateManifestPaths({
+    scope: controller.scope,
+    registryRootDir: controller.registryRootDir,
+    manifest: createManifest,
+  });
+
+  const baseBranch = stringValue(args.baseBranch);
+  if (baseBranch) assertSafeGitRefName(baseBranch, "baseBranch");
+  const createWorktreeInput: CodexGoalProjectCreateWorktreeInput = {
+    sourceWorkspacePath,
+    path: createManifest.workspacePath,
+    ...(baseBranch ? { baseBranch } : {}),
+  };
+
+  if (!args.confirmRefill) {
+    return mcpJson({
+      ok: false,
+      reason: "confirm_refill_required",
+      mode: "project_control_refill_worker",
+      controllerJobId: controller.controller.jobId,
+      targetJobId: createManifest.jobId,
+      auditPath: projectControlAuditPath(controller.controller),
+      workerRole: role,
+      startWorker: booleanValue(args.startWorker) !== false,
+      worktreePreview: createWorktreeInput,
+      manifestPreview: createManifest as unknown as JsonObject,
+      promptPath: createManifest.promptPath,
+    });
+  }
+
+  const worktreeBroker = codexProjectControlBroker({
+    registryRootDir: controller.registryRootDir,
+    controller: controller.controller,
+    scope: controller.scope,
+    createWorktreeInput,
+  });
+  const worktree = await worktreeBroker.createWorktree(createWorktreeInput);
+
+  await mkdir(dirname(createManifest.promptPath), { recursive: true, mode: 0o700 });
+  await writeFile(createManifest.promptPath, promptBody, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+
+  const createBroker = codexProjectControlBroker({
+    registryRootDir: controller.registryRootDir,
+    controller: controller.controller,
+    scope: controller.scope,
+    createManifest,
+    createOverwrite: booleanValue(args.overwrite) ?? false,
+  });
+  const createJob = await createBroker.createJob({
+    jobId: createManifest.jobId,
+    registryRoot: controller.registryRootDir,
+    workspacePath: createManifest.workspacePath,
+    ...(createManifest.tmuxSession
+      ? { tmuxSession: createManifest.tmuxSession }
+      : {}),
+    accounts: createManifest.accounts,
+  });
+  const manifest = await readCodexGoalJob({
+    registryRootDir: controller.registryRootDir,
+    jobId: createManifest.jobId,
+  });
+
+  let start: ProjectControlOperationResult | undefined;
+  if (booleanValue(args.startWorker) !== false) {
+    const launch = await goalLaunchInput(codexGoalJobToArgs(manifest));
+    const startBroker = codexProjectControlBroker({
+      registryRootDir: controller.registryRootDir,
+      controller: controller.controller,
+      scope: controller.scope,
+      startLaunch: launch,
+      startSkipDoctor: booleanValue(args.skipDoctor) ?? false,
+    });
+    start = await startBroker.startWorker({
+      jobId: manifest.jobId,
+      registryRoot: controller.registryRootDir,
+      workspacePath: launch.config.workspacePath,
+      ...(launch.tmuxSession ? { tmuxSession: launch.tmuxSession } : {}),
+    });
+  }
+
+  return mcpJson({
+    ok: true,
+    mode: "project_control_refill_worker",
+    controllerJobId: controller.controller.jobId,
+    registryRootDir: controller.registryRootDir,
+    auditPath: projectControlAuditPath(controller.controller),
+    workerRole: role,
+    jobId: manifest.jobId,
+    worktree: worktree as unknown as JsonObject,
+    createJob: createJob as unknown as JsonObject,
+    ...(start ? { start: start as unknown as JsonObject } : { startSkipped: true }),
+    manifest,
+    summary: summarizeCodexGoalJob(manifest, controller.registryRootDir),
+  });
+}
+
 async function projectControlStartStoredJob(args: ProjectControlMcpArgs) {
   const controller = await loadProjectControlController(args);
   const loaded = await loadJobLaunch({
@@ -4024,6 +4196,14 @@ function projectControlChildScope(
 
 function uniqueProjectControlStrings(values: readonly string[]): readonly string[] {
   return [...new Set(values.filter((value) => value.length > 0))];
+}
+
+function projectControlWorkerRole(value: unknown): "producer" | "fastgate" | "reviewer" {
+  const role = stringValue(value) ?? "producer";
+  if (role === "producer" || role === "fastgate" || role === "reviewer") {
+    return role;
+  }
+  throw new Error("project_control_worker_role_invalid");
 }
 
 function assertProjectControlCreateManifestPaths(input: {

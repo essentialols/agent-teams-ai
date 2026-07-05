@@ -33,6 +33,7 @@ export enum ControlledAgentToolName {
   ProjectCreateWorktree = "codex_goal_project_create_worktree",
   ProjectCreateJob = "codex_goal_project_create_job",
   ProjectStart = "codex_goal_project_start",
+  ProjectRefillWorker = "codex_goal_project_refill_worker",
   ProjectStop = "codex_goal_project_stop",
   ProjectMarkReviewed = "codex_goal_project_mark_reviewed",
   ProjectOpenIntegrationAttempt = "codex_goal_project_open_integration_attempt",

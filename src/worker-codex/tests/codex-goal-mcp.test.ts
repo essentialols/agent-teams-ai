@@ -758,6 +758,108 @@ describe("codex goal MCP server", () => {
     }
   });
 
+  it("refills a project worker with one brokered worktree, prompt and job flow", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-project-refill-"));
+    const registryRootDir = join(root, "worker-jobs", "registry");
+    const controllerJobRoot = join(root, "worker-jobs", "infinity-context-controller-v1");
+    const sourceWorkspacePath = join(root, "workspaces", "infinity-context-main");
+    const childWorkspace = join(root, "worktrees", "infinity-context-memory-fastgate-v1");
+    const childJobRoot = join(root, "worker-jobs", "infinity-context-memory-fastgate-v1");
+    const server = createCodexGoalMcpServer();
+    const client = new Client({
+      name: "subscription-runtime-test",
+      version: "0.0.0",
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+    try {
+      await mkdir(sourceWorkspacePath, { recursive: true });
+      await gitInitRepository(sourceWorkspacePath);
+      await writeFile(join(sourceWorkspacePath, "README.md"), "base\n");
+      await git(sourceWorkspacePath, ["add", "README.md"]);
+      await git(sourceWorkspacePath, ["commit", "-m", "test: base"]);
+
+      await Promise.all([
+        server.connect(serverTransport),
+        client.connect(clientTransport),
+      ]);
+
+      await callToolJson(client, "codex_goal_create_job", {
+        registryRootDir,
+        jobId: "infinity-context-controller-v1",
+        jobRootDir: controllerJobRoot,
+        authRootDir: join(root, "auth"),
+        workspacePath: sourceWorkspacePath,
+        promptPath: join(controllerJobRoot, "prompt.md"),
+        taskId: "infinity-context-controller-v1",
+        accounts: ["account-a"],
+        accessBoundary: AccessBoundary.ProjectScopedControl,
+        networkAccess: NetworkAccessMode.Restricted,
+        projectAccessScope: {
+          projectId: "infinity-context",
+          workspaceRoots: [sourceWorkspacePath],
+          worktreeRoots: [join(root, "worktrees")],
+          registryRoot: registryRootDir,
+          jobIdPrefixes: ["infinity-context-"],
+          tmuxSessionPrefixes: ["infinity-context-"],
+          allowedAccountIds: ["account-a"],
+        },
+      });
+
+      const result = await callToolJson(client, "codex_goal_project_refill_worker", {
+        registryRootDir,
+        controllerJobId: "infinity-context-controller-v1",
+        jobId: "infinity-context-memory-fastgate-v1",
+        jobRootDir: childJobRoot,
+        authRootDir: join(root, "auth"),
+        sourceWorkspacePath,
+        workspacePath: childWorkspace,
+        promptBody: "Run a focused memory fastgate and report cleanly.\n",
+        taskId: "infinity-context-memory-fastgate-v1",
+        accounts: ["account-a"],
+        workerRole: "fastgate",
+        startWorker: false,
+        confirmRefill: true,
+      });
+
+      expect(result).toMatchObject({
+        ok: true,
+        mode: "project_control_refill_worker",
+        controllerJobId: "infinity-context-controller-v1",
+        workerRole: "fastgate",
+        jobId: "infinity-context-memory-fastgate-v1",
+        startSkipped: true,
+        manifest: {
+          accessBoundary: AccessBoundary.IsolatedWorkspaceWrite,
+          reasoningEffort: "high",
+          serviceTier: "fast",
+          networkAccess: NetworkAccessMode.Restricted,
+          tags: expect.arrayContaining([
+            "project-control-refill",
+            "worker-role-fastgate",
+          ]),
+        },
+      });
+      await expect(readFile(join(childJobRoot, "prompt.md"), "utf8")).resolves.toBe(
+        "Run a focused memory fastgate and report cleanly.\n",
+      );
+      await expect(access(join(childWorkspace, "README.md"))).resolves.toBeUndefined();
+      const audit = await readProjectControlAudit(
+        controllerJobRoot,
+        "infinity-context-controller-v1",
+      );
+      expect(audit.map((event) => auditDecision(event).operation)).toEqual([
+        "create_worktree",
+        "create_job",
+        "use_account",
+      ]);
+    } finally {
+      await client.close();
+      await server.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("builds a fail-closed controlled-agent launch plan for project controllers", async () => {
     const root = await mkdtemp(join(tmpdir(), "subscription-runtime-controller-plan-"));
     const registryRootDir = join(root, "worker-jobs", "registry");

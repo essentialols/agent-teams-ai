@@ -293,6 +293,25 @@ codex_goal_project_controller_start` returns
 `durable_controller_process_required`; use a durable host supervisor, daemon,
 native MCP server or SDK process for live starts so provider liveness remains
 attached after startup.
+
+For a durable CLI-owned controller process, run:
+
+```sh
+subscription-runtime-codex-goal controller-supervise \
+  --controller-job-id infinity-context-project-controller-v1 \
+  --registry-root /var/data/infinity-context/worker-jobs/registry \
+  --provider codex \
+  --status-interval-ms 60000 \
+  --format json
+```
+
+This process owns the in-memory provider runner until it receives SIGINT or
+SIGTERM. It is the safe CLI alternative to an unsafe full-access controller.
+For child capacity refill, prefer the one-shot broker helper
+`codex_goal_project_refill_worker` instead of manually chaining
+`create_worktree`, prompt writes, `create_job` and `start`. The helper still
+requires explicit child identity and scope, including `jobId`, `workspacePath`,
+`sourceWorkspacePath` and `promptBody`.
 If `codex_goal_project_controller_start`, `stop` or `reconcile` returns
 `controlled_agent_provider_runner_not_connected`, the persisted run is not owned
 by the current MCP process. Treat this as expected fail-closed behavior after a

@@ -6110,7 +6110,7 @@ export async function buildCodexGoalBrief(input: {
 function codexGoalBriefHealthStatus(input: {
   readonly status: Awaited<ReturnType<typeof collectCodexGoalStatus>>;
   readonly workerAlive: boolean;
-}): "running" | "stopped" | "completed" | "failed" | "unknown" {
+}): "running" | "stopped" | "completed" | "blocked" | "failed" | "unknown" {
   if (input.workerAlive && input.status.progressStatus === "running") {
     return "running";
   }
@@ -6119,6 +6119,12 @@ function codexGoalBriefHealthStatus(input: {
     input.status.resultStatus === "completed"
   ) {
     return "completed";
+  }
+  if (
+    input.status.resultStatus === "waiting_capacity" ||
+    input.status.progressStatus === "blocked"
+  ) {
+    return "blocked";
   }
   if (input.workerAlive) return "running";
   if (

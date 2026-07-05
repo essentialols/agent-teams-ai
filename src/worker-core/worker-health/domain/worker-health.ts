@@ -2,6 +2,7 @@ export type WorkerHealthStatus =
   | "running"
   | "stopped"
   | "completed"
+  | "blocked"
   | "failed"
   | "unknown";
 

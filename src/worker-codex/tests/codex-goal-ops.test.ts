@@ -10,7 +10,11 @@ import {
   RunProcessAliveReason,
   RunProcessSupervisorKind,
 } from "@vioxen/subscription-runtime/worker-core";
-import { codexGoalAccountSlots, type CodexGoalRunConfig } from "../codex-goal-runner";
+import {
+  codexGoalAccountSlots,
+  codexGoalProgressPath,
+  type CodexGoalRunConfig,
+} from "../codex-goal-runner";
 import {
   buildCodexGoalNoTmuxCommand,
   buildCodexGoalTmuxCommand,
@@ -1004,6 +1008,65 @@ describe("codex goal ops", () => {
     });
     expect(brief.nextBestCommand).toContain("codex_goal_accounts_status");
     expect(brief.nextBestCommand).toContain("job-from-registry");
+  });
+
+  it("reports waiting capacity as blocked with capacity continuation action", async () => {
+    const fixture = await createGoalFixture();
+    const launch = launchInput(fixture.config, fixture.root);
+    await writeFile(
+      launch.config.outputPath!,
+      `${JSON.stringify({
+        status: "blocked",
+        reason: "capacity_unavailable",
+        changedFiles: [],
+        evidence: ["safe_execution_status:waiting_capacity"],
+        blockers: ["capacity_unavailable"],
+        nextAction: "wait",
+        updatedAt: new Date().toISOString(),
+      })}\n`,
+    );
+    await writeFile(
+      codexGoalProgressPath(launch.config),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        taskId: fixture.config.taskId,
+        status: "blocked",
+        resultStatus: "waiting_capacity",
+        reason: "capacity_unavailable",
+        updatedAt: new Date().toISOString(),
+        pid: process.pid,
+      })}\n`,
+    );
+
+    const status = await collectCodexGoalStatus({
+      jobRootDir: fixture.config.jobRootDir,
+      taskId: fixture.config.taskId,
+      workspacePath: fixture.config.workspacePath,
+      logPath: launch.logPath,
+    });
+    const brief = await buildCodexGoalBrief({
+      jobId: "job-from-registry",
+      launch,
+      status,
+      accounts: [accountStatus("account-a", {})],
+      staleAfterMs: 60_000,
+      tailLines: 20,
+    });
+
+    expect(status).toMatchObject({
+      resultStatus: "blocked",
+      resultReason: "capacity_unavailable",
+      progressStatus: "blocked",
+      progressResultStatus: "waiting_capacity",
+      recommendedAction: "continue_after_capacity",
+    });
+    expect(brief).toMatchObject({
+      workerHealth: {
+        blocked: true,
+        evidence: expect.arrayContaining(["status:blocked"]),
+      },
+      nextBestTool: "codex_goal_brief",
+    });
   });
 
   it("dedupes account slots by sanitized identity and prefers newest ready auth", () => {

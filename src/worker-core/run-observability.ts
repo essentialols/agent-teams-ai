@@ -10,6 +10,7 @@ export type RunObservationStatus =
   | "running"
   | "stopped"
   | "completed"
+  | "blocked"
   | "failed"
   | "unknown";
 
@@ -568,7 +569,12 @@ function runtimeStatusForObservation(input: {
   if (input.resultStatus === "done" || input.resultStatus === "completed") {
     return "done" as const;
   }
-  if (input.resultStatus === "blocked" || input.status === "running") {
+  if (
+    input.resultStatus === "blocked" ||
+    input.resultStatus === "waiting_capacity" ||
+    input.status === "blocked" ||
+    input.status === "running"
+  ) {
     return "blocked" as const;
   }
   if (

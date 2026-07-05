@@ -545,6 +545,12 @@ function codexRunStatus(input: {
   ) {
     return "completed";
   }
+  if (
+    input.status.resultStatus === "waiting_capacity" ||
+    input.status.progressStatus === "blocked"
+  ) {
+    return "blocked";
+  }
   if (input.workerAlive) return "running";
   if (
     input.status.resultStatus === "failed" ||
@@ -650,7 +656,12 @@ function runtimeStatusForCodexObservation(input: {
   if (input.resultStatus === "done" || input.resultStatus === "completed") {
     return "done" as const;
   }
-  if (input.resultStatus === "blocked" || input.runStatus === "running") {
+  if (
+    input.resultStatus === "blocked" ||
+    input.resultStatus === "waiting_capacity" ||
+    input.runStatus === "blocked" ||
+    input.runStatus === "running"
+  ) {
     return "blocked" as const;
   }
   if (

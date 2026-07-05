@@ -13,6 +13,11 @@ const demand: WorkerRuntimeDemand = {
   serviceTier: "fast",
 };
 
+const highDemand: WorkerRuntimeDemand = {
+  ...demand,
+  reasoningEffort: "high",
+};
+
 describe("SelectRuntimeAccountUseCase", () => {
   it("selects and leases the first available account", async () => {
     const now = new Date("2026-06-01T00:00:00.000Z");
@@ -137,6 +142,142 @@ describe("SelectRuntimeAccountUseCase", () => {
         leaseStore: new InMemoryWorkerAccountLeaseStore(),
         now,
         lastSelectedAccountId: "account-a",
+      }),
+    ).resolves.toMatchObject({
+      type: "selected",
+      accountId: "account-b",
+    });
+  });
+
+  it("ignores expired leases and selects the released account", async () => {
+    const now = new Date("2026-06-01T00:02:00.000Z");
+    const leaseStore = new InMemoryWorkerAccountLeaseStore();
+    await leaseStore.acquire({
+      accountId: "account-a",
+      demand,
+      ownerId: "previous-worker",
+      ttlMs: 60_000,
+      now: new Date("2026-06-01T00:00:00.000Z"),
+    });
+
+    await expect(
+      new SelectRuntimeAccountUseCase().execute({
+        allowedAccounts: ["account-a", "account-b"],
+        demand,
+        ownerId: "worker-1",
+        leaseTtlMs: 60_000,
+        capacityStore: new InMemoryWorkerAccountCapacityStore(),
+        leaseStore,
+        now,
+      }),
+    ).resolves.toMatchObject({
+      type: "selected",
+      accountId: "account-a",
+      lease: {
+        ownerId: "worker-1",
+      },
+    });
+  });
+
+  it("scopes leases by runtime demand", async () => {
+    const now = new Date("2026-06-01T00:00:00.000Z");
+    const leaseStore = new InMemoryWorkerAccountLeaseStore();
+    await leaseStore.acquire({
+      accountId: "account-a",
+      demand: highDemand,
+      ownerId: "high-worker",
+      ttlMs: 120_000,
+      now,
+    });
+
+    await expect(
+      new SelectRuntimeAccountUseCase().execute({
+        allowedAccounts: ["account-a", "account-b"],
+        demand,
+        ownerId: "xhigh-worker",
+        leaseTtlMs: 60_000,
+        capacityStore: new InMemoryWorkerAccountCapacityStore(),
+        leaseStore,
+        now,
+      }),
+    ).resolves.toMatchObject({
+      type: "selected",
+      accountId: "account-a",
+    });
+
+    await expect(
+      new SelectRuntimeAccountUseCase().execute({
+        allowedAccounts: ["account-a", "account-b"],
+        demand: highDemand,
+        ownerId: "another-high-worker",
+        leaseTtlMs: 60_000,
+        capacityStore: new InMemoryWorkerAccountCapacityStore(),
+        leaseStore,
+        now,
+      }),
+    ).resolves.toMatchObject({
+      type: "selected",
+      accountId: "account-b",
+    });
+  });
+
+  it("does not invent a wait time for quota blockers without reset time", async () => {
+    const now = new Date("2026-06-01T00:00:00.000Z");
+    const capacityStore = new InMemoryWorkerAccountCapacityStore();
+    capacityStore.observe({
+      accountId: "account-a",
+      demand,
+      observedAt: now,
+      capacity: {
+        availability: "quota_exhausted",
+        reason: "account_exhausted",
+      },
+    });
+
+    await expect(
+      new SelectRuntimeAccountUseCase().execute({
+        allowedAccounts: ["account-a"],
+        demand,
+        ownerId: "worker-1",
+        leaseTtlMs: 60_000,
+        capacityStore,
+        leaseStore: new InMemoryWorkerAccountLeaseStore(),
+        now,
+      }),
+    ).resolves.toEqual({
+      type: "all_unavailable",
+      waitPlan: {
+        unavailable: [{
+          accountId: "account-a",
+          reason: "account_exhausted",
+        }],
+      },
+    });
+  });
+
+  it("dedupes and trims allowed accounts before selecting", async () => {
+    const now = new Date("2026-06-01T00:00:00.000Z");
+    const capacityStore = new InMemoryWorkerAccountCapacityStore();
+    capacityStore.observe({
+      accountId: "account-a",
+      demand,
+      observedAt: now,
+      capacity: {
+        availability: "quota_exhausted",
+        reason: "quota_limited",
+        cooldownUntil: new Date("2026-06-01T01:00:00.000Z"),
+      },
+    });
+
+    await expect(
+      new SelectRuntimeAccountUseCase().execute({
+        allowedAccounts: [" account-a ", "account-a", "", " account-b "],
+        demand,
+        ownerId: "worker-1",
+        leaseTtlMs: 60_000,
+        capacityStore,
+        leaseStore: new InMemoryWorkerAccountLeaseStore(),
+        now,
       }),
     ).resolves.toMatchObject({
       type: "selected",

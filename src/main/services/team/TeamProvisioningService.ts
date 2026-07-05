@@ -10951,7 +10951,11 @@ export class TeamProvisioningService {
     this.cleanedStoppedTeamOpenCodeRuntimeLanes.delete(request.teamName);
     const existingProvisioningRunId = this.getResolvableProvisioningRunId(request.teamName);
     if (existingProvisioningRunId) {
-      return { runId: existingProvisioningRunId };
+      return {
+        runId: existingProvisioningRunId,
+        launchStatus: 'already_launching',
+        alreadyLaunching: true,
+      };
     }
     const previousLaunchSnapshot = await this.readTaskActivityRepairLaunchSnapshot(
       request.teamName
@@ -12563,7 +12567,11 @@ export class TeamProvisioningService {
   ): Promise<TeamLaunchResponse> {
     const existingProvisioningRunId = this.getResolvableProvisioningRunId(request.teamName);
     if (existingProvisioningRunId) {
-      return { runId: existingProvisioningRunId };
+      return {
+        runId: existingProvisioningRunId,
+        launchStatus: 'already_launching',
+        alreadyLaunching: true,
+      };
     }
     const stopAllGenerationAtStart = this.stopAllTeamsGeneration;
     assertAppDeterministicBootstrapEnabled();

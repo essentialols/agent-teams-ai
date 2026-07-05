@@ -1,15 +1,15 @@
 // @vitest-environment node
 
-import Fastify from 'fastify';
-import { mkdtemp, mkdir, rm, writeFile } from 'fs/promises';
-import { tmpdir } from 'os';
-import path from 'path';
-import type { AddressInfo } from 'net';
-
-import { registerTools } from '../../../mcp-server/src/tools';
 import { registerTeamRoutes } from '@main/http/teams';
 import { TeamDataService } from '@main/services/team/TeamDataService';
 import { setClaudeBasePathOverride } from '@main/utils/pathDecoder';
+import Fastify from 'fastify';
+import { mkdir, mkdtemp, rm, writeFile } from 'fs/promises';
+import { tmpdir } from 'os';
+import path from 'path';
+
+import { registerTools } from '../../../mcp-server/src/tools';
+
 import type { HttpServices } from '@main/http';
 import type {
   TeamCreateRequest,
@@ -18,6 +18,7 @@ import type {
   TeamProvisioningProgress,
   TeamRuntimeState,
 } from '@shared/types/team';
+import type { AddressInfo } from 'net';
 
 interface RegisteredTool {
   name: string;
@@ -390,6 +391,77 @@ describe('MCP team tools over the local REST control API', () => {
       setClaudeBasePathOverride(null);
       await rm(claudeRoot, { recursive: true, force: true });
       await rm(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it('returns active launch status without waiting when MCP team_launch re-enters provisioning', async () => {
+    const claudeRoot = await mkdtemp(path.join(tmpdir(), 'agent-teams-control-active-'));
+    const projectDir = await mkdtemp(path.join(tmpdir(), 'agent-teams-project-active-'));
+    const teamName = 'mcp-active-launch';
+    setClaudeBasePathOverride(claudeRoot);
+
+    const app = Fastify();
+    const { services } = createServices(claudeRoot);
+    let launchRequest: TeamLaunchRequest | null = null;
+    services.teamProvisioningService!.launchTeam = async (
+      request: TeamLaunchRequest
+    ): Promise<TeamLaunchResponse> => {
+      launchRequest = request;
+      return {
+        runId: 'active-run-1',
+        launchStatus: 'already_launching',
+        alreadyLaunching: true,
+      };
+    };
+    services.teamProvisioningService!.getProvisioningStatus = async () => {
+      throw new Error('team_launch should not wait for provisioning status after already_launching');
+    };
+    registerTeamRoutes(app, services);
+
+    try {
+      const teamDir = path.join(claudeRoot, 'teams', teamName);
+      await mkdir(teamDir, { recursive: true });
+      await writeFile(
+        path.join(teamDir, 'config.json'),
+        JSON.stringify({
+          name: teamName,
+          projectPath: projectDir,
+          members: [{ name: 'team-lead', agentType: 'team-lead' }],
+        }),
+        'utf8'
+      );
+
+      await app.listen({ host: '127.0.0.1', port: 0 });
+      const address = app.server.address() as AddressInfo;
+      const controlUrl = `http://127.0.0.1:${address.port}`;
+
+      const launched = parseJsonToolResult(
+        await getTool('team_launch').execute({
+          claudeDir: claudeRoot,
+          controlUrl,
+          teamName,
+          cwd: projectDir,
+          effort: 'minimal',
+        })
+      );
+
+      expect(launched).toMatchObject({
+        teamName,
+        runId: 'active-run-1',
+        waitForReady: false,
+        launchStatus: 'already_launching',
+        alreadyLaunching: true,
+      });
+      expect(launchRequest).toMatchObject({
+        teamName,
+        cwd: projectDir,
+        effort: 'low',
+      });
+    } finally {
+      await app.close().catch(() => undefined);
+      await rm(claudeRoot, { recursive: true, force: true });
+      await rm(projectDir, { recursive: true, force: true });
+      setClaudeBasePathOverride(null);
     }
   });
 });

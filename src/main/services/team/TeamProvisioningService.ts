@@ -309,7 +309,6 @@ import {
   type TeamProvisioningOpenCodeMemberMessageDeliveryHost,
 } from './provisioning/TeamProvisioningOpenCodeMemberMessageDeliveryServiceFactory';
 import { OpenCodeMemberSendSerializer } from './provisioning/TeamProvisioningOpenCodeMemberSendSerialization';
-import { type PreparedOpenCodeRuntimeAdapterLaunch } from './provisioning/TeamProvisioningOpenCodeRuntimeAdapterPreparation';
 import {
   createOpenCodeTeamThroughRuntimeAdapterFlow,
   launchOpenCodeTeamThroughRuntimeAdapterFlow,
@@ -848,32 +847,6 @@ export class TeamProvisioningService {
     ).advisoryReviewTimers;
   }
 
-  private probeClaudeRuntime(
-    claudePath: string,
-    cwd: string,
-    env: NodeJS.ProcessEnv,
-    providerId: TeamProviderId | undefined = 'anthropic',
-    providerArgs: string[] = []
-  ): Promise<{ warning?: string }> {
-    return this.providerRuntime.probeClaudeRuntime(claudePath, cwd, env, providerId, providerArgs);
-  }
-
-  private runProviderOneShotDiagnostic(
-    claudePath: string,
-    cwd: string,
-    env: NodeJS.ProcessEnv,
-    providerId: TeamProviderId | undefined = 'anthropic',
-    providerArgs: string[] = []
-  ): Promise<{ warning?: string }> {
-    return this.providerRuntime.runProviderOneShotDiagnostic(
-      claudePath,
-      cwd,
-      env,
-      providerId,
-      providerArgs
-    );
-  }
-
   private buildProvisioningEnv(
     providerId: TeamProviderId | undefined = 'anthropic',
     providerBackendId?: string | null,
@@ -1236,7 +1209,7 @@ export class TeamProvisioningService {
         this.confirmSameTeamNativeMatches(teamName, leadName, messages),
       scheduleSameTeamPersistRetry: (teamName) => this.scheduleSameTeamPersistRetry(teamName),
       scheduleSameTeamDeferredRetry: (teamName) => this.scheduleSameTeamDeferredRetry(teamName),
-      resolveControlApiBaseUrl: () => this.resolveControlApiBaseUrl(),
+      resolveControlApiBaseUrl: () => this.providerRuntime.resolveControlApiBaseUrl(),
       sendMessageToRun: (run, message) => this.sendMessageToRun(run, message),
       hasAcceptedLeadWorkSyncReport: (input) => this.hasAcceptedLeadWorkSyncReport(input),
       scheduleLeadProofMissingWorkSyncRecovery: (input) =>
@@ -2075,11 +2048,17 @@ export class TeamProvisioningService {
       buildProvisioningEnv: (providerId, providerBackendId, options) =>
         this.buildProvisioningEnv(providerId, providerBackendId, options),
       runProviderOneShotDiagnostic: (claudePath, cwd, env, providerId, providerArgs) =>
-        this.runProviderOneShotDiagnostic(claudePath, cwd, env, providerId, providerArgs),
+        this.providerRuntime.runProviderOneShotDiagnostic(
+          claudePath,
+          cwd,
+          env,
+          providerId,
+          providerArgs
+        ),
       readRuntimeProviderLaunchFacts: (params) => this.readRuntimeProviderLaunchFacts(params),
       resolveClaudeBinaryPath: () => ClaudeBinaryResolver.resolve(),
       probeClaudeRuntime: (claudePath, cwd, env, providerId, providerArgs) =>
-        this.probeClaudeRuntime(claudePath, cwd, env, providerId, providerArgs),
+        this.providerRuntime.probeClaudeRuntime(claudePath, cwd, env, providerId, providerArgs),
       ensureMemberWorktree: (input) => this.memberWorktreeManager.ensureMemberWorktree(input),
       execCli,
       planRuntimeLanesOrThrow: (leadProviderId, members, baseCwd) =>
@@ -2580,15 +2559,6 @@ export class TeamProvisioningService {
     return this.prepareFacade.resolveOpenCodeMemberWorkspacesForRuntime(params);
   }
 
-  private prepareOpenCodeRuntimeAdapterLaunch<
-    TRequest extends TeamCreateRequest | TeamLaunchRequest,
-  >(params: {
-    request: TRequest;
-    members: TeamCreateRequest['members'];
-  }): Promise<PreparedOpenCodeRuntimeAdapterLaunch<TRequest>> {
-    return this.prepareFacade.prepareOpenCodeRuntimeAdapterLaunch(params);
-  }
-
   private normalizeTeamConfigForLaunch(teamName: string, configRaw: string): Promise<void> {
     return this.configFacade.normalizeTeamConfigForLaunch(teamName, configRaw);
   }
@@ -2642,10 +2612,6 @@ export class TeamProvisioningService {
     members: Parameters<typeof writeOpenCodeTeamConfig>[1]
   ): ReturnType<typeof writeOpenCodeTeamConfig> {
     return writeOpenCodeTeamConfig(launchRequest, members);
-  }
-
-  private resolveControlApiBaseUrl(): Promise<string | null> {
-    return this.providerRuntime.resolveControlApiBaseUrl();
   }
 
   private async respondToTeammatePermission(
@@ -4301,7 +4267,7 @@ export class TeamProvisioningService {
       writeOpenCodeTeamConfig: (launchRequest, members) =>
         this.writeOpenCodeTeamConfig(launchRequest, members),
       prepareOpenCodeRuntimeAdapterLaunch: (params) =>
-        this.prepareOpenCodeRuntimeAdapterLaunch(params),
+        this.prepareFacade.prepareOpenCodeRuntimeAdapterLaunch(params),
       readTeamConfigRaw: (teamName) => {
         const configPath = path.join(getTeamsBasePath(), teamName, 'config.json');
         return tryReadRegularFileUtf8(configPath, {

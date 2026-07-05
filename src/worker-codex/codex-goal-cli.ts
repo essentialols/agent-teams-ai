@@ -275,9 +275,31 @@ export async function runCodexGoalCli(
     writeJsonOrText(command.format, result, io);
     return result.status === "completed" ? 0 : 1;
   } catch (error) {
-    io.writeStderr(`${error instanceof Error ? error.message : "codex goal failed"}\n`);
+    if (isBrokenPipeError(error)) return 0;
+    try {
+      io.writeStderr(`${error instanceof Error ? error.message : "codex goal failed"}\n`);
+    } catch (stderrError) {
+      if (isBrokenPipeError(stderrError)) return 0;
+      throw stderrError;
+    }
     return 2;
   }
+}
+
+function isBrokenPipeError(error: unknown): boolean {
+  if (!isRecord(error)) return false;
+  return error.code === "EPIPE" || error.errno === -32;
+}
+
+function installBrokenPipeHandlers(): void {
+  const onStreamError = (error: Error): void => {
+    if (isBrokenPipeError(error)) {
+      process.exit(0);
+    }
+    throw error;
+  };
+  process.stdout.on("error", onStreamError);
+  process.stderr.on("error", onStreamError);
 }
 
 export function parseCodexGoalCliArgs(
@@ -1690,6 +1712,7 @@ const defaultIo: CodexGoalCliIo = {
 };
 
 if (await isMainModule()) {
+  installBrokenPipeHandlers();
   process.exitCode = await runCodexGoalCli();
 }
 

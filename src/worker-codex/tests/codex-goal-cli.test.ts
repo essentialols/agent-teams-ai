@@ -260,6 +260,26 @@ describe("codex goal cli", () => {
     );
   });
 
+  it("exits successfully when stdout is closed by a downstream pipe", async () => {
+    const epipe = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
+    const io: CodexGoalCliIo = {
+      writeStdout(): void {
+        throw epipe;
+      },
+      writeStderr(): void {
+        throw new Error("stderr should not be written for EPIPE");
+      },
+      cwd(): string {
+        return "/tmp";
+      },
+      env(): Readonly<Record<string, string | undefined>> {
+        return {};
+      },
+    };
+
+    await expect(runCodexGoalCli(["help"], io)).resolves.toBe(0);
+  });
+
   it("calls MCP job tools through the CLI fallback with JSON args", async () => {
     const root = await mkdtemp(join(tmpdir(), "subscription-runtime-cli-mcp-"));
     const io = captureIo();

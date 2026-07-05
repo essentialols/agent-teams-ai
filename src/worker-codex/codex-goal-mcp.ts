@@ -2791,7 +2791,7 @@ async function orphanDirtyWorkspaceDebt(input: {
     debt.push({
       reason: status.ok
         ? ProjectDebtReason.OrphanLegacyWorkspace
-        : ProjectDebtReason.UnreadableRoot,
+        : ProjectDebtReason.UnreadableWorkspace,
       subject: workspacePath,
       severity: "blocking",
       evidence: status.ok
@@ -2892,6 +2892,7 @@ function projectAdmissionDebtCounts(
     activeWriterConflicts: count(ProjectDebtReason.ActiveWriterConflict),
     staleDirtyWorkers: count(ProjectDebtReason.StaleDirtyWorker),
     unreadableRoots: count(ProjectDebtReason.UnreadableRoot),
+    unreadableWorkspaces: count(ProjectDebtReason.UnreadableWorkspace),
     diskPressure: count(ProjectDebtReason.DiskPressure),
   };
 }

@@ -31,6 +31,7 @@ export enum ProjectDebtReason {
   ActiveWriterConflict = "active_writer_conflict",
   StaleDirtyWorker = "stale_dirty_worker",
   UnreadableRoot = "unreadable_root",
+  UnreadableWorkspace = "unreadable_workspace",
   SnapshotStale = "snapshot_stale",
   DiskPressure = "disk_pressure",
 }
@@ -56,6 +57,7 @@ export type ProjectAdmissionSnapshot = {
     readonly activeWriterConflicts?: number;
     readonly staleDirtyWorkers?: number;
     readonly unreadableRoots?: number;
+    readonly unreadableWorkspaces?: number;
     readonly diskPressure?: number;
   };
 };

@@ -902,6 +902,7 @@ describe("codex goal MCP server", () => {
     const legacyWorkspaceRoot = join(root, "legacy-workspaces");
     const sourceWorkspacePath = join(workspaceRoot, "infinity-context-main");
     const orphanWorkspace = join(legacyWorkspaceRoot, "infinity-context-memory-old-v1");
+    const brokenWorkspace = join(legacyWorkspaceRoot, "infinity-context-memory-broken-v1");
     const producerWorkspace = join(root, "worktrees", "infinity-context-memory-producer-v1");
     const reviewerWorkspace = join(root, "worktrees", "infinity-context-memory-reviewer-v1");
     const server = createCodexGoalMcpServer();
@@ -929,6 +930,11 @@ describe("codex goal MCP server", () => {
       await git(orphanWorkspace, ["add", "memory.py"]);
       await git(orphanWorkspace, ["commit", "-m", "test: orphan base"]);
       await writeFile(join(orphanWorkspace, "memory.py"), "value = 2\n");
+      await mkdir(brokenWorkspace, { recursive: true });
+      await writeFile(
+        join(brokenWorkspace, ".git"),
+        `gitdir: ${join(root, "missing-gitdir")}\n`,
+      );
 
       await Promise.all([
         server.connect(serverTransport),
@@ -977,6 +983,7 @@ describe("codex goal MCP server", () => {
         snapshot: {
           counts: {
             orphanLegacyWorkspaces: 1,
+            unreadableWorkspaces: 1,
           },
         },
       });

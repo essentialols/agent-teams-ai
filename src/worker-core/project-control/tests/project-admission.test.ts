@@ -134,6 +134,44 @@ describe("evaluateProjectAdmission", () => {
       reason: ProjectAdmissionDecisionReason.DiskPressure,
     });
   });
+
+  it("treats an unreadable workspace as drainable output debt", () => {
+    const producer = evaluateProjectAdmission({
+      request: {
+        operation: ProjectOperation.StartWorker,
+        workerRole: ProjectAdmissionWorkerRole.Producer,
+      },
+      snapshot: snapshot([
+        {
+          reason: ProjectDebtReason.UnreadableWorkspace,
+          subject: "/var/data/workspaces/infinity-context-broken",
+          evidence: ["git status failed for a broken legacy worktree"],
+        },
+      ]),
+    });
+    const reviewer = evaluateProjectAdmission({
+      request: {
+        operation: ProjectOperation.StartWorker,
+        workerRole: ProjectAdmissionWorkerRole.Reviewer,
+      },
+      snapshot: snapshot([
+        {
+          reason: ProjectDebtReason.UnreadableWorkspace,
+          subject: "/var/data/workspaces/infinity-context-broken",
+          evidence: ["git status failed for a broken legacy worktree"],
+        },
+      ]),
+    });
+
+    expect(producer).toMatchObject({
+      allowed: false,
+      reason: ProjectAdmissionDecisionReason.OutputDebtPresent,
+    });
+    expect(reviewer).toMatchObject({
+      allowed: true,
+      status: ProjectAdmissionDecisionStatus.AllowedForDrainOnly,
+    });
+  });
 });
 
 function snapshot(

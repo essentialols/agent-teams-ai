@@ -836,17 +836,6 @@ export class TeamProvisioningService {
     ).memberLogsFinder = value;
   }
 
-  private get openCodeRuntimeDeliveryAdvisoryReviewTimers(): Map<
-    string,
-    ReturnType<typeof setTimeout>
-  > {
-    return (
-      this.openCodeRuntimeDeliveryAdvisory as unknown as {
-        advisoryReviewTimers: Map<string, ReturnType<typeof setTimeout>>;
-      }
-    ).advisoryReviewTimers;
-  }
-
   private buildProvisioningEnv(
     providerId: TeamProviderId | undefined = 'anthropic',
     providerBackendId?: string | null,

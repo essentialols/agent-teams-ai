@@ -29,7 +29,7 @@ function run(
   return {
     runId: 'run-1',
     teamName: 'Team',
-    request: { cwd: '/tmp/team' },
+    request: { cwd: '/workspace/team' },
     provisioningOutputParts: [],
     memberSpawnStatuses: new Map(statuses),
     pendingMemberRestarts: new Map(),

@@ -53,7 +53,7 @@ function launchFailureRun(
     request: {
       teamName: 'team-a',
       displayName: 'Team A',
-      cwd: '/tmp/team-a',
+      cwd: '/workspace/team-a',
       members: [],
       providerId: 'anthropic',
       model: 'claude-sonnet-4',

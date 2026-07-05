@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createTeamProvisioningLiveLaunchSnapshotBoundary } from '../TeamProvisioningLiveLaunchSnapshotBoundaryFactory';
 
 import type { TeamProvisioningLiveLaunchSnapshotRun } from '../TeamProvisioningLiveLaunchSnapshotBoundaryFactory';
-import type { MemberSpawnStatusEntry, PersistedTeamLaunchSnapshot } from '@shared/types';
+import type { MemberSpawnStatusEntry } from '@shared/types';
 
 const NOW = '2026-07-03T00:00:00.000Z';
 
@@ -84,7 +84,7 @@ describe('TeamProvisioningLiveLaunchSnapshotBoundaryFactory', () => {
         ]),
       }),
       'active'
-    ) as PersistedTeamLaunchSnapshot;
+    )!;
 
     boundary.syncRunMemberSpawnStatusesFromSnapshot(targetRun, snapshot);
 

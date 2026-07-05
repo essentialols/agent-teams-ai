@@ -58,7 +58,7 @@ function launchFailureRun(
     request: {
       teamName: 'team-a',
       displayName: 'Team A',
-      cwd: '/tmp/team-a',
+      cwd: '/workspace/team-a',
       members: [],
       providerId: 'anthropic',
       model: 'claude-sonnet-4',
@@ -220,7 +220,7 @@ describe('launch failure artifact pack helpers', () => {
       teamName: 'team-a',
       runId: 'run-1',
       reason: 'launch_progress_failed',
-      cwd: '/tmp/team-a',
+      cwd: '/workspace/team-a',
       pid: 1234,
       providerId: 'anthropic',
       model: 'claude-sonnet-4',

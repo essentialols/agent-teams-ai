@@ -12,7 +12,9 @@ import {
 
 import type { TeamProvisioningProgress } from '@shared/types';
 
-type ProbeProcess = { id: string };
+interface ProbeProcess {
+  id: string;
+}
 
 function makeProgress(
   runId: string,

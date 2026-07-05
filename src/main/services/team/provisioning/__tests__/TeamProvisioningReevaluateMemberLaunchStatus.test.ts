@@ -31,7 +31,7 @@ function run(
   return {
     runId: 'run-1',
     teamName: 'Team',
-    request: { cwd: '/tmp/team' },
+    request: { cwd: '/workspace/team' },
     provisioningOutputParts: [],
     memberSpawnStatuses: new Map(statuses),
     pendingMemberRestarts: new Map(),
@@ -42,10 +42,12 @@ function run(
   };
 }
 
-function makePorts(input: {
-  runtime?: ReadonlyMap<string, LiveTeamAgentRuntimeMetadata>;
-  isOpenCodeSecondary?: boolean;
-} = {}): ReevaluateMemberLaunchStatusPorts<ReevaluateMemberLaunchStatusRunLike> & {
+function makePorts(
+  input: {
+    runtime?: ReadonlyMap<string, LiveTeamAgentRuntimeMetadata>;
+    isOpenCodeSecondary?: boolean;
+  } = {}
+): ReevaluateMemberLaunchStatusPorts<ReevaluateMemberLaunchStatusRunLike> & {
   openCodeSetPending: ReturnType<typeof vi.fn>;
   openCodeSetStalled: ReturnType<typeof vi.fn>;
   openCodeRetryPrompt: ReturnType<typeof vi.fn>;

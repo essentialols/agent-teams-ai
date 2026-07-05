@@ -45,11 +45,11 @@ describe('TeamProvisioningPrepareCoordinator', () => {
       runProviderOneShotDiagnostic: vi.fn().mockResolvedValue({ warning: 'diagnostic note' }),
     });
 
-    const first = coordinator.prepareForProvisioning('/tmp/coalesced-prepare', {
+    const first = coordinator.prepareForProvisioning('/workspace/coalesced-prepare', {
       providerId: 'anthropic',
       modelVerificationMode: 'deep',
     });
-    const second = coordinator.prepareForProvisioning('/tmp/coalesced-prepare', {
+    const second = coordinator.prepareForProvisioning('/workspace/coalesced-prepare', {
       providerId: 'anthropic',
       modelVerificationMode: 'deep',
     });
@@ -76,14 +76,14 @@ describe('TeamProvisioningPrepareCoordinator', () => {
     const clearProbeCache = vi.fn();
     const coordinator = createCoordinator({ clearProbeCache });
 
-    await coordinator.prepareForProvisioning('/tmp/force-fresh-prepare', {
+    await coordinator.prepareForProvisioning('/workspace/force-fresh-prepare', {
       forceFresh: true,
       providerIds: ['anthropic', 'codex', 'codex'],
     });
 
     expect(clearProbeCache.mock.calls).toEqual([
-      ['/tmp/force-fresh-prepare', 'anthropic'],
-      ['/tmp/force-fresh-prepare', 'codex'],
+      ['/workspace/force-fresh-prepare', 'anthropic'],
+      ['/workspace/force-fresh-prepare', 'codex'],
     ]);
   });
 
@@ -103,7 +103,7 @@ describe('TeamProvisioningPrepareCoordinator', () => {
 
     const result = await coordinator.materializeEffectiveTeamMemberSpecs({
       claudePath: '/fake/claude',
-      cwd: '/tmp/materialize',
+      cwd: '/workspace/materialize',
       members,
       defaults: {},
       primaryProviderId: 'codex',
@@ -120,7 +120,7 @@ describe('TeamProvisioningPrepareCoordinator', () => {
     expect(resolveProviderDefaultModel).toHaveBeenCalledOnce();
     expect(resolveProviderDefaultModel).toHaveBeenCalledWith(
       '/fake/claude',
-      '/tmp/materialize',
+      '/workspace/materialize',
       'codex',
       { PATH: '/bin' },
       ['--from-env', '--resolved'],
@@ -136,25 +136,25 @@ describe('TeamProvisioningPrepareCoordinator', () => {
   it('resolves missing OpenCode worktree member paths through the worktree port', async () => {
     const ensureMemberWorktree = vi
       .fn()
-      .mockResolvedValue({ worktreePath: '/tmp/member-worktree' });
+      .mockResolvedValue({ worktreePath: '/workspace/member-worktree' });
     const coordinator = createCoordinator({ ensureMemberWorktree });
 
     const result = await coordinator.resolveOpenCodeMemberWorkspacesForRuntime({
       teamName: 'team',
-      baseCwd: '/tmp/base',
+      baseCwd: '/workspace/base',
       members: [{ name: 'dev', role: 'Developer', providerId: 'opencode', isolation: 'worktree' }],
     });
 
     expect(ensureMemberWorktree).toHaveBeenCalledWith({
       teamName: 'team',
       memberName: 'dev',
-      baseCwd: '/tmp/base',
+      baseCwd: '/workspace/base',
     });
-    expect(result[0]?.cwd).toBe('/tmp/member-worktree');
+    expect(result[0]?.cwd).toBe('/workspace/member-worktree');
   });
 
   it('caches successful probes but does not pin auth failures', async () => {
-    const cwd = `/tmp/probe-cache-${Date.now()}`;
+    const cwd = `/workspace/probe-cache-${Date.now()}`;
     const probeClaudeRuntime = vi
       .fn()
       .mockResolvedValueOnce({})
@@ -195,7 +195,7 @@ describe('TeamProvisioningPrepareCoordinator', () => {
   });
 
   it('isolates default provider probe caches per coordinator instance', async () => {
-    const cwd = '/tmp/probe-cache-isolated';
+    const cwd = '/workspace/probe-cache-isolated';
     const probeClaudeRuntime = vi.fn().mockResolvedValue({});
     const buildProvisioningEnv = vi.fn().mockResolvedValue({
       env: { PATH: '/bin' },
@@ -222,7 +222,7 @@ describe('TeamProvisioningPrepareCoordinator', () => {
   });
 
   it('dedupes in-flight provider probes within a coordinator cache', async () => {
-    const cwd = '/tmp/probe-cache-in-flight';
+    const cwd = '/workspace/probe-cache-in-flight';
     let releaseProbe: ((value: { warning?: string }) => void) | null = null;
     const probeClaudeRuntime = vi.fn(
       () =>

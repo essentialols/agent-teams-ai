@@ -5,17 +5,30 @@ import {
 
 declare const runtimeControlCommandIdBrand: unique symbol;
 declare const runtimeControlEventIdBrand: unique symbol;
+declare const runtimeControlStringKindBrand: unique symbol;
 
 export type RuntimeControlCommandId = string & {
   readonly [runtimeControlCommandIdBrand]: true;
 };
 export type RuntimeControlEventId = string & { readonly [runtimeControlEventIdBrand]: true };
-export type RuntimeControlTeamName = string;
-export type RuntimeControlRunId = string;
-export type RuntimeControlLaneId = string;
-export type RuntimeControlMemberName = string;
-export type RuntimeControlRuntimeSessionId = string;
-export type RuntimeControlIdempotencyKey = string;
+export type RuntimeControlTeamName = string & {
+  readonly [runtimeControlStringKindBrand]?: 'teamName';
+};
+export type RuntimeControlRunId = string & {
+  readonly [runtimeControlStringKindBrand]?: 'runId';
+};
+export type RuntimeControlLaneId = string & {
+  readonly [runtimeControlStringKindBrand]?: 'laneId';
+};
+export type RuntimeControlMemberName = string & {
+  readonly [runtimeControlStringKindBrand]?: 'memberName';
+};
+export type RuntimeControlRuntimeSessionId = string & {
+  readonly [runtimeControlStringKindBrand]?: 'runtimeSessionId';
+};
+export type RuntimeControlIdempotencyKey = string & {
+  readonly [runtimeControlStringKindBrand]?: 'idempotencyKey';
+};
 
 export interface RuntimeControlCommandIdPartsInput {
   providerId: RuntimeControlProviderId;
@@ -47,7 +60,13 @@ export interface RuntimeTaskEventCommandIdInput {
   idempotencyKey: RuntimeControlIdempotencyKey;
 }
 
-export type RuntimeDeliverMessageCommandIdInput = RuntimeTaskEventCommandIdInput;
+export interface RuntimeDeliverMessageCommandIdInput {
+  providerId: RuntimeControlProviderId;
+  teamName: RuntimeControlTeamName;
+  laneId: RuntimeControlLaneId;
+  runId: RuntimeControlRunId;
+  idempotencyKey: RuntimeControlIdempotencyKey;
+}
 
 export interface RuntimePermissionAnswerCommandIdInput {
   providerId: RuntimeControlProviderId;

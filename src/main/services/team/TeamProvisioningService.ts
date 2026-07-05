@@ -232,10 +232,11 @@ import {
   type LiveRosterAttachReason,
   type MemberLifecycleOperation,
   TeamProvisioningMemberLifecycleController,
+  type TeamProvisioningMemberLifecycleHost,
 } from './provisioning/TeamProvisioningMemberLifecycle';
 import {
-  createTeamProvisioningMemberLifecycleHost,
-  type TeamProvisioningMemberLifecycleHostFactoryService,
+  createTeamProvisioningMemberLifecycleHostFromPortGroups,
+  type TeamProvisioningMemberLifecycleHostFactoryPortGroups,
 } from './provisioning/TeamProvisioningMemberLifecycleHostFactory';
 import { TeamProvisioningMemberMcpLaunchConfigProvisioner } from './provisioning/TeamProvisioningMemberMcpLaunchConfig';
 import {
@@ -1339,15 +1340,7 @@ export class TeamProvisioningService {
     Promise<RetryFailedOpenCodeSecondaryLanesResult>
   >();
   private readonly memberLifecycleOperations = new Map<string, MemberLifecycleOperation>();
-  private readonly memberLifecycleHost = createTeamProvisioningMemberLifecycleHost<
-    ProvisioningRun,
-    MixedSecondaryRuntimeLaneState
-  >(
-    this as unknown as TeamProvisioningMemberLifecycleHostFactoryService<
-      ProvisioningRun,
-      MixedSecondaryRuntimeLaneState
-    >
-  );
+  private readonly memberLifecycleHost = this.createMemberLifecycleHost();
   private readonly memberLifecycleController = new TeamProvisioningMemberLifecycleController(
     this.memberLifecycleHost
   );
@@ -1634,6 +1627,124 @@ export class TeamProvisioningService {
     }),
     resolveOpenCodeRuntimeLaneId: (input) => this.resolveOpenCodeRuntimeLaneId(input),
   });
+
+  private createMemberLifecycleHost(): TeamProvisioningMemberLifecycleHost {
+    const portGroups: TeamProvisioningMemberLifecycleHostFactoryPortGroups<
+      ProvisioningRun,
+      MixedSecondaryRuntimeLaneState
+    > = {
+      sharedState: {
+        runs: this.runs as TeamProvisioningMemberLifecycleHost['runs'],
+        runtimeAdapterRunByTeam: this
+          .runtimeAdapterRunByTeam as TeamProvisioningMemberLifecycleHost['runtimeAdapterRunByTeam'],
+        failedOpenCodeSecondaryRetryInFlightByTeam: this
+          .failedOpenCodeSecondaryRetryInFlightByTeam as TeamProvisioningMemberLifecycleHost['failedOpenCodeSecondaryRetryInFlightByTeam'],
+        memberLifecycleOperations: this.memberLifecycleOperations,
+      },
+      stores: {
+        mcpConfigBuilder: {
+          writeConfigFile: (projectPath, options) =>
+            this.mcpConfigBuilder.writeConfigFile(projectPath, options as never),
+        },
+        membersMetaStore: {
+          getMembers: (teamName) => this.membersMetaStore.getMembers(teamName),
+        },
+        teamMetaStore: {
+          getMeta: async (teamName) =>
+            (await this.teamMetaStore.getMeta(teamName)) as Awaited<
+              ReturnType<TeamProvisioningMemberLifecycleHost['teamMetaStore']['getMeta']>
+            >,
+        },
+        readConfigForStrictDecision: (teamName) => this.readConfigForStrictDecision(teamName),
+        readPersistedRuntimeMembers: (teamName) => this.readPersistedRuntimeMembers(teamName),
+        readPersistedTeamProjectPath: (teamName) => this.readPersistedTeamProjectPath(teamName),
+      },
+      memberSpec: {
+        materializeEffectiveTeamMemberSpecs: (input) =>
+          this.materializeEffectiveTeamMemberSpecs(
+            input as Parameters<typeof this.materializeEffectiveTeamMemberSpecs>[0]
+          ),
+      },
+      runtimeLaunch: {
+        buildProvisioningEnv: (providerId, providerBackendId, options) =>
+          this.buildProvisioningEnv(providerId, providerBackendId, options),
+        resolveDirectMemberLaunchIdentity: (input) =>
+          this.resolveDirectMemberLaunchIdentity(
+            input as Parameters<typeof this.resolveDirectMemberLaunchIdentity>[0]
+          ),
+        buildTeamRuntimeLaunchArgsPlan: (input) =>
+          this.buildTeamRuntimeLaunchArgsPlan(
+            input as Parameters<typeof this.buildTeamRuntimeLaunchArgsPlan>[0]
+          ),
+        memberMcpLaunchConfigProvisioner: {
+          buildTrackedMemberMcpLaunchConfig: (input) =>
+            this.memberMcpLaunchConfigProvisioner.buildTrackedMemberMcpLaunchConfig(input),
+          removeTrackedMemberMcpLaunchConfig: (run, config) =>
+            this.memberMcpLaunchConfigProvisioner.removeTrackedMemberMcpLaunchConfig(run, config),
+        },
+        sendMessageToRun: (run, message) => this.sendMessageToRun(run, message),
+      },
+      launchState: {
+        launchStateStore: {
+          read: (teamName) => this.launchStateStore.read(teamName),
+        },
+        persistLaunchStateSnapshot: (run, phase) => this.persistLaunchStateSnapshot(run, phase),
+        writeLaunchStateSnapshot: (teamName, snapshot) =>
+          this.writeLaunchStateSnapshot(teamName, snapshot),
+      },
+      runState: {
+        runTracking: {
+          getAliveRunId: (teamName) => this.runTracking.getAliveRunId(teamName),
+          getTrackedRunId: (teamName) => this.runTracking.getTrackedRunId(teamName),
+          getProvisioningRunId: (teamName) => this.runTracking.getProvisioningRunId(teamName),
+        },
+        getRunTrackedCwd: (run) => this.getRunTrackedCwd(run),
+        appendMemberBootstrapDiagnostic: (run, memberName, text) =>
+          this.appendMemberBootstrapDiagnostic(run, memberName, text),
+        setMemberSpawnStatus: (run, memberName, status, error, livenessSource, heartbeatAt) =>
+          this.setMemberSpawnStatus(run, memberName, status, error, livenessSource, heartbeatAt),
+        upsertRunAllEffectiveMember: (run, member) => this.upsertRunAllEffectiveMember(run, member),
+        removeRunAllEffectiveMember: (run, memberName) =>
+          this.removeRunAllEffectiveMember(run, memberName),
+        invalidateRuntimeSnapshotCaches: (teamName) =>
+          this.invalidateRuntimeSnapshotCaches(teamName),
+        resetRuntimeToolActivity: (run, memberName) =>
+          this.resetRuntimeToolActivity(run, memberName),
+        clearMemberSpawnToolTracking: (run, memberName) =>
+          this.clearMemberSpawnToolTracking(run, memberName),
+        isCurrentTrackedRun: (run) => this.isCurrentTrackedRun(run),
+        getLiveTeamAgentRuntimeMetadata: (teamName) =>
+          this.getLiveTeamAgentRuntimeMetadata(teamName),
+      },
+      messaging: {
+        persistInboxMessage: (teamName, memberName, message) =>
+          this.persistInboxMessage(teamName, memberName, message as unknown as InboxMessage),
+        persistSentMessage: (teamName, message) =>
+          this.persistSentMessage(teamName, message as unknown as InboxMessage),
+      },
+      openCodeRuntime: {
+        getOpenCodeRuntimeAdapter: () => this.getOpenCodeRuntimeAdapter(),
+        resolveOpenCodeMemberWorkspacesForRuntime: (input) =>
+          this.resolveOpenCodeMemberWorkspacesForRuntime(input),
+        runOpenCodeTeamRuntimeAdapterLaunch: (input) =>
+          this.runOpenCodeTeamRuntimeAdapterLaunch(
+            input as Parameters<typeof this.runOpenCodeTeamRuntimeAdapterLaunch>[0]
+          ),
+      },
+      mixedSecondaryRuntime: {
+        createMixedSecondaryLaneStateForMember: (run, member) =>
+          this.createMixedSecondaryLaneStateForMember(run, member),
+        stopSingleMixedSecondaryRuntimeLane: (run, lane, reason) =>
+          this.stopSingleMixedSecondaryRuntimeLane(run, lane, reason),
+        getRunLeadName: (run) => this.getRunLeadName(run),
+        launchSingleMixedSecondaryLane: (run, lane) =>
+          this.launchSingleMixedSecondaryLane(run, lane),
+        getMixedSecondaryLaunchPhase: (run) => this.getMixedSecondaryLaunchPhase(run),
+      },
+    };
+
+    return createTeamProvisioningMemberLifecycleHostFromPortGroups(portGroups);
+  }
 
   constructor(
     private readonly configReader: TeamConfigReader = new TeamConfigReader(),

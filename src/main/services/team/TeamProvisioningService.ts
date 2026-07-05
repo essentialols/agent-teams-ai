@@ -1174,7 +1174,7 @@ export class TeamProvisioningService {
       getProvisioningRunId: (teamName) => this.runTracking.getProvisioningRunId(teamName),
       getRun: (runId) => this.runs.get(runId),
       isCurrentTrackedRun: (run) => this.isCurrentTrackedRun(run),
-      readConfigForObservation: (teamName) => this.configFacade.readConfigForObservation(teamName),
+      readConfigForObservation: (teamName) => this.readConfigSnapshot(teamName),
       readLeadInboxMessages: (teamName, leadName) =>
         this.inboxReader.getMessagesFor(teamName, leadName),
       markInboxMessagesRead: (teamName, leadName, messages) =>

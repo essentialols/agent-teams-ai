@@ -1477,7 +1477,7 @@ async function claudeControlledControllerStartsChildWorker() {
       promptPath: controllerPrompt,
       taskId: controllerJobId,
       progressPath: join(controllerJobRoot, `${controllerJobId}.progress.json`),
-      accounts: ["account-a"],
+      accounts: [codexAccount],
       tmuxSession: controllerJobId,
       accessBoundary: "project_scoped_control",
       projectAccessScope,

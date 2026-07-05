@@ -155,6 +155,7 @@ import {
   mergeLiveLeadProcessMessages,
   mergeLiveLeadProcessMessagesPage,
 } from '../services/team/mergeLiveLeadProcessMessages';
+import { buildOpenCodeRuntimeDeliveryUserVisibleImpact } from '../services/team/opencode/delivery/OpenCodeRuntimeDeliveryAdvisoryPolicy';
 import { TeamAttachmentStore } from '../services/team/TeamAttachmentStore';
 import { TeamConfigReader } from '../services/team/TeamConfigReader';
 import { readTeamLaunchFailureDiagnosticsBundle } from '../services/team/TeamLaunchFailureArtifactPack';
@@ -3455,8 +3456,7 @@ async function handleSendMessage(
           reason: delivery.reason,
           diagnostics: delivery.diagnostics,
           userVisibleImpact:
-            delivery.userVisibleImpact ??
-            provisioning.buildOpenCodeRuntimeDeliveryUserVisibleImpact(delivery),
+            delivery.userVisibleImpact ?? buildOpenCodeRuntimeDeliveryUserVisibleImpact(delivery),
         };
         if (
           !delivery.delivered &&
@@ -3477,7 +3477,7 @@ async function handleSendMessage(
           delivered: false,
           reason,
           diagnostics: [reason],
-          userVisibleImpact: provisioning.buildOpenCodeRuntimeDeliveryUserVisibleImpact({
+          userVisibleImpact: buildOpenCodeRuntimeDeliveryUserVisibleImpact({
             delivered: false,
             reason,
             diagnostics: [reason],

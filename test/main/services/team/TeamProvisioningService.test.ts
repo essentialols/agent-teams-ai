@@ -1345,21 +1345,6 @@ describe('TeamProvisioningService', () => {
   });
 
   describe('OpenCode runtime delivery user-visible impact', () => {
-    it('treats policy none as authoritative over raw failed delivery facts', () => {
-      const svc = new TeamProvisioningService();
-
-      expect(
-        svc.buildOpenCodeRuntimeDeliveryUserVisibleImpact({
-          delivered: false,
-          responsePending: false,
-          ledgerStatus: 'failed_terminal',
-          reason: 'empty_assistant_turn',
-          diagnostics: ['empty_assistant_turn'],
-          policyImpact: { state: 'none' },
-        })
-      ).toEqual({ state: 'none' });
-    });
-
     it('does not requeue terminal no-assistant delivery after the bounded recovery retry is exhausted', async () => {
       const svc = new TeamProvisioningService();
       const record = {

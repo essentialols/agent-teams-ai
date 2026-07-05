@@ -65,10 +65,7 @@ import {
   type OpenCodePromptDeliveryWatchdogCoordinator,
 } from './opencode/delivery/OpenCodePromptDeliveryWatchdogCoordinator';
 import { OpenCodePromptDeliveryWatchdogScheduler } from './opencode/delivery/OpenCodePromptDeliveryWatchdogScheduler';
-import {
-  buildOpenCodeRuntimeDeliveryUserVisibleImpact,
-  type OpenCodeRuntimeDeliveryAdvisoryDecision,
-} from './opencode/delivery/OpenCodeRuntimeDeliveryAdvisoryPolicy';
+import { type OpenCodeRuntimeDeliveryAdvisoryDecision } from './opencode/delivery/OpenCodeRuntimeDeliveryAdvisoryPolicy';
 import { openCodeTaskRefsIncludeAll as openCodeTaskRefsIncludeAllValue } from './opencode/delivery/OpenCodeRuntimeDeliveryProofMatching';
 import { OpenCodeRuntimeDeliveryProofReader } from './opencode/delivery/OpenCodeRuntimeDeliveryProofReader';
 import { OpenCodeVisibleReplyProofService } from './opencode/delivery/OpenCodeVisibleReplyProofService';
@@ -599,7 +596,6 @@ import type {
   MemberSpawnStatusEntry,
   MemberSpawnStatusesSnapshot,
   OpenCodeRuntimeDeliveryStatus,
-  OpenCodeRuntimeDeliveryUserVisibleImpact,
   PersistedTeamLaunchMemberState,
   PersistedTeamLaunchPhase,
   PersistedTeamLaunchSnapshot,
@@ -2367,12 +2363,6 @@ export class TeamProvisioningService {
       })
     );
     this.scheduleStaleAnthropicTeamApiKeyHelperCleanup();
-  }
-
-  buildOpenCodeRuntimeDeliveryUserVisibleImpact(
-    input: Parameters<typeof buildOpenCodeRuntimeDeliveryUserVisibleImpact>[0]
-  ): OpenCodeRuntimeDeliveryUserVisibleImpact {
-    return buildOpenCodeRuntimeDeliveryUserVisibleImpact(input);
   }
 
   private repairStaleTaskActivityIntervalsOnce(

@@ -401,7 +401,6 @@ describe('ipc teams handlers', () => {
     getOpenCodeRuntimeDeliveryStatus: vi.fn(
       () => resolved(null as OpenCodeRuntimeDeliveryStatus | null)
     ),
-    buildOpenCodeRuntimeDeliveryUserVisibleImpact: vi.fn(() => ({ state: 'none' })),
     getLiveLeadProcessMessages: vi.fn(() => [] as InboxMessage[]),
     getCurrentLeadSessionId: vi.fn(() => null as string | null),
     getAliveTeams: vi.fn(() => ['my-team']),
@@ -1193,9 +1192,6 @@ describe('ipc teams handlers', () => {
         diagnostics: ['prompt accepted'],
         userVisibleImpact: { state: 'none' },
       });
-      provisioningService.buildOpenCodeRuntimeDeliveryUserVisibleImpact.mockReturnValueOnce({
-        state: 'checking',
-      });
       const sendHandler = handlers.get(TEAM_SEND_MESSAGE);
       expect(sendHandler).toBeDefined();
 
@@ -1223,15 +1219,6 @@ describe('ipc teams handlers', () => {
         userVisibleImpact: { state: 'checking' },
       });
       expect(result.data?.runtimeDelivery?.acceptanceUnknown).toBeUndefined();
-      const impactCalls = provisioningService.buildOpenCodeRuntimeDeliveryUserVisibleImpact.mock
-        .calls as unknown as [Partial<NonNullable<SendMessageResult['runtimeDelivery']>>][];
-      const impactInput = impactCalls.at(-1)?.[0];
-      expect(impactInput).toMatchObject({
-        delivered: true,
-        accepted: true,
-        responsePending: true,
-      });
-      expect(impactInput).not.toHaveProperty('userVisibleImpact');
     } finally {
       vi.useRealTimers();
     }
@@ -1288,9 +1275,6 @@ describe('ipc teams handlers', () => {
         acceptanceUnknown: false,
         userVisibleImpact: { state: 'none' },
       });
-      expect(
-        provisioningService.buildOpenCodeRuntimeDeliveryUserVisibleImpact
-      ).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }

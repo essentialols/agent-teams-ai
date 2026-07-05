@@ -11,6 +11,7 @@ export enum IntegrationErrorReason {
   UnexpectedFiles = "unexpected_files",
   InvalidCommitMessage = "invalid_commit_message",
   BranchMismatch = "branch_mismatch",
+  StaleBase = "stale_base",
   PolicyDenied = "policy_denied",
 }
 

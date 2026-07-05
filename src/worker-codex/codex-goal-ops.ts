@@ -31,6 +31,7 @@ import {
   type CodexGoalRunConfig,
 } from "./codex-goal-runner";
 import { assertCodexGoalAccessLaunchAllowed } from "./codex-goal-access-plan";
+import { readLocalGitHeadCommit } from "./codex-goal-git-revision";
 
 const execFileAsync = promisify(execFile);
 const gitStatusTimeoutMs = 5_000;
@@ -624,6 +625,7 @@ export async function reconcileCodexGoalRuntimeResult(
         workspacePath: input.config.workspacePath,
         outputPath: join(input.config.jobRootDir, `${input.config.taskId}.preserved.patch`),
       });
+  const baseCommit = await readLocalGitHeadCommit(input.config.workspacePath);
   const nextAction = actionForRuntimeState({
     status: runtimeStatus,
     classification,
@@ -661,6 +663,7 @@ export async function reconcileCodexGoalRuntimeResult(
     ...(artifacts.length === 0 ? {} : { artifacts }),
     details: {
       source: "codex_goal_runtime_result_reconcile",
+      ...(baseCommit === undefined ? {} : { baseCommit }),
     },
   });
   return {

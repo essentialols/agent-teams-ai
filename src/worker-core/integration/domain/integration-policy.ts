@@ -25,6 +25,7 @@ export type ProjectIntegrationPolicy = {
   readonly allowedPathPrefixes?: readonly string[];
   readonly requiredCheckIds?: readonly string[];
   readonly allowForcePush?: boolean;
+  readonly allowStaleBase?: boolean;
 };
 
 export function assertCanOpenIntegrationAttempt(
@@ -60,12 +61,36 @@ export function assertCanOpenIntegrationAttempt(
     force: false,
   });
   if (!pushDecision.allowed) throw integrationPolicyDenied(pushDecision);
+  assertBaseRevisionAllowed(policy, input);
   assertExpectedFilesAllowed(policy, input.reviewDecision.approvedFiles);
   for (const file of input.reviewDecision.approvedFiles) {
     const writeDecision = access.canWritePath({
       path: join(input.targetWorkspacePath, normalizeProjectRelativePath(file)),
     });
     if (!writeDecision.allowed) throw integrationPolicyDenied(writeDecision);
+  }
+}
+
+function assertBaseRevisionAllowed(
+  policy: ProjectIntegrationPolicy,
+  input: OpenIntegrationAttemptInput,
+): void {
+  if (
+    input.workerOutput.baseStatus === "needs_rebase_check" &&
+    policy.allowStaleBase !== true
+  ) {
+    throw new IntegrationError({
+      reason: IntegrationErrorReason.StaleBase,
+      evidence: [
+        ...(input.workerOutput.baseCommit
+          ? [`base:${input.workerOutput.baseCommit}`]
+          : []),
+        ...(input.workerOutput.targetCommit
+          ? [`target:${input.workerOutput.targetCommit}`]
+          : []),
+        ...(input.workerOutput.baseRevisionReasons ?? []),
+      ],
+    });
   }
 }
 

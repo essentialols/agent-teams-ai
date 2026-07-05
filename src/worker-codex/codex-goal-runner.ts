@@ -43,6 +43,7 @@ import {
   buildCodexGoalAccessLaunchPlan,
   codexGoalControlsForAccessBoundary,
 } from "./codex-goal-access-plan";
+import { readLocalGitHeadCommit } from "./codex-goal-git-revision";
 
 const execFileAsync = promisify(execFile);
 const gitStatusTimeoutMs = 5_000;
@@ -211,6 +212,7 @@ export async function runCodexGoal(
     executionEngine: config.executionEngine ?? "app-server-goal",
     accountCount: config.accounts.length,
   });
+  const baseCommit = await readLocalGitHeadCommit(config.workspacePath);
   const linkedWorktreeHandoff = await codexGoalLinkedWorktreeHandoffPreflight({
     config,
     prompt,
@@ -283,7 +285,11 @@ export async function runCodexGoal(
         codexGoalObjective: config.codexGoalObjective ?? prompt,
       },
     });
-    await resultRecorder.record(await codexRuntimeResultInput({ config, result }));
+    await resultRecorder.record(await codexRuntimeResultInput({
+      config,
+      result,
+      ...(baseCommit === undefined ? {} : { baseCommit }),
+    }));
     await progressHeartbeat.write(progressFromResult(result));
     await runtimeEvents.write("executor_finished", {
       status: result.status,
@@ -295,6 +301,7 @@ export async function runCodexGoal(
     await resultRecorder.record(await codexExceptionRuntimeResultInput({
       config,
       error,
+      ...(baseCommit === undefined ? {} : { baseCommit }),
     }));
     await progressHeartbeat.write({
       status: "failed",
@@ -689,6 +696,7 @@ function progressStatusFromResult(status: string): CodexGoalProgressStatus {
 async function codexRuntimeResultInput(input: {
   readonly config: CodexGoalRunConfig;
   readonly result: SafeExecutionRunResult<FileBackendCodexWorkerResult>;
+  readonly baseCommit?: string;
 }): Promise<RuntimeResultEnvelopeInput> {
   const changedFiles = changedFilesFromSafeExecutionResult(input.result);
   const workerReport = workerReportFromSafeExecutionResult(input.result);
@@ -700,6 +708,12 @@ async function codexRuntimeResultInput(input: {
   const artifacts = status === "done" || changedFiles.length === 0
     ? []
     : await preservePatchArtifacts(input.config);
+  const details = runtimeResultDetails({
+    ...("failureDetails" in input.result && input.result.failureDetails
+      ? { failureDetails: input.result.failureDetails }
+      : {}),
+    ...(input.baseCommit === undefined ? {} : { baseCommit: input.baseCommit }),
+  });
   return {
     status,
     provider: "codex",
@@ -722,21 +736,26 @@ async function codexRuntimeResultInput(input: {
     }),
     ...(workerReport === undefined ? {} : { workerReport }),
     ...(artifacts.length === 0 ? {} : { artifacts }),
-    ...("failureDetails" in input.result && input.result.failureDetails
-      ? { details: input.result.failureDetails }
-      : {}),
+    ...(details === undefined ? {} : { details }),
   };
 }
 
 async function codexExceptionRuntimeResultInput(input: {
   readonly config: CodexGoalRunConfig;
   readonly error: unknown;
+  readonly baseCommit?: string;
 }): Promise<RuntimeResultEnvelopeInput> {
   const workspace = await changedFilesFromWorkspace(input.config.workspacePath);
   const changedFiles = workspace.changedFiles;
   const artifacts = changedFiles.length === 0
     ? []
     : await preservePatchArtifacts(input.config);
+  const details = runtimeResultDetails({
+    failureDetails: {
+      errorName: input.error instanceof Error ? input.error.name : "unknown",
+    },
+    ...(input.baseCommit === undefined ? {} : { baseCommit: input.baseCommit }),
+  });
   return {
     status: changedFiles.length > 0 ? "partial" : "failed",
     provider: "codex",
@@ -755,10 +774,19 @@ async function codexExceptionRuntimeResultInput(input: {
     blockers: ["runner_exception"],
     nextAction: changedFiles.length > 0 ? "preserve_patch" : "recover",
     ...(artifacts.length === 0 ? {} : { artifacts }),
-    details: {
-      errorName: input.error instanceof Error ? input.error.name : "unknown",
-    },
+    ...(details === undefined ? {} : { details }),
   };
+}
+
+function runtimeResultDetails(input: {
+  readonly failureDetails?: Readonly<Record<string, string>>;
+  readonly baseCommit?: string;
+}): Readonly<Record<string, string>> | undefined {
+  const details = {
+    ...(input.failureDetails ?? {}),
+    ...(input.baseCommit === undefined ? {} : { baseCommit: input.baseCommit }),
+  };
+  return Object.keys(details).length === 0 ? undefined : details;
 }
 
 function runtimeStatusFromSafeExecutionResult(input: {

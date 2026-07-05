@@ -597,6 +597,9 @@ describe("codex goal runner", () => {
       await execFileAsync("git", ["commit", "-m", "test fixture"], {
         cwd: workspacePath,
       });
+      const baseCommit = (await execFileAsync("git", ["rev-parse", "HEAD"], {
+        cwd: workspacePath,
+      })).stdout.trim();
 
       await expect(runCodexGoal(config, {
         createExecutor: () => ({
@@ -616,6 +619,7 @@ describe("codex goal runner", () => {
         changedFiles: ["tracked.txt", "new.txt"],
         nextAction: "preserve_patch",
       });
+      expect(result.details).toMatchObject({ baseCommit });
       expect(result.evidence).toEqual(expect.arrayContaining([
         `patch_preserved:${join(config.jobRootDir, "task-patch.preserved.patch")}`,
       ]));

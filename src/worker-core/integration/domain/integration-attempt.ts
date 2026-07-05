@@ -1,5 +1,6 @@
 import { isAbsolute, posix } from "node:path";
 
+import type { BaseRevisionStatus } from "../../base-revision";
 import {
   IntegrationError,
   IntegrationErrorReason,
@@ -51,6 +52,10 @@ export type WorkerOutput = {
   readonly commitSha?: string;
   readonly patchPath?: string;
   readonly summaryPath?: string;
+  readonly baseCommit?: string;
+  readonly targetCommit?: string;
+  readonly baseStatus?: BaseRevisionStatus;
+  readonly baseRevisionReasons?: readonly string[];
   readonly changedFiles: readonly string[];
   readonly evidencePaths?: readonly string[];
 };

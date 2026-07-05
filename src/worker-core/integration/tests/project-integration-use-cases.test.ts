@@ -149,6 +149,54 @@ describe("project integration use cases", () => {
       targetBranch: "feature/outside",
     })).rejects.toBeInstanceOf(IntegrationError);
   });
+
+  it("blocks stale worker output until review policy allows a rebase check", async () => {
+    const fixture = createFixture();
+
+    await expect(openProjectIntegrationAttempt(fixture.deps(), {
+      ...input(),
+      workerOutput: {
+        ...input().workerOutput,
+        baseCommit: "abc1234",
+        targetCommit: "def5678",
+        baseStatus: "needs_rebase_check",
+        baseRevisionReasons: ["target_advanced", "output_changed_on_stale_base"],
+      },
+    })).rejects.toMatchObject({
+      reason: IntegrationErrorReason.StaleBase,
+      evidence: [
+        "base:abc1234",
+        "target:def5678",
+        "target_advanced",
+        "output_changed_on_stale_base",
+      ],
+    });
+  });
+
+  it("allows stale worker output when integration policy explicitly accepts it", async () => {
+    const fixture = createFixture();
+
+    await expect(openProjectIntegrationAttempt(fixture.deps(), {
+      ...input(),
+      policy: {
+        ...policy(),
+        allowStaleBase: true,
+      },
+      workerOutput: {
+        ...input().workerOutput,
+        baseCommit: "abc1234",
+        targetCommit: "def5678",
+        baseStatus: "needs_rebase_check",
+        baseRevisionReasons: ["target_advanced", "output_changed_on_stale_base"],
+      },
+    })).resolves.toMatchObject({
+      workerOutput: {
+        baseCommit: "abc1234",
+        targetCommit: "def5678",
+        baseStatus: "needs_rebase_check",
+      },
+    });
+  });
 });
 
 function input() {

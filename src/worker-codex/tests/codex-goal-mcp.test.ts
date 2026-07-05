@@ -175,6 +175,89 @@ describe("codex goal MCP server", () => {
     }
   });
 
+  it("exposes stale base revision facts in brief when a target commit is provided", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-base-revision-"));
+    const promptPath = join(root, "prompt.md");
+    const resultPath = join(root, "task.latest-result.json");
+    const patchPath = join(root, "task.preserved.patch");
+    try {
+      await mkdir(root, { recursive: true });
+      await writeFile(promptPath, "Do a sandbox task.\n");
+      await writeFile(patchPath, "diff --git a/src/a.ts b/src/a.ts\n");
+      await writeFile(resultPath, `${JSON.stringify({
+        status: "partial",
+        changedFiles: ["src/a.ts"],
+        evidence: ["patch_preserved"],
+        blockers: ["worker_stopped_before_result"],
+        nextAction: "preserve_patch",
+        details: {
+          baseCommit: "abc1234",
+        },
+        artifacts: [{
+          kind: "patch",
+          path: patchPath,
+          byteLength: 42,
+        }],
+        updatedAt: new Date().toISOString(),
+      })}\n`);
+
+      const brief = await buildCodexGoalBrief({
+        jobId: "job-base-revision",
+        launch: {
+          cwd: root,
+          logPath: join(root, "task.log"),
+          cliCommand: ["subscription-runtime-codex-goal"],
+          config: {
+            jobRootDir: root,
+            authRootDir: root,
+            workspacePath: root,
+            promptPath,
+            taskId: "task",
+            accounts: [{ name: "account-a" }],
+            outputPath: resultPath,
+          },
+        },
+        status: {
+          tmuxAlive: false,
+          resultExists: true,
+          resultPath,
+          resultStatus: "partial",
+          workspaceDirty: true,
+          changedFiles: ["src/a.ts"],
+          logPath: join(root, "task.log"),
+          logExists: false,
+          logByteLength: 0,
+          recommendedAction: "inspect_dirty_failure",
+          warnings: [],
+        },
+        accounts: [{
+          name: "account-a",
+          authJsonPath: join(root, "account-a", "auth.json"),
+          status: "ready",
+          warnings: [],
+          safeMessage: "account-a is ready",
+        }],
+        staleAfterMs: 60_000,
+        tailLines: 20,
+        targetCommit: "def5678",
+      });
+
+      expect(brief.baseRevision).toMatchObject({
+        status: "needs_rebase_check",
+        workerBaseCommit: "abc1234",
+        targetCommit: "def5678",
+      });
+      expect(brief.statusView).toMatchObject({
+        baseCommit: "abc1234",
+        targetCommit: "def5678",
+        baseStatus: "needs_rebase_check",
+      });
+      expect(brief.handoffPatchPath).toBe(patchPath);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("exposes read-only agent run watch snapshots without control actions", async () => {
     const root = await mkdtemp(join(tmpdir(), "subscription-runtime-run-watch-"));
     const registryRootDir = join(root, "registry");
@@ -2519,6 +2602,12 @@ describe("codex goal MCP server", () => {
           hasAvailableAccount: false,
           lifecycleMarkerTypes: ["review", "pause_request"],
           nextBestTool: "codex_goal_accounts_status",
+          activeWriterRisk: "none",
+          baseRevisionStatus: "unknown",
+          statusView: expect.objectContaining({
+            activeWriterRisk: "none",
+            safeToContinue: true,
+          }),
         });
         expect(overviewJobA?.lifecycleMarkers).toEqual([
           expect.objectContaining({ type: "review" }),

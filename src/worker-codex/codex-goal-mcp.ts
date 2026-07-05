@@ -38,9 +38,13 @@ import {
   RunEventProviderKind,
   RunEventType,
   WorkerControlService,
+  assessBaseRevision,
+  assessWorkerHealth,
   applyWorkerOutput,
+  buildWorkerStatusView,
   commitApprovedChanges,
   decideRunObservation,
+  describeProjectControlSurface,
   isRunEventCompactionSafetyMode,
   isRunEventProviderKind,
   isRunEventType,
@@ -51,7 +55,11 @@ import {
   rejectIntegrationAttempt,
   reconcileRunPreview,
   runRequiredChecks,
+  readTargetRevision,
   runEventProviderKindFromString,
+  buildHandoffManifest,
+  type BaseRevisionStatus,
+  type RuntimeResultArtifact,
   type RunEventReadResult,
   type RunEventRetentionPolicy,
   type RunObservationSnapshot,
@@ -123,6 +131,7 @@ import {
   optionalCodexGoalNetworkAccess,
   parseCodexGoalProjectAccessScope,
 } from "./codex-goal-access-plan";
+import { LocalGitRevisionReader } from "./codex-goal-git-revision";
 
 const serverVersion = "0.1.0-main.2";
 const defaultAuthRoot = "~/.cache/subscription-runtime/live-codex-auth";
@@ -270,7 +279,12 @@ type ProjectIntegrationMcpArgs = ProjectControlMcpArgs & {
   readonly workerWorkspacePath?: string;
   readonly workerCommitSha?: string;
   readonly workerPatchPath?: string;
+  readonly workerSummaryPath?: string;
+  readonly workerBaseCommit?: string;
   readonly targetWorkspacePath?: string;
+  readonly targetCommit?: string;
+  readonly baseStatus?: string;
+  readonly baseRevisionReasons?: readonly string[] | string;
   readonly targetBranch?: string;
   readonly targetRemote?: string;
   readonly changedFiles?: readonly string[] | string;
@@ -280,6 +294,7 @@ type ProjectIntegrationMcpArgs = ProjectControlMcpArgs & {
   readonly requiredChecks?: readonly unknown[];
   readonly reviewedBy?: string;
   readonly reviewReason?: string;
+  readonly allowStaleBase?: boolean;
   readonly allowedPreExistingDirtyFiles?: readonly string[] | string;
   readonly message?: string;
   readonly reason?: string;
@@ -312,6 +327,8 @@ type JobResultReconcileMcpArgs = JobBriefMcpArgs & {
 type JobBriefMcpArgs = JobIdMcpArgs & {
   readonly staleAfterMs?: number;
   readonly tailLines?: number;
+  readonly targetCommit?: string;
+  readonly targetWorkspacePath?: string;
 };
 
 type JobDecisionMcpArgs = JobBriefMcpArgs & {
@@ -1323,9 +1340,12 @@ export function createCodexGoalMcpServer(
         ...jobIdInputSchema(),
         staleAfterMs: z.number().int().positive().optional(),
         tailLines: z.number().int().positive().optional(),
+        targetCommit: z.string().optional(),
+        targetWorkspacePath: z.string().optional(),
       },
     },
     async (args) => withMcpErrors(async () => {
+      const briefArgs = args as JobBriefMcpArgs;
       const loaded = await loadJobLaunch(args as JobBriefMcpArgs);
       const status = await collectCodexGoalStatus(statusInput(loaded.launch));
       const accounts = await listCodexGoalAccountStatuses({
@@ -1339,8 +1359,9 @@ export function createCodexGoalMcpServer(
         launch: loaded.launch,
         status,
         accounts,
-        staleAfterMs: numberValue((args as JobBriefMcpArgs).staleAfterMs) ?? 10 * 60_000,
-        tailLines: numberValue((args as JobBriefMcpArgs).tailLines) ?? 20,
+        staleAfterMs: numberValue(briefArgs.staleAfterMs) ?? 10 * 60_000,
+        tailLines: numberValue(briefArgs.tailLines) ?? 20,
+        ...optionalTargetCommit(await targetCommitFromArgs(briefArgs)),
       });
       return mcpJson({
         ok: true,
@@ -1362,6 +1383,8 @@ export function createCodexGoalMcpServer(
         ...jobIdInputSchema(),
         staleAfterMs: z.number().int().positive().optional(),
         tailLines: z.number().int().positive().optional(),
+        targetCommit: z.string().optional(),
+        targetWorkspacePath: z.string().optional(),
         includeRegistryConflicts: z.boolean().optional(),
       },
       outputSchema: {
@@ -1392,6 +1415,7 @@ export function createCodexGoalMcpServer(
         accounts,
         staleAfterMs,
         tailLines,
+        ...optionalTargetCommit(await targetCommitFromArgs(decisionArgs)),
       });
       const overview = booleanValue(decisionArgs.includeRegistryConflicts) === false
         ? undefined
@@ -1430,6 +1454,8 @@ export function createCodexGoalMcpServer(
         ...jobIdInputSchema(),
         staleAfterMs: z.number().int().positive().optional(),
         tailLines: z.number().int().positive().optional(),
+        targetCommit: z.string().optional(),
+        targetWorkspacePath: z.string().optional(),
         includeCliFallback: z.boolean().optional(),
       },
     },
@@ -1448,6 +1474,7 @@ export function createCodexGoalMcpServer(
         accounts,
         staleAfterMs: numberValue((args as JobHandoffMcpArgs).staleAfterMs) ?? 10 * 60_000,
         tailLines: numberValue((args as JobHandoffMcpArgs).tailLines) ?? 20,
+        ...optionalTargetCommit(await targetCommitFromArgs(args as JobHandoffMcpArgs)),
       });
       const handoff = buildCodexGoalHandoff({
         registryRootDir: loaded.registryRootDir,
@@ -1811,7 +1838,12 @@ export function createCodexGoalMcpServer(
         workerWorkspacePath: z.string().optional(),
         workerCommitSha: z.string().optional(),
         workerPatchPath: z.string().optional(),
+        workerSummaryPath: z.string().optional(),
+        workerBaseCommit: z.string().optional(),
         targetWorkspacePath: z.string().optional(),
+        targetCommit: z.string().optional(),
+        baseStatus: z.string().optional(),
+        baseRevisionReasons: z.union([z.string(), z.array(z.string())]).optional(),
         targetBranch: z.string().optional(),
         targetRemote: z.string().optional(),
         changedFiles: z.union([z.string(), z.array(z.string())]).optional(),
@@ -1821,6 +1853,7 @@ export function createCodexGoalMcpServer(
         requiredChecks: z.array(projectIntegrationCheckSchema()).optional(),
         reviewedBy: z.string().optional(),
         reviewReason: z.string().optional(),
+        allowStaleBase: z.boolean().optional(),
         confirmOpen: z.boolean().optional(),
       },
     },
@@ -2540,6 +2573,7 @@ function projectIntegrationPolicy(
     ...(allowedPathPrefixes.length ? { allowedPathPrefixes } : {}),
     ...(requiredCheckIds.length ? { requiredCheckIds } : {}),
     ...(controller.scope.allowForcePush === true ? { allowForcePush: true } : {}),
+    ...(args.allowStaleBase === true ? { allowStaleBase: true } : {}),
   };
 }
 
@@ -2921,6 +2955,13 @@ async function projectIntegrationOpenAttempt(args: ProjectIntegrationMcpArgs) {
   const commitSha = stringValue(args.workerCommitSha ?? args.commitSha);
   if (commitSha) assertSafeGitCommitSha(commitSha);
   const patchPath = stringValue(args.workerPatchPath);
+  const summaryPath = stringValue(args.workerSummaryPath);
+  const baseCommit = stringValue(args.workerBaseCommit);
+  if (baseCommit) assertSafeGitCommitSha(baseCommit);
+  const targetCommit = stringValue(args.targetCommit);
+  if (targetCommit) assertSafeGitCommitSha(targetCommit);
+  const baseStatus = optionalBaseRevisionStatus(args.baseStatus);
+  const baseRevisionReasons = stringArrayArg(args.baseRevisionReasons);
   if (!commitSha && !patchPath) {
     throw new Error("project_integration_worker_output_source_required");
   }
@@ -2941,6 +2982,11 @@ async function projectIntegrationOpenAttempt(args: ProjectIntegrationMcpArgs) {
       workspacePath: workerWorkspacePath,
       ...(commitSha ? { commitSha } : {}),
       ...(patchPath ? { patchPath } : {}),
+      ...(summaryPath ? { summaryPath } : {}),
+      ...(baseCommit ? { baseCommit } : {}),
+      ...(targetCommit ? { targetCommit } : {}),
+      ...(baseStatus ? { baseStatus } : {}),
+      ...(baseRevisionReasons.length ? { baseRevisionReasons } : {}),
       changedFiles,
     },
     reviewDecision: {
@@ -4989,6 +5035,13 @@ async function buildCodexGoalOverviewItem(input: {
       workerAliveReason: brief.workerAliveReason,
       workerProcessAlive: brief.workerProcessAlive,
       workerFreshProgressAlive: brief.workerFreshProgressAlive,
+      workerHealth: brief.workerHealth,
+      activeWriterRisk: brief.activeWriterRisk,
+      activeWriterRiskReasons: brief.activeWriterRiskReasons,
+      statusView: brief.statusView,
+      baseRevision: brief.baseRevision,
+      baseRevisionStatus: brief.baseRevisionStatus,
+      baseRevisionReasons: brief.baseRevisionReasons,
       recommendedAction,
       resultStatus: status.resultStatus,
       resultReason: status.resultReason,
@@ -5260,10 +5313,20 @@ export async function buildCodexGoalBrief(input: {
   readonly accounts: Awaited<ReturnType<typeof listCodexGoalAccountStatuses>>;
   readonly staleAfterMs: number;
   readonly tailLines: number;
+  readonly targetCommit?: string;
 }) {
   const result = input.status.resultPath
     ? await readRuntimeResultBrief(input.status.resultPath)
     : {};
+  const baseRevision = assessBaseRevision({
+    workerBase: result.baseCommit === undefined ? {} : { commit: result.baseCommit },
+    ...(input.targetCommit === undefined
+      ? {}
+      : { target: { commit: input.targetCommit } }),
+    outputChangedFiles: input.status.changedFiles ?? [],
+    outputNoDiff: (input.status.changedFiles ?? []).length === 0 &&
+      input.status.workspaceDirty !== true,
+  });
   const lastProgressAt = latestIsoDate([
     input.status.progressUpdatedAt,
     input.status.logUpdatedAt,
@@ -5290,6 +5353,34 @@ export async function buildCodexGoalBrief(input: {
   const heartbeatOnlyNoOutput = isHeartbeatOnlyNoOutputBrief({
     status: input.status,
     staleAfterMs: input.staleAfterMs,
+  });
+  const workerHealth = assessWorkerHealth({
+    status: codexGoalBriefHealthStatus({
+      status: input.status,
+      workerAlive: workerLiveness.alive,
+    }),
+    processAlive: workerLiveness.alive,
+    liveness: silentStale ? "stale" : workerLiveness.alive ? "alive" : "dead",
+    staleAfterMs: input.staleAfterMs,
+    progressStale,
+    silentStale,
+    heartbeatOnlyNoOutput,
+    changedFilesCount: (input.status.changedFiles ?? []).length,
+    ...(input.status.progressStatus === undefined
+      ? {}
+      : { progressStatus: input.status.progressStatus }),
+    ...(input.status.progressHeartbeatAgeMs === undefined
+      ? {}
+      : { progressHeartbeatAgeMs: input.status.progressHeartbeatAgeMs }),
+    ...(input.status.resultExists === undefined
+      ? {}
+      : { resultExists: input.status.resultExists }),
+    ...(input.status.resultStatus === undefined
+      ? {}
+      : { resultStatus: input.status.resultStatus }),
+    ...(input.status.workspaceDirty === undefined
+      ? {}
+      : { workspaceDirty: input.status.workspaceDirty }),
   });
   const invalidAccounts = input.accounts.filter((slot) => slot.status !== "ready");
   const capacityBlockedAccounts = input.accounts.filter((slot) =>
@@ -5374,6 +5465,34 @@ export async function buildCodexGoalBrief(input: {
       }
     : nextActionForStatus(input.status.recommendedAction);
   const recentLogTail = redactLogTail(await safeTail(input.launch.logPath, input.tailLines));
+  const currentAccount = result.currentAccount ?? input.status.progressCurrentAccount;
+  const statusView = buildWorkerStatusView({
+    health: workerHealth,
+    staleAfterMs: input.staleAfterMs,
+    baseStatus: baseRevision.status,
+    dirtyFilesCount: (input.status.changedFiles ?? []).length,
+    nextBestActionHint: String(next.tool),
+    ...(baseRevision.workerBaseCommit === undefined
+      ? {}
+      : { baseCommit: baseRevision.workerBaseCommit }),
+    ...(baseRevision.targetCommit === undefined
+      ? {}
+      : { targetCommit: baseRevision.targetCommit }),
+    ...(input.launch.config.model === undefined
+      ? {}
+      : { model: input.launch.config.model }),
+    ...(input.launch.config.reasoningEffort === undefined
+      ? {}
+      : { effort: input.launch.config.reasoningEffort }),
+    ...(input.launch.config.serviceTier === undefined
+      ? {}
+      : { serviceTier: input.launch.config.serviceTier }),
+    ...(currentAccount === undefined ? {} : { account: currentAccount }),
+    ...(input.launch.config.accessBoundary === undefined
+      ? {}
+      : { accessBoundary: input.launch.config.accessBoundary }),
+    ...(lastProgressAgeMs === undefined ? {} : { freshAgeMs: lastProgressAgeMs }),
+  });
   return {
     text: [
       workerLiveness.alive ? "worker alive" : "worker not running",
@@ -5412,6 +5531,17 @@ export async function buildCodexGoalBrief(input: {
     workerAliveReason: workerLiveness.aliveReason,
     workerProcessAlive: workerLiveness.processAlive,
     workerFreshProgressAlive: workerLiveness.freshProgressAlive,
+    workerHealth,
+    statusView,
+    baseRevision,
+    baseRevisionStatus: baseRevision.status,
+    baseRevisionReasons: baseRevision.reasons,
+    handoffArtifacts: result.artifacts ?? [],
+    handoffBaseCommit: result.baseCommit,
+    handoffPatchPath: result.patchPath,
+    handoffSummaryPath: result.summaryPath,
+    activeWriterRisk: workerHealth.activeWriterRisk.kind,
+    activeWriterRiskReasons: workerHealth.activeWriterRisk.reasons,
     silentStale,
     heartbeatOnlyNoOutput,
     logExists: input.status.logExists,
@@ -5437,6 +5567,7 @@ export async function buildCodexGoalBrief(input: {
     lastFailureReason: input.status.resultReason ?? result.lastFailureReason,
     changedFiles: input.status.changedFiles ?? [],
     safeToContinue:
+      workerHealth.safeToContinue &&
       safeStatusToContinue &&
       hasAvailableAccount &&
       !reviewedStopped &&
@@ -5469,6 +5600,34 @@ export async function buildCodexGoalBrief(input: {
     }),
     recentLogTail,
   };
+}
+
+function codexGoalBriefHealthStatus(input: {
+  readonly status: Awaited<ReturnType<typeof collectCodexGoalStatus>>;
+  readonly workerAlive: boolean;
+}): "running" | "stopped" | "completed" | "failed" | "unknown" {
+  if (input.workerAlive && input.status.progressStatus === "running") {
+    return "running";
+  }
+  if (
+    input.status.resultStatus === "done" ||
+    input.status.resultStatus === "completed"
+  ) {
+    return "completed";
+  }
+  if (input.workerAlive) return "running";
+  if (
+    input.status.resultStatus === "failed" ||
+    input.status.resultStatus === "partial" ||
+    input.status.resultStatus === "blocked" ||
+    input.status.resultStatus === "aborted"
+  ) {
+    return "failed";
+  }
+  if (input.status.resultExists === false && input.status.tmuxAlive === false) {
+    return "stopped";
+  }
+  return "unknown";
 }
 
 function isHeartbeatOnlyNoOutputBrief(input: {
@@ -5530,6 +5689,10 @@ function buildCodexGoalDecision(input: {
       workerAliveReason: input.brief.workerAliveReason,
       workerProcessAlive: input.brief.workerProcessAlive,
       workerFreshProgressAlive: input.brief.workerFreshProgressAlive,
+      activeWriterRisk: input.brief.activeWriterRisk,
+      activeWriterRiskReasons: input.brief.activeWriterRiskReasons,
+      baseRevisionStatus: input.brief.baseRevisionStatus,
+      baseRevisionReasons: input.brief.baseRevisionReasons,
       recommendedAction: input.status.recommendedAction,
       resultStatus: input.status.resultStatus,
       resultReason: redactOptional(input.status.resultReason),
@@ -5555,6 +5718,14 @@ function buildCodexGoalDecision(input: {
       lastRuntimeEvent: input.brief.lastRuntimeEvent,
       lastRuntimeEventAt: input.brief.lastRuntimeEventAt,
       lastRuntimeEventLevel: input.brief.lastRuntimeEventLevel,
+    },
+    {
+      code: "status_view",
+      statusView: input.brief.statusView,
+    },
+    {
+      code: "base_revision",
+      baseRevision: input.brief.baseRevision,
     },
     {
       code: "account_state",
@@ -5779,6 +5950,44 @@ function codexGoalDecisionCommands(input: {
   };
 }
 
+async function targetCommitFromArgs(
+  args: Pick<JobBriefMcpArgs, "cwd" | "targetCommit" | "targetWorkspacePath">,
+): Promise<string | undefined> {
+  const commit = stringValue(args.targetCommit);
+  if (commit) {
+    assertSafeGitCommitSha(commit);
+    return commit;
+  }
+  const workspacePath = stringValue(args.targetWorkspacePath);
+  if (!workspacePath) return undefined;
+  const cwd = resolvePath(process.cwd(), args.cwd ?? process.cwd());
+  const target = await readTargetRevision(new LocalGitRevisionReader(), {
+    workspacePath: resolvePath(cwd, workspacePath),
+  });
+  return target.commit;
+}
+
+function optionalTargetCommit(
+  targetCommit: string | undefined,
+): { readonly targetCommit?: string } {
+  return targetCommit === undefined ? {} : { targetCommit };
+}
+
+function optionalBaseRevisionStatus(
+  value: string | undefined,
+): BaseRevisionStatus | undefined {
+  if (value === undefined) return undefined;
+  if (
+    value === "current" ||
+    value === "stale" ||
+    value === "needs_rebase_check" ||
+    value === "unknown"
+  ) {
+    return value;
+  }
+  throw new Error("project_integration_base_status_invalid");
+}
+
 function codexGoalDecisionChecklist(input: {
   readonly decision: string;
   readonly commands: JsonObject;
@@ -5843,6 +6052,7 @@ interface CodexGoalControlSurface {
   readonly childWorkerSpawn: string;
   readonly hostAuthSurfaces: readonly string[];
   readonly guidance: string;
+  readonly projectControlSurface: ReturnType<typeof describeProjectControlSurface>;
 }
 
 const CODEX_GOAL_EXECUTION_ENGINE_SCHEMA = z.enum([
@@ -5857,6 +6067,7 @@ const CODEX_GOAL_CONTROL_SURFACE_SCHEMA = z.object({
   childWorkerSpawn: z.string(),
   hostAuthSurfaces: z.array(z.string()),
   guidance: z.string(),
+  projectControlSurface: z.unknown().optional(),
 });
 
 const DEFAULT_CODEX_GOAL_EXECUTION_ENGINE: NonNullable<CodexGoalRunConfig["executionEngine"]> = "app-server-goal";
@@ -5884,6 +6095,7 @@ function codexGoalControlSurface(launch: CodexGoalLaunchInput): CodexGoalControl
     guidance: appServerGoal
       ? "Lane orchestrators running inside app-server-goal should not spawn child workers or depend on host GH/auth surfaces. Request child worker, continue, stop and account actions through host-side subscription-runtime MCP or CLI controls."
       : "Use the runtime adapter control surface for worker lifecycle and account actions.",
+    projectControlSurface: describeProjectControlSurface(),
   };
 }
 
@@ -5938,6 +6150,24 @@ function buildCodexGoalHandoff(input: {
         `subscription-runtime-codex-goal stop-job ${shellText(input.manifest.jobId)} --registry-root ${shellText(input.registryRootDir)} --confirm`,
       ]
     : [];
+  const handoffContract = buildHandoffManifest({
+    workerJobId: input.manifest.jobId,
+    workspacePath: input.launch.config.workspacePath,
+    createdAt: new Date().toISOString(),
+    changedFiles: input.status.changedFiles ?? [],
+    ...(input.brief.handoffBaseCommit === undefined
+      ? {}
+      : { baseCommit: input.brief.handoffBaseCommit }),
+    ...(input.brief.handoffPatchPath === undefined
+      ? {}
+      : { patchPath: input.brief.handoffPatchPath }),
+    ...(input.brief.handoffSummaryPath === undefined
+      ? {}
+      : { summaryPath: input.brief.handoffSummaryPath }),
+    ...(input.status.workspaceDirty === undefined
+      ? {}
+      : { workspaceDirty: input.status.workspaceDirty }),
+  });
   const mcpCommands = [
     `codex_goal_get_job(${JSON.stringify(registryArgs)})`,
     `codex_goal_brief(${JSON.stringify(registryArgs)})`,
@@ -6024,6 +6254,7 @@ function buildCodexGoalHandoff(input: {
     reviewCommands,
     cliFallbackCommands,
     controlSurface,
+    handoffContract,
     summary: {
       jobId: input.manifest.jobId,
       registryRootDir: input.registryRootDir,
@@ -6035,6 +6266,9 @@ function buildCodexGoalHandoff(input: {
       resultReason: input.status.resultReason,
       workspaceDirty: input.status.workspaceDirty,
       changedFiles: input.status.changedFiles ?? [],
+      handoffStatus: handoffContract.status,
+      handoffIssues: handoffContract.issues,
+      baseRevision: input.brief.baseRevision,
       silentStale: input.brief.silentStale,
       lastProgressAt: input.brief.lastProgressAt,
       lastProgressAgeMs: input.brief.lastProgressAgeMs,
@@ -6183,12 +6417,20 @@ async function readRuntimeResultBrief(path: string): Promise<{
   readonly lastFailureReason?: string;
   readonly updatedAt?: string;
   readonly strict?: boolean;
+  readonly baseCommit?: string;
+  readonly patchPath?: string;
+  readonly summaryPath?: string;
+  readonly artifacts?: readonly RuntimeResultArtifact[];
 }> {
   try {
     const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
     if (!isRecord(parsed)) return {};
     const attempts = Array.isArray(parsed.attempts) ? parsed.attempts : [];
     const lastAttempt = lastRecord(attempts);
+    const artifacts = runtimeResultArtifacts(parsed.artifacts);
+    const patchPath = runtimeResultArtifactPath(artifacts, "patch");
+    const summaryPath = runtimeResultArtifactPath(artifacts, "summary");
+    const baseCommit = runtimeResultBaseCommit(parsed);
     return {
       ...(isRecord(lastAttempt) && typeof lastAttempt.accountId === "string"
         ? { currentAccount: lastAttempt.accountId }
@@ -6201,11 +6443,50 @@ async function readRuntimeResultBrief(path: string): Promise<{
         : isRecord(parsed.task) && typeof parsed.task.updatedAt === "string"
           ? { updatedAt: parsed.task.updatedAt }
           : {}),
+      ...(baseCommit === undefined ? {} : { baseCommit }),
+      ...(patchPath === undefined ? {} : { patchPath }),
+      ...(summaryPath === undefined ? {} : { summaryPath }),
+      ...(artifacts.length === 0 ? {} : { artifacts }),
       strict: isStrictRuntimeResultBrief(parsed),
     };
   } catch {
     return {};
   }
+}
+
+function runtimeResultArtifacts(value: unknown): readonly RuntimeResultArtifact[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item): RuntimeResultArtifact[] => {
+    if (!isRecord(item) || typeof item.kind !== "string") return [];
+    return [{
+      kind: item.kind,
+      ...(typeof item.path === "string" ? { path: item.path } : {}),
+      ...(typeof item.byteLength === "number" ? { byteLength: item.byteLength } : {}),
+    }];
+  });
+}
+
+function runtimeResultArtifactPath(
+  artifacts: readonly RuntimeResultArtifact[],
+  kind: string,
+): string | undefined {
+  return artifacts.find((artifact) =>
+    artifact.kind === kind && typeof artifact.path === "string"
+  )?.path;
+}
+
+function runtimeResultBaseCommit(parsed: Record<string, unknown>): string | undefined {
+  if (typeof parsed.baseCommit === "string" && parsed.baseCommit.trim()) {
+    return parsed.baseCommit.trim();
+  }
+  if (
+    isRecord(parsed.details) &&
+    typeof parsed.details.baseCommit === "string" &&
+    parsed.details.baseCommit.trim()
+  ) {
+    return parsed.details.baseCommit.trim();
+  }
+  return undefined;
 }
 
 function isStrictRuntimeResultBrief(parsed: Record<string, unknown>): boolean {

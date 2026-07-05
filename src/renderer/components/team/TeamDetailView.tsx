@@ -156,7 +156,7 @@ import {
 } from './sidebar/teamSidebarUiState';
 import { ClaudeLogsSection } from './ClaudeLogsSection';
 import { CollapsibleTeamSection } from './CollapsibleTeamSection';
-import { deriveLeadLoadButtonLabel } from './lead-load-guards';
+// import { deriveLeadLoadButtonLabel } from './lead-load-guards';
 import { LeadSessionDetailGate } from './LeadSessionDetailGate';
 import { LiveRuntimeStatusBridge } from './LiveRuntimeStatusBridge';
 import { ProcessesSection } from './ProcessesSection';
@@ -826,7 +826,7 @@ const LeadLoadBridge = memo(function LeadLoadBridge({
       setSelectedContextPhaseForTab: s.setSelectedContextPhaseForTab,
     }))
   );
-  const [isContextButtonHovered, setIsContextButtonHovered] = useState(false);
+  // const [isContextButtonHovered, setIsContextButtonHovered] = useState(false);
 
   const setContextPanelVisible = useCallback(
     (visible: boolean) => {
@@ -939,19 +939,19 @@ const LeadLoadBridge = memo(function LeadLoadBridge({
       visibleContextTokens,
     ]
   );
-  const contextUsedPercentLabel = useMemo(
-    () =>
-      deriveLeadLoadButtonLabel({
-        liveContextUsedPercent: leadContextSnapshot?.contextUsedPercent,
-        fullContextUsedPercent: contextMetrics.contextUsedPercentOfContextWindow,
-        contextPanelOpen: isContextPanelVisible,
-      }),
-    [
-      contextMetrics.contextUsedPercentOfContextWindow,
-      isContextPanelVisible,
-      leadContextSnapshot?.contextUsedPercent,
-    ]
-  );
+  // const contextUsedPercentLabel = useMemo(
+  //   () =>
+  //     deriveLeadLoadButtonLabel({
+  //       liveContextUsedPercent: leadContextSnapshot?.contextUsedPercent,
+  //       fullContextUsedPercent: contextMetrics.contextUsedPercentOfContextWindow,
+  //       contextPanelOpen: isContextPanelVisible,
+  //     }),
+  //   [
+  //     contextMetrics.contextUsedPercentOfContextWindow,
+  //     isContextPanelVisible,
+  //     leadContextSnapshot?.contextUsedPercent,
+  //   ]
+  // );
   const shouldShowLeadContextUi = canShowLeadLoadUi(leadProviderId);
   const shouldLoadFullLeadDetail = Boolean(
     leadSessionId && shouldShowLeadContextUi && isThisTabActive && isContextPanelVisible
@@ -1028,6 +1028,7 @@ const LeadLoadBridge = memo(function LeadLoadBridge({
         </div>
       )}
 
+      {/*
       <div
         className="pointer-events-none fixed bottom-4 z-20"
         style={{ left: isContextPanelVisible ? 'calc(20rem + 1rem)' : '1rem' }}
@@ -1060,6 +1061,7 @@ const LeadLoadBridge = memo(function LeadLoadBridge({
           {contextUsedPercentLabel}
         </button>
       </div>
+      */}
     </>
   );
 });

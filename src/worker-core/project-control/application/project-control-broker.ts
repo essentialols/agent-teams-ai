@@ -50,7 +50,9 @@ export type ProjectControlCreateWorktreeInput =
   ProjectWorktreeAccessRequest & ProjectControlAdmissionMetadata;
 
 export type ProjectControlStartWorkerInput =
-  ProjectJobAccessRequest & ProjectControlAdmissionMetadata;
+  ProjectJobAccessRequest & ProjectControlAdmissionMetadata & {
+    readonly accounts?: readonly string[];
+  };
 
 export type ProjectControlPolicyBrokerEvent = {
   readonly schemaVersion: 1;
@@ -158,6 +160,9 @@ export class ProjectControlBroker {
     input: ProjectControlStartWorkerInput,
   ): Promise<ProjectControlOperationResult> {
     await this.authorize(this.policy.canStartWorker(input));
+    for (const accountId of input.accounts ?? []) {
+      await this.authorize(this.policy.canUseAccount({ accountId }));
+    }
     await this.admit(ProjectOperation.StartWorker, input);
     return this.ports.supervisor.startWorker(input);
   }

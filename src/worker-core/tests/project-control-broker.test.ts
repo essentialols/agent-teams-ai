@@ -135,6 +135,103 @@ describe("ProjectControlBroker", () => {
     ]);
   });
 
+  it("fails closed when starting an existing project job with an account outside scope", async () => {
+    const calls: string[] = [];
+    const audits: ProjectControlBrokerEvent[] = [];
+    const broker = new ProjectControlBroker({
+      boundary: AccessBoundary.ProjectScopedControl,
+      scope: {
+        ...scope(),
+        allowedAccountIds: ["account-a"],
+      },
+    }, ports(calls, audits));
+
+    await expect(broker.startWorker({
+      jobId: "infinity-context-child-v1",
+      workspacePath: "/work/infinity-context-child",
+      tmuxSession: "infinity-context-child-v1",
+      accounts: ["account-b"],
+    })).rejects.toMatchObject({
+      decision: {
+        allowed: false,
+        reason: AccessDecisionReason.AccountDenied,
+      },
+    });
+
+    expect(calls).toEqual([]);
+    expect(audits.map((event) => event.decision.reason)).toEqual([
+      AccessDecisionReason.Allowed,
+      AccessDecisionReason.AccountDenied,
+    ]);
+  });
+
+  it("fails closed when a worker workspace resolves outside project roots", async () => {
+    const calls: string[] = [];
+    const broker = new ProjectControlBroker({
+      boundary: AccessBoundary.ProjectScopedControl,
+      scope: scope(),
+    }, ports(calls, [], allowAdmission()));
+
+    await expect(broker.startWorker({
+      jobId: "infinity-context-child-v1",
+      workspacePath: "/work/infinity-context-child",
+      realWorkspacePath: "/other-project/infinity-context-child",
+      tmuxSession: "infinity-context-child-v1",
+    })).rejects.toMatchObject({
+      decision: {
+        allowed: false,
+        reason: AccessDecisionReason.PathOutsideScope,
+      },
+    });
+
+    expect(calls).toEqual([]);
+  });
+
+  it("fails closed when a review marker workspace resolves outside project roots", async () => {
+    const calls: string[] = [];
+    const broker = new ProjectControlBroker({
+      boundary: AccessBoundary.ProjectScopedControl,
+      scope: scope(),
+    }, ports(calls, []));
+
+    await expect(broker.writeReviewMarker({
+      jobId: "infinity-context-child-v1",
+      workspacePath: "/work/infinity-context-child",
+      realWorkspacePath: "/other-project/infinity-context-child",
+      markerType: "review",
+    })).rejects.toMatchObject({
+      decision: {
+        allowed: false,
+        reason: AccessDecisionReason.PathOutsideScope,
+      },
+    });
+
+    expect(calls).toEqual([]);
+  });
+
+  it("fails closed when a worktree source resolves outside project roots", async () => {
+    const calls: string[] = [];
+    const broker = new ProjectControlBroker({
+      boundary: AccessBoundary.ProjectScopedControl,
+      scope: scope(),
+    }, ports(calls, [], allowAdmission()));
+
+    await expect(broker.createWorktree({
+      sourceWorkspacePath: "/work/infinity-context-main",
+      realSourceWorkspacePath: "/other-project/infinity-context-main",
+      path: "/work/infinity-context-child",
+      baseBranch: "main",
+      workerRole: ProjectAdmissionWorkerRole.Reviewer,
+    })).rejects.toMatchObject({
+      decision: {
+        allowed: false,
+        reason: AccessDecisionReason.PathOutsideScope,
+      },
+    });
+
+    expect(calls).toEqual([]);
+  });
+
   it("does not let isolated workspace writers become coordinators", async () => {
     const calls: string[] = [];
     const broker = new ProjectControlBroker({

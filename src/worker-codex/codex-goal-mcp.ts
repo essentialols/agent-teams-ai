@@ -843,10 +843,22 @@ export function createCodexGoalMcpServer(
     async (args) => withMcpErrors(async () => {
       const updateArgs = args as JobUpdateMcpArgs;
       const registryRootDir = registryRootFromArgs(updateArgs);
-      const manifest = await updateCodexGoalJob({
+      const existing = await readCodexGoalJob({
         registryRootDir,
         jobId: requiredRawString(updateArgs.jobId, "jobId"),
-        patch: jobManifestPatchFromArgs(updateArgs),
+      });
+      const patch = jobManifestPatchFromArgs(updateArgs);
+      const projectControlDenial = projectControlGenericToolDenial({
+        accessBoundary: existing.accessBoundary ?? patch.accessBoundary,
+        projectAccessScope: existing.projectAccessScope ?? patch.projectAccessScope,
+        jobId: existing.jobId,
+        requiredTool: "brokered_project_manifest_repair",
+      });
+      if (projectControlDenial) return mcpJson(projectControlDenial);
+      const manifest = await updateCodexGoalJob({
+        registryRootDir,
+        jobId: existing.jobId,
+        patch,
       });
       return mcpJson({
         ok: true,
@@ -1365,6 +1377,13 @@ export function createCodexGoalMcpServer(
     },
     async (args) => withMcpErrors(async () => {
       const loaded = await loadJobLaunch(args as JobIdMcpArgs);
+      const projectControlDenial = projectControlGenericToolDenial({
+        accessBoundary: loaded.manifest.accessBoundary,
+        projectAccessScope: loaded.manifest.projectAccessScope,
+        jobId: loaded.manifest.jobId,
+        requiredTool: "codex_goal_project_mark_reviewed",
+      });
+      if (projectControlDenial) return mcpJson(projectControlDenial);
       await mkdir(loaded.launch.config.jobRootDir, { recursive: true, mode: 0o700 });
       const reviewPath = join(
         loaded.launch.config.jobRootDir,
@@ -1709,7 +1728,7 @@ export function createCodexGoalMcpServer(
     },
     async (args) => withMcpErrors(async () => {
       const launch = await goalLaunchInput(args as StartMcpArgs);
-      const projectControlDenial = projectControlGenericLifecycleDenial({
+      const projectControlDenial = projectControlGenericToolDenial({
         accessBoundary: launch.config.accessBoundary,
         projectAccessScope: launch.config.projectAccessScope,
       });
@@ -2780,7 +2799,7 @@ async function orphanDirtyWorkspaceDebt(input: {
   }
   const debt: ProjectDebtItem[] = [];
   for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
+    if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
     if (!matchesProjectControlPrefix(entry.name, input.prefixes)) continue;
     const workspacePath = join(root, entry.name);
     if (!await pathLooksLikeGitWorkspace(workspacePath)) continue;
@@ -2932,6 +2951,7 @@ function projectAdmissionWorkerRoleArg(
 
 type CodexGoalProjectCreateWorktreeInput = {
   readonly sourceWorkspacePath: string;
+  readonly realSourceWorkspacePath?: string;
   readonly path: string;
   readonly baseBranch?: string;
   readonly workerRole?: ProjectAdmissionWorkerRole | `${ProjectAdmissionWorkerRole}`;
@@ -2940,12 +2960,14 @@ type CodexGoalProjectCreateWorktreeInput = {
 
 type CodexGoalProjectIntegrateCommitInput = {
   readonly workspacePath: string;
+  readonly realWorkspacePath?: string;
   readonly branch: string;
   readonly commitSha: string;
 };
 
 type CodexGoalProjectPushBranchInput = {
   readonly workspacePath: string;
+  readonly realWorkspacePath?: string;
   readonly branch: string;
   readonly remote: string;
   readonly force: boolean;
@@ -3291,6 +3313,7 @@ async function rollbackProjectRefillPartial(input: {
 async function createOrReuseProjectJob(input: {
   readonly broker: ProjectControlBroker;
   readonly registryRootDir: string;
+  readonly scope: ProjectAccessScope;
   readonly manifest: CodexGoalJobManifestInput;
   readonly promptBody: string;
   readonly workerRole?: ProjectAdmissionWorkerRole | `${ProjectAdmissionWorkerRole}`;
@@ -3316,10 +3339,15 @@ async function createOrReuseProjectJob(input: {
       manifest: existing,
     };
   }
+  const realWorkspacePath = await projectControlRealPathOutsideWorkspaceScope(
+    input.manifest.workspacePath,
+    input.scope,
+  );
   const result = await input.broker.createJob({
     jobId: input.manifest.jobId,
     registryRoot: input.registryRootDir,
     workspacePath: input.manifest.workspacePath,
+    ...(realWorkspacePath ? { realWorkspacePath } : {}),
     ...(input.manifest.tmuxSession
       ? { tmuxSession: input.manifest.tmuxSession }
       : {}),
@@ -4134,10 +4162,15 @@ async function projectControlCreateCodexGoalJob(args: ProjectControlMcpArgs) {
     createOverwrite: booleanValue(args.overwrite) ?? false,
   });
   const workerRole = projectAdmissionWorkerRoleArg(args.workerRole);
+  const realWorkspacePath = await projectControlRealPathOutsideWorkspaceScope(
+    createManifest.workspacePath,
+    controller.scope,
+  );
   const result = await broker.createJob({
     jobId: createManifest.jobId,
     registryRoot: controller.registryRootDir,
     workspacePath: createManifest.workspacePath,
+    ...(realWorkspacePath ? { realWorkspacePath } : {}),
     ...(createManifest.tmuxSession
       ? { tmuxSession: createManifest.tmuxSession }
       : {}),
@@ -4211,8 +4244,13 @@ async function projectControlRefillWorker(args: ProjectControlMcpArgs) {
 
   const baseBranch = stringValue(args.baseBranch) ?? "origin/main";
   assertSafeGitRefName(baseBranch, "baseBranch");
+  const realSourceWorkspacePath = await projectControlRealPathOutsideWorkspaceScope(
+    sourceWorkspacePath,
+    controller.scope,
+  );
   const createWorktreeInput: CodexGoalProjectCreateWorktreeInput = {
     sourceWorkspacePath,
+    ...(realSourceWorkspacePath ? { realSourceWorkspacePath } : {}),
     path: createManifest.workspacePath,
     baseBranch,
     workerRole: role,
@@ -4282,6 +4320,7 @@ async function projectControlRefillWorker(args: ProjectControlMcpArgs) {
     const createResult = await createOrReuseProjectJob({
       broker: createBroker,
       registryRootDir: controller.registryRootDir,
+      scope: controller.scope,
       manifest: createManifest,
       promptBody,
       workerRole: role,
@@ -4316,11 +4355,17 @@ async function projectControlRefillWorker(args: ProjectControlMcpArgs) {
       startLaunch: launch,
       startSkipDoctor: booleanValue(args.skipDoctor) ?? false,
     });
+    const realLaunchWorkspacePath = await projectControlRealPathOutsideWorkspaceScope(
+      launch.config.workspacePath,
+      controller.scope,
+    );
     start = await startBroker.startWorker({
       jobId: manifest.jobId,
       registryRoot: controller.registryRootDir,
       workspacePath: launch.config.workspacePath,
+      ...(realLaunchWorkspacePath ? { realWorkspacePath: realLaunchWorkspacePath } : {}),
       ...(launch.tmuxSession ? { tmuxSession: launch.tmuxSession } : {}),
+      accounts: manifest.accounts,
       workerRole: role,
       ...(manifest.tags ? { tags: manifest.tags } : {}),
     });
@@ -4425,11 +4470,17 @@ async function projectControlStartStoredJob(args: ProjectControlMcpArgs) {
     startLaunch: loaded.launch,
     startSkipDoctor: booleanValue(args.skipDoctor) ?? false,
   });
+  const realWorkspacePath = await projectControlRealPathOutsideWorkspaceScope(
+    loaded.launch.config.workspacePath,
+    controller.scope,
+  );
   const result = await broker.startWorker({
     jobId: loaded.manifest.jobId,
     registryRoot: controller.registryRootDir,
     workspacePath: loaded.launch.config.workspacePath,
+    ...(realWorkspacePath ? { realWorkspacePath } : {}),
     tmuxSession: loaded.launch.tmuxSession,
+    accounts: loaded.manifest.accounts,
     ...(loaded.manifest.tags ? { tags: loaded.manifest.tags } : {}),
   });
   return mcpJson({
@@ -4457,8 +4508,13 @@ async function projectControlCreateWorktree(args: ProjectControlMcpArgs) {
   const baseBranch = stringValue(args.baseBranch);
   if (baseBranch) assertSafeGitRefName(baseBranch, "baseBranch");
   const workerRole = projectAdmissionWorkerRoleArg(args.workerRole);
+  const realSourceWorkspacePath = await projectControlRealPathOutsideWorkspaceScope(
+    sourceWorkspacePath,
+    controller.scope,
+  );
   const createWorktreeInput: CodexGoalProjectCreateWorktreeInput = {
     sourceWorkspacePath,
+    ...(realSourceWorkspacePath ? { realSourceWorkspacePath } : {}),
     path,
     ...(baseBranch ? { baseBranch } : {}),
     ...(workerRole ? { workerRole } : {}),
@@ -4510,8 +4566,13 @@ async function projectControlIntegrateCommit(args: ProjectControlMcpArgs) {
   const commitSha = requiredRawString(args.commitSha, "commitSha");
   assertSafeGitRefName(branch, "branch");
   assertSafeGitCommitSha(commitSha);
+  const realWorkspacePath = await projectControlRealPathOutsideWorkspaceScope(
+    workspacePath,
+    controller.scope,
+  );
   const integrateCommitInput: CodexGoalProjectIntegrateCommitInput = {
     workspacePath,
+    ...(realWorkspacePath ? { realWorkspacePath } : {}),
     branch,
     commitSha,
   };
@@ -4555,8 +4616,13 @@ async function projectControlPushBranch(args: ProjectControlMcpArgs) {
   const force = booleanValue(args.force) ?? false;
   assertSafeGitRefName(branch, "branch");
   assertSafeGitRemoteName(remote, "remote");
+  const realWorkspacePath = await projectControlRealPathOutsideWorkspaceScope(
+    workspacePath,
+    controller.scope,
+  );
   const pushBranchInput: CodexGoalProjectPushBranchInput = {
     workspacePath,
+    ...(realWorkspacePath ? { realWorkspacePath } : {}),
     branch,
     remote,
     force,
@@ -4898,10 +4964,15 @@ async function projectControlStopStoredJob(args: ProjectControlMcpArgs) {
     scope: controller.scope,
     stopLaunch: loaded.launch,
   });
+  const realWorkspacePath = await projectControlRealPathOutsideWorkspaceScope(
+    loaded.launch.config.workspacePath,
+    controller.scope,
+  );
   const result = await broker.stopWorker({
     jobId: loaded.manifest.jobId,
     registryRoot: controller.registryRootDir,
     workspacePath: loaded.launch.config.workspacePath,
+    ...(realWorkspacePath ? { realWorkspacePath } : {}),
     tmuxSession: loaded.launch.tmuxSession,
   });
   await writeCodexGoalStoppedProgress({
@@ -4953,10 +5024,15 @@ async function projectControlMarkReviewed(args: ProjectControlMcpArgs) {
     reviewLaunch: loaded.launch,
     reviewNote: stringValue(args.note) ?? "project_control_reviewed",
   });
+  const realWorkspacePath = await projectControlRealPathOutsideWorkspaceScope(
+    loaded.launch.config.workspacePath,
+    controller.scope,
+  );
   const result = await broker.writeReviewMarker({
     jobId: loaded.manifest.jobId,
     registryRoot: controller.registryRootDir,
     workspacePath: loaded.launch.config.workspacePath,
+    ...(realWorkspacePath ? { realWorkspacePath } : {}),
     ...(loaded.launch.tmuxSession ? { tmuxSession: loaded.launch.tmuxSession } : {}),
     markerType: "review",
     note: stringValue(args.note) ?? "project_control_reviewed",
@@ -5065,6 +5141,27 @@ function pathInsideAnyProjectRoot(
   roots: readonly string[],
 ): boolean {
   return roots.some((root) => pathInsideOrEqual(path, root));
+}
+
+async function projectControlRealPathOutsideWorkspaceScope(
+  path: string,
+  scope: ProjectAccessScope,
+): Promise<string | undefined> {
+  const realPath = await optionalRealPathForAdmission(path);
+  if (!realPath) return undefined;
+  const roots = uniqueProjectControlStrings([
+    ...(scope.workspaceRoots ?? []),
+    ...(scope.worktreeRoots ?? []),
+    ...(scope.isolatedWorkspaceRoot ? [scope.isolatedWorkspaceRoot] : []),
+  ]);
+  const realRoots = (await Promise.all(
+    roots.map((root) => optionalRealPathForAdmission(root)),
+  )).filter((root): root is string => Boolean(root));
+  const allowedRoots = uniqueProjectControlStrings([
+    ...roots,
+    ...realRoots,
+  ]);
+  return pathInsideAnyProjectRoot(realPath, allowedRoots) ? undefined : realPath;
 }
 
 function pathInsideOrEqual(path: string, root: string): boolean {
@@ -5361,7 +5458,7 @@ async function continueStoredJob(
   },
 ) {
   const loaded = await loadJobLaunch(args);
-  const projectControlDenial = projectControlGenericLifecycleDenial({
+  const projectControlDenial = projectControlGenericToolDenial({
     accessBoundary: loaded.manifest.accessBoundary,
     projectAccessScope: loaded.manifest.projectAccessScope,
     jobId: loaded.manifest.jobId,
@@ -5453,10 +5550,11 @@ async function continueStoredJob(
   });
 }
 
-function projectControlGenericLifecycleDenial(input: {
+function projectControlGenericToolDenial(input: {
   readonly accessBoundary?: AccessBoundary | undefined;
   readonly projectAccessScope?: CodexGoalRunConfig["projectAccessScope"] | undefined;
   readonly jobId?: string | undefined;
+  readonly requiredTool?: string | undefined;
 }): JsonObject | undefined {
   if (
     input.accessBoundary !== AccessBoundary.ProjectScopedControl &&
@@ -5464,9 +5562,10 @@ function projectControlGenericLifecycleDenial(input: {
   ) {
     return undefined;
   }
-  const requiredTool = input.accessBoundary === AccessBoundary.ProjectScopedControl
-    ? "codex_goal_project_controller_start"
-    : "codex_goal_project_start";
+  const requiredTool = input.requiredTool ??
+    (input.accessBoundary === AccessBoundary.ProjectScopedControl
+      ? "codex_goal_project_controller_start"
+      : "codex_goal_project_start");
   return {
     ok: false,
     reason: "project_control_broker_required",
@@ -5550,6 +5649,13 @@ async function reconcileStoredJobRuntimeResult(args: JobResultReconcileMcpArgs) 
 
 async function stopStoredJob(args: JobLifecycleMcpArgs) {
   const loaded = await loadJobLaunch(args);
+  const projectControlDenial = projectControlGenericToolDenial({
+    accessBoundary: loaded.manifest.accessBoundary,
+    projectAccessScope: loaded.manifest.projectAccessScope,
+    jobId: loaded.manifest.jobId,
+    requiredTool: "codex_goal_project_stop",
+  });
+  if (projectControlDenial) return mcpJson(projectControlDenial);
   const status = await collectCodexGoalStatus(statusInput(loaded.launch));
   const accounts = await listCodexGoalAccountStatuses({
     authRootDir: loaded.launch.config.authRootDir,
@@ -5660,6 +5766,13 @@ async function stopStoredJob(args: JobLifecycleMcpArgs) {
 
 async function maintenancePauseStoredJob(args: JobLifecycleMcpArgs) {
   const loaded = await loadJobLaunch(args);
+  const projectControlDenial = projectControlGenericToolDenial({
+    accessBoundary: loaded.manifest.accessBoundary,
+    projectAccessScope: loaded.manifest.projectAccessScope,
+    jobId: loaded.manifest.jobId,
+    requiredTool: "codex_goal_project_stop",
+  });
+  if (projectControlDenial) return mcpJson(projectControlDenial);
   const status = await collectCodexGoalStatus(statusInput(loaded.launch));
   const accounts = await listCodexGoalAccountStatuses({
     authRootDir: loaded.launch.config.authRootDir,

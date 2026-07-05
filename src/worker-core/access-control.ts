@@ -135,17 +135,20 @@ export type ProjectJobAccessRequest = {
   readonly jobId: string;
   readonly registryRoot?: string;
   readonly workspacePath?: string;
+  readonly realWorkspacePath?: string;
   readonly tmuxSession?: string;
 };
 
 export type ProjectWorktreeAccessRequest = {
   readonly path: string;
   readonly sourceWorkspacePath?: string;
+  readonly realSourceWorkspacePath?: string;
   readonly baseBranch?: string;
 };
 
 export type ProjectGitAccessRequest = {
   readonly workspacePath?: string;
+  readonly realWorkspacePath?: string;
   readonly branch: string;
   readonly remote?: string;
   readonly force?: boolean;
@@ -522,6 +525,16 @@ class DefaultAccessPolicyService implements AccessPolicyService {
         ["source workspace is outside project workspace roots"],
       );
     }
+    if (
+      request.realSourceWorkspacePath &&
+      !pathInsideAnyRoot(request.realSourceWorkspacePath, scopedWorkspaceRoots(scope))
+    ) {
+      return this.deny(
+        ProjectOperation.CreateWorktree,
+        AccessDecisionReason.PathOutsideScope,
+        ["source workspace real path is outside project workspace roots"],
+      );
+    }
     return this.pathDecision(
       ProjectOperation.CreateWorktree,
       { path: request.path },
@@ -606,6 +619,14 @@ class DefaultAccessPolicyService implements AccessPolicyService {
       ]);
     }
     if (
+      request.realWorkspacePath &&
+      !pathInsideAnyRoot(request.realWorkspacePath, scopedWorkspaceRoots(scope))
+    ) {
+      return this.deny(operation, AccessDecisionReason.PathOutsideScope, [
+        "worker workspace real path is outside project workspace roots",
+      ]);
+    }
+    if (
       request.tmuxSession &&
       !matchesAnyPrefix(request.tmuxSession, scope.tmuxSessionPrefixes ?? [])
     ) {
@@ -667,6 +688,14 @@ class DefaultAccessPolicyService implements AccessPolicyService {
     ) {
       return this.deny(operation, AccessDecisionReason.PathOutsideScope, [
         "git workspace is outside project workspace roots",
+      ]);
+    }
+    if (
+      request.realWorkspacePath &&
+      !pathInsideAnyRoot(request.realWorkspacePath, scopedWorkspaceRoots(scope))
+    ) {
+      return this.deny(operation, AccessDecisionReason.PathOutsideScope, [
+        "git workspace real path is outside project workspace roots",
       ]);
     }
     if (request.force === true && scope.allowForcePush !== true) {

@@ -75,6 +75,7 @@ export type AttemptStatus = "running" | "completed" | "blocked" | "failed";
 export type SafeExecutionTaskStatus =
   | "running"
   | "completed"
+  | "waiting_capacity"
   | "partial"
   | "failed"
   | "aborted";
@@ -342,7 +343,7 @@ export type SafeExecutionRunResult<Result> =
       readonly replayed: boolean;
     }
   | {
-      readonly status: "partial" | "failed" | "aborted";
+      readonly status: "waiting_capacity" | "partial" | "failed" | "aborted";
       readonly task: SafeExecutionTaskRecord;
       readonly attempts: readonly AttemptRecord[];
       readonly reason: AttemptFailureReason;
@@ -1367,16 +1368,21 @@ export class SafeExecutionRunner {
             now: this.clock.now(),
           });
 
+          const changed = workspaceChanged(before, after);
           const canContinue = shouldContinueAfterFailure({
             classification,
             policy,
             effectMode: input.effectMode,
-            workspaceChanged: workspaceChanged(before, after),
+            workspaceChanged: changed,
             attemptsRemaining: attemptNumber < policy.maxAttempts,
           });
 
           if (!canContinue.allowed) {
-            const status = finalStatusForFailure(classification.reason);
+            const status =
+              waitingStatusForBlockedFailure({
+                reason: classification.reason,
+                workspaceChanged: changed,
+              }) ?? finalStatusForFailure(classification.reason);
             task = await this.options.journal.markPartial({
               taskId: input.taskId,
               status,
@@ -1460,7 +1466,7 @@ export class SafeExecutionRunner {
 
       const exhausted = await this.options.journal.markPartial({
         taskId: input.taskId,
-        status: "partial",
+        status: waitingStatusForFailure(task.lastFailureReason) ?? "partial",
         reason: task.lastFailureReason ?? "unknown_error",
         message: "Safe execution exhausted all configured attempts.",
         ...(task.lastFailureDetails === undefined
@@ -1469,7 +1475,7 @@ export class SafeExecutionRunner {
         now: this.clock.now(),
       });
       return {
-        status: "partial",
+        status: waitingStatusForFailure(exhausted.lastFailureReason) ?? "partial",
         task: exhausted,
         attempts: exhausted.attempts,
         reason: exhausted.lastFailureReason ?? "unknown_error",
@@ -2099,6 +2105,25 @@ function finalStatusForFailure(
     return "failed";
   }
   return "partial";
+}
+
+function waitingStatusForFailure(
+  reason: AttemptFailureReason | undefined,
+): "waiting_capacity" | null {
+  return reason === "quota_limited" ||
+    reason === "capacity_unavailable" ||
+    reason === "account_unavailable" ||
+    reason === "reconnect_required"
+    ? "waiting_capacity"
+    : null;
+}
+
+function waitingStatusForBlockedFailure(input: {
+  readonly reason: AttemptFailureReason;
+  readonly workspaceChanged: boolean;
+}): "waiting_capacity" | null {
+  if (input.workspaceChanged) return null;
+  return waitingStatusForFailure(input.reason);
 }
 
 function workspaceChanged(
@@ -2791,6 +2816,7 @@ function requireTaskStatus(value: unknown): SafeExecutionTaskStatus {
   if (
     value === "running" ||
     value === "completed" ||
+    value === "waiting_capacity" ||
     value === "partial" ||
     value === "failed" ||
     value === "aborted"

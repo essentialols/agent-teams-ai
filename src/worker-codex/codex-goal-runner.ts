@@ -687,6 +687,7 @@ function currentAccountFromResult(
 
 function progressStatusFromResult(status: string): CodexGoalProgressStatus {
   if (status === "completed") return "completed";
+  if (status === "waiting_capacity") return "blocked";
   if (status === "partial") return "partial";
   if (status === "failed") return "failed";
   if (status === "aborted") return "aborted";
@@ -731,6 +732,7 @@ async function codexRuntimeResultInput(input: {
     blockers: runtimeBlockersFromSafeExecutionResult(input.result),
     nextAction: runtimeActionFromSafeExecutionResult({
       status,
+      resultStatus: input.result.status,
       reason,
       changedFilesCount: changedFiles.length,
     }),
@@ -794,6 +796,7 @@ function runtimeStatusFromSafeExecutionResult(input: {
   readonly changedFilesCount: number;
 }): RuntimeResultStatus {
   if (input.resultStatus === "completed") return "done";
+  if (input.resultStatus === "waiting_capacity") return "blocked";
   if (input.resultStatus === "partial") return "partial";
   if (input.resultStatus === "aborted" && input.changedFilesCount > 0) {
     return "partial";
@@ -803,10 +806,12 @@ function runtimeStatusFromSafeExecutionResult(input: {
 
 function runtimeActionFromSafeExecutionResult(input: {
   readonly status: RuntimeResultStatus;
+  readonly resultStatus?: SafeExecutionRunResult<FileBackendCodexWorkerResult>["status"];
   readonly reason?: string | undefined;
   readonly changedFilesCount: number;
 }): RuntimeRecommendedAction {
   if (input.status === "done") return "review_completed";
+  if (input.resultStatus === "waiting_capacity") return "wait";
   if (
     input.reason === "quota_limited" ||
     input.reason === "capacity_unavailable" ||

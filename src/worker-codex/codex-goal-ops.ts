@@ -743,6 +743,9 @@ export function recommendCodexGoalAction(input: {
   if (input.resultStatus === "done" || input.resultStatus === "completed") {
     return "review_completed";
   }
+  if (input.resultStatus === "waiting_capacity") {
+    return "continue_after_capacity";
+  }
   if (!input.resultExists) {
     return input.workspaceDirty ? "inspect_dirty_workspace" : "start_worker";
   }

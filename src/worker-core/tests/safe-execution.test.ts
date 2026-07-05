@@ -861,6 +861,58 @@ describe("SafeExecutionRunner", () => {
     });
   });
 
+  it(
+    "parks clean work as waiting_capacity when every account is temporarily unavailable",
+    async () => {
+      const workspacePath = await gitWorkspace("safe-execution-wait-capacity-");
+      const journal = new InMemoryAttemptJournal();
+      const runner = new SafeExecutionRunner({
+        lockStore: new InMemoryWorkspaceLockStore(),
+        journal,
+      });
+
+      const result = await runner.run({
+        taskId: "task-wait-capacity",
+        workspace: { mode: "existing_locked", path: workspacePath },
+        effectMode: "workspace_patch",
+        provider: "codex",
+        pool: {
+          async run(): Promise<PromptResult> {
+            throw new SubscriptionWorkerError(
+              "subscription_worker_pool_capacity_unavailable",
+              "Worker pool has no available accounts.",
+              {
+                details: {
+                  availability: "quota_exhausted:2",
+                  reasons: "quota_limited:2",
+                  waitUntil: "2026-06-01T01:00:00.000Z",
+                },
+              },
+            );
+          },
+        },
+        job: { prompt: "Implement feature.", workspacePath },
+        originalPrompt: "Implement feature.",
+        policy: { maxAttempts: 1 },
+      });
+
+      expect(result.status).toBe("waiting_capacity");
+      if (result.status !== "waiting_capacity") {
+        throw new Error("expected waiting_capacity");
+      }
+      expect(result.reason).toBe("capacity_unavailable");
+      expect(result.task.status).toBe("waiting_capacity");
+      expect(result.failureDetails).toMatchObject({
+        availability: "quota_exhausted:2",
+        reasons: "quota_limited:2",
+      });
+      expect(
+        (await journal.readTask({ taskId: "task-wait-capacity" }))?.status,
+      ).toBe("waiting_capacity");
+    },
+    15_000,
+  );
+
   it("classifies raw Codex app-server goal blocks before unknown_error", () => {
     const processFailure = Object.assign(
       new Error("node_process_runner_failed:1:codex_app_server_goal_blocked"),

@@ -196,6 +196,33 @@ describe("decideRunObservation", () => {
     });
   });
 
+  it("keeps watching when at least one account remains available", () => {
+    expect(decideRunObservation({
+      status: "running",
+      liveness: "alive",
+      progress: {
+        status: "running",
+        heartbeatAgeMs: 1_000,
+        staleAfterMs: 60_000,
+        stale: false,
+      },
+      capacity: [
+        {
+          account: "account-g",
+          status: "ready",
+          availability: "cooldown",
+          reason: "quota_limited",
+        },
+        {
+          account: "account-d",
+          status: "ready",
+        },
+      ],
+    })).toMatchObject({
+      kind: "keep_watching",
+    });
+  });
+
   it("requires review for stopped runs without a terminal result", () => {
     expect(decideRunObservation({
       status: "stopped",

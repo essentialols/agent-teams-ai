@@ -311,7 +311,7 @@ export function decideRunObservation(input: {
       ["result.status", "workspace.changedFiles"],
     );
   }
-  if (input.capacity?.some((hint) => isBlockedCapacity(hint)) === true) {
+  if (input.capacity && hasOnlyBlockedCapacity(input.capacity)) {
     return decision(
       "capacity_blocked",
       "account_or_capacity_unavailable",
@@ -533,6 +533,10 @@ function isBlockedCapacity(hint: RunCapacityHint): boolean {
     hint.availability === "cooldown" ||
     hint.availability === "quota_exhausted" ||
     hint.availability === "disabled";
+}
+
+function hasOnlyBlockedCapacity(capacity: readonly RunCapacityHint[]): boolean {
+  return capacity.length > 0 && capacity.every((hint) => isBlockedCapacity(hint));
 }
 
 function workspaceSignature(

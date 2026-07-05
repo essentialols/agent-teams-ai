@@ -330,6 +330,37 @@ describe("codex goal cli", () => {
     }
   });
 
+  it("parses durable project controller supervision commands", () => {
+    const command = parseCodexGoalCliArgs([
+      "controller-supervise",
+      "--controller-job-id",
+      "infinity-context-project-controller-v1",
+      "--registry-root",
+      "/var/data/infinity-context/worker-jobs/registry",
+      "--provider",
+      "codex",
+      "--max-goal-turns",
+      "120",
+      "--status-interval-ms",
+      "15000",
+      "--format",
+      "json",
+    ], fakeIo());
+
+    expect(command.kind).toBe("controller-supervise");
+    if (command.kind !== "controller-supervise") return;
+    expect(command).toMatchObject({
+      statusIntervalMs: 15_000,
+      format: "json",
+      args: {
+        controllerJobId: "infinity-context-project-controller-v1",
+        registryRootDir: "/var/data/infinity-context/worker-jobs/registry",
+        providerKind: "codex",
+        maxGoalTurns: 120,
+      },
+    });
+  });
+
   it("builds shortcut commands for common agent operations", () => {
     const overview = parseCodexGoalCliArgs([
       "overview",

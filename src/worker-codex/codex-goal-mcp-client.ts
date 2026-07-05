@@ -1,10 +1,15 @@
 import { dirname, join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createCodexGoalMcpServer } from "./codex-goal-mcp";
 
 type JsonRecord = Record<string, unknown>;
+type SuperviseEvent =
+  | { readonly type: "start"; readonly result: unknown }
+  | { readonly type: "status"; readonly result: unknown }
+  | { readonly type: "stop"; readonly result: unknown };
 
 const requiredCodexGoalMcpTools = [
   "codex_goal_list_jobs",
@@ -40,6 +45,81 @@ export async function callCodexGoalMcpTool(input: {
       arguments: input.args ?? {},
     }))
   );
+}
+
+export async function superviseCodexGoalProjectController(input: {
+  readonly args: JsonRecord;
+  readonly statusIntervalMs?: number;
+  readonly signal?: AbortSignal;
+  readonly onEvent?: (event: SuperviseEvent) => void;
+}): Promise<{
+  readonly ok: boolean;
+  readonly start: unknown;
+  readonly finalStatus?: unknown;
+  readonly stop?: unknown;
+}> {
+  const server = createCodexGoalMcpServer();
+  const client = new Client({
+    name: "subscription-runtime-codex-goal-controller-supervisor",
+    version: "0.0.0",
+  });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await Promise.all([
+    server.connect(serverTransport),
+    client.connect(clientTransport),
+  ]);
+  try {
+    const start = parseMcpJsonResult(await client.callTool({
+      name: "codex_goal_project_controller_start",
+      arguments: input.args,
+    }));
+    input.onEvent?.({ type: "start", result: start });
+    if (!mcpResultOk(start)) return { ok: false, start };
+
+    let lastStatus: unknown = start;
+    while (!input.signal?.aborted) {
+      try {
+        await sleep(input.statusIntervalMs ?? 60_000, undefined, {
+          signal: input.signal,
+        });
+      } catch (error) {
+        if (isAbortError(error)) break;
+        throw error;
+      }
+      const status = parseMcpJsonResult(await client.callTool({
+        name: "codex_goal_project_controller_status",
+        arguments: input.args,
+      }));
+      lastStatus = status;
+      input.onEvent?.({ type: "status", result: status });
+      const runStatus = isRecord(status) ? status.status : undefined;
+      if (
+        typeof runStatus === "string" &&
+        runStatus !== "running" &&
+        runStatus !== "planned"
+      ) {
+        return { ok: mcpResultOk(status), start, finalStatus: status };
+      }
+    }
+
+    const stop = parseMcpJsonResult(await client.callTool({
+      name: "codex_goal_project_controller_stop",
+      arguments: {
+        ...input.args,
+        reason: "controller_supervisor_stopped",
+      },
+    }));
+    input.onEvent?.({ type: "stop", result: stop });
+    return {
+      ok: mcpResultOk(stop),
+      start,
+      finalStatus: lastStatus,
+      stop,
+    };
+  } finally {
+    await client.close();
+    await server.close();
+  }
 }
 
 export async function listCodexGoalMcpResources(): Promise<unknown> {
@@ -143,6 +223,14 @@ function parseMcpJsonResult(result: unknown): unknown {
     }
   }
   return result;
+}
+
+function mcpResultOk(value: unknown): boolean {
+  return isRecord(value) && value.ok !== false;
+}
+
+function isAbortError(error: unknown): boolean {
+  return isRecord(error) && error.name === "AbortError";
 }
 
 function toolNamesFromResult(result: unknown): ReadonlySet<string> {

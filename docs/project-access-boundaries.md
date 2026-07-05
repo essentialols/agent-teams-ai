@@ -206,6 +206,13 @@ The controlled-agent MCP lifecycle tools are:
 - `codex_goal_project_controller_reconcile`: reconcile provider liveness through
   the safe provider runner after crash/reboot.
 
+`subscription-runtime-codex-goal controller-supervise` is the durable CLI owner
+for a live controller session. It keeps the in-process MCP server and provider
+runner alive, calls `codex_goal_project_controller_start`, polls status, and
+stops the controlled provider on SIGINT/SIGTERM. The one-shot
+`subscription-runtime-codex-goal tool codex_goal_project_controller_start`
+remains fail-closed because it cannot own provider liveness after process exit.
+
 If `start`, `stop` or `reconcile` return
 `controlled_agent_provider_runner_not_connected`, the persisted state exists but
 this MCP process does not own the live provider instance. That is not permission
@@ -231,9 +238,12 @@ Minimum safe scope:
 The expected control loop is:
 
 1. inspect status with read-only tools;
-2. create a scoped worktree with `codex_goal_project_create_worktree`;
-3. create a child job with `codex_goal_project_create_job`;
-4. start it with `codex_goal_project_start`;
+2. create or refill a child worker through `codex_goal_project_refill_worker`,
+   or manually create a scoped worktree with
+   `codex_goal_project_create_worktree`;
+3. create a child job with `codex_goal_project_create_job` when not using the
+   refill helper;
+4. start it with `codex_goal_project_start` when not using the refill helper;
 5. review the child diff and verification evidence;
 6. write a review marker with `codex_goal_project_mark_reviewed`;
 7. open the reviewed output with `codex_goal_project_open_integration_attempt`;

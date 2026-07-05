@@ -193,6 +193,7 @@ codex_goal_project_controller_status({ controllerJobId, registryRootDir, provide
 codex_goal_project_controller_start({ controllerJobId, registryRootDir, providerKind })
 codex_goal_project_controller_stop({ controllerJobId, registryRootDir, providerKind, reason })
 codex_goal_project_controller_reconcile({ controllerJobId, registryRootDir, providerKind })
+codex_goal_project_refill_worker({ controllerJobId, sourceWorkspacePath, baseBranch, promptBody, confirmRefill: true })
 ```
 
 Use the CLI fallback for launch plans, status reads and diagnostics only. The
@@ -202,6 +203,23 @@ one-shot in-process MCP server and cannot keep the provider runner attached
 after the command exits. Start live controllers only from the host supervisor,
 daemon, native MCP server or SDK process that will continue owning `status`,
 `stop` and `reconcile`.
+
+For a durable CLI-owned controller process, use:
+
+```sh
+subscription-runtime-codex-goal controller-supervise \
+  --controller-job-id infinity-context-project-controller-v1 \
+  --registry-root /var/data/infinity-context/worker-jobs/registry \
+  --provider codex \
+  --status-interval-ms 60000 \
+  --format json
+```
+
+`controller-supervise` keeps the in-process MCP server and provider runner alive
+for the lifetime of the process. It starts through the same
+`codex_goal_project_controller_start` policy path, polls status, and stops the
+controlled provider on SIGINT/SIGTERM. Do not replace it with
+`danger_full_access` if a one-shot start fails.
 
 The Codex controlled-agent profile disables native app-server environments and
 keeps only the configured broker/status MCP surface. If a profile can only add
@@ -261,6 +279,7 @@ Controller actions must use brokered MCP tools:
 ```txt
 codex_goal_project_create_worktree({ controllerJobId, ... })
 codex_goal_project_create_job({ controllerJobId, ... })
+codex_goal_project_refill_worker({ controllerJobId, sourceWorkspacePath, baseBranch, promptBody, confirmRefill: true })
 codex_goal_project_controller_launch_plan({ controllerJobId, ... })
 codex_goal_project_controller_status({ controllerJobId, ... })
 codex_goal_project_start({ controllerJobId, jobId, confirmStart: true })
@@ -277,6 +296,17 @@ Child jobs created by `codex_goal_project_create_job` inherit a narrowed scope
 from the controller. They default to
 `accessBoundary: "isolated_workspace_write"` and cannot request
 `project_scoped_control` or `danger_full_access` through the controller path.
+
+For capacity refill, prefer `codex_goal_project_refill_worker` over the manual
+`create_worktree -> write prompt -> create_job -> start` sequence. The helper
+creates a scoped worktree, writes the prompt inside the child job root, creates
+the child manifest, starts it unless `startWorker: false`, and records the
+broker audit trail for controller adoption. The caller still supplies the
+controlled task identity, including `jobId`, `workspacePath`, `sourceWorkspacePath`
+and `promptBody`; the helper does not invent product work by itself.
+`workerRole` is capacity taxonomy only: `producer`, `fastgate` or `reviewer`.
+New children default to `reasoningEffort: "high"` and `serviceTier: "fast"`
+unless the caller supplies a more specific child manifest value.
 
 These child jobs should normally produce a diff, patch or handoff, not their own
 commit. In a linked git worktree, `git add` and `git commit` can require writes

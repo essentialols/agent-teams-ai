@@ -16,6 +16,7 @@ describe("describeProjectControlSurface", () => {
       "create_worktree",
       "create_job",
       "start_worker",
+      "refill_worker",
       "mark_reviewed",
       "open_integration_attempt",
       "apply_worker_output",

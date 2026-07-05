@@ -49,6 +49,7 @@ import {
   listCodexGoalMcpResources,
   listCodexGoalMcpTools,
   readCodexGoalMcpResource,
+  superviseCodexGoalProjectController,
 } from "./codex-goal-mcp-client";
 import {
   upsertCodexGoalLaunchManifest,
@@ -69,6 +70,7 @@ type CodexGoalCliCommand =
   | McpPromptsCommand
   | McpPromptCommand
   | ControlDoctorCommand
+  | ControllerSuperviseCommand
   | HelpCommand;
 
 export type RunCommand = {
@@ -161,6 +163,13 @@ type McpPromptCommand = {
 
 type ControlDoctorCommand = {
   readonly kind: "control-doctor";
+  readonly format: OutputFormat;
+};
+
+type ControllerSuperviseCommand = {
+  readonly kind: "controller-supervise";
+  readonly args: Record<string, unknown>;
+  readonly statusIntervalMs: number;
   readonly format: OutputFormat;
 };
 
@@ -257,6 +266,30 @@ export async function runCodexGoalCli(
       const result = await doctorCodexGoalControlSurface();
       writeJsonOrText(command.format, result, io);
       return result.ok ? 0 : 1;
+    }
+    if (command.kind === "controller-supervise") {
+      const abortController = new AbortController();
+      const onSignal = () => abortController.abort();
+      process.once("SIGINT", onSignal);
+      process.once("SIGTERM", onSignal);
+      try {
+        const result = await superviseCodexGoalProjectController({
+          args: command.args,
+          statusIntervalMs: command.statusIntervalMs,
+          signal: abortController.signal,
+          onEvent: (event) => {
+            if (command.format === "json") {
+              io.writeStdout(`${JSON.stringify(event)}\n`);
+              return;
+            }
+            io.writeStdout(`${event.type} ${JSON.stringify(event.result)}\n`);
+          },
+        });
+        return result.ok ? 0 : 1;
+      } finally {
+        process.off("SIGINT", onSignal);
+        process.off("SIGTERM", onSignal);
+      }
     }
     if (command.tmuxSession) {
       const tmuxCommand = buildTmuxCommand(command);
@@ -356,6 +389,12 @@ export function parseCodexGoalCliArgs(
   }
   if (commandName === "doctor-control" || commandName === "control-doctor") {
     return parseControlDoctor(rest, io);
+  }
+  if (
+    commandName === "controller-supervise" ||
+    commandName === "project-controller-supervise"
+  ) {
+    return parseControllerSupervise(rest, io);
   }
   const shortcut = parseMcpShortcut(commandName, rest, io);
   if (shortcut) return shortcut;
@@ -647,6 +686,61 @@ function parseControlDoctor(
   return {
     kind: "control-doctor",
     format: outputFormatFromFlags(values, io.env()),
+  };
+}
+
+function parseControllerSupervise(
+  argv: readonly string[],
+  io: CodexGoalCliIo,
+): ControllerSuperviseCommand {
+  const values = parseFlags(argv);
+  const env = io.env();
+  const registryRootDir = option(values, env, "--registry-root", [
+    "SUBSCRIPTION_RUNTIME_CODEX_GOAL_REGISTRY_ROOT",
+    "CODEX_GOAL_REGISTRY_ROOT",
+  ]);
+  const stateDir = option(values, env, "--state-dir", []);
+  const mcpCwd = option(values, env, "--mcp-cwd", []);
+  const args: Record<string, unknown> = {
+    controllerJobId: requiredOption(values, env, "--controller-job-id", [
+      "SUBSCRIPTION_RUNTIME_CONTROLLER_JOB_ID",
+    ]),
+    ...(registryRootDir
+      ? { registryRootDir: resolvePath(io.cwd(), registryRootDir) }
+      : {}),
+    ...(option(values, env, "--provider", []) ? {
+      providerKind: option(values, env, "--provider", []),
+    } : {}),
+    ...(stateDir ? { stateDir: resolvePath(io.cwd(), stateDir) } : {}),
+    ...(option(values, env, "--session-artifact-path", []) ? {
+      sessionArtifactPath: option(values, env, "--session-artifact-path", []),
+    } : {}),
+    ...(option(values, env, "--claude-path", []) ? {
+      claudePath: option(values, env, "--claude-path", []),
+    } : {}),
+    ...(option(values, env, "--mcp-server-name", []) ? {
+      mcpServerName: option(values, env, "--mcp-server-name", []),
+    } : {}),
+    ...(option(values, env, "--mcp-command", []) ? {
+      mcpCommand: option(values, env, "--mcp-command", []),
+    } : {}),
+    ...(option(values, env, "--mcp-args", []) ? {
+      mcpArgs: splitCsv(option(values, env, "--mcp-args", []) as string),
+    } : {}),
+    ...(mcpCwd ? { mcpCwd: resolvePath(io.cwd(), mcpCwd) } : {}),
+    ...(option(values, env, "--raw-shell-mode", []) ? {
+      rawShellMode: option(values, env, "--raw-shell-mode", []),
+    } : {}),
+    ...optionalNumberArg(values, "--max-goal-turns", "maxGoalTurns"),
+  };
+  return {
+    kind: "controller-supervise",
+    args,
+    statusIntervalMs: parseOptionalPositiveInteger(
+      option(values, env, "--status-interval-ms", []),
+      "--status-interval-ms",
+    ) ?? 60_000,
+    format: outputFormatFromFlags(values, env),
   };
 }
 
@@ -1686,6 +1780,7 @@ function usage(): string {
   subscription-runtime-codex-goal recover-job <jobId> --confirm [--registry-root <dir>]
   subscription-runtime-codex-goal stop-job <jobId> --confirm [--registry-root <dir>]
   subscription-runtime-codex-goal maintenance-pause-job <jobId> --confirm [--reason resize] [--registry-root <dir>]
+  subscription-runtime-codex-goal controller-supervise --controller-job-id <id> [--registry-root <dir>] [--provider codex|claude] [--status-interval-ms 60000]
   subscription-runtime-codex-goal tools
   subscription-runtime-codex-goal tool <mcp_tool_name> [--args-json '{"jobId":"..."}' | --args-file args.json]
   subscription-runtime-codex-goal resources

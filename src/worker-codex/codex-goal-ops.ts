@@ -83,6 +83,7 @@ export type CodexGoalStatus = {
   readonly resultStatus?: string;
   readonly resultReason?: string;
   readonly resultUpdatedAt?: string;
+  readonly workspaceExists?: boolean;
   readonly workspaceDirty?: boolean;
   readonly changedFiles?: readonly string[];
   readonly logPath?: string;
@@ -415,6 +416,7 @@ export async function collectCodexGoalStatus(
     ...(resultFile.updatedAt === undefined
       ? {}
       : { resultUpdatedAt: resultFile.updatedAt }),
+    ...(workspace.exists === undefined ? {} : { workspaceExists: workspace.exists }),
     ...(workspace.dirty === undefined ? {} : { workspaceDirty: workspace.dirty }),
     ...(workspace.changedFiles === undefined
       ? {}
@@ -482,6 +484,9 @@ export async function collectCodexGoalStatus(
       ...(result.status === undefined ? {} : { resultStatus: result.status }),
       ...(result.reason === undefined ? {} : { resultReason: result.reason }),
       ...(progress.status === undefined ? {} : { progressStatus: progress.status }),
+      ...(workspace.exists === undefined
+        ? {}
+        : { workspaceExists: workspace.exists }),
       ...(workspace.dirty === undefined
         ? {}
         : { workspaceDirty: workspace.dirty }),
@@ -735,10 +740,12 @@ export function recommendCodexGoalAction(input: {
   readonly resultStatus?: string;
   readonly resultReason?: string;
   readonly progressStatus?: string;
+  readonly workspaceExists?: boolean;
   readonly workspaceDirty?: boolean;
   readonly resultExists?: boolean;
 }): CodexGoalRecommendedAction {
   if (input.tmuxAlive) return "wait_for_worker";
+  if (input.workspaceExists === false) return "inspect_failure";
   if (input.progressStatus === "maintenance_paused") return "start_worker";
   if (input.resultStatus === "done" || input.resultStatus === "completed") {
     return "review_completed";
@@ -1198,6 +1205,7 @@ async function readCodexGoalProgressFile(
 }
 
 async function gitWorkspaceStatus(path: string): Promise<{
+  readonly exists?: boolean;
   readonly dirty?: boolean;
   readonly changedFiles?: readonly string[];
   readonly warning?: string;
@@ -1216,14 +1224,25 @@ async function gitWorkspaceStatus(path: string): Promise<{
       .filter((path) => path.length > 0)
       .sort((left, right) => left.localeCompare(right));
     return {
+      exists: true,
       dirty: changedFiles.length > 0,
       changedFiles,
     };
   } catch {
+    let exists = false;
+    try {
+      await access(path, constants.F_OK);
+      exists = true;
+    } catch {
+      exists = false;
+    }
     return {
+      exists,
       dirty: false,
       changedFiles: [],
-      warning: `${path} is not a readable git worktree`,
+      warning: exists
+        ? `${path} is not a readable git worktree`
+        : `${path} workspace_missing`,
     };
   }
 }

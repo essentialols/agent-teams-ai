@@ -179,6 +179,7 @@ export class CodexRunObservationAdapter implements RunObservationPort {
     const workspace = {
       path: paths.workspacePath,
       key: workspaceKey,
+      ...(status.workspaceExists === undefined ? {} : { exists: status.workspaceExists }),
       changedFilesCount: changedFiles.length,
       ...(status.workspaceDirty === undefined ? {} : { dirty: status.workspaceDirty }),
       ...(request.includeChangedFiles ? { changedFiles } : {}),

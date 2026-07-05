@@ -764,6 +764,47 @@ describe("codex goal ops", () => {
     expect(String(brief.text)).toContain("reviewedWithoutResult true");
   });
 
+  it("does not offer to start no-result jobs when the workspace is missing", async () => {
+    const fixture = await createGoalFixture();
+    const launch = launchInput(fixture.config, fixture.root);
+
+    try {
+      await rm(fixture.config.workspacePath, { recursive: true, force: true });
+
+      const status = await collectCodexGoalStatus({
+        jobRootDir: fixture.config.jobRootDir,
+        taskId: fixture.config.taskId,
+        workspacePath: fixture.config.workspacePath,
+        logPath: launch.logPath,
+      });
+      const brief = await buildCodexGoalBrief({
+        jobId: "job-from-registry",
+        launch,
+        status,
+        accounts: [accountStatus("account-a", {})],
+        staleAfterMs: 60_000,
+        tailLines: 20,
+      });
+
+      expect(status).toMatchObject({
+        resultExists: false,
+        workspaceExists: false,
+        workspaceDirty: false,
+        changedFiles: [],
+        recommendedAction: "inspect_failure",
+      });
+      expect(status.warnings).toContain(`${fixture.config.workspacePath} workspace_missing`);
+      expect(brief).toMatchObject({
+        safeToContinue: false,
+        nextBestTool: "manual_review",
+        nextBestReason: "status requires inspection before continuing",
+        nextBestCommand: "manual_review_status",
+      });
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
   it("uses runner progress as the strongest observable progress signal", async () => {
     const fixture = await createGoalFixture();
     const launch = launchInput(fixture.config, fixture.root);

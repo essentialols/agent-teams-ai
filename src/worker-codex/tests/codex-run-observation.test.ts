@@ -270,10 +270,15 @@ describe("CodexRunObservationAdapter", () => {
       expect(snapshot.warnings.map((warning) => warning.code)).toContain(
         "codex_status_warning",
       );
+      expect(snapshot.workspace).toMatchObject({
+        exists: false,
+        dirty: false,
+        changedFilesCount: 0,
+      });
       expect(snapshot.warnings.map((warning) => warning.message).join("\n"))
         .toContain("progress file is unreadable");
       expect(snapshot.warnings.map((warning) => warning.message).join("\n"))
-        .toContain("is not a readable git worktree");
+        .toContain("workspace_missing");
     } finally {
       await rm(fixture.root, { recursive: true, force: true });
     }

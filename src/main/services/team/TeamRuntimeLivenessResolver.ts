@@ -1,3 +1,5 @@
+import { sanitizeRuntimeProjectionProcessCommand } from './runtime-projection';
+
 import type { RuntimeProcessTableRow, TmuxPaneRuntimeInfo } from '@features/tmux-installer/main';
 import type {
   MemberSpawnStatusEntry,
@@ -43,8 +45,6 @@ export interface ResolvedTeamMemberRuntimeLiveness {
 }
 
 const SHELL_COMMAND_NAMES = new Set(['sh', 'bash', 'zsh', 'fish', 'dash', 'login', 'tmux']);
-const SECRET_FLAG_PATTERN =
-  /(--(?:api-key|token|password|secret|authorization|auth-token)(?:=|\s+))("[^"]*"|'[^']*'|\S+)/gi;
 const CLI_ARG_VALUES_CACHE_MAX_COMMANDS = 1_000;
 const CLI_ARG_EQUALS_CACHE_MAX_KEYS_PER_COMMAND = 100;
 const cliArgValuesCache = new Map<string, Map<string, string[]>>();
@@ -63,9 +63,7 @@ export function isShellLikeCommand(command: string | undefined): boolean {
 export function sanitizeProcessCommandForDiagnostics(
   command: string | undefined
 ): string | undefined {
-  const trimmed = command?.trim();
-  if (!trimmed) return undefined;
-  return trimmed.replace(SECRET_FLAG_PATTERN, '$1[redacted]').slice(0, 500);
+  return sanitizeRuntimeProjectionProcessCommand(command);
 }
 
 function escapeRegexLiteral(value: string): string {

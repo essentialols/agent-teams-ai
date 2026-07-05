@@ -55,7 +55,9 @@ function parseIsoMs(value: string | undefined): number | undefined {
   return Number.isFinite(timestampMs) ? timestampMs : undefined;
 }
 
-function sanitizeProcessCommand(command: string | undefined): string | undefined {
+export function sanitizeRuntimeProjectionProcessCommand(
+  command: string | undefined
+): string | undefined {
   const trimmed = nonEmptyString(command);
   return trimmed?.replace(SECRET_CLI_FLAG_PATTERN, '$1[redacted]').slice(0, 500);
 }
@@ -103,6 +105,7 @@ function buildProjection(
   },
   diagnosticEvidence: RuntimeProjectionDiagnosticEvidence | undefined
 ): RuntimeProjectionLivenessProjection {
+  const processCommand = sanitizeRuntimeProjectionProcessCommand(params.processCommand);
   const diagnosticProjection = projectRuntimeDiagnostics(
     {
       message: params.runtimeDiagnostic,
@@ -126,9 +129,7 @@ function buildProjection(
     ...(nonEmptyString(params.runtimeLastSeenAt)
       ? { runtimeLastSeenAt: nonEmptyString(params.runtimeLastSeenAt) }
       : {}),
-    ...(sanitizeProcessCommand(params.processCommand)
-      ? { processCommand: sanitizeProcessCommand(params.processCommand) }
-      : {}),
+    ...(processCommand ? { processCommand } : {}),
     runtimeDiagnostic,
     runtimeDiagnosticSeverity: diagnosticProjection.runtimeDiagnosticSeverity ?? 'info',
     diagnostics: diagnosticProjection.diagnostics ?? [runtimeDiagnostic],

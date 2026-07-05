@@ -16,6 +16,10 @@ export type {
   RuntimeProjectionLivenessOptions,
   RuntimeProjectionLivenessProjection,
 } from './RuntimeProjectionLiveness';
-export { isStrongRuntimeEvidence, projectRuntimeLiveness } from './RuntimeProjectionLiveness';
+export {
+  isStrongRuntimeEvidence,
+  projectRuntimeLiveness,
+  sanitizeRuntimeProjectionProcessCommand,
+} from './RuntimeProjectionLiveness';
 export type { RuntimeProjectionResourceProjection } from './RuntimeProjectionResource';
 export { projectRuntimeResource, projectRuntimeResourceSample } from './RuntimeProjectionResource';

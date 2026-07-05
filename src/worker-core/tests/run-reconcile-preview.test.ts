@@ -82,6 +82,37 @@ describe("reconcileRunPreview", () => {
     });
   });
 
+  it("reports cooldown before generic unsafe status for parked capacity runs", async () => {
+    const continued: string[] = [];
+    const continueAfter = new Date("2026-06-01T01:00:00.000Z");
+    const backend = fakeBackend([
+      run({
+        runId: "parked-capacity",
+        safeToContinue: false,
+        continueAfter,
+      }),
+    ], continued);
+
+    const result = await reconcileRunPreview({
+      backend,
+      policy: {
+        continueSafeRuns: true,
+        now: new Date("2026-06-01T00:00:00.000Z"),
+      },
+    });
+
+    expect(result.continued).toBe(0);
+    expect(continued).toEqual([]);
+    expect(result.decisions[0]).toMatchObject({
+      runId: "parked-capacity",
+      action: "skipped",
+      reason: "continue_cooldown",
+      status: {
+        continueAfter,
+      },
+    });
+  });
+
   it("keeps the old job-watch API as a deprecated compatibility shim", async () => {
     const result = await reconcileWatchableJobs({
       backend: {
@@ -139,6 +170,7 @@ function run(input: {
   readonly safeToContinue?: boolean;
   readonly workspaceKey?: string;
   readonly workspaceDirty?: boolean;
+  readonly continueAfter?: Date;
 }): RunReconcilePreviewStatus {
   return {
     runId: input.runId,
@@ -148,5 +180,8 @@ function run(input: {
     ...(input.workspaceDirty === undefined
       ? {}
       : { workspaceDirty: input.workspaceDirty }),
+    ...(input.continueAfter === undefined
+      ? {}
+      : { continueAfter: input.continueAfter }),
   };
 }

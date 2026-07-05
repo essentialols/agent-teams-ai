@@ -184,19 +184,19 @@ async function decideRunReconcilePreview(input: {
       status,
     };
   }
-  if (!status.safeToContinue) {
-    return {
-      runId: status.runId,
-      action: "skipped",
-      reason: "not_safe_to_continue",
-      status,
-    };
-  }
   if (status.continueAfter && status.continueAfter.getTime() > input.now.getTime()) {
     return {
       runId: status.runId,
       action: "skipped",
       reason: "continue_cooldown",
+      status,
+    };
+  }
+  if (!status.safeToContinue) {
+    return {
+      runId: status.runId,
+      action: "skipped",
+      reason: "not_safe_to_continue",
       status,
     };
   }

@@ -826,6 +826,14 @@ Recommended agent loop:
    ```bash
    subscription-runtime-codex-goal reconcile-preview --registry-root <dir>
    ```
+   To let parked capacity jobs wake without a human loop, run the same command
+   from a cron or systemd timer with `--continue-safe-jobs`. The preview uses
+   the stored brief/overview gate, respects `continueAfter` cooldowns, and only
+   starts jobs whose `brief.safeToContinue` is true.
+
+   ```bash
+   subscription-runtime-codex-goal reconcile-preview --registry-root <dir> --continue-safe-jobs
+   ```
 2. If `recommendedAction` is `wait_for_worker`, do not start another writer in
    that worktree while `brief.silentStale` is false.
 3. If `brief.silentStale` is true, inspect tmux, process tree, app-server,

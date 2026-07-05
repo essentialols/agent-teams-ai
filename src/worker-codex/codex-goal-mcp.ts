@@ -5381,6 +5381,7 @@ async function codexOverviewItemToWatchStatus(
   const workspacePath = stringValue(item.workspacePath);
   const recommendedAction = stringValue(item.recommendedAction);
   const nextBestTool = stringValue(item.nextBestTool);
+  const continueAfter = continueAfterFromOverviewItem(item);
   const requiresManualReview = nextBestTool === "manual_review" ||
     recommendedAction === "inspect_dirty_workspace" ||
     recommendedAction === "inspect_dirty_failure" ||
@@ -5398,8 +5399,23 @@ async function codexOverviewItemToWatchStatus(
     ...(requiresManualReview
       ? { manualReviewReason: nextBestTool ?? recommendedAction ?? "manual_review" }
       : {}),
+    ...(continueAfter ? { continueAfter } : {}),
     summary: item,
   };
+}
+
+function continueAfterFromOverviewItem(item: JsonObject): Date | undefined {
+  const recommendedAction = stringValue(item.recommendedAction);
+  if (recommendedAction !== "continue_after_capacity") return undefined;
+  const accounts = Array.isArray(item.capacityBlockedAccounts)
+    ? item.capacityBlockedAccounts
+    : [];
+  return accounts
+    .map((account) =>
+      isRecord(account) ? dateValue(account.cooldownUntil) : undefined
+    )
+    .filter((value): value is Date => value !== undefined)
+    .sort((left, right) => left.getTime() - right.getTime())[0];
 }
 
 async function buildCodexGoalWorkspaceConflicts(
@@ -5568,6 +5584,7 @@ async function buildCodexGoalOverviewItem(input: {
       safeToContinue: brief.safeToContinue,
       hasAvailableAccount: brief.hasAvailableAccount,
       needsHumanRelogin: brief.needsHumanRelogin,
+      capacityBlockedAccounts: brief.capacityBlockedAccounts,
       availableDedupedAccounts: brief.availableDedupedAccounts,
       invalidAccounts: brief.invalidAccounts,
       lifecycleMarkers: brief.lifecycleMarkers,
@@ -7609,6 +7626,12 @@ function stringValue(value: unknown): string | undefined {
 
 function numberValue(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function dateValue(value: unknown): Date | undefined {
+  if (typeof value !== "string") return undefined;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date : undefined;
 }
 
 function booleanValue(value: unknown): boolean | undefined {

@@ -258,6 +258,88 @@ describe("codex goal MCP server", () => {
     }
   });
 
+  it("flags executor-started runners with fresh heartbeat but no output", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-executor-started-no-output-"));
+    const promptPath = join(root, "prompt.md");
+    const progressPath = join(root, "task.progress.json");
+    const logPath = join(root, "task.log");
+    const oldLogTime = new Date(Date.now() - 130_000);
+    try {
+      await writeFile(promptPath, "Do a sandbox task.\n");
+      await writeFile(logPath, "");
+      await utimes(logPath, oldLogTime, oldLogTime);
+      await writeFile(progressPath, `${JSON.stringify({
+        schemaVersion: 1,
+        taskId: "task",
+        status: "running",
+        updatedAt: new Date().toISOString(),
+        pid: process.pid,
+      })}\n`);
+
+      const brief = await buildCodexGoalBrief({
+        jobId: "job-executor-started-no-output",
+        launch: {
+          cwd: root,
+          logPath,
+          cliCommand: ["subscription-runtime-codex-goal"],
+          config: {
+            jobRootDir: root,
+            authRootDir: root,
+            workspacePath: root,
+            promptPath,
+            taskId: "task",
+            accounts: [{ name: "account-a" }],
+            progressPath,
+          },
+        },
+        status: {
+          tmuxAlive: true,
+          resultExists: false,
+          workspaceDirty: false,
+          changedFiles: [],
+          logPath,
+          logExists: true,
+          logUpdatedAt: oldLogTime.toISOString(),
+          logByteLength: 0,
+          progressPath,
+          progressExists: true,
+          progressStatus: "running",
+          progressUpdatedAt: new Date().toISOString(),
+          progressHeartbeatAgeMs: 10_000,
+          progressPid: process.pid,
+          progressProcessAlive: true,
+          progressCpuActive: true,
+          runtimeEventsExists: true,
+          runtimeEventsByteLength: 850,
+          lastRuntimeEvent: "executor_started",
+          lastRuntimeEventAt: oldLogTime.toISOString(),
+          recommendedAction: "wait_for_worker",
+          warnings: [],
+        },
+        accounts: [{
+          name: "account-a",
+          authJsonPath: join(root, "account-a", "auth.json"),
+          status: "ready",
+          warnings: [],
+          safeMessage: "account-a is ready",
+        }],
+        staleAfterMs: 600_000,
+        tailLines: 20,
+      });
+
+      expect(brief).toMatchObject({
+        isStale: false,
+        silentStale: false,
+        heartbeatOnlyNoOutput: true,
+        safeToContinue: false,
+        nextBestTool: "manual_review",
+        nextBestReason: "heartbeat_only_no_output",
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("exposes read-only agent run watch snapshots without control actions", async () => {
     const root = await mkdtemp(join(tmpdir(), "subscription-runtime-run-watch-"));
     const registryRootDir = join(root, "registry");

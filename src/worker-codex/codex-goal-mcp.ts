@@ -5644,6 +5644,13 @@ function isHeartbeatOnlyNoOutputBrief(input: {
     status,
     progressStale,
   });
+  const executorStartedOnlyNoOutput = Boolean(
+    status.lastRuntimeEvent === "executor_started" &&
+      status.resultExists === false &&
+      (status.logExists === false || status.logByteLength === 0),
+  );
+  const noOutputIsNotUsefulProgress = status.progressCpuActive !== true ||
+    executorStartedOnlyNoOutput;
   return Boolean(
     workerLiveness.alive &&
       status.progressExists &&
@@ -5652,7 +5659,7 @@ function isHeartbeatOnlyNoOutputBrief(input: {
       noOutputAgeMs >= heartbeatOnlyNoOutputAfterMs &&
       status.progressHeartbeatAgeMs !== undefined &&
       status.progressHeartbeatAgeMs <= input.staleAfterMs &&
-      status.progressCpuActive !== true &&
+      noOutputIsNotUsefulProgress &&
       status.resultExists === false &&
       (status.logExists === false || status.logByteLength === 0) &&
       status.workspaceDirty === false &&

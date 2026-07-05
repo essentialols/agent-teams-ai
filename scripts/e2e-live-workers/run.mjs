@@ -46,6 +46,10 @@ async function main() {
   await run("codex project integration lifecycle tools", codexProjectIntegrationLifecycleTools);
   await run("codex command policy rejects project bypass", codexCommandPolicyRejectsProjectBypass);
   await run(
+    "codex project controller manifest liveness contract",
+    codexProjectControllerManifestLivenessContract,
+  );
+  await run(
     "codex real app-server command approval denies raw push",
     codexRealAppServerCommandApprovalDeniesRawPush,
   );
@@ -596,6 +600,187 @@ async function codexProjectIntegrationLifecycleTools() {
     ]).stdout.trim();
     assertEqual(pushedSha, commitSha);
     return { root: keepArtifacts ? root : undefined, branch };
+  } finally {
+    await cleanup(root);
+  }
+}
+
+async function codexProjectControllerManifestLivenessContract() {
+  const root = await sandboxRoot("codex-project-controller-liveness-");
+  try {
+    const sourceWorkspace = await gitSandbox(join(root, "source"), {
+      "README.md": "Project controller manifest liveness sandbox only.\n",
+    });
+    const branch = runChecked("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+      cwd: sourceWorkspace,
+    }).stdout.trim();
+    const registryRootDir = join(root, "registry");
+    const jobsRoot = join(root, "jobs");
+    const worktreesRoot = join(root, "worktrees");
+    const authRoot = join(root, "auth");
+    await mkdir(registryRootDir, { recursive: true });
+    await mkdir(jobsRoot, { recursive: true });
+    await mkdir(worktreesRoot, { recursive: true });
+    await mkdir(authRoot, { recursive: true });
+
+    const prefix = "pc-liveness-e2e-";
+    const controllerJobId = `${prefix}controller`;
+    const childJobId = `${prefix}child`;
+    const controllerJobRoot = join(jobsRoot, controllerJobId);
+    const childJobRoot = join(jobsRoot, childJobId);
+    const childWorkspace = join(worktreesRoot, childJobId);
+    const controllerPrompt = join(controllerJobRoot, "prompt.md");
+    const childPrompt = join(childJobRoot, "prompt.md");
+    await mkdir(controllerJobRoot, { recursive: true });
+    await mkdir(childJobRoot, { recursive: true });
+    await writeFile(
+      controllerPrompt,
+      "Controller manifest only. A live LLM launcher must expose broker/status tools only.\n",
+    );
+    await writeFile(
+      childPrompt,
+      "Sandbox child worker placeholder. Do not print secrets.\n",
+    );
+
+    const projectAccessScope = {
+      projectId: "codex-project-controller-liveness-e2e",
+      registryRoot: registryRootDir,
+      workspaceRoots: [sourceWorkspace],
+      worktreeRoots: [worktreesRoot],
+      jobIdPrefixes: [prefix],
+      tmuxSessionPrefixes: [prefix],
+      allowedBranches: [branch],
+      allowedGitRemotes: ["origin"],
+      allowedAccountIds: ["account-a"],
+    };
+
+    assertToolOk(codexGoalTool("codex_goal_create_job", {
+      registryRootDir,
+      jobId: controllerJobId,
+      description: "Project-scoped controller manifest liveness e2e",
+      jobRootDir: controllerJobRoot,
+      authRootDir: authRoot,
+      stateRootDir: join(controllerJobRoot, "state"),
+      workspacePath: sourceWorkspace,
+      promptPath: controllerPrompt,
+      taskId: controllerJobId,
+      progressPath: join(controllerJobRoot, `${controllerJobId}.progress.json`),
+      accounts: ["account-a"],
+      tmuxSession: controllerJobId,
+      accessBoundary: "project_scoped_control",
+      projectAccessScope,
+      networkAccess: "restricted",
+      confirmCreate: true,
+    }), "create controller manifest");
+
+    const ordinaryStart = codexGoalTool("codex_goal_start", {
+      registryRootDir,
+      jobId: controllerJobId,
+      jobRootDir: controllerJobRoot,
+      authRootDir: authRoot,
+      stateRootDir: join(controllerJobRoot, "state"),
+      workspacePath: sourceWorkspace,
+      promptPath: controllerPrompt,
+      taskId: controllerJobId,
+      progressPath: join(controllerJobRoot, `${controllerJobId}.progress.json`),
+      accounts: ["account-a"],
+      tmuxSession: controllerJobId,
+      accessBoundary: "project_scoped_control",
+      projectAccessScope,
+      networkAccess: "restricted",
+      confirmStart: true,
+      skipDoctor: true,
+    });
+    assertEqual(ordinaryStart.ok, false);
+    assert(
+      String(ordinaryStart.error).includes("codex_goal_access_boundary_blocked"),
+      "ordinary controller launch must fail closed without a broker-only LLM surface",
+    );
+
+    assertToolOk(codexGoalTool("codex_goal_project_create_worktree", {
+      registryRootDir,
+      controllerJobId,
+      sourceWorkspacePath: sourceWorkspace,
+      path: childWorkspace,
+      confirmCreateWorktree: true,
+    }), "create child worktree through controller broker");
+
+    const child = assertToolOk(codexGoalTool("codex_goal_project_create_job", {
+      registryRootDir,
+      controllerJobId,
+      jobId: childJobId,
+      description: "Sandbox child manifest from project controller",
+      jobRootDir: childJobRoot,
+      authRootDir: authRoot,
+      stateRootDir: join(childJobRoot, "state"),
+      workspacePath: childWorkspace,
+      promptPath: childPrompt,
+      taskId: childJobId,
+      progressPath: join(childJobRoot, `${childJobId}.progress.json`),
+      accounts: ["account-a"],
+      tmuxSession: childJobId,
+      networkAccess: "restricted",
+      confirmCreate: true,
+    }), "create child manifest through controller broker");
+    assertEqual(child.manifest?.accessBoundary, "isolated_workspace_write");
+
+    const dangerChild = codexGoalTool("codex_goal_project_create_job", {
+      registryRootDir,
+      controllerJobId,
+      jobId: `${prefix}danger-child`,
+      jobRootDir: join(jobsRoot, `${prefix}danger-child`),
+      authRootDir: authRoot,
+      workspacePath: join(worktreesRoot, `${prefix}danger-child`),
+      promptPath: join(jobsRoot, `${prefix}danger-child`, "prompt.md"),
+      taskId: `${prefix}danger-child`,
+      accounts: ["account-a"],
+      tmuxSession: `${prefix}danger-child`,
+      accessBoundary: "danger_full_access",
+      allowDangerFullAccess: true,
+      confirmCreate: true,
+    });
+    assertEqual(dangerChild.ok, false);
+    assert(
+      String(dangerChild.error).includes("project_control_child_danger_full_access_denied") ||
+        String(dangerChild.error).includes("project_control_child_boundary_denied"),
+      "controller broker must reject danger_full_access child jobs",
+    );
+
+    const controllerChild = codexGoalTool("codex_goal_project_create_job", {
+      registryRootDir,
+      controllerJobId,
+      jobId: `${prefix}controller-child`,
+      jobRootDir: join(jobsRoot, `${prefix}controller-child`),
+      authRootDir: authRoot,
+      workspacePath: join(worktreesRoot, `${prefix}controller-child`),
+      promptPath: join(jobsRoot, `${prefix}controller-child`, "prompt.md"),
+      taskId: `${prefix}controller-child`,
+      accounts: ["account-a"],
+      tmuxSession: `${prefix}controller-child`,
+      accessBoundary: "project_scoped_control",
+      confirmCreate: true,
+    });
+    assertEqual(controllerChild.ok, false);
+    assert(
+      String(controllerChild.error).includes("project_control_child_boundary_denied"),
+      "controller broker must reject nested project_scoped_control child jobs",
+    );
+
+    const auditText = await readFile(
+      join(controllerJobRoot, `${controllerJobId}.project-control-events.jsonl`),
+      "utf8",
+    );
+    assert(
+      auditText.includes('"operation":"create_worktree"') &&
+        auditText.includes('"operation":"create_job"'),
+      "controller audit must record broker worktree and child-job operations",
+    );
+
+    return {
+      root: keepArtifacts ? root : undefined,
+      ordinaryStartError: ordinaryStart.error,
+      childAccessBoundary: child.manifest?.accessBoundary,
+    };
   } finally {
     await cleanup(root);
   }

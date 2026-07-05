@@ -466,6 +466,11 @@ Current e2e coverage:
 - `codex command policy rejects project bypass` builds a project-scoped Codex
   launch plan from `dist` and proves raw `git push`, raw `tmux`, inline code and
   direct registry path access are denied before a runner executes them;
+- `codex project controller manifest liveness contract` creates a
+  `project_scoped_control` manifest through the built CLI, proves ordinary
+  controller worker startup fails closed without a broker-only LLM surface, and
+  proves brokered child worktree/job creation still works from the same
+  manifest;
 - `codex real app-server command approval denies raw push`, when live Codex
   accounts are enabled, requires real raw-push blocking evidence. The scenario
   first proves that the sandboxed raw `git push` did not update the sandbox

@@ -50,15 +50,19 @@ export async function scanLeadInboxPermissionRequests<TRun extends LeadPermissio
     if (Number.isFinite(msgTs) && Number.isFinite(runStartedAtMs) && msgTs < runStartedAtMs) {
       continue;
     }
-    ports.handleTeammatePermissionRequest(input.run, perm, msg.timestamp);
+    try {
+      ports.handleTeammatePermissionRequest(input.run, perm, msg.timestamp);
+    } catch {
+      // best-effort — a failing permission handler must not abort the relay turn
+    }
     if (!msg.read && hasStableInboxMessageId(msg)) {
       permMsgsToMarkRead.push({ messageId: msg.messageId });
     }
   }
   if (permMsgsToMarkRead.length > 0) {
-    await ports.markInboxMessagesRead(input.teamName, input.leadName, permMsgsToMarkRead).catch(
-      () => {}
-    );
+    await ports
+      .markInboxMessagesRead(input.teamName, input.leadName, permMsgsToMarkRead)
+      .catch(() => {});
   }
   return 'ok';
 }

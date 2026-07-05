@@ -409,6 +409,44 @@ describe("codex goal ops", () => {
     expect(brief.nextBestReason).toBe("missing_runtime_result");
   });
 
+  it("does not reconcile dirty evidence after a strict worker result exists", async () => {
+    const fixture = await createGoalFixture();
+    const launch = launchInput(fixture.config, fixture.root);
+    await writeFile(
+      fixture.config.outputPath!,
+      `${JSON.stringify({
+        status: "done",
+        changedFiles: ["WORKER_SUMMARY.md"],
+        evidence: ["worker_summary_present"],
+        blockers: [],
+        nextAction: "review_completed",
+        updatedAt: new Date().toISOString(),
+      })}\n`,
+    );
+    await writeFile(join(fixture.config.workspacePath, "WORKER_SUMMARY.md"), "done\n");
+
+    const status = await collectCodexGoalStatus({
+      jobRootDir: fixture.config.jobRootDir,
+      taskId: fixture.config.taskId,
+      workspacePath: fixture.config.workspacePath,
+    });
+    const brief = await buildCodexGoalBrief({
+      jobId: "job-from-registry",
+      launch,
+      status,
+      accounts: [accountStatus("account-a", {})],
+      staleAfterMs: 60_000,
+      tailLines: 20,
+    });
+
+    expect(status.resultExists).toBe(true);
+    expect(status.resultStatus).toBe("done");
+    expect(status.workspaceDirty).toBe(true);
+    expect(status.recommendedAction).toBe("review_completed");
+    expect(brief.nextBestTool).toBe("codex_goal_mark_reviewed");
+    expect(brief.nextBestReason).toBe("worker completed");
+  });
+
   it("reconciles a missing runtime result into a strict partial result with a patch", async () => {
     const fixture = await createGoalFixture();
     await execFileAsync("git", ["config", "user.email", "test@example.com"], {

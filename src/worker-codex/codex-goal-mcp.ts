@@ -5323,8 +5323,10 @@ export async function buildCodexGoalBrief(input: {
       input.status.progressStatus === "maintenance_paused" &&
       !workerLiveness.alive,
   );
+  const strictResultExists = result.strict === true;
   const needsResultReconcile = Boolean(
     !workerLiveness.alive &&
+      !strictResultExists &&
       (
         (stoppedWithoutResult && !maintenancePaused) ||
         input.status.workspaceDirty ||

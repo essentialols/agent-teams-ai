@@ -114,6 +114,33 @@ describe("project integration use cases", () => {
     expect(fixture.git.calls).toEqual(["status", "apply"]);
   });
 
+  it("can retry required checks after a transient check failure", async () => {
+    const fixture = createFixture({
+      checkStatus: CheckRunStatus.Failed,
+    });
+    const opened = await openProjectIntegrationAttempt(fixture.deps(), input());
+    const applied = await applyWorkerOutput(fixture.deps(), {
+      attemptId: opened.attemptId,
+    });
+    const failed = await runRequiredChecks(fixture.deps(), {
+      attemptId: applied.attemptId,
+    });
+
+    fixture.checks.status = CheckRunStatus.Passed;
+    const retried = await runRequiredChecks(fixture.deps(), {
+      attemptId: failed.attemptId,
+    });
+
+    expect(retried.status).toBe(IntegrationAttemptStatus.ChecksPassed);
+    await expect(commitApprovedChanges(fixture.deps(), {
+      attemptId: retried.attemptId,
+      message: "fix(memory): integrate worker output",
+      policy: policy(),
+    })).resolves.toMatchObject({
+      status: IntegrationAttemptStatus.CommitCreated,
+    });
+  });
+
   it("blocks commit when secret scan fails", async () => {
     const fixture = createFixture({
       secretScanStatus: SecretScanStatus.Failed,
@@ -271,6 +298,7 @@ function createFixture(options: {
   );
   return {
     events,
+    checks,
     git,
     deps() {
       return {
@@ -352,7 +380,7 @@ class FakeGit implements GitPort {
 }
 
 class FakeChecks implements CheckRunnerPort {
-  constructor(private readonly status: CheckRunStatus) {}
+  constructor(public status: CheckRunStatus) {}
 
   runCheck(input: {
     readonly check: ProjectIntegrationCheckSpec;

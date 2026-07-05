@@ -191,7 +191,10 @@ export function markChecksRunning(
   attempt: IntegrationAttempt,
   now: string,
 ): IntegrationAttempt {
-  assertStatus(attempt, [IntegrationAttemptStatus.Applied]);
+  assertStatus(attempt, [
+    IntegrationAttemptStatus.Applied,
+    IntegrationAttemptStatus.ChecksFailed,
+  ]);
   return {
     ...attempt,
     status: IntegrationAttemptStatus.ChecksRunning,

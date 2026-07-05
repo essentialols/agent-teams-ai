@@ -188,11 +188,11 @@ host supervisor calling broker tools directly. Never switch the controller to
 Before starting a live LLM controller, build the controlled-agent launch plan:
 
 ```txt
-codex_goal_project_controller_launch_plan({ controllerJobId, registryRootDir })
-codex_goal_project_controller_status({ controllerJobId, registryRootDir })
-codex_goal_project_controller_start({ controllerJobId, registryRootDir })
-codex_goal_project_controller_stop({ controllerJobId, registryRootDir, reason })
-codex_goal_project_controller_reconcile({ controllerJobId, registryRootDir })
+codex_goal_project_controller_launch_plan({ controllerJobId, registryRootDir, providerKind })
+codex_goal_project_controller_status({ controllerJobId, registryRootDir, providerKind })
+codex_goal_project_controller_start({ controllerJobId, registryRootDir, providerKind })
+codex_goal_project_controller_stop({ controllerJobId, registryRootDir, providerKind, reason })
+codex_goal_project_controller_reconcile({ controllerJobId, registryRootDir, providerKind })
 ```
 
 The Codex controlled-agent profile disables native app-server environments and
@@ -214,6 +214,13 @@ project objective, not only kept as manifest metadata. For smoke tests only,
 `maxGoalTurns` may be supplied to the start tool to bound a tiny controller
 slice; production controllers normally omit it and are stopped through the safe
 provider runner.
+
+For Claude, pass `providerKind: "claude"` and a `sessionArtifactPath` to
+`codex_goal_project_controller_start`. The session artifact path must resolve
+inside `projectAccessScope.authRoot`; symlink escapes are rejected. The runtime
+wraps that file as a Claude `SessionArtifact` host-side and starts the Claude
+controlled-agent provider with strict MCP broker tools. A
+`project_scoped_control` manifest by itself is not a live LLM process.
 `status` reads persisted controlled-agent session/run state and, when the
 provider is still attached in this MCP process, also reports provider liveness.
 `stop` and `reconcile` use the same provider adapter. If a different process

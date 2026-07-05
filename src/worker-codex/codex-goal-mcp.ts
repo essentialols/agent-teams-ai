@@ -29,6 +29,9 @@ import {
   LocalProjectCheckRunner,
   LocalWorkspaceIntegrationLock,
   SimpleSecretScanner,
+  buildLocalClaudeControlledAgentProfile,
+  createLocalClaudeControlledAgentProvider,
+  loadScopedClaudeSessionArtifact,
   watchClaudeRuns,
   type ClaudeRunWatchArgs,
 } from "@vioxen/subscription-runtime/worker-local";
@@ -93,6 +96,7 @@ import {
   type WorkerControlSignal,
   type WorkerControlSignalView,
   type WorkerControlTarget,
+  type ControlledAgentProviderPort,
 } from "@vioxen/subscription-runtime/worker-core";
 import {
   codexGoalJobToArgs,
@@ -152,7 +156,7 @@ const serverVersion = "0.1.0-main.2";
 const defaultAuthRoot = "~/.cache/subscription-runtime/live-codex-auth";
 const defaultTimeoutMs = 72 * 60 * 60 * 1000;
 const execFileAsync = promisify(execFile);
-const controlledAgentProviders = new Map<string, CodexControlledAgentProvider>();
+const controlledAgentProviders = new Map<string, ControlledAgentProviderPort>();
 
 type JsonObject = Readonly<Record<string, unknown>>;
 
@@ -290,7 +294,10 @@ type ProjectControlMcpArgs = GoalMcpArgs & JobRegistryMcpArgs & {
 };
 
 type ProjectControllerLaunchPlanMcpArgs = ProjectControlMcpArgs & {
+  readonly providerKind?: string;
   readonly stateDir?: string;
+  readonly sessionArtifactPath?: string;
+  readonly claudePath?: string;
   readonly mcpServerName?: string;
   readonly mcpCommand?: string;
   readonly mcpArgs?: readonly string[] | string;
@@ -1779,7 +1786,10 @@ export function createCodexGoalMcpServer(
       inputSchema: {
         ...jobRegistryInputSchema(),
         controllerJobId: z.string().optional(),
+        providerKind: z.enum([RunEventProviderKind.Codex, RunEventProviderKind.Claude]).optional(),
         stateDir: z.string().optional(),
+        sessionArtifactPath: z.string().optional(),
+        claudePath: z.string().optional(),
         mcpServerName: z.string().optional(),
         mcpCommand: z.string().optional(),
         mcpArgs: z.union([z.string(), z.array(z.string())]).optional(),
@@ -1805,7 +1815,10 @@ export function createCodexGoalMcpServer(
       inputSchema: {
         ...jobRegistryInputSchema(),
         controllerJobId: z.string().optional(),
+        providerKind: z.enum([RunEventProviderKind.Codex, RunEventProviderKind.Claude]).optional(),
         stateDir: z.string().optional(),
+        sessionArtifactPath: z.string().optional(),
+        claudePath: z.string().optional(),
         mcpServerName: z.string().optional(),
         mcpCommand: z.string().optional(),
         mcpArgs: z.union([z.string(), z.array(z.string())]).optional(),
@@ -1831,6 +1844,7 @@ export function createCodexGoalMcpServer(
       inputSchema: {
         ...jobRegistryInputSchema(),
         controllerJobId: z.string().optional(),
+        providerKind: z.enum([RunEventProviderKind.Codex, RunEventProviderKind.Claude]).optional(),
         stateDir: z.string().optional(),
       },
     },
@@ -1848,6 +1862,7 @@ export function createCodexGoalMcpServer(
       inputSchema: {
         ...jobRegistryInputSchema(),
         controllerJobId: z.string().optional(),
+        providerKind: z.enum([RunEventProviderKind.Codex, RunEventProviderKind.Claude]).optional(),
         stateDir: z.string().optional(),
         reason: z.string().optional(),
       },
@@ -1866,6 +1881,7 @@ export function createCodexGoalMcpServer(
       inputSchema: {
         ...jobRegistryInputSchema(),
         controllerJobId: z.string().optional(),
+        providerKind: z.enum([RunEventProviderKind.Codex, RunEventProviderKind.Claude]).optional(),
         stateDir: z.string().optional(),
       },
     },
@@ -2680,6 +2696,7 @@ async function projectControllerLaunchPlan(args: ProjectControllerLaunchPlanMcpA
     ok: ready,
     mode: "project_controller_launch_plan",
     controllerJobId: controller.controller.jobId,
+    providerKind: profile.providerKind,
     registryRootDir: controller.registryRootDir,
     stateDir: state.stateDir,
     sessionId: state.sessionId,
@@ -2688,17 +2705,14 @@ async function projectControllerLaunchPlan(args: ProjectControllerLaunchPlanMcpA
     ...(ready
       ? {
           session: plan.session,
-          allowedTools: profile.enabledTools,
-          codexHome: profile.codexHome,
-          configToml: profile.configToml,
-          rulesText: profile.rulesText,
+          ...projectControllerProfileReadyJson(profile),
           evidence: plan.evidence,
         }
       : {
           reason: plan.reason,
           accessReason: plan.accessReason,
           evidence: plan.evidence,
-          allowedTools: profile.enabledTools,
+          allowedTools: projectControllerAllowedTools(profile),
           safeMessage:
             "Controlled LLM controller launch is blocked until the provider can enforce broker-only tools without raw shell.",
         }),
@@ -2715,6 +2729,7 @@ async function projectControllerStart(args: ProjectControllerLaunchPlanMcpArgs) 
       ok: false,
       mode: "project_controller_start",
       controllerJobId: controller.controller.jobId,
+      providerKind: profile.providerKind,
       registryRootDir: controller.registryRootDir,
       stateDir: state.stateDir,
       sessionId: state.sessionId,
@@ -2727,24 +2742,12 @@ async function projectControllerStart(args: ProjectControllerLaunchPlanMcpArgs) 
     });
   }
   const launch = await goalLaunchInput(codexGoalJobToArgs(controller.controller));
-  const account = await controlledAgentAccount({
+  const providerInput = await projectControllerProvider({
+    args,
     controller,
     launch,
-  });
-  const provider = new CodexControlledAgentProvider({
     profile,
-    sessionArtifact: account.sessionArtifact,
-    workspacePath: launch.config.workspacePath,
-    codexBinaryPath: launch.config.codexBinaryPath ?? "codex",
-    controllerObjective: await readFile(launch.config.promptPath, "utf8"),
-    ...(launch.config.model === undefined ? {} : { model: launch.config.model }),
-    ...(launch.config.reasoningEffort === undefined
-      ? {}
-      : { reasoningEffort: launch.config.reasoningEffort }),
-    ...(launch.config.serviceTier === undefined
-      ? {}
-      : { serviceTier: launch.config.serviceTier }),
-    ...(args.maxGoalTurns === undefined ? {} : { maxGoalTurns: args.maxGoalTurns }),
+    state,
   });
   const result = await startControlledAgentRun({
     controllerJobId: controller.controller.jobId,
@@ -2755,7 +2758,7 @@ async function projectControllerStart(args: ProjectControllerLaunchPlanMcpArgs) 
     provider: profile.enforcement,
     networkAccess: NetworkAccessMode.Restricted,
   }, {
-    provider,
+    provider: providerInput.provider,
     stateStore: state.store,
     events: state.store,
   });
@@ -2765,6 +2768,7 @@ async function projectControllerStart(args: ProjectControllerLaunchPlanMcpArgs) 
         ok: false,
         mode: "project_controller_start",
         controllerJobId: controller.controller.jobId,
+        providerKind: profile.providerKind,
         registryRootDir: controller.registryRootDir,
         stateDir: state.stateDir,
         sessionId: state.sessionId,
@@ -2779,6 +2783,7 @@ async function projectControllerStart(args: ProjectControllerLaunchPlanMcpArgs) 
       ok: false,
       mode: "project_controller_start",
       controllerJobId: controller.controller.jobId,
+      providerKind: profile.providerKind,
       registryRootDir: controller.registryRootDir,
       stateDir: state.stateDir,
       sessionId: state.sessionId,
@@ -2789,24 +2794,24 @@ async function projectControllerStart(args: ProjectControllerLaunchPlanMcpArgs) 
         "Controlled LLM controller start was blocked by the controlled-agent use case.",
     });
   }
-  controlledAgentProviders.set(state.sessionId, provider);
+  controlledAgentProviders.set(state.sessionId, providerInput.provider);
   return mcpJson({
     ok: true,
     mode: "project_controller_start",
     controllerJobId: controller.controller.jobId,
+    providerKind: profile.providerKind,
     registryRootDir: controller.registryRootDir,
     stateDir: state.stateDir,
     sessionId: state.sessionId,
     status: result.run.status,
     run: result.run,
     provider: result.provider,
-    account: {
-      name: account.name,
-      authJsonSha256Prefix: account.authJsonSha256Prefix,
-    },
-    allowedTools: profile.enabledTools,
-    safeMessage:
-      "Codex broker-only controlled-agent provider started with native app-server environments disabled.",
+    ...(providerInput.account === undefined ? {} : { account: providerInput.account }),
+    ...(providerInput.sessionArtifact === undefined
+      ? {}
+      : { sessionArtifact: providerInput.sessionArtifact }),
+    allowedTools: projectControllerAllowedTools(profile),
+    safeMessage: providerInput.safeMessage,
     evidence: plan.evidence,
   });
 }
@@ -2825,6 +2830,7 @@ async function projectControllerStatus(args: ProjectControllerLaunchPlanMcpArgs)
     ok: result.ok,
     mode: "project_controller_status",
     controllerJobId: controller.controller.jobId,
+    providerKind: projectControllerProviderKind(args),
     registryRootDir: controller.registryRootDir,
     stateDir: state.stateDir,
     sessionId: state.sessionId,
@@ -2861,6 +2867,7 @@ async function projectControllerStop(args: ProjectControllerLaunchPlanMcpArgs) {
       ok: stopped.ok,
       mode: "project_controller_stop",
       controllerJobId: controller.controller.jobId,
+      providerKind: projectControllerProviderKind(args),
       registryRootDir: controller.registryRootDir,
       stateDir: state.stateDir,
       sessionId: state.sessionId,
@@ -2875,6 +2882,7 @@ async function projectControllerStop(args: ProjectControllerLaunchPlanMcpArgs) {
     ok: false,
     mode: "project_controller_stop",
     controllerJobId: controller.controller.jobId,
+    providerKind: projectControllerProviderKind(args),
     registryRootDir: controller.registryRootDir,
     stateDir: state.stateDir,
     sessionId: state.sessionId,
@@ -2905,6 +2913,7 @@ async function projectControllerReconcile(args: ProjectControllerLaunchPlanMcpAr
       ok: reconciled.ok,
       mode: "project_controller_reconcile",
       controllerJobId: controller.controller.jobId,
+      providerKind: projectControllerProviderKind(args),
       registryRootDir: controller.registryRootDir,
       stateDir: state.stateDir,
       sessionId: state.sessionId,
@@ -2920,6 +2929,7 @@ async function projectControllerReconcile(args: ProjectControllerLaunchPlanMcpAr
     ok: false,
     mode: "project_controller_reconcile",
     controllerJobId: controller.controller.jobId,
+    providerKind: projectControllerProviderKind(args),
     registryRootDir: controller.registryRootDir,
     stateDir: state.stateDir,
     sessionId: state.sessionId,
@@ -2953,9 +2963,44 @@ function projectControllerState(
   return {
     cwd,
     stateDir,
-    sessionId: `${controller.controller.jobId}:controlled-agent`,
+    sessionId: projectControllerSessionId(
+      controller.controller.jobId,
+      projectControllerProviderKind(args),
+    ),
     store: new LocalControlledAgentStateStore({ rootDir: stateDir }),
   };
+}
+
+type ProjectControllerProviderKind =
+  | RunEventProviderKind.Codex
+  | RunEventProviderKind.Claude;
+
+type ProjectControllerProfile =
+  | ReturnType<typeof buildCodexControlledAgentProfile>
+  | ReturnType<typeof buildLocalClaudeControlledAgentProfile>;
+
+function projectControllerProviderKind(
+  args: ProjectControllerLaunchPlanMcpArgs,
+): ProjectControllerProviderKind {
+  const providerKind = optionalRunEventProviderKind(args.providerKind) ??
+    RunEventProviderKind.Codex;
+  if (
+    providerKind === RunEventProviderKind.Codex ||
+    providerKind === RunEventProviderKind.Claude
+  ) {
+    return providerKind;
+  }
+  throw new Error(`project_controller_provider_kind_unsupported:${providerKind}`);
+}
+
+function projectControllerSessionId(
+  controllerJobId: string,
+  providerKind: ProjectControllerProviderKind,
+): string {
+  if (providerKind === RunEventProviderKind.Codex) {
+    return `${controllerJobId}:controlled-agent`;
+  }
+  return `${controllerJobId}:controlled-agent:${providerKind}`;
 }
 
 function projectControllerProfile(
@@ -2964,10 +3009,9 @@ function projectControllerProfile(
     readonly stateDir: string;
     readonly cwd: string;
   },
-): ReturnType<typeof buildCodexControlledAgentProfile> {
-  return buildCodexControlledAgentProfile({
+): ProjectControllerProfile {
+  const common = {
     stateDir: state.stateDir,
-    rawShellMode: args.rawShellMode ?? "disabled-by-provider",
     ...(stringValue(args.mcpServerName) === undefined
       ? {}
       : { mcpServerName: stringValue(args.mcpServerName) as string }),
@@ -2978,6 +3022,13 @@ function projectControllerProfile(
     ...(stringValue(args.mcpCwd) === undefined
       ? {}
       : { mcpCwd: resolvePath(state.cwd, stringValue(args.mcpCwd) as string) }),
+  };
+  if (projectControllerProviderKind(args) === RunEventProviderKind.Claude) {
+    return buildLocalClaudeControlledAgentProfile(common);
+  }
+  return buildCodexControlledAgentProfile({
+    ...common,
+    rawShellMode: args.rawShellMode ?? "disabled-by-provider",
   });
 }
 
@@ -2990,7 +3041,7 @@ function projectControllerLaunchInput(
     readonly sessionId: string;
     readonly stateDir: string;
   },
-  profile: ReturnType<typeof buildCodexControlledAgentProfile>,
+  profile: ProjectControllerProfile,
 ) {
   return buildControlledAgentLaunchPlan({
     controllerJobId: controller.controller.jobId,
@@ -3003,7 +3054,114 @@ function projectControllerLaunchInput(
   });
 }
 
-async function controlledAgentAccount(input: {
+function projectControllerAllowedTools(
+  profile: ProjectControllerProfile,
+): readonly string[] {
+  return profile.providerKind === RunEventProviderKind.Codex
+    ? profile.enabledTools
+    : profile.allowedTools;
+}
+
+function projectControllerProfileReadyJson(
+  profile: ProjectControllerProfile,
+): JsonObject {
+  if (profile.providerKind === RunEventProviderKind.Codex) {
+    return {
+      allowedTools: profile.enabledTools,
+      codexHome: profile.codexHome,
+      configToml: profile.configToml,
+      rulesText: profile.rulesText,
+    };
+  }
+  return {
+    allowedTools: profile.allowedTools,
+    disallowedTools: profile.disallowedTools,
+    configDir: profile.configDir,
+    mcpConfig: profile.mcpConfig,
+    strictMcpConfig: profile.strictMcpConfig,
+    appendSystemPrompt: profile.appendSystemPrompt,
+  };
+}
+
+async function projectControllerProvider(input: {
+  readonly args: ProjectControllerLaunchPlanMcpArgs;
+  readonly controller: {
+    readonly controller: CodexGoalJobManifest;
+    readonly registryRootDir: string;
+    readonly scope: ProjectAccessScope;
+  };
+  readonly launch: CodexGoalLaunchInput;
+  readonly profile: ProjectControllerProfile;
+  readonly state: {
+    readonly cwd: string;
+  };
+}): Promise<{
+  readonly provider: ControlledAgentProviderPort;
+  readonly account?: JsonObject;
+  readonly sessionArtifact?: JsonObject;
+  readonly safeMessage: string;
+}> {
+  if (input.profile.providerKind === RunEventProviderKind.Claude) {
+    const loaded = await controlledAgentClaudeSessionArtifact(input);
+    const controllerObjective = await readFile(input.launch.config.promptPath, "utf8");
+    return {
+      provider: createLocalClaudeControlledAgentProvider({
+        profile: input.profile,
+        sessionArtifact: loaded.sessionArtifact,
+        workspacePath: input.launch.config.workspacePath,
+        ...(stringValue(input.args.claudePath) === undefined
+          ? {}
+          : { claudePath: stringValue(input.args.claudePath) as string }),
+        ...(input.launch.config.model === undefined ? {} : { model: input.launch.config.model }),
+        ...(input.args.maxGoalTurns === undefined
+          ? {}
+          : { maxTurns: input.args.maxGoalTurns }),
+        controllerObjective,
+      }),
+      sessionArtifact: {
+        path: loaded.path,
+        sha256Prefix: loaded.sha256Prefix,
+      },
+      safeMessage:
+        "Claude broker-only controlled-agent provider started with strict MCP broker tools.",
+    };
+  }
+
+  const account = await controlledAgentCodexAccount({
+    controller: input.controller,
+    launch: input.launch,
+  });
+  const controllerObjective = await readFile(input.launch.config.promptPath, "utf8");
+  return {
+    provider: new CodexControlledAgentProvider({
+      profile: input.profile,
+      sessionArtifact: account.sessionArtifact,
+      workspacePath: input.launch.config.workspacePath,
+      codexBinaryPath: input.launch.config.codexBinaryPath ?? "codex",
+      controllerObjective,
+      ...(input.launch.config.model === undefined ? {} : { model: input.launch.config.model }),
+      ...(input.launch.config.reasoningEffort === undefined
+        ? {}
+        : { reasoningEffort: input.launch.config.reasoningEffort }),
+      ...(input.launch.config.serviceTier === undefined
+        ? {}
+        : { serviceTier: input.launch.config.serviceTier }),
+      ...(input.args.maxGoalTurns === undefined
+        ? {}
+        : { maxGoalTurns: input.args.maxGoalTurns }),
+    }),
+    account: {
+      name: account.name,
+      ...(account.authJsonSha256Prefix === undefined
+        ? {}
+        : { authJsonSha256Prefix: account.authJsonSha256Prefix }),
+    },
+    safeMessage:
+      "Codex broker-only controlled-agent provider started with native app-server environments disabled.",
+  };
+}
+
+async function controlledAgentCodexAccount(input: {
   readonly controller: {
     readonly scope: ProjectAccessScope;
   };
@@ -3042,6 +3200,33 @@ async function controlledAgentAccount(input: {
       : { authJsonSha256Prefix: selected.authJsonSha256Prefix }),
     sessionArtifact: sessionArtifactFromCodexAuthJson(authJsonBytes),
   };
+}
+
+async function controlledAgentClaudeSessionArtifact(input: {
+  readonly args: ProjectControllerLaunchPlanMcpArgs;
+  readonly controller: {
+    readonly scope: ProjectAccessScope;
+  };
+  readonly state: {
+    readonly cwd: string;
+  };
+}): Promise<{
+  readonly path: string;
+  readonly sha256Prefix: string;
+  readonly sessionArtifact: SessionArtifact;
+}> {
+  if (!input.controller.scope.authRoot) {
+    throw new Error("project_control_controller_auth_root_scope_required");
+  }
+  const rawPath = stringValue(input.args.sessionArtifactPath);
+  if (rawPath === undefined) {
+    throw new Error("project_control_controller_session_artifact_path_required");
+  }
+  return loadScopedClaudeSessionArtifact({
+    sessionArtifactPath: rawPath,
+    authRoot: input.controller.scope.authRoot,
+    cwd: input.state.cwd,
+  });
 }
 
 function projectIntegrationDeps(controller: {
@@ -5030,13 +5215,16 @@ async function projectAgentRunEvents(
 ): Promise<JsonObject> {
   const providerKind = optionalRunEventProviderKind(args.providerKind) ??
     RunEventProviderKind.Codex;
-  if (providerKind !== RunEventProviderKind.Codex) {
+  if (
+    providerKind !== RunEventProviderKind.Codex &&
+    providerKind !== RunEventProviderKind.Claude
+  ) {
     return {
       ok: false,
       mode: "project_events",
       sideEffects: [],
       providerKind,
-      supportedProviderKinds: [RunEventProviderKind.Codex],
+      supportedProviderKinds: [RunEventProviderKind.Codex, RunEventProviderKind.Claude],
       reason: "provider_event_projection_not_implemented",
       safeMessage:
         `Run event projection for provider '${providerKind}' is not implemented yet. Projection did not start, stop, continue, recover or deliver work.`,

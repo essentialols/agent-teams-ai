@@ -294,6 +294,12 @@ process restart or split-brain attempt. Do not use `danger_full_access`; stop or
 reconcile from the owning process, or restart from clean controlled-agent state.
 For Codex `start` also requires `projectAccessScope.authRoot` to match the
 controller job `authRootDir` and at least one ready allowed account.
+For Claude, pass `providerKind: "claude"` and `sessionArtifactPath`; the path
+must resolve inside `projectAccessScope.authRoot`. The runtime validates both
+the declared path and the realpath target so a symlink cannot escape the scoped
+auth/session root. A `project_scoped_control` manifest is only a policy
+manifest; it is not a live LLM controller until `codex_goal_project_controller_start`
+successfully starts a provider.
 
 To run the real Codex controller-to-child regression through the host-side
 broker tools, use:
@@ -355,7 +361,7 @@ reviewed output:
 
 ```sh
 SUBSCRIPTION_RUNTIME_LIVE_WORKERS=1 \
-  CODEX_LIVE_ACCOUNT=account-f \
+  CODEX_LIVE_ACCOUNTS=account-e,account-f \
   SUBSCRIPTION_RUNTIME_LIVE_E2E_ONLY=claude-controlled-controller-starts-real-child-worker \
   npm run e2e:live-workers
 ```
@@ -364,6 +370,21 @@ If the selected Codex account is quota-limited, this scenario reports a safe
 skip instead of faking a result. A safe skip means the Claude controller surface
 can still be valid, but the child-worker evidence must be rerun with a live
 Codex account before claiming the mixed-provider path passed.
+
+To prove the production MCP start path for Claude, provide a real Claude session
+artifact JSON file under the scoped auth root:
+
+```sh
+SUBSCRIPTION_RUNTIME_LIVE_WORKERS=1 \
+  CLAUDE_LIVE_SESSION_ARTIFACT_PATH=/secure/claude-auth/account-a/session.json \
+  SUBSCRIPTION_RUNTIME_LIVE_E2E_ONLY=claude-project-controller-production-mcp-start \
+  npm run e2e:live-workers
+```
+
+This is stronger than the ambient Claude CLI harness because it goes through
+`codex_goal_project_controller_launch_plan` and
+`codex_goal_project_controller_start` with `providerKind: "claude"`. It still
+uses a sandbox project and must not print the OAuth payload.
 
 If the selected account is expired, quota-limited or capacity-limited, the
 harness reports the scenario as skipped. That means auth/account state must be

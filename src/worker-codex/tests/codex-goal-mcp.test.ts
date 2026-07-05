@@ -834,6 +834,33 @@ describe("codex goal MCP server", () => {
       expect(String(readyPlan.configToml)).not.toContain("danger-full-access");
       expect(String(readyPlan.rulesText)).toContain('pattern = ["git"]');
 
+      const claudePlan = await callToolJson(
+        client,
+        "codex_goal_project_controller_launch_plan",
+        {
+          registryRootDir,
+          controllerJobId: "infinity-context-controller-v1",
+          providerKind: "claude",
+          stateDir: join(root, "controller-state"),
+          mcpArgs: ["--stdio"],
+        },
+      );
+      expect(claudePlan).toMatchObject({
+        ok: true,
+        mode: "project_controller_launch_plan",
+        providerKind: "claude",
+        controllerJobId: "infinity-context-controller-v1",
+        sessionId: "infinity-context-controller-v1:controlled-agent:claude",
+        status: "ready",
+        strictMcpConfig: true,
+      });
+      expect((claudePlan.allowedTools as readonly string[]).every((tool) =>
+        tool.startsWith("mcp__subscription_runtime_project_control__")
+      )).toBe(true);
+      expect(claudePlan.disallowedTools).toEqual(
+        expect.arrayContaining(["Bash", "Edit", "Write", "Read"]),
+      );
+
       const blockedStart = await callToolJson(
         client,
         "codex_goal_project_controller_start",
@@ -875,6 +902,82 @@ describe("codex goal MCP server", () => {
         ok: false,
         mode: "project_controller_status",
         reason: "session_missing",
+      });
+    } finally {
+      await client.close();
+      await server.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when a Claude project controller lacks a scoped session artifact", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-controller-claude-"));
+    const registryRootDir = join(root, "worker-jobs", "registry");
+    const controllerJobRoot = join(root, "worker-jobs", "infinity-context-controller-v1");
+    const authRootDir = join(root, "auth");
+    const server = createCodexGoalMcpServer();
+    const client = new Client({
+      name: "subscription-runtime-test",
+      version: "0.0.0",
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+    try {
+      await Promise.all([
+        server.connect(serverTransport),
+        client.connect(clientTransport),
+      ]);
+
+      await callToolJson(client, "codex_goal_create_job", {
+        registryRootDir,
+        jobId: "infinity-context-controller-v1",
+        jobRootDir: controllerJobRoot,
+        authRootDir,
+        workspacePath: join(root, "workspaces", "controller"),
+        promptPath: join(controllerJobRoot, "prompt.md"),
+        taskId: "infinity-context-controller-v1",
+        accounts: ["account-a"],
+        accessBoundary: AccessBoundary.ProjectScopedControl,
+        networkAccess: NetworkAccessMode.Restricted,
+        projectAccessScope: {
+          projectId: "infinity-context",
+          workspaceRoots: [join(root, "workspaces")],
+          worktreeRoots: [join(root, "worktrees")],
+          registryRoot: registryRootDir,
+          authRoot: authRootDir,
+          jobIdPrefixes: ["infinity-context-"],
+          tmuxSessionPrefixes: ["infinity-context-"],
+          allowedAccountIds: ["account-a"],
+        },
+      });
+
+      const missingPath = await callToolJson(
+        client,
+        "codex_goal_project_controller_start",
+        {
+          registryRootDir,
+          controllerJobId: "infinity-context-controller-v1",
+          providerKind: "claude",
+        },
+      );
+      expect(missingPath).toMatchObject({
+        ok: false,
+        error: "project_control_controller_session_artifact_path_required",
+      });
+
+      const outsidePath = await callToolJson(
+        client,
+        "codex_goal_project_controller_start",
+        {
+          registryRootDir,
+          controllerJobId: "infinity-context-controller-v1",
+          providerKind: "claude",
+          sessionArtifactPath: join(root, "outside-session.json"),
+        },
+      );
+      expect(outsidePath).toMatchObject({
+        ok: false,
+        error: "project_control_controller_session_artifact_outside_scope",
       });
     } finally {
       await client.close();
@@ -1576,6 +1679,31 @@ describe("codex goal MCP server", () => {
           },
         });
         expect(JSON.stringify(watch).includes("claude-oauth-secret")).toBe(false);
+
+        const eventRootDir = join(root, "events");
+        const projected = await callToolJson(client, "agent_run_project_events", {
+          providerKind: "claude",
+          stateRootDir,
+          eventRootDir,
+          jobId: "claude-watch-run",
+          hostId: "test-host",
+        });
+
+        expect(projected).toMatchObject({
+          ok: true,
+          mode: "project_events",
+          sideEffects: ["append_run_events", "write_projection_state"],
+          providerKind: "claude",
+          appendedCount: expect.any(Number),
+          projectedRuns: [
+            expect.objectContaining({
+              runId: "claude-watch-run",
+              status: "completed",
+            }),
+          ],
+        });
+        expect((projected.appendedCount as number)).toBeGreaterThan(0);
+        expect(JSON.stringify(projected).includes("claude-oauth-secret")).toBe(false);
       } finally {
         await client.close();
         await server.close();

@@ -185,12 +185,14 @@ fail closed when that session cannot be provided.
 The controlled-agent MCP lifecycle tools are:
 
 - `codex_goal_project_controller_launch_plan`: build the fail-closed plan;
-- `codex_goal_project_controller_start`: start the Codex app-server controlled
-  provider only when the plan is ready, `projectAccessScope.authRoot` is scoped,
-  a configured account is ready and the provider can enforce broker-only tools.
-  The stored controller `prompt.md` becomes the live controller objective.
-  `maxGoalTurns` is available for bounded smoke/debug runs, not as the normal
-  production orchestration mode;
+- `codex_goal_project_controller_start`: start a provider-specific
+  controlled-agent only when the plan is ready and the provider can enforce
+  broker-only tools. Codex requires `projectAccessScope.authRoot` to match the
+  controller `authRootDir` plus a ready allowed account. Claude requires
+  `providerKind: "claude"` and `sessionArtifactPath` inside
+  `projectAccessScope.authRoot`. The stored controller `prompt.md` becomes the
+  live controller objective. `maxGoalTurns` is available for bounded
+  smoke/debug runs, not as the normal production orchestration mode;
 - `codex_goal_project_controller_status`: read persisted controller session/run
   state and include provider liveness only when the provider instance is still
   attached in this MCP process;
@@ -208,8 +210,10 @@ Minimum safe scope:
 
 - `registryRoot`: the single worker registry this controller may write through
   the broker;
-- `authRoot`: the single Codex auth root the host-side runtime may read to seed
-  the controlled provider session;
+- `authRoot`: the single provider auth/session root the host-side runtime may
+  read to seed the controlled provider session. For Codex this is the
+  `authRoot/account/auth.json` tree. For Claude this is the parent root that may
+  contain the explicit `sessionArtifactPath`;
 - `workspaceRoots`: existing project integration/checkpoint workspaces;
 - `worktreeRoots`: parent directories where child worktrees may be created;
 - `jobIdPrefixes`: project-specific prefixes for child job ids and job roots;

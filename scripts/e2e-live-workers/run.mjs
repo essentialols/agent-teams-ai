@@ -12,7 +12,7 @@ import {
 } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import {
   AccessBoundary,
   LaunchPlanStatus,
@@ -56,8 +56,15 @@ const codexAuthRoot = resolveHome(
   process.env.CODEX_LIVE_AUTH_ROOT ??
     "~/.cache/subscription-runtime/live-codex-auth",
 );
-const codexAccount = process.env.CODEX_LIVE_ACCOUNT ?? "account-a";
-const codexAuthJsonPath = join(codexAuthRoot, codexAccount, "auth.json");
+const requestedCodexAccounts = codexAccountsFromEnv();
+const codexAccounts = requestedCodexAccounts.filter((account) =>
+  existsSync(codexAuthJsonPathFor(account))
+);
+const codexAccount = codexAccounts[0] ?? requestedCodexAccounts[0] ?? "account-a";
+const codexAuthJsonPath = codexAuthJsonPathFor(codexAccount);
+const claudeLiveSessionArtifactPath = process.env.CLAUDE_LIVE_SESSION_ARTIFACT_PATH
+  ? resolveHome(process.env.CLAUDE_LIVE_SESSION_ARTIFACT_PATH)
+  : undefined;
 
 const results = [];
 
@@ -83,6 +90,10 @@ async function main() {
   await run(
     "claude controlled controller real cli launcher",
     claudeControlledControllerRealCliLauncher,
+  );
+  await run(
+    "claude project controller production mcp start",
+    claudeProjectControllerProductionMcpStart,
   );
   await run(
     "claude controlled controller integrates reviewed worker output",
@@ -345,7 +356,7 @@ async function codexProjectControllerStartsChildWorker() {
       tmuxSessionPrefixes: [prefix],
       allowedBranches: ["main", "master"],
       allowedGitRemotes: ["origin"],
-      allowedAccountIds: [codexAccount],
+      allowedAccountIds: codexAccounts,
     };
 
     await codexGoalTool("codex_goal_create_job", {
@@ -359,7 +370,7 @@ async function codexProjectControllerStartsChildWorker() {
       promptPath: controllerPrompt,
       taskId: controllerJobId,
       progressPath: join(controllerJobRoot, `${controllerJobId}.progress.json`),
-      accounts: [codexAccount],
+      accounts: codexAccounts,
       tmuxSession: controllerJobId,
       model: process.env.CODEX_LIVE_MODEL ?? "gpt-5.5",
       reasoningEffort: process.env.CODEX_LIVE_EFFORT ?? "high",
@@ -392,7 +403,7 @@ async function codexProjectControllerStartsChildWorker() {
       promptPath: childPrompt,
       taskId: childJobId,
       progressPath: join(childJobRoot, `${childJobId}.progress.json`),
-      accounts: [codexAccount],
+      accounts: codexAccounts,
       tmuxSession: childTmuxSession,
       model: process.env.CODEX_LIVE_MODEL ?? "gpt-5.5",
       reasoningEffort: process.env.CODEX_LIVE_EFFORT ?? "high",
@@ -1172,6 +1183,126 @@ async function claudeControlledControllerRealCliLauncher() {
   }
 }
 
+async function claudeProjectControllerProductionMcpStart() {
+  const skip = claudeSkipReason();
+  if (skip) return { skipped: true, reason: skip };
+  if (!claudeLiveSessionArtifactPath) {
+    return {
+      skipped: true,
+      reason: "CLAUDE_LIVE_SESSION_ARTIFACT_PATH is not set",
+    };
+  }
+  if (!existsSync(claudeLiveSessionArtifactPath)) {
+    return {
+      skipped: true,
+      reason: "CLAUDE_LIVE_SESSION_ARTIFACT_PATH does not exist",
+    };
+  }
+
+  const root = await sandboxRoot("claude-controller-production-mcp-");
+  try {
+    const sourceWorkspace = await gitSandbox(join(root, "source"), {
+      "README.md": "Claude production MCP controller live sandbox only.\n",
+    });
+    const branch = runChecked("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+      cwd: sourceWorkspace,
+    }).stdout.trim();
+    const registryRootDir = join(root, "registry");
+    const jobsRoot = join(root, "jobs");
+    const worktreesRoot = join(root, "worktrees");
+    const authRoot = dirname(claudeLiveSessionArtifactPath);
+    await mkdir(registryRootDir, { recursive: true });
+    await mkdir(jobsRoot, { recursive: true });
+    await mkdir(worktreesRoot, { recursive: true });
+
+    const prefix = "claude-production-controller-";
+    const controllerJobId = `${prefix}v1`;
+    const controllerJobRoot = join(jobsRoot, controllerJobId);
+    const controllerPrompt = join(controllerJobRoot, "prompt.md");
+    await mkdir(controllerJobRoot, { recursive: true });
+    await writeFile(
+      controllerPrompt,
+      [
+        "Production MCP Claude controller smoke.",
+        "Do not create workers, do not edit files, do not use raw host tools.",
+        "Reply with CLAUDE_PRODUCTION_CONTROLLER_OK and finish.",
+      ].join("\n"),
+    );
+
+    const projectAccessScope = {
+      projectId: "claude-production-controller-live-e2e",
+      registryRoot: registryRootDir,
+      authRoot,
+      workspaceRoots: [sourceWorkspace],
+      worktreeRoots: [worktreesRoot],
+      jobIdPrefixes: [prefix],
+      tmuxSessionPrefixes: [prefix],
+      allowedBranches: [branch],
+      allowedGitRemotes: ["origin"],
+      allowedAccountIds: ["claude-session"],
+    };
+    assertToolOk(codexGoalTool("codex_goal_create_job", {
+      registryRootDir,
+      jobId: controllerJobId,
+      description: "Production MCP Claude project controller live e2e",
+      jobRootDir: controllerJobRoot,
+      authRootDir: authRoot,
+      stateRootDir: join(controllerJobRoot, "state"),
+      workspacePath: sourceWorkspace,
+      promptPath: controllerPrompt,
+      taskId: controllerJobId,
+      progressPath: join(controllerJobRoot, `${controllerJobId}.progress.json`),
+      accounts: ["claude-session"],
+      tmuxSession: controllerJobId,
+      accessBoundary: "project_scoped_control",
+      projectAccessScope,
+      networkAccess: "restricted",
+      model: process.env.CLAUDE_LIVE_MODEL ?? "sonnet",
+      confirmCreate: true,
+    }), "create production Claude controller manifest");
+
+    const plan = assertToolOk(codexGoalTool("codex_goal_project_controller_launch_plan", {
+      registryRootDir,
+      controllerJobId,
+      providerKind: "claude",
+      mcpCommand: process.execPath,
+      mcpArgs: [join(process.cwd(), "dist/worker-codex/codex-goal-mcp.js")],
+      mcpCwd: process.cwd(),
+    }), "production Claude controller launch plan");
+    assertEqual(plan.providerKind, "claude");
+    assert(
+      String(plan.sessionId).endsWith(":controlled-agent:claude"),
+      "Claude production controller must use provider-specific session id",
+    );
+
+    const started = assertToolOk(codexGoalTool("codex_goal_project_controller_start", {
+      registryRootDir,
+      controllerJobId,
+      providerKind: "claude",
+      sessionArtifactPath: claudeLiveSessionArtifactPath,
+      mcpCommand: process.execPath,
+      mcpArgs: [join(process.cwd(), "dist/worker-codex/codex-goal-mcp.js")],
+      mcpCwd: process.cwd(),
+      maxGoalTurns: Number(process.env.CLAUDE_CONTROLLED_LIVE_MAX_TURNS ?? "1"),
+    }), "production Claude controller start");
+    assertEqual(started.providerKind, "claude");
+    assertEqual(started.status, ControlledAgentRunStatus.Running);
+    assert(
+      !JSON.stringify(started).includes("oauth"),
+      "production start response must not include Claude oauth payloads",
+    );
+
+    return {
+      root: keepArtifacts ? root : undefined,
+      providerKind: started.providerKind,
+      status: started.status,
+      sessionArtifactSha256Prefix: started.sessionArtifact?.sha256Prefix,
+    };
+  } finally {
+    await cleanup(root);
+  }
+}
+
 async function claudeControlledControllerIntegratesReviewedOutput() {
   const skip = claudeSkipReason();
   if (skip) return { skipped: true, reason: skip };
@@ -1464,7 +1595,7 @@ async function claudeControlledControllerStartsChildWorker() {
       tmuxSessionPrefixes: [prefix],
       allowedBranches: ["main", "master"],
       allowedGitRemotes: ["origin"],
-      allowedAccountIds: [codexAccount],
+      allowedAccountIds: codexAccounts,
     };
     assertToolOk(codexGoalTool("codex_goal_create_job", {
       registryRootDir,
@@ -1477,7 +1608,7 @@ async function claudeControlledControllerStartsChildWorker() {
       promptPath: controllerPrompt,
       taskId: controllerJobId,
       progressPath: join(controllerJobRoot, `${controllerJobId}.progress.json`),
-      accounts: [codexAccount],
+      accounts: codexAccounts,
       tmuxSession: controllerJobId,
       accessBoundary: "project_scoped_control",
       projectAccessScope,
@@ -1531,7 +1662,7 @@ async function claudeControlledControllerStartsChildWorker() {
           promptPath: childPrompt,
           taskId: childJobId,
           progressPath: join(childJobRoot, `${childJobId}.progress.json`),
-          accounts: [codexAccount],
+          accounts: codexAccounts,
           tmuxSession: childTmuxSession,
           model: process.env.CODEX_LIVE_MODEL ?? "gpt-5.5",
           reasoningEffort: process.env.CODEX_LIVE_EFFORT ?? "high",
@@ -1961,11 +2092,26 @@ async function claudeInboxEdit() {
 
 function codexSkipReason() {
   if (!allowLive) return "set SUBSCRIPTION_RUNTIME_LIVE_WORKERS=1 or pass --allow-live";
-  if (!existsSync(codexAuthJsonPath)) {
-    return `missing Codex auth slot: ${redactPath(codexAuthJsonPath)}`;
+  if (codexAccounts.length === 0) {
+    return `missing Codex auth slots: ${
+      requestedCodexAccounts.map((account) =>
+        redactPath(codexAuthJsonPathFor(account))
+      ).join(", ")
+    }`;
   }
   if (!hasCommand("codex")) return "codex command not found";
   return null;
+}
+
+function codexAccountsFromEnv() {
+  const raw = process.env.CODEX_LIVE_ACCOUNTS ??
+    process.env.CODEX_LIVE_ACCOUNT ??
+    "account-a";
+  return raw.split(",").map((account) => account.trim()).filter(Boolean);
+}
+
+function codexAuthJsonPathFor(account) {
+  return join(codexAuthRoot, account, "auth.json");
 }
 
 function claudeSkipReason() {

@@ -54,18 +54,29 @@ const syntheticRequest: TeamCreateRequest = {
   members: [{ name: 'Builder', role: 'Build' }],
 };
 
+const testArtifactsRoot = '/repo/.agent-teams-test-artifacts';
+const authHelperDirectory = `${testArtifactsRoot}/auth-helper`;
+const authHelperPath = `${authHelperDirectory}/helper.sh`;
+const authHelperKeyPath = `${authHelperDirectory}/key`;
+const authHelperSettingsPath = `${authHelperDirectory}/settings.json`;
+const bootstrapSpecPath = `${testArtifactsRoot}/agent-teams-test-spec/spec.json`;
+const bootstrapUserPromptPath = `${testArtifactsRoot}/agent-teams-test-prompt/prompt.txt`;
+const mcpConfigPath = `${testArtifactsRoot}/mcp.json`;
+
 const anthropicApiKeyHelper = {
   teamName: 'demo',
-  directory: '/tmp/auth-helper',
-  helperPath: '/tmp/auth-helper/helper.sh',
-  keyPath: '/tmp/auth-helper/key',
-  settingsPath: '/tmp/auth-helper/settings.json',
-  settingsObject: { apiKeyHelper: '/tmp/auth-helper/helper.sh' },
-  settingsArgs: ['--settings', '{"apiKeyHelper":"/tmp/auth-helper/helper.sh"}'],
+  directory: authHelperDirectory,
+  helperPath: authHelperPath,
+  keyPath: authHelperKeyPath,
+  settingsPath: authHelperSettingsPath,
+  settingsObject: { apiKeyHelper: authHelperPath },
+  settingsArgs: ['--settings', JSON.stringify({ apiKeyHelper: authHelperPath })],
   envPatch: {},
 };
 
-function createRun(overrides: Partial<DeterministicLaunchSpawnFlowRun> = {}) {
+function createRun(
+  overrides: Partial<DeterministicLaunchSpawnFlowRun> = {}
+): DeterministicLaunchSpawnFlowRun {
   const progress: TeamProvisioningProgress = {
     runId: 'run-1',
     teamName: 'demo',
@@ -79,9 +90,9 @@ function createRun(overrides: Partial<DeterministicLaunchSpawnFlowRun> = {}) {
     runId: 'run-1',
     teamName: 'demo',
     progress,
-    bootstrapSpecPath: '/tmp/agent-teams-test-spec/spec.json',
-    bootstrapUserPromptPath: '/tmp/agent-teams-test-prompt/prompt.txt',
-    mcpConfigPath: '/tmp/mcp.json',
+    bootstrapSpecPath,
+    bootstrapUserPromptPath,
+    mcpConfigPath,
     requiresFirstRealTurnSuccess: true,
     cancelRequested: false,
     processKilled: false,
@@ -186,7 +197,7 @@ describe('TeamProvisioningLaunchDeterministicSpawnFlow', () => {
           order.push('cleanup-auth');
         }),
         mcpConfigBuilder: {
-          writeConfigFile: vi.fn(async () => '/tmp/mcp.json'),
+          writeConfigFile: vi.fn(async () => mcpConfigPath),
           removeConfigFile: vi.fn(async () => {
             order.push('remove-mcp');
           }),
@@ -231,7 +242,7 @@ describe('TeamProvisioningLaunchDeterministicSpawnFlow', () => {
           order.push('cleanup-auth');
         }),
         mcpConfigBuilder: {
-          writeConfigFile: vi.fn(async () => '/tmp/mcp.json'),
+          writeConfigFile: vi.fn(async () => mcpConfigPath),
           removeConfigFile: vi.fn(async () => {
             order.push('remove-mcp');
           }),

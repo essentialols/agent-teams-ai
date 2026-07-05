@@ -8,6 +8,9 @@ import {
 
 import type { TeamNotificationPayload } from '@main/utils/teamNotificationBuilder';
 
+const provisionTeamProjectPath = '/repo/.agent-teams-test-projects/provision-team';
+const launchTeamProjectPath = '/repo/.agent-teams-test-projects/launch-team';
+
 describe('TeamProvisioningLaunchNotifications', () => {
   it('fires the non-launch provisioned notification payload', async () => {
     const run = runLike({
@@ -16,7 +19,7 @@ describe('TeamProvisioningLaunchNotifications', () => {
       runId: 'run-42',
       request: {
         displayName: 'Provision Team',
-        cwd: '/tmp/provision-team',
+        cwd: provisionTeamProjectPath,
       },
     });
     const ports = createPorts({
@@ -36,7 +39,7 @@ describe('TeamProvisioningLaunchNotifications', () => {
       body: 'Team "Provision Team" has been provisioned and is ready for tasks.',
       dedupeKey: 'team_launched:provision-team:run-42',
       target: { kind: 'team', teamName: 'provision-team', section: 'overview' },
-      projectPath: '/tmp/provision-team',
+      projectPath: provisionTeamProjectPath,
       suppressToast: true,
     });
   });
@@ -165,7 +168,7 @@ function runLike(
     runId: 'run-1',
     request: {
       displayName: 'Launch Team',
-      cwd: '/tmp/launch-team',
+      cwd: launchTeamProjectPath,
     },
     expectedMembers: [],
     allEffectiveMembers: [],
@@ -187,7 +190,7 @@ function teamNotificationPayload(
     body: 'Team launched',
     dedupeKey: 'team_launched:launch-team:run-1',
     target: { kind: 'team', teamName: 'launch-team', section: 'overview' },
-    projectPath: '/tmp/launch-team',
+    projectPath: launchTeamProjectPath,
     suppressToast: false,
     ...overrides,
   };

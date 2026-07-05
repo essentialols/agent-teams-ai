@@ -13,6 +13,12 @@ import type {
   TeamProvisioningProgress,
 } from '@shared/types';
 
+const testArtifactsRoot = '/repo/.agent-teams-test-artifacts';
+const authHelperDirectory = `${testArtifactsRoot}/helper`;
+const authHelperPath = `${authHelperDirectory}/helper.sh`;
+const authHelperKeyPath = `${authHelperDirectory}/key`;
+const authHelperSettingsPath = `${authHelperDirectory}/settings.json`;
+
 const mocks = vi.hoisted(() => ({
   createDeterministicLaunchProvisioningRun: vi.fn(),
   prepareDeterministicLaunchRunState: vi.fn(),
@@ -28,7 +34,9 @@ vi.mock('../TeamProvisioningLaunchDeterministicSpawnFlow', () => ({
   runDeterministicLaunchSpawnFlow: mocks.runDeterministicLaunchSpawnFlow,
 }));
 
-type TestLane = { laneId: string };
+interface TestLane {
+  laneId: string;
+}
 
 const progress: TeamProvisioningProgress = {
   runId: 'run-1',
@@ -63,13 +71,13 @@ const setup: PreparedDeterministicLaunchSetup<TestLane> = {
     providerArgs: ['--provider-arg'],
     anthropicApiKeyHelper: {
       teamName: 'team-a',
-      directory: '/tmp/helper',
-      helperPath: '/tmp/helper/helper.sh',
-      keyPath: '/tmp/helper/key',
-      settingsPath: '/tmp/helper/settings.json',
-      settingsObject: { apiKeyHelper: '/tmp/helper/helper.sh' },
-      settingsArgs: ['--settings', '/tmp/helper/settings.json'],
-      envPatch: { ANTHROPIC_API_KEY_HELPER: '/tmp/helper/helper.sh' },
+      directory: authHelperDirectory,
+      helperPath: authHelperPath,
+      keyPath: authHelperKeyPath,
+      settingsPath: authHelperSettingsPath,
+      settingsObject: { apiKeyHelper: authHelperPath },
+      settingsArgs: ['--settings', authHelperSettingsPath],
+      envPatch: { ANTHROPIC_API_KEY_HELPER: authHelperPath },
     },
   },
   workspaceTrustFeatureFlags: {

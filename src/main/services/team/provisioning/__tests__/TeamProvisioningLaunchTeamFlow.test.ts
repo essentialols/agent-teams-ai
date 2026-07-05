@@ -71,7 +71,13 @@ const launchRequest: TeamLaunchRequest = {
   skipPermissions: false,
 };
 
-function createLaunchBootstrapRun() {
+const testArtifactsRoot = '/repo/.agent-teams-test-artifacts';
+const memberMcpConfigPath = `${testArtifactsRoot}/member-mcp.json`;
+const mcpConfigPath = `${testArtifactsRoot}/mcp.json`;
+const bootstrapSpecPath = `${testArtifactsRoot}/spec.json`;
+const bootstrapUserPromptPath = `${testArtifactsRoot}/prompt.txt`;
+
+function createLaunchBootstrapRun(): { run: TeamProvisioningLaunchBootstrapRun } {
   const progress: TeamProvisioningProgress = {
     runId: 'run-1',
     teamName: 'demo',
@@ -328,9 +334,7 @@ describe('TeamProvisioningLaunchTeamFlow', () => {
     expect(run.lastMemberSpawnAuditMissingWarningAt).toBeInstanceOf(Map);
     expect(Array.from(run.memberSpawnStatuses.keys())).toEqual(['Lead', 'Builder']);
     expect(run.memberSpawnStatuses.get('Lead')?.updatedAt).toBe('2026-01-01T00:00:00.000Z');
-    expect(run.memberSpawnStatuses.get('Builder')?.updatedAt).toBe(
-      '2026-01-01T00:00:01.000Z'
-    );
+    expect(run.memberSpawnStatuses.get('Builder')?.updatedAt).toBe('2026-01-01T00:00:01.000Z');
   });
 
   it.each([
@@ -492,7 +496,7 @@ describe('TeamProvisioningLaunchTeamFlow', () => {
             [
               'Builder',
               {
-                mcpConfigPath: '/tmp/member-mcp.json',
+                mcpConfigPath: memberMcpConfigPath,
                 mcpSettingSources: 'local',
                 strictMcpConfig: true,
               },
@@ -504,23 +508,23 @@ describe('TeamProvisioningLaunchTeamFlow', () => {
           expect(
             spec.members.find((member: { name: string }) => member.name === 'Builder')
           ).toMatchObject({
-            mcpConfigPath: '/tmp/member-mcp.json',
+            mcpConfigPath: memberMcpConfigPath,
             nativeAppManagedBootstrap: { contextText: 'ctx' },
           });
-          return '/tmp/spec.json';
+          return bootstrapSpecPath;
         }),
         writeDeterministicBootstrapUserPromptFile: vi.fn(async (prompt) => {
           order.push(`write-prompt:${prompt}`);
-          return '/tmp/prompt.txt';
+          return bootstrapUserPromptPath;
         }),
         mcpConfigBuilder: {
           writeConfigFile: vi.fn(async (cwd, options) => {
             order.push(`write-mcp:${cwd}:${options.controlApiBaseUrl}`);
-            return '/tmp/mcp.json';
+            return mcpConfigPath;
           }),
         },
-        validateAgentTeamsMcpRuntime: vi.fn(async (mcpConfigPath, options) => {
-          order.push(`validate:${mcpConfigPath}`);
+        validateAgentTeamsMcpRuntime: vi.fn(async (nextMcpConfigPath, options) => {
+          order.push(`validate:${nextMcpConfigPath}`);
           validationOptionsRef.current = options;
         }),
       }
@@ -535,7 +539,7 @@ describe('TeamProvisioningLaunchTeamFlow', () => {
       'write-spec:launch:run-1',
       'write-prompt:hydrate\nprompt',
       'write-mcp:/repo:http://127.0.0.1:1234',
-      'validate:/tmp/mcp.json',
+      `validate:${mcpConfigPath}`,
     ]);
     expect(
       run.provisioningTraceLines.map((line) => line.replace(/^.* \[validating\] /, ''))
@@ -549,16 +553,16 @@ describe('TeamProvisioningLaunchTeamFlow', () => {
       'Validating agent-teams MCP runtime',
     ]);
     expect(run.progress.warnings).toEqual(['Recovered roster', 'Native context is large']);
-    expect(run.bootstrapSpecPath).toBe('/tmp/spec.json');
-    expect(run.bootstrapUserPromptPath).toBe('/tmp/prompt.txt');
-    expect(run.mcpConfigPath).toBe('/tmp/mcp.json');
+    expect(run.bootstrapSpecPath).toBe(bootstrapSpecPath);
+    expect(run.bootstrapUserPromptPath).toBe(bootstrapUserPromptPath);
+    expect(run.mcpConfigPath).toBe(mcpConfigPath);
     expect(run.requiresFirstRealTurnSuccess).toBe(true);
     expect(result).toEqual({
       prompt: 'hydrate\nprompt',
       promptSize: { chars: 14, lines: 2 },
-      mcpConfigPath: '/tmp/mcp.json',
-      bootstrapSpecPath: '/tmp/spec.json',
-      bootstrapUserPromptPath: '/tmp/prompt.txt',
+      mcpConfigPath,
+      bootstrapSpecPath,
+      bootstrapUserPromptPath,
     });
     expect(validationOptionsRef.current?.isCancelled).toBe(isValidationCancelled);
   });
@@ -592,10 +596,10 @@ describe('TeamProvisioningLaunchTeamFlow', () => {
           },
         })),
         buildRuntimeBootstrapMemberMcpLaunchConfigs: vi.fn(async () => new Map()),
-        writeDeterministicBootstrapSpecFile: vi.fn(async () => '/tmp/spec.json'),
-        writeDeterministicBootstrapUserPromptFile: vi.fn(async () => '/tmp/prompt.txt'),
+        writeDeterministicBootstrapSpecFile: vi.fn(async () => bootstrapSpecPath),
+        writeDeterministicBootstrapUserPromptFile: vi.fn(async () => bootstrapUserPromptPath),
         mcpConfigBuilder: {
-          writeConfigFile: vi.fn(async () => '/tmp/mcp.json'),
+          writeConfigFile: vi.fn(async () => mcpConfigPath),
         },
         validateAgentTeamsMcpRuntime: vi.fn(async () => undefined),
       }
@@ -609,9 +613,9 @@ describe('TeamProvisioningLaunchTeamFlow', () => {
 
   it('builds deterministic launch process args in the legacy append order', () => {
     const args = buildDeterministicLaunchProcessArgs({
-      mcpConfigPath: '/tmp/mcp.json',
-      bootstrapSpecPath: '/tmp/spec.json',
-      bootstrapUserPromptPath: '/tmp/prompt.txt',
+      mcpConfigPath,
+      bootstrapSpecPath,
+      bootstrapUserPromptPath,
       skipPermissions: false,
       worktree: 'feature-a',
       providerId: 'codex',
@@ -640,11 +644,11 @@ describe('TeamProvisioningLaunchTeamFlow', () => {
       '--setting-sources',
       'user,project,local',
       '--mcp-config',
-      '/tmp/mcp.json',
+      mcpConfigPath,
       '--team-bootstrap-spec',
-      '/tmp/spec.json',
+      bootstrapSpecPath,
       '--team-bootstrap-user-prompt-file',
-      '/tmp/prompt.txt',
+      bootstrapUserPromptPath,
       '--disallowedTools',
       'TeamDelete',
       '--permission-prompt-tool',

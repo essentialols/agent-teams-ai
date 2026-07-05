@@ -12,8 +12,14 @@ import type {
 } from '../TeamProvisioningLaunchDeterministicRunFlow';
 import type { MemberSpawnStatusEntry, TeamLaunchRequest } from '@shared/types';
 
-type TestLane = { laneId: string };
+interface TestLane {
+  laneId: string;
+}
 type TestRun = DeterministicLaunchRunFlowRun<TestLane>;
+
+const testArtifactsRoot = '/repo/.agent-teams-test-artifacts';
+const mcpConfigPath = `${testArtifactsRoot}/mcp.json`;
+const spoolRootPath = `${testArtifactsRoot}/spool`;
 
 const request = {
   teamName: 'demo',
@@ -80,7 +86,7 @@ class BoundCallbackHost {
   }
 
   readonly mcpConfigBuilder = {
-    writeConfigFile: vi.fn(async () => '/tmp/mcp.json'),
+    writeConfigFile: vi.fn(async () => mcpConfigPath),
     removeConfigFile: vi.fn(async () => undefined),
   };
   readonly teamMetaStore = {
@@ -278,7 +284,7 @@ describe('createTeamProvisioningLaunchDeterministicFlowBoundary', () => {
       members: [],
       run,
     });
-    await runPorts.validateAgentTeamsMcpRuntime('/tmp/mcp.json', cancellationOptions);
+    await runPorts.validateAgentTeamsMcpRuntime(mcpConfigPath, cancellationOptions);
     runPorts.attachStdoutHandler(run);
     runPorts.attachStderrHandler(run);
     runPorts.startStallWatchdog(run);
@@ -293,7 +299,7 @@ describe('createTeamProvisioningLaunchDeterministicFlowBoundary', () => {
       setup.claudePath,
       request.cwd,
       setup.shellEnv,
-      '/tmp/mcp.json',
+      mcpConfigPath,
       cancellationOptions
     );
     expect(runPorts.createInitialMemberSpawnStatusEntry()).toBe(memberSpawnStatus);
@@ -322,7 +328,7 @@ describe('createTeamProvisioningLaunchDeterministicFlowBoundary', () => {
       execute: vi.fn(),
     };
     const runtimeTurnSettledEnvironmentProvider = vi.fn(async () => ({
-      RUNTIME_TURN_SETTLED_SPOOL_ROOT: '/tmp/spool',
+      RUNTIME_TURN_SETTLED_SPOOL_ROOT: spoolRootPath,
     }));
 
     expect(host.getWorkspaceTrustCoordinator).not.toHaveBeenCalled();

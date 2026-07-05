@@ -63,7 +63,6 @@ export interface TeamProvisioningServicePrivateHarness {
     string,
     TeamProvisioningServicePrivateRuntimeAdapterProgressHarness
   >;
-  getResolvableProvisioningRunId: (teamName: string) => string | null;
   readRecentBootstrapTranscriptOutcome: (
     filePath: string,
     sinceMs: number | null,
@@ -106,13 +105,6 @@ export function registerProvisioningRun(
       state: options.runtimeAdapterProgressState,
     });
   }
-}
-
-export function getResolvableProvisioningRunId(
-  svc: TeamProvisioningService,
-  teamName: string
-): string | null {
-  return privateHarness(svc).getResolvableProvisioningRunId(teamName);
 }
 
 export function getRegisteredProvisioningRunId(

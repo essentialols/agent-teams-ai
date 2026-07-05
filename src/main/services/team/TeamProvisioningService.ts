@@ -874,10 +874,6 @@ export class TeamProvisioningService {
     };
   }
 
-  private getResolvableProvisioningRunId(teamName: string): string | null {
-    return this.runTracking.getResolvableProvisioningRunId(teamName);
-  }
-
   private rememberRecentCrossTeamLeadDeliveryMessageIds(
     teamName: string,
     messageIds: readonly string[]

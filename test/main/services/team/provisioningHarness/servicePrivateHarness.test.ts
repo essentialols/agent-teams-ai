@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   getRegisteredProvisioningRunId,
-  getResolvableProvisioningRunId,
   memberLifecycleControllerHarness,
   memberLifecycleHostHarness,
   outputRecoveryFacadeHarness,
@@ -55,9 +54,6 @@ describe('team provisioning private harness seams', () => {
       provisioningRunByTeam: new Map<string, string>(),
       runtimeAdapterProgressByRunId: new Map<string, { runId: string; state: 'spawning' }>(),
       runs: new Map(),
-      getResolvableProvisioningRunId: vi.fn((teamName: string) => {
-        return serviceSeams.provisioningRunByTeam.get(teamName) ?? null;
-      }),
     };
     const service = serviceSeams as unknown as TeamProvisioningService;
     const aliveRun = {
@@ -81,7 +77,6 @@ describe('team provisioning private harness seams', () => {
       runId: 'runtime-adapter-run-1',
       state: 'spawning',
     });
-    expect(getResolvableProvisioningRunId(service, 'team-a')).toBe('runtime-adapter-run-1');
   });
 
   it('stubs persisted member and project-path seams with vi mocks', () => {

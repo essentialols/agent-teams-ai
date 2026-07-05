@@ -1,4 +1,4 @@
-import type { OpenCodeRuntimeControlAck } from '../runtime-control/domain/RuntimeControlAck';
+import type { OpenCodeRuntimeControlAck } from '../runtime-control';
 import type {
   LeadActivitySnapshot,
   LeadContextUsageSnapshot,

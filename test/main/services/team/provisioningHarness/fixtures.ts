@@ -1,5 +1,5 @@
 import type { TeamMetaFile } from '@main/services/team/TeamMetaStore';
-import type { TeamConfig, TeamMember, TeamProviderId } from '@shared/types';
+import type { TeamConfig, TeamCreateRequest, TeamMember, TeamProviderId } from '@shared/types';
 
 export const HARNESS_DEFAULT_TEAM_NAME = 'harness-team';
 export const HARNESS_DEFAULT_NOW_ISO = '2026-01-01T00:00:00.000Z';
@@ -92,6 +92,24 @@ export const teamMetaFixture = {
     return fixture;
   },
 };
+
+export function toMetaMembers(members: TeamCreateRequest['members']): TeamMember[] {
+  return members.map(
+    (memberValue) =>
+      ({
+        name: memberValue.name,
+        role: memberValue.role,
+        workflow: memberValue.workflow,
+        isolation: memberValue.isolation,
+        cwd: memberValue.cwd,
+        providerId: memberValue.providerId,
+        model: memberValue.model,
+        effort: memberValue.effort,
+        mcpPolicy: memberValue.mcpPolicy,
+        agentType: 'teammate',
+      }) satisfies TeamMember
+  );
+}
 
 export interface SecretLikeFixtureFinding {
   path: string;

@@ -117,6 +117,8 @@ import {
 import { execCli, spawnCli } from '@main/utils/childProcess';
 import { setAppDataBasePath } from '@main/utils/pathDecoder';
 
+import { toMetaMembers } from './provisioningHarness';
+
 import type { TeamCreateRequest, TeamMember, TeamProviderId } from '@shared/types';
 
 function createFakeChild() {
@@ -266,24 +268,6 @@ function configFacadeHarness(svc: TeamProvisioningService): ConfigFacadeHarness 
 
 function prepareFacadeHarness(svc: TeamProvisioningService): PrepareFacadeHarness {
   return (svc as unknown as { prepareFacade: PrepareFacadeHarness }).prepareFacade;
-}
-
-function toMetaMembers(members: TeamCreateRequest['members']): TeamMember[] {
-  return members.map(
-    (member) =>
-      ({
-        name: member.name,
-        role: member.role,
-        workflow: member.workflow,
-        isolation: member.isolation,
-        cwd: member.cwd,
-        providerId: member.providerId,
-        model: member.model,
-        effort: member.effort,
-        mcpPolicy: member.mcpPolicy,
-        agentType: 'teammate',
-      }) as TeamMember
-  );
 }
 
 function mockProviderRuntime(

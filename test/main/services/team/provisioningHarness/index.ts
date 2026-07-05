@@ -13,6 +13,7 @@ export {
   type TeamConfigFixtureOptions,
   teamMetaFixture,
   type TeamMetaFixtureOptions,
+  toMetaMembers,
 } from './fixtures';
 export {
   memberLifecycleControllerHarness,

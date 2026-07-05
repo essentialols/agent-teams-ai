@@ -106,6 +106,7 @@ export type ProjectAccessScope = {
   readonly projectId: string;
   readonly projectSlug?: string;
   readonly readRoots?: readonly string[];
+  readonly observedWorkspaceRoots?: readonly string[];
   readonly isolatedWorkspaceRoot?: string;
   readonly workspaceRoots?: readonly string[];
   readonly worktreeRoots?: readonly string[];

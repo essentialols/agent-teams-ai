@@ -182,6 +182,11 @@ export function parseCodexGoalProjectAccessScope(
       ? {}
       : { projectSlug: stringValue(value.projectSlug) as string }),
     ...stringArrayProperty(value.readRoots, "readRoots", fieldName),
+    ...stringArrayProperty(
+      value.observedWorkspaceRoots,
+      "observedWorkspaceRoots",
+      fieldName,
+    ),
     ...(stringValue(value.isolatedWorkspaceRoot) === undefined
       ? {}
       : {

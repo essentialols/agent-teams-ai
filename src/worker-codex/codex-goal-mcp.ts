@@ -2666,6 +2666,7 @@ async function buildCodexProjectAdmissionSnapshot(input: {
   const roots = uniqueProjectControlStrings([
     ...(input.scope.workspaceRoots ?? []),
     ...(input.scope.worktreeRoots ?? []),
+    ...(input.scope.observedWorkspaceRoots ?? []),
   ]);
   for (const root of roots) {
     debt.push(...await orphanDirtyWorkspaceDebt({

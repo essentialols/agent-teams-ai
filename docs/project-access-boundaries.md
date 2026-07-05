@@ -97,6 +97,14 @@ work cannot bypass unresolved project output debt.
 Use `codex_goal_project_admission_snapshot` to inspect the read-only snapshot
 and optional decision for a proposed operation and worker role.
 
+Use `observedWorkspaceRoots` for legacy or shared parent directories that must
+be scanned for dirty project output but must not become write targets. For
+example, a project may create new child worktrees only under
+`/var/data/infinity-context/worktrees`, while still observing legacy
+`/var/data/workspaces/infinity-context-*` directories for debt. Do not add a
+shared parent such as `/var/data/workspaces` to `workspaceRoots` just to make
+admission see old dirty worktrees; `workspaceRoots` is a write-capable scope.
+
 ## Edge cases covered by policy tests
 
 - similar path prefixes, for example `/work/project` vs `/work/project-other`;
@@ -281,6 +289,8 @@ Minimum safe scope:
   contain the explicit `sessionArtifactPath`;
 - `workspaceRoots`: existing project integration/checkpoint workspaces;
 - `worktreeRoots`: parent directories where child worktrees may be created;
+- `observedWorkspaceRoots`: read-only parent directories scanned only by the
+  admission gate for legacy dirty workspaces and orphan output debt;
 - `jobIdPrefixes`: project-specific prefixes for child job ids and job roots;
 - `tmuxSessionPrefixes`: project-specific prefixes for child worker sessions;
 - `allowedBranches`: branches the controller may integrate or push;

@@ -899,8 +899,9 @@ describe("codex goal MCP server", () => {
     const registryRootDir = join(root, "worker-jobs", "registry");
     const controllerJobRoot = join(root, "worker-jobs", "infinity-context-controller-v1");
     const workspaceRoot = join(root, "workspaces");
+    const legacyWorkspaceRoot = join(root, "legacy-workspaces");
     const sourceWorkspacePath = join(workspaceRoot, "infinity-context-main");
-    const orphanWorkspace = join(workspaceRoot, "infinity-context-memory-old-v1");
+    const orphanWorkspace = join(legacyWorkspaceRoot, "infinity-context-memory-old-v1");
     const producerWorkspace = join(root, "worktrees", "infinity-context-memory-producer-v1");
     const reviewerWorkspace = join(root, "worktrees", "infinity-context-memory-reviewer-v1");
     const server = createCodexGoalMcpServer();
@@ -949,6 +950,7 @@ describe("codex goal MCP server", () => {
           projectId: "infinity-context",
           workspaceRoots: [workspaceRoot],
           worktreeRoots: [join(root, "worktrees")],
+          observedWorkspaceRoots: [legacyWorkspaceRoot],
           registryRoot: registryRootDir,
           jobIdPrefixes: ["infinity-context-"],
           tmuxSessionPrefixes: ["infinity-context-"],
@@ -1020,6 +1022,32 @@ describe("codex goal MCP server", () => {
         ok: true,
         workerRole: "reviewer",
         startSkipped: true,
+      });
+
+      const legacyTarget = await callToolJson(client, "codex_goal_project_refill_worker", {
+        registryRootDir,
+        controllerJobId: "infinity-context-controller-v1",
+        jobId: "infinity-context-memory-reviewer-legacy-v1",
+        jobRootDir: join(root, "worker-jobs", "infinity-context-memory-reviewer-legacy-v1"),
+        authRootDir: join(root, "auth"),
+        sourceWorkspacePath,
+        workspacePath: join(legacyWorkspaceRoot, "infinity-context-memory-reviewer-legacy-v1"),
+        promptPath: join(
+          root,
+          "worker-jobs",
+          "infinity-context-memory-reviewer-legacy-v1",
+          "prompt.md",
+        ),
+        promptBody: "Review and drain old memory output.\n",
+        taskId: "infinity-context-memory-reviewer-legacy-v1",
+        accounts: ["account-a"],
+        workerRole: "reviewer",
+        startWorker: false,
+        confirmRefill: true,
+      });
+      expect(legacyTarget).toMatchObject({
+        ok: false,
+        error: "project_control_workspace_outside_scope",
       });
     } finally {
       await client.close();

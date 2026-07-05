@@ -64,10 +64,10 @@ export function bindTeamLaunchApi(source: TeamLaunchApi): TeamLaunchApi {
     getProvisioningStatus: source.getProvisioningStatus.bind(source),
   };
   const repairStaleTaskActivityIntervalsBeforeSnapshot =
-    source.repairStaleTaskActivityIntervalsBeforeSnapshot;
+    source.repairStaleTaskActivityIntervalsBeforeSnapshot?.bind(source);
   if (repairStaleTaskActivityIntervalsBeforeSnapshot) {
     api.repairStaleTaskActivityIntervalsBeforeSnapshot =
-      repairStaleTaskActivityIntervalsBeforeSnapshot.bind(source);
+      repairStaleTaskActivityIntervalsBeforeSnapshot;
   }
   return api;
 }

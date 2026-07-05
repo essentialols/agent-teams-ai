@@ -26,6 +26,8 @@ import type {
   TeamRuntimeState,
 } from '@shared/types/team';
 
+const TEST_TEAM_CWD = '/workspace/team';
+
 describe('TeamProvisioning API binders', () => {
   it('binds launch methods and optional status repair to the source object', async () => {
     interface LaunchSource extends TeamLaunchApi {
@@ -62,19 +64,19 @@ describe('TeamProvisioning API binders', () => {
     };
 
     const api = bindTeamLaunchApi(source);
-    const createTeam = api.createTeam;
-    const launchTeam = api.launchTeam;
-    const getProvisioningStatus = api.getProvisioningStatus;
+    const createTeam = api.createTeam.bind(undefined);
+    const launchTeam = api.launchTeam.bind(undefined);
+    const getProvisioningStatus = api.getProvisioningStatus.bind(undefined);
     const repairStaleTaskActivityIntervalsBeforeSnapshot =
-      api.repairStaleTaskActivityIntervalsBeforeSnapshot;
+      api.repairStaleTaskActivityIntervalsBeforeSnapshot?.bind(undefined);
 
     await expect(
-      createTeam({ teamName: 'team-bound', cwd: '/tmp/team', members: [] }, () => undefined)
+      createTeam({ teamName: 'team-bound', cwd: TEST_TEAM_CWD, members: [] }, () => undefined)
     ).resolves.toEqual({
       runId: 'run-bound',
     });
     await expect(
-      launchTeam({ teamName: 'team-bound', cwd: '/tmp/team' }, () => undefined)
+      launchTeam({ teamName: 'team-bound', cwd: TEST_TEAM_CWD }, () => undefined)
     ).resolves.toEqual({
       runId: 'run-bound',
     });
@@ -142,9 +144,9 @@ describe('TeamProvisioning API binders', () => {
     };
 
     const api = bindTeamRuntimeApi(source);
-    const getRuntimeState = api.getRuntimeState;
-    const stopTeam = api.stopTeam;
-    const deliverOpenCodeRuntimeMessage = api.deliverOpenCodeRuntimeMessage;
+    const getRuntimeState = api.getRuntimeState.bind(undefined);
+    const stopTeam = api.stopTeam.bind(undefined);
+    const deliverOpenCodeRuntimeMessage = api.deliverOpenCodeRuntimeMessage.bind(undefined);
 
     await expect(getRuntimeState('team-bound')).resolves.toMatchObject({
       teamName: 'team-bound',
@@ -223,9 +225,9 @@ describe('TeamProvisioning API binders', () => {
 
     const memberLifecycleApi = bindTeamMemberLifecycleApi(memberLifecycleSource);
     const diagnosticsApi = bindTeamDiagnosticsApi(diagnosticsSource);
-    const restartMember = memberLifecycleApi.restartMember;
-    const skipMemberForLaunch = memberLifecycleApi.skipMemberForLaunch;
-    const getTeamAgentRuntimeSnapshot = diagnosticsApi.getTeamAgentRuntimeSnapshot;
+    const restartMember = memberLifecycleApi.restartMember.bind(undefined);
+    const skipMemberForLaunch = memberLifecycleApi.skipMemberForLaunch.bind(undefined);
+    const getTeamAgentRuntimeSnapshot = diagnosticsApi.getTeamAgentRuntimeSnapshot.bind(undefined);
 
     await expect(memberLifecycleApi.getMemberSpawnStatuses('team-bound')).resolves.toEqual({
       statuses: {},

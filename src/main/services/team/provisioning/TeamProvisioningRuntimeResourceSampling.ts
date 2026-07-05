@@ -76,6 +76,15 @@ export interface RuntimeResourceSamplingPidUsageReader {
   read(pids: number | readonly number[], options?: { maxage?: number }): Promise<unknown>;
 }
 
+const defaultRuntimeResourceSamplingPidUsageReader: RuntimeResourceSamplingPidUsageReader = {
+  read: (pids, pidusageOptions) => {
+    if (typeof pids === 'number') {
+      return pidusage(pids, pidusageOptions);
+    }
+    return pidusage([...pids], pidusageOptions);
+  },
+};
+
 export interface TeamProvisioningRuntimeSnapshotResourceSamplingPorts {
   readRuntimeProcessRowsForUsageSnapshot(
     teamName: string,
@@ -99,6 +108,12 @@ export interface TeamProvisioningRuntimeSnapshotResourceSamplingPorts {
     ): TeamAgentRuntimeResourceSample[] | undefined;
     prune(teamName: string, activeKeys: ReadonlySet<string>): void;
   };
+}
+
+interface RuntimeUsageProcessTreeInputObject {
+  rootPids: readonly number[];
+  processRows: readonly RuntimeTelemetryProcessTableRow[] | null;
+  rootOwnersByPid?: ReadonlyMap<number, ReadonlySet<string>>;
 }
 
 export class TeamProvisioningRuntimeResourceSampling {
@@ -131,14 +146,7 @@ export class TeamProvisioningRuntimeResourceSampling {
       listRuntimeProcessTable: listRuntimeProcessTableForCurrentPlatform,
       listWindowsProcessTable,
     },
-    private readonly pidUsageReader: RuntimeResourceSamplingPidUsageReader = {
-      read: (pids, options) => {
-        if (typeof pids === 'number') {
-          return pidusage(pids, options);
-        }
-        return pidusage([...pids], options);
-      },
-    }
+    private readonly pidUsageReader: RuntimeResourceSamplingPidUsageReader = defaultRuntimeResourceSamplingPidUsageReader
   ) {
     this.agentRuntimeResourceHistory = new TeamAgentRuntimeResourceHistory({
       historyLimit: options.historyLimit,
@@ -331,7 +339,7 @@ export class TeamProvisioningRuntimeResourceSampling {
     pids: readonly number[],
     cacheOptions: { ignoreCachedMisses?: boolean } = {}
   ): Promise<Map<number, RuntimeProcessUsageStats>> {
-    const pidCandidates = Array.isArray(pids) ? pids : [];
+    const pidCandidates: readonly number[] = Array.isArray(pids) ? pids : [];
     const uniquePids = [...new Set(pidCandidates.filter((pid) => Number.isFinite(pid) && pid > 0))];
     if (uniquePids.length === 0) {
       return new Map();
@@ -467,11 +475,6 @@ export class TeamProvisioningRuntimeResourceSampling {
     processRows?: readonly RuntimeTelemetryProcessTableRow[] | null,
     rootOwnersByPid?: ReadonlyMap<number, ReadonlySet<string>>
   ): Map<number, RuntimeUsageProcessTree> {
-    type RuntimeUsageProcessTreeInputObject = {
-      rootPids: readonly number[];
-      processRows: readonly RuntimeTelemetryProcessTableRow[] | null;
-      rootOwnersByPid?: ReadonlyMap<number, ReadonlySet<string>>;
-    };
     const treeInput: RuntimeUsageProcessTreeInputObject = Array.isArray(input)
       ? {
           rootPids: input as readonly number[],

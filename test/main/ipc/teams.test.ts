@@ -334,6 +334,7 @@ describe('ipc teams handlers', () => {
     getSavedRequest: vi.fn<() => Promise<TeamCreateRequest | null>>(() => resolved(null)),
   };
   const provisioningService = {
+    getCliHelpOutput: vi.fn(() => resolved('Usage')),
     prepareForProvisioning: vi.fn(() => resolved({
       ready: true,
       message: 'CLI прогрет и готов к запуску',
@@ -508,6 +509,8 @@ describe('ipc teams handlers', () => {
     mockTeamDataWorkerClient.invalidateTeamConfig.mockReset();
     mockTeamDataWorkerClient.invalidateTeamMessageFeed.mockReset();
     mockTeamDataWorkerClient.invalidateMemberRuntimeAdvisory.mockReset();
+    provisioningService.getCliHelpOutput.mockReset();
+    provisioningService.getCliHelpOutput.mockResolvedValue('Usage');
     provisioningService.sendMessageToTeam.mockReset();
     provisioningService.sendMessageToTeam.mockResolvedValue(undefined);
     provisioningService.resolveRuntimeRecipientProviderId.mockReset();

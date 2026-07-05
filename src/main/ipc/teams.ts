@@ -141,6 +141,7 @@ import {
   bindTeamDiagnosticsApi,
   bindTeamLaunchApi,
   bindTeamMemberLifecycleApi,
+  bindTeamProvisioningPreflightApi,
   bindTeamRuntimeApi,
 } from '../services/team/contracts/TeamProvisioningApis';
 import {
@@ -191,6 +192,7 @@ import type {
   TeamDiagnosticsApi,
   TeamLaunchApi,
   TeamMemberLifecycleApi,
+  TeamProvisioningPreflightApi,
   TeamRuntimeApi,
 } from '../services/team/contracts/TeamProvisioningApis';
 import type { TeamBackupService } from '../services/team/TeamBackupService';
@@ -752,6 +754,7 @@ function buildLeadDirectDelegateAckBlock(actionMode?: AgentActionMode): string |
 let teamDataService: TeamDataService | null = null;
 let teamProvisioningService: TeamProvisioningService | null = null;
 let teamProvisioningStartApi: TeamLaunchApi | null = null;
+let teamProvisioningPreflightApi: TeamProvisioningPreflightApi | null = null;
 let teamRuntimeApi: TeamRuntimeApi | null = null;
 let teamMemberLifecycleApi: TeamMemberLifecycleApi | null = null;
 let teamDiagnosticsApi: TeamDiagnosticsApi | null = null;
@@ -820,6 +823,7 @@ export function initializeTeamHandlers(
   teamDataService = service;
   teamProvisioningService = provisioningService;
   teamProvisioningStartApi = bindTeamLaunchApi(provisioningService);
+  teamProvisioningPreflightApi = bindTeamProvisioningPreflightApi(provisioningService);
   teamRuntimeApi = bindTeamRuntimeApi(provisioningService);
   teamMemberLifecycleApi = bindTeamMemberLifecycleApi(provisioningService);
   teamDiagnosticsApi = bindTeamDiagnosticsApi(provisioningService);
@@ -1031,6 +1035,13 @@ function getTeamProvisioningStartApi(): TeamLaunchApi {
     throw new Error('Team provisioning handlers are not initialized');
   }
   return teamProvisioningStartApi;
+}
+
+function getTeamProvisioningPreflightApi(): TeamProvisioningPreflightApi {
+  if (!teamProvisioningPreflightApi) {
+    throw new Error('Team provisioning preflight handlers are not initialized');
+  }
+  return teamProvisioningPreflightApi;
 }
 
 function getTeamRuntimeApi(): TeamRuntimeApi {
@@ -2564,7 +2575,7 @@ async function handleValidateCliArgs(
     return { success: false, error: 'rawArgs too long (max 2048)' };
   }
   return wrapTeamHandler('validateCliArgs', async () => {
-    const helpOutput = await getTeamProvisioningService().getCliHelpOutput();
+    const helpOutput = await getTeamProvisioningPreflightApi().getCliHelpOutput();
     const knownFlags = extractFlagsFromHelp(helpOutput);
     const userFlags = extractUserFlags(rawArgs);
 
@@ -2704,7 +2715,7 @@ async function handlePrepareProvisioning(
     validatedSelectedModelChecks = normalized;
   }
   return wrapTeamHandler('prepareProvisioning', () =>
-    getTeamProvisioningService().prepareForProvisioning(validatedCwd, {
+    getTeamProvisioningPreflightApi().prepareForProvisioning(validatedCwd, {
       providerId: validatedProviderId,
       providerIds: validatedProviderIds,
       modelIds: validatedSelectedModels,

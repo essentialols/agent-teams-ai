@@ -4,6 +4,7 @@ import {
   bindTeamDiagnosticsApi,
   bindTeamLaunchApi,
   bindTeamMemberLifecycleApi,
+  bindTeamProvisioningPreflightApi,
   bindTeamRuntimeApi,
 } from '../TeamProvisioningApis';
 
@@ -12,6 +13,7 @@ import type {
   TeamDiagnosticsApi,
   TeamLaunchApi,
   TeamMemberLifecycleApi,
+  TeamProvisioningPreflightApi,
   TeamRuntimeApi,
 } from '../TeamProvisioningApis';
 import type {
@@ -22,6 +24,7 @@ import type {
   TeamAgentRuntimeSnapshot,
   TeamCreateResponse,
   TeamLaunchResponse,
+  TeamProvisioningPrepareResult,
   TeamProvisioningProgress,
   TeamRuntimeState,
 } from '@shared/types/team';
@@ -86,6 +89,38 @@ describe('TeamProvisioning API binders', () => {
     });
     await repairStaleTaskActivityIntervalsBeforeSnapshot?.('team-bound');
     expect(source.repairedTeamName).toBe('team-bound');
+  });
+
+  it('binds provisioning preflight methods to the source object', async () => {
+    interface PreflightSource extends TeamProvisioningPreflightApi {
+      readonly cwd: string;
+    }
+
+    const source: PreflightSource = {
+      cwd: TEST_TEAM_CWD,
+      getCliHelpOutput(this: PreflightSource): Promise<string> {
+        return Promise.resolve(`Usage ${this.cwd}`);
+      },
+      prepareForProvisioning(
+        this: PreflightSource,
+        cwd?: string
+      ): Promise<TeamProvisioningPrepareResult> {
+        return Promise.resolve({
+          ready: true,
+          message: cwd ?? this.cwd,
+        });
+      },
+    };
+
+    const api = bindTeamProvisioningPreflightApi(source);
+    const getCliHelpOutput = api.getCliHelpOutput.bind(undefined);
+    const prepareForProvisioning = api.prepareForProvisioning.bind(undefined);
+
+    await expect(getCliHelpOutput()).resolves.toBe(`Usage ${TEST_TEAM_CWD}`);
+    await expect(prepareForProvisioning('/workspace/preflight')).resolves.toEqual({
+      ready: true,
+      message: '/workspace/preflight',
+    });
   });
 
   it('binds runtime control methods to the source object', async () => {

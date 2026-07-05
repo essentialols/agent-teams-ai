@@ -9,6 +9,10 @@ import type {
   TeamCreateResponse,
   TeamLaunchRequest,
   TeamLaunchResponse,
+  TeamProviderId,
+  TeamProvisioningModelCheckRequest,
+  TeamProvisioningModelVerificationMode,
+  TeamProvisioningPrepareResult,
   TeamProvisioningProgress,
   TeamRuntimeState,
 } from '@shared/types/team';
@@ -29,6 +33,24 @@ export interface TeamLaunchApi {
 export type TeamProvisioningStartApi = TeamLaunchApi;
 
 export type { OpenCodeRuntimeControlAck };
+
+export interface TeamProvisioningPrepareOptions {
+  forceFresh?: boolean;
+  providerId?: TeamProviderId;
+  providerIds?: TeamProviderId[];
+  modelIds?: string[];
+  modelChecks?: TeamProvisioningModelCheckRequest[];
+  limitContext?: boolean;
+  modelVerificationMode?: TeamProvisioningModelVerificationMode;
+}
+
+export interface TeamProvisioningPreflightApi {
+  getCliHelpOutput(): Promise<string>;
+  prepareForProvisioning(
+    cwd?: string,
+    opts?: TeamProvisioningPrepareOptions
+  ): Promise<TeamProvisioningPrepareResult>;
+}
 
 export interface TeamRuntimeApi {
   getRuntimeState(teamName: string): Promise<TeamRuntimeState>;
@@ -70,6 +92,15 @@ export function bindTeamLaunchApi(source: TeamLaunchApi): TeamLaunchApi {
       repairStaleTaskActivityIntervalsBeforeSnapshot;
   }
   return api;
+}
+
+export function bindTeamProvisioningPreflightApi(
+  source: TeamProvisioningPreflightApi
+): TeamProvisioningPreflightApi {
+  return {
+    getCliHelpOutput: source.getCliHelpOutput.bind(source),
+    prepareForProvisioning: source.prepareForProvisioning.bind(source),
+  };
 }
 
 export function bindTeamRuntimeApi(source: TeamRuntimeApi): TeamRuntimeApi {

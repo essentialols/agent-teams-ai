@@ -11,6 +11,8 @@ import {
 } from "../../access-control";
 import {
   ProjectAdmissionDecisionReason,
+  ProjectAdmissionDecisionStatus,
+  normalizeProjectAdmissionWorkerRole,
   type ProjectAdmissionDecision,
   type ProjectAdmissionGate,
   type ProjectAdmissionWorkerRole,
@@ -218,14 +220,16 @@ export class ProjectControlBroker {
       readonly workspacePath?: string;
     },
   ): Promise<void> {
-    if (!this.ports.admission) return;
-    const decision = await this.ports.admission.evaluate({
+    const request = {
       operation,
       ...(input.jobId ? { jobId: input.jobId } : {}),
       ...(input.workspacePath ? { workspacePath: input.workspacePath } : {}),
       ...(input.workerRole ? { workerRole: input.workerRole } : {}),
       ...(input.tags ? { tags: input.tags } : {}),
-    });
+    };
+    const decision = this.ports.admission
+      ? await this.ports.admission.evaluate(request)
+      : missingAdmissionDecision(request);
     await this.ports.audit?.record({
       schemaVersion: 1,
       type: ProjectControlAuditEventType.AdmissionDecisionRecorded,
@@ -251,6 +255,24 @@ export function projectControlAdmissionDeniedReason(
   return error instanceof ProjectControlAdmissionDeniedError
     ? error.decision.reason
     : null;
+}
+
+function missingAdmissionDecision(input: {
+  readonly operation: ProjectOperation;
+  readonly jobId?: string;
+  readonly workspacePath?: string;
+  readonly workerRole?: ProjectAdmissionWorkerRole | `${ProjectAdmissionWorkerRole}`;
+  readonly tags?: readonly string[];
+}): ProjectAdmissionDecision {
+  return {
+    operation: input.operation,
+    workerRole: normalizeProjectAdmissionWorkerRole(input.workerRole, input.tags),
+    status: ProjectAdmissionDecisionStatus.Denied,
+    allowed: false,
+    reason: ProjectAdmissionDecisionReason.SnapshotUnavailable,
+    evidence: ["project admission gate is not configured"],
+    debt: [],
+  };
 }
 
 function isPolicyService(value: unknown): value is AccessPolicyService {

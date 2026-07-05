@@ -89,6 +89,9 @@ describe("controlled-agent launch plan", () => {
 
     expect(tools).toContain(ControlledAgentToolName.ProjectCreateJob);
     expect(tools).toContain(ControlledAgentToolName.ProjectPushApprovedCommit);
+    expect(tools).not.toContain("codex_goal_create_job" as never);
+    expect(tools).not.toContain("codex_goal_continue_job" as never);
+    expect(tools).not.toContain("codex_goal_recover_job" as never);
     expect(tools).not.toContain("git" as never);
     expect(tools).not.toContain("tmux" as never);
     expect(tools).not.toContain("bash" as never);

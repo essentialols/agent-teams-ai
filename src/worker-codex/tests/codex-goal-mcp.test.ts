@@ -762,6 +762,59 @@ describe("codex goal MCP server", () => {
     }
   });
 
+  it("denies generic start for project-scoped controller jobs", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-project-generic-start-"));
+    const registryRootDir = join(root, "worker-jobs", "registry");
+    const controllerJobRoot = join(root, "worker-jobs", "infinity-context-controller-v1");
+    const controllerWorkspace = join(root, "workspaces", "infinity-context-controller");
+    const server = createCodexGoalMcpServer();
+    const client = new Client({
+      name: "subscription-runtime-test",
+      version: "0.0.0",
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+    try {
+      await Promise.all([
+        server.connect(serverTransport),
+        client.connect(clientTransport),
+      ]);
+
+      const result = await callToolJson(client, "codex_goal_start", {
+        registryRootDir,
+        jobId: "infinity-context-controller-v1",
+        jobRootDir: controllerJobRoot,
+        authRootDir: join(root, "auth"),
+        workspacePath: controllerWorkspace,
+        promptPath: join(controllerJobRoot, "prompt.md"),
+        taskId: "infinity-context-controller-v1",
+        accounts: ["account-a"],
+        accessBoundary: AccessBoundary.ProjectScopedControl,
+        networkAccess: NetworkAccessMode.Restricted,
+        projectAccessScope: {
+          projectId: "infinity-context",
+          workspaceRoots: [join(root, "workspaces")],
+          worktreeRoots: [join(root, "worktrees")],
+          registryRoot: registryRootDir,
+          jobIdPrefixes: ["infinity-context-"],
+          tmuxSessionPrefixes: ["infinity-context-"],
+          allowedAccountIds: ["account-a"],
+        },
+        confirmStart: true,
+      });
+
+      expect(result).toMatchObject({
+        ok: false,
+        reason: "project_control_broker_required",
+        requiredTool: "codex_goal_project_controller_start",
+      });
+    } finally {
+      await client.close();
+      await server.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("refills a project worker with one brokered worktree, prompt and job flow", async () => {
     const root = await mkdtemp(join(tmpdir(), "subscription-runtime-project-refill-"));
     const registryRootDir = join(root, "worker-jobs", "registry");
@@ -887,6 +940,16 @@ describe("codex goal MCP server", () => {
       expect(audit.some((event) =>
         event.type === "project_control.admission_decision_recorded"
       )).toBe(true);
+      const genericContinue = await callToolJson(client, "codex_goal_continue", {
+        registryRootDir,
+        jobId: "infinity-context-memory-fastgate-v1",
+        confirmContinue: true,
+      });
+      expect(genericContinue).toMatchObject({
+        ok: false,
+        reason: "project_control_broker_required",
+        requiredTool: "codex_goal_project_start",
+      });
     } finally {
       await client.close();
       await server.close();

@@ -27,7 +27,7 @@ describe("ProjectControlBroker", () => {
     const broker = new ProjectControlBroker({
       boundary: AccessBoundary.ProjectScopedControl,
       scope: scope(),
-    }, ports(calls, audits));
+    }, ports(calls, audits, allowAdmission()));
 
     await expect(broker.createJob({
       jobId: "infinity-context-child-v1",
@@ -41,15 +41,39 @@ describe("ProjectControlBroker", () => {
     })).resolves.toMatchObject({ status: "applied" });
 
     expect(calls).toEqual(["createJob:infinity-context-child-v1", "push:main"]);
-    expect(audits).toEqual([
-      expect.objectContaining({
-        type: ProjectControlAuditEventType.DecisionRecorded,
-        decision: expect.objectContaining({ allowed: true }),
-      }),
-      expect.objectContaining({
-        type: ProjectControlAuditEventType.DecisionRecorded,
-        decision: expect.objectContaining({ allowed: true }),
-      }),
+    expect(audits.map((event) => event.type)).toEqual([
+      ProjectControlAuditEventType.DecisionRecorded,
+      ProjectControlAuditEventType.AdmissionDecisionRecorded,
+      ProjectControlAuditEventType.DecisionRecorded,
+    ]);
+    expect(audits.every((event) => event.decision.allowed)).toBe(true);
+  });
+
+  it("fails closed before side effects when admission is not configured", async () => {
+    const calls: string[] = [];
+    const audits: ProjectControlBrokerEvent[] = [];
+    const broker = new ProjectControlBroker({
+      boundary: AccessBoundary.ProjectScopedControl,
+      scope: scope(),
+    }, ports(calls, audits));
+
+    await expect(broker.createJob({
+      jobId: "infinity-context-child-v1",
+      registryRoot: "/var/data/worker-jobs/registry",
+      workspacePath: "/work/infinity-context-child",
+      tmuxSession: "infinity-context-child-v1",
+    })).rejects.toMatchObject({
+      decision: {
+        allowed: false,
+        reason: ProjectAdmissionDecisionReason.SnapshotUnavailable,
+        evidence: ["project admission gate is not configured"],
+      },
+    });
+
+    expect(calls).toEqual([]);
+    expect(audits.map((event) => event.type)).toEqual([
+      ProjectControlAuditEventType.DecisionRecorded,
+      ProjectControlAuditEventType.AdmissionDecisionRecorded,
     ]);
   });
 
@@ -296,6 +320,19 @@ function admission(
       };
     },
   };
+}
+
+function allowAdmission(
+  workerRole = ProjectAdmissionWorkerRole.Producer,
+): ProjectAdmissionGate {
+  return admission({
+    allowed: true,
+    status: ProjectAdmissionDecisionStatus.Allowed,
+    reason: ProjectAdmissionDecisionReason.Allowed,
+    workerRole,
+    evidence: ["test admission allowed"],
+    debt: [],
+  });
 }
 
 function scope(): ProjectAccessScope {

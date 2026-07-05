@@ -1709,6 +1709,11 @@ export function createCodexGoalMcpServer(
     },
     async (args) => withMcpErrors(async () => {
       const launch = await goalLaunchInput(args as StartMcpArgs);
+      const projectControlDenial = projectControlGenericLifecycleDenial({
+        accessBoundary: launch.config.accessBoundary,
+        projectAccessScope: launch.config.projectAccessScope,
+      });
+      if (projectControlDenial) return mcpJson(projectControlDenial);
       if (!launch.tmuxSession) {
         return mcpJson({
           ok: false,
@@ -5356,6 +5361,12 @@ async function continueStoredJob(
   },
 ) {
   const loaded = await loadJobLaunch(args);
+  const projectControlDenial = projectControlGenericLifecycleDenial({
+    accessBoundary: loaded.manifest.accessBoundary,
+    projectAccessScope: loaded.manifest.projectAccessScope,
+    jobId: loaded.manifest.jobId,
+  });
+  if (projectControlDenial) return mcpJson(projectControlDenial);
   const status = await collectCodexGoalStatus(statusInput(loaded.launch));
   const progressStale = status.progressHeartbeatAgeMs !== undefined &&
     status.progressHeartbeatAgeMs > (numberValue(args.staleAfterMs) ?? 10 * 60_000);
@@ -5440,6 +5451,30 @@ async function continueStoredJob(
     statusBefore: status,
     ...(resultReconciliation === undefined ? {} : { resultReconciliation }),
   });
+}
+
+function projectControlGenericLifecycleDenial(input: {
+  readonly accessBoundary?: AccessBoundary | undefined;
+  readonly projectAccessScope?: CodexGoalRunConfig["projectAccessScope"] | undefined;
+  readonly jobId?: string | undefined;
+}): JsonObject | undefined {
+  if (
+    input.accessBoundary !== AccessBoundary.ProjectScopedControl &&
+    input.projectAccessScope === undefined
+  ) {
+    return undefined;
+  }
+  const requiredTool = input.accessBoundary === AccessBoundary.ProjectScopedControl
+    ? "codex_goal_project_controller_start"
+    : "codex_goal_project_start";
+  return {
+    ok: false,
+    reason: "project_control_broker_required",
+    ...(input.jobId === undefined ? {} : { jobId: input.jobId }),
+    requiredTool,
+    safeMessage:
+      "Project-owned jobs must be started through brokered project-control tools so admission debt, audit and controller adoption are enforced.",
+  };
 }
 
 function shouldReconcileResultBeforeStart(status: Awaited<ReturnType<typeof collectCodexGoalStatus>>): boolean {

@@ -94,6 +94,30 @@ describe("buildControlledAgentLiveControllerState", () => {
     });
   });
 
+  it("does not count stopped persisted runs as live even when the session still says running", () => {
+    const owner = processOwner("owner-1");
+    const stoppedRun = buildControlledAgentLiveControllerState({
+      session: controlledSession({
+        owner,
+        status: ControlledAgentRunStatus.Running,
+      }),
+      persistedRunStatus: ControlledAgentRunStatus.Stopped,
+      providerAttached: true,
+      currentOwner: owner,
+      providerObservedStatus: ControlledAgentRunStatus.Running,
+    });
+
+    expect(stoppedRun).toMatchObject({
+      providerRunnerAttached: true,
+      live: false,
+      ownerMatches: true,
+      persistedStatus: "running",
+      persistedRunStatus: "stopped",
+      providerObservedStatus: "running",
+    });
+    expect(stoppedRun.safeMessage).toContain("persisted controller run status is not running");
+  });
+
   it("does not report live ownership when provider status probing fails", () => {
     const owner = processOwner("owner-1");
     const session = controlledSession({
@@ -159,30 +183,6 @@ describe("buildControlledAgentLiveControllerState", () => {
       providerObservedStatus: "running",
     });
     expect(persistedBlocked.safeMessage).toContain("persisted controller status is not running");
-  });
-
-  it("does not count stopped persisted runs as live even when the session still says running", () => {
-    const owner = processOwner("owner-1");
-    const stoppedRun = buildControlledAgentLiveControllerState({
-      session: controlledSession({
-        owner,
-        status: ControlledAgentRunStatus.Running,
-      }),
-      persistedRunStatus: ControlledAgentRunStatus.Stopped,
-      providerAttached: true,
-      currentOwner: owner,
-      providerObservedStatus: ControlledAgentRunStatus.Running,
-    });
-
-    expect(stoppedRun).toMatchObject({
-      providerRunnerAttached: true,
-      live: false,
-      ownerMatches: true,
-      persistedStatus: "running",
-      persistedRunStatus: "stopped",
-      providerObservedStatus: "running",
-    });
-    expect(stoppedRun.safeMessage).toContain("persisted controller run status is not running");
   });
 });
 

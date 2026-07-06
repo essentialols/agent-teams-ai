@@ -102,13 +102,19 @@ export class StartControlledAgentRunUseCase {
           run: existingRun,
         };
       }
-      const recovery = recoveryForExistingActiveRun(existingSession, existingRun);
+      const staleSafeMessage = existingRun.owner === undefined
+        ? "Controlled-agent active run has no owner metadata and exceeded the ownerless recovery threshold."
+        : "Controlled-agent owner process is no longer live.";
+      const terminalRecovery = runRecoveryForExistingActiveRun(existingSession);
+      const recoveredStatus = terminalRecovery.status ??
+        ControlledAgentRunStatus.Failed;
+      const recoveredSafeMessage = terminalRecovery.safeMessage ?? staleSafeMessage;
       const now = (this.deps.clock?.now() ?? new Date()).toISOString();
       try {
         await this.deps.provider.stop({
           session: existingSession,
           run: existingRun,
-          reason: recovery.safeMessage,
+          reason: recoveredSafeMessage,
         });
       } catch (error) {
         return {
@@ -121,14 +127,14 @@ export class StartControlledAgentRunUseCase {
       }
       await this.deps.stateStore?.saveRun({
         ...existingRun,
-        status: recovery.status,
-        safeMessage: recovery.safeMessage,
+        status: recoveredStatus,
+        safeMessage: recoveredSafeMessage,
         stoppedAt: now,
         updatedAt: now,
       });
       await this.deps.stateStore?.saveSession({
         ...existingSession,
-        status: recovery.status,
+        status: recoveredStatus,
         updatedAt: now,
       });
     }
@@ -221,12 +227,11 @@ export async function startControlledAgentRun(
   return new StartControlledAgentRunUseCase(deps).start(input);
 }
 
-function recoveryForExistingActiveRun(
+function runRecoveryForExistingActiveRun(
   session: ControlledAgentSession,
-  run: ControlledAgentRun,
 ): {
-  readonly status: ControlledAgentRunStatus;
-  readonly safeMessage: string;
+  readonly status?: ControlledAgentRunStatus;
+  readonly safeMessage?: string;
 } {
   if (!controlledAgentStatusAllowsLiveController(session.status)) {
     const status = isControlledAgentTerminalStatus(session.status)
@@ -238,14 +243,5 @@ function recoveryForExistingActiveRun(
         `Controlled-agent persisted session status is ${session.status}; active provider run must be recovered.`,
     };
   }
-  return run.owner === undefined
-    ? {
-        status: ControlledAgentRunStatus.Failed,
-        safeMessage:
-          "Controlled-agent active run has no owner metadata and exceeded the ownerless recovery threshold.",
-      }
-    : {
-        status: ControlledAgentRunStatus.Failed,
-        safeMessage: "Controlled-agent owner process is no longer live.",
-      };
+  return {};
 }

@@ -5,6 +5,7 @@ import {
   RunEventProviderKind,
   ControlledAgentRunStatus,
   ControlledAgentProcessOwnerKind,
+  StartControlledAgentRunBlockReason,
   buildControlledAgentProcessOwner,
   startControlledAgentRun,
   type ControlledAgentEvent,
@@ -220,121 +221,7 @@ describe("startControlledAgentRun", () => {
     expect(result.plan.reason).toBe("provider_cannot_disable_raw_shell");
   });
 
-  it("does not start a second provider run when the session already has an active run", async () => {
-    let providerCalled = false;
-    const provider: ControlledAgentProviderPort = {
-      start() {
-        providerCalled = true;
-        return {};
-      },
-      status() {
-        return { status: ControlledAgentRunStatus.Running };
-      },
-      stop() {
-        return { status: ControlledAgentRunStatus.Stopped };
-      },
-    };
-
-    const result = await startControlledAgentRun(launchInput(true), {
-      provider,
-      stateStore: {
-        readSession() {
-          return activeSession();
-        },
-        saveSession() {
-          throw new Error("should not save session");
-        },
-        readRun() {
-          return activeRun();
-        },
-        readLatestRunForSession() {
-          return activeRun();
-        },
-        saveRun() {
-          throw new Error("should not save run");
-        },
-      },
-    });
-
-    expect(result.ok).toBe(false);
-    expect(providerCalled).toBe(false);
-    if (result.ok || !("reason" in result)) {
-      throw new Error("expected existing active run block");
-    }
-    expect(result.reason).toBe("existing_active_run");
-    expect(result.run.runId).toBe("run-existing");
-  });
-
-  it("starts a new run after marking an old ownerless run failed when recovery is enabled", async () => {
-    const providerStarts: ControlledAgentSession[] = [];
-    const providerCalls: string[] = [];
-    const savedSessions: ControlledAgentSession[] = [];
-    const savedRuns: ControlledAgentRun[] = [];
-    const provider: ControlledAgentProviderPort = {
-      start(input) {
-        providerCalls.push("start");
-        providerStarts.push(input.session);
-        return { providerRunId: "provider-run-2" };
-      },
-      status() {
-        return { status: ControlledAgentRunStatus.Running };
-      },
-      stop(input) {
-        providerCalls.push("stop");
-        expect(input.reason).toBe(
-          "Controlled-agent active run has no owner metadata and exceeded the ownerless recovery threshold.",
-        );
-        return { status: ControlledAgentRunStatus.Stopped };
-      },
-    };
-
-    const result = await startControlledAgentRun(launchInput(true), {
-      provider,
-      recoverOwnerlessActiveRunAfterMs: 10 * 60 * 1000,
-      stateStore: {
-        readSession() {
-          return activeSession();
-        },
-        saveSession(session) {
-          savedSessions.push(session);
-        },
-        readRun() {
-          return activeRun();
-        },
-        readLatestRunForSession() {
-          return activeRun();
-        },
-        saveRun(run) {
-          savedRuns.push(run);
-        },
-      },
-      clock: { now: () => new Date("2026-07-05T11:15:01.000Z") },
-      idGenerator: {
-        randomId: (() => {
-          const ids = ["run-2", "event-1"];
-          return () => ids.shift() ?? "unused";
-        })(),
-      },
-    });
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error("expected ownerless recovery");
-    expect(providerCalls).toEqual(["stop", "start"]);
-    expect(providerStarts).toHaveLength(1);
-    expect(savedRuns[0]).toMatchObject({
-      runId: "run-existing",
-      status: ControlledAgentRunStatus.Failed,
-      safeMessage:
-        "Controlled-agent active run has no owner metadata and exceeded the ownerless recovery threshold.",
-    });
-    expect(savedSessions[0]).toMatchObject({
-      status: ControlledAgentRunStatus.Failed,
-    });
-    expect(result.run.runId).toBe("run-2");
-    expect(result.run.providerRunId).toBe("provider-run-2");
-  });
-
-  it("starts a new run after marking a stale owner run failed", async () => {
+  it("does not replace a stale owner run when provider cleanup fails", async () => {
     const staleOwner = buildControlledAgentProcessOwner({
       kind: ControlledAgentProcessOwnerKind.DurableMcp,
       ownerId: "owner-stale",
@@ -342,23 +229,17 @@ describe("startControlledAgentRun", () => {
       pid: 111,
       hostname: "host-a",
     });
-    const providerStarts: ControlledAgentSession[] = [];
-    const providerCalls: string[] = [];
     const savedSessions: ControlledAgentSession[] = [];
     const savedRuns: ControlledAgentRun[] = [];
     const provider: ControlledAgentProviderPort = {
-      start(input) {
-        providerCalls.push("start");
-        providerStarts.push(input.session);
-        return { providerRunId: "provider-run-2" };
+      start() {
+        throw new Error("should not start a replacement run");
       },
       status() {
         return { status: ControlledAgentRunStatus.Running };
       },
-      stop(input) {
-        providerCalls.push("stop");
-        expect(input.reason).toBe("Controlled-agent owner process is no longer live.");
-        return { status: ControlledAgentRunStatus.Stopped };
+      stop() {
+        throw new Error("provider cleanup failed");
       },
     };
 
@@ -382,31 +263,18 @@ describe("startControlledAgentRun", () => {
           savedRuns.push(run);
         },
       },
-      clock: { now: () => new Date("2026-07-05T11:00:00.000Z") },
-      idGenerator: {
-        randomId: (() => {
-          const ids = ["run-2", "event-1"];
-          return () => ids.shift() ?? "unused";
-        })(),
-      },
     });
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error("expected stale owner recovery");
-    expect(providerCalls).toEqual(["stop", "start"]);
-    expect(providerStarts).toHaveLength(1);
-    expect(savedRuns[0]).toMatchObject({
-      runId: "run-existing",
-      status: ControlledAgentRunStatus.Failed,
-      stoppedAt: "2026-07-05T11:00:00.000Z",
-      safeMessage: "Controlled-agent owner process is no longer live.",
-    });
-    expect(savedSessions[0]).toMatchObject({
-      status: ControlledAgentRunStatus.Failed,
-      activeRunId: "run-existing",
-    });
-    expect(result.run.runId).toBe("run-2");
-    expect(result.run.providerRunId).toBe("provider-run-2");
+    expect(result.ok).toBe(false);
+    if (result.ok || !("reason" in result)) {
+      throw new Error("expected cleanup failure");
+    }
+    expect(result.reason).toBe(
+      StartControlledAgentRunBlockReason.ExistingActiveRunCleanupFailed,
+    );
+    expect(result.safeMessage).toBe("provider cleanup failed");
+    expect(savedSessions).toHaveLength(0);
+    expect(savedRuns).toHaveLength(0);
   });
 
   it("recovers a blocked persisted controller session instead of treating its active run as healthy", async () => {
@@ -476,15 +344,196 @@ describe("startControlledAgentRun", () => {
     if (!result.ok) throw new Error("expected blocked session recovery");
     expect(providerCalls).toEqual(["stop", "start"]);
     expect(providerStarts).toHaveLength(1);
-    expect(savedRuns[0]).toMatchObject({
+    expect(savedRuns.find((run) => run.runId === "run-existing")).toMatchObject({
       runId: "run-existing",
       status: ControlledAgentRunStatus.Blocked,
       stoppedAt: "2026-07-05T11:01:00.000Z",
       safeMessage:
         "Controlled-agent persisted session status is blocked; active provider run must be recovered.",
     });
-    expect(savedSessions[0]).toMatchObject({
+    expect(
+      savedSessions.find(
+        (session) => session.status === ControlledAgentRunStatus.Blocked,
+      ),
+    ).toMatchObject({
       status: ControlledAgentRunStatus.Blocked,
+      activeRunId: "run-existing",
+    });
+    expect(result.run.runId).toBe("run-2");
+    expect(result.run.providerRunId).toBe("provider-run-2");
+  });
+
+  it("does not start a second provider run when the session already has an active run", async () => {
+    let providerCalled = false;
+    const provider: ControlledAgentProviderPort = {
+      start() {
+        providerCalled = true;
+        return {};
+      },
+      status() {
+        return { status: ControlledAgentRunStatus.Running };
+      },
+      stop() {
+        return { status: ControlledAgentRunStatus.Stopped };
+      },
+    };
+
+    const result = await startControlledAgentRun(launchInput(true), {
+      provider,
+      stateStore: {
+        readSession() {
+          return activeSession();
+        },
+        saveSession() {
+          throw new Error("should not save session");
+        },
+        readRun() {
+          return activeRun();
+        },
+        readLatestRunForSession() {
+          return activeRun();
+        },
+        saveRun() {
+          throw new Error("should not save run");
+        },
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(providerCalled).toBe(false);
+    if (result.ok || !("reason" in result)) {
+      throw new Error("expected existing active run block");
+    }
+    expect(result.reason).toBe("existing_active_run");
+    expect(result.run.runId).toBe("run-existing");
+  });
+
+  it("starts a new run after marking an old ownerless run failed when recovery is enabled", async () => {
+    const providerStarts: ControlledAgentSession[] = [];
+    const savedSessions: ControlledAgentSession[] = [];
+    const savedRuns: ControlledAgentRun[] = [];
+    const provider: ControlledAgentProviderPort = {
+      start(input) {
+        providerStarts.push(input.session);
+        return { providerRunId: "provider-run-2" };
+      },
+      status() {
+        return { status: ControlledAgentRunStatus.Running };
+      },
+      stop() {
+        return { status: ControlledAgentRunStatus.Stopped };
+      },
+    };
+
+    const result = await startControlledAgentRun(launchInput(true), {
+      provider,
+      recoverOwnerlessActiveRunAfterMs: 10 * 60 * 1000,
+      stateStore: {
+        readSession() {
+          return activeSession();
+        },
+        saveSession(session) {
+          savedSessions.push(session);
+        },
+        readRun() {
+          return activeRun();
+        },
+        readLatestRunForSession() {
+          return activeRun();
+        },
+        saveRun(run) {
+          savedRuns.push(run);
+        },
+      },
+      clock: { now: () => new Date("2026-07-05T11:15:01.000Z") },
+      idGenerator: {
+        randomId: (() => {
+          const ids = ["run-2", "event-1"];
+          return () => ids.shift() ?? "unused";
+        })(),
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ownerless recovery");
+    expect(providerStarts).toHaveLength(1);
+    expect(savedRuns[0]).toMatchObject({
+      runId: "run-existing",
+      status: ControlledAgentRunStatus.Failed,
+      safeMessage:
+        "Controlled-agent active run has no owner metadata and exceeded the ownerless recovery threshold.",
+    });
+    expect(savedSessions[0]).toMatchObject({
+      status: ControlledAgentRunStatus.Failed,
+    });
+    expect(result.run.runId).toBe("run-2");
+    expect(result.run.providerRunId).toBe("provider-run-2");
+  });
+
+  it("starts a new run after marking a stale owner run failed", async () => {
+    const staleOwner = buildControlledAgentProcessOwner({
+      kind: ControlledAgentProcessOwnerKind.DurableMcp,
+      ownerId: "owner-stale",
+      now: new Date("2026-07-05T10:50:00.000Z"),
+      pid: 111,
+      hostname: "host-a",
+    });
+    const providerStarts: ControlledAgentSession[] = [];
+    const savedSessions: ControlledAgentSession[] = [];
+    const savedRuns: ControlledAgentRun[] = [];
+    const provider: ControlledAgentProviderPort = {
+      start(input) {
+        providerStarts.push(input.session);
+        return { providerRunId: "provider-run-2" };
+      },
+      status() {
+        return { status: ControlledAgentRunStatus.Running };
+      },
+      stop() {
+        return { status: ControlledAgentRunStatus.Stopped };
+      },
+    };
+
+    const result = await startControlledAgentRun(launchInput(true), {
+      provider,
+      ownerLiveness: { isLive: () => false },
+      stateStore: {
+        readSession() {
+          return { ...activeSession(), owner: staleOwner };
+        },
+        saveSession(session) {
+          savedSessions.push(session);
+        },
+        readRun() {
+          return { ...activeRun(), owner: staleOwner };
+        },
+        readLatestRunForSession() {
+          return { ...activeRun(), owner: staleOwner };
+        },
+        saveRun(run) {
+          savedRuns.push(run);
+        },
+      },
+      clock: { now: () => new Date("2026-07-05T11:00:00.000Z") },
+      idGenerator: {
+        randomId: (() => {
+          const ids = ["run-2", "event-1"];
+          return () => ids.shift() ?? "unused";
+        })(),
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected stale owner recovery");
+    expect(providerStarts).toHaveLength(1);
+    expect(savedRuns[0]).toMatchObject({
+      runId: "run-existing",
+      status: ControlledAgentRunStatus.Failed,
+      stoppedAt: "2026-07-05T11:00:00.000Z",
+      safeMessage: "Controlled-agent owner process is no longer live.",
+    });
+    expect(savedSessions[0]).toMatchObject({
+      status: ControlledAgentRunStatus.Failed,
       activeRunId: "run-existing",
     });
     expect(result.run.runId).toBe("run-2");

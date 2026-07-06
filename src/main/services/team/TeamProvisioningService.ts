@@ -232,12 +232,14 @@ import { relayMemberInboxMessagesWithPorts } from './provisioning/TeamProvisioni
 import {
   type LiveRosterAttachReason,
   type MemberLifecycleOperation,
+  type MemberLifecycleOperationKind,
   TeamProvisioningMemberLifecycleController,
 } from './provisioning/TeamProvisioningMemberLifecycle';
 import {
   createTeamProvisioningMemberLifecycleHostFromPortGroups,
   type TeamProvisioningMemberLifecycleHostFactoryPortGroups,
 } from './provisioning/TeamProvisioningMemberLifecycleHostFactory';
+import { createTeamProvisioningMemberLifecycleOperationRunner } from './provisioning/TeamProvisioningMemberLifecycleOperationRunner';
 import { TeamProvisioningMemberMcpLaunchConfigProvisioner } from './provisioning/TeamProvisioningMemberMcpLaunchConfig';
 import {
   refreshMemberSpawnStatusesFromLeadInbox as refreshMemberSpawnStatusesFromLeadInboxHelper,
@@ -1339,6 +1341,12 @@ export class TeamProvisioningService {
     Promise<RetryFailedOpenCodeSecondaryLanesResult>
   >();
   private readonly memberLifecycleOperations = new Map<string, MemberLifecycleOperation>();
+  private readonly memberLifecycleOperationRunner =
+    createTeamProvisioningMemberLifecycleOperationRunner({
+      memberLifecycleOperations: this.memberLifecycleOperations,
+      invalidateRuntimeSnapshotCaches: (teamName) => this.invalidateRuntimeSnapshotCaches(teamName),
+      nowMs: () => Date.now(),
+    });
   private readonly memberLifecycleUseCases = {
     persistOpenCodeMemberRestartSystemMessage:
       createPersistOpenCodeMemberRestartSystemMessageUseCase({
@@ -1350,6 +1358,18 @@ export class TeamProvisioningService {
     appendDirectProcessRuntimeEvent: createAppendDirectProcessRuntimeEventUseCase(
       createNodeAppendDirectProcessRuntimeEventUseCasePorts({ nowIso })
     ),
+    runMemberLifecycleOperation: <T>(
+      teamName: string,
+      memberName: string,
+      kind: MemberLifecycleOperationKind,
+      operation: () => Promise<T>
+    ) =>
+      this.memberLifecycleOperationRunner.runMemberLifecycleOperation(
+        teamName,
+        memberName,
+        kind,
+        operation
+      ),
   } satisfies TeamProvisioningServiceMemberLifecycleHostPortGroups['useCases'];
   private readonly memberLifecycleHost = createTeamProvisioningMemberLifecycleHostFromPortGroups<
     ProvisioningRun,

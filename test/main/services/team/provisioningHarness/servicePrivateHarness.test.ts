@@ -8,6 +8,7 @@ import {
   privateHarness,
   providerRuntimeHarness,
   provisioningConfigFacadeHarness,
+  registerActiveProvisioningRun,
   registerAliveRun,
   registerProvisioningRun,
   runtimeResourceSamplingHarness,
@@ -64,14 +65,27 @@ describe('team provisioning private harness seams', () => {
       processKilled: false,
       cancelRequested: false,
     };
+    const activeProvisioningRun = {
+      runId: 'active-provisioning-run-1',
+      teamName: 'team-b',
+      request: {},
+      child: null,
+      processKilled: false,
+      cancelRequested: false,
+    };
 
     registerAliveRun(service, aliveRun);
+    registerActiveProvisioningRun(service, activeProvisioningRun);
     registerProvisioningRun(service, 'team-a', 'runtime-adapter-run-1', {
       runtimeAdapterProgressState: 'spawning',
     });
 
     expect(serviceSeams.runs.get(aliveRun.runId)).toBe(aliveRun);
+    expect(serviceSeams.runs.get(activeProvisioningRun.runId)).toBe(activeProvisioningRun);
     expect(serviceSeams.aliveRunByTeam.get('team-a')).toBe(aliveRun.runId);
+    expect(getRegisteredProvisioningRunId(service, 'team-b')).toBe(
+      activeProvisioningRun.runId
+    );
     expect(getRegisteredProvisioningRunId(service, 'team-a')).toBe('runtime-adapter-run-1');
     expect(serviceSeams.runtimeAdapterProgressByRunId.get('runtime-adapter-run-1')).toEqual({
       runId: 'runtime-adapter-run-1',

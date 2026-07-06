@@ -89,6 +89,15 @@ export function registerAliveRun(
   harness.aliveRunByTeam.set(run.teamName, run.runId);
 }
 
+export function registerActiveProvisioningRun(
+  svc: TeamProvisioningService,
+  run: TeamProvisioningServicePrivateRunHarness
+): void {
+  const harness = privateHarness(svc);
+  harness.runs.set(run.runId, run);
+  harness.provisioningRunByTeam.set(run.teamName, run.runId);
+}
+
 export function registerProvisioningRun(
   svc: TeamProvisioningService,
   teamName: string,

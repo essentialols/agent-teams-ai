@@ -29,7 +29,7 @@ import { TeamProvisioningService } from '@main/services/team/TeamProvisioningSer
 import {
   getRegisteredProvisioningRunId,
   getResolvableProvisioningRunId,
-  privateHarness,
+  registerActiveProvisioningRun,
   registerAliveRun,
   registerProvisioningRun,
 } from './provisioningHarness/servicePrivateHarness';
@@ -89,8 +89,7 @@ describe('TeamProvisioningService idempotent launch guards', () => {
     const runId = 'launching-run-1';
     const svc = new TeamProvisioningService();
 
-    registerProvisioningRun(svc, teamName, runId);
-    privateHarness(svc).runs.set(runId, {
+    registerActiveProvisioningRun(svc, {
       runId,
       teamName,
       request: {},

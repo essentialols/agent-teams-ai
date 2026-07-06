@@ -135,6 +135,7 @@ import {
   computeTeamWatchScope,
   resetTeamWatchScopeForTests,
 } from '../../../src/main/services/infrastructure/teamWatchScope';
+import { bindTeamIpcProvisioningApis } from '../../../src/main/services/team/contracts/TeamProvisioningApis';
 import { LaunchIoGovernor } from '../../../src/main/services/team/LaunchIoGovernor';
 import { getAppDataPath } from '../../../src/main/utils/pathDecoder';
 import {
@@ -532,7 +533,7 @@ describe('ipc teams handlers', () => {
     launchIoGovernor = new LaunchIoGovernor({ quietWindowMs: 100 });
     initializeTeamHandlers(
       service as never,
-      provisioningService as never,
+      bindTeamIpcProvisioningApis(provisioningService as never),
       undefined,
       undefined,
       undefined,

@@ -138,17 +138,6 @@ import {
   initializeAutoResumeService,
 } from '../services/team/AutoResumeService';
 import {
-  bindTeamClaudeLogsApi,
-  bindTeamDiagnosticsApi,
-  bindTeamLaunchApi,
-  bindTeamMemberLifecycleApi,
-  bindTeamMessagingApi,
-  bindTeamProvisioningPreflightApi,
-  bindTeamProvisioningRunApi,
-  bindTeamRuntimeApi,
-  bindTeamToolApprovalApi,
-} from '../services/team/contracts/TeamProvisioningApis';
-import {
   cloneLaunchIoGovernorPayload,
   type LaunchIoGovernor,
 } from '../services/team/LaunchIoGovernor';
@@ -194,6 +183,7 @@ import type {
 import type {
   TeamClaudeLogsApi,
   TeamDiagnosticsApi,
+  TeamIpcProvisioningApis,
   TeamLaunchApi,
   TeamMemberLifecycleApi,
   TeamMessagingApi,
@@ -757,16 +747,6 @@ function buildLeadDirectDelegateAckBlock(actionMode?: AgentActionMode): string |
   );
 }
 
-export type TeamIpcProvisioningApis = TeamLaunchApi &
-  TeamProvisioningPreflightApi &
-  TeamProvisioningRunApi &
-  TeamRuntimeApi &
-  TeamMemberLifecycleApi &
-  TeamDiagnosticsApi &
-  TeamClaudeLogsApi &
-  TeamMessagingApi &
-  TeamToolApprovalApi;
-
 let teamDataService: TeamDataService | null = null;
 let teamProvisioningStartApi: TeamLaunchApi | null = null;
 let teamProvisioningPreflightApi: TeamProvisioningPreflightApi | null = null;
@@ -840,15 +820,15 @@ export function initializeTeamHandlers(
   ioGovernor?: LaunchIoGovernor
 ): void {
   teamDataService = service;
-  teamProvisioningStartApi = bindTeamLaunchApi(provisioningService);
-  teamProvisioningPreflightApi = bindTeamProvisioningPreflightApi(provisioningService);
-  teamProvisioningRunApi = bindTeamProvisioningRunApi(provisioningService);
-  teamRuntimeApi = bindTeamRuntimeApi(provisioningService);
-  teamMemberLifecycleApi = bindTeamMemberLifecycleApi(provisioningService);
-  teamDiagnosticsApi = bindTeamDiagnosticsApi(provisioningService);
-  teamClaudeLogsApi = bindTeamClaudeLogsApi(provisioningService);
-  teamMessagingApi = bindTeamMessagingApi(provisioningService);
-  teamToolApprovalApi = bindTeamToolApprovalApi(provisioningService);
+  teamProvisioningStartApi = provisioningService.launch;
+  teamProvisioningPreflightApi = provisioningService.preflight;
+  teamProvisioningRunApi = provisioningService.provisioningRun;
+  teamRuntimeApi = provisioningService.runtime;
+  teamMemberLifecycleApi = provisioningService.memberLifecycle;
+  teamDiagnosticsApi = provisioningService.diagnostics;
+  teamClaudeLogsApi = provisioningService.claudeLogs;
+  teamMessagingApi = provisioningService.messaging;
+  teamToolApprovalApi = provisioningService.toolApproval;
   initializeAutoResumeService({
     getCurrentRunId: teamRuntimeApi.getCurrentRunId,
     isTeamAlive: teamRuntimeApi.isTeamAlive,

@@ -76,12 +76,7 @@ import {
   registerSubagentHandlers,
   removeSubagentHandlers,
 } from './subagents';
-import {
-  initializeTeamHandlers,
-  registerTeamHandlers,
-  removeTeamHandlers,
-  type TeamIpcProvisioningApis,
-} from './teams';
+import { initializeTeamHandlers, registerTeamHandlers, removeTeamHandlers } from './teams';
 import { registerTelemetryHandlers, removeTelemetryHandlers } from './telemetry';
 import {
   initializeTerminalHandlers,
@@ -132,6 +127,7 @@ import type { SkillsWatcherService } from '../services/extensions/skills/SkillsW
 import type { McpHealthDiagnosticsService } from '../services/extensions/state/McpHealthDiagnosticsService';
 import type { HttpServer } from '../services/infrastructure/HttpServer';
 import type { SchedulerService } from '../services/schedule/SchedulerService';
+import type { TeamIpcProvisioningApis } from '../services/team/contracts/TeamProvisioningApis';
 import type { CrossTeamService } from '../services/team/CrossTeamService';
 import type { LaunchIoGovernor } from '../services/team/LaunchIoGovernor';
 import type { TeamBackupService } from '../services/team/TeamBackupService';

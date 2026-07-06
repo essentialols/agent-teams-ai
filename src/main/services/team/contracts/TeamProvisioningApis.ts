@@ -87,6 +87,18 @@ export interface TeamHttpProvisioningApis {
   runtimeControl?: TeamRuntimeControlCompatibilityApi;
 }
 
+export interface TeamIpcProvisioningApis {
+  launch: TeamLaunchApi;
+  preflight: TeamProvisioningPreflightApi;
+  provisioningRun: TeamProvisioningRunApi;
+  runtime: TeamRuntimeApi;
+  memberLifecycle: TeamMemberLifecycleApi;
+  diagnostics: TeamDiagnosticsApi;
+  claudeLogs: TeamClaudeLogsApi;
+  messaging: TeamMessagingApi;
+  toolApproval: TeamToolApprovalApi;
+}
+
 export type TeamLiveRosterAttachReason = 'member_added' | 'member_restored' | 'member_updated';
 
 export interface TeamMemberLifecycleApi {
@@ -258,6 +270,30 @@ export function bindTeamHttpProvisioningApis(
     launch: bindTeamLaunchApi(source),
     runtime: bindTeamRuntimeApi(source),
     runtimeControl: bindTeamRuntimeControlCompatibilityApi(source),
+  };
+}
+
+export function bindTeamIpcProvisioningApis(
+  source: TeamLaunchApi &
+    TeamProvisioningPreflightApi &
+    TeamProvisioningRunApi &
+    TeamRuntimeApi &
+    TeamMemberLifecycleApi &
+    TeamDiagnosticsApi &
+    TeamClaudeLogsApi &
+    TeamMessagingApi &
+    TeamToolApprovalApi
+): TeamIpcProvisioningApis {
+  return {
+    launch: bindTeamLaunchApi(source),
+    preflight: bindTeamProvisioningPreflightApi(source),
+    provisioningRun: bindTeamProvisioningRunApi(source),
+    runtime: bindTeamRuntimeApi(source),
+    memberLifecycle: bindTeamMemberLifecycleApi(source),
+    diagnostics: bindTeamDiagnosticsApi(source),
+    claudeLogs: bindTeamClaudeLogsApi(source),
+    messaging: bindTeamMessagingApi(source),
+    toolApproval: bindTeamToolApprovalApi(source),
   };
 }
 

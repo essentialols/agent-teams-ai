@@ -1,3 +1,6 @@
+import {
+  getMemberLifecycleOperationKey,
+} from '@main/services/team/provisioning/TeamProvisioningMemberLifecycleKeys';
 import { TeamProvisioningService } from '@main/services/team/TeamProvisioningService';
 import { describe, expect, it } from 'vitest';
 
@@ -19,7 +22,15 @@ type MemberLifecycleHostProbe = {
       run: { id: string };
     }): Promise<unknown>;
     removeTrackedMemberMcpLaunchConfig(run: { id: string }, config: unknown): Promise<void>;
+    runMemberLifecycleOperation?<T>(
+      teamName: string,
+      memberName: string,
+      kind: 'manual_restart' | 'primary_member_updated',
+      operation: () => Promise<T>
+    ): Promise<T>;
   };
+  memberLifecycleOperations: Map<string, { kind: string; startedAtMs: number }>;
+  getRuntimeSnapshotCacheGeneration(teamName: string): number;
 };
 
 type MemberMcpLaunchConfigProvisionerProbe = {
@@ -138,5 +149,57 @@ describe('TeamProvisioningService member lifecycle host', () => {
     );
 
     expect(calls).toEqual(['build:run-lazy:/repo', 'remove:run-lazy:config']);
+  });
+
+  it('runs lifecycle operations through the service-owned use case port', async () => {
+    const service = new TeamProvisioningService();
+    const serviceProbe = service as unknown as MemberLifecycleHostProbe;
+    const host = serviceProbe.memberLifecycleHost;
+    let resolveOperation: () => void = () => undefined;
+    const operationBlocker = new Promise<void>((resolve) => {
+      resolveOperation = resolve;
+    });
+
+    expect(host.runMemberLifecycleOperation).toBeTypeOf('function');
+
+    const operation = host.runMemberLifecycleOperation!(
+      'team-a',
+      'Worker',
+      'manual_restart',
+      async () => {
+        await operationBlocker;
+        return 'done';
+      }
+    );
+
+    try {
+      expect(
+        serviceProbe.memberLifecycleOperations.get(
+          getMemberLifecycleOperationKey('team-a', 'Worker')
+        )
+      ).toMatchObject({
+        kind: 'manual_restart',
+      });
+      const generationDuringOperation =
+        serviceProbe.getRuntimeSnapshotCacheGeneration('team-a');
+
+      await expect(
+        host.runMemberLifecycleOperation!(
+          ' TEAM-A ',
+          ' worker ',
+          'primary_member_updated',
+          async () => 'overlap'
+        )
+      ).rejects.toThrow('Lifecycle operation for teammate " worker " is already in progress');
+
+      resolveOperation();
+      await expect(operation).resolves.toBe('done');
+      expect(serviceProbe.memberLifecycleOperations.size).toBe(0);
+      expect(serviceProbe.getRuntimeSnapshotCacheGeneration('team-a')).toBeGreaterThan(
+        generationDuringOperation
+      );
+    } finally {
+      resolveOperation();
+    }
   });
 });

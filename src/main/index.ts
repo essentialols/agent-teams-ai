@@ -111,17 +111,10 @@ import {
   snapshotOpenCodeLocalMcpLaunchEnv,
 } from '@main/services/team/opencode/bridge/OpenCodeMcpBridgeEnv';
 import {
-  bindTeamClaudeLogsApi,
-  bindTeamDiagnosticsApi,
   bindTeamHttpProvisioningApis,
-  bindTeamLaunchApi,
-  bindTeamMemberLifecycleApi,
-  bindTeamMessagingApi,
-  bindTeamProvisioningPreflightApi,
-  bindTeamProvisioningRunApi,
-  bindTeamRuntimeApi,
-  bindTeamToolApprovalApi,
+  bindTeamIpcProvisioningApis,
   type TeamHttpProvisioningApis,
+  type TeamIpcProvisioningApis,
 } from '@main/services/team/contracts/TeamProvisioningApis';
 import { ReviewApplierService } from '@main/services/team/ReviewApplierService';
 import { TeamBackupService } from '@main/services/team/TeamBackupService';
@@ -294,7 +287,6 @@ import type {
   AppStartupStep,
   TeamChangeEvent,
 } from '@shared/types';
-import type { TeamIpcProvisioningApis } from './ipc/teams';
 
 const logger = createLogger('App');
 const appStartedAtMs = Date.now();
@@ -2583,17 +2575,8 @@ async function initializeServices(): Promise<void> {
     message: 'Wiring app actions...',
   });
 
-  const teamIpcProvisioningApis: TeamIpcProvisioningApis = {
-    ...bindTeamLaunchApi(teamProvisioningService),
-    ...bindTeamProvisioningPreflightApi(teamProvisioningService),
-    ...bindTeamProvisioningRunApi(teamProvisioningService),
-    ...bindTeamRuntimeApi(teamProvisioningService),
-    ...bindTeamMemberLifecycleApi(teamProvisioningService),
-    ...bindTeamDiagnosticsApi(teamProvisioningService),
-    ...bindTeamClaudeLogsApi(teamProvisioningService),
-    ...bindTeamMessagingApi(teamProvisioningService),
-    ...bindTeamToolApprovalApi(teamProvisioningService),
-  };
+  const teamIpcProvisioningApis: TeamIpcProvisioningApis =
+    bindTeamIpcProvisioningApis(teamProvisioningService);
   teamHttpProvisioningApis = bindTeamHttpProvisioningApis(teamProvisioningService);
 
   // Initialize IPC handlers with registry

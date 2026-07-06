@@ -80,44 +80,60 @@ export async function superviseCodexGoalProjectController(input: {
     client.connect(clientTransport),
   ]);
   try {
-    const start = parseMcpJsonResult(await client.callTool({
-      name: "codex_goal_project_controller_start",
-      arguments: input.args,
-    }));
-    input.onEvent?.({ type: "start", result: start });
-    if (!mcpResultOk(start)) return { ok: false, start };
-
+    let start: unknown = null;
     let lastStatus: unknown = start;
     while (!input.signal?.aborted) {
-      try {
-        await sleep(input.statusIntervalMs ?? 60_000, undefined, {
-          signal: input.signal,
-        });
-      } catch (error) {
-        if (isAbortError(error)) break;
-        throw error;
-      }
-      const status = parseMcpJsonResult(await client.callTool({
-        name: "codex_goal_project_controller_status",
+      start = parseMcpJsonResult(await client.callTool({
+        name: "codex_goal_project_controller_start",
         arguments: input.args,
       }));
-      lastStatus = status;
-      input.onEvent?.({ type: "status", result: status });
-      if (!mcpResultOk(status)) {
-        return { ok: false, start, finalStatus: status };
-      }
-      const runStatus = controllerSupervisorObservedStatus(status);
-      if (runStatus !== undefined && controllerSupervisorStatusIsTerminal(runStatus)) {
-        const reconcile = parseMcpJsonResult(await client.callTool({
-          name: "codex_goal_project_controller_reconcile",
+      input.onEvent?.({ type: "start", result: start });
+      if (!mcpResultOk(start)) return { ok: false, start };
+      lastStatus = start;
+
+      while (!input.signal?.aborted) {
+        try {
+          await sleep(input.statusIntervalMs ?? 60_000, undefined, {
+            signal: input.signal,
+          });
+        } catch (error) {
+          if (isAbortError(error)) break;
+          throw error;
+        }
+        const status = parseMcpJsonResult(await client.callTool({
+          name: "codex_goal_project_controller_status",
           arguments: input.args,
         }));
-        input.onEvent?.({ type: "reconcile", result: reconcile });
-        return {
-          ok: mcpResultOk(reconcile) && controllerSupervisorTerminalStatusSucceeded(runStatus),
-          start,
-          finalStatus: reconcile,
-        };
+        lastStatus = status;
+        input.onEvent?.({ type: "status", result: status });
+        if (!mcpResultOk(status)) {
+          return { ok: false, start, finalStatus: status };
+        }
+        const runStatus = controllerSupervisorObservedStatus(status);
+        if (runStatus !== undefined && controllerSupervisorStatusIsTerminal(runStatus)) {
+          const reconcile = parseMcpJsonResult(await client.callTool({
+            name: "codex_goal_project_controller_reconcile",
+            arguments: input.args,
+          }));
+          input.onEvent?.({ type: "reconcile", result: reconcile });
+          if (
+            mcpResultOk(reconcile) &&
+            controllerSupervisorTerminalStatusCanRetry(runStatus, reconcile)
+          ) {
+            const accountsStatus = parseMcpJsonResult(await client.callTool({
+              name: "codex_goal_accounts_status",
+              arguments: input.args,
+            }));
+            if (controllerSupervisorHasAvailableAccounts(accountsStatus)) {
+              break;
+            }
+          }
+          return {
+            ok: mcpResultOk(reconcile) && controllerSupervisorTerminalStatusSucceeded(runStatus),
+            start,
+            finalStatus: reconcile,
+          };
+        }
       }
     }
 
@@ -160,6 +176,20 @@ export function controllerSupervisorStatusIsTerminal(
     status !== ControllerSupervisorObservedStatus.Running;
 }
 
+export function controllerSupervisorTerminalStatusCanRetry(
+  status: ControllerSupervisorObservedStatus,
+  reconcile: unknown,
+): boolean {
+  return status === ControllerSupervisorObservedStatus.Failed &&
+    controllerSupervisorQuotaFailure(reconcile);
+}
+
+export function controllerSupervisorHasAvailableAccounts(result: unknown): boolean {
+  const summary = nestedRecord(result, "summary");
+  const available = summary?.availableDeduped;
+  return typeof available === "number" && available > 0;
+}
+
 function controllerSupervisorTerminalStatusSucceeded(
   status: ControllerSupervisorObservedStatus,
 ): boolean {
@@ -184,6 +214,16 @@ function controllerSupervisorStatusValue(
     }
   }
   return undefined;
+}
+
+function controllerSupervisorQuotaFailure(result: unknown): boolean {
+  return /\b(?:quota|billing limit|usage limit|rate limit)\b/i.test(
+    String(
+      nestedRecord(result, "run")?.safeMessage ??
+        (isRecord(result) ? result.safeMessage : undefined) ??
+        "",
+    ),
+  );
 }
 
 export async function listCodexGoalMcpResources(): Promise<unknown> {

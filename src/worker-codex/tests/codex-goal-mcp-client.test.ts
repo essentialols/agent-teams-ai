@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   ControllerSupervisorObservedStatus,
+  controllerSupervisorHasAvailableAccounts,
   controllerSupervisorObservedStatus,
   controllerSupervisorStatusIsTerminal,
+  controllerSupervisorTerminalStatusCanRetry,
 } from "../codex-goal-mcp-client";
 
 describe("codex goal MCP client supervisor helpers", () => {
@@ -46,5 +48,32 @@ describe("codex goal MCP client supervisor helpers", () => {
     expect(controllerSupervisorStatusIsTerminal(
       ControllerSupervisorObservedStatus.Failed,
     )).toBe(true);
+  });
+
+  it("retries failed project controllers only after quota failures", () => {
+    expect(controllerSupervisorTerminalStatusCanRetry(
+      ControllerSupervisorObservedStatus.Failed,
+      { ok: true, run: { safeMessage: "Codex quota or billing limit was reached." } },
+    )).toBe(true);
+    expect(controllerSupervisorTerminalStatusCanRetry(
+      ControllerSupervisorObservedStatus.Failed,
+      { ok: true, run: { safeMessage: "Codex session is invalid." } },
+    )).toBe(false);
+    expect(controllerSupervisorTerminalStatusCanRetry(
+      ControllerSupervisorObservedStatus.Blocked,
+      { ok: true, run: { safeMessage: "Codex quota or billing limit was reached." } },
+    )).toBe(false);
+  });
+
+  it("continues only while project accounts remain available", () => {
+    expect(controllerSupervisorHasAvailableAccounts({
+      ok: true,
+      summary: { availableDeduped: 1 },
+    })).toBe(true);
+    expect(controllerSupervisorHasAvailableAccounts({
+      ok: true,
+      summary: { availableDeduped: 0 },
+    })).toBe(false);
+    expect(controllerSupervisorHasAvailableAccounts({ ok: false })).toBe(false);
   });
 });

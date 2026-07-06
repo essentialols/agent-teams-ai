@@ -961,6 +961,45 @@ describe("codex goal ops", () => {
     });
   });
 
+  it("does not treat partial progress as a live worker", () => {
+    expect(resolveCodexGoalWorkerLiveness({
+      status: {
+        progressExists: true,
+        progressStatus: "partial",
+        progressHeartbeatAgeMs: 1_000,
+        progressProcessAlive: true,
+        progressCommand: "node subscription-runtime-codex-goal run",
+      },
+      progressStale: false,
+    })).toMatchObject({
+      alive: false,
+      supervisorKind: RunProcessSupervisorKind.None,
+      processAlive: false,
+      freshProgressAlive: false,
+      aliveReason: RunProcessAliveReason.TerminalResult,
+    });
+  });
+
+  it("does not trust bracketed kernel worker commands as progress pid liveness", () => {
+    expect(resolveCodexGoalWorkerLiveness({
+      status: {
+        tmuxAlive: false,
+        progressExists: true,
+        progressStatus: "running",
+        progressHeartbeatAgeMs: 1_000,
+        progressProcessAlive: true,
+        progressCommand: "[kworker/R-slub_]",
+      },
+      progressStale: false,
+    })).toMatchObject({
+      alive: false,
+      supervisorKind: RunProcessSupervisorKind.None,
+      processAlive: false,
+      freshProgressAlive: false,
+      aliveReason: RunProcessAliveReason.Unknown,
+    });
+  });
+
   it("keeps a live dirty worker in wait state instead of manual review", async () => {
     const fixture = await createGoalFixture();
     const launch = launchInput(fixture.config, fixture.root);

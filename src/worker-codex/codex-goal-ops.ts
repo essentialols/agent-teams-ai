@@ -526,17 +526,21 @@ export function resolveCodexGoalWorkerLiveness(input: {
     | "progressStatus"
     | "progressHeartbeatAgeMs"
     | "progressProcessAlive"
+    | "progressCommand"
   >;
   readonly progressStale?: boolean;
 }): CodexGoalWorkerLiveness {
   const tmuxAlive = input.status.tmuxAlive === true;
   const terminalProgress = input.status.progressStatus === "completed" ||
     input.status.progressStatus === "failed" ||
+    input.status.progressStatus === "partial" ||
     input.status.progressStatus === "maintenance_paused";
+  const trustedProgressProcessAlive = input.status.progressProcessAlive === true &&
+    isTrustedCodexGoalProgressProcess(input.status.progressCommand);
   const processAlive = !terminalProgress &&
-    (tmuxAlive || input.status.progressProcessAlive === true);
+    (tmuxAlive || trustedProgressProcessAlive);
   const explicitSupervisorDead = input.status.tmuxAlive === false &&
-    input.status.progressProcessAlive !== true;
+    !trustedProgressProcessAlive;
   const freshProgressAlive = Boolean(
     !terminalProgress &&
       !explicitSupervisorDead &&
@@ -550,7 +554,7 @@ export function resolveCodexGoalWorkerLiveness(input: {
     ? RunProcessSupervisorKind.Tmux
     : terminalProgress
     ? RunProcessSupervisorKind.None
-    : input.status.progressProcessAlive === true
+    : trustedProgressProcessAlive
     ? RunProcessSupervisorKind.Direct
     : freshProgressAlive
     ? RunProcessSupervisorKind.External
@@ -562,7 +566,7 @@ export function resolveCodexGoalWorkerLiveness(input: {
       ? RunProcessAliveReason.Tmux
       : terminalProgress
       ? RunProcessAliveReason.TerminalResult
-      : input.status.progressProcessAlive === true
+      : trustedProgressProcessAlive
       ? RunProcessAliveReason.Pid
       : freshProgressAlive
       ? RunProcessAliveReason.FreshProgress
@@ -572,6 +576,13 @@ export function resolveCodexGoalWorkerLiveness(input: {
     processAlive,
     freshProgressAlive,
   };
+}
+
+function isTrustedCodexGoalProgressProcess(command: string | undefined): boolean {
+  if (command === undefined) return true;
+  const trimmed = command.trim();
+  if (trimmed.length === 0) return false;
+  return !(trimmed.startsWith("[") && trimmed.endsWith("]"));
 }
 
 export async function reconcileCodexGoalRuntimeResult(

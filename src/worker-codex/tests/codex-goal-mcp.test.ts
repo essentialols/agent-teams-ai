@@ -839,6 +839,112 @@ describe("codex goal MCP server", () => {
     }
   });
 
+  it("repairs project child manifest accounts through the brokered repair tool", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-project-manifest-repair-"));
+    const registryRootDir = join(root, "worker-jobs", "registry");
+    const authRootDir = join(root, "auth");
+    const controllerJobRoot = join(root, "worker-jobs", "infinity-context-controller-v1");
+    const controllerWorkspace = join(root, "workspaces", "infinity-context-controller");
+    const childWorkspace = join(root, "worktrees", "infinity-context-child-v1");
+    const childJobRoot = join(root, "worker-jobs", "infinity-context-child-v1");
+    const server = createCodexGoalMcpServer();
+    const client = new Client({
+      name: "subscription-runtime-test",
+      version: "0.0.0",
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+    try {
+      await Promise.all([
+        server.connect(serverTransport),
+        client.connect(clientTransport),
+      ]);
+      await writeFakeAuth(authRootDir, "account-a", {
+        lastRefresh: new Date().toISOString(),
+      });
+
+      await callToolJson(client, "codex_goal_create_job", {
+        registryRootDir,
+        jobId: "infinity-context-controller-v1",
+        jobRootDir: controllerJobRoot,
+        authRootDir,
+        workspacePath: controllerWorkspace,
+        promptPath: join(controllerJobRoot, "prompt.md"),
+        taskId: "infinity-context-controller-v1",
+        accounts: ["account-a"],
+        accessBoundary: AccessBoundary.ProjectScopedControl,
+        networkAccess: NetworkAccessMode.Restricted,
+        projectAccessScope: {
+          projectId: "infinity-context",
+          workspaceRoots: [join(root, "workspaces")],
+          worktreeRoots: [join(root, "worktrees")],
+          registryRoot: registryRootDir,
+          jobIdPrefixes: ["infinity-context-"],
+          tmuxSessionPrefixes: ["infinity-context-"],
+          allowedAccountIds: ["account-a", "account-b"],
+        },
+      });
+
+      const created = await callToolJson(client, "codex_goal_project_create_job", {
+        registryRootDir,
+        controllerJobId: "infinity-context-controller-v1",
+        jobId: "infinity-context-child-v1",
+        jobRootDir: childJobRoot,
+        authRootDir,
+        workspacePath: childWorkspace,
+        promptPath: join(childJobRoot, "prompt.md"),
+        taskId: "infinity-context-child-v1",
+        accounts: ["account-a"],
+        confirmCreate: true,
+      });
+      expect(created).toMatchObject({
+        ok: true,
+        manifest: { accounts: ["account-a"] },
+      });
+
+      await writeFakeAuth(authRootDir, "account-b", {
+        lastRefresh: new Date().toISOString(),
+      });
+      const preview = await callToolJson(client, "brokered_project_manifest_repair", {
+        registryRootDir,
+        controllerJobId: "infinity-context-controller-v1",
+        jobId: "infinity-context-child-v1",
+      });
+      expect(preview).toMatchObject({
+        ok: false,
+        reason: "confirm_repair_required",
+        proposedPatch: { accounts: ["account-a", "account-b"] },
+      });
+
+      const repaired = await callToolJson(client, "brokered_project_manifest_repair", {
+        registryRootDir,
+        controllerJobId: "infinity-context-controller-v1",
+        jobId: "infinity-context-child-v1",
+        confirmRepair: true,
+      });
+      expect(repaired).toMatchObject({
+        ok: true,
+        manifest: { accounts: ["account-a", "account-b"] },
+      });
+
+      const denied = await callToolJson(client, "brokered_project_manifest_repair", {
+        registryRootDir,
+        controllerJobId: "infinity-context-controller-v1",
+        jobId: "infinity-context-child-v1",
+        accounts: ["account-c"],
+        confirmRepair: true,
+      });
+      expect(denied).toMatchObject({
+        ok: false,
+        error: "project_control_repair_account_outside_scope",
+      });
+    } finally {
+      await client.close();
+      await server.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("updates controller consumed-output ledger roots through scoped repair only", async () => {
     const root = await mkdtemp(join(tmpdir(), "subscription-runtime-controller-scope-repair-"));
     const registryRootDir = join(root, "worker-jobs", "registry");

@@ -1,6 +1,7 @@
 /* eslint-disable security/detect-non-literal-fs-filename -- Test paths are owned by the harness temp workspace. */
+import { createTeamProvisioningLaunchExpectedMembersPorts } from '@main/services/team/provisioning/TeamProvisioningLaunchExpectedMembersPortsFactory';
 import { getTeamsBasePath, setClaudeBasePathOverride } from '@main/utils/pathDecoder';
-import { access, mkdir, readdir, readFile, rm, stat, writeFile } from 'fs/promises';
+import { access, readdir, readFile, rm, stat, writeFile } from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
 
@@ -169,6 +170,27 @@ describe('TeamProvisioningHarnessBuilder', () => {
     expect(await listTempWorkspaceNames(prefix)).toEqual(beforeEntries);
   });
 
+  it('rejects traversal sidecar team names before creating temp dirs or writing escaped files', async () => {
+    const prefix = 'team-provisioning-harness-invalid-sidecar-team-path-test-';
+    const outsideDir = path.join(
+      os.tmpdir(),
+      `team-provisioning-harness-sidecar-team-escape-${process.pid}`
+    );
+    await rm(outsideDir, { recursive: true, force: true });
+    const beforeEntries = await listTempWorkspaceNames(prefix);
+    const traversalTeamName = path.join('..', '..', '..', path.basename(outsideDir));
+
+    await expect(
+      TeamProvisioningHarnessBuilder.create()
+        .withTempWorkspace({ prefix })
+        .withLaunchState(traversalTeamName, { state: 'ready' })
+        .build()
+    ).rejects.toThrow(/Invalid team name/);
+
+    expect(await listTempWorkspaceNames(prefix)).toEqual(beforeEntries);
+    expect(await pathExists(outsideDir)).toBe(false);
+  });
+
   it('rejects traversal inbox member names before creating temp dirs or writing escaped files', async () => {
     const prefix = 'team-provisioning-harness-invalid-member-path-test-';
     const teamName = 'invalid-member-path-team';
@@ -190,6 +212,28 @@ describe('TeamProvisioningHarnessBuilder', () => {
             members: [memberFixture.lead(), memberFixture.codex(traversalMemberName)],
           })
         )
+        .build()
+    ).rejects.toThrow(/Invalid member name/);
+
+    expect(await listTempWorkspaceNames(prefix)).toEqual(beforeEntries);
+    expect(await pathExists(outsideDir)).toBe(false);
+  });
+
+  it('rejects traversal inbox fixture member names before creating temp dirs or writing escaped files', async () => {
+    const prefix = 'team-provisioning-harness-invalid-inbox-fixture-path-test-';
+    const teamName = 'invalid-inbox-fixture-team';
+    const outsideDir = path.join(
+      os.tmpdir(),
+      `team-provisioning-harness-inbox-fixture-escape-${process.pid}`
+    );
+    await rm(outsideDir, { recursive: true, force: true });
+    const beforeEntries = await listTempWorkspaceNames(prefix);
+    const traversalMemberName = path.join('..', '..', '..', path.basename(outsideDir));
+
+    await expect(
+      TeamProvisioningHarnessBuilder.create()
+        .withTempWorkspace({ prefix })
+        .withInbox(teamName, traversalMemberName)
         .build()
     ).rejects.toThrow(/Invalid member name/);
 
@@ -473,6 +517,8 @@ describe('TeamProvisioningHarnessBuilder', () => {
     expect(Object.keys(harness.stores.teamMetaStore).sort()).toEqual(['getMeta']);
     expect(Object.keys(harness.stores.inboxReader).sort()).toEqual(['listInboxNames']);
     expect(Object.keys(harness.stores.launchStateStore).sort()).toEqual(['read']);
+    expect(Object.keys(harness.stores.bootstrapStateStore).sort()).toEqual(['read']);
+    expect(Object.keys(harness.stores.runtimeStore).sort()).toEqual(['read']);
     expect('updateConfig' in harness.stores.configReader).toBe(false);
     expect('writeMeta' in harness.stores.teamMetaStore).toBe(false);
 
@@ -503,18 +549,61 @@ describe('TeamProvisioningHarnessBuilder', () => {
     });
   });
 
+  it('seeds sidecar state files for extracted provisioning service port tests', async () => {
+    const teamName = 'sidecar-fixture-team';
+    const launchState = {
+      teamName,
+      members: [{ name: 'Worker', phase: 'registered' }],
+    };
+    const bootstrapState = {
+      teamName,
+      checkpoint: 'runtime-ready',
+    };
+    const runtimeStore = {
+      sessions: [{ memberName: 'Worker', laneId: 'lane-worker' }],
+    };
+    const inboxMessages = [{ id: 'message-1', from: 'user', text: 'fixture inbox message' }];
+    const harness = await track(
+      TeamProvisioningHarnessBuilder.create()
+        .withTeam(teamName)
+        .withMembersMeta(teamName, [memberFixture.codex('Worker')])
+        .withLaunchState(teamName, launchState)
+        .withBootstrapState(teamName, bootstrapState)
+        .withRuntimeStore(teamName, runtimeStore)
+        .withInbox(teamName, 'Worker', inboxMessages)
+        .build()
+    );
+    const ports = createTeamProvisioningLaunchExpectedMembersPorts({
+      launchStateStore: harness.stores.launchStateStore,
+      readBootstrapLaunchSnapshot: (targetTeamName) =>
+        harness.stores.bootstrapStateStore.read(targetTeamName),
+      membersMetaStore: harness.stores.membersMetaStore,
+      inboxReader: harness.stores.inboxReader,
+      logger: harness.logger,
+    });
+
+    await expect(ports.readLaunchState(teamName)).resolves.toEqual(launchState);
+    await expect(ports.readBootstrapLaunchSnapshot(teamName)).resolves.toEqual(bootstrapState);
+    await expect(ports.getMembers(teamName)).resolves.toEqual([
+      expect.objectContaining({ name: 'Worker' }),
+    ]);
+    await expect(ports.listInboxNames(teamName)).resolves.toEqual(['Worker']);
+    await expect(harness.stores.runtimeStore.read(teamName)).resolves.toEqual(runtimeStore);
+    expect(JSON.parse(await readFile(harness.paths.inboxPath(teamName, 'Worker'), 'utf8'))).toEqual(
+      inboxMessages
+    );
+  });
+
   it('wires config facade launch-member discovery to harness config, meta, and inbox fixtures', async () => {
     const teamName = 'facade-inbox-team';
     const harness = await track(
       TeamProvisioningHarnessBuilder.create()
         .withTeam(teamName)
         .withMembersMeta(teamName, [])
+        .withInbox(teamName, 'alice')
         .build()
     );
 
-    const aliceInboxPath = harness.paths.inboxPath(teamName, 'alice');
-    await mkdir(path.dirname(aliceInboxPath), { recursive: true });
-    await writeFile(aliceInboxPath, '[]\n', 'utf8');
     const configRaw = await harness.stores.configReader.readTeamConfigRaw(teamName);
 
     expect(harness.facades.configFacade.readPersistedTeamProjectPath(teamName)).toBe(

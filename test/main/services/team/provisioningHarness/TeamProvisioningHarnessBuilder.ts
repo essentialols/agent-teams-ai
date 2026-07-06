@@ -76,10 +76,20 @@ export interface HarnessLaunchStateStorePort {
   read(teamName: string): Promise<unknown>;
 }
 
+export interface HarnessBootstrapStateStorePort {
+  read(teamName: string): Promise<unknown>;
+}
+
+export interface HarnessRuntimeStorePort {
+  read(teamName: string): Promise<unknown>;
+}
+
 export interface TeamProvisioningHarnessStores {
   configReader: HarnessTeamConfigReaderPort;
   inboxReader: HarnessTeamInboxReaderPort;
   launchStateStore: HarnessLaunchStateStorePort;
+  bootstrapStateStore: HarnessBootstrapStateStorePort;
+  runtimeStore: HarnessRuntimeStorePort;
   teamMetaStore: HarnessTeamMetaStorePort;
   membersMetaStore: HarnessTeamMembersMetaStorePort;
 }
@@ -467,6 +477,22 @@ class FakeLaunchStateStore {
   }
 }
 
+class FakeBootstrapStateStore {
+  constructor(private readonly paths: TeamProvisioningHarnessPaths) {}
+
+  async read(teamName: string): Promise<unknown> {
+    return readHarnessJsonFile(this.paths.bootstrapStatePath(teamName));
+  }
+}
+
+class FakeRuntimeStore {
+  constructor(private readonly paths: TeamProvisioningHarnessPaths) {}
+
+  async read(teamName: string): Promise<unknown> {
+    return readHarnessJsonFile(this.paths.runtimeStorePath(teamName));
+  }
+}
+
 class HarnessLogger implements TeamProvisioningHarnessLogger {
   private readonly logs: TeamProvisioningHarnessLogEntry[] = [];
 
@@ -528,6 +554,20 @@ function createLaunchStateStorePort(store: FakeLaunchStateStore): HarnessLaunchS
   };
 }
 
+function createBootstrapStateStorePort(
+  store: FakeBootstrapStateStore
+): HarnessBootstrapStateStorePort {
+  return {
+    read: (teamName) => store.read(teamName),
+  };
+}
+
+function createRuntimeStorePort(store: FakeRuntimeStore): HarnessRuntimeStorePort {
+  return {
+    read: (teamName) => store.read(teamName),
+  };
+}
+
 async function readHarnessJsonFile(filePath: string): Promise<unknown> {
   try {
     return JSON.parse(await readFile(filePath, 'utf8'));
@@ -563,8 +603,7 @@ function createConfigFacade(
     membersMetaStore: stores.membersMetaStore,
     launchStateStore: stores.launchStateStore,
     persistedTeamConfigCache: new Map(),
-    readBootstrapLaunchSnapshot: (teamName) =>
-      readHarnessJsonFile(paths.bootstrapStatePath(teamName)),
+    readBootstrapLaunchSnapshot: (teamName) => stores.bootstrapStateStore.read(teamName),
     readRegularFileUtf8: (filePath, readOptions) =>
       readHarnessRegularFileUtf8(paths, filePath, readOptions),
     logger,
@@ -701,6 +740,10 @@ export class TeamProvisioningHarnessBuilder {
   private readonly teamConfigs = new Map<string, TeamConfig | null>();
   private readonly teamMeta = new Map<string, TeamMetaFile>();
   private readonly membersMeta = new Map<string, TeamMembersMetaFile>();
+  private readonly inboxMessages = new Map<string, Map<string, readonly unknown[]>>();
+  private readonly launchStates = new Map<string, unknown>();
+  private readonly bootstrapStates = new Map<string, unknown>();
+  private readonly runtimeStores = new Map<string, unknown>();
 
   static create(): TeamProvisioningHarnessBuilder {
     return new TeamProvisioningHarnessBuilder();
@@ -755,6 +798,28 @@ export class TeamProvisioningHarnessBuilder {
     return this;
   }
 
+  withInbox(teamName: string, memberName: string, messages: readonly unknown[] = []): this {
+    const teamInboxes = this.inboxMessages.get(teamName) ?? new Map<string, readonly unknown[]>();
+    teamInboxes.set(memberName, cloneFixture(messages));
+    this.inboxMessages.set(teamName, teamInboxes);
+    return this;
+  }
+
+  withLaunchState(teamName: string, snapshot: unknown): this {
+    this.launchStates.set(teamName, cloneFixture(snapshot));
+    return this;
+  }
+
+  withBootstrapState(teamName: string, snapshot: unknown): this {
+    this.bootstrapStates.set(teamName, cloneFixture(snapshot));
+    return this;
+  }
+
+  withRuntimeStore(teamName: string, store: unknown): this {
+    this.runtimeStores.set(teamName, cloneFixture(store));
+    return this;
+  }
+
   async build(): Promise<TeamProvisioningHarness> {
     this.validateInputsBeforeSideEffects();
 
@@ -773,16 +838,26 @@ export class TeamProvisioningHarnessBuilder {
       const membersMeta = this.createMembersMetaFixtures(configs);
 
       await writeHarnessFiles(paths, configs, teamMeta, membersMeta);
+      await writeHarnessStateFiles(paths, {
+        inboxMessages: this.inboxMessages,
+        launchStates: this.launchStates,
+        bootstrapStates: this.bootstrapStates,
+        runtimeStores: this.runtimeStores,
+      });
 
       const configReader = new FakeTeamConfigReader(configs.entries(), paths);
       const teamMetaStore = new FakeTeamMetaStore(teamMeta.entries(), paths);
       const membersMetaStore = new FakeTeamMembersMetaStore(membersMeta.entries(), paths);
       const inboxReader = new FakeTeamInboxReader(paths);
       const launchStateStore = new FakeLaunchStateStore(paths);
+      const bootstrapStateStore = new FakeBootstrapStateStore(paths);
+      const runtimeStore = new FakeRuntimeStore(paths);
       const stores: TeamProvisioningHarnessStores = {
         configReader: createConfigReaderPort(configReader),
         inboxReader: createInboxReaderPort(inboxReader),
         launchStateStore: createLaunchStateStorePort(launchStateStore),
+        bootstrapStateStore: createBootstrapStateStorePort(bootstrapStateStore),
+        runtimeStore: createRuntimeStorePort(runtimeStore),
         teamMetaStore: createTeamMetaStorePort(teamMetaStore),
         membersMetaStore: createMembersMetaStorePort(membersMetaStore),
       };
@@ -828,6 +903,25 @@ export class TeamProvisioningHarnessBuilder {
       validateTeamNamePathSegment(teamName);
       validateMemberPathSegments(meta.members);
       assertNoSecretLikeFixtureValues({ teamName, meta });
+    }
+    for (const [teamName, inboxes] of this.inboxMessages) {
+      validateTeamNamePathSegment(teamName);
+      for (const [memberName, messages] of inboxes) {
+        validateMemberNamePathSegment(memberName);
+        assertValidJsonFixture({ teamName, memberName, messages }, 'inbox fixture');
+      }
+    }
+    for (const [teamName, snapshot] of this.launchStates) {
+      validateTeamNamePathSegment(teamName);
+      assertValidJsonFixture({ teamName, snapshot }, 'launch state fixture');
+    }
+    for (const [teamName, snapshot] of this.bootstrapStates) {
+      validateTeamNamePathSegment(teamName);
+      assertValidJsonFixture({ teamName, snapshot }, 'bootstrap state fixture');
+    }
+    for (const [teamName, store] of this.runtimeStores) {
+      validateTeamNamePathSegment(teamName);
+      assertValidJsonFixture({ teamName, store }, 'runtime store fixture');
     }
   }
 
@@ -1078,10 +1172,28 @@ async function createTempWorkspace(
   return paths;
 }
 
+function assertValidJsonFixture(value: unknown, label: string): void {
+  if (value === undefined) {
+    throw new Error(`${label} must be JSON-serializable; undefined is not allowed.`);
+  }
+  assertNoSecretLikeFixtureValues(value);
+  const serialized = JSON.stringify(value);
+  if (serialized === undefined) {
+    throw new Error(`${label} must be JSON-serializable.`);
+  }
+}
+
 async function writeJsonFile(filePath: string, payload: unknown): Promise<void> {
-  assertNoSecretLikeFixtureValues(payload);
+  assertValidJsonFixture(payload, 'harness JSON fixture');
   await mkdir(path.dirname(filePath), { recursive: true });
   await writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+}
+
+interface HarnessStateFileFixtures {
+  inboxMessages: ReadonlyMap<string, ReadonlyMap<string, readonly unknown[]>>;
+  launchStates: ReadonlyMap<string, unknown>;
+  bootstrapStates: ReadonlyMap<string, unknown>;
+  runtimeStores: ReadonlyMap<string, unknown>;
 }
 
 async function writeHarnessFiles(
@@ -1100,5 +1212,28 @@ async function writeHarnessFiles(
 
   for (const [teamName, meta] of membersMeta) {
     await writeJsonFile(paths.membersMetaPath(teamName), meta);
+  }
+}
+
+async function writeHarnessStateFiles(
+  paths: TeamProvisioningHarnessPaths,
+  fixtures: HarnessStateFileFixtures
+): Promise<void> {
+  for (const [teamName, snapshot] of fixtures.launchStates) {
+    await writeJsonFile(paths.launchStatePath(teamName), snapshot);
+  }
+
+  for (const [teamName, snapshot] of fixtures.bootstrapStates) {
+    await writeJsonFile(paths.bootstrapStatePath(teamName), snapshot);
+  }
+
+  for (const [teamName, store] of fixtures.runtimeStores) {
+    await writeJsonFile(paths.runtimeStorePath(teamName), store);
+  }
+
+  for (const [teamName, inboxes] of fixtures.inboxMessages) {
+    for (const [memberName, messages] of inboxes) {
+      await writeJsonFile(paths.inboxPath(teamName, memberName), messages);
+    }
   }
 }

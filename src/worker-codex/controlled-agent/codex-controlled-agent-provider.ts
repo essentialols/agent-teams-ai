@@ -281,6 +281,7 @@ function controlledAgentPrompt(
           "",
         ]),
     "Use only the broker/status MCP tools available in this session.",
+    "At the start of each loop and before spawning or integrating workers, call codex_goal_project_controller_consume_guidance for your controller job and apply any returned guidance.",
     "Do not request raw shell, raw git, raw tmux, filesystem grants or auth files.",
   ].join("\n");
 }
@@ -291,6 +292,7 @@ function controlledAgentGoalObjective(input: ControlledAgentProviderStartInput):
     `Controller job: ${input.session.identity.controllerJobId}.`,
     `Project: ${input.session.identity.projectId}.`,
     "Inspect project worker status, create scoped child workers when useful, review outputs, and integrate only through brokered lifecycle tools.",
+    "Consume controller guidance through codex_goal_project_controller_consume_guidance at safe points so operator direction does not remain pending.",
     "Never use raw shell/git/tmux/registry/auth access.",
   ].join(" ");
 }

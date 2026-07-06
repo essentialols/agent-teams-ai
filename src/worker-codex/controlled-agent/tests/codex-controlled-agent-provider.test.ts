@@ -88,6 +88,9 @@ describe("CodexControlledAgentProvider", () => {
         "Use only the broker/status MCP tools",
       );
       expect(fakeFactory.prompts.join("\n")).toContain(
+        "codex_goal_project_controller_consume_guidance",
+      );
+      expect(fakeFactory.prompts.join("\n")).toContain(
         "Create focused sandbox child workers only through broker tools.",
       );
 
@@ -97,6 +100,7 @@ describe("CodexControlledAgentProvider", () => {
       expect(configToml).toContain("subscription-runtime-codex-goal-mcp-test");
       expect(configToml).toContain("enabled_tools");
       expect(configToml).toContain("codex_goal_project_start");
+      expect(configToml).toContain("codex_goal_project_controller_consume_guidance");
       expect(configToml).not.toContain("danger-full-access");
     } finally {
       await provider.stop({

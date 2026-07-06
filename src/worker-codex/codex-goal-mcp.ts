@@ -335,6 +335,7 @@ type ProjectControllerLaunchPlanMcpArgs = ProjectControlMcpArgs & {
   readonly rawShellMode?: "disabled-by-provider" | "sandboxed-deny-rules-only";
   readonly maxGoalTurns?: number;
   readonly reason?: string;
+  readonly deliveryAttemptId?: string;
 };
 
 type ProjectIntegrationMcpArgs = ProjectControlMcpArgs & {
@@ -1995,6 +1996,23 @@ export function createCodexGoalMcpServer(
     },
     async (args) => withMcpErrors(async () =>
       projectControllerStatus(args as ProjectControllerLaunchPlanMcpArgs),
+    ),
+  );
+
+  server.registerTool(
+    "codex_goal_project_controller_consume_guidance",
+    {
+      title: "Project Controller Consume Guidance",
+      description:
+        "Consume pending control guidance for the ProjectScopedControl controller's own inbox and record delivery receipts. Does not consume child-worker inboxes.",
+      inputSchema: {
+        ...jobRegistryInputSchema(),
+        controllerJobId: z.string().optional(),
+        deliveryAttemptId: z.string().optional(),
+      },
+    },
+    async (args) => withMcpErrors(async () =>
+      projectControllerConsumeGuidance(args as ProjectControllerLaunchPlanMcpArgs),
     ),
   );
 
@@ -3668,6 +3686,34 @@ async function projectControllerStatus(args: ProjectControllerLaunchPlanMcpArgs)
         ? "Controller state is persisted and provider liveness was observed in this MCP process."
         : "Controller state is persisted, but provider liveness is unavailable in this MCP process."
       : "No persisted controlled-agent session/run exists for this controller.",
+  });
+}
+
+async function projectControllerConsumeGuidance(args: ProjectControllerLaunchPlanMcpArgs) {
+  const controller = await loadProjectControlController(args);
+  const launch = await goalLaunchInput(codexGoalJobToArgs(controller.controller));
+  const control = codexGoalWorkerControlService(launch);
+  const target = codexGoalWorkerControlTarget({
+    manifest: controller.controller,
+    launch,
+  });
+  const deliveryAttemptId = stringValue(args.deliveryAttemptId) ??
+    `${controller.controller.jobId}:controller-guidance:${new Date().toISOString()}`;
+  const batch = await control.consumeForContinuation({
+    target,
+    deliveryAttemptId,
+  });
+  const decision = await control.getDecision({ target });
+  return mcpJson({
+    ok: true,
+    mode: "project_controller_consume_guidance",
+    controllerJobId: controller.controller.jobId,
+    registryRootDir: controller.registryRootDir,
+    deliveryAttemptId: batch.deliveryAttemptId,
+    consumedCount: batch.signalIds.length,
+    signalIds: batch.signalIds,
+    ...(batch.message === undefined ? {} : { message: batch.message }),
+    decision: workerControlDecisionJson(decision, false),
   });
 }
 

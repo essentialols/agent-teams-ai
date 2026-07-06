@@ -31,6 +31,7 @@ export enum ControlledAgentToolName {
   GoalListJobs = "codex_goal_list_jobs",
   GoalGetJob = "codex_goal_get_job",
   ProjectEvents = "codex_goal_project_events",
+  ProjectControllerConsumeGuidance = "codex_goal_project_controller_consume_guidance",
   ProjectCreateWorktree = "codex_goal_project_create_worktree",
   ProjectCreateJob = "codex_goal_project_create_job",
   ProjectStart = "codex_goal_project_start",
@@ -47,6 +48,7 @@ export enum ControlledAgentToolName {
 
 export enum ControlledAgentToolGroup {
   Diagnostics = "diagnostics",
+  ControllerLifecycle = "controller_lifecycle",
   WorkerLifecycle = "worker_lifecycle",
   IntegrationLifecycle = "integration_lifecycle",
 }

@@ -257,6 +257,10 @@ The controlled-agent MCP lifecycle tools are:
   observed provider status when available. `liveController.live=true` requires
   an attached runner, matching owner metadata, persisted `running` state and no
   observed terminal provider status;
+- `codex_goal_project_controller_consume_guidance`: consume pending control
+  guidance for the controller manifest's own inbox and record delivery receipts.
+  A live controller should call this at the start of each loop and before
+  spawning or integrating workers so operator guidance does not remain pending;
 - `codex_goal_project_controller_stop`: stop through the safe provider runner;
 - `codex_goal_project_controller_reconcile`: reconcile provider liveness through
   the safe provider runner after crash/reboot.

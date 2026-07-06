@@ -191,6 +191,7 @@ Before starting a live LLM controller, build the controlled-agent launch plan:
 codex_goal_project_controller_launch_plan({ controllerJobId, registryRootDir, providerKind })
 codex_goal_project_controller_status({ controllerJobId, registryRootDir, providerKind })
 codex_goal_project_controller_start({ controllerJobId, registryRootDir, providerKind })
+codex_goal_project_controller_consume_guidance({ controllerJobId, registryRootDir })
 codex_goal_project_controller_stop({ controllerJobId, registryRootDir, providerKind, reason })
 codex_goal_project_controller_reconcile({ controllerJobId, registryRootDir, providerKind })
 codex_goal_project_refill_worker({ controllerJobId, sourceWorkspacePath, baseBranch, promptBody, confirmRefill: true })

@@ -2127,6 +2127,132 @@ describe("codex goal MCP server", () => {
     }
   });
 
+  it("lets project controllers consume only their own pending guidance", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-controller-guidance-"));
+    const registryRootDir = join(root, "worker-jobs", "registry");
+    const authRootDir = join(root, "auth");
+    const controllerJobRoot = join(root, "worker-jobs", "infinity-context-controller-v1");
+    const childJobRoot = join(root, "worker-jobs", "infinity-context-child-v1");
+    const server = createCodexGoalMcpServer();
+    const client = new Client({
+      name: "subscription-runtime-test",
+      version: "0.0.0",
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+    try {
+      await Promise.all([
+        server.connect(serverTransport),
+        client.connect(clientTransport),
+      ]);
+
+      const controllerCreate = await callToolJson(client, "codex_goal_create_job", {
+        registryRootDir,
+        jobId: "infinity-context-controller-v1",
+        jobRootDir: controllerJobRoot,
+        authRootDir,
+        workspacePath: join(root, "workspaces", "controller"),
+        promptPath: join(controllerJobRoot, "prompt.md"),
+        taskId: "infinity-context-controller-v1",
+        accounts: ["account-a"],
+        accessBoundary: AccessBoundary.ProjectScopedControl,
+        networkAccess: NetworkAccessMode.Restricted,
+        projectAccessScope: {
+          projectId: "infinity-context",
+          workspaceRoots: [join(root, "workspaces")],
+          worktreeRoots: [join(root, "worktrees")],
+          registryRoot: registryRootDir,
+          jobIdPrefixes: ["infinity-context-"],
+          tmuxSessionPrefixes: ["infinity-context-"],
+          allowedAccountIds: ["account-a"],
+        },
+      });
+      expect(controllerCreate).toMatchObject({ ok: true });
+      const childCreate = await callToolJson(client, "codex_goal_project_create_job", {
+        registryRootDir,
+        controllerJobId: "infinity-context-controller-v1",
+        jobId: "infinity-context-child-v1",
+        jobRootDir: childJobRoot,
+        authRootDir,
+        workspacePath: join(root, "worktrees", "infinity-context-child-v1"),
+        promptPath: join(childJobRoot, "prompt.md"),
+        taskId: "infinity-context-child-v1",
+        accounts: ["account-a"],
+        logPath: join(childJobRoot, "infinity-context-child-v1.log"),
+        confirmCreate: true,
+      });
+      expect(childCreate).toMatchObject({ ok: true });
+
+      await callToolJson(client, "codex_goal_control_enqueue", {
+        registryRootDir,
+        jobId: "infinity-context-controller-v1",
+        intent: "guidance",
+        body: "Stop spawning broad feature-owned workers; drain memory backlog first.",
+        idempotencyKey: "controller-memory-guidance",
+      });
+      await callToolJson(client, "codex_goal_control_enqueue", {
+        registryRootDir,
+        jobId: "infinity-context-child-v1",
+        intent: "guidance",
+        body: "Child worker guidance must remain pending.",
+        idempotencyKey: "child-guidance",
+      });
+
+      const consumed = await callToolJson(
+        client,
+        "codex_goal_project_controller_consume_guidance",
+        {
+          registryRootDir,
+          controllerJobId: "infinity-context-controller-v1",
+          deliveryAttemptId: "controller-loop-1",
+        },
+      );
+
+      expect(consumed).toMatchObject({
+        ok: true,
+        mode: "project_controller_consume_guidance",
+        controllerJobId: "infinity-context-controller-v1",
+        deliveryAttemptId: "controller-loop-1",
+        consumedCount: 1,
+        decision: {
+          pendingCount: 0,
+          deliverableCount: 0,
+        },
+      });
+      expect(String(consumed.message)).toContain("drain memory backlog first");
+
+      const controllerSignals = await callToolJson(client, "codex_goal_control_list", {
+        registryRootDir,
+        jobId: "infinity-context-controller-v1",
+      });
+      expect(controllerSignals.signals).toMatchObject([
+        {
+          state: "delivered",
+          latestReceipt: {
+            state: "delivered",
+            deliveryAttemptId: "controller-loop-1",
+          },
+        },
+      ]);
+
+      const childDecision = await callToolJson(client, "codex_goal_control_decision", {
+        registryRootDir,
+        jobId: "infinity-context-child-v1",
+      });
+      expect(childDecision).toMatchObject({
+        ok: true,
+        decision: {
+          pendingCount: 1,
+          deliverableCount: 1,
+        },
+      });
+    } finally {
+      await client.close();
+      await server.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("fails closed when a Claude project controller lacks a scoped session artifact", async () => {
     const root = await mkdtemp(join(tmpdir(), "subscription-runtime-controller-claude-"));
     const registryRootDir = join(root, "worker-jobs", "registry");

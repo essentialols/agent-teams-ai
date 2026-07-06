@@ -588,6 +588,14 @@ export interface TeamProvisioningMemberLifecycleUseCasePorts {
   persistOpenCodeMemberRestartSystemMessage?(input: OpenCodeMemberRestartSystemMessageInput): void;
   launchDirectProcessMemberRestart?(input: DirectProcessMemberRestartInput): Promise<void>;
   appendDirectProcessRuntimeEvent?(input: DirectProcessRuntimeEventInput): Promise<void>;
+  /**
+   * Overrides the controller's operation runner entirely: implementations MUST
+   * provide the same per-member mutual exclusion backed by the shared
+   * memberLifecycleOperations registry (see
+   * TeamProvisioningMemberLifecycleOperationRunner), otherwise concurrent
+   * restarts pass isMemberLifecycleOperationActive and spawn duplicate
+   * teammate processes.
+   */
   runMemberLifecycleOperation?<T>(
     teamName: string,
     memberName: string,

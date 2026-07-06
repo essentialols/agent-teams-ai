@@ -135,6 +135,7 @@ export type WorkerPoolRunOptions = {
 export type WorkerPoolRetryPolicy = {
   readonly maxAttempts?: number;
   readonly retryOnSlotCapacityUnavailable?: boolean;
+  readonly capacityPollMs?: number;
 };
 
 export type WorkerPoolHealth = {

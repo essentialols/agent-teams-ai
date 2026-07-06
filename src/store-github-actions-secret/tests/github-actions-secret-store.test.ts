@@ -161,6 +161,52 @@ describe("GitHub Actions Secret store", () => {
     );
   });
 
+  it("rejects invalid encryption output before the writeback adapter", async () => {
+    const writeback = new CapturingWritebackClient();
+    const secretEncryption: GitHubSecretEncryptionPort = {
+      encryptSecretValue: async ({ publicKey }) => ({
+        encryptedValue: "Bearer " + rawToken,
+        keyId: publicKey.keyId,
+      }),
+    };
+
+    await expect(
+      writeGitHubActionsSecretSession(
+        {
+          publicKeyProvider: {
+            getRepositoryPublicKey: async () => ({
+              key: "unused-by-fake-encryption",
+              keyId: "fake-key",
+            }),
+          },
+          secretEncryption,
+          secretSource: {
+            getSecretValue: () => authJson,
+          },
+          writebackClient: writeback,
+        },
+        {
+          settings: {
+            providerId: "codex",
+            providerInstanceId: "codex-rotating:repo",
+            secretName: secretName,
+            artifactKind: "json-file",
+            formatVersion: "codex-auth-json-v1",
+            contentType: "application/json",
+          },
+          write: {
+            providerInstanceId: "codex-rotating:repo",
+            expectedGeneration: 1,
+            nextArtifact: makeArtifact(refreshedAuthJson),
+            idempotencyKey: "idem-1",
+            leaseId: "lease-1",
+          },
+        },
+      ),
+    ).rejects.toThrow(BoundaryViolationError);
+    expect(writeback.lastRequest).toBeNull();
+  });
+
   it("rejects plaintext-looking writeback requests at the no-custody boundary", () => {
     const request: EncryptedWritebackRequest & Readonly<Record<typeof refreshTokenField, string>> = {
       leaseId: "lease-1",

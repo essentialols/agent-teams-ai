@@ -10,7 +10,9 @@ import {
   isGitHubActionsSecretReadTarget,
   type GitHubActionsSecretSessionSettings,
 } from "../domain/github-actions-secret-store-policy";
+import { sealGitHubEncryptedSecret } from "../domain/encrypted-secret-policy";
 import { assertEncryptedWritebackRequestIsNoCustody } from "../domain/no-plaintext-boundary";
+import { decodeArtifactPlaintextForEncryption } from "../domain/plaintext-session-policy";
 import type {
   EncryptedWritebackClient,
   EncryptedWritebackRequest,
@@ -95,11 +97,14 @@ export async function writeGitHubActionsSecretSession(
   const publicKey = await deps.publicKeyProvider.getRepositoryPublicKey({
     providerInstanceId: input.write.providerInstanceId,
   });
-  const plaintext = new TextDecoder().decode(input.write.nextArtifact.bytes);
+  const plaintext = decodeArtifactPlaintextForEncryption({
+    bytes: input.write.nextArtifact.bytes,
+  });
   const encrypted = await deps.secretEncryption.encryptSecretValue({
     plaintext,
     publicKey,
   });
+  const sealed = sealGitHubEncryptedSecret(encrypted);
   const nextGenerationHash = computeSessionGenerationHash({
     artifact: input.write.nextArtifact,
   });
@@ -119,8 +124,8 @@ export async function writeGitHubActionsSecretSession(
     idempotencyKey: input.write.idempotencyKey,
     previousGenerationHash: previous?.generationHash ?? "",
     nextGenerationHash,
-    encryptedValue: encrypted.encryptedValue,
-    keyId: encrypted.keyId,
+    encryptedValue: sealed.encryptedValue,
+    keyId: sealed.keyId,
     contentType: input.write.nextArtifact.contentType,
     formatVersion: input.write.nextArtifact.formatVersion,
     artifactKind: input.write.nextArtifact.kind,

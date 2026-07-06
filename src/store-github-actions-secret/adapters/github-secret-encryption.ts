@@ -1,5 +1,5 @@
 import sodium from "libsodium-wrappers";
-import { assertLooksLikeGitHubSealedBox } from "../domain/no-plaintext-boundary";
+import { sealGitHubEncryptedSecret } from "../domain/encrypted-secret-policy";
 import type {
   GitHubEncryptedSecretValue,
   GitHubRepositoryPublicKey,
@@ -24,11 +24,10 @@ export class SodiumGitHubSecretEncryption implements GitHubSecretEncryptionPort 
       encryptedBytes,
       sodium.base64_variants.ORIGINAL,
     );
-    assertLooksLikeGitHubSealedBox(encryptedValue);
-    return {
+    return sealGitHubEncryptedSecret({
       encryptedValue,
       keyId: input.publicKey.keyId,
-    };
+    });
   }
 }
 

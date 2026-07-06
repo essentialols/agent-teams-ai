@@ -3720,7 +3720,7 @@ export class TeamProvisioningService {
       launchStateStore: {
         read: (teamName) => this.launchStateStore.read(teamName),
       },
-      writeLaunchStateSnapshot: async (teamName, snapshot) => {
+      writeLaunchStateSnapshot: async (teamName, snapshot): Promise<void> => {
         await this.writeLaunchStateSnapshot(teamName, snapshot);
       },
       readConfigForStrictDecision: (teamName) => this.readConfigForStrictDecision(teamName),

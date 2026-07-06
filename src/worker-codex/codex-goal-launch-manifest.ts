@@ -50,6 +50,9 @@ export function codexGoalLaunchManifestInputFromLaunch(
     ...(launch.config.stateRootDir ? { stateRootDir: launch.config.stateRootDir } : {}),
     workspacePath: launch.config.workspacePath,
     promptPath: launch.config.promptPath,
+    ...(launch.config.codexGoalObjective
+      ? { codexGoalObjective: launch.config.codexGoalObjective }
+      : {}),
     taskId: launch.config.taskId,
     accounts: launch.config.accounts.map((account) => account.name),
     ...(launch.config.outputPath ? { outputPath: launch.config.outputPath } : {}),
@@ -69,6 +72,9 @@ export function codexGoalLaunchManifestInputFromLaunch(
       ? { executionEngine: launch.config.executionEngine }
       : {}),
     ...(launch.config.taskTimeoutMs ? { taskTimeoutMs: launch.config.taskTimeoutMs } : {}),
+    ...(launch.config.appServerStartupTimeoutMs
+      ? { appServerStartupTimeoutMs: launch.config.appServerStartupTimeoutMs }
+      : {}),
     ...(launch.config.staleLockMs ? { staleLockMs: launch.config.staleLockMs } : {}),
     ...(launch.config.maxAccountCycles
       ? { maxAccountCycles: launch.config.maxAccountCycles }

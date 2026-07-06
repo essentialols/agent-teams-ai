@@ -49,6 +49,9 @@ describe("codex goal ops", () => {
 
     expect(noTmux).toContain("subscription-runtime-codex-goal run --no-tmux");
     expect(noTmux).toContain("--accounts account-a");
+    expect(noTmux).toContain(
+      "--codex-goal-objective 'Short objective with docs links.'",
+    );
     expect(noTmux).toContain("--effort xhigh");
     expect(noTmux).not.toContain("refresh-secret");
     expect(tmux.preview).toContain("tmux new-session");
@@ -253,6 +256,10 @@ describe("codex goal ops", () => {
     expect(doctor.ok).toBe(true);
     expect(accounts).toHaveLength(1);
     expect(accounts[0]?.status).toBe("ready");
+    expect(accounts[0]?.availability).toBe("limited");
+    expect(accounts[0]?.schedulerEligible).toBe(false);
+    expect(accounts[0]?.recommendedAction).toBe("wait");
+    expect(accounts[0]?.limitResetAt).toBe(cooldownUntil.toISOString());
     expect(accounts[0]?.identitySource).toBe("chatgpt_account_id");
     expect(accounts[0]?.identityHashPrefix).toHaveLength(16);
     expect(accounts[0]?.capacityAvailability).toBe("cooldown");
@@ -262,6 +269,40 @@ describe("codex goal ops", () => {
     expect(JSON.stringify(accounts)).not.toContain("access-secret");
     expect(JSON.stringify(accounts)).not.toContain("secret@example.com");
     expect(JSON.stringify(accounts)).not.toContain("chatgpt-account-secret");
+  });
+
+  it("adds operator display labels from auth root metadata without renaming slots", async () => {
+    const fixture = await createGoalFixture();
+    await writeFile(
+      join(fixture.config.authRootDir, "account-labels.json"),
+      `${JSON.stringify({
+        "account-a": {
+          email: "operator@example.com",
+        },
+        "account-g": {
+          displayName: "usa18303530342",
+        },
+      })}\n`,
+    );
+
+    const accounts = await listCodexGoalAccountStatuses({
+      authRootDir: fixture.config.authRootDir,
+      accounts: ["account-a", "account-g"],
+    });
+
+    expect(accounts[0]).toMatchObject({
+      name: "account-a",
+      displayName: "operator@example.com",
+      email: "operator@example.com",
+      shortName: "a",
+      operatorLabel: "operator@example.com - a",
+    });
+    expect(accounts[1]).toMatchObject({
+      name: "account-g",
+      displayName: "usa18303530342",
+      shortName: "g",
+      operatorLabel: "usa18303530342 - g",
+    });
   });
 
   it("optionally validates account slots with codex login status without leaking provider output", async () => {
@@ -942,6 +983,18 @@ describe("codex goal ops", () => {
     });
   });
 
+  it("detects an idle Codex app-server child process", () => {
+    expect(summarizeCodexGoalProcessTree(100, [
+      { pid: 100, ppid: 1, cpu: 0, command: "node subscription-runtime-codex-goal" },
+      { pid: 101, ppid: 100, cpu: 0, command: "codex app-server --listen stdio://" },
+    ])).toMatchObject({
+      alive: true,
+      cpuActive: false,
+      appServerAlive: true,
+      appServerPid: 101,
+    });
+  });
+
   it("does not summarize defunct process rows as live worker progress", () => {
     expect(summarizeCodexGoalProcessTree(100, [
       {
@@ -1401,6 +1454,7 @@ async function createGoalFixture(): Promise<{
       authRootDir,
       workspacePath,
       promptPath,
+      codexGoalObjective: "Short objective with docs links.",
       taskId: "task-1",
       accounts: codexGoalAccountSlots(["account-a"]),
       outputPath: join(jobRootDir, "task-1.latest-result.json"),
@@ -1434,10 +1488,23 @@ function accountStatus(
   name: string,
   overrides: Partial<Awaited<ReturnType<typeof listCodexGoalAccountStatuses>>[number]>,
 ): Awaited<ReturnType<typeof listCodexGoalAccountStatuses>>[number] {
+  const status = overrides.status ?? "ready";
+  const availability = status !== "ready"
+    ? "reconnect_required"
+    : overrides.capacityAvailability && overrides.capacityAvailability !== "available"
+      ? "limited"
+      : "available";
   return {
     name,
     authJsonPath: `/tmp/${name}/auth.json`,
-    status: "ready",
+    status,
+    availability,
+    schedulerEligible: availability === "available",
+    recommendedAction: availability === "available"
+      ? "none"
+      : availability === "limited"
+        ? "wait"
+        : "relogin",
     warnings: [],
     safeMessage: "auth.json is readable",
     ...overrides,

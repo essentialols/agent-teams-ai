@@ -116,6 +116,7 @@ import {
 } from "@vioxen/subscription-runtime/worker-core";
 import {
   codexGoalJobToArgs,
+  codexGoalObjectiveMaxChars,
   createCodexGoalJob,
   defaultCodexGoalJobRoot,
   listCodexGoalJobs,
@@ -201,6 +202,7 @@ type GoalMcpArgs = {
   readonly stateRootDir?: string;
   readonly workspacePath?: string;
   readonly promptPath?: string;
+  readonly codexGoalObjective?: string;
   readonly taskId?: string;
   readonly accounts?: string | readonly string[];
   readonly outputPath?: string;
@@ -212,6 +214,7 @@ type GoalMcpArgs = {
   readonly serviceTier?: CodexGoalRunConfig["serviceTier"];
   readonly executionEngine?: CodexGoalRunConfig["executionEngine"];
   readonly taskTimeoutMs?: number;
+  readonly appServerStartupTimeoutMs?: number;
   readonly staleLockMs?: number;
   readonly maxAccountCycles?: number;
   readonly editMode?: CodexGoalRunConfig["editMode"];
@@ -2577,12 +2580,30 @@ async function goalLaunchInput(args: GoalMcpArgs): Promise<CodexGoalLaunchInput>
     merged.projectAccessScope,
   );
   const networkAccess = optionalCodexGoalNetworkAccess(merged.networkAccess);
+  const taskTimeoutMs = positiveIntegerValue(merged.taskTimeoutMs, "taskTimeoutMs") ??
+    defaultTimeoutMs;
+  const appServerStartupTimeoutMs = positiveIntegerValue(
+    merged.appServerStartupTimeoutMs,
+    "appServerStartupTimeoutMs",
+  );
+  const progressHeartbeatMs = positiveIntegerValue(
+    merged.progressHeartbeatMs,
+    "progressHeartbeatMs",
+  ) ?? 60_000;
+  const staleLockMs = positiveIntegerValue(merged.staleLockMs, "staleLockMs");
+  const maxAccountCycles = positiveIntegerValue(
+    merged.maxAccountCycles,
+    "maxAccountCycles",
+  ) ?? 5;
   const config: CodexGoalRunConfig = {
     ...(jobId === undefined ? {} : { jobId }),
     jobRootDir,
     authRootDir,
     workspacePath,
     promptPath,
+    ...(stringValue(merged.codexGoalObjective)
+      ? { codexGoalObjective: stringValue(merged.codexGoalObjective) as string }
+      : {}),
     taskId,
     accounts,
     outputPath: resolvePath(
@@ -2608,12 +2629,13 @@ async function goalLaunchInput(args: GoalMcpArgs): Promise<CodexGoalLaunchInput>
     ...(projectAccessScope === undefined ? {} : { projectAccessScope }),
     allowDangerFullAccess: booleanValue(merged.allowDangerFullAccess) ?? false,
     ...(networkAccess === undefined ? {} : { networkAccess }),
-    taskTimeoutMs: numberValue(merged.taskTimeoutMs) ?? defaultTimeoutMs,
-    progressHeartbeatMs: numberValue(merged.progressHeartbeatMs) ?? 60_000,
-    ...(numberValue(merged.staleLockMs) === undefined
+    taskTimeoutMs,
+    ...(appServerStartupTimeoutMs === undefined
       ? {}
-      : { staleLockMs: numberValue(merged.staleLockMs) as number }),
-    maxAccountCycles: numberValue(merged.maxAccountCycles) ?? 5,
+      : { appServerStartupTimeoutMs }),
+    progressHeartbeatMs,
+    ...(staleLockMs === undefined ? {} : { staleLockMs }),
+    maxAccountCycles,
     allowDuplicateAccountIdentities:
       booleanValue(merged.allowDuplicateAccountIdentities) ?? false,
     requireGitWorkspace: booleanValue(merged.requireGitWorkspace) ?? true,
@@ -6179,6 +6201,8 @@ async function codexAccountStatusPayload(input: {
     duplicates,
     dedupedAccountNames: dedupedSlots.map((slot) => slot.name),
     availableDedupedAccountNames: availableDedupedSlots.map((slot) => slot.name),
+    dedupedAccountLabels: dedupedSlots.map(accountOperatorLabel),
+    availableDedupedAccountLabels: availableDedupedSlots.map(accountOperatorLabel),
     dedupeRecommendation: duplicates.length
       ? "Use dedupedAccountNames for worker pools. It keeps the newest ready slot per identity group."
       : "No duplicate identity groups detected.",
@@ -7831,6 +7855,9 @@ function jobManifestInputFromArgs(args: JobCreateMcpArgs): CodexGoalJobManifestI
     ...(args.stateRootDir ? { stateRootDir: resolvePath(cwd, args.stateRootDir) } : {}),
     workspacePath: requiredString(args.workspacePath, "workspacePath", cwd),
     promptPath: resolvePath(cwd, args.promptPath ?? join(jobRootDir, "prompt.md")),
+    ...(stringValue(args.codexGoalObjective)
+      ? { codexGoalObjective: stringValue(args.codexGoalObjective) as string }
+      : {}),
     taskId: args.taskId ?? jobId,
     accounts: accountNames(args.accounts),
     ...(args.outputPath ? { outputPath: resolvePath(cwd, args.outputPath) } : {}),
@@ -7842,6 +7869,9 @@ function jobManifestInputFromArgs(args: JobCreateMcpArgs): CodexGoalJobManifestI
     serviceTier: args.serviceTier ?? "fast",
     executionEngine: args.executionEngine ?? "app-server-goal",
     taskTimeoutMs: args.taskTimeoutMs ?? defaultTimeoutMs,
+    ...(args.appServerStartupTimeoutMs
+      ? { appServerStartupTimeoutMs: args.appServerStartupTimeoutMs }
+      : {}),
     ...(args.staleLockMs ? { staleLockMs: args.staleLockMs } : {}),
     maxAccountCycles: args.maxAccountCycles ?? 5,
     ...controlModes,
@@ -7873,6 +7903,7 @@ function jobManifestPatchFromArgs(args: JobUpdateMcpArgs): CodexGoalJobManifestP
   putIfDefined(patch, "stateRootDir", args.stateRootDir && resolvePath(cwd, args.stateRootDir));
   putIfDefined(patch, "workspacePath", args.workspacePath && resolvePath(cwd, args.workspacePath));
   putIfDefined(patch, "promptPath", args.promptPath && resolvePath(cwd, args.promptPath));
+  putIfDefined(patch, "codexGoalObjective", stringValue(args.codexGoalObjective));
   putIfDefined(patch, "taskId", stringValue(args.taskId));
   if (args.accounts !== undefined) patch.accounts = accountNames(args.accounts);
   putIfDefined(patch, "outputPath", args.outputPath && resolvePath(cwd, args.outputPath));
@@ -7884,6 +7915,11 @@ function jobManifestPatchFromArgs(args: JobUpdateMcpArgs): CodexGoalJobManifestP
   putIfDefined(patch, "serviceTier", stringValue(args.serviceTier));
   putIfDefined(patch, "executionEngine", stringValue(args.executionEngine));
   putIfDefined(patch, "taskTimeoutMs", numberValue(args.taskTimeoutMs));
+  putIfDefined(
+    patch,
+    "appServerStartupTimeoutMs",
+    numberValue(args.appServerStartupTimeoutMs),
+  );
   putIfDefined(patch, "staleLockMs", numberValue(args.staleLockMs));
   putIfDefined(patch, "maxAccountCycles", numberValue(args.maxAccountCycles));
   putIfDefined(
@@ -8012,7 +8048,7 @@ export async function buildCodexGoalBrief(input: {
   });
   const invalidAccounts = input.accounts.filter((slot) => slot.status !== "ready");
   const capacityBlockedAccounts = input.accounts.filter((slot) =>
-    slot.capacityAvailability && slot.capacityAvailability !== "available"
+    slot.availability === "limited"
   );
   const duplicateAccounts = duplicateAccountGroups(input.accounts);
   const dedupedAccounts = dedupeCodexGoalAccountSlots(input.accounts);
@@ -8132,6 +8168,9 @@ export async function buildCodexGoalBrief(input: {
       input.status.progressStatus
         ? `progressStatus ${input.status.progressStatus}`
         : "progressStatus unknown",
+      input.status.appServerProcessAlive === undefined
+        ? "appServerProcessAlive unknown"
+        : `appServerProcessAlive ${String(input.status.appServerProcessAlive)}`,
       input.status.workspaceDirty === undefined
         ? "workspace dirty unknown"
         : `workspace dirty ${input.status.workspaceDirty}`,
@@ -8181,6 +8220,8 @@ export async function buildCodexGoalBrief(input: {
     progressHeartbeatAgeMs: input.status.progressHeartbeatAgeMs,
     progressPid: input.status.progressPid,
     progressProcessAlive: input.status.progressProcessAlive,
+    appServerProcessAlive: input.status.appServerProcessAlive,
+    appServerProcessPid: input.status.appServerProcessPid,
     progressResultStatus: input.status.progressResultStatus,
     progressResultReason: input.status.progressResultReason,
     progressAttemptCount: input.status.progressAttemptCount,
@@ -8213,9 +8254,9 @@ export async function buildCodexGoalBrief(input: {
     maintenancePaused,
     capacityBlockedAccounts: capacityBlockedAccounts.map((slot) => ({
       name: slot.name,
-      availability: slot.capacityAvailability,
+      availability: slot.availability,
       reason: slot.capacityReason,
-      cooldownUntil: slot.capacityCooldownUntil,
+      cooldownUntil: slot.limitResetAt ?? slot.capacityCooldownUntil,
     })),
     recentCommands: extractRecentCommands(recentLogTail),
     nextBestTool: next.tool,
@@ -8352,6 +8393,8 @@ function buildCodexGoalDecision(input: {
       progressUpdatedAt: input.brief.progressUpdatedAt,
       progressHeartbeatAgeMs: input.brief.progressHeartbeatAgeMs,
       progressStatus: input.brief.progressStatus,
+      appServerProcessAlive: input.brief.appServerProcessAlive,
+      appServerProcessPid: input.brief.appServerProcessPid,
       logByteLength: input.brief.logByteLength,
       silentStale: input.brief.silentStale,
       heartbeatOnlyNoOutput: input.brief.heartbeatOnlyNoOutput,
@@ -8922,6 +8965,8 @@ function buildCodexGoalHandoff(input: {
       progressUpdatedAt: input.brief.progressUpdatedAt,
       progressHeartbeatAgeMs: input.brief.progressHeartbeatAgeMs,
       progressPid: input.brief.progressPid,
+      appServerProcessAlive: input.brief.appServerProcessAlive,
+      appServerProcessPid: input.brief.appServerProcessPid,
       lifecycleMarkers: input.brief.lifecycleMarkers,
       lifecycleMarkerTypes: input.brief.lifecycleMarkerTypes,
       safeToContinue: input.brief.safeToContinue,
@@ -8934,6 +8979,10 @@ function buildCodexGoalHandoff(input: {
     accounts: input.accounts.map((account) => ({
       name: account.name,
       status: account.status,
+      availability: account.availability,
+      schedulerEligible: account.schedulerEligible,
+      recommendedAction: account.recommendedAction,
+      limitResetAt: account.limitResetAt,
       capacityAvailability: account.capacityAvailability,
       capacityReason: account.capacityReason,
       capacityCooldownUntil: account.capacityCooldownUntil,
@@ -9267,6 +9316,8 @@ async function listAccountPools(
           availableCount: availableDedupedSlots.length,
           dedupedAccountNames: dedupedSlots.map((slot) => slot.name),
           availableDedupedAccountNames: availableDedupedSlots.map((slot) => slot.name),
+          dedupedAccountLabels: dedupedSlots.map(accountOperatorLabel),
+          availableDedupedAccountLabels: availableDedupedSlots.map(accountOperatorLabel),
           hasDuplicates: duplicateAccountGroups(visibleSlots).length > 0,
         };
       }),
@@ -9291,12 +9342,25 @@ function duplicateAccountGroups(
       identityHashPrefix,
       slots: group.map((slot) => ({
         name: slot.name,
+        operatorLabel: slot.operatorLabel,
+        displayName: slot.displayName,
+        email: slot.email,
+        shortName: slot.shortName,
         status: slot.status,
         lastRefreshAt: slot.lastRefreshAt,
         expiresAt: slot.expiresAt,
       })),
       preferredSlot: preferredAccountSlot(group)?.name,
+      preferredSlotLabel: preferredAccountSlot(group)
+        ? accountOperatorLabel(preferredAccountSlot(group)!)
+        : undefined,
     }));
+}
+
+function accountOperatorLabel(
+  slot: Awaited<ReturnType<typeof listCodexGoalAccountStatuses>>[number],
+): string {
+  return slot.operatorLabel ?? slot.displayName ?? slot.email ?? slot.name;
 }
 
 export function dedupeCodexGoalAccountSlots(
@@ -9354,8 +9418,8 @@ function preferredAccountSlot(
   slots: Awaited<ReturnType<typeof listCodexGoalAccountStatuses>>,
 ) {
   return [...slots].sort((left, right) => {
-    const leftReady = left.status === "ready" ? 1 : 0;
-    const rightReady = right.status === "ready" ? 1 : 0;
+    const leftReady = left.schedulerEligible ? 1 : 0;
+    const rightReady = right.schedulerEligible ? 1 : 0;
     if (leftReady !== rightReady) return rightReady - leftReady;
     return Date.parse(right.lastRefreshAt ?? right.expiresAt ?? "0") -
       Date.parse(left.lastRefreshAt ?? left.expiresAt ?? "0");
@@ -9365,9 +9429,7 @@ function preferredAccountSlot(
 function isAccountSlotAvailable(
   slot: Awaited<ReturnType<typeof listCodexGoalAccountStatuses>>[number],
 ): boolean {
-  return slot.status === "ready" && (
-    !slot.capacityAvailability || slot.capacityAvailability === "available"
-  );
+  return slot.schedulerEligible;
 }
 
 function isLikelyAuthPoolName(name: string): boolean {
@@ -9481,6 +9543,9 @@ function goalInputSchema(): Record<string, z.ZodTypeAny> {
     stateRootDir: z.string().optional(),
     workspacePath: z.string().optional(),
     promptPath: z.string().optional(),
+    codexGoalObjective: z.string().max(codexGoalObjectiveMaxChars).describe(
+      "Short app-server goal objective, max 4000 characters. For long instructions, keep the full task in promptPath and reference docs/files here.",
+    ).optional(),
     taskId: z.string().optional(),
     accounts: z.union([z.string(), z.array(z.string())]).optional(),
     outputPath: z.string().optional(),
@@ -9492,6 +9557,7 @@ function goalInputSchema(): Record<string, z.ZodTypeAny> {
     serviceTier: z.string().optional(),
     executionEngine: CODEX_GOAL_EXECUTION_ENGINE_SCHEMA.optional(),
     taskTimeoutMs: z.number().int().positive().optional(),
+    appServerStartupTimeoutMs: z.number().int().positive().optional(),
     staleLockMs: z.number().int().positive().optional(),
     maxAccountCycles: z.number().int().positive().optional(),
     editMode: z.string().optional(),
@@ -9560,6 +9626,7 @@ function launchSummary(launch: CodexGoalLaunchInput): JsonObject {
     serviceTier: launch.config.serviceTier,
     executionEngine: launch.config.executionEngine ?? "app-server-goal",
     taskTimeoutMs: launch.config.taskTimeoutMs,
+    appServerStartupTimeoutMs: launch.config.appServerStartupTimeoutMs,
     progressPath: launch.config.progressPath,
     progressHeartbeatMs: launch.config.progressHeartbeatMs,
     maxAccountCycles: launch.config.maxAccountCycles,
@@ -9789,6 +9856,14 @@ function dateValue(value: unknown): Date | undefined {
   if (typeof value !== "string") return undefined;
   const date = new Date(value);
   return Number.isFinite(date.getTime()) ? date : undefined;
+}
+
+function positiveIntegerValue(value: unknown, name: string): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
+    throw new Error(`${name} must be a positive integer`);
+  }
+  return value;
 }
 
 function booleanValue(value: unknown): boolean | undefined {

@@ -230,7 +230,8 @@ export function controllerSupervisorTerminalStatusCanRetry(
     (
       controllerSupervisorQuotaFailure(reconcile) ||
       controllerSupervisorTimeoutFailure(reconcile) ||
-      controllerSupervisorProviderSessionInvalid(reconcile)
+      controllerSupervisorProviderSessionInvalid(reconcile) ||
+      controllerSupervisorProviderOutputInvalid(reconcile)
     );
 }
 
@@ -344,6 +345,16 @@ function controllerSupervisorQuotaFailure(result: unknown): boolean {
 
 function controllerSupervisorProviderSessionInvalid(result: unknown): boolean {
   return /\b(?:session is invalid|provider session invalid|needs reconnect)\b/i.test(
+    String(
+      nestedRecord(result, "run")?.safeMessage ??
+        (isRecord(result) ? result.safeMessage : undefined) ??
+        "",
+    ),
+  );
+}
+
+function controllerSupervisorProviderOutputInvalid(result: unknown): boolean {
+  return /\b(?:provider output was invalid|provider output invalid|output was invalid)\b/i.test(
     String(
       nestedRecord(result, "run")?.safeMessage ??
         (isRecord(result) ? result.safeMessage : undefined) ??

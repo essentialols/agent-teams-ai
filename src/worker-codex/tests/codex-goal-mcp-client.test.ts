@@ -83,6 +83,10 @@ describe("codex goal MCP client supervisor helpers", () => {
       { ok: true, run: { safeMessage: "Codex session is invalid." } },
     )).toBe(true);
     expect(controllerSupervisorTerminalStatusCanRetry(
+      ControllerSupervisorObservedStatus.Failed,
+      { ok: true, run: { safeMessage: "Codex provider output was invalid." } },
+    )).toBe(true);
+    expect(controllerSupervisorTerminalStatusCanRetry(
       ControllerSupervisorObservedStatus.Blocked,
       { ok: true, run: { safeMessage: "Codex quota or billing limit was reached." } },
     )).toBe(false);

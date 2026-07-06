@@ -2037,7 +2037,20 @@ async function buildCodexProjectAdmissionSnapshot(input) {
         summaries = [];
     }
     const projectSummaries = limitCodexProjectSummaries(summaries.filter((summary) => matchesProjectControlPrefix(summary.jobId, prefixes)));
-    const overviewItems = await Promise.all(projectSummaries.map((summary) => buildCodexGoalOverviewItem({
+    const overviewSummaries = [];
+    for (const summary of projectSummaries) {
+        const consumed = await debtFromConsumedJobSummary({
+            summary,
+            consumedOutput,
+            knownWorkspacePaths,
+        });
+        if (consumed) {
+            debt.push(...consumed);
+            continue;
+        }
+        overviewSummaries.push(summary);
+    }
+    const overviewItems = await Promise.all(overviewSummaries.map((summary) => buildCodexGoalOverviewItem({
         registryRootDir: input.registryRootDir,
         jobId: summary.jobId,
         staleAfterMs,
@@ -2073,6 +2086,19 @@ async function buildCodexProjectAdmissionSnapshot(input) {
         debt,
         counts: projectAdmissionDebtCounts(debt),
     };
+}
+async function debtFromConsumedJobSummary(input) {
+    const resolvedWorkspacePath = await optionalRealPathForAdmission(input.summary.workspacePath);
+    const consumed = consumedOutputRecordFor({
+        ledger: input.consumedOutput,
+        jobId: input.summary.jobId,
+        workspacePath: input.summary.workspacePath,
+        ...(resolvedWorkspacePath ? { resolvedWorkspacePath } : {}),
+    });
+    if (!consumed)
+        return undefined;
+    await rememberKnownWorkspacePath(input.knownWorkspacePaths, input.summary.workspacePath);
+    return consumedDebt(consumed);
 }
 async function debtFromOverviewItem(input) {
     const { item } = input;

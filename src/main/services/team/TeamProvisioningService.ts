@@ -232,7 +232,6 @@ import { relayMemberInboxMessagesWithPorts } from './provisioning/TeamProvisioni
 import {
   type LiveRosterAttachReason,
   type MemberLifecycleOperation,
-  type MemberLifecycleOperationKind,
   TeamProvisioningMemberLifecycleController,
 } from './provisioning/TeamProvisioningMemberLifecycle';
 import {
@@ -240,6 +239,7 @@ import {
   type TeamProvisioningMemberLifecycleHostFactoryPortGroups,
 } from './provisioning/TeamProvisioningMemberLifecycleHostFactory';
 import { createTeamProvisioningMemberLifecycleOperationRunner } from './provisioning/TeamProvisioningMemberLifecycleOperationRunner';
+import { createTeamProvisioningMemberLifecycleServiceUseCases } from './provisioning/TeamProvisioningMemberLifecycleServiceUseCases';
 import { TeamProvisioningMemberMcpLaunchConfigProvisioner } from './provisioning/TeamProvisioningMemberMcpLaunchConfig';
 import {
   refreshMemberSpawnStatusesFromLeadInbox as refreshMemberSpawnStatusesFromLeadInboxHelper,
@@ -310,7 +310,6 @@ import {
   deliverOpenCodeMemberMessage as deliverOpenCodeMemberMessageHelper,
   type TeamProvisioningOpenCodeMemberMessageDeliveryHost,
 } from './provisioning/TeamProvisioningOpenCodeMemberMessageDeliveryServiceFactory';
-import { createPersistOpenCodeMemberRestartSystemMessageUseCase } from './provisioning/TeamProvisioningOpenCodeMemberRestartSystemMessageUseCase';
 import { OpenCodeMemberSendSerializer } from './provisioning/TeamProvisioningOpenCodeMemberSendSerialization';
 import {
   createOpenCodeTeamThroughRuntimeAdapterFlow,
@@ -1347,30 +1346,16 @@ export class TeamProvisioningService {
       invalidateRuntimeSnapshotCaches: (teamName) => this.invalidateRuntimeSnapshotCaches(teamName),
       nowMs: () => Date.now(),
     });
-  private readonly memberLifecycleUseCases = {
-    persistOpenCodeMemberRestartSystemMessage:
-      createPersistOpenCodeMemberRestartSystemMessageUseCase({
-        persistSentMessage: (teamName, message) =>
-          this.persistSentMessage(teamName, message as unknown as InboxMessage),
-        nowIso,
-        randomUUID,
-      }),
+  private readonly memberLifecycleUseCases = createTeamProvisioningMemberLifecycleServiceUseCases({
+    persistSentMessage: (teamName, message) =>
+      this.persistSentMessage(teamName, message as unknown as InboxMessage),
     appendDirectProcessRuntimeEvent: createAppendDirectProcessRuntimeEventUseCase(
       createNodeAppendDirectProcessRuntimeEventUseCasePorts({ nowIso })
     ),
-    runMemberLifecycleOperation: <T>(
-      teamName: string,
-      memberName: string,
-      kind: MemberLifecycleOperationKind,
-      operation: () => Promise<T>
-    ) =>
-      this.memberLifecycleOperationRunner.runMemberLifecycleOperation(
-        teamName,
-        memberName,
-        kind,
-        operation
-      ),
-  } satisfies TeamProvisioningServiceMemberLifecycleHostPortGroups['useCases'];
+    operationRunner: this.memberLifecycleOperationRunner,
+    nowIso,
+    randomUUID,
+  });
   private readonly memberLifecycleHost = createTeamProvisioningMemberLifecycleHostFromPortGroups<
     ProvisioningRun,
     MixedSecondaryRuntimeLaneState

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ControllerSupervisorObservedStatus,
+  controllerSupervisorDeliverableGuidanceSignature,
   controllerSupervisorHasDeliverableGuidance,
   controllerSupervisorHasAvailableAccounts,
   controllerSupervisorJobArgs,
@@ -69,7 +70,7 @@ describe("codex goal MCP client supervisor helpers", () => {
     )).toBe(false);
   });
 
-  it("retries failed project controllers only after quota failures", () => {
+  it("retries failed project controllers after transient runtime failures", () => {
     expect(controllerSupervisorTerminalStatusCanRetry(
       ControllerSupervisorObservedStatus.Failed,
       { ok: true, run: { safeMessage: "Codex quota or billing limit was reached." } },
@@ -85,6 +86,19 @@ describe("codex goal MCP client supervisor helpers", () => {
     expect(controllerSupervisorTerminalStatusCanRetry(
       ControllerSupervisorObservedStatus.Failed,
       { ok: true, run: { safeMessage: "Codex provider output was invalid." } },
+    )).toBe(true);
+    expect(controllerSupervisorTerminalStatusCanRetry(
+      ControllerSupervisorObservedStatus.Failed,
+      { ok: true, run: { safeMessage: "Codex runtime failed." } },
+    )).toBe(true);
+    expect(controllerSupervisorTerminalStatusCanRetry(
+      ControllerSupervisorObservedStatus.Failed,
+      {
+        ok: true,
+        session: {
+          safeMessage: "Codex app-server goal backend is temporarily blocked.",
+        },
+      },
     )).toBe(true);
     expect(controllerSupervisorTerminalStatusCanRetry(
       ControllerSupervisorObservedStatus.Blocked,
@@ -119,6 +133,26 @@ describe("codex goal MCP client supervisor helpers", () => {
       decision: { pendingCount: 3, deliverableCount: 0 },
     })).toBe(false);
     expect(controllerSupervisorHasDeliverableGuidance({ ok: false })).toBe(false);
+  });
+
+  it("builds stable deliverable guidance signatures from signal ids", () => {
+    expect(controllerSupervisorDeliverableGuidanceSignature({
+      ok: true,
+      decision: {
+        deliverableSignals: [
+          { signal: { signalId: "signal-a" } },
+          { signalId: "signal-b" },
+        ],
+      },
+    })).toBe("signal-a,signal-b");
+    expect(controllerSupervisorDeliverableGuidanceSignature({
+      ok: true,
+      decision: { deliverableCount: 2 },
+    })).toBe("count:2");
+    expect(controllerSupervisorDeliverableGuidanceSignature({
+      ok: true,
+      decision: { deliverableCount: 0 },
+    })).toBeUndefined();
   });
 
   it("continues only while project accounts remain available", () => {

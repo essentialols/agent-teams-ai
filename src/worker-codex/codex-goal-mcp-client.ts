@@ -85,6 +85,7 @@ export async function superviseCodexGoalProjectController(input: {
   try {
     let start: unknown = null;
     let lastStatus: unknown = start;
+    let lastGuidanceRestartSignature: string | undefined;
     while (!input.signal?.aborted) {
       start = parseMcpJsonResult(await client.callTool({
         name: "codex_goal_project_controller_start",
@@ -113,6 +114,33 @@ export async function superviseCodexGoalProjectController(input: {
           return { ok: false, start, finalStatus: status };
         }
         const runStatus = controllerSupervisorObservedStatus(status);
+        if (runStatus === ControllerSupervisorObservedStatus.Running) {
+          const controlDecision = parseMcpJsonResult(await client.callTool({
+            name: "codex_goal_control_decision",
+            arguments: controllerSupervisorJobArgs(input.args),
+          }));
+          const guidanceSignature = controllerSupervisorDeliverableGuidanceSignature(
+            controlDecision,
+          );
+          if (
+            mcpResultOk(controlDecision) &&
+            guidanceSignature !== undefined &&
+            guidanceSignature !== lastGuidanceRestartSignature
+          ) {
+            input.onEvent?.({ type: "control_decision", result: controlDecision });
+            lastGuidanceRestartSignature = guidanceSignature;
+            const stop = parseMcpJsonResult(await client.callTool({
+              name: "codex_goal_project_controller_stop",
+              arguments: {
+                ...input.args,
+                reason: "controller_supervisor_guidance_restart",
+              },
+            }));
+            input.onEvent?.({ type: "stop", result: stop });
+            if (!mcpResultOk(stop)) return { ok: false, start, finalStatus: status, stop };
+            break;
+          }
+        }
         if (runStatus !== undefined && controllerSupervisorStatusIsTerminal(runStatus)) {
           const reconcile = parseMcpJsonResult(await client.callTool({
             name: "codex_goal_project_controller_reconcile",
@@ -231,7 +259,8 @@ export function controllerSupervisorTerminalStatusCanRetry(
       controllerSupervisorQuotaFailure(reconcile) ||
       controllerSupervisorTimeoutFailure(reconcile) ||
       controllerSupervisorProviderSessionInvalid(reconcile) ||
-      controllerSupervisorProviderOutputInvalid(reconcile)
+      controllerSupervisorProviderOutputInvalid(reconcile) ||
+      controllerSupervisorTransientRuntimeFailure(reconcile)
     );
 }
 
@@ -262,6 +291,38 @@ export function controllerSupervisorHasDeliverableGuidance(result: unknown): boo
     ? decision?.signals
     : undefined;
   return Array.isArray(signals) && signals.length > 0;
+}
+
+export function controllerSupervisorDeliverableGuidanceSignature(
+  result: unknown,
+): string | undefined {
+  if (!controllerSupervisorHasDeliverableGuidance(result)) return undefined;
+  const decision = nestedRecord(result, "decision");
+  const signals = Array.isArray(decision?.deliverableSignals)
+    ? decision?.deliverableSignals
+    : Array.isArray(decision?.signals)
+    ? decision?.signals
+    : undefined;
+  if (Array.isArray(signals) && signals.length > 0) {
+    const ids = signals
+      .map((item) => {
+        if (!isRecord(item)) return undefined;
+        if (typeof item.signalId === "string") return item.signalId;
+        if (typeof item.id === "string") return item.id;
+        const signal = item.signal;
+        return isRecord(signal) && typeof signal.signalId === "string"
+          ? signal.signalId
+          : undefined;
+      })
+      .filter((value): value is string => value !== undefined);
+    if (ids.length > 0) return ids.join(",");
+  }
+  const count = decision?.deliverableCount ??
+    decision?.deliverableGuidanceCount ??
+    decision?.pendingDeliverableCount ??
+    (isRecord(result) ? result.deliverableCount : undefined) ??
+    (isRecord(result) ? result.deliverableGuidanceCount : undefined);
+  return typeof count === "number" && count > 0 ? `count:${count}` : undefined;
 }
 
 export function controllerSupervisorNextCapacityRetryDelayMs(
@@ -335,41 +396,40 @@ function controllerSupervisorStatusValue(
 
 function controllerSupervisorQuotaFailure(result: unknown): boolean {
   return /\b(?:quota|billing limit|usage limit|rate limit)\b/i.test(
-    String(
-      nestedRecord(result, "run")?.safeMessage ??
-        (isRecord(result) ? result.safeMessage : undefined) ??
-        "",
-    ),
+    controllerSupervisorSafeMessage(result),
   );
 }
 
 function controllerSupervisorProviderSessionInvalid(result: unknown): boolean {
   return /\b(?:session is invalid|provider session invalid|needs reconnect)\b/i.test(
-    String(
-      nestedRecord(result, "run")?.safeMessage ??
-        (isRecord(result) ? result.safeMessage : undefined) ??
-        "",
-    ),
+    controllerSupervisorSafeMessage(result),
   );
 }
 
 function controllerSupervisorProviderOutputInvalid(result: unknown): boolean {
   return /\b(?:provider output was invalid|provider output invalid|output was invalid)\b/i.test(
-    String(
-      nestedRecord(result, "run")?.safeMessage ??
-        (isRecord(result) ? result.safeMessage : undefined) ??
-        "",
-    ),
+    controllerSupervisorSafeMessage(result),
   );
 }
 
 function controllerSupervisorTimeoutFailure(result: unknown): boolean {
   return /\b(?:timed out|timeout)\b/i.test(
-    String(
-      nestedRecord(result, "run")?.safeMessage ??
-        (isRecord(result) ? result.safeMessage : undefined) ??
-        "",
-    ),
+    controllerSupervisorSafeMessage(result),
+  );
+}
+
+function controllerSupervisorTransientRuntimeFailure(result: unknown): boolean {
+  return /\b(?:codex runtime failed|codex provider output was invalid|codex app-server goal backend is temporarily blocked|codex app-server goal slice exhausted)\b/i.test(
+    controllerSupervisorSafeMessage(result),
+  );
+}
+
+function controllerSupervisorSafeMessage(result: unknown): string {
+  return String(
+    nestedRecord(result, "run")?.safeMessage ??
+      nestedRecord(result, "session")?.safeMessage ??
+      (isRecord(result) ? result.safeMessage : undefined) ??
+      "",
   );
 }
 

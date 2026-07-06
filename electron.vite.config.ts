@@ -17,6 +17,7 @@ const rendererDependencyEsbuildTarget = 'esnext'
 // Fastify and its plugins rely on runtime module resolution that breaks when bundled.
 const runtimeExternalDeps = new Set([
   'node-pty',
+  'better-sqlite3',
   'agent-teams-controller',
   'terminal-platform-node',
   'ws',
@@ -138,7 +139,11 @@ export default defineConfig({
           index: resolve(__dirname, 'src/main/index.ts'),
           'team-fs-worker': resolve(__dirname, 'src/main/workers/team-fs-worker.ts'),
           'task-change-worker': resolve(__dirname, 'src/main/workers/task-change-worker.ts'),
-          'team-data-worker': resolve(__dirname, 'src/main/workers/team-data-worker.ts')
+          'team-data-worker': resolve(__dirname, 'src/main/workers/team-data-worker.ts'),
+          'internal-storage-worker': resolve(
+            __dirname,
+            'src/features/internal-storage/main/infrastructure/worker/internalStorageWorkerEntry.ts'
+          )
         },
         output: {
           // CJS format so bundled deps can use __dirname/require.

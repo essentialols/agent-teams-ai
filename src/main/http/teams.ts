@@ -1,5 +1,5 @@
-import { validateTeamName } from '@main/ipc/guards';
 import { TeamConfigReader } from '@main/services/team/TeamConfigReader';
+import { validateTeamName } from '@main/services/team/TeamIdentifierValidation';
 import { getTeamsBasePath } from '@main/utils/pathDecoder';
 import { getErrorMessage } from '@shared/utils/errorHandling';
 import { createLogger } from '@shared/utils/logger';

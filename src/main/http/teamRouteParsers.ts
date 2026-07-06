@@ -1,4 +1,7 @@
-import { validateTeammateName, validateTeamName } from '@main/ipc/guards';
+import {
+  validateTeammateName,
+  validateTeamName,
+} from '@main/services/team/TeamIdentifierValidation';
 import { extractUserFlags, PROTECTED_CLI_FLAGS } from '@shared/utils/cliArgsParser';
 import {
   formatEffortLevelListForProvider,

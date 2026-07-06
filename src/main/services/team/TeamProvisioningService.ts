@@ -16887,12 +16887,11 @@ export class TeamProvisioningService {
               }
             : finishedWithoutRuntimeEvidence
               ? {
-                  launchState: 'failed_to_start',
+                  launchState: 'runtime_pending_bootstrap',
                   agentToolAccepted: false,
                   runtimeAlive: false,
                   bootstrapConfirmed: false,
-                  hardFailure: true,
-                  hardFailureReason: 'opencode_runtime_evidence_missing',
+                  hardFailure: false,
                   runtimeDiagnostic:
                     'OpenCode secondary lane finished without committed runtime evidence.',
                   runtimeDiagnosticSeverity: 'warning',

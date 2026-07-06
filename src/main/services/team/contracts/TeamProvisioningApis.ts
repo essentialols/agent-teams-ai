@@ -81,9 +81,15 @@ export interface TeamRuntimeApi {
   getCurrentRunId(teamName: string): string | null;
 }
 
+export interface TeamHttpRuntimeApi {
+  getRuntimeState(teamName: string): Promise<TeamRuntimeState>;
+  stopTeam(teamName: string): Promise<void>;
+  getAliveTeams(): string[];
+}
+
 export interface TeamHttpProvisioningApis {
   launch?: TeamLaunchApi;
-  runtime?: TeamRuntimeApi;
+  runtime?: TeamHttpRuntimeApi;
   runtimeControl?: TeamRuntimeControlCompatibilityApi;
 }
 
@@ -263,12 +269,20 @@ export function bindTeamRuntimeApi(source: TeamRuntimeApi): TeamRuntimeApi {
   };
 }
 
+export function bindTeamHttpRuntimeApi(source: TeamHttpRuntimeApi): TeamHttpRuntimeApi {
+  return {
+    getRuntimeState: source.getRuntimeState.bind(source),
+    stopTeam: source.stopTeam.bind(source),
+    getAliveTeams: source.getAliveTeams.bind(source),
+  };
+}
+
 export function bindTeamHttpProvisioningApis(
-  source: TeamLaunchApi & TeamRuntimeApi & TeamRuntimeControlCompatibilityApi
+  source: TeamLaunchApi & TeamHttpRuntimeApi & TeamRuntimeControlCompatibilityApi
 ): TeamHttpProvisioningApis {
   return {
     launch: bindTeamLaunchApi(source),
-    runtime: bindTeamRuntimeApi(source),
+    runtime: bindTeamHttpRuntimeApi(source),
     runtimeControl: bindTeamRuntimeControlCompatibilityApi(source),
   };
 }

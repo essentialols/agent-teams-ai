@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   bindTeamClaudeLogsApi,
   bindTeamDiagnosticsApi,
+  bindTeamHttpRuntimeApi,
   bindTeamLaunchApi,
   bindTeamMemberLifecycleApi,
   bindTeamMessagingApi,
@@ -316,6 +317,7 @@ describe('TeamProvisioning API binders', () => {
     };
 
     const runtimeApi = bindTeamRuntimeApi(runtimeSource);
+    const httpRuntimeApi = bindTeamHttpRuntimeApi(runtimeSource);
     const runtimeControlApi = bindTeamRuntimeControlCompatibilityApi(runtimeControlSource);
     const lifecycleApi = bindTeamMemberLifecycleApi(lifecycleSource);
 
@@ -324,6 +326,11 @@ describe('TeamProvisioning API binders', () => {
       'getCurrentRunId',
       'getRuntimeState',
       'isTeamAlive',
+      'stopTeam',
+    ]);
+    expect(Object.keys(httpRuntimeApi).sort()).toEqual([
+      'getAliveTeams',
+      'getRuntimeState',
       'stopTeam',
     ]);
     expect(Object.keys(runtimeControlApi).sort()).toEqual([

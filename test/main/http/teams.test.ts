@@ -5,8 +5,8 @@ import { describe, expect, it, vi } from 'vitest';
 import type { HttpServices } from '@main/http';
 import type {
   OpenCodeRuntimeControlAck,
+  TeamHttpRuntimeApi,
   TeamLaunchApi,
-  TeamRuntimeApi,
   TeamRuntimeControlCompatibilityApi,
 } from '@main/services/team/contracts/TeamProvisioningApis';
 import type {
@@ -33,9 +33,7 @@ describe('HTTP team runtime routes', () => {
     const getRuntimeState = vi.fn<(teamName: string) => Promise<TeamRuntimeState>>();
     const getProvisioningStatus = vi.fn<(runId: string) => Promise<TeamProvisioningProgress>>();
     const stopTeam = vi.fn<(teamName: string) => Promise<void>>(() => Promise.resolve());
-    const isTeamAlive = vi.fn<(teamName: string) => boolean>(() => false);
     const getAliveTeams = vi.fn<() => string[]>();
-    const getCurrentRunId = vi.fn<(teamName: string) => string | null>(() => null);
     const recordOpenCodeRuntimeBootstrapCheckin =
       vi.fn<(raw: unknown) => Promise<OpenCodeRuntimeControlAck>>();
     const deliverOpenCodeRuntimeMessage =
@@ -65,10 +63,8 @@ describe('HTTP team runtime routes', () => {
     const teamRuntimeApi = {
       getRuntimeState,
       stopTeam,
-      isTeamAlive,
       getAliveTeams,
-      getCurrentRunId,
-    } satisfies TeamRuntimeApi;
+    } satisfies TeamHttpRuntimeApi;
     const teamRuntimeControlApi = {
       recordOpenCodeRuntimeBootstrapCheckin,
       deliverOpenCodeRuntimeMessage,
@@ -107,9 +103,7 @@ describe('HTTP team runtime routes', () => {
       getRuntimeState,
       getProvisioningStatus,
       stopTeam,
-      isTeamAlive,
       getAliveTeams,
-      getCurrentRunId,
       recordOpenCodeRuntimeBootstrapCheckin,
       deliverOpenCodeRuntimeMessage,
       recordOpenCodeRuntimeTaskEvent,

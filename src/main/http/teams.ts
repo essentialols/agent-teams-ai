@@ -18,8 +18,8 @@ import {
 import type { HttpServices } from './index';
 import type { MemberWorkSyncReportState } from '@features/member-work-sync/contracts';
 import type {
+  TeamHttpRuntimeApi,
   TeamLaunchApi,
-  TeamRuntimeApi,
   TeamRuntimeControlCompatibilityApi,
 } from '@main/services/team/contracts/TeamProvisioningApis';
 import type {
@@ -47,7 +47,7 @@ function getTeamLaunchApi(services: HttpServices): TeamLaunchApi {
   return services.teamProvisioningApis.launch;
 }
 
-function getTeamRuntimeApi(services: HttpServices): TeamRuntimeApi {
+function getTeamRuntimeApi(services: HttpServices): TeamHttpRuntimeApi {
   if (!services.teamProvisioningApis?.runtime) {
     throw new HttpFeatureUnavailableError('Team runtime control is not available in this mode');
   }
@@ -131,7 +131,7 @@ async function getTeamDataWithRuntimeOverlay(
   teamName: string
 ): Promise<Awaited<ReturnType<NonNullable<HttpServices['teamDataService']>['getTeamData']>>> {
   const data = await getTeamDataService(services).getTeamData(teamName);
-  let runtimeState: Awaited<ReturnType<TeamRuntimeApi['getRuntimeState']>> | null = null;
+  let runtimeState: Awaited<ReturnType<TeamHttpRuntimeApi['getRuntimeState']>> | null = null;
   try {
     const runtimeApi = services.teamProvisioningApis?.runtime;
     runtimeState = (await runtimeApi?.getRuntimeState(teamName)) ?? null;

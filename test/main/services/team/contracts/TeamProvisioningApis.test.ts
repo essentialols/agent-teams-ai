@@ -160,9 +160,7 @@ describe('bindTeamHttpProvisioningApis', () => {
     ]);
     expect(sortedKeys(runtimeApi)).toEqual([
       'getAliveTeams',
-      'getCurrentRunId',
       'getRuntimeState',
-      'isTeamAlive',
       'stopTeam',
     ]);
     expect(sortedKeys(runtimeControlApi)).toEqual([

@@ -13,8 +13,8 @@ import { registerTools } from '../../../mcp-server/src/tools';
 import type { HttpServices } from '@main/http';
 import type {
   OpenCodeRuntimeControlAck,
+  TeamHttpRuntimeApi,
   TeamLaunchApi,
-  TeamRuntimeApi,
   TeamRuntimeControlCompatibilityApi,
 } from '@main/services/team/contracts/TeamProvisioningApis';
 import type {
@@ -281,10 +281,8 @@ function createServices(claudeRoot: string): {
       aliveTeams.delete(teamName);
       return Promise.resolve();
     },
-    isTeamAlive: (teamName: string): boolean => aliveTeams.has(teamName),
     getAliveTeams: (): string[] => [...aliveTeams],
-    getCurrentRunId: (teamName: string): string | null => runIdByTeam.get(teamName) ?? null,
-  } satisfies TeamRuntimeApi;
+  } satisfies TeamHttpRuntimeApi;
   const teamRuntimeControlApi = {
     recordOpenCodeRuntimeBootstrapCheckin: (): Promise<OpenCodeRuntimeControlAck> =>
       Promise.resolve(runtimeAck('accepted')),

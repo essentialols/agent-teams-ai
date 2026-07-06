@@ -269,11 +269,22 @@ export function buildCodexGoalNoTmuxCommand(input: CodexGoalLaunchInput): string
   if (config.allowDuplicateAccountIdentities) args.push("--allow-duplicate-accounts");
   if (config.requireGitWorkspace === false) args.push("--no-require-git-workspace");
   if (config.prewarmOnStart) args.push("--prewarm");
+  const envAssignments: string[] = [];
   const extraWritableRoots =
     process.env.SUBSCRIPTION_RUNTIME_CODEX_EXTRA_WRITABLE_ROOTS?.trim();
-  const envPrefix = extraWritableRoots
-    ? `SUBSCRIPTION_RUNTIME_CODEX_EXTRA_WRITABLE_ROOTS=${shellQuote(extraWritableRoots)} `
-    : "";
+  if (extraWritableRoots) {
+    envAssignments.push(
+      `SUBSCRIPTION_RUNTIME_CODEX_EXTRA_WRITABLE_ROOTS=${shellQuote(extraWritableRoots)}`,
+    );
+  }
+  const brokeredProjectStart =
+    process.env.SUBSCRIPTION_RUNTIME_PROJECT_CONTROL_BROKERED_START?.trim();
+  if (brokeredProjectStart) {
+    envAssignments.push(
+      `SUBSCRIPTION_RUNTIME_PROJECT_CONTROL_BROKERED_START=${shellQuote(brokeredProjectStart)}`,
+    );
+  }
+  const envPrefix = envAssignments.length ? `${envAssignments.join(" ")} ` : "";
   return `${envPrefix}${args.map(shellQuote).join(" ")}`;
 }
 

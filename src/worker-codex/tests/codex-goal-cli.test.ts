@@ -311,6 +311,45 @@ describe("codex goal cli", () => {
       expect(io.stderr).toContain("project_control_broker_required");
       expect(io.stderr).toContain("requiredTool=codex_goal_project_start");
       await expect(readFile(childJobJson, "utf8")).rejects.toThrow(/ENOENT/);
+
+      const brokeredChildIo = captureIo({
+        SUBSCRIPTION_RUNTIME_PROJECT_CONTROL_BROKERED_START: "1",
+      });
+      const brokeredChildExitCode = await runCodexGoalCli([
+        "run",
+        "--no-tmux",
+        "--job-root",
+        childJobRoot,
+        "--auth-root",
+        join(root, "auth"),
+        "--workspace",
+        join(worktreeRoot, "infinity-context-memory-child-v1"),
+        "--prompt",
+        childPrompt,
+        "--task-id",
+        "infinity-context-memory-child-v1",
+        "--job-id",
+        "infinity-context-memory-child-v1",
+        "--accounts",
+        "account-a",
+        "--access-boundary",
+        "isolated_workspace_write",
+        "--project-access-scope-json",
+        JSON.stringify({
+          projectId: "infinity-context",
+          readRoots: [join(worktreeRoot, "infinity-context-memory-child-v1")],
+          isolatedWorkspaceRoot: join(worktreeRoot, "infinity-context-memory-child-v1"),
+          workspaceRoots: [join(worktreeRoot, "infinity-context-memory-child-v1")],
+          registryRoot,
+        }),
+        "--network-access",
+        "restricted",
+        "--no-require-git-workspace",
+      ], brokeredChildIo);
+
+      expect(brokeredChildExitCode).toBe(2);
+      expect(brokeredChildIo.stderr).not.toContain("project_control_broker_required");
+      expect(brokeredChildIo.stderr).toContain("ENOENT");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

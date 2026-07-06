@@ -3092,7 +3092,19 @@ function codexProjectControlPorts(input: {
             throw new Error(`project_control_doctor_failed:${JSON.stringify(doctor)}`);
           }
         }
-        const command = await startCodexGoalTmux(input.startLaunch);
+        const previousBrokeredStart =
+          process.env.SUBSCRIPTION_RUNTIME_PROJECT_CONTROL_BROKERED_START;
+        process.env.SUBSCRIPTION_RUNTIME_PROJECT_CONTROL_BROKERED_START = "1";
+        let command: Awaited<ReturnType<typeof startCodexGoalTmux>>;
+        try {
+          command = await startCodexGoalTmux(input.startLaunch);
+        } finally {
+          if (previousBrokeredStart === undefined) {
+            delete process.env.SUBSCRIPTION_RUNTIME_PROJECT_CONTROL_BROKERED_START;
+          } else {
+            process.env.SUBSCRIPTION_RUNTIME_PROJECT_CONTROL_BROKERED_START = previousBrokeredStart;
+          }
+        }
         return operationResult(command.preview);
       },
       async stopWorker() {

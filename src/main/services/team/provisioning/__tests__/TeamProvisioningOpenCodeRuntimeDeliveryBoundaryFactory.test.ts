@@ -5,10 +5,12 @@ import {
   type TeamProvisioningOpenCodeRuntimeDeliveryBoundaryPorts,
 } from '../TeamProvisioningOpenCodeRuntimeDelivery';
 import {
+  createTeamProvisioningOpenCodeRuntimeDeliveryBoundaryHost,
   createTeamProvisioningOpenCodeRuntimeDeliveryBoundaryFromHost,
   createTeamProvisioningOpenCodeRuntimeDeliveryBoundaryFromPorts,
   type TeamProvisioningOpenCodeRuntimeDeliveryBoundaryFactoryPorts,
   type TeamProvisioningOpenCodeRuntimeDeliveryBoundaryHost,
+  type TeamProvisioningOpenCodeRuntimeDeliveryBoundaryHostFactoryService,
 } from '../TeamProvisioningOpenCodeRuntimeDeliveryBoundaryFactory';
 
 import type { OpenCodeRuntimeCheckinRun } from '../TeamProvisioningOpenCodeRuntimeCheckin';
@@ -190,6 +192,44 @@ describe('TeamProvisioningOpenCodeRuntimeDeliveryBoundaryFactory', () => {
     expect(boundaryPorts.getCrossTeamSender()).toBe('cross-team-sender');
     expect(boundaryPorts.nowIso()).toBe('2026-01-01T00:00:00.000Z');
     expect(boundaryPorts.logger).toBe(deps.logger);
+  });
+
+  it('builds the TeamProvisioning host from service-shaped ports with live emitter lookup', async () => {
+    const fakeBoundary = createFakeBoundary();
+    createBoundaryMock.mockReturnValue(fakeBoundary);
+    const run = createRun();
+    const service = createService({
+      run,
+      readLaunchState: vi.fn(async () => ({ teamName: 'Team' }) as never),
+    });
+    const deps = createDeps();
+
+    createTeamProvisioningOpenCodeRuntimeDeliveryBoundaryFromHost(
+      createTeamProvisioningOpenCodeRuntimeDeliveryBoundaryHost(service),
+      deps
+    );
+
+    const boundaryPorts = createBoundaryMock.mock.calls[0]?.[0] as
+      | TeamProvisioningOpenCodeRuntimeDeliveryBoundaryPorts<OpenCodeRuntimeCheckinRun>
+      | undefined;
+    expect(boundaryPorts).toBeDefined();
+    if (!boundaryPorts) {
+      return;
+    }
+
+    const event = { type: 'member-spawn', teamName: 'Team', detail: 'Builder' } as const;
+    boundaryPorts.emitTeamChange(event);
+    const teamChangeEmitter = vi.fn();
+    service.teamChangeEmitter = teamChangeEmitter;
+    boundaryPorts.emitTeamChange(event);
+
+    await expect(boundaryPorts.resolveCurrentOpenCodeRuntimeRunId('Team', 'lane-1')).resolves.toBe(
+      'run-1'
+    );
+    expect(boundaryPorts.getTrackedRun('Team')).toBe(run);
+    expect(boundaryPorts.getCrossTeamSender()).toBe('cross-team-sender');
+    expect(teamChangeEmitter).toHaveBeenCalledTimes(1);
+    expect(teamChangeEmitter).toHaveBeenCalledWith(event);
   });
 });
 
@@ -382,6 +422,50 @@ function createHost(options: {
       isEnabled: vi.fn(() => true),
     },
     scheduleOpenCodePromptDeliveryWatchdog: vi.fn(),
+  };
+}
+
+function createService(options: {
+  run: OpenCodeRuntimeCheckinRun;
+  readLaunchState: ReturnType<typeof vi.fn>;
+}): TeamProvisioningOpenCodeRuntimeDeliveryBoundaryHostFactoryService<OpenCodeRuntimeCheckinRun> {
+  const host = createHost({
+    run: options.run,
+    teamChangeEmitter: vi.fn(),
+    readLaunchState: options.readLaunchState,
+  });
+  return {
+    resolveOpenCodeRuntimeLaneId: host.resolveOpenCodeRuntimeLaneId,
+    openCodeRuntimeRecoveryIdentity: host.openCodeRuntimeRecoveryIdentity,
+    launchStateStore: host.launchStateStore,
+    writeLaunchStateSnapshot: host.writeLaunchStateSnapshot,
+    readConfigForStrictDecision: host.readConfigForStrictDecision,
+    membersMetaStore: host.membersMetaStore,
+    readPersistedRuntimeMembers: host.readPersistedRuntimeMembers,
+    runTracking: host.runTracking,
+    runs: host.runs,
+    persistLaunchStateSnapshot: host.persistLaunchStateSnapshot,
+    getMixedSecondaryLaunchPhase: host.getMixedSecondaryLaunchPhase,
+    invalidateRuntimeSnapshotCaches: host.invalidateRuntimeSnapshotCaches,
+    emitMemberSpawnChange: host.emitMemberSpawnChange,
+    teamChangeEmitter: null,
+    createOpenCodeRuntimeBootstrapEvidencePorts: host.createOpenCodeRuntimeBootstrapEvidencePorts,
+    openCodeTaskLogAttributionStore: host.openCodeTaskLogAttributionStore,
+    syncMemberTaskActivityForRuntimeTransition: host.syncMemberTaskActivityForRuntimeTransition,
+    syncMemberLaunchGraceCheck: host.syncMemberLaunchGraceCheck,
+    sentMessagesStore: host.sentMessagesStore,
+    inboxReader: host.inboxReader,
+    inboxWriter: host.inboxWriter,
+    crossTeamSender: 'cross-team-sender' as never,
+    isOpenCodeRuntimeRecipient: host.isOpenCodeRuntimeRecipient,
+    getOpenCodeAgendaSyncRecoveryBypassMessageIds:
+      host.getOpenCodeAgendaSyncRecoveryBypassMessageIds,
+    tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive:
+      host.tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive,
+    decideOpenCodeRuntimeDeliveryUserFacingAdvisory:
+      host.decideOpenCodeRuntimeDeliveryUserFacingAdvisory,
+    openCodePromptDeliveryWatchdogScheduler: host.openCodePromptDeliveryWatchdogScheduler,
+    scheduleOpenCodePromptDeliveryWatchdog: host.scheduleOpenCodePromptDeliveryWatchdog,
   };
 }
 

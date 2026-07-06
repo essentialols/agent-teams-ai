@@ -165,6 +165,10 @@ import {
   buildCodexControlledAgentProfile,
   CodexControlledAgentProvider,
 } from "./controlled-agent";
+import {
+  projectControllerCapacityDemand,
+  recordProjectControllerCapacitySignal,
+} from "./project-controller-capacity";
 
 const serverVersion = "0.1.0-main.2";
 const defaultAuthRoot = "~/.cache/subscription-runtime/live-codex-auth";
@@ -3533,6 +3537,7 @@ async function projectControllerStart(args: ProjectControllerLaunchPlanMcpArgs) 
     profile,
     state,
   });
+  const capacityAccountId = stringValue(providerInput.account?.name);
   const result = await startControlledAgentRun({
     controllerJobId: controller.controller.jobId,
     sessionId: state.sessionId,
@@ -3546,6 +3551,12 @@ async function projectControllerStart(args: ProjectControllerLaunchPlanMcpArgs) 
     stateStore: state.store,
     events: state.store,
     owner: controlledAgentProcessOwner,
+    ...(capacityAccountId === undefined ? {} : {
+      capacity: {
+        accountId: capacityAccountId,
+        demand: projectControllerCapacityDemand(launch.config),
+      },
+    }),
   });
   if (!result.ok) {
     if ("reason" in result) {
@@ -3733,6 +3744,14 @@ async function projectControllerReconcile(args: ProjectControllerLaunchPlanMcpAr
       provider,
       events: state.store,
     });
+    if (reconciled.ok) {
+      const launch = await goalLaunchInput(codexGoalJobToArgs(controller.controller));
+      recordControllerCapacitySignal({
+        launch,
+        controllerJobId: controller.controller.jobId,
+        run: reconciled.run,
+      });
+    }
     return mcpJson({
       ok: reconciled.ok,
       mode: "project_controller_reconcile",
@@ -3774,6 +3793,19 @@ async function projectControllerReconcile(args: ProjectControllerLaunchPlanMcpAr
     safeMessage: result.ok
       ? "A safe provider runner is required to reconcile provider liveness. Persisted state is available, but runtime liveness cannot be asserted."
       : "No persisted controlled-agent run exists to reconcile.",
+  });
+}
+
+function recordControllerCapacitySignal(input: {
+  readonly launch: CodexGoalLaunchInput;
+  readonly controllerJobId: string;
+  readonly run: Parameters<typeof recordProjectControllerCapacitySignal>[0]["run"];
+}): void {
+  recordProjectControllerCapacitySignal({
+    stateRootDir: codexGoalStateRootDir(input.launch),
+    controllerJobId: input.controllerJobId,
+    config: input.launch.config,
+    run: input.run,
   });
 }
 

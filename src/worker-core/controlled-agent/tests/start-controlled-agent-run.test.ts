@@ -141,6 +141,62 @@ describe("startControlledAgentRun", () => {
     expect(savedRuns[0]?.owner?.runtimeSha).toBe("abc123");
   });
 
+  it("persists selected capacity account metadata for later quota reconciliation", async () => {
+    const savedRuns: ControlledAgentRun[] = [];
+    const provider: ControlledAgentProviderPort = {
+      start() {
+        return { providerRunId: "provider-run-1" };
+      },
+      status() {
+        return { status: ControlledAgentRunStatus.Running };
+      },
+      stop() {
+        return { status: ControlledAgentRunStatus.Stopped };
+      },
+    };
+
+    const result = await startControlledAgentRun(launchInput(true), {
+      provider,
+      capacity: {
+        accountId: "account-d",
+        demand: {
+          provider: "codex",
+          model: "gpt-5.5",
+          reasoningEffort: "high",
+          serviceTier: "fast",
+        },
+      },
+      stateStore: {
+        readSession() {
+          return null;
+        },
+        saveSession() {},
+        readRun() {
+          return null;
+        },
+        readLatestRunForSession() {
+          return null;
+        },
+        saveRun(run) {
+          savedRuns.push(run);
+        },
+      },
+      clock: { now: () => new Date("2026-07-05T11:00:00.000Z") },
+      idGenerator: { randomId: () => "run-1" },
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected start success");
+    expect(result.run.capacityAccountId).toBe("account-d");
+    expect(result.run.capacityDemand).toEqual({
+      provider: "codex",
+      model: "gpt-5.5",
+      reasoningEffort: "high",
+      serviceTier: "fast",
+    });
+    expect(savedRuns[0]?.capacityAccountId).toBe("account-d");
+  });
+
   it("does not call the provider when enforcement is incomplete", async () => {
     let providerCalled = false;
     const provider: ControlledAgentProviderPort = {

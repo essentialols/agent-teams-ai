@@ -8,6 +8,7 @@ import {
   type FilesystemPolicy,
   type ProjectAccessScope,
 } from "../../access-control";
+import type { WorkerRuntimeDemand } from "../../account-capacity";
 import { RunEventProviderKind } from "../../run-provider-kind";
 
 export enum ControlledAgentLaunchBlockReason {
@@ -137,6 +138,8 @@ export type ControlledAgentRun = {
   readonly status: ControlledAgentRunStatus;
   readonly providerRunId?: string;
   readonly owner?: ControlledAgentProcessOwner;
+  readonly capacityAccountId?: string;
+  readonly capacityDemand?: WorkerRuntimeDemand;
   readonly safeMessage?: string;
   readonly startedAt: string;
   readonly stoppedAt?: string;

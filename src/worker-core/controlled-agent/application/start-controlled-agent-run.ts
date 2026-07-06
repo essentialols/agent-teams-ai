@@ -12,6 +12,7 @@ import type {
   ControlledAgentRun,
   ControlledAgentSession,
 } from "../domain/controlled-agent";
+import type { WorkerRuntimeDemand } from "../../account-capacity";
 import type {
   ControlledAgentEventPort,
   ControlledAgentProviderPort,
@@ -26,6 +27,10 @@ export type StartControlledAgentRunDeps = {
   readonly stateStore?: ControllerStateStorePort;
   readonly events?: ControlledAgentEventPort;
   readonly owner?: ControlledAgentProcessOwner;
+  readonly capacity?: {
+    readonly accountId: string;
+    readonly demand?: WorkerRuntimeDemand;
+  };
   readonly clock?: { now(): Date };
   readonly idGenerator?: { randomId(): string };
 };
@@ -100,6 +105,12 @@ export class StartControlledAgentRunUseCase {
         providerRunId: provider.providerRunId,
       }),
       ...(this.deps.owner === undefined ? {} : { owner: this.deps.owner }),
+      ...(this.deps.capacity === undefined ? {} : {
+        capacityAccountId: this.deps.capacity.accountId,
+        ...(this.deps.capacity.demand === undefined
+          ? {}
+          : { capacityDemand: this.deps.capacity.demand }),
+      }),
       ...(provider.safeMessage === undefined ? {} : {
         safeMessage: provider.safeMessage,
       }),

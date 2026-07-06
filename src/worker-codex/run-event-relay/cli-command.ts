@@ -1,16 +1,4 @@
-import {
-  LocalFileRunEventDeliveryCursorStore,
-  LocalFileRunEventStore,
-} from "@vioxen/subscription-runtime/store-local-file";
-import {
-  RunEventRelayService,
-  type RunEventType,
-  isRunEventType,
-} from "@vioxen/subscription-runtime/worker-core";
-import {
-  StdoutNdjsonRunEventPublisher,
-  WebhookRunEventPublisher,
-} from "@vioxen/subscription-runtime/worker-local";
+import type { RunEventType } from "@vioxen/subscription-runtime/worker-core";
 import {
   type CodexGoalCliIo,
   type OutputFormat,
@@ -22,8 +10,14 @@ import {
   resolvePath,
   writeJsonOrText,
 } from "../codex-goal-cli-support";
-
-type RelayEventsPublisherKind = "stdout" | "webhook";
+import { createLocalFileRelayEventsPorts } from "./adapters/local-file-relay-events-adapters";
+import { createRelayEventsPublisher } from "./adapters/relay-events-publisher";
+import { relayRunEvents } from "./application/relay-run-events";
+import {
+  RelayEventsPublisherKind,
+  parseRelayEventTypes,
+  parseRelayEventsPublisherKind,
+} from "./domain/relay-events";
 
 export type RelayEventsCommand = {
   readonly kind: "relay-events";
@@ -44,10 +38,10 @@ export function parseCodexGoalRelayEventsCommand(
 ): RelayEventsCommand {
   const env = io.env();
   const values = parseFlags(argv);
-  const publisherKind = relayEventsPublisherKind(
+  const publisherKind = parseRelayEventsPublisherKind(
     option(values, env, "--publisher", [
       "SUBSCRIPTION_RUNTIME_RUN_EVENT_PUBLISHER",
-    ]) ?? "stdout",
+    ]) ?? RelayEventsPublisherKind.Stdout,
   );
   const eventRootDir = resolvePath(
     io.cwd(),
@@ -58,11 +52,11 @@ export function parseCodexGoalRelayEventsCommand(
   const webhookUrl = option(values, env, "--webhook-url", [
     "SUBSCRIPTION_RUNTIME_RUN_EVENT_WEBHOOK_URL",
   ]);
-  if (publisherKind === "webhook" && !webhookUrl) {
+  if (publisherKind === RelayEventsPublisherKind.Webhook && !webhookUrl) {
     throw new Error("--webhook-url is required for webhook publisher");
   }
   const format = outputFormatFromFlags(values, env, "text");
-  if (publisherKind === "stdout" && format === "json") {
+  if (publisherKind === RelayEventsPublisherKind.Stdout && format === "json") {
     throw new Error("stdout relay publisher writes NDJSON events; use --text");
   }
   const webhookTimeoutMs = parseOptionalPositiveInteger(
@@ -76,7 +70,7 @@ export function parseCodexGoalRelayEventsCommand(
     "--limit",
   );
   const runId = option(values, env, "--run-id", []);
-  const types = relayEventTypes(option(values, env, "--type", []));
+  const types = parseRelayEventTypes(option(values, env, "--type", []));
   return {
     kind: "relay-events",
     eventRootDir,
@@ -98,7 +92,10 @@ export async function runCodexGoalRelayEventsCommand(
   io: CodexGoalCliIo,
 ): Promise<number> {
   const result = await relayEvents(command, io);
-  if (command.publisherKind === "stdout" && command.format === "text") {
+  if (
+    command.publisherKind === RelayEventsPublisherKind.Stdout &&
+    command.format === "text"
+  ) {
     return 0;
   }
   writeJsonOrText(command.format, result, io);
@@ -106,33 +103,28 @@ export async function runCodexGoalRelayEventsCommand(
 }
 
 async function relayEvents(command: RelayEventsCommand, io: CodexGoalCliIo) {
-  const eventStore = new LocalFileRunEventStore({
-    rootDir: command.eventRootDir,
+  const publisher = createRelayEventsPublisher({
+    publisherKind: command.publisherKind,
+    ...(command.webhookUrl === undefined
+      ? {}
+      : { webhookUrl: command.webhookUrl }),
+    ...(command.webhookTimeoutMs === undefined
+      ? {}
+      : { webhookTimeoutMs: command.webhookTimeoutMs }),
+    writeStdout: (chunk) => io.writeStdout(chunk),
   });
-  const cursorStore = new LocalFileRunEventDeliveryCursorStore({
-    rootDir: command.eventRootDir,
-  });
-  const publisher = command.publisherKind === "stdout"
-    ? new StdoutNdjsonRunEventPublisher({
-        write: (chunk) => io.writeStdout(chunk),
-      })
-    : new WebhookRunEventPublisher({
-        endpointUrl: command.webhookUrl as string,
-        ...(command.webhookTimeoutMs === undefined
-          ? {}
-          : { timeoutMs: command.webhookTimeoutMs }),
-      });
-  const service = new RunEventRelayService({
-    eventStore,
-    cursorStore,
-    publisher,
-  });
-  const result = await service.relay({
-    consumerId: command.consumerId,
-    ...(command.limit === undefined ? {} : { limit: command.limit }),
-    ...(command.runId === undefined ? {} : { runId: command.runId }),
-    ...(command.types === undefined ? {} : { types: command.types }),
-  });
+  const result = await relayRunEvents(
+    {
+      consumerId: command.consumerId,
+      ...(command.limit === undefined ? {} : { limit: command.limit }),
+      ...(command.runId === undefined ? {} : { runId: command.runId }),
+      ...(command.types === undefined ? {} : { types: command.types }),
+    },
+    createLocalFileRelayEventsPorts({
+      eventRootDir: command.eventRootDir,
+      publisher,
+    }),
+  );
   return {
     ok: result.warnings.length === 0,
     mode: "relay_events",
@@ -140,19 +132,4 @@ async function relayEvents(command: RelayEventsCommand, io: CodexGoalCliIo) {
     publisherKind: command.publisherKind,
     ...result,
   };
-}
-
-function relayEventsPublisherKind(value: string): RelayEventsPublisherKind {
-  if (value === "stdout" || value === "webhook") return value;
-  throw new Error("--publisher must be stdout or webhook");
-}
-
-function relayEventTypes(value: string | undefined): readonly RunEventType[] | undefined {
-  if (value === undefined) return undefined;
-  const types = value.split(",").map((item) => item.trim()).filter(Boolean);
-  if (types.length === 0) return undefined;
-  return types.map((type) => {
-    if (isRunEventType(type)) return type;
-    throw new Error(`unsupported run event type: ${type}`);
-  });
 }

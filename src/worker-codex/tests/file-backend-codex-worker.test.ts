@@ -855,6 +855,55 @@ describe("FileBackendCodexWorker", () => {
     }
   });
 
+  it("isolates cached Codex homes for separate worker instances", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "codex-worker-"));
+    const appServer = new FakeAppServerFactory();
+    const workerOptions = {
+      providerInstanceId: "codex:shared-account",
+      stateRootDir: rootDir,
+      codexBinaryPath: "codex",
+      encryptionKey: new Uint8Array(32).fill(7),
+      appServerProcessFactory: appServer.create,
+      executionEngine: "app-server" as const,
+      sessionCacheSlots: 1,
+      clock: {
+        now: () => new Date("2026-05-31T00:05:00.000Z"),
+        monotonicMs: () => 1,
+      },
+    };
+    const first = new FileBackendCodexWorker({
+      ...workerOptions,
+      workerId: "codex-slot-1",
+    });
+    const second = new FileBackendCodexWorker({
+      ...workerOptions,
+      workerId: "codex-slot-2",
+    });
+
+    try {
+      await first.start();
+      await second.start();
+      await first.seedCodexAuthJson(validAuthJson);
+      await second.seedCodexAuthJson(validAuthJson);
+
+      await expect(
+        Promise.all([
+          first.run({ prompt: "first" }),
+          second.run({ prompt: "second" }),
+        ]),
+      ).resolves.toEqual([
+        { outputText: "OK", warnings: [] },
+        { outputText: "OK", warnings: [] },
+      ]);
+
+      expect(new Set(appServer.codexHomes)).toHaveLength(2);
+    } finally {
+      await first.dispose();
+      await second.dispose();
+      await rm(rootDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 });
+    }
+  });
+
   it("retries quota-limited Codex work on a different account", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "codex-worker-"));
     const clock = {
@@ -2124,6 +2173,7 @@ class FakeAppServerFactory {
   readonly prompts: string[] = [];
   readonly threadCwds: string[] = [];
   readonly envs: Readonly<Record<string, string>>[] = [];
+  readonly codexHomes: string[] = [];
   readonly goalObjectives: string[] = [];
   private emittedTurnErrors = 0;
 
@@ -2134,6 +2184,7 @@ class FakeAppServerFactory {
   }) => {
     this.spawnCount += 1;
     this.envs.push(input.env);
+    this.codexHomes.push(input.env.CODEX_HOME ?? "");
     return new FakeAppServerProcess(
       (prompt) => this.prompts.push(prompt),
       (cwd) => this.threadCwds.push(cwd),

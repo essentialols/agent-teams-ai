@@ -76,7 +76,12 @@ import {
   registerSubagentHandlers,
   removeSubagentHandlers,
 } from './subagents';
-import { initializeTeamHandlers, registerTeamHandlers, removeTeamHandlers } from './teams';
+import {
+  initializeTeamHandlers,
+  registerTeamHandlers,
+  removeTeamHandlers,
+  type TeamIpcProvisioningApis,
+} from './teams';
 import { registerTelemetryHandlers, removeTelemetryHandlers } from './telemetry';
 import {
   initializeTerminalHandlers,
@@ -115,7 +120,6 @@ import type {
   TeamLogSourceTracker,
   TeammateToolTracker,
   TeamMemberLogsFinder,
-  TeamProvisioningService,
   UpdaterService,
 } from '../services';
 import type { ApiKeyService } from '../services/extensions/apikeys/ApiKeyService';
@@ -142,7 +146,7 @@ export function initializeIpcHandlers(
   updater: UpdaterService,
   sshManager: SshConnectionManager,
   teamDataService: TeamDataService,
-  teamProvisioningService: TeamProvisioningService,
+  teamProvisioningApis: TeamIpcProvisioningApis,
   teamMemberLogsFinder: TeamMemberLogsFinder,
   memberStatsComputer: MemberStatsComputer,
   boardTaskActivityService: BoardTaskActivityService,
@@ -157,6 +161,7 @@ export function initializeIpcHandlers(
     rewire: (context: ServiceContext) => void;
     full: (context: ServiceContext) => void;
     onClaudeRootPathUpdated: (claudeRootPath: string | null) => Promise<void> | void;
+    onAgentLanguageUpdated: (newLangCode: string) => Promise<void> | void;
   },
   httpServerDeps?: {
     httpServer: HttpServer;
@@ -192,7 +197,7 @@ export function initializeIpcHandlers(
   initializeContextHandlers(registry, contextCallbacks.rewire);
   initializeTeamHandlers(
     teamDataService,
-    teamProvisioningService,
+    teamProvisioningApis,
     teamMemberLogsFinder,
     memberStatsComputer,
     teamBackupService,
@@ -208,9 +213,7 @@ export function initializeIpcHandlers(
   );
   initializeConfigHandlers({
     onClaudeRootPathUpdated: contextCallbacks.onClaudeRootPathUpdated,
-    onAgentLanguageUpdated: (newLangCode) => {
-      void teamProvisioningService.notifyLanguageChange(newLangCode);
-    },
+    onAgentLanguageUpdated: contextCallbacks.onAgentLanguageUpdated,
   });
   if (httpServerDeps) {
     initializeHttpServerHandlers(httpServerDeps.httpServer, httpServerDeps.startHttpServer);

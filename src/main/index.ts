@@ -111,9 +111,16 @@ import {
   snapshotOpenCodeLocalMcpLaunchEnv,
 } from '@main/services/team/opencode/bridge/OpenCodeMcpBridgeEnv';
 import {
+  bindTeamClaudeLogsApi,
+  bindTeamDiagnosticsApi,
   bindTeamLaunchApi,
+  bindTeamMemberLifecycleApi,
+  bindTeamMessagingApi,
+  bindTeamProvisioningPreflightApi,
+  bindTeamProvisioningRunApi,
   bindTeamRuntimeApi,
   bindTeamRuntimeControlCompatibilityApi,
+  bindTeamToolApprovalApi,
 } from '@main/services/team/contracts/TeamProvisioningApis';
 import { ReviewApplierService } from '@main/services/team/ReviewApplierService';
 import { TeamBackupService } from '@main/services/team/TeamBackupService';
@@ -286,6 +293,7 @@ import type {
   AppStartupStep,
   TeamChangeEvent,
 } from '@shared/types';
+import type { TeamIpcProvisioningApis } from './ipc/teams';
 
 const logger = createLogger('App');
 const appStartedAtMs = Date.now();
@@ -2573,13 +2581,25 @@ async function initializeServices(): Promise<void> {
     message: 'Wiring app actions...',
   });
 
+  const teamIpcProvisioningApis: TeamIpcProvisioningApis = {
+    ...bindTeamLaunchApi(teamProvisioningService),
+    ...bindTeamProvisioningPreflightApi(teamProvisioningService),
+    ...bindTeamProvisioningRunApi(teamProvisioningService),
+    ...bindTeamRuntimeApi(teamProvisioningService),
+    ...bindTeamMemberLifecycleApi(teamProvisioningService),
+    ...bindTeamDiagnosticsApi(teamProvisioningService),
+    ...bindTeamClaudeLogsApi(teamProvisioningService),
+    ...bindTeamMessagingApi(teamProvisioningService),
+    ...bindTeamToolApprovalApi(teamProvisioningService),
+  };
+
   // Initialize IPC handlers with registry
   initializeIpcHandlers(
     contextRegistry,
     updaterService,
     sshConnectionManager,
     teamDataService,
-    teamProvisioningService,
+    teamIpcProvisioningApis,
     teamMemberLogsFinder,
     memberStatsComputer,
     boardTaskActivityService,
@@ -2599,6 +2619,9 @@ async function initializeServices(): Promise<void> {
         if (httpServer?.isRunning()) {
           void syncTeamControlApiState().catch(() => undefined);
         }
+      },
+      onAgentLanguageUpdated: (newLangCode: string) => {
+        void teamProvisioningService.notifyLanguageChange(newLangCode);
       },
     },
     {

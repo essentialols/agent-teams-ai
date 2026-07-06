@@ -757,7 +757,7 @@ function buildLeadDirectDelegateAckBlock(actionMode?: AgentActionMode): string |
   );
 }
 
-type TeamHandlerProvisioningApis = TeamLaunchApi &
+export type TeamIpcProvisioningApis = TeamLaunchApi &
   TeamProvisioningPreflightApi &
   TeamProvisioningRunApi &
   TeamRuntimeApi &
@@ -825,7 +825,7 @@ const MAX_TOTAL_ATTACHMENT_SIZE = 20 * 1024 * 1024; // 20MB total
 
 export function initializeTeamHandlers(
   service: TeamDataService,
-  provisioningService: TeamHandlerProvisioningApis,
+  provisioningService: TeamIpcProvisioningApis,
   logsFinder?: TeamMemberLogsFinder,
   statsComputer?: MemberStatsComputer,
   backupService?: TeamBackupService,

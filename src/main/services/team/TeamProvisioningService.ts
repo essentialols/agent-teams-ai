@@ -308,6 +308,7 @@ import {
   deliverOpenCodeMemberMessage as deliverOpenCodeMemberMessageHelper,
   type TeamProvisioningOpenCodeMemberMessageDeliveryHost,
 } from './provisioning/TeamProvisioningOpenCodeMemberMessageDeliveryServiceFactory';
+import { createPersistOpenCodeMemberRestartSystemMessageUseCase } from './provisioning/TeamProvisioningOpenCodeMemberRestartSystemMessageUseCase';
 import { OpenCodeMemberSendSerializer } from './provisioning/TeamProvisioningOpenCodeMemberSendSerialization';
 import {
   createOpenCodeTeamThroughRuntimeAdapterFlow,
@@ -1339,6 +1340,13 @@ export class TeamProvisioningService {
   >();
   private readonly memberLifecycleOperations = new Map<string, MemberLifecycleOperation>();
   private readonly memberLifecycleUseCases = {
+    persistOpenCodeMemberRestartSystemMessage:
+      createPersistOpenCodeMemberRestartSystemMessageUseCase({
+        persistSentMessage: (teamName, message) =>
+          this.persistSentMessage(teamName, message as unknown as InboxMessage),
+        nowIso,
+        randomUUID,
+      }),
     appendDirectProcessRuntimeEvent: createAppendDirectProcessRuntimeEventUseCase(
       createNodeAppendDirectProcessRuntimeEventUseCasePorts({ nowIso })
     ),

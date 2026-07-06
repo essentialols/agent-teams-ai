@@ -7128,12 +7128,9 @@ describe('TeamProvisioningService', () => {
             cwd: '/repo',
           }))
       );
-      const persistRestartMessage = vi
-        .spyOn(
-          memberLifecycleControllerHarness(svc),
-          'persistOpenCodeMemberRestartSystemMessageInternal'
-        )
-        .mockImplementation(() => undefined);
+      const persistRestartMessage = vi.fn();
+      memberLifecycleHostHarness(svc).persistOpenCodeMemberRestartSystemMessage =
+        persistRestartMessage;
       const runtimeRelaunch = vi
         .spyOn(svc as any, 'runOpenCodeTeamRuntimeAdapterLaunch')
         .mockResolvedValue({ runId: 'opencode-run-2' });

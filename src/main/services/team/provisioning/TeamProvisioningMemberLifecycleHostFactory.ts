@@ -7,7 +7,9 @@ import {
   resolveLeadMemberName,
 } from './TeamProvisioningMemberStatusProjection';
 
+import type { AppendDirectProcessRuntimeEventUseCase } from './TeamProvisioningAppendDirectProcessRuntimeEventUseCase';
 import type { TeamProvisioningMemberLifecycleHost } from './TeamProvisioningMemberLifecycle';
+import type { PersistOpenCodeMemberRestartSystemMessageUseCase } from './TeamProvisioningOpenCodeMemberRestartSystemMessageUseCase';
 import type { TeamCreateRequest } from '@shared/types';
 
 type HostRun = NonNullable<Parameters<TeamProvisioningMemberLifecycleHost['getRunTrackedCwd']>[0]>;
@@ -185,14 +187,8 @@ export interface TeamProvisioningMemberLifecycleHostFactoryMixedSecondaryRuntime
   ): ReturnType<TeamProvisioningMemberLifecycleHost['getMixedSecondaryLaunchPhase']>;
 }
 
-type HostPersistOpenCodeMemberRestartSystemMessage = NonNullable<
-  TeamProvisioningMemberLifecycleHost['persistOpenCodeMemberRestartSystemMessage']
->;
 type HostLaunchDirectProcessMemberRestart = NonNullable<
   TeamProvisioningMemberLifecycleHost['launchDirectProcessMemberRestart']
->;
-type HostAppendDirectProcessRuntimeEvent = NonNullable<
-  TeamProvisioningMemberLifecycleHost['appendDirectProcessRuntimeEvent']
 >;
 type HostRunMemberLifecycleOperation = NonNullable<
   TeamProvisioningMemberLifecycleHost['runMemberLifecycleOperation']
@@ -219,11 +215,11 @@ type HostDetachOpenCodeOwnedMemberLaneUnlocked = NonNullable<
 export interface TeamProvisioningMemberLifecycleHostFactoryUseCasePorts<
   TRun extends TeamProvisioningMemberLifecycleHostFactoryRun,
 > {
-  persistOpenCodeMemberRestartSystemMessage?: HostPersistOpenCodeMemberRestartSystemMessage;
+  persistOpenCodeMemberRestartSystemMessage?: PersistOpenCodeMemberRestartSystemMessageUseCase;
   launchDirectProcessMemberRestart?: (
     input: WithServiceRun<Parameters<HostLaunchDirectProcessMemberRestart>[0], TRun>
   ) => ReturnType<HostLaunchDirectProcessMemberRestart>;
-  appendDirectProcessRuntimeEvent?: HostAppendDirectProcessRuntimeEvent;
+  appendDirectProcessRuntimeEvent?: AppendDirectProcessRuntimeEventUseCase;
   runMemberLifecycleOperation?: HostRunMemberLifecycleOperation;
   stopPrimaryOwnedRosterRuntime?: HostStopPrimaryOwnedRosterRuntime;
   collectFailedOpenCodeSecondaryRetryCandidates?: (

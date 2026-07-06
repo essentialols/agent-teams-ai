@@ -36,6 +36,7 @@ import { TeamConfigReader } from '../TeamConfigReader';
 import { createPersistedLaunchSnapshot } from '../TeamLaunchStateEvaluator';
 
 import {
+  type AppendDirectProcessRuntimeEventUseCase,
   createAppendDirectProcessRuntimeEventUseCase,
   type DirectProcessRuntimeEventInput,
 } from './TeamProvisioningAppendDirectProcessRuntimeEventUseCase';
@@ -57,6 +58,11 @@ import {
   type TeamProvisioningMemberLifecycleOperationRunner,
 } from './TeamProvisioningMemberLifecycleOperationRunner';
 import { parseOptionalIsoMs } from './TeamProvisioningMemberSpawnStatusPolicy';
+import {
+  createPersistOpenCodeMemberRestartSystemMessageUseCase,
+  type OpenCodeMemberRestartSystemMessageInput,
+  type PersistOpenCodeMemberRestartSystemMessageUseCase,
+} from './TeamProvisioningOpenCodeMemberRestartSystemMessageUseCase';
 import {
   hasOpenCodeRuntimeEntryHandle,
   hasOpenCodeRuntimeHandle,
@@ -261,15 +267,6 @@ interface DirectTmuxRestartMemberConfigInput {
   bootstrapRunId?: string;
   bootstrapContextHash?: string;
   bootstrapBriefingHash?: string;
-}
-
-interface OpenCodeMemberRestartSystemMessageInput {
-  teamName: string;
-  leadName: string;
-  leadSessionId: string | null;
-  displayName: string;
-  member: TeamCreateRequest['members'][number];
-  reason: 'manual_restart' | 'member_updated';
 }
 
 interface DirectProcessMemberRestartInput {
@@ -585,9 +582,9 @@ export interface TeamProvisioningMemberLifecycleMixedSecondaryRuntimePorts {
 }
 
 export interface TeamProvisioningMemberLifecycleUseCasePorts {
-  persistOpenCodeMemberRestartSystemMessage?(input: OpenCodeMemberRestartSystemMessageInput): void;
+  persistOpenCodeMemberRestartSystemMessage?: PersistOpenCodeMemberRestartSystemMessageUseCase;
   launchDirectProcessMemberRestart?(input: DirectProcessMemberRestartInput): Promise<void>;
-  appendDirectProcessRuntimeEvent?(input: DirectProcessRuntimeEventInput): Promise<void>;
+  appendDirectProcessRuntimeEvent?: AppendDirectProcessRuntimeEventUseCase;
   /**
    * Overrides the controller's operation runner entirely: implementations MUST
    * provide the same per-member mutual exclusion backed by the shared
@@ -638,6 +635,12 @@ export interface TeamProvisioningMemberLifecycleHost
 
 export class TeamProvisioningMemberLifecycleController {
   private readonly operationRunner: TeamProvisioningMemberLifecycleOperationRunner;
+  private readonly persistOpenCodeMemberRestartSystemMessageFallback =
+    createPersistOpenCodeMemberRestartSystemMessageUseCase({
+      persistSentMessage: (teamName, message) => this.persistSentMessage(teamName, message),
+      nowIso,
+      randomUUID,
+    });
   private readonly appendDirectProcessRuntimeEventFallback =
     createAppendDirectProcessRuntimeEventUseCase();
 
@@ -1077,27 +1080,7 @@ export class TeamProvisioningMemberLifecycleController {
   persistOpenCodeMemberRestartSystemMessageInternal(
     input: OpenCodeMemberRestartSystemMessageInput
   ): void {
-    const timestamp = nowIso();
-    const prompt = buildMemberSpawnPrompt(
-      input.member,
-      input.displayName,
-      input.teamName,
-      input.leadName,
-      { restart: true }
-    );
-    const reasonSummary =
-      input.reason === 'member_updated' ? 'after member settings update' : 'by user request';
-    this.persistSentMessage(input.teamName, {
-      from: input.leadName,
-      to: input.member.name,
-      text: prompt,
-      timestamp,
-      read: true,
-      source: 'system_notification',
-      leadSessionId: input.leadSessionId ?? undefined,
-      messageId: `member-restart:${input.teamName}:${input.member.name}:${randomUUID()}`,
-      summary: `Restarting ${input.member.name} ${reasonSummary}`,
-    });
+    this.persistOpenCodeMemberRestartSystemMessageFallback(input);
   }
 
   private async launchDirectTmuxMemberRestart(input: {

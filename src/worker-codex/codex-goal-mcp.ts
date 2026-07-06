@@ -68,11 +68,10 @@ import {
   buildHandoffManifest,
   ProjectOperation,
   consumedDebt,
-  consumedOutputRecordFromJson,
   consumedOutputRecordFor,
   projectAdmissionDebtCounts,
+  readConsumedOutputLedgers,
   type ConsumedOutputLedger,
-  type ConsumedOutputRecord,
   type RuntimeResultArtifact,
   type RunEventReadResult,
   type RunEventRetentionPolicy,
@@ -2998,78 +2997,6 @@ async function orphanDirtyWorkspaceDebt(input: {
     });
   }
   return debt;
-}
-
-async function readConsumedOutputLedgers(input: {
-  readonly roots: readonly string[];
-}): Promise<ConsumedOutputLedger> {
-  const byJobId = new Map<string, ConsumedOutputRecord>();
-  const byWorkspace = new Map<string, ConsumedOutputRecord>();
-  const debt: ProjectDebtItem[] = [];
-  for (const rootInput of uniqueProjectControlStrings(input.roots)) {
-    const root = resolve(rootInput);
-    const itemsDir = join(root, "items");
-    let entries;
-    try {
-      entries = await readdir(itemsDir, { withFileTypes: true });
-    } catch (error) {
-      debt.push({
-        reason: ProjectDebtReason.UnreadableRoot,
-        subject: itemsDir,
-        severity: "blocking",
-        evidence: [
-          `consumed output ledger unreadable: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        ],
-      });
-      continue;
-    }
-    for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
-      const ledgerPath = join(itemsDir, entry.name);
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(await readFile(ledgerPath, "utf8"));
-      } catch (error) {
-        debt.push({
-          reason: ProjectDebtReason.UnreadableRoot,
-          subject: ledgerPath,
-          severity: "blocking",
-          evidence: [
-            `consumed output ledger record unreadable: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          ],
-        });
-        continue;
-      }
-      const record = await consumedOutputRecordFromJson({
-        value: parsed,
-        ledgerPath,
-        pathAccess: {
-          pathExists: consumedOutputLedgerPathExists,
-          realpath: optionalRealPathForAdmission,
-        },
-      });
-      if (!record) continue;
-      byJobId.set(record.jobId, record);
-      if (record.workspace) byWorkspace.set(resolve(record.workspace), record);
-      if (record.resolvedWorkspace) {
-        byWorkspace.set(record.resolvedWorkspace, record);
-      }
-    }
-  }
-  return { byJobId, byWorkspace, debt };
-}
-
-async function consumedOutputLedgerPathExists(path: string): Promise<boolean> {
-  try {
-    await stat(path);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 async function diskPressureDebt(root: string): Promise<readonly ProjectDebtItem[]> {

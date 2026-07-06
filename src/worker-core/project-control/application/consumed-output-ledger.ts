@@ -1,4 +1,5 @@
-import { basename, resolve } from "node:path";
+import { readdir, readFile, realpath, stat } from "node:fs/promises";
+import { basename, join, resolve } from "node:path";
 
 import {
   ProjectDebtReason,
@@ -37,12 +38,80 @@ export type ConsumedOutputLedgerPathAccess = {
   readonly realpath?: (path: string) => Promise<string | undefined> | string | undefined;
 };
 
+const defaultPathAccess: ConsumedOutputLedgerPathAccess = {
+  pathExists,
+  realpath: optionalRealpath,
+};
+
+export async function readConsumedOutputLedgers(input: {
+  readonly roots: readonly string[];
+  readonly pathAccess?: ConsumedOutputLedgerPathAccess;
+}): Promise<ConsumedOutputLedger> {
+  const byJobId = new Map<string, ConsumedOutputRecord>();
+  const byWorkspace = new Map<string, ConsumedOutputRecord>();
+  const debt: ProjectDebtItem[] = [];
+  const pathAccess = input.pathAccess ?? defaultPathAccess;
+  for (const rootInput of uniqueStrings(input.roots)) {
+    const root = resolve(rootInput);
+    const itemsDir = join(root, "items");
+    let entries;
+    try {
+      entries = await readdir(itemsDir, { withFileTypes: true });
+    } catch (error) {
+      debt.push({
+        reason: ProjectDebtReason.UnreadableRoot,
+        subject: itemsDir,
+        severity: "blocking",
+        evidence: [
+          `consumed output ledger unreadable: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        ],
+      });
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+      const ledgerPath = join(itemsDir, entry.name);
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(await readFile(ledgerPath, "utf8"));
+      } catch (error) {
+        debt.push({
+          reason: ProjectDebtReason.UnreadableRoot,
+          subject: ledgerPath,
+          severity: "blocking",
+          evidence: [
+            `consumed output ledger record unreadable: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          ],
+        });
+        continue;
+      }
+      const record = await consumedOutputRecordFromJson({
+        value: parsed,
+        ledgerPath,
+        pathAccess,
+      });
+      if (!record) continue;
+      byJobId.set(record.jobId, record);
+      if (record.workspace) byWorkspace.set(resolve(record.workspace), record);
+      if (record.resolvedWorkspace) {
+        byWorkspace.set(record.resolvedWorkspace, record);
+      }
+    }
+  }
+  return { byJobId, byWorkspace, debt };
+}
+
 export async function consumedOutputRecordFromJson(input: {
   readonly value: unknown;
   readonly ledgerPath: string;
-  readonly pathAccess: ConsumedOutputLedgerPathAccess;
+  readonly pathAccess?: ConsumedOutputLedgerPathAccess;
 }): Promise<ConsumedOutputRecord | null> {
   if (!isRecord(input.value)) return null;
+  const pathAccess = input.pathAccess ?? defaultPathAccess;
   const status = stringValue(input.value.status);
   if (!status || !CONSUMED_OUTPUT_TERMINAL_STATUSES.has(status)) return null;
   const jobId = stringValue(input.value.jobId);
@@ -69,7 +138,7 @@ export async function consumedOutputRecordFromJson(input: {
     evidence.push("terminal consumed-output record is still marked active/claimed");
   }
   const backupEvidence = backup
-    ? await consumedOutputBackupEvidence(backup, input.pathAccess)
+    ? await consumedOutputBackupEvidence(backup, pathAccess)
     : { ok: false, evidence: ["backup metadata is missing"] };
   evidence.push(...backupEvidence.evidence);
   const commit = integratedOutputCommit(input.value);
@@ -77,9 +146,9 @@ export async function consumedOutputRecordFromJson(input: {
     evidence.push("integrated consumed-output record is missing commit evidence");
   }
   let resolvedWorkspace: string | undefined;
-  if (workspace && input.pathAccess.realpath) {
+  if (workspace && pathAccess.realpath) {
     try {
-      resolvedWorkspace = await input.pathAccess.realpath(workspace);
+      resolvedWorkspace = await pathAccess.realpath(workspace);
     } catch {
       resolvedWorkspace = undefined;
     }
@@ -242,6 +311,27 @@ function consumedOutputEvidence(input: {
     `ledger: ${input.ledgerPath}`,
     ...(input.commitSha ? [`commit: ${input.commitSha}`] : []),
   ];
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function optionalRealpath(path: string): Promise<string | undefined> {
+  try {
+    return await realpath(path);
+  } catch {
+    return undefined;
+  }
+}
+
+function uniqueStrings(values: readonly string[]): readonly string[] {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
 }
 
 function stringValue(value: unknown): string | undefined {

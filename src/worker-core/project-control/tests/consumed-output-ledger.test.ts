@@ -1,4 +1,6 @@
-import { join, resolve } from "node:path";
+import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -7,23 +9,18 @@ import {
   consumedDebt,
   consumedOutputRecordFor,
   consumedOutputRecordFromJson,
-  type ConsumedOutputLedger,
-  type ConsumedOutputLedgerPathAccess,
-  type ConsumedOutputRecord,
+  readConsumedOutputLedgers,
 } from "../index";
 
 describe("consumed output ledger", () => {
   it("accepts terminal drain records with backup evidence", async () => {
-    const paths = new Set<string>();
-    const pathAccess = testPathAccess(paths);
-    const root = "/tmp/subscription-runtime-consumed-ledger";
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-consumed-ledger-"));
     const workspace = join(root, "workspaces", "infinity-context-memory-v1");
-    const backup = createBackupEvidence(paths, root, "infinity-context-memory-v1", workspace);
+    const backup = await createBackupEvidence(root, "infinity-context-memory-v1", workspace);
 
     for (const status of ["duplicate", "superseded", "rejected", "archived"]) {
       const record = await consumedOutputRecordFromJson({
         ledgerPath: join(root, `${status}.json`),
-        pathAccess,
         value: {
           jobId: `infinity-context-memory-${status}`,
           status,
@@ -46,15 +43,12 @@ describe("consumed output ledger", () => {
   });
 
   it("requires commit evidence for integrated records", async () => {
-    const paths = new Set<string>();
-    const pathAccess = testPathAccess(paths);
-    const root = "/tmp/subscription-runtime-integrated-ledger";
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-integrated-ledger-"));
     const workspace = join(root, "workspaces", "infinity-context-memory-v1");
-    const backup = createBackupEvidence(paths, root, "infinity-context-memory-v1", workspace);
+    const backup = await createBackupEvidence(root, "infinity-context-memory-v1", workspace);
 
     await expect(consumedOutputRecordFromJson({
       ledgerPath: join(root, "integrated.json"),
-      pathAccess,
       value: {
         jobId: "infinity-context-memory-v1",
         status: "integrated",
@@ -69,7 +63,6 @@ describe("consumed output ledger", () => {
 
     const missingCommit = await consumedOutputRecordFromJson({
       ledgerPath: join(root, "integrated-missing-commit.json"),
-      pathAccess,
       value: {
         jobId: "infinity-context-memory-v1",
         status: "integrated",
@@ -93,14 +86,12 @@ describe("consumed output ledger", () => {
   });
 
   it("rejects terminal records without complete backup or with active claims", async () => {
-    const paths = new Set<string>();
-    const pathAccess = testPathAccess(paths);
-    const root = "/tmp/subscription-runtime-invalid-ledger";
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-invalid-ledger-"));
     const workspace = join(root, "workspaces", "infinity-context-memory-v1");
+    await mkdir(workspace, { recursive: true });
 
     const missingBackup = await consumedOutputRecordFromJson({
       ledgerPath: join(root, "missing-backup.json"),
-      pathAccess,
       value: {
         jobId: "infinity-context-memory-v1",
         status: "duplicate",
@@ -114,10 +105,9 @@ describe("consumed output ledger", () => {
       ]),
     });
 
-    const backup = createBackupEvidence(paths, root, "infinity-context-memory-v1", workspace);
+    const backup = await createBackupEvidence(root, "infinity-context-memory-v1", workspace);
     const claimed = await consumedOutputRecordFromJson({
       ledgerPath: join(root, "claimed.json"),
-      pathAccess,
       value: {
         jobId: "infinity-context-memory-v1",
         status: "duplicate",
@@ -135,34 +125,29 @@ describe("consumed output ledger", () => {
   });
 
   it("matches workspace symlink realpaths and blocks job/workspace mismatches", async () => {
-    const paths = new Set<string>();
-    const root = "/tmp/subscription-runtime-ledger-match";
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-ledger-match-"));
+    const ledgerRoot = join(root, "ledger");
     const realWorkspace = join(root, "real", "infinity-context-memory-v1");
-    const linkWorkspace = join(root, "links", "infinity-context-memory-v1");
+    const linkRoot = join(root, "links");
+    const linkWorkspace = join(linkRoot, "infinity-context-memory-v1");
     const otherWorkspace = join(root, "real", "infinity-context-memory-other");
-    const pathAccess = testPathAccess(paths, new Map([
-      [realWorkspace, realWorkspace],
-      [linkWorkspace, realWorkspace],
-      [otherWorkspace, otherWorkspace],
-    ]));
+    await mkdir(join(ledgerRoot, "items"), { recursive: true });
+    await mkdir(linkRoot, { recursive: true });
+    await mkdir(otherWorkspace, { recursive: true });
+    await createBackupEvidence(root, "infinity-context-memory-v1", realWorkspace);
+    await symlink(realWorkspace, linkWorkspace);
 
-    const record = await consumedOutputRecordFromJson({
-      ledgerPath: join(root, "ledger", "items", "infinity-context-memory-v1.json"),
-      pathAccess,
-      value: {
+    await writeFile(
+      join(ledgerRoot, "items", "infinity-context-memory-v1.json"),
+      `${JSON.stringify({
         jobId: "infinity-context-memory-v1",
         status: "duplicate",
         closedAt: "2026-07-06T00:00:00.000Z",
-        backup: createBackupEvidence(
-          paths,
-          root,
-          "infinity-context-memory-v1",
-          realWorkspace,
-        ),
-      },
-    });
-    const ledger = ledgerFromRecord(record!);
+        backup: await createBackupEvidence(root, "infinity-context-memory-v1-b", realWorkspace),
+      }, null, 2)}\n`,
+    );
 
+    const ledger = await readConsumedOutputLedgers({ roots: [ledgerRoot] });
     expect(consumedOutputRecordFor({
       ledger,
       jobId: "infinity-context-memory-v1",
@@ -199,44 +184,24 @@ describe("consumed output ledger", () => {
   });
 });
 
-function createBackupEvidence(
-  paths: Set<string>,
+async function createBackupEvidence(
   root: string,
   jobId: string,
   workspace: string,
-): Record<string, string> {
+): Promise<Record<string, string>> {
+  await mkdir(workspace, { recursive: true });
   const backupRoot = join(root, "backups", jobId);
+  await mkdir(backupRoot, { recursive: true });
   const statusPath = join(backupRoot, "status.txt");
   const patchPath = join(backupRoot, "tracked.patch");
   const numstatPath = join(backupRoot, "numstat.txt");
-  paths.add(statusPath);
-  paths.add(patchPath);
-  paths.add(numstatPath);
+  await writeFile(statusPath, " M memory.py\n");
+  await writeFile(patchPath, "diff --git a/memory.py b/memory.py\n");
+  await writeFile(numstatPath, "1\t1\tmemory.py\n");
   return {
     workspace,
     statusPath,
     patchPath,
     numstatPath,
-  };
-}
-
-function testPathAccess(
-  paths: ReadonlySet<string>,
-  realpaths: ReadonlyMap<string, string> = new Map(),
-): ConsumedOutputLedgerPathAccess {
-  return {
-    pathExists: (path) => paths.has(path),
-    realpath: (path) => realpaths.get(path) ?? path,
-  };
-}
-
-function ledgerFromRecord(record: ConsumedOutputRecord): ConsumedOutputLedger {
-  const byWorkspace = new Map<string, ConsumedOutputRecord>();
-  if (record.workspace) byWorkspace.set(resolve(record.workspace), record);
-  if (record.resolvedWorkspace) byWorkspace.set(record.resolvedWorkspace, record);
-  return {
-    byJobId: new Map([[record.jobId, record]]),
-    byWorkspace,
-    debt: [],
   };
 }

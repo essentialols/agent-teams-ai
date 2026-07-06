@@ -21,5 +21,17 @@ export {
   projectRuntimeLiveness,
   sanitizeRuntimeProjectionProcessCommand,
 } from './RuntimeProjectionLiveness';
+export type {
+  RuntimeProjectionProcessTableRow,
+  RuntimeProjectionVerifiedProcessEvidence,
+} from './RuntimeProjectionProcessTableEvidence';
+export {
+  commandArgEquals,
+  extractCliArgValues,
+  findNewestVerifiedRuntimeProcessRow,
+  isShellLikeCommand,
+  readVerifiedRuntimeProcessLivenessEvidence,
+  sanitizeProcessCommandForDiagnostics,
+} from './RuntimeProjectionProcessTableEvidence';
 export type { RuntimeProjectionResourceProjection } from './RuntimeProjectionResource';
 export { projectRuntimeResource, projectRuntimeResourceSample } from './RuntimeProjectionResource';

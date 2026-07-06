@@ -5,6 +5,7 @@ import {
   projectRuntimeDiagnostics,
   projectRuntimeLiveness,
   projectRuntimeResource,
+  readVerifiedRuntimeProcessLivenessEvidence,
 } from '../index';
 
 const NOW_MS = Date.parse('2026-01-01T00:05:00.000Z');
@@ -227,6 +228,59 @@ describe('runtime projection foundation', () => {
     expect(projectRuntimeLiveness(processEvidence).processCommand).toBe(
       'codex --api-key [redacted] --team-name demo'
     );
+  });
+
+  it('keeps process-table identity matching behind a liveness evidence adapter', () => {
+    const evidence = readVerifiedRuntimeProcessLivenessEvidence({
+      rows: [
+        {
+          pid: 100,
+          command: 'node runtime.js --team-name demo --agent-id older',
+        },
+        {
+          pid: 200,
+          command: 'node runtime.js --token fixture-token --team-name demo --agent-id worker@demo',
+        },
+      ],
+      teamName: 'demo',
+      agentId: 'worker@demo',
+      runtimeSessionId: 'session-process',
+      pidSource: 'agent_process_table',
+    });
+
+    expect(evidence).not.toBeNull();
+    if (!evidence) {
+      throw new Error('expected verified process evidence');
+    }
+
+    expect(evidence.diagnostics).toEqual(['matched process table by team-name and agent-id']);
+    expect(evidence.evidence).toMatchObject({
+      process: {
+        pid: 200,
+        running: true,
+        identityVerified: true,
+        pidSource: 'agent_process_table',
+      },
+      registration: {
+        runtimeSessionId: 'session-process',
+      },
+    });
+    expect(projectRuntimeLiveness(evidence.evidence)).toMatchObject({
+      alive: true,
+      livenessKind: 'runtime_process',
+      pid: 200,
+      pidSource: 'agent_process_table',
+      processCommand: 'node runtime.js --token [redacted] --team-name demo --agent-id worker@demo',
+      runtimeSessionId: 'session-process',
+    });
+
+    expect(
+      readVerifiedRuntimeProcessLivenessEvidence({
+        rows: [{ pid: 200, command: 'node runtime.js --team-name demo --agent-id worker@demo' }],
+        teamName: 'demo',
+        pidSource: 'agent_process_table',
+      })
+    ).toBeNull();
   });
 
   it('projects runtimePid-only resource usage and history', () => {

@@ -1,7 +1,11 @@
 import {
+  commandArgEquals,
+  extractCliArgValues,
+  isShellLikeCommand,
   projectRuntimeLiveness,
+  readVerifiedRuntimeProcessLivenessEvidence,
   type RuntimeProjectionLivenessProjection,
-  sanitizeRuntimeProjectionProcessCommand,
+  sanitizeProcessCommandForDiagnostics,
 } from './runtime-projection';
 
 import type { RuntimeProcessTableRow, TmuxPaneRuntimeInfo } from '@features/tmux-installer/main';
@@ -48,139 +52,12 @@ export interface ResolvedTeamMemberRuntimeLiveness {
   diagnostics: string[];
 }
 
-const SHELL_COMMAND_NAMES = new Set(['sh', 'bash', 'zsh', 'fish', 'dash', 'login', 'tmux']);
-const CLI_ARG_VALUES_CACHE_MAX_COMMANDS = 1_000;
-const CLI_ARG_EQUALS_CACHE_MAX_KEYS_PER_COMMAND = 100;
-const cliArgValuesCache = new Map<string, Map<string, string[]>>();
-const cliArgEqualsCache = new Map<string, Map<string, boolean>>();
-
-function basenameCommand(command: string | undefined): string {
-  const firstToken = command?.trim().split(/\s+/, 1)[0] ?? '';
-  const base = firstToken.split(/[\\/]/).pop() ?? firstToken;
-  return base.replace(/^-/, '').toLowerCase();
-}
-
-export function isShellLikeCommand(command: string | undefined): boolean {
-  return SHELL_COMMAND_NAMES.has(basenameCommand(command));
-}
-
-export function sanitizeProcessCommandForDiagnostics(
-  command: string | undefined
-): string | undefined {
-  return sanitizeRuntimeProjectionProcessCommand(command);
-}
-
-function escapeRegexLiteral(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function getCachedCliArgValues(command: string, argName: string): readonly string[] {
-  if (!command.includes(argName)) {
-    return [];
-  }
-
-  const cachedByArg = cliArgValuesCache.get(command);
-  const cachedValues = cachedByArg?.get(argName);
-  if (cachedValues) {
-    if (cachedByArg) {
-      cliArgValuesCache.delete(command);
-      cliArgValuesCache.set(command, cachedByArg);
-    }
-    return cachedValues;
-  }
-
-  const escapedArg = escapeRegexLiteral(argName);
-  const pattern = new RegExp(
-    `(?:^|\\s)${escapedArg}(?:=|\\s+)("([^"]*)"|'([^']*)'|([^\\s]+))`,
-    'g'
-  );
-
-  const values: string[] = [];
-  for (const match of command.matchAll(pattern)) {
-    const value = (match[2] ?? match[3] ?? match[4] ?? '').trim();
-    if (value) values.push(value);
-  }
-  const nextByArg = cachedByArg ?? new Map<string, string[]>();
-  nextByArg.set(argName, values);
-  cliArgValuesCache.delete(command);
-  cliArgValuesCache.set(command, nextByArg);
-  while (cliArgValuesCache.size > CLI_ARG_VALUES_CACHE_MAX_COMMANDS) {
-    const oldestKey = cliArgValuesCache.keys().next().value;
-    if (oldestKey === undefined) break;
-    cliArgValuesCache.delete(oldestKey);
-  }
-  return values;
-}
-
-function getCachedCliArgEquals(
-  command: string,
-  argName: string,
-  normalizedExpected: string
-): boolean | undefined {
-  const cachedByKey = cliArgEqualsCache.get(command);
-  if (!cachedByKey) {
-    return undefined;
-  }
-  const cacheKey = `${argName}\0${normalizedExpected}`;
-  const cached = cachedByKey.get(cacheKey);
-  if (cached !== undefined) {
-    cliArgEqualsCache.delete(command);
-    cliArgEqualsCache.set(command, cachedByKey);
-  }
-  return cached;
-}
-
-function setCachedCliArgEquals(
-  command: string,
-  argName: string,
-  normalizedExpected: string,
-  value: boolean
-): void {
-  let cachedByKey = cliArgEqualsCache.get(command);
-  if (!cachedByKey) {
-    cachedByKey = new Map<string, boolean>();
-  }
-  const cacheKey = `${argName}\0${normalizedExpected}`;
-  if (!cachedByKey.has(cacheKey) && cachedByKey.size >= CLI_ARG_EQUALS_CACHE_MAX_KEYS_PER_COMMAND) {
-    const oldestKey = cachedByKey.keys().next().value;
-    if (oldestKey !== undefined) {
-      cachedByKey.delete(oldestKey);
-    }
-  }
-  cachedByKey.set(cacheKey, value);
-  cliArgEqualsCache.delete(command);
-  cliArgEqualsCache.set(command, cachedByKey);
-  while (cliArgEqualsCache.size > CLI_ARG_VALUES_CACHE_MAX_COMMANDS) {
-    const oldestCommand = cliArgEqualsCache.keys().next().value;
-    if (oldestCommand === undefined) break;
-    cliArgEqualsCache.delete(oldestCommand);
-  }
-}
-
-export function extractCliArgValues(command: string, argName: string): string[] {
-  const values = getCachedCliArgValues(command, argName);
-  return [...values];
-}
-
-export function commandArgEquals(
-  command: string,
-  argName: string,
-  expected: string | undefined
-): boolean {
-  const normalizedExpected = expected?.trim();
-  if (!normalizedExpected) return false;
-  if (!command.includes(argName)) return false;
-  if (!command.includes(normalizedExpected)) return false;
-  const cached = getCachedCliArgEquals(command, argName, normalizedExpected);
-  if (cached !== undefined) {
-    return cached;
-  }
-  const value = getCachedCliArgValues(command, argName).some(
-    (argValue) => argValue === normalizedExpected
-  );
-  setCachedCliArgEquals(command, argName, normalizedExpected, value);
-  return value;
-}
+export {
+  commandArgEquals,
+  extractCliArgValues,
+  isShellLikeCommand,
+  sanitizeProcessCommandForDiagnostics,
+};
 
 function collectDescendants(
   rows: readonly RuntimeProcessTableRow[],
@@ -204,39 +81,6 @@ function collectDescendants(
     queue.push(...(childrenByParent.get(row.pid) ?? []));
   }
   return descendants;
-}
-
-function isVerifiedRuntimeProcess(params: {
-  row: RuntimeProcessTableRow;
-  teamName: string;
-  agentId?: string;
-}): boolean {
-  return (
-    commandArgEquals(params.row.command, '--team-name', params.teamName) &&
-    commandArgEquals(params.row.command, '--agent-id', params.agentId)
-  );
-}
-
-function findNewestVerifiedRuntimeProcess(params: {
-  rows: readonly RuntimeProcessTableRow[];
-  teamName: string;
-  agentId?: string;
-}): RuntimeProcessTableRow | undefined {
-  const agentId = params.agentId?.trim();
-  if (!agentId) {
-    return undefined;
-  }
-
-  let newest: RuntimeProcessTableRow | undefined;
-  for (const row of params.rows) {
-    if (!isVerifiedRuntimeProcess({ row, teamName: params.teamName, agentId })) {
-      continue;
-    }
-    if (!newest || row.pid > newest.pid) {
-      newest = row;
-    }
-  }
-  return newest;
 }
 
 function isOpenCodeRuntimeProcess(command: string | undefined): boolean {
@@ -298,6 +142,8 @@ function resultFromRuntimeProjection(
     runtimeDiagnosticSeverity?: TeamAgentRuntimeDiagnosticSeverity;
     diagnostics?: string[];
     pid?: number;
+    panePid?: number;
+    paneCurrentCommand?: string;
     runtimeSessionId?: string;
   }
 ): ResolvedTeamMemberRuntimeLiveness {
@@ -340,29 +186,19 @@ export function resolveTeamMemberRuntimeLiveness(
     });
   }
 
-  const verifiedProcess = findNewestVerifiedRuntimeProcess({
+  const verifiedProcess = readVerifiedRuntimeProcessLivenessEvidence({
     rows: input.processRows,
     teamName: input.teamName,
     agentId: input.agentId,
+    runtimeSessionId,
+    pidSource: 'agent_process_table',
   });
   if (verifiedProcess) {
-    return resultFromRuntimeProjection(
-      projectRuntimeLiveness({
-        registration: { runtimeSessionId },
-        process: {
-          pid: verifiedProcess.pid,
-          command: verifiedProcess.command,
-          running: true,
-          identityVerified: true,
-          pidSource: 'agent_process_table',
-        },
-      }),
-      {
-        runtimeSessionId,
-        runtimeDiagnostic: 'verified runtime process detected',
-        diagnostics: [...diagnostics, 'matched process table by team-name and agent-id'],
-      }
-    );
+    return resultFromRuntimeProjection(projectRuntimeLiveness(verifiedProcess.evidence), {
+      runtimeSessionId,
+      runtimeDiagnostic: 'verified runtime process detected',
+      diagnostics: [...diagnostics, ...verifiedProcess.diagnostics],
+    });
   }
 
   const runtimePid = input.runtimePid ?? input.persistedRuntimePid;
@@ -445,23 +281,21 @@ export function resolveTeamMemberRuntimeLiveness(
   const pane = input.pane;
   if (pane) {
     const descendants = collectDescendants(input.processRows, pane.panePid);
-    const verifiedDescendant = findNewestVerifiedRuntimeProcess({
+    const verifiedDescendant = readVerifiedRuntimeProcessLivenessEvidence({
       rows: descendants,
       teamName: input.teamName,
       agentId: input.agentId,
+      runtimeSessionId,
+      pidSource: 'tmux_child',
+      diagnostic: 'matched tmux descendant by team-name and agent-id',
     });
     if (verifiedDescendant) {
-      return result({
-        alive: true,
-        livenessKind: 'runtime_process',
-        pidSource: 'tmux_child',
-        pid: verifiedDescendant.pid,
+      return resultFromRuntimeProjection(projectRuntimeLiveness(verifiedDescendant.evidence), {
         panePid: pane.panePid,
         paneCurrentCommand: pane.currentCommand,
         runtimeSessionId,
-        processCommand: sanitizeProcessCommandForDiagnostics(verifiedDescendant.command),
         runtimeDiagnostic: 'verified tmux runtime child detected',
-        diagnostics: [...diagnostics, 'matched tmux descendant by team-name and agent-id'],
+        diagnostics: [...diagnostics, ...verifiedDescendant.diagnostics],
       });
     }
 

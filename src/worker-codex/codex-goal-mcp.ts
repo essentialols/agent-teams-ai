@@ -4886,11 +4886,22 @@ async function projectControlRefillWorker(args: ProjectControlMcpArgs) {
   ) {
     throw new Error("project_control_child_boundary_denied");
   }
+  const accounts = await projectControlRefillAccountNames({
+    ...(requested.authRootDir === undefined
+      ? {}
+      : { authRootDir: requested.authRootDir }),
+    requestedAccounts: requested.accounts,
+    allowedAccountIds: controller.scope.allowedAccountIds ?? [],
+  });
+  if (!accounts.length) {
+    throw new Error("project_control_refill_no_ready_account");
+  }
   const role = projectControlWorkerRole(args.workerRole);
   const accessBoundary =
     requested.accessBoundary ?? AccessBoundary.IsolatedWorkspaceWrite;
   const createManifest: CodexGoalJobManifestInput = {
     ...requested,
+    accounts,
     tags: uniqueProjectControlStrings([
       ...tagValues(requested.tags),
       "project-control-refill",
@@ -9607,6 +9618,34 @@ async function projectControlDefaultAccountNames(input: {
     )
     .map((slot) => slot.name);
   return readyAccounts.length > 0 ? readyAccounts : input.requestedAccounts;
+}
+
+async function projectControlRefillAccountNames(input: {
+  readonly authRootDir?: string;
+  readonly requestedAccounts: readonly string[];
+  readonly allowedAccountIds: readonly string[];
+}): Promise<readonly string[]> {
+  const requestedAccounts = input.requestedAccounts.length
+    ? uniqueProjectControlStrings(input.requestedAccounts)
+    : await projectControlDefaultAccountNames(input);
+  const allowed = new Set(input.allowedAccountIds);
+  const scopedAccounts = requestedAccounts.filter((account) =>
+    allowed.size === 0 || allowed.has(account)
+  );
+  if (!input.authRootDir || scopedAccounts.length === 0) return scopedAccounts;
+
+  const slots = await listCodexGoalAccountStatuses({
+    authRootDir: input.authRootDir,
+    accounts: scopedAccounts,
+  });
+  const ready = new Set(
+    slots
+      .filter((slot) => slot.status === "ready")
+      .map((slot) => slot.name),
+  );
+  return ready.size > 0
+    ? scopedAccounts.filter((account) => ready.has(account))
+    : scopedAccounts;
 }
 
 function signalIdList(value: unknown): readonly string[] {

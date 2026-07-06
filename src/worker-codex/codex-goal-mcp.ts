@@ -2225,7 +2225,10 @@ export function createCodexGoalMcpServer(
       projectIntegrationHandlers.commitApprovedChanges(args),
     ),
     pushApprovedCommit: (args) => withMcpErrors(async () =>
-      projectIntegrationHandlers.pushApprovedCommit(args),
+      projectIntegrationPushApprovedCommitWithConsumedLedger(
+        args,
+        projectIntegrationHandlers.pushApprovedCommit,
+      ),
     ),
     rejectAttempt: (args) => withMcpErrors(async () =>
       projectIntegrationHandlers.rejectAttempt(args),
@@ -5333,6 +5336,148 @@ async function projectControlPushBranch(args: ProjectControlMcpArgs) {
     auditPath: projectControlAuditPath(controller.controller),
     result: result as unknown as JsonObject,
   });
+}
+
+async function projectIntegrationPushApprovedCommitWithConsumedLedger(
+  args: unknown,
+  pushApprovedCommit: (args: unknown) => Promise<CallToolResult>,
+): Promise<CallToolResult> {
+  const controller = await loadProjectControlController(args as ProjectControlMcpArgs);
+  const response = await pushApprovedCommit(args);
+  const payload = callToolResultJson(response);
+  if (payload?.ok !== true) return response;
+  const attempt = isRecord(payload.attempt) ? payload.attempt : undefined;
+  if (!attempt) return response;
+
+  const consumedOutputLedger = await recordConsumedOutputAfterPush(
+    controller,
+    attempt,
+  );
+  if (!consumedOutputLedger) return response;
+  return mcpJson({
+    ...payload,
+    consumedOutputLedger,
+  });
+}
+
+function callToolResultJson(result: CallToolResult): JsonObject | undefined {
+  if (isRecord(result.structuredContent)) {
+    return result.structuredContent as unknown as JsonObject;
+  }
+  return undefined;
+}
+
+async function recordConsumedOutputAfterPush(
+  controller: Awaited<ReturnType<typeof loadProjectControlController>>,
+  attempt: Record<string, unknown>,
+): Promise<JsonObject | undefined> {
+  const ledgerRoot = controller.scope.consumedOutputLedgerRoots?.[0];
+  const pushAttempt = isRecord(attempt.pushAttempt) ? attempt.pushAttempt : undefined;
+  const commitCandidate = isRecord(attempt.commitCandidate)
+    ? attempt.commitCandidate
+    : undefined;
+  const commitSha = stringValue(pushAttempt?.commitSha) ??
+    stringValue(commitCandidate?.commitSha);
+  const workerOutput = isRecord(attempt.workerOutput)
+    ? attempt.workerOutput
+    : undefined;
+  const workerJobId = stringValue(workerOutput?.workerJobId);
+  const workspacePath = stringValue(workerOutput?.workspacePath);
+  const changedFiles = safeStringArray(workerOutput?.changedFiles);
+  if (!ledgerRoot || !commitSha || !workerJobId || !workspacePath) {
+    return undefined;
+  }
+
+  const archiveRoot = join(dirname(controller.registryRootDir), "archives");
+  const archivePath = join(
+    archiveRoot,
+    `${safeArchiveName(workerJobId)}-integrated-${commitSha.slice(0, 8)}-${timestampForPath()}`,
+  );
+  await mkdir(archivePath, { recursive: true });
+  const statusPath = join(archivePath, "git-status.txt");
+  const patchPath = join(archivePath, "tracked.diff");
+  const numstatPath = join(archivePath, "tracked.numstat");
+  await writeFile(statusPath, await safeGitOutput(workspacePath, [
+    "status",
+    "--short",
+  ]));
+  await writeFile(patchPath, await safeGitOutput(workspacePath, [
+    "diff",
+    "--",
+    ...changedFiles,
+  ]));
+  await writeFile(numstatPath, await safeGitOutput(workspacePath, [
+    "diff",
+    "--numstat",
+    "--",
+    ...changedFiles,
+  ]));
+  const closedAt = new Date().toISOString();
+  const ledgerPath = join(ledgerRoot, "items", `${safeArchiveName(workerJobId)}.json`);
+  const attemptId = stringValue(attempt.attemptId) ?? "unknown";
+  const record = {
+    schemaVersion: 1,
+    jobId: workerJobId,
+    status: "integrated",
+    closedAt,
+    consumedAt: closedAt,
+    integratedCommitSha: commitSha,
+    commitSha,
+    commit: commitSha,
+    archivePath,
+    note: `Integrated reviewed worker output via project lifecycle attempt ${attemptId}.`,
+    backup: {
+      workspace: workspacePath,
+      statusPath,
+      patchPath,
+      numstatPath,
+    },
+    notes: [{
+      status: "integrated",
+      text: `Integrated reviewed worker output via project lifecycle attempt ${attemptId}.`,
+      commit: commitSha,
+    }],
+  };
+  await mkdir(dirname(ledgerPath), { recursive: true });
+  await writeJsonAtomic(ledgerPath, record);
+  return {
+    ledgerPath,
+    archivePath,
+    status: "integrated",
+    commitSha,
+  };
+}
+
+async function safeGitOutput(
+  cwd: string,
+  args: readonly string[],
+): Promise<string> {
+  try {
+    const result = await execFileAsync("git", [...args], {
+      cwd,
+      maxBuffer: 10 * 1024 * 1024,
+      timeout: 60_000,
+    });
+    return result.stdout;
+  } catch (error) {
+    return `git ${args.join(" ")} failed: ${
+      error instanceof Error ? error.message : String(error)
+    }\n`;
+  }
+}
+
+async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
+  const tmpPath = `${path}.${process.pid}.${Date.now()}.tmp`;
+  await writeFile(tmpPath, `${JSON.stringify(value, null, 2)}\n`);
+  await rename(tmpPath, path);
+}
+
+function safeArchiveName(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
+function timestampForPath(): string {
+  return new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
 }
 
 async function projectControlStopStoredJob(args: ProjectControlMcpArgs) {

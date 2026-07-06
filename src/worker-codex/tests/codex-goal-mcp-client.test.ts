@@ -81,7 +81,7 @@ describe("codex goal MCP client supervisor helpers", () => {
     expect(controllerSupervisorTerminalStatusCanRetry(
       ControllerSupervisorObservedStatus.Blocked,
       { ok: true, run: { safeMessage: "Codex controlled-agent is waiting for input." } },
-      { ok: true, decision: { pendingCount: 0 } },
+      { ok: true, decision: { pendingCount: 3, deliverableCount: 0 } },
     )).toBe(false);
   });
 
@@ -96,7 +96,7 @@ describe("codex goal MCP client supervisor helpers", () => {
     })).toBe(true);
     expect(controllerSupervisorHasDeliverableGuidance({
       ok: true,
-      decision: { pendingCount: 0 },
+      decision: { pendingCount: 3, deliverableCount: 0 },
     })).toBe(false);
     expect(controllerSupervisorHasDeliverableGuidance({ ok: false })).toBe(false);
   });

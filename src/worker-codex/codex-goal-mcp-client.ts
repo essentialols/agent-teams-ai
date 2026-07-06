@@ -242,7 +242,6 @@ export function controllerSupervisorHasDeliverableGuidance(result: unknown): boo
     decision?.deliverableCount,
     decision?.deliverableGuidanceCount,
     decision?.pendingDeliverableCount,
-    decision?.pendingCount,
     isRecord(result) ? result.deliverableCount : undefined,
     isRecord(result) ? result.deliverableGuidanceCount : undefined,
   ];

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { readFileSync, statSync } from "node:fs";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
@@ -203,6 +204,8 @@ export class FileBackendCodexWorker implements CapacityAwareSubscriptionWorker<
   private quotaGroup: string | null = null;
   private capacityAccountId: string | null = null;
   private seededCodexAuthJsonPath: string | null = null;
+  private seededCodexAuthJsonFingerprint: string | null = null;
+  private seededCodexAuthJsonSourceMtimeMs: number | null = null;
 
   constructor(private readonly options: FileBackendCodexWorkerOptions) {
     this.workerId =
@@ -386,16 +389,18 @@ export class FileBackendCodexWorker implements CapacityAwareSubscriptionWorker<
       this.recordFailure(codexSeedSessionInvalidFailure());
       return;
     }
-    await this.seedCodexAuthJson(authJson);
+    if (await this.seedCodexAuthJson(authJson)) {
+      this.rememberSeededCodexAuthSource(authJsonPath, authJson);
+    }
   }
 
-  async seedCodexAuthJson(authJson: string): Promise<void> {
+  async seedCodexAuthJson(authJson: string): Promise<boolean> {
     let artifact: SessionArtifact;
     try {
       artifact = sessionArtifactFromCodexAuthJson(authJson);
     } catch (error) {
       this.recordFailure(classifyCodexFailure(error));
-      return;
+      return false;
     }
     const existing = await this.sessionStore.read({
       providerInstanceId: this.options.providerInstanceId,
@@ -418,10 +423,10 @@ export class FileBackendCodexWorker implements CapacityAwareSubscriptionWorker<
           leaseId: "seed-local-file-backend",
         });
         this.rememberQuotaGroup(artifact);
-        return;
+        return true;
       }
       this.rememberQuotaGroup(existing.artifact);
-      return;
+      return true;
     }
 
     await this.sessionStore.write({
@@ -432,10 +437,12 @@ export class FileBackendCodexWorker implements CapacityAwareSubscriptionWorker<
       leaseId: "seed-local-file-backend",
     });
     this.rememberQuotaGroup(artifact);
+    return true;
   }
 
   async prewarm(): Promise<SubscriptionWorkerPrewarmResult> {
     this.assertStarted();
+    await this.importSeededCodexAuthJsonFileIfChanged("prewarm");
     this.workerState = "prewarming";
     const session = await this.sessionStore.read({
       providerInstanceId: this.options.providerInstanceId,
@@ -511,6 +518,7 @@ export class FileBackendCodexWorker implements CapacityAwareSubscriptionWorker<
   ): Promise<FileBackendCodexWorkerResult> {
     this.assertStarted();
     assertProviderTaskSystemPrompt(job.systemPrompt, "job.systemPrompt");
+    await this.importSeededCodexAuthJsonFileIfChanged("run");
     await this.rememberStoredQuotaGroup();
     const runId = job.runId ?? `local-${randomUUID()}`;
     const abort = combineAbortSignals(job.abortSignal, options.abortSignal);
@@ -770,6 +778,18 @@ export class FileBackendCodexWorker implements CapacityAwareSubscriptionWorker<
       this.capacityState,
       this.clock.now(),
     );
+    if (
+      this.seededCodexAuthJsonFileChanged() &&
+      isAuthReseedableCapacity(this.capacityState)
+    ) {
+      this.capacityState = {
+        availability: "available",
+        reason: "auth_reseed_pending",
+        lastLimitSignalAt: this.clock.now(),
+        details: { authSourceChanged: "true" },
+      };
+      this.consecutiveReconnectFailures = 0;
+    }
     if (
       previousCapacity.availability === "cooldown" &&
       previousCapacity.reason === "session_unhealthy" &&
@@ -1185,6 +1205,66 @@ export class FileBackendCodexWorker implements CapacityAwareSubscriptionWorker<
     }
   }
 
+  private async importSeededCodexAuthJsonFileIfChanged(
+    context: "prewarm" | "run",
+  ): Promise<void> {
+    if (!this.seededCodexAuthJsonPath) return;
+    let authJson: string;
+    try {
+      authJson = await readFile(this.seededCodexAuthJsonPath, "utf8");
+    } catch {
+      return;
+    }
+    const fingerprint = hashText(authJson);
+    const sourceMtimeMs = safeStatMtimeMs(this.seededCodexAuthJsonPath);
+    if (
+      this.seededCodexAuthJsonFingerprint === fingerprint &&
+      (
+        sourceMtimeMs === null ||
+        this.seededCodexAuthJsonSourceMtimeMs === sourceMtimeMs
+      )
+    ) {
+      return;
+    }
+    if (!(await this.seedCodexAuthJson(authJson))) return;
+    this.rememberSeededCodexAuthSource(this.seededCodexAuthJsonPath, authJson);
+    this.capacityState = { availability: "available" };
+    this.consecutiveReconnectFailures = 0;
+    this.observability.emit({
+      name: "codex.auth_path.imported",
+      providerId: "codex",
+      agentId: this.agentDriver.agentId,
+      storeId: this.sessionStore.storeId,
+      metadata: { context },
+    });
+  }
+
+  private rememberSeededCodexAuthSource(
+    authJsonPath: string,
+    authJson: string,
+  ): void {
+    this.seededCodexAuthJsonFingerprint = hashText(authJson);
+    this.seededCodexAuthJsonSourceMtimeMs = safeStatMtimeMs(authJsonPath);
+  }
+
+  private seededCodexAuthJsonFileChanged(): boolean {
+    if (!this.seededCodexAuthJsonPath) return false;
+    const sourceMtimeMs = safeStatMtimeMs(this.seededCodexAuthJsonPath);
+    if (
+      sourceMtimeMs !== null &&
+      this.seededCodexAuthJsonSourceMtimeMs !== null &&
+      sourceMtimeMs === this.seededCodexAuthJsonSourceMtimeMs
+    ) {
+      return false;
+    }
+    try {
+      const fingerprint = hashText(readFileSync(this.seededCodexAuthJsonPath, "utf8"));
+      return this.seededCodexAuthJsonFingerprint !== fingerprint;
+    } catch {
+      return false;
+    }
+  }
+
   private withCapacityDetails(
     capacity: WorkerCapacitySnapshot,
   ): WorkerCapacitySnapshot {
@@ -1551,6 +1631,31 @@ function safeReadCodexArtifactFreshness(input: {
   } catch {
     return null;
   }
+}
+
+function safeStatMtimeMs(path: string): number | null {
+  try {
+    return statSync(path).mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
+function isAuthReseedableCapacity(capacity: WorkerCapacitySnapshot): boolean {
+  return (
+    capacity.availability !== "available" &&
+    (
+      capacity.reason === "auth_invalid" ||
+      capacity.reason === "provider_session_invalid" ||
+      capacity.reason === "reconnect_required" ||
+      capacity.reason === "provider_reconnect_required" ||
+      capacity.reason === "session_unhealthy" ||
+      capacity.reason === "quota_limited" ||
+      capacity.availability === "cooldown" ||
+      capacity.availability === "quota_exhausted" ||
+      capacity.availability === "disabled"
+    )
+  );
 }
 
 function sameArtifactBytes(

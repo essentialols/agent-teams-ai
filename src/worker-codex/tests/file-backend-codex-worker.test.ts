@@ -986,6 +986,51 @@ describe("FileBackendCodexWorker", () => {
     }
   });
 
+  it("marks a blocked seeded-auth worker available after the source auth file changes", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "codex-worker-auth-reseed-"));
+    const authJsonPath = join(rootDir, "auth.json");
+    await writeFile(authJsonPath, codexAuthJson("old-account-token"));
+    const worker = new FileBackendCodexWorker({
+      providerInstanceId: "codex-auth-reseed-account",
+      stateRootDir: rootDir,
+      codexBinaryPath: "codex",
+      encryptionKey: new Uint8Array(32).fill(42),
+      appServerProcessFactory: new FakeAppServerFactory({
+        emitTopLevelErrorOnTurn: "You've hit your usage limit.",
+      }).create,
+      runner: new StaticRunner({
+        exitCode: 1,
+        stdout: "",
+        stderr: "You've hit your usage limit.",
+      }),
+      capacityPolicy: {
+        quotaCooldownMs: 60_000,
+      },
+    });
+
+    try {
+      await worker.start();
+      await worker.seedCodexAuthJsonFile(authJsonPath);
+      await expect(worker.run({ prompt: "hit quota" })).rejects.toMatchObject({
+        code: "subscription_worker_run_failed",
+      });
+      expect(worker.capacity()).toMatchObject({
+        availability: "cooldown",
+        reason: "quota_limited",
+      });
+
+      await writeFile(authJsonPath, codexAuthJson("new-account-token"));
+
+      expect(worker.capacity()).toMatchObject({
+        availability: "available",
+        reason: "auth_reseed_pending",
+      });
+    } finally {
+      await worker.dispose();
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
   it("self-switches safe Codex work to another account with a continuation packet", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "codex-safe-executor-"));
     const workspacePath = await gitWorkspace("codex-safe-workspace-");

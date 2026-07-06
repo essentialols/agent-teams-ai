@@ -264,6 +264,40 @@ describe("BoundedSubscriptionWorkerPool", () => {
     await pool.dispose();
   });
 
+  it("waits for auth-stale capacity when capacity retry is enabled", async () => {
+    const workers: FakeWorker[] = [];
+    const pool = new BoundedSubscriptionWorkerPool<string, string>({
+      poolId: "auth-stale-wait",
+      slots: 1,
+      retryPolicy: {
+        retryOnSlotCapacityUnavailable: true,
+        capacityPollMs: 5,
+      },
+      workerFactory: ({ workerId }) => {
+        const worker = new FakeWorker(
+          workerId,
+          async (job) => `${workerId}:${job}`,
+        );
+        worker.capacitySnapshot = {
+          availability: "disabled",
+          reason: "auth_invalid",
+        };
+        workers.push(worker);
+        return worker;
+      },
+    });
+
+    await pool.start();
+    const result = pool.run("after-auth-sync");
+    expect(pool.stats().queued).toBe(1);
+    await delay(15);
+    workers[0]!.capacitySnapshot = { availability: "available" };
+
+    await expect(result).resolves.toBe("auth-stale-wait:slot-1:after-auth-sync");
+    expect(pool.stats().queued).toBe(0);
+    await pool.dispose();
+  });
+
   it("surfaces auth recovery hints for provider session invalid capacity reasons", async () => {
     const pool = new BoundedSubscriptionWorkerPool<string, string>({
       poolId: "provider-session-invalid-capacity",

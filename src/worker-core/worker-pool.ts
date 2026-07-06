@@ -16,6 +16,7 @@ import type {
 } from "./types";
 import {
   assessWorkerCapacityRecovery,
+  isAuthBlockedWorkerCapacity,
   nextWorkerCapacityRecoveryAt,
   normalizeWorkerCapacitySnapshot,
 } from "./account-capacity/domain/worker-capacity-recovery-policy";
@@ -36,6 +37,7 @@ type QueuedRun<Job, Result> = {
 
 const defaultMaxQueueSize = 1024;
 const defaultShutdownTimeoutMs = 30_000;
+const defaultCapacityPollMs = 30_000;
 
 export class BoundedSubscriptionWorkerPool<Job, Result> {
   private readonly slots: Slot<Job, Result>[] = [];
@@ -194,13 +196,14 @@ export class BoundedSubscriptionWorkerPool<Job, Result> {
   }
 
   private startRun(job: Job, options: WorkerPoolRunOptions): Promise<Result> {
+    const policy = retryPolicy(options, this.options.retryPolicy);
     const selected = this.selectAvailableSlot(job, this.now());
     const available = selected.slot;
     if (available) {
       return this.runOnSlotWithRetry(available, job, options, 1);
     }
-    this.scheduleCooldownDrain(selected.snapshots);
-    const unavailableError = capacityUnavailableError(selected.snapshots);
+    this.scheduleCapacityDrain(selected.snapshots, policy);
+    const unavailableError = capacityUnavailableError(selected.snapshots, policy);
     if (unavailableError) return Promise.reject(unavailableError);
 
     if (
@@ -438,8 +441,12 @@ export class BoundedSubscriptionWorkerPool<Job, Result> {
       if (!next) return;
       const selected = this.selectAvailableSlot(next.job, this.now());
       if (!selected.slot) {
-        this.scheduleCooldownDrain(selected.snapshots);
-        const unavailableError = capacityUnavailableError(selected.snapshots);
+        const policy = retryPolicy(next.options, this.options.retryPolicy);
+        this.scheduleCapacityDrain(selected.snapshots, policy);
+        const unavailableError = capacityUnavailableError(
+          selected.snapshots,
+          policy,
+        );
         if (unavailableError) {
           this.rejectQueued(unavailableError);
         }
@@ -473,7 +480,10 @@ export class BoundedSubscriptionWorkerPool<Job, Result> {
       }
       const selected = this.selectAvailableSlot(job, this.now());
       if (!selected.slot) {
-        this.scheduleCooldownDrain(selected.snapshots);
+        this.scheduleCapacityDrain(
+          selected.snapshots,
+          retryPolicy(options, this.options.retryPolicy),
+        );
         throw error;
       }
       this.emit("subscription_worker_pool.slot_retry", {
@@ -570,25 +580,41 @@ export class BoundedSubscriptionWorkerPool<Job, Result> {
     return normalizeWorkerCapacitySnapshot(worker.capacity(), now);
   }
 
-  private scheduleCooldownDrain(
+  private scheduleCapacityDrain(
     snapshots: readonly WorkerPoolSlotSnapshot[],
+    policy: Required<WorkerPoolRetryPolicy>,
   ): void {
+    const now = this.now().getTime();
     const nextCooldownAt = nextWorkerCapacityRecoveryAt(snapshots);
-    if (nextCooldownAt === null) return;
+    const shouldPoll =
+      policy.retryOnSlotCapacityUnavailable &&
+      snapshots.some((snapshot) => isAuthBlockedWorkerCapacity(snapshot.capacity));
+    if (nextCooldownAt === null && !shouldPoll) return;
+
+    const nextPollAt = shouldPoll
+      ? now + Math.max(250, policy.capacityPollMs)
+      : null;
+    const nextDrainAt = nextCooldownAt === null
+      ? nextPollAt
+      : nextPollAt === null
+        ? nextCooldownAt
+        : Math.min(nextCooldownAt, nextPollAt);
+    if (nextDrainAt === null) return;
+
     if (
       this.cooldownDrainAt !== null &&
-      this.cooldownDrainAt <= nextCooldownAt
+      this.cooldownDrainAt <= nextDrainAt
     ) {
       return;
     }
 
     this.clearCooldownDrainTimer();
-    this.cooldownDrainAt = nextCooldownAt;
+    this.cooldownDrainAt = nextDrainAt;
     this.cooldownDrainTimer = this.setTimer(() => {
       this.cooldownDrainAt = null;
       this.cooldownDrainTimer = null;
       this.drainQueue();
-    }, Math.max(0, nextCooldownAt - this.now().getTime()));
+    }, Math.max(0, nextDrainAt - now));
   }
 
   private clearCooldownDrainTimer(): void {
@@ -799,6 +825,12 @@ function retryPolicy(
       options.retryPolicy?.retryOnSlotCapacityUnavailable ??
       poolPolicy?.retryOnSlotCapacityUnavailable ??
       false,
+    capacityPollMs: Math.max(
+      250,
+      options.retryPolicy?.capacityPollMs ??
+        poolPolicy?.capacityPollMs ??
+        defaultCapacityPollMs,
+    ),
   };
 }
 
@@ -813,9 +845,16 @@ function capacityAwareWorker<Job, Result>(
 
 function capacityUnavailableError(
   snapshots: readonly WorkerPoolSlotSnapshot[],
+  policy: Required<WorkerPoolRetryPolicy>,
 ): SubscriptionWorkerError | null {
   const recovery = assessWorkerCapacityRecovery(snapshots);
   if (recovery.kind !== "unavailable") return null;
+  if (
+    policy.retryOnSlotCapacityUnavailable &&
+    snapshots.some((snapshot) => isAuthBlockedWorkerCapacity(snapshot.capacity))
+  ) {
+    return null;
+  }
 
   return new SubscriptionWorkerError(
     "subscription_worker_pool_capacity_unavailable",

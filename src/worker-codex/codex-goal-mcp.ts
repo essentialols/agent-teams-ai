@@ -112,6 +112,7 @@ import {
   type CodexGoalJobManifest,
   type CodexGoalJobManifestInput,
   type CodexGoalJobManifestPatch,
+  type CodexGoalJobSummary,
 } from "./codex-goal-jobs";
 import { upsertCodexGoalLaunchManifest } from "./codex-goal-launch-manifest";
 import {
@@ -2871,8 +2872,21 @@ async function buildCodexProjectAdmissionSnapshot(input: {
   const projectSummaries = summaries.filter((summary) =>
     matchesProjectControlPrefix(summary.jobId, prefixes)
   );
+  const overviewSummaries: CodexGoalJobSummary[] = [];
+  for (const summary of projectSummaries) {
+    const consumed = await debtFromConsumedJobSummary({
+      summary,
+      consumedOutput,
+      knownWorkspacePaths,
+    });
+    if (consumed) {
+      debt.push(...consumed);
+      continue;
+    }
+    overviewSummaries.push(summary);
+  }
   const overviewItems = await Promise.all(
-    projectSummaries.map((summary) =>
+    overviewSummaries.map((summary) =>
       buildCodexGoalOverviewItem({
         registryRootDir: input.registryRootDir,
         jobId: summary.jobId,
@@ -2911,6 +2925,28 @@ async function buildCodexProjectAdmissionSnapshot(input: {
     debt,
     counts: projectAdmissionDebtCounts(debt),
   };
+}
+
+async function debtFromConsumedJobSummary(input: {
+  readonly summary: CodexGoalJobSummary;
+  readonly consumedOutput: ConsumedOutputLedger;
+  readonly knownWorkspacePaths: Set<string>;
+}): Promise<readonly ProjectDebtItem[] | undefined> {
+  const resolvedWorkspacePath = await optionalRealPathForAdmission(
+    input.summary.workspacePath,
+  );
+  const consumed = consumedOutputRecordFor({
+    ledger: input.consumedOutput,
+    jobId: input.summary.jobId,
+    workspacePath: input.summary.workspacePath,
+    ...(resolvedWorkspacePath ? { resolvedWorkspacePath } : {}),
+  });
+  if (!consumed) return undefined;
+  await rememberKnownWorkspacePath(
+    input.knownWorkspacePaths,
+    input.summary.workspacePath,
+  );
+  return consumedDebt(consumed);
 }
 
 async function debtFromOverviewItem(input: {

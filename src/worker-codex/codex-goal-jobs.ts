@@ -29,6 +29,7 @@ import {
 } from "./codex-goal-control-modes";
 
 export const codexGoalJobManifestSchemaVersion = 1;
+export const codexGoalObjectiveMaxChars = 4000;
 
 export type CodexGoalJobManifest = {
   readonly schemaVersion: typeof codexGoalJobManifestSchemaVersion;
@@ -42,6 +43,7 @@ export type CodexGoalJobManifest = {
   readonly stateRootDir?: string;
   readonly workspacePath: string;
   readonly promptPath: string;
+  readonly codexGoalObjective?: string;
   readonly taskId: string;
   readonly accounts: readonly string[];
   readonly outputPath?: string;
@@ -53,6 +55,7 @@ export type CodexGoalJobManifest = {
   readonly serviceTier?: CodexGoalRunConfig["serviceTier"];
   readonly executionEngine?: CodexGoalRunConfig["executionEngine"];
   readonly taskTimeoutMs?: number;
+  readonly appServerStartupTimeoutMs?: number;
   readonly staleLockMs?: number;
   readonly maxAccountCycles?: number;
   readonly editMode?: CodexGoalRunConfig["editMode"];
@@ -240,6 +243,7 @@ export function codexGoalJobToArgs(
     stateRootDir: manifest.stateRootDir,
     workspacePath: manifest.workspacePath,
     promptPath: manifest.promptPath,
+    codexGoalObjective: manifest.codexGoalObjective,
     taskId: manifest.taskId,
     accounts: manifest.accounts,
     outputPath: manifest.outputPath,
@@ -251,6 +255,7 @@ export function codexGoalJobToArgs(
     serviceTier: manifest.serviceTier,
     executionEngine: manifest.executionEngine,
     taskTimeoutMs: manifest.taskTimeoutMs,
+    appServerStartupTimeoutMs: manifest.appServerStartupTimeoutMs,
     staleLockMs: manifest.staleLockMs,
     maxAccountCycles: manifest.maxAccountCycles,
     editMode: manifest.editMode,
@@ -341,6 +346,9 @@ export function parseCodexGoalJobManifest(
       : { stateRootDir: optionalString(value.stateRootDir) as string }),
     workspacePath: requiredString(value.workspacePath, "workspacePath"),
     promptPath: requiredString(value.promptPath, "promptPath"),
+    ...(optionalString(value.codexGoalObjective) === undefined
+      ? {}
+      : { codexGoalObjective: optionalString(value.codexGoalObjective) as string }),
     taskId: requiredString(value.taskId, "taskId"),
     accounts,
     ...(optionalString(value.outputPath) === undefined
@@ -381,6 +389,10 @@ export function parseCodexGoalJobManifest(
           >,
         }),
     ...optionalPositiveIntegerProperty(value.taskTimeoutMs, "taskTimeoutMs"),
+    ...optionalPositiveIntegerProperty(
+      value.appServerStartupTimeoutMs,
+      "appServerStartupTimeoutMs",
+    ),
     ...optionalPositiveIntegerProperty(value.staleLockMs, "staleLockMs"),
     ...optionalPositiveIntegerProperty(value.maxAccountCycles, "maxAccountCycles"),
     ...(editMode === undefined ? {} : { editMode }),
@@ -573,7 +585,12 @@ function readStringArray(value: unknown, field: string): readonly string[] {
 
 function optionalPositiveIntegerProperty(
   value: unknown,
-  key: "taskTimeoutMs" | "staleLockMs" | "maxAccountCycles" | "progressHeartbeatMs",
+  key:
+    | "taskTimeoutMs"
+    | "appServerStartupTimeoutMs"
+    | "staleLockMs"
+    | "maxAccountCycles"
+    | "progressHeartbeatMs",
 ): Partial<Pick<CodexGoalJobManifest, typeof key>> {
   if (value === undefined) return {};
   if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {

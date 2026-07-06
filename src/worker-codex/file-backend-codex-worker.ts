@@ -82,6 +82,7 @@ export type FileBackendCodexWorkerOptions = {
    */
   readonly warmupPrompt?: string | false;
   readonly taskTimeoutMs?: number;
+  readonly appServerStartupTimeoutMs?: number;
   readonly refreshFreshnessMs?: number;
   readonly refreshBeforeExpiryMs?: number;
   readonly maxSessionAgeMs?: number;
@@ -285,6 +286,9 @@ export class FileBackendCodexWorker implements CapacityAwareSubscriptionWorker<
               codexBinaryPath: options.codexBinaryPath,
               ...(options.sourceEnv ? { sourceEnv: options.sourceEnv } : {}),
               ...(options.taskTimeoutMs ? { timeoutMs: options.taskTimeoutMs } : {}),
+              ...(options.appServerStartupTimeoutMs
+                ? { startupTimeoutMs: options.appServerStartupTimeoutMs }
+                : {}),
               ...(options.appServerProcessFactory
                 ? { processFactory: options.appServerProcessFactory }
                 : {}),
@@ -1784,6 +1788,10 @@ function assertWorkerOptions(options: FileBackendCodexWorkerOptions): void {
   ) {
     throw new Error("file_backend_codex_execution_engine_invalid");
   }
+  assertPositiveInteger(
+    options.appServerStartupTimeoutMs,
+    "file_backend_codex_app_server_startup_timeout_invalid",
+  );
   const softMaxRuns = options.capacityPolicy?.softMaxRunsPerWindow;
   if (
     softMaxRuns !== undefined &&
@@ -1805,6 +1813,11 @@ function assertWorkerOptions(options: FileBackendCodexWorkerOptions): void {
   ) {
     throw new Error("file_backend_codex_quota_cooldown_invalid");
   }
+}
+
+function assertPositiveInteger(value: number | undefined, code: string): void {
+  if (value === undefined) return;
+  if (!Number.isInteger(value) || value <= 0) throw new Error(code);
 }
 
 function capacityWindowMs(policy: CodexWorkerCapacityPolicy | undefined): number {

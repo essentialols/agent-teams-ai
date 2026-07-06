@@ -177,6 +177,36 @@ describe("project integration use cases", () => {
     })).rejects.toBeInstanceOf(IntegrationError);
   });
 
+  it("opens an attempt when an allowed path prefix has a trailing slash", async () => {
+    const fixture = createFixture();
+    const base = input();
+    const approvedFile = "src/worker-codex/codex-goal-runner.ts";
+
+    const opened = await openProjectIntegrationAttempt(fixture.deps(), {
+      ...base,
+      policy: {
+        ...policy(),
+        allowedPathPrefixes: ["src/worker-codex/"],
+      },
+      workerOutput: {
+        ...base.workerOutput,
+        changedFiles: [approvedFile],
+      },
+      reviewDecision: {
+        ...base.reviewDecision,
+        approvedFiles: [approvedFile],
+      },
+    });
+
+    expect(opened.expectedFiles).toEqual([approvedFile]);
+    expect(fixture.events).toMatchObject([
+      {
+        type: IntegrationAuditEventType.AttemptOpened,
+        files: [approvedFile],
+      },
+    ]);
+  });
+
   it("blocks stale worker output until review policy allows a rebase check", async () => {
     const fixture = createFixture();
 

@@ -408,6 +408,88 @@ describe("startControlledAgentRun", () => {
     expect(result.run.runId).toBe("run-2");
     expect(result.run.providerRunId).toBe("provider-run-2");
   });
+
+  it("recovers a blocked persisted controller session instead of treating its active run as healthy", async () => {
+    const owner = buildControlledAgentProcessOwner({
+      kind: ControlledAgentProcessOwnerKind.DurableMcp,
+      ownerId: "owner-blocked",
+      now: new Date("2026-07-05T10:55:00.000Z"),
+      pid: 222,
+      hostname: "host-a",
+    });
+    const providerStarts: ControlledAgentSession[] = [];
+    const providerCalls: string[] = [];
+    const savedSessions: ControlledAgentSession[] = [];
+    const savedRuns: ControlledAgentRun[] = [];
+    const provider: ControlledAgentProviderPort = {
+      start(input) {
+        providerCalls.push("start");
+        providerStarts.push(input.session);
+        return { providerRunId: "provider-run-2" };
+      },
+      status() {
+        return { status: ControlledAgentRunStatus.Running };
+      },
+      stop(input) {
+        providerCalls.push("stop");
+        expect(input.reason).toBe(
+          "Controlled-agent persisted session status is blocked; active provider run must be recovered.",
+        );
+        return { status: ControlledAgentRunStatus.Stopped };
+      },
+    };
+
+    const result = await startControlledAgentRun(launchInput(true), {
+      provider,
+      ownerLiveness: { isLive: () => true },
+      stateStore: {
+        readSession() {
+          return {
+            ...activeSession(),
+            status: ControlledAgentRunStatus.Blocked,
+            owner,
+          };
+        },
+        saveSession(session) {
+          savedSessions.push(session);
+        },
+        readRun() {
+          return { ...activeRun(), owner };
+        },
+        readLatestRunForSession() {
+          return { ...activeRun(), owner };
+        },
+        saveRun(run) {
+          savedRuns.push(run);
+        },
+      },
+      clock: { now: () => new Date("2026-07-05T11:01:00.000Z") },
+      idGenerator: {
+        randomId: (() => {
+          const ids = ["run-2", "event-1"];
+          return () => ids.shift() ?? "unused";
+        })(),
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected blocked session recovery");
+    expect(providerCalls).toEqual(["stop", "start"]);
+    expect(providerStarts).toHaveLength(1);
+    expect(savedRuns[0]).toMatchObject({
+      runId: "run-existing",
+      status: ControlledAgentRunStatus.Blocked,
+      stoppedAt: "2026-07-05T11:01:00.000Z",
+      safeMessage:
+        "Controlled-agent persisted session status is blocked; active provider run must be recovered.",
+    });
+    expect(savedSessions[0]).toMatchObject({
+      status: ControlledAgentRunStatus.Blocked,
+      activeRunId: "run-existing",
+    });
+    expect(result.run.runId).toBe("run-2");
+    expect(result.run.providerRunId).toBe("provider-run-2");
+  });
 });
 
 function launchInput(canDisableRawShell: boolean): ControlledAgentLaunchPlanInput {

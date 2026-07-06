@@ -110,6 +110,80 @@ describe("controlled agent lifecycle", () => {
     expect(store.savedSession).toBeUndefined();
     expect(store.savedRun).toBeUndefined();
   });
+
+  it("does not treat persisted terminal controller state as healthy when the provider reports running", async () => {
+    const scenarios: Array<{
+      readonly name: string;
+      readonly sessionStatus: ControlledAgentRunStatus;
+      readonly runStatus: ControlledAgentRunStatus;
+      readonly expectedStatus: ControlledAgentRunStatus;
+      readonly existingSafeMessage?: string;
+    }> = [
+      {
+        name: "blocked session",
+        sessionStatus: ControlledAgentRunStatus.Blocked,
+        runStatus: ControlledAgentRunStatus.Running,
+        expectedStatus: ControlledAgentRunStatus.Blocked,
+        existingSafeMessage: "Codex app-server goal backend is temporarily blocked.",
+      },
+      {
+        name: "stopped run",
+        sessionStatus: ControlledAgentRunStatus.Running,
+        runStatus: ControlledAgentRunStatus.Stopped,
+        expectedStatus: ControlledAgentRunStatus.Stopped,
+      },
+    ];
+
+    for (const scenario of scenarios) {
+      const store = new MemoryStateStore(
+        { ...session(), status: scenario.sessionStatus },
+        {
+          ...run(),
+          status: scenario.runStatus,
+          ...(scenario.existingSafeMessage === undefined
+            ? {}
+            : { safeMessage: scenario.existingSafeMessage }),
+        },
+      );
+      const providerStops: string[] = [];
+      const provider: ControlledAgentProviderPort = {
+        start() {
+          return {};
+        },
+        status() {
+          return {
+            status: ControlledAgentRunStatus.Running,
+            providerAttached: true,
+            providerRunId: `provider-${scenario.name}`,
+          };
+        },
+        stop(input) {
+          providerStops.push(input.reason ?? "");
+          return { status: ControlledAgentRunStatus.Stopped };
+        },
+      };
+
+      const result = await reconcileControlledAgentRun("session-1", {
+        stateStore: store,
+        provider,
+        clock: { now: () => new Date("2026-07-05T12:45:00.000Z") },
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error(`expected reconcile success for ${scenario.name}`);
+      expect(result.reason).toBe(ReconcileControlledAgentRunReason.ProviderTerminalStatus);
+      expect(result.session.activeRunId).toBeUndefined();
+      expect(result.session.status).toBe(scenario.expectedStatus);
+      expect(result.run.status).toBe(scenario.expectedStatus);
+      expect(result.run.stoppedAt).toBe("2026-07-05T12:45:00.000Z");
+      expect(providerStops).toEqual([
+        `controlled_agent_reconcile_persisted_terminal:${scenario.expectedStatus}`,
+      ]);
+      if (scenario.existingSafeMessage) {
+        expect(result.run.safeMessage).toBe(scenario.existingSafeMessage);
+      }
+    }
+  });
 });
 
 class MemoryStateStore implements ControllerStateStorePort {

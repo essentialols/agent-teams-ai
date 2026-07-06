@@ -59,6 +59,10 @@ describe("codex goal MCP client supervisor helpers", () => {
     )).toBe(true);
     expect(controllerSupervisorTerminalStatusCanRetry(
       ControllerSupervisorObservedStatus.Failed,
+      { ok: true, run: { safeMessage: "Codex task timed out." } },
+    )).toBe(true);
+    expect(controllerSupervisorTerminalStatusCanRetry(
+      ControllerSupervisorObservedStatus.Failed,
       { ok: true, run: { safeMessage: "Codex session is invalid." } },
     )).toBe(false);
     expect(controllerSupervisorTerminalStatusCanRetry(

@@ -203,7 +203,10 @@ export function controllerSupervisorTerminalStatusCanRetry(
   reconcile: unknown,
 ): boolean {
   return status === ControllerSupervisorObservedStatus.Failed &&
-    controllerSupervisorQuotaFailure(reconcile);
+    (
+      controllerSupervisorQuotaFailure(reconcile) ||
+      controllerSupervisorTimeoutFailure(reconcile)
+    );
 }
 
 export function controllerSupervisorHasAvailableAccounts(result: unknown): boolean {
@@ -285,6 +288,16 @@ function controllerSupervisorStatusValue(
 
 function controllerSupervisorQuotaFailure(result: unknown): boolean {
   return /\b(?:quota|billing limit|usage limit|rate limit)\b/i.test(
+    String(
+      nestedRecord(result, "run")?.safeMessage ??
+        (isRecord(result) ? result.safeMessage : undefined) ??
+        "",
+    ),
+  );
+}
+
+function controllerSupervisorTimeoutFailure(result: unknown): boolean {
+  return /\b(?:timed out|timeout)\b/i.test(
     String(
       nestedRecord(result, "run")?.safeMessage ??
         (isRecord(result) ? result.safeMessage : undefined) ??

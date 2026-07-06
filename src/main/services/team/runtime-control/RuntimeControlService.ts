@@ -21,6 +21,12 @@ export interface RuntimeControlServiceOptions {
   eventSink?: RuntimeControlEventSink;
 }
 
+function isRuntimeControlProviderList(
+  value: readonly RuntimeControlProviderHandler[] | RuntimeControlServiceOptions
+): value is readonly RuntimeControlProviderHandler[] {
+  return Array.isArray(value);
+}
+
 export class RuntimeControlService {
   private readonly providers: RuntimeControlProviderRegistry;
   private readonly eventSink?: RuntimeControlEventSink;
@@ -28,7 +34,7 @@ export class RuntimeControlService {
   constructor(
     providersOrOptions: readonly RuntimeControlProviderHandler[] | RuntimeControlServiceOptions = []
   ) {
-    const options = Array.isArray(providersOrOptions)
+    const options: RuntimeControlServiceOptions = isRuntimeControlProviderList(providersOrOptions)
       ? { providers: providersOrOptions }
       : providersOrOptions;
     this.providers = new RuntimeControlProviderRegistry(options.providers ?? []);

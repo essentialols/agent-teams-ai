@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { LocalFileWorkerAccountCapacityStore } from "@vioxen/subscription-runtime/store-local-file";
 import {
+  isProjectControllerProviderSessionInvalid,
   isProjectControllerQuotaFailure,
   projectControllerCapacityDemand,
   recordProjectControllerCapacitySignal,
@@ -54,7 +55,7 @@ describe("project controller capacity signals", () => {
     }
   });
 
-  it("ignores non-quota controller failures", async () => {
+  it("records provider-session-invalid controller failures as account capacity blocks", async () => {
     const root = await mkdtemp(join(tmpdir(), "subscription-runtime-controller-capacity-"));
     try {
       const recorded = recordProjectControllerCapacitySignal({
@@ -64,6 +65,38 @@ describe("project controller capacity signals", () => {
         run: {
           status: "failed",
           safeMessage: "Codex session is invalid.",
+          capacityAccountId: "account-d",
+        },
+        observedAt: new Date("2026-07-05T11:00:00.000Z"),
+      });
+
+      expect(recorded).toBe(true);
+      const capacity = new LocalFileWorkerAccountCapacityStore({
+        rootDir: join(root, "worker-account-capacity"),
+      }).read({
+        accountId: "account-d",
+        demand: projectControllerCapacityDemand({ model: "gpt-5.5" }),
+        now: new Date("2026-07-05T11:00:01.000Z"),
+      });
+      expect(capacity).toMatchObject({
+        availability: "quota_exhausted",
+        reason: "provider_session_invalid",
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores generic non-capacity controller failures", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-controller-capacity-"));
+    try {
+      const recorded = recordProjectControllerCapacitySignal({
+        stateRootDir: root,
+        controllerJobId: "infinity-context-project-controller-v1",
+        config: { model: "gpt-5.5" },
+        run: {
+          status: "failed",
+          safeMessage: "Codex returned malformed output.",
           capacityAccountId: "account-d",
         },
         observedAt: new Date("2026-07-05T11:00:00.000Z"),
@@ -87,5 +120,14 @@ describe("project controller capacity signals", () => {
     expect(isProjectControllerQuotaFailure("rate limit exceeded")).toBe(true);
     expect(isProjectControllerQuotaFailure("usage limit reached")).toBe(true);
     expect(isProjectControllerQuotaFailure("session is invalid")).toBe(false);
+  });
+
+  it("classifies provider session invalid messages", () => {
+    expect(isProjectControllerProviderSessionInvalid("Codex session is invalid."))
+      .toBe(true);
+    expect(isProjectControllerProviderSessionInvalid("provider session invalid"))
+      .toBe(true);
+    expect(isProjectControllerProviderSessionInvalid("billing limit reached"))
+      .toBe(false);
   });
 });

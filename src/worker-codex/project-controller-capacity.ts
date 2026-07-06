@@ -45,25 +45,48 @@ export function recordProjectControllerCapacitySignal(
 ): boolean {
   if (input.run.status !== "failed") return false;
   if (!input.run.capacityAccountId) return false;
-  if (!isProjectControllerQuotaFailure(input.run.safeMessage)) return false;
-
   const observedAt = input.observedAt ?? new Date();
-  new LocalFileWorkerAccountCapacityStore({
+  const store = new LocalFileWorkerAccountCapacityStore({
     rootDir: join(input.stateRootDir, "worker-account-capacity"),
-  }).observe({
-    accountId: input.run.capacityAccountId,
-    demand: input.run.capacityDemand ?? projectControllerCapacityDemand(input.config),
-    capacity: {
-      availability: "cooldown",
-      reason: "quota_limited",
-      cooldownUntil: new Date(
-        observedAt.getTime() + (input.config.quotaCooldownMs ?? 15 * 60 * 1000),
-      ),
-    },
-    observedAt,
-    sourceWorkerId: input.controllerJobId,
   });
-  return true;
+  if (isProjectControllerQuotaFailure(input.run.safeMessage)) {
+    store.observe({
+      accountId: input.run.capacityAccountId,
+      demand: input.run.capacityDemand ?? projectControllerCapacityDemand(input.config),
+      capacity: {
+        availability: "cooldown",
+        reason: "quota_limited",
+        cooldownUntil: new Date(
+          observedAt.getTime() + (input.config.quotaCooldownMs ?? 15 * 60 * 1000),
+        ),
+      },
+      observedAt,
+      sourceWorkerId: input.controllerJobId,
+    });
+    return true;
+  }
+  if (isProjectControllerProviderSessionInvalid(input.run.safeMessage)) {
+    store.observe({
+      accountId: input.run.capacityAccountId,
+      demand: input.run.capacityDemand ?? projectControllerCapacityDemand(input.config),
+      capacity: {
+        availability: "quota_exhausted",
+        reason: "provider_session_invalid",
+      },
+      observedAt,
+      sourceWorkerId: input.controllerJobId,
+    });
+    return true;
+  }
+  return false;
+}
+
+export function isProjectControllerProviderSessionInvalid(
+  safeMessage: string | undefined,
+): boolean {
+  return /\b(?:session is invalid|provider session invalid|needs reconnect)\b/i.test(
+    safeMessage ?? "",
+  );
 }
 
 export function isProjectControllerQuotaFailure(

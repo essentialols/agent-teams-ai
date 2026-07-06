@@ -229,7 +229,8 @@ export function controllerSupervisorTerminalStatusCanRetry(
   return status === ControllerSupervisorObservedStatus.Failed &&
     (
       controllerSupervisorQuotaFailure(reconcile) ||
-      controllerSupervisorTimeoutFailure(reconcile)
+      controllerSupervisorTimeoutFailure(reconcile) ||
+      controllerSupervisorProviderSessionInvalid(reconcile)
     );
 }
 
@@ -333,6 +334,16 @@ function controllerSupervisorStatusValue(
 
 function controllerSupervisorQuotaFailure(result: unknown): boolean {
   return /\b(?:quota|billing limit|usage limit|rate limit)\b/i.test(
+    String(
+      nestedRecord(result, "run")?.safeMessage ??
+        (isRecord(result) ? result.safeMessage : undefined) ??
+        "",
+    ),
+  );
+}
+
+function controllerSupervisorProviderSessionInvalid(result: unknown): boolean {
+  return /\b(?:session is invalid|provider session invalid|needs reconnect)\b/i.test(
     String(
       nestedRecord(result, "run")?.safeMessage ??
         (isRecord(result) ? result.safeMessage : undefined) ??

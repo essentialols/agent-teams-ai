@@ -272,7 +272,7 @@ describe('TeamProvisioningMixedSecondaryLaunchReconciliation', () => {
     expect(params?.secondaryMembers?.[0]?.leadDefaults).toBe(params?.leadDefaults);
   });
 
-  it('preserves queued and missing-evidence lane policy without touching persistence', () => {
+  it('preserves queued and missing-evidence pending lane policy without touching persistence', () => {
     const { ports, getCapturedParams } = createPorts();
     const queuedRun = createRun({
       lanes: [createLane({ state: 'queued', runId: null })],
@@ -303,12 +303,11 @@ describe('TeamProvisioningMixedSecondaryLaunchReconciliation', () => {
 
     expect(getFinishedParams()?.secondaryMembers?.[0]).toMatchObject({
       evidence: {
-        launchState: 'failed_to_start',
+        launchState: 'runtime_pending_bootstrap',
         agentToolAccepted: false,
         runtimeAlive: false,
         bootstrapConfirmed: false,
-        hardFailure: true,
-        hardFailureReason: 'opencode_runtime_evidence_missing',
+        hardFailure: false,
         runtimeDiagnostic: 'OpenCode secondary lane finished without committed runtime evidence.',
         runtimeDiagnosticSeverity: 'warning',
         bootstrapStalled: true,

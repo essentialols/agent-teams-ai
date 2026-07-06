@@ -884,6 +884,15 @@ function runConfigFromFlags(
         "MEMO_STACK_GOAL_PROMPT_PATH",
       ]),
     ),
+    ...(option(values, env, "--codex-goal-objective", [
+      "SUBSCRIPTION_RUNTIME_CODEX_GOAL_OBJECTIVE",
+    ]) === undefined
+      ? {}
+      : {
+          codexGoalObjective: option(values, env, "--codex-goal-objective", [
+            "SUBSCRIPTION_RUNTIME_CODEX_GOAL_OBJECTIVE",
+          ]) as string,
+        }),
     taskId,
     accounts,
     outputPath: resolvePath(

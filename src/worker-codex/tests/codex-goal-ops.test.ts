@@ -49,6 +49,9 @@ describe("codex goal ops", () => {
 
     expect(noTmux).toContain("subscription-runtime-codex-goal run --no-tmux");
     expect(noTmux).toContain("--accounts account-a");
+    expect(noTmux).toContain(
+      "--codex-goal-objective 'Short objective with docs links.'",
+    );
     expect(noTmux).toContain("--effort xhigh");
     expect(noTmux).not.toContain("refresh-secret");
     expect(tmux.preview).toContain("tmux new-session");
@@ -1401,6 +1404,7 @@ async function createGoalFixture(): Promise<{
       authRootDir,
       workspacePath,
       promptPath,
+      codexGoalObjective: "Short objective with docs links.",
       taskId: "task-1",
       accounts: codexGoalAccountSlots(["account-a"]),
       outputPath: join(jobRootDir, "task-1.latest-result.json"),

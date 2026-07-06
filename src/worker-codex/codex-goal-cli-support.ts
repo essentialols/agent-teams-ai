@@ -177,6 +177,7 @@ export function usage(): string {
 
 defaults:
   --model gpt-5.5 --effort high --service-tier fast --execution-engine app-server-goal --timeout 72h --max-account-cycles 5
+  --codex-goal-objective <text> sets a short app-server goal objective, max 4000 chars. Keep long instructions in --prompt.
 
 escape hatches:
   --dry-run, --print-command, --no-tmux, --no-require-git-workspace

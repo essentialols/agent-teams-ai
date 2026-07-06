@@ -58,64 +58,20 @@ describe("codex goal MCP server", () => {
     expect(context).toContain("1 older deliverable guidance item(s) omitted");
   });
 
-  it("registers the project integration tool surface from its feature module", async () => {
-    const server = createCodexGoalMcpServer();
-    const client = new Client({
-      name: "subscription-runtime-test",
-      version: "0.0.0",
+  it("treats restricted tmux probes as unavailable instead of throwing", async () => {
+    const calls: string[][] = [];
+    const available = await hasTmux((args) => {
+      calls.push([...args]);
+      if (args[0] === "-V") return Promise.resolve();
+      throw new Error("tmux new-session not permitted");
     });
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 
-    try {
-      await Promise.all([
-        server.connect(serverTransport),
-        client.connect(clientTransport),
-      ]);
-
-      const toolResult = await client.listTools();
-      const tools = (toolResult as {
-        readonly tools?: readonly {
-          readonly name?: string;
-          readonly inputSchema?: {
-            readonly properties?: Record<string, unknown>;
-          };
-        }[];
-      }).tools ?? [];
-      const toolsByName = new Map(tools.map((tool) => [tool.name, tool]));
-
-      for (const name of [
-        "codex_goal_project_open_integration_attempt",
-        "codex_goal_project_apply_worker_output",
-        "codex_goal_project_run_required_checks",
-        "codex_goal_project_commit_approved_changes",
-        "codex_goal_project_push_approved_commit",
-        "codex_goal_project_reject_integration_attempt",
-      ]) {
-        expect(toolsByName.has(name)).toBe(true);
-      }
-
-      expect(
-        toolsByName.get("codex_goal_project_open_integration_attempt")
-          ?.inputSchema?.properties,
-      ).toMatchObject({
-        registryRootDir: expect.any(Object),
-        controllerJobId: expect.any(Object),
-        requiredChecks: expect.any(Object),
-        confirmOpen: expect.any(Object),
-      });
-      expect(
-        toolsByName.get("codex_goal_project_commit_approved_changes")
-          ?.inputSchema?.properties,
-      ).toMatchObject({
-        message: expect.any(Object),
-        allowedPathPrefixes: expect.any(Object),
-        requiredCheckIds: expect.any(Object),
-        confirmCommit: expect.any(Object),
-      });
-    } finally {
-      await client.close();
-      await server.close();
-    }
+    expect(available).toBe(false);
+    expect(calls).toEqual([
+      ["-V"],
+      expect.arrayContaining(["new-session"]),
+      expect.arrayContaining(["kill-session"]),
+    ]);
   });
 
   it("advertises codexGoalObjective max length in job tool schemas", async () => {
@@ -126,12 +82,11 @@ describe("codex goal MCP server", () => {
     });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 
+    await Promise.all([
+      server.connect(serverTransport),
+      client.connect(clientTransport),
+    ]);
     try {
-      await Promise.all([
-        server.connect(serverTransport),
-        client.connect(clientTransport),
-      ]);
-
       const tools = await client.listTools();
       const createJobTool = (tools.tools ?? []).find(
         (tool) => tool.name === "codex_goal_create_job",
@@ -150,22 +105,6 @@ describe("codex goal MCP server", () => {
       await client.close();
       await server.close();
     }
-  });
-
-  it("treats restricted tmux probes as unavailable instead of throwing", async () => {
-    const calls: string[][] = [];
-    const available = await hasTmux((args) => {
-      calls.push([...args]);
-      if (args[0] === "-V") return Promise.resolve();
-      throw new Error("tmux new-session not permitted");
-    });
-
-    expect(available).toBe(false);
-    expect(calls).toEqual([
-      ["-V"],
-      expect.arrayContaining(["new-session"]),
-      expect.arrayContaining(["kill-session"]),
-    ]);
   });
 
   it("flags alive workers with stale logs as silent-stale", async () => {
@@ -231,6 +170,66 @@ describe("codex goal MCP server", () => {
       expect(String(brief.text)).toContain("silentStale true");
     } finally {
       await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("registers the project integration tool surface from its feature module", async () => {
+    const server = createCodexGoalMcpServer();
+    const client = new Client({
+      name: "subscription-runtime-test",
+      version: "0.0.0",
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+    try {
+      await Promise.all([
+        server.connect(serverTransport),
+        client.connect(clientTransport),
+      ]);
+
+      const toolResult = await client.listTools();
+      const tools = (toolResult as {
+        readonly tools?: readonly {
+          readonly name?: string;
+          readonly inputSchema?: {
+            readonly properties?: Record<string, unknown>;
+          };
+        }[];
+      }).tools ?? [];
+      const toolsByName = new Map(tools.map((tool) => [tool.name, tool]));
+
+      for (const name of [
+        "codex_goal_project_open_integration_attempt",
+        "codex_goal_project_apply_worker_output",
+        "codex_goal_project_run_required_checks",
+        "codex_goal_project_commit_approved_changes",
+        "codex_goal_project_push_approved_commit",
+        "codex_goal_project_reject_integration_attempt",
+      ]) {
+        expect(toolsByName.has(name)).toBe(true);
+      }
+
+      expect(
+        toolsByName.get("codex_goal_project_open_integration_attempt")
+          ?.inputSchema?.properties,
+      ).toMatchObject({
+        registryRootDir: expect.any(Object),
+        controllerJobId: expect.any(Object),
+        requiredChecks: expect.any(Object),
+        confirmOpen: expect.any(Object),
+      });
+      expect(
+        toolsByName.get("codex_goal_project_commit_approved_changes")
+          ?.inputSchema?.properties,
+      ).toMatchObject({
+        message: expect.any(Object),
+        allowedPathPrefixes: expect.any(Object),
+        requiredCheckIds: expect.any(Object),
+        confirmCommit: expect.any(Object),
+      });
+    } finally {
+      await client.close();
+      await server.close();
     }
   });
 
@@ -1560,7 +1559,18 @@ describe("codex goal MCP server", () => {
       await mkdir(sourceWorkspacePath, { recursive: true });
       await gitInitRepository(sourceWorkspacePath);
       await writeFile(join(sourceWorkspacePath, "README.md"), "base\n");
-      await git(sourceWorkspacePath, ["add", "README.md"]);
+      await writeFile(join(sourceWorkspacePath, "package.json"), JSON.stringify({
+        packageManager: "npm@11.0.0",
+        scripts: {
+          test: "vitest run",
+          lint: "eslint .",
+        },
+      }));
+      await writeFile(join(sourceWorkspacePath, "package-lock.json"), JSON.stringify({
+        lockfileVersion: 3,
+        packages: {},
+      }));
+      await git(sourceWorkspacePath, ["add", "README.md", "package.json", "package-lock.json"]);
       await git(sourceWorkspacePath, ["commit", "-m", "test: base"]);
       await mkdir(childWorkspace, { recursive: true });
       await gitInitRepository(childWorkspace);
@@ -1735,7 +1745,18 @@ describe("codex goal MCP server", () => {
       await mkdir(sourceWorkspacePath, { recursive: true });
       await gitInitRepository(sourceWorkspacePath);
       await writeFile(join(sourceWorkspacePath, "README.md"), "base\n");
-      await git(sourceWorkspacePath, ["add", "README.md"]);
+      await writeFile(join(sourceWorkspacePath, "package.json"), JSON.stringify({
+        packageManager: "npm@11.0.0",
+        scripts: {
+          test: "vitest run",
+          lint: "eslint .",
+        },
+      }));
+      await writeFile(join(sourceWorkspacePath, "package-lock.json"), JSON.stringify({
+        lockfileVersion: 3,
+        packages: {},
+      }));
+      await git(sourceWorkspacePath, ["add", "README.md", "package.json", "package-lock.json"]);
       await git(sourceWorkspacePath, ["commit", "-m", "test: base"]);
       await git(sourceWorkspacePath, [
         "update-ref",
@@ -1805,11 +1826,34 @@ describe("codex goal MCP server", () => {
             "worker-role-fastgate",
           ]),
         },
+        dependencyPreflight: {
+          status: "deps_missing",
+          packageManager: {
+            name: "npm",
+            source: "packageManager",
+            versionSpec: "npm@11.0.0",
+            lockfilePath: join(childWorkspace, "package-lock.json"),
+          },
+          nodeModulesPath: join(childWorkspace, "node_modules"),
+          nodeModulesExists: false,
+          diagnosticPath: join(childJobRoot, "dependency-preflight.json"),
+          installCommand: `npm ci --prefer-offline --cache ${
+            join(root, "worker-jobs", ".dependency-cache", "npm-cache")
+          }`,
+        },
       });
       await expect(readFile(join(childJobRoot, "prompt.md"), "utf8")).resolves.toBe(
         "Run a focused memory fastgate and report cleanly.\n",
       );
       await expect(access(join(childWorkspace, "README.md"))).resolves.toBeUndefined();
+      const dependencyPreflight = JSON.parse(
+        await readFile(join(childJobRoot, "dependency-preflight.json"), "utf8"),
+      ) as Record<string, unknown>;
+      expect(dependencyPreflight).toMatchObject({
+        status: "deps_missing",
+        nodeModulesPath: join(childWorkspace, "node_modules"),
+        cacheRoot: join(root, "worker-jobs", ".dependency-cache"),
+      });
       const retry = await callToolJson(client, "codex_goal_project_refill_worker", {
         registryRootDir,
         controllerJobId: "infinity-context-controller-v1",

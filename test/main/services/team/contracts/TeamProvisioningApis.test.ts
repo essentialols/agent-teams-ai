@@ -86,16 +86,15 @@ describe('bindTeamIpcProvisioningApis', () => {
       'preflight',
       'provisioningRun',
       'runtime',
+      'taskActivity',
       'toolApproval',
     ]);
-    expect(sortedKeys(api.launch)).toEqual([
-      'createTeam',
-      'getProvisioningStatus',
-      'launchTeam',
-      'repairStaleTaskActivityIntervalsBeforeSnapshot',
-    ]);
+    expect(sortedKeys(api.launch)).toEqual(['createTeam', 'getProvisioningStatus', 'launchTeam']);
     expect(sortedKeys(api.preflight)).toEqual(['getCliHelpOutput', 'prepareForProvisioning']);
     expect(sortedKeys(api.provisioningRun)).toEqual(['cancelProvisioning', 'hasProvisioningRun']);
+    expect(sortedKeys(api.taskActivity)).toEqual([
+      'repairStaleTaskActivityIntervalsBeforeSnapshot',
+    ]);
     expect(sortedKeys(api.runtime)).toEqual([
       'getAliveTeams',
       'getCurrentRunId',
@@ -146,16 +145,16 @@ describe('bindTeamIpcProvisioningApis', () => {
 
 describe('bindTeamHttpProvisioningApis', () => {
   it('groups TeamProvisioningService behind HTTP-facing facade ports only', async () => {
-    const api = bindTeamHttpProvisioningApis(createSource() as never);
+    const source = createSource();
+    const api = bindTeamHttpProvisioningApis(source as never);
     const launchApi = api.launch as NonNullable<typeof api.launch>;
     const runtimeApi = api.runtime as NonNullable<typeof api.runtime>;
     const runtimeControlApi = api.runtimeControl as NonNullable<typeof api.runtimeControl>;
+    const taskActivityApi = api.taskActivity as NonNullable<typeof api.taskActivity>;
 
-    expect(sortedKeys(api)).toEqual(['launch', 'runtime', 'runtimeControl']);
-    expect(sortedKeys(launchApi)).toEqual([
-      'createTeam',
-      'getProvisioningStatus',
-      'launchTeam',
+    expect(sortedKeys(api)).toEqual(['launch', 'runtime', 'runtimeControl', 'taskActivity']);
+    expect(sortedKeys(launchApi)).toEqual(['createTeam', 'getProvisioningStatus', 'launchTeam']);
+    expect(sortedKeys(taskActivityApi)).toEqual([
       'repairStaleTaskActivityIntervalsBeforeSnapshot',
     ]);
     expect(sortedKeys(runtimeApi)).toEqual([
@@ -182,5 +181,11 @@ describe('bindTeamHttpProvisioningApis', () => {
       teamName: 'bound-run',
       state: 'delivered',
     });
+    await expect(
+      taskActivityApi.repairStaleTaskActivityIntervalsBeforeSnapshot('team-bound')
+    ).resolves.toBeUndefined();
+    expect(source.repairStaleTaskActivityIntervalsBeforeSnapshot).toHaveBeenCalledWith(
+      'team-bound'
+    );
   });
 });

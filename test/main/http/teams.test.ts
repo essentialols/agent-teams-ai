@@ -8,6 +8,7 @@ import type {
   TeamHttpRuntimeApi,
   TeamLaunchApi,
   TeamRuntimeControlCompatibilityApi,
+  TeamTaskActivityRepairApi,
 } from '@main/services/team/contracts/TeamProvisioningApis';
 import type {
   TeamCreateConfigRequest,
@@ -32,6 +33,8 @@ describe('HTTP team runtime routes', () => {
       >();
     const getRuntimeState = vi.fn<(teamName: string) => Promise<TeamRuntimeState>>();
     const getProvisioningStatus = vi.fn<(runId: string) => Promise<TeamProvisioningProgress>>();
+    const repairStaleTaskActivityIntervalsBeforeSnapshot =
+      vi.fn<(teamName: string) => Promise<void>>(() => Promise.resolve());
     const stopTeam = vi.fn<(teamName: string) => Promise<void>>(() => Promise.resolve());
     const getAliveTeams = vi.fn<() => string[]>();
     const recordOpenCodeRuntimeBootstrapCheckin =
@@ -60,6 +63,9 @@ describe('HTTP team runtime routes', () => {
       launchTeam,
       getProvisioningStatus,
     } satisfies Pick<TeamLaunchApi, 'createTeam' | 'launchTeam' | 'getProvisioningStatus'>;
+    const teamTaskActivityRepairApi = {
+      repairStaleTaskActivityIntervalsBeforeSnapshot,
+    } satisfies TeamTaskActivityRepairApi;
     const teamRuntimeApi = {
       getRuntimeState,
       stopTeam,
@@ -92,6 +98,7 @@ describe('HTTP team runtime routes', () => {
       teamDataService,
       teamProvisioningApis: {
         launch: teamLaunchApi,
+        taskActivity: teamTaskActivityRepairApi,
         runtime: teamRuntimeApi,
         runtimeControl: teamRuntimeControlApi,
       },
@@ -102,6 +109,7 @@ describe('HTTP team runtime routes', () => {
       launchTeam,
       getRuntimeState,
       getProvisioningStatus,
+      repairStaleTaskActivityIntervalsBeforeSnapshot,
       stopTeam,
       getAliveTeams,
       recordOpenCodeRuntimeBootstrapCheckin,
@@ -200,6 +208,34 @@ describe('HTTP team runtime routes', () => {
         fastMode: 'on',
         limitContext: true,
       });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('repairs stale task activity before reading a team snapshot', async () => {
+    const { app, getTeamData, repairStaleTaskActivityIntervalsBeforeSnapshot } = await createApp();
+    getTeamData.mockResolvedValue({
+      teamName: 'demo-team',
+      config: null,
+      tasks: [],
+      members: [],
+      messages: [],
+      processes: [],
+      kanban: null,
+    } as unknown as TeamViewSnapshot);
+
+    try {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/teams/demo-team',
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(repairStaleTaskActivityIntervalsBeforeSnapshot).toHaveBeenCalledWith('demo-team');
+      expect(
+        repairStaleTaskActivityIntervalsBeforeSnapshot.mock.invocationCallOrder[0]
+      ).toBeLessThan(getTeamData.mock.invocationCallOrder[0]);
     } finally {
       await app.close();
     }

@@ -186,7 +186,7 @@ export function registerTeamRoutes(app: FastifyInstance, services: HttpServices)
         });
       }
 
-      await services.teamProvisioningApis?.launch?.repairStaleTaskActivityIntervalsBeforeSnapshot?.(
+      await services.teamProvisioningApis?.taskActivity?.repairStaleTaskActivityIntervalsBeforeSnapshot(
         teamName
       );
       return reply.send(await getTeamDataWithRuntimeOverlay(services, teamName));

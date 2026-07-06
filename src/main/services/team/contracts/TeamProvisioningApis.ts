@@ -36,7 +36,6 @@ export interface TeamLaunchApi {
     onProgress: (progress: TeamProvisioningProgress) => void
   ): Promise<TeamLaunchResponse>;
   getProvisioningStatus(runId: string): Promise<TeamProvisioningProgress>;
-  repairStaleTaskActivityIntervalsBeforeSnapshot?(teamName: string): Promise<void>;
 }
 
 export type TeamProvisioningStartApi = TeamLaunchApi;
@@ -44,6 +43,10 @@ export type TeamProvisioningStartApi = TeamLaunchApi;
 export interface TeamProvisioningRunApi {
   cancelProvisioning(runId: string): Promise<void>;
   hasProvisioningRun(teamName: string): boolean;
+}
+
+export interface TeamTaskActivityRepairApi {
+  repairStaleTaskActivityIntervalsBeforeSnapshot(teamName: string): Promise<void>;
 }
 
 export type { OpenCodeRuntimeControlAck };
@@ -89,6 +92,7 @@ export interface TeamHttpRuntimeApi {
 
 export interface TeamHttpProvisioningApis {
   launch?: TeamLaunchApi;
+  taskActivity?: TeamTaskActivityRepairApi;
   runtime?: TeamHttpRuntimeApi;
   runtimeControl?: TeamRuntimeControlCompatibilityApi;
 }
@@ -97,6 +101,7 @@ export interface TeamIpcProvisioningApis {
   launch: TeamLaunchApi;
   preflight: TeamProvisioningPreflightApi;
   provisioningRun: TeamProvisioningRunApi;
+  taskActivity: TeamTaskActivityRepairApi;
   runtime: TeamRuntimeApi;
   memberLifecycle: TeamMemberLifecycleApi;
   diagnostics: TeamDiagnosticsApi;
@@ -217,18 +222,11 @@ export interface TeamToolApprovalApi {
 }
 
 export function bindTeamLaunchApi(source: TeamLaunchApi): TeamLaunchApi {
-  const api: TeamLaunchApi = {
+  return {
     createTeam: source.createTeam.bind(source),
     launchTeam: source.launchTeam.bind(source),
     getProvisioningStatus: source.getProvisioningStatus.bind(source),
   };
-  const repairStaleTaskActivityIntervalsBeforeSnapshot =
-    source.repairStaleTaskActivityIntervalsBeforeSnapshot?.bind(source);
-  if (repairStaleTaskActivityIntervalsBeforeSnapshot) {
-    api.repairStaleTaskActivityIntervalsBeforeSnapshot =
-      repairStaleTaskActivityIntervalsBeforeSnapshot;
-  }
-  return api;
 }
 
 export function bindTeamProvisioningPreflightApi(
@@ -244,6 +242,15 @@ export function bindTeamProvisioningRunApi(source: TeamProvisioningRunApi): Team
   return {
     cancelProvisioning: source.cancelProvisioning.bind(source),
     hasProvisioningRun: source.hasProvisioningRun.bind(source),
+  };
+}
+
+export function bindTeamTaskActivityRepairApi(
+  source: TeamTaskActivityRepairApi
+): TeamTaskActivityRepairApi {
+  return {
+    repairStaleTaskActivityIntervalsBeforeSnapshot:
+      source.repairStaleTaskActivityIntervalsBeforeSnapshot.bind(source),
   };
 }
 
@@ -278,10 +285,14 @@ export function bindTeamHttpRuntimeApi(source: TeamHttpRuntimeApi): TeamHttpRunt
 }
 
 export function bindTeamHttpProvisioningApis(
-  source: TeamLaunchApi & TeamHttpRuntimeApi & TeamRuntimeControlCompatibilityApi
+  source: TeamLaunchApi &
+    TeamTaskActivityRepairApi &
+    TeamHttpRuntimeApi &
+    TeamRuntimeControlCompatibilityApi
 ): TeamHttpProvisioningApis {
   return {
     launch: bindTeamLaunchApi(source),
+    taskActivity: bindTeamTaskActivityRepairApi(source),
     runtime: bindTeamHttpRuntimeApi(source),
     runtimeControl: bindTeamRuntimeControlCompatibilityApi(source),
   };
@@ -291,6 +302,7 @@ export function bindTeamIpcProvisioningApis(
   source: TeamLaunchApi &
     TeamProvisioningPreflightApi &
     TeamProvisioningRunApi &
+    TeamTaskActivityRepairApi &
     TeamRuntimeApi &
     TeamMemberLifecycleApi &
     TeamDiagnosticsApi &
@@ -302,6 +314,7 @@ export function bindTeamIpcProvisioningApis(
     launch: bindTeamLaunchApi(source),
     preflight: bindTeamProvisioningPreflightApi(source),
     provisioningRun: bindTeamProvisioningRunApi(source),
+    taskActivity: bindTeamTaskActivityRepairApi(source),
     runtime: bindTeamRuntimeApi(source),
     memberLifecycle: bindTeamMemberLifecycleApi(source),
     diagnostics: bindTeamDiagnosticsApi(source),

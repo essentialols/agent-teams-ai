@@ -191,6 +191,7 @@ import type {
   TeamProvisioningPreflightApi,
   TeamProvisioningRunApi,
   TeamRuntimeApi,
+  TeamTaskActivityRepairApi,
   TeamToolApprovalApi,
 } from '../services/team/contracts/TeamProvisioningApis';
 import type { TeamBackupService } from '../services/team/TeamBackupService';
@@ -751,6 +752,7 @@ let teamDataService: TeamDataService | null = null;
 let teamProvisioningStartApi: TeamLaunchApi | null = null;
 let teamProvisioningPreflightApi: TeamProvisioningPreflightApi | null = null;
 let teamProvisioningRunApi: TeamProvisioningRunApi | null = null;
+let teamTaskActivityRepairApi: TeamTaskActivityRepairApi | null = null;
 let teamRuntimeApi: TeamRuntimeApi | null = null;
 let teamMemberLifecycleApi: TeamMemberLifecycleApi | null = null;
 let teamDiagnosticsApi: TeamDiagnosticsApi | null = null;
@@ -823,6 +825,7 @@ export function initializeTeamHandlers(
   teamProvisioningStartApi = provisioningService.launch;
   teamProvisioningPreflightApi = provisioningService.preflight;
   teamProvisioningRunApi = provisioningService.provisioningRun;
+  teamTaskActivityRepairApi = provisioningService.taskActivity;
   teamRuntimeApi = provisioningService.runtime;
   teamMemberLifecycleApi = provisioningService.memberLifecycle;
   teamDiagnosticsApi = provisioningService.diagnostics;
@@ -1048,6 +1051,13 @@ function getTeamProvisioningRunApi(): TeamProvisioningRunApi {
     throw new Error('Team provisioning run handlers are not initialized');
   }
   return teamProvisioningRunApi;
+}
+
+function getTeamTaskActivityRepairApi(): TeamTaskActivityRepairApi {
+  if (!teamTaskActivityRepairApi) {
+    throw new Error('Team task activity repair handlers are not initialized');
+  }
+  return teamTaskActivityRepairApi;
 }
 
 function getTeamRuntimeApi(): TeamRuntimeApi {
@@ -1287,7 +1297,7 @@ async function handleGetData(
       return { success: false, error: 'TEAM_DRAFT' };
     }
 
-    await getTeamProvisioningStartApi().repairStaleTaskActivityIntervalsBeforeSnapshot?.(tn);
+    await getTeamTaskActivityRepairApi().repairStaleTaskActivityIntervalsBeforeSnapshot(tn);
 
     if (workerAvailable) {
       try {

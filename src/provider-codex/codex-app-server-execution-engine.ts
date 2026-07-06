@@ -40,10 +40,8 @@ import {
   type CodexAppServerNativeToolSurface,
   type CodexAppServerSandboxPolicy,
   codexAppServerSandboxPolicy,
-  codexExtraWritableRootsFromEnv,
-  mergeDeveloperInstructions,
+  codexAppServerThreadRuntimePolicy,
   normalizeSystemPrompt,
-  uniqueNonEmptyStrings,
 } from "./codex-app-server-policy";
 import {
   type CodexAppServerJsonRpcResponse,
@@ -1132,7 +1130,23 @@ class CodexAppServerClient {
     readonly goalMode?: boolean;
   }): Promise<string> {
     const disableTools = this.disableAllTools(input.goalMode);
-    const disableNativeEnvironments = this.disableNativeEnvironments(input.goalMode);
+    const disableNativeEnvironments = this.disableNativeEnvironments(
+      input.goalMode,
+    );
+    const threadPolicy = codexAppServerThreadRuntimePolicy({
+      workspacePath: input.workspacePath,
+      ...(input.sandboxMode === undefined
+        ? {}
+        : { sandboxMode: input.sandboxMode }),
+      ...(this.options.sourceEnv === undefined
+        ? {}
+        : { sourceEnv: this.options.sourceEnv }),
+      baseDeveloperInstructions:
+        this.options.executionProfile.developerInstructions,
+      ...(input.systemPrompt === undefined
+        ? {}
+        : { systemPrompt: input.systemPrompt }),
+    });
     const features = {
       apps: false,
       hooks: false,
@@ -1146,17 +1160,14 @@ class CodexAppServerClient {
     const response = await this.send(
       "thread/start",
       {
-        runtimeWorkspaceRoots: uniqueNonEmptyStrings([
-          input.workspacePath,
-          ...codexExtraWritableRootsFromEnv(this.options.sourceEnv),
-        ]),
+        runtimeWorkspaceRoots: threadPolicy.runtimeWorkspaceRoots,
         model: input.model,
         modelProvider: null,
         serviceTier: input.serviceTier ?? null,
         cwd: input.workspacePath,
         approvalPolicy: this.approvalPolicyForThread(),
         approvalsReviewer: null,
-        sandbox: input.sandboxMode ?? "read-only",
+        sandbox: threadPolicy.sandboxMode,
         config: {
           model_reasoning_effort: input.reasoningEffort,
           model_verbosity: "low",
@@ -1165,7 +1176,7 @@ class CodexAppServerClient {
             : { service_tier: input.serviceTier }),
           approval_policy:
             this.options.commandApprovalPolicy === undefined ? "never" : "on-request",
-          sandbox_mode: input.sandboxMode ?? "read-only",
+          sandbox_mode: threadPolicy.sandboxMode,
           web_search: "disabled",
           features,
           apps: {
@@ -1178,13 +1189,7 @@ class CodexAppServerClient {
         },
         serviceName: "subscription-runtime",
         baseInstructions: this.options.executionProfile.baseInstructions,
-        developerInstructions:
-          mergeDeveloperInstructions({
-            base: this.options.executionProfile.developerInstructions,
-            ...(input.systemPrompt !== undefined
-              ? { systemPrompt: input.systemPrompt }
-              : {}),
-          }),
+        developerInstructions: threadPolicy.developerInstructions,
         personality: null,
         ephemeral: input.goalMode ? false : true,
         sessionStartSource: "startup",

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   codexAppServerSandboxPolicy,
+  codexAppServerThreadRuntimePolicy,
   codexExtraWritableRootsFromEnv,
   mergeDeveloperInstructions,
 } from "../codex-app-server-policy";
@@ -33,6 +34,24 @@ describe("Codex app-server boundary helpers", () => {
         SUBSCRIPTION_RUNTIME_CODEX_EXTRA_WRITABLE_ROOTS: "/outside",
       }),
     ).toEqual([]);
+  });
+
+  it("builds the app-server thread runtime policy before execution starts", () => {
+    expect(
+      codexAppServerThreadRuntimePolicy({
+        workspacePath: "/work/repo",
+        sourceEnv: {
+          SUBSCRIPTION_RUNTIME_CODEX_EXTRA_WRITABLE_ROOTS:
+            " /cache/a :/cache/a,\n/cache/b ",
+        },
+        baseDeveloperInstructions: "base instructions",
+        systemPrompt: "  task instructions  ",
+      }),
+    ).toEqual({
+      runtimeWorkspaceRoots: ["/work/repo", "/cache/a", "/cache/b"],
+      sandboxMode: "read-only",
+      developerInstructions: "base instructions\n\ntask instructions",
+    });
   });
 
   it("keeps task system prompts in developer instructions without changing empty prompts", () => {

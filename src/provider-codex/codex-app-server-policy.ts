@@ -34,6 +34,12 @@ export type CodexAppServerSandboxPolicy =
       readonly excludeTmpdirEnvVar: true;
     };
 
+export type CodexAppServerThreadRuntimePolicy = {
+  readonly runtimeWorkspaceRoots: readonly string[];
+  readonly sandboxMode: CodexSandboxMode;
+  readonly developerInstructions: string | null;
+};
+
 export function normalizeSystemPrompt(value: string | undefined): string | null {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
@@ -62,6 +68,26 @@ export function mergeDeveloperInstructions(input: {
   if (!systemPrompt) return input.base;
   if (!input.base) return systemPrompt;
   return `${input.base}\n\n${systemPrompt}`;
+}
+
+export function codexAppServerThreadRuntimePolicy(input: {
+  readonly workspacePath: string;
+  readonly sandboxMode?: CodexSandboxMode;
+  readonly sourceEnv?: Readonly<Record<string, string | undefined>>;
+  readonly baseDeveloperInstructions: string | null;
+  readonly systemPrompt?: string | undefined;
+}): CodexAppServerThreadRuntimePolicy {
+  return {
+    runtimeWorkspaceRoots: uniqueNonEmptyStrings([
+      input.workspacePath,
+      ...codexExtraWritableRootsFromEnv(input.sourceEnv),
+    ]),
+    sandboxMode: input.sandboxMode ?? "read-only",
+    developerInstructions: mergeDeveloperInstructions({
+      base: input.baseDeveloperInstructions,
+      systemPrompt: input.systemPrompt,
+    }),
+  };
 }
 
 export function codexAppServerSandboxPolicy(input: {

@@ -1962,7 +1962,7 @@ async function restorePreviousMembersMetaSnapshot(options: {
 async function rollbackLiveRosterMutation(options: {
   teamName: string;
   teamDataService: TeamDataService;
-  provisioning: TeamProvisioningService;
+  memberLifecycle: TeamMemberLifecycleApi;
   previousMembers: RuntimeRosterMutationMember[];
   previousMembersMeta: TeamMembersMetaFile | null;
   restoreLiveMemberNames?: string[];
@@ -1971,7 +1971,7 @@ async function rollbackLiveRosterMutation(options: {
   const {
     teamName,
     teamDataService,
-    provisioning,
+    memberLifecycle,
     previousMembers,
     previousMembersMeta,
     restoreLiveMemberNames = [],
@@ -1983,7 +1983,7 @@ async function rollbackLiveRosterMutation(options: {
   );
   for (const memberName of detachNames) {
     try {
-      await provisioning.detachLiveRosterMember(teamName, memberName);
+      await memberLifecycle.detachLiveRosterMember(teamName, memberName);
     } catch (error) {
       logger.warn(
         `Failed to clean up live roster member for ${teamName}/${memberName} during rollback: ${
@@ -2012,7 +2012,7 @@ async function rollbackLiveRosterMutation(options: {
   );
   for (const memberName of restoreNames) {
     try {
-      await provisioning.attachLiveRosterMember(teamName, memberName, {
+      await memberLifecycle.attachLiveRosterMember(teamName, memberName, {
         reason: 'member_updated',
       });
     } catch (error) {
@@ -4637,7 +4637,7 @@ async function handleAddMember(
     const previousMembersMeta = await new TeamMembersMetaStore().getMeta(tn).catch(() => null);
     const previousTeamData = await teamDataService.getTeamData(tn);
     const previousMembers = previousTeamData.members as RuntimeRosterMutationMember[];
-    const provisioning = getTeamProvisioningService();
+    const memberLifecycle = getTeamMemberLifecycleApi();
     const isTeamAlive = getTeamRuntimeApi().isTeamAlive(tn);
     if (isTeamAlive && isOpenCodeLedRoster(previousMembers)) {
       throw new Error(OPENCODE_LEAD_LIVE_ROSTER_MUTATION_BLOCK_MESSAGE);
@@ -4661,14 +4661,14 @@ async function handleAddMember(
 
     if (isTeamAlive) {
       try {
-        await provisioning.attachLiveRosterMember(tn, memberName, {
+        await memberLifecycle.attachLiveRosterMember(tn, memberName, {
           reason: 'member_added',
         });
       } catch (error) {
         await rollbackLiveRosterMutation({
           teamName: tn,
           teamDataService,
-          provisioning,
+          memberLifecycle,
           previousMembers,
           previousMembersMeta,
           detachLiveMemberNames: [memberName],
@@ -4780,7 +4780,7 @@ async function handleReplaceMembers(
   return wrapTeamHandler('replaceMembers', async () => {
     const tn = vTeam.value!;
     const teamDataService = getTeamDataService();
-    const provisioning = getTeamProvisioningService();
+    const memberLifecycle = getTeamMemberLifecycleApi();
     const isTeamAlive = getTeamRuntimeApi().isTeamAlive(tn);
     if (!isTeamAlive) {
       await teamDataService.replaceMembers(tn, { members });
@@ -4862,33 +4862,33 @@ async function handleReplaceMembers(
 
     try {
       for (const removedMember of removedOpenCodeMembers) {
-        await provisioning.detachLiveRosterMember(tn, removedMember.name);
+        await memberLifecycle.detachLiveRosterMember(tn, removedMember.name);
       }
 
       for (const addedMember of addedOpenCodeMembers) {
-        await provisioning.attachLiveRosterMember(tn, addedMember.name, {
+        await memberLifecycle.attachLiveRosterMember(tn, addedMember.name, {
           reason: 'member_added',
         });
       }
 
       for (const updatedMember of updatedOpenCodeMembers) {
-        await provisioning.attachLiveRosterMember(tn, updatedMember.name, {
+        await memberLifecycle.attachLiveRosterMember(tn, updatedMember.name, {
           reason: 'member_updated',
         });
       }
 
       for (const removedMemberName of primaryDiff.removed) {
-        await provisioning.detachLiveRosterMember(tn, removedMemberName);
+        await memberLifecycle.detachLiveRosterMember(tn, removedMemberName);
       }
 
       for (const addedMember of primaryDiff.added) {
-        await provisioning.attachLiveRosterMember(tn, addedMember.name, {
+        await memberLifecycle.attachLiveRosterMember(tn, addedMember.name, {
           reason: 'member_added',
         });
       }
 
       for (const updatedMember of primaryDiff.updated) {
-        await provisioning.attachLiveRosterMember(tn, updatedMember.name, {
+        await memberLifecycle.attachLiveRosterMember(tn, updatedMember.name, {
           reason: 'member_updated',
         });
       }
@@ -4896,7 +4896,7 @@ async function handleReplaceMembers(
       await rollbackLiveRosterMutation({
         teamName: tn,
         teamDataService,
-        provisioning,
+        memberLifecycle,
         previousMembers,
         previousMembersMeta,
         restoreLiveMemberNames: [
@@ -4945,7 +4945,7 @@ async function handleRemoveMember(
     const previousMembersMeta = await new TeamMembersMetaStore().getMeta(tn).catch(() => null);
     const previousTeamData = await teamDataService.getTeamData(tn);
     const previousMembers = previousTeamData.members as RuntimeRosterMutationMember[];
-    const provisioning = getTeamProvisioningService();
+    const memberLifecycle = getTeamMemberLifecycleApi();
     const isTeamAlive = getTeamRuntimeApi().isTeamAlive(tn);
     if (isTeamAlive && isOpenCodeLedRoster(previousMembers)) {
       throw new Error(OPENCODE_LEAD_LIVE_ROSTER_MUTATION_BLOCK_MESSAGE);
@@ -4955,12 +4955,12 @@ async function handleRemoveMember(
 
     if (isTeamAlive) {
       try {
-        await provisioning.detachLiveRosterMember(tn, name);
+        await memberLifecycle.detachLiveRosterMember(tn, name);
       } catch (error) {
         await rollbackLiveRosterMutation({
           teamName: tn,
           teamDataService,
-          provisioning,
+          memberLifecycle,
           previousMembers,
           previousMembersMeta,
           restoreLiveMemberNames: [name],
@@ -4997,7 +4997,7 @@ async function handleRestoreMember(
     const previousMembersMeta = await new TeamMembersMetaStore().getMeta(tn).catch(() => null);
     const previousTeamData = await teamDataService.getTeamData(tn);
     const previousMembers = previousTeamData.members as RuntimeRosterMutationMember[];
-    const provisioning = getTeamProvisioningService();
+    const memberLifecycle = getTeamMemberLifecycleApi();
     const isTeamAlive = getTeamRuntimeApi().isTeamAlive(tn);
     if (isTeamAlive && isOpenCodeLedRoster(previousMembers)) {
       throw new Error(OPENCODE_LEAD_LIVE_ROSTER_MUTATION_BLOCK_MESSAGE);
@@ -5011,14 +5011,14 @@ async function handleRestoreMember(
     }
 
     try {
-      await provisioning.attachLiveRosterMember(tn, name, {
+      await memberLifecycle.attachLiveRosterMember(tn, name, {
         reason: 'member_restored',
       });
     } catch (error) {
       await rollbackLiveRosterMutation({
         teamName: tn,
         teamDataService,
-        provisioning,
+        memberLifecycle,
         previousMembers,
         previousMembersMeta,
         detachLiveMemberNames: [name],

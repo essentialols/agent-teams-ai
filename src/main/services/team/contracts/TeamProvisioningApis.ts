@@ -74,8 +74,16 @@ export interface TeamRuntimeApi extends TeamRuntimeControlCompatibilityApi {
   getCurrentRunId(teamName: string): string | null;
 }
 
+export type TeamLiveRosterAttachReason = 'member_added' | 'member_restored' | 'member_updated';
+
 export interface TeamMemberLifecycleApi {
   getMemberSpawnStatuses(teamName: string): Promise<MemberSpawnStatusesSnapshot>;
+  attachLiveRosterMember(
+    teamName: string,
+    memberName: string,
+    options?: { reason?: TeamLiveRosterAttachReason }
+  ): Promise<void>;
+  detachLiveRosterMember(teamName: string, memberName: string): Promise<void>;
   restartMember(teamName: string, memberName: string): Promise<void>;
   retryFailedOpenCodeSecondaryLanes(
     teamName: string
@@ -223,6 +231,8 @@ export function bindTeamRuntimeApi(source: TeamRuntimeApi): TeamRuntimeApi {
 export function bindTeamMemberLifecycleApi(source: TeamMemberLifecycleApi): TeamMemberLifecycleApi {
   return {
     getMemberSpawnStatuses: source.getMemberSpawnStatuses.bind(source),
+    attachLiveRosterMember: source.attachLiveRosterMember.bind(source),
+    detachLiveRosterMember: source.detachLiveRosterMember.bind(source),
     restartMember: source.restartMember.bind(source),
     retryFailedOpenCodeSecondaryLanes: source.retryFailedOpenCodeSecondaryLanes.bind(source),
     skipMemberForLaunch: source.skipMemberForLaunch.bind(source),

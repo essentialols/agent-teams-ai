@@ -222,6 +222,9 @@ describe('TeamProvisioning API binders', () => {
   it('binds member lifecycle and diagnostics methods to the source object', async () => {
     interface MemberLifecycleSource extends TeamMemberLifecycleApi {
       readonly runId: string;
+      attachedMemberName: string | null;
+      attachedReason: string | undefined;
+      detachedMemberName: string | null;
       restartedMemberName: string | null;
       skippedMemberName: string | null;
     }
@@ -231,10 +234,31 @@ describe('TeamProvisioning API binders', () => {
 
     const memberLifecycleSource: MemberLifecycleSource = {
       runId: 'run-bound',
+      attachedMemberName: null,
+      attachedReason: undefined,
+      detachedMemberName: null,
       restartedMemberName: null,
       skippedMemberName: null,
       getMemberSpawnStatuses(this: MemberLifecycleSource): Promise<MemberSpawnStatusesSnapshot> {
         return Promise.resolve({ statuses: {}, runId: this.runId });
+      },
+      attachLiveRosterMember(
+        this: MemberLifecycleSource,
+        _teamName: string,
+        memberName: string,
+        options?: { reason?: 'member_added' | 'member_restored' | 'member_updated' }
+      ): Promise<void> {
+        this.attachedMemberName = memberName;
+        this.attachedReason = options?.reason;
+        return Promise.resolve();
+      },
+      detachLiveRosterMember(
+        this: MemberLifecycleSource,
+        _teamName: string,
+        memberName: string
+      ): Promise<void> {
+        this.detachedMemberName = memberName;
+        return Promise.resolve();
       },
       restartMember(
         this: MemberLifecycleSource,
@@ -284,6 +308,8 @@ describe('TeamProvisioning API binders', () => {
 
     const memberLifecycleApi = bindTeamMemberLifecycleApi(memberLifecycleSource);
     const diagnosticsApi = bindTeamDiagnosticsApi(diagnosticsSource);
+    const attachLiveRosterMember = memberLifecycleApi.attachLiveRosterMember.bind(undefined);
+    const detachLiveRosterMember = memberLifecycleApi.detachLiveRosterMember.bind(undefined);
     const restartMember = memberLifecycleApi.restartMember.bind(undefined);
     const skipMemberForLaunch = memberLifecycleApi.skipMemberForLaunch.bind(undefined);
     const getTeamAgentRuntimeSnapshot = diagnosticsApi.getTeamAgentRuntimeSnapshot.bind(undefined);
@@ -292,8 +318,13 @@ describe('TeamProvisioning API binders', () => {
       statuses: {},
       runId: 'run-bound',
     });
+    await attachLiveRosterMember('team-bound', 'live-worker', { reason: 'member_added' });
+    await detachLiveRosterMember('team-bound', 'stale-worker');
     await restartMember('team-bound', 'worker');
     await skipMemberForLaunch('team-bound', 'blocked-worker');
+    expect(memberLifecycleSource.attachedMemberName).toBe('live-worker');
+    expect(memberLifecycleSource.attachedReason).toBe('member_added');
+    expect(memberLifecycleSource.detachedMemberName).toBe('stale-worker');
     expect(memberLifecycleSource.restartedMemberName).toBe('worker');
     expect(memberLifecycleSource.skippedMemberName).toBe('blocked-worker');
     expect(diagnosticsApi.getLeadActivityState('team-bound')).toEqual({

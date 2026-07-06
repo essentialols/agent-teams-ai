@@ -179,6 +179,10 @@ type HelpCommand = {
   readonly kind: "help";
 };
 
+type CodexGoalRunConfigWithAppServerStartupTimeout = CodexGoalRunConfig & {
+  readonly appServerStartupTimeoutMs?: number;
+};
+
 export async function runCodexGoalCli(
   argv = process.argv.slice(2),
   io: CodexGoalCliIo = defaultIo,
@@ -829,6 +833,12 @@ function runConfigFromFlags(
       "SUBSCRIPTION_RUNTIME_WORKER_REPORT_MODE",
     ]),
   );
+  const appServerStartupTimeoutMs = parseOptionalPositiveInteger(
+    option(values, env, "--app-server-startup-timeout-ms", [
+      "SUBSCRIPTION_RUNTIME_APP_SERVER_STARTUP_TIMEOUT_MS",
+    ]),
+    "--app-server-startup-timeout-ms",
+  );
   assertCodexGoalProviderSandboxModeAllowed({
     editMode,
     providerSandboxMode,
@@ -860,7 +870,7 @@ function runConfigFromFlags(
       env.SUBSCRIPTION_RUNTIME_TMPDIR ?? join(resolvedJobRootDir, "tmp"),
     TMPDIR: env.TMPDIR ?? join(resolvedJobRootDir, "tmp"),
   } as const;
-  const config: CodexGoalRunConfig = {
+  const config: CodexGoalRunConfigWithAppServerStartupTimeout = {
     ...(option(values, env, "--job-id", ["SUBSCRIPTION_RUNTIME_JOB_ID"]) === undefined
       ? {}
       : {
@@ -925,6 +935,7 @@ function runConfigFromFlags(
       ]),
       "--timeout-ms",
     ) ?? parseDurationMs(option(values, env, "--timeout", []) ?? "72h"),
+    ...(appServerStartupTimeoutMs === undefined ? {} : { appServerStartupTimeoutMs }),
     progressHeartbeatMs: parseOptionalPositiveInteger(
       option(values, env, "--progress-heartbeat-ms", [
         "SUBSCRIPTION_RUNTIME_PROGRESS_HEARTBEAT_MS",

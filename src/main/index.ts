@@ -113,14 +113,15 @@ import {
 import {
   bindTeamClaudeLogsApi,
   bindTeamDiagnosticsApi,
+  bindTeamHttpProvisioningApis,
   bindTeamLaunchApi,
   bindTeamMemberLifecycleApi,
   bindTeamMessagingApi,
   bindTeamProvisioningPreflightApi,
   bindTeamProvisioningRunApi,
   bindTeamRuntimeApi,
-  bindTeamRuntimeControlCompatibilityApi,
   bindTeamToolApprovalApi,
+  type TeamHttpProvisioningApis,
 } from '@main/services/team/contracts/TeamProvisioningApis';
 import { ReviewApplierService } from '@main/services/team/ReviewApplierService';
 import { TeamBackupService } from '@main/services/team/TeamBackupService';
@@ -1059,6 +1060,7 @@ let tokenUsageFeature: TokenUsageFeatureFacade | null = null;
 let memberWorkSyncFeature: MemberWorkSyncFeatureFacade | null = null;
 let teamDataService: TeamDataService;
 let teamProvisioningService: TeamProvisioningService;
+let teamHttpProvisioningApis: TeamHttpProvisioningApis | null = null;
 let launchIoGovernor: LaunchIoGovernor | null = null;
 let cliInstallerService: CliInstallerService;
 let openCodeRuntimeInstallerService: OpenCodeRuntimeInstallerService;
@@ -2592,6 +2594,7 @@ async function initializeServices(): Promise<void> {
     ...bindTeamMessagingApi(teamProvisioningService),
     ...bindTeamToolApprovalApi(teamProvisioningService),
   };
+  teamHttpProvisioningApis = bindTeamHttpProvisioningApis(teamProvisioningService);
 
   // Initialize IPC handlers with registry
   initializeIpcHandlers(
@@ -2707,6 +2710,9 @@ async function startHttpServer(
 
     const config = configManager.getConfig();
     const activeContext = contextRegistry.getActive();
+    if (!teamHttpProvisioningApis) {
+      throw new Error('Team HTTP provisioning APIs are not initialized');
+    }
     const port = await httpServer.start(
       {
         projectScanner: activeContext.projectScanner,
@@ -2721,9 +2727,7 @@ async function startHttpServer(
         updaterService,
         sshConnectionManager,
         teamDataService,
-        teamLaunchApi: bindTeamLaunchApi(teamProvisioningService),
-        teamRuntimeApi: bindTeamRuntimeApi(teamProvisioningService),
-        teamRuntimeControlApi: bindTeamRuntimeControlCompatibilityApi(teamProvisioningService),
+        teamProvisioningApis: teamHttpProvisioningApis,
       },
       modeSwitchHandler,
       config.httpServer?.port ?? 3456

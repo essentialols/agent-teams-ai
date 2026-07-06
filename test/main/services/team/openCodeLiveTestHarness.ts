@@ -350,8 +350,10 @@ async function startLiveTeamControlApi(
 }> {
   const app = Fastify({ logger: false });
   registerTeamRoutes(app, {
-    teamLaunchApi: svc,
-    teamRuntimeApi: svc,
+    teamProvisioningApis: {
+      launch: svc,
+      runtime: svc,
+    },
     ...extraServices,
   } as HttpServices);
   await app.listen({ host: '127.0.0.1', port: 0 });

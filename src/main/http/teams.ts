@@ -18,6 +18,11 @@ import {
 import type { HttpServices } from './index';
 import type { MemberWorkSyncReportState } from '@features/member-work-sync/contracts';
 import type {
+  TeamLaunchApi,
+  TeamRuntimeApi,
+  TeamRuntimeControlCompatibilityApi,
+} from '@main/services/team/contracts/TeamProvisioningApis';
+import type {
   TeamCreateConfigRequest,
   TeamCreateRequest,
   TeamLaunchRequest,
@@ -35,27 +40,25 @@ function isMemberWorkSyncReportState(value: string): value is MemberWorkSyncRepo
   return value === 'still_working' || value === 'blocked' || value === 'caught_up';
 }
 
-function getTeamLaunchApi(services: HttpServices): NonNullable<HttpServices['teamLaunchApi']> {
-  if (!services.teamLaunchApi) {
+function getTeamLaunchApi(services: HttpServices): TeamLaunchApi {
+  if (!services.teamProvisioningApis?.launch) {
     throw new HttpFeatureUnavailableError('Team launch control is not available in this mode');
   }
-  return services.teamLaunchApi;
+  return services.teamProvisioningApis.launch;
 }
 
-function getTeamRuntimeApi(services: HttpServices): NonNullable<HttpServices['teamRuntimeApi']> {
-  if (!services.teamRuntimeApi) {
+function getTeamRuntimeApi(services: HttpServices): TeamRuntimeApi {
+  if (!services.teamProvisioningApis?.runtime) {
     throw new HttpFeatureUnavailableError('Team runtime control is not available in this mode');
   }
-  return services.teamRuntimeApi;
+  return services.teamProvisioningApis.runtime;
 }
 
-function getTeamRuntimeControlApi(
-  services: HttpServices
-): NonNullable<HttpServices['teamRuntimeControlApi']> {
-  if (!services.teamRuntimeControlApi) {
+function getTeamRuntimeControlApi(services: HttpServices): TeamRuntimeControlCompatibilityApi {
+  if (!services.teamProvisioningApis?.runtimeControl) {
     throw new HttpFeatureUnavailableError('Team runtime callbacks are not available in this mode');
   }
-  return services.teamRuntimeControlApi;
+  return services.teamProvisioningApis.runtimeControl;
 }
 
 function getTeamDataService(services: HttpServices): NonNullable<HttpServices['teamDataService']> {
@@ -128,11 +131,10 @@ async function getTeamDataWithRuntimeOverlay(
   teamName: string
 ): Promise<Awaited<ReturnType<NonNullable<HttpServices['teamDataService']>['getTeamData']>>> {
   const data = await getTeamDataService(services).getTeamData(teamName);
-  let runtimeState: Awaited<
-    ReturnType<NonNullable<HttpServices['teamRuntimeApi']>['getRuntimeState']>
-  > | null = null;
+  let runtimeState: Awaited<ReturnType<TeamRuntimeApi['getRuntimeState']>> | null = null;
   try {
-    runtimeState = (await services.teamRuntimeApi?.getRuntimeState(teamName)) ?? null;
+    const runtimeApi = services.teamProvisioningApis?.runtime;
+    runtimeState = (await runtimeApi?.getRuntimeState(teamName)) ?? null;
   } catch {
     runtimeState = null;
   }
@@ -184,7 +186,9 @@ export function registerTeamRoutes(app: FastifyInstance, services: HttpServices)
         });
       }
 
-      await services.teamLaunchApi?.repairStaleTaskActivityIntervalsBeforeSnapshot?.(teamName);
+      await services.teamProvisioningApis?.launch?.repairStaleTaskActivityIntervalsBeforeSnapshot?.(
+        teamName
+      );
       return reply.send(await getTeamDataWithRuntimeOverlay(services, teamName));
     } catch (error) {
       if (shouldLogError(error)) {

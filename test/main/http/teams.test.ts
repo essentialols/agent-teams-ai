@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { HttpServices } from '@main/http';
 import type {
   OpenCodeRuntimeControlAck,
+  TeamLaunchApi,
   TeamRuntimeApi,
   TeamRuntimeControlCompatibilityApi,
 } from '@main/services/team/contracts/TeamProvisioningApis';
@@ -60,10 +61,7 @@ describe('HTTP team runtime routes', () => {
       createTeam,
       launchTeam,
       getProvisioningStatus,
-    } satisfies Pick<
-      NonNullable<HttpServices['teamLaunchApi']>,
-      'createTeam' | 'launchTeam' | 'getProvisioningStatus'
-    >;
+    } satisfies Pick<TeamLaunchApi, 'createTeam' | 'launchTeam' | 'getProvisioningStatus'>;
     const teamRuntimeApi = {
       getRuntimeState,
       stopTeam,
@@ -96,9 +94,11 @@ describe('HTTP team runtime routes', () => {
       updaterService: {} as HttpServices['updaterService'],
       sshConnectionManager: {} as HttpServices['sshConnectionManager'],
       teamDataService,
-      teamLaunchApi,
-      teamRuntimeApi,
-      teamRuntimeControlApi,
+      teamProvisioningApis: {
+        launch: teamLaunchApi,
+        runtime: teamRuntimeApi,
+        runtimeControl: teamRuntimeControlApi,
+      },
     } satisfies HttpServices;
 
     return {
@@ -840,7 +840,10 @@ describe('HTTP team runtime routes', () => {
     const mocks = createServicesMock();
     registerTeamRoutes(app, {
       ...mocks.services,
-      teamRuntimeControlApi: undefined,
+      teamProvisioningApis: {
+        ...mocks.services.teamProvisioningApis,
+        runtimeControl: undefined,
+      },
     });
     await app.ready();
 

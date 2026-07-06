@@ -81,6 +81,12 @@ export interface TeamRuntimeApi {
   getCurrentRunId(teamName: string): string | null;
 }
 
+export interface TeamHttpProvisioningApis {
+  launch?: TeamLaunchApi;
+  runtime?: TeamRuntimeApi;
+  runtimeControl?: TeamRuntimeControlCompatibilityApi;
+}
+
 export type TeamLiveRosterAttachReason = 'member_added' | 'member_restored' | 'member_updated';
 
 export interface TeamMemberLifecycleApi {
@@ -242,6 +248,16 @@ export function bindTeamRuntimeApi(source: TeamRuntimeApi): TeamRuntimeApi {
     isTeamAlive: source.isTeamAlive.bind(source),
     getAliveTeams: source.getAliveTeams.bind(source),
     getCurrentRunId: source.getCurrentRunId.bind(source),
+  };
+}
+
+export function bindTeamHttpProvisioningApis(
+  source: TeamLaunchApi & TeamRuntimeApi & TeamRuntimeControlCompatibilityApi
+): TeamHttpProvisioningApis {
+  return {
+    launch: bindTeamLaunchApi(source),
+    runtime: bindTeamRuntimeApi(source),
+    runtimeControl: bindTeamRuntimeControlCompatibilityApi(source),
   };
 }
 

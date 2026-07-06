@@ -13,6 +13,7 @@ import { registerTools } from '../../../mcp-server/src/tools';
 import type { HttpServices } from '@main/http';
 import type {
   OpenCodeRuntimeControlAck,
+  TeamLaunchApi,
   TeamRuntimeApi,
   TeamRuntimeControlCompatibilityApi,
 } from '@main/services/team/contracts/TeamProvisioningApis';
@@ -265,7 +266,7 @@ function createServices(claudeRoot: string): {
       }
       return Promise.resolve(progress);
     },
-  } satisfies NonNullable<HttpServices['teamLaunchApi']>;
+  } satisfies TeamLaunchApi;
   const teamRuntimeApi = {
     getRuntimeState: (teamName: string): Promise<TeamRuntimeState> => {
       const runId = runIdByTeam.get(teamName) ?? null;
@@ -306,9 +307,11 @@ function createServices(claudeRoot: string): {
       updaterService: {} as HttpServices['updaterService'],
       sshConnectionManager: {} as HttpServices['sshConnectionManager'],
       teamDataService,
-      teamLaunchApi,
-      teamRuntimeApi,
-      teamRuntimeControlApi,
+      teamProvisioningApis: {
+        launch: teamLaunchApi,
+        runtime: teamRuntimeApi,
+        runtimeControl: teamRuntimeControlApi,
+      },
     },
   };
 }
@@ -528,7 +531,7 @@ describe('MCP team tools over the local REST control API', () => {
     const app = Fastify();
     const { services } = createServices(claudeRoot);
     let launchRequest: TeamLaunchRequest | null = null;
-    services.teamLaunchApi!.launchTeam = (
+    services.teamProvisioningApis!.launch!.launchTeam = (
       request: TeamLaunchRequest
     ): Promise<TeamLaunchResponse> => {
       launchRequest = request;
@@ -538,7 +541,7 @@ describe('MCP team tools over the local REST control API', () => {
         alreadyLaunching: true,
       });
     };
-    services.teamLaunchApi!.getProvisioningStatus = () =>
+    services.teamProvisioningApis!.launch!.getProvisioningStatus = () =>
       Promise.reject(
         new Error('team_launch should not wait for provisioning status after already_launching')
       );

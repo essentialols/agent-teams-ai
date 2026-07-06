@@ -210,15 +210,24 @@ export function recordCheckRuns(
   },
 ): IntegrationAttempt {
   assertStatus(attempt, [IntegrationAttemptStatus.ChecksRunning]);
-  const failed = input.checkRuns.some((run) => run.status !== CheckRunStatus.Passed);
   return {
     ...attempt,
-    status: failed
-      ? IntegrationAttemptStatus.ChecksFailed
-      : IntegrationAttemptStatus.ChecksPassed,
+    status: integrationStatusForCheckRuns(input.checkRuns),
     checkRuns: input.checkRuns,
     updatedAt: input.now,
   };
+}
+
+export function allCheckRunsPassed(checkRuns: readonly CheckRun[]): boolean {
+  return checkRuns.every((run) => run.status === CheckRunStatus.Passed);
+}
+
+export function integrationStatusForCheckRuns(
+  checkRuns: readonly CheckRun[],
+): IntegrationAttemptStatus.ChecksFailed | IntegrationAttemptStatus.ChecksPassed {
+  return allCheckRunsPassed(checkRuns)
+    ? IntegrationAttemptStatus.ChecksPassed
+    : IntegrationAttemptStatus.ChecksFailed;
 }
 
 export function markCommitCreated(

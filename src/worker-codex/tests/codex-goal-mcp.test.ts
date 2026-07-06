@@ -732,6 +732,7 @@ describe("codex goal MCP server", () => {
         promptPath: join(childJobRoot, "prompt.md"),
         taskId: "infinity-context-child-v1",
         accounts: ["account-a"],
+        workerRole: "reviewer",
         confirmCreate: true,
       });
 
@@ -743,6 +744,7 @@ describe("codex goal MCP server", () => {
           jobId: "infinity-context-child-v1",
           accessBoundary: AccessBoundary.IsolatedWorkspaceWrite,
           networkAccess: NetworkAccessMode.Restricted,
+          tags: expect.arrayContaining(["worker-role-reviewer"]),
           projectAccessScope: {
             projectId: "infinity-context",
             isolatedWorkspaceRoot: childWorkspace,
@@ -1583,6 +1585,281 @@ describe("codex goal MCP server", () => {
       expect(legacyTarget).toMatchObject({
         ok: false,
         error: "project_control_workspace_outside_scope",
+      });
+    } finally {
+      await client.close();
+      await server.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("admits producer refill when dirty legacy output has valid consumed ledger evidence", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-consumed-output-"));
+    const registryRootDir = join(root, "worker-jobs", "registry");
+    const controllerJobRoot = join(root, "worker-jobs", "infinity-context-controller-v1");
+    const workspaceRoot = join(root, "workspaces");
+    const legacyWorkspaceRoot = join(root, "legacy-workspaces");
+    const sourceWorkspacePath = join(workspaceRoot, "infinity-context-main");
+    const orphanWorkspace = join(legacyWorkspaceRoot, "infinity-context-memory-old-v1");
+    const ledgerRoot = join(root, "dirty-worktree-drain");
+    const backupRoot = join(root, "dirty-worktree-backups");
+    const producerWorkspace = join(root, "worktrees", "infinity-context-memory-producer-v1");
+    const server = createCodexGoalMcpServer();
+    const client = new Client({
+      name: "subscription-runtime-test",
+      version: "0.0.0",
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+    try {
+      await mkdir(sourceWorkspacePath, { recursive: true });
+      await gitInitRepository(sourceWorkspacePath);
+      await writeFile(join(sourceWorkspacePath, "README.md"), "base\n");
+      await git(sourceWorkspacePath, ["add", "README.md"]);
+      await git(sourceWorkspacePath, ["commit", "-m", "test: base"]);
+      await git(sourceWorkspacePath, [
+        "update-ref",
+        "refs/remotes/origin/main",
+        "HEAD",
+      ]);
+
+      await mkdir(orphanWorkspace, { recursive: true });
+      await gitInitRepository(orphanWorkspace);
+      await writeFile(join(orphanWorkspace, "memory.py"), "value = 1\n");
+      await git(orphanWorkspace, ["add", "memory.py"]);
+      await git(orphanWorkspace, ["commit", "-m", "test: orphan base"]);
+      await writeFile(join(orphanWorkspace, "memory.py"), "value = 2\n");
+
+      await mkdir(join(ledgerRoot, "items"), { recursive: true });
+      await mkdir(backupRoot, { recursive: true });
+      const statusPath = join(backupRoot, "infinity-context-memory-old-v1.status.txt");
+      const patchPath = join(backupRoot, "infinity-context-memory-old-v1.patch");
+      await writeFile(statusPath, " M memory.py\n");
+      await writeFile(patchPath, "diff --git a/memory.py b/memory.py\n");
+      await writeFile(
+        join(ledgerRoot, "items", "infinity-context-memory-old-v1.json"),
+        `${JSON.stringify({
+          jobId: "infinity-context-memory-old-v1",
+          status: "duplicate",
+          closedAt: "2026-07-06T00:00:00.000Z",
+          backup: {
+            workspace: orphanWorkspace,
+            statusPath,
+            patchPath,
+          },
+          notes: [{ status: "duplicate", text: "output already represented" }],
+        }, null, 2)}\n`,
+      );
+
+      await Promise.all([
+        server.connect(serverTransport),
+        client.connect(clientTransport),
+      ]);
+
+      await callToolJson(client, "codex_goal_create_job", {
+        registryRootDir,
+        jobId: "infinity-context-controller-v1",
+        jobRootDir: controllerJobRoot,
+        authRootDir: join(root, "auth"),
+        workspacePath: sourceWorkspacePath,
+        promptPath: join(controllerJobRoot, "prompt.md"),
+        taskId: "infinity-context-controller-v1",
+        accounts: ["account-a"],
+        accessBoundary: AccessBoundary.ProjectScopedControl,
+        networkAccess: NetworkAccessMode.Restricted,
+        projectAccessScope: {
+          projectId: "infinity-context",
+          workspaceRoots: [workspaceRoot],
+          worktreeRoots: [join(root, "worktrees")],
+          observedWorkspaceRoots: [legacyWorkspaceRoot],
+          consumedOutputLedgerRoots: [ledgerRoot],
+          registryRoot: registryRootDir,
+          jobIdPrefixes: ["infinity-context-"],
+          tmuxSessionPrefixes: ["infinity-context-"],
+          allowedAccountIds: ["account-a"],
+        },
+      });
+
+      const snapshot = await callToolJson(
+        client,
+        "codex_goal_project_admission_snapshot",
+        {
+          registryRootDir,
+          controllerJobId: "infinity-context-controller-v1",
+          operation: "create_job",
+          workerRole: "producer",
+        },
+      );
+      expect(snapshot).toMatchObject({
+        ok: true,
+        decision: {
+          allowed: true,
+          reason: "allowed",
+        },
+        snapshot: {
+          counts: {
+            orphanLegacyWorkspaces: 0,
+            consumedDirtyWorkspaces: 1,
+            incompleteConsumedOutputRecords: 0,
+          },
+        },
+      });
+
+      const producer = await callToolJson(client, "codex_goal_project_refill_worker", {
+        registryRootDir,
+        controllerJobId: "infinity-context-controller-v1",
+        jobId: "infinity-context-memory-producer-v1",
+        jobRootDir: join(root, "worker-jobs", "infinity-context-memory-producer-v1"),
+        authRootDir: join(root, "auth"),
+        sourceWorkspacePath,
+        workspacePath: producerWorkspace,
+        promptPath: join(root, "worker-jobs", "infinity-context-memory-producer-v1", "prompt.md"),
+        promptBody: "Produce a memory improvement.\n",
+        taskId: "infinity-context-memory-producer-v1",
+        accounts: ["account-a"],
+        workerRole: "producer",
+        startWorker: false,
+        confirmRefill: true,
+      });
+      expect(producer).toMatchObject({
+        ok: true,
+        workerRole: "producer",
+        startSkipped: true,
+      });
+    } finally {
+      await client.close();
+      await server.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks producer refill when terminal consumed ledger evidence is incomplete", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-incomplete-output-"));
+    const registryRootDir = join(root, "worker-jobs", "registry");
+    const controllerJobRoot = join(root, "worker-jobs", "infinity-context-controller-v1");
+    const workspaceRoot = join(root, "workspaces");
+    const legacyWorkspaceRoot = join(root, "legacy-workspaces");
+    const sourceWorkspacePath = join(workspaceRoot, "infinity-context-main");
+    const orphanWorkspace = join(legacyWorkspaceRoot, "infinity-context-memory-old-v1");
+    const ledgerRoot = join(root, "dirty-worktree-drain");
+    const backupRoot = join(root, "dirty-worktree-backups");
+    const server = createCodexGoalMcpServer();
+    const client = new Client({
+      name: "subscription-runtime-test",
+      version: "0.0.0",
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+    try {
+      await mkdir(sourceWorkspacePath, { recursive: true });
+      await gitInitRepository(sourceWorkspacePath);
+      await writeFile(join(sourceWorkspacePath, "README.md"), "base\n");
+      await git(sourceWorkspacePath, ["add", "README.md"]);
+      await git(sourceWorkspacePath, ["commit", "-m", "test: base"]);
+      await git(sourceWorkspacePath, [
+        "update-ref",
+        "refs/remotes/origin/main",
+        "HEAD",
+      ]);
+
+      await mkdir(orphanWorkspace, { recursive: true });
+      await gitInitRepository(orphanWorkspace);
+      await writeFile(join(orphanWorkspace, "memory.py"), "value = 1\n");
+      await git(orphanWorkspace, ["add", "memory.py"]);
+      await git(orphanWorkspace, ["commit", "-m", "test: orphan base"]);
+      await writeFile(join(orphanWorkspace, "memory.py"), "value = 2\n");
+
+      await mkdir(join(ledgerRoot, "items"), { recursive: true });
+      await mkdir(backupRoot, { recursive: true });
+      const statusPath = join(backupRoot, "infinity-context-memory-old-v1.status.txt");
+      await writeFile(statusPath, " M memory.py\n");
+      await writeFile(
+        join(ledgerRoot, "items", "infinity-context-memory-old-v1.json"),
+        `${JSON.stringify({
+          jobId: "infinity-context-memory-old-v1",
+          status: "duplicate",
+          closedAt: "2026-07-06T00:00:00.000Z",
+          backup: {
+            workspace: orphanWorkspace,
+            statusPath,
+          },
+          notes: [{ status: "duplicate", text: "output already represented" }],
+        }, null, 2)}\n`,
+      );
+
+      await Promise.all([
+        server.connect(serverTransport),
+        client.connect(clientTransport),
+      ]);
+
+      await callToolJson(client, "codex_goal_create_job", {
+        registryRootDir,
+        jobId: "infinity-context-controller-v1",
+        jobRootDir: controllerJobRoot,
+        authRootDir: join(root, "auth"),
+        workspacePath: sourceWorkspacePath,
+        promptPath: join(controllerJobRoot, "prompt.md"),
+        taskId: "infinity-context-controller-v1",
+        accounts: ["account-a"],
+        accessBoundary: AccessBoundary.ProjectScopedControl,
+        networkAccess: NetworkAccessMode.Restricted,
+        projectAccessScope: {
+          projectId: "infinity-context",
+          workspaceRoots: [workspaceRoot],
+          worktreeRoots: [join(root, "worktrees")],
+          observedWorkspaceRoots: [legacyWorkspaceRoot],
+          consumedOutputLedgerRoots: [ledgerRoot],
+          registryRoot: registryRootDir,
+          jobIdPrefixes: ["infinity-context-"],
+          tmuxSessionPrefixes: ["infinity-context-"],
+          allowedAccountIds: ["account-a"],
+        },
+      });
+
+      const snapshot = await callToolJson(
+        client,
+        "codex_goal_project_admission_snapshot",
+        {
+          registryRootDir,
+          controllerJobId: "infinity-context-controller-v1",
+          operation: "create_job",
+          workerRole: "producer",
+        },
+      );
+      expect(snapshot).toMatchObject({
+        ok: true,
+        decision: {
+          allowed: false,
+          reason: "output_debt_present",
+        },
+        snapshot: {
+          counts: {
+            orphanLegacyWorkspaces: 0,
+            consumedDirtyWorkspaces: 0,
+            incompleteConsumedOutputRecords: 1,
+          },
+        },
+      });
+
+      const producer = await callToolJson(client, "codex_goal_project_refill_worker", {
+        registryRootDir,
+        controllerJobId: "infinity-context-controller-v1",
+        jobId: "infinity-context-memory-producer-v1",
+        jobRootDir: join(root, "worker-jobs", "infinity-context-memory-producer-v1"),
+        authRootDir: join(root, "auth"),
+        sourceWorkspacePath,
+        workspacePath: join(root, "worktrees", "infinity-context-memory-producer-v1"),
+        promptPath: join(root, "worker-jobs", "infinity-context-memory-producer-v1", "prompt.md"),
+        promptBody: "Produce a memory improvement.\n",
+        taskId: "infinity-context-memory-producer-v1",
+        accounts: ["account-a"],
+        workerRole: "producer",
+        startWorker: false,
+        confirmRefill: true,
+      });
+      expect(producer).toMatchObject({
+        ok: false,
+        error: "project_control_admission_denied:output_debt_present",
       });
     } finally {
       await client.close();

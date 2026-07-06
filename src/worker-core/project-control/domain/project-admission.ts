@@ -28,6 +28,8 @@ export enum ProjectDebtReason {
   InactiveDirtyWorkspace = "inactive_dirty_workspace",
   UnconsumedCompletedJob = "unconsumed_completed_job",
   OrphanLegacyWorkspace = "orphan_legacy_workspace",
+  ConsumedDirtyWorkspace = "consumed_dirty_workspace",
+  IncompleteConsumedOutputRecord = "incomplete_consumed_output_record",
   ActiveWriterConflict = "active_writer_conflict",
   StaleDirtyWorker = "stale_dirty_worker",
   UnreadableRoot = "unreadable_root",
@@ -54,6 +56,8 @@ export type ProjectAdmissionSnapshot = {
     readonly inactiveDirtyWorkspaces?: number;
     readonly unconsumedCompletedJobs?: number;
     readonly orphanLegacyWorkspaces?: number;
+    readonly consumedDirtyWorkspaces?: number;
+    readonly incompleteConsumedOutputRecords?: number;
     readonly activeWriterConflicts?: number;
     readonly staleDirtyWorkers?: number;
     readonly unreadableRoots?: number;

@@ -187,6 +187,11 @@ export function parseCodexGoalProjectAccessScope(
       "observedWorkspaceRoots",
       fieldName,
     ),
+    ...stringArrayProperty(
+      value.consumedOutputLedgerRoots,
+      "consumedOutputLedgerRoots",
+      fieldName,
+    ),
     ...(stringValue(value.isolatedWorkspaceRoot) === undefined
       ? {}
       : {

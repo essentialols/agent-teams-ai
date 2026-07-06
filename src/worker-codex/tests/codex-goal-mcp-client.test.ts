@@ -70,7 +70,7 @@ describe("codex goal MCP client supervisor helpers", () => {
     )).toBe(false);
   });
 
-  it("retries failed project controllers only after quota failures", () => {
+  it("retries failed project controllers after transient runtime failures", () => {
     expect(controllerSupervisorTerminalStatusCanRetry(
       ControllerSupervisorObservedStatus.Failed,
       { ok: true, run: { safeMessage: "Codex quota or billing limit was reached." } },
@@ -78,6 +78,14 @@ describe("codex goal MCP client supervisor helpers", () => {
     expect(controllerSupervisorTerminalStatusCanRetry(
       ControllerSupervisorObservedStatus.Failed,
       { ok: true, run: { safeMessage: "Codex task timed out." } },
+    )).toBe(true);
+    expect(controllerSupervisorTerminalStatusCanRetry(
+      ControllerSupervisorObservedStatus.Failed,
+      { ok: true, run: { safeMessage: "Codex provider output was invalid." } },
+    )).toBe(true);
+    expect(controllerSupervisorTerminalStatusCanRetry(
+      ControllerSupervisorObservedStatus.Failed,
+      { ok: true, run: { safeMessage: "Codex runtime failed." } },
     )).toBe(true);
     expect(controllerSupervisorTerminalStatusCanRetry(
       ControllerSupervisorObservedStatus.Failed,

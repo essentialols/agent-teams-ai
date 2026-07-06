@@ -257,7 +257,8 @@ export function controllerSupervisorTerminalStatusCanRetry(
   return status === ControllerSupervisorObservedStatus.Failed &&
     (
       controllerSupervisorQuotaFailure(reconcile) ||
-      controllerSupervisorTimeoutFailure(reconcile)
+      controllerSupervisorTimeoutFailure(reconcile) ||
+      controllerSupervisorTransientRuntimeFailure(reconcile)
     );
 }
 
@@ -393,21 +394,28 @@ function controllerSupervisorStatusValue(
 
 function controllerSupervisorQuotaFailure(result: unknown): boolean {
   return /\b(?:quota|billing limit|usage limit|rate limit)\b/i.test(
-    String(
-      nestedRecord(result, "run")?.safeMessage ??
-        (isRecord(result) ? result.safeMessage : undefined) ??
-        "",
-    ),
+    controllerSupervisorSafeMessage(result),
   );
 }
 
 function controllerSupervisorTimeoutFailure(result: unknown): boolean {
   return /\b(?:timed out|timeout)\b/i.test(
-    String(
-      nestedRecord(result, "run")?.safeMessage ??
-        (isRecord(result) ? result.safeMessage : undefined) ??
-        "",
-    ),
+    controllerSupervisorSafeMessage(result),
+  );
+}
+
+function controllerSupervisorTransientRuntimeFailure(result: unknown): boolean {
+  return /\b(?:codex runtime failed|codex provider output was invalid|codex app-server goal backend is temporarily blocked|codex app-server goal slice exhausted)\b/i.test(
+    controllerSupervisorSafeMessage(result),
+  );
+}
+
+function controllerSupervisorSafeMessage(result: unknown): string {
+  return String(
+    nestedRecord(result, "run")?.safeMessage ??
+      nestedRecord(result, "session")?.safeMessage ??
+      (isRecord(result) ? result.safeMessage : undefined) ??
+      "",
   );
 }
 

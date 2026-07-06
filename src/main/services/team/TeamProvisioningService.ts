@@ -321,9 +321,7 @@ import {
 } from './provisioning/TeamProvisioningOpenCodeRuntimeDeliveryAdvisory';
 import {
   createTeamProvisioningOpenCodeRuntimeDeliveryBoundaryFromHost,
-  createTeamProvisioningOpenCodeRuntimeDeliveryBoundaryHost,
   type TeamProvisioningOpenCodeRuntimeDeliveryBoundaryHost,
-  type TeamProvisioningOpenCodeRuntimeDeliveryBoundaryHostFactoryService,
 } from './provisioning/TeamProvisioningOpenCodeRuntimeDeliveryBoundaryFactory';
 import {
   applyOpenCodeSecondaryBootstrapStallOverlay as applyOpenCodeSecondaryBootstrapStallOverlayHelper,
@@ -1779,10 +1777,7 @@ export class TeamProvisioningService {
         logger,
       }
     );
-    this.openCodeRuntimeDeliveryBoundaryHost =
-      createTeamProvisioningOpenCodeRuntimeDeliveryBoundaryHost<ProvisioningRun>(
-        this as unknown as TeamProvisioningOpenCodeRuntimeDeliveryBoundaryHostFactoryService<ProvisioningRun>
-      );
+    this.openCodeRuntimeDeliveryBoundaryHost = this.createOpenCodeRuntimeDeliveryBoundaryHost();
     this.launchStateStoreBoundary = new TeamProvisioningLaunchStateStoreBoundary({
       launchStateStore: {
         read: (teamName) => this.launchStateStore.read(teamName),
@@ -3708,6 +3703,83 @@ export class TeamProvisioningService {
 
   async recordOpenCodeRuntimeHeartbeat(raw: unknown): Promise<OpenCodeRuntimeControlAck> {
     return this.openCodeRuntimeControlApi.recordOpenCodeRuntimeHeartbeat(raw);
+  }
+
+  private createOpenCodeRuntimeDeliveryBoundaryHost(): TeamProvisioningOpenCodeRuntimeDeliveryBoundaryHost<ProvisioningRun> {
+    return {
+      resolveOpenCodeRuntimeLaneId: (input) => this.resolveOpenCodeRuntimeLaneId(input),
+      openCodeRuntimeRecoveryIdentity: {
+        resolveCurrentOpenCodeRuntimeRunId: (teamName, laneId) =>
+          this.openCodeRuntimeRecoveryIdentity.resolveCurrentOpenCodeRuntimeRunId(teamName, laneId),
+        resolveOpenCodeMemberDeliveryIdentity: (teamName, memberName) =>
+          this.openCodeRuntimeRecoveryIdentity.resolveOpenCodeMemberDeliveryIdentity(
+            teamName,
+            memberName
+          ),
+      },
+      launchStateStore: {
+        read: (teamName) => this.launchStateStore.read(teamName),
+      },
+      writeLaunchStateSnapshot: async (teamName, snapshot) => {
+        await this.writeLaunchStateSnapshot(teamName, snapshot);
+      },
+      readConfigForStrictDecision: (teamName) => this.readConfigForStrictDecision(teamName),
+      membersMetaStore: {
+        getMembers: (teamName) => this.membersMetaStore.getMembers(teamName),
+      },
+      readPersistedRuntimeMembers: (teamName) => this.readPersistedRuntimeMembers(teamName),
+      runTracking: {
+        getTrackedRunId: (teamName) => this.runTracking.getTrackedRunId(teamName),
+      },
+      runs: {
+        get: (runId) => this.runs.get(runId),
+      },
+      persistLaunchStateSnapshot: (run, launchPhase) =>
+        this.persistLaunchStateSnapshot(run, launchPhase),
+      getMixedSecondaryLaunchPhase: (run) => this.getMixedSecondaryLaunchPhase(run),
+      invalidateRuntimeSnapshotCaches: (teamName) => this.invalidateRuntimeSnapshotCaches(teamName),
+      emitMemberSpawnChange: (run, memberName) => this.emitMemberSpawnChange(run, memberName),
+      teamChangeEmitter: (event) => {
+        this.teamChangeEmitter?.(event);
+      },
+      createOpenCodeRuntimeBootstrapEvidencePorts: () =>
+        this.createOpenCodeRuntimeBootstrapEvidencePorts(),
+      openCodeTaskLogAttributionStore: {
+        upsertTaskRecord: (teamName, record) =>
+          this.openCodeTaskLogAttributionStore.upsertTaskRecord(teamName, record),
+      },
+      syncMemberTaskActivityForRuntimeTransition: (
+        run,
+        memberName,
+        previousStatus,
+        nextStatus,
+        observedAt
+      ) =>
+        this.syncMemberTaskActivityForRuntimeTransition(
+          run,
+          memberName,
+          previousStatus,
+          nextStatus,
+          observedAt
+        ),
+      syncMemberLaunchGraceCheck: (run, memberName, nextStatus) =>
+        this.syncMemberLaunchGraceCheck(run, memberName, nextStatus),
+      sentMessagesStore: this.sentMessagesStore,
+      inboxReader: this.inboxReader,
+      inboxWriter: this.inboxWriter,
+      getCrossTeamSender: () => this.crossTeamSender,
+      isOpenCodeRuntimeRecipient: (teamName, memberName) =>
+        this.isOpenCodeRuntimeRecipient(teamName, memberName),
+      getOpenCodeAgendaSyncRecoveryBypassMessageIds: (input) =>
+        this.getOpenCodeAgendaSyncRecoveryBypassMessageIds(input),
+      tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive: (input) =>
+        this.tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive(input),
+      decideOpenCodeRuntimeDeliveryUserFacingAdvisory: (record) =>
+        this.decideOpenCodeRuntimeDeliveryUserFacingAdvisory(record),
+      openCodePromptDeliveryWatchdogScheduler: this.openCodePromptDeliveryWatchdogScheduler,
+      scheduleOpenCodePromptDeliveryWatchdog: (input) =>
+        this.scheduleOpenCodePromptDeliveryWatchdog(input),
+    };
   }
 
   private createOpenCodeRuntimeDeliveryBoundary() {

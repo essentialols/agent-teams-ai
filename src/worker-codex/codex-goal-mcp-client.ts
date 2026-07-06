@@ -10,6 +10,8 @@ type SuperviseEvent =
   | { readonly type: "start"; readonly result: unknown }
   | { readonly type: "status"; readonly result: unknown }
   | { readonly type: "reconcile"; readonly result: unknown }
+  | { readonly type: "accounts"; readonly result: unknown }
+  | { readonly type: "capacity_wait"; readonly result: unknown }
   | { readonly type: "stop"; readonly result: unknown };
 
 export enum ControllerSupervisorObservedStatus {
@@ -122,9 +124,29 @@ export async function superviseCodexGoalProjectController(input: {
           ) {
             const accountsStatus = parseMcpJsonResult(await client.callTool({
               name: "codex_goal_accounts_status",
-              arguments: input.args,
+              arguments: controllerSupervisorJobArgs(input.args),
             }));
+            input.onEvent?.({ type: "accounts", result: accountsStatus });
             if (controllerSupervisorHasAvailableAccounts(accountsStatus)) {
+              break;
+            }
+            const retryAfterMs = controllerSupervisorNextCapacityRetryDelayMs(accountsStatus);
+            if (retryAfterMs !== undefined) {
+              input.onEvent?.({
+                type: "capacity_wait",
+                result: {
+                  ok: true,
+                  mode: "project_controller_capacity_wait",
+                  controllerJobId: controllerSupervisorControllerJobId(input.args),
+                  retryAfterMs,
+                },
+              });
+              try {
+                await sleep(retryAfterMs, undefined, { signal: input.signal });
+              } catch (error) {
+                if (isAbortError(error)) break;
+                throw error;
+              }
               break;
             }
           }
@@ -185,9 +207,23 @@ export function controllerSupervisorTerminalStatusCanRetry(
 }
 
 export function controllerSupervisorHasAvailableAccounts(result: unknown): boolean {
+  if (isRecord(result) && result.ok === false) return false;
   const summary = nestedRecord(result, "summary");
-  const available = summary?.availableDeduped;
+  const available = summary?.availableDeduped ??
+    (isRecord(result) ? result.available : undefined);
   return typeof available === "number" && available > 0;
+}
+
+export function controllerSupervisorNextCapacityRetryDelayMs(
+  result: unknown,
+  nowMs = Date.now(),
+): number | undefined {
+  if (isRecord(result) && result.ok === false) return undefined;
+  const retryAt = controllerSupervisorCooldownInstants(result)
+    .filter((instant) => instant > nowMs)
+    .sort((left, right) => left - right)[0];
+  if (retryAt === undefined) return undefined;
+  return Math.max(1_000, retryAt - nowMs);
 }
 
 function controllerSupervisorTerminalStatusSucceeded(
@@ -195,6 +231,37 @@ function controllerSupervisorTerminalStatusSucceeded(
 ): boolean {
   return status === ControllerSupervisorObservedStatus.Completed ||
     status === ControllerSupervisorObservedStatus.Stopped;
+}
+
+export function controllerSupervisorJobArgs(args: JsonRecord): JsonRecord {
+  const controllerJobId = controllerSupervisorControllerJobId(args);
+  return controllerJobId === undefined ? args : {
+    ...args,
+    jobId: controllerJobId,
+  };
+}
+
+function controllerSupervisorControllerJobId(args: JsonRecord): string | undefined {
+  return typeof args.controllerJobId === "string"
+    ? args.controllerJobId
+    : typeof args.jobId === "string"
+    ? args.jobId
+    : undefined;
+}
+
+function controllerSupervisorCooldownInstants(result: unknown): readonly number[] {
+  const records = [
+    ...recordArray(result, "accounts"),
+    ...recordArray(result, "slots"),
+  ];
+  const instants: number[] = [];
+  for (const record of records) {
+    const cooldownUntil = record.capacityCooldownUntil;
+    if (typeof cooldownUntil !== "string") continue;
+    const instant = Date.parse(cooldownUntil);
+    if (Number.isFinite(instant)) instants.push(instant);
+  }
+  return instants;
 }
 
 function controllerSupervisorStatusValue(
@@ -337,6 +404,11 @@ function nestedRecord(value: unknown, key: string): Record<string, unknown> | un
   if (!isRecord(value)) return undefined;
   const nested = value[key];
   return isRecord(nested) ? nested : undefined;
+}
+
+function recordArray(value: unknown, key: string): readonly Record<string, unknown>[] {
+  if (!isRecord(value) || !Array.isArray(value[key])) return [];
+  return value[key].filter((item): item is Record<string, unknown> => isRecord(item));
 }
 
 function isAbortError(error: unknown): boolean {

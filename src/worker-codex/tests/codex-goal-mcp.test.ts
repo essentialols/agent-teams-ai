@@ -4158,6 +4158,18 @@ await writeFile(operationFilePath, JSON.stringify(operation, null, 2) + "\\n");
             workspace: workspacePath,
           },
         });
+      await expect(callToolJson(client, "codex_goal_project_push_approved_commit", {
+        registryRootDir,
+        controllerJobId: "infinity-context-controller-v1",
+        attemptId: "attempt-1",
+        confirmPush: true,
+      })).resolves.toMatchObject({
+        ok: true,
+        mode: "project_integration_push_approved_commit",
+        attempt: {
+          status: "pushed",
+        },
+      });
     } finally {
       await client.close();
       await server.close();

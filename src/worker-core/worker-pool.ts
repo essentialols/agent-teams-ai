@@ -14,12 +14,6 @@ import type {
   WorkerPoolStats,
   WorkerPoolTimerHandle,
 } from "./types";
-import {
-  assessWorkerCapacityRecovery,
-  isAuthBlockedWorkerCapacity,
-  nextWorkerCapacityRecoveryAt,
-  normalizeWorkerCapacitySnapshot,
-} from "./account-capacity/domain/worker-capacity-recovery-policy";
 import { SubscriptionWorkerError } from "./errors";
 
 type Slot<Job, Result> = {
@@ -577,7 +571,7 @@ export class BoundedSubscriptionWorkerPool<Job, Result> {
     if (slot.busy) return { availability: "busy" };
     const worker = capacityAwareWorker(slot.worker);
     if (!worker) return { availability: "available" };
-    return normalizeWorkerCapacitySnapshot(worker.capacity(), now);
+    return normalizeCapacity(worker.capacity(), now);
   }
 
   private scheduleCapacityDrain(
@@ -585,20 +579,21 @@ export class BoundedSubscriptionWorkerPool<Job, Result> {
     policy: Required<WorkerPoolRetryPolicy>,
   ): void {
     const now = this.now().getTime();
-    const nextCooldownAt = nextWorkerCapacityRecoveryAt(snapshots);
+    const nextCooldownAt = nextCooldownDrainAt(snapshots);
     const shouldPoll =
       policy.retryOnSlotCapacityUnavailable &&
-      snapshots.some((snapshot) => isAuthBlockedWorkerCapacity(snapshot.capacity));
+      snapshots.some((snapshot) => isAuthBlockedCapacity(snapshot.capacity));
     if (nextCooldownAt === null && !shouldPoll) return;
 
     const nextPollAt = shouldPoll
       ? now + Math.max(250, policy.capacityPollMs)
       : null;
-    const nextDrainAt = nextCooldownAt === null
-      ? nextPollAt
-      : nextPollAt === null
-        ? nextCooldownAt
-        : Math.min(nextCooldownAt, nextPollAt);
+    const nextDrainAt =
+      nextCooldownAt === null
+        ? nextPollAt
+        : nextPollAt === null
+          ? nextCooldownAt
+          : Math.min(nextCooldownAt, nextPollAt);
     if (nextDrainAt === null) return;
 
     if (
@@ -615,6 +610,27 @@ export class BoundedSubscriptionWorkerPool<Job, Result> {
       this.cooldownDrainTimer = null;
       this.drainQueue();
     }, Math.max(0, nextDrainAt - now));
+  }
+
+  private scheduleCooldownDrain(
+    snapshots: readonly WorkerPoolSlotSnapshot[],
+  ): void {
+    const nextCooldownAt = nextCooldownDrainAt(snapshots);
+    if (nextCooldownAt === null) return;
+    if (
+      this.cooldownDrainAt !== null &&
+      this.cooldownDrainAt <= nextCooldownAt
+    ) {
+      return;
+    }
+
+    this.clearCooldownDrainTimer();
+    this.cooldownDrainAt = nextCooldownAt;
+    this.cooldownDrainTimer = this.setTimer(() => {
+      this.cooldownDrainAt = null;
+      this.cooldownDrainTimer = null;
+      this.drainQueue();
+    }, Math.max(0, nextCooldownAt - this.now().getTime()));
   }
 
   private clearCooldownDrainTimer(): void {
@@ -843,24 +859,145 @@ function capacityAwareWorker<Job, Result>(
   return null;
 }
 
+function normalizeCapacity(
+  capacity: WorkerCapacitySnapshot,
+  now: Date,
+): WorkerCapacitySnapshot {
+  if (
+    !isResettableCapacity(capacity) ||
+    !capacity.cooldownUntil ||
+    capacity.cooldownUntil.getTime() > now.getTime()
+  ) {
+    return capacity;
+  }
+
+  const {
+    cooldownUntil: _cooldownUntil,
+    lastLimitSignalAt: _lastLimitSignalAt,
+    reason: _reason,
+    ...rest
+  } = capacity;
+  return {
+    ...rest,
+    availability: "available",
+  };
+}
+
+function isResettableCapacity(
+  capacity: WorkerCapacitySnapshot,
+): boolean {
+  return (
+    capacity.availability === "cooldown" ||
+    capacity.availability === "quota_exhausted"
+  );
+}
+
 function capacityUnavailableError(
   snapshots: readonly WorkerPoolSlotSnapshot[],
   policy: Required<WorkerPoolRetryPolicy>,
 ): SubscriptionWorkerError | null {
-  const recovery = assessWorkerCapacityRecovery(snapshots);
-  if (recovery.kind !== "unavailable") return null;
+  if (snapshots.some((snapshot) => snapshot.busy)) return null;
   if (
-    policy.retryOnSlotCapacityUnavailable &&
-    snapshots.some((snapshot) => isAuthBlockedWorkerCapacity(snapshot.capacity))
+    snapshots.some(
+      (snapshot) =>
+        isResettableCapacity(snapshot.capacity) &&
+        snapshot.capacity.cooldownUntil,
+    )
   ) {
     return null;
   }
+  if (
+    policy.retryOnSlotCapacityUnavailable &&
+    snapshots.some((snapshot) => isAuthBlockedCapacity(snapshot.capacity))
+  ) {
+    return null;
+  }
+
+  const unavailable = snapshots.filter(
+    (snapshot) => snapshot.capacity.availability !== "available",
+  );
+  if (unavailable.length === 0) return null;
 
   return new SubscriptionWorkerError(
     "subscription_worker_pool_capacity_unavailable",
     "Worker pool has no available or resettable-capacity slots.",
     {
-      details: recovery.details,
+      details: {
+        availability: summarizeAvailability(unavailable),
+        ...capacityRecoveryDetails(unavailable),
+      },
     },
   );
+}
+
+function nextCooldownDrainAt(
+  snapshots: readonly WorkerPoolSlotSnapshot[],
+): number | null {
+  return snapshots.reduce<number | null>((nextAt, snapshot) => {
+    if (
+      !isResettableCapacity(snapshot.capacity) ||
+      !snapshot.capacity.cooldownUntil
+    ) {
+      return nextAt;
+    }
+    const candidate = snapshot.capacity.cooldownUntil.getTime();
+    return nextAt === null ? candidate : Math.min(nextAt, candidate);
+  }, null);
+}
+
+function capacityRecoveryDetails(
+  snapshots: readonly WorkerPoolSlotSnapshot[],
+): Readonly<Record<string, string>> {
+  const reasons = summarizeReasons(snapshots);
+  const authBlocked = snapshots.some((snapshot) =>
+    isAuthBlockedCapacity(snapshot.capacity)
+  );
+  return {
+    ...(reasons ? { reasons } : {}),
+    ...(authBlocked
+      ? {
+          recoveryHint:
+            "One or more worker account slots look auth-stale. Run account diagnostics, relogin the affected slot or sync the per-account auth root to this host, then retry the worker.",
+        }
+      : {}),
+  };
+}
+
+function isAuthBlockedCapacity(capacity: WorkerCapacitySnapshot): boolean {
+  return capacity.reason === "auth_invalid" ||
+    capacity.reason === "auth_missing" ||
+    capacity.reason === "account_unavailable" ||
+    capacity.reason === "provider_session_invalid" ||
+    capacity.reason === "reconnect_required" ||
+    capacity.details?.code === "auth_invalid" ||
+    capacity.details?.code === "provider_session_invalid";
+}
+
+function summarizeAvailability(
+  snapshots: readonly WorkerPoolSlotSnapshot[],
+): string {
+  const counts = new Map<string, number>();
+  for (const snapshot of snapshots) {
+    counts.set(
+      snapshot.capacity.availability,
+      (counts.get(snapshot.capacity.availability) ?? 0) + 1,
+    );
+  }
+  return [...counts.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([availability, count]) => `${availability}:${count}`)
+    .join(",");
+}
+
+function summarizeReasons(snapshots: readonly WorkerPoolSlotSnapshot[]): string {
+  const counts = new Map<string, number>();
+  for (const snapshot of snapshots) {
+    const reason = snapshot.capacity.reason ?? snapshot.capacity.details?.code;
+    if (!reason) continue;
+    counts.set(reason, (counts.get(reason) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([reason, count]) => `${reason}:${count}`)
+    .join(",");
 }

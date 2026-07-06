@@ -5,7 +5,6 @@ import {
   ProjectDebtReason,
   type ProjectAdmissionSnapshot,
   type ProjectDebtItem,
-  summarizeProjectAdmissionDebt,
 } from "../domain/project-admission";
 
 const CONSUMED_OUTPUT_TERMINAL_STATUSES = new Set([
@@ -34,24 +33,12 @@ export type ConsumedOutputLedger = {
   readonly debt: readonly ProjectDebtItem[];
 };
 
-export type ConsumedOutputLedgerPathAccess = {
-  readonly pathExists: (path: string) => Promise<boolean> | boolean;
-  readonly realpath?: (path: string) => Promise<string | undefined> | string | undefined;
-};
-
-const defaultPathAccess: ConsumedOutputLedgerPathAccess = {
-  pathExists,
-  realpath: optionalRealpath,
-};
-
 export async function readConsumedOutputLedgers(input: {
   readonly roots: readonly string[];
-  readonly pathAccess?: ConsumedOutputLedgerPathAccess;
 }): Promise<ConsumedOutputLedger> {
   const byJobId = new Map<string, ConsumedOutputRecord>();
   const byWorkspace = new Map<string, ConsumedOutputRecord>();
   const debt: ProjectDebtItem[] = [];
-  const pathAccess = input.pathAccess ?? defaultPathAccess;
   for (const rootInput of uniqueStrings(input.roots)) {
     const root = resolve(rootInput);
     const itemsDir = join(root, "items");
@@ -93,7 +80,6 @@ export async function readConsumedOutputLedgers(input: {
       const record = await consumedOutputRecordFromJson({
         value: parsed,
         ledgerPath,
-        pathAccess,
       });
       if (!record) continue;
       byJobId.set(record.jobId, record);
@@ -109,10 +95,8 @@ export async function readConsumedOutputLedgers(input: {
 export async function consumedOutputRecordFromJson(input: {
   readonly value: unknown;
   readonly ledgerPath: string;
-  readonly pathAccess?: ConsumedOutputLedgerPathAccess;
 }): Promise<ConsumedOutputRecord | null> {
   if (!isRecord(input.value)) return null;
-  const pathAccess = input.pathAccess ?? defaultPathAccess;
   const status = stringValue(input.value.status);
   if (!status || !CONSUMED_OUTPUT_TERMINAL_STATUSES.has(status)) return null;
   const jobId = stringValue(input.value.jobId);
@@ -139,7 +123,7 @@ export async function consumedOutputRecordFromJson(input: {
     evidence.push("terminal consumed-output record is still marked active/claimed");
   }
   const backupEvidence = backup
-    ? await consumedOutputBackupEvidence(backup, pathAccess)
+    ? await consumedOutputBackupEvidence(backup)
     : { ok: false, evidence: ["backup metadata is missing"] };
   evidence.push(...backupEvidence.evidence);
   const commit = integratedOutputCommit(input.value);
@@ -147,9 +131,9 @@ export async function consumedOutputRecordFromJson(input: {
     evidence.push("integrated consumed-output record is missing commit evidence");
   }
   let resolvedWorkspace: string | undefined;
-  if (workspace && pathAccess.realpath) {
+  if (workspace) {
     try {
-      resolvedWorkspace = await pathAccess.realpath(workspace);
+      resolvedWorkspace = await realpath(workspace);
     } catch {
       resolvedWorkspace = undefined;
     }
@@ -241,18 +225,30 @@ export function consumedDebt(record: ConsumedOutputRecord): readonly ProjectDebt
 export function projectAdmissionDebtCounts(
   debt: readonly ProjectDebtItem[],
 ): NonNullable<ProjectAdmissionSnapshot["counts"]> {
-  return summarizeProjectAdmissionDebt(debt).counts;
+  const count = (reason: ProjectDebtReason) =>
+    debt.filter((item) => item.reason === reason).length;
+  return {
+    inactiveDirtyWorkspaces: count(ProjectDebtReason.InactiveDirtyWorkspace),
+    unconsumedCompletedJobs: count(ProjectDebtReason.UnconsumedCompletedJob),
+    orphanLegacyWorkspaces: count(ProjectDebtReason.OrphanLegacyWorkspace),
+    consumedDirtyWorkspaces: count(ProjectDebtReason.ConsumedDirtyWorkspace),
+    incompleteConsumedOutputRecords: count(ProjectDebtReason.IncompleteConsumedOutputRecord),
+    activeWriterConflicts: count(ProjectDebtReason.ActiveWriterConflict),
+    staleDirtyWorkers: count(ProjectDebtReason.StaleDirtyWorker),
+    unreadableRoots: count(ProjectDebtReason.UnreadableRoot),
+    unreadableWorkspaces: count(ProjectDebtReason.UnreadableWorkspace),
+    diskPressure: count(ProjectDebtReason.DiskPressure),
+  };
 }
 
 async function consumedOutputBackupEvidence(
   backup: Record<string, unknown>,
-  pathAccess: ConsumedOutputLedgerPathAccess,
 ): Promise<{ readonly ok: boolean; readonly evidence: readonly string[] }> {
   const evidence: string[] = [];
   const statusPath = stringValue(backup.statusPath);
   if (!statusPath) {
     evidence.push("backup is missing statusPath");
-  } else if (!await pathAccess.pathExists(statusPath)) {
+  } else if (!await pathExists(statusPath)) {
     evidence.push(`backup statusPath is missing: ${statusPath}`);
   }
   const payloadPaths = [
@@ -264,7 +260,7 @@ async function consumedOutputBackupEvidence(
     evidence.push("backup is missing patch/numstat/untracked archive evidence");
   } else {
     const existing = await Promise.all(
-      payloadPaths.map(async (path) => await pathAccess.pathExists(path)),
+      payloadPaths.map(async (path) => await pathExists(path)),
     );
     if (!existing.some(Boolean)) {
       evidence.push("none of backup patch/numstat/untracked archive paths exists");
@@ -307,14 +303,6 @@ async function pathExists(path: string): Promise<boolean> {
     return true;
   } catch {
     return false;
-  }
-}
-
-async function optionalRealpath(path: string): Promise<string | undefined> {
-  try {
-    return await realpath(path);
-  } catch {
-    return undefined;
   }
 }
 

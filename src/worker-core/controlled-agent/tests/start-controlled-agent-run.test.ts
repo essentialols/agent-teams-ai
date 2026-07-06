@@ -344,13 +344,14 @@ describe("startControlledAgentRun", () => {
     if (!result.ok) throw new Error("expected blocked session recovery");
     expect(providerCalls).toEqual(["stop", "start"]);
     expect(providerStarts).toHaveLength(1);
-    expect(savedRuns.find((run) => run.runId === "run-existing")).toMatchObject({
-      runId: "run-existing",
-      status: ControlledAgentRunStatus.Blocked,
-      stoppedAt: "2026-07-05T11:01:00.000Z",
-      safeMessage:
-        "Controlled-agent persisted session status is blocked; active provider run must be recovered.",
-    });
+    expect(savedRuns.filter((run) => run.runId === "run-existing").slice(-1)[0])
+      .toMatchObject({
+        runId: "run-existing",
+        status: ControlledAgentRunStatus.Blocked,
+        stoppedAt: "2026-07-05T11:01:00.000Z",
+        safeMessage:
+          "Controlled-agent persisted session status is blocked; active provider run must be recovered.",
+      });
     expect(
       savedSessions.find(
         (session) => session.status === ControlledAgentRunStatus.Blocked,

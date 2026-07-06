@@ -105,16 +105,15 @@ export class StartControlledAgentRunUseCase {
       const staleSafeMessage = existingRun.owner === undefined
         ? "Controlled-agent active run has no owner metadata and exceeded the ownerless recovery threshold."
         : "Controlled-agent owner process is no longer live.";
-      const terminalRecovery = runRecoveryForExistingActiveRun(existingSession);
-      const recoveredStatus = terminalRecovery.status ??
-        ControlledAgentRunStatus.Failed;
-      const recoveredSafeMessage = terminalRecovery.safeMessage ?? staleSafeMessage;
       const now = (this.deps.clock?.now() ?? new Date()).toISOString();
       try {
         await this.deps.provider.stop({
           session: existingSession,
           run: existingRun,
-          reason: recoveredSafeMessage,
+          reason: existingActiveRunRecoverySafeMessage(
+            existingSession,
+            staleSafeMessage,
+          ),
         });
       } catch (error) {
         return {
@@ -127,14 +126,26 @@ export class StartControlledAgentRunUseCase {
       }
       await this.deps.stateStore?.saveRun({
         ...existingRun,
-        status: recoveredStatus,
-        safeMessage: recoveredSafeMessage,
+        status: ControlledAgentRunStatus.Failed,
+        safeMessage: staleSafeMessage,
         stoppedAt: now,
         updatedAt: now,
       });
+      if (!controlledAgentStatusAllowsLiveController(existingSession.status)) {
+        await this.deps.stateStore?.saveRun({
+          ...existingRun,
+          status: existingActiveRunRecoveryStatus(existingSession),
+          safeMessage: existingActiveRunRecoverySafeMessage(
+            existingSession,
+            staleSafeMessage,
+          ),
+          stoppedAt: now,
+          updatedAt: now,
+        });
+      }
       await this.deps.stateStore?.saveSession({
         ...existingSession,
-        status: recoveredStatus,
+        status: existingActiveRunRecoveryStatus(existingSession),
         updatedAt: now,
       });
     }
@@ -244,4 +255,18 @@ function runRecoveryForExistingActiveRun(
     };
   }
   return {};
+}
+
+function existingActiveRunRecoveryStatus(
+  session: ControlledAgentSession,
+): ControlledAgentRunStatus {
+  return runRecoveryForExistingActiveRun(session).status ??
+    ControlledAgentRunStatus.Failed;
+}
+
+function existingActiveRunRecoverySafeMessage(
+  session: ControlledAgentSession,
+  staleSafeMessage: string,
+): string {
+  return runRecoveryForExistingActiveRun(session).safeMessage ?? staleSafeMessage;
 }

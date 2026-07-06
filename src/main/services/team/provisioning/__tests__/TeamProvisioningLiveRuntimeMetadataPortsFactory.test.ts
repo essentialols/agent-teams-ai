@@ -1,26 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  cloneLiveTeamAgentRuntimeMetadata,
   createTeamProvisioningLiveRuntimeMetadataPorts,
   type TeamProvisioningLiveRuntimeMetadataInFlightEntry,
   type TeamProvisioningLiveRuntimeMetadataPortsFactoryDeps,
 } from '../TeamProvisioningLiveRuntimeMetadataPortsFactory';
 
 import type { LiveTeamAgentRuntimeMetadata } from '../TeamProvisioningRuntimeMetadataPolicy';
-
-function cloneLiveTeamAgentRuntimeMetadata(
-  metadata: ReadonlyMap<string, LiveTeamAgentRuntimeMetadata>
-): Map<string, LiveTeamAgentRuntimeMetadata> {
-  return new Map(
-    [...metadata.entries()].map(([memberName, entry]) => [
-      memberName,
-      {
-        ...entry,
-        ...(entry.diagnostics ? { diagnostics: [...entry.diagnostics] } : {}),
-      },
-    ])
-  );
-}
 
 function createDeferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;

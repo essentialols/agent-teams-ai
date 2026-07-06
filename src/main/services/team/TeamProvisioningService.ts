@@ -227,7 +227,10 @@ import {
 } from './provisioning/TeamProvisioningLiveInboxRelayRouting';
 import { createTeamProvisioningLiveLaunchSnapshotBoundary } from './provisioning/TeamProvisioningLiveLaunchSnapshotBoundaryFactory';
 import { createTeamProvisioningLiveLeadMessagePortsBoundary } from './provisioning/TeamProvisioningLiveLeadMessagePortsFactory';
-import { createTeamProvisioningLiveRuntimeMetadataPorts } from './provisioning/TeamProvisioningLiveRuntimeMetadataPortsFactory';
+import {
+  cloneLiveTeamAgentRuntimeMetadata,
+  createTeamProvisioningLiveRuntimeMetadataPorts,
+} from './provisioning/TeamProvisioningLiveRuntimeMetadataPortsFactory';
 import { relayMemberInboxMessagesWithPorts } from './provisioning/TeamProvisioningMemberInboxRelayFlow';
 import {
   type LiveRosterAttachReason,
@@ -1867,8 +1870,7 @@ export class TeamProvisioningService {
       readPersistedRuntimeMembers: (targetTeamName) =>
         this.readPersistedRuntimeMembers(targetTeamName),
       liveTeamAgentRuntimeMetadataCache: this.liveTeamAgentRuntimeMetadataCache,
-      cloneLiveTeamAgentRuntimeMetadata: (metadata) =>
-        this.cloneLiveTeamAgentRuntimeMetadata(metadata),
+      cloneLiveTeamAgentRuntimeMetadata,
       readRuntimeProcessRowsForLiveRuntimeMetadata: (input) =>
         this.runtimeResourceSampling.readRuntimeProcessRowsForLiveRuntimeMetadata(input),
       readWindowsHostProcessRowsForLiveRuntimeMetadata: (targetTeamName) =>
@@ -2514,20 +2516,6 @@ export class TeamProvisioningService {
       nowMs: () => Date.now(),
       nowIso,
     });
-  }
-
-  private cloneLiveTeamAgentRuntimeMetadata(
-    metadata: ReadonlyMap<string, LiveTeamAgentRuntimeMetadata>
-  ): Map<string, LiveTeamAgentRuntimeMetadata> {
-    return new Map(
-      [...metadata.entries()].map(([memberName, entry]) => [
-        memberName,
-        {
-          ...entry,
-          ...(entry.diagnostics ? { diagnostics: [...entry.diagnostics] } : {}),
-        },
-      ])
-    );
   }
 
   private resolveOpenCodeMemberIdentityFromDirectory(

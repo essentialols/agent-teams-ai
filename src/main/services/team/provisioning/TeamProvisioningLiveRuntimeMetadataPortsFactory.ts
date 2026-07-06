@@ -23,6 +23,20 @@ export interface TeamProvisioningLiveRuntimeMetadataPorts {
   ): Promise<Map<string, LiveTeamAgentRuntimeMetadata>>;
 }
 
+export function cloneLiveTeamAgentRuntimeMetadata(
+  metadata: ReadonlyMap<string, LiveTeamAgentRuntimeMetadata>
+): Map<string, LiveTeamAgentRuntimeMetadata> {
+  return new Map(
+    [...metadata.entries()].map(([memberName, entry]) => [
+      memberName,
+      {
+        ...entry,
+        ...(entry.diagnostics ? { diagnostics: [...entry.diagnostics] } : {}),
+      },
+    ])
+  );
+}
+
 export type TeamProvisioningLiveRuntimeMetadataPortsFactoryDeps = Omit<
   BuildLiveTeamAgentRuntimeMetadataParams,
   'teamName' | 'runId' | 'generationAtStart'

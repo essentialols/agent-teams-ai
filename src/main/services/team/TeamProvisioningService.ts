@@ -78,6 +78,10 @@ import {
   upsertOpenCodeRuntimeLaneIndexEntry,
 } from './opencode/store/OpenCodeRuntimeManifestEvidenceReader';
 import { getSystemLocale } from './provisioning/TeamProvisioningAgentLanguage';
+import {
+  createAppendDirectProcessRuntimeEventUseCase,
+  createNodeAppendDirectProcessRuntimeEventUseCasePorts,
+} from './provisioning/TeamProvisioningAppendDirectProcessRuntimeEventUseCase';
 import { ensureCwdExists, sleep } from './provisioning/TeamProvisioningAsyncUtils';
 import {
   createTeamProvisioningBootstrapFailureMarker,
@@ -1334,6 +1338,11 @@ export class TeamProvisioningService {
     Promise<RetryFailedOpenCodeSecondaryLanesResult>
   >();
   private readonly memberLifecycleOperations = new Map<string, MemberLifecycleOperation>();
+  private readonly memberLifecycleUseCases = {
+    appendDirectProcessRuntimeEvent: createAppendDirectProcessRuntimeEventUseCase(
+      createNodeAppendDirectProcessRuntimeEventUseCasePorts({ nowIso })
+    ),
+  } satisfies TeamProvisioningServiceMemberLifecycleHostPortGroups['useCases'];
   private readonly memberLifecycleHost = createTeamProvisioningMemberLifecycleHostFromPortGroups<
     ProvisioningRun,
     MixedSecondaryRuntimeLaneState
@@ -1730,7 +1739,7 @@ export class TeamProvisioningService {
           this.launchSingleMixedSecondaryLane(run, lane),
         getMixedSecondaryLaunchPhase: (run) => this.getMixedSecondaryLaunchPhase(run),
       },
-      useCases: {},
+      useCases: this.memberLifecycleUseCases,
     };
   }
 

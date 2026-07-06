@@ -36,6 +36,10 @@ import { TeamConfigReader } from '../TeamConfigReader';
 import { createPersistedLaunchSnapshot } from '../TeamLaunchStateEvaluator';
 
 import {
+  createAppendDirectProcessRuntimeEventUseCase,
+  type DirectProcessRuntimeEventInput,
+} from './TeamProvisioningAppendDirectProcessRuntimeEventUseCase';
+import {
   buildDirectTmuxRestartCommand,
   isInteractiveShellCommand,
 } from './TeamProvisioningDirectRestart';
@@ -257,19 +261,6 @@ interface DirectTmuxRestartMemberConfigInput {
   bootstrapRunId?: string;
   bootstrapContextHash?: string;
   bootstrapBriefingHash?: string;
-}
-
-interface DirectProcessRuntimeEventInput {
-  type: string;
-  eventsPath: string;
-  pid: number;
-  teamName: string;
-  agentName: string;
-  agentId: string;
-  runId: string;
-  bootstrapRunId: string;
-  source: string;
-  detail?: string;
 }
 
 interface OpenCodeMemberRestartSystemMessageInput {
@@ -639,6 +630,8 @@ export interface TeamProvisioningMemberLifecycleHost
 
 export class TeamProvisioningMemberLifecycleController {
   private readonly operationRunner: TeamProvisioningMemberLifecycleOperationRunner;
+  private readonly appendDirectProcessRuntimeEventFallback =
+    createAppendDirectProcessRuntimeEventUseCase();
 
   constructor(private readonly host: TeamProvisioningMemberLifecycleHost) {
     this.operationRunner = createTeamProvisioningMemberLifecycleOperationRunner({
@@ -1678,34 +1671,7 @@ export class TeamProvisioningMemberLifecycleController {
     input: DirectProcessRuntimeEventInput
   ): Promise<void> {
     const seam = this.host.appendDirectProcessRuntimeEvent;
-    if (seam) {
-      await seam(input);
-      return;
-    }
-    await this.appendDirectProcessRuntimeEventInternal(input);
-  }
-
-  private async appendDirectProcessRuntimeEventInternal(
-    input: DirectProcessRuntimeEventInput
-  ): Promise<void> {
-    await fs.promises.mkdir(path.dirname(input.eventsPath), { recursive: true });
-    await fs.promises.appendFile(
-      input.eventsPath,
-      `${JSON.stringify({
-        version: 1,
-        type: input.type,
-        timestamp: nowIso(),
-        pid: input.pid,
-        teamName: input.teamName,
-        agentName: input.agentName,
-        agentId: input.agentId,
-        runId: input.runId,
-        bootstrapRunId: input.bootstrapRunId,
-        source: input.source,
-        ...(input.detail ? { detail: input.detail } : {}),
-      })}\n`,
-      { encoding: 'utf8', mode: 0o600 }
-    );
+    await (seam ?? this.appendDirectProcessRuntimeEventFallback)(input);
   }
 
   isMemberLifecycleOperationActive(teamName: string, memberName: string): boolean {

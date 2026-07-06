@@ -21,6 +21,8 @@ export type CodexThreadGoal = {
   readonly usage?: AgentUsage;
 };
 
+const appServerGoalObjectiveMaxChars = 4000;
+
 export function nestedString(
   value: Record<string, unknown> | undefined,
   path: readonly string[],
@@ -121,6 +123,27 @@ export function readGoal(value: unknown): CodexThreadGoal | null {
     status,
     ...usageField(readUsage(goal)),
   };
+}
+
+export function formatGoalSetError(
+  message: string | undefined,
+  objective: string,
+): string {
+  if (
+    message &&
+    /goal objective must be at most 4000 characters/i.test(message)
+  ) {
+    return appServerGoalObjectiveLimitError(objective) ?? message;
+  }
+  return message ?? "unknown";
+}
+
+export function appServerGoalObjectiveLimitError(
+  objective: string,
+): string | null {
+  const length = objective.length;
+  if (length <= appServerGoalObjectiveMaxChars) return null;
+  return `Prompt too long: ${length}/${appServerGoalObjectiveMaxChars} chars. Use compact prompt with docs links.`;
 }
 
 export function readUsageFromRecords(

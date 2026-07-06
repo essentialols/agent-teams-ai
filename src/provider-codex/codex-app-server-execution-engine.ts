@@ -48,6 +48,8 @@ import {
   type CodexThreadGoal,
   type CodexThreadGoalStatus,
   agentMessageText,
+  appServerGoalObjectiveLimitError,
+  formatGoalSetError,
   isCodexAppServerReconnectProgressMessage,
   mergeAgentUsage,
   nestedString,
@@ -128,7 +130,6 @@ const defaultControlRequestTimeoutMs = 30 * 1000;
 const defaultReconnectGraceMs = 10 * 60 * 1000;
 const defaultMaxOutputBytes = 512 * 1024;
 const defaultMaxGoalTurns = 20;
-const appServerGoalObjectiveMaxChars = 4000;
 const defaultGoalContinuePrompt =
   "Continue working toward the active goal. If the goal is complete, mark it complete and summarize the result.";
 
@@ -2048,25 +2049,6 @@ function assertOutputWithinBounds(
 
 function controlRequestTimeoutMs(taskTimeoutMs: number): number {
   return Math.min(taskTimeoutMs, defaultControlRequestTimeoutMs);
-}
-
-function formatGoalSetError(
-  message: string | undefined,
-  objective: string,
-): string {
-  if (
-    message &&
-    /goal objective must be at most 4000 characters/i.test(message)
-  ) {
-    return appServerGoalObjectiveLimitError(objective) ?? message;
-  }
-  return message ?? "unknown";
-}
-
-function appServerGoalObjectiveLimitError(objective: string): string | null {
-  const length = objective.length;
-  if (length <= appServerGoalObjectiveMaxChars) return null;
-  return `Prompt too long: ${length}/${appServerGoalObjectiveMaxChars} chars. Use compact prompt with docs links.`;
 }
 
 function appServerStartupTimeoutMs(input: {

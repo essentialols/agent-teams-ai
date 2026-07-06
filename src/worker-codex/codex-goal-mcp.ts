@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFile } from "node:child_process";
-import { appendFile, lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { appendFile, lstat, mkdir, readdir, readFile, realpath, rename, rm, rmdir, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { execPath } from "node:process";
@@ -3484,7 +3484,7 @@ function projectRefillJobMismatches(
 async function removeEmptyDir(path: string): Promise<void> {
   try {
     const entries = await readdir(path);
-    if (entries.length === 0) await rm(path, { recursive: false, force: true });
+    if (entries.length === 0) await rmdir(path);
   } catch (error) {
     if (nodeErrorCode(error) !== "ENOENT" && nodeErrorCode(error) !== "ENOTDIR") {
       throw error;

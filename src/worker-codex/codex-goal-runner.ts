@@ -74,6 +74,7 @@ export type CodexGoalRunConfig = {
   readonly serviceTier?: CodexServiceTier;
   readonly executionEngine?: CodexWorkerExecutionEngine;
   readonly taskTimeoutMs?: number;
+  readonly appServerStartupTimeoutMs?: number;
   readonly staleLockMs?: number;
   readonly maxAccountCycles?: number;
   readonly quotaCooldownMs?: number;
@@ -365,6 +366,9 @@ export function buildCodexGoalExecutorOptions(input: {
         executionEngine: config.executionEngine ?? "app-server-goal",
         capacityAccountId: account.name,
         taskTimeoutMs: config.taskTimeoutMs ?? 72 * 60 * 60 * 1000,
+        ...(config.appServerStartupTimeoutMs === undefined
+          ? {}
+          : { appServerStartupTimeoutMs: config.appServerStartupTimeoutMs }),
         sourceEnv: config.sourceEnv ?? process.env,
         ...(commandPolicy === undefined ? {} : { commandPolicy }),
         ...(config.model ? { model: config.model } : {}),
@@ -444,6 +448,10 @@ function assertCodexGoalRunConfig(config: CodexGoalRunConfig): void {
   if (!config.taskId.trim()) throw new Error("codex_goal_task_id_required");
   if (config.accounts.length === 0) throw new Error("codex_goal_accounts_required");
   assertPositiveInteger(config.taskTimeoutMs, "codex_goal_task_timeout_invalid");
+  assertPositiveInteger(
+    config.appServerStartupTimeoutMs,
+    "codex_goal_app_server_startup_timeout_invalid",
+  );
   assertPositiveInteger(config.staleLockMs, "codex_goal_stale_lock_invalid");
   assertPositiveInteger(config.maxAccountCycles, "codex_goal_account_cycles_invalid");
   assertPositiveInteger(config.quotaCooldownMs, "codex_goal_quota_cooldown_invalid");

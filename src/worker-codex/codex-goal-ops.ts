@@ -6,6 +6,13 @@ import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { DefaultRedactor } from "@vioxen/subscription-runtime/core";
 import {
+  isSchedulerEligible,
+  recommendedActionForAvailability,
+  workerCapacityToDiagnosticSignal,
+  type ProviderAccountAction,
+  type ProviderAccountAvailability,
+} from "@vioxen/subscription-runtime/account-diagnostics";
+import {
   readCodexAuthJsonFreshness,
   validateCodexAuthJsonBytes,
 } from "@vioxen/subscription-runtime/provider-codex";
@@ -23,6 +30,7 @@ import {
   type RuntimeRecommendedAction,
   type RuntimeResultEnvelope,
   type RuntimeResultStatus,
+  type WorkerCapacitySnapshot,
 } from "@vioxen/subscription-runtime/worker-core";
 import { LocalFileWorkerAccountCapacityStore } from "@vioxen/subscription-runtime/store-local-file";
 import {
@@ -33,6 +41,11 @@ import {
 } from "./codex-goal-runner";
 import { assertCodexGoalAccessLaunchAllowed } from "./codex-goal-access-plan";
 import { readLocalGitHeadCommit } from "./codex-goal-git-revision";
+import {
+  codexAccountDisplayMetadataForSlot,
+  readCodexAccountDisplayMetadata,
+  type CodexAccountDisplayMetadata,
+} from "./account-display-metadata";
 
 const execFileAsync = promisify(execFile);
 const gitStatusTimeoutMs = 5_000;
@@ -107,6 +120,8 @@ export type CodexGoalStatus = {
   readonly progressProcessAlive?: boolean;
   readonly progressCpuActive?: boolean;
   readonly progressCommand?: string;
+  readonly appServerProcessAlive?: boolean;
+  readonly appServerProcessPid?: number;
   readonly progressResultStatus?: string;
   readonly progressResultReason?: string;
   readonly progressAttemptCount?: number;
@@ -172,6 +187,8 @@ export type CodexGoalProcessSnapshot = {
   readonly alive?: boolean;
   readonly cpuActive?: boolean;
   readonly command?: string;
+  readonly appServerAlive?: boolean;
+  readonly appServerPid?: number;
 };
 
 export type CodexGoalWorkerLiveness = {
@@ -200,14 +217,22 @@ export type CodexGoalAccountStatus =
 
 export type CodexGoalAccountSlotStatus = {
   readonly name: string;
+  readonly displayName?: string;
+  readonly email?: string;
+  readonly shortName?: string;
+  readonly operatorLabel?: string;
   readonly authJsonPath: string;
   readonly status: CodexGoalAccountStatus;
+  readonly availability: ProviderAccountAvailability;
+  readonly schedulerEligible: boolean;
+  readonly recommendedAction: ProviderAccountAction;
   readonly byteLength?: number;
   readonly authJsonSha256Prefix?: string;
   readonly identitySource?: string;
   readonly identityHashPrefix?: string;
   readonly lastRefreshAt?: string;
   readonly expiresAt?: string;
+  readonly limitResetAt?: string;
   readonly capacityAvailability?: string;
   readonly capacityReason?: string;
   readonly capacityCooldownUntil?: string;
@@ -225,6 +250,7 @@ export type CodexGoalAccountStatusInput = {
   readonly liveCheck?: boolean;
   readonly codexBinaryPath?: string;
   readonly liveCheckTimeoutMs?: number;
+  readonly accountMetadata?: Readonly<Record<string, CodexAccountDisplayMetadata>>;
 };
 
 export function buildCodexGoalNoTmuxCommand(input: CodexGoalLaunchInput): string {
@@ -260,6 +286,11 @@ export function buildCodexGoalNoTmuxCommand(input: CodexGoalLaunchInput): string
   pushOptional(args, "--service-tier", config.serviceTier);
   pushOptional(args, "--execution-engine", config.executionEngine);
   pushOptionalNumber(args, "--timeout-ms", config.taskTimeoutMs);
+  pushOptionalNumber(
+    args,
+    "--app-server-startup-timeout-ms",
+    config.appServerStartupTimeoutMs,
+  );
   pushOptionalNumber(args, "--progress-heartbeat-ms", config.progressHeartbeatMs);
   pushOptionalNumber(args, "--stale-lock-ms", config.staleLockMs);
   pushOptionalNumber(args, "--max-account-cycles", config.maxAccountCycles);
@@ -531,6 +562,12 @@ export async function collectCodexGoalStatus(
     ...(progressProcess.command === undefined
       ? {}
       : { progressCommand: progressProcess.command }),
+    ...(progressProcess.appServerAlive === undefined
+      ? {}
+      : { appServerProcessAlive: progressProcess.appServerAlive }),
+    ...(progressProcess.appServerPid === undefined
+      ? {}
+      : { appServerProcessPid: progressProcess.appServerPid }),
     ...(progress.resultStatus === undefined
       ? {}
       : { progressResultStatus: progress.resultStatus }),
@@ -825,11 +862,18 @@ export async function listCodexGoalAccountStatuses(
   const accountNames = input.accounts?.length
     ? input.accounts
     : await listAccountDirectories(input.authRootDir);
+  const accountMetadata = {
+    ...(await readCodexAccountDisplayMetadata(input.authRootDir)),
+    ...(input.accountMetadata ?? {}),
+  };
   return Promise.all(
     accountNames.map((name) =>
       inspectCodexGoalAccount({
         authRootDir: input.authRootDir,
         name,
+        ...(accountMetadata[name]
+          ? { displayMetadata: accountMetadata[name] }
+          : {}),
         ...(input.stateRootDir ? { stateRootDir: input.stateRootDir } : {}),
         ...(input.liveCheck ? { liveCheck: input.liveCheck } : {}),
         ...(input.codexBinaryPath ? { codexBinaryPath: input.codexBinaryPath } : {}),
@@ -999,6 +1043,7 @@ export function shellQuote(value: string): string {
 async function inspectCodexGoalAccount(input: {
   readonly authRootDir: string;
   readonly name: string;
+  readonly displayMetadata?: CodexAccountDisplayMetadata;
   readonly stateRootDir?: string;
   readonly liveCheck?: boolean;
   readonly codexBinaryPath?: string;
@@ -1006,6 +1051,10 @@ async function inspectCodexGoalAccount(input: {
 }
 ): Promise<CodexGoalAccountSlotStatus> {
   const authJsonPath = join(input.authRootDir, input.name, "auth.json");
+  const display = codexAccountDisplayMetadataForSlot(
+    input.name,
+    input.displayMetadata,
+  );
   try {
     const authJsonBytes = await readFile(authJsonPath, "utf8");
     const validation = validateCodexAuthJsonBytes({ authJsonBytes });
@@ -1024,10 +1073,16 @@ async function inspectCodexGoalAccount(input: {
       : undefined;
     const warnings = [...validation.warnings, ...freshness.warnings];
     if (live && !live.ok) {
+      const availability = codexGoalAccountAvailability({
+        status: "auth_invalid",
+        capacity,
+      });
       return {
         name: input.name,
+        ...display,
         authJsonPath,
         status: "auth_invalid",
+        ...availability,
         byteLength: validation.byteLength,
         authJsonSha256Prefix: validation.exactBytesSha256.slice(0, 12),
         ...(identity ? { identitySource: identity.source } : {}),
@@ -1054,10 +1109,16 @@ async function inspectCodexGoalAccount(input: {
         safeMessage: live.safeMessage,
       };
     }
+    const availability = codexGoalAccountAvailability({
+      status: "ready",
+      capacity,
+    });
     return {
       name: input.name,
+      ...display,
       authJsonPath,
       status: "ready",
+      ...availability,
       byteLength: validation.byteLength,
       authJsonSha256Prefix: validation.exactBytesSha256.slice(0, 12),
       ...(identity ? { identitySource: identity.source } : {}),
@@ -1089,14 +1150,51 @@ async function inspectCodexGoalAccount(input: {
     const safeMessage = error instanceof Error ? error.message : "auth_invalid";
     return {
       name: input.name,
+      ...display,
       authJsonPath,
       status: safeMessage.includes("ENOENT") ? "auth_missing" : "auth_invalid",
+      ...codexGoalAccountAvailability({
+        status: safeMessage.includes("ENOENT") ? "auth_missing" : "auth_invalid",
+        capacity: null,
+      }),
       warnings: [],
       safeMessage: safeMessage.includes("ENOENT")
         ? "auth.json is missing"
         : safeMessage,
     };
   }
+}
+
+function codexGoalAccountAvailability(input: {
+  readonly status: CodexGoalAccountStatus;
+  readonly capacity: WorkerCapacitySnapshot | null;
+}): {
+  readonly availability: ProviderAccountAvailability;
+  readonly schedulerEligible: boolean;
+  readonly recommendedAction: ProviderAccountAction;
+  readonly limitResetAt?: string;
+} {
+  if (input.status !== "ready") {
+    const availability = "reconnect_required";
+    return {
+      availability,
+      schedulerEligible: isSchedulerEligible(availability),
+      recommendedAction: recommendedActionForAvailability(availability),
+    };
+  }
+
+  const capacitySignal = input.capacity
+    ? workerCapacityToDiagnosticSignal(input.capacity)
+    : null;
+  const availability = capacitySignal?.availability ?? "available";
+  return {
+    availability,
+    schedulerEligible: isSchedulerEligible(availability),
+    recommendedAction: recommendedActionForAvailability(availability),
+    ...(capacitySignal?.limitResetAt
+      ? { limitResetAt: capacitySignal.limitResetAt.toISOString() }
+      : {}),
+  };
 }
 
 async function inspectCodexAccountLiveStatus(input: {
@@ -1396,12 +1494,20 @@ async function inspectProcessSnapshot(
     if (
       summary.alive !== undefined ||
       summary.cpuActive !== undefined ||
-      summary.command !== undefined
+      summary.command !== undefined ||
+      summary.appServerAlive !== undefined ||
+      summary.appServerPid !== undefined
     ) {
       return {
         ...(summary.alive === undefined ? {} : { alive: summary.alive }),
         ...(summary.cpuActive === undefined ? {} : { cpuActive: summary.cpuActive }),
         ...(summary.command === undefined ? {} : { command: redactStatusText(summary.command) }),
+        ...(summary.appServerAlive === undefined
+          ? {}
+          : { appServerAlive: summary.appServerAlive }),
+        ...(summary.appServerPid === undefined
+          ? {}
+          : { appServerPid: summary.appServerPid }),
       };
     }
   } catch {
@@ -1466,11 +1572,20 @@ export function summarizeCodexGoalProcessTree(
   const activeRows = treeRows.filter((row) => row.cpu > processCpuActiveThreshold);
   const totalCpu = treeRows.reduce((sum, row) => sum + row.cpu, 0);
   const commandRow = bestProcessCommandRow(activeRows.length > 0 ? activeRows : treeRows);
+  const appServerRow = treeRows.find((row) => isCodexAppServerCommand(row.command));
   return {
     alive: true,
     cpuActive: activeRows.length > 0 || totalCpu > processCpuActiveThreshold,
     ...(commandRow?.command ? { command: commandRow.command } : {}),
+    appServerAlive: appServerRow !== undefined,
+    ...(appServerRow ? { appServerPid: appServerRow.pid } : {}),
   };
+}
+
+function isCodexAppServerCommand(command: string): boolean {
+  return /\bcodex\b[\s\S]*\bapp-server\b[\s\S]*--listen[\s\S]*stdio:\/\//.test(
+    command,
+  );
 }
 
 function parseProcessSnapshotRows(

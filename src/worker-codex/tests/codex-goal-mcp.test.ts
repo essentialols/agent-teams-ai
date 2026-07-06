@@ -209,6 +209,9 @@ describe("codex goal MCP server", () => {
           name: "account-a",
           authJsonPath: join(root, "account-a", "auth.json"),
           status: "ready",
+          availability: "available",
+          schedulerEligible: true,
+          recommendedAction: "none",
           warnings: [],
           safeMessage: "account-a is ready",
         }],
@@ -281,6 +284,9 @@ describe("codex goal MCP server", () => {
           name: "account-a",
           authJsonPath: join(root, "account-a", "auth.json"),
           status: "ready",
+          availability: "available",
+          schedulerEligible: true,
+          recommendedAction: "none",
           warnings: [],
           safeMessage: "account-a is ready",
         }],
@@ -361,6 +367,9 @@ describe("codex goal MCP server", () => {
           name: "account-a",
           authJsonPath: join(root, "account-a", "auth.json"),
           status: "ready",
+          availability: "available",
+          schedulerEligible: true,
+          recommendedAction: "none",
           warnings: [],
           safeMessage: "account-a is ready",
         }],
@@ -447,6 +456,9 @@ describe("codex goal MCP server", () => {
           name: "account-a",
           authJsonPath: join(root, "account-a", "auth.json"),
           status: "ready",
+          availability: "available",
+          schedulerEligible: true,
+          recommendedAction: "none",
           warnings: [],
           safeMessage: "account-a is ready",
         }],
@@ -790,6 +802,99 @@ describe("codex goal MCP server", () => {
           },
           networkAccess: NetworkAccessMode.Restricted,
         },
+      });
+    } finally {
+      await client.close();
+      await server.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("persists app-server startup timeout through MCP job creation", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-mcp-startup-timeout-"));
+    const registryRootDir = join(root, "registry");
+    const jobRootDir = join(root, "job");
+    const workspacePath = join(root, "workspace");
+    const promptPath = join(jobRootDir, "prompt.md");
+    const server = createCodexGoalMcpServer();
+    const client = new Client({
+      name: "subscription-runtime-test",
+      version: "0.0.0",
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+    try {
+      await mkdir(jobRootDir, { recursive: true });
+      await mkdir(workspacePath, { recursive: true });
+      await writeFile(promptPath, "Do a sandbox task.\n");
+      await Promise.all([
+        server.connect(serverTransport),
+        client.connect(clientTransport),
+      ]);
+
+      const created = await callToolJson(client, "codex_goal_create_job", {
+        registryRootDir,
+        jobId: "job-startup-timeout",
+        jobRootDir,
+        authRootDir: join(root, "auth"),
+        workspacePath,
+        promptPath,
+        taskId: "task-startup-timeout",
+        accounts: ["account-a"],
+        appServerStartupTimeoutMs: 45_000,
+      });
+
+      expect(created).toMatchObject({ ok: true });
+
+      const job = await callToolJson(client, "codex_goal_get_job", {
+        registryRootDir,
+        jobId: "job-startup-timeout",
+      });
+
+      expect(job).toMatchObject({
+        ok: true,
+        manifest: {
+          appServerStartupTimeoutMs: 45_000,
+        },
+      });
+
+      const dryRun = await callToolJson(client, "codex_goal_dry_run", {
+        jobRootDir,
+        authRootDir: join(root, "auth"),
+        workspacePath,
+        promptPath,
+        taskId: "task-startup-timeout",
+        accounts: ["account-a"],
+        appServerStartupTimeoutMs: 45_000,
+      });
+
+      expect(dryRun).toMatchObject({
+        ok: true,
+        summary: {
+          appServerStartupTimeoutMs: 45_000,
+        },
+      });
+      expect(String(dryRun.noTmuxCommand)).toContain(
+        "--app-server-startup-timeout-ms",
+      );
+
+      const invalidConfigPath = join(root, "invalid-startup-timeout.json");
+      await writeFile(invalidConfigPath, `${JSON.stringify({
+        jobRootDir,
+        authRootDir: join(root, "auth"),
+        workspacePath,
+        promptPath,
+        taskId: "task-invalid-startup-timeout",
+        accounts: ["account-a"],
+        appServerStartupTimeoutMs: 0,
+      })}\n`);
+      const invalid = await callToolJson(client, "codex_goal_dry_run", {
+        configPath: invalidConfigPath,
+      });
+
+      expect(invalid).toMatchObject({
+        ok: false,
+        error: "appServerStartupTimeoutMs must be a positive integer",
       });
     } finally {
       await client.close();
@@ -1765,6 +1870,92 @@ describe("codex goal MCP server", () => {
         ok: false,
         reason: "project_control_broker_required",
         requiredTool: "codex_goal_project_mark_reviewed",
+      });
+    } finally {
+      await client.close();
+      await server.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("filters missing explicit refill accounts before creating the child manifest", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-project-refill-accounts-"));
+    const registryRootDir = join(root, "worker-jobs", "registry");
+    const authRootDir = join(root, "auth");
+    const controllerJobRoot = join(root, "worker-jobs", "infinity-context-controller-v1");
+    const sourceWorkspacePath = join(root, "workspaces", "infinity-context-main");
+    const childWorkspace = join(root, "worktrees", "infinity-context-child-v1");
+    const childJobRoot = join(root, "worker-jobs", "infinity-context-child-v1");
+    const server = createCodexGoalMcpServer();
+    const client = new Client({
+      name: "subscription-runtime-test",
+      version: "0.0.0",
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+    try {
+      await mkdir(sourceWorkspacePath, { recursive: true });
+      await gitInitRepository(sourceWorkspacePath);
+      await writeFile(join(sourceWorkspacePath, "README.md"), "base\n");
+      await git(sourceWorkspacePath, ["add", "README.md"]);
+      await git(sourceWorkspacePath, ["commit", "-m", "test: base"]);
+      await git(sourceWorkspacePath, [
+        "update-ref",
+        "refs/remotes/origin/main",
+        "HEAD",
+      ]);
+      await writeFakeAuth(authRootDir, "account-a", {
+        lastRefresh: new Date().toISOString(),
+      });
+
+      await Promise.all([
+        server.connect(serverTransport),
+        client.connect(clientTransport),
+      ]);
+
+      await callToolJson(client, "codex_goal_create_job", {
+        registryRootDir,
+        jobId: "infinity-context-controller-v1",
+        jobRootDir: controllerJobRoot,
+        authRootDir,
+        workspacePath: sourceWorkspacePath,
+        promptPath: join(controllerJobRoot, "prompt.md"),
+        taskId: "infinity-context-controller-v1",
+        accounts: ["account-a"],
+        accessBoundary: AccessBoundary.ProjectScopedControl,
+        networkAccess: NetworkAccessMode.Restricted,
+        projectAccessScope: {
+          projectId: "infinity-context",
+          workspaceRoots: [sourceWorkspacePath],
+          worktreeRoots: [join(root, "worktrees")],
+          registryRoot: registryRootDir,
+          jobIdPrefixes: ["infinity-context-"],
+          tmuxSessionPrefixes: ["infinity-context-"],
+          allowedAccountIds: ["account-missing", "account-a"],
+        },
+      });
+
+      const result = await callToolJson(client, "codex_goal_project_refill_worker", {
+        registryRootDir,
+        controllerJobId: "infinity-context-controller-v1",
+        jobId: "infinity-context-child-v1",
+        jobRootDir: childJobRoot,
+        authRootDir,
+        sourceWorkspacePath,
+        workspacePath: childWorkspace,
+        promptBody: "Run a focused child worker and report cleanly.\n",
+        taskId: "infinity-context-child-v1",
+        accounts: ["account-missing", "account-a"],
+        workerRole: "producer",
+        startWorker: false,
+        confirmRefill: true,
+      });
+
+      expect(result).toMatchObject({
+        ok: true,
+        manifest: {
+          accounts: ["account-a"],
+        },
       });
     } finally {
       await client.close();

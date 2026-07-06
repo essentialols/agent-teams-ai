@@ -66,6 +66,15 @@ export interface TeamProvisioningMemberLifecycleHostFactoryRuntimeLaunchPorts<
   updateDirectTmuxRestartMemberConfig?: NonNullable<
     TeamProvisioningMemberLifecycleHost['updateDirectTmuxRestartMemberConfig']
   >;
+  sendMessageToRun(
+    run: TRun,
+    message: string
+  ): ReturnType<TeamProvisioningMemberLifecycleHost['sendMessageToRun']>;
+}
+
+export interface TeamProvisioningMemberLifecycleHostFactoryMemberMcpLaunchConfigPorts<
+  TRun extends TeamProvisioningMemberLifecycleHostFactoryRun,
+> {
   memberMcpLaunchConfigProvisioner: {
     buildTrackedMemberMcpLaunchConfig(
       input: WithServiceRun<
@@ -80,10 +89,6 @@ export interface TeamProvisioningMemberLifecycleHostFactoryRuntimeLaunchPorts<
       >[1]
     ): ReturnType<TeamProvisioningMemberLifecycleHost['removeTrackedMemberMcpLaunchConfig']>;
   };
-  sendMessageToRun(
-    run: TRun,
-    message: string
-  ): ReturnType<TeamProvisioningMemberLifecycleHost['sendMessageToRun']>;
 }
 
 export interface TeamProvisioningMemberLifecycleHostFactoryLaunchStatePorts<
@@ -189,6 +194,7 @@ export interface TeamProvisioningMemberLifecycleHostFactoryService<
     TeamProvisioningMemberLifecycleHostFactoryStorePorts,
     TeamProvisioningMemberLifecycleHostFactoryMemberSpecPorts,
     TeamProvisioningMemberLifecycleHostFactoryRuntimeLaunchPorts<TRun>,
+    TeamProvisioningMemberLifecycleHostFactoryMemberMcpLaunchConfigPorts<TRun>,
     TeamProvisioningMemberLifecycleHostFactoryLaunchStatePorts<TRun>,
     TeamProvisioningMemberLifecycleHostFactoryRunStatePorts<TRun>,
     TeamProvisioningMemberLifecycleHostFactoryMessagingPorts,
@@ -206,6 +212,7 @@ export interface TeamProvisioningMemberLifecycleHostFactoryPortGroups<
   stores: TeamProvisioningMemberLifecycleHostFactoryStorePorts;
   memberSpec: TeamProvisioningMemberLifecycleHostFactoryMemberSpecPorts;
   runtimeLaunch: TeamProvisioningMemberLifecycleHostFactoryRuntimeLaunchPorts<TRun>;
+  memberMcpLaunchConfig: TeamProvisioningMemberLifecycleHostFactoryMemberMcpLaunchConfigPorts<TRun>;
   launchState: TeamProvisioningMemberLifecycleHostFactoryLaunchStatePorts<TRun>;
   runState: TeamProvisioningMemberLifecycleHostFactoryRunStatePorts<TRun>;
   messaging: TeamProvisioningMemberLifecycleHostFactoryMessagingPorts;
@@ -243,9 +250,11 @@ export const TEAM_PROVISIONING_MEMBER_LIFECYCLE_HOST_FACTORY_PORT_KEYS = {
     'resolveDirectMemberLaunchIdentity',
     'buildTeamRuntimeLaunchArgsPlan',
     'updateDirectTmuxRestartMemberConfig',
+    'sendMessageToRun',
+  ],
+  memberMcpLaunchConfig: [
     'buildTrackedMemberMcpLaunchConfig',
     'removeTrackedMemberMcpLaunchConfig',
-    'sendMessageToRun',
   ],
   launchState: ['launchStateStore', 'persistLaunchStateSnapshot', 'writeLaunchStateSnapshot'],
   runState: [
@@ -332,6 +341,7 @@ export function createTeamProvisioningMemberLifecycleHostPortGroups<
     stores: service,
     memberSpec: service,
     runtimeLaunch: service,
+    memberMcpLaunchConfig: service,
     launchState: service,
     runState: service,
     messaging: service,
@@ -351,6 +361,7 @@ export function createTeamProvisioningMemberLifecycleHostFromPortGroups<
     stores,
     memberSpec,
     runtimeLaunch,
+    memberMcpLaunchConfig,
     launchState,
     runState,
     messaging,
@@ -445,12 +456,12 @@ export function createTeamProvisioningMemberLifecycleHostFromPortGroups<
     persistLaunchStateSnapshot: (run, phase) =>
       launchState.persistLaunchStateSnapshot(asServiceProvisioningRun<TRun>(run), phase),
     buildTrackedMemberMcpLaunchConfig: (input) =>
-      runtimeLaunch.memberMcpLaunchConfigProvisioner.buildTrackedMemberMcpLaunchConfig({
+      memberMcpLaunchConfig.memberMcpLaunchConfigProvisioner.buildTrackedMemberMcpLaunchConfig({
         ...input,
         run: asServiceProvisioningRun<TRun>(input.run),
       }),
     removeTrackedMemberMcpLaunchConfig: (run, config) =>
-      runtimeLaunch.memberMcpLaunchConfigProvisioner.removeTrackedMemberMcpLaunchConfig(
+      memberMcpLaunchConfig.memberMcpLaunchConfigProvisioner.removeTrackedMemberMcpLaunchConfig(
         asServiceProvisioningRun<TRun>(run),
         config
       ),

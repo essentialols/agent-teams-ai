@@ -259,6 +259,43 @@ describe('TeamProvisioningMemberLifecycleHostFactory', () => {
     expect(Object.keys(host).sort()).toEqual([...groupedKeys].sort());
   });
 
+  it('routes member MCP launch config through its dedicated port group', async () => {
+    const service = createService();
+    const portGroups = createTeamProvisioningMemberLifecycleHostPortGroups(service);
+    const mcpEvents: string[] = [];
+    portGroups.memberMcpLaunchConfig = {
+      memberMcpLaunchConfigProvisioner: {
+        async buildTrackedMemberMcpLaunchConfig(input) {
+          mcpEvents.push(`mcp:${input.run.id}:${input.cwd}`);
+          return null;
+        },
+        async removeTrackedMemberMcpLaunchConfig(run) {
+          mcpEvents.push(`mcp:remove:${run.id}`);
+        },
+      },
+    };
+    const host = createTeamProvisioningMemberLifecycleHostFromPortGroups(portGroups);
+    const run = { id: 'run-mcp', cwd: '/project' } as unknown as HostRun;
+
+    await host.buildTrackedMemberMcpLaunchConfig({
+      cwd: '/project',
+      mcpPolicy: undefined,
+      run,
+    });
+    await host.removeTrackedMemberMcpLaunchConfig(run, null);
+    await host.sendMessageToRun(run, 'hello');
+
+    expect(mcpEvents).toEqual(['mcp:run-mcp:/project', 'mcp:remove:run-mcp']);
+    expect(service.events).toEqual(['service:send:run-mcp:hello']);
+    expect(
+      (
+        service.memberMcpLaunchConfigProvisioner as ReceiverBoundService['memberMcpLaunchConfigProvisioner'] & {
+          events: string[];
+        }
+      ).events
+    ).toEqual([]);
+  });
+
   it('forwards callbacks through the service receivers with run and lane casts intact', async () => {
     const service = createService();
     const portGroups = createTeamProvisioningMemberLifecycleHostPortGroups(service);

@@ -1,4 +1,5 @@
 import {
+  bindTeamCrossTeamProvisioningApi,
   bindTeamHttpProvisioningApis,
   bindTeamIpcProvisioningApis,
 } from '@main/services/team/contracts/TeamProvisioningApis';
@@ -68,6 +69,14 @@ function createSource() {
     getLiveLeadProcessMessages: vi.fn(() => []),
     getCurrentLeadSessionId: vi.fn(() => null),
     pushLiveLeadProcessMessage: vi.fn(),
+    resolveCrossTeamReplyMetadata: vi.fn(function (this: { marker: string }) {
+      return {
+        conversationId: `${this.marker}:conversation`,
+        replyToConversationId: 'reply-conversation',
+      };
+    }),
+    registerPendingCrossTeamReplyExpectation: vi.fn(),
+    clearPendingCrossTeamReplyExpectation: vi.fn(),
     respondToToolApproval: vi.fn(async () => undefined),
     updateToolApprovalSettings: vi.fn(),
   };
@@ -140,6 +149,43 @@ describe('bindTeamIpcProvisioningApis', () => {
     await expect(createTeam({} as never, () => undefined)).resolves.toEqual({
       runId: 'bound-run',
     });
+  });
+});
+
+describe('bindTeamCrossTeamProvisioningApi', () => {
+  it('exposes only cross-team relay methods and binds them to the source service', async () => {
+    const source = createSource();
+    const api = bindTeamCrossTeamProvisioningApi(source as never);
+    const resolveCrossTeamReplyMetadata = api.resolveCrossTeamReplyMetadata;
+    const relayLeadInboxMessages = api.relayLeadInboxMessages;
+
+    expect(sortedKeys(api)).toEqual([
+      'clearPendingCrossTeamReplyExpectation',
+      'isTeamAlive',
+      'registerPendingCrossTeamReplyExpectation',
+      'relayLeadInboxMessages',
+      'resolveCrossTeamReplyMetadata',
+    ]);
+    expect(((api as unknown) as Record<string, unknown>).createTeam).toBeUndefined();
+    expect(((api as unknown) as Record<string, unknown>).sendMessageToTeam).toBeUndefined();
+    expect(resolveCrossTeamReplyMetadata('from-team', 'to-team')).toEqual({
+      conversationId: 'bound-run:conversation',
+      replyToConversationId: 'reply-conversation',
+    });
+
+    api.registerPendingCrossTeamReplyExpectation('from-team', 'to-team', 'conversation-1');
+    api.clearPendingCrossTeamReplyExpectation('from-team', 'to-team', 'conversation-1');
+    expect(source.registerPendingCrossTeamReplyExpectation).toHaveBeenCalledWith(
+      'from-team',
+      'to-team',
+      'conversation-1'
+    );
+    expect(source.clearPendingCrossTeamReplyExpectation).toHaveBeenCalledWith(
+      'from-team',
+      'to-team',
+      'conversation-1'
+    );
+    await expect(relayLeadInboxMessages('to-team')).resolves.toBe(0);
   });
 });
 

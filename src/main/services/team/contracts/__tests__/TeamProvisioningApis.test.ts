@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   bindTeamClaudeLogsApi,
+  bindTeamCrossTeamProvisioningApi,
   bindTeamDiagnosticsApi,
   bindTeamHttpDataApi,
   bindTeamHttpRuntimeApi,
@@ -19,6 +20,7 @@ import {
 import type {
   OpenCodeRuntimeControlAck,
   TeamClaudeLogsApi,
+  TeamCrossTeamProvisioningApi,
   TeamDiagnosticsApi,
   TeamHttpDataApi,
   TeamLaunchApi,
@@ -671,6 +673,78 @@ describe('TeamProvisioning API binders', () => {
     });
     expect(api.getCurrentLeadSessionId('team-bound')).toBe('session:team-bound');
     expect(api.getLiveLeadProcessMessages('team-bound')).toHaveLength(1);
+  });
+
+  it('binds cross-team provisioning relay methods to a narrow facade', async () => {
+    interface CrossTeamSource extends TeamCrossTeamProvisioningApi {
+      readonly marker: string;
+      registered: string[];
+      cleared: string[];
+      relayedTeamName: string | null;
+    }
+
+    const source: CrossTeamSource = {
+      marker: 'source-bound',
+      registered: [],
+      cleared: [],
+      relayedTeamName: null,
+      resolveCrossTeamReplyMetadata(this: CrossTeamSource, teamName: string, toTeam: string) {
+        return {
+          conversationId: `${this.marker}:${teamName}:${toTeam}`,
+          replyToConversationId: `reply:${toTeam}`,
+        };
+      },
+      registerPendingCrossTeamReplyExpectation(
+        this: CrossTeamSource,
+        teamName: string,
+        otherTeam: string,
+        conversationId: string
+      ): void {
+        this.registered.push(`${teamName}:${otherTeam}:${conversationId}`);
+      },
+      clearPendingCrossTeamReplyExpectation(
+        this: CrossTeamSource,
+        teamName: string,
+        otherTeam: string,
+        conversationId: string
+      ): void {
+        this.cleared.push(`${teamName}:${otherTeam}:${conversationId}`);
+      },
+      isTeamAlive(this: CrossTeamSource, teamName: string): boolean {
+        return teamName === this.marker;
+      },
+      relayLeadInboxMessages(this: CrossTeamSource, teamName: string): Promise<number> {
+        this.relayedTeamName = teamName;
+        return Promise.resolve(3);
+      },
+    };
+
+    const api = bindTeamCrossTeamProvisioningApi(source);
+    const resolveCrossTeamReplyMetadata = api.resolveCrossTeamReplyMetadata.bind(undefined);
+    const registerPendingCrossTeamReplyExpectation =
+      api.registerPendingCrossTeamReplyExpectation.bind(undefined);
+    const clearPendingCrossTeamReplyExpectation =
+      api.clearPendingCrossTeamReplyExpectation.bind(undefined);
+    const relayLeadInboxMessages = api.relayLeadInboxMessages.bind(undefined);
+
+    expect(Object.keys(api).sort()).toEqual([
+      'clearPendingCrossTeamReplyExpectation',
+      'isTeamAlive',
+      'registerPendingCrossTeamReplyExpectation',
+      'relayLeadInboxMessages',
+      'resolveCrossTeamReplyMetadata',
+    ]);
+    expect(resolveCrossTeamReplyMetadata('team-a', 'team-b')).toEqual({
+      conversationId: 'source-bound:team-a:team-b',
+      replyToConversationId: 'reply:team-b',
+    });
+    registerPendingCrossTeamReplyExpectation('team-a', 'team-b', 'conversation-1');
+    clearPendingCrossTeamReplyExpectation('team-a', 'team-b', 'conversation-1');
+    expect(source.registered).toEqual(['team-a:team-b:conversation-1']);
+    expect(source.cleared).toEqual(['team-a:team-b:conversation-1']);
+    expect(api.isTeamAlive('source-bound')).toBe(true);
+    await expect(relayLeadInboxMessages('team-b')).resolves.toBe(3);
+    expect(source.relayedTeamName).toBe('team-b');
   });
 
   it('binds tool approval methods to the source object', async () => {

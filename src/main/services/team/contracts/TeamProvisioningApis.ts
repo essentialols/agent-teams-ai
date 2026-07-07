@@ -220,6 +220,25 @@ export interface TeamMessagingApi {
   pushLiveLeadProcessMessage(teamName: string, message: InboxMessage): void;
 }
 
+export interface TeamCrossTeamProvisioningApi {
+  resolveCrossTeamReplyMetadata(
+    teamName: string,
+    toTeam: string
+  ): { conversationId: string; replyToConversationId: string } | null;
+  registerPendingCrossTeamReplyExpectation(
+    teamName: string,
+    otherTeam: string,
+    conversationId: string
+  ): void;
+  clearPendingCrossTeamReplyExpectation(
+    teamName: string,
+    otherTeam: string,
+    conversationId: string
+  ): void;
+  isTeamAlive(teamName: string): boolean;
+  relayLeadInboxMessages(teamName: string): Promise<number>;
+}
+
 export interface TeamToolApprovalApi {
   respondToToolApproval(
     teamName: string,
@@ -378,6 +397,20 @@ export function bindTeamMessagingApi(source: TeamMessagingApi): TeamMessagingApi
     getLiveLeadProcessMessages: source.getLiveLeadProcessMessages.bind(source),
     getCurrentLeadSessionId: source.getCurrentLeadSessionId.bind(source),
     pushLiveLeadProcessMessage: source.pushLiveLeadProcessMessage.bind(source),
+  };
+}
+
+export function bindTeamCrossTeamProvisioningApi(
+  source: TeamCrossTeamProvisioningApi
+): TeamCrossTeamProvisioningApi {
+  return {
+    resolveCrossTeamReplyMetadata: source.resolveCrossTeamReplyMetadata.bind(source),
+    registerPendingCrossTeamReplyExpectation:
+      source.registerPendingCrossTeamReplyExpectation.bind(source),
+    clearPendingCrossTeamReplyExpectation:
+      source.clearPendingCrossTeamReplyExpectation.bind(source),
+    isTeamAlive: source.isTeamAlive.bind(source),
+    relayLeadInboxMessages: source.relayLeadInboxMessages.bind(source),
   };
 }
 

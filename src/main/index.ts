@@ -111,6 +111,7 @@ import {
   snapshotOpenCodeLocalMcpLaunchEnv,
 } from '@main/services/team/opencode/bridge/OpenCodeMcpBridgeEnv';
 import {
+  bindTeamCrossTeamProvisioningApi,
   bindTeamHttpDataApi,
   bindTeamHttpProvisioningApis,
   bindTeamIpcProvisioningApis,
@@ -1888,7 +1889,7 @@ async function initializeServices(): Promise<void> {
     crossTeamConfigReader,
     teamDataService,
     crossTeamInboxWriter,
-    teamProvisioningService
+    bindTeamCrossTeamProvisioningApi(teamProvisioningService)
   );
   teamProvisioningService.setCrossTeamSender((request) => crossTeamService.send(request));
 

@@ -29,7 +29,7 @@ import type {
   ToolApprovalSettings,
 } from '@shared/types/team';
 
-export interface TeamLaunchApi {
+export interface TeamProvisioningStartApi {
   createTeam(
     request: TeamCreateRequest,
     onProgress: (progress: TeamProvisioningProgress) => void
@@ -38,10 +38,13 @@ export interface TeamLaunchApi {
     request: TeamLaunchRequest,
     onProgress: (progress: TeamProvisioningProgress) => void
   ): Promise<TeamLaunchResponse>;
+}
+
+export interface TeamProvisioningStatusApi {
   getProvisioningStatus(runId: string): Promise<TeamProvisioningProgress>;
 }
 
-export type TeamProvisioningStartApi = TeamLaunchApi;
+export interface TeamLaunchApi extends TeamProvisioningStartApi, TeamProvisioningStatusApi {}
 
 export interface TeamProvisioningRunApi {
   cancelProvisioning(runId: string): Promise<void>;
@@ -94,7 +97,8 @@ export interface TeamHttpRuntimeApi {
 }
 
 export interface TeamHttpProvisioningApis {
-  launch?: TeamLaunchApi;
+  launch?: TeamProvisioningStartApi;
+  status?: TeamProvisioningStatusApi;
   taskActivity?: TeamTaskActivityRepairApi;
   runtime?: TeamHttpRuntimeApi;
   runtimeControl?: TeamRuntimeControlCompatibilityApi;
@@ -258,6 +262,23 @@ export function bindTeamLaunchApi(source: TeamLaunchApi): TeamLaunchApi {
   };
 }
 
+export function bindTeamProvisioningStartApi(
+  source: TeamProvisioningStartApi
+): TeamProvisioningStartApi {
+  return {
+    createTeam: source.createTeam.bind(source),
+    launchTeam: source.launchTeam.bind(source),
+  };
+}
+
+export function bindTeamProvisioningStatusApi(
+  source: TeamProvisioningStatusApi
+): TeamProvisioningStatusApi {
+  return {
+    getProvisioningStatus: source.getProvisioningStatus.bind(source),
+  };
+}
+
 export function bindTeamProvisioningPreflightApi(
   source: TeamProvisioningPreflightApi
 ): TeamProvisioningPreflightApi {
@@ -314,13 +335,15 @@ export function bindTeamHttpRuntimeApi(source: TeamHttpRuntimeApi): TeamHttpRunt
 }
 
 export function bindTeamHttpProvisioningApis(
-  source: TeamLaunchApi &
+  source: TeamProvisioningStartApi &
+    TeamProvisioningStatusApi &
     TeamTaskActivityRepairApi &
     TeamHttpRuntimeApi &
     TeamRuntimeControlCompatibilityApi
 ): TeamHttpProvisioningApis {
   return {
-    launch: bindTeamLaunchApi(source),
+    launch: bindTeamProvisioningStartApi(source),
+    status: bindTeamProvisioningStatusApi(source),
     taskActivity: bindTeamTaskActivityRepairApi(source),
     runtime: bindTeamHttpRuntimeApi(source),
     runtimeControl: bindTeamRuntimeControlCompatibilityApi(source),

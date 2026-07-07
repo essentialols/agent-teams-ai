@@ -306,6 +306,7 @@ function createServices(claudeRoot: string): {
       sshConnectionManager: {} as HttpServices['sshConnectionManager'],
       teamDataApi: teamDataService,
       teamProvisioningApis: {
+        status: teamLaunchApi,
         launch: teamLaunchApi,
         runtime: teamRuntimeApi,
         runtimeControl: teamRuntimeControlApi,
@@ -539,7 +540,7 @@ describe('MCP team tools over the local REST control API', () => {
         alreadyLaunching: true,
       });
     };
-    services.teamProvisioningApis!.launch!.getProvisioningStatus = () =>
+    services.teamProvisioningApis!.status!.getProvisioningStatus = () =>
       Promise.reject(
         new Error('team_launch should not wait for provisioning status after already_launching')
       );

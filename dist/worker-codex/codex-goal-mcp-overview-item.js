@@ -3,6 +3,7 @@ import { collectCodexGoalStatus, listCodexGoalAccountStatuses, } from "./codex-g
 import { buildCodexGoalBrief } from "./codex-goal-mcp-brief.js";
 import { goalLaunchInput } from "./codex-goal-mcp-launch-input.js";
 import { codexGoalStateRootDir } from "./codex-goal-mcp-worker-control.js";
+import { codexGoalStatusInputFromLaunch as statusInput, } from "./codex-goal-mcp-status-input.js";
 export async function buildCodexGoalOverviewItem(input) {
     try {
         const manifest = await readCodexGoalJob({
@@ -106,19 +107,5 @@ export async function buildCodexGoalOverviewItem(input) {
             safeMessage: error instanceof Error ? error.message : String(error),
         };
     }
-}
-function statusInput(launch) {
-    return {
-        jobRootDir: launch.config.jobRootDir,
-        taskId: launch.config.taskId,
-        ...(launch.config.outputPath ? { resultPath: launch.config.outputPath } : {}),
-        workspacePath: launch.config.workspacePath,
-        ...(launch.tmuxSession ? { tmuxSession: launch.tmuxSession } : {}),
-        logPath: launch.logPath,
-        ...(launch.config.progressPath ? { progressPath: launch.config.progressPath } : {}),
-        ...(launch.config.accessBoundary === undefined
-            ? {}
-            : { accessBoundary: launch.config.accessBoundary }),
-    };
 }
 //# sourceMappingURL=codex-goal-mcp-overview-item.js.map

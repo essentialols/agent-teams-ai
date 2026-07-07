@@ -5,12 +5,13 @@ import {
 import {
   collectCodexGoalStatus,
   listCodexGoalAccountStatuses,
-  type CodexGoalLaunchInput,
-  type CodexGoalStatusInput,
 } from "./codex-goal-ops";
 import { buildCodexGoalBrief } from "./codex-goal-mcp-brief";
 import { goalLaunchInput } from "./codex-goal-mcp-launch-input";
 import { codexGoalStateRootDir } from "./codex-goal-mcp-worker-control";
+import {
+  codexGoalStatusInputFromLaunch as statusInput,
+} from "./codex-goal-mcp-status-input";
 
 type JsonObject = Readonly<Record<string, unknown>>;
 
@@ -124,19 +125,4 @@ export async function buildCodexGoalOverviewItem(input: {
       safeMessage: error instanceof Error ? error.message : String(error),
     };
   }
-}
-
-function statusInput(launch: CodexGoalLaunchInput): CodexGoalStatusInput {
-  return {
-    jobRootDir: launch.config.jobRootDir,
-    taskId: launch.config.taskId,
-    ...(launch.config.outputPath ? { resultPath: launch.config.outputPath } : {}),
-    workspacePath: launch.config.workspacePath,
-    ...(launch.tmuxSession ? { tmuxSession: launch.tmuxSession } : {}),
-    logPath: launch.logPath,
-    ...(launch.config.progressPath ? { progressPath: launch.config.progressPath } : {}),
-    ...(launch.config.accessBoundary === undefined
-      ? {}
-      : { accessBoundary: launch.config.accessBoundary }),
-  };
 }

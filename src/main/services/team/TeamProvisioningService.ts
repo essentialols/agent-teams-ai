@@ -77,11 +77,11 @@ import {
   upsertOpenCodeRuntimeLaneIndexEntry,
 } from './opencode/store/OpenCodeRuntimeManifestEvidenceReader';
 import { getSystemLocale } from './provisioning/TeamProvisioningAgentLanguage';
-import { TeamProvisioningAppShellBoundary } from './provisioning/TeamProvisioningAppShellBoundary';
 import {
   createAppendDirectProcessRuntimeEventUseCase,
   createNodeAppendDirectProcessRuntimeEventUseCasePorts,
 } from './provisioning/TeamProvisioningAppendDirectProcessRuntimeEventUseCase';
+import { TeamProvisioningAppShellBoundary } from './provisioning/TeamProvisioningAppShellBoundary';
 import { ensureCwdExists, sleep } from './provisioning/TeamProvisioningAsyncUtils';
 import {
   createTeamProvisioningBootstrapFailureMarker,

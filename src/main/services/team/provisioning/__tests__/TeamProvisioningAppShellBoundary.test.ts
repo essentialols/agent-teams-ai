@@ -1,12 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { WorkspaceTrustCoordinator } from '@features/workspace-trust/main';
-
+import { TeamRuntimeAdapterRegistry } from '../../runtime';
 import { TeamProvisioningAppShellBoundary } from '../TeamProvisioningAppShellBoundary';
 
-import { TeamRuntimeAdapterRegistry } from '../../runtime';
-
 import type { TeamLaunchRuntimeAdapter, TeamRuntimeProviderId } from '../../runtime';
+import type { WorkspaceTrustCoordinator } from '@features/workspace-trust/main';
 
 function createRuntimeAdapter(
   providerId: TeamRuntimeProviderId,

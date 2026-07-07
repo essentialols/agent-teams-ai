@@ -1,6 +1,3 @@
-import type { WorkspaceTrustCoordinator } from '@features/workspace-trust/main';
-import type { CrossTeamSendRequest, CrossTeamSendResult } from '@shared/types';
-
 import {
   getOpenCodeRuntimeAdapter as getOpenCodeRuntimeAdapterFromRegistry,
   getOpenCodeRuntimeMessageAdapter as getOpenCodeRuntimeMessageAdapterFromAdapter,
@@ -18,6 +15,8 @@ import type {
   RuntimeTurnSettledEnvironmentProvider,
   RuntimeTurnSettledHookSettingsProvider,
 } from './TeamProvisioningRuntimeTurnSettledPlanning';
+import type { WorkspaceTrustCoordinator } from '@features/workspace-trust/main';
+import type { CrossTeamSendRequest, CrossTeamSendResult } from '@shared/types';
 
 export type TeamProvisioningMemberRuntimeAdvisoryInvalidator = (
   teamName: string,

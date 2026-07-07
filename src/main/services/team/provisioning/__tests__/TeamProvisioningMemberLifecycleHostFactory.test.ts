@@ -379,7 +379,7 @@ describe('TeamProvisioningMemberLifecycleHostFactory', () => {
     expect(service.events).toEqual(['service:send:run-opencode:still-runtime-launch']);
   });
 
-  it('routes lifecycle use-case seams through their dedicated port group', async () => {
+  it('routes lifecycle use-case seams through their dedicated port groups', async () => {
     const service = createService();
     const portGroups = createTeamProvisioningMemberLifecycleHostPortGroups(service);
     const useCaseEvents: string[] = [];
@@ -404,6 +404,9 @@ describe('TeamProvisioningMemberLifecycleHostFactory', () => {
           shouldDirectProcessRestart: false,
         };
       },
+    } as typeof portGroups.useCases & { marker: string };
+    portGroups.openCodeRetryUseCases = {
+      marker: 'opencode-retry',
       async collectFailedOpenCodeSecondaryRetryCandidates(this: { marker: string }, run) {
         useCaseEvents.push(`${this.marker}:collect:${run.id}`);
         return [{ memberName: 'Worker', laneId: 'secondary:opencode:worker' }];
@@ -425,7 +428,7 @@ describe('TeamProvisioningMemberLifecycleHostFactory', () => {
       async detachOpenCodeOwnedMemberLaneUnlocked(this: { marker: string }, teamName, memberName) {
         useCaseEvents.push(`${this.marker}:detach:${teamName}:${memberName}`);
       },
-    } as typeof portGroups.useCases & { marker: string };
+    } as typeof portGroups.openCodeRetryUseCases & { marker: string };
     const host = createTeamProvisioningMemberLifecycleHostFromPortGroups(portGroups);
     const run = { id: 'run-use-case', cwd: '/project' } as unknown as HostRun;
     const member = { name: 'Worker' } as HostMember;
@@ -503,11 +506,11 @@ describe('TeamProvisioningMemberLifecycleHostFactory', () => {
       'use-case:runtime-event:process_spawned',
       'use-case:stop-primary:Worker',
       'use-case:prepare-restart:Worker',
-      'use-case:collect:run-use-case',
-      'use-case:outcome:run-use-case:Worker:secondary:opencode:worker',
-      'use-case:notify:run-use-case:Worker',
-      'use-case:reattach:team-a:Worker',
-      'use-case:detach:team-a:Worker',
+      'opencode-retry:collect:run-use-case',
+      'opencode-retry:outcome:run-use-case:Worker:secondary:opencode:worker',
+      'opencode-retry:notify:run-use-case:Worker',
+      'opencode-retry:reattach:team-a:Worker',
+      'opencode-retry:detach:team-a:Worker',
     ]);
     expect(service.events).toEqual([]);
   });

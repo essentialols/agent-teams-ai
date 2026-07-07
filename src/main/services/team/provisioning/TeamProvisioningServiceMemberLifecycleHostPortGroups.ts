@@ -21,6 +21,8 @@ type CreateMixedSecondaryLaneStateForMember =
   MixedSecondaryRuntimePorts['createMixedSecondaryLaneStateForMember'];
 type StopSingleMixedSecondaryRuntimeLane =
   MixedSecondaryRuntimePorts['stopSingleMixedSecondaryRuntimeLane'];
+type ServiceMemberLifecycleUseCases = PortGroups['useCases'] &
+  Pick<PortGroups['openCodeRetryUseCases'], 'readOpenCodeSecondaryRetryOutcome'>;
 
 export interface TeamProvisioningServiceMemberLifecycleHostPortGroupPorts {
   runs: unknown;
@@ -73,7 +75,7 @@ export interface TeamProvisioningServiceMemberLifecycleHostPortGroupPorts {
   getRunLeadName: MixedSecondaryRuntimePorts['getRunLeadName'];
   launchSingleMixedSecondaryLane: MixedSecondaryRuntimePorts['launchSingleMixedSecondaryLane'];
   getMixedSecondaryLaunchPhase: MixedSecondaryRuntimePorts['getMixedSecondaryLaunchPhase'];
-  memberLifecycleUseCases: PortGroups['useCases'];
+  memberLifecycleUseCases: ServiceMemberLifecycleUseCases;
 }
 
 export function createTeamProvisioningServiceMemberLifecycleHostPortGroups(
@@ -182,7 +184,19 @@ export function createTeamProvisioningServiceMemberLifecycleHostPortGroups(
       getMixedSecondaryLaunchPhase: (run) => service.getMixedSecondaryLaunchPhase(run),
     },
     useCases: {
-      ...service.memberLifecycleUseCases,
+      persistOpenCodeMemberRestartSystemMessage:
+        service.memberLifecycleUseCases.persistOpenCodeMemberRestartSystemMessage,
+      launchDirectProcessMemberRestart:
+        service.memberLifecycleUseCases.launchDirectProcessMemberRestart,
+      appendDirectProcessRuntimeEvent:
+        service.memberLifecycleUseCases.appendDirectProcessRuntimeEvent,
+      stopPrimaryOwnedRosterRuntime: service.memberLifecycleUseCases.stopPrimaryOwnedRosterRuntime,
+      preparePrimaryOwnedMemberRestartRuntime:
+        service.memberLifecycleUseCases.preparePrimaryOwnedMemberRestartRuntime,
+    },
+    openCodeRetryUseCases: {
+      readOpenCodeSecondaryRetryOutcome:
+        service.memberLifecycleUseCases.readOpenCodeSecondaryRetryOutcome,
     },
   };
 }

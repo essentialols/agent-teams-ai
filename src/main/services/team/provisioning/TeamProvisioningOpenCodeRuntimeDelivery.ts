@@ -48,6 +48,7 @@ import {
   requireRuntimeString,
 } from './TeamProvisioningRuntimeMetadata';
 
+import type { OpenCodeRuntimeControlPort } from '../runtime-control';
 import type {
   InboxMessage,
   OpenCodeRuntimeDeliveryStatus,
@@ -212,12 +213,10 @@ export type TeamProvisioningOpenCodeRuntimeDeliveryBoundaryPorts<
 
 export function createTeamProvisioningOpenCodeRuntimeDeliveryBoundary<
   Run extends OpenCodeRuntimeCheckinRun,
->(ports: TeamProvisioningOpenCodeRuntimeDeliveryBoundaryPorts<Run>): {
+>(
+  ports: TeamProvisioningOpenCodeRuntimeDeliveryBoundaryPorts<Run>
+): OpenCodeRuntimeControlPort & {
   createOpenCodeRuntimeCheckinPorts(): OpenCodeRuntimeCheckinPorts<Run>;
-  recordOpenCodeRuntimeBootstrapCheckin(raw: unknown): Promise<OpenCodeRuntimeControlAck>;
-  deliverOpenCodeRuntimeMessage(raw: unknown): Promise<OpenCodeRuntimeControlAck>;
-  recordOpenCodeRuntimeTaskEvent(raw: unknown): Promise<OpenCodeRuntimeControlAck>;
-  recordOpenCodeRuntimeHeartbeat(raw: unknown): Promise<OpenCodeRuntimeControlAck>;
   createOpenCodeRuntimeDeliveryService(teamName: string, laneId: string): RuntimeDeliveryService;
   createOpenCodePromptDeliveryLedger(
     teamName: string,
@@ -308,7 +307,12 @@ export function createTeamProvisioningOpenCodeRuntimeDeliveryBoundary<
     const teamName = input.teamName.trim();
     const memberName = input.memberName.trim();
     const messageId = input.messageId.trim();
-    if (!teamName || !memberName || !messageId || !ports.isOpenCodePromptDeliveryWatchdogEnabled()) {
+    if (
+      !teamName ||
+      !memberName ||
+      !messageId ||
+      !ports.isOpenCodePromptDeliveryWatchdogEnabled()
+    ) {
       return;
     }
     ports.scheduleOpenCodePromptDeliveryWatchdog({
@@ -370,7 +374,8 @@ export function createTeamProvisioningOpenCodeRuntimeDeliveryBoundary<
     },
     recordOpenCodeRuntimeTaskEvent: (raw) =>
       recordOpenCodeRuntimeTaskEvent(raw, createCheckinPorts()),
-    recordOpenCodeRuntimeHeartbeat: (raw) => recordOpenCodeRuntimeHeartbeat(raw, createCheckinPorts()),
+    recordOpenCodeRuntimeHeartbeat: (raw) =>
+      recordOpenCodeRuntimeHeartbeat(raw, createCheckinPorts()),
     createOpenCodeRuntimeDeliveryService: createDeliveryService,
     createOpenCodePromptDeliveryLedger: createPromptDeliveryLedger,
     getOpenCodeRuntimeDeliveryStatus: (teamName, messageId) =>
@@ -477,7 +482,8 @@ export async function getOpenCodeRuntimeDeliveryStatus(
     ),
   ];
   for (const laneId of laneIds) {
-    const records = await ports.createOpenCodePromptDeliveryLedger(teamName, laneId)
+    const records = await ports
+      .createOpenCodePromptDeliveryLedger(teamName, laneId)
       .list()
       .catch(() => []);
     const record = records.find((candidate) => candidate.inboxMessageId === normalizedMessageId);
@@ -513,7 +519,8 @@ export async function tryGetActiveOpenCodePromptDeliveryRecord(
       return null;
     }
   }
-  return await ports.createOpenCodePromptDeliveryLedger(input.teamName, identity.laneId)
+  return await ports
+    .createOpenCodePromptDeliveryLedger(input.teamName, identity.laneId)
     .getActiveForMember({
       teamName: input.teamName,
       memberName: identity.canonicalMemberName,
@@ -652,14 +659,13 @@ export async function getOpenCodeMemberDeliveryBusyStatus(
 
   let activeRecord: OpenCodePromptDeliveryLedgerRecord | null;
   try {
-    activeRecord = await ports.createOpenCodePromptDeliveryLedger(
-      input.teamName,
-      identity.laneId
-    ).getActiveForMember({
-      teamName: input.teamName,
-      memberName: identity.canonicalMemberName,
-      laneId: identity.laneId,
-    });
+    activeRecord = await ports
+      .createOpenCodePromptDeliveryLedger(input.teamName, identity.laneId)
+      .getActiveForMember({
+        teamName: input.teamName,
+        memberName: identity.canonicalMemberName,
+        laneId: identity.laneId,
+      });
   } catch {
     return {
       busy: true,

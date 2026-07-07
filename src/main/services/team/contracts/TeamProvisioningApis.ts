@@ -1,4 +1,4 @@
-import type { OpenCodeRuntimeControlAck } from '../runtime-control';
+import type { OpenCodeRuntimeControlAck, OpenCodeRuntimeControlApi } from '../runtime-control';
 import type {
   AgentActionMode,
   AttachmentPayload,
@@ -75,12 +75,7 @@ export interface TeamProvisioningPreflightApi {
   ): Promise<TeamProvisioningPrepareResult>;
 }
 
-export interface TeamRuntimeControlCompatibilityApi {
-  recordOpenCodeRuntimeBootstrapCheckin(raw: unknown): Promise<OpenCodeRuntimeControlAck>;
-  deliverOpenCodeRuntimeMessage(raw: unknown): Promise<OpenCodeRuntimeControlAck>;
-  recordOpenCodeRuntimeTaskEvent(raw: unknown): Promise<OpenCodeRuntimeControlAck>;
-  recordOpenCodeRuntimeHeartbeat(raw: unknown): Promise<OpenCodeRuntimeControlAck>;
-}
+export type TeamRuntimeControlCompatibilityApi = OpenCodeRuntimeControlApi;
 
 export interface TeamRuntimeApi {
   getRuntimeState(teamName: string): Promise<TeamRuntimeState>;

@@ -34,9 +34,8 @@ import {
   type RuntimeToolMetadata,
 } from './TeamProvisioningRuntimeMetadata';
 
-import type { OpenCodeRuntimeControlAck } from '../contracts/TeamProvisioningApis';
+import type { OpenCodeRuntimeControlAck } from '../runtime-control';
 import type { TeamRuntimeLaunchResult, TeamRuntimeMemberLaunchEvidence } from '../runtime';
-export type { OpenCodeRuntimeControlAck } from '../contracts/TeamProvisioningApis';
 import type {
   OpenCodeTaskLogAttributionRecord,
   OpenCodeTaskLogAttributionWriteResult,
@@ -51,6 +50,8 @@ import type {
   TeamCreateRequest,
   TeamMember,
 } from '@shared/types';
+
+export type { OpenCodeRuntimeControlAck } from '../runtime-control';
 
 export interface OpenCodeRuntimeCheckinLane {
   laneId: string;

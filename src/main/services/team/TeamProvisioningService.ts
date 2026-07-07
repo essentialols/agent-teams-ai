@@ -3,7 +3,6 @@ import { createTeamRuntimeLaneCoordinator } from '@features/team-runtime-lanes/m
 import {
   type WorkspaceTrustArgsOnlyPlanRequest,
   type WorkspaceTrustArgsOnlyPlanResult,
-  type WorkspaceTrustCoordinator,
   type WorkspaceTrustFeatureFlags,
   type WorkspaceTrustFullPlanRequest,
   type WorkspaceTrustFullPlanResult,
@@ -81,7 +80,6 @@ import {
   createAppendDirectProcessRuntimeEventUseCase,
   createNodeAppendDirectProcessRuntimeEventUseCasePorts,
 } from './provisioning/TeamProvisioningAppendDirectProcessRuntimeEventUseCase';
-import { TeamProvisioningAppShellBoundary } from './provisioning/TeamProvisioningAppShellBoundary';
 import { ensureCwdExists, sleep } from './provisioning/TeamProvisioningAsyncUtils';
 import {
   createTeamProvisioningBootstrapFailureMarker,
@@ -121,6 +119,7 @@ import {
 } from './provisioning/TeamProvisioningCleanup';
 import { createTeamProvisioningCleanupRunPorts } from './provisioning/TeamProvisioningCleanupRunPortsFactory';
 import { getCliHelpOutputWithProvisioningPorts } from './provisioning/TeamProvisioningCliHelpOutputPortsFactory';
+import { TeamProvisioningCompatibilityFacade } from './provisioning/TeamProvisioningCompatibilityFacade';
 import { TeamProvisioningConfigFacade } from './provisioning/TeamProvisioningConfigFacade';
 import {
   createTeamProvisioningConfigTaskActivityBoundary,
@@ -269,10 +268,6 @@ import {
   buildRuntimeSpawnStatusRecord as buildRuntimeSpawnStatusRecordHelper,
   filterRemovedMembersFromLaunchSnapshot,
 } from './provisioning/TeamProvisioningMemberStatusProjection';
-import {
-  type MemberWorkSyncAcceptedReportChecker,
-  type MemberWorkSyncProofMissingRecoveryScheduler,
-} from './provisioning/TeamProvisioningMemberWorkSyncProof';
 import { createTeamProvisioningMemberWorkSyncProofBoundary } from './provisioning/TeamProvisioningMemberWorkSyncProofBoundaryFactory';
 import {
   persistTeamProvisioningInboxMessage,
@@ -557,7 +552,6 @@ import type {
   OpenCodeTeamRuntimeMessageInput,
   OpenCodeTeamRuntimeMessageResult,
   TeamLaunchRuntimeAdapter,
-  TeamRuntimeAdapterRegistry,
   TeamRuntimeLaunchInput,
   TeamRuntimeLaunchResult,
   TeamRuntimeMemberLaunchEvidence,
@@ -581,8 +575,6 @@ export {
 
 import type {
   AgentActionMode,
-  CrossTeamSendRequest,
-  CrossTeamSendResult,
   InboxMessage,
   LeadContextUsage,
   MemberSpawnLivenessSource,
@@ -637,9 +629,8 @@ function getRunRuntimeFailureLabel(run: ProvisioningRun): string {
   return getRuntimeFailureLabelForRequest(run.request);
 }
 
-export class TeamProvisioningService {
+export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade {
   private readonly runtimeLaneCoordinator = createTeamRuntimeLaneCoordinator();
-  private readonly appShellBoundary = new TeamProvisioningAppShellBoundary();
   private readonly providerConnectionService = ProviderConnectionService.getInstance();
   private readonly launchIdentityBoundary: TeamProvisioningLaunchIdentityBoundary =
     createTeamProvisioningLaunchIdentityBoundary({
@@ -1596,6 +1587,7 @@ export class TeamProvisioningService {
     private readonly memberWorktreeManager: TeamMemberWorktreeManager = new TeamMemberWorktreeManager(),
     private readonly attachmentStore: TeamAttachmentStore = new TeamAttachmentStore()
   ) {
+    super();
     this.configFacade = new TeamProvisioningConfigFacade({
       configReader: this.configReader,
       inboxReader: this.inboxReader,
@@ -2375,46 +2367,6 @@ export class TeamProvisioningService {
     );
   }
 
-  setRuntimeAdapterRegistry(registry: TeamRuntimeAdapterRegistry | null): void {
-    this.appShellBoundary.setRuntimeAdapterRegistry(registry);
-  }
-
-  getOpenCodeRuntimeAdapter(): TeamLaunchRuntimeAdapter | null {
-    return this.appShellBoundary.getOpenCodeRuntimeAdapter();
-  }
-
-  setMemberRuntimeAdvisoryInvalidator(
-    invalidator: ((teamName: string, memberName: string) => void) | null
-  ): void {
-    this.appShellBoundary.setMemberRuntimeAdvisoryInvalidator(invalidator);
-  }
-
-  setMemberWorkSyncProofMissingRecoveryScheduler(
-    scheduler: MemberWorkSyncProofMissingRecoveryScheduler | null
-  ): void {
-    this.appShellBoundary.setMemberWorkSyncProofMissingRecoveryScheduler(scheduler);
-  }
-
-  setMemberWorkSyncAcceptedReportChecker(
-    checker: MemberWorkSyncAcceptedReportChecker | null
-  ): void {
-    this.appShellBoundary.setMemberWorkSyncAcceptedReportChecker(checker);
-  }
-
-  setCrossTeamSender(
-    sender: ((request: CrossTeamSendRequest) => Promise<CrossTeamSendResult>) | null
-  ): void {
-    this.appShellBoundary.setCrossTeamSender(sender);
-  }
-
-  setControlApiBaseUrlResolver(resolver: (() => Promise<string | null>) | null): void {
-    this.appShellBoundary.setControlApiBaseUrlResolver(resolver);
-  }
-
-  setWorkspaceTrustCoordinator(coordinator: WorkspaceTrustCoordinator | null): void {
-    this.appShellBoundary.setWorkspaceTrustCoordinator(coordinator);
-  }
-
   private collectWorkspaceTrustProviders(input: {
     leadProviderId?: TeamProviderId;
     members: TeamCreateRequest['members'];
@@ -2450,18 +2402,6 @@ export class TeamProvisioningService {
       request,
       logger,
     });
-  }
-
-  setRuntimeTurnSettledHookSettingsProvider(
-    provider: RuntimeTurnSettledHookSettingsProvider | null
-  ): void {
-    this.appShellBoundary.setRuntimeTurnSettledHookSettingsProvider(provider);
-  }
-
-  setRuntimeTurnSettledEnvironmentProvider(
-    provider: RuntimeTurnSettledEnvironmentProvider | null
-  ): void {
-    this.appShellBoundary.setRuntimeTurnSettledEnvironmentProvider(provider);
   }
 
   private isLaunchRunStillCurrent(run: ProvisioningRun): boolean {

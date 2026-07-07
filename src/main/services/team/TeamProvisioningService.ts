@@ -3894,19 +3894,13 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
     await maybeAuditMemberSpawnStatusesForRun(run, this.memberSpawnStatusAuditPorts, options);
   }
 
-  private static readonly CONTEXT_EMIT_THROTTLE_MS = 2000;
-
   private emitLeadContextUsage(run: ProvisioningRun): void {
-    emitLeadContextUsageForRun(
-      run,
-      {
-        isCurrentTrackedRun: (targetRun) => this.isCurrentTrackedRun(targetRun),
-        nowMs: () => Date.now(),
-        nowIso: () => new Date().toISOString(),
-        emitTeamChange: (event) => this.teamChangeEmitter?.(event),
-      },
-      TeamProvisioningService.CONTEXT_EMIT_THROTTLE_MS
-    );
+    emitLeadContextUsageForRun(run, {
+      isCurrentTrackedRun: (targetRun) => this.isCurrentTrackedRun(targetRun),
+      nowMs: () => Date.now(),
+      nowIso: () => new Date().toISOString(),
+      emitTeamChange: (event) => this.teamChangeEmitter?.(event),
+    });
   }
 
   async warmup(): Promise<void> {

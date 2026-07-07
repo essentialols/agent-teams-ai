@@ -10,10 +10,39 @@ describe('TeamProvisioningMemberLifecycleServiceUseCases', () => {
     const runtimeEvents: DirectProcessRuntimeEventInput[] = [];
     const stoppedMembers: string[] = [];
     const preparedRestartMembers: string[] = [];
+    const launchStateReads: string[] = [];
 
     const useCases = createTeamProvisioningMemberLifecycleServiceUseCases({
       persistSentMessage: (teamName, message) => {
         sentMessages.push({ teamName, message });
+      },
+      readLaunchStateSnapshot: async (teamName) => {
+        launchStateReads.push(teamName);
+        return {
+          version: 2,
+          teamName,
+          launchPhase: 'active',
+          updatedAt: '2026-07-06T17:00:00.000Z',
+          expectedMembers: ['Worker'],
+          members: {
+            Worker: {
+              name: 'Worker',
+              launchState: 'confirmed_alive',
+              agentToolAccepted: true,
+              runtimeAlive: true,
+              bootstrapConfirmed: true,
+              hardFailure: false,
+              lastEvaluatedAt: '2026-07-06T17:00:00.000Z',
+            },
+          },
+          summary: {
+            confirmedCount: 1,
+            pendingCount: 0,
+            failedCount: 0,
+            runtimeAlivePendingCount: 0,
+          },
+          teamLaunchState: 'clean_success',
+        };
       },
       appendDirectProcessRuntimeEvent: async (input) => {
         runtimeEvents.push(input);
@@ -36,6 +65,7 @@ describe('TeamProvisioningMemberLifecycleServiceUseCases', () => {
       'appendDirectProcessRuntimeEvent',
       'persistOpenCodeMemberRestartSystemMessage',
       'preparePrimaryOwnedMemberRestartRuntime',
+      'readOpenCodeSecondaryRetryOutcome',
       'stopPrimaryOwnedRosterRuntime',
     ]);
 
@@ -77,6 +107,17 @@ describe('TeamProvisioningMemberLifecycleServiceUseCases', () => {
       directTmuxRestartPaneId: null,
       shouldDirectProcessRestart: true,
     });
+    await expect(
+      useCases.readOpenCodeSecondaryRetryOutcome(
+        {
+          teamName: 'team-a',
+          mixedSecondaryLanes: [],
+          memberSpawnStatuses: new Map(),
+        },
+        'Worker',
+        'secondary:opencode:worker'
+      )
+    ).resolves.toEqual({ launchState: 'confirmed_alive' });
     expect(sentMessages).toHaveLength(1);
     expect(sentMessages[0]?.message).toMatchObject({
       from: 'Lead',
@@ -95,5 +136,6 @@ describe('TeamProvisioningMemberLifecycleServiceUseCases', () => {
     ]);
     expect(stoppedMembers).toEqual(['team-a:Worker']);
     expect(preparedRestartMembers).toEqual(['team-a:Worker']);
+    expect(launchStateReads).toEqual(['team-a']);
   });
 });

@@ -2,13 +2,19 @@ import {
   createPersistOpenCodeMemberRestartSystemMessageUseCase,
   type PersistOpenCodeMemberRestartSystemMessageUseCase,
 } from './TeamProvisioningOpenCodeMemberRestartSystemMessageUseCase';
+import {
+  createReadOpenCodeSecondaryRetryOutcomeUseCase,
+  type ReadOpenCodeSecondaryRetryOutcomeUseCase,
+} from './TeamProvisioningReadOpenCodeSecondaryRetryOutcomeUseCase';
 
 import type { AppendDirectProcessRuntimeEventUseCase } from './TeamProvisioningAppendDirectProcessRuntimeEventUseCase';
 import type { PreparePrimaryOwnedMemberRestartRuntimeUseCase } from './TeamProvisioningPreparePrimaryOwnedMemberRestartRuntimeUseCase';
 import type { StopPrimaryOwnedRosterRuntimeUseCase } from './TeamProvisioningStopPrimaryOwnedRosterRuntimeUseCase';
+import type { PersistedTeamLaunchSnapshot } from '@shared/types';
 
 export interface TeamProvisioningMemberLifecycleServiceUseCasePorts {
   persistSentMessage(teamName: string, message: Record<string, unknown>): void;
+  readLaunchStateSnapshot(teamName: string): Promise<PersistedTeamLaunchSnapshot | null>;
   appendDirectProcessRuntimeEvent: AppendDirectProcessRuntimeEventUseCase;
   stopPrimaryOwnedRosterRuntime: StopPrimaryOwnedRosterRuntimeUseCase;
   preparePrimaryOwnedMemberRestartRuntime: PreparePrimaryOwnedMemberRestartRuntimeUseCase;
@@ -18,6 +24,7 @@ export interface TeamProvisioningMemberLifecycleServiceUseCasePorts {
 
 export interface TeamProvisioningMemberLifecycleServiceUseCases {
   persistOpenCodeMemberRestartSystemMessage: PersistOpenCodeMemberRestartSystemMessageUseCase;
+  readOpenCodeSecondaryRetryOutcome: ReadOpenCodeSecondaryRetryOutcomeUseCase;
   appendDirectProcessRuntimeEvent: AppendDirectProcessRuntimeEventUseCase;
   stopPrimaryOwnedRosterRuntime: StopPrimaryOwnedRosterRuntimeUseCase;
   preparePrimaryOwnedMemberRestartRuntime: PreparePrimaryOwnedMemberRestartRuntimeUseCase;
@@ -33,6 +40,9 @@ export function createTeamProvisioningMemberLifecycleServiceUseCases(
         nowIso: ports.nowIso,
         randomUUID: ports.randomUUID,
       }),
+    readOpenCodeSecondaryRetryOutcome: createReadOpenCodeSecondaryRetryOutcomeUseCase({
+      readLaunchStateSnapshot: ports.readLaunchStateSnapshot,
+    }),
     appendDirectProcessRuntimeEvent: ports.appendDirectProcessRuntimeEvent,
     stopPrimaryOwnedRosterRuntime: ports.stopPrimaryOwnedRosterRuntime,
     preparePrimaryOwnedMemberRestartRuntime: ports.preparePrimaryOwnedMemberRestartRuntime,

@@ -71,12 +71,16 @@ import {
   buildRestartMemberSpawnMessage,
 } from './TeamProvisioningPromptBuilders';
 import {
+  createReadOpenCodeSecondaryRetryOutcomeUseCase,
+  type OpenCodeSecondaryRetryOutcome,
+} from './TeamProvisioningReadOpenCodeSecondaryRetryOutcomeUseCase';
+import {
   createNodeStopPrimaryOwnedRosterRuntimeUseCase,
   type StopPrimaryOwnedRosterRuntimeInput,
 } from './TeamProvisioningStopPrimaryOwnedRosterRuntimeUseCase';
 
 import type { NativeAppManagedBootstrapSpec } from '../bootstrap/NativeAppManagedBootstrapContextBuilder';
-import type { TeamRuntimeLaunchResult, TeamRuntimeMemberLaunchEvidence } from '../runtime';
+import type { TeamRuntimeLaunchResult } from '../runtime';
 import type { TeamMcpConfigBuilder } from '../TeamMcpConfigBuilder';
 import type { TeamMembersMetaStore } from '../TeamMembersMetaStore';
 import type { RuntimeBootstrapMemberMcpLaunchConfig } from './TeamProvisioningBootstrapSpec';
@@ -84,7 +88,6 @@ import type { TeamProvisioningMemberLifecycleOperationUseCases } from './TeamPro
 import type { LiveTeamAgentRuntimeMetadata } from './TeamProvisioningRuntimeMetadataPolicy';
 import type {
   EffortLevel,
-  MemberLaunchState,
   MemberSpawnStatusEntry,
   PersistedTeamLaunchMemberState,
   PersistedTeamLaunchPhase,
@@ -234,10 +237,7 @@ export interface OpenCodeSecondaryRetryCandidate {
   laneId: string;
 }
 
-export interface OpenCodeSecondaryRetryOutcome {
-  launchState: MemberLaunchState;
-  reason?: string;
-}
+export type { OpenCodeSecondaryRetryOutcome } from './TeamProvisioningReadOpenCodeSecondaryRetryOutcomeUseCase';
 
 type EffectiveConfiguredMember = TeamCreateRequest['members'][number] & {
   agentType?: string;
@@ -571,6 +571,10 @@ export class TeamProvisioningMemberLifecycleController {
     createNodeStopPrimaryOwnedRosterRuntimeUseCase();
   private readonly preparePrimaryOwnedMemberRestartRuntimeFallback =
     createNodePreparePrimaryOwnedMemberRestartRuntimeUseCase();
+  private readonly readOpenCodeSecondaryRetryOutcomeFallback =
+    createReadOpenCodeSecondaryRetryOutcomeUseCase({
+      readLaunchStateSnapshot: (teamName) => this.launchStateStore.read(teamName),
+    });
 
   constructor(
     private readonly host: TeamProvisioningMemberLifecycleHost,
@@ -2566,92 +2570,7 @@ export class TeamProvisioningMemberLifecycleController {
     memberName: string,
     laneId: string
   ): Promise<OpenCodeSecondaryRetryOutcome> {
-    const lane = (run.mixedSecondaryLanes ?? []).find(
-      (candidate) =>
-        candidate.laneId === laneId || matchesTeamMemberIdentity(candidate.member.name, memberName)
-    );
-    const memberEvidence =
-      lane?.result?.members[memberName] ??
-      Object.values(lane?.result?.members ?? {}).find((member) =>
-        matchesTeamMemberIdentity(member.memberName, memberName)
-      );
-    const persistedSnapshot = await this.launchStateStore.read(run.teamName).catch(() => null);
-    const persistedMember =
-      persistedSnapshot?.members[memberName] ??
-      Object.values(persistedSnapshot?.members ?? {}).find((member) => member.laneId === laneId);
-    const liveEntry = run.memberSpawnStatuses.get(memberName);
-
-    if (
-      memberEvidence?.launchState === 'confirmed_alive' ||
-      memberEvidence?.bootstrapConfirmed === true ||
-      liveEntry?.launchState === 'confirmed_alive' ||
-      liveEntry?.bootstrapConfirmed === true ||
-      persistedMember?.launchState === 'confirmed_alive' ||
-      persistedMember?.bootstrapConfirmed === true
-    ) {
-      return { launchState: 'confirmed_alive' };
-    }
-
-    if (
-      liveEntry?.launchState === 'skipped_for_launch' ||
-      liveEntry?.skippedForLaunch === true ||
-      persistedMember?.launchState === 'skipped_for_launch' ||
-      persistedMember?.skippedForLaunch === true
-    ) {
-      return {
-        launchState: 'skipped_for_launch',
-        reason: liveEntry?.skipReason ?? persistedMember?.skipReason,
-      };
-    }
-
-    if (
-      memberEvidence?.launchState === 'failed_to_start' ||
-      memberEvidence?.hardFailure === true ||
-      liveEntry?.launchState === 'failed_to_start' ||
-      liveEntry?.status === 'error' ||
-      persistedMember?.launchState === 'failed_to_start' ||
-      persistedMember?.hardFailure === true
-    ) {
-      return {
-        launchState: 'failed_to_start',
-        reason: this.selectOpenCodeSecondaryRetryFailureReason({
-          memberEvidence,
-          liveEntry,
-          persistedMember,
-        }),
-      };
-    }
-
-    return {
-      launchState:
-        memberEvidence?.launchState ??
-        liveEntry?.launchState ??
-        persistedMember?.launchState ??
-        'runtime_pending_bootstrap',
-    };
-  }
-
-  private selectOpenCodeSecondaryRetryFailureReason(input: {
-    memberEvidence?: TeamRuntimeMemberLaunchEvidence;
-    liveEntry?: MemberSpawnStatusEntry;
-    persistedMember?: PersistedTeamLaunchMemberState;
-  }): string | undefined {
-    const diagnostics = [
-      input.memberEvidence?.hardFailureReason,
-      input.memberEvidence?.runtimeDiagnostic,
-      ...(input.memberEvidence?.diagnostics ?? []),
-      input.liveEntry?.hardFailureReason,
-      input.liveEntry?.runtimeDiagnostic,
-      input.liveEntry?.error,
-      input.persistedMember?.hardFailureReason,
-      input.persistedMember?.runtimeDiagnostic,
-    ];
-    return diagnostics
-      .find(
-        (diagnostic): diagnostic is string =>
-          typeof diagnostic === 'string' && diagnostic.trim().length > 0
-      )
-      ?.trim();
+    return await this.readOpenCodeSecondaryRetryOutcomeFallback(run, memberName, laneId);
   }
 
   private async notifyLeadAboutConfirmedOpenCodeRetries(

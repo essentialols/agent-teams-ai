@@ -1299,6 +1299,7 @@ export class TeamProvisioningService {
   private readonly memberLifecycleUseCases = createTeamProvisioningMemberLifecycleServiceUseCases({
     persistSentMessage: (teamName, message) =>
       this.persistSentMessage(teamName, message as unknown as InboxMessage),
+    readLaunchStateSnapshot: (teamName) => this.launchStateStore.read(teamName),
     appendDirectProcessRuntimeEvent: createAppendDirectProcessRuntimeEventUseCase(
       createNodeAppendDirectProcessRuntimeEventUseCasePorts({ nowIso })
     ),

@@ -27,7 +27,7 @@ import { LocalGitRevisionReader } from "./codex-goal-git-revision.js";
 import { buildCodexControlledAgentProfile, CodexControlledAgentProvider, } from "./controlled-agent/index.js";
 import { projectControllerCapacityDemand, recordProjectControllerCapacitySignal, } from "./project-controller-capacity.js";
 import { createProjectControlOperation, patchProjectControlOperation, projectControlOperationExecutionMode, projectControlOperationView, projectControlOperationsRoot, readProjectControlOperationById, startProjectControlOperationRunner, } from "./project-control-operation-lifecycle.js";
-import { accountNames, booleanValue, dateValue, numberValue, positiveIntegerValue, putIfDefined, requiredRawString, requiredString, resolvePath, stringValue, tagValues, workerReportModeValue, } from "./codex-goal-mcp-values.js";
+import { accountNames, booleanValue, numberValue, positiveIntegerValue, putIfDefined, requiredRawString, requiredString, resolvePath, stringValue, tagValues, workerReportModeValue, } from "./codex-goal-mcp-values.js";
 import { jobIdInputSchema, jobRegistryInputSchema, optionalRunEventProviderKind, registryRootFromArgs, runEventRetentionPolicyFromArgs, runEventRootFromArgs, runEventTypeFilter, } from "./codex-goal-mcp-inputs.js";
 import { accountAuthRootFromArgs, accountPoolRootFromArgs, availableCodexGoalAccountSlots, codexAccountReloginInstructions, codexAccountStatusPayload, defaultCodexGoalAuthRoot, dedupeCodexGoalAccountSlots, duplicateAccountGroups, listAccountPools, } from "./codex-goal-mcp-accounts.js";
 import { readRuntimeResultBrief, safeTail, } from "./codex-goal-mcp-runtime-result.js";
@@ -37,7 +37,8 @@ import { buildCodexProjectAdmissionSnapshot, codexProjectAdmissionGate, projectA
 import { jobIdsFromValue, parseIsoDate, signalIdList, workerControlCallerArgs, workerControlDecisionJson, workerControlReceiptJson, workerControlSignalJson, workerControlSignalViewJson, } from "./codex-goal-mcp-worker-control-view.js";
 import { codexGoalAccountStatusPayload, codexGoalStateRootDir, codexGoalWorkerControlService, codexGoalWorkerControlTarget, } from "./codex-goal-mcp-worker-control.js";
 import { codexGoalAccountCapacityFacts } from "./codex-goal-mcp-account-capacity-facts.js";
-import { applyWorkspaceConflictToOverviewJob, buildCodexGoalWorkspaceConflicts, workspaceConflictJobIds, workspaceConflictKey, } from "./codex-goal-mcp-workspace-conflicts.js";
+import { applyWorkspaceConflictToOverviewJob, buildCodexGoalWorkspaceConflicts, workspaceConflictJobIds, } from "./codex-goal-mcp-workspace-conflicts.js";
+import { codexOverviewItemToWatchStatus } from "./codex-goal-mcp-watch-status.js";
 import { CODEX_GOAL_CONTROL_SURFACE_SCHEMA, CODEX_GOAL_EXECUTION_ENGINE_SCHEMA, buildCodexGoalDecision, buildCodexGoalHandoff, codexGoalBriefHealthStatus, isHeartbeatOnlyNoOutputBrief, isSafeStartAction, latestIsoDate, nextActionForStatus, nextBestCommand, redactText, truncateText, } from "./codex-goal-mcp-decision.js";
 import { extractRecentCommands, redactLogTail, } from "./codex-goal-mcp-log-view.js";
 import { assertGitCurrentBranch, assertSafeGitCommitSha, assertSafeGitRefName, assertSafeGitRemoteName, execGit, execGitStdout, } from "./codex-goal-mcp-project-git.js";
@@ -4710,45 +4711,6 @@ function summarizeRunObservationSnapshots(snapshots) {
         unsafeStateMismatch: snapshots.filter((snapshot) => snapshot.readOnlyDecision.kind === "unsafe_state_mismatch").length,
         warnings: snapshots.reduce((count, snapshot) => count + snapshot.warnings.length, 0),
     };
-}
-async function codexOverviewItemToWatchStatus(item) {
-    const jobId = stringValue(item.jobId) ?? "unknown";
-    const workspacePath = stringValue(item.workspacePath);
-    const recommendedAction = stringValue(item.recommendedAction);
-    const nextBestTool = stringValue(item.nextBestTool);
-    const continueAfter = continueAfterFromOverviewItem(item);
-    const requiresManualReview = nextBestTool === "manual_review" ||
-        recommendedAction === "inspect_dirty_workspace" ||
-        recommendedAction === "inspect_dirty_failure" ||
-        recommendedAction === "inspect_failure" ||
-        recommendedAction === "check_log_or_result";
-    return {
-        runId: jobId,
-        workerAlive: item.workerAlive === true,
-        safeToContinue: item.safeToContinue === true,
-        ...(workspacePath ? { workspaceKey: await workspaceConflictKey(workspacePath) } : {}),
-        ...(item.workspaceDirty === undefined
-            ? {}
-            : { workspaceDirty: item.workspaceDirty === true }),
-        ...(requiresManualReview ? { requiresManualReview: true } : {}),
-        ...(requiresManualReview
-            ? { manualReviewReason: nextBestTool ?? recommendedAction ?? "manual_review" }
-            : {}),
-        ...(continueAfter ? { continueAfter } : {}),
-        summary: item,
-    };
-}
-function continueAfterFromOverviewItem(item) {
-    const recommendedAction = stringValue(item.recommendedAction);
-    if (recommendedAction !== "continue_after_capacity")
-        return undefined;
-    const accounts = Array.isArray(item.capacityBlockedAccounts)
-        ? item.capacityBlockedAccounts
-        : [];
-    return accounts
-        .map((account) => isRecord(account) ? dateValue(account.cooldownUntil) : undefined)
-        .filter((value) => value !== undefined)
-        .sort((left, right) => left.getTime() - right.getTime())[0];
 }
 async function buildCodexGoalOverviewItem(input) {
     try {

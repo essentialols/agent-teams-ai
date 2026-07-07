@@ -456,7 +456,7 @@ function createService(options: {
     sentMessagesStore: host.sentMessagesStore,
     inboxReader: host.inboxReader,
     inboxWriter: host.inboxWriter,
-    crossTeamSender: 'cross-team-sender' as never,
+    getCrossTeamSender: vi.fn(() => 'cross-team-sender' as never),
     isOpenCodeRuntimeRecipient: host.isOpenCodeRuntimeRecipient,
     getOpenCodeAgendaSyncRecoveryBypassMessageIds:
       host.getOpenCodeAgendaSyncRecoveryBypassMessageIds,

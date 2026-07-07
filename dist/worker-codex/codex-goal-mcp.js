@@ -9,9 +9,9 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { DefaultRedactor, } from "@vioxen/subscription-runtime/core";
 import { sessionArtifactFromCodexAuthJson } from "@vioxen/subscription-runtime/provider-codex";
-import { LocalFileRunEventProjectionStateStore, LocalFileRunEventStore, LocalFileWorkerControlInboxStore, LocalControlledAgentStateStore, } from "@vioxen/subscription-runtime/store-local-file";
+import { LocalFileRunEventProjectionStateStore, LocalFileRunEventStore, LocalControlledAgentStateStore, } from "@vioxen/subscription-runtime/store-local-file";
 import { buildLocalClaudeControlledAgentProfile, createLocalClaudeControlledAgentProvider, loadScopedClaudeSessionArtifact, watchClaudeRuns, } from "@vioxen/subscription-runtime/worker-local";
-import { AccessBoundary, LaunchPlanStatus, NetworkAccessMode, ProjectAdmissionWorkerRole, RunObservationService, InterruptAndContinueWorkerUseCase, ProjectControlBroker, RunEventProviderKind, WorkerControlService, assessBaseRevision, assessWorkerHealth, buildControlledAgentLaunchPlan, buildControlledAgentLiveControllerState, buildControlledAgentProcessOwner, getControlledAgentStatus, reconcileControlledAgentRun, startControlledAgentRun, stopControlledAgentRun, buildWorkerStatusView, decideRunObservation, evaluateProjectAdmission, projectRunObservationEvents, projectRunReadModelsFromEvents, reconcileRunPreview, readTargetRevision, runEventProviderKindFromString, ProjectOperation, } from "@vioxen/subscription-runtime/worker-core";
+import { AccessBoundary, LaunchPlanStatus, NetworkAccessMode, ProjectAdmissionWorkerRole, RunObservationService, InterruptAndContinueWorkerUseCase, ProjectControlBroker, RunEventProviderKind, assessBaseRevision, assessWorkerHealth, buildControlledAgentLaunchPlan, buildControlledAgentLiveControllerState, buildControlledAgentProcessOwner, getControlledAgentStatus, reconcileControlledAgentRun, startControlledAgentRun, stopControlledAgentRun, buildWorkerStatusView, decideRunObservation, evaluateProjectAdmission, projectRunObservationEvents, projectRunReadModelsFromEvents, reconcileRunPreview, readTargetRevision, runEventProviderKindFromString, ProjectOperation, } from "@vioxen/subscription-runtime/worker-core";
 import { codexGoalJobToArgs, codexGoalObjectiveMaxChars, createCodexGoalJob, defaultCodexGoalJobRoot, listCodexGoalJobs, readCodexGoalJob, resolveCodexGoalJobRegistryRoot, summarizeCodexGoalJob, updateCodexGoalJob, } from "./codex-goal-jobs.js";
 import { upsertCodexGoalLaunchManifest } from "./codex-goal-launch-manifest.js";
 import { runDependencyBootstrap, } from "./dependency-bootstrap.js";
@@ -35,6 +35,7 @@ import { readCodexGoalLifecycleMarkers, writeCodexGoalMaintenancePauseEvent, wri
 import { matchesProjectControlPrefix, nodeErrorCode, pathInsideAnyProjectRoot, stringArrayArg, uniqueProjectControlStrings, } from "./codex-goal-mcp-project-utils.js";
 import { buildCodexProjectAdmissionSnapshot, codexProjectAdmissionGate, projectAdmissionDetailView, projectAdmissionOperation, projectAdmissionWorkerRoleArg, } from "./codex-goal-mcp-project-admission.js";
 import { jobIdsFromValue, parseIsoDate, signalIdList, workerControlCallerArgs, workerControlDecisionJson, workerControlReceiptJson, workerControlSignalJson, workerControlSignalViewJson, } from "./codex-goal-mcp-worker-control-view.js";
+import { codexGoalAccountStatusPayload, codexGoalStateRootDir, codexGoalWorkerControlService, codexGoalWorkerControlTarget, } from "./codex-goal-mcp-worker-control.js";
 import { CODEX_GOAL_CONTROL_SURFACE_SCHEMA, CODEX_GOAL_EXECUTION_ENGINE_SCHEMA, buildCodexGoalDecision, buildCodexGoalHandoff, codexGoalBriefHealthStatus, isHeartbeatOnlyNoOutputBrief, isSafeStartAction, latestIsoDate, nextActionForStatus, nextBestCommand, redactText, truncateText, } from "./codex-goal-mcp-decision.js";
 import { extractRecentCommands, redactLogTail, } from "./codex-goal-mcp-log-view.js";
 import { assertGitCurrentBranch, assertSafeGitCommitSha, assertSafeGitRefName, assertSafeGitRemoteName, execGit, execGitStdout, } from "./codex-goal-mcp-project-git.js";
@@ -3636,31 +3637,6 @@ async function projectControlMarkReviewed(args) {
         auditPath: projectControlAuditPath(controller.controller),
         jobId: loaded.manifest.jobId,
         result: result,
-    });
-}
-function codexGoalWorkerControlService(launch) {
-    return new WorkerControlService({
-        store: new LocalFileWorkerControlInboxStore({
-            rootDir: codexGoalStateRootDir(launch),
-        }),
-    });
-}
-function codexGoalWorkerControlTarget(input) {
-    return {
-        jobId: input.manifest.jobId,
-        taskId: input.launch.config.taskId,
-        workspaceId: input.launch.config.workspacePath,
-    };
-}
-function codexGoalStateRootDir(launch) {
-    return launch.config.stateRootDir ?? join(launch.config.jobRootDir, "state");
-}
-async function codexGoalAccountStatusPayload(launch, options = {}) {
-    return codexAccountStatusPayload({
-        authRootDir: launch.config.authRootDir,
-        stateRootDir: codexGoalStateRootDir(launch),
-        accounts: launch.config.accounts.map((account) => account.name),
-        ...options,
     });
 }
 async function codexGoalAccountCapacityFacts(manifest) {

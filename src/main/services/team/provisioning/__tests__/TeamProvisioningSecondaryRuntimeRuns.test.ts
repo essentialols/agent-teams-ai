@@ -10,6 +10,7 @@ import {
   getMixedSecondaryLaunchPhase,
   getSecondaryRuntimeRuns,
   hasSecondaryRuntimeRuns,
+  isOpenCodeSecondaryLaneMemberInRun,
   type MixedSecondaryRuntimeLaneState,
   removeRunAllEffectiveMember,
   type SecondaryRuntimeRunEntry,
@@ -150,6 +151,29 @@ describe('TeamProvisioningSecondaryRuntimeRuns', () => {
           mixedSecondaryLanes: [lane('finished', runtimeResult('clean_success'))],
         })
       ).toBe('finished');
+    });
+
+    it('detects OpenCode secondary lane members from mixed lane state only', () => {
+      expect(
+        isOpenCodeSecondaryLaneMemberInRun({ mixedSecondaryLanes: [lane('queued')] }, 'bob')
+      ).toBe(true);
+      expect(
+        isOpenCodeSecondaryLaneMemberInRun(
+          {
+            mixedSecondaryLanes: [
+              {
+                ...lane('queued'),
+                providerId: 'opencode',
+                member: member('alice', 'opencode'),
+              },
+            ],
+          },
+          'bob'
+        )
+      ).toBe(false);
+      expect(isOpenCodeSecondaryLaneMemberInRun({ mixedSecondaryLanes: undefined }, 'bob')).toBe(
+        false
+      );
     });
   });
 

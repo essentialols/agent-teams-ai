@@ -470,6 +470,7 @@ import {
   createSecondaryRuntimeRunStore,
   getCurrentOpenCodeRuntimeRunId as resolveOpenCodeRuntimeRunIdFromMaps,
   getMixedSecondaryLaunchPhase as getMixedSecondaryLaunchPhaseFromRun,
+  isOpenCodeSecondaryLaneMemberInRun,
   type MixedSecondaryRuntimeLaneState,
   removeRunAllEffectiveMember as removeRunAllEffectiveMemberFromRun,
   type SecondaryRuntimeRunEntry,
@@ -964,8 +965,7 @@ export class TeamProvisioningService {
   private readonly primaryBootstrapTruthReporting =
     createTeamProvisioningPrimaryBootstrapTruthReportingBoundary<ProvisioningRun>({
       service: {
-        isOpenCodeSecondaryLaneMemberInRun: (run, memberName) =>
-          this.isOpenCodeSecondaryLaneMemberInRun(run, memberName),
+        isOpenCodeSecondaryLaneMemberInRun,
         syncMemberTaskActivityForRuntimeTransition: (run, memberName, previous, next, observedAt) =>
           this.syncMemberTaskActivityForRuntimeTransition(
             run,
@@ -1081,8 +1081,7 @@ export class TeamProvisioningService {
       this.setMemberSpawnStatus(run, memberName, status, error),
     confirmMemberSpawnStatusFromTranscript: (run, memberName, observedAt, source) =>
       this.confirmMemberSpawnStatusFromTranscript(run, memberName, observedAt, source),
-    isOpenCodeSecondaryLaneMemberInRun: (run, memberName) =>
-      this.isOpenCodeSecondaryLaneMemberInRun(run, memberName),
+    isOpenCodeSecondaryLaneMemberInRun,
   };
   private readonly openCodePromptDeliveryFollowUpPolicy = new OpenCodePromptDeliveryFollowUpPolicy({
     markFailedTerminal: (input) => this.markOpenCodePromptLedgerFailedTerminal(input),
@@ -1455,8 +1454,7 @@ export class TeamProvisioningService {
           this.maybeAuditMemberSpawnStatuses(targetRun, options),
         getLiveTeamAgentRuntimeMetadata: (teamName) =>
           this.getLiveTeamAgentRuntimeMetadata(teamName),
-        isOpenCodeSecondaryLaneMemberInRun: (targetRun, targetMember) =>
-          this.isOpenCodeSecondaryLaneMemberInRun(targetRun, targetMember),
+        isOpenCodeSecondaryLaneMemberInRun,
         getOpenCodeBootstrapStallReconciliationPorts: () =>
           this.getOpenCodeBootstrapStallReconciliationPorts(),
         setMemberSpawnStatus: (targetRun, targetMember, status, error, livenessSource) =>
@@ -4103,11 +4101,6 @@ export class TeamProvisioningService {
     await maybeAuditMemberSpawnStatusesForRun(run, this.memberSpawnStatusAuditPorts, options);
   }
 
-  private isOpenCodeSecondaryLaneMemberInRun(run: ProvisioningRun, memberName: string): boolean {
-    const lanes = Array.isArray(run.mixedSecondaryLanes) ? run.mixedSecondaryLanes : [];
-    return lanes.some((lane) => lane.providerId === 'opencode' && lane.member.name === memberName);
-  }
-
   private static readonly CONTEXT_EMIT_THROTTLE_MS = 2000;
 
   private emitLeadContextUsage(run: ProvisioningRun): void {
@@ -4783,7 +4776,7 @@ export class TeamProvisioningService {
   }
 
   private async auditMemberSpawnStatuses(run: ProvisioningRun): Promise<void> {
-    await auditRegisteredMemberSpawnStatusesHelper(run, {
+    await auditRegisteredMemberSpawnStatusesHelper<ProvisioningRun>(run, {
       nowMs: () => Date.now(),
       getRegisteredTeamMemberNames: (teamName) => this.getRegisteredTeamMemberNames(teamName),
       hasTeamDirectory: async (teamName) => {
@@ -4795,8 +4788,7 @@ export class TeamProvisioningService {
         }
       },
       getLiveTeamAgentNames: (teamName) => this.getLiveTeamAgentNames(teamName),
-      isOpenCodeSecondaryLaneMemberInRun: (targetRun, memberName) =>
-        this.isOpenCodeSecondaryLaneMemberInRun(targetRun, memberName),
+      isOpenCodeSecondaryLaneMemberInRun,
       isOpenCodeBootstrapStallWindowElapsed: (firstSpawnAcceptedAt) =>
         this.isOpenCodeBootstrapStallWindowElapsed(firstSpawnAcceptedAt),
       getOpenCodeBootstrapStallReconciliationPorts: () =>

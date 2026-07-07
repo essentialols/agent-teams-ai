@@ -2,7 +2,6 @@
 import { appendFile, mkdir, readdir, readFile, realpath, rm, rmdir, stat, writeFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { execPath } from "node:process";
 import { fileURLToPath } from "node:url";
 import { McpServer, ResourceTemplate, } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -14,8 +13,8 @@ import { AccessBoundary, LaunchPlanStatus, NetworkAccessMode, ProjectAdmissionWo
 import { codexGoalJobToArgs, codexGoalObjectiveMaxChars, createCodexGoalJob, defaultCodexGoalJobRoot, listCodexGoalJobs, readCodexGoalJob, resolveCodexGoalJobRegistryRoot, summarizeCodexGoalJob, updateCodexGoalJob, } from "./codex-goal-jobs.js";
 import { upsertCodexGoalLaunchManifest } from "./codex-goal-launch-manifest.js";
 import { runDependencyBootstrap, } from "./dependency-bootstrap.js";
-import { codexGoalAccountSlots, codexGoalProgressPath, } from "./codex-goal-runner.js";
-import { assertCodexGoalProviderSandboxModeAllowed, optionalCodexGoalEditMode, optionalCodexGoalProviderSandboxMode, parseCodexGoalEditMode, } from "./codex-goal-control-modes.js";
+import { codexGoalProgressPath, } from "./codex-goal-runner.js";
+import { optionalCodexGoalEditMode, optionalCodexGoalProviderSandboxMode, } from "./codex-goal-control-modes.js";
 import { buildCodexGoalNoTmuxCommand, buildCodexGoalStopTmuxCommand, buildCodexGoalTmuxCommand, collectCodexGoalStatus, doctorCodexGoal, listCodexGoalAccountStatuses, prepareCodexGoalLaunchPaths, reconcileCodexGoalRuntimeResult, resolveCodexGoalWorkerLiveness, startCodexGoalTmux, stopCodexGoalDirectProcess, stopCodexGoalTmux, tailCodexGoalLog, } from "./codex-goal-ops.js";
 import { CodexRunObservationAdapter } from "./codex-run-observation.js";
 import { optionalCodexGoalAccessBoundary, optionalCodexGoalNetworkAccess, parseCodexGoalProjectAccessScope, } from "./codex-goal-access-plan.js";
@@ -26,7 +25,7 @@ import { LocalGitRevisionReader } from "./codex-goal-git-revision.js";
 import { buildCodexControlledAgentProfile, CodexControlledAgentProvider, } from "./controlled-agent/index.js";
 import { projectControllerCapacityDemand, recordProjectControllerCapacitySignal, } from "./project-controller-capacity.js";
 import { createProjectControlOperation, patchProjectControlOperation, projectControlOperationExecutionMode, projectControlOperationView, projectControlOperationsRoot, readProjectControlOperationById, startProjectControlOperationRunner, } from "./project-control-operation-lifecycle.js";
-import { accountNames, booleanValue, numberValue, positiveIntegerValue, putIfDefined, requiredRawString, requiredString, resolvePath, stringValue, tagValues, workerReportModeValue, } from "./codex-goal-mcp-values.js";
+import { accountNames, booleanValue, numberValue, putIfDefined, requiredRawString, requiredString, resolvePath, stringValue, tagValues, workerReportModeValue, } from "./codex-goal-mcp-values.js";
 import { jobIdInputSchema, jobRegistryInputSchema, optionalRunEventProviderKind, registryRootFromArgs, runEventRetentionPolicyFromArgs, runEventRootFromArgs, runEventTypeFilter, } from "./codex-goal-mcp-inputs.js";
 import { accountAuthRootFromArgs, accountPoolRootFromArgs, availableCodexGoalAccountSlots, codexAccountReloginInstructions, codexAccountStatusPayload, defaultCodexGoalAuthRoot, dedupeCodexGoalAccountSlots, listAccountPools, } from "./codex-goal-mcp-accounts.js";
 import { writeCodexGoalMaintenancePauseEvent, writeCodexGoalReviewMarker, writeCodexGoalStopEvent, writeCodexGoalStoppedProgress, } from "./codex-goal-mcp-lifecycle-markers.js";
@@ -40,6 +39,7 @@ import { codexOverviewItemToWatchStatus } from "./codex-goal-mcp-watch-status.js
 import { failedRunObservationSnapshot, observeOrphanCodexRun, safeObservationErrorMessage, summarizeRunObservationSnapshots, } from "./codex-goal-mcp-observation-projection.js";
 import { buildCodexGoalBrief } from "./codex-goal-mcp-brief.js";
 export { buildCodexGoalBrief } from "./codex-goal-mcp-brief.js";
+import { CODEX_GOAL_MCP_DEFAULT_TIMEOUT_MS, goalControlModesFromRecord, goalLaunchInput, } from "./codex-goal-mcp-launch-input.js";
 import { CODEX_GOAL_CONTROL_SURFACE_SCHEMA, CODEX_GOAL_EXECUTION_ENGINE_SCHEMA, buildCodexGoalDecision, buildCodexGoalHandoff, isSafeStartAction, nextActionForStatus, redactText, truncateText, } from "./codex-goal-mcp-decision.js";
 import { assertGitCurrentBranch, assertSafeGitCommitSha, assertSafeGitRefName, assertSafeGitRemoteName, execGit, execGitStdout, } from "./codex-goal-mcp-project-git.js";
 import { assertProjectControlCreateManifestPaths, assertProjectControlDependencyBootstrapReady, assertProjectControlScopeRepairAllowed, projectControlChildScope, projectControlDependencyBootstrapMode, projectControlPathArg, projectControlRealPathOutsideWorkspaceScope, projectControlWorkerRole, projectScopeFieldFingerprint, } from "./codex-goal-mcp-project-scope.js";
@@ -47,7 +47,7 @@ import { projectIntegrationPushApprovedCommitWithConsumedLedger, } from "./codex
 export { availableCodexGoalAccountSlots, dedupeCodexGoalAccountSlots, visibleCodexGoalAccountPoolSlots, } from "./codex-goal-mcp-accounts.js";
 const serverVersion = "0.1.0-main.2";
 const defaultAuthRoot = defaultCodexGoalAuthRoot;
-const defaultTimeoutMs = 72 * 60 * 60 * 1000;
+const defaultTimeoutMs = CODEX_GOAL_MCP_DEFAULT_TIMEOUT_MS;
 const controlledAgentProcessOwner = buildControlledAgentProcessOwner({
     runtimeVersion: serverVersion,
     ...(process.env.SUBSCRIPTION_RUNTIME_RELEASE_SHA === undefined
@@ -1552,102 +1552,6 @@ export function createCodexGoalMcpServer(options = {}) {
         });
     }));
     return server;
-}
-async function goalLaunchInput(args) {
-    const cwd = resolvePath(process.cwd(), args.cwd ?? process.cwd());
-    const fileConfig = args.configPath
-        ? await readGoalConfigFile(resolvePath(cwd, args.configPath))
-        : {};
-    const merged = mergeDefined(fileConfig, args);
-    const jobRootDir = requiredString(merged.jobRootDir, "jobRootDir", cwd);
-    const taskId = requiredRawString(merged.taskId, "taskId");
-    const jobId = stringValue(merged.jobId);
-    const authRootDir = resolvePath(cwd, stringValue(merged.authRootDir) ?? defaultAuthRoot);
-    const workspacePath = requiredString(merged.workspacePath, "workspacePath", cwd);
-    const promptPath = requiredString(merged.promptPath, "promptPath", cwd);
-    const accounts = codexGoalAccountSlots(accountNames(merged.accounts));
-    if (!accounts.length)
-        throw new Error("accounts are required");
-    const controlModes = goalControlModesFromRecord(merged);
-    const accessBoundary = optionalCodexGoalAccessBoundary(merged.accessBoundary);
-    const projectAccessScope = parseCodexGoalProjectAccessScope(merged.projectAccessScope);
-    const networkAccess = optionalCodexGoalNetworkAccess(merged.networkAccess);
-    const taskTimeoutMs = positiveIntegerValue(merged.taskTimeoutMs, "taskTimeoutMs") ??
-        defaultTimeoutMs;
-    const appServerStartupTimeoutMs = positiveIntegerValue(merged.appServerStartupTimeoutMs, "appServerStartupTimeoutMs");
-    const progressHeartbeatMs = positiveIntegerValue(merged.progressHeartbeatMs, "progressHeartbeatMs") ?? 60_000;
-    const staleLockMs = positiveIntegerValue(merged.staleLockMs, "staleLockMs");
-    const maxAccountCycles = positiveIntegerValue(merged.maxAccountCycles, "maxAccountCycles") ?? 5;
-    const config = {
-        ...(jobId === undefined ? {} : { jobId }),
-        jobRootDir,
-        authRootDir,
-        workspacePath,
-        promptPath,
-        ...(stringValue(merged.codexGoalObjective)
-            ? { codexGoalObjective: stringValue(merged.codexGoalObjective) }
-            : {}),
-        taskId,
-        accounts,
-        outputPath: resolvePath(cwd, stringValue(merged.outputPath) ??
-            join(jobRootDir, `${taskId}.latest-result.json`)),
-        progressPath: resolvePath(cwd, stringValue(merged.progressPath) ??
-            codexGoalProgressPath({ jobRootDir, taskId })),
-        model: stringValue(merged.model) ?? "gpt-5.5",
-        reasoningEffort: (stringValue(merged.reasoningEffort) ?? "high"),
-        serviceTier: (stringValue(merged.serviceTier) ?? "default"),
-        executionEngine: (stringValue(merged.executionEngine) ?? "app-server-goal"),
-        codexBinaryPath: stringValue(merged.codexBinaryPath) ?? "codex",
-        ...controlModes,
-        ...(accessBoundary === undefined ? {} : { accessBoundary }),
-        ...(projectAccessScope === undefined ? {} : { projectAccessScope }),
-        allowDangerFullAccess: booleanValue(merged.allowDangerFullAccess) ?? false,
-        ...(networkAccess === undefined ? {} : { networkAccess }),
-        taskTimeoutMs,
-        ...(appServerStartupTimeoutMs === undefined
-            ? {}
-            : { appServerStartupTimeoutMs }),
-        progressHeartbeatMs,
-        ...(staleLockMs === undefined ? {} : { staleLockMs }),
-        maxAccountCycles,
-        allowDuplicateAccountIdentities: booleanValue(merged.allowDuplicateAccountIdentities) ?? false,
-        requireGitWorkspace: booleanValue(merged.requireGitWorkspace) ?? true,
-        prewarmOnStart: booleanValue(merged.prewarmOnStart) ?? false,
-        ...(workerReportModeValue(merged.workerReportMode) === undefined
-            ? {}
-            : { workerReportMode: workerReportModeValue(merged.workerReportMode) }),
-    };
-    const stateRootDir = stringValue(merged.stateRootDir);
-    const finalConfig = stateRootDir
-        ? { ...config, stateRootDir: resolvePath(cwd, stateRootDir) }
-        : config;
-    return {
-        config: finalConfig,
-        ...(stringValue(merged.tmuxSession)
-            ? { tmuxSession: stringValue(merged.tmuxSession) }
-            : {}),
-        cwd,
-        logPath: resolvePath(cwd, stringValue(merged.logPath) ?? join(jobRootDir, `${taskId}.log`)),
-        format: (stringValue(merged.outputFormat) ?? "json"),
-        cliCommand: defaultCliCommand(import.meta.url),
-    };
-}
-function goalControlModesFromRecord(value) {
-    const editModeValue = stringValue(value.editMode);
-    const legacyPermissionModeValue = stringValue(value.permissionMode);
-    const editMode = parseCodexGoalEditMode(editModeValue ?? legacyPermissionModeValue ?? "allow-edits", editModeValue === undefined && legacyPermissionModeValue !== undefined
-        ? "permissionMode"
-        : "editMode");
-    const providerSandboxMode = optionalCodexGoalProviderSandboxMode(stringValue(value.providerSandboxMode), "providerSandboxMode");
-    assertCodexGoalProviderSandboxModeAllowed({
-        editMode,
-        providerSandboxMode,
-        fieldName: "providerSandboxMode",
-    });
-    return {
-        editMode,
-        ...(providerSandboxMode === undefined ? {} : { providerSandboxMode }),
-    };
 }
 async function loadJobLaunch(args) {
     const registryRootDir = registryRootFromArgs(args);
@@ -4845,28 +4749,6 @@ function launchSummary(launch) {
         tmuxSession: launch.tmuxSession,
         logPath: launch.logPath,
     };
-}
-async function readGoalConfigFile(path) {
-    const parsed = JSON.parse(await readFile(path, "utf8"));
-    if (!isRecord(parsed))
-        throw new Error("configPath must contain a JSON object");
-    return parsed;
-}
-function defaultCliCommand(importMetaUrl) {
-    return [
-        execPath,
-        join(dirname(fileURLToPath(importMetaUrl)), "codex-goal-cli.js"),
-    ];
-}
-function mergeDefined(...items) {
-    const merged = {};
-    for (const item of items) {
-        for (const [key, value] of Object.entries(item)) {
-            if (value !== undefined)
-                merged[key] = value;
-        }
-    }
-    return merged;
 }
 async function projectControlDefaultAccountNames(input) {
     if (!input.authRootDir)

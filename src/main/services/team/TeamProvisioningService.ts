@@ -286,7 +286,11 @@ import {
   persistTeamProvisioningInboxMessage,
   persistTeamProvisioningSentMessage,
 } from './provisioning/TeamProvisioningMessagePersistence';
-import { createTeamProvisioningMixedSecondaryLaneWiring } from './provisioning/TeamProvisioningMixedSecondaryLaneWiring';
+import {
+  createTeamProvisioningMixedSecondaryLaneWiring,
+  createTeamProvisioningMixedSecondaryLaneWiringDepsFromService,
+  type TeamProvisioningMixedSecondaryLaneWiringServiceHost,
+} from './provisioning/TeamProvisioningMixedSecondaryLaneWiring';
 import {
   buildMixedSecondaryLaunchSnapshotForRun as buildMixedSecondaryLaunchSnapshotForRunHelper,
   shouldRecoverStalePersistedMixedLaunchSnapshot as shouldRecoverStalePersistedMixedLaunchSnapshotHelper,
@@ -1362,52 +1366,12 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
       )
     );
   private readonly mixedSecondaryLaneWiring =
-    createTeamProvisioningMixedSecondaryLaneWiring<ProvisioningRun>({
-      service: {
-        isStoppingSecondaryRuntimeTeam: (teamName) =>
-          this.stoppingSecondaryRuntimeTeams.has(teamName),
-        deleteSecondaryRuntimeRun: (teamName, laneId) =>
-          this.deleteSecondaryRuntimeRun(teamName, laneId),
-        getOpenCodeRuntimeAdapter: () => this.appShellBoundary.getOpenCodeRuntimeAdapter(),
-        publishMixedSecondaryLaneStatusChange: (run, lane) =>
-          this.publishMixedSecondaryLaneStatusChange(run, lane),
-        readLaunchState: (teamName) => this.launchStateStore.read(teamName),
-        setSecondaryRuntimeRun: (input) => this.setSecondaryRuntimeRun(input),
-        buildOpenCodeSecondaryAppManagedLaunchPrompt: (run, lane) =>
-          this.buildOpenCodeSecondaryAppManagedLaunchPrompt(run, lane),
-        guardCommittedOpenCodeSecondaryLaneEvidence: (input) =>
-          this.guardCommittedOpenCodeSecondaryLaneEvidence(input),
-        syncOpenCodeRuntimeToolApprovals: (input) =>
-          this.toolApprovalFacade.syncOpenCodeRuntimeToolApprovals(input),
-        launchSingleMixedSecondaryLane: (run, lane) =>
-          this.launchSingleMixedSecondaryLane(run, lane),
-        persistLaunchStateSnapshot: (run, launchPhase) =>
-          this.persistLaunchStateSnapshot(run, launchPhase),
-        getMixedSecondaryLaunchPhase: (run) => this.getMixedSecondaryLaunchPhase(run),
-        hasMixedSecondaryLaunchMetadata: (snapshot) =>
-          this.hasMixedSecondaryLaunchMetadata(snapshot),
-        shouldRecoverStalePersistedMixedLaunchSnapshot: (snapshot) =>
-          this.shouldRecoverStalePersistedMixedLaunchSnapshot(snapshot),
-        readTeamMeta: (teamName) => this.teamMetaStore.getMeta(teamName),
-        readMembersMeta: (teamName) => this.membersMetaStore.getMeta(teamName),
-        readPersistedTeamProjectPath: (teamName) => this.readPersistedTeamProjectPath(teamName),
-        tryRecoverMissingOpenCodeSecondaryLaneFromRuntime: (input) =>
-          this.openCodeRuntimeRecoveryBoundary.tryRecoverMissingOpenCodeSecondaryLaneFromRuntime(
-            input
-          ),
-        tryRecoverActiveOpenCodeSecondaryLaneFromRuntime: (input) =>
-          this.openCodeRuntimeRecoveryBoundary.tryRecoverActiveOpenCodeSecondaryLaneFromRuntime(
-            input
-          ),
-        resolveCurrentOpenCodeRuntimeRunId: (teamName, laneId) =>
-          this.openCodeRuntimeRecoveryIdentity.resolveCurrentOpenCodeRuntimeRunId(teamName, laneId),
-        buildAggregateLaunchSnapshot: (input) =>
-          this.runtimeLaneCoordinator.buildAggregateLaunchSnapshot(input),
-        writeLaunchStateSnapshot: (teamName, snapshot) =>
-          this.writeLaunchStateSnapshot(teamName, snapshot),
-      },
-      logger,
-    });
+    createTeamProvisioningMixedSecondaryLaneWiring<ProvisioningRun>(
+      createTeamProvisioningMixedSecondaryLaneWiringDepsFromService(
+        this as unknown as TeamProvisioningMixedSecondaryLaneWiringServiceHost<ProvisioningRun>,
+        { logger }
+      )
+    );
   private readonly openCodeLaunchWiring =
     createTeamProvisioningOpenCodeLaunchWiring<ProvisioningRun>({
       runtimeAdapterRunByTeam: this.runtimeAdapterRunByTeam,

@@ -224,7 +224,11 @@ import {
   emitLeadContextUsageForRun,
   getLeadContextUsageForTeam,
 } from './provisioning/TeamProvisioningLeadContextUsage';
-import { createTeamProvisioningLeadInboxRelayPortsBoundary } from './provisioning/TeamProvisioningLeadInboxRelayPortsFactory';
+import {
+  createTeamProvisioningLeadInboxRelayPortsBoundary,
+  createTeamProvisioningLeadInboxRelayPortsDepsFromService,
+  type TeamProvisioningLeadInboxRelayServiceHost,
+} from './provisioning/TeamProvisioningLeadInboxRelayPortsFactory';
 import {
   getRunTrackedCwdFromRun,
   isCurrentTrackedRunById,
@@ -1109,48 +1113,19 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
   private readonly pendingCrossTeamFirstReplies = new Map<string, Map<string, number>>();
   private readonly recentCrossTeamLeadDeliveryMessageIds = new Map<string, Map<string, number>>();
   private readonly leadInboxRelayPortsBoundary =
-    createTeamProvisioningLeadInboxRelayPortsBoundary<ProvisioningRun>({
-      leadInboxRelayInFlight: this.leadInboxRelayInFlight,
-      getAliveRunId: (teamName) => this.runTracking.getAliveRunId(teamName),
-      getProvisioningRunId: (teamName) => this.runTracking.getProvisioningRunId(teamName),
-      getRun: (runId) => this.runs.get(runId),
-      isCurrentTrackedRun: (run) => this.isCurrentTrackedRun(run),
-      readConfigForObservation: (teamName) => this.readConfigSnapshot(teamName),
-      readLeadInboxMessages: (teamName, leadName) =>
-        this.inboxReader.getMessagesFor(teamName, leadName),
-      markInboxMessagesRead: (teamName, leadName, messages) =>
-        this.markInboxMessagesRead(teamName, leadName, messages),
-      handleTeammatePermissionRequest: (run, permissionRequest, timestamp) =>
-        this.handleTeammatePermissionRequest(run, permissionRequest, timestamp),
-      refreshMemberSpawnStatusesFromLeadInbox: (run) =>
-        this.refreshMemberSpawnStatusesFromLeadInbox(run),
-      confirmSameTeamNativeMatches: (teamName, leadName, messages) =>
-        this.confirmSameTeamNativeMatches(teamName, leadName, messages),
-      scheduleSameTeamPersistRetry: (teamName) => this.scheduleSameTeamPersistRetry(teamName),
-      scheduleSameTeamDeferredRetry: (teamName) => this.scheduleSameTeamDeferredRetry(teamName),
-      resolveControlApiBaseUrl: () => this.providerRuntime.resolveControlApiBaseUrl(),
-      sendMessageToRun: (run, message) => this.sendMessageToRun(run, message),
-      hasAcceptedLeadWorkSyncReport: (input) => this.hasAcceptedLeadWorkSyncReport(input),
-      scheduleLeadProofMissingWorkSyncRecovery: (input) =>
-        this.scheduleLeadProofMissingWorkSyncRecovery(input),
-      pushLiveLeadTextMessage: (run, text, messageId, timestamp) =>
-        this.pushLiveLeadTextMessage(run, text, messageId, timestamp),
-      pushLiveLeadProcessMessage: (teamName, message) =>
-        this.pushLiveLeadProcessMessage(teamName, message),
-      persistSentMessage: (teamName, message) => this.persistSentMessage(teamName, message),
-      emitTeamChange: (event) => this.teamChangeEmitter?.(event),
-      scheduleLeadInboxFollowUpRelay: (teamName) => this.scheduleLeadInboxFollowUpRelay(teamName),
-      relayedLeadInboxMessageIds: this.relayedLeadInboxMessageIds,
-      trimRelayedSet: (relayedIds) => this.trimRelayedSet(relayedIds),
-      pendingCrossTeamFirstReplies: this.pendingCrossTeamFirstReplies,
-      recentCrossTeamLeadDeliveryMessageIds: this.recentCrossTeamLeadDeliveryMessageIds,
-      logger,
-      getErrorMessage,
-      nowIso,
-      nowMs: () => Date.now(),
-      setTimeout: (callback, ms) => setTimeout(callback, ms),
-      clearTimeout: (handle) => clearTimeout(handle),
-    });
+    createTeamProvisioningLeadInboxRelayPortsBoundary<ProvisioningRun>(
+      createTeamProvisioningLeadInboxRelayPortsDepsFromService(
+        this as unknown as TeamProvisioningLeadInboxRelayServiceHost<ProvisioningRun>,
+        {
+          logger,
+          getErrorMessage,
+          nowIso,
+          nowMs: () => Date.now(),
+          setTimeout: (callback, ms) => setTimeout(callback, ms),
+          clearTimeout: (handle) => clearTimeout(handle),
+        }
+      )
+    );
   private readonly liveLeadProcessMessages = new Map<string, InboxMessage[]>();
   private readonly recentSameTeamNativeFingerprints = new Map<
     string,

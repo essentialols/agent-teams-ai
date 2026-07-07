@@ -51,6 +51,56 @@ export interface TeamProvisioningLeadInboxRelayPortsBoundary {
   relayLeadInboxMessages(teamName: string): Promise<number>;
 }
 
+export interface TeamProvisioningLeadInboxRelayServiceHost<TRun extends LeadInboxRelayFlowRun> {
+  leadInboxRelayInFlight: TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun>['leadInboxRelayInFlight'];
+  runTracking: Pick<
+    TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun>,
+    'getAliveRunId' | 'getProvisioningRunId'
+  >;
+  runs: {
+    get(runId: string): TRun | undefined;
+  };
+  isCurrentTrackedRun: TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun>['isCurrentTrackedRun'];
+  readConfigSnapshot: TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun>['readConfigForObservation'];
+  inboxReader: {
+    getMessagesFor: TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun>['readLeadInboxMessages'];
+  };
+  markInboxMessagesRead: TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun>['markInboxMessagesRead'];
+  handleTeammatePermissionRequest: TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun>['handleTeammatePermissionRequest'];
+  refreshMemberSpawnStatusesFromLeadInbox: TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun>['refreshMemberSpawnStatusesFromLeadInbox'];
+  confirmSameTeamNativeMatches: TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun>['confirmSameTeamNativeMatches'];
+  scheduleSameTeamPersistRetry: TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun>['scheduleSameTeamPersistRetry'];
+  scheduleSameTeamDeferredRetry: TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun>['scheduleSameTeamDeferredRetry'];
+  providerRuntime: {
+    resolveControlApiBaseUrl: TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun>['resolveControlApiBaseUrl'];
+  };
+  sendMessageToRun: TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun>['sendMessageToRun'];
+  hasAcceptedLeadWorkSyncReport: TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun>['hasAcceptedLeadWorkSyncReport'];
+  scheduleLeadProofMissingWorkSyncRecovery: TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun>['scheduleLeadProofMissingWorkSyncRecovery'];
+  pushLiveLeadTextMessage: TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun>['pushLiveLeadTextMessage'];
+  pushLiveLeadProcessMessage: TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun>['pushLiveLeadProcessMessage'];
+  persistSentMessage: TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun>['persistSentMessage'];
+  teamChangeEmitter?: TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun>['emitTeamChange'];
+  scheduleLeadInboxFollowUpRelay: TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun>['scheduleLeadInboxFollowUpRelay'];
+  relayedLeadInboxMessageIds: TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun>['relayedLeadInboxMessageIds'];
+  trimRelayedSet: TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun>['trimRelayedSet'];
+  pendingCrossTeamFirstReplies: TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun>['pendingCrossTeamFirstReplies'];
+  recentCrossTeamLeadDeliveryMessageIds: TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun>['recentCrossTeamLeadDeliveryMessageIds'];
+}
+
+export interface TeamProvisioningLeadInboxRelayServiceHostOptions<
+  TRun extends LeadInboxRelayFlowRun,
+> {
+  logger: TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun>['logger'];
+  getErrorMessage: TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun>['getErrorMessage'];
+  nowIso: TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun>['nowIso'];
+  nowMs: TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun>['nowMs'];
+  setTimeout: TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun>['setTimeout'];
+  clearTimeout: TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun>['clearTimeout'];
+  relayLeadInboxMessagesForTeam?: TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun>['relayLeadInboxMessagesForTeam'];
+  waitForInboxRelayInFlight?: TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun>['waitForInboxRelayInFlight'];
+}
+
 export function createTeamProvisioningLeadInboxRelayFlowPorts<TRun extends LeadInboxRelayFlowRun>(
   deps: Omit<
     TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun>,
@@ -103,6 +153,58 @@ export function createTeamProvisioningLeadInboxRelayFlowPorts<TRun extends LeadI
     nowMs: deps.nowMs,
     setTimeout: (callback, ms) => deps.setTimeout(callback, ms),
     clearTimeout: (handle) => deps.clearTimeout(handle),
+  };
+}
+
+export function createTeamProvisioningLeadInboxRelayPortsDepsFromService<
+  TRun extends LeadInboxRelayFlowRun,
+>(
+  service: TeamProvisioningLeadInboxRelayServiceHost<TRun>,
+  options: TeamProvisioningLeadInboxRelayServiceHostOptions<TRun>
+): TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun> {
+  return {
+    leadInboxRelayInFlight: service.leadInboxRelayInFlight,
+    getAliveRunId: (teamName) => service.runTracking.getAliveRunId(teamName),
+    getProvisioningRunId: (teamName) => service.runTracking.getProvisioningRunId(teamName),
+    getRun: (runId) => service.runs.get(runId),
+    isCurrentTrackedRun: (run) => service.isCurrentTrackedRun(run),
+    readConfigForObservation: (teamName) => service.readConfigSnapshot(teamName),
+    readLeadInboxMessages: (teamName, leadName) =>
+      service.inboxReader.getMessagesFor(teamName, leadName),
+    markInboxMessagesRead: (teamName, leadName, messages) =>
+      service.markInboxMessagesRead(teamName, leadName, messages),
+    handleTeammatePermissionRequest: (run, permissionRequest, timestamp) =>
+      service.handleTeammatePermissionRequest(run, permissionRequest, timestamp),
+    refreshMemberSpawnStatusesFromLeadInbox: (run) =>
+      service.refreshMemberSpawnStatusesFromLeadInbox(run),
+    confirmSameTeamNativeMatches: (teamName, leadName, messages) =>
+      service.confirmSameTeamNativeMatches(teamName, leadName, messages),
+    scheduleSameTeamPersistRetry: (teamName) => service.scheduleSameTeamPersistRetry(teamName),
+    scheduleSameTeamDeferredRetry: (teamName) => service.scheduleSameTeamDeferredRetry(teamName),
+    resolveControlApiBaseUrl: () => service.providerRuntime.resolveControlApiBaseUrl(),
+    sendMessageToRun: (run, message) => service.sendMessageToRun(run, message),
+    hasAcceptedLeadWorkSyncReport: (input) => service.hasAcceptedLeadWorkSyncReport(input),
+    scheduleLeadProofMissingWorkSyncRecovery: (input) =>
+      service.scheduleLeadProofMissingWorkSyncRecovery(input),
+    pushLiveLeadTextMessage: (run, text, messageId, timestamp) =>
+      service.pushLiveLeadTextMessage(run, text, messageId, timestamp),
+    pushLiveLeadProcessMessage: (teamName, message) =>
+      service.pushLiveLeadProcessMessage(teamName, message),
+    persistSentMessage: (teamName, message) => service.persistSentMessage(teamName, message),
+    emitTeamChange: (event) => service.teamChangeEmitter?.(event),
+    scheduleLeadInboxFollowUpRelay: (teamName) => service.scheduleLeadInboxFollowUpRelay(teamName),
+    relayedLeadInboxMessageIds: service.relayedLeadInboxMessageIds,
+    trimRelayedSet: (relayedIds) => service.trimRelayedSet(relayedIds),
+    pendingCrossTeamFirstReplies: service.pendingCrossTeamFirstReplies,
+    recentCrossTeamLeadDeliveryMessageIds: service.recentCrossTeamLeadDeliveryMessageIds,
+    logger: options.logger,
+    getErrorMessage: options.getErrorMessage,
+    nowIso: options.nowIso,
+    nowMs: options.nowMs,
+    setTimeout: options.setTimeout,
+    clearTimeout: options.clearTimeout,
+    relayLeadInboxMessagesForTeam: options.relayLeadInboxMessagesForTeam,
+    waitForInboxRelayInFlight: options.waitForInboxRelayInFlight,
   };
 }
 

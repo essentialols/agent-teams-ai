@@ -103,6 +103,10 @@ import {
   TeamProvisioningBootstrapTranscriptFacade,
   type TeamProvisioningBootstrapTranscriptMemberLogsPort,
 } from './provisioning/TeamProvisioningBootstrapTranscriptFacade';
+import {
+  createTeamProvisioningCancellationBoundary,
+  type TeamProvisioningCancellationBoundary,
+} from './provisioning/TeamProvisioningCancellationBoundary';
 import { readTeamProvisioningClaudeLogs } from './provisioning/TeamProvisioningClaudeLogs';
 import {
   addPermissionRulesToSettings as addClaudePermissionRulesToSettings,
@@ -417,14 +421,6 @@ import {
   updateProgress,
   wrapInAgentBlock,
 } from './provisioning/TeamProvisioningRunProgress';
-import {
-  cancelRuntimeAdapterProvisioning as cancelRuntimeAdapterProvisioningHelper,
-  clearOpenCodeRuntimeAdapterPrimaryLaneIfOwned as clearOpenCodeRuntimeAdapterPrimaryLaneIfOwnedHelper,
-  isCancellableRuntimeAdapterProgress as isCancellableRuntimeAdapterProgressHelper,
-  recordCancelledOpenCodeRuntimeAdapterLaunch as recordCancelledOpenCodeRuntimeAdapterLaunchHelper,
-  type RuntimeAdapterCancellationPorts,
-} from './provisioning/TeamProvisioningRuntimeAdapterCancellation';
-import { createTeamProvisioningRuntimeAdapterCancellationPorts } from './provisioning/TeamProvisioningRuntimeAdapterCancellationPortsFactory';
 import { TeamProvisioningRuntimeAdapterProgressState } from './provisioning/TeamProvisioningRuntimeAdapterProgressState';
 import {
   createMixedSecondaryLaneStates as createMixedSecondaryLaneStatesHelper,
@@ -750,6 +746,33 @@ export class TeamProvisioningService {
     persistedRuntimeSnapshotCacheTtlMs: 10_000,
   });
   private readonly cancelledRuntimeAdapterRunIds = new Set<string>();
+  private readonly cancellationBoundary: TeamProvisioningCancellationBoundary =
+    createTeamProvisioningCancellationBoundary<ProvisioningRun>({
+      runs: this.runs,
+      runtimeAdapterProgressByRunId: this.runtimeAdapterProgressByRunId,
+      cancelledRuntimeAdapterRunIds: this.cancelledRuntimeAdapterRunIds,
+      runtimeAdapterRunByTeam: this.runtimeAdapterRunByTeam,
+      provisioningRunByTeam: this.provisioningRunByTeam,
+      aliveRunByTeam: this.aliveRunByTeam,
+      getTrackedRunId: (teamName) => this.runTracking.getTrackedRunId(teamName),
+      deleteAliveRunId: (teamName) => this.runTracking.deleteAliveRunId(teamName),
+      hasSecondaryRuntimeRuns: (teamName) => this.hasSecondaryRuntimeRuns(teamName),
+      stopMixedSecondaryRuntimeLanes: (teamName) => this.stopMixedSecondaryRuntimeLanes(teamName),
+      killTeamProcess,
+      updateProgress,
+      cleanupRun: (run) => this.cleanupRun(run),
+      nowIso,
+      clearOpenCodeRuntimeToolApprovals: (teamName, options) =>
+        this.toolApprovalFacade.clearOpenCodeRuntimeToolApprovals(teamName, options),
+      invalidateRuntimeSnapshotCaches: (teamName) => this.invalidateRuntimeSnapshotCaches(teamName),
+      setRuntimeAdapterProgress: (progress, onProgress) =>
+        this.runtimeAdapterProgressState.setRuntimeAdapterProgress(progress, onProgress),
+      emitTeamChange: (event) => this.teamChangeEmitter?.(event),
+      readLaunchState: (teamName) => this.launchStateStore.read(teamName),
+      getOpenCodeRuntimeAdapter: () => this.getOpenCodeRuntimeAdapter(),
+      readPersistedTeamProjectPath: (teamName) => this.readPersistedTeamProjectPath(teamName),
+      logWarning: (message) => logger.warn(message),
+    });
   private stopAllTeamsGeneration = 0;
   private readonly transientProbeProcesses = new Set<ReturnType<typeof spawn>>();
   private readonly secondaryRuntimeRunByTeam = new Map<
@@ -844,10 +867,10 @@ export class TeamProvisioningService {
     },
     {
       isCancellableRuntimeAdapterProgress: (progress) =>
-        this.isCancellableRuntimeAdapterProgress(progress),
+        this.cancellationBoundary.isCancellableRuntimeAdapterProgress(progress),
       stopTeam: (teamName) => this.stopTeam(teamName),
       cancelRuntimeAdapterProvisioning: (runId, progress) =>
-        this.cancelRuntimeAdapterProvisioning(runId, progress),
+        this.cancellationBoundary.cancelRuntimeAdapterProvisioning(runId, progress),
       killProcessTree,
       logger,
     }
@@ -1416,9 +1439,9 @@ export class TeamProvisioningService {
     stopPersistentTeamMembers: (teamName) => this.stopPersistentTeamMembers(teamName),
     openCodeRuntimeDeliveryAdvisory: this.openCodeRuntimeDeliveryAdvisory,
     isCancellableRuntimeAdapterProgress: (progress) =>
-      this.isCancellableRuntimeAdapterProgress(progress),
+      this.cancellationBoundary.isCancellableRuntimeAdapterProgress(progress),
     cancelRuntimeAdapterProvisioning: (runId, progress) =>
-      this.cancelRuntimeAdapterProvisioning(runId, progress),
+      this.cancellationBoundary.cancelRuntimeAdapterProvisioning(runId, progress),
     cleanupAnthropicApiKeyHelperMaterialForStoppedTeam: (teamName) =>
       this.cleanupAnthropicApiKeyHelperMaterialForStoppedTeam(teamName),
     withTeamLock: (teamName, fn) => this.withTeamLock(teamName, fn),
@@ -1532,11 +1555,15 @@ export class TeamProvisioningService {
       hasSecondaryRuntimeRuns: (teamName) => this.hasSecondaryRuntimeRuns(teamName),
       stopMixedSecondaryRuntimeLanes: (teamName) => this.stopMixedSecondaryRuntimeLanes(teamName),
       isCancellableRuntimeAdapterProgress: (progress) =>
-        this.isCancellableRuntimeAdapterProgress(progress),
+        this.cancellationBoundary.isCancellableRuntimeAdapterProgress(progress),
       cancelRuntimeAdapterProvisioning: (runId, progress) =>
-        this.cancelRuntimeAdapterProvisioning(runId, progress),
+        this.cancellationBoundary.cancelRuntimeAdapterProvisioning(runId, progress),
       recordCancelledOpenCodeRuntimeAdapterLaunch: (teamName, sourceWarning, onProgress) =>
-        this.recordCancelledOpenCodeRuntimeAdapterLaunch(teamName, sourceWarning, onProgress),
+        this.cancellationBoundary.recordCancelledOpenCodeRuntimeAdapterLaunch(
+          teamName,
+          sourceWarning,
+          onProgress
+        ),
       resetTeamScopedTransientStateForNewRun: (teamName) =>
         this.resetTeamScopedTransientStateForNewRun(teamName),
       readLaunchState: (teamName) => this.launchStateStore.read(teamName),
@@ -1555,7 +1582,7 @@ export class TeamProvisioningService {
       getOpenCodeRuntimeLaunchCwd: (baseCwd, members) =>
         this.prepareFacade.getOpenCodeRuntimeLaunchCwd(baseCwd, members),
       clearOpenCodeRuntimeAdapterPrimaryLaneIfOwned: (teamName, runId) =>
-        this.clearOpenCodeRuntimeAdapterPrimaryLaneIfOwned(teamName, runId),
+        this.cancellationBoundary.clearOpenCodeRuntimeAdapterPrimaryLaneIfOwned(teamName, runId),
       persistOpenCodeRuntimeAdapterLaunchResult: (result, launchInput) =>
         this.persistOpenCodeRuntimeAdapterLaunchResult(result, launchInput),
       syncOpenCodeRuntimeToolApprovals: (syncInput) =>
@@ -3206,7 +3233,7 @@ export class TeamProvisioningService {
       shouldRouteOpenCodeToRuntimeAdapter: (request) =>
         this.shouldRouteOpenCodeToRuntimeAdapter(request),
       isCancellableRuntimeAdapterProgress: (progress) =>
-        this.isCancellableRuntimeAdapterProgress(progress),
+        this.cancellationBoundary.isCancellableRuntimeAdapterProgress(progress),
     });
   }
 
@@ -4484,98 +4511,7 @@ export class TeamProvisioningService {
   }
 
   async cancelProvisioning(runId: string): Promise<void> {
-    const run = this.runs.get(runId);
-    if (!run) {
-      const runtimeProgress = this.runtimeAdapterProgressByRunId.get(runId);
-      if (runtimeProgress) {
-        await this.cancelRuntimeAdapterProvisioning(runId, runtimeProgress);
-        return;
-      }
-      throw new Error('Unknown runId');
-    }
-    if (
-      !['spawning', 'configuring', 'assembling', 'finalizing', 'verifying'].includes(
-        run.progress.state
-      )
-    ) {
-      throw new Error('Provisioning cannot be cancelled in current state');
-    }
-
-    run.cancelRequested = true;
-    run.processKilled = true;
-    // SIGKILL: newer Claude CLI versions handle SIGTERM gracefully and delete
-    // team files during cleanup. SIGKILL is uncatchable — files are preserved.
-    killTeamProcess(run.child);
-    if (
-      this.runTracking.getTrackedRunId(run.teamName) === run.runId &&
-      this.hasSecondaryRuntimeRuns(run.teamName)
-    ) {
-      void this.stopMixedSecondaryRuntimeLanes(run.teamName);
-    }
-    const progress = updateProgress(run, 'cancelled', 'Provisioning cancelled by user');
-    run.onProgress(progress);
-    this.cleanupRun(run);
-  }
-
-  private isCancellableRuntimeAdapterProgress(progress: TeamProvisioningProgress): boolean {
-    return isCancellableRuntimeAdapterProgressHelper(progress);
-  }
-
-  private async cancelRuntimeAdapterProvisioning(
-    runId: string,
-    runtimeProgress: TeamProvisioningProgress
-  ): Promise<void> {
-    await cancelRuntimeAdapterProvisioningHelper({
-      runId,
-      runtimeProgress,
-      ports: this.createRuntimeAdapterCancellationPorts(),
-    });
-  }
-
-  private async clearOpenCodeRuntimeAdapterPrimaryLaneIfOwned(
-    teamName: string,
-    runId: string
-  ): Promise<void> {
-    await clearOpenCodeRuntimeAdapterPrimaryLaneIfOwnedHelper({
-      teamName,
-      runId,
-      ports: this.createRuntimeAdapterCancellationPorts(),
-    });
-  }
-
-  private recordCancelledOpenCodeRuntimeAdapterLaunch(
-    teamName: string,
-    sourceWarning: string | undefined,
-    onProgress: (progress: TeamProvisioningProgress) => void
-  ): TeamLaunchResponse {
-    return recordCancelledOpenCodeRuntimeAdapterLaunchHelper({
-      teamName,
-      sourceWarning,
-      onProgress,
-      createRunId: randomUUID,
-      ports: this.createRuntimeAdapterCancellationPorts(),
-    });
-  }
-
-  private createRuntimeAdapterCancellationPorts(): RuntimeAdapterCancellationPorts {
-    return createTeamProvisioningRuntimeAdapterCancellationPorts({
-      cancelledRuntimeAdapterRunIds: this.cancelledRuntimeAdapterRunIds,
-      runtimeAdapterRunByTeam: this.runtimeAdapterRunByTeam,
-      provisioningRunByTeam: this.provisioningRunByTeam,
-      aliveRunByTeam: this.aliveRunByTeam,
-      nowIso,
-      clearOpenCodeRuntimeToolApprovals: (teamName, options) =>
-        this.toolApprovalFacade.clearOpenCodeRuntimeToolApprovals(teamName, options),
-      deleteAliveRunId: (teamName) => this.runTracking.deleteAliveRunId(teamName),
-      invalidateRuntimeSnapshotCaches: (teamName) => this.invalidateRuntimeSnapshotCaches(teamName),
-      setRuntimeAdapterProgress: (progress, onProgress) =>
-        this.runtimeAdapterProgressState.setRuntimeAdapterProgress(progress, onProgress),
-      emitTeamChange: (event) => this.teamChangeEmitter?.(event),
-      readLaunchState: (teamName) => this.launchStateStore.read(teamName),
-      getOpenCodeRuntimeAdapter: () => this.getOpenCodeRuntimeAdapter(),
-      readPersistedTeamProjectPath: (teamName) => this.readPersistedTeamProjectPath(teamName),
-      logWarning: (message) => logger.warn(message),
-    });
+    await this.cancellationBoundary.cancelProvisioning(runId);
   }
 
   /**

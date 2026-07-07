@@ -634,14 +634,46 @@ function getRunRuntimeFailureLabel(run: ProvisioningRun): string {
 }
 
 export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade<ProvisioningRun> {
-  static RUNTIME_PROCESS_TABLE_TIMEOUT_MS =
+  private static runtimeProcessTableTimeoutMs =
     DEFAULT_RUNTIME_RESOURCE_SAMPLING_OPTIONS.processTableTimeoutMs;
-  static RUNTIME_WINDOWS_PROCESS_TABLE_TIMEOUT_MS =
+  private static runtimeWindowsProcessTableTimeoutMs =
     DEFAULT_RUNTIME_RESOURCE_SAMPLING_OPTIONS.windowsProcessTableTimeoutMs;
-  static RUNTIME_PIDUSAGE_BATCH_TIMEOUT_MS =
+  private static runtimePidusageBatchTimeoutMs =
     DEFAULT_RUNTIME_RESOURCE_SAMPLING_OPTIONS.pidusageBatchTimeoutMs;
-  static RUNTIME_PROCESS_USAGE_CACHE_MAX_ENTRIES =
+  private static runtimeProcessUsageCacheMaxEntries =
     DEFAULT_RUNTIME_RESOURCE_SAMPLING_OPTIONS.processUsageCacheMaxEntries;
+
+  static get RUNTIME_PROCESS_TABLE_TIMEOUT_MS(): number {
+    return TeamProvisioningService.runtimeProcessTableTimeoutMs;
+  }
+
+  static set RUNTIME_PROCESS_TABLE_TIMEOUT_MS(value: number) {
+    TeamProvisioningService.runtimeProcessTableTimeoutMs = value;
+  }
+
+  static get RUNTIME_WINDOWS_PROCESS_TABLE_TIMEOUT_MS(): number {
+    return TeamProvisioningService.runtimeWindowsProcessTableTimeoutMs;
+  }
+
+  static set RUNTIME_WINDOWS_PROCESS_TABLE_TIMEOUT_MS(value: number) {
+    TeamProvisioningService.runtimeWindowsProcessTableTimeoutMs = value;
+  }
+
+  static get RUNTIME_PIDUSAGE_BATCH_TIMEOUT_MS(): number {
+    return TeamProvisioningService.runtimePidusageBatchTimeoutMs;
+  }
+
+  static set RUNTIME_PIDUSAGE_BATCH_TIMEOUT_MS(value: number) {
+    TeamProvisioningService.runtimePidusageBatchTimeoutMs = value;
+  }
+
+  static get RUNTIME_PROCESS_USAGE_CACHE_MAX_ENTRIES(): number {
+    return TeamProvisioningService.runtimeProcessUsageCacheMaxEntries;
+  }
+
+  static set RUNTIME_PROCESS_USAGE_CACHE_MAX_ENTRIES(value: number) {
+    TeamProvisioningService.runtimeProcessUsageCacheMaxEntries = value;
+  }
 
   private readonly runtimeLaneCoordinator = createTeamRuntimeLaneCoordinator();
   private readonly providerConnectionService = ProviderConnectionService.getInstance();

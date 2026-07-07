@@ -1591,7 +1591,13 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
   ) {
     super();
     this.configFacade = new TeamProvisioningConfigFacade({
-      configReader: this.configReader,
+      configReader: {
+        getConfig: (teamName) => this.configReader.getConfig(teamName),
+        getConfigSnapshot: (teamName) =>
+          typeof this.configReader.getConfigSnapshot === 'function'
+            ? this.configReader.getConfigSnapshot(teamName)
+            : this.configReader.getConfig(teamName),
+      },
       inboxReader: this.inboxReader,
       membersMetaStore: this.membersMetaStore,
       launchStateStore: this.launchStateStore,

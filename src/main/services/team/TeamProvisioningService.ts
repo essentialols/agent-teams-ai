@@ -160,7 +160,6 @@ import {
   type TeamProvisioningIdlePromptInjectionBoundary,
 } from './provisioning/TeamProvisioningIdlePromptInjectionPortsFactory';
 import { markTeamInboxMessagesRead } from './provisioning/TeamProvisioningInboxPersistence';
-import { armSilentTeammateForward } from './provisioning/TeamProvisioningInboxRelayCandidates';
 import {
   getLeadRelayReadCommitBatch as getLeadRelayReadCommitBatchHelper,
   hasStableInboxMessageId,
@@ -380,11 +379,7 @@ import {
   isTerminalFailureProvisioningState,
   TeamProvisioningRetainedProgressState,
 } from './provisioning/TeamProvisioningProgressState';
-import {
-  buildDeterministicLaunchHydrationPrompt,
-  getCanonicalSendMessageFieldRule,
-  getCanonicalSendMessageToolRule,
-} from './provisioning/TeamProvisioningPromptBuilders';
+import { buildDeterministicLaunchHydrationPrompt } from './provisioning/TeamProvisioningPromptBuilders';
 import {
   createTeamProvisioningProviderRuntimeCompatibility,
   createTeamProvisioningProviderRuntimeFacade,
@@ -419,7 +414,6 @@ import {
   killTeamProcess,
   nowIso,
   updateProgress,
-  wrapInAgentBlock,
 } from './provisioning/TeamProvisioningRunProgress';
 import { TeamProvisioningRuntimeAdapterProgressState } from './provisioning/TeamProvisioningRuntimeAdapterProgressState';
 import {
@@ -521,6 +515,7 @@ import {
   createTeamProvisioningTurnCompletePorts,
   type TeamProvisioningTurnCompleteServiceAdapter,
 } from './provisioning/TeamProvisioningTurnCompletePortsFactory';
+import { forwardUserDmToTeammateWithPorts } from './provisioning/TeamProvisioningUserDmRelay';
 import {
   createTeamProvisioningVerificationProbePorts,
   type TeamProvisioningVerificationProbePorts,
@@ -4559,41 +4554,15 @@ export class TeamProvisioningService {
     userText: string,
     userSummary?: string
   ): Promise<void> {
-    const runId = this.runTracking.getAliveRunId(teamName);
-    if (!runId) {
-      throw new Error(`No active process for team "${teamName}"`);
-    }
-    const run = this.runs.get(runId);
-    if (!run?.child?.stdin?.writable) {
-      throw new Error(`Team "${teamName}" process stdin is not writable`);
-    }
-    if (!run.provisioningComplete) {
-      // Don't inject extra turns during provisioning/bootstrap.
-      return;
-    }
-
-    armSilentTeammateForward(run, teammateName, 'user_dm', nowIso());
-
-    const summaryLine = userSummary?.trim() ? `Summary: ${userSummary.trim()}` : null;
-    const internal = wrapInAgentBlock(
-      [
-        `UI relay request — forward a direct message to teammate "${teammateName}".`,
-        `MUST: ${getCanonicalSendMessageToolRule(teammateName)}`,
-        `MUST: if they reply to the human, the destination must be to="user" (short answer).`,
-        `CRITICAL: Do NOT send any message to="user" for this turn.`,
-        getCanonicalSendMessageFieldRule(),
-      ].join('\n')
+    await forwardUserDmToTeammateWithPorts(
+      { teamName, teammateName, userText, userSummary },
+      {
+        getAliveRunId: (teamName) => this.runTracking.getAliveRunId(teamName),
+        getRun: (runId) => this.runs.get(runId),
+        sendMessageToRun: (run, message) => this.sendMessageToRun(run, message),
+        nowIso,
+      }
     );
-    const message = [
-      `User DM relay (internal).`,
-      internal,
-      ``,
-      `Message to forward:`,
-      ...(summaryLine ? [summaryLine] : []),
-      userText,
-    ].join('\n');
-
-    await this.sendMessageToRun(run, message);
   }
 
   async relayMemberInboxMessages(teamName: string, memberName: string): Promise<number> {

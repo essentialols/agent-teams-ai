@@ -19,7 +19,6 @@ import { sessionArtifactFromCodexAuthJson } from "@vioxen/subscription-runtime/p
 import {
   LocalFileRunEventProjectionStateStore,
   LocalFileRunEventStore,
-  LocalFileWorkerControlInboxStore,
   LocalControlledAgentStateStore,
 } from "@vioxen/subscription-runtime/store-local-file";
 import {
@@ -38,7 +37,6 @@ import {
   InterruptAndContinueWorkerUseCase,
   ProjectControlBroker,
   RunEventProviderKind,
-  WorkerControlService,
   assessBaseRevision,
   assessWorkerHealth,
   buildControlledAgentLaunchPlan,
@@ -71,7 +69,6 @@ import {
   type WorkerControlDeliveryMode,
   type WorkerControlIntent,
   type WorkerControlPriority,
-  type WorkerControlTarget,
   type ControlledAgentProcessOwner,
   type ControlledAgentProviderPort,
   type ControlledAgentSession,
@@ -257,6 +254,12 @@ import {
   workerControlSignalJson,
   workerControlSignalViewJson,
 } from "./codex-goal-mcp-worker-control-view";
+import {
+  codexGoalAccountStatusPayload,
+  codexGoalStateRootDir,
+  codexGoalWorkerControlService,
+  codexGoalWorkerControlTarget,
+} from "./codex-goal-mcp-worker-control";
 import {
   CODEX_GOAL_CONTROL_SURFACE_SCHEMA,
   CODEX_GOAL_EXECUTION_ENGINE_SCHEMA,
@@ -4847,47 +4850,6 @@ async function projectControlMarkReviewed(args: ProjectControlMcpArgs) {
     auditPath: projectControlAuditPath(controller.controller),
     jobId: loaded.manifest.jobId,
     result: result as unknown as JsonObject,
-  });
-}
-
-function codexGoalWorkerControlService(
-  launch: CodexGoalLaunchInput,
-): WorkerControlService {
-  return new WorkerControlService({
-    store: new LocalFileWorkerControlInboxStore({
-      rootDir: codexGoalStateRootDir(launch),
-    }),
-  });
-}
-
-function codexGoalWorkerControlTarget(input: {
-  readonly manifest: CodexGoalJobManifest;
-  readonly launch: CodexGoalLaunchInput;
-}): WorkerControlTarget {
-  return {
-    jobId: input.manifest.jobId,
-    taskId: input.launch.config.taskId,
-    workspaceId: input.launch.config.workspacePath,
-  };
-}
-
-function codexGoalStateRootDir(launch: CodexGoalLaunchInput): string {
-  return launch.config.stateRootDir ?? join(launch.config.jobRootDir, "state");
-}
-
-async function codexGoalAccountStatusPayload(
-  launch: CodexGoalLaunchInput,
-  options: {
-    readonly liveCheck?: boolean;
-    readonly codexBinaryPath?: string;
-    readonly liveCheckTimeoutMs?: number;
-  } = {},
-) {
-  return codexAccountStatusPayload({
-    authRootDir: launch.config.authRootDir,
-    stateRootDir: codexGoalStateRootDir(launch),
-    accounts: launch.config.accounts.map((account) => account.name),
-    ...options,
   });
 }
 

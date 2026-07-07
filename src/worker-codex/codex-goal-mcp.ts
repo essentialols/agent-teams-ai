@@ -2,7 +2,7 @@
 import { execFile } from "node:child_process";
 import { appendFile, mkdir, readdir, readFile, realpath, rename, rm, rmdir, stat, writeFile } from "node:fs/promises";
 import { hostname } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { execPath } from "node:process";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -239,7 +239,6 @@ import {
   matchesProjectControlPrefix,
   nodeErrorCode,
   pathInsideAnyProjectRoot,
-  pathInsideOrEqual,
   stringArrayArg,
   uniqueProjectControlStrings,
 } from "./codex-goal-mcp-project-utils";
@@ -288,6 +287,17 @@ import {
   execGit,
   execGitStdout,
 } from "./codex-goal-mcp-project-git";
+import {
+  assertProjectControlCreateManifestPaths,
+  assertProjectControlDependencyBootstrapReady,
+  assertProjectControlScopeRepairAllowed,
+  projectControlChildScope,
+  projectControlDependencyBootstrapMode,
+  projectControlPathArg,
+  projectControlRealPathOutsideWorkspaceScope,
+  projectControlWorkerRole,
+  projectScopeFieldFingerprint,
+} from "./codex-goal-mcp-project-scope";
 export {
   availableCodexGoalAccountSlots,
   dedupeCodexGoalAccountSlots,
@@ -5060,200 +5070,6 @@ async function projectControlMarkReviewed(args: ProjectControlMcpArgs) {
     jobId: loaded.manifest.jobId,
     result: result as unknown as JsonObject,
   });
-}
-
-function projectControlChildScope(
-  parent: ProjectAccessScope,
-  workspacePath: string,
-): ProjectAccessScope {
-  return {
-    projectId: parent.projectId,
-    ...(parent.projectSlug ? { projectSlug: parent.projectSlug } : {}),
-    readRoots: uniqueProjectControlStrings([
-      ...(parent.readRoots ?? []),
-      workspacePath,
-      ...(parent.registryRoot ? [parent.registryRoot] : []),
-    ]),
-    isolatedWorkspaceRoot: workspacePath,
-    workspaceRoots: [workspacePath],
-    ...(parent.registryRoot ? { registryRoot: parent.registryRoot } : {}),
-    ...(parent.authRoot ? { authRoot: parent.authRoot } : {}),
-    ...(parent.deniedRoots ? { deniedRoots: parent.deniedRoots } : {}),
-    ...(parent.allowedAccountIds
-      ? { allowedAccountIds: parent.allowedAccountIds }
-      : {}),
-  };
-}
-
-const PROJECT_CONTROL_SCOPE_REPAIR_IMMUTABLE_FIELDS = [
-  "projectId",
-  "projectSlug",
-  "readRoots",
-  "observedWorkspaceRoots",
-  "isolatedWorkspaceRoot",
-  "workspaceRoots",
-  "worktreeRoots",
-  "registryRoot",
-  "authRoot",
-  "deniedRoots",
-  "jobIdPrefixes",
-  "tmuxSessionPrefixes",
-  "allowedBranches",
-  "allowedGitRemotes",
-  "allowedAccountIds",
-  "allowForcePush",
-] as const satisfies readonly (keyof ProjectAccessScope)[];
-
-function assertProjectControlScopeRepairAllowed(input: {
-  readonly existing: ProjectAccessScope;
-  readonly proposed: ProjectAccessScope;
-}): void {
-  for (const field of PROJECT_CONTROL_SCOPE_REPAIR_IMMUTABLE_FIELDS) {
-    if (
-      projectScopeFieldFingerprint(input.existing[field]) !==
-        projectScopeFieldFingerprint(input.proposed[field])
-    ) {
-      throw new Error(`project_control_scope_${field}_repair_denied`);
-    }
-  }
-  const allowedRoots = uniqueProjectControlStrings([
-    ...(input.existing.readRoots ?? []),
-    ...(input.existing.workspaceRoots ?? []),
-    ...(input.existing.worktreeRoots ?? []),
-    ...(input.existing.isolatedWorkspaceRoot
-      ? [input.existing.isolatedWorkspaceRoot]
-      : []),
-    ...(input.existing.registryRoot ? [input.existing.registryRoot] : []),
-  ]);
-  const deniedRoots = input.existing.deniedRoots ?? [];
-  for (const root of input.proposed.consumedOutputLedgerRoots ?? []) {
-    if (!pathInsideAnyProjectRoot(root, allowedRoots)) {
-      throw new Error("project_control_consumed_output_ledger_root_outside_scope");
-    }
-    if (pathInsideAnyProjectRoot(root, deniedRoots)) {
-      throw new Error("project_control_consumed_output_ledger_root_denied");
-    }
-  }
-}
-
-function projectScopeFieldFingerprint(value: unknown): string {
-  if (Array.isArray(value)) {
-    return JSON.stringify(value.map((item) => String(item)));
-  }
-  return JSON.stringify(value ?? null);
-}
-
-function projectControlWorkerRole(value: unknown): "producer" | "fastgate" | "reviewer" {
-  const role = stringValue(value) ?? "producer";
-  if (role === "producer" || role === "fastgate" || role === "reviewer") {
-    return role;
-  }
-  throw new Error("project_control_worker_role_invalid");
-}
-
-function projectControlDependencyBootstrapMode(value: unknown): DependencyBootstrapMode {
-  const mode = stringValue(value) ?? "preflight";
-  if (mode === "off" || mode === "preflight" || mode === "install") {
-    return mode;
-  }
-  throw new Error("project_control_dependency_bootstrap_mode_invalid");
-}
-
-function assertProjectControlDependencyBootstrapReady(
-  result: DependencyPreflightResult,
-): void {
-  if (result.mode === "install" && result.status === "install_failed") {
-    throw new Error(
-      `project_control_dependency_bootstrap_failed:${result.warnings.join(",")}`,
-    );
-  }
-}
-
-function assertProjectControlCreateManifestPaths(input: {
-  readonly scope: ProjectAccessScope;
-  readonly registryRootDir: string;
-  readonly manifest: CodexGoalJobManifestInput;
-}): void {
-  const jobRootBase = dirname(input.scope.registryRoot ?? input.registryRootDir);
-  if (!pathInsideOrEqual(input.manifest.jobRootDir, jobRootBase)) {
-    throw new Error("project_control_job_root_outside_scope");
-  }
-  if (!matchesProjectControlPrefix(
-    basename(input.manifest.jobRootDir),
-    input.scope.jobIdPrefixes ?? [],
-  )) {
-    throw new Error("project_control_job_root_prefix_denied");
-  }
-  if (!pathInsideAnyProjectRoot(
-    input.manifest.workspacePath,
-    [
-      ...(input.scope.workspaceRoots ?? []),
-      ...(input.scope.worktreeRoots ?? []),
-      ...(input.scope.isolatedWorkspaceRoot ? [input.scope.isolatedWorkspaceRoot] : []),
-    ],
-  )) {
-    throw new Error("project_control_workspace_outside_scope");
-  }
-
-  for (const [field, value] of [
-    ["promptPath", input.manifest.promptPath],
-    ["outputPath", input.manifest.outputPath],
-    ["progressPath", input.manifest.progressPath],
-    ["logPath", input.manifest.logPath],
-    ["stateRootDir", input.manifest.stateRootDir],
-  ] as const) {
-    if (
-      value &&
-      !pathInsideAnyProjectRoot(value, [
-        input.manifest.jobRootDir,
-        input.manifest.workspacePath,
-      ])
-    ) {
-      throw new Error(`project_control_${field}_outside_scope`);
-    }
-  }
-
-  if (
-    input.scope.authRoot &&
-    input.manifest.authRootDir &&
-    resolve(input.manifest.authRootDir) !== resolve(input.scope.authRoot)
-  ) {
-    throw new Error("project_control_auth_root_outside_scope");
-  }
-}
-
-async function projectControlRealPathOutsideWorkspaceScope(
-  path: string,
-  scope: ProjectAccessScope,
-): Promise<string | undefined> {
-  const realPath = await optionalRealPathForAdmission(path);
-  if (!realPath) return undefined;
-  const roots = projectControlWorkspaceRoots(scope);
-  const realRoots = (await Promise.all(
-    roots.map((root) => optionalRealPathForAdmission(root)),
-  )).filter((root): root is string => Boolean(root));
-  const allowedRoots = uniqueProjectControlStrings([
-    ...roots,
-    ...realRoots,
-  ]);
-  return pathInsideAnyProjectRoot(realPath, allowedRoots) ? undefined : realPath;
-}
-
-function projectControlWorkspaceRoots(scope: ProjectAccessScope): readonly string[] {
-  return uniqueProjectControlStrings([
-    ...(scope.workspaceRoots ?? []),
-    ...(scope.worktreeRoots ?? []),
-    ...(scope.isolatedWorkspaceRoot ? [scope.isolatedWorkspaceRoot] : []),
-  ]);
-}
-
-function projectControlPathArg(
-  args: ProjectControlMcpArgs,
-  value: unknown,
-  fieldName: string,
-): string {
-  const cwd = resolvePath(process.cwd(), stringValue(args.cwd) ?? process.cwd());
-  return requiredString(value, fieldName, cwd);
 }
 
 async function writeCodexGoalReviewMarker(input: {

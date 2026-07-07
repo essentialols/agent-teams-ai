@@ -286,6 +286,7 @@ async function projectIntegrationRejectAttempt(
       mode: "project_integration_reject_attempt",
       controllerJobId: controller.controller.jobId,
       attemptId,
+      rejectionReason: reason,
     });
   }
   const attempt = await rejectIntegrationAttempt(options.integrationDeps(controller), {

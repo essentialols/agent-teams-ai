@@ -136,4 +136,34 @@ describe("project integration MCP tool handlers", () => {
       changedFiles: ["src/file.ts"],
     })).rejects.toThrow("project_integration_base_status_invalid");
   });
+
+  it("previews rejection reasons before invoking integration use cases", async () => {
+    let integrationDepsCalls = 0;
+    const handlers = createProjectIntegrationMcpToolHandlers({
+      loadController: async () => controller,
+      resolvePathArg: (_args, value, fieldName) => {
+        if (typeof value !== "string") throw new Error(`${fieldName} is required`);
+        return value;
+      },
+      integrationDeps: () => {
+        integrationDepsCalls += 1;
+        throw new Error("integration_deps_unexpected");
+      },
+    });
+
+    const result = await handlers.rejectAttempt({
+      attemptId: "attempt-1",
+      reason: "Worker output conflicted with target policy.",
+    });
+
+    expect(integrationDepsCalls).toBe(0);
+    expect(result.structuredContent).toMatchObject({
+      ok: false,
+      reason: "confirm_reject_required",
+      mode: "project_integration_reject_attempt",
+      controllerJobId: "controller-1",
+      attemptId: "attempt-1",
+      rejectionReason: "Worker output conflicted with target policy.",
+    });
+  });
 });

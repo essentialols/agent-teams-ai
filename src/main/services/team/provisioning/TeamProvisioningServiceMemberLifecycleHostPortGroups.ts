@@ -42,9 +42,7 @@ export interface TeamProvisioningServiceMemberLifecycleHostPortGroupPorts {
   materializeEffectiveTeamMemberSpecs(
     input: never
   ): ReturnType<PortGroups['memberSpec']['materializeEffectiveTeamMemberSpecs']>;
-  providerRuntime: {
-    buildProvisioningEnv: PortGroups['runtimeLaunch']['buildProvisioningEnv'];
-  };
+  buildProvisioningEnv: PortGroups['runtimeLaunch']['buildProvisioningEnv'];
   resolveDirectMemberLaunchIdentity(
     input: never
   ): ReturnType<PortGroups['runtimeLaunch']['resolveDirectMemberLaunchIdentity']>;
@@ -113,7 +111,7 @@ export function createTeamProvisioningServiceMemberLifecycleHostPortGroups(
     },
     runtimeLaunch: {
       buildProvisioningEnv: (providerId, providerBackendId, options) =>
-        service.providerRuntime.buildProvisioningEnv(providerId, providerBackendId, options),
+        service.buildProvisioningEnv(providerId, providerBackendId, options),
       resolveDirectMemberLaunchIdentity: (input) =>
         service.resolveDirectMemberLaunchIdentity(input as never),
       buildTeamRuntimeLaunchArgsPlan: (input) => service.buildTeamRuntimeLaunchArgsPlan(input),

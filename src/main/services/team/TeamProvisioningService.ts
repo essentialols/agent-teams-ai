@@ -1843,7 +1843,11 @@ export class TeamProvisioningService {
       runs: this.runs,
       provisioningRunByTeam: this.provisioningRunByTeam,
       getStopAllTeamsGeneration: () => this.stopAllTeamsGeneration,
-      providerRuntime: this.providerRuntimeCompatibility,
+      providerRuntime: {
+        buildProvisioningEnv: (...args) => this.buildProvisioningEnv(...args),
+        buildCrossProviderMemberArgs: (...args) => this.buildCrossProviderMemberArgs(...args),
+        validateAgentTeamsMcpRuntime: (...args) => this.validateAgentTeamsMcpRuntime(...args),
+      },
       getWorkspaceTrustCoordinator: () => this.appShellBoundary.getWorkspaceTrustCoordinator(),
       workspaceTrustWorkspaceCollectionPorts: this.workspaceTrustWorkspaceCollectionPorts,
       getRuntimeTurnSettledEnvironmentProvider: () => this.runtimeTurnSettledEnvironmentProvider,
@@ -1917,13 +1921,7 @@ export class TeamProvisioningService {
         buildMemberMcpLaunchConfigs: (input) =>
           this.buildRuntimeBootstrapMemberMcpLaunchConfigs(input),
         validateAgentTeamsMcpRuntime: ({ claudePath, cwd, shellEnv, mcpConfigPath, options }) =>
-          this.providerRuntime.validateAgentTeamsMcpRuntime(
-            claudePath,
-            cwd,
-            shellEnv,
-            mcpConfigPath,
-            options
-          ),
+          this.validateAgentTeamsMcpRuntime(claudePath, cwd, shellEnv, mcpConfigPath, options),
         buildTeamRuntimeLaunchArgsPlan: (input) => this.buildTeamRuntimeLaunchArgsPlan(input),
         seedLeadBootstrapPermissionRules: (teamName, cwd) =>
           this.seedLeadBootstrapPermissionRules(teamName, cwd),
@@ -1997,7 +1995,7 @@ export class TeamProvisioningService {
     this.prepareFacade = new TeamProvisioningPrepareFacade({
       getOpenCodeRuntimeAdapter: () => this.appShellBoundary.getOpenCodeRuntimeAdapter(),
       buildProvisioningEnv: (providerId, providerBackendId, options) =>
-        this.providerRuntime.buildProvisioningEnv(providerId, providerBackendId, options),
+        this.buildProvisioningEnv(providerId, providerBackendId, options),
       runProviderOneShotDiagnostic: (claudePath, cwd, env, providerId, providerArgs) =>
         this.providerRuntime.runProviderOneShotDiagnostic(
           claudePath,
@@ -2206,6 +2204,28 @@ export class TeamProvisioningService {
     this.scheduleStaleAnthropicTeamApiKeyHelperCleanup();
   }
 
+  buildProvisioningEnv(
+    ...args: Parameters<TeamProvisioningProviderRuntimeCompatibility['buildProvisioningEnv']>
+  ): ReturnType<TeamProvisioningProviderRuntimeCompatibility['buildProvisioningEnv']> {
+    return this.providerRuntimeCompatibility.buildProvisioningEnv(...args);
+  }
+
+  buildCrossProviderMemberArgs(
+    ...args: Parameters<
+      TeamProvisioningProviderRuntimeCompatibility['buildCrossProviderMemberArgs']
+    >
+  ): ReturnType<TeamProvisioningProviderRuntimeCompatibility['buildCrossProviderMemberArgs']> {
+    return this.providerRuntimeCompatibility.buildCrossProviderMemberArgs(...args);
+  }
+
+  validateAgentTeamsMcpRuntime(
+    ...args: Parameters<
+      TeamProvisioningProviderRuntimeCompatibility['validateAgentTeamsMcpRuntime']
+    >
+  ): ReturnType<TeamProvisioningProviderRuntimeCompatibility['validateAgentTeamsMcpRuntime']> {
+    return this.providerRuntimeCompatibility.validateAgentTeamsMcpRuntime(...args);
+  }
+
   private writeLaunchFailureArtifactPackBestEffort(
     run: ProvisioningRun,
     options: {
@@ -2243,11 +2263,13 @@ export class TeamProvisioningService {
   }
 
   private readConfigSnapshot(teamName: string): Promise<TeamConfig | null> {
-    return this.configTaskActivityBoundary.readConfigSnapshot(teamName);
+    return typeof this.configReader.getConfigSnapshot === 'function'
+      ? this.configReader.getConfigSnapshot(teamName)
+      : this.configReader.getConfig(teamName);
   }
 
   private readConfigForStrictDecision(teamName: string): Promise<TeamConfig | null> {
-    return this.configTaskActivityBoundary.readConfigForStrictDecision(teamName);
+    return this.configReader.getConfig(teamName);
   }
 
   private async resolveOpenCodeMemberDeliveryIdentity(
@@ -4237,7 +4259,7 @@ export class TeamProvisioningService {
           resolveClaudePath: () => ClaudeBinaryResolver.resolve(),
           buildMissingCliError,
           buildProvisioningEnv: (providerId, providerBackendId, options) =>
-            this.providerRuntime.buildProvisioningEnv(providerId, providerBackendId, options),
+            this.buildProvisioningEnv(providerId, providerBackendId, options),
           materializeEffectiveTeamMemberSpecs: (params) =>
             this.materializeEffectiveTeamMemberSpecs(params),
           resolveOpenCodeMemberWorkspacesForRuntime: (params) =>
@@ -4245,11 +4267,7 @@ export class TeamProvisioningService {
           planRuntimeLanesOrThrow: (leadProviderId, members, cwd) =>
             this.planRuntimeLanesOrThrow(leadProviderId, members, cwd),
           buildCrossProviderMemberArgs: (primaryProviderId, memberSpecs, options) =>
-            this.providerRuntime.buildCrossProviderMemberArgs(
-              primaryProviderId,
-              memberSpecs,
-              options
-            ),
+            this.buildCrossProviderMemberArgs(primaryProviderId, memberSpecs, options),
           resolveAndValidateLaunchIdentity: (params) =>
             this.resolveAndValidateLaunchIdentity(params),
           createMixedSecondaryLaneStates: (lanePlan) =>

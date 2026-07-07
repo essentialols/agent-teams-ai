@@ -197,9 +197,17 @@ describe('bindTeamHttpProvisioningApis', () => {
     const runtimeApi = api.runtime as NonNullable<typeof api.runtime>;
     const runtimeControlApi = api.runtimeControl as NonNullable<typeof api.runtimeControl>;
     const taskActivityApi = api.taskActivity as NonNullable<typeof api.taskActivity>;
+    const statusApi = api.status as NonNullable<typeof api.status>;
 
-    expect(sortedKeys(api)).toEqual(['launch', 'runtime', 'runtimeControl', 'taskActivity']);
-    expect(sortedKeys(launchApi)).toEqual(['createTeam', 'getProvisioningStatus', 'launchTeam']);
+    expect(sortedKeys(api)).toEqual([
+      'launch',
+      'runtime',
+      'runtimeControl',
+      'status',
+      'taskActivity',
+    ]);
+    expect(sortedKeys(launchApi)).toEqual(['createTeam', 'launchTeam']);
+    expect(sortedKeys(statusApi)).toEqual(['getProvisioningStatus']);
     expect(sortedKeys(taskActivityApi)).toEqual([
       'repairStaleTaskActivityIntervalsBeforeSnapshot',
     ]);

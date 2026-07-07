@@ -63,7 +63,6 @@ import {
   type ProjectControlBrokerPorts,
   type ProjectControlOperationResult,
   type RunReconcilePreviewDecision,
-  type RunReconcilePreviewStatus,
   type ActiveAttemptRegistry,
   type WorkerControlActor,
   type WorkerControlDeliveryMode,
@@ -265,8 +264,8 @@ import {
   applyWorkspaceConflictToOverviewJob,
   buildCodexGoalWorkspaceConflicts,
   workspaceConflictJobIds,
-  workspaceConflictKey,
 } from "./codex-goal-mcp-workspace-conflicts";
+import { codexOverviewItemToWatchStatus } from "./codex-goal-mcp-watch-status";
 import {
   CODEX_GOAL_CONTROL_SURFACE_SCHEMA,
   CODEX_GOAL_EXECUTION_ENGINE_SCHEMA,
@@ -6033,50 +6032,6 @@ function summarizeRunObservationSnapshots(
     ).length,
     warnings: snapshots.reduce((count, snapshot) => count + snapshot.warnings.length, 0),
   };
-}
-
-async function codexOverviewItemToWatchStatus(
-  item: JsonObject,
-): Promise<RunReconcilePreviewStatus> {
-  const jobId = stringValue(item.jobId) ?? "unknown";
-  const workspacePath = stringValue(item.workspacePath);
-  const recommendedAction = stringValue(item.recommendedAction);
-  const nextBestTool = stringValue(item.nextBestTool);
-  const continueAfter = continueAfterFromOverviewItem(item);
-  const requiresManualReview = nextBestTool === "manual_review" ||
-    recommendedAction === "inspect_dirty_workspace" ||
-    recommendedAction === "inspect_dirty_failure" ||
-    recommendedAction === "inspect_failure" ||
-    recommendedAction === "check_log_or_result";
-  return {
-    runId: jobId,
-    workerAlive: item.workerAlive === true,
-    safeToContinue: item.safeToContinue === true,
-    ...(workspacePath ? { workspaceKey: await workspaceConflictKey(workspacePath) } : {}),
-    ...(item.workspaceDirty === undefined
-      ? {}
-      : { workspaceDirty: item.workspaceDirty === true }),
-    ...(requiresManualReview ? { requiresManualReview: true } : {}),
-    ...(requiresManualReview
-      ? { manualReviewReason: nextBestTool ?? recommendedAction ?? "manual_review" }
-      : {}),
-    ...(continueAfter ? { continueAfter } : {}),
-    summary: item,
-  };
-}
-
-function continueAfterFromOverviewItem(item: JsonObject): Date | undefined {
-  const recommendedAction = stringValue(item.recommendedAction);
-  if (recommendedAction !== "continue_after_capacity") return undefined;
-  const accounts = Array.isArray(item.capacityBlockedAccounts)
-    ? item.capacityBlockedAccounts
-    : [];
-  return accounts
-    .map((account) =>
-      isRecord(account) ? dateValue(account.cooldownUntil) : undefined
-    )
-    .filter((value): value is Date => value !== undefined)
-    .sort((left, right) => left.getTime() - right.getTime())[0];
 }
 
 async function buildCodexGoalOverviewItem(input: {

@@ -509,7 +509,11 @@ import {
   stopAllTeamsFlow,
   stopPersistentTeamMembersFlow,
 } from './provisioning/TeamProvisioningStopFlow';
-import { createTeamProvisioningStopFlowBoundary } from './provisioning/TeamProvisioningStopFlowPortsFactory';
+import {
+  createTeamProvisioningStopFlowBoundary,
+  createTeamProvisioningStopFlowDepsFromService,
+  type TeamProvisioningStopFlowServiceHost,
+} from './provisioning/TeamProvisioningStopFlowPortsFactory';
 import { createNodeStopPrimaryOwnedRosterRuntimeUseCase } from './provisioning/TeamProvisioningStopPrimaryOwnedRosterRuntimeUseCase';
 import {
   killOrphanedTeamAgentProcesses as killOrphanedTeamAgentProcessesHelper,
@@ -1329,50 +1333,19 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
       nowIso,
       getErrorMessage,
     });
-  private readonly stopFlowBoundary = createTeamProvisioningStopFlowBoundary<ProvisioningRun>({
-    getTeamsBasePath,
-    getSecondaryRuntimeRuns: (teamName) => this.getSecondaryRuntimeRuns(teamName),
-    stoppingSecondaryRuntimeTeams: this.stoppingSecondaryRuntimeTeams,
-    getOpenCodeRuntimeAdapter: () => this.appShellBoundary.getOpenCodeRuntimeAdapter(),
-    readLaunchState: (teamName) => this.launchStateStore.read(teamName),
-    writeLaunchStateSnapshot: (teamName, snapshot) =>
-      this.writeLaunchStateSnapshot(teamName, snapshot),
-    readPersistedTeamProjectPath: (teamName) => this.readPersistedTeamProjectPath(teamName),
-    clearOpenCodeRuntimeLaneStorage,
-    deleteSecondaryRuntimeRun: (teamName, laneId) =>
-      this.deleteSecondaryRuntimeRun(teamName, laneId),
-    clearSecondaryRuntimeRuns: (teamName) => this.clearSecondaryRuntimeRuns(teamName),
-    runtimeAdapterRunByTeam: this.runtimeAdapterRunByTeam,
-    runtimeAdapterProgressByRunId: this.runtimeAdapterProgressByRunId,
-    setRuntimeAdapterProgress: (progress) =>
-      this.runtimeAdapterProgressState.setRuntimeAdapterProgress(progress),
-    clearOpenCodeRuntimeToolApprovals: (teamName, options) =>
-      this.toolApprovalFacade.clearOpenCodeRuntimeToolApprovals(teamName, options),
-    getTrackedRunId: (teamName) => this.runTracking.getTrackedRunId(teamName),
-    getAliveRunId: (teamName) => this.runTracking.getAliveRunId(teamName),
-    deleteAliveRunId: (teamName) => this.runTracking.deleteAliveRunId(teamName),
-    runs: this.runs,
-    provisioningRunByTeam: this.provisioningRunByTeam,
-    invalidateRuntimeSnapshotCaches: (teamName) => this.invalidateRuntimeSnapshotCaches(teamName),
-    pauseActiveIntervalsForTeam: (teamName) =>
-      this.taskActivityIntervalService.pauseActiveIntervalsForTeam(teamName),
-    stopPersistentTeamMembers: (teamName) => this.stopPersistentTeamMembers(teamName),
-    openCodeRuntimeDeliveryAdvisory: this.openCodeRuntimeDeliveryAdvisory,
-    isCancellableRuntimeAdapterProgress: (progress) =>
-      this.cancellationBoundary.isCancellableRuntimeAdapterProgress(progress),
-    cancelRuntimeAdapterProvisioning: (runId, progress) =>
-      this.cancellationBoundary.cancelRuntimeAdapterProvisioning(runId, progress),
-    cleanupAnthropicApiKeyHelperMaterialForStoppedTeam: (teamName) =>
-      this.cleanupAnthropicApiKeyHelperMaterialForStoppedTeam(teamName),
-    withTeamLock: (teamName, fn) => this.withTeamLock(teamName, fn),
-    hasSecondaryRuntimeRuns: (teamName) => this.hasSecondaryRuntimeRuns(teamName),
-    killTeamProcess,
-    updateProgress,
-    cleanupRun: (run) => this.cleanupRun(run),
-    emitTeamChange: (event) => this.teamChangeEmitter?.(event),
-    logger,
-    nowIso,
-  });
+  private readonly stopFlowBoundary = createTeamProvisioningStopFlowBoundary<ProvisioningRun>(
+    createTeamProvisioningStopFlowDepsFromService(
+      this as unknown as TeamProvisioningStopFlowServiceHost<ProvisioningRun>,
+      {
+        getTeamsBasePath,
+        clearOpenCodeRuntimeLaneStorage,
+        killTeamProcess,
+        updateProgress,
+        logger,
+        nowIso,
+      }
+    )
+  );
   private readonly reevaluateMemberLaunchStatusBoundary =
     createTeamProvisioningReevaluateMemberLaunchStatusBoundary<ProvisioningRun>({
       nowIso,

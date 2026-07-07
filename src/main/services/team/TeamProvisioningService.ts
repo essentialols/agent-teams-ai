@@ -104,7 +104,9 @@ import {
 } from './provisioning/TeamProvisioningBootstrapTranscriptFacade';
 import {
   createTeamProvisioningCancellationBoundary,
+  createTeamProvisioningCancellationBoundaryPortsFromService,
   type TeamProvisioningCancellationBoundary,
+  type TeamProvisioningCancellationBoundaryServiceHost,
 } from './provisioning/TeamProvisioningCancellationBoundary';
 import { readTeamProvisioningClaudeLogs } from './provisioning/TeamProvisioningClaudeLogs';
 import {
@@ -761,32 +763,14 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
   });
   private readonly cancelledRuntimeAdapterRunIds = new Set<string>();
   private readonly cancellationBoundary: TeamProvisioningCancellationBoundary =
-    createTeamProvisioningCancellationBoundary<ProvisioningRun>({
-      runs: this.runs,
-      runtimeAdapterProgressByRunId: this.runtimeAdapterProgressByRunId,
-      cancelledRuntimeAdapterRunIds: this.cancelledRuntimeAdapterRunIds,
-      runtimeAdapterRunByTeam: this.runtimeAdapterRunByTeam,
-      provisioningRunByTeam: this.provisioningRunByTeam,
-      aliveRunByTeam: this.aliveRunByTeam,
-      getTrackedRunId: (teamName) => this.runTracking.getTrackedRunId(teamName),
-      deleteAliveRunId: (teamName) => this.runTracking.deleteAliveRunId(teamName),
-      hasSecondaryRuntimeRuns: (teamName) => this.hasSecondaryRuntimeRuns(teamName),
-      stopMixedSecondaryRuntimeLanes: (teamName) => this.stopMixedSecondaryRuntimeLanes(teamName),
-      killTeamProcess,
-      updateProgress,
-      cleanupRun: (run) => this.cleanupRun(run),
-      nowIso,
-      clearOpenCodeRuntimeToolApprovals: (teamName, options) =>
-        this.toolApprovalFacade.clearOpenCodeRuntimeToolApprovals(teamName, options),
-      invalidateRuntimeSnapshotCaches: (teamName) => this.invalidateRuntimeSnapshotCaches(teamName),
-      setRuntimeAdapterProgress: (progress, onProgress) =>
-        this.runtimeAdapterProgressState.setRuntimeAdapterProgress(progress, onProgress),
-      emitTeamChange: (event) => this.teamChangeEmitter?.(event),
-      readLaunchState: (teamName) => this.launchStateStore.read(teamName),
-      getOpenCodeRuntimeAdapter: () => this.appShellBoundary.getOpenCodeRuntimeAdapter(),
-      readPersistedTeamProjectPath: (teamName) => this.readPersistedTeamProjectPath(teamName),
-      logWarning: (message) => logger.warn(message),
-    });
+    createTeamProvisioningCancellationBoundary<ProvisioningRun>(
+      createTeamProvisioningCancellationBoundaryPortsFromService(
+        this as unknown as TeamProvisioningCancellationBoundaryServiceHost<ProvisioningRun>,
+        {
+          logWarning: (message) => logger.warn(message),
+        }
+      )
+    );
   private stopAllTeamsGeneration = 0;
   private readonly transientProbeProcesses = new Set<ReturnType<typeof spawn>>();
   private readonly secondaryRuntimeRunByTeam = new Map<

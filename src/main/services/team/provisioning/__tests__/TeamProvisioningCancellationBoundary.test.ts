@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   createTeamProvisioningCancellationBoundary,
+  createTeamProvisioningCancellationBoundaryPortsFromService,
   type TeamProvisioningCancellationBoundaryPorts,
+  type TeamProvisioningCancellationBoundaryServiceHost,
   type TeamProvisioningCancellationRun,
 } from '../TeamProvisioningCancellationBoundary';
 
@@ -140,6 +142,61 @@ function makePorts(
 }
 
 describe('TeamProvisioningCancellationBoundary', () => {
+  it('builds cancellation ports from service-shaped dependencies', async () => {
+    const run = makeRun();
+    const basePorts = makePorts({
+      run,
+      trackedRunId: run.runId,
+      hasSecondaryRuntimeRuns: true,
+    });
+    const service = {
+      runs: basePorts.runs,
+      runtimeAdapterProgressByRunId: basePorts.runtimeAdapterProgressByRunId,
+      cancelledRuntimeAdapterRunIds: basePorts.cancelledRuntimeAdapterRunIds,
+      runtimeAdapterRunByTeam: basePorts.runtimeAdapterRunByTeam,
+      provisioningRunByTeam: basePorts.provisioningRunByTeam,
+      aliveRunByTeam: basePorts.aliveRunByTeam,
+      runTracking: {
+        getTrackedRunId: basePorts.getTrackedRunId,
+        deleteAliveRunId: basePorts.deleteAliveRunId,
+      },
+      hasSecondaryRuntimeRuns: basePorts.hasSecondaryRuntimeRuns,
+      stopMixedSecondaryRuntimeLanes: basePorts.stopMixedSecondaryRuntimeLanes,
+      cleanupRun: basePorts.cleanupRun,
+      toolApprovalFacade: {
+        clearOpenCodeRuntimeToolApprovals: basePorts.clearOpenCodeRuntimeToolApprovals,
+      },
+      invalidateRuntimeSnapshotCaches: basePorts.invalidateRuntimeSnapshotCaches,
+      runtimeAdapterProgressState: {
+        setRuntimeAdapterProgress: basePorts.setRuntimeAdapterProgress,
+      },
+      teamChangeEmitter: basePorts.emitTeamChange,
+      launchStateStore: {
+        read: basePorts.readLaunchState,
+      },
+      appShellBoundary: {
+        getOpenCodeRuntimeAdapter: basePorts.getOpenCodeRuntimeAdapter,
+      },
+      readPersistedTeamProjectPath: basePorts.readPersistedTeamProjectPath,
+    } satisfies TeamProvisioningCancellationBoundaryServiceHost<TestRun>;
+
+    const boundary = createTeamProvisioningCancellationBoundary(
+      createTeamProvisioningCancellationBoundaryPortsFromService(service, {
+        killTeamProcess: basePorts.killTeamProcess,
+        updateProgress: basePorts.updateProgress,
+        nowIso: basePorts.nowIso,
+        logWarning: basePorts.logWarning,
+      })
+    );
+
+    await boundary.cancelProvisioning(run.runId);
+
+    expect(run.cancelRequested).toBe(true);
+    expect(basePorts.killTeamProcess).toHaveBeenCalledWith(run.child);
+    expect(basePorts.stopMixedSecondaryRuntimeLanes).toHaveBeenCalledWith(run.teamName);
+    expect(basePorts.cleanupRun).toHaveBeenCalledWith(run);
+  });
+
   it('cancels an active direct provisioning run and leaves cleanup behind the ports', async () => {
     const run = makeRun();
     const ports = makePorts({

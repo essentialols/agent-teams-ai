@@ -9,6 +9,11 @@ import {
   type RuntimeAdapterRunEntry,
 } from './TeamProvisioningRuntimeAdapterCancellation';
 import { createTeamProvisioningRuntimeAdapterCancellationPorts } from './TeamProvisioningRuntimeAdapterCancellationPortsFactory';
+import {
+  killTeamProcess as killTeamProcessDefault,
+  nowIso as nowIsoDefault,
+  updateProgress as updateProgressDefault,
+} from './TeamProvisioningRunProgress';
 
 import type { TeamLaunchRuntimeAdapter } from '../runtime';
 import type {
@@ -81,6 +86,48 @@ export interface TeamProvisioningCancellationBoundary {
   ): TeamLaunchResponse;
 }
 
+export interface TeamProvisioningCancellationBoundaryServiceHost<
+  TRun extends TeamProvisioningCancellationRun,
+> {
+  runs: TeamProvisioningCancellationBoundaryPorts<TRun>['runs'];
+  runtimeAdapterProgressByRunId: TeamProvisioningCancellationBoundaryPorts<TRun>['runtimeAdapterProgressByRunId'];
+  cancelledRuntimeAdapterRunIds: TeamProvisioningCancellationBoundaryPorts<TRun>['cancelledRuntimeAdapterRunIds'];
+  runtimeAdapterRunByTeam: TeamProvisioningCancellationBoundaryPorts<TRun>['runtimeAdapterRunByTeam'];
+  provisioningRunByTeam: TeamProvisioningCancellationBoundaryPorts<TRun>['provisioningRunByTeam'];
+  aliveRunByTeam: TeamProvisioningCancellationBoundaryPorts<TRun>['aliveRunByTeam'];
+  runTracking: Pick<
+    TeamProvisioningCancellationBoundaryPorts<TRun>,
+    'getTrackedRunId' | 'deleteAliveRunId'
+  >;
+  hasSecondaryRuntimeRuns: TeamProvisioningCancellationBoundaryPorts<TRun>['hasSecondaryRuntimeRuns'];
+  stopMixedSecondaryRuntimeLanes: TeamProvisioningCancellationBoundaryPorts<TRun>['stopMixedSecondaryRuntimeLanes'];
+  cleanupRun: TeamProvisioningCancellationBoundaryPorts<TRun>['cleanupRun'];
+  toolApprovalFacade: {
+    clearOpenCodeRuntimeToolApprovals: TeamProvisioningCancellationBoundaryPorts<TRun>['clearOpenCodeRuntimeToolApprovals'];
+  };
+  invalidateRuntimeSnapshotCaches: TeamProvisioningCancellationBoundaryPorts<TRun>['invalidateRuntimeSnapshotCaches'];
+  runtimeAdapterProgressState: {
+    setRuntimeAdapterProgress: TeamProvisioningCancellationBoundaryPorts<TRun>['setRuntimeAdapterProgress'];
+  };
+  teamChangeEmitter?: TeamProvisioningCancellationBoundaryPorts<TRun>['emitTeamChange'];
+  launchStateStore: {
+    read: TeamProvisioningCancellationBoundaryPorts<TRun>['readLaunchState'];
+  };
+  appShellBoundary: {
+    getOpenCodeRuntimeAdapter: TeamProvisioningCancellationBoundaryPorts<TRun>['getOpenCodeRuntimeAdapter'];
+  };
+  readPersistedTeamProjectPath: TeamProvisioningCancellationBoundaryPorts<TRun>['readPersistedTeamProjectPath'];
+}
+
+export interface TeamProvisioningCancellationBoundaryServiceHostOptions<
+  TRun extends TeamProvisioningCancellationRun,
+> {
+  killTeamProcess?: TeamProvisioningCancellationBoundaryPorts<TRun>['killTeamProcess'];
+  updateProgress?: TeamProvisioningCancellationBoundaryPorts<TRun>['updateProgress'];
+  nowIso?: TeamProvisioningCancellationBoundaryPorts<TRun>['nowIso'];
+  logWarning?: TeamProvisioningCancellationBoundaryPorts<TRun>['logWarning'];
+}
+
 const CANCELLABLE_PROVISIONING_STATES: ReadonlySet<TeamProvisioningProgress['state']> = new Set([
   'spawning',
   'configuring',
@@ -88,6 +135,45 @@ const CANCELLABLE_PROVISIONING_STATES: ReadonlySet<TeamProvisioningProgress['sta
   'finalizing',
   'verifying',
 ]);
+
+export function createTeamProvisioningCancellationBoundaryPortsFromService<
+  TRun extends TeamProvisioningCancellationRun,
+>(
+  service: TeamProvisioningCancellationBoundaryServiceHost<TRun>,
+  options: TeamProvisioningCancellationBoundaryServiceHostOptions<TRun> = {}
+): TeamProvisioningCancellationBoundaryPorts<TRun> {
+  return {
+    runs: service.runs,
+    runtimeAdapterProgressByRunId: service.runtimeAdapterProgressByRunId,
+    cancelledRuntimeAdapterRunIds: service.cancelledRuntimeAdapterRunIds,
+    runtimeAdapterRunByTeam: service.runtimeAdapterRunByTeam,
+    provisioningRunByTeam: service.provisioningRunByTeam,
+    aliveRunByTeam: service.aliveRunByTeam,
+    getTrackedRunId: (teamName) => service.runTracking.getTrackedRunId(teamName),
+    deleteAliveRunId: (teamName) => service.runTracking.deleteAliveRunId(teamName),
+    hasSecondaryRuntimeRuns: (teamName) => service.hasSecondaryRuntimeRuns(teamName),
+    stopMixedSecondaryRuntimeLanes: (teamName) => service.stopMixedSecondaryRuntimeLanes(teamName),
+    killTeamProcess:
+      options.killTeamProcess ??
+      (killTeamProcessDefault as TeamProvisioningCancellationBoundaryPorts<TRun>['killTeamProcess']),
+    updateProgress:
+      options.updateProgress ??
+      (updateProgressDefault as unknown as TeamProvisioningCancellationBoundaryPorts<TRun>['updateProgress']),
+    cleanupRun: (run) => service.cleanupRun(run),
+    nowIso: options.nowIso ?? nowIsoDefault,
+    clearOpenCodeRuntimeToolApprovals: (teamName, approvalOptions) =>
+      service.toolApprovalFacade.clearOpenCodeRuntimeToolApprovals(teamName, approvalOptions),
+    invalidateRuntimeSnapshotCaches: (teamName) =>
+      service.invalidateRuntimeSnapshotCaches(teamName),
+    setRuntimeAdapterProgress: (progress, onProgress) =>
+      service.runtimeAdapterProgressState.setRuntimeAdapterProgress(progress, onProgress),
+    emitTeamChange: (event) => service.teamChangeEmitter?.(event),
+    readLaunchState: (teamName) => service.launchStateStore.read(teamName),
+    getOpenCodeRuntimeAdapter: () => service.appShellBoundary.getOpenCodeRuntimeAdapter(),
+    readPersistedTeamProjectPath: (teamName) => service.readPersistedTeamProjectPath(teamName),
+    logWarning: options.logWarning ?? (() => undefined),
+  };
+}
 
 export function createTeamProvisioningCancellationBoundary<
   TRun extends TeamProvisioningCancellationRun,

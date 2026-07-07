@@ -9,6 +9,7 @@ import {
   safeExecutionWaitingStatusForFailure,
   shouldContinueSafeExecutionAfterFailure,
   shouldDeliverSafeExecutionControlForContinuation,
+  shouldReplaceSafeExecutionWorkspaceLock,
   type SafeExecutionFailureClassification,
 } from "../index";
 
@@ -132,6 +133,41 @@ describe("safe execution policy decisions", () => {
       .toBe(false);
     expect(shouldDeliverSafeExecutionControlForContinuation("reconnect_required"))
       .toBe(false);
+  });
+
+  it("replaces dead-owner workspace locks and keeps live or ownerless locks", () => {
+    const acquiredAt = new Date("2026-01-01T00:00:00.000Z");
+    const beforeStale = new Date("2026-01-01T00:00:09.000Z");
+    const afterStale = new Date("2026-01-01T00:00:11.000Z");
+
+    expect(shouldReplaceSafeExecutionWorkspaceLock({
+      acquiredAt,
+      now: beforeStale,
+      ownerPid: 123,
+      ownerProcessAlive: false,
+    })).toBe(true);
+
+    expect(shouldReplaceSafeExecutionWorkspaceLock({
+      acquiredAt,
+      now: afterStale,
+      ownerPid: 123,
+      ownerProcessAlive: true,
+      staleLockMs: 10_000,
+    })).toBe(false);
+
+    expect(shouldReplaceSafeExecutionWorkspaceLock({
+      acquiredAt,
+      now: beforeStale,
+      ownerPid: 123,
+      ownerProcessAlive: false,
+      staleLockMs: 10_000,
+    })).toBe(true);
+
+    expect(shouldReplaceSafeExecutionWorkspaceLock({
+      acquiredAt,
+      now: afterStale,
+      staleLockMs: 10_000,
+    })).toBe(false);
   });
 
   it("classifies backend and auth failures with stable safe messages", () => {

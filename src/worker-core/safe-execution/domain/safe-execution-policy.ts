@@ -81,6 +81,24 @@ export type SafeExecutionContinuationDecision = {
   readonly safeMessage?: string;
 };
 
+export function shouldReplaceSafeExecutionWorkspaceLock(input: {
+  readonly acquiredAt: Date;
+  readonly now: Date;
+  readonly staleLockMs?: number;
+  readonly ownerPid?: number;
+  readonly ownerProcessAlive?: boolean;
+}): boolean {
+  if (input.ownerPid !== undefined && input.ownerProcessAlive === false) {
+    return true;
+  }
+  if (input.staleLockMs === undefined) return false;
+  if (input.now.getTime() - input.acquiredAt.getTime() < input.staleLockMs) {
+    return false;
+  }
+  if (input.ownerPid === undefined) return false;
+  return input.ownerProcessAlive === false;
+}
+
 export function normalizeSafeExecutionPolicy(input: {
   readonly policy?: SafeExecutionPolicy;
   readonly continuationMode?: ContinuationMode;

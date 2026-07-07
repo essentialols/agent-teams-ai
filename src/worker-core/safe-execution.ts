@@ -33,6 +33,7 @@ import {
   safeExecutionWaitingStatusForFailure,
   shouldContinueSafeExecutionAfterFailure,
   shouldDeliverSafeExecutionControlForContinuation,
+  shouldReplaceSafeExecutionWorkspaceLock,
   withFailureDetails,
   type AttemptFailureReason,
   type ContinuationMode,
@@ -72,6 +73,7 @@ export {
   attemptFailureReasons,
   defaultSafeExecutionErrorClassifier,
   isSafeExecutionError,
+  shouldReplaceSafeExecutionWorkspaceLock,
   type AttemptFailureReason,
   type ContinuationMode,
   type SafeExecutionErrorCode,
@@ -1711,15 +1713,17 @@ function workspaceLockKey(workspacePath: string): string {
 }
 
 function canReplaceLock(record: WorkspaceLockRecord, now: Date): boolean {
-  if (record.ownerPid !== undefined && !isProcessAlive(record.ownerPid)) {
-    return true;
-  }
-  if (record.staleLockMs === undefined) return false;
-  if (now.getTime() - record.acquiredAt.getTime() < record.staleLockMs) {
-    return false;
-  }
-  if (record.ownerPid === undefined) return false;
-  return !isProcessAlive(record.ownerPid);
+  const ownerProcessAlive =
+    record.ownerPid === undefined ? undefined : isProcessAlive(record.ownerPid);
+  return shouldReplaceSafeExecutionWorkspaceLock({
+    acquiredAt: record.acquiredAt,
+    now,
+    ...(record.staleLockMs === undefined
+      ? {}
+      : { staleLockMs: record.staleLockMs }),
+    ...(record.ownerPid === undefined ? {} : { ownerPid: record.ownerPid }),
+    ...(ownerProcessAlive === undefined ? {} : { ownerProcessAlive }),
+  });
 }
 
 function isProcessAlive(pid: number): boolean {

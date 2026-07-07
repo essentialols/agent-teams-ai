@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { execFile } from "node:child_process";
 import { appendFile, mkdir, readdir, readFile, realpath, rename, rm, rmdir, stat, writeFile } from "node:fs/promises";
-import { homedir, hostname } from "node:os";
+import { hostname } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { execPath } from "node:process";
 import { fileURLToPath } from "node:url";
@@ -219,11 +219,15 @@ import {
 } from "./codex-goal-mcp-inputs";
 import {
   accountOperatorLabel,
+  accountAuthRootFromArgs,
+  accountPoolRootFromArgs,
   availableCodexGoalAccountSlots,
   codexAccountReloginInstructions,
   codexAccountStatusPayload,
+  defaultCodexGoalAuthRoot,
   dedupeCodexGoalAccountSlots,
   duplicateAccountGroups,
+  listAccountPools,
   visibleCodexGoalAccountPoolSlots,
 } from "./codex-goal-mcp-accounts";
 import {
@@ -272,6 +276,10 @@ import {
   redactText,
   truncateText,
 } from "./codex-goal-mcp-decision";
+import {
+  extractRecentCommands,
+  redactLogTail,
+} from "./codex-goal-mcp-log-view";
 export {
   availableCodexGoalAccountSlots,
   dedupeCodexGoalAccountSlots,
@@ -279,7 +287,7 @@ export {
 } from "./codex-goal-mcp-accounts";
 
 const serverVersion = "0.1.0-main.2";
-const defaultAuthRoot = "~/.cache/subscription-runtime/live-codex-auth";
+const defaultAuthRoot = defaultCodexGoalAuthRoot;
 const defaultTimeoutMs = 72 * 60 * 60 * 1000;
 const execFileAsync = promisify(execFile);
 const controlledAgentProcessOwner = buildControlledAgentProcessOwner({
@@ -7418,90 +7426,6 @@ function optionalTargetCommit(
   targetCommit: string | undefined,
 ): { readonly targetCommit?: string } {
   return targetCommit === undefined ? {} : { targetCommit };
-}
-
-function accountPoolRootFromArgs(args: AccountPoolMcpArgs): string {
-  return resolvePath(
-    process.cwd(),
-    args.poolRootDir ?? join(homedir(), ".cache", "subscription-runtime"),
-  );
-}
-
-function accountAuthRootFromArgs(args: AccountPoolMcpArgs): string {
-  if (args.authRootDir) return resolvePath(process.cwd(), args.authRootDir);
-  if (args.pool) return join(accountPoolRootFromArgs(args), args.pool);
-  return resolvePath(process.cwd(), defaultAuthRoot);
-}
-
-async function listAccountPools(
-  poolRootDir: string,
-  stateRootDir?: string,
-): Promise<readonly JsonObject[]> {
-  let entries;
-  try {
-    entries = await readdir(poolRootDir, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-  const pools = await Promise.all(
-    entries
-      .filter((entry) => entry.isDirectory())
-      .map(async (entry) => {
-        const authRootDir = join(poolRootDir, entry.name);
-        const slots = await listCodexGoalAccountStatuses({
-          authRootDir,
-          ...(stateRootDir ? { stateRootDir } : {}),
-        });
-        const visibleSlots = visibleCodexGoalAccountPoolSlots(entry.name, slots);
-        const dedupedSlots = dedupeCodexGoalAccountSlots(visibleSlots);
-        const availableDedupedSlots = availableCodexGoalAccountSlots(dedupedSlots);
-        return {
-          pool: entry.name,
-          authRootDir,
-          accountCount: visibleSlots.length,
-          readyCount: visibleSlots.filter((slot) => slot.status === "ready").length,
-          availableCount: availableDedupedSlots.length,
-          dedupedAccountNames: dedupedSlots.map((slot) => slot.name),
-          availableDedupedAccountNames: availableDedupedSlots.map((slot) => slot.name),
-          dedupedAccountLabels: dedupedSlots.map(accountOperatorLabel),
-          availableDedupedAccountLabels: availableDedupedSlots.map(accountOperatorLabel),
-          hasDuplicates: duplicateAccountGroups(visibleSlots).length > 0,
-        };
-      }),
-  );
-  return pools.filter((pool) => (pool.accountCount as number) > 0);
-}
-
-function extractRecentCommands(logTail: string): readonly string[] {
-  const commands: string[] = [];
-  for (const line of logTail.split(/\r?\n/)) {
-    const command = commandFromLogLine(line);
-    if (!command) continue;
-    if (commands.at(-1) !== command) commands.push(command);
-  }
-  return commands.slice(-10);
-}
-
-function commandFromLogLine(line: string): string | null {
-  const trimmed = line.trim();
-  if (!trimmed) return null;
-  const promptMatch = /^(?:[$>]|\+\s)(.+)$/.exec(trimmed);
-  const command = promptMatch?.[1]?.trim() ?? trimmed;
-  if (!/^(?:git|npm|npx|node|pnpm|yarn|bun|uv|python|python3|pytest|ruff|mypy|tsc|vitest|cargo|go|make|cmake|docker|docker-compose|\.venv\/bin\/python|scripts\/)[\s/]/.test(command)) {
-    return null;
-  }
-  return redactCommand(command).slice(0, 500);
-}
-
-function redactCommand(command: string): string {
-  return new DefaultRedactor().redact(command);
-}
-
-function redactLogTail(logTail: string): string {
-  return logTail
-    .split(/\r?\n/)
-    .map((line) => redactCommand(line))
-    .join("\n");
 }
 
 function registerCodexGoalPrompts(server: McpServer): void {

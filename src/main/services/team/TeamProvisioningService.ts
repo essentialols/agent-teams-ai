@@ -233,10 +233,6 @@ import {
 } from './provisioning/TeamProvisioningLiveInboxRelayRouting';
 import { createTeamProvisioningLiveLaunchSnapshotBoundary } from './provisioning/TeamProvisioningLiveLaunchSnapshotBoundaryFactory';
 import { createTeamProvisioningLiveLeadMessagePortsBoundary } from './provisioning/TeamProvisioningLiveLeadMessagePortsFactory';
-import {
-  cloneLiveTeamAgentRuntimeMetadata,
-  createTeamProvisioningLiveRuntimeMetadataPorts,
-} from './provisioning/TeamProvisioningLiveRuntimeMetadataPortsFactory';
 import { relayMemberInboxMessagesWithPorts } from './provisioning/TeamProvisioningMemberInboxRelayFlow';
 import {
   type LiveRosterAttachReason,
@@ -443,6 +439,10 @@ import {
 import { mergeRuntimeDiagnostics } from './provisioning/TeamProvisioningRuntimeMetadata';
 import { type LiveTeamAgentRuntimeMetadata } from './provisioning/TeamProvisioningRuntimeMetadataPolicy';
 import {
+  createTeamProvisioningRuntimeProjection,
+  type TeamProvisioningRuntimeProjection,
+} from './provisioning/TeamProvisioningRuntimeProjectionFactory';
+import {
   isOpenCodeRuntimeRecipient as isOpenCodeRuntimeRecipientHelper,
   isOpenCodeRuntimeRecipientFromSources,
   resolveRuntimeRecipientProviderId as resolveRuntimeRecipientProviderIdHelper,
@@ -453,7 +453,6 @@ import {
   type PersistedRuntimeMemberLike,
 } from './provisioning/TeamProvisioningRuntimeSnapshot';
 import { TeamProvisioningRuntimeSnapshotCacheBoundary } from './provisioning/TeamProvisioningRuntimeSnapshotCache';
-import { TeamProvisioningRuntimeSnapshotFacade } from './provisioning/TeamProvisioningRuntimeSnapshotFacade';
 import { createRuntimeToolActivityHandlers } from './provisioning/TeamProvisioningRuntimeToolActivity';
 import {
   buildRuntimeTurnSettledHookSettingsArgs as buildRuntimeTurnSettledHookSettingsArgsHelper,
@@ -1153,7 +1152,7 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
     { logDebug: (message) => logger.debug(message) }
   );
   private readonly persistedTeamConfigCache = new Map<string, PersistedTeamConfigCacheEntry>();
-  private readonly runtimeSnapshotFacade!: TeamProvisioningRuntimeSnapshotFacade;
+  private readonly runtimeSnapshotFacade!: TeamProvisioningRuntimeProjection['runtimeSnapshotFacade'];
   private readonly liveTeamAgentRuntimeMetadataCache = new Map<
     string,
     {
@@ -1194,9 +1193,7 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
   private readonly launchStateStore = new TeamLaunchStateStore();
   private readonly defaultLaunchStateStore = this.launchStateStore;
   private readonly configFacade!: TeamProvisioningConfigFacade;
-  private readonly liveRuntimeMetadataPorts: ReturnType<
-    typeof createTeamProvisioningLiveRuntimeMetadataPorts
-  >;
+  private readonly liveRuntimeMetadataPorts: TeamProvisioningRuntimeProjection['liveRuntimeMetadataPorts'];
   private readonly openCodeSecondaryEvidenceOverlayPorts =
     createTeamProvisioningOpenCodeSecondaryEvidenceOverlayPorts({
       getTeamsBasePath,
@@ -1558,47 +1555,32 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
       readRegularFileUtf8: tryReadRegularFileUtf8,
       logger,
     });
-    this.runtimeSnapshotFacade = new TeamProvisioningRuntimeSnapshotFacade({
+    const runtimeProjection = createTeamProvisioningRuntimeProjection({
       runs: this.runs,
+      provisioningRunByTeam: this.provisioningRunByTeam,
       runtimeAdapterRunByTeam: this.runtimeAdapterRunByTeam,
-      runtimeState: {
-        provisioningRunByTeam: this.provisioningRunByTeam,
-        runs: this.runs,
-        runtimeAdapterRunByTeam: this.runtimeAdapterRunByTeam,
-        runtimeAdapterProgressByRunId: this.runtimeAdapterProgressByRunId,
-        getRetainedProvisioningProgressMap: () =>
-          this.retainedProvisioningProgressState.getRetainedProvisioningProgressMap(),
-      },
-      runtimeStatePorts: {
-        getAliveRunId: (teamName) => this.runTracking.getAliveRunId(teamName),
-        getTrackedRunId: (teamName) => this.runTracking.getTrackedRunId(teamName),
-        getAliveTeamNames: () => this.runTracking.getAliveTeamNames(),
-        hasSecondaryRuntimeRuns: (teamName) => this.hasSecondaryRuntimeRuns(teamName),
-        readBootstrapRuntimeState,
-      },
-      teamMetaStore: {
-        getMeta: (targetTeamName) => this.teamMetaStore.getMeta(targetTeamName),
-      },
-      membersMetaStore: {
-        getMembers: (targetTeamName) => this.membersMetaStore.getMembers(targetTeamName),
-      },
-      launchStateStore: {
-        read: (targetTeamName) => this.launchStateStore.read(targetTeamName),
-      },
+      runtimeAdapterProgressByRunId: this.runtimeAdapterProgressByRunId,
+      getRetainedProvisioningProgressMap: () =>
+        this.retainedProvisioningProgressState.getRetainedProvisioningProgressMap(),
+      runTracking: this.runTracking,
+      hasSecondaryRuntimeRuns: (teamName) => this.hasSecondaryRuntimeRuns(teamName),
+      readBootstrapRuntimeState,
+      teamMetaStore: this.teamMetaStore,
+      membersMetaStore: this.membersMetaStore,
+      launchStateStore: this.launchStateStore,
       readConfigSnapshot: (targetTeamName) => this.readConfigSnapshot(targetTeamName),
       readPersistedRuntimeMembers: (targetTeamName) =>
         this.readPersistedRuntimeMembers(targetTeamName),
       getMemberSpawnStatuses: (targetTeamName) => this.getMemberSpawnStatuses(targetTeamName),
       getLiveTeamAgentRuntimeMetadata: (targetTeamName) =>
         this.getLiveTeamAgentRuntimeMetadata(targetTeamName),
-      createRuntimeSnapshotResourceSamplingPorts: () =>
-        this.runtimeResourceSampling.createRuntimeSnapshotResourceSamplingPorts(),
       runtimeSnapshotCache: this.runtimeSnapshotCacheBoundary,
-      getTrackedRunId: (targetTeamName) => this.getTrackedRunId(targetTeamName),
-      getAgentRuntimeSnapshotCacheTtlMs: (targetTeamName, targetRunId) =>
-        this.getAgentRuntimeSnapshotCacheTtlMs(targetTeamName, targetRunId),
+      liveTeamAgentRuntimeMetadataCache: this.liveTeamAgentRuntimeMetadataCache,
+      runtimeResourceSampling: this.runtimeResourceSampling,
       logDebug: (message) => logger.debug(message),
     });
+    this.liveRuntimeMetadataPorts = runtimeProjection.liveRuntimeMetadataPorts;
+    this.runtimeSnapshotFacade = runtimeProjection.runtimeSnapshotFacade;
     this.openCodeRuntimeLaneRecoveryFacade = new TeamProvisioningOpenCodeRuntimeLaneRecoveryFacade(
       {
         runTracking: this.runTracking,
@@ -1663,36 +1645,6 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
       launchStateStore: this.launchStateStore,
       runtimeAdapterTraceLinesByRunId: this.runtimeAdapterTraceLinesByRunId,
       logger,
-    });
-    this.liveRuntimeMetadataPorts = createTeamProvisioningLiveRuntimeMetadataPorts({
-      runs: this.runs,
-      runtimeAdapterRunByTeam: this.runtimeAdapterRunByTeam,
-      teamMetaStore: {
-        getMeta: (targetTeamName) => this.teamMetaStore.getMeta(targetTeamName),
-      },
-      membersMetaStore: {
-        getMembers: (targetTeamName) => this.membersMetaStore.getMembers(targetTeamName),
-      },
-      launchStateStore: {
-        read: (targetTeamName) => this.launchStateStore.read(targetTeamName),
-      },
-      readConfigSnapshot: (targetTeamName) => this.readConfigSnapshot(targetTeamName),
-      readPersistedRuntimeMembers: (targetTeamName) =>
-        this.readPersistedRuntimeMembers(targetTeamName),
-      liveTeamAgentRuntimeMetadataCache: this.liveTeamAgentRuntimeMetadataCache,
-      cloneLiveTeamAgentRuntimeMetadata,
-      readRuntimeProcessRowsForLiveRuntimeMetadata: (input) =>
-        this.runtimeResourceSampling.readRuntimeProcessRowsForLiveRuntimeMetadata(input),
-      readWindowsHostProcessRowsForLiveRuntimeMetadata: (targetTeamName) =>
-        this.runtimeResourceSampling.readWindowsHostProcessRowsForLiveRuntimeMetadata(
-          targetTeamName
-        ),
-      getRuntimeSnapshotCacheGeneration: (targetTeamName) =>
-        this.getRuntimeSnapshotCacheGeneration(targetTeamName),
-      getTrackedRunId: (targetTeamName) => this.getTrackedRunId(targetTeamName),
-      getAgentRuntimeSnapshotCacheTtlMs: (targetTeamName, targetRunId) =>
-        this.getAgentRuntimeSnapshotCacheTtlMs(targetTeamName, targetRunId),
-      logDebug: (message) => logger.debug(message),
     });
     this.toolApprovalFacade = new TeamProvisioningToolApprovalFacade<ProvisioningRun>({
       logger,

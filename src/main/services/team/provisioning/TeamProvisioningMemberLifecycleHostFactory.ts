@@ -103,13 +103,15 @@ export interface TeamProvisioningMemberLifecycleHostFactoryLaunchStatePorts<
   writeLaunchStateSnapshot: TeamProvisioningMemberLifecycleHost['writeLaunchStateSnapshot'];
 }
 
+export interface TeamProvisioningMemberLifecycleHostFactoryRunTrackingPorts {
+  getAliveRunId: TeamProvisioningMemberLifecycleHost['getAliveRunId'];
+  getTrackedRunId: TeamProvisioningMemberLifecycleHost['getTrackedRunId'];
+  getProvisioningRunId: TeamProvisioningMemberLifecycleHost['getProvisioningRunId'];
+}
+
 export interface TeamProvisioningMemberLifecycleHostFactoryRunStatePorts<
   TRun extends TeamProvisioningMemberLifecycleHostFactoryRun,
 > {
-  runTracking: Pick<
-    TeamProvisioningMemberLifecycleHost,
-    'getAliveRunId' | 'getTrackedRunId' | 'getProvisioningRunId'
-  >;
   getRunTrackedCwd(
     run: TRun | null | undefined
   ): ReturnType<TeamProvisioningMemberLifecycleHost['getRunTrackedCwd']>;
@@ -244,6 +246,7 @@ export interface TeamProvisioningMemberLifecycleHostFactoryService<
     TeamProvisioningMemberLifecycleHostFactoryRuntimeLaunchPorts<TRun>,
     TeamProvisioningMemberLifecycleHostFactoryMemberMcpLaunchConfigPorts<TRun>,
     TeamProvisioningMemberLifecycleHostFactoryLaunchStatePorts<TRun>,
+    TeamProvisioningMemberLifecycleHostFactoryRunTrackingPorts,
     TeamProvisioningMemberLifecycleHostFactoryRunStatePorts<TRun>,
     TeamProvisioningMemberLifecycleHostFactoryMessagingPorts,
     TeamProvisioningMemberLifecycleHostFactoryOpenCodeRuntimePorts,
@@ -260,6 +263,7 @@ export interface TeamProvisioningMemberLifecycleHostFactoryPortGroups<
   runtimeLaunch: TeamProvisioningMemberLifecycleHostFactoryRuntimeLaunchPorts<TRun>;
   memberMcpLaunchConfig: TeamProvisioningMemberLifecycleHostFactoryMemberMcpLaunchConfigPorts<TRun>;
   launchState: TeamProvisioningMemberLifecycleHostFactoryLaunchStatePorts<TRun>;
+  runTracking: TeamProvisioningMemberLifecycleHostFactoryRunTrackingPorts;
   runState: TeamProvisioningMemberLifecycleHostFactoryRunStatePorts<TRun>;
   messaging: TeamProvisioningMemberLifecycleHostFactoryMessagingPorts;
   openCodeRuntime: TeamProvisioningMemberLifecycleHostFactoryOpenCodeRuntimePorts;
@@ -299,6 +303,7 @@ export const TEAM_PROVISIONING_MEMBER_LIFECYCLE_HOST_FACTORY_PORT_KEYS = {
     'removeTrackedMemberMcpLaunchConfig',
   ],
   launchState: ['launchStateStore', 'persistLaunchStateSnapshot', 'writeLaunchStateSnapshot'],
+  runTracking: ['getAliveRunId', 'getTrackedRunId', 'getProvisioningRunId'],
   runState: [
     'getRunTrackedCwd',
     'appendMemberBootstrapDiagnostic',
@@ -308,9 +313,6 @@ export const TEAM_PROVISIONING_MEMBER_LIFECYCLE_HOST_FACTORY_PORT_KEYS = {
     'invalidateRuntimeSnapshotCaches',
     'resetRuntimeToolActivity',
     'clearMemberSpawnToolTracking',
-    'getAliveRunId',
-    'getTrackedRunId',
-    'getProvisioningRunId',
     'isCurrentTrackedRun',
     'getLiveTeamAgentRuntimeMetadata',
   ],
@@ -396,6 +398,7 @@ export function createTeamProvisioningMemberLifecycleHostPortGroups<
     runtimeLaunch: service,
     memberMcpLaunchConfig: service,
     launchState: service,
+    runTracking: service,
     runState: service,
     messaging: service,
     openCodeRuntime: service,
@@ -417,6 +420,7 @@ export function createTeamProvisioningMemberLifecycleHostFromPortGroups<
     runtimeLaunch,
     memberMcpLaunchConfig,
     launchState,
+    runTracking,
     runState,
     messaging,
     openCodeRuntime,
@@ -508,9 +512,9 @@ export function createTeamProvisioningMemberLifecycleHostFromPortGroups<
       runState.resetRuntimeToolActivity(asServiceProvisioningRun<TRun>(run), memberName),
     clearMemberSpawnToolTracking: (run, memberName) =>
       runState.clearMemberSpawnToolTracking(asServiceProvisioningRun<TRun>(run), memberName),
-    getAliveRunId: (teamName) => runState.runTracking.getAliveRunId(teamName),
-    getTrackedRunId: (teamName) => runState.runTracking.getTrackedRunId(teamName),
-    getProvisioningRunId: (teamName) => runState.runTracking.getProvisioningRunId(teamName),
+    getAliveRunId: (teamName) => runTracking.getAliveRunId(teamName),
+    getTrackedRunId: (teamName) => runTracking.getTrackedRunId(teamName),
+    getProvisioningRunId: (teamName) => runTracking.getProvisioningRunId(teamName),
     isCurrentTrackedRun: (run) => runState.isCurrentTrackedRun(asServiceProvisioningRun<TRun>(run)),
     readConfigForStrictDecision: (teamName) => stores.readConfigForStrictDecision(teamName),
     resolveEffectiveConfiguredMember: (configMembers, metaMembers, memberName) =>

@@ -464,6 +464,12 @@ export interface TeamProvisioningMemberLifecycleMemberSpecPorts {
   ): TeamCreateRequest['members'][number];
 }
 
+export interface TeamProvisioningMemberLifecycleRunTrackingPorts {
+  getAliveRunId(teamName: string): string | null;
+  getTrackedRunId(teamName: string): string | null;
+  getProvisioningRunId(teamName: string): string | null;
+}
+
 export interface TeamProvisioningMemberLifecycleRunStatePorts {
   getRunTrackedCwd(run: ProvisioningRun | null | undefined): string | null;
   appendMemberBootstrapDiagnostic(run: ProvisioningRun, memberName: string, text: string): void;
@@ -483,9 +489,6 @@ export interface TeamProvisioningMemberLifecycleRunStatePorts {
   invalidateRuntimeSnapshotCaches(teamName: string): void;
   resetRuntimeToolActivity(run: ProvisioningRun, memberName?: string): void;
   clearMemberSpawnToolTracking(run: ProvisioningRun, memberName: string): void;
-  getAliveRunId(teamName: string): string | null;
-  getTrackedRunId(teamName: string): string | null;
-  getProvisioningRunId(teamName: string): string | null;
   isCurrentTrackedRun(run: ProvisioningRun): boolean;
   getLiveTeamAgentRuntimeMetadata(
     teamName: string
@@ -607,6 +610,7 @@ export interface TeamProvisioningMemberLifecycleHost
     TeamProvisioningMemberLifecycleStorePorts,
     TeamProvisioningMemberLifecycleLaunchStatePorts,
     TeamProvisioningMemberLifecycleMemberSpecPorts,
+    TeamProvisioningMemberLifecycleRunTrackingPorts,
     TeamProvisioningMemberLifecycleRunStatePorts,
     TeamProvisioningMemberLifecycleRuntimeLaunchPorts,
     TeamProvisioningMemberLifecycleMessagingPorts,

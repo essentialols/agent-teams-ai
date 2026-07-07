@@ -104,18 +104,18 @@ function createService(): ReceiverBoundService {
         env: { RECEIVER: this.marker, PROVIDER: providerId },
       } as Awaited<ReturnType<Host['buildProvisioningEnv']>>;
     },
-    runTracking: {
-      getAliveRunId(this: { marker: string }, teamName: string) {
-        return `${this.marker}:${teamName}:alive`;
-      },
-      getTrackedRunId(this: { marker: string }, teamName: string) {
-        return `${this.marker}:${teamName}:tracked`;
-      },
-      getProvisioningRunId(this: { marker: string }, teamName: string) {
-        return `${this.marker}:${teamName}:provisioning`;
-      },
-      marker: 'run-tracking',
-    } as ReceiverBoundService['runTracking'] & { marker: string },
+    getAliveRunId(this: ReceiverBoundService, teamName: string) {
+      this.events.push(`service:run-tracking:alive:${teamName}`);
+      return `service:${teamName}:alive`;
+    },
+    getTrackedRunId(this: ReceiverBoundService, teamName: string) {
+      this.events.push(`service:run-tracking:tracked:${teamName}`);
+      return `service:${teamName}:tracked`;
+    },
+    getProvisioningRunId(this: ReceiverBoundService, teamName: string) {
+      this.events.push(`service:run-tracking:provisioning:${teamName}`);
+      return `service:${teamName}:provisioning`;
+    },
     memberMcpLaunchConfigProvisioner: {
       async buildTrackedMemberMcpLaunchConfig(
         this: { marker: string; events: string[] },
@@ -255,6 +255,40 @@ describe('TeamProvisioningMemberLifecycleHostFactory', () => {
     expect(TEAM_PROVISIONING_MEMBER_LIFECYCLE_HOST_FACTORY_PORT_KEYS_COVER_HOST).toBe(true);
     expect(new Set(groupedKeys).size).toBe(groupedKeys.length);
     expect(Object.keys(host).sort()).toEqual([...groupedKeys].sort());
+  });
+
+  it('routes run tracking through its dedicated port group', () => {
+    const service = createService();
+    const portGroups = createTeamProvisioningMemberLifecycleHostPortGroups(service);
+    const runTrackingEvents: string[] = [];
+    portGroups.runTracking = {
+      getAliveRunId(teamName) {
+        runTrackingEvents.push(`run-tracking:alive:${teamName}`);
+        return `alive:${teamName}`;
+      },
+      getTrackedRunId(teamName) {
+        runTrackingEvents.push(`run-tracking:tracked:${teamName}`);
+        return `tracked:${teamName}`;
+      },
+      getProvisioningRunId(teamName) {
+        runTrackingEvents.push(`run-tracking:provisioning:${teamName}`);
+        return `provisioning:${teamName}`;
+      },
+    };
+    const host = createTeamProvisioningMemberLifecycleHostFromPortGroups(portGroups);
+    const run = { id: 'run-1', cwd: '/project' } as unknown as HostRun;
+
+    expect(host.getAliveRunId('team-a')).toBe('alive:team-a');
+    expect(host.getTrackedRunId('team-a')).toBe('tracked:team-a');
+    expect(host.getProvisioningRunId('team-a')).toBe('provisioning:team-a');
+    expect(host.getRunTrackedCwd(run)).toBe('/project');
+
+    expect(runTrackingEvents).toEqual([
+      'run-tracking:alive:team-a',
+      'run-tracking:tracked:team-a',
+      'run-tracking:provisioning:team-a',
+    ]);
+    expect(service.events).toEqual(['service:get-cwd:run-1']);
   });
 
   it('routes member MCP launch config through its dedicated port group', async () => {
@@ -471,9 +505,9 @@ describe('TeamProvisioningMemberLifecycleHostFactory', () => {
     );
     expect(host.getRunTrackedCwd(run)).toBe('/other');
     expect(host.getRunTrackedCwd(null)).toBeNull();
-    expect(host.getAliveRunId('team-a')).toBe('run-tracking:team-a:alive');
-    expect(host.getTrackedRunId('team-a')).toBe('run-tracking:team-a:tracked');
-    expect(host.getProvisioningRunId('team-a')).toBe('run-tracking:team-a:provisioning');
+    expect(host.getAliveRunId('team-a')).toBe('service:team-a:alive');
+    expect(host.getTrackedRunId('team-a')).toBe('service:team-a:tracked');
+    expect(host.getProvisioningRunId('team-a')).toBe('service:team-a:provisioning');
     await expect(
       host.buildProvisioningEnv('anthropic', undefined, {
         teamRuntimeAuth: {
@@ -566,6 +600,9 @@ describe('TeamProvisioningMemberLifecycleHostFactory', () => {
     expect(service.events).toEqual([
       'service:get-cwd:run-2',
       'service:get-cwd:none',
+      'service:run-tracking:alive:team-a',
+      'service:run-tracking:tracked:team-a',
+      'service:run-tracking:provisioning:team-a',
       'service:materialize:/project',
       'service:resolve-identity:run-2',
       'service:args-plan',

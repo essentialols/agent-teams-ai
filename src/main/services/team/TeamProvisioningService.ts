@@ -1680,12 +1680,12 @@ export class TeamProvisioningService {
         writeLaunchStateSnapshot: (teamName, snapshot) =>
           this.writeLaunchStateSnapshot(teamName, snapshot),
       },
+      runTracking: {
+        getAliveRunId: (teamName) => this.runTracking.getAliveRunId(teamName),
+        getTrackedRunId: (teamName) => this.runTracking.getTrackedRunId(teamName),
+        getProvisioningRunId: (teamName) => this.runTracking.getProvisioningRunId(teamName),
+      },
       runState: {
-        runTracking: {
-          getAliveRunId: (teamName) => this.runTracking.getAliveRunId(teamName),
-          getTrackedRunId: (teamName) => this.runTracking.getTrackedRunId(teamName),
-          getProvisioningRunId: (teamName) => this.runTracking.getProvisioningRunId(teamName),
-        },
         getRunTrackedCwd: (run) => this.getRunTrackedCwd(run),
         appendMemberBootstrapDiagnostic: (run, memberName, text) =>
           this.appendMemberBootstrapDiagnostic(run, memberName, text),

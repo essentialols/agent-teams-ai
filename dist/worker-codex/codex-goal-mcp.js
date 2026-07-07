@@ -37,6 +37,7 @@ import { buildCodexProjectAdmissionSnapshot, codexProjectAdmissionGate, projectA
 import { jobIdsFromValue, parseIsoDate, signalIdList, workerControlCallerArgs, workerControlDecisionJson, workerControlReceiptJson, workerControlSignalJson, workerControlSignalViewJson, } from "./codex-goal-mcp-worker-control-view.js";
 import { codexGoalAccountStatusPayload, codexGoalStateRootDir, codexGoalWorkerControlService, codexGoalWorkerControlTarget, } from "./codex-goal-mcp-worker-control.js";
 import { codexGoalAccountCapacityFacts } from "./codex-goal-mcp-account-capacity-facts.js";
+import { applyWorkspaceConflictToOverviewJob, buildCodexGoalWorkspaceConflicts, workspaceConflictJobIds, workspaceConflictKey, } from "./codex-goal-mcp-workspace-conflicts.js";
 import { CODEX_GOAL_CONTROL_SURFACE_SCHEMA, CODEX_GOAL_EXECUTION_ENGINE_SCHEMA, buildCodexGoalDecision, buildCodexGoalHandoff, codexGoalBriefHealthStatus, isHeartbeatOnlyNoOutputBrief, isSafeStartAction, latestIsoDate, nextActionForStatus, nextBestCommand, redactText, truncateText, } from "./codex-goal-mcp-decision.js";
 import { extractRecentCommands, redactLogTail, } from "./codex-goal-mcp-log-view.js";
 import { assertGitCurrentBranch, assertSafeGitCommitSha, assertSafeGitRefName, assertSafeGitRemoteName, execGit, execGitStdout, } from "./codex-goal-mcp-project-git.js";
@@ -4748,79 +4749,6 @@ function continueAfterFromOverviewItem(item) {
         .map((account) => isRecord(account) ? dateValue(account.cooldownUntil) : undefined)
         .filter((value) => value !== undefined)
         .sort((left, right) => left.getTime() - right.getTime())[0];
-}
-async function buildCodexGoalWorkspaceConflicts(jobs) {
-    const candidates = jobs.filter((job) => job.ok === true &&
-        typeof job.jobId === "string" &&
-        typeof job.workspacePath === "string" &&
-        (job.workerAlive === true || job.safeToContinue === true));
-    const keyed = await Promise.all(candidates.map(async (job) => ({
-        job,
-        workspaceKey: await workspaceConflictKey(String(job.workspacePath)),
-    })));
-    const groups = new Map();
-    for (const item of keyed) {
-        groups.set(item.workspaceKey, [...(groups.get(item.workspaceKey) ?? []), item]);
-    }
-    return [...groups.values()]
-        .filter((group) => group.length > 1)
-        .map((group) => ({
-        workspacePath: group[0]?.job.workspacePath,
-        workspaceKey: group[0]?.workspaceKey,
-        jobIds: group.map((item) => item.job.jobId).filter((jobId) => typeof jobId === "string"),
-        runningJobIds: group
-            .filter((item) => item.job.workerAlive === true)
-            .map((item) => item.job.jobId)
-            .filter((jobId) => typeof jobId === "string"),
-        safeToContinueJobIds: group
-            .filter((item) => item.job.safeToContinue === true)
-            .map((item) => item.job.jobId)
-            .filter((jobId) => typeof jobId === "string"),
-        reason: "multiple_potential_writers_share_workspace",
-        safeMessage: "Multiple stored jobs can write to the same workspace. Continue only one writer after manual review.",
-    }));
-}
-async function workspaceConflictKey(workspacePath) {
-    try {
-        return await realpath(workspacePath);
-    }
-    catch {
-        return resolve(process.cwd(), workspacePath);
-    }
-}
-function workspaceConflictJobIds(conflicts) {
-    const ids = new Set();
-    for (const conflict of conflicts) {
-        const jobIds = Array.isArray(conflict.jobIds) ? conflict.jobIds : [];
-        for (const jobId of jobIds) {
-            if (typeof jobId === "string")
-                ids.add(jobId);
-        }
-    }
-    return ids;
-}
-function applyWorkspaceConflictToOverviewJob(input) {
-    const jobId = typeof input.job.jobId === "string" ? input.job.jobId : undefined;
-    if (!jobId || !input.conflictJobIds.has(jobId))
-        return input.job;
-    const commands = isRecord(input.job.commands)
-        ? omitJsonKey(input.job.commands, "continue")
-        : input.job.commands;
-    return {
-        ...input.job,
-        safeToContinue: false,
-        blockedBySingleWriter: true,
-        workspaceConflict: true,
-        nextBestTool: "manual_review",
-        nextBestReason: "single_writer_workspace_conflict",
-        nextBestCommand: "manual_review_single_writer_workspace_conflict",
-        ...(commands ? { commands } : {}),
-    };
-}
-function omitJsonKey(value, key) {
-    const copy = { ...value };
-    delete copy[key];
-    return copy;
 }
 async function buildCodexGoalOverviewItem(input) {
     try {

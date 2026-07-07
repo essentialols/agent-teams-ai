@@ -2,7 +2,6 @@
 import { appendFile, mkdir, readdir, readFile, realpath, rename, rm, rmdir, stat, writeFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { execPath } from "node:process";
 import { fileURLToPath } from "node:url";
 import {
   McpServer,
@@ -85,15 +84,11 @@ import {
   type DependencyPreflightResult,
 } from "./dependency-bootstrap";
 import {
-  codexGoalAccountSlots,
   codexGoalProgressPath,
-  type CodexGoalRunConfig,
 } from "./codex-goal-runner";
 import {
-  assertCodexGoalProviderSandboxModeAllowed,
   optionalCodexGoalEditMode,
   optionalCodexGoalProviderSandboxMode,
-  parseCodexGoalEditMode,
 } from "./codex-goal-control-modes";
 import {
   buildCodexGoalNoTmuxCommand,
@@ -110,7 +105,6 @@ import {
   stopCodexGoalTmux,
   tailCodexGoalLog,
   type CodexGoalLaunchInput,
-  type CodexGoalOutputFormat,
 } from "./codex-goal-ops";
 import { CodexRunObservationAdapter } from "./codex-run-observation";
 import {
@@ -261,6 +255,11 @@ import {
 import { buildCodexGoalBrief } from "./codex-goal-mcp-brief";
 export { buildCodexGoalBrief } from "./codex-goal-mcp-brief";
 import {
+  CODEX_GOAL_MCP_DEFAULT_TIMEOUT_MS,
+  goalControlModesFromRecord,
+  goalLaunchInput,
+} from "./codex-goal-mcp-launch-input";
+import {
   CODEX_GOAL_CONTROL_SURFACE_SCHEMA,
   CODEX_GOAL_EXECUTION_ENGINE_SCHEMA,
   buildCodexGoalDecision,
@@ -300,7 +299,7 @@ export {
 
 const serverVersion = "0.1.0-main.2";
 const defaultAuthRoot = defaultCodexGoalAuthRoot;
-const defaultTimeoutMs = 72 * 60 * 60 * 1000;
+const defaultTimeoutMs = CODEX_GOAL_MCP_DEFAULT_TIMEOUT_MS;
 const controlledAgentProcessOwner = buildControlledAgentProcessOwner({
   runtimeVersion: serverVersion,
   ...(process.env.SUBSCRIPTION_RUNTIME_RELEASE_SHA === undefined
@@ -2302,138 +2301,6 @@ export function createCodexGoalMcpServer(
   );
 
   return server;
-}
-
-async function goalLaunchInput(args: GoalMcpArgs): Promise<CodexGoalLaunchInput> {
-  const cwd = resolvePath(process.cwd(), args.cwd ?? process.cwd());
-  const fileConfig = args.configPath
-    ? await readGoalConfigFile(resolvePath(cwd, args.configPath))
-    : {};
-  const merged = mergeDefined(fileConfig, args);
-  const jobRootDir = requiredString(merged.jobRootDir, "jobRootDir", cwd);
-  const taskId = requiredRawString(merged.taskId, "taskId");
-  const jobId = stringValue(merged.jobId);
-  const authRootDir = resolvePath(
-    cwd,
-    stringValue(merged.authRootDir) ?? defaultAuthRoot,
-  );
-  const workspacePath = requiredString(merged.workspacePath, "workspacePath", cwd);
-  const promptPath = requiredString(merged.promptPath, "promptPath", cwd);
-  const accounts = codexGoalAccountSlots(accountNames(merged.accounts));
-  if (!accounts.length) throw new Error("accounts are required");
-  const controlModes = goalControlModesFromRecord(merged);
-  const accessBoundary = optionalCodexGoalAccessBoundary(merged.accessBoundary);
-  const projectAccessScope = parseCodexGoalProjectAccessScope(
-    merged.projectAccessScope,
-  );
-  const networkAccess = optionalCodexGoalNetworkAccess(merged.networkAccess);
-  const taskTimeoutMs = positiveIntegerValue(merged.taskTimeoutMs, "taskTimeoutMs") ??
-    defaultTimeoutMs;
-  const appServerStartupTimeoutMs = positiveIntegerValue(
-    merged.appServerStartupTimeoutMs,
-    "appServerStartupTimeoutMs",
-  );
-  const progressHeartbeatMs = positiveIntegerValue(
-    merged.progressHeartbeatMs,
-    "progressHeartbeatMs",
-  ) ?? 60_000;
-  const staleLockMs = positiveIntegerValue(merged.staleLockMs, "staleLockMs");
-  const maxAccountCycles = positiveIntegerValue(
-    merged.maxAccountCycles,
-    "maxAccountCycles",
-  ) ?? 5;
-  const config: CodexGoalRunConfig = {
-    ...(jobId === undefined ? {} : { jobId }),
-    jobRootDir,
-    authRootDir,
-    workspacePath,
-    promptPath,
-    ...(stringValue(merged.codexGoalObjective)
-      ? { codexGoalObjective: stringValue(merged.codexGoalObjective) as string }
-      : {}),
-    taskId,
-    accounts,
-    outputPath: resolvePath(
-      cwd,
-      stringValue(merged.outputPath) ??
-        join(jobRootDir, `${taskId}.latest-result.json`),
-    ),
-    progressPath: resolvePath(
-      cwd,
-      stringValue(merged.progressPath) ??
-        codexGoalProgressPath({ jobRootDir, taskId }),
-    ),
-    model: stringValue(merged.model) ?? "gpt-5.5",
-    reasoningEffort:
-      (stringValue(merged.reasoningEffort) ?? "high") as NonNullable<CodexGoalRunConfig["reasoningEffort"]>,
-    serviceTier:
-      (stringValue(merged.serviceTier) ?? "default") as NonNullable<CodexGoalRunConfig["serviceTier"]>,
-    executionEngine:
-      (stringValue(merged.executionEngine) ?? "app-server-goal") as NonNullable<CodexGoalRunConfig["executionEngine"]>,
-    codexBinaryPath: stringValue(merged.codexBinaryPath) ?? "codex",
-    ...controlModes,
-    ...(accessBoundary === undefined ? {} : { accessBoundary }),
-    ...(projectAccessScope === undefined ? {} : { projectAccessScope }),
-    allowDangerFullAccess: booleanValue(merged.allowDangerFullAccess) ?? false,
-    ...(networkAccess === undefined ? {} : { networkAccess }),
-    taskTimeoutMs,
-    ...(appServerStartupTimeoutMs === undefined
-      ? {}
-      : { appServerStartupTimeoutMs }),
-    progressHeartbeatMs,
-    ...(staleLockMs === undefined ? {} : { staleLockMs }),
-    maxAccountCycles,
-    allowDuplicateAccountIdentities:
-      booleanValue(merged.allowDuplicateAccountIdentities) ?? false,
-    requireGitWorkspace: booleanValue(merged.requireGitWorkspace) ?? true,
-    prewarmOnStart: booleanValue(merged.prewarmOnStart) ?? false,
-    ...(workerReportModeValue(merged.workerReportMode) === undefined
-      ? {}
-      : { workerReportMode: workerReportModeValue(merged.workerReportMode) }),
-  };
-  const stateRootDir = stringValue(merged.stateRootDir);
-  const finalConfig = stateRootDir
-    ? { ...config, stateRootDir: resolvePath(cwd, stateRootDir) }
-    : config;
-  return {
-    config: finalConfig,
-    ...(stringValue(merged.tmuxSession)
-      ? { tmuxSession: stringValue(merged.tmuxSession) as string }
-      : {}),
-    cwd,
-    logPath: resolvePath(
-      cwd,
-      stringValue(merged.logPath) ?? join(jobRootDir, `${taskId}.log`),
-    ),
-    format: (stringValue(merged.outputFormat) ?? "json") as CodexGoalOutputFormat,
-    cliCommand: defaultCliCommand(import.meta.url),
-  };
-}
-
-function goalControlModesFromRecord(
-  value: JsonObject,
-): Pick<CodexGoalRunConfig, "editMode" | "providerSandboxMode"> {
-  const editModeValue = stringValue(value.editMode);
-  const legacyPermissionModeValue = stringValue(value.permissionMode);
-  const editMode = parseCodexGoalEditMode(
-    editModeValue ?? legacyPermissionModeValue ?? "allow-edits",
-    editModeValue === undefined && legacyPermissionModeValue !== undefined
-      ? "permissionMode"
-      : "editMode",
-  );
-  const providerSandboxMode = optionalCodexGoalProviderSandboxMode(
-    stringValue(value.providerSandboxMode),
-    "providerSandboxMode",
-  );
-  assertCodexGoalProviderSandboxModeAllowed({
-    editMode,
-    providerSandboxMode,
-    fieldName: "providerSandboxMode",
-  });
-  return {
-    editMode,
-    ...(providerSandboxMode === undefined ? {} : { providerSandboxMode }),
-  };
 }
 
 async function loadJobLaunch(args: JobIdMcpArgs): Promise<{
@@ -6166,29 +6033,6 @@ function launchSummary(launch: CodexGoalLaunchInput): JsonObject {
     tmuxSession: launch.tmuxSession,
     logPath: launch.logPath,
   };
-}
-
-async function readGoalConfigFile(path: string): Promise<JsonObject> {
-  const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
-  if (!isRecord(parsed)) throw new Error("configPath must contain a JSON object");
-  return parsed;
-}
-
-function defaultCliCommand(importMetaUrl: string): readonly string[] {
-  return [
-    execPath,
-    join(dirname(fileURLToPath(importMetaUrl)), "codex-goal-cli.js"),
-  ];
-}
-
-function mergeDefined(...items: readonly JsonObject[]): JsonObject {
-  const merged: Record<string, unknown> = {};
-  for (const item of items) {
-    for (const [key, value] of Object.entries(item)) {
-      if (value !== undefined) merged[key] = value;
-    }
-  }
-  return merged;
 }
 
 async function projectControlDefaultAccountNames(input: {

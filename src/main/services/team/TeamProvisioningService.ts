@@ -238,7 +238,11 @@ import {
   relayInboxFileToLiveRecipientWithPorts,
 } from './provisioning/TeamProvisioningLiveInboxRelayRouting';
 import { createTeamProvisioningLiveLaunchSnapshotBoundary } from './provisioning/TeamProvisioningLiveLaunchSnapshotBoundaryFactory';
-import { createTeamProvisioningLiveLeadMessagePortsBoundary } from './provisioning/TeamProvisioningLiveLeadMessagePortsFactory';
+import {
+  createTeamProvisioningLiveLeadMessagePortsBoundary,
+  createTeamProvisioningLiveLeadMessagePortsDepsFromService,
+  type TeamProvisioningLiveLeadMessageServiceHost,
+} from './provisioning/TeamProvisioningLiveLeadMessagePortsFactory';
 import { relayMemberInboxMessagesWithPorts } from './provisioning/TeamProvisioningMemberInboxRelayFlow';
 import {
   type LiveRosterAttachReason,
@@ -1132,23 +1136,18 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
     NativeSameTeamFingerprint[]
   >();
   private readonly liveLeadMessagePortsBoundary =
-    createTeamProvisioningLiveLeadMessagePortsBoundary<ProvisioningRun>({
-      liveLeadProcessMessages: this.liveLeadProcessMessages,
-      getTrackedRunId: (teamName) => this.runTracking.getTrackedRunId(teamName),
-      getAliveRunId: (teamName) => this.runTracking.getAliveRunId(teamName),
-      getRun: (runId) => this.runs.get(runId),
-      getRunLeadName: (run) => this.getRunLeadName(run),
-      getCrossTeamSender: () => this.appShellBoundary.getCrossTeamSender(),
-      persistSentMessage: (teamName, message) => this.persistSentMessage(teamName, message),
-      persistInboxMessage: (teamName, recipient, message) =>
-        this.persistInboxMessage(teamName, recipient, message),
-      emitTeamChange: (event) => this.teamChangeEmitter?.(event),
-      logger,
-      nowIso,
-      nowMs: () => Date.now(),
-      cacheLimit: LIVE_LEAD_PROCESS_MESSAGE_CACHE_LIMIT,
-      leadTextEmitThrottleMs: LEAD_TEXT_EMIT_THROTTLE_MS,
-    });
+    createTeamProvisioningLiveLeadMessagePortsBoundary<ProvisioningRun>(
+      createTeamProvisioningLiveLeadMessagePortsDepsFromService(
+        this as unknown as TeamProvisioningLiveLeadMessageServiceHost<ProvisioningRun>,
+        {
+          logger,
+          nowIso,
+          nowMs: () => Date.now(),
+          cacheLimit: LIVE_LEAD_PROCESS_MESSAGE_CACHE_LIMIT,
+          leadTextEmitThrottleMs: LEAD_TEXT_EMIT_THROTTLE_MS,
+        }
+      )
+    );
   private readonly sameTeamNativeDelivery: TeamProvisioningSameTeamNativeDelivery;
   private readonly agentRuntimeSnapshotCache = new Map<
     string,

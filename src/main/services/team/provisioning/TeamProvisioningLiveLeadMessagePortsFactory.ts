@@ -70,6 +70,61 @@ export interface TeamProvisioningLiveLeadMessagePortsBoundary<
   ): void;
 }
 
+export interface TeamProvisioningLiveLeadMessageServiceHost<
+  TRun extends TeamProvisioningLiveLeadMessagePortsFactoryRun,
+> {
+  liveLeadProcessMessages: TeamProvisioningLiveLeadMessagePortsFactoryDeps<TRun>['liveLeadProcessMessages'];
+  runTracking: Pick<
+    TeamProvisioningLiveLeadMessagePortsFactoryDeps<TRun>,
+    'getTrackedRunId' | 'getAliveRunId'
+  >;
+  runs: {
+    get(runId: string): TRun | undefined;
+  };
+  getRunLeadName: TeamProvisioningLiveLeadMessagePortsFactoryDeps<TRun>['getRunLeadName'];
+  appShellBoundary: {
+    getCrossTeamSender: TeamProvisioningLiveLeadMessagePortsFactoryDeps<TRun>['getCrossTeamSender'];
+  };
+  persistSentMessage: TeamProvisioningLiveLeadMessagePortsFactoryDeps<TRun>['persistSentMessage'];
+  persistInboxMessage: TeamProvisioningLiveLeadMessagePortsFactoryDeps<TRun>['persistInboxMessage'];
+  teamChangeEmitter?: TeamProvisioningLiveLeadMessagePortsFactoryDeps<TRun>['emitTeamChange'];
+}
+
+export interface TeamProvisioningLiveLeadMessageServiceHostOptions<
+  TRun extends TeamProvisioningLiveLeadMessagePortsFactoryRun,
+> {
+  logger: TeamProvisioningLiveLeadMessagePortsFactoryDeps<TRun>['logger'];
+  nowIso: TeamProvisioningLiveLeadMessagePortsFactoryDeps<TRun>['nowIso'];
+  nowMs: TeamProvisioningLiveLeadMessagePortsFactoryDeps<TRun>['nowMs'];
+  cacheLimit: TeamProvisioningLiveLeadMessagePortsFactoryDeps<TRun>['cacheLimit'];
+  leadTextEmitThrottleMs: TeamProvisioningLiveLeadMessagePortsFactoryDeps<TRun>['leadTextEmitThrottleMs'];
+}
+
+export function createTeamProvisioningLiveLeadMessagePortsDepsFromService<
+  TRun extends TeamProvisioningLiveLeadMessagePortsFactoryRun,
+>(
+  service: TeamProvisioningLiveLeadMessageServiceHost<TRun>,
+  options: TeamProvisioningLiveLeadMessageServiceHostOptions<TRun>
+): TeamProvisioningLiveLeadMessagePortsFactoryDeps<TRun> {
+  return {
+    liveLeadProcessMessages: service.liveLeadProcessMessages,
+    getTrackedRunId: (teamName) => service.runTracking.getTrackedRunId(teamName),
+    getAliveRunId: (teamName) => service.runTracking.getAliveRunId(teamName),
+    getRun: (runId) => service.runs.get(runId),
+    getRunLeadName: (run) => service.getRunLeadName(run),
+    getCrossTeamSender: () => service.appShellBoundary.getCrossTeamSender(),
+    persistSentMessage: (teamName, message) => service.persistSentMessage(teamName, message),
+    persistInboxMessage: (teamName, recipient, message) =>
+      service.persistInboxMessage(teamName, recipient, message),
+    emitTeamChange: (event) => service.teamChangeEmitter?.(event),
+    logger: options.logger,
+    nowIso: options.nowIso,
+    nowMs: options.nowMs,
+    cacheLimit: options.cacheLimit,
+    leadTextEmitThrottleMs: options.leadTextEmitThrottleMs,
+  };
+}
+
 export function createTeamProvisioningLiveLeadMessagePortsBoundary<
   TRun extends TeamProvisioningLiveLeadMessagePortsFactoryRun,
 >(

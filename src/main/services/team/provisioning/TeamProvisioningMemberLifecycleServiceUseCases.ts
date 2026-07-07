@@ -4,10 +4,12 @@ import {
 } from './TeamProvisioningOpenCodeMemberRestartSystemMessageUseCase';
 
 import type { AppendDirectProcessRuntimeEventUseCase } from './TeamProvisioningAppendDirectProcessRuntimeEventUseCase';
+import type { StopPrimaryOwnedRosterRuntimeUseCase } from './TeamProvisioningStopPrimaryOwnedRosterRuntimeUseCase';
 
 export interface TeamProvisioningMemberLifecycleServiceUseCasePorts {
   persistSentMessage(teamName: string, message: Record<string, unknown>): void;
   appendDirectProcessRuntimeEvent: AppendDirectProcessRuntimeEventUseCase;
+  stopPrimaryOwnedRosterRuntime: StopPrimaryOwnedRosterRuntimeUseCase;
   nowIso(): string;
   randomUUID(): string;
 }
@@ -15,6 +17,7 @@ export interface TeamProvisioningMemberLifecycleServiceUseCasePorts {
 export interface TeamProvisioningMemberLifecycleServiceUseCases {
   persistOpenCodeMemberRestartSystemMessage: PersistOpenCodeMemberRestartSystemMessageUseCase;
   appendDirectProcessRuntimeEvent: AppendDirectProcessRuntimeEventUseCase;
+  stopPrimaryOwnedRosterRuntime: StopPrimaryOwnedRosterRuntimeUseCase;
 }
 
 export function createTeamProvisioningMemberLifecycleServiceUseCases(
@@ -28,5 +31,6 @@ export function createTeamProvisioningMemberLifecycleServiceUseCases(
         randomUUID: ports.randomUUID,
       }),
     appendDirectProcessRuntimeEvent: ports.appendDirectProcessRuntimeEvent,
+    stopPrimaryOwnedRosterRuntime: ports.stopPrimaryOwnedRosterRuntime,
   };
 }

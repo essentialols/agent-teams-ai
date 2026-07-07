@@ -499,6 +499,7 @@ import {
   stopPersistentTeamMembersFlow,
 } from './provisioning/TeamProvisioningStopFlow';
 import { createTeamProvisioningStopFlowBoundary } from './provisioning/TeamProvisioningStopFlowPortsFactory';
+import { createNodeStopPrimaryOwnedRosterRuntimeUseCase } from './provisioning/TeamProvisioningStopPrimaryOwnedRosterRuntimeUseCase';
 import {
   killOrphanedTeamAgentProcesses as killOrphanedTeamAgentProcessesHelper,
   killPersistedPaneMembers as killPersistedPaneMembersHelper,
@@ -1277,6 +1278,7 @@ export class TeamProvisioningService {
     appendDirectProcessRuntimeEvent: createAppendDirectProcessRuntimeEventUseCase(
       createNodeAppendDirectProcessRuntimeEventUseCasePorts({ nowIso })
     ),
+    stopPrimaryOwnedRosterRuntime: createNodeStopPrimaryOwnedRosterRuntimeUseCase(),
     nowIso,
     randomUUID,
   });

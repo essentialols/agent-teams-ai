@@ -68,6 +68,10 @@ import {
   buildMemberSpawnPrompt,
   buildRestartMemberSpawnMessage,
 } from './TeamProvisioningPromptBuilders';
+import {
+  createNodeStopPrimaryOwnedRosterRuntimeUseCase,
+  type StopPrimaryOwnedRosterRuntimeInput,
+} from './TeamProvisioningStopPrimaryOwnedRosterRuntimeUseCase';
 
 import type { NativeAppManagedBootstrapSpec } from '../bootstrap/NativeAppManagedBootstrapContextBuilder';
 import type { TeamRuntimeLaunchResult, TeamRuntimeMemberLaunchEvidence } from '../runtime';
@@ -275,14 +279,6 @@ interface DirectProcessMemberRestartInput {
   configuredMember: NonNullable<EffectiveConfiguredMember | null>;
   persistedRuntimeMembers: readonly PersistedRuntimeMemberLike[];
   operation?: DirectProcessMemberLaunchReason;
-}
-
-interface StopPrimaryOwnedRosterRuntimeInput {
-  teamName: string;
-  memberName: string;
-  persistedRuntimeMembers: readonly PersistedRuntimeMemberLike[];
-  liveRuntimeByMember: Map<string, LiveTeamAgentRuntimeMetadata>;
-  actionLabel: string;
 }
 
 interface ReattachOpenCodeOwnedMemberLaneOptions {
@@ -627,6 +623,8 @@ export class TeamProvisioningMemberLifecycleController {
     });
   private readonly appendDirectProcessRuntimeEventFallback =
     createAppendDirectProcessRuntimeEventUseCase();
+  private readonly stopPrimaryOwnedRosterRuntimeFallback =
+    createNodeStopPrimaryOwnedRosterRuntimeUseCase();
 
   constructor(
     private readonly host: TeamProvisioningMemberLifecycleHost,
@@ -1720,118 +1718,7 @@ export class TeamProvisioningMemberLifecycleController {
   async stopPrimaryOwnedRosterRuntimeInternal(
     input: StopPrimaryOwnedRosterRuntimeInput
   ): Promise<void> {
-    const pidsToStop = new Set<number>();
-    const tmuxPaneIdsToStop = new Set<string>();
-    let hasAliveRuntimeWithoutStopHandle = false;
-
-    for (const runtimeMember of input.persistedRuntimeMembers) {
-      const backendType = runtimeMember.backendType?.trim().toLowerCase();
-      if (backendType === 'in-process') {
-        throw new Error(
-          `Member "${input.memberName}" uses an in-process runtime and cannot be detached here`
-        );
-      }
-      if (
-        backendType === 'process' &&
-        typeof runtimeMember.runtimePid === 'number' &&
-        Number.isFinite(runtimeMember.runtimePid) &&
-        runtimeMember.runtimePid > 0
-      ) {
-        pidsToStop.add(runtimeMember.runtimePid);
-      }
-      const paneId =
-        typeof runtimeMember.tmuxPaneId === 'string' ? runtimeMember.tmuxPaneId.trim() : '';
-      if (backendType === 'tmux' && paneId) {
-        tmuxPaneIdsToStop.add(paneId);
-      }
-    }
-
-    for (const [candidateName, metadata] of input.liveRuntimeByMember.entries()) {
-      if (!matchesObservedMemberNameForExpected(candidateName, input.memberName)) {
-        continue;
-      }
-      if (metadata.backendType === 'in-process') {
-        throw new Error(
-          `Member "${input.memberName}" uses an in-process runtime and cannot be detached here`
-        );
-      }
-
-      let hasStopHandle = false;
-      if (metadata.backendType === 'tmux') {
-        const paneId = metadata.tmuxPaneId?.trim();
-        if (paneId) {
-          tmuxPaneIdsToStop.add(paneId);
-          hasStopHandle = true;
-        }
-      }
-      if (typeof metadata.pid === 'number' && Number.isFinite(metadata.pid) && metadata.pid > 0) {
-        pidsToStop.add(metadata.pid);
-        hasStopHandle = true;
-      }
-      if (
-        typeof metadata.metricsPid === 'number' &&
-        Number.isFinite(metadata.metricsPid) &&
-        metadata.metricsPid > 0
-      ) {
-        pidsToStop.add(metadata.metricsPid);
-        hasStopHandle = true;
-      }
-      if (metadata.alive && !hasStopHandle) {
-        hasAliveRuntimeWithoutStopHandle = true;
-      }
-    }
-
-    if (hasAliveRuntimeWithoutStopHandle) {
-      throw new Error(
-        `${input.actionLabel} cannot stop the existing runtime because it does not expose a pid or tmux pane.`
-      );
-    }
-
-    for (const paneId of tmuxPaneIdsToStop) {
-      try {
-        killTmuxPaneForCurrentPlatformSync(paneId);
-      } catch (error) {
-        logger.debug(
-          `[${input.teamName}] Failed to stop teammate pane ${input.memberName} ${paneId} for live roster lifecycle: ${
-            error instanceof Error ? error.message : String(error)
-          }`
-        );
-      }
-    }
-    for (const pid of pidsToStop) {
-      try {
-        killProcessByPid(pid);
-      } catch (error) {
-        logger.debug(
-          `[${input.teamName}] Failed to stop teammate process ${input.memberName} pid=${pid} for live roster lifecycle: ${
-            error instanceof Error ? error.message : String(error)
-          }`
-        );
-      }
-    }
-
-    if (pidsToStop.size > 0) {
-      const lingeringPids = await waitForPidsToExit([...pidsToStop], {
-        timeoutMs: 1_500,
-        pollMs: 100,
-      });
-      if (lingeringPids.length > 0) {
-        throw new Error(
-          `${input.actionLabel} is still waiting for process exit (${lingeringPids.join(', ')}).`
-        );
-      }
-    }
-    if (tmuxPaneIdsToStop.size > 0) {
-      const lingeringPaneIds = await waitForTmuxPanesToExit([...tmuxPaneIdsToStop], {
-        timeoutMs: 1_500,
-        pollMs: 100,
-      });
-      if (lingeringPaneIds.length > 0) {
-        throw new Error(
-          `${input.actionLabel} is still waiting for tmux pane exit (${lingeringPaneIds.join(', ')}).`
-        );
-      }
-    }
+    await this.stopPrimaryOwnedRosterRuntimeFallback(input);
   }
 
   private async attachLiveRosterMemberUnlocked(

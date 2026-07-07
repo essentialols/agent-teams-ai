@@ -8,6 +8,7 @@ describe('TeamProvisioningMemberLifecycleServiceUseCases', () => {
   it('creates only the service-owned lifecycle use case ports', async () => {
     const sentMessages: Array<{ teamName: string; message: Record<string, unknown> }> = [];
     const runtimeEvents: DirectProcessRuntimeEventInput[] = [];
+    const stoppedMembers: string[] = [];
 
     const useCases = createTeamProvisioningMemberLifecycleServiceUseCases({
       persistSentMessage: (teamName, message) => {
@@ -16,6 +17,9 @@ describe('TeamProvisioningMemberLifecycleServiceUseCases', () => {
       appendDirectProcessRuntimeEvent: async (input) => {
         runtimeEvents.push(input);
       },
+      stopPrimaryOwnedRosterRuntime: async (input) => {
+        stoppedMembers.push(`${input.teamName}:${input.memberName}`);
+      },
       nowIso: () => '2026-07-06T17:00:00.000Z',
       randomUUID: () => 'uuid-1',
     });
@@ -23,6 +27,7 @@ describe('TeamProvisioningMemberLifecycleServiceUseCases', () => {
     expect(Object.keys(useCases).sort()).toEqual([
       'appendDirectProcessRuntimeEvent',
       'persistOpenCodeMemberRestartSystemMessage',
+      'stopPrimaryOwnedRosterRuntime',
     ]);
 
     useCases.persistOpenCodeMemberRestartSystemMessage({
@@ -44,6 +49,13 @@ describe('TeamProvisioningMemberLifecycleServiceUseCases', () => {
       bootstrapRunId: 'bootstrap-1',
       source: 'test',
     });
+    await useCases.stopPrimaryOwnedRosterRuntime({
+      teamName: 'team-a',
+      memberName: 'Worker',
+      actionLabel: 'Detach for teammate "Worker"',
+      persistedRuntimeMembers: [],
+      liveRuntimeByMember: new Map(),
+    });
     expect(sentMessages).toHaveLength(1);
     expect(sentMessages[0]?.message).toMatchObject({
       from: 'Lead',
@@ -60,5 +72,6 @@ describe('TeamProvisioningMemberLifecycleServiceUseCases', () => {
         pid: 123,
       }),
     ]);
+    expect(stoppedMembers).toEqual(['team-a:Worker']);
   });
 });

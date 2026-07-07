@@ -34,6 +34,26 @@ type SqliteDatabase = InstanceType<typeof DatabaseConstructor>;
 // Keep row-count * column-count safely below SQLite's bound-variable limit.
 const INSERT_CHUNK_SIZE = 400;
 
+const INTEGRITY_CHECK_ERROR_PREFIX = 'integrity_check failed';
+
+/**
+ * Only confirmed corruption may trigger the backup-and-recreate path;
+ * transient startup failures (mkdir, driver init, migration bugs) must
+ * propagate instead of discarding a healthy database file.
+ */
+function isLikelyCorruptionError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  if (error.message.startsWith(INTEGRITY_CHECK_ERROR_PREFIX)) {
+    return true;
+  }
+  const code = (error as { code?: unknown }).code;
+  return (
+    typeof code === 'string' && (code.startsWith('SQLITE_CORRUPT') || code === 'SQLITE_NOTADB')
+  );
+}
+
 export interface InternalStorageWorkerCoreOptions {
   databasePath: string;
   /** Injected so tests can pass a Node-ABI build of better-sqlite3. */
@@ -215,8 +235,11 @@ export class InternalStorageWorkerCore {
     try {
       db = this.openOnce();
     } catch (initialError) {
+      if (!isLikelyCorruptionError(initialError)) {
+        throw initialError;
+      }
       // A corrupt database is backed up (never deleted) and recreated; the
-      // stall journal can be re-imported from *.pre-sqlite JSON archives.
+      // journals can be re-imported from *.pre-sqlite JSON archives.
       this.backupCorruptDatabaseFiles();
       integrity = 'recovered';
       try {

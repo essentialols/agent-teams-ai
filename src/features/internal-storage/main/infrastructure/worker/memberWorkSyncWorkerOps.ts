@@ -75,6 +75,9 @@ function canClaim(item: MemberWorkSyncOutboxItemRecord, nowIso: string): boolean
   return isNextAttemptDue(item.nextAttemptAt, nowIso);
 }
 
+// Load-bearing guard, not just batching: drizzle's .values([]) throws, and an
+// empty set is a legitimate state (fresh team import). Iterating chunks means
+// zero .values() calls for empty input — do not inline bulk inserts without it.
 function chunked<T>(values: T[]): T[][] {
   const chunks: T[][] = [];
   for (let start = 0; start < values.length; start += INSERT_CHUNK_SIZE) {

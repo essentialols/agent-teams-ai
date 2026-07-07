@@ -28,8 +28,11 @@ export interface ImportLegacyJsonStoreDeps<TRecord> {
  * A failure at any step leaves the JSON file untouched, so the legacy backend
  * remains a valid source of truth.
  */
+const IMPORT_FAILURE_RETRY_COOLDOWN_MS = 60_000;
+
 export class ImportLegacyJsonStoreUseCase<TRecord> {
   private readonly importedTeams = new Set<string>();
+  private readonly recentFailures = new Map<string, { atMs: number; error: Error }>();
 
   constructor(private readonly deps: ImportLegacyJsonStoreDeps<TRecord>) {}
 
@@ -38,7 +41,26 @@ export class ImportLegacyJsonStoreUseCase<TRecord> {
     if (this.importedTeams.has(teamName)) {
       return;
     }
+    // A failed import stays failed for a cooldown window instead of re-running
+    // the full replace transaction on every store call (callers poll every
+    // few seconds); the JSON files remain the source of truth throughout.
+    const failure = this.recentFailures.get(teamName);
+    if (failure && Date.now() - failure.atMs < IMPORT_FAILURE_RETRY_COOLDOWN_MS) {
+      throw failure.error;
+    }
+    try {
+      await this.importTeamOnce(teamName);
+      this.recentFailures.delete(teamName);
+    } catch (error) {
+      this.recentFailures.set(teamName, {
+        atMs: Date.now(),
+        error: error instanceof Error ? error : new Error(String(error)),
+      });
+      throw error;
+    }
+  }
 
+  private async importTeamOnce(teamName: string): Promise<void> {
     const legacyRecords = await this.deps.source.read(teamName);
     if (legacyRecords === null) {
       this.importedTeams.add(teamName);

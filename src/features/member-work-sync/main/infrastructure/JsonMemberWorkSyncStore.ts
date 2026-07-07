@@ -1175,6 +1175,19 @@ export class JsonMemberWorkSyncStore
    * or malformed entries are excluded the same way repairs exclude them.
    */
   async readSnapshotForImport(teamName: string): Promise<MemberWorkSyncStoreSnapshot | null> {
+    let snapshot: MemberWorkSyncStoreSnapshot | null = null;
+    // Serialized through the same per-team write queue as every mutation, so
+    // the snapshot cannot race a queued JSON write whose effect would be lost
+    // once the files are archived after import.
+    await this.enqueue(teamName, async () => {
+      snapshot = await this.readSnapshotForImportUnqueued(teamName);
+    });
+    return snapshot;
+  }
+
+  private async readSnapshotForImportUnqueued(
+    teamName: string
+  ): Promise<MemberWorkSyncStoreSnapshot | null> {
     const candidateFiles = [
       this.paths.getLegacyStatusPath(teamName),
       this.paths.getLegacyPendingReportsPath(teamName),
@@ -1203,12 +1216,21 @@ export class JsonMemberWorkSyncStore
       return null;
     }
 
+    // Ownership filters mirror the index-repair paths: entries claiming a
+    // different team must not leak into another team's imported rows.
+    const teamKey = normalizeTeamKey(teamName);
     const statuses = new Map<string, MemberWorkSyncStatus>();
     for (const status of await this.scanMemberStatuses(teamName)) {
+      if (normalizeTeamKey(status.teamName) !== teamKey) {
+        continue;
+      }
       statuses.set(normalizeMemberKey(status.memberName), status);
     }
     const legacyStatus = await this.readLegacyStatusFile(teamName);
     for (const [memberKey, status] of Object.entries(legacyStatus.members)) {
+      if (normalizeTeamKey(status.teamName) !== teamKey) {
+        continue;
+      }
       const key = normalizeMemberKey(status.memberName) || normalizeMemberKey(memberKey);
       if (!statuses.has(key)) {
         statuses.set(key, status);
@@ -1248,10 +1270,14 @@ export class JsonMemberWorkSyncStore
 
     const metricEvents = new Map<string, MemberWorkSyncMetricEvent>();
     for (const event of legacyStatus.metrics?.recentEvents ?? []) {
-      metricEvents.set(event.id, event);
+      if (normalizeTeamKey(event.teamName) === teamKey) {
+        metricEvents.set(event.id, event);
+      }
     }
     for (const event of (await this.readMetricsIndexFile(teamName)).recentEvents) {
-      metricEvents.set(event.id, event);
+      if (normalizeTeamKey(event.teamName) === teamKey) {
+        metricEvents.set(event.id, event);
+      }
     }
 
     return {

@@ -25,8 +25,11 @@ export interface MemberWorkSyncSqliteImporterDeps {
  * File presence is the trigger: a crash before archiving or a downgrade that
  * recreated the files leads to a safe re-import where the JSON wins.
  */
+const IMPORT_FAILURE_RETRY_COOLDOWN_MS = 60_000;
+
 export class MemberWorkSyncSqliteImporter {
   private readonly importedTeams = new Set<string>();
+  private readonly recentFailures = new Map<string, { atMs: number; error: Error }>();
 
   constructor(private readonly deps: MemberWorkSyncSqliteImporterDeps) {}
 
@@ -35,14 +38,42 @@ export class MemberWorkSyncSqliteImporter {
     if (this.importedTeams.has(teamName)) {
       return;
     }
+    // A failed import stays failed for a cooldown window instead of re-running
+    // the full replace transaction on every store call (claimDue polls every
+    // few seconds); the JSON files remain the source of truth throughout.
+    const failure = this.recentFailures.get(teamName);
+    if (failure && Date.now() - failure.atMs < IMPORT_FAILURE_RETRY_COOLDOWN_MS) {
+      throw failure.error;
+    }
+    try {
+      await this.importTeamOnce(teamName);
+      this.recentFailures.delete(teamName);
+    } catch (error) {
+      this.recentFailures.set(teamName, {
+        atMs: Date.now(),
+        error: error instanceof Error ? error : new Error(String(error)),
+      });
+      throw error;
+    }
+  }
 
+  private async importTeamOnce(teamName: string): Promise<void> {
     const snapshot = await this.deps.jsonStore.readSnapshotForImport(teamName);
     if (snapshot === null) {
       this.importedTeams.add(teamName);
       return;
     }
 
-    const records = snapshotToRecords(snapshot);
+    // Canonicalize the routing column to the import argument: legacy entries
+    // may carry a differently-cased teamName, and rows keyed by it would be
+    // invisible to queries (and to the verification read-back below).
+    const mapped = snapshotToRecords(snapshot);
+    const records = {
+      statuses: mapped.statuses.map((record) => ({ ...record, teamName })),
+      reportIntents: mapped.reportIntents.map((record) => ({ ...record, teamName })),
+      outboxItems: mapped.outboxItems.map((record) => ({ ...record, teamName })),
+      metricEvents: mapped.metricEvents.map((record) => ({ ...record, teamName })),
+    };
     await this.deps.gateway.importTeam(teamName, records);
 
     const roundTrip = await this.deps.gateway.listTeamSnapshot(teamName);

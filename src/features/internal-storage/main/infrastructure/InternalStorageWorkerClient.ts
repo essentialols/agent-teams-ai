@@ -29,6 +29,13 @@ import type {
 
 const logger = createLogger('Service:InternalStorageWorkerClient');
 
+// Keeps per-op payload typing for the journal ops; mws.* ops share one wire
+// shape and are typed by the public gateway methods instead.
+type InternalStorageWorkerPayloadFor<TOp extends InternalStorageWorkerRequest['op']> =
+  TOp extends `mws.${string}`
+    ? unknown
+    : Extract<InternalStorageWorkerRequest, { op: TOp }>['payload'];
+
 const WORKER_CALL_TIMEOUT_MS = 20_000;
 const WORKER_FILENAME = 'internal-storage-worker.cjs';
 
@@ -430,9 +437,9 @@ export class InternalStorageWorkerClient
     }
   }
 
-  private call(
-    op: InternalStorageWorkerRequest['op'],
-    payload: InternalStorageWorkerRequest['payload'],
+  private call<TOp extends InternalStorageWorkerRequest['op']>(
+    op: TOp,
+    payload: InternalStorageWorkerPayloadFor<TOp>,
     options: { allowWhenClosed?: boolean } = {}
   ): Promise<unknown> {
     if (this.closed && !options.allowWhenClosed) {

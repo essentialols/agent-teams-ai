@@ -6,7 +6,7 @@ import {
 import { MemberWorkSyncSqliteImporter } from '@features/member-work-sync/main/infrastructure/MemberWorkSyncSqliteImporter';
 import { MemberWorkSyncStorePaths } from '@features/member-work-sync/main/infrastructure/MemberWorkSyncStorePaths';
 import { SqliteMemberWorkSyncStore } from '@features/member-work-sync/main/infrastructure/SqliteMemberWorkSyncStore';
-import { mkdtemp, readdir, rm } from 'fs/promises';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -496,6 +496,34 @@ describe('SqliteMemberWorkSyncStore', () => {
       });
       expect(claimed).toHaveLength(450);
     }, 60_000);
+
+    it('excludes foreign-team entries from the import and still verifies', async () => {
+      const { store, jsonStore, root } = await makeHarness('sqlite');
+      await jsonStore.write(makeStatus());
+
+      // A foreign metric event smuggled into this team's metrics index must
+      // not be imported (it would also break the verification read-back).
+      const metricsPath = join(root, 'team-a', '.member-work-sync', 'indexes', 'metrics.json');
+      const metrics = JSON.parse(await readFile(metricsPath, 'utf8')) as {
+        recentEvents: { id: string; teamName: string }[];
+      };
+      metrics.recentEvents.push({
+        id: 'foreign-event',
+        teamName: 'other-team',
+        memberName: 'mallory',
+        kind: 'status_evaluated',
+        state: 'unknown',
+        agendaFingerprint: 'x',
+        recordedAt: T0,
+        actionableCount: 0,
+      } as never);
+      await writeFile(metricsPath, JSON.stringify(metrics, null, 2));
+
+      const status = await store.read({ teamName: 'team-a', memberName: 'bob' });
+      expect(status?.state).toBe('needs_sync');
+      const metricsAfter = await store.readTeamMetrics?.('team-a');
+      expect(metricsAfter?.recentEvents.some((event) => event.id === 'foreign-event')).toBe(false);
+    });
 
     it('serializes concurrent claims so no item is double-claimed', async () => {
       const { store } = await makeHarness('sqlite');

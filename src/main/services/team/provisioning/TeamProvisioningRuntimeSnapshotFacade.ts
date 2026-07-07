@@ -4,6 +4,11 @@ import {
   type RuntimeAdapterRunSnapshotSource,
   type TeamProvisioningRuntimeSnapshotRun,
 } from './TeamProvisioningRuntimeSnapshot';
+import {
+  TeamProvisioningRuntimeStateProjection,
+  type TeamProvisioningRuntimeStateProjectionPorts,
+  type TeamProvisioningRuntimeStateProjectionState,
+} from './TeamProvisioningRuntimeStateProjection';
 
 import type { LiveTeamAgentRuntimeMetadata } from './TeamProvisioningRuntimeMetadataPolicy';
 import type { TeamProvisioningRuntimeSnapshotResourceSamplingPorts } from './TeamProvisioningRuntimeResourceSampling';
@@ -18,6 +23,7 @@ import type {
   TeamMember,
   TeamProviderBackendId,
   TeamProviderId,
+  TeamRuntimeState,
 } from '@shared/types';
 
 type BuildTeamAgentRuntimeSnapshotParams = Parameters<
@@ -27,6 +33,8 @@ type BuildTeamAgentRuntimeSnapshotParams = Parameters<
 export interface TeamProvisioningRuntimeSnapshotFacadePorts {
   runs: ReadonlyMap<string, TeamProvisioningRuntimeSnapshotRun>;
   runtimeAdapterRunByTeam: ReadonlyMap<string, RuntimeAdapterRunSnapshotSource>;
+  runtimeState: TeamProvisioningRuntimeStateProjectionState;
+  runtimeStatePorts: TeamProvisioningRuntimeStateProjectionPorts;
   teamMetaStore: {
     getMeta(teamName: string): Promise<{
       providerId?: TeamProviderId;
@@ -66,8 +74,30 @@ export class TeamProvisioningRuntimeSnapshotFacade {
       promise: Promise<TeamAgentRuntimeSnapshot>;
     }
   >();
+  private readonly runtimeStateProjection: TeamProvisioningRuntimeStateProjection;
 
-  constructor(private readonly ports: TeamProvisioningRuntimeSnapshotFacadePorts) {}
+  constructor(private readonly ports: TeamProvisioningRuntimeSnapshotFacadePorts) {
+    this.runtimeStateProjection = new TeamProvisioningRuntimeStateProjection({
+      state: ports.runtimeState,
+      ports: ports.runtimeStatePorts,
+    });
+  }
+
+  hasProvisioningRun(teamName: string): boolean {
+    return this.runtimeStateProjection.hasProvisioningRun(teamName);
+  }
+
+  isTeamAlive(teamName: string): boolean {
+    return this.runtimeStateProjection.isTeamAlive(teamName);
+  }
+
+  getAliveTeams(): string[] {
+    return this.runtimeStateProjection.getAliveTeams();
+  }
+
+  getRuntimeState(teamName: string): Promise<TeamRuntimeState> {
+    return this.runtimeStateProjection.getRuntimeState(teamName);
+  }
 
   async getTeamAgentRuntimeSnapshot(teamName: string): Promise<TeamAgentRuntimeSnapshot> {
     const runId = this.ports.getTrackedRunId(teamName);

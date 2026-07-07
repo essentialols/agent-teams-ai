@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { execFile } from "node:child_process";
 import { appendFile, mkdir, readdir, readFile, realpath, rename, rm, rmdir, stat, writeFile } from "node:fs/promises";
-import { homedir, hostname } from "node:os";
+import { hostname } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { execPath } from "node:process";
 import { fileURLToPath } from "node:url";
@@ -31,16 +31,17 @@ import { projectControllerCapacityDemand, recordProjectControllerCapacitySignal,
 import { createProjectControlOperation, patchProjectControlOperation, projectControlOperationExecutionMode, projectControlOperationView, projectControlOperationsRoot, readProjectControlOperationById, startProjectControlOperationRunner, } from "./project-control-operation-lifecycle.js";
 import { accountNames, booleanValue, dateValue, numberValue, positiveIntegerValue, putIfDefined, requiredRawString, requiredString, resolvePath, stringValue, tagValues, workerReportModeValue, } from "./codex-goal-mcp-values.js";
 import { jobIdInputSchema, jobRegistryInputSchema, optionalRunEventProviderKind, registryRootFromArgs, runEventRetentionPolicyFromArgs, runEventRootFromArgs, runEventTypeFilter, } from "./codex-goal-mcp-inputs.js";
-import { accountOperatorLabel, availableCodexGoalAccountSlots, codexAccountReloginInstructions, codexAccountStatusPayload, dedupeCodexGoalAccountSlots, duplicateAccountGroups, visibleCodexGoalAccountPoolSlots, } from "./codex-goal-mcp-accounts.js";
+import { accountAuthRootFromArgs, accountPoolRootFromArgs, availableCodexGoalAccountSlots, codexAccountReloginInstructions, codexAccountStatusPayload, defaultCodexGoalAuthRoot, dedupeCodexGoalAccountSlots, duplicateAccountGroups, listAccountPools, } from "./codex-goal-mcp-accounts.js";
 import { readRuntimeResultBrief, safeTail, } from "./codex-goal-mcp-runtime-result.js";
 import { readCodexGoalLifecycleMarkers } from "./codex-goal-mcp-lifecycle-markers.js";
 import { matchesProjectControlPrefix, nodeErrorCode, pathInsideAnyProjectRoot, pathInsideOrEqual, stringArrayArg, uniqueProjectControlStrings, } from "./codex-goal-mcp-project-utils.js";
 import { buildCodexProjectAdmissionSnapshot, codexProjectAdmissionGate, optionalRealPathForAdmission, projectAdmissionDetailView, projectAdmissionOperation, projectAdmissionWorkerRoleArg, } from "./codex-goal-mcp-project-admission.js";
 import { jobIdsFromValue, parseIsoDate, signalIdList, workerControlCallerArgs, workerControlDecisionJson, workerControlReceiptJson, workerControlSignalJson, workerControlSignalViewJson, } from "./codex-goal-mcp-worker-control-view.js";
 import { CODEX_GOAL_CONTROL_SURFACE_SCHEMA, CODEX_GOAL_EXECUTION_ENGINE_SCHEMA, buildCodexGoalDecision, buildCodexGoalHandoff, codexGoalBriefHealthStatus, isHeartbeatOnlyNoOutputBrief, isSafeStartAction, latestIsoDate, nextActionForStatus, nextBestCommand, redactText, truncateText, } from "./codex-goal-mcp-decision.js";
+import { extractRecentCommands, redactLogTail, } from "./codex-goal-mcp-log-view.js";
 export { availableCodexGoalAccountSlots, dedupeCodexGoalAccountSlots, visibleCodexGoalAccountPoolSlots, } from "./codex-goal-mcp-accounts.js";
 const serverVersion = "0.1.0-main.2";
-const defaultAuthRoot = "~/.cache/subscription-runtime/live-codex-auth";
+const defaultAuthRoot = defaultCodexGoalAuthRoot;
 const defaultTimeoutMs = 72 * 60 * 60 * 1000;
 const execFileAsync = promisify(execFile);
 const controlledAgentProcessOwner = buildControlledAgentProcessOwner({
@@ -5856,81 +5857,6 @@ async function targetCommitFromArgs(args) {
 }
 function optionalTargetCommit(targetCommit) {
     return targetCommit === undefined ? {} : { targetCommit };
-}
-function accountPoolRootFromArgs(args) {
-    return resolvePath(process.cwd(), args.poolRootDir ?? join(homedir(), ".cache", "subscription-runtime"));
-}
-function accountAuthRootFromArgs(args) {
-    if (args.authRootDir)
-        return resolvePath(process.cwd(), args.authRootDir);
-    if (args.pool)
-        return join(accountPoolRootFromArgs(args), args.pool);
-    return resolvePath(process.cwd(), defaultAuthRoot);
-}
-async function listAccountPools(poolRootDir, stateRootDir) {
-    let entries;
-    try {
-        entries = await readdir(poolRootDir, { withFileTypes: true });
-    }
-    catch {
-        return [];
-    }
-    const pools = await Promise.all(entries
-        .filter((entry) => entry.isDirectory())
-        .map(async (entry) => {
-        const authRootDir = join(poolRootDir, entry.name);
-        const slots = await listCodexGoalAccountStatuses({
-            authRootDir,
-            ...(stateRootDir ? { stateRootDir } : {}),
-        });
-        const visibleSlots = visibleCodexGoalAccountPoolSlots(entry.name, slots);
-        const dedupedSlots = dedupeCodexGoalAccountSlots(visibleSlots);
-        const availableDedupedSlots = availableCodexGoalAccountSlots(dedupedSlots);
-        return {
-            pool: entry.name,
-            authRootDir,
-            accountCount: visibleSlots.length,
-            readyCount: visibleSlots.filter((slot) => slot.status === "ready").length,
-            availableCount: availableDedupedSlots.length,
-            dedupedAccountNames: dedupedSlots.map((slot) => slot.name),
-            availableDedupedAccountNames: availableDedupedSlots.map((slot) => slot.name),
-            dedupedAccountLabels: dedupedSlots.map(accountOperatorLabel),
-            availableDedupedAccountLabels: availableDedupedSlots.map(accountOperatorLabel),
-            hasDuplicates: duplicateAccountGroups(visibleSlots).length > 0,
-        };
-    }));
-    return pools.filter((pool) => pool.accountCount > 0);
-}
-function extractRecentCommands(logTail) {
-    const commands = [];
-    for (const line of logTail.split(/\r?\n/)) {
-        const command = commandFromLogLine(line);
-        if (!command)
-            continue;
-        if (commands.at(-1) !== command)
-            commands.push(command);
-    }
-    return commands.slice(-10);
-}
-function commandFromLogLine(line) {
-    const trimmed = line.trim();
-    if (!trimmed)
-        return null;
-    const promptMatch = /^(?:[$>]|\+\s)(.+)$/.exec(trimmed);
-    const command = promptMatch?.[1]?.trim() ?? trimmed;
-    if (!/^(?:git|npm|npx|node|pnpm|yarn|bun|uv|python|python3|pytest|ruff|mypy|tsc|vitest|cargo|go|make|cmake|docker|docker-compose|\.venv\/bin\/python|scripts\/)[\s/]/.test(command)) {
-        return null;
-    }
-    return redactCommand(command).slice(0, 500);
-}
-function redactCommand(command) {
-    return new DefaultRedactor().redact(command);
-}
-function redactLogTail(logTail) {
-    return logTail
-        .split(/\r?\n/)
-        .map((line) => redactCommand(line))
-        .join("\n");
 }
 function registerCodexGoalPrompts(server) {
     for (const prompt of [

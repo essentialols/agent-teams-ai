@@ -1,10 +1,21 @@
+import { readdir } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   listCodexGoalAccountStatuses,
   shellQuote,
 } from "./codex-goal-ops";
+import { resolvePath } from "./codex-goal-mcp-values";
 
 type JsonObject = Readonly<Record<string, unknown>>;
+
+export const defaultCodexGoalAuthRoot = "~/.cache/subscription-runtime/live-codex-auth";
+
+export type CodexAccountPoolArgs = {
+  readonly authRootDir?: string;
+  readonly pool?: string;
+  readonly poolRootDir?: string;
+};
 
 type CodexGoalAccountSlots = Awaited<
   ReturnType<typeof listCodexGoalAccountStatuses>
@@ -166,6 +177,58 @@ export function visibleCodexGoalAccountPoolSlots(
     slot.status !== "auth_missing" ||
     likelyAuthPool
   );
+}
+
+export function accountPoolRootFromArgs(args: CodexAccountPoolArgs): string {
+  return resolvePath(
+    process.cwd(),
+    args.poolRootDir ?? join(homedir(), ".cache", "subscription-runtime"),
+  );
+}
+
+export function accountAuthRootFromArgs(args: CodexAccountPoolArgs): string {
+  if (args.authRootDir) return resolvePath(process.cwd(), args.authRootDir);
+  if (args.pool) return join(accountPoolRootFromArgs(args), args.pool);
+  return resolvePath(process.cwd(), defaultCodexGoalAuthRoot);
+}
+
+export async function listAccountPools(
+  poolRootDir: string,
+  stateRootDir?: string,
+): Promise<readonly JsonObject[]> {
+  let entries;
+  try {
+    entries = await readdir(poolRootDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const pools = await Promise.all(
+    entries
+      .filter((entry) => entry.isDirectory())
+      .map(async (entry) => {
+        const authRootDir = join(poolRootDir, entry.name);
+        const slots = await listCodexGoalAccountStatuses({
+          authRootDir,
+          ...(stateRootDir ? { stateRootDir } : {}),
+        });
+        const visibleSlots = visibleCodexGoalAccountPoolSlots(entry.name, slots);
+        const dedupedSlots = dedupeCodexGoalAccountSlots(visibleSlots);
+        const availableDedupedSlots = availableCodexGoalAccountSlots(dedupedSlots);
+        return {
+          pool: entry.name,
+          authRootDir,
+          accountCount: visibleSlots.length,
+          readyCount: visibleSlots.filter((slot) => slot.status === "ready").length,
+          availableCount: availableDedupedSlots.length,
+          dedupedAccountNames: dedupedSlots.map((slot) => slot.name),
+          availableDedupedAccountNames: availableDedupedSlots.map((slot) => slot.name),
+          dedupedAccountLabels: dedupedSlots.map(accountOperatorLabel),
+          availableDedupedAccountLabels: availableDedupedSlots.map(accountOperatorLabel),
+          hasDuplicates: duplicateAccountGroups(visibleSlots).length > 0,
+        };
+      }),
+  );
+  return pools.filter((pool) => (pool.accountCount as number) > 0);
 }
 
 function preferredAccountSlot(slots: CodexGoalAccountSlots) {

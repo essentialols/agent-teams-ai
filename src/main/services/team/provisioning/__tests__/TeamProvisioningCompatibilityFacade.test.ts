@@ -2,12 +2,18 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { TeamRuntimeAdapterRegistry } from '../../runtime';
 import { TeamProvisioningCompatibilityFacade } from '../TeamProvisioningCompatibilityFacade';
+import type {
+  TeamProvisioningCompatibilityDelegation,
+  TeamProvisioningCompatibilityDelegationRun,
+} from '../TeamProvisioningCompatibilityFacade';
 
 import type { TeamLaunchRuntimeAdapter, TeamRuntimeProviderId } from '../../runtime';
 import type { TeamProvisioningAppShellBoundary } from '../TeamProvisioningAppShellBoundary';
 import type { WorkspaceTrustCoordinator } from '@features/workspace-trust/main';
 
 class TestCompatibilityFacade extends TeamProvisioningCompatibilityFacade {
+  protected readonly compatibilityDelegation =
+    {} as TeamProvisioningCompatibilityDelegation<TeamProvisioningCompatibilityDelegationRun>;
   getAppShellBoundary(): TeamProvisioningAppShellBoundary {
     return this.appShellBoundary;
   }

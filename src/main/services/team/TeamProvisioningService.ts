@@ -119,7 +119,10 @@ import {
 } from './provisioning/TeamProvisioningCleanup';
 import { createTeamProvisioningCleanupRunPorts } from './provisioning/TeamProvisioningCleanupRunPortsFactory';
 import { getCliHelpOutputWithProvisioningPorts } from './provisioning/TeamProvisioningCliHelpOutputPortsFactory';
-import { TeamProvisioningCompatibilityFacade } from './provisioning/TeamProvisioningCompatibilityFacade';
+import {
+  TeamProvisioningCompatibilityFacade,
+  type TeamProvisioningCompatibilityDelegation,
+} from './provisioning/TeamProvisioningCompatibilityFacade';
 import { TeamProvisioningConfigFacade } from './provisioning/TeamProvisioningConfigFacade';
 import {
   createTeamProvisioningConfigTaskActivityBoundary,
@@ -591,7 +594,6 @@ import type {
   TaskRef,
   TeamAgentRuntimeSnapshot,
   TeamChangeEvent,
-  TeamConfig,
   TeamCreateRequest,
   TeamCreateResponse,
   TeamLaunchAggregateState,
@@ -605,7 +607,6 @@ import type {
   TeamProvisioningModelVerificationMode,
   TeamProvisioningPrepareResult,
   TeamProvisioningProgress,
-  TeamRuntimeState,
   ToolApprovalEvent,
   ToolApprovalSettings,
 } from '@shared/types';
@@ -629,7 +630,7 @@ function getRunRuntimeFailureLabel(run: ProvisioningRun): string {
   return getRuntimeFailureLabelForRequest(run.request);
 }
 
-export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade {
+export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade<ProvisioningRun> {
   private readonly runtimeLaneCoordinator = createTeamRuntimeLaneCoordinator();
   private readonly providerConnectionService = ProviderConnectionService.getInstance();
   private readonly launchIdentityBoundary: TeamProvisioningLaunchIdentityBoundary =
@@ -1317,6 +1318,7 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
   private readonly idlePromptInjectionBoundary: TeamProvisioningIdlePromptInjectionBoundary<ProvisioningRun>;
   private readonly providerRuntime: TeamProvisioningProviderRuntimeFacade;
   private readonly providerRuntimeCompatibility: TeamProvisioningProviderRuntimeCompatibility;
+  protected readonly compatibilityDelegation!: TeamProvisioningCompatibilityDelegation<ProvisioningRun>;
   private readonly outputRecoveryFacade: TeamProvisioningOutputRecoveryFacade<ProvisioningRun>;
   private readonly deterministicCreateSpawnFlowBoundary: TeamProvisioningCreateDeterministicSpawnFlowBoundary<ProvisioningRun>;
   private readonly deterministicLaunchFlowBoundary: TeamProvisioningLaunchDeterministicFlowBoundary<MixedSecondaryRuntimeLaneState>;
@@ -1802,6 +1804,17 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
     this.providerRuntimeCompatibility = createTeamProvisioningProviderRuntimeCompatibility(
       this.providerRuntime
     );
+    this.compatibilityDelegation = {
+      providerRuntimeCompatibility: this.providerRuntimeCompatibility,
+      configFacade: this.configFacade,
+      configTaskActivityBoundary: this.configTaskActivityBoundary,
+      retainedProvisioningProgressState: this.retainedProvisioningProgressState,
+      cancellationBoundary: this.cancellationBoundary,
+      runtimeSnapshotFacade: this.runtimeSnapshotFacade,
+      runTracking: this.runTracking,
+      runs: this.runs,
+      sendMessageToRunBoundary: this.sendMessageToRunBoundary,
+    };
     this.outputRecoveryFacade = new TeamProvisioningOutputRecoveryFacade<ProvisioningRun>({
       service: {
         updateProgress,
@@ -2196,42 +2209,6 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
     this.scheduleStaleAnthropicTeamApiKeyHelperCleanup();
   }
 
-  buildProvisioningEnv(
-    ...args: Parameters<TeamProvisioningProviderRuntimeCompatibility['buildProvisioningEnv']>
-  ): ReturnType<TeamProvisioningProviderRuntimeCompatibility['buildProvisioningEnv']> {
-    return this.providerRuntimeCompatibility.buildProvisioningEnv(...args);
-  }
-
-  buildCrossProviderMemberArgs(
-    ...args: Parameters<
-      TeamProvisioningProviderRuntimeCompatibility['buildCrossProviderMemberArgs']
-    >
-  ): ReturnType<TeamProvisioningProviderRuntimeCompatibility['buildCrossProviderMemberArgs']> {
-    return this.providerRuntimeCompatibility.buildCrossProviderMemberArgs(...args);
-  }
-
-  validateAgentTeamsMcpRuntime(
-    ...args: Parameters<
-      TeamProvisioningProviderRuntimeCompatibility['validateAgentTeamsMcpRuntime']
-    >
-  ): ReturnType<TeamProvisioningProviderRuntimeCompatibility['validateAgentTeamsMcpRuntime']> {
-    return this.providerRuntimeCompatibility.validateAgentTeamsMcpRuntime(...args);
-  }
-
-  private writeLaunchFailureArtifactPackBestEffort(
-    run: ProvisioningRun,
-    options: {
-      reason: string;
-      launchSnapshot?: PersistedTeamLaunchSnapshot | null;
-    }
-  ): void {
-    this.configTaskActivityBoundary.writeLaunchFailureArtifactPackBestEffort(run, options);
-  }
-
-  async repairStaleTaskActivityIntervalsBeforeSnapshot(teamName: string): Promise<void> {
-    return this.configTaskActivityBoundary.repairStaleTaskActivityIntervalsBeforeSnapshot(teamName);
-  }
-
   private scheduleStaleAnthropicTeamApiKeyHelperCleanup(): void {
     void cleanupStaleAnthropicTeamApiKeyHelpers({
       baseClaudeDir: getClaudeBasePath(),
@@ -2254,16 +2231,6 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
     return { config, teamMeta, metaMembers };
   }
 
-  private readConfigSnapshot(teamName: string): Promise<TeamConfig | null> {
-    return typeof this.configReader.getConfigSnapshot === 'function'
-      ? this.configReader.getConfigSnapshot(teamName)
-      : this.configReader.getConfig(teamName);
-  }
-
-  private readConfigForStrictDecision(teamName: string): Promise<TeamConfig | null> {
-    return this.configReader.getConfig(teamName);
-  }
-
   private async resolveOpenCodeMemberDeliveryIdentity(
     teamName: string,
     memberName: string
@@ -2272,14 +2239,6 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
       teamName,
       memberName
     );
-  }
-
-  private readPersistedRuntimeMembers(teamName: string): PersistedRuntimeMemberLike[] {
-    return this.configFacade.readPersistedRuntimeMembers(teamName);
-  }
-
-  private readPersistedTeamProjectPath(teamName: string): string | null {
-    return this.configFacade.readPersistedTeamProjectPath(teamName);
   }
 
   private getTrackedRunId(teamName: string): string | null {
@@ -2425,54 +2384,6 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
     >[0]
   ): ReturnType<TeamProvisioningPrepareFacade['resolveOpenCodeMemberWorkspacesForRuntime']> {
     return this.prepareFacade.resolveOpenCodeMemberWorkspacesForRuntime(params);
-  }
-
-  private normalizeTeamConfigForLaunch(teamName: string, configRaw: string): Promise<void> {
-    return this.configFacade.normalizeTeamConfigForLaunch(teamName, configRaw);
-  }
-
-  private assertConfigLeadOnlyForLaunch(teamName: string): Promise<void> {
-    return this.configFacade.assertConfigLeadOnlyForLaunch(teamName);
-  }
-
-  private updateConfigProjectPath(teamName: string, cwd: string): Promise<void> {
-    return this.configTaskActivityBoundary.updateConfigProjectPath(teamName, cwd);
-  }
-
-  private restorePrelaunchConfig(teamName: string): Promise<void> {
-    return this.configTaskActivityBoundary.restorePrelaunchConfig(teamName);
-  }
-
-  cleanupPrelaunchBackup(teamName: string): Promise<void> {
-    return this.configTaskActivityBoundary.cleanupPrelaunchBackup(teamName);
-  }
-
-  private persistMembersMeta(teamName: string, request: TeamCreateRequest): Promise<void> {
-    return this.configFacade.persistMembersMeta(teamName, request);
-  }
-
-  private resolveLaunchExpectedMembers(
-    teamName: string,
-    configRaw: string,
-    leadProviderId?: TeamProviderId
-  ): ReturnType<TeamProvisioningConfigFacade['resolveLaunchExpectedMembers']> {
-    return this.configFacade.resolveLaunchExpectedMembers(teamName, configRaw, leadProviderId);
-  }
-
-  private updateConfigPostLaunch(
-    teamName: string,
-    projectPath: string,
-    detectedSessionId: string | null,
-    color?: string,
-    launchState?: Parameters<TeamProvisioningConfigFacade['updateConfigPostLaunch']>[4]
-  ): Promise<void> {
-    return this.configFacade.updateConfigPostLaunch(
-      teamName,
-      projectPath,
-      detectedSessionId,
-      color,
-      launchState
-    );
   }
 
   private writeOpenCodeTeamConfig(
@@ -4410,47 +4321,6 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
     }
   }
 
-  async getProvisioningStatus(runId: string): Promise<TeamProvisioningProgress> {
-    return this.retainedProvisioningProgressState.getProvisioningStatus(runId, this.runs);
-  }
-
-  private retainProvisioningProgress(runId: string, progress: TeamProvisioningProgress): void {
-    this.retainedProvisioningProgressState.retainProvisioningProgress(runId, progress);
-  }
-
-  async cancelProvisioning(runId: string): Promise<void> {
-    await this.cancellationBoundary.cancelProvisioning(runId);
-  }
-
-  /**
-   * Send a message to the team's lead process via stream-json stdin.
-   * The lead will receive it as a new user turn and can delegate to teammates.
-   */
-  async sendMessageToTeam(
-    teamName: string,
-    message: string,
-    attachments?: { data: string; mimeType: string; filename?: string }[]
-  ): Promise<void> {
-    const runId = this.runTracking.getAliveRunId(teamName);
-    if (!runId) {
-      throw new Error(`No active process for team "${teamName}"`);
-    }
-    const run = this.runs.get(runId);
-    if (!run?.child?.stdin?.writable) {
-      throw new Error(`Team "${teamName}" process stdin is not writable`);
-    }
-
-    await this.sendMessageToRun(run, message, attachments);
-  }
-
-  private async sendMessageToRun(
-    run: ProvisioningRun,
-    message: string,
-    attachments?: { data: string; mimeType: string; filename?: string }[]
-  ): Promise<void> {
-    await this.sendMessageToRunBoundary.sendMessageToRun(run, message, attachments);
-  }
-
   /**
    * UNUSED (2026-03-23): teammates read their own inbox files directly via fs.watch,
    * so forwarding through the lead is unnecessary. Kept for reference — the prompt
@@ -4587,37 +4457,12 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
   }
 
   /**
-   * Check if a team has an active provisioning run (started but not yet finished).
-   */
-  hasProvisioningRun(teamName: string): boolean {
-    return this.runtimeSnapshotFacade.hasProvisioningRun(teamName);
-  }
-
-  /**
-   * Check if a team has a live process.
-   */
-  isTeamAlive(teamName: string): boolean {
-    return this.runtimeSnapshotFacade.isTeamAlive(teamName);
-  }
-
-  /**
-   * Get list of teams with active processes.
-   */
-  getAliveTeams(): string[] {
-    return this.runtimeSnapshotFacade.getAliveTeams();
-  }
-
-  /**
    * True when shutdown has team runtime state that must not be left headless.
    * Includes active leads, provisioning runs, runtime-adapter runs, secondary lanes,
    * and in-flight team operations that may expose a runtime shortly.
    */
   hasActiveTeamRuntimes(): boolean {
     return this.shutdownCoordination.getShutdownTrackedTeamNames().length > 0;
-  }
-
-  async getRuntimeState(teamName: string): Promise<TeamRuntimeState> {
-    return this.runtimeSnapshotFacade.getRuntimeState(teamName);
   }
 
   private languageChangeInFlight: Promise<void> = Promise.resolve();

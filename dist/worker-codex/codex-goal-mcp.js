@@ -7,11 +7,10 @@ import { fileURLToPath } from "node:url";
 import { McpServer, ResourceTemplate, } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { DefaultRedactor, } from "@vioxen/subscription-runtime/core";
 import { sessionArtifactFromCodexAuthJson } from "@vioxen/subscription-runtime/provider-codex";
 import { LocalFileRunEventProjectionStateStore, LocalFileRunEventStore, LocalControlledAgentStateStore, } from "@vioxen/subscription-runtime/store-local-file";
 import { buildLocalClaudeControlledAgentProfile, createLocalClaudeControlledAgentProvider, loadScopedClaudeSessionArtifact, watchClaudeRuns, } from "@vioxen/subscription-runtime/worker-local";
-import { AccessBoundary, LaunchPlanStatus, NetworkAccessMode, ProjectAdmissionWorkerRole, RunObservationService, InterruptAndContinueWorkerUseCase, ProjectControlBroker, RunEventProviderKind, assessBaseRevision, assessWorkerHealth, buildControlledAgentLaunchPlan, buildControlledAgentLiveControllerState, buildControlledAgentProcessOwner, getControlledAgentStatus, reconcileControlledAgentRun, startControlledAgentRun, stopControlledAgentRun, buildWorkerStatusView, decideRunObservation, evaluateProjectAdmission, projectRunObservationEvents, projectRunReadModelsFromEvents, reconcileRunPreview, readTargetRevision, runEventProviderKindFromString, ProjectOperation, } from "@vioxen/subscription-runtime/worker-core";
+import { AccessBoundary, LaunchPlanStatus, NetworkAccessMode, ProjectAdmissionWorkerRole, RunObservationService, InterruptAndContinueWorkerUseCase, ProjectControlBroker, RunEventProviderKind, assessBaseRevision, assessWorkerHealth, buildControlledAgentLaunchPlan, buildControlledAgentLiveControllerState, buildControlledAgentProcessOwner, getControlledAgentStatus, reconcileControlledAgentRun, startControlledAgentRun, stopControlledAgentRun, buildWorkerStatusView, evaluateProjectAdmission, projectRunObservationEvents, projectRunReadModelsFromEvents, reconcileRunPreview, readTargetRevision, runEventProviderKindFromString, ProjectOperation, } from "@vioxen/subscription-runtime/worker-core";
 import { codexGoalJobToArgs, codexGoalObjectiveMaxChars, createCodexGoalJob, defaultCodexGoalJobRoot, listCodexGoalJobs, readCodexGoalJob, resolveCodexGoalJobRegistryRoot, summarizeCodexGoalJob, updateCodexGoalJob, } from "./codex-goal-jobs.js";
 import { upsertCodexGoalLaunchManifest } from "./codex-goal-launch-manifest.js";
 import { runDependencyBootstrap, } from "./dependency-bootstrap.js";
@@ -39,6 +38,7 @@ import { codexGoalAccountStatusPayload, codexGoalStateRootDir, codexGoalWorkerCo
 import { codexGoalAccountCapacityFacts } from "./codex-goal-mcp-account-capacity-facts.js";
 import { applyWorkspaceConflictToOverviewJob, buildCodexGoalWorkspaceConflicts, workspaceConflictJobIds, } from "./codex-goal-mcp-workspace-conflicts.js";
 import { codexOverviewItemToWatchStatus } from "./codex-goal-mcp-watch-status.js";
+import { failedRunObservationSnapshot, observeOrphanCodexRun, safeObservationErrorMessage, summarizeRunObservationSnapshots, } from "./codex-goal-mcp-observation-projection.js";
 import { CODEX_GOAL_CONTROL_SURFACE_SCHEMA, CODEX_GOAL_EXECUTION_ENGINE_SCHEMA, buildCodexGoalDecision, buildCodexGoalHandoff, codexGoalBriefHealthStatus, isHeartbeatOnlyNoOutputBrief, isSafeStartAction, latestIsoDate, nextActionForStatus, nextBestCommand, redactText, truncateText, } from "./codex-goal-mcp-decision.js";
 import { extractRecentCommands, redactLogTail, } from "./codex-goal-mcp-log-view.js";
 import { assertGitCurrentBranch, assertSafeGitCommitSha, assertSafeGitRefName, assertSafeGitRemoteName, execGit, execGitStdout, } from "./codex-goal-mcp-project-git.js";
@@ -4497,219 +4497,6 @@ async function projectAgentRunEvents(args) {
         projectedRuns,
         nextCursor: readBack.nextCursor?.value,
         events: readBack.events,
-    };
-}
-async function observeOrphanCodexRun(input) {
-    if (!isMissingCodexGoalManifestError(input.error))
-        return null;
-    if (!stringValue(input.args.runArtifactsRootDir))
-        return null;
-    const cwd = resolvePath(process.cwd(), stringValue(input.args.cwd) ?? process.cwd());
-    const jobRootDir = join(resolvePath(cwd, stringValue(input.args.runArtifactsRootDir)), input.runId);
-    try {
-        const rootStat = await stat(jobRootDir);
-        if (!rootStat.isDirectory())
-            return null;
-    }
-    catch {
-        return null;
-    }
-    const status = await collectCodexGoalStatus({
-        jobRootDir,
-        taskId: input.runId,
-        resultPath: join(jobRootDir, "result.json"),
-        logPath: join(jobRootDir, "worker.log"),
-        progressPath: join(jobRootDir, "progress.json"),
-        tmuxSession: input.runId,
-    });
-    const logUpdatedAgeMs = isoAgeMsForMcp(status.logUpdatedAt);
-    const progressStale = status.progressHeartbeatAgeMs !== undefined &&
-        status.progressHeartbeatAgeMs > input.staleAfterMs;
-    const logStale = logUpdatedAgeMs !== undefined &&
-        logUpdatedAgeMs > input.staleAfterMs;
-    const workerLiveness = resolveCodexGoalWorkerLiveness({
-        status,
-        progressStale,
-    });
-    const workerAlive = false;
-    const heartbeatOnlyNoOutput = Boolean(workerAlive &&
-        status.progressExists &&
-        !status.resultExists &&
-        (status.logByteLength ?? 0) === 0);
-    const warnings = [
-        {
-            code: "codex_orphan_artifact_run",
-            message: "Codex run artifacts exist but the job registry manifest is missing; observing artifact paths read-only.",
-            severity: "warning",
-        },
-        ...status.warnings.map((message) => ({
-            code: "codex_status_warning",
-            message,
-            severity: "warning",
-        })),
-        ...(heartbeatOnlyNoOutput
-            ? [{
-                    code: "heartbeat_only_no_output",
-                    message: "worker heartbeat is fresh, but there is no result, log output or workspace change",
-                    severity: "blocked",
-                }]
-            : []),
-    ];
-    const runStatus = workerAlive && status.progressStatus === "running"
-        ? "running"
-        : status.resultStatus === "completed"
-            ? "completed"
-            : status.resultStatus === "failed"
-                ? "failed"
-                : workerAlive
-                    ? "running"
-                    : "unknown";
-    const liveness = workerAlive
-        ? (progressStale || logStale ? "stale" : "alive")
-        : "dead";
-    const manualReviewReasons = [
-        "missing_job_manifest",
-        ...(heartbeatOnlyNoOutput ? ["heartbeat_only_no_output"] : []),
-    ];
-    const snapshotBase = {
-        runId: input.runId,
-        providerKind: input.providerKind,
-        observedAt: new Date().toISOString(),
-        status: runStatus,
-        liveness,
-        process: {
-            supervisor: workerLiveness.supervisorKind,
-            sessionId: input.runId,
-            alive: workerAlive,
-            aliveReason: workerLiveness.aliveReason,
-            ...(status.progressPid === undefined ? {} : { pid: status.progressPid }),
-        },
-        progress: {
-            ...(status.progressStatus === undefined ? {} : { status: status.progressStatus }),
-            ...(status.progressUpdatedAt === undefined ? {} : { updatedAt: status.progressUpdatedAt }),
-            ...(status.progressHeartbeatAgeMs === undefined
-                ? {}
-                : { heartbeatAgeMs: status.progressHeartbeatAgeMs }),
-            staleAfterMs: input.staleAfterMs,
-            stale: progressStale,
-            silentStale: Boolean(workerAlive && (progressStale || logStale)),
-            heartbeatOnlyNoOutput,
-            ...(status.progressAttemptCount === undefined
-                ? {}
-                : { attemptCount: status.progressAttemptCount }),
-            ...(status.progressCurrentAccount === undefined
-                ? {}
-                : { currentAccount: status.progressCurrentAccount }),
-        },
-        result: {
-            ...(status.resultExists === undefined ? {} : { exists: status.resultExists }),
-            ...(status.resultStatus === undefined ? {} : { status: status.resultStatus }),
-            ...(status.resultReason === undefined ? {} : { reason: status.resultReason }),
-            ...(status.resultPath === undefined ? {} : { path: status.resultPath }),
-        },
-        logs: await orphanCodexLogExcerpt({
-            status,
-            includeLogTail: booleanValue(input.args.includeLogTail) === true,
-            tailLines: input.tailLines,
-        }),
-        artifacts: [
-            orphanArtifactSummary("result", status.resultPath, status.resultExists),
-            orphanArtifactSummary("progress", status.progressPath, status.progressExists, status.progressUpdatedAt),
-            orphanArtifactSummary("log", status.logPath, status.logExists, status.logUpdatedAt, status.logByteLength),
-        ],
-        manualReviewReasons,
-        warnings,
-    };
-    return {
-        ...snapshotBase,
-        readOnlyDecision: {
-            kind: "manual_review_required",
-            reason: "missing_job_manifest",
-            safeMessage: "This Codex run has artifacts but no job registry manifest. Watch remains read-only; review or recreate the job manifest before continuing.",
-            evidence: ["manualReviewReasons", "artifacts"],
-        },
-    };
-}
-function isMissingCodexGoalManifestError(error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return message.includes("job.json") && message.includes("ENOENT");
-}
-async function orphanCodexLogExcerpt(input) {
-    if (!input.status.logPath)
-        return { exists: false };
-    if (!input.status.logExists) {
-        return { exists: false, path: input.status.logPath };
-    }
-    return {
-        exists: true,
-        path: input.status.logPath,
-        ...(input.status.logUpdatedAt ? { updatedAt: input.status.logUpdatedAt } : {}),
-        ...(input.status.logByteLength === undefined
-            ? {}
-            : { byteLength: input.status.logByteLength }),
-        ...(input.includeLogTail
-            ? { tail: await tailCodexGoalLog(input.status.logPath, input.tailLines) }
-            : {}),
-    };
-}
-function orphanArtifactSummary(kind, path, exists, updatedAt, byteLength) {
-    return {
-        kind,
-        ...(path === undefined ? {} : { path }),
-        ...(exists === undefined ? {} : { exists }),
-        ...(updatedAt === undefined ? {} : { updatedAt }),
-        ...(byteLength === undefined ? {} : { byteLength }),
-    };
-}
-function isoAgeMsForMcp(value) {
-    if (!value)
-        return undefined;
-    const time = Date.parse(value);
-    if (!Number.isFinite(time))
-        return undefined;
-    return Date.now() - time;
-}
-function failedRunObservationSnapshot(input) {
-    const message = safeObservationErrorMessage(input.error);
-    const warnings = [{
-            code: "run_observation_failed",
-            message,
-            severity: "warning",
-        }];
-    const manualReviewReasons = ["run_observation_failed"];
-    return {
-        runId: input.runId,
-        providerKind: input.providerKind,
-        observedAt: new Date().toISOString(),
-        status: "unknown",
-        liveness: "unknown",
-        warnings,
-        manualReviewReasons,
-        readOnlyDecision: decideRunObservation({
-            status: "unknown",
-            liveness: "unknown",
-            manualReviewReasons,
-            warnings,
-        }),
-    };
-}
-function safeObservationErrorMessage(error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return new DefaultRedactor().redact(message);
-}
-function summarizeRunObservationSnapshots(snapshots) {
-    return {
-        running: snapshots.filter((snapshot) => snapshot.status === "running").length,
-        completed: snapshots.filter((snapshot) => snapshot.status === "completed").length,
-        failed: snapshots.filter((snapshot) => snapshot.status === "failed").length,
-        stopped: snapshots.filter((snapshot) => snapshot.status === "stopped").length,
-        unknown: snapshots.filter((snapshot) => snapshot.status === "unknown").length,
-        alive: snapshots.filter((snapshot) => snapshot.liveness === "alive").length,
-        stale: snapshots.filter((snapshot) => snapshot.liveness === "stale").length,
-        manualReview: snapshots.filter((snapshot) => snapshot.readOnlyDecision.kind === "manual_review_required").length,
-        capacityBlocked: snapshots.filter((snapshot) => snapshot.readOnlyDecision.kind === "capacity_blocked").length,
-        unsafeStateMismatch: snapshots.filter((snapshot) => snapshot.readOnlyDecision.kind === "unsafe_state_mismatch").length,
-        warnings: snapshots.reduce((count, snapshot) => count + snapshot.warnings.length, 0),
     };
 }
 async function buildCodexGoalOverviewItem(input) {

@@ -256,6 +256,9 @@ import { buildCodexGoalBrief } from "./codex-goal-mcp-brief";
 export { buildCodexGoalBrief } from "./codex-goal-mcp-brief";
 import { buildCodexGoalOverviewItem } from "./codex-goal-mcp-overview-item";
 import {
+  codexGoalStatusInputFromLaunch as statusInput,
+} from "./codex-goal-mcp-status-input";
+import {
   CODEX_GOAL_MCP_DEFAULT_TIMEOUT_MS,
   goalControlModesFromRecord,
   goalLaunchInput,
@@ -5885,21 +5888,6 @@ function statusInputSchema(): Record<string, z.ZodTypeAny> {
     progressPath: z.string().optional(),
     accessBoundary: z.string().optional(),
     cwd: z.string().optional(),
-  };
-}
-
-function statusInput(launch: CodexGoalLaunchInput) {
-  return {
-    jobRootDir: launch.config.jobRootDir,
-    taskId: launch.config.taskId,
-    ...(launch.config.outputPath ? { resultPath: launch.config.outputPath } : {}),
-    workspacePath: launch.config.workspacePath,
-    ...(launch.tmuxSession ? { tmuxSession: launch.tmuxSession } : {}),
-    logPath: launch.logPath,
-    ...(launch.config.progressPath ? { progressPath: launch.config.progressPath } : {}),
-    ...(launch.config.accessBoundary === undefined
-      ? {}
-      : { accessBoundary: launch.config.accessBoundary }),
   };
 }
 

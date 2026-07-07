@@ -40,6 +40,7 @@ import { failedRunObservationSnapshot, observeOrphanCodexRun, safeObservationErr
 import { buildCodexGoalBrief } from "./codex-goal-mcp-brief.js";
 export { buildCodexGoalBrief } from "./codex-goal-mcp-brief.js";
 import { buildCodexGoalOverviewItem } from "./codex-goal-mcp-overview-item.js";
+import { codexGoalStatusInputFromLaunch as statusInput, } from "./codex-goal-mcp-status-input.js";
 import { CODEX_GOAL_MCP_DEFAULT_TIMEOUT_MS, goalControlModesFromRecord, goalLaunchInput, } from "./codex-goal-mcp-launch-input.js";
 import { CODEX_GOAL_CONTROL_SURFACE_SCHEMA, CODEX_GOAL_EXECUTION_ENGINE_SCHEMA, buildCodexGoalDecision, buildCodexGoalHandoff, isSafeStartAction, nextActionForStatus, redactText, truncateText, } from "./codex-goal-mcp-decision.js";
 import { assertGitCurrentBranch, assertSafeGitCommitSha, assertSafeGitRefName, assertSafeGitRemoteName, execGit, execGitStdout, } from "./codex-goal-mcp-project-git.js";
@@ -4611,20 +4612,6 @@ function statusInputSchema() {
         progressPath: z.string().optional(),
         accessBoundary: z.string().optional(),
         cwd: z.string().optional(),
-    };
-}
-function statusInput(launch) {
-    return {
-        jobRootDir: launch.config.jobRootDir,
-        taskId: launch.config.taskId,
-        ...(launch.config.outputPath ? { resultPath: launch.config.outputPath } : {}),
-        workspacePath: launch.config.workspacePath,
-        ...(launch.tmuxSession ? { tmuxSession: launch.tmuxSession } : {}),
-        logPath: launch.logPath,
-        ...(launch.config.progressPath ? { progressPath: launch.config.progressPath } : {}),
-        ...(launch.config.accessBoundary === undefined
-            ? {}
-            : { accessBoundary: launch.config.accessBoundary }),
     };
 }
 function launchSummary(launch) {

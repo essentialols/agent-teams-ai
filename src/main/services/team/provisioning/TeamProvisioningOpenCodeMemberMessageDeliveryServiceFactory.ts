@@ -13,6 +13,8 @@ import {
   stampOpenCodeAppMcpTransportEvidenceIfMissing,
 } from './TeamProvisioningOpenCodeBootstrapEvidence';
 
+import type { TeamProvisioningOpenCodeStoppedLaneCleanupBoundary } from './TeamProvisioningOpenCodeStoppedLaneCleanupBoundary';
+
 export interface OpenCodeRuntimeBootstrapEvidencePortsFactoryInput {
   teamsBasePath: string;
   warn(message: string): void;
@@ -45,7 +47,10 @@ export interface TeamProvisioningOpenCodeMemberMessageDeliveryHost {
   tryRecoverOpenCodeRuntimeLaneBeforeDelivery: OpenCodeMemberMessageDeliveryFactoryPorts['tryRecoverOpenCodeRuntimeLaneBeforeDelivery'];
   tryRecoverOpenCodeRuntimeLaneFromCommittedSessionBeforeDelivery: OpenCodeMemberMessageDeliveryFactoryPorts['tryRecoverOpenCodeRuntimeLaneFromCommittedSessionBeforeDelivery'];
   deleteSecondaryRuntimeRun: OpenCodeMemberMessageDeliveryFactoryPorts['deleteSecondaryRuntimeRun'];
-  cleanupStoppedTeamOpenCodeRuntimeLanesInBackground: OpenCodeMemberMessageDeliveryFactoryPorts['cleanupStoppedTeamOpenCodeRuntimeLanesInBackground'];
+  openCodeStoppedLaneCleanup: Pick<
+    TeamProvisioningOpenCodeStoppedLaneCleanupBoundary,
+    'cleanupStoppedTeamOpenCodeRuntimeLanesInBackground'
+  >;
   createOpenCodeRuntimeBootstrapEvidencePorts(): OpenCodeRuntimeBootstrapEvidencePorts;
   providerRuntime: {
     resolveControlApiBaseUrl: OpenCodeMemberMessageDeliveryFactoryPorts['resolveControlApiBaseUrl'];
@@ -130,7 +135,7 @@ export function createOpenCodeMemberMessageDeliveryServiceFromHost(
     deleteSecondaryRuntimeRun: (teamName, laneId) =>
       host.deleteSecondaryRuntimeRun(teamName, laneId),
     cleanupStoppedTeamOpenCodeRuntimeLanesInBackground: (teamName) =>
-      host.cleanupStoppedTeamOpenCodeRuntimeLanesInBackground(teamName),
+      host.openCodeStoppedLaneCleanup.cleanupStoppedTeamOpenCodeRuntimeLanesInBackground(teamName),
     createOpenCodeRuntimeBootstrapEvidencePorts: () =>
       host.createOpenCodeRuntimeBootstrapEvidencePorts(),
     resolveControlApiBaseUrl: () => host.providerRuntime.resolveControlApiBaseUrl(),
@@ -198,8 +203,7 @@ export function createTeamProvisioningOpenCodeMemberMessageDeliveryHostFromServi
       service.tryRecoverOpenCodeRuntimeLaneFromCommittedSessionBeforeDelivery(input),
     deleteSecondaryRuntimeRun: (teamName, laneId) =>
       service.deleteSecondaryRuntimeRun(teamName, laneId),
-    cleanupStoppedTeamOpenCodeRuntimeLanesInBackground: (teamName) =>
-      service.cleanupStoppedTeamOpenCodeRuntimeLanesInBackground(teamName),
+    openCodeStoppedLaneCleanup: service.openCodeStoppedLaneCleanup,
     createOpenCodeRuntimeBootstrapEvidencePorts: () =>
       service.createOpenCodeRuntimeBootstrapEvidencePorts(),
     providerRuntime: {

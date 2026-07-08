@@ -109,7 +109,9 @@ describe('TeamProvisioningOpenCodeMemberMessageDeliveryServiceFactory', () => {
       tryRecoverOpenCodeRuntimeLaneBeforeDelivery: vi.fn(),
       tryRecoverOpenCodeRuntimeLaneFromCommittedSessionBeforeDelivery: vi.fn(),
       deleteSecondaryRuntimeRun: vi.fn(),
-      cleanupStoppedTeamOpenCodeRuntimeLanesInBackground: vi.fn(),
+      openCodeStoppedLaneCleanup: {
+        cleanupStoppedTeamOpenCodeRuntimeLanesInBackground: vi.fn(),
+      },
     } as unknown as TeamProvisioningOpenCodeMemberMessageDeliveryServiceHost;
 
     const host = createTeamProvisioningOpenCodeMemberMessageDeliveryHostFromService(service);

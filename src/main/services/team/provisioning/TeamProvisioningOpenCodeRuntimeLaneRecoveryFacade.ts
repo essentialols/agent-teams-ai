@@ -13,13 +13,19 @@ import {
   tryRecoverOpenCodeRuntimeLanesForDeliveryWatchdog as tryRecoverOpenCodeRuntimeLanesForDeliveryWatchdogHelper,
 } from './TeamProvisioningOpenCodeRuntimeRecoveryFlow';
 
+import type { TeamProvisioningOpenCodeStoppedLaneCleanupBoundary } from './TeamProvisioningOpenCodeStoppedLaneCleanupBoundary';
+
 export type TeamProvisioningOpenCodeRuntimeLaneRecoveryFacadeHost =
   TeamProvisioningOpenCodeRuntimeLaneRecoveryPortsFactoryHost;
 
 export interface TeamProvisioningOpenCodeRuntimeLaneRecoveryFacadeServiceHost extends Omit<
   TeamProvisioningOpenCodeRuntimeLaneRecoveryFacadeHost,
-  'readConfigForObservation'
+  'cleanupStoppedTeamOpenCodeRuntimeLanesInBackground' | 'readConfigForObservation'
 > {
+  openCodeStoppedLaneCleanup: Pick<
+    TeamProvisioningOpenCodeStoppedLaneCleanupBoundary,
+    'cleanupStoppedTeamOpenCodeRuntimeLanesInBackground'
+  >;
   configFacade: {
     readConfigForObservation: TeamProvisioningOpenCodeRuntimeLaneRecoveryFacadeHost['readConfigForObservation'];
   };
@@ -138,7 +144,9 @@ export function createTeamProvisioningOpenCodeRuntimeLaneRecoveryFacadeHostFromS
   return {
     runTracking: service.runTracking,
     cleanupStoppedTeamOpenCodeRuntimeLanesInBackground: (teamName) =>
-      service.cleanupStoppedTeamOpenCodeRuntimeLanesInBackground(teamName),
+      service.openCodeStoppedLaneCleanup.cleanupStoppedTeamOpenCodeRuntimeLanesInBackground(
+        teamName
+      ),
     launchStateStore: service.launchStateStore,
     openCodeRuntimeRecoveryBoundary: service.openCodeRuntimeRecoveryBoundary,
     readOpenCodeMemberDirectory: (teamName) => service.readOpenCodeMemberDirectory(teamName),

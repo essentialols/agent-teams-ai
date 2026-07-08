@@ -17,12 +17,20 @@ describe('TeamProvisioningOpenCodeRuntimeLaneRecoveryFacade', () => {
     const capturedPorts: OpenCodeRuntimeLaneRecoveryPorts[] = [];
     const helpers = createHelpers(capturedPorts);
     const host = createHost();
-    const { readConfigForObservation: _readConfigForObservation, ...hostWithoutConfig } = host;
+    const {
+      cleanupStoppedTeamOpenCodeRuntimeLanesInBackground,
+      readConfigForObservation: _readConfigForObservation,
+      ...hostWithoutConfig
+    } = host;
     const configFacade = {
       readConfigForObservation: vi.fn(async () => null),
     };
+    const openCodeStoppedLaneCleanup = {
+      cleanupStoppedTeamOpenCodeRuntimeLanesInBackground,
+    };
     const service = {
       ...hostWithoutConfig,
+      openCodeStoppedLaneCleanup,
       configFacade,
     } satisfies TeamProvisioningOpenCodeRuntimeLaneRecoveryFacadeServiceHost;
     const facade = createTeamProvisioningOpenCodeRuntimeLaneRecoveryFacadeFromService(service, {
@@ -47,9 +55,9 @@ describe('TeamProvisioningOpenCodeRuntimeLaneRecoveryFacade', () => {
     await expect(firstPorts.readConfigForObservation('alpha')).resolves.toBeNull();
     expect(configFacade.readConfigForObservation).toHaveBeenCalledWith('alpha');
     firstPorts.cleanupStoppedTeamOpenCodeRuntimeLanesInBackground('alpha');
-    expect(service.cleanupStoppedTeamOpenCodeRuntimeLanesInBackground).toHaveBeenCalledWith(
-      'alpha'
-    );
+    expect(
+      service.openCodeStoppedLaneCleanup.cleanupStoppedTeamOpenCodeRuntimeLanesInBackground
+    ).toHaveBeenCalledWith('alpha');
   });
 
   it('delegates recovery operations through TeamProvisioning lane recovery ports', async () => {

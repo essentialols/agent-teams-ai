@@ -24,7 +24,6 @@ import {
   getTasksBasePath,
   getTeamsBasePath,
 } from '@main/utils/pathDecoder';
-import { killProcessByPid } from '@main/utils/processKill';
 import { resolveLanguageName } from '@shared/utils/agentLanguage';
 import { getErrorMessage } from '@shared/utils/errorHandling';
 import { type ParsedPermissionRequest, type PermissionSuggestion } from '@shared/utils/inboxNoise';
@@ -391,15 +390,7 @@ import {
   getOpenCodeSecondaryBootstrapPendingMemberNames as getOpenCodeSecondaryBootstrapPendingMemberNamesHelper,
   isRecoverablePersistedOpenCodeTerminalRuntimeCandidate,
 } from './provisioning/TeamProvisioningOpenCodeRuntimeEvidencePolicy';
-import {
-  cleanupStoppedTeamOpenCodeRuntimeLanesInBackground as cleanupStoppedTeamOpenCodeRuntimeLanesInBackgroundHelper,
-  hasAlivePersistedTeamProcess as hasAlivePersistedTeamProcessHelper,
-  hasOnlyExplicitlyStoppedPersistedTeamProcesses as hasOnlyExplicitlyStoppedPersistedTeamProcessesHelper,
-  readProcessCommandByPid as readOpenCodeRuntimeLaneProcessCommandByPid,
-  stopOpenCodeRuntimeLanesForStoppedTeam as stopOpenCodeRuntimeLanesForStoppedTeamHelper,
-  stopOpenCodeRuntimeLanesForStoppedTeamOnce,
-  tryStopPersistedOpenCodeRuntimePidForStoppedLane as tryStopPersistedOpenCodeRuntimePidForStoppedLaneHelper,
-} from './provisioning/TeamProvisioningOpenCodeRuntimeLaneCleanup';
+import { readProcessCommandByPid as readOpenCodeRuntimeLaneProcessCommandByPid } from './provisioning/TeamProvisioningOpenCodeRuntimeLaneCleanup';
 import {
   createTeamProvisioningOpenCodeRuntimeLaneRecoveryFacadeFromService,
   TeamProvisioningOpenCodeRuntimeLaneRecoveryFacade,
@@ -423,6 +414,10 @@ import { resolveOpenCodeRuntimeLaneId as resolveOpenCodeRuntimeLaneIdHelper } fr
 import { createOpenCodeRuntimeRecoveryIdentityHelpers } from './provisioning/TeamProvisioningOpenCodeRuntimeRecoveryIdentity';
 import { createTeamProvisioningOpenCodeSecondaryBriefingBuilder } from './provisioning/TeamProvisioningOpenCodeSecondaryBriefingBuilder';
 import { createTeamProvisioningOpenCodeSecondaryEvidenceOverlayPorts } from './provisioning/TeamProvisioningOpenCodeSecondaryEvidenceOverlayPortsFactory';
+import {
+  createTeamProvisioningOpenCodeStoppedLaneCleanupBoundary,
+  type TeamProvisioningOpenCodeStoppedLaneCleanupBoundary,
+} from './provisioning/TeamProvisioningOpenCodeStoppedLaneCleanupBoundary';
 import { writeOpenCodeTeamConfig } from './provisioning/TeamProvisioningOpenCodeTeamConfigWriter';
 import {
   isAuthFailureWarning,
@@ -842,9 +837,10 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
     ports: {
       notifyTeamWatchScopeChanged,
       isTeamAlive: (teamName) => this.isTeamAlive(teamName),
-      hasAlivePersistedTeamProcess: (teamName) => this.hasAlivePersistedTeamProcess(teamName),
+      hasAlivePersistedTeamProcess: (teamName) =>
+        this.openCodeStoppedLaneCleanup.hasAlivePersistedTeamProcess(teamName),
       hasOnlyExplicitlyStoppedPersistedTeamProcesses: (teamName) =>
-        this.hasOnlyExplicitlyStoppedPersistedTeamProcesses(teamName),
+        this.openCodeStoppedLaneCleanup.hasOnlyExplicitlyStoppedPersistedTeamProcesses(teamName),
       logDebug: (message) => logger.debug(message),
     },
     liveRuntimeSnapshotCacheTtlMs: 2_000,
@@ -1296,8 +1292,34 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
     return this.appShellBoundary.getRuntimeTurnSettledEnvironmentProvider();
   }
 
-  private readonly stoppedTeamOpenCodeRuntimeCleanupInFlight = new Map<string, Promise<number>>();
   private readonly cleanedStoppedTeamOpenCodeRuntimeLanes = new Set<string>();
+  private readonly openCodeStoppedLaneCleanup: TeamProvisioningOpenCodeStoppedLaneCleanupBoundary =
+    createTeamProvisioningOpenCodeStoppedLaneCleanupBoundary(
+      {
+        canDeliverToOpenCodeRuntimeForTeam: (teamName) =>
+          this.runTracking.canDeliverToOpenCodeRuntimeForTeam(teamName),
+        getOpenCodeRuntimeAdapter: () => this.appShellBoundary.getOpenCodeRuntimeAdapter(),
+        readPreviousLaunchState: (teamName) => this.launchStateStore.read(teamName),
+        readConfigForObservation: (teamName) =>
+          this.configFacade.readConfigForObservation(teamName),
+        readMembersMeta: (teamName) => this.membersMetaStore.getMembers(teamName),
+        readPersistedTeamProjectPath: (teamName) => this.readPersistedTeamProjectPath(teamName),
+        deleteSecondaryRuntimeRun: (teamName, laneId) =>
+          this.deleteSecondaryRuntimeRun(teamName, laneId),
+        clearPrimaryRuntimeRun: (teamName) => {
+          this.runtimeAdapterRunByTeam.delete(teamName);
+          this.runTracking.deleteAliveRunId(teamName);
+          this.provisioningRunByTeam.delete(teamName);
+          this.invalidateRuntimeSnapshotCaches(teamName);
+        },
+        markStoppedTeamOpenCodeRuntimeLanesCleaned: (teamName) => {
+          this.cleanedStoppedTeamOpenCodeRuntimeLanes.add(teamName);
+        },
+        logInfo: (message) => logger.info(message),
+        logWarning: (message) => logger.warn(message),
+      },
+      { getTeamsBasePath }
+    );
   private readonly openCodeMemberInboxRelayHost =
     createTeamProvisioningOpenCodeMemberInboxRelayHostFromService(
       this as unknown as TeamProvisioningOpenCodeMemberInboxRelayServiceHost
@@ -1585,7 +1607,7 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
         recoverRuntimeLanesForWatchdog: (teamName, options) =>
           this.tryRecoverOpenCodeRuntimeLanesForDeliveryWatchdog(teamName, options),
         stopRuntimeLanesForStoppedTeam: (teamName) =>
-          this.stopOpenCodeRuntimeLanesForStoppedTeam(teamName),
+          this.openCodeStoppedLaneCleanup.stopOpenCodeRuntimeLanesForStoppedTeam(teamName),
         readActiveRuntimeLaneIds: async (teamName) => {
           const laneIndex = await readOpenCodeRuntimeLaneIndex(getTeamsBasePath(), teamName).catch(
             () => null
@@ -1990,77 +2012,6 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
    */
   getAliveTeamNames(): string[] {
     return this.runTracking.getAliveTeamNames();
-  }
-
-  private hasAlivePersistedTeamProcess(teamName: string): boolean {
-    return hasAlivePersistedTeamProcessHelper({
-      teamsBasePath: getTeamsBasePath(),
-      teamName,
-    });
-  }
-
-  private hasOnlyExplicitlyStoppedPersistedTeamProcesses(teamName: string): boolean {
-    return hasOnlyExplicitlyStoppedPersistedTeamProcessesHelper({
-      teamsBasePath: getTeamsBasePath(),
-      teamName,
-    });
-  }
-
-  private cleanupStoppedTeamOpenCodeRuntimeLanesInBackground(teamName: string): void {
-    cleanupStoppedTeamOpenCodeRuntimeLanesInBackgroundHelper({
-      teamName,
-      stopOpenCodeRuntimeLanesForStoppedTeam: (candidateTeamName) =>
-        this.stopOpenCodeRuntimeLanesForStoppedTeam(candidateTeamName),
-      logWarning: (message) => logger.warn(message),
-    });
-  }
-
-  private stopOpenCodeRuntimeLanesForStoppedTeam(teamName: string): Promise<number> {
-    return stopOpenCodeRuntimeLanesForStoppedTeamOnce({
-      teamName,
-      inFlight: this.stoppedTeamOpenCodeRuntimeCleanupInFlight,
-      stopInternal: (candidateTeamName) =>
-        this.stopOpenCodeRuntimeLanesForStoppedTeamInternal(candidateTeamName),
-    });
-  }
-
-  private async stopOpenCodeRuntimeLanesForStoppedTeamInternal(teamName: string): Promise<number> {
-    return stopOpenCodeRuntimeLanesForStoppedTeamHelper({
-      teamName,
-      teamsBasePath: getTeamsBasePath(),
-      ports: {
-        canDeliverToOpenCodeRuntimeForTeam: (candidateTeamName) =>
-          this.runTracking.canDeliverToOpenCodeRuntimeForTeam(candidateTeamName),
-        getOpenCodeRuntimeAdapter: () => this.appShellBoundary.getOpenCodeRuntimeAdapter(),
-        readPreviousLaunchState: (candidateTeamName) =>
-          this.launchStateStore.read(candidateTeamName),
-        readConfigForObservation: (candidateTeamName) =>
-          this.configFacade.readConfigForObservation(candidateTeamName),
-        readMembersMeta: (candidateTeamName) => this.membersMetaStore.getMembers(candidateTeamName),
-        readPersistedTeamProjectPath: (candidateTeamName) =>
-          this.readPersistedTeamProjectPath(candidateTeamName),
-        tryStopPersistedOpenCodeRuntimePidForStoppedLane: (input) =>
-          tryStopPersistedOpenCodeRuntimePidForStoppedLaneHelper(input, {
-            readProcessCommandByPid: readOpenCodeRuntimeLaneProcessCommandByPid,
-            isOpenCodeServeCommand,
-            killProcessByPid,
-            logInfo: (message) => logger.info(message),
-            logWarning: (message) => logger.warn(message),
-          }),
-        deleteSecondaryRuntimeRun: (candidateTeamName, laneId) =>
-          this.deleteSecondaryRuntimeRun(candidateTeamName, laneId),
-        clearPrimaryRuntimeRun: (candidateTeamName) => {
-          this.runtimeAdapterRunByTeam.delete(candidateTeamName);
-          this.runTracking.deleteAliveRunId(candidateTeamName);
-          this.provisioningRunByTeam.delete(candidateTeamName);
-          this.invalidateRuntimeSnapshotCaches(candidateTeamName);
-        },
-        markStoppedTeamOpenCodeRuntimeLanesCleaned: (candidateTeamName) => {
-          this.cleanedStoppedTeamOpenCodeRuntimeLanes.add(candidateTeamName);
-        },
-        logWarning: (message) => logger.warn(message),
-      },
-    });
   }
 
   async resolveRuntimeRecipientProviderId(

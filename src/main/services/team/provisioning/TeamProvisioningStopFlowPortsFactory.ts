@@ -17,6 +17,11 @@ type RuntimeAdapterProgressMap<TRun extends TeamProvisioningStopRun> =
   OpenCodeRuntimeStopFlowPorts['runtimeAdapterProgressByRunId'] &
     TeamProvisioningStopTeamPorts<TRun>['runtimeAdapterProgressByRunId'];
 
+type PersistentRuntimeCleanupPort<TRun extends TeamProvisioningStopRun> = Pick<
+  TeamProvisioningStopTeamPorts<TRun>,
+  'stopPersistentTeamMembers' | 'cleanupAnthropicApiKeyHelperMaterialForStoppedTeam'
+>;
+
 export interface TeamProvisioningStopFlowFactoryDeps<TRun extends TeamProvisioningStopRun> {
   getTeamsBasePath(): string;
   getSecondaryRuntimeRuns: OpenCodeRuntimeStopFlowPorts['getSecondaryRuntimeRuns'];
@@ -39,11 +44,10 @@ export interface TeamProvisioningStopFlowFactoryDeps<TRun extends TeamProvisioni
   provisioningRunByTeam: TeamProvisioningStopTeamPorts<TRun>['provisioningRunByTeam'];
   invalidateRuntimeSnapshotCaches: OpenCodeRuntimeStopFlowPorts['invalidateRuntimeSnapshotCaches'];
   pauseActiveIntervalsForTeam: TeamProvisioningStopTeamPorts<TRun>['pauseActiveIntervalsForTeam'];
-  stopPersistentTeamMembers: TeamProvisioningStopTeamPorts<TRun>['stopPersistentTeamMembers'];
+  persistentRuntimeCleanup: PersistentRuntimeCleanupPort<TRun>;
   openCodeRuntimeDeliveryAdvisory: TeamProvisioningStopTeamPorts<TRun>['openCodeRuntimeDeliveryAdvisory'];
   isCancellableRuntimeAdapterProgress: TeamProvisioningStopTeamPorts<TRun>['isCancellableRuntimeAdapterProgress'];
   cancelRuntimeAdapterProvisioning: TeamProvisioningStopTeamPorts<TRun>['cancelRuntimeAdapterProvisioning'];
-  cleanupAnthropicApiKeyHelperMaterialForStoppedTeam: TeamProvisioningStopTeamPorts<TRun>['cleanupAnthropicApiKeyHelperMaterialForStoppedTeam'];
   withTeamLock: TeamProvisioningStopTeamPorts<TRun>['withTeamLock'];
   hasSecondaryRuntimeRuns: TeamProvisioningStopTeamPorts<TRun>['hasSecondaryRuntimeRuns'];
   killTeamProcess: TeamProvisioningStopTeamPorts<TRun>['killTeamProcess'];
@@ -91,13 +95,12 @@ export interface TeamProvisioningStopFlowServiceHost<TRun extends TeamProvisioni
   taskActivityIntervalService: {
     pauseActiveIntervalsForTeam: TeamProvisioningStopFlowFactoryDeps<TRun>['pauseActiveIntervalsForTeam'];
   };
-  stopPersistentTeamMembers: TeamProvisioningStopFlowFactoryDeps<TRun>['stopPersistentTeamMembers'];
+  persistentRuntimeCleanup: TeamProvisioningStopFlowFactoryDeps<TRun>['persistentRuntimeCleanup'];
   openCodeRuntimeDeliveryAdvisory: TeamProvisioningStopFlowFactoryDeps<TRun>['openCodeRuntimeDeliveryAdvisory'];
   cancellationBoundary: Pick<
     TeamProvisioningStopFlowFactoryDeps<TRun>,
     'isCancellableRuntimeAdapterProgress' | 'cancelRuntimeAdapterProvisioning'
   >;
-  cleanupAnthropicApiKeyHelperMaterialForStoppedTeam: TeamProvisioningStopFlowFactoryDeps<TRun>['cleanupAnthropicApiKeyHelperMaterialForStoppedTeam'];
   withTeamLock: TeamProvisioningStopFlowFactoryDeps<TRun>['withTeamLock'];
   hasSecondaryRuntimeRuns: TeamProvisioningStopFlowFactoryDeps<TRun>['hasSecondaryRuntimeRuns'];
   cleanupRun: TeamProvisioningStopFlowFactoryDeps<TRun>['cleanupRun'];
@@ -145,14 +148,12 @@ export function createTeamProvisioningStopFlowDepsFromService<TRun extends TeamP
       service.invalidateRuntimeSnapshotCaches(teamName),
     pauseActiveIntervalsForTeam: (teamName) =>
       service.taskActivityIntervalService.pauseActiveIntervalsForTeam(teamName),
-    stopPersistentTeamMembers: (teamName) => service.stopPersistentTeamMembers(teamName),
+    persistentRuntimeCleanup: service.persistentRuntimeCleanup,
     openCodeRuntimeDeliveryAdvisory: service.openCodeRuntimeDeliveryAdvisory,
     isCancellableRuntimeAdapterProgress: (progress) =>
       service.cancellationBoundary.isCancellableRuntimeAdapterProgress(progress),
     cancelRuntimeAdapterProvisioning: (runId, progress) =>
       service.cancellationBoundary.cancelRuntimeAdapterProvisioning(runId, progress),
-    cleanupAnthropicApiKeyHelperMaterialForStoppedTeam: (teamName) =>
-      service.cleanupAnthropicApiKeyHelperMaterialForStoppedTeam(teamName),
     withTeamLock: (teamName, fn) => service.withTeamLock(teamName, fn),
     hasSecondaryRuntimeRuns: (teamName) => service.hasSecondaryRuntimeRuns(teamName),
     killTeamProcess: (child) => options.killTeamProcess(child),
@@ -200,7 +201,8 @@ export function createTeamProvisioningStopTeamPortsFromDeps<TRun extends TeamPro
   return {
     invalidateRuntimeSnapshotCaches: (teamName) => deps.invalidateRuntimeSnapshotCaches(teamName),
     pauseActiveIntervalsForTeam: (teamName) => deps.pauseActiveIntervalsForTeam(teamName),
-    stopPersistentTeamMembers: (teamName) => deps.stopPersistentTeamMembers(teamName),
+    stopPersistentTeamMembers: (teamName) =>
+      deps.persistentRuntimeCleanup.stopPersistentTeamMembers(teamName),
     openCodeRuntimeDeliveryAdvisory: deps.openCodeRuntimeDeliveryAdvisory,
     getTrackedRunId: (teamName) => deps.getTrackedRunId(teamName),
     getAliveRunId: (teamName) => deps.getAliveRunId(teamName),
@@ -211,7 +213,7 @@ export function createTeamProvisioningStopTeamPortsFromDeps<TRun extends TeamPro
     cancelRuntimeAdapterProvisioning: (runId, progress) =>
       deps.cancelRuntimeAdapterProvisioning(runId, progress),
     cleanupAnthropicApiKeyHelperMaterialForStoppedTeam: (teamName) =>
-      deps.cleanupAnthropicApiKeyHelperMaterialForStoppedTeam(teamName),
+      deps.persistentRuntimeCleanup.cleanupAnthropicApiKeyHelperMaterialForStoppedTeam(teamName),
     runtimeAdapterRunByTeam: deps.runtimeAdapterRunByTeam,
     withTeamLock: (teamName, fn) => deps.withTeamLock(teamName, fn),
     stopOpenCodeRuntimeAdapterTeam: (teamName, runId) =>

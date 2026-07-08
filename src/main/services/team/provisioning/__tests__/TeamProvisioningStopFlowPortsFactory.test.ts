@@ -127,11 +127,13 @@ function createDeps(
     provisioningRunByTeam,
     invalidateRuntimeSnapshotCaches: vi.fn(),
     pauseActiveIntervalsForTeam: vi.fn(),
-    stopPersistentTeamMembers: vi.fn(),
+    persistentRuntimeCleanup: {
+      stopPersistentTeamMembers: vi.fn(),
+      cleanupAnthropicApiKeyHelperMaterialForStoppedTeam: vi.fn(),
+    },
     openCodeRuntimeDeliveryAdvisory: { cancelTeam: vi.fn() },
     isCancellableRuntimeAdapterProgress: vi.fn(() => false),
     cancelRuntimeAdapterProvisioning: vi.fn(),
-    cleanupAnthropicApiKeyHelperMaterialForStoppedTeam: vi.fn(),
     withTeamLock: vi.fn(async (_teamName, fn) => fn()),
     hasSecondaryRuntimeRuns: vi.fn(() => false),
     killTeamProcess: vi.fn((child) => {
@@ -197,14 +199,16 @@ describe('TeamProvisioningStopFlowPortsFactory', () => {
       taskActivityIntervalService: {
         pauseActiveIntervalsForTeam: deps.pauseActiveIntervalsForTeam,
       },
-      stopPersistentTeamMembers: deps.stopPersistentTeamMembers,
+      persistentRuntimeCleanup: {
+        stopPersistentTeamMembers: deps.persistentRuntimeCleanup.stopPersistentTeamMembers,
+        cleanupAnthropicApiKeyHelperMaterialForStoppedTeam:
+          deps.persistentRuntimeCleanup.cleanupAnthropicApiKeyHelperMaterialForStoppedTeam,
+      },
       openCodeRuntimeDeliveryAdvisory: deps.openCodeRuntimeDeliveryAdvisory,
       cancellationBoundary: {
         isCancellableRuntimeAdapterProgress: deps.isCancellableRuntimeAdapterProgress,
         cancelRuntimeAdapterProvisioning: deps.cancelRuntimeAdapterProvisioning,
       },
-      cleanupAnthropicApiKeyHelperMaterialForStoppedTeam:
-        deps.cleanupAnthropicApiKeyHelperMaterialForStoppedTeam,
       withTeamLock: deps.withTeamLock,
       hasSecondaryRuntimeRuns: deps.hasSecondaryRuntimeRuns,
       cleanupRun: deps.cleanupRun,
@@ -291,7 +295,7 @@ describe('TeamProvisioningStopFlowPortsFactory', () => {
 
     expect(deps.invalidateRuntimeSnapshotCaches).toHaveBeenCalledWith(teamName);
     expect(deps.pauseActiveIntervalsForTeam).toHaveBeenCalledWith(teamName);
-    expect(deps.stopPersistentTeamMembers).toHaveBeenCalledWith(teamName);
+    expect(deps.persistentRuntimeCleanup.stopPersistentTeamMembers).toHaveBeenCalledWith(teamName);
     expect(deps.openCodeRuntimeDeliveryAdvisory.cancelTeam).toHaveBeenCalledWith(teamName);
     expect(deps.killTeamProcess).toHaveBeenCalledWith(run.child);
     expect(run.processKilled).toBe(true);
@@ -304,7 +308,9 @@ describe('TeamProvisioningStopFlowPortsFactory', () => {
       })
     );
     expect(deps.cleanupRun).toHaveBeenCalledWith(run);
-    expect(deps.cleanupAnthropicApiKeyHelperMaterialForStoppedTeam).toHaveBeenCalledWith(teamName);
+    expect(
+      deps.persistentRuntimeCleanup.cleanupAnthropicApiKeyHelperMaterialForStoppedTeam
+    ).toHaveBeenCalledWith(teamName);
   });
 
   it('routes missing tracked OpenCode runtime runs to adapter stop ports', async () => {
@@ -358,6 +364,8 @@ describe('TeamProvisioningStopFlowPortsFactory', () => {
       runId,
       detail: 'stopped',
     });
-    expect(deps.cleanupAnthropicApiKeyHelperMaterialForStoppedTeam).toHaveBeenCalledWith(teamName);
+    expect(
+      deps.persistentRuntimeCleanup.cleanupAnthropicApiKeyHelperMaterialForStoppedTeam
+    ).toHaveBeenCalledWith(teamName);
   });
 });

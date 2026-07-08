@@ -435,6 +435,7 @@ import {
 } from './provisioning/TeamProvisioningOutputRecoveryFacade';
 import { reconcilePersistedLaunchStateWithTeamProvisioningPorts } from './provisioning/TeamProvisioningPersistedLaunchReconcilePorts';
 import { type PersistedTeamConfigCacheEntry } from './provisioning/TeamProvisioningPersistedTeamConfigAccess';
+import { createTeamProvisioningPersistentRuntimeCleanup } from './provisioning/TeamProvisioningPersistentRuntimeCleanup';
 import {
   createTeamProvisioningPrepareFacadeFromService,
   TeamProvisioningPrepareFacade,
@@ -538,10 +539,7 @@ import {
   createDefaultTeamProvisioningRuntimeResourceSampling,
   DEFAULT_RUNTIME_RESOURCE_SAMPLING_OPTIONS,
 } from './provisioning/TeamProvisioningRuntimeResourceSamplingFactory';
-import {
-  attachLiveRuntimeMetadataToStatuses as attachLiveRuntimeMetadataToStatusesHelper,
-  type PersistedRuntimeMemberLike,
-} from './provisioning/TeamProvisioningRuntimeSnapshot';
+import { attachLiveRuntimeMetadataToStatuses as attachLiveRuntimeMetadataToStatusesHelper } from './provisioning/TeamProvisioningRuntimeSnapshot';
 import { TeamProvisioningRuntimeSnapshotCacheBoundary } from './provisioning/TeamProvisioningRuntimeSnapshotCache';
 import {
   createRuntimeToolActivityHandlerPortsFromService,
@@ -578,10 +576,7 @@ import {
   type TeamProvisioningServiceMemberLifecycleHostPortGroups,
 } from './provisioning/TeamProvisioningServiceMemberLifecycleHostPortGroups';
 import { createTeamProvisioningShutdownCoordination } from './provisioning/TeamProvisioningShutdownCoordination';
-import {
-  stopAllTeamsFlow,
-  stopPersistentTeamMembersFlow,
-} from './provisioning/TeamProvisioningStopFlow';
+import { stopAllTeamsFlow } from './provisioning/TeamProvisioningStopFlow';
 import {
   createTeamProvisioningStopFlowBoundary,
   createTeamProvisioningStopFlowDepsFromService,
@@ -589,8 +584,8 @@ import {
 } from './provisioning/TeamProvisioningStopFlowPortsFactory';
 import { createNodeStopPrimaryOwnedRosterRuntimeUseCase } from './provisioning/TeamProvisioningStopPrimaryOwnedRosterRuntimeUseCase';
 import {
-  killOrphanedTeamAgentProcesses as killOrphanedTeamAgentProcessesHelper,
-  killPersistedPaneMembers as killPersistedPaneMembersHelper,
+  killOrphanedTeamAgentProcesses,
+  killPersistedPaneMembers,
 } from './provisioning/TeamProvisioningStopProcessCleanup';
 import {
   createTeamProvisioningStreamEventPortsBoundary,
@@ -1132,6 +1127,20 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
       )
     );
   private readonly sameTeamNativeDelivery: TeamProvisioningSameTeamNativeDelivery;
+  private readonly persistentRuntimeCleanup = createTeamProvisioningPersistentRuntimeCleanup({
+    readPersistedRuntimeMembers: (teamName) => this.readPersistedRuntimeMembers(teamName),
+    killPersistedPaneMembers: (teamName, members) =>
+      killPersistedPaneMembers(teamName, members, logger),
+    killOrphanedTeamAgentProcesses: (teamName, currentRunPid) =>
+      killOrphanedTeamAgentProcesses({ teamName, currentRunPid, logger }),
+    getCurrentRunPid: (teamName) => {
+      const currentRunId = this.runTracking.getTrackedRunId(teamName);
+      return currentRunId ? this.runs.get(currentRunId)?.child?.pid : undefined;
+    },
+    cleanupAnthropicTeamApiKeyHelperForTeam,
+    getClaudeBasePath,
+    logger,
+  });
   private readonly agentRuntimeSnapshotCache = new Map<
     string,
     { expiresAtMs: number; snapshot: TeamAgentRuntimeSnapshot }
@@ -4555,43 +4564,6 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
     await this.stopFlowBoundary.stopOpenCodeRuntimeAdapterTeam(teamName, runId);
   }
 
-  private stopPersistentTeamMembers(teamName: string): void {
-    stopPersistentTeamMembersFlow(teamName, {
-      readPersistedRuntimeMembers: (teamName) => this.readPersistedRuntimeMembers(teamName),
-      killPersistedPaneMembers: (teamName, members) =>
-        this.killPersistedPaneMembers(teamName, members),
-      killOrphanedTeamAgentProcesses: (teamName) => this.killOrphanedTeamAgentProcesses(teamName),
-    });
-  }
-
-  private async cleanupAnthropicApiKeyHelperMaterialForStoppedTeam(
-    teamName: string
-  ): Promise<void> {
-    try {
-      await cleanupAnthropicTeamApiKeyHelperForTeam({
-        teamName,
-        baseClaudeDir: getClaudeBasePath(),
-      });
-    } catch (error) {
-      logger.warn(
-        `[${teamName}] Failed to cleanup Anthropic team API-key helper material: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
-    }
-  }
-
-  private killPersistedPaneMembers(teamName: string, members: PersistedRuntimeMemberLike[]): void {
-    killPersistedPaneMembersHelper(teamName, members, logger);
-  }
-
-  private killOrphanedTeamAgentProcesses(teamName: string): void {
-    const currentRunPid = this.runTracking.getTrackedRunId(teamName)
-      ? this.runs.get(this.runTracking.getTrackedRunId(teamName)!)?.child?.pid
-      : undefined;
-    killOrphanedTeamAgentProcessesHelper({ teamName, currentRunPid, logger });
-  }
-
   /**
    * Stop all running team processes. Called during app shutdown.
    * Uses killTeamProcess() (SIGKILL) to guarantee instant death
@@ -4615,9 +4587,10 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
       waitForInFlightTeamOperationsForShutdown: () =>
         this.shutdownCoordination.waitForInFlightTeamOperationsForShutdown(),
       listPersistedTeamNames: () => this.configFacade.listPersistedTeamNames(),
-      stopPersistentTeamMembers: (teamName) => this.stopPersistentTeamMembers(teamName),
+      stopPersistentTeamMembers: (teamName) =>
+        this.persistentRuntimeCleanup.stopPersistentTeamMembers(teamName),
       cleanupAnthropicApiKeyHelperMaterialForStoppedTeam: (teamName) =>
-        this.cleanupAnthropicApiKeyHelperMaterialForStoppedTeam(teamName),
+        this.persistentRuntimeCleanup.cleanupAnthropicApiKeyHelperMaterialForStoppedTeam(teamName),
       logger,
     });
   }
@@ -4633,6 +4606,7 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
   private getStreamJsonEventPorts(): TeamProvisioningStreamEventPorts<ProvisioningRun> {
     return createTeamProvisioningStreamEventPortsBoundary({
       service: this as TeamProvisioningStreamEventServiceAdapter<ProvisioningRun>,
+      persistentRuntimeCleanup: this.persistentRuntimeCleanup,
       outputRecovery: this.outputRecoveryFacade,
       updateProgress,
       emitTeamChange: (event) => this.teamChangeEmitter?.(event),

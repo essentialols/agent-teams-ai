@@ -66,6 +66,8 @@ export function sanitizeTaskStallJournalEntries(value: unknown): TaskStallJourna
       ...(typeof entry.memberName === 'string' && entry.memberName.trim()
         ? { memberName: entry.memberName }
         : {}),
-      ...(entry.alertedAt ? { alertedAt: entry.alertedAt } : {}),
+      ...(typeof entry.alertedAt === 'string' && entry.alertedAt
+        ? { alertedAt: entry.alertedAt }
+        : {}),
     }));
 }

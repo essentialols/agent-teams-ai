@@ -87,6 +87,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Rebuild test SQLite native module for Node
+        run: node ./scripts/ci/rebuild-better-sqlite3-node.cjs
+
       - name: Audit dependencies
         run: pnpm audit --audit-level high
 
@@ -129,6 +132,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Rebuild test SQLite native module for Node
+        run: node ./scripts/ci/rebuild-better-sqlite3-node.cjs
 
       - name: Test
         run: pnpm test:workspace:ci

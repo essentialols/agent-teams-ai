@@ -76,11 +76,15 @@ export function sanitizeTaskCommentNotificationJournalEntries(
       taskId: entry.taskId,
       commentId: entry.commentId,
       author: entry.author,
-      ...(entry.commentCreatedAt ? { commentCreatedAt: entry.commentCreatedAt } : {}),
-      ...(entry.messageId ? { messageId: entry.messageId } : {}),
+      ...(typeof entry.commentCreatedAt === 'string' && entry.commentCreatedAt
+        ? { commentCreatedAt: entry.commentCreatedAt }
+        : {}),
+      ...(typeof entry.messageId === 'string' && entry.messageId
+        ? { messageId: entry.messageId }
+        : {}),
       state: entry.state,
       createdAt: entry.createdAt,
       updatedAt: entry.updatedAt,
-      ...(entry.sentAt ? { sentAt: entry.sentAt } : {}),
+      ...(typeof entry.sentAt === 'string' && entry.sentAt ? { sentAt: entry.sentAt } : {}),
     }));
 }

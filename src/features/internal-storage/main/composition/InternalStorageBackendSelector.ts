@@ -24,6 +24,11 @@ export class InternalStorageBackendSelector {
 
   constructor(private readonly ping: () => Promise<InternalStorageBackendInfo>) {}
 
+  /**
+   * Reports the decided backend. Until the first store access resolves the
+   * ping this optimistically reads 'sqlite'; treat it as diagnostics, not as
+   * a synchronization primitive.
+   */
   getBackendKind(): InternalStorageBackendKind {
     return this.backendKind;
   }

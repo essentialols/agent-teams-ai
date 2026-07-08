@@ -4,8 +4,11 @@ import * as path from 'path';
 import Database from 'better-sqlite3-node';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { getTableColumns, getTableName } from 'drizzle-orm';
+
 import { InternalStorageWorkerCore } from '@features/internal-storage/main/infrastructure/worker/InternalStorageWorkerCore';
 import { INTERNAL_STORAGE_SCHEMA_VERSION } from '@features/internal-storage/main/infrastructure/worker/internalStorageMigrations';
+import * as schema from '@features/internal-storage/main/infrastructure/worker/internalStorageSchema';
 
 import type {
   InternalStorageBackendInfo,
@@ -149,6 +152,50 @@ describe('InternalStorageWorkerCore', () => {
     const info = second.handle('ping', {}) as InternalStorageBackendInfo;
     expect(info.schemaVersion).toBe(INTERNAL_STORAGE_SCHEMA_VERSION);
     expect(info.integrity).toBe('ok');
+  });
+
+  it('keeps the raw migration DDL in sync with the drizzle schema', async () => {
+    const dbPath = await makeTmpDbPath();
+    const core = track(makeCore(dbPath));
+    core.handle('ping', {});
+
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      for (const table of Object.values(schema)) {
+        const tableName = getTableName(table);
+        const actual = (db.pragma(`table_info(${tableName})`) as { name: string }[])
+          .map((column) => column.name)
+          .sort((a, b) => a.localeCompare(b));
+        const expected = Object.values(getTableColumns(table))
+          .map((column) => column.name)
+          .sort((a, b) => a.localeCompare(b));
+        expect(actual, `columns of ${tableName}`).toEqual(expected);
+      }
+    } finally {
+      db.close();
+    }
+  });
+
+  it('propagates transient open failures without touching the database file', async () => {
+    const dbPath = await makeTmpDbPath();
+    const healthy = track(makeCore(dbPath));
+    healthy.handle('stallJournal.replace', { teamName: 'demo', entries: [makeRecord()] });
+    healthy.close();
+
+    // A non-corruption failure (driver init, permissions) must NOT trigger
+    // the backup-and-recreate path — that would discard a healthy database.
+    const broken = new InternalStorageWorkerCore({
+      databasePath: dbPath,
+      createDatabase: () => {
+        throw new Error('EPERM: operation not permitted');
+      },
+    });
+    expect(() => broken.handle('ping', {})).toThrow(/EPERM/);
+
+    const siblings = await fs.readdir(path.dirname(dbPath));
+    expect(siblings.some((name) => name.includes('.corrupt-'))).toBe(false);
+    const reopened = track(makeCore(dbPath));
+    expect(reopened.handle('stallJournal.load', { teamName: 'demo' })).toHaveLength(1);
   });
 
   it('backs up a corrupt database file and recreates a working one', async () => {

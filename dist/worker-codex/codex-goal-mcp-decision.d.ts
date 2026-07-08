@@ -1,9 +1,9 @@
 /// <reference types="node" />
-import { z } from "zod";
 import type { CodexGoalJobManifest } from "./codex-goal-jobs.js";
 import { resolveCodexGoalWorkerLiveness, type CodexGoalLaunchInput } from "./codex-goal-ops.js";
 type JsonObject = Readonly<Record<string, unknown>>;
 type WorkerLivenessStatus = Parameters<typeof resolveCodexGoalWorkerLiveness>[0]["status"];
+export { CODEX_GOAL_CONTROL_SURFACE_SCHEMA, CODEX_GOAL_EXECUTION_ENGINE_SCHEMA, } from "./codex-goal-mcp-decision-contracts.js";
 type CodexGoalStatusView = WorkerLivenessStatus & {
     readonly recommendedAction: string;
     readonly progressStatus?: string;
@@ -102,24 +102,6 @@ export declare function buildCodexGoalDecision(input: {
     readonly brief: CodexGoalBriefView;
     readonly overview?: JsonObject;
 }): JsonObject;
-export declare const CODEX_GOAL_EXECUTION_ENGINE_SCHEMA: z.ZodEnum<{
-    "app-server-goal": "app-server-goal";
-    "app-server": "app-server";
-    "packaged-exec": "packaged-exec";
-    "plain-exec": "plain-exec";
-}>;
-export declare const CODEX_GOAL_CONTROL_SURFACE_SCHEMA: z.ZodObject<{
-    executionEngine: z.ZodEnum<{
-        "app-server-goal": "app-server-goal";
-        "app-server": "app-server";
-        "packaged-exec": "packaged-exec";
-        "plain-exec": "plain-exec";
-    }>;
-    childWorkerSpawn: z.ZodString;
-    hostAuthSurfaces: z.ZodArray<z.ZodString>;
-    guidance: z.ZodString;
-    projectControlSurface: z.ZodOptional<z.ZodUnknown>;
-}, z.core.$strip>;
 export declare function buildCodexGoalHandoff(input: {
     readonly registryRootDir: string;
     readonly manifest: CodexGoalJobManifest;
@@ -140,5 +122,4 @@ export declare function nextBestCommand(input: {
     readonly launch: CodexGoalLaunchInput;
 }): string;
 export declare function isSafeStartAction(action: string): boolean;
-export {};
 //# sourceMappingURL=codex-goal-mcp-decision.d.ts.map

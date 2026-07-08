@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { codexGoalObjectiveMaxChars } from "./codex-goal-jobs.js";
-import { CODEX_GOAL_EXECUTION_ENGINE_SCHEMA } from "./codex-goal-mcp-decision.js";
+import { CODEX_GOAL_EXECUTION_ENGINE_SCHEMA } from "./codex-goal-mcp-decision-contracts.js";
 export function goalInputSchema() {
     return {
         jobId: z.string().optional(),

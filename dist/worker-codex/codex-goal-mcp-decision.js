@@ -1,8 +1,9 @@
 import { join } from "node:path";
-import { z } from "zod";
 import { DefaultRedactor } from "@vioxen/subscription-runtime/core";
 import { buildHandoffManifest, describeProjectControlSurface, } from "@vioxen/subscription-runtime/worker-core";
+import { CODEX_GOAL_EXECUTION_ENGINE_SCHEMA, } from "./codex-goal-mcp-decision-contracts.js";
 import { resolveCodexGoalWorkerLiveness, shellQuote, } from "./codex-goal-ops.js";
+export { CODEX_GOAL_CONTROL_SURFACE_SCHEMA, CODEX_GOAL_EXECUTION_ENGINE_SCHEMA, } from "./codex-goal-mcp-decision-contracts.js";
 export function codexGoalBriefHealthStatus(input) {
     if (input.workerAlive && input.status.progressStatus === "running") {
         return "running";
@@ -366,19 +367,6 @@ function codexGoalDecisionChecklist(input) {
         "Do not continue until the blocking state is understood.",
     ];
 }
-export const CODEX_GOAL_EXECUTION_ENGINE_SCHEMA = z.enum([
-    "app-server",
-    "app-server-goal",
-    "packaged-exec",
-    "plain-exec",
-]);
-export const CODEX_GOAL_CONTROL_SURFACE_SCHEMA = z.object({
-    executionEngine: CODEX_GOAL_EXECUTION_ENGINE_SCHEMA,
-    childWorkerSpawn: z.string(),
-    hostAuthSurfaces: z.array(z.string()),
-    guidance: z.string(),
-    projectControlSurface: z.unknown().optional(),
-});
 const DEFAULT_CODEX_GOAL_EXECUTION_ENGINE = "app-server-goal";
 function codexGoalControlSurface(launch) {
     // Keep this default aligned with create/load launch config defaults above.

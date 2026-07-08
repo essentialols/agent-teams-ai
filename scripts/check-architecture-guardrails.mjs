@@ -32,14 +32,7 @@ const legacyLineCaps = {
   "src/worker-local/tests/agent-task-runner-cli.test.ts": 1027,
 };
 
-const allowedMcpRestrictedImports = {
-  "src/worker-codex/codex-goal-mcp.ts": [
-    "@vioxen/subscription-runtime/worker-core",
-    "./codex-goal-ops",
-    "./codex-goal-mcp-decision",
-    "./codex-goal-mcp-job-lifecycle",
-  ],
-};
+const allowedMcpRestrictedImports = {};
 
 const staticImportPattern =
   /(?:import|export)\s+(?:type\s+)?(?:[^'"]+\s+from\s+)?["']([^"']+)["']/g;

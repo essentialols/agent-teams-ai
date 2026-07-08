@@ -1,10 +1,12 @@
 import { join } from "node:path";
-import { z } from "zod";
 import { DefaultRedactor } from "@vioxen/subscription-runtime/core";
 import {
   buildHandoffManifest,
   describeProjectControlSurface,
 } from "@vioxen/subscription-runtime/worker-core";
+import {
+  CODEX_GOAL_EXECUTION_ENGINE_SCHEMA,
+} from "./codex-goal-mcp-decision-contracts";
 import type { CodexGoalJobManifest } from "./codex-goal-jobs";
 import {
   resolveCodexGoalWorkerLiveness,
@@ -15,6 +17,11 @@ import type { CodexGoalRunConfig } from "./codex-goal-runner";
 
 type JsonObject = Readonly<Record<string, unknown>>;
 type WorkerLivenessStatus = Parameters<typeof resolveCodexGoalWorkerLiveness>[0]["status"];
+
+export {
+  CODEX_GOAL_CONTROL_SURFACE_SCHEMA,
+  CODEX_GOAL_EXECUTION_ENGINE_SCHEMA,
+} from "./codex-goal-mcp-decision-contracts";
 
 type CodexGoalStatusView = WorkerLivenessStatus & {
   readonly recommendedAction: string;
@@ -529,21 +536,6 @@ interface CodexGoalControlSurface {
   readonly guidance: string;
   readonly projectControlSurface: ReturnType<typeof describeProjectControlSurface>;
 }
-
-export const CODEX_GOAL_EXECUTION_ENGINE_SCHEMA = z.enum([
-  "app-server",
-  "app-server-goal",
-  "packaged-exec",
-  "plain-exec",
-]);
-
-export const CODEX_GOAL_CONTROL_SURFACE_SCHEMA = z.object({
-  executionEngine: CODEX_GOAL_EXECUTION_ENGINE_SCHEMA,
-  childWorkerSpawn: z.string(),
-  hostAuthSurfaces: z.array(z.string()),
-  guidance: z.string(),
-  projectControlSurface: z.unknown().optional(),
-});
 
 const DEFAULT_CODEX_GOAL_EXECUTION_ENGINE: NonNullable<CodexGoalRunConfig["executionEngine"]> = "app-server-goal";
 

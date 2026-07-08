@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { codexGoalObjectiveMaxChars } from "./codex-goal-jobs";
-import { CODEX_GOAL_EXECUTION_ENGINE_SCHEMA } from "./codex-goal-mcp-decision";
+import { CODEX_GOAL_EXECUTION_ENGINE_SCHEMA } from "./codex-goal-mcp-decision-contracts";
 
 export function goalInputSchema(): Record<string, z.ZodTypeAny> {
   return {

@@ -20,7 +20,7 @@ import {
   type CodexGoalWorkerControlUseCaseOptions,
 } from "./application/codex-goal-worker-control-use-cases";
 
-type CodexGoalWorkerControlToolOptions = CodexGoalWorkerControlUseCaseOptions;
+export type CodexGoalWorkerControlToolOptions = CodexGoalWorkerControlUseCaseOptions;
 
 export function registerCodexGoalWorkerControlTools(
   server: McpServer,

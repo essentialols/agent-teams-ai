@@ -282,11 +282,13 @@ import {
 import {
   confirmMemberSpawnStatusFromTranscriptForRun,
   createMemberSpawnStatusAuditPortsFromService,
+  createMemberSpawnStatusMutationPortsFromService,
   getMemberSpawnStatusesSnapshot,
   maybeAuditMemberSpawnStatusesForRun,
   type MemberSpawnStatusAuditPorts,
   type MemberSpawnStatusAuditServiceHost,
   type MemberSpawnStatusMutationPorts,
+  type MemberSpawnStatusMutationServiceHost,
   reconcileBootstrapTranscriptFailuresForRun,
   reconcileBootstrapTranscriptSuccessesForRun,
   setMemberSpawnStatusForRun,
@@ -1066,34 +1068,13 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
       }
     );
   private readonly memberSpawnStatusMutationPorts: MemberSpawnStatusMutationPorts<ProvisioningRun> =
-    {
-      nowIso,
-      syncMemberTaskActivityForRuntimeTransition: (run, memberName, previous, next, observedAt) =>
-        this.syncMemberTaskActivityForRuntimeTransition(
-          run,
-          memberName,
-          previous,
-          next,
-          observedAt
-        ),
-      syncMemberLaunchGraceCheck: (run, memberName, next) =>
-        this.syncMemberLaunchGraceCheck(run, memberName, next),
-      updateLaunchDiagnostics: (run) => {
-        const launchDiagnostics = boundLaunchDiagnostics(buildLaunchDiagnosticsFromRun(run));
-        if (!launchDiagnostics) return;
-        run.progress = {
-          ...run.progress,
-          updatedAt: nowIso(),
-          launchDiagnostics,
-        };
-        run.onProgress(run.progress);
-      },
-      appendMemberBootstrapDiagnostic: (run, memberName, text) =>
-        this.appendMemberBootstrapDiagnostic(run, memberName, text),
-      isCurrentTrackedRun: (run) => this.isCurrentTrackedRun(run),
-      emitMemberSpawnChange: (run, memberName) => this.emitMemberSpawnChange(run, memberName),
-      persistLaunchStateSnapshot: (run, phase) => this.persistLaunchStateSnapshot(run, phase),
-    };
+    createMemberSpawnStatusMutationPortsFromService(
+      this as unknown as MemberSpawnStatusMutationServiceHost<ProvisioningRun>,
+      {
+        nowIso,
+        buildLaunchDiagnostics: (run) => boundLaunchDiagnostics(buildLaunchDiagnosticsFromRun(run)),
+      }
+    );
   private readonly memberSpawnStatusAuditPorts: MemberSpawnStatusAuditPorts<ProvisioningRun> =
     createMemberSpawnStatusAuditPortsFromService(
       this as unknown as MemberSpawnStatusAuditServiceHost<ProvisioningRun>,

@@ -54,6 +54,54 @@ export interface MemberSpawnStatusMutationPorts<TRun extends MemberSpawnStatusRu
   persistLaunchStateSnapshot(run: TRun, phase: PersistedTeamLaunchPhase): Promise<unknown>;
 }
 
+export interface MemberSpawnStatusMutationServiceHost<TRun extends MemberSpawnStatusRun> {
+  syncMemberTaskActivityForRuntimeTransition: MemberSpawnStatusMutationPorts<TRun>['syncMemberTaskActivityForRuntimeTransition'];
+  syncMemberLaunchGraceCheck: MemberSpawnStatusMutationPorts<TRun>['syncMemberLaunchGraceCheck'];
+  appendMemberBootstrapDiagnostic: MemberSpawnStatusMutationPorts<TRun>['appendMemberBootstrapDiagnostic'];
+  isCurrentTrackedRun: MemberSpawnStatusMutationPorts<TRun>['isCurrentTrackedRun'];
+  emitMemberSpawnChange: MemberSpawnStatusMutationPorts<TRun>['emitMemberSpawnChange'];
+  persistLaunchStateSnapshot: MemberSpawnStatusMutationPorts<TRun>['persistLaunchStateSnapshot'];
+}
+
+export interface MemberSpawnStatusMutationServiceHostOptions<TRun extends MemberSpawnStatusRun> {
+  nowIso: MemberSpawnStatusMutationPorts<TRun>['nowIso'];
+  buildLaunchDiagnostics(run: TRun): TeamProvisioningProgress['launchDiagnostics'] | null;
+}
+
+export function createMemberSpawnStatusMutationPortsFromService<TRun extends MemberSpawnStatusRun>(
+  service: MemberSpawnStatusMutationServiceHost<TRun>,
+  options: MemberSpawnStatusMutationServiceHostOptions<TRun>
+): MemberSpawnStatusMutationPorts<TRun> {
+  return {
+    nowIso: options.nowIso,
+    syncMemberTaskActivityForRuntimeTransition: (run, memberName, previous, next, observedAt) =>
+      service.syncMemberTaskActivityForRuntimeTransition(
+        run,
+        memberName,
+        previous,
+        next,
+        observedAt
+      ),
+    syncMemberLaunchGraceCheck: (run, memberName, next) =>
+      service.syncMemberLaunchGraceCheck(run, memberName, next),
+    updateLaunchDiagnostics: (run) => {
+      const launchDiagnostics = options.buildLaunchDiagnostics(run);
+      if (!launchDiagnostics) return;
+      run.progress = {
+        ...run.progress,
+        updatedAt: options.nowIso(),
+        launchDiagnostics,
+      };
+      run.onProgress(run.progress);
+    },
+    appendMemberBootstrapDiagnostic: (run, memberName, text) =>
+      service.appendMemberBootstrapDiagnostic(run, memberName, text),
+    isCurrentTrackedRun: (run) => service.isCurrentTrackedRun(run),
+    emitMemberSpawnChange: (run, memberName) => service.emitMemberSpawnChange(run, memberName),
+    persistLaunchStateSnapshot: (run, phase) => service.persistLaunchStateSnapshot(run, phase),
+  };
+}
+
 export interface MemberSpawnStatusesSnapshotCacheEntry {
   expiresAtMs: number;
   generation: number;

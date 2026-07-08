@@ -2,9 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   createMemberSpawnStatusAuditPortsFromService,
+  createMemberSpawnStatusMutationPortsFromService,
   type MemberSpawnStatusAuditRun,
   type MemberSpawnStatusAuditServiceHost,
   type MemberSpawnStatusMutationPorts,
+  type MemberSpawnStatusMutationServiceHost,
   type MemberSpawnStatusRun,
   setMemberSpawnStatusForRun,
 } from '../TeamProvisioningMemberSpawnSnapshots';
@@ -46,6 +48,72 @@ const createPorts = (): MemberSpawnStatusMutationPorts<MemberSpawnStatusRun> => 
 });
 
 describe('member spawn snapshot mutations', () => {
+  it('builds mutation ports from service-shaped host wiring', async () => {
+    const run = createRun();
+    const previous = baseStatus({ status: 'waiting' });
+    const next = baseStatus({ status: 'online' });
+    const service = {
+      syncMemberTaskActivityForRuntimeTransition: vi.fn(),
+      syncMemberLaunchGraceCheck: vi.fn(),
+      appendMemberBootstrapDiagnostic: vi.fn(),
+      isCurrentTrackedRun: vi.fn(() => true),
+      emitMemberSpawnChange: vi.fn(),
+      persistLaunchStateSnapshot: vi.fn(async () => undefined),
+    } satisfies MemberSpawnStatusMutationServiceHost<MemberSpawnStatusRun>;
+
+    const ports = createMemberSpawnStatusMutationPortsFromService(service, {
+      nowIso: () => '2026-01-01T00:03:00.000Z',
+      buildLaunchDiagnostics: () => [
+        {
+          id: 'diag-api',
+          memberName: 'api',
+          severity: 'warning',
+          code: 'runtime_process_detected',
+          label: 'Runtime process detected',
+          observedAt: '2026-01-01T00:03:00.000Z',
+        },
+      ],
+    });
+
+    expect(ports.nowIso()).toBe('2026-01-01T00:03:00.000Z');
+    ports.syncMemberTaskActivityForRuntimeTransition(
+      run,
+      'api',
+      previous,
+      next,
+      '2026-01-01T00:03:01.000Z'
+    );
+    ports.syncMemberLaunchGraceCheck(run, 'api', next);
+    ports.updateLaunchDiagnostics(run);
+    ports.appendMemberBootstrapDiagnostic(run, 'api', 'diagnostic');
+    expect(ports.isCurrentTrackedRun(run)).toBe(true);
+    ports.emitMemberSpawnChange(run, 'api');
+    await ports.persistLaunchStateSnapshot(run, 'active');
+
+    expect(service.syncMemberTaskActivityForRuntimeTransition).toHaveBeenCalledWith(
+      run,
+      'api',
+      previous,
+      next,
+      '2026-01-01T00:03:01.000Z'
+    );
+    expect(service.syncMemberLaunchGraceCheck).toHaveBeenCalledWith(run, 'api', next);
+    expect(run.progress).toMatchObject({
+      updatedAt: '2026-01-01T00:03:00.000Z',
+      launchDiagnostics: [
+        {
+          id: 'diag-api',
+          memberName: 'api',
+          severity: 'warning',
+        },
+      ],
+    });
+    expect(run.onProgress).toHaveBeenCalledWith(run.progress);
+    expect(service.appendMemberBootstrapDiagnostic).toHaveBeenCalledWith(run, 'api', 'diagnostic');
+    expect(service.emitMemberSpawnChange).toHaveBeenCalledWith(run, 'api');
+    expect(service.persistLaunchStateSnapshot).toHaveBeenCalledWith(run, 'active');
+  });
+
   it('builds audit ports from service-shaped host wiring', async () => {
     const run = { ...createRun(), lastMemberSpawnAuditAt: 0 } as MemberSpawnStatusAuditRun;
     const current = baseStatus();

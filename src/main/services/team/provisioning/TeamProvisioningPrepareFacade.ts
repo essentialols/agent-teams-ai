@@ -76,6 +76,62 @@ export interface TeamProvisioningPrepareFacadePorts {
   warn(message: string): void;
 }
 
+export interface TeamProvisioningPrepareFacadeServiceHost {
+  appShellBoundary: {
+    getOpenCodeRuntimeAdapter: TeamProvisioningPrepareFacadePorts['getOpenCodeRuntimeAdapter'];
+  };
+  buildProvisioningEnv: TeamProvisioningPrepareFacadePorts['buildProvisioningEnv'];
+  providerRuntime: Pick<
+    TeamProvisioningPrepareFacadePorts,
+    'runProviderOneShotDiagnostic' | 'probeClaudeRuntime'
+  >;
+  readRuntimeProviderLaunchFacts: TeamProvisioningPrepareFacadePorts['readRuntimeProviderLaunchFacts'];
+  memberWorktreeManager: {
+    ensureMemberWorktree: TeamProvisioningPrepareFacadePorts['ensureMemberWorktree'];
+  };
+  planRuntimeLanesOrThrow: TeamProvisioningPrepareFacadePorts['planRuntimeLanesOrThrow'];
+}
+
+export interface TeamProvisioningPrepareFacadeServiceHostOptions
+  extends
+    Pick<TeamProvisioningPrepareFacadePorts, 'info' | 'warn'>,
+    Partial<
+      Pick<
+        TeamProvisioningPrepareFacadePorts,
+        'execCli' | 'providerProbeCache' | 'resolveClaudeBinaryPath'
+      >
+    > {}
+
+export function createTeamProvisioningPrepareFacadeFromService(
+  service: TeamProvisioningPrepareFacadeServiceHost,
+  options: TeamProvisioningPrepareFacadeServiceHostOptions
+): TeamProvisioningPrepareFacade {
+  return new TeamProvisioningPrepareFacade({
+    getOpenCodeRuntimeAdapter: () => service.appShellBoundary.getOpenCodeRuntimeAdapter(),
+    buildProvisioningEnv: (providerId, providerBackendId, envOptions) =>
+      service.buildProvisioningEnv(providerId, providerBackendId, envOptions),
+    runProviderOneShotDiagnostic: (claudePath, cwd, env, providerId, providerArgs) =>
+      service.providerRuntime.runProviderOneShotDiagnostic(
+        claudePath,
+        cwd,
+        env,
+        providerId,
+        providerArgs
+      ),
+    readRuntimeProviderLaunchFacts: (params) => service.readRuntimeProviderLaunchFacts(params),
+    resolveClaudeBinaryPath: options.resolveClaudeBinaryPath,
+    probeClaudeRuntime: (claudePath, cwd, env, providerId, providerArgs) =>
+      service.providerRuntime.probeClaudeRuntime(claudePath, cwd, env, providerId, providerArgs),
+    ensureMemberWorktree: (input) => service.memberWorktreeManager.ensureMemberWorktree(input),
+    providerProbeCache: options.providerProbeCache,
+    execCli: options.execCli,
+    planRuntimeLanesOrThrow: (leadProviderId, members, baseCwd) =>
+      service.planRuntimeLanesOrThrow(leadProviderId, members, baseCwd),
+    info: (message) => options.info(message),
+    warn: (message) => options.warn(message),
+  });
+}
+
 export class TeamProvisioningPrepareFacade {
   private readonly coordinator: TeamProvisioningPrepareCoordinator;
   private readonly resolveClaudeBinaryPath: () => Promise<string | null>;

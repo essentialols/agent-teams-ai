@@ -398,7 +398,11 @@ import {
 import { TeamProvisioningOutputRecoveryFacade } from './provisioning/TeamProvisioningOutputRecoveryFacade';
 import { reconcilePersistedLaunchStateWithTeamProvisioningPorts } from './provisioning/TeamProvisioningPersistedLaunchReconcilePorts';
 import { type PersistedTeamConfigCacheEntry } from './provisioning/TeamProvisioningPersistedTeamConfigAccess';
-import { TeamProvisioningPrepareFacade } from './provisioning/TeamProvisioningPrepareFacade';
+import {
+  createTeamProvisioningPrepareFacadeFromService,
+  TeamProvisioningPrepareFacade,
+  type TeamProvisioningPrepareFacadeServiceHost,
+} from './provisioning/TeamProvisioningPrepareFacade';
 import { createNodePreparePrimaryOwnedMemberRestartRuntimeUseCase } from './provisioning/TeamProvisioningPreparePrimaryOwnedMemberRestartRuntimeUseCase';
 import { createTeamProvisioningPrimaryBootstrapTruthReportingBoundary } from './provisioning/TeamProvisioningPrimaryBootstrapTruthReportingPortsFactory';
 import {
@@ -1710,29 +1714,15 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
         }
       )
     );
-    this.prepareFacade = new TeamProvisioningPrepareFacade({
-      getOpenCodeRuntimeAdapter: () => this.appShellBoundary.getOpenCodeRuntimeAdapter(),
-      buildProvisioningEnv: (providerId, providerBackendId, options) =>
-        this.buildProvisioningEnv(providerId, providerBackendId, options),
-      runProviderOneShotDiagnostic: (claudePath, cwd, env, providerId, providerArgs) =>
-        this.providerRuntime.runProviderOneShotDiagnostic(
-          claudePath,
-          cwd,
-          env,
-          providerId,
-          providerArgs
-        ),
-      readRuntimeProviderLaunchFacts: (params) => this.readRuntimeProviderLaunchFacts(params),
-      resolveClaudeBinaryPath: () => ClaudeBinaryResolver.resolve(),
-      probeClaudeRuntime: (claudePath, cwd, env, providerId, providerArgs) =>
-        this.providerRuntime.probeClaudeRuntime(claudePath, cwd, env, providerId, providerArgs),
-      ensureMemberWorktree: (input) => this.memberWorktreeManager.ensureMemberWorktree(input),
-      execCli,
-      planRuntimeLanesOrThrow: (leadProviderId, members, baseCwd) =>
-        this.planRuntimeLanesOrThrow(leadProviderId, members, baseCwd),
-      info: (message) => logger.info(message),
-      warn: (message) => logger.warn(message),
-    });
+    this.prepareFacade = createTeamProvisioningPrepareFacadeFromService(
+      this as unknown as TeamProvisioningPrepareFacadeServiceHost,
+      {
+        resolveClaudeBinaryPath: () => ClaudeBinaryResolver.resolve(),
+        execCli,
+        info: (message) => logger.info(message),
+        warn: (message) => logger.warn(message),
+      }
+    );
     this.memberMcpLaunchConfigProvisioner = new TeamProvisioningMemberMcpLaunchConfigProvisioner({
       mcpConfigBuilder: this.mcpConfigBuilder,
       ensureCwdExists,

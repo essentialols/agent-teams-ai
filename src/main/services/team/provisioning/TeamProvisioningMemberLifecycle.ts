@@ -32,7 +32,6 @@ import { TeamConfigReader } from '../TeamConfigReader';
 import { createPersistedLaunchSnapshot } from '../TeamLaunchStateEvaluator';
 
 import {
-  type AppendDirectProcessRuntimeEventUseCase,
   createAppendDirectProcessRuntimeEventUseCase,
   type DirectProcessRuntimeEventInput,
 } from './TeamProvisioningAppendDirectProcessRuntimeEventUseCase';
@@ -56,7 +55,6 @@ import { parseOptionalIsoMs } from './TeamProvisioningMemberSpawnStatusPolicy';
 import {
   createPersistOpenCodeMemberRestartSystemMessageUseCase,
   type OpenCodeMemberRestartSystemMessageInput,
-  type PersistOpenCodeMemberRestartSystemMessageUseCase,
 } from './TeamProvisioningOpenCodeMemberRestartSystemMessageUseCase';
 import {
   hasOpenCodeRuntimeEntryHandle,
@@ -83,15 +81,34 @@ import {
 } from './TeamProvisioningStopPrimaryOwnedRosterRuntimeUseCase';
 
 import type { NativeAppManagedBootstrapSpec } from '../bootstrap/NativeAppManagedBootstrapContextBuilder';
-import type { TeamRuntimeLaunchResult } from '../runtime';
-import type { TeamMcpConfigBuilder } from '../TeamMcpConfigBuilder';
 import type { TeamMembersMetaStore } from '../TeamMembersMetaStore';
 import type { RuntimeBootstrapMemberMcpLaunchConfig } from './TeamProvisioningBootstrapSpec';
-import type { TeamProvisioningMemberLifecycleOperationUseCases } from './TeamProvisioningMemberLifecycleOperationUseCases';
-import type { LiveTeamAgentRuntimeMetadata } from './TeamProvisioningRuntimeMetadataPolicy';
 import type {
-  EffortLevel,
-  MemberSpawnStatusEntry,
+  DirectRestartPromptInput,
+  DirectTmuxRestartMemberConfigInput,
+  ProvisioningEnvResolution,
+  TeamProvisioningMemberLifecycleHost,
+  TeamRuntimeLaunchArgsPlan,
+} from './TeamProvisioningMemberLifecycleHostPorts';
+import type { TeamProvisioningMemberLifecycleOperationUseCases } from './TeamProvisioningMemberLifecycleOperationUseCases';
+import type {
+  DirectProcessMemberLaunchReason,
+  DirectProcessMemberRestartInput,
+  EffectiveConfiguredMember,
+  LiveRosterAttachReason,
+  PersistedRuntimeMemberLike,
+  ProvisioningRun,
+  ReattachOpenCodeOwnedMemberLaneOptions,
+} from './TeamProvisioningMemberLifecycleTypes';
+import type {
+  TeamProvisioningMemberLifecycleActionUseCaseSeams,
+  TeamProvisioningMemberLifecycleControllerUseCaseSeams,
+  TeamProvisioningMemberLifecycleOpenCodeRetryUseCaseSeams,
+  TeamProvisioningMemberLifecycleRestartUseCaseSeams,
+} from './TeamProvisioningMemberLifecycleUseCaseSeams';
+import type { LiveTeamAgentRuntimeMetadata } from './TeamProvisioningRuntimeMetadataPolicy';
+import type { MixedSecondaryRuntimeLaneState } from './TeamProvisioningSecondaryRuntimeRuns';
+import type {
   PersistedTeamLaunchPhase,
   PersistedTeamLaunchSnapshot,
   ProviderModelLaunchIdentity,
@@ -99,8 +116,6 @@ import type {
   TeamAgentRuntimeEntry,
   TeamConfig,
   TeamCreateRequest,
-  TeamFastMode,
-  TeamLaunchRequest,
   TeamProviderBackendId,
   TeamProviderId,
 } from '@shared/types';
@@ -180,383 +195,27 @@ async function ensureCwdExists(cwd: string): Promise<void> {
   }
 }
 
+export type { OpenCodeSecondaryRetryCandidate } from './TeamProvisioningCollectFailedOpenCodeSecondaryRetryCandidatesUseCase';
 export type {
   MemberLifecycleOperation,
   MemberLifecycleOperationKind,
 } from './TeamProvisioningMemberLifecycleOperationRunner';
-
-interface DirectRestartPromptInput {
-  teamName: string;
-  memberName: string;
-  leadName: string;
-  leadSessionId: string | null;
-  prompt: string;
-  operation?: DirectProcessMemberLaunchReason;
-}
-
-interface DirectTmuxRestartMemberConfigInput {
-  teamName: string;
-  memberName: string;
-  member: TeamCreateRequest['members'][number] & { agentType?: string };
-  agentId: string;
-  color: string;
-  prompt: string;
-  paneId: string;
-  cwd: string;
-  providerId: TeamProviderId;
-  joinedAt: number;
-  bootstrapExpectedAfter: string;
-  backendType?: 'tmux' | 'process';
-  runtimePid?: number;
-  bootstrapRuntimeEventsPath?: string;
-  bootstrapProofToken?: string;
-  bootstrapRunId?: string;
-  bootstrapContextHash?: string;
-  bootstrapBriefingHash?: string;
-}
-
-interface DirectProcessMemberRestartInput {
-  run: ProvisioningRun;
-  teamName: string;
-  displayName: string;
-  leadName: string;
-  memberName: string;
-  config: TeamConfig;
-  configuredMember: NonNullable<EffectiveConfiguredMember | null>;
-  persistedRuntimeMembers: readonly PersistedRuntimeMemberLike[];
-  operation?: DirectProcessMemberLaunchReason;
-}
-
-interface ReattachOpenCodeOwnedMemberLaneOptions {
-  reason?: 'member_added' | 'member_updated' | 'manual_restart';
-}
-
-export type LiveRosterAttachReason = 'member_added' | 'member_restored' | 'member_updated';
-type DirectProcessMemberLaunchReason = 'manual_restart' | LiveRosterAttachReason;
-
-export type { OpenCodeSecondaryRetryCandidate } from './TeamProvisioningCollectFailedOpenCodeSecondaryRetryCandidatesUseCase';
+export type {
+  DirectProcessMemberLaunchReason,
+  DirectProcessMemberRestartInput,
+  EffectiveConfiguredMember,
+  LiveRosterAttachReason,
+  PersistedRuntimeMemberLike,
+  ProvisioningRun,
+  ReattachOpenCodeOwnedMemberLaneOptions,
+} from './TeamProvisioningMemberLifecycleTypes';
 export type { OpenCodeSecondaryRetryOutcome } from './TeamProvisioningReadOpenCodeSecondaryRetryOutcomeUseCase';
 
-type EffectiveConfiguredMember = TeamCreateRequest['members'][number] & {
-  agentType?: string;
-  removedAt?: number | string;
-};
-
-interface PendingMemberRestartContextLike {
-  requestedAt: string;
-  desired?: {
-    name: string;
-    role?: string;
-    workflow?: string;
-    isolation?: 'worktree';
-    providerId?: TeamProviderId;
-    model?: string;
-    effort?: EffortLevel;
-  };
-}
-
-interface MixedSecondaryRuntimeLaneState {
-  laneId: string;
-  providerId: 'opencode';
-  member: TeamCreateRequest['members'][number];
-  runId: string | null;
-  state: 'queued' | 'launching' | 'finished';
-  result: TeamRuntimeLaunchResult | null;
-  warnings: string[];
-  diagnostics: string[];
-  launchScheduled?: boolean;
-  queuedAtMs?: number;
-  launchStartedAtMs?: number;
-  launchFinishedAtMs?: number;
-}
-
-interface ProvisioningRun {
-  runId: string;
-  teamName: string;
-  request: TeamCreateRequest;
-  spawnContext?: { claudePath?: string };
-  detectedSessionId: string | null;
-  memberMcpConfigPaths: string[];
-  memberSpawnStatuses: Map<string, MemberSpawnStatusEntry>;
-  memberSpawnToolUseIds: Map<string, string>;
-  pendingMemberRestarts: Map<string, PendingMemberRestartContextLike>;
-  mixedSecondaryLanes: MixedSecondaryRuntimeLaneState[];
-  processKilled: boolean;
-  cancelRequested: boolean;
-  isLaunch: boolean;
-  provisioningComplete: boolean;
-}
-
-interface PersistedRuntimeMemberLike {
-  name?: string;
-  agentId?: string;
-  tmuxPaneId?: string;
-  backendType?: string;
-  providerId?: string;
-  cwd?: string;
-  bootstrapExpectedAfter?: string;
-  bootstrapProofToken?: string;
-  bootstrapRunId?: string;
-  bootstrapProofMode?: string;
-  bootstrapContextHash?: string;
-  bootstrapBriefingHash?: string;
-  bootstrapRuntimeEventsPath?: string;
-  runtimePid?: number;
-  runtimeSessionId?: string;
-}
-
-interface ProvisioningEnvResolution {
-  env: NodeJS.ProcessEnv;
-  providerArgs?: string[];
-  warning?: string;
-}
-
-interface TeamRuntimeLaunchArgsPlan {
-  settingsArgs: string[];
-  fastModeArgs: string[];
-  runtimeTurnSettledHookArgs: string[];
-  providerArgs: string[];
-  appManagedSettingsPath: string | null;
-}
-
-interface TeamMetaLike {
-  providerId?: TeamProviderId;
-  providerBackendId?: string;
-  cwd?: string;
-  prompt?: string;
-  model?: string;
-  effort?: EffortLevel;
-  fastMode?: TeamFastMode;
-  limitContext?: boolean;
-  skipPermissions?: boolean;
-  worktree?: string;
-  extraCliArgs?: string;
-}
-
-export interface TeamProvisioningMemberLifecycleSharedStatePorts {
-  runs: Map<string, ProvisioningRun>;
-  runtimeAdapterRunByTeam: Map<string, { providerId: TeamProviderId; runId: string; cwd?: string }>;
-  failedOpenCodeSecondaryRetryInFlightByTeam: Map<
-    string,
-    Promise<RetryFailedOpenCodeSecondaryLanesResult>
-  >;
-}
-
-export interface TeamProvisioningMemberLifecycleStorePorts {
-  mcpConfigBuilder: Pick<TeamMcpConfigBuilder, 'writeConfigFile'>;
-  membersMetaStore: Pick<TeamMembersMetaStore, 'getMembers'>;
-  teamMetaStore: { getMeta(teamName: string): Promise<TeamMetaLike | null> };
-  readConfigForStrictDecision(teamName: string): Promise<TeamConfig | null>;
-  readPersistedRuntimeMembers(teamName: string): PersistedRuntimeMemberLike[];
-  readPersistedTeamProjectPath(teamName: string): string | null;
-}
-
-export interface TeamProvisioningMemberLifecycleLaunchStatePorts {
-  launchStateStore: { read(teamName: string): Promise<PersistedTeamLaunchSnapshot | null> };
-  persistLaunchStateSnapshot(
-    run: ProvisioningRun,
-    phase: PersistedTeamLaunchPhase
-  ): Promise<PersistedTeamLaunchSnapshot | null>;
-  writeLaunchStateSnapshot(
-    teamName: string,
-    snapshot: PersistedTeamLaunchSnapshot
-  ): Promise<unknown>;
-}
-
-export interface TeamProvisioningMemberLifecycleMemberSpecPorts {
-  buildPrimaryOwnedMemberSpecForRuntime(input: {
-    configuredMember: EffectiveConfiguredMember;
-    run: ProvisioningRun;
-  }): TeamCreateRequest['members'][number];
-  materializeEffectiveTeamMemberSpecs(input: {
-    claudePath: string;
-    cwd: string;
-    members: TeamCreateRequest['members'];
-    defaults: {
-      providerId: TeamProviderId;
-      model?: string;
-      effort?: EffortLevel;
-    };
-    primaryProviderId: TeamProviderId;
-    primaryEnv: ProvisioningEnvResolution;
-    teamRuntimeAuth: {
-      teamName: string;
-      authMaterialId: string;
-      allowAnthropicApiKeyHelper: boolean;
-    };
-  }): Promise<TeamCreateRequest['members']>;
-  resolveEffectiveConfiguredMember(
-    configMembers: TeamConfig['members'],
-    metaMembers: Awaited<ReturnType<TeamMembersMetaStore['getMembers']>>,
-    memberName: string
-  ): EffectiveConfiguredMember | null;
-  resolveLeadMemberName(
-    configMembers: TeamConfig['members'],
-    metaMembers: Awaited<ReturnType<TeamMembersMetaStore['getMembers']>>
-  ): string;
-  buildConfiguredProvisioningMember(
-    member: EffectiveConfiguredMember
-  ): TeamCreateRequest['members'][number];
-}
-
-export interface TeamProvisioningMemberLifecycleRunTrackingPorts {
-  getAliveRunId(teamName: string): string | null;
-  getTrackedRunId(teamName: string): string | null;
-  getProvisioningRunId(teamName: string): string | null;
-}
-
-export interface TeamProvisioningMemberLifecycleRunStatePorts {
-  getRunTrackedCwd(run: ProvisioningRun | null | undefined): string | null;
-  appendMemberBootstrapDiagnostic(run: ProvisioningRun, memberName: string, text: string): void;
-  setMemberSpawnStatus(
-    run: ProvisioningRun,
-    memberName: string,
-    status: 'spawning' | 'waiting' | 'online' | 'error' | 'offline' | 'skipped',
-    error?: string,
-    livenessSource?: 'heartbeat' | 'process',
-    heartbeatAt?: string
-  ): void;
-  upsertRunAllEffectiveMember(
-    run: ProvisioningRun,
-    member: TeamCreateRequest['members'][number]
-  ): void;
-  removeRunAllEffectiveMember(run: ProvisioningRun, memberName: string): void;
-  invalidateRuntimeSnapshotCaches(teamName: string): void;
-  resetRuntimeToolActivity(run: ProvisioningRun, memberName?: string): void;
-  clearMemberSpawnToolTracking(run: ProvisioningRun, memberName: string): void;
-  isCurrentTrackedRun(run: ProvisioningRun): boolean;
-  getLiveTeamAgentRuntimeMetadata(
-    teamName: string
-  ): Promise<Map<string, LiveTeamAgentRuntimeMetadata>>;
-}
-
-export interface TeamProvisioningMemberLifecycleRuntimeLaunchPorts {
-  buildProvisioningEnv(
-    providerId: TeamProviderId,
-    providerBackendId: TeamProviderBackendId | undefined,
-    options: {
-      teamRuntimeAuth: {
-        teamName: string;
-        authMaterialId: string;
-        allowAnthropicApiKeyHelper: boolean;
-      };
-    }
-  ): Promise<ProvisioningEnvResolution>;
-  resolveDirectMemberLaunchIdentity(input: {
-    claudePath: string;
-    cwd: string;
-    providerId: TeamProviderId;
-    providerBackendId?: TeamProviderBackendId;
-    provisioningEnv: ProvisioningEnvResolution;
-    memberSpec: TeamCreateRequest['members'][number];
-    run: ProvisioningRun;
-  }): Promise<ProviderModelLaunchIdentity | null>;
-  buildTeamRuntimeLaunchArgsPlan(input: {
-    teamName: string;
-    providerId: TeamProviderId;
-    launchIdentity: ProviderModelLaunchIdentity | null;
-    envResolution: ProvisioningEnvResolution;
-    extraArgs: string[];
-    includeAnthropicHelper: boolean;
-    contextLabel: string;
-  }): Promise<TeamRuntimeLaunchArgsPlan>;
-  updateDirectTmuxRestartMemberConfig?(input: DirectTmuxRestartMemberConfigInput): Promise<void>;
-  buildTrackedMemberMcpLaunchConfig(input: {
-    cwd: string;
-    mcpPolicy: TeamCreateRequest['members'][number]['mcpPolicy'];
-    run: ProvisioningRun;
-  }): Promise<RuntimeBootstrapMemberMcpLaunchConfig | null>;
-  removeTrackedMemberMcpLaunchConfig(
-    run: ProvisioningRun,
-    config: RuntimeBootstrapMemberMcpLaunchConfig | null
-  ): Promise<void>;
-  sendMessageToRun(run: ProvisioningRun, message: string): Promise<unknown>;
-}
-
-export interface TeamProvisioningMemberLifecycleMessagingPorts {
-  persistInboxMessage(teamName: string, memberName: string, message: Record<string, unknown>): void;
-  persistSentMessage(teamName: string, message: Record<string, unknown>): void;
-  enqueueDirectRestartPrompt?(input: DirectRestartPromptInput): void;
-}
-
-export interface TeamProvisioningMemberLifecycleOpenCodeRuntimePorts {
-  getOpenCodeRuntimeAdapter(): unknown | null;
-  resolveOpenCodeMemberWorkspacesForRuntime(input: {
-    teamName: string;
-    baseCwd: string;
-    leadProviderId: TeamProviderId;
-    members: TeamCreateRequest['members'];
-  }): Promise<TeamCreateRequest['members']>;
-  runOpenCodeTeamRuntimeAdapterLaunch(input: {
-    request: TeamCreateRequest | TeamLaunchRequest;
-    members: TeamCreateRequest['members'];
-    prompt: string;
-    sourceWarning?: string;
-    onProgress: (progress: unknown) => void;
-  }): Promise<unknown>;
-}
-
-export interface TeamProvisioningMemberLifecycleMixedSecondaryRuntimePorts {
-  createMixedSecondaryLaneStateForMember(
-    run: ProvisioningRun,
-    member: TeamCreateRequest['members'][number]
-  ): MixedSecondaryRuntimeLaneState;
-  stopSingleMixedSecondaryRuntimeLane(
-    run: ProvisioningRun,
-    lane: MixedSecondaryRuntimeLaneState,
-    reason: 'cleanup' | 'relaunch'
-  ): Promise<void>;
-  getRunLeadName(run: ProvisioningRun): string;
-  launchSingleMixedSecondaryLane(
-    run: ProvisioningRun,
-    lane: MixedSecondaryRuntimeLaneState
-  ): Promise<void>;
-  getMixedSecondaryLaunchPhase(run: ProvisioningRun): PersistedTeamLaunchPhase;
-}
-
-export interface TeamProvisioningMemberLifecycleUseCasePorts {
-  persistOpenCodeMemberRestartSystemMessage?: PersistOpenCodeMemberRestartSystemMessageUseCase;
-  launchDirectProcessMemberRestart?(input: DirectProcessMemberRestartInput): Promise<void>;
-  appendDirectProcessRuntimeEvent?: AppendDirectProcessRuntimeEventUseCase;
-  stopPrimaryOwnedRosterRuntime?(input: StopPrimaryOwnedRosterRuntimeInput): Promise<void>;
-  preparePrimaryOwnedMemberRestartRuntime?(
-    input: PreparePrimaryOwnedMemberRestartRuntimeInput
-  ): Promise<PreparePrimaryOwnedMemberRestartRuntimeResult>;
-  collectFailedOpenCodeSecondaryRetryCandidates?(
-    run: ProvisioningRun
-  ): Promise<OpenCodeSecondaryRetryCandidate[]>;
-  readOpenCodeSecondaryRetryOutcome?(
-    run: ProvisioningRun,
-    memberName: string,
-    laneId: string
-  ): Promise<OpenCodeSecondaryRetryOutcome>;
-  notifyLeadAboutConfirmedOpenCodeRetries?(
-    run: ProvisioningRun,
-    result: RetryFailedOpenCodeSecondaryLanesResult
-  ): Promise<void>;
-  reattachOpenCodeOwnedMemberLaneUnlocked?(
-    teamName: string,
-    memberName: string,
-    options?: ReattachOpenCodeOwnedMemberLaneOptions
-  ): Promise<void>;
-  detachOpenCodeOwnedMemberLaneUnlocked?(teamName: string, memberName: string): Promise<void>;
-}
-
-export interface TeamProvisioningMemberLifecycleHost
-  extends
-    TeamProvisioningMemberLifecycleSharedStatePorts,
-    TeamProvisioningMemberLifecycleStorePorts,
-    TeamProvisioningMemberLifecycleLaunchStatePorts,
-    TeamProvisioningMemberLifecycleMemberSpecPorts,
-    TeamProvisioningMemberLifecycleRunTrackingPorts,
-    TeamProvisioningMemberLifecycleRunStatePorts,
-    TeamProvisioningMemberLifecycleRuntimeLaunchPorts,
-    TeamProvisioningMemberLifecycleMessagingPorts,
-    TeamProvisioningMemberLifecycleOpenCodeRuntimePorts,
-    TeamProvisioningMemberLifecycleMixedSecondaryRuntimePorts,
-    TeamProvisioningMemberLifecycleUseCasePorts {}
-
 export class TeamProvisioningMemberLifecycleController {
+  private readonly actionUseCases: TeamProvisioningMemberLifecycleActionUseCaseSeams;
+  private readonly restartUseCases: TeamProvisioningMemberLifecycleRestartUseCaseSeams;
+  private readonly openCodeRetryUseCases: TeamProvisioningMemberLifecycleOpenCodeRetryUseCaseSeams;
+
   private readonly persistOpenCodeMemberRestartSystemMessageFallback =
     createPersistOpenCodeMemberRestartSystemMessageUseCase({
       persistSentMessage: (teamName, message) => this.persistSentMessage(teamName, message),
@@ -585,8 +244,13 @@ export class TeamProvisioningMemberLifecycleController {
 
   constructor(
     private readonly host: TeamProvisioningMemberLifecycleHost,
-    private readonly operationUseCases: TeamProvisioningMemberLifecycleOperationUseCases
-  ) {}
+    private readonly operationUseCases: TeamProvisioningMemberLifecycleOperationUseCases,
+    useCases: TeamProvisioningMemberLifecycleControllerUseCaseSeams = {}
+  ) {
+    this.actionUseCases = useCases.actions ?? {};
+    this.restartUseCases = useCases.restart ?? {};
+    this.openCodeRetryUseCases = useCases.openCodeRetry ?? {};
+  }
 
   private get runs(): TeamProvisioningMemberLifecycleHost['runs'] {
     return this.host.runs;
@@ -982,7 +646,7 @@ export class TeamProvisioningMemberLifecycleController {
   private persistOpenCodeMemberRestartSystemMessage(
     input: OpenCodeMemberRestartSystemMessageInput
   ): void {
-    const seam = this.host.persistOpenCodeMemberRestartSystemMessage;
+    const seam = this.restartUseCases.persistOpenCodeMemberRestartSystemMessage;
     if (seam) {
       seam(input);
       return;
@@ -1193,7 +857,7 @@ export class TeamProvisioningMemberLifecycleController {
   private async launchDirectProcessMemberRestart(
     input: DirectProcessMemberRestartInput
   ): Promise<void> {
-    const seam = this.host.launchDirectProcessMemberRestart;
+    const seam = this.restartUseCases.launchDirectProcessMemberRestart;
     if (seam) {
       await seam(input);
       return;
@@ -1574,7 +1238,7 @@ export class TeamProvisioningMemberLifecycleController {
   private async appendDirectProcessRuntimeEvent(
     input: DirectProcessRuntimeEventInput
   ): Promise<void> {
-    const seam = this.host.appendDirectProcessRuntimeEvent;
+    const seam = this.restartUseCases.appendDirectProcessRuntimeEvent;
     await (seam ?? this.appendDirectProcessRuntimeEventFallback)(input);
   }
 
@@ -1630,18 +1294,22 @@ export class TeamProvisioningMemberLifecycleController {
     memberName: string,
     options?: { reason?: LiveRosterAttachReason }
   ): Promise<void> {
+    const seam = this.actionUseCases.attachLiveRosterMember;
     return this.runMemberLifecycleOperation(
       teamName,
       memberName,
       this.getLiveRosterAttachLifecycleKind(options?.reason),
-      () => this.attachLiveRosterMemberUnlocked(teamName, memberName, options)
+      () =>
+        seam
+          ? seam(teamName, memberName, options)
+          : this.attachLiveRosterMemberUnlocked(teamName, memberName, options)
     );
   }
 
   private async stopPrimaryOwnedRosterRuntime(
     input: StopPrimaryOwnedRosterRuntimeInput
   ): Promise<void> {
-    const seam = this.host.stopPrimaryOwnedRosterRuntime;
+    const seam = this.restartUseCases.stopPrimaryOwnedRosterRuntime;
     if (seam) {
       await seam(input);
       return;
@@ -1658,7 +1326,7 @@ export class TeamProvisioningMemberLifecycleController {
   private async preparePrimaryOwnedMemberRestartRuntime(
     input: PreparePrimaryOwnedMemberRestartRuntimeInput
   ): Promise<PreparePrimaryOwnedMemberRestartRuntimeResult> {
-    const seam = this.host.preparePrimaryOwnedMemberRestartRuntime;
+    const seam = this.restartUseCases.preparePrimaryOwnedMemberRestartRuntime;
     if (seam) {
       return await seam(input);
     }
@@ -1829,8 +1497,9 @@ export class TeamProvisioningMemberLifecycleController {
   }
 
   async detachLiveRosterMember(teamName: string, memberName: string): Promise<void> {
+    const seam = this.actionUseCases.detachLiveRosterMember;
     return this.runMemberLifecycleOperation(teamName, memberName, 'primary_member_removed', () =>
-      this.detachLiveRosterMemberUnlocked(teamName, memberName)
+      seam ? seam(teamName, memberName) : this.detachLiveRosterMemberUnlocked(teamName, memberName)
     );
   }
 
@@ -1886,8 +1555,9 @@ export class TeamProvisioningMemberLifecycleController {
   }
 
   async restartMember(teamName: string, memberName: string): Promise<void> {
+    const seam = this.actionUseCases.restartMember;
     return this.runMemberLifecycleOperation(teamName, memberName, 'manual_restart', () =>
-      this.restartMemberUnlocked(teamName, memberName)
+      seam ? seam(teamName, memberName) : this.restartMemberUnlocked(teamName, memberName)
     );
   }
 
@@ -2296,9 +1966,12 @@ export class TeamProvisioningMemberLifecycleController {
       return existing;
     }
 
-    const retry = this.retryFailedOpenCodeSecondaryLanesNow(teamName).finally(() => {
-      this.failedOpenCodeSecondaryRetryInFlightByTeam.delete(teamName);
-    });
+    const seam = this.actionUseCases.retryFailedOpenCodeSecondaryLanes;
+    const retry = Promise.resolve()
+      .then(() => (seam ? seam(teamName) : this.retryFailedOpenCodeSecondaryLanesNow(teamName)))
+      .finally(() => {
+        this.failedOpenCodeSecondaryRetryInFlightByTeam.delete(teamName);
+      });
     this.failedOpenCodeSecondaryRetryInFlightByTeam.set(teamName, retry);
     return retry;
   }
@@ -2383,7 +2056,7 @@ export class TeamProvisioningMemberLifecycleController {
   private async collectFailedOpenCodeSecondaryRetryCandidates(
     run: ProvisioningRun
   ): Promise<OpenCodeSecondaryRetryCandidate[]> {
-    const seam = this.host.collectFailedOpenCodeSecondaryRetryCandidates;
+    const seam = this.openCodeRetryUseCases.collectFailedOpenCodeSecondaryRetryCandidates;
     if (seam) {
       return await seam(run);
     }
@@ -2401,7 +2074,7 @@ export class TeamProvisioningMemberLifecycleController {
     memberName: string,
     laneId: string
   ): Promise<OpenCodeSecondaryRetryOutcome> {
-    const seam = this.host.readOpenCodeSecondaryRetryOutcome;
+    const seam = this.openCodeRetryUseCases.readOpenCodeSecondaryRetryOutcome;
     if (seam) {
       return await seam(run, memberName, laneId);
     }
@@ -2420,7 +2093,7 @@ export class TeamProvisioningMemberLifecycleController {
     run: ProvisioningRun,
     result: RetryFailedOpenCodeSecondaryLanesResult
   ): Promise<void> {
-    const seam = this.host.notifyLeadAboutConfirmedOpenCodeRetries;
+    const seam = this.openCodeRetryUseCases.notifyLeadAboutConfirmedOpenCodeRetries;
     if (seam) {
       await seam(run, result);
       return;
@@ -2450,6 +2123,15 @@ export class TeamProvisioningMemberLifecycleController {
   }
 
   async skipMemberForLaunch(teamName: string, memberName: string): Promise<void> {
+    const seam = this.actionUseCases.skipMemberForLaunch;
+    if (seam) {
+      await seam(teamName, memberName);
+      return;
+    }
+    await this.skipMemberForLaunchInternal(teamName, memberName);
+  }
+
+  private async skipMemberForLaunchInternal(teamName: string, memberName: string): Promise<void> {
     const normalizedMemberName = memberName.trim();
     if (!normalizedMemberName) {
       throw new Error('Member name is required');
@@ -2614,7 +2296,7 @@ export class TeamProvisioningMemberLifecycleController {
     memberName: string,
     options?: ReattachOpenCodeOwnedMemberLaneOptions
   ): Promise<void> {
-    const seam = this.host.reattachOpenCodeOwnedMemberLaneUnlocked;
+    const seam = this.openCodeRetryUseCases.reattachOpenCodeOwnedMemberLaneUnlocked;
     if (seam) {
       await seam(teamName, memberName, options);
       return;
@@ -2790,7 +2472,7 @@ export class TeamProvisioningMemberLifecycleController {
     teamName: string,
     memberName: string
   ): Promise<void> {
-    const seam = this.host.detachOpenCodeOwnedMemberLaneUnlocked;
+    const seam = this.openCodeRetryUseCases.detachOpenCodeOwnedMemberLaneUnlocked;
     if (seam) {
       await seam(teamName, memberName);
       return;

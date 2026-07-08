@@ -8,6 +8,10 @@ import {
 } from './TeamProvisioningReadOpenCodeSecondaryRetryOutcomeUseCase';
 
 import type { AppendDirectProcessRuntimeEventUseCase } from './TeamProvisioningAppendDirectProcessRuntimeEventUseCase';
+import type {
+  TeamProvisioningMemberLifecycleOpenCodeRetryUseCaseSeams,
+  TeamProvisioningMemberLifecycleRestartUseCaseSeams,
+} from './TeamProvisioningMemberLifecycleUseCaseSeams';
 import type { PreparePrimaryOwnedMemberRestartRuntimeUseCase } from './TeamProvisioningPreparePrimaryOwnedMemberRestartRuntimeUseCase';
 import type { StopPrimaryOwnedRosterRuntimeUseCase } from './TeamProvisioningStopPrimaryOwnedRosterRuntimeUseCase';
 import type { PersistedTeamLaunchSnapshot } from '@shared/types';
@@ -22,7 +26,13 @@ export interface TeamProvisioningMemberLifecycleServiceUseCasePorts {
   randomUUID(): string;
 }
 
-export interface TeamProvisioningMemberLifecycleServiceUseCases {
+export interface TeamProvisioningMemberLifecycleServiceUseCases
+  extends
+    TeamProvisioningMemberLifecycleRestartUseCaseSeams,
+    Pick<
+      TeamProvisioningMemberLifecycleOpenCodeRetryUseCaseSeams,
+      'readOpenCodeSecondaryRetryOutcome'
+    > {
   persistOpenCodeMemberRestartSystemMessage: PersistOpenCodeMemberRestartSystemMessageUseCase;
   readOpenCodeSecondaryRetryOutcome: ReadOpenCodeSecondaryRetryOutcomeUseCase;
   appendDirectProcessRuntimeEvent: AppendDirectProcessRuntimeEventUseCase;

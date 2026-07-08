@@ -216,7 +216,6 @@ import {
 } from './provisioning/TeamProvisioningLiveLeadMessagePortsFactory';
 import { relayMemberInboxMessagesWithPorts } from './provisioning/TeamProvisioningMemberInboxRelayFlow';
 import {
-  type LiveRosterAttachReason,
   type MemberLifecycleOperation,
   TeamProvisioningMemberLifecycleController,
 } from './provisioning/TeamProvisioningMemberLifecycle';
@@ -224,6 +223,7 @@ import { createTeamProvisioningMemberLifecycleHostFromPortGroups } from './provi
 import { createTeamProvisioningMemberLifecycleOperationRunner } from './provisioning/TeamProvisioningMemberLifecycleOperationRunner';
 import { createTeamProvisioningMemberLifecycleOperationUseCases } from './provisioning/TeamProvisioningMemberLifecycleOperationUseCases';
 import { createTeamProvisioningMemberLifecycleServiceUseCases } from './provisioning/TeamProvisioningMemberLifecycleServiceUseCases';
+import { type LiveRosterAttachReason } from './provisioning/TeamProvisioningMemberLifecycleTypes';
 import { TeamProvisioningMemberMcpLaunchConfigProvisioner } from './provisioning/TeamProvisioningMemberMcpLaunchConfig';
 import {
   refreshMemberSpawnStatusesFromLeadInbox as refreshMemberSpawnStatusesFromLeadInboxHelper,
@@ -1161,7 +1161,11 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
   >(this.createMemberLifecycleHostPortGroups());
   private readonly memberLifecycleController = new TeamProvisioningMemberLifecycleController(
     this.memberLifecycleHost,
-    this.memberLifecycleOperationUseCases
+    this.memberLifecycleOperationUseCases,
+    {
+      restart: this.memberLifecycleUseCases,
+      openCodeRetry: this.memberLifecycleUseCases,
+    }
   );
   private readonly memberMcpLaunchConfigProvisioner!: TeamProvisioningMemberMcpLaunchConfigProvisioner<ProvisioningRun>;
   private readonly taskActivityIntervalService = new TeamTaskActivityIntervalService();

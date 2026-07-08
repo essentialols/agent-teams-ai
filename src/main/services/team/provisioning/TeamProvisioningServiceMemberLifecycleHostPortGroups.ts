@@ -22,8 +22,6 @@ type CreateMixedSecondaryLaneStateForMember =
   MixedSecondaryRuntimePorts['createMixedSecondaryLaneStateForMember'];
 type StopSingleMixedSecondaryRuntimeLane =
   MixedSecondaryRuntimePorts['stopSingleMixedSecondaryRuntimeLane'];
-type ServiceMemberLifecycleUseCases =
-  TeamProvisioningServiceMemberLifecycleHostPortGroups['useCases'];
 
 export interface TeamProvisioningServiceMemberLifecycleHostPortGroupPorts {
   runs: unknown;
@@ -84,7 +82,6 @@ export interface TeamProvisioningServiceMemberLifecycleHostPortGroupPorts {
   getRunLeadName: MixedSecondaryRuntimePorts['getRunLeadName'];
   launchSingleMixedSecondaryLane: MixedSecondaryRuntimePorts['launchSingleMixedSecondaryLane'];
   getMixedSecondaryLaunchPhase: MixedSecondaryRuntimePorts['getMixedSecondaryLaunchPhase'];
-  memberLifecycleUseCases: ServiceMemberLifecycleUseCases;
 }
 
 export function createTeamProvisioningServiceMemberLifecycleHostPortGroups(
@@ -192,17 +189,5 @@ export function createTeamProvisioningServiceMemberLifecycleHostPortGroups(
         service.launchSingleMixedSecondaryLane(run, lane),
       getMixedSecondaryLaunchPhase: (run) => service.getMixedSecondaryLaunchPhase(run),
     },
-    useCases: {
-      persistOpenCodeMemberRestartSystemMessage:
-        service.memberLifecycleUseCases.persistOpenCodeMemberRestartSystemMessage,
-      launchDirectProcessMemberRestart:
-        service.memberLifecycleUseCases.launchDirectProcessMemberRestart,
-      appendDirectProcessRuntimeEvent:
-        service.memberLifecycleUseCases.appendDirectProcessRuntimeEvent,
-      stopPrimaryOwnedRosterRuntime: service.memberLifecycleUseCases.stopPrimaryOwnedRosterRuntime,
-      preparePrimaryOwnedMemberRestartRuntime:
-        service.memberLifecycleUseCases.preparePrimaryOwnedMemberRestartRuntime,
-    },
-    openCodeRetryUseCases: {},
   };
 }

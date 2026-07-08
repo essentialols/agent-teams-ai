@@ -7,9 +7,7 @@ import {
   resolveLeadMemberName,
 } from './TeamProvisioningMemberStatusProjection';
 
-import type { AppendDirectProcessRuntimeEventUseCase } from './TeamProvisioningAppendDirectProcessRuntimeEventUseCase';
-import type { TeamProvisioningMemberLifecycleHost } from './TeamProvisioningMemberLifecycle';
-import type { PersistOpenCodeMemberRestartSystemMessageUseCase } from './TeamProvisioningOpenCodeMemberRestartSystemMessageUseCase';
+import type { TeamProvisioningMemberLifecycleHost } from './TeamProvisioningMemberLifecycleHostPorts';
 import type { TeamCreateRequest } from '@shared/types';
 
 type HostRun = NonNullable<Parameters<TeamProvisioningMemberLifecycleHost['getRunTrackedCwd']>[0]>;
@@ -188,62 +186,6 @@ export interface TeamProvisioningMemberLifecycleHostFactoryMixedSecondaryRuntime
   ): ReturnType<TeamProvisioningMemberLifecycleHost['getMixedSecondaryLaunchPhase']>;
 }
 
-type HostLaunchDirectProcessMemberRestart = NonNullable<
-  TeamProvisioningMemberLifecycleHost['launchDirectProcessMemberRestart']
->;
-type HostStopPrimaryOwnedRosterRuntime = NonNullable<
-  TeamProvisioningMemberLifecycleHost['stopPrimaryOwnedRosterRuntime']
->;
-type HostPreparePrimaryOwnedMemberRestartRuntime = NonNullable<
-  TeamProvisioningMemberLifecycleHost['preparePrimaryOwnedMemberRestartRuntime']
->;
-type HostCollectFailedOpenCodeSecondaryRetryCandidates = NonNullable<
-  TeamProvisioningMemberLifecycleHost['collectFailedOpenCodeSecondaryRetryCandidates']
->;
-type HostReadOpenCodeSecondaryRetryOutcome = NonNullable<
-  TeamProvisioningMemberLifecycleHost['readOpenCodeSecondaryRetryOutcome']
->;
-type HostNotifyLeadAboutConfirmedOpenCodeRetries = NonNullable<
-  TeamProvisioningMemberLifecycleHost['notifyLeadAboutConfirmedOpenCodeRetries']
->;
-type HostReattachOpenCodeOwnedMemberLaneUnlocked = NonNullable<
-  TeamProvisioningMemberLifecycleHost['reattachOpenCodeOwnedMemberLaneUnlocked']
->;
-type HostDetachOpenCodeOwnedMemberLaneUnlocked = NonNullable<
-  TeamProvisioningMemberLifecycleHost['detachOpenCodeOwnedMemberLaneUnlocked']
->;
-
-export interface TeamProvisioningMemberLifecycleHostFactoryUseCasePorts<
-  TRun extends TeamProvisioningMemberLifecycleHostFactoryRun,
-> {
-  persistOpenCodeMemberRestartSystemMessage?: PersistOpenCodeMemberRestartSystemMessageUseCase;
-  launchDirectProcessMemberRestart?: (
-    input: WithServiceRun<Parameters<HostLaunchDirectProcessMemberRestart>[0], TRun>
-  ) => ReturnType<HostLaunchDirectProcessMemberRestart>;
-  appendDirectProcessRuntimeEvent?: AppendDirectProcessRuntimeEventUseCase;
-  stopPrimaryOwnedRosterRuntime?: HostStopPrimaryOwnedRosterRuntime;
-  preparePrimaryOwnedMemberRestartRuntime?: HostPreparePrimaryOwnedMemberRestartRuntime;
-}
-
-export interface TeamProvisioningMemberLifecycleHostFactoryOpenCodeRetryUseCasePorts<
-  TRun extends TeamProvisioningMemberLifecycleHostFactoryRun,
-> {
-  collectFailedOpenCodeSecondaryRetryCandidates?: (
-    run: TRun
-  ) => ReturnType<HostCollectFailedOpenCodeSecondaryRetryCandidates>;
-  readOpenCodeSecondaryRetryOutcome?: (
-    run: TRun,
-    memberName: Parameters<HostReadOpenCodeSecondaryRetryOutcome>[1],
-    laneId: Parameters<HostReadOpenCodeSecondaryRetryOutcome>[2]
-  ) => ReturnType<HostReadOpenCodeSecondaryRetryOutcome>;
-  notifyLeadAboutConfirmedOpenCodeRetries?: (
-    run: TRun,
-    result: Parameters<HostNotifyLeadAboutConfirmedOpenCodeRetries>[1]
-  ) => ReturnType<HostNotifyLeadAboutConfirmedOpenCodeRetries>;
-  reattachOpenCodeOwnedMemberLaneUnlocked?: HostReattachOpenCodeOwnedMemberLaneUnlocked;
-  detachOpenCodeOwnedMemberLaneUnlocked?: HostDetachOpenCodeOwnedMemberLaneUnlocked;
-}
-
 export interface TeamProvisioningMemberLifecycleHostFactoryService<
   TRun extends TeamProvisioningMemberLifecycleHostFactoryRun,
   TMixedSecondaryLane,
@@ -259,9 +201,10 @@ export interface TeamProvisioningMemberLifecycleHostFactoryService<
     TeamProvisioningMemberLifecycleHostFactoryRunStatePorts<TRun>,
     TeamProvisioningMemberLifecycleHostFactoryMessagingPorts,
     TeamProvisioningMemberLifecycleHostFactoryOpenCodeRuntimePorts,
-    TeamProvisioningMemberLifecycleHostFactoryMixedSecondaryRuntimePorts<TRun, TMixedSecondaryLane>,
-    TeamProvisioningMemberLifecycleHostFactoryUseCasePorts<TRun>,
-    TeamProvisioningMemberLifecycleHostFactoryOpenCodeRetryUseCasePorts<TRun> {}
+    TeamProvisioningMemberLifecycleHostFactoryMixedSecondaryRuntimePorts<
+      TRun,
+      TMixedSecondaryLane
+    > {}
 
 export interface TeamProvisioningMemberLifecycleHostFactoryPortGroups<
   TRun extends TeamProvisioningMemberLifecycleHostFactoryRun,
@@ -281,8 +224,6 @@ export interface TeamProvisioningMemberLifecycleHostFactoryPortGroups<
     TRun,
     TMixedSecondaryLane
   >;
-  useCases: TeamProvisioningMemberLifecycleHostFactoryUseCasePorts<TRun>;
-  openCodeRetryUseCases: TeamProvisioningMemberLifecycleHostFactoryOpenCodeRetryUseCasePorts<TRun>;
 }
 
 export const TEAM_PROVISIONING_MEMBER_LIFECYCLE_HOST_FACTORY_PORT_KEYS = {
@@ -339,20 +280,6 @@ export const TEAM_PROVISIONING_MEMBER_LIFECYCLE_HOST_FACTORY_PORT_KEYS = {
     'getRunLeadName',
     'launchSingleMixedSecondaryLane',
     'getMixedSecondaryLaunchPhase',
-  ],
-  useCases: [
-    'persistOpenCodeMemberRestartSystemMessage',
-    'launchDirectProcessMemberRestart',
-    'appendDirectProcessRuntimeEvent',
-    'stopPrimaryOwnedRosterRuntime',
-    'preparePrimaryOwnedMemberRestartRuntime',
-  ],
-  openCodeRetryUseCases: [
-    'collectFailedOpenCodeSecondaryRetryCandidates',
-    'readOpenCodeSecondaryRetryOutcome',
-    'notifyLeadAboutConfirmedOpenCodeRetries',
-    'reattachOpenCodeOwnedMemberLaneUnlocked',
-    'detachOpenCodeOwnedMemberLaneUnlocked',
   ],
 } as const satisfies Record<
   keyof TeamProvisioningMemberLifecycleHostFactoryPortGroups<
@@ -417,8 +344,6 @@ export function createTeamProvisioningMemberLifecycleHostPortGroups<
     messaging: service,
     openCodeRuntime: service,
     mixedSecondaryRuntime: service,
-    useCases: service,
-    openCodeRetryUseCases: service,
   };
 }
 
@@ -440,28 +365,9 @@ export function createTeamProvisioningMemberLifecycleHostFromPortGroups<
     messaging,
     openCodeRuntime,
     mixedSecondaryRuntime,
-    useCases,
-    openCodeRetryUseCases,
   } = portGroups;
   const updateDirectTmuxRestartMemberConfigSeam = runtimeLaunch.updateDirectTmuxRestartMemberConfig;
   const enqueueDirectRestartPromptSeam = messaging.enqueueDirectRestartPrompt;
-  const persistOpenCodeMemberRestartSystemMessageSeam =
-    useCases.persistOpenCodeMemberRestartSystemMessage;
-  const launchDirectProcessMemberRestartSeam = useCases.launchDirectProcessMemberRestart;
-  const appendDirectProcessRuntimeEventSeam = useCases.appendDirectProcessRuntimeEvent;
-  const stopPrimaryOwnedRosterRuntimeSeam = useCases.stopPrimaryOwnedRosterRuntime;
-  const preparePrimaryOwnedMemberRestartRuntimeSeam =
-    useCases.preparePrimaryOwnedMemberRestartRuntime;
-  const collectFailedOpenCodeSecondaryRetryCandidatesSeam =
-    openCodeRetryUseCases.collectFailedOpenCodeSecondaryRetryCandidates;
-  const readOpenCodeSecondaryRetryOutcomeSeam =
-    openCodeRetryUseCases.readOpenCodeSecondaryRetryOutcome;
-  const notifyLeadAboutConfirmedOpenCodeRetriesSeam =
-    openCodeRetryUseCases.notifyLeadAboutConfirmedOpenCodeRetries;
-  const reattachOpenCodeOwnedMemberLaneUnlockedSeam =
-    openCodeRetryUseCases.reattachOpenCodeOwnedMemberLaneUnlocked;
-  const detachOpenCodeOwnedMemberLaneUnlockedSeam =
-    openCodeRetryUseCases.detachOpenCodeOwnedMemberLaneUnlocked;
 
   return {
     runs: sharedState.runs,
@@ -587,65 +493,5 @@ export function createTeamProvisioningMemberLifecycleHostFromPortGroups<
     writeLaunchStateSnapshot: (teamName, snapshot) =>
       launchState.writeLaunchStateSnapshot(teamName, snapshot),
     readPersistedTeamProjectPath: (teamName) => stores.readPersistedTeamProjectPath(teamName),
-    persistOpenCodeMemberRestartSystemMessage: persistOpenCodeMemberRestartSystemMessageSeam
-      ? (input) => persistOpenCodeMemberRestartSystemMessageSeam.call(useCases, input)
-      : undefined,
-    launchDirectProcessMemberRestart: launchDirectProcessMemberRestartSeam
-      ? (input) =>
-          launchDirectProcessMemberRestartSeam.call(useCases, {
-            ...input,
-            run: asServiceProvisioningRun<TRun>(input.run),
-          })
-      : undefined,
-    appendDirectProcessRuntimeEvent: appendDirectProcessRuntimeEventSeam
-      ? (input) => appendDirectProcessRuntimeEventSeam.call(useCases, input)
-      : undefined,
-    stopPrimaryOwnedRosterRuntime: stopPrimaryOwnedRosterRuntimeSeam
-      ? (input) => stopPrimaryOwnedRosterRuntimeSeam.call(useCases, input)
-      : undefined,
-    preparePrimaryOwnedMemberRestartRuntime: preparePrimaryOwnedMemberRestartRuntimeSeam
-      ? (input) => preparePrimaryOwnedMemberRestartRuntimeSeam.call(useCases, input)
-      : undefined,
-    collectFailedOpenCodeSecondaryRetryCandidates: collectFailedOpenCodeSecondaryRetryCandidatesSeam
-      ? (run) =>
-          collectFailedOpenCodeSecondaryRetryCandidatesSeam.call(
-            openCodeRetryUseCases,
-            asServiceProvisioningRun<TRun>(run)
-          )
-      : undefined,
-    readOpenCodeSecondaryRetryOutcome: readOpenCodeSecondaryRetryOutcomeSeam
-      ? (run, memberName, laneId) =>
-          readOpenCodeSecondaryRetryOutcomeSeam.call(
-            openCodeRetryUseCases,
-            asServiceProvisioningRun<TRun>(run),
-            memberName,
-            laneId
-          )
-      : undefined,
-    notifyLeadAboutConfirmedOpenCodeRetries: notifyLeadAboutConfirmedOpenCodeRetriesSeam
-      ? (run, result) =>
-          notifyLeadAboutConfirmedOpenCodeRetriesSeam.call(
-            openCodeRetryUseCases,
-            asServiceProvisioningRun<TRun>(run),
-            result
-          )
-      : undefined,
-    reattachOpenCodeOwnedMemberLaneUnlocked: reattachOpenCodeOwnedMemberLaneUnlockedSeam
-      ? (teamName, memberName, options) =>
-          reattachOpenCodeOwnedMemberLaneUnlockedSeam.call(
-            openCodeRetryUseCases,
-            teamName,
-            memberName,
-            options
-          )
-      : undefined,
-    detachOpenCodeOwnedMemberLaneUnlocked: detachOpenCodeOwnedMemberLaneUnlockedSeam
-      ? (teamName, memberName) =>
-          detachOpenCodeOwnedMemberLaneUnlockedSeam.call(
-            openCodeRetryUseCases,
-            teamName,
-            memberName
-          )
-      : undefined,
   };
 }

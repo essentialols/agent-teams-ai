@@ -1,12 +1,11 @@
 #!/usr/bin/env node
 import { mkdir, realpath, writeFile } from "node:fs/promises";
-import { hostname } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { McpServer, ResourceTemplate, } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { AccessBoundary, NetworkAccessMode, ProjectAdmissionWorkerRole, InterruptAndContinueWorkerUseCase, RunEventProviderKind, evaluateProjectAdmission, reconcileRunPreview, ProjectOperation, } from "@vioxen/subscription-runtime/worker-core";
+import { AccessBoundary, ProjectAdmissionWorkerRole, InterruptAndContinueWorkerUseCase, RunEventProviderKind, evaluateProjectAdmission, reconcileRunPreview, ProjectOperation, } from "@vioxen/subscription-runtime/worker-core";
 import { codexGoalJobToArgs, createCodexGoalJob, listCodexGoalJobs, readCodexGoalJob, resolveCodexGoalJobRegistryRoot, summarizeCodexGoalJob, updateCodexGoalJob, } from "./codex-goal-jobs.js";
 import { upsertCodexGoalLaunchManifest } from "./codex-goal-launch-manifest.js";
 import { runDependencyBootstrap, } from "./dependency-bootstrap.js";
@@ -16,17 +15,15 @@ import { parseCodexGoalProjectAccessScope, } from "./codex-goal-access-plan.js";
 import { projectControlGenericScopeDenial, projectControlGenericToolDenial, } from "./project-control-scope-guard.js";
 import { registerProjectIntegrationMcpTools, } from "./project-integration-mcp/index.js";
 import { createLocalProjectIntegrationMcpToolHandlers, } from "./project-integration-mcp/adapters/local-project-integration-mcp-tool-handlers.js";
-import { createProjectControlOperation, patchProjectControlOperation, projectControlOperationExecutionMode, projectControlOperationView, projectControlOperationsRoot, readProjectControlOperationById, startProjectControlOperationRunner, } from "./project-control-operation-lifecycle.js";
 import { accountNames, booleanValue, numberValue, requiredRawString, resolvePath, stringValue, tagValues, } from "./codex-goal-mcp-values.js";
 import { jobIdInputSchema, jobRegistryInputSchema, registryRootFromArgs, } from "./codex-goal-mcp-inputs.js";
 import { accountAuthRootFromArgs, accountPoolRootFromArgs, codexAccountReloginInstructions, codexAccountStatusPayload, listAccountPools, } from "./codex-goal-mcp-accounts.js";
 import { writeCodexGoalStopEvent, writeCodexGoalStoppedProgress, } from "./codex-goal-mcp-lifecycle-markers.js";
-import { matchesProjectControlPrefix, pathInsideAnyProjectRoot, uniqueProjectControlStrings, } from "./codex-goal-mcp-project-utils.js";
-import { projectControlDefaultAccountNames, projectControlRefillAccountNames, } from "./codex-goal-mcp-project-accounts.js";
+import { matchesProjectControlPrefix, pathInsideAnyProjectRoot, } from "./codex-goal-mcp-project-utils.js";
+import { projectControlDefaultAccountNames, } from "./codex-goal-mcp-project-accounts.js";
 import { buildCodexProjectAdmissionSnapshot, projectAdmissionDetailView, projectAdmissionOperation, projectAdmissionWorkerRoleArg, } from "./codex-goal-mcp-project-admission.js";
 import { jobIdsFromValue, parseIsoDate, signalIdList, workerControlCallerArgs, workerControlDecisionJson, workerControlReceiptJson, workerControlSignalJson, workerControlSignalViewJson, } from "./codex-goal-mcp-worker-control-view.js";
 import { codexGoalAccountStatusPayload, codexGoalStateRootDir, codexGoalWorkerControlService, codexGoalWorkerControlTarget, } from "./codex-goal-mcp-worker-control.js";
-import { codexGoalAccountCapacityFacts } from "./codex-goal-mcp-account-capacity-facts.js";
 import { applyWorkspaceConflictToOverviewJob, buildCodexGoalWorkspaceConflicts, workspaceConflictJobIds, } from "./codex-goal-mcp-workspace-conflicts.js";
 import { codexOverviewItemToWatchStatus } from "./codex-goal-mcp-watch-status.js";
 import { buildCodexGoalBrief } from "./codex-goal-mcp-brief.js";
@@ -39,7 +36,8 @@ export { buildCodexGoalBrief } from "./codex-goal-mcp-brief.js";
 import { buildCodexGoalOverviewItem } from "./codex-goal-mcp-overview-item.js";
 import { codexGoalStatusInputFromLaunch as statusInput, } from "./codex-goal-mcp-status-input.js";
 import { createCodexProjectControlBroker, projectControlAuditPath, } from "./codex-goal-mcp-project-broker.js";
-import { assertReadablePrompt, createOrReuseProjectJob, createOrReuseProjectWorktree, readTextFileIfExists, rollbackProjectRefillPartial, } from "./codex-goal-mcp-project-refill.js";
+import { assertReadablePrompt, } from "./codex-goal-mcp-project-refill.js";
+import { projectControlCreateCodexGoalJobView, projectControlOperationStatusView, projectControlRefillWorkerView, } from "./codex-goal-mcp-project-control-jobs.js";
 import { projectControllerConsumeGuidanceView, projectControllerLaunchPlanView, projectControllerReconcileView, projectControllerStartView, projectControllerStatusView, projectControllerStopView, } from "./codex-goal-mcp-project-controller.js";
 export { projectControllerPendingGuidancePromptContext, } from "./codex-goal-mcp-project-controller-provider.js";
 import { compactAgentRunEvents, planAgentRunEventCompaction, projectAgentRunEvents, readAgentRunEvents, readAgentRunState, watchAgentRuns, } from "./codex-goal-mcp-run-events.js";
@@ -48,7 +46,7 @@ import { goalLaunchInput, } from "./codex-goal-mcp-launch-input.js";
 import { codexGoalLaunchSummary as launchSummary, } from "./codex-goal-mcp-launch-summary.js";
 import { CODEX_GOAL_CONTROL_SURFACE_SCHEMA, buildCodexGoalDecision, buildCodexGoalHandoff, isSafeStartAction, nextActionForStatus, } from "./codex-goal-mcp-decision.js";
 import { assertSafeGitCommitSha, assertSafeGitRefName, assertSafeGitRemoteName, } from "./codex-goal-mcp-project-git.js";
-import { assertProjectControlCreateManifestPaths, assertProjectControlDependencyBootstrapReady, assertProjectControlScopeRepairAllowed, projectControlChildScope, projectControlDependencyBootstrapMode, projectControlPathArg, projectControlRealPathOutsideWorkspaceScope, projectControlWorkerRole, projectScopeFieldFingerprint, } from "./codex-goal-mcp-project-scope.js";
+import { assertProjectControlDependencyBootstrapReady, assertProjectControlScopeRepairAllowed, projectControlDependencyBootstrapMode, projectControlPathArg, projectControlRealPathOutsideWorkspaceScope, projectScopeFieldFingerprint, } from "./codex-goal-mcp-project-scope.js";
 import { projectIntegrationPushApprovedCommitWithConsumedLedger, } from "./codex-goal-mcp-project-integration-ledger.js";
 export { availableCodexGoalAccountSlots, dedupeCodexGoalAccountSlots, visibleCodexGoalAccountPoolSlots, } from "./codex-goal-mcp-accounts.js";
 const serverVersion = "0.1.0-main.2";
@@ -1798,401 +1796,20 @@ async function projectControllerStop(args) {
 async function projectControllerReconcile(args) {
     return mcpJson(await projectControllerReconcileView(args, projectControllerDeps()));
 }
-async function projectControlCreateCodexGoalJob(args) {
-    const controller = await loadProjectControlController(args);
-    if (args.projectAccessScope !== undefined) {
-        throw new Error("project_control_child_scope_is_controller_owned");
-    }
-    if (args.allowDangerFullAccess === true) {
-        throw new Error("project_control_child_danger_full_access_denied");
-    }
-    const requested = jobManifestInputFromArgs(args);
-    if (requested.accessBoundary === AccessBoundary.ProjectScopedControl ||
-        requested.accessBoundary === AccessBoundary.DangerFullAccess) {
-        throw new Error("project_control_child_boundary_denied");
-    }
-    const accessBoundary = requested.accessBoundary ?? AccessBoundary.IsolatedWorkspaceWrite;
-    const workerRole = projectAdmissionWorkerRoleArg(args.workerRole);
-    const accounts = await projectControlDefaultAccountNames({
-        ...(requested.authRootDir ? { authRootDir: requested.authRootDir } : {}),
-        requestedAccounts: requested.accounts,
-        allowedAccountIds: controller.scope.allowedAccountIds ?? [],
-    });
-    const createManifest = {
-        ...requested,
-        accounts,
-        accessBoundary,
-        projectAccessScope: projectControlChildScope(controller.scope, requested.workspacePath),
-        allowDangerFullAccess: false,
-        networkAccess: requested.networkAccess ?? NetworkAccessMode.Restricted,
-        ...(workerRole
-            ? {
-                tags: uniqueProjectControlStrings([
-                    ...tagValues(requested.tags),
-                    `worker-role-${workerRole}`,
-                ]),
-            }
-            : {}),
+function projectControlJobsDeps() {
+    return {
+        loadProjectControlController,
+        codexProjectControlBroker,
     };
-    assertProjectControlCreateManifestPaths({
-        scope: controller.scope,
-        registryRootDir: controller.registryRootDir,
-        manifest: createManifest,
-    });
-    if (!args.confirmCreate) {
-        return mcpJson({
-            ok: false,
-            reason: "confirm_create_required",
-            controllerJobId: controller.controller.jobId,
-            targetJobId: createManifest.jobId,
-            auditPath: projectControlAuditPath(controller.controller),
-            manifestPreview: createManifest,
-        });
-    }
-    const broker = codexProjectControlBroker({
-        registryRootDir: controller.registryRootDir,
-        controller: controller.controller,
-        scope: controller.scope,
-        createManifest,
-        createOverwrite: booleanValue(args.overwrite) ?? false,
-    });
-    const realWorkspacePath = await projectControlRealPathOutsideWorkspaceScope(createManifest.workspacePath, controller.scope);
-    const result = await broker.createJob({
-        jobId: createManifest.jobId,
-        registryRoot: controller.registryRootDir,
-        workspacePath: createManifest.workspacePath,
-        ...(realWorkspacePath ? { realWorkspacePath } : {}),
-        ...(createManifest.tmuxSession
-            ? { tmuxSession: createManifest.tmuxSession }
-            : {}),
-        accounts: createManifest.accounts,
-        ...(workerRole ? { workerRole } : {}),
-        ...(createManifest.tags ? { tags: createManifest.tags } : {}),
-    });
-    const manifest = await readCodexGoalJob({
-        registryRootDir: controller.registryRootDir,
-        jobId: createManifest.jobId,
-    });
-    return mcpJson({
-        ok: true,
-        mode: "project_control_create_job",
-        controllerJobId: controller.controller.jobId,
-        registryRootDir: controller.registryRootDir,
-        auditPath: projectControlAuditPath(controller.controller),
-        result: result,
-        manifest,
-        summary: summarizeCodexGoalJob(manifest, controller.registryRootDir),
-    });
+}
+async function projectControlCreateCodexGoalJob(args) {
+    return mcpJson(await projectControlCreateCodexGoalJobView(args, projectControlJobsDeps()));
 }
 async function projectControlRefillWorker(args) {
-    if (projectControlOperationExecutionMode(args.executionMode) === "bounded") {
-        return projectControlRefillWorkerBounded(args);
-    }
-    const controller = await loadProjectControlController(args);
-    if (args.projectAccessScope !== undefined) {
-        throw new Error("project_control_child_scope_is_controller_owned");
-    }
-    if (args.allowDangerFullAccess === true) {
-        throw new Error("project_control_child_danger_full_access_denied");
-    }
-    const promptBody = requiredRawString(args.promptBody, "promptBody");
-    const sourceWorkspacePath = projectControlPathArg(args, args.sourceWorkspacePath, "sourceWorkspacePath");
-    const requested = jobManifestInputFromArgs(args);
-    if (requested.accessBoundary === AccessBoundary.ProjectScopedControl ||
-        requested.accessBoundary === AccessBoundary.DangerFullAccess) {
-        throw new Error("project_control_child_boundary_denied");
-    }
-    const accounts = await projectControlRefillAccountNames({
-        ...(requested.authRootDir === undefined
-            ? {}
-            : { authRootDir: requested.authRootDir }),
-        requestedAccounts: requested.accounts,
-        allowedAccountIds: controller.scope.allowedAccountIds ?? [],
-    });
-    if (!accounts.length) {
-        throw new Error("project_control_refill_no_ready_account");
-    }
-    const role = projectControlWorkerRole(args.workerRole);
-    const accessBoundary = requested.accessBoundary ?? AccessBoundary.IsolatedWorkspaceWrite;
-    const createManifest = {
-        ...requested,
-        accounts,
-        tags: uniqueProjectControlStrings([
-            ...tagValues(requested.tags),
-            "project-control-refill",
-            `worker-role-${role}`,
-        ]),
-        accessBoundary,
-        projectAccessScope: projectControlChildScope(controller.scope, requested.workspacePath),
-        allowDangerFullAccess: false,
-        networkAccess: requested.networkAccess ?? NetworkAccessMode.Restricted,
-        reasoningEffort: requested.reasoningEffort ?? "high",
-        serviceTier: requested.serviceTier ?? "default",
-    };
-    assertProjectControlCreateManifestPaths({
-        scope: controller.scope,
-        registryRootDir: controller.registryRootDir,
-        manifest: createManifest,
-    });
-    const baseBranch = stringValue(args.baseBranch) ?? "origin/main";
-    assertSafeGitRefName(baseBranch, "baseBranch");
-    const sourceRef = stringValue(args.sourceRef);
-    if (sourceRef)
-        assertSafeGitRefName(sourceRef, "sourceRef");
-    const newBranch = stringValue(args.newBranch);
-    if (newBranch)
-        assertSafeGitRefName(newBranch, "newBranch");
-    const realSourceWorkspacePath = await projectControlRealPathOutsideWorkspaceScope(sourceWorkspacePath, controller.scope);
-    const createWorktreeInput = {
-        sourceWorkspacePath,
-        ...(realSourceWorkspacePath ? { realSourceWorkspacePath } : {}),
-        path: createManifest.workspacePath,
-        baseBranch,
-        ...(sourceRef ? { sourceRef } : {}),
-        ...(newBranch ? { newBranch } : {}),
-        workerRole: role,
-        ...(createManifest.tags ? { tags: createManifest.tags } : {}),
-    };
-    if (!args.confirmRefill) {
-        return mcpJson({
-            ok: false,
-            reason: "confirm_refill_required",
-            mode: "project_control_refill_worker",
-            controllerJobId: controller.controller.jobId,
-            targetJobId: createManifest.jobId,
-            auditPath: projectControlAuditPath(controller.controller),
-            workerRole: role,
-            startWorker: booleanValue(args.startWorker) !== false,
-            worktreePreview: createWorktreeInput,
-            manifestPreview: createManifest,
-            promptPath: createManifest.promptPath,
-        });
-    }
-    const worktreeBroker = codexProjectControlBroker({
-        registryRootDir: controller.registryRootDir,
-        controller: controller.controller,
-        scope: controller.scope,
-        createWorktreeInput,
-    });
-    let worktreeCreated = false;
-    let promptWritten = false;
-    let worktree;
-    let createJob;
-    let manifest;
-    let prompt;
-    let dependencyPreflight;
-    try {
-        const worktreeResult = await createOrReuseProjectWorktree({
-            broker: worktreeBroker,
-            createWorktreeInput,
-        });
-        worktree = worktreeResult.result;
-        worktreeCreated = worktreeResult.created;
-        const existingPrompt = await readTextFileIfExists(createManifest.promptPath);
-        if (existingPrompt !== null && existingPrompt !== promptBody) {
-            throw new Error("project_control_existing_prompt_mismatch");
-        }
-        if (existingPrompt === null) {
-            await mkdir(dirname(createManifest.promptPath), { recursive: true, mode: 0o700 });
-            await writeFile(createManifest.promptPath, promptBody, {
-                encoding: "utf8",
-                mode: 0o600,
-            });
-            promptWritten = true;
-        }
-        prompt = await assertReadablePrompt({
-            promptPath: createManifest.promptPath,
-            expectedBody: promptBody,
-        });
-        const createBroker = codexProjectControlBroker({
-            registryRootDir: controller.registryRootDir,
-            controller: controller.controller,
-            scope: controller.scope,
-            createManifest,
-            createOverwrite: booleanValue(args.overwrite) ?? false,
-        });
-        const createResult = await createOrReuseProjectJob({
-            broker: createBroker,
-            registryRootDir: controller.registryRootDir,
-            scope: controller.scope,
-            manifest: createManifest,
-            promptBody,
-            workerRole: role,
-        });
-        createJob = createResult.result;
-        manifest = createResult.manifest;
-        dependencyPreflight = await runDependencyBootstrap({
-            workspacePath: manifest.workspacePath,
-            jobRootDir: manifest.jobRootDir,
-            mode: projectControlDependencyBootstrapMode(args.dependencyBootstrap),
-            confirmInstall: booleanValue(args.confirmDependencyBootstrap) === true,
-        });
-        assertProjectControlDependencyBootstrapReady(dependencyPreflight);
-    }
-    catch (error) {
-        const rolledBack = await rollbackProjectRefillPartial({
-            sourceWorkspacePath,
-            workspacePath: createManifest.workspacePath,
-            promptPath: createManifest.promptPath,
-            registryRootDir: controller.registryRootDir,
-            jobId: createManifest.jobId,
-            worktreeCreated,
-            promptWritten,
-        });
-        if (error instanceof Error && rolledBack.length > 0) {
-            error.message = `${error.message}; rollback=${rolledBack.join(",")}`;
-        }
-        throw error;
-    }
-    const accountCapacityFacts = await codexGoalAccountCapacityFacts({
-        manifest,
-        loadLaunch: async (jobManifest) => goalLaunchInput(codexGoalJobToArgs(jobManifest)),
-    });
-    let start;
-    if (booleanValue(args.startWorker) !== false) {
-        await assertReadablePrompt({ promptPath: manifest.promptPath });
-        const launch = await goalLaunchInput(codexGoalJobToArgs(manifest));
-        const startBroker = codexProjectControlBroker({
-            registryRootDir: controller.registryRootDir,
-            controller: controller.controller,
-            scope: controller.scope,
-            startLaunch: launch,
-            startSkipDoctor: booleanValue(args.skipDoctor) ?? false,
-        });
-        const realLaunchWorkspacePath = await projectControlRealPathOutsideWorkspaceScope(launch.config.workspacePath, controller.scope);
-        start = await startBroker.startWorker({
-            jobId: manifest.jobId,
-            registryRoot: controller.registryRootDir,
-            workspacePath: launch.config.workspacePath,
-            ...(realLaunchWorkspacePath ? { realWorkspacePath: realLaunchWorkspacePath } : {}),
-            ...(launch.tmuxSession ? { tmuxSession: launch.tmuxSession } : {}),
-            accounts: manifest.accounts,
-            workerRole: role,
-            ...(manifest.tags ? { tags: manifest.tags } : {}),
-        });
-    }
-    return mcpJson({
-        ok: true,
-        mode: "project_control_refill_worker",
-        controllerJobId: controller.controller.jobId,
-        registryRootDir: controller.registryRootDir,
-        auditPath: projectControlAuditPath(controller.controller),
-        workerRole: role,
-        targetJobId: manifest.jobId,
-        baseBranch,
-        prompt,
-        accountCapacityFacts,
-        dependencyPreflight: dependencyPreflight,
-        jobId: manifest.jobId,
-        worktree: worktree,
-        createJob: createJob,
-        ...(start ? { start: start } : { startSkipped: true }),
-        manifest,
-        summary: summarizeCodexGoalJob(manifest, controller.registryRootDir),
-    });
-}
-async function projectControlRefillWorkerBounded(args) {
-    const controller = await loadProjectControlController(args);
-    if (args.projectAccessScope !== undefined) {
-        throw new Error("project_control_child_scope_is_controller_owned");
-    }
-    if (args.allowDangerFullAccess === true) {
-        throw new Error("project_control_child_danger_full_access_denied");
-    }
-    if (!args.confirmRefill) {
-        return mcpJson({
-            ok: false,
-            reason: "confirm_refill_required",
-            mode: "project_control_refill_worker_operation_preview",
-            executionMode: "bounded",
-            controllerJobId: controller.controller.jobId,
-            auditPath: projectControlAuditPath(controller.controller),
-            requiredConfirmation: "confirmRefill",
-        });
-    }
-    requiredRawString(args.promptBody, "promptBody");
-    projectControlPathArg(args, args.sourceWorkspacePath, "sourceWorkspacePath");
-    const requested = jobManifestInputFromArgs(args);
-    if (requested.accessBoundary === AccessBoundary.ProjectScopedControl ||
-        requested.accessBoundary === AccessBoundary.DangerFullAccess) {
-        throw new Error("project_control_child_boundary_denied");
-    }
-    const createManifest = {
-        ...requested,
-        accessBoundary: requested.accessBoundary ?? AccessBoundary.IsolatedWorkspaceWrite,
-        projectAccessScope: projectControlChildScope(controller.scope, requested.workspacePath),
-        allowDangerFullAccess: false,
-        networkAccess: requested.networkAccess ?? NetworkAccessMode.Restricted,
-    };
-    assertProjectControlCreateManifestPaths({
-        scope: controller.scope,
-        registryRootDir: controller.registryRootDir,
-        manifest: createManifest,
-    });
-    const operationArgs = {
-        ...jsonRecordFromProjectControlArgs(args),
-        executionMode: "sync",
-        confirmRefill: true,
-    };
-    const operationsRootDir = projectControlOperationsRoot(controller.controller.jobRootDir);
-    const operation = await createProjectControlOperation({
-        operationsRootDir,
-        controllerJobId: controller.controller.jobId,
-        toolName: "codex_goal_project_refill_worker",
-        args: operationArgs,
-        targetJobId: createManifest.jobId,
-    });
-    const runner = await startProjectControlOperationRunner({
-        operationFilePath: operation.operationFilePath,
-        cwd: controller.controller.workspacePath,
-    });
-    const updated = await patchProjectControlOperation({
-        operationFilePath: operation.operationFilePath,
-        patch: {
-            runner: {
-                hostname: hostname(),
-                pid: runner.pid,
-                command: runner.command,
-                startedAt: new Date().toISOString(),
-            },
-        },
-    });
-    return mcpJson({
-        ok: true,
-        mode: "project_control_refill_worker_operation_started",
-        executionMode: "bounded",
-        controllerJobId: controller.controller.jobId,
-        registryRootDir: controller.registryRootDir,
-        auditPath: projectControlAuditPath(controller.controller),
-        operationId: updated.operationId,
-        operationStatusTool: "codex_goal_project_operation_status",
-        operationStatusArgs: {
-            registryRootDir: controller.registryRootDir,
-            controllerJobId: controller.controller.jobId,
-            operationId: updated.operationId,
-        },
-        targetJobId: createManifest.jobId,
-        runnerPid: runner.pid,
-        operation: projectControlOperationView({ operation: updated }),
-    });
+    return mcpJson(await projectControlRefillWorkerView(args, projectControlJobsDeps()));
 }
 async function projectControlOperationStatus(args) {
-    const controller = await loadProjectControlController(args);
-    const operationId = requiredRawString(args.operationId, "operationId");
-    const operation = await readProjectControlOperationById({
-        operationsRootDir: projectControlOperationsRoot(controller.controller.jobRootDir),
-        operationId,
-    });
-    return mcpJson({
-        ok: true,
-        mode: "project_control_operation_status",
-        controllerJobId: controller.controller.jobId,
-        registryRootDir: controller.registryRootDir,
-        operation: projectControlOperationView({
-            operation,
-            includeResult: booleanValue(args.includeResult) === true,
-        }),
-    });
+    return mcpJson(await projectControlOperationStatusView(args, projectControlJobsDeps()));
 }
 async function projectControlStartStoredJob(args) {
     const controller = await loadProjectControlController(args);
@@ -2731,9 +2348,6 @@ function reconcilePreviewDecisionJson(decision) {
         ...decision,
         jobId: decision.runId,
     };
-}
-function jsonRecordFromProjectControlArgs(args) {
-    return JSON.parse(JSON.stringify(args));
 }
 if (await isMainModule()) {
     try {

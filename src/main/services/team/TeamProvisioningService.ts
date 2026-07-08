@@ -560,7 +560,9 @@ import {
 import { forwardUserDmToTeammateWithPorts } from './provisioning/TeamProvisioningUserDmRelay';
 import {
   createTeamProvisioningVerificationProbePorts,
+  createTeamProvisioningVerificationProbePortsDepsFromService,
   type TeamProvisioningVerificationProbePorts,
+  type TeamProvisioningVerificationProbeServiceHost,
 } from './provisioning/TeamProvisioningVerificationProbePortsFactory';
 import {
   collectWorkspaceTrustProviders as collectWorkspaceTrustProvidersHelper,
@@ -1667,30 +1669,21 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
           }
         )
       );
-    this.verificationProbePorts = createTeamProvisioningVerificationProbePorts<ProvisioningRun>({
-      service: {
-        persistMembersMeta: (teamName, request) => this.persistMembersMeta(teamName, request),
-        updateConfigPostLaunch: (teamName, cwd, detectedSessionId, color, options) =>
-          this.updateConfigPostLaunch(teamName, cwd, detectedSessionId, color, options),
-        refreshMemberSpawnStatusesFromLeadInbox: (run) =>
-          this.refreshMemberSpawnStatusesFromLeadInbox(run),
-        maybeAuditMemberSpawnStatuses: (run, options) =>
-          this.maybeAuditMemberSpawnStatuses(run, options),
-        finalizeMissingRegisteredMembersAsFailed: (run) =>
-          this.finalizeMissingRegisteredMembersAsFailed(run),
-        persistLaunchStateSnapshot: (run, phase) => this.persistLaunchStateSnapshot(run, phase),
-        cleanupRun: (run) => this.cleanupRun(run),
-      },
-      listTeams: () => this.configReader.listTeams(),
-      getTeamsBasePath,
-      readRegularFileUtf8: tryReadRegularFileUtf8,
-      updateProgress,
-      verifyTimeoutMs: VERIFY_TIMEOUT_MS,
-      verifyPollMs: VERIFY_POLL_MS,
-      teamJsonReadTimeoutMs: TEAM_JSON_READ_TIMEOUT_MS,
-      teamConfigMaxBytes: TEAM_CONFIG_MAX_BYTES,
-      sleep,
-    });
+    this.verificationProbePorts = createTeamProvisioningVerificationProbePorts<ProvisioningRun>(
+      createTeamProvisioningVerificationProbePortsDepsFromService(
+        this as unknown as TeamProvisioningVerificationProbeServiceHost<ProvisioningRun>,
+        {
+          getTeamsBasePath,
+          readRegularFileUtf8: tryReadRegularFileUtf8,
+          updateProgress,
+          verifyTimeoutMs: VERIFY_TIMEOUT_MS,
+          verifyPollMs: VERIFY_POLL_MS,
+          teamJsonReadTimeoutMs: TEAM_JSON_READ_TIMEOUT_MS,
+          teamConfigMaxBytes: TEAM_CONFIG_MAX_BYTES,
+          sleep,
+        }
+      )
+    );
     this.processExitPorts = createTeamProvisioningProcessExitPorts<ProvisioningRun>({
       service: {
         buildStdoutCarryDiagnostic: (run) =>

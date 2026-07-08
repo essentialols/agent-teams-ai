@@ -486,7 +486,11 @@ import {
   type PersistedRuntimeMemberLike,
 } from './provisioning/TeamProvisioningRuntimeSnapshot';
 import { TeamProvisioningRuntimeSnapshotCacheBoundary } from './provisioning/TeamProvisioningRuntimeSnapshotCache';
-import { createRuntimeToolActivityHandlers } from './provisioning/TeamProvisioningRuntimeToolActivity';
+import {
+  createRuntimeToolActivityHandlerPortsFromService,
+  createRuntimeToolActivityHandlers,
+  type RuntimeToolActivityServiceHost,
+} from './provisioning/TeamProvisioningRuntimeToolActivity';
 import {
   buildRuntimeTurnSettledHookSettingsArgs as buildRuntimeTurnSettledHookSettingsArgsHelper,
   buildRuntimeTurnSettledHookSettingsObject as buildRuntimeTurnSettledHookSettingsObjectHelper,
@@ -1281,23 +1285,17 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
   );
   private readonly memberMcpLaunchConfigProvisioner: TeamProvisioningMemberMcpLaunchConfigProvisioner<ProvisioningRun>;
   private readonly taskActivityIntervalService = new TeamTaskActivityIntervalService();
-  private readonly runtimeToolActivity = createRuntimeToolActivityHandlers<ProvisioningRun>({
-    isCurrentTrackedRun: (run) => this.isCurrentTrackedRun(run),
-    emitTeamChange: (event) => this.teamChangeEmitter?.(event),
-    nowIso,
-    logInfo: (message) => logger.info(message),
-    logWarn: (message) => logger.warn(message),
-    updateProgress,
-    setMemberSpawnStatus: (run, memberName, status, error) =>
-      this.setMemberSpawnStatus(run, memberName, status, error),
-    invalidateRuntimeSnapshotCaches: (teamName) => this.invalidateRuntimeSnapshotCaches(teamName),
-    reevaluateMemberLaunchStatus: (run, memberName) =>
-      this.reevaluateMemberLaunchStatus(run, memberName),
-    pauseActiveIntervalsForMember: (teamName, memberName, at) =>
-      this.taskActivityIntervalService.pauseActiveIntervalsForMember(teamName, memberName, at),
-    resumeActiveIntervalsForMember: (teamName, memberName, at) =>
-      this.taskActivityIntervalService.resumeActiveIntervalsForMember(teamName, memberName, at),
-  });
+  private readonly runtimeToolActivity = createRuntimeToolActivityHandlers<ProvisioningRun>(
+    createRuntimeToolActivityHandlerPortsFromService(
+      this as unknown as RuntimeToolActivityServiceHost<ProvisioningRun>,
+      {
+        nowIso,
+        logInfo: (message) => logger.info(message),
+        logWarn: (message) => logger.warn(message),
+        updateProgress,
+      }
+    )
+  );
   private readonly leadTaskActivitySyncedRunKeys = new Set<string>();
   private teamChangeEmitter: ((event: TeamChangeEvent) => void) | null = null;
   private readonly helpOutputCache = { output: null as string | null, cachedAtMs: 0 };

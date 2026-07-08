@@ -1,15 +1,12 @@
-import { hostname } from "node:os";
 import {
   AccessBoundary,
   LaunchPlanStatus,
   NetworkAccessMode,
   buildControlledAgentLiveControllerState,
-  buildControlledAgentProcessOwner,
   getControlledAgentStatus,
   reconcileControlledAgentRun,
   startControlledAgentRun,
   stopControlledAgentRun,
-  type ControlledAgentProcessOwner,
   type ControlledAgentProviderPort,
   type ProjectAccessScope,
 } from "@vioxen/subscription-runtime/worker-core";
@@ -39,6 +36,11 @@ import {
 import {
   projectControllerProvider,
 } from "./codex-goal-mcp-project-controller-provider";
+import {
+  createInMemoryProjectControllerProviderRegistry,
+  projectControllerOwnerIsLive,
+  projectControllerProcessOwner,
+} from "./application/project-control/codex-goal-project-controller-runtime";
 import type { ProjectControllerLaunchPlanMcpArgs } from "./codex-goal-mcp-inputs";
 import {
   stringValue,
@@ -67,7 +69,7 @@ export type CodexGoalMcpProjectControllerDeps = {
   readonly runtimeVersion: string;
 };
 
-const controlledAgentProviders = new Map<string, ControlledAgentProviderPort>();
+const controlledAgentProviders = createInMemoryProjectControllerProviderRegistry();
 
 export async function projectControllerLaunchPlanView(
   args: ProjectControllerLaunchPlanMcpArgs,
@@ -139,7 +141,7 @@ export async function projectControllerStartView(
     state,
   });
   const capacityAccountId = stringValue(providerInput.account?.name);
-  const owner = controlledAgentProcessOwner(deps.runtimeVersion);
+  const owner = projectControllerProcessOwner(deps.runtimeVersion);
   const result = await startControlledAgentRun({
     controllerJobId: controller.controller.jobId,
     sessionId: state.sessionId,
@@ -153,7 +155,7 @@ export async function projectControllerStartView(
     stateStore: state.store,
     events: state.store,
     owner,
-    ownerLiveness: { isLive: controlledAgentOwnerIsLive },
+    ownerLiveness: { isLive: projectControllerOwnerIsLive },
     recoverOwnerlessActiveRunAfterMs: 10 * 60 * 1000,
     ...(capacityAccountId === undefined ? {} : {
       capacity: {
@@ -240,7 +242,7 @@ export async function projectControllerStatusView(
       providerStatusError = safeObservationErrorMessage(error);
     }
   }
-  const owner = controlledAgentProcessOwner(deps.runtimeVersion);
+  const owner = projectControllerProcessOwner(deps.runtimeVersion);
   const liveController = result.ok
     ? buildControlledAgentLiveControllerState({
         session: result.session,
@@ -320,7 +322,7 @@ export async function projectControllerStopView(
     stateStore: state.store,
   });
   const provider = controlledAgentProviders.get(state.sessionId);
-  const owner = controlledAgentProcessOwner(deps.runtimeVersion);
+  const owner = projectControllerProcessOwner(deps.runtimeVersion);
   if (result.ok && provider) {
     const stopped = await stopControlledAgentRun({
       sessionId: state.sessionId,
@@ -384,7 +386,7 @@ export async function projectControllerReconcileView(
     stateStore: state.store,
   });
   const provider = controlledAgentProviders.get(state.sessionId);
-  const owner = controlledAgentProcessOwner(deps.runtimeVersion);
+  const owner = projectControllerProcessOwner(deps.runtimeVersion);
   if (result.ok && provider) {
     const reconciled = await reconcileControlledAgentRun(state.sessionId, {
       stateStore: state.store,
@@ -443,26 +445,6 @@ export async function projectControllerReconcileView(
   };
 }
 
-function controlledAgentProcessOwner(runtimeVersion: string): ControlledAgentProcessOwner {
-  return buildControlledAgentProcessOwner({
-    runtimeVersion,
-    ...(process.env.SUBSCRIPTION_RUNTIME_RELEASE_SHA === undefined
-      ? {}
-      : { runtimeSha: process.env.SUBSCRIPTION_RUNTIME_RELEASE_SHA }),
-    pid: process.pid,
-  });
-}
-
-function controlledAgentOwnerIsLive(owner: ControlledAgentProcessOwner): boolean {
-  if (owner.hostname !== undefined && owner.hostname !== hostname()) return true;
-  if (owner.pid === undefined) return true;
-  try {
-    process.kill(owner.pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 function recordControllerCapacitySignal(input: {
   readonly launch: CodexGoalLaunchInput;

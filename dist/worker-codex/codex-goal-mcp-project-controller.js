@@ -1,15 +1,15 @@
-import { hostname } from "node:os";
-import { AccessBoundary, LaunchPlanStatus, NetworkAccessMode, buildControlledAgentLiveControllerState, buildControlledAgentProcessOwner, getControlledAgentStatus, reconcileControlledAgentRun, startControlledAgentRun, stopControlledAgentRun, } from "@vioxen/subscription-runtime/worker-core";
+import { AccessBoundary, LaunchPlanStatus, NetworkAccessMode, buildControlledAgentLiveControllerState, getControlledAgentStatus, reconcileControlledAgentRun, startControlledAgentRun, stopControlledAgentRun, } from "@vioxen/subscription-runtime/worker-core";
 import { projectControllerCapacityDemand, recordProjectControllerCapacitySignal, } from "./project-controller-capacity.js";
 import { codexGoalJobToArgs, } from "./codex-goal-jobs.js";
 import { goalLaunchInput, } from "./codex-goal-mcp-launch-input.js";
 import { safeObservationErrorMessage, } from "./codex-goal-mcp-observation-projection.js";
 import { projectControllerAllowedTools, projectControllerLaunchInput, projectControllerProfile, projectControllerProfileReadyJson, projectControllerProviderKind, projectControllerState, } from "./codex-goal-mcp-project-controller-profile.js";
 import { projectControllerProvider, } from "./codex-goal-mcp-project-controller-provider.js";
+import { createInMemoryProjectControllerProviderRegistry, projectControllerOwnerIsLive, projectControllerProcessOwner, } from "./application/project-control/codex-goal-project-controller-runtime.js";
 import { stringValue, } from "./codex-goal-mcp-values.js";
 import { workerControlDecisionJson, } from "./codex-goal-mcp-worker-control-view.js";
 import { codexGoalStateRootDir, codexGoalWorkerControlService, codexGoalWorkerControlTarget, } from "./codex-goal-mcp-worker-control.js";
-const controlledAgentProviders = new Map();
+const controlledAgentProviders = createInMemoryProjectControllerProviderRegistry();
 export async function projectControllerLaunchPlanView(args, deps) {
     const controller = await deps.loadProjectControlController(args);
     const state = projectControllerState(args, controller);
@@ -71,7 +71,7 @@ export async function projectControllerStartView(args, deps) {
         state,
     });
     const capacityAccountId = stringValue(providerInput.account?.name);
-    const owner = controlledAgentProcessOwner(deps.runtimeVersion);
+    const owner = projectControllerProcessOwner(deps.runtimeVersion);
     const result = await startControlledAgentRun({
         controllerJobId: controller.controller.jobId,
         sessionId: state.sessionId,
@@ -85,7 +85,7 @@ export async function projectControllerStartView(args, deps) {
         stateStore: state.store,
         events: state.store,
         owner,
-        ownerLiveness: { isLive: controlledAgentOwnerIsLive },
+        ownerLiveness: { isLive: projectControllerOwnerIsLive },
         recoverOwnerlessActiveRunAfterMs: 10 * 60 * 1000,
         ...(capacityAccountId === undefined ? {} : {
             capacity: {
@@ -167,7 +167,7 @@ export async function projectControllerStatusView(args, deps) {
             providerStatusError = safeObservationErrorMessage(error);
         }
     }
-    const owner = controlledAgentProcessOwner(deps.runtimeVersion);
+    const owner = projectControllerProcessOwner(deps.runtimeVersion);
     const liveController = result.ok
         ? buildControlledAgentLiveControllerState({
             session: result.session,
@@ -239,7 +239,7 @@ export async function projectControllerStopView(args, deps) {
         stateStore: state.store,
     });
     const provider = controlledAgentProviders.get(state.sessionId);
-    const owner = controlledAgentProcessOwner(deps.runtimeVersion);
+    const owner = projectControllerProcessOwner(deps.runtimeVersion);
     if (result.ok && provider) {
         const stopped = await stopControlledAgentRun({
             sessionId: state.sessionId,
@@ -300,7 +300,7 @@ export async function projectControllerReconcileView(args, deps) {
         stateStore: state.store,
     });
     const provider = controlledAgentProviders.get(state.sessionId);
-    const owner = controlledAgentProcessOwner(deps.runtimeVersion);
+    const owner = projectControllerProcessOwner(deps.runtimeVersion);
     if (result.ok && provider) {
         const reconciled = await reconcileControlledAgentRun(state.sessionId, {
             stateStore: state.store,
@@ -357,28 +357,6 @@ export async function projectControllerReconcileView(args, deps) {
             ? "A safe provider runner is required to reconcile provider liveness. Persisted state is available, but runtime liveness cannot be asserted."
             : "No persisted controlled-agent run exists to reconcile.",
     };
-}
-function controlledAgentProcessOwner(runtimeVersion) {
-    return buildControlledAgentProcessOwner({
-        runtimeVersion,
-        ...(process.env.SUBSCRIPTION_RUNTIME_RELEASE_SHA === undefined
-            ? {}
-            : { runtimeSha: process.env.SUBSCRIPTION_RUNTIME_RELEASE_SHA }),
-        pid: process.pid,
-    });
-}
-function controlledAgentOwnerIsLive(owner) {
-    if (owner.hostname !== undefined && owner.hostname !== hostname())
-        return true;
-    if (owner.pid === undefined)
-        return true;
-    try {
-        process.kill(owner.pid, 0);
-        return true;
-    }
-    catch {
-        return false;
-    }
 }
 function recordControllerCapacitySignal(input) {
     recordProjectControllerCapacitySignal({

@@ -29,6 +29,7 @@ export {
   markTeamRunAlive,
   memberLifecycleControllerHarness,
   memberLifecycleHostHarness,
+  memberLifecycleUseCasesHarness,
   outputRecoveryFacadeHarness,
   privateHarness,
   providerRuntimeHarness,

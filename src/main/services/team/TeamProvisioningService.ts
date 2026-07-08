@@ -330,7 +330,10 @@ import {
   shouldRecoverStalePersistedMixedLaunchSnapshot as shouldRecoverStalePersistedMixedLaunchSnapshotHelper,
 } from './provisioning/TeamProvisioningMixedSecondaryLaunchReconciliation';
 import { handleNativeTeammateUserMessage as handleNativeTeammateUserMessageHelper } from './provisioning/TeamProvisioningNativeTeammateMessages';
-import { getOpenCodeAgendaSyncRecoveryBypassMessageIds as getOpenCodeAgendaSyncRecoveryBypassMessageIdsHelper } from './provisioning/TeamProvisioningOpenCodeAgendaSyncRecovery';
+import {
+  getOpenCodeAgendaSyncRecoveryBypassMessageIdsWithService,
+  type OpenCodeAgendaSyncRecoveryBypassServiceHost,
+} from './provisioning/TeamProvisioningOpenCodeAgendaSyncRecovery';
 import {
   commitOpenCodeRuntimeAdapterLaunchSessionEvidence as commitOpenCodeRuntimeAdapterLaunchSessionEvidenceHelper,
   launchOpenCodeAggregatePrimaryLane as launchOpenCodeAggregatePrimaryLaneHelper,
@@ -3554,33 +3557,10 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
     taskRefs?: TaskRef[];
     foregroundMessages: InboxMessage[];
   }): Promise<Set<string>> {
-    return getOpenCodeAgendaSyncRecoveryBypassMessageIdsHelper(input, {
-      resolveOpenCodeMemberDeliveryIdentity: async (teamName, memberName) => {
-        const identity = await this.resolveOpenCodeMemberDeliveryIdentity(teamName, memberName);
-        return identity.ok
-          ? {
-              ok: true,
-              laneId: identity.laneId,
-              canonicalMemberName: identity.canonicalMemberName,
-            }
-          : null;
-      },
-      readLaneState: async (teamName, laneId) => {
-        const laneIndex = await readOpenCodeRuntimeLaneIndex(getTeamsBasePath(), teamName).catch(
-          () => undefined
-        );
-        if (laneIndex === undefined) {
-          return 'unreadable';
-        }
-        return laneIndex.lanes[laneId]?.state ?? 'missing';
-      },
-      tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive: (recoveryInput) =>
-        this.tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive(recoveryInput),
-      listOpenCodePromptDeliveryLedgerRecords: (teamName, laneId) =>
-        this.createOpenCodePromptDeliveryLedger(teamName, laneId)
-          .list()
-          .catch(() => null),
-    });
+    return getOpenCodeAgendaSyncRecoveryBypassMessageIdsWithService(
+      input,
+      this as unknown as OpenCodeAgendaSyncRecoveryBypassServiceHost
+    );
   }
 
   async relayLeadInboxMessages(teamName: string): Promise<number> {

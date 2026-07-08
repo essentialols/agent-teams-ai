@@ -366,7 +366,10 @@ import {
   getOpenCodeMemberDeliveryBusyStatus as getOpenCodeMemberDeliveryBusyStatusWithPorts,
   tryGetActiveOpenCodePromptDeliveryRecord as tryGetActiveOpenCodePromptDeliveryRecordWithPorts,
 } from './provisioning/TeamProvisioningOpenCodeRuntimeDelivery';
-import { TeamProvisioningOpenCodeRuntimeDeliveryAdvisory } from './provisioning/TeamProvisioningOpenCodeRuntimeDeliveryAdvisory';
+import {
+  createTeamProvisioningOpenCodeRuntimeDeliveryAdvisoryFromService,
+  type TeamProvisioningOpenCodeRuntimeDeliveryAdvisoryServiceHost,
+} from './provisioning/TeamProvisioningOpenCodeRuntimeDeliveryAdvisory';
 import {
   createTeamProvisioningOpenCodeRuntimeDeliveryBoundaryFromHost,
   createTeamProvisioningOpenCodeRuntimeDeliveryBoundaryHostFromService,
@@ -958,40 +961,18 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
   });
   private readonly openCodeRuntimeDeliveryProofReader = new OpenCodeRuntimeDeliveryProofReader();
   private readonly openCodeRuntimeDeliveryAdvisory =
-    new TeamProvisioningOpenCodeRuntimeDeliveryAdvisory({
-      createOpenCodePromptDeliveryLedger: (teamName, laneId) =>
-        this.createOpenCodePromptDeliveryLedger(teamName, laneId),
-      readProofIndex: (input) => this.openCodeRuntimeDeliveryProofReader.readProofIndex(input),
-      readConfigSnapshot: (teamName) => this.configFacade.readConfigSnapshot(teamName),
-      addTeamNotification: async (notification) => {
-        await NotificationManager.getInstance().addTeamNotification(notification);
-      },
-      emitTeamChange: (event) => {
-        this.teamChangeEmitter?.(event);
-      },
-      invalidateMemberRuntimeAdvisory: (teamName, memberName) => {
-        this.appShellBoundary.getMemberRuntimeAdvisoryInvalidator()?.(teamName, memberName);
-      },
-      scheduleProofMissingWorkSyncRecovery: (input) =>
-        this.appShellBoundary.getMemberWorkSyncProofMissingRecoveryScheduler()?.(input),
-      getLeadNoticeSink: (teamName) => {
-        const runId = this.runTracking.getAliveRunId(teamName);
-        const run = runId ? this.runs.get(runId) : null;
-        if (!run || run.processKilled || run.cancelRequested) {
-          return null;
-        }
-        if (run.child && !run.child.stdin?.writable) {
-          return null;
-        }
-        return {
-          send: (message) => this.sendMessageToRun(run, message),
-        };
-      },
-      logInfo: (message, detail) =>
-        detail === undefined ? logger.info(message) : logger.info(message, detail),
-      logWarning: (message) => logger.warn(message),
-      getErrorMessage,
-    });
+    createTeamProvisioningOpenCodeRuntimeDeliveryAdvisoryFromService<ProvisioningRun>(
+      this as unknown as TeamProvisioningOpenCodeRuntimeDeliveryAdvisoryServiceHost<ProvisioningRun>,
+      {
+        addTeamNotification: async (notification) => {
+          await NotificationManager.getInstance().addTeamNotification(notification);
+        },
+        logInfo: (message, detail) =>
+          detail === undefined ? logger.info(message) : logger.info(message, detail),
+        logWarning: (message) => logger.warn(message),
+        getErrorMessage,
+      }
+    );
   private readonly launchNotifications = new TeamProvisioningLaunchNotifications<ProvisioningRun>({
     getConfig: () => ConfigManager.getInstance().getConfig(),
     addTeamNotification: (notification) =>

@@ -419,7 +419,7 @@
       },
       "badges": {
         "deleted": "DELETEDの特長",
-        "manualReview": "MANUAL REVIEWの特長",
+        "manualReview": "MANUAL REVIEW",
         "new": "NEWの特長",
         "worktree": "WORKTREEの特長"
       },
@@ -1084,7 +1084,7 @@
       "subject": "コンテンツ",
       "subjectPlaceholder": "何をすべきか?",
       "title": "タスクの作成",
-      "todo": "TODOの特長"
+      "todo": "TODO"
     },
     "list": {
       "columns": {
@@ -2305,11 +2305,11 @@
     },
     "title": "カンバン",
     "columns": {
-      "todo": "TODOの特長",
-      "inProgress": "PROGRESSで",
-      "review": "REVIEWの特長",
-      "done": "DONEの特長",
-      "approved": "APPROVEDの特長"
+      "todo": "TODO",
+      "inProgress": "IN PROGRESS",
+      "review": "REVIEW",
+      "done": "DONE",
+      "approved": "APPROVED"
     }
   },
   "worktreeGitReadiness": {

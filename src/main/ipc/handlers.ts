@@ -127,7 +127,7 @@ import type { SkillsWatcherService } from '../services/extensions/skills/SkillsW
 import type { McpHealthDiagnosticsService } from '../services/extensions/state/McpHealthDiagnosticsService';
 import type { HttpServer } from '../services/infrastructure/HttpServer';
 import type { SchedulerService } from '../services/schedule/SchedulerService';
-import type { TeamIpcProvisioningApis } from '../services/team/contracts/TeamProvisioningApis';
+import type { TeamIpcHandlerApis } from '../services/team/contracts/TeamProvisioningApis';
 import type { CrossTeamService } from '../services/team/CrossTeamService';
 import type { LaunchIoGovernor } from '../services/team/LaunchIoGovernor';
 import type { TeamBackupService } from '../services/team/TeamBackupService';
@@ -142,7 +142,7 @@ export function initializeIpcHandlers(
   updater: UpdaterService,
   sshManager: SshConnectionManager,
   teamDataService: TeamDataService,
-  teamProvisioningApis: TeamIpcProvisioningApis,
+  teamHandlerApis: TeamIpcHandlerApis,
   teamMemberLogsFinder: TeamMemberLogsFinder,
   memberStatsComputer: MemberStatsComputer,
   boardTaskActivityService: BoardTaskActivityService,
@@ -193,7 +193,7 @@ export function initializeIpcHandlers(
   initializeContextHandlers(registry, contextCallbacks.rewire);
   initializeTeamHandlers(
     teamDataService,
-    teamProvisioningApis,
+    teamHandlerApis,
     teamMemberLogsFinder,
     memberStatsComputer,
     teamBackupService,

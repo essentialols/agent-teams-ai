@@ -29,7 +29,7 @@ import type {
   ToolApprovalSettings,
 } from '@shared/types/team';
 
-export interface TeamProvisioningStartApi {
+export interface TeamLaunchApi {
   createTeam(
     request: TeamCreateRequest,
     onProgress: (progress: TeamProvisioningProgress) => void
@@ -38,13 +38,8 @@ export interface TeamProvisioningStartApi {
     request: TeamLaunchRequest,
     onProgress: (progress: TeamProvisioningProgress) => void
   ): Promise<TeamLaunchResponse>;
-}
-
-export interface TeamProvisioningStatusApi {
   getProvisioningStatus(runId: string): Promise<TeamProvisioningProgress>;
 }
-
-export interface TeamLaunchApi extends TeamProvisioningStartApi, TeamProvisioningStatusApi {}
 
 export interface TeamProvisioningRunApi {
   cancelProvisioning(runId: string): Promise<void>;
@@ -91,14 +86,6 @@ export interface TeamHttpRuntimeApi {
   getAliveTeams(): string[];
 }
 
-export interface TeamHttpProvisioningApis {
-  launch?: TeamProvisioningStartApi;
-  status?: TeamProvisioningStatusApi;
-  taskActivity?: TeamTaskActivityRepairApi;
-  runtime?: TeamHttpRuntimeApi;
-  runtimeControl?: TeamRuntimeControlCompatibilityApi;
-}
-
 export interface TeamHttpDataApi {
   listTeams(): Promise<TeamSummary[]>;
   getTeamData(teamName: string): Promise<TeamViewSnapshot>;
@@ -106,7 +93,7 @@ export interface TeamHttpDataApi {
   createTeamConfig(request: TeamCreateConfigRequest): Promise<void>;
 }
 
-export interface TeamIpcProvisioningApis {
+export interface TeamIpcHandlerApis {
   launch: TeamLaunchApi;
   preflight: TeamProvisioningPreflightApi;
   provisioningRun: TeamProvisioningRunApi;
@@ -219,7 +206,7 @@ export interface TeamMessagingApi {
   pushLiveLeadProcessMessage(teamName: string, message: InboxMessage): void;
 }
 
-export interface TeamCrossTeamProvisioningApi {
+export interface TeamCrossTeamMessagingApi {
   resolveCrossTeamReplyMetadata(
     teamName: string,
     toTeam: string
@@ -253,23 +240,6 @@ export function bindTeamLaunchApi(source: TeamLaunchApi): TeamLaunchApi {
   return {
     createTeam: source.createTeam.bind(source),
     launchTeam: source.launchTeam.bind(source),
-    getProvisioningStatus: source.getProvisioningStatus.bind(source),
-  };
-}
-
-export function bindTeamProvisioningStartApi(
-  source: TeamProvisioningStartApi
-): TeamProvisioningStartApi {
-  return {
-    createTeam: source.createTeam.bind(source),
-    launchTeam: source.launchTeam.bind(source),
-  };
-}
-
-export function bindTeamProvisioningStatusApi(
-  source: TeamProvisioningStatusApi
-): TeamProvisioningStatusApi {
-  return {
     getProvisioningStatus: source.getProvisioningStatus.bind(source),
   };
 }
@@ -329,22 +299,6 @@ export function bindTeamHttpRuntimeApi(source: TeamHttpRuntimeApi): TeamHttpRunt
   };
 }
 
-export function bindTeamHttpProvisioningApis(
-  source: TeamProvisioningStartApi &
-    TeamProvisioningStatusApi &
-    TeamTaskActivityRepairApi &
-    TeamHttpRuntimeApi &
-    TeamRuntimeControlCompatibilityApi
-): TeamHttpProvisioningApis {
-  return {
-    launch: bindTeamProvisioningStartApi(source),
-    status: bindTeamProvisioningStatusApi(source),
-    taskActivity: bindTeamTaskActivityRepairApi(source),
-    runtime: bindTeamHttpRuntimeApi(source),
-    runtimeControl: bindTeamRuntimeControlCompatibilityApi(source),
-  };
-}
-
 export function bindTeamHttpDataApi(source: TeamHttpDataApi): TeamHttpDataApi {
   return {
     listTeams: source.listTeams.bind(source),
@@ -354,7 +308,7 @@ export function bindTeamHttpDataApi(source: TeamHttpDataApi): TeamHttpDataApi {
   };
 }
 
-export function bindTeamIpcProvisioningApis(
+export function bindTeamIpcHandlerApis(
   source: TeamLaunchApi &
     TeamProvisioningPreflightApi &
     TeamProvisioningRunApi &
@@ -365,7 +319,7 @@ export function bindTeamIpcProvisioningApis(
     TeamClaudeLogsApi &
     TeamMessagingApi &
     TeamToolApprovalApi
-): TeamIpcProvisioningApis {
+): TeamIpcHandlerApis {
   return {
     launch: bindTeamLaunchApi(source),
     preflight: bindTeamProvisioningPreflightApi(source),
@@ -418,9 +372,9 @@ export function bindTeamMessagingApi(source: TeamMessagingApi): TeamMessagingApi
   };
 }
 
-export function bindTeamCrossTeamProvisioningApi(
-  source: TeamCrossTeamProvisioningApi
-): TeamCrossTeamProvisioningApi {
+export function bindTeamCrossTeamMessagingApi(
+  source: TeamCrossTeamMessagingApi
+): TeamCrossTeamMessagingApi {
   return {
     resolveCrossTeamReplyMetadata: source.resolveCrossTeamReplyMetadata.bind(source),
     registerPendingCrossTeamReplyExpectation:

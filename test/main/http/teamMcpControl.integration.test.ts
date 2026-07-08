@@ -305,12 +305,9 @@ function createServices(claudeRoot: string): {
       updaterService: {} as HttpServices['updaterService'],
       sshConnectionManager: {} as HttpServices['sshConnectionManager'],
       teamDataApi: teamDataService,
-      teamProvisioningApis: {
-        status: teamLaunchApi,
-        launch: teamLaunchApi,
-        runtime: teamRuntimeApi,
-        runtimeControl: teamRuntimeControlApi,
-      },
+      teamLaunchApi,
+      teamRuntimeApi,
+      teamRuntimeControlApi,
     },
   };
 }
@@ -530,7 +527,7 @@ describe('MCP team tools over the local REST control API', () => {
     const app = Fastify();
     const { services } = createServices(claudeRoot);
     let launchRequest: TeamLaunchRequest | null = null;
-    services.teamProvisioningApis!.launch!.launchTeam = (
+    services.teamLaunchApi!.launchTeam = (
       request: TeamLaunchRequest
     ): Promise<TeamLaunchResponse> => {
       launchRequest = request;
@@ -540,7 +537,7 @@ describe('MCP team tools over the local REST control API', () => {
         alreadyLaunching: true,
       });
     };
-    services.teamProvisioningApis!.status!.getProvisioningStatus = () =>
+    services.teamLaunchApi!.getProvisioningStatus = () =>
       Promise.reject(
         new Error('team_launch should not wait for provisioning status after already_launching')
       );

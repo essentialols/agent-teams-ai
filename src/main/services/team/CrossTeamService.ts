@@ -9,7 +9,7 @@ import { buildActionModeAgentBlock } from './actionModeInstructions';
 import { CascadeGuard } from './CascadeGuard';
 import { CrossTeamOutbox } from './CrossTeamOutbox';
 
-import type { TeamCrossTeamProvisioningApi } from './contracts/TeamProvisioningApis';
+import type { TeamCrossTeamMessagingApi } from './contracts/TeamProvisioningApis';
 import type { TeamConfigReader } from './TeamConfigReader';
 import type { TeamDataService } from './TeamDataService';
 import type { TeamInboxWriter } from './TeamInboxWriter';
@@ -65,7 +65,7 @@ export class CrossTeamService {
     private configReader: TeamConfigReader,
     private dataService: TeamDataService,
     private inboxWriter: TeamInboxWriter,
-    private provisioning: TeamCrossTeamProvisioningApi | null
+    private messaging: TeamCrossTeamMessagingApi | null
   ) {}
 
   async send(request: CrossTeamSendRequest): Promise<CrossTeamSendResult> {
@@ -76,7 +76,7 @@ export class CrossTeamService {
     const timestamp = request.timestamp ?? new Date().toISOString();
     const inferredReplyMeta =
       !request.conversationId && !request.replyToConversationId
-        ? (this.provisioning?.resolveCrossTeamReplyMetadata(fromTeam, toTeam) ?? null)
+        ? (this.messaging?.resolveCrossTeamReplyMetadata(fromTeam, toTeam) ?? null)
         : null;
     const replyToConversationId =
       request.replyToConversationId?.trim() ||
@@ -148,7 +148,7 @@ export class CrossTeamService {
       // 4. Cascade check only for real new deliveries
       this.cascadeGuard.check(fromTeam, toTeam, chainDepth);
       this.cascadeGuard.record(fromTeam, toTeam);
-      this.provisioning?.registerPendingCrossTeamReplyExpectation(fromTeam, toTeam, conversationId);
+      this.messaging?.registerPendingCrossTeamReplyExpectation(fromTeam, toTeam, conversationId);
 
       // 5. Inbox write to TARGET team (TeamInboxWriter handles file lock + in-process lock internally)
       await this.inboxWriter.sendMessage(toTeam, {
@@ -187,7 +187,7 @@ export class CrossTeamService {
         conversationId,
         replyToConversationId,
       });
-      this.provisioning?.clearPendingCrossTeamReplyExpectation(fromTeam, toTeam, conversationId);
+      this.messaging?.clearPendingCrossTeamReplyExpectation(fromTeam, toTeam, conversationId);
     } catch (e: unknown) {
       logger.warn(
         `Failed to write sender copy for ${fromTeam}: ${e instanceof Error ? e.message : String(e)}`
@@ -195,8 +195,8 @@ export class CrossTeamService {
     }
 
     // 7. Best-effort relay (if online)
-    if (this.provisioning?.isTeamAlive(toTeam)) {
-      void this.provisioning.relayLeadInboxMessages(toTeam).catch((e: unknown) => {
+    if (this.messaging?.isTeamAlive(toTeam)) {
+      void this.messaging.relayLeadInboxMessages(toTeam).catch((e: unknown) => {
         logger.warn(`Cross-team relay to ${toTeam}: ${e instanceof Error ? e.message : String(e)}`);
       });
     }
@@ -230,7 +230,7 @@ export class CrossTeamService {
           color: team.color,
           ...(summaryLead?.name ? { leadName: summaryLead.name } : {}),
           ...(summaryLead?.color ? { leadColor: summaryLead.color } : {}),
-          isOnline: this.provisioning?.isTeamAlive(team.teamName) ?? false,
+          isOnline: this.messaging?.isTeamAlive(team.teamName) ?? false,
         };
       });
 

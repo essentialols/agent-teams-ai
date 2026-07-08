@@ -1,7 +1,6 @@
 import {
-  bindTeamCrossTeamProvisioningApi,
-  bindTeamHttpProvisioningApis,
-  bindTeamIpcProvisioningApis,
+  bindTeamCrossTeamMessagingApi,
+  bindTeamIpcHandlerApis,
 } from '@main/services/team/contracts/TeamProvisioningApis';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -23,23 +22,16 @@ function createSource() {
     prepareForProvisioning: vi.fn(async () => ({ ready: true })),
     cancelProvisioning: vi.fn(async () => undefined),
     hasProvisioningRun: vi.fn(() => false),
-    getRuntimeState: vi.fn(async () => ({ teamName: 'team', alive: false, members: [] })),
+    getRuntimeState: vi.fn(async () => ({
+      teamName: 'team',
+      isAlive: false,
+      runId: null,
+      progress: null,
+    })),
     stopTeam: vi.fn(async () => undefined),
     isTeamAlive: vi.fn(() => false),
     getAliveTeams: vi.fn(() => []),
     getCurrentRunId: vi.fn(() => null),
-    recordOpenCodeRuntimeBootstrapCheckin: vi.fn(async function (this: { marker: string }) {
-      return { ok: true, teamName: this.marker, state: 'recorded' };
-    }),
-    deliverOpenCodeRuntimeMessage: vi.fn(async function (this: { marker: string }) {
-      return { ok: true, teamName: this.marker, state: 'delivered' };
-    }),
-    recordOpenCodeRuntimeTaskEvent: vi.fn(async function (this: { marker: string }) {
-      return { ok: true, teamName: this.marker, state: 'recorded' };
-    }),
-    recordOpenCodeRuntimeHeartbeat: vi.fn(async function (this: { marker: string }) {
-      return { ok: true, teamName: this.marker, state: 'recorded' };
-    }),
     getMemberSpawnStatuses: vi.fn(async () => ({ statuses: {} })),
     attachLiveRosterMember: vi.fn(async () => undefined),
     detachLiveRosterMember: vi.fn(async () => undefined),
@@ -82,9 +74,9 @@ function createSource() {
   };
 }
 
-describe('bindTeamIpcProvisioningApis', () => {
+describe('bindTeamIpcHandlerApis', () => {
   it('groups TeamProvisioningService behind IPC-facing facade ports only', () => {
-    const api = bindTeamIpcProvisioningApis(createSource() as never);
+    const api = bindTeamIpcHandlerApis(createSource() as never);
 
     expect(sortedKeys(api)).toEqual([
       'claudeLogs',
@@ -143,7 +135,7 @@ describe('bindTeamIpcProvisioningApis', () => {
   });
 
   it('binds facade methods to the source service instance', async () => {
-    const api = bindTeamIpcProvisioningApis(createSource() as never);
+    const api = bindTeamIpcHandlerApis(createSource() as never);
     const createTeam = api.launch.createTeam;
 
     await expect(createTeam({} as never, () => undefined)).resolves.toEqual({
@@ -152,10 +144,10 @@ describe('bindTeamIpcProvisioningApis', () => {
   });
 });
 
-describe('bindTeamCrossTeamProvisioningApi', () => {
+describe('bindTeamCrossTeamMessagingApi', () => {
   it('exposes only cross-team relay methods and binds them to the source service', async () => {
     const source = createSource();
-    const api = bindTeamCrossTeamProvisioningApi(source as never);
+    const api = bindTeamCrossTeamMessagingApi(source as never);
     const resolveCrossTeamReplyMetadata = api.resolveCrossTeamReplyMetadata;
     const relayLeadInboxMessages = api.relayLeadInboxMessages;
 
@@ -186,60 +178,5 @@ describe('bindTeamCrossTeamProvisioningApi', () => {
       'conversation-1'
     );
     await expect(relayLeadInboxMessages('to-team')).resolves.toBe(0);
-  });
-});
-
-describe('bindTeamHttpProvisioningApis', () => {
-  it('groups TeamProvisioningService behind HTTP-facing facade ports only', async () => {
-    const source = createSource();
-    const api = bindTeamHttpProvisioningApis(source as never);
-    const launchApi = api.launch as NonNullable<typeof api.launch>;
-    const runtimeApi = api.runtime as NonNullable<typeof api.runtime>;
-    const runtimeControlApi = api.runtimeControl as NonNullable<typeof api.runtimeControl>;
-    const taskActivityApi = api.taskActivity as NonNullable<typeof api.taskActivity>;
-    const statusApi = api.status as NonNullable<typeof api.status>;
-
-    expect(sortedKeys(api)).toEqual([
-      'launch',
-      'runtime',
-      'runtimeControl',
-      'status',
-      'taskActivity',
-    ]);
-    expect(sortedKeys(launchApi)).toEqual(['createTeam', 'launchTeam']);
-    expect(sortedKeys(statusApi)).toEqual(['getProvisioningStatus']);
-    expect(sortedKeys(taskActivityApi)).toEqual([
-      'repairStaleTaskActivityIntervalsBeforeSnapshot',
-    ]);
-    expect(sortedKeys(runtimeApi)).toEqual([
-      'getAliveTeams',
-      'getRuntimeState',
-      'stopTeam',
-    ]);
-    expect(sortedKeys(runtimeControlApi)).toEqual([
-      'deliverOpenCodeRuntimeMessage',
-      'recordOpenCodeRuntimeBootstrapCheckin',
-      'recordOpenCodeRuntimeHeartbeat',
-      'recordOpenCodeRuntimeTaskEvent',
-    ]);
-    expect(((api as unknown) as Record<string, unknown>).preflight).toBeUndefined();
-    expect(((api as unknown) as Record<string, unknown>).provisioningRun).toBeUndefined();
-    expect(((api as unknown) as Record<string, unknown>).memberLifecycle).toBeUndefined();
-    expect(((api as unknown) as Record<string, unknown>).diagnostics).toBeUndefined();
-    expect(((api as unknown) as Record<string, unknown>).claudeLogs).toBeUndefined();
-    expect(((api as unknown) as Record<string, unknown>).messaging).toBeUndefined();
-    expect(((api as unknown) as Record<string, unknown>).toolApproval).toBeUndefined();
-    expect(((api as unknown) as Record<string, unknown>).extraServiceMethod).toBeUndefined();
-
-    await expect(runtimeControlApi.deliverOpenCodeRuntimeMessage({})).resolves.toMatchObject({
-      teamName: 'bound-run',
-      state: 'delivered',
-    });
-    await expect(
-      taskActivityApi.repairStaleTaskActivityIntervalsBeforeSnapshot('team-bound')
-    ).resolves.toBeUndefined();
-    expect(source.repairStaleTaskActivityIntervalsBeforeSnapshot).toHaveBeenCalledWith(
-      'team-bound'
-    );
   });
 });

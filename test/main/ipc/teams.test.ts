@@ -135,7 +135,6 @@ import {
   computeTeamWatchScope,
   resetTeamWatchScopeForTests,
 } from '../../../src/main/services/infrastructure/teamWatchScope';
-import { bindTeamIpcProvisioningApis } from '../../../src/main/services/team/contracts/TeamProvisioningApis';
 import { LaunchIoGovernor } from '../../../src/main/services/team/LaunchIoGovernor';
 import { getAppDataPath } from '../../../src/main/utils/pathDecoder';
 import {
@@ -199,6 +198,8 @@ import {
   TEAM_UPDATE_TASK_OWNER,
   TEAM_UPDATE_TASK_STATUS,
 } from '../../../src/preload/constants/ipcChannels';
+
+import type { TeamIpcHandlerApis } from '../../../src/main/services/team/contracts/TeamProvisioningApis';
 
 type CreateTeamMock = (
   request: TeamCreateRequest,
@@ -334,7 +335,7 @@ describe('ipc teams handlers', () => {
     createTeamConfig: vi.fn(() => resolvedUndefined()),
     getSavedRequest: vi.fn<() => Promise<TeamCreateRequest | null>>(() => resolved(null)),
   };
-  const provisioningService = {
+  const teamHandlerMocks = {
     getCliHelpOutput: vi.fn(() => resolved('Usage')),
     prepareForProvisioning: vi.fn(() => resolved({
       ready: true,
@@ -358,32 +359,23 @@ describe('ipc teams handlers', () => {
     getClaudeLogs: vi.fn(() => resolved({ lines: [], total: 0, hasMore: false })),
     launchTeam: vi.fn(() => resolved({ runId: 'run-2' })),
     sendMessageToTeam: vi.fn(() => resolvedUndefined()),
-    prepareLiveMemberMcpLaunchConfig: vi.fn(() => resolved(null)),
-    discardLiveMemberMcpLaunchConfig: vi.fn(() => resolvedUndefined()),
     getRuntimeState: vi.fn(() => resolved({
       teamName: 'my-team',
+      isAlive: true,
       runId: 'run-2',
-      alive: true,
-      members: [],
-      updatedAt: new Date().toISOString(),
+      progress: null,
     })),
     isTeamAlive: vi.fn(() => true),
     getCurrentRunId: vi.fn(() => 'run-2' as string | null),
-    recordOpenCodeRuntimeBootstrapCheckin: vi.fn(() => resolved({ accepted: true })),
-    deliverOpenCodeRuntimeMessage: vi.fn(() => resolved({ accepted: true })),
-    recordOpenCodeRuntimeTaskEvent: vi.fn(() => resolved({ accepted: true })),
-    recordOpenCodeRuntimeHeartbeat: vi.fn(() => resolved({ accepted: true })),
     pushLiveLeadProcessMessage: vi.fn(),
     respondToToolApproval: vi.fn(() => resolvedUndefined()),
     updateToolApprovalSettings: vi.fn(),
     relayLeadInboxMessages: vi.fn(() => resolved(0)),
-    relayMemberInboxMessages: vi.fn(() => resolved(0)),
     resolveRuntimeRecipientProviderId: vi.fn(
       (): Promise<TeamProviderId | undefined> => resolved(undefined)
     ) as ReturnType<
       typeof vi.fn<(teamName: string, memberName: string) => Promise<TeamProviderId | undefined>>
     >,
-    isOpenCodeRuntimeRecipient: vi.fn(() => resolved(false)),
     relayOpenCodeMemberInboxMessages: vi.fn(() => resolved({
       relayed: 0,
       attempted: 0,
@@ -434,11 +426,65 @@ describe('ipc teams handlers', () => {
     skipMemberForLaunch: vi.fn(() => resolvedUndefined()),
     stopTeam: vi.fn(() => Promise.resolve()),
     repairStaleTaskActivityIntervalsBeforeSnapshot: vi.fn(() => Promise.resolve(undefined)),
-    reattachOpenCodeOwnedMemberLane: vi.fn(() => resolvedUndefined()),
-    detachOpenCodeOwnedMemberLane: vi.fn(() => resolvedUndefined()),
     attachLiveRosterMember: vi.fn(() => resolvedUndefined()),
     detachLiveRosterMember: vi.fn(() => resolvedUndefined()),
   };
+  const teamHandlerApis = {
+    launch: {
+      createTeam: teamHandlerMocks.createTeam,
+      launchTeam: teamHandlerMocks.launchTeam,
+      getProvisioningStatus: teamHandlerMocks.getProvisioningStatus,
+    },
+    preflight: {
+      getCliHelpOutput: teamHandlerMocks.getCliHelpOutput,
+      prepareForProvisioning: teamHandlerMocks.prepareForProvisioning,
+    },
+    provisioningRun: {
+      cancelProvisioning: teamHandlerMocks.cancelProvisioning,
+      hasProvisioningRun: teamHandlerMocks.hasProvisioningRun,
+    },
+    taskActivity: {
+      repairStaleTaskActivityIntervalsBeforeSnapshot:
+        teamHandlerMocks.repairStaleTaskActivityIntervalsBeforeSnapshot,
+    },
+    runtime: {
+      getRuntimeState: teamHandlerMocks.getRuntimeState,
+      stopTeam: teamHandlerMocks.stopTeam,
+      isTeamAlive: teamHandlerMocks.isTeamAlive,
+      getAliveTeams: teamHandlerMocks.getAliveTeams,
+      getCurrentRunId: teamHandlerMocks.getCurrentRunId,
+    },
+    memberLifecycle: {
+      getMemberSpawnStatuses: teamHandlerMocks.getMemberSpawnStatuses,
+      attachLiveRosterMember: teamHandlerMocks.attachLiveRosterMember,
+      detachLiveRosterMember: teamHandlerMocks.detachLiveRosterMember,
+      restartMember: teamHandlerMocks.restartMember,
+      retryFailedOpenCodeSecondaryLanes: teamHandlerMocks.retryFailedOpenCodeSecondaryLanes,
+      skipMemberForLaunch: teamHandlerMocks.skipMemberForLaunch,
+    },
+    diagnostics: {
+      getLeadActivityState: teamHandlerMocks.getLeadActivityState,
+      getLeadContextUsage: teamHandlerMocks.getLeadContextUsage,
+      getTeamAgentRuntimeSnapshot: teamHandlerMocks.getTeamAgentRuntimeSnapshot,
+    },
+    claudeLogs: {
+      getClaudeLogs: teamHandlerMocks.getClaudeLogs,
+    },
+    messaging: {
+      sendMessageToTeam: teamHandlerMocks.sendMessageToTeam,
+      relayOpenCodeMemberInboxMessages: teamHandlerMocks.relayOpenCodeMemberInboxMessages,
+      relayLeadInboxMessages: teamHandlerMocks.relayLeadInboxMessages,
+      getOpenCodeRuntimeDeliveryStatus: teamHandlerMocks.getOpenCodeRuntimeDeliveryStatus,
+      resolveRuntimeRecipientProviderId: teamHandlerMocks.resolveRuntimeRecipientProviderId,
+      getLiveLeadProcessMessages: teamHandlerMocks.getLiveLeadProcessMessages,
+      getCurrentLeadSessionId: teamHandlerMocks.getCurrentLeadSessionId,
+      pushLiveLeadProcessMessage: teamHandlerMocks.pushLiveLeadProcessMessage,
+    },
+    toolApproval: {
+      respondToToolApproval: teamHandlerMocks.respondToToolApproval,
+      updateToolApprovalSettings: teamHandlerMocks.updateToolApprovalSettings,
+    },
+  } as TeamIpcHandlerApis;
   const boardTaskActivityService = {
     getTaskActivity: vi.fn<() => Promise<BoardTaskActivityEntry[]>>(() => resolved([])),
   };
@@ -514,26 +560,24 @@ describe('ipc teams handlers', () => {
     mockTeamDataWorkerClient.invalidateTeamConfig.mockReset();
     mockTeamDataWorkerClient.invalidateTeamMessageFeed.mockReset();
     mockTeamDataWorkerClient.invalidateMemberRuntimeAdvisory.mockReset();
-    provisioningService.getCliHelpOutput.mockReset();
-    provisioningService.getCliHelpOutput.mockResolvedValue('Usage');
-    provisioningService.sendMessageToTeam.mockReset();
-    provisioningService.sendMessageToTeam.mockResolvedValue(undefined);
-    provisioningService.resolveRuntimeRecipientProviderId.mockReset();
-    provisioningService.resolveRuntimeRecipientProviderId.mockResolvedValue(undefined);
-    provisioningService.prepareLiveMemberMcpLaunchConfig.mockReset();
-    provisioningService.prepareLiveMemberMcpLaunchConfig.mockResolvedValue(null);
-    provisioningService.discardLiveMemberMcpLaunchConfig.mockReset();
-    provisioningService.discardLiveMemberMcpLaunchConfig.mockResolvedValue(undefined);
-    provisioningService.attachLiveRosterMember.mockReset();
-    provisioningService.attachLiveRosterMember.mockResolvedValue(undefined);
-    provisioningService.detachLiveRosterMember.mockReset();
-    provisioningService.detachLiveRosterMember.mockResolvedValue(undefined);
-    provisioningService.repairStaleTaskActivityIntervalsBeforeSnapshot.mockReset();
-    provisioningService.repairStaleTaskActivityIntervalsBeforeSnapshot.mockResolvedValue(undefined);
+    teamHandlerMocks.getCliHelpOutput.mockReset();
+    teamHandlerMocks.getCliHelpOutput.mockResolvedValue('Usage');
+    teamHandlerMocks.sendMessageToTeam.mockReset();
+    teamHandlerMocks.sendMessageToTeam.mockResolvedValue(undefined);
+    teamHandlerMocks.resolveRuntimeRecipientProviderId.mockReset();
+    teamHandlerMocks.resolveRuntimeRecipientProviderId.mockResolvedValue(undefined);
+    teamHandlerMocks.attachLiveRosterMember.mockReset();
+    teamHandlerMocks.attachLiveRosterMember.mockResolvedValue(undefined);
+    teamHandlerMocks.detachLiveRosterMember.mockReset();
+    teamHandlerMocks.detachLiveRosterMember.mockResolvedValue(undefined);
+    teamHandlerMocks.isTeamAlive.mockReset();
+    teamHandlerMocks.isTeamAlive.mockReturnValue(true);
+    teamHandlerMocks.repairStaleTaskActivityIntervalsBeforeSnapshot.mockReset();
+    teamHandlerMocks.repairStaleTaskActivityIntervalsBeforeSnapshot.mockResolvedValue(undefined);
     launchIoGovernor = new LaunchIoGovernor({ quietWindowMs: 100 });
     initializeTeamHandlers(
       service as never,
-      bindTeamIpcProvisioningApis(provisioningService as never),
+      teamHandlerApis,
       undefined,
       undefined,
       undefined,
@@ -638,7 +682,7 @@ describe('ipc teams handlers', () => {
     )) as { success: boolean };
 
     expect(result.success).toBe(true);
-    expect(provisioningService.prepareForProvisioning).toHaveBeenCalledWith(os.tmpdir(), {
+    expect(teamHandlerMocks.prepareForProvisioning).toHaveBeenCalledWith(os.tmpdir(), {
       providerId: 'anthropic',
       providerIds: ['anthropic'],
       modelIds: ['claude-opus-4-6[1m]'],
@@ -889,7 +933,7 @@ describe('ipc teams handlers', () => {
   });
 
   it('uses Agent Teams MCP reply instructions for Codex user direct messages', async () => {
-    provisioningService.resolveRuntimeRecipientProviderId.mockResolvedValueOnce('codex');
+    teamHandlerMocks.resolveRuntimeRecipientProviderId.mockResolvedValueOnce('codex');
     const sendHandler = handlers.get(TEAM_SEND_MESSAGE);
     expect(sendHandler).toBeDefined();
 
@@ -921,7 +965,7 @@ describe('ipc teams handlers', () => {
   it.each([['anthropic' as const], ['gemini' as const], [undefined]])(
     'keeps SendMessage reply instructions for %s user direct messages',
     async (providerId) => {
-      provisioningService.resolveRuntimeRecipientProviderId.mockResolvedValueOnce(providerId);
+      teamHandlerMocks.resolveRuntimeRecipientProviderId.mockResolvedValueOnce(providerId);
       const sendHandler = handlers.get(TEAM_SEND_MESSAGE);
       expect(sendHandler).toBeDefined();
 
@@ -943,8 +987,8 @@ describe('ipc teams handlers', () => {
   );
 
   it('stores base text and returns runtimeDelivery success for OpenCode teammate sends', async () => {
-    provisioningService.resolveRuntimeRecipientProviderId.mockResolvedValueOnce('opencode');
-    provisioningService.relayOpenCodeMemberInboxMessages.mockResolvedValueOnce({
+    teamHandlerMocks.resolveRuntimeRecipientProviderId.mockResolvedValueOnce('opencode');
+    teamHandlerMocks.relayOpenCodeMemberInboxMessages.mockResolvedValueOnce({
       relayed: 1,
       attempted: 1,
       delivered: 1,
@@ -985,7 +1029,7 @@ describe('ipc teams handlers', () => {
         text: expect.stringContaining('SendMessage'),
       })
     );
-    expect(provisioningService.relayOpenCodeMemberInboxMessages).toHaveBeenCalledWith(
+    expect(teamHandlerMocks.relayOpenCodeMemberInboxMessages).toHaveBeenCalledWith(
       'my-team',
       'bob',
       expect.objectContaining({
@@ -1010,19 +1054,19 @@ describe('ipc teams handlers', () => {
       laneId: 'secondary:opencode:bob',
       diagnostics: ['opencode_delivery_response_pending'],
     });
-    expect(provisioningService.getOpenCodeRuntimeDeliveryStatus).not.toHaveBeenCalled();
+    expect(teamHandlerMocks.getOpenCodeRuntimeDeliveryStatus).not.toHaveBeenCalled();
   });
 
   it('hydrates bare OpenCode read-shortcut relay success from durable delivery status', async () => {
-    provisioningService.resolveRuntimeRecipientProviderId.mockResolvedValueOnce('opencode');
-    provisioningService.relayOpenCodeMemberInboxMessages.mockResolvedValueOnce({
+    teamHandlerMocks.resolveRuntimeRecipientProviderId.mockResolvedValueOnce('opencode');
+    teamHandlerMocks.relayOpenCodeMemberInboxMessages.mockResolvedValueOnce({
       relayed: 0,
       attempted: 1,
       delivered: 1,
       failed: 0,
       lastDelivery: { delivered: true },
     });
-    provisioningService.getOpenCodeRuntimeDeliveryStatus.mockResolvedValueOnce({
+    teamHandlerMocks.getOpenCodeRuntimeDeliveryStatus.mockResolvedValueOnce({
       messageId: 'm1',
       providerId: 'opencode',
       attempted: true,
@@ -1047,7 +1091,7 @@ describe('ipc teams handlers', () => {
     })) as { success: boolean; data?: SendMessageResult };
 
     expect(result.success).toBe(true);
-    expect(provisioningService.getOpenCodeRuntimeDeliveryStatus).toHaveBeenCalledWith(
+    expect(teamHandlerMocks.getOpenCodeRuntimeDeliveryStatus).toHaveBeenCalledWith(
       'my-team',
       'm1'
     );
@@ -1068,8 +1112,8 @@ describe('ipc teams handlers', () => {
   });
 
   it('returns runtimeDelivery failure without hiding the persisted OpenCode message', async () => {
-    provisioningService.resolveRuntimeRecipientProviderId.mockResolvedValueOnce('opencode');
-    provisioningService.relayOpenCodeMemberInboxMessages.mockResolvedValueOnce({
+    teamHandlerMocks.resolveRuntimeRecipientProviderId.mockResolvedValueOnce('opencode');
+    teamHandlerMocks.relayOpenCodeMemberInboxMessages.mockResolvedValueOnce({
       relayed: 0,
       attempted: 1,
       delivered: 0,
@@ -1103,8 +1147,8 @@ describe('ipc teams handlers', () => {
   });
 
   it('returns runtimeDelivery acceptanceUnknown for OpenCode observe-pending timeout sends', async () => {
-    provisioningService.resolveRuntimeRecipientProviderId.mockResolvedValueOnce('opencode');
-    provisioningService.relayOpenCodeMemberInboxMessages.mockResolvedValueOnce({
+    teamHandlerMocks.resolveRuntimeRecipientProviderId.mockResolvedValueOnce('opencode');
+    teamHandlerMocks.relayOpenCodeMemberInboxMessages.mockResolvedValueOnce({
       relayed: 0,
       attempted: 1,
       delivered: 0,
@@ -1143,11 +1187,11 @@ describe('ipc teams handlers', () => {
   it('maps OpenCode UI relay timeout to pending acceptance-unknown delivery', async () => {
     vi.useFakeTimers();
     try {
-      provisioningService.resolveRuntimeRecipientProviderId.mockResolvedValueOnce('opencode');
-      provisioningService.relayOpenCodeMemberInboxMessages.mockReturnValueOnce(
+      teamHandlerMocks.resolveRuntimeRecipientProviderId.mockResolvedValueOnce('opencode');
+      teamHandlerMocks.relayOpenCodeMemberInboxMessages.mockReturnValueOnce(
         new Promise(() => undefined)
       );
-      provisioningService.getOpenCodeRuntimeDeliveryStatus.mockResolvedValueOnce(null);
+      teamHandlerMocks.getOpenCodeRuntimeDeliveryStatus.mockResolvedValueOnce(null);
       const sendHandler = handlers.get(TEAM_SEND_MESSAGE);
       expect(sendHandler).toBeDefined();
 
@@ -1169,7 +1213,7 @@ describe('ipc teams handlers', () => {
         responseState: 'not_observed',
         reason: 'opencode_runtime_delivery_ui_timeout_pending',
       });
-      expect(provisioningService.getOpenCodeRuntimeDeliveryStatus).toHaveBeenCalledWith(
+      expect(teamHandlerMocks.getOpenCodeRuntimeDeliveryStatus).toHaveBeenCalledWith(
         'my-team',
         result.data?.messageId
       );
@@ -1181,11 +1225,11 @@ describe('ipc teams handlers', () => {
   it('uses durable OpenCode delivery status when UI relay timeout fires after prompt acceptance', async () => {
     vi.useFakeTimers();
     try {
-      provisioningService.resolveRuntimeRecipientProviderId.mockResolvedValueOnce('opencode');
-      provisioningService.relayOpenCodeMemberInboxMessages.mockReturnValueOnce(
+      teamHandlerMocks.resolveRuntimeRecipientProviderId.mockResolvedValueOnce('opencode');
+      teamHandlerMocks.relayOpenCodeMemberInboxMessages.mockReturnValueOnce(
         new Promise(() => undefined)
       );
-      provisioningService.getOpenCodeRuntimeDeliveryStatus.mockResolvedValueOnce({
+      teamHandlerMocks.getOpenCodeRuntimeDeliveryStatus.mockResolvedValueOnce({
         messageId: 'msg-123',
         providerId: 'opencode',
         attempted: true,
@@ -1235,11 +1279,11 @@ describe('ipc teams handlers', () => {
   it('preserves terminal durable OpenCode delivery status after UI relay timeout', async () => {
     vi.useFakeTimers();
     try {
-      provisioningService.resolveRuntimeRecipientProviderId.mockResolvedValueOnce('opencode');
-      provisioningService.relayOpenCodeMemberInboxMessages.mockReturnValueOnce(
+      teamHandlerMocks.resolveRuntimeRecipientProviderId.mockResolvedValueOnce('opencode');
+      teamHandlerMocks.relayOpenCodeMemberInboxMessages.mockReturnValueOnce(
         new Promise(() => undefined)
       );
-      provisioningService.getOpenCodeRuntimeDeliveryStatus.mockResolvedValueOnce({
+      teamHandlerMocks.getOpenCodeRuntimeDeliveryStatus.mockResolvedValueOnce({
         messageId: 'msg-responded',
         providerId: 'opencode',
         attempted: true,
@@ -1291,11 +1335,11 @@ describe('ipc teams handlers', () => {
   it('does not let a slow OpenCode delivery status lookup extend the UI timeout indefinitely', async () => {
     vi.useFakeTimers();
     try {
-      provisioningService.resolveRuntimeRecipientProviderId.mockResolvedValueOnce('opencode');
-      provisioningService.relayOpenCodeMemberInboxMessages.mockReturnValueOnce(
+      teamHandlerMocks.resolveRuntimeRecipientProviderId.mockResolvedValueOnce('opencode');
+      teamHandlerMocks.relayOpenCodeMemberInboxMessages.mockReturnValueOnce(
         new Promise(() => undefined)
       );
-      provisioningService.getOpenCodeRuntimeDeliveryStatus.mockReturnValueOnce(
+      teamHandlerMocks.getOpenCodeRuntimeDeliveryStatus.mockReturnValueOnce(
         new Promise(() => undefined)
       );
       const sendHandler = handlers.get(TEAM_SEND_MESSAGE);
@@ -1335,11 +1379,11 @@ describe('ipc teams handlers', () => {
   it('falls back to acceptance-unknown when OpenCode delivery status lookup rejects after UI timeout', async () => {
     vi.useFakeTimers();
     try {
-      provisioningService.resolveRuntimeRecipientProviderId.mockResolvedValueOnce('opencode');
-      provisioningService.relayOpenCodeMemberInboxMessages.mockReturnValueOnce(
+      teamHandlerMocks.resolveRuntimeRecipientProviderId.mockResolvedValueOnce('opencode');
+      teamHandlerMocks.relayOpenCodeMemberInboxMessages.mockReturnValueOnce(
         new Promise(() => undefined)
       );
-      provisioningService.getOpenCodeRuntimeDeliveryStatus.mockRejectedValueOnce(
+      teamHandlerMocks.getOpenCodeRuntimeDeliveryStatus.mockRejectedValueOnce(
         new Error('status read failed')
       );
       const sendHandler = handlers.get(TEAM_SEND_MESSAGE);
@@ -1382,13 +1426,13 @@ describe('ipc teams handlers', () => {
     try {
       const deferredRelay =
         createDeferred<
-          Awaited<ReturnType<typeof provisioningService.relayOpenCodeMemberInboxMessages>>
+          Awaited<ReturnType<typeof teamHandlerMocks.relayOpenCodeMemberInboxMessages>>
         >();
-      provisioningService.resolveRuntimeRecipientProviderId.mockResolvedValueOnce('opencode');
-      provisioningService.relayOpenCodeMemberInboxMessages.mockReturnValueOnce(
+      teamHandlerMocks.resolveRuntimeRecipientProviderId.mockResolvedValueOnce('opencode');
+      teamHandlerMocks.relayOpenCodeMemberInboxMessages.mockReturnValueOnce(
         deferredRelay.promise
       );
-      provisioningService.getOpenCodeRuntimeDeliveryStatus.mockResolvedValueOnce(null);
+      teamHandlerMocks.getOpenCodeRuntimeDeliveryStatus.mockResolvedValueOnce(null);
       const sendHandler = handlers.get(TEAM_SEND_MESSAGE);
       expect(sendHandler).toBeDefined();
 
@@ -1419,13 +1463,13 @@ describe('ipc teams handlers', () => {
     try {
       const deferredRelay =
         createDeferred<
-          Awaited<ReturnType<typeof provisioningService.relayOpenCodeMemberInboxMessages>>
+          Awaited<ReturnType<typeof teamHandlerMocks.relayOpenCodeMemberInboxMessages>>
         >();
-      provisioningService.resolveRuntimeRecipientProviderId.mockResolvedValueOnce('opencode');
-      provisioningService.relayOpenCodeMemberInboxMessages.mockReturnValueOnce(
+      teamHandlerMocks.resolveRuntimeRecipientProviderId.mockResolvedValueOnce('opencode');
+      teamHandlerMocks.relayOpenCodeMemberInboxMessages.mockReturnValueOnce(
         deferredRelay.promise
       );
-      provisioningService.getOpenCodeRuntimeDeliveryStatus.mockResolvedValueOnce(null);
+      teamHandlerMocks.getOpenCodeRuntimeDeliveryStatus.mockResolvedValueOnce(null);
       const sendHandler = handlers.get(TEAM_SEND_MESSAGE);
       expect(sendHandler).toBeDefined();
 
@@ -1472,12 +1516,12 @@ describe('ipc teams handlers', () => {
     })) as { success: boolean };
 
     expect(result.success).toBe(true);
-    expect(provisioningService.sendMessageToTeam).toHaveBeenCalledWith(
+    expect(teamHandlerMocks.sendMessageToTeam).toHaveBeenCalledWith(
       'my-team',
       expect.stringContaining('TURN ACTION MODE: ASK'),
       undefined
     );
-    expect(provisioningService.sendMessageToTeam).toHaveBeenCalledWith(
+    expect(teamHandlerMocks.sendMessageToTeam).toHaveBeenCalledWith(
       'my-team',
       expect.stringContaining(
         'FORBIDDEN: editing files, changing code, changing task/board state, delegating work, launching Agent/subagents'
@@ -1510,19 +1554,19 @@ describe('ipc teams handlers', () => {
     })) as { success: boolean };
 
     expect(result.success).toBe(true);
-    expect(provisioningService.sendMessageToTeam).toHaveBeenCalledWith(
+    expect(teamHandlerMocks.sendMessageToTeam).toHaveBeenCalledWith(
       'my-team',
       expect.stringContaining('Current durable team context:'),
       undefined
     );
-    expect(provisioningService.sendMessageToTeam).toHaveBeenCalledWith(
+    expect(teamHandlerMocks.sendMessageToTeam).toHaveBeenCalledWith(
       'my-team',
       expect.stringContaining(
         'Persistent teammates currently configured: alice (reviewer), jack (developer)'
       ),
       undefined
     );
-    expect(provisioningService.sendMessageToTeam).toHaveBeenCalledWith(
+    expect(teamHandlerMocks.sendMessageToTeam).toHaveBeenCalledWith(
       'my-team',
       expect.stringContaining('This team is NOT in solo mode'),
       undefined
@@ -1540,12 +1584,12 @@ describe('ipc teams handlers', () => {
     })) as { success: boolean };
 
     expect(result.success).toBe(true);
-    expect(provisioningService.sendMessageToTeam).toHaveBeenCalledWith(
+    expect(teamHandlerMocks.sendMessageToTeam).toHaveBeenCalledWith(
       'my-team',
       expect.stringContaining('DELEGATE MODE USER ACK CONTRACT:'),
       undefined
     );
-    expect(provisioningService.sendMessageToTeam).toHaveBeenCalledWith(
+    expect(teamHandlerMocks.sendMessageToTeam).toHaveBeenCalledWith(
       'my-team',
       expect.stringContaining(
         'Make the acknowledgement at least 40 characters so it is preserved in the Messages panel.'
@@ -1573,7 +1617,7 @@ describe('ipc teams handlers', () => {
     })) as { success: boolean };
 
     expect(result.success).toBe(true);
-    const stdinCall = vi.mocked(provisioningService.sendMessageToTeam).mock.calls[0] as
+    const stdinCall = vi.mocked(teamHandlerMocks.sendMessageToTeam).mock.calls[0] as
       | unknown[]
       | undefined;
     expect(secondMockArgString(stdinCall)).not.toContain('Current durable team context:');
@@ -1589,12 +1633,12 @@ describe('ipc teams handlers', () => {
     })) as { success: boolean };
 
     expect(result.success).toBe(true);
-    expect(provisioningService.sendMessageToTeam).toHaveBeenCalledWith(
+    expect(teamHandlerMocks.sendMessageToTeam).toHaveBeenCalledWith(
       'my-team',
       '/COMPACT keep kanban',
       undefined
     );
-    const compactCall = vi.mocked(provisioningService.sendMessageToTeam).mock.calls as unknown[][];
+    const compactCall = vi.mocked(teamHandlerMocks.sendMessageToTeam).mock.calls as unknown[][];
     const [firstCompactCall] = compactCall;
     expect(secondMockArgString(firstCompactCall)).not.toContain(
       'You received a direct message from the user'
@@ -1621,12 +1665,12 @@ describe('ipc teams handlers', () => {
     })) as { success: boolean };
 
     expect(result.success).toBe(true);
-    expect(provisioningService.sendMessageToTeam).toHaveBeenCalledWith(
+    expect(teamHandlerMocks.sendMessageToTeam).toHaveBeenCalledWith(
       'my-team',
       '/foo bar',
       undefined
     );
-    const unknownSlashCall = vi.mocked(provisioningService.sendMessageToTeam).mock
+    const unknownSlashCall = vi.mocked(teamHandlerMocks.sendMessageToTeam).mock
       .calls as unknown[][];
     const [firstUnknownSlashCall] = unknownSlashCall;
     expect(secondMockArgString(firstUnknownSlashCall)).not.toContain(
@@ -1666,7 +1710,7 @@ describe('ipc teams handlers', () => {
       })) as { success: boolean };
 
       expect(result.success).toBe(true);
-      expect(provisioningService.sendMessageToTeam).toHaveBeenCalledWith(
+      expect(teamHandlerMocks.sendMessageToTeam).toHaveBeenCalledWith(
         'my-team',
         expect.stringContaining('You received a direct message from the user'),
         expect.arrayContaining([
@@ -1684,8 +1728,8 @@ describe('ipc teams handlers', () => {
   it('preserves attachment delivery errors when the lead process is still alive', async () => {
     const sendHandler = handlers.get(TEAM_SEND_MESSAGE);
     expect(sendHandler).toBeDefined();
-    provisioningService.isTeamAlive.mockReturnValue(true);
-    provisioningService.sendMessageToTeam.mockRejectedValueOnce(
+    teamHandlerMocks.isTeamAlive.mockReturnValue(true);
+    teamHandlerMocks.sendMessageToTeam.mockRejectedValueOnce(
       new Error('Claude attachment MIME unsupported: image/avif')
     );
 
@@ -1715,8 +1759,8 @@ describe('ipc teams handlers', () => {
   it('reports attachment delivery as unavailable only when liveness confirms it', async () => {
     const sendHandler = handlers.get(TEAM_SEND_MESSAGE);
     expect(sendHandler).toBeDefined();
-    provisioningService.isTeamAlive.mockReturnValueOnce(true).mockReturnValueOnce(false);
-    provisioningService.sendMessageToTeam.mockRejectedValueOnce(new Error('write EPIPE'));
+    teamHandlerMocks.isTeamAlive.mockReturnValueOnce(true).mockReturnValueOnce(false);
+    teamHandlerMocks.sendMessageToTeam.mockRejectedValueOnce(new Error('write EPIPE'));
 
     const result = (await sendHandler!({} as never, 'my-team', {
       member: 'team-lead',
@@ -1768,19 +1812,19 @@ describe('ipc teams handlers', () => {
       cwd: os.tmpdir(),
     })) as { success: boolean };
     expect(createResult.success).toBe(true);
-    expect(provisioningService.createTeam).toHaveBeenCalledTimes(1);
+    expect(teamHandlerMocks.createTeam).toHaveBeenCalledTimes(1);
 
     const statusResult = (await handlers.get(TEAM_PROVISIONING_STATUS)!({} as never, 'run-1')) as {
       success: boolean;
     };
     expect(statusResult.success).toBe(true);
-    expect(provisioningService.getProvisioningStatus).toHaveBeenCalledWith('run-1');
+    expect(teamHandlerMocks.getProvisioningStatus).toHaveBeenCalledWith('run-1');
 
     const cancelResult = (await handlers.get(TEAM_CANCEL_PROVISIONING)!({} as never, 'run-1')) as {
       success: boolean;
     };
     expect(cancelResult.success).toBe(true);
-    expect(provisioningService.cancelProvisioning).toHaveBeenCalledWith('run-1');
+    expect(teamHandlerMocks.cancelProvisioning).toHaveBeenCalledWith('run-1');
 
     const reviewResult = (await handlers.get(TEAM_REQUEST_REVIEW)!(
       {} as never,
@@ -1805,7 +1849,7 @@ describe('ipc teams handlers', () => {
 
   it('marks created teams engaged before provisioning writes startup artifacts', async () => {
     const createTeam = 'created-watch-scope';
-    provisioningService.createTeam.mockImplementationOnce(() => {
+    teamHandlerMocks.createTeam.mockImplementationOnce(() => {
       expect(computeTeamWatchScope()?.has(createTeam)).toBe(true);
       return resolved({ runId: 'run-created-watch-scope' });
     });
@@ -1930,7 +1974,7 @@ describe('ipc teams handlers', () => {
       success: boolean;
     };
     expect(first.success).toBe(true);
-    provisioningService.createTeam.mockRejectedValueOnce(new Error('bootstrap failed early'));
+    teamHandlerMocks.createTeam.mockRejectedValueOnce(new Error('bootstrap failed early'));
     service.listTeams
       .mockResolvedValueOnce([{ teamName: 'background-fresh', displayName: 'Background Fresh' }])
       .mockResolvedValueOnce([{ teamName: 'fresh-team', displayName: 'Fresh' }]);
@@ -1967,7 +2011,7 @@ describe('ipc teams handlers', () => {
   });
 
   it('keeps TEAM_GET_DATA structural and does not expose message transport', async () => {
-    provisioningService.getLiveLeadProcessMessages.mockReturnValueOnce([
+    teamHandlerMocks.getLiveLeadProcessMessages.mockReturnValueOnce([
       {
         from: 'team-lead',
         text: 'Hello there',
@@ -2071,11 +2115,11 @@ describe('ipc teams handlers', () => {
     };
 
     expect(result.success).toBe(true);
-    expect(provisioningService.repairStaleTaskActivityIntervalsBeforeSnapshot).toHaveBeenCalledWith(
+    expect(teamHandlerMocks.repairStaleTaskActivityIntervalsBeforeSnapshot).toHaveBeenCalledWith(
       'my-team'
     );
     expect(
-      provisioningService.repairStaleTaskActivityIntervalsBeforeSnapshot.mock.invocationCallOrder[0]
+      teamHandlerMocks.repairStaleTaskActivityIntervalsBeforeSnapshot.mock.invocationCallOrder[0]
     ).toBeLessThan(mockTeamDataWorkerClient.getTeamData.mock.invocationCallOrder[0]);
   });
 
@@ -2307,9 +2351,9 @@ describe('ipc teams handlers', () => {
     );
 
     try {
-      provisioningService.isTeamAlive.mockReturnValue(true);
-      provisioningService.getCurrentLeadSessionId.mockReturnValue('sess-123');
-      provisioningService.sendMessageToTeam.mockResolvedValue(undefined);
+      teamHandlerMocks.isTeamAlive.mockReturnValue(true);
+      teamHandlerMocks.getCurrentLeadSessionId.mockReturnValue('sess-123');
+      teamHandlerMocks.sendMessageToTeam.mockResolvedValue(undefined);
       service.getTeamData.mockResolvedValueOnce({
         teamName: 'my-team',
         config: { name: 'My Team' },
@@ -2329,7 +2373,7 @@ describe('ipc teams handlers', () => {
         kanbanState: { teamName: 'my-team', reviewers: [], tasks: {} },
         processes: [],
       });
-      provisioningService.getLiveLeadProcessMessages.mockReturnValueOnce([
+      teamHandlerMocks.getLiveLeadProcessMessages.mockReturnValueOnce([
         {
           from: 'team-lead',
           text: "You've hit your limit. Resets in 5 minutes.",
@@ -2356,10 +2400,10 @@ describe('ipc teams handlers', () => {
       ]);
 
       await vi.advanceTimersByTimeAsync(4 * 60 * 1000 + 59 * 1000);
-      expect(provisioningService.sendMessageToTeam).not.toHaveBeenCalled();
+      expect(teamHandlerMocks.sendMessageToTeam).not.toHaveBeenCalled();
 
       await vi.advanceTimersByTimeAsync(1100);
-      expect(provisioningService.sendMessageToTeam).toHaveBeenCalledTimes(1);
+      expect(teamHandlerMocks.sendMessageToTeam).toHaveBeenCalledTimes(1);
     } finally {
       getConfigSpy.mockRestore();
     }
@@ -2422,7 +2466,7 @@ describe('ipc teams handlers', () => {
       hasMore: false,
       feedRevision: 'rev-worker',
     });
-    provisioningService.getLiveLeadProcessMessages.mockReturnValueOnce([liveMessage]);
+    teamHandlerMocks.getLiveLeadProcessMessages.mockReturnValueOnce([liveMessage]);
 
     const handler = handlers.get(TEAM_GET_MESSAGES_PAGE)!;
     const result = (await handler({} as never, 'my-team', {
@@ -2458,7 +2502,7 @@ describe('ipc teams handlers', () => {
       hasMore: false,
       feedRevision: 'rev-worker',
     });
-    provisioningService.getLiveLeadProcessMessages.mockReturnValueOnce(liveMessages);
+    teamHandlerMocks.getLiveLeadProcessMessages.mockReturnValueOnce(liveMessages);
 
     const handler = handlers.get(TEAM_GET_MESSAGES_PAGE)!;
     const result = (await handler({} as never, 'my-team', {
@@ -2492,7 +2536,7 @@ describe('ipc teams handlers', () => {
     mockTeamDataWorkerClient.getMessagesPage.mockRejectedValueOnce(
       new Error('Worker terminated due to reaching memory limit: JS heap out of memory')
     );
-    provisioningService.getLiveLeadProcessMessages.mockReturnValueOnce([liveMessage]);
+    teamHandlerMocks.getLiveLeadProcessMessages.mockReturnValueOnce([liveMessage]);
 
     const handler = handlers.get(TEAM_GET_MESSAGES_PAGE)!;
     const result = (await handler({} as never, 'my-team', {
@@ -2721,9 +2765,9 @@ describe('ipc teams handlers', () => {
     );
 
     try {
-      provisioningService.isTeamAlive.mockReturnValue(true);
-      provisioningService.getCurrentLeadSessionId.mockReturnValue('sess-live');
-      provisioningService.sendMessageToTeam.mockResolvedValue(undefined);
+      teamHandlerMocks.isTeamAlive.mockReturnValue(true);
+      teamHandlerMocks.getCurrentLeadSessionId.mockReturnValue('sess-live');
+      teamHandlerMocks.sendMessageToTeam.mockResolvedValue(undefined);
       service.getTeamData.mockResolvedValueOnce({
         teamName: 'my-team',
         config: { name: 'My Team' },
@@ -2753,10 +2797,10 @@ describe('ipc teams handlers', () => {
       expect(result.success).toBe(true);
 
       await vi.advanceTimersByTimeAsync(3 * 60 * 1000 + 29 * 1000);
-      expect(provisioningService.sendMessageToTeam).not.toHaveBeenCalled();
+      expect(teamHandlerMocks.sendMessageToTeam).not.toHaveBeenCalled();
 
       await vi.advanceTimersByTimeAsync(1100);
-      expect(provisioningService.sendMessageToTeam).toHaveBeenCalledTimes(1);
+      expect(teamHandlerMocks.sendMessageToTeam).toHaveBeenCalledTimes(1);
     } finally {
       getConfigSpy.mockRestore();
     }
@@ -2780,9 +2824,9 @@ describe('ipc teams handlers', () => {
     );
 
     try {
-      provisioningService.isTeamAlive.mockReturnValue(true);
-      provisioningService.getCurrentLeadSessionId.mockReturnValue('sess-live');
-      provisioningService.sendMessageToTeam.mockResolvedValue(undefined);
+      teamHandlerMocks.isTeamAlive.mockReturnValue(true);
+      teamHandlerMocks.getCurrentLeadSessionId.mockReturnValue('sess-live');
+      teamHandlerMocks.sendMessageToTeam.mockResolvedValue(undefined);
       service.getTeamData.mockResolvedValue({
         teamName: 'my-team',
         config: { name: 'My Team' },
@@ -2809,7 +2853,7 @@ describe('ipc teams handlers', () => {
         success: boolean;
       };
       expect(firstResult.success).toBe(true);
-      expect(provisioningService.sendMessageToTeam).not.toHaveBeenCalled();
+      expect(teamHandlerMocks.sendMessageToTeam).not.toHaveBeenCalled();
 
       autoResumeEnabled = true;
 
@@ -2819,10 +2863,10 @@ describe('ipc teams handlers', () => {
       expect(secondResult.success).toBe(true);
 
       await vi.advanceTimersByTimeAsync(3 * 60 * 1000 + 29 * 1000);
-      expect(provisioningService.sendMessageToTeam).not.toHaveBeenCalled();
+      expect(teamHandlerMocks.sendMessageToTeam).not.toHaveBeenCalled();
 
       await vi.advanceTimersByTimeAsync(1100);
-      expect(provisioningService.sendMessageToTeam).toHaveBeenCalledTimes(1);
+      expect(teamHandlerMocks.sendMessageToTeam).toHaveBeenCalledTimes(1);
     } finally {
       getConfigSpy.mockRestore();
     }
@@ -2846,9 +2890,9 @@ describe('ipc teams handlers', () => {
     );
 
     try {
-      provisioningService.isTeamAlive.mockReturnValue(true);
-      provisioningService.getCurrentLeadSessionId.mockReturnValue('sess-live');
-      provisioningService.sendMessageToTeam.mockResolvedValue(undefined);
+      teamHandlerMocks.isTeamAlive.mockReturnValue(true);
+      teamHandlerMocks.getCurrentLeadSessionId.mockReturnValue('sess-live');
+      teamHandlerMocks.sendMessageToTeam.mockResolvedValue(undefined);
       service.getTeamData.mockResolvedValue({
         teamName: 'my-team',
         config: { name: 'My Team' },
@@ -2875,7 +2919,7 @@ describe('ipc teams handlers', () => {
         success: boolean;
       };
       expect(firstResult.success).toBe(true);
-      expect(provisioningService.sendMessageToTeam).not.toHaveBeenCalled();
+      expect(teamHandlerMocks.sendMessageToTeam).not.toHaveBeenCalled();
 
       vi.setSystemTime(new Date('2026-04-17T12:20:00.000Z'));
 
@@ -2885,10 +2929,10 @@ describe('ipc teams handlers', () => {
       expect(secondResult.success).toBe(true);
 
       await vi.advanceTimersByTimeAsync(29 * 1000);
-      expect(provisioningService.sendMessageToTeam).not.toHaveBeenCalled();
+      expect(teamHandlerMocks.sendMessageToTeam).not.toHaveBeenCalled();
 
       await vi.advanceTimersByTimeAsync(1500);
-      expect(provisioningService.sendMessageToTeam).toHaveBeenCalledTimes(1);
+      expect(teamHandlerMocks.sendMessageToTeam).toHaveBeenCalledTimes(1);
     } finally {
       warnSpy.mockRestore();
       getConfigSpy.mockRestore();
@@ -2912,8 +2956,8 @@ describe('ipc teams handlers', () => {
     );
 
     try {
-      provisioningService.isTeamAlive.mockReturnValue(false);
-      provisioningService.sendMessageToTeam.mockResolvedValue(undefined);
+      teamHandlerMocks.isTeamAlive.mockReturnValue(false);
+      teamHandlerMocks.sendMessageToTeam.mockResolvedValue(undefined);
       service.getTeamData.mockResolvedValue({
         teamName: 'my-team',
         config: { name: 'My Team' },
@@ -2941,10 +2985,10 @@ describe('ipc teams handlers', () => {
 
       // Simulate the user manually starting a fresh run later; stale persisted history
       // should not have armed an auto-resume timer while the team was offline.
-      provisioningService.isTeamAlive.mockReturnValue(true);
+      teamHandlerMocks.isTeamAlive.mockReturnValue(true);
 
       await vi.advanceTimersByTimeAsync(3 * 60 * 1000 + 31 * 1000);
-      expect(provisioningService.sendMessageToTeam).not.toHaveBeenCalled();
+      expect(teamHandlerMocks.sendMessageToTeam).not.toHaveBeenCalled();
     } finally {
       getConfigSpy.mockRestore();
     }
@@ -2967,9 +3011,9 @@ describe('ipc teams handlers', () => {
     );
 
     try {
-      provisioningService.isTeamAlive.mockReturnValue(true);
-      provisioningService.getCurrentLeadSessionId.mockReturnValue('sess-new');
-      provisioningService.sendMessageToTeam.mockResolvedValue(undefined);
+      teamHandlerMocks.isTeamAlive.mockReturnValue(true);
+      teamHandlerMocks.getCurrentLeadSessionId.mockReturnValue('sess-new');
+      teamHandlerMocks.sendMessageToTeam.mockResolvedValue(undefined);
       service.getTeamData.mockResolvedValue({
         teamName: 'my-team',
         config: { name: 'My Team' },
@@ -2997,7 +3041,7 @@ describe('ipc teams handlers', () => {
       expect(result.success).toBe(true);
 
       await vi.advanceTimersByTimeAsync(3 * 60 * 1000 + 31 * 1000);
-      expect(provisioningService.sendMessageToTeam).not.toHaveBeenCalled();
+      expect(teamHandlerMocks.sendMessageToTeam).not.toHaveBeenCalled();
     } finally {
       getConfigSpy.mockRestore();
     }
@@ -3020,9 +3064,9 @@ describe('ipc teams handlers', () => {
     );
 
     try {
-      provisioningService.isTeamAlive.mockReturnValue(true);
-      provisioningService.getCurrentLeadSessionId.mockReturnValue('sess-live');
-      provisioningService.sendMessageToTeam.mockResolvedValue(undefined);
+      teamHandlerMocks.isTeamAlive.mockReturnValue(true);
+      teamHandlerMocks.getCurrentLeadSessionId.mockReturnValue('sess-live');
+      teamHandlerMocks.sendMessageToTeam.mockResolvedValue(undefined);
       service.getTeamData.mockResolvedValue({
         teamName: 'my-team',
         config: { name: 'My Team' },
@@ -3049,7 +3093,7 @@ describe('ipc teams handlers', () => {
       expect(result.success).toBe(true);
 
       await vi.advanceTimersByTimeAsync(3 * 60 * 1000 + 31 * 1000);
-      expect(provisioningService.sendMessageToTeam).not.toHaveBeenCalled();
+      expect(teamHandlerMocks.sendMessageToTeam).not.toHaveBeenCalled();
     } finally {
       getConfigSpy.mockRestore();
     }
@@ -3087,7 +3131,7 @@ describe('ipc teams handlers', () => {
       hasMore: false,
       feedRevision: 'rev-1',
     });
-    provisioningService.getLiveLeadProcessMessages.mockReturnValueOnce([
+    teamHandlerMocks.getLiveLeadProcessMessages.mockReturnValueOnce([
       {
         from: 'team-lead',
         text: 'Already persisted thought',
@@ -3153,7 +3197,7 @@ describe('ipc teams handlers', () => {
       hasMore: false,
       feedRevision: 'rev-worker',
     });
-    provisioningService.getLiveLeadProcessMessages.mockReturnValueOnce([liveMessage]);
+    teamHandlerMocks.getLiveLeadProcessMessages.mockReturnValueOnce([liveMessage]);
 
     const getDataHandler = handlers.get(TEAM_GET_DATA)!;
     const result = (await getDataHandler({} as never, 'my-team')) as {
@@ -3198,7 +3242,7 @@ describe('ipc teams handlers', () => {
     mockTeamDataWorkerClient.getMessagesPage.mockRejectedValueOnce(
       new Error('Worker terminated due to reaching memory limit: JS heap out of memory')
     );
-    provisioningService.getLiveLeadProcessMessages.mockReturnValueOnce([liveMessage]);
+    teamHandlerMocks.getLiveLeadProcessMessages.mockReturnValueOnce([liveMessage]);
 
     const getDataHandler = handlers.get(TEAM_GET_DATA)!;
     const result = (await getDataHandler({} as never, 'my-team')) as {
@@ -3233,7 +3277,7 @@ describe('ipc teams handlers', () => {
       hasMore: true,
       feedRevision: 'rev-1',
     });
-    provisioningService.getLiveLeadProcessMessages.mockReturnValueOnce([
+    teamHandlerMocks.getLiveLeadProcessMessages.mockReturnValueOnce([
       {
         from: 'team-lead',
         text: 'Команда поднята, приступаю к раздаче задач.',
@@ -3280,7 +3324,7 @@ describe('ipc teams handlers', () => {
       hasMore: false,
       feedRevision: 'rev-1',
     });
-    provisioningService.getLiveLeadProcessMessages.mockReturnValueOnce([
+    teamHandlerMocks.getLiveLeadProcessMessages.mockReturnValueOnce([
       {
         from: 'team-lead',
         text: 'Hello there',
@@ -3330,7 +3374,7 @@ describe('ipc teams handlers', () => {
     };
 
     expect(result.success).toBe(true);
-    expect(provisioningService.getLiveLeadProcessMessages).not.toHaveBeenCalled();
+    expect(teamHandlerMocks.getLiveLeadProcessMessages).not.toHaveBeenCalled();
     expect(result.data.messages).toHaveLength(1);
     expect(result.data.messages[0]?.messageId).toBe('durable-older-1');
   });
@@ -3429,10 +3473,10 @@ describe('ipc teams handlers', () => {
       })) as { success: boolean };
 
       expect(result.success).toBe(true);
-      expect(provisioningService.attachLiveRosterMember).toHaveBeenCalledWith('my-team', 'alice', {
+      expect(teamHandlerMocks.attachLiveRosterMember).toHaveBeenCalledWith('my-team', 'alice', {
         reason: 'member_added',
       });
-      expect(provisioningService.sendMessageToTeam).not.toHaveBeenCalled();
+      expect(teamHandlerMocks.sendMessageToTeam).not.toHaveBeenCalled();
     });
 
     it('preserves runtime backend and fast mode when adding a live teammate', async () => {
@@ -3455,7 +3499,7 @@ describe('ipc teams handlers', () => {
           fastMode: 'on',
         })
       );
-      expect(provisioningService.attachLiveRosterMember).toHaveBeenCalledWith('my-team', 'alice', {
+      expect(teamHandlerMocks.attachLiveRosterMember).toHaveBeenCalledWith('my-team', 'alice', {
         reason: 'member_added',
       });
     });
@@ -3487,11 +3531,10 @@ describe('ipc teams handlers', () => {
       })) as { success: boolean };
 
       expect(result.success).toBe(true);
-      expect(provisioningService.attachLiveRosterMember).toHaveBeenCalledWith('my-team', 'alice', {
+      expect(teamHandlerMocks.attachLiveRosterMember).toHaveBeenCalledWith('my-team', 'alice', {
         reason: 'member_added',
       });
-      expect(provisioningService.prepareLiveMemberMcpLaunchConfig).not.toHaveBeenCalled();
-      expect(provisioningService.sendMessageToTeam).not.toHaveBeenCalled();
+      expect(teamHandlerMocks.sendMessageToTeam).not.toHaveBeenCalled();
     });
 
     it('rolls back live addMember metadata when lifecycle attach fails', async () => {
@@ -3500,7 +3543,7 @@ describe('ipc teams handlers', () => {
         providerBackendId: 'codex-native',
         members: [],
       });
-      provisioningService.attachLiveRosterMember.mockRejectedValueOnce(new Error('attach failed'));
+      teamHandlerMocks.attachLiveRosterMember.mockRejectedValueOnce(new Error('attach failed'));
 
       const handler = handlers.get(TEAM_ADD_MEMBER)!;
       const result = (await handler({} as never, 'my-team', {
@@ -3515,8 +3558,8 @@ describe('ipc teams handlers', () => {
       expect(mockWriteMembersMeta).toHaveBeenCalledWith('my-team', [], {
         providerBackendId: 'codex-native',
       });
-      expect(provisioningService.detachLiveRosterMember).toHaveBeenCalledWith('my-team', 'alice');
-      const detachOrder = provisioningService.detachLiveRosterMember.mock.invocationCallOrder[0];
+      expect(teamHandlerMocks.detachLiveRosterMember).toHaveBeenCalledWith('my-team', 'alice');
+      const detachOrder = teamHandlerMocks.detachLiveRosterMember.mock.invocationCallOrder[0];
       const metadataRestoreOrder = mockWriteMembersMeta.mock.invocationCallOrder[0];
       expect(detachOrder).toBeDefined();
       expect(metadataRestoreOrder).toBeDefined();
@@ -3574,7 +3617,7 @@ describe('ipc teams handlers', () => {
       expect(result.success).toBe(false);
       expect(result.error).toContain('running OpenCode-led team');
       expect(service.addMember).not.toHaveBeenCalled();
-      expect(provisioningService.attachLiveRosterMember).not.toHaveBeenCalled();
+      expect(teamHandlerMocks.attachLiveRosterMember).not.toHaveBeenCalled();
       vi.mocked(console.error).mockClear();
     });
 
@@ -3624,7 +3667,7 @@ describe('ipc teams handlers', () => {
         kanbanState: { teamName: 'my-team', reviewers: [], tasks: {} },
         processes: [],
       });
-      provisioningService.attachLiveRosterMember.mockRejectedValueOnce(
+      teamHandlerMocks.attachLiveRosterMember.mockRejectedValueOnce(
         new Error('reattach failed')
       );
 
@@ -3669,7 +3712,7 @@ describe('ipc teams handlers', () => {
         ],
         { providerBackendId: 'codex-native' }
       );
-      expect(provisioningService.detachLiveRosterMember).toHaveBeenCalledWith('my-team', 'alice');
+      expect(teamHandlerMocks.detachLiveRosterMember).toHaveBeenCalledWith('my-team', 'alice');
       vi.mocked(console.error).mockClear();
     });
   });
@@ -3678,7 +3721,7 @@ describe('ipc teams handlers', () => {
     it('notifies a live lead only when the team name actually changes', async () => {
       const handler = handlers.get(TEAM_UPDATE_CONFIG)!;
       service.getTeamDisplayName.mockResolvedValueOnce('My Team');
-      provisioningService.isTeamAlive = vi.fn(() => true);
+      teamHandlerMocks.isTeamAlive.mockReturnValue(true);
 
       const result = (await handler({} as never, 'my-team', {
         name: 'Renamed Team',
@@ -3691,7 +3734,7 @@ describe('ipc teams handlers', () => {
         color: undefined,
       });
       expect(mockTeamDataWorkerClient.invalidateTeamConfig).toHaveBeenCalledWith('my-team');
-      expect(provisioningService.sendMessageToTeam).toHaveBeenCalledWith(
+      expect(teamHandlerMocks.sendMessageToTeam).toHaveBeenCalledWith(
         'my-team',
         'The team has been renamed to "Renamed Team". Please use this name when referring to the team going forward.'
       );
@@ -3700,7 +3743,7 @@ describe('ipc teams handlers', () => {
     it('does not notify the lead when the submitted team name is unchanged', async () => {
       const handler = handlers.get(TEAM_UPDATE_CONFIG)!;
       service.getTeamDisplayName.mockResolvedValueOnce('My Team');
-      provisioningService.isTeamAlive = vi.fn(() => true);
+      teamHandlerMocks.isTeamAlive.mockReturnValue(true);
 
       const result = (await handler({} as never, 'my-team', {
         name: 'My Team',
@@ -3712,7 +3755,7 @@ describe('ipc teams handlers', () => {
         description: undefined,
         color: undefined,
       });
-      expect(provisioningService.sendMessageToTeam).not.toHaveBeenCalled();
+      expect(teamHandlerMocks.sendMessageToTeam).not.toHaveBeenCalled();
     });
   });
 
@@ -3886,7 +3929,7 @@ describe('ipc teams handlers', () => {
       expect(result.success).toBe(false);
       expect(result.error).toContain('running OpenCode-led team');
       expect(service.removeMember).not.toHaveBeenCalled();
-      expect(provisioningService.detachLiveRosterMember).not.toHaveBeenCalled();
+      expect(teamHandlerMocks.detachLiveRosterMember).not.toHaveBeenCalled();
       vi.mocked(console.error).mockClear();
     });
 
@@ -3936,7 +3979,7 @@ describe('ipc teams handlers', () => {
         kanbanState: { teamName: 'my-team', reviewers: [], tasks: {} },
         processes: [],
       });
-      provisioningService.detachLiveRosterMember.mockRejectedValueOnce(new Error('detach failed'));
+      teamHandlerMocks.detachLiveRosterMember.mockRejectedValueOnce(new Error('detach failed'));
 
       const result = (await handler({} as never, 'my-team', 'alice')) as {
         success: boolean;
@@ -3967,7 +4010,7 @@ describe('ipc teams handlers', () => {
         ],
         { providerBackendId: undefined }
       );
-      expect(provisioningService.attachLiveRosterMember).toHaveBeenCalledWith('my-team', 'alice', {
+      expect(teamHandlerMocks.attachLiveRosterMember).toHaveBeenCalledWith('my-team', 'alice', {
         reason: 'member_updated',
       });
       vi.mocked(console.error).mockClear();
@@ -4030,11 +4073,10 @@ describe('ipc teams handlers', () => {
       const result = (await handler({} as never, 'my-team', 'alice')) as { success: boolean };
 
       expect(result.success).toBe(true);
-      expect(provisioningService.attachLiveRosterMember).toHaveBeenCalledWith('my-team', 'alice', {
+      expect(teamHandlerMocks.attachLiveRosterMember).toHaveBeenCalledWith('my-team', 'alice', {
         reason: 'member_restored',
       });
-      expect(provisioningService.prepareLiveMemberMcpLaunchConfig).not.toHaveBeenCalled();
-      expect(provisioningService.sendMessageToTeam).not.toHaveBeenCalled();
+      expect(teamHandlerMocks.sendMessageToTeam).not.toHaveBeenCalled();
     });
 
     it('attaches a restored OpenCode teammate through the lifecycle service', async () => {
@@ -4072,10 +4114,10 @@ describe('ipc teams handlers', () => {
       const result = (await handler({} as never, 'my-team', 'alice')) as { success: boolean };
 
       expect(result.success).toBe(true);
-      expect(provisioningService.attachLiveRosterMember).toHaveBeenCalledWith('my-team', 'alice', {
+      expect(teamHandlerMocks.attachLiveRosterMember).toHaveBeenCalledWith('my-team', 'alice', {
         reason: 'member_restored',
       });
-      expect(provisioningService.sendMessageToTeam).not.toHaveBeenCalled();
+      expect(teamHandlerMocks.sendMessageToTeam).not.toHaveBeenCalled();
     });
 
     it('blocks live restoreMember for a running OpenCode-led team before metadata is changed', async () => {
@@ -4113,14 +4155,14 @@ describe('ipc teams handlers', () => {
       expect(result.success).toBe(false);
       expect(result.error).toContain('running OpenCode-led team');
       expect(service.restoreMember).not.toHaveBeenCalled();
-      expect(provisioningService.attachLiveRosterMember).not.toHaveBeenCalled();
+      expect(teamHandlerMocks.attachLiveRosterMember).not.toHaveBeenCalled();
       vi.mocked(console.error).mockClear();
     });
   });
 
   describe('replaceMembers', () => {
     it('updates non-live draft members without requiring a full team snapshot', async () => {
-      provisioningService.isTeamAlive.mockReturnValueOnce(false);
+      teamHandlerMocks.isTeamAlive.mockReturnValue(false);
       service.getTeamData.mockRejectedValueOnce(new Error('Team not found: draft-team'));
 
       const handler = handlers.get(TEAM_REPLACE_MEMBERS)!;
@@ -4152,8 +4194,8 @@ describe('ipc teams handlers', () => {
           },
         ],
       });
-      expect(provisioningService.attachLiveRosterMember).not.toHaveBeenCalled();
-      expect(provisioningService.detachLiveRosterMember).not.toHaveBeenCalled();
+      expect(teamHandlerMocks.attachLiveRosterMember).not.toHaveBeenCalled();
+      expect(teamHandlerMocks.detachLiveRosterMember).not.toHaveBeenCalled();
       expect(mockTeamDataWorkerClient.invalidateTeamConfig).toHaveBeenCalledWith('draft-team');
       expect(mockTeamDataWorkerClient.invalidateMemberRuntimeAdvisory).toHaveBeenCalledWith(
         'draft-team'
@@ -4191,11 +4233,10 @@ describe('ipc teams handlers', () => {
       })) as { success: boolean };
 
       expect(result.success).toBe(true);
-      expect(provisioningService.attachLiveRosterMember).toHaveBeenCalledWith('my-team', 'alice', {
+      expect(teamHandlerMocks.attachLiveRosterMember).toHaveBeenCalledWith('my-team', 'alice', {
         reason: 'member_added',
       });
-      expect(provisioningService.prepareLiveMemberMcpLaunchConfig).not.toHaveBeenCalled();
-      expect(provisioningService.sendMessageToTeam).not.toHaveBeenCalled();
+      expect(teamHandlerMocks.sendMessageToTeam).not.toHaveBeenCalled();
     });
 
     it('reattaches updated primary-owned teammates through lifecycle during live replaceMembers', async () => {
@@ -4236,11 +4277,10 @@ describe('ipc teams handlers', () => {
       })) as { success: boolean };
 
       expect(result.success).toBe(true);
-      expect(provisioningService.attachLiveRosterMember).toHaveBeenCalledWith('my-team', 'alice', {
+      expect(teamHandlerMocks.attachLiveRosterMember).toHaveBeenCalledWith('my-team', 'alice', {
         reason: 'member_updated',
       });
-      expect(provisioningService.prepareLiveMemberMcpLaunchConfig).not.toHaveBeenCalled();
-      expect(provisioningService.sendMessageToTeam).not.toHaveBeenCalled();
+      expect(teamHandlerMocks.sendMessageToTeam).not.toHaveBeenCalled();
     });
 
     it('blocks live replaceMembers for a running OpenCode-led team before metadata is changed', async () => {
@@ -4276,8 +4316,8 @@ describe('ipc teams handlers', () => {
       expect(result.success).toBe(false);
       expect(result.error).toContain('running OpenCode-led team');
       expect(service.replaceMembers).not.toHaveBeenCalled();
-      expect(provisioningService.attachLiveRosterMember).not.toHaveBeenCalled();
-      expect(provisioningService.detachLiveRosterMember).not.toHaveBeenCalled();
+      expect(teamHandlerMocks.attachLiveRosterMember).not.toHaveBeenCalled();
+      expect(teamHandlerMocks.detachLiveRosterMember).not.toHaveBeenCalled();
       vi.mocked(console.error).mockClear();
     });
 
@@ -4343,7 +4383,7 @@ describe('ipc teams handlers', () => {
         kanbanState: { teamName: 'my-team', reviewers: [], tasks: {} },
         processes: [],
       });
-      provisioningService.attachLiveRosterMember.mockRejectedValueOnce(
+      teamHandlerMocks.attachLiveRosterMember.mockRejectedValueOnce(
         new Error('reattach failed')
       );
 
@@ -4421,13 +4461,13 @@ describe('ipc teams handlers', () => {
         ],
         { providerBackendId: 'codex-native' }
       );
-      expect(provisioningService.attachLiveRosterMember).toHaveBeenNthCalledWith(
+      expect(teamHandlerMocks.attachLiveRosterMember).toHaveBeenNthCalledWith(
         1,
         'my-team',
         'alice',
         { reason: 'member_updated' }
       );
-      expect(provisioningService.attachLiveRosterMember).toHaveBeenNthCalledWith(
+      expect(teamHandlerMocks.attachLiveRosterMember).toHaveBeenNthCalledWith(
         2,
         'my-team',
         'alice',
@@ -4479,8 +4519,8 @@ describe('ipc teams handlers', () => {
       );
       expect(result.error).toContain('alice');
       expect(service.replaceMembers).not.toHaveBeenCalled();
-      expect(provisioningService.attachLiveRosterMember).not.toHaveBeenCalled();
-      expect(provisioningService.detachLiveRosterMember).not.toHaveBeenCalled();
+      expect(teamHandlerMocks.attachLiveRosterMember).not.toHaveBeenCalled();
+      expect(teamHandlerMocks.detachLiveRosterMember).not.toHaveBeenCalled();
       vi.mocked(console.error).mockClear();
     });
 
@@ -4527,8 +4567,8 @@ describe('ipc teams handlers', () => {
       );
       expect(result.error).toContain('alice');
       expect(service.replaceMembers).not.toHaveBeenCalled();
-      expect(provisioningService.attachLiveRosterMember).not.toHaveBeenCalled();
-      expect(provisioningService.detachLiveRosterMember).not.toHaveBeenCalled();
+      expect(teamHandlerMocks.attachLiveRosterMember).not.toHaveBeenCalled();
+      expect(teamHandlerMocks.detachLiveRosterMember).not.toHaveBeenCalled();
       vi.mocked(console.error).mockClear();
     });
   });
@@ -4579,7 +4619,7 @@ describe('ipc teams handlers', () => {
         prompt: 'Build a web app',
       })) as { success: boolean };
       expect(result.success).toBe(true);
-      const callArg = provisioningService.createTeam.mock.calls[0][0];
+      const callArg = teamHandlerMocks.createTeam.mock.calls[0][0];
       expect(callArg.prompt).toBe('Build a web app');
     });
 
@@ -4801,8 +4841,8 @@ describe('ipc teams handlers', () => {
         cwd: os.tmpdir(),
       })) as { success: boolean };
       expect(result.success).toBe(true);
-      expect(provisioningService.createTeam).toHaveBeenCalledTimes(1);
-      const callArg = provisioningService.createTeam.mock.calls[0][0];
+      expect(teamHandlerMocks.createTeam).toHaveBeenCalledTimes(1);
+      const callArg = teamHandlerMocks.createTeam.mock.calls[0][0];
       expect(callArg.members).toEqual([]);
     });
 
@@ -4827,7 +4867,7 @@ describe('ipc teams handlers', () => {
       })) as { success: boolean };
 
       expect(result.success).toBe(true);
-      expect(provisioningService.createTeam.mock.calls[0][0].members).toEqual([
+      expect(teamHandlerMocks.createTeam.mock.calls[0][0].members).toEqual([
         {
           name: 'builder',
           role: 'Engineer',
@@ -4859,7 +4899,7 @@ describe('ipc teams handlers', () => {
       })) as { success: boolean };
 
       expect(result.success).toBe(true);
-      expect(provisioningService.createTeam.mock.calls[0][0].members).toEqual([
+      expect(teamHandlerMocks.createTeam.mock.calls[0][0].members).toEqual([
         {
           name: 'builder',
           role: undefined,
@@ -4890,7 +4930,7 @@ describe('ipc teams handlers', () => {
       })) as { success: boolean };
 
       expect(result.success).toBe(true);
-      expect(provisioningService.createTeam).toHaveBeenCalledWith(
+      expect(teamHandlerMocks.createTeam).toHaveBeenCalledWith(
         expect.objectContaining({
           teamName: 'opencode-runtime-team',
           providerId: 'opencode',
@@ -5154,8 +5194,8 @@ describe('ipc teams handlers', () => {
 
         expect(result.success).toBe(true);
         expect(computeTeamWatchScope()?.has('draft-team')).toBe(true);
-        expect(provisioningService.launchTeam).not.toHaveBeenCalled();
-        expect(provisioningService.createTeam).toHaveBeenCalledWith(
+        expect(teamHandlerMocks.launchTeam).not.toHaveBeenCalled();
+        expect(teamHandlerMocks.createTeam).toHaveBeenCalledWith(
           {
             teamName: 'draft-team',
             displayName: 'Draft Team',
@@ -5232,7 +5272,7 @@ describe('ipc teams handlers', () => {
         })) as { success: boolean };
 
         expect(result.success).toBe(true);
-        expect(provisioningService.launchTeam).toHaveBeenCalledWith(
+        expect(teamHandlerMocks.launchTeam).toHaveBeenCalledWith(
           expect.objectContaining({
             teamName: 'anthropic-team',
             providerId: 'anthropic',
@@ -5293,7 +5333,7 @@ describe('ipc teams handlers', () => {
         })) as { success: boolean };
 
         expect(result).toMatchObject({ success: true });
-        expect(provisioningService.launchTeam).toHaveBeenCalledWith(
+        expect(teamHandlerMocks.launchTeam).toHaveBeenCalledWith(
           expect.objectContaining({
             teamName: 'anthropic-team',
             providerId: 'anthropic',
@@ -5359,7 +5399,7 @@ describe('ipc teams handlers', () => {
         })) as { success: boolean };
 
         expect(result).toMatchObject({ success: true });
-        expect(provisioningService.launchTeam).toHaveBeenCalledWith(
+        expect(teamHandlerMocks.launchTeam).toHaveBeenCalledWith(
           expect.objectContaining({
             teamName: 'runtime-change-team',
             providerId: 'anthropic',
@@ -5426,7 +5466,7 @@ describe('ipc teams handlers', () => {
         })) as { success: boolean };
 
         expect(result).toMatchObject({ success: true });
-        const [request] = provisioningService.launchTeam.mock.calls.at(-1) as unknown as [
+        const [request] = teamHandlerMocks.launchTeam.mock.calls.at(-1) as unknown as [
           TeamLaunchRequest,
           (progress: TeamProvisioningProgress) => void,
         ];
@@ -5477,7 +5517,7 @@ describe('ipc teams handlers', () => {
         })) as { success: boolean };
 
         expect(result).toMatchObject({ success: true });
-        expect(provisioningService.launchTeam).toHaveBeenCalledWith(
+        expect(teamHandlerMocks.launchTeam).toHaveBeenCalledWith(
           expect.objectContaining({
             teamName: 'gemini-backend-team',
             providerId: 'gemini',
@@ -5543,7 +5583,7 @@ describe('ipc teams handlers', () => {
         })) as { success: boolean };
 
         expect(result).toMatchObject({ success: true });
-        expect(provisioningService.launchTeam).toHaveBeenCalledWith(
+        expect(teamHandlerMocks.launchTeam).toHaveBeenCalledWith(
           expect.objectContaining({
             teamName: 'codex-default-model-team',
             providerId: 'codex',
@@ -5594,7 +5634,7 @@ describe('ipc teams handlers', () => {
         })) as { success: boolean };
 
         expect(result).toMatchObject({ success: true });
-        expect(provisioningService.launchTeam).toHaveBeenCalledWith(
+        expect(teamHandlerMocks.launchTeam).toHaveBeenCalledWith(
           expect.objectContaining({
             teamName: 'runtime-backend-change-team',
             providerId: 'anthropic',
@@ -5622,7 +5662,7 @@ describe('ipc teams handlers', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('providerBackendId must be valid');
-      expect(provisioningService.launchTeam).not.toHaveBeenCalled();
+      expect(teamHandlerMocks.launchTeam).not.toHaveBeenCalled();
     });
 
     it('launchTeam preserves top-level OpenCode provider and backend', async () => {
@@ -5637,7 +5677,7 @@ describe('ipc teams handlers', () => {
       })) as { success: boolean };
 
       expect(result.success).toBe(true);
-      expect(provisioningService.launchTeam).toHaveBeenCalledWith(
+      expect(teamHandlerMocks.launchTeam).toHaveBeenCalledWith(
         expect.objectContaining({
           teamName: 'opencode-runtime-team',
           providerId: 'opencode',

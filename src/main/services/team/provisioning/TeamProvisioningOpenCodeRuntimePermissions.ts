@@ -139,6 +139,39 @@ export interface OpenCodeRuntimePermissionSpawnStatusPorts<
   persistLaunchStateSnapshot(run: TRun, launchPhase: 'active' | 'finished'): void | Promise<void>;
 }
 
+export interface OpenCodeRuntimePermissionSpawnStatusServiceHost<
+  TRun extends OpenCodeRuntimePermissionTrackedRunLike,
+> {
+  isCurrentTrackedRun: OpenCodeRuntimePermissionSpawnStatusPorts<TRun>['isCurrentTrackedRun'];
+  emitMemberSpawnChange: OpenCodeRuntimePermissionSpawnStatusPorts<TRun>['emitMemberSpawnChange'];
+  persistLaunchStateSnapshot: OpenCodeRuntimePermissionSpawnStatusPorts<TRun>['persistLaunchStateSnapshot'];
+}
+
+export interface OpenCodeRuntimePermissionSpawnStatusServiceHostOptions<
+  TRun extends OpenCodeRuntimePermissionTrackedRunLike,
+> {
+  nowIso: OpenCodeRuntimePermissionSpawnStatusPorts<TRun>['nowIso'];
+  getTrackedRunId: OpenCodeRuntimePermissionSpawnStatusPorts<TRun>['getTrackedRunId'];
+  getRun: OpenCodeRuntimePermissionSpawnStatusPorts<TRun>['getRun'];
+}
+
+export function createOpenCodeRuntimePermissionSpawnStatusPortsFromService<
+  TRun extends OpenCodeRuntimePermissionTrackedRunLike,
+>(
+  service: OpenCodeRuntimePermissionSpawnStatusServiceHost<TRun>,
+  options: OpenCodeRuntimePermissionSpawnStatusServiceHostOptions<TRun>
+): OpenCodeRuntimePermissionSpawnStatusPorts<TRun> {
+  return {
+    nowIso: options.nowIso,
+    getTrackedRunId: (teamName) => options.getTrackedRunId(teamName),
+    getRun: (runId) => options.getRun(runId),
+    isCurrentTrackedRun: (run) => service.isCurrentTrackedRun(run),
+    emitMemberSpawnChange: (run, memberName) => service.emitMemberSpawnChange(run, memberName),
+    persistLaunchStateSnapshot: (run, launchPhase) =>
+      service.persistLaunchStateSnapshot(run, launchPhase),
+  };
+}
+
 export const OPENCODE_PENDING_PERMISSION_REQUEST_PATTERN =
   /\b(?:pending permission request(?:\(s\)|s)?|permission[_ -]blocked)\b/i;
 

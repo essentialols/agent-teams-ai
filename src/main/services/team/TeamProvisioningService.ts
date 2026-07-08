@@ -404,8 +404,10 @@ import {
   type TeamProvisioningOpenCodeRuntimeLaneRecoveryFacadeServiceHost,
 } from './provisioning/TeamProvisioningOpenCodeRuntimeLaneRecoveryFacade';
 import {
+  createOpenCodeRuntimePermissionSpawnStatusPortsFromService,
   type OpenCodeRuntimePendingPermissionsPersistencePorts,
   type OpenCodeRuntimePermissionSpawnStatusPorts,
+  type OpenCodeRuntimePermissionSpawnStatusServiceHost,
   type OpenCodeRuntimePermissionSyncInput,
   persistOpenCodeRuntimePendingPermissions,
   syncOpenCodeRuntimePermissionsAfterDelivery,
@@ -1055,16 +1057,14 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
       logDebug: (message) => logger.debug(message),
     };
   private readonly openCodeRuntimePermissionSpawnStatusPorts: OpenCodeRuntimePermissionSpawnStatusPorts<ProvisioningRun> =
-    {
-      nowIso,
-      getTrackedRunId: (teamName) => this.runTracking.getTrackedRunId(teamName),
-      getRun: (runId) => this.runs.get(runId) ?? null,
-      isCurrentTrackedRun: (run) => this.isCurrentTrackedRun(run),
-      emitMemberSpawnChange: (run, memberName) => this.emitMemberSpawnChange(run, memberName),
-      persistLaunchStateSnapshot: async (run, launchPhase) => {
-        await this.persistLaunchStateSnapshot(run, launchPhase);
-      },
-    };
+    createOpenCodeRuntimePermissionSpawnStatusPortsFromService(
+      this as unknown as OpenCodeRuntimePermissionSpawnStatusServiceHost<ProvisioningRun>,
+      {
+        nowIso,
+        getTrackedRunId: (teamName) => this.runTracking.getTrackedRunId(teamName),
+        getRun: (runId) => this.runs.get(runId) ?? null,
+      }
+    );
   private readonly memberSpawnStatusMutationPorts: MemberSpawnStatusMutationPorts<ProvisioningRun> =
     {
       nowIso,

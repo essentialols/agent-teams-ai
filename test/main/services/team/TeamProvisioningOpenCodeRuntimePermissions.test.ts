@@ -1,9 +1,11 @@
 import {
   buildOpenCodePermissionPendingEvidence,
   buildOpenCodeRuntimePendingPermissionsLaunchSnapshot,
+  createOpenCodeRuntimePermissionSpawnStatusPortsFromService,
   groupOpenCodeRuntimePermissionsByMember,
   hasOpenCodePendingPermissionSignal,
   type OpenCodeRuntimePermissionListingAdapter,
+  type OpenCodeRuntimePermissionSpawnStatusServiceHost,
   type OpenCodeRuntimePermissionTrackedRunLike,
   persistOpenCodeRuntimePendingPermissions,
   syncOpenCodeRuntimePermissionsAfterDelivery,
@@ -90,9 +92,7 @@ describe('TeamProvisioningOpenCodeRuntimePermissions', () => {
         diagnostics: ['bridge response: permission-blocked'],
       })
     ).toBe(true);
-    expect(hasOpenCodePendingPermissionSignal({ reason: 'session refresh scheduled' })).toBe(
-      false
-    );
+    expect(hasOpenCodePendingPermissionSignal({ reason: 'session refresh scheduled' })).toBe(false);
   });
 
   it('lists, persists, and projects pending permissions after a blocked delivery signal', async () => {
@@ -144,8 +144,11 @@ describe('TeamProvisioningOpenCodeRuntimePermissions', () => {
     });
     const persisted = persistPendingPermissions.mock.calls[0]?.[0];
     expect(persisted?.previousLaunchState).toBe(previousLaunchState);
-    expect(persisted?.permissionsByMember.get('Builder')?.map((permission: { requestId: string }) => permission.requestId))
-      .toEqual(['req-builder']);
+    expect(
+      persisted?.permissionsByMember
+        .get('Builder')
+        ?.map((permission: { requestId: string }) => permission.requestId)
+    ).toEqual(['req-builder']);
     expect(syncSpawnStatuses.mock.calls[0]?.[0].permissionsByMember.get('Builder')).toHaveLength(1);
     expect(syncToolApprovals.mock.calls[0]?.[0]).toMatchObject({
       teamName: 'demo',
@@ -227,13 +230,12 @@ describe('TeamProvisioningOpenCodeRuntimePermissions', () => {
       previousLaunchState,
     });
 
-    expect(grouped.get('Reviewer')?.map((permission: { requestId: string }) => permission.requestId)).toEqual([
-      'req-reviewer',
-    ]);
-    expect(grouped.get('Builder')?.map((permission: { requestId: string }) => permission.requestId)).toEqual([
-      'req-delivered',
-      'req-no-session',
-    ]);
+    expect(
+      grouped.get('Reviewer')?.map((permission: { requestId: string }) => permission.requestId)
+    ).toEqual(['req-reviewer']);
+    expect(
+      grouped.get('Builder')?.map((permission: { requestId: string }) => permission.requestId)
+    ).toEqual(['req-delivered', 'req-no-session']);
   });
 
   it('builds pending-permission launch evidence from previous member state', () => {
@@ -270,11 +272,9 @@ describe('TeamProvisioningOpenCodeRuntimePermissions', () => {
       runtimeDiagnostic: 'OpenCode runtime is waiting for permission approval',
       runtimeDiagnosticSeverity: 'warning',
     });
-    expect(evidence.pendingPermissions?.map((permission: { requestId: string }) => permission.requestId)).toEqual([
-      'req-1',
-      'req-1',
-      'req-2',
-    ]);
+    expect(
+      evidence.pendingPermissions?.map((permission: { requestId: string }) => permission.requestId)
+    ).toEqual(['req-1', 'req-1', 'req-2']);
     expect(evidence.diagnostics).toEqual([
       'OpenCode runtime permission request discovered after delivery was blocked.',
       'previous diagnostic',
@@ -509,5 +509,40 @@ describe('TeamProvisioningOpenCodeRuntimePermissions', () => {
     });
     expect(emitMemberSpawnChange).toHaveBeenCalledWith(run, 'Builder');
     expect(persistLaunchStateSnapshot).toHaveBeenCalledWith(run, 'finished');
+  });
+
+  it('builds permission spawn status ports from service-shaped host wiring', async () => {
+    const run: OpenCodeRuntimePermissionTrackedRunLike = {
+      runId: 'run-1',
+      request: { providerId: 'opencode' },
+      memberSpawnStatuses: new Map(),
+      isLaunch: true,
+    };
+    const service = {
+      isCurrentTrackedRun: vi.fn(() => true),
+      emitMemberSpawnChange: vi.fn(),
+      persistLaunchStateSnapshot: vi.fn(async () => undefined),
+    } satisfies OpenCodeRuntimePermissionSpawnStatusServiceHost<OpenCodeRuntimePermissionTrackedRunLike>;
+    const getTrackedRunId = vi.fn(() => 'run-1');
+    const getRun = vi.fn(() => run);
+
+    const ports = createOpenCodeRuntimePermissionSpawnStatusPortsFromService(service, {
+      nowIso: () => '2026-01-01T00:01:10.000Z',
+      getTrackedRunId,
+      getRun,
+    });
+
+    expect(ports.nowIso()).toBe('2026-01-01T00:01:10.000Z');
+    expect(ports.getTrackedRunId('demo')).toBe('run-1');
+    expect(ports.getRun('run-1')).toBe(run);
+    expect(ports.isCurrentTrackedRun(run)).toBe(true);
+    ports.emitMemberSpawnChange(run, 'Builder');
+    await ports.persistLaunchStateSnapshot(run, 'active');
+
+    expect(getTrackedRunId).toHaveBeenCalledWith('demo');
+    expect(getRun).toHaveBeenCalledWith('run-1');
+    expect(service.isCurrentTrackedRun).toHaveBeenCalledWith(run);
+    expect(service.emitMemberSpawnChange).toHaveBeenCalledWith(run, 'Builder');
+    expect(service.persistLaunchStateSnapshot).toHaveBeenCalledWith(run, 'active');
   });
 });

@@ -2,11 +2,11 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { InterruptAndContinueWorkerUseCase, } from "@vioxen/subscription-runtime/worker-core";
 import { collectCodexGoalStatus, } from "../codex-goal-ops.js";
-import { codexGoalStatusInputFromLaunch as statusInput, } from "../codex-goal-mcp-status-input.js";
+import { codexGoalStatusInputFromLaunch as statusInput, } from "./codex-goal-status-input.js";
 import { loadJobLaunch, } from "../codex-goal-mcp-project-control-deps.js";
 import { codexGoalWorkerControlService, codexGoalWorkerControlTarget, } from "../codex-goal-mcp-worker-control.js";
 import { parseIsoDate, signalIdList, workerControlCallerArgs, workerControlDecisionJson, workerControlReceiptJson, workerControlSignalJson, workerControlSignalViewJson, } from "../codex-goal-mcp-worker-control-view.js";
-import { booleanValue, requiredRawString, stringValue, } from "../codex-goal-mcp-values.js";
+import { booleanValue, requiredRawString, stringValue, } from "./codex-goal-input-values.js";
 import { codexGoalControlDeliveryDiagnostic, } from "./codex-goal-control-delivery-diagnostic.js";
 export async function pauseCodexGoalWorker(args) {
     const loaded = await loadJobLaunch(args);

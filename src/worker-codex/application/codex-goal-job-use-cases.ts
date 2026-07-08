@@ -22,7 +22,7 @@ import {
   numberValue,
   requiredRawString,
   stringValue,
-} from "../codex-goal-mcp-values";
+} from "./codex-goal-input-values";
 import {
   registryRootFromArgs,
   type JobBriefMcpArgs,
@@ -49,7 +49,7 @@ import {
 } from "../codex-goal-mcp-launch-input";
 import {
   codexGoalStatusInputFromLaunch as statusInput,
-} from "../codex-goal-mcp-status-input";
+} from "./codex-goal-status-input";
 import {
   continueStoredJobLifecycle,
   maintenancePauseStoredJobLifecycle,

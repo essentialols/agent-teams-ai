@@ -1,5 +1,5 @@
 import { collectCodexGoalStatus, resolveCodexGoalWorkerLiveness, } from "../codex-goal-ops.js";
-import { codexGoalStatusInputFromLaunch as statusInput, } from "../codex-goal-mcp-status-input.js";
+import { codexGoalStatusInputFromLaunch as statusInput, } from "./codex-goal-status-input.js";
 export async function codexGoalControlDeliveryDiagnostic(input) {
     const status = await collectCodexGoalStatus(statusInput(input.launch));
     return buildCodexGoalControlDeliveryDiagnostic({

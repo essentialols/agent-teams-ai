@@ -15,16 +15,16 @@ import {
 } from "../codex-goal-launch-manifest";
 import {
   isSafeStartAction,
-} from "../codex-goal-mcp-decision";
+} from "./codex-goal-start-policy";
 import {
   codexGoalLaunchSummary as launchSummary,
-} from "../codex-goal-mcp-launch-summary";
+} from "./codex-goal-launch-summary";
 import {
   codexGoalStatusInputFromLaunch as statusInput,
-} from "../codex-goal-mcp-status-input";
+} from "./codex-goal-status-input";
 import {
   resolvePath,
-} from "../codex-goal-mcp-values";
+} from "./codex-goal-input-values";
 import {
   projectControlGenericScopeDenial,
   projectControlGenericToolDenial,

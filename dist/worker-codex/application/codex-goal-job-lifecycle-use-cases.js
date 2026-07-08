@@ -4,8 +4,8 @@ import { buildCodexGoalBrief } from "../codex-goal-mcp-brief.js";
 import { isSafeStartAction, nextActionForStatus, } from "../codex-goal-mcp-decision.js";
 import { writeCodexGoalMaintenancePauseEvent, writeCodexGoalStopEvent, writeCodexGoalStoppedProgress, } from "../codex-goal-mcp-lifecycle-markers.js";
 import { codexGoalStateRootDir } from "../codex-goal-mcp-worker-control.js";
-import { codexGoalStatusInputFromLaunch as statusInput } from "../codex-goal-mcp-status-input.js";
-import { booleanValue, numberValue, stringValue, } from "../codex-goal-mcp-values.js";
+import { codexGoalStatusInputFromLaunch as statusInput } from "./codex-goal-status-input.js";
+import { booleanValue, numberValue, stringValue, } from "./codex-goal-input-values.js";
 import { projectControlGenericScopeDenial, projectControlGenericToolDenial, } from "../project-control-scope-guard.js";
 import { stopDirectCodexGoalRun, } from "./codex-goal-direct-run-stop-use-case.js";
 export async function continueStoredJobLifecycle(args, options, deps) {

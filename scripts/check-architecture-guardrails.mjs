@@ -33,6 +33,32 @@ const legacyLineCaps = {
 };
 
 const allowedMcpRestrictedImports = {};
+const allowedApplicationMcpImports = {
+  "src/worker-codex/application/codex-goal-job-lifecycle-use-cases.ts": [
+    "../codex-goal-mcp-brief",
+    "../codex-goal-mcp-decision",
+    "../codex-goal-mcp-inputs",
+    "../codex-goal-mcp-lifecycle-markers",
+    "../codex-goal-mcp-worker-control",
+  ],
+  "src/worker-codex/application/codex-goal-job-use-cases.ts": [
+    "../codex-goal-mcp-brief",
+    "../codex-goal-mcp-decision",
+    "../codex-goal-mcp-inputs",
+    "../codex-goal-mcp-launch-input",
+    "../codex-goal-mcp-manifest-args",
+    "../codex-goal-mcp-overview",
+    "../codex-goal-mcp-project-control-deps",
+    "../codex-goal-mcp-target-commit",
+    "../codex-goal-mcp-worker-control",
+  ],
+  "src/worker-codex/application/codex-goal-worker-control-use-cases.ts": [
+    "../codex-goal-mcp-inputs",
+    "../codex-goal-mcp-project-control-deps",
+    "../codex-goal-mcp-worker-control",
+    "../codex-goal-mcp-worker-control-view",
+  ],
+};
 
 const staticImportPattern =
   /(?:import|export)\s+(?:type\s+)?(?:[^'"]+\s+from\s+)?["']([^"']+)["']/g;
@@ -47,6 +73,7 @@ for (const file of await listFiles(srcDir)) {
   const rel = relative(rootDir, file).replaceAll("\\", "/");
   const text = await readFile(file, "utf8");
   checkLineBudget(rel, text);
+  checkApplicationImports(rel, text);
   if (isMcpToolFile(rel) || rel === "src/worker-codex/codex-goal-mcp.ts") {
     checkMcpFacade(rel, text);
   }
@@ -92,6 +119,18 @@ function checkMcpFacade(rel, text) {
   }
 }
 
+function checkApplicationImports(rel, text) {
+  if (!/^src\/worker-codex\/application\/.+\.ts$/.test(rel)) return;
+  const allowed = new Set(allowedApplicationMcpImports[rel] ?? []);
+  for (const specifier of extractImports(text)) {
+    if (isWorkerCodexMcpImport(specifier) && !allowed.has(specifier)) {
+      violations.push(
+        `${rel}: application layer imports MCP-facing module ${specifier}`,
+      );
+    }
+  }
+}
+
 function isMcpToolFile(rel) {
   return /^src\/worker-codex\/codex-goal-mcp-.+tools\.ts$/.test(rel);
 }
@@ -102,6 +141,11 @@ function isRestrictedMcpImport(specifier) {
     /^\.\/codex-goal-mcp-decision$/.test(specifier) ||
     /^\.\/codex-goal-mcp-job-lifecycle$/.test(specifier) ||
     /^\.\/codex-goal-mcp-observation-projection$/.test(specifier);
+}
+
+function isWorkerCodexMcpImport(specifier) {
+  return /^\.\.\/codex-goal-mcp(?:-|$)/.test(specifier) ||
+    /^\.\/codex-goal-mcp(?:-|$)/.test(specifier);
 }
 
 function extractImports(text) {

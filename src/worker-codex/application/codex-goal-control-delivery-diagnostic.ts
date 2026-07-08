@@ -10,7 +10,7 @@ import {
 } from "../codex-goal-ops";
 import {
   codexGoalStatusInputFromLaunch as statusInput,
-} from "../codex-goal-mcp-status-input";
+} from "./codex-goal-status-input";
 
 export async function codexGoalControlDeliveryDiagnostic(input: {
   readonly launch: CodexGoalLaunchInput;

@@ -17,7 +17,7 @@ import type {
 } from "../codex-goal-mcp-inputs";
 import {
   codexGoalStatusInputFromLaunch as statusInput,
-} from "../codex-goal-mcp-status-input";
+} from "./codex-goal-status-input";
 import {
   loadJobLaunch,
 } from "../codex-goal-mcp-project-control-deps";
@@ -38,7 +38,7 @@ import {
   booleanValue,
   requiredRawString,
   stringValue,
-} from "../codex-goal-mcp-values";
+} from "./codex-goal-input-values";
 import {
   codexGoalControlDeliveryDiagnostic,
 } from "./codex-goal-control-delivery-diagnostic";

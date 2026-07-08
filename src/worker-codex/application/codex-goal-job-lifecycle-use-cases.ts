@@ -30,12 +30,12 @@ import {
   writeCodexGoalStoppedProgress,
 } from "../codex-goal-mcp-lifecycle-markers";
 import { codexGoalStateRootDir } from "../codex-goal-mcp-worker-control";
-import { codexGoalStatusInputFromLaunch as statusInput } from "../codex-goal-mcp-status-input";
+import { codexGoalStatusInputFromLaunch as statusInput } from "./codex-goal-status-input";
 import {
   booleanValue,
   numberValue,
   stringValue,
-} from "../codex-goal-mcp-values";
+} from "./codex-goal-input-values";
 import {
   projectControlGenericScopeDenial,
   projectControlGenericToolDenial,

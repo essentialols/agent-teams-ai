@@ -7,11 +7,10 @@ import { projectControllerOptionsFromMcpArgs, } from "./codex-goal-mcp-project-c
 import { projectControllerAllowedTools, projectControllerLaunchInput, projectControllerProfile, projectControllerProfileReadyJson, projectControllerState, } from "./application/project-control/codex-goal-project-controller-profile.js";
 import { projectControllerProviderKind, } from "./application/project-control/codex-goal-project-controller-options.js";
 import { projectControllerProvider, } from "./codex-goal-mcp-project-controller-provider.js";
-import { createInMemoryProjectControllerProviderRegistry, projectControllerOwnerIsLive, projectControllerProcessOwner, } from "./application/project-control/codex-goal-project-controller-runtime.js";
+import { projectControllerOwnerIsLive, projectControllerProcessOwner, } from "./application/project-control/codex-goal-project-controller-runtime.js";
 import { stringValue, } from "./codex-goal-mcp-values.js";
 import { workerControlDecisionJson, } from "./codex-goal-mcp-worker-control-view.js";
 import { codexGoalStateRootDir, codexGoalWorkerControlService, codexGoalWorkerControlTarget, } from "./codex-goal-mcp-worker-control.js";
-const controlledAgentProviders = createInMemoryProjectControllerProviderRegistry();
 export async function projectControllerLaunchPlanView(args, deps) {
     const controller = await deps.loadProjectControlController(args);
     const options = projectControllerOptionsFromMcpArgs(args);
@@ -128,7 +127,7 @@ export async function projectControllerStartView(args, deps) {
             safeMessage: "Controlled LLM controller start was blocked by the controlled-agent use case.",
         };
     }
-    controlledAgentProviders.set(state.sessionId, providerInput.provider);
+    deps.providerRegistry.set(state.sessionId, providerInput.provider);
     return {
         ok: true,
         mode: "project_controller_start",
@@ -161,7 +160,7 @@ export async function projectControllerStatusView(args, deps) {
     const result = await getControlledAgentStatus(state.sessionId, {
         stateStore: state.store,
     });
-    const provider = controlledAgentProviders.get(state.sessionId);
+    const provider = deps.providerRegistry.get(state.sessionId);
     let observed;
     let providerStatusError;
     if (result.ok && provider) {
@@ -245,7 +244,7 @@ export async function projectControllerStopView(args, deps) {
     const result = await getControlledAgentStatus(state.sessionId, {
         stateStore: state.store,
     });
-    const provider = controlledAgentProviders.get(state.sessionId);
+    const provider = deps.providerRegistry.get(state.sessionId);
     const owner = projectControllerProcessOwner(deps.runtimeVersion);
     if (result.ok && provider) {
         const stopped = await stopControlledAgentRun({
@@ -257,7 +256,7 @@ export async function projectControllerStopView(args, deps) {
             events: state.store,
         });
         if (stopped.ok)
-            controlledAgentProviders.delete(state.sessionId);
+            deps.providerRegistry.delete(state.sessionId);
         return {
             ok: stopped.ok,
             mode: "project_controller_stop",
@@ -307,7 +306,7 @@ export async function projectControllerReconcileView(args, deps) {
     const result = await getControlledAgentStatus(state.sessionId, {
         stateStore: state.store,
     });
-    const provider = controlledAgentProviders.get(state.sessionId);
+    const provider = deps.providerRegistry.get(state.sessionId);
     const owner = projectControllerProcessOwner(deps.runtimeVersion);
     if (result.ok && provider) {
         const reconciled = await reconcileControlledAgentRun(state.sessionId, {

@@ -47,6 +47,9 @@ import {
   projectControllerStopView,
 } from "./codex-goal-mcp-project-controller";
 import {
+  createInMemoryProjectControllerProviderRegistry,
+} from "./application/project-control/codex-goal-project-controller-runtime";
+import {
   codexProjectAdmissionDeps,
   codexProjectControlBroker,
   loadJobLaunch,
@@ -60,6 +63,8 @@ import {
 } from "./codex-goal-mcp-project-integration-ledger";
 
 const serverVersion = process.env.npm_package_version ?? "0.0.0";
+const projectControllerProviderRegistry =
+  createInMemoryProjectControllerProviderRegistry();
 const projectAdmissionWorkerRoleSchemaValues = [
   "producer",
   "fastgate",
@@ -523,6 +528,7 @@ function projectControllerDeps() {
   return {
     loadProjectControlController,
     runtimeVersion: serverVersion,
+    providerRegistry: projectControllerProviderRegistry,
   };
 }
 

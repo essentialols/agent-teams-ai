@@ -42,9 +42,9 @@ import {
   projectControllerProvider,
 } from "./codex-goal-mcp-project-controller-provider";
 import {
-  createInMemoryProjectControllerProviderRegistry,
   projectControllerOwnerIsLive,
   projectControllerProcessOwner,
+  type ProjectControllerProviderRegistry,
 } from "./application/project-control/codex-goal-project-controller-runtime";
 import type { ProjectControllerLaunchPlanMcpArgs } from "./codex-goal-mcp-inputs";
 import {
@@ -72,9 +72,8 @@ export type CodexGoalMcpProjectControllerDeps = {
     args: ProjectControllerLaunchPlanMcpArgs,
   ) => Promise<LoadedProjectControlController>;
   readonly runtimeVersion: string;
+  readonly providerRegistry: ProjectControllerProviderRegistry;
 };
-
-const controlledAgentProviders = createInMemoryProjectControllerProviderRegistry();
 
 export async function projectControllerLaunchPlanView(
   args: ProjectControllerLaunchPlanMcpArgs,
@@ -203,7 +202,7 @@ export async function projectControllerStartView(
         "Controlled LLM controller start was blocked by the controlled-agent use case.",
     };
   }
-  controlledAgentProviders.set(state.sessionId, providerInput.provider);
+  deps.providerRegistry.set(state.sessionId, providerInput.provider);
   return {
     ok: true,
     mode: "project_controller_start",
@@ -240,7 +239,7 @@ export async function projectControllerStatusView(
   const result = await getControlledAgentStatus(state.sessionId, {
     stateStore: state.store,
   });
-  const provider = controlledAgentProviders.get(state.sessionId);
+  const provider = deps.providerRegistry.get(state.sessionId);
   let observed: Awaited<ReturnType<ControlledAgentProviderPort["status"]>> | undefined;
   let providerStatusError: string | undefined;
   if (result.ok && provider) {
@@ -331,7 +330,7 @@ export async function projectControllerStopView(
   const result = await getControlledAgentStatus(state.sessionId, {
     stateStore: state.store,
   });
-  const provider = controlledAgentProviders.get(state.sessionId);
+  const provider = deps.providerRegistry.get(state.sessionId);
   const owner = projectControllerProcessOwner(deps.runtimeVersion);
   if (result.ok && provider) {
     const stopped = await stopControlledAgentRun({
@@ -342,7 +341,7 @@ export async function projectControllerStopView(
       provider,
       events: state.store,
     });
-    if (stopped.ok) controlledAgentProviders.delete(state.sessionId);
+    if (stopped.ok) deps.providerRegistry.delete(state.sessionId);
     return {
       ok: stopped.ok,
       mode: "project_controller_stop",
@@ -396,7 +395,7 @@ export async function projectControllerReconcileView(
   const result = await getControlledAgentStatus(state.sessionId, {
     stateStore: state.store,
   });
-  const provider = controlledAgentProviders.get(state.sessionId);
+  const provider = deps.providerRegistry.get(state.sessionId);
   const owner = projectControllerProcessOwner(deps.runtimeVersion);
   if (result.ok && provider) {
     const reconciled = await reconcileControlledAgentRun(state.sessionId, {

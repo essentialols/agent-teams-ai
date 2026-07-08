@@ -1,6 +1,7 @@
 /// <reference types="node" />
 import { type ProjectAccessScope } from "@vioxen/subscription-runtime/worker-core";
 import { type CodexGoalJobManifest } from "./codex-goal-jobs.js";
+import { type ProjectControllerProviderRegistry } from "./application/project-control/codex-goal-project-controller-runtime.js";
 import type { ProjectControllerLaunchPlanMcpArgs } from "./codex-goal-mcp-inputs.js";
 type JsonObject = Readonly<Record<string, unknown>>;
 type LoadedProjectControlController = {
@@ -11,6 +12,7 @@ type LoadedProjectControlController = {
 export type CodexGoalMcpProjectControllerDeps = {
     readonly loadProjectControlController: (args: ProjectControllerLaunchPlanMcpArgs) => Promise<LoadedProjectControlController>;
     readonly runtimeVersion: string;
+    readonly providerRegistry: ProjectControllerProviderRegistry;
 };
 export declare function projectControllerLaunchPlanView(args: ProjectControllerLaunchPlanMcpArgs, deps: CodexGoalMcpProjectControllerDeps): Promise<JsonObject>;
 export declare function projectControllerStartView(args: ProjectControllerLaunchPlanMcpArgs, deps: CodexGoalMcpProjectControllerDeps): Promise<JsonObject>;

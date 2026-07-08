@@ -8,10 +8,12 @@ import { projectControlAdmissionSnapshotView, projectControlRepairJobManifestVie
 import { projectControlCreateWorktreeView, projectControlIntegrateCommitView, projectControlMarkReviewedView, projectControlPushBranchView, projectControlStartStoredJobView, projectControlStopStoredJobView, } from "./codex-goal-mcp-project-control-actions.js";
 import { projectControlCreateCodexGoalJobView, projectControlOperationStatusView, projectControlRefillWorkerView, } from "./codex-goal-mcp-project-control-jobs.js";
 import { projectControllerConsumeGuidanceView, projectControllerLaunchPlanView, projectControllerReconcileView, projectControllerStartView, projectControllerStatusView, projectControllerStopView, } from "./codex-goal-mcp-project-controller.js";
+import { createInMemoryProjectControllerProviderRegistry, } from "./application/project-control/codex-goal-project-controller-runtime.js";
 import { codexProjectAdmissionDeps, codexProjectControlBroker, loadJobLaunch, loadProjectControlController, } from "./codex-goal-mcp-project-control-deps.js";
 import { projectControlPathArg, } from "./codex-goal-mcp-project-scope.js";
 import { projectIntegrationPushApprovedCommitWithConsumedLedger, } from "./codex-goal-mcp-project-integration-ledger.js";
 const serverVersion = process.env.npm_package_version ?? "0.0.0";
+const projectControllerProviderRegistry = createInMemoryProjectControllerProviderRegistry();
 const projectAdmissionWorkerRoleSchemaValues = [
     "producer",
     "fastgate",
@@ -308,6 +310,7 @@ function projectControllerDeps() {
     return {
         loadProjectControlController,
         runtimeVersion: serverVersion,
+        providerRegistry: projectControllerProviderRegistry,
     };
 }
 async function projectControllerLaunchPlan(args) {

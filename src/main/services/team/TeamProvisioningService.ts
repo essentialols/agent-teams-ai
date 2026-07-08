@@ -21,7 +21,6 @@ import {
 import {
   getAutoDetectedClaudeBasePath,
   getClaudeBasePath,
-  getTasksBasePath,
   getTeamsBasePath,
 } from '@main/utils/pathDecoder';
 import { resolveLanguageName } from '@shared/utils/agentLanguage';
@@ -370,6 +369,10 @@ import {
   launchOpenCodeTeamThroughRuntimeAdapterFlow,
   type OpenCodeRuntimeAdapterTeamFlowPorts,
 } from './provisioning/TeamProvisioningOpenCodeRuntimeAdapterTeamFlow';
+import {
+  createOpenCodeRuntimeAdapterTeamFlowPortsFromService,
+  type TeamProvisioningOpenCodeRuntimeAdapterTeamFlowServiceHost,
+} from './provisioning/TeamProvisioningOpenCodeRuntimeAdapterTeamFlowPortsFactory';
 import { type OpenCodeRuntimeControlAck } from './provisioning/TeamProvisioningOpenCodeRuntimeCheckin';
 import {
   getOpenCodeMemberDeliveryBusyStatus as getOpenCodeMemberDeliveryBusyStatusWithPorts,
@@ -454,7 +457,6 @@ import {
   isTerminalFailureProvisioningState,
   TeamProvisioningRetainedProgressState,
 } from './provisioning/TeamProvisioningProgressState';
-import { buildDeterministicLaunchHydrationPrompt } from './provisioning/TeamProvisioningPromptBuilders';
 import {
   createTeamProvisioningProviderRuntimeCompatibility,
   createTeamProvisioningProviderRuntimeFacadeFromService,
@@ -512,7 +514,6 @@ import {
 import {
   buildTeamRuntimeLaunchArgsPlan as buildTeamRuntimeLaunchArgsPlanHelper,
   type BuildTeamRuntimeLaunchArgsPlanInput,
-  getTeamsBasePathsToProbe,
   logsSuggestShutdownOrCleanup,
   type RuntimeProviderLaunchFacts,
   type TeamRuntimeLaunchArgsPlan,
@@ -647,7 +648,6 @@ import { TeamMemberWorktreeManager } from './TeamMemberWorktreeManager';
 import { TeamMetaStore } from './TeamMetaStore';
 import { TeamSentMessagesStore } from './TeamSentMessagesStore';
 import { TeamTaskActivityIntervalService } from './TeamTaskActivityIntervalService';
-import { TeamTaskReader } from './TeamTaskReader';
 
 import type {
   OpenCodeTeamRuntimeMessageInput,
@@ -3184,43 +3184,14 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
   }
 
   private createOpenCodeRuntimeAdapterTeamFlowPorts(): OpenCodeRuntimeAdapterTeamFlowPorts {
-    return {
-      getTeamsBasePathsToProbe,
-      getTeamsBasePath,
-      getTasksBasePath,
-      pathExists: (filePath) => this.pathExists(filePath),
-      ensureCwdExists,
-      mkdir: async (directoryPath) => {
-        await fs.promises.mkdir(directoryPath, { recursive: true });
-      },
-      nowMs: () => Date.now(),
-      writeTeamMeta: (teamName, data) => this.teamMetaStore.writeMeta(teamName, data),
-      writeMembersMeta: (teamName, members, options) =>
-        this.membersMetaStore.writeMembers(teamName, members, options),
-      writeOpenCodeTeamConfig: (launchRequest, members) =>
-        this.writeOpenCodeTeamConfig(launchRequest, members),
-      prepareOpenCodeRuntimeAdapterLaunch: (params) =>
-        this.prepareFacade.prepareOpenCodeRuntimeAdapterLaunch(params),
-      readTeamConfigRaw: (teamName) => {
-        const configPath = path.join(getTeamsBasePath(), teamName, 'config.json');
-        return tryReadRegularFileUtf8(configPath, {
-          timeoutMs: TEAM_JSON_READ_TIMEOUT_MS,
-          maxBytes: TEAM_CONFIG_MAX_BYTES,
-        });
-      },
-      resolveLaunchExpectedMembers: (teamName, configRaw, leadProviderId) =>
-        this.resolveLaunchExpectedMembers(teamName, configRaw, leadProviderId),
-      updateConfigProjectPath: (teamName, cwd) => this.updateConfigProjectPath(teamName, cwd),
-      readExistingTasks: (teamName) => new TeamTaskReader().getTasks(teamName),
-      warn: (message) => {
-        logger.warn(message);
-      },
-      buildDeterministicLaunchHydrationPrompt,
-      runOpenCodeWorktreeRootAggregateLaunch: (input) =>
-        this.runOpenCodeWorktreeRootAggregateLaunch(input),
-      runOpenCodeTeamRuntimeAdapterLaunch: (input) =>
-        this.runOpenCodeTeamRuntimeAdapterLaunch(input),
-    };
+    return createOpenCodeRuntimeAdapterTeamFlowPortsFromService(
+      this as unknown as TeamProvisioningOpenCodeRuntimeAdapterTeamFlowServiceHost,
+      {
+        warn: (message) => {
+          logger.warn(message);
+        },
+      }
+    );
   }
 
   private createDeterministicCreateRunFlowPorts(): DeterministicCreateRunFlowPorts<

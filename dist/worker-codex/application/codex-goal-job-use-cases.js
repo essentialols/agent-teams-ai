@@ -9,7 +9,7 @@ import { jobManifestInputFromArgs, jobManifestPatchFromArgs, } from "../codex-go
 import { loadJobLaunch, } from "../codex-goal-mcp-project-control-deps.js";
 import { goalLaunchInput, } from "../codex-goal-mcp-launch-input.js";
 import { codexGoalStatusInputFromLaunch as statusInput, } from "../codex-goal-mcp-status-input.js";
-import { continueStoredJobLifecycle, maintenancePauseStoredJobLifecycle, reconcileStoredJobRuntimeResultLifecycle, stopStoredJobLifecycle, } from "../codex-goal-mcp-job-lifecycle.js";
+import { continueStoredJobLifecycle, maintenancePauseStoredJobLifecycle, reconcileStoredJobRuntimeResultLifecycle, stopStoredJobLifecycle, } from "./codex-goal-job-lifecycle-use-cases.js";
 import { buildCodexGoalOverviewView, reconcilePreviewCodexGoalJobsView, } from "../codex-goal-mcp-overview.js";
 import { buildCodexGoalBrief, } from "../codex-goal-mcp-brief.js";
 import { codexGoalStateRootDir, } from "../codex-goal-mcp-worker-control.js";

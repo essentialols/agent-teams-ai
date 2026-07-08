@@ -1,4 +1,4 @@
-import type { CodexGoalJobManifest } from "./codex-goal-jobs";
+import type { CodexGoalJobManifest } from "../codex-goal-jobs";
 import {
   buildCodexGoalNoTmuxCommand,
   buildCodexGoalStopTmuxCommand,
@@ -12,37 +12,37 @@ import {
   startCodexGoalTmux,
   stopCodexGoalTmux,
   type CodexGoalLaunchInput,
-} from "./codex-goal-ops";
-import { codexGoalProgressPath } from "./codex-goal-runner";
-import { buildCodexGoalBrief } from "./codex-goal-mcp-brief";
+} from "../codex-goal-ops";
+import { codexGoalProgressPath } from "../codex-goal-runner";
+import { buildCodexGoalBrief } from "../codex-goal-mcp-brief";
 import {
   isSafeStartAction,
   nextActionForStatus,
-} from "./codex-goal-mcp-decision";
+} from "../codex-goal-mcp-decision";
 import {
   type JobIdMcpArgs,
   type JobLifecycleMcpArgs,
   type JobResultReconcileMcpArgs,
-} from "./codex-goal-mcp-inputs";
+} from "../codex-goal-mcp-inputs";
 import {
   writeCodexGoalMaintenancePauseEvent,
   writeCodexGoalStopEvent,
   writeCodexGoalStoppedProgress,
-} from "./codex-goal-mcp-lifecycle-markers";
-import { codexGoalStateRootDir } from "./codex-goal-mcp-worker-control";
-import { codexGoalStatusInputFromLaunch as statusInput } from "./codex-goal-mcp-status-input";
+} from "../codex-goal-mcp-lifecycle-markers";
+import { codexGoalStateRootDir } from "../codex-goal-mcp-worker-control";
+import { codexGoalStatusInputFromLaunch as statusInput } from "../codex-goal-mcp-status-input";
 import {
   booleanValue,
   numberValue,
   stringValue,
-} from "./codex-goal-mcp-values";
+} from "../codex-goal-mcp-values";
 import {
   projectControlGenericScopeDenial,
   projectControlGenericToolDenial,
-} from "./project-control-scope-guard";
+} from "../project-control-scope-guard";
 import {
   stopDirectCodexGoalRun,
-} from "./application/codex-goal-direct-run-stop-use-case";
+} from "./codex-goal-direct-run-stop-use-case";
 
 type JsonObject = Readonly<Record<string, unknown>>;
 

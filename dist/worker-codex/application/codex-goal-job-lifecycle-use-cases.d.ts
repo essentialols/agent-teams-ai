@@ -1,7 +1,7 @@
 /// <reference types="node" />
-import type { CodexGoalJobManifest } from "./codex-goal-jobs.js";
-import { type CodexGoalLaunchInput } from "./codex-goal-ops.js";
-import { type JobIdMcpArgs, type JobLifecycleMcpArgs, type JobResultReconcileMcpArgs } from "./codex-goal-mcp-inputs.js";
+import type { CodexGoalJobManifest } from "../codex-goal-jobs.js";
+import { type CodexGoalLaunchInput } from "../codex-goal-ops.js";
+import { type JobIdMcpArgs, type JobLifecycleMcpArgs, type JobResultReconcileMcpArgs } from "../codex-goal-mcp-inputs.js";
 type JsonObject = Readonly<Record<string, unknown>>;
 type LoadedCodexGoalJobLaunch = {
     readonly registryRootDir: string;
@@ -19,4 +19,4 @@ export declare function reconcileStoredJobRuntimeResultLifecycle(args: JobResult
 export declare function stopStoredJobLifecycle(args: JobLifecycleMcpArgs, deps: CodexGoalMcpJobLifecycleDeps): Promise<JsonObject>;
 export declare function maintenancePauseStoredJobLifecycle(args: JobLifecycleMcpArgs, deps: CodexGoalMcpJobLifecycleDeps): Promise<JsonObject>;
 export {};
-//# sourceMappingURL=codex-goal-mcp-job-lifecycle.d.ts.map
+//# sourceMappingURL=codex-goal-job-lifecycle-use-cases.d.ts.map

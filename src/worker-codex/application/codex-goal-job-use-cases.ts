@@ -55,7 +55,7 @@ import {
   maintenancePauseStoredJobLifecycle,
   reconcileStoredJobRuntimeResultLifecycle,
   stopStoredJobLifecycle,
-} from "../codex-goal-mcp-job-lifecycle";
+} from "./codex-goal-job-lifecycle-use-cases";
 import {
   buildCodexGoalOverviewView,
   reconcilePreviewCodexGoalJobsView,

@@ -4,7 +4,6 @@ import {
   AccessBoundary,
   ProjectControlBroker,
   type ProjectAccessScope,
-  type ProjectAdmissionWorkerRole,
   type ProjectControlBrokerEvent,
   type ProjectControlBrokerPorts,
   type ProjectControlOperationResult,
@@ -32,18 +31,15 @@ import {
   codexProjectAdmissionGate,
   type CodexProjectAdmissionDeps,
 } from "./codex-goal-mcp-project-admission";
+import {
+  noopOperationResult,
+  type CodexGoalProjectCreateWorktreeInput,
+} from "./application/project-control/codex-goal-project-control-contracts";
 import { assertGitCurrentBranch, execGit } from "./codex-goal-mcp-project-git";
 
-export type CodexGoalProjectCreateWorktreeInput = {
-  readonly sourceWorkspacePath: string;
-  readonly realSourceWorkspacePath?: string;
-  readonly path: string;
-  readonly baseBranch?: string;
-  readonly sourceRef?: string;
-  readonly newBranch?: string;
-  readonly workerRole?: ProjectAdmissionWorkerRole | `${ProjectAdmissionWorkerRole}`;
-  readonly tags?: readonly string[];
-};
+export type {
+  CodexGoalProjectCreateWorktreeInput,
+} from "./application/project-control/codex-goal-project-control-contracts";
 
 export type CodexGoalProjectIntegrateCommitInput = {
   readonly workspacePath: string;
@@ -296,16 +292,5 @@ function operationResult(resourceId: string): ProjectControlOperationResult {
   return {
     status: "applied",
     resourceId,
-  };
-}
-
-export function noopOperationResult(
-  resourceId: string,
-  safeMessage: string,
-): ProjectControlOperationResult {
-  return {
-    status: "noop",
-    resourceId,
-    safeMessage,
   };
 }

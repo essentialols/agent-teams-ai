@@ -6,7 +6,7 @@ import type {
   DependencyPreflightResult,
 } from "./dependency-bootstrap";
 import type { ProjectControlMcpArgs } from "./codex-goal-mcp-inputs";
-import { optionalRealPathForAdmission } from "./codex-goal-mcp-project-admission";
+export { projectControlRealPathOutsideWorkspaceScope } from "./application/project-control/codex-goal-project-workspace-scope";
 import {
   matchesProjectControlPrefix,
   pathInsideAnyProjectRoot,
@@ -183,30 +183,6 @@ export function assertProjectControlCreateManifestPaths(input: {
   }
 }
 
-export async function projectControlRealPathOutsideWorkspaceScope(
-  path: string,
-  scope: ProjectAccessScope,
-): Promise<string | undefined> {
-  const realPath = await optionalRealPathForAdmission(path);
-  if (!realPath) return undefined;
-  const roots = projectControlWorkspaceRoots(scope);
-  const realRoots = (await Promise.all(
-    roots.map((root) => optionalRealPathForAdmission(root)),
-  )).filter((root): root is string => Boolean(root));
-  const allowedRoots = uniqueProjectControlStrings([
-    ...roots,
-    ...realRoots,
-  ]);
-  return pathInsideAnyProjectRoot(realPath, allowedRoots) ? undefined : realPath;
-}
-
-function projectControlWorkspaceRoots(scope: ProjectAccessScope): readonly string[] {
-  return uniqueProjectControlStrings([
-    ...(scope.workspaceRoots ?? []),
-    ...(scope.worktreeRoots ?? []),
-    ...(scope.isolatedWorkspaceRoot ? [scope.isolatedWorkspaceRoot] : []),
-  ]);
-}
 
 export function projectControlPathArg(
   args: ProjectControlMcpArgs,

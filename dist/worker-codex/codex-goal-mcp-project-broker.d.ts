@@ -1,18 +1,10 @@
 /// <reference types="node" />
-import { ProjectControlBroker, type ProjectAccessScope, type ProjectAdmissionWorkerRole, type ProjectControlOperationResult } from "@vioxen/subscription-runtime/worker-core";
+import { ProjectControlBroker, type ProjectAccessScope } from "@vioxen/subscription-runtime/worker-core";
 import { type CodexGoalJobManifest, type CodexGoalJobManifestInput } from "./codex-goal-jobs.js";
 import { type CodexGoalLaunchInput } from "./codex-goal-ops.js";
 import { type CodexProjectAdmissionDeps } from "./codex-goal-mcp-project-admission.js";
-export type CodexGoalProjectCreateWorktreeInput = {
-    readonly sourceWorkspacePath: string;
-    readonly realSourceWorkspacePath?: string;
-    readonly path: string;
-    readonly baseBranch?: string;
-    readonly sourceRef?: string;
-    readonly newBranch?: string;
-    readonly workerRole?: ProjectAdmissionWorkerRole | `${ProjectAdmissionWorkerRole}`;
-    readonly tags?: readonly string[];
-};
+import { type CodexGoalProjectCreateWorktreeInput } from "./application/project-control/codex-goal-project-control-contracts.js";
+export type { CodexGoalProjectCreateWorktreeInput, } from "./application/project-control/codex-goal-project-control-contracts.js";
 export type CodexGoalProjectIntegrateCommitInput = {
     readonly workspacePath: string;
     readonly realWorkspacePath?: string;
@@ -44,5 +36,4 @@ export type CodexProjectControlBrokerInput = {
 };
 export declare function createCodexProjectControlBroker(input: CodexProjectControlBrokerInput): ProjectControlBroker;
 export declare function projectControlAuditPath(controller: CodexGoalJobManifest): string;
-export declare function noopOperationResult(resourceId: string, safeMessage: string): ProjectControlOperationResult;
 //# sourceMappingURL=codex-goal-mcp-project-broker.d.ts.map

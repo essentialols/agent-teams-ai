@@ -6,6 +6,7 @@ import { buildCodexGoalStopTmuxCommand, collectCodexGoalStatus, doctorCodexGoal,
 import { writeCodexGoalReviewMarker } from "./codex-goal-mcp-lifecycle-markers.js";
 import { codexGoalStatusInputFromLaunch as statusInput, } from "./codex-goal-mcp-status-input.js";
 import { codexProjectAdmissionGate, } from "./codex-goal-mcp-project-admission.js";
+import { noopOperationResult, } from "./application/project-control/codex-goal-project-control-contracts.js";
 import { assertGitCurrentBranch, execGit } from "./codex-goal-mcp-project-git.js";
 export function createCodexProjectControlBroker(input) {
     return new ProjectControlBroker({
@@ -199,13 +200,6 @@ function operationResult(resourceId) {
     return {
         status: "applied",
         resourceId,
-    };
-}
-export function noopOperationResult(resourceId, safeMessage) {
-    return {
-        status: "noop",
-        resourceId,
-        safeMessage,
     };
 }
 //# sourceMappingURL=codex-goal-mcp-project-broker.js.map

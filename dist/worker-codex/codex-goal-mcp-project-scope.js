@@ -1,5 +1,5 @@
 import { basename, dirname, resolve } from "node:path";
-import { optionalRealPathForAdmission } from "./codex-goal-mcp-project-admission.js";
+export { projectControlRealPathOutsideWorkspaceScope } from "./application/project-control/codex-goal-project-workspace-scope.js";
 import { matchesProjectControlPrefix, pathInsideAnyProjectRoot, pathInsideOrEqual, uniqueProjectControlStrings, } from "./codex-goal-mcp-project-utils.js";
 import { requiredString, resolvePath, stringValue, } from "./codex-goal-mcp-values.js";
 const PROJECT_CONTROL_SCOPE_REPAIR_IMMUTABLE_FIELDS = [
@@ -125,25 +125,6 @@ export function assertProjectControlCreateManifestPaths(input) {
         resolve(input.manifest.authRootDir) !== resolve(input.scope.authRoot)) {
         throw new Error("project_control_auth_root_outside_scope");
     }
-}
-export async function projectControlRealPathOutsideWorkspaceScope(path, scope) {
-    const realPath = await optionalRealPathForAdmission(path);
-    if (!realPath)
-        return undefined;
-    const roots = projectControlWorkspaceRoots(scope);
-    const realRoots = (await Promise.all(roots.map((root) => optionalRealPathForAdmission(root)))).filter((root) => Boolean(root));
-    const allowedRoots = uniqueProjectControlStrings([
-        ...roots,
-        ...realRoots,
-    ]);
-    return pathInsideAnyProjectRoot(realPath, allowedRoots) ? undefined : realPath;
-}
-function projectControlWorkspaceRoots(scope) {
-    return uniqueProjectControlStrings([
-        ...(scope.workspaceRoots ?? []),
-        ...(scope.worktreeRoots ?? []),
-        ...(scope.isolatedWorkspaceRoot ? [scope.isolatedWorkspaceRoot] : []),
-    ]);
 }
 export function projectControlPathArg(args, value, fieldName) {
     const cwd = resolvePath(process.cwd(), stringValue(args.cwd) ?? process.cwd());

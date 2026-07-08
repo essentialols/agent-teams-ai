@@ -2383,17 +2383,9 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
     memberName: string;
     laneId: string;
   }): Promise<boolean> {
-    const recovered = await this.tryRecoverOpenCodeRuntimeLaneForConfiguredMemberBeforeDelivery({
-      teamName: input.teamName,
-      memberName: input.memberName,
-    }).catch(() => false);
-    if (!recovered) {
-      return false;
-    }
-    const laneIndex = await readOpenCodeRuntimeLaneIndex(getTeamsBasePath(), input.teamName).catch(
-      () => null
+    return await this.openCodeRuntimeLaneRecoveryFacade.tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive(
+      input
     );
-    return laneIndex?.lanes[input.laneId]?.state === 'active';
   }
 
   private async tryRecoverOpenCodeRuntimeLanesForDeliveryWatchdog(

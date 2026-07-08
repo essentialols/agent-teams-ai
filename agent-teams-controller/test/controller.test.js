@@ -1224,6 +1224,54 @@ describe('agent-teams-controller API', () => {
     expect(rows[0].attachments[0].filename).toBe('note.txt');
   });
 
+  it('rejects unsafe configured member names before inbox path construction', () => {
+    const claudeDir = makeClaudeDir();
+    const configPath = path.join(claudeDir, 'teams', 'my-team', 'config.json');
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify(
+        {
+          name: 'my-team',
+          members: [
+            { name: '../config', role: 'developer' },
+            { name: 'alice', role: 'team-lead' },
+          ],
+        },
+        null,
+        2
+      )
+    );
+    const originalConfig = fs.readFileSync(configPath, 'utf8');
+    const controller = createController({ teamName: 'my-team', claudeDir });
+
+    expect(() =>
+      controller.messages.sendMessage({
+        to: '../config',
+        from: 'alice',
+        text: 'should not overwrite config',
+      })
+    ).toThrow('Unknown to: ../config');
+    expect(fs.readFileSync(configPath, 'utf8')).toBe(originalConfig);
+  });
+
+  it('does not overwrite a corrupt inbox JSON file when appending a message', () => {
+    const claudeDir = makeClaudeDir();
+    const inboxDir = path.join(claudeDir, 'teams', 'my-team', 'inboxes');
+    const inboxPath = path.join(inboxDir, 'bob.json');
+    fs.mkdirSync(inboxDir, { recursive: true });
+    fs.writeFileSync(inboxPath, '{not json', 'utf8');
+    const controller = createController({ teamName: 'my-team', claudeDir });
+
+    expect(() =>
+      controller.messages.sendMessage({
+        to: 'bob',
+        from: 'alice',
+        text: 'after corruption',
+      })
+    ).toThrow();
+    expect(fs.readFileSync(inboxPath, 'utf8')).toBe('{not json');
+  });
+
   it('persists slash command metadata through controller messages.appendSentMessage', () => {
     const claudeDir = makeClaudeDir();
     const controller = createController({ teamName: 'my-team', claudeDir });
@@ -2243,6 +2291,7 @@ describe('agent-teams-controller API', () => {
     const task = controller.tasks.createTask({ subject: 'Deleted work guard', owner: 'bob' });
 
     controller.tasks.softDeleteTask(task.id, 'bob');
+    const deletedBefore = controller.tasks.getTask(task.id);
 
     expect(() => controller.tasks.startTask(task.id, 'bob')).toThrow(
       'use task_restore before starting work'
@@ -2253,6 +2302,29 @@ describe('agent-teams-controller API', () => {
     expect(() => controller.tasks.setTaskStatus(task.id, 'pending', 'bob')).toThrow(
       'use task_restore before changing status'
     );
+    expect(() => controller.tasks.setTaskOwner(task.id, 'alice', 'alice')).toThrow(
+      'use task_restore before changing owner'
+    );
+    expect(() => controller.tasks.updateTaskFields(task.id, { description: 'mutated' })).toThrow(
+      'use task_restore before updating task fields'
+    );
+    expect(() =>
+      controller.tasks.addTaskComment(task.id, {
+        from: 'alice',
+        text: 'still writing',
+      })
+    ).toThrow('use task_restore before adding a comment');
+    expect(() => controller.tasks.setNeedsClarification(task.id, 'lead')).toThrow(
+      'use task_restore before changing clarification'
+    );
+
+    const stillDeleted = controller.tasks.getTask(task.id);
+    expect(stillDeleted.status).toBe('deleted');
+    expect(stillDeleted.owner).toBe('bob');
+    expect(stillDeleted.subject).toBe(deletedBefore.subject);
+    expect(stillDeleted.description).toBe(deletedBefore.description);
+    expect(stillDeleted.comments || []).toEqual([]);
+    expect(stillDeleted.needsClarification).toBeUndefined();
 
     const restored = controller.tasks.restoreTask(task.id, 'alice');
     expect(restored.status).toBe('pending');

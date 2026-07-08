@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { writeJsonFileSync } = require('./atomicFile.js');
+const runtimeHelpers = require('./runtimeHelpers.js');
 
 function nowIso() {
   return new Date().toISOString();
@@ -10,8 +11,11 @@ function nowIso() {
 function readJson(filePath, fallbackValue) {
   try {
     return JSON.parse(fs.readFileSync(filePath, 'utf8'));
-  } catch {
-    return fallbackValue;
+  } catch (error) {
+    if (error && error.code === 'ENOENT') {
+      return fallbackValue;
+    }
+    throw error;
   }
 }
 
@@ -20,7 +24,8 @@ function writeJson(filePath, value) {
 }
 
 function getInboxPath(paths, memberName) {
-  return path.join(paths.teamDir, 'inboxes', `${String(memberName).trim()}.json`);
+  const safeMemberName = runtimeHelpers.assertSafeMemberFileSegment('member name', memberName);
+  return path.join(paths.teamDir, 'inboxes', `${safeMemberName}.json`);
 }
 
 function getSentMessagesPath(paths) {

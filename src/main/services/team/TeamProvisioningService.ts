@@ -430,7 +430,10 @@ import {
   type TeamProvisioningPrepareFacadeServiceHost,
 } from './provisioning/TeamProvisioningPrepareFacade';
 import { createNodePreparePrimaryOwnedMemberRestartRuntimeUseCase } from './provisioning/TeamProvisioningPreparePrimaryOwnedMemberRestartRuntimeUseCase';
-import { createTeamProvisioningPrimaryBootstrapTruthReportingBoundary } from './provisioning/TeamProvisioningPrimaryBootstrapTruthReportingPortsFactory';
+import {
+  createTeamProvisioningPrimaryBootstrapTruthReportingBoundaryFromService,
+  type TeamProvisioningPrimaryBootstrapTruthReportingServiceHost,
+} from './provisioning/TeamProvisioningPrimaryBootstrapTruthReportingPortsFactory';
 import {
   handleProvisioningProcessExit,
   type TeamProvisioningProcessExitPorts,
@@ -995,30 +998,17 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
       }
     );
   private readonly primaryBootstrapTruthReporting =
-    createTeamProvisioningPrimaryBootstrapTruthReportingBoundary<ProvisioningRun>({
-      service: {
+    createTeamProvisioningPrimaryBootstrapTruthReportingBoundaryFromService<ProvisioningRun>(
+      this as unknown as TeamProvisioningPrimaryBootstrapTruthReportingServiceHost<ProvisioningRun>,
+      {
         isOpenCodeSecondaryLaneMemberInRun,
-        syncMemberTaskActivityForRuntimeTransition: (run, memberName, previous, next, observedAt) =>
-          this.syncMemberTaskActivityForRuntimeTransition(
-            run,
-            memberName,
-            previous,
-            next,
-            observedAt
-          ),
-        syncMemberLaunchGraceCheck: (run, memberName, next) =>
-          this.syncMemberLaunchGraceCheck(run, memberName, next),
-        syncRunMemberSpawnStatusesFromSnapshot: (run, snapshot) =>
-          this.syncRunMemberSpawnStatusesFromSnapshot(run, snapshot),
-      },
-      readBootstrapLaunchSnapshot,
-      writeLaunchStateSnapshot: (teamName, snapshot) =>
-        this.writeLaunchStateSnapshot(teamName, snapshot),
-      nowIso,
-      logger: {
-        warn: (message) => logger.warn(message),
-      },
-    });
+        readBootstrapLaunchSnapshot,
+        nowIso,
+        logger: {
+          warn: (message) => logger.warn(message),
+        },
+      }
+    );
   private readonly openCodeVisibleReplyProofService: OpenCodeVisibleReplyProofService;
   private readonly openCodePromptDeliveryWatchdogCoordinator: OpenCodePromptDeliveryWatchdogCoordinator;
   private readonly openCodeRuntimeRecoveryIdentity = createOpenCodeRuntimeRecoveryIdentityHelpers({

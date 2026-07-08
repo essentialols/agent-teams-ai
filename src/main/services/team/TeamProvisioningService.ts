@@ -62,11 +62,6 @@ import {
 } from './provisioning/TeamProvisioningBootstrapFailureMarking';
 import { type RuntimeBootstrapMemberMcpLaunchConfig } from './provisioning/TeamProvisioningBootstrapSpec';
 import {
-  createTeamProvisioningOpenCodeBootstrapStallReconciliationPorts,
-  createTeamProvisioningOpenCodeBootstrapStallStatusPorts,
-  type TeamProvisioningOpenCodeBootstrapStallReconciliationPorts,
-} from './provisioning/TeamProvisioningBootstrapStallPortsFactory';
-import {
   applyBootstrapTranscriptEvidenceOverlay as applyBootstrapTranscriptEvidenceOverlayHelper,
   applyProcessBootstrapTransportOverlay as applyProcessBootstrapTransportOverlayHelper,
   type BootstrapTranscriptOutcome,
@@ -83,7 +78,6 @@ import {
   type TeamProvisioningCancellationBoundary,
   type TeamProvisioningCancellationBoundaryServiceHost,
 } from './provisioning/TeamProvisioningCancellationBoundary';
-import { readTeamProvisioningClaudeLogs } from './provisioning/TeamProvisioningClaudeLogs';
 import {
   addPermissionRulesToSettings as addClaudePermissionRulesToSettings,
   type ClaudePermissionSettingsFilePorts,
@@ -94,7 +88,6 @@ import {
   finalizeIncompleteLaunchStateBeforeCleanup as finalizeIncompleteLaunchStateBeforeCleanupHelper,
   type TeamProvisioningCleanupPorts,
 } from './provisioning/TeamProvisioningCleanup';
-import { getCliHelpOutputWithProvisioningPorts } from './provisioning/TeamProvisioningCliHelpOutputPortsFactory';
 import { type TeamProvisioningCompatibilityDelegation } from './provisioning/TeamProvisioningCompatibilityFacade';
 import { TeamProvisioningConfigFacade } from './provisioning/TeamProvisioningConfigFacade';
 import { type TeamProvisioningConfigTaskActivityBoundary } from './provisioning/TeamProvisioningConfigTaskActivityBoundary';
@@ -130,6 +123,7 @@ import {
   type DeterministicBootstrapCompletionRecoveryServiceHost,
   recoverDeterministicBootstrapCompletionWithService,
 } from './provisioning/TeamProvisioningDeterministicBootstrapCompletionRecovery';
+import { TeamProvisioningDiagnosticsPreflightCompatibilityFacade } from './provisioning/TeamProvisioningDiagnosticsPreflightCompatibilityFacade';
 import { type ProvisioningEnvResolution } from './provisioning/TeamProvisioningEnvBuilder';
 import {
   startProvisioningFilesystemMonitor,
@@ -176,7 +170,6 @@ import {
   TeamProvisioningLaunchStateStoreBoundary,
 } from './provisioning/TeamProvisioningLaunchStateStoreBoundary';
 import {
-  getLeadActivityStateForTeam,
   setLeadActivity as setLeadActivityHelper,
   type SetLeadActivityPorts,
   syncLeadTaskActivityForState as syncLeadTaskActivityForStateHelper,
@@ -185,19 +178,13 @@ import {
   createTeamProvisioningLeadActivityPortsFromService,
   type TeamProvisioningLeadActivityPortsServiceHost,
 } from './provisioning/TeamProvisioningLeadActivityPortsFactory';
-import {
-  emitLeadContextUsageForRun,
-  getLeadContextUsageForTeam,
-} from './provisioning/TeamProvisioningLeadContextUsage';
+import { emitLeadContextUsageForRun } from './provisioning/TeamProvisioningLeadContextUsage';
 import {
   createTeamProvisioningLeadInboxRelayPortsBoundary,
   createTeamProvisioningLeadInboxRelayPortsDepsFromService,
   type TeamProvisioningLeadInboxRelayServiceHost,
 } from './provisioning/TeamProvisioningLeadInboxRelayPortsFactory';
-import {
-  getRunTrackedCwdFromRun,
-  isCurrentTrackedRunById,
-} from './provisioning/TeamProvisioningLeadRunDerivation';
+import { getRunTrackedCwdFromRun } from './provisioning/TeamProvisioningLeadRunDerivation';
 import {
   type LiveInboxRelayResult,
   relayInboxFileToLiveRecipientWithPorts,
@@ -216,10 +203,7 @@ import {
   type MemberLifecycleOperation,
   TeamProvisioningMemberLifecycleController,
 } from './provisioning/TeamProvisioningMemberLifecycle';
-import {
-  TeamProvisioningMemberLifecycleCompatibilityFacade,
-  type TeamProvisioningMemberLifecyclePublicFacade,
-} from './provisioning/TeamProvisioningMemberLifecycleCompatibilityFacade';
+import { type TeamProvisioningMemberLifecyclePublicFacade } from './provisioning/TeamProvisioningMemberLifecycleCompatibilityFacade';
 import { createTeamProvisioningMemberLifecycleHostFromPortGroups } from './provisioning/TeamProvisioningMemberLifecycleHostFactory';
 import { createTeamProvisioningMemberLifecycleOperationRunner } from './provisioning/TeamProvisioningMemberLifecycleOperationRunner';
 import { createTeamProvisioningMemberLifecycleOperationUseCases } from './provisioning/TeamProvisioningMemberLifecycleOperationUseCases';
@@ -230,28 +214,19 @@ import {
   resolveExpectedLaunchMemberName as resolveExpectedLaunchMemberNameHelper,
 } from './provisioning/TeamProvisioningMemberSpawnLeadInbox';
 import {
-  confirmMemberSpawnStatusFromTranscriptForRun,
   createMemberSpawnStatusAuditPortsFromService,
   createMemberSpawnStatusMutationPortsFromService,
-  getMemberSpawnStatusesSnapshot,
-  maybeAuditMemberSpawnStatusesForRun,
   type MemberSpawnStatusAuditPorts,
   type MemberSpawnStatusAuditServiceHost,
   type MemberSpawnStatusMutationPorts,
   type MemberSpawnStatusMutationServiceHost,
   reconcileBootstrapTranscriptFailuresForRun,
   reconcileBootstrapTranscriptSuccessesForRun,
-  setMemberSpawnStatusForRun,
 } from './provisioning/TeamProvisioningMemberSpawnSnapshots';
 import {
   createInitialMemberSpawnStatusEntry,
   MEMBER_LAUNCH_GRACE_MS,
 } from './provisioning/TeamProvisioningMemberSpawnStatusPolicy';
-import {
-  createTeamProvisioningMemberSpawnStatusesSnapshotHostFromService,
-  createTeamProvisioningMemberSpawnStatusesSnapshotPortsBoundary,
-  type TeamProvisioningMemberSpawnStatusesSnapshotServiceHost,
-} from './provisioning/TeamProvisioningMemberSpawnStatusSnapshotPortsFactory';
 import {
   buildRuntimeSpawnStatusRecord as buildRuntimeSpawnStatusRecordHelper,
   filterRemovedMembersFromLaunchSnapshot,
@@ -286,11 +261,6 @@ import {
   type TeamProvisioningOpenCodeAggregatePrimaryLaneServiceHost,
 } from './provisioning/TeamProvisioningOpenCodeAggregatePrimaryLanePortsFactory';
 import { type OpenCodeRuntimeBootstrapEvidencePorts } from './provisioning/TeamProvisioningOpenCodeBootstrapEvidence';
-import {
-  isOpenCodeBootstrapStallWindowElapsed as isOpenCodeBootstrapStallWindowElapsedHelper,
-  type OpenCodeBootstrapStallStatusPorts,
-  scheduleOpenCodeBootstrapStallReevaluation as scheduleOpenCodeBootstrapStallReevaluationHelper,
-} from './provisioning/TeamProvisioningOpenCodeBootstrapStall';
 import { createTeamProvisioningOpenCodeInboxAttachmentPayloadBoundary } from './provisioning/TeamProvisioningOpenCodeInboxAttachmentPayloadBoundaryFactory';
 import {
   createTeamProvisioningOpenCodeLaunchPersistencePortsFromService,
@@ -308,7 +278,6 @@ import {
 import {
   type OpenCodeMemberInboxRelayOptions,
   type OpenCodeMemberInboxRelayResult,
-  scheduleOpenCodeMemberInboxDeliveryWakeWithPorts,
 } from './provisioning/TeamProvisioningOpenCodeMemberInboxRelay';
 import {
   createTeamProvisioningOpenCodeMemberInboxRelayBoundary,
@@ -336,21 +305,11 @@ import {
   createOpenCodeRuntimeAdapterTeamFlowPortsFromService,
   type TeamProvisioningOpenCodeRuntimeAdapterTeamFlowServiceHost,
 } from './provisioning/TeamProvisioningOpenCodeRuntimeAdapterTeamFlowPortsFactory';
-import { type OpenCodeRuntimeControlAck } from './provisioning/TeamProvisioningOpenCodeRuntimeCheckin';
-import {
-  getOpenCodeMemberDeliveryBusyStatus as getOpenCodeMemberDeliveryBusyStatusWithPorts,
-  tryGetActiveOpenCodePromptDeliveryRecord as tryGetActiveOpenCodePromptDeliveryRecordWithPorts,
-} from './provisioning/TeamProvisioningOpenCodeRuntimeDelivery';
 import {
   createTeamProvisioningOpenCodeRuntimeDeliveryAdvisoryFromService,
   type TeamProvisioningOpenCodeRuntimeDeliveryAdvisoryServiceHost,
 } from './provisioning/TeamProvisioningOpenCodeRuntimeDeliveryAdvisory';
-import {
-  createTeamProvisioningOpenCodeRuntimeDeliveryBoundaryFromHost,
-  createTeamProvisioningOpenCodeRuntimeDeliveryBoundaryHostFromService,
-  type TeamProvisioningOpenCodeRuntimeDeliveryBoundaryHost,
-  type TeamProvisioningOpenCodeRuntimeDeliveryBoundaryServiceHost,
-} from './provisioning/TeamProvisioningOpenCodeRuntimeDeliveryBoundaryFactory';
+import { type TeamProvisioningOpenCodeRuntimeDeliveryBoundaryHost } from './provisioning/TeamProvisioningOpenCodeRuntimeDeliveryBoundaryFactory';
 import {
   applyOpenCodeSecondaryBootstrapStallOverlay as applyOpenCodeSecondaryBootstrapStallOverlayHelper,
   getOpenCodeSecondaryBootstrapPendingMemberNames as getOpenCodeSecondaryBootstrapPendingMemberNamesHelper,
@@ -436,7 +395,6 @@ import {
   LIVE_LEAD_PROCESS_MESSAGE_CACHE_LIMIT,
   MEMBER_SPAWN_AUDIT_MIN_INTERVAL_MS,
   type ProvisioningRun,
-  VERIFY_TIMEOUT_MS,
 } from './provisioning/TeamProvisioningRunModel';
 import {
   killTeamProcess,
@@ -453,21 +411,10 @@ import {
   getAnthropicFastModeDefault,
   getTeamProviderLabel,
 } from './provisioning/TeamProvisioningRuntimeDiagnostics';
-import {
-  buildTeamRuntimeLaunchArgsPlan as buildTeamRuntimeLaunchArgsPlanHelper,
-  type BuildTeamRuntimeLaunchArgsPlanInput,
-  type RuntimeProviderLaunchFacts,
-  type TeamRuntimeLaunchArgsPlan,
-  type ValidConfigProbeResult,
-} from './provisioning/TeamProvisioningRuntimeLaunchSelection';
 import { mergeRuntimeDiagnostics } from './provisioning/TeamProvisioningRuntimeMetadata';
 import { type LiveTeamAgentRuntimeMetadata } from './provisioning/TeamProvisioningRuntimeMetadataPolicy';
 import { type TeamProvisioningRuntimeProjection } from './provisioning/TeamProvisioningRuntimeProjectionFactory';
-import {
-  isOpenCodeRuntimeRecipient as isOpenCodeRuntimeRecipientHelper,
-  isOpenCodeRuntimeRecipientFromSources,
-  resolveRuntimeRecipientProviderId as resolveRuntimeRecipientProviderIdHelper,
-} from './provisioning/TeamProvisioningRuntimeRecipientResolution';
+import { isOpenCodeRuntimeRecipientFromSources } from './provisioning/TeamProvisioningRuntimeRecipientResolution';
 import { createTeamProvisioningRuntimeResourceSamplingForService } from './provisioning/TeamProvisioningRuntimeResourceSamplingCompatibilityFacade';
 import { attachLiveRuntimeMetadataToStatuses as attachLiveRuntimeMetadataToStatusesHelper } from './provisioning/TeamProvisioningRuntimeSnapshot';
 import { TeamProvisioningRuntimeSnapshotCacheBoundary } from './provisioning/TeamProvisioningRuntimeSnapshotCache';
@@ -476,12 +423,6 @@ import {
   createRuntimeToolActivityHandlers,
   type RuntimeToolActivityServiceHost,
 } from './provisioning/TeamProvisioningRuntimeToolActivity';
-import {
-  buildRuntimeTurnSettledHookSettingsArgs as buildRuntimeTurnSettledHookSettingsArgsHelper,
-  buildRuntimeTurnSettledHookSettingsObject as buildRuntimeTurnSettledHookSettingsObjectHelper,
-  type RuntimeTurnSettledEnvironmentProvider,
-  type RuntimeTurnSettledHookSettingsProvider,
-} from './provisioning/TeamProvisioningRuntimeTurnSettledPlanning';
 import { TeamProvisioningRunTrackingDeliveryHelper } from './provisioning/TeamProvisioningRunTrackingDelivery';
 import { TeamProvisioningSameTeamNativeDelivery } from './provisioning/TeamProvisioningSameTeamNativeDelivery';
 import {
@@ -590,36 +531,23 @@ export {
 import type {
   AgentActionMode,
   InboxMessage,
-  LeadContextUsage,
-  MemberSpawnLivenessSource,
-  MemberSpawnStatus,
   MemberSpawnStatusEntry,
   MemberSpawnStatusesSnapshot,
-  OpenCodeRuntimeDeliveryStatus,
   PersistedTeamLaunchMemberState,
   PersistedTeamLaunchPhase,
   PersistedTeamLaunchSnapshot,
-  PersistedTeamLaunchSummary,
-  ProviderModelLaunchIdentity,
   RetryFailedOpenCodeSecondaryLanesResult,
   TaskRef,
   TeamAgentRuntimeSnapshot,
   TeamChangeEvent,
   TeamCreateRequest,
   TeamCreateResponse,
-  TeamLaunchAggregateState,
   TeamLaunchDiagnosticItem,
   TeamLaunchRequest,
   TeamLaunchResponse,
   TeamMember,
-  TeamProviderBackendId,
   TeamProviderId,
-  TeamProvisioningModelCheckRequest,
-  TeamProvisioningModelVerificationMode,
-  TeamProvisioningPrepareResult,
   TeamProvisioningProgress,
-  ToolApprovalEvent,
-  ToolApprovalSettings,
 } from '@shared/types';
 
 const logger = createLogger('Service:TeamProvisioning');
@@ -634,10 +562,10 @@ const claudePermissionSettingsFilePorts: ClaudePermissionSettingsFilePorts = {
   writeFileUtf8: (filePath, contents) => atomicWriteAsync(filePath, contents),
 };
 
-export class TeamProvisioningService extends TeamProvisioningMemberLifecycleCompatibilityFacade<ProvisioningRun> {
+export class TeamProvisioningService extends TeamProvisioningDiagnosticsPreflightCompatibilityFacade<ProvisioningRun> {
   private readonly runtimeLaneCoordinator = createTeamRuntimeLaneCoordinator();
   private readonly providerConnectionService = ProviderConnectionService.getInstance();
-  private readonly launchIdentityBoundary: TeamProvisioningLaunchIdentityBoundary =
+  protected readonly launchIdentityBoundary: TeamProvisioningLaunchIdentityBoundary =
     createTeamProvisioningLaunchIdentityBoundary({
       execCli,
       providerConnectionService: this.providerConnectionService,
@@ -656,10 +584,10 @@ export class TeamProvisioningService extends TeamProvisioningMemberLifecycleComp
       createController: (input) => createController(input),
       getClaudeBasePath,
     });
-  private readonly runs = new Map<string, ProvisioningRun>();
+  protected readonly runs = new Map<string, ProvisioningRun>();
   private readonly provisioningRunByTeam = new Map<string, string>();
   private readonly aliveRunByTeam = new Map<string, string>();
-  private readonly runtimeAdapterProgressByRunId = new Map<string, TeamProvisioningProgress>();
+  protected readonly runtimeAdapterProgressByRunId = new Map<string, TeamProvisioningProgress>();
   private readonly runtimeAdapterTraceLinesByRunId = new Map<string, string[]>();
   private readonly runtimeAdapterTraceKeyByRunId = new Map<string, string>();
   private readonly retainedProvisioningProgressState = new TeamProvisioningRetainedProgressState({
@@ -681,8 +609,8 @@ export class TeamProvisioningService extends TeamProvisioningMemberLifecycleComp
       [...this.aliveRunByTeam.values()].includes(runId) ||
       [...this.runtimeAdapterRunByTeam.values()].some((entry) => entry.runId === runId),
   });
-  private readonly runtimeAdapterRunByTeam = new Map<string, RuntimeAdapterRunByTeamEntry>();
-  private readonly runTracking = new TeamProvisioningRunTrackingDeliveryHelper({
+  protected readonly runtimeAdapterRunByTeam = new Map<string, RuntimeAdapterRunByTeamEntry>();
+  protected readonly runTracking = new TeamProvisioningRunTrackingDeliveryHelper({
     state: {
       provisioningRunByTeam: this.provisioningRunByTeam,
       aliveRunByTeam: this.aliveRunByTeam,
@@ -733,8 +661,8 @@ export class TeamProvisioningService extends TeamProvisioningMemberLifecycleComp
   private readonly deleteSecondaryRuntimeRun = this.secondaryRuntimeRuns.deleteSecondaryRuntimeRun;
   private readonly clearSecondaryRuntimeRuns = this.secondaryRuntimeRuns.clearSecondaryRuntimeRuns;
   private readonly stoppingSecondaryRuntimeTeams = new Set<string>();
-  private readonly retainedClaudeLogsByTeam = new Map<string, RetainedClaudeLogsSnapshot>();
-  private readonly bootstrapTranscriptFacade!: TeamProvisioningBootstrapTranscriptFacade;
+  protected readonly retainedClaudeLogsByTeam = new Map<string, RetainedClaudeLogsSnapshot>();
+  protected readonly bootstrapTranscriptFacade!: TeamProvisioningBootstrapTranscriptFacade;
 
   private get parsedBootstrapTranscriptTailCache(): Map<
     string,
@@ -778,7 +706,7 @@ export class TeamProvisioningService extends TeamProvisioningMemberLifecycleComp
   }
 
   private readonly teamOpLocks = new Map<string, Promise<void>>();
-  private readonly shutdownCoordination = createTeamProvisioningShutdownCoordination(
+  protected readonly shutdownCoordination = createTeamProvisioningShutdownCoordination(
     {
       provisioningRunByTeam: this.provisioningRunByTeam,
       aliveRunByTeam: this.aliveRunByTeam,
@@ -920,7 +848,7 @@ export class TeamProvisioningService extends TeamProvisioningMemberLifecycleComp
         logDebug: (message) => logger.debug(message),
       }
     );
-  private readonly memberSpawnStatusMutationPorts: MemberSpawnStatusMutationPorts<ProvisioningRun> =
+  protected readonly memberSpawnStatusMutationPorts: MemberSpawnStatusMutationPorts<ProvisioningRun> =
     createMemberSpawnStatusMutationPortsFromService(
       this as unknown as MemberSpawnStatusMutationServiceHost<ProvisioningRun>,
       {
@@ -928,7 +856,7 @@ export class TeamProvisioningService extends TeamProvisioningMemberLifecycleComp
         buildLaunchDiagnostics: (run) => boundLaunchDiagnostics(buildLaunchDiagnosticsFromRun(run)),
       }
     );
-  private readonly memberSpawnStatusAuditPorts: MemberSpawnStatusAuditPorts<ProvisioningRun> =
+  protected readonly memberSpawnStatusAuditPorts: MemberSpawnStatusAuditPorts<ProvisioningRun> =
     createMemberSpawnStatusAuditPortsFromService(
       this as unknown as MemberSpawnStatusAuditServiceHost<ProvisioningRun>,
       {
@@ -947,7 +875,7 @@ export class TeamProvisioningService extends TeamProvisioningMemberLifecycleComp
     scheduleWatchdog: (input) => this.scheduleOpenCodePromptDeliveryWatchdog(input),
     nowIso,
   });
-  private readonly openCodePromptDeliveryWatchdogScheduler =
+  protected readonly openCodePromptDeliveryWatchdogScheduler =
     createOpenCodePromptDeliveryWatchdogSchedulerFromService(
       this as unknown as TeamProvisioningOpenCodePromptDeliveryWatchdogSchedulerServiceHost,
       {
@@ -977,7 +905,7 @@ export class TeamProvisioningService extends TeamProvisioningMemberLifecycleComp
     string,
     NativeSameTeamFingerprint[]
   >();
-  private readonly liveLeadMessagePortsBoundary =
+  protected readonly liveLeadMessagePortsBoundary =
     createTeamProvisioningLiveLeadMessagePortsBoundary<ProvisioningRun>(
       createTeamProvisioningLiveLeadMessagePortsDepsFromService(
         this as unknown as TeamProvisioningLiveLeadMessageServiceHost<ProvisioningRun>,
@@ -1019,7 +947,7 @@ export class TeamProvisioningService extends TeamProvisioningMemberLifecycleComp
       { logDebug: (message) => logger.debug(message) }
     );
   private readonly persistedTeamConfigCache = new Map<string, PersistedTeamConfigCacheEntry>();
-  private readonly runtimeSnapshotFacade!: TeamProvisioningRuntimeProjection['runtimeSnapshotFacade'];
+  protected readonly runtimeSnapshotFacade!: TeamProvisioningRuntimeProjection['runtimeSnapshotFacade'];
   private readonly liveTeamAgentRuntimeMetadataCache = new Map<
     string,
     {
@@ -1113,7 +1041,7 @@ export class TeamProvisioningService extends TeamProvisioningMemberLifecycleComp
     this.memberLifecycleController;
   private readonly memberMcpLaunchConfigProvisioner!: TeamProvisioningMemberMcpLaunchConfigProvisioner<ProvisioningRun>;
   private readonly taskActivityIntervalService = new TeamTaskActivityIntervalService();
-  private readonly runtimeToolActivity = createRuntimeToolActivityHandlers<ProvisioningRun>(
+  protected readonly runtimeToolActivity = createRuntimeToolActivityHandlers<ProvisioningRun>(
     createRuntimeToolActivityHandlerPortsFromService(
       this as unknown as RuntimeToolActivityServiceHost<ProvisioningRun>,
       {
@@ -1126,31 +1054,23 @@ export class TeamProvisioningService extends TeamProvisioningMemberLifecycleComp
   );
   private readonly leadTaskActivitySyncedRunKeys = new Set<string>();
   private teamChangeEmitter: ((event: TeamChangeEvent) => void) | null = null;
-  private readonly helpOutputCache = { output: null as string | null, cachedAtMs: 0 };
-  private pendingTimeouts = new Map<string, NodeJS.Timeout>();
-  private readonly toolApprovalFacade!: TeamProvisioningToolApprovalFacade<ProvisioningRun>;
-  private readonly transientRunState!: TeamProvisioningTransientRunState;
+  protected readonly helpOutputCache = { output: null as string | null, cachedAtMs: 0 };
+  protected readonly pendingTimeouts = new Map<string, NodeJS.Timeout>();
+  protected readonly toolApprovalFacade!: TeamProvisioningToolApprovalFacade<ProvisioningRun>;
+  protected readonly transientRunState!: TeamProvisioningTransientRunState;
   private readonly cleanupRunPorts!: TeamProvisioningCleanupPorts<ProvisioningRun>;
   private readonly idlePromptInjectionBoundary!: TeamProvisioningIdlePromptInjectionBoundary<ProvisioningRun>;
-  private readonly providerRuntime!: TeamProvisioningProviderRuntimeFacade;
+  protected readonly providerRuntime!: TeamProvisioningProviderRuntimeFacade;
   private readonly providerRuntimeCompatibility!: TeamProvisioningProviderRuntimeCompatibility;
   protected readonly compatibilityDelegation!: TeamProvisioningCompatibilityDelegation<ProvisioningRun>;
   private readonly outputRecoveryFacade!: TeamProvisioningOutputRecoveryFacade<ProvisioningRun>;
   private readonly deterministicCreateSpawnFlowBoundary!: TeamProvisioningCreateDeterministicSpawnFlowBoundary<ProvisioningRun>;
   private readonly deterministicLaunchFlowBoundary!: TeamProvisioningLaunchDeterministicFlowBoundary<MixedSecondaryRuntimeLaneState>;
-  private readonly prepareFacade!: TeamProvisioningPrepareFacade;
-  private readonly verificationProbePorts!: TeamProvisioningVerificationProbePorts<ProvisioningRun>;
+  protected readonly prepareFacade!: TeamProvisioningPrepareFacade;
+  protected readonly verificationProbePorts!: TeamProvisioningVerificationProbePorts<ProvisioningRun>;
   private readonly processExitPorts!: TeamProvisioningProcessExitPorts<ProvisioningRun>;
   private readonly workspaceTrustWorkspaceCollectionPorts =
     createNodeWorkspaceTrustWorkspaceCollectionPorts();
-
-  private get runtimeTurnSettledHookSettingsProvider(): RuntimeTurnSettledHookSettingsProvider | null {
-    return this.appShellBoundary.getRuntimeTurnSettledHookSettingsProvider();
-  }
-
-  private get runtimeTurnSettledEnvironmentProvider(): RuntimeTurnSettledEnvironmentProvider | null {
-    return this.appShellBoundary.getRuntimeTurnSettledEnvironmentProvider();
-  }
 
   private readonly cleanedStoppedTeamOpenCodeRuntimeLanes = new Set<string>();
   private readonly openCodeStoppedLaneCleanup: TeamProvisioningOpenCodeStoppedLaneCleanupBoundary =
@@ -1210,7 +1130,7 @@ export class TeamProvisioningService extends TeamProvisioningMemberLifecycleComp
       }
     )
   );
-  private readonly reevaluateMemberLaunchStatusBoundary =
+  protected readonly reevaluateMemberLaunchStatusBoundary =
     createTeamProvisioningReevaluateMemberLaunchStatusBoundary<ProvisioningRun>(
       createTeamProvisioningReevaluateMemberLaunchStatusDepsFromService(
         this as unknown as TeamProvisioningReevaluateMemberLaunchStatusServiceHost<ProvisioningRun>,
@@ -1234,10 +1154,11 @@ export class TeamProvisioningService extends TeamProvisioningMemberLifecycleComp
         this as unknown as TeamProvisioningOpenCodeLaunchWiringServiceHost<ProvisioningRun>
       )
     );
-  private readonly openCodeRuntimeDeliveryBoundaryHost!: TeamProvisioningOpenCodeRuntimeDeliveryBoundaryHost<ProvisioningRun>;
-  private readonly openCodeRuntimeControlApi = createTeamRuntimeControlCompatibilityApiFromService(
-    this as unknown as TeamRuntimeControlCompatibilityServiceHost
-  );
+  protected readonly openCodeRuntimeDeliveryBoundaryHost!: TeamProvisioningOpenCodeRuntimeDeliveryBoundaryHost<ProvisioningRun>;
+  protected readonly openCodeRuntimeControlApi =
+    createTeamRuntimeControlCompatibilityApiFromService(
+      this as unknown as TeamRuntimeControlCompatibilityServiceHost
+    );
 
   private createMemberLifecycleHostPortGroups(): TeamProvisioningServiceMemberLifecycleHostPortGroups {
     return createTeamProvisioningServiceMemberLifecycleHostPortGroups(
@@ -1247,8 +1168,8 @@ export class TeamProvisioningService extends TeamProvisioningMemberLifecycleComp
 
   constructor(
     private readonly configReader: TeamConfigReader = new TeamConfigReader(),
-    private readonly inboxReader: TeamInboxReader = new TeamInboxReader(),
-    private readonly membersMetaStore: TeamMembersMetaStore = new TeamMembersMetaStore(),
+    protected readonly inboxReader: TeamInboxReader = new TeamInboxReader(),
+    protected readonly membersMetaStore: TeamMembersMetaStore = new TeamMembersMetaStore(),
     private readonly sentMessagesStore: TeamSentMessagesStore = new TeamSentMessagesStore(),
     private readonly mcpConfigBuilder: TeamMcpConfigBuilder = new TeamMcpConfigBuilder(),
     private readonly teamMetaStore: TeamMetaStore = new TeamMetaStore(),
@@ -1284,7 +1205,7 @@ export class TeamProvisioningService extends TeamProvisioningMemberLifecycleComp
     return { config, teamMeta, metaMembers };
   }
 
-  private async resolveOpenCodeMemberDeliveryIdentity(
+  protected async resolveOpenCodeMemberDeliveryIdentity(
     teamName: string,
     memberName: string
   ): Promise<OpenCodeMemberIdentityResolution> {
@@ -1304,14 +1225,6 @@ export class TeamProvisioningService extends TeamProvisioningMemberLifecycleComp
 
   private invalidateRuntimeSnapshotCaches(teamName: string): void {
     this.runtimeSnapshotCacheBoundary.invalidateRuntimeSnapshotCaches(teamName);
-  }
-
-  private createMemberSpawnStatusesSnapshotPorts() {
-    return createTeamProvisioningMemberSpawnStatusesSnapshotPortsBoundary<ProvisioningRun>(
-      createTeamProvisioningMemberSpawnStatusesSnapshotHostFromService(
-        this as unknown as TeamProvisioningMemberSpawnStatusesSnapshotServiceHost<ProvisioningRun>
-      )
-    );
   }
 
   private resolveOpenCodeMemberIdentityFromDirectory(
@@ -1525,115 +1438,6 @@ export class TeamProvisioningService extends TeamProvisioningMemberLifecycleComp
     throw new Error('Team launch cancelled by app shutdown');
   }
 
-  private async buildTeamRuntimeLaunchArgsPlan(
-    input: BuildTeamRuntimeLaunchArgsPlanInput
-  ): Promise<TeamRuntimeLaunchArgsPlan> {
-    return buildTeamRuntimeLaunchArgsPlanHelper(input, {
-      buildRuntimeTurnSettledHookSettingsArgs: (providerId) =>
-        buildRuntimeTurnSettledHookSettingsArgsHelper(
-          { providerId },
-          {
-            hookSettingsProvider: this.runtimeTurnSettledHookSettingsProvider,
-            logger,
-          }
-        ),
-      buildRuntimeTurnSettledHookSettingsObject: (providerId) =>
-        buildRuntimeTurnSettledHookSettingsObjectHelper(
-          { providerId },
-          {
-            hookSettingsProvider: this.runtimeTurnSettledHookSettingsProvider,
-            logger,
-          }
-        ),
-    });
-  }
-
-  private async readRuntimeProviderLaunchFacts(params: {
-    claudePath: string;
-    cwd: string;
-    providerId: TeamProviderId;
-    env: NodeJS.ProcessEnv;
-    providerArgs?: string[];
-    limitContext?: boolean;
-  }): Promise<RuntimeProviderLaunchFacts> {
-    return this.launchIdentityBoundary.readRuntimeProviderLaunchFacts(params);
-  }
-
-  private async resolveAndValidateLaunchIdentity(params: {
-    claudePath: string;
-    cwd: string;
-    env: NodeJS.ProcessEnv;
-    request: Pick<
-      TeamCreateRequest,
-      'providerId' | 'providerBackendId' | 'model' | 'effort' | 'fastMode' | 'limitContext'
-    >;
-    effectiveMembers: TeamCreateRequest['members'];
-    providerArgsByProvider?: Map<TeamProviderId, string[]>;
-  }): Promise<ProviderModelLaunchIdentity> {
-    return this.launchIdentityBoundary.resolveAndValidateLaunchIdentity(params);
-  }
-
-  private async resolveDirectMemberLaunchIdentity(input: {
-    claudePath: string;
-    cwd: string;
-    providerId: TeamProviderId;
-    providerBackendId?: TeamProviderBackendId;
-    provisioningEnv: ProvisioningEnvResolution;
-    memberSpec: TeamCreateRequest['members'][number];
-    run: ProvisioningRun;
-  }): Promise<ProviderModelLaunchIdentity> {
-    return this.launchIdentityBoundary.resolveDirectMemberLaunchIdentity({
-      ...input,
-      requestLimitContext: input.run.request.limitContext,
-    });
-  }
-
-  async getClaudeLogs(
-    teamName: string,
-    query?: { offset?: number; limit?: number }
-  ): Promise<{ lines: string[]; total: number; hasMore: boolean; updatedAt?: string }> {
-    return readTeamProvisioningClaudeLogs(teamName, query, {
-      runTracking: this.runTracking,
-      runs: this.runs,
-      retainedClaudeLogsByTeam: this.retainedClaudeLogsByTeam,
-      readPersistedTranscriptClaudeLogs: (candidateTeamName) =>
-        this.getPersistedTranscriptClaudeLogs(candidateTeamName),
-    });
-  }
-
-  /**
-   * Snapshot of teams that currently have a live runtime run. Used to keep the
-   * file-watch scope covering running teams (read-only; the map is maintained as
-   * runs start and stop).
-   */
-  getAliveTeamNames(): string[] {
-    return this.runTracking.getAliveTeamNames();
-  }
-
-  async resolveRuntimeRecipientProviderId(
-    teamName: string,
-    memberName: string
-  ): Promise<TeamProviderId | undefined> {
-    return resolveRuntimeRecipientProviderIdHelper(
-      { teamName, memberName },
-      {
-        readConfigSnapshot: (candidateTeamName) =>
-          this.configFacade.readConfigSnapshot(candidateTeamName),
-        readMembersMeta: (candidateTeamName) => this.membersMetaStore.getMembers(candidateTeamName),
-      }
-    );
-  }
-
-  async isOpenCodeRuntimeRecipient(teamName: string, memberName: string): Promise<boolean> {
-    return isOpenCodeRuntimeRecipientHelper(
-      { teamName, memberName },
-      {
-        readConfigSnapshot: (candidateTeamName) =>
-          this.configFacade.readConfigSnapshot(candidateTeamName),
-        readMembersMeta: (candidateTeamName) => this.membersMetaStore.getMembers(candidateTeamName),
-      }
-    );
-  }
   private async isOpenCodeDeliveryResponseReadCommitAllowed(input: {
     teamName?: string;
     memberName?: string;
@@ -1736,7 +1540,7 @@ export class TeamProvisioningService extends TeamProvisioningMemberLifecycleComp
     );
   }
 
-  private scheduleOpenCodePromptDeliveryWatchdog(input: {
+  protected scheduleOpenCodePromptDeliveryWatchdog(input: {
     teamName: string;
     memberName: string;
     messageId?: string | null;
@@ -1793,10 +1597,6 @@ export class TeamProvisioningService extends TeamProvisioningMemberLifecycleComp
 
   private emitRuntimeDeliveryReplyAdvisoryRefresh(teamName: string, message: InboxMessage): void {
     this.openCodeRuntimeDeliveryAdvisory.emitRuntimeDeliveryReplyAdvisoryRefresh(teamName, message);
-  }
-
-  private canDeliverToOpenCodeRuntimeForTeam(teamName: string): boolean {
-    return this.runTracking.canDeliverToOpenCodeRuntimeForTeam(teamName);
   }
 
   async scanOpenCodePromptDeliveryWatchdog(teamName: string): Promise<number> {
@@ -1927,7 +1727,7 @@ export class TeamProvisioningService extends TeamProvisioningMemberLifecycleComp
     );
   }
 
-  private async tryRecoverOpenCodeRuntimeLaneForConfiguredMemberBeforeDelivery(input: {
+  protected async tryRecoverOpenCodeRuntimeLaneForConfiguredMemberBeforeDelivery(input: {
     teamName: string;
     memberName: string;
   }): Promise<boolean> {
@@ -1936,7 +1736,7 @@ export class TeamProvisioningService extends TeamProvisioningMemberLifecycleComp
     );
   }
 
-  private async tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive(input: {
+  protected async tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive(input: {
     teamName: string;
     memberName: string;
     laneId: string;
@@ -2003,12 +1803,6 @@ export class TeamProvisioningService extends TeamProvisioningMemberLifecycleComp
     this.runtimeAdapterProgressState.sweepRuntimeAdapterRunState(nowMs);
   }
 
-  private async getPersistedTranscriptClaudeLogs(
-    teamName: string
-  ): Promise<RetainedClaudeLogsSnapshot | null> {
-    return this.bootstrapTranscriptFacade.getPersistedTranscriptClaudeLogs(teamName);
-  }
-
   private clearSameTeamRetryTimers(teamName: string): void {
     this.transientRunState.clearSameTeamRetryTimers(teamName);
   }
@@ -2023,10 +1817,6 @@ export class TeamProvisioningService extends TeamProvisioningMemberLifecycleComp
 
   private resetTeamScopedTransientStateForNewRun(teamName: string): void {
     this.transientRunState.resetTeamScopedTransientStateForNewRun(teamName);
-  }
-
-  private appendCliLogs(run: ProvisioningRun, stream: 'stdout' | 'stderr', text: string): void {
-    this.transientRunState.appendCliLogs(run, stream, text);
   }
 
   /**
@@ -2170,7 +1960,7 @@ export class TeamProvisioningService extends TeamProvisioningMemberLifecycleComp
     return this.openCodeMemberSendSerializer.getOpenCodeMemberRelayKey(teamName, memberName);
   }
 
-  private async sendOpenCodeMemberMessageToRuntimeSerialized(input: {
+  protected async sendOpenCodeMemberMessageToRuntimeSerialized(input: {
     teamName: string;
     laneId: string;
     send: () => Promise<OpenCodeTeamRuntimeMessageResult>;
@@ -2178,196 +1968,11 @@ export class TeamProvisioningService extends TeamProvisioningMemberLifecycleComp
     return this.openCodeMemberSendSerializer.sendSerialized(input);
   }
 
-  setToolApprovalEventEmitter(emitter: (event: ToolApprovalEvent) => void): void {
-    this.toolApprovalFacade.setToolApprovalEventEmitter(emitter);
-  }
-
-  setMainWindow(win: import('electron').BrowserWindow | null): void {
-    this.toolApprovalFacade.setMainWindow(win);
-  }
-
-  updateToolApprovalSettings(teamName: string, settings: ToolApprovalSettings): void {
-    this.toolApprovalFacade.updateToolApprovalSettings(teamName, settings);
-  }
-
-  getLiveLeadProcessMessages(teamName: string): InboxMessage[] {
-    return this.liveLeadMessagePortsBoundary.getLiveLeadProcessMessages(teamName);
-  }
-
-  private pruneLiveLeadMessagesForCleanedRun(run: ProvisioningRun): void {
-    this.liveLeadMessagePortsBoundary.pruneLiveLeadMessagesForCleanedRun(run);
-  }
-
-  getCurrentLeadSessionId(teamName: string): string | null {
-    return this.liveLeadMessagePortsBoundary.getCurrentLeadSessionId(teamName);
-  }
-
-  getCurrentRunId(teamName: string): string | null {
-    return this.runTracking.getAliveRunId(teamName);
-  }
-
-  async recordOpenCodeRuntimeBootstrapCheckin(raw: unknown): Promise<OpenCodeRuntimeControlAck> {
-    return this.openCodeRuntimeControlApi.recordOpenCodeRuntimeBootstrapCheckin(raw);
-  }
-
-  async deliverOpenCodeRuntimeMessage(raw: unknown): Promise<OpenCodeRuntimeControlAck> {
-    return this.openCodeRuntimeControlApi.deliverOpenCodeRuntimeMessage(raw);
-  }
-
-  async recordOpenCodeRuntimeTaskEvent(raw: unknown): Promise<OpenCodeRuntimeControlAck> {
-    return this.openCodeRuntimeControlApi.recordOpenCodeRuntimeTaskEvent(raw);
-  }
-
-  async recordOpenCodeRuntimeHeartbeat(raw: unknown): Promise<OpenCodeRuntimeControlAck> {
-    return this.openCodeRuntimeControlApi.recordOpenCodeRuntimeHeartbeat(raw);
-  }
-
-  private createOpenCodeRuntimeDeliveryBoundaryHost(): TeamProvisioningOpenCodeRuntimeDeliveryBoundaryHost<ProvisioningRun> {
-    return createTeamProvisioningOpenCodeRuntimeDeliveryBoundaryHostFromService<ProvisioningRun>(
-      this as unknown as TeamProvisioningOpenCodeRuntimeDeliveryBoundaryServiceHost<ProvisioningRun>
-    );
-  }
-
-  private createOpenCodeRuntimeDeliveryBoundary() {
-    return createTeamProvisioningOpenCodeRuntimeDeliveryBoundaryFromHost<ProvisioningRun>(
-      this.openCodeRuntimeDeliveryBoundaryHost,
-      {
-        getTeamsBasePath,
-        nowIso,
-        logger,
-      }
-    );
-  }
-
-  private createOpenCodePromptDeliveryLedger(teamName: string, laneId: string) {
-    return this.createOpenCodeRuntimeDeliveryBoundary().createOpenCodePromptDeliveryLedger(
-      teamName,
-      laneId
-    );
-  }
-
-  async getOpenCodeRuntimeDeliveryStatus(
-    teamName: string,
-    messageId: string
-  ): Promise<OpenCodeRuntimeDeliveryStatus | null> {
-    return this.createOpenCodeRuntimeDeliveryBoundary().getOpenCodeRuntimeDeliveryStatus(
-      teamName,
-      messageId
-    );
-  }
-
-  private async tryGetActiveOpenCodePromptDeliveryRecord(input: {
-    teamName: string;
-    memberName: string;
-  }): Promise<OpenCodePromptDeliveryLedgerRecord | null> {
-    return tryGetActiveOpenCodePromptDeliveryRecordWithPorts(input, {
-      teamsBasePath: getTeamsBasePath(),
-      resolveOpenCodeMemberDeliveryIdentity: (teamName, memberName) =>
-        this.resolveOpenCodeMemberDeliveryIdentity(teamName, memberName),
-      tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive: (recoveryInput) =>
-        this.tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive(recoveryInput),
-      createOpenCodePromptDeliveryLedger: (teamName, laneId) =>
-        this.createOpenCodePromptDeliveryLedger(teamName, laneId),
-    });
-  }
-
-  async getOpenCodeMemberDeliveryBusyStatus(input: {
-    teamName: string;
-    memberName: string;
-    nowIso: string;
-    workSyncIntent?: 'agenda_sync' | 'review_pickup';
-    workSyncIntentKey?: string;
-    taskRefs?: TaskRef[];
-  }): Promise<{
-    busy: boolean;
-    reason?: string;
-    retryAfterIso?: string;
-    activeMessageId?: string;
-    activeMessageKind?: string | null;
-  }> {
-    return getOpenCodeMemberDeliveryBusyStatusWithPorts(input, {
-      teamsBasePath: getTeamsBasePath(),
-      isOpenCodeRuntimeRecipient: (teamName, memberName) =>
-        this.isOpenCodeRuntimeRecipient(teamName, memberName),
-      inboxReader: this.inboxReader,
-      getOpenCodeAgendaSyncRecoveryBypassMessageIds: (bypassInput) =>
-        this.getOpenCodeAgendaSyncRecoveryBypassMessageIds(bypassInput),
-      tryGetActiveOpenCodePromptDeliveryRecord: (activeInput) =>
-        this.tryGetActiveOpenCodePromptDeliveryRecord(activeInput),
-      scheduleOpenCodeMemberInboxDeliveryWake: (wakeInput) =>
-        this.scheduleOpenCodeMemberInboxDeliveryWake(wakeInput),
-      resolveOpenCodeMemberDeliveryIdentity: (teamName, memberName) =>
-        this.resolveOpenCodeMemberDeliveryIdentity(teamName, memberName),
-      tryRecoverOpenCodeRuntimeLaneForConfiguredMemberBeforeDelivery: (recoveryInput) =>
-        this.tryRecoverOpenCodeRuntimeLaneForConfiguredMemberBeforeDelivery(recoveryInput),
-      tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive: (recoveryInput) =>
-        this.tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive(recoveryInput),
-      createOpenCodePromptDeliveryLedger: (teamName, laneId) =>
-        this.createOpenCodePromptDeliveryLedger(teamName, laneId),
-    });
-  }
-
-  scheduleOpenCodeMemberInboxDeliveryWake(input: {
-    teamName: string;
-    memberName: string;
-    messageId: string;
-    delayMs?: number;
-  }): void {
-    this.scheduleOpenCodeMemberInboxDeliveryWakeInternal(input);
-  }
-
-  private scheduleOpenCodeMemberInboxDeliveryWakeInternal(input: {
-    teamName: string;
-    memberName: string;
-    messageId: string;
-    delayMs?: number;
-  }): void {
-    scheduleOpenCodeMemberInboxDeliveryWakeWithPorts(input, {
-      watchdogScheduler: this.openCodePromptDeliveryWatchdogScheduler,
-      scheduleWake: (wakeInput) => this.scheduleOpenCodePromptDeliveryWatchdog(wakeInput),
-    });
-  }
-
-  async recoverOpenCodeRuntimeDeliveryJournal(teamName: string): Promise<{ recovered: true }> {
-    return this.createOpenCodeRuntimeDeliveryBoundary().recoverOpenCodeRuntimeDeliveryJournal(
-      teamName
-    );
-  }
-
-  getLeadActivityState(teamName: string): {
-    state: 'active' | 'idle' | 'offline';
-    runId: string | null;
-  } {
-    return getLeadActivityStateForTeam(teamName, {
-      getTrackedRunId: (targetTeamName) => this.runTracking.getTrackedRunId(targetTeamName),
-      getRun: (runId) => this.runs.get(runId),
-      getRuntimeAdapterRun: (targetTeamName) =>
-        this.runtimeAdapterRunByTeam.get(targetTeamName) ?? null,
-      getRuntimeAdapterProgress: (runId) => this.runtimeAdapterProgressByRunId.get(runId) ?? null,
-      // Read-repair active lead task intervals for runs that were already active
-      // before interval tracking was introduced or before the renderer polled state.
-      syncLeadTaskActivityForState: (run, state, previousState) =>
-        this.syncLeadTaskActivityForState(run, state, previousState),
-    });
-  }
-
-  getLeadContextUsage(teamName: string): { usage: LeadContextUsage | null; runId: string | null } {
-    return getLeadContextUsageForTeam(teamName, {
-      getTrackedRunId: (targetTeamName) => this.runTracking.getTrackedRunId(targetTeamName),
-      getRun: (runId) => this.runs.get(runId),
-      nowIso: () => new Date().toISOString(),
-    });
-  }
-
-  private isCurrentTrackedRun(run: ProvisioningRun): boolean {
-    return isCurrentTrackedRunById(run, this.runTracking.getTrackedRunId(run.teamName));
-  }
-
   private getRunTrackedCwd(run: ProvisioningRun | null | undefined): string | null {
     return getRunTrackedCwdFromRun(run, path.resolve);
   }
 
-  private syncLeadTaskActivityForState(
+  protected syncLeadTaskActivityForState(
     run: ProvisioningRun,
     state: 'active' | 'idle' | 'offline',
     previousState: 'active' | 'idle' | 'offline',
@@ -2393,273 +1998,6 @@ export class TeamProvisioningService extends TeamProvisioningMemberLifecycleComp
     );
   }
 
-  private startRuntimeToolActivity(
-    run: ProvisioningRun,
-    memberName: string,
-    block: Record<string, unknown>
-  ): void {
-    this.runtimeToolActivity.startRuntimeToolActivity(run, memberName, block);
-  }
-
-  private finishRuntimeToolActivity(
-    run: ProvisioningRun,
-    toolUseId: string,
-    resultContent: unknown,
-    isError: boolean
-  ): void {
-    this.runtimeToolActivity.finishRuntimeToolActivity(run, toolUseId, resultContent, isError);
-  }
-
-  private appendMemberBootstrapDiagnostic(
-    run: ProvisioningRun,
-    memberName: string,
-    text: string
-  ): void {
-    this.runtimeToolActivity.appendMemberBootstrapDiagnostic(run, memberName, text);
-  }
-
-  private updateLaunchDiagnosticsForRun(run: ProvisioningRun, observedAt: string): void {
-    const launchDiagnostics = boundLaunchDiagnostics(
-      buildLaunchDiagnosticsFromRun(run, { nowIso: () => observedAt })
-    );
-    if (!launchDiagnostics) {
-      return;
-    }
-    run.progress = {
-      ...run.progress,
-      updatedAt: observedAt,
-      launchDiagnostics,
-    };
-    run.onProgress(run.progress);
-  }
-
-  private resetRuntimeToolActivity(run: ProvisioningRun, memberName?: string): void {
-    this.runtimeToolActivity.resetRuntimeToolActivity(run, memberName);
-  }
-
-  private clearMemberSpawnToolTracking(run: ProvisioningRun, memberName: string): void {
-    this.runtimeToolActivity.clearMemberSpawnToolTracking(run, memberName);
-  }
-
-  private pauseMemberTaskActivityForRuntimeLoss(
-    run: ProvisioningRun,
-    memberName: string,
-    previous: MemberSpawnStatusEntry,
-    observedAt: string
-  ): void {
-    this.runtimeToolActivity.pauseMemberTaskActivityForRuntimeLoss(
-      run,
-      memberName,
-      previous,
-      observedAt
-    );
-  }
-
-  private syncMemberTaskActivityForRuntimeTransition(
-    run: ProvisioningRun,
-    memberName: string,
-    previous: MemberSpawnStatusEntry,
-    next: MemberSpawnStatusEntry,
-    observedAt: string
-  ): void {
-    this.runtimeToolActivity.syncMemberTaskActivityForRuntimeTransition(
-      run,
-      memberName,
-      previous,
-      next,
-      observedAt
-    );
-  }
-
-  /**
-   * Update spawn status for a specific team member and emit a change event.
-   */
-  private setMemberSpawnStatus(
-    run: ProvisioningRun,
-    memberName: string,
-    status: MemberSpawnStatus,
-    error?: string,
-    livenessSource?: MemberSpawnLivenessSource,
-    heartbeatAt?: string
-  ): void {
-    setMemberSpawnStatusForRun(
-      {
-        run,
-        memberName,
-        status,
-        error,
-        livenessSource,
-        heartbeatAt,
-      },
-      this.memberSpawnStatusMutationPorts
-    );
-  }
-
-  private confirmMemberSpawnStatusFromTranscript(
-    run: ProvisioningRun,
-    memberName: string,
-    observedAt: string,
-    source: 'transcript' | 'runtime-proof' = 'transcript'
-  ): void {
-    confirmMemberSpawnStatusFromTranscriptForRun(
-      {
-        run,
-        memberName,
-        observedAt,
-        source,
-      },
-      this.memberSpawnStatusMutationPorts
-    );
-  }
-
-  /**
-   * Get current member spawn statuses for a team.
-   * Returns a map of memberName → MemberSpawnStatusEntry.
-   */
-  async getMemberSpawnStatuses(teamName: string): Promise<{
-    statuses: Record<string, MemberSpawnStatusEntry>;
-    runId: string | null;
-    teamLaunchState?: TeamLaunchAggregateState;
-    launchPhase?: PersistedTeamLaunchPhase;
-    expectedMembers?: string[];
-    updatedAt?: string;
-    summary?: PersistedTeamLaunchSummary;
-    source?: 'live' | 'persisted' | 'merged';
-  }> {
-    return getMemberSpawnStatusesSnapshot(teamName, this.createMemberSpawnStatusesSnapshotPorts());
-  }
-
-  async getTeamAgentRuntimeSnapshot(teamName: string): Promise<TeamAgentRuntimeSnapshot> {
-    return this.runtimeSnapshotFacade.getTeamAgentRuntimeSnapshot(teamName);
-  }
-
-  private getMemberLaunchGraceKey(run: ProvisioningRun, memberName: string): string {
-    return `member-launch-grace:${run.runId}:${memberName}`;
-  }
-
-  private syncMemberLaunchGraceCheck(
-    run: ProvisioningRun,
-    memberName: string,
-    entry: MemberSpawnStatusEntry
-  ): void {
-    const key = this.getMemberLaunchGraceKey(run, memberName);
-    const existing = this.pendingTimeouts.get(key);
-    if (entry.launchState === 'failed_to_start' || entry.launchState === 'confirmed_alive') {
-      if (existing) {
-        clearTimeout(existing);
-        this.pendingTimeouts.delete(key);
-      }
-      return;
-    }
-    if (!entry.firstSpawnAcceptedAt) {
-      if (existing) {
-        clearTimeout(existing);
-        this.pendingTimeouts.delete(key);
-      }
-      return;
-    }
-    const remainingMs =
-      Date.parse(entry.firstSpawnAcceptedAt) + MEMBER_LAUNCH_GRACE_MS - Date.now();
-    if (remainingMs <= 0) {
-      if (existing) {
-        clearTimeout(existing);
-        this.pendingTimeouts.delete(key);
-      }
-      void this.reevaluateMemberLaunchStatus(run, memberName);
-      return;
-    }
-    if (existing) {
-      return;
-    }
-    const timer = setTimeout(() => {
-      this.pendingTimeouts.delete(key);
-      void this.reevaluateMemberLaunchStatus(run, memberName);
-    }, remainingMs);
-    timer.unref?.();
-    this.pendingTimeouts.set(key, timer);
-  }
-
-  private async reevaluateMemberLaunchStatus(
-    run: ProvisioningRun,
-    memberName: string
-  ): Promise<void> {
-    await this.reevaluateMemberLaunchStatusBoundary.reevaluateMemberLaunchStatus(run, memberName);
-  }
-
-  private getOpenCodeBootstrapStallStatusPorts(): OpenCodeBootstrapStallStatusPorts {
-    return createTeamProvisioningOpenCodeBootstrapStallStatusPorts<ProvisioningRun>({
-      nowIso,
-      syncMemberTaskActivityForRuntimeTransition: (targetRun, targetMember, previous, next, at) =>
-        this.syncMemberTaskActivityForRuntimeTransition(
-          targetRun,
-          targetMember,
-          previous,
-          next,
-          at
-        ),
-      updateLaunchDiagnostics: (targetRun, observedAt) =>
-        this.updateLaunchDiagnosticsForRun(targetRun, observedAt),
-      appendMemberBootstrapDiagnostic: (targetRun, targetMember, text) =>
-        this.appendMemberBootstrapDiagnostic(targetRun, targetMember, text),
-      isCurrentTrackedRun: (targetRun) => this.isCurrentTrackedRun(targetRun),
-      emitMemberSpawnChange: (targetRun, targetMember) =>
-        this.emitMemberSpawnChange(targetRun, targetMember),
-      persistLaunchStateSnapshot: (targetRun, phase) => {
-        void this.persistLaunchStateSnapshot(targetRun, phase);
-      },
-    });
-  }
-
-  private getOpenCodeBootstrapStallReconciliationPorts(): TeamProvisioningOpenCodeBootstrapStallReconciliationPorts {
-    return createTeamProvisioningOpenCodeBootstrapStallReconciliationPorts<ProvisioningRun>({
-      getOpenCodeBootstrapStallStatusPorts: () => this.getOpenCodeBootstrapStallStatusPorts(),
-      findBootstrapTranscriptOutcome: (teamName, memberName, acceptedAtMs) =>
-        this.findBootstrapTranscriptOutcome(teamName, memberName, acceptedAtMs),
-      getOpenCodeRuntimeMessageAdapter: () =>
-        this.appShellBoundary.getOpenCodeRuntimeMessageAdapter(),
-      sendOpenCodeMemberMessageToRuntimeSerialized: (sendInput) =>
-        this.sendOpenCodeMemberMessageToRuntimeSerialized(sendInput),
-      appendMemberBootstrapDiagnostic: (targetRun, targetMember, text) =>
-        this.appendMemberBootstrapDiagnostic(targetRun, targetMember, text),
-      isCurrentTrackedRun: (targetRun) => this.isCurrentTrackedRun(targetRun),
-      scheduleOpenCodeBootstrapStallReevaluation: (targetRun, targetMember, firstSpawnAcceptedAt) =>
-        this.scheduleOpenCodeBootstrapStallReevaluation(
-          targetRun,
-          targetMember,
-          firstSpawnAcceptedAt
-        ),
-    });
-  }
-
-  private scheduleOpenCodeBootstrapStallReevaluation(
-    run: ProvisioningRun,
-    memberName: string,
-    firstSpawnAcceptedAt: string
-  ): void {
-    scheduleOpenCodeBootstrapStallReevaluationHelper(run, memberName, firstSpawnAcceptedAt, {
-      nowMs: () => Date.now(),
-      getMemberLaunchGraceKey: (targetRun, targetMember) =>
-        this.getMemberLaunchGraceKey(targetRun as ProvisioningRun, targetMember),
-      hasPendingTimeout: (key) => this.pendingTimeouts.has(key),
-      setPendingTimeout: (key, timer) => this.pendingTimeouts.set(key, timer),
-      deletePendingTimeout: (key) => this.pendingTimeouts.delete(key),
-      setTimeout: (callback, delayMs) => setTimeout(callback, delayMs),
-      reevaluateMemberLaunchStatus: (targetRun, targetMember) =>
-        this.reevaluateMemberLaunchStatus(targetRun as ProvisioningRun, targetMember),
-    });
-  }
-
-  private isOpenCodeBootstrapStallWindowElapsed(firstSpawnAcceptedAt: string | undefined): boolean {
-    return isOpenCodeBootstrapStallWindowElapsedHelper(firstSpawnAcceptedAt, Date.now());
-  }
-
-  private async maybeAuditMemberSpawnStatuses(
-    run: ProvisioningRun,
-    options?: { force?: boolean }
-  ): Promise<void> {
-    await maybeAuditMemberSpawnStatusesForRun(run, this.memberSpawnStatusAuditPorts, options);
-  }
-
   private emitLeadContextUsage(run: ProvisioningRun): void {
     emitLeadContextUsageForRun(run, {
       isCurrentTrackedRun: (targetRun) => this.isCurrentTrackedRun(targetRun),
@@ -2667,25 +2005,6 @@ export class TeamProvisioningService extends TeamProvisioningMemberLifecycleComp
       nowIso: () => new Date().toISOString(),
       emitTeamChange: (event) => this.teamChangeEmitter?.(event),
     });
-  }
-
-  async warmup(): Promise<void> {
-    await this.prepareFacade.warmup();
-  }
-
-  async prepareForProvisioning(
-    cwd?: string,
-    opts?: {
-      forceFresh?: boolean;
-      providerId?: TeamProviderId;
-      providerIds?: TeamProviderId[];
-      modelIds?: string[];
-      modelChecks?: TeamProvisioningModelCheckRequest[];
-      limitContext?: boolean;
-      modelVerificationMode?: TeamProvisioningModelVerificationMode;
-    }
-  ): Promise<TeamProvisioningPrepareResult> {
-    return this.prepareFacade.prepareForProvisioning(cwd, opts);
   }
 
   private createOpenCodeRuntimeAdapterTeamFlowPorts(): OpenCodeRuntimeAdapterTeamFlowPorts {
@@ -2954,7 +2273,7 @@ export class TeamProvisioningService extends TeamProvisioningMemberLifecycleComp
    *
    * Returns the number of messages relayed.
    */
-  private async getOpenCodeAgendaSyncRecoveryBypassMessageIds(input: {
+  protected async getOpenCodeAgendaSyncRecoveryBypassMessageIds(input: {
     teamName: string;
     memberName: string;
     workSyncIntent?: 'agenda_sync' | 'review_pickup';
@@ -2969,15 +2288,6 @@ export class TeamProvisioningService extends TeamProvisioningMemberLifecycleComp
 
   async relayLeadInboxMessages(teamName: string): Promise<number> {
     return this.leadInboxRelayPortsBoundary.relayLeadInboxMessages(teamName);
-  }
-
-  /**
-   * True when shutdown has team runtime state that must not be left headless.
-   * Includes active leads, provisioning runs, runtime-adapter runs, secondary lanes,
-   * and in-flight team operations that may expose a runtime shortly.
-   */
-  hasActiveTeamRuntimes(): boolean {
-    return this.shutdownCoordination.getShutdownTrackedTeamNames().length > 0;
   }
 
   private languageChangeInFlight: Promise<void> = Promise.resolve();
@@ -3360,7 +2670,7 @@ export class TeamProvisioningService extends TeamProvisioningMemberLifecycleComp
     return this.liveLaunchSnapshotBoundary.buildLiveLaunchSnapshotForRun(run, launchPhase);
   }
 
-  private emitMemberSpawnChange(
+  protected emitMemberSpawnChange(
     run: Pick<ProvisioningRun, 'teamName' | 'runId'>,
     memberName: string
   ): void {
@@ -3468,7 +2778,7 @@ export class TeamProvisioningService extends TeamProvisioningMemberLifecycleComp
     });
   }
 
-  private async persistLaunchStateSnapshot(
+  protected async persistLaunchStateSnapshot(
     run: ProvisioningRun,
     launchPhase: 'active' | 'finished' | 'reconciled' = run.provisioningComplete
       ? 'finished'
@@ -3596,7 +2906,7 @@ export class TeamProvisioningService extends TeamProvisioningMemberLifecycleComp
     );
   }
 
-  private async findBootstrapTranscriptOutcome(
+  protected async findBootstrapTranscriptOutcome(
     teamName: string,
     memberName: string,
     sinceMs: number | null
@@ -3846,25 +3156,6 @@ export class TeamProvisioningService extends TeamProvisioningMemberLifecycleComp
     this.toolApprovalFacade.handleTeammatePermissionRequest(run, perm, messageTimestamp);
   }
 
-  /** Dismiss the OS notification for a resolved/dismissed approval. */
-  dismissApprovalNotification(requestId: string): void {
-    this.toolApprovalFacade.dismissApprovalNotification(requestId);
-  }
-
-  /**
-   * Respond to a pending tool approval — sends control_response to CLI stdin.
-   * Validates runId match and requestId existence before writing.
-   */
-  async respondToToolApproval(
-    teamName: string,
-    runId: string,
-    requestId: string,
-    allow: boolean,
-    message?: string
-  ): Promise<void> {
-    await this.toolApprovalFacade.respondToToolApproval(teamName, runId, requestId, allow, message);
-  }
-
   /**
    * Safely add tool names to the permissions.allow (or deny) array in a Claude settings file.
    * Creates the file and parent directories if they don't exist.
@@ -4058,42 +3349,5 @@ export class TeamProvisioningService extends TeamProvisioningMemberLifecycleComp
 
   private async handleProcessExit(run: ProvisioningRun, code: number | null): Promise<void> {
     await handleProvisioningProcessExit(run, code, this.processExitPorts);
-  }
-
-  private async waitForValidConfig(
-    run: ProvisioningRun,
-    timeoutMs: number = VERIFY_TIMEOUT_MS
-  ): Promise<ValidConfigProbeResult> {
-    return this.verificationProbePorts.waitForValidConfig(run, timeoutMs);
-  }
-
-  private async waitForTeamInList(teamName: string, run?: ProvisioningRun): Promise<boolean> {
-    return this.verificationProbePorts.waitForTeamInList(teamName, run);
-  }
-
-  private async waitForMissingInboxes(run: ProvisioningRun): Promise<string[]> {
-    return this.verificationProbePorts.waitForMissingInboxes(run);
-  }
-
-  private async tryCompleteAfterTimeout(run: ProvisioningRun): Promise<boolean> {
-    return this.verificationProbePorts.tryCompleteAfterTimeout(run);
-  }
-
-  private async pathExists(filePath: string): Promise<boolean> {
-    return this.verificationProbePorts.pathExists(filePath);
-  }
-
-  /**
-   * Run `claude --help` and return the output. Cached for 5 minutes.
-   * Used by the validateCliArgs IPC handler to check user-entered flags.
-   */
-  async getCliHelpOutput(cwd?: string): Promise<string> {
-    return getCliHelpOutputWithProvisioningPorts({
-      cwd,
-      cache: this.helpOutputCache,
-      getCachedOrProbeResult: (targetCwd, providerId) =>
-        this.prepareFacade.getCachedOrProbeResult(targetCwd, providerId),
-      providerRuntime: this.providerRuntime,
-    });
   }
 }

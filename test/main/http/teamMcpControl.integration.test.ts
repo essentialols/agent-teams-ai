@@ -13,8 +13,8 @@ import { registerTools } from '../../../mcp-server/src/tools';
 import type { HttpServices } from '@main/http';
 import type {
   OpenCodeRuntimeControlAck,
+  TeamHttpRuntimeApi,
   TeamLaunchApi,
-  TeamRuntimeApi,
   TeamRuntimeControlCompatibilityApi,
 } from '@main/services/team/contracts/TeamProvisioningApis';
 import type {
@@ -281,10 +281,8 @@ function createServices(claudeRoot: string): {
       aliveTeams.delete(teamName);
       return Promise.resolve();
     },
-    isTeamAlive: (teamName: string): boolean => aliveTeams.has(teamName),
     getAliveTeams: (): string[] => [...aliveTeams],
-    getCurrentRunId: (teamName: string): string | null => runIdByTeam.get(teamName) ?? null,
-  } satisfies TeamRuntimeApi;
+  } satisfies TeamHttpRuntimeApi;
   const teamRuntimeControlApi = {
     recordOpenCodeRuntimeBootstrapCheckin: (): Promise<OpenCodeRuntimeControlAck> =>
       Promise.resolve(runtimeAck('accepted')),
@@ -306,8 +304,9 @@ function createServices(claudeRoot: string): {
       dataCache: {} as HttpServices['dataCache'],
       updaterService: {} as HttpServices['updaterService'],
       sshConnectionManager: {} as HttpServices['sshConnectionManager'],
-      teamDataService,
+      teamDataApi: teamDataService,
       teamProvisioningApis: {
+        status: teamLaunchApi,
         launch: teamLaunchApi,
         runtime: teamRuntimeApi,
         runtimeControl: teamRuntimeControlApi,
@@ -541,7 +540,7 @@ describe('MCP team tools over the local REST control API', () => {
         alreadyLaunching: true,
       });
     };
-    services.teamProvisioningApis!.launch!.getProvisioningStatus = () =>
+    services.teamProvisioningApis!.status!.getProvisioningStatus = () =>
       Promise.reject(
         new Error('team_launch should not wait for provisioning status after already_launching')
       );

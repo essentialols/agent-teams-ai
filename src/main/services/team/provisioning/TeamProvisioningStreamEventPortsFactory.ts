@@ -106,17 +106,21 @@ type StreamEventServicePortKey =
   | 'reevaluateMemberLaunchStatus'
   | 'invalidateRuntimeSnapshotCaches'
   | 'markUnconfirmedBootstrapMembersFailed'
-  | 'stopPersistentTeamMembers'
   | 'persistLaunchStateSnapshot';
 
 export type TeamProvisioningStreamEventServiceAdapter<
   TRun extends TeamProvisioningStreamEventPortsFactoryRun,
 > = Pick<TeamProvisioningStreamEventPorts<TRun>, StreamEventServicePortKey>;
 
+export type TeamProvisioningStreamEventPersistentRuntimeCleanupAdapter<
+  TRun extends TeamProvisioningStreamEventPortsFactoryRun,
+> = Pick<TeamProvisioningStreamEventPorts<TRun>, 'stopPersistentTeamMembers'>;
+
 export interface TeamProvisioningStreamEventPortsBoundaryDeps<
   TRun extends TeamProvisioningStreamEventPortsFactoryRun,
 > {
   service: TeamProvisioningStreamEventServiceAdapter<TRun>;
+  persistentRuntimeCleanup: TeamProvisioningStreamEventPersistentRuntimeCleanupAdapter<TRun>;
   outputRecovery: TeamProvisioningStreamEventOutputRecoveryAdapter<TRun>;
   updateProgress: TeamProvisioningStreamEventPorts<TRun>['updateProgress'];
   emitTeamChange?: TeamProvisioningStreamEventPorts<TRun>['emitTeamChange'];
@@ -175,7 +179,8 @@ export function createTeamProvisioningStreamEventPortsBoundary<
       deps.service.invalidateRuntimeSnapshotCaches(teamName),
     markUnconfirmedBootstrapMembersFailed: (run, reason, options) =>
       deps.service.markUnconfirmedBootstrapMembersFailed(run, reason, options),
-    stopPersistentTeamMembers: (teamName) => deps.service.stopPersistentTeamMembers(teamName),
+    stopPersistentTeamMembers: (teamName) =>
+      deps.persistentRuntimeCleanup.stopPersistentTeamMembers(teamName),
     persistLaunchStateSnapshot: (run, phase) => deps.service.persistLaunchStateSnapshot(run, phase),
   });
 }

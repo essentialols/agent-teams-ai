@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  createTeamProvisioningLanguageChangeNotificationPortsFromService,
   notifyAliveTeamsAboutLanguageChangeWithPorts,
   type TeamProvisioningLanguageChangeNotificationPorts,
+  type TeamProvisioningLanguageChangeNotificationServiceHost,
 } from '../TeamProvisioningLanguageChangeNotification';
 
 import type { TeamConfig } from '@shared/types';
@@ -41,6 +43,44 @@ function createPorts(
 }
 
 describe('language change notification helper', () => {
+  it('builds notification ports from service dependencies', async () => {
+    const service: TeamProvisioningLanguageChangeNotificationServiceHost = {
+      getAliveTeams: vi.fn(() => ['alpha']),
+      configFacade: {
+        readConfigForStrictDecision: vi.fn(async () => teamConfig('en')),
+      },
+      configReader: {
+        updateConfig: vi.fn(async () => undefined),
+      },
+      sendMessageToTeam: vi.fn(async () => undefined),
+    };
+    const options = {
+      getSystemLocale: vi.fn(() => 'en-US'),
+      resolveLanguageName: vi.fn((code: string) => code),
+      logger: {
+        info: vi.fn(),
+        warn: vi.fn(),
+      },
+    };
+
+    const ports = createTeamProvisioningLanguageChangeNotificationPortsFromService(
+      service,
+      options
+    );
+
+    expect(ports.getAliveTeams()).toEqual(['alpha']);
+    await expect(ports.readConfigForStrictDecision('alpha')).resolves.toEqual(teamConfig('en'));
+    await ports.updateConfig('alpha', { language: 'fr' });
+    await ports.sendMessageToTeam('alpha', 'bonjour');
+    expect(ports.getSystemLocale()).toBe('en-US');
+    expect(ports.resolveLanguageName('fr')).toBe('fr');
+
+    expect(service.getAliveTeams).toHaveBeenCalledOnce();
+    expect(service.configFacade.readConfigForStrictDecision).toHaveBeenCalledWith('alpha');
+    expect(service.configReader.updateConfig).toHaveBeenCalledWith('alpha', { language: 'fr' });
+    expect(service.sendMessageToTeam).toHaveBeenCalledWith('alpha', 'bonjour');
+  });
+
   it('does nothing when there are no alive teams', async () => {
     const ports = createPorts({
       getAliveTeams: vi.fn(() => []),

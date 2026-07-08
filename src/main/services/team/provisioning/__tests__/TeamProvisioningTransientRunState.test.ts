@@ -2,9 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createTeamProvisioningTransientRunStatePorts,
+  createTeamProvisioningTransientRunStatePortsFromService,
   type TeamProvisioningCliLogRun,
   TeamProvisioningTransientRunState,
   type TeamProvisioningTransientRunStatePorts,
+  type TeamProvisioningTransientRunStateServiceHost,
 } from '../TeamProvisioningTransientRunState';
 
 type FakeTimer = ReturnType<typeof setTimeout> & {
@@ -63,6 +65,75 @@ function makePorts(
 describe('TeamProvisioningTransientRunState', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it('builds transient run state ports from service-shaped dependencies', async () => {
+    const pendingTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
+    const teamOpLocks = new Map<string, Promise<void>>();
+    const cancelPendingAutoResume = vi.fn();
+    const warn = vi.fn();
+    const relayLeadInboxMessages = vi.fn().mockResolvedValue(1);
+    const service = {
+      pendingTimeouts,
+      teamOpLocks,
+      toolApprovalFacade: {
+        clearOpenCodeRuntimeToolApprovals: vi.fn(),
+      },
+      invalidateRuntimeSnapshotCaches: vi.fn(),
+      runtimeResourceSampling: {
+        clearRuntimeProcessRowsForTeam: vi.fn(),
+      },
+      retainedClaudeLogsByTeam: new Map(),
+      bootstrapTranscriptFacade: {
+        invalidatePersistedTranscriptClaudeLogs: vi.fn(),
+      },
+      leadInboxRelayInFlight: new Map(),
+      relayedLeadInboxMessageIds: new Map(),
+      pendingCrossTeamFirstReplies: new Map(),
+      recentCrossTeamLeadDeliveryMessageIds: new Map(),
+      sameTeamNativeDelivery: new Map(),
+      memberInboxRelayInFlight: new Map(),
+      openCodeMemberInboxRelayInFlight: new Map(),
+      openCodeMemberSendInFlightByLane: new Map(),
+      openCodePromptDeliveryWatchdogScheduler: { cancelTeam: vi.fn() },
+      openCodeRuntimeDeliveryAdvisory: { cancelTeam: vi.fn() },
+      relayedMemberInboxMessageIds: new Map(),
+      liveLeadProcessMessages: new Map(),
+      relayLeadInboxMessages,
+    } satisfies TeamProvisioningTransientRunStateServiceHost;
+    const ports = createTeamProvisioningTransientRunStatePortsFromService(service, {
+      cancelPendingAutoResume,
+      warn,
+      nowMs: () => 42,
+    });
+
+    ports.cancelPendingAutoResume('alpha');
+    ports.clearOpenCodeRuntimeToolApprovals('alpha', { emitDismiss: true });
+    ports.invalidateRuntimeSnapshotCaches('alpha');
+    ports.clearRuntimeProcessRowsForTeam('alpha');
+    ports.persistedTranscriptClaudeLogs.invalidate('alpha');
+    await ports.relayLeadInboxMessages('alpha');
+    ports.warn('careful');
+
+    expect(ports.pendingTimeouts).toBe(pendingTimeouts);
+    expect(ports.teamOpLocks).toBe(teamOpLocks);
+    expect(ports.retainedClaudeLogsByTeam).toBe(service.retainedClaudeLogsByTeam);
+    expect(ports.recentSameTeamNativeFingerprints).toBe(service.sameTeamNativeDelivery);
+    expect(ports.nowMs()).toBe(42);
+    expect(cancelPendingAutoResume).toHaveBeenCalledWith('alpha');
+    expect(service.toolApprovalFacade.clearOpenCodeRuntimeToolApprovals).toHaveBeenCalledWith(
+      'alpha',
+      { emitDismiss: true }
+    );
+    expect(service.invalidateRuntimeSnapshotCaches).toHaveBeenCalledWith('alpha');
+    expect(service.runtimeResourceSampling.clearRuntimeProcessRowsForTeam).toHaveBeenCalledWith(
+      'alpha'
+    );
+    expect(
+      service.bootstrapTranscriptFacade.invalidatePersistedTranscriptClaudeLogs
+    ).toHaveBeenCalledWith('alpha');
+    expect(relayLeadInboxMessages).toHaveBeenCalledWith('alpha');
+    expect(warn).toHaveBeenCalledWith('careful');
   });
 
   it('clears same-team retry timers from the shared timeout map', () => {

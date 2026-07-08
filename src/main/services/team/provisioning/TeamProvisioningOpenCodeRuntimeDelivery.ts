@@ -48,6 +48,7 @@ import {
   requireRuntimeString,
 } from './TeamProvisioningRuntimeMetadata';
 
+import type { OpenCodeRuntimeControlPort } from '../runtime-control';
 import type {
   InboxMessage,
   OpenCodeRuntimeDeliveryStatus,
@@ -143,6 +144,10 @@ export interface OpenCodeMemberDeliveryBusyStatusPorts extends OpenCodeRuntimeDe
     teamName: string,
     memberName: string
   ): Promise<OpenCodeDeliveryIdentityResolution>;
+  tryRecoverOpenCodeRuntimeLaneForConfiguredMemberBeforeDelivery(input: {
+    teamName: string;
+    memberName: string;
+  }): Promise<boolean>;
   tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive(input: {
     teamName: string;
     memberName: string;
@@ -186,6 +191,10 @@ export type TeamProvisioningOpenCodeRuntimeDeliveryBoundaryPorts<
       teamName: string,
       memberName: string
     ): Promise<OpenCodeDeliveryIdentityResolution>;
+    tryRecoverOpenCodeRuntimeLaneForConfiguredMemberBeforeDelivery(input: {
+      teamName: string;
+      memberName: string;
+    }): Promise<boolean>;
     tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive(input: {
       teamName: string;
       memberName: string;
@@ -212,12 +221,10 @@ export type TeamProvisioningOpenCodeRuntimeDeliveryBoundaryPorts<
 
 export function createTeamProvisioningOpenCodeRuntimeDeliveryBoundary<
   Run extends OpenCodeRuntimeCheckinRun,
->(ports: TeamProvisioningOpenCodeRuntimeDeliveryBoundaryPorts<Run>): {
+>(
+  ports: TeamProvisioningOpenCodeRuntimeDeliveryBoundaryPorts<Run>
+): OpenCodeRuntimeControlPort & {
   createOpenCodeRuntimeCheckinPorts(): OpenCodeRuntimeCheckinPorts<Run>;
-  recordOpenCodeRuntimeBootstrapCheckin(raw: unknown): Promise<OpenCodeRuntimeControlAck>;
-  deliverOpenCodeRuntimeMessage(raw: unknown): Promise<OpenCodeRuntimeControlAck>;
-  recordOpenCodeRuntimeTaskEvent(raw: unknown): Promise<OpenCodeRuntimeControlAck>;
-  recordOpenCodeRuntimeHeartbeat(raw: unknown): Promise<OpenCodeRuntimeControlAck>;
   createOpenCodeRuntimeDeliveryService(teamName: string, laneId: string): RuntimeDeliveryService;
   createOpenCodePromptDeliveryLedger(
     teamName: string,
@@ -308,7 +315,12 @@ export function createTeamProvisioningOpenCodeRuntimeDeliveryBoundary<
     const teamName = input.teamName.trim();
     const memberName = input.memberName.trim();
     const messageId = input.messageId.trim();
-    if (!teamName || !memberName || !messageId || !ports.isOpenCodePromptDeliveryWatchdogEnabled()) {
+    if (
+      !teamName ||
+      !memberName ||
+      !messageId ||
+      !ports.isOpenCodePromptDeliveryWatchdogEnabled()
+    ) {
       return;
     }
     ports.scheduleOpenCodePromptDeliveryWatchdog({
@@ -370,7 +382,8 @@ export function createTeamProvisioningOpenCodeRuntimeDeliveryBoundary<
     },
     recordOpenCodeRuntimeTaskEvent: (raw) =>
       recordOpenCodeRuntimeTaskEvent(raw, createCheckinPorts()),
-    recordOpenCodeRuntimeHeartbeat: (raw) => recordOpenCodeRuntimeHeartbeat(raw, createCheckinPorts()),
+    recordOpenCodeRuntimeHeartbeat: (raw) =>
+      recordOpenCodeRuntimeHeartbeat(raw, createCheckinPorts()),
     createOpenCodeRuntimeDeliveryService: createDeliveryService,
     createOpenCodePromptDeliveryLedger: createPromptDeliveryLedger,
     getOpenCodeRuntimeDeliveryStatus: (teamName, messageId) =>
@@ -393,6 +406,8 @@ export function createTeamProvisioningOpenCodeRuntimeDeliveryBoundary<
         scheduleOpenCodeMemberInboxDeliveryWake: scheduleMemberInboxDeliveryWake,
         resolveOpenCodeMemberDeliveryIdentity: (teamName, memberName) =>
           ports.resolveOpenCodeMemberDeliveryIdentity(teamName, memberName),
+        tryRecoverOpenCodeRuntimeLaneForConfiguredMemberBeforeDelivery: (recoverInput) =>
+          ports.tryRecoverOpenCodeRuntimeLaneForConfiguredMemberBeforeDelivery(recoverInput),
         tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive: (recoverInput) =>
           ports.tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive(recoverInput),
         createOpenCodePromptDeliveryLedger: createPromptDeliveryLedger,
@@ -477,7 +492,8 @@ export async function getOpenCodeRuntimeDeliveryStatus(
     ),
   ];
   for (const laneId of laneIds) {
-    const records = await ports.createOpenCodePromptDeliveryLedger(teamName, laneId)
+    const records = await ports
+      .createOpenCodePromptDeliveryLedger(teamName, laneId)
       .list()
       .catch(() => []);
     const record = records.find((candidate) => candidate.inboxMessageId === normalizedMessageId);
@@ -513,7 +529,8 @@ export async function tryGetActiveOpenCodePromptDeliveryRecord(
       return null;
     }
   }
-  return await ports.createOpenCodePromptDeliveryLedger(input.teamName, identity.laneId)
+  return await ports
+    .createOpenCodePromptDeliveryLedger(input.teamName, identity.laneId)
     .getActiveForMember({
       teamName: input.teamName,
       memberName: identity.canonicalMemberName,
@@ -541,6 +558,32 @@ export async function getOpenCodeMemberDeliveryBusyStatus(
   const retryAfterIso = new Date(
     (Number.isFinite(nowMs) ? nowMs : Date.now()) + 60_000
   ).toISOString();
+
+  const identity = await ports.resolveOpenCodeMemberDeliveryIdentity(
+    input.teamName,
+    input.memberName
+  );
+  if (!identity.ok) {
+    return { busy: true, reason: identity.reason, retryAfterIso };
+  }
+
+  let laneIndex = await readOpenCodeRuntimeLaneIndex(ports.teamsBasePath, input.teamName).catch(
+    () => null
+  );
+  if (laneIndex?.lanes[identity.laneId]?.state !== 'active') {
+    const recovered = await ports
+      .tryRecoverOpenCodeRuntimeLaneForConfiguredMemberBeforeDelivery({
+        teamName: input.teamName,
+        memberName: identity.canonicalMemberName,
+      })
+      .catch(() => false);
+    if (recovered) {
+      laneIndex = await readOpenCodeRuntimeLaneIndex(ports.teamsBasePath, input.teamName).catch(
+        () => laneIndex
+      );
+    }
+  }
+  const hasActiveLane = laneIndex?.lanes[identity.laneId]?.state === 'active';
 
   let inboxMessages: Awaited<ReturnType<TeamInboxReader['getMessagesFor']>>;
   try {
@@ -580,19 +623,21 @@ export async function getOpenCodeMemberDeliveryBusyStatus(
       hasStableInboxMessageId(message)
   );
   if (unreadForeground?.messageId) {
-    const activeRecord = await ports.tryGetActiveOpenCodePromptDeliveryRecord({
-      teamName: input.teamName,
-      memberName: input.memberName,
-    });
-    if (activeRecord) {
-      return buildOpenCodePromptDeliveryActiveBusyStatus({
+    if (hasActiveLane) {
+      const activeRecord = await ports.tryGetActiveOpenCodePromptDeliveryRecord({
         teamName: input.teamName,
         memberName: input.memberName,
-        retryAfterIso,
-        nowMs: Number.isFinite(nowMs) ? nowMs : undefined,
-        activeRecord,
-        scheduleWake: (wakeInput) => ports.scheduleOpenCodeMemberInboxDeliveryWake(wakeInput),
       });
+      if (activeRecord) {
+        return buildOpenCodePromptDeliveryActiveBusyStatus({
+          teamName: input.teamName,
+          memberName: input.memberName,
+          retryAfterIso,
+          nowMs: Number.isFinite(nowMs) ? nowMs : undefined,
+          activeRecord,
+          scheduleWake: (wakeInput) => ports.scheduleOpenCodeMemberInboxDeliveryWake(wakeInput),
+        });
+      }
     }
     ports.scheduleOpenCodeMemberInboxDeliveryWake({
       teamName: input.teamName,
@@ -623,43 +668,22 @@ export async function getOpenCodeMemberDeliveryBusyStatus(
     };
   }
 
-  const identity = await ports.resolveOpenCodeMemberDeliveryIdentity(
-    input.teamName,
-    input.memberName
-  );
-  if (!identity.ok) {
-    return { busy: true, reason: identity.reason, retryAfterIso };
-  }
-
-  const laneIndex = await readOpenCodeRuntimeLaneIndex(ports.teamsBasePath, input.teamName).catch(
-    () => null
-  );
   if (!laneIndex) {
     return { busy: true, reason: 'opencode_lane_index_unavailable', retryAfterIso };
   }
-  if (
-    laneIndex.lanes[identity.laneId]?.state !== 'active' &&
-    !(await ports
-      .tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive({
-        teamName: input.teamName,
-        memberName: identity.canonicalMemberName,
-        laneId: identity.laneId,
-      })
-      .catch(() => false))
-  ) {
+  if (!hasActiveLane) {
     return { busy: true, reason: 'opencode_no_active_lane', retryAfterIso };
   }
 
   let activeRecord: OpenCodePromptDeliveryLedgerRecord | null;
   try {
-    activeRecord = await ports.createOpenCodePromptDeliveryLedger(
-      input.teamName,
-      identity.laneId
-    ).getActiveForMember({
-      teamName: input.teamName,
-      memberName: identity.canonicalMemberName,
-      laneId: identity.laneId,
-    });
+    activeRecord = await ports
+      .createOpenCodePromptDeliveryLedger(input.teamName, identity.laneId)
+      .getActiveForMember({
+        teamName: input.teamName,
+        memberName: identity.canonicalMemberName,
+        laneId: identity.laneId,
+      });
   } catch {
     return {
       busy: true,

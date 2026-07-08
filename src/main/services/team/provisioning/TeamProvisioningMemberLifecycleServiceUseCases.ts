@@ -2,31 +2,32 @@ import {
   createPersistOpenCodeMemberRestartSystemMessageUseCase,
   type PersistOpenCodeMemberRestartSystemMessageUseCase,
 } from './TeamProvisioningOpenCodeMemberRestartSystemMessageUseCase';
+import {
+  createReadOpenCodeSecondaryRetryOutcomeUseCase,
+  type ReadOpenCodeSecondaryRetryOutcomeUseCase,
+} from './TeamProvisioningReadOpenCodeSecondaryRetryOutcomeUseCase';
 
 import type { AppendDirectProcessRuntimeEventUseCase } from './TeamProvisioningAppendDirectProcessRuntimeEventUseCase';
-import type { TeamProvisioningMemberLifecycleUseCasePorts } from './TeamProvisioningMemberLifecycle';
-import type { TeamProvisioningMemberLifecycleOperationRunner } from './TeamProvisioningMemberLifecycleOperationRunner';
+import type { PreparePrimaryOwnedMemberRestartRuntimeUseCase } from './TeamProvisioningPreparePrimaryOwnedMemberRestartRuntimeUseCase';
+import type { StopPrimaryOwnedRosterRuntimeUseCase } from './TeamProvisioningStopPrimaryOwnedRosterRuntimeUseCase';
+import type { PersistedTeamLaunchSnapshot } from '@shared/types';
 
 export interface TeamProvisioningMemberLifecycleServiceUseCasePorts {
   persistSentMessage(teamName: string, message: Record<string, unknown>): void;
+  readLaunchStateSnapshot(teamName: string): Promise<PersistedTeamLaunchSnapshot | null>;
   appendDirectProcessRuntimeEvent: AppendDirectProcessRuntimeEventUseCase;
-  operationRunner: Pick<
-    TeamProvisioningMemberLifecycleOperationRunner,
-    'runMemberLifecycleOperation'
-  >;
+  stopPrimaryOwnedRosterRuntime: StopPrimaryOwnedRosterRuntimeUseCase;
+  preparePrimaryOwnedMemberRestartRuntime: PreparePrimaryOwnedMemberRestartRuntimeUseCase;
   nowIso(): string;
   randomUUID(): string;
 }
 
-export interface TeamProvisioningMemberLifecycleServiceUseCases extends Pick<
-  TeamProvisioningMemberLifecycleUseCasePorts,
-  | 'persistOpenCodeMemberRestartSystemMessage'
-  | 'appendDirectProcessRuntimeEvent'
-  | 'runMemberLifecycleOperation'
-> {
+export interface TeamProvisioningMemberLifecycleServiceUseCases {
   persistOpenCodeMemberRestartSystemMessage: PersistOpenCodeMemberRestartSystemMessageUseCase;
+  readOpenCodeSecondaryRetryOutcome: ReadOpenCodeSecondaryRetryOutcomeUseCase;
   appendDirectProcessRuntimeEvent: AppendDirectProcessRuntimeEventUseCase;
-  runMemberLifecycleOperation: TeamProvisioningMemberLifecycleOperationRunner['runMemberLifecycleOperation'];
+  stopPrimaryOwnedRosterRuntime: StopPrimaryOwnedRosterRuntimeUseCase;
+  preparePrimaryOwnedMemberRestartRuntime: PreparePrimaryOwnedMemberRestartRuntimeUseCase;
 }
 
 export function createTeamProvisioningMemberLifecycleServiceUseCases(
@@ -39,8 +40,11 @@ export function createTeamProvisioningMemberLifecycleServiceUseCases(
         nowIso: ports.nowIso,
         randomUUID: ports.randomUUID,
       }),
+    readOpenCodeSecondaryRetryOutcome: createReadOpenCodeSecondaryRetryOutcomeUseCase({
+      readLaunchStateSnapshot: ports.readLaunchStateSnapshot,
+    }),
     appendDirectProcessRuntimeEvent: ports.appendDirectProcessRuntimeEvent,
-    runMemberLifecycleOperation: (teamName, memberName, kind, operation) =>
-      ports.operationRunner.runMemberLifecycleOperation(teamName, memberName, kind, operation),
+    stopPrimaryOwnedRosterRuntime: ports.stopPrimaryOwnedRosterRuntime,
+    preparePrimaryOwnedMemberRestartRuntime: ports.preparePrimaryOwnedMemberRestartRuntime,
   };
 }

@@ -53,6 +53,66 @@ export interface TeamProvisioningPrimaryBootstrapTruthReportingBoundary<
   ): Promise<PersistedTeamLaunchSnapshot | null>;
 }
 
+export interface TeamProvisioningPrimaryBootstrapTruthReportingServiceHost<
+  TRun extends PrimaryBootstrapTruthRunLike,
+> {
+  syncMemberTaskActivityForRuntimeTransition: TeamProvisioningPrimaryBootstrapTruthReportingServiceAdapter<TRun>['syncMemberTaskActivityForRuntimeTransition'];
+  syncMemberLaunchGraceCheck: TeamProvisioningPrimaryBootstrapTruthReportingServiceAdapter<TRun>['syncMemberLaunchGraceCheck'];
+  syncRunMemberSpawnStatusesFromSnapshot: TeamProvisioningPrimaryBootstrapTruthReportingServiceAdapter<TRun>['syncRunMemberSpawnStatusesFromSnapshot'];
+  writeLaunchStateSnapshot: TeamProvisioningPrimaryBootstrapTruthReportingPortsFactoryDeps<TRun>['writeLaunchStateSnapshot'];
+}
+
+export interface TeamProvisioningPrimaryBootstrapTruthReportingServiceHostOptions<
+  TRun extends PrimaryBootstrapTruthRunLike,
+> {
+  isOpenCodeSecondaryLaneMemberInRun: TeamProvisioningPrimaryBootstrapTruthReportingServiceAdapter<TRun>['isOpenCodeSecondaryLaneMemberInRun'];
+  readBootstrapLaunchSnapshot: TeamProvisioningPrimaryBootstrapTruthReportingPortsFactoryDeps<TRun>['readBootstrapLaunchSnapshot'];
+  nowIso: TeamProvisioningPrimaryBootstrapTruthReportingPortsFactoryDeps<TRun>['nowIso'];
+  logger: TeamProvisioningPrimaryBootstrapTruthReportingPortsFactoryDeps<TRun>['logger'];
+}
+
+export function createTeamProvisioningPrimaryBootstrapTruthReportingDepsFromService<
+  TRun extends PrimaryBootstrapTruthRunLike,
+>(
+  service: TeamProvisioningPrimaryBootstrapTruthReportingServiceHost<TRun>,
+  options: TeamProvisioningPrimaryBootstrapTruthReportingServiceHostOptions<TRun>
+): TeamProvisioningPrimaryBootstrapTruthReportingPortsFactoryDeps<TRun> {
+  return {
+    service: {
+      isOpenCodeSecondaryLaneMemberInRun: (run, memberName) =>
+        options.isOpenCodeSecondaryLaneMemberInRun(run, memberName),
+      syncMemberTaskActivityForRuntimeTransition: (run, memberName, previous, next, observedAt) =>
+        service.syncMemberTaskActivityForRuntimeTransition(
+          run,
+          memberName,
+          previous,
+          next,
+          observedAt
+        ),
+      syncMemberLaunchGraceCheck: (run, memberName, next) =>
+        service.syncMemberLaunchGraceCheck(run, memberName, next),
+      syncRunMemberSpawnStatusesFromSnapshot: (run, snapshot) =>
+        service.syncRunMemberSpawnStatusesFromSnapshot(run, snapshot),
+    },
+    readBootstrapLaunchSnapshot: (teamName) => options.readBootstrapLaunchSnapshot(teamName),
+    writeLaunchStateSnapshot: (teamName, snapshot) =>
+      service.writeLaunchStateSnapshot(teamName, snapshot),
+    nowIso: options.nowIso,
+    logger: options.logger,
+  };
+}
+
+export function createTeamProvisioningPrimaryBootstrapTruthReportingBoundaryFromService<
+  TRun extends PrimaryBootstrapTruthRunLike,
+>(
+  service: TeamProvisioningPrimaryBootstrapTruthReportingServiceHost<TRun>,
+  options: TeamProvisioningPrimaryBootstrapTruthReportingServiceHostOptions<TRun>
+): TeamProvisioningPrimaryBootstrapTruthReportingBoundary<TRun> {
+  return createTeamProvisioningPrimaryBootstrapTruthReportingBoundary(
+    createTeamProvisioningPrimaryBootstrapTruthReportingDepsFromService(service, options)
+  );
+}
+
 function createPrimaryBootstrapTruthReportingPorts<TRun extends PrimaryBootstrapTruthRunLike>(
   deps: TeamProvisioningPrimaryBootstrapTruthReportingPortsFactoryDeps<TRun>
 ): PrimaryBootstrapTruthReportingPorts<TRun> {

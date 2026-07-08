@@ -1,4 +1,5 @@
 import {
+  bindTeamCrossTeamProvisioningApi,
   bindTeamHttpProvisioningApis,
   bindTeamIpcProvisioningApis,
 } from '@main/services/team/contracts/TeamProvisioningApis';
@@ -68,6 +69,14 @@ function createSource() {
     getLiveLeadProcessMessages: vi.fn(() => []),
     getCurrentLeadSessionId: vi.fn(() => null),
     pushLiveLeadProcessMessage: vi.fn(),
+    resolveCrossTeamReplyMetadata: vi.fn(function (this: { marker: string }) {
+      return {
+        conversationId: `${this.marker}:conversation`,
+        replyToConversationId: 'reply-conversation',
+      };
+    }),
+    registerPendingCrossTeamReplyExpectation: vi.fn(),
+    clearPendingCrossTeamReplyExpectation: vi.fn(),
     respondToToolApproval: vi.fn(async () => undefined),
     updateToolApprovalSettings: vi.fn(),
   };
@@ -86,16 +95,15 @@ describe('bindTeamIpcProvisioningApis', () => {
       'preflight',
       'provisioningRun',
       'runtime',
+      'taskActivity',
       'toolApproval',
     ]);
-    expect(sortedKeys(api.launch)).toEqual([
-      'createTeam',
-      'getProvisioningStatus',
-      'launchTeam',
-      'repairStaleTaskActivityIntervalsBeforeSnapshot',
-    ]);
+    expect(sortedKeys(api.launch)).toEqual(['createTeam', 'getProvisioningStatus', 'launchTeam']);
     expect(sortedKeys(api.preflight)).toEqual(['getCliHelpOutput', 'prepareForProvisioning']);
     expect(sortedKeys(api.provisioningRun)).toEqual(['cancelProvisioning', 'hasProvisioningRun']);
+    expect(sortedKeys(api.taskActivity)).toEqual([
+      'repairStaleTaskActivityIntervalsBeforeSnapshot',
+    ]);
     expect(sortedKeys(api.runtime)).toEqual([
       'getAliveTeams',
       'getCurrentRunId',
@@ -144,25 +152,68 @@ describe('bindTeamIpcProvisioningApis', () => {
   });
 });
 
+describe('bindTeamCrossTeamProvisioningApi', () => {
+  it('exposes only cross-team relay methods and binds them to the source service', async () => {
+    const source = createSource();
+    const api = bindTeamCrossTeamProvisioningApi(source as never);
+    const resolveCrossTeamReplyMetadata = api.resolveCrossTeamReplyMetadata;
+    const relayLeadInboxMessages = api.relayLeadInboxMessages;
+
+    expect(sortedKeys(api)).toEqual([
+      'clearPendingCrossTeamReplyExpectation',
+      'isTeamAlive',
+      'registerPendingCrossTeamReplyExpectation',
+      'relayLeadInboxMessages',
+      'resolveCrossTeamReplyMetadata',
+    ]);
+    expect(((api as unknown) as Record<string, unknown>).createTeam).toBeUndefined();
+    expect(((api as unknown) as Record<string, unknown>).sendMessageToTeam).toBeUndefined();
+    expect(resolveCrossTeamReplyMetadata('from-team', 'to-team')).toEqual({
+      conversationId: 'bound-run:conversation',
+      replyToConversationId: 'reply-conversation',
+    });
+
+    api.registerPendingCrossTeamReplyExpectation('from-team', 'to-team', 'conversation-1');
+    api.clearPendingCrossTeamReplyExpectation('from-team', 'to-team', 'conversation-1');
+    expect(source.registerPendingCrossTeamReplyExpectation).toHaveBeenCalledWith(
+      'from-team',
+      'to-team',
+      'conversation-1'
+    );
+    expect(source.clearPendingCrossTeamReplyExpectation).toHaveBeenCalledWith(
+      'from-team',
+      'to-team',
+      'conversation-1'
+    );
+    await expect(relayLeadInboxMessages('to-team')).resolves.toBe(0);
+  });
+});
+
 describe('bindTeamHttpProvisioningApis', () => {
   it('groups TeamProvisioningService behind HTTP-facing facade ports only', async () => {
-    const api = bindTeamHttpProvisioningApis(createSource() as never);
+    const source = createSource();
+    const api = bindTeamHttpProvisioningApis(source as never);
     const launchApi = api.launch as NonNullable<typeof api.launch>;
     const runtimeApi = api.runtime as NonNullable<typeof api.runtime>;
     const runtimeControlApi = api.runtimeControl as NonNullable<typeof api.runtimeControl>;
+    const taskActivityApi = api.taskActivity as NonNullable<typeof api.taskActivity>;
+    const statusApi = api.status as NonNullable<typeof api.status>;
 
-    expect(sortedKeys(api)).toEqual(['launch', 'runtime', 'runtimeControl']);
-    expect(sortedKeys(launchApi)).toEqual([
-      'createTeam',
-      'getProvisioningStatus',
-      'launchTeam',
+    expect(sortedKeys(api)).toEqual([
+      'launch',
+      'runtime',
+      'runtimeControl',
+      'status',
+      'taskActivity',
+    ]);
+    expect(sortedKeys(launchApi)).toEqual(['createTeam', 'launchTeam']);
+    expect(sortedKeys(statusApi)).toEqual(['getProvisioningStatus']);
+    expect(sortedKeys(taskActivityApi)).toEqual([
       'repairStaleTaskActivityIntervalsBeforeSnapshot',
     ]);
     expect(sortedKeys(runtimeApi)).toEqual([
       'getAliveTeams',
-      'getCurrentRunId',
       'getRuntimeState',
-      'isTeamAlive',
       'stopTeam',
     ]);
     expect(sortedKeys(runtimeControlApi)).toEqual([
@@ -184,5 +235,11 @@ describe('bindTeamHttpProvisioningApis', () => {
       teamName: 'bound-run',
       state: 'delivered',
     });
+    await expect(
+      taskActivityApi.repairStaleTaskActivityIntervalsBeforeSnapshot('team-bound')
+    ).resolves.toBeUndefined();
+    expect(source.repairStaleTaskActivityIntervalsBeforeSnapshot).toHaveBeenCalledWith(
+      'team-bound'
+    );
   });
 });

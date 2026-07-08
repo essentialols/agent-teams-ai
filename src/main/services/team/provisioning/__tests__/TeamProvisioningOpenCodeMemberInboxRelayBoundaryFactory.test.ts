@@ -8,6 +8,7 @@ import {
 } from '../TeamProvisioningOpenCodeMemberInboxRelay';
 import {
   createTeamProvisioningOpenCodeMemberInboxRelayBoundary,
+  createTeamProvisioningOpenCodeMemberInboxRelayHostFromService,
   type TeamProvisioningOpenCodeMemberInboxRelayBoundaryDeps,
 } from '../TeamProvisioningOpenCodeMemberInboxRelayBoundaryFactory';
 
@@ -164,6 +165,61 @@ describe('TeamProvisioningOpenCodeMemberInboxRelayBoundaryFactory', () => {
 
     expect(teamTaskReaderMock).toHaveBeenCalledTimes(1);
     expect(getTasksMock).toHaveBeenCalledWith('team-a');
+  });
+
+  it('builds the host from service-shaped ports without freezing relay methods', async () => {
+    const service = createDeps().host;
+    const host = createTeamProvisioningOpenCodeMemberInboxRelayHostFromService(service);
+    const ledger = {} as OpenCodePromptDeliveryLedgerStore;
+    const record = ledgerRecord();
+
+    expect(host.getOpenCodeMemberRelayKey('team-a', 'worker')).toBe('relay/team-a/worker');
+    host.scheduleOpenCodeMemberInboxDeliveryWake({
+      teamName: 'team-a',
+      memberName: 'worker',
+      messageId: 'message-1',
+      delayMs: 500,
+    });
+    await host.isOpenCodeRuntimeRecipient('team-a', 'worker');
+    host.createOpenCodePromptDeliveryLedger('team-a', 'lane-worker');
+    await host.requeueOpenCodeRuntimeManifestWatermarkDeliveryIfNeeded({
+      ledger,
+      ledgerRecord: record,
+    });
+    await host.requeueOpenCodeNoAssistantTerminalDeliveryIfNeeded({
+      ledger,
+      ledgerRecord: record,
+    });
+    await host.isOpenCodeDeliveryResponseReadCommitAllowed({
+      teamName: 'team-a',
+      memberName: 'worker',
+      taskRefs: [],
+      ledgerRecord: record,
+    });
+    await host.markInboxMessagesRead('team-a', 'worker', [inboxMessage()]);
+    host.logOpenCodePromptDeliveryEvent('event', record, { extra: true });
+    await host.markOpenCodePromptLedgerFailedTerminal({
+      ledger,
+      id: 'record-1',
+      reason: 'reason',
+      failedAt: '2026-01-01T00:00:00.000Z',
+    });
+    await host.deliverOpenCodeMemberMessage('team-a', {} as never);
+
+    expect(service.scheduleOpenCodeMemberInboxDeliveryWake).toHaveBeenCalledWith({
+      teamName: 'team-a',
+      memberName: 'worker',
+      messageId: 'message-1',
+      delayMs: 500,
+    });
+    expect(service.createOpenCodePromptDeliveryLedger).toHaveBeenCalledWith(
+      'team-a',
+      'lane-worker'
+    );
+    expect(service.logOpenCodePromptDeliveryEvent).toHaveBeenCalledWith('event', record, {
+      extra: true,
+    });
+    expect(service.deliverOpenCodeMemberMessage).toHaveBeenCalledWith('team-a', {});
   });
 });
 

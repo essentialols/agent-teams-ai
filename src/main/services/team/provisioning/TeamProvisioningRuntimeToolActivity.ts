@@ -57,7 +57,8 @@ export interface StartRuntimeToolActivityPorts<
 }
 
 export interface FinishRuntimeToolActivityPorts<TRun extends RuntimeToolActivityRunLike>
-  extends StartRuntimeToolActivityPorts<TRun>,
+  extends
+    StartRuntimeToolActivityPorts<TRun>,
     AppendMemberBootstrapDiagnosticPorts,
     HandleMemberSpawnFailurePorts<TRun> {
   invalidateRuntimeSnapshotCaches(teamName: string): void;
@@ -109,16 +110,35 @@ export interface RuntimeTransitionTaskActivityPorts extends RuntimeLossTaskActiv
 }
 
 export interface RuntimeToolActivityHandlerPorts<TRun extends RuntimeToolActivityRunLike>
-  extends FinishRuntimeToolActivityPorts<TRun>,
-    RuntimeTransitionTaskActivityPorts {}
+  extends FinishRuntimeToolActivityPorts<TRun>, RuntimeTransitionTaskActivityPorts {}
+
+export interface RuntimeToolActivityServiceHost<TRun extends RuntimeToolActivityRunLike> {
+  teamChangeEmitter?: ((event: TeamChangeEvent) => void) | null;
+  taskActivityIntervalService: Pick<
+    RuntimeTransitionTaskActivityPorts,
+    'pauseActiveIntervalsForMember' | 'resumeActiveIntervalsForMember'
+  >;
+  isCurrentTrackedRun(run: TRun): boolean;
+  setMemberSpawnStatus(
+    run: TRun,
+    memberName: string,
+    status: MemberSpawnStatus,
+    error?: string
+  ): void;
+  invalidateRuntimeSnapshotCaches(teamName: string): void;
+  reevaluateMemberLaunchStatus(run: TRun, memberName: string): Promise<unknown> | unknown;
+}
+
+export interface RuntimeToolActivityServiceHostOptions<TRun extends RuntimeToolActivityRunLike> {
+  nowIso: RuntimeToolActivityHandlerPorts<TRun>['nowIso'];
+  logInfo: RuntimeToolActivityHandlerPorts<TRun>['logInfo'];
+  logWarn: RuntimeToolActivityHandlerPorts<TRun>['logWarn'];
+  updateProgress: RuntimeToolActivityHandlerPorts<TRun>['updateProgress'];
+}
 
 export interface RuntimeToolActivityHandlers<TRun extends RuntimeToolActivityRunLike> {
   emitToolActivity(run: TRun, payload: ToolActivityEventPayload): void;
-  startRuntimeToolActivity(
-    run: TRun,
-    memberName: string,
-    block: Record<string, unknown>
-  ): void;
+  startRuntimeToolActivity(run: TRun, memberName: string, block: Record<string, unknown>): void;
   finishRuntimeToolActivity(
     run: TRun,
     toolUseId: string,
@@ -141,6 +161,34 @@ export interface RuntimeToolActivityHandlers<TRun extends RuntimeToolActivityRun
     next: MemberSpawnStatusEntry,
     observedAt: string
   ): void;
+}
+
+export function createRuntimeToolActivityHandlerPortsFromService<
+  TRun extends RuntimeToolActivityRunLike,
+>(
+  service: RuntimeToolActivityServiceHost<TRun>,
+  options: RuntimeToolActivityServiceHostOptions<TRun>
+): RuntimeToolActivityHandlerPorts<TRun> {
+  return {
+    isCurrentTrackedRun: (run) => service.isCurrentTrackedRun(run),
+    emitTeamChange: (event) => {
+      service.teamChangeEmitter?.(event);
+    },
+    nowIso: options.nowIso,
+    logInfo: options.logInfo,
+    logWarn: options.logWarn,
+    updateProgress: options.updateProgress,
+    setMemberSpawnStatus: (run, memberName, status, error) =>
+      service.setMemberSpawnStatus(run, memberName, status, error),
+    invalidateRuntimeSnapshotCaches: (teamName) =>
+      service.invalidateRuntimeSnapshotCaches(teamName),
+    reevaluateMemberLaunchStatus: (run, memberName) =>
+      service.reevaluateMemberLaunchStatus(run, memberName),
+    pauseActiveIntervalsForMember: (teamName, memberName, at) =>
+      service.taskActivityIntervalService.pauseActiveIntervalsForMember(teamName, memberName, at),
+    resumeActiveIntervalsForMember: (teamName, memberName, at) =>
+      service.taskActivityIntervalService.resumeActiveIntervalsForMember(teamName, memberName, at),
+  };
 }
 
 export function createRuntimeToolActivityHandlers<TRun extends RuntimeToolActivityRunLike>(
@@ -190,11 +238,7 @@ export function createRuntimeToolActivityHandlers<TRun extends RuntimeToolActivi
 
 export function emitToolActivity<
   TRun extends Pick<RuntimeToolActivityRunLike, 'teamName' | 'runId'>,
->(
-  run: TRun,
-  payload: ToolActivityEventPayload,
-  ports: RuntimeToolActivityEmitPorts<TRun>
-): void {
+>(run: TRun, payload: ToolActivityEventPayload, ports: RuntimeToolActivityEmitPorts<TRun>): void {
   if (!ports.isCurrentTrackedRun(run)) return;
   ports.emitTeamChange({
     type: 'tool-activity',
@@ -368,7 +412,11 @@ export function handleMemberSpawnFailure<TRun extends RuntimeToolActivityRunLike
     !run.provisioningComplete &&
     (run.progress.state === 'assembling' || run.progress.state === 'configuring')
   ) {
-    const progress = ports.updateProgress(run, 'assembling', `Failed to start member ${memberName}`);
+    const progress = ports.updateProgress(
+      run,
+      'assembling',
+      `Failed to start member ${memberName}`
+    );
     run.onProgress(progress);
   }
 }

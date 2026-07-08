@@ -3,7 +3,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { createPersistedLaunchSnapshot } from '../../TeamLaunchStateEvaluator';
 import {
   createTeamProvisioningPrimaryBootstrapTruthReportingBoundary,
+  createTeamProvisioningPrimaryBootstrapTruthReportingDepsFromService,
   type TeamProvisioningPrimaryBootstrapTruthReportingServiceAdapter,
+  type TeamProvisioningPrimaryBootstrapTruthReportingServiceHost,
 } from '../TeamProvisioningPrimaryBootstrapTruthReportingPortsFactory';
 
 import type { PrimaryBootstrapTruthRunLike } from '../TeamProvisioningPrimaryBootstrapTruthReporting';
@@ -136,6 +138,64 @@ function createBoundary(input: {
 }
 
 describe('TeamProvisioningPrimaryBootstrapTruthReportingPortsFactory', () => {
+  it('builds primary bootstrap truth deps from service-shaped host wiring', async () => {
+    const targetRun = run();
+    const previous = status({ launchState: 'starting' });
+    const next = status({ launchState: 'confirmed_alive' });
+    const targetSnapshot = confirmedBootstrapSnapshot();
+    const persistedSnapshot = snapshot({ members: { Builder: member() } });
+    const service = {
+      syncMemberTaskActivityForRuntimeTransition: vi.fn(),
+      syncMemberLaunchGraceCheck: vi.fn(),
+      syncRunMemberSpawnStatusesFromSnapshot: vi.fn(),
+      writeLaunchStateSnapshot: vi.fn(async () => persistedSnapshot),
+    } as unknown as TeamProvisioningPrimaryBootstrapTruthReportingServiceHost<TestRun>;
+    const isOpenCodeSecondaryLaneMemberInRun = vi.fn(() => true);
+    const readBootstrapLaunchSnapshot = vi.fn(async () => targetSnapshot);
+    const warn = vi.fn();
+
+    const deps = createTeamProvisioningPrimaryBootstrapTruthReportingDepsFromService(service, {
+      isOpenCodeSecondaryLaneMemberInRun,
+      readBootstrapLaunchSnapshot,
+      nowIso: () => factoryNow,
+      logger: { warn },
+    });
+
+    expect(deps.service.isOpenCodeSecondaryLaneMemberInRun(targetRun, 'Builder')).toBe(true);
+    deps.service.syncMemberTaskActivityForRuntimeTransition(
+      targetRun,
+      'Builder',
+      previous,
+      next,
+      observedAt
+    );
+    deps.service.syncMemberLaunchGraceCheck(targetRun, 'Builder', next);
+    deps.service.syncRunMemberSpawnStatusesFromSnapshot(targetRun, targetSnapshot);
+    await expect(deps.readBootstrapLaunchSnapshot('demo')).resolves.toBe(targetSnapshot);
+    await expect(deps.writeLaunchStateSnapshot('demo', targetSnapshot)).resolves.toBe(
+      persistedSnapshot
+    );
+
+    expect(deps.nowIso()).toBe(factoryNow);
+    deps.logger.warn('warning');
+    expect(warn).toHaveBeenCalledWith('warning');
+    expect(isOpenCodeSecondaryLaneMemberInRun).toHaveBeenCalledWith(targetRun, 'Builder');
+    expect(service.syncMemberTaskActivityForRuntimeTransition).toHaveBeenCalledWith(
+      targetRun,
+      'Builder',
+      previous,
+      next,
+      observedAt
+    );
+    expect(service.syncMemberLaunchGraceCheck).toHaveBeenCalledWith(targetRun, 'Builder', next);
+    expect(service.syncRunMemberSpawnStatusesFromSnapshot).toHaveBeenCalledWith(
+      targetRun,
+      targetSnapshot
+    );
+    expect(readBootstrapLaunchSnapshot).toHaveBeenCalledWith('demo');
+    expect(service.writeLaunchStateSnapshot).toHaveBeenCalledWith('demo', targetSnapshot);
+  });
+
   it('wires primary bootstrap truth overlay through service callbacks', async () => {
     const targetRun = run({
       memberSpawnStatuses: new Map([['Builder', status()]]),

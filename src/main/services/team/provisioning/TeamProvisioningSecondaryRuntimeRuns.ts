@@ -71,6 +71,13 @@ export interface SecondaryRuntimeRunProvisioningRun {
   mixedSecondaryLanes?: MixedSecondaryRuntimeLaneState[];
 }
 
+export interface SecondaryRuntimeLaneMembershipRun {
+  mixedSecondaryLanes?: Array<{
+    providerId?: string;
+    member: Pick<TeamCreateRequest['members'][number], 'name'>;
+  }>;
+}
+
 export function createMixedSecondaryLaneStates(
   plan: TeamRuntimeLanePlan
 ): MixedSecondaryRuntimeLaneState[] {
@@ -142,6 +149,14 @@ export function getMixedSecondaryLaunchPhase(
   )
     ? 'active'
     : 'finished';
+}
+
+export function isOpenCodeSecondaryLaneMemberInRun(
+  run: SecondaryRuntimeLaneMembershipRun,
+  memberName: string
+): boolean {
+  const lanes = Array.isArray(run.mixedSecondaryLanes) ? run.mixedSecondaryLanes : [];
+  return lanes.some((lane) => lane.providerId === 'opencode' && lane.member.name === memberName);
 }
 
 export function upsertRunAllEffectiveMember(

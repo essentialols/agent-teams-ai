@@ -9,6 +9,7 @@ import { buildActionModeAgentBlock } from './actionModeInstructions';
 import { CascadeGuard } from './CascadeGuard';
 import { CrossTeamOutbox } from './CrossTeamOutbox';
 
+import type { TeamCrossTeamProvisioningApi } from './contracts/TeamProvisioningApis';
 import type { TeamConfigReader } from './TeamConfigReader';
 import type { TeamDataService } from './TeamDataService';
 import type { TeamInboxWriter } from './TeamInboxWriter';
@@ -56,25 +57,6 @@ export interface CrossTeamTarget {
   isOnline?: boolean;
 }
 
-interface CrossTeamProvisioningPort {
-  resolveCrossTeamReplyMetadata(
-    teamName: string,
-    toTeam: string
-  ): { conversationId: string; replyToConversationId: string } | null;
-  registerPendingCrossTeamReplyExpectation(
-    teamName: string,
-    otherTeam: string,
-    conversationId: string
-  ): void;
-  clearPendingCrossTeamReplyExpectation(
-    teamName: string,
-    otherTeam: string,
-    conversationId: string
-  ): void;
-  isTeamAlive(teamName: string): boolean;
-  relayLeadInboxMessages(teamName: string): Promise<unknown>;
-}
-
 export class CrossTeamService {
   private cascadeGuard = new CascadeGuard();
   private outbox = new CrossTeamOutbox();
@@ -83,7 +65,7 @@ export class CrossTeamService {
     private configReader: TeamConfigReader,
     private dataService: TeamDataService,
     private inboxWriter: TeamInboxWriter,
-    private provisioning: CrossTeamProvisioningPort | null
+    private provisioning: TeamCrossTeamProvisioningApi | null
   ) {}
 
   async send(request: CrossTeamSendRequest): Promise<CrossTeamSendResult> {

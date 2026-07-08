@@ -3,7 +3,9 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createOpenCodeRuntimeStopFlowPortsFromDeps,
   createTeamProvisioningStopFlowBoundary,
+  createTeamProvisioningStopFlowDepsFromService,
   type TeamProvisioningStopFlowFactoryDeps,
+  type TeamProvisioningStopFlowServiceHost,
 } from '../TeamProvisioningStopFlowPortsFactory';
 
 import type { TeamLaunchRuntimeAdapter } from '../../runtime';
@@ -125,11 +127,13 @@ function createDeps(
     provisioningRunByTeam,
     invalidateRuntimeSnapshotCaches: vi.fn(),
     pauseActiveIntervalsForTeam: vi.fn(),
-    stopPersistentTeamMembers: vi.fn(),
+    persistentRuntimeCleanup: {
+      stopPersistentTeamMembers: vi.fn(),
+      cleanupAnthropicApiKeyHelperMaterialForStoppedTeam: vi.fn(),
+    },
     openCodeRuntimeDeliveryAdvisory: { cancelTeam: vi.fn() },
     isCancellableRuntimeAdapterProgress: vi.fn(() => false),
     cancelRuntimeAdapterProvisioning: vi.fn(),
-    cleanupAnthropicApiKeyHelperMaterialForStoppedTeam: vi.fn(),
     withTeamLock: vi.fn(async (_teamName, fn) => fn()),
     hasSecondaryRuntimeRuns: vi.fn(() => false),
     killTeamProcess: vi.fn((child) => {
@@ -161,6 +165,87 @@ function createDeps(
 }
 
 describe('TeamProvisioningStopFlowPortsFactory', () => {
+  it('builds stop flow deps from service-shaped dependencies', async () => {
+    const deps = createDeps();
+    const service = {
+      getSecondaryRuntimeRuns: deps.getSecondaryRuntimeRuns,
+      stoppingSecondaryRuntimeTeams: deps.stoppingSecondaryRuntimeTeams,
+      appShellBoundary: {
+        getOpenCodeRuntimeAdapter: deps.getOpenCodeRuntimeAdapter,
+      },
+      launchStateStore: {
+        read: deps.readLaunchState,
+      },
+      writeLaunchStateSnapshot: deps.writeLaunchStateSnapshot,
+      readPersistedTeamProjectPath: deps.readPersistedTeamProjectPath,
+      deleteSecondaryRuntimeRun: deps.deleteSecondaryRuntimeRun,
+      clearSecondaryRuntimeRuns: deps.clearSecondaryRuntimeRuns,
+      runtimeAdapterRunByTeam: deps.runtimeAdapterRunByTeam,
+      runtimeAdapterProgressByRunId: deps.runtimeAdapterProgressByRunId,
+      runtimeAdapterProgressState: {
+        setRuntimeAdapterProgress: deps.setRuntimeAdapterProgress,
+      },
+      toolApprovalFacade: {
+        clearOpenCodeRuntimeToolApprovals: deps.clearOpenCodeRuntimeToolApprovals,
+      },
+      runTracking: {
+        getTrackedRunId: deps.getTrackedRunId,
+        getAliveRunId: deps.getAliveRunId,
+        deleteAliveRunId: deps.deleteAliveRunId,
+      },
+      runs: deps.runs,
+      provisioningRunByTeam: deps.provisioningRunByTeam,
+      invalidateRuntimeSnapshotCaches: deps.invalidateRuntimeSnapshotCaches,
+      taskActivityIntervalService: {
+        pauseActiveIntervalsForTeam: deps.pauseActiveIntervalsForTeam,
+      },
+      persistentRuntimeCleanup: {
+        stopPersistentTeamMembers: deps.persistentRuntimeCleanup.stopPersistentTeamMembers,
+        cleanupAnthropicApiKeyHelperMaterialForStoppedTeam:
+          deps.persistentRuntimeCleanup.cleanupAnthropicApiKeyHelperMaterialForStoppedTeam,
+      },
+      openCodeRuntimeDeliveryAdvisory: deps.openCodeRuntimeDeliveryAdvisory,
+      cancellationBoundary: {
+        isCancellableRuntimeAdapterProgress: deps.isCancellableRuntimeAdapterProgress,
+        cancelRuntimeAdapterProvisioning: deps.cancelRuntimeAdapterProvisioning,
+      },
+      withTeamLock: deps.withTeamLock,
+      hasSecondaryRuntimeRuns: deps.hasSecondaryRuntimeRuns,
+      cleanupRun: deps.cleanupRun,
+      teamChangeEmitter: deps.emitTeamChange,
+    } satisfies TeamProvisioningStopFlowServiceHost<StopFactoryRun>;
+
+    const built = createTeamProvisioningStopFlowDepsFromService(service, {
+      getTeamsBasePath: deps.getTeamsBasePath,
+      clearOpenCodeRuntimeLaneStorage: deps.clearOpenCodeRuntimeLaneStorage,
+      killTeamProcess: deps.killTeamProcess,
+      updateProgress: deps.updateProgress,
+      logger: deps.logger,
+      nowIso: deps.nowIso,
+    });
+    const ports = createOpenCodeRuntimeStopFlowPortsFromDeps(built);
+
+    expect(ports.teamsBasePath).toBe('/teams');
+    expect(ports.runtimeAdapterRunByTeam).toBe(deps.runtimeAdapterRunByTeam);
+    await ports.clearOpenCodeRuntimeLaneStorage({
+      teamsBasePath: ports.teamsBasePath,
+      teamName: 'team-a',
+      laneId: 'primary',
+    });
+    ports.clearOpenCodeRuntimeToolApprovals('team-a', { emitDismiss: true });
+    ports.deleteAliveRunId('team-a');
+
+    expect(deps.clearOpenCodeRuntimeLaneStorage).toHaveBeenCalledWith({
+      teamsBasePath: '/teams',
+      teamName: 'team-a',
+      laneId: 'primary',
+    });
+    expect(deps.clearOpenCodeRuntimeToolApprovals).toHaveBeenCalledWith('team-a', {
+      emitDismiss: true,
+    });
+    expect(deps.deleteAliveRunId).toHaveBeenCalledWith('team-a');
+  });
+
   it('creates OpenCode runtime stop ports from explicit service dependencies', async () => {
     const deps = createDeps();
     const ports = createOpenCodeRuntimeStopFlowPortsFromDeps(deps);
@@ -210,7 +295,7 @@ describe('TeamProvisioningStopFlowPortsFactory', () => {
 
     expect(deps.invalidateRuntimeSnapshotCaches).toHaveBeenCalledWith(teamName);
     expect(deps.pauseActiveIntervalsForTeam).toHaveBeenCalledWith(teamName);
-    expect(deps.stopPersistentTeamMembers).toHaveBeenCalledWith(teamName);
+    expect(deps.persistentRuntimeCleanup.stopPersistentTeamMembers).toHaveBeenCalledWith(teamName);
     expect(deps.openCodeRuntimeDeliveryAdvisory.cancelTeam).toHaveBeenCalledWith(teamName);
     expect(deps.killTeamProcess).toHaveBeenCalledWith(run.child);
     expect(run.processKilled).toBe(true);
@@ -223,7 +308,9 @@ describe('TeamProvisioningStopFlowPortsFactory', () => {
       })
     );
     expect(deps.cleanupRun).toHaveBeenCalledWith(run);
-    expect(deps.cleanupAnthropicApiKeyHelperMaterialForStoppedTeam).toHaveBeenCalledWith(teamName);
+    expect(
+      deps.persistentRuntimeCleanup.cleanupAnthropicApiKeyHelperMaterialForStoppedTeam
+    ).toHaveBeenCalledWith(teamName);
   });
 
   it('routes missing tracked OpenCode runtime runs to adapter stop ports', async () => {
@@ -277,6 +364,8 @@ describe('TeamProvisioningStopFlowPortsFactory', () => {
       runId,
       detail: 'stopped',
     });
-    expect(deps.cleanupAnthropicApiKeyHelperMaterialForStoppedTeam).toHaveBeenCalledWith(teamName);
+    expect(
+      deps.persistentRuntimeCleanup.cleanupAnthropicApiKeyHelperMaterialForStoppedTeam
+    ).toHaveBeenCalledWith(teamName);
   });
 });

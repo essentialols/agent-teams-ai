@@ -65,12 +65,6 @@ export interface TeamProvisioningStopAllPorts {
   logger: StopLogger;
 }
 
-export interface TeamProvisioningPersistentStopPorts<TMember> {
-  readPersistedRuntimeMembers(teamName: string): TMember[];
-  killPersistedPaneMembers(teamName: string, members: TMember[]): void;
-  killOrphanedTeamAgentProcesses(teamName: string): void;
-}
-
 export function getOrphanPersistedTeamNames(
   persistedTeamNames: readonly string[],
   trackedTeamNames: Iterable<string>
@@ -154,17 +148,6 @@ export async function stopTeamFlow<TRun extends TeamProvisioningStopRun>(
   ports.logger.info(`[${teamName}] Process stopped (SIGKILL)`);
   await stopSecondaryRuntimeLanes;
   await ports.cleanupAnthropicApiKeyHelperMaterialForStoppedTeam(teamName);
-}
-
-export function stopPersistentTeamMembersFlow<TMember>(
-  teamName: string,
-  ports: TeamProvisioningPersistentStopPorts<TMember>
-): void {
-  const members = ports.readPersistedRuntimeMembers(teamName);
-  if (members.length > 0) {
-    ports.killPersistedPaneMembers(teamName, members);
-  }
-  ports.killOrphanedTeamAgentProcesses(teamName);
 }
 
 export async function stopAllTeamsFlow(ports: TeamProvisioningStopAllPorts): Promise<void> {

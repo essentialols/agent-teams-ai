@@ -4,17 +4,26 @@ import {
   snapshotToMemberSpawnStatuses,
 } from '../TeamLaunchStateEvaluator';
 
+import { getPersistedLaunchMemberNames } from './TeamProvisioningLaunchStateProjection';
 import {
-  type MemberSpawnStatusesSnapshotPorts,
-  type MemberSpawnStatusRun,
-} from './TeamProvisioningMemberSpawnSnapshots';
+  buildRuntimeSpawnStatusRecord,
+  filterRemovedMembersFromLaunchSnapshot,
+} from './TeamProvisioningMemberStatusProjection';
+import { nowIso } from './TeamProvisioningRunProgress';
 
 import type { TeamMembersMetaStore } from '../TeamMembersMetaStore';
+import type {
+  MemberSpawnStatusesSnapshotPorts,
+  MemberSpawnStatusRun,
+} from './TeamProvisioningMemberSpawnSnapshots';
 import type { PersistedTeamLaunchSnapshot } from '@shared/types';
 
 type TeamProvisioningMemberSpawnStatusesMetaMembers = Awaited<
   ReturnType<TeamMembersMetaStore['getMembers']>
 >;
+
+const DEFAULT_LIVE_MEMBER_SPAWN_STATUS_SNAPSHOT_CACHE_TTL_MS = 500;
+const DEFAULT_PERSISTED_MEMBER_SPAWN_STATUS_SNAPSHOT_CACHE_TTL_MS = 5_000;
 
 export interface TeamProvisioningMemberSpawnStatusesSnapshotPortsFactoryDeps<
   TRun extends MemberSpawnStatusRun,
@@ -44,9 +53,8 @@ export interface TeamProvisioningMemberSpawnStatusesSnapshotPortsHost<
   runTracking: {
     getTrackedRunId(teamName: string): string | null;
   };
-  ttl: Pick<
-    MemberSpawnStatusesSnapshotPorts<TRun>['cache'],
-    'liveCacheTtlMs' | 'persistedCacheTtlMs'
+  ttl?: Partial<
+    Pick<MemberSpawnStatusesSnapshotPorts<TRun>['cache'], 'liveCacheTtlMs' | 'persistedCacheTtlMs'>
   >;
   readTaskActivityRepairLaunchSnapshot: MemberSpawnStatusesSnapshotPorts<TRun>['persisted']['readTaskActivityRepairLaunchSnapshot'];
   repairStaleTaskActivityIntervalsOnce: MemberSpawnStatusesSnapshotPorts<TRun>['persisted']['repairStaleTaskActivityIntervalsOnce'];
@@ -79,6 +87,35 @@ export interface TeamProvisioningMemberSpawnStatusesSnapshotPortsHost<
   ): ReturnType<MemberSpawnStatusesSnapshotPorts<TRun>['live']['getPersistedLaunchMemberNames']>;
   nowMs(): number;
   nowIso: MemberSpawnStatusesSnapshotPorts<TRun>['nowIso'];
+}
+
+export interface TeamProvisioningMemberSpawnStatusesCacheGenerationPort {
+  getMemberSpawnStatusesCacheGeneration(teamName: string): number;
+}
+
+export interface TeamProvisioningMemberSpawnStatusesSnapshotServiceHost<
+  TRun extends MemberSpawnStatusRun,
+> {
+  runs: TeamProvisioningMemberSpawnStatusesSnapshotPortsHost<TRun>['runs'];
+  memberSpawnStatusesSnapshotCache: TeamProvisioningMemberSpawnStatusesSnapshotPortsHost<TRun>['cache']['snapshotCache'];
+  memberSpawnStatusesInFlightByTeam: TeamProvisioningMemberSpawnStatusesSnapshotPortsHost<TRun>['cache']['inFlightByTeam'];
+  runtimeSnapshotCacheBoundary: TeamProvisioningMemberSpawnStatusesCacheGenerationPort;
+  runTracking: TeamProvisioningMemberSpawnStatusesSnapshotPortsHost<TRun>['runTracking'];
+  configTaskActivityBoundary: Pick<
+    TeamProvisioningMemberSpawnStatusesSnapshotPortsHost<TRun>,
+    'readTaskActivityRepairLaunchSnapshot' | 'repairStaleTaskActivityIntervalsOnce'
+  >;
+  reconcilePersistedLaunchState: TeamProvisioningMemberSpawnStatusesSnapshotPortsHost<TRun>['reconcilePersistedLaunchState'];
+  attachLiveRuntimeMetadataToStatuses: TeamProvisioningMemberSpawnStatusesSnapshotPortsHost<TRun>['attachLiveRuntimeMetadataToStatuses'];
+  getOpenCodeSecondaryBootstrapPendingMemberNames: TeamProvisioningMemberSpawnStatusesSnapshotPortsHost<TRun>['getOpenCodeSecondaryBootstrapPendingMemberNames'];
+  taskActivityIntervalService: TeamProvisioningMemberSpawnStatusesSnapshotPortsHost<TRun>['taskActivityIntervalService'];
+  refreshMemberSpawnStatusesFromLeadInbox: TeamProvisioningMemberSpawnStatusesSnapshotPortsHost<TRun>['refreshMemberSpawnStatusesFromLeadInbox'];
+  maybeAuditMemberSpawnStatuses: TeamProvisioningMemberSpawnStatusesSnapshotPortsHost<TRun>['maybeAuditMemberSpawnStatuses'];
+  persistLaunchStateSnapshot: TeamProvisioningMemberSpawnStatusesSnapshotPortsHost<TRun>['persistLaunchStateSnapshot'];
+  launchStateStore: TeamProvisioningMemberSpawnStatusesSnapshotPortsHost<TRun>['launchStateStore'];
+  syncRunMemberSpawnStatusesFromSnapshot: TeamProvisioningMemberSpawnStatusesSnapshotPortsHost<TRun>['syncRunMemberSpawnStatusesFromSnapshot'];
+  buildLiveLaunchSnapshotForRun: TeamProvisioningMemberSpawnStatusesSnapshotPortsHost<TRun>['buildLiveLaunchSnapshotForRun'];
+  membersMetaStore: TeamProvisioningMemberSpawnStatusesSnapshotPortsHost<TRun>['membersMetaStore'];
 }
 
 export function createTeamProvisioningMemberSpawnStatusesSnapshotPorts<
@@ -135,6 +172,59 @@ export function createTeamProvisioningMemberSpawnStatusesSnapshotPorts<
   };
 }
 
+export function createTeamProvisioningMemberSpawnStatusesSnapshotHostFromService<
+  TRun extends MemberSpawnStatusRun,
+>(
+  service: TeamProvisioningMemberSpawnStatusesSnapshotServiceHost<TRun>
+): TeamProvisioningMemberSpawnStatusesSnapshotPortsHost<TRun> {
+  return {
+    runs: service.runs,
+    cache: {
+      snapshotCache: service.memberSpawnStatusesSnapshotCache,
+      inFlightByTeam: service.memberSpawnStatusesInFlightByTeam,
+    },
+    getCacheGeneration: (teamName) =>
+      service.runtimeSnapshotCacheBoundary.getMemberSpawnStatusesCacheGeneration(teamName),
+    runTracking: service.runTracking,
+    readTaskActivityRepairLaunchSnapshot: (teamName) =>
+      service.configTaskActivityBoundary.readTaskActivityRepairLaunchSnapshot(teamName),
+    repairStaleTaskActivityIntervalsOnce: (teamName, launchSnapshot) =>
+      service.configTaskActivityBoundary.repairStaleTaskActivityIntervalsOnce(
+        teamName,
+        launchSnapshot
+      ),
+    reconcilePersistedLaunchState: (teamName) => service.reconcilePersistedLaunchState(teamName),
+    attachLiveRuntimeMetadataToStatuses: (teamName, statuses, options) =>
+      service.attachLiveRuntimeMetadataToStatuses(teamName, statuses, options),
+    getOpenCodeSecondaryBootstrapPendingMemberNames: (snapshot) =>
+      service.getOpenCodeSecondaryBootstrapPendingMemberNames(snapshot),
+    taskActivityIntervalService: service.taskActivityIntervalService,
+    refreshMemberSpawnStatusesFromLeadInbox: (run) =>
+      service.refreshMemberSpawnStatusesFromLeadInbox(run),
+    maybeAuditMemberSpawnStatuses: (run) => service.maybeAuditMemberSpawnStatuses(run),
+    persistLaunchStateSnapshot: (run, phase) => service.persistLaunchStateSnapshot(run, phase),
+    launchStateStore: service.launchStateStore,
+    syncRunMemberSpawnStatusesFromSnapshot: (run, snapshot) =>
+      service.syncRunMemberSpawnStatusesFromSnapshot(run, snapshot),
+    buildLiveLaunchSnapshotForRun: (run, phase) =>
+      service.buildLiveLaunchSnapshotForRun(run, phase),
+    buildRuntimeSpawnStatusRecord: (run) =>
+      buildRuntimeSpawnStatusRecord(
+        run as unknown as Parameters<typeof buildRuntimeSpawnStatusRecord>[0]
+      ),
+    membersMetaStore: service.membersMetaStore,
+    filterRemovedMembersFromLaunchSnapshot: (snapshot, metaMembers) =>
+      filterRemovedMembersFromLaunchSnapshot(
+        snapshot,
+        metaMembers,
+        getPersistedLaunchMemberNames(snapshot)
+      ),
+    getPersistedLaunchMemberNames,
+    nowMs: () => Date.now(),
+    nowIso,
+  };
+}
+
 export function createTeamProvisioningMemberSpawnStatusesSnapshotPortsBoundary<
   TRun extends MemberSpawnStatusRun,
 >(
@@ -148,8 +238,11 @@ export function createTeamProvisioningMemberSpawnStatusesSnapshotPortsBoundary<
       getCacheGeneration: (teamName) => host.getCacheGeneration(teamName),
       getTrackedRunId: (teamName) => host.runTracking.getTrackedRunId(teamName),
       nowMs: () => host.nowMs(),
-      liveCacheTtlMs: host.ttl.liveCacheTtlMs,
-      persistedCacheTtlMs: host.ttl.persistedCacheTtlMs,
+      liveCacheTtlMs:
+        host.ttl?.liveCacheTtlMs ?? DEFAULT_LIVE_MEMBER_SPAWN_STATUS_SNAPSHOT_CACHE_TTL_MS,
+      persistedCacheTtlMs:
+        host.ttl?.persistedCacheTtlMs ??
+        DEFAULT_PERSISTED_MEMBER_SPAWN_STATUS_SNAPSHOT_CACHE_TTL_MS,
     },
     persisted: {
       readTaskActivityRepairLaunchSnapshot: (teamName) =>

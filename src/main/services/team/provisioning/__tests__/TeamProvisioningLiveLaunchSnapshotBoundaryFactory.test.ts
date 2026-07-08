@@ -1,8 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createTeamProvisioningLiveLaunchSnapshotBoundary } from '../TeamProvisioningLiveLaunchSnapshotBoundaryFactory';
+import {
+  createTeamProvisioningLiveLaunchSnapshotBoundary,
+  createTeamProvisioningLiveLaunchSnapshotBoundaryDepsFromService,
+} from '../TeamProvisioningLiveLaunchSnapshotBoundaryFactory';
 
-import type { TeamProvisioningLiveLaunchSnapshotRun } from '../TeamProvisioningLiveLaunchSnapshotBoundaryFactory';
+import type {
+  TeamProvisioningLiveLaunchSnapshotBoundaryServiceHost,
+  TeamProvisioningLiveLaunchSnapshotRun,
+} from '../TeamProvisioningLiveLaunchSnapshotBoundaryFactory';
 import type { MemberSpawnStatusEntry } from '@shared/types';
 
 const NOW = '2026-07-03T00:00:00.000Z';
@@ -176,5 +182,76 @@ describe('TeamProvisioningLiveLaunchSnapshotBoundaryFactory', () => {
     boundary.emitMemberSpawnChange({ teamName: 'team-a', runId: 'run-1' }, 'Builder');
 
     expect(maybeFireTeamLaunchedNotificationWhenAllMembersJoined).not.toHaveBeenCalled();
+  });
+
+  it('builds boundary deps from service-shaped host wiring', async () => {
+    const trackedRun = run();
+    const teamChanges: Array<{
+      type: 'member-spawn';
+      teamName: string;
+      runId: string;
+      detail: string;
+    }> = [];
+    const service = {
+      runs: new Map([[trackedRun.runId, trackedRun]]),
+      pauseMemberTaskActivityForRuntimeLoss: vi.fn(),
+      buildMixedPersistedLaunchSnapshotForRun: vi.fn(() => null),
+      runtimeSnapshotCacheBoundary: {
+        invalidateMemberSpawnStatusesCache: vi.fn(),
+      },
+      teamChangeEmitter: vi.fn((event) => {
+        teamChanges.push(event);
+      }),
+      maybeFireTeamLaunchedNotificationWhenAllMembersJoined: vi.fn(async () => undefined),
+    } as unknown as TeamProvisioningLiveLaunchSnapshotBoundaryServiceHost<TeamProvisioningLiveLaunchSnapshotRun>;
+    const getPersistedLaunchMemberNames = vi.fn(() => ['Builder']);
+    const buildRuntimeSpawnStatusRecord = vi.fn(
+      (targetRun: TeamProvisioningLiveLaunchSnapshotRun) =>
+        Object.fromEntries(targetRun.memberSpawnStatuses)
+    );
+
+    const deps = createTeamProvisioningLiveLaunchSnapshotBoundaryDepsFromService(service, {
+      getPersistedLaunchMemberNames,
+      buildRuntimeSpawnStatusRecord,
+    });
+
+    expect(deps.getPersistedLaunchMemberNames({ expectedMembers: ['Builder'] } as never)).toEqual([
+      'Builder',
+    ]);
+    deps.pauseMemberTaskActivityForRuntimeLoss(
+      trackedRun,
+      'Builder',
+      status(),
+      '2026-07-03T00:01:00.000Z'
+    );
+    expect(deps.buildMixedPersistedLaunchSnapshotForRun(trackedRun, 'active')).toBeNull();
+    expect(deps.buildRuntimeSpawnStatusRecord(trackedRun)).toEqual(
+      Object.fromEntries(trackedRun.memberSpawnStatuses)
+    );
+    deps.invalidateMemberSpawnStatusesCache('team-a');
+    deps.emitTeamChange({
+      type: 'member-spawn',
+      teamName: 'team-a',
+      runId: 'run-1',
+      detail: 'Builder',
+    });
+    await deps.maybeFireTeamLaunchedNotificationWhenAllMembersJoined(trackedRun);
+
+    expect(deps.getRun(trackedRun.runId)).toBe(trackedRun);
+    expect(service.pauseMemberTaskActivityForRuntimeLoss).toHaveBeenCalledWith(
+      trackedRun,
+      'Builder',
+      expect.objectContaining({ status: 'online' }),
+      '2026-07-03T00:01:00.000Z'
+    );
+    expect(
+      service.runtimeSnapshotCacheBoundary.invalidateMemberSpawnStatusesCache
+    ).toHaveBeenCalledWith('team-a');
+    expect(teamChanges).toEqual([
+      { type: 'member-spawn', teamName: 'team-a', runId: 'run-1', detail: 'Builder' },
+    ]);
+    expect(service.maybeFireTeamLaunchedNotificationWhenAllMembersJoined).toHaveBeenCalledWith(
+      trackedRun
+    );
   });
 });

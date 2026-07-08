@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   createTeamProvisioningLiveLeadMessagePortsBoundary,
+  createTeamProvisioningLiveLeadMessagePortsDepsFromService,
   type TeamProvisioningLiveLeadMessagePortsFactoryRun,
+  type TeamProvisioningLiveLeadMessageServiceHost,
 } from '../TeamProvisioningLiveLeadMessagePortsFactory';
 
 import type { InboxMessage, TeamChangeEvent } from '@shared/types';
@@ -37,6 +39,56 @@ function createRun(
 }
 
 describe('TeamProvisioningLiveLeadMessagePortsFactory', () => {
+  it('builds live lead message deps from service-shaped dependencies', () => {
+    const run = createRun({ detectedSessionId: 'session-1' });
+    const runs = new Map([[run.runId, run]]);
+    const liveLeadProcessMessages = new Map<string, InboxMessage[]>();
+    const emitted: TeamChangeEvent[] = [];
+    const service = {
+      liveLeadProcessMessages,
+      runTracking: {
+        getTrackedRunId: vi.fn(() => run.runId),
+        getAliveRunId: vi.fn(() => run.runId),
+      },
+      runs: {
+        get: (runId: string) => runs.get(runId),
+      },
+      getRunLeadName: vi.fn(() => 'lead'),
+      appShellBoundary: {
+        getCrossTeamSender: vi.fn(() => null),
+      },
+      persistSentMessage: vi.fn(),
+      persistInboxMessage: vi.fn(),
+      teamChangeEmitter: (event: TeamChangeEvent) => emitted.push(event),
+    } satisfies TeamProvisioningLiveLeadMessageServiceHost<TeamProvisioningLiveLeadMessagePortsFactoryRun>;
+
+    const ports = createTeamProvisioningLiveLeadMessagePortsBoundary(
+      createTeamProvisioningLiveLeadMessagePortsDepsFromService(service, {
+        logger: { debug: vi.fn(), warn: vi.fn() },
+        nowIso: () => '2026-01-01T00:00:00.000Z',
+        nowMs: () => 5_000,
+        cacheLimit: 5,
+        leadTextEmitThrottleMs: 2_000,
+      })
+    );
+
+    ports.pushLiveLeadTextMessage(run, 'streamed', undefined, undefined, {
+      coalesceStreamChunk: true,
+    });
+
+    expect(ports.getCurrentLeadSessionId('alpha')).toBe('session-1');
+    expect(ports.getLiveLeadProcessMessages('alpha')).toEqual([
+      expect.objectContaining({
+        messageId: 'lead-turn-run-1-1',
+        text: 'streamed',
+        leadSessionId: 'session-1',
+      }),
+    ]);
+    expect(emitted).toEqual([
+      { type: 'lead-message', teamName: 'alpha', runId: 'run-1', detail: 'lead-text' },
+    ]);
+  });
+
   it('wires live lead process and text helpers to shared provisioning state', () => {
     const run = createRun({ detectedSessionId: 'session-1' });
     const runs = new Map([[run.runId, run]]);
@@ -99,7 +151,7 @@ describe('TeamProvisioningLiveLeadMessagePortsFactory', () => {
     const runs = new Map([[run.runId, run]]);
     const liveLeadProcessMessages = new Map<string, InboxMessage[]>();
     const sent: InboxMessage[] = [];
-    const inbox: Array<{ recipient: string; message: InboxMessage }> = [];
+    const inbox: { recipient: string; message: InboxMessage }[] = [];
     const emitted: TeamChangeEvent[] = [];
     const crossTeamSender = vi.fn().mockResolvedValue({ messageId: 'cross-1' });
     let nowMs = 5_000;

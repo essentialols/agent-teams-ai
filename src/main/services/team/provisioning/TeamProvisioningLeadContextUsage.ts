@@ -4,6 +4,8 @@ import { normalizeOptionalTeamProviderId } from '@shared/utils/teamProvider';
 
 import type { LeadContextUsage, TeamChangeEvent } from '@shared/types';
 
+const DEFAULT_LEAD_CONTEXT_USAGE_EMIT_THROTTLE_MS = 2_000;
+
 export interface LeadContextUsageRequestLike {
   providerId?: string;
   model?: string;
@@ -119,7 +121,7 @@ export function buildLeadContextUsagePayloadForRun(
 export function emitLeadContextUsageForRun<TRun extends LeadContextUsageEmissionRunLike>(
   run: TRun,
   ports: LeadContextUsageEmissionPorts<TRun>,
-  throttleMs: number
+  throttleMs: number = DEFAULT_LEAD_CONTEXT_USAGE_EMIT_THROTTLE_MS
 ): boolean {
   if (!run.leadContextUsage || !run.provisioningComplete) {
     return false;

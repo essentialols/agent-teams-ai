@@ -2,29 +2,40 @@ import { describe, expect, it } from 'vitest';
 
 import {
   bindTeamClaudeLogsApi,
+  bindTeamCrossTeamProvisioningApi,
   bindTeamDiagnosticsApi,
+  bindTeamHttpDataApi,
+  bindTeamHttpRuntimeApi,
   bindTeamLaunchApi,
   bindTeamMemberLifecycleApi,
   bindTeamMessagingApi,
   bindTeamProvisioningPreflightApi,
   bindTeamProvisioningRunApi,
+  bindTeamProvisioningStartApi,
+  bindTeamProvisioningStatusApi,
   bindTeamRuntimeApi,
   bindTeamRuntimeControlCompatibilityApi,
+  bindTeamTaskActivityRepairApi,
   bindTeamToolApprovalApi,
 } from '../TeamProvisioningApis';
 
 import type {
   OpenCodeRuntimeControlAck,
   TeamClaudeLogsApi,
+  TeamCrossTeamProvisioningApi,
   TeamDiagnosticsApi,
+  TeamHttpDataApi,
   TeamLaunchApi,
   TeamMemberLifecycleApi,
   TeamMessagingApi,
   TeamOpenCodeMemberInboxRelayOptions,
   TeamProvisioningPreflightApi,
   TeamProvisioningRunApi,
+  TeamProvisioningStartApi,
+  TeamProvisioningStatusApi,
   TeamRuntimeApi,
   TeamRuntimeControlCompatibilityApi,
+  TeamTaskActivityRepairApi,
   TeamToolApprovalApi,
 } from '../TeamProvisioningApis';
 import type {
@@ -34,26 +45,28 @@ import type {
   MemberSpawnStatusesSnapshot,
   RetryFailedOpenCodeSecondaryLanesResult,
   TeamAgentRuntimeSnapshot,
+  TeamCreateConfigRequest,
+  TeamCreateRequest,
   TeamCreateResponse,
   TeamLaunchResponse,
   TeamProvisioningPrepareResult,
   TeamProvisioningProgress,
   TeamRuntimeState,
+  TeamSummary,
+  TeamViewSnapshot,
   ToolApprovalSettings,
 } from '@shared/types/team';
 
 const TEST_TEAM_CWD = '/workspace/team';
 
 describe('TeamProvisioning API binders', () => {
-  it('binds launch methods and optional status repair to the source object', async () => {
+  it('binds launch methods to the source object', async () => {
     interface LaunchSource extends TeamLaunchApi {
       readonly runId: string;
-      repairedTeamName: string | null;
     }
 
     const source: LaunchSource = {
       runId: 'run-bound',
-      repairedTeamName: null,
       createTeam(this: LaunchSource): Promise<TeamCreateResponse> {
         return Promise.resolve({ runId: this.runId });
       },
@@ -70,21 +83,12 @@ describe('TeamProvisioning API binders', () => {
           updatedAt: '2026-01-01T00:00:00.000Z',
         });
       },
-      repairStaleTaskActivityIntervalsBeforeSnapshot(
-        this: LaunchSource,
-        teamName: string
-      ): Promise<void> {
-        this.repairedTeamName = teamName;
-        return Promise.resolve();
-      },
     };
 
     const api = bindTeamLaunchApi(source);
     const createTeam = api.createTeam.bind(undefined);
     const launchTeam = api.launchTeam.bind(undefined);
     const getProvisioningStatus = api.getProvisioningStatus.bind(undefined);
-    const repairStaleTaskActivityIntervalsBeforeSnapshot =
-      api.repairStaleTaskActivityIntervalsBeforeSnapshot?.bind(undefined);
 
     await expect(
       createTeam({ teamName: 'team-bound', cwd: TEST_TEAM_CWD, members: [] }, () => undefined)
@@ -100,8 +104,34 @@ describe('TeamProvisioning API binders', () => {
       runId: 'run-bound',
       teamName: 'team-bound',
     });
-    await repairStaleTaskActivityIntervalsBeforeSnapshot?.('team-bound');
-    expect(source.repairedTeamName).toBe('team-bound');
+  });
+
+  it('binds provisioning start through a launch-only facade', async () => {
+    interface StartSource extends TeamProvisioningStartApi {
+      readonly runId: string;
+    }
+
+    const source: StartSource = {
+      runId: 'run-start',
+      createTeam(this: StartSource): Promise<TeamCreateResponse> {
+        return Promise.resolve({ runId: this.runId });
+      },
+      launchTeam(this: StartSource): Promise<TeamLaunchResponse> {
+        return Promise.resolve({ runId: this.runId });
+      },
+    };
+
+    const api = bindTeamProvisioningStartApi(source);
+    const createTeam = api.createTeam.bind(undefined);
+    const launchTeam = api.launchTeam.bind(undefined);
+
+    expect(Object.keys(api).sort()).toEqual(['createTeam', 'launchTeam']);
+    await expect(
+      createTeam({ teamName: 'team-start', cwd: TEST_TEAM_CWD, members: [] }, () => undefined)
+    ).resolves.toEqual({ runId: 'run-start' });
+    await expect(
+      launchTeam({ teamName: 'team-start', cwd: TEST_TEAM_CWD }, () => undefined)
+    ).resolves.toEqual({ runId: 'run-start' });
   });
 
   it('binds provisioning preflight methods to the source object', async () => {
@@ -133,6 +163,35 @@ describe('TeamProvisioning API binders', () => {
     await expect(prepareForProvisioning('/workspace/preflight')).resolves.toEqual({
       ready: true,
       message: '/workspace/preflight',
+    });
+  });
+
+  it('binds provisioning status through a narrow status facade', async () => {
+    interface StatusSource extends TeamProvisioningStatusApi {
+      readonly runId: string;
+    }
+
+    const source: StatusSource = {
+      runId: 'run-status',
+      getProvisioningStatus(this: StatusSource): Promise<TeamProvisioningProgress> {
+        return Promise.resolve({
+          runId: this.runId,
+          teamName: 'team-status',
+          state: 'ready',
+          message: 'ready',
+          startedAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:01.000Z',
+        });
+      },
+    };
+
+    const api = bindTeamProvisioningStatusApi(source);
+    const getProvisioningStatus = api.getProvisioningStatus.bind(undefined);
+
+    expect(Object.keys(api)).toEqual(['getProvisioningStatus']);
+    await expect(getProvisioningStatus('run-status')).resolves.toMatchObject({
+      runId: 'run-status',
+      teamName: 'team-status',
     });
   });
 
@@ -180,6 +239,91 @@ describe('TeamProvisioning API binders', () => {
       total: 1,
       hasMore: false,
     });
+  });
+
+  it('binds task activity repair to the source object', async () => {
+    interface TaskActivityRepairSource extends TeamTaskActivityRepairApi {
+      repairedTeamName: string | null;
+    }
+
+    const source: TaskActivityRepairSource = {
+      repairedTeamName: null,
+      repairStaleTaskActivityIntervalsBeforeSnapshot(
+        this: TaskActivityRepairSource,
+        teamName: string
+      ): Promise<void> {
+        this.repairedTeamName = teamName;
+        return Promise.resolve();
+      },
+    };
+
+    const api = bindTeamTaskActivityRepairApi(source);
+    const repairStaleTaskActivityIntervalsBeforeSnapshot =
+      api.repairStaleTaskActivityIntervalsBeforeSnapshot.bind(undefined);
+
+    await repairStaleTaskActivityIntervalsBeforeSnapshot('team-bound');
+    expect(source.repairedTeamName).toBe('team-bound');
+  });
+
+  it('binds HTTP team data methods to the source object', async () => {
+    interface TeamDataSource extends TeamHttpDataApi {
+      readonly suffix: string;
+      createdTeamName: string | null;
+    }
+
+    const source: TeamDataSource = {
+      suffix: 'bound',
+      createdTeamName: null,
+      listTeams(this: TeamDataSource): Promise<TeamSummary[]> {
+        return Promise.resolve([
+          {
+            teamName: `team-${this.suffix}`,
+            displayName: 'Bound Team',
+            memberCount: 0,
+            taskCount: 0,
+            lastActivity: null,
+          } as TeamSummary,
+        ]);
+      },
+      getTeamData(this: TeamDataSource, teamName: string): Promise<TeamViewSnapshot> {
+        return Promise.resolve({
+          teamName: `${teamName}-${this.suffix}`,
+          config: null,
+          tasks: [],
+          messages: [],
+          processes: [],
+          kanban: null,
+        } as unknown as TeamViewSnapshot);
+      },
+      getSavedRequest(teamName: string): Promise<TeamCreateRequest | null> {
+        return Promise.resolve({ teamName, cwd: TEST_TEAM_CWD, members: [] });
+      },
+      createTeamConfig(this: TeamDataSource, request: TeamCreateConfigRequest): Promise<void> {
+        this.createdTeamName = request.teamName;
+        return Promise.resolve();
+      },
+    };
+
+    const api = bindTeamHttpDataApi(source);
+    const listTeams = api.listTeams.bind(undefined);
+    const getTeamData = api.getTeamData.bind(undefined);
+    const getSavedRequest = api.getSavedRequest.bind(undefined);
+    const createTeamConfig = api.createTeamConfig.bind(undefined);
+
+    await expect(listTeams()).resolves.toEqual([
+      expect.objectContaining({ teamName: 'team-bound' }),
+    ]);
+    await expect(getTeamData('demo')).resolves.toMatchObject({ teamName: 'demo-bound' });
+    await expect(getSavedRequest('draft-team')).resolves.toMatchObject({
+      teamName: 'draft-team',
+      cwd: TEST_TEAM_CWD,
+    });
+    await createTeamConfig({
+      teamName: 'created-team',
+      cwd: TEST_TEAM_CWD,
+      members: [],
+    } as TeamCreateConfigRequest);
+    expect(source.createdTeamName).toBe('created-team');
   });
 
   it('binds runtime control methods to the source object', async () => {
@@ -270,7 +414,7 @@ describe('TeamProvisioning API binders', () => {
     expect(source.compatibilityCalls).toBe(2);
   });
 
-  it('keeps runtime, runtime-control, and member lifecycle APIs as separate control surfaces', () => {
+  it('keeps runtime, runtime-control, task activity, and member lifecycle APIs as separate control surfaces', () => {
     const ack: OpenCodeRuntimeControlAck = {
       ok: true,
       providerId: 'opencode',
@@ -299,6 +443,9 @@ describe('TeamProvisioning API binders', () => {
       recordOpenCodeRuntimeTaskEvent: () => Promise.resolve(ack),
       recordOpenCodeRuntimeHeartbeat: () => Promise.resolve(ack),
     };
+    const taskActivitySource: TeamTaskActivityRepairApi = {
+      repairStaleTaskActivityIntervalsBeforeSnapshot: () => Promise.resolve(),
+    };
     const lifecycleSource: TeamMemberLifecycleApi = {
       getMemberSpawnStatuses: () => Promise.resolve({ statuses: {}, runId: 'run-bound' }),
       attachLiveRosterMember: () => Promise.resolve(),
@@ -316,7 +463,9 @@ describe('TeamProvisioning API binders', () => {
     };
 
     const runtimeApi = bindTeamRuntimeApi(runtimeSource);
+    const httpRuntimeApi = bindTeamHttpRuntimeApi(runtimeSource);
     const runtimeControlApi = bindTeamRuntimeControlCompatibilityApi(runtimeControlSource);
+    const taskActivityApi = bindTeamTaskActivityRepairApi(taskActivitySource);
     const lifecycleApi = bindTeamMemberLifecycleApi(lifecycleSource);
 
     expect(Object.keys(runtimeApi).sort()).toEqual([
@@ -326,11 +475,19 @@ describe('TeamProvisioning API binders', () => {
       'isTeamAlive',
       'stopTeam',
     ]);
+    expect(Object.keys(httpRuntimeApi).sort()).toEqual([
+      'getAliveTeams',
+      'getRuntimeState',
+      'stopTeam',
+    ]);
     expect(Object.keys(runtimeControlApi).sort()).toEqual([
       'deliverOpenCodeRuntimeMessage',
       'recordOpenCodeRuntimeBootstrapCheckin',
       'recordOpenCodeRuntimeHeartbeat',
       'recordOpenCodeRuntimeTaskEvent',
+    ]);
+    expect(Object.keys(taskActivityApi).sort()).toEqual([
+      'repairStaleTaskActivityIntervalsBeforeSnapshot',
     ]);
     expect(Object.keys(lifecycleApi).sort()).toEqual([
       'attachLiveRosterMember',
@@ -342,9 +499,13 @@ describe('TeamProvisioning API binders', () => {
     ]);
     const runtimeKeys = new Set(Object.keys(runtimeApi));
     const runtimeControlKeys = new Set(Object.keys(runtimeControlApi));
+    const taskActivityKeys = new Set(Object.keys(taskActivityApi));
     expect(Object.keys(runtimeControlApi).filter((key) => runtimeKeys.has(key))).toEqual([]);
+    expect(Object.keys(taskActivityApi).filter((key) => runtimeKeys.has(key))).toEqual([]);
+    expect(Object.keys(taskActivityApi).filter((key) => runtimeControlKeys.has(key))).toEqual([]);
     expect(Object.keys(lifecycleApi).filter((key) => runtimeKeys.has(key))).toEqual([]);
     expect(Object.keys(lifecycleApi).filter((key) => runtimeControlKeys.has(key))).toEqual([]);
+    expect(Object.keys(lifecycleApi).filter((key) => taskActivityKeys.has(key))).toEqual([]);
   });
 
   it('binds member lifecycle and diagnostics methods to the source object', async () => {
@@ -573,6 +734,78 @@ describe('TeamProvisioning API binders', () => {
     });
     expect(api.getCurrentLeadSessionId('team-bound')).toBe('session:team-bound');
     expect(api.getLiveLeadProcessMessages('team-bound')).toHaveLength(1);
+  });
+
+  it('binds cross-team provisioning relay methods to a narrow facade', async () => {
+    interface CrossTeamSource extends TeamCrossTeamProvisioningApi {
+      readonly marker: string;
+      registered: string[];
+      cleared: string[];
+      relayedTeamName: string | null;
+    }
+
+    const source: CrossTeamSource = {
+      marker: 'source-bound',
+      registered: [],
+      cleared: [],
+      relayedTeamName: null,
+      resolveCrossTeamReplyMetadata(this: CrossTeamSource, teamName: string, toTeam: string) {
+        return {
+          conversationId: `${this.marker}:${teamName}:${toTeam}`,
+          replyToConversationId: `reply:${toTeam}`,
+        };
+      },
+      registerPendingCrossTeamReplyExpectation(
+        this: CrossTeamSource,
+        teamName: string,
+        otherTeam: string,
+        conversationId: string
+      ): void {
+        this.registered.push(`${teamName}:${otherTeam}:${conversationId}`);
+      },
+      clearPendingCrossTeamReplyExpectation(
+        this: CrossTeamSource,
+        teamName: string,
+        otherTeam: string,
+        conversationId: string
+      ): void {
+        this.cleared.push(`${teamName}:${otherTeam}:${conversationId}`);
+      },
+      isTeamAlive(this: CrossTeamSource, teamName: string): boolean {
+        return teamName === this.marker;
+      },
+      relayLeadInboxMessages(this: CrossTeamSource, teamName: string): Promise<number> {
+        this.relayedTeamName = teamName;
+        return Promise.resolve(3);
+      },
+    };
+
+    const api = bindTeamCrossTeamProvisioningApi(source);
+    const resolveCrossTeamReplyMetadata = api.resolveCrossTeamReplyMetadata.bind(undefined);
+    const registerPendingCrossTeamReplyExpectation =
+      api.registerPendingCrossTeamReplyExpectation.bind(undefined);
+    const clearPendingCrossTeamReplyExpectation =
+      api.clearPendingCrossTeamReplyExpectation.bind(undefined);
+    const relayLeadInboxMessages = api.relayLeadInboxMessages.bind(undefined);
+
+    expect(Object.keys(api).sort()).toEqual([
+      'clearPendingCrossTeamReplyExpectation',
+      'isTeamAlive',
+      'registerPendingCrossTeamReplyExpectation',
+      'relayLeadInboxMessages',
+      'resolveCrossTeamReplyMetadata',
+    ]);
+    expect(resolveCrossTeamReplyMetadata('team-a', 'team-b')).toEqual({
+      conversationId: 'source-bound:team-a:team-b',
+      replyToConversationId: 'reply:team-b',
+    });
+    registerPendingCrossTeamReplyExpectation('team-a', 'team-b', 'conversation-1');
+    clearPendingCrossTeamReplyExpectation('team-a', 'team-b', 'conversation-1');
+    expect(source.registered).toEqual(['team-a:team-b:conversation-1']);
+    expect(source.cleared).toEqual(['team-a:team-b:conversation-1']);
+    expect(api.isTeamAlive('source-bound')).toBe(true);
+    await expect(relayLeadInboxMessages('team-b')).resolves.toBe(3);
+    expect(source.relayedTeamName).toBe('team-b');
   });
 
   it('binds tool approval methods to the source object', async () => {

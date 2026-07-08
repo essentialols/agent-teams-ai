@@ -41,6 +41,7 @@ export interface TeamProvisioningOpenCodeRuntimeDeliveryBoundaryFactoryPorts<
   isOpenCodeRuntimeRecipient: DeliveryBoundaryPorts<Run>['isOpenCodeRuntimeRecipient'];
   getOpenCodeAgendaSyncRecoveryBypassMessageIds: DeliveryBoundaryPorts<Run>['getOpenCodeAgendaSyncRecoveryBypassMessageIds'];
   resolveOpenCodeMemberDeliveryIdentity: DeliveryBoundaryPorts<Run>['resolveOpenCodeMemberDeliveryIdentity'];
+  tryRecoverOpenCodeRuntimeLaneForConfiguredMemberBeforeDelivery: DeliveryBoundaryPorts<Run>['tryRecoverOpenCodeRuntimeLaneForConfiguredMemberBeforeDelivery'];
   tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive: DeliveryBoundaryPorts<Run>['tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive'];
   decideOpenCodeRuntimeDeliveryUserFacingAdvisory: DeliveryBoundaryPorts<Run>['decideOpenCodeRuntimeDeliveryUserFacingAdvisory'];
   isOpenCodePromptDeliveryWatchdogEnabled: DeliveryBoundaryPorts<Run>['isOpenCodePromptDeliveryWatchdogEnabled'];
@@ -97,6 +98,7 @@ export interface TeamProvisioningOpenCodeRuntimeDeliveryBoundaryHost<
   getCrossTeamSender: DeliveryBoundaryPorts<Run>['getCrossTeamSender'];
   isOpenCodeRuntimeRecipient: DeliveryBoundaryPorts<Run>['isOpenCodeRuntimeRecipient'];
   getOpenCodeAgendaSyncRecoveryBypassMessageIds: DeliveryBoundaryPorts<Run>['getOpenCodeAgendaSyncRecoveryBypassMessageIds'];
+  tryRecoverOpenCodeRuntimeLaneForConfiguredMemberBeforeDelivery: DeliveryBoundaryPorts<Run>['tryRecoverOpenCodeRuntimeLaneForConfiguredMemberBeforeDelivery'];
   tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive: DeliveryBoundaryPorts<Run>['tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive'];
   decideOpenCodeRuntimeDeliveryUserFacingAdvisory: DeliveryBoundaryPorts<Run>['decideOpenCodeRuntimeDeliveryUserFacingAdvisory'];
   openCodePromptDeliveryWatchdogScheduler: {
@@ -129,9 +131,46 @@ export interface TeamProvisioningOpenCodeRuntimeDeliveryBoundaryHostFactoryServi
   sentMessagesStore: DeliveryBoundaryPorts<Run>['sentMessagesStore'];
   inboxReader: DeliveryBoundaryPorts<Run>['inboxReader'];
   inboxWriter: DeliveryBoundaryPorts<Run>['inboxWriter'];
-  crossTeamSender: ReturnType<DeliveryBoundaryPorts<Run>['getCrossTeamSender']>;
+  getCrossTeamSender: DeliveryBoundaryPorts<Run>['getCrossTeamSender'];
   isOpenCodeRuntimeRecipient: DeliveryBoundaryPorts<Run>['isOpenCodeRuntimeRecipient'];
   getOpenCodeAgendaSyncRecoveryBypassMessageIds: DeliveryBoundaryPorts<Run>['getOpenCodeAgendaSyncRecoveryBypassMessageIds'];
+  tryRecoverOpenCodeRuntimeLaneForConfiguredMemberBeforeDelivery: DeliveryBoundaryPorts<Run>['tryRecoverOpenCodeRuntimeLaneForConfiguredMemberBeforeDelivery'];
+  tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive: DeliveryBoundaryPorts<Run>['tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive'];
+  decideOpenCodeRuntimeDeliveryUserFacingAdvisory: DeliveryBoundaryPorts<Run>['decideOpenCodeRuntimeDeliveryUserFacingAdvisory'];
+  openCodePromptDeliveryWatchdogScheduler: TeamProvisioningOpenCodeRuntimeDeliveryBoundaryHost<Run>['openCodePromptDeliveryWatchdogScheduler'];
+  scheduleOpenCodePromptDeliveryWatchdog: DeliveryBoundaryPorts<Run>['scheduleOpenCodePromptDeliveryWatchdog'];
+}
+
+export interface TeamProvisioningOpenCodeRuntimeDeliveryBoundaryServiceHost<
+  Run extends OpenCodeRuntimeCheckinRun,
+> {
+  resolveOpenCodeRuntimeLaneId: DeliveryBoundaryPorts<Run>['resolveOpenCodeRuntimeLaneId'];
+  openCodeRuntimeRecoveryIdentity: TeamProvisioningOpenCodeRuntimeDeliveryBoundaryHost<Run>['openCodeRuntimeRecoveryIdentity'];
+  launchStateStore: TeamProvisioningOpenCodeRuntimeDeliveryBoundaryHost<Run>['launchStateStore'];
+  writeLaunchStateSnapshot: TeamProvisioningOpenCodeRuntimeDeliveryBoundaryHost<Run>['writeLaunchStateSnapshot'];
+  readConfigForStrictDecision: DeliveryBoundaryPorts<Run>['readConfigForStrictDecision'];
+  membersMetaStore: TeamProvisioningOpenCodeRuntimeDeliveryBoundaryHost<Run>['membersMetaStore'];
+  readPersistedRuntimeMembers: DeliveryBoundaryPorts<Run>['readPersistedRuntimeMembers'];
+  runTracking: TeamProvisioningOpenCodeRuntimeDeliveryBoundaryHost<Run>['runTracking'];
+  runs: TeamProvisioningOpenCodeRuntimeDeliveryBoundaryHost<Run>['runs'];
+  persistLaunchStateSnapshot: TeamProvisioningOpenCodeRuntimeDeliveryBoundaryHost<Run>['persistLaunchStateSnapshot'];
+  getMixedSecondaryLaunchPhase: TeamProvisioningOpenCodeRuntimeDeliveryBoundaryFactoryPorts<Run>['getMixedSecondaryLaunchPhase'];
+  invalidateRuntimeSnapshotCaches: DeliveryBoundaryPorts<Run>['invalidateRuntimeSnapshotCaches'];
+  emitMemberSpawnChange: DeliveryBoundaryPorts<Run>['emitMemberSpawnChange'];
+  teamChangeEmitter: DeliveryBoundaryPorts<Run>['emitTeamChange'] | null;
+  createOpenCodeRuntimeBootstrapEvidencePorts: DeliveryBoundaryPorts<Run>['createOpenCodeRuntimeBootstrapEvidencePorts'];
+  openCodeTaskLogAttributionStore: TeamProvisioningOpenCodeRuntimeDeliveryBoundaryHost<Run>['openCodeTaskLogAttributionStore'];
+  syncMemberTaskActivityForRuntimeTransition: DeliveryBoundaryPorts<Run>['syncMemberTaskActivityForRuntimeTransition'];
+  syncMemberLaunchGraceCheck: DeliveryBoundaryPorts<Run>['syncMemberLaunchGraceCheck'];
+  sentMessagesStore: DeliveryBoundaryPorts<Run>['sentMessagesStore'];
+  inboxReader: DeliveryBoundaryPorts<Run>['inboxReader'];
+  inboxWriter: DeliveryBoundaryPorts<Run>['inboxWriter'];
+  appShellBoundary: {
+    getCrossTeamSender: DeliveryBoundaryPorts<Run>['getCrossTeamSender'];
+  };
+  isOpenCodeRuntimeRecipient: DeliveryBoundaryPorts<Run>['isOpenCodeRuntimeRecipient'];
+  getOpenCodeAgendaSyncRecoveryBypassMessageIds: DeliveryBoundaryPorts<Run>['getOpenCodeAgendaSyncRecoveryBypassMessageIds'];
+  tryRecoverOpenCodeRuntimeLaneForConfiguredMemberBeforeDelivery: DeliveryBoundaryPorts<Run>['tryRecoverOpenCodeRuntimeLaneForConfiguredMemberBeforeDelivery'];
   tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive: DeliveryBoundaryPorts<Run>['tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive'];
   decideOpenCodeRuntimeDeliveryUserFacingAdvisory: DeliveryBoundaryPorts<Run>['decideOpenCodeRuntimeDeliveryUserFacingAdvisory'];
   openCodePromptDeliveryWatchdogScheduler: TeamProvisioningOpenCodeRuntimeDeliveryBoundaryHost<Run>['openCodePromptDeliveryWatchdogScheduler'];
@@ -207,11 +246,13 @@ export function createTeamProvisioningOpenCodeRuntimeDeliveryBoundaryHost<
     sentMessagesStore: service.sentMessagesStore,
     inboxReader: service.inboxReader,
     inboxWriter: service.inboxWriter,
-    getCrossTeamSender: () => service.crossTeamSender,
+    getCrossTeamSender: () => service.getCrossTeamSender(),
     isOpenCodeRuntimeRecipient: (teamName, memberName) =>
       service.isOpenCodeRuntimeRecipient(teamName, memberName),
     getOpenCodeAgendaSyncRecoveryBypassMessageIds: (input) =>
       service.getOpenCodeAgendaSyncRecoveryBypassMessageIds(input),
+    tryRecoverOpenCodeRuntimeLaneForConfiguredMemberBeforeDelivery: (input) =>
+      service.tryRecoverOpenCodeRuntimeLaneForConfiguredMemberBeforeDelivery(input),
     tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive: (input) =>
       service.tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive(input),
     decideOpenCodeRuntimeDeliveryUserFacingAdvisory: (record) =>
@@ -220,6 +261,92 @@ export function createTeamProvisioningOpenCodeRuntimeDeliveryBoundaryHost<
     scheduleOpenCodePromptDeliveryWatchdog: (input) =>
       service.scheduleOpenCodePromptDeliveryWatchdog(input),
   };
+}
+
+export function createTeamProvisioningOpenCodeRuntimeDeliveryBoundaryHostFromService<
+  Run extends OpenCodeRuntimeCheckinRun,
+>(
+  service: TeamProvisioningOpenCodeRuntimeDeliveryBoundaryServiceHost<Run>
+): TeamProvisioningOpenCodeRuntimeDeliveryBoundaryHost<Run> {
+  return createTeamProvisioningOpenCodeRuntimeDeliveryBoundaryHost<Run>({
+    resolveOpenCodeRuntimeLaneId: (input) => service.resolveOpenCodeRuntimeLaneId(input),
+    openCodeRuntimeRecoveryIdentity: {
+      resolveCurrentOpenCodeRuntimeRunId: (teamName, laneId) =>
+        service.openCodeRuntimeRecoveryIdentity.resolveCurrentOpenCodeRuntimeRunId(
+          teamName,
+          laneId
+        ),
+      resolveOpenCodeMemberDeliveryIdentity: (teamName, memberName) =>
+        service.openCodeRuntimeRecoveryIdentity.resolveOpenCodeMemberDeliveryIdentity(
+          teamName,
+          memberName
+        ),
+    },
+    launchStateStore: {
+      read: (teamName) => service.launchStateStore.read(teamName),
+    },
+    writeLaunchStateSnapshot: (teamName, snapshot) =>
+      service.writeLaunchStateSnapshot(teamName, snapshot),
+    readConfigForStrictDecision: (teamName) => service.readConfigForStrictDecision(teamName),
+    membersMetaStore: {
+      getMembers: (teamName) => service.membersMetaStore.getMembers(teamName),
+    },
+    readPersistedRuntimeMembers: (teamName) => service.readPersistedRuntimeMembers(teamName),
+    runTracking: {
+      getTrackedRunId: (teamName) => service.runTracking.getTrackedRunId(teamName),
+    },
+    runs: {
+      get: (runId) => service.runs.get(runId),
+    },
+    persistLaunchStateSnapshot: (run, launchPhase) =>
+      service.persistLaunchStateSnapshot(run, launchPhase),
+    getMixedSecondaryLaunchPhase: (run) => service.getMixedSecondaryLaunchPhase(run),
+    invalidateRuntimeSnapshotCaches: (teamName) =>
+      service.invalidateRuntimeSnapshotCaches(teamName),
+    emitMemberSpawnChange: (run, memberName) => service.emitMemberSpawnChange(run, memberName),
+    teamChangeEmitter: (event) => {
+      service.teamChangeEmitter?.(event);
+    },
+    createOpenCodeRuntimeBootstrapEvidencePorts: () =>
+      service.createOpenCodeRuntimeBootstrapEvidencePorts(),
+    openCodeTaskLogAttributionStore: {
+      upsertTaskRecord: (teamName, record) =>
+        service.openCodeTaskLogAttributionStore.upsertTaskRecord(teamName, record),
+    },
+    syncMemberTaskActivityForRuntimeTransition: (
+      run,
+      memberName,
+      previousStatus,
+      nextStatus,
+      observedAt
+    ) =>
+      service.syncMemberTaskActivityForRuntimeTransition(
+        run,
+        memberName,
+        previousStatus,
+        nextStatus,
+        observedAt
+      ),
+    syncMemberLaunchGraceCheck: (run, memberName, nextStatus) =>
+      service.syncMemberLaunchGraceCheck(run, memberName, nextStatus),
+    sentMessagesStore: service.sentMessagesStore,
+    inboxReader: service.inboxReader,
+    inboxWriter: service.inboxWriter,
+    getCrossTeamSender: () => service.appShellBoundary.getCrossTeamSender(),
+    isOpenCodeRuntimeRecipient: (teamName, memberName) =>
+      service.isOpenCodeRuntimeRecipient(teamName, memberName),
+    getOpenCodeAgendaSyncRecoveryBypassMessageIds: (input) =>
+      service.getOpenCodeAgendaSyncRecoveryBypassMessageIds(input),
+    tryRecoverOpenCodeRuntimeLaneForConfiguredMemberBeforeDelivery: (input) =>
+      service.tryRecoverOpenCodeRuntimeLaneForConfiguredMemberBeforeDelivery(input),
+    tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive: (input) =>
+      service.tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive(input),
+    decideOpenCodeRuntimeDeliveryUserFacingAdvisory: (record) =>
+      service.decideOpenCodeRuntimeDeliveryUserFacingAdvisory(record),
+    openCodePromptDeliveryWatchdogScheduler: service.openCodePromptDeliveryWatchdogScheduler,
+    scheduleOpenCodePromptDeliveryWatchdog: (input) =>
+      service.scheduleOpenCodePromptDeliveryWatchdog(input),
+  });
 }
 
 export function createTeamProvisioningOpenCodeRuntimeDeliveryBoundaryFromHost<
@@ -280,6 +407,8 @@ export function createTeamProvisioningOpenCodeRuntimeDeliveryBoundaryFromHost<
         teamName,
         memberName
       ),
+    tryRecoverOpenCodeRuntimeLaneForConfiguredMemberBeforeDelivery: (recoverInput) =>
+      host.tryRecoverOpenCodeRuntimeLaneForConfiguredMemberBeforeDelivery(recoverInput),
     tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive: (recoverInput) =>
       host.tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive(recoverInput),
     decideOpenCodeRuntimeDeliveryUserFacingAdvisory: (record) =>
@@ -350,6 +479,8 @@ export function createTeamProvisioningOpenCodeRuntimeDeliveryBoundaryFromPorts<
       ports.getOpenCodeAgendaSyncRecoveryBypassMessageIds(bypassInput),
     resolveOpenCodeMemberDeliveryIdentity: (teamName, memberName) =>
       ports.resolveOpenCodeMemberDeliveryIdentity(teamName, memberName),
+    tryRecoverOpenCodeRuntimeLaneForConfiguredMemberBeforeDelivery: (recoverInput) =>
+      ports.tryRecoverOpenCodeRuntimeLaneForConfiguredMemberBeforeDelivery(recoverInput),
     tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive: (recoverInput) =>
       ports.tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive(recoverInput),
     decideOpenCodeRuntimeDeliveryUserFacingAdvisory: (record) =>

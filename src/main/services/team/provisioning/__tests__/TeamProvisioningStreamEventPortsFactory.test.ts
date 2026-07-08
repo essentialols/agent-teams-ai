@@ -145,7 +145,6 @@ function createServiceAdapter(
     reevaluateMemberLaunchStatus: callbacks.reevaluateMemberLaunchStatus,
     invalidateRuntimeSnapshotCaches: callbacks.invalidateRuntimeSnapshotCaches,
     markUnconfirmedBootstrapMembersFailed: callbacks.markUnconfirmedBootstrapMembersFailed,
-    stopPersistentTeamMembers: callbacks.stopPersistentTeamMembers,
     persistLaunchStateSnapshot: callbacks.persistLaunchStateSnapshot,
   };
 }
@@ -187,6 +186,9 @@ describe('TeamProvisioningStreamEventPortsFactory', () => {
     const emitTeamChange = vi.fn();
     const ports = createTeamProvisioningStreamEventPortsBoundary({
       service: createServiceAdapter(callbacks),
+      persistentRuntimeCleanup: {
+        stopPersistentTeamMembers: callbacks.stopPersistentTeamMembers,
+      },
       outputRecovery: createOutputRecoveryAdapter(callbacks),
       updateProgress: callbacks.updateProgress,
       emitTeamChange,
@@ -220,6 +222,9 @@ describe('TeamProvisioningStreamEventPortsFactory', () => {
     const callbacks = createCallbacks();
     const ports = createTeamProvisioningStreamEventPortsBoundary({
       service: createServiceAdapter(callbacks),
+      persistentRuntimeCleanup: {
+        stopPersistentTeamMembers: callbacks.stopPersistentTeamMembers,
+      },
       outputRecovery: createOutputRecoveryAdapter(callbacks),
       updateProgress: callbacks.updateProgress,
     });

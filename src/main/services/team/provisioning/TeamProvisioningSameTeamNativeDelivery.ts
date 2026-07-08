@@ -36,6 +36,13 @@ export interface TeamProvisioningSameTeamNativeDeliveryConfig {
   persistRetryMs: number;
 }
 
+const DEFAULT_SAME_TEAM_NATIVE_DELIVERY_CONFIG = {
+  fingerprintTtlMs: 60_000,
+  matchWindowMs: 30_000,
+  nativeDeliveryGraceMs: 15_000,
+  persistRetryMs: 2_000,
+} satisfies TeamProvisioningSameTeamNativeDeliveryConfig;
+
 export function createTeamProvisioningSameTeamNativeDeliveryPorts(
   ports: Omit<TeamProvisioningSameTeamNativeDeliveryPorts, 'nowMs' | 'randomId' | 'setTimeout'> &
     Partial<Pick<TeamProvisioningSameTeamNativeDeliveryPorts, 'nowMs' | 'randomId' | 'setTimeout'>>
@@ -46,6 +53,55 @@ export function createTeamProvisioningSameTeamNativeDeliveryPorts(
     randomId: ports.randomId ?? (() => randomUUID()),
     setTimeout: ports.setTimeout ?? ((handler, ms) => setTimeout(handler, ms)),
   };
+}
+
+export function createDefaultTeamProvisioningSameTeamNativeDelivery(
+  ports: TeamProvisioningSameTeamNativeDeliveryPorts,
+  recentFingerprints?: Map<string, NativeSameTeamFingerprint[]>
+): TeamProvisioningSameTeamNativeDelivery {
+  return new TeamProvisioningSameTeamNativeDelivery(
+    DEFAULT_SAME_TEAM_NATIVE_DELIVERY_CONFIG,
+    ports,
+    recentFingerprints
+  );
+}
+
+export interface TeamProvisioningSameTeamNativeDeliveryServiceHost {
+  inboxReader: TeamProvisioningSameTeamNativeDeliveryPorts['inboxReader'];
+  relayedLeadInboxMessageIds: TeamProvisioningSameTeamNativeDeliveryPorts['relayedLeadInboxMessageIds'];
+  pendingTimeouts: TeamProvisioningSameTeamNativeDeliveryPorts['pendingTimeouts'];
+  markInboxMessagesRead: TeamProvisioningSameTeamNativeDeliveryPorts['markInboxMessagesRead'];
+  relayLeadInboxMessages: TeamProvisioningSameTeamNativeDeliveryPorts['relayLeadInboxMessages'];
+  trimRelayedSet: TeamProvisioningSameTeamNativeDeliveryPorts['trimRelayedSet'];
+  recentSameTeamNativeFingerprints: Map<string, NativeSameTeamFingerprint[]>;
+}
+
+export interface TeamProvisioningSameTeamNativeDeliveryServiceHostOptions extends Partial<
+  Pick<TeamProvisioningSameTeamNativeDeliveryPorts, 'nowMs' | 'randomId' | 'setTimeout'>
+> {
+  warn: TeamProvisioningSameTeamNativeDeliveryPorts['warn'];
+}
+
+export function createDefaultTeamProvisioningSameTeamNativeDeliveryFromService(
+  service: TeamProvisioningSameTeamNativeDeliveryServiceHost,
+  options: TeamProvisioningSameTeamNativeDeliveryServiceHostOptions
+): TeamProvisioningSameTeamNativeDelivery {
+  return createDefaultTeamProvisioningSameTeamNativeDelivery(
+    createTeamProvisioningSameTeamNativeDeliveryPorts({
+      inboxReader: service.inboxReader,
+      relayedLeadInboxMessageIds: service.relayedLeadInboxMessageIds,
+      pendingTimeouts: service.pendingTimeouts,
+      markInboxMessagesRead: (teamName, leadName, messages) =>
+        service.markInboxMessagesRead(teamName, leadName, messages),
+      relayLeadInboxMessages: (teamName) => service.relayLeadInboxMessages(teamName),
+      trimRelayedSet: (set) => service.trimRelayedSet(set),
+      warn: options.warn,
+      nowMs: options.nowMs,
+      randomId: options.randomId,
+      setTimeout: options.setTimeout,
+    }),
+    service.recentSameTeamNativeFingerprints
+  );
 }
 
 export class TeamProvisioningSameTeamNativeDelivery {

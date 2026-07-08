@@ -8,6 +8,9 @@ import { withFileLock } from '../fileLock';
 import { withInboxLock } from '../inboxLock';
 import { getEffectiveInboxMessageId } from '../inboxMessageIdentity';
 
+import { tryReadRegularFileUtf8 } from './TeamProvisioningRegularFileRead';
+import { TEAM_INBOX_MAX_BYTES, TEAM_JSON_READ_TIMEOUT_MS } from './TeamProvisioningRunModel';
+
 export interface TeamInboxReadFileOptions {
   timeoutMs: number;
   maxBytes: number;
@@ -110,5 +113,22 @@ export async function markTeamInboxMessagesRead(
       if (!changed) return;
       await atomicWriteAsync(inboxPath, JSON.stringify(parsed, null, 2));
     });
+  });
+}
+
+export type MarkTeamInboxMessagesReadWithDefaultsInput = Pick<
+  MarkTeamInboxMessagesReadInput,
+  'teamName' | 'member' | 'messages'
+> &
+  Pick<Partial<MarkTeamInboxMessagesReadInput>, 'teamsBasePath'>;
+
+export function markTeamInboxMessagesReadWithDefaults(
+  input: MarkTeamInboxMessagesReadWithDefaultsInput
+): Promise<void> {
+  return markTeamInboxMessagesRead({
+    ...input,
+    readRegularFileUtf8: tryReadRegularFileUtf8,
+    timeoutMs: TEAM_JSON_READ_TIMEOUT_MS,
+    maxBytes: TEAM_INBOX_MAX_BYTES,
   });
 }

@@ -1,4 +1,7 @@
+import { getTeamsBasePath } from '@main/utils/pathDecoder';
+
 import { normalizeOpenCodeTaskRefsForComparison } from '../opencode/delivery/OpenCodeRuntimeDeliveryProofMatching';
+import { readOpenCodeRuntimeLaneIndex } from '../opencode/store/OpenCodeRuntimeManifestEvidenceReader';
 
 import {
   hasStableInboxMessageId,
@@ -30,6 +33,70 @@ export interface OpenCodeAgendaSyncRecoveryBypassPorts {
     teamName: string,
     laneId: string
   ): Promise<OpenCodePromptDeliveryLedgerRecord[] | null>;
+}
+
+export interface OpenCodeAgendaSyncRecoveryBypassServiceHost {
+  resolveOpenCodeMemberDeliveryIdentity(
+    teamName: string,
+    memberName: string
+  ): Promise<
+    | {
+        ok: true;
+        laneId: string;
+        canonicalMemberName: string;
+      }
+    | { ok: false }
+  >;
+  tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive: OpenCodeAgendaSyncRecoveryBypassPorts['tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive'];
+  createOpenCodePromptDeliveryLedger(
+    teamName: string,
+    laneId: string
+  ): {
+    list(): Promise<OpenCodePromptDeliveryLedgerRecord[]>;
+  };
+}
+
+export function createOpenCodeAgendaSyncRecoveryBypassPortsFromService(
+  service: OpenCodeAgendaSyncRecoveryBypassServiceHost
+): OpenCodeAgendaSyncRecoveryBypassPorts {
+  return {
+    resolveOpenCodeMemberDeliveryIdentity: async (teamName, memberName) => {
+      const identity = await service.resolveOpenCodeMemberDeliveryIdentity(teamName, memberName);
+      return identity.ok
+        ? {
+            ok: true,
+            laneId: identity.laneId,
+            canonicalMemberName: identity.canonicalMemberName,
+          }
+        : null;
+    },
+    readLaneState: async (teamName, laneId) => {
+      const laneIndex = await readOpenCodeRuntimeLaneIndex(getTeamsBasePath(), teamName).catch(
+        () => undefined
+      );
+      if (laneIndex === undefined) {
+        return 'unreadable';
+      }
+      return laneIndex.lanes[laneId]?.state ?? 'missing';
+    },
+    tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive: (input) =>
+      service.tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive(input),
+    listOpenCodePromptDeliveryLedgerRecords: (teamName, laneId) =>
+      service
+        .createOpenCodePromptDeliveryLedger(teamName, laneId)
+        .list()
+        .catch(() => null),
+  };
+}
+
+export function getOpenCodeAgendaSyncRecoveryBypassMessageIdsWithService(
+  input: Parameters<typeof getOpenCodeAgendaSyncRecoveryBypassMessageIds>[0],
+  service: OpenCodeAgendaSyncRecoveryBypassServiceHost
+): Promise<Set<string>> {
+  return getOpenCodeAgendaSyncRecoveryBypassMessageIds(
+    input,
+    createOpenCodeAgendaSyncRecoveryBypassPortsFromService(service)
+  );
 }
 
 export async function getOpenCodeAgendaSyncRecoveryBypassMessageIds(
@@ -100,7 +167,8 @@ export async function getOpenCodeAgendaSyncRecoveryBypassMessageIds(
   const proofMissingRecords = (records ?? []).filter(
     (record) =>
       record.teamName.trim().toLowerCase() === input.teamName.trim().toLowerCase() &&
-      record.memberName.trim().toLowerCase() === identity.canonicalMemberName.trim().toLowerCase() &&
+      record.memberName.trim().toLowerCase() ===
+        identity.canonicalMemberName.trim().toLowerCase() &&
       record.laneId === identity.laneId &&
       record.status === 'failed_terminal' &&
       !record.inboxReadCommittedAt &&

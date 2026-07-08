@@ -63,6 +63,81 @@ export function createTeamProvisioningTransientRunStatePorts(
   };
 }
 
+export interface TeamProvisioningTransientRunStateServiceHost {
+  pendingTimeouts: TeamProvisioningTransientRunStatePorts['pendingTimeouts'];
+  teamOpLocks: TeamProvisioningTransientRunStatePorts['teamOpLocks'];
+  toolApprovalFacade: {
+    clearOpenCodeRuntimeToolApprovals: TeamProvisioningTransientRunStatePorts['clearOpenCodeRuntimeToolApprovals'];
+  };
+  invalidateRuntimeSnapshotCaches: TeamProvisioningTransientRunStatePorts['invalidateRuntimeSnapshotCaches'];
+  runtimeResourceSampling: {
+    clearRuntimeProcessRowsForTeam: TeamProvisioningTransientRunStatePorts['clearRuntimeProcessRowsForTeam'];
+  };
+  retainedClaudeLogsByTeam: TeamProvisioningTransientRunStatePorts['retainedClaudeLogsByTeam'];
+  bootstrapTranscriptFacade: {
+    invalidatePersistedTranscriptClaudeLogs: TeamProvisioningTransientRunStatePorts['persistedTranscriptClaudeLogs']['invalidate'];
+  };
+  leadInboxRelayInFlight: TeamProvisioningTransientRunStatePorts['leadInboxRelayInFlight'];
+  relayedLeadInboxMessageIds: TeamProvisioningTransientRunStatePorts['relayedLeadInboxMessageIds'];
+  pendingCrossTeamFirstReplies: TeamProvisioningTransientRunStatePorts['pendingCrossTeamFirstReplies'];
+  recentCrossTeamLeadDeliveryMessageIds: TeamProvisioningTransientRunStatePorts['recentCrossTeamLeadDeliveryMessageIds'];
+  sameTeamNativeDelivery: TeamProvisioningTransientRunStatePorts['recentSameTeamNativeFingerprints'];
+  memberInboxRelayInFlight: TeamProvisioningTransientRunStatePorts['memberInboxRelayInFlight'];
+  openCodeMemberInboxRelayInFlight: TeamProvisioningTransientRunStatePorts['openCodeMemberInboxRelayInFlight'];
+  openCodeMemberSendInFlightByLane: TeamProvisioningTransientRunStatePorts['openCodeMemberSendInFlightByLane'];
+  openCodePromptDeliveryWatchdogScheduler: TeamProvisioningTransientRunStatePorts['openCodePromptDeliveryWatchdogScheduler'];
+  openCodeRuntimeDeliveryAdvisory: TeamProvisioningTransientRunStatePorts['openCodeRuntimeDeliveryAdvisory'];
+  relayedMemberInboxMessageIds: TeamProvisioningTransientRunStatePorts['relayedMemberInboxMessageIds'];
+  liveLeadProcessMessages: TeamProvisioningTransientRunStatePorts['liveLeadProcessMessages'];
+  relayLeadInboxMessages: TeamProvisioningTransientRunStatePorts['relayLeadInboxMessages'];
+}
+
+export interface TeamProvisioningTransientRunStateServiceHostOptions extends Partial<
+  Pick<TeamProvisioningTransientRunStatePorts, 'setTimeout' | 'clearTimeout' | 'nowMs'>
+> {
+  cancelPendingAutoResume: TeamProvisioningTransientRunStatePorts['cancelPendingAutoResume'];
+  warn: TeamProvisioningTransientRunStatePorts['warn'];
+}
+
+export function createTeamProvisioningTransientRunStatePortsFromService(
+  service: TeamProvisioningTransientRunStateServiceHost,
+  options: TeamProvisioningTransientRunStateServiceHostOptions
+): TeamProvisioningTransientRunStatePorts {
+  return createTeamProvisioningTransientRunStatePorts({
+    pendingTimeouts: service.pendingTimeouts,
+    teamOpLocks: service.teamOpLocks,
+    cancelPendingAutoResume: options.cancelPendingAutoResume,
+    clearOpenCodeRuntimeToolApprovals: (teamName, clearOptions) =>
+      service.toolApprovalFacade.clearOpenCodeRuntimeToolApprovals(teamName, clearOptions),
+    invalidateRuntimeSnapshotCaches: (teamName) =>
+      service.invalidateRuntimeSnapshotCaches(teamName),
+    clearRuntimeProcessRowsForTeam: (teamName) =>
+      service.runtimeResourceSampling.clearRuntimeProcessRowsForTeam(teamName),
+    retainedClaudeLogsByTeam: service.retainedClaudeLogsByTeam,
+    persistedTranscriptClaudeLogs: {
+      invalidate: (teamName) =>
+        service.bootstrapTranscriptFacade.invalidatePersistedTranscriptClaudeLogs(teamName),
+    },
+    leadInboxRelayInFlight: service.leadInboxRelayInFlight,
+    relayedLeadInboxMessageIds: service.relayedLeadInboxMessageIds,
+    pendingCrossTeamFirstReplies: service.pendingCrossTeamFirstReplies,
+    recentCrossTeamLeadDeliveryMessageIds: service.recentCrossTeamLeadDeliveryMessageIds,
+    recentSameTeamNativeFingerprints: service.sameTeamNativeDelivery,
+    memberInboxRelayInFlight: service.memberInboxRelayInFlight,
+    openCodeMemberInboxRelayInFlight: service.openCodeMemberInboxRelayInFlight,
+    openCodeMemberSendInFlightByLane: service.openCodeMemberSendInFlightByLane,
+    openCodePromptDeliveryWatchdogScheduler: service.openCodePromptDeliveryWatchdogScheduler,
+    openCodeRuntimeDeliveryAdvisory: service.openCodeRuntimeDeliveryAdvisory,
+    relayedMemberInboxMessageIds: service.relayedMemberInboxMessageIds,
+    liveLeadProcessMessages: service.liveLeadProcessMessages,
+    relayLeadInboxMessages: (teamName) => service.relayLeadInboxMessages(teamName),
+    warn: options.warn,
+    setTimeout: options.setTimeout,
+    clearTimeout: options.clearTimeout,
+    nowMs: options.nowMs,
+  });
+}
+
 export class TeamProvisioningTransientRunState {
   constructor(private readonly ports: TeamProvisioningTransientRunStatePorts) {}
 

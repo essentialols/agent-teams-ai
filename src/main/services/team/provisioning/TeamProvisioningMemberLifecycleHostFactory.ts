@@ -38,7 +38,6 @@ export interface TeamProvisioningMemberLifecycleHostFactorySharedStatePorts {
   runs: TeamProvisioningMemberLifecycleHost['runs'];
   runtimeAdapterRunByTeam: TeamProvisioningMemberLifecycleHost['runtimeAdapterRunByTeam'];
   failedOpenCodeSecondaryRetryInFlightByTeam: TeamProvisioningMemberLifecycleHost['failedOpenCodeSecondaryRetryInFlightByTeam'];
-  memberLifecycleOperations: TeamProvisioningMemberLifecycleHost['memberLifecycleOperations'];
 }
 
 export interface TeamProvisioningMemberLifecycleHostFactoryStorePorts {
@@ -104,13 +103,15 @@ export interface TeamProvisioningMemberLifecycleHostFactoryLaunchStatePorts<
   writeLaunchStateSnapshot: TeamProvisioningMemberLifecycleHost['writeLaunchStateSnapshot'];
 }
 
+export interface TeamProvisioningMemberLifecycleHostFactoryRunTrackingPorts {
+  getAliveRunId: TeamProvisioningMemberLifecycleHost['getAliveRunId'];
+  getTrackedRunId: TeamProvisioningMemberLifecycleHost['getTrackedRunId'];
+  getProvisioningRunId: TeamProvisioningMemberLifecycleHost['getProvisioningRunId'];
+}
+
 export interface TeamProvisioningMemberLifecycleHostFactoryRunStatePorts<
   TRun extends TeamProvisioningMemberLifecycleHostFactoryRun,
 > {
-  runTracking: Pick<
-    TeamProvisioningMemberLifecycleHost,
-    'getAliveRunId' | 'getTrackedRunId' | 'getProvisioningRunId'
-  >;
   getRunTrackedCwd(
     run: TRun | null | undefined
   ): ReturnType<TeamProvisioningMemberLifecycleHost['getRunTrackedCwd']>;
@@ -190,11 +191,11 @@ export interface TeamProvisioningMemberLifecycleHostFactoryMixedSecondaryRuntime
 type HostLaunchDirectProcessMemberRestart = NonNullable<
   TeamProvisioningMemberLifecycleHost['launchDirectProcessMemberRestart']
 >;
-type HostRunMemberLifecycleOperation = NonNullable<
-  TeamProvisioningMemberLifecycleHost['runMemberLifecycleOperation']
->;
 type HostStopPrimaryOwnedRosterRuntime = NonNullable<
   TeamProvisioningMemberLifecycleHost['stopPrimaryOwnedRosterRuntime']
+>;
+type HostPreparePrimaryOwnedMemberRestartRuntime = NonNullable<
+  TeamProvisioningMemberLifecycleHost['preparePrimaryOwnedMemberRestartRuntime']
 >;
 type HostCollectFailedOpenCodeSecondaryRetryCandidates = NonNullable<
   TeamProvisioningMemberLifecycleHost['collectFailedOpenCodeSecondaryRetryCandidates']
@@ -220,8 +221,13 @@ export interface TeamProvisioningMemberLifecycleHostFactoryUseCasePorts<
     input: WithServiceRun<Parameters<HostLaunchDirectProcessMemberRestart>[0], TRun>
   ) => ReturnType<HostLaunchDirectProcessMemberRestart>;
   appendDirectProcessRuntimeEvent?: AppendDirectProcessRuntimeEventUseCase;
-  runMemberLifecycleOperation?: HostRunMemberLifecycleOperation;
   stopPrimaryOwnedRosterRuntime?: HostStopPrimaryOwnedRosterRuntime;
+  preparePrimaryOwnedMemberRestartRuntime?: HostPreparePrimaryOwnedMemberRestartRuntime;
+}
+
+export interface TeamProvisioningMemberLifecycleHostFactoryOpenCodeRetryUseCasePorts<
+  TRun extends TeamProvisioningMemberLifecycleHostFactoryRun,
+> {
   collectFailedOpenCodeSecondaryRetryCandidates?: (
     run: TRun
   ) => ReturnType<HostCollectFailedOpenCodeSecondaryRetryCandidates>;
@@ -249,11 +255,13 @@ export interface TeamProvisioningMemberLifecycleHostFactoryService<
     TeamProvisioningMemberLifecycleHostFactoryRuntimeLaunchPorts<TRun>,
     TeamProvisioningMemberLifecycleHostFactoryMemberMcpLaunchConfigPorts<TRun>,
     TeamProvisioningMemberLifecycleHostFactoryLaunchStatePorts<TRun>,
+    TeamProvisioningMemberLifecycleHostFactoryRunTrackingPorts,
     TeamProvisioningMemberLifecycleHostFactoryRunStatePorts<TRun>,
     TeamProvisioningMemberLifecycleHostFactoryMessagingPorts,
     TeamProvisioningMemberLifecycleHostFactoryOpenCodeRuntimePorts,
     TeamProvisioningMemberLifecycleHostFactoryMixedSecondaryRuntimePorts<TRun, TMixedSecondaryLane>,
-    TeamProvisioningMemberLifecycleHostFactoryUseCasePorts<TRun> {}
+    TeamProvisioningMemberLifecycleHostFactoryUseCasePorts<TRun>,
+    TeamProvisioningMemberLifecycleHostFactoryOpenCodeRetryUseCasePorts<TRun> {}
 
 export interface TeamProvisioningMemberLifecycleHostFactoryPortGroups<
   TRun extends TeamProvisioningMemberLifecycleHostFactoryRun,
@@ -265,6 +273,7 @@ export interface TeamProvisioningMemberLifecycleHostFactoryPortGroups<
   runtimeLaunch: TeamProvisioningMemberLifecycleHostFactoryRuntimeLaunchPorts<TRun>;
   memberMcpLaunchConfig: TeamProvisioningMemberLifecycleHostFactoryMemberMcpLaunchConfigPorts<TRun>;
   launchState: TeamProvisioningMemberLifecycleHostFactoryLaunchStatePorts<TRun>;
+  runTracking: TeamProvisioningMemberLifecycleHostFactoryRunTrackingPorts;
   runState: TeamProvisioningMemberLifecycleHostFactoryRunStatePorts<TRun>;
   messaging: TeamProvisioningMemberLifecycleHostFactoryMessagingPorts;
   openCodeRuntime: TeamProvisioningMemberLifecycleHostFactoryOpenCodeRuntimePorts;
@@ -273,15 +282,11 @@ export interface TeamProvisioningMemberLifecycleHostFactoryPortGroups<
     TMixedSecondaryLane
   >;
   useCases: TeamProvisioningMemberLifecycleHostFactoryUseCasePorts<TRun>;
+  openCodeRetryUseCases: TeamProvisioningMemberLifecycleHostFactoryOpenCodeRetryUseCasePorts<TRun>;
 }
 
 export const TEAM_PROVISIONING_MEMBER_LIFECYCLE_HOST_FACTORY_PORT_KEYS = {
-  sharedState: [
-    'runs',
-    'runtimeAdapterRunByTeam',
-    'failedOpenCodeSecondaryRetryInFlightByTeam',
-    'memberLifecycleOperations',
-  ],
+  sharedState: ['runs', 'runtimeAdapterRunByTeam', 'failedOpenCodeSecondaryRetryInFlightByTeam'],
   stores: [
     'mcpConfigBuilder',
     'membersMetaStore',
@@ -309,6 +314,7 @@ export const TEAM_PROVISIONING_MEMBER_LIFECYCLE_HOST_FACTORY_PORT_KEYS = {
     'removeTrackedMemberMcpLaunchConfig',
   ],
   launchState: ['launchStateStore', 'persistLaunchStateSnapshot', 'writeLaunchStateSnapshot'],
+  runTracking: ['getAliveRunId', 'getTrackedRunId', 'getProvisioningRunId'],
   runState: [
     'getRunTrackedCwd',
     'appendMemberBootstrapDiagnostic',
@@ -318,9 +324,6 @@ export const TEAM_PROVISIONING_MEMBER_LIFECYCLE_HOST_FACTORY_PORT_KEYS = {
     'invalidateRuntimeSnapshotCaches',
     'resetRuntimeToolActivity',
     'clearMemberSpawnToolTracking',
-    'getAliveRunId',
-    'getTrackedRunId',
-    'getProvisioningRunId',
     'isCurrentTrackedRun',
     'getLiveTeamAgentRuntimeMetadata',
   ],
@@ -341,8 +344,10 @@ export const TEAM_PROVISIONING_MEMBER_LIFECYCLE_HOST_FACTORY_PORT_KEYS = {
     'persistOpenCodeMemberRestartSystemMessage',
     'launchDirectProcessMemberRestart',
     'appendDirectProcessRuntimeEvent',
-    'runMemberLifecycleOperation',
     'stopPrimaryOwnedRosterRuntime',
+    'preparePrimaryOwnedMemberRestartRuntime',
+  ],
+  openCodeRetryUseCases: [
     'collectFailedOpenCodeSecondaryRetryCandidates',
     'readOpenCodeSecondaryRetryOutcome',
     'notifyLeadAboutConfirmedOpenCodeRetries',
@@ -407,11 +412,13 @@ export function createTeamProvisioningMemberLifecycleHostPortGroups<
     runtimeLaunch: service,
     memberMcpLaunchConfig: service,
     launchState: service,
+    runTracking: service,
     runState: service,
     messaging: service,
     openCodeRuntime: service,
     mixedSecondaryRuntime: service,
     useCases: service,
+    openCodeRetryUseCases: service,
   };
 }
 
@@ -428,11 +435,13 @@ export function createTeamProvisioningMemberLifecycleHostFromPortGroups<
     runtimeLaunch,
     memberMcpLaunchConfig,
     launchState,
+    runTracking,
     runState,
     messaging,
     openCodeRuntime,
     mixedSecondaryRuntime,
     useCases,
+    openCodeRetryUseCases,
   } = portGroups;
   const updateDirectTmuxRestartMemberConfigSeam = runtimeLaunch.updateDirectTmuxRestartMemberConfig;
   const enqueueDirectRestartPromptSeam = messaging.enqueueDirectRestartPrompt;
@@ -440,23 +449,25 @@ export function createTeamProvisioningMemberLifecycleHostFromPortGroups<
     useCases.persistOpenCodeMemberRestartSystemMessage;
   const launchDirectProcessMemberRestartSeam = useCases.launchDirectProcessMemberRestart;
   const appendDirectProcessRuntimeEventSeam = useCases.appendDirectProcessRuntimeEvent;
-  const runMemberLifecycleOperationSeam = useCases.runMemberLifecycleOperation;
   const stopPrimaryOwnedRosterRuntimeSeam = useCases.stopPrimaryOwnedRosterRuntime;
+  const preparePrimaryOwnedMemberRestartRuntimeSeam =
+    useCases.preparePrimaryOwnedMemberRestartRuntime;
   const collectFailedOpenCodeSecondaryRetryCandidatesSeam =
-    useCases.collectFailedOpenCodeSecondaryRetryCandidates;
-  const readOpenCodeSecondaryRetryOutcomeSeam = useCases.readOpenCodeSecondaryRetryOutcome;
+    openCodeRetryUseCases.collectFailedOpenCodeSecondaryRetryCandidates;
+  const readOpenCodeSecondaryRetryOutcomeSeam =
+    openCodeRetryUseCases.readOpenCodeSecondaryRetryOutcome;
   const notifyLeadAboutConfirmedOpenCodeRetriesSeam =
-    useCases.notifyLeadAboutConfirmedOpenCodeRetries;
+    openCodeRetryUseCases.notifyLeadAboutConfirmedOpenCodeRetries;
   const reattachOpenCodeOwnedMemberLaneUnlockedSeam =
-    useCases.reattachOpenCodeOwnedMemberLaneUnlocked;
-  const detachOpenCodeOwnedMemberLaneUnlockedSeam = useCases.detachOpenCodeOwnedMemberLaneUnlocked;
+    openCodeRetryUseCases.reattachOpenCodeOwnedMemberLaneUnlocked;
+  const detachOpenCodeOwnedMemberLaneUnlockedSeam =
+    openCodeRetryUseCases.detachOpenCodeOwnedMemberLaneUnlocked;
 
   return {
     runs: sharedState.runs,
     runtimeAdapterRunByTeam: sharedState.runtimeAdapterRunByTeam,
     failedOpenCodeSecondaryRetryInFlightByTeam:
       sharedState.failedOpenCodeSecondaryRetryInFlightByTeam,
-    memberLifecycleOperations: sharedState.memberLifecycleOperations,
     mcpConfigBuilder: {
       writeConfigFile: (projectPath, options) =>
         stores.mcpConfigBuilder.writeConfigFile(projectPath, options as never),
@@ -521,9 +532,9 @@ export function createTeamProvisioningMemberLifecycleHostFromPortGroups<
       runState.resetRuntimeToolActivity(asServiceProvisioningRun<TRun>(run), memberName),
     clearMemberSpawnToolTracking: (run, memberName) =>
       runState.clearMemberSpawnToolTracking(asServiceProvisioningRun<TRun>(run), memberName),
-    getAliveRunId: (teamName) => runState.runTracking.getAliveRunId(teamName),
-    getTrackedRunId: (teamName) => runState.runTracking.getTrackedRunId(teamName),
-    getProvisioningRunId: (teamName) => runState.runTracking.getProvisioningRunId(teamName),
+    getAliveRunId: (teamName) => runTracking.getAliveRunId(teamName),
+    getTrackedRunId: (teamName) => runTracking.getTrackedRunId(teamName),
+    getProvisioningRunId: (teamName) => runTracking.getProvisioningRunId(teamName),
     isCurrentTrackedRun: (run) => runState.isCurrentTrackedRun(asServiceProvisioningRun<TRun>(run)),
     readConfigForStrictDecision: (teamName) => stores.readConfigForStrictDecision(teamName),
     resolveEffectiveConfiguredMember: (configMembers, metaMembers, memberName) =>
@@ -589,37 +600,23 @@ export function createTeamProvisioningMemberLifecycleHostFromPortGroups<
     appendDirectProcessRuntimeEvent: appendDirectProcessRuntimeEventSeam
       ? (input) => appendDirectProcessRuntimeEventSeam.call(useCases, input)
       : undefined,
-    runMemberLifecycleOperation: runMemberLifecycleOperationSeam
-      ? <TValue>(
-          teamName: string,
-          memberName: string,
-          kind: Parameters<
-            NonNullable<TeamProvisioningMemberLifecycleHost['runMemberLifecycleOperation']>
-          >[2],
-          operation: () => Promise<TValue>
-        ): Promise<TValue> =>
-          runMemberLifecycleOperationSeam.call(
-            useCases,
-            teamName,
-            memberName,
-            kind,
-            operation
-          ) as Promise<TValue>
-      : undefined,
     stopPrimaryOwnedRosterRuntime: stopPrimaryOwnedRosterRuntimeSeam
       ? (input) => stopPrimaryOwnedRosterRuntimeSeam.call(useCases, input)
+      : undefined,
+    preparePrimaryOwnedMemberRestartRuntime: preparePrimaryOwnedMemberRestartRuntimeSeam
+      ? (input) => preparePrimaryOwnedMemberRestartRuntimeSeam.call(useCases, input)
       : undefined,
     collectFailedOpenCodeSecondaryRetryCandidates: collectFailedOpenCodeSecondaryRetryCandidatesSeam
       ? (run) =>
           collectFailedOpenCodeSecondaryRetryCandidatesSeam.call(
-            useCases,
+            openCodeRetryUseCases,
             asServiceProvisioningRun<TRun>(run)
           )
       : undefined,
     readOpenCodeSecondaryRetryOutcome: readOpenCodeSecondaryRetryOutcomeSeam
       ? (run, memberName, laneId) =>
           readOpenCodeSecondaryRetryOutcomeSeam.call(
-            useCases,
+            openCodeRetryUseCases,
             asServiceProvisioningRun<TRun>(run),
             memberName,
             laneId
@@ -628,18 +625,27 @@ export function createTeamProvisioningMemberLifecycleHostFromPortGroups<
     notifyLeadAboutConfirmedOpenCodeRetries: notifyLeadAboutConfirmedOpenCodeRetriesSeam
       ? (run, result) =>
           notifyLeadAboutConfirmedOpenCodeRetriesSeam.call(
-            useCases,
+            openCodeRetryUseCases,
             asServiceProvisioningRun<TRun>(run),
             result
           )
       : undefined,
     reattachOpenCodeOwnedMemberLaneUnlocked: reattachOpenCodeOwnedMemberLaneUnlockedSeam
       ? (teamName, memberName, options) =>
-          reattachOpenCodeOwnedMemberLaneUnlockedSeam.call(useCases, teamName, memberName, options)
+          reattachOpenCodeOwnedMemberLaneUnlockedSeam.call(
+            openCodeRetryUseCases,
+            teamName,
+            memberName,
+            options
+          )
       : undefined,
     detachOpenCodeOwnedMemberLaneUnlocked: detachOpenCodeOwnedMemberLaneUnlockedSeam
       ? (teamName, memberName) =>
-          detachOpenCodeOwnedMemberLaneUnlockedSeam.call(useCases, teamName, memberName)
+          detachOpenCodeOwnedMemberLaneUnlockedSeam.call(
+            openCodeRetryUseCases,
+            teamName,
+            memberName
+          )
       : undefined,
   };
 }

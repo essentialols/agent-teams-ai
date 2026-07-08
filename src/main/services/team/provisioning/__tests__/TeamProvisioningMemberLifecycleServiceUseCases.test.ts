@@ -3,41 +3,60 @@ import { describe, expect, it } from 'vitest';
 import { createTeamProvisioningMemberLifecycleServiceUseCases } from '../TeamProvisioningMemberLifecycleServiceUseCases';
 
 import type { DirectProcessRuntimeEventInput } from '../TeamProvisioningAppendDirectProcessRuntimeEventUseCase';
-import type { TeamProvisioningMemberLifecycleOperationRunner } from '../TeamProvisioningMemberLifecycleOperationRunner';
-
-type RunMemberLifecycleOperationKind = Parameters<
-  TeamProvisioningMemberLifecycleOperationRunner['runMemberLifecycleOperation']
->[2];
 
 describe('TeamProvisioningMemberLifecycleServiceUseCases', () => {
   it('creates only the service-owned lifecycle use case ports', async () => {
     const sentMessages: Array<{ teamName: string; message: Record<string, unknown> }> = [];
     const runtimeEvents: DirectProcessRuntimeEventInput[] = [];
-    const operationCalls: string[] = [];
-    const operationRunner = {
-      marker: 'runner-bound',
-      async runMemberLifecycleOperation<T>(
-        this: { marker: string },
-        teamName: string,
-        memberName: string,
-        kind: RunMemberLifecycleOperationKind,
-        operation: () => Promise<T>
-      ): Promise<T> {
-        operationCalls.push(`${this.marker}:${teamName}:${memberName}:${kind}`);
-        return await operation();
-      },
-    } as Pick<TeamProvisioningMemberLifecycleOperationRunner, 'runMemberLifecycleOperation'> & {
-      marker: string;
-    };
+    const stoppedMembers: string[] = [];
+    const preparedRestartMembers: string[] = [];
+    const launchStateReads: string[] = [];
 
     const useCases = createTeamProvisioningMemberLifecycleServiceUseCases({
       persistSentMessage: (teamName, message) => {
         sentMessages.push({ teamName, message });
       },
+      readLaunchStateSnapshot: async (teamName) => {
+        launchStateReads.push(teamName);
+        return {
+          version: 2,
+          teamName,
+          launchPhase: 'active',
+          updatedAt: '2026-07-06T17:00:00.000Z',
+          expectedMembers: ['Worker'],
+          members: {
+            Worker: {
+              name: 'Worker',
+              launchState: 'confirmed_alive',
+              agentToolAccepted: true,
+              runtimeAlive: true,
+              bootstrapConfirmed: true,
+              hardFailure: false,
+              lastEvaluatedAt: '2026-07-06T17:00:00.000Z',
+            },
+          },
+          summary: {
+            confirmedCount: 1,
+            pendingCount: 0,
+            failedCount: 0,
+            runtimeAlivePendingCount: 0,
+          },
+          teamLaunchState: 'clean_success',
+        };
+      },
       appendDirectProcessRuntimeEvent: async (input) => {
         runtimeEvents.push(input);
       },
-      operationRunner,
+      stopPrimaryOwnedRosterRuntime: async (input) => {
+        stoppedMembers.push(`${input.teamName}:${input.memberName}`);
+      },
+      preparePrimaryOwnedMemberRestartRuntime: async (input) => {
+        preparedRestartMembers.push(`${input.teamName}:${input.memberName}`);
+        return {
+          directTmuxRestartPaneId: null,
+          shouldDirectProcessRestart: true,
+        };
+      },
       nowIso: () => '2026-07-06T17:00:00.000Z',
       randomUUID: () => 'uuid-1',
     });
@@ -45,7 +64,9 @@ describe('TeamProvisioningMemberLifecycleServiceUseCases', () => {
     expect(Object.keys(useCases).sort()).toEqual([
       'appendDirectProcessRuntimeEvent',
       'persistOpenCodeMemberRestartSystemMessage',
-      'runMemberLifecycleOperation',
+      'preparePrimaryOwnedMemberRestartRuntime',
+      'readOpenCodeSecondaryRetryOutcome',
+      'stopPrimaryOwnedRosterRuntime',
     ]);
 
     useCases.persistOpenCodeMemberRestartSystemMessage({
@@ -58,7 +79,7 @@ describe('TeamProvisioningMemberLifecycleServiceUseCases', () => {
     });
     await useCases.appendDirectProcessRuntimeEvent({
       type: 'process_spawned',
-      eventsPath: 'team-a/runtime/events.jsonl',
+      eventsPath: '/safe-test-workspace/team-a/runtime/events.jsonl',
       pid: 123,
       teamName: 'team-a',
       agentName: 'Worker',
@@ -67,10 +88,36 @@ describe('TeamProvisioningMemberLifecycleServiceUseCases', () => {
       bootstrapRunId: 'bootstrap-1',
       source: 'test',
     });
+    await useCases.stopPrimaryOwnedRosterRuntime({
+      teamName: 'team-a',
+      memberName: 'Worker',
+      actionLabel: 'Detach for teammate "Worker"',
+      persistedRuntimeMembers: [],
+      liveRuntimeByMember: new Map(),
+    });
     await expect(
-      useCases.runMemberLifecycleOperation('team-a', 'Worker', 'manual_restart', async () => 'done')
-    ).resolves.toBe('done');
-
+      useCases.preparePrimaryOwnedMemberRestartRuntime({
+        teamName: 'team-a',
+        memberName: 'Worker',
+        persistedRuntimeMembers: [],
+        invalidateRuntimeSnapshotCaches: () => undefined,
+        loadLiveRuntimeByMember: async () => new Map(),
+      })
+    ).resolves.toEqual({
+      directTmuxRestartPaneId: null,
+      shouldDirectProcessRestart: true,
+    });
+    await expect(
+      useCases.readOpenCodeSecondaryRetryOutcome(
+        {
+          teamName: 'team-a',
+          mixedSecondaryLanes: [],
+          memberSpawnStatuses: new Map(),
+        },
+        'Worker',
+        'secondary:opencode:worker'
+      )
+    ).resolves.toEqual({ launchState: 'confirmed_alive' });
     expect(sentMessages).toHaveLength(1);
     expect(sentMessages[0]?.message).toMatchObject({
       from: 'Lead',
@@ -87,6 +134,8 @@ describe('TeamProvisioningMemberLifecycleServiceUseCases', () => {
         pid: 123,
       }),
     ]);
-    expect(operationCalls).toEqual(['runner-bound:team-a:Worker:manual_restart']);
+    expect(stoppedMembers).toEqual(['team-a:Worker']);
+    expect(preparedRestartMembers).toEqual(['team-a:Worker']);
+    expect(launchStateReads).toEqual(['team-a']);
   });
 });

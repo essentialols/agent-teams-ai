@@ -125,6 +125,19 @@ export interface TeamProvisioningConfigTaskActivityBoundaryFactoryOptions {
   };
 }
 
+export interface TeamProvisioningConfigTaskActivityBoundaryServiceHost {
+  configFacade: TeamProvisioningConfigTaskActivityConfigPort;
+  taskActivityIntervalService: TaskActivityRepairServicePort;
+  runTracking: TeamProvisioningConfigTaskActivityBoundaryFactoryOptions['runTracking'];
+  runs: TeamProvisioningConfigTaskActivityBoundaryFactoryOptions['runs'];
+  launchStateStore: TeamProvisioningConfigTaskActivityBoundaryFactoryOptions['launchStateStore'];
+  runtimeAdapterTraceLinesByRunId: TeamProvisioningConfigTaskActivityBoundaryFactoryOptions['runtimeAdapterTraceLinesByRunId'];
+}
+
+export interface TeamProvisioningConfigTaskActivityBoundaryServiceHostOptions {
+  logger: TeamProvisioningConfigTaskActivityBoundaryFactoryOptions['logger'];
+}
+
 export function createTeamProvisioningConfigTaskActivityBoundary<
   TRun extends TeamProvisioningTaskActivityRepairBoundaryRun,
 >(
@@ -147,5 +160,22 @@ export function createTeamProvisioningConfigTaskActivityBoundary<
       getRuntimeAdapterTraceLines: (runId) => options.runtimeAdapterTraceLinesByRunId.get(runId),
       warn: (message) => options.logger.warn(message),
     }),
+  });
+}
+
+export function createTeamProvisioningConfigTaskActivityBoundaryFromService<
+  TRun extends TeamProvisioningTaskActivityRepairBoundaryRun,
+>(
+  service: TeamProvisioningConfigTaskActivityBoundaryServiceHost,
+  options: TeamProvisioningConfigTaskActivityBoundaryServiceHostOptions
+): TeamProvisioningConfigTaskActivityBoundary<TRun> {
+  return createTeamProvisioningConfigTaskActivityBoundary<TRun>({
+    config: service.configFacade,
+    taskActivityIntervalService: service.taskActivityIntervalService,
+    runTracking: service.runTracking,
+    runs: service.runs,
+    launchStateStore: service.launchStateStore,
+    runtimeAdapterTraceLinesByRunId: service.runtimeAdapterTraceLinesByRunId,
+    logger: options.logger,
   });
 }

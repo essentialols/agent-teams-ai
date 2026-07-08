@@ -136,8 +136,9 @@ import {
 } from './provisioning/TeamProvisioningCompatibilityFacade';
 import { TeamProvisioningConfigFacade } from './provisioning/TeamProvisioningConfigFacade';
 import {
-  createTeamProvisioningConfigTaskActivityBoundary,
+  createTeamProvisioningConfigTaskActivityBoundaryFromService,
   type TeamProvisioningConfigTaskActivityBoundary,
+  type TeamProvisioningConfigTaskActivityBoundaryServiceHost,
 } from './provisioning/TeamProvisioningConfigTaskActivityBoundary';
 import {
   createDefaultDeterministicCreateRunFlowPorts,
@@ -1545,15 +1546,11 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
       nowMs: () => Date.now(),
       writtenRunIdByTeam: this.launchStateWrittenRunIdByTeam,
     });
-    this.configTaskActivityBoundary = createTeamProvisioningConfigTaskActivityBoundary({
-      config: this.configFacade,
-      taskActivityIntervalService: this.taskActivityIntervalService,
-      runTracking: this.runTracking,
-      runs: this.runs,
-      launchStateStore: this.launchStateStore,
-      runtimeAdapterTraceLinesByRunId: this.runtimeAdapterTraceLinesByRunId,
-      logger,
-    });
+    this.configTaskActivityBoundary =
+      createTeamProvisioningConfigTaskActivityBoundaryFromService<ProvisioningRun>(
+        this as unknown as TeamProvisioningConfigTaskActivityBoundaryServiceHost,
+        { logger }
+      );
     this.toolApprovalFacade = new TeamProvisioningToolApprovalFacade<ProvisioningRun>({
       logger,
       pendingTimeouts: this.pendingTimeouts,

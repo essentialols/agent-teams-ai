@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  createTeamProvisioningConfigTaskActivityBoundaryFromService,
   TeamProvisioningConfigTaskActivityBoundary,
   type TeamProvisioningConfigTaskActivityBoundaryPorts,
+  type TeamProvisioningConfigTaskActivityBoundaryServiceHost,
 } from '../TeamProvisioningConfigTaskActivityBoundary';
 
 import type { LaunchFailureArtifactPackRun } from '../TeamProvisioningTaskActivityRepair';
@@ -55,6 +57,54 @@ function createBoundary(): {
 }
 
 describe('TeamProvisioningConfigTaskActivityBoundary', () => {
+  it('builds the boundary from service-shaped dependencies', async () => {
+    const configFacade = {
+      readConfigSnapshot: vi.fn(async () => ({ teamName: 'snapshot' }) as unknown as TeamConfig),
+      readConfigForStrictDecision: vi.fn(
+        async () => ({ teamName: 'strict' }) as unknown as TeamConfig
+      ),
+      updateConfigProjectPath: vi.fn(async () => undefined),
+      restorePrelaunchConfig: vi.fn(async () => undefined),
+      cleanupPrelaunchBackup: vi.fn(async () => undefined),
+    };
+    const runId = 'run-1';
+    const service = {
+      configFacade,
+      taskActivityIntervalService: {
+        repairStaleIntervalsAfterCrash: vi.fn(() => ({})),
+      },
+      runTracking: {
+        getTrackedRunId: vi.fn(() => runId),
+      },
+      runs: {
+        has: vi.fn(() => false),
+      },
+      launchStateStore: {
+        read: vi.fn(async () => null),
+      },
+      runtimeAdapterTraceLinesByRunId: {
+        get: vi.fn(() => undefined),
+      },
+    } satisfies TeamProvisioningConfigTaskActivityBoundaryServiceHost;
+    const logger = {
+      warn: vi.fn(),
+    };
+    const boundary =
+      createTeamProvisioningConfigTaskActivityBoundaryFromService<LaunchFailureArtifactPackRun>(
+        service,
+        { logger }
+      );
+
+    await expect(boundary.readConfigSnapshot('alpha')).resolves.toMatchObject({
+      teamName: 'snapshot',
+    });
+    await boundary.repairStaleTaskActivityIntervalsBeforeSnapshot('alpha');
+
+    expect(configFacade.readConfigSnapshot).toHaveBeenCalledWith('alpha');
+    expect(service.runTracking.getTrackedRunId).toHaveBeenCalledWith('alpha');
+    expect(service.launchStateStore.read).toHaveBeenCalledWith('alpha');
+  });
+
   it('keeps config reads and prelaunch mutations behind the config port', async () => {
     const { boundary, ports } = createBoundary();
 

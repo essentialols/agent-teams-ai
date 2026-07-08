@@ -38,6 +38,31 @@ export interface TeamProvisioningLaunchStateStoreBoundaryPorts {
   writtenRunIdByTeam?: Map<string, string>;
 }
 
+export interface TeamProvisioningLaunchStateStoreBoundaryServiceHost {
+  launchStateStore: {
+    read(teamName: string): Promise<PersistedTeamLaunchSnapshot | null>;
+    write(teamName: string, snapshot: PersistedTeamLaunchSnapshot): Promise<void>;
+    clear?(teamName: string): Promise<void>;
+  };
+  defaultLaunchStateStore: {
+    write(teamName: string, snapshot: PersistedTeamLaunchSnapshot): Promise<void>;
+    clear(teamName: string): Promise<void>;
+  };
+  membersMetaStore: TeamProvisioningLaunchStateStoreBoundaryPorts['membersMetaStore'];
+  getTrackedRunId(teamName: string): string | null | undefined;
+  applyOpenCodeSecondaryEvidenceOverlay: TeamProvisioningLaunchStateStoreBoundaryPorts['applyOpenCodeSecondaryEvidenceOverlay'];
+  applyOpenCodeSecondaryBootstrapStallOverlay: TeamProvisioningLaunchStateStoreBoundaryPorts['applyBootstrapStallOverlay'];
+  invalidateRuntimeSnapshotCaches: TeamProvisioningLaunchStateStoreBoundaryPorts['invalidateRuntimeSnapshotCaches'];
+  launchStateWrittenRunIdByTeam: Map<string, string>;
+}
+
+export interface TeamProvisioningLaunchStateStoreBoundaryServiceHostOptions {
+  areSnapshotsSemanticallyEqual: TeamProvisioningLaunchStateStoreBoundaryPorts['areSnapshotsSemanticallyEqual'];
+  clearBootstrapState: TeamProvisioningLaunchStateStoreBoundaryPorts['clearBootstrapState'];
+  logDebug: TeamProvisioningLaunchStateStoreBoundaryPorts['logDebug'];
+  nowMs: TeamProvisioningLaunchStateStoreBoundaryPorts['nowMs'];
+}
+
 export class TeamProvisioningLaunchStateStoreBoundary {
   private readonly queue = new Map<string, Promise<unknown>>();
   private readonly writtenRunIdByTeam: Map<string, string>;
@@ -153,4 +178,42 @@ export class TeamProvisioningLaunchStateStoreBoundary {
       }
     });
   }
+}
+
+export function createTeamProvisioningLaunchStateStoreBoundaryFromService(
+  service: TeamProvisioningLaunchStateStoreBoundaryServiceHost,
+  options: TeamProvisioningLaunchStateStoreBoundaryServiceHostOptions
+): TeamProvisioningLaunchStateStoreBoundary {
+  return new TeamProvisioningLaunchStateStoreBoundary({
+    launchStateStore: {
+      read: (teamName) => service.launchStateStore.read(teamName),
+      write: async (teamName, snapshot) => {
+        await service.launchStateStore.write(teamName, snapshot);
+        if (service.launchStateStore !== service.defaultLaunchStateStore) {
+          await service.defaultLaunchStateStore.write(teamName, snapshot);
+        }
+      },
+      clear: async (teamName) => {
+        if (typeof service.launchStateStore.clear === 'function') {
+          await service.launchStateStore.clear(teamName);
+        }
+        if (service.launchStateStore !== service.defaultLaunchStateStore) {
+          await service.defaultLaunchStateStore.clear(teamName);
+        }
+      },
+    },
+    membersMetaStore: service.membersMetaStore,
+    getTrackedRunId: (teamName) => service.getTrackedRunId(teamName),
+    applyOpenCodeSecondaryEvidenceOverlay: (params) =>
+      service.applyOpenCodeSecondaryEvidenceOverlay(params),
+    applyBootstrapStallOverlay: (snapshot) =>
+      service.applyOpenCodeSecondaryBootstrapStallOverlay(snapshot),
+    areSnapshotsSemanticallyEqual: options.areSnapshotsSemanticallyEqual,
+    clearBootstrapState: (teamName) => options.clearBootstrapState(teamName),
+    invalidateRuntimeSnapshotCaches: (teamName) =>
+      service.invalidateRuntimeSnapshotCaches(teamName),
+    logDebug: (message) => options.logDebug(message),
+    nowMs: options.nowMs,
+    writtenRunIdByTeam: service.launchStateWrittenRunIdByTeam,
+  });
 }

@@ -2,8 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createPersistedLaunchSnapshot } from '../../TeamLaunchStateEvaluator';
 import {
+  createTeamProvisioningLaunchStateStoreBoundaryFromService,
   TeamProvisioningLaunchStateStoreBoundary,
   type TeamProvisioningLaunchStateStoreBoundaryPorts,
+  type TeamProvisioningLaunchStateStoreBoundaryServiceHost,
 } from '../TeamProvisioningLaunchStateStoreBoundary';
 
 import type { PersistedTeamLaunchMemberState, PersistedTeamLaunchSnapshot } from '@shared/types';
@@ -108,6 +110,51 @@ function createBoundary(overrides: Partial<TeamProvisioningLaunchStateStoreBound
 }
 
 describe('TeamProvisioningLaunchStateStoreBoundary', () => {
+  it('builds service-shaped boundary ports and mirrors launch-state writes', async () => {
+    const nextSnapshot = snapshot();
+    const launchStateStore = {
+      read: vi.fn(async () => null),
+      write: vi.fn(async () => undefined),
+      clear: vi.fn(async () => undefined),
+    };
+    const defaultLaunchStateStore = {
+      write: vi.fn(async () => undefined),
+      clear: vi.fn(async () => undefined),
+    };
+    const clearBootstrapState = vi.fn(async () => undefined);
+    const invalidateRuntimeSnapshotCaches = vi.fn();
+    const service = {
+      launchStateStore,
+      defaultLaunchStateStore,
+      membersMetaStore: {
+        getMembers: vi.fn(async () => [{ name: 'Builder', joinedAt: 1 }]),
+      },
+      getTrackedRunId: vi.fn(() => 'run-1'),
+      applyOpenCodeSecondaryEvidenceOverlay: vi.fn(
+        async ({ snapshot: inputSnapshot }) => inputSnapshot
+      ),
+      applyOpenCodeSecondaryBootstrapStallOverlay: vi.fn(() => null),
+      invalidateRuntimeSnapshotCaches,
+      launchStateWrittenRunIdByTeam: new Map<string, string>(),
+    } satisfies TeamProvisioningLaunchStateStoreBoundaryServiceHost;
+    const boundary = createTeamProvisioningLaunchStateStoreBoundaryFromService(service, {
+      areSnapshotsSemanticallyEqual: vi.fn(() => false),
+      clearBootstrapState,
+      logDebug: vi.fn(),
+      nowMs: vi.fn(() => Date.parse(at)),
+    });
+
+    await boundary.writeLaunchStateSnapshotNow('demo', nextSnapshot, { runId: 'run-1' });
+    await boundary.clearPersistedLaunchStateNow('demo', { expectedRunId: 'run-1' });
+
+    expect(launchStateStore.write).toHaveBeenCalledWith('demo', nextSnapshot);
+    expect(defaultLaunchStateStore.write).toHaveBeenCalledWith('demo', nextSnapshot);
+    expect(launchStateStore.clear).toHaveBeenCalledWith('demo');
+    expect(defaultLaunchStateStore.clear).toHaveBeenCalledWith('demo');
+    expect(clearBootstrapState).toHaveBeenCalledWith('demo');
+    expect(invalidateRuntimeSnapshotCaches).toHaveBeenCalledWith('demo');
+  });
+
   it('skips stale clears when the tracked run id differs', async () => {
     const { boundary, ports, setTrackedRunId } = createBoundary();
     setTrackedRunId('run-current');

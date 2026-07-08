@@ -224,7 +224,9 @@ import {
 } from './provisioning/TeamProvisioningLaunchStateReconciliation';
 import {
   type LaunchStateWriteResult,
+  createTeamProvisioningLaunchStateStoreBoundaryFromService,
   TeamProvisioningLaunchStateStoreBoundary,
+  type TeamProvisioningLaunchStateStoreBoundaryServiceHost,
 } from './provisioning/TeamProvisioningLaunchStateStoreBoundary';
 import {
   getLeadActivityStateForTeam,
@@ -1518,39 +1520,15 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
       }
     );
     this.openCodeRuntimeDeliveryBoundaryHost = this.createOpenCodeRuntimeDeliveryBoundaryHost();
-    this.launchStateStoreBoundary = new TeamProvisioningLaunchStateStoreBoundary({
-      launchStateStore: {
-        read: (teamName) => this.launchStateStore.read(teamName),
-        write: async (teamName, snapshot) => {
-          await this.launchStateStore.write(teamName, snapshot);
-          if (this.launchStateStore !== this.defaultLaunchStateStore) {
-            await this.defaultLaunchStateStore.write(teamName, snapshot);
-          }
-        },
-        clear: async (teamName) => {
-          if (typeof this.launchStateStore.clear === 'function') {
-            await this.launchStateStore.clear(teamName);
-          }
-          if (this.launchStateStore !== this.defaultLaunchStateStore) {
-            await this.defaultLaunchStateStore.clear(teamName);
-          }
-        },
-      },
-      membersMetaStore: {
-        getMembers: (teamName) => this.membersMetaStore.getMembers(teamName),
-      },
-      getTrackedRunId: (teamName) => this.getTrackedRunId(teamName),
-      applyOpenCodeSecondaryEvidenceOverlay: (params) =>
-        this.applyOpenCodeSecondaryEvidenceOverlay(params),
-      applyBootstrapStallOverlay: (snapshot) =>
-        this.applyOpenCodeSecondaryBootstrapStallOverlay(snapshot),
-      areSnapshotsSemanticallyEqual: areLaunchStateSnapshotsSemanticallyEqual,
-      clearBootstrapState,
-      invalidateRuntimeSnapshotCaches: (teamName) => this.invalidateRuntimeSnapshotCaches(teamName),
-      logDebug: (message) => logger.debug(message),
-      nowMs: () => Date.now(),
-      writtenRunIdByTeam: this.launchStateWrittenRunIdByTeam,
-    });
+    this.launchStateStoreBoundary = createTeamProvisioningLaunchStateStoreBoundaryFromService(
+      this as unknown as TeamProvisioningLaunchStateStoreBoundaryServiceHost,
+      {
+        areSnapshotsSemanticallyEqual: areLaunchStateSnapshotsSemanticallyEqual,
+        clearBootstrapState,
+        logDebug: (message) => logger.debug(message),
+        nowMs: () => Date.now(),
+      }
+    );
     this.configTaskActivityBoundary =
       createTeamProvisioningConfigTaskActivityBoundaryFromService<ProvisioningRun>(
         this as unknown as TeamProvisioningConfigTaskActivityBoundaryServiceHost,

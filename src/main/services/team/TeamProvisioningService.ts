@@ -138,22 +138,21 @@ import {
   type TeamProvisioningConfigTaskActivityBoundaryServiceHost,
 } from './provisioning/TeamProvisioningConfigTaskActivityBoundary';
 import {
-  createDefaultDeterministicCreateRunFlowPorts,
   type DeterministicCreateRunFlowPorts,
   runDeterministicCreateRunFlow,
 } from './provisioning/TeamProvisioningCreateDeterministicRunFlow';
-import { prepareDeterministicCreateSetupFlow } from './provisioning/TeamProvisioningCreateDeterministicSetupFlow';
 import {
-  type DeterministicCreateSpawnFlowPorts,
-  runDeterministicCreateSpawnFlow,
-} from './provisioning/TeamProvisioningCreateDeterministicSpawnFlow';
+  createTeamProvisioningCreateDeterministicRunFlowPortsFromService,
+  type TeamProvisioningCreateDeterministicRunFlowServiceHost,
+} from './provisioning/TeamProvisioningCreateDeterministicRunFlowPortsFactory';
+import { prepareDeterministicCreateSetupFlow } from './provisioning/TeamProvisioningCreateDeterministicSetupFlow';
+import { type DeterministicCreateSpawnFlowPorts } from './provisioning/TeamProvisioningCreateDeterministicSpawnFlow';
 import {
   createTeamProvisioningCreateDeterministicSpawnFlowBoundary,
   createTeamProvisioningCreateDeterministicSpawnFlowDepsFromService,
   type TeamProvisioningCreateDeterministicSpawnFlowBoundary,
   type TeamProvisioningCreateDeterministicSpawnFlowServiceHost,
 } from './provisioning/TeamProvisioningCreateDeterministicSpawnFlowPortsFactory';
-import { createDeterministicCreateProvisioningRun } from './provisioning/TeamProvisioningCreateTeamFlow';
 import {
   clearPendingCrossTeamReplyExpectation as clearPendingCrossTeamReplyExpectationInState,
   type CrossTeamDeliveredLeadBlock,
@@ -3198,27 +3197,9 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
     ProvisioningRun,
     MixedSecondaryRuntimeLaneState
   > {
-    return createDefaultDeterministicCreateRunFlowPorts({
-      createProvisioningRun: (input) =>
-        createDeterministicCreateProvisioningRun({
-          ...input,
-          createInitialMemberSpawnStatusEntry,
-        }),
-      createInitialMemberSpawnStatusEntry,
-      resetTeamScopedTransientStateForNewRun: (teamName) =>
-        this.resetTeamScopedTransientStateForNewRun(teamName),
-      registerRun: (runId, run) => {
-        this.runs.set(runId, run);
-      },
-      setProvisioningRunByTeam: (teamName, runId) => {
-        this.provisioningRunByTeam.set(teamName, runId);
-      },
-      prepareWorkspaceTrustForDeterministicRun: (input) =>
-        this.prepareWorkspaceTrustForDeterministicRun(input),
-      clearPersistedLaunchState: (teamName, options) =>
-        this.clearPersistedLaunchState(teamName, options),
-      runDeterministicCreateSpawnFlow,
-    });
+    return createTeamProvisioningCreateDeterministicRunFlowPortsFromService(
+      this as unknown as TeamProvisioningCreateDeterministicRunFlowServiceHost
+    );
   }
 
   private createDeterministicCreateSpawnFlowPorts(input: {

@@ -182,14 +182,17 @@ import {
   type TeamProvisioningIdlePromptInjectionBoundary,
   type TeamProvisioningIdlePromptInjectionServiceHost,
 } from './provisioning/TeamProvisioningIdlePromptInjectionPortsFactory';
-import { markTeamInboxMessagesRead } from './provisioning/TeamProvisioningInboxPersistence';
+import { markTeamInboxMessagesReadWithDefaults } from './provisioning/TeamProvisioningInboxPersistence';
 import {
   getLeadRelayReadCommitBatch as getLeadRelayReadCommitBatchHelper,
   hasStableInboxMessageId,
   type NativeSameTeamFingerprint,
   trimRelayedMessageIdSet,
 } from './provisioning/TeamProvisioningInboxRelayPolicy';
-import { notifyAliveTeamsAboutLanguageChangeWithPorts } from './provisioning/TeamProvisioningLanguageChangeNotification';
+import {
+  notifyAliveTeamsAboutLanguageChangeWithService,
+  type TeamProvisioningLanguageChangeNotificationServiceHost,
+} from './provisioning/TeamProvisioningLanguageChangeNotification';
 import { assertOpenCodeNotLaunchedThroughLegacyProvisioning } from './provisioning/TeamProvisioningLaunchCompatibility';
 import {
   createTeamProvisioningLaunchDeterministicFlowBoundary,
@@ -512,7 +515,6 @@ import {
   MEMBER_SPAWN_AUDIT_MIN_INTERVAL_MS,
   type ProvisioningRun,
   TEAM_CONFIG_MAX_BYTES,
-  TEAM_INBOX_MAX_BYTES,
   TEAM_JSON_READ_TIMEOUT_MS,
   VERIFY_POLL_MS,
   VERIFY_TIMEOUT_MS,
@@ -3606,18 +3608,15 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
    */
   async notifyLanguageChange(newLangCode: string): Promise<void> {
     this.languageChangeInFlight = this.languageChangeInFlight.then(() =>
-      notifyAliveTeamsAboutLanguageChangeWithPorts(newLangCode, {
-        getAliveTeams: () => this.getAliveTeams(),
-        readConfigForStrictDecision: (teamName) =>
-          this.configFacade.readConfigForStrictDecision(teamName),
-        updateConfig: async (teamName, update) => {
-          await this.configReader.updateConfig(teamName, update);
-        },
-        sendMessageToTeam: (teamName, message) => this.sendMessageToTeam(teamName, message),
-        getSystemLocale,
-        resolveLanguageName,
-        logger,
-      })
+      notifyAliveTeamsAboutLanguageChangeWithService(
+        newLangCode,
+        this as unknown as TeamProvisioningLanguageChangeNotificationServiceHost,
+        {
+          getSystemLocale,
+          resolveLanguageName,
+          logger,
+        }
+      )
     );
     return this.languageChangeInFlight;
   }
@@ -3627,14 +3626,7 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
     member: string,
     messages: { messageId: string }[]
   ): Promise<void> {
-    await markTeamInboxMessagesRead({
-      teamName,
-      member,
-      messages,
-      readRegularFileUtf8: tryReadRegularFileUtf8,
-      timeoutMs: TEAM_JSON_READ_TIMEOUT_MS,
-      maxBytes: TEAM_INBOX_MAX_BYTES,
-    });
+    await markTeamInboxMessagesReadWithDefaults({ teamName, member, messages });
   }
 
   private trimRelayedSet(set: Set<string>): Set<string> {

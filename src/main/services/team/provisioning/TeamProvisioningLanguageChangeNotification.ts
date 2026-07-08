@@ -15,6 +15,50 @@ export interface TeamProvisioningLanguageChangeNotificationPorts {
   logger: TeamProvisioningLanguageChangeNotificationLogger;
 }
 
+export interface TeamProvisioningLanguageChangeNotificationServiceHost {
+  getAliveTeams(): readonly string[];
+  configFacade: {
+    readConfigForStrictDecision(teamName: string): Promise<TeamConfig | null>;
+  };
+  configReader: {
+    updateConfig(teamName: string, update: Pick<TeamConfig, 'language'>): Promise<void>;
+  };
+  sendMessageToTeam(teamName: string, message: string): Promise<void>;
+}
+
+export interface TeamProvisioningLanguageChangeNotificationServiceOptions {
+  getSystemLocale: TeamProvisioningLanguageChangeNotificationPorts['getSystemLocale'];
+  resolveLanguageName: TeamProvisioningLanguageChangeNotificationPorts['resolveLanguageName'];
+  logger: TeamProvisioningLanguageChangeNotificationLogger;
+}
+
+export function createTeamProvisioningLanguageChangeNotificationPortsFromService(
+  service: TeamProvisioningLanguageChangeNotificationServiceHost,
+  options: TeamProvisioningLanguageChangeNotificationServiceOptions
+): TeamProvisioningLanguageChangeNotificationPorts {
+  return {
+    getAliveTeams: () => service.getAliveTeams(),
+    readConfigForStrictDecision: (teamName) =>
+      service.configFacade.readConfigForStrictDecision(teamName),
+    updateConfig: (teamName, update) => service.configReader.updateConfig(teamName, update),
+    sendMessageToTeam: (teamName, message) => service.sendMessageToTeam(teamName, message),
+    getSystemLocale: options.getSystemLocale,
+    resolveLanguageName: options.resolveLanguageName,
+    logger: options.logger,
+  };
+}
+
+export function notifyAliveTeamsAboutLanguageChangeWithService(
+  newLangCode: string,
+  service: TeamProvisioningLanguageChangeNotificationServiceHost,
+  options: TeamProvisioningLanguageChangeNotificationServiceOptions
+): Promise<void> {
+  return notifyAliveTeamsAboutLanguageChangeWithPorts(
+    newLangCode,
+    createTeamProvisioningLanguageChangeNotificationPortsFromService(service, options)
+  );
+}
+
 export async function notifyAliveTeamsAboutLanguageChangeWithPorts(
   newLangCode: string,
   ports: TeamProvisioningLanguageChangeNotificationPorts

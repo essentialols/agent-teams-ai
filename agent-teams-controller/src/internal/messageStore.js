@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { writeJsonFileSync } = require('./atomicFile.js');
+const { withFileLockSync } = require('./fileLock.js');
 const runtimeHelpers = require('./runtimeHelpers.js');
 
 function nowIso() {
@@ -202,11 +203,13 @@ function buildMessage(flags, defaults) {
 }
 
 function appendRow(filePath, row) {
-  const current = readJson(filePath, []);
-  const list = Array.isArray(current) ? current : [];
-  list.push(row);
-  writeJson(filePath, list);
-  return row;
+  return withFileLockSync(filePath, () => {
+    const current = readJson(filePath, []);
+    const list = Array.isArray(current) ? current : [];
+    list.push(row);
+    writeJson(filePath, list);
+    return row;
+  });
 }
 
 const RUNTIME_DELIVERY_DUPLICATE_NOTICE =
@@ -254,16 +257,18 @@ function getRuntimeDeliveryDuplicate(list, row) {
 }
 
 function appendInboxRow(filePath, row) {
-  const current = readJson(filePath, []);
-  const list = Array.isArray(current) ? current : [];
-  const duplicate = getRuntimeDeliveryDuplicate(list, row);
-  if (duplicate) {
-    return { row: duplicate, deduplicated: true };
-  }
+  return withFileLockSync(filePath, () => {
+    const current = readJson(filePath, []);
+    const list = Array.isArray(current) ? current : [];
+    const duplicate = getRuntimeDeliveryDuplicate(list, row);
+    if (duplicate) {
+      return { row: duplicate, deduplicated: true };
+    }
 
-  list.push(row);
-  writeJson(filePath, list);
-  return { row, deduplicated: false };
+    list.push(row);
+    writeJson(filePath, list);
+    return { row, deduplicated: false };
+  });
 }
 
 function sendInboxMessage(paths, flags) {

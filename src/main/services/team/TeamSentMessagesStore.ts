@@ -5,6 +5,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { atomicWriteAsync } from './atomicWrite';
+import { withFileLock } from './fileLock';
 
 import type { InboxMessage } from '@shared/types';
 
@@ -48,10 +49,45 @@ export class TeamSentMessagesStore {
       return [];
     }
 
+    return this.normalizeMessages(parsed);
+  }
+
+  private async readMessagesForAppend(teamName: string, filePath: string): Promise<InboxMessage[]> {
+    let raw: string;
+    try {
+      const stat = await fs.promises.stat(filePath);
+      if (!stat.isFile() || stat.size > MAX_SENT_MESSAGES_FILE_BYTES) {
+        throw new Error('sent messages file is not a regular readable file');
+      }
+      raw = await readFileUtf8WithTimeout(filePath, 5_000);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return [];
+      }
+      if (error instanceof FileReadTimeoutError) {
+        throw new Error(`Timed out reading sent messages for ${teamName}`);
+      }
+      throw error;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw) as unknown;
+    } catch (error) {
+      throw new Error(`Failed to parse sent messages for ${teamName}: ${String(error)}`);
+    }
+
+    if (!Array.isArray(parsed)) {
+      throw new Error(`Sent messages file for ${teamName} is not an array`);
+    }
+
+    return this.normalizeMessages(parsed);
+  }
+
+  private normalizeMessages(parsed: unknown): InboxMessage[] {
     if (!Array.isArray(parsed)) {
       return [];
     }
-
     const messages: InboxMessage[] = [];
     for (const item of parsed) {
       if (!item || typeof item !== 'object') continue;
@@ -139,15 +175,16 @@ export class TeamSentMessagesStore {
   }
 
   async appendMessage(teamName: string, message: InboxMessage): Promise<void> {
-    // Bug #6: wrap in try/catch to prevent crash on IO errors
+    const filePath = this.getFilePath(teamName);
     try {
-      const existing = await this.readMessages(teamName);
-      existing.push(message);
+      await withFileLock(filePath, async () => {
+        const existing = await this.readMessagesForAppend(teamName, filePath);
+        existing.push(message);
 
-      // Trim to MAX_MESSAGES (keep newest)
-      const trimmed = existing.length > MAX_MESSAGES ? existing.slice(-MAX_MESSAGES) : existing;
+        const trimmed = existing.length > MAX_MESSAGES ? existing.slice(-MAX_MESSAGES) : existing;
 
-      await atomicWriteAsync(this.getFilePath(teamName), JSON.stringify(trimmed, null, 2));
+        await atomicWriteAsync(filePath, JSON.stringify(trimmed, null, 2));
+      });
     } catch (error) {
       logger.error(`Failed to append sent message for ${teamName}: ${String(error)}`);
     }

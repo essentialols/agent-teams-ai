@@ -2,6 +2,7 @@ const fs = require('fs');
 const http = require('http');
 const os = require('os');
 const path = require('path');
+const { spawn } = require('child_process');
 
 const { createController } = require('../src/index.js');
 
@@ -75,6 +76,59 @@ describe('agent-teams-controller API', () => {
       path.join(claudeDir, 'team-control-api.json'),
       JSON.stringify({ baseUrl, updatedAt: new Date().toISOString() }, null, 2)
     );
+  }
+
+  function runControllerMessageProcess(env) {
+    const script = `
+const fs = require('fs');
+const path = require('path');
+const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+const inboxPath = path.resolve(process.env.INBOX_PATH);
+const originalReadFileSync = fs.readFileSync;
+fs.readFileSync = function patchedReadFileSync(filePath, ...args) {
+  const resolved = path.resolve(String(filePath));
+  try {
+    const result = originalReadFileSync.call(this, filePath, ...args);
+    if (resolved === inboxPath) sleep(250);
+    return result;
+  } catch (error) {
+    if (resolved === inboxPath) sleep(250);
+    throw error;
+  }
+};
+const { createController } = require(process.env.CONTROLLER_ENTRY);
+const controller = createController({ teamName: 'my-team', claudeDir: process.env.CLAUDE_DIR });
+controller.messages.sendMessage({
+  to: 'bob',
+  from: 'alice',
+  text: process.env.MESSAGE_TEXT,
+  messageId: process.env.MESSAGE_ID,
+});
+`;
+
+    return new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, ['-e', script], {
+        cwd: path.join(__dirname, '..'),
+        env: { ...process.env, ...env },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stdout = '';
+      let stderr = '';
+      child.stdout.on('data', (chunk) => {
+        stdout += chunk;
+      });
+      child.stderr.on('data', (chunk) => {
+        stderr += chunk;
+      });
+      child.on('error', reject);
+      child.on('exit', (code) => {
+        if (code === 0) {
+          resolve();
+          return;
+        }
+        reject(new Error(`child exited ${code}\nstdout:\n${stdout}\nstderr:\n${stderr}`));
+      });
+    });
   }
 
   it('creates tasks and exposes grouped controller modules', () => {
@@ -1270,6 +1324,33 @@ describe('agent-teams-controller API', () => {
       })
     ).toThrow();
     expect(fs.readFileSync(inboxPath, 'utf8')).toBe('{not json');
+  });
+
+  it('keeps concurrent controller message appends from separate processes', async () => {
+    const claudeDir = makeClaudeDir();
+    const inboxPath = path.join(claudeDir, 'teams', 'my-team', 'inboxes', 'bob.json');
+    const controllerEntry = path.join(__dirname, '..', 'src', 'index.js');
+
+    await Promise.all(
+      ['one', 'two', 'three', 'four'].map((label) =>
+        runControllerMessageProcess({
+          CLAUDE_DIR: claudeDir,
+          CONTROLLER_ENTRY: controllerEntry,
+          INBOX_PATH: inboxPath,
+          MESSAGE_ID: `msg-${label}`,
+          MESSAGE_TEXT: `parallel ${label}`,
+        })
+      )
+    );
+
+    const rows = JSON.parse(fs.readFileSync(inboxPath, 'utf8'));
+    expect(rows).toHaveLength(4);
+    expect(rows.map((row) => row.messageId).sort()).toEqual([
+      'msg-four',
+      'msg-one',
+      'msg-three',
+      'msg-two',
+    ]);
   });
 
   it('persists slash command metadata through controller messages.appendSentMessage', () => {

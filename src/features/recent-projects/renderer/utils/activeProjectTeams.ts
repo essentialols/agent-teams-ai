@@ -1,4 +1,4 @@
-import { normalizePath } from '@renderer/utils/pathNormalize';
+import { normalizePathForMatching } from '@renderer/utils/pathNormalize';
 
 import type { TeamSummary } from '@shared/types';
 
@@ -35,7 +35,7 @@ export function buildActiveTeamsByProject({
       continue;
     }
 
-    const key = normalizePath(team.projectPath);
+    const key = normalizePathForMatching(team.projectPath);
     const existing = teamsByProject.get(key);
     if (existing) {
       existing.push(team);

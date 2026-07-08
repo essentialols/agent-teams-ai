@@ -2,6 +2,7 @@ import {
   buildTaskCountsByOwner,
   buildTaskCountsByProject,
   normalizePath,
+  normalizePathForMatching,
 } from '@renderer/utils/pathNormalize';
 import { describe, expect, it } from 'vitest';
 
@@ -10,6 +11,11 @@ describe('pathNormalize task counts', () => {
     expect(normalizePath('C:\\Users\\Alice\\Repo\\')).toBe('c:/users/alice/repo');
     expect(normalizePath('/Users/Alice/Repo/')).toBe('/Users/Alice/Repo');
     expect(normalizePath('/Users/Alice/repo/')).toBe('/Users/Alice/repo');
+  });
+
+  it('normalizes project matching keys case-insensitively', () => {
+    expect(normalizePathForMatching('/Users/Alice/Repo/')).toBe('/users/alice/repo');
+    expect(normalizePathForMatching('/Users/Alice/repo/')).toBe('/users/alice/repo');
   });
 
   it('keeps project counts separate for POSIX paths that differ only by case', () => {

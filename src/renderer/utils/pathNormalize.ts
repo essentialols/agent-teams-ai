@@ -12,6 +12,11 @@ export function normalizePath(p: string): string {
   return stripTrailingSeparators(normalizePathForComparison(p));
 }
 
+/** Case-insensitive UI comparison key. Keep normalizePath for identity maps. */
+export function normalizePathForMatching(p: string): string {
+  return normalizePath(p).toLowerCase();
+}
+
 export interface TaskStatusCounts {
   pending: number;
   inProgress: number;

@@ -401,7 +401,11 @@ import {
   handleProvisioningProcessExit,
   type TeamProvisioningProcessExitPorts,
 } from './provisioning/TeamProvisioningProcessExit';
-import { createTeamProvisioningProcessExitPorts } from './provisioning/TeamProvisioningProcessExitPortsFactory';
+import {
+  createTeamProvisioningProcessExitPorts,
+  createTeamProvisioningProcessExitPortsDepsFromService,
+  type TeamProvisioningProcessExitServiceHost,
+} from './provisioning/TeamProvisioningProcessExitPortsFactory';
 import {
   isTerminalFailureProvisioningState,
   TeamProvisioningRetainedProgressState,
@@ -1684,30 +1688,23 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
         }
       )
     );
-    this.processExitPorts = createTeamProvisioningProcessExitPorts<ProvisioningRun>({
-      service: {
-        buildStdoutCarryDiagnostic: (run) =>
-          this.outputRecoveryFacade.buildStdoutCarryDiagnostic(run),
-        flushStdoutParserCarry: (run) => this.outputRecoveryFacade.flushStdoutParserCarry(run),
-        stopStallWatchdog: (run) => this.outputRecoveryFacade.stopStallWatchdog(run),
-        hasSecondaryRuntimeRuns: (teamName) => this.hasSecondaryRuntimeRuns(teamName),
-        stopMixedSecondaryRuntimeLanes: (teamName) => this.stopMixedSecondaryRuntimeLanes(teamName),
-        persistMembersMeta: (teamName, request) => this.persistMembersMeta(teamName, request),
-        finalizeIncompleteLaunchStateBeforeCleanup: (run, fallbackReason) =>
-          this.finalizeIncompleteLaunchStateBeforeCleanup(run, fallbackReason),
-        cleanupRun: (run) => this.cleanupRun(run),
-      },
-      verificationProbePorts: this.verificationProbePorts,
-      logger,
-      updateProgress,
-      getTeamsBasePath,
-      getAutoDetectedClaudeBasePath,
-      getConfiguredCliCommandLabel,
-      getRunRuntimeFailureLabel,
-      getVerificationTimeoutMs: () => VERIFY_TIMEOUT_MS,
-      extractCliLogsFromRun,
-      logsSuggestShutdownOrCleanup,
-    });
+    this.processExitPorts = createTeamProvisioningProcessExitPorts<ProvisioningRun>(
+      createTeamProvisioningProcessExitPortsDepsFromService(
+        this as unknown as TeamProvisioningProcessExitServiceHost<ProvisioningRun>,
+        {
+          verificationProbePorts: this.verificationProbePorts,
+          logger,
+          updateProgress,
+          getTeamsBasePath,
+          getAutoDetectedClaudeBasePath,
+          getConfiguredCliCommandLabel,
+          getRunRuntimeFailureLabel,
+          getVerificationTimeoutMs: () => VERIFY_TIMEOUT_MS,
+          extractCliLogsFromRun,
+          logsSuggestShutdownOrCleanup,
+        }
+      )
+    );
     this.prepareFacade = new TeamProvisioningPrepareFacade({
       getOpenCodeRuntimeAdapter: () => this.appShellBoundary.getOpenCodeRuntimeAdapter(),
       buildProvisioningEnv: (providerId, providerBackendId, options) =>

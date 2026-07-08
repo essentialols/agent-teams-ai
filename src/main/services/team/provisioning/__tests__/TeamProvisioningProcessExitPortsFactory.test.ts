@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   createTeamProvisioningProcessExitPorts,
+  createTeamProvisioningProcessExitPortsDepsFromService,
   type TeamProvisioningProcessExitServiceAdapter,
+  type TeamProvisioningProcessExitServiceHost,
   type TeamProvisioningProcessExitVerificationProbeAdapter,
 } from '../TeamProvisioningProcessExitPortsFactory';
 
@@ -58,6 +60,67 @@ function createRun(overrides: Partial<TestRun> = {}): TestRun {
 }
 
 describe('TeamProvisioningProcessExitPortsFactory', () => {
+  it('builds process-exit deps from service-shaped dependencies', async () => {
+    const run = createRun();
+    const verificationProbePorts: TeamProvisioningProcessExitVerificationProbeAdapter<TestRun> = {
+      waitForValidConfig: vi.fn(async () => ({
+        ok: true as const,
+        location: 'configured' as const,
+        configPath: '/teams/atlas-hq/config.json',
+      })),
+      waitForTeamInList: vi.fn(async () => true),
+      waitForMissingInboxes: vi.fn(async () => []),
+    };
+    const service = {
+      outputRecoveryFacade: {
+        buildStdoutCarryDiagnostic: vi.fn(() => ({ carry: true })),
+        flushStdoutParserCarry: vi.fn(),
+        stopStallWatchdog: vi.fn(),
+      },
+      hasSecondaryRuntimeRuns: vi.fn(() => false),
+      stopMixedSecondaryRuntimeLanes: vi.fn(async () => undefined),
+      persistMembersMeta: vi.fn(async () => undefined),
+      finalizeIncompleteLaunchStateBeforeCleanup: vi.fn(async () => undefined),
+      cleanupRun: vi.fn(),
+    } satisfies TeamProvisioningProcessExitServiceHost<TestRun>;
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    const updateProgress = vi.fn(() => run.progress);
+    const deps = createTeamProvisioningProcessExitPortsDepsFromService(service, {
+      verificationProbePorts,
+      logger,
+      updateProgress,
+      getTeamsBasePath: () => '/teams',
+      getAutoDetectedClaudeBasePath: () => '/claude',
+      getConfiguredCliCommandLabel: () => 'claude',
+      getRunRuntimeFailureLabel: () => 'Claude',
+      getVerificationTimeoutMs: () => 15_000,
+      extractCliLogsFromRun: () => 'tail',
+      logsSuggestShutdownOrCleanup: () => true,
+    });
+
+    expect(deps.service.buildStdoutCarryDiagnostic(run)).toEqual({ carry: true });
+    deps.service.flushStdoutParserCarry(run);
+    deps.service.stopStallWatchdog(run);
+    expect(deps.service.hasSecondaryRuntimeRuns('atlas-hq')).toBe(false);
+    await deps.service.stopMixedSecondaryRuntimeLanes('atlas-hq');
+    await deps.service.persistMembersMeta('atlas-hq', run.request);
+    await deps.service.finalizeIncompleteLaunchStateBeforeCleanup(run, 'fallback');
+    deps.service.cleanupRun(run);
+
+    expect(deps.verificationProbePorts).toBe(verificationProbePorts);
+    expect(deps.logger).toBe(logger);
+    expect(deps.updateProgress).toBe(updateProgress);
+    expect(deps.getTeamsBasePath()).toBe('/teams');
+    expect(service.outputRecoveryFacade.flushStdoutParserCarry).toHaveBeenCalledWith(run);
+    expect(service.stopMixedSecondaryRuntimeLanes).toHaveBeenCalledWith('atlas-hq');
+    expect(service.persistMembersMeta).toHaveBeenCalledWith('atlas-hq', run.request);
+    expect(service.finalizeIncompleteLaunchStateBeforeCleanup).toHaveBeenCalledWith(
+      run,
+      'fallback'
+    );
+    expect(service.cleanupRun).toHaveBeenCalledWith(run);
+  });
+
   it('wires process-exit ports through explicit service and probe dependencies', async () => {
     const run = createRun();
     const progress = createProgress({ state: 'disconnected', message: 'done' });

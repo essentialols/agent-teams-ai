@@ -223,8 +223,8 @@ import {
   guardCommittedOpenCodeSecondaryLaneEvidence as guardCommittedOpenCodeSecondaryLaneEvidenceHelper,
 } from './provisioning/TeamProvisioningLaunchStateReconciliation';
 import {
-  type LaunchStateWriteResult,
   createTeamProvisioningLaunchStateStoreBoundaryFromService,
+  type LaunchStateWriteResult,
   TeamProvisioningLaunchStateStoreBoundary,
   type TeamProvisioningLaunchStateStoreBoundaryServiceHost,
 } from './provisioning/TeamProvisioningLaunchStateStoreBoundary';
@@ -581,7 +581,11 @@ import {
   type TeamProvisioningStreamEventPorts,
 } from './provisioning/TeamProvisioningStreamEvents';
 import { captureTeamSpawnEvents as captureTeamSpawnEventsHelper } from './provisioning/TeamProvisioningStreamSpawnEvents';
-import { TeamProvisioningToolApprovalFacade } from './provisioning/TeamProvisioningToolApprovalFacade';
+import {
+  createTeamProvisioningToolApprovalFacadeFromService,
+  TeamProvisioningToolApprovalFacade,
+  type TeamProvisioningToolApprovalFacadeServiceHost,
+} from './provisioning/TeamProvisioningToolApprovalFacade';
 import {
   createTeamProvisioningTransientRunStatePortsFromService,
   TeamProvisioningTransientRunState,
@@ -1507,41 +1511,16 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
         this as unknown as TeamProvisioningConfigTaskActivityBoundaryServiceHost,
         { logger }
       );
-    this.toolApprovalFacade = new TeamProvisioningToolApprovalFacade<ProvisioningRun>({
-      logger,
-      pendingTimeouts: this.pendingTimeouts,
-      getRuns: () => this.runs.values(),
-      getTrackedRunId: (teamName) => this.runTracking.getTrackedRunId(teamName) ?? undefined,
-      getRun: (runId) => this.runs.get(runId),
-      getOpenCodeRuntimeAdapter: () => this.appShellBoundary.getOpenCodeRuntimeAdapter(),
-      readLaunchState: (teamName) => this.launchStateStore.read(teamName),
-      persistOpenCodeRuntimeAdapterLaunchResult: (result, input) =>
-        this.persistOpenCodeRuntimeAdapterLaunchResult(result, input),
-      deleteRuntimeAdapterRunByTeam: (teamName) => {
-        this.runtimeAdapterRunByTeam.delete(teamName);
-      },
-      setRuntimeAdapterRunByTeam: (teamName, runtimeRun) => {
-        this.runtimeAdapterRunByTeam.set(teamName, runtimeRun);
-      },
-      setAliveRunId: (teamName, runId) => this.runTracking.setAliveRunId(teamName, runId),
-      guardCommittedOpenCodeSecondaryLaneEvidence: (input) =>
-        this.guardCommittedOpenCodeSecondaryLaneEvidence(input),
-      publishMixedSecondaryLaneStatusChange: (run, lane) =>
-        this.publishMixedSecondaryLaneStatusChange(run, lane),
-      emitTeamChange: (event) => {
-        this.teamChangeEmitter?.(event);
-      },
-      readConfigForStrictDecision: (teamName) =>
-        this.configFacade.readConfigForStrictDecision(teamName),
-      addPermissionRulesToSettings: (settingsPath, toolNames, behavior) =>
-        this.addPermissionRulesToSettings(settingsPath, toolNames, behavior),
-      persistInboxMessage: (teamName, recipient, message) =>
-        this.persistInboxMessage(teamName, recipient, message),
-      nowIso,
-      nowMs: () => Date.now(),
-      joinPath: (...parts) => path.join(...parts),
-      teammateOperationalToolNames: AGENT_TEAMS_NAMESPACED_TEAMMATE_OPERATIONAL_TOOL_NAMES,
-    });
+    this.toolApprovalFacade = createTeamProvisioningToolApprovalFacadeFromService<ProvisioningRun>(
+      this as unknown as TeamProvisioningToolApprovalFacadeServiceHost<ProvisioningRun>,
+      {
+        logger,
+        nowIso,
+        nowMs: () => Date.now(),
+        joinPath: (...parts) => path.join(...parts),
+        teammateOperationalToolNames: AGENT_TEAMS_NAMESPACED_TEAMMATE_OPERATIONAL_TOOL_NAMES,
+      }
+    );
     this.idlePromptInjectionBoundary =
       createTeamProvisioningIdlePromptInjectionBoundaryFromService<ProvisioningRun>(
         this as unknown as TeamProvisioningIdlePromptInjectionServiceHost<ProvisioningRun>,

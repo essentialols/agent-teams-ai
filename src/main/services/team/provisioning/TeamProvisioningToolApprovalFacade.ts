@@ -78,6 +78,107 @@ export interface TeamProvisioningToolApprovalFacadeDeps<
   notifications?: TeamProvisioningToolApprovalFacadeNotificationDeps;
 }
 
+export interface TeamProvisioningToolApprovalFacadeServiceHost<
+  TRun extends TeamProvisioningToolApprovalFacadeRun,
+> {
+  pendingTimeouts: TeamProvisioningToolApprovalFacadeDeps<TRun>['pendingTimeouts'];
+  runs: ReadonlyMap<string, TRun>;
+  runTracking: {
+    getTrackedRunId(teamName: string): string | null | undefined;
+    setAliveRunId: TeamProvisioningToolApprovalFacadeDeps<TRun>['setAliveRunId'];
+  };
+  appShellBoundary: {
+    getOpenCodeRuntimeAdapter: TeamProvisioningToolApprovalFacadeDeps<TRun>['getOpenCodeRuntimeAdapter'];
+  };
+  launchStateStore: {
+    read: TeamProvisioningToolApprovalFacadeDeps<TRun>['readLaunchState'];
+  };
+  runtimeAdapterRunByTeam: {
+    delete(teamName: string): unknown;
+    set(
+      teamName: string,
+      runtimeRun: Parameters<
+        TeamProvisioningToolApprovalFacadeDeps<TRun>['setRuntimeAdapterRunByTeam']
+      >[1]
+    ): unknown;
+  };
+  teamChangeEmitter?: TeamProvisioningToolApprovalFacadeDeps<TRun>['emitTeamChange'] | null;
+  configFacade: {
+    readConfigForStrictDecision: TeamProvisioningToolApprovalFacadeDeps<TRun>['readConfigForStrictDecision'];
+  };
+  persistOpenCodeRuntimeAdapterLaunchResult: TeamProvisioningToolApprovalFacadeDeps<TRun>['persistOpenCodeRuntimeAdapterLaunchResult'];
+  guardCommittedOpenCodeSecondaryLaneEvidence: TeamProvisioningToolApprovalFacadeDeps<TRun>['guardCommittedOpenCodeSecondaryLaneEvidence'];
+  publishMixedSecondaryLaneStatusChange: TeamProvisioningToolApprovalFacadeDeps<TRun>['publishMixedSecondaryLaneStatusChange'];
+  addPermissionRulesToSettings: TeamProvisioningToolApprovalFacadeDeps<TRun>['addPermissionRulesToSettings'];
+  persistInboxMessage: TeamProvisioningToolApprovalFacadeDeps<TRun>['persistInboxMessage'];
+}
+
+export interface TeamProvisioningToolApprovalFacadeServiceHostOptions<
+  TRun extends TeamProvisioningToolApprovalFacadeRun,
+> {
+  logger: TeamProvisioningToolApprovalFacadeDeps<TRun>['logger'];
+  nowIso: TeamProvisioningToolApprovalFacadeDeps<TRun>['nowIso'];
+  nowMs: TeamProvisioningToolApprovalFacadeDeps<TRun>['nowMs'];
+  joinPath: TeamProvisioningToolApprovalFacadeDeps<TRun>['joinPath'];
+  teammateOperationalToolNames: TeamProvisioningToolApprovalFacadeDeps<TRun>['teammateOperationalToolNames'];
+  notifications?: TeamProvisioningToolApprovalFacadeNotificationDeps;
+}
+
+export function createTeamProvisioningToolApprovalFacadeDepsFromService<
+  TRun extends TeamProvisioningToolApprovalFacadeRun,
+>(
+  service: TeamProvisioningToolApprovalFacadeServiceHost<TRun>,
+  options: TeamProvisioningToolApprovalFacadeServiceHostOptions<TRun>
+): TeamProvisioningToolApprovalFacadeDeps<TRun> {
+  return {
+    logger: options.logger,
+    pendingTimeouts: service.pendingTimeouts,
+    getRuns: () => service.runs.values(),
+    getTrackedRunId: (teamName) => service.runTracking.getTrackedRunId(teamName) ?? undefined,
+    getRun: (runId) => service.runs.get(runId),
+    getOpenCodeRuntimeAdapter: () => service.appShellBoundary.getOpenCodeRuntimeAdapter(),
+    readLaunchState: (teamName) => service.launchStateStore.read(teamName),
+    persistOpenCodeRuntimeAdapterLaunchResult: (result, input) =>
+      service.persistOpenCodeRuntimeAdapterLaunchResult(result, input),
+    deleteRuntimeAdapterRunByTeam: (teamName) => {
+      service.runtimeAdapterRunByTeam.delete(teamName);
+    },
+    setRuntimeAdapterRunByTeam: (teamName, runtimeRun) => {
+      service.runtimeAdapterRunByTeam.set(teamName, runtimeRun);
+    },
+    setAliveRunId: (teamName, runId) => service.runTracking.setAliveRunId(teamName, runId),
+    guardCommittedOpenCodeSecondaryLaneEvidence: (input) =>
+      service.guardCommittedOpenCodeSecondaryLaneEvidence(input),
+    publishMixedSecondaryLaneStatusChange: (run, lane) =>
+      service.publishMixedSecondaryLaneStatusChange(run, lane),
+    emitTeamChange: (event) => {
+      service.teamChangeEmitter?.(event);
+    },
+    readConfigForStrictDecision: (teamName) =>
+      service.configFacade.readConfigForStrictDecision(teamName),
+    addPermissionRulesToSettings: (settingsPath, toolNames, behavior) =>
+      service.addPermissionRulesToSettings(settingsPath, toolNames, behavior),
+    persistInboxMessage: (teamName, recipient, message) =>
+      service.persistInboxMessage(teamName, recipient, message),
+    nowIso: options.nowIso,
+    nowMs: options.nowMs,
+    joinPath: options.joinPath,
+    teammateOperationalToolNames: options.teammateOperationalToolNames,
+    notifications: options.notifications,
+  };
+}
+
+export function createTeamProvisioningToolApprovalFacadeFromService<
+  TRun extends TeamProvisioningToolApprovalFacadeRun,
+>(
+  service: TeamProvisioningToolApprovalFacadeServiceHost<TRun>,
+  options: TeamProvisioningToolApprovalFacadeServiceHostOptions<TRun>
+): TeamProvisioningToolApprovalFacade<TRun> {
+  return new TeamProvisioningToolApprovalFacade<TRun>(
+    createTeamProvisioningToolApprovalFacadeDepsFromService(service, options)
+  );
+}
+
 export class TeamProvisioningToolApprovalFacade<
   TRun extends TeamProvisioningToolApprovalFacadeRun,
 > {

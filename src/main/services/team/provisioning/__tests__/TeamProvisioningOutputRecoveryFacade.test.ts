@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  createTeamProvisioningOutputRecoveryFacadeDepsFromService,
+  createTeamProvisioningOutputRecoveryFacadeFromService,
   TeamProvisioningOutputRecoveryFacade,
   type TeamProvisioningOutputRecoveryFacadeServiceAdapter,
+  type TeamProvisioningOutputRecoveryFacadeServiceHost,
 } from '../TeamProvisioningOutputRecoveryFacade';
 
 import type { TeamProvisioningOutputRecoveryBoundary } from '../TeamProvisioningOutputRecoveryBoundaryFactory';
@@ -178,6 +181,61 @@ function makeFacade(service = makeService()): TeamProvisioningOutputRecoveryFaca
 }
 
 describe('TeamProvisioningOutputRecoveryFacade', () => {
+  it('builds facade deps from service-shaped recovery dependencies', async () => {
+    const serviceAdapter = makeService();
+    const mcpConfigBuilder = { writeConfigFile: vi.fn(async () => '/workspace/mcp.json') };
+    const providerRuntimeCompatibility = {
+      validateAgentTeamsMcpRuntime: vi.fn(async () => undefined),
+    };
+    const service = {
+      ...serviceAdapter,
+      stopAllTeamsGeneration: 7,
+      mcpConfigBuilder,
+      providerRuntimeCompatibility,
+    } satisfies TeamProvisioningOutputRecoveryFacadeServiceHost<TestRun> & {
+      events: string[];
+    };
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const killTeamProcess = vi.fn();
+    const updateProgress = vi.fn((run: TestRun) => run.progress);
+    const emitLogsProgress = vi.fn();
+    const nowIso = () => '2026-01-01T00:00:00.000Z';
+    const deps = createTeamProvisioningOutputRecoveryFacadeDepsFromService(service, {
+      logger,
+      killTeamProcess,
+      updateProgress,
+      emitLogsProgress,
+      nowIso,
+    });
+    const facade = createTeamProvisioningOutputRecoveryFacadeFromService(service, {
+      logger,
+      killTeamProcess,
+      updateProgress,
+      emitLogsProgress,
+      nowIso,
+    });
+    const run = makeRun();
+
+    deps.service.updateProgress(run, 'spawning', 'Starting');
+    deps.service.emitLogsProgress(run);
+    expect(deps.service.getStopAllTeamsGeneration()).toBe(7);
+    deps.service.stopFilesystemMonitor(run);
+    deps.service.startFilesystemMonitor(run, run.request);
+    await deps.service.tryCompleteAfterTimeout(run);
+    await deps.service.handleProcessExit(run, 0);
+
+    expect(deps.logger).toBe(logger);
+    expect(deps.mcpConfigBuilder).toBe(mcpConfigBuilder);
+    expect(deps.providerRuntime).toBe(providerRuntimeCompatibility);
+    expect(deps.killTeamProcess).toBe(killTeamProcess);
+    expect(deps.updateProgress).toBe(updateProgress);
+    expect(deps.nowIso).toBe(nowIso);
+    expect(updateProgress).toHaveBeenCalledWith(run, 'spawning', 'Starting');
+    expect(emitLogsProgress).toHaveBeenCalledWith(run);
+    expect(service.events).toEqual(['stop-fs', 'start-fs', 'timeout', 'exit']);
+    expect(facade).toBeInstanceOf(TeamProvisioningOutputRecoveryFacade);
+  });
+
   it('delegates output recovery methods through the output boundary', () => {
     const facade = makeFacade();
     const run = makeRun();
@@ -228,8 +286,9 @@ describe('TeamProvisioningOutputRecoveryFacade', () => {
     makeFacade();
     const run = makeRun();
 
-    const outputCalls = mocks.createOutputBoundary.mock
-      .calls as unknown as [OutputBoundaryDepsForTest][];
+    const outputCalls = mocks.createOutputBoundary.mock.calls as unknown as [
+      OutputBoundaryDepsForTest,
+    ][];
     const outputDeps = outputCalls.at(-1)?.[0];
     await outputDeps?.service.respawnAfterAuthFailure(run);
 
@@ -241,8 +300,9 @@ describe('TeamProvisioningOutputRecoveryFacade', () => {
     makeFacade(service);
     const run = makeRun();
 
-    const authRetryCalls = mocks.createAuthRetryBoundary.mock
-      .calls as unknown as [AuthRetryBoundaryDepsForTest][];
+    const authRetryCalls = mocks.createAuthRetryBoundary.mock.calls as unknown as [
+      AuthRetryBoundaryDepsForTest,
+    ][];
     const authRetryDeps = authRetryCalls.at(-1)?.[0];
     authRetryDeps?.service.stopStallWatchdog(run);
     authRetryDeps?.service.attachStdoutHandler(run);

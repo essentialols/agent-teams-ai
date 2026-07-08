@@ -404,7 +404,11 @@ import {
   isAuthFailureWarning,
   normalizeApiRetryErrorMessage,
 } from './provisioning/TeamProvisioningOutputErrorPolicy';
-import { TeamProvisioningOutputRecoveryFacade } from './provisioning/TeamProvisioningOutputRecoveryFacade';
+import {
+  createTeamProvisioningOutputRecoveryFacadeFromService,
+  TeamProvisioningOutputRecoveryFacade,
+  type TeamProvisioningOutputRecoveryFacadeServiceHost,
+} from './provisioning/TeamProvisioningOutputRecoveryFacade';
 import { reconcilePersistedLaunchStateWithTeamProvisioningPorts } from './provisioning/TeamProvisioningPersistedLaunchReconcilePorts';
 import { type PersistedTeamConfigCacheEntry } from './provisioning/TeamProvisioningPersistedTeamConfigAccess';
 import {
@@ -1621,29 +1625,17 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
       runs: this.runs,
       sendMessageToRunBoundary: this.sendMessageToRunBoundary,
     };
-    this.outputRecoveryFacade = new TeamProvisioningOutputRecoveryFacade<ProvisioningRun>({
-      service: {
-        updateProgress,
-        emitLogsProgress,
-        killTeamProcess,
-        cleanupRun: (run) => this.cleanupRun(run),
-        appendCliLogs: (run, stream, text) => this.appendCliLogs(run, stream, text),
-        handleStreamJsonMessage: (run, msg) => this.handleStreamJsonMessage(run, msg),
-        shiftProvisioningOutputIndexesAfterRemoval: (run, removedIndex) =>
-          this.shiftProvisioningOutputIndexesAfterRemoval(run, removedIndex),
-        getStopAllTeamsGeneration: () => this.stopAllTeamsGeneration,
-        stopFilesystemMonitor: (run) => this.stopFilesystemMonitor(run),
-        startFilesystemMonitor: (run, request) => this.startFilesystemMonitor(run, request),
-        tryCompleteAfterTimeout: (run) => this.tryCompleteAfterTimeout(run),
-        handleProcessExit: (run, code) => this.handleProcessExit(run, code),
-      },
-      logger,
-      mcpConfigBuilder: this.mcpConfigBuilder,
-      providerRuntime: this.providerRuntimeCompatibility,
-      killTeamProcess,
-      updateProgress,
-      nowIso,
-    });
+    this.outputRecoveryFacade =
+      createTeamProvisioningOutputRecoveryFacadeFromService<ProvisioningRun>(
+        this as unknown as TeamProvisioningOutputRecoveryFacadeServiceHost<ProvisioningRun>,
+        {
+          logger,
+          killTeamProcess,
+          updateProgress,
+          emitLogsProgress,
+          nowIso,
+        }
+      );
     const deterministicLaunchFlowHost =
       createTeamProvisioningLaunchDeterministicFlowHostFromService<
         ProvisioningRun,

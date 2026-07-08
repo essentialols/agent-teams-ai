@@ -24,6 +24,11 @@ export type TeamProvisioningCleanupRunPortsFactoryDeps<
 type CleanupRunPortsFactoryDeps<TRun extends TeamProvisioningCleanupRunPortsFactoryRun> =
   TeamProvisioningCleanupRunPortsFactoryDeps<TRun>;
 
+export interface TeamProvisioningCleanupRuntimeSnapshotCachePort {
+  invalidateRuntimeSnapshotCaches(teamName: string): void;
+  invalidateMemberSpawnStatusesCache(teamName: string): void;
+}
+
 export interface TeamProvisioningCleanupRunServiceHost<
   TRun extends TeamProvisioningCleanupRunPortsFactoryRun,
 > {
@@ -47,8 +52,7 @@ export interface TeamProvisioningCleanupRunServiceHost<
   provisioningRunByTeam: CleanupRunPortsFactoryDeps<TRun>['provisioningRunByTeam'];
   aliveRunByTeam: CleanupRunPortsFactoryDeps<TRun>['aliveRunByTeam'];
   clearSecondaryRuntimeRuns: CleanupRunPortsFactoryDeps<TRun>['clearSecondaryRuntimeRuns'];
-  invalidateRuntimeSnapshotCaches: CleanupRunPortsFactoryDeps<TRun>['invalidateRuntimeSnapshotCaches'];
-  invalidateMemberSpawnStatusesCache: CleanupRunPortsFactoryDeps<TRun>['invalidateMemberSpawnStatusesCache'];
+  runtimeSnapshotCacheBoundary: TeamProvisioningCleanupRuntimeSnapshotCachePort;
   leadInboxRelayInFlight: CleanupRunPortsFactoryDeps<TRun>['leadInboxRelayInFlight'];
   relayedLeadInboxMessageIds: CleanupRunPortsFactoryDeps<TRun>['relayedLeadInboxMessageIds'];
   pendingCrossTeamFirstReplies: CleanupRunPortsFactoryDeps<TRun>['pendingCrossTeamFirstReplies'];
@@ -101,9 +105,9 @@ export function createTeamProvisioningCleanupRunPortsDepsFromService<
     deleteAliveRunId: (teamName) => service.runTracking.deleteAliveRunId(teamName),
     clearSecondaryRuntimeRuns: (teamName) => service.clearSecondaryRuntimeRuns(teamName),
     invalidateRuntimeSnapshotCaches: (teamName) =>
-      service.invalidateRuntimeSnapshotCaches(teamName),
+      service.runtimeSnapshotCacheBoundary.invalidateRuntimeSnapshotCaches(teamName),
     invalidateMemberSpawnStatusesCache: (teamName) =>
-      service.invalidateMemberSpawnStatusesCache(teamName),
+      service.runtimeSnapshotCacheBoundary.invalidateMemberSpawnStatusesCache(teamName),
     leadInboxRelayInFlight: service.leadInboxRelayInFlight,
     relayedLeadInboxMessageIds: service.relayedLeadInboxMessageIds,
     pendingCrossTeamFirstReplies: service.pendingCrossTeamFirstReplies,

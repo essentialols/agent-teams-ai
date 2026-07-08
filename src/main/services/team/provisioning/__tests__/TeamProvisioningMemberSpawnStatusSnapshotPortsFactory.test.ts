@@ -350,7 +350,9 @@ describe('TeamProvisioningMemberSpawnStatusSnapshotPortsFactory', () => {
       runs: new Map([['run-1', targetRun]]),
       memberSpawnStatusesSnapshotCache: snapshotCache,
       memberSpawnStatusesInFlightByTeam: inFlightByTeam,
-      getMemberSpawnStatusesCacheGeneration: vi.fn(() => 17),
+      runtimeSnapshotCacheBoundary: {
+        getMemberSpawnStatusesCacheGeneration: vi.fn(() => 17),
+      },
       runTracking: {
         getTrackedRunId: vi.fn(() => 'run-1'),
       },

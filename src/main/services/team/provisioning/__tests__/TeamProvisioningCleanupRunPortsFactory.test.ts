@@ -3,8 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createTeamProvisioningCleanupRunPorts,
   createTeamProvisioningCleanupRunPortsDepsFromService,
-  type TeamProvisioningCleanupRunServiceHost,
   type TeamProvisioningCleanupRunPortsFactoryDeps,
+  type TeamProvisioningCleanupRunServiceHost,
 } from '../TeamProvisioningCleanupRunPortsFactory';
 
 import type { TeamProvisioningCleanupRun } from '../TeamProvisioningCleanup';
@@ -129,8 +129,10 @@ describe('createTeamProvisioningCleanupRunPorts', () => {
       provisioningRunByTeam: deps.provisioningRunByTeam,
       aliveRunByTeam: deps.aliveRunByTeam,
       clearSecondaryRuntimeRuns: deps.clearSecondaryRuntimeRuns,
-      invalidateRuntimeSnapshotCaches: deps.invalidateRuntimeSnapshotCaches,
-      invalidateMemberSpawnStatusesCache: deps.invalidateMemberSpawnStatusesCache,
+      runtimeSnapshotCacheBoundary: {
+        invalidateRuntimeSnapshotCaches: deps.invalidateRuntimeSnapshotCaches,
+        invalidateMemberSpawnStatusesCache: deps.invalidateMemberSpawnStatusesCache,
+      },
       leadInboxRelayInFlight: deps.leadInboxRelayInFlight,
       relayedLeadInboxMessageIds: deps.relayedLeadInboxMessageIds,
       pendingCrossTeamFirstReplies: deps.pendingCrossTeamFirstReplies,

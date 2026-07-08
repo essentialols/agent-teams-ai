@@ -196,7 +196,9 @@ describe('TeamProvisioningLiveLaunchSnapshotBoundaryFactory', () => {
       runs: new Map([[trackedRun.runId, trackedRun]]),
       pauseMemberTaskActivityForRuntimeLoss: vi.fn(),
       buildMixedPersistedLaunchSnapshotForRun: vi.fn(() => null),
-      invalidateMemberSpawnStatusesCache: vi.fn(),
+      runtimeSnapshotCacheBoundary: {
+        invalidateMemberSpawnStatusesCache: vi.fn(),
+      },
       teamChangeEmitter: vi.fn((event) => {
         teamChanges.push(event);
       }),
@@ -242,7 +244,9 @@ describe('TeamProvisioningLiveLaunchSnapshotBoundaryFactory', () => {
       expect.objectContaining({ status: 'online' }),
       '2026-07-03T00:01:00.000Z'
     );
-    expect(service.invalidateMemberSpawnStatusesCache).toHaveBeenCalledWith('team-a');
+    expect(
+      service.runtimeSnapshotCacheBoundary.invalidateMemberSpawnStatusesCache
+    ).toHaveBeenCalledWith('team-a');
     expect(teamChanges).toEqual([
       { type: 'member-spawn', teamName: 'team-a', runId: 'run-1', detail: 'Builder' },
     ]);

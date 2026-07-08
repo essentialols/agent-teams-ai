@@ -1675,18 +1675,6 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
     return this.runtimeSnapshotCacheBoundary.getRuntimeSnapshotCacheGeneration(teamName);
   }
 
-  private getAgentRuntimeSnapshotCacheTtlMs(teamName: string, runId: string | null): number {
-    return this.runTracking.getAgentRuntimeSnapshotCacheTtlMs(teamName, runId);
-  }
-
-  private getMemberSpawnStatusesCacheGeneration(teamName: string): number {
-    return this.runtimeSnapshotCacheBoundary.getMemberSpawnStatusesCacheGeneration(teamName);
-  }
-
-  private invalidateMemberSpawnStatusesCache(teamName: string): void {
-    this.runtimeSnapshotCacheBoundary.invalidateMemberSpawnStatusesCache(teamName);
-  }
-
   private invalidateRuntimeSnapshotCaches(teamName: string): void {
     this.runtimeSnapshotCacheBoundary.invalidateRuntimeSnapshotCaches(teamName);
   }

@@ -3,20 +3,20 @@ import {
   snapshotFromRuntimeMemberStatuses,
   snapshotToMemberSpawnStatuses,
 } from '../TeamLaunchStateEvaluator';
+
 import { getPersistedLaunchMemberNames } from './TeamProvisioningLaunchStateProjection';
-
-import {
-  type MemberSpawnStatusesSnapshotPorts,
-  type MemberSpawnStatusRun,
-} from './TeamProvisioningMemberSpawnSnapshots';
-
-import type { TeamMembersMetaStore } from '../TeamMembersMetaStore';
-import type { PersistedTeamLaunchSnapshot } from '@shared/types';
-import { nowIso } from './TeamProvisioningRunProgress';
 import {
   buildRuntimeSpawnStatusRecord,
   filterRemovedMembersFromLaunchSnapshot,
 } from './TeamProvisioningMemberStatusProjection';
+import { nowIso } from './TeamProvisioningRunProgress';
+
+import type { TeamMembersMetaStore } from '../TeamMembersMetaStore';
+import type {
+  MemberSpawnStatusesSnapshotPorts,
+  MemberSpawnStatusRun,
+} from './TeamProvisioningMemberSpawnSnapshots';
+import type { PersistedTeamLaunchSnapshot } from '@shared/types';
 
 type TeamProvisioningMemberSpawnStatusesMetaMembers = Awaited<
   ReturnType<TeamMembersMetaStore['getMembers']>
@@ -89,13 +89,17 @@ export interface TeamProvisioningMemberSpawnStatusesSnapshotPortsHost<
   nowIso: MemberSpawnStatusesSnapshotPorts<TRun>['nowIso'];
 }
 
+export interface TeamProvisioningMemberSpawnStatusesCacheGenerationPort {
+  getMemberSpawnStatusesCacheGeneration(teamName: string): number;
+}
+
 export interface TeamProvisioningMemberSpawnStatusesSnapshotServiceHost<
   TRun extends MemberSpawnStatusRun,
 > {
   runs: TeamProvisioningMemberSpawnStatusesSnapshotPortsHost<TRun>['runs'];
   memberSpawnStatusesSnapshotCache: TeamProvisioningMemberSpawnStatusesSnapshotPortsHost<TRun>['cache']['snapshotCache'];
   memberSpawnStatusesInFlightByTeam: TeamProvisioningMemberSpawnStatusesSnapshotPortsHost<TRun>['cache']['inFlightByTeam'];
-  getMemberSpawnStatusesCacheGeneration: TeamProvisioningMemberSpawnStatusesSnapshotPortsHost<TRun>['getCacheGeneration'];
+  runtimeSnapshotCacheBoundary: TeamProvisioningMemberSpawnStatusesCacheGenerationPort;
   runTracking: TeamProvisioningMemberSpawnStatusesSnapshotPortsHost<TRun>['runTracking'];
   configTaskActivityBoundary: Pick<
     TeamProvisioningMemberSpawnStatusesSnapshotPortsHost<TRun>,
@@ -179,7 +183,8 @@ export function createTeamProvisioningMemberSpawnStatusesSnapshotHostFromService
       snapshotCache: service.memberSpawnStatusesSnapshotCache,
       inFlightByTeam: service.memberSpawnStatusesInFlightByTeam,
     },
-    getCacheGeneration: (teamName) => service.getMemberSpawnStatusesCacheGeneration(teamName),
+    getCacheGeneration: (teamName) =>
+      service.runtimeSnapshotCacheBoundary.getMemberSpawnStatusesCacheGeneration(teamName),
     runTracking: service.runTracking,
     readTaskActivityRepairLaunchSnapshot: (teamName) =>
       service.configTaskActivityBoundary.readTaskActivityRepairLaunchSnapshot(teamName),

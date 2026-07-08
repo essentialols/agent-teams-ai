@@ -59,13 +59,17 @@ export interface TeamProvisioningLiveLaunchSnapshotBoundary<
   emitMemberSpawnChange(run: Pick<TRun, 'teamName' | 'runId'>, memberName: string): void;
 }
 
+export interface TeamProvisioningLiveLaunchSnapshotRuntimeCachePort {
+  invalidateMemberSpawnStatusesCache(teamName: string): void;
+}
+
 export interface TeamProvisioningLiveLaunchSnapshotBoundaryServiceHost<
   TRun extends TeamProvisioningLiveLaunchSnapshotRun,
 > {
   runs: ReadonlyMap<string, TRun>;
   pauseMemberTaskActivityForRuntimeLoss: TeamProvisioningLiveLaunchSnapshotBoundaryDeps<TRun>['pauseMemberTaskActivityForRuntimeLoss'];
   buildMixedPersistedLaunchSnapshotForRun: TeamProvisioningLiveLaunchSnapshotBoundaryDeps<TRun>['buildMixedPersistedLaunchSnapshotForRun'];
-  invalidateMemberSpawnStatusesCache: TeamProvisioningLiveLaunchSnapshotBoundaryDeps<TRun>['invalidateMemberSpawnStatusesCache'];
+  runtimeSnapshotCacheBoundary: TeamProvisioningLiveLaunchSnapshotRuntimeCachePort;
   teamChangeEmitter?: TeamProvisioningLiveLaunchSnapshotBoundaryDeps<TRun>['emitTeamChange'] | null;
   maybeFireTeamLaunchedNotificationWhenAllMembersJoined: TeamProvisioningLiveLaunchSnapshotBoundaryDeps<TRun>['maybeFireTeamLaunchedNotificationWhenAllMembersJoined'];
 }
@@ -91,7 +95,7 @@ export function createTeamProvisioningLiveLaunchSnapshotBoundaryDepsFromService<
       service.buildMixedPersistedLaunchSnapshotForRun(run, launchPhase),
     buildRuntimeSpawnStatusRecord: (run) => options.buildRuntimeSpawnStatusRecord(run),
     invalidateMemberSpawnStatusesCache: (teamName) =>
-      service.invalidateMemberSpawnStatusesCache(teamName),
+      service.runtimeSnapshotCacheBoundary.invalidateMemberSpawnStatusesCache(teamName),
     emitTeamChange: (event) => {
       service.teamChangeEmitter?.(event);
     },

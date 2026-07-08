@@ -4,8 +4,8 @@ import { sessionArtifactFromCodexAuthJson } from "@vioxen/subscription-runtime/p
 import { createLocalClaudeControlledAgentProvider, loadScopedClaudeSessionArtifact, } from "@vioxen/subscription-runtime/worker-local";
 import { RunEventProviderKind, } from "@vioxen/subscription-runtime/worker-core";
 import { CodexControlledAgentProvider } from "./controlled-agent/index.js";
-import { availableCodexGoalAccountSlots, dedupeCodexGoalAccountSlots, } from "./codex-goal-mcp-accounts.js";
-import { redactText, truncateText } from "./codex-goal-mcp-decision.js";
+import { selectProjectControllerCodexAccountSlot, } from "./application/project-control/codex-goal-project-controller-account-selection.js";
+import { projectControllerPendingGuidancePromptContext, } from "./application/project-control/codex-goal-project-controller-guidance.js";
 import { codexGoalStateRootDir, codexGoalWorkerControlService, codexGoalWorkerControlTarget, } from "./codex-goal-mcp-worker-control.js";
 import { listCodexGoalAccountStatuses } from "./codex-goal-ops.js";
 export async function projectControllerProvider(input) {
@@ -93,31 +93,6 @@ async function projectControllerPendingGuidanceContext(controller, launch) {
         return undefined;
     }
 }
-export function projectControllerPendingGuidancePromptContext(input) {
-    const deliverable = input.deliverableSignals
-        .slice()
-        .sort((left, right) => right.signal.createdAt.getTime() - left.signal.createdAt.getTime())
-        .slice(0, 5);
-    if (deliverable.length === 0)
-        return undefined;
-    const lines = [
-        "Pending controller guidance from durable inbox:",
-        "- Treat this as read-only context for this run.",
-        "- Before applying it, call codex_goal_project_controller_consume_guidance for your controller job so the inbox records delivery.",
-        `- pendingCount=${input.pendingCount} deliverableCount=${input.deliverableSignals.length}`,
-    ];
-    for (const view of deliverable) {
-        const signal = view.signal;
-        lines.push(`- ${signal.createdAt.toISOString()} ${signal.createdBy}/${signal.priority}: ${truncateText(redactPromptGuidanceText(signal.body), 800)}`);
-    }
-    if (input.deliverableSignals.length > deliverable.length) {
-        lines.push(`- ${input.deliverableSignals.length - deliverable.length} older deliverable guidance item(s) omitted from prompt context.`);
-    }
-    return lines.join("\n");
-}
-function redactPromptGuidanceText(value) {
-    return redactText(value).replace(/[A-Za-z0-9_=-]{32,}/g, "[redacted]");
-}
 async function controlledAgentCodexAccount(input) {
     if (!input.controller.scope.authRoot) {
         throw new Error("project_control_controller_auth_root_scope_required");
@@ -130,11 +105,10 @@ async function controlledAgentCodexAccount(input) {
         accounts: input.launch.config.accounts.map((account) => account.name),
         stateRootDir: codexGoalStateRootDir(input.launch),
     });
-    const allowedAccountIds = input.controller.scope.allowedAccountIds;
-    const available = availableCodexGoalAccountSlots(dedupeCodexGoalAccountSlots(slots))
-        .filter((slot) => allowedAccountIds === undefined ||
-        allowedAccountIds.includes(slot.name));
-    const selected = available[0];
+    const selected = selectProjectControllerCodexAccountSlot({
+        slots,
+        allowedAccountIds: input.controller.scope.allowedAccountIds,
+    });
     if (!selected) {
         throw new Error("project_control_controller_no_available_account");
     }

@@ -12,7 +12,7 @@ import { registerCodexGoalWorkerControlTools, } from "./codex-goal-mcp-worker-co
 import { registerCodexGoalInspectionTools, registerCodexGoalLaunchTools, } from "./codex-goal-mcp-operation-tools.js";
 import { registerCodexGoalAccountTools } from "./codex-goal-mcp-account-tools.js";
 export { buildCodexGoalBrief } from "./codex-goal-mcp-brief.js";
-export { projectControllerPendingGuidancePromptContext, } from "./codex-goal-mcp-project-controller-provider.js";
+export { projectControllerPendingGuidancePromptContext, } from "./application/project-control/codex-goal-project-controller-guidance.js";
 export { availableCodexGoalAccountSlots, dedupeCodexGoalAccountSlots, visibleCodexGoalAccountPoolSlots, } from "./codex-goal-mcp-accounts.js";
 const serverVersion = "0.1.0-main.2";
 export function createCodexGoalMcpServer(options = {}) {

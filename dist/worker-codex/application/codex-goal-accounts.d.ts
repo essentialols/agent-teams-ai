@@ -6,8 +6,8 @@ export type CodexAccountPoolArgs = {
     readonly pool?: string;
     readonly poolRootDir?: string;
 };
-type CodexGoalAccountSlots = Awaited<ReturnType<typeof listCodexGoalAccountStatuses>>;
-type CodexGoalAccountSlot = CodexGoalAccountSlots[number];
+export type CodexGoalAccountSlots = Awaited<ReturnType<typeof listCodexGoalAccountStatuses>>;
+export type CodexGoalAccountSlot = CodexGoalAccountSlots[number];
 export declare function codexAccountStatusPayload(input: {
     readonly authRootDir: string;
     readonly stateRootDir?: string;

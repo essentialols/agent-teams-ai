@@ -28,7 +28,7 @@ import { registerCodexGoalAccountTools } from "./codex-goal-mcp-account-tools";
 export { buildCodexGoalBrief } from "./codex-goal-mcp-brief";
 export {
   projectControllerPendingGuidancePromptContext,
-} from "./codex-goal-mcp-project-controller-provider";
+} from "./application/project-control/codex-goal-project-controller-guidance";
 export {
   availableCodexGoalAccountSlots,
   dedupeCodexGoalAccountSlots,

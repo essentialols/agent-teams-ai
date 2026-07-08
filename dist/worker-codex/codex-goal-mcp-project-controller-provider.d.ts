@@ -23,16 +23,5 @@ export declare function projectControllerProvider(input: {
     readonly sessionArtifact?: JsonObject;
     readonly safeMessage: string;
 }>;
-export declare function projectControllerPendingGuidancePromptContext(input: {
-    readonly pendingCount: number;
-    readonly deliverableSignals: readonly {
-        readonly signal: {
-            readonly createdAt: Date;
-            readonly createdBy: string;
-            readonly priority: string;
-            readonly body: string;
-        };
-    }[];
-}): string | undefined;
 export {};
 //# sourceMappingURL=codex-goal-mcp-project-controller-provider.d.ts.map

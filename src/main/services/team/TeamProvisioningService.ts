@@ -252,7 +252,10 @@ import {
   type LiveInboxRelayResult,
   relayInboxFileToLiveRecipientWithPorts,
 } from './provisioning/TeamProvisioningLiveInboxRelayRouting';
-import { createTeamProvisioningLiveLaunchSnapshotBoundary } from './provisioning/TeamProvisioningLiveLaunchSnapshotBoundaryFactory';
+import {
+  createTeamProvisioningLiveLaunchSnapshotBoundaryFromService,
+  type TeamProvisioningLiveLaunchSnapshotBoundaryServiceHost,
+} from './provisioning/TeamProvisioningLiveLaunchSnapshotBoundaryFactory';
 import {
   createTeamProvisioningLiveLeadMessagePortsBoundary,
   createTeamProvisioningLiveLeadMessagePortsDepsFromService,
@@ -984,22 +987,13 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
     },
   });
   private readonly liveLaunchSnapshotBoundary =
-    createTeamProvisioningLiveLaunchSnapshotBoundary<ProvisioningRun>({
-      getPersistedLaunchMemberNames,
-      pauseMemberTaskActivityForRuntimeLoss: (run, memberName, previous, observedAt) =>
-        this.pauseMemberTaskActivityForRuntimeLoss(run, memberName, previous, observedAt),
-      buildMixedPersistedLaunchSnapshotForRun: (run, launchPhase) =>
-        this.buildMixedPersistedLaunchSnapshotForRun(run, launchPhase),
-      buildRuntimeSpawnStatusRecord: buildRuntimeSpawnStatusRecordHelper,
-      invalidateMemberSpawnStatusesCache: (teamName) =>
-        this.invalidateMemberSpawnStatusesCache(teamName),
-      emitTeamChange: (event) => {
-        this.teamChangeEmitter?.(event);
-      },
-      getRun: (runId) => this.runs.get(runId),
-      maybeFireTeamLaunchedNotificationWhenAllMembersJoined: (run) =>
-        this.maybeFireTeamLaunchedNotificationWhenAllMembersJoined(run),
-    });
+    createTeamProvisioningLiveLaunchSnapshotBoundaryFromService<ProvisioningRun>(
+      this as unknown as TeamProvisioningLiveLaunchSnapshotBoundaryServiceHost<ProvisioningRun>,
+      {
+        getPersistedLaunchMemberNames,
+        buildRuntimeSpawnStatusRecord: buildRuntimeSpawnStatusRecordHelper,
+      }
+    );
   private readonly primaryBootstrapTruthReporting =
     createTeamProvisioningPrimaryBootstrapTruthReportingBoundary<ProvisioningRun>({
       service: {

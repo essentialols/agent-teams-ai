@@ -406,8 +406,10 @@ import {
   type TeamProvisioningOpenCodeRuntimeLaneRecoveryFacadeServiceHost,
 } from './provisioning/TeamProvisioningOpenCodeRuntimeLaneRecoveryFacade';
 import {
+  createOpenCodeRuntimePendingPermissionsPersistencePortsFromService,
   createOpenCodeRuntimePermissionSpawnStatusPortsFromService,
   type OpenCodeRuntimePendingPermissionsPersistencePorts,
+  type OpenCodeRuntimePendingPermissionsPersistenceServiceHost,
   type OpenCodeRuntimePermissionSpawnStatusPorts,
   type OpenCodeRuntimePermissionSpawnStatusServiceHost,
   type OpenCodeRuntimePermissionSyncInput,
@@ -1038,26 +1040,15 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
     });
   private readonly openCodeRuntimeLaneRecoveryFacade!: TeamProvisioningOpenCodeRuntimeLaneRecoveryFacade;
   private readonly openCodeRuntimePermissionPersistencePorts: OpenCodeRuntimePendingPermissionsPersistencePorts =
-    {
-      nowIso,
-      getTrackedRunId: (teamName) => this.runTracking.getTrackedRunId(teamName),
-      enqueueLaunchStateStoreOperation: (teamName, operation) =>
-        this.enqueueLaunchStateStoreOperation(teamName, operation),
-      readLaunchState: (teamName) => this.launchStateStore.read(teamName).catch(() => null),
-      writeLaunchStateSnapshot: async (teamName, snapshot) => {
-        await this.writeLaunchStateSnapshotNow(teamName, snapshot);
-      },
-      invalidateRuntimeSnapshotCaches: (teamName) => this.invalidateRuntimeSnapshotCaches(teamName),
-      emitMemberSpawnChange: (input) => {
-        this.teamChangeEmitter?.({
-          type: 'member-spawn',
-          teamName: input.teamName,
-          ...(input.runId ? { runId: input.runId } : {}),
-          detail: input.memberName,
-        });
-      },
-      logDebug: (message) => logger.debug(message),
-    };
+    createOpenCodeRuntimePendingPermissionsPersistencePortsFromService(
+      this as unknown as OpenCodeRuntimePendingPermissionsPersistenceServiceHost,
+      {
+        nowIso,
+        getTrackedRunId: (teamName) => this.runTracking.getTrackedRunId(teamName),
+        readLaunchState: (teamName) => this.launchStateStore.read(teamName).catch(() => null),
+        logDebug: (message) => logger.debug(message),
+      }
+    );
   private readonly openCodeRuntimePermissionSpawnStatusPorts: OpenCodeRuntimePermissionSpawnStatusPorts<ProvisioningRun> =
     createOpenCodeRuntimePermissionSpawnStatusPortsFromService(
       this as unknown as OpenCodeRuntimePermissionSpawnStatusServiceHost<ProvisioningRun>,

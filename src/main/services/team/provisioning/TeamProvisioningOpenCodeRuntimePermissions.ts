@@ -128,6 +128,55 @@ export interface OpenCodeRuntimePendingPermissionsPersistencePorts {
   logDebug(message: string): void;
 }
 
+interface OpenCodeRuntimePendingPermissionsMemberSpawnChangeEvent {
+  type: 'member-spawn';
+  teamName: string;
+  runId?: string;
+  detail: string;
+}
+
+export interface OpenCodeRuntimePendingPermissionsPersistenceServiceHost {
+  enqueueLaunchStateStoreOperation: OpenCodeRuntimePendingPermissionsPersistencePorts['enqueueLaunchStateStoreOperation'];
+  writeLaunchStateSnapshotNow: OpenCodeRuntimePendingPermissionsPersistencePorts['writeLaunchStateSnapshot'];
+  invalidateRuntimeSnapshotCaches: OpenCodeRuntimePendingPermissionsPersistencePorts['invalidateRuntimeSnapshotCaches'];
+  teamChangeEmitter?:
+    | ((event: OpenCodeRuntimePendingPermissionsMemberSpawnChangeEvent) => void)
+    | null;
+}
+
+export interface OpenCodeRuntimePendingPermissionsPersistenceServiceHostOptions {
+  nowIso: OpenCodeRuntimePendingPermissionsPersistencePorts['nowIso'];
+  getTrackedRunId: OpenCodeRuntimePendingPermissionsPersistencePorts['getTrackedRunId'];
+  readLaunchState: OpenCodeRuntimePendingPermissionsPersistencePorts['readLaunchState'];
+  logDebug: OpenCodeRuntimePendingPermissionsPersistencePorts['logDebug'];
+}
+
+export function createOpenCodeRuntimePendingPermissionsPersistencePortsFromService(
+  service: OpenCodeRuntimePendingPermissionsPersistenceServiceHost,
+  options: OpenCodeRuntimePendingPermissionsPersistenceServiceHostOptions
+): OpenCodeRuntimePendingPermissionsPersistencePorts {
+  return {
+    nowIso: options.nowIso,
+    getTrackedRunId: (teamName) => options.getTrackedRunId(teamName),
+    enqueueLaunchStateStoreOperation: (teamName, operation) =>
+      service.enqueueLaunchStateStoreOperation(teamName, operation),
+    readLaunchState: (teamName) => options.readLaunchState(teamName),
+    writeLaunchStateSnapshot: (teamName, snapshot) =>
+      service.writeLaunchStateSnapshotNow(teamName, snapshot),
+    invalidateRuntimeSnapshotCaches: (teamName) =>
+      service.invalidateRuntimeSnapshotCaches(teamName),
+    emitMemberSpawnChange: (input) => {
+      service.teamChangeEmitter?.({
+        type: 'member-spawn',
+        teamName: input.teamName,
+        ...(input.runId ? { runId: input.runId } : {}),
+        detail: input.memberName,
+      });
+    },
+    logDebug: (message) => options.logDebug(message),
+  };
+}
+
 export interface OpenCodeRuntimePermissionSpawnStatusPorts<
   TRun extends OpenCodeRuntimePermissionTrackedRunLike,
 > {

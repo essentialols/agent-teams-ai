@@ -1,9 +1,11 @@
 import {
   buildOpenCodePermissionPendingEvidence,
   buildOpenCodeRuntimePendingPermissionsLaunchSnapshot,
+  createOpenCodeRuntimePendingPermissionsPersistencePortsFromService,
   createOpenCodeRuntimePermissionSpawnStatusPortsFromService,
   groupOpenCodeRuntimePermissionsByMember,
   hasOpenCodePendingPermissionSignal,
+  type OpenCodeRuntimePendingPermissionsPersistenceServiceHost,
   type OpenCodeRuntimePermissionListingAdapter,
   type OpenCodeRuntimePermissionSpawnStatusServiceHost,
   type OpenCodeRuntimePermissionTrackedRunLike,
@@ -399,6 +401,62 @@ describe('TeamProvisioningOpenCodeRuntimePermissions', () => {
       runId: 'run-1',
       memberName: 'Builder',
     });
+  });
+
+  it('builds pending permission persistence ports from service-shaped host wiring', async () => {
+    const previousLaunchState = makeSnapshot({
+      Builder: makePersistedMember({
+        runtimeSessionId: 'sess-builder',
+      }),
+    });
+    const teamChangeEmitter = vi.fn();
+    const service = {
+      enqueueLaunchStateStoreOperation: vi.fn(async (_teamName, operation) => operation()),
+      writeLaunchStateSnapshotNow: vi.fn(async () => undefined),
+      invalidateRuntimeSnapshotCaches: vi.fn(),
+      teamChangeEmitter,
+    } satisfies OpenCodeRuntimePendingPermissionsPersistenceServiceHost;
+    const getTrackedRunId = vi.fn(() => 'run-1');
+    const readLaunchState = vi.fn(async () => previousLaunchState);
+    const logDebug = vi.fn();
+
+    const ports = createOpenCodeRuntimePendingPermissionsPersistencePortsFromService(service, {
+      nowIso: () => '2026-01-01T00:00:45.000Z',
+      getTrackedRunId,
+      readLaunchState,
+      logDebug,
+    });
+
+    expect(ports.nowIso()).toBe('2026-01-01T00:00:45.000Z');
+    expect(ports.getTrackedRunId('demo')).toBe('run-1');
+    await expect(ports.enqueueLaunchStateStoreOperation('demo', async () => 'ok')).resolves.toBe(
+      'ok'
+    );
+    await expect(ports.readLaunchState('demo')).resolves.toBe(previousLaunchState);
+    await ports.writeLaunchStateSnapshot('demo', previousLaunchState);
+    ports.invalidateRuntimeSnapshotCaches('demo');
+    ports.emitMemberSpawnChange({
+      teamName: 'demo',
+      runId: 'run-1',
+      memberName: 'Builder',
+    });
+    ports.logDebug('debug');
+
+    expect(getTrackedRunId).toHaveBeenCalledWith('demo');
+    expect(service.enqueueLaunchStateStoreOperation).toHaveBeenCalledWith(
+      'demo',
+      expect.any(Function)
+    );
+    expect(readLaunchState).toHaveBeenCalledWith('demo');
+    expect(service.writeLaunchStateSnapshotNow).toHaveBeenCalledWith('demo', previousLaunchState);
+    expect(service.invalidateRuntimeSnapshotCaches).toHaveBeenCalledWith('demo');
+    expect(teamChangeEmitter).toHaveBeenCalledWith({
+      type: 'member-spawn',
+      teamName: 'demo',
+      runId: 'run-1',
+      detail: 'Builder',
+    });
+    expect(logDebug).toHaveBeenCalledWith('debug');
   });
 
   it('skips launch-state writes when pending permissions belong to a stale run', async () => {

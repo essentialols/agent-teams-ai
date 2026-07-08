@@ -557,8 +557,9 @@ import {
 import { captureTeamSpawnEvents as captureTeamSpawnEventsHelper } from './provisioning/TeamProvisioningStreamSpawnEvents';
 import { TeamProvisioningToolApprovalFacade } from './provisioning/TeamProvisioningToolApprovalFacade';
 import {
-  createTeamProvisioningTransientRunStatePorts,
+  createTeamProvisioningTransientRunStatePortsFromService,
   TeamProvisioningTransientRunState,
+  type TeamProvisioningTransientRunStateServiceHost,
 } from './provisioning/TeamProvisioningTransientRunState';
 import { handleTeamProvisioningTurnComplete } from './provisioning/TeamProvisioningTurnComplete';
 import {
@@ -1835,37 +1836,14 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
       )
     );
     this.transientRunState = new TeamProvisioningTransientRunState(
-      createTeamProvisioningTransientRunStatePorts({
-        pendingTimeouts: this.pendingTimeouts,
-        teamOpLocks: this.teamOpLocks,
-        cancelPendingAutoResume: (teamName) =>
-          peekAutoResumeService()?.cancelPendingAutoResume(teamName),
-        clearOpenCodeRuntimeToolApprovals: (teamName, options) =>
-          this.toolApprovalFacade.clearOpenCodeRuntimeToolApprovals(teamName, options),
-        invalidateRuntimeSnapshotCaches: (teamName) =>
-          this.invalidateRuntimeSnapshotCaches(teamName),
-        clearRuntimeProcessRowsForTeam: (teamName) =>
-          this.runtimeResourceSampling.clearRuntimeProcessRowsForTeam(teamName),
-        retainedClaudeLogsByTeam: this.retainedClaudeLogsByTeam,
-        persistedTranscriptClaudeLogs: {
-          invalidate: (teamName) =>
-            this.bootstrapTranscriptFacade.invalidatePersistedTranscriptClaudeLogs(teamName),
-        },
-        leadInboxRelayInFlight: this.leadInboxRelayInFlight,
-        relayedLeadInboxMessageIds: this.relayedLeadInboxMessageIds,
-        pendingCrossTeamFirstReplies: this.pendingCrossTeamFirstReplies,
-        recentCrossTeamLeadDeliveryMessageIds: this.recentCrossTeamLeadDeliveryMessageIds,
-        recentSameTeamNativeFingerprints: this.sameTeamNativeDelivery,
-        memberInboxRelayInFlight: this.memberInboxRelayInFlight,
-        openCodeMemberInboxRelayInFlight: this.openCodeMemberInboxRelayInFlight,
-        openCodeMemberSendInFlightByLane: this.openCodeMemberSendInFlightByLane,
-        openCodePromptDeliveryWatchdogScheduler: this.openCodePromptDeliveryWatchdogScheduler,
-        openCodeRuntimeDeliveryAdvisory: this.openCodeRuntimeDeliveryAdvisory,
-        relayedMemberInboxMessageIds: this.relayedMemberInboxMessageIds,
-        liveLeadProcessMessages: this.liveLeadProcessMessages,
-        relayLeadInboxMessages: (teamName) => this.relayLeadInboxMessages(teamName),
-        warn: (message) => logger.warn(message),
-      })
+      createTeamProvisioningTransientRunStatePortsFromService(
+        this as unknown as TeamProvisioningTransientRunStateServiceHost,
+        {
+          cancelPendingAutoResume: (teamName) =>
+            peekAutoResumeService()?.cancelPendingAutoResume(teamName),
+          warn: (message) => logger.warn(message),
+        }
+      )
     );
     this.scheduleStaleAnthropicTeamApiKeyHelperCleanup();
   }

@@ -52,6 +52,10 @@ import {
   removeMemberWorkSyncIpc,
 } from '@features/member-work-sync/main';
 import {
+  createInternalStorageFeature,
+  type InternalStorageFeature,
+} from '@features/internal-storage/main';
+import {
   createOrganizationsFeature,
   type OrganizationsFeatureFacade,
   registerOrganizationsIpc,
@@ -1062,6 +1066,7 @@ let ptyTerminalService: PtyTerminalService;
 let httpServer: HttpServer;
 let schedulerService: SchedulerService;
 let teamTaskStallMonitor: TeamTaskStallMonitor | null = null;
+let internalStorageFeature: InternalStorageFeature | null = null;
 let skillsWatcherService: SkillsWatcherService | null = null;
 let teamBackupService: TeamBackupService | null = null;
 let branchStatusService: BranchStatusService | null = null;
@@ -1894,11 +1899,14 @@ async function initializeServices(): Promise<void> {
   teamProvisioningService.setCrossTeamSender((request) => crossTeamService.send(request));
 
   const taskChangePresenceRepository = new JsonTaskChangePresenceRepository();
+  internalStorageFeature = createInternalStorageFeature({
+    userDataPath: app.getPath('userData'),
+  });
   teamTaskStallMonitor = new TeamTaskStallMonitor(
     new ActiveTeamRegistry(teamDataService, teamLogSourceTracker),
     new TeamTaskStallSnapshotSource(teamTranscriptSourceLocator),
     new TeamTaskStallPolicy(),
-    new TeamTaskStallJournal(),
+    new TeamTaskStallJournal({ store: internalStorageFeature.taskStallJournalStore }),
     new TeamTaskStallNotifier(teamDataService, teamProvisioningService)
   );
   let teammateToolTracker: TeammateToolTracker | null = null;
@@ -2818,6 +2826,14 @@ async function shutdownServices(): Promise<void> {
     if (teamDataService) {
       await runShutdownStep('team data polling stop', () =>
         teamDataService.stopProcessHealthPolling()
+      );
+    }
+    if (internalStorageFeature) {
+      // WAL checkpoint + close inside the worker, then terminate it.
+      await runShutdownStep(
+        'internal storage dispose',
+        () => internalStorageFeature?.dispose() ?? Promise.resolve(),
+        5_000
       );
     }
     if (updaterService) {

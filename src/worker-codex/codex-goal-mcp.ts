@@ -14,10 +14,8 @@ import { sessionArtifactFromCodexAuthJson } from "@vioxen/subscription-runtime/p
 import {
   LocalFileRunEventProjectionStateStore,
   LocalFileRunEventStore,
-  LocalControlledAgentStateStore,
 } from "@vioxen/subscription-runtime/store-local-file";
 import {
-  buildLocalClaudeControlledAgentProfile,
   createLocalClaudeControlledAgentProvider,
   loadScopedClaudeSessionArtifact,
   watchClaudeRuns,
@@ -31,7 +29,6 @@ import {
   RunObservationService,
   InterruptAndContinueWorkerUseCase,
   RunEventProviderKind,
-  buildControlledAgentLaunchPlan,
   buildControlledAgentLiveControllerState,
   buildControlledAgentProcessOwner,
   getControlledAgentStatus,
@@ -113,7 +110,6 @@ import {
   createLocalProjectIntegrationMcpToolHandlers,
 } from "./project-integration-mcp/adapters/local-project-integration-mcp-tool-handlers";
 import {
-  buildCodexControlledAgentProfile,
   CodexControlledAgentProvider,
 } from "./controlled-agent";
 import {
@@ -194,7 +190,6 @@ import {
 import {
   matchesProjectControlPrefix,
   pathInsideAnyProjectRoot,
-  stringArrayArg,
   uniqueProjectControlStrings,
 } from "./codex-goal-mcp-project-utils";
 import {
@@ -278,6 +273,15 @@ import {
   readTextFileIfExists,
   rollbackProjectRefillPartial,
 } from "./codex-goal-mcp-project-refill";
+import {
+  projectControllerAllowedTools,
+  projectControllerLaunchInput,
+  projectControllerProfile,
+  projectControllerProfileReadyJson,
+  projectControllerProviderKind,
+  projectControllerState,
+  type ProjectControllerProfile,
+} from "./codex-goal-mcp-project-controller-profile";
 import {
   goalControlModesFromRecord,
   goalLaunchInput,
@@ -2960,146 +2964,6 @@ function recordControllerCapacitySignal(input: {
     config: input.launch.config,
     run: input.run,
   });
-}
-
-function projectControllerState(
-  args: ProjectControllerLaunchPlanMcpArgs,
-  controller: {
-    readonly controller: CodexGoalJobManifest;
-  },
-): {
-  readonly stateDir: string;
-  readonly cwd: string;
-  readonly sessionId: string;
-  readonly store: LocalControlledAgentStateStore;
-} {
-  const cwd = resolvePath(process.cwd(), stringValue(args.cwd) ?? process.cwd());
-  const stateDir = resolvePath(
-    cwd,
-    stringValue(args.stateDir) ??
-      join(controller.controller.jobRootDir, "controlled-agent"),
-  );
-  return {
-    cwd,
-    stateDir,
-    sessionId: projectControllerSessionId(
-      controller.controller.jobId,
-      projectControllerProviderKind(args),
-    ),
-    store: new LocalControlledAgentStateStore({ rootDir: stateDir }),
-  };
-}
-
-type ProjectControllerProviderKind =
-  | RunEventProviderKind.Codex
-  | RunEventProviderKind.Claude;
-
-type ProjectControllerProfile =
-  | ReturnType<typeof buildCodexControlledAgentProfile>
-  | ReturnType<typeof buildLocalClaudeControlledAgentProfile>;
-
-function projectControllerProviderKind(
-  args: ProjectControllerLaunchPlanMcpArgs,
-): ProjectControllerProviderKind {
-  const providerKind = optionalRunEventProviderKind(args.providerKind) ??
-    RunEventProviderKind.Codex;
-  if (
-    providerKind === RunEventProviderKind.Codex ||
-    providerKind === RunEventProviderKind.Claude
-  ) {
-    return providerKind;
-  }
-  throw new Error(`project_controller_provider_kind_unsupported:${providerKind}`);
-}
-
-function projectControllerSessionId(
-  controllerJobId: string,
-  providerKind: ProjectControllerProviderKind,
-): string {
-  if (providerKind === RunEventProviderKind.Codex) {
-    return `${controllerJobId}:controlled-agent`;
-  }
-  return `${controllerJobId}:controlled-agent:${providerKind}`;
-}
-
-function projectControllerProfile(
-  args: ProjectControllerLaunchPlanMcpArgs,
-  state: {
-    readonly stateDir: string;
-    readonly cwd: string;
-  },
-): ProjectControllerProfile {
-  const common = {
-    stateDir: state.stateDir,
-    ...(stringValue(args.mcpServerName) === undefined
-      ? {}
-      : { mcpServerName: stringValue(args.mcpServerName) as string }),
-    ...(stringValue(args.mcpCommand) === undefined
-      ? {}
-      : { mcpCommand: stringValue(args.mcpCommand) as string }),
-    ...(args.mcpArgs === undefined ? {} : { mcpArgs: stringArrayArg(args.mcpArgs) }),
-    ...(stringValue(args.mcpCwd) === undefined
-      ? {}
-      : { mcpCwd: resolvePath(state.cwd, stringValue(args.mcpCwd) as string) }),
-  };
-  if (projectControllerProviderKind(args) === RunEventProviderKind.Claude) {
-    return buildLocalClaudeControlledAgentProfile(common);
-  }
-  return buildCodexControlledAgentProfile({
-    ...common,
-    rawShellMode: args.rawShellMode ?? "disabled-by-provider",
-  });
-}
-
-function projectControllerLaunchInput(
-  controller: {
-    readonly controller: CodexGoalJobManifest;
-    readonly scope: ProjectAccessScope;
-  },
-  state: {
-    readonly sessionId: string;
-    readonly stateDir: string;
-  },
-  profile: ProjectControllerProfile,
-) {
-  return buildControlledAgentLaunchPlan({
-    controllerJobId: controller.controller.jobId,
-    sessionId: state.sessionId,
-    stateDir: state.stateDir,
-    boundary: AccessBoundary.ProjectScopedControl,
-    projectAccessScope: controller.scope,
-    provider: profile.enforcement,
-    networkAccess: NetworkAccessMode.Restricted,
-  });
-}
-
-function projectControllerAllowedTools(
-  profile: ProjectControllerProfile,
-): readonly string[] {
-  return profile.providerKind === RunEventProviderKind.Codex
-    ? profile.enabledTools
-    : profile.allowedTools;
-}
-
-function projectControllerProfileReadyJson(
-  profile: ProjectControllerProfile,
-): JsonObject {
-  if (profile.providerKind === RunEventProviderKind.Codex) {
-    return {
-      allowedTools: profile.enabledTools,
-      codexHome: profile.codexHome,
-      configToml: profile.configToml,
-      rulesText: profile.rulesText,
-    };
-  }
-  return {
-    allowedTools: profile.allowedTools,
-    disallowedTools: profile.disallowedTools,
-    configDir: profile.configDir,
-    mcpConfig: profile.mcpConfig,
-    strictMcpConfig: profile.strictMcpConfig,
-    appendSystemPrompt: profile.appendSystemPrompt,
-  };
 }
 
 async function projectControllerProvider(input: {

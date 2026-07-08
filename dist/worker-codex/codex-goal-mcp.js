@@ -7,9 +7,9 @@ import { McpServer, ResourceTemplate, } from "@modelcontextprotocol/sdk/server/m
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { sessionArtifactFromCodexAuthJson } from "@vioxen/subscription-runtime/provider-codex";
-import { LocalFileRunEventProjectionStateStore, LocalFileRunEventStore, LocalControlledAgentStateStore, } from "@vioxen/subscription-runtime/store-local-file";
-import { buildLocalClaudeControlledAgentProfile, createLocalClaudeControlledAgentProvider, loadScopedClaudeSessionArtifact, watchClaudeRuns, } from "@vioxen/subscription-runtime/worker-local";
-import { AccessBoundary, LaunchPlanStatus, NetworkAccessMode, ProjectAdmissionWorkerRole, RunObservationService, InterruptAndContinueWorkerUseCase, RunEventProviderKind, buildControlledAgentLaunchPlan, buildControlledAgentLiveControllerState, buildControlledAgentProcessOwner, getControlledAgentStatus, reconcileControlledAgentRun, startControlledAgentRun, stopControlledAgentRun, evaluateProjectAdmission, projectRunObservationEvents, projectRunReadModelsFromEvents, reconcileRunPreview, runEventProviderKindFromString, ProjectOperation, } from "@vioxen/subscription-runtime/worker-core";
+import { LocalFileRunEventProjectionStateStore, LocalFileRunEventStore, } from "@vioxen/subscription-runtime/store-local-file";
+import { createLocalClaudeControlledAgentProvider, loadScopedClaudeSessionArtifact, watchClaudeRuns, } from "@vioxen/subscription-runtime/worker-local";
+import { AccessBoundary, LaunchPlanStatus, NetworkAccessMode, ProjectAdmissionWorkerRole, RunObservationService, InterruptAndContinueWorkerUseCase, RunEventProviderKind, buildControlledAgentLiveControllerState, buildControlledAgentProcessOwner, getControlledAgentStatus, reconcileControlledAgentRun, startControlledAgentRun, stopControlledAgentRun, evaluateProjectAdmission, projectRunObservationEvents, projectRunReadModelsFromEvents, reconcileRunPreview, runEventProviderKindFromString, ProjectOperation, } from "@vioxen/subscription-runtime/worker-core";
 import { codexGoalJobToArgs, createCodexGoalJob, listCodexGoalJobs, readCodexGoalJob, resolveCodexGoalJobRegistryRoot, summarizeCodexGoalJob, updateCodexGoalJob, } from "./codex-goal-jobs.js";
 import { upsertCodexGoalLaunchManifest } from "./codex-goal-launch-manifest.js";
 import { runDependencyBootstrap, } from "./dependency-bootstrap.js";
@@ -20,14 +20,14 @@ import { parseCodexGoalProjectAccessScope, } from "./codex-goal-access-plan.js";
 import { projectControlGenericScopeDenial, projectControlGenericToolDenial, } from "./project-control-scope-guard.js";
 import { registerProjectIntegrationMcpTools, } from "./project-integration-mcp/index.js";
 import { createLocalProjectIntegrationMcpToolHandlers, } from "./project-integration-mcp/adapters/local-project-integration-mcp-tool-handlers.js";
-import { buildCodexControlledAgentProfile, CodexControlledAgentProvider, } from "./controlled-agent/index.js";
+import { CodexControlledAgentProvider, } from "./controlled-agent/index.js";
 import { projectControllerCapacityDemand, recordProjectControllerCapacitySignal, } from "./project-controller-capacity.js";
 import { createProjectControlOperation, patchProjectControlOperation, projectControlOperationExecutionMode, projectControlOperationView, projectControlOperationsRoot, readProjectControlOperationById, startProjectControlOperationRunner, } from "./project-control-operation-lifecycle.js";
 import { accountNames, booleanValue, numberValue, requiredRawString, resolvePath, stringValue, tagValues, } from "./codex-goal-mcp-values.js";
 import { jobIdInputSchema, jobRegistryInputSchema, optionalRunEventProviderKind, registryRootFromArgs, runEventRetentionPolicyFromArgs, runEventRootFromArgs, runEventTypeFilter, } from "./codex-goal-mcp-inputs.js";
 import { accountAuthRootFromArgs, accountPoolRootFromArgs, availableCodexGoalAccountSlots, codexAccountReloginInstructions, codexAccountStatusPayload, dedupeCodexGoalAccountSlots, listAccountPools, } from "./codex-goal-mcp-accounts.js";
 import { writeCodexGoalMaintenancePauseEvent, writeCodexGoalStopEvent, writeCodexGoalStoppedProgress, } from "./codex-goal-mcp-lifecycle-markers.js";
-import { matchesProjectControlPrefix, pathInsideAnyProjectRoot, stringArrayArg, uniqueProjectControlStrings, } from "./codex-goal-mcp-project-utils.js";
+import { matchesProjectControlPrefix, pathInsideAnyProjectRoot, uniqueProjectControlStrings, } from "./codex-goal-mcp-project-utils.js";
 import { projectControlDefaultAccountNames, projectControlRefillAccountNames, } from "./codex-goal-mcp-project-accounts.js";
 import { buildCodexProjectAdmissionSnapshot, projectAdmissionDetailView, projectAdmissionOperation, projectAdmissionWorkerRoleArg, } from "./codex-goal-mcp-project-admission.js";
 import { jobIdsFromValue, parseIsoDate, signalIdList, workerControlCallerArgs, workerControlDecisionJson, workerControlReceiptJson, workerControlSignalJson, workerControlSignalViewJson, } from "./codex-goal-mcp-worker-control-view.js";
@@ -47,6 +47,7 @@ import { buildCodexGoalOverviewItem } from "./codex-goal-mcp-overview-item.js";
 import { codexGoalStatusInputFromLaunch as statusInput, } from "./codex-goal-mcp-status-input.js";
 import { createCodexProjectControlBroker, projectControlAuditPath, } from "./codex-goal-mcp-project-broker.js";
 import { assertReadablePrompt, createOrReuseProjectJob, createOrReuseProjectWorktree, readTextFileIfExists, rollbackProjectRefillPartial, } from "./codex-goal-mcp-project-refill.js";
+import { projectControllerAllowedTools, projectControllerLaunchInput, projectControllerProfile, projectControllerProfileReadyJson, projectControllerProviderKind, projectControllerState, } from "./codex-goal-mcp-project-controller-profile.js";
 import { goalLaunchInput, } from "./codex-goal-mcp-launch-input.js";
 import { codexGoalLaunchSummary as launchSummary, } from "./codex-goal-mcp-launch-summary.js";
 import { CODEX_GOAL_CONTROL_SURFACE_SCHEMA, buildCodexGoalDecision, buildCodexGoalHandoff, isSafeStartAction, nextActionForStatus, redactText, truncateText, } from "./codex-goal-mcp-decision.js";
@@ -2136,88 +2137,6 @@ function recordControllerCapacitySignal(input) {
         config: input.launch.config,
         run: input.run,
     });
-}
-function projectControllerState(args, controller) {
-    const cwd = resolvePath(process.cwd(), stringValue(args.cwd) ?? process.cwd());
-    const stateDir = resolvePath(cwd, stringValue(args.stateDir) ??
-        join(controller.controller.jobRootDir, "controlled-agent"));
-    return {
-        cwd,
-        stateDir,
-        sessionId: projectControllerSessionId(controller.controller.jobId, projectControllerProviderKind(args)),
-        store: new LocalControlledAgentStateStore({ rootDir: stateDir }),
-    };
-}
-function projectControllerProviderKind(args) {
-    const providerKind = optionalRunEventProviderKind(args.providerKind) ??
-        RunEventProviderKind.Codex;
-    if (providerKind === RunEventProviderKind.Codex ||
-        providerKind === RunEventProviderKind.Claude) {
-        return providerKind;
-    }
-    throw new Error(`project_controller_provider_kind_unsupported:${providerKind}`);
-}
-function projectControllerSessionId(controllerJobId, providerKind) {
-    if (providerKind === RunEventProviderKind.Codex) {
-        return `${controllerJobId}:controlled-agent`;
-    }
-    return `${controllerJobId}:controlled-agent:${providerKind}`;
-}
-function projectControllerProfile(args, state) {
-    const common = {
-        stateDir: state.stateDir,
-        ...(stringValue(args.mcpServerName) === undefined
-            ? {}
-            : { mcpServerName: stringValue(args.mcpServerName) }),
-        ...(stringValue(args.mcpCommand) === undefined
-            ? {}
-            : { mcpCommand: stringValue(args.mcpCommand) }),
-        ...(args.mcpArgs === undefined ? {} : { mcpArgs: stringArrayArg(args.mcpArgs) }),
-        ...(stringValue(args.mcpCwd) === undefined
-            ? {}
-            : { mcpCwd: resolvePath(state.cwd, stringValue(args.mcpCwd)) }),
-    };
-    if (projectControllerProviderKind(args) === RunEventProviderKind.Claude) {
-        return buildLocalClaudeControlledAgentProfile(common);
-    }
-    return buildCodexControlledAgentProfile({
-        ...common,
-        rawShellMode: args.rawShellMode ?? "disabled-by-provider",
-    });
-}
-function projectControllerLaunchInput(controller, state, profile) {
-    return buildControlledAgentLaunchPlan({
-        controllerJobId: controller.controller.jobId,
-        sessionId: state.sessionId,
-        stateDir: state.stateDir,
-        boundary: AccessBoundary.ProjectScopedControl,
-        projectAccessScope: controller.scope,
-        provider: profile.enforcement,
-        networkAccess: NetworkAccessMode.Restricted,
-    });
-}
-function projectControllerAllowedTools(profile) {
-    return profile.providerKind === RunEventProviderKind.Codex
-        ? profile.enabledTools
-        : profile.allowedTools;
-}
-function projectControllerProfileReadyJson(profile) {
-    if (profile.providerKind === RunEventProviderKind.Codex) {
-        return {
-            allowedTools: profile.enabledTools,
-            codexHome: profile.codexHome,
-            configToml: profile.configToml,
-            rulesText: profile.rulesText,
-        };
-    }
-    return {
-        allowedTools: profile.allowedTools,
-        disallowedTools: profile.disallowedTools,
-        configDir: profile.configDir,
-        mcpConfig: profile.mcpConfig,
-        strictMcpConfig: profile.strictMcpConfig,
-        appendSystemPrompt: profile.appendSystemPrompt,
-    };
 }
 async function projectControllerProvider(input) {
     if (input.profile.providerKind === RunEventProviderKind.Claude) {

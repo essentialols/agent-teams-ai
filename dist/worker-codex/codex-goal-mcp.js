@@ -5,20 +5,16 @@ import { fileURLToPath } from "node:url";
 import { McpServer, ResourceTemplate, } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { AccessBoundary, ProjectAdmissionWorkerRole, InterruptAndContinueWorkerUseCase, RunEventProviderKind, evaluateProjectAdmission, reconcileRunPreview, ProjectOperation, } from "@vioxen/subscription-runtime/worker-core";
+import { AccessBoundary, ProjectAdmissionWorkerRole, InterruptAndContinueWorkerUseCase, RunEventProviderKind, reconcileRunPreview, ProjectOperation, } from "@vioxen/subscription-runtime/worker-core";
 import { codexGoalJobToArgs, createCodexGoalJob, listCodexGoalJobs, readCodexGoalJob, resolveCodexGoalJobRegistryRoot, summarizeCodexGoalJob, updateCodexGoalJob, } from "./codex-goal-jobs.js";
 import { upsertCodexGoalLaunchManifest } from "./codex-goal-launch-manifest.js";
 import { buildCodexGoalNoTmuxCommand, buildCodexGoalTmuxCommand, collectCodexGoalStatus, doctorCodexGoal, listCodexGoalAccountStatuses, prepareCodexGoalLaunchPaths, resolveCodexGoalWorkerLiveness, startCodexGoalTmux, tailCodexGoalLog, } from "./codex-goal-ops.js";
-import { parseCodexGoalProjectAccessScope, } from "./codex-goal-access-plan.js";
 import { projectControlGenericScopeDenial, projectControlGenericToolDenial, } from "./project-control-scope-guard.js";
 import { registerProjectIntegrationMcpTools, } from "./project-integration-mcp/index.js";
 import { createLocalProjectIntegrationMcpToolHandlers, } from "./project-integration-mcp/adapters/local-project-integration-mcp-tool-handlers.js";
-import { accountNames, booleanValue, numberValue, requiredRawString, resolvePath, stringValue, tagValues, } from "./codex-goal-mcp-values.js";
+import { accountNames, booleanValue, numberValue, requiredRawString, resolvePath, stringValue, } from "./codex-goal-mcp-values.js";
 import { jobIdInputSchema, jobRegistryInputSchema, registryRootFromArgs, } from "./codex-goal-mcp-inputs.js";
 import { accountAuthRootFromArgs, accountPoolRootFromArgs, codexAccountReloginInstructions, codexAccountStatusPayload, listAccountPools, } from "./codex-goal-mcp-accounts.js";
-import { matchesProjectControlPrefix, pathInsideAnyProjectRoot, } from "./codex-goal-mcp-project-utils.js";
-import { projectControlDefaultAccountNames, } from "./codex-goal-mcp-project-accounts.js";
-import { buildCodexProjectAdmissionSnapshot, projectAdmissionDetailView, projectAdmissionOperation, projectAdmissionWorkerRoleArg, } from "./codex-goal-mcp-project-admission.js";
 import { jobIdsFromValue, parseIsoDate, signalIdList, workerControlCallerArgs, workerControlDecisionJson, workerControlReceiptJson, workerControlSignalJson, workerControlSignalViewJson, } from "./codex-goal-mcp-worker-control-view.js";
 import { codexGoalAccountStatusPayload, codexGoalStateRootDir, codexGoalWorkerControlService, codexGoalWorkerControlTarget, } from "./codex-goal-mcp-worker-control.js";
 import { applyWorkspaceConflictToOverviewJob, buildCodexGoalWorkspaceConflicts, workspaceConflictJobIds, } from "./codex-goal-mcp-workspace-conflicts.js";
@@ -32,7 +28,8 @@ import { goalInputSchema, statusInputSchema, } from "./codex-goal-mcp-input-sche
 export { buildCodexGoalBrief } from "./codex-goal-mcp-brief.js";
 import { buildCodexGoalOverviewItem } from "./codex-goal-mcp-overview-item.js";
 import { codexGoalStatusInputFromLaunch as statusInput, } from "./codex-goal-mcp-status-input.js";
-import { createCodexProjectControlBroker, projectControlAuditPath, } from "./codex-goal-mcp-project-broker.js";
+import { createCodexProjectControlBroker, } from "./codex-goal-mcp-project-broker.js";
+import { projectControlAdmissionSnapshotView, projectControlRepairJobManifestView, projectControlUpdateControllerScopeView, } from "./codex-goal-mcp-project-control-admin.js";
 import { projectControlCreateWorktreeView, projectControlIntegrateCommitView, projectControlMarkReviewedView, projectControlPushBranchView, projectControlStartStoredJobView, projectControlStopStoredJobView, } from "./codex-goal-mcp-project-control-actions.js";
 import { projectControlCreateCodexGoalJobView, projectControlOperationStatusView, projectControlRefillWorkerView, } from "./codex-goal-mcp-project-control-jobs.js";
 import { projectControllerConsumeGuidanceView, projectControllerLaunchPlanView, projectControllerReconcileView, projectControllerStartView, projectControllerStatusView, projectControllerStopView, } from "./codex-goal-mcp-project-controller.js";
@@ -42,7 +39,7 @@ import { continueStoredJobLifecycle, maintenancePauseStoredJobLifecycle, reconci
 import { goalLaunchInput, } from "./codex-goal-mcp-launch-input.js";
 import { codexGoalLaunchSummary as launchSummary, } from "./codex-goal-mcp-launch-summary.js";
 import { CODEX_GOAL_CONTROL_SURFACE_SCHEMA, buildCodexGoalDecision, buildCodexGoalHandoff, isSafeStartAction, nextActionForStatus, } from "./codex-goal-mcp-decision.js";
-import { assertProjectControlScopeRepairAllowed, projectControlPathArg, projectScopeFieldFingerprint, } from "./codex-goal-mcp-project-scope.js";
+import { projectControlPathArg, } from "./codex-goal-mcp-project-scope.js";
 import { projectIntegrationPushApprovedCommitWithConsumedLedger, } from "./codex-goal-mcp-project-integration-ledger.js";
 export { availableCodexGoalAccountSlots, dedupeCodexGoalAccountSlots, visibleCodexGoalAccountPoolSlots, } from "./codex-goal-mcp-accounts.js";
 const serverVersion = "0.1.0-main.2";
@@ -1577,190 +1574,20 @@ const codexProjectAdmissionDeps = {
     listJobs: listCodexGoalJobs,
     buildOverviewItem: (input) => buildCodexGoalOverviewItem(input),
 };
+function projectControlAdminDeps() {
+    return {
+        loadProjectControlController,
+        admissionDeps: codexProjectAdmissionDeps,
+    };
+}
 async function projectControlAdmissionSnapshot(args) {
-    const controller = await loadProjectControlController(args);
-    const snapshot = await buildCodexProjectAdmissionSnapshot({
-        registryRootDir: controller.registryRootDir,
-        scope: controller.scope,
-        deps: codexProjectAdmissionDeps,
-    });
-    const operation = projectAdmissionOperation(args.operation);
-    const workerRole = projectAdmissionWorkerRoleArg(args.workerRole);
-    const decision = operation
-        ? evaluateProjectAdmission({
-            request: {
-                operation,
-                projectId: controller.scope.projectId,
-                ...(workerRole ? { workerRole } : {}),
-            },
-            snapshot,
-        })
-        : undefined;
-    const detailView = projectAdmissionDetailView({
-        snapshot,
-        ...(decision ? { decision } : {}),
-        includeDetails: args.includeDetails === true,
-        ...(args.maxDebtItems === undefined ? {} : { maxDebtItems: args.maxDebtItems }),
-    });
-    return mcpJson({
-        ok: true,
-        mode: "project_admission_snapshot",
-        controllerJobId: controller.controller.jobId,
-        registryRootDir: controller.registryRootDir,
-        snapshot: detailView.snapshot,
-        ...(detailView.decision ? { decision: detailView.decision } : {}),
-    });
+    return mcpJson(await projectControlAdmissionSnapshotView(args, projectControlAdminDeps()));
 }
 async function projectControlUpdateControllerScope(args) {
-    const controller = await loadProjectControlController(args);
-    const proposedScope = parseCodexGoalProjectAccessScope(args.projectAccessScope, "projectAccessScope");
-    if (!proposedScope) {
-        throw new Error("project_control_project_access_scope_required");
-    }
-    assertProjectControlScopeRepairAllowed({
-        existing: controller.scope,
-        proposed: proposedScope,
-    });
-    if (booleanValue(args.confirmUpdate) !== true) {
-        return mcpJson({
-            ok: false,
-            reason: "confirm_update_required",
-            mode: "project_control_update_controller_scope",
-            controllerJobId: controller.controller.jobId,
-            registryRootDir: controller.registryRootDir,
-            auditPath: projectControlAuditPath(controller.controller),
-            currentConsumedOutputLedgerRoots: controller.scope.consumedOutputLedgerRoots ?? [],
-            proposedConsumedOutputLedgerRoots: proposedScope.consumedOutputLedgerRoots ?? [],
-        });
-    }
-    const manifest = await updateCodexGoalJob({
-        registryRootDir: controller.registryRootDir,
-        jobId: controller.controller.jobId,
-        patch: { projectAccessScope: proposedScope },
-    });
-    return mcpJson({
-        ok: true,
-        mode: "project_control_update_controller_scope",
-        controllerJobId: controller.controller.jobId,
-        registryRootDir: controller.registryRootDir,
-        auditPath: projectControlAuditPath(controller.controller),
-        manifest,
-        summary: summarizeCodexGoalJob(manifest, controller.registryRootDir),
-    });
+    return mcpJson(await projectControlUpdateControllerScopeView(args, projectControlAdminDeps()));
 }
 async function projectControlRepairJobManifest(args) {
-    const controller = await loadProjectControlController(args);
-    const jobId = requiredRawString(args.jobId, "jobId");
-    if (jobId === controller.controller.jobId) {
-        return mcpJson({
-            ok: false,
-            error: "project_control_controller_manifest_repair_unsupported",
-            requiredTool: "codex_goal_project_update_controller_scope",
-            safeMessage: "Controller manifests use codex_goal_project_update_controller_scope for scoped repairs.",
-        });
-    }
-    const existing = await readCodexGoalJob({
-        registryRootDir: controller.registryRootDir,
-        jobId,
-    });
-    assertProjectControlRepairJobOwned({
-        controllerScope: controller.scope,
-        job: existing,
-    });
-    const patch = {};
-    if (args.accounts !== undefined) {
-        const requestedAccounts = accountNames(args.accounts);
-        if (requestedAccounts.length === 0) {
-            throw new Error("project_control_repair_accounts_required");
-        }
-        assertProjectControlRepairAccountsAllowed({
-            accounts: requestedAccounts,
-            allowedAccountIds: controller.scope.allowedAccountIds ?? [],
-        });
-        patch.accounts = requestedAccounts;
-    }
-    else {
-        const repairedAccounts = await projectControlDefaultAccountNames({
-            ...(existing.authRootDir ? { authRootDir: existing.authRootDir } : {}),
-            requestedAccounts: existing.accounts,
-            allowedAccountIds: controller.scope.allowedAccountIds ?? [],
-        });
-        if (projectScopeFieldFingerprint(existing.accounts) !==
-            projectScopeFieldFingerprint(repairedAccounts)) {
-            patch.accounts = repairedAccounts;
-        }
-    }
-    if (args.description !== undefined) {
-        patch.description = stringValue(args.description) ?? "";
-    }
-    if (args.tags !== undefined) {
-        patch.tags = tagValues(args.tags);
-    }
-    if (Object.keys(patch).length === 0) {
-        return mcpJson({
-            ok: true,
-            mode: "brokered_project_manifest_repair",
-            reason: "no_repair_needed",
-            controllerJobId: controller.controller.jobId,
-            registryRootDir: controller.registryRootDir,
-            manifest: existing,
-            summary: summarizeCodexGoalJob(existing, controller.registryRootDir),
-        });
-    }
-    if (booleanValue(args.confirmRepair) !== true) {
-        return mcpJson({
-            ok: false,
-            reason: "confirm_repair_required",
-            mode: "brokered_project_manifest_repair",
-            controllerJobId: controller.controller.jobId,
-            registryRootDir: controller.registryRootDir,
-            jobId: existing.jobId,
-            auditPath: projectControlAuditPath(controller.controller),
-            proposedPatch: patch,
-        });
-    }
-    const manifest = await updateCodexGoalJob({
-        registryRootDir: controller.registryRootDir,
-        jobId: existing.jobId,
-        patch: patch,
-    });
-    return mcpJson({
-        ok: true,
-        mode: "brokered_project_manifest_repair",
-        controllerJobId: controller.controller.jobId,
-        registryRootDir: controller.registryRootDir,
-        auditPath: projectControlAuditPath(controller.controller),
-        manifest,
-        summary: summarizeCodexGoalJob(manifest, controller.registryRootDir),
-    });
-}
-function assertProjectControlRepairJobOwned(input) {
-    if (input.job.accessBoundary === AccessBoundary.ProjectScopedControl) {
-        throw new Error("project_control_repair_child_job_required");
-    }
-    if (input.job.projectAccessScope?.projectId !== input.controllerScope.projectId) {
-        throw new Error("project_control_repair_project_scope_mismatch");
-    }
-    const jobMatches = matchesProjectControlPrefix(input.job.jobId, input.controllerScope.jobIdPrefixes ?? []);
-    const workspaceMatches = pathInsideAnyProjectRoot(input.job.workspacePath, [
-        ...(input.controllerScope.workspaceRoots ?? []),
-        ...(input.controllerScope.worktreeRoots ?? []),
-        ...(input.controllerScope.isolatedWorkspaceRoot
-            ? [input.controllerScope.isolatedWorkspaceRoot]
-            : []),
-    ]);
-    if (!jobMatches && !workspaceMatches) {
-        throw new Error("project_control_repair_job_scope_mismatch");
-    }
-}
-function assertProjectControlRepairAccountsAllowed(input) {
-    const allowed = new Set(input.allowedAccountIds);
-    if (allowed.size === 0)
-        return;
-    const denied = input.accounts.filter((account) => !allowed.has(account));
-    if (denied.length > 0) {
-        throw new Error("project_control_repair_account_outside_scope");
-    }
+    return mcpJson(await projectControlRepairJobManifestView(args, projectControlAdminDeps()));
 }
 function codexProjectControlBroker(input) {
     return createCodexProjectControlBroker({

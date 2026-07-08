@@ -5,11 +5,10 @@ import {
   listCodexGoalAccountStatuses,
   shellQuote,
 } from "./codex-goal-ops";
+import { defaultCodexGoalAuthRoot } from "./application/codex-goal-account-roots";
 import { resolvePath } from "./codex-goal-mcp-values";
 
 type JsonObject = Readonly<Record<string, unknown>>;
-
-export const defaultCodexGoalAuthRoot = "~/.cache/subscription-runtime/live-codex-auth";
 
 export type CodexAccountPoolArgs = {
   readonly authRootDir?: string;

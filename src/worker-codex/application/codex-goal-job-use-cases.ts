@@ -40,13 +40,13 @@ import {
 import {
   jobManifestInputFromArgs,
   jobManifestPatchFromArgs,
-} from "../codex-goal-mcp-manifest-args";
+} from "./codex-goal-manifest-input";
 import {
   loadJobLaunch,
 } from "../codex-goal-mcp-project-control-deps";
 import {
   goalLaunchInput,
-} from "../codex-goal-mcp-launch-input";
+} from "./codex-goal-launch-input";
 import {
   codexGoalStatusInputFromLaunch as statusInput,
 } from "./codex-goal-status-input";
@@ -69,7 +69,7 @@ import {
 import {
   optionalTargetCommit,
   targetCommitFromArgs,
-} from "../codex-goal-mcp-target-commit";
+} from "./codex-goal-target-commit";
 import {
   buildCodexGoalDecision,
   buildCodexGoalHandoff,

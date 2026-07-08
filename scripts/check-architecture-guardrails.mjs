@@ -41,11 +41,8 @@ const allowedApplicationMcpImports = {
   ],
   "src/worker-codex/application/codex-goal-job-use-cases.ts": [
     "../codex-goal-mcp-brief",
-    "../codex-goal-mcp-launch-input",
-    "../codex-goal-mcp-manifest-args",
     "../codex-goal-mcp-overview",
     "../codex-goal-mcp-project-control-deps",
-    "../codex-goal-mcp-target-commit",
     "../codex-goal-mcp-worker-control",
   ],
   "src/worker-codex/application/codex-goal-worker-control-use-cases.ts": [

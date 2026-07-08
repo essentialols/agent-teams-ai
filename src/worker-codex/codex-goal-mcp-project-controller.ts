@@ -1,29 +1,14 @@
 import {
-  AccessBoundary,
   LaunchPlanStatus,
-  NetworkAccessMode,
-  getControlledAgentStatus,
-  reconcileControlledAgentRun,
-  startControlledAgentRun,
-  stopControlledAgentRun,
-  type ControlledAgentProviderStatusResult,
   type ProjectAccessScope,
 } from "@vioxen/subscription-runtime/worker-core";
-import {
-  projectControllerCapacityDemand,
-  recordProjectControllerCapacitySignal,
-} from "./project-controller-capacity";
 import {
   codexGoalJobToArgs,
   type CodexGoalJobManifest,
 } from "./codex-goal-jobs";
-import type { CodexGoalLaunchInput } from "./codex-goal-ops";
 import {
   goalLaunchInput,
 } from "./codex-goal-mcp-launch-input";
-import {
-  safeObservationErrorMessage,
-} from "./codex-goal-mcp-observation-projection";
 import {
   projectControllerOptionsFromMcpArgs,
 } from "./codex-goal-mcp-project-controller-profile";
@@ -40,8 +25,6 @@ import {
   projectControllerProvider,
 } from "./codex-goal-mcp-project-controller-provider";
 import {
-  projectControllerOwnerIsLive,
-  projectControllerProcessOwner,
   type ProjectControllerProviderRegistry,
 } from "./application/project-control/codex-goal-project-controller-runtime";
 import {
@@ -57,6 +40,12 @@ import {
   projectControllerStopProviderResultViewJson,
   projectControllerViewBase,
 } from "./application/project-control/codex-goal-project-controller-view";
+import {
+  observeProjectControllerControlledRun,
+  reconcileProjectControllerControlledRun,
+  startProjectControllerControlledRun,
+  stopProjectControllerControlledRun,
+} from "./application/project-control/codex-goal-project-controller-run-use-cases";
 import type { ProjectControllerLaunchPlanMcpArgs } from "./codex-goal-mcp-inputs";
 import {
   stringValue,
@@ -65,7 +54,6 @@ import {
   workerControlDecisionJson,
 } from "./application/codex-goal-worker-control-view";
 import {
-  codexGoalStateRootDir,
   codexGoalWorkerControlService,
   codexGoalWorkerControlTarget,
 } from "./application/codex-goal-worker-control";
@@ -124,48 +112,34 @@ export async function projectControllerStartView(
     profile,
     state,
   });
-  const capacityAccountId = stringValue(providerInput.account?.name);
-  const owner = projectControllerProcessOwner(deps.runtimeVersion);
-  const result = await startControlledAgentRun({
+  const started = await startProjectControllerControlledRun({
     controllerJobId: controller.controller.jobId,
-    sessionId: state.sessionId,
-    stateDir: state.stateDir,
-    boundary: AccessBoundary.ProjectScopedControl,
-    projectAccessScope: controller.scope,
-    provider: profile.enforcement,
-    networkAccess: NetworkAccessMode.Restricted,
-  }, {
-    provider: providerInput.provider,
-    stateStore: state.store,
-    events: state.store,
-    owner,
-    ownerLiveness: { isLive: projectControllerOwnerIsLive },
-    recoverOwnerlessActiveRunAfterMs: 10 * 60 * 1000,
-    ...(capacityAccountId === undefined ? {} : {
-      capacity: {
-        accountId: capacityAccountId,
-        demand: projectControllerCapacityDemand(launch.config),
-      },
-    }),
+    scope: controller.scope,
+    profile,
+    state,
+    launch,
+    providerInput,
+    deps,
   });
-  if (!result.ok) {
-    if ("reason" in result) {
-      return projectControllerStartExistingRunViewJson({ base, result });
+  if (!started.result.ok) {
+    if ("reason" in started.result) {
+      return projectControllerStartExistingRunViewJson({
+        base,
+        result: started.result,
+      });
     }
-    return projectControllerStartUseCaseBlockedViewJson({ base, result });
+    return projectControllerStartUseCaseBlockedViewJson({
+      base,
+      result: started.result,
+    });
   }
-  deps.providerRegistry.set(state.sessionId, providerInput.provider);
   return projectControllerStartReadyViewJson({
     base,
     profile,
     plan,
-    result,
-    owner,
-    providerEvidence: {
-      account: providerInput.account,
-      sessionArtifact: providerInput.sessionArtifact,
-      safeMessage: providerInput.safeMessage,
-    },
+    result: started.result,
+    owner: started.owner,
+    providerEvidence: started.providerEvidence,
   });
 }
 
@@ -176,30 +150,18 @@ export async function projectControllerStatusView(
   const controller = await deps.loadProjectControlController(args);
   const options = projectControllerOptionsFromMcpArgs(args);
   const state = projectControllerState(options, controller);
-  const result = await getControlledAgentStatus(state.sessionId, {
-    stateStore: state.store,
-  });
-  const provider = deps.providerRegistry.get(state.sessionId);
-  let observed: ControlledAgentProviderStatusResult | undefined;
-  let providerStatusError: string | undefined;
-  if (result.ok && provider) {
-    try {
-      observed = await provider.status({ session: result.session, run: result.run });
-    } catch (error) {
-      providerStatusError = safeObservationErrorMessage(error);
-    }
-  }
+  const observed = await observeProjectControllerControlledRun({ state, deps });
   return projectControllerStatusViewJson({
     base: controllerViewBase(
       controller,
       state,
       projectControllerProviderKind(options),
     ),
-    result,
-    providerAttached: provider !== undefined,
-    observed,
-    providerStatusError,
-    owner: projectControllerProcessOwner(deps.runtimeVersion),
+    result: observed.result,
+    providerAttached: observed.providerAttached,
+    observed: observed.observed,
+    providerStatusError: observed.providerStatusError,
+    owner: observed.owner,
   });
 }
 
@@ -242,34 +204,29 @@ export async function projectControllerStopView(
   const controller = await deps.loadProjectControlController(args);
   const options = projectControllerOptionsFromMcpArgs(args);
   const state = projectControllerState(options, controller);
-  const result = await getControlledAgentStatus(state.sessionId, {
-    stateStore: state.store,
-  });
   const base = controllerViewBase(
     controller,
     state,
     projectControllerProviderKind(options),
   );
-  const provider = deps.providerRegistry.get(state.sessionId);
-  const owner = projectControllerProcessOwner(deps.runtimeVersion);
-  if (result.ok && provider) {
-    const stopped = await stopControlledAgentRun({
-      sessionId: state.sessionId,
-      reason: options.reason ?? "project_controller_stop",
-    }, {
-      stateStore: state.store,
-      provider,
-      events: state.store,
-    });
-    if (stopped.ok) deps.providerRegistry.delete(state.sessionId);
+  const stopped = await stopProjectControllerControlledRun({
+    state,
+    reason: options.reason ?? "project_controller_stop",
+    deps,
+  });
+  if (stopped.stopped !== undefined) {
     return projectControllerStopProviderResultViewJson({
       base,
-      statusResult: result,
-      stopped,
-      owner,
+      statusResult: stopped.statusResult,
+      stopped: stopped.stopped,
+      owner: stopped.owner,
     });
   }
-  return projectControllerStopDisconnectedViewJson({ base, result, owner });
+  return projectControllerStopDisconnectedViewJson({
+    base,
+    result: stopped.result,
+    owner: stopped.owner,
+  });
 }
 
 export async function projectControllerReconcileView(
@@ -279,37 +236,29 @@ export async function projectControllerReconcileView(
   const controller = await deps.loadProjectControlController(args);
   const options = projectControllerOptionsFromMcpArgs(args);
   const state = projectControllerState(options, controller);
-  const result = await getControlledAgentStatus(state.sessionId, {
-    stateStore: state.store,
-  });
   const base = controllerViewBase(
     controller,
     state,
     projectControllerProviderKind(options),
   );
-  const provider = deps.providerRegistry.get(state.sessionId);
-  const owner = projectControllerProcessOwner(deps.runtimeVersion);
-  if (result.ok && provider) {
-    const reconciled = await reconcileControlledAgentRun(state.sessionId, {
-      stateStore: state.store,
-      provider,
-      events: state.store,
-    });
-    if (reconciled.ok) {
-      const launch = await goalLaunchInput(codexGoalJobToArgs(controller.controller));
-      recordControllerCapacitySignal({
-        launch,
-        controllerJobId: controller.controller.jobId,
-        run: reconciled.run,
-      });
-    }
+  const reconciled = await reconcileProjectControllerControlledRun({
+    controllerJobId: controller.controller.jobId,
+    state,
+    loadLaunch: () => goalLaunchInput(codexGoalJobToArgs(controller.controller)),
+    deps,
+  });
+  if (reconciled.reconciled !== undefined) {
     return projectControllerReconcileProviderResultViewJson({
       base,
-      reconciled,
-      owner,
+      reconciled: reconciled.reconciled,
+      owner: reconciled.owner,
     });
   }
-  return projectControllerReconcileDisconnectedViewJson({ base, result, owner });
+  return projectControllerReconcileDisconnectedViewJson({
+    base,
+    result: reconciled.result,
+    owner: reconciled.owner,
+  });
 }
 
 function controllerViewBase(
@@ -326,18 +275,5 @@ function controllerViewBase(
     registryRootDir: controller.registryRootDir,
     stateDir: state.stateDir,
     sessionId: state.sessionId,
-  });
-}
-
-function recordControllerCapacitySignal(input: {
-  readonly launch: CodexGoalLaunchInput;
-  readonly controllerJobId: string;
-  readonly run: Parameters<typeof recordProjectControllerCapacitySignal>[0]["run"];
-}): void {
-  recordProjectControllerCapacitySignal({
-    stateRootDir: codexGoalStateRootDir(input.launch),
-    controllerJobId: input.controllerJobId,
-    config: input.launch.config,
-    run: input.run,
   });
 }

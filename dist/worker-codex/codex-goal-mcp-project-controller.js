@@ -1,17 +1,14 @@
-import { AccessBoundary, LaunchPlanStatus, NetworkAccessMode, getControlledAgentStatus, reconcileControlledAgentRun, startControlledAgentRun, stopControlledAgentRun, } from "@vioxen/subscription-runtime/worker-core";
-import { projectControllerCapacityDemand, recordProjectControllerCapacitySignal, } from "./project-controller-capacity.js";
+import { LaunchPlanStatus, } from "@vioxen/subscription-runtime/worker-core";
 import { codexGoalJobToArgs, } from "./codex-goal-jobs.js";
 import { goalLaunchInput, } from "./codex-goal-mcp-launch-input.js";
-import { safeObservationErrorMessage, } from "./codex-goal-mcp-observation-projection.js";
 import { projectControllerOptionsFromMcpArgs, } from "./codex-goal-mcp-project-controller-profile.js";
 import { projectControllerLaunchInput, projectControllerProfile, projectControllerState, } from "./application/project-control/codex-goal-project-controller-profile.js";
 import { projectControllerProviderKind, } from "./application/project-control/codex-goal-project-controller-options.js";
 import { projectControllerProvider, } from "./codex-goal-mcp-project-controller-provider.js";
-import { projectControllerOwnerIsLive, projectControllerProcessOwner, } from "./application/project-control/codex-goal-project-controller-runtime.js";
 import { projectControllerLaunchPlanViewJson, projectControllerReconcileDisconnectedViewJson, projectControllerReconcileProviderResultViewJson, projectControllerStartExistingRunViewJson, projectControllerStartLaunchBlockedViewJson, projectControllerStartReadyViewJson, projectControllerStartUseCaseBlockedViewJson, projectControllerStatusViewJson, projectControllerStopDisconnectedViewJson, projectControllerStopProviderResultViewJson, projectControllerViewBase, } from "./application/project-control/codex-goal-project-controller-view.js";
-import { stringValue, } from "./codex-goal-mcp-values.js";
+import { observeProjectControllerControlledRun, reconcileProjectControllerControlledRun, startProjectControllerControlledRun, stopProjectControllerControlledRun, } from "./application/project-control/codex-goal-project-controller-run-use-cases.js";
 import { workerControlDecisionJson, } from "./application/codex-goal-worker-control-view.js";
-import { codexGoalStateRootDir, codexGoalWorkerControlService, codexGoalWorkerControlTarget, } from "./application/codex-goal-worker-control.js";
+import { codexGoalWorkerControlService, codexGoalWorkerControlTarget, } from "./application/codex-goal-worker-control.js";
 export async function projectControllerLaunchPlanView(args, deps) {
     const controller = await deps.loadProjectControlController(args);
     const options = projectControllerOptionsFromMcpArgs(args);
@@ -43,75 +40,48 @@ export async function projectControllerStartView(args, deps) {
         profile,
         state,
     });
-    const capacityAccountId = stringValue(providerInput.account?.name);
-    const owner = projectControllerProcessOwner(deps.runtimeVersion);
-    const result = await startControlledAgentRun({
+    const started = await startProjectControllerControlledRun({
         controllerJobId: controller.controller.jobId,
-        sessionId: state.sessionId,
-        stateDir: state.stateDir,
-        boundary: AccessBoundary.ProjectScopedControl,
-        projectAccessScope: controller.scope,
-        provider: profile.enforcement,
-        networkAccess: NetworkAccessMode.Restricted,
-    }, {
-        provider: providerInput.provider,
-        stateStore: state.store,
-        events: state.store,
-        owner,
-        ownerLiveness: { isLive: projectControllerOwnerIsLive },
-        recoverOwnerlessActiveRunAfterMs: 10 * 60 * 1000,
-        ...(capacityAccountId === undefined ? {} : {
-            capacity: {
-                accountId: capacityAccountId,
-                demand: projectControllerCapacityDemand(launch.config),
-            },
-        }),
+        scope: controller.scope,
+        profile,
+        state,
+        launch,
+        providerInput,
+        deps,
     });
-    if (!result.ok) {
-        if ("reason" in result) {
-            return projectControllerStartExistingRunViewJson({ base, result });
+    if (!started.result.ok) {
+        if ("reason" in started.result) {
+            return projectControllerStartExistingRunViewJson({
+                base,
+                result: started.result,
+            });
         }
-        return projectControllerStartUseCaseBlockedViewJson({ base, result });
+        return projectControllerStartUseCaseBlockedViewJson({
+            base,
+            result: started.result,
+        });
     }
-    deps.providerRegistry.set(state.sessionId, providerInput.provider);
     return projectControllerStartReadyViewJson({
         base,
         profile,
         plan,
-        result,
-        owner,
-        providerEvidence: {
-            account: providerInput.account,
-            sessionArtifact: providerInput.sessionArtifact,
-            safeMessage: providerInput.safeMessage,
-        },
+        result: started.result,
+        owner: started.owner,
+        providerEvidence: started.providerEvidence,
     });
 }
 export async function projectControllerStatusView(args, deps) {
     const controller = await deps.loadProjectControlController(args);
     const options = projectControllerOptionsFromMcpArgs(args);
     const state = projectControllerState(options, controller);
-    const result = await getControlledAgentStatus(state.sessionId, {
-        stateStore: state.store,
-    });
-    const provider = deps.providerRegistry.get(state.sessionId);
-    let observed;
-    let providerStatusError;
-    if (result.ok && provider) {
-        try {
-            observed = await provider.status({ session: result.session, run: result.run });
-        }
-        catch (error) {
-            providerStatusError = safeObservationErrorMessage(error);
-        }
-    }
+    const observed = await observeProjectControllerControlledRun({ state, deps });
     return projectControllerStatusViewJson({
         base: controllerViewBase(controller, state, projectControllerProviderKind(options)),
-        result,
-        providerAttached: provider !== undefined,
-        observed,
-        providerStatusError,
-        owner: projectControllerProcessOwner(deps.runtimeVersion),
+        result: observed.result,
+        providerAttached: observed.providerAttached,
+        observed: observed.observed,
+        providerStatusError: observed.providerStatusError,
+        owner: observed.owner,
     });
 }
 export async function projectControllerConsumeGuidanceView(args, deps) {
@@ -146,63 +116,49 @@ export async function projectControllerStopView(args, deps) {
     const controller = await deps.loadProjectControlController(args);
     const options = projectControllerOptionsFromMcpArgs(args);
     const state = projectControllerState(options, controller);
-    const result = await getControlledAgentStatus(state.sessionId, {
-        stateStore: state.store,
-    });
     const base = controllerViewBase(controller, state, projectControllerProviderKind(options));
-    const provider = deps.providerRegistry.get(state.sessionId);
-    const owner = projectControllerProcessOwner(deps.runtimeVersion);
-    if (result.ok && provider) {
-        const stopped = await stopControlledAgentRun({
-            sessionId: state.sessionId,
-            reason: options.reason ?? "project_controller_stop",
-        }, {
-            stateStore: state.store,
-            provider,
-            events: state.store,
-        });
-        if (stopped.ok)
-            deps.providerRegistry.delete(state.sessionId);
+    const stopped = await stopProjectControllerControlledRun({
+        state,
+        reason: options.reason ?? "project_controller_stop",
+        deps,
+    });
+    if (stopped.stopped !== undefined) {
         return projectControllerStopProviderResultViewJson({
             base,
-            statusResult: result,
-            stopped,
-            owner,
+            statusResult: stopped.statusResult,
+            stopped: stopped.stopped,
+            owner: stopped.owner,
         });
     }
-    return projectControllerStopDisconnectedViewJson({ base, result, owner });
+    return projectControllerStopDisconnectedViewJson({
+        base,
+        result: stopped.result,
+        owner: stopped.owner,
+    });
 }
 export async function projectControllerReconcileView(args, deps) {
     const controller = await deps.loadProjectControlController(args);
     const options = projectControllerOptionsFromMcpArgs(args);
     const state = projectControllerState(options, controller);
-    const result = await getControlledAgentStatus(state.sessionId, {
-        stateStore: state.store,
-    });
     const base = controllerViewBase(controller, state, projectControllerProviderKind(options));
-    const provider = deps.providerRegistry.get(state.sessionId);
-    const owner = projectControllerProcessOwner(deps.runtimeVersion);
-    if (result.ok && provider) {
-        const reconciled = await reconcileControlledAgentRun(state.sessionId, {
-            stateStore: state.store,
-            provider,
-            events: state.store,
-        });
-        if (reconciled.ok) {
-            const launch = await goalLaunchInput(codexGoalJobToArgs(controller.controller));
-            recordControllerCapacitySignal({
-                launch,
-                controllerJobId: controller.controller.jobId,
-                run: reconciled.run,
-            });
-        }
+    const reconciled = await reconcileProjectControllerControlledRun({
+        controllerJobId: controller.controller.jobId,
+        state,
+        loadLaunch: () => goalLaunchInput(codexGoalJobToArgs(controller.controller)),
+        deps,
+    });
+    if (reconciled.reconciled !== undefined) {
         return projectControllerReconcileProviderResultViewJson({
             base,
-            reconciled,
-            owner,
+            reconciled: reconciled.reconciled,
+            owner: reconciled.owner,
         });
     }
-    return projectControllerReconcileDisconnectedViewJson({ base, result, owner });
+    return projectControllerReconcileDisconnectedViewJson({
+        base,
+        result: reconciled.result,
+        owner: reconciled.owner,
+    });
 }
 function controllerViewBase(controller, state, providerKind) {
     return projectControllerViewBase({
@@ -211,14 +167,6 @@ function controllerViewBase(controller, state, providerKind) {
         registryRootDir: controller.registryRootDir,
         stateDir: state.stateDir,
         sessionId: state.sessionId,
-    });
-}
-function recordControllerCapacitySignal(input) {
-    recordProjectControllerCapacitySignal({
-        stateRootDir: codexGoalStateRootDir(input.launch),
-        controllerJobId: input.controllerJobId,
-        config: input.launch.config,
-        run: input.run,
     });
 }
 //# sourceMappingURL=codex-goal-mcp-project-controller.js.map

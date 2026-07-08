@@ -3,7 +3,7 @@ import { z } from "zod";
 import { accountNames, booleanValue, numberValue, resolvePath, stringValue, } from "./codex-goal-mcp-values.js";
 import { jobIdInputSchema, } from "./codex-goal-mcp-inputs.js";
 import { accountAuthRootFromArgs, accountPoolRootFromArgs, codexAccountReloginInstructions, codexAccountStatusPayload, listAccountPools, } from "./codex-goal-mcp-accounts.js";
-import { codexGoalAccountStatusPayload, codexGoalStateRootDir, } from "./codex-goal-mcp-worker-control.js";
+import { codexGoalAccountStatusPayload, codexGoalStateRootDir, } from "./application/codex-goal-worker-control.js";
 import { mcpJson, withMcpErrors, } from "./codex-goal-mcp-response.js";
 import { loadJobLaunch, } from "./codex-goal-mcp-project-control-deps.js";
 export function registerCodexGoalAccountTools(server) {

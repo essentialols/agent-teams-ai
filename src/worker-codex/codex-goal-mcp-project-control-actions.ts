@@ -51,7 +51,7 @@ import {
 import { buildCodexGoalBrief } from "./codex-goal-mcp-brief";
 import {
   codexGoalStateRootDir,
-} from "./codex-goal-mcp-worker-control";
+} from "./application/codex-goal-worker-control";
 import {
   codexGoalStatusInputFromLaunch as statusInput,
 } from "./codex-goal-mcp-status-input";

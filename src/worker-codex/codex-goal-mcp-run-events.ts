@@ -27,7 +27,7 @@ import {
   requiredRawString,
   stringValue,
 } from "./codex-goal-mcp-values";
-import { jobIdsFromValue } from "./codex-goal-mcp-worker-control-view";
+import { jobIdsFromValue } from "./application/codex-goal-worker-control-view";
 import {
   optionalRunEventProviderKind,
   registryRootFromArgs,

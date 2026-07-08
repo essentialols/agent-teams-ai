@@ -63,12 +63,12 @@ import {
 } from "./codex-goal-mcp-values";
 import {
   workerControlDecisionJson,
-} from "./codex-goal-mcp-worker-control-view";
+} from "./application/codex-goal-worker-control-view";
 import {
   codexGoalStateRootDir,
   codexGoalWorkerControlService,
   codexGoalWorkerControlTarget,
-} from "./codex-goal-mcp-worker-control";
+} from "./application/codex-goal-worker-control";
 
 type JsonObject = Readonly<Record<string, unknown>>;
 

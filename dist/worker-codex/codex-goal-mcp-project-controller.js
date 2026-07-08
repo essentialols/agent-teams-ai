@@ -10,8 +10,8 @@ import { projectControllerProvider, } from "./codex-goal-mcp-project-controller-
 import { projectControllerOwnerIsLive, projectControllerProcessOwner, } from "./application/project-control/codex-goal-project-controller-runtime.js";
 import { projectControllerLaunchPlanViewJson, projectControllerReconcileDisconnectedViewJson, projectControllerReconcileProviderResultViewJson, projectControllerStartExistingRunViewJson, projectControllerStartLaunchBlockedViewJson, projectControllerStartReadyViewJson, projectControllerStartUseCaseBlockedViewJson, projectControllerStatusViewJson, projectControllerStopDisconnectedViewJson, projectControllerStopProviderResultViewJson, projectControllerViewBase, } from "./application/project-control/codex-goal-project-controller-view.js";
 import { stringValue, } from "./codex-goal-mcp-values.js";
-import { workerControlDecisionJson, } from "./codex-goal-mcp-worker-control-view.js";
-import { codexGoalStateRootDir, codexGoalWorkerControlService, codexGoalWorkerControlTarget, } from "./codex-goal-mcp-worker-control.js";
+import { workerControlDecisionJson, } from "./application/codex-goal-worker-control-view.js";
+import { codexGoalStateRootDir, codexGoalWorkerControlService, codexGoalWorkerControlTarget, } from "./application/codex-goal-worker-control.js";
 export async function projectControllerLaunchPlanView(args, deps) {
     const controller = await deps.loadProjectControlController(args);
     const options = projectControllerOptionsFromMcpArgs(args);

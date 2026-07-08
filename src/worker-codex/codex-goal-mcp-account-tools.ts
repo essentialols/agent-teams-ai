@@ -24,7 +24,7 @@ import {
 import {
   codexGoalAccountStatusPayload,
   codexGoalStateRootDir,
-} from "./codex-goal-mcp-worker-control";
+} from "./application/codex-goal-worker-control";
 import {
   mcpJson,
   withMcpErrors,

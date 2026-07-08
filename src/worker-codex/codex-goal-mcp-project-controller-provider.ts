@@ -28,7 +28,7 @@ import {
   codexGoalStateRootDir,
   codexGoalWorkerControlService,
   codexGoalWorkerControlTarget,
-} from "./codex-goal-mcp-worker-control";
+} from "./application/codex-goal-worker-control";
 import { listCodexGoalAccountStatuses } from "./codex-goal-ops";
 
 type JsonObject = Readonly<Record<string, unknown>>;

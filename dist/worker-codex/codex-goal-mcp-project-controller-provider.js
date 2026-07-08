@@ -6,7 +6,7 @@ import { RunEventProviderKind, } from "@vioxen/subscription-runtime/worker-core"
 import { CodexControlledAgentProvider } from "./controlled-agent/index.js";
 import { selectProjectControllerCodexAccountSlot, } from "./application/project-control/codex-goal-project-controller-account-selection.js";
 import { projectControllerPendingGuidancePromptContext, } from "./application/project-control/codex-goal-project-controller-guidance.js";
-import { codexGoalStateRootDir, codexGoalWorkerControlService, codexGoalWorkerControlTarget, } from "./codex-goal-mcp-worker-control.js";
+import { codexGoalStateRootDir, codexGoalWorkerControlService, codexGoalWorkerControlTarget, } from "./application/codex-goal-worker-control.js";
 import { listCodexGoalAccountStatuses } from "./codex-goal-ops.js";
 export async function projectControllerProvider(input) {
     if (input.profile.providerKind === RunEventProviderKind.Claude) {

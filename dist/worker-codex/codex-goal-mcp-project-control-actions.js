@@ -9,7 +9,7 @@ import { assertProjectControlDependencyBootstrapReady, projectControlDependencyB
 import { assertSafeGitCommitSha, assertSafeGitRefName, assertSafeGitRemoteName, } from "./codex-goal-mcp-project-git.js";
 import { writeCodexGoalStopEvent, writeCodexGoalStoppedProgress, } from "./codex-goal-mcp-lifecycle-markers.js";
 import { buildCodexGoalBrief } from "./codex-goal-mcp-brief.js";
-import { codexGoalStateRootDir, } from "./codex-goal-mcp-worker-control.js";
+import { codexGoalStateRootDir, } from "./application/codex-goal-worker-control.js";
 import { codexGoalStatusInputFromLaunch as statusInput, } from "./codex-goal-mcp-status-input.js";
 import { isSafeStartAction, } from "./codex-goal-mcp-decision.js";
 import { booleanValue, requiredRawString, stringValue, } from "./codex-goal-mcp-values.js";

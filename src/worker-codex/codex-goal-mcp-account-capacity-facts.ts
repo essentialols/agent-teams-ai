@@ -1,6 +1,6 @@
 import type { CodexGoalJobManifest } from "./codex-goal-jobs";
 import type { CodexGoalLaunchInput } from "./codex-goal-ops";
-import { codexGoalAccountStatusPayload } from "./codex-goal-mcp-worker-control";
+import { codexGoalAccountStatusPayload } from "./application/codex-goal-worker-control";
 
 type JsonObject = Readonly<Record<string, unknown>>;
 

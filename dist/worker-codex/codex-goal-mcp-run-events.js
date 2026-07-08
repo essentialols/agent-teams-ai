@@ -4,7 +4,7 @@ import { RunEventProviderKind, RunObservationService, projectRunObservationEvent
 import { CodexRunObservationAdapter } from "./codex-run-observation.js";
 import { failedRunObservationSnapshot, observeOrphanCodexRun, summarizeRunObservationSnapshots, } from "./codex-goal-mcp-observation-projection.js";
 import { booleanValue, numberValue, requiredRawString, stringValue, } from "./codex-goal-mcp-values.js";
-import { jobIdsFromValue } from "./codex-goal-mcp-worker-control-view.js";
+import { jobIdsFromValue } from "./application/codex-goal-worker-control-view.js";
 import { optionalRunEventProviderKind, registryRootFromArgs, runEventRetentionPolicyFromArgs, runEventRootFromArgs, runEventTypeFilter, } from "./codex-goal-mcp-inputs.js";
 export async function watchAgentRuns(args) {
     const providerKindInput = stringValue(args.providerKind) ?? RunEventProviderKind.Codex;

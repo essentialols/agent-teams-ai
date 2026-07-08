@@ -1,4 +1,4 @@
-import { codexGoalAccountStatusPayload } from "./codex-goal-mcp-worker-control.js";
+import { codexGoalAccountStatusPayload } from "./application/codex-goal-worker-control.js";
 export async function codexGoalAccountCapacityFacts(input) {
     try {
         const launch = await input.loadLaunch(input.manifest);

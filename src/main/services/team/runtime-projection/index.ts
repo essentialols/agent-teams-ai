@@ -35,3 +35,29 @@ export {
 } from './RuntimeProjectionProcessTableEvidence';
 export type { RuntimeProjectionResourceProjection } from './RuntimeProjectionResource';
 export { projectRuntimeResource, projectRuntimeResourceSample } from './RuntimeProjectionResource';
+export type {
+  RuntimeProjectionMemberEntryInput,
+  RuntimeProjectionSnapshotDtoInput,
+} from './RuntimeProjectionSnapshotDto';
+export {
+  mapRuntimeProjectionMemberEntry,
+  mapRuntimeProjectionSnapshot,
+} from './RuntimeProjectionSnapshotDto';
+export type {
+  RuntimeProjectionBootstrapConfirmationEvidence,
+  RuntimeProjectionSnapshotBootstrapConfirmationEvidence,
+} from './RuntimeProjectionSnapshotEvidence';
+export {
+  hasRuntimeProjectionBootstrapConfirmationEvidence,
+  hasRuntimeProjectionSnapshotBootstrapConfirmationEvidence,
+} from './RuntimeProjectionSnapshotEvidence';
+export type {
+  RuntimeProjectionSnapshotMemberLivenessFields,
+  RuntimeProjectionSnapshotMemberLivenessInput,
+} from './RuntimeProjectionSnapshotLiveness';
+export { projectRuntimeSnapshotMemberLivenessFields } from './RuntimeProjectionSnapshotLiveness';
+export type {
+  RuntimeProjectionSnapshotResourceFieldInput,
+  RuntimeProjectionSnapshotResourceFields,
+} from './RuntimeProjectionSnapshotResource';
+export { projectRuntimeSnapshotResourceFields } from './RuntimeProjectionSnapshotResource';

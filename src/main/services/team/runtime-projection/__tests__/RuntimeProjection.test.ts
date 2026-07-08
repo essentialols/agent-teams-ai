@@ -1,10 +1,16 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  hasRuntimeProjectionBootstrapConfirmationEvidence,
+  hasRuntimeProjectionSnapshotBootstrapConfirmationEvidence,
   isStrongRuntimeEvidence,
+  mapRuntimeProjectionMemberEntry,
+  mapRuntimeProjectionSnapshot,
   projectRuntimeDiagnostics,
   projectRuntimeLiveness,
   projectRuntimeResource,
+  projectRuntimeSnapshotMemberLivenessFields,
+  projectRuntimeSnapshotResourceFields,
   readVerifiedRuntimeProcessLivenessEvidence,
 } from '../index';
 
@@ -331,6 +337,190 @@ describe('runtime projection foundation', () => {
         },
       ],
     });
+  });
+
+  it('maps runtime projection output into the stable team runtime snapshot DTO shape', () => {
+    const resourceFields = projectRuntimeSnapshotResourceFields({
+      source: 'runtime-adapter',
+      runtimePid: 7000,
+      pidSource: 'opencode_bridge',
+      usageStats: {
+        rssBytes: 1000,
+        cpuPercent: 0,
+        processCount: 1,
+        runtimeLoadScope: 'shared-host',
+      },
+      resourceHistory: [
+        {
+          timestamp: '2026-01-01T00:04:00.000Z',
+          runtimePid: 7000,
+          pidSource: 'opencode_bridge',
+          rssBytes: 900,
+          cpuPercent: 1,
+          processCount: 1,
+          runtimeLoadScope: 'shared-host',
+        },
+      ],
+    });
+
+    const member = mapRuntimeProjectionMemberEntry({
+      memberName: 'worker',
+      alive: true,
+      restartable: false,
+      backendType: 'process',
+      providerId: 'opencode',
+      runtimeModel: '  gpt-runtime  ',
+      ...resourceFields,
+      livenessKind: 'confirmed_bootstrap',
+      pidSource: 'opencode_bridge',
+      runtimePid: 7000,
+      runtimeSessionId: 'session-1',
+      runtimeDiagnostic: ' ready ',
+      runtimeDiagnosticSeverity: 'info',
+      diagnostics: ['ready'],
+      updatedAt: '2026-01-01T00:05:00.000Z',
+    });
+
+    expect(member).toEqual({
+      memberName: 'worker',
+      alive: true,
+      restartable: false,
+      backendType: 'process',
+      providerId: 'opencode',
+      runtimeModel: 'gpt-runtime',
+      rssBytes: 1000,
+      cpuPercent: 0,
+      processCount: 1,
+      runtimeLoadScope: 'shared-host',
+      resourceHistory: [
+        {
+          timestamp: '2026-01-01T00:04:00.000Z',
+          rssBytes: 900,
+          cpuPercent: 1,
+          processCount: 1,
+          runtimeLoadScope: 'shared-host',
+          pidSource: 'opencode_bridge',
+          runtimePid: 7000,
+        },
+      ],
+      livenessKind: 'confirmed_bootstrap',
+      pidSource: 'opencode_bridge',
+      runtimePid: 7000,
+      runtimeSessionId: 'session-1',
+      runtimeDiagnostic: 'ready',
+      runtimeDiagnosticSeverity: 'info',
+      diagnostics: ['ready'],
+      updatedAt: '2026-01-01T00:05:00.000Z',
+    });
+    expect(
+      mapRuntimeProjectionMemberEntry({
+        memberName: 'idle-worker',
+        alive: false,
+        restartable: true,
+        pid: -1,
+        runtimeModel: ' ',
+        rssBytes: Number.NaN,
+        cpuPercent: -0.1,
+        processCount: 0,
+        runtimeDiagnostic: ' ',
+        updatedAt: '2026-01-01T00:05:00.000Z',
+      })
+    ).toEqual({
+      memberName: 'idle-worker',
+      alive: false,
+      restartable: true,
+      updatedAt: '2026-01-01T00:05:00.000Z',
+    });
+
+    expect(
+      mapRuntimeProjectionSnapshot({
+        teamName: 'alpha',
+        updatedAt: '2026-01-01T00:05:00.000Z',
+        runId: null,
+        providerBackendId: 'opencode-cli',
+        fastMode: 'on',
+        members: { worker: member },
+      })
+    ).toEqual({
+      teamName: 'alpha',
+      updatedAt: '2026-01-01T00:05:00.000Z',
+      runId: null,
+      providerBackendId: 'opencode-cli',
+      fastMode: 'on',
+      members: { worker: member },
+    });
+    expect(
+      mapRuntimeProjectionSnapshot({
+        teamName: 'alpha',
+        updatedAt: '2026-01-01T00:05:00.000Z',
+        runId: null,
+        members: {},
+      })
+    ).toEqual({
+      teamName: 'alpha',
+      updatedAt: '2026-01-01T00:05:00.000Z',
+      runId: null,
+      members: {},
+    });
+  });
+
+  it('projects runtime snapshot liveness overrides from bootstrap evidence', () => {
+    expect(
+      projectRuntimeSnapshotMemberLivenessFields({
+        liveAlive: false,
+        liveLivenessKind: 'runtime_process_candidate',
+        livePidSource: 'opencode_bridge',
+        liveRuntimeDiagnostic: 'candidate only',
+        liveRuntimeDiagnosticSeverity: 'warning',
+        confirmedOpenCodeRuntimeAlive: true,
+      })
+    ).toEqual({
+      alive: true,
+      livenessKind: 'confirmed_bootstrap',
+      pidSource: 'opencode_bridge',
+      runtimeDiagnostic: 'OpenCode bootstrap confirmed; runtime host/session evidence present.',
+      runtimeDiagnosticSeverity: 'info',
+    });
+
+    expect(
+      projectRuntimeSnapshotMemberLivenessFields({
+        liveAlive: false,
+        liveLivenessKind: 'registered_only',
+        livePidSource: 'persisted_metadata',
+        liveRuntimeDiagnosticSeverity: 'warning',
+        spawnRuntimeDiagnostic: 'bootstrap transport warning',
+        spawnRuntimeDiagnosticSeverity: 'warning',
+        confirmedSpawnRuntimeFallback: true,
+        keepConfirmedSpawnRuntimeDiagnostic: true,
+      })
+    ).toEqual({
+      alive: true,
+      livenessKind: 'confirmed_bootstrap',
+      pidSource: 'runtime_bootstrap',
+      runtimeDiagnostic: 'bootstrap transport warning',
+      runtimeDiagnosticSeverity: 'warning',
+    });
+  });
+
+  it('maps runtime snapshot bootstrap confirmation evidence across sources', () => {
+    expect(
+      hasRuntimeProjectionBootstrapConfirmationEvidence({
+        bootstrapConfirmed: false,
+        launchState: 'runtime_pending_bootstrap',
+      })
+    ).toBe(false);
+    expect(
+      hasRuntimeProjectionBootstrapConfirmationEvidence({
+        launchState: 'confirmed_alive',
+      })
+    ).toBe(true);
+    expect(
+      hasRuntimeProjectionSnapshotBootstrapConfirmationEvidence({
+        launch: { bootstrapConfirmed: false },
+        runtimeAdapter: { bootstrapConfirmed: false },
+        spawnStatus: { bootstrapConfirmed: true },
+      })
+    ).toBe(true);
   });
 
   it('redacts token-shaped diagnostic values before projecting details', () => {

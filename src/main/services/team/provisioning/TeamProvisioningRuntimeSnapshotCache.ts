@@ -31,6 +31,48 @@ export interface TeamProvisioningAgentRuntimeSnapshotCachePort<
   getRuntimeSnapshotCacheGeneration(teamName: string): number;
 }
 
+export interface TeamProvisioningRuntimeSnapshotBuildCacheReadPort {
+  getRuntimeSnapshotCacheGeneration(teamName: string): number;
+  getTrackedRunId(teamName: string): string | null;
+  getAgentRuntimeSnapshotCacheTtlMs(teamName: string, runId: string | null): number;
+}
+
+export interface TeamProvisioningRuntimeSnapshotBuildCacheWritePort<
+  TAgentRuntimeSnapshot extends TeamProvisioningAgentRuntimeSnapshotLike,
+> {
+  rememberAgentRuntimeSnapshot(params: {
+    teamName: string;
+    runId: string | null;
+    generationAtStart: number;
+    snapshot: TAgentRuntimeSnapshot;
+    ttlMs: number;
+  }): void;
+}
+
+export interface TeamProvisioningLiveRuntimeMetadataCacheReadPort<TMetadata> {
+  getCachedLiveTeamAgentRuntimeMetadata(
+    teamName: string,
+    runId: string | null,
+    nowMs?: number
+  ): TMetadata | null;
+}
+
+export interface TeamProvisioningLiveRuntimeMetadataCacheWritePort<TMetadata> {
+  rememberLiveTeamAgentRuntimeMetadata(params: {
+    teamName: string;
+    runId: string | null;
+    generationAtStart: number;
+    metadata: TMetadata;
+    ttlMs: number;
+    nowMs?: number;
+  }): void;
+}
+
+export interface TeamProvisioningLiveRuntimeMetadataCachePort<TMetadata>
+  extends
+    TeamProvisioningLiveRuntimeMetadataCacheReadPort<TMetadata>,
+    TeamProvisioningLiveRuntimeMetadataCacheWritePort<TMetadata> {}
+
 export interface TeamProvisioningLiveRuntimeMetadataCacheEntry<TMetadata> {
   expiresAtMs: number;
   metadata: TMetadata;
@@ -80,7 +122,11 @@ export class TeamProvisioningRuntimeSnapshotCacheBoundary<
   TLiveRuntimeMetadata,
   TMemberSpawnStatusesSnapshot,
   TPersistedTeamConfigCacheEntry,
-> implements TeamProvisioningAgentRuntimeSnapshotCachePort<TAgentRuntimeSnapshot> {
+>
+  implements
+    TeamProvisioningAgentRuntimeSnapshotCachePort<TAgentRuntimeSnapshot>,
+    TeamProvisioningLiveRuntimeMetadataCachePort<TLiveRuntimeMetadata>
+{
   private readonly generationByScope = new Map<
     TeamProvisioningRuntimeSnapshotCacheScope,
     Map<string, number>
@@ -131,6 +177,36 @@ export class TeamProvisioningRuntimeSnapshotCacheBoundary<
     this.ports.agentRuntimeSnapshotCache.set(params.teamName, {
       expiresAtMs: (params.nowMs ?? Date.now()) + params.ttlMs,
       snapshot: params.snapshot,
+    });
+  }
+
+  getCachedLiveTeamAgentRuntimeMetadata(
+    teamName: string,
+    runId: string | null,
+    nowMs = Date.now()
+  ): TLiveRuntimeMetadata | null {
+    const cached = this.ports.liveTeamAgentRuntimeMetadataCache.get(teamName);
+    if (!cached || cached.expiresAtMs <= nowMs || cached.runId !== runId) {
+      return null;
+    }
+    return cached.metadata;
+  }
+
+  rememberLiveTeamAgentRuntimeMetadata(params: {
+    teamName: string;
+    runId: string | null;
+    generationAtStart: number;
+    metadata: TLiveRuntimeMetadata;
+    ttlMs: number;
+    nowMs?: number;
+  }): void {
+    if (this.getRuntimeSnapshotCacheGeneration(params.teamName) !== params.generationAtStart) {
+      return;
+    }
+    this.ports.liveTeamAgentRuntimeMetadataCache.set(params.teamName, {
+      expiresAtMs: (params.nowMs ?? Date.now()) + params.ttlMs,
+      metadata: params.metadata,
+      runId: params.runId,
     });
   }
 

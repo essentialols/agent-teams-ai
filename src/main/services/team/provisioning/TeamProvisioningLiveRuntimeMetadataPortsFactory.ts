@@ -6,6 +6,7 @@ import {
 } from './TeamProvisioningRuntimeSnapshot';
 
 import type { LiveTeamAgentRuntimeMetadata } from './TeamProvisioningRuntimeMetadataPolicy';
+import type { TeamProvisioningLiveRuntimeMetadataCachePort } from './TeamProvisioningRuntimeSnapshotCache';
 
 type BuildLiveTeamAgentRuntimeMetadataParams = Parameters<
   typeof buildLiveTeamAgentRuntimeMetadata
@@ -39,11 +40,14 @@ export function cloneLiveTeamAgentRuntimeMetadata(
 
 export type TeamProvisioningLiveRuntimeMetadataPortsFactoryDeps = Omit<
   BuildLiveTeamAgentRuntimeMetadataParams,
-  'teamName' | 'runId' | 'generationAtStart'
+  'teamName' | 'runId' | 'generationAtStart' | 'liveRuntimeMetadataCache'
 > & {
   runs: ReadonlyMap<string, TeamProvisioningRuntimeSnapshotRun>;
   runtimeAdapterRunByTeam: ReadonlyMap<string, RuntimeAdapterRunSnapshotSource>;
   readPersistedRuntimeMembers(teamName: string): PersistedRuntimeMemberLike[];
+  liveRuntimeMetadataCache: TeamProvisioningLiveRuntimeMetadataCachePort<
+    Map<string, LiveTeamAgentRuntimeMetadata>
+  >;
   liveTeamAgentRuntimeMetadataInFlightByTeam?: Map<
     string,
     TeamProvisioningLiveRuntimeMetadataInFlightEntry
@@ -66,15 +70,18 @@ export function createTeamProvisioningLiveRuntimeMetadataPorts(
       teamName: string
     ): Promise<Map<string, LiveTeamAgentRuntimeMetadata>> {
       const runId = buildDeps.getTrackedRunId(teamName);
-      const cached = buildDeps.liveTeamAgentRuntimeMetadataCache.get(teamName);
-      if (cached && cached.expiresAtMs > Date.now() && cached.runId === runId) {
-        return buildDeps.cloneLiveTeamAgentRuntimeMetadata(cached.metadata);
+      const cached = buildDeps.liveRuntimeMetadataCache.getCachedLiveTeamAgentRuntimeMetadata(
+        teamName,
+        runId
+      );
+      if (cached) {
+        return cloneLiveTeamAgentRuntimeMetadata(cached);
       }
 
       const generationAtStart = buildDeps.getRuntimeSnapshotCacheGeneration(teamName);
       const existingRequest = liveTeamAgentRuntimeMetadataInFlightByTeam.get(teamName);
       if (existingRequest?.runIdAtStart === runId) {
-        return buildDeps.cloneLiveTeamAgentRuntimeMetadata(await existingRequest.promise);
+        return cloneLiveTeamAgentRuntimeMetadata(await existingRequest.promise);
       }
 
       const request = buildLiveTeamAgentRuntimeMetadata({
@@ -82,6 +89,13 @@ export function createTeamProvisioningLiveRuntimeMetadataPorts(
         teamName,
         runId,
         generationAtStart,
+        liveRuntimeMetadataCache: {
+          rememberLiveTeamAgentRuntimeMetadata: (params) =>
+            buildDeps.liveRuntimeMetadataCache.rememberLiveTeamAgentRuntimeMetadata({
+              ...params,
+              metadata: cloneLiveTeamAgentRuntimeMetadata(params.metadata),
+            }),
+        },
       }).finally(() => {
         if (liveTeamAgentRuntimeMetadataInFlightByTeam.get(teamName)?.promise === request) {
           liveTeamAgentRuntimeMetadataInFlightByTeam.delete(teamName);
@@ -92,7 +106,7 @@ export function createTeamProvisioningLiveRuntimeMetadataPorts(
         runIdAtStart: runId,
         promise: request,
       });
-      return buildDeps.cloneLiveTeamAgentRuntimeMetadata(await request);
+      return cloneLiveTeamAgentRuntimeMetadata(await request);
     },
   };
 }

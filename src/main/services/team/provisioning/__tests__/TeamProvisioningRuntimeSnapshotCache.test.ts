@@ -134,6 +134,46 @@ describe('TeamProvisioningRuntimeSnapshotCacheBoundary', () => {
     expect(agentRuntimeSnapshotCache.has('alpha')).toBe(false);
   });
 
+  it('reads and writes live runtime metadata through the boundary', () => {
+    const { boundary, liveTeamAgentRuntimeMetadataCache } = createCacheBoundary();
+    const metadata = new Map([['worker', 'ready']]);
+
+    boundary.rememberLiveTeamAgentRuntimeMetadata({
+      teamName: 'alpha',
+      runId: 'run-1',
+      generationAtStart: 0,
+      metadata,
+      ttlMs: 500,
+      nowMs: 1_000,
+    });
+
+    expect(boundary.getCachedLiveTeamAgentRuntimeMetadata('alpha', 'run-1', 1_499)).toBe(metadata);
+    expect(boundary.getCachedLiveTeamAgentRuntimeMetadata('alpha', 'run-2', 1_499)).toBeNull();
+    expect(boundary.getCachedLiveTeamAgentRuntimeMetadata('alpha', 'run-1', 1_500)).toBeNull();
+    expect(liveTeamAgentRuntimeMetadataCache.get('alpha')).toMatchObject({
+      expiresAtMs: 1_500,
+      metadata,
+      runId: 'run-1',
+    });
+  });
+
+  it('does not cache live runtime metadata after the generation changes', () => {
+    const { boundary, liveTeamAgentRuntimeMetadataCache } = createCacheBoundary();
+    boundary.invalidateRuntimeSnapshotCaches('alpha');
+
+    boundary.rememberLiveTeamAgentRuntimeMetadata({
+      teamName: 'alpha',
+      runId: 'run-1',
+      generationAtStart: 0,
+      metadata: new Map([['worker', 'stale']]),
+      ttlMs: 500,
+      nowMs: 1_000,
+    });
+
+    expect(liveTeamAgentRuntimeMetadataCache.has('alpha')).toBe(false);
+    expect(boundary.getCachedLiveTeamAgentRuntimeMetadata('alpha', 'run-1', 1_001)).toBeNull();
+  });
+
   it('clears runtime snapshot caches without clearing member spawn status caches', () => {
     const {
       boundary,

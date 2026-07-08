@@ -15,7 +15,6 @@ describe('TeamProvisioningRuntimeProjectionFactory', () => {
     const runtimeAdapterProgressByRunId = new Map();
     const retainedProgressByTeam = new Map();
     const runtimeSnapshotCacheBoundary = {} as never;
-    const liveTeamAgentRuntimeMetadataCache = new Map();
     const runtimeResourceSampling = {} as never;
     const readBootstrapRuntimeState = vi.fn(async () => null as TeamRuntimeState | null);
     const logDebug = vi.fn();
@@ -48,7 +47,6 @@ describe('TeamProvisioningRuntimeProjectionFactory', () => {
       getMemberSpawnStatuses: vi.fn(async () => ({})),
       getLiveTeamAgentRuntimeMetadata: vi.fn(async () => new Map()),
       runtimeSnapshotCacheBoundary,
-      liveTeamAgentRuntimeMetadataCache,
       runtimeResourceSampling,
     } as unknown as TeamProvisioningRuntimeProjectionServiceHost<never, never>;
 
@@ -63,7 +61,7 @@ describe('TeamProvisioningRuntimeProjectionFactory', () => {
     expect(deps.runtimeAdapterProgressByRunId).toBe(runtimeAdapterProgressByRunId);
     expect(deps.getRetainedProvisioningProgressMap()).toBe(retainedProgressByTeam);
     expect(deps.runtimeSnapshotCache).toBe(runtimeSnapshotCacheBoundary);
-    expect(deps.liveTeamAgentRuntimeMetadataCache).toBe(liveTeamAgentRuntimeMetadataCache);
+    expect(deps.liveRuntimeMetadataCache).toBe(runtimeSnapshotCacheBoundary);
     expect(deps.runtimeResourceSampling).toBe(runtimeResourceSampling);
     expect(deps.logDebug).toBe(logDebug);
     await expect(deps.readBootstrapRuntimeState('alpha')).resolves.toBeNull();

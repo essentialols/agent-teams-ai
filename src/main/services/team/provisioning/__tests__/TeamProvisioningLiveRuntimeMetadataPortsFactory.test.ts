@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
-  cloneLiveTeamAgentRuntimeMetadata,
   createTeamProvisioningLiveRuntimeMetadataPorts,
   type TeamProvisioningLiveRuntimeMetadataInFlightEntry,
   type TeamProvisioningLiveRuntimeMetadataPortsFactoryDeps,
 } from '../TeamProvisioningLiveRuntimeMetadataPortsFactory';
 
 import type { LiveTeamAgentRuntimeMetadata } from '../TeamProvisioningRuntimeMetadataPolicy';
+import type { TeamProvisioningLiveRuntimeMetadataCachePort } from '../TeamProvisioningRuntimeSnapshotCache';
 
 function createDeferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -17,6 +17,34 @@ function createDeferred<T>() {
     reject = promiseReject;
   });
   return { promise, resolve, reject };
+}
+
+function createLiveRuntimeMetadataCachePort(
+  cache: Map<
+    string,
+    {
+      expiresAtMs: number;
+      metadata: Map<string, LiveTeamAgentRuntimeMetadata>;
+      runId: string | null;
+    }
+  >
+): TeamProvisioningLiveRuntimeMetadataCachePort<Map<string, LiveTeamAgentRuntimeMetadata>> {
+  return {
+    getCachedLiveTeamAgentRuntimeMetadata(teamName, runId, nowMs = Date.now()) {
+      const cached = cache.get(teamName);
+      if (!cached || cached.expiresAtMs <= nowMs || cached.runId !== runId) {
+        return null;
+      }
+      return cached.metadata;
+    },
+    rememberLiveTeamAgentRuntimeMetadata(params) {
+      cache.set(params.teamName, {
+        expiresAtMs: (params.nowMs ?? Date.now()) + params.ttlMs,
+        metadata: params.metadata,
+        runId: params.runId,
+      });
+    },
+  };
 }
 
 function makeDeps(
@@ -36,8 +64,7 @@ function makeDeps(
     },
     readConfigSnapshot: vi.fn(async () => null),
     readPersistedRuntimeMembers: vi.fn(() => []),
-    liveTeamAgentRuntimeMetadataCache: new Map(),
-    cloneLiveTeamAgentRuntimeMetadata,
+    liveRuntimeMetadataCache: createLiveRuntimeMetadataCachePort(new Map()),
     readRuntimeProcessRowsForLiveRuntimeMetadata: vi.fn(async () => ({
       rows: [],
       processTableAvailable: true,
@@ -56,11 +83,21 @@ function makeDeps(
 
 describe('TeamProvisioningLiveRuntimeMetadataPortsFactory', () => {
   it('returns a cloned cached hit without rebuilding metadata', async () => {
+    const liveRuntimeMetadataCache = new Map<
+      string,
+      {
+        expiresAtMs: number;
+        metadata: Map<string, LiveTeamAgentRuntimeMetadata>;
+        runId: string | null;
+      }
+    >();
     const cachedMetadata = new Map<string, LiveTeamAgentRuntimeMetadata>([
       ['Worker', { alive: true, diagnostics: ['cached'] }],
     ]);
-    const deps = makeDeps();
-    deps.liveTeamAgentRuntimeMetadataCache.set('alpha', {
+    const deps = makeDeps({
+      liveRuntimeMetadataCache: createLiveRuntimeMetadataCachePort(liveRuntimeMetadataCache),
+    });
+    liveRuntimeMetadataCache.set('alpha', {
       expiresAtMs: Date.now() + 10_000,
       metadata: cachedMetadata,
       runId: 'run-1',
@@ -81,8 +118,17 @@ describe('TeamProvisioningLiveRuntimeMetadataPortsFactory', () => {
   it('dedupes in-flight metadata builds and clones each caller result', async () => {
     const configDeferred = createDeferred<null>();
     const inFlightByTeam = new Map<string, TeamProvisioningLiveRuntimeMetadataInFlightEntry>();
+    const liveRuntimeMetadataCache = new Map<
+      string,
+      {
+        expiresAtMs: number;
+        metadata: Map<string, LiveTeamAgentRuntimeMetadata>;
+        runId: string | null;
+      }
+    >();
     const deps = makeDeps({
       liveTeamAgentRuntimeMetadataInFlightByTeam: inFlightByTeam,
+      liveRuntimeMetadataCache: createLiveRuntimeMetadataCachePort(liveRuntimeMetadataCache),
       readConfigSnapshot: vi.fn(() => configDeferred.promise),
       readPersistedRuntimeMembers: vi.fn(() => [
         {
@@ -117,7 +163,12 @@ describe('TeamProvisioningLiveRuntimeMetadataPortsFactory', () => {
     });
     expect(inFlightByTeam.has('alpha')).toBe(false);
     expect(deps.getAgentRuntimeSnapshotCacheTtlMs).toHaveBeenCalledWith('alpha', 'run-1');
-    expect(deps.liveTeamAgentRuntimeMetadataCache.get('alpha')?.runId).toBe('run-1');
+    expect(liveRuntimeMetadataCache.get('alpha')?.runId).toBe('run-1');
+
+    firstResult.get('Worker')!.cwd = '/mutated-caller-copy';
+    const cachedResult = await ports.getLiveTeamAgentRuntimeMetadata('alpha');
+    expect(cachedResult).not.toBe(liveRuntimeMetadataCache.get('alpha')?.metadata);
+    expect(cachedResult.get('Worker')?.cwd).toBe('/repo/team-alpha');
   });
 
   it('cleans up the in-flight entry when a metadata build fails', async () => {

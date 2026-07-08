@@ -1,5 +1,4 @@
 import {
-  cloneLiveTeamAgentRuntimeMetadata,
   createTeamProvisioningLiveRuntimeMetadataPorts,
   type TeamProvisioningLiveRuntimeMetadataPorts,
 } from './TeamProvisioningLiveRuntimeMetadataPortsFactory';
@@ -15,7 +14,10 @@ import type {
   RuntimeAdapterRunSnapshotSource,
   TeamProvisioningRuntimeSnapshotRun,
 } from './TeamProvisioningRuntimeSnapshot';
-import type { TeamProvisioningAgentRuntimeSnapshotCachePort } from './TeamProvisioningRuntimeSnapshotCache';
+import type {
+  TeamProvisioningAgentRuntimeSnapshotCachePort,
+  TeamProvisioningLiveRuntimeMetadataCachePort,
+} from './TeamProvisioningRuntimeSnapshotCache';
 import type {
   TeamProvisioningRuntimeStateProjectionRun,
   TeamProvisioningRuntimeStateProjectionRuntimeAdapterRun,
@@ -57,13 +59,8 @@ export interface TeamProvisioningRuntimeProjectionFactoryDeps<
     teamName: string
   ): Promise<Map<string, LiveTeamAgentRuntimeMetadata>>;
   runtimeSnapshotCache: TeamProvisioningAgentRuntimeSnapshotCachePort<TeamAgentRuntimeSnapshot>;
-  liveTeamAgentRuntimeMetadataCache: Map<
-    string,
-    {
-      expiresAtMs: number;
-      metadata: Map<string, LiveTeamAgentRuntimeMetadata>;
-      runId: string | null;
-    }
+  liveRuntimeMetadataCache: TeamProvisioningLiveRuntimeMetadataCachePort<
+    Map<string, LiveTeamAgentRuntimeMetadata>
   >;
   runtimeResourceSampling: Pick<
     TeamProvisioningRuntimeResourceSampling,
@@ -103,11 +100,8 @@ export interface TeamProvisioningRuntimeProjectionServiceHost<
   getLiveTeamAgentRuntimeMetadata(
     teamName: string
   ): Promise<Map<string, LiveTeamAgentRuntimeMetadata>>;
-  runtimeSnapshotCacheBoundary: TeamProvisioningAgentRuntimeSnapshotCachePort<TeamAgentRuntimeSnapshot>;
-  liveTeamAgentRuntimeMetadataCache: TeamProvisioningRuntimeProjectionFactoryDeps<
-    TRun,
-    TRuntimeAdapterRun
-  >['liveTeamAgentRuntimeMetadataCache'];
+  runtimeSnapshotCacheBoundary: TeamProvisioningAgentRuntimeSnapshotCachePort<TeamAgentRuntimeSnapshot> &
+    TeamProvisioningLiveRuntimeMetadataCachePort<Map<string, LiveTeamAgentRuntimeMetadata>>;
   runtimeResourceSampling: TeamProvisioningRuntimeProjectionFactoryDeps<
     TRun,
     TRuntimeAdapterRun
@@ -142,8 +136,7 @@ export function createTeamProvisioningRuntimeProjection<
     launchStateStore: deps.launchStateStore,
     readConfigSnapshot: deps.readConfigSnapshot,
     readPersistedRuntimeMembers: deps.readPersistedRuntimeMembers,
-    liveTeamAgentRuntimeMetadataCache: deps.liveTeamAgentRuntimeMetadataCache,
-    cloneLiveTeamAgentRuntimeMetadata,
+    liveRuntimeMetadataCache: deps.liveRuntimeMetadataCache,
     readRuntimeProcessRowsForLiveRuntimeMetadata: (input) =>
       deps.runtimeResourceSampling.readRuntimeProcessRowsForLiveRuntimeMetadata(input),
     readWindowsHostProcessRowsForLiveRuntimeMetadata: (teamName) =>
@@ -229,7 +222,7 @@ export function createTeamProvisioningRuntimeProjectionDepsFromService<
     getLiveTeamAgentRuntimeMetadata: (teamName) =>
       service.getLiveTeamAgentRuntimeMetadata(teamName),
     runtimeSnapshotCache: service.runtimeSnapshotCacheBoundary,
-    liveTeamAgentRuntimeMetadataCache: service.liveTeamAgentRuntimeMetadataCache,
+    liveRuntimeMetadataCache: service.runtimeSnapshotCacheBoundary,
     runtimeResourceSampling: service.runtimeResourceSampling,
     logDebug: options.logDebug,
   };

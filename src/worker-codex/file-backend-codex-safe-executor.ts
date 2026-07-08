@@ -8,14 +8,13 @@ import {
 import {
   LocalFileWorkerAccountCapacityStore,
   LocalFileWorkerControlInboxStore,
+  createLocalFileSafeExecutionStores,
 } from "@vioxen/subscription-runtime/store-local-file";
 import {
   accountCapacityAwareWorkerFactory,
   type ActiveAttemptRegistry,
   type AttemptUsage,
   BoundedSubscriptionWorkerPool,
-  LocalFileAttemptJournal,
-  LocalFileWorkspaceLockStore,
   SafeExecutionRunner,
   SubscriptionWorkerError,
   WorkerControlService,
@@ -166,13 +165,12 @@ export class FileBackendCodexSafeExecutor {
         },
       }),
     });
+    const localSafeExecutionStores = createLocalFileSafeExecutionStores({
+      rootDir: options.stateRootDir,
+    });
     this.runner = new SafeExecutionRunner({
-      lockStore:
-        options.lockStore ??
-        new LocalFileWorkspaceLockStore(join(options.stateRootDir, "workspace-locks")),
-      journal:
-        options.journal ??
-        new LocalFileAttemptJournal(join(options.stateRootDir, "attempt-journal")),
+      lockStore: options.lockStore ?? localSafeExecutionStores.lockStore,
+      journal: options.journal ?? localSafeExecutionStores.journal,
       controlInbox:
         options.controlInbox ??
         new WorkerControlService({
@@ -224,8 +222,7 @@ export class FileBackendCodexSafeExecutor {
       staleLockMs,
       maxAccountCycles,
       policy,
-    } =
-      codexSafeExecutionInput(input);
+    } = codexSafeExecutionInput(input);
     return this.runner.run({
       taskId,
       workspace: {
@@ -260,7 +257,11 @@ export class FileBackendCodexSafeExecutor {
             defaultMaxAccountCycles,
         }),
       }),
-      continuationJobFactory: ({ job: previousJob, continuationPacket, attemptNumber }) => ({
+      continuationJobFactory: ({
+        job: previousJob,
+        continuationPacket,
+        attemptNumber,
+      }) => ({
         ...previousJob,
         runId: `${taskId}:attempt-${attemptNumber}`,
         prompt: continuationPacket.message,
@@ -376,9 +377,10 @@ function errorCauseChain(error: unknown): readonly unknown[] {
   while (current && !seen.has(current)) {
     chain.push(current);
     seen.add(current);
-    current = current instanceof Error
-      ? (current as Error & { cause?: unknown }).cause
-      : undefined;
+    current =
+      current instanceof Error
+        ? (current as Error & { cause?: unknown }).cause
+        : undefined;
   }
   return chain;
 }
@@ -416,7 +418,9 @@ function codexSafeExecutionInput(input: FileBackendCodexSafeExecutorRunInput): {
     ...(effectMode === undefined ? {} : { effectMode }),
     ...(staleLockMs === undefined ? {} : { staleLockMs }),
     ...(maxAccountCycles === undefined ? {} : { maxAccountCycles }),
-    ...(safeExecutionPolicy === undefined ? {} : { policy: safeExecutionPolicy }),
+    ...(safeExecutionPolicy === undefined
+      ? {}
+      : { policy: safeExecutionPolicy }),
   };
 }
 
@@ -487,10 +491,7 @@ function assertSafeExecutorOptions(
 }
 
 function assertMaxAccountCycles(value: number | undefined): void {
-  if (
-    value !== undefined &&
-    (!Number.isInteger(value) || value <= 0)
-  ) {
+  if (value !== undefined && (!Number.isInteger(value) || value <= 0)) {
     throw new Error("file_backend_codex_safe_max_account_cycles_invalid");
   }
 }
@@ -524,7 +525,9 @@ async function assertUniqueCodexAccountIdentities(
   if (duplicateGroups.length === 0) return;
 
   const firstGroup = duplicateGroups[0]!;
-  const duplicateLabels = firstGroup.map((identity) => identity.label).join(",");
+  const duplicateLabels = firstGroup
+    .map((identity) => identity.label)
+    .join(",");
   throw new SubscriptionWorkerError(
     "subscription_worker_start_failed",
     `Duplicate Codex account identity across safe executor accounts: ${duplicateLabels}. Re-login duplicate slots with different accounts or remove them from the pool.`,
@@ -611,7 +614,9 @@ function resolveCodexAccountIdentity(authJson: ValidatedCodexAuthJson): {
 
   const idTokenClaims = decodeJwtClaims(authJson.tokens.id_token);
   if (idTokenClaims) {
-    const authNamespace = objectClaim(idTokenClaims["https://api.openai.com/auth"]);
+    const authNamespace = objectClaim(
+      idTokenClaims["https://api.openai.com/auth"],
+    );
     const accountId = firstNonEmptyString(
       idTokenClaims["https://api.openai.com/auth.chatgpt_account_id"],
       idTokenClaims["chatgpt_account_id"],
@@ -646,7 +651,9 @@ function resolveCodexAccountIdentity(authJson: ValidatedCodexAuthJson): {
   };
 }
 
-function decodeJwtClaims(token: string | undefined): Record<string, unknown> | null {
+function decodeJwtClaims(
+  token: string | undefined,
+): Record<string, unknown> | null {
   if (!token) return null;
   const parts = token.split(".");
   const payload = parts[1];
@@ -664,9 +671,7 @@ function objectClaim(value: unknown): Record<string, unknown> | null {
   return isRecord(value) ? value : null;
 }
 
-function firstNonEmptyString(
-  ...values: readonly unknown[]
-): string | null {
+function firstNonEmptyString(...values: readonly unknown[]): string | null {
   for (const value of values) {
     if (typeof value !== "string") continue;
     const trimmed = value.trim();

@@ -4,9 +4,9 @@ import { readFile, realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 
+import { LocalFileWorkspaceLockStore } from "@vioxen/subscription-runtime/store-local-file";
 import {
   CheckRunStatus,
-  LocalFileWorkspaceLockStore,
   SecretScanStatus,
   normalizeProjectRelativePath,
   type CheckRun,
@@ -32,21 +32,27 @@ export type LocalGitIntegrationAdapterOptions = {
 };
 
 export class LocalGitIntegrationAdapter implements GitPort {
-  constructor(private readonly options: LocalGitIntegrationAdapterOptions = {}) {}
+  constructor(
+    private readonly options: LocalGitIntegrationAdapterOptions = {},
+  ) {}
 
   async getStatus(input: {
     readonly workspacePath: string;
   }): Promise<GitWorkspaceStatus> {
     const workspacePath = await canonicalDirectory(input.workspacePath);
-    const branch = (await this.git(["rev-parse", "--abbrev-ref", "HEAD"], workspacePath))
-      .stdout.trim();
+    const branch = (
+      await this.git(["rev-parse", "--abbrev-ref", "HEAD"], workspacePath)
+    ).stdout.trim();
     const dirtyFiles = uniqueSorted([
-      ...await this.gitLines(["diff", "--name-only"], workspacePath),
-      ...await this.gitLines(["diff", "--cached", "--name-only"], workspacePath),
-      ...await this.gitLines(
+      ...(await this.gitLines(["diff", "--name-only"], workspacePath)),
+      ...(await this.gitLines(
+        ["diff", "--cached", "--name-only"],
+        workspacePath,
+      )),
+      ...(await this.gitLines(
         ["ls-files", "--others", "--exclude-standard"],
         workspacePath,
-      ),
+      )),
     ]).map(normalizeProjectRelativePath);
     return { branch, dirtyFiles };
   }
@@ -61,16 +67,24 @@ export class LocalGitIntegrationAdapter implements GitPort {
       readonly targetWorkspacePath: string;
     };
   }): Promise<GitApplyWorkerOutputResult> {
-    const workspacePath = await canonicalDirectory(input.attempt.targetWorkspacePath);
+    const workspacePath = await canonicalDirectory(
+      input.attempt.targetWorkspacePath,
+    );
     if (input.workerOutput.commitSha) {
-      await this.git(["cherry-pick", "--no-commit", input.workerOutput.commitSha], workspacePath);
+      await this.git(
+        ["cherry-pick", "--no-commit", input.workerOutput.commitSha],
+        workspacePath,
+      );
     } else if (input.workerOutput.patchPath) {
       const patchPath = await canonicalPatchPath({
         workspacePath: input.workerOutput.workspacePath,
         path: input.workerOutput.patchPath,
         allowedPatchRoots: this.options.allowedPatchRoots ?? [],
       });
-      await this.git(["apply", "--whitespace=nowarn", patchPath], workspacePath);
+      await this.git(
+        ["apply", "--whitespace=nowarn", patchPath],
+        workspacePath,
+      );
     } else {
       throw new Error("local_git_integration_worker_output_source_required");
     }
@@ -84,11 +98,16 @@ export class LocalGitIntegrationAdapter implements GitPort {
   }): Promise<GitDiffCheckResult> {
     const workspacePath = await canonicalDirectory(input.workspacePath);
     const working = await this.tryGit(["diff", "--check"], workspacePath);
-    const staged = await this.tryGit(["diff", "--cached", "--check"], workspacePath);
+    const staged = await this.tryGit(
+      ["diff", "--cached", "--check"],
+      workspacePath,
+    );
     if (working.exitCode === 0 && staged.exitCode === 0) return { ok: true };
     return {
       ok: false,
-      safeMessage: safeTail(`${working.stdout}\n${working.stderr}\n${staged.stdout}\n${staged.stderr}`),
+      safeMessage: safeTail(
+        `${working.stdout}\n${working.stderr}\n${staged.stdout}\n${staged.stderr}`,
+      ),
     };
   }
 
@@ -101,11 +120,15 @@ export class LocalGitIntegrationAdapter implements GitPort {
     const files = input.files.map(normalizeProjectRelativePath);
     await this.git(["add", "--", ...files], workspacePath);
     await this.git(["commit", "-m", input.message], workspacePath);
-    const commitSha = (await this.git(["rev-parse", "HEAD"], workspacePath)).stdout.trim();
-    const diffStat = (await this.git(
-      ["show", "--stat", "--format=", "--no-renames", "HEAD"],
-      workspacePath,
-    )).stdout.trim();
+    const commitSha = (
+      await this.git(["rev-parse", "HEAD"], workspacePath)
+    ).stdout.trim();
+    const diffStat = (
+      await this.git(
+        ["show", "--stat", "--format=", "--no-renames", "HEAD"],
+        workspacePath,
+      )
+    ).stdout.trim();
     return {
       commitSha,
       ...(diffStat ? { diffStat } : {}),
@@ -120,24 +143,30 @@ export class LocalGitIntegrationAdapter implements GitPort {
     readonly force: boolean;
   }): Promise<void> {
     const workspacePath = await canonicalDirectory(input.workspacePath);
-    const head = (await this.git(["rev-parse", "HEAD"], workspacePath)).stdout.trim();
+    const head = (
+      await this.git(["rev-parse", "HEAD"], workspacePath)
+    ).stdout.trim();
     if (head !== input.commitSha) {
       throw new Error("local_git_integration_push_commit_mismatch");
     }
-    await this.git([
-      "push",
-      ...(input.force ? ["--force-with-lease"] : []),
-      input.remote,
-      `HEAD:${input.branch}`,
-    ], workspacePath);
+    await this.git(
+      [
+        "push",
+        ...(input.force ? ["--force-with-lease"] : []),
+        input.remote,
+        `HEAD:${input.branch}`,
+      ],
+      workspacePath,
+    );
   }
 
   async currentBranch(input: {
     readonly workspacePath: string;
   }): Promise<string> {
     const workspacePath = await canonicalDirectory(input.workspacePath);
-    return (await this.git(["rev-parse", "--abbrev-ref", "HEAD"], workspacePath))
-      .stdout.trim();
+    return (
+      await this.git(["rev-parse", "--abbrev-ref", "HEAD"], workspacePath)
+    ).stdout.trim();
   }
 
   private async git(
@@ -146,7 +175,9 @@ export class LocalGitIntegrationAdapter implements GitPort {
   ): Promise<CommandResult> {
     const result = await this.tryGit(args, cwd);
     if (result.exitCode !== 0) {
-      throw new Error(`local_git_integration_failed:${safeTail(result.stderr || result.stdout)}`);
+      throw new Error(
+        `local_git_integration_failed:${safeTail(result.stderr || result.stdout)}`,
+      );
     }
     return result;
   }
@@ -376,9 +407,7 @@ async function runCommand(input: {
   try {
     const result = await execFileAsync(input.command, [...input.args], {
       cwd: input.cwd,
-      env: input.env === undefined
-        ? process.env
-        : dropUndefinedEnv(input.env),
+      env: input.env === undefined ? process.env : dropUndefinedEnv(input.env),
       timeout: input.timeoutMs,
       maxBuffer: input.maxBuffer,
     });
@@ -416,9 +445,10 @@ async function canonicalPatchPath(input: {
   readonly allowedPatchRoots: readonly string[];
 }): Promise<string> {
   const workspaceRoot = await canonicalDirectory(input.workspacePath);
-  const candidate = input.path && isAbsolute(input.path)
-    ? input.path
-    : resolve(workspaceRoot, input.path);
+  const candidate =
+    input.path && isAbsolute(input.path)
+      ? input.path
+      : resolve(workspaceRoot, input.path);
   const canonical = await realpath(candidate);
   if (isPathInside(canonical, workspaceRoot)) return canonical;
 
@@ -435,11 +465,12 @@ async function checkCwd(
   cwd: string | undefined,
 ): Promise<string> {
   const workspace = await canonicalDirectory(workspacePath);
-  const candidate = cwd === undefined
-    ? workspace
-    : isAbsolute(cwd)
-      ? cwd
-      : resolve(workspace, cwd);
+  const candidate =
+    cwd === undefined
+      ? workspace
+      : isAbsolute(cwd)
+        ? cwd
+        : resolve(workspace, cwd);
   const canonical = await realpath(candidate);
   if (!isPathInside(canonical, workspace)) {
     throw new Error("local_project_check_cwd_outside_workspace");
@@ -484,16 +515,18 @@ function dropUndefinedEnv(
   env: Readonly<Record<string, string | undefined>>,
 ): NodeJS.ProcessEnv {
   return Object.fromEntries(
-    Object.entries(env).filter((entry): entry is [string, string] =>
-      entry[1] !== undefined
+    Object.entries(env).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined,
     ),
   );
 }
 
 function isNodeErrorCode(error: unknown, code: string): boolean {
-  return error instanceof Error &&
+  return (
+    error instanceof Error &&
     "code" in error &&
-    (error as NodeJS.ErrnoException).code === code;
+    (error as NodeJS.ErrnoException).code === code
+  );
 }
 
 const defaultSecretPatterns: readonly RegExp[] = [

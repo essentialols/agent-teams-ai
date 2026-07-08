@@ -6,6 +6,7 @@ import * as integrationAttempts from "../integration-attempts";
 import * as runEventOrchestratorState from "../run-event-orchestrator-state";
 import * as runEvents from "../run-events";
 import * as runObservationHistory from "../run-observation-history";
+import * as safeExecution from "../safe-execution";
 import * as sessionCustody from "../session-custody";
 import * as sessionLeases from "../session-leases";
 import * as workerAccountCapacity from "../worker-account-capacity";
@@ -51,6 +52,15 @@ describe("store-local-file boundary modules", () => {
     );
     expect(publicApi.LocalIntegrationAttemptStore).toBe(
       integrationAttempts.LocalIntegrationAttemptStore,
+    );
+    expect(publicApi.LocalFileWorkspaceLockStore).toBe(
+      safeExecution.LocalFileWorkspaceLockStore,
+    );
+    expect(publicApi.LocalFileAttemptJournal).toBe(
+      safeExecution.LocalFileAttemptJournal,
+    );
+    expect(publicApi.createLocalFileSafeExecutionStores).toBe(
+      safeExecution.createLocalFileSafeExecutionStores,
     );
     expect(publicApi.createLocalFileBackendRuntimeAdapters).toBe(
       sessionCustody.createLocalFileBackendRuntimeAdapters,

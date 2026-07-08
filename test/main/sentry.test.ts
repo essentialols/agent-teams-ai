@@ -1,7 +1,6 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-
 import { vi } from 'vitest';
 
 describe('main Sentry telemetry gate', () => {
@@ -71,10 +70,15 @@ describe('main Sentry telemetry gate', () => {
 
     expect(context?.userId).toMatch(/^[a-f0-9]{64}$/);
     expect(Object.keys(context?.tags ?? {}).sort((a, b) => a.localeCompare(b))).toEqual([
+      'app_name',
+      'app_namespace',
       'app_version',
       'arch',
+      'git_repository',
       'identity_source',
       'platform',
+      'release',
+      'release_channel',
     ]);
   });
 
@@ -120,6 +124,16 @@ describe('main Sentry telemetry gate', () => {
 
     expect(
       Object.keys(getSafeSentryTelemetryTags('app-data')).sort((a, b) => a.localeCompare(b))
-    ).toEqual(['app_version', 'arch', 'identity_source', 'platform']);
+    ).toEqual([
+      'app_name',
+      'app_namespace',
+      'app_version',
+      'arch',
+      'git_repository',
+      'identity_source',
+      'platform',
+      'release',
+      'release_channel',
+    ]);
   });
 });

@@ -76,6 +76,115 @@ export interface OpenCodeRuntimeDeliveryAdvisoryPorts {
   leadNoticeDedupeTtlMs?: number;
 }
 
+export interface TeamProvisioningOpenCodeRuntimeDeliveryAdvisoryLeadRun {
+  processKilled?: boolean;
+  cancelRequested?: boolean;
+  child?: {
+    stdin?: {
+      writable?: boolean;
+    } | null;
+  } | null;
+}
+
+export interface TeamProvisioningOpenCodeRuntimeDeliveryAdvisoryServiceHost<
+  TRun extends TeamProvisioningOpenCodeRuntimeDeliveryAdvisoryLeadRun,
+> {
+  runs: ReadonlyMap<string, TRun>;
+  runTracking: {
+    getAliveRunId(teamName: string): string | null | undefined;
+  };
+  configFacade: {
+    readConfigSnapshot: OpenCodeRuntimeDeliveryAdvisoryPorts['readConfigSnapshot'];
+  };
+  openCodeRuntimeDeliveryProofReader: {
+    readProofIndex: OpenCodeRuntimeDeliveryAdvisoryPorts['readProofIndex'];
+  };
+  appShellBoundary: {
+    getMemberRuntimeAdvisoryInvalidator():
+      | ((teamName: string, memberName: string) => unknown)
+      | null
+      | undefined;
+    getMemberWorkSyncProofMissingRecoveryScheduler():
+      | MemberWorkSyncProofMissingRecoveryScheduler
+      | null
+      | undefined;
+  };
+  teamChangeEmitter?: OpenCodeRuntimeDeliveryAdvisoryPorts['emitTeamChange'] | null;
+  createOpenCodePromptDeliveryLedger: OpenCodeRuntimeDeliveryAdvisoryPorts['createOpenCodePromptDeliveryLedger'];
+  sendMessageToRun(run: TRun, message: string): Promise<void>;
+}
+
+export interface TeamProvisioningOpenCodeRuntimeDeliveryAdvisoryServiceHostOptions {
+  addTeamNotification: OpenCodeRuntimeDeliveryAdvisoryPorts['addTeamNotification'];
+  logInfo: OpenCodeRuntimeDeliveryAdvisoryPorts['logInfo'];
+  logWarning: OpenCodeRuntimeDeliveryAdvisoryPorts['logWarning'];
+  getErrorMessage: OpenCodeRuntimeDeliveryAdvisoryPorts['getErrorMessage'];
+  nowMs?: OpenCodeRuntimeDeliveryAdvisoryPorts['nowMs'];
+  setTimeout?: OpenCodeRuntimeDeliveryAdvisoryPorts['setTimeout'];
+  clearTimeout?: OpenCodeRuntimeDeliveryAdvisoryPorts['clearTimeout'];
+  advisoryEventDedupeTtlMs?: OpenCodeRuntimeDeliveryAdvisoryPorts['advisoryEventDedupeTtlMs'];
+  leadNoticeDedupeTtlMs?: OpenCodeRuntimeDeliveryAdvisoryPorts['leadNoticeDedupeTtlMs'];
+}
+
+export function createTeamProvisioningOpenCodeRuntimeDeliveryAdvisoryPortsFromService<
+  TRun extends TeamProvisioningOpenCodeRuntimeDeliveryAdvisoryLeadRun,
+>(
+  service: TeamProvisioningOpenCodeRuntimeDeliveryAdvisoryServiceHost<TRun>,
+  options: TeamProvisioningOpenCodeRuntimeDeliveryAdvisoryServiceHostOptions
+): OpenCodeRuntimeDeliveryAdvisoryPorts {
+  return {
+    createOpenCodePromptDeliveryLedger: (teamName, laneId) =>
+      service.createOpenCodePromptDeliveryLedger(teamName, laneId),
+    readProofIndex: (input) => service.openCodeRuntimeDeliveryProofReader.readProofIndex(input),
+    readConfigSnapshot: (teamName) => service.configFacade.readConfigSnapshot(teamName),
+    addTeamNotification: (notification) => options.addTeamNotification(notification),
+    emitTeamChange: (event) => {
+      service.teamChangeEmitter?.(event);
+    },
+    invalidateMemberRuntimeAdvisory: (teamName, memberName) => {
+      service.appShellBoundary.getMemberRuntimeAdvisoryInvalidator()?.(teamName, memberName);
+    },
+    scheduleProofMissingWorkSyncRecovery: async (input) => {
+      const scheduler = service.appShellBoundary.getMemberWorkSyncProofMissingRecoveryScheduler();
+      if (scheduler) {
+        await scheduler(input);
+      }
+    },
+    getLeadNoticeSink: (teamName) => {
+      const runId = service.runTracking.getAliveRunId(teamName);
+      const run = runId ? service.runs.get(runId) : null;
+      if (!run || run.processKilled || run.cancelRequested) {
+        return null;
+      }
+      if (run.child && !run.child.stdin?.writable) {
+        return null;
+      }
+      return {
+        send: (message) => service.sendMessageToRun(run, message),
+      };
+    },
+    logInfo: options.logInfo,
+    logWarning: options.logWarning,
+    getErrorMessage: options.getErrorMessage,
+    nowMs: options.nowMs,
+    setTimeout: options.setTimeout,
+    clearTimeout: options.clearTimeout,
+    advisoryEventDedupeTtlMs: options.advisoryEventDedupeTtlMs,
+    leadNoticeDedupeTtlMs: options.leadNoticeDedupeTtlMs,
+  };
+}
+
+export function createTeamProvisioningOpenCodeRuntimeDeliveryAdvisoryFromService<
+  TRun extends TeamProvisioningOpenCodeRuntimeDeliveryAdvisoryLeadRun,
+>(
+  service: TeamProvisioningOpenCodeRuntimeDeliveryAdvisoryServiceHost<TRun>,
+  options: TeamProvisioningOpenCodeRuntimeDeliveryAdvisoryServiceHostOptions
+): TeamProvisioningOpenCodeRuntimeDeliveryAdvisory {
+  return new TeamProvisioningOpenCodeRuntimeDeliveryAdvisory(
+    createTeamProvisioningOpenCodeRuntimeDeliveryAdvisoryPortsFromService(service, options)
+  );
+}
+
 export class TeamProvisioningOpenCodeRuntimeDeliveryAdvisory {
   private readonly advisoryReviewTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly advisoryEventSentAt = new Map<string, number>();

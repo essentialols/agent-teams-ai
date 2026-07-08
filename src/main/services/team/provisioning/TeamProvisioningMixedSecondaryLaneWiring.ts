@@ -106,6 +106,56 @@ export interface TeamProvisioningMixedSecondaryLaneWiringDeps<
     SingleMixedSecondaryRuntimeLaneStopPorts['logger'];
 }
 
+export interface TeamProvisioningMixedSecondaryLaneWiringServiceHost<
+  TRun extends TeamProvisioningMixedSecondaryLaneWiringRun,
+> {
+  stoppingSecondaryRuntimeTeams: { has(teamName: string): boolean };
+  appShellBoundary: {
+    getOpenCodeRuntimeAdapter: TeamProvisioningMixedSecondaryLaneWiringService<TRun>['getOpenCodeRuntimeAdapter'];
+  };
+  launchStateStore: {
+    read: TeamProvisioningMixedSecondaryLaneWiringService<TRun>['readLaunchState'];
+  };
+  toolApprovalFacade: {
+    syncOpenCodeRuntimeToolApprovals: TeamProvisioningMixedSecondaryLaneWiringService<TRun>['syncOpenCodeRuntimeToolApprovals'];
+  };
+  teamMetaStore: {
+    getMeta: TeamProvisioningMixedSecondaryLaneWiringService<TRun>['readTeamMeta'];
+  };
+  membersMetaStore: {
+    getMeta: TeamProvisioningMixedSecondaryLaneWiringService<TRun>['readMembersMeta'];
+  };
+  openCodeRuntimeRecoveryBoundary: Pick<
+    TeamProvisioningMixedSecondaryLaneWiringService<TRun>,
+    | 'tryRecoverMissingOpenCodeSecondaryLaneFromRuntime'
+    | 'tryRecoverActiveOpenCodeSecondaryLaneFromRuntime'
+  >;
+  openCodeRuntimeRecoveryIdentity: {
+    resolveCurrentOpenCodeRuntimeRunId: TeamProvisioningMixedSecondaryLaneWiringService<TRun>['resolveCurrentOpenCodeRuntimeRunId'];
+  };
+  runtimeLaneCoordinator: {
+    buildAggregateLaunchSnapshot: TeamProvisioningMixedSecondaryLaneWiringService<TRun>['buildAggregateLaunchSnapshot'];
+  };
+  deleteSecondaryRuntimeRun: TeamProvisioningMixedSecondaryLaneWiringService<TRun>['deleteSecondaryRuntimeRun'];
+  publishMixedSecondaryLaneStatusChange: TeamProvisioningMixedSecondaryLaneWiringService<TRun>['publishMixedSecondaryLaneStatusChange'];
+  setSecondaryRuntimeRun: TeamProvisioningMixedSecondaryLaneWiringService<TRun>['setSecondaryRuntimeRun'];
+  buildOpenCodeSecondaryAppManagedLaunchPrompt: TeamProvisioningMixedSecondaryLaneWiringService<TRun>['buildOpenCodeSecondaryAppManagedLaunchPrompt'];
+  guardCommittedOpenCodeSecondaryLaneEvidence: TeamProvisioningMixedSecondaryLaneWiringService<TRun>['guardCommittedOpenCodeSecondaryLaneEvidence'];
+  launchSingleMixedSecondaryLane: TeamProvisioningMixedSecondaryLaneWiringService<TRun>['launchSingleMixedSecondaryLane'];
+  persistLaunchStateSnapshot: TeamProvisioningMixedSecondaryLaneWiringService<TRun>['persistLaunchStateSnapshot'];
+  getMixedSecondaryLaunchPhase: TeamProvisioningMixedSecondaryLaneWiringService<TRun>['getMixedSecondaryLaunchPhase'];
+  hasMixedSecondaryLaunchMetadata: TeamProvisioningMixedSecondaryLaneWiringService<TRun>['hasMixedSecondaryLaunchMetadata'];
+  shouldRecoverStalePersistedMixedLaunchSnapshot: TeamProvisioningMixedSecondaryLaneWiringService<TRun>['shouldRecoverStalePersistedMixedLaunchSnapshot'];
+  readPersistedTeamProjectPath: TeamProvisioningMixedSecondaryLaneWiringService<TRun>['readPersistedTeamProjectPath'];
+  writeLaunchStateSnapshot: TeamProvisioningMixedSecondaryLaneWiringService<TRun>['writeLaunchStateSnapshot'];
+}
+
+export interface TeamProvisioningMixedSecondaryLaneWiringServiceHostOptions<
+  TRun extends TeamProvisioningMixedSecondaryLaneWiringRun,
+> {
+  logger: TeamProvisioningMixedSecondaryLaneWiringDeps<TRun>['logger'];
+}
+
 export interface TeamProvisioningMixedSecondaryLaneWiring<
   TRun extends TeamProvisioningMixedSecondaryLaneWiringRun,
 > {
@@ -230,6 +280,63 @@ export function createStaleMixedSecondaryRecoveryPorts<
     buildAggregateLaunchSnapshot: (input) => deps.service.buildAggregateLaunchSnapshot(input),
     writeLaunchStateSnapshot: (teamName, snapshot) =>
       deps.service.writeLaunchStateSnapshot(teamName, snapshot),
+  };
+}
+
+export function createTeamProvisioningMixedSecondaryLaneWiringDepsFromService<
+  TRun extends TeamProvisioningMixedSecondaryLaneWiringRun,
+>(
+  service: TeamProvisioningMixedSecondaryLaneWiringServiceHost<TRun>,
+  options: TeamProvisioningMixedSecondaryLaneWiringServiceHostOptions<TRun>
+): TeamProvisioningMixedSecondaryLaneWiringDeps<TRun> {
+  return {
+    service: {
+      isStoppingSecondaryRuntimeTeam: (teamName) =>
+        service.stoppingSecondaryRuntimeTeams.has(teamName),
+      deleteSecondaryRuntimeRun: (teamName, laneId) =>
+        service.deleteSecondaryRuntimeRun(teamName, laneId),
+      getOpenCodeRuntimeAdapter: () => service.appShellBoundary.getOpenCodeRuntimeAdapter(),
+      publishMixedSecondaryLaneStatusChange: (run, lane) =>
+        service.publishMixedSecondaryLaneStatusChange(run, lane),
+      readLaunchState: (teamName) => service.launchStateStore.read(teamName),
+      setSecondaryRuntimeRun: (input) => service.setSecondaryRuntimeRun(input),
+      buildOpenCodeSecondaryAppManagedLaunchPrompt: (run, lane) =>
+        service.buildOpenCodeSecondaryAppManagedLaunchPrompt(run, lane),
+      guardCommittedOpenCodeSecondaryLaneEvidence: (input) =>
+        service.guardCommittedOpenCodeSecondaryLaneEvidence(input),
+      syncOpenCodeRuntimeToolApprovals: (input) =>
+        service.toolApprovalFacade.syncOpenCodeRuntimeToolApprovals(input),
+      launchSingleMixedSecondaryLane: (run, lane) =>
+        service.launchSingleMixedSecondaryLane(run, lane),
+      persistLaunchStateSnapshot: (run, launchPhase) =>
+        service.persistLaunchStateSnapshot(run, launchPhase),
+      getMixedSecondaryLaunchPhase: (run) => service.getMixedSecondaryLaunchPhase(run),
+      hasMixedSecondaryLaunchMetadata: (snapshot) =>
+        service.hasMixedSecondaryLaunchMetadata(snapshot),
+      shouldRecoverStalePersistedMixedLaunchSnapshot: (snapshot) =>
+        service.shouldRecoverStalePersistedMixedLaunchSnapshot(snapshot),
+      readTeamMeta: (teamName) => service.teamMetaStore.getMeta(teamName),
+      readMembersMeta: (teamName) => service.membersMetaStore.getMeta(teamName),
+      readPersistedTeamProjectPath: (teamName) => service.readPersistedTeamProjectPath(teamName),
+      tryRecoverMissingOpenCodeSecondaryLaneFromRuntime: (input) =>
+        service.openCodeRuntimeRecoveryBoundary.tryRecoverMissingOpenCodeSecondaryLaneFromRuntime(
+          input
+        ),
+      tryRecoverActiveOpenCodeSecondaryLaneFromRuntime: (input) =>
+        service.openCodeRuntimeRecoveryBoundary.tryRecoverActiveOpenCodeSecondaryLaneFromRuntime(
+          input
+        ),
+      resolveCurrentOpenCodeRuntimeRunId: (teamName, laneId) =>
+        service.openCodeRuntimeRecoveryIdentity.resolveCurrentOpenCodeRuntimeRunId(
+          teamName,
+          laneId
+        ),
+      buildAggregateLaunchSnapshot: (input) =>
+        service.runtimeLaneCoordinator.buildAggregateLaunchSnapshot(input),
+      writeLaunchStateSnapshot: (teamName, snapshot) =>
+        service.writeLaunchStateSnapshot(teamName, snapshot),
+    },
+    logger: options.logger,
   };
 }
 

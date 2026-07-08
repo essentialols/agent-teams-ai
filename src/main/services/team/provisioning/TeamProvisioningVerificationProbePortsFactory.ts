@@ -49,6 +49,61 @@ export interface TeamProvisioningVerificationProbePortsFactoryDeps<
   pathExists?(filePath: string): Promise<boolean>;
 }
 
+export interface TeamProvisioningVerificationProbeServiceHost<
+  TRun extends TeamProvisioningProcessExitRun,
+> extends TeamProvisioningVerificationProbeServiceAdapter<TRun> {
+  configReader: {
+    listTeams(): Promise<readonly { teamName: string }[]>;
+  };
+}
+
+export interface TeamProvisioningVerificationProbeServiceHostOptions<
+  TRun extends TeamProvisioningProcessExitRun,
+> {
+  getTeamsBasePath: TeamProvisioningVerificationProbePortsFactoryDeps<TRun>['getTeamsBasePath'];
+  readRegularFileUtf8: TeamProvisioningVerificationProbePortsFactoryDeps<TRun>['readRegularFileUtf8'];
+  updateProgress: TeamProvisioningVerificationProbePortsFactoryDeps<TRun>['updateProgress'];
+  verifyTimeoutMs: number;
+  verifyPollMs: number;
+  teamJsonReadTimeoutMs: number;
+  teamConfigMaxBytes: number;
+  sleep?: TeamProvisioningVerificationProbePortsFactoryDeps<TRun>['sleep'];
+  pathExists?: TeamProvisioningVerificationProbePortsFactoryDeps<TRun>['pathExists'];
+}
+
+export function createTeamProvisioningVerificationProbePortsDepsFromService<
+  TRun extends TeamProvisioningProcessExitRun,
+>(
+  service: TeamProvisioningVerificationProbeServiceHost<TRun>,
+  options: TeamProvisioningVerificationProbeServiceHostOptions<TRun>
+): TeamProvisioningVerificationProbePortsFactoryDeps<TRun> {
+  return {
+    service: {
+      persistMembersMeta: (teamName, request) => service.persistMembersMeta(teamName, request),
+      updateConfigPostLaunch: (teamName, cwd, detectedSessionId, color, updateOptions) =>
+        service.updateConfigPostLaunch(teamName, cwd, detectedSessionId, color, updateOptions),
+      refreshMemberSpawnStatusesFromLeadInbox: (run) =>
+        service.refreshMemberSpawnStatusesFromLeadInbox(run),
+      maybeAuditMemberSpawnStatuses: (run, auditOptions) =>
+        service.maybeAuditMemberSpawnStatuses(run, auditOptions),
+      finalizeMissingRegisteredMembersAsFailed: (run) =>
+        service.finalizeMissingRegisteredMembersAsFailed(run),
+      persistLaunchStateSnapshot: (run, phase) => service.persistLaunchStateSnapshot(run, phase),
+      cleanupRun: (run) => service.cleanupRun(run),
+    },
+    listTeams: () => service.configReader.listTeams(),
+    getTeamsBasePath: options.getTeamsBasePath,
+    readRegularFileUtf8: options.readRegularFileUtf8,
+    updateProgress: options.updateProgress,
+    verifyTimeoutMs: options.verifyTimeoutMs,
+    verifyPollMs: options.verifyPollMs,
+    teamJsonReadTimeoutMs: options.teamJsonReadTimeoutMs,
+    teamConfigMaxBytes: options.teamConfigMaxBytes,
+    sleep: options.sleep,
+    pathExists: options.pathExists,
+  };
+}
+
 export function createTeamProvisioningVerificationProbePorts<
   TRun extends TeamProvisioningProcessExitRun,
 >(

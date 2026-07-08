@@ -23,6 +23,9 @@ export interface TeamProvisioningOpenCodeMemberInboxRelayHost {
   deliverOpenCodeMemberMessage: OpenCodeMemberInboxRelayPorts['deliverOpenCodeMemberMessage'];
 }
 
+export type TeamProvisioningOpenCodeMemberInboxRelayServiceHost =
+  TeamProvisioningOpenCodeMemberInboxRelayHost;
+
 export interface TeamProvisioningOpenCodeMemberInboxRelayBoundaryDeps {
   host: TeamProvisioningOpenCodeMemberInboxRelayHost;
   inFlight: OpenCodeMemberInboxRelayPorts['inFlight'];
@@ -48,6 +51,35 @@ export interface TeamProvisioningOpenCodeMemberInboxRelayBoundaryDeps {
   };
   nowIso: OpenCodeMemberInboxRelayPorts['nowIso'];
   getErrorMessage: OpenCodeMemberInboxRelayPorts['getErrorMessage'];
+}
+
+export function createTeamProvisioningOpenCodeMemberInboxRelayHostFromService(
+  service: TeamProvisioningOpenCodeMemberInboxRelayServiceHost
+): TeamProvisioningOpenCodeMemberInboxRelayHost {
+  return {
+    getOpenCodeMemberRelayKey: (teamName, memberName) =>
+      service.getOpenCodeMemberRelayKey(teamName, memberName),
+    scheduleOpenCodeMemberInboxDeliveryWake: (input) =>
+      service.scheduleOpenCodeMemberInboxDeliveryWake(input),
+    isOpenCodeRuntimeRecipient: (teamName, memberName) =>
+      service.isOpenCodeRuntimeRecipient(teamName, memberName),
+    createOpenCodePromptDeliveryLedger: (teamName, laneId) =>
+      service.createOpenCodePromptDeliveryLedger(teamName, laneId),
+    requeueOpenCodeRuntimeManifestWatermarkDeliveryIfNeeded: (input) =>
+      service.requeueOpenCodeRuntimeManifestWatermarkDeliveryIfNeeded(input),
+    requeueOpenCodeNoAssistantTerminalDeliveryIfNeeded: (input) =>
+      service.requeueOpenCodeNoAssistantTerminalDeliveryIfNeeded(input),
+    isOpenCodeDeliveryResponseReadCommitAllowed: (input) =>
+      service.isOpenCodeDeliveryResponseReadCommitAllowed(input),
+    markInboxMessagesRead: (teamName, memberName, messages) =>
+      service.markInboxMessagesRead(teamName, memberName, messages),
+    logOpenCodePromptDeliveryEvent: (event, record, extra) =>
+      service.logOpenCodePromptDeliveryEvent(event, record, extra),
+    markOpenCodePromptLedgerFailedTerminal: (input) =>
+      service.markOpenCodePromptLedgerFailedTerminal(input),
+    deliverOpenCodeMemberMessage: (teamName, input) =>
+      service.deliverOpenCodeMemberMessage(teamName, input),
+  };
 }
 
 export interface TeamProvisioningOpenCodeMemberInboxRelayBoundary {

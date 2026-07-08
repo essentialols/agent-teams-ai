@@ -115,6 +115,8 @@ import {
   snapshotOpenCodeLocalMcpLaunchEnv,
 } from '@main/services/team/opencode/bridge/OpenCodeMcpBridgeEnv';
 import {
+  bindTeamCrossTeamProvisioningApi,
+  bindTeamHttpDataApi,
   bindTeamHttpProvisioningApis,
   bindTeamIpcProvisioningApis,
   type TeamHttpProvisioningApis,
@@ -1843,6 +1845,8 @@ async function initializeServices(): Promise<void> {
     internalStorageFeature.taskCommentNotificationJournalStore
   );
   teamProvisioningService = new TeamProvisioningService();
+  const teamIpcProvisioningApis: TeamIpcProvisioningApis =
+    bindTeamIpcProvisioningApis(teamProvisioningService);
   teamProvisioningService.setWorkspaceTrustCoordinator(
     createWorkspaceTrustCoordinator({
       claudeConfigDir: () => getClaudeBasePath(),
@@ -1896,7 +1900,7 @@ async function initializeServices(): Promise<void> {
     crossTeamConfigReader,
     teamDataService,
     crossTeamInboxWriter,
-    teamProvisioningService
+    bindTeamCrossTeamProvisioningApi(teamProvisioningService)
   );
   teamProvisioningService.setCrossTeamSender((request) => crossTeamService.send(request));
 
@@ -2160,7 +2164,7 @@ async function initializeServices(): Promise<void> {
   tokenUsageStartupRefreshTimer.unref?.();
   const memberWorkSyncLogger = createLogger('Feature:MemberWorkSync');
   type MemberWorkSyncRuntimeSnapshot = Awaited<
-    ReturnType<TeamProvisioningService['getTeamAgentRuntimeSnapshot']>
+    ReturnType<TeamIpcProvisioningApis['diagnostics']['getTeamAgentRuntimeSnapshot']>
   >;
   const memberWorkSyncRuntimeSnapshotInFlightByTeam = new Map<
     string,
@@ -2182,7 +2186,9 @@ async function initializeServices(): Promise<void> {
     }
 
     let timer: ReturnType<typeof setTimeout> | null = null;
-    const snapshot = teamProvisioningService.getTeamAgentRuntimeSnapshot(input.teamName);
+    const snapshot = teamIpcProvisioningApis.diagnostics.getTeamAgentRuntimeSnapshot(
+      input.teamName
+    );
     let timedOut = false;
     const request = Promise.race([
       snapshot.then((value) => {
@@ -2272,8 +2278,8 @@ async function initializeServices(): Promise<void> {
       return runtimeActive;
     }
     return (
-      teamProvisioningService.isTeamAlive(teamName) ||
-      teamProvisioningService.hasProvisioningRun(teamName)
+      teamIpcProvisioningApis.runtime.isTeamAlive(teamName) ||
+      teamIpcProvisioningApis.provisioningRun.hasProvisioningRun(teamName)
     );
   };
   const canDispatchMemberWorkSyncNudges = async (teamName: string): Promise<boolean> => {
@@ -2281,7 +2287,7 @@ async function initializeServices(): Promise<void> {
     if (runtimeActive != null) {
       return runtimeActive;
     }
-    return teamProvisioningService.isTeamAlive(teamName);
+    return teamIpcProvisioningApis.runtime.isTeamAlive(teamName);
   };
   const isMemberActiveForMemberWorkSync = async (input: {
     teamName: string;
@@ -2292,8 +2298,8 @@ async function initializeServices(): Promise<void> {
       return runtimeActive;
     }
     return (
-      teamProvisioningService.isTeamAlive(input.teamName) ||
-      teamProvisioningService.hasProvisioningRun(input.teamName)
+      teamIpcProvisioningApis.runtime.isTeamAlive(input.teamName) ||
+      teamIpcProvisioningApis.provisioningRun.hasProvisioningRun(input.teamName)
     );
   };
   const listMemberWorkSyncLifecycleActiveTeamNames = async (): Promise<string[]> => {
@@ -2313,8 +2319,8 @@ async function initializeServices(): Promise<void> {
             error: String(error),
           });
           if (
-            teamProvisioningService.isTeamAlive(team.teamName) ||
-            teamProvisioningService.hasProvisioningRun(team.teamName)
+            teamIpcProvisioningApis.runtime.isTeamAlive(team.teamName) ||
+            teamIpcProvisioningApis.provisioningRun.hasProvisioningRun(team.teamName)
           ) {
             activeTeamNames.push(team.teamName);
           }
@@ -2353,7 +2359,7 @@ async function initializeServices(): Promise<void> {
           return { ok: true };
         }
 
-        const status = await teamProvisioningService.getOpenCodeRuntimeDeliveryStatus(
+        const status = await teamIpcProvisioningApis.messaging.getOpenCodeRuntimeDeliveryStatus(
           input.teamName,
           input.originalMessageId
         );
@@ -2408,7 +2414,7 @@ async function initializeServices(): Promise<void> {
 
         const timer = setTimeout(
           () => {
-            void teamProvisioningService
+            void teamIpcProvisioningApis.messaging
               .relayLeadInboxMessages(input.teamName)
               .catch((error: unknown) =>
                 logger.warn(
@@ -2440,7 +2446,7 @@ async function initializeServices(): Promise<void> {
           };
         }
 
-        const relay = await teamProvisioningService.relayOpenCodeMemberInboxMessages(
+        const relay = await teamIpcProvisioningApis.messaging.relayOpenCodeMemberInboxMessages(
           input.teamName,
           input.memberName,
           {
@@ -2586,8 +2592,6 @@ async function initializeServices(): Promise<void> {
     message: 'Wiring app actions...',
   });
 
-  const teamIpcProvisioningApis: TeamIpcProvisioningApis =
-    bindTeamIpcProvisioningApis(teamProvisioningService);
   teamHttpProvisioningApis = bindTeamHttpProvisioningApis(teamProvisioningService);
 
   // Initialize IPC handlers with registry
@@ -2720,7 +2724,7 @@ async function startHttpServer(
         memberWorkSyncFeature: memberWorkSyncFeature ?? undefined,
         updaterService,
         sshConnectionManager,
-        teamDataService,
+        teamDataApi: bindTeamHttpDataApi(teamDataService),
         teamProvisioningApis: teamHttpProvisioningApis,
       },
       modeSwitchHandler,

@@ -4,8 +4,10 @@ import * as path from 'path';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  createTeamProvisioningPrepareFacadeFromService,
   TeamProvisioningPrepareFacade,
   type TeamProvisioningPrepareFacadePorts,
+  type TeamProvisioningPrepareFacadeServiceHost,
 } from '../TeamProvisioningPrepareFacade';
 
 import type { TeamRuntimeLanePlan } from '@features/team-runtime-lanes';
@@ -61,6 +63,56 @@ function createFacade(
 }
 
 describe('TeamProvisioningPrepareFacade', () => {
+  it('builds facade ports from service-shaped dependencies', async () => {
+    const cwd = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'prepare-facade-host-'));
+    const buildProvisioningEnv = vi.fn().mockResolvedValue({
+      env: { PATH: '/bin' },
+      authSource: 'codex_runtime',
+      geminiRuntimeAuth: null,
+      providerArgs: ['--codex'],
+    });
+    const probeClaudeRuntime = vi.fn().mockResolvedValue({});
+    const service = {
+      appShellBoundary: {
+        getOpenCodeRuntimeAdapter: vi.fn(() => null),
+      },
+      buildProvisioningEnv,
+      providerRuntime: {
+        runProviderOneShotDiagnostic: vi.fn().mockResolvedValue({}),
+        probeClaudeRuntime,
+      },
+      readRuntimeProviderLaunchFacts: vi.fn().mockResolvedValue({
+        defaultModel: null,
+        modelIds: new Set(),
+        runtimeCapabilities: null,
+        modelCatalog: null,
+      }),
+      memberWorktreeManager: {
+        ensureMemberWorktree: vi.fn(async ({ baseCwd, memberName }) => ({
+          worktreePath: path.join(baseCwd, '.worktrees', memberName),
+        })),
+      },
+      planRuntimeLanesOrThrow: vi.fn((_leadProviderId, members) => buildLanePlan(members)),
+    } satisfies TeamProvisioningPrepareFacadeServiceHost;
+    const facade = createTeamProvisioningPrepareFacadeFromService(service, {
+      resolveClaudeBinaryPath: vi.fn().mockResolvedValue('/fake/claude'),
+      execCli: vi.fn().mockResolvedValue({ stdout: '{}' }),
+      info: vi.fn(),
+      warn: vi.fn(),
+    });
+
+    await facade.prepareForProvisioning(cwd, { providerId: 'codex' });
+
+    expect(buildProvisioningEnv).toHaveBeenCalledWith('codex', undefined, undefined);
+    expect(probeClaudeRuntime).toHaveBeenCalledWith(
+      '/fake/claude',
+      cwd,
+      { PATH: '/bin' },
+      'codex',
+      ['--codex']
+    );
+  });
+
   it('owns probe caching and preserves forceFresh cache invalidation', async () => {
     const cwd = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'prepare-facade-cache-'));
     const probeClaudeRuntime = vi.fn().mockResolvedValue({});

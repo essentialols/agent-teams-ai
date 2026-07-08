@@ -4,7 +4,10 @@ import * as path from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { buildLegacyInboxMessageId } from '../../inboxMessageIdentity';
-import { markTeamInboxMessagesRead } from '../TeamProvisioningInboxPersistence';
+import {
+  markTeamInboxMessagesRead,
+  markTeamInboxMessagesReadWithDefaults,
+} from '../TeamProvisioningInboxPersistence';
 
 const tmpRoots: string[] = [];
 
@@ -21,6 +24,25 @@ async function readRegularFileUtf8(filePath: string): Promise<string | null> {
 describe('team inbox persistence', () => {
   afterEach(async () => {
     await Promise.all(tmpRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  });
+
+  it('marks rows read through the default-bound helper using a sandbox teams root', async () => {
+    const teamsRoot = await makeTeamsRoot();
+    const inboxDir = path.join(teamsRoot, 'team-a', 'inboxes');
+    const inboxPath = path.join(inboxDir, 'lead.json');
+    await mkdir(inboxDir, { recursive: true });
+    await writeFile(inboxPath, JSON.stringify([{ messageId: 'stable-1', read: false }], null, 2));
+
+    await markTeamInboxMessagesReadWithDefaults({
+      teamName: 'team-a',
+      member: 'lead',
+      teamsBasePath: teamsRoot,
+      messages: [{ messageId: 'stable-1' }],
+    });
+
+    expect(JSON.parse(await readFile(inboxPath, 'utf8'))).toEqual([
+      { messageId: 'stable-1', read: true },
+    ]);
   });
 
   it('marks matching inbox rows read by stable and legacy message ids', async () => {

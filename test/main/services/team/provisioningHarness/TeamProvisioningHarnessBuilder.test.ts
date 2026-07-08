@@ -10,11 +10,17 @@ import {
   collectSecretLikeFixtureValues,
   HARNESS_DEFAULT_NOW_ISO,
   HARNESS_DEFAULT_TEAM_NAME,
+  makeLaunchState,
+  makeOpenCodeEvidence,
+  makeProvisioningRun,
+  makeRuntimeSnapshot,
+  makeTeamCreateRequest,
   memberFixture,
   teamConfigFixture,
   teamMetaFixture,
   type TeamProvisioningHarness,
   TeamProvisioningHarnessBuilder,
+  toMetaMembers,
 } from './index';
 
 import type { TeamProvisioningConfigFacadeReader } from '@main/services/team/provisioning/TeamProvisioningConfigFacade';
@@ -592,6 +598,100 @@ describe('TeamProvisioningHarnessBuilder', () => {
     expect(JSON.parse(await readFile(harness.paths.inboxPath(teamName, 'Worker'), 'utf8'))).toEqual(
       inboxMessages
     );
+  });
+
+  it('provides typed domain fixtures for extracted service tests', async () => {
+    const teamName = 'typed-fixture-team';
+    const request = makeTeamCreateRequest({
+      teamName,
+      cwd: '/tmp/agent-teams-harness/typed-fixture',
+      members: [memberFixture.lead(), memberFixture.opencode('Runtime')],
+    });
+    const run = makeProvisioningRun({
+      runId: 'typed-fixture-run',
+      request,
+      expectedMembers: ['Runtime'],
+    });
+    const launchState = makeLaunchState({
+      teamName,
+      expectedMembers: ['Runtime'],
+      members: {
+        Runtime: {
+          name: 'Runtime',
+          providerId: 'opencode',
+          launchState: 'confirmed_alive',
+          agentToolAccepted: true,
+          runtimeAlive: true,
+          bootstrapConfirmed: true,
+          hardFailure: false,
+          lastEvaluatedAt: HARNESS_DEFAULT_NOW_ISO,
+          diagnostics: [],
+        },
+      },
+    });
+    const runtimeSnapshot = makeRuntimeSnapshot({
+      teamName,
+      runId: run.runId,
+      members: {
+        Runtime: {
+          memberName: 'Runtime',
+          alive: true,
+          restartable: true,
+          providerId: 'opencode',
+          providerBackendId: 'opencode-cli',
+          updatedAt: HARNESS_DEFAULT_NOW_ISO,
+        },
+      },
+    });
+    const openCodeEvidence = makeOpenCodeEvidence({ memberName: 'Runtime' });
+    const harness = await track(
+      TeamProvisioningHarnessBuilder.create()
+        .withTeam(
+          teamName,
+          teamConfigFixture.basic({
+            teamName,
+            projectPath: request.cwd,
+            members: toMetaMembers(request.members),
+          })
+        )
+        .withLaunchState(teamName, launchState)
+        .withRuntimeStore(teamName, { runtimeSnapshot, openCodeEvidence })
+        .build()
+    );
+
+    expect(run).toMatchObject({
+      runId: 'typed-fixture-run',
+      teamName,
+      expectedMembers: ['Runtime'],
+      deterministicBootstrap: true,
+    });
+    await expect(harness.stores.launchStateStore.read(teamName)).resolves.toMatchObject({
+      teamName,
+      expectedMembers: ['Runtime'],
+      members: {
+        Runtime: expect.objectContaining({
+          launchState: 'confirmed_alive',
+          runtimeAlive: true,
+        }),
+      },
+    });
+    await expect(harness.stores.runtimeStore.read(teamName)).resolves.toMatchObject({
+      runtimeSnapshot: {
+        teamName,
+        runId: 'typed-fixture-run',
+        members: {
+          Runtime: expect.objectContaining({
+            alive: true,
+            providerId: 'opencode',
+          }),
+        },
+      },
+      openCodeEvidence: expect.objectContaining({
+        memberName: 'Runtime',
+        providerId: 'opencode',
+        bootstrapConfirmed: true,
+      }),
+    });
   });
 
   it('wires config facade launch-member discovery to harness config, meta, and inbox fixtures', async () => {

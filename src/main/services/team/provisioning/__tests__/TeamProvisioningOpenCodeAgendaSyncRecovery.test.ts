@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  createOpenCodeAgendaSyncRecoveryBypassPortsFromService,
   getOpenCodeAgendaSyncRecoveryBypassMessageIds,
   type OpenCodeAgendaSyncRecoveryBypassPorts,
+  type OpenCodeAgendaSyncRecoveryBypassServiceHost,
 } from '../TeamProvisioningOpenCodeAgendaSyncRecovery';
 
 import type { OpenCodePromptDeliveryLedgerRecord } from '../../opencode/delivery/OpenCodePromptDeliveryLedger';
@@ -61,6 +63,51 @@ function createPorts(
 }
 
 describe('OpenCode agenda sync recovery bypass helpers', () => {
+  it('builds bypass ports from service dependencies', async () => {
+    const records = [createRecord()];
+    const service: OpenCodeAgendaSyncRecoveryBypassServiceHost = {
+      resolveOpenCodeMemberDeliveryIdentity: vi.fn().mockResolvedValue({
+        ok: true,
+        laneId: 'lane-1',
+        canonicalMemberName: 'dev',
+      }),
+      tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive: vi
+        .fn()
+        .mockResolvedValue(true),
+      createOpenCodePromptDeliveryLedger: vi.fn(() => ({
+        list: vi.fn(async () => records),
+      })),
+    };
+
+    const ports = createOpenCodeAgendaSyncRecoveryBypassPortsFromService(service);
+
+    await expect(ports.resolveOpenCodeMemberDeliveryIdentity('alpha', 'dev')).resolves.toEqual({
+      ok: true,
+      laneId: 'lane-1',
+      canonicalMemberName: 'dev',
+    });
+    await expect(
+      ports.tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive({
+        teamName: 'alpha',
+        memberName: 'dev',
+        laneId: 'lane-1',
+      })
+    ).resolves.toBe(true);
+    await expect(ports.listOpenCodePromptDeliveryLedgerRecords('alpha', 'lane-1')).resolves.toBe(
+      records
+    );
+
+    expect(service.resolveOpenCodeMemberDeliveryIdentity).toHaveBeenCalledWith('alpha', 'dev');
+    expect(
+      service.tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive
+    ).toHaveBeenCalledWith({
+      teamName: 'alpha',
+      memberName: 'dev',
+      laneId: 'lane-1',
+    });
+    expect(service.createOpenCodePromptDeliveryLedger).toHaveBeenCalledWith('alpha', 'lane-1');
+  });
+
   it('returns matching foreground message ids for active proof-missing ledger records', async () => {
     const ids = await getOpenCodeAgendaSyncRecoveryBypassMessageIds(
       {

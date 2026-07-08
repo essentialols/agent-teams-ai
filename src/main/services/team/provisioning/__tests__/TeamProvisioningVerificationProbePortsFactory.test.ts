@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   createTeamProvisioningVerificationProbePorts,
+  createTeamProvisioningVerificationProbePortsDepsFromService,
   type TeamProvisioningVerificationProbeServiceAdapter,
+  type TeamProvisioningVerificationProbeServiceHost,
 } from '../TeamProvisioningVerificationProbePortsFactory';
 
 import type { TeamProvisioningProcessExitRun } from '../TeamProvisioningProcessExit';
@@ -71,6 +73,44 @@ function createServiceAdapter(overrides: Partial<TestServiceAdapter> = {}): Test
 }
 
 describe('TeamProvisioningVerificationProbePortsFactory', () => {
+  it('builds verification probe deps from service-shaped dependencies', async () => {
+    const serviceAdapter = createServiceAdapter();
+    const listTeams = vi.fn(async () => [{ teamName: 'atlas-hq' }]);
+    const readRegularFileUtf8 = vi.fn(async () => '{"name":"atlas-hq"}');
+    const updateProgress = vi.fn();
+    const service = {
+      ...serviceAdapter,
+      configReader: {
+        listTeams,
+      },
+    } satisfies TeamProvisioningVerificationProbeServiceHost<TestRun>;
+    const deps = createTeamProvisioningVerificationProbePortsDepsFromService(service, {
+      getTeamsBasePath: () => '/teams',
+      readRegularFileUtf8,
+      updateProgress,
+      verifyTimeoutMs: 15_000,
+      verifyPollMs: 500,
+      teamJsonReadTimeoutMs: 5_000,
+      teamConfigMaxBytes: 10_000,
+      sleep: vi.fn(async () => undefined),
+    });
+    const run = createRun();
+
+    await expect(deps.listTeams()).resolves.toEqual([{ teamName: 'atlas-hq' }]);
+    await deps.service.refreshMemberSpawnStatusesFromLeadInbox(run);
+    await deps.service.maybeAuditMemberSpawnStatuses(run, { force: true });
+    deps.service.cleanupRun(run);
+
+    expect(deps.getTeamsBasePath()).toBe('/teams');
+    expect(deps.readRegularFileUtf8).toBe(readRegularFileUtf8);
+    expect(deps.updateProgress).toBe(updateProgress);
+    expect(serviceAdapter.refreshMemberSpawnStatusesFromLeadInbox).toHaveBeenCalledWith(run);
+    expect(serviceAdapter.maybeAuditMemberSpawnStatuses).toHaveBeenCalledWith(run, {
+      force: true,
+    });
+    expect(serviceAdapter.cleanupRun).toHaveBeenCalledWith(run);
+  });
+
   it('wires valid-config probes with service verification timing and file limits', async () => {
     const readRegularFileUtf8 = vi.fn(async () => '{"name":"atlas-hq"}');
     const ports = createTeamProvisioningVerificationProbePorts({

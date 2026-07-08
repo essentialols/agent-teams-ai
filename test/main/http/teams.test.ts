@@ -5,9 +5,12 @@ import { describe, expect, it, vi } from 'vitest';
 import type { HttpServices } from '@main/http';
 import type {
   OpenCodeRuntimeControlAck,
-  TeamLaunchApi,
-  TeamRuntimeApi,
+  TeamHttpDataApi,
+  TeamHttpRuntimeApi,
+  TeamProvisioningStartApi,
+  TeamProvisioningStatusApi,
   TeamRuntimeControlCompatibilityApi,
+  TeamTaskActivityRepairApi,
 } from '@main/services/team/contracts/TeamProvisioningApis';
 import type {
   TeamCreateConfigRequest,
@@ -32,10 +35,10 @@ describe('HTTP team runtime routes', () => {
       >();
     const getRuntimeState = vi.fn<(teamName: string) => Promise<TeamRuntimeState>>();
     const getProvisioningStatus = vi.fn<(runId: string) => Promise<TeamProvisioningProgress>>();
+    const repairStaleTaskActivityIntervalsBeforeSnapshot =
+      vi.fn<(teamName: string) => Promise<void>>(() => Promise.resolve());
     const stopTeam = vi.fn<(teamName: string) => Promise<void>>(() => Promise.resolve());
-    const isTeamAlive = vi.fn<(teamName: string) => boolean>(() => false);
     const getAliveTeams = vi.fn<() => string[]>();
-    const getCurrentRunId = vi.fn<(teamName: string) => string | null>(() => null);
     const recordOpenCodeRuntimeBootstrapCheckin =
       vi.fn<(raw: unknown) => Promise<OpenCodeRuntimeControlAck>>();
     const deliverOpenCodeRuntimeMessage =
@@ -60,30 +63,33 @@ describe('HTTP team runtime routes', () => {
     const teamLaunchApi = {
       createTeam,
       launchTeam,
+    } satisfies TeamProvisioningStartApi;
+    const teamProvisioningStatusApi = {
       getProvisioningStatus,
-    } satisfies Pick<TeamLaunchApi, 'createTeam' | 'launchTeam' | 'getProvisioningStatus'>;
+    } satisfies TeamProvisioningStatusApi;
+    const teamTaskActivityRepairApi = {
+      repairStaleTaskActivityIntervalsBeforeSnapshot,
+    } satisfies TeamTaskActivityRepairApi;
     const teamRuntimeApi = {
       getRuntimeState,
       stopTeam,
-      isTeamAlive,
       getAliveTeams,
-      getCurrentRunId,
-    } satisfies TeamRuntimeApi;
+    } satisfies TeamHttpRuntimeApi;
     const teamRuntimeControlApi = {
       recordOpenCodeRuntimeBootstrapCheckin,
       deliverOpenCodeRuntimeMessage,
       recordOpenCodeRuntimeTaskEvent,
       recordOpenCodeRuntimeHeartbeat,
     } satisfies TeamRuntimeControlCompatibilityApi;
-    const teamDataService = {
+    const teamDataApi = {
       listTeams,
       getTeamData,
       getSavedRequest,
       createTeamConfig,
     } as Pick<
-      NonNullable<HttpServices['teamDataService']>,
+      TeamHttpDataApi,
       'listTeams' | 'getTeamData' | 'getSavedRequest' | 'createTeamConfig'
-    > as HttpServices['teamDataService'];
+    > as HttpServices['teamDataApi'];
 
     const services = {
       projectScanner: {} as HttpServices['projectScanner'],
@@ -93,9 +99,11 @@ describe('HTTP team runtime routes', () => {
       dataCache: {} as HttpServices['dataCache'],
       updaterService: {} as HttpServices['updaterService'],
       sshConnectionManager: {} as HttpServices['sshConnectionManager'],
-      teamDataService,
+      teamDataApi,
       teamProvisioningApis: {
         launch: teamLaunchApi,
+        status: teamProvisioningStatusApi,
+        taskActivity: teamTaskActivityRepairApi,
         runtime: teamRuntimeApi,
         runtimeControl: teamRuntimeControlApi,
       },
@@ -106,10 +114,9 @@ describe('HTTP team runtime routes', () => {
       launchTeam,
       getRuntimeState,
       getProvisioningStatus,
+      repairStaleTaskActivityIntervalsBeforeSnapshot,
       stopTeam,
-      isTeamAlive,
       getAliveTeams,
-      getCurrentRunId,
       recordOpenCodeRuntimeBootstrapCheckin,
       deliverOpenCodeRuntimeMessage,
       recordOpenCodeRuntimeTaskEvent,
@@ -206,6 +213,34 @@ describe('HTTP team runtime routes', () => {
         fastMode: 'on',
         limitContext: true,
       });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('repairs stale task activity before reading a team snapshot', async () => {
+    const { app, getTeamData, repairStaleTaskActivityIntervalsBeforeSnapshot } = await createApp();
+    getTeamData.mockResolvedValue({
+      teamName: 'demo-team',
+      config: null,
+      tasks: [],
+      members: [],
+      messages: [],
+      processes: [],
+      kanban: null,
+    } as unknown as TeamViewSnapshot);
+
+    try {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/teams/demo-team',
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(repairStaleTaskActivityIntervalsBeforeSnapshot).toHaveBeenCalledWith('demo-team');
+      expect(
+        repairStaleTaskActivityIntervalsBeforeSnapshot.mock.invocationCallOrder[0]
+      ).toBeLessThan(getTeamData.mock.invocationCallOrder[0]);
     } finally {
       await app.close();
     }
@@ -807,6 +842,34 @@ describe('HTTP team runtime routes', () => {
           teamName: 'demo-team',
         });
       }
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('returns 501 for provisioning status without the status facade', async () => {
+    const app = Fastify();
+    const mocks = createServicesMock();
+    registerTeamRoutes(app, {
+      ...mocks.services,
+      teamProvisioningApis: {
+        ...mocks.services.teamProvisioningApis,
+        status: undefined,
+      },
+    });
+    await app.ready();
+
+    try {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/teams/provisioning/run-2',
+      });
+
+      expect(response.statusCode).toBe(501);
+      expect(response.json()).toEqual({
+        error: 'Team provisioning status is not available in this mode',
+      });
+      expect(mocks.getProvisioningStatus).not.toHaveBeenCalled();
     } finally {
       await app.close();
     }

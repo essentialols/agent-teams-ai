@@ -1,7 +1,5 @@
-import { FileReadTimeoutError, readFileUtf8WithTimeout } from '@main/utils/fsRead';
 import { getTeamsBasePath } from '@main/utils/pathDecoder';
 import { isMeaningfulBootstrapCheckInMessage } from '@shared/utils/inboxNoise';
-import * as fs from 'fs';
 import * as path from 'path';
 
 import {
@@ -35,6 +33,7 @@ import {
   type ReconcilePersistedLaunchStatePorts,
   reconcilePersistedLaunchStateWithPorts,
 } from './TeamProvisioningPersistedLaunchReconciliation';
+import { tryReadRegularFileUtf8 } from './TeamProvisioningRegularFileRead';
 import { mergeRuntimeDiagnostics } from './TeamProvisioningRuntimeMetadata';
 
 import type { PersistedTeamLaunchSnapshot, TeamMember } from '@shared/types';
@@ -63,39 +62,29 @@ export interface TeamProvisioningPersistedLaunchReconcilePortsInput extends Pick
   findBootstrapTranscriptOutcome: ReconcilePersistedLaunchMemberPorts['findBootstrapTranscriptOutcome'];
 }
 
-function nowIso(): string {
-  return new Date().toISOString();
+export interface TeamProvisioningPersistedLaunchReconcileServiceHost extends Pick<
+  TeamProvisioningPersistedLaunchReconcilePortsInput,
+  | 'recoverStaleMixedSecondaryLaunchSnapshot'
+  | 'applyOpenCodeSecondaryEvidenceOverlay'
+  | 'applyOpenCodeSecondaryBootstrapStallOverlay'
+  | 'writeLaunchStateSnapshot'
+  | 'clearPersistedLaunchState'
+  | 'getLiveTeamAgentRuntimeMetadata'
+  | 'resolveExpectedLaunchMemberName'
+  | 'findBootstrapRuntimeProofObservedAt'
+  | 'findBootstrapTranscriptOutcome'
+  | 'readPersistedRuntimeMembers'
+> {
+  launchStateStore: {
+    read: TeamProvisioningPersistedLaunchReconcilePortsInput['readLaunchState'];
+  };
+  membersMetaStore: {
+    getMembers: TeamProvisioningPersistedLaunchReconcilePortsInput['readMembersMeta'];
+  };
 }
 
-async function tryReadRegularFileUtf8(
-  filePath: string,
-  opts: { timeoutMs: number; maxBytes: number }
-): Promise<string | null> {
-  let stat: fs.Stats;
-  try {
-    stat = await fs.promises.stat(filePath);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return null;
-    }
-    return null;
-  }
-
-  if (!stat.isFile() || stat.size > opts.maxBytes) {
-    return null;
-  }
-
-  try {
-    return await readFileUtf8WithTimeout(filePath, opts.timeoutMs);
-  } catch (error) {
-    if (error instanceof FileReadTimeoutError) {
-      return null;
-    }
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return null;
-    }
-    return null;
-  }
+function nowIso(): string {
+  return new Date().toISOString();
 }
 
 export function createTeamProvisioningPersistedLaunchReconcilePorts(
@@ -213,5 +202,46 @@ export function reconcilePersistedLaunchStateWithTeamProvisioningPorts(
   return reconcilePersistedLaunchStateWithPorts(
     teamName,
     createTeamProvisioningPersistedLaunchReconcilePorts(input)
+  );
+}
+
+export function createTeamProvisioningPersistedLaunchReconcilePortsFromService(
+  service: TeamProvisioningPersistedLaunchReconcileServiceHost
+): ReconcilePersistedLaunchStatePorts {
+  return createTeamProvisioningPersistedLaunchReconcilePorts({
+    readLaunchState: (teamName) => service.launchStateStore.read(teamName),
+    readMembersMeta: (teamName) => service.membersMetaStore.getMembers(teamName),
+    recoverStaleMixedSecondaryLaunchSnapshot: (teamName, bootstrapSnapshot, persistedSnapshot) =>
+      service.recoverStaleMixedSecondaryLaunchSnapshot(
+        teamName,
+        bootstrapSnapshot,
+        persistedSnapshot
+      ),
+    applyOpenCodeSecondaryEvidenceOverlay: (input) =>
+      service.applyOpenCodeSecondaryEvidenceOverlay(input),
+    applyOpenCodeSecondaryBootstrapStallOverlay: (snapshot) =>
+      service.applyOpenCodeSecondaryBootstrapStallOverlay(snapshot),
+    writeLaunchStateSnapshot: (teamName, snapshot) =>
+      service.writeLaunchStateSnapshot(teamName, snapshot),
+    clearPersistedLaunchState: (teamName) => service.clearPersistedLaunchState(teamName),
+    getLiveTeamAgentRuntimeMetadata: (teamName) =>
+      service.getLiveTeamAgentRuntimeMetadata(teamName),
+    resolveExpectedLaunchMemberName: (members, candidateName) =>
+      service.resolveExpectedLaunchMemberName(members, candidateName),
+    findBootstrapRuntimeProofObservedAt: (teamName, memberName, member) =>
+      service.findBootstrapRuntimeProofObservedAt(teamName, memberName, member),
+    findBootstrapTranscriptOutcome: (teamName, memberName, sinceMs) =>
+      service.findBootstrapTranscriptOutcome(teamName, memberName, sinceMs),
+    readPersistedRuntimeMembers: (teamName) => service.readPersistedRuntimeMembers(teamName),
+  });
+}
+
+export function reconcilePersistedLaunchStateWithTeamProvisioningService(
+  teamName: string,
+  service: TeamProvisioningPersistedLaunchReconcileServiceHost
+): Promise<PersistedLaunchReconciliationResult> {
+  return reconcilePersistedLaunchStateWithPorts(
+    teamName,
+    createTeamProvisioningPersistedLaunchReconcilePortsFromService(service)
   );
 }

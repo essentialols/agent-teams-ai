@@ -3,7 +3,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { InboxRelayInFlightTimeoutError } from '../TeamProvisioningInboxRelayCandidates';
 import {
   createTeamProvisioningLeadInboxRelayPortsBoundary,
+  createTeamProvisioningLeadInboxRelayPortsDepsFromService,
   type TeamProvisioningLeadInboxRelayPortsFactoryDeps,
+  type TeamProvisioningLeadInboxRelayServiceHost,
 } from '../TeamProvisioningLeadInboxRelayPortsFactory';
 
 import type {
@@ -73,6 +75,76 @@ function createDeps(
 }
 
 describe('TeamProvisioningLeadInboxRelayPortsFactory', () => {
+  it('builds relay boundary deps from service-shaped dependencies', async () => {
+    let capturedPorts: LeadInboxRelayFlowPorts<LeadInboxRelayFlowRun> | null = null;
+    const deps = createDeps({
+      relayLeadInboxMessagesForTeam: vi.fn(async (_teamName, ports) => {
+        capturedPorts = ports;
+        return 4;
+      }),
+    });
+    const service = {
+      leadInboxRelayInFlight: deps.leadInboxRelayInFlight,
+      runTracking: {
+        getAliveRunId: deps.getAliveRunId,
+        getProvisioningRunId: deps.getProvisioningRunId,
+      },
+      runs: {
+        get: deps.getRun,
+      },
+      isCurrentTrackedRun: deps.isCurrentTrackedRun,
+      readConfigSnapshot: deps.readConfigForObservation,
+      inboxReader: {
+        getMessagesFor: deps.readLeadInboxMessages,
+      },
+      markInboxMessagesRead: deps.markInboxMessagesRead,
+      handleTeammatePermissionRequest: deps.handleTeammatePermissionRequest,
+      refreshMemberSpawnStatusesFromLeadInbox: deps.refreshMemberSpawnStatusesFromLeadInbox,
+      confirmSameTeamNativeMatches: deps.confirmSameTeamNativeMatches,
+      scheduleSameTeamPersistRetry: deps.scheduleSameTeamPersistRetry,
+      scheduleSameTeamDeferredRetry: deps.scheduleSameTeamDeferredRetry,
+      providerRuntime: {
+        resolveControlApiBaseUrl: deps.resolveControlApiBaseUrl,
+      },
+      sendMessageToRun: deps.sendMessageToRun,
+      hasAcceptedLeadWorkSyncReport: deps.hasAcceptedLeadWorkSyncReport,
+      scheduleLeadProofMissingWorkSyncRecovery: deps.scheduleLeadProofMissingWorkSyncRecovery,
+      pushLiveLeadTextMessage: deps.pushLiveLeadTextMessage,
+      pushLiveLeadProcessMessage: deps.pushLiveLeadProcessMessage,
+      persistSentMessage: deps.persistSentMessage,
+      teamChangeEmitter: deps.emitTeamChange,
+      scheduleLeadInboxFollowUpRelay: deps.scheduleLeadInboxFollowUpRelay,
+      relayedLeadInboxMessageIds: deps.relayedLeadInboxMessageIds,
+      trimRelayedSet: deps.trimRelayedSet,
+      pendingCrossTeamFirstReplies: deps.pendingCrossTeamFirstReplies,
+      recentCrossTeamLeadDeliveryMessageIds: deps.recentCrossTeamLeadDeliveryMessageIds,
+    } satisfies TeamProvisioningLeadInboxRelayServiceHost<LeadInboxRelayFlowRun>;
+
+    const boundary = createTeamProvisioningLeadInboxRelayPortsBoundary(
+      createTeamProvisioningLeadInboxRelayPortsDepsFromService(service, {
+        logger: deps.logger,
+        getErrorMessage: deps.getErrorMessage,
+        nowIso: deps.nowIso,
+        nowMs: deps.nowMs,
+        setTimeout: deps.setTimeout,
+        clearTimeout: deps.clearTimeout,
+        relayLeadInboxMessagesForTeam: deps.relayLeadInboxMessagesForTeam,
+      })
+    );
+
+    await expect(boundary.relayLeadInboxMessages('alpha')).resolves.toBe(4);
+
+    expect(deps.relayLeadInboxMessagesForTeam).toHaveBeenCalledWith('alpha', expect.any(Object));
+    const ports = capturedPorts as unknown as LeadInboxRelayFlowPorts<LeadInboxRelayFlowRun>;
+    expect(ports.getAliveRunId('alpha')).toBe('run-1');
+    await expect(ports.readLeadInboxMessages('alpha', 'lead')).resolves.toEqual([]);
+    expect(ports.relayedLeadInboxMessageIds).toBe(deps.relayedLeadInboxMessageIds);
+    expect(ports.pendingCrossTeamFirstReplies).toBe(deps.pendingCrossTeamFirstReplies);
+    expect(ports.recentCrossTeamLeadDeliveryMessageIds).toBe(
+      deps.recentCrossTeamLeadDeliveryMessageIds
+    );
+  });
+
   it('wires relay flow ports through provisioning service dependencies', async () => {
     let capturedPorts: LeadInboxRelayFlowPorts<LeadInboxRelayFlowRun> | null = null;
     const relayedLeadInboxMessageIds = new Map<string, Set<string>>();

@@ -6,11 +6,14 @@ import {
   TeamProvisioningRuntimeSnapshotFacade,
   type TeamProvisioningRuntimeSnapshotFacadePorts,
 } from '../TeamProvisioningRuntimeSnapshotFacade';
+import { type TeamProvisioningRuntimeStateProjectionRun } from '../TeamProvisioningRuntimeStateProjection';
 
 import type {
   MemberSpawnStatusesSnapshot,
   TeamAgentRuntimeSnapshot,
   TeamConfig,
+  TeamProvisioningProgress,
+  TeamRuntimeState,
 } from '@shared/types';
 
 function createDeferred<T>() {
@@ -26,6 +29,49 @@ function createDeferred<T>() {
 type BuildTeamAgentRuntimeSnapshotPort = NonNullable<
   TeamProvisioningRuntimeSnapshotFacadePorts['buildTeamAgentRuntimeSnapshot']
 >;
+type RuntimeSnapshotFacadeRun =
+  TeamProvisioningRuntimeSnapshotFacadePorts['runs'] extends ReadonlyMap<string, infer T>
+    ? T
+    : never;
+type RuntimeSnapshotFacadeProjectionRun = RuntimeSnapshotFacadeRun &
+  TeamProvisioningRuntimeStateProjectionRun;
+
+function progress(
+  runId: string,
+  teamName: string,
+  state: TeamProvisioningProgress['state'] = 'ready'
+): TeamProvisioningProgress {
+  return {
+    runId,
+    teamName,
+    state,
+    message: `${state} message`,
+    startedAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:01.000Z',
+  };
+}
+
+function runtimeRun(
+  runId: string,
+  teamName: string,
+  options: Partial<
+    Pick<RuntimeSnapshotFacadeProjectionRun, 'child' | 'processKilled' | 'cancelRequested'>
+  > = {}
+): RuntimeSnapshotFacadeProjectionRun {
+  return {
+    runId,
+    child: {},
+    processKilled: false,
+    cancelRequested: false,
+    progress: progress(runId, teamName),
+    request: {
+      teamName,
+      members: [],
+      cwd: '/safe-test-workspace/test-team',
+    },
+    ...options,
+  };
+}
 
 function createFacadeHarness(
   options: {
@@ -40,6 +86,15 @@ function createFacadeHarness(
     string,
     { expiresAtMs: number; snapshot: TeamAgentRuntimeSnapshot }
   >();
+  const runs = new Map<string, RuntimeSnapshotFacadeProjectionRun>();
+  const provisioningRunByTeam = new Map<string, string>();
+  const aliveRunByTeam = new Map<string, string>();
+  const runtimeAdapterProgressByRunId = new Map<string, TeamProvisioningProgress>();
+  const retainedProgressByRunId = new Map<string, TeamProvisioningProgress>();
+  const bootstrapStateByTeam = new Map<string, TeamRuntimeState>();
+  const readBootstrapRuntimeState = vi.fn(async (teamName: string) => {
+    return bootstrapStateByTeam.get(teamName) ?? null;
+  });
   const runtimeSnapshotCache = new TeamProvisioningRuntimeSnapshotCacheBoundary<
     TeamAgentRuntimeSnapshot,
     Map<string, unknown>,
@@ -57,8 +112,23 @@ function createFacadeHarness(
     minSampleIntervalMs: 0,
   });
   const facade = new TeamProvisioningRuntimeSnapshotFacade({
-    runs: new Map(),
+    runs,
     runtimeAdapterRunByTeam: new Map(),
+    runtimeState: {
+      provisioningRunByTeam,
+      runs,
+      runtimeAdapterRunByTeam: new Map(),
+      runtimeAdapterProgressByRunId,
+      getRetainedProvisioningProgressMap: () => retainedProgressByRunId,
+    },
+    runtimeStatePorts: {
+      getAliveRunId: (teamName) => aliveRunByTeam.get(teamName) ?? null,
+      getTrackedRunId: (teamName) =>
+        provisioningRunByTeam.get(teamName) ?? aliveRunByTeam.get(teamName) ?? null,
+      getAliveTeamNames: () => [...aliveRunByTeam.keys()],
+      hasSecondaryRuntimeRuns: () => false,
+      readBootstrapRuntimeState,
+    },
     teamMetaStore: {
       getMeta: async () => {
         buildCount += 1;
@@ -103,6 +173,15 @@ function createFacadeHarness(
     getBuildCount: () => buildCount,
     setRunId: (nextRunId: string | null) => {
       runId = nextRunId;
+    },
+    runtimeState: {
+      runs,
+      provisioningRunByTeam,
+      aliveRunByTeam,
+      runtimeAdapterProgressByRunId,
+      retainedProgressByRunId,
+      bootstrapStateByTeam,
+      readBootstrapRuntimeState,
     },
     incrementGeneration: () => {
       runtimeSnapshotCache.invalidateRuntimeSnapshotCaches('alpha');
@@ -209,5 +288,39 @@ describe('TeamProvisioningRuntimeSnapshotFacade', () => {
 
     expect(firstSnapshot.runId).toBe('run-1');
     expect(secondSnapshot.runId).toBe('run-2');
+  });
+
+  it('delegates runtime state projection through the snapshot facade', async () => {
+    const harness = createFacadeHarness();
+    const teamName = 'alpha';
+    const runId = 'run-alpha';
+    harness.runtimeState.provisioningRunByTeam.set(teamName, runId);
+    harness.runtimeState.aliveRunByTeam.set(teamName, runId);
+    harness.runtimeState.runs.set(runId, runtimeRun(runId, teamName));
+
+    expect(harness.facade.hasProvisioningRun(teamName)).toBe(true);
+    expect(harness.facade.isTeamAlive(teamName)).toBe(true);
+    expect(harness.facade.getAliveTeams()).toEqual([teamName]);
+    await expect(harness.facade.getRuntimeState(teamName)).resolves.toEqual({
+      teamName,
+      isAlive: true,
+      runId,
+      progress: progress(runId, teamName),
+    });
+  });
+
+  it('uses recovered bootstrap runtime state when the facade has no current run', async () => {
+    const harness = createFacadeHarness();
+    const teamName = 'alpha';
+    const recovered: TeamRuntimeState = {
+      teamName,
+      isAlive: false,
+      runId: 'run-recovered',
+      progress: progress('run-recovered', teamName, 'failed'),
+    };
+    harness.runtimeState.bootstrapStateByTeam.set(teamName, recovered);
+
+    await expect(harness.facade.getRuntimeState(teamName)).resolves.toBe(recovered);
+    expect(harness.runtimeState.readBootstrapRuntimeState).toHaveBeenCalledWith(teamName);
   });
 });

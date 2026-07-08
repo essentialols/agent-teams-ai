@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  createTeamProvisioningToolApprovalFacadeDepsFromService,
   TeamProvisioningToolApprovalFacade,
   type TeamProvisioningToolApprovalFacadeDeps,
   type TeamProvisioningToolApprovalFacadeRun,
+  type TeamProvisioningToolApprovalFacadeServiceHost,
 } from '../TeamProvisioningToolApprovalFacade';
 import {
   type TeamProvisioningToolApprovalNotification,
@@ -359,6 +361,103 @@ describe('TeamProvisioningToolApprovalFacade', () => {
       teamName: 'alpha',
       reason: 'timeout_deny',
     });
+  });
+
+  it('builds facade deps from service-shaped host wiring', async () => {
+    const run = buildRun();
+    const runs = new Map([[run.runId, run]]);
+    const pendingTimeouts = new Map<string, NodeJS.Timeout>();
+    const runtimeAdapter = { providerId: 'opencode' } as unknown as TeamLaunchRuntimeAdapter;
+    const runtimeRun = { runId: 'runtime-run' } as Parameters<
+      TeamProvisioningToolApprovalFacadeDeps<TestRun>['setRuntimeAdapterRunByTeam']
+    >[1];
+    const teamChanges: TeamChangeEvent[] = [];
+    const logger = {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+    const service = {
+      pendingTimeouts,
+      runs,
+      runTracking: {
+        getTrackedRunId: vi.fn(() => null),
+        setAliveRunId: vi.fn(),
+      },
+      appShellBoundary: {
+        getOpenCodeRuntimeAdapter: vi.fn(() => runtimeAdapter),
+      },
+      launchStateStore: {
+        read: vi.fn(async () => null),
+      },
+      runtimeAdapterRunByTeam: {
+        delete: vi.fn(),
+        set: vi.fn(),
+      },
+      teamChangeEmitter: vi.fn((event) => {
+        teamChanges.push(event);
+      }),
+      configFacade: {
+        readConfigForStrictDecision: vi.fn(async () => ({
+          name: 'alpha',
+          projectPath: '/repo',
+        })),
+      },
+      persistOpenCodeRuntimeAdapterLaunchResult: vi.fn(async (result) => ({ result })),
+      guardCommittedOpenCodeSecondaryLaneEvidence: vi.fn(async ({ result }) => result),
+      publishMixedSecondaryLaneStatusChange: vi.fn(async () => undefined),
+      addPermissionRulesToSettings: vi.fn(async () => 1),
+      persistInboxMessage: vi.fn(),
+    } as unknown as TeamProvisioningToolApprovalFacadeServiceHost<TestRun>;
+
+    const deps = createTeamProvisioningToolApprovalFacadeDepsFromService(service, {
+      logger,
+      nowIso: () => '2026-01-01T00:00:00.000Z',
+      nowMs: () => 1_234,
+      joinPath: (...parts) => parts.join('/'),
+      teammateOperationalToolNames: ['agent-teams.send-message'],
+    });
+
+    expect(deps.logger).toBe(logger);
+    expect(deps.pendingTimeouts).toBe(pendingTimeouts);
+    expect([...deps.getRuns()]).toEqual([run]);
+    expect(deps.getTrackedRunId('alpha')).toBeUndefined();
+    expect(deps.getRun(run.runId)).toBe(run);
+    expect(deps.getOpenCodeRuntimeAdapter()).toBe(runtimeAdapter);
+    await expect(deps.readLaunchState('alpha')).resolves.toBeNull();
+    await expect(
+      deps.persistOpenCodeRuntimeAdapterLaunchResult(
+        { ok: true } as unknown as TeamRuntimeLaunchResult,
+        {
+          teamName: 'alpha',
+          providerId: 'opencode',
+        } as never
+      )
+    ).resolves.toEqual({ result: { ok: true } });
+
+    deps.deleteRuntimeAdapterRunByTeam('alpha');
+    deps.setRuntimeAdapterRunByTeam('alpha', runtimeRun);
+    deps.setAliveRunId('alpha', run.runId);
+    deps.emitTeamChange({ type: 'team-progress', teamName: 'alpha' } as unknown as TeamChangeEvent);
+    await expect(deps.readConfigForStrictDecision('alpha')).resolves.toMatchObject({
+      name: 'alpha',
+    });
+    await expect(
+      deps.addPermissionRulesToSettings('/settings.json', ['Bash'], 'allow')
+    ).resolves.toBe(1);
+    deps.persistInboxMessage('alpha', 'Lead', { text: 'hello' } as InboxMessage);
+
+    expect(service.appShellBoundary.getOpenCodeRuntimeAdapter).toHaveBeenCalled();
+    expect(service.launchStateStore.read).toHaveBeenCalledWith('alpha');
+    expect(service.runtimeAdapterRunByTeam.delete).toHaveBeenCalledWith('alpha');
+    expect(service.runtimeAdapterRunByTeam.set).toHaveBeenCalledWith('alpha', runtimeRun);
+    expect(service.runTracking.setAliveRunId).toHaveBeenCalledWith('alpha', run.runId);
+    expect(teamChanges).toEqual([{ type: 'team-progress', teamName: 'alpha' }]);
+    expect(deps.nowIso()).toBe('2026-01-01T00:00:00.000Z');
+    expect(deps.nowMs()).toBe(1_234);
+    expect(deps.joinPath('/repo', 'member')).toBe('/repo/member');
+    expect(deps.teammateOperationalToolNames).toEqual(['agent-teams.send-message']);
   });
 });
 

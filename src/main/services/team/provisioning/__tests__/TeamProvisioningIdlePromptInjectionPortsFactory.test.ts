@@ -2,9 +2,12 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   createTeamProvisioningIdlePromptInjectionBoundary,
+  createTeamProvisioningIdlePromptInjectionBoundaryFromService,
+  createTeamProvisioningIdlePromptInjectionDepsFromService,
   createTeamProvisioningIdlePromptInjectionPorts,
   type TeamProvisioningIdlePromptInjectionPortsFactoryRun,
   type TeamProvisioningIdlePromptInjectionServiceAdapter,
+  type TeamProvisioningIdlePromptInjectionServiceHost,
 } from '../TeamProvisioningIdlePromptInjectionPortsFactory';
 
 import type { LeadActivityState } from '../TeamProvisioningLeadActivity';
@@ -84,6 +87,42 @@ function makeServiceAdapter(
 }
 
 describe('TeamProvisioningIdlePromptInjectionPortsFactory', () => {
+  it('builds idle prompt injection deps from service-shaped dependencies', async () => {
+    const config = {
+      members: [
+        { name: 'lead', role: 'Lead' },
+        { name: 'worker', role: 'Engineer' },
+      ],
+    };
+    const service = {
+      configFacade: {
+        readConfigForObservation: vi.fn(async () => config),
+      },
+      setLeadActivity: vi.fn((run: TestRun, state: LeadActivityState) => {
+        run.leadActivityState = state;
+      }),
+      resetRuntimeToolActivity: vi.fn(),
+      getRunLeadName: vi.fn(() => 'lead'),
+    } satisfies TeamProvisioningIdlePromptInjectionServiceHost<TestRun>;
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    const deps = createTeamProvisioningIdlePromptInjectionDepsFromService(service, { logger });
+    const boundary = createTeamProvisioningIdlePromptInjectionBoundaryFromService(service, {
+      logger,
+    });
+    const run = makeRun();
+
+    await expect(deps.service.readConfigForObservation('team-a')).resolves.toEqual(config);
+    deps.service.setLeadActivity(run, 'active');
+    deps.service.resetRuntimeToolActivity(run, 'lead');
+
+    expect(deps.logger).toBe(logger);
+    expect(service.configFacade.readConfigForObservation).toHaveBeenCalledWith('team-a');
+    expect(service.setLeadActivity).toHaveBeenCalledWith(run, 'active');
+    expect(service.resetRuntimeToolActivity).toHaveBeenCalledWith(run, 'lead');
+    expect(deps.service.getRunLeadName(run)).toBe('lead');
+    expect(boundary.injectPostCompactReminder).toBeTypeOf('function');
+  });
+
   it('wires service callbacks and preserves stdin payload newline writes', async () => {
     const service = makeServiceAdapter();
     const logger = { info: vi.fn(), warn: vi.fn() };
@@ -150,7 +189,7 @@ describe('TeamProvisioningIdlePromptInjectionPortsFactory', () => {
     const postCompactPayload = JSON.parse(
       postCompactRun.child.stdin.write.mock.calls[0][0].trim()
     ) as {
-      message: { content: Array<{ text: string }> };
+      message: { content: { text: string }[] };
     };
     expect(postCompactPayload.message.content[0].text).toContain('persistent context');
     expect(postCompactPayload.message.content[0].text).toContain('task board snapshot');

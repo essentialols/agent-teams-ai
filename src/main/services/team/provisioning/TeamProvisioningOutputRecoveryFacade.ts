@@ -18,13 +18,10 @@ import type { TeamProvisioningAuthRetryRun } from './TeamProvisioningAuthRetryRe
 export type TeamProvisioningOutputRecoveryFacadeRun = TeamProvisioningOutputRecoveryBoundaryRun &
   TeamProvisioningAuthRetryRun;
 
-type OutputRecoveryFacadeServiceAdapter<
-  TRun extends TeamProvisioningOutputRecoveryFacadeRun,
-> = Omit<TeamProvisioningOutputRecoveryServiceAdapter<TRun>, 'respawnAfterAuthFailure'>;
+type OutputRecoveryFacadeServiceAdapter<TRun extends TeamProvisioningOutputRecoveryFacadeRun> =
+  Omit<TeamProvisioningOutputRecoveryServiceAdapter<TRun>, 'respawnAfterAuthFailure'>;
 
-type AuthRetryFacadeServiceAdapter<
-  TRun extends TeamProvisioningOutputRecoveryFacadeRun,
-> = Omit<
+type AuthRetryFacadeServiceAdapter<TRun extends TeamProvisioningOutputRecoveryFacadeRun> = Omit<
   TeamProvisioningAuthRetryRecoveryServiceAdapter<TRun>,
   'stopStallWatchdog' | 'attachStdoutHandler' | 'attachStderrHandler' | 'startStallWatchdog'
 >;
@@ -49,9 +46,35 @@ export interface TeamProvisioningOutputRecoveryFacadeDeps<
   clearInterval?: TeamProvisioningOutputRecoveryBoundaryDeps<TRun>['clearInterval'];
 }
 
+export interface TeamProvisioningOutputRecoveryFacadeServiceHost<
+  TRun extends TeamProvisioningOutputRecoveryFacadeRun,
+> {
+  mcpConfigBuilder: TeamProvisioningOutputRecoveryFacadeDeps<TRun>['mcpConfigBuilder'];
+  providerRuntimeCompatibility: TeamProvisioningOutputRecoveryFacadeDeps<TRun>['providerRuntime'];
+  cleanupRun: TeamProvisioningOutputRecoveryFacadeServiceAdapter<TRun>['cleanupRun'];
+  appendCliLogs: TeamProvisioningOutputRecoveryFacadeServiceAdapter<TRun>['appendCliLogs'];
+  handleStreamJsonMessage: TeamProvisioningOutputRecoveryFacadeServiceAdapter<TRun>['handleStreamJsonMessage'];
+  shiftProvisioningOutputIndexesAfterRemoval: TeamProvisioningOutputRecoveryFacadeServiceAdapter<TRun>['shiftProvisioningOutputIndexesAfterRemoval'];
+  stopAllTeamsGeneration: number;
+  stopFilesystemMonitor: TeamProvisioningOutputRecoveryFacadeServiceAdapter<TRun>['stopFilesystemMonitor'];
+  startFilesystemMonitor: TeamProvisioningOutputRecoveryFacadeServiceAdapter<TRun>['startFilesystemMonitor'];
+  tryCompleteAfterTimeout: TeamProvisioningOutputRecoveryFacadeServiceAdapter<TRun>['tryCompleteAfterTimeout'];
+  handleProcessExit: TeamProvisioningOutputRecoveryFacadeServiceAdapter<TRun>['handleProcessExit'];
+}
+
+export interface TeamProvisioningOutputRecoveryFacadeServiceHostOptions<
+  TRun extends TeamProvisioningOutputRecoveryFacadeRun,
+> {
+  logger: TeamProvisioningOutputRecoveryFacadeDeps<TRun>['logger'];
+  killTeamProcess: TeamProvisioningOutputRecoveryFacadeDeps<TRun>['killTeamProcess'];
+  updateProgress: TeamProvisioningOutputRecoveryFacadeDeps<TRun>['updateProgress'];
+  emitLogsProgress: TeamProvisioningOutputRecoveryFacadeServiceAdapter<TRun>['emitLogsProgress'];
+  nowIso?: TeamProvisioningOutputRecoveryFacadeDeps<TRun>['nowIso'];
+}
+
 export class TeamProvisioningOutputRecoveryFacade<
-    TRun extends TeamProvisioningOutputRecoveryFacadeRun,
-  >
+  TRun extends TeamProvisioningOutputRecoveryFacadeRun,
+>
   implements
     TeamProvisioningOutputRecoveryBoundary<TRun>,
     TeamProvisioningAuthRetryRecoveryBoundary<TRun>
@@ -89,8 +112,7 @@ export class TeamProvisioningOutputRecoveryFacade<
         attachStdoutHandler: (run) => this.attachStdoutHandler(run),
         attachStderrHandler: (run) => this.attachStderrHandler(run),
         startStallWatchdog: (run) => this.startStallWatchdog(run),
-        startFilesystemMonitor: (run, request) =>
-          deps.service.startFilesystemMonitor(run, request),
+        startFilesystemMonitor: (run, request) => deps.service.startFilesystemMonitor(run, request),
         tryCompleteAfterTimeout: (run) => deps.service.tryCompleteAfterTimeout(run),
         handleProcessExit: (run, code) => deps.service.handleProcessExit(run, code),
       },
@@ -161,4 +183,46 @@ export class TeamProvisioningOutputRecoveryFacade<
   attachStderrHandler(run: TRun): void {
     this.outputRecoveryBoundary.attachStderrHandler(run);
   }
+}
+
+export function createTeamProvisioningOutputRecoveryFacadeDepsFromService<
+  TRun extends TeamProvisioningOutputRecoveryFacadeRun,
+>(
+  service: TeamProvisioningOutputRecoveryFacadeServiceHost<TRun>,
+  options: TeamProvisioningOutputRecoveryFacadeServiceHostOptions<TRun>
+): TeamProvisioningOutputRecoveryFacadeDeps<TRun> {
+  return {
+    service: {
+      updateProgress: options.updateProgress,
+      emitLogsProgress: options.emitLogsProgress,
+      killTeamProcess: options.killTeamProcess,
+      cleanupRun: (run) => service.cleanupRun(run),
+      appendCliLogs: (run, stream, text) => service.appendCliLogs(run, stream, text),
+      handleStreamJsonMessage: (run, msg) => service.handleStreamJsonMessage(run, msg),
+      shiftProvisioningOutputIndexesAfterRemoval: (run, removedIndex) =>
+        service.shiftProvisioningOutputIndexesAfterRemoval(run, removedIndex),
+      getStopAllTeamsGeneration: () => service.stopAllTeamsGeneration,
+      stopFilesystemMonitor: (run) => service.stopFilesystemMonitor(run),
+      startFilesystemMonitor: (run, request) => service.startFilesystemMonitor(run, request),
+      tryCompleteAfterTimeout: (run) => service.tryCompleteAfterTimeout(run),
+      handleProcessExit: (run, code) => service.handleProcessExit(run, code),
+    },
+    logger: options.logger,
+    mcpConfigBuilder: service.mcpConfigBuilder,
+    providerRuntime: service.providerRuntimeCompatibility,
+    killTeamProcess: options.killTeamProcess,
+    updateProgress: options.updateProgress,
+    nowIso: options.nowIso,
+  };
+}
+
+export function createTeamProvisioningOutputRecoveryFacadeFromService<
+  TRun extends TeamProvisioningOutputRecoveryFacadeRun,
+>(
+  service: TeamProvisioningOutputRecoveryFacadeServiceHost<TRun>,
+  options: TeamProvisioningOutputRecoveryFacadeServiceHostOptions<TRun>
+): TeamProvisioningOutputRecoveryFacade<TRun> {
+  return new TeamProvisioningOutputRecoveryFacade<TRun>(
+    createTeamProvisioningOutputRecoveryFacadeDepsFromService(service, options)
+  );
 }

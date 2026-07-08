@@ -66,7 +66,6 @@ function createService(): ReceiverBoundService {
     runs: new Map([['team-a', serviceRun as unknown as HostRun]]),
     runtimeAdapterRunByTeam: new Map(),
     failedOpenCodeSecondaryRetryInFlightByTeam: new Map(),
-    memberLifecycleOperations: new Map(),
     mcpConfigBuilder: {
       async writeConfigFile(this: { marker: string }, projectPath) {
         return `${projectPath}/${this.marker}.json`;
@@ -105,18 +104,18 @@ function createService(): ReceiverBoundService {
         env: { RECEIVER: this.marker, PROVIDER: providerId },
       } as Awaited<ReturnType<Host['buildProvisioningEnv']>>;
     },
-    runTracking: {
-      getAliveRunId(this: { marker: string }, teamName: string) {
-        return `${this.marker}:${teamName}:alive`;
-      },
-      getTrackedRunId(this: { marker: string }, teamName: string) {
-        return `${this.marker}:${teamName}:tracked`;
-      },
-      getProvisioningRunId(this: { marker: string }, teamName: string) {
-        return `${this.marker}:${teamName}:provisioning`;
-      },
-      marker: 'run-tracking',
-    } as ReceiverBoundService['runTracking'] & { marker: string },
+    getAliveRunId(this: ReceiverBoundService, teamName: string) {
+      this.events.push(`service:run-tracking:alive:${teamName}`);
+      return `service:${teamName}:alive`;
+    },
+    getTrackedRunId(this: ReceiverBoundService, teamName: string) {
+      this.events.push(`service:run-tracking:tracked:${teamName}`);
+      return `service:${teamName}:tracked`;
+    },
+    getProvisioningRunId(this: ReceiverBoundService, teamName: string) {
+      this.events.push(`service:run-tracking:provisioning:${teamName}`);
+      return `service:${teamName}:provisioning`;
+    },
     memberMcpLaunchConfigProvisioner: {
       async buildTrackedMemberMcpLaunchConfig(
         this: { marker: string; events: string[] },
@@ -244,7 +243,6 @@ describe('TeamProvisioningMemberLifecycleHostFactory', () => {
     expect(host.failedOpenCodeSecondaryRetryInFlightByTeam).toBe(
       service.failedOpenCodeSecondaryRetryInFlightByTeam
     );
-    expect(host.memberLifecycleOperations).toBe(service.memberLifecycleOperations);
   });
 
   it('groups every lifecycle host member exactly once', () => {
@@ -257,6 +255,40 @@ describe('TeamProvisioningMemberLifecycleHostFactory', () => {
     expect(TEAM_PROVISIONING_MEMBER_LIFECYCLE_HOST_FACTORY_PORT_KEYS_COVER_HOST).toBe(true);
     expect(new Set(groupedKeys).size).toBe(groupedKeys.length);
     expect(Object.keys(host).sort()).toEqual([...groupedKeys].sort());
+  });
+
+  it('routes run tracking through its dedicated port group', () => {
+    const service = createService();
+    const portGroups = createTeamProvisioningMemberLifecycleHostPortGroups(service);
+    const runTrackingEvents: string[] = [];
+    portGroups.runTracking = {
+      getAliveRunId(teamName) {
+        runTrackingEvents.push(`run-tracking:alive:${teamName}`);
+        return `alive:${teamName}`;
+      },
+      getTrackedRunId(teamName) {
+        runTrackingEvents.push(`run-tracking:tracked:${teamName}`);
+        return `tracked:${teamName}`;
+      },
+      getProvisioningRunId(teamName) {
+        runTrackingEvents.push(`run-tracking:provisioning:${teamName}`);
+        return `provisioning:${teamName}`;
+      },
+    };
+    const host = createTeamProvisioningMemberLifecycleHostFromPortGroups(portGroups);
+    const run = { id: 'run-1', cwd: '/project' } as unknown as HostRun;
+
+    expect(host.getAliveRunId('team-a')).toBe('alive:team-a');
+    expect(host.getTrackedRunId('team-a')).toBe('tracked:team-a');
+    expect(host.getProvisioningRunId('team-a')).toBe('provisioning:team-a');
+    expect(host.getRunTrackedCwd(run)).toBe('/project');
+
+    expect(runTrackingEvents).toEqual([
+      'run-tracking:alive:team-a',
+      'run-tracking:tracked:team-a',
+      'run-tracking:provisioning:team-a',
+    ]);
+    expect(service.events).toEqual(['service:get-cwd:run-1']);
   });
 
   it('routes member MCP launch config through its dedicated port group', async () => {
@@ -347,7 +379,7 @@ describe('TeamProvisioningMemberLifecycleHostFactory', () => {
     expect(service.events).toEqual(['service:send:run-opencode:still-runtime-launch']);
   });
 
-  it('routes lifecycle use-case seams through their dedicated port group', async () => {
+  it('routes lifecycle use-case seams through their dedicated port groups', async () => {
     const service = createService();
     const portGroups = createTeamProvisioningMemberLifecycleHostPortGroups(service);
     const useCaseEvents: string[] = [];
@@ -362,13 +394,19 @@ describe('TeamProvisioningMemberLifecycleHostFactory', () => {
       async appendDirectProcessRuntimeEvent(this: { marker: string }, input) {
         useCaseEvents.push(`${this.marker}:runtime-event:${input.type}`);
       },
-      async runMemberLifecycleOperation(this: { marker: string }, teamName, memberName, kind, op) {
-        useCaseEvents.push(`${this.marker}:operation:${teamName}:${memberName}:${kind}`);
-        return await op();
-      },
       async stopPrimaryOwnedRosterRuntime(this: { marker: string }, input) {
         useCaseEvents.push(`${this.marker}:stop-primary:${input.memberName}`);
       },
+      async preparePrimaryOwnedMemberRestartRuntime(this: { marker: string }, input) {
+        useCaseEvents.push(`${this.marker}:prepare-restart:${input.memberName}`);
+        return {
+          directTmuxRestartPaneId: 'pane-1',
+          shouldDirectProcessRestart: false,
+        };
+      },
+    } as typeof portGroups.useCases & { marker: string };
+    portGroups.openCodeRetryUseCases = {
+      marker: 'opencode-retry',
       async collectFailedOpenCodeSecondaryRetryCandidates(this: { marker: string }, run) {
         useCaseEvents.push(`${this.marker}:collect:${run.id}`);
         return [{ memberName: 'Worker', laneId: 'secondary:opencode:worker' }];
@@ -390,7 +428,7 @@ describe('TeamProvisioningMemberLifecycleHostFactory', () => {
       async detachOpenCodeOwnedMemberLaneUnlocked(this: { marker: string }, teamName, memberName) {
         useCaseEvents.push(`${this.marker}:detach:${teamName}:${memberName}`);
       },
-    } as typeof portGroups.useCases & { marker: string };
+    } as typeof portGroups.openCodeRetryUseCases & { marker: string };
     const host = createTeamProvisioningMemberLifecycleHostFromPortGroups(portGroups);
     const run = { id: 'run-use-case', cwd: '/project' } as unknown as HostRun;
     const member = { name: 'Worker' } as HostMember;
@@ -431,20 +469,24 @@ describe('TeamProvisioningMemberLifecycleHostFactory', () => {
       bootstrapRunId: 'run-use-case',
       source: 'test',
     });
-    await expect(
-      host.runMemberLifecycleOperation!(
-        'team-a',
-        'Worker',
-        'manual_restart',
-        async () => 'operation-result'
-      )
-    ).resolves.toBe('operation-result');
     await host.stopPrimaryOwnedRosterRuntime!({
       teamName: 'team-a',
       memberName: 'Worker',
       persistedRuntimeMembers: [],
       liveRuntimeByMember: new Map(),
       actionLabel: 'Stop Worker',
+    });
+    await expect(
+      host.preparePrimaryOwnedMemberRestartRuntime!({
+        teamName: 'team-a',
+        memberName: 'Worker',
+        persistedRuntimeMembers: [],
+        invalidateRuntimeSnapshotCaches: () => undefined,
+        loadLiveRuntimeByMember: async () => new Map(),
+      })
+    ).resolves.toEqual({
+      directTmuxRestartPaneId: 'pane-1',
+      shouldDirectProcessRestart: false,
     });
     await expect(host.collectFailedOpenCodeSecondaryRetryCandidates!(run)).resolves.toEqual([
       { memberName: 'Worker', laneId: 'secondary:opencode:worker' },
@@ -462,13 +504,13 @@ describe('TeamProvisioningMemberLifecycleHostFactory', () => {
       'use-case:persist-opencode:Worker',
       'use-case:launch-process:run-use-case',
       'use-case:runtime-event:process_spawned',
-      'use-case:operation:team-a:Worker:manual_restart',
       'use-case:stop-primary:Worker',
-      'use-case:collect:run-use-case',
-      'use-case:outcome:run-use-case:Worker:secondary:opencode:worker',
-      'use-case:notify:run-use-case:Worker',
-      'use-case:reattach:team-a:Worker',
-      'use-case:detach:team-a:Worker',
+      'use-case:prepare-restart:Worker',
+      'opencode-retry:collect:run-use-case',
+      'opencode-retry:outcome:run-use-case:Worker:secondary:opencode:worker',
+      'opencode-retry:notify:run-use-case:Worker',
+      'opencode-retry:reattach:team-a:Worker',
+      'opencode-retry:detach:team-a:Worker',
     ]);
     expect(service.events).toEqual([]);
   });
@@ -486,9 +528,9 @@ describe('TeamProvisioningMemberLifecycleHostFactory', () => {
     );
     expect(host.getRunTrackedCwd(run)).toBe('/other');
     expect(host.getRunTrackedCwd(null)).toBeNull();
-    expect(host.getAliveRunId('team-a')).toBe('run-tracking:team-a:alive');
-    expect(host.getTrackedRunId('team-a')).toBe('run-tracking:team-a:tracked');
-    expect(host.getProvisioningRunId('team-a')).toBe('run-tracking:team-a:provisioning');
+    expect(host.getAliveRunId('team-a')).toBe('service:team-a:alive');
+    expect(host.getTrackedRunId('team-a')).toBe('service:team-a:tracked');
+    expect(host.getProvisioningRunId('team-a')).toBe('service:team-a:provisioning');
     await expect(
       host.buildProvisioningEnv('anthropic', undefined, {
         teamRuntimeAuth: {
@@ -581,6 +623,9 @@ describe('TeamProvisioningMemberLifecycleHostFactory', () => {
     expect(service.events).toEqual([
       'service:get-cwd:run-2',
       'service:get-cwd:none',
+      'service:run-tracking:alive:team-a',
+      'service:run-tracking:tracked:team-a',
+      'service:run-tracking:provisioning:team-a',
       'service:materialize:/project',
       'service:resolve-identity:run-2',
       'service:args-plan',

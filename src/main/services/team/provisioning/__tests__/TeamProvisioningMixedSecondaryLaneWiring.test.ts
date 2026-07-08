@@ -6,8 +6,10 @@ import {
   createSingleMixedSecondaryRuntimeLaneStopPorts,
   createStaleMixedSecondaryRecoveryPorts,
   createTeamProvisioningMixedSecondaryLaneWiring,
+  createTeamProvisioningMixedSecondaryLaneWiringDepsFromService,
   type TeamProvisioningMixedSecondaryLaneWiringDeps,
   type TeamProvisioningMixedSecondaryLaneWiringService,
+  type TeamProvisioningMixedSecondaryLaneWiringServiceHost,
 } from '../TeamProvisioningMixedSecondaryLaneWiring';
 
 import type { TeamRuntimeLaunchResult } from '../../runtime/TeamRuntimeAdapter';
@@ -256,6 +258,102 @@ describe('TeamProvisioningMixedSecondaryLaneWiring', () => {
     expect(deps.service.tryRecoverActiveOpenCodeSecondaryLaneFromRuntime).toHaveBeenCalledTimes(1);
     expect(deps.service.buildAggregateLaunchSnapshot).toHaveBeenCalledTimes(1);
     expect(deps.service.writeLaunchStateSnapshot).toHaveBeenCalledWith('atlas-hq', snapshot);
+  });
+
+  it('builds mixed secondary lane wiring deps from service-shaped dependencies', async () => {
+    const service = createService();
+    const has = vi.fn(() => true);
+    const logger = { warn: vi.fn() };
+    const host = {
+      stoppingSecondaryRuntimeTeams: { has },
+      appShellBoundary: {
+        getOpenCodeRuntimeAdapter: service.getOpenCodeRuntimeAdapter,
+      },
+      launchStateStore: {
+        read: service.readLaunchState,
+      },
+      toolApprovalFacade: {
+        syncOpenCodeRuntimeToolApprovals: service.syncOpenCodeRuntimeToolApprovals,
+      },
+      teamMetaStore: {
+        getMeta: service.readTeamMeta,
+      },
+      membersMetaStore: {
+        getMeta: service.readMembersMeta,
+      },
+      openCodeRuntimeRecoveryBoundary: {
+        tryRecoverMissingOpenCodeSecondaryLaneFromRuntime:
+          service.tryRecoverMissingOpenCodeSecondaryLaneFromRuntime,
+        tryRecoverActiveOpenCodeSecondaryLaneFromRuntime:
+          service.tryRecoverActiveOpenCodeSecondaryLaneFromRuntime,
+      },
+      openCodeRuntimeRecoveryIdentity: {
+        resolveCurrentOpenCodeRuntimeRunId: service.resolveCurrentOpenCodeRuntimeRunId,
+      },
+      runtimeLaneCoordinator: {
+        buildAggregateLaunchSnapshot: service.buildAggregateLaunchSnapshot,
+      },
+      deleteSecondaryRuntimeRun: service.deleteSecondaryRuntimeRun,
+      publishMixedSecondaryLaneStatusChange: service.publishMixedSecondaryLaneStatusChange,
+      setSecondaryRuntimeRun: service.setSecondaryRuntimeRun,
+      buildOpenCodeSecondaryAppManagedLaunchPrompt:
+        service.buildOpenCodeSecondaryAppManagedLaunchPrompt,
+      guardCommittedOpenCodeSecondaryLaneEvidence:
+        service.guardCommittedOpenCodeSecondaryLaneEvidence,
+      launchSingleMixedSecondaryLane: service.launchSingleMixedSecondaryLane,
+      persistLaunchStateSnapshot: service.persistLaunchStateSnapshot,
+      getMixedSecondaryLaunchPhase: service.getMixedSecondaryLaunchPhase,
+      hasMixedSecondaryLaunchMetadata: service.hasMixedSecondaryLaunchMetadata,
+      shouldRecoverStalePersistedMixedLaunchSnapshot:
+        service.shouldRecoverStalePersistedMixedLaunchSnapshot,
+      readPersistedTeamProjectPath: service.readPersistedTeamProjectPath,
+      writeLaunchStateSnapshot: service.writeLaunchStateSnapshot,
+    } satisfies TeamProvisioningMixedSecondaryLaneWiringServiceHost<TestRun>;
+    const deps = createTeamProvisioningMixedSecondaryLaneWiringDepsFromService(host, {
+      logger,
+    });
+    const run = createRun();
+    const lane = createLane();
+    const snapshot = createSnapshot();
+
+    expect(deps.logger).toBe(logger);
+    expect(deps.service.isStoppingSecondaryRuntimeTeam('atlas-hq')).toBe(true);
+    deps.service.deleteSecondaryRuntimeRun('atlas-hq', lane.laneId);
+    await deps.service.publishMixedSecondaryLaneStatusChange(run, lane);
+    await deps.service.readLaunchState('atlas-hq');
+    deps.service.syncOpenCodeRuntimeToolApprovals({
+      teamName: 'atlas-hq',
+      runId: 'lane-run-1',
+      laneId: lane.laneId,
+      cwd: TEST_PROJECT_PATH,
+      members: {},
+      expectedMembers: [],
+    });
+    await deps.service.resolveCurrentOpenCodeRuntimeRunId('atlas-hq', lane.laneId);
+    deps.service.buildAggregateLaunchSnapshot({
+      teamName: 'atlas-hq',
+      launchPhase: 'active',
+      leadDefaults: {
+        providerId: 'anthropic',
+        providerBackendId: null,
+      },
+      primaryMembers: [],
+      primaryStatuses: {},
+      secondaryMembers: [],
+    });
+    await deps.service.writeLaunchStateSnapshot('atlas-hq', snapshot);
+
+    expect(has).toHaveBeenCalledWith('atlas-hq');
+    expect(service.deleteSecondaryRuntimeRun).toHaveBeenCalledWith('atlas-hq', lane.laneId);
+    expect(service.publishMixedSecondaryLaneStatusChange).toHaveBeenCalledWith(run, lane);
+    expect(service.readLaunchState).toHaveBeenCalledWith('atlas-hq');
+    expect(service.syncOpenCodeRuntimeToolApprovals).toHaveBeenCalledTimes(1);
+    expect(service.resolveCurrentOpenCodeRuntimeRunId).toHaveBeenCalledWith(
+      'atlas-hq',
+      lane.laneId
+    );
+    expect(service.buildAggregateLaunchSnapshot).toHaveBeenCalledTimes(1);
+    expect(service.writeLaunchStateSnapshot).toHaveBeenCalledWith('atlas-hq', snapshot);
   });
 
   it('exposes a small lane boundary that delegates launch and recovery flows', async () => {

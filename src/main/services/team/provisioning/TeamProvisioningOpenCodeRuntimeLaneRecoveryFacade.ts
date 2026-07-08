@@ -13,8 +13,23 @@ import {
   tryRecoverOpenCodeRuntimeLanesForDeliveryWatchdog as tryRecoverOpenCodeRuntimeLanesForDeliveryWatchdogHelper,
 } from './TeamProvisioningOpenCodeRuntimeRecoveryFlow';
 
+import type { TeamProvisioningOpenCodeStoppedLaneCleanupBoundary } from './TeamProvisioningOpenCodeStoppedLaneCleanupBoundary';
+
 export type TeamProvisioningOpenCodeRuntimeLaneRecoveryFacadeHost =
   TeamProvisioningOpenCodeRuntimeLaneRecoveryPortsFactoryHost;
+
+export interface TeamProvisioningOpenCodeRuntimeLaneRecoveryFacadeServiceHost extends Omit<
+  TeamProvisioningOpenCodeRuntimeLaneRecoveryFacadeHost,
+  'cleanupStoppedTeamOpenCodeRuntimeLanesInBackground' | 'readConfigForObservation'
+> {
+  openCodeStoppedLaneCleanup: Pick<
+    TeamProvisioningOpenCodeStoppedLaneCleanupBoundary,
+    'cleanupStoppedTeamOpenCodeRuntimeLanesInBackground'
+  >;
+  configFacade: {
+    readConfigForObservation: TeamProvisioningOpenCodeRuntimeLaneRecoveryFacadeHost['readConfigForObservation'];
+  };
+}
 
 export type OpenCodeRuntimeLaneBeforeDeliveryRecoveryInput = Parameters<
   typeof tryRecoverOpenCodeRuntimeLaneBeforeDeliveryHelper
@@ -121,4 +136,36 @@ export class TeamProvisioningOpenCodeRuntimeLaneRecoveryFacade {
       logger: this.deps.logger,
     });
   }
+}
+
+export function createTeamProvisioningOpenCodeRuntimeLaneRecoveryFacadeHostFromService(
+  service: TeamProvisioningOpenCodeRuntimeLaneRecoveryFacadeServiceHost
+): TeamProvisioningOpenCodeRuntimeLaneRecoveryFacadeHost {
+  return {
+    runTracking: service.runTracking,
+    cleanupStoppedTeamOpenCodeRuntimeLanesInBackground: (teamName) =>
+      service.openCodeStoppedLaneCleanup.cleanupStoppedTeamOpenCodeRuntimeLanesInBackground(
+        teamName
+      ),
+    launchStateStore: service.launchStateStore,
+    openCodeRuntimeRecoveryBoundary: service.openCodeRuntimeRecoveryBoundary,
+    readOpenCodeMemberDirectory: (teamName) => service.readOpenCodeMemberDirectory(teamName),
+    resolveOpenCodeMemberIdentityFromDirectory: (teamName, memberName, directory) =>
+      service.resolveOpenCodeMemberIdentityFromDirectory(teamName, memberName, directory),
+    readConfigForObservation: (teamName) => service.configFacade.readConfigForObservation(teamName),
+    teamMetaStore: service.teamMetaStore,
+    membersMetaStore: service.membersMetaStore,
+    readPersistedTeamProjectPath: (teamName) => service.readPersistedTeamProjectPath(teamName),
+    openCodeRuntimeRecoveryIdentity: service.openCodeRuntimeRecoveryIdentity,
+  };
+}
+
+export function createTeamProvisioningOpenCodeRuntimeLaneRecoveryFacadeFromService(
+  service: TeamProvisioningOpenCodeRuntimeLaneRecoveryFacadeServiceHost,
+  deps: TeamProvisioningOpenCodeRuntimeLaneRecoveryFacadeDeps = {}
+): TeamProvisioningOpenCodeRuntimeLaneRecoveryFacade {
+  return new TeamProvisioningOpenCodeRuntimeLaneRecoveryFacade(
+    createTeamProvisioningOpenCodeRuntimeLaneRecoveryFacadeHostFromService(service),
+    deps
+  );
 }

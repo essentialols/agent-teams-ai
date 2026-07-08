@@ -2,11 +2,13 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   clearMemberSpawnToolTracking,
+  createRuntimeToolActivityHandlerPortsFromService,
   createRuntimeToolActivityHandlers,
   finishRuntimeToolActivity,
   pauseMemberTaskActivityForRuntimeLoss,
   resetRuntimeToolActivity,
   type RuntimeToolActivityRunLike,
+  type RuntimeToolActivityServiceHost,
   startRuntimeToolActivity,
   syncMemberTaskActivityForRuntimeTransition,
 } from '../TeamProvisioningRuntimeToolActivity';
@@ -111,9 +113,10 @@ describe('runtime tool activity helpers', () => {
 
   it('finishes runtime tool activity and marks accepted spawn tools as waiting', () => {
     const emitTeamChange = vi.fn<(event: TeamChangeEvent) => void>();
-    const setMemberSpawnStatus = vi.fn<
-      (targetRun: ReturnType<typeof run>, memberName: string, state: MemberSpawnStatus) => void
-    >();
+    const setMemberSpawnStatus =
+      vi.fn<
+        (targetRun: ReturnType<typeof run>, memberName: string, state: MemberSpawnStatus) => void
+      >();
     const targetRun = run({
       activeToolCalls: new Map([['tool-api', active('lead', 'tool-api')]]),
       memberSpawnToolUseIds: new Map([['tool-api', 'api']]),
@@ -308,6 +311,51 @@ describe('runtime tool activity helpers', () => {
       'api',
       '2026-01-01T00:00:08.000Z'
     );
+  });
+
+  it('builds runtime tool activity handler ports from service-shaped dependencies', async () => {
+    const targetRun = run();
+    const emitTeamChange = vi.fn<(event: TeamChangeEvent) => void>();
+    const pauseActiveIntervalsForMember = vi.fn(() => ({ failed: false }));
+    const resumeActiveIntervalsForMember = vi.fn(() => ({ failed: false }));
+    const service = {
+      teamChangeEmitter: emitTeamChange,
+      taskActivityIntervalService: {
+        pauseActiveIntervalsForMember,
+        resumeActiveIntervalsForMember,
+      },
+      isCurrentTrackedRun: vi.fn(() => true),
+      setMemberSpawnStatus: vi.fn(),
+      invalidateRuntimeSnapshotCaches: vi.fn(),
+      reevaluateMemberLaunchStatus: vi.fn(async () => undefined),
+    } satisfies RuntimeToolActivityServiceHost<RuntimeToolActivityRunLike>;
+    const updateProgress = vi.fn((targetRun: RuntimeToolActivityRunLike) => targetRun.progress);
+    const ports = createRuntimeToolActivityHandlerPortsFromService(service, {
+      nowIso: () => ISO_LATER,
+      logInfo: vi.fn(),
+      logWarn: vi.fn(),
+      updateProgress,
+    });
+
+    expect(ports.isCurrentTrackedRun(targetRun)).toBe(true);
+    ports.emitTeamChange({ type: 'process', teamName: 'team', detail: 'ready' });
+    ports.setMemberSpawnStatus(targetRun, 'api', 'error', 'boom');
+    ports.invalidateRuntimeSnapshotCaches('team');
+    await ports.reevaluateMemberLaunchStatus(targetRun, 'api');
+    ports.pauseActiveIntervalsForMember('team', 'api', ISO);
+    ports.resumeActiveIntervalsForMember('team', 'api', ISO_LATER);
+
+    expect(ports.nowIso()).toBe(ISO_LATER);
+    expect(emitTeamChange).toHaveBeenCalledWith({
+      type: 'process',
+      teamName: 'team',
+      detail: 'ready',
+    });
+    expect(service.setMemberSpawnStatus).toHaveBeenCalledWith(targetRun, 'api', 'error', 'boom');
+    expect(service.invalidateRuntimeSnapshotCaches).toHaveBeenCalledWith('team');
+    expect(service.reevaluateMemberLaunchStatus).toHaveBeenCalledWith(targetRun, 'api');
+    expect(pauseActiveIntervalsForMember).toHaveBeenCalledWith('team', 'api', ISO);
+    expect(resumeActiveIntervalsForMember).toHaveBeenCalledWith('team', 'api', ISO_LATER);
   });
 
   it('wires runtime tool activity handler ports for reset and spawn tracking cleanup', () => {

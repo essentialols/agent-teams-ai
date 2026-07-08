@@ -1,14 +1,10 @@
-import { buildPlannedMemberLaneIdentity } from '@features/team-runtime-lanes';
 import {
-  killTmuxPaneForCurrentPlatformSync,
-  listTmuxPanePidsForCurrentPlatform,
   listTmuxPaneRuntimeInfoForCurrentPlatform,
   sendKeysToTmuxPaneForCurrentPlatform,
 } from '@features/tmux-installer/main';
 import { spawnCli } from '@main/utils/childProcess';
 import { FileReadTimeoutError, readFileUtf8WithTimeout } from '@main/utils/fsRead';
 import { getTeamsBasePath } from '@main/utils/pathDecoder';
-import { isProcessAlive } from '@main/utils/processHealth';
 import { killProcessByPid } from '@main/utils/processKill';
 import { getMemberColorByName } from '@shared/constants/memberColors';
 import { isTeamEffortLevel } from '@shared/utils/effortLevels';
@@ -41,6 +37,10 @@ import {
   type DirectProcessRuntimeEventInput,
 } from './TeamProvisioningAppendDirectProcessRuntimeEventUseCase';
 import {
+  createCollectFailedOpenCodeSecondaryRetryCandidatesUseCase,
+  type OpenCodeSecondaryRetryCandidate,
+} from './TeamProvisioningCollectFailedOpenCodeSecondaryRetryCandidatesUseCase';
+import {
   buildDirectTmuxRestartCommand,
   isInteractiveShellCommand,
 } from './TeamProvisioningDirectRestart';
@@ -51,12 +51,7 @@ import {
   matchesTeamMemberIdentity,
 } from './TeamProvisioningMemberIdentity';
 import { isMemberLifecycleOperationInProgressError } from './TeamProvisioningMemberLifecycleKeys';
-import {
-  createTeamProvisioningMemberLifecycleOperationRunner,
-  type MemberLifecycleOperation,
-  type MemberLifecycleOperationKind,
-  type TeamProvisioningMemberLifecycleOperationRunner,
-} from './TeamProvisioningMemberLifecycleOperationRunner';
+import { type MemberLifecycleOperationKind } from './TeamProvisioningMemberLifecycleOperationRunner';
 import { parseOptionalIsoMs } from './TeamProvisioningMemberSpawnStatusPolicy';
 import {
   createPersistOpenCodeMemberRestartSystemMessageUseCase,
@@ -70,21 +65,33 @@ import {
   MEMBER_BOOTSTRAP_STALL_MS,
 } from './TeamProvisioningOpenCodeRuntimeEvidencePolicy';
 import {
+  createNodePreparePrimaryOwnedMemberRestartRuntimeUseCase,
+  type PreparePrimaryOwnedMemberRestartRuntimeInput,
+  type PreparePrimaryOwnedMemberRestartRuntimeResult,
+} from './TeamProvisioningPreparePrimaryOwnedMemberRestartRuntimeUseCase';
+import {
   buildMemberSpawnPrompt,
   buildRestartMemberSpawnMessage,
 } from './TeamProvisioningPromptBuilders';
+import {
+  createReadOpenCodeSecondaryRetryOutcomeUseCase,
+  type OpenCodeSecondaryRetryOutcome,
+} from './TeamProvisioningReadOpenCodeSecondaryRetryOutcomeUseCase';
+import {
+  createNodeStopPrimaryOwnedRosterRuntimeUseCase,
+  type StopPrimaryOwnedRosterRuntimeInput,
+} from './TeamProvisioningStopPrimaryOwnedRosterRuntimeUseCase';
 
 import type { NativeAppManagedBootstrapSpec } from '../bootstrap/NativeAppManagedBootstrapContextBuilder';
-import type { TeamRuntimeLaunchResult, TeamRuntimeMemberLaunchEvidence } from '../runtime';
+import type { TeamRuntimeLaunchResult } from '../runtime';
 import type { TeamMcpConfigBuilder } from '../TeamMcpConfigBuilder';
 import type { TeamMembersMetaStore } from '../TeamMembersMetaStore';
 import type { RuntimeBootstrapMemberMcpLaunchConfig } from './TeamProvisioningBootstrapSpec';
+import type { TeamProvisioningMemberLifecycleOperationUseCases } from './TeamProvisioningMemberLifecycleOperationUseCases';
 import type { LiveTeamAgentRuntimeMetadata } from './TeamProvisioningRuntimeMetadataPolicy';
 import type {
   EffortLevel,
-  MemberLaunchState,
   MemberSpawnStatusEntry,
-  PersistedTeamLaunchMemberState,
   PersistedTeamLaunchPhase,
   PersistedTeamLaunchSnapshot,
   ProviderModelLaunchIdentity,
@@ -166,67 +173,6 @@ function applyAppManagedRuntimeSettingsPathEnv(
   }
 }
 
-async function waitForPidsToExit(
-  pids: readonly number[],
-  options: { timeoutMs: number; pollMs: number }
-): Promise<number[]> {
-  const uniquePids = [...new Set(pids.filter((pid) => Number.isFinite(pid) && pid > 0))];
-  if (uniquePids.length === 0) {
-    return [];
-  }
-  const deadline = Date.now() + options.timeoutMs;
-  while (Date.now() < deadline) {
-    const alive = uniquePids.filter((pid) => isProcessAlive(pid));
-    if (alive.length === 0) {
-      return [];
-    }
-    await new Promise((resolve) => setTimeout(resolve, options.pollMs));
-  }
-  return uniquePids.filter((pid) => isProcessAlive(pid));
-}
-
-async function waitForTmuxPanesToExit(
-  paneIds: readonly string[],
-  options: { timeoutMs: number; pollMs: number }
-): Promise<string[]> {
-  const uniquePaneIds = [...new Set(paneIds.map((paneId) => paneId.trim()).filter(Boolean))];
-  if (uniquePaneIds.length === 0) {
-    return [];
-  }
-  const deadline = Date.now() + options.timeoutMs;
-  while (Date.now() < deadline) {
-    let paneInfo: Map<string, number>;
-    try {
-      paneInfo = await listTmuxPanePidsForCurrentPlatform(uniquePaneIds);
-    } catch (error) {
-      if (isTmuxServerUnavailableError(error)) {
-        return [];
-      }
-      throw error;
-    }
-    const alive = uniquePaneIds.filter((paneId) => paneInfo.has(paneId));
-    if (alive.length === 0) {
-      return [];
-    }
-    await new Promise((resolve) => setTimeout(resolve, options.pollMs));
-  }
-  let finalPaneInfo: Map<string, number>;
-  try {
-    finalPaneInfo = await listTmuxPanePidsForCurrentPlatform(uniquePaneIds);
-  } catch (error) {
-    if (isTmuxServerUnavailableError(error)) {
-      return [];
-    }
-    throw error;
-  }
-  return uniquePaneIds.filter((paneId) => finalPaneInfo.has(paneId));
-}
-
-function isTmuxServerUnavailableError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /error connecting to .*tmux.*No such file or directory/i.test(message);
-}
-
 async function ensureCwdExists(cwd: string): Promise<void> {
   const stat = await fs.promises.stat(cwd).catch(() => null);
   if (!stat?.isDirectory()) {
@@ -281,14 +227,6 @@ interface DirectProcessMemberRestartInput {
   operation?: DirectProcessMemberLaunchReason;
 }
 
-interface StopPrimaryOwnedRosterRuntimeInput {
-  teamName: string;
-  memberName: string;
-  persistedRuntimeMembers: readonly PersistedRuntimeMemberLike[];
-  liveRuntimeByMember: Map<string, LiveTeamAgentRuntimeMetadata>;
-  actionLabel: string;
-}
-
 interface ReattachOpenCodeOwnedMemberLaneOptions {
   reason?: 'member_added' | 'member_updated' | 'manual_restart';
 }
@@ -296,15 +234,8 @@ interface ReattachOpenCodeOwnedMemberLaneOptions {
 export type LiveRosterAttachReason = 'member_added' | 'member_restored' | 'member_updated';
 type DirectProcessMemberLaunchReason = 'manual_restart' | LiveRosterAttachReason;
 
-export interface OpenCodeSecondaryRetryCandidate {
-  memberName: string;
-  laneId: string;
-}
-
-export interface OpenCodeSecondaryRetryOutcome {
-  launchState: MemberLaunchState;
-  reason?: string;
-}
+export type { OpenCodeSecondaryRetryCandidate } from './TeamProvisioningCollectFailedOpenCodeSecondaryRetryCandidatesUseCase';
+export type { OpenCodeSecondaryRetryOutcome } from './TeamProvisioningReadOpenCodeSecondaryRetryOutcomeUseCase';
 
 type EffectiveConfiguredMember = TeamCreateRequest['members'][number] & {
   agentType?: string;
@@ -409,7 +340,6 @@ export interface TeamProvisioningMemberLifecycleSharedStatePorts {
     string,
     Promise<RetryFailedOpenCodeSecondaryLanesResult>
   >;
-  memberLifecycleOperations: Map<string, MemberLifecycleOperation>;
 }
 
 export interface TeamProvisioningMemberLifecycleStorePorts {
@@ -469,6 +399,12 @@ export interface TeamProvisioningMemberLifecycleMemberSpecPorts {
   ): TeamCreateRequest['members'][number];
 }
 
+export interface TeamProvisioningMemberLifecycleRunTrackingPorts {
+  getAliveRunId(teamName: string): string | null;
+  getTrackedRunId(teamName: string): string | null;
+  getProvisioningRunId(teamName: string): string | null;
+}
+
 export interface TeamProvisioningMemberLifecycleRunStatePorts {
   getRunTrackedCwd(run: ProvisioningRun | null | undefined): string | null;
   appendMemberBootstrapDiagnostic(run: ProvisioningRun, memberName: string, text: string): void;
@@ -488,9 +424,6 @@ export interface TeamProvisioningMemberLifecycleRunStatePorts {
   invalidateRuntimeSnapshotCaches(teamName: string): void;
   resetRuntimeToolActivity(run: ProvisioningRun, memberName?: string): void;
   clearMemberSpawnToolTracking(run: ProvisioningRun, memberName: string): void;
-  getAliveRunId(teamName: string): string | null;
-  getTrackedRunId(teamName: string): string | null;
-  getProvisioningRunId(teamName: string): string | null;
   isCurrentTrackedRun(run: ProvisioningRun): boolean;
   getLiveTeamAgentRuntimeMetadata(
     teamName: string
@@ -585,21 +518,10 @@ export interface TeamProvisioningMemberLifecycleUseCasePorts {
   persistOpenCodeMemberRestartSystemMessage?: PersistOpenCodeMemberRestartSystemMessageUseCase;
   launchDirectProcessMemberRestart?(input: DirectProcessMemberRestartInput): Promise<void>;
   appendDirectProcessRuntimeEvent?: AppendDirectProcessRuntimeEventUseCase;
-  /**
-   * Overrides the controller's operation runner entirely: implementations MUST
-   * provide the same per-member mutual exclusion backed by the shared
-   * memberLifecycleOperations registry (see
-   * TeamProvisioningMemberLifecycleOperationRunner), otherwise concurrent
-   * restarts pass isMemberLifecycleOperationActive and spawn duplicate
-   * teammate processes.
-   */
-  runMemberLifecycleOperation?<T>(
-    teamName: string,
-    memberName: string,
-    kind: MemberLifecycleOperationKind,
-    operation: () => Promise<T>
-  ): Promise<T>;
   stopPrimaryOwnedRosterRuntime?(input: StopPrimaryOwnedRosterRuntimeInput): Promise<void>;
+  preparePrimaryOwnedMemberRestartRuntime?(
+    input: PreparePrimaryOwnedMemberRestartRuntimeInput
+  ): Promise<PreparePrimaryOwnedMemberRestartRuntimeResult>;
   collectFailedOpenCodeSecondaryRetryCandidates?(
     run: ProvisioningRun
   ): Promise<OpenCodeSecondaryRetryCandidate[]>;
@@ -626,6 +548,7 @@ export interface TeamProvisioningMemberLifecycleHost
     TeamProvisioningMemberLifecycleStorePorts,
     TeamProvisioningMemberLifecycleLaunchStatePorts,
     TeamProvisioningMemberLifecycleMemberSpecPorts,
+    TeamProvisioningMemberLifecycleRunTrackingPorts,
     TeamProvisioningMemberLifecycleRunStatePorts,
     TeamProvisioningMemberLifecycleRuntimeLaunchPorts,
     TeamProvisioningMemberLifecycleMessagingPorts,
@@ -634,7 +557,6 @@ export interface TeamProvisioningMemberLifecycleHost
     TeamProvisioningMemberLifecycleUseCasePorts {}
 
 export class TeamProvisioningMemberLifecycleController {
-  private readonly operationRunner: TeamProvisioningMemberLifecycleOperationRunner;
   private readonly persistOpenCodeMemberRestartSystemMessageFallback =
     createPersistOpenCodeMemberRestartSystemMessageUseCase({
       persistSentMessage: (teamName, message) => this.persistSentMessage(teamName, message),
@@ -643,14 +565,28 @@ export class TeamProvisioningMemberLifecycleController {
     });
   private readonly appendDirectProcessRuntimeEventFallback =
     createAppendDirectProcessRuntimeEventUseCase();
-
-  constructor(private readonly host: TeamProvisioningMemberLifecycleHost) {
-    this.operationRunner = createTeamProvisioningMemberLifecycleOperationRunner({
-      memberLifecycleOperations: host.memberLifecycleOperations,
-      invalidateRuntimeSnapshotCaches: (teamName) => host.invalidateRuntimeSnapshotCaches(teamName),
-      nowMs: () => Date.now(),
+  private readonly stopPrimaryOwnedRosterRuntimeFallback =
+    createNodeStopPrimaryOwnedRosterRuntimeUseCase();
+  private readonly preparePrimaryOwnedMemberRestartRuntimeFallback =
+    createNodePreparePrimaryOwnedMemberRestartRuntimeUseCase();
+  private readonly readOpenCodeSecondaryRetryOutcomeFallback =
+    createReadOpenCodeSecondaryRetryOutcomeUseCase({
+      readLaunchStateSnapshot: (teamName) => this.launchStateStore.read(teamName),
     });
-  }
+  private readonly collectFailedOpenCodeSecondaryRetryCandidatesFallback =
+    createCollectFailedOpenCodeSecondaryRetryCandidatesUseCase({
+      hasOpenCodeRuntimeAdapter: () => Boolean(this.getOpenCodeRuntimeAdapter()),
+      readConfigForStrictDecision: (teamName) => this.readConfigForStrictDecision(teamName),
+      readMetaMembers: (teamName) => this.membersMetaStore.getMembers(teamName),
+      readLaunchStateSnapshot: (teamName) => this.launchStateStore.read(teamName),
+      resolveEffectiveConfiguredMember: (configMembers, metaMembers, memberName) =>
+        this.resolveEffectiveConfiguredMember(configMembers, metaMembers, memberName),
+    });
+
+  constructor(
+    private readonly host: TeamProvisioningMemberLifecycleHost,
+    private readonly operationUseCases: TeamProvisioningMemberLifecycleOperationUseCases
+  ) {}
 
   private get runs(): TeamProvisioningMemberLifecycleHost['runs'] {
     return this.host.runs;
@@ -903,29 +839,6 @@ export class TeamProvisioningMemberLifecycleController {
 
   private readPersistedTeamProjectPath(teamName: string): string | null {
     return this.host.readPersistedTeamProjectPath(teamName);
-  }
-
-  private getDirectTmuxRestartPaneId(
-    persistedRuntimeMembers: readonly PersistedRuntimeMemberLike[],
-    memberName: string
-  ): string | null {
-    for (const persistedRuntimeMember of persistedRuntimeMembers) {
-      const backendType = persistedRuntimeMember.backendType?.trim().toLowerCase();
-      const paneId =
-        typeof persistedRuntimeMember.tmuxPaneId === 'string'
-          ? persistedRuntimeMember.tmuxPaneId.trim()
-          : '';
-      const runtimeMemberName =
-        typeof persistedRuntimeMember.name === 'string' ? persistedRuntimeMember.name : '';
-      if (
-        backendType === 'tmux' &&
-        paneId &&
-        matchesMemberNameOrBase(runtimeMemberName, memberName)
-      ) {
-        return paneId;
-      }
-    }
-    return null;
   }
 
   private resolveDirectRestartRuntimeCwd(params: {
@@ -1666,7 +1579,7 @@ export class TeamProvisioningMemberLifecycleController {
   }
 
   isMemberLifecycleOperationActive(teamName: string, memberName: string): boolean {
-    return this.operationRunner.isMemberLifecycleOperationActive(teamName, memberName);
+    return this.operationUseCases.isMemberLifecycleOperationActive(teamName, memberName);
   }
 
   private isMemberLifecycleOperationInProgressError(error: unknown): boolean {
@@ -1679,10 +1592,6 @@ export class TeamProvisioningMemberLifecycleController {
     kind: MemberLifecycleOperationKind,
     operation: () => Promise<T>
   ): Promise<T> {
-    const seam = this.host.runMemberLifecycleOperation;
-    if (seam) {
-      return await seam(teamName, memberName, kind, operation);
-    }
     return await this.runMemberLifecycleOperationInternal(teamName, memberName, kind, operation);
   }
 
@@ -1692,7 +1601,12 @@ export class TeamProvisioningMemberLifecycleController {
     kind: MemberLifecycleOperationKind,
     operation: () => Promise<T>
   ): Promise<T> {
-    return this.operationRunner.runMemberLifecycleOperation(teamName, memberName, kind, operation);
+    return this.operationUseCases.runMemberLifecycleOperation(
+      teamName,
+      memberName,
+      kind,
+      operation
+    );
   }
 
   private getOpenCodeReattachLifecycleKind(
@@ -1738,118 +1652,23 @@ export class TeamProvisioningMemberLifecycleController {
   async stopPrimaryOwnedRosterRuntimeInternal(
     input: StopPrimaryOwnedRosterRuntimeInput
   ): Promise<void> {
-    const pidsToStop = new Set<number>();
-    const tmuxPaneIdsToStop = new Set<string>();
-    let hasAliveRuntimeWithoutStopHandle = false;
+    await this.stopPrimaryOwnedRosterRuntimeFallback(input);
+  }
 
-    for (const runtimeMember of input.persistedRuntimeMembers) {
-      const backendType = runtimeMember.backendType?.trim().toLowerCase();
-      if (backendType === 'in-process') {
-        throw new Error(
-          `Member "${input.memberName}" uses an in-process runtime and cannot be detached here`
-        );
-      }
-      if (
-        backendType === 'process' &&
-        typeof runtimeMember.runtimePid === 'number' &&
-        Number.isFinite(runtimeMember.runtimePid) &&
-        runtimeMember.runtimePid > 0
-      ) {
-        pidsToStop.add(runtimeMember.runtimePid);
-      }
-      const paneId =
-        typeof runtimeMember.tmuxPaneId === 'string' ? runtimeMember.tmuxPaneId.trim() : '';
-      if (backendType === 'tmux' && paneId) {
-        tmuxPaneIdsToStop.add(paneId);
-      }
+  private async preparePrimaryOwnedMemberRestartRuntime(
+    input: PreparePrimaryOwnedMemberRestartRuntimeInput
+  ): Promise<PreparePrimaryOwnedMemberRestartRuntimeResult> {
+    const seam = this.host.preparePrimaryOwnedMemberRestartRuntime;
+    if (seam) {
+      return await seam(input);
     }
+    return await this.preparePrimaryOwnedMemberRestartRuntimeInternal(input);
+  }
 
-    for (const [candidateName, metadata] of input.liveRuntimeByMember.entries()) {
-      if (!matchesObservedMemberNameForExpected(candidateName, input.memberName)) {
-        continue;
-      }
-      if (metadata.backendType === 'in-process') {
-        throw new Error(
-          `Member "${input.memberName}" uses an in-process runtime and cannot be detached here`
-        );
-      }
-
-      let hasStopHandle = false;
-      if (metadata.backendType === 'tmux') {
-        const paneId = metadata.tmuxPaneId?.trim();
-        if (paneId) {
-          tmuxPaneIdsToStop.add(paneId);
-          hasStopHandle = true;
-        }
-      }
-      if (typeof metadata.pid === 'number' && Number.isFinite(metadata.pid) && metadata.pid > 0) {
-        pidsToStop.add(metadata.pid);
-        hasStopHandle = true;
-      }
-      if (
-        typeof metadata.metricsPid === 'number' &&
-        Number.isFinite(metadata.metricsPid) &&
-        metadata.metricsPid > 0
-      ) {
-        pidsToStop.add(metadata.metricsPid);
-        hasStopHandle = true;
-      }
-      if (metadata.alive && !hasStopHandle) {
-        hasAliveRuntimeWithoutStopHandle = true;
-      }
-    }
-
-    if (hasAliveRuntimeWithoutStopHandle) {
-      throw new Error(
-        `${input.actionLabel} cannot stop the existing runtime because it does not expose a pid or tmux pane.`
-      );
-    }
-
-    for (const paneId of tmuxPaneIdsToStop) {
-      try {
-        killTmuxPaneForCurrentPlatformSync(paneId);
-      } catch (error) {
-        logger.debug(
-          `[${input.teamName}] Failed to stop teammate pane ${input.memberName} ${paneId} for live roster lifecycle: ${
-            error instanceof Error ? error.message : String(error)
-          }`
-        );
-      }
-    }
-    for (const pid of pidsToStop) {
-      try {
-        killProcessByPid(pid);
-      } catch (error) {
-        logger.debug(
-          `[${input.teamName}] Failed to stop teammate process ${input.memberName} pid=${pid} for live roster lifecycle: ${
-            error instanceof Error ? error.message : String(error)
-          }`
-        );
-      }
-    }
-
-    if (pidsToStop.size > 0) {
-      const lingeringPids = await waitForPidsToExit([...pidsToStop], {
-        timeoutMs: 1_500,
-        pollMs: 100,
-      });
-      if (lingeringPids.length > 0) {
-        throw new Error(
-          `${input.actionLabel} is still waiting for process exit (${lingeringPids.join(', ')}).`
-        );
-      }
-    }
-    if (tmuxPaneIdsToStop.size > 0) {
-      const lingeringPaneIds = await waitForTmuxPanesToExit([...tmuxPaneIdsToStop], {
-        timeoutMs: 1_500,
-        pollMs: 100,
-      });
-      if (lingeringPaneIds.length > 0) {
-        throw new Error(
-          `${input.actionLabel} is still waiting for tmux pane exit (${lingeringPaneIds.join(', ')}).`
-        );
-      }
-    }
+  async preparePrimaryOwnedMemberRestartRuntimeInternal(
+    input: PreparePrimaryOwnedMemberRestartRuntimeInput
+  ): Promise<PreparePrimaryOwnedMemberRestartRuntimeResult> {
+    return await this.preparePrimaryOwnedMemberRestartRuntimeFallback(input);
   }
 
   private async attachLiveRosterMemberUnlocked(
@@ -2152,134 +1971,15 @@ export class TeamProvisioningMemberLifecycleController {
       const candidateName = typeof member.name === 'string' ? member.name.trim() : '';
       return candidateName.length > 0 && matchesMemberNameOrBase(candidateName, memberName);
     });
-    const directTmuxRestartCandidatePaneId = this.getDirectTmuxRestartPaneId(
+
+    const restartRuntimePreparation = await this.preparePrimaryOwnedMemberRestartRuntime({
+      teamName,
+      memberName,
       persistedRuntimeMembers,
-      memberName
-    );
-
-    const backendTypes = new Set(
-      persistedRuntimeMembers
-        .map((member) => member.backendType?.trim().toLowerCase())
-        .filter((value): value is string => Boolean(value))
-    );
-    if (backendTypes.has('in-process')) {
-      throw new Error(
-        `Member "${memberName}" uses an in-process runtime and cannot be restarted here`
-      );
-    }
-
-    this.invalidateRuntimeSnapshotCaches(teamName);
-    const liveRuntimeByMember = await this.getLiveTeamAgentRuntimeMetadata(teamName);
-    const livePids = new Set<number>();
-    let hasAliveRuntimeWithoutPid = false;
-    for (const [candidateName, metadata] of liveRuntimeByMember.entries()) {
-      if (!matchesMemberNameOrBase(candidateName, memberName)) {
-        continue;
-      }
-      if (metadata.pid) {
-        livePids.add(metadata.pid);
-        continue;
-      }
-      if (metadata.alive && metadata.backendType !== 'in-process') {
-        hasAliveRuntimeWithoutPid = true;
-      }
-    }
-
-    if (hasAliveRuntimeWithoutPid) {
-      throw new Error(
-        `Member "${memberName}" is running, but its backend does not expose a restartable pid yet`
-      );
-    }
-
-    let directTmuxRestartPaneId: string | null = null;
-    if (directTmuxRestartCandidatePaneId) {
-      try {
-        const paneInfo = (
-          await listTmuxPaneRuntimeInfoForCurrentPlatform([directTmuxRestartCandidatePaneId])
-        ).get(directTmuxRestartCandidatePaneId);
-        if (paneInfo && isInteractiveShellCommand(paneInfo.currentCommand)) {
-          directTmuxRestartPaneId = directTmuxRestartCandidatePaneId;
-        }
-      } catch (error) {
-        logger.debug(
-          `[${teamName}] Direct tmux restart probe failed for ${memberName}: ${
-            error instanceof Error ? error.message : String(error)
-          }`
-        );
-      }
-    }
-
-    const tmuxPaneIdsToVerify: string[] = [];
-    if (!directTmuxRestartPaneId) {
-      for (const persistedRuntimeMember of persistedRuntimeMembers) {
-        const paneId =
-          typeof persistedRuntimeMember.tmuxPaneId === 'string'
-            ? persistedRuntimeMember.tmuxPaneId.trim()
-            : '';
-        const backendType = persistedRuntimeMember.backendType?.trim().toLowerCase();
-        if (!paneId || backendType !== 'tmux') {
-          continue;
-        }
-        tmuxPaneIdsToVerify.push(paneId);
-        try {
-          killTmuxPaneForCurrentPlatformSync(paneId);
-          logger.info(
-            `[${teamName}] Killed teammate pane ${memberName} (${paneId}) for manual restart`
-          );
-        } catch (error) {
-          logger.debug(
-            `[${teamName}] Failed to kill teammate pane ${memberName} (${paneId}) for manual restart: ${
-              error instanceof Error ? error.message : String(error)
-            }`
-          );
-        }
-      }
-    }
-
-    for (const pid of livePids) {
-      try {
-        killProcessByPid(pid);
-      } catch (error) {
-        logger.debug(
-          `[${teamName}] Failed to kill teammate process ${memberName} pid=${pid} for manual restart: ${
-            error instanceof Error ? error.message : String(error)
-          }`
-        );
-      }
-    }
-
-    if (livePids.size > 0) {
-      const lingeringPids = await waitForPidsToExit(Array.from(livePids), {
-        timeoutMs: 1_500,
-        pollMs: 100,
-      });
-      if (lingeringPids.length > 0) {
-        throw new Error(
-          `Restart for teammate "${memberName}" is still waiting for the previous process to exit (${lingeringPids.join(', ')}).`
-        );
-      }
-    }
-
-    if (tmuxPaneIdsToVerify.length > 0) {
-      let lingeringPaneIds: string[];
-      try {
-        lingeringPaneIds = await waitForTmuxPanesToExit(tmuxPaneIdsToVerify, {
-          timeoutMs: 1_500,
-          pollMs: 100,
-        });
-      } catch (error) {
-        throw new Error(
-          `Restart for teammate "${memberName}" could not verify that the previous tmux pane exited: ${
-            error instanceof Error ? error.message : String(error)
-          }`
-        );
-      }
-      if (lingeringPaneIds.length > 0) {
-        throw new Error(
-          `Restart for teammate "${memberName}" is still waiting for the previous tmux pane to exit (${lingeringPaneIds.join(', ')}).`
-        );
-      }
-    }
+      invalidateRuntimeSnapshotCaches: () => this.invalidateRuntimeSnapshotCaches(teamName),
+      loadLiveRuntimeByMember: () => this.getLiveTeamAgentRuntimeMetadata(teamName),
+    });
+    const { directTmuxRestartPaneId, shouldDirectProcessRestart } = restartRuntimePreparation;
 
     this.setMemberSpawnStatus(run, memberName, 'offline');
 
@@ -2367,7 +2067,6 @@ export class TeamProvisioningMemberLifecycleController {
       }
     }
 
-    const shouldDirectProcessRestart = backendTypes.has('process') || livePids.size > 0;
     if (shouldDirectProcessRestart) {
       try {
         await this.launchDirectProcessMemberRestart({
@@ -2694,171 +2393,7 @@ export class TeamProvisioningMemberLifecycleController {
   async collectFailedOpenCodeSecondaryRetryCandidatesInternal(
     run: ProvisioningRun
   ): Promise<OpenCodeSecondaryRetryCandidate[]> {
-    const teamName = run.teamName;
-    const leadProviderId = resolveTeamProviderId(run.request.providerId);
-    const isOpenCodeAggregateRun =
-      leadProviderId === 'opencode' && (run.mixedSecondaryLanes?.length ?? 0) > 0;
-    if (leadProviderId === 'opencode' && !isOpenCodeAggregateRun) {
-      throw new Error(
-        'Retrying OpenCode secondary lanes requires an active OpenCode worktree lane run.'
-      );
-    }
-    if (!this.getOpenCodeRuntimeAdapter()) {
-      throw new Error('OpenCode runtime adapter is not available for secondary lane retry.');
-    }
-
-    const config = await this.readConfigForStrictDecision(teamName);
-    if (!config) {
-      throw new Error(`Team "${teamName}" configuration is no longer available`);
-    }
-    const metaMembers = await this.membersMetaStore.getMembers(teamName).catch(() => []);
-    const persistedSnapshot = await this.launchStateStore.read(teamName).catch(() => null);
-
-    const names = new Set<string>();
-    for (const member of config.members ?? []) {
-      const name = member.name?.trim();
-      if (name) {
-        names.add(name);
-      }
-    }
-    for (const member of metaMembers) {
-      const name = member.name?.trim();
-      if (name) {
-        names.add(name);
-      }
-    }
-    for (const lane of run.mixedSecondaryLanes ?? []) {
-      const name = lane.member.name?.trim();
-      if (name) {
-        names.add(name);
-      }
-    }
-    for (const name of persistedSnapshot?.expectedMembers ?? []) {
-      if (name.trim()) {
-        names.add(name.trim());
-      }
-    }
-    for (const name of Object.keys(persistedSnapshot?.members ?? {})) {
-      if (name.trim()) {
-        names.add(name.trim());
-      }
-    }
-
-    const candidates: OpenCodeSecondaryRetryCandidate[] = [];
-    for (const memberName of [...names].sort((left, right) => left.localeCompare(right))) {
-      const configuredMember = this.resolveEffectiveConfiguredMember(
-        config.members ?? [],
-        metaMembers,
-        memberName
-      );
-      if (!configuredMember || configuredMember.removedAt) {
-        continue;
-      }
-      if (isLeadMember({ name: memberName, agentType: configuredMember.agentType })) {
-        continue;
-      }
-      const desiredProviderId =
-        normalizeOptionalTeamProviderId(configuredMember.providerId) ?? leadProviderId;
-      if (desiredProviderId !== 'opencode') {
-        continue;
-      }
-
-      const existingLane = (run.mixedSecondaryLanes ?? []).find((lane) =>
-        matchesTeamMemberIdentity(lane.member.name, memberName)
-      );
-      const liveEntry = run.memberSpawnStatuses.get(memberName);
-      const persistedMemberByName =
-        persistedSnapshot?.members[memberName] ??
-        Object.values(persistedSnapshot?.members ?? {}).find((member) =>
-          matchesTeamMemberIdentity(member.name, memberName)
-        );
-      let laneId: string | null = null;
-      if (leadProviderId === 'opencode') {
-        const persistedLaneId = persistedMemberByName?.laneId?.startsWith('secondary:opencode:')
-          ? persistedMemberByName.laneId
-          : null;
-        laneId = existingLane?.laneId ?? persistedLaneId;
-        if (!laneId) {
-          continue;
-        }
-      } else {
-        const laneIdentity = buildPlannedMemberLaneIdentity({
-          leadProviderId,
-          member: {
-            name: memberName,
-            providerId: 'opencode',
-          },
-        });
-        if (
-          laneIdentity.laneKind !== 'secondary' ||
-          laneIdentity.laneOwnerProviderId !== 'opencode'
-        ) {
-          continue;
-        }
-        laneId = laneIdentity.laneId;
-      }
-      const persistedMember =
-        persistedMemberByName ??
-        Object.values(persistedSnapshot?.members ?? {}).find((member) => member.laneId === laneId);
-
-      if (
-        this.isRetryableFailedOpenCodeSecondaryLane({
-          liveEntry,
-          persistedMember,
-          existingLane,
-        })
-      ) {
-        candidates.push({ memberName, laneId });
-      }
-    }
-    return candidates;
-  }
-
-  private isRetryableFailedOpenCodeSecondaryLane(input: {
-    liveEntry?: MemberSpawnStatusEntry;
-    persistedMember?: PersistedTeamLaunchMemberState;
-    existingLane?: MixedSecondaryRuntimeLaneState;
-  }): boolean {
-    const { liveEntry, persistedMember, existingLane } = input;
-    if (existingLane?.state === 'queued' || existingLane?.state === 'launching') {
-      return false;
-    }
-    if (
-      liveEntry?.launchState === 'skipped_for_launch' ||
-      liveEntry?.skippedForLaunch === true ||
-      persistedMember?.launchState === 'skipped_for_launch' ||
-      persistedMember?.skippedForLaunch === true
-    ) {
-      return false;
-    }
-    if (
-      liveEntry?.launchState === 'runtime_pending_permission' ||
-      liveEntry?.launchState === 'runtime_pending_bootstrap' ||
-      persistedMember?.launchState === 'runtime_pending_permission' ||
-      persistedMember?.launchState === 'runtime_pending_bootstrap' ||
-      (liveEntry?.pendingPermissionRequestIds?.length ?? 0) > 0 ||
-      (persistedMember?.pendingPermissionRequestIds?.length ?? 0) > 0
-    ) {
-      return false;
-    }
-    if (liveEntry?.launchState === 'starting' || liveEntry?.status === 'spawning') {
-      return false;
-    }
-    if (
-      liveEntry?.launchState === 'confirmed_alive' ||
-      liveEntry?.bootstrapConfirmed === true ||
-      persistedMember?.launchState === 'confirmed_alive' ||
-      persistedMember?.bootstrapConfirmed === true
-    ) {
-      return false;
-    }
-
-    return (
-      liveEntry?.launchState === 'failed_to_start' ||
-      liveEntry?.status === 'error' ||
-      persistedMember?.launchState === 'failed_to_start' ||
-      persistedMember?.hardFailure === true
-    );
+    return await this.collectFailedOpenCodeSecondaryRetryCandidatesFallback(run);
   }
 
   private async readOpenCodeSecondaryRetryOutcome(
@@ -2878,92 +2413,7 @@ export class TeamProvisioningMemberLifecycleController {
     memberName: string,
     laneId: string
   ): Promise<OpenCodeSecondaryRetryOutcome> {
-    const lane = (run.mixedSecondaryLanes ?? []).find(
-      (candidate) =>
-        candidate.laneId === laneId || matchesTeamMemberIdentity(candidate.member.name, memberName)
-    );
-    const memberEvidence =
-      lane?.result?.members[memberName] ??
-      Object.values(lane?.result?.members ?? {}).find((member) =>
-        matchesTeamMemberIdentity(member.memberName, memberName)
-      );
-    const persistedSnapshot = await this.launchStateStore.read(run.teamName).catch(() => null);
-    const persistedMember =
-      persistedSnapshot?.members[memberName] ??
-      Object.values(persistedSnapshot?.members ?? {}).find((member) => member.laneId === laneId);
-    const liveEntry = run.memberSpawnStatuses.get(memberName);
-
-    if (
-      memberEvidence?.launchState === 'confirmed_alive' ||
-      memberEvidence?.bootstrapConfirmed === true ||
-      liveEntry?.launchState === 'confirmed_alive' ||
-      liveEntry?.bootstrapConfirmed === true ||
-      persistedMember?.launchState === 'confirmed_alive' ||
-      persistedMember?.bootstrapConfirmed === true
-    ) {
-      return { launchState: 'confirmed_alive' };
-    }
-
-    if (
-      liveEntry?.launchState === 'skipped_for_launch' ||
-      liveEntry?.skippedForLaunch === true ||
-      persistedMember?.launchState === 'skipped_for_launch' ||
-      persistedMember?.skippedForLaunch === true
-    ) {
-      return {
-        launchState: 'skipped_for_launch',
-        reason: liveEntry?.skipReason ?? persistedMember?.skipReason,
-      };
-    }
-
-    if (
-      memberEvidence?.launchState === 'failed_to_start' ||
-      memberEvidence?.hardFailure === true ||
-      liveEntry?.launchState === 'failed_to_start' ||
-      liveEntry?.status === 'error' ||
-      persistedMember?.launchState === 'failed_to_start' ||
-      persistedMember?.hardFailure === true
-    ) {
-      return {
-        launchState: 'failed_to_start',
-        reason: this.selectOpenCodeSecondaryRetryFailureReason({
-          memberEvidence,
-          liveEntry,
-          persistedMember,
-        }),
-      };
-    }
-
-    return {
-      launchState:
-        memberEvidence?.launchState ??
-        liveEntry?.launchState ??
-        persistedMember?.launchState ??
-        'runtime_pending_bootstrap',
-    };
-  }
-
-  private selectOpenCodeSecondaryRetryFailureReason(input: {
-    memberEvidence?: TeamRuntimeMemberLaunchEvidence;
-    liveEntry?: MemberSpawnStatusEntry;
-    persistedMember?: PersistedTeamLaunchMemberState;
-  }): string | undefined {
-    const diagnostics = [
-      input.memberEvidence?.hardFailureReason,
-      input.memberEvidence?.runtimeDiagnostic,
-      ...(input.memberEvidence?.diagnostics ?? []),
-      input.liveEntry?.hardFailureReason,
-      input.liveEntry?.runtimeDiagnostic,
-      input.liveEntry?.error,
-      input.persistedMember?.hardFailureReason,
-      input.persistedMember?.runtimeDiagnostic,
-    ];
-    return diagnostics
-      .find(
-        (diagnostic): diagnostic is string =>
-          typeof diagnostic === 'string' && diagnostic.trim().length > 0
-      )
-      ?.trim();
+    return await this.readOpenCodeSecondaryRetryOutcomeFallback(run, memberName, laneId);
   }
 
   private async notifyLeadAboutConfirmedOpenCodeRetries(

@@ -1,11 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  createTeamProvisioningOpenCodeRuntimeDeliveryAdvisoryPortsFromService,
   type OpenCodeRuntimeDeliveryAdvisoryPorts,
   TeamProvisioningOpenCodeRuntimeDeliveryAdvisory,
+  type TeamProvisioningOpenCodeRuntimeDeliveryAdvisoryServiceHost,
 } from '../TeamProvisioningOpenCodeRuntimeDeliveryAdvisory';
 
 import type { OpenCodePromptDeliveryLedgerRecord } from '../../opencode/delivery/OpenCodePromptDeliveryLedger';
+import type { TeamChangeEvent } from '@shared/types';
 
 const testProjectPath = '/safe-test/team-alpha';
 
@@ -207,6 +210,89 @@ describe('TeamProvisioningOpenCodeRuntimeDeliveryAdvisory', () => {
       detail: 'runtime-delivery',
       taskSignalKind: 'log',
     });
+  });
+
+  it('builds advisory ports from service-shaped host wiring', async () => {
+    const ledger = { list: vi.fn() };
+    const run = {
+      processKilled: false,
+      cancelRequested: false,
+      child: { stdin: { writable: true } },
+    };
+    const teamChanges: TeamChangeEvent[] = [];
+    const invalidator = vi.fn();
+    const proofRecoveryScheduler = vi.fn();
+    const service = {
+      runs: new Map([['run-1', run]]),
+      runTracking: {
+        getAliveRunId: vi.fn(() => 'run-1'),
+      },
+      configFacade: {
+        readConfigSnapshot: vi.fn(async () => ({
+          name: 'Team Alpha',
+          projectPath: testProjectPath,
+        })),
+      },
+      openCodeRuntimeDeliveryProofReader: {
+        readProofIndex: vi.fn(async () => null),
+      },
+      appShellBoundary: {
+        getMemberRuntimeAdvisoryInvalidator: vi.fn(() => invalidator),
+        getMemberWorkSyncProofMissingRecoveryScheduler: vi.fn(() => proofRecoveryScheduler),
+      },
+      teamChangeEmitter: vi.fn((event) => {
+        teamChanges.push(event);
+      }),
+      createOpenCodePromptDeliveryLedger: vi.fn(() => ledger),
+      sendMessageToRun: vi.fn(async () => undefined),
+    } as unknown as TeamProvisioningOpenCodeRuntimeDeliveryAdvisoryServiceHost<typeof run>;
+    const addTeamNotification = vi.fn(async () => undefined);
+    const logInfo = vi.fn();
+    const logWarning = vi.fn();
+    const getErrorMessage = vi.fn((error: unknown) =>
+      error instanceof Error ? error.message : String(error)
+    );
+
+    const ports = createTeamProvisioningOpenCodeRuntimeDeliveryAdvisoryPortsFromService(service, {
+      addTeamNotification,
+      logInfo,
+      logWarning,
+      getErrorMessage,
+    });
+
+    expect(ports.createOpenCodePromptDeliveryLedger('team-a', 'lane-a')).toBe(ledger);
+    await expect(ports.readProofIndex({} as never)).resolves.toBeNull();
+    await expect(ports.readConfigSnapshot('team-a')).resolves.toMatchObject({
+      name: 'Team Alpha',
+    });
+    await ports.addTeamNotification({ teamName: 'team-a' } as Parameters<
+      OpenCodeRuntimeDeliveryAdvisoryPorts['addTeamNotification']
+    >[0]);
+    ports.emitTeamChange({ type: 'member-advisory', teamName: 'team-a' } as TeamChangeEvent);
+    ports.invalidateMemberRuntimeAdvisory('team-a', 'builder');
+    await ports.scheduleProofMissingWorkSyncRecovery?.({
+      teamName: 'team-a',
+      memberName: 'builder',
+      originalMessageId: 'message-a',
+    });
+    expect(proofRecoveryScheduler).toHaveBeenCalledWith({
+      teamName: 'team-a',
+      memberName: 'builder',
+      originalMessageId: 'message-a',
+    });
+
+    const sink = ports.getLeadNoticeSink('team-a');
+    await sink?.send('check delivery');
+    run.processKilled = true;
+
+    expect(ports.getLeadNoticeSink('team-a')).toBeNull();
+    expect(service.createOpenCodePromptDeliveryLedger).toHaveBeenCalledWith('team-a', 'lane-a');
+    expect(service.openCodeRuntimeDeliveryProofReader.readProofIndex).toHaveBeenCalledWith({});
+    expect(service.configFacade.readConfigSnapshot).toHaveBeenCalledWith('team-a');
+    expect(addTeamNotification).toHaveBeenCalledWith({ teamName: 'team-a' });
+    expect(teamChanges).toEqual([{ type: 'member-advisory', teamName: 'team-a' }]);
+    expect(invalidator).toHaveBeenCalledWith('team-a', 'builder');
+    expect(service.sendMessageToRun).toHaveBeenCalledWith(run, 'check delivery');
   });
 });
 

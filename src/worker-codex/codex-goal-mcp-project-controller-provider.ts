@@ -19,11 +19,10 @@ import {
   dedupeCodexGoalAccountSlots,
 } from "./codex-goal-mcp-accounts";
 import { redactText, truncateText } from "./codex-goal-mcp-decision";
-import type { ProjectControllerLaunchPlanMcpArgs } from "./codex-goal-mcp-inputs";
+import type { ProjectControllerOptions } from "./application/project-control/codex-goal-project-controller-options";
 import {
   type ProjectControllerProfile,
-} from "./codex-goal-mcp-project-controller-profile";
-import { stringValue } from "./codex-goal-mcp-values";
+} from "./application/project-control/codex-goal-project-controller-profile";
 import {
   codexGoalStateRootDir,
   codexGoalWorkerControlService,
@@ -34,7 +33,7 @@ import { listCodexGoalAccountStatuses } from "./codex-goal-ops";
 type JsonObject = Readonly<Record<string, unknown>>;
 
 export async function projectControllerProvider(input: {
-  readonly args: ProjectControllerLaunchPlanMcpArgs;
+  readonly options: ProjectControllerOptions;
   readonly controller: {
     readonly controller: CodexGoalJobManifest;
     readonly registryRootDir: string;
@@ -62,15 +61,15 @@ export async function projectControllerProvider(input: {
         profile: input.profile,
         sessionArtifact: loaded.sessionArtifact,
         workspacePath: input.launch.config.workspacePath,
-        ...(stringValue(input.args.claudePath) === undefined
+        ...(input.options.claudePath === undefined
           ? {}
-          : { claudePath: stringValue(input.args.claudePath) as string }),
+          : { claudePath: input.options.claudePath }),
         ...(input.launch.config.model === undefined
           ? {}
           : { model: input.launch.config.model }),
-        ...(input.args.maxGoalTurns === undefined
+        ...(input.options.maxGoalTurns === undefined
           ? {}
-          : { maxTurns: input.args.maxGoalTurns }),
+          : { maxTurns: input.options.maxGoalTurns }),
         controllerObjective,
       }),
       sessionArtifact: {
@@ -106,9 +105,9 @@ export async function projectControllerProvider(input: {
       ...(input.launch.config.serviceTier === undefined
         ? {}
         : { serviceTier: input.launch.config.serviceTier }),
-      ...(input.args.maxGoalTurns === undefined
+      ...(input.options.maxGoalTurns === undefined
         ? {}
-        : { maxGoalTurns: input.args.maxGoalTurns }),
+        : { maxGoalTurns: input.options.maxGoalTurns }),
     }),
     account: {
       name: account.name,
@@ -243,7 +242,7 @@ async function controlledAgentCodexAccount(input: {
 }
 
 async function controlledAgentClaudeSessionArtifact(input: {
-  readonly args: ProjectControllerLaunchPlanMcpArgs;
+  readonly options: ProjectControllerOptions;
   readonly controller: {
     readonly scope: ProjectAccessScope;
   };
@@ -258,7 +257,7 @@ async function controlledAgentClaudeSessionArtifact(input: {
   if (!input.controller.scope.authRoot) {
     throw new Error("project_control_controller_auth_root_scope_required");
   }
-  const rawPath = stringValue(input.args.sessionArtifactPath);
+  const rawPath = input.options.sessionArtifactPath;
   if (rawPath === undefined) {
     throw new Error("project_control_controller_session_artifact_path_required");
   }

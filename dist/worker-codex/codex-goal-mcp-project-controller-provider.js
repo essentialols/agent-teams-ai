@@ -6,7 +6,6 @@ import { RunEventProviderKind, } from "@vioxen/subscription-runtime/worker-core"
 import { CodexControlledAgentProvider } from "./controlled-agent/index.js";
 import { availableCodexGoalAccountSlots, dedupeCodexGoalAccountSlots, } from "./codex-goal-mcp-accounts.js";
 import { redactText, truncateText } from "./codex-goal-mcp-decision.js";
-import { stringValue } from "./codex-goal-mcp-values.js";
 import { codexGoalStateRootDir, codexGoalWorkerControlService, codexGoalWorkerControlTarget, } from "./codex-goal-mcp-worker-control.js";
 import { listCodexGoalAccountStatuses } from "./codex-goal-ops.js";
 export async function projectControllerProvider(input) {
@@ -18,15 +17,15 @@ export async function projectControllerProvider(input) {
                 profile: input.profile,
                 sessionArtifact: loaded.sessionArtifact,
                 workspacePath: input.launch.config.workspacePath,
-                ...(stringValue(input.args.claudePath) === undefined
+                ...(input.options.claudePath === undefined
                     ? {}
-                    : { claudePath: stringValue(input.args.claudePath) }),
+                    : { claudePath: input.options.claudePath }),
                 ...(input.launch.config.model === undefined
                     ? {}
                     : { model: input.launch.config.model }),
-                ...(input.args.maxGoalTurns === undefined
+                ...(input.options.maxGoalTurns === undefined
                     ? {}
-                    : { maxTurns: input.args.maxGoalTurns }),
+                    : { maxTurns: input.options.maxGoalTurns }),
                 controllerObjective,
             }),
             sessionArtifact: {
@@ -57,9 +56,9 @@ export async function projectControllerProvider(input) {
             ...(input.launch.config.serviceTier === undefined
                 ? {}
                 : { serviceTier: input.launch.config.serviceTier }),
-            ...(input.args.maxGoalTurns === undefined
+            ...(input.options.maxGoalTurns === undefined
                 ? {}
-                : { maxGoalTurns: input.args.maxGoalTurns }),
+                : { maxGoalTurns: input.options.maxGoalTurns }),
         }),
         account: {
             name: account.name,
@@ -152,7 +151,7 @@ async function controlledAgentClaudeSessionArtifact(input) {
     if (!input.controller.scope.authRoot) {
         throw new Error("project_control_controller_auth_root_scope_required");
     }
-    const rawPath = stringValue(input.args.sessionArtifactPath);
+    const rawPath = input.options.sessionArtifactPath;
     if (rawPath === undefined) {
         throw new Error("project_control_controller_session_artifact_path_required");
     }

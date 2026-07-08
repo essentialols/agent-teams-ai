@@ -2,11 +2,11 @@
 import { type ControlledAgentProviderPort, type ProjectAccessScope } from "@vioxen/subscription-runtime/worker-core";
 import type { CodexGoalJobManifest } from "./codex-goal-jobs.js";
 import type { CodexGoalLaunchInput } from "./codex-goal-ops.js";
-import type { ProjectControllerLaunchPlanMcpArgs } from "./codex-goal-mcp-inputs.js";
-import { type ProjectControllerProfile } from "./codex-goal-mcp-project-controller-profile.js";
+import type { ProjectControllerOptions } from "./application/project-control/codex-goal-project-controller-options.js";
+import { type ProjectControllerProfile } from "./application/project-control/codex-goal-project-controller-profile.js";
 type JsonObject = Readonly<Record<string, unknown>>;
 export declare function projectControllerProvider(input: {
-    readonly args: ProjectControllerLaunchPlanMcpArgs;
+    readonly options: ProjectControllerOptions;
     readonly controller: {
         readonly controller: CodexGoalJobManifest;
         readonly registryRootDir: string;

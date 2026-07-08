@@ -3,7 +3,9 @@ import { projectControllerCapacityDemand, recordProjectControllerCapacitySignal,
 import { codexGoalJobToArgs, } from "./codex-goal-jobs.js";
 import { goalLaunchInput, } from "./codex-goal-mcp-launch-input.js";
 import { safeObservationErrorMessage, } from "./codex-goal-mcp-observation-projection.js";
-import { projectControllerAllowedTools, projectControllerLaunchInput, projectControllerProfile, projectControllerProfileReadyJson, projectControllerProviderKind, projectControllerState, } from "./codex-goal-mcp-project-controller-profile.js";
+import { projectControllerOptionsFromMcpArgs, } from "./codex-goal-mcp-project-controller-profile.js";
+import { projectControllerAllowedTools, projectControllerLaunchInput, projectControllerProfile, projectControllerProfileReadyJson, projectControllerState, } from "./application/project-control/codex-goal-project-controller-profile.js";
+import { projectControllerProviderKind, } from "./application/project-control/codex-goal-project-controller-options.js";
 import { projectControllerProvider, } from "./codex-goal-mcp-project-controller-provider.js";
 import { createInMemoryProjectControllerProviderRegistry, projectControllerOwnerIsLive, projectControllerProcessOwner, } from "./application/project-control/codex-goal-project-controller-runtime.js";
 import { stringValue, } from "./codex-goal-mcp-values.js";
@@ -12,8 +14,9 @@ import { codexGoalStateRootDir, codexGoalWorkerControlService, codexGoalWorkerCo
 const controlledAgentProviders = createInMemoryProjectControllerProviderRegistry();
 export async function projectControllerLaunchPlanView(args, deps) {
     const controller = await deps.loadProjectControlController(args);
-    const state = projectControllerState(args, controller);
-    const profile = projectControllerProfile(args, state);
+    const options = projectControllerOptionsFromMcpArgs(args);
+    const state = projectControllerState(options, controller);
+    const profile = projectControllerProfile(options, state);
     const plan = projectControllerLaunchInput(controller, state, profile);
     const ready = plan.status === LaunchPlanStatus.Ready;
     return {
@@ -24,7 +27,7 @@ export async function projectControllerLaunchPlanView(args, deps) {
         registryRootDir: controller.registryRootDir,
         stateDir: state.stateDir,
         sessionId: state.sessionId,
-        rawShellMode: args.rawShellMode ?? "disabled-by-provider",
+        rawShellMode: options.rawShellMode ?? "disabled-by-provider",
         status: plan.status,
         ...(ready
             ? {
@@ -43,8 +46,9 @@ export async function projectControllerLaunchPlanView(args, deps) {
 }
 export async function projectControllerStartView(args, deps) {
     const controller = await deps.loadProjectControlController(args);
-    const state = projectControllerState(args, controller);
-    const profile = projectControllerProfile(args, state);
+    const options = projectControllerOptionsFromMcpArgs(args);
+    const state = projectControllerState(options, controller);
+    const profile = projectControllerProfile(options, state);
     const plan = projectControllerLaunchInput(controller, state, profile);
     if (plan.status === LaunchPlanStatus.Blocked) {
         return {
@@ -64,7 +68,7 @@ export async function projectControllerStartView(args, deps) {
     }
     const launch = await goalLaunchInput(codexGoalJobToArgs(controller.controller));
     const providerInput = await projectControllerProvider({
-        args,
+        options,
         controller,
         launch,
         profile,
@@ -152,7 +156,8 @@ export async function projectControllerStartView(args, deps) {
 }
 export async function projectControllerStatusView(args, deps) {
     const controller = await deps.loadProjectControlController(args);
-    const state = projectControllerState(args, controller);
+    const options = projectControllerOptionsFromMcpArgs(args);
+    const state = projectControllerState(options, controller);
     const result = await getControlledAgentStatus(state.sessionId, {
         stateStore: state.store,
     });
@@ -184,7 +189,7 @@ export async function projectControllerStatusView(args, deps) {
         ok: result.ok,
         mode: "project_controller_status",
         controllerJobId: controller.controller.jobId,
-        providerKind: projectControllerProviderKind(args),
+        providerKind: projectControllerProviderKind(options),
         registryRootDir: controller.registryRootDir,
         stateDir: state.stateDir,
         sessionId: state.sessionId,
@@ -207,13 +212,14 @@ export async function projectControllerStatusView(args, deps) {
 }
 export async function projectControllerConsumeGuidanceView(args, deps) {
     const controller = await deps.loadProjectControlController(args);
+    const options = projectControllerOptionsFromMcpArgs(args);
     const launch = await goalLaunchInput(codexGoalJobToArgs(controller.controller));
     const control = codexGoalWorkerControlService(launch);
     const target = codexGoalWorkerControlTarget({
         manifest: controller.controller,
         launch,
     });
-    const deliveryAttemptId = stringValue(args.deliveryAttemptId) ??
+    const deliveryAttemptId = options.deliveryAttemptId ??
         `${controller.controller.jobId}:controller-guidance:${new Date().toISOString()}`;
     const batch = await control.consumeForContinuation({
         target,
@@ -234,7 +240,8 @@ export async function projectControllerConsumeGuidanceView(args, deps) {
 }
 export async function projectControllerStopView(args, deps) {
     const controller = await deps.loadProjectControlController(args);
-    const state = projectControllerState(args, controller);
+    const options = projectControllerOptionsFromMcpArgs(args);
+    const state = projectControllerState(options, controller);
     const result = await getControlledAgentStatus(state.sessionId, {
         stateStore: state.store,
     });
@@ -243,7 +250,7 @@ export async function projectControllerStopView(args, deps) {
     if (result.ok && provider) {
         const stopped = await stopControlledAgentRun({
             sessionId: state.sessionId,
-            reason: stringValue(args.reason) ?? "project_controller_stop",
+            reason: options.reason ?? "project_controller_stop",
         }, {
             stateStore: state.store,
             provider,
@@ -255,7 +262,7 @@ export async function projectControllerStopView(args, deps) {
             ok: stopped.ok,
             mode: "project_controller_stop",
             controllerJobId: controller.controller.jobId,
-            providerKind: projectControllerProviderKind(args),
+            providerKind: projectControllerProviderKind(options),
             registryRootDir: controller.registryRootDir,
             stateDir: state.stateDir,
             sessionId: state.sessionId,
@@ -275,7 +282,7 @@ export async function projectControllerStopView(args, deps) {
         ok: false,
         mode: "project_controller_stop",
         controllerJobId: controller.controller.jobId,
-        providerKind: projectControllerProviderKind(args),
+        providerKind: projectControllerProviderKind(options),
         registryRootDir: controller.registryRootDir,
         stateDir: state.stateDir,
         sessionId: state.sessionId,
@@ -295,7 +302,8 @@ export async function projectControllerStopView(args, deps) {
 }
 export async function projectControllerReconcileView(args, deps) {
     const controller = await deps.loadProjectControlController(args);
-    const state = projectControllerState(args, controller);
+    const options = projectControllerOptionsFromMcpArgs(args);
+    const state = projectControllerState(options, controller);
     const result = await getControlledAgentStatus(state.sessionId, {
         stateStore: state.store,
     });
@@ -319,7 +327,7 @@ export async function projectControllerReconcileView(args, deps) {
             ok: reconciled.ok,
             mode: "project_controller_reconcile",
             controllerJobId: controller.controller.jobId,
-            providerKind: projectControllerProviderKind(args),
+            providerKind: projectControllerProviderKind(options),
             registryRootDir: controller.registryRootDir,
             stateDir: state.stateDir,
             sessionId: state.sessionId,
@@ -340,7 +348,7 @@ export async function projectControllerReconcileView(args, deps) {
         ok: false,
         mode: "project_controller_reconcile",
         controllerJobId: controller.controller.jobId,
-        providerKind: projectControllerProviderKind(args),
+        providerKind: projectControllerProviderKind(options),
         registryRootDir: controller.registryRootDir,
         stateDir: state.stateDir,
         sessionId: state.sessionId,

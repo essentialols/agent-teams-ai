@@ -216,11 +216,14 @@ import {
   type MemberLifecycleOperation,
   TeamProvisioningMemberLifecycleController,
 } from './provisioning/TeamProvisioningMemberLifecycle';
+import {
+  TeamProvisioningMemberLifecycleCompatibilityFacade,
+  type TeamProvisioningMemberLifecyclePublicFacade,
+} from './provisioning/TeamProvisioningMemberLifecycleCompatibilityFacade';
 import { createTeamProvisioningMemberLifecycleHostFromPortGroups } from './provisioning/TeamProvisioningMemberLifecycleHostFactory';
 import { createTeamProvisioningMemberLifecycleOperationRunner } from './provisioning/TeamProvisioningMemberLifecycleOperationRunner';
 import { createTeamProvisioningMemberLifecycleOperationUseCases } from './provisioning/TeamProvisioningMemberLifecycleOperationUseCases';
 import { createTeamProvisioningMemberLifecycleServiceUseCases } from './provisioning/TeamProvisioningMemberLifecycleServiceUseCases';
-import { type LiveRosterAttachReason } from './provisioning/TeamProvisioningMemberLifecycleTypes';
 import { TeamProvisioningMemberMcpLaunchConfigProvisioner } from './provisioning/TeamProvisioningMemberMcpLaunchConfig';
 import {
   refreshMemberSpawnStatusesFromLeadInbox as refreshMemberSpawnStatusesFromLeadInboxHelper,
@@ -465,10 +468,7 @@ import {
   isOpenCodeRuntimeRecipientFromSources,
   resolveRuntimeRecipientProviderId as resolveRuntimeRecipientProviderIdHelper,
 } from './provisioning/TeamProvisioningRuntimeRecipientResolution';
-import {
-  createTeamProvisioningRuntimeResourceSamplingForService,
-  TeamProvisioningRuntimeResourceSamplingCompatibilityFacade,
-} from './provisioning/TeamProvisioningRuntimeResourceSamplingCompatibilityFacade';
+import { createTeamProvisioningRuntimeResourceSamplingForService } from './provisioning/TeamProvisioningRuntimeResourceSamplingCompatibilityFacade';
 import { attachLiveRuntimeMetadataToStatuses as attachLiveRuntimeMetadataToStatusesHelper } from './provisioning/TeamProvisioningRuntimeSnapshot';
 import { TeamProvisioningRuntimeSnapshotCacheBoundary } from './provisioning/TeamProvisioningRuntimeSnapshotCache';
 import {
@@ -634,7 +634,7 @@ const claudePermissionSettingsFilePorts: ClaudePermissionSettingsFilePorts = {
   writeFileUtf8: (filePath, contents) => atomicWriteAsync(filePath, contents),
 };
 
-export class TeamProvisioningService extends TeamProvisioningRuntimeResourceSamplingCompatibilityFacade<ProvisioningRun> {
+export class TeamProvisioningService extends TeamProvisioningMemberLifecycleCompatibilityFacade<ProvisioningRun> {
   private readonly runtimeLaneCoordinator = createTeamRuntimeLaneCoordinator();
   private readonly providerConnectionService = ProviderConnectionService.getInstance();
   private readonly launchIdentityBoundary: TeamProvisioningLaunchIdentityBoundary =
@@ -1109,6 +1109,8 @@ export class TeamProvisioningService extends TeamProvisioningRuntimeResourceSamp
       openCodeRetry: this.memberLifecycleUseCases,
     }
   );
+  protected readonly memberLifecycleFacade: TeamProvisioningMemberLifecyclePublicFacade =
+    this.memberLifecycleController;
   private readonly memberMcpLaunchConfigProvisioner!: TeamProvisioningMemberMcpLaunchConfigProvisioner<ProvisioningRun>;
   private readonly taskActivityIntervalService = new TeamTaskActivityIntervalService();
   private readonly runtimeToolActivity = createRuntimeToolActivityHandlers<ProvisioningRun>(
@@ -2529,52 +2531,6 @@ export class TeamProvisioningService extends TeamProvisioningRuntimeResourceSamp
 
   async getTeamAgentRuntimeSnapshot(teamName: string): Promise<TeamAgentRuntimeSnapshot> {
     return this.runtimeSnapshotFacade.getTeamAgentRuntimeSnapshot(teamName);
-  }
-
-  private isMemberLifecycleOperationActive(teamName: string, memberName: string): boolean {
-    return this.memberLifecycleController.isMemberLifecycleOperationActive(teamName, memberName);
-  }
-
-  async attachLiveRosterMember(
-    teamName: string,
-    memberName: string,
-    options?: { reason?: LiveRosterAttachReason }
-  ): Promise<void> {
-    return this.memberLifecycleController.attachLiveRosterMember(teamName, memberName, options);
-  }
-
-  async detachLiveRosterMember(teamName: string, memberName: string): Promise<void> {
-    return this.memberLifecycleController.detachLiveRosterMember(teamName, memberName);
-  }
-
-  async restartMember(teamName: string, memberName: string): Promise<void> {
-    return this.memberLifecycleController.restartMember(teamName, memberName);
-  }
-
-  async retryFailedOpenCodeSecondaryLanes(
-    teamName: string
-  ): Promise<RetryFailedOpenCodeSecondaryLanesResult> {
-    return this.memberLifecycleController.retryFailedOpenCodeSecondaryLanes(teamName);
-  }
-
-  async skipMemberForLaunch(teamName: string, memberName: string): Promise<void> {
-    return this.memberLifecycleController.skipMemberForLaunch(teamName, memberName);
-  }
-
-  async reattachOpenCodeOwnedMemberLane(
-    teamName: string,
-    memberName: string,
-    options?: { reason?: 'member_added' | 'member_updated' | 'manual_restart' }
-  ): Promise<void> {
-    return this.memberLifecycleController.reattachOpenCodeOwnedMemberLane(
-      teamName,
-      memberName,
-      options
-    );
-  }
-
-  async detachOpenCodeOwnedMemberLane(teamName: string, memberName: string): Promise<void> {
-    return this.memberLifecycleController.detachOpenCodeOwnedMemberLane(teamName, memberName);
   }
 
   private getMemberLaunchGraceKey(run: ProvisioningRun, memberName: string): string {

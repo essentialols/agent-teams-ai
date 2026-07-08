@@ -69,9 +69,7 @@ import {
 } from './opencode/delivery/OpenCodeVisibleReplyProofService';
 import {
   clearOpenCodeRuntimeLaneStorage,
-  inspectOpenCodeRuntimeLaneStorage,
   readOpenCodeRuntimeLaneIndex,
-  upsertOpenCodeRuntimeLaneIndexEntry,
 } from './opencode/store/OpenCodeRuntimeManifestEvidenceReader';
 import { getSystemLocale } from './provisioning/TeamProvisioningAgentLanguage';
 import {
@@ -428,6 +426,10 @@ import { resolveOpenCodeRuntimeLaneId as resolveOpenCodeRuntimeLaneIdHelper } fr
 import { createOpenCodeRuntimeRecoveryIdentityHelpers } from './provisioning/TeamProvisioningOpenCodeRuntimeRecoveryIdentity';
 import { createTeamProvisioningOpenCodeSecondaryBriefingBuilder } from './provisioning/TeamProvisioningOpenCodeSecondaryBriefingBuilder';
 import { createTeamProvisioningOpenCodeSecondaryEvidenceOverlayPorts } from './provisioning/TeamProvisioningOpenCodeSecondaryEvidenceOverlayPortsFactory';
+import {
+  createTeamProvisioningOpenCodeSecondaryLaneEvidencePortsFromService,
+  type TeamProvisioningOpenCodeSecondaryLaneEvidenceServiceHost,
+} from './provisioning/TeamProvisioningOpenCodeSecondaryLaneEvidencePortsFactory';
 import {
   createTeamProvisioningOpenCodeStoppedLaneCleanupBoundary,
   type TeamProvisioningOpenCodeStoppedLaneCleanupBoundary,
@@ -4083,25 +4085,15 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
     result: TeamRuntimeLaunchResult;
     memberName: string;
   }): Promise<TeamRuntimeLaunchResult> {
-    return guardCommittedOpenCodeSecondaryLaneEvidenceHelper(params, {
-      commitOpenCodeRuntimeAdapterLaunchSessionEvidence: (input) =>
-        this.commitOpenCodeRuntimeAdapterLaunchSessionEvidence(input),
-      inspectOpenCodeRuntimeLaneStorage: ({ teamName, laneId }) =>
-        inspectOpenCodeRuntimeLaneStorage({
-          teamsBasePath: getTeamsBasePath(),
-          teamName,
-          laneId,
-        }),
-      upsertOpenCodeRuntimeLaneIndexEntry: ({ teamName, laneId, state, diagnostics }) =>
-        upsertOpenCodeRuntimeLaneIndexEntry({
-          teamsBasePath: getTeamsBasePath(),
-          teamName,
-          laneId,
-          state,
-          diagnostics,
-        }),
-      logWarn: (message) => logger.warn(message),
-    });
+    return guardCommittedOpenCodeSecondaryLaneEvidenceHelper(
+      params,
+      createTeamProvisioningOpenCodeSecondaryLaneEvidencePortsFromService(
+        this as unknown as TeamProvisioningOpenCodeSecondaryLaneEvidenceServiceHost,
+        {
+          logWarn: (message) => logger.warn(message),
+        }
+      )
+    );
   }
 
   private async buildOpenCodeSecondaryAppManagedLaunchPrompt(

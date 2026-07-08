@@ -16695,7 +16695,6 @@ describe('TeamProvisioningService', () => {
         appManagedSettingsPath: null,
       }));
       (svc as any).materializeDirectProcessNativeBootstrapContext = vi.fn(async () => ({}));
-      const hostSeams = memberLifecycleHostHarness(svc) as any;
       const updateDirectTmuxRestartMemberConfig = vi.fn(async () => {});
       stubMemberLifecycleHostOptionalSeam(
         svc,
@@ -16703,7 +16702,7 @@ describe('TeamProvisioningService', () => {
         updateDirectTmuxRestartMemberConfig
       );
       stubMemberLifecycleHostOptionalSeam(svc, 'enqueueDirectRestartPrompt', vi.fn());
-      hostSeams.appendDirectProcessRuntimeEvent = vi
+      memberLifecycleUseCasesHarness(svc).appendDirectProcessRuntimeEvent = vi
         .fn()
         .mockRejectedValueOnce(new Error('event write failed'));
 
@@ -30322,7 +30321,8 @@ describe('TeamProvisioningService', () => {
       .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce(new Error('OpenCode bridge crashed'));
-    vi.spyOn(lifecycleController, 'readOpenCodeSecondaryRetryOutcomeInternal')
+    memberLifecycleUseCasesHarness(svc).readOpenCodeSecondaryRetryOutcome = vi
+      .fn()
       .mockResolvedValueOnce({ launchState: 'confirmed_alive' })
       .mockResolvedValueOnce({
         launchState: 'failed_to_start',
@@ -30482,9 +30482,11 @@ describe('TeamProvisioningService', () => {
     const reattach = vi
       .spyOn(lifecycleController, 'reattachOpenCodeOwnedMemberLaneUnlockedInternal')
       .mockResolvedValue(undefined);
-    vi.spyOn(lifecycleController, 'readOpenCodeSecondaryRetryOutcomeInternal').mockResolvedValue({
-      launchState: 'confirmed_alive',
-    });
+    memberLifecycleUseCasesHarness(svc).readOpenCodeSecondaryRetryOutcome = vi
+      .fn()
+      .mockResolvedValue({
+        launchState: 'confirmed_alive',
+      });
     vi.spyOn(
       lifecycleController,
       'notifyLeadAboutConfirmedOpenCodeRetriesInternal'

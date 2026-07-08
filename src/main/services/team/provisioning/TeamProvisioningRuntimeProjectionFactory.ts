@@ -74,6 +74,54 @@ export interface TeamProvisioningRuntimeProjectionFactoryDeps<
   logDebug(message: string): void;
 }
 
+export interface TeamProvisioningRuntimeProjectionServiceHost<
+  TRun extends TeamProvisioningRuntimeSnapshotRun & TeamProvisioningRuntimeStateProjectionRun,
+  TRuntimeAdapterRun extends RuntimeAdapterRunSnapshotSource &
+    TeamProvisioningRuntimeStateProjectionRuntimeAdapterRun,
+> {
+  runs: ReadonlyMap<string, TRun>;
+  provisioningRunByTeam: ReadonlyMap<string, string>;
+  runtimeAdapterRunByTeam: ReadonlyMap<string, TRuntimeAdapterRun>;
+  runtimeAdapterProgressByRunId: ReadonlyMap<string, TeamProvisioningProgress>;
+  retainedProvisioningProgressState: {
+    getRetainedProvisioningProgressMap(): ReadonlyMap<string, TeamProvisioningProgress>;
+  };
+  runTracking: TeamProvisioningRuntimeProjectionRunTrackingPorts;
+  hasSecondaryRuntimeRuns(teamName: string): boolean;
+  teamMetaStore: {
+    getMeta: TeamProvisioningRuntimeSnapshotFacadePorts['teamMetaStore']['getMeta'];
+  };
+  membersMetaStore: {
+    getMembers: TeamProvisioningRuntimeSnapshotFacadePorts['membersMetaStore']['getMembers'];
+  };
+  launchStateStore: {
+    read: TeamProvisioningRuntimeSnapshotFacadePorts['launchStateStore']['read'];
+  };
+  readConfigSnapshot: TeamProvisioningRuntimeSnapshotFacadePorts['readConfigSnapshot'];
+  readPersistedRuntimeMembers(teamName: string): PersistedRuntimeMemberLike[];
+  getMemberSpawnStatuses(teamName: string): Promise<MemberSpawnStatusesSnapshot>;
+  getLiveTeamAgentRuntimeMetadata(
+    teamName: string
+  ): Promise<Map<string, LiveTeamAgentRuntimeMetadata>>;
+  runtimeSnapshotCacheBoundary: TeamProvisioningAgentRuntimeSnapshotCachePort<TeamAgentRuntimeSnapshot>;
+  liveTeamAgentRuntimeMetadataCache: TeamProvisioningRuntimeProjectionFactoryDeps<
+    TRun,
+    TRuntimeAdapterRun
+  >['liveTeamAgentRuntimeMetadataCache'];
+  runtimeResourceSampling: TeamProvisioningRuntimeProjectionFactoryDeps<
+    TRun,
+    TRuntimeAdapterRun
+  >['runtimeResourceSampling'];
+}
+
+export interface TeamProvisioningRuntimeProjectionServiceHostOptions {
+  readBootstrapRuntimeState: TeamProvisioningRuntimeProjectionFactoryDeps<
+    never,
+    never
+  >['readBootstrapRuntimeState'];
+  logDebug: TeamProvisioningRuntimeProjectionFactoryDeps<never, never>['logDebug'];
+}
+
 export interface TeamProvisioningRuntimeProjection {
   runtimeSnapshotFacade: TeamProvisioningRuntimeSnapshotFacade;
   liveRuntimeMetadataPorts: TeamProvisioningLiveRuntimeMetadataPorts;
@@ -146,4 +194,56 @@ export function createTeamProvisioningRuntimeProjection<
   });
 
   return { runtimeSnapshotFacade, liveRuntimeMetadataPorts };
+}
+
+export function createTeamProvisioningRuntimeProjectionDepsFromService<
+  TRun extends TeamProvisioningRuntimeSnapshotRun & TeamProvisioningRuntimeStateProjectionRun,
+  TRuntimeAdapterRun extends RuntimeAdapterRunSnapshotSource &
+    TeamProvisioningRuntimeStateProjectionRuntimeAdapterRun,
+>(
+  service: TeamProvisioningRuntimeProjectionServiceHost<TRun, TRuntimeAdapterRun>,
+  options: TeamProvisioningRuntimeProjectionServiceHostOptions
+): TeamProvisioningRuntimeProjectionFactoryDeps<TRun, TRuntimeAdapterRun> {
+  return {
+    runs: service.runs,
+    provisioningRunByTeam: service.provisioningRunByTeam,
+    runtimeAdapterRunByTeam: service.runtimeAdapterRunByTeam,
+    runtimeAdapterProgressByRunId: service.runtimeAdapterProgressByRunId,
+    getRetainedProvisioningProgressMap: () =>
+      service.retainedProvisioningProgressState.getRetainedProvisioningProgressMap(),
+    runTracking: service.runTracking,
+    hasSecondaryRuntimeRuns: (teamName) => service.hasSecondaryRuntimeRuns(teamName),
+    readBootstrapRuntimeState: options.readBootstrapRuntimeState,
+    teamMetaStore: {
+      getMeta: (teamName) => service.teamMetaStore.getMeta(teamName),
+    },
+    membersMetaStore: {
+      getMembers: (teamName) => service.membersMetaStore.getMembers(teamName),
+    },
+    launchStateStore: {
+      read: (teamName) => service.launchStateStore.read(teamName),
+    },
+    readConfigSnapshot: (teamName) => service.readConfigSnapshot(teamName),
+    readPersistedRuntimeMembers: (teamName) => service.readPersistedRuntimeMembers(teamName),
+    getMemberSpawnStatuses: (teamName) => service.getMemberSpawnStatuses(teamName),
+    getLiveTeamAgentRuntimeMetadata: (teamName) =>
+      service.getLiveTeamAgentRuntimeMetadata(teamName),
+    runtimeSnapshotCache: service.runtimeSnapshotCacheBoundary,
+    liveTeamAgentRuntimeMetadataCache: service.liveTeamAgentRuntimeMetadataCache,
+    runtimeResourceSampling: service.runtimeResourceSampling,
+    logDebug: options.logDebug,
+  };
+}
+
+export function createTeamProvisioningRuntimeProjectionFromService<
+  TRun extends TeamProvisioningRuntimeSnapshotRun & TeamProvisioningRuntimeStateProjectionRun,
+  TRuntimeAdapterRun extends RuntimeAdapterRunSnapshotSource &
+    TeamProvisioningRuntimeStateProjectionRuntimeAdapterRun,
+>(
+  service: TeamProvisioningRuntimeProjectionServiceHost<TRun, TRuntimeAdapterRun>,
+  options: TeamProvisioningRuntimeProjectionServiceHostOptions
+): TeamProvisioningRuntimeProjection {
+  return createTeamProvisioningRuntimeProjection<TRun, TRuntimeAdapterRun>(
+    createTeamProvisioningRuntimeProjectionDepsFromService(service, options)
+  );
 }

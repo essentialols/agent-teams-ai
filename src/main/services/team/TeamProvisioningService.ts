@@ -505,8 +505,9 @@ import {
 import { mergeRuntimeDiagnostics } from './provisioning/TeamProvisioningRuntimeMetadata';
 import { type LiveTeamAgentRuntimeMetadata } from './provisioning/TeamProvisioningRuntimeMetadataPolicy';
 import {
-  createTeamProvisioningRuntimeProjection,
+  createTeamProvisioningRuntimeProjectionFromService,
   type TeamProvisioningRuntimeProjection,
+  type TeamProvisioningRuntimeProjectionServiceHost,
 } from './provisioning/TeamProvisioningRuntimeProjectionFactory';
 import {
   isOpenCodeRuntimeRecipient as isOpenCodeRuntimeRecipientHelper,
@@ -710,6 +711,13 @@ function getRunRuntimeFailureLabel(run: ProvisioningRun): string {
   return getRuntimeFailureLabelForRequest(run.request);
 }
 
+type RuntimeAdapterRunByTeamEntry = {
+  runId: string;
+  providerId: TeamProviderId;
+  cwd?: string;
+  members?: Record<string, TeamRuntimeMemberLaunchEvidence>;
+};
+
 export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade<ProvisioningRun> {
   private static runtimeProcessTableTimeoutMs =
     DEFAULT_RUNTIME_RESOURCE_SAMPLING_OPTIONS.processTableTimeoutMs;
@@ -798,15 +806,7 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
       [...this.aliveRunByTeam.values()].includes(runId) ||
       [...this.runtimeAdapterRunByTeam.values()].some((entry) => entry.runId === runId),
   });
-  private readonly runtimeAdapterRunByTeam = new Map<
-    string,
-    {
-      runId: string;
-      providerId: TeamProviderId;
-      cwd?: string;
-      members?: Record<string, TeamRuntimeMemberLaunchEvidence>;
-    }
-  >();
+  private readonly runtimeAdapterRunByTeam = new Map<string, RuntimeAdapterRunByTeamEntry>();
   private readonly runTracking = new TeamProvisioningRunTrackingDeliveryHelper({
     state: {
       provisioningRunByTeam: this.provisioningRunByTeam,
@@ -1469,36 +1469,19 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
       readRegularFileUtf8: tryReadRegularFileUtf8,
       logger,
     });
-    const runtimeProjection = createTeamProvisioningRuntimeProjection({
-      runs: this.runs,
-      provisioningRunByTeam: this.provisioningRunByTeam,
-      runtimeAdapterRunByTeam: this.runtimeAdapterRunByTeam,
-      runtimeAdapterProgressByRunId: this.runtimeAdapterProgressByRunId,
-      getRetainedProvisioningProgressMap: () =>
-        this.retainedProvisioningProgressState.getRetainedProvisioningProgressMap(),
-      runTracking: this.runTracking,
-      hasSecondaryRuntimeRuns: (teamName) => this.hasSecondaryRuntimeRuns(teamName),
-      readBootstrapRuntimeState,
-      teamMetaStore: {
-        getMeta: (targetTeamName) => this.teamMetaStore.getMeta(targetTeamName),
-      },
-      membersMetaStore: {
-        getMembers: (targetTeamName) => this.membersMetaStore.getMembers(targetTeamName),
-      },
-      launchStateStore: {
-        read: (targetTeamName) => this.launchStateStore.read(targetTeamName),
-      },
-      readConfigSnapshot: (targetTeamName) => this.readConfigSnapshot(targetTeamName),
-      readPersistedRuntimeMembers: (targetTeamName) =>
-        this.readPersistedRuntimeMembers(targetTeamName),
-      getMemberSpawnStatuses: (targetTeamName) => this.getMemberSpawnStatuses(targetTeamName),
-      getLiveTeamAgentRuntimeMetadata: (targetTeamName) =>
-        this.getLiveTeamAgentRuntimeMetadata(targetTeamName),
-      runtimeSnapshotCache: this.runtimeSnapshotCacheBoundary,
-      liveTeamAgentRuntimeMetadataCache: this.liveTeamAgentRuntimeMetadataCache,
-      runtimeResourceSampling: this.runtimeResourceSampling,
-      logDebug: (message) => logger.debug(message),
-    });
+    const runtimeProjection = createTeamProvisioningRuntimeProjectionFromService<
+      ProvisioningRun,
+      RuntimeAdapterRunByTeamEntry
+    >(
+      this as unknown as TeamProvisioningRuntimeProjectionServiceHost<
+        ProvisioningRun,
+        RuntimeAdapterRunByTeamEntry
+      >,
+      {
+        readBootstrapRuntimeState,
+        logDebug: (message) => logger.debug(message),
+      }
+    );
     this.liveRuntimeMetadataPorts = runtimeProjection.liveRuntimeMetadataPorts;
     this.runtimeSnapshotFacade = runtimeProjection.runtimeSnapshotFacade;
     this.openCodeRuntimeLaneRecoveryFacade =

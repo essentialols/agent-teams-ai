@@ -70,9 +70,7 @@ import {
 import {
   clearOpenCodeRuntimeLaneStorage,
   inspectOpenCodeRuntimeLaneStorage,
-  migrateLegacyOpenCodeRuntimeState,
   readOpenCodeRuntimeLaneIndex,
-  setOpenCodeRuntimeActiveRunManifest,
   upsertOpenCodeRuntimeLaneIndexEntry,
 } from './opencode/store/OpenCodeRuntimeManifestEvidenceReader';
 import { getSystemLocale } from './provisioning/TeamProvisioningAgentLanguage';
@@ -335,6 +333,10 @@ import {
   persistOpenCodeRuntimeAdapterLaunchResult as persistOpenCodeRuntimeAdapterLaunchResultHelper,
   summarizeOpenCodeAggregateLaunchState as summarizeOpenCodeAggregateLaunchStateHelper,
 } from './provisioning/TeamProvisioningOpenCodeAggregateLaunchPersistence';
+import {
+  createTeamProvisioningOpenCodeAggregatePrimaryLanePortsFromService,
+  type TeamProvisioningOpenCodeAggregatePrimaryLaneServiceHost,
+} from './provisioning/TeamProvisioningOpenCodeAggregatePrimaryLanePortsFactory';
 import { type OpenCodeRuntimeBootstrapEvidencePorts } from './provisioning/TeamProvisioningOpenCodeBootstrapEvidence';
 import {
   isOpenCodeBootstrapStallWindowElapsed as isOpenCodeBootstrapStallWindowElapsedHelper,
@@ -3321,21 +3323,12 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
     prompt: string;
     previousLaunchState: PersistedTeamLaunchSnapshot | null;
   }): Promise<TeamRuntimeLaunchResult | null> {
-    return launchOpenCodeAggregatePrimaryLaneHelper(params, {
-      getTeamsBasePath,
-      getOpenCodeRuntimeLaunchCwd: (baseCwd, members) =>
-        this.prepareFacade.getOpenCodeRuntimeLaunchCwd(baseCwd, members),
-      migrateLegacyOpenCodeRuntimeState,
-      upsertOpenCodeRuntimeLaneIndexEntry,
-      setOpenCodeRuntimeActiveRunManifest,
-      persistOpenCodeRuntimeAdapterLaunchResult: (result, launchInput) =>
-        this.persistOpenCodeRuntimeAdapterLaunchResult(result, launchInput),
-      syncOpenCodeRuntimeToolApprovals: (input) =>
-        this.toolApprovalFacade.syncOpenCodeRuntimeToolApprovals(input),
-      setRuntimeAdapterRunByTeam: (teamName, runtimeRun) => {
-        this.runtimeAdapterRunByTeam.set(teamName, runtimeRun);
-      },
-    });
+    return launchOpenCodeAggregatePrimaryLaneHelper(
+      params,
+      createTeamProvisioningOpenCodeAggregatePrimaryLanePortsFromService(
+        this as unknown as TeamProvisioningOpenCodeAggregatePrimaryLaneServiceHost
+      )
+    );
   }
 
   private summarizeOpenCodeAggregateLaunchState(input: {

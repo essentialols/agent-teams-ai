@@ -227,10 +227,7 @@ import {
   createInitialMemberSpawnStatusEntry,
   MEMBER_LAUNCH_GRACE_MS,
 } from './provisioning/TeamProvisioningMemberSpawnStatusPolicy';
-import {
-  buildRuntimeSpawnStatusRecord as buildRuntimeSpawnStatusRecordHelper,
-  filterRemovedMembersFromLaunchSnapshot,
-} from './provisioning/TeamProvisioningMemberStatusProjection';
+import { buildRuntimeSpawnStatusRecord as buildRuntimeSpawnStatusRecordHelper } from './provisioning/TeamProvisioningMemberStatusProjection';
 import { createTeamProvisioningMemberWorkSyncProofBoundary } from './provisioning/TeamProvisioningMemberWorkSyncProofBoundaryFactory';
 import {
   persistTeamProvisioningInboxMessage,
@@ -351,11 +348,8 @@ import {
 } from './provisioning/TeamProvisioningOpenCodeStoppedLaneCleanupBoundary';
 import { writeOpenCodeTeamConfig } from './provisioning/TeamProvisioningOpenCodeTeamConfigWriter';
 import { TeamProvisioningOutputRecoveryFacade } from './provisioning/TeamProvisioningOutputRecoveryFacade';
-import {
-  reconcilePersistedLaunchStateWithTeamProvisioningService,
-  type TeamProvisioningPersistedLaunchReconcileServiceHost,
-} from './provisioning/TeamProvisioningPersistedLaunchReconcilePorts';
 import { type PersistedTeamConfigCacheEntry } from './provisioning/TeamProvisioningPersistedTeamConfigAccess';
+import { type TeamProvisioningPersistenceReconcileFacade } from './provisioning/TeamProvisioningPersistenceReconcileFacade';
 import { createTeamProvisioningPersistentRuntimeCleanup } from './provisioning/TeamProvisioningPersistentRuntimeCleanup';
 import { TeamProvisioningPrepareFacade } from './provisioning/TeamProvisioningPrepareFacade';
 import { createNodePreparePrimaryOwnedMemberRestartRuntimeUseCase } from './provisioning/TeamProvisioningPreparePrimaryOwnedMemberRestartRuntimeUseCase';
@@ -996,6 +990,7 @@ export class TeamProvisioningService extends TeamProvisioningDiagnosticsPrefligh
     });
   private readonly launchStateWrittenRunIdByTeam = new Map<string, string>();
   private readonly launchStateStoreBoundary!: TeamProvisioningLaunchStateStoreBoundary;
+  private readonly persistenceReconcileFacade!: TeamProvisioningPersistenceReconcileFacade<ProvisioningRun>;
   private readonly configTaskActivityBoundary!: TeamProvisioningConfigTaskActivityBoundary<ProvisioningRun>;
   private readonly failedOpenCodeSecondaryRetryInFlightByTeam = new Map<
     string,
@@ -2459,14 +2454,14 @@ export class TeamProvisioningService extends TeamProvisioningDiagnosticsPrefligh
     teamName: string,
     options?: { expectedRunId?: string }
   ): Promise<void> {
-    await this.launchStateStoreBoundary.clearPersistedLaunchState(teamName, options);
+    await this.persistenceReconcileFacade.clearPersistedLaunchState(teamName, options);
   }
 
   private canClearPersistedLaunchStateForRun(
     teamName: string,
     expectedRunId: string | undefined
   ): boolean {
-    return this.launchStateStoreBoundary.canClearPersistedLaunchStateForRun(
+    return this.persistenceReconcileFacade.canClearPersistedLaunchStateForRun(
       teamName,
       expectedRunId
     );
@@ -2476,7 +2471,7 @@ export class TeamProvisioningService extends TeamProvisioningDiagnosticsPrefligh
     teamName: string,
     options?: { expectedRunId?: string }
   ): Promise<void> {
-    await this.launchStateStoreBoundary.clearPersistedLaunchStateNow(teamName, options);
+    await this.persistenceReconcileFacade.clearPersistedLaunchStateNow(teamName, options);
   }
 
   private async applyOpenCodeSecondaryEvidenceOverlay(params: {
@@ -2495,7 +2490,7 @@ export class TeamProvisioningService extends TeamProvisioningDiagnosticsPrefligh
     teamName: string,
     snapshot: PersistedTeamLaunchSnapshot
   ): Promise<PersistedTeamLaunchSnapshot> {
-    return this.launchStateStoreBoundary.writeLaunchStateSnapshot(teamName, snapshot);
+    return this.persistenceReconcileFacade.writeLaunchStateSnapshot(teamName, snapshot);
   }
 
   private async writeLaunchStateSnapshotNow(
@@ -2503,18 +2498,18 @@ export class TeamProvisioningService extends TeamProvisioningDiagnosticsPrefligh
     snapshot: PersistedTeamLaunchSnapshot,
     options?: { allowNoopSkip?: boolean; runId?: string }
   ): Promise<LaunchStateWriteResult> {
-    return this.launchStateStoreBoundary.writeLaunchStateSnapshotNow(teamName, snapshot, options);
+    return this.persistenceReconcileFacade.writeLaunchStateSnapshotNow(teamName, snapshot, options);
   }
 
   private isLaunchStateNoopRefreshDue(snapshot: PersistedTeamLaunchSnapshot): boolean {
-    return this.launchStateStoreBoundary.isLaunchStateNoopRefreshDue(snapshot);
+    return this.persistenceReconcileFacade.isLaunchStateNoopRefreshDue(snapshot);
   }
 
   private async enqueueLaunchStateStoreOperation<T>(
     teamName: string,
     operation: () => Promise<T>
   ): Promise<T> {
-    return this.launchStateStoreBoundary.enqueue(teamName, operation);
+    return this.persistenceReconcileFacade.enqueueLaunchStateStoreOperation(teamName, operation);
   }
 
   private getMemberLaunchSummary(run: ProvisioningRun): {
@@ -2784,46 +2779,14 @@ export class TeamProvisioningService extends TeamProvisioningDiagnosticsPrefligh
       ? 'finished'
       : 'active'
   ): Promise<PersistedTeamLaunchSnapshot | null> {
-    return this.enqueueLaunchStateStoreOperation(run.teamName, () =>
-      this.persistLaunchStateSnapshotNow(run, launchPhase)
-    );
+    return this.persistenceReconcileFacade.persistLaunchStateSnapshot(run, launchPhase);
   }
 
   private async persistLaunchStateSnapshotNow(
     run: ProvisioningRun,
     launchPhase: 'active' | 'finished' | 'reconciled'
   ): Promise<PersistedTeamLaunchSnapshot | null> {
-    await this.primaryBootstrapTruthReporting.overlayPrimaryBootstrapTruthIntoRunStatusesFromBootstrapState(
-      run
-    );
-    const snapshot = this.buildLiveLaunchSnapshotForRun(run, launchPhase);
-    if (!snapshot) {
-      if (run.isLaunch) {
-        await this.clearPersistedLaunchStateNow(run.teamName, { expectedRunId: run.runId });
-      }
-      return null;
-    }
-
-    const metaMembers = await this.membersMetaStore.getMembers(run.teamName).catch(() => []);
-    const filteredSnapshot = filterRemovedMembersFromLaunchSnapshot(
-      snapshot,
-      metaMembers,
-      getPersistedLaunchMemberNames(snapshot)
-    );
-
-    if (filteredSnapshot.teamLaunchState === 'clean_success' && launchPhase !== 'active') {
-      await this.clearPersistedLaunchStateNow(run.teamName, { expectedRunId: run.runId });
-      return null;
-    }
-
-    const writeResult = await this.writeLaunchStateSnapshotNow(run.teamName, filteredSnapshot, {
-      allowNoopSkip: true,
-      runId: run.runId,
-    });
-    if (writeResult.wrote) {
-      this.invalidateRuntimeSnapshotCaches(run.teamName);
-    }
-    return writeResult.snapshot;
+    return this.persistenceReconcileFacade.persistLaunchStateSnapshotNow(run, launchPhase);
   }
 
   private async launchSingleMixedSecondaryLane(
@@ -2888,10 +2851,7 @@ export class TeamProvisioningService extends TeamProvisioningDiagnosticsPrefligh
     snapshot: ReturnType<typeof createPersistedLaunchSnapshot> | null;
     statuses: Record<string, MemberSpawnStatusEntry>;
   }> {
-    return reconcilePersistedLaunchStateWithTeamProvisioningService(
-      teamName,
-      this as unknown as TeamProvisioningPersistedLaunchReconcileServiceHost
-    );
+    return this.persistenceReconcileFacade.reconcilePersistedLaunchState(teamName);
   }
 
   private async findBootstrapTranscriptFailureReason(

@@ -100,6 +100,11 @@ import {
 } from './TeamProvisioningOutputRecoveryFacade';
 import { type PersistedTeamConfigCacheEntry } from './TeamProvisioningPersistedTeamConfigAccess';
 import {
+  createTeamProvisioningPersistenceReconcileFacadeFromService,
+  TeamProvisioningPersistenceReconcileFacade,
+  type TeamProvisioningPersistenceReconcileFacadeServiceHost,
+} from './TeamProvisioningPersistenceReconcileFacade';
+import {
   createTeamProvisioningPrepareFacadeFromService,
   TeamProvisioningPrepareFacade,
   type TeamProvisioningPrepareFacadeServiceHost,
@@ -222,6 +227,7 @@ export interface TeamProvisioningServiceComposition {
   openCodeRuntimeLaneRecoveryFacade: TeamProvisioningOpenCodeRuntimeLaneRecoveryFacade;
   openCodeRuntimeDeliveryBoundaryHost: TeamProvisioningOpenCodeRuntimeDeliveryBoundaryHost<ProvisioningRun>;
   launchStateStoreBoundary: TeamProvisioningLaunchStateStoreBoundary;
+  persistenceReconcileFacade: TeamProvisioningPersistenceReconcileFacade<ProvisioningRun>;
   configTaskActivityBoundary: TeamProvisioningConfigTaskActivityBoundary<ProvisioningRun>;
   toolApprovalFacade: TeamProvisioningToolApprovalFacade<ProvisioningRun>;
   idlePromptInjectionBoundary: TeamProvisioningIdlePromptInjectionBoundary<ProvisioningRun>;
@@ -326,6 +332,10 @@ export function createTeamProvisioningServiceComposition(
     }
   );
   assignCompositionPart(service, 'launchStateStoreBoundary', launchStateStoreBoundary);
+  const persistenceReconcileFacade = createTeamProvisioningPersistenceReconcileFacadeFromService(
+    service as TeamProvisioningPersistenceReconcileFacadeServiceHost<ProvisioningRun>
+  );
+  assignCompositionPart(service, 'persistenceReconcileFacade', persistenceReconcileFacade);
   const configTaskActivityBoundary =
     createTeamProvisioningConfigTaskActivityBoundaryFromService<ProvisioningRun>(
       service as TeamProvisioningConfigTaskActivityBoundaryServiceHost,
@@ -593,6 +603,7 @@ export function createTeamProvisioningServiceComposition(
     openCodeRuntimeLaneRecoveryFacade,
     openCodeRuntimeDeliveryBoundaryHost,
     launchStateStoreBoundary,
+    persistenceReconcileFacade,
     configTaskActivityBoundary,
     toolApprovalFacade,
     idlePromptInjectionBoundary,

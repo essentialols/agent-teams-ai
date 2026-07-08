@@ -57,6 +57,21 @@ export interface TeamProvisioningIdlePromptInjectionPortsFactoryDeps<
   writeLeadStdin?: TeamProvisioningIdlePromptInjectionPorts<TRun>['writeLeadStdin'];
 }
 
+export interface TeamProvisioningIdlePromptInjectionServiceHost<
+  TRun extends TeamProvisioningIdlePromptInjectionPortsFactoryRun,
+> {
+  configFacade: {
+    readConfigForObservation: TeamProvisioningIdlePromptInjectionServiceAdapter<TRun>['readConfigForObservation'];
+  };
+  setLeadActivity: TeamProvisioningIdlePromptInjectionServiceAdapter<TRun>['setLeadActivity'];
+  resetRuntimeToolActivity: TeamProvisioningIdlePromptInjectionServiceAdapter<TRun>['resetRuntimeToolActivity'];
+  getRunLeadName: TeamProvisioningIdlePromptInjectionServiceAdapter<TRun>['getRunLeadName'];
+}
+
+export interface TeamProvisioningIdlePromptInjectionServiceHostOptions {
+  logger: TeamProvisioningIdlePromptInjectionLogger;
+}
+
 export interface TeamProvisioningIdlePromptInjectionBoundary<
   TRun extends TeamProvisioningIdlePromptInjectionPortsFactoryRun,
 > {
@@ -110,4 +125,34 @@ export function createTeamProvisioningIdlePromptInjectionBoundary<
     injectPostCompactReminder: (run) => injectPostCompactReminder(run, ports),
     injectGeminiPostLaunchHydration: (run) => injectGeminiPostLaunchHydration(run, ports),
   };
+}
+
+export function createTeamProvisioningIdlePromptInjectionDepsFromService<
+  TRun extends TeamProvisioningIdlePromptInjectionPortsFactoryRun,
+>(
+  service: TeamProvisioningIdlePromptInjectionServiceHost<TRun>,
+  options: TeamProvisioningIdlePromptInjectionServiceHostOptions
+): TeamProvisioningIdlePromptInjectionPortsFactoryDeps<TRun> {
+  return {
+    logger: options.logger,
+    service: {
+      readConfigForObservation: (teamName) =>
+        service.configFacade.readConfigForObservation(teamName),
+      setLeadActivity: (run, state) => service.setLeadActivity(run, state),
+      resetRuntimeToolActivity: (run, memberName) =>
+        service.resetRuntimeToolActivity(run, memberName),
+      getRunLeadName: (run) => service.getRunLeadName(run),
+    },
+  };
+}
+
+export function createTeamProvisioningIdlePromptInjectionBoundaryFromService<
+  TRun extends TeamProvisioningIdlePromptInjectionPortsFactoryRun,
+>(
+  service: TeamProvisioningIdlePromptInjectionServiceHost<TRun>,
+  options: TeamProvisioningIdlePromptInjectionServiceHostOptions
+): TeamProvisioningIdlePromptInjectionBoundary<TRun> {
+  return createTeamProvisioningIdlePromptInjectionBoundary<TRun>(
+    createTeamProvisioningIdlePromptInjectionDepsFromService(service, options)
+  );
 }

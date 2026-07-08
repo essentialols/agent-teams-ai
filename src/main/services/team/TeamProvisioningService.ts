@@ -176,8 +176,9 @@ import {
   stopProvisioningFilesystemMonitor,
 } from './provisioning/TeamProvisioningFilesystemMonitor';
 import {
-  createTeamProvisioningIdlePromptInjectionBoundary,
+  createTeamProvisioningIdlePromptInjectionBoundaryFromService,
   type TeamProvisioningIdlePromptInjectionBoundary,
+  type TeamProvisioningIdlePromptInjectionServiceHost,
 } from './provisioning/TeamProvisioningIdlePromptInjectionPortsFactory';
 import { markTeamInboxMessagesRead } from './provisioning/TeamProvisioningInboxPersistence';
 import {
@@ -1591,17 +1592,10 @@ export class TeamProvisioningService extends TeamProvisioningCompatibilityFacade
       teammateOperationalToolNames: AGENT_TEAMS_NAMESPACED_TEAMMATE_OPERATIONAL_TOOL_NAMES,
     });
     this.idlePromptInjectionBoundary =
-      createTeamProvisioningIdlePromptInjectionBoundary<ProvisioningRun>({
-        logger,
-        service: {
-          readConfigForObservation: (teamName) =>
-            this.configFacade.readConfigForObservation(teamName),
-          setLeadActivity: (run, state) => this.setLeadActivity(run, state),
-          resetRuntimeToolActivity: (run, memberName) =>
-            this.resetRuntimeToolActivity(run, memberName),
-          getRunLeadName: (run) => this.getRunLeadName(run),
-        },
-      });
+      createTeamProvisioningIdlePromptInjectionBoundaryFromService<ProvisioningRun>(
+        this as unknown as TeamProvisioningIdlePromptInjectionServiceHost<ProvisioningRun>,
+        { logger }
+      );
     this.providerRuntime = createTeamProvisioningProviderRuntimeFacadeFromService(
       this as unknown as TeamProvisioningProviderRuntimeFacadeServiceHost,
       {

@@ -7,7 +7,8 @@ import type {
   OpenCodeRuntimeControlAck,
   TeamHttpDataApi,
   TeamHttpRuntimeApi,
-  TeamLaunchApi,
+  TeamProvisioningStartApi,
+  TeamProvisioningStatusApi,
   TeamRuntimeControlCompatibilityApi,
   TeamTaskActivityRepairApi,
 } from '@main/services/team/contracts/TeamProvisioningApis';
@@ -62,8 +63,10 @@ describe('HTTP team runtime routes', () => {
     const teamLaunchApi = {
       createTeam,
       launchTeam,
+    } satisfies TeamProvisioningStartApi;
+    const teamProvisioningStatusApi = {
       getProvisioningStatus,
-    } satisfies TeamLaunchApi;
+    } satisfies TeamProvisioningStatusApi;
     const teamTaskActivityRepairApi = {
       repairStaleTaskActivityIntervalsBeforeSnapshot,
     } satisfies TeamTaskActivityRepairApi;
@@ -98,6 +101,7 @@ describe('HTTP team runtime routes', () => {
       sshConnectionManager: {} as HttpServices['sshConnectionManager'],
       teamDataApi,
       teamLaunchApi,
+      teamProvisioningStatusApi,
       teamTaskActivityApi: teamTaskActivityRepairApi,
       teamRuntimeApi,
       teamRuntimeControlApi,
@@ -841,12 +845,12 @@ describe('HTTP team runtime routes', () => {
     }
   });
 
-  it('returns 501 for provisioning status without the launch facade', async () => {
+  it('returns 501 for provisioning status without the status facade', async () => {
     const app = Fastify();
     const mocks = createServicesMock();
     registerTeamRoutes(app, {
       ...mocks.services,
-      teamLaunchApi: undefined,
+      teamProvisioningStatusApi: undefined,
     });
     await app.ready();
 
@@ -858,7 +862,7 @@ describe('HTTP team runtime routes', () => {
 
       expect(response.statusCode).toBe(501);
       expect(response.json()).toEqual({
-        error: 'Team launch control is not available in this mode',
+        error: 'Team provisioning status is not available in this mode',
       });
       expect(mocks.getProvisioningStatus).not.toHaveBeenCalled();
     } finally {

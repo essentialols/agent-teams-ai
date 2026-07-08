@@ -29,7 +29,7 @@ import type {
   ToolApprovalSettings,
 } from '@shared/types/team';
 
-export interface TeamLaunchApi {
+export interface TeamProvisioningStartApi {
   createTeam(
     request: TeamCreateRequest,
     onProgress: (progress: TeamProvisioningProgress) => void
@@ -38,8 +38,13 @@ export interface TeamLaunchApi {
     request: TeamLaunchRequest,
     onProgress: (progress: TeamProvisioningProgress) => void
   ): Promise<TeamLaunchResponse>;
+}
+
+export interface TeamProvisioningStatusApi {
   getProvisioningStatus(runId: string): Promise<TeamProvisioningProgress>;
 }
+
+export interface TeamLaunchApi extends TeamProvisioningStartApi, TeamProvisioningStatusApi {}
 
 export interface TeamProvisioningRunApi {
   cancelProvisioning(runId: string): Promise<void>;
@@ -240,6 +245,23 @@ export function bindTeamLaunchApi(source: TeamLaunchApi): TeamLaunchApi {
   return {
     createTeam: source.createTeam.bind(source),
     launchTeam: source.launchTeam.bind(source),
+    getProvisioningStatus: source.getProvisioningStatus.bind(source),
+  };
+}
+
+export function bindTeamProvisioningStartApi(
+  source: TeamProvisioningStartApi
+): TeamProvisioningStartApi {
+  return {
+    createTeam: source.createTeam.bind(source),
+    launchTeam: source.launchTeam.bind(source),
+  };
+}
+
+export function bindTeamProvisioningStatusApi(
+  source: TeamProvisioningStatusApi
+): TeamProvisioningStatusApi {
+  return {
     getProvisioningStatus: source.getProvisioningStatus.bind(source),
   };
 }

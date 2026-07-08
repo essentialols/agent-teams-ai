@@ -41,7 +41,8 @@ import type { SshConnectionManager } from '../services/infrastructure/SshConnect
 import type {
   TeamHttpDataApi,
   TeamHttpRuntimeApi,
-  TeamLaunchApi,
+  TeamProvisioningStartApi,
+  TeamProvisioningStatusApi,
   TeamRuntimeControlCompatibilityApi,
   TeamTaskActivityRepairApi,
 } from '../services/team/contracts/TeamProvisioningApis';
@@ -63,7 +64,8 @@ export interface HttpServices {
   updaterService: UpdaterService;
   sshConnectionManager: SshConnectionManager;
   teamDataApi?: TeamHttpDataApi;
-  teamLaunchApi?: TeamLaunchApi;
+  teamLaunchApi?: TeamProvisioningStartApi;
+  teamProvisioningStatusApi?: TeamProvisioningStatusApi;
   teamTaskActivityApi?: TeamTaskActivityRepairApi;
   teamRuntimeApi?: TeamHttpRuntimeApi;
   teamRuntimeControlApi?: TeamRuntimeControlCompatibilityApi;
@@ -81,6 +83,7 @@ export function registerHttpRoutes(
   if (
     services.teamDataApi ||
     services.teamLaunchApi ||
+    services.teamProvisioningStatusApi ||
     services.teamTaskActivityApi ||
     services.teamRuntimeApi ||
     services.teamRuntimeControlApi

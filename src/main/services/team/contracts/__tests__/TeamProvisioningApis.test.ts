@@ -11,6 +11,8 @@ import {
   bindTeamMessagingApi,
   bindTeamProvisioningPreflightApi,
   bindTeamProvisioningRunApi,
+  bindTeamProvisioningStartApi,
+  bindTeamProvisioningStatusApi,
   bindTeamRuntimeApi,
   bindTeamRuntimeControlCompatibilityApi,
   bindTeamTaskActivityRepairApi,
@@ -29,6 +31,8 @@ import type {
   TeamOpenCodeMemberInboxRelayOptions,
   TeamProvisioningPreflightApi,
   TeamProvisioningRunApi,
+  TeamProvisioningStartApi,
+  TeamProvisioningStatusApi,
   TeamRuntimeApi,
   TeamRuntimeControlCompatibilityApi,
   TeamTaskActivityRepairApi,
@@ -99,6 +103,63 @@ describe('TeamProvisioning API binders', () => {
     await expect(getProvisioningStatus('run-bound')).resolves.toMatchObject({
       runId: 'run-bound',
       teamName: 'team-bound',
+    });
+  });
+
+  it('binds provisioning start methods to the source object', async () => {
+    interface StartSource extends TeamProvisioningStartApi {
+      readonly runId: string;
+    }
+
+    const source: StartSource = {
+      runId: 'run-start',
+      createTeam(this: StartSource): Promise<TeamCreateResponse> {
+        return Promise.resolve({ runId: this.runId });
+      },
+      launchTeam(this: StartSource): Promise<TeamLaunchResponse> {
+        return Promise.resolve({ runId: this.runId });
+      },
+    };
+
+    const api = bindTeamProvisioningStartApi(source);
+    const createTeam = api.createTeam.bind(undefined);
+    const launchTeam = api.launchTeam.bind(undefined);
+
+    expect(Object.keys(api).sort()).toEqual(['createTeam', 'launchTeam']);
+    await expect(
+      createTeam({ teamName: 'team-start', cwd: TEST_TEAM_CWD, members: [] }, () => undefined)
+    ).resolves.toEqual({ runId: 'run-start' });
+    await expect(
+      launchTeam({ teamName: 'team-start', cwd: TEST_TEAM_CWD }, () => undefined)
+    ).resolves.toEqual({ runId: 'run-start' });
+  });
+
+  it('binds provisioning status methods to the source object', async () => {
+    interface StatusSource extends TeamProvisioningStatusApi {
+      readonly runId: string;
+    }
+
+    const source: StatusSource = {
+      runId: 'run-status',
+      getProvisioningStatus(this: StatusSource): Promise<TeamProvisioningProgress> {
+        return Promise.resolve({
+          runId: this.runId,
+          teamName: 'team-status',
+          state: 'ready',
+          message: 'ready',
+          startedAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:01.000Z',
+        });
+      },
+    };
+
+    const api = bindTeamProvisioningStatusApi(source);
+    const getProvisioningStatus = api.getProvisioningStatus.bind(undefined);
+
+    expect(Object.keys(api)).toEqual(['getProvisioningStatus']);
+    await expect(getProvisioningStatus('run-status')).resolves.toMatchObject({
+      runId: 'run-status',
+      teamName: 'team-status',
     });
   });
 

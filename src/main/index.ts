@@ -119,13 +119,15 @@ import {
   bindTeamHttpDataApi,
   bindTeamHttpRuntimeApi,
   bindTeamIpcHandlerApis,
-  bindTeamLaunchApi,
+  bindTeamProvisioningStartApi,
+  bindTeamProvisioningStatusApi,
   bindTeamRuntimeControlCompatibilityApi,
   bindTeamTaskActivityRepairApi,
   type TeamDiagnosticsApi,
   type TeamHttpRuntimeApi,
   type TeamIpcHandlerApis,
-  type TeamLaunchApi,
+  type TeamProvisioningStartApi,
+  type TeamProvisioningStatusApi,
   type TeamRuntimeControlCompatibilityApi,
   type TeamTaskActivityRepairApi,
 } from '@main/services/team/contracts/TeamProvisioningApis';
@@ -1065,7 +1067,8 @@ let tokenUsageFeature: TokenUsageFeatureFacade | null = null;
 let memberWorkSyncFeature: MemberWorkSyncFeatureFacade | null = null;
 let teamDataService: TeamDataService;
 let teamProvisioningService: TeamProvisioningService;
-let teamHttpLaunchApi: TeamLaunchApi | null = null;
+let teamHttpLaunchApi: TeamProvisioningStartApi | null = null;
+let teamHttpProvisioningStatusApi: TeamProvisioningStatusApi | null = null;
 let teamHttpTaskActivityApi: TeamTaskActivityRepairApi | null = null;
 let teamHttpRuntimeApi: TeamHttpRuntimeApi | null = null;
 let teamHttpRuntimeControlApi: TeamRuntimeControlCompatibilityApi | null = null;
@@ -2603,7 +2606,8 @@ async function initializeServices(): Promise<void> {
     message: 'Wiring app actions...',
   });
 
-  teamHttpLaunchApi = bindTeamLaunchApi(teamProvisioningService);
+  teamHttpLaunchApi = bindTeamProvisioningStartApi(teamProvisioningService);
+  teamHttpProvisioningStatusApi = bindTeamProvisioningStatusApi(teamProvisioningService);
   teamHttpTaskActivityApi = bindTeamTaskActivityRepairApi(teamProvisioningService);
   teamHttpRuntimeApi = bindTeamHttpRuntimeApi(teamProvisioningService);
   teamHttpRuntimeControlApi = bindTeamRuntimeControlCompatibilityApi(teamProvisioningService);
@@ -2724,6 +2728,7 @@ async function startHttpServer(
     const activeContext = contextRegistry.getActive();
     if (
       !teamHttpLaunchApi ||
+      !teamHttpProvisioningStatusApi ||
       !teamHttpTaskActivityApi ||
       !teamHttpRuntimeApi ||
       !teamHttpRuntimeControlApi
@@ -2745,6 +2750,7 @@ async function startHttpServer(
         sshConnectionManager,
         teamDataApi: bindTeamHttpDataApi(teamDataService),
         teamLaunchApi: teamHttpLaunchApi,
+        teamProvisioningStatusApi: teamHttpProvisioningStatusApi,
         teamTaskActivityApi: teamHttpTaskActivityApi,
         teamRuntimeApi: teamHttpRuntimeApi,
         teamRuntimeControlApi: teamHttpRuntimeControlApi,

@@ -25,7 +25,6 @@ const legacyLineCaps = {
   "src/worker-codex/tests/codex-goal-mcp.test.ts": 6272,
   "src/worker-codex/tests/codex-goal-ops.test.ts": 1526,
   "src/worker-codex/tests/file-backend-codex-worker.test.ts": 2844,
-  "src/worker-core/run-events.ts": 1825,
   "src/worker-core/safe-execution.ts": 2099,
   "src/worker-core/tests/safe-execution.test.ts": 1892,
   "src/worker-core/worker-pool.ts": 1003,

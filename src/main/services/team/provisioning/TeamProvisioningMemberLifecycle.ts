@@ -637,6 +637,7 @@ export class TeamProvisioningMemberLifecycleController {
       memberSpec,
       run: input.run,
     });
+    this.assertRunStillCurrentAndAlive(input.run, input.teamName);
     const memberMcpPolicy = normalizeTeamMemberMcpPolicy(memberSpec.mcpPolicy);
     const mcpConfigPath = await this.mcpConfigBuilder.writeConfigFile(cwd, {
       mcpPolicy: memberMcpPolicy,
@@ -715,6 +716,7 @@ export class TeamProvisioningMemberLifecycleController {
       args: runtimeArgs,
     });
 
+    this.assertRunStillCurrentAndAlive(input.run, input.teamName);
     await this.updateDirectTmuxRestartMemberConfig({
       teamName: input.teamName,
       memberName: input.memberName,
@@ -728,6 +730,7 @@ export class TeamProvisioningMemberLifecycleController {
       joinedAt: Date.now(),
       bootstrapExpectedAfter,
     });
+    this.assertRunStillCurrentAndAlive(input.run, input.teamName);
     this.enqueueDirectRestartPrompt({
       teamName: input.teamName,
       memberName: input.configuredMember.name,
@@ -820,6 +823,7 @@ export class TeamProvisioningMemberLifecycleController {
       memberSpec,
       run: input.run,
     });
+    this.assertRunStillCurrentAndAlive(input.run, input.teamName);
     const memberMcpPolicy = normalizeTeamMemberMcpPolicy(memberSpec.mcpPolicy);
     const mcpConfigPath = await this.mcpConfigBuilder.writeConfigFile(cwd, {
       mcpPolicy: memberMcpPolicy,
@@ -918,6 +922,7 @@ export class TeamProvisioningMemberLifecycleController {
       ...runtimeArgsPlan.settingsArgs,
     ]);
 
+    this.assertRunStillCurrentAndAlive(input.run, input.teamName);
     const stdoutLog = fs.createWriteStream(runtimePaths.stdoutPath, { flags: 'a', mode: 0o600 });
     const stderrLog = fs.createWriteStream(runtimePaths.stderrPath, { flags: 'a', mode: 0o600 });
     const child = spawnCli(claudePath, runtimeArgs, {
@@ -989,6 +994,7 @@ export class TeamProvisioningMemberLifecycleController {
     child.unref();
 
     try {
+      this.assertRunStillCurrentAndAlive(input.run, input.teamName);
       await this.appendDirectProcessRuntimeEvent({
         type: 'process_spawned',
         eventsPath: runtimePaths.eventsPath,
@@ -1013,6 +1019,7 @@ export class TeamProvisioningMemberLifecycleController {
         source: runtimeEventSource,
         detail: 'stdout and stderr attached',
       });
+      this.assertRunStillCurrentAndAlive(input.run, input.teamName);
       await this.updateDirectTmuxRestartMemberConfig({
         teamName: input.teamName,
         memberName: input.memberName,
@@ -1037,6 +1044,7 @@ export class TeamProvisioningMemberLifecycleController {
             }
           : {}),
       });
+      this.assertRunStillCurrentAndAlive(input.run, input.teamName);
       this.enqueueDirectRestartPrompt({
         teamName: input.teamName,
         memberName: input.configuredMember.name,
@@ -1178,6 +1186,18 @@ export class TeamProvisioningMemberLifecycleController {
     if (reason === 'member_restored') return 'primary_member_restored';
     if (reason === 'member_updated') return 'primary_member_updated';
     return 'primary_member_added';
+  }
+
+  private assertRunStillCurrentAndAlive(run: ProvisioningRun, teamName: string): void {
+    if (
+      this.getAliveRunId(teamName) !== run.runId ||
+      this.runs.get(run.runId) !== run ||
+      !this.isCurrentTrackedRun(run) ||
+      run.processKilled ||
+      run.cancelRequested
+    ) {
+      throw new Error(`Team "${teamName}" is not currently running`);
+    }
   }
 
   async attachLiveRosterMember(
@@ -1329,6 +1349,7 @@ export class TeamProvisioningMemberLifecycleController {
         `Member "${memberName}" uses an in-process runtime and cannot be attached here`
       );
     }
+    this.assertRunStillCurrentAndAlive(run, teamName);
     if (replaceExistingRuntime) {
       await this.stopPrimaryOwnedRosterRuntime({
         teamName,
@@ -1337,6 +1358,7 @@ export class TeamProvisioningMemberLifecycleController {
         liveRuntimeByMember,
         actionLabel: `Update for teammate "${memberName}"`,
       });
+      this.assertRunStillCurrentAndAlive(run, teamName);
       this.setMemberSpawnStatus(run, memberName, 'offline');
     }
 
@@ -1426,6 +1448,7 @@ export class TeamProvisioningMemberLifecycleController {
     const liveRuntimeByMember = await this.getLiveTeamAgentRuntimeMetadata(teamName).catch(
       () => new Map<string, LiveTeamAgentRuntimeMetadata>()
     );
+    this.assertRunStillCurrentAndAlive(run, teamName);
     await this.stopPrimaryOwnedRosterRuntime({
       teamName,
       memberName,
@@ -1433,6 +1456,7 @@ export class TeamProvisioningMemberLifecycleController {
       liveRuntimeByMember,
       actionLabel: `Detach for teammate "${memberName}"`,
     });
+    this.assertRunStillCurrentAndAlive(run, teamName);
 
     this.removeRunAllEffectiveMember(run, memberName);
     this.invalidateRuntimeSnapshotCaches(teamName);
@@ -2250,6 +2274,7 @@ export class TeamProvisioningMemberLifecycleController {
     if (!memberSpec) {
       throw new Error(`Member "${memberName}" could not be resolved for OpenCode lane reattach.`);
     }
+    this.assertRunStillCurrentAndAlive(run, teamName);
     const nextLane = this.createMixedSecondaryLaneStateForMember(run, memberSpec);
     const existingLaneIndex = run.mixedSecondaryLanes.findIndex(
       (lane) => lane.laneId === nextLane.laneId || lane.member.name.trim() === memberName
@@ -2269,9 +2294,11 @@ export class TeamProvisioningMemberLifecycleController {
       laneId: nextLane.laneId,
       existingLane,
     });
+    this.assertRunStillCurrentAndAlive(run, teamName);
 
     if (existingLane) {
       await this.stopSingleMixedSecondaryRuntimeLane(run, existingLane, 'relaunch');
+      this.assertRunStillCurrentAndAlive(run, teamName);
     }
 
     const laneState = existingLane ?? nextLane;
@@ -2354,8 +2381,10 @@ export class TeamProvisioningMemberLifecycleController {
       return;
     }
 
-    const [lane] = run.mixedSecondaryLanes.splice(laneIndex, 1);
+    const lane = run.mixedSecondaryLanes[laneIndex];
     await this.stopSingleMixedSecondaryRuntimeLane(run, lane, 'cleanup');
+    this.assertRunStillCurrentAndAlive(run, teamName);
+    run.mixedSecondaryLanes.splice(laneIndex, 1);
     this.removeRunAllEffectiveMember(run, memberName);
     this.invalidateRuntimeSnapshotCaches(teamName);
     this.resetRuntimeToolActivity(run, memberName);

@@ -35,6 +35,7 @@ function createRuntimeSnapshot(
     updatedAt: BASE_TIME,
     runId: 'run-1',
     providerBackendId: 'codex-native',
+    fastMode: 'inherit',
     members: {
       alice: createRuntimeEntry(),
     },
@@ -64,6 +65,31 @@ describe('teamAgentRuntimeSnapshotStabilizer', () => {
     expect(stabilized.members.alice).toBe(previous.members.alice);
     expect(stabilized.members.alice.alive).toBe(true);
     expect(stabilized.members.alice.livenessKind).toBe('runtime_process');
+  });
+
+  it('preserves next snapshot metadata while stabilizing transient member liveness', () => {
+    const previous = createRuntimeSnapshot();
+    const next = createRuntimeSnapshot({
+      updatedAt: '2026-05-31T10:00:10.000Z',
+      providerBackendId: 'api',
+      fastMode: 'on',
+      members: {
+        alice: createRuntimeEntry({
+          alive: false,
+          livenessKind: 'registered_only',
+          pidSource: 'persisted_metadata',
+          runtimeDiagnostic: 'registered runtime metadata without live process',
+          runtimeDiagnosticSeverity: 'warning',
+          updatedAt: '2026-05-31T10:00:10.000Z',
+        }),
+      },
+    });
+
+    const stabilized = stabilizeTeamAgentRuntimeSnapshot(previous, next, BASE_TIME_MS + 10_000);
+
+    expect(stabilized.providerBackendId).toBe('api');
+    expect(stabilized.fastMode).toBe('on');
+    expect(stabilized.members.alice).toBe(previous.members.alice);
   });
 
   it('accepts the offline snapshot after the short stability grace expires', () => {

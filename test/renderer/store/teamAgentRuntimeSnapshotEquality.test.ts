@@ -105,19 +105,25 @@ describe('teamAgentRuntimeSnapshotEquality', () => {
     expect(areTeamAgentRuntimeResourceSamplesEqual(null, createResourceSample())).toBe(false);
   });
 
-  it('ignores runtime entry fields that do not currently affect equality', () => {
-    const left = createRuntimeEntry({
-      cwd: '/tmp/old',
-      runtimeLeaseExpiresAt: '2026-05-22T10:10:00.000Z',
-      updatedAt: '2026-05-22T10:00:00.000Z',
-    });
-    const right = createRuntimeEntry({
-      cwd: '/tmp/new',
-      runtimeLeaseExpiresAt: '2026-05-22T10:20:00.000Z',
-      updatedAt: '2026-05-22T10:05:00.000Z',
-    });
-
-    expect(areTeamAgentRuntimeEntriesEqual(left, right)).toBe(true);
+  it('detects renderer-facing runtime entry metadata changes', () => {
+    expect(
+      areTeamAgentRuntimeEntriesEqual(
+        createRuntimeEntry({ cwd: '/tmp/old' }),
+        createRuntimeEntry({ cwd: '/tmp/new' })
+      )
+    ).toBe(false);
+    expect(
+      areTeamAgentRuntimeEntriesEqual(
+        createRuntimeEntry({ runtimeLeaseExpiresAt: '2026-05-22T10:10:00.000Z' }),
+        createRuntimeEntry({ runtimeLeaseExpiresAt: '2026-05-22T10:20:00.000Z' })
+      )
+    ).toBe(false);
+    expect(
+      areTeamAgentRuntimeEntriesEqual(
+        createRuntimeEntry({ updatedAt: '2026-05-22T10:00:00.000Z' }),
+        createRuntimeEntry({ updatedAt: '2026-05-22T10:05:00.000Z' })
+      )
+    ).toBe(true);
   });
 
   it('detects visible runtime entry field changes', () => {
@@ -183,11 +189,24 @@ describe('teamAgentRuntimeSnapshotEquality', () => {
     ).toBe(false);
   });
 
-  it('ignores snapshot metadata fields that do not currently affect equality', () => {
+  it('detects renderer-facing snapshot metadata changes', () => {
+    expect(
+      areTeamAgentRuntimeSnapshotsEqual(
+        createRuntimeSnapshot({ providerBackendId: 'codex-native' }),
+        createRuntimeSnapshot({ providerBackendId: 'api' })
+      )
+    ).toBe(false);
+    expect(
+      areTeamAgentRuntimeSnapshotsEqual(
+        createRuntimeSnapshot({ fastMode: 'inherit' }),
+        createRuntimeSnapshot({ fastMode: 'on' })
+      )
+    ).toBe(false);
+  });
+
+  it('ignores freshness timestamp fields by default', () => {
     const left = createRuntimeSnapshot({
       updatedAt: '2026-05-22T10:00:00.000Z',
-      providerBackendId: 'codex-native',
-      fastMode: 'inherit',
       members: {
         alice: createRuntimeEntry({
           updatedAt: '2026-05-22T10:00:00.000Z',
@@ -197,8 +216,6 @@ describe('teamAgentRuntimeSnapshotEquality', () => {
     });
     const right = createRuntimeSnapshot({
       updatedAt: '2026-05-22T10:05:00.000Z',
-      providerBackendId: 'api',
-      fastMode: 'on',
       members: {
         alice: createRuntimeEntry({
           updatedAt: '2026-05-22T10:05:00.000Z',

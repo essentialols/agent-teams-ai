@@ -4331,6 +4331,62 @@ describe('teamSlice actions', () => {
     expect(store.getState().teamAgentRuntimeByTeam['my-team']).toBe(firstSnapshot);
   });
 
+  it('updates runtime snapshots when renderer-facing entry metadata changes', async () => {
+    const store = createSliceStore();
+    const snapshot = createRuntimeSnapshot({
+      members: {
+        alice: {
+          ...createRuntimeSnapshot().members.alice,
+          cwd: '/tmp/project-a',
+          runtimeLeaseExpiresAt: '2026-03-12T10:10:00.000Z',
+        },
+      },
+    });
+    hoisted.getTeamAgentRuntime.mockResolvedValue(snapshot);
+
+    await store.getState().fetchTeamAgentRuntime('my-team');
+    const firstSnapshot = store.getState().teamAgentRuntimeByTeam['my-team'];
+
+    const nextSnapshot = createRuntimeSnapshot({
+      members: {
+        alice: {
+          ...snapshot.members.alice,
+          cwd: '/tmp/project-b',
+          runtimeLeaseExpiresAt: '2026-03-12T10:20:00.000Z',
+        },
+      },
+    });
+    hoisted.getTeamAgentRuntime.mockResolvedValue(nextSnapshot);
+
+    await store.getState().fetchTeamAgentRuntime('my-team');
+
+    expect(store.getState().teamAgentRuntimeByTeam['my-team']).not.toBe(firstSnapshot);
+    expect(store.getState().teamAgentRuntimeByTeam['my-team']).toEqual(nextSnapshot);
+  });
+
+  it('updates runtime snapshots when renderer-facing snapshot metadata changes', async () => {
+    const store = createSliceStore();
+    const snapshot = createRuntimeSnapshot({
+      providerBackendId: 'codex-native',
+      fastMode: 'inherit',
+    });
+    hoisted.getTeamAgentRuntime.mockResolvedValue(snapshot);
+
+    await store.getState().fetchTeamAgentRuntime('my-team');
+    const firstSnapshot = store.getState().teamAgentRuntimeByTeam['my-team'];
+
+    const nextSnapshot = createRuntimeSnapshot({
+      providerBackendId: 'api',
+      fastMode: 'on',
+    });
+    hoisted.getTeamAgentRuntime.mockResolvedValue(nextSnapshot);
+
+    await store.getState().fetchTeamAgentRuntime('my-team');
+
+    expect(store.getState().teamAgentRuntimeByTeam['my-team']).not.toBe(firstSnapshot);
+    expect(store.getState().teamAgentRuntimeByTeam['my-team']).toEqual(nextSnapshot);
+  });
+
   it('uses timestamp-only runtime observations for stabilization without replacing visible snapshots', async () => {
     vi.useFakeTimers();
     const store = createSliceStore();

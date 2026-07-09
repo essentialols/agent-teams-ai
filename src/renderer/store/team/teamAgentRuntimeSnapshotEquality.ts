@@ -82,6 +82,7 @@ export function areTeamAgentRuntimeEntriesEqual(
     left.laneKind === right.laneKind &&
     left.pid === right.pid &&
     left.runtimeModel === right.runtimeModel &&
+    left.cwd === right.cwd &&
     left.rssBytes === right.rssBytes &&
     left.cpuPercent === right.cpuPercent &&
     left.primaryCpuPercent === right.primaryCpuPercent &&
@@ -99,6 +100,7 @@ export function areTeamAgentRuntimeEntriesEqual(
     left.paneCurrentCommand === right.paneCurrentCommand &&
     left.runtimePid === right.runtimePid &&
     left.runtimeSessionId === right.runtimeSessionId &&
+    left.runtimeLeaseExpiresAt === right.runtimeLeaseExpiresAt &&
     left.runtimeDiagnostic === right.runtimeDiagnostic &&
     left.runtimeDiagnosticSeverity === right.runtimeDiagnosticSeverity &&
     (!options.compareFreshnessTimestamps ||
@@ -115,7 +117,12 @@ export function areTeamAgentRuntimeSnapshotsEqual(
   options: TeamAgentRuntimeSnapshotEqualityOptions = {}
 ): boolean {
   if (!left) return false;
-  if (left.teamName !== right.teamName || left.runId !== right.runId) {
+  if (
+    left.teamName !== right.teamName ||
+    left.runId !== right.runId ||
+    left.providerBackendId !== right.providerBackendId ||
+    left.fastMode !== right.fastMode
+  ) {
     return false;
   }
   if (options.compareFreshnessTimestamps && left.updatedAt !== right.updatedAt) {

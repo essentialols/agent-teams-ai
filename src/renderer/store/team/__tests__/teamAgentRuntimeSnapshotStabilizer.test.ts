@@ -19,12 +19,17 @@ function makeEntry(
   };
 }
 
-function makeSnapshot(updatedAt: string, entry: TeamAgentRuntimeEntry): TeamAgentRuntimeSnapshot {
+function makeSnapshot(
+  updatedAt: string,
+  entry: TeamAgentRuntimeEntry,
+  overrides: Partial<TeamAgentRuntimeSnapshot> = {}
+): TeamAgentRuntimeSnapshot {
   return {
     teamName: 'alpha',
     runId: 'run-1',
     updatedAt,
     members: { alice: entry },
+    ...overrides,
   };
 }
 
@@ -63,5 +68,34 @@ describe('team agent runtime snapshot stabilization', () => {
 
     expect(stabilized.members.alice?.alive).toBe(true);
     expect(stabilized.members.alice?.updatedAt).toBe('2026-01-01T00:00:20.000Z');
+  });
+
+  it('keeps next snapshot metadata visible when transient offline entries are stabilized', () => {
+    const live = makeSnapshot(
+      '2026-01-01T00:00:00.000Z',
+      makeEntry({ updatedAt: '2026-01-01T00:00:00.000Z' }),
+      { providerBackendId: 'codex-native', fastMode: 'inherit' }
+    );
+    const transientOffline = makeSnapshot(
+      '2026-01-01T00:00:05.000Z',
+      makeEntry({
+        alive: false,
+        livenessKind: 'registered_only',
+        runtimeDiagnosticSeverity: 'warning',
+        updatedAt: '2026-01-01T00:00:05.000Z',
+      }),
+      { providerBackendId: 'api', fastMode: 'on' }
+    );
+
+    const stabilized = stabilizeTeamAgentRuntimeSnapshot(
+      live,
+      transientOffline,
+      Date.parse('2026-01-01T00:00:05.000Z')
+    );
+
+    expect(stabilized.providerBackendId).toBe('api');
+    expect(stabilized.fastMode).toBe('on');
+    expect(stabilized.members.alice).toBe(live.members.alice);
+    expect(areTeamAgentRuntimeSnapshotsEqual(live, stabilized)).toBe(false);
   });
 });

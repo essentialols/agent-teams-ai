@@ -141,7 +141,7 @@ export class ApplicationCommandRunner {
   }
 
   private async readCommittedRecord<TOperation extends string>(
-    input: ApplicationCommandIdentity<TOperation>
+    input: { namespace: string; scopeKey: string; commandId: string }
   ): Promise<ApplicationCommandLedgerRecord<TOperation>> {
     const record = await this.ledger.getByCommandId<TOperation>({
       namespace: input.namespace,

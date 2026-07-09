@@ -21,8 +21,17 @@ import {
   type TeamRefreshFanoutSnapshot,
 } from '../../../src/renderer/store/teamRefreshFanoutDiagnostics';
 
-import type { TeamSlice } from '../../../src/renderer/store/slices/teamSlice';
-import type { TeamAgentRuntimeResourceSample } from '../../../src/shared/types';
+import type { TeamLaunchParams, TeamSlice } from '../../../src/renderer/store/slices/teamSlice';
+import type {
+  GlobalTask,
+  InboxMessage,
+  MemberSpawnStatusEntry,
+  MemberSpawnStatusesSnapshot,
+  TeamAgentRuntimeResourceSample,
+  TeamAgentRuntimeSnapshot,
+  TeamMemberSnapshot,
+  TeamViewSnapshot,
+} from '../../../src/shared/types';
 
 const hoisted = vi.hoisted(() => ({
   list: vi.fn(),
@@ -107,8 +116,21 @@ vi.mock('../../../src/renderer/utils/unwrapIpc', async (importOriginal) => {
   };
 });
 
+type TeamSliceTestTab = {
+  id: string;
+  type: string;
+  teamName?: string;
+  label?: string;
+};
+
+type TeamSliceTestState = TeamSlice &
+  Record<string, unknown> & {
+    getAllPaneTabs: () => TeamSliceTestTab[];
+    warmTaskChangeSummaries: (...args: unknown[]) => Promise<void>;
+  };
+
 function createSliceStore() {
-  return create<TeamSlice>()((set, get, store) =>
+  return create<TeamSliceTestState>()((set, get, store) =>
     ({
       ...createTeamSlice(set as never, get as never, store as never),
       paneLayout: {
@@ -130,19 +152,11 @@ function createSliceStore() {
       invalidateTaskChangePresence: vi.fn(),
       fetchTeams: vi.fn(async () => undefined),
       fetchAllTasks: vi.fn(async () => undefined),
-    }) as unknown as TeamSlice
+    }) as unknown as TeamSliceTestState
   );
 }
 
-function createTeamSnapshot(overrides: Record<string, unknown> = {}): {
-  teamName: string;
-  config: { name: string; members?: unknown[]; projectPath?: string };
-  tasks: unknown[];
-  members: unknown[];
-  kanbanState: { teamName: string; reviewers: unknown[]; tasks: Record<string, unknown> };
-  processes: unknown[];
-  isAlive?: boolean;
-} {
+function createTeamSnapshot(overrides: Record<string, unknown> = {}): TeamViewSnapshot {
   return {
     teamName: 'my-team',
     config: { name: 'My Team' },
@@ -151,10 +165,34 @@ function createTeamSnapshot(overrides: Record<string, unknown> = {}): {
     kanbanState: { teamName: 'my-team', reviewers: [], tasks: {} },
     processes: [],
     ...overrides,
+  } as TeamViewSnapshot;
+}
+
+function createTeamMemberSnapshot(overrides: Partial<TeamMemberSnapshot> = {}): TeamMemberSnapshot {
+  return {
+    name: 'alice',
+    agentId: 'agent-alice',
+    currentTaskId: null,
+    taskCount: 0,
+    ...overrides,
   };
 }
 
-function createMemberSpawnStatus(overrides: Record<string, unknown> = {}) {
+function createGlobalTask(overrides: Partial<GlobalTask> = {}): GlobalTask {
+  return {
+    teamName: 'my-team',
+    teamDisplayName: 'My Team',
+    id: 'task-1',
+    subject: 'Task',
+    status: 'pending',
+    changePresence: 'unknown',
+    ...overrides,
+  };
+}
+
+function createMemberSpawnStatus(
+  overrides: Partial<MemberSpawnStatusEntry> = {}
+): MemberSpawnStatusEntry {
   return {
     status: 'online',
     launchState: 'confirmed_alive',
@@ -170,10 +208,9 @@ function createMemberSpawnStatus(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function createMemberSpawnSnapshot(overrides: Record<string, unknown> = {}) {
-  const typedOverrides = overrides as {
-    statuses?: Record<string, ReturnType<typeof createMemberSpawnStatus>>;
-  };
+function createMemberSpawnSnapshot(
+  overrides: Partial<MemberSpawnStatusesSnapshot> = {}
+): MemberSpawnStatusesSnapshot {
   return {
     runId: 'runtime-run',
     teamLaunchState: 'clean_success',
@@ -187,7 +224,7 @@ function createMemberSpawnSnapshot(overrides: Record<string, unknown> = {}) {
       runtimeAlivePendingCount: 0,
     },
     source: 'merged',
-    statuses: typedOverrides.statuses ?? { alice: createMemberSpawnStatus() },
+    statuses: { alice: createMemberSpawnStatus() },
     ...overrides,
   };
 }
@@ -281,7 +318,7 @@ async function flushAsyncWork(): Promise<void> {
   await flushMicrotasks();
 }
 
-function createRuntimeSnapshot(overrides: Record<string, unknown> = {}) {
+function createRuntimeSnapshot(overrides: Record<string, unknown> = {}): TeamAgentRuntimeSnapshot {
   return {
     teamName: 'my-team',
     updatedAt: '2026-03-12T10:00:00.000Z',
@@ -299,7 +336,7 @@ function createRuntimeSnapshot(overrides: Record<string, unknown> = {}) {
       },
     },
     ...overrides,
-  };
+  } as TeamAgentRuntimeSnapshot;
 }
 
 describe('teamSlice actions', () => {
@@ -401,9 +438,9 @@ describe('teamSlice actions', () => {
       selectedTeamData: existingData,
       teamDataCacheByName: { 'my-team': existingData },
       globalTasks: [
-        { teamName: 'my-team', id: 'task-1', changePresence: 'unknown' },
-        { teamName: 'my-team', id: 'task-2', changePresence: 'unknown' },
-        { teamName: 'other-team', id: 'task-1', changePresence: 'unknown' },
+        createGlobalTask({ teamName: 'my-team', id: 'task-1', changePresence: 'unknown' }),
+        createGlobalTask({ teamName: 'my-team', id: 'task-2', changePresence: 'unknown' }),
+        createGlobalTask({ teamName: 'other-team', id: 'task-1', changePresence: 'unknown' }),
       ],
     });
 
@@ -415,7 +452,7 @@ describe('teamSlice actions', () => {
     expect(
       store
         .getState()
-        .selectedTeamData.tasks.map((task: { changePresence?: string }) => task.changePresence)
+        .selectedTeamData!.tasks.map((task: { changePresence?: string }) => task.changePresence)
     ).toEqual(['no_changes', 'has_changes']);
     expect(
       store
@@ -1033,7 +1070,7 @@ describe('teamSlice actions', () => {
     });
 
     store.getState().ensureTeamGraphSlotAssignments('my-team', [
-      { name: 'hidden', agentId: 'agent-hidden', removedAt: '2026-04-16T08:00:00.000Z' },
+      { name: 'hidden', agentId: 'agent-hidden', removedAt: 1776326400000 },
       { name: 'alice', agentId: 'agent-alice' },
       { name: 'bob', agentId: 'agent-bob' },
     ]);
@@ -1202,12 +1239,11 @@ describe('teamSlice actions', () => {
           config: { name: 'My Team' },
           tasks: [],
           members: [
-            { name: 'alice', agentId: 'agent-alice' },
-            { name: 'bob', agentId: 'agent-bob' },
-            { name: 'tom', agentId: 'agent-tom' },
-            { name: 'jack', agentId: 'agent-jack' },
+            createTeamMemberSnapshot({ name: 'alice', agentId: 'agent-alice' }),
+            createTeamMemberSnapshot({ name: 'bob', agentId: 'agent-bob' }),
+            createTeamMemberSnapshot({ name: 'tom', agentId: 'agent-tom' }),
+            createTeamMemberSnapshot({ name: 'jack', agentId: 'agent-jack' }),
           ],
-          messages: [],
           kanbanState: { teamName: 'my-team', reviewers: [], tasks: {} },
           processes: [],
         },
@@ -2376,7 +2412,7 @@ describe('teamSlice actions', () => {
 
   it('distinguishes historical feed changes from visible head changes in refreshTeamMessagesHead', async () => {
     const store = createSliceStore();
-    const existingMessages = [
+    const existingMessages: InboxMessage[] = [
       {
         from: 'team-lead',
         text: 'Stable head',
@@ -2426,7 +2462,7 @@ describe('teamSlice actions', () => {
 
   it('keeps loaded older tail when head refresh updates only the visible top slice', async () => {
     const store = createSliceStore();
-    const existingMessages = [
+    const existingMessages: InboxMessage[] = [
       {
         from: 'team-lead',
         text: 'Head 2',
@@ -3073,9 +3109,12 @@ describe('teamSlice actions', () => {
       },
       leadContextByTeam: {
         'my-team': {
-          currentTokens: 12,
-          contextWindow: 100,
-          percent: 12,
+          promptInputTokens: 12,
+          outputTokens: 0,
+          contextUsedTokens: 12,
+          contextWindowTokens: 100,
+          contextUsedPercent: 12,
+          promptInputSource: 'anthropic_usage',
           updatedAt: '2026-03-12T10:00:00.000Z',
         },
       },
@@ -3534,6 +3573,7 @@ describe('teamSlice actions', () => {
       timestamp: '2026-03-12T10:00:00.000Z',
       messageId: 'm-1',
       source: 'inbox' as const,
+      read: true,
     };
 
     store.setState({
@@ -3672,9 +3712,12 @@ describe('teamSlice actions', () => {
       },
       leadContextByTeam: {
         'my-team': {
-          currentTokens: 12,
-          contextWindow: 100,
-          percent: 12,
+          promptInputTokens: 12,
+          outputTokens: 0,
+          contextUsedTokens: 12,
+          contextWindowTokens: 100,
+          contextUsedPercent: 12,
+          promptInputSource: 'anthropic_usage',
           updatedAt: '2026-03-12T10:00:00.000Z',
         },
       },
@@ -5060,6 +5103,7 @@ describe('teamSlice actions', () => {
           tasks: [],
           members: [],
           kanbanState: { teamName: 'my-team', reviewers: [], tasks: {} },
+          processes: [],
         },
         selectedTeamError: null,
       });
@@ -5084,6 +5128,7 @@ describe('teamSlice actions', () => {
         tasks: [],
         members: [],
         kanbanState: { teamName: 'my-team', reviewers: [], tasks: {} },
+        processes: [],
       };
       store.setState({
         selectedTeamName: 'my-team',
@@ -5338,6 +5383,7 @@ describe('teamSlice actions', () => {
           tasks: [],
           members: [],
           kanbanState: { teamName: 'my-team', reviewers: [], tasks: {} },
+          processes: [],
         },
         selectedTeamError: 'Previous failure',
       });
@@ -5360,6 +5406,7 @@ describe('teamSlice actions', () => {
         tasks: [],
         members: [],
         kanbanState: { teamName: 'my-team', reviewers: [], tasks: {} },
+        processes: [],
       };
       store.setState({
         selectedTeamName: 'my-team',
@@ -5429,6 +5476,7 @@ describe('teamSlice actions', () => {
                 {
                   id: 'evt-approved',
                   type: 'review_approved',
+                  from: 'review',
                   to: 'approved',
                   timestamp: '2026-03-01T10:10:00.000Z',
                 },
@@ -5478,6 +5526,7 @@ describe('teamSlice actions', () => {
               {
                 id: 'evt-approved',
                 type: 'review_approved',
+                from: 'review',
                 to: 'approved',
                 timestamp: '2026-03-01T10:10:00.000Z',
               },
@@ -5784,7 +5833,7 @@ describe('teamSlice actions', () => {
 
     it('keeps previous launch params while a metadata-only relaunch request is pending', async () => {
       const store = createSliceStore();
-      const previousParams = {
+      const previousParams: TeamLaunchParams = {
         providerId: 'codex',
         providerBackendId: 'codex-native',
         model: 'gpt-5.5',
@@ -5815,7 +5864,7 @@ describe('teamSlice actions', () => {
 
     it('rolls back staged launch params when launchTeam fails before provisioning starts', async () => {
       const store = createSliceStore();
-      const previousParams = {
+      const previousParams: TeamLaunchParams = {
         providerId: 'codex',
         providerBackendId: 'codex-native',
         model: 'gpt-5.5',
@@ -5844,7 +5893,7 @@ describe('teamSlice actions', () => {
 
     it('rolls back optimistic pending run on early createTeam failure', async () => {
       const store = createSliceStore();
-      const previousParams = {
+      const previousParams: TeamLaunchParams = {
         providerId: 'codex',
         providerBackendId: 'codex-native',
         model: 'gpt-5.5',
@@ -6100,7 +6149,7 @@ describe('teamSlice actions', () => {
         },
         memberSpawnStatusesByTeam: {
           'my-team': {
-            alice: { status: 'spawning', updatedAt: '2026-03-12T10:00:00.000Z' },
+            alice: { status: 'spawning', launchState: 'starting', updatedAt: '2026-03-12T10:00:00.000Z' },
           },
         },
       });
@@ -6157,7 +6206,7 @@ describe('teamSlice actions', () => {
       hoisted.getMemberSpawnStatuses.mockResolvedValue({
         runId: 'runtime-run',
         statuses: {
-          alice: { status: 'spawning', updatedAt: '2026-03-12T10:00:00.000Z' },
+          alice: { status: 'spawning', launchState: 'starting', updatedAt: '2026-03-12T10:00:00.000Z' },
         },
       });
 
@@ -6166,7 +6215,7 @@ describe('teamSlice actions', () => {
       expect(store.getState().currentProvisioningRunIdByTeam['my-team']).toBe('provisioning-run');
       expect(store.getState().currentRuntimeRunIdByTeam['my-team']).toBe('runtime-run');
       expect(store.getState().memberSpawnStatusesByTeam['my-team']).toEqual({
-        alice: { status: 'spawning', updatedAt: '2026-03-12T10:00:00.000Z' },
+        alice: { status: 'spawning', launchState: 'starting', updatedAt: '2026-03-12T10:00:00.000Z' },
       });
     });
 
@@ -6605,7 +6654,7 @@ describe('teamSlice actions', () => {
       hoisted.getMemberSpawnStatuses.mockResolvedValue({
         runId: 'old-runtime-run',
         statuses: {
-          alice: { status: 'spawning', updatedAt: '2026-03-12T10:00:00.000Z' },
+          alice: { status: 'spawning', launchState: 'starting', updatedAt: '2026-03-12T10:00:00.000Z' },
         },
       });
 
@@ -6751,7 +6800,7 @@ describe('teamSlice actions', () => {
       hoisted.getMemberSpawnStatuses.mockResolvedValue({
         runId: 'runtime-old',
         statuses: {
-          alice: { status: 'spawning', updatedAt: '2026-03-12T10:00:00.000Z' },
+          alice: { status: 'spawning', launchState: 'starting', updatedAt: '2026-03-12T10:00:00.000Z' },
         },
       });
 
@@ -6787,7 +6836,7 @@ describe('teamSlice actions', () => {
         },
         memberSpawnStatusesByTeam: {
           'my-team': {
-            alice: { status: 'spawning', updatedAt: '2026-03-12T10:00:00.000Z' },
+            alice: { status: 'spawning', launchState: 'starting', updatedAt: '2026-03-12T10:00:00.000Z' },
           },
         },
       });
@@ -6796,7 +6845,7 @@ describe('teamSlice actions', () => {
 
       expect(store.getState().currentProvisioningRunIdByTeam['my-team']).toBe('run-current');
       expect(store.getState().memberSpawnStatusesByTeam['my-team']).toEqual({
-        alice: { status: 'spawning', updatedAt: '2026-03-12T10:00:00.000Z' },
+        alice: { status: 'spawning', launchState: 'starting', updatedAt: '2026-03-12T10:00:00.000Z' },
       });
     });
 

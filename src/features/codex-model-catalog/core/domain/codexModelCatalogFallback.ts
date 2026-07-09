@@ -1,6 +1,7 @@
 import type { CliProviderModelCatalogItem, CliProviderReasoningEffort } from '@shared/types';
 
 const DEFAULT_CODEX_EFFORTS = ['low', 'medium', 'high', 'xhigh'] as const;
+const GPT_5_6_SOL_CODEX_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 const MINI_CODEX_EFFORTS = ['medium', 'high'] as const;
 
 function createFallbackModel(options: {
@@ -30,6 +31,22 @@ function createFallbackModel(options: {
 
 export function createStaticCodexModelCatalogModels(): CliProviderModelCatalogItem[] {
   return [
+    createFallbackModel({
+      id: 'gpt-5.6-sol',
+      displayName: 'GPT-5.6 Sol',
+      badgeLabel: '5.6-sol',
+      efforts: GPT_5_6_SOL_CODEX_EFFORTS,
+    }),
+    createFallbackModel({
+      id: 'gpt-5.6-terra',
+      displayName: 'GPT-5.6 Terra',
+      badgeLabel: '5.6-terra',
+    }),
+    createFallbackModel({
+      id: 'gpt-5.6-luna',
+      displayName: 'GPT-5.6 Luna',
+      badgeLabel: '5.6-luna',
+    }),
     createFallbackModel({
       id: 'gpt-5.4',
       displayName: 'GPT-5.4',

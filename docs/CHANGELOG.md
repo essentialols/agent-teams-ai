@@ -6,6 +6,10 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+### Added
+
+- GPT-5.6 Sol, Terra, and Luna model selection for Codex teams, including Sol `max` reasoning support.
+
 ## [1.2.0] - 2026-03-31
 
 ### Added

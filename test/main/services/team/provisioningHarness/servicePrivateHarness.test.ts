@@ -1,10 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { TeamProvisioningService } from '@main/services/team/TeamProvisioningService';
+import type { TeamProvisioningConfigFacade } from '@main/services/team/provisioning/TeamProvisioningConfigFacade';
+import type { TeamProvisioningMemberLifecycleServiceUseCases } from '@main/services/team/provisioning/TeamProvisioningMemberLifecycleServiceUseCases';
+
 import {
   getRegisteredProvisioningRunId,
   markTeamRunAlive,
   memberLifecycleControllerHarness,
   memberLifecycleHostHarness,
+  memberLifecycleUseCasesHarness,
   outputRecoveryFacadeHarness,
   privateHarness,
   providerRuntimeHarness,
@@ -18,8 +23,22 @@ import {
   verificationProbePortsHarness,
 } from './servicePrivateHarness';
 
-import type { TeamProvisioningConfigFacade } from '@main/services/team/provisioning/TeamProvisioningConfigFacade';
-import type { TeamProvisioningService } from '@main/services/team/TeamProvisioningService';
+const { cleanupStaleAnthropicTeamApiKeyHelpersMock } = vi.hoisted(() => ({
+  cleanupStaleAnthropicTeamApiKeyHelpersMock: vi.fn(() => Promise.resolve(undefined)),
+}));
+
+vi.mock('@main/services/runtime/anthropicTeamApiKeyHelper', async (importOriginal) => ({
+  ...(await importOriginal()),
+  cleanupStaleAnthropicTeamApiKeyHelpers: cleanupStaleAnthropicTeamApiKeyHelpersMock,
+}));
+
+const MEMBER_LIFECYCLE_SERVICE_USE_CASE_KEYS = [
+  'appendDirectProcessRuntimeEvent',
+  'persistOpenCodeMemberRestartSystemMessage',
+  'preparePrimaryOwnedMemberRestartRuntime',
+  'readOpenCodeSecondaryRetryOutcome',
+  'stopPrimaryOwnedRosterRuntime',
+] as const satisfies readonly (keyof TeamProvisioningMemberLifecycleServiceUseCases)[];
 
 describe('team provisioning private harness seams', () => {
   it('returns service facade seams without cloning or constructing runtime services', () => {
@@ -121,5 +140,19 @@ describe('team provisioning private harness seams', () => {
     expect(
       vi.isMockFunction(provisioningConfigFacadeHarness(service).readPersistedTeamProjectPath)
     ).toBe(true);
+  });
+
+  it('exposes the service-owned lifecycle use cases wired into restart and retry controller seams', () => {
+    const service = new TeamProvisioningService();
+    const useCases = memberLifecycleUseCasesHarness(service);
+    const controller = memberLifecycleControllerHarness(service);
+
+    expect(Object.keys(useCases).sort((a, b) => a.localeCompare(b))).toEqual([
+      ...MEMBER_LIFECYCLE_SERVICE_USE_CASE_KEYS,
+    ]);
+    expect(Reflect.get(controller, 'restartUseCases')).toBe(useCases);
+    expect(Reflect.get(controller, 'openCodeRetryUseCases')).toBe(useCases);
+    expect(Reflect.get(controller, 'actionUseCases')).toEqual({});
+    expect(cleanupStaleAnthropicTeamApiKeyHelpersMock).toHaveBeenCalledTimes(1);
   });
 });

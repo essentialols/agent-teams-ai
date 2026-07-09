@@ -62,9 +62,6 @@ export interface TeamProvisioningMemberLifecycleHostFactoryRuntimeLaunchPorts<
     >
   ): ReturnType<TeamProvisioningMemberLifecycleHost['resolveDirectMemberLaunchIdentity']>;
   buildTeamRuntimeLaunchArgsPlan: TeamProvisioningMemberLifecycleHost['buildTeamRuntimeLaunchArgsPlan'];
-  updateDirectTmuxRestartMemberConfig?: NonNullable<
-    TeamProvisioningMemberLifecycleHost['updateDirectTmuxRestartMemberConfig']
-  >;
   sendMessageToRun(
     run: TRun,
     message: string
@@ -247,7 +244,6 @@ export const TEAM_PROVISIONING_MEMBER_LIFECYCLE_HOST_FACTORY_PORT_KEYS = {
     'buildProvisioningEnv',
     'resolveDirectMemberLaunchIdentity',
     'buildTeamRuntimeLaunchArgsPlan',
-    'updateDirectTmuxRestartMemberConfig',
     'sendMessageToRun',
   ],
   memberMcpLaunchConfig: [
@@ -339,11 +335,6 @@ export function createTeamProvisioningMemberLifecycleHostPortGroups<
     buildTeamRuntimeLaunchArgsPlan: (input) => service.buildTeamRuntimeLaunchArgsPlan(input),
     sendMessageToRun: (run, message) => service.sendMessageToRun(run, message),
   };
-  const updateDirectTmuxRestartMemberConfig = service.updateDirectTmuxRestartMemberConfig;
-  if (updateDirectTmuxRestartMemberConfig) {
-    runtimeLaunch.updateDirectTmuxRestartMemberConfig = (input) =>
-      updateDirectTmuxRestartMemberConfig.call(service, input);
-  }
 
   const messaging: TeamProvisioningMemberLifecycleHostFactoryMessagingPorts = {
     persistInboxMessage: (teamName, memberName, message) =>
@@ -464,7 +455,6 @@ export function createTeamProvisioningMemberLifecycleHostFromPortGroups<
     openCodeRuntime,
     mixedSecondaryRuntime,
   } = portGroups;
-  const updateDirectTmuxRestartMemberConfigSeam = runtimeLaunch.updateDirectTmuxRestartMemberConfig;
   const enqueueDirectRestartPromptSeam = messaging.enqueueDirectRestartPrompt;
 
   return {
@@ -502,9 +492,6 @@ export function createTeamProvisioningMemberLifecycleHostFromPortGroups<
         run: asServiceProvisioningRun<TRun>(input.run),
       }),
     buildTeamRuntimeLaunchArgsPlan: (input) => runtimeLaunch.buildTeamRuntimeLaunchArgsPlan(input),
-    updateDirectTmuxRestartMemberConfig: updateDirectTmuxRestartMemberConfigSeam
-      ? (input) => updateDirectTmuxRestartMemberConfigSeam.call(runtimeLaunch, input)
-      : undefined,
     persistInboxMessage: (teamName, memberName, message) =>
       messaging.persistInboxMessage(teamName, memberName, message),
     persistSentMessage: (teamName, message) => messaging.persistSentMessage(teamName, message),

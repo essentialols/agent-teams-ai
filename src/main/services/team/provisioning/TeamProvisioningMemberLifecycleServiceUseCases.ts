@@ -6,6 +6,10 @@ import {
   createReadOpenCodeSecondaryRetryOutcomeUseCase,
   type ReadOpenCodeSecondaryRetryOutcomeUseCase,
 } from './TeamProvisioningReadOpenCodeSecondaryRetryOutcomeUseCase';
+import {
+  createNodeUpdateDirectTmuxRestartMemberConfigUseCase,
+  type UpdateDirectTmuxRestartMemberConfigUseCase,
+} from './TeamProvisioningUpdateDirectTmuxRestartMemberConfigUseCase';
 
 import type { AppendDirectProcessRuntimeEventUseCase } from './TeamProvisioningAppendDirectProcessRuntimeEventUseCase';
 import type {
@@ -36,6 +40,7 @@ export interface TeamProvisioningMemberLifecycleServiceUseCases
   persistOpenCodeMemberRestartSystemMessage: PersistOpenCodeMemberRestartSystemMessageUseCase;
   readOpenCodeSecondaryRetryOutcome: ReadOpenCodeSecondaryRetryOutcomeUseCase;
   appendDirectProcessRuntimeEvent: AppendDirectProcessRuntimeEventUseCase;
+  updateDirectTmuxRestartMemberConfig: UpdateDirectTmuxRestartMemberConfigUseCase;
   stopPrimaryOwnedRosterRuntime: StopPrimaryOwnedRosterRuntimeUseCase;
   preparePrimaryOwnedMemberRestartRuntime: PreparePrimaryOwnedMemberRestartRuntimeUseCase;
 }
@@ -54,6 +59,7 @@ export function createTeamProvisioningMemberLifecycleServiceUseCases(
       readLaunchStateSnapshot: ports.readLaunchStateSnapshot,
     }),
     appendDirectProcessRuntimeEvent: ports.appendDirectProcessRuntimeEvent,
+    updateDirectTmuxRestartMemberConfig: createNodeUpdateDirectTmuxRestartMemberConfigUseCase(),
     stopPrimaryOwnedRosterRuntime: ports.stopPrimaryOwnedRosterRuntime,
     preparePrimaryOwnedMemberRestartRuntime: ports.preparePrimaryOwnedMemberRestartRuntime,
   };

@@ -13,6 +13,7 @@ import type {
 } from './TeamProvisioningPreparePrimaryOwnedMemberRestartRuntimeUseCase';
 import type { OpenCodeSecondaryRetryOutcome } from './TeamProvisioningReadOpenCodeSecondaryRetryOutcomeUseCase';
 import type { StopPrimaryOwnedRosterRuntimeInput } from './TeamProvisioningStopPrimaryOwnedRosterRuntimeUseCase';
+import type { UpdateDirectTmuxRestartMemberConfigUseCase } from './TeamProvisioningUpdateDirectTmuxRestartMemberConfigUseCase';
 import type { RetryFailedOpenCodeSecondaryLanesResult } from '@shared/types';
 
 export interface TeamProvisioningMemberLifecycleActionUseCaseSeams {
@@ -33,6 +34,7 @@ export interface TeamProvisioningMemberLifecycleRestartUseCaseSeams {
   persistOpenCodeMemberRestartSystemMessage?: PersistOpenCodeMemberRestartSystemMessageUseCase;
   launchDirectProcessMemberRestart?(input: DirectProcessMemberRestartInput): Promise<void>;
   appendDirectProcessRuntimeEvent?: AppendDirectProcessRuntimeEventUseCase;
+  updateDirectTmuxRestartMemberConfig?: UpdateDirectTmuxRestartMemberConfigUseCase;
   stopPrimaryOwnedRosterRuntime?(input: StopPrimaryOwnedRosterRuntimeInput): Promise<void>;
   preparePrimaryOwnedMemberRestartRuntime?(
     input: PreparePrimaryOwnedMemberRestartRuntimeInput

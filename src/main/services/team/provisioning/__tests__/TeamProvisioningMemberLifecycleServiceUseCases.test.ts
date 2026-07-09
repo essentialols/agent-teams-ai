@@ -67,6 +67,7 @@ describe('TeamProvisioningMemberLifecycleServiceUseCases', () => {
       'preparePrimaryOwnedMemberRestartRuntime',
       'readOpenCodeSecondaryRetryOutcome',
       'stopPrimaryOwnedRosterRuntime',
+      'updateDirectTmuxRestartMemberConfig',
     ]);
 
     useCases.persistOpenCodeMemberRestartSystemMessage({

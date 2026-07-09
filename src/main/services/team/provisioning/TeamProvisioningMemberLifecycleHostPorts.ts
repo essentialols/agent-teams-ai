@@ -32,27 +32,6 @@ export interface DirectRestartPromptInput {
   operation?: DirectProcessMemberLaunchReason;
 }
 
-export interface DirectTmuxRestartMemberConfigInput {
-  teamName: string;
-  memberName: string;
-  member: TeamCreateRequest['members'][number] & { agentType?: string };
-  agentId: string;
-  color: string;
-  prompt: string;
-  paneId: string;
-  cwd: string;
-  providerId: TeamProviderId;
-  joinedAt: number;
-  bootstrapExpectedAfter: string;
-  backendType?: 'tmux' | 'process';
-  runtimePid?: number;
-  bootstrapRuntimeEventsPath?: string;
-  bootstrapProofToken?: string;
-  bootstrapRunId?: string;
-  bootstrapContextHash?: string;
-  bootstrapBriefingHash?: string;
-}
-
 export interface ProvisioningEnvResolution {
   env: NodeJS.ProcessEnv;
   providerArgs?: string[];
@@ -208,7 +187,6 @@ export interface TeamProvisioningMemberLifecycleRuntimeLaunchPorts {
     includeAnthropicHelper: boolean;
     contextLabel: string;
   }): Promise<TeamRuntimeLaunchArgsPlan>;
-  updateDirectTmuxRestartMemberConfig?(input: DirectTmuxRestartMemberConfigInput): Promise<void>;
   buildTrackedMemberMcpLaunchConfig(input: {
     cwd: string;
     mcpPolicy: TeamCreateRequest['members'][number]['mcpPolicy'];

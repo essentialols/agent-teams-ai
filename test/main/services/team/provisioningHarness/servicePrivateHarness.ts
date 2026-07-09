@@ -5,6 +5,7 @@ import type { TeamProvisioningMemberLifecycleController } from '@main/services/t
 import type { TeamProvisioningMemberLifecycleHost } from '@main/services/team/provisioning/TeamProvisioningMemberLifecycleHostPorts';
 import type { TeamProvisioningMemberLifecycleServiceUseCases } from '@main/services/team/provisioning/TeamProvisioningMemberLifecycleServiceUseCases';
 import type { TeamProvisioningRuntimeResourceSampling } from '@main/services/team/provisioning/TeamProvisioningRuntimeResourceSampling';
+import type { UpdateDirectTmuxRestartMemberConfigUseCase } from '@main/services/team/provisioning/TeamProvisioningUpdateDirectTmuxRestartMemberConfigUseCase';
 import type { OpenCodeTeamRuntimeMessageResult } from '@main/services/team/runtime/OpenCodeTeamRuntimeAdapter';
 import type { createPersistedLaunchSnapshot } from '@main/services/team/TeamLaunchStateEvaluator';
 import type { TeamProvisioningService } from '@main/services/team/TeamProvisioningService';
@@ -245,14 +246,25 @@ type MutableMemberLifecycleHostOptionalSeam =
   | 'enqueueDirectRestartPrompt'
   | 'updateDirectTmuxRestartMemberConfig';
 
+interface MutableMemberLifecycleSeamMap {
+  enqueueDirectRestartPrompt: NonNullable<
+    TeamProvisioningMemberLifecycleHost['enqueueDirectRestartPrompt']
+  >;
+  updateDirectTmuxRestartMemberConfig: UpdateDirectTmuxRestartMemberConfigUseCase;
+}
+
 export function stubMemberLifecycleHostOptionalSeam<
   TKey extends MutableMemberLifecycleHostOptionalSeam,
 >(
   svc: TeamProvisioningService,
   key: TKey,
-  seam: NonNullable<TeamProvisioningMemberLifecycleHost[TKey]>
-): NonNullable<TeamProvisioningMemberLifecycleHost[TKey]> {
-  Object.defineProperty(memberLifecycleHostHarness(svc), key, {
+  seam: MutableMemberLifecycleSeamMap[TKey]
+): MutableMemberLifecycleSeamMap[TKey] {
+  const target =
+    key === 'updateDirectTmuxRestartMemberConfig'
+      ? memberLifecycleUseCasesHarness(svc)
+      : memberLifecycleHostHarness(svc);
+  Object.defineProperty(target, key, {
     configurable: true,
     writable: true,
     value: seam,

@@ -1,8 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-
 import { TeamProvisioningService } from '@main/services/team/TeamProvisioningService';
-import type { TeamProvisioningConfigFacade } from '@main/services/team/provisioning/TeamProvisioningConfigFacade';
-import type { TeamProvisioningMemberLifecycleServiceUseCases } from '@main/services/team/provisioning/TeamProvisioningMemberLifecycleServiceUseCases';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   getRegisteredProvisioningRunId,
@@ -23,6 +20,9 @@ import {
   verificationProbePortsHarness,
 } from './servicePrivateHarness';
 
+import type { TeamProvisioningConfigFacade } from '@main/services/team/provisioning/TeamProvisioningConfigFacade';
+import type { TeamProvisioningMemberLifecycleServiceUseCases } from '@main/services/team/provisioning/TeamProvisioningMemberLifecycleServiceUseCases';
+
 const { cleanupStaleAnthropicTeamApiKeyHelpersMock } = vi.hoisted(() => ({
   cleanupStaleAnthropicTeamApiKeyHelpersMock: vi.fn(() => Promise.resolve(undefined)),
 }));
@@ -38,6 +38,7 @@ const MEMBER_LIFECYCLE_SERVICE_USE_CASE_KEYS = [
   'preparePrimaryOwnedMemberRestartRuntime',
   'readOpenCodeSecondaryRetryOutcome',
   'stopPrimaryOwnedRosterRuntime',
+  'updateDirectTmuxRestartMemberConfig',
 ] as const satisfies readonly (keyof TeamProvisioningMemberLifecycleServiceUseCases)[];
 
 describe('team provisioning private harness seams', () => {

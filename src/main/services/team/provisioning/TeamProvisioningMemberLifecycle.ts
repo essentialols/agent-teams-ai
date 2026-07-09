@@ -3,7 +3,6 @@ import {
   sendKeysToTmuxPaneForCurrentPlatform,
 } from '@features/tmux-installer/main';
 import { spawnCli } from '@main/utils/childProcess';
-import { FileReadTimeoutError, readFileUtf8WithTimeout } from '@main/utils/fsRead';
 import { getTeamsBasePath } from '@main/utils/pathDecoder';
 import { killProcessByPid } from '@main/utils/processKill';
 import { getMemberColorByName } from '@shared/constants/memberColors';
@@ -28,7 +27,6 @@ import { buildNativeAppManagedBootstrapSpecs } from '../bootstrap/NativeAppManag
 import { ClaudeBinaryResolver } from '../ClaudeBinaryResolver';
 import { getConfiguredCliFlavor } from '../cliFlavor';
 import { sanitizeProcessRuntimeEventFilePrefix } from '../ProcessBootstrapTransportEvidence';
-import { TeamConfigReader } from '../TeamConfigReader';
 import { createPersistedLaunchSnapshot } from '../TeamLaunchStateEvaluator';
 
 import {
@@ -79,13 +77,16 @@ import {
   createNodeStopPrimaryOwnedRosterRuntimeUseCase,
   type StopPrimaryOwnedRosterRuntimeInput,
 } from './TeamProvisioningStopPrimaryOwnedRosterRuntimeUseCase';
+import {
+  createNodeUpdateDirectTmuxRestartMemberConfigUseCase,
+  type DirectTmuxRestartMemberConfigInput,
+} from './TeamProvisioningUpdateDirectTmuxRestartMemberConfigUseCase';
 
 import type { NativeAppManagedBootstrapSpec } from '../bootstrap/NativeAppManagedBootstrapContextBuilder';
 import type { TeamMembersMetaStore } from '../TeamMembersMetaStore';
 import type { RuntimeBootstrapMemberMcpLaunchConfig } from './TeamProvisioningBootstrapSpec';
 import type {
   DirectRestartPromptInput,
-  DirectTmuxRestartMemberConfigInput,
   ProvisioningEnvResolution,
   TeamProvisioningMemberLifecycleHost,
   TeamRuntimeLaunchArgsPlan,
@@ -127,38 +128,8 @@ const TEAMMATE_RUNTIME_EVENTS_ENV = 'CLAUDE_CODE_TEAMMATE_RUNTIME_EVENTS_PATH';
 const TEAMMATE_BOOTSTRAP_PROOF_TOKEN_ENV = 'CLAUDE_CODE_BOOTSTRAP_PROOF_TOKEN';
 const NATIVE_APP_MANAGED_BOOTSTRAP_CONTEXT_ENV =
   'CLAUDE_CODE_NATIVE_APP_MANAGED_BOOTSTRAP_CONTEXT_PATH';
-const TEAM_JSON_READ_TIMEOUT_MS = 5_000;
-const TEAM_CONFIG_MAX_BYTES = 10 * 1024 * 1024;
 const APP_TEAM_RUNTIME_DISALLOWED_TOOLS =
   'TeamDelete,TodoWrite,TaskCreate,TaskUpdate,mcp__agent-teams__team_launch,mcp__agent-teams__team_stop';
-
-async function tryReadRegularFileUtf8(
-  filePath: string,
-  opts: { timeoutMs: number; maxBytes: number }
-): Promise<string | null> {
-  let stat: fs.Stats;
-  try {
-    stat = await fs.promises.stat(filePath);
-  } catch {
-    return null;
-  }
-
-  if (!stat.isFile() || stat.size > opts.maxBytes) {
-    return null;
-  }
-
-  try {
-    return await readFileUtf8WithTimeout(filePath, opts.timeoutMs);
-  } catch (error) {
-    if (error instanceof FileReadTimeoutError) {
-      return null;
-    }
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return null;
-    }
-    throw error;
-  }
-}
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -224,6 +195,8 @@ export class TeamProvisioningMemberLifecycleController {
     });
   private readonly appendDirectProcessRuntimeEventFallback =
     createAppendDirectProcessRuntimeEventUseCase();
+  private readonly updateDirectTmuxRestartMemberConfigFallback =
+    createNodeUpdateDirectTmuxRestartMemberConfigUseCase();
   private readonly stopPrimaryOwnedRosterRuntimeFallback =
     createNodeStopPrimaryOwnedRosterRuntimeUseCase();
   private readonly preparePrimaryOwnedMemberRestartRuntimeFallback =
@@ -539,80 +512,8 @@ export class TeamProvisioningMemberLifecycleController {
   private async updateDirectTmuxRestartMemberConfig(
     input: DirectTmuxRestartMemberConfigInput
   ): Promise<void> {
-    const seam = this.host.updateDirectTmuxRestartMemberConfig;
-    if (seam) {
-      await seam(input);
-      return;
-    }
-    await this.updateDirectTmuxRestartMemberConfigInternal(input);
-  }
-
-  private async updateDirectTmuxRestartMemberConfigInternal(
-    input: DirectTmuxRestartMemberConfigInput
-  ): Promise<void> {
-    const configPath = path.join(getTeamsBasePath(), input.teamName, 'config.json');
-    const raw = await tryReadRegularFileUtf8(configPath, {
-      timeoutMs: TEAM_JSON_READ_TIMEOUT_MS,
-      maxBytes: TEAM_CONFIG_MAX_BYTES,
-    });
-    if (!raw) {
-      throw new Error(`Team "${input.teamName}" configuration is no longer available`);
-    }
-
-    const parsed = JSON.parse(raw) as TeamConfig & { members?: Record<string, unknown>[] };
-    const members = Array.isArray(parsed.members) ? parsed.members : [];
-    const existingIndex = members.findIndex((member) => {
-      const candidateName = typeof member?.name === 'string' ? member.name.trim() : '';
-      return (
-        candidateName.length > 0 && matchesExactTeamMemberName(candidateName, input.memberName)
-      );
-    });
-    const existing: Record<string, unknown> =
-      existingIndex >= 0 ? (members[existingIndex] ?? {}) : {};
-    const nextMember = {
-      ...existing,
-      agentId: input.agentId,
-      name: input.member.name,
-      ...(input.member.role ? { role: input.member.role } : {}),
-      ...(input.member.workflow ? { workflow: input.member.workflow } : {}),
-      ...(input.member.agentType ? { agentType: input.member.agentType } : {}),
-      provider: input.providerId,
-      providerId: input.providerId,
-      ...(input.member.model ? { model: input.member.model } : {}),
-      ...(input.member.effort ? { effort: input.member.effort } : {}),
-      prompt: input.prompt,
-      color: input.color,
-      joinedAt: input.joinedAt,
-      bootstrapExpectedAfter: input.bootstrapExpectedAfter,
-      ...(input.bootstrapProofToken ? { bootstrapProofToken: input.bootstrapProofToken } : {}),
-      ...(input.bootstrapRunId ? { bootstrapRunId: input.bootstrapRunId } : {}),
-      ...(input.bootstrapRuntimeEventsPath
-        ? { bootstrapRuntimeEventsPath: input.bootstrapRuntimeEventsPath }
-        : {}),
-      ...(input.bootstrapContextHash
-        ? {
-            bootstrapProofMode: 'native_app_managed_context',
-            bootstrapContextHash: input.bootstrapContextHash,
-          }
-        : {}),
-      ...(input.bootstrapBriefingHash
-        ? { bootstrapBriefingHash: input.bootstrapBriefingHash }
-        : {}),
-      tmuxPaneId: input.paneId,
-      ...(typeof input.runtimePid === 'number' ? { runtimePid: input.runtimePid } : {}),
-      cwd: input.cwd,
-      subscriptions: Array.isArray(existing.subscriptions) ? existing.subscriptions : [],
-      backendType: input.backendType ?? 'tmux',
-    };
-
-    if (existingIndex >= 0) {
-      members[existingIndex] = nextMember;
-    } else {
-      members.push(nextMember);
-    }
-    parsed.members = members;
-    await atomicWriteAsync(configPath, `${JSON.stringify(parsed, null, 2)}\n`);
-    TeamConfigReader.invalidateTeam(input.teamName);
+    const seam = this.restartUseCases.updateDirectTmuxRestartMemberConfig;
+    await (seam ?? this.updateDirectTmuxRestartMemberConfigFallback)(input);
   }
 
   private enqueueDirectRestartPrompt(input: DirectRestartPromptInput): void {

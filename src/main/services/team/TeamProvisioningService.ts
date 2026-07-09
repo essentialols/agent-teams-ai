@@ -122,7 +122,7 @@ import {
   type DeterministicBootstrapCompletionRecoveryServiceHost,
   recoverDeterministicBootstrapCompletionWithService,
 } from './provisioning/TeamProvisioningDeterministicBootstrapCompletionRecovery';
-import { TeamProvisioningDiagnosticsPreflightCompatibilityFacade } from './provisioning/TeamProvisioningDiagnosticsPreflightCompatibilityFacade';
+import { TeamProvisioningStreamTurnCompatibilityFacade } from './provisioning/TeamProvisioningStreamTurnCompatibilityFacade';
 import { type ProvisioningEnvResolution } from './provisioning/TeamProvisioningEnvBuilder';
 import {
   startProvisioningFilesystemMonitor,
@@ -451,22 +451,8 @@ import {
   killOrphanedTeamAgentProcesses,
   killPersistedPaneMembers,
 } from './provisioning/TeamProvisioningStopProcessCleanup';
-import {
-  createTeamProvisioningStreamEventPortsBoundary,
-  type TeamProvisioningStreamEventServiceAdapter,
-} from './provisioning/TeamProvisioningStreamEventPortsFactory';
-import {
-  handleTeamProvisioningStreamJsonMessage,
-  type TeamProvisioningStreamEventPorts,
-} from './provisioning/TeamProvisioningStreamEvents';
-import { captureTeamSpawnEvents as captureTeamSpawnEventsHelper } from './provisioning/TeamProvisioningStreamSpawnEvents';
 import { TeamProvisioningToolApprovalFacade } from './provisioning/TeamProvisioningToolApprovalFacade';
 import { TeamProvisioningTransientRunState } from './provisioning/TeamProvisioningTransientRunState';
-import { handleTeamProvisioningTurnComplete } from './provisioning/TeamProvisioningTurnComplete';
-import {
-  createTeamProvisioningTurnCompletePorts,
-  type TeamProvisioningTurnCompleteServiceAdapter,
-} from './provisioning/TeamProvisioningTurnCompletePortsFactory';
 import { forwardUserDmToTeammateWithPorts } from './provisioning/TeamProvisioningUserDmRelay';
 import { type TeamProvisioningVerificationProbePorts } from './provisioning/TeamProvisioningVerificationProbePortsFactory';
 import {
@@ -555,7 +541,7 @@ const claudePermissionSettingsFilePorts: ClaudePermissionSettingsFilePorts = {
   writeFileUtf8: (filePath, contents) => atomicWriteAsync(filePath, contents),
 };
 
-export class TeamProvisioningService extends TeamProvisioningDiagnosticsPreflightCompatibilityFacade<ProvisioningRun> {
+export class TeamProvisioningService extends TeamProvisioningStreamTurnCompatibilityFacade<ProvisioningRun> {
   private readonly runtimeLaneCoordinator = createTeamRuntimeLaneCoordinator();
   private readonly providerConnectionService = ProviderConnectionService.getInstance();
   protected readonly launchIdentityBoundary: TeamProvisioningLaunchIdentityBoundary =
@@ -578,7 +564,7 @@ export class TeamProvisioningService extends TeamProvisioningDiagnosticsPrefligh
       getClaudeBasePath,
     });
   protected readonly runs = new Map<string, ProvisioningRun>();
-  private readonly provisioningRunByTeam = new Map<string, string>();
+  protected readonly provisioningRunByTeam = new Map<string, string>();
   private readonly aliveRunByTeam = new Map<string, string>();
   protected readonly runtimeAdapterProgressByRunId = new Map<string, TeamProvisioningProgress>();
   private readonly runtimeAdapterTraceLinesByRunId = new Map<string, string[]>();
@@ -912,7 +898,7 @@ export class TeamProvisioningService extends TeamProvisioningDiagnosticsPrefligh
       )
     );
   private readonly sameTeamNativeDelivery!: TeamProvisioningSameTeamNativeDelivery;
-  private readonly persistentRuntimeCleanup = createTeamProvisioningPersistentRuntimeCleanup({
+  protected readonly persistentRuntimeCleanup = createTeamProvisioningPersistentRuntimeCleanup({
     readPersistedRuntimeMembers: (teamName) => this.readPersistedRuntimeMembers(teamName),
     killPersistedPaneMembers: (teamName, members) =>
       killPersistedPaneMembers(teamName, members, logger),
@@ -1047,7 +1033,7 @@ export class TeamProvisioningService extends TeamProvisioningDiagnosticsPrefligh
     )
   );
   private readonly leadTaskActivitySyncedRunKeys = new Set<string>();
-  private teamChangeEmitter: ((event: TeamChangeEvent) => void) | null = null;
+  protected teamChangeEmitter: ((event: TeamChangeEvent) => void) | null = null;
   protected readonly helpOutputCache = { output: null as string | null, cachedAtMs: 0 };
   protected readonly pendingTimeouts = new Map<string, NodeJS.Timeout>();
   protected readonly toolApprovalFacade!: TeamProvisioningToolApprovalFacade<ProvisioningRun>;
@@ -1057,7 +1043,7 @@ export class TeamProvisioningService extends TeamProvisioningDiagnosticsPrefligh
   protected readonly providerRuntime!: TeamProvisioningProviderRuntimeFacade;
   private readonly providerRuntimeCompatibility!: TeamProvisioningProviderRuntimeCompatibility;
   protected readonly compatibilityDelegation!: TeamProvisioningCompatibilityDelegation<ProvisioningRun>;
-  private readonly outputRecoveryFacade!: TeamProvisioningOutputRecoveryFacade<ProvisioningRun>;
+  protected readonly outputRecoveryFacade!: TeamProvisioningOutputRecoveryFacade<ProvisioningRun>;
   private readonly deterministicCreateSpawnFlowBoundary!: TeamProvisioningCreateDeterministicSpawnFlowBoundary<ProvisioningRun>;
   private readonly deterministicLaunchFlowBoundary!: TeamProvisioningLaunchDeterministicFlowBoundary<MixedSecondaryRuntimeLaneState>;
   protected readonly prepareFacade!: TeamProvisioningPrepareFacade;
@@ -2299,29 +2285,6 @@ export class TeamProvisioningService extends TeamProvisioningDiagnosticsPrefligh
   }
 
   /**
-   * Intercept SendMessage tool_use blocks from the lead's stream-json output.
-   *
-   * Claude Code's internal teamContext may be lost after session resume (--resume), causing
-   * SendMessage routing to drift away from our canonical team artifacts. By capturing tool_use
-   * calls directly from stdout, we persist a durable message row under the correct team name so
-   * Messages stays accurate even if Claude's own routing is flaky.
-   */
-  /**
-   * Intercept Task tool_use blocks that spawn team members.
-   * Sets member spawn status to 'spawning' when the lead issues a Task call with team_name + name.
-   */
-  private captureTeamSpawnEvents(run: ProvisioningRun, content: Record<string, unknown>[]): void {
-    captureTeamSpawnEventsHelper(run, content, {
-      logger,
-      setMemberSpawnStatus: (run, memberName, status, error) =>
-        this.setMemberSpawnStatus(run, memberName, status, error),
-      appendMemberBootstrapDiagnostic: (run, memberName, detail) =>
-        this.appendMemberBootstrapDiagnostic(run, memberName, detail),
-      updateProgress,
-    });
-  }
-
-  /**
    * Post-provisioning audit: read config.json members and flag any expectedMember
    * that was NOT registered by Claude Code as a team member.
    *
@@ -2920,61 +2883,6 @@ export class TeamProvisioningService extends TeamProvisioningDiagnosticsPrefligh
     await reconcileBootstrapTranscriptSuccessesForRun(run, this.memberSpawnStatusAuditPorts);
   }
 
-  private captureSendMessages(run: ProvisioningRun, content: Record<string, unknown>[]): void {
-    this.liveLeadMessagePortsBoundary.captureSendMessages(run, content);
-  }
-
-  pushLiveLeadProcessMessage(teamName: string, message: InboxMessage): void {
-    this.liveLeadMessagePortsBoundary.pushLiveLeadProcessMessage(teamName, message);
-  }
-
-  resolveCrossTeamReplyMetadata(
-    teamName: string,
-    toTeam: string
-  ): { conversationId: string; replyToConversationId: string } | null {
-    return this.liveLeadMessagePortsBoundary.resolveCrossTeamReplyMetadata(teamName, toTeam);
-  }
-
-  /**
-   * Create an InboxMessage from assistant text and push it into the live cache.
-   * Used for both pre-ready (provisioning) and post-ready assistant text.
-   * Emits a coalesced `lead-message` event for renderer refresh.
-   */
-  private resetLiveLeadTextBuffer(run: ProvisioningRun): void {
-    this.liveLeadMessagePortsBoundary.resetLiveLeadTextBuffer(run);
-  }
-
-  private appendProvisioningAssistantText(
-    run: ProvisioningRun,
-    msg: Record<string, unknown>,
-    text: string
-  ): void {
-    this.liveLeadMessagePortsBoundary.appendProvisioningAssistantText(run, msg, text);
-  }
-
-  private shiftProvisioningOutputIndexesAfterRemoval(
-    run: ProvisioningRun,
-    removedIndex: number
-  ): void {
-    this.liveLeadMessagePortsBoundary.shiftProvisioningOutputIndexesAfterRemoval(run, removedIndex);
-  }
-
-  private pushLiveLeadTextMessage(
-    run: ProvisioningRun,
-    cleanText: string,
-    stableMessageId?: string,
-    messageTimestamp?: string,
-    options?: { coalesceStreamChunk?: boolean }
-  ): void {
-    this.liveLeadMessagePortsBoundary.pushLiveLeadTextMessage(
-      run,
-      cleanText,
-      stableMessageId,
-      messageTimestamp,
-      options
-    );
-  }
-
   /**
    * Stop the running process for a team. No-op if team is not running.
    * Always uses SIGKILL via killTeamProcess() to prevent CLI cleanup.
@@ -3019,38 +2927,6 @@ export class TeamProvisioningService extends TeamProvisioningDiagnosticsPrefligh
       cleanupAnthropicApiKeyHelperMaterialForStoppedTeam: (teamName) =>
         this.persistentRuntimeCleanup.cleanupAnthropicApiKeyHelperMaterialForStoppedTeam(teamName),
       logger,
-    });
-  }
-
-  /**
-   * Process a parsed stream-json message from stdout.
-   * Extracts assistant text for progress reporting and detects turn completion.
-   */
-  private handleStreamJsonMessage(run: ProvisioningRun, msg: Record<string, unknown>): void {
-    handleTeamProvisioningStreamJsonMessage(run, msg, this.getStreamJsonEventPorts());
-  }
-
-  private getStreamJsonEventPorts(): TeamProvisioningStreamEventPorts<ProvisioningRun> {
-    return createTeamProvisioningStreamEventPortsBoundary({
-      service: this as TeamProvisioningStreamEventServiceAdapter<ProvisioningRun>,
-      persistentRuntimeCleanup: this.persistentRuntimeCleanup,
-      outputRecovery: this.outputRecoveryFacade,
-      updateProgress,
-      emitTeamChange: (event) => this.teamChangeEmitter?.(event),
-    });
-  }
-
-  private completeProvisioningFromSuccessfulResult(run: ProvisioningRun): void {
-    if (run.provisioningComplete || run.cancelRequested) {
-      return;
-    }
-
-    void this.handleProvisioningTurnComplete(run).catch((err: unknown) => {
-      logger.error(
-        `[${run.teamName}] handleProvisioningTurnComplete threw unexpectedly: ${
-          err instanceof Error ? err.message : String(err)
-        }`
-      );
     });
   }
 
@@ -3120,40 +2996,6 @@ export class TeamProvisioningService extends TeamProvisioningDiagnosticsPrefligh
       },
       { ...claudePermissionSettingsFilePorts, logger }
     );
-  }
-
-  /**
-   * Called once provisioning has a promotable readiness signal.
-   * For deterministic runs with a deferred first task, that signal must be result.success.
-   * Process stays alive for subsequent tasks.
-   */
-  private async handleProvisioningTurnComplete(run: ProvisioningRun): Promise<void> {
-    await handleTeamProvisioningTurnComplete(run, this.getProvisioningTurnCompletePorts());
-  }
-
-  private getProvisioningTurnCompletePorts() {
-    type SecondaryLaunchResult = Awaited<
-      ReturnType<TeamProvisioningService['launchMixedSecondaryLaneIfNeeded']>
-    >;
-
-    return createTeamProvisioningTurnCompletePorts<ProvisioningRun, SecondaryLaunchResult>({
-      service: this as TeamProvisioningTurnCompleteServiceAdapter<
-        ProvisioningRun,
-        SecondaryLaunchResult
-      >,
-      outputRecovery: this.outputRecoveryFacade,
-      config: {
-        updateConfigPostLaunch: (teamName, cwd, detectedSessionId, color, options) =>
-          this.updateConfigPostLaunch(teamName, cwd, detectedSessionId, color, options),
-        cleanupPrelaunchBackup: (teamName) => this.cleanupPrelaunchBackup(teamName),
-        persistMembersMeta: (teamName, request) => this.persistMembersMeta(teamName, request),
-      },
-      updateProgress,
-      provisioningRunByTeam: this.provisioningRunByTeam,
-      setAliveRunId: (teamName, runId) => this.runTracking.setAliveRunId(teamName, runId),
-      emitTeamChange: (event) => this.teamChangeEmitter?.(event),
-      killTeamProcess,
-    });
   }
 
   // ---------------------------------------------------------------------------

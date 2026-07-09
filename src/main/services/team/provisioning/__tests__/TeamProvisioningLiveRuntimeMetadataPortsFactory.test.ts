@@ -171,6 +171,44 @@ describe('TeamProvisioningLiveRuntimeMetadataPortsFactory', () => {
     expect(cachedResult.get('Worker')?.cwd).toBe('/repo/team-alpha');
   });
 
+  it('stamps verified live process observations with a last-seen time', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:20.000Z'));
+    try {
+      const deps = makeDeps({
+        readPersistedRuntimeMembers: vi.fn(() => [
+          {
+            name: 'Worker',
+            providerId: 'anthropic',
+            agentId: 'agent-worker',
+          },
+        ]),
+        readRuntimeProcessRowsForLiveRuntimeMetadata: vi.fn(async () => ({
+          rows: [
+            {
+              pid: 4242,
+              ppid: 1,
+              command: 'node runtime.js --team-name alpha --agent-id agent-worker',
+            },
+          ],
+          processTableAvailable: true,
+        })),
+      });
+      const ports = createTeamProvisioningLiveRuntimeMetadataPorts(deps);
+
+      const metadata = await ports.getLiveTeamAgentRuntimeMetadata('alpha');
+
+      expect(metadata.get('Worker')).toMatchObject({
+        alive: true,
+        livenessKind: 'runtime_process',
+        pid: 4242,
+        runtimeLastSeenAt: '2026-01-01T00:00:20.000Z',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('cleans up the in-flight entry when a metadata build fails', async () => {
     const inFlightByTeam = new Map<string, TeamProvisioningLiveRuntimeMetadataInFlightEntry>();
     const deps = makeDeps({

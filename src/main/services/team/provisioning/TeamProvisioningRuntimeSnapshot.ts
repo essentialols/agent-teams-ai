@@ -1508,6 +1508,7 @@ export async function buildLiveTeamAgentRuntimeMetadata(
       : shouldPreferCurrentLaunchMemberStatus(trackedStatus, adapterStatus)
         ? adapterStatus
         : (trackedStatus ?? adapterStatus ?? launchStatus);
+    const resolvedAt = nowIso();
     const resolved = resolveTeamMemberRuntimeLiveness({
       teamName: params.teamName,
       memberName,
@@ -1523,8 +1524,10 @@ export async function buildLiveTeamAgentRuntimeMetadata(
       pane: paneId ? paneInfoById.get(paneId) : undefined,
       processRows: memberProcessRows,
       processTableAvailable: memberProcessTableAvailable,
-      nowIso: nowIso(),
+      nowIso: resolvedAt,
     });
+    const runtimeLastSeenAt =
+      resolved.runtimeLastSeenAt ?? (isStrongRuntimeEvidence(resolved) ? resolvedAt : undefined);
     const bootstrapTransportDiagnostic =
       status?.runtimeDiagnostic ?? launchMember?.runtimeDiagnostic;
     const bootstrapTransportDiagnosticSeverity =
@@ -1562,7 +1565,7 @@ export async function buildLiveTeamAgentRuntimeMetadata(
       ...(resolved.panePid ? { panePid: resolved.panePid } : {}),
       ...(resolved.paneCurrentCommand ? { paneCurrentCommand: resolved.paneCurrentCommand } : {}),
       ...(resolved.runtimeSessionId ? { runtimeSessionId: resolved.runtimeSessionId } : {}),
-      ...(resolved.runtimeLastSeenAt ? { runtimeLastSeenAt: resolved.runtimeLastSeenAt } : {}),
+      ...(runtimeLastSeenAt ? { runtimeLastSeenAt } : {}),
       runtimeDiagnostic,
       runtimeDiagnosticSeverity,
       diagnostics: hasProcessBootstrapTransportDiagnostic

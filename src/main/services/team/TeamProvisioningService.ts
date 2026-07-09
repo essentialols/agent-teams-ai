@@ -258,7 +258,6 @@ import {
 } from './provisioning/TeamProvisioningOpenCodeSecondaryLaneEvidencePortsFactory';
 import { writeOpenCodeTeamConfig } from './provisioning/TeamProvisioningOpenCodeTeamConfigWriter';
 import { TeamProvisioningOutputRecoveryFacade } from './provisioning/TeamProvisioningOutputRecoveryFacade';
-import { type PersistedTeamConfigCacheEntry } from './provisioning/TeamProvisioningPersistedTeamConfigAccess';
 import { type TeamProvisioningPersistenceReconcileFacade } from './provisioning/TeamProvisioningPersistenceReconcileFacade';
 import { createTeamProvisioningPersistentRuntimeCleanup } from './provisioning/TeamProvisioningPersistentRuntimeCleanup';
 import { TeamProvisioningPrepareFacade } from './provisioning/TeamProvisioningPrepareFacade';
@@ -305,10 +304,8 @@ import {
   getAnthropicFastModeDefault,
   getTeamProviderLabel,
 } from './provisioning/TeamProvisioningRuntimeDiagnostics';
-import { type LiveTeamAgentRuntimeMetadata } from './provisioning/TeamProvisioningRuntimeMetadataPolicy';
 import { type TeamProvisioningRuntimeProjection } from './provisioning/TeamProvisioningRuntimeProjectionFactory';
-import { createTeamProvisioningRuntimeResourceSamplingForService } from './provisioning/TeamProvisioningRuntimeResourceSamplingCompatibilityFacade';
-import { TeamProvisioningRuntimeSnapshotCacheBoundary } from './provisioning/TeamProvisioningRuntimeSnapshotCache';
+import { createTeamProvisioningRuntimeResourceCacheBoundary } from './provisioning/TeamProvisioningRuntimeResourceCacheBoundary';
 import {
   createRuntimeToolActivityHandlerPortsFromService,
   createRuntimeToolActivityHandlers,
@@ -389,13 +386,11 @@ export {
 
 import type {
   InboxMessage,
-  MemberSpawnStatusesSnapshot,
   PersistedTeamLaunchMemberState,
   PersistedTeamLaunchPhase,
   PersistedTeamLaunchSnapshot,
   RetryFailedOpenCodeSecondaryLanesResult,
   TaskRef,
-  TeamAgentRuntimeSnapshot,
   TeamChangeEvent,
   TeamCreateRequest,
   TeamCreateResponse,
@@ -786,63 +781,28 @@ export class TeamProvisioningService extends TeamProvisioningLaunchStateCompatib
     getClaudeBasePath,
     logger,
   });
-  private readonly agentRuntimeSnapshotCache = new Map<
-    string,
-    { expiresAtMs: number; snapshot: TeamAgentRuntimeSnapshot }
-  >();
-  private readonly runtimeResourceSampling =
-    createTeamProvisioningRuntimeResourceSamplingForService(
-      {
-        getRuntimeSnapshotCacheGeneration: (teamName) =>
-          this.getRuntimeSnapshotCacheGeneration(teamName),
-        getTrackedRunId: (teamName) => this.runTracking.getTrackedRunId(teamName),
-      },
-      { logDebug: (message) => logger.debug(message) }
-    );
-  private readonly persistedTeamConfigCache = new Map<string, PersistedTeamConfigCacheEntry>();
-  protected readonly runtimeSnapshotFacade!: TeamProvisioningRuntimeProjection['runtimeSnapshotFacade'];
-  private readonly liveTeamAgentRuntimeMetadataCache = new Map<
-    string,
-    {
-      expiresAtMs: number;
-      metadata: Map<string, LiveTeamAgentRuntimeMetadata>;
-      runId: string | null;
-    }
-  >();
-  private readonly memberSpawnStatusesSnapshotCache = new Map<
-    string,
-    {
-      expiresAtMs: number;
-      generation: number;
-      runId: string | null;
-      snapshot: MemberSpawnStatusesSnapshot;
-    }
-  >();
-  private readonly memberSpawnStatusesInFlightByTeam = new Map<
-    string,
-    {
-      generationAtStart: number;
-      runIdAtStart: string;
-      promise: Promise<MemberSpawnStatusesSnapshot>;
-    }
-  >();
-  protected readonly runtimeSnapshotCacheBoundary =
-    new TeamProvisioningRuntimeSnapshotCacheBoundary<
-      TeamAgentRuntimeSnapshot,
-      Map<string, LiveTeamAgentRuntimeMetadata>,
-      MemberSpawnStatusesSnapshot,
-      PersistedTeamConfigCacheEntry
-    >({
-      agentRuntimeSnapshotCache: this.agentRuntimeSnapshotCache,
-      liveTeamAgentRuntimeMetadataCache: this.liveTeamAgentRuntimeMetadataCache,
-      persistedTeamConfigCache: this.persistedTeamConfigCache,
-      memberSpawnStatusesSnapshotCache: this.memberSpawnStatusesSnapshotCache,
-      memberSpawnStatusesInFlightByTeam: this.memberSpawnStatusesInFlightByTeam,
+
+  private readonly runtimeResourceCacheBoundary =
+    createTeamProvisioningRuntimeResourceCacheBoundary({
+      getTrackedRunId: (teamName) => this.runTracking.getTrackedRunId(teamName),
+      logDebug: (message) => logger.debug(message),
     });
+  private readonly runtimeResourceSampling =
+    this.runtimeResourceCacheBoundary.runtimeResourceSampling;
+  private readonly persistedTeamConfigCache =
+    this.runtimeResourceCacheBoundary.persistedTeamConfigCache;
+  protected readonly runtimeSnapshotFacade!: TeamProvisioningRuntimeProjection['runtimeSnapshotFacade'];
+  private readonly memberSpawnStatusesSnapshotCache =
+    this.runtimeResourceCacheBoundary.memberSpawnStatusesSnapshotCache;
+  private readonly memberSpawnStatusesInFlightByTeam =
+    this.runtimeResourceCacheBoundary.memberSpawnStatusesInFlightByTeam;
+  protected readonly runtimeSnapshotCacheBoundary =
+    this.runtimeResourceCacheBoundary.runtimeSnapshotCacheBoundary;
+
   private readonly launchStateStore = new TeamLaunchStateStore();
   private readonly defaultLaunchStateStore = this.launchStateStore;
   private readonly configFacade!: TeamProvisioningConfigFacade;
-  private readonly liveRuntimeMetadataPorts!: TeamProvisioningRuntimeProjection['liveRuntimeMetadataPorts'];
+  protected readonly liveRuntimeMetadataPorts!: TeamProvisioningRuntimeProjection['liveRuntimeMetadataPorts'];
   private readonly launchStateWrittenRunIdByTeam = new Map<string, string>();
   private readonly launchStateStoreBoundary!: TeamProvisioningLaunchStateStoreBoundary;
   private readonly persistenceReconcileFacade!: TeamProvisioningPersistenceReconcileFacade<ProvisioningRun>;
@@ -1031,7 +991,7 @@ export class TeamProvisioningService extends TeamProvisioningLaunchStateCompatib
   }
 
   private invalidateRuntimeSnapshotCaches(teamName: string): void {
-    this.runtimeSnapshotCacheBoundary.invalidateRuntimeSnapshotCaches(teamName);
+    this.runtimeResourceCacheBoundary.invalidateRuntimeSnapshotCaches(teamName);
   }
 
   private isLaunchRunStillCurrent(run: ProvisioningRun): boolean {

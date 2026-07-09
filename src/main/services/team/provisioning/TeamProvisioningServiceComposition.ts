@@ -78,6 +78,11 @@ import {
   type TeamProvisioningLaunchStateStoreBoundaryServiceHost,
 } from './TeamProvisioningLaunchStateStoreBoundary';
 import {
+  createTeamProvisioningLeadInboxRelayCompatibilityFacadeFromService,
+  type TeamProvisioningLeadInboxRelayCompatibilityFacade,
+  type TeamProvisioningLeadInboxRelayCompatibilityServiceHost,
+} from './TeamProvisioningLeadInboxRelayCompatibilityFacade';
+import {
   createTeamProvisioningMemberMcpLaunchConfigProvisionerFromService,
   TeamProvisioningMemberMcpLaunchConfigProvisioner,
   type TeamProvisioningMemberMcpLaunchConfigServiceHost,
@@ -144,11 +149,6 @@ import {
   type TeamProvisioningRuntimeProjection,
   type TeamProvisioningRuntimeProjectionServiceHost,
 } from './TeamProvisioningRuntimeProjectionFactory';
-import {
-  createDefaultTeamProvisioningSameTeamNativeDeliveryFromService,
-  TeamProvisioningSameTeamNativeDelivery,
-  type TeamProvisioningSameTeamNativeDeliveryServiceHost,
-} from './TeamProvisioningSameTeamNativeDelivery';
 import { type MixedSecondaryRuntimeLaneState } from './TeamProvisioningSecondaryRuntimeRuns';
 import { type TeamProvisioningSendMessageToRunBoundary } from './TeamProvisioningSendMessageToRunBoundaryFactory';
 import {
@@ -244,7 +244,7 @@ export interface TeamProvisioningServiceComposition {
   openCodeVisibleReplyProofService: OpenCodeVisibleReplyProofService;
   openCodePromptDeliveryWatchdogCoordinator: OpenCodePromptDeliveryWatchdogCoordinator;
   bootstrapTranscriptFacade: TeamProvisioningBootstrapTranscriptFacade;
-  sameTeamNativeDelivery: TeamProvisioningSameTeamNativeDelivery;
+  leadInboxRelayFacade: TeamProvisioningLeadInboxRelayCompatibilityFacade<ProvisioningRun>;
   cleanupRunPorts: TeamProvisioningCleanupPorts<ProvisioningRun>;
   transientRunState: TeamProvisioningTransientRunState;
 }
@@ -573,11 +573,18 @@ export function createTeamProvisioningServiceComposition(
     { nowIso }
   );
   assignCompositionPart(service, 'bootstrapTranscriptFacade', bootstrapTranscriptFacade);
-  const sameTeamNativeDelivery = createDefaultTeamProvisioningSameTeamNativeDeliveryFromService(
-    service as TeamProvisioningSameTeamNativeDeliveryServiceHost,
-    { warn: (message) => logger.warn(message) }
+  const leadInboxRelayFacade = createTeamProvisioningLeadInboxRelayCompatibilityFacadeFromService(
+    service as TeamProvisioningLeadInboxRelayCompatibilityServiceHost<ProvisioningRun>,
+    {
+      logger,
+      getErrorMessage,
+      nowIso,
+      nowMs: () => Date.now(),
+      setTimeout: (callback, ms) => setTimeout(callback, ms),
+      clearTimeout: (handle) => clearTimeout(handle),
+    }
   );
-  assignCompositionPart(service, 'sameTeamNativeDelivery', sameTeamNativeDelivery);
+  assignCompositionPart(service, 'leadInboxRelayFacade', leadInboxRelayFacade);
   const cleanupRunPorts = createTeamProvisioningCleanupRunPorts<ProvisioningRun>(
     createTeamProvisioningCleanupRunPortsDepsFromService(
       service as TeamProvisioningCleanupRunServiceHost<ProvisioningRun>
@@ -620,7 +627,7 @@ export function createTeamProvisioningServiceComposition(
     openCodeVisibleReplyProofService,
     openCodePromptDeliveryWatchdogCoordinator,
     bootstrapTranscriptFacade,
-    sameTeamNativeDelivery,
+    leadInboxRelayFacade,
     cleanupRunPorts,
     transientRunState,
   };

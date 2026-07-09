@@ -2498,7 +2498,7 @@ Messages:
     ]);
 
     const nativeMatchSpy = vi
-      .spyOn(service as any, 'confirmSameTeamNativeMatches')
+      .spyOn((service as any).leadInboxRelayFacade, 'confirmSameTeamNativeMatches')
       .mockResolvedValue({ nativeMatchedMessageIds: new Set<string>(), persisted: true });
 
     const { writeSpy } = attachAliveRun(service, teamName);
@@ -2536,7 +2536,10 @@ Messages:
     ]);
     vi.spyOn(service as any, 'markInboxMessagesRead').mockRejectedValue(new Error('write failed'));
 
-    await (service as any).reconcileSameTeamNativeDeliveries(teamName, 'team-lead');
+    await (service as any).leadInboxRelayFacade.reconcileSameTeamNativeDeliveries(
+      teamName,
+      'team-lead'
+    );
 
     expect((service as any).relayedLeadInboxMessageIds.has(teamName)).toBe(false);
     expect((service as any).recentSameTeamNativeFingerprints.get(teamName)).toEqual([
@@ -4281,7 +4284,9 @@ Messages:
         messageId: 'opencode-lead-unread-1',
       },
     ]);
-    const relaySpy = vi.spyOn(service, 'relayOpenCodeMemberInboxMessages').mockResolvedValue({
+    const relaySpy = vi
+      .spyOn((service as any).leadInboxRelayFacade, 'relayOpenCodeMemberInboxMessages')
+      .mockResolvedValue({
       relayed: 1,
       attempted: 1,
       delivered: 1,

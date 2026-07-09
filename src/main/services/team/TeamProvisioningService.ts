@@ -9,7 +9,6 @@ import { resolveLanguageName } from '@shared/utils/agentLanguage';
 import { getErrorMessage } from '@shared/utils/errorHandling';
 import { type ParsedPermissionRequest, type PermissionSuggestion } from '@shared/utils/inboxNoise';
 import { createLogger } from '@shared/utils/logger';
-import { type ParsedTeammateContent } from '@shared/utils/teammateMessageParser';
 import * as agentTeamsControllerModule from 'agent-teams-controller';
 import { type spawn } from 'child_process';
 import { randomUUID } from 'crypto';
@@ -87,17 +86,6 @@ import {
 import { type DeterministicCreateSpawnFlowPorts } from './provisioning/TeamProvisioningCreateDeterministicSpawnFlow';
 import { type TeamProvisioningCreateDeterministicSpawnFlowBoundary } from './provisioning/TeamProvisioningCreateDeterministicSpawnFlowPortsFactory';
 import {
-  clearPendingCrossTeamReplyExpectation as clearPendingCrossTeamReplyExpectationInState,
-  type CrossTeamDeliveredLeadBlock,
-  getPendingCrossTeamReplyExpectationKeys as getPendingCrossTeamReplyExpectationKeysFromState,
-  isCrossTeamPseudoRecipientName,
-  isCrossTeamToolRecipientName,
-  readAndMatchCrossTeamLeadInboxMessages,
-  registerPendingCrossTeamReplyExpectation as registerPendingCrossTeamReplyExpectationInState,
-  rememberRecentCrossTeamLeadDeliveryMessageIds as rememberRecentCrossTeamLeadDeliveryMessageIdsHelper,
-  resolveCrossTeamLeadName,
-} from './provisioning/TeamProvisioningCrossTeamRelayHelpers';
-import {
   type DeterministicBootstrapCompletionRecoveryServiceHost,
   recoverDeterministicBootstrapCompletionWithService,
 } from './provisioning/TeamProvisioningDeterministicBootstrapCompletionRecovery';
@@ -158,16 +146,9 @@ import {
   type TeamProvisioningLeadActivityPortsServiceHost,
 } from './provisioning/TeamProvisioningLeadActivityPortsFactory';
 import { emitLeadContextUsageForRun } from './provisioning/TeamProvisioningLeadContextUsage';
-import {
-  createTeamProvisioningLeadInboxRelayPortsBoundary,
-  createTeamProvisioningLeadInboxRelayPortsDepsFromService,
-  type TeamProvisioningLeadInboxRelayServiceHost,
-} from './provisioning/TeamProvisioningLeadInboxRelayPortsFactory';
+import { type TeamProvisioningLeadInboxRelayCompatibilityFacade } from './provisioning/TeamProvisioningLeadInboxRelayCompatibilityFacade';
 import { getRunTrackedCwdFromRun } from './provisioning/TeamProvisioningLeadRunDerivation';
-import {
-  type LiveInboxRelayResult,
-  relayInboxFileToLiveRecipientWithPorts,
-} from './provisioning/TeamProvisioningLiveInboxRelayRouting';
+import { type LiveInboxRelayResult } from './provisioning/TeamProvisioningLiveInboxRelayRouting';
 import {
   createTeamProvisioningLiveLaunchSnapshotBoundaryFromService,
   type TeamProvisioningLiveLaunchSnapshotBoundaryServiceHost,
@@ -177,7 +158,6 @@ import {
   createTeamProvisioningLiveLeadMessagePortsDepsFromService,
   type TeamProvisioningLiveLeadMessageServiceHost,
 } from './provisioning/TeamProvisioningLiveLeadMessagePortsFactory';
-import { relayMemberInboxMessagesWithPorts } from './provisioning/TeamProvisioningMemberInboxRelayFlow';
 import {
   type MemberLifecycleOperation,
   TeamProvisioningMemberLifecycleController,
@@ -220,7 +200,6 @@ import {
   buildMixedSecondaryLaunchSnapshotForRun as buildMixedSecondaryLaunchSnapshotForRunHelper,
   shouldRecoverStalePersistedMixedLaunchSnapshot as shouldRecoverStalePersistedMixedLaunchSnapshotHelper,
 } from './provisioning/TeamProvisioningMixedSecondaryLaunchReconciliation';
-import { handleNativeTeammateUserMessage as handleNativeTeammateUserMessageHelper } from './provisioning/TeamProvisioningNativeTeammateMessages';
 import {
   getOpenCodeAgendaSyncRecoveryBypassMessageIdsWithService,
   type OpenCodeAgendaSyncRecoveryBypassServiceHost,
@@ -385,7 +364,6 @@ import {
 import { mergeRuntimeDiagnostics } from './provisioning/TeamProvisioningRuntimeMetadata';
 import { type LiveTeamAgentRuntimeMetadata } from './provisioning/TeamProvisioningRuntimeMetadataPolicy';
 import { type TeamProvisioningRuntimeProjection } from './provisioning/TeamProvisioningRuntimeProjectionFactory';
-import { isOpenCodeRuntimeRecipientFromSources } from './provisioning/TeamProvisioningRuntimeRecipientResolution';
 import { createTeamProvisioningRuntimeResourceSamplingForService } from './provisioning/TeamProvisioningRuntimeResourceSamplingCompatibilityFacade';
 import { attachLiveRuntimeMetadataToStatuses as attachLiveRuntimeMetadataToStatusesHelper } from './provisioning/TeamProvisioningRuntimeSnapshot';
 import { TeamProvisioningRuntimeSnapshotCacheBoundary } from './provisioning/TeamProvisioningRuntimeSnapshotCache';
@@ -429,7 +407,11 @@ import {
 } from './provisioning/TeamProvisioningStopProcessCleanup';
 import { TeamProvisioningToolApprovalFacade } from './provisioning/TeamProvisioningToolApprovalFacade';
 import { TeamProvisioningTransientRunState } from './provisioning/TeamProvisioningTransientRunState';
-import { forwardUserDmToTeammateWithPorts } from './provisioning/TeamProvisioningUserDmRelay';
+import { handleTeamProvisioningTurnComplete } from './provisioning/TeamProvisioningTurnComplete';
+import {
+  createTeamProvisioningTurnCompletePorts,
+  type TeamProvisioningTurnCompleteServiceAdapter,
+} from './provisioning/TeamProvisioningTurnCompletePortsFactory';
 import { type TeamProvisioningVerificationProbePorts } from './provisioning/TeamProvisioningVerificationProbePortsFactory';
 import { createTeamProvisioningWorkspaceTrustPreSpawnBoundary } from './provisioning/TeamProvisioningWorkspaceTrustPreSpawnBoundary';
 import { OpenCodeTaskLogAttributionStore } from './taskLogs/stream/OpenCodeTaskLogAttributionStore';
@@ -636,12 +618,7 @@ export class TeamProvisioningService extends TeamProvisioningOpenCodePromptDeliv
     teamName: string,
     messageIds: readonly string[]
   ): void {
-    rememberRecentCrossTeamLeadDeliveryMessageIdsHelper(
-      this.recentCrossTeamLeadDeliveryMessageIds,
-      teamName,
-      messageIds,
-      Date.now()
-    );
+    this.leadInboxRelayFacade.rememberRecentCrossTeamLeadDeliveryMessageIds(teamName, messageIds);
   }
 
   private readonly teamOpLocks = new Map<string, Promise<void>>();
@@ -665,14 +642,11 @@ export class TeamProvisioningService extends TeamProvisioningOpenCodePromptDeliv
       logger,
     }
   );
-  private readonly leadInboxRelayInFlight = new Map<string, Promise<number>>();
-  private readonly relayedLeadInboxMessageIds = new Map<string, Set<string>>();
   private readonly sendMessageToRunBoundary =
     createTeamProvisioningSendMessageToRunBoundary<ProvisioningRun>({
       isCurrentTrackedRun: (run) => this.isCurrentTrackedRun(run),
       setLeadActivity: (run, state) => this.setLeadActivity(run, state),
     });
-  private readonly memberInboxRelayInFlight = new Map<string, Promise<number>>();
   private readonly openCodeMemberInboxRelayInFlight = new Map<
     string,
     Promise<OpenCodeMemberInboxRelayResult>
@@ -695,6 +669,36 @@ export class TeamProvisioningService extends TeamProvisioningOpenCodePromptDeliv
     logger,
     getErrorMessage,
   });
+  private readonly leadInboxRelayFacade!: TeamProvisioningLeadInboxRelayCompatibilityFacade<ProvisioningRun>;
+
+  private get leadInboxRelayInFlight(): Map<string, Promise<number>> {
+    return this.leadInboxRelayFacade.leadInboxRelayInFlight;
+  }
+
+  private get relayedLeadInboxMessageIds(): Map<string, Set<string>> {
+    return this.leadInboxRelayFacade.relayedLeadInboxMessageIds;
+  }
+
+  private get memberInboxRelayInFlight(): Map<string, Promise<number>> {
+    return this.leadInboxRelayFacade.memberInboxRelayInFlight;
+  }
+
+  private get relayedMemberInboxMessageIds(): Map<string, Set<string>> {
+    return this.leadInboxRelayFacade.relayedMemberInboxMessageIds;
+  }
+
+  private get pendingCrossTeamFirstReplies(): Map<string, Map<string, number>> {
+    return this.leadInboxRelayFacade.pendingCrossTeamFirstReplies;
+  }
+
+  private get recentCrossTeamLeadDeliveryMessageIds(): Map<string, Map<string, number>> {
+    return this.leadInboxRelayFacade.recentCrossTeamLeadDeliveryMessageIds;
+  }
+
+  private get recentSameTeamNativeFingerprints(): Map<string, NativeSameTeamFingerprint[]> {
+    return this.leadInboxRelayFacade.recentSameTeamNativeFingerprints;
+  }
+
   private readonly openCodeRuntimeDeliveryProofReader = new OpenCodeRuntimeDeliveryProofReader();
   protected readonly openCodeRuntimeDeliveryAdvisory =
     createTeamProvisioningOpenCodeRuntimeDeliveryAdvisoryFromService<ProvisioningRun>(
@@ -822,28 +826,7 @@ export class TeamProvisioningService extends TeamProvisioningOpenCodePromptDeliv
         getErrorMessage,
       }
     );
-  private readonly relayedMemberInboxMessageIds = new Map<string, Set<string>>();
-  private readonly pendingCrossTeamFirstReplies = new Map<string, Map<string, number>>();
-  private readonly recentCrossTeamLeadDeliveryMessageIds = new Map<string, Map<string, number>>();
-  private readonly leadInboxRelayPortsBoundary =
-    createTeamProvisioningLeadInboxRelayPortsBoundary<ProvisioningRun>(
-      createTeamProvisioningLeadInboxRelayPortsDepsFromService(
-        this as unknown as TeamProvisioningLeadInboxRelayServiceHost<ProvisioningRun>,
-        {
-          logger,
-          getErrorMessage,
-          nowIso,
-          nowMs: () => Date.now(),
-          setTimeout: (callback, ms) => setTimeout(callback, ms),
-          clearTimeout: (handle) => clearTimeout(handle),
-        }
-      )
-    );
   private readonly liveLeadProcessMessages = new Map<string, InboxMessage[]>();
-  private readonly recentSameTeamNativeFingerprints = new Map<
-    string,
-    NativeSameTeamFingerprint[]
-  >();
   protected readonly liveLeadMessagePortsBoundary =
     createTeamProvisioningLiveLeadMessagePortsBoundary<ProvisioningRun>(
       createTeamProvisioningLiveLeadMessagePortsDepsFromService(
@@ -857,7 +840,9 @@ export class TeamProvisioningService extends TeamProvisioningOpenCodePromptDeliv
         }
       )
     );
-  private readonly sameTeamNativeDelivery!: TeamProvisioningSameTeamNativeDelivery;
+  private get sameTeamNativeDelivery(): TeamProvisioningSameTeamNativeDelivery {
+    return this.leadInboxRelayFacade.sameTeamNativeDelivery;
+  }
   protected readonly persistentRuntimeCleanup = createTeamProvisioningPersistentRuntimeCleanup({
     readPersistedRuntimeMembers: (teamName) => this.readPersistedRuntimeMembers(teamName),
     killPersistedPaneMembers: (teamName, members) =>
@@ -1474,12 +1459,10 @@ export class TeamProvisioningService extends TeamProvisioningOpenCodePromptDeliv
     otherTeam: string,
     conversationId: string
   ): void {
-    registerPendingCrossTeamReplyExpectationInState(
-      this.pendingCrossTeamFirstReplies,
+    this.leadInboxRelayFacade.registerPendingCrossTeamReplyExpectation(
       teamName,
       otherTeam,
-      conversationId,
-      Date.now()
+      conversationId
     );
   }
 
@@ -1488,8 +1471,7 @@ export class TeamProvisioningService extends TeamProvisioningOpenCodePromptDeliv
     otherTeam: string,
     conversationId: string
   ): void {
-    clearPendingCrossTeamReplyExpectationInState(
-      this.pendingCrossTeamFirstReplies,
+    this.leadInboxRelayFacade.clearPendingCrossTeamReplyExpectation(
       teamName,
       otherTeam,
       conversationId
@@ -1497,61 +1479,18 @@ export class TeamProvisioningService extends TeamProvisioningOpenCodePromptDeliv
   }
 
   private getPendingCrossTeamReplyExpectationKeys(teamName: string): Set<string> {
-    return getPendingCrossTeamReplyExpectationKeysFromState(
-      this.pendingCrossTeamFirstReplies,
-      teamName,
-      Date.now()
-    );
+    return this.leadInboxRelayFacade.getPendingCrossTeamReplyExpectationKeys(teamName);
   }
 
   private getRunLeadName(run: ProvisioningRun): string {
-    return resolveCrossTeamLeadName(run.request?.members);
-  }
-
-  private async matchCrossTeamLeadInboxMessages(
-    teamName: string,
-    leadName: string,
-    deliveredBlocks: CrossTeamDeliveredLeadBlock[]
-  ): Promise<
-    {
-      teammateId: string;
-      content: string;
-      toTeam: string;
-      conversationId: string;
-      messageId: string;
-      wasRead: boolean;
-    }[]
-  > {
-    return readAndMatchCrossTeamLeadInboxMessages({
-      inboxReader: this.inboxReader,
-      teamName,
-      leadName,
-      deliveredBlocks,
-    });
+    return this.leadInboxRelayFacade.getRunLeadName(run);
   }
 
   private handleNativeTeammateUserMessage(
     run: ProvisioningRun,
     msg: Record<string, unknown>
   ): void {
-    handleNativeTeammateUserMessageHelper(run, msg, {
-      recentCrossTeamLeadDeliveryMessageIds: this.recentCrossTeamLeadDeliveryMessageIds,
-      nowMs: () => Date.now(),
-      nowIso,
-      getRunLeadName: (run) => this.getRunLeadName(run),
-      handleTeammatePermissionRequest: (run, permissionRequest, timestamp) =>
-        this.handleTeammatePermissionRequest(run, permissionRequest, timestamp),
-      matchCrossTeamLeadInboxMessages: (teamName, leadName, deliveredBlocks) =>
-        this.matchCrossTeamLeadInboxMessages(teamName, leadName, deliveredBlocks),
-      markInboxMessagesRead: (teamName, leadName, messages) =>
-        this.markInboxMessagesRead(teamName, leadName, messages),
-      setMemberSpawnStatus: (run, memberName, status, error, source) =>
-        this.setMemberSpawnStatus(run, memberName, status, error, source),
-      rememberSameTeamNativeFingerprints: (teamName, blocks) =>
-        this.rememberSameTeamNativeFingerprints(teamName, blocks),
-      reconcileSameTeamNativeDeliveries: (teamName, leadName) =>
-        this.reconcileSameTeamNativeDeliveries(teamName, leadName),
-    });
+    this.leadInboxRelayFacade.handleNativeTeammateUserMessage(run, msg);
   }
 
   private async refreshMemberSpawnStatusesFromLeadInbox(run: ProvisioningRun): Promise<void> {
@@ -1590,11 +1529,11 @@ export class TeamProvisioningService extends TeamProvisioningOpenCodePromptDeliv
   }
 
   private getMemberRelayKey(teamName: string, memberName: string): string {
-    return this.openCodeMemberSendSerializer.getMemberRelayKey(teamName, memberName);
+    return this.leadInboxRelayFacade.getMemberRelayKey(teamName, memberName);
   }
 
   private getOpenCodeMemberRelayKey(teamName: string, memberName: string): string {
-    return this.openCodeMemberSendSerializer.getOpenCodeMemberRelayKey(teamName, memberName);
+    return this.leadInboxRelayFacade.getOpenCodeMemberRelayKey(teamName, memberName);
   }
 
   protected async sendOpenCodeMemberMessageToRuntimeSerialized(input: {
@@ -1804,43 +1743,16 @@ export class TeamProvisioningService extends TeamProvisioningOpenCodePromptDeliv
     userText: string,
     userSummary?: string
   ): Promise<void> {
-    await forwardUserDmToTeammateWithPorts(
-      { teamName, teammateName, userText, userSummary },
-      {
-        getAliveRunId: (teamName) => this.runTracking.getAliveRunId(teamName),
-        getRun: (runId) => this.runs.get(runId),
-        sendMessageToRun: (run, message) => this.sendMessageToRun(run, message),
-        nowIso,
-      }
+    await this.leadInboxRelayFacade.forwardUserDmToTeammate(
+      teamName,
+      teammateName,
+      userText,
+      userSummary
     );
   }
 
   async relayMemberInboxMessages(teamName: string, memberName: string): Promise<number> {
-    if (isCrossTeamPseudoRecipientName(memberName) || isCrossTeamToolRecipientName(memberName)) {
-      return 0;
-    }
-    const relayKey = this.getMemberRelayKey(teamName, memberName);
-    return relayMemberInboxMessagesWithPorts(
-      { teamName, memberName, relayKey },
-      {
-        inFlight: this.memberInboxRelayInFlight,
-        getAliveRunId: (teamName) => this.runTracking.getAliveRunId(teamName),
-        getRun: (runId) => this.runs.get(runId),
-        isCurrentTrackedRun: (run) => this.isCurrentTrackedRun(run),
-        readInboxMessages: (teamName, memberName) =>
-          this.inboxReader.getMessagesFor(teamName, memberName),
-        markInboxMessagesRead: (teamName, memberName, messages) =>
-          this.markInboxMessagesRead(teamName, memberName, messages),
-        sendMessageToRun: (run, message) => this.sendMessageToRun(run, message),
-        hasAcceptedMemberWorkSyncReport: (input) =>
-          this.memberWorkSyncProofBoundary.hasAcceptedMemberWorkSyncReport(input),
-        relayedMemberInboxMessageIds: this.relayedMemberInboxMessageIds,
-        trimRelayedSet: (relayedIds) => this.trimRelayedSet(relayedIds),
-        logger,
-        nowIso,
-        getErrorMessage,
-      }
-    );
+    return this.leadInboxRelayFacade.relayMemberInboxMessages(teamName, memberName);
   }
 
   async relayInboxFileToLiveRecipient(
@@ -1848,19 +1760,7 @@ export class TeamProvisioningService extends TeamProvisioningOpenCodePromptDeliv
     inboxName: string,
     options: OpenCodeMemberInboxRelayOptions = {}
   ): Promise<LiveInboxRelayResult> {
-    return relayInboxFileToLiveRecipientWithPorts(
-      { teamName, inboxName, options },
-      {
-        readConfigSnapshot: (teamName) => this.configFacade.readConfigSnapshot(teamName),
-        readMetaMembers: (teamName) => this.membersMetaStore.getMembers(teamName),
-        isOpenCodeRuntimeRecipientFromSources: ({ memberName, config, metaMembers }) =>
-          isOpenCodeRuntimeRecipientFromSources({ memberName, config, metaMembers }),
-        relayOpenCodeMemberInboxMessages: (teamName, memberName, relayOptions) =>
-          this.relayOpenCodeMemberInboxMessages(teamName, memberName, relayOptions),
-        relayLeadInboxMessages: (teamName) => this.relayLeadInboxMessages(teamName),
-        isTeamAlive: (teamName) => this.isTeamAlive(teamName),
-      }
-    );
+    return this.leadInboxRelayFacade.relayInboxFileToLiveRecipient(teamName, inboxName, options);
   }
 
   async relayOpenCodeMemberInboxMessages(
@@ -1868,7 +1768,7 @@ export class TeamProvisioningService extends TeamProvisioningOpenCodePromptDeliv
     memberName: string,
     options: OpenCodeMemberInboxRelayOptions = {}
   ): Promise<OpenCodeMemberInboxRelayResult> {
-    return this.openCodeMemberInboxRelayBoundary.relayOpenCodeMemberInboxMessages(
+    return this.leadInboxRelayFacade.relayOpenCodeMemberInboxMessages(
       teamName,
       memberName,
       options
@@ -1898,7 +1798,7 @@ export class TeamProvisioningService extends TeamProvisioningOpenCodePromptDeliv
   }
 
   async relayLeadInboxMessages(teamName: string): Promise<number> {
-    return this.leadInboxRelayPortsBoundary.relayLeadInboxMessages(teamName);
+    return this.leadInboxRelayFacade.relayLeadInboxMessages(teamName);
   }
 
   private languageChangeInFlight: Promise<void> = Promise.resolve();
@@ -2682,45 +2582,6 @@ export class TeamProvisioningService extends TeamProvisioningOpenCodePromptDeliv
       launchSummary,
       snapshot
     );
-  }
-
-  // ---------------------------------------------------------------------------
-  // Same-team native delivery dedup (Layer 2)
-  // ---------------------------------------------------------------------------
-
-  private rememberSameTeamNativeFingerprints(
-    teamName: string,
-    blocks: ParsedTeammateContent[]
-  ): void {
-    this.sameTeamNativeDelivery.rememberSameTeamNativeFingerprints(teamName, blocks);
-  }
-
-  private async confirmSameTeamNativeMatches(
-    teamName: string,
-    leadName: string,
-    messages: InboxMessage[]
-  ): Promise<{ nativeMatchedMessageIds: Set<string>; persisted: boolean }> {
-    return this.sameTeamNativeDelivery.confirmSameTeamNativeMatches(teamName, leadName, messages);
-  }
-
-  private async reconcileSameTeamNativeDeliveries(
-    teamName: string,
-    leadName: string
-  ): Promise<void> {
-    await this.sameTeamNativeDelivery.reconcileSameTeamNativeDeliveries(teamName, leadName);
-  }
-
-  private scheduleSameTeamDeferredRetry(teamName: string): void {
-    this.sameTeamNativeDelivery.scheduleSameTeamDeferredRetry(teamName);
-  }
-
-  /**
-   * Best-effort durable follow-up after native delivery was matched but inbox read-state
-   * could not be persisted. If the run dies before this retry succeeds, a later reconnect
-   * may still relay the row once because in-memory dedupe is not durable.
-   */
-  private scheduleSameTeamPersistRetry(teamName: string): void {
-    this.sameTeamNativeDelivery.scheduleSameTeamPersistRetry(teamName);
   }
 
   private markIncompleteLaunchStateFinalized(run: ProvisioningRun, cleanupReason: string): void {

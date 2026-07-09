@@ -3,7 +3,7 @@ import { createTeamRuntimeLaneCoordinator } from '@features/team-runtime-lanes/m
 import { ConfigManager } from '@main/services/infrastructure/ConfigManager';
 import { NotificationManager } from '@main/services/infrastructure/NotificationManager';
 import { notifyTeamWatchScopeChanged } from '@main/services/infrastructure/teamWatchScope';
-import { execCli, killProcessTree, killTrackedCliProcesses } from '@main/utils/childProcess';
+import { execCli, killProcessTree } from '@main/utils/childProcess';
 import { getClaudeBasePath, getTeamsBasePath } from '@main/utils/pathDecoder';
 import { resolveLanguageName } from '@shared/utils/agentLanguage';
 import { getErrorMessage } from '@shared/utils/errorHandling';
@@ -33,7 +33,6 @@ import { OpenCodePromptDeliveryFollowUpPolicy } from './opencode/delivery/OpenCo
 import { type OpenCodePromptDeliveryWatchdogCoordinator } from './opencode/delivery/OpenCodePromptDeliveryWatchdogCoordinator';
 import { OpenCodeRuntimeDeliveryProofReader } from './opencode/delivery/OpenCodeRuntimeDeliveryProofReader';
 import { type OpenCodeVisibleReplyProofService } from './opencode/delivery/OpenCodeVisibleReplyProofService';
-import { clearOpenCodeRuntimeLaneStorage } from './opencode/store/OpenCodeRuntimeManifestEvidenceReader';
 import { getSystemLocale } from './provisioning/TeamProvisioningAgentLanguage';
 import {
   createAppendDirectProcessRuntimeEventUseCase,
@@ -65,11 +64,6 @@ import {
   type ClaudePermissionSettingsFilePorts,
   seedLeadBootstrapPermissionRules as seedLeadBootstrapPermissionRulesHelper,
 } from './provisioning/TeamProvisioningClaudePermissionSettings';
-import {
-  cleanupProvisioningRun,
-  finalizeIncompleteLaunchStateBeforeCleanup as finalizeIncompleteLaunchStateBeforeCleanupHelper,
-  type TeamProvisioningCleanupPorts,
-} from './provisioning/TeamProvisioningCleanup';
 import { type TeamProvisioningCompatibilityDelegation } from './provisioning/TeamProvisioningCompatibilityFacade';
 import { TeamProvisioningConfigFacade } from './provisioning/TeamProvisioningConfigFacade';
 import { type TeamProvisioningConfigTaskActivityBoundary } from './provisioning/TeamProvisioningConfigTaskActivityBoundary';
@@ -89,8 +83,6 @@ import {
   type DeterministicBootstrapCompletionRecoveryServiceHost,
   recoverDeterministicBootstrapCompletionWithService,
 } from './provisioning/TeamProvisioningDeterministicBootstrapCompletionRecovery';
-import { TeamProvisioningMemberMcpLaunchConfigCompatibilityFacade } from './provisioning/TeamProvisioningMemberMcpLaunchConfigCompatibilityFacade';
-import { TeamProvisioningOpenCodePromptDeliveryCompatibilityFacade } from './provisioning/TeamProvisioningOpenCodePromptDeliveryCompatibilityFacade';
 import { type ProvisioningEnvResolution } from './provisioning/TeamProvisioningEnvBuilder';
 import {
   startProvisioningFilesystemMonitor,
@@ -295,10 +287,6 @@ import {
   createTeamProvisioningOpenCodeSecondaryLaneEvidencePortsFromService,
   type TeamProvisioningOpenCodeSecondaryLaneEvidenceServiceHost,
 } from './provisioning/TeamProvisioningOpenCodeSecondaryLaneEvidencePortsFactory';
-import {
-  createTeamProvisioningOpenCodeStoppedLaneCleanupBoundary,
-  type TeamProvisioningOpenCodeStoppedLaneCleanupBoundary,
-} from './provisioning/TeamProvisioningOpenCodeStoppedLaneCleanupBoundary';
 import { writeOpenCodeTeamConfig } from './provisioning/TeamProvisioningOpenCodeTeamConfigWriter';
 import { TeamProvisioningOutputRecoveryFacade } from './provisioning/TeamProvisioningOutputRecoveryFacade';
 import { type PersistedTeamConfigCacheEntry } from './provisioning/TeamProvisioningPersistedTeamConfigAccess';
@@ -347,11 +335,7 @@ import {
   MEMBER_SPAWN_AUDIT_MIN_INTERVAL_MS,
   type ProvisioningRun,
 } from './provisioning/TeamProvisioningRunModel';
-import {
-  killTeamProcess,
-  nowIso,
-  updateProgress,
-} from './provisioning/TeamProvisioningRunProgress';
+import { nowIso, updateProgress } from './provisioning/TeamProvisioningRunProgress';
 import { TeamProvisioningRuntimeAdapterProgressState } from './provisioning/TeamProvisioningRuntimeAdapterProgressState';
 import {
   planRuntimeLanesOrThrow as planRuntimeLanesOrThrowHelper,
@@ -394,12 +378,7 @@ import {
   type TeamProvisioningServiceMemberLifecycleHostPortGroups,
 } from './provisioning/TeamProvisioningServiceMemberLifecycleHostPortGroups';
 import { createTeamProvisioningShutdownCoordination } from './provisioning/TeamProvisioningShutdownCoordination';
-import { stopAllTeamsFlow } from './provisioning/TeamProvisioningStopFlow';
-import {
-  createTeamProvisioningStopFlowBoundary,
-  createTeamProvisioningStopFlowDepsFromService,
-  type TeamProvisioningStopFlowServiceHost,
-} from './provisioning/TeamProvisioningStopFlowPortsFactory';
+import { TeamProvisioningStopCleanupCompatibilityFacade } from './provisioning/TeamProvisioningStopCleanupCompatibilityFacade';
 import { createNodeStopPrimaryOwnedRosterRuntimeUseCase } from './provisioning/TeamProvisioningStopPrimaryOwnedRosterRuntimeUseCase';
 import {
   killOrphanedTeamAgentProcesses,
@@ -484,7 +463,7 @@ const claudePermissionSettingsFilePorts: ClaudePermissionSettingsFilePorts = {
   writeFileUtf8: (filePath, contents) => atomicWriteAsync(filePath, contents),
 };
 
-export class TeamProvisioningService extends TeamProvisioningOpenCodePromptDeliveryCompatibilityFacade<ProvisioningRun> {
+export class TeamProvisioningService extends TeamProvisioningStopCleanupCompatibilityFacade<ProvisioningRun> {
   private readonly runtimeLaneCoordinator = createTeamRuntimeLaneCoordinator();
   private readonly providerConnectionService = ProviderConnectionService.getInstance();
   protected readonly launchIdentityBoundary: TeamProvisioningLaunchIdentityBoundary =
@@ -564,7 +543,6 @@ export class TeamProvisioningService extends TeamProvisioningOpenCodePromptDeliv
         }
       )
     );
-  private stopAllTeamsGeneration = 0;
   private readonly transientProbeProcesses = new Set<ReturnType<typeof spawn>>();
   private readonly secondaryRuntimeRunByTeam = new Map<
     string,
@@ -977,7 +955,6 @@ export class TeamProvisioningService extends TeamProvisioningOpenCodePromptDeliv
   protected readonly pendingTimeouts = new Map<string, NodeJS.Timeout>();
   protected readonly toolApprovalFacade!: TeamProvisioningToolApprovalFacade<ProvisioningRun>;
   protected readonly transientRunState!: TeamProvisioningTransientRunState;
-  private readonly cleanupRunPorts!: TeamProvisioningCleanupPorts<ProvisioningRun>;
   private readonly idlePromptInjectionBoundary!: TeamProvisioningIdlePromptInjectionBoundary<ProvisioningRun>;
   protected readonly providerRuntime!: TeamProvisioningProviderRuntimeFacade;
   private readonly providerRuntimeCompatibility!: TeamProvisioningProviderRuntimeCompatibility;
@@ -1004,35 +981,6 @@ export class TeamProvisioningService extends TeamProvisioningOpenCodePromptDeliv
       cleanupRun: (run) => this.cleanupRun(run),
       logger,
     });
-
-  private readonly cleanedStoppedTeamOpenCodeRuntimeLanes = new Set<string>();
-  private readonly openCodeStoppedLaneCleanup: TeamProvisioningOpenCodeStoppedLaneCleanupBoundary =
-    createTeamProvisioningOpenCodeStoppedLaneCleanupBoundary(
-      {
-        canDeliverToOpenCodeRuntimeForTeam: (teamName) =>
-          this.runTracking.canDeliverToOpenCodeRuntimeForTeam(teamName),
-        getOpenCodeRuntimeAdapter: () => this.appShellBoundary.getOpenCodeRuntimeAdapter(),
-        readPreviousLaunchState: (teamName) => this.launchStateStore.read(teamName),
-        readConfigForObservation: (teamName) =>
-          this.configFacade.readConfigForObservation(teamName),
-        readMembersMeta: (teamName) => this.membersMetaStore.getMembers(teamName),
-        readPersistedTeamProjectPath: (teamName) => this.readPersistedTeamProjectPath(teamName),
-        deleteSecondaryRuntimeRun: (teamName, laneId) =>
-          this.deleteSecondaryRuntimeRun(teamName, laneId),
-        clearPrimaryRuntimeRun: (teamName) => {
-          this.runtimeAdapterRunByTeam.delete(teamName);
-          this.runTracking.deleteAliveRunId(teamName);
-          this.provisioningRunByTeam.delete(teamName);
-          this.invalidateRuntimeSnapshotCaches(teamName);
-        },
-        markStoppedTeamOpenCodeRuntimeLanesCleaned: (teamName) => {
-          this.cleanedStoppedTeamOpenCodeRuntimeLanes.add(teamName);
-        },
-        logInfo: (message) => logger.info(message),
-        logWarning: (message) => logger.warn(message),
-      },
-      { getTeamsBasePath }
-    );
   private readonly openCodeMemberInboxRelayHost =
     createTeamProvisioningOpenCodeMemberInboxRelayHostFromService(
       this as unknown as TeamProvisioningOpenCodeMemberInboxRelayServiceHost
@@ -1050,19 +998,6 @@ export class TeamProvisioningService extends TeamProvisioningOpenCodePromptDeliv
       nowIso,
       getErrorMessage,
     });
-  private readonly stopFlowBoundary = createTeamProvisioningStopFlowBoundary<ProvisioningRun>(
-    createTeamProvisioningStopFlowDepsFromService(
-      this as unknown as TeamProvisioningStopFlowServiceHost<ProvisioningRun>,
-      {
-        getTeamsBasePath,
-        clearOpenCodeRuntimeLaneStorage,
-        killTeamProcess,
-        updateProgress,
-        logger,
-        nowIso,
-      }
-    )
-  );
   protected readonly reevaluateMemberLaunchStatusBoundary =
     createTeamProvisioningReevaluateMemberLaunchStatusBoundary<ProvisioningRun>(
       createTeamProvisioningReevaluateMemberLaunchStatusDepsFromService(
@@ -2433,53 +2368,6 @@ export class TeamProvisioningService extends TeamProvisioningOpenCodePromptDeliv
   }
 
   /**
-   * Stop the running process for a team. No-op if team is not running.
-   * Always uses SIGKILL via killTeamProcess() to prevent CLI cleanup.
-   */
-  async stopTeam(teamName: string): Promise<void> {
-    await this.stopFlowBoundary.stopTeam(teamName);
-  }
-
-  private async stopMixedSecondaryRuntimeLanes(teamName: string): Promise<void> {
-    await this.stopFlowBoundary.stopMixedSecondaryRuntimeLanes(teamName);
-  }
-
-  private async stopOpenCodeRuntimeAdapterTeam(teamName: string, runId: string): Promise<void> {
-    await this.stopFlowBoundary.stopOpenCodeRuntimeAdapterTeam(teamName, runId);
-  }
-
-  /**
-   * Stop all running team processes. Called during app shutdown.
-   * Uses killTeamProcess() (SIGKILL) to guarantee instant death
-   * without CLI cleanup that would delete team files.
-   */
-  async stopAllTeams(): Promise<void> {
-    await stopAllTeamsFlow({
-      incrementStopAllTeamsGeneration: () => {
-        this.stopAllTeamsGeneration += 1;
-      },
-      getShutdownTrackedTeamNames: () => this.shutdownCoordination.getShutdownTrackedTeamNames(),
-      pauseActiveIntervalsForTeam: (teamName) =>
-        this.taskActivityIntervalService.pauseActiveIntervalsForTeam(teamName),
-      killTrackedCliProcesses,
-      killTransientProbeProcessesForShutdown: () =>
-        this.shutdownCoordination.killTransientProbeProcessesForShutdown(),
-      stopTrackedTeamsForShutdown: (label) =>
-        this.shutdownCoordination.stopTrackedTeamsForShutdown(label),
-      cancelPendingRuntimeAdapterLaunchesForShutdown: () =>
-        this.shutdownCoordination.cancelPendingRuntimeAdapterLaunchesForShutdown(),
-      waitForInFlightTeamOperationsForShutdown: () =>
-        this.shutdownCoordination.waitForInFlightTeamOperationsForShutdown(),
-      listPersistedTeamNames: () => this.configFacade.listPersistedTeamNames(),
-      stopPersistentTeamMembers: (teamName) =>
-        this.persistentRuntimeCleanup.stopPersistentTeamMembers(teamName),
-      cleanupAnthropicApiKeyHelperMaterialForStoppedTeam: (teamName) =>
-        this.persistentRuntimeCleanup.cleanupAnthropicApiKeyHelperMaterialForStoppedTeam(teamName),
-      logger,
-    });
-  }
-
-  /**
    * Injects a post-compact context reminder into the lead process via stdin.
    * Reinjects durable lead rules (constraints, communication protocol, board MCP ops)
    * plus a fresh task board snapshot so the lead recovers full operational context
@@ -2577,46 +2465,6 @@ export class TeamProvisioningService extends TeamProvisioningOpenCodePromptDeliv
       launchSummary,
       snapshot
     );
-  }
-
-  private markIncompleteLaunchStateFinalized(run: ProvisioningRun, cleanupReason: string): void {
-    logger.warn(`[${run.teamName}] Launch cleanup finalizing unconfirmed bootstrap members`, {
-      runId: run.runId,
-      progressState: run.progress.state,
-      progressMessage: run.progress.message,
-      progressError: run.progress.error ?? null,
-      cleanupReason,
-      unconfirmedMembers: this.outputRecoveryFacade.getUnconfirmedBootstrapMemberNames(run),
-      ...this.outputRecoveryFacade.buildStdoutCarryDiagnostic(run),
-    });
-    this.markUnconfirmedBootstrapMembersFailed(run, cleanupReason, {
-      cleanupRequested: true,
-      preserveExistingFailure: true,
-    });
-    run.launchCleanupStateFinalized = true;
-  }
-
-  private async finalizeIncompleteLaunchStateBeforeCleanup(
-    run: ProvisioningRun,
-    fallbackReason?: string
-  ): Promise<void> {
-    await finalizeIncompleteLaunchStateBeforeCleanupHelper(run, this.cleanupRunPorts, {
-      fallbackReason,
-      onPersistFailure: (run, error) => {
-        logger.warn(
-          `[${run.teamName}] Failed to finalize launch state before cleanup: ${
-            error instanceof Error ? error.message : String(error)
-          }`
-        );
-      },
-    });
-  }
-
-  /**
-   * Remove a run from tracking maps.
-   */
-  private cleanupRun(run: ProvisioningRun): void {
-    cleanupProvisioningRun(run, this.cleanupRunPorts);
   }
 
   /**

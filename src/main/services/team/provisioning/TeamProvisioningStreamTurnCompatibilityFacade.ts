@@ -1,8 +1,9 @@
 import { createLogger } from '@shared/utils/logger';
 
-import { TeamProvisioningDiagnosticsPreflightCompatibilityFacade } from './TeamProvisioningDiagnosticsPreflightCompatibilityFacade';
-import { type TeamProvisioningLiveLeadMessagePortsBoundary } from './TeamProvisioningLiveLeadMessagePortsFactory';
-import { type ProvisioningRun } from './TeamProvisioningRunModel';
+import {
+  TeamProvisioningLiveMessageRelayCompatibilityFacade,
+  type TeamProvisioningLiveMessageRelayCompatibilityRun,
+} from './TeamProvisioningLiveMessageRelayCompatibilityFacade';
 import { killTeamProcess, updateProgress } from './TeamProvisioningRunProgress';
 import { type TeamProvisioningRunTrackingDeliveryHelper } from './TeamProvisioningRunTrackingDelivery';
 import {
@@ -29,14 +30,15 @@ import type { InboxMessage, PersistedTeamLaunchSnapshot, TeamChangeEvent } from 
 
 const logger = createLogger('Service:TeamProvisioning');
 
-export type TeamProvisioningStreamTurnCompatibilityRun = ProvisioningRun &
-  TeamProvisioningStreamEventPortsFactoryRun &
-  TeamProvisioningTurnCompletePortsFactoryRun;
+export type TeamProvisioningStreamTurnCompatibilityRun =
+  TeamProvisioningLiveMessageRelayCompatibilityRun &
+    TeamProvisioningStreamEventPortsFactoryRun &
+    TeamProvisioningTurnCompletePortsFactoryRun;
 
 export abstract class TeamProvisioningStreamTurnCompatibilityFacade<
   TRun extends TeamProvisioningStreamTurnCompatibilityRun =
     TeamProvisioningStreamTurnCompatibilityRun,
-> extends TeamProvisioningDiagnosticsPreflightCompatibilityFacade<TRun> {
+> extends TeamProvisioningLiveMessageRelayCompatibilityFacade<TRun> {
   protected abstract readonly persistentRuntimeCleanup: TeamProvisioningStreamEventPersistentRuntimeCleanupAdapter<TRun>;
   protected abstract readonly outputRecoveryFacade: TeamProvisioningStreamEventOutputRecoveryAdapter<TRun> &
     TeamProvisioningTurnCompleteOutputRecoveryAdapter<TRun, PersistedTeamLaunchSnapshot | null>;
@@ -49,7 +51,6 @@ export abstract class TeamProvisioningStreamTurnCompatibilityFacade<
     | 'getTrackedRunId'
     | 'setAliveRunId'
   >;
-  protected abstract readonly liveLeadMessagePortsBoundary: TeamProvisioningLiveLeadMessagePortsBoundary<TRun>;
   protected abstract teamChangeEmitter: ((event: TeamChangeEvent) => void) | null;
 
   /**

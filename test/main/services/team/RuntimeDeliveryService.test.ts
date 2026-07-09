@@ -8,6 +8,7 @@ import {
   buildRuntimeDestinationMessageId,
   createRuntimeDeliveryJournalStore,
   hashRuntimeDeliveryEnvelope,
+  normalizeRuntimeDeliveryEnvelope,
   resolveRuntimeDeliveryDestination,
   type RuntimeDeliveryDestinationRef,
   type RuntimeDeliveryEnvelope,
@@ -410,6 +411,33 @@ describe('RuntimeDeliveryService', () => {
         messageId: destinationMessageId,
       }),
     });
+  });
+});
+
+describe('RuntimeDeliveryJournal', () => {
+  it('normalizes createdAt before delivery payload hashing', () => {
+    const normalized = normalizeRuntimeDeliveryEnvelope({
+      ...envelope(),
+      createdAt: '2026-04-21T12:00:00Z',
+    });
+
+    expect(normalized.createdAt).toBe('2026-04-21T12:00:00.000Z');
+    expect(hashRuntimeDeliveryEnvelope(normalized)).toBe(hashRuntimeDeliveryEnvelope(envelope()));
+  });
+
+  it('rejects missing or invalid createdAt instead of hashing a fallback timestamp', () => {
+    const missingCreatedAt: Partial<RuntimeDeliveryEnvelope> = { ...envelope() };
+    delete missingCreatedAt.createdAt;
+
+    expect(() => normalizeRuntimeDeliveryEnvelope(missingCreatedAt)).toThrow(
+      'Runtime delivery envelope missing createdAt'
+    );
+    expect(() =>
+      normalizeRuntimeDeliveryEnvelope({
+        ...envelope(),
+        createdAt: 'not-a-date',
+      })
+    ).toThrow('Runtime delivery envelope invalid createdAt');
   });
 });
 

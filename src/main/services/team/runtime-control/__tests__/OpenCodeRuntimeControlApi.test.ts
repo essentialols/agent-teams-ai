@@ -114,6 +114,30 @@ describe('OpenCodeRuntimeControlApi', () => {
     expect(ports.runtimeControl.deliverMessage).not.toHaveBeenCalled();
   });
 
+  it('rejects missing or invalid delivery createdAt before runtime control', async () => {
+    const ack = createAck('delivered');
+    const ports = createPorts(ack);
+    const api = createOpenCodeRuntimeControlApi(ports);
+    const raw = {
+      teamName: 'Team',
+      runId: 'run-1',
+      fromMemberName: 'Builder',
+      idempotencyKey: 'message-key-1',
+      runtimeSessionId: 'session-1',
+      to: 'user',
+      text: 'Delivered text',
+    };
+
+    await expect(api.deliverOpenCodeRuntimeMessage(raw)).rejects.toThrow(
+      'Runtime delivery envelope missing createdAt'
+    );
+    await expect(
+      api.deliverOpenCodeRuntimeMessage({ ...raw, createdAt: 'not-a-date' })
+    ).rejects.toThrow('Runtime delivery envelope invalid createdAt');
+
+    expect(ports.runtimeControl.deliverMessage).not.toHaveBeenCalled();
+  });
+
   it('builds stable task-event and heartbeat command ids', async () => {
     const ack = createAck('recorded');
     const ports = createPorts(ack);
@@ -171,6 +195,29 @@ describe('OpenCodeRuntimeControlApi', () => {
         metadata: { runtimeVersion: '1.0.0' },
       })
     );
+  });
+
+  it('rejects missing or invalid task-event createdAt before runtime control', async () => {
+    const ack = createAck('recorded');
+    const ports = createPorts(ack);
+    const api = createOpenCodeRuntimeControlApi(ports);
+    const raw = {
+      teamName: 'Team',
+      runId: 'run-1',
+      memberName: 'Builder',
+      taskId: 'task-1',
+      event: 'started',
+      idempotencyKey: 'task-key-1',
+    };
+
+    await expect(api.recordOpenCodeRuntimeTaskEvent(raw)).rejects.toThrow(
+      'OpenCode runtime payload missing createdAt'
+    );
+    await expect(
+      api.recordOpenCodeRuntimeTaskEvent({ ...raw, createdAt: 'not-a-date' })
+    ).rejects.toThrow('OpenCode runtime payload invalid createdAt');
+
+    expect(ports.runtimeControl.recordTaskEvent).not.toHaveBeenCalled();
   });
 
   it('maps OpenCode permission answers onto the runtime-control answer command', async () => {

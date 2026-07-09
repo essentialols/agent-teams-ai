@@ -117,7 +117,7 @@ export function createOpenCodeRuntimeControlApi(
         ),
         target: normalizeRuntimeDeliveryTarget(payload.to),
         text: requireRuntimeDeliveryString(payload.text, 'text'),
-        createdAt: normalizeRuntimeIso(payload.createdAt),
+        createdAt: requireRuntimeDeliveryIso(payload.createdAt, 'createdAt'),
         summary:
           payload.summary === undefined || payload.summary === null
             ? null
@@ -134,7 +134,7 @@ export function createOpenCodeRuntimeControlApi(
       const event = requireRuntimeString(payload.event, 'event');
       const idempotencyKey = requireRuntimeString(payload.idempotencyKey, 'idempotencyKey');
       const runtimeSessionId = optionalRuntimeString(payload.runtimeSessionId);
-      const createdAt = normalizeRuntimeIso(payload.createdAt);
+      const createdAt = requireRuntimeIso(payload.createdAt, 'createdAt');
       const laneId = await resolveLaneId(ports, { teamName, runId, memberName });
 
       return ports.runtimeControl.recordTaskEvent({
@@ -274,6 +274,26 @@ function normalizeRuntimeIso(value: unknown, fallback: string = new Date().toISO
   }
   const parsed = Date.parse(raw);
   return Number.isFinite(parsed) ? new Date(parsed).toISOString() : fallback;
+}
+
+function requireRuntimeIso(
+  value: unknown,
+  fieldName: string,
+  errorPrefix = 'OpenCode runtime payload'
+): string {
+  const raw = optionalRuntimeString(value);
+  if (!raw) {
+    throw new Error(`${errorPrefix} missing ${fieldName}`);
+  }
+  const parsed = Date.parse(raw);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`${errorPrefix} invalid ${fieldName}`);
+  }
+  return new Date(parsed).toISOString();
+}
+
+function requireRuntimeDeliveryIso(value: unknown, fieldName: string): string {
+  return requireRuntimeIso(value, fieldName, 'Runtime delivery envelope');
 }
 
 function normalizeRuntimeStringArray(value: unknown): string[] {

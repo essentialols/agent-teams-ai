@@ -339,7 +339,7 @@ export function normalizeRuntimeDeliveryEnvelope(value: unknown): RuntimeDeliver
     runtimeSessionId: requireNonEmptyString(value.runtimeSessionId, 'runtimeSessionId'),
     to: normalizeRuntimeDeliveryTarget(value.to),
     text: requireNonEmptyString(value.text, 'text'),
-    createdAt: requireNonEmptyString(value.createdAt, 'createdAt'),
+    createdAt: requireRuntimeDeliveryIso(value.createdAt, 'createdAt'),
     summary: value.summary === undefined || value.summary === null ? null : String(value.summary),
     ...(taskRefs ? { taskRefs } : {}),
   };
@@ -531,6 +531,15 @@ function requireNonEmptyString(value: unknown, field: string): string {
     throw new Error(`Runtime delivery envelope missing ${field}`);
   }
   return value;
+}
+
+function requireRuntimeDeliveryIso(value: unknown, field: string): string {
+  const raw = requireNonEmptyString(value, field).trim();
+  const parsed = Date.parse(raw);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`Runtime delivery envelope invalid ${field}`);
+  }
+  return new Date(parsed).toISOString();
 }
 
 function fail(message: string): never {

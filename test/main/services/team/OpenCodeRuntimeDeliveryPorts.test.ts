@@ -104,11 +104,13 @@ describe('OpenCodeRuntimeDeliveryPorts', () => {
       sentMessages.push(message);
       return Promise.resolve();
     });
+    const deliveredMessageId = 'deduplicated-runtime-cross-team-message';
     const crossTeamSender = vi.fn(
       (request: Parameters<OpenCodeRuntimeDeliveryCrossTeamSender>[0]) =>
         Promise.resolve({
-          messageId: request.messageId ?? 'runtime-delivery-message',
+          messageId: deliveredMessageId,
           deliveredToInbox: true,
+          deduplicated: true,
           toTeam: request.toTeam,
           toMember: request.toMember,
         })
@@ -145,10 +147,13 @@ describe('OpenCodeRuntimeDeliveryPorts', () => {
         from: 'Builder',
         to: 'team-b.Reviewer',
         text: 'Please review this',
-        messageId: 'runtime-delivery-message',
+        messageId: deliveredMessageId,
         source: CROSS_TEAM_SENT_SOURCE,
       })
     );
+    expect(location).toMatchObject({
+      messageId: deliveredMessageId,
+    });
     await expect(
       port.verify({
         destination: {

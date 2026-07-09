@@ -282,12 +282,16 @@ describe('RuntimeDeliveryService', () => {
       to: { teamName: 'team-b', memberName: 'Reviewer' },
     });
     const destinationMessageId = buildRuntimeDestinationMessageId(crossTeamEnvelope);
-    const crossTeamSender = vi.fn(() => Promise.resolve({
-      messageId: destinationMessageId,
-      deliveredToInbox: true,
-      toTeam: 'team-b',
-      toMember: 'Reviewer',
-    }));
+    const deliveredMessageId = 'deduplicated-runtime-cross-team-message';
+    const crossTeamSender = vi.fn(() =>
+      Promise.resolve({
+        messageId: deliveredMessageId,
+        deliveredToInbox: true,
+        deduplicated: true,
+        toTeam: 'team-b',
+        toMember: 'Reviewer',
+      })
+    );
     const service = new RuntimeDeliveryService(
       runState,
       journal,
@@ -324,14 +328,14 @@ describe('RuntimeDeliveryService', () => {
         fromTeamName: 'team-a',
         toTeamName: 'team-b',
         toMemberName: 'Reviewer',
-        messageId: destinationMessageId,
+        messageId: deliveredMessageId,
       },
     });
     expect(sentMessages).toEqual([
       expect.objectContaining({
         from: 'Builder',
         to: 'team-b.Reviewer',
-        messageId: destinationMessageId,
+        messageId: deliveredMessageId,
         source: CROSS_TEAM_SENT_SOURCE,
       }),
     ]);
@@ -339,7 +343,7 @@ describe('RuntimeDeliveryService', () => {
       status: 'committed',
       committedLocation: expect.objectContaining({
         kind: 'cross_team_outbox',
-        messageId: destinationMessageId,
+        messageId: deliveredMessageId,
       }),
     });
     expect(diagnostics.append).not.toHaveBeenCalled();

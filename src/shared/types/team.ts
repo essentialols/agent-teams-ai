@@ -1791,6 +1791,7 @@ export interface CrossTeamSendResult {
   messageId: string;
   deliveredToInbox: boolean;
   deduplicated?: boolean;
+  /** Canonical target used by runtime delivery to verify or repair sender-copy proof. */
   toTeam?: string;
   toMember?: string;
 }

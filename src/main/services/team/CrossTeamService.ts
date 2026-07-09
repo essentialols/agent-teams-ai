@@ -196,13 +196,13 @@ export class CrossTeamService {
         messageId: duplicate.messageId,
         deliveredToInbox: true,
         deduplicated: true,
-        toTeam,
-        toMember: duplicate.toMember,
+        toTeam: duplicate.toTeam,
+        toMember: duplicate.toMember ?? targetMemberName,
       };
       if (request.requireRuntimeDelivery) {
         await this.requireCrossTeamRuntimeDelivery({
           teamName: toTeam,
-          memberName: targetMemberName,
+          memberName: duplicate.toMember ?? targetMemberName,
           messageId: result.messageId,
         });
       }

@@ -26,6 +26,8 @@ const COMPOSITION_INSTALLED_KEYS = [
   'idlePromptInjectionBoundary',
   'providerRuntime',
   'providerRuntimeCompatibility',
+  'openCodeRuntimeRecoveryFacade',
+  'openCodePromptDeliveryWatchdogScheduler',
   'compatibilityDelegation',
   'outputRecoveryFacade',
   'deterministicLaunchFlowBoundary',

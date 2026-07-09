@@ -98,7 +98,16 @@ import {
   type TeamProvisioningMemberMcpLaunchConfigServiceHost,
 } from './TeamProvisioningMemberMcpLaunchConfig';
 import { createInitialMemberSpawnStatusEntry } from './TeamProvisioningMemberSpawnStatusPolicy';
+import {
+  createOpenCodePromptDeliveryWatchdogSchedulerFromService,
+  type TeamProvisioningOpenCodePromptDeliveryWatchdogSchedulerServiceHost,
+} from './TeamProvisioningOpenCodePromptDeliveryWatchdogSchedulerFactory';
 import { type TeamProvisioningOpenCodeRuntimeDeliveryBoundaryHost } from './TeamProvisioningOpenCodeRuntimeDeliveryBoundaryFactory';
+import {
+  createTeamProvisioningOpenCodeRuntimeRecoveryFacadeFromService,
+  type TeamProvisioningOpenCodeRuntimeRecoveryFacade,
+  type TeamProvisioningOpenCodeRuntimeRecoveryFacadeServiceHost,
+} from './TeamProvisioningOpenCodeRuntimeRecoveryFacade';
 import {
   isAuthFailureWarning,
   normalizeApiRetryErrorMessage,
@@ -222,7 +231,6 @@ export interface TeamProvisioningServiceCompositionDeps {
   runs: ReadonlyMap<string, ProvisioningRun>;
   sendMessageToRunBoundary: TeamProvisioningSendMessageToRunBoundary<ProvisioningRun>;
   transientProbeProcesses: Set<ReturnType<typeof spawn>>;
-  openCodePromptDeliveryWatchdogScheduler: OpenCodePromptDeliveryWatchdogScheduler;
 }
 
 export interface TeamProvisioningServiceComposition {
@@ -238,6 +246,8 @@ export interface TeamProvisioningServiceComposition {
   idlePromptInjectionBoundary: TeamProvisioningIdlePromptInjectionBoundary<ProvisioningRun>;
   providerRuntime: TeamProvisioningProviderRuntimeFacade;
   providerRuntimeCompatibility: TeamProvisioningProviderRuntimeCompatibility;
+  openCodeRuntimeRecoveryFacade: TeamProvisioningOpenCodeRuntimeRecoveryFacade;
+  openCodePromptDeliveryWatchdogScheduler: OpenCodePromptDeliveryWatchdogScheduler;
   compatibilityDelegation: TeamProvisioningCompatibilityDelegation<ProvisioningRun>;
   outputRecoveryFacade: TeamProvisioningOutputRecoveryFacade<ProvisioningRun>;
   deterministicLaunchFlowBoundary: TeamProvisioningLaunchDeterministicFlowBoundary<MixedSecondaryRuntimeLaneState>;
@@ -269,6 +279,8 @@ type TeamProvisioningServiceCompositionSource = ServiceCompositionPorts &
   TeamProvisioningToolApprovalFacadeServiceHost<ProvisioningRun> &
   TeamProvisioningIdlePromptInjectionServiceHost<ProvisioningRun> &
   TeamProvisioningProviderRuntimeFacadeServiceHost &
+  TeamProvisioningOpenCodeRuntimeRecoveryFacadeServiceHost &
+  TeamProvisioningOpenCodePromptDeliveryWatchdogSchedulerServiceHost &
   TeamProvisioningOutputRecoveryFacadeServiceHost<ProvisioningRun> &
   TeamProvisioningLaunchDeterministicFlowServiceHost<
     ProvisioningRun,
@@ -384,6 +396,22 @@ export function createTeamProvisioningServiceComposition(
   const providerRuntimeCompatibility =
     createTeamProvisioningProviderRuntimeCompatibility(providerRuntime);
   assignCompositionPart(host, 'providerRuntimeCompatibility', providerRuntimeCompatibility);
+  const openCodeRuntimeRecoveryFacade =
+    createTeamProvisioningOpenCodeRuntimeRecoveryFacadeFromService(host, {
+      getTeamsBasePath,
+      logger,
+    });
+  assignCompositionPart(host, 'openCodeRuntimeRecoveryFacade', openCodeRuntimeRecoveryFacade);
+  const openCodePromptDeliveryWatchdogScheduler =
+    createOpenCodePromptDeliveryWatchdogSchedulerFromService(host, {
+      logger,
+      getErrorMessage,
+    });
+  assignCompositionPart(
+    host,
+    'openCodePromptDeliveryWatchdogScheduler',
+    openCodePromptDeliveryWatchdogScheduler
+  );
   const compatibilityDelegation: TeamProvisioningCompatibilityDelegation<ProvisioningRun> = {
     providerRuntimeCompatibility,
     configFacade,
@@ -492,7 +520,7 @@ export function createTeamProvisioningServiceComposition(
         servicePorts.maybeSyncOpenCodeRuntimePermissionsAfterDelivery(input),
       rememberRuntimePidFromBridge: (input) =>
         servicePorts.rememberOpenCodeRuntimePidFromBridge(input),
-      watchdogScheduler: deps.openCodePromptDeliveryWatchdogScheduler,
+      watchdogScheduler: openCodePromptDeliveryWatchdogScheduler,
       schedulePromptDeliveryWatchdog: (input) =>
         servicePorts.scheduleOpenCodePromptDeliveryWatchdog(input),
       canDeliverToTeamRuntime: (teamName) =>
@@ -591,6 +619,8 @@ export function createTeamProvisioningServiceComposition(
     idlePromptInjectionBoundary,
     providerRuntime,
     providerRuntimeCompatibility,
+    openCodeRuntimeRecoveryFacade,
+    openCodePromptDeliveryWatchdogScheduler,
     compatibilityDelegation,
     outputRecoveryFacade,
     deterministicLaunchFlowBoundary,

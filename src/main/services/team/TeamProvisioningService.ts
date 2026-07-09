@@ -18,6 +18,7 @@ import { ProviderConnectionService } from '../runtime/ProviderConnectionService'
 import { isOpenCodeServeCommand } from './opencode/bridge/OpenCodeManagedHostProcessCleanup';
 import { OpenCodePromptDeliveryFollowUpPolicy } from './opencode/delivery/OpenCodePromptDeliveryFollowUpPolicy';
 import { type OpenCodePromptDeliveryWatchdogCoordinator } from './opencode/delivery/OpenCodePromptDeliveryWatchdogCoordinator';
+import { type OpenCodePromptDeliveryWatchdogScheduler } from './opencode/delivery/OpenCodePromptDeliveryWatchdogScheduler';
 import { OpenCodeRuntimeDeliveryProofReader } from './opencode/delivery/OpenCodeRuntimeDeliveryProofReader';
 import { type OpenCodeVisibleReplyProofService } from './opencode/delivery/OpenCodeVisibleReplyProofService';
 import { scheduleStaleAnthropicTeamApiKeyHelperCleanup } from './provisioning/TeamProvisioningAnthropicApiKeyHelperCleanup';
@@ -84,10 +85,6 @@ import {
   type TeamProvisioningOpenCodeLaunchWiringServiceHost,
 } from './provisioning/TeamProvisioningOpenCodeLaunchWiring';
 import {
-  createOpenCodePromptDeliveryWatchdogSchedulerFromService,
-  type TeamProvisioningOpenCodePromptDeliveryWatchdogSchedulerServiceHost,
-} from './provisioning/TeamProvisioningOpenCodePromptDeliveryWatchdogSchedulerFactory';
-import {
   createTeamProvisioningOpenCodeRuntimeDeliveryAdvisoryFromService,
   type TeamProvisioningOpenCodeRuntimeDeliveryAdvisoryServiceHost,
 } from './provisioning/TeamProvisioningOpenCodeRuntimeDeliveryAdvisory';
@@ -106,11 +103,7 @@ import {
   type RememberOpenCodeRuntimePidFromBridgeServiceHost,
 } from './provisioning/TeamProvisioningOpenCodeRuntimePidBridge';
 import { createTeamProvisioningOpenCodeRuntimeRecoveryBoundary } from './provisioning/TeamProvisioningOpenCodeRuntimeRecoveryBoundaryFactory';
-import {
-  createTeamProvisioningOpenCodeRuntimeRecoveryFacadeFromService,
-  type TeamProvisioningOpenCodeRuntimeRecoveryFacade,
-  type TeamProvisioningOpenCodeRuntimeRecoveryFacadeServiceHost,
-} from './provisioning/TeamProvisioningOpenCodeRuntimeRecoveryFacade';
+import { type TeamProvisioningOpenCodeRuntimeRecoveryFacade } from './provisioning/TeamProvisioningOpenCodeRuntimeRecoveryFacade';
 import { createTeamProvisioningOpenCodeSecondaryBriefingBuilder } from './provisioning/TeamProvisioningOpenCodeSecondaryBriefingBuilder';
 import { TeamProvisioningOutputRecoveryFacade } from './provisioning/TeamProvisioningOutputRecoveryFacade';
 import { type TeamProvisioningPersistenceReconcileFacade } from './provisioning/TeamProvisioningPersistenceReconcileFacade';
@@ -464,14 +457,7 @@ export class TeamProvisioningService extends TeamProvisioningServiceFacadeDelega
     scheduleWatchdog: (input) => this.scheduleOpenCodePromptDeliveryWatchdog(input),
     nowIso,
   });
-  protected readonly openCodePromptDeliveryWatchdogScheduler =
-    createOpenCodePromptDeliveryWatchdogSchedulerFromService(
-      this as unknown as TeamProvisioningOpenCodePromptDeliveryWatchdogSchedulerServiceHost,
-      {
-        logger,
-        getErrorMessage,
-      }
-    );
+  protected readonly openCodePromptDeliveryWatchdogScheduler!: OpenCodePromptDeliveryWatchdogScheduler;
   protected readonly persistentRuntimeCleanup = createTeamProvisioningPersistentRuntimeCleanup({
     readPersistedRuntimeMembers: (teamName) => this.readPersistedRuntimeMembers(teamName),
     killPersistedPaneMembers: (teamName, members) =>
@@ -507,14 +493,7 @@ export class TeamProvisioningService extends TeamProvisioningServiceFacadeDelega
   private readonly launchStateStore = new TeamLaunchStateStore();
   private readonly defaultLaunchStateStore = this.launchStateStore;
   private readonly configFacade!: TeamProvisioningConfigFacade;
-  protected readonly openCodeRuntimeRecoveryFacade: TeamProvisioningOpenCodeRuntimeRecoveryFacade =
-    createTeamProvisioningOpenCodeRuntimeRecoveryFacadeFromService(
-      this as unknown as TeamProvisioningOpenCodeRuntimeRecoveryFacadeServiceHost,
-      {
-        getTeamsBasePath,
-        logger,
-      }
-    );
+  protected readonly openCodeRuntimeRecoveryFacade!: TeamProvisioningOpenCodeRuntimeRecoveryFacade;
 
   protected readonly liveRuntimeMetadataPorts!: TeamProvisioningRuntimeProjection['liveRuntimeMetadataPorts'];
   private readonly launchStateWrittenRunIdByTeam = new Map<string, string>();

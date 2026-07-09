@@ -60,7 +60,6 @@ import {
   createTeamProvisioningBootstrapFailureMarker,
   type TeamProvisioningBootstrapFailureMarker,
 } from './provisioning/TeamProvisioningBootstrapFailureMarking';
-import { type RuntimeBootstrapMemberMcpLaunchConfig } from './provisioning/TeamProvisioningBootstrapSpec';
 import {
   applyBootstrapTranscriptEvidenceOverlay as applyBootstrapTranscriptEvidenceOverlayHelper,
   applyProcessBootstrapTransportOverlay as applyProcessBootstrapTransportOverlayHelper,
@@ -122,7 +121,7 @@ import {
   type DeterministicBootstrapCompletionRecoveryServiceHost,
   recoverDeterministicBootstrapCompletionWithService,
 } from './provisioning/TeamProvisioningDeterministicBootstrapCompletionRecovery';
-import { TeamProvisioningStreamTurnCompatibilityFacade } from './provisioning/TeamProvisioningStreamTurnCompatibilityFacade';
+import { TeamProvisioningMemberMcpLaunchConfigCompatibilityFacade } from './provisioning/TeamProvisioningMemberMcpLaunchConfigCompatibilityFacade';
 import { type ProvisioningEnvResolution } from './provisioning/TeamProvisioningEnvBuilder';
 import {
   startProvisioningFilesystemMonitor,
@@ -207,7 +206,6 @@ import { createTeamProvisioningMemberLifecycleHostFromPortGroups } from './provi
 import { createTeamProvisioningMemberLifecycleOperationRunner } from './provisioning/TeamProvisioningMemberLifecycleOperationRunner';
 import { createTeamProvisioningMemberLifecycleOperationUseCases } from './provisioning/TeamProvisioningMemberLifecycleOperationUseCases';
 import { createTeamProvisioningMemberLifecycleServiceUseCases } from './provisioning/TeamProvisioningMemberLifecycleServiceUseCases';
-import { TeamProvisioningMemberMcpLaunchConfigProvisioner } from './provisioning/TeamProvisioningMemberMcpLaunchConfig';
 import {
   refreshMemberSpawnStatusesFromLeadInbox as refreshMemberSpawnStatusesFromLeadInboxHelper,
   resolveExpectedLaunchMemberName as resolveExpectedLaunchMemberNameHelper,
@@ -541,7 +539,7 @@ const claudePermissionSettingsFilePorts: ClaudePermissionSettingsFilePorts = {
   writeFileUtf8: (filePath, contents) => atomicWriteAsync(filePath, contents),
 };
 
-export class TeamProvisioningService extends TeamProvisioningStreamTurnCompatibilityFacade<ProvisioningRun> {
+export class TeamProvisioningService extends TeamProvisioningMemberMcpLaunchConfigCompatibilityFacade<ProvisioningRun> {
   private readonly runtimeLaneCoordinator = createTeamRuntimeLaneCoordinator();
   private readonly providerConnectionService = ProviderConnectionService.getInstance();
   protected readonly launchIdentityBoundary: TeamProvisioningLaunchIdentityBoundary =
@@ -1019,7 +1017,6 @@ export class TeamProvisioningService extends TeamProvisioningStreamTurnCompatibi
   );
   protected readonly memberLifecycleFacade: TeamProvisioningMemberLifecyclePublicFacade =
     this.memberLifecycleController;
-  private readonly memberMcpLaunchConfigProvisioner!: TeamProvisioningMemberMcpLaunchConfigProvisioner<ProvisioningRun>;
   private readonly taskActivityIntervalService = new TeamTaskActivityIntervalService();
   protected readonly runtimeToolActivity = createRuntimeToolActivityHandlers<ProvisioningRun>(
     createRuntimeToolActivityHandlerPortsFromService(
@@ -1748,38 +1745,6 @@ export class TeamProvisioningService extends TeamProvisioningStreamTurnCompatibi
       params,
       this as unknown as OpenCodeRuntimeLaneIdResolutionServiceHost
     );
-  }
-
-  private async buildRuntimeBootstrapMemberMcpLaunchConfigs(input: {
-    cwd: string;
-    members: TeamCreateRequest['members'];
-    run: ProvisioningRun;
-    controlApiBaseUrl?: string | null;
-  }): Promise<Map<string, RuntimeBootstrapMemberMcpLaunchConfig>> {
-    return this.memberMcpLaunchConfigProvisioner.buildRuntimeBootstrapMemberMcpLaunchConfigs(input);
-  }
-
-  async prepareLiveMemberMcpLaunchConfig(input: {
-    teamName: string;
-    cwd?: string;
-    mcpPolicy?: unknown;
-  }): Promise<RuntimeBootstrapMemberMcpLaunchConfig | null> {
-    return this.memberMcpLaunchConfigProvisioner.prepareLiveMemberMcpLaunchConfig(input);
-  }
-
-  async discardLiveMemberMcpLaunchConfig(input: {
-    teamName: string;
-    mcpLaunchConfig: RuntimeBootstrapMemberMcpLaunchConfig | null | undefined;
-  }): Promise<void> {
-    await this.memberMcpLaunchConfigProvisioner.discardLiveMemberMcpLaunchConfig(input);
-  }
-
-  private async removeRunMemberMcpConfigFiles(run: ProvisioningRun): Promise<void> {
-    await this.memberMcpLaunchConfigProvisioner.removeRunMemberMcpConfigFiles(run);
-  }
-
-  private removeRunMemberMcpConfigFilesLater(run: ProvisioningRun): void {
-    this.memberMcpLaunchConfigProvisioner.removeRunMemberMcpConfigFilesLater(run);
   }
 
   private sweepRuntimeAdapterRunState(nowMs: number = Date.now()): void {

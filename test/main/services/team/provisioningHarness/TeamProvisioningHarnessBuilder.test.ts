@@ -1,5 +1,4 @@
 /* eslint-disable security/detect-non-literal-fs-filename -- Test paths are owned by the harness temp workspace. */
-import { createTeamProvisioningLaunchExpectedMembersPorts } from '@main/services/team/provisioning/TeamProvisioningLaunchExpectedMembersPortsFactory';
 import { getTeamsBasePath, setClaudeBasePathOverride } from '@main/utils/pathDecoder';
 import { access, readdir, readFile, rm, stat, writeFile } from 'fs/promises';
 import * as os from 'os';
@@ -525,6 +524,10 @@ describe('TeamProvisioningHarnessBuilder', () => {
     expect(Object.keys(harness.stores.launchStateStore).sort()).toEqual(['read']);
     expect(Object.keys(harness.stores.bootstrapStateStore).sort()).toEqual(['read']);
     expect(Object.keys(harness.stores.runtimeStore).sort()).toEqual(['read']);
+    expect(Object.keys(harness.facades).sort()).toEqual([
+      'configFacade',
+      'launchExpectedMembersPorts',
+    ]);
     expect('updateConfig' in harness.stores.configReader).toBe(false);
     expect('writeMeta' in harness.stores.teamMetaStore).toBe(false);
 
@@ -579,14 +582,7 @@ describe('TeamProvisioningHarnessBuilder', () => {
         .withInbox(teamName, 'Worker', inboxMessages)
         .build()
     );
-    const ports = createTeamProvisioningLaunchExpectedMembersPorts({
-      launchStateStore: harness.stores.launchStateStore,
-      readBootstrapLaunchSnapshot: (targetTeamName) =>
-        harness.stores.bootstrapStateStore.read(targetTeamName),
-      membersMetaStore: harness.stores.membersMetaStore,
-      inboxReader: harness.stores.inboxReader,
-      logger: harness.logger,
-    });
+    const ports = harness.facades.launchExpectedMembersPorts;
 
     await expect(ports.readLaunchState(teamName)).resolves.toEqual(launchState);
     await expect(ports.readBootstrapLaunchSnapshot(teamName)).resolves.toEqual(bootstrapState);

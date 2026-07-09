@@ -5,6 +5,8 @@ import {
   type TeamProvisioningConfigFacadeOptions,
   type TeamProvisioningConfigFacadeReader,
 } from '@main/services/team/provisioning/TeamProvisioningConfigFacade';
+import { type TeamProvisioningLaunchExpectedMembersPorts } from '@main/services/team/provisioning/TeamProvisioningLaunchExpectedMembers';
+import { createTeamProvisioningLaunchExpectedMembersPorts } from '@main/services/team/provisioning/TeamProvisioningLaunchExpectedMembersPortsFactory';
 import {
   getAutoDetectedClaudeBasePath,
   getClaudeBasePath,
@@ -96,6 +98,7 @@ export interface TeamProvisioningHarnessStores {
 
 export interface TeamProvisioningHarnessFacades {
   configFacade: TeamProvisioningConfigFacade;
+  launchExpectedMembersPorts: TeamProvisioningLaunchExpectedMembersPorts;
 }
 
 export interface TeamProvisioningHarnessClock {
@@ -611,6 +614,19 @@ function createConfigFacade(
   return new TeamProvisioningConfigFacade(options);
 }
 
+function createLaunchExpectedMembersPorts(
+  stores: TeamProvisioningHarnessStores,
+  logger: TeamProvisioningHarnessLogger
+): TeamProvisioningLaunchExpectedMembersPorts {
+  return createTeamProvisioningLaunchExpectedMembersPorts({
+    launchStateStore: stores.launchStateStore,
+    readBootstrapLaunchSnapshot: (teamName) => stores.bootstrapStateStore.read(teamName),
+    membersMetaStore: stores.membersMetaStore,
+    inboxReader: stores.inboxReader,
+    logger,
+  });
+}
+
 interface HarnessPathOverrideLease {
   token: symbol;
   claudeRoot: string;
@@ -869,6 +885,7 @@ export class TeamProvisioningHarnessBuilder {
         stores,
         {
           configFacade: createConfigFacade(paths, stores, harnessLogger),
+          launchExpectedMembersPorts: createLaunchExpectedMembersPorts(stores, harnessLogger),
         },
         new HarnessClock(this.clockIso),
         new HarnessUuidSource(this.uuidSequence),

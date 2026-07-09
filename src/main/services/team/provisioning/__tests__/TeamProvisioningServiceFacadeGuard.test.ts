@@ -1,5 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { dirname, relative, resolve } from 'node:path';
 
 import { format, type Options as PrettierOptions } from 'prettier';
 import ts from 'typescript';
@@ -9,6 +9,9 @@ const TEAM_PROVISIONING_SERVICE_PATH = resolve(
   process.cwd(),
   'src/main/services/team/TeamProvisioningService.ts'
 );
+const TEAM_PROVISIONING_FACADE_ROOT = resolve(process.cwd(), 'src/main/services/team/provisioning');
+const TEAM_PROVISIONING_COMPATIBILITY_FACADE_OWNER_FILE_PATTERN =
+  /^TeamProvisioning(?:AppShellFacade|ServiceFacadeDelegates|.*CompatibilityFacade)\.ts$/;
 const TEAM_PROVISIONING_SERVICE_LINE_LIMIT = 777;
 const TEAM_PROVISIONING_SERVICE_FORMAT_OPTIONS: PrettierOptions = {
   parser: 'typescript',
@@ -29,6 +32,12 @@ type ServiceEntryPointMember =
   | ts.MethodDeclaration
   | ts.PropertyDeclaration
   | ts.SetAccessorDeclaration;
+type GuardedFacadeSource = {
+  filePath: string;
+  projectPath: string;
+  source: string;
+  sourceFile: ts.SourceFile;
+};
 const CONSTRUCTOR_DEPENDENCIES = [
   {
     accessibility: 'private',
@@ -114,32 +123,48 @@ function readTeamProvisioningServiceSource(): string {
   return readFileSync(TEAM_PROVISIONING_SERVICE_PATH, 'utf8');
 }
 
+function parseTypeScriptSource(filePath: string, source: string): ts.SourceFile {
+  return ts.createSourceFile(filePath, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+}
+
 function parseTeamProvisioningServiceSource(source: string): ts.SourceFile {
-  return ts.createSourceFile(
-    TEAM_PROVISIONING_SERVICE_PATH,
+  return parseTypeScriptSource(TEAM_PROVISIONING_SERVICE_PATH, source);
+}
+
+function projectRelativePath(filePath: string): string {
+  return relative(process.cwd(), filePath);
+}
+
+function readGuardedFacadeSource(filePath: string): GuardedFacadeSource {
+  const source = readFileSync(filePath, 'utf8');
+
+  return {
+    filePath,
+    projectPath: projectRelativePath(filePath),
     source,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS
-  );
+    sourceFile: parseTypeScriptSource(filePath, source),
+  };
 }
 
 async function formatTeamProvisioningServiceSource(source: string): Promise<string> {
   return await format(source, TEAM_PROVISIONING_SERVICE_FORMAT_OPTIONS);
 }
 
-function findTeamProvisioningServiceClass(sourceFile: ts.SourceFile): ts.ClassDeclaration {
+function findClassDeclaration(sourceFile: ts.SourceFile, className: string): ts.ClassDeclaration {
   const serviceClass = sourceFile.statements.find(
     (statement): statement is ts.ClassDeclaration =>
-      ts.isClassDeclaration(statement) &&
-      statement.name?.text === TEAM_PROVISIONING_SERVICE_CLASS_NAME
+      ts.isClassDeclaration(statement) && statement.name?.text === className
   );
 
   if (!serviceClass) {
-    throw new Error(`Missing ${TEAM_PROVISIONING_SERVICE_CLASS_NAME} class`);
+    throw new Error(`Missing ${className} class in ${projectRelativePath(sourceFile.fileName)}`);
   }
 
   return serviceClass;
+}
+
+function findTeamProvisioningServiceClass(sourceFile: ts.SourceFile): ts.ClassDeclaration {
+  return findClassDeclaration(sourceFile, TEAM_PROVISIONING_SERVICE_CLASS_NAME);
 }
 
 function hasModifier(node: ts.Node, kind: ts.SyntaxKind): boolean {
@@ -256,6 +281,131 @@ function collectModuleSpecifiers(sourceFile: ts.SourceFile): string[] {
   });
 }
 
+function getSuperclassIdentifier(classDeclaration: ts.ClassDeclaration): string | null {
+  const extendsClause = classDeclaration.heritageClauses?.find(
+    (clause) => clause.token === ts.SyntaxKind.ExtendsKeyword
+  );
+  const superType = extendsClause?.types[0];
+  if (!superType) {
+    return null;
+  }
+
+  if (ts.isIdentifier(superType.expression)) {
+    return superType.expression.text;
+  }
+
+  if (ts.isPropertyAccessExpression(superType.expression)) {
+    return superType.expression.name.text;
+  }
+
+  return null;
+}
+
+function resolveLocalModuleSpecifier(importerPath: string, specifier: string): string | null {
+  if (!specifier.startsWith('.')) {
+    return null;
+  }
+
+  const basePath = resolve(dirname(importerPath), specifier);
+  const candidatePaths = [`${basePath}.ts`, resolve(basePath, 'index.ts')];
+
+  return candidatePaths.find((candidatePath) => existsSync(candidatePath)) ?? null;
+}
+
+function resolveImportedIdentifierPath(
+  sourceFile: ts.SourceFile,
+  importerPath: string,
+  identifier: string
+): string | null {
+  for (const statement of sourceFile.statements) {
+    if (
+      !ts.isImportDeclaration(statement) ||
+      !statement.moduleSpecifier ||
+      !ts.isStringLiteral(statement.moduleSpecifier)
+    ) {
+      continue;
+    }
+
+    const importClause = statement.importClause;
+    const namedBindings = importClause?.namedBindings;
+    const isDefaultMatch = importClause?.name?.text === identifier;
+    const isNamedMatch =
+      namedBindings &&
+      ts.isNamedImports(namedBindings) &&
+      namedBindings.elements.some((element) => element.name.text === identifier);
+
+    if (isDefaultMatch || isNamedMatch) {
+      return resolveLocalModuleSpecifier(importerPath, statement.moduleSpecifier.text);
+    }
+  }
+
+  return null;
+}
+
+function collectLocalSuperclassChainPaths(
+  initialFilePath = TEAM_PROVISIONING_SERVICE_PATH,
+  initialClassName = TEAM_PROVISIONING_SERVICE_CLASS_NAME
+): string[] {
+  const filePaths: string[] = [];
+  const seenClasses = new Set<string>();
+  let currentFilePath = initialFilePath;
+  let currentClassName: string | null = initialClassName;
+
+  while (currentClassName) {
+    const seenKey = `${currentFilePath}#${currentClassName}`;
+    if (seenClasses.has(seenKey)) {
+      throw new Error(
+        `Circular facade superclass chain at ${projectRelativePath(currentFilePath)}`
+      );
+    }
+    seenClasses.add(seenKey);
+    filePaths.push(currentFilePath);
+
+    const { sourceFile } = readGuardedFacadeSource(currentFilePath);
+    const classDeclaration = findClassDeclaration(sourceFile, currentClassName);
+    const superclassIdentifier = getSuperclassIdentifier(classDeclaration);
+    if (!superclassIdentifier) {
+      break;
+    }
+
+    const superclassPath = resolveImportedIdentifierPath(
+      sourceFile,
+      currentFilePath,
+      superclassIdentifier
+    );
+    if (!superclassPath) {
+      break;
+    }
+
+    currentFilePath = superclassPath;
+    currentClassName = superclassIdentifier;
+  }
+
+  return filePaths;
+}
+
+function collectNamedCompatibilityFacadeOwnershipPaths(): string[] {
+  return readdirSync(TEAM_PROVISIONING_FACADE_ROOT)
+    .filter((fileName) => TEAM_PROVISIONING_COMPATIBILITY_FACADE_OWNER_FILE_PATTERN.test(fileName))
+    .map((fileName) => resolve(TEAM_PROVISIONING_FACADE_ROOT, fileName));
+}
+
+function getTeamProvisioningCompatibilityFacadeGuardPaths(): string[] {
+  return [
+    ...new Set([
+      TEAM_PROVISIONING_SERVICE_PATH,
+      ...collectNamedCompatibilityFacadeOwnershipPaths(),
+      ...collectLocalSuperclassChainPaths(),
+    ]),
+  ].sort((a, b) => projectRelativePath(a).localeCompare(projectRelativePath(b)));
+}
+
+function readTeamProvisioningCompatibilityFacadeGuardSources(): GuardedFacadeSource[] {
+  return getTeamProvisioningCompatibilityFacadeGuardPaths().map((filePath) =>
+    readGuardedFacadeSource(filePath)
+  );
+}
+
 describe('TeamProvisioningService facade guard', () => {
   it('keeps the compatibility facade below the line cap', () => {
     const source = readTeamProvisioningServiceSource();
@@ -279,14 +429,39 @@ describe('TeamProvisioningService facade guard', () => {
   });
 
   it('keeps subscription runtime references out of the compatibility facade', () => {
-    const source = readTeamProvisioningServiceSource();
-    const sourceFile = parseTeamProvisioningServiceSource(source);
-    const forbiddenImports = collectModuleSpecifiers(sourceFile).filter((specifier) =>
-      SUBSCRIPTION_RUNTIME_REFERENCE_PATTERN.test(specifier)
+    const forbiddenReferences = readTeamProvisioningCompatibilityFacadeGuardSources().flatMap(
+      ({ projectPath, source, sourceFile }) => {
+        const forbiddenImports = collectModuleSpecifiers(sourceFile).filter((specifier) =>
+          SUBSCRIPTION_RUNTIME_REFERENCE_PATTERN.test(specifier)
+        );
+
+        if (!SUBSCRIPTION_RUNTIME_REFERENCE_PATTERN.test(source) && forbiddenImports.length === 0) {
+          return [];
+        }
+
+        return [{ forbiddenImports, projectPath }];
+      }
     );
 
-    expect(source).not.toMatch(SUBSCRIPTION_RUNTIME_REFERENCE_PATTERN);
-    expect(forbiddenImports).toEqual([]);
+    expect(forbiddenReferences).toEqual([]);
+  });
+
+  it('includes extracted facade delegates and superclasses in forbidden-reference coverage', () => {
+    const guardedProjectPaths = getTeamProvisioningCompatibilityFacadeGuardPaths().map((filePath) =>
+      projectRelativePath(filePath)
+    );
+    const superclassProjectPaths = collectLocalSuperclassChainPaths().map((filePath) =>
+      projectRelativePath(filePath)
+    );
+
+    expect(guardedProjectPaths).toEqual(expect.arrayContaining(superclassProjectPaths));
+    expect(guardedProjectPaths).toEqual(
+      expect.arrayContaining([
+        'src/main/services/team/provisioning/TeamProvisioningAppShellFacade.ts',
+        'src/main/services/team/provisioning/TeamProvisioningCompatibilityFacade.ts',
+        'src/main/services/team/provisioning/TeamProvisioningServiceFacadeDelegates.ts',
+      ])
+    );
   });
 
   it('keeps the declared public service entrypoints narrow', () => {

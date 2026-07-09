@@ -60,9 +60,14 @@ export function areTeamAgentRuntimeResourceSamplesEqual(left: unknown, right: un
   );
 }
 
+export interface TeamAgentRuntimeSnapshotEqualityOptions {
+  compareFreshnessTimestamps?: boolean;
+}
+
 export function areTeamAgentRuntimeEntriesEqual(
   left: TeamAgentRuntimeEntry | undefined,
-  right: TeamAgentRuntimeEntry | undefined
+  right: TeamAgentRuntimeEntry | undefined,
+  options: TeamAgentRuntimeSnapshotEqualityOptions = {}
 ): boolean {
   if (left === right) return true;
   if (!left || !right) return left === right;
@@ -96,6 +101,7 @@ export function areTeamAgentRuntimeEntriesEqual(
     left.runtimeSessionId === right.runtimeSessionId &&
     left.runtimeDiagnostic === right.runtimeDiagnostic &&
     left.runtimeDiagnosticSeverity === right.runtimeDiagnosticSeverity &&
+    (!options.compareFreshnessTimestamps || left.updatedAt === right.updatedAt) &&
     left.runtimeLastSeenAt === right.runtimeLastSeenAt &&
     left.historicalBootstrapConfirmed === right.historicalBootstrapConfirmed &&
     areDiagnosticsEqual(left.diagnostics, right.diagnostics) &&
@@ -105,10 +111,14 @@ export function areTeamAgentRuntimeEntriesEqual(
 
 export function areTeamAgentRuntimeSnapshotsEqual(
   left: TeamAgentRuntimeSnapshot | undefined,
-  right: TeamAgentRuntimeSnapshot
+  right: TeamAgentRuntimeSnapshot,
+  options: TeamAgentRuntimeSnapshotEqualityOptions = {}
 ): boolean {
   if (!left) return false;
   if (left.teamName !== right.teamName || left.runId !== right.runId) {
+    return false;
+  }
+  if (options.compareFreshnessTimestamps && left.updatedAt !== right.updatedAt) {
     return false;
   }
   const leftKeys = Object.keys(left.members);
@@ -120,7 +130,7 @@ export function areTeamAgentRuntimeSnapshotsEqual(
     if (!(key in right.members)) {
       return false;
     }
-    if (!areTeamAgentRuntimeEntriesEqual(left.members[key], right.members[key])) {
+    if (!areTeamAgentRuntimeEntriesEqual(left.members[key], right.members[key], options)) {
       return false;
     }
   }

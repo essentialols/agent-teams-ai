@@ -39,7 +39,11 @@ describe('team agent runtime snapshot stabilization', () => {
       makeEntry({ updatedAt: '2026-01-01T00:00:20.000Z' })
     );
 
-    expect(areTeamAgentRuntimeSnapshotsEqual(firstLive, refreshedLive)).toBe(false);
+    expect(
+      areTeamAgentRuntimeSnapshotsEqual(firstLive, refreshedLive, {
+        compareFreshnessTimestamps: true,
+      })
+    ).toBe(false);
 
     const transientOffline = makeSnapshot(
       '2026-01-01T00:00:25.000Z',

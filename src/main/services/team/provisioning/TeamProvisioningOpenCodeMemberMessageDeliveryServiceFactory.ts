@@ -30,6 +30,12 @@ export type OpenCodeMemberMessageDeliveryFactoryPorts = Omit<
   createOpenCodeRuntimeBootstrapEvidencePorts(): OpenCodeRuntimeBootstrapEvidencePorts;
 };
 
+type OpenCodeRuntimeDeliveryRecoveryShim = Pick<
+  TeamProvisioningOpenCodeRuntimeRecoveryFacade,
+  | 'tryRecoverOpenCodeRuntimeLaneBeforeDelivery'
+  | 'tryRecoverOpenCodeRuntimeLaneFromCommittedSessionBeforeDelivery'
+>;
+
 export interface TeamProvisioningOpenCodeMemberMessageDeliveryHost {
   getOpenCodeRuntimeMessageAdapter: OpenCodeMemberMessageDeliveryFactoryPorts['getOpenCodeRuntimeMessageAdapter'];
   openCodeRuntimeRecoveryFacade: Pick<
@@ -40,6 +46,8 @@ export interface TeamProvisioningOpenCodeMemberMessageDeliveryHost {
     | 'tryRecoverOpenCodeRuntimeLaneFromCommittedSessionBeforeDelivery'
     | 'openCodeRuntimeRecoveryIdentity'
   >;
+  tryRecoverOpenCodeRuntimeLaneBeforeDelivery?: OpenCodeRuntimeDeliveryRecoveryShim['tryRecoverOpenCodeRuntimeLaneBeforeDelivery'];
+  tryRecoverOpenCodeRuntimeLaneFromCommittedSessionBeforeDelivery?: OpenCodeRuntimeDeliveryRecoveryShim['tryRecoverOpenCodeRuntimeLaneFromCommittedSessionBeforeDelivery'];
   stoppingSecondaryRuntimeTeams: OpenCodeMemberMessageDeliveryFactoryPorts['stoppingSecondaryRuntimeTeams'];
   readPersistedTeamProjectPath: OpenCodeMemberMessageDeliveryFactoryPorts['readPersistedTeamProjectPath'];
   runTracking: {
@@ -205,9 +213,15 @@ export function createTeamProvisioningOpenCodeMemberMessageDeliveryHostFromServi
     getCurrentOpenCodeRuntimeRunId: (teamName, laneId) =>
       service.getCurrentOpenCodeRuntimeRunId(teamName, laneId),
     tryRecoverOpenCodeRuntimeLaneBeforeDelivery: (input) =>
-      service.tryRecoverOpenCodeRuntimeLaneBeforeDelivery(input),
+      typeof service.tryRecoverOpenCodeRuntimeLaneBeforeDelivery === 'function'
+        ? service.tryRecoverOpenCodeRuntimeLaneBeforeDelivery(input)
+        : service.openCodeRuntimeRecoveryFacade.tryRecoverOpenCodeRuntimeLaneBeforeDelivery(input),
     tryRecoverOpenCodeRuntimeLaneFromCommittedSessionBeforeDelivery: (input) =>
-      service.tryRecoverOpenCodeRuntimeLaneFromCommittedSessionBeforeDelivery(input),
+      typeof service.tryRecoverOpenCodeRuntimeLaneFromCommittedSessionBeforeDelivery === 'function'
+        ? service.tryRecoverOpenCodeRuntimeLaneFromCommittedSessionBeforeDelivery(input)
+        : service.openCodeRuntimeRecoveryFacade.tryRecoverOpenCodeRuntimeLaneFromCommittedSessionBeforeDelivery(
+            input
+          ),
     deleteSecondaryRuntimeRun: (teamName, laneId) =>
       service.deleteSecondaryRuntimeRun(teamName, laneId),
     openCodeStoppedLaneCleanup: service.openCodeStoppedLaneCleanup,

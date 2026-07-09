@@ -1,5 +1,4 @@
 import { createTeamRuntimeLaneCoordinator } from '@features/team-runtime-lanes/main';
-import { ConfigManager } from '@main/services/infrastructure/ConfigManager';
 import { NotificationManager } from '@main/services/infrastructure/NotificationManager';
 import { notifyTeamWatchScopeChanged } from '@main/services/infrastructure/teamWatchScope';
 import { execCli, killProcessTree } from '@main/utils/childProcess';
@@ -47,8 +46,7 @@ import {
   createTeamProvisioningLaunchIdentityBoundary,
   type TeamProvisioningLaunchIdentityBoundary,
 } from './provisioning/TeamProvisioningLaunchIdentityBoundaryFactory';
-import { buildTeamLaunchIncompleteNotificationPayload } from './provisioning/TeamProvisioningLaunchIncompleteNotification';
-import { TeamProvisioningLaunchNotifications } from './provisioning/TeamProvisioningLaunchNotifications';
+import { createTeamProvisioningLaunchNotificationsBoundary } from './provisioning/TeamProvisioningLaunchNotificationsBoundaryFactory';
 import { type TeamProvisioningLaunchStateCompatibilityBoundary } from './provisioning/TeamProvisioningLaunchStateCompatibilityFacade';
 import { getPersistedLaunchMemberNames } from './provisioning/TeamProvisioningLaunchStateProjection';
 import { TeamProvisioningLaunchStateStoreBoundary } from './provisioning/TeamProvisioningLaunchStateStoreBoundary';
@@ -373,16 +371,13 @@ export class TeamProvisioningService extends TeamProvisioningServiceFacadeDelega
         getErrorMessage,
       }
     );
-  private readonly launchNotifications = new TeamProvisioningLaunchNotifications<ProvisioningRun>({
-    getConfig: () => ConfigManager.getInstance().getConfig(),
-    addTeamNotification: (notification) =>
-      NotificationManager.getInstance().addTeamNotification(notification),
-    areAllExpectedLaunchMembersConfirmed: (run) => this.areAllExpectedLaunchMembersConfirmed(run),
-    buildLaunchIncompleteNotificationPayload: buildTeamLaunchIncompleteNotificationPayload,
-    logger: {
-      warn: (message) => logger.warn(message),
-    },
-  });
+  private readonly launchNotifications =
+    createTeamProvisioningLaunchNotificationsBoundary<ProvisioningRun>({
+      areAllExpectedLaunchMembersConfirmed: (run) => this.areAllExpectedLaunchMembersConfirmed(run),
+      logger: {
+        warn: (message) => logger.warn(message),
+      },
+    });
   private readonly liveLaunchSnapshotBoundary =
     createTeamProvisioningLiveLaunchSnapshotBoundaryFromService<ProvisioningRun>(
       this as unknown as TeamProvisioningLiveLaunchSnapshotBoundaryServiceHost<ProvisioningRun>,

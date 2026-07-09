@@ -22,6 +22,7 @@ import type {
 
 const logger = createLogger('CrossTeamService');
 const { createController } = agentTeamsControllerModule;
+type AgentTeamsController = ReturnType<typeof createController>;
 
 const TEAM_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,127}$/;
 
@@ -192,18 +193,32 @@ export class CrossTeamService {
     });
 
     if (duplicate) {
+      const duplicateTargetMemberName = duplicate.toMember ?? targetMemberName;
       const result: CrossTeamSendResult = {
         messageId: duplicate.messageId,
         deliveredToInbox: true,
         deduplicated: true,
         toTeam: duplicate.toTeam,
-        toMember: duplicate.toMember ?? targetMemberName,
+        toMember: duplicateTargetMemberName,
       };
       if (request.requireRuntimeDelivery) {
         await this.requireCrossTeamRuntimeDelivery({
           teamName: toTeam,
-          memberName: duplicate.toMember ?? targetMemberName,
+          memberName: duplicateTargetMemberName,
           messageId: result.messageId,
+        });
+        this.appendSenderCopy({
+          fromTeam: duplicate.fromTeam,
+          fromMember: duplicate.fromMember,
+          toTeam: duplicate.toTeam,
+          targetMemberName: duplicateTargetMemberName,
+          text: duplicate.text,
+          taskRefs: duplicate.taskRefs,
+          timestamp: duplicate.timestamp,
+          messageId: duplicate.messageId,
+          summary: duplicate.summary,
+          conversationId: duplicate.conversationId ?? conversationId,
+          replyToConversationId: duplicate.replyToConversationId ?? replyToConversationId,
         });
       }
       return result;
@@ -336,21 +351,24 @@ export class CrossTeamService {
     replyToConversationId: string | undefined;
   }): void {
     try {
-      createController({
+      const controller = createController({
         teamName: input.fromTeam,
         claudeDir: getClaudeBasePath(),
-      }).messages.appendSentMessage({
-        from: input.fromMember,
-        to: `${input.toTeam}.${input.targetMemberName}`,
-        text: input.text,
-        taskRefs: input.taskRefs,
-        timestamp: input.timestamp,
-        messageId: input.messageId,
-        summary: input.summary ?? `Cross-team message to ${input.toTeam}`,
-        source: CROSS_TEAM_SENT_SOURCE,
-        conversationId: input.conversationId,
-        replyToConversationId: input.replyToConversationId,
       });
+      if (!hasExistingSentCopy(controller, input.messageId)) {
+        controller.messages.appendSentMessage({
+          from: input.fromMember,
+          to: `${input.toTeam}.${input.targetMemberName}`,
+          text: input.text,
+          taskRefs: input.taskRefs,
+          timestamp: input.timestamp,
+          messageId: input.messageId,
+          summary: input.summary ?? `Cross-team message to ${input.toTeam}`,
+          source: CROSS_TEAM_SENT_SOURCE,
+          conversationId: input.conversationId,
+          replyToConversationId: input.replyToConversationId,
+        });
+      }
       this.messaging?.clearPendingCrossTeamReplyExpectation(
         input.fromTeam,
         input.toTeam,
@@ -388,6 +406,14 @@ function hasRuntimeDeliveryProof(
     !delivery.acceptanceUnknown &&
     !delivery.queuedBehindMessageId
   );
+}
+
+function hasExistingSentCopy(controller: AgentTeamsController, messageId: string): boolean {
+  try {
+    return controller.messages.lookupMessage(messageId).store === 'sent';
+  } catch {
+    return false;
+  }
 }
 
 function describeRuntimeDeliveryRelay(

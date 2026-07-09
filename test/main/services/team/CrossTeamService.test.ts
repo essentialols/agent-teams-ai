@@ -294,6 +294,100 @@ describe('CrossTeamService', () => {
       expect(fs.existsSync(`${MOCK_TEAMS_BASE_PATH}/teams/team-a/sentMessages.json`)).toBe(false);
     });
 
+    it('writes sender copy and clears pending reply when retry deduplicates after runtime proof failure', async () => {
+      const request = makeRequest({
+        requireRuntimeDelivery: true,
+        messageId: 'cross-runtime-retry-1',
+        conversationId: 'conv-runtime-retry-1',
+        text: 'Please verify runtime retry',
+      });
+      provisioning.relayInboxFileToLiveRecipient
+        .mockResolvedValueOnce({
+          kind: 'native_lead',
+          relayed: 0,
+          diagnostics: ['target runtime not ready'],
+        })
+        .mockResolvedValueOnce({
+          kind: 'native_lead',
+          relayed: 1,
+        })
+        .mockResolvedValueOnce({
+          kind: 'native_lead',
+          relayed: 1,
+        });
+
+      await expect(service.send(request)).rejects.toThrow('target runtime not ready');
+
+      const sentMessagesPath = `${MOCK_TEAMS_BASE_PATH}/teams/team-a/sentMessages.json`;
+      expect(fs.existsSync(sentMessagesPath)).toBe(false);
+      expect(provisioning.registerPendingCrossTeamReplyExpectation).toHaveBeenCalledWith(
+        'team-a',
+        'team-b',
+        'conv-runtime-retry-1'
+      );
+      expect(provisioning.clearPendingCrossTeamReplyExpectation).not.toHaveBeenCalled();
+
+      const retry = await service.send(request);
+
+      expect(retry).toMatchObject({
+        deliveredToInbox: true,
+        deduplicated: true,
+        messageId: 'cross-runtime-retry-1',
+        toTeam: 'team-b',
+        toMember: 'team-lead',
+      });
+      expect(inboxWriter.sendMessage).toHaveBeenCalledTimes(1);
+      expect(provisioning.relayInboxFileToLiveRecipient).toHaveBeenNthCalledWith(
+        1,
+        'team-b',
+        'team-lead',
+        { onlyMessageId: 'cross-runtime-retry-1' }
+      );
+      expect(provisioning.relayInboxFileToLiveRecipient).toHaveBeenNthCalledWith(
+        2,
+        'team-b',
+        'team-lead',
+        { onlyMessageId: 'cross-runtime-retry-1' }
+      );
+
+      const sentRows = JSON.parse(fs.readFileSync(sentMessagesPath, 'utf8')) as Record<
+        string,
+        unknown
+      >[];
+      expect(sentRows).toHaveLength(1);
+      expect(sentRows[0]).toMatchObject({
+        from: 'team-lead',
+        to: 'team-b.team-lead',
+        text: 'Please verify runtime retry',
+        messageId: 'cross-runtime-retry-1',
+        source: CROSS_TEAM_SENT_SOURCE,
+        conversationId: 'conv-runtime-retry-1',
+      });
+      expect(provisioning.clearPendingCrossTeamReplyExpectation).toHaveBeenCalledTimes(1);
+      expect(provisioning.clearPendingCrossTeamReplyExpectation).toHaveBeenCalledWith(
+        'team-a',
+        'team-b',
+        'conv-runtime-retry-1'
+      );
+
+      const secondRetry = await service.send(request);
+
+      expect(secondRetry).toMatchObject({
+        deliveredToInbox: true,
+        deduplicated: true,
+        messageId: 'cross-runtime-retry-1',
+      });
+      expect(inboxWriter.sendMessage).toHaveBeenCalledTimes(1);
+      expect(provisioning.relayInboxFileToLiveRecipient).toHaveBeenNthCalledWith(
+        3,
+        'team-b',
+        'team-lead',
+        { onlyMessageId: 'cross-runtime-retry-1' }
+      );
+      expect(JSON.parse(fs.readFileSync(sentMessagesPath, 'utf8'))).toHaveLength(1);
+      expect(provisioning.clearPendingCrossTeamReplyExpectation).toHaveBeenCalledTimes(2);
+    });
+
     it('writes runtime-required sender copy only after live runtime proof', async () => {
       const sentMessagesPath = `${MOCK_TEAMS_BASE_PATH}/teams/team-a/sentMessages.json`;
       provisioning.relayInboxFileToLiveRecipient.mockImplementation(async () => {

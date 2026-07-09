@@ -35,35 +35,37 @@ export function projectRuntimeSnapshotMemberLivenessFields(
   input: RuntimeProjectionSnapshotMemberLivenessInput
 ): RuntimeProjectionSnapshotMemberLivenessFields {
   const confirmedOpenCodeRuntimeAlive = input.confirmedOpenCodeRuntimeAlive === true;
+  const confirmedOpenCodeRuntimeAdapterAlive = input.confirmedOpenCodeRuntimeAdapterAlive === true;
+  const confirmedOpenCodeBootstrapAlive =
+    confirmedOpenCodeRuntimeAlive || confirmedOpenCodeRuntimeAdapterAlive;
   const confirmedSpawnRuntimeFallback = input.confirmedSpawnRuntimeFallback === true;
-  const openCodeCandidateConfirmed =
-    confirmedOpenCodeRuntimeAlive && input.liveLivenessKind === 'runtime_process_candidate';
+  const strongLiveOpenCodeEvidence =
+    input.liveLivenessKind === 'runtime_process' || input.liveLivenessKind === 'confirmed_bootstrap';
+  const openCodeBootstrapConfirmed =
+    confirmedOpenCodeBootstrapAlive && !strongLiveOpenCodeEvidence;
   const spawnRuntimeDiagnostic = nonEmptyString(input.spawnRuntimeDiagnostic);
   const liveRuntimeDiagnostic = nonEmptyString(input.liveRuntimeDiagnostic);
 
   const alive =
-    input.liveAlive === true ||
-    confirmedOpenCodeRuntimeAlive ||
-    input.confirmedOpenCodeRuntimeAdapterAlive === true ||
-    confirmedSpawnRuntimeFallback;
-  const livenessKind = openCodeCandidateConfirmed
+    input.liveAlive === true || confirmedOpenCodeBootstrapAlive || confirmedSpawnRuntimeFallback;
+  const livenessKind = openCodeBootstrapConfirmed
     ? 'confirmed_bootstrap'
     : confirmedSpawnRuntimeFallback
       ? 'confirmed_bootstrap'
       : input.liveLivenessKind;
   const pidSource =
-    confirmedSpawnRuntimeFallback &&
+    (openCodeBootstrapConfirmed || confirmedSpawnRuntimeFallback) &&
     (input.livePidSource === 'persisted_metadata' || input.livePidSource == null)
       ? 'runtime_bootstrap'
       : input.livePidSource;
-  const runtimeDiagnostic = openCodeCandidateConfirmed
+  const runtimeDiagnostic = openCodeBootstrapConfirmed
     ? 'OpenCode bootstrap confirmed; runtime host/session evidence present.'
     : confirmedSpawnRuntimeFallback
       ? input.keepConfirmedSpawnRuntimeDiagnostic === true && spawnRuntimeDiagnostic
         ? spawnRuntimeDiagnostic
         : 'bootstrap confirmed'
       : liveRuntimeDiagnostic;
-  const runtimeDiagnosticSeverity = openCodeCandidateConfirmed
+  const runtimeDiagnosticSeverity = openCodeBootstrapConfirmed
     ? 'info'
     : confirmedSpawnRuntimeFallback
       ? input.keepConfirmedSpawnRuntimeDiagnostic === true

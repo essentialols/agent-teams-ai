@@ -500,6 +500,37 @@ describe('runtime projection foundation', () => {
       runtimeDiagnostic: 'bootstrap transport warning',
       runtimeDiagnosticSeverity: 'warning',
     });
+
+    expect(
+      projectRuntimeSnapshotMemberLivenessFields({
+        liveAlive: false,
+        liveLivenessKind: 'registered_only',
+        livePidSource: 'persisted_metadata',
+        liveRuntimeDiagnostic: 'registered runtime metadata without live process',
+        liveRuntimeDiagnosticSeverity: 'warning',
+        confirmedOpenCodeRuntimeAdapterAlive: true,
+      })
+    ).toEqual({
+      alive: true,
+      livenessKind: 'confirmed_bootstrap',
+      pidSource: 'runtime_bootstrap',
+      runtimeDiagnostic: 'OpenCode bootstrap confirmed; runtime host/session evidence present.',
+      runtimeDiagnosticSeverity: 'info',
+    });
+
+    expect(
+      projectRuntimeSnapshotMemberLivenessFields({
+        liveAlive: false,
+        liveLivenessKind: 'not_found',
+        confirmedOpenCodeRuntimeAdapterAlive: true,
+      })
+    ).toEqual({
+      alive: true,
+      livenessKind: 'confirmed_bootstrap',
+      pidSource: 'runtime_bootstrap',
+      runtimeDiagnostic: 'OpenCode bootstrap confirmed; runtime host/session evidence present.',
+      runtimeDiagnosticSeverity: 'info',
+    });
   });
 
   it('maps runtime snapshot bootstrap confirmation evidence across sources', () => {

@@ -108,26 +108,12 @@ import {
 import { buildTeamLaunchIncompleteNotificationPayload } from './provisioning/TeamProvisioningLaunchIncompleteNotification';
 import { TeamProvisioningLaunchNotifications } from './provisioning/TeamProvisioningLaunchNotifications';
 import {
-  buildAggregatePendingLaunchMessage as buildAggregatePendingLaunchMessageHelper,
-  hasPendingLaunchMembers as hasPendingLaunchMembersHelper,
-} from './provisioning/TeamProvisioningLaunchPendingMessage';
-import {
-  areAllExpectedLaunchMembersConfirmed as areAllExpectedLaunchMembersConfirmedHelper,
-  getMemberLaunchSummary as getMemberLaunchSummaryHelper,
-  getPersistedLaunchMemberNames,
-  hasMixedLaunchMetadata,
-  hasMixedSecondaryLaunchMetadata,
-  hasPrimaryOnlyLaneAwareLaunchMetadata,
-} from './provisioning/TeamProvisioningLaunchStateProjection';
-import {
-  applyOpenCodeSecondaryEvidenceOverlay as applyOpenCodeSecondaryEvidenceOverlayHelper,
-  finalizeMissingRegisteredMembersAsFailed as finalizeMissingRegisteredMembersAsFailedHelper,
-  guardCommittedOpenCodeSecondaryLaneEvidence as guardCommittedOpenCodeSecondaryLaneEvidenceHelper,
-} from './provisioning/TeamProvisioningLaunchStateReconciliation';
-import {
-  type LaunchStateWriteResult,
-  TeamProvisioningLaunchStateStoreBoundary,
-} from './provisioning/TeamProvisioningLaunchStateStoreBoundary';
+  type TeamProvisioningLaunchStateCompatibilityBoundary,
+  TeamProvisioningLaunchStateCompatibilityFacade,
+} from './provisioning/TeamProvisioningLaunchStateCompatibilityFacade';
+import { getPersistedLaunchMemberNames } from './provisioning/TeamProvisioningLaunchStateProjection';
+import { guardCommittedOpenCodeSecondaryLaneEvidence as guardCommittedOpenCodeSecondaryLaneEvidenceHelper } from './provisioning/TeamProvisioningLaunchStateReconciliation';
+import { TeamProvisioningLaunchStateStoreBoundary } from './provisioning/TeamProvisioningLaunchStateStoreBoundary';
 import {
   setLeadActivity as setLeadActivityHelper,
   type SetLeadActivityPorts,
@@ -173,11 +159,7 @@ import {
   reconcileBootstrapTranscriptFailuresForRun,
   reconcileBootstrapTranscriptSuccessesForRun,
 } from './provisioning/TeamProvisioningMemberSpawnSnapshots';
-import {
-  createInitialMemberSpawnStatusEntry,
-  MEMBER_LAUNCH_GRACE_MS,
-} from './provisioning/TeamProvisioningMemberSpawnStatusPolicy';
-import { buildRuntimeSpawnStatusRecord as buildRuntimeSpawnStatusRecordHelper } from './provisioning/TeamProvisioningMemberStatusProjection';
+import { createInitialMemberSpawnStatusEntry } from './provisioning/TeamProvisioningMemberSpawnStatusPolicy';
 import { createTeamProvisioningMemberWorkSyncProofBoundary } from './provisioning/TeamProvisioningMemberWorkSyncProofBoundaryFactory';
 import {
   persistTeamProvisioningInboxMessage,
@@ -188,10 +170,6 @@ import {
   createTeamProvisioningMixedSecondaryLaneWiringDepsFromService,
   type TeamProvisioningMixedSecondaryLaneWiringServiceHost,
 } from './provisioning/TeamProvisioningMixedSecondaryLaneWiring';
-import {
-  buildMixedSecondaryLaunchSnapshotForRun as buildMixedSecondaryLaunchSnapshotForRunHelper,
-  shouldRecoverStalePersistedMixedLaunchSnapshot as shouldRecoverStalePersistedMixedLaunchSnapshotHelper,
-} from './provisioning/TeamProvisioningMixedSecondaryLaunchReconciliation';
 import {
   getOpenCodeAgendaSyncRecoveryBypassMessageIdsWithService,
   type OpenCodeAgendaSyncRecoveryBypassServiceHost,
@@ -256,11 +234,6 @@ import {
   type TeamProvisioningOpenCodeRuntimeDeliveryAdvisoryServiceHost,
 } from './provisioning/TeamProvisioningOpenCodeRuntimeDeliveryAdvisory';
 import { type TeamProvisioningOpenCodeRuntimeDeliveryBoundaryHost } from './provisioning/TeamProvisioningOpenCodeRuntimeDeliveryBoundaryFactory';
-import {
-  applyOpenCodeSecondaryBootstrapStallOverlay as applyOpenCodeSecondaryBootstrapStallOverlayHelper,
-  getOpenCodeSecondaryBootstrapPendingMemberNames as getOpenCodeSecondaryBootstrapPendingMemberNamesHelper,
-  isRecoverablePersistedOpenCodeTerminalRuntimeCandidate,
-} from './provisioning/TeamProvisioningOpenCodeRuntimeEvidencePolicy';
 import { readProcessCommandByPid as readOpenCodeRuntimeLaneProcessCommandByPid } from './provisioning/TeamProvisioningOpenCodeRuntimeLaneCleanup';
 import { TeamProvisioningOpenCodeRuntimeLaneRecoveryFacade } from './provisioning/TeamProvisioningOpenCodeRuntimeLaneRecoveryFacade';
 import {
@@ -315,11 +288,6 @@ import {
   createTeamProvisioningReevaluateMemberLaunchStatusDepsFromService,
   type TeamProvisioningReevaluateMemberLaunchStatusServiceHost,
 } from './provisioning/TeamProvisioningReevaluateMemberLaunchStatusPortsFactory';
-import {
-  auditRegisteredMemberSpawnStatusesWithService,
-  type AuditRegisteredMemberSpawnStatusServiceHost,
-  readRegisteredTeamMemberNamesFromConfigDefaults,
-} from './provisioning/TeamProvisioningRegisteredMemberAudit';
 import {
   createTeamProvisioningRequestAdmissionBoundary,
   type TeamProvisioningRequestAdmissionServiceHost,
@@ -378,7 +346,6 @@ import {
   type TeamProvisioningServiceMemberLifecycleHostPortGroups,
 } from './provisioning/TeamProvisioningServiceMemberLifecycleHostPortGroups';
 import { createTeamProvisioningShutdownCoordination } from './provisioning/TeamProvisioningShutdownCoordination';
-import { TeamProvisioningStopCleanupCompatibilityFacade } from './provisioning/TeamProvisioningStopCleanupCompatibilityFacade';
 import { createNodeStopPrimaryOwnedRosterRuntimeUseCase } from './provisioning/TeamProvisioningStopPrimaryOwnedRosterRuntimeUseCase';
 import {
   killOrphanedTeamAgentProcesses,
@@ -415,7 +382,6 @@ import type {
   TeamRuntimeLaunchResult,
   TeamRuntimeStopInput,
 } from './runtime';
-import type { createPersistedLaunchSnapshot } from './TeamLaunchStateEvaluator';
 export type { RuntimeBootstrapMemberMcpLaunchConfig } from './provisioning/TeamProvisioningBootstrapSpec';
 export { buildDirectTmuxRestartEnvAssignments } from './provisioning/TeamProvisioningDirectRestart';
 export {
@@ -463,7 +429,7 @@ const claudePermissionSettingsFilePorts: ClaudePermissionSettingsFilePorts = {
   writeFileUtf8: (filePath, contents) => atomicWriteAsync(filePath, contents),
 };
 
-export class TeamProvisioningService extends TeamProvisioningStopCleanupCompatibilityFacade<ProvisioningRun> {
+export class TeamProvisioningService extends TeamProvisioningLaunchStateCompatibilityFacade<ProvisioningRun> {
   private readonly runtimeLaneCoordinator = createTeamRuntimeLaneCoordinator();
   private readonly providerConnectionService = ProviderConnectionService.getInstance();
   protected readonly launchIdentityBoundary: TeamProvisioningLaunchIdentityBoundary =
@@ -701,7 +667,7 @@ export class TeamProvisioningService extends TeamProvisioningStopCleanupCompatib
       this as unknown as TeamProvisioningLiveLaunchSnapshotBoundaryServiceHost<ProvisioningRun>,
       {
         getPersistedLaunchMemberNames,
-        buildRuntimeSpawnStatusRecord: buildRuntimeSpawnStatusRecordHelper,
+        buildRuntimeSpawnStatusRecord: (run) => this.buildRuntimeSpawnStatusRecord(run),
       }
     );
   private readonly primaryBootstrapTruthReporting =
@@ -894,6 +860,7 @@ export class TeamProvisioningService extends TeamProvisioningStopCleanupCompatib
   private readonly launchStateWrittenRunIdByTeam = new Map<string, string>();
   private readonly launchStateStoreBoundary!: TeamProvisioningLaunchStateStoreBoundary;
   private readonly persistenceReconcileFacade!: TeamProvisioningPersistenceReconcileFacade<ProvisioningRun>;
+  protected readonly launchStateCompatibilityBoundary!: TeamProvisioningLaunchStateCompatibilityBoundary<ProvisioningRun>;
   private readonly configTaskActivityBoundary!: TeamProvisioningConfigTaskActivityBoundary<ProvisioningRun>;
   private readonly failedOpenCodeSecondaryRetryInFlightByTeam = new Map<
     string,
@@ -1768,40 +1735,6 @@ export class TeamProvisioningService extends TeamProvisioningStopCleanupCompatib
     return trimRelayedMessageIdSet(set);
   }
 
-  /**
-   * Post-provisioning audit: read config.json members and flag any expectedMember
-   * that was NOT registered by Claude Code as a team member.
-   *
-   * This is the ground-truth check — when Agent(team_name=X, name=Y) succeeds,
-   * the CLI adds Y to config.json members[]. If a member is missing, the spawn
-   * was incorrect (e.g., missing team_name/name params) and the agent ran as a
-   * one-shot subagent instead of a persistent teammate.
-   */
-  private async getRegisteredTeamMemberNames(teamName: string): Promise<Set<string> | null> {
-    return readRegisteredTeamMemberNamesFromConfigDefaults(teamName);
-  }
-
-  private async auditMemberSpawnStatuses(run: ProvisioningRun): Promise<void> {
-    await auditRegisteredMemberSpawnStatusesWithService<ProvisioningRun>(
-      run,
-      this as unknown as AuditRegisteredMemberSpawnStatusServiceHost<ProvisioningRun>,
-      {
-        debug: (message) => logger.debug(message),
-        warn: (message) => logger.warn(message),
-      }
-    );
-  }
-
-  private async finalizeMissingRegisteredMembersAsFailed(run: ProvisioningRun): Promise<void> {
-    return finalizeMissingRegisteredMembersAsFailedHelper(run, {
-      getRegisteredTeamMemberNames: (teamName) => this.getRegisteredTeamMemberNames(teamName),
-      isMemberLifecycleOperationActive: (teamName, memberName) =>
-        this.isMemberLifecycleOperationActive(teamName, memberName),
-      setMemberSpawnStatus: (targetRun, memberName, status, error) =>
-        this.setMemberSpawnStatus(targetRun, memberName, status, error),
-    });
-  }
-
   private createBootstrapFailureMarker(): TeamProvisioningBootstrapFailureMarker<ProvisioningRun> {
     return createTeamProvisioningBootstrapFailureMarker<ProvisioningRun>({
       nowIso,
@@ -1843,141 +1776,6 @@ export class TeamProvisioningService extends TeamProvisioningStopCleanupCompatib
     });
   }
 
-  private getOpenCodeSecondaryBootstrapPendingMemberNames(
-    snapshot: PersistedTeamLaunchSnapshot | null | undefined
-  ): ReadonlySet<string> {
-    return getOpenCodeSecondaryBootstrapPendingMemberNamesHelper(snapshot);
-  }
-
-  private applyOpenCodeSecondaryBootstrapStallOverlay(
-    snapshot: PersistedTeamLaunchSnapshot | null
-  ): PersistedTeamLaunchSnapshot | null {
-    return applyOpenCodeSecondaryBootstrapStallOverlayHelper(snapshot, {
-      nowMs: Date.now(),
-      updatedAt: nowIso(),
-    });
-  }
-
-  private async getLiveTeamAgentNames(teamName: string): Promise<Set<string>> {
-    const runtimeByMember = await this.getLiveTeamAgentRuntimeMetadata(teamName);
-    return new Set(
-      [...runtimeByMember.entries()]
-        .filter(([, metadata]) => metadata.alive)
-        .map(([memberName]) => memberName)
-    );
-  }
-
-  private async getLiveTeamAgentRuntimeMetadata(
-    teamName: string
-  ): Promise<Map<string, LiveTeamAgentRuntimeMetadata>> {
-    return this.liveRuntimeMetadataPorts.getLiveTeamAgentRuntimeMetadata(teamName);
-  }
-
-  private async clearPersistedLaunchState(
-    teamName: string,
-    options?: { expectedRunId?: string }
-  ): Promise<void> {
-    await this.persistenceReconcileFacade.clearPersistedLaunchState(teamName, options);
-  }
-
-  private canClearPersistedLaunchStateForRun(
-    teamName: string,
-    expectedRunId: string | undefined
-  ): boolean {
-    return this.persistenceReconcileFacade.canClearPersistedLaunchStateForRun(
-      teamName,
-      expectedRunId
-    );
-  }
-
-  private async clearPersistedLaunchStateNow(
-    teamName: string,
-    options?: { expectedRunId?: string }
-  ): Promise<void> {
-    await this.persistenceReconcileFacade.clearPersistedLaunchStateNow(teamName, options);
-  }
-
-  private async applyOpenCodeSecondaryEvidenceOverlay(params: {
-    teamName: string;
-    snapshot: PersistedTeamLaunchSnapshot;
-    previousSnapshot?: PersistedTeamLaunchSnapshot | null;
-    metaMembers?: readonly TeamMember[];
-  }): Promise<PersistedTeamLaunchSnapshot> {
-    return applyOpenCodeSecondaryEvidenceOverlayHelper(
-      params,
-      this.openCodeSecondaryEvidenceOverlayPorts
-    );
-  }
-
-  private async writeLaunchStateSnapshot(
-    teamName: string,
-    snapshot: PersistedTeamLaunchSnapshot
-  ): Promise<PersistedTeamLaunchSnapshot> {
-    return this.persistenceReconcileFacade.writeLaunchStateSnapshot(teamName, snapshot);
-  }
-
-  private async writeLaunchStateSnapshotNow(
-    teamName: string,
-    snapshot: PersistedTeamLaunchSnapshot,
-    options?: { allowNoopSkip?: boolean; runId?: string }
-  ): Promise<LaunchStateWriteResult> {
-    return this.persistenceReconcileFacade.writeLaunchStateSnapshotNow(teamName, snapshot, options);
-  }
-
-  private isLaunchStateNoopRefreshDue(snapshot: PersistedTeamLaunchSnapshot): boolean {
-    return this.persistenceReconcileFacade.isLaunchStateNoopRefreshDue(snapshot);
-  }
-
-  private async enqueueLaunchStateStoreOperation<T>(
-    teamName: string,
-    operation: () => Promise<T>
-  ): Promise<T> {
-    return this.persistenceReconcileFacade.enqueueLaunchStateStoreOperation(teamName, operation);
-  }
-
-  private getMemberLaunchSummary(run: ProvisioningRun): {
-    confirmedCount: number;
-    pendingCount: number;
-    failedCount: number;
-    skippedCount?: number;
-    runtimeAlivePendingCount: number;
-    shellOnlyPendingCount?: number;
-    runtimeProcessPendingCount?: number;
-    runtimeCandidatePendingCount?: number;
-    noRuntimePendingCount?: number;
-    permissionPendingCount?: number;
-  } {
-    return getMemberLaunchSummaryHelper(run);
-  }
-
-  private buildAggregatePendingLaunchMessage(
-    prefix: string,
-    run: ProvisioningRun,
-    launchSummary: {
-      confirmedCount: number;
-      pendingCount: number;
-      failedCount: number;
-      runtimeAlivePendingCount: number;
-      runtimeProcessPendingCount?: number;
-    },
-    snapshot?: PersistedTeamLaunchSnapshot | null
-  ): string {
-    return buildAggregatePendingLaunchMessageHelper({ prefix, run, launchSummary, snapshot });
-  }
-
-  private buildRuntimeSpawnStatusRecord(
-    run: ProvisioningRun
-  ): Record<string, MemberSpawnStatusEntry> {
-    return buildRuntimeSpawnStatusRecordHelper(run);
-  }
-
-  private async reconcileFinalLaunchReportingSnapshot(
-    run: ProvisioningRun,
-    snapshot: PersistedTeamLaunchSnapshot | null
-  ): Promise<PersistedTeamLaunchSnapshot | null> {
-    return this.primaryBootstrapTruthReporting.reconcileFinalLaunchReportingSnapshot(run, snapshot);
-  }
-
   private scheduleDeterministicBootstrapCompletionRecovery(run: ProvisioningRun): void {
     if (!run.deterministicBootstrap) {
       return;
@@ -2002,14 +1800,9 @@ export class TeamProvisioningService extends TeamProvisioningStopCleanupCompatib
       {
         readBootstrapLaunchSnapshot,
         nowIso,
-        getMemberLaunchSummary: getMemberLaunchSummaryHelper,
+        getMemberLaunchSummary: (targetRun) => this.getMemberLaunchSummary(targetRun),
         buildAggregatePendingLaunchMessage: (prefix, targetRun, launchSummary, snapshot) =>
-          buildAggregatePendingLaunchMessageHelper({
-            prefix,
-            run: targetRun,
-            launchSummary,
-            snapshot,
-          }),
+          this.buildAggregatePendingLaunchMessage(prefix, targetRun, launchSummary, snapshot),
         updateProgress,
         extractCliLogsFromRun,
         warn: (message) => logger.warn(message),
@@ -2064,58 +1857,6 @@ export class TeamProvisioningService extends TeamProvisioningStopCleanupCompatib
     return true;
   }
 
-  private syncRunMemberSpawnStatusesFromSnapshot(
-    run: ProvisioningRun,
-    snapshot: PersistedTeamLaunchSnapshot
-  ): void {
-    this.liveLaunchSnapshotBoundary.syncRunMemberSpawnStatusesFromSnapshot(run, snapshot);
-  }
-
-  private hasPendingLaunchMembers(
-    run: ProvisioningRun,
-    launchSummary: {
-      pendingCount: number;
-    },
-    snapshot?: PersistedTeamLaunchSnapshot | null
-  ): boolean {
-    return hasPendingLaunchMembersHelper({ run, launchSummary, snapshot });
-  }
-
-  private buildLiveLaunchSnapshotForRun(
-    run: ProvisioningRun,
-    launchPhase: PersistedTeamLaunchPhase = run.provisioningComplete ? 'finished' : 'active'
-  ): PersistedTeamLaunchSnapshot | null {
-    return this.liveLaunchSnapshotBoundary.buildLiveLaunchSnapshotForRun(run, launchPhase);
-  }
-
-  protected emitMemberSpawnChange(
-    run: Pick<ProvisioningRun, 'teamName' | 'runId'>,
-    memberName: string
-  ): void {
-    this.liveLaunchSnapshotBoundary.emitMemberSpawnChange(run, memberName);
-  }
-
-  private async maybeFireTeamLaunchedNotificationWhenAllMembersJoined(
-    run: ProvisioningRun
-  ): Promise<void> {
-    if (
-      !run.isLaunch ||
-      run.teamLaunchedNotificationFired ||
-      run.processKilled ||
-      run.cancelRequested ||
-      !this.isProvisioningRunPromotedToAlive(run) ||
-      !this.areAllExpectedLaunchMembersConfirmed(run)
-    ) {
-      return;
-    }
-
-    await this.fireTeamLaunchedNotification(run);
-  }
-
-  private areAllExpectedLaunchMembersConfirmed(run: ProvisioningRun): boolean {
-    return areAllExpectedLaunchMembersConfirmedHelper(run);
-  }
-
   private async publishMixedSecondaryLaneStatusChange(
     run: ProvisioningRun,
     lane: MixedSecondaryRuntimeLaneState
@@ -2160,58 +1901,6 @@ export class TeamProvisioningService extends TeamProvisioningStopCleanupCompatib
     });
   }
 
-  private buildMixedPersistedLaunchSnapshotForRun(
-    run: ProvisioningRun,
-    launchPhase: PersistedTeamLaunchPhase
-  ): PersistedTeamLaunchSnapshot | null {
-    return buildMixedSecondaryLaunchSnapshotForRunHelper(run, launchPhase, {
-      buildRuntimeSpawnStatusRecord: (inputRun) => this.buildRuntimeSpawnStatusRecord(inputRun),
-      buildAggregateLaunchSnapshot: (params) =>
-        this.runtimeLaneCoordinator.buildAggregateLaunchSnapshot(params),
-    });
-  }
-
-  private hasMixedLaunchMetadata(snapshot: PersistedTeamLaunchSnapshot | null): boolean {
-    return hasMixedLaunchMetadata(snapshot);
-  }
-
-  private hasMixedSecondaryLaunchMetadata(snapshot: PersistedTeamLaunchSnapshot | null): boolean {
-    return hasMixedSecondaryLaunchMetadata(snapshot);
-  }
-
-  private hasPrimaryOnlyLaneAwareLaunchMetadata(
-    snapshot: PersistedTeamLaunchSnapshot | null
-  ): boolean {
-    return hasPrimaryOnlyLaneAwareLaunchMetadata(snapshot);
-  }
-
-  private shouldRecoverStalePersistedMixedLaunchSnapshot(
-    snapshot: PersistedTeamLaunchSnapshot
-  ): boolean {
-    return shouldRecoverStalePersistedMixedLaunchSnapshotHelper({
-      snapshot,
-      nowMs: Date.now(),
-      graceMs: MEMBER_LAUNCH_GRACE_MS,
-      isRecoverablePersistedOpenCodeTerminalRuntimeCandidate,
-    });
-  }
-
-  protected async persistLaunchStateSnapshot(
-    run: ProvisioningRun,
-    launchPhase: 'active' | 'finished' | 'reconciled' = run.provisioningComplete
-      ? 'finished'
-      : 'active'
-  ): Promise<PersistedTeamLaunchSnapshot | null> {
-    return this.persistenceReconcileFacade.persistLaunchStateSnapshot(run, launchPhase);
-  }
-
-  private async persistLaunchStateSnapshotNow(
-    run: ProvisioningRun,
-    launchPhase: 'active' | 'finished' | 'reconciled'
-  ): Promise<PersistedTeamLaunchSnapshot | null> {
-    return this.persistenceReconcileFacade.persistLaunchStateSnapshotNow(run, launchPhase);
-  }
-
   private async launchSingleMixedSecondaryLane(
     run: ProvisioningRun,
     lane: MixedSecondaryRuntimeLaneState
@@ -2241,18 +1930,6 @@ export class TeamProvisioningService extends TeamProvisioningStopCleanupCompatib
     return this.mixedSecondaryLaneWiring.launchMixedSecondaryLaneIfNeeded(run, options);
   }
 
-  private async recoverStaleMixedSecondaryLaunchSnapshot(
-    teamName: string,
-    bootstrapSnapshot: PersistedTeamLaunchSnapshot | null,
-    persistedSnapshot: PersistedTeamLaunchSnapshot | null
-  ): Promise<PersistedTeamLaunchSnapshot | null> {
-    return this.mixedSecondaryLaneWiring.recoverStaleMixedSecondaryLaunchSnapshot(
-      teamName,
-      bootstrapSnapshot,
-      persistedSnapshot
-    );
-  }
-
   private async findBootstrapRuntimeProofObservedAt(
     teamName: string,
     memberName: string,
@@ -2268,13 +1945,6 @@ export class TeamProvisioningService extends TeamProvisioningStopCleanupCompatib
       member,
       runtimeMembers: this.readPersistedRuntimeMembers(teamName),
     });
-  }
-
-  private async reconcilePersistedLaunchState(teamName: string): Promise<{
-    snapshot: ReturnType<typeof createPersistedLaunchSnapshot> | null;
-    statuses: Record<string, MemberSpawnStatusEntry>;
-  }> {
-    return this.persistenceReconcileFacade.reconcilePersistedLaunchState(teamName);
   }
 
   private async findBootstrapTranscriptFailureReason(

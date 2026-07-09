@@ -71,6 +71,11 @@ import {
   type TeamProvisioningLaunchDeterministicFlowBoundary,
   type TeamProvisioningLaunchDeterministicFlowServiceHost,
 } from './TeamProvisioningLaunchDeterministicFlowPortsFactory';
+import {
+  createTeamProvisioningLaunchStateCompatibilityBoundaryFromService,
+  type TeamProvisioningLaunchStateCompatibilityBoundary,
+  type TeamProvisioningLaunchStateCompatibilityServiceHost,
+} from './TeamProvisioningLaunchStateCompatibilityFacade';
 import { areLaunchStateSnapshotsSemanticallyEqual } from './TeamProvisioningLaunchStateProjection';
 import {
   createTeamProvisioningLaunchStateStoreBoundaryFromService,
@@ -228,6 +233,7 @@ export interface TeamProvisioningServiceComposition {
   openCodeRuntimeDeliveryBoundaryHost: TeamProvisioningOpenCodeRuntimeDeliveryBoundaryHost<ProvisioningRun>;
   launchStateStoreBoundary: TeamProvisioningLaunchStateStoreBoundary;
   persistenceReconcileFacade: TeamProvisioningPersistenceReconcileFacade<ProvisioningRun>;
+  launchStateCompatibilityBoundary: TeamProvisioningLaunchStateCompatibilityBoundary<ProvisioningRun>;
   configTaskActivityBoundary: TeamProvisioningConfigTaskActivityBoundary<ProvisioningRun>;
   toolApprovalFacade: TeamProvisioningToolApprovalFacade<ProvisioningRun>;
   idlePromptInjectionBoundary: TeamProvisioningIdlePromptInjectionBoundary<ProvisioningRun>;
@@ -336,6 +342,15 @@ export function createTeamProvisioningServiceComposition(
     service as TeamProvisioningPersistenceReconcileFacadeServiceHost<ProvisioningRun>
   );
   assignCompositionPart(service, 'persistenceReconcileFacade', persistenceReconcileFacade);
+  const launchStateCompatibilityBoundary =
+    createTeamProvisioningLaunchStateCompatibilityBoundaryFromService(
+      service as TeamProvisioningLaunchStateCompatibilityServiceHost<ProvisioningRun>
+    );
+  assignCompositionPart(
+    service,
+    'launchStateCompatibilityBoundary',
+    launchStateCompatibilityBoundary
+  );
   const configTaskActivityBoundary =
     createTeamProvisioningConfigTaskActivityBoundaryFromService<ProvisioningRun>(
       service as TeamProvisioningConfigTaskActivityBoundaryServiceHost,
@@ -611,6 +626,7 @@ export function createTeamProvisioningServiceComposition(
     openCodeRuntimeDeliveryBoundaryHost,
     launchStateStoreBoundary,
     persistenceReconcileFacade,
+    launchStateCompatibilityBoundary,
     configTaskActivityBoundary,
     toolApprovalFacade,
     idlePromptInjectionBoundary,

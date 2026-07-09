@@ -70,6 +70,10 @@ export function validateMemberName(memberName: unknown): TeamIdentifierValidatio
     return { valid: false, error: 'member contains invalid characters' };
   }
 
+  if (/[. ]$/.test(basic.value!)) {
+    return { valid: false, error: 'member cannot end with a space or period' };
+  }
+
   const windowsReserved = rejectWindowsReserved(basic.value!, 'member');
   if (windowsReserved) {
     return windowsReserved;

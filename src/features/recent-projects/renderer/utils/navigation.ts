@@ -1,4 +1,4 @@
-import { normalizePath } from '@renderer/utils/pathNormalize';
+import { normalizePathForMatching } from '@renderer/utils/pathNormalize';
 
 import type { RepositoryGroup } from '@renderer/types/data';
 
@@ -11,11 +11,13 @@ export function findMatchingWorktree(
   groups: RepositoryGroup[],
   candidatePaths: readonly string[]
 ): WorktreeMatch | null {
-  const normalizedPaths = new Set(candidatePaths.map((projectPath) => normalizePath(projectPath)));
+  const normalizedPaths = new Set(
+    candidatePaths.map((projectPath) => normalizePathForMatching(projectPath))
+  );
 
   for (const repo of groups) {
     for (const worktree of repo.worktrees) {
-      if (normalizedPaths.has(normalizePath(worktree.path))) {
+      if (normalizedPaths.has(normalizePathForMatching(worktree.path))) {
         return { repoId: repo.id, worktreeId: worktree.id };
       }
     }

@@ -328,6 +328,33 @@ describe('crossTeam module', () => {
       ).toThrow('Target team not found');
     });
 
+    it('rejects unsafe target lead names before inbox writes', () => {
+      const claudeDir = makeClaudeDir({
+        'team-a': {
+          name: 'team-a',
+          members: [{ name: 'team-lead', agentType: 'team-lead' }],
+        },
+        'team-b': {
+          name: 'team-b',
+          members: [{ name: '../config', agentType: 'team-lead' }],
+        },
+      });
+      const targetConfigPath = path.join(claudeDir, 'teams', 'team-b', 'config.json');
+      const originalConfig = fs.readFileSync(targetConfigPath, 'utf8');
+
+      const controller = createController({ teamName: 'team-a', claudeDir });
+      expect(() =>
+        controller.crossTeam.sendCrossTeamMessage({
+          toTeam: 'team-b',
+          text: 'Hello',
+        })
+      ).toThrow('Invalid target lead name');
+      expect(fs.readFileSync(targetConfigPath, 'utf8')).toBe(originalConfig);
+      expect(fs.existsSync(path.join(claudeDir, 'teams', 'team-a', 'sent-cross-team.json'))).toBe(
+        false
+      );
+    });
+
     it('rejects excessive chain depth', () => {
       const claudeDir = makeClaudeDir({
         'team-a': {

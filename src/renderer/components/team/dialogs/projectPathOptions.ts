@@ -1,4 +1,4 @@
-import { normalizePath } from '@renderer/utils/pathNormalize';
+import { normalizePathForMatching } from '@renderer/utils/pathNormalize';
 import { isEphemeralProjectPath } from '@shared/utils/ephemeralProjectPath';
 
 import type {
@@ -53,8 +53,8 @@ export function findProjectPathProjectByPath(
   projects: readonly ProjectPathProject[],
   projectPath: string
 ): ProjectPathProject | undefined {
-  const normalizedPath = normalizePath(projectPath);
-  return projects.find((project) => normalizePath(project.path) === normalizedPath);
+  const normalizedPath = normalizePathForMatching(projectPath);
+  return projects.find((project) => normalizePathForMatching(project.path) === normalizedPath);
 }
 
 export function isDeletedProjectPathSelection(
@@ -74,14 +74,14 @@ export function buildProjectPathOptions(
 ): ComboboxOption[] {
   const options: ComboboxOption[] = [];
   const optionIndexByNormalizedPath = new Map<string, number>();
-  const normalizedPreferredPath = preferredPath ? normalizePath(preferredPath) : null;
+  const normalizedPreferredPath = preferredPath ? normalizePathForMatching(preferredPath) : null;
 
   for (const project of projects) {
     if (isEphemeralProjectPath(project.path)) {
       continue;
     }
 
-    const normalizedProjectPath = normalizePath(project.path);
+    const normalizedProjectPath = normalizePathForMatching(project.path);
     const existingIndex = optionIndexByNormalizedPath.get(normalizedProjectPath);
 
     if (existingIndex === undefined) {

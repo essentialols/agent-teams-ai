@@ -32,6 +32,12 @@ function assertTaskNotDeleted(task, action) {
     }
 }
 
+function readMutableTask(context, taskId, action) {
+    const task = taskStore.readTask(context.paths, taskId, { includeDeleted: true });
+    assertTaskNotDeleted(task, action);
+    return task;
+}
+
 function isSameMember(left, right) {
     return normalizeActorName(left).toLowerCase() === normalizeActorName(right).toLowerCase();
 }
@@ -481,7 +487,7 @@ function restoreTask(context, taskId, actor) {
 
 function setTaskOwner(context, taskId, owner, actor) {
     const { previousTask, updatedTask } = withTeamBoardLock(context.paths, () => {
-        const before = taskStore.readTask(context.paths, taskId, { includeDeleted: true });
+        const before = readMutableTask(context, taskId, 'changing owner');
         const nextOwner = isClearOwnerValue(owner)
             ? owner
             : assertKnownTaskActor(context, owner, 'task owner');
@@ -506,9 +512,10 @@ function setTaskOwner(context, taskId, owner, actor) {
 }
 
 function updateTaskFields(context, taskId, fields) {
-    return withTeamBoardLock(context.paths, () =>
-        taskStore.updateTaskFields(context.paths, taskId, fields)
-    );
+    return withTeamBoardLock(context.paths, () => {
+        readMutableTask(context, taskId, 'updating task fields');
+        return taskStore.updateTaskFields(context.paths, taskId, fields);
+    });
 }
 
 function addTaskCommentWithOptions(context, taskId, flags, options = {}) {
@@ -531,16 +538,17 @@ function addTaskCommentWithOptions(context, taskId, flags, options = {}) {
             allowProviderAliases: !fromRequiredForAgentTool,
         }
     );
-    const result = withTeamBoardLock(context.paths, () =>
-        taskStore.addTaskComment(context.paths, taskId, commentFlags.text, {
+    const result = withTeamBoardLock(context.paths, () => {
+        readMutableTask(context, taskId, 'adding a comment');
+        return taskStore.addTaskComment(context.paths, taskId, commentFlags.text, {
             author,
             ...(commentFlags.id ? { id: commentFlags.id } : {}),
             ...(commentFlags.createdAt ? { createdAt: commentFlags.createdAt } : {}),
             ...(commentFlags.type ? { type: commentFlags.type } : {}),
             ...(Array.isArray(commentFlags.taskRefs) ? { taskRefs: commentFlags.taskRefs } : {}),
             ...(Array.isArray(commentFlags.attachments) ? { attachments: commentFlags.attachments } : {}),
-        })
-    );
+        });
+    });
 
     try {
         maybeNotifyTaskOwnerOnComment(context, result.task, result.comment, {
@@ -567,10 +575,12 @@ function addTaskComment(context, taskId, flags) {
 
 function attachTaskFile(context, taskId, flags) {
     const canonicalTaskId = resolveTaskId(context, taskId);
+    withTeamBoardLock(context.paths, () => readMutableTask(context, canonicalTaskId, 'adding an attachment'));
     const saved = runtimeHelpers.saveTaskAttachmentFile(context.paths, canonicalTaskId, flags);
-    const task = withTeamBoardLock(context.paths, () =>
-        taskStore.addTaskAttachmentMeta(context.paths, canonicalTaskId, saved.meta)
-    );
+    const task = withTeamBoardLock(context.paths, () => {
+        readMutableTask(context, canonicalTaskId, 'adding an attachment');
+        return taskStore.addTaskAttachmentMeta(context.paths, canonicalTaskId, saved.meta);
+    });
     return {
         ...saved.meta,
         task,
@@ -579,10 +589,12 @@ function attachTaskFile(context, taskId, flags) {
 
 function attachCommentFile(context, taskId, commentId, flags) {
     const canonicalTaskId = resolveTaskId(context, taskId);
+    withTeamBoardLock(context.paths, () => readMutableTask(context, canonicalTaskId, 'adding a comment attachment'));
     const saved = runtimeHelpers.saveTaskAttachmentFile(context.paths, canonicalTaskId, flags);
-    const task = withTeamBoardLock(context.paths, () =>
-        taskStore.addCommentAttachmentMeta(context.paths, canonicalTaskId, commentId, saved.meta)
-    );
+    const task = withTeamBoardLock(context.paths, () => {
+        readMutableTask(context, canonicalTaskId, 'adding a comment attachment');
+        return taskStore.addCommentAttachmentMeta(context.paths, canonicalTaskId, commentId, saved.meta);
+    });
     return {
         ...saved.meta,
         task,
@@ -590,21 +602,24 @@ function attachCommentFile(context, taskId, commentId, flags) {
 }
 
 function addTaskAttachmentMeta(context, taskId, meta) {
-    return withTeamBoardLock(context.paths, () =>
-        taskStore.addTaskAttachmentMeta(context.paths, taskId, meta)
-    );
+    return withTeamBoardLock(context.paths, () => {
+        readMutableTask(context, taskId, 'adding an attachment');
+        return taskStore.addTaskAttachmentMeta(context.paths, taskId, meta);
+    });
 }
 
 function removeTaskAttachment(context, taskId, attachmentId) {
-    return withTeamBoardLock(context.paths, () =>
-        taskStore.removeTaskAttachment(context.paths, taskId, attachmentId)
-    );
+    return withTeamBoardLock(context.paths, () => {
+        readMutableTask(context, taskId, 'removing an attachment');
+        return taskStore.removeTaskAttachment(context.paths, taskId, attachmentId);
+    });
 }
 
 function setNeedsClarification(context, taskId, value) {
-    return withTeamBoardLock(context.paths, () =>
-        taskStore.setNeedsClarification(context.paths, taskId, value == null ? 'clear' : String(value))
-    );
+    return withTeamBoardLock(context.paths, () => {
+        readMutableTask(context, taskId, 'changing clarification');
+        return taskStore.setNeedsClarification(context.paths, taskId, value == null ? 'clear' : String(value));
+    });
 }
 
 function linkTask(context, taskId, targetId, linkType) {
@@ -1038,6 +1053,9 @@ module.exports = {
     taskBriefing,
     unlinkTask,
     updateTask: (context, taskRef, updater) =>
-        withTeamBoardLock(context.paths, () => taskStore.updateTask(context.paths, taskRef, updater)),
+        withTeamBoardLock(context.paths, () => {
+            readMutableTask(context, taskRef, 'updating task');
+            return taskStore.updateTask(context.paths, taskRef, updater);
+        }),
     updateTaskFields,
 };

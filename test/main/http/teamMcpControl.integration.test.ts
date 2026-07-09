@@ -130,7 +130,8 @@ function installControlApiFetchMock(app: FastifyInstance, baseUrl: string): () =
     if (!request && typeof input !== 'string' && !(input instanceof URL)) {
       return originalFetch(input, init);
     }
-    const url = new URL(request?.url ?? (input instanceof URL ? input.href : input));
+    const requestUrl = request?.url ?? (input instanceof URL ? input.href : String(input));
+    const url = new URL(requestUrl);
     if (url.origin !== baseUrl) {
       return originalFetch(input, init);
     }

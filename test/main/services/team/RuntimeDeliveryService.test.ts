@@ -126,7 +126,7 @@ describe('RuntimeDeliveryService', () => {
       memberName: 'CanonicalReviewer',
       messageId: 'canonical-message',
     };
-    destination.writeImpl = () => {
+    destination.writeImpl = async () => {
       destination.messages.set(canonicalLocation.messageId, canonicalLocation);
       return canonicalLocation;
     };

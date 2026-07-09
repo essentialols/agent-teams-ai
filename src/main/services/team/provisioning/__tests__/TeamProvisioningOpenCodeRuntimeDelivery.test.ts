@@ -45,6 +45,7 @@ describe('TeamProvisioningOpenCodeRuntimeDelivery', () => {
           text: 'delivered elsewhere',
           timestamp: '2026-01-01T00:00:00.000Z',
           messageId: 'cross-message-1',
+          read: false,
         },
       ];
       const ports = createOpenCodeRuntimeDeliveryPorts({
@@ -96,6 +97,7 @@ describe('TeamProvisioningOpenCodeRuntimeDelivery', () => {
           text: 'deduplicated delivery',
           timestamp: '2026-01-01T00:00:00.000Z',
           messageId: 'existing-cross-message',
+          read: false,
         },
       ];
       const crossTeamSender = vi.fn(async () => ({

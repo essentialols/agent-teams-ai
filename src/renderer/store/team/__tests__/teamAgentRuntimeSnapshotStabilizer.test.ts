@@ -5,15 +5,17 @@ import { stabilizeTeamAgentRuntimeSnapshot } from '../teamAgentRuntimeSnapshotSt
 
 import type { TeamAgentRuntimeEntry, TeamAgentRuntimeSnapshot } from '@shared/types';
 
-function makeEntry(input: Partial<TeamAgentRuntimeEntry> & { updatedAt: string }): TeamAgentRuntimeEntry {
+function makeEntry(
+  input: Partial<TeamAgentRuntimeEntry> & { updatedAt: string }
+): TeamAgentRuntimeEntry {
   return {
     memberName: 'alice',
     alive: true,
     restartable: true,
     backendType: 'process',
     livenessKind: 'runtime_process',
-    updatedAt: input.updatedAt,
     ...input,
+    updatedAt: input.updatedAt,
   };
 }
 

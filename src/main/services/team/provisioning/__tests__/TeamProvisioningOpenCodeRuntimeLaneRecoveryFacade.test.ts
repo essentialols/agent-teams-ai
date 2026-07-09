@@ -254,15 +254,17 @@ function createHost(): TeamProvisioningOpenCodeRuntimeLaneRecoveryFacadeHost {
       tryRecoverMissingOpenCodeSecondaryLaneFromRuntime: vi.fn(async () => null),
       tryRecoverActiveOpenCodeSecondaryLaneFromRuntime: vi.fn(async () => null),
     },
-    readOpenCodeMemberDirectory: vi.fn(async () => ({
-      config: null,
-      teamMeta: null,
-      metaMembers: [],
-    })),
-    resolveOpenCodeMemberIdentityFromDirectory: vi.fn(() => ({
-      ok: false as const,
-      reason: 'opencode_recipient_unavailable' as const,
-    })),
+    orgConfigCompatibilityFacade: {
+      readOpenCodeMemberDirectory: vi.fn(async () => ({
+        config: null,
+        teamMeta: null,
+        metaMembers: [],
+      })),
+      resolveOpenCodeMemberIdentityFromDirectory: vi.fn(() => ({
+        ok: false as const,
+        reason: 'opencode_recipient_unavailable' as const,
+      })),
+    },
     readConfigForObservation: vi.fn(async () => null),
     teamMetaStore: {
       getMeta: vi.fn(async () => null),

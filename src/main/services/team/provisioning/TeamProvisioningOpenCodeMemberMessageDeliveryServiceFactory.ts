@@ -14,6 +14,7 @@ import {
 } from './TeamProvisioningOpenCodeBootstrapEvidence';
 
 import type { TeamProvisioningOpenCodeStoppedLaneCleanupBoundary } from './TeamProvisioningOpenCodeStoppedLaneCleanupBoundary';
+import type { TeamProvisioningOrgConfigCompatibilityFacade } from './TeamProvisioningOrgConfigCompatibilityFacade';
 
 export interface OpenCodeRuntimeBootstrapEvidencePortsFactoryInput {
   teamsBasePath: string;
@@ -31,8 +32,10 @@ export type OpenCodeMemberMessageDeliveryFactoryPorts = Omit<
 
 export interface TeamProvisioningOpenCodeMemberMessageDeliveryHost {
   getOpenCodeRuntimeMessageAdapter: OpenCodeMemberMessageDeliveryFactoryPorts['getOpenCodeRuntimeMessageAdapter'];
-  readOpenCodeMemberDirectory: OpenCodeMemberMessageDeliveryFactoryPorts['readOpenCodeMemberDirectory'];
-  resolveOpenCodeMemberIdentityFromDirectory: OpenCodeMemberMessageDeliveryFactoryPorts['resolveOpenCodeMemberIdentityFromDirectory'];
+  orgConfigCompatibilityFacade: Pick<
+    TeamProvisioningOrgConfigCompatibilityFacade,
+    'readOpenCodeMemberDirectory' | 'resolveOpenCodeMemberIdentityFromDirectory'
+  >;
   stoppingSecondaryRuntimeTeams: OpenCodeMemberMessageDeliveryFactoryPorts['stoppingSecondaryRuntimeTeams'];
   readPersistedTeamProjectPath: OpenCodeMemberMessageDeliveryFactoryPorts['readPersistedTeamProjectPath'];
   runTracking: {
@@ -114,9 +117,14 @@ export function createOpenCodeMemberMessageDeliveryServiceFromHost(
 ): OpenCodeMemberMessageDeliveryService {
   return createOpenCodeMemberMessageDeliveryService({
     getOpenCodeRuntimeMessageAdapter: () => host.getOpenCodeRuntimeMessageAdapter(),
-    readOpenCodeMemberDirectory: (teamName) => host.readOpenCodeMemberDirectory(teamName),
+    readOpenCodeMemberDirectory: (teamName) =>
+      host.orgConfigCompatibilityFacade.readOpenCodeMemberDirectory(teamName),
     resolveOpenCodeMemberIdentityFromDirectory: (teamName, memberName, directory) =>
-      host.resolveOpenCodeMemberIdentityFromDirectory(teamName, memberName, directory),
+      host.orgConfigCompatibilityFacade.resolveOpenCodeMemberIdentityFromDirectory(
+        teamName,
+        memberName,
+        directory
+      ),
     stoppingSecondaryRuntimeTeams: host.stoppingSecondaryRuntimeTeams,
     readPersistedTeamProjectPath: (teamName) => host.readPersistedTeamProjectPath(teamName),
     resolveDeliverableTrackedRuntimeRunId: (teamName) =>
@@ -176,9 +184,7 @@ export function createTeamProvisioningOpenCodeMemberMessageDeliveryHostFromServi
   return {
     getOpenCodeRuntimeMessageAdapter: () =>
       service.appShellBoundary.getOpenCodeRuntimeMessageAdapter(),
-    readOpenCodeMemberDirectory: (teamName) => service.readOpenCodeMemberDirectory(teamName),
-    resolveOpenCodeMemberIdentityFromDirectory: (teamName, memberName, directory) =>
-      service.resolveOpenCodeMemberIdentityFromDirectory(teamName, memberName, directory),
+    orgConfigCompatibilityFacade: service.orgConfigCompatibilityFacade,
     stoppingSecondaryRuntimeTeams: service.stoppingSecondaryRuntimeTeams,
     readPersistedTeamProjectPath: (teamName) => service.readPersistedTeamProjectPath(teamName),
     runTracking: {

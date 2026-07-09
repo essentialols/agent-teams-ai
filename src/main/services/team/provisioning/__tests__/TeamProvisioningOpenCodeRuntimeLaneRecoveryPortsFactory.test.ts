@@ -87,8 +87,8 @@ describe('TeamProvisioningOpenCodeRuntimeLaneRecoveryPortsFactory', () => {
       'launchStateStore.read:alpha',
       'recoveryBoundary.tryRecoverMissingOpenCodeSecondaryLaneFromRuntime:secondary:opencode:bob',
       'recoveryBoundary.tryRecoverActiveOpenCodeSecondaryLaneFromRuntime:secondary:opencode:bob',
-      'host.readOpenCodeMemberDirectory:alpha',
-      'host.resolveOpenCodeMemberIdentityFromDirectory:alpha:Bob',
+      'orgConfigCompatibilityFacade.readOpenCodeMemberDirectory:alpha',
+      'orgConfigCompatibilityFacade.resolveOpenCodeMemberIdentityFromDirectory:alpha:Bob',
       'host.readConfigForObservation:alpha',
       'teamMetaStore.getMeta:alpha',
       'membersMetaStore.getMembers:alpha',
@@ -190,24 +190,29 @@ function createHost(calls: string[]): TeamProvisioningOpenCodeRuntimeLaneRecover
     },
     launchStateStore,
     openCodeRuntimeRecoveryBoundary,
-    async readOpenCodeMemberDirectory(this: { calls: string[] }, teamName: string) {
-      this.calls.push(`host.readOpenCodeMemberDirectory:${teamName}`);
-      return {
-        config: null,
-        teamMeta: null,
-        metaMembers: [],
-      };
-    },
-    resolveOpenCodeMemberIdentityFromDirectory(
-      this: { calls: string[] },
-      teamName: string,
-      memberName: string
-    ) {
-      this.calls.push(`host.resolveOpenCodeMemberIdentityFromDirectory:${teamName}:${memberName}`);
-      return {
-        ok: false as const,
-        reason: 'opencode_recipient_unavailable' as const,
-      };
+    orgConfigCompatibilityFacade: {
+      calls,
+      async readOpenCodeMemberDirectory(this: { calls: string[] }, teamName: string) {
+        this.calls.push(`orgConfigCompatibilityFacade.readOpenCodeMemberDirectory:${teamName}`);
+        return {
+          config: null,
+          teamMeta: null,
+          metaMembers: [],
+        };
+      },
+      resolveOpenCodeMemberIdentityFromDirectory(
+        this: { calls: string[] },
+        teamName: string,
+        memberName: string
+      ) {
+        this.calls.push(
+          `orgConfigCompatibilityFacade.resolveOpenCodeMemberIdentityFromDirectory:${teamName}:${memberName}`
+        );
+        return {
+          ok: false as const,
+          reason: 'opencode_recipient_unavailable' as const,
+        };
+      },
     },
     async readConfigForObservation(this: { calls: string[] }, teamName: string) {
       this.calls.push(`host.readConfigForObservation:${teamName}`);

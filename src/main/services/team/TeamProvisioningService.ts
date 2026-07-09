@@ -24,7 +24,6 @@ import { ProviderConnectionService } from '../runtime/ProviderConnectionService'
 
 import { isOpenCodeServeCommand } from './opencode/bridge/OpenCodeManagedHostProcessCleanup';
 import {
-  type OpenCodeMemberDirectory,
   type OpenCodeMemberIdentityResolution,
   type OpenCodeMemberInboxDelivery,
   type OpenCodeMemberMessageDeliveryInput,
@@ -443,6 +442,10 @@ export class TeamProvisioningService extends TeamProvisioningLaunchStateCompatib
       getRuntimeAdapterProviderId: (teamName) =>
         this.runtimeAdapterRunByTeam.get(teamName)?.providerId ?? null,
     });
+  protected readonly orgConfigCompatibilityFacade =
+    createTeamProvisioningOrgConfigCompatibilityFacadeFromService(
+      this as unknown as TeamProvisioningOrgConfigCompatibilityServiceHost
+    );
   private readonly openCodeSecondaryBriefingBuilder =
     createTeamProvisioningOpenCodeSecondaryBriefingBuilder({
       createController: (input) => createController(input),
@@ -678,9 +681,14 @@ export class TeamProvisioningService extends TeamProvisioningLaunchStateCompatib
     getTeamsBasePath,
     getCurrentOpenCodeRuntimeRunId: (teamName, laneId) =>
       this.getCurrentOpenCodeRuntimeRunId(teamName, laneId),
-    readOpenCodeMemberDirectory: (teamName) => this.readOpenCodeMemberDirectory(teamName),
+    readOpenCodeMemberDirectory: (teamName) =>
+      this.orgConfigCompatibilityFacade.readOpenCodeMemberDirectory(teamName),
     resolveOpenCodeMemberIdentityFromDirectory: (teamName, memberName, directory) =>
-      this.resolveOpenCodeMemberIdentityFromDirectory(teamName, memberName, directory),
+      this.orgConfigCompatibilityFacade.resolveOpenCodeMemberIdentityFromDirectory(
+        teamName,
+        memberName,
+        directory
+      ),
   });
   private readonly openCodeRuntimeRecoveryBoundary =
     createTeamProvisioningOpenCodeRuntimeRecoveryBoundary({
@@ -1019,15 +1027,6 @@ export class TeamProvisioningService extends TeamProvisioningLaunchStateCompatib
     });
   }
 
-  private async readOpenCodeMemberDirectory(teamName: string): Promise<OpenCodeMemberDirectory> {
-    const [config, teamMeta, metaMembers] = await Promise.all([
-      this.configFacade.readConfigForObservation(teamName).catch(() => null),
-      this.teamMetaStore.getMeta(teamName).catch(() => null),
-      this.membersMetaStore.getMembers(teamName).catch(() => []),
-    ]);
-    return { config, teamMeta, metaMembers };
-  }
-
   protected async resolveOpenCodeMemberDeliveryIdentity(
     teamName: string,
     memberName: string
@@ -1048,18 +1047,6 @@ export class TeamProvisioningService extends TeamProvisioningLaunchStateCompatib
 
   private invalidateRuntimeSnapshotCaches(teamName: string): void {
     this.runtimeSnapshotCacheBoundary.invalidateRuntimeSnapshotCaches(teamName);
-  }
-
-  private resolveOpenCodeMemberIdentityFromDirectory(
-    teamName: string,
-    memberName: string,
-    directory: OpenCodeMemberDirectory
-  ): OpenCodeMemberIdentityResolution {
-    return this.openCodeMemberIdentityBoundary.resolveOpenCodeMemberIdentityFromDirectory(
-      teamName,
-      memberName,
-      directory
-    );
   }
 
   private isLaunchRunStillCurrent(run: ProvisioningRun): boolean {

@@ -78,8 +78,10 @@ describe('TeamProvisioningOpenCodeMemberMessageDeliveryServiceFactory', () => {
       appShellBoundary: {
         getOpenCodeRuntimeMessageAdapter: firstAdapterGetter,
       },
-      readOpenCodeMemberDirectory: vi.fn(async () => ({ members: [] })),
-      resolveOpenCodeMemberIdentityFromDirectory: vi.fn(async () => null),
+      orgConfigCompatibilityFacade: {
+        readOpenCodeMemberDirectory: vi.fn(async () => ({ members: [] })),
+        resolveOpenCodeMemberIdentityFromDirectory: vi.fn(async () => null),
+      },
       stoppingSecondaryRuntimeTeams: new Set<string>(),
       readPersistedTeamProjectPath: vi.fn(async () => path.join('/tmp', 'team-a')),
       runTracking: {

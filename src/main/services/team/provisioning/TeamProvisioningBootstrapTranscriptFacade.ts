@@ -160,6 +160,16 @@ export class TeamProvisioningBootstrapTranscriptFacade {
     return this.bootstrapTranscriptOutcomePorts.parsedBootstrapTranscriptTailCache;
   }
 
+  getMemberLogsFinderForCompatibility(): TeamProvisioningBootstrapTranscriptMemberLogsPort {
+    return this.memberLogsFinder;
+  }
+
+  setMemberLogsFinderForCompatibility(
+    memberLogsFinder: TeamProvisioningBootstrapTranscriptMemberLogsPort
+  ): void {
+    this.memberLogsFinder = memberLogsFinder;
+  }
+
   getPersistedTranscriptClaudeLogs(teamName: string): Promise<RetainedClaudeLogsSnapshot | null> {
     return this.persistedTranscriptClaudeLogs.get(teamName);
   }

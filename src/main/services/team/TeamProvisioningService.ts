@@ -39,14 +39,15 @@ import {
   createNodeAppendDirectProcessRuntimeEventUseCasePorts,
 } from './provisioning/TeamProvisioningAppendDirectProcessRuntimeEventUseCase';
 import {
+  TeamProvisioningBootstrapEvidenceFacade,
+  type TeamProvisioningProcessBootstrapTransportOverlayInput,
+} from './provisioning/TeamProvisioningBootstrapEvidenceFacade';
+import {
   createTeamProvisioningBootstrapFailureMarker,
   type TeamProvisioningBootstrapFailureMarker,
 } from './provisioning/TeamProvisioningBootstrapFailureMarking';
 import {
-  applyBootstrapTranscriptEvidenceOverlay as applyBootstrapTranscriptEvidenceOverlayHelper,
-  applyProcessBootstrapTransportOverlay as applyProcessBootstrapTransportOverlayHelper,
   type BootstrapTranscriptOutcome,
-  findBootstrapRuntimeProofObservedAt as findBootstrapRuntimeProofObservedAtHelper,
   type ParsedBootstrapTranscriptTailCacheEntry,
 } from './provisioning/TeamProvisioningBootstrapTranscript';
 import {
@@ -184,7 +185,6 @@ import {
   createTeamProvisioningOpenCodeAggregatePrimaryLanePortsFromService,
   type TeamProvisioningOpenCodeAggregatePrimaryLaneServiceHost,
 } from './provisioning/TeamProvisioningOpenCodeAggregatePrimaryLanePortsFactory';
-import { type OpenCodeRuntimeBootstrapEvidencePorts } from './provisioning/TeamProvisioningOpenCodeBootstrapEvidence';
 import { createTeamProvisioningOpenCodeInboxAttachmentPayloadBoundary } from './provisioning/TeamProvisioningOpenCodeInboxAttachmentPayloadBoundaryFactory';
 import {
   createTeamProvisioningOpenCodeLaunchPersistencePortsFromService,
@@ -210,7 +210,6 @@ import {
 } from './provisioning/TeamProvisioningOpenCodeMemberInboxRelayBoundaryFactory';
 import {
   createOpenCodeMemberMessageDeliveryServiceFromHost,
-  createOpenCodeRuntimeBootstrapEvidencePorts as createOpenCodeRuntimeBootstrapEvidencePortsHelper,
   createTeamProvisioningOpenCodeMemberMessageDeliveryHostFromService,
   deliverOpenCodeMemberMessage as deliverOpenCodeMemberMessageHelper,
   type TeamProvisioningOpenCodeMemberMessageDeliveryServiceHost,
@@ -255,7 +254,6 @@ import {
 } from './provisioning/TeamProvisioningOpenCodeRuntimeRecoveryFlow';
 import { createOpenCodeRuntimeRecoveryIdentityHelpers } from './provisioning/TeamProvisioningOpenCodeRuntimeRecoveryIdentity';
 import { createTeamProvisioningOpenCodeSecondaryBriefingBuilder } from './provisioning/TeamProvisioningOpenCodeSecondaryBriefingBuilder';
-import { createTeamProvisioningOpenCodeSecondaryEvidenceOverlayPorts } from './provisioning/TeamProvisioningOpenCodeSecondaryEvidenceOverlayPortsFactory';
 import {
   createTeamProvisioningOpenCodeSecondaryLaneEvidencePortsFromService,
   type TeamProvisioningOpenCodeSecondaryLaneEvidenceServiceHost,
@@ -313,7 +311,6 @@ import {
   getAnthropicFastModeDefault,
   getTeamProviderLabel,
 } from './provisioning/TeamProvisioningRuntimeDiagnostics';
-import { mergeRuntimeDiagnostics } from './provisioning/TeamProvisioningRuntimeMetadata';
 import { type LiveTeamAgentRuntimeMetadata } from './provisioning/TeamProvisioningRuntimeMetadataPolicy';
 import { type TeamProvisioningRuntimeProjection } from './provisioning/TeamProvisioningRuntimeProjectionFactory';
 import { createTeamProvisioningRuntimeResourceSamplingForService } from './provisioning/TeamProvisioningRuntimeResourceSamplingCompatibilityFacade';
@@ -529,28 +526,21 @@ export class TeamProvisioningService extends TeamProvisioningLaunchStateCompatib
   private readonly stoppingSecondaryRuntimeTeams = new Set<string>();
   protected readonly retainedClaudeLogsByTeam = new Map<string, RetainedClaudeLogsSnapshot>();
   protected readonly bootstrapTranscriptFacade!: TeamProvisioningBootstrapTranscriptFacade;
+  private readonly bootstrapEvidenceFacade!: TeamProvisioningBootstrapEvidenceFacade;
 
   private get parsedBootstrapTranscriptTailCache(): Map<
     string,
     ParsedBootstrapTranscriptTailCacheEntry
   > {
-    return this.bootstrapTranscriptFacade.parsedBootstrapTranscriptTailCache;
+    return this.bootstrapEvidenceFacade.parsedBootstrapTranscriptTailCache;
   }
 
   private get memberLogsFinder(): TeamProvisioningBootstrapTranscriptMemberLogsPort {
-    return (
-      this.bootstrapTranscriptFacade as unknown as {
-        memberLogsFinder: TeamProvisioningBootstrapTranscriptMemberLogsPort;
-      }
-    ).memberLogsFinder;
+    return this.bootstrapEvidenceFacade.memberLogsFinder;
   }
 
   private set memberLogsFinder(value: TeamProvisioningBootstrapTranscriptMemberLogsPort) {
-    (
-      this.bootstrapTranscriptFacade as unknown as {
-        memberLogsFinder: TeamProvisioningBootstrapTranscriptMemberLogsPort;
-      }
-    ).memberLogsFinder = value;
+    this.bootstrapEvidenceFacade.memberLogsFinder = value;
   }
 
   private rememberRecentCrossTeamLeadDeliveryMessageIds(
@@ -852,11 +842,6 @@ export class TeamProvisioningService extends TeamProvisioningLaunchStateCompatib
   private readonly defaultLaunchStateStore = this.launchStateStore;
   private readonly configFacade!: TeamProvisioningConfigFacade;
   private readonly liveRuntimeMetadataPorts!: TeamProvisioningRuntimeProjection['liveRuntimeMetadataPorts'];
-  private readonly openCodeSecondaryEvidenceOverlayPorts =
-    createTeamProvisioningOpenCodeSecondaryEvidenceOverlayPorts({
-      getTeamsBasePath,
-      nowIso,
-    });
   private readonly launchStateWrittenRunIdByTeam = new Map<string, string>();
   private readonly launchStateStoreBoundary!: TeamProvisioningLaunchStateStoreBoundary;
   private readonly persistenceReconcileFacade!: TeamProvisioningPersistenceReconcileFacade<ProvisioningRun>;
@@ -1161,11 +1146,8 @@ export class TeamProvisioningService extends TeamProvisioningLaunchStateCompatib
     });
   }
 
-  private createOpenCodeRuntimeBootstrapEvidencePorts(): OpenCodeRuntimeBootstrapEvidencePorts {
-    return createOpenCodeRuntimeBootstrapEvidencePortsHelper({
-      teamsBasePath: getTeamsBasePath(),
-      warn: (message) => logger.warn(message),
-    });
+  private createOpenCodeRuntimeBootstrapEvidencePorts() {
+    return this.bootstrapEvidenceFacade.createOpenCodeRuntimeBootstrapEvidencePorts();
   }
 
   private createOpenCodeMemberMessageDeliveryService() {
@@ -1938,13 +1920,11 @@ export class TeamProvisioningService extends TeamProvisioningLaunchStateCompatib
       'firstSpawnAcceptedAt' | 'launchState' | 'hardFailureReason'
     >
   ): Promise<string | null> {
-    return findBootstrapRuntimeProofObservedAtHelper({
-      teamsBasePath: getTeamsBasePath(),
+    return this.bootstrapEvidenceFacade.findBootstrapRuntimeProofObservedAt(
       teamName,
       memberName,
-      member,
-      runtimeMembers: this.readPersistedRuntimeMembers(teamName),
-    });
+      member
+    );
   }
 
   private async findBootstrapTranscriptFailureReason(
@@ -1952,7 +1932,7 @@ export class TeamProvisioningService extends TeamProvisioningLaunchStateCompatib
     memberName: string,
     sinceMs: number | null
   ): Promise<string | null> {
-    return this.bootstrapTranscriptFacade.findBootstrapTranscriptFailureReason(
+    return this.bootstrapEvidenceFacade.findBootstrapTranscriptFailureReason(
       teamName,
       memberName,
       sinceMs
@@ -1964,7 +1944,7 @@ export class TeamProvisioningService extends TeamProvisioningLaunchStateCompatib
     memberName: string,
     sinceMs: number | null
   ): Promise<BootstrapTranscriptOutcome | null> {
-    return this.bootstrapTranscriptFacade.findBootstrapTranscriptOutcome(
+    return this.bootstrapEvidenceFacade.findBootstrapTranscriptOutcome(
       teamName,
       memberName,
       sinceMs
@@ -1981,7 +1961,7 @@ export class TeamProvisioningService extends TeamProvisioningLaunchStateCompatib
       contextMemberNames?: readonly string[];
     } = {}
   ): Promise<BootstrapTranscriptOutcome | null> {
-    return this.bootstrapTranscriptFacade.readRecentBootstrapTranscriptOutcome(
+    return this.bootstrapEvidenceFacade.readRecentBootstrapTranscriptOutcome(
       filePath,
       sinceMs,
       memberName,
@@ -1995,7 +1975,7 @@ export class TeamProvisioningService extends TeamProvisioningLaunchStateCompatib
     memberName: string,
     sinceMs: number | null
   ): Promise<BootstrapTranscriptOutcome[]> {
-    return this.bootstrapTranscriptFacade.readBootstrapTranscriptOutcomesInProjectRoot(
+    return this.bootstrapEvidenceFacade.readBootstrapTranscriptOutcomesInProjectRoot(
       teamName,
       memberName,
       sinceMs
@@ -2003,30 +1983,15 @@ export class TeamProvisioningService extends TeamProvisioningLaunchStateCompatib
   }
 
   private applyProcessBootstrapTransportOverlay(
-    input: Omit<
-      Parameters<typeof applyProcessBootstrapTransportOverlayHelper>[0],
-      'nowIso' | 'mergeRuntimeDiagnostics'
-    >
-  ): ReturnType<typeof applyProcessBootstrapTransportOverlayHelper> {
-    return applyProcessBootstrapTransportOverlayHelper({
-      ...input,
-      nowIso,
-      mergeRuntimeDiagnostics,
-    });
+    input: TeamProvisioningProcessBootstrapTransportOverlayInput
+  ) {
+    return this.bootstrapEvidenceFacade.applyProcessBootstrapTransportOverlay(input);
   }
 
   private async applyBootstrapTranscriptEvidenceOverlay(
     snapshot: PersistedTeamLaunchSnapshot | null
   ): Promise<PersistedTeamLaunchSnapshot | null> {
-    return applyBootstrapTranscriptEvidenceOverlayHelper({
-      snapshot,
-      expectedMembers: snapshot ? getPersistedLaunchMemberNames(snapshot) : [],
-      findBootstrapRuntimeProofObservedAt: (teamName, memberName, member) =>
-        this.findBootstrapRuntimeProofObservedAt(teamName, memberName, member),
-      findBootstrapTranscriptOutcome: (teamName, memberName, sinceMs) =>
-        this.findBootstrapTranscriptOutcome(teamName, memberName, sinceMs),
-      nowIso,
-    });
+    return this.bootstrapEvidenceFacade.applyBootstrapTranscriptEvidenceOverlay(snapshot);
   }
 
   private async reconcileBootstrapTranscriptFailures(run: ProvisioningRun): Promise<void> {

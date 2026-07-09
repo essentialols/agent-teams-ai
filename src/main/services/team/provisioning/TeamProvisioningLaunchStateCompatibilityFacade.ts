@@ -14,10 +14,8 @@ import {
   hasPrimaryOnlyLaneAwareLaunchMetadata,
 } from './TeamProvisioningLaunchStateProjection';
 import {
-  applyOpenCodeSecondaryEvidenceOverlay as applyOpenCodeSecondaryEvidenceOverlayHelper,
   finalizeMissingRegisteredMembersAsFailed as finalizeMissingRegisteredMembersAsFailedHelper,
   type OpenCodeSecondaryEvidenceOverlayParams,
-  type OpenCodeSecondaryEvidenceOverlayPorts,
 } from './TeamProvisioningLaunchStateReconciliation';
 import { type LaunchStateWriteResult } from './TeamProvisioningLaunchStateStoreBoundary';
 import { type TeamProvisioningLiveLaunchSnapshotBoundary } from './TeamProvisioningLiveLaunchSnapshotBoundaryFactory';
@@ -184,7 +182,10 @@ export interface TeamProvisioningLaunchStateCompatibilityServiceHost<
     | 'persistLaunchStateSnapshotNow'
     | 'reconcilePersistedLaunchState'
   >;
-  openCodeSecondaryEvidenceOverlayPorts: OpenCodeSecondaryEvidenceOverlayPorts;
+  bootstrapEvidenceFacade: Pick<
+    TeamProvisioningBootstrapEvidenceFacade,
+    applyOpenCodeSecondaryEvidenceOverlay
+  >;
   primaryBootstrapTruthReporting: Pick<
     TeamProvisioningPrimaryBootstrapTruthReportingBoundary<TRun>,
     'reconcileFinalLaunchReportingSnapshot'
@@ -270,10 +271,7 @@ export function createTeamProvisioningLaunchStateCompatibilityBoundaryFromServic
     },
 
     applyOpenCodeSecondaryEvidenceOverlay(params) {
-      return applyOpenCodeSecondaryEvidenceOverlayHelper(
-        params,
-        service.openCodeSecondaryEvidenceOverlayPorts
-      );
+      return service.bootstrapEvidenceFacade.applyOpenCodeSecondaryEvidenceOverlay(params);
     },
 
     writeLaunchStateSnapshot(teamName, snapshot) {

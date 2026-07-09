@@ -35,6 +35,11 @@ import { TeamMembersMetaStore } from '../TeamMembersMetaStore';
 
 import { ensureCwdExists, sleep } from './TeamProvisioningAsyncUtils';
 import {
+  createTeamProvisioningBootstrapEvidenceFacadeFromService,
+  TeamProvisioningBootstrapEvidenceFacade,
+  type TeamProvisioningBootstrapEvidenceFacadeServiceHost,
+} from './TeamProvisioningBootstrapEvidenceFacade';
+import {
   createTeamProvisioningBootstrapTranscriptFacadeFromService,
   TeamProvisioningBootstrapTranscriptFacade,
   type TeamProvisioningBootstrapTranscriptFacadeServiceHost,
@@ -250,6 +255,7 @@ export interface TeamProvisioningServiceComposition {
   openCodeVisibleReplyProofService: OpenCodeVisibleReplyProofService;
   openCodePromptDeliveryWatchdogCoordinator: OpenCodePromptDeliveryWatchdogCoordinator;
   bootstrapTranscriptFacade: TeamProvisioningBootstrapTranscriptFacade;
+  bootstrapEvidenceFacade: TeamProvisioningBootstrapEvidenceFacade;
   leadInboxRelayFacade: TeamProvisioningLeadInboxRelayCompatibilityFacade<ProvisioningRun>;
   cleanupRunPorts: TeamProvisioningCleanupPorts<ProvisioningRun>;
   transientRunState: TeamProvisioningTransientRunState;
@@ -588,6 +594,15 @@ export function createTeamProvisioningServiceComposition(
     { nowIso }
   );
   assignCompositionPart(service, 'bootstrapTranscriptFacade', bootstrapTranscriptFacade);
+  const bootstrapEvidenceFacade = createTeamProvisioningBootstrapEvidenceFacadeFromService(
+    service as unknown as TeamProvisioningBootstrapEvidenceFacadeServiceHost,
+    {
+      getTeamsBasePath,
+      nowIso,
+      warn: (message) => logger.warn(message),
+    }
+  );
+  assignCompositionPart(service, 'bootstrapEvidenceFacade', bootstrapEvidenceFacade);
   const leadInboxRelayFacade = createTeamProvisioningLeadInboxRelayCompatibilityFacadeFromService(
     service as TeamProvisioningLeadInboxRelayCompatibilityServiceHost<ProvisioningRun>,
     {
@@ -643,6 +658,7 @@ export function createTeamProvisioningServiceComposition(
     openCodeVisibleReplyProofService,
     openCodePromptDeliveryWatchdogCoordinator,
     bootstrapTranscriptFacade,
+    bootstrapEvidenceFacade,
     leadInboxRelayFacade,
     cleanupRunPorts,
     transientRunState,

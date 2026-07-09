@@ -255,23 +255,58 @@ export interface TeamProvisioningServiceComposition {
   transientRunState: TeamProvisioningTransientRunState;
 }
 
+type TeamProvisioningServiceCompositionInstallTarget = {
+  -readonly [K in keyof TeamProvisioningServiceComposition]?: TeamProvisioningServiceComposition[K];
+};
+
+type TeamProvisioningServiceCompositionSource = ServiceCompositionPorts &
+  TeamProvisioningServiceCompositionDeps &
+  TeamProvisioningRuntimeProjectionServiceHost<ProvisioningRun, RuntimeAdapterRunByTeamEntry> &
+  TeamProvisioningLaunchStateStoreBoundaryServiceHost &
+  TeamProvisioningPersistenceReconcileFacadeServiceHost<ProvisioningRun> &
+  TeamProvisioningLaunchStateCompatibilityServiceHost<ProvisioningRun> &
+  TeamProvisioningConfigTaskActivityBoundaryServiceHost &
+  TeamProvisioningToolApprovalFacadeServiceHost<ProvisioningRun> &
+  TeamProvisioningIdlePromptInjectionServiceHost<ProvisioningRun> &
+  TeamProvisioningProviderRuntimeFacadeServiceHost &
+  TeamProvisioningOutputRecoveryFacadeServiceHost<ProvisioningRun> &
+  TeamProvisioningLaunchDeterministicFlowServiceHost<
+    ProvisioningRun,
+    MixedSecondaryRuntimeLaneState
+  > &
+  TeamProvisioningCreateDeterministicSpawnFlowServiceHost<ProvisioningRun> &
+  TeamProvisioningVerificationProbeServiceHost<ProvisioningRun> &
+  TeamProvisioningProcessExitServiceHost<ProvisioningRun> &
+  TeamProvisioningPrepareFacadeServiceHost &
+  TeamProvisioningMemberMcpLaunchConfigServiceHost<ProvisioningRun> &
+  OpenCodeVisibleReplyProofServiceHost &
+  TeamProvisioningBootstrapTranscriptFacadeServiceHost &
+  TeamProvisioningBootstrapEvidenceFacadeServiceHost &
+  TeamProvisioningLeadInboxRelayCompatibilityServiceHost<ProvisioningRun> &
+  TeamProvisioningCleanupRunServiceHost<ProvisioningRun> &
+  TeamProvisioningTransientRunStateServiceHost;
+
+type TeamProvisioningServiceCompositionHost = TeamProvisioningServiceCompositionSource &
+  TeamProvisioningServiceCompositionInstallTarget;
+
 function getRunRuntimeFailureLabel(run: ProvisioningRun): string {
   return getRuntimeFailureLabelForRequest(run.request);
 }
 
 function assignCompositionPart<K extends keyof TeamProvisioningServiceComposition>(
-  service: unknown,
+  service: TeamProvisioningServiceCompositionInstallTarget,
   key: K,
   value: TeamProvisioningServiceComposition[K]
 ): void {
-  (service as Record<K, TeamProvisioningServiceComposition[K]>)[key] = value;
+  service[key] = value;
 }
 
 export function createTeamProvisioningServiceComposition(
   service: unknown
 ): TeamProvisioningServiceComposition {
-  const servicePorts = service as ServiceCompositionPorts;
-  const deps = service as TeamProvisioningServiceCompositionDeps;
+  const host = service as TeamProvisioningServiceCompositionHost;
+  const servicePorts = host;
+  const deps = host;
   const configFacade = new TeamProvisioningConfigFacade({
     configReader: {
       getConfig: (teamName) => deps.configReader.getConfig(teamName),
@@ -288,64 +323,45 @@ export function createTeamProvisioningServiceComposition(
     readRegularFileUtf8: tryReadRegularFileUtf8,
     logger,
   });
-  assignCompositionPart(service, 'configFacade', configFacade);
+  assignCompositionPart(host, 'configFacade', configFacade);
   const runtimeProjection = createTeamProvisioningRuntimeProjectionFromService<
     ProvisioningRun,
     RuntimeAdapterRunByTeamEntry
-  >(
-    service as TeamProvisioningRuntimeProjectionServiceHost<
-      ProvisioningRun,
-      RuntimeAdapterRunByTeamEntry
-    >,
-    {
-      readBootstrapRuntimeState,
-      logDebug: (message) => logger.debug(message),
-    }
-  );
+  >(host, {
+    readBootstrapRuntimeState,
+    logDebug: (message) => logger.debug(message),
+  });
   assignCompositionPart(
-    service,
+    host,
     'liveRuntimeMetadataPorts',
     runtimeProjection.liveRuntimeMetadataPorts
   );
-  assignCompositionPart(service, 'runtimeSnapshotFacade', runtimeProjection.runtimeSnapshotFacade);
+  assignCompositionPart(host, 'runtimeSnapshotFacade', runtimeProjection.runtimeSnapshotFacade);
   const openCodeRuntimeDeliveryBoundaryHost =
     servicePorts.createOpenCodeRuntimeDeliveryBoundaryHost();
   assignCompositionPart(
-    service,
+    host,
     'openCodeRuntimeDeliveryBoundaryHost',
     openCodeRuntimeDeliveryBoundaryHost
   );
-  const launchStateStoreBoundary = createTeamProvisioningLaunchStateStoreBoundaryFromService(
-    service as TeamProvisioningLaunchStateStoreBoundaryServiceHost,
-    {
-      areSnapshotsSemanticallyEqual: areLaunchStateSnapshotsSemanticallyEqual,
-      clearBootstrapState,
-      logDebug: (message) => logger.debug(message),
-      nowMs: () => Date.now(),
-    }
-  );
-  assignCompositionPart(service, 'launchStateStoreBoundary', launchStateStoreBoundary);
-  const persistenceReconcileFacade = createTeamProvisioningPersistenceReconcileFacadeFromService(
-    service as TeamProvisioningPersistenceReconcileFacadeServiceHost<ProvisioningRun>
-  );
-  assignCompositionPart(service, 'persistenceReconcileFacade', persistenceReconcileFacade);
+  const launchStateStoreBoundary = createTeamProvisioningLaunchStateStoreBoundaryFromService(host, {
+    areSnapshotsSemanticallyEqual: areLaunchStateSnapshotsSemanticallyEqual,
+    clearBootstrapState,
+    logDebug: (message) => logger.debug(message),
+    nowMs: () => Date.now(),
+  });
+  assignCompositionPart(host, 'launchStateStoreBoundary', launchStateStoreBoundary);
+  const persistenceReconcileFacade =
+    createTeamProvisioningPersistenceReconcileFacadeFromService(host);
+  assignCompositionPart(host, 'persistenceReconcileFacade', persistenceReconcileFacade);
   const launchStateCompatibilityBoundary =
-    createTeamProvisioningLaunchStateCompatibilityBoundaryFromService(
-      service as TeamProvisioningLaunchStateCompatibilityServiceHost<ProvisioningRun>
-    );
-  assignCompositionPart(
-    service,
-    'launchStateCompatibilityBoundary',
-    launchStateCompatibilityBoundary
-  );
+    createTeamProvisioningLaunchStateCompatibilityBoundaryFromService(host);
+  assignCompositionPart(host, 'launchStateCompatibilityBoundary', launchStateCompatibilityBoundary);
   const configTaskActivityBoundary =
-    createTeamProvisioningConfigTaskActivityBoundaryFromService<ProvisioningRun>(
-      service as TeamProvisioningConfigTaskActivityBoundaryServiceHost,
-      { logger }
-    );
-  assignCompositionPart(service, 'configTaskActivityBoundary', configTaskActivityBoundary);
+    createTeamProvisioningConfigTaskActivityBoundaryFromService<ProvisioningRun>(host, { logger });
+  assignCompositionPart(host, 'configTaskActivityBoundary', configTaskActivityBoundary);
   const toolApprovalFacade = createTeamProvisioningToolApprovalFacadeFromService<ProvisioningRun>(
-    service as TeamProvisioningToolApprovalFacadeServiceHost<ProvisioningRun>,
+    host,
     {
       logger,
       nowIso,
@@ -354,26 +370,20 @@ export function createTeamProvisioningServiceComposition(
       teammateOperationalToolNames: AGENT_TEAMS_NAMESPACED_TEAMMATE_OPERATIONAL_TOOL_NAMES,
     }
   );
-  assignCompositionPart(service, 'toolApprovalFacade', toolApprovalFacade);
+  assignCompositionPart(host, 'toolApprovalFacade', toolApprovalFacade);
   const idlePromptInjectionBoundary =
-    createTeamProvisioningIdlePromptInjectionBoundaryFromService<ProvisioningRun>(
-      service as TeamProvisioningIdlePromptInjectionServiceHost<ProvisioningRun>,
-      { logger }
-    );
-  assignCompositionPart(service, 'idlePromptInjectionBoundary', idlePromptInjectionBoundary);
-  const providerRuntime = createTeamProvisioningProviderRuntimeFacadeFromService(
-    service as TeamProvisioningProviderRuntimeFacadeServiceHost,
-    {
-      transientProbeProcesses: deps.transientProbeProcesses,
-      logger,
-      isAuthFailureWarning,
-      normalizeApiRetryErrorMessage,
-    }
-  );
-  assignCompositionPart(service, 'providerRuntime', providerRuntime);
+    createTeamProvisioningIdlePromptInjectionBoundaryFromService<ProvisioningRun>(host, { logger });
+  assignCompositionPart(host, 'idlePromptInjectionBoundary', idlePromptInjectionBoundary);
+  const providerRuntime = createTeamProvisioningProviderRuntimeFacadeFromService(host, {
+    transientProbeProcesses: deps.transientProbeProcesses,
+    logger,
+    isAuthFailureWarning,
+    normalizeApiRetryErrorMessage,
+  });
+  assignCompositionPart(host, 'providerRuntime', providerRuntime);
   const providerRuntimeCompatibility =
     createTeamProvisioningProviderRuntimeCompatibility(providerRuntime);
-  assignCompositionPart(service, 'providerRuntimeCompatibility', providerRuntimeCompatibility);
+  assignCompositionPart(host, 'providerRuntimeCompatibility', providerRuntimeCompatibility);
   const compatibilityDelegation: TeamProvisioningCompatibilityDelegation<ProvisioningRun> = {
     providerRuntimeCompatibility,
     configFacade,
@@ -385,28 +395,20 @@ export function createTeamProvisioningServiceComposition(
     runs: deps.runs,
     sendMessageToRunBoundary: deps.sendMessageToRunBoundary,
   };
-  assignCompositionPart(service, 'compatibilityDelegation', compatibilityDelegation);
+  assignCompositionPart(host, 'compatibilityDelegation', compatibilityDelegation);
   const outputRecoveryFacade =
-    createTeamProvisioningOutputRecoveryFacadeFromService<ProvisioningRun>(
-      service as TeamProvisioningOutputRecoveryFacadeServiceHost<ProvisioningRun>,
-      {
-        logger,
-        killTeamProcess,
-        updateProgress,
-        emitLogsProgress,
-        nowIso,
-      }
-    );
-  assignCompositionPart(service, 'outputRecoveryFacade', outputRecoveryFacade);
+    createTeamProvisioningOutputRecoveryFacadeFromService<ProvisioningRun>(host, {
+      logger,
+      killTeamProcess,
+      updateProgress,
+      emitLogsProgress,
+      nowIso,
+    });
+  assignCompositionPart(host, 'outputRecoveryFacade', outputRecoveryFacade);
   const deterministicLaunchFlowHost = createTeamProvisioningLaunchDeterministicFlowHostFromService<
     ProvisioningRun,
     MixedSecondaryRuntimeLaneState
-  >(
-    service as TeamProvisioningLaunchDeterministicFlowServiceHost<
-      ProvisioningRun,
-      MixedSecondaryRuntimeLaneState
-    >
-  );
+  >(host);
   const deterministicLaunchFlowBoundary = createTeamProvisioningLaunchDeterministicFlowBoundary<
     ProvisioningRun,
     MixedSecondaryRuntimeLaneState
@@ -422,94 +424,64 @@ export function createTeamProvisioningServiceComposition(
     setTimeout: (callback, ms) => setTimeout(callback, ms),
     killTeamProcess,
   });
-  assignCompositionPart(
-    service,
-    'deterministicLaunchFlowBoundary',
-    deterministicLaunchFlowBoundary
-  );
+  assignCompositionPart(host, 'deterministicLaunchFlowBoundary', deterministicLaunchFlowBoundary);
   const deterministicCreateSpawnFlowBoundary =
     createTeamProvisioningCreateDeterministicSpawnFlowBoundary<ProvisioningRun>(
-      createTeamProvisioningCreateDeterministicSpawnFlowDepsFromService(
-        service as TeamProvisioningCreateDeterministicSpawnFlowServiceHost<ProvisioningRun>,
-        {
-          spawnCli,
-          updateProgress,
-          killTeamProcess,
-        }
-      )
+      createTeamProvisioningCreateDeterministicSpawnFlowDepsFromService(host, {
+        spawnCli,
+        updateProgress,
+        killTeamProcess,
+      })
     );
   assignCompositionPart(
-    service,
+    host,
     'deterministicCreateSpawnFlowBoundary',
     deterministicCreateSpawnFlowBoundary
   );
   const verificationProbePorts = createTeamProvisioningVerificationProbePorts<ProvisioningRun>(
-    createTeamProvisioningVerificationProbePortsDepsFromService(
-      service as TeamProvisioningVerificationProbeServiceHost<ProvisioningRun>,
-      {
-        getTeamsBasePath,
-        readRegularFileUtf8: tryReadRegularFileUtf8,
-        updateProgress,
-        verifyTimeoutMs: VERIFY_TIMEOUT_MS,
-        verifyPollMs: VERIFY_POLL_MS,
-        teamJsonReadTimeoutMs: TEAM_JSON_READ_TIMEOUT_MS,
-        teamConfigMaxBytes: TEAM_CONFIG_MAX_BYTES,
-        sleep,
-      }
-    )
+    createTeamProvisioningVerificationProbePortsDepsFromService(host, {
+      getTeamsBasePath,
+      readRegularFileUtf8: tryReadRegularFileUtf8,
+      updateProgress,
+      verifyTimeoutMs: VERIFY_TIMEOUT_MS,
+      verifyPollMs: VERIFY_POLL_MS,
+      teamJsonReadTimeoutMs: TEAM_JSON_READ_TIMEOUT_MS,
+      teamConfigMaxBytes: TEAM_CONFIG_MAX_BYTES,
+      sleep,
+    })
   );
-  assignCompositionPart(service, 'verificationProbePorts', verificationProbePorts);
+  assignCompositionPart(host, 'verificationProbePorts', verificationProbePorts);
   const processExitPorts = createTeamProvisioningProcessExitPorts<ProvisioningRun>(
-    createTeamProvisioningProcessExitPortsDepsFromService(
-      service as TeamProvisioningProcessExitServiceHost<ProvisioningRun>,
-      {
-        verificationProbePorts,
-        logger,
-        updateProgress,
-        getTeamsBasePath,
-        getAutoDetectedClaudeBasePath,
-        getConfiguredCliCommandLabel,
-        getRunRuntimeFailureLabel,
-        getVerificationTimeoutMs: () => VERIFY_TIMEOUT_MS,
-        extractCliLogsFromRun,
-        logsSuggestShutdownOrCleanup,
-      }
-    )
+    createTeamProvisioningProcessExitPortsDepsFromService(host, {
+      verificationProbePorts,
+      logger,
+      updateProgress,
+      getTeamsBasePath,
+      getAutoDetectedClaudeBasePath,
+      getConfiguredCliCommandLabel,
+      getRunRuntimeFailureLabel,
+      getVerificationTimeoutMs: () => VERIFY_TIMEOUT_MS,
+      extractCliLogsFromRun,
+      logsSuggestShutdownOrCleanup,
+    })
   );
-  assignCompositionPart(service, 'processExitPorts', processExitPorts);
-  const prepareFacade = createTeamProvisioningPrepareFacadeFromService(
-    service as TeamProvisioningPrepareFacadeServiceHost,
-    {
-      resolveClaudeBinaryPath: () => ClaudeBinaryResolver.resolve(),
-      execCli,
-      info: (message) => logger.info(message),
-      warn: (message) => logger.warn(message),
-    }
-  );
-  assignCompositionPart(service, 'prepareFacade', prepareFacade);
+  assignCompositionPart(host, 'processExitPorts', processExitPorts);
+  const prepareFacade = createTeamProvisioningPrepareFacadeFromService(host, {
+    resolveClaudeBinaryPath: () => ClaudeBinaryResolver.resolve(),
+    execCli,
+    info: (message) => logger.info(message),
+    warn: (message) => logger.warn(message),
+  });
+  assignCompositionPart(host, 'prepareFacade', prepareFacade);
   const memberMcpLaunchConfigProvisioner =
-    createTeamProvisioningMemberMcpLaunchConfigProvisionerFromService(
-      service as TeamProvisioningMemberMcpLaunchConfigServiceHost<ProvisioningRun>,
-      { ensureCwdExists }
-    );
-  assignCompositionPart(
-    service,
-    'memberMcpLaunchConfigProvisioner',
-    memberMcpLaunchConfigProvisioner
-  );
-  const openCodeVisibleReplyProofService = createOpenCodeVisibleReplyProofServiceFromHost(
-    service as OpenCodeVisibleReplyProofServiceHost,
-    {
-      warn: (message) => logger.warn(message),
-      getErrorMessage,
-      nowIso,
-    }
-  );
-  assignCompositionPart(
-    service,
-    'openCodeVisibleReplyProofService',
-    openCodeVisibleReplyProofService
-  );
+    createTeamProvisioningMemberMcpLaunchConfigProvisionerFromService(host, { ensureCwdExists });
+  assignCompositionPart(host, 'memberMcpLaunchConfigProvisioner', memberMcpLaunchConfigProvisioner);
+  const openCodeVisibleReplyProofService = createOpenCodeVisibleReplyProofServiceFromHost(host, {
+    warn: (message) => logger.warn(message),
+    getErrorMessage,
+    nowIso,
+  });
+  assignCompositionPart(host, 'openCodeVisibleReplyProofService', openCodeVisibleReplyProofService);
   const openCodePromptDeliveryWatchdogCoordinator = createOpenCodePromptDeliveryWatchdogCoordinator(
     {
       hasAcceptedMemberWorkSyncReport: (input) =>
@@ -566,26 +538,23 @@ export function createTeamProvisioningServiceComposition(
     }
   );
   assignCompositionPart(
-    service,
+    host,
     'openCodePromptDeliveryWatchdogCoordinator',
     openCodePromptDeliveryWatchdogCoordinator
   );
   const bootstrapTranscriptFacade = createTeamProvisioningBootstrapTranscriptFacadeFromService(
-    service as TeamProvisioningBootstrapTranscriptFacadeServiceHost,
+    host,
     { nowIso }
   );
-  assignCompositionPart(service, 'bootstrapTranscriptFacade', bootstrapTranscriptFacade);
-  const bootstrapEvidenceFacade = createTeamProvisioningBootstrapEvidenceFacadeFromService(
-    service as unknown as TeamProvisioningBootstrapEvidenceFacadeServiceHost,
-    {
-      getTeamsBasePath,
-      nowIso,
-      warn: (message) => logger.warn(message),
-    }
-  );
-  assignCompositionPart(service, 'bootstrapEvidenceFacade', bootstrapEvidenceFacade);
+  assignCompositionPart(host, 'bootstrapTranscriptFacade', bootstrapTranscriptFacade);
+  const bootstrapEvidenceFacade = createTeamProvisioningBootstrapEvidenceFacadeFromService(host, {
+    getTeamsBasePath,
+    nowIso,
+    warn: (message) => logger.warn(message),
+  });
+  assignCompositionPart(host, 'bootstrapEvidenceFacade', bootstrapEvidenceFacade);
   const leadInboxRelayFacade = createTeamProvisioningLeadInboxRelayCompatibilityFacadeFromService(
-    service as TeamProvisioningLeadInboxRelayCompatibilityServiceHost<ProvisioningRun>,
+    host,
     {
       logger,
       getErrorMessage,
@@ -595,24 +564,19 @@ export function createTeamProvisioningServiceComposition(
       clearTimeout: (handle) => clearTimeout(handle),
     }
   );
-  assignCompositionPart(service, 'leadInboxRelayFacade', leadInboxRelayFacade);
+  assignCompositionPart(host, 'leadInboxRelayFacade', leadInboxRelayFacade);
   const cleanupRunPorts = createTeamProvisioningCleanupRunPorts<ProvisioningRun>(
-    createTeamProvisioningCleanupRunPortsDepsFromService(
-      service as TeamProvisioningCleanupRunServiceHost<ProvisioningRun>
-    )
+    createTeamProvisioningCleanupRunPortsDepsFromService(host)
   );
-  assignCompositionPart(service, 'cleanupRunPorts', cleanupRunPorts);
+  assignCompositionPart(host, 'cleanupRunPorts', cleanupRunPorts);
   const transientRunState = new TeamProvisioningTransientRunState(
-    createTeamProvisioningTransientRunStatePortsFromService(
-      service as TeamProvisioningTransientRunStateServiceHost,
-      {
-        cancelPendingAutoResume: (teamName) =>
-          peekAutoResumeService()?.cancelPendingAutoResume(teamName),
-        warn: (message) => logger.warn(message),
-      }
-    )
+    createTeamProvisioningTransientRunStatePortsFromService(host, {
+      cancelPendingAutoResume: (teamName) =>
+        peekAutoResumeService()?.cancelPendingAutoResume(teamName),
+      warn: (message) => logger.warn(message),
+    })
   );
-  assignCompositionPart(service, 'transientRunState', transientRunState);
+  assignCompositionPart(host, 'transientRunState', transientRunState);
 
   return {
     configFacade,

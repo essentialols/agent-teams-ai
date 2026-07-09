@@ -119,6 +119,33 @@ describe('RuntimeDeliveryService', () => {
     expect(diagnostics.append).not.toHaveBeenCalled();
   });
 
+  it('verifies the canonical location returned by destination write', async () => {
+    const canonicalLocation: RuntimeDeliveryLocation = {
+      kind: 'member_inbox',
+      teamName: 'team-a',
+      memberName: 'CanonicalReviewer',
+      messageId: 'canonical-message',
+    };
+    destination.writeImpl = () => {
+      destination.messages.set(canonicalLocation.messageId, canonicalLocation);
+      return canonicalLocation;
+    };
+    const service = createService();
+
+    const ack = await service.deliver(envelope());
+
+    expect(ack).toMatchObject({
+      ok: true,
+      delivered: true,
+      location: canonicalLocation,
+    });
+    expect(destination.verifyInputs.at(-1)?.location).toEqual(canonicalLocation);
+    await expect(journal.get('delivery-1')).resolves.toMatchObject({
+      status: 'committed',
+      committedLocation: canonicalLocation,
+    });
+  });
+
   it('commits duplicate destination found without writing a second message', async () => {
     const message = envelope();
     const destinationMessageId = buildRuntimeDestinationMessageId(message);
@@ -331,6 +358,11 @@ class FakeRunStateReader implements RuntimeDeliveryRunStateReader {
 
 class FakeDestinationPort implements RuntimeDeliveryDestinationPort {
   readonly messages = new Map<string, RuntimeDeliveryLocation>();
+  readonly verifyInputs: {
+    destination: RuntimeDeliveryDestinationRef;
+    destinationMessageId: string;
+    location?: RuntimeDeliveryLocation;
+  }[] = [];
   writeCalls = 0;
   writeImpl:
     | ((input: {
@@ -365,8 +397,11 @@ class FakeDestinationPort implements RuntimeDeliveryDestinationPort {
   verify(input: {
     destination: RuntimeDeliveryDestinationRef;
     destinationMessageId: string;
+    location?: RuntimeDeliveryLocation;
   }): Promise<RuntimeDeliveryVerifyResult> {
-    const location = this.messages.get(input.destinationMessageId) ?? null;
+    this.verifyInputs.push(input);
+    const location =
+      this.messages.get(input.location?.messageId ?? input.destinationMessageId) ?? null;
     return Promise.resolve({
       found: location !== null,
       location,

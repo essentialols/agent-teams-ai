@@ -88,6 +88,71 @@ describe('TeamProvisioningOpenCodeRuntimeDelivery', () => {
       });
     });
 
+    it('verifies cross-team delivery with canonical sender-copy location', async () => {
+      const sentMessages: InboxMessage[] = [
+        {
+          from: 'Runtime',
+          to: 'other-team.Captain',
+          text: 'deduplicated delivery',
+          timestamp: '2026-01-01T00:00:00.000Z',
+          messageId: 'existing-cross-message',
+        },
+      ];
+      const crossTeamSender = vi.fn(async () => ({
+        deliveredToInbox: true,
+        deduplicated: true,
+        messageId: 'existing-cross-message',
+      }));
+      const ports = createOpenCodeRuntimeDeliveryPorts({
+        sentMessagesStore: {
+          appendMessage: vi.fn(),
+          readMessages: vi.fn(async () => sentMessages),
+        },
+        inboxReader: {
+          getMessagesFor: vi.fn(async () => []),
+        },
+        inboxWriter: {
+          sendMessage: vi.fn(),
+        },
+        getCrossTeamSender: () => crossTeamSender,
+      });
+      const crossTeamPort = ports.find((port) => port.kind === 'cross_team_outbox');
+      expect(crossTeamPort).toBeDefined();
+      if (!crossTeamPort) {
+        return;
+      }
+
+      const location = await crossTeamPort.write({
+        envelope: createDeliveryEnvelope({
+          to: { teamName: 'other-team', memberName: 'lead' },
+        }),
+        destinationMessageId: 'new-cross-message',
+      });
+
+      expect(location).toEqual({
+        kind: 'cross_team_outbox',
+        fromTeamName: 'Team',
+        toTeamName: 'other-team',
+        toMemberName: 'Captain',
+        messageId: 'existing-cross-message',
+      });
+      await expect(
+        crossTeamPort.verify({
+          destination: {
+            kind: 'cross_team_outbox',
+            fromTeamName: 'Team',
+            toTeamName: 'other-team',
+            toMemberName: 'lead',
+          },
+          destinationMessageId: 'new-cross-message',
+          location,
+        })
+      ).resolves.toMatchObject({
+        found: true,
+        location,
+      });
+    });
+
     it('preserves structured task refs in sent, inbox, and cross-team messages', async () => {
       const taskRefs = [{ taskId: 'task-1', displayId: '#1', teamName: 'Team' }];
       const sentMessages: InboxMessage[] = [];

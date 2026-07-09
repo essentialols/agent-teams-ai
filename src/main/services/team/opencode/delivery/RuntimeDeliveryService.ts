@@ -30,6 +30,7 @@ export interface RuntimeDeliveryDestinationPort {
   verify(input: {
     destination: RuntimeDeliveryDestinationRef;
     destinationMessageId: string;
+    location?: RuntimeDeliveryLocation;
   }): Promise<RuntimeDeliveryVerifyResult>;
 
   buildChangeEvent(input: {
@@ -202,7 +203,7 @@ export class RuntimeDeliveryService {
 
     try {
       const location = await port.write({ envelope, destinationMessageId });
-      const verified = await port.verify({ destination, destinationMessageId });
+      const verified = await port.verify({ destination, destinationMessageId, location });
       if (!verified.found) {
         throw new Error(
           `Delivery destination write was not verifiable for ${destinationMessageId}`

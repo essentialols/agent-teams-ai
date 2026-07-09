@@ -13,8 +13,8 @@ import {
   stampOpenCodeAppMcpTransportEvidenceIfMissing,
 } from './TeamProvisioningOpenCodeBootstrapEvidence';
 
+import type { TeamProvisioningOpenCodeRuntimeRecoveryFacade } from './TeamProvisioningOpenCodeRuntimeRecoveryFacade';
 import type { TeamProvisioningOpenCodeStoppedLaneCleanupBoundary } from './TeamProvisioningOpenCodeStoppedLaneCleanupBoundary';
-import type { TeamProvisioningOrgConfigCompatibilityFacade } from './TeamProvisioningOrgConfigCompatibilityFacade';
 
 export interface OpenCodeRuntimeBootstrapEvidencePortsFactoryInput {
   teamsBasePath: string;
@@ -32,9 +32,13 @@ export type OpenCodeMemberMessageDeliveryFactoryPorts = Omit<
 
 export interface TeamProvisioningOpenCodeMemberMessageDeliveryHost {
   getOpenCodeRuntimeMessageAdapter: OpenCodeMemberMessageDeliveryFactoryPorts['getOpenCodeRuntimeMessageAdapter'];
-  orgConfigCompatibilityFacade: Pick<
-    TeamProvisioningOrgConfigCompatibilityFacade,
-    'readOpenCodeMemberDirectory' | 'resolveOpenCodeMemberIdentityFromDirectory'
+  openCodeRuntimeRecoveryFacade: Pick<
+    TeamProvisioningOpenCodeRuntimeRecoveryFacade,
+    | 'readOpenCodeMemberDirectory'
+    | 'resolveOpenCodeMemberIdentityFromDirectory'
+    | 'tryRecoverOpenCodeRuntimeLaneBeforeDelivery'
+    | 'tryRecoverOpenCodeRuntimeLaneFromCommittedSessionBeforeDelivery'
+    | 'openCodeRuntimeRecoveryIdentity'
   >;
   stoppingSecondaryRuntimeTeams: OpenCodeMemberMessageDeliveryFactoryPorts['stoppingSecondaryRuntimeTeams'];
   readPersistedTeamProjectPath: OpenCodeMemberMessageDeliveryFactoryPorts['readPersistedTeamProjectPath'];
@@ -43,12 +47,6 @@ export interface TeamProvisioningOpenCodeMemberMessageDeliveryHost {
   };
   runs: OpenCodeMemberMessageDeliveryFactoryPorts['runs'];
   getCurrentOpenCodeRuntimeRunId: OpenCodeMemberMessageDeliveryFactoryPorts['getCurrentOpenCodeRuntimeRunId'];
-  openCodeRuntimeRecoveryIdentity: {
-    resolveCurrentOpenCodeRuntimeRunId: OpenCodeMemberMessageDeliveryFactoryPorts['resolveCurrentOpenCodeRuntimeRunId'];
-    isOpenCodeRuntimeLaneIndexActive: OpenCodeMemberMessageDeliveryFactoryPorts['isOpenCodeRuntimeLaneIndexActive'];
-  };
-  tryRecoverOpenCodeRuntimeLaneBeforeDelivery: OpenCodeMemberMessageDeliveryFactoryPorts['tryRecoverOpenCodeRuntimeLaneBeforeDelivery'];
-  tryRecoverOpenCodeRuntimeLaneFromCommittedSessionBeforeDelivery: OpenCodeMemberMessageDeliveryFactoryPorts['tryRecoverOpenCodeRuntimeLaneFromCommittedSessionBeforeDelivery'];
   deleteSecondaryRuntimeRun: OpenCodeMemberMessageDeliveryFactoryPorts['deleteSecondaryRuntimeRun'];
   openCodeStoppedLaneCleanup: Pick<
     TeamProvisioningOpenCodeStoppedLaneCleanupBoundary,
@@ -118,9 +116,9 @@ export function createOpenCodeMemberMessageDeliveryServiceFromHost(
   return createOpenCodeMemberMessageDeliveryService({
     getOpenCodeRuntimeMessageAdapter: () => host.getOpenCodeRuntimeMessageAdapter(),
     readOpenCodeMemberDirectory: (teamName) =>
-      host.orgConfigCompatibilityFacade.readOpenCodeMemberDirectory(teamName),
+      host.openCodeRuntimeRecoveryFacade.readOpenCodeMemberDirectory(teamName),
     resolveOpenCodeMemberIdentityFromDirectory: (teamName, memberName, directory) =>
-      host.orgConfigCompatibilityFacade.resolveOpenCodeMemberIdentityFromDirectory(
+      host.openCodeRuntimeRecoveryFacade.resolveOpenCodeMemberIdentityFromDirectory(
         teamName,
         memberName,
         directory
@@ -133,13 +131,21 @@ export function createOpenCodeMemberMessageDeliveryServiceFromHost(
     getCurrentOpenCodeRuntimeRunId: (teamName, laneId) =>
       host.getCurrentOpenCodeRuntimeRunId(teamName, laneId),
     resolveCurrentOpenCodeRuntimeRunId: (teamName, laneId) =>
-      host.openCodeRuntimeRecoveryIdentity.resolveCurrentOpenCodeRuntimeRunId(teamName, laneId),
+      host.openCodeRuntimeRecoveryFacade.openCodeRuntimeRecoveryIdentity.resolveCurrentOpenCodeRuntimeRunId(
+        teamName,
+        laneId
+      ),
     isOpenCodeRuntimeLaneIndexActive: (teamName, laneId) =>
-      host.openCodeRuntimeRecoveryIdentity.isOpenCodeRuntimeLaneIndexActive(teamName, laneId),
+      host.openCodeRuntimeRecoveryFacade.openCodeRuntimeRecoveryIdentity.isOpenCodeRuntimeLaneIndexActive(
+        teamName,
+        laneId
+      ),
     tryRecoverOpenCodeRuntimeLaneBeforeDelivery: (input) =>
-      host.tryRecoverOpenCodeRuntimeLaneBeforeDelivery(input),
+      host.openCodeRuntimeRecoveryFacade.tryRecoverOpenCodeRuntimeLaneBeforeDelivery(input),
     tryRecoverOpenCodeRuntimeLaneFromCommittedSessionBeforeDelivery: (input) =>
-      host.tryRecoverOpenCodeRuntimeLaneFromCommittedSessionBeforeDelivery(input),
+      host.openCodeRuntimeRecoveryFacade.tryRecoverOpenCodeRuntimeLaneFromCommittedSessionBeforeDelivery(
+        input
+      ),
     deleteSecondaryRuntimeRun: (teamName, laneId) =>
       host.deleteSecondaryRuntimeRun(teamName, laneId),
     cleanupStoppedTeamOpenCodeRuntimeLanesInBackground: (teamName) =>
@@ -184,7 +190,7 @@ export function createTeamProvisioningOpenCodeMemberMessageDeliveryHostFromServi
   return {
     getOpenCodeRuntimeMessageAdapter: () =>
       service.appShellBoundary.getOpenCodeRuntimeMessageAdapter(),
-    orgConfigCompatibilityFacade: service.orgConfigCompatibilityFacade,
+    openCodeRuntimeRecoveryFacade: service.openCodeRuntimeRecoveryFacade,
     stoppingSecondaryRuntimeTeams: service.stoppingSecondaryRuntimeTeams,
     readPersistedTeamProjectPath: (teamName) => service.readPersistedTeamProjectPath(teamName),
     runTracking: {
@@ -194,19 +200,6 @@ export function createTeamProvisioningOpenCodeMemberMessageDeliveryHostFromServi
     runs: service.runs,
     getCurrentOpenCodeRuntimeRunId: (teamName, laneId) =>
       service.getCurrentOpenCodeRuntimeRunId(teamName, laneId),
-    openCodeRuntimeRecoveryIdentity: {
-      resolveCurrentOpenCodeRuntimeRunId: (teamName, laneId) =>
-        service.openCodeRuntimeRecoveryIdentity.resolveCurrentOpenCodeRuntimeRunId(
-          teamName,
-          laneId
-        ),
-      isOpenCodeRuntimeLaneIndexActive: (teamName, laneId) =>
-        service.openCodeRuntimeRecoveryIdentity.isOpenCodeRuntimeLaneIndexActive(teamName, laneId),
-    },
-    tryRecoverOpenCodeRuntimeLaneBeforeDelivery: (input) =>
-      service.tryRecoverOpenCodeRuntimeLaneBeforeDelivery(input),
-    tryRecoverOpenCodeRuntimeLaneFromCommittedSessionBeforeDelivery: (input) =>
-      service.tryRecoverOpenCodeRuntimeLaneFromCommittedSessionBeforeDelivery(input),
     deleteSecondaryRuntimeRun: (teamName, laneId) =>
       service.deleteSecondaryRuntimeRun(teamName, laneId),
     openCodeStoppedLaneCleanup: service.openCodeStoppedLaneCleanup,

@@ -78,9 +78,19 @@ describe('TeamProvisioningOpenCodeMemberMessageDeliveryServiceFactory', () => {
       appShellBoundary: {
         getOpenCodeRuntimeMessageAdapter: firstAdapterGetter,
       },
-      orgConfigCompatibilityFacade: {
-        readOpenCodeMemberDirectory: vi.fn(async () => ({ members: [] })),
+      openCodeRuntimeRecoveryFacade: {
+        readOpenCodeMemberDirectory: vi.fn(async () => ({
+          config: null,
+          teamMeta: null,
+          metaMembers: [],
+        })),
         resolveOpenCodeMemberIdentityFromDirectory: vi.fn(async () => null),
+        tryRecoverOpenCodeRuntimeLaneBeforeDelivery: vi.fn(),
+        tryRecoverOpenCodeRuntimeLaneFromCommittedSessionBeforeDelivery: vi.fn(),
+        openCodeRuntimeRecoveryIdentity: {
+          resolveCurrentOpenCodeRuntimeRunId: vi.fn(() => 'runtime-run-2'),
+          isOpenCodeRuntimeLaneIndexActive: vi.fn(() => true),
+        },
       },
       stoppingSecondaryRuntimeTeams: new Set<string>(),
       readPersistedTeamProjectPath: vi.fn(async () => path.join('/tmp', 'team-a')),
@@ -89,10 +99,6 @@ describe('TeamProvisioningOpenCodeMemberMessageDeliveryServiceFactory', () => {
       },
       runs: new Map(),
       getCurrentOpenCodeRuntimeRunId: vi.fn(() => 'runtime-run-1'),
-      openCodeRuntimeRecoveryIdentity: {
-        resolveCurrentOpenCodeRuntimeRunId: vi.fn(() => 'runtime-run-2'),
-        isOpenCodeRuntimeLaneIndexActive: vi.fn(() => true),
-      },
       providerRuntime: {
         resolveControlApiBaseUrl: vi.fn(() => 'http://127.0.0.1:1234'),
       },
@@ -110,8 +116,6 @@ describe('TeamProvisioningOpenCodeMemberMessageDeliveryServiceFactory', () => {
       requeueOpenCodeRuntimeManifestWatermarkDeliveryIfNeeded: vi.fn(),
       emitOpenCodePromptDeliveryTaskLogChange: vi.fn(),
       observeOpenCodeDirectUserDeliveryInlineIfNeeded: vi.fn(),
-      tryRecoverOpenCodeRuntimeLaneBeforeDelivery: vi.fn(),
-      tryRecoverOpenCodeRuntimeLaneFromCommittedSessionBeforeDelivery: vi.fn(),
       deleteSecondaryRuntimeRun: vi.fn(),
       openCodeStoppedLaneCleanup: {
         cleanupStoppedTeamOpenCodeRuntimeLanesInBackground: vi.fn(),
@@ -130,7 +134,10 @@ describe('TeamProvisioningOpenCodeMemberMessageDeliveryServiceFactory', () => {
     expect(projectPath).toBe(path.join('/tmp', 'team-a'));
     expect(host.runTracking.resolveDeliverableTrackedRuntimeRunId('team-a')).toBe('run-1');
     expect(
-      host.openCodeRuntimeRecoveryIdentity.isOpenCodeRuntimeLaneIndexActive('team-a', 'lane-a')
+      host.openCodeRuntimeRecoveryFacade.openCodeRuntimeRecoveryIdentity.isOpenCodeRuntimeLaneIndexActive(
+        'team-a',
+        'lane-a'
+      )
     ).toBe(true);
     expect(host.providerRuntime.resolveControlApiBaseUrl()).toBe('http://127.0.0.1:1234');
   });

@@ -2,7 +2,6 @@ import { getTeamsBasePath } from '@main/utils/pathDecoder';
 import { createLogger } from '@shared/utils/logger';
 
 import type { OpenCodeRuntimeLaneRecoveryPorts } from './TeamProvisioningOpenCodeRuntimeRecoveryFlow';
-import type { TeamProvisioningOrgConfigCompatibilityFacade } from './TeamProvisioningOrgConfigCompatibilityFacade';
 
 const defaultLogger = createLogger('Service:TeamProvisioning');
 
@@ -19,10 +18,8 @@ export interface TeamProvisioningOpenCodeRuntimeLaneRecoveryPortsFactoryHost {
     tryRecoverMissingOpenCodeSecondaryLaneFromRuntime: OpenCodeRuntimeLaneRecoveryPorts['tryRecoverMissingOpenCodeSecondaryLaneFromRuntime'];
     tryRecoverActiveOpenCodeSecondaryLaneFromRuntime: OpenCodeRuntimeLaneRecoveryPorts['tryRecoverActiveOpenCodeSecondaryLaneFromRuntime'];
   };
-  orgConfigCompatibilityFacade: Pick<
-    TeamProvisioningOrgConfigCompatibilityFacade,
-    'readOpenCodeMemberDirectory' | 'resolveOpenCodeMemberIdentityFromDirectory'
-  >;
+  readOpenCodeMemberDirectory: OpenCodeRuntimeLaneRecoveryPorts['readOpenCodeMemberDirectory'];
+  resolveOpenCodeMemberIdentityFromDirectory: OpenCodeRuntimeLaneRecoveryPorts['resolveOpenCodeMemberIdentityFromDirectory'];
   readConfigForObservation: OpenCodeRuntimeLaneRecoveryPorts['readConfigForObservation'];
   teamMetaStore: {
     getMeta: OpenCodeRuntimeLaneRecoveryPorts['readTeamMeta'];
@@ -63,14 +60,9 @@ export function createTeamProvisioningOpenCodeRuntimeLaneRecoveryPortsFromHost(
       host.openCodeRuntimeRecoveryBoundary.tryRecoverActiveOpenCodeSecondaryLaneFromRuntime(
         recoverInput
       ),
-    readOpenCodeMemberDirectory: (teamName) =>
-      host.orgConfigCompatibilityFacade.readOpenCodeMemberDirectory(teamName),
+    readOpenCodeMemberDirectory: (teamName) => host.readOpenCodeMemberDirectory(teamName),
     resolveOpenCodeMemberIdentityFromDirectory: (teamName, memberName, directory) =>
-      host.orgConfigCompatibilityFacade.resolveOpenCodeMemberIdentityFromDirectory(
-        teamName,
-        memberName,
-        directory
-      ),
+      host.resolveOpenCodeMemberIdentityFromDirectory(teamName, memberName, directory),
     readConfigForObservation: (teamName) => host.readConfigForObservation(teamName),
     readTeamMeta: (teamName) => host.teamMetaStore.getMeta(teamName),
     readMetaMembers: (teamName) => host.membersMetaStore.getMembers(teamName),

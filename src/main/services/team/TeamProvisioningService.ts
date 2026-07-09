@@ -194,10 +194,6 @@ import {
   type TeamProvisioningOpenCodeLaunchWiringServiceHost,
 } from './provisioning/TeamProvisioningOpenCodeLaunchWiring';
 import {
-  createTeamProvisioningOpenCodeMemberIdentityBoundary,
-  type TeamProvisioningOpenCodeMemberIdentityBoundary,
-} from './provisioning/TeamProvisioningOpenCodeMemberIdentityBoundaryFactory';
-import {
   type OpenCodeMemberInboxRelayOptions,
   type OpenCodeMemberInboxRelayResult,
 } from './provisioning/TeamProvisioningOpenCodeMemberInboxRelay';
@@ -232,7 +228,6 @@ import {
 } from './provisioning/TeamProvisioningOpenCodeRuntimeDeliveryAdvisory';
 import { type TeamProvisioningOpenCodeRuntimeDeliveryBoundaryHost } from './provisioning/TeamProvisioningOpenCodeRuntimeDeliveryBoundaryFactory';
 import { readProcessCommandByPid as readOpenCodeRuntimeLaneProcessCommandByPid } from './provisioning/TeamProvisioningOpenCodeRuntimeLaneCleanup';
-import { TeamProvisioningOpenCodeRuntimeLaneRecoveryFacade } from './provisioning/TeamProvisioningOpenCodeRuntimeLaneRecoveryFacade';
 import {
   createOpenCodeRuntimePendingPermissionsPersistencePortsFromService,
   createOpenCodeRuntimePermissionSpawnStatusPortsFromService,
@@ -247,10 +242,14 @@ import {
 } from './provisioning/TeamProvisioningOpenCodeRuntimePidBridge';
 import { createTeamProvisioningOpenCodeRuntimeRecoveryBoundary } from './provisioning/TeamProvisioningOpenCodeRuntimeRecoveryBoundaryFactory';
 import {
+  createTeamProvisioningOpenCodeRuntimeRecoveryFacadeFromService,
+  type TeamProvisioningOpenCodeRuntimeRecoveryFacade,
+  type TeamProvisioningOpenCodeRuntimeRecoveryFacadeServiceHost,
+} from './provisioning/TeamProvisioningOpenCodeRuntimeRecoveryFacade';
+import {
   type OpenCodeRuntimeLaneIdResolutionServiceHost,
   resolveOpenCodeRuntimeLaneIdWithService,
 } from './provisioning/TeamProvisioningOpenCodeRuntimeRecoveryFlow';
-import { createOpenCodeRuntimeRecoveryIdentityHelpers } from './provisioning/TeamProvisioningOpenCodeRuntimeRecoveryIdentity';
 import { createTeamProvisioningOpenCodeSecondaryBriefingBuilder } from './provisioning/TeamProvisioningOpenCodeSecondaryBriefingBuilder';
 import {
   createTeamProvisioningOpenCodeSecondaryLaneEvidencePortsFromService,
@@ -423,16 +422,6 @@ export class TeamProvisioningService extends TeamProvisioningLaunchStateCompatib
       getProviderLabel: getTeamProviderLabel,
       logger,
     });
-  private readonly openCodeMemberIdentityBoundary: TeamProvisioningOpenCodeMemberIdentityBoundary =
-    createTeamProvisioningOpenCodeMemberIdentityBoundary({
-      getSecondaryRuntimeRuns: (teamName) => this.getSecondaryRuntimeRuns(teamName),
-      getRuntimeAdapterProviderId: (teamName) =>
-        this.runtimeAdapterRunByTeam.get(teamName)?.providerId ?? null,
-    });
-  protected readonly orgConfigCompatibilityFacade =
-    createTeamProvisioningOrgConfigCompatibilityFacadeFromService(
-      this as unknown as TeamProvisioningOrgConfigCompatibilityServiceHost
-    );
   private readonly openCodeSecondaryBriefingBuilder =
     createTeamProvisioningOpenCodeSecondaryBriefingBuilder({
       createController: (input) => createController(input),
@@ -664,19 +653,6 @@ export class TeamProvisioningService extends TeamProvisioningLaunchStateCompatib
     );
   private readonly openCodeVisibleReplyProofService!: OpenCodeVisibleReplyProofService;
   protected readonly openCodePromptDeliveryWatchdogCoordinator!: OpenCodePromptDeliveryWatchdogCoordinator;
-  private readonly openCodeRuntimeRecoveryIdentity = createOpenCodeRuntimeRecoveryIdentityHelpers({
-    getTeamsBasePath,
-    getCurrentOpenCodeRuntimeRunId: (teamName, laneId) =>
-      this.getCurrentOpenCodeRuntimeRunId(teamName, laneId),
-    readOpenCodeMemberDirectory: (teamName) =>
-      this.orgConfigCompatibilityFacade.readOpenCodeMemberDirectory(teamName),
-    resolveOpenCodeMemberIdentityFromDirectory: (teamName, memberName, directory) =>
-      this.orgConfigCompatibilityFacade.resolveOpenCodeMemberIdentityFromDirectory(
-        teamName,
-        memberName,
-        directory
-      ),
-  });
   private readonly openCodeRuntimeRecoveryBoundary =
     createTeamProvisioningOpenCodeRuntimeRecoveryBoundary({
       teamsBasePath: getTeamsBasePath(),
@@ -685,7 +661,6 @@ export class TeamProvisioningService extends TeamProvisioningLaunchStateCompatib
       createRunId: randomUUID,
       getErrorMessage,
     });
-  private readonly openCodeRuntimeLaneRecoveryFacade!: TeamProvisioningOpenCodeRuntimeLaneRecoveryFacade;
   private readonly openCodeRuntimePermissionPersistencePorts: OpenCodeRuntimePendingPermissionsPersistencePorts =
     createOpenCodeRuntimePendingPermissionsPersistencePortsFromService(
       this as unknown as OpenCodeRuntimePendingPermissionsPersistenceServiceHost,
@@ -802,7 +777,20 @@ export class TeamProvisioningService extends TeamProvisioningLaunchStateCompatib
   private readonly launchStateStore = new TeamLaunchStateStore();
   private readonly defaultLaunchStateStore = this.launchStateStore;
   private readonly configFacade!: TeamProvisioningConfigFacade;
-  protected readonly liveRuntimeMetadataPorts!: TeamProvisioningRuntimeProjection['liveRuntimeMetadataPorts'];
+  private readonly openCodeRuntimeRecoveryFacade: TeamProvisioningOpenCodeRuntimeRecoveryFacade =
+    createTeamProvisioningOpenCodeRuntimeRecoveryFacadeFromService(
+      this as unknown as TeamProvisioningOpenCodeRuntimeRecoveryFacadeServiceHost,
+      {
+        getTeamsBasePath,
+        logger,
+      }
+    );
+
+  private get openCodeRuntimeRecoveryIdentity(): TeamProvisioningOpenCodeRuntimeRecoveryFacade[openCodeRuntimeRecoveryIdentity] {
+    return this.openCodeRuntimeRecoveryFacade.openCodeRuntimeRecoveryIdentity;
+  }
+
+  protected readonly liveRuntimeMetadataPorts!: TeamProvisioningRuntimeProjection[liveRuntimeMetadataPorts];
   private readonly launchStateWrittenRunIdByTeam = new Map<string, string>();
   private readonly launchStateStoreBoundary!: TeamProvisioningLaunchStateStoreBoundary;
   private readonly persistenceReconcileFacade!: TeamProvisioningPersistenceReconcileFacade<ProvisioningRun>;
@@ -984,7 +972,7 @@ export class TeamProvisioningService extends TeamProvisioningLaunchStateCompatib
     teamName: string,
     memberName: string
   ): Promise<OpenCodeMemberIdentityResolution> {
-    return await this.openCodeRuntimeRecoveryIdentity.resolveOpenCodeMemberDeliveryIdentity(
+    return await this.openCodeRuntimeRecoveryFacade.resolveOpenCodeMemberDeliveryIdentity(
       teamName,
       memberName
     );
@@ -1138,7 +1126,7 @@ export class TeamProvisioningService extends TeamProvisioningLaunchStateCompatib
     member: TeamMember;
     projectPath: string | null;
   }): Promise<boolean> {
-    return await this.openCodeRuntimeLaneRecoveryFacade.tryRecoverOpenCodeRuntimeLaneBeforeDelivery(
+    return await this.openCodeRuntimeRecoveryFacade.tryRecoverOpenCodeRuntimeLaneBeforeDelivery(
       input
     );
   }
@@ -1150,7 +1138,7 @@ export class TeamProvisioningService extends TeamProvisioningLaunchStateCompatib
     projectPath: string | null;
     previousLaunchState?: PersistedTeamLaunchSnapshot | null;
   }): Promise<boolean> {
-    return await this.openCodeRuntimeLaneRecoveryFacade.tryRecoverOpenCodeRuntimeLaneFromCommittedSessionBeforeDelivery(
+    return await this.openCodeRuntimeRecoveryFacade.tryRecoverOpenCodeRuntimeLaneFromCommittedSessionBeforeDelivery(
       input
     );
   }
@@ -1159,7 +1147,7 @@ export class TeamProvisioningService extends TeamProvisioningLaunchStateCompatib
     teamName: string;
     memberName: string;
   }): Promise<boolean> {
-    return await this.openCodeRuntimeLaneRecoveryFacade.tryRecoverOpenCodeRuntimeLaneForConfiguredMemberBeforeDelivery(
+    return await this.openCodeRuntimeRecoveryFacade.tryRecoverOpenCodeRuntimeLaneForConfiguredMemberBeforeDelivery(
       input
     );
   }
@@ -1169,7 +1157,7 @@ export class TeamProvisioningService extends TeamProvisioningLaunchStateCompatib
     memberName: string;
     laneId: string;
   }): Promise<boolean> {
-    return await this.openCodeRuntimeLaneRecoveryFacade.tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive(
+    return await this.openCodeRuntimeRecoveryFacade.tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive(
       input
     );
   }
@@ -1178,7 +1166,7 @@ export class TeamProvisioningService extends TeamProvisioningLaunchStateCompatib
     teamName: string,
     options: { allowCommittedSessionRecoveryWithoutTeamRuntime?: boolean } = {}
   ): Promise<string[]> {
-    return await this.openCodeRuntimeLaneRecoveryFacade.tryRecoverOpenCodeRuntimeLanesForDeliveryWatchdog(
+    return await this.openCodeRuntimeRecoveryFacade.tryRecoverOpenCodeRuntimeLanesForDeliveryWatchdog(
       teamName,
       options
     );

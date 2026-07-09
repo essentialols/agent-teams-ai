@@ -100,11 +100,6 @@ import {
 import { createInitialMemberSpawnStatusEntry } from './TeamProvisioningMemberSpawnStatusPolicy';
 import { type TeamProvisioningOpenCodeRuntimeDeliveryBoundaryHost } from './TeamProvisioningOpenCodeRuntimeDeliveryBoundaryFactory';
 import {
-  createTeamProvisioningOpenCodeRuntimeLaneRecoveryFacadeFromService,
-  TeamProvisioningOpenCodeRuntimeLaneRecoveryFacade,
-  type TeamProvisioningOpenCodeRuntimeLaneRecoveryFacadeServiceHost,
-} from './TeamProvisioningOpenCodeRuntimeLaneRecoveryFacade';
-import {
   isAuthFailureWarning,
   normalizeApiRetryErrorMessage,
 } from './TeamProvisioningOutputErrorPolicy';
@@ -234,7 +229,6 @@ export interface TeamProvisioningServiceComposition {
   configFacade: TeamProvisioningConfigFacade;
   liveRuntimeMetadataPorts: TeamProvisioningRuntimeProjection['liveRuntimeMetadataPorts'];
   runtimeSnapshotFacade: TeamProvisioningRuntimeProjection['runtimeSnapshotFacade'];
-  openCodeRuntimeLaneRecoveryFacade: TeamProvisioningOpenCodeRuntimeLaneRecoveryFacade;
   openCodeRuntimeDeliveryBoundaryHost: TeamProvisioningOpenCodeRuntimeDeliveryBoundaryHost<ProvisioningRun>;
   launchStateStoreBoundary: TeamProvisioningLaunchStateStoreBoundary;
   persistenceReconcileFacade: TeamProvisioningPersistenceReconcileFacade<ProvisioningRun>;
@@ -314,19 +308,6 @@ export function createTeamProvisioningServiceComposition(
     runtimeProjection.liveRuntimeMetadataPorts
   );
   assignCompositionPart(service, 'runtimeSnapshotFacade', runtimeProjection.runtimeSnapshotFacade);
-  const openCodeRuntimeLaneRecoveryFacade =
-    createTeamProvisioningOpenCodeRuntimeLaneRecoveryFacadeFromService(
-      service as TeamProvisioningOpenCodeRuntimeLaneRecoveryFacadeServiceHost,
-      {
-        getTeamsBasePath,
-        logger,
-      }
-    );
-  assignCompositionPart(
-    service,
-    'openCodeRuntimeLaneRecoveryFacade',
-    openCodeRuntimeLaneRecoveryFacade
-  );
   const openCodeRuntimeDeliveryBoundaryHost =
     servicePorts.createOpenCodeRuntimeDeliveryBoundaryHost();
   assignCompositionPart(
@@ -637,7 +618,6 @@ export function createTeamProvisioningServiceComposition(
     configFacade,
     liveRuntimeMetadataPorts: runtimeProjection.liveRuntimeMetadataPorts,
     runtimeSnapshotFacade: runtimeProjection.runtimeSnapshotFacade,
-    openCodeRuntimeLaneRecoveryFacade,
     openCodeRuntimeDeliveryBoundaryHost,
     launchStateStoreBoundary,
     persistenceReconcileFacade,

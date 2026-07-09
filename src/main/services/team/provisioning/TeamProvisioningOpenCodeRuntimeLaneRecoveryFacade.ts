@@ -149,7 +149,9 @@ export function createTeamProvisioningOpenCodeRuntimeLaneRecoveryFacadeHostFromS
       ),
     launchStateStore: service.launchStateStore,
     openCodeRuntimeRecoveryBoundary: service.openCodeRuntimeRecoveryBoundary,
-    orgConfigCompatibilityFacade: service.orgConfigCompatibilityFacade,
+    readOpenCodeMemberDirectory: (teamName) => service.readOpenCodeMemberDirectory(teamName),
+    resolveOpenCodeMemberIdentityFromDirectory: (teamName, memberName, directory) =>
+      service.resolveOpenCodeMemberIdentityFromDirectory(teamName, memberName, directory),
     readConfigForObservation: (teamName) => service.configFacade.readConfigForObservation(teamName),
     teamMetaStore: service.teamMetaStore,
     membersMetaStore: service.membersMetaStore,

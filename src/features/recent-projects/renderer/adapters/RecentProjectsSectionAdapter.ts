@@ -1,5 +1,9 @@
 import { formatProjectPath } from '@renderer/utils/pathDisplay';
-import { normalizePath, type TaskStatusCounts } from '@renderer/utils/pathNormalize';
+import {
+  normalizePath,
+  normalizePathForMatching,
+  type TaskStatusCounts,
+} from '@renderer/utils/pathNormalize';
 import { formatDistanceToNow } from 'date-fns';
 
 import { sortDashboardProviderIds } from '../utils/projectDecorations';
@@ -37,13 +41,30 @@ interface RecentProjectsSectionAdapterInput {
   tasksLoading: boolean;
 }
 
+function getProjectPathMapValue<T>(map: Map<string, T>, projectPath: string): T | undefined {
+  const identityKey = normalizePath(projectPath);
+  const exact = map.get(identityKey);
+  if (exact !== undefined) {
+    return exact;
+  }
+
+  const matchingKey = normalizePathForMatching(projectPath);
+  for (const [key, value] of map) {
+    if (normalizePathForMatching(key) === matchingKey) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
 function sumTaskCounts(
   project: DashboardRecentProject,
   taskCountsByProject: Map<string, TaskStatusCounts>
 ): TaskStatusCounts | undefined {
   const total = project.associatedPaths.reduce<TaskStatusCounts>(
     (counts, currentPath) => {
-      const next = taskCountsByProject.get(normalizePath(currentPath));
+      const next = getProjectPathMapValue(taskCountsByProject, currentPath);
       if (!next) {
         return counts;
       }
@@ -68,7 +89,7 @@ function collectActiveTeams(
   const activeTeams: TeamSummary[] = [];
 
   for (const projectPath of project.associatedPaths) {
-    const teams = activeTeamsByProject.get(normalizePath(projectPath));
+    const teams = getProjectPathMapValue(activeTeamsByProject, projectPath);
     if (!teams) {
       continue;
     }

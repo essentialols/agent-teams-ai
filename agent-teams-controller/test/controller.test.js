@@ -2,6 +2,7 @@ const fs = require('fs');
 const http = require('http');
 const os = require('os');
 const path = require('path');
+const { spawn } = require('child_process');
 
 const { createController } = require('../src/index.js');
 
@@ -75,6 +76,59 @@ describe('agent-teams-controller API', () => {
       path.join(claudeDir, 'team-control-api.json'),
       JSON.stringify({ baseUrl, updatedAt: new Date().toISOString() }, null, 2)
     );
+  }
+
+  function runControllerMessageProcess(env) {
+    const script = `
+const fs = require('fs');
+const path = require('path');
+const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+const inboxPath = path.resolve(process.env.INBOX_PATH);
+const originalReadFileSync = fs.readFileSync;
+fs.readFileSync = function patchedReadFileSync(filePath, ...args) {
+  const resolved = path.resolve(String(filePath));
+  try {
+    const result = originalReadFileSync.call(this, filePath, ...args);
+    if (resolved === inboxPath) sleep(250);
+    return result;
+  } catch (error) {
+    if (resolved === inboxPath) sleep(250);
+    throw error;
+  }
+};
+const { createController } = require(process.env.CONTROLLER_ENTRY);
+const controller = createController({ teamName: 'my-team', claudeDir: process.env.CLAUDE_DIR });
+controller.messages.sendMessage({
+  to: 'bob',
+  from: 'alice',
+  text: process.env.MESSAGE_TEXT,
+  messageId: process.env.MESSAGE_ID,
+});
+`;
+
+    return new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, ['-e', script], {
+        cwd: path.join(__dirname, '..'),
+        env: { ...process.env, ...env },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stdout = '';
+      let stderr = '';
+      child.stdout.on('data', (chunk) => {
+        stdout += chunk;
+      });
+      child.stderr.on('data', (chunk) => {
+        stderr += chunk;
+      });
+      child.on('error', reject);
+      child.on('exit', (code) => {
+        if (code === 0) {
+          resolve();
+          return;
+        }
+        reject(new Error(`child exited ${code}\nstdout:\n${stdout}\nstderr:\n${stderr}`));
+      });
+    });
   }
 
   it('creates tasks and exposes grouped controller modules', () => {
@@ -1224,6 +1278,81 @@ describe('agent-teams-controller API', () => {
     expect(rows[0].attachments[0].filename).toBe('note.txt');
   });
 
+  it('rejects unsafe configured member names before inbox path construction', () => {
+    const claudeDir = makeClaudeDir();
+    const configPath = path.join(claudeDir, 'teams', 'my-team', 'config.json');
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify(
+        {
+          name: 'my-team',
+          members: [
+            { name: '../config', role: 'developer' },
+            { name: 'alice', role: 'team-lead' },
+          ],
+        },
+        null,
+        2
+      )
+    );
+    const originalConfig = fs.readFileSync(configPath, 'utf8');
+    const controller = createController({ teamName: 'my-team', claudeDir });
+
+    expect(() =>
+      controller.messages.sendMessage({
+        to: '../config',
+        from: 'alice',
+        text: 'should not overwrite config',
+      })
+    ).toThrow('Unknown to: ../config');
+    expect(fs.readFileSync(configPath, 'utf8')).toBe(originalConfig);
+  });
+
+  it('does not overwrite a corrupt inbox JSON file when appending a message', () => {
+    const claudeDir = makeClaudeDir();
+    const inboxDir = path.join(claudeDir, 'teams', 'my-team', 'inboxes');
+    const inboxPath = path.join(inboxDir, 'bob.json');
+    fs.mkdirSync(inboxDir, { recursive: true });
+    fs.writeFileSync(inboxPath, '{not json', 'utf8');
+    const controller = createController({ teamName: 'my-team', claudeDir });
+
+    expect(() =>
+      controller.messages.sendMessage({
+        to: 'bob',
+        from: 'alice',
+        text: 'after corruption',
+      })
+    ).toThrow();
+    expect(fs.readFileSync(inboxPath, 'utf8')).toBe('{not json');
+  });
+
+  it('keeps concurrent controller message appends from separate processes', async () => {
+    const claudeDir = makeClaudeDir();
+    const inboxPath = path.join(claudeDir, 'teams', 'my-team', 'inboxes', 'bob.json');
+    const controllerEntry = path.join(__dirname, '..', 'src', 'index.js');
+
+    await Promise.all(
+      ['one', 'two', 'three', 'four'].map((label) =>
+        runControllerMessageProcess({
+          CLAUDE_DIR: claudeDir,
+          CONTROLLER_ENTRY: controllerEntry,
+          INBOX_PATH: inboxPath,
+          MESSAGE_ID: `msg-${label}`,
+          MESSAGE_TEXT: `parallel ${label}`,
+        })
+      )
+    );
+
+    const rows = JSON.parse(fs.readFileSync(inboxPath, 'utf8'));
+    expect(rows).toHaveLength(4);
+    expect(rows.map((row) => row.messageId).sort()).toEqual([
+      'msg-four',
+      'msg-one',
+      'msg-three',
+      'msg-two',
+    ]);
+  });
+
   it('persists slash command metadata through controller messages.appendSentMessage', () => {
     const claudeDir = makeClaudeDir();
     const controller = createController({ teamName: 'my-team', claudeDir });
@@ -2243,6 +2372,7 @@ describe('agent-teams-controller API', () => {
     const task = controller.tasks.createTask({ subject: 'Deleted work guard', owner: 'bob' });
 
     controller.tasks.softDeleteTask(task.id, 'bob');
+    const deletedBefore = controller.tasks.getTask(task.id);
 
     expect(() => controller.tasks.startTask(task.id, 'bob')).toThrow(
       'use task_restore before starting work'
@@ -2253,6 +2383,29 @@ describe('agent-teams-controller API', () => {
     expect(() => controller.tasks.setTaskStatus(task.id, 'pending', 'bob')).toThrow(
       'use task_restore before changing status'
     );
+    expect(() => controller.tasks.setTaskOwner(task.id, 'alice', 'alice')).toThrow(
+      'use task_restore before changing owner'
+    );
+    expect(() => controller.tasks.updateTaskFields(task.id, { description: 'mutated' })).toThrow(
+      'use task_restore before updating task fields'
+    );
+    expect(() =>
+      controller.tasks.addTaskComment(task.id, {
+        from: 'alice',
+        text: 'still writing',
+      })
+    ).toThrow('use task_restore before adding a comment');
+    expect(() => controller.tasks.setNeedsClarification(task.id, 'lead')).toThrow(
+      'use task_restore before changing clarification'
+    );
+
+    const stillDeleted = controller.tasks.getTask(task.id);
+    expect(stillDeleted.status).toBe('deleted');
+    expect(stillDeleted.owner).toBe('bob');
+    expect(stillDeleted.subject).toBe(deletedBefore.subject);
+    expect(stillDeleted.description).toBe(deletedBefore.description);
+    expect(stillDeleted.comments || []).toEqual([]);
+    expect(stillDeleted.needsClarification).toBeUndefined();
 
     const restored = controller.tasks.restoreTask(task.id, 'alice');
     expect(restored.status).toBe('pending');
@@ -3116,6 +3269,27 @@ describe('agent-teams-controller API', () => {
       expect(result.message.messageId).toBe(delivered.messageId);
       expect(result.message.text).toBe('Deploy to staging');
       expect(result.store).toBe('inbox:bob');
+    });
+
+    it('skips corrupt inbox files while looking up valid inbox messages', () => {
+      const claudeDir = makeClaudeDir();
+      const controller = createController({ teamName: 'my-team', claudeDir });
+
+      const delivered = controller.messages.sendMessage({
+        to: 'bob',
+        from: 'user',
+        text: 'Deploy to staging',
+        source: 'inbox',
+      });
+      const inboxDir = path.join(claudeDir, 'teams', 'my-team', 'inboxes');
+      const corruptPath = path.join(inboxDir, 'alice.json');
+      fs.writeFileSync(corruptPath, '{not json', 'utf8');
+
+      const result = controller.messages.lookupMessage(delivered.messageId);
+
+      expect(result.message.messageId).toBe(delivered.messageId);
+      expect(result.store).toBe('inbox:bob');
+      expect(fs.readFileSync(corruptPath, 'utf8')).toBe('{not json');
     });
 
     it('throws on unknown messageId', () => {

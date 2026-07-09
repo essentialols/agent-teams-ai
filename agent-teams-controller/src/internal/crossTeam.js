@@ -36,6 +36,7 @@ function normalizeMetaMembers(rawMembers) {
     if (!m || typeof m !== 'object') continue;
     const name = typeof m.name === 'string' ? m.name.trim() : '';
     if (!name) continue;
+    if (!runtimeHelpers.isSafeMemberFileSegment(name)) continue;
     deduped.set(name, {
       name,
       agentType: typeof m.agentType === 'string' ? m.agentType.trim() || undefined : undefined,
@@ -195,7 +196,10 @@ function sendCrossTeamMessage(context, flags) {
   }
 
   // Resolve lead
-  const leadName = resolveTargetLead(targetContext.paths, targetConfig);
+  const leadName = runtimeHelpers.assertSafeMemberFileSegment(
+    'target lead name',
+    resolveTargetLead(targetContext.paths, targetConfig)
+  );
 
   // Format
   const from = `${fromTeam}.${fromMember}`;

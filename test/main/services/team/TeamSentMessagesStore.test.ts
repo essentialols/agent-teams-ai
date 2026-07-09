@@ -117,4 +117,33 @@ describe('TeamSentMessagesStore', () => {
     expect(messages[0].messageId).toBe('sent-5');
     expect(messages.at(-1)?.messageId).toBe('sent-204');
   });
+
+  it('does not overwrite corrupt sent message history when appending', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'team-sent-store-'));
+    tempDirs.push(root);
+
+    const teamDir = path.join(root, 'my-team');
+    const sentMessagesPath = path.join(teamDir, 'sentMessages.json');
+    await fs.mkdir(teamDir, { recursive: true });
+    await fs.writeFile(sentMessagesPath, 'NOT VALID JSON', 'utf8');
+
+    const store = new TeamSentMessagesStore();
+    expect(await store.readMessages('my-team')).toEqual([]);
+
+    await store.appendMessage('my-team', {
+      from: 'alice',
+      to: 'user',
+      text: 'should not replace corrupt history',
+      timestamp: '2026-03-27T12:00:00.000Z',
+      read: true,
+      messageId: 'msg-after-corruption',
+    });
+
+    expect(console.error).toHaveBeenCalledWith(
+      '[TeamSentMessagesStore]',
+      expect.stringContaining('Failed to append sent message for my-team')
+    );
+    vi.mocked(console.error).mockClear();
+    await expect(fs.readFile(sentMessagesPath, 'utf8')).resolves.toBe('NOT VALID JSON');
+  });
 });

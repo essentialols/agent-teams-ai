@@ -2,6 +2,8 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { writeJsonFileSync } = require('./atomicFile.js');
+const { withFileLockSync } = require('./fileLock.js');
+const runtimeHelpers = require('./runtimeHelpers.js');
 
 function nowIso() {
   return new Date().toISOString();
@@ -10,8 +12,11 @@ function nowIso() {
 function readJson(filePath, fallbackValue) {
   try {
     return JSON.parse(fs.readFileSync(filePath, 'utf8'));
-  } catch {
-    return fallbackValue;
+  } catch (error) {
+    if (error && error.code === 'ENOENT') {
+      return fallbackValue;
+    }
+    throw error;
   }
 }
 
@@ -20,7 +25,8 @@ function writeJson(filePath, value) {
 }
 
 function getInboxPath(paths, memberName) {
-  return path.join(paths.teamDir, 'inboxes', `${String(memberName).trim()}.json`);
+  const safeMemberName = runtimeHelpers.assertSafeMemberFileSegment('member name', memberName);
+  return path.join(paths.teamDir, 'inboxes', `${safeMemberName}.json`);
 }
 
 function getSentMessagesPath(paths) {
@@ -197,11 +203,13 @@ function buildMessage(flags, defaults) {
 }
 
 function appendRow(filePath, row) {
-  const current = readJson(filePath, []);
-  const list = Array.isArray(current) ? current : [];
-  list.push(row);
-  writeJson(filePath, list);
-  return row;
+  return withFileLockSync(filePath, () => {
+    const current = readJson(filePath, []);
+    const list = Array.isArray(current) ? current : [];
+    list.push(row);
+    writeJson(filePath, list);
+    return row;
+  });
 }
 
 const RUNTIME_DELIVERY_DUPLICATE_NOTICE =
@@ -249,16 +257,18 @@ function getRuntimeDeliveryDuplicate(list, row) {
 }
 
 function appendInboxRow(filePath, row) {
-  const current = readJson(filePath, []);
-  const list = Array.isArray(current) ? current : [];
-  const duplicate = getRuntimeDeliveryDuplicate(list, row);
-  if (duplicate) {
-    return { row: duplicate, deduplicated: true };
-  }
+  return withFileLockSync(filePath, () => {
+    const current = readJson(filePath, []);
+    const list = Array.isArray(current) ? current : [];
+    const duplicate = getRuntimeDeliveryDuplicate(list, row);
+    if (duplicate) {
+      return { row: duplicate, deduplicated: true };
+    }
 
-  list.push(row);
-  writeJson(filePath, list);
-  return { row, deduplicated: false };
+    list.push(row);
+    writeJson(filePath, list);
+    return { row, deduplicated: false };
+  });
 }
 
 function sendInboxMessage(paths, flags) {
@@ -344,7 +354,12 @@ function lookupMessage(paths, messageId) {
   }
 
   for (const file of inboxFiles) {
-    const rows = readJson(path.join(inboxDir, file), []);
+    let rows;
+    try {
+      rows = readJson(path.join(inboxDir, file), []);
+    } catch {
+      continue;
+    }
     if (!Array.isArray(rows)) continue;
     for (const row of rows) {
       if (row && row.messageId === id) {

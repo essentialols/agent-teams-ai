@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
+import { format, type Options as PrettierOptions } from 'prettier';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
@@ -9,6 +10,13 @@ const TEAM_PROVISIONING_SERVICE_PATH = resolve(
   'src/main/services/team/TeamProvisioningService.ts'
 );
 const TEAM_PROVISIONING_SERVICE_LINE_LIMIT = 777;
+const TEAM_PROVISIONING_SERVICE_FORMAT_OPTIONS: PrettierOptions = {
+  parser: 'typescript',
+  singleQuote: true,
+  trailingComma: 'es5',
+  printWidth: 100,
+  endOfLine: 'lf',
+};
 const SUBSCRIPTION_RUNTIME_REFERENCE_PATTERN = /subscription[-_\s]+runtime|subscriptionRuntime/i;
 const TEAM_PROVISIONING_SERVICE_CLASS_NAME = 'TeamProvisioningService';
 const DECLARED_PUBLIC_SERVICE_ENTRYPOINTS = [
@@ -116,6 +124,10 @@ function parseTeamProvisioningServiceSource(source: string): ts.SourceFile {
   );
 }
 
+async function formatTeamProvisioningServiceSource(source: string): Promise<string> {
+  return await format(source, TEAM_PROVISIONING_SERVICE_FORMAT_OPTIONS);
+}
+
 function findTeamProvisioningServiceClass(sourceFile: ts.SourceFile): ts.ClassDeclaration {
   const serviceClass = sourceFile.statements.find(
     (statement): statement is ts.ClassDeclaration =>
@@ -166,16 +178,53 @@ function getDeclaredPublicServiceEntryPointNames(
     .sort((a, b) => a.localeCompare(b));
 }
 
+function getClassElementBody(member: ts.ClassElement): ts.Block | undefined {
+  if (
+    ts.isConstructorDeclaration(member) ||
+    ts.isGetAccessorDeclaration(member) ||
+    ts.isMethodDeclaration(member) ||
+    ts.isSetAccessorDeclaration(member)
+  ) {
+    return member.body;
+  }
+
+  return undefined;
+}
+
+function getClassElementName(sourceFile: ts.SourceFile, member: ts.ClassElement): string {
+  if (ts.isConstructorDeclaration(member)) {
+    return 'constructor';
+  }
+
+  return member.name?.getText(sourceFile) ?? member.getText(sourceFile).slice(0, 80);
+}
+
+function getSingleLineBodyMemberNames(
+  sourceFile: ts.SourceFile,
+  serviceClass: ts.ClassDeclaration
+): string[] {
+  return serviceClass.members.flatMap((member) => {
+    const body = getClassElementBody(member);
+    if (!body) {
+      return [];
+    }
+
+    const bodyStartLine = sourceFile.getLineAndCharacterOfPosition(body.getStart(sourceFile)).line;
+    const bodyEndLine = sourceFile.getLineAndCharacterOfPosition(body.end).line;
+    return bodyStartLine === bodyEndLine ? [getClassElementName(sourceFile, member)] : [];
+  });
+}
+
 function getConstructorDependencySurface(
   sourceFile: ts.SourceFile,
   serviceClass: ts.ClassDeclaration
-): Array<{
+): {
   accessibility: 'private' | 'protected' | 'public' | 'none';
   defaultNew: string | null;
   name: string;
   readonly: boolean;
   type: string | null;
-}> {
+}[] {
   const constructor = serviceClass.members.find(ts.isConstructorDeclaration);
   if (!constructor) {
     throw new Error(`${TEAM_PROVISIONING_SERVICE_CLASS_NAME} must declare a constructor`);
@@ -212,6 +261,21 @@ describe('TeamProvisioningService facade guard', () => {
     const source = readTeamProvisioningServiceSource();
 
     expect(countSourceLines(source)).toBeLessThan(TEAM_PROVISIONING_SERVICE_LINE_LIMIT);
+  });
+
+  it('keeps the compatibility facade below the line cap after normal formatting', async () => {
+    const source = readTeamProvisioningServiceSource();
+    const formattedSource = await formatTeamProvisioningServiceSource(source);
+
+    expect(countSourceLines(formattedSource)).toBeLessThan(TEAM_PROVISIONING_SERVICE_LINE_LIMIT);
+  });
+
+  it('does not rely on one-line class-member wrapper compression', () => {
+    const source = readTeamProvisioningServiceSource();
+    const sourceFile = parseTeamProvisioningServiceSource(source);
+    const serviceClass = findTeamProvisioningServiceClass(sourceFile);
+
+    expect(getSingleLineBodyMemberNames(sourceFile, serviceClass)).toEqual([]);
   });
 
   it('keeps subscription runtime references out of the compatibility facade', () => {

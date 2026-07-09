@@ -1,4 +1,3 @@
-import { type TeamRuntimeLanePlan } from '@features/team-runtime-lanes';
 import { createTeamRuntimeLaneCoordinator } from '@features/team-runtime-lanes/main';
 import { ConfigManager } from '@main/services/infrastructure/ConfigManager';
 import { NotificationManager } from '@main/services/infrastructure/NotificationManager';
@@ -6,12 +5,10 @@ import { notifyTeamWatchScopeChanged } from '@main/services/infrastructure/teamW
 import { execCli, killProcessTree } from '@main/utils/childProcess';
 import { getClaudeBasePath, getTeamsBasePath } from '@main/utils/pathDecoder';
 import { getErrorMessage } from '@shared/utils/errorHandling';
-import { type ParsedPermissionRequest, type PermissionSuggestion } from '@shared/utils/inboxNoise';
 import { createLogger } from '@shared/utils/logger';
 import * as agentTeamsControllerModule from 'agent-teams-controller';
 import { type spawn } from 'child_process';
 import { randomUUID } from 'crypto';
-import * as path from 'path';
 
 import {
   cleanupAnthropicTeamApiKeyHelperForTeam,
@@ -20,7 +17,6 @@ import {
 import { ProviderConnectionService } from '../runtime/ProviderConnectionService';
 
 import { isOpenCodeServeCommand } from './opencode/bridge/OpenCodeManagedHostProcessCleanup';
-import { type OpenCodeMemberIdentityResolution } from './opencode/delivery/OpenCodeMemberMessageDeliveryService';
 import { OpenCodePromptDeliveryFollowUpPolicy } from './opencode/delivery/OpenCodePromptDeliveryFollowUpPolicy';
 import { type OpenCodePromptDeliveryWatchdogCoordinator } from './opencode/delivery/OpenCodePromptDeliveryWatchdogCoordinator';
 import { OpenCodeRuntimeDeliveryProofReader } from './opencode/delivery/OpenCodeRuntimeDeliveryProofReader';
@@ -30,7 +26,6 @@ import {
   createAppendDirectProcessRuntimeEventUseCase,
   createNodeAppendDirectProcessRuntimeEventUseCasePorts,
 } from './provisioning/TeamProvisioningAppendDirectProcessRuntimeEventUseCase';
-import { TeamProvisioningBootstrapEvidenceCompatibilityFacade } from './provisioning/TeamProvisioningBootstrapEvidenceCompatibilityFacade';
 import { TeamProvisioningBootstrapEvidenceFacade } from './provisioning/TeamProvisioningBootstrapEvidenceFacade';
 import { TeamProvisioningBootstrapTranscriptFacade } from './provisioning/TeamProvisioningBootstrapTranscriptFacade';
 import {
@@ -43,26 +38,9 @@ import { createTeamProvisioningClaudePermissionSettingsDelegation } from './prov
 import { type TeamProvisioningCompatibilityDelegation } from './provisioning/TeamProvisioningCompatibilityFacade';
 import { TeamProvisioningConfigFacade } from './provisioning/TeamProvisioningConfigFacade';
 import { type TeamProvisioningConfigTaskActivityBoundary } from './provisioning/TeamProvisioningConfigTaskActivityBoundary';
-import { type DeterministicCreateRunFlowPorts } from './provisioning/TeamProvisioningCreateDeterministicRunFlow';
-import {
-  createTeamProvisioningCreateDeterministicRunFlowPortsFromService,
-  type TeamProvisioningCreateDeterministicRunFlowServiceHost,
-} from './provisioning/TeamProvisioningCreateDeterministicRunFlowPortsFactory';
-import { type DeterministicCreateSetupFlowPorts } from './provisioning/TeamProvisioningCreateDeterministicSetupFlow';
-import {
-  createTeamProvisioningCreateDeterministicSetupFlowPortsFromService,
-  type TeamProvisioningCreateDeterministicSetupFlowServiceHost,
-} from './provisioning/TeamProvisioningCreateDeterministicSetupFlowPortsFactory';
-import { type DeterministicCreateSpawnFlowPorts } from './provisioning/TeamProvisioningCreateDeterministicSpawnFlow';
 import { type TeamProvisioningCreateDeterministicSpawnFlowBoundary } from './provisioning/TeamProvisioningCreateDeterministicSpawnFlowPortsFactory';
 import { type ProvisioningEnvResolution } from './provisioning/TeamProvisioningEnvBuilder';
-import {
-  startProvisioningFilesystemMonitor,
-  stopProvisioningFilesystemMonitor,
-} from './provisioning/TeamProvisioningFilesystemMonitor';
 import { type TeamProvisioningIdlePromptInjectionBoundary } from './provisioning/TeamProvisioningIdlePromptInjectionPortsFactory';
-import { markTeamInboxMessagesReadWithDefaults } from './provisioning/TeamProvisioningInboxPersistence';
-import { getLeadRelayReadCommitBatch as getLeadRelayReadCommitBatchHelper } from './provisioning/TeamProvisioningInboxRelayPolicy';
 import { type TeamProvisioningLaunchDeterministicFlowBoundary } from './provisioning/TeamProvisioningLaunchDeterministicFlowPortsFactory';
 import { buildLaunchDiagnosticsFromRun } from './provisioning/TeamProvisioningLaunchDiagnostics';
 import {
@@ -75,7 +53,6 @@ import { type TeamProvisioningLaunchStateCompatibilityBoundary } from './provisi
 import { getPersistedLaunchMemberNames } from './provisioning/TeamProvisioningLaunchStateProjection';
 import { TeamProvisioningLaunchStateStoreBoundary } from './provisioning/TeamProvisioningLaunchStateStoreBoundary';
 import { type TeamProvisioningLeadInboxRelayCompatibilityFacade } from './provisioning/TeamProvisioningLeadInboxRelayCompatibilityFacade';
-import { getRunTrackedCwdFromRun } from './provisioning/TeamProvisioningLeadRunDerivation';
 import {
   createTeamProvisioningLiveLaunchSnapshotBoundaryFromService,
   type TeamProvisioningLiveLaunchSnapshotBoundaryServiceHost,
@@ -99,18 +76,10 @@ import {
 } from './provisioning/TeamProvisioningMemberSpawnSnapshots';
 import { createTeamProvisioningMemberWorkSyncProofBoundary } from './provisioning/TeamProvisioningMemberWorkSyncProofBoundaryFactory';
 import {
-  persistTeamProvisioningInboxMessage,
-  persistTeamProvisioningSentMessage,
-} from './provisioning/TeamProvisioningMessagePersistence';
-import {
   createTeamProvisioningMixedSecondaryLaneWiring,
   createTeamProvisioningMixedSecondaryLaneWiringDepsFromService,
   type TeamProvisioningMixedSecondaryLaneWiringServiceHost,
 } from './provisioning/TeamProvisioningMixedSecondaryLaneWiring';
-import {
-  getOpenCodeAgendaSyncRecoveryBypassMessageIdsWithService,
-  type OpenCodeAgendaSyncRecoveryBypassServiceHost,
-} from './provisioning/TeamProvisioningOpenCodeAgendaSyncRecovery';
 import {
   createTeamProvisioningOpenCodeLaunchWiring,
   createTeamProvisioningOpenCodeLaunchWiringHostFromService,
@@ -120,15 +89,6 @@ import {
   createOpenCodePromptDeliveryWatchdogSchedulerFromService,
   type TeamProvisioningOpenCodePromptDeliveryWatchdogSchedulerServiceHost,
 } from './provisioning/TeamProvisioningOpenCodePromptDeliveryWatchdogSchedulerFactory';
-import {
-  createOpenCodeTeamThroughRuntimeAdapterFlow,
-  launchOpenCodeTeamThroughRuntimeAdapterFlow,
-  type OpenCodeRuntimeAdapterTeamFlowPorts,
-} from './provisioning/TeamProvisioningOpenCodeRuntimeAdapterTeamFlow';
-import {
-  createOpenCodeRuntimeAdapterTeamFlowPortsFromService,
-  type TeamProvisioningOpenCodeRuntimeAdapterTeamFlowServiceHost,
-} from './provisioning/TeamProvisioningOpenCodeRuntimeAdapterTeamFlowPortsFactory';
 import {
   createTeamProvisioningOpenCodeRuntimeDeliveryAdvisoryFromService,
   type TeamProvisioningOpenCodeRuntimeDeliveryAdvisoryServiceHost,
@@ -153,12 +113,7 @@ import {
   type TeamProvisioningOpenCodeRuntimeRecoveryFacade,
   type TeamProvisioningOpenCodeRuntimeRecoveryFacadeServiceHost,
 } from './provisioning/TeamProvisioningOpenCodeRuntimeRecoveryFacade';
-import {
-  type OpenCodeRuntimeLaneIdResolutionServiceHost,
-  resolveOpenCodeRuntimeLaneIdWithService,
-} from './provisioning/TeamProvisioningOpenCodeRuntimeRecoveryFlow';
 import { createTeamProvisioningOpenCodeSecondaryBriefingBuilder } from './provisioning/TeamProvisioningOpenCodeSecondaryBriefingBuilder';
-import { writeOpenCodeTeamConfig } from './provisioning/TeamProvisioningOpenCodeTeamConfigWriter';
 import { TeamProvisioningOutputRecoveryFacade } from './provisioning/TeamProvisioningOutputRecoveryFacade';
 import { type TeamProvisioningPersistenceReconcileFacade } from './provisioning/TeamProvisioningPersistenceReconcileFacade';
 import { createTeamProvisioningPersistentRuntimeCleanup } from './provisioning/TeamProvisioningPersistentRuntimeCleanup';
@@ -168,10 +123,7 @@ import {
   createTeamProvisioningPrimaryBootstrapTruthReportingBoundaryFromService,
   type TeamProvisioningPrimaryBootstrapTruthReportingServiceHost,
 } from './provisioning/TeamProvisioningPrimaryBootstrapTruthReportingPortsFactory';
-import {
-  handleProvisioningProcessExit,
-  type TeamProvisioningProcessExitPorts,
-} from './provisioning/TeamProvisioningProcessExit';
+import { type TeamProvisioningProcessExitPorts } from './provisioning/TeamProvisioningProcessExit';
 import { TeamProvisioningRetainedProgressState } from './provisioning/TeamProvisioningProgressState';
 import {
   type TeamProvisioningProviderRuntimeCompatibility,
@@ -210,6 +162,7 @@ import {
   createTeamProvisioningServiceComposition,
   type RuntimeAdapterRunByTeamEntry,
 } from './provisioning/TeamProvisioningServiceComposition';
+import { TeamProvisioningServiceFacadeDelegates } from './provisioning/TeamProvisioningServiceFacadeDelegates';
 import {
   createTeamProvisioningServiceMemberLifecycleHostPortGroups,
   type TeamProvisioningServiceMemberLifecycleHostPortGroupPorts,
@@ -243,7 +196,6 @@ import { TeamMemberWorktreeManager } from './TeamMemberWorktreeManager';
 import { TeamMetaStore } from './TeamMetaStore';
 import { TeamSentMessagesStore } from './TeamSentMessagesStore';
 
-import type { TeamRuntimeStopInput } from './runtime';
 export type { RuntimeBootstrapMemberMcpLaunchConfig } from './provisioning/TeamProvisioningBootstrapSpec';
 export { buildDirectTmuxRestartEnvAssignments } from './provisioning/TeamProvisioningDirectRestart';
 export {
@@ -261,15 +213,12 @@ export {
 
 import type {
   InboxMessage,
-  PersistedTeamLaunchSnapshot,
   RetryFailedOpenCodeSecondaryLanesResult,
-  TaskRef,
   TeamChangeEvent,
   TeamCreateRequest,
   TeamCreateResponse,
   TeamLaunchRequest,
   TeamLaunchResponse,
-  TeamMember,
   TeamProvisioningProgress,
 } from '@shared/types';
 
@@ -277,7 +226,7 @@ const logger = createLogger('Service:TeamProvisioning');
 const { AGENT_TEAMS_NAMESPACED_LEAD_BOOTSTRAP_TOOL_NAMES, createController } =
   agentTeamsControllerModule;
 
-export class TeamProvisioningService extends TeamProvisioningBootstrapEvidenceCompatibilityFacade<ProvisioningRun> {
+export class TeamProvisioningService extends TeamProvisioningServiceFacadeDelegates {
   protected readonly runtimeLaneCoordinator = createTeamRuntimeLaneCoordinator();
   private readonly providerConnectionService = ProviderConnectionService.getInstance();
   protected readonly launchIdentityBoundary: TeamProvisioningLaunchIdentityBoundary =
@@ -288,12 +237,12 @@ export class TeamProvisioningService extends TeamProvisioningBootstrapEvidenceCo
       getProviderLabel: getTeamProviderLabel,
       logger,
     });
-  private readonly openCodeSecondaryBriefingBuilder =
+  protected readonly openCodeSecondaryBriefingBuilder =
     createTeamProvisioningOpenCodeSecondaryBriefingBuilder({
       createController: (input) => createController(input),
       getClaudeBasePath,
     });
-  private readonly claudePermissionSettingsDelegation =
+  protected readonly claudePermissionSettingsDelegation =
     createTeamProvisioningClaudePermissionSettingsDelegation({
       bootstrapToolNames: AGENT_TEAMS_NAMESPACED_LEAD_BOOTSTRAP_TOOL_NAMES,
       logger,
@@ -399,13 +348,15 @@ export class TeamProvisioningService extends TeamProvisioningBootstrapEvidenceCo
       logger,
     }
   );
-  private readonly memberWorkSyncProofBoundary = createTeamProvisioningMemberWorkSyncProofBoundary({
-    getAcceptedReportChecker: () => this.appShellBoundary.getMemberWorkSyncAcceptedReportChecker(),
-    getProofMissingRecoveryScheduler: () =>
-      this.appShellBoundary.getMemberWorkSyncProofMissingRecoveryScheduler(),
-    logger,
-    getErrorMessage,
-  });
+  protected readonly memberWorkSyncProofBoundary =
+    createTeamProvisioningMemberWorkSyncProofBoundary({
+      getAcceptedReportChecker: () =>
+        this.appShellBoundary.getMemberWorkSyncAcceptedReportChecker(),
+      getProofMissingRecoveryScheduler: () =>
+        this.appShellBoundary.getMemberWorkSyncProofMissingRecoveryScheduler(),
+      logger,
+      getErrorMessage,
+    });
   protected readonly leadInboxRelayFacade!: TeamProvisioningLeadInboxRelayCompatibilityFacade<ProvisioningRun>;
 
   private readonly openCodeRuntimeDeliveryProofReader = new OpenCodeRuntimeDeliveryProofReader();
@@ -561,7 +512,7 @@ export class TeamProvisioningService extends TeamProvisioningBootstrapEvidenceCo
   private readonly launchStateStore = new TeamLaunchStateStore();
   private readonly defaultLaunchStateStore = this.launchStateStore;
   private readonly configFacade!: TeamProvisioningConfigFacade;
-  private readonly openCodeRuntimeRecoveryFacade: TeamProvisioningOpenCodeRuntimeRecoveryFacade =
+  protected readonly openCodeRuntimeRecoveryFacade: TeamProvisioningOpenCodeRuntimeRecoveryFacade =
     createTeamProvisioningOpenCodeRuntimeRecoveryFacadeFromService(
       this as unknown as TeamProvisioningOpenCodeRuntimeRecoveryFacadeServiceHost,
       {
@@ -623,16 +574,16 @@ export class TeamProvisioningService extends TeamProvisioningBootstrapEvidenceCo
   protected readonly pendingTimeouts = new Map<string, NodeJS.Timeout>();
   protected readonly toolApprovalFacade!: TeamProvisioningToolApprovalFacade<ProvisioningRun>;
   protected readonly transientRunState!: TeamProvisioningTransientRunState;
-  private readonly idlePromptInjectionBoundary!: TeamProvisioningIdlePromptInjectionBoundary<ProvisioningRun>;
+  protected readonly idlePromptInjectionBoundary!: TeamProvisioningIdlePromptInjectionBoundary<ProvisioningRun>;
   protected readonly providerRuntime!: TeamProvisioningProviderRuntimeFacade;
   private readonly providerRuntimeCompatibility!: TeamProvisioningProviderRuntimeCompatibility;
   protected readonly compatibilityDelegation!: TeamProvisioningCompatibilityDelegation<ProvisioningRun>;
   protected readonly outputRecoveryFacade!: TeamProvisioningOutputRecoveryFacade<ProvisioningRun>;
-  private readonly deterministicCreateSpawnFlowBoundary!: TeamProvisioningCreateDeterministicSpawnFlowBoundary<ProvisioningRun>;
+  protected readonly deterministicCreateSpawnFlowBoundary!: TeamProvisioningCreateDeterministicSpawnFlowBoundary<ProvisioningRun>;
   private readonly deterministicLaunchFlowBoundary!: TeamProvisioningLaunchDeterministicFlowBoundary<MixedSecondaryRuntimeLaneState>;
   protected readonly prepareFacade!: TeamProvisioningPrepareFacade;
   protected readonly verificationProbePorts!: TeamProvisioningVerificationProbePorts<ProvisioningRun>;
-  private readonly processExitPorts!: TeamProvisioningProcessExitPorts<ProvisioningRun>;
+  protected readonly processExitPorts!: TeamProvisioningProcessExitPorts<ProvisioningRun>;
   private readonly workspaceTrustPreSpawnBoundary =
     createTeamProvisioningWorkspaceTrustPreSpawnBoundary<
       ProvisioningRun,
@@ -660,14 +611,14 @@ export class TeamProvisioningService extends TeamProvisioningBootstrapEvidenceCo
         }
       )
     );
-  private readonly mixedSecondaryLaneWiring =
+  protected readonly mixedSecondaryLaneWiring =
     createTeamProvisioningMixedSecondaryLaneWiring<ProvisioningRun>(
       createTeamProvisioningMixedSecondaryLaneWiringDepsFromService(
         this as unknown as TeamProvisioningMixedSecondaryLaneWiringServiceHost<ProvisioningRun>,
         { logger }
       )
     );
-  private readonly openCodeLaunchWiring =
+  protected readonly openCodeLaunchWiring =
     createTeamProvisioningOpenCodeLaunchWiring<ProvisioningRun>(
       createTeamProvisioningOpenCodeLaunchWiringHostFromService(
         this as unknown as TeamProvisioningOpenCodeLaunchWiringServiceHost<ProvisioningRun>
@@ -705,52 +656,21 @@ export class TeamProvisioningService extends TeamProvisioningBootstrapEvidenceCo
     scheduleStaleAnthropicTeamApiKeyHelperCleanup({ baseClaudeDir: getClaudeBasePath(), logger });
   }
 
-  private get openCodeRuntimeRecoveryIdentity(): TeamProvisioningOpenCodeRuntimeRecoveryFacade['openCodeRuntimeRecoveryIdentity'] { return this.openCodeRuntimeRecoveryFacade.openCodeRuntimeRecoveryIdentity; }
-  protected async resolveOpenCodeMemberDeliveryIdentity(teamName: string, memberName: string): Promise<OpenCodeMemberIdentityResolution> { return await this.openCodeRuntimeRecoveryFacade.resolveOpenCodeMemberDeliveryIdentity(teamName, memberName); }
-  private writeOpenCodeTeamConfig(launchRequest: Parameters<typeof writeOpenCodeTeamConfig>[0], members: Parameters<typeof writeOpenCodeTeamConfig>[1]): ReturnType<typeof writeOpenCodeTeamConfig> { return writeOpenCodeTeamConfig(launchRequest, members); }
-  private async respondToTeammatePermission(run: Parameters<TeamProvisioningToolApprovalFacade<ProvisioningRun>['respondToTeammatePermission']>[0]['run'], agentId: string, requestId: string, allow: boolean, message?: string, permissionSuggestions?: PermissionSuggestion[], toolName?: string, toolInput?: Record<string, unknown>): Promise<void> { await this.toolApprovalFacade.respondToTeammatePermission({ run, agentId, requestId, allow, message, permissionSuggestions, toolName, toolInput }); }
-  private hasAcceptedLeadWorkSyncReport(input: { teamName: string; leadName: string }): Promise<boolean> { return this.memberWorkSyncProofBoundary.hasAcceptedLeadWorkSyncReport(input); }
-  private scheduleLeadProofMissingWorkSyncRecovery(input: { teamName: string; leadName: string; message: InboxMessage & { messageId: string } }): Promise<boolean> { return this.memberWorkSyncProofBoundary.scheduleLeadProofMissingWorkSyncRecovery(input); }
-  private getLeadRelayReadCommitBatch(input: Omit<Parameters<typeof getLeadRelayReadCommitBatchHelper>[0], 'hasAcceptedLeadWorkSyncReport' | 'scheduleLeadProofMissingWorkSyncRecovery'>): ReturnType<typeof getLeadRelayReadCommitBatchHelper> { return getLeadRelayReadCommitBatchHelper({ ...input, hasAcceptedLeadWorkSyncReport: (reportInput) => this.hasAcceptedLeadWorkSyncReport(reportInput), scheduleLeadProofMissingWorkSyncRecovery: (recoveryInput) => this.scheduleLeadProofMissingWorkSyncRecovery(recoveryInput) }); }
-  private async tryRecoverOpenCodeRuntimeLaneBeforeDelivery(input: { teamName: string; laneId: string; member: TeamMember; projectPath: string | null }): Promise<boolean> { return await this.openCodeRuntimeRecoveryFacade.tryRecoverOpenCodeRuntimeLaneBeforeDelivery(input); }
-  private async tryRecoverOpenCodeRuntimeLaneFromCommittedSessionBeforeDelivery(input: { teamName: string; laneId: string; member: TeamMember; projectPath: string | null; previousLaunchState?: PersistedTeamLaunchSnapshot | null }): Promise<boolean> { return await this.openCodeRuntimeRecoveryFacade.tryRecoverOpenCodeRuntimeLaneFromCommittedSessionBeforeDelivery(input); }
-  protected async tryRecoverOpenCodeRuntimeLaneForConfiguredMemberBeforeDelivery(input: { teamName: string; memberName: string }): Promise<boolean> { return await this.openCodeRuntimeRecoveryFacade.tryRecoverOpenCodeRuntimeLaneForConfiguredMemberBeforeDelivery(input); }
-  protected async tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive(input: { teamName: string; memberName: string; laneId: string }): Promise<boolean> { return await this.openCodeRuntimeRecoveryFacade.tryRecoverOpenCodeRuntimeLaneForConfiguredMemberAndVerifyActive(input); }
-  private async tryRecoverOpenCodeRuntimeLanesForDeliveryWatchdog(teamName: string, options: { allowCommittedSessionRecoveryWithoutTeamRuntime?: boolean } = {}): Promise<string[]> { return await this.openCodeRuntimeRecoveryFacade.tryRecoverOpenCodeRuntimeLanesForDeliveryWatchdog(teamName, options); }
-  private async resolveOpenCodeRuntimeLaneId(params: { teamName: string; runId: string; memberName?: string }): Promise<string> { return resolveOpenCodeRuntimeLaneIdWithService(params, this as unknown as OpenCodeRuntimeLaneIdResolutionServiceHost); }
-  private clearSameTeamRetryTimers(teamName: string): void { this.transientRunState.clearSameTeamRetryTimers(teamName); }
-  private clearLeadInboxFollowUpRelayTimer(teamName: string): void { this.transientRunState.clearLeadInboxFollowUpRelayTimer(teamName); }
-  private scheduleLeadInboxFollowUpRelay(teamName: string): void { this.transientRunState.scheduleLeadInboxFollowUpRelay(teamName); }
-  private resetTeamScopedTransientStateForNewRun(teamName: string): void { this.transientRunState.resetTeamScopedTransientStateForNewRun(teamName); }
-  private async withTeamLock<T>(teamName: string, fn: () => Promise<T>): Promise<T> { return this.transientRunState.withTeamLock(teamName, fn); }
-  setTeamChangeEmitter(emitter: ((event: TeamChangeEvent) => void) | null): void { this.teamChangeEmitter = emitter; }
-  private persistSentMessage(teamName: string, message: InboxMessage): void { persistTeamProvisioningSentMessage(teamName, message, { createController: (input) => createController(input), getClaudeBasePath, logger }); }
-  private persistInboxMessage(teamName: string, recipient: string, message: InboxMessage): void { persistTeamProvisioningInboxMessage(teamName, recipient, message, { createController: (input) => createController(input), getClaudeBasePath, logger, emitRuntimeDeliveryReplyAdvisoryRefresh: (teamName, message) => this.emitRuntimeDeliveryReplyAdvisoryRefresh(teamName, message) }); }
-  private getRunTrackedCwd(run: ProvisioningRun | null | undefined): string | null { return getRunTrackedCwdFromRun(run, path.resolve); }
-  private createOpenCodeRuntimeAdapterTeamFlowPorts(): OpenCodeRuntimeAdapterTeamFlowPorts { return createOpenCodeRuntimeAdapterTeamFlowPortsFromService(this as unknown as TeamProvisioningOpenCodeRuntimeAdapterTeamFlowServiceHost, { warn: (message) => { logger.warn(message); } }); }
-  private createDeterministicCreateSetupFlowPorts(): DeterministicCreateSetupFlowPorts<MixedSecondaryRuntimeLaneState> { return createTeamProvisioningCreateDeterministicSetupFlowPortsFromService(this as unknown as TeamProvisioningCreateDeterministicSetupFlowServiceHost, { logger }); }
-  private createDeterministicCreateRunFlowPorts(): DeterministicCreateRunFlowPorts<ProvisioningRun, MixedSecondaryRuntimeLaneState> { return createTeamProvisioningCreateDeterministicRunFlowPortsFromService(this as unknown as TeamProvisioningCreateDeterministicRunFlowServiceHost); }
-  private createDeterministicCreateSpawnFlowPorts(input: { request: TeamCreateRequest; claudePath: string; shellEnv: NodeJS.ProcessEnv }): DeterministicCreateSpawnFlowPorts<ProvisioningRun> { return this.deterministicCreateSpawnFlowBoundary.createSpawnFlowPorts(input); }
-  async createTeam(request: TeamCreateRequest, onProgress: (progress: TeamProvisioningProgress) => void): Promise<TeamCreateResponse> { return this.requestAdmissionBoundary.createTeam(request, onProgress); }
-  private async createOpenCodeTeamThroughRuntimeAdapter(request: TeamCreateRequest, onProgress: (progress: TeamProvisioningProgress) => void): Promise<TeamCreateResponse> { return createOpenCodeTeamThroughRuntimeAdapterFlow(request, onProgress, this.createOpenCodeRuntimeAdapterTeamFlowPorts()); }
-  private async launchOpenCodeTeamThroughRuntimeAdapter(request: TeamLaunchRequest, onProgress: (progress: TeamProvisioningProgress) => void): Promise<TeamLaunchResponse> { return launchOpenCodeTeamThroughRuntimeAdapterFlow(request, onProgress, this.createOpenCodeRuntimeAdapterTeamFlowPorts()); }
-  private async runOpenCodeWorktreeRootAggregateLaunch(input: { request: TeamCreateRequest | TeamLaunchRequest; members: TeamCreateRequest['members']; lanePlan: Extract<TeamRuntimeLanePlan, { mode: 'pure_opencode_worktree_root_lanes' }>; prompt: string; sourceWarning?: string; onProgress: (progress: TeamProvisioningProgress) => void }): Promise<TeamLaunchResponse> { return this.openCodeLaunchWiring.runOpenCodeWorktreeRootAggregateLaunch(input); }
-  private async runOpenCodeTeamRuntimeAdapterLaunch(input: { request: TeamCreateRequest | TeamLaunchRequest; members: TeamCreateRequest['members']; prompt: string; sourceWarning?: string; onProgress: (progress: TeamProvisioningProgress) => void }): Promise<TeamLaunchResponse> { return this.openCodeLaunchWiring.runOpenCodeTeamRuntimeAdapterLaunch(input); }
-  async launchTeam(request: TeamLaunchRequest, onProgress: (progress: TeamProvisioningProgress) => void): Promise<TeamLaunchResponse> { return this.requestAdmissionBoundary.launchTeam(request, onProgress); }
-  protected async getOpenCodeAgendaSyncRecoveryBypassMessageIds(input: { teamName: string; memberName: string; workSyncIntent?: 'agenda_sync' | 'review_pickup'; taskRefs?: TaskRef[]; foregroundMessages: InboxMessage[] }): Promise<Set<string>> { return getOpenCodeAgendaSyncRecoveryBypassMessageIdsWithService(input, this as unknown as OpenCodeAgendaSyncRecoveryBypassServiceHost); }
-  private async markInboxMessagesRead(teamName: string, member: string, messages: { messageId: string }[]): Promise<void> { await markTeamInboxMessagesReadWithDefaults({ teamName, member, messages }); }
-  private async buildOpenCodeSecondaryAppManagedLaunchPrompt(run: ProvisioningRun, lane: MixedSecondaryRuntimeLaneState): Promise<string> { return this.openCodeSecondaryBriefingBuilder.buildOpenCodeSecondaryAppManagedLaunchPrompt({ teamName: run.teamName, memberName: lane.member.name }); }
-  private async launchSingleMixedSecondaryLane(run: ProvisioningRun, lane: MixedSecondaryRuntimeLaneState): Promise<void> { await this.mixedSecondaryLaneWiring.launchSingleMixedSecondaryLane(run, lane); }
-  private async stopSingleMixedSecondaryRuntimeLane(run: ProvisioningRun, lane: MixedSecondaryRuntimeLaneState, reason: TeamRuntimeStopInput['reason']): Promise<void> { await this.mixedSecondaryLaneWiring.stopSingleMixedSecondaryRuntimeLane(run, lane, reason); }
-  private launchQueuedMixedSecondaryLaneInBackground(run: ProvisioningRun, lane: MixedSecondaryRuntimeLaneState): void { this.mixedSecondaryLaneWiring.launchQueuedMixedSecondaryLaneInBackground(run, lane); }
-  private async launchMixedSecondaryLaneIfNeeded(run: ProvisioningRun, options: { waitForCompletion?: boolean } = {}): Promise<PersistedTeamLaunchSnapshot | null> { return this.mixedSecondaryLaneWiring.launchMixedSecondaryLaneIfNeeded(run, options); }
-  private async injectPostCompactReminder(run: ProvisioningRun): Promise<void> { await this.idlePromptInjectionBoundary.injectPostCompactReminder(run); }
-  private async injectGeminiPostLaunchHydration(run: ProvisioningRun): Promise<void> { await this.idlePromptInjectionBoundary.injectGeminiPostLaunchHydration(run); }
-  private handleControlRequest(run: ProvisioningRun, msg: Record<string, unknown>): void { this.toolApprovalFacade.handleControlRequest(run, msg); }
-  private handleTeammatePermissionRequest(run: ProvisioningRun, perm: ParsedPermissionRequest, messageTimestamp: string): void { this.toolApprovalFacade.handleTeammatePermissionRequest(run, perm, messageTimestamp); }
-  private async addPermissionRulesToSettings(settingsPath: string, toolNames: string[], behavior: string): Promise<number> { return this.claudePermissionSettingsDelegation.addPermissionRulesToSettings(settingsPath, toolNames, behavior); }
-  private async seedLeadBootstrapPermissionRules(teamName: string, projectCwd: string): Promise<void> { await this.claudePermissionSettingsDelegation.seedLeadBootstrapPermissionRules(teamName, projectCwd); }
-  private startFilesystemMonitor(run: ProvisioningRun, request: TeamCreateRequest): void { startProvisioningFilesystemMonitor(run, request, { updateProgress, getRegisteredTeamMemberNames: (teamName) => this.getRegisteredTeamMemberNames(teamName), handleProvisioningTurnComplete: (run) => this.handleProvisioningTurnComplete(run) }); }
-  private stopFilesystemMonitor(run: ProvisioningRun): void { stopProvisioningFilesystemMonitor(run); }
-  private async handleProcessExit(run: ProvisioningRun, code: number | null): Promise<void> { await handleProvisioningProcessExit(run, code, this.processExitPorts); }
+  setTeamChangeEmitter(emitter: ((event: TeamChangeEvent) => void) | null): void {
+    this.teamChangeEmitter = emitter;
+  }
+
+  async createTeam(
+    request: TeamCreateRequest,
+    onProgress: (progress: TeamProvisioningProgress) => void
+  ): Promise<TeamCreateResponse> {
+    return this.requestAdmissionBoundary.createTeam(request, onProgress);
+  }
+
+  async launchTeam(
+    request: TeamLaunchRequest,
+    onProgress: (progress: TeamProvisioningProgress) => void
+  ): Promise<TeamLaunchResponse> {
+    return this.requestAdmissionBoundary.launchTeam(request, onProgress);
+  }
 }

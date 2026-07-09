@@ -690,6 +690,64 @@ describe('TeamProvisioningHarnessBuilder', () => {
     });
   });
 
+  it('clones domain fixture inputs so caller mutation cannot leak between fake snapshots', () => {
+    const members = [memberFixture.lead(), memberFixture.codex('Original')];
+    const config = teamConfigFixture.basic({ teamName: 'alias-fixture-team', members });
+    members[1]!.name = 'Mutated input';
+    members.push(memberFixture.codex('Added later'));
+    expect(config.members?.map((member) => member.name)).toEqual(['Lead', 'Original']);
+
+    const request = makeTeamCreateRequest({ teamName: 'alias-run-team', members });
+    const run = makeProvisioningRun({ request });
+    request.members[1]!.name = 'Mutated request';
+    run.request.members[1]!.name = 'Mutated run request';
+    expect(run.effectiveMembers.map((member) => member.name)).toEqual([
+      'Lead',
+      'Mutated input',
+      'Added later',
+    ]);
+    expect(run.allEffectiveMembers.map((member) => member.name)).toEqual([
+      'Lead',
+      'Mutated input',
+      'Added later',
+    ]);
+
+    const runtimeMembers = {
+      Worker: {
+        memberName: 'Worker',
+        alive: true,
+        restartable: true,
+        updatedAt: HARNESS_DEFAULT_NOW_ISO,
+      },
+    };
+    const runtimeSnapshot = makeRuntimeSnapshot({ members: runtimeMembers });
+    runtimeMembers.Worker.alive = false;
+    expect(runtimeSnapshot.members.Worker?.alive).toBe(true);
+
+    const diagnostics = ['runtime-ready'];
+    const evidence = makeOpenCodeEvidence({ diagnostics });
+    diagnostics.push('mutated');
+    expect(evidence.diagnostics).toEqual(['runtime-ready']);
+  });
+
+  it('returns fresh fake store snapshots after callers mutate prior reads', async () => {
+    const teamName = 'fake-snapshot-isolation-team';
+    const harness = await track(TeamProvisioningHarnessBuilder.create().withTeam(teamName).build());
+
+    const firstConfig = await harness.stores.configReader.getConfigSnapshot(teamName);
+    firstConfig!.members![0]!.name = 'Mutated read';
+    await expect(harness.stores.configReader.getConfigSnapshot(teamName)).resolves.toMatchObject({
+      members: expect.arrayContaining([expect.objectContaining({ name: 'Lead' })]),
+    });
+
+    const firstMembers = await harness.stores.membersMetaStore.getMembers(teamName);
+    firstMembers[0]!.name = 'Mutated member read';
+    await expect(harness.stores.membersMetaStore.getMembers(teamName)).resolves.toEqual([
+      expect.objectContaining({ name: 'Builder' }),
+      expect.objectContaining({ name: 'Lead' }),
+    ]);
+  });
+
   it('wires config facade launch-member discovery to harness config, meta, and inbox fixtures', async () => {
     const teamName = 'facade-inbox-team';
     const harness = await track(

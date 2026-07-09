@@ -1,5 +1,7 @@
 import { createPersistedLaunchSnapshot } from '@main/services/team/TeamLaunchStateEvaluator';
 
+import { cloneFixture } from './harnessData';
+
 import type { ProvisioningRun } from '@main/services/team/provisioning/TeamProvisioningRunModel';
 import type { TeamRuntimeMemberLaunchEvidence } from '@main/services/team/runtime';
 import type { TeamMetaFile } from '@main/services/team/TeamMetaStore';
@@ -42,7 +44,7 @@ function member(
     ...overrides,
   };
   assertNoSecretLikeFixtureValues(fixture);
-  return fixture;
+  return cloneFixture(fixture);
 }
 
 export const memberFixture = {
@@ -86,7 +88,7 @@ export const teamConfigFixture = {
       ...overrides,
     };
     assertNoSecretLikeFixtureValues(fixture);
-    return fixture;
+    return cloneFixture(fixture);
   },
 };
 
@@ -107,42 +109,46 @@ export const teamMetaFixture = {
       ...options,
     };
     assertNoSecretLikeFixtureValues(fixture);
-    return fixture;
+    return cloneFixture(fixture);
   },
 };
 
 export function toMetaMembers(members: TeamCreateRequest['members']): TeamMember[] {
-  return members.map(
-    (memberValue) =>
-      ({
-        name: memberValue.name,
-        role: memberValue.role,
-        workflow: memberValue.workflow,
-        isolation: memberValue.isolation,
-        cwd: memberValue.cwd,
-        providerId: memberValue.providerId,
-        model: memberValue.model,
-        effort: memberValue.effort,
-        mcpPolicy: memberValue.mcpPolicy,
-        agentType: 'teammate',
-      }) satisfies TeamMember
+  return cloneFixture(
+    members.map(
+      (memberValue) =>
+        ({
+          name: memberValue.name,
+          role: memberValue.role,
+          workflow: memberValue.workflow,
+          isolation: memberValue.isolation,
+          cwd: memberValue.cwd,
+          providerId: memberValue.providerId,
+          model: memberValue.model,
+          effort: memberValue.effort,
+          mcpPolicy: memberValue.mcpPolicy,
+          agentType: 'teammate',
+        }) satisfies TeamMember
+    )
   );
 }
 
 function toProvisioningMemberInputs(members: readonly TeamMember[]): TeamCreateRequest['members'] {
-  return members.map((memberValue) => ({
-    name: memberValue.name,
-    role: memberValue.role,
-    workflow: memberValue.workflow,
-    isolation: memberValue.isolation,
-    cwd: memberValue.cwd,
-    providerId: memberValue.providerId,
-    providerBackendId: memberValue.providerBackendId,
-    model: memberValue.model,
-    effort: memberValue.effort,
-    fastMode: memberValue.fastMode,
-    mcpPolicy: memberValue.mcpPolicy,
-  }));
+  return cloneFixture(
+    members.map((memberValue) => ({
+      name: memberValue.name,
+      role: memberValue.role,
+      workflow: memberValue.workflow,
+      isolation: memberValue.isolation,
+      cwd: memberValue.cwd,
+      providerId: memberValue.providerId,
+      providerBackendId: memberValue.providerBackendId,
+      model: memberValue.model,
+      effort: memberValue.effort,
+      fastMode: memberValue.fastMode,
+      mcpPolicy: memberValue.mcpPolicy,
+    }))
+  );
 }
 
 export type TeamCreateRequestFixtureOptions = Partial<Omit<TeamCreateRequest, 'members'>> & {
@@ -170,7 +176,7 @@ export function makeTeamCreateRequest(
     ...overrides,
   };
   assertNoSecretLikeFixtureValues(request);
-  return request;
+  return cloneFixture(request);
 }
 
 export interface ProvisioningRunFixtureOptions {
@@ -190,7 +196,7 @@ function makeProvisioningProgress(
   startedAt: string,
   overrides: Partial<TeamProvisioningProgress> = {}
 ): TeamProvisioningProgress {
-  return {
+  return cloneFixture({
     runId,
     teamName,
     state: 'configuring',
@@ -198,16 +204,16 @@ function makeProvisioningProgress(
     startedAt,
     updatedAt: startedAt,
     ...overrides,
-  };
+  });
 }
 
 export function makeProvisioningRun(options: ProvisioningRunFixtureOptions = {}): ProvisioningRun {
   const runId = options.runId ?? 'harness-run-id';
   const teamName = options.teamName ?? options.request?.teamName ?? HARNESS_DEFAULT_TEAM_NAME;
   const startedAt = options.startedAt ?? HARNESS_DEFAULT_NOW_ISO;
-  const request = options.request ?? makeTeamCreateRequest({ teamName });
-  const allEffectiveMembers = options.effectiveMembers ?? request.members;
-  const effectiveMembers = options.effectiveMembers ?? request.members;
+  const request = cloneFixture(options.request ?? makeTeamCreateRequest({ teamName }));
+  const allEffectiveMembers = cloneFixture(options.effectiveMembers ?? request.members);
+  const effectiveMembers = cloneFixture(options.effectiveMembers ?? request.members);
   const expectedMembers =
     options.expectedMembers ?? effectiveMembers.map((memberValue) => memberValue.name);
   const progress = makeProvisioningProgress(runId, teamName, startedAt, options.progress);
@@ -340,7 +346,7 @@ export function makeLaunchState(
     updatedAt: options.updatedAt ?? HARNESS_DEFAULT_NOW_ISO,
   });
   assertNoSecretLikeFixtureValues(snapshot);
-  return snapshot;
+  return cloneFixture(snapshot);
 }
 
 export interface RuntimeSnapshotFixtureOptions {
@@ -356,24 +362,25 @@ export function makeRuntimeSnapshot(
   options: RuntimeSnapshotFixtureOptions = {}
 ): TeamAgentRuntimeSnapshot {
   const updatedAt = options.updatedAt ?? HARNESS_DEFAULT_NOW_ISO;
-  const members =
+  const members = cloneFixture(
     options.members ??
-    ({
-      Builder: {
-        memberName: 'Builder',
-        alive: true,
-        restartable: true,
-        backendType: 'process',
-        providerId: 'opencode',
-        providerBackendId: 'opencode-cli',
-        laneId: 'lane-builder',
-        laneKind: 'secondary',
-        runtimePid: 4242,
-        livenessKind: 'confirmed_bootstrap',
-        pidSource: 'runtime_bootstrap',
-        updatedAt,
-      },
-    } satisfies Record<string, TeamAgentRuntimeEntry>);
+      ({
+        Builder: {
+          memberName: 'Builder',
+          alive: true,
+          restartable: true,
+          backendType: 'process',
+          providerId: 'opencode',
+          providerBackendId: 'opencode-cli',
+          laneId: 'lane-builder',
+          laneKind: 'secondary',
+          runtimePid: 4242,
+          livenessKind: 'confirmed_bootstrap',
+          pidSource: 'runtime_bootstrap',
+          updatedAt,
+        },
+      } satisfies Record<string, TeamAgentRuntimeEntry>)
+  );
   const snapshot: TeamAgentRuntimeSnapshot = {
     teamName: options.teamName ?? HARNESS_DEFAULT_TEAM_NAME,
     updatedAt,
@@ -383,7 +390,7 @@ export function makeRuntimeSnapshot(
     members,
   };
   assertNoSecretLikeFixtureValues(snapshot);
-  return snapshot;
+  return cloneFixture(snapshot);
 }
 
 export interface OpenCodeEvidenceFixtureOptions {
@@ -419,10 +426,10 @@ export function makeOpenCodeEvidence(
     runtimePid: options.runtimePid ?? 4242,
     livenessKind: 'confirmed_bootstrap',
     pidSource: 'runtime_bootstrap',
-    diagnostics: options.diagnostics ?? [],
+    diagnostics: cloneFixture(options.diagnostics ?? []),
   };
   assertNoSecretLikeFixtureValues(evidence);
-  return evidence;
+  return cloneFixture(evidence);
 }
 
 export interface SecretLikeFixtureFinding {

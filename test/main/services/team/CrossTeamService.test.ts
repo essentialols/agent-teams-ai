@@ -117,6 +117,38 @@ describe('CrossTeamService', () => {
       expect(prefix?.conversationId).toBeTruthy();
     });
 
+    it('delivers to an explicit target member when requested', async () => {
+      configReader.getConfig.mockImplementation((teamName: string) =>
+        Promise.resolve(
+          teamName === 'team-b'
+            ? makeConfig({
+                name: 'team-b',
+                members: [
+                  { name: 'team-lead', agentType: 'team-lead' },
+                  { name: 'worker', agentType: 'developer' },
+                ],
+              })
+            : makeConfig({
+                name: teamName,
+                members: [{ name: 'team-lead', agentType: 'team-lead' }],
+              })
+        )
+      );
+
+      await service.send(makeRequest({ toMember: 'worker' }));
+
+      const [teamName, req] = inboxWriter.sendMessage.mock.calls[0];
+      expect(teamName).toBe('team-b');
+      expect(req.member).toBe('worker');
+
+      const sentMessagesPath = `${MOCK_TEAMS_BASE_PATH}/teams/team-a/sentMessages.json`;
+      const sentRows = JSON.parse(fs.readFileSync(sentMessagesPath, 'utf8')) as Record<
+        string,
+        unknown
+      >[];
+      expect(sentRows[0]?.to).toBe('team-b.worker');
+    });
+
     it('injects a hidden action-mode block for the target lead only', async () => {
       await service.send(makeRequest({ actionMode: 'ask', text: 'Can you inspect this?' }));
 
@@ -236,14 +268,18 @@ describe('CrossTeamService', () => {
     });
 
     it('rejects self-send', async () => {
-      await expect(service.send(makeRequest({ fromTeam: 'team-a', toTeam: 'team-a' }))).rejects.toThrow(
-        'same team'
-      );
+      await expect(
+        service.send(makeRequest({ fromTeam: 'team-a', toTeam: 'team-a' }))
+      ).rejects.toThrow('same team');
     });
 
     it('rejects invalid team names', async () => {
-      await expect(service.send(makeRequest({ fromTeam: '../evil' }))).rejects.toThrow('Invalid fromTeam');
-      await expect(service.send(makeRequest({ toTeam: 'UPPER' }))).rejects.toThrow('Invalid toTeam');
+      await expect(service.send(makeRequest({ fromTeam: '../evil' }))).rejects.toThrow(
+        'Invalid fromTeam'
+      );
+      await expect(service.send(makeRequest({ toTeam: 'UPPER' }))).rejects.toThrow(
+        'Invalid toTeam'
+      );
     });
 
     it('rejects empty text', async () => {

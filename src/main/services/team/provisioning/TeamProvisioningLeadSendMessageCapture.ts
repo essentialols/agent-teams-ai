@@ -35,6 +35,7 @@ export interface CrossTeamSendRequest {
   fromTeam: string;
   fromMember: string;
   toTeam: string;
+  toMember?: string;
   text: string;
   summary?: string;
   taskRefs?: TaskRef[];
@@ -127,8 +128,7 @@ export function captureLeadSendMessages<TRun extends TeamProvisioningLeadSendMes
 
     const summary = typeof inp.summary === 'string' ? inp.summary : '';
     const leadName =
-      run.request.members.find((m) => m.role?.toLowerCase().includes('lead'))?.name ||
-      'team-lead';
+      run.request.members.find((m) => m.role?.toLowerCase().includes('lead'))?.name || 'team-lead';
 
     const cleanContent = stripAgentBlocks(msgContent);
     if (cleanContent.trim().length === 0) continue;
@@ -167,6 +167,7 @@ export function captureLeadSendMessages<TRun extends TeamProvisioningLeadSendMes
           fromTeam: run.teamName,
           fromMember: leadName,
           toTeam: crossTeamRecipient.teamName,
+          toMember: crossTeamRecipient.memberName,
           text: strippedCrossTeamContent,
           summary,
           ...(taskRefs ? { taskRefs } : {}),

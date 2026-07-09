@@ -8,6 +8,7 @@ export type OpenCodeRuntimeDeliveryCrossTeamSender = (request: {
   fromTeam: string;
   fromMember: string;
   toTeam: string;
+  toMember?: string;
   text: string;
   summary?: string;
   taskRefs?: TaskRef[];
@@ -157,6 +158,7 @@ export function createOpenCodeRuntimeDeliveryPorts(
         fromTeam: envelope.teamName,
         fromMember: envelope.fromMemberName,
         toTeam: envelope.to.teamName,
+        toMember: envelope.to.memberName,
         text: envelope.text,
         summary: envelope.summary ?? undefined,
         ...(taskRefs ? { taskRefs } : {}),

@@ -205,6 +205,7 @@ describe('lead SendMessage capture helpers', () => {
         fromTeam: 'alpha',
         fromMember: 'lead',
         toTeam: 'beta',
+        toMember: 'worker',
         text: 'hello',
       })
     );

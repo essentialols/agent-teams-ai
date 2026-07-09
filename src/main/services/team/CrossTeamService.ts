@@ -47,6 +47,30 @@ function resolveCrossTeamFromMember(config: TeamConfig, rawFromMember: string): 
   throw new Error(`Unknown fromMember: ${rawFromMember}. Use a configured team member name.`);
 }
 
+function resolveCrossTeamTargetMember(
+  config: TeamConfig,
+  rawToMember: string | undefined,
+  fallbackLeadName: string
+): string {
+  const requestedKey = normalizeMemberKey(rawToMember);
+  if (!requestedKey) {
+    return fallbackLeadName;
+  }
+
+  const members = Array.isArray(config.members) ? config.members : [];
+  const direct = members.find((member) => normalizeMemberKey(member.name) === requestedKey);
+  if (direct?.name?.trim()) {
+    return direct.name.trim();
+  }
+
+  const leadKey = normalizeMemberKey(fallbackLeadName);
+  if (requestedKey === 'lead' || requestedKey === 'team-lead' || requestedKey === leadKey) {
+    return fallbackLeadName;
+  }
+
+  throw new Error(`Unknown toMember: ${rawToMember}. Use a configured target team member name.`);
+}
+
 export interface CrossTeamTarget {
   teamName: string;
   displayName: string;
@@ -69,7 +93,7 @@ export class CrossTeamService {
   ) {}
 
   async send(request: CrossTeamSendRequest): Promise<CrossTeamSendResult> {
-    const { fromTeam, toTeam, text, taskRefs, summary, actionMode } = request;
+    const { fromTeam, toTeam, toMember, text, taskRefs, summary, actionMode } = request;
     const rawFromMember = request.fromMember;
     const chainDepth = request.chainDepth ?? 0;
     const messageId = request.messageId?.trim() || randomUUID();
@@ -121,6 +145,7 @@ export class CrossTeamService {
       targetConfig.members?.find((m) => isLeadMember(m))?.name?.trim() ||
       (await this.dataService.getLeadMemberName(toTeam)) ||
       'team-lead';
+    const targetMemberName = resolveCrossTeamTargetMember(targetConfig, toMember, leadName);
 
     // 3. Format
     const from = `${fromTeam}.${fromMember}`;
@@ -135,6 +160,7 @@ export class CrossTeamService {
       fromTeam,
       fromMember,
       toTeam,
+      toMember: targetMemberName,
       conversationId,
       replyToConversationId,
       text,
@@ -152,7 +178,7 @@ export class CrossTeamService {
 
       // 5. Inbox write to TARGET team (TeamInboxWriter handles file lock + in-process lock internally)
       await this.inboxWriter.sendMessage(toTeam, {
-        member: leadName,
+        member: targetMemberName,
         text: formattedText,
         from,
         timestamp,
@@ -177,7 +203,7 @@ export class CrossTeamService {
         claudeDir: getClaudeBasePath(),
       }).messages.appendSentMessage({
         from: fromMember,
-        to: `${toTeam}.${leadName}`,
+        to: `${toTeam}.${targetMemberName}`,
         text,
         taskRefs,
         timestamp,

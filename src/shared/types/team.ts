@@ -1759,6 +1759,7 @@ export interface CrossTeamMessage {
   fromTeam: string;
   fromMember: string;
   toTeam: string;
+  toMember?: string;
   conversationId?: string;
   replyToConversationId?: string;
   text: string;
@@ -1772,6 +1773,7 @@ export interface CrossTeamSendRequest {
   fromTeam: string;
   fromMember: string;
   toTeam: string;
+  toMember?: string;
   timestamp?: string;
   messageId?: string;
   conversationId?: string;

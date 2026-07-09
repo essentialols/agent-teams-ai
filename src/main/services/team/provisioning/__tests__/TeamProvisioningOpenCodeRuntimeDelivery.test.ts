@@ -96,6 +96,7 @@ describe('TeamProvisioningOpenCodeRuntimeDelivery', () => {
       expect(sentMessages[0]?.taskRefs).toEqual(taskRefs);
       expect(inboxRequests[0]?.taskRefs).toEqual(taskRefs);
       expect(crossTeamRequests[0]?.taskRefs).toEqual(taskRefs);
+      expect(crossTeamRequests[0]?.toMember).toBe('Reviewer');
     });
   });
 

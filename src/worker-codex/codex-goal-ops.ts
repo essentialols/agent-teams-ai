@@ -1,38 +1,20 @@
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
-import { constants } from "node:fs";
-import { access, mkdir, readdir, readFile, stat } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { DefaultRedactor } from "@vioxen/subscription-runtime/core";
-import {
-  isSchedulerEligible,
-  recommendedActionForAvailability,
-  workerCapacityToDiagnosticSignal,
-  type ProviderAccountAction,
-  type ProviderAccountAvailability,
-} from "@vioxen/subscription-runtime/account-diagnostics";
-import {
-  readCodexAuthJsonFreshness,
-  validateCodexAuthJsonBytes,
-} from "@vioxen/subscription-runtime/provider-codex";
 import {
   AccessBoundary,
   GitPatchPreserver,
   StrictResultRecorder,
   actionForRuntimeState,
   classifyRuntimeRunState,
-  hostExecutableNotFoundMessage,
-  resolveHostExecutable,
   RunProcessAliveReason,
   RunProcessSupervisorKind,
   type RunProgressClassification,
   type RuntimeRecommendedAction,
   type RuntimeResultEnvelope,
   type RuntimeResultStatus,
-  type WorkerCapacitySnapshot,
 } from "@vioxen/subscription-runtime/worker-core";
-import { LocalFileWorkerAccountCapacityStore } from "@vioxen/subscription-runtime/store-local-file";
 import {
   codexGoalOutputPath,
   codexGoalProgressPath,
@@ -41,15 +23,41 @@ import {
 } from "./codex-goal-runner";
 import { assertCodexGoalAccessLaunchAllowed } from "./codex-goal-access-plan";
 import { readLocalGitHeadCommit } from "./codex-goal-git-revision";
+import { listCodexGoalAccountStatuses } from "./codex-goal-account-status";
 import {
-  codexAccountDisplayMetadataForSlot,
-  readCodexAccountDisplayMetadata,
-  type CodexAccountDisplayMetadata,
-} from "./account-display-metadata";
+  doctorCodexGoal,
+  inspectCodexGoalTmuxSession,
+  resolveCodexGoalTmuxExecutable,
+  tmuxCodexGoalStartFailedMessage,
+} from "./codex-goal-doctor";
+import { inspectCodexGoalProcessSnapshot } from "./codex-goal-process-snapshot";
+import {
+  fileExists,
+  gitWorkspaceStatus,
+  logFileStatus,
+  readCodexGoalProgressSummary,
+  readCodexGoalResultSummary,
+  readLastCodexGoalRuntimeEvent,
+} from "./codex-goal-status-files";
+
+export { listCodexGoalAccountStatuses };
+export { doctorCodexGoal };
+export { summarizeCodexGoalProcessTree } from "./codex-goal-process-snapshot";
+export type {
+  CodexGoalProcessSnapshot,
+  CodexGoalProcessSnapshotRow,
+} from "./codex-goal-process-snapshot";
+export type {
+  CodexGoalDoctorCheck,
+  CodexGoalDoctorResult,
+} from "./codex-goal-doctor";
+export type {
+  CodexGoalAccountSlotStatus,
+  CodexGoalAccountStatus,
+  CodexGoalAccountStatusInput,
+} from "./codex-goal-account-status";
 
 const execFileAsync = promisify(execFile);
-const gitStatusTimeoutMs = 5_000;
-const processCpuActiveThreshold = 0.1;
 
 export type CodexGoalOutputFormat = "text" | "json";
 
@@ -175,82 +183,12 @@ export class CodexGoalRuntimeResultReconciler
   }
 }
 
-export type CodexGoalProcessSnapshotRow = {
-  readonly pid: number;
-  readonly ppid: number;
-  readonly stat?: string;
-  readonly cpu: number;
-  readonly command: string;
-};
-
-export type CodexGoalProcessSnapshot = {
-  readonly alive?: boolean;
-  readonly cpuActive?: boolean;
-  readonly command?: string;
-  readonly appServerAlive?: boolean;
-  readonly appServerPid?: number;
-};
-
 export type CodexGoalWorkerLiveness = {
   readonly alive: boolean;
   readonly supervisorKind: RunProcessSupervisorKind;
   readonly aliveReason: RunProcessAliveReason;
   readonly processAlive: boolean;
   readonly freshProgressAlive: boolean;
-};
-
-export type CodexGoalDoctorCheck = {
-  readonly name: string;
-  readonly ok: boolean;
-  readonly message: string;
-};
-
-export type CodexGoalDoctorResult = {
-  readonly ok: boolean;
-  readonly checks: readonly CodexGoalDoctorCheck[];
-};
-
-export type CodexGoalAccountStatus =
-  | "ready"
-  | "auth_missing"
-  | "auth_invalid";
-
-export type CodexGoalAccountSlotStatus = {
-  readonly name: string;
-  readonly displayName?: string;
-  readonly email?: string;
-  readonly shortName?: string;
-  readonly operatorLabel?: string;
-  readonly authJsonPath: string;
-  readonly status: CodexGoalAccountStatus;
-  readonly availability: ProviderAccountAvailability;
-  readonly schedulerEligible: boolean;
-  readonly recommendedAction: ProviderAccountAction;
-  readonly byteLength?: number;
-  readonly authJsonSha256Prefix?: string;
-  readonly identitySource?: string;
-  readonly identityHashPrefix?: string;
-  readonly lastRefreshAt?: string;
-  readonly expiresAt?: string;
-  readonly limitResetAt?: string;
-  readonly capacityAvailability?: string;
-  readonly capacityReason?: string;
-  readonly capacityCooldownUntil?: string;
-  readonly capacityLastLimitSignalAt?: string;
-  readonly liveCheck?: "passed" | "failed";
-  readonly liveCheckSafeMessage?: string;
-  readonly warnings: readonly string[];
-  readonly safeMessage: string;
-};
-
-export type CodexGoalAccountStatusInput = {
-  readonly authRootDir: string;
-  readonly accounts?: readonly string[];
-  readonly stateRootDir?: string;
-  readonly liveCheck?: boolean;
-  readonly codexBinaryPath?: string;
-  readonly liveCheckTimeoutMs?: number;
-  readonly accountMetadata?: Readonly<Record<string, CodexAccountDisplayMetadata>>;
 };
 
 export function buildCodexGoalNoTmuxCommand(input: CodexGoalLaunchInput): string {
@@ -362,11 +300,11 @@ export async function startCodexGoalTmux(
   assertCodexGoalAccessLaunchAllowed(input.config);
   await prepareCodexGoalLaunchPaths(input);
   const command = buildCodexGoalTmuxCommand(input);
-  const tmuxExecutable = await resolveTmuxExecutable();
+  const tmuxExecutable = await resolveCodexGoalTmuxExecutable();
   try {
     await execFileAsync(tmuxExecutable, command.args);
   } catch (error) {
-    throw new Error(tmuxStartFailedMessage(error));
+    throw new Error(tmuxCodexGoalStartFailedMessage(error));
   }
   return command;
 }
@@ -408,7 +346,7 @@ export async function stopCodexGoalTmux(
   tmuxSession: string,
 ): Promise<CodexGoalTmuxCommand> {
   const command = buildCodexGoalStopTmuxCommand(tmuxSession);
-  await execFileAsync(await resolveTmuxExecutable(), command.args);
+  await execFileAsync(await resolveCodexGoalTmuxExecutable(), command.args);
   return command;
 }
 
@@ -478,7 +416,7 @@ export async function collectCodexGoalStatus(
     : {};
   let tmuxAlive: boolean | undefined;
   if (input.tmuxSession) {
-    const tmux = await inspectTmuxSession(input.tmuxSession);
+    const tmux = await inspectCodexGoalTmuxSession(input.tmuxSession);
     tmuxAlive = tmux.alive;
     if (!tmuxAlive) warnings.push("tmux session is not alive");
     if (tmux.warning) warnings.push(tmux.warning);
@@ -500,7 +438,7 @@ export async function collectCodexGoalStatus(
   const progress = progressPath ? await readCodexGoalProgressSummary(progressPath) : {};
   const progressProcess = progress.pid === undefined
     ? {}
-    : await inspectProcessSnapshot(progress.pid);
+    : await inspectCodexGoalProcessSnapshot(progress.pid);
   if (progress.warning) warnings.push(progress.warning);
   const runtimeEventsPath = input.jobRootDir && input.taskId
     ? codexGoalRuntimeEventsPath({
@@ -822,65 +760,12 @@ export async function reconcileCodexGoalRuntimeResult(
   };
 }
 
-export async function doctorCodexGoal(input: {
-  readonly config: CodexGoalRunConfig;
-  readonly tmuxSession?: string;
-}): Promise<CodexGoalDoctorResult> {
-  const checks = await Promise.all([
-    checkFile("prompt", input.config.promptPath),
-    checkDirectory("jobRoot", input.config.jobRootDir),
-    checkDirectory("authRoot", input.config.authRootDir),
-    checkGitWorkspace(input.config.workspacePath),
-    ...(input.tmuxSession
-      ? [checkTmuxSessionAvailable(input.tmuxSession)]
-      : []),
-    ...input.config.accounts.map((account) =>
-      checkFile(
-        `account:${account.name}`,
-        account.authJsonPath ??
-          join(input.config.authRootDir, account.name, "auth.json"),
-      ),
-    ),
-  ]);
-  return {
-    ok: checks.every((check) => check.ok),
-    checks,
-  };
-}
-
 export async function tailCodexGoalLog(
   logPath: string,
   lines: number,
 ): Promise<string> {
   const text = await readFile(logPath, "utf8");
   return `${text.split(/\r?\n/).slice(-lines).join("\n")}\n`;
-}
-
-export async function listCodexGoalAccountStatuses(
-  input: CodexGoalAccountStatusInput,
-): Promise<readonly CodexGoalAccountSlotStatus[]> {
-  const accountNames = input.accounts?.length
-    ? input.accounts
-    : await listAccountDirectories(input.authRootDir);
-  const accountMetadata = {
-    ...(await readCodexAccountDisplayMetadata(input.authRootDir)),
-    ...(input.accountMetadata ?? {}),
-  };
-  return Promise.all(
-    accountNames.map((name) =>
-      inspectCodexGoalAccount({
-        authRootDir: input.authRootDir,
-        name,
-        ...(accountMetadata[name]
-          ? { displayMetadata: accountMetadata[name] }
-          : {}),
-        ...(input.stateRootDir ? { stateRootDir: input.stateRootDir } : {}),
-        ...(input.liveCheck ? { liveCheck: input.liveCheck } : {}),
-        ...(input.codexBinaryPath ? { codexBinaryPath: input.codexBinaryPath } : {}),
-        ...(input.liveCheckTimeoutMs ? { liveCheckTimeoutMs: input.liveCheckTimeoutMs } : {}),
-      }),
-    ),
-  );
 }
 
 export function recommendCodexGoalAction(input: {
@@ -1040,786 +925,6 @@ export function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
-async function inspectCodexGoalAccount(input: {
-  readonly authRootDir: string;
-  readonly name: string;
-  readonly displayMetadata?: CodexAccountDisplayMetadata;
-  readonly stateRootDir?: string;
-  readonly liveCheck?: boolean;
-  readonly codexBinaryPath?: string;
-  readonly liveCheckTimeoutMs?: number;
-}
-): Promise<CodexGoalAccountSlotStatus> {
-  const authJsonPath = join(input.authRootDir, input.name, "auth.json");
-  const display = codexAccountDisplayMetadataForSlot(
-    input.name,
-    input.displayMetadata,
-  );
-  try {
-    const authJsonBytes = await readFile(authJsonPath, "utf8");
-    const validation = validateCodexAuthJsonBytes({ authJsonBytes });
-    const freshness = readCodexAuthJsonFreshness({ authJsonBytes });
-    const identity = sanitizedCodexIdentity(validation.parsed.tokens.id_token);
-    const capacity = readAccountCapacity({
-      accountName: input.name,
-      ...(input.stateRootDir ? { stateRootDir: input.stateRootDir } : {}),
-    });
-    const live = input.liveCheck
-      ? await inspectCodexAccountLiveStatus({
-          codexHome: dirname(authJsonPath),
-          ...(input.codexBinaryPath ? { codexBinaryPath: input.codexBinaryPath } : {}),
-          ...(input.liveCheckTimeoutMs ? { timeoutMs: input.liveCheckTimeoutMs } : {}),
-        })
-      : undefined;
-    const warnings = [...validation.warnings, ...freshness.warnings];
-    if (live && !live.ok) {
-      const availability = codexGoalAccountAvailability({
-        status: "auth_invalid",
-        capacity,
-      });
-      return {
-        name: input.name,
-        ...display,
-        authJsonPath,
-        status: "auth_invalid",
-        ...availability,
-        byteLength: validation.byteLength,
-        authJsonSha256Prefix: validation.exactBytesSha256.slice(0, 12),
-        ...(identity ? { identitySource: identity.source } : {}),
-        ...(identity ? { identityHashPrefix: identity.hashPrefix } : {}),
-        ...(freshness.lastRefreshAt
-          ? { lastRefreshAt: freshness.lastRefreshAt.toISOString() }
-          : {}),
-        ...(freshness.expiresAt
-          ? { expiresAt: freshness.expiresAt.toISOString() }
-          : {}),
-        ...(capacity?.availability
-          ? { capacityAvailability: capacity.availability }
-          : {}),
-        ...(capacity?.reason ? { capacityReason: capacity.reason } : {}),
-        ...(capacity?.cooldownUntil
-          ? { capacityCooldownUntil: capacity.cooldownUntil.toISOString() }
-          : {}),
-        ...(capacity?.lastLimitSignalAt
-          ? { capacityLastLimitSignalAt: capacity.lastLimitSignalAt.toISOString() }
-          : {}),
-        liveCheck: "failed",
-        liveCheckSafeMessage: live.safeMessage,
-        warnings,
-        safeMessage: live.safeMessage,
-      };
-    }
-    const availability = codexGoalAccountAvailability({
-      status: "ready",
-      capacity,
-    });
-    return {
-      name: input.name,
-      ...display,
-      authJsonPath,
-      status: "ready",
-      ...availability,
-      byteLength: validation.byteLength,
-      authJsonSha256Prefix: validation.exactBytesSha256.slice(0, 12),
-      ...(identity ? { identitySource: identity.source } : {}),
-      ...(identity ? { identityHashPrefix: identity.hashPrefix } : {}),
-      ...(freshness.lastRefreshAt
-        ? { lastRefreshAt: freshness.lastRefreshAt.toISOString() }
-        : {}),
-      ...(freshness.expiresAt
-        ? { expiresAt: freshness.expiresAt.toISOString() }
-        : {}),
-      ...(capacity?.availability
-        ? { capacityAvailability: capacity.availability }
-        : {}),
-      ...(capacity?.reason ? { capacityReason: capacity.reason } : {}),
-      ...(capacity?.cooldownUntil
-        ? { capacityCooldownUntil: capacity.cooldownUntil.toISOString() }
-        : {}),
-      ...(capacity?.lastLimitSignalAt
-        ? { capacityLastLimitSignalAt: capacity.lastLimitSignalAt.toISOString() }
-        : {}),
-      ...(live ? { liveCheck: "passed" as const } : {}),
-      ...(live ? { liveCheckSafeMessage: live.safeMessage } : {}),
-      warnings,
-      safeMessage: warnings.length
-        ? "auth.json is readable but has warnings"
-        : "auth.json is readable",
-    };
-  } catch (error) {
-    const safeMessage = error instanceof Error ? error.message : "auth_invalid";
-    return {
-      name: input.name,
-      ...display,
-      authJsonPath,
-      status: safeMessage.includes("ENOENT") ? "auth_missing" : "auth_invalid",
-      ...codexGoalAccountAvailability({
-        status: safeMessage.includes("ENOENT") ? "auth_missing" : "auth_invalid",
-        capacity: null,
-      }),
-      warnings: [],
-      safeMessage: safeMessage.includes("ENOENT")
-        ? "auth.json is missing"
-        : safeMessage,
-    };
-  }
-}
-
-function codexGoalAccountAvailability(input: {
-  readonly status: CodexGoalAccountStatus;
-  readonly capacity: WorkerCapacitySnapshot | null;
-}): {
-  readonly availability: ProviderAccountAvailability;
-  readonly schedulerEligible: boolean;
-  readonly recommendedAction: ProviderAccountAction;
-  readonly limitResetAt?: string;
-} {
-  if (input.status !== "ready") {
-    const availability = "reconnect_required";
-    return {
-      availability,
-      schedulerEligible: isSchedulerEligible(availability),
-      recommendedAction: recommendedActionForAvailability(availability),
-    };
-  }
-
-  const capacitySignal = input.capacity
-    ? workerCapacityToDiagnosticSignal(input.capacity)
-    : null;
-  const availability = capacitySignal?.availability ?? "available";
-  return {
-    availability,
-    schedulerEligible: isSchedulerEligible(availability),
-    recommendedAction: recommendedActionForAvailability(availability),
-    ...(capacitySignal?.limitResetAt
-      ? { limitResetAt: capacitySignal.limitResetAt.toISOString() }
-      : {}),
-  };
-}
-
-async function inspectCodexAccountLiveStatus(input: {
-  readonly codexHome: string;
-  readonly codexBinaryPath?: string;
-  readonly timeoutMs?: number;
-}): Promise<{ readonly ok: boolean; readonly safeMessage: string }> {
-  const codexBinaryPath = input.codexBinaryPath ?? "codex";
-  try {
-    await execFileAsync(codexBinaryPath, ["login", "status"], {
-      env: {
-        ...process.env,
-        CODEX_HOME: input.codexHome,
-      },
-      timeout: input.timeoutMs ?? 70_000,
-      maxBuffer: 1024 * 1024,
-    });
-    return { ok: true, safeMessage: "codex login status passed" };
-  } catch (error) {
-    if (isExecTimeoutError(error)) {
-      return { ok: false, safeMessage: "codex login status timed out" };
-    }
-    return { ok: false, safeMessage: "codex login status failed" };
-  }
-}
-
-function isExecTimeoutError(error: unknown): boolean {
-  return isRecord(error) &&
-    (error.signal === "SIGTERM" || error.killed === true || error.code === "ETIMEDOUT");
-}
-
-function sanitizedCodexIdentity(idToken: string | undefined): {
-  readonly source: string;
-  readonly hashPrefix: string;
-} | null {
-  if (!idToken) return null;
-  const claims = decodeJwtClaims(idToken);
-  if (!claims) return null;
-  const authClaims = isRecord(claims["https://api.openai.com/auth"])
-    ? claims["https://api.openai.com/auth"]
-    : {};
-  const candidates = [
-    ["chatgpt_account_id", authClaims.chatgpt_account_id],
-    ["chatgpt_user_id", authClaims.chatgpt_user_id],
-    ["sub", claims.sub],
-    ["email", claims.email],
-  ] as const;
-  for (const [source, value] of candidates) {
-    if (typeof value !== "string" || !value.trim()) continue;
-    return {
-      source,
-      hashPrefix: hashText(`${source}:${value}`).slice(0, 16),
-    };
-  }
-  return null;
-}
-
-function decodeJwtClaims(token: string): Record<string, unknown> | null {
-  const payload = token.split(".")[1];
-  if (!payload) return null;
-  try {
-    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
-    const padded = normalized.padEnd(
-      normalized.length + ((4 - (normalized.length % 4)) % 4),
-      "=",
-    );
-    const parsed: unknown = JSON.parse(Buffer.from(padded, "base64").toString("utf8"));
-    return isRecord(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-function readAccountCapacity(input: {
-  readonly stateRootDir?: string;
-  readonly accountName: string;
-}) {
-  if (!input.stateRootDir) return null;
-  try {
-    return new LocalFileWorkerAccountCapacityStore({
-      rootDir: join(input.stateRootDir, "worker-account-capacity"),
-    }).read({ accountId: input.accountName });
-  } catch {
-    return null;
-  }
-}
-
-async function listAccountDirectories(authRootDir: string): Promise<readonly string[]> {
-  try {
-    const entries = await readdir(authRootDir, { withFileTypes: true });
-    return entries
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
-      .sort((left, right) => left.localeCompare(right));
-  } catch {
-    return [];
-  }
-}
-
-async function readCodexGoalResultSummary(path: string): Promise<{
-  readonly status?: string;
-  readonly reason?: string;
-}> {
-  try {
-    const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
-    if (!isRecord(parsed)) return {};
-    return {
-      ...(typeof parsed.status === "string" ? { status: parsed.status } : {}),
-      ...(typeof parsed.reason === "string"
-        ? { reason: redactStatusText(parsed.reason) }
-        : {}),
-    };
-  } catch {
-    return {};
-  }
-}
-
-async function readCodexGoalProgressSummary(path: string): Promise<{
-  readonly exists?: boolean;
-  readonly status?: string;
-  readonly updatedAt?: string;
-  readonly heartbeatAgeMs?: number;
-  readonly pid?: number;
-  readonly resultStatus?: string;
-  readonly reason?: string;
-  readonly attemptCount?: number;
-  readonly currentAccount?: string;
-  readonly warning?: string;
-}> {
-  try {
-    const [item, parsed] = await Promise.all([
-      stat(path),
-      readCodexGoalProgressFile(path),
-    ]);
-    const updatedAt = parsed.updatedAt ?? item.mtime.toISOString();
-    const updatedAtMs = Date.parse(updatedAt);
-    return {
-      exists: item.isFile(),
-      ...(parsed.status ? { status: parsed.status } : {}),
-      updatedAt,
-      ...(Number.isFinite(updatedAtMs)
-        ? { heartbeatAgeMs: Date.now() - updatedAtMs }
-        : {}),
-      ...(typeof parsed.pid === "number" ? { pid: parsed.pid } : {}),
-      ...(parsed.resultStatus ? { resultStatus: parsed.resultStatus } : {}),
-      ...(parsed.reason ? { reason: redactStatusText(parsed.reason) } : {}),
-      ...(typeof parsed.attemptCount === "number"
-        ? { attemptCount: parsed.attemptCount }
-        : {}),
-      ...(parsed.currentAccount ? { currentAccount: parsed.currentAccount } : {}),
-    };
-  } catch (error) {
-    const safeMessage = error instanceof Error ? error.message : "progress_unreadable";
-    return safeMessage.includes("ENOENT")
-      ? { exists: false }
-      : { exists: false, warning: `progress file is unreadable: ${safeMessage}` };
-  }
-}
-
-async function readLastCodexGoalRuntimeEvent(path: string): Promise<{
-  readonly event?: string;
-  readonly timestamp?: string;
-  readonly level?: string;
-  readonly warning?: string;
-}> {
-  try {
-    const text = await readFile(path, "utf8");
-    const line = text.split(/\r?\n/).reverse().find((item) => item.trim());
-    if (!line) return {};
-    const parsed: unknown = JSON.parse(line);
-    if (!isRecord(parsed)) return {};
-    return {
-      ...(typeof parsed.event === "string"
-        ? { event: redactStatusText(parsed.event) }
-        : {}),
-      ...(typeof parsed.timestamp === "string" ? { timestamp: parsed.timestamp } : {}),
-      ...(typeof parsed.level === "string" ? { level: redactStatusText(parsed.level) } : {}),
-    };
-  } catch (error) {
-    const safeMessage = error instanceof Error ? error.message : "runtime_event_unreadable";
-    return safeMessage.includes("ENOENT")
-      ? {}
-      : { warning: `runtime event file is unreadable: ${safeMessage}` };
-  }
-}
-
-async function readCodexGoalProgressFile(
-  path: string,
-): Promise<{
-  readonly status?: string;
-  readonly updatedAt?: string;
-  readonly pid?: number;
-  readonly resultStatus?: string;
-  readonly reason?: string;
-  readonly attemptCount?: number;
-  readonly currentAccount?: string;
-}> {
-  const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
-  if (!isRecord(parsed)) return {};
-  return {
-    ...(typeof parsed.status === "string" ? { status: parsed.status } : {}),
-    ...(typeof parsed.updatedAt === "string" ? { updatedAt: parsed.updatedAt } : {}),
-    ...(typeof parsed.pid === "number" ? { pid: parsed.pid } : {}),
-    ...(typeof parsed.resultStatus === "string"
-      ? { resultStatus: parsed.resultStatus }
-      : {}),
-    ...(typeof parsed.reason === "string"
-      ? { reason: redactStatusText(parsed.reason) }
-      : {}),
-    ...(typeof parsed.attemptCount === "number"
-      ? { attemptCount: parsed.attemptCount }
-      : {}),
-    ...(typeof parsed.currentAccount === "string"
-      ? { currentAccount: parsed.currentAccount }
-      : {}),
-  };
-}
-
-async function gitWorkspaceStatus(path: string): Promise<{
-  readonly exists?: boolean;
-  readonly dirty?: boolean;
-  readonly changedFiles?: readonly string[];
-  readonly warning?: string;
-}> {
-  try {
-    const { stdout } = await execFileAsync("git", [
-      "-C",
-      path,
-      "status",
-      "--porcelain",
-    ], { timeout: gitStatusTimeoutMs });
-    const changedFiles = stdout
-      .split(/\r?\n/)
-      .filter((line) => line.trim().length > 0)
-      .map((line) => statusPorcelainPath(line))
-      .filter((path) => path.length > 0)
-      .sort((left, right) => left.localeCompare(right));
-    return {
-      exists: true,
-      dirty: changedFiles.length > 0,
-      changedFiles,
-    };
-  } catch {
-    let exists = false;
-    try {
-      await access(path, constants.F_OK);
-      exists = true;
-    } catch {
-      exists = false;
-    }
-    return {
-      exists,
-      dirty: false,
-      changedFiles: [],
-      warning: exists
-        ? `${path} is not a readable git worktree`
-        : `${path} workspace_missing`,
-    };
-  }
-}
-
-function statusPorcelainPath(line: string): string {
-  const path = line.length > 3 ? line.slice(3).trim() : line.trim();
-  const renameTarget = path.split(" -> ").at(-1);
-  return renameTarget?.trim() ?? path;
-}
-
-async function logFileStatus(path: string): Promise<{
-  readonly exists?: boolean;
-  readonly updatedAt?: string;
-  readonly byteLength?: number;
-}> {
-  try {
-    const item = await stat(path);
-    return {
-      exists: item.isFile(),
-      ...(item.isFile() ? { updatedAt: item.mtime.toISOString() } : {}),
-      ...(item.isFile() ? { byteLength: item.size } : {}),
-    };
-  } catch {
-    return { exists: false };
-  }
-}
-
-async function inspectProcessSnapshot(
-  pid: number,
-): Promise<CodexGoalProcessSnapshot> {
-  try {
-    const { stdout } = await execFileAsync("ps", [
-      "-axo",
-      "pid=,ppid=,stat=,%cpu=,command=",
-    ], { timeout: 1_000 });
-    const summary = summarizeCodexGoalProcessTree(
-      pid,
-      parseProcessSnapshotRows(stdout),
-    );
-    if (
-      summary.alive !== undefined ||
-      summary.cpuActive !== undefined ||
-      summary.command !== undefined ||
-      summary.appServerAlive !== undefined ||
-      summary.appServerPid !== undefined
-    ) {
-      return {
-        ...(summary.alive === undefined ? {} : { alive: summary.alive }),
-        ...(summary.cpuActive === undefined ? {} : { cpuActive: summary.cpuActive }),
-        ...(summary.command === undefined ? {} : { command: redactStatusText(summary.command) }),
-        ...(summary.appServerAlive === undefined
-          ? {}
-          : { appServerAlive: summary.appServerAlive }),
-        ...(summary.appServerPid === undefined
-          ? {}
-          : { appServerPid: summary.appServerPid }),
-      };
-    }
-  } catch {
-    // Fall back to direct pid inspection below.
-  }
-  try {
-    const { stdout } = await execFileAsync("ps", [
-      "-p",
-      String(pid),
-      "-o",
-      "stat=",
-      "-o",
-      "%cpu=",
-      "-o",
-      "command=",
-    ], { timeout: 1_000 });
-    const line = stdout.trim();
-    if (!line) return {};
-    const match = line.match(/^(\S+)\s+(\S+)\s+([\s\S]*)$/);
-    const statText = match?.[1] ?? "";
-    if (processStatIsZombie(statText)) {
-      const command = match?.[3]?.trim();
-      return {
-        alive: false,
-        cpuActive: false,
-        ...(command ? { command: redactStatusText(command) } : {}),
-      };
-    }
-    const cpu = match ? Number(match[2]) : Number.NaN;
-    const command = match?.[3]?.trim();
-    return {
-      alive: true,
-      ...(Number.isFinite(cpu) ? { cpuActive: cpu > 0.1 } : {}),
-      ...(command ? { command: redactStatusText(command) } : {}),
-    };
-  } catch {
-    return {};
-  }
-}
-
-export function summarizeCodexGoalProcessTree(
-  rootPid: number,
-  rows: readonly CodexGoalProcessSnapshotRow[],
-): CodexGoalProcessSnapshot {
-  const rowsByParent = new Map<number, CodexGoalProcessSnapshotRow[]>();
-  for (const row of rows.filter((item) => !processSnapshotRowIsZombie(item))) {
-    const group = rowsByParent.get(row.ppid) ?? [];
-    group.push(row);
-    rowsByParent.set(row.ppid, group);
-  }
-  const treeRows: CodexGoalProcessSnapshotRow[] = [];
-  const queue = rows.filter((row) => row.pid === rootPid && !processSnapshotRowIsZombie(row));
-  const seen = new Set<number>();
-  while (queue.length > 0) {
-    const row = queue.shift();
-    if (!row || seen.has(row.pid)) continue;
-    seen.add(row.pid);
-    treeRows.push(row);
-    queue.push(...(rowsByParent.get(row.pid) ?? []));
-  }
-  if (treeRows.length === 0) return {};
-  const activeRows = treeRows.filter((row) => row.cpu > processCpuActiveThreshold);
-  const totalCpu = treeRows.reduce((sum, row) => sum + row.cpu, 0);
-  const commandRow = bestProcessCommandRow(activeRows.length > 0 ? activeRows : treeRows);
-  const appServerRow = treeRows.find((row) => isCodexAppServerCommand(row.command));
-  return {
-    alive: true,
-    cpuActive: activeRows.length > 0 || totalCpu > processCpuActiveThreshold,
-    ...(commandRow?.command ? { command: commandRow.command } : {}),
-    appServerAlive: appServerRow !== undefined,
-    ...(appServerRow ? { appServerPid: appServerRow.pid } : {}),
-  };
-}
-
-function isCodexAppServerCommand(command: string): boolean {
-  return /\bcodex\b[\s\S]*\bapp-server\b[\s\S]*--listen[\s\S]*stdio:\/\//.test(
-    command,
-  );
-}
-
-function parseProcessSnapshotRows(
-  stdout: string,
-): readonly CodexGoalProcessSnapshotRow[] {
-  return stdout
-    .split(/\r?\n/)
-    .map((line): CodexGoalProcessSnapshotRow | null => {
-      const match = line.match(/^\s*(\d+)\s+(\d+)\s+(\S+)\s+([0-9.]+)\s*([\s\S]*)$/);
-      if (!match) return null;
-      const pid = Number(match[1]);
-      const ppid = Number(match[2]);
-      const statText = match[3] ?? "";
-      const cpu = Number(match[4]);
-      if (
-        !Number.isInteger(pid) ||
-        !Number.isInteger(ppid) ||
-        !Number.isFinite(cpu)
-      ) {
-        return null;
-      }
-      return {
-        pid,
-        ppid,
-        stat: statText,
-        cpu,
-        command: match[5]?.trim() ?? "",
-      };
-    })
-    .filter((row): row is CodexGoalProcessSnapshotRow => row !== null);
-}
-
-function processSnapshotRowIsZombie(
-  row: CodexGoalProcessSnapshotRow,
-): boolean {
-  return processStatIsZombie(row.stat) || /\b<defunct>\b/i.test(row.command);
-}
-
-function processStatIsZombie(statText: string | undefined): boolean {
-  return /\bZ/.test(statText ?? "");
-}
-
-function bestProcessCommandRow(
-  rows: readonly CodexGoalProcessSnapshotRow[],
-): CodexGoalProcessSnapshotRow | undefined {
-  return rows.slice().sort((left, right) => {
-    const buildScore = Number(isBuildLikeProcessCommand(right.command)) -
-      Number(isBuildLikeProcessCommand(left.command));
-    if (buildScore !== 0) return buildScore;
-    return right.cpu - left.cpu;
-  })[0];
-}
-
-function isBuildLikeProcessCommand(command: string | undefined): boolean {
-  return command === undefined ||
-    /\b(build|test|check|lint|tsc|vite|vitest|jest|pytest|cargo|gradle|mvn)\b/i
-      .test(command);
-}
-
-async function checkFile(
-  name: string,
-  path: string,
-): Promise<CodexGoalDoctorCheck> {
-  try {
-    const item = await stat(path);
-    if (!item.isFile()) {
-      return { name, ok: false, message: `${path} is not a file` };
-    }
-    await access(path, constants.R_OK);
-    return { name, ok: true, message: path };
-  } catch (error) {
-    const code = safeErrorCode(error);
-    if (code === "ENOENT") {
-      return { name, ok: false, message: `${path} is missing` };
-    }
-    return {
-      name,
-      ok: false,
-      message: `${path} is not readable (${code})`,
-    };
-  }
-}
-
-async function checkDirectory(
-  name: string,
-  path: string,
-): Promise<CodexGoalDoctorCheck> {
-  try {
-    const item = await stat(path);
-    return {
-      name,
-      ok: item.isDirectory(),
-      message: item.isDirectory() ? path : `${path} is not a directory`,
-    };
-  } catch {
-    return { name, ok: false, message: `${path} is missing` };
-  }
-}
-
-async function checkGitWorkspace(path: string): Promise<CodexGoalDoctorCheck> {
-  try {
-    await execFileAsync(
-      "git",
-      ["-C", path, "rev-parse", "--is-inside-work-tree"],
-      { timeout: gitStatusTimeoutMs },
-    );
-    return { name: "workspace", ok: true, message: path };
-  } catch {
-    return { name: "workspace", ok: false, message: `${path} is not a git worktree` };
-  }
-}
-
-async function checkTmuxSessionAvailable(
-  session: string,
-): Promise<CodexGoalDoctorCheck> {
-  const tmux = await inspectTmuxSession(session);
-  if (tmux.warning) {
-    return {
-      name: "tmuxSession",
-      ok: false,
-      message: tmux.warning,
-    };
-  }
-  const alive = tmux.alive;
-  return {
-    name: "tmuxSession",
-    ok: !alive,
-    message: alive
-      ? `${session} is already alive`
-      : `${session} is available`,
-  };
-}
-
-async function resolveTmuxExecutable(): Promise<string> {
-  const resolution = await resolveTmux();
-  if (!resolution.found) {
-    throw new Error(hostExecutableNotFoundMessage(resolution));
-  }
-  return resolution.executable;
-}
-
-async function resolveTmux() {
-  return resolveHostExecutable({
-    name: "tmux",
-    envNames: [
-      "SUBSCRIPTION_RUNTIME_TMUX_PATH",
-      "TMUX_PATH",
-      "TMUX_BIN",
-    ],
-    additionalCandidates: [
-      "/opt/homebrew/bin/tmux",
-      "/usr/local/bin/tmux",
-      "/usr/bin/tmux",
-      "/bin/tmux",
-    ],
-  });
-}
-
-async function inspectTmuxSession(
-  session: string,
-): Promise<{ readonly alive: boolean; readonly warning?: string }> {
-  const resolution = await resolveTmux();
-  if (!resolution.found) {
-    return {
-      alive: false,
-      warning: hostExecutableNotFoundMessage(resolution),
-    };
-  }
-  try {
-    await execFileAsync(resolution.executable, ["has-session", "-t", session]);
-    return { alive: true };
-  } catch (error) {
-    if (isTmuxPermissionFailure(error)) {
-      return {
-        alive: false,
-        warning: tmuxUnavailableMessage(error),
-      };
-    }
-    return { alive: false };
-  }
-}
-
-function tmuxUnavailableMessage(error: unknown): string {
-  const detail = safeExecErrorMessage(error);
-  return [
-    "codex_goal_tmux_unavailable",
-    detail,
-    "Lane orchestrators inside app-server-goal cannot own child worker process supervision; request worker start, continue, stop and account actions through host-side subscription-runtime MCP or CLI controls.",
-  ].filter(Boolean).join(": ");
-}
-
-function tmuxStartFailedMessage(error: unknown): string {
-  if (isTmuxPermissionFailure(error)) return tmuxUnavailableMessage(error);
-  const detail = safeExecErrorMessage(error);
-  return ["codex_goal_tmux_start_failed", detail].filter(Boolean).join(": ");
-}
-
-function isTmuxPermissionFailure(error: unknown): boolean {
-  const message = safeExecErrorMessage(error).toLowerCase();
-  return message.includes("operation not permitted") ||
-    message.includes("permission denied") ||
-    message.includes("eacces") ||
-    safeErrorCode(error) === "EACCES" ||
-    safeErrorCode(error) === "EPERM";
-}
-
-function safeExecErrorMessage(error: unknown): string {
-  if (!isRecord(error)) {
-    return error instanceof Error ? redactStatusText(error.message) : "tmux failed";
-  }
-  const stderr = typeof error.stderr === "string" ? error.stderr.trim() : "";
-  const stdout = typeof error.stdout === "string" ? error.stdout.trim() : "";
-  const message = error instanceof Error ? error.message : "";
-  return redactStatusText(stderr || stdout || message || "tmux failed");
-}
-
-function safeErrorCode(error: unknown): string {
-  if (isRecord(error) && typeof error.code === "string") return error.code;
-  return "unknown_error";
-}
-
-async function fileExists(path: string): Promise<boolean> {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function redactStatusText(value: string): string {
-  return new DefaultRedactor().redact(value);
-}
-
 function pushOptional(
   args: string[],
   flagName: string,
@@ -1840,8 +945,4 @@ function pushOptionalNumber(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function hashText(value: string): string {
-  return createHash("sha256").update(value).digest("hex");
 }

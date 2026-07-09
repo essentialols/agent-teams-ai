@@ -1,4 +1,4 @@
-import { normalizePath } from '@renderer/utils/pathNormalize';
+import { normalizePathForMatching } from '@renderer/utils/pathNormalize';
 
 import type { Project, RepositoryGroup } from '@renderer/types/data';
 import type { TeamSummary } from '@shared/types';
@@ -148,11 +148,11 @@ export function findTeamProjectSelectionTarget(
   projects: readonly Project[],
   projectPath: string
 ): TeamProjectSelectionTarget | null {
-  const normalizedProjectPath = normalizePath(projectPath);
+  const normalizedProjectPath = normalizePathForMatching(projectPath);
 
   for (const repositoryGroup of repositoryGroups) {
     const worktree = repositoryGroup.worktrees.find(
-      (candidate) => normalizePath(candidate.path) === normalizedProjectPath
+      (candidate) => normalizePathForMatching(candidate.path) === normalizedProjectPath
     );
     if (worktree) {
       return {
@@ -165,7 +165,7 @@ export function findTeamProjectSelectionTarget(
   }
 
   const project = projects.find(
-    (candidate) => normalizePath(candidate.path) === normalizedProjectPath
+    (candidate) => normalizePathForMatching(candidate.path) === normalizedProjectPath
   );
   if (project) {
     return {
@@ -179,14 +179,14 @@ export function findTeamProjectSelectionTarget(
 }
 
 export function teamMatchesProjectSelection(team: TeamSummary, projectPath: string): boolean {
-  const normalizedProjectPath = normalizePath(projectPath);
-  if (team.projectPath && normalizePath(team.projectPath) === normalizedProjectPath) {
+  const normalizedProjectPath = normalizePathForMatching(projectPath);
+  if (team.projectPath && normalizePathForMatching(team.projectPath) === normalizedProjectPath) {
     return true;
   }
 
   return (
     team.projectPathHistory?.some(
-      (candidate) => normalizePath(candidate) === normalizedProjectPath
+      (candidate) => normalizePathForMatching(candidate) === normalizedProjectPath
     ) ?? false
   );
 }

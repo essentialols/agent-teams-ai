@@ -5,6 +5,31 @@ const crypto = require('crypto');
 const TASK_ATTACHMENTS_DIR = 'task-attachments';
 const MAX_TASK_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 const TEAM_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,127}$/;
+const MEMBER_FILE_SEGMENT_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
+const WINDOWS_RESERVED_FILE_STEMS = new Set([
+  'con',
+  'prn',
+  'aux',
+  'nul',
+  'com1',
+  'com2',
+  'com3',
+  'com4',
+  'com5',
+  'com6',
+  'com7',
+  'com8',
+  'com9',
+  'lpt1',
+  'lpt2',
+  'lpt3',
+  'lpt4',
+  'lpt5',
+  'lpt6',
+  'lpt7',
+  'lpt8',
+  'lpt9',
+]);
 const LEAD_AGENT_TYPES = new Set(['team-lead', 'lead', 'orchestrator']);
 const CROSS_TEAM_TOOL_RECIPIENT_NAMES = new Set([
   'cross_team_send',
@@ -48,6 +73,35 @@ function isSafePathSegment(value) {
 function assertSafePathSegment(label, value) {
   const normalized = String(value == null ? '' : value);
   if (!isSafePathSegment(normalized)) {
+    throw new Error(`Invalid ${String(label)}`);
+  }
+  return normalized;
+}
+
+function isWindowsReservedFileSegment(value) {
+  const normalized = String(value == null ? '' : value)
+    .trim()
+    .replace(/[. ]+$/g, '')
+    .toLowerCase();
+  if (!normalized) return false;
+  const stem = normalized.split('.')[0] || normalized;
+  return WINDOWS_RESERVED_FILE_STEMS.has(stem);
+}
+
+function isSafeMemberFileSegment(value) {
+  const normalized = String(value == null ? '' : value).trim();
+  if (!MEMBER_FILE_SEGMENT_PATTERN.test(normalized)) return false;
+  if (normalized === '.' || normalized === '..') return false;
+  if (normalized.includes('/') || normalized.includes('\\')) return false;
+  if (normalized.includes('\0')) return false;
+  if (/[. ]$/.test(normalized)) return false;
+  if (isWindowsReservedFileSegment(normalized)) return false;
+  return true;
+}
+
+function assertSafeMemberFileSegment(label, value) {
+  const normalized = String(value == null ? '' : value).trim();
+  if (!isSafeMemberFileSegment(normalized)) {
     throw new Error(`Invalid ${String(label)}`);
   }
   return normalized;
@@ -196,7 +250,8 @@ function inferLeadName(paths) {
   }
   const config = resolved.config;
   if (config && Array.isArray(config.members) && config.members[0]) {
-    return String(config.members[0].name);
+    const firstMember = config.members.map((member) => normalizeMemberRecord(member)).find(Boolean);
+    if (firstMember) return firstMember.name;
   }
   return 'team-lead';
 }
@@ -350,6 +405,7 @@ function listInboxMemberNames(paths) {
     .map((entry) => entry.name.slice(0, -5))
     .map((name) => String(name || '').trim())
     .filter((name) => name && name !== 'user')
+    .filter((name) => isSafeMemberFileSegment(name))
     .filter((name) => !looksLikeCrossTeamPseudoRecipient(name))
     .filter((name) => !looksLikeCrossTeamToolRecipient(name));
 }
@@ -358,6 +414,7 @@ function normalizeMemberRecord(member) {
   if (!member || typeof member !== 'object') return null;
   const name = typeof member.name === 'string' ? member.name.trim() : '';
   if (!name) return null;
+  if (!isSafeMemberFileSegment(name)) return null;
   const copyTrimmedString = (key) =>
     typeof member[key] === 'string' && member[key].trim()
       ? { [key]: member[key].trim() }
@@ -699,10 +756,12 @@ function saveTaskAttachmentFile(paths, taskId, flags) {
 }
 
 module.exports = {
+  assertSafeMemberFileSegment,
   assertExplicitTeamMemberName,
   collectExplicitTeamMembers,
   getPaths,
   inferLeadName,
+  isSafeMemberFileSegment,
   isCanonicalLeadMember,
   looksLikeCrossTeamRecipient,
   looksLikeCrossTeamToolRecipient,

@@ -112,6 +112,18 @@ describe('TeamInboxWriter', () => {
     expect(typeof persisted[0].timestamp).toBe('string');
   });
 
+  it('rejects unsafe inbox member names before writing', async () => {
+    await expect(
+      writer.sendMessage('my-team', {
+        member: '../config',
+        text: 'should not escape inboxes',
+      })
+    ).rejects.toThrow('Invalid inbox path');
+
+    expect(hoisted.atomicWrite).not.toHaveBeenCalled();
+    expect(hoisted.files.has('/mock/teams/my-team/config.json')).toBe(false);
+  });
+
   it('retries write when verify cannot find messageId', async () => {
     hoisted.setDropWrites(2);
     const result = await writer.sendMessage('my-team', {

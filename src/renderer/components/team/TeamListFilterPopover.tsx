@@ -6,7 +6,7 @@ import { Button } from '@renderer/components/ui/button';
 import { Checkbox } from '@renderer/components/ui/checkbox';
 import { Popover, PopoverContent, PopoverTrigger } from '@renderer/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/components/ui/tooltip';
-import { normalizePath } from '@renderer/utils/pathNormalize';
+import { normalizePathForMatching } from '@renderer/utils/pathNormalize';
 import { getBaseName } from '@renderer/utils/pathUtils';
 import { Filter } from 'lucide-react';
 
@@ -39,7 +39,7 @@ export function isTeamProjectPathSelected(
   projectPath: string
 ): boolean {
   return selectedProjectPath
-    ? normalizePath(selectedProjectPath) === normalizePath(projectPath)
+    ? normalizePathForMatching(selectedProjectPath) === normalizePathForMatching(projectPath)
     : false;
 }
 

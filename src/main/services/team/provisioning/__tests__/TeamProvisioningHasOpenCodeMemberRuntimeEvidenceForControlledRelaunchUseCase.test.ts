@@ -49,7 +49,7 @@ describe('TeamProvisioningHasOpenCodeMemberRuntimeEvidenceForControlledRelaunchU
                 runtimePid: 1234,
               },
             },
-          } as OpenCodeControlledRelaunchRuntimeEvidenceLane['result'],
+          } as unknown as OpenCodeControlledRelaunchRuntimeEvidenceLane['result'],
         },
       })
     ).resolves.toBe(true);
@@ -101,7 +101,7 @@ describe('TeamProvisioningHasOpenCodeMemberRuntimeEvidenceForControlledRelaunchU
               'Worker-2',
               {
                 alive: true,
-                livenessKind: 'permission_blocked',
+                livenessKind: 'permission_blocked' as const,
               },
             ],
           ])

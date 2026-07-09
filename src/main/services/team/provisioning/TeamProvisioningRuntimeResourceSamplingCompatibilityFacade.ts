@@ -93,4 +93,12 @@ export abstract class TeamProvisioningRuntimeResourceSamplingCompatibilityFacade
   static set RUNTIME_PROCESS_USAGE_CACHE_MAX_ENTRIES(value: number) {
     runtimeResourceSamplingCompatibilityConfig.processUsageCacheMaxEntries = value;
   }
+
+  protected get liveTeamAgentRuntimeMetadataCache(): Map<string, unknown> {
+    return (
+      this as unknown as {
+        runtimeResourceCacheBoundary: { liveTeamAgentRuntimeMetadataCache: Map<string, unknown> };
+      }
+    ).runtimeResourceCacheBoundary.liveTeamAgentRuntimeMetadataCache;
+  }
 }

@@ -148,12 +148,18 @@ export class TeamProvisioningOpenCodeMemberMessageDeliveryCompatibilityService<
     return this.openCodeMemberInboxRelayBoundaryValue;
   }
 
+  protected createOpenCodeMemberMessageDeliveryService(): ReturnType<
+    typeof createOpenCodeMemberMessageDeliveryServiceFromHost
+  > {
+    return createOpenCodeMemberMessageDeliveryServiceFromHost(this.deps.createDeliveryHost());
+  }
+
   async deliverOpenCodeMemberMessage(
     teamName: string,
     input: OpenCodeMemberMessageDeliveryInput
   ): Promise<OpenCodeMemberInboxDelivery> {
     return await deliverOpenCodeMemberMessageHelper(
-      createOpenCodeMemberMessageDeliveryServiceFromHost(this.deps.createDeliveryHost()),
+      this.createOpenCodeMemberMessageDeliveryService(),
       teamName,
       input
     );
@@ -237,11 +243,24 @@ export abstract class TeamProvisioningOpenCodeMemberMessageDeliveryCompatibility
     return this.openCodeMemberMessageDeliveryCompatibility.openCodeMemberInboxRelayBoundary;
   }
 
+  protected createOpenCodeMemberMessageDeliveryService(): ReturnType<
+    typeof createOpenCodeMemberMessageDeliveryServiceFromHost
+  > {
+    return (
+      this.openCodeMemberMessageDeliveryCompatibility as unknown as {
+        createOpenCodeMemberMessageDeliveryService(): ReturnType<
+          typeof createOpenCodeMemberMessageDeliveryServiceFromHost
+        >;
+      }
+    ).createOpenCodeMemberMessageDeliveryService();
+  }
+
   async deliverOpenCodeMemberMessage(
     teamName: string,
     input: OpenCodeMemberMessageDeliveryInput
   ): Promise<OpenCodeMemberInboxDelivery> {
-    return await this.openCodeMemberMessageDeliveryCompatibility.deliverOpenCodeMemberMessage(
+    return await deliverOpenCodeMemberMessageHelper(
+      this.createOpenCodeMemberMessageDeliveryService(),
       teamName,
       input
     );

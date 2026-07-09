@@ -141,11 +141,15 @@ export function createOpenCodeMemberMessageDeliveryServiceFromHost(
         laneId
       ),
     tryRecoverOpenCodeRuntimeLaneBeforeDelivery: (input) =>
-      host.openCodeRuntimeRecoveryFacade.tryRecoverOpenCodeRuntimeLaneBeforeDelivery(input),
+      typeof host.tryRecoverOpenCodeRuntimeLaneBeforeDelivery === 'function'
+        ? host.tryRecoverOpenCodeRuntimeLaneBeforeDelivery(input)
+        : host.openCodeRuntimeRecoveryFacade.tryRecoverOpenCodeRuntimeLaneBeforeDelivery(input),
     tryRecoverOpenCodeRuntimeLaneFromCommittedSessionBeforeDelivery: (input) =>
-      host.openCodeRuntimeRecoveryFacade.tryRecoverOpenCodeRuntimeLaneFromCommittedSessionBeforeDelivery(
-        input
-      ),
+      typeof host.tryRecoverOpenCodeRuntimeLaneFromCommittedSessionBeforeDelivery === 'function'
+        ? host.tryRecoverOpenCodeRuntimeLaneFromCommittedSessionBeforeDelivery(input)
+        : host.openCodeRuntimeRecoveryFacade.tryRecoverOpenCodeRuntimeLaneFromCommittedSessionBeforeDelivery(
+            input
+          ),
     deleteSecondaryRuntimeRun: (teamName, laneId) =>
       host.deleteSecondaryRuntimeRun(teamName, laneId),
     cleanupStoppedTeamOpenCodeRuntimeLanesInBackground: (teamName) =>
@@ -200,6 +204,10 @@ export function createTeamProvisioningOpenCodeMemberMessageDeliveryHostFromServi
     runs: service.runs,
     getCurrentOpenCodeRuntimeRunId: (teamName, laneId) =>
       service.getCurrentOpenCodeRuntimeRunId(teamName, laneId),
+    tryRecoverOpenCodeRuntimeLaneBeforeDelivery: (input) =>
+      service.tryRecoverOpenCodeRuntimeLaneBeforeDelivery(input),
+    tryRecoverOpenCodeRuntimeLaneFromCommittedSessionBeforeDelivery: (input) =>
+      service.tryRecoverOpenCodeRuntimeLaneFromCommittedSessionBeforeDelivery(input),
     deleteSecondaryRuntimeRun: (teamName, laneId) =>
       service.deleteSecondaryRuntimeRun(teamName, laneId),
     openCodeStoppedLaneCleanup: service.openCodeStoppedLaneCleanup,

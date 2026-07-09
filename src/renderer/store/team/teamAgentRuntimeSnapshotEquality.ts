@@ -68,7 +68,6 @@ export function areTeamAgentRuntimeEntriesEqual(
   if (!left || !right) return left === right;
   return (
     left.memberName === right.memberName &&
-    left.updatedAt === right.updatedAt &&
     left.alive === right.alive &&
     left.restartable === right.restartable &&
     left.backendType === right.backendType &&
@@ -109,7 +108,7 @@ export function areTeamAgentRuntimeSnapshotsEqual(
   right: TeamAgentRuntimeSnapshot
 ): boolean {
   if (!left) return false;
-  if (left.teamName !== right.teamName || left.runId !== right.runId || left.updatedAt !== right.updatedAt) {
+  if (left.teamName !== right.teamName || left.runId !== right.runId) {
     return false;
   }
   const leftKeys = Object.keys(left.members);

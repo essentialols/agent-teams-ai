@@ -210,6 +210,24 @@ export function createTeamProvisioningLaunchStateCompatibilityBoundaryFromServic
 >(
   service: TeamProvisioningLaunchStateCompatibilityServiceHost<TRun>
 ): TeamProvisioningLaunchStateCompatibilityBoundary<TRun> {
+  const getLiveRuntimeMetadata = (teamName: string) => {
+    const serviceWithLegacyOverride = service as unknown as {
+      getLiveTeamAgentRuntimeMetadata?: (
+        teamName: string
+      ) => Promise<Map<string, LiveTeamAgentRuntimeMetadata>>;
+    };
+    const ownOverride = Object.prototype.hasOwnProperty.call(
+      serviceWithLegacyOverride,
+      'getLiveTeamAgentRuntimeMetadata'
+    );
+    if (
+      ownOverride &&
+      typeof serviceWithLegacyOverride.getLiveTeamAgentRuntimeMetadata === 'function'
+    ) {
+      return serviceWithLegacyOverride.getLiveTeamAgentRuntimeMetadata(teamName);
+    }
+    return service.liveRuntimeMetadataPorts.getLiveTeamAgentRuntimeMetadata(teamName);
+  };
   return {
     getRegisteredTeamMemberNames(teamName) {
       return readRegisteredTeamMemberNamesFromConfigDefaults(teamName);
@@ -244,8 +262,7 @@ export function createTeamProvisioningLaunchStateCompatibilityBoundaryFromServic
     },
 
     async getLiveTeamAgentNames(teamName) {
-      const runtimeByMember =
-        await service.liveRuntimeMetadataPorts.getLiveTeamAgentRuntimeMetadata(teamName);
+      const runtimeByMember = await getLiveRuntimeMetadata(teamName);
       return new Set(
         [...runtimeByMember.entries()]
           .filter(([, metadata]) => metadata.alive)
@@ -254,7 +271,7 @@ export function createTeamProvisioningLaunchStateCompatibilityBoundaryFromServic
     },
 
     getLiveTeamAgentRuntimeMetadata(teamName) {
-      return service.liveRuntimeMetadataPorts.getLiveTeamAgentRuntimeMetadata(teamName);
+      return getLiveRuntimeMetadata(teamName);
     },
 
     clearPersistedLaunchState(teamName, options) {

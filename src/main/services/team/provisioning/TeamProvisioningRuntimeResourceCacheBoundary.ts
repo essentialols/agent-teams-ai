@@ -27,6 +27,10 @@ export interface TeamProvisioningRuntimeResourceCacheBoundaryPorts {
 
 export interface TeamProvisioningRuntimeResourceCacheBoundary {
   persistedTeamConfigCache: Map<string, PersistedTeamConfigCacheEntry>;
+  liveTeamAgentRuntimeMetadataCache: Map<
+    string,
+    TeamProvisioningLiveRuntimeMetadataCacheEntry<Map<string, LiveTeamAgentRuntimeMetadata>>
+  >;
   memberSpawnStatusesSnapshotCache: Map<
     string,
     TeamProvisioningMemberSpawnStatusesSnapshotCacheEntry<MemberSpawnStatusesSnapshot>
@@ -90,6 +94,7 @@ export function createTeamProvisioningRuntimeResourceCacheBoundary(
 
   return {
     persistedTeamConfigCache,
+    liveTeamAgentRuntimeMetadataCache,
     memberSpawnStatusesSnapshotCache,
     memberSpawnStatusesInFlightByTeam,
     runtimeSnapshotCacheBoundary,

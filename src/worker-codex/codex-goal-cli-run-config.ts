@@ -223,4 +223,3 @@ function parseCodexGoalWorkerReportMode(
 export function splitCsv(value: string): readonly string[] {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
 }
-

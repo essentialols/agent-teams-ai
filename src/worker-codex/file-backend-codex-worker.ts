@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import { readFileSync, statSync } from "node:fs";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import {
   createSubscriptionRuntime,
   DefaultRedactor,
@@ -12,7 +12,6 @@ import {
   type ManagedRunRecord,
   type ManagedRunRecoveryPacket,
   type ManagedRunResumeHandle,
-  type ManagedRunStorePort,
   type ObservabilityPort,
   type ProviderFailure,
   type ProviderTask,
@@ -36,13 +35,11 @@ import {
   PackagedCodexJsonExecutionEngine,
   defaultCodexModel,
   type CodexAppServerProcessFactory,
-  type CodexAppServerCommandApprovalPolicy,
   type CodexReasoningEffort,
   type CodexServiceTier,
   classifyCodexFailure,
   sessionArtifactFromCodexAuthJson,
   codexAuthJsonFromArtifact,
-  readCodexAuthJsonFreshness,
   validateCodexAuthJsonBytes,
 } from "@vioxen/subscription-runtime/provider-codex";
 import { createLocalFileBackendRuntimeAdapters } from "@vioxen/subscription-runtime/store-local-file";
@@ -56,7 +53,6 @@ import {
   type SubscriptionWorkerState,
   type WorkerCapacitySnapshot,
   type CommandPolicy,
-  validateCommandAgainstPolicy,
 } from "@vioxen/subscription-runtime/worker-core";
 import { NodeProcessRunner } from "../worker-local/node-process-runner";
 import { NullWorkerObservability } from "../worker-local/observability";
@@ -65,6 +61,29 @@ import {
   StableWorkerWorkspace,
 } from "../worker-local/temp-workspace";
 import { CommandPolicyRunner } from "./command-policy-runner";
+import { LocalFileManagedRunStore } from "./file-backend-codex-managed-run-store";
+import {
+  buildManagedRunRecoveryPacket,
+  buildManagedRunRecoveryPrompt,
+  canRecoverManagedRun,
+  type ManagedRunPersistContext,
+  type WaitingProviderTaskResult,
+} from "./file-backend-codex-managed-run-recovery";
+import { codexAppServerCommandApprovalPolicy } from "./file-backend-codex-command-policy";
+import {
+  capacityWindowMs,
+  isAuthReseedableCapacity,
+  isSevereCapacity,
+  normalizeCapacityAccountId,
+  normalizeResettableCapacity,
+} from "./file-backend-codex-capacity";
+import {
+  hashArtifact,
+  safeStatMtimeMs,
+  sameArtifactBytes,
+  shouldReplaceSeededCodexSession,
+  writeCodexAuthJsonFileAtomic,
+} from "./file-backend-codex-auth-artifacts";
 
 export type FileBackendCodexWorkerOptions = {
   readonly workerId?: string;
@@ -161,24 +180,6 @@ export type FileBackendCodexManagedRunResumeInput = {
   readonly controls?: ProviderTask["controls"];
   readonly abortSignal?: AbortSignal;
 };
-
-type WaitingProviderTaskResult = Extract<
-  ProviderTaskResult,
-  { readonly status: "waiting_for_input" }
->;
-
-type ManagedRunPersistContext =
-  | {
-      readonly kind: "run";
-      readonly runId: string;
-      readonly job: FileBackendCodexWorkerJob;
-      readonly attempt: number;
-    }
-  | {
-      readonly kind: "resume";
-      readonly input: FileBackendCodexManagedRunResumeInput;
-      readonly previousRecord: ManagedRunRecord | null;
-    };
 
 export class FileBackendCodexWorker implements CapacityAwareSubscriptionWorker<
   FileBackendCodexWorkerJob,
@@ -1307,133 +1308,6 @@ export class FileBackendCodexWorker implements CapacityAwareSubscriptionWorker<
   }
 }
 
-class LocalFileManagedRunStore implements ManagedRunStorePort {
-  constructor(private readonly rootDir: string) {}
-
-  async get(input: { readonly runId: string }): Promise<ManagedRunRecord | null> {
-    const raw = await readFile(this.recordPath(input.runId), "utf8").catch(
-      (error: unknown) => {
-        if (isNodeErrorCode(error, "ENOENT")) return null;
-        throw error;
-      },
-    );
-    if (raw === null) return null;
-    return parseManagedRunRecord(JSON.parse(raw));
-  }
-
-  async saveWaitingInput(input: {
-    readonly runId: string;
-    readonly request: ManagedRunInputRequest;
-    readonly resumeHandle: ManagedRunResumeHandle;
-    readonly recoveryPacket?: ManagedRunRecoveryPacket;
-    readonly taskId?: string;
-    readonly assignedWorkerId?: string;
-    readonly providerInstanceId?: string;
-    readonly workspacePath?: string;
-    readonly outputText?: string;
-    readonly now: Date;
-  }): Promise<ManagedRunRecord> {
-    const current = await this.get({ runId: input.runId });
-    const recoveryPacket = input.recoveryPacket ?? current?.recoveryPacket;
-    const taskId = input.taskId ?? current?.taskId;
-    const assignedWorkerId = input.assignedWorkerId ?? current?.assignedWorkerId;
-    const providerInstanceId =
-      input.providerInstanceId ?? current?.providerInstanceId;
-    const workspacePath = input.workspacePath ?? current?.workspacePath;
-    const outputText = input.outputText ?? current?.outputText;
-    const record: ManagedRunRecord = {
-      runId: input.runId,
-      status: "waiting_for_input",
-      request: input.request,
-      resumeHandle: input.resumeHandle,
-      ...(recoveryPacket === undefined ? {} : { recoveryPacket }),
-      ...(taskId === undefined ? {} : { taskId }),
-      ...(assignedWorkerId === undefined ? {} : { assignedWorkerId }),
-      ...(providerInstanceId === undefined ? {} : { providerInstanceId }),
-      ...(workspacePath === undefined ? {} : { workspacePath }),
-      ...(outputText === undefined ? {} : { outputText }),
-      updatedAt: input.now,
-    };
-    await this.writeRecord(record);
-    return record;
-  }
-
-  async resume(input: {
-    readonly runId: string;
-    readonly requestId: string;
-    readonly answer: string;
-    readonly now: Date;
-  }): Promise<ManagedRunRecord> {
-    const current = await this.get({ runId: input.runId });
-    if (
-      !current ||
-      current.status !== "waiting_for_input" ||
-      current.request?.id !== input.requestId
-    ) {
-      throw new Error("managed_run_request_mismatch");
-    }
-    const {
-      request: _request,
-      ...currentWithoutRequest
-    } = current;
-    const record: ManagedRunRecord = {
-      ...currentWithoutRequest,
-      status: "active",
-      updatedAt: input.now,
-    };
-    await this.writeRecord(record);
-    return record;
-  }
-
-  async complete(input: {
-    readonly runId: string;
-    readonly outputText: string;
-    readonly now: Date;
-  }): Promise<ManagedRunRecord> {
-    const current = await this.get({ runId: input.runId });
-    const record: ManagedRunRecord = {
-      ...(current ?? { runId: input.runId }),
-      runId: input.runId,
-      status: "completed",
-      outputText: input.outputText,
-      updatedAt: input.now,
-    };
-    await this.writeRecord(record);
-    return record;
-  }
-
-  async fail(input: {
-    readonly runId: string;
-    readonly failure: ProviderFailure;
-    readonly now: Date;
-  }): Promise<ManagedRunRecord> {
-    const current = await this.get({ runId: input.runId });
-    const record: ManagedRunRecord = {
-      ...(current ?? { runId: input.runId }),
-      runId: input.runId,
-      status: "failed",
-      failure: input.failure,
-      updatedAt: input.now,
-    };
-    await this.writeRecord(record);
-    return record;
-  }
-
-  private recordPath(runId: string): string {
-    return join(this.rootDir, `${hashText(runId)}.json`);
-  }
-
-  private async writeRecord(record: ManagedRunRecord): Promise<void> {
-    const path = this.recordPath(record.runId);
-    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-    const tempPath = `${path}.${randomUUID()}.tmp`;
-    await writeFile(tempPath, `${JSON.stringify(record, null, 2)}\n`, {
-      mode: 0o600,
-    });
-    await rename(tempPath, path);
-  }
-}
-
 function codexSeedSessionInvalidFailure(): ProviderFailure {
   return {
     code: "provider_session_invalid",
@@ -1453,222 +1327,6 @@ function shouldRetryRefreshConflict(result: RefreshThenRunResult): boolean {
   );
 }
 
-function canRecoverManagedRun(
-  input: FileBackendCodexManagedRunResumeInput,
-  record: ManagedRunRecord | null,
-): record is ManagedRunRecord & {
-  readonly recoveryPacket: ManagedRunRecoveryPacket;
-} {
-  if (!record?.recoveryPacket) return false;
-  if (record.status === "completed" || record.status === "aborted") return false;
-  if (record.runId !== input.runId) return false;
-  if (record.request && record.request.id !== input.requestId) return false;
-  if (record.resumeHandle?.runId && record.resumeHandle.runId !== input.runId) {
-    return false;
-  }
-  return true;
-}
-
-function buildManagedRunRecoveryPacket(input: {
-  readonly result: WaitingProviderTaskResult;
-  readonly context: ManagedRunPersistContext;
-}): ManagedRunRecoveryPacket {
-  const previous =
-    input.context.kind === "resume"
-      ? input.context.previousRecord?.recoveryPacket
-      : input.context.job.recoveryPacket;
-  const job = input.context.kind === "run" ? input.context.job : null;
-  const controls =
-    input.context.kind === "resume"
-      ? input.context.input.controls ?? previous?.controls
-      : job?.controls ?? previous?.controls;
-  const outputSchemaName =
-    input.context.kind === "resume"
-      ? input.context.input.outputSchemaName ?? previous?.outputSchemaName
-      : job?.outputSchemaName ?? previous?.outputSchemaName;
-  const metadata =
-    input.context.kind === "run"
-      ? job?.metadata ?? previous?.metadata
-      : previous?.metadata;
-  const goalObjective =
-    metadata?.codexGoalObjective ?? previous?.goalObjective;
-  const kind = job?.kind ?? previous?.kind;
-  const systemPrompt = job?.systemPrompt ?? previous?.systemPrompt;
-  return {
-    originalPrompt: previous?.originalPrompt ?? job?.prompt ?? input.result.outputText,
-    ...(goalObjective ? { goalObjective } : {}),
-    lastOutput: input.result.outputText,
-    blockerQuestion: input.result.request.question,
-    ...(input.result.request.contextSummary
-      ? { contextSummary: input.result.request.contextSummary }
-      : previous?.contextSummary
-        ? { contextSummary: previous.contextSummary }
-        : {}),
-    attemptSummary: managedRunAttemptSummary(input.context),
-    ...(kind ? { kind } : {}),
-    ...(systemPrompt ? { systemPrompt } : {}),
-    ...(outputSchemaName ? { outputSchemaName } : {}),
-    ...(controls ? { controls } : {}),
-    ...(metadata ? { metadata } : {}),
-  };
-}
-
-function managedRunAttemptSummary(context: ManagedRunPersistContext): string {
-  if (context.kind === "run") {
-    return `Blocked during worker attempt ${context.attempt}.`;
-  }
-  const answerPreview = context.input.answer.trim().slice(0, 240);
-  return [
-    `Recovered after answering request ${context.input.requestId}.`,
-    answerPreview ? `Answer preview: ${answerPreview}` : "Answer preview: (empty answer)",
-  ].join("\n");
-}
-
-function buildManagedRunRecoveryPrompt(input: {
-  readonly packet: ManagedRunRecoveryPacket;
-  readonly answer: string;
-  readonly requestId: string;
-}): string {
-  return [
-    "Continue a previously blocked managed run.",
-    "",
-    "Original task:",
-    input.packet.originalPrompt,
-    "",
-    ...(input.packet.goalObjective
-      ? ["Goal objective:", input.packet.goalObjective, ""]
-      : []),
-    "Last worker output before the blocker:",
-    input.packet.lastOutput || "(no output)",
-    "",
-    "Blocking request:",
-    `Request id: ${input.requestId}`,
-    input.packet.blockerQuestion,
-    "",
-    ...(input.packet.contextSummary
-      ? ["Context summary:", input.packet.contextSummary, ""]
-      : []),
-    ...(input.packet.attemptSummary
-      ? ["Attempt summary:", input.packet.attemptSummary, ""]
-      : []),
-    "Answer from orchestrator:",
-    input.answer.trim() || "(empty answer)",
-    "",
-    "Use the answer above and continue the original task from the recovered state. Do not restart from scratch unless the recovered context is insufficient.",
-  ].join("\n");
-}
-
-function parseManagedRunRecord(value: unknown): ManagedRunRecord {
-  if (!value || typeof value !== "object") {
-    throw new Error("managed_run_record_invalid");
-  }
-  const record = value as ManagedRunRecord & { readonly updatedAt: unknown };
-  if (typeof record.runId !== "string") {
-    throw new Error("managed_run_record_run_id_invalid");
-  }
-  if (typeof record.status !== "string") {
-    throw new Error("managed_run_record_status_invalid");
-  }
-  return {
-    ...record,
-    updatedAt: new Date(String(record.updatedAt)),
-  };
-}
-
-function isNodeErrorCode(error: unknown, code: string): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { readonly code?: unknown }).code === code
-  );
-}
-
-function shouldReplaceSeededCodexSession(input: {
-  readonly existing: SessionEnvelope;
-  readonly incoming: SessionArtifact;
-  readonly now: Date;
-}): boolean {
-  if (sameArtifactBytes(input.existing.artifact, input.incoming)) return false;
-
-  const existingFreshness = safeReadCodexArtifactFreshness({
-    artifact: input.existing.artifact,
-    now: input.now,
-  });
-  if (!existingFreshness) return true;
-
-  const incomingFreshness = safeReadCodexArtifactFreshness({
-    artifact: input.incoming,
-    now: input.now,
-  });
-  if (!incomingFreshness) return false;
-
-  const existingLastRefresh = existingFreshness.lastRefreshAt?.getTime() ?? null;
-  const incomingLastRefresh = incomingFreshness.lastRefreshAt?.getTime() ?? null;
-  if (
-    incomingLastRefresh !== null &&
-    (existingLastRefresh === null || incomingLastRefresh >= existingLastRefresh)
-  ) {
-    return true;
-  }
-  if (existingLastRefresh === null && incomingLastRefresh === null) {
-    return true;
-  }
-
-  const existingExpiry = existingFreshness.expiresAt?.getTime() ?? null;
-  const incomingExpiry = incomingFreshness.expiresAt?.getTime() ?? null;
-  return (
-    incomingExpiry !== null &&
-    (existingExpiry === null || incomingExpiry > existingExpiry)
-  );
-}
-
-function safeReadCodexArtifactFreshness(input: {
-  readonly artifact: SessionArtifact;
-  readonly now: Date;
-}): ReturnType<typeof readCodexAuthJsonFreshness> | null {
-  try {
-    return readCodexAuthJsonFreshness({
-      authJsonBytes: codexAuthJsonFromArtifact(input.artifact),
-      now: input.now,
-    });
-  } catch {
-    return null;
-  }
-}
-
-function safeStatMtimeMs(path: string): number | null {
-  try {
-    return statSync(path).mtimeMs;
-  } catch {
-    return null;
-  }
-}
-
-function isAuthReseedableCapacity(capacity: WorkerCapacitySnapshot): boolean {
-  return (
-    capacity.availability !== "available" &&
-    (
-      capacity.reason === "auth_invalid" ||
-      capacity.reason === "provider_session_invalid" ||
-      capacity.reason === "reconnect_required" ||
-      capacity.reason === "provider_reconnect_required" ||
-      capacity.reason === "session_unhealthy" ||
-      capacity.reason === "quota_limited" ||
-      capacity.availability === "cooldown" ||
-      capacity.availability === "quota_exhausted" ||
-      capacity.availability === "disabled"
-    )
-  );
-}
-
-function sameArtifactBytes(
-  left: SessionArtifact,
-  right: SessionArtifact,
-): boolean {
-  return Buffer.from(left.bytes).equals(Buffer.from(right.bytes));
-}
-
 function appendWarnings<T extends ProviderTaskResult>(
   result: T,
   warnings: readonly RuntimeWarning[],
@@ -1678,10 +1336,6 @@ function appendWarnings<T extends ProviderTaskResult>(
     ...result,
     warnings: [...result.warnings, ...warnings],
   };
-}
-
-function hashArtifact(artifact: SessionArtifact): string {
-  return createHash("sha256").update(artifact.bytes).digest("hex");
 }
 
 function refreshConflictDelayMs(attempt: number): number {
@@ -1703,67 +1357,6 @@ function delay(ms: number, abortSignal: AbortSignal): Promise<void> {
       { once: true },
     );
   });
-}
-
-function codexAppServerCommandApprovalPolicy(
-  policy: CommandPolicy,
-  observability: ObservabilityPort,
-  metadata: Readonly<Record<string, string>>,
-): CodexAppServerCommandApprovalPolicy {
-  return {
-    reviewCommand(input) {
-      const command = commandApprovalVector(input);
-      if (command === null) {
-        observability.emit({
-          name: "command_policy.denied",
-          providerId: "codex",
-          metadata: {
-            ...metadata,
-            reason: "command_unparseable",
-            source: input.source,
-          },
-        });
-        return { approved: false, reason: "command_unparseable" };
-      }
-      const decision = validateCommandAgainstPolicy({ command, policy });
-      if (!decision.allowed) {
-        observability.emit({
-          name: "command_policy.denied",
-          providerId: "codex",
-          metadata: {
-            ...metadata,
-            reason: decision.reason,
-            source: input.source,
-            ...(decision.executableName === undefined
-              ? {}
-              : { executableName: decision.executableName }),
-          },
-        });
-      }
-      return {
-        approved: decision.allowed,
-        reason: decision.allowed ? "command_policy_allowed" : decision.reason,
-      };
-    },
-  };
-}
-
-function commandApprovalVector(input: {
-  readonly command?: readonly string[];
-  readonly commandText?: string;
-}): readonly string[] | null {
-  if (input.command !== undefined) {
-    return input.command.length > 0 && input.command.every((part) => part.trim())
-      ? input.command
-      : null;
-  }
-  const commandText = input.commandText?.trim();
-  if (!commandText) return null;
-  if (/[`$<>|;&\n\r]/.test(commandText)) {
-    return ["sh", "-lc", commandText];
-  }
-  const parts = commandText.split(/\s+/).filter(Boolean);
-  return parts.length > 0 ? parts : null;
 }
 
 function assertWorkerOptions(options: FileBackendCodexWorkerOptions): void {
@@ -1820,68 +1413,8 @@ function assertPositiveInteger(value: number | undefined, code: string): void {
   if (!Number.isInteger(value) || value <= 0) throw new Error(code);
 }
 
-function capacityWindowMs(policy: CodexWorkerCapacityPolicy | undefined): number {
-  return policy?.windowMs ?? 5 * 60 * 60 * 1000;
-}
-
-function normalizeResettableCapacity(
-  capacity: WorkerCapacitySnapshot,
-  now: Date,
-): WorkerCapacitySnapshot {
-  if (
-    !isResettableCapacity(capacity) ||
-    !capacity.cooldownUntil ||
-    capacity.cooldownUntil.getTime() > now.getTime()
-  ) {
-    return capacity;
-  }
-
-  const {
-    cooldownUntil: _cooldownUntil,
-    lastLimitSignalAt: _lastLimitSignalAt,
-    reason: _reason,
-    ...rest
-  } = capacity;
-  return {
-    ...rest,
-    availability: "available",
-  };
-}
-
-function isResettableCapacity(capacity: WorkerCapacitySnapshot): boolean {
-  return (
-    capacity.availability === "cooldown" ||
-    capacity.availability === "quota_exhausted"
-  );
-}
-
-function isSevereCapacity(capacity: WorkerCapacitySnapshot): boolean {
-  return (
-    capacity.availability === "quota_exhausted" ||
-    capacity.availability === "degraded" ||
-    capacity.availability === "disabled"
-  );
-}
-
 function hashText(value: string): string {
   return createHash("sha256").update(value).digest("hex");
-}
-
-function normalizeCapacityAccountId(
-  value: string | null | undefined,
-): string | null {
-  const normalized = value?.trim();
-  return normalized ? normalized : null;
-}
-
-async function writeCodexAuthJsonFileAtomic(
-  authJsonPath: string,
-  authJson: string,
-): Promise<void> {
-  await mkdir(dirname(authJsonPath), { recursive: true, mode: 0o700 });
-  const tempPath = `${authJsonPath}.${process.pid}.${randomUUID()}.tmp`;
-  await writeFile(tempPath, authJson, { mode: 0o600 });
-  await rename(tempPath, authJsonPath);
 }
 
 const systemClock: ClockPort = {

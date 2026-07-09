@@ -1,0 +1,127 @@
+import { describe, expect, it, vi } from 'vitest';
+
+import {
+  createOpenCodeRuntimeDeliveryPorts,
+  type OpenCodeRuntimeDeliveryCrossTeamSender,
+} from '../../../../src/main/services/team/opencode/delivery/OpenCodeRuntimeDeliveryPorts';
+import { CROSS_TEAM_SENT_SOURCE } from '../../../../src/shared/constants/crossTeam';
+
+import type { RuntimeDeliveryEnvelope } from '../../../../src/main/services/team/opencode/delivery/RuntimeDeliveryJournal';
+import type { RuntimeDeliveryDestinationPort } from '../../../../src/main/services/team/opencode/delivery/RuntimeDeliveryService';
+import type { InboxMessage } from '../../../../src/shared/types/team';
+
+describe('OpenCodeRuntimeDeliveryPorts', () => {
+  it('requires runtime proof when an OpenCode runtime delivers cross-team', async () => {
+    const sentMessages: InboxMessage[] = [];
+    const crossTeamSender = vi.fn(
+      (request: Parameters<OpenCodeRuntimeDeliveryCrossTeamSender>[0]) => {
+        sentMessages.push({
+          from: request.fromMember,
+          to: `${request.toTeam}.${request.toMember ?? 'team-lead'}`,
+          text: request.text,
+          timestamp: request.timestamp ?? '2026-04-21T12:00:00.000Z',
+          read: true,
+          messageId: request.messageId ?? 'runtime-delivery-message',
+          source: CROSS_TEAM_SENT_SOURCE,
+        });
+        return Promise.resolve({
+          messageId: request.messageId ?? 'runtime-delivery-message',
+          deliveredToInbox: true,
+        });
+      }
+    );
+    const port = getCrossTeamPort(
+      createOpenCodeRuntimeDeliveryPorts({
+        sentMessagesStore: {
+          appendMessage: vi.fn(() => Promise.resolve()),
+          readMessages: vi.fn(() => Promise.resolve(sentMessages)),
+        },
+        inboxReader: {
+          getMessagesFor: vi.fn(() => Promise.resolve([])),
+        },
+        inboxWriter: {
+          sendMessage: vi.fn(() =>
+            Promise.resolve({
+              deliveredToInbox: true,
+              messageId: 'unused',
+            })
+          ),
+        },
+        getCrossTeamSender: () => crossTeamSender,
+      })
+    );
+
+    const location = await port.write({
+      envelope: envelope(),
+      destinationMessageId: 'runtime-delivery-message',
+    });
+
+    expect(crossTeamSender).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fromTeam: 'team-a',
+        fromMember: 'Builder',
+        toTeam: 'team-b',
+        toMember: 'Reviewer',
+        messageId: 'runtime-delivery-message',
+        requireRuntimeDelivery: true,
+      })
+    );
+    expect(location).toEqual({
+      kind: 'cross_team_outbox',
+      fromTeamName: 'team-a',
+      toTeamName: 'team-b',
+      toMemberName: 'Reviewer',
+      messageId: 'runtime-delivery-message',
+    });
+    await expect(
+      port.verify({
+        destination: {
+          kind: 'cross_team_outbox',
+          fromTeamName: 'team-a',
+          toTeamName: 'team-b',
+          toMemberName: 'Reviewer',
+        },
+        destinationMessageId: 'runtime-delivery-message',
+      })
+    ).resolves.toMatchObject({
+      found: false,
+      diagnostics: ['cross-team runtime delivery requires committed write proof'],
+    });
+    await expect(
+      port.verify({
+        destination: {
+          kind: 'cross_team_outbox',
+          fromTeamName: 'team-a',
+          toTeamName: 'team-b',
+          toMemberName: 'Reviewer',
+        },
+        destinationMessageId: 'runtime-delivery-message',
+        location,
+      })
+    ).resolves.toMatchObject({ found: true });
+  });
+});
+
+function getCrossTeamPort(
+  ports: RuntimeDeliveryDestinationPort[]
+): RuntimeDeliveryDestinationPort {
+  const port = ports.find((candidate) => candidate.kind === 'cross_team_outbox');
+  if (!port) {
+    throw new Error('cross-team runtime delivery port not registered');
+  }
+  return port;
+}
+
+function envelope(): RuntimeDeliveryEnvelope {
+  return {
+    idempotencyKey: 'delivery-1',
+    runId: 'run-1',
+    teamName: 'team-a',
+    fromMemberName: 'Builder',
+    providerId: 'opencode',
+    runtimeSessionId: 'session-1',
+    to: { teamName: 'team-b', memberName: 'Reviewer' },
+    text: 'Please review this',
+    createdAt: '2026-04-21T12:00:00.000Z',
+  };
+}

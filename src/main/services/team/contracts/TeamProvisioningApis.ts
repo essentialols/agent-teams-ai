@@ -227,6 +227,16 @@ export interface TeamCrossTeamMessagingApi {
     conversationId: string
   ): void;
   isTeamAlive(teamName: string): boolean;
+  relayInboxFileToLiveRecipient(
+    teamName: string,
+    inboxName: string,
+    options?: TeamOpenCodeMemberInboxRelayOptions
+  ): Promise<{
+    kind: string;
+    relayed: number;
+    diagnostics?: string[];
+    lastDelivery?: TeamOpenCodeMemberInboxDelivery;
+  }>;
   relayLeadInboxMessages(teamName: string): Promise<number>;
 }
 
@@ -405,6 +415,7 @@ export function bindTeamCrossTeamMessagingApi(
     clearPendingCrossTeamReplyExpectation:
       source.clearPendingCrossTeamReplyExpectation.bind(source),
     isTeamAlive: source.isTeamAlive.bind(source),
+    relayInboxFileToLiveRecipient: source.relayInboxFileToLiveRecipient.bind(source),
     relayLeadInboxMessages: source.relayLeadInboxMessages.bind(source),
   };
 }

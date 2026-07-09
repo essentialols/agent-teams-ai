@@ -55,6 +55,10 @@ function createSource() {
       delivered: 0,
       failed: 0,
     })),
+    relayInboxFileToLiveRecipient: vi.fn(async () => ({
+      kind: 'native_lead',
+      relayed: 0,
+    })),
     relayLeadInboxMessages: vi.fn(async () => 0),
     getOpenCodeRuntimeDeliveryStatus: vi.fn(async () => null),
     resolveRuntimeRecipientProviderId: vi.fn(async () => undefined),
@@ -149,12 +153,14 @@ describe('bindTeamCrossTeamMessagingApi', () => {
     const source = createSource();
     const api = bindTeamCrossTeamMessagingApi(source as never);
     const resolveCrossTeamReplyMetadata = api.resolveCrossTeamReplyMetadata;
+    const relayInboxFileToLiveRecipient = api.relayInboxFileToLiveRecipient;
     const relayLeadInboxMessages = api.relayLeadInboxMessages;
 
     expect(sortedKeys(api)).toEqual([
       'clearPendingCrossTeamReplyExpectation',
       'isTeamAlive',
       'registerPendingCrossTeamReplyExpectation',
+      'relayInboxFileToLiveRecipient',
       'relayLeadInboxMessages',
       'resolveCrossTeamReplyMetadata',
     ]);
@@ -177,6 +183,11 @@ describe('bindTeamCrossTeamMessagingApi', () => {
       'to-team',
       'conversation-1'
     );
+    await expect(relayInboxFileToLiveRecipient('to-team', 'team-lead')).resolves.toEqual({
+      kind: 'native_lead',
+      relayed: 0,
+    });
+    expect(source.relayInboxFileToLiveRecipient).toHaveBeenCalledWith('to-team', 'team-lead');
     await expect(relayLeadInboxMessages('to-team')).resolves.toBe(0);
   });
 });

@@ -754,6 +754,7 @@ describe('TeamProvisioning API binders', () => {
       registered: string[];
       cleared: string[];
       relayedTeamName: string | null;
+      relayedInbox: string | null;
     }
 
     const source: CrossTeamSource = {
@@ -761,6 +762,7 @@ describe('TeamProvisioning API binders', () => {
       registered: [],
       cleared: [],
       relayedTeamName: null,
+      relayedInbox: null,
       resolveCrossTeamReplyMetadata(this: CrossTeamSource, teamName: string, toTeam: string) {
         return {
           conversationId: `${this.marker}:${teamName}:${toTeam}`,
@@ -786,6 +788,14 @@ describe('TeamProvisioning API binders', () => {
       isTeamAlive(this: CrossTeamSource, teamName: string): boolean {
         return teamName === this.marker;
       },
+      relayInboxFileToLiveRecipient(
+        this: CrossTeamSource,
+        teamName: string,
+        inboxName: string
+      ): Promise<{ kind: string; relayed: number }> {
+        this.relayedInbox = `${teamName}:${inboxName}`;
+        return Promise.resolve({ kind: 'native_lead', relayed: 4 });
+      },
       relayLeadInboxMessages(this: CrossTeamSource, teamName: string): Promise<number> {
         this.relayedTeamName = teamName;
         return Promise.resolve(3);
@@ -798,12 +808,14 @@ describe('TeamProvisioning API binders', () => {
       api.registerPendingCrossTeamReplyExpectation.bind(undefined);
     const clearPendingCrossTeamReplyExpectation =
       api.clearPendingCrossTeamReplyExpectation.bind(undefined);
+    const relayInboxFileToLiveRecipient = api.relayInboxFileToLiveRecipient.bind(undefined);
     const relayLeadInboxMessages = api.relayLeadInboxMessages.bind(undefined);
 
     expect(Object.keys(api).sort()).toEqual([
       'clearPendingCrossTeamReplyExpectation',
       'isTeamAlive',
       'registerPendingCrossTeamReplyExpectation',
+      'relayInboxFileToLiveRecipient',
       'relayLeadInboxMessages',
       'resolveCrossTeamReplyMetadata',
     ]);
@@ -816,6 +828,11 @@ describe('TeamProvisioning API binders', () => {
     expect(source.registered).toEqual(['team-a:team-b:conversation-1']);
     expect(source.cleared).toEqual(['team-a:team-b:conversation-1']);
     expect(api.isTeamAlive('source-bound')).toBe(true);
+    await expect(relayInboxFileToLiveRecipient('team-b', 'team-lead')).resolves.toEqual({
+      kind: 'native_lead',
+      relayed: 4,
+    });
+    expect(source.relayedInbox).toBe('team-b:team-lead');
     await expect(relayLeadInboxMessages('team-b')).resolves.toBe(3);
     expect(source.relayedTeamName).toBe('team-b');
   });

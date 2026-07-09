@@ -58,6 +58,7 @@ describe('CrossTeamService', () => {
   let inboxWriter: { sendMessage: ReturnType<typeof vi.fn> };
   let provisioning: {
     isTeamAlive: ReturnType<typeof vi.fn>;
+    relayInboxFileToLiveRecipient: ReturnType<typeof vi.fn>;
     relayLeadInboxMessages: ReturnType<typeof vi.fn>;
     resolveCrossTeamReplyMetadata: ReturnType<typeof vi.fn>;
     registerPendingCrossTeamReplyExpectation: ReturnType<typeof vi.fn>;
@@ -78,6 +79,10 @@ describe('CrossTeamService', () => {
     };
     provisioning = {
       isTeamAlive: vi.fn().mockReturnValue(false),
+      relayInboxFileToLiveRecipient: vi.fn().mockResolvedValue({
+        kind: 'native_lead',
+        relayed: 0,
+      }),
       relayLeadInboxMessages: vi.fn().mockResolvedValue(0),
       resolveCrossTeamReplyMetadata: vi.fn().mockReturnValue(null),
       registerPendingCrossTeamReplyExpectation: vi.fn(),
@@ -257,6 +262,70 @@ describe('CrossTeamService', () => {
       await service.send(makeRequest());
 
       expect(provisioning.relayLeadInboxMessages).not.toHaveBeenCalled();
+    });
+
+    it('requires live runtime proof when requested by runtime delivery', async () => {
+      provisioning.relayInboxFileToLiveRecipient.mockResolvedValue({
+        kind: 'native_lead',
+        relayed: 1,
+      });
+
+      const result = await service.send(makeRequest({ requireRuntimeDelivery: true }));
+
+      expect(result.deliveredToInbox).toBe(true);
+      expect(provisioning.relayInboxFileToLiveRecipient).toHaveBeenCalledWith(
+        'team-b',
+        'team-lead',
+        { onlyMessageId: result.messageId }
+      );
+      expect(provisioning.relayLeadInboxMessages).not.toHaveBeenCalled();
+    });
+
+    it('rejects runtime-required delivery when live relay does not prove delivery', async () => {
+      provisioning.relayInboxFileToLiveRecipient.mockResolvedValue({
+        kind: 'native_lead',
+        relayed: 0,
+      });
+
+      await expect(
+        service.send(makeRequest({ requireRuntimeDelivery: true }))
+      ).rejects.toThrow('Cross-team runtime delivery was not confirmed for team-b.team-lead');
+    });
+
+    it('accepts OpenCode runtime proof when the target runtime accepted the prompt', async () => {
+      provisioning.relayInboxFileToLiveRecipient.mockResolvedValue({
+        kind: 'opencode_member',
+        relayed: 0,
+        lastDelivery: {
+          delivered: true,
+          accepted: true,
+          responsePending: true,
+          reason: 'opencode_delivery_response_pending',
+        },
+      });
+
+      await expect(
+        service.send(makeRequest({ requireRuntimeDelivery: true }))
+      ).resolves.toMatchObject({
+        deliveredToInbox: true,
+      });
+    });
+
+    it('rejects OpenCode runtime-required delivery while prompt acceptance is unproven', async () => {
+      provisioning.relayInboxFileToLiveRecipient.mockResolvedValue({
+        kind: 'opencode_member',
+        relayed: 0,
+        lastDelivery: {
+          delivered: true,
+          accepted: false,
+          responsePending: true,
+          reason: 'opencode_delivery_response_pending',
+        },
+      });
+
+      await expect(
+        service.send(makeRequest({ requireRuntimeDelivery: true }))
+      ).rejects.toThrow('opencode_delivery_response_pending');
     });
 
     it('gracefully handles relay failure', async () => {

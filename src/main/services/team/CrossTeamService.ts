@@ -192,7 +192,19 @@ export class CrossTeamService {
     });
 
     if (duplicate) {
-      return { messageId: duplicate.messageId, deliveredToInbox: true, deduplicated: true };
+      const result: CrossTeamSendResult = {
+        messageId: duplicate.messageId,
+        deliveredToInbox: true,
+        deduplicated: true,
+      };
+      if (request.requireRuntimeDelivery) {
+        await this.requireCrossTeamRuntimeDelivery({
+          teamName: toTeam,
+          memberName: targetMemberName,
+          messageId: result.messageId,
+        });
+      }
+      return result;
     }
 
     // 6. Write a non-actionable sender copy so the message appears in activity without
@@ -218,6 +230,15 @@ export class CrossTeamService {
       logger.warn(
         `Failed to write sender copy for ${fromTeam}: ${e instanceof Error ? e.message : String(e)}`
       );
+    }
+
+    if (request.requireRuntimeDelivery) {
+      await this.requireCrossTeamRuntimeDelivery({
+        teamName: toTeam,
+        memberName: targetMemberName,
+        messageId,
+      });
+      return { messageId, deliveredToInbox: true };
     }
 
     // 7. Best-effort relay (if online)
@@ -270,4 +291,61 @@ export class CrossTeamService {
   async getOutbox(teamName: string): Promise<CrossTeamMessage[]> {
     return this.outbox.read(teamName);
   }
+
+  private async requireCrossTeamRuntimeDelivery(input: {
+    teamName: string;
+    memberName: string;
+    messageId: string;
+  }): Promise<void> {
+    if (!this.messaging) {
+      throw new Error('Cross-team runtime delivery guard is not configured');
+    }
+
+    const relay = await this.messaging.relayInboxFileToLiveRecipient(
+      input.teamName,
+      input.memberName,
+      { onlyMessageId: input.messageId }
+    );
+    if (hasRuntimeDeliveryProof(relay)) {
+      return;
+    }
+
+    throw new Error(
+      `Cross-team runtime delivery was not confirmed for ${input.teamName}.${input.memberName}: ` +
+        describeRuntimeDeliveryRelay(relay)
+    );
+  }
+}
+
+function hasRuntimeDeliveryProof(
+  relay: Awaited<ReturnType<TeamCrossTeamMessagingApi['relayInboxFileToLiveRecipient']>>
+): boolean {
+  if (relay.kind === 'native_lead') {
+    return relay.relayed > 0;
+  }
+
+  if (relay.kind !== 'opencode_member') {
+    return false;
+  }
+
+  if (relay.relayed > 0) {
+    return true;
+  }
+
+  const delivery = relay.lastDelivery;
+  return Boolean(
+    delivery?.delivered &&
+      delivery.accepted === true &&
+      !delivery.acceptanceUnknown &&
+      !delivery.queuedBehindMessageId
+  );
+}
+
+function describeRuntimeDeliveryRelay(
+  relay: Awaited<ReturnType<TeamCrossTeamMessagingApi['relayInboxFileToLiveRecipient']>>
+): string {
+  const diagnostics = relay.diagnostics?.filter(Boolean) ?? [];
+  const lastDelivery = relay.lastDelivery;
+  const reason = lastDelivery?.reason;
+  return reason || diagnostics[0] || `relay kind ${relay.kind} relayed ${relay.relayed}`;
 }

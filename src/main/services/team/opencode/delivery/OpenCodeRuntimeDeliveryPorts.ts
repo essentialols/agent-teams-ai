@@ -16,6 +16,7 @@ export type OpenCodeRuntimeDeliveryCrossTeamSender = (request: {
   messageId?: string;
   timestamp?: string;
   conversationId?: string;
+  requireRuntimeDelivery?: boolean;
 }) => Promise<unknown>;
 
 export interface OpenCodeRuntimeDeliveryPortsDependencies {
@@ -195,6 +196,7 @@ export function createOpenCodeRuntimeDeliveryPorts(
         messageId: destinationMessageId,
         timestamp: envelope.createdAt,
         conversationId: envelope.idempotencyKey,
+        requireRuntimeDelivery: true,
       });
       const deliveredMessageId = isCrossTeamSendResult(result)
         ? result.messageId.trim()
@@ -216,21 +218,18 @@ export function createOpenCodeRuntimeDeliveryPorts(
         messageId: deliveredMessageId,
       };
     },
-    verify: async ({ destination, destinationMessageId, location }) => {
-      const expectedLocation = isCrossTeamLocation(location)
-        ? location
-        : destination.kind === 'cross_team_outbox'
-          ? {
-              kind: 'cross_team_outbox' as const,
-              fromTeamName: destination.fromTeamName,
-              toTeamName: destination.toTeamName,
-              toMemberName: destination.toMemberName,
-              messageId: destinationMessageId,
-            }
-          : null;
-      if (!expectedLocation) {
+    verify: async ({ destination, location }) => {
+      if (destination.kind !== 'cross_team_outbox') {
         return { found: false, location: null, diagnostics: ['destination kind mismatch'] };
       }
+      if (!isCrossTeamLocation(location)) {
+        return {
+          found: false,
+          location: null,
+          diagnostics: ['cross-team runtime delivery requires committed write proof'],
+        };
+      }
+      const expectedLocation = location;
       const messages = await deps.sentMessagesStore.readMessages(expectedLocation.fromTeamName);
       const expectedRecipient = `${expectedLocation.toTeamName}.${expectedLocation.toMemberName}`;
       const found = messages.some(

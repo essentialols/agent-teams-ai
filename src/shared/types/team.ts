@@ -1783,6 +1783,8 @@ export interface CrossTeamSendRequest {
   actionMode?: AgentActionMode;
   summary?: string;
   chainDepth?: number;
+  /** Runtime-control sends require live relay proof before acknowledging delivery. */
+  requireRuntimeDelivery?: boolean;
 }
 
 export interface CrossTeamSendResult {

@@ -101,8 +101,8 @@ export function areTeamAgentRuntimeEntriesEqual(
     left.runtimeSessionId === right.runtimeSessionId &&
     left.runtimeDiagnostic === right.runtimeDiagnostic &&
     left.runtimeDiagnosticSeverity === right.runtimeDiagnosticSeverity &&
-    (!options.compareFreshnessTimestamps || left.updatedAt === right.updatedAt) &&
-    left.runtimeLastSeenAt === right.runtimeLastSeenAt &&
+    (!options.compareFreshnessTimestamps ||
+      (left.updatedAt === right.updatedAt && left.runtimeLastSeenAt === right.runtimeLastSeenAt)) &&
     left.historicalBootstrapConfirmed === right.historicalBootstrapConfirmed &&
     areDiagnosticsEqual(left.diagnostics, right.diagnostics) &&
     areResourceHistoryEntriesEqual(left.resourceHistory, right.resourceHistory)

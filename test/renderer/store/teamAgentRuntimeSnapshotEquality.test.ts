@@ -188,14 +188,52 @@ describe('teamAgentRuntimeSnapshotEquality', () => {
       updatedAt: '2026-05-22T10:00:00.000Z',
       providerBackendId: 'codex-native',
       fastMode: 'inherit',
+      members: {
+        alice: createRuntimeEntry({
+          updatedAt: '2026-05-22T10:00:00.000Z',
+          runtimeLastSeenAt: '2026-05-22T10:00:00.000Z',
+        }),
+      },
     });
     const right = createRuntimeSnapshot({
       updatedAt: '2026-05-22T10:05:00.000Z',
       providerBackendId: 'api',
       fastMode: 'on',
+      members: {
+        alice: createRuntimeEntry({
+          updatedAt: '2026-05-22T10:05:00.000Z',
+          runtimeLastSeenAt: '2026-05-22T10:05:00.000Z',
+        }),
+      },
     });
 
     expect(areTeamAgentRuntimeSnapshotsEqual(left, right)).toBe(true);
+  });
+
+  it('can opt into freshness timestamp comparison for stabilizer recency checks', () => {
+    const left = createRuntimeSnapshot({
+      updatedAt: '2026-05-22T10:00:00.000Z',
+      members: {
+        alice: createRuntimeEntry({
+          updatedAt: '2026-05-22T10:00:00.000Z',
+          runtimeLastSeenAt: '2026-05-22T10:00:00.000Z',
+        }),
+      },
+    });
+    const right = createRuntimeSnapshot({
+      updatedAt: '2026-05-22T10:05:00.000Z',
+      members: {
+        alice: createRuntimeEntry({
+          updatedAt: '2026-05-22T10:05:00.000Z',
+          runtimeLastSeenAt: '2026-05-22T10:05:00.000Z',
+        }),
+      },
+    });
+
+    expect(areTeamAgentRuntimeSnapshotsEqual(left, right)).toBe(true);
+    expect(
+      areTeamAgentRuntimeSnapshotsEqual(left, right, { compareFreshnessTimestamps: true })
+    ).toBe(false);
   });
 
   it('returns false when there is no previous runtime snapshot', () => {

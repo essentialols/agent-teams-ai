@@ -266,6 +266,7 @@ let pendingFreshGlobalTasksRefresh = false;
 const reportedTaskEndKeys = new Set<string>();
 const reportedTeamLaunchEndRunIds = new Set<string>();
 const teamLaunchAnalyticsByRunId = new Map<string, TeamLaunchAnalyticsContext>();
+const teamAgentRuntimeFreshnessSnapshotByTeam = new Map<string, TeamAgentRuntimeSnapshot>();
 
 type GlobalTaskNotificationParams = Parameters<typeof processGlobalTaskNotifications>[0];
 
@@ -293,6 +294,33 @@ function clearTeamDataRequestsForTeam(teamName: string): void {
       inFlightTeamDataRequests.delete(key);
     }
   }
+}
+
+function getTeamAgentRuntimeFreshnessSnapshot(
+  teamName: string,
+  visibleSnapshot: TeamAgentRuntimeSnapshot | undefined,
+  incomingSnapshot: TeamAgentRuntimeSnapshot
+): TeamAgentRuntimeSnapshot | undefined {
+  const cachedSnapshot = teamAgentRuntimeFreshnessSnapshotByTeam.get(teamName);
+  if (
+    !cachedSnapshot ||
+    cachedSnapshot.teamName !== incomingSnapshot.teamName ||
+    cachedSnapshot.runId !== incomingSnapshot.runId
+  ) {
+    return visibleSnapshot;
+  }
+  return cachedSnapshot;
+}
+
+function rememberTeamAgentRuntimeFreshnessSnapshot(
+  teamName: string,
+  snapshot: TeamAgentRuntimeSnapshot
+): void {
+  teamAgentRuntimeFreshnessSnapshotByTeam.set(teamName, snapshot);
+}
+
+function clearTeamAgentRuntimeFreshnessSnapshot(teamName: string): void {
+  teamAgentRuntimeFreshnessSnapshotByTeam.delete(teamName);
 }
 
 export function isTeamDataRefreshPending(teamName: string): boolean {
@@ -329,6 +357,7 @@ export function __resetTeamSliceModuleStateForTests(): void {
   reportedTaskEndKeys.clear();
   reportedTeamLaunchEndRunIds.clear();
   teamLaunchAnalyticsByRunId.clear();
+  teamAgentRuntimeFreshnessSnapshotByTeam.clear();
   clearAllPendingReplyRefreshWaits();
   clearAllLastResolvedTeamDataRefreshes();
   clearAllTeamLocalStateEpochs();
@@ -362,6 +391,7 @@ function clearTeamScopedTransientState(teamName: string): void {
   clearMemberSpawnStatusesIpcBackoff(teamName);
   clearTeamRefreshBurstDiagnostics(teamName);
   clearMemberSpawnUiEqualLastWarn(teamName);
+  clearTeamAgentRuntimeFreshnessSnapshot(teamName);
   clearTeamScopedSelectorCaches(teamName);
 }
 
@@ -1668,9 +1698,15 @@ export const createTeamSlice: StateCreator<AppState, [], [], TeamSlice> = (set, 
         ) {
           return {};
         }
-        const previousSnapshot = prev.teamAgentRuntimeByTeam[teamName];
+        const visibleSnapshot = prev.teamAgentRuntimeByTeam[teamName];
+        const previousSnapshot = getTeamAgentRuntimeFreshnessSnapshot(
+          teamName,
+          visibleSnapshot,
+          snapshot
+        );
         const stabilizedSnapshot = stabilizeTeamAgentRuntimeSnapshot(previousSnapshot, snapshot);
-        if (areTeamAgentRuntimeSnapshotsEqual(previousSnapshot, stabilizedSnapshot)) {
+        rememberTeamAgentRuntimeFreshnessSnapshot(teamName, stabilizedSnapshot);
+        if (areTeamAgentRuntimeSnapshotsEqual(visibleSnapshot, stabilizedSnapshot)) {
           return {};
         }
         return {
@@ -4311,6 +4347,7 @@ export const createTeamSlice: StateCreator<AppState, [], [], TeamSlice> = (set, 
         delete nextSpawnStatuses[existing.teamName];
         delete nextSpawnSnapshots[existing.teamName];
         delete nextRuntime[existing.teamName];
+        clearTeamAgentRuntimeFreshnessSnapshot(existing.teamName);
       }
       const nextActiveTools = { ...state.activeToolsByTeam };
       const nextFinishedVisible = { ...state.finishedVisibleByTeam };
@@ -4476,6 +4513,7 @@ export const createTeamSlice: StateCreator<AppState, [], [], TeamSlice> = (set, 
         if (!currentStatuses) {
           if (progress.state !== 'ready') {
             delete nextRuntime[progress.teamName];
+            clearTeamAgentRuntimeFreshnessSnapshot(progress.teamName);
           }
           return {
             memberSpawnStatusesByTeam: next,
@@ -4501,6 +4539,7 @@ export const createTeamSlice: StateCreator<AppState, [], [], TeamSlice> = (set, 
           delete nextSnapshots[progress.teamName];
         }
         delete nextRuntime[progress.teamName];
+        clearTeamAgentRuntimeFreshnessSnapshot(progress.teamName);
         return {
           memberSpawnStatusesByTeam: next,
           memberSpawnSnapshotsByTeam: nextSnapshots,

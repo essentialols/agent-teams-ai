@@ -130,4 +130,23 @@ describe('teamAgentRuntimeSnapshotStabilizer', () => {
     expect(stabilized).toBe(next);
     expect(stabilized.members.alice.alive).toBe(false);
   });
+
+  it('does not carry live state across different teams', () => {
+    const previous = createRuntimeSnapshot({ teamName: 'beacon-desk-14' });
+    const next = createRuntimeSnapshot({
+      teamName: 'beacon-desk-15',
+      members: {
+        alice: createRuntimeEntry({
+          alive: false,
+          livenessKind: 'registered_only',
+          updatedAt: '2026-05-31T10:00:05.000Z',
+        }),
+      },
+    });
+
+    const stabilized = stabilizeTeamAgentRuntimeSnapshot(previous, next, BASE_TIME_MS + 5_000);
+
+    expect(stabilized).toBe(next);
+    expect(stabilized.members.alice.alive).toBe(false);
+  });
 });

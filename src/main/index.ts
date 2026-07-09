@@ -1067,7 +1067,7 @@ let tokenUsageFeature: TokenUsageFeatureFacade | null = null;
 let memberWorkSyncFeature: MemberWorkSyncFeatureFacade | null = null;
 let teamDataService: TeamDataService;
 let teamProvisioningService: TeamProvisioningService;
-let teamHttpLaunchApi: TeamProvisioningStartApi | null = null;
+let teamHttpProvisioningStartApi: TeamProvisioningStartApi | null = null;
 let teamHttpProvisioningStatusApi: TeamProvisioningStatusApi | null = null;
 let teamHttpTaskActivityApi: TeamTaskActivityRepairApi | null = null;
 let teamHttpRuntimeApi: TeamHttpRuntimeApi | null = null;
@@ -2606,7 +2606,7 @@ async function initializeServices(): Promise<void> {
     message: 'Wiring app actions...',
   });
 
-  teamHttpLaunchApi = bindTeamProvisioningStartApi(teamProvisioningService);
+  teamHttpProvisioningStartApi = bindTeamProvisioningStartApi(teamProvisioningService);
   teamHttpProvisioningStatusApi = bindTeamProvisioningStatusApi(teamProvisioningService);
   teamHttpTaskActivityApi = bindTeamTaskActivityRepairApi(teamProvisioningService);
   teamHttpRuntimeApi = bindTeamHttpRuntimeApi(teamProvisioningService);
@@ -2727,7 +2727,7 @@ async function startHttpServer(
     const config = configManager.getConfig();
     const activeContext = contextRegistry.getActive();
     if (
-      !teamHttpLaunchApi ||
+      !teamHttpProvisioningStartApi ||
       !teamHttpProvisioningStatusApi ||
       !teamHttpTaskActivityApi ||
       !teamHttpRuntimeApi ||
@@ -2749,7 +2749,7 @@ async function startHttpServer(
         updaterService,
         sshConnectionManager,
         teamDataApi: bindTeamHttpDataApi(teamDataService),
-        teamLaunchApi: teamHttpLaunchApi,
+        teamProvisioningStartApi: teamHttpProvisioningStartApi,
         teamProvisioningStatusApi: teamHttpProvisioningStatusApi,
         teamTaskActivityApi: teamHttpTaskActivityApi,
         teamRuntimeApi: teamHttpRuntimeApi,

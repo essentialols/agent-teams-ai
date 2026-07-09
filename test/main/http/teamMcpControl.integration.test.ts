@@ -14,7 +14,8 @@ import type { HttpServices } from '@main/http';
 import type {
   OpenCodeRuntimeControlAck,
   TeamHttpRuntimeApi,
-  TeamLaunchApi,
+  TeamProvisioningStartApi,
+  TeamProvisioningStatusApi,
   TeamRuntimeControlCompatibilityApi,
 } from '@main/services/team/contracts/TeamProvisioningApis';
 import type {
@@ -239,7 +240,7 @@ function createServices(claudeRoot: string): {
     };
   }
 
-  const teamLaunchApi = {
+  const teamProvisioningStartApi = {
     createTeam,
     launchTeam: async (
       request: TeamLaunchRequest,
@@ -263,6 +264,8 @@ function createServices(claudeRoot: string): {
         onProgress
       );
     },
+  } satisfies TeamProvisioningStartApi;
+  const teamProvisioningStatusApi = {
     getProvisioningStatus: (runId: string): Promise<TeamProvisioningProgress> => {
       const progress = progressByRunId.get(runId);
       if (!progress) {
@@ -270,7 +273,7 @@ function createServices(claudeRoot: string): {
       }
       return Promise.resolve(progress);
     },
-  } satisfies TeamLaunchApi;
+  } satisfies TeamProvisioningStatusApi;
   const teamRuntimeApi = {
     getRuntimeState: (teamName: string): Promise<TeamRuntimeState> => {
       const runId = runIdByTeam.get(teamName) ?? null;
@@ -311,8 +314,8 @@ function createServices(claudeRoot: string): {
       updaterService: {} as HttpServices['updaterService'],
       sshConnectionManager: {} as HttpServices['sshConnectionManager'],
       teamDataApi: teamDataService,
-      teamLaunchApi,
-      teamProvisioningStatusApi: teamLaunchApi,
+      teamProvisioningStartApi,
+      teamProvisioningStatusApi,
       teamRuntimeApi,
       teamRuntimeControlApi,
     },
@@ -534,7 +537,7 @@ describe('MCP team tools over the local REST control API', () => {
     const app = Fastify();
     const { services } = createServices(claudeRoot);
     let launchRequest: TeamLaunchRequest | null = null;
-    services.teamLaunchApi!.launchTeam = (
+    services.teamProvisioningStartApi!.launchTeam = (
       request: TeamLaunchRequest
     ): Promise<TeamLaunchResponse> => {
       launchRequest = request;

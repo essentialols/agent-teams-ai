@@ -430,9 +430,11 @@ describe('ipc teams handlers', () => {
     detachLiveRosterMember: vi.fn(() => resolvedUndefined()),
   };
   const teamHandlerApis = {
-    launch: {
+    provisioningStart: {
       createTeam: teamHandlerMocks.createTeam,
       launchTeam: teamHandlerMocks.launchTeam,
+    },
+    provisioningStatus: {
       getProvisioningStatus: teamHandlerMocks.getProvisioningStatus,
     },
     preflight: {

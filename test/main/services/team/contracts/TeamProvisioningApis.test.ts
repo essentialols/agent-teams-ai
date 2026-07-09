@@ -85,16 +85,18 @@ describe('bindTeamIpcHandlerApis', () => {
     expect(sortedKeys(api)).toEqual([
       'claudeLogs',
       'diagnostics',
-      'launch',
       'memberLifecycle',
       'messaging',
       'preflight',
       'provisioningRun',
+      'provisioningStart',
+      'provisioningStatus',
       'runtime',
       'taskActivity',
       'toolApproval',
     ]);
-    expect(sortedKeys(api.launch)).toEqual(['createTeam', 'getProvisioningStatus', 'launchTeam']);
+    expect(sortedKeys(api.provisioningStart)).toEqual(['createTeam', 'launchTeam']);
+    expect(sortedKeys(api.provisioningStatus)).toEqual(['getProvisioningStatus']);
     expect(sortedKeys(api.preflight)).toEqual(['getCliHelpOutput', 'prepareForProvisioning']);
     expect(sortedKeys(api.provisioningRun)).toEqual(['cancelProvisioning', 'hasProvisioningRun']);
     expect(sortedKeys(api.taskActivity)).toEqual([
@@ -140,10 +142,15 @@ describe('bindTeamIpcHandlerApis', () => {
 
   it('binds facade methods to the source service instance', async () => {
     const api = bindTeamIpcHandlerApis(createSource() as never);
-    const createTeam = api.launch.createTeam;
+    const createTeam = api.provisioningStart.createTeam;
+    const getProvisioningStatus = api.provisioningStatus.getProvisioningStatus;
 
     await expect(createTeam({} as never, () => undefined)).resolves.toEqual({
       runId: 'bound-run',
+    });
+    await expect(getProvisioningStatus('run-1')).resolves.toMatchObject({
+      runId: 'run-1',
+      state: 'spawning',
     });
   });
 });

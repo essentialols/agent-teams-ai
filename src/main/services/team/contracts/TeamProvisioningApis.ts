@@ -44,8 +44,6 @@ export interface TeamProvisioningStatusApi {
   getProvisioningStatus(runId: string): Promise<TeamProvisioningProgress>;
 }
 
-export interface TeamLaunchApi extends TeamProvisioningStartApi, TeamProvisioningStatusApi {}
-
 export interface TeamProvisioningRunApi {
   cancelProvisioning(runId: string): Promise<void>;
   hasProvisioningRun(teamName: string): boolean;
@@ -99,7 +97,8 @@ export interface TeamHttpDataApi {
 }
 
 export interface TeamIpcHandlerApis {
-  launch: TeamLaunchApi;
+  provisioningStart: TeamProvisioningStartApi;
+  provisioningStatus: TeamProvisioningStatusApi;
   preflight: TeamProvisioningPreflightApi;
   provisioningRun: TeamProvisioningRunApi;
   taskActivity: TeamTaskActivityRepairApi;
@@ -251,14 +250,6 @@ export interface TeamToolApprovalApi {
   updateToolApprovalSettings(teamName: string, settings: ToolApprovalSettings): void;
 }
 
-export function bindTeamLaunchApi(source: TeamLaunchApi): TeamLaunchApi {
-  return {
-    createTeam: source.createTeam.bind(source),
-    launchTeam: source.launchTeam.bind(source),
-    getProvisioningStatus: source.getProvisioningStatus.bind(source),
-  };
-}
-
 export function bindTeamProvisioningStartApi(
   source: TeamProvisioningStartApi
 ): TeamProvisioningStartApi {
@@ -342,7 +333,8 @@ export function bindTeamHttpDataApi(source: TeamHttpDataApi): TeamHttpDataApi {
 }
 
 export function bindTeamIpcHandlerApis(
-  source: TeamLaunchApi &
+  source: TeamProvisioningStartApi &
+    TeamProvisioningStatusApi &
     TeamProvisioningPreflightApi &
     TeamProvisioningRunApi &
     TeamTaskActivityRepairApi &
@@ -354,7 +346,8 @@ export function bindTeamIpcHandlerApis(
     TeamToolApprovalApi
 ): TeamIpcHandlerApis {
   return {
-    launch: bindTeamLaunchApi(source),
+    provisioningStart: bindTeamProvisioningStartApi(source),
+    provisioningStatus: bindTeamProvisioningStatusApi(source),
     preflight: bindTeamProvisioningPreflightApi(source),
     provisioningRun: bindTeamProvisioningRunApi(source),
     taskActivity: bindTeamTaskActivityRepairApi(source),

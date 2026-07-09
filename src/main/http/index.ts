@@ -64,7 +64,7 @@ export interface HttpServices {
   updaterService: UpdaterService;
   sshConnectionManager: SshConnectionManager;
   teamDataApi?: TeamHttpDataApi;
-  teamLaunchApi?: TeamProvisioningStartApi;
+  teamProvisioningStartApi?: TeamProvisioningStartApi;
   teamProvisioningStatusApi?: TeamProvisioningStatusApi;
   teamTaskActivityApi?: TeamTaskActivityRepairApi;
   teamRuntimeApi?: TeamHttpRuntimeApi;
@@ -82,7 +82,7 @@ export function registerHttpRoutes(
   registerSubagentRoutes(app, services);
   if (
     services.teamDataApi ||
-    services.teamLaunchApi ||
+    services.teamProvisioningStartApi ||
     services.teamProvisioningStatusApi ||
     services.teamTaskActivityApi ||
     services.teamRuntimeApi ||

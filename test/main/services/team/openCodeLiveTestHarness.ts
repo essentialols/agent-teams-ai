@@ -350,7 +350,7 @@ async function startLiveTeamControlApi(
 }> {
   const app = Fastify({ logger: false });
   registerTeamRoutes(app, {
-    teamLaunchApi: svc,
+    teamProvisioningStartApi: svc,
     teamRuntimeApi: svc,
     ...extraServices,
   } as HttpServices);

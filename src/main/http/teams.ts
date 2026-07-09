@@ -41,11 +41,11 @@ function isMemberWorkSyncReportState(value: string): value is MemberWorkSyncRepo
   return value === 'still_working' || value === 'blocked' || value === 'caught_up';
 }
 
-function getTeamLaunchApi(services: HttpServices): TeamProvisioningStartApi {
-  if (!services.teamLaunchApi) {
+function getTeamProvisioningStartApi(services: HttpServices): TeamProvisioningStartApi {
+  if (!services.teamProvisioningStartApi) {
     throw new HttpFeatureUnavailableError('Team launch control is not available in this mode');
   }
-  return services.teamLaunchApi;
+  return services.teamProvisioningStartApi;
 }
 
 function getTeamProvisioningStatusApi(services: HttpServices): TeamProvisioningStatusApi {
@@ -216,11 +216,11 @@ export function registerTeamRoutes(app: FastifyInstance, services: HttpServices)
         const teamName = validatedTeamName.value!;
         const draftSavedRequest = await getDraftSavedRequest(services, teamName);
         const response = draftSavedRequest
-          ? await getTeamLaunchApi(services).createTeam(
+          ? await getTeamProvisioningStartApi(services).createTeam(
               parseDraftLaunchCreateRequest(draftSavedRequest, request.body),
               () => undefined
             )
-          : await getTeamLaunchApi(services).launchTeam(
+          : await getTeamProvisioningStartApi(services).launchTeam(
               parseLaunchRequest(teamName, request.body),
               () => undefined
             );

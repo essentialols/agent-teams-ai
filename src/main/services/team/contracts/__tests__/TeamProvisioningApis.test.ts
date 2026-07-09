@@ -6,7 +6,6 @@ import {
   bindTeamDiagnosticsApi,
   bindTeamHttpDataApi,
   bindTeamHttpRuntimeApi,
-  bindTeamLaunchApi,
   bindTeamMemberLifecycleApi,
   bindTeamMessagingApi,
   bindTeamProvisioningPreflightApi,
@@ -25,7 +24,6 @@ import type {
   TeamCrossTeamMessagingApi,
   TeamDiagnosticsApi,
   TeamHttpDataApi,
-  TeamLaunchApi,
   TeamMemberLifecycleApi,
   TeamMessagingApi,
   TeamOpenCodeMemberInboxRelayOptions,
@@ -60,52 +58,6 @@ import type {
 const TEST_TEAM_CWD = '/workspace/team';
 
 describe('TeamProvisioning API binders', () => {
-  it('binds launch methods to the source object', async () => {
-    interface LaunchSource extends TeamLaunchApi {
-      readonly runId: string;
-    }
-
-    const source: LaunchSource = {
-      runId: 'run-bound',
-      createTeam(this: LaunchSource): Promise<TeamCreateResponse> {
-        return Promise.resolve({ runId: this.runId });
-      },
-      launchTeam(this: LaunchSource): Promise<TeamLaunchResponse> {
-        return Promise.resolve({ runId: this.runId });
-      },
-      getProvisioningStatus(this: LaunchSource): Promise<TeamProvisioningProgress> {
-        return Promise.resolve({
-          runId: this.runId,
-          teamName: 'team-bound',
-          state: 'spawning',
-          message: 'running',
-          startedAt: '2026-01-01T00:00:00.000Z',
-          updatedAt: '2026-01-01T00:00:00.000Z',
-        });
-      },
-    };
-
-    const api = bindTeamLaunchApi(source);
-    const createTeam = api.createTeam.bind(undefined);
-    const launchTeam = api.launchTeam.bind(undefined);
-    const getProvisioningStatus = api.getProvisioningStatus.bind(undefined);
-
-    await expect(
-      createTeam({ teamName: 'team-bound', cwd: TEST_TEAM_CWD, members: [] }, () => undefined)
-    ).resolves.toEqual({
-      runId: 'run-bound',
-    });
-    await expect(
-      launchTeam({ teamName: 'team-bound', cwd: TEST_TEAM_CWD }, () => undefined)
-    ).resolves.toEqual({
-      runId: 'run-bound',
-    });
-    await expect(getProvisioningStatus('run-bound')).resolves.toMatchObject({
-      runId: 'run-bound',
-      teamName: 'team-bound',
-    });
-  });
-
   it('binds provisioning start methods to the source object', async () => {
     interface StartSource extends TeamProvisioningStartApi {
       readonly runId: string;

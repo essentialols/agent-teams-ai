@@ -63,7 +63,7 @@ describe('HTTP team runtime routes', () => {
     const createTeamConfig = vi.fn<(request: TeamCreateConfigRequest) => Promise<void>>(() =>
       Promise.resolve()
     );
-    const teamLaunchApi = {
+    const teamProvisioningStartApi = {
       createTeam,
       launchTeam,
     } satisfies TeamProvisioningStartApi;
@@ -104,7 +104,7 @@ describe('HTTP team runtime routes', () => {
       updaterService: {} as HttpServices['updaterService'],
       sshConnectionManager: {} as HttpServices['sshConnectionManager'],
       teamDataApi,
-      teamLaunchApi,
+      teamProvisioningStartApi,
       teamProvisioningStatusApi,
       teamTaskActivityApi: teamTaskActivityRepairApi,
       teamRuntimeApi,
@@ -322,6 +322,35 @@ describe('HTTP team runtime routes', () => {
         },
         expect.any(Function)
       );
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('returns 501 for launch without the provisioning start facade', async () => {
+    const app = Fastify();
+    const mocks = createServicesMock();
+    registerTeamRoutes(app, {
+      ...mocks.services,
+      teamProvisioningStartApi: undefined,
+    });
+    await app.ready();
+
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/teams/demo-team/launch',
+        payload: {
+          cwd: '/Users/test/project',
+        },
+      });
+
+      expect(response.statusCode).toBe(501);
+      expect(response.json()).toEqual({
+        error: 'Team launch control is not available in this mode',
+      });
+      expect(mocks.launchTeam).not.toHaveBeenCalled();
+      expect(mocks.createTeam).not.toHaveBeenCalled();
     } finally {
       await app.close();
     }

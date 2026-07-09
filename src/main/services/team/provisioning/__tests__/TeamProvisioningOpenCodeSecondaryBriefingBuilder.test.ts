@@ -14,6 +14,9 @@ function createPorts(briefing: unknown): {
 } {
   const memberBriefing = vi.fn(async () => briefing);
   const createController = vi.fn(() => ({
+    taskBoard: {
+      memberBriefing,
+    },
     tasks: {
       memberBriefing,
     },

@@ -840,7 +840,7 @@ export class TeamDataService {
 
   async getTask(teamName: string, taskId: string): Promise<TeamTaskWithKanban | null> {
     const controller = this.getController(teamName);
-    const task = controller.tasks?.getTask?.(taskId) as TeamTask | null | undefined;
+    const task = controller.taskBoard?.getTask?.(taskId) as TeamTask | null | undefined;
     if (!task) {
       return null;
     }
@@ -2160,7 +2160,7 @@ export class TeamDataService {
     }
 
     const shouldStart = request.owner && request.startImmediately === true;
-    const task = controller.tasks.createTask({
+    const task = controller.taskBoard.createTask({
       subject: request.subject,
       ...(request.description?.trim() ? { description: request.description.trim() } : {}),
       ...(request.descriptionTaskRefs?.length
@@ -2203,7 +2203,7 @@ export class TeamDataService {
       throw new Error(`Task #${taskId} is not pending (current: ${task.status})`);
     }
 
-    this.getController(teamName).tasks.startTask(taskId, 'user');
+    this.getController(teamName).taskBoard.startTask(taskId, 'user');
     this.invalidateGlobalTaskProjectionCache();
 
     if (task.owner) {
@@ -2259,7 +2259,7 @@ export class TeamDataService {
       throw new Error(`Task #${taskId} is not pending (current: ${task.status})`);
     }
 
-    this.getController(teamName).tasks.startTask(taskId, 'user');
+    this.getController(teamName).taskBoard.startTask(taskId, 'user');
     this.invalidateGlobalTaskProjectionCache();
 
     if (task.owner) {
@@ -2315,7 +2315,7 @@ export class TeamDataService {
     status: TeamTaskStatus,
     actor?: string
   ): Promise<void> {
-    this.getController(teamName).tasks.setTaskStatus(taskId, status, actor);
+    this.getController(teamName).taskBoard.setTaskStatus(taskId, status, actor);
     this.invalidateGlobalTaskProjectionCache();
   }
 
@@ -2375,12 +2375,12 @@ export class TeamDataService {
   }
 
   async softDeleteTask(teamName: string, taskId: string): Promise<void> {
-    this.getController(teamName).tasks.softDeleteTask(taskId, 'user');
+    this.getController(teamName).taskBoard.softDeleteTask(taskId, 'user');
     this.invalidateGlobalTaskProjectionCache();
   }
 
   async restoreTask(teamName: string, taskId: string): Promise<void> {
-    this.getController(teamName).tasks.restoreTask(taskId, 'user');
+    this.getController(teamName).taskBoard.restoreTask(taskId, 'user');
     this.invalidateGlobalTaskProjectionCache();
   }
 
@@ -2389,7 +2389,7 @@ export class TeamDataService {
   }
 
   async updateTaskOwner(teamName: string, taskId: string, owner: string | null): Promise<void> {
-    this.getController(teamName).tasks.setTaskOwner(taskId, owner, 'user');
+    this.getController(teamName).taskBoard.setTaskOwner(taskId, owner, 'user');
     this.invalidateGlobalTaskProjectionCache();
   }
 
@@ -2398,7 +2398,7 @@ export class TeamDataService {
     taskId: string,
     fields: { subject?: string; description?: string }
   ): Promise<void> {
-    this.getController(teamName).tasks.updateTaskFields(taskId, fields);
+    this.getController(teamName).taskBoard.updateTaskFields(taskId, fields);
     this.invalidateGlobalTaskProjectionCache();
   }
 
@@ -2407,7 +2407,7 @@ export class TeamDataService {
     taskId: string,
     meta: TaskAttachmentMeta
   ): Promise<void> {
-    this.getController(teamName).tasks.addTaskAttachmentMeta(
+    this.getController(teamName).taskBoard.addTaskAttachmentMeta(
       taskId,
       meta as unknown as Record<string, unknown>
     );
@@ -2419,7 +2419,7 @@ export class TeamDataService {
     taskId: string,
     attachmentId: string
   ): Promise<void> {
-    this.getController(teamName).tasks.removeTaskAttachment(taskId, attachmentId);
+    this.getController(teamName).taskBoard.removeTaskAttachment(taskId, attachmentId);
     this.invalidateGlobalTaskProjectionCache();
   }
 
@@ -2428,7 +2428,7 @@ export class TeamDataService {
     taskId: string,
     value: 'lead' | 'user' | null
   ): Promise<void> {
-    this.getController(teamName).tasks.setNeedsClarification(taskId, value);
+    this.getController(teamName).taskBoard.setNeedsClarification(taskId, value);
     this.invalidateGlobalTaskProjectionCache();
   }
 
@@ -2438,7 +2438,7 @@ export class TeamDataService {
     targetId: string,
     type: 'blockedBy' | 'blocks' | 'related'
   ): Promise<void> {
-    this.getController(teamName).tasks.linkTask(
+    this.getController(teamName).taskBoard.linkTask(
       taskId,
       targetId,
       type === 'blockedBy' ? 'blocked-by' : type
@@ -2452,7 +2452,7 @@ export class TeamDataService {
     targetId: string,
     type: 'blockedBy' | 'blocks' | 'related'
   ): Promise<void> {
-    this.getController(teamName).tasks.unlinkTask(
+    this.getController(teamName).taskBoard.unlinkTask(
       taskId,
       targetId,
       type === 'blockedBy' ? 'blocked-by' : type
@@ -2468,7 +2468,7 @@ export class TeamDataService {
     taskRefs?: TaskRef[]
   ): Promise<TaskComment> {
     const controller = this.getController(teamName);
-    const addResult = controller.tasks.addTaskComment(taskId, {
+    const addResult = controller.taskBoard.addTaskComment(taskId, {
       from: 'user',
       text,
       attachments,
@@ -3295,7 +3295,7 @@ export class TeamDataService {
 
   async requestReview(teamName: string, taskId: string): Promise<void> {
     const { leadName, leadSessionId } = await this.resolveLeadRuntimeContext(teamName);
-    this.getController(teamName).review.requestReview(taskId, {
+    this.getController(teamName).taskBoard.requestReview(taskId, {
       from: leadName,
       ...(leadSessionId ? { leadSessionId } : {}),
     });
@@ -3305,16 +3305,16 @@ export class TeamDataService {
     controller: AgentTeamsController,
     taskId: string
   ): 'review' | 'approved' | undefined | null {
-    if (!controller.tasks?.getTask || !controller.kanban?.getKanbanState) {
+    if (!controller.taskBoard?.getTask || !controller.taskBoard?.getKanbanState) {
       return null;
     }
 
-    const task = controller.tasks.getTask(taskId) as TeamTask | null | undefined;
+    const task = controller.taskBoard.getTask(taskId) as TeamTask | null | undefined;
     if (!task || typeof task.status !== 'string') {
       return null;
     }
 
-    const kanbanState = controller.kanban.getKanbanState() as KanbanState | null | undefined;
+    const kanbanState = controller.taskBoard.getKanbanState() as KanbanState | null | undefined;
     const kanbanColumn = kanbanState?.tasks?.[task.id]?.column;
     const kanbanWorkflowColumn = kanbanColumn
       ? getTeamTaskWorkflowColumn({
@@ -3881,14 +3881,14 @@ export class TeamDataService {
     const controller = this.getController(teamName);
 
     if (patch.op === 'remove') {
-      controller.kanban.clearKanban(taskId);
+      controller.taskBoard.clearKanban(taskId);
       return;
     }
 
     if (patch.op === 'set_column') {
       if (patch.column === 'review') {
         const { leadName, leadSessionId } = await this.resolveLeadRuntimeContext(teamName);
-        controller.review.requestReview(taskId, {
+        controller.taskBoard.requestReview(taskId, {
           from: leadName,
           ...(leadSessionId ? { leadSessionId } : {}),
         });
@@ -3896,11 +3896,11 @@ export class TeamDataService {
         const { leadName, leadSessionId } = await this.resolveLeadRuntimeContext(teamName);
         const workflowColumn = this.getControllerTaskWorkflowColumn(controller, taskId);
         if (workflowColumn === undefined) {
-          controller.kanban.setKanbanColumn(taskId, 'approved', {
+          controller.taskBoard.setKanbanColumn(taskId, 'approved', {
             transition: 'manual_approve',
           });
         } else {
-          controller.review.approveReview(taskId, {
+          controller.taskBoard.approveReview(taskId, {
             from: leadName,
             suppressTaskComment: true,
             'notify-owner': true,
@@ -3912,7 +3912,7 @@ export class TeamDataService {
     }
 
     const { leadName, leadSessionId } = await this.resolveLeadRuntimeContext(teamName);
-    controller.review.requestChanges(taskId, {
+    controller.taskBoard.requestChanges(taskId, {
       from: leadName,
       comment: patch.comment?.trim() || 'Reviewer requested changes.',
       ...(patch.op === 'request_changes' && patch.taskRefs?.length
@@ -3927,6 +3927,6 @@ export class TeamDataService {
     columnId: KanbanColumnId,
     orderedTaskIds: string[]
   ): Promise<void> {
-    this.getController(teamName).kanban.updateColumnOrder(columnId, orderedTaskIds);
+    this.getController(teamName).taskBoard.updateColumnOrder(columnId, orderedTaskIds);
   }
 }

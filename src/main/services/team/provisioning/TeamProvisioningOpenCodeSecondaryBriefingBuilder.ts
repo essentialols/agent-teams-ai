@@ -1,6 +1,15 @@
 import { boundOpenCodeAppManagedBriefingText } from './TeamProvisioningOpenCodeDiagnosticsPolicy';
 
 export interface OpenCodeSecondaryBriefingController {
+  taskBoard: {
+    memberBriefing(
+      memberName: string,
+      options: {
+        runtimeProvider: 'opencode';
+        includeActiveProcesses: false;
+      }
+    ): Promise<unknown> | unknown;
+  };
   tasks: {
     memberBriefing(
       memberName: string,
@@ -54,7 +63,7 @@ export async function buildOpenCodeSecondaryAppManagedLaunchPromptWithPorts(
     claudeDir: ports.getClaudeBasePath(),
     allowUserMessageSender: false,
   });
-  const briefing = await controller.tasks.memberBriefing(input.memberName, {
+  const briefing = await controller.taskBoard.memberBriefing(input.memberName, {
     runtimeProvider: 'opencode',
     includeActiveProcesses: false,
   });

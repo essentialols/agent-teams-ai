@@ -38,6 +38,18 @@ describe('agent-teams-controller API', () => {
     return dir;
   }
 
+  function readTaskFile(claudeDir, taskId) {
+    return JSON.parse(
+      fs.readFileSync(path.join(claudeDir, 'tasks', 'my-team', `${taskId}.json`), 'utf8')
+    );
+  }
+
+  function readKanbanFile(claudeDir) {
+    return JSON.parse(
+      fs.readFileSync(path.join(claudeDir, 'teams', 'my-team', 'kanban-state.json'), 'utf8')
+    );
+  }
+
   async function startControlServer(handler) {
     const server = http.createServer(async (req, res) => {
       const chunks = [];
@@ -187,6 +199,111 @@ controller.messages.sendMessage({
     expect(controller.processes.listProcesses()).toHaveLength(1);
     const stopped = controller.processes.stopProcess({ pid: process.pid });
     expect(typeof stopped.stoppedAt).toBe('string');
+  });
+
+  it('routes task and review lifecycle through taskBoard without changing persisted state', () => {
+    const claudeDir = makeClaudeDir();
+    const controller = createController({ teamName: 'my-team', claudeDir });
+
+    const task = controller.taskBoard.createTask({ subject: 'Facade task', owner: 'bob' });
+    expect(task.status).toBe('pending');
+    expect(task.reviewState).toBe('none');
+
+    expect(controller.taskBoard.startTask(task.id, 'bob').status).toBe('in_progress');
+    expect(controller.taskBoard.completeTask(task.id, 'bob').status).toBe('completed');
+    expect(
+      controller.taskBoard.requestReview(task.id, { from: 'alice', reviewer: 'alice' }).reviewState
+    ).toBe('review');
+    expect(controller.taskBoard.startReview(task.id, { from: 'alice' }).column).toBe('review');
+
+    const approved = controller.taskBoard.approveReview(task.id, {
+      from: 'alice',
+      note: 'Looks good',
+      'notify-owner': true,
+    });
+
+    expect(approved.status).toBe('completed');
+    expect(approved.reviewState).toBe('approved');
+    expect(readTaskFile(claudeDir, task.id).reviewState).toBe('approved');
+    expect(readKanbanFile(claudeDir).tasks[task.id].column).toBe('approved');
+    expect(() => controller.taskBoard.clearKanban(task.id)).toThrow('reviewState=approved');
+
+    const ownerInboxPath = path.join(claudeDir, 'teams', 'my-team', 'inboxes', 'bob.json');
+    const ownerInbox = JSON.parse(fs.readFileSync(ownerInboxPath, 'utf8'));
+    expect(ownerInbox.at(-1).summary).toContain('Approved');
+
+    const reopened = controller.taskBoard.setTaskStatus(task.id, 'pending', 'alice');
+    expect(reopened.status).toBe('pending');
+    expect(reopened.reviewState).toBe('none');
+    expect(readKanbanFile(claudeDir).tasks[task.id]).toBeUndefined();
+  });
+
+  it('keeps request-changes and restart semantics behind taskBoard', () => {
+    const claudeDir = makeClaudeDir();
+    const controller = createController({ teamName: 'my-team', claudeDir });
+
+    const task = controller.taskBoard.createTask({ subject: 'Needs review', owner: 'bob' });
+    controller.taskBoard.startTask(task.id, 'bob');
+    controller.taskBoard.completeTask(task.id, 'bob');
+    controller.taskBoard.requestReview(task.id, { from: 'alice', reviewer: 'alice' });
+    controller.taskBoard.startReview(task.id, { from: 'alice' });
+
+    const changed = controller.taskBoard.requestChanges(task.id, {
+      from: 'alice',
+      comment: 'Fix the edge case',
+    });
+
+    expect(changed.status).toBe('pending');
+    expect(changed.reviewState).toBe('needsFix');
+    expect(readKanbanFile(claudeDir).tasks[task.id]).toBeUndefined();
+    expect(changed.comments.at(-1).type).toBe('review_request');
+
+    const ownerInboxPath = path.join(claudeDir, 'teams', 'my-team', 'inboxes', 'bob.json');
+    const ownerInbox = JSON.parse(fs.readFileSync(ownerInboxPath, 'utf8'));
+    expect(ownerInbox.at(-1).summary).toContain('Fix request');
+
+    const restarted = controller.taskBoard.startTask(task.id, 'bob');
+    expect(restarted.status).toBe('in_progress');
+    expect(restarted.reviewState).toBe('none');
+    expect(readKanbanFile(claudeDir).tasks[task.id]).toBeUndefined();
+  });
+
+  it('keeps delete, restore, and dependency unblock idempotency behind taskBoard', () => {
+    const claudeDir = makeClaudeDir();
+    const controller = createController({ teamName: 'my-team', claudeDir });
+
+    const dependency = controller.taskBoard.createTask({ subject: 'Dependency', owner: 'alice' });
+    const blocked = controller.taskBoard.createTask({
+      subject: 'Blocked implementation',
+      owner: 'bob',
+      'blocked-by': dependency.id,
+    });
+
+    controller.taskBoard.startTask(dependency.id, 'alice');
+    controller.taskBoard.completeTask(dependency.id, 'alice');
+    controller.taskBoard.completeTask(dependency.id, 'alice');
+
+    const blockedAfterDependency = controller.taskBoard.getTask(blocked.id);
+    const unblockCommentId = `dep-resolved-${dependency.id}-${blocked.id}`;
+    expect(
+      blockedAfterDependency.comments.filter((entry) => entry.id === unblockCommentId)
+    ).toHaveLength(1);
+
+    controller.taskBoard.startTask(blocked.id, 'bob');
+    controller.taskBoard.completeTask(blocked.id, 'bob');
+    controller.taskBoard.requestReview(blocked.id, { from: 'alice', reviewer: 'alice' });
+    controller.taskBoard.approveReview(blocked.id, { from: 'alice' });
+    expect(readKanbanFile(claudeDir).tasks[blocked.id].column).toBe('approved');
+
+    const deleted = controller.taskBoard.softDeleteTask(blocked.id, 'alice');
+    expect(deleted.status).toBe('deleted');
+    expect(deleted.reviewState).toBe('none');
+    expect(readKanbanFile(claudeDir).tasks[blocked.id]).toBeUndefined();
+
+    const restored = controller.taskBoard.restoreTask(blocked.id, 'alice');
+    expect(restored.status).toBe('pending');
+    expect(restored.reviewState).toBe('none');
+    expect(readKanbanFile(claudeDir).tasks[blocked.id]).toBeUndefined();
   });
 
   it('builds member briefing from team config language and known member metadata', async () => {

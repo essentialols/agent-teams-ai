@@ -100,9 +100,10 @@ export function registerTaskTools(server: Pick<FastMCP, 'addTool'>) {
     }) => {
       assertConfiguredTeam(teamName, claudeDir);
       const controller = getController(teamName, claudeDir);
+      const { taskBoard } = controller;
       return await Promise.resolve(
         jsonTextContent(
-          controller.tasks.createTask(
+          taskBoard.createTask(
             buildCreateTaskPayload({
               subject,
               description,
@@ -159,6 +160,7 @@ export function registerTaskTools(server: Pick<FastMCP, 'addTool'>) {
     }) => {
       assertConfiguredTeam(teamName, claudeDir);
       const controller = getController(teamName, claudeDir);
+      const { taskBoard } = controller;
 
       // 1. Lookup message by exact messageId
       let message: Record<string, unknown>;
@@ -221,7 +223,7 @@ export function registerTaskTools(server: Pick<FastMCP, 'addTool'>) {
       // 5. Forward into canonical create-task path
       return await Promise.resolve(
         jsonTextContent(
-          controller.tasks.createTask(
+          taskBoard.createTask(
             buildCreateTaskPayload({
               subject,
               description,
@@ -254,7 +256,7 @@ export function registerTaskTools(server: Pick<FastMCP, 'addTool'>) {
     execute: async ({ teamName, claudeDir, taskId }) => {
       assertConfiguredTeam(teamName, claudeDir);
       return await Promise.resolve(
-        jsonTextContent(getController(teamName, claudeDir).tasks.getTask(taskId))
+        jsonTextContent(getController(teamName, claudeDir).taskBoard.getTask(taskId))
       );
     },
   });
@@ -271,7 +273,9 @@ export function registerTaskTools(server: Pick<FastMCP, 'addTool'>) {
     execute: async ({ teamName, claudeDir, taskId, commentId }) => {
       assertConfiguredTeam(teamName, claudeDir);
       return await Promise.resolve(
-        jsonTextContent(getController(teamName, claudeDir).tasks.getTaskComment(taskId, commentId))
+        jsonTextContent(
+          getController(teamName, claudeDir).taskBoard.getTaskComment(taskId, commentId)
+        )
       );
     },
   });
@@ -304,7 +308,7 @@ export function registerTaskTools(server: Pick<FastMCP, 'addTool'>) {
       assertConfiguredTeam(teamName, claudeDir);
       return await Promise.resolve(
         jsonTextContent(
-          getController(teamName, claudeDir).tasks.listTaskInventory({
+          getController(teamName, claudeDir).taskBoard.listTaskInventory({
             ...(owner ? { owner } : {}),
             ...(status ? { status } : {}),
             ...(reviewState ? { reviewState } : {}),
@@ -332,10 +336,11 @@ export function registerTaskTools(server: Pick<FastMCP, 'addTool'>) {
       return await Promise.resolve(
         jsonTextContent(
           slimTask(
-            getController(teamName, claudeDir).tasks.setTaskStatus(taskId, status, actor) as Record<
-              string,
-              unknown
-            >
+            getController(teamName, claudeDir).taskBoard.setTaskStatus(
+              taskId,
+              status,
+              actor
+            ) as Record<string, unknown>
           )
         )
       );
@@ -355,7 +360,7 @@ export function registerTaskTools(server: Pick<FastMCP, 'addTool'>) {
       return await Promise.resolve(
         jsonTextContent(
           slimTask(
-            getController(teamName, claudeDir).tasks.restoreTask(taskId, actor) as Record<
+            getController(teamName, claudeDir).taskBoard.restoreTask(taskId, actor) as Record<
               string,
               unknown
             >
@@ -378,7 +383,7 @@ export function registerTaskTools(server: Pick<FastMCP, 'addTool'>) {
       return await Promise.resolve(
         jsonTextContent(
           slimTask(
-            getController(teamName, claudeDir).tasks.startTask(taskId, actor) as Record<
+            getController(teamName, claudeDir).taskBoard.startTask(taskId, actor) as Record<
               string,
               unknown
             >
@@ -401,7 +406,7 @@ export function registerTaskTools(server: Pick<FastMCP, 'addTool'>) {
       return await Promise.resolve(
         jsonTextContent(
           slimTask(
-            getController(teamName, claudeDir).tasks.completeTask(taskId, actor) as Record<
+            getController(teamName, claudeDir).taskBoard.completeTask(taskId, actor) as Record<
               string,
               unknown
             >
@@ -425,10 +430,11 @@ export function registerTaskTools(server: Pick<FastMCP, 'addTool'>) {
       return await Promise.resolve(
         jsonTextContent(
           slimTask(
-            getController(teamName, claudeDir).tasks.setTaskOwner(taskId, owner, actor) as Record<
-              string,
-              unknown
-            >
+            getController(teamName, claudeDir).taskBoard.setTaskOwner(
+              taskId,
+              owner,
+              actor
+            ) as Record<string, unknown>
           )
         )
       );
@@ -450,7 +456,7 @@ export function registerTaskTools(server: Pick<FastMCP, 'addTool'>) {
       return await Promise.resolve(
         jsonTextContent(
           taskWriteResult(
-            getController(teamName, claudeDir).tasks.addTaskComment(taskId, {
+            getController(teamName, claudeDir).taskBoard.addTaskComment(taskId, {
               text,
               ...(from ? { from } : {}),
             }) as Record<string, unknown>
@@ -487,7 +493,7 @@ export function registerTaskTools(server: Pick<FastMCP, 'addTool'>) {
       return await Promise.resolve(
         jsonTextContent(
           taskWriteResult(
-            getController(teamName, claudeDir).tasks.attachTaskFile(taskId, {
+            getController(teamName, claudeDir).taskBoard.attachTaskFile(taskId, {
               file: filePath,
               ...(mode ? { mode } : {}),
               ...(filename ? { filename } : {}),
@@ -529,7 +535,7 @@ export function registerTaskTools(server: Pick<FastMCP, 'addTool'>) {
       return await Promise.resolve(
         jsonTextContent(
           taskWriteResult(
-            getController(teamName, claudeDir).tasks.attachCommentFile(taskId, commentId, {
+            getController(teamName, claudeDir).taskBoard.attachCommentFile(taskId, commentId, {
               file: filePath,
               ...(mode ? { mode } : {}),
               ...(filename ? { filename } : {}),
@@ -555,7 +561,7 @@ export function registerTaskTools(server: Pick<FastMCP, 'addTool'>) {
       return await Promise.resolve(
         jsonTextContent(
           slimTask(
-            getController(teamName, claudeDir).tasks.setNeedsClarification(
+            getController(teamName, claudeDir).taskBoard.setNeedsClarification(
               taskId,
               value === 'clear' ? null : value
             ) as Record<string, unknown>
@@ -579,7 +585,7 @@ export function registerTaskTools(server: Pick<FastMCP, 'addTool'>) {
       return await Promise.resolve(
         jsonTextContent(
           slimTask(
-            getController(teamName, claudeDir).tasks.linkTask(
+            getController(teamName, claudeDir).taskBoard.linkTask(
               taskId,
               targetId,
               relationship
@@ -604,7 +610,7 @@ export function registerTaskTools(server: Pick<FastMCP, 'addTool'>) {
       return await Promise.resolve(
         jsonTextContent(
           slimTask(
-            getController(teamName, claudeDir).tasks.unlinkTask(
+            getController(teamName, claudeDir).taskBoard.unlinkTask(
               taskId,
               targetId,
               relationship
@@ -637,7 +643,7 @@ export function registerTaskTools(server: Pick<FastMCP, 'addTool'>) {
         content: [
           {
             type: 'text' as const,
-            text: await getController(teamName, claudeDir).tasks.memberBriefing(memberName, {
+            text: await getController(teamName, claudeDir).taskBoard.memberBriefing(memberName, {
               ...(runtimeProvider ? { runtimeProvider } : {}),
               ...(includeActiveProcesses !== undefined ? { includeActiveProcesses } : {}),
             }),
@@ -660,7 +666,7 @@ export function registerTaskTools(server: Pick<FastMCP, 'addTool'>) {
         content: [
           {
             type: 'text' as const,
-            text: await getController(teamName, claudeDir).tasks.taskBriefing(memberName),
+            text: await getController(teamName, claudeDir).taskBoard.taskBriefing(memberName),
           },
         ],
       };

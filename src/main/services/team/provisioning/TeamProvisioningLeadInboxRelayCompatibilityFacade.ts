@@ -14,12 +14,12 @@ import {
   rememberRecentCrossTeamLeadDeliveryMessageIds as rememberRecentCrossTeamLeadDeliveryMessageIdsHelper,
   resolveCrossTeamLeadName,
 } from './TeamProvisioningCrossTeamRelayHelpers';
+import { type NativeSameTeamFingerprint } from './TeamProvisioningInboxRelayPolicy';
+import { type LeadInboxRelayFlowRun } from './TeamProvisioningLeadInboxRelayFlow';
 import {
   createTeamProvisioningLeadInboxRelayPortsBoundary,
   type TeamProvisioningLeadInboxRelayPortsBoundary,
 } from './TeamProvisioningLeadInboxRelayPortsFactory';
-import { type NativeSameTeamFingerprint } from './TeamProvisioningInboxRelayPolicy';
-import { type LeadInboxRelayFlowRun } from './TeamProvisioningLeadInboxRelayFlow';
 import {
   type LiveInboxRelayResult,
   relayInboxFileToLiveRecipientWithPorts,
@@ -57,10 +57,10 @@ export type TeamProvisioningLeadInboxRelayCompatibilityRun = LeadInboxRelayFlowR
   TeamProvisioningUserDmRelayRun &
   TeamProvisioningLeadInboxRelayCompatibilityRunRequest & {
     teamName: string;
-    activeCrossTeamReplyHints: Array<{
+    activeCrossTeamReplyHints: {
       toTeam: string;
       conversationId: string;
-    }>;
+    }[];
   };
 
 export interface TeamProvisioningLeadInboxRelayCompatibilityLogger {

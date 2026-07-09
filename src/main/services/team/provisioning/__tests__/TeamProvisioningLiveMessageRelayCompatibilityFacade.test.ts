@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { TeamProvisioningLiveMessageRelayCompatibilityFacade } from '../TeamProvisioningLiveMessageRelayCompatibilityFacade';
 
-type RelayFacadeMock = {
+interface RelayFacadeMock {
   leadInboxRelayInFlight: Map<string, Promise<number>>;
   relayedLeadInboxMessageIds: Map<string, Set<string>>;
   memberInboxRelayInFlight: Map<string, Promise<number>>;
@@ -24,9 +24,9 @@ type RelayFacadeMock = {
   relayInboxFileToLiveRecipient: ReturnType<typeof vi.fn>;
   relayOpenCodeMemberInboxMessages: ReturnType<typeof vi.fn>;
   relayLeadInboxMessages: ReturnType<typeof vi.fn>;
-};
+}
 
-type RelayHarness = {
+interface RelayHarness {
   leadInboxRelayFacade: RelayFacadeMock;
   leadInboxRelayInFlight: Map<string, Promise<number>>;
   relayedLeadInboxMessageIds: Map<string, Set<string>>;
@@ -74,7 +74,7 @@ type RelayHarness = {
   ): Promise<unknown>;
   relayLeadInboxMessages(teamName: string): Promise<number>;
   trimRelayedSet(set: Set<string>): Set<string>;
-};
+}
 
 function createHarness(): { harness: RelayHarness; relayFacade: RelayFacadeMock } {
   const relayFacade: RelayFacadeMock = {

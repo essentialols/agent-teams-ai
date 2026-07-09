@@ -123,7 +123,7 @@ describe('TeamProvisioningWorkspaceTrustPreSpawnBoundary', () => {
         workspaceTrustPlan,
         featureFlags,
         provisioningEnv: {
-          anthropicApiKeyHelper: { directory: '/tmp/anthropic-helper' },
+          anthropicApiKeyHelper: { directory: '/workspace/.agent-teams-ai-test/anthropic-helper' },
         },
       })
     ).rejects.toThrow('Workspace trust required for /repo');
@@ -134,7 +134,7 @@ describe('TeamProvisioningWorkspaceTrustPreSpawnBoundary', () => {
       error: 'Workspace trust required for /repo',
     });
     expect(cleanupAnthropicApiKeyHelperMaterial).toHaveBeenCalledWith({
-      directory: '/tmp/anthropic-helper',
+      directory: '/workspace/.agent-teams-ai-test/anthropic-helper',
     });
     expect(restorePrelaunchConfig).toHaveBeenCalledWith('team-1');
     expect(cleanupRun).toHaveBeenCalledWith(run);

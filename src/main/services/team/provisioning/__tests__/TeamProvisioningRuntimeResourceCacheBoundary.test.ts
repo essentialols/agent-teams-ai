@@ -56,9 +56,7 @@ describe('TeamProvisioningRuntimeResourceCacheBoundary', () => {
       getTrackedRunId: () => 'run-1',
       logDebug: vi.fn(),
     });
-    const metadata: Map<string, LiveTeamAgentRuntimeMetadata> = new Map([
-      ['lead', { alive: true }],
-    ]);
+    const metadata = new Map<string, LiveTeamAgentRuntimeMetadata>([['lead', { alive: true }]]);
 
     boundary.runtimeSnapshotCacheBoundary.rememberAgentRuntimeSnapshot({
       teamName: 'alpha',

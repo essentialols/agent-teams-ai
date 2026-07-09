@@ -259,8 +259,7 @@ export abstract class TeamProvisioningOpenCodeMemberMessageDeliveryCompatibility
     teamName: string,
     input: OpenCodeMemberMessageDeliveryInput
   ): Promise<OpenCodeMemberInboxDelivery> {
-    return await deliverOpenCodeMemberMessageHelper(
-      this.createOpenCodeMemberMessageDeliveryService(),
+    return await this.openCodeMemberMessageDeliveryCompatibility.deliverOpenCodeMemberMessage(
       teamName,
       input
     );

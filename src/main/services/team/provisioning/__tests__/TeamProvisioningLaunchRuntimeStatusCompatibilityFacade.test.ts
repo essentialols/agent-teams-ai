@@ -1,14 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { TeamRuntimeLanePlan } from '@features/team-runtime-lanes';
 
 import { TeamProvisioningLaunchRuntimeStatusCompatibilityFacade } from '../TeamProvisioningLaunchRuntimeStatusCompatibilityFacade';
 
+import type { TeamLaunchRuntimeAdapter, TeamRuntimeLaunchResult } from '../../runtime';
 import type { TeamProvisioningCompatibilityDelegation } from '../TeamProvisioningCompatibilityFacade';
 import type { TeamProvisioningLaunchStateCompatibilityBoundary } from '../TeamProvisioningLaunchStateCompatibilityFacade';
 import type { TeamProvisioningMemberLifecyclePublicFacade } from '../TeamProvisioningMemberLifecycleCompatibilityFacade';
 import type { ProvisioningRun } from '../TeamProvisioningRunModel';
 import type { MixedSecondaryRuntimeLaneState } from '../TeamProvisioningSecondaryRuntimeRuns';
-import type { TeamLaunchRuntimeAdapter, TeamRuntimeLaunchResult } from '../../runtime';
+import type { TeamRuntimeLanePlan } from '@features/team-runtime-lanes';
 import type {
   PersistedTeamLaunchSnapshot,
   TeamAgentRuntimeSnapshot,

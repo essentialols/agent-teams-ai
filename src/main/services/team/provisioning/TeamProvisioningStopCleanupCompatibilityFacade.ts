@@ -28,10 +28,10 @@ import type { TeamConfig, TeamMember } from '@shared/types';
 
 const logger = createLogger('Service:TeamProvisioning');
 
-type MarkUnconfirmedBootstrapMembersFailedOptions = {
+interface MarkUnconfirmedBootstrapMembersFailedOptions {
   cleanupRequested?: boolean;
   preserveExistingFailure?: boolean;
-};
+}
 
 export interface TeamProvisioningStopCleanupCompatibilityServiceHost<
   TRun extends ProvisioningRun,

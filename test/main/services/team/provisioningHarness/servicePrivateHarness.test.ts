@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { TeamProvisioningService } from '@main/services/team/TeamProvisioningService';
 import type { TeamProvisioningConfigFacade } from '@main/services/team/provisioning/TeamProvisioningConfigFacade';
@@ -41,6 +41,10 @@ const MEMBER_LIFECYCLE_SERVICE_USE_CASE_KEYS = [
 ] as const satisfies readonly (keyof TeamProvisioningMemberLifecycleServiceUseCases)[];
 
 describe('team provisioning private harness seams', () => {
+  beforeEach(() => {
+    cleanupStaleAnthropicTeamApiKeyHelpersMock.mockClear();
+  });
+
   it('returns service facade seams without cloning or constructing runtime services', () => {
     const serviceSeams = {
       aliveRunByTeam: new Map([['team-a', 'run-1']]),

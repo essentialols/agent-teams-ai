@@ -11,66 +11,85 @@ const TEAM_PROVISIONING_SERVICE_PATH = resolve(
 const TEAM_PROVISIONING_SERVICE_LINE_LIMIT = 777;
 const SUBSCRIPTION_RUNTIME_REFERENCE_PATTERN = /subscription[-_\s]+runtime|subscriptionRuntime/i;
 const TEAM_PROVISIONING_SERVICE_CLASS_NAME = 'TeamProvisioningService';
-const DECLARED_PUBLIC_METHODS = ['createTeam', 'launchTeam', 'setTeamChangeEmitter'] as const;
+const DECLARED_PUBLIC_SERVICE_ENTRYPOINTS = [
+  'createTeam',
+  'launchTeam',
+  'setTeamChangeEmitter',
+] as const;
+type ServiceEntryPointMember =
+  | ts.GetAccessorDeclaration
+  | ts.MethodDeclaration
+  | ts.PropertyDeclaration
+  | ts.SetAccessorDeclaration;
 const CONSTRUCTOR_DEPENDENCIES = [
   {
     accessibility: 'private',
     defaultNew: 'TeamConfigReader',
     name: 'configReader',
+    readonly: true,
     type: 'TeamConfigReader',
   },
   {
     accessibility: 'protected',
     defaultNew: 'TeamInboxReader',
     name: 'inboxReader',
+    readonly: true,
     type: 'TeamInboxReader',
   },
   {
     accessibility: 'protected',
     defaultNew: 'TeamMembersMetaStore',
     name: 'membersMetaStore',
+    readonly: true,
     type: 'TeamMembersMetaStore',
   },
   {
     accessibility: 'private',
     defaultNew: 'TeamSentMessagesStore',
     name: 'sentMessagesStore',
+    readonly: true,
     type: 'TeamSentMessagesStore',
   },
   {
     accessibility: 'private',
     defaultNew: 'TeamMcpConfigBuilder',
     name: 'mcpConfigBuilder',
+    readonly: true,
     type: 'TeamMcpConfigBuilder',
   },
   {
     accessibility: 'private',
     defaultNew: 'TeamMetaStore',
     name: 'teamMetaStore',
+    readonly: true,
     type: 'TeamMetaStore',
   },
   {
     accessibility: 'private',
     defaultNew: 'TeamInboxWriter',
     name: 'inboxWriter',
+    readonly: true,
     type: 'TeamInboxWriter',
   },
   {
     accessibility: 'private',
     defaultNew: 'OpenCodeTaskLogAttributionStore',
     name: 'openCodeTaskLogAttributionStore',
+    readonly: true,
     type: 'OpenCodeTaskLogAttributionStore',
   },
   {
     accessibility: 'private',
     defaultNew: 'TeamMemberWorktreeManager',
     name: 'memberWorktreeManager',
+    readonly: true,
     type: 'TeamMemberWorktreeManager',
   },
   {
     accessibility: 'private',
     defaultNew: 'TeamAttachmentStore',
     name: 'attachmentStore',
+    readonly: true,
     type: 'TeamAttachmentStore',
   },
 ] as const;
@@ -122,17 +141,28 @@ function getAccessibility(node: ts.Node): 'private' | 'protected' | 'public' | '
   return 'none';
 }
 
-function getDeclaredPublicMethodNames(serviceClass: ts.ClassDeclaration): string[] {
+function isServiceEntryPointMember(member: ts.ClassElement): member is ServiceEntryPointMember {
+  return (
+    ts.isGetAccessorDeclaration(member) ||
+    ts.isMethodDeclaration(member) ||
+    ts.isPropertyDeclaration(member) ||
+    ts.isSetAccessorDeclaration(member)
+  );
+}
+
+function getDeclaredPublicServiceEntryPointNames(
+  sourceFile: ts.SourceFile,
+  serviceClass: ts.ClassDeclaration
+): string[] {
   return serviceClass.members
     .filter(
-      (member): member is ts.MethodDeclaration =>
-        ts.isMethodDeclaration(member) &&
+      (member): member is ServiceEntryPointMember =>
+        isServiceEntryPointMember(member) &&
         !hasModifier(member, ts.SyntaxKind.StaticKeyword) &&
         !hasModifier(member, ts.SyntaxKind.PrivateKeyword) &&
-        !hasModifier(member, ts.SyntaxKind.ProtectedKeyword) &&
-        ts.isIdentifier(member.name)
+        !hasModifier(member, ts.SyntaxKind.ProtectedKeyword)
     )
-    .map((member) => (member.name as ts.Identifier).text)
+    .map((member) => member.name.getText(sourceFile))
     .sort((a, b) => a.localeCompare(b));
 }
 
@@ -143,6 +173,7 @@ function getConstructorDependencySurface(
   accessibility: 'private' | 'protected' | 'public' | 'none';
   defaultNew: string | null;
   name: string;
+  readonly: boolean;
   type: string | null;
 }> {
   const constructor = serviceClass.members.find(ts.isConstructorDeclaration);
@@ -157,6 +188,7 @@ function getConstructorDependencySurface(
         ? parameter.initializer.expression.getText(sourceFile)
         : null,
     name: parameter.name.getText(sourceFile),
+    readonly: hasModifier(parameter, ts.SyntaxKind.ReadonlyKeyword),
     type: parameter.type?.getText(sourceFile) ?? null,
   }));
 }
@@ -198,8 +230,8 @@ describe('TeamProvisioningService facade guard', () => {
     const sourceFile = parseTeamProvisioningServiceSource(source);
     const serviceClass = findTeamProvisioningServiceClass(sourceFile);
 
-    expect(getDeclaredPublicMethodNames(serviceClass)).toEqual(
-      [...DECLARED_PUBLIC_METHODS].sort((a, b) => a.localeCompare(b))
+    expect(getDeclaredPublicServiceEntryPointNames(sourceFile, serviceClass)).toEqual(
+      [...DECLARED_PUBLIC_SERVICE_ENTRYPOINTS].sort((a, b) => a.localeCompare(b))
     );
   });
 

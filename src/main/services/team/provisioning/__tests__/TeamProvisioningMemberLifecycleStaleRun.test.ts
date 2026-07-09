@@ -258,6 +258,89 @@ describe('TeamProvisioningMemberLifecycle stale run guards', () => {
     expect(spawnStatuses).toEqual([]);
   });
 
+  it('does not mark a primary-owned attach online after live runtime metadata observes a stale run', async () => {
+    const member: TeamCreateRequest['members'][number] = {
+      name: 'Worker',
+      role: 'Developer',
+      providerId: 'codex',
+    };
+    const run = createRun(member);
+    let aliveRunId: string | null = run.runId;
+    let upserted = false;
+    const spawnStatuses: string[] = [];
+    const host = createHost(run, {
+      getAliveRunId: () => aliveRunId,
+      getTrackedRunId: () => aliveRunId,
+      isCurrentTrackedRun: (candidateRun) => aliveRunId === candidateRun.runId,
+      async getLiveTeamAgentRuntimeMetadata() {
+        aliveRunId = null;
+        return new Map([
+          [
+            'Worker',
+            {
+              alive: true,
+              livenessKind: 'runtime_process',
+            },
+          ],
+        ]);
+      },
+      upsertRunAllEffectiveMember() {
+        upserted = true;
+      },
+      setMemberSpawnStatus(_targetRun, _memberName, status) {
+        spawnStatuses.push(status);
+      },
+    });
+    const controller = new TeamProvisioningMemberLifecycleController(
+      host,
+      immediateOperationUseCases
+    );
+
+    await expect(controller.attachLiveRosterMember('team-a', 'Worker')).rejects.toThrow(
+      'Team "team-a" is not currently running'
+    );
+
+    expect(upserted).toBe(false);
+    expect(spawnStatuses).toEqual([]);
+  });
+
+  it('does not mark a primary-owned attach error when launch observes a stale run', async () => {
+    const member: TeamCreateRequest['members'][number] = {
+      name: 'Worker',
+      role: 'Developer',
+      providerId: 'codex',
+    };
+    const run = createRun(member);
+    let aliveRunId: string | null = run.runId;
+    const spawnStatuses: string[] = [];
+    const host = createHost(run, {
+      getAliveRunId: () => aliveRunId,
+      getTrackedRunId: () => aliveRunId,
+      isCurrentTrackedRun: (candidateRun) => aliveRunId === candidateRun.runId,
+      setMemberSpawnStatus(_targetRun, _memberName, status) {
+        spawnStatuses.push(status);
+      },
+    });
+    const controller = new TeamProvisioningMemberLifecycleController(
+      host,
+      immediateOperationUseCases,
+      {
+        restart: {
+          async launchDirectProcessMemberRestart() {
+            aliveRunId = null;
+            throw new Error('stale launch');
+          },
+        },
+      }
+    );
+
+    await expect(controller.attachLiveRosterMember('team-a', 'Worker')).rejects.toThrow(
+      'stale launch'
+    );
+
+    expect(spawnStatuses).toEqual(['spawning']);
+  });
+
   it('does not enqueue an OpenCode lane reattach after workspace resolution observes a stale run', async () => {
     const member: TeamCreateRequest['members'][number] = {
       name: 'Worker',
@@ -299,5 +382,180 @@ describe('TeamProvisioningMemberLifecycle stale run guards', () => {
     expect(laneCreated).toBe(false);
     expect(laneLaunched).toBe(false);
     expect(run.mixedSecondaryLanes).toEqual([]);
+  });
+
+  it('does not prepare or mutate a restart after the active run changes during config reads', async () => {
+    const member: TeamCreateRequest['members'][number] = {
+      name: 'Worker',
+      role: 'Developer',
+      providerId: 'codex',
+    };
+    const run = createRun(member);
+    let aliveRunId: string | null = run.runId;
+    let prepareCalled = false;
+    const spawnStatuses: string[] = [];
+    const host = createHost(run, {
+      getAliveRunId: () => aliveRunId,
+      getTrackedRunId: () => aliveRunId,
+      isCurrentTrackedRun: (candidateRun) => aliveRunId === candidateRun.runId,
+      async readConfigForStrictDecision() {
+        aliveRunId = null;
+        return createConfig(member);
+      },
+      setMemberSpawnStatus(_targetRun, _memberName, status) {
+        spawnStatuses.push(status);
+      },
+    });
+    const controller = new TeamProvisioningMemberLifecycleController(
+      host,
+      immediateOperationUseCases,
+      {
+        restart: {
+          async preparePrimaryOwnedMemberRestartRuntime() {
+            prepareCalled = true;
+            return { directTmuxRestartPaneId: null, shouldDirectProcessRestart: false };
+          },
+        },
+      }
+    );
+
+    await expect(controller.restartMember('team-a', 'Worker')).rejects.toThrow(
+      'Team "team-a" is not currently running'
+    );
+
+    expect(prepareCalled).toBe(false);
+    expect(spawnStatuses).toEqual([]);
+  });
+
+  it('does not mark a restarted member offline after preparation observes a stale run', async () => {
+    const member: TeamCreateRequest['members'][number] = {
+      name: 'Worker',
+      role: 'Developer',
+      providerId: 'codex',
+    };
+    const run = createRun(member);
+    let aliveRunId: string | null = run.runId;
+    let prepareCalled = false;
+    const spawnStatuses: string[] = [];
+    const host = createHost(run, {
+      getAliveRunId: () => aliveRunId,
+      getTrackedRunId: () => aliveRunId,
+      isCurrentTrackedRun: (candidateRun) => aliveRunId === candidateRun.runId,
+      setMemberSpawnStatus(_targetRun, _memberName, status) {
+        spawnStatuses.push(status);
+      },
+    });
+    const controller = new TeamProvisioningMemberLifecycleController(
+      host,
+      immediateOperationUseCases,
+      {
+        restart: {
+          async preparePrimaryOwnedMemberRestartRuntime() {
+            prepareCalled = true;
+            aliveRunId = null;
+            return { directTmuxRestartPaneId: null, shouldDirectProcessRestart: false };
+          },
+        },
+      }
+    );
+
+    await expect(controller.restartMember('team-a', 'Worker')).rejects.toThrow(
+      'Team "team-a" is not currently running'
+    );
+
+    expect(prepareCalled).toBe(true);
+    expect(spawnStatuses).toEqual([]);
+  });
+
+  it('does not mark a manual restart error when direct launch observes a stale run', async () => {
+    const member: TeamCreateRequest['members'][number] = {
+      name: 'Worker',
+      role: 'Developer',
+      providerId: 'codex',
+    };
+    const run = createRun(member);
+    let aliveRunId: string | null = run.runId;
+    const spawnStatuses: string[] = [];
+    const host = createHost(run, {
+      getAliveRunId: () => aliveRunId,
+      getTrackedRunId: () => aliveRunId,
+      isCurrentTrackedRun: (candidateRun) => aliveRunId === candidateRun.runId,
+      setMemberSpawnStatus(_targetRun, _memberName, status) {
+        spawnStatuses.push(status);
+      },
+    });
+    const controller = new TeamProvisioningMemberLifecycleController(
+      host,
+      immediateOperationUseCases,
+      {
+        restart: {
+          async preparePrimaryOwnedMemberRestartRuntime() {
+            return { directTmuxRestartPaneId: null, shouldDirectProcessRestart: true };
+          },
+          async launchDirectProcessMemberRestart() {
+            aliveRunId = null;
+            throw new Error('stale restart launch');
+          },
+        },
+      }
+    );
+
+    await expect(controller.restartMember('team-a', 'Worker')).rejects.toThrow(
+      'stale restart launch'
+    );
+
+    expect(spawnStatuses).toEqual(['offline', 'spawning']);
+  });
+
+  it('does not track a direct process MCP config after its write observes a stale run', async () => {
+    const member: TeamCreateRequest['members'][number] = {
+      name: 'Worker',
+      role: 'Developer',
+      providerId: 'codex',
+      mcpPolicy: {
+        mode: 'appOnly',
+      },
+    };
+    const run = createRun(member);
+    run.spawnContext = { claudePath: '/bin/echo' };
+    let aliveRunId: string | null = run.runId;
+    let wroteMcpConfig = false;
+    const host = createHost(run, {
+      getAliveRunId: () => aliveRunId,
+      getTrackedRunId: () => aliveRunId,
+      isCurrentTrackedRun: (candidateRun) => aliveRunId === candidateRun.runId,
+      mcpConfigBuilder: {
+        async writeConfigFile() {
+          wroteMcpConfig = true;
+          aliveRunId = null;
+          return `${process.cwd()}/worker.mcp.json`;
+        },
+      },
+    });
+    const controller = new TeamProvisioningMemberLifecycleController(
+      host,
+      immediateOperationUseCases,
+      {
+        restart: {
+          resolveDirectRestartRuntimeCwd: () => process.cwd(),
+        },
+      }
+    );
+
+    await expect(
+      controller.launchDirectProcessMemberRestartInternal({
+        run,
+        teamName: 'team-a',
+        displayName: 'Team A',
+        leadName: 'Lead',
+        memberName: 'Worker',
+        config: createConfig(member),
+        configuredMember: member,
+        persistedRuntimeMembers: [],
+      })
+    ).rejects.toThrow('Team "team-a" is not currently running');
+
+    expect(wroteMcpConfig).toBe(true);
+    expect(run.memberMcpConfigPaths).toEqual([]);
   });
 });

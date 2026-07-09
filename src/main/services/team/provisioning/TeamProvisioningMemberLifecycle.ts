@@ -643,6 +643,7 @@ export class TeamProvisioningMemberLifecycleController {
       mcpPolicy: memberMcpPolicy,
       controlApiBaseUrl: provisioningEnv.env.CLAUDE_TEAM_CONTROL_URL,
     });
+    this.assertRunStillCurrentAndAlive(input.run, input.teamName);
     const memberMcpConfigPaths = input.run.memberMcpConfigPaths ?? [];
     input.run.memberMcpConfigPaths = memberMcpConfigPaths;
     memberMcpConfigPaths.push(mcpConfigPath);
@@ -829,6 +830,7 @@ export class TeamProvisioningMemberLifecycleController {
       mcpPolicy: memberMcpPolicy,
       controlApiBaseUrl: provisioningEnv.env.CLAUDE_TEAM_CONTROL_URL,
     });
+    this.assertRunStillCurrentAndAlive(input.run, input.teamName);
     const memberMcpConfigPaths = input.run.memberMcpConfigPaths ?? [];
     input.run.memberMcpConfigPaths = memberMcpConfigPaths;
     memberMcpConfigPaths.push(mcpConfigPath);
@@ -1188,14 +1190,18 @@ export class TeamProvisioningMemberLifecycleController {
     return 'primary_member_added';
   }
 
+  private isRunStillCurrentAndAlive(run: ProvisioningRun, teamName: string): boolean {
+    return (
+      this.getAliveRunId(teamName) === run.runId &&
+      this.runs.get(run.runId) === run &&
+      this.isCurrentTrackedRun(run) &&
+      !run.processKilled &&
+      !run.cancelRequested
+    );
+  }
+
   private assertRunStillCurrentAndAlive(run: ProvisioningRun, teamName: string): void {
-    if (
-      this.getAliveRunId(teamName) !== run.runId ||
-      this.runs.get(run.runId) !== run ||
-      !this.isCurrentTrackedRun(run) ||
-      run.processKilled ||
-      run.cancelRequested
-    ) {
+    if (!this.isRunStillCurrentAndAlive(run, teamName)) {
       throw new Error(`Team "${teamName}" is not currently running`);
     }
   }
@@ -1310,6 +1316,7 @@ export class TeamProvisioningMemberLifecycleController {
       [...liveRuntimeByMember.entries()].find(([candidateName]) =>
         matchesObservedMemberNameForExpected(candidateName, memberName)
       )?.[1];
+    this.assertRunStillCurrentAndAlive(run, teamName);
     if (
       !replaceExistingRuntime &&
       liveRuntimeMember?.alive &&
@@ -1393,6 +1400,9 @@ export class TeamProvisioningMemberLifecycleController {
         operation: options?.reason ?? 'member_added',
       });
     } catch (error) {
+      if (!this.isRunStillCurrentAndAlive(run, teamName)) {
+        throw error;
+      }
       this.setMemberSpawnStatus(
         run,
         memberName,
@@ -1557,15 +1567,18 @@ export class TeamProvisioningMemberLifecycleController {
       return candidateName.length > 0 && matchesMemberNameOrBase(candidateName, memberName);
     });
 
+    this.assertRunStillCurrentAndAlive(run, teamName);
     const restartRuntimePreparation = await this.preparePrimaryOwnedMemberRestartRuntime({
       teamName,
       memberName,
       persistedRuntimeMembers,
+      assertStillCurrent: () => this.assertRunStillCurrentAndAlive(run, teamName),
       invalidateRuntimeSnapshotCaches: () => this.invalidateRuntimeSnapshotCaches(teamName),
       loadLiveRuntimeByMember: () => this.getLiveTeamAgentRuntimeMetadata(teamName),
     });
     const { directTmuxRestartPaneId, shouldDirectProcessRestart } = restartRuntimePreparation;
 
+    this.assertRunStillCurrentAndAlive(run, teamName);
     this.setMemberSpawnStatus(run, memberName, 'offline');
 
     const latestRunId = this.getAliveRunId(teamName);
@@ -1635,6 +1648,9 @@ export class TeamProvisioningMemberLifecycleController {
         });
         return;
       } catch (error) {
+        if (!this.isRunStillCurrentAndAlive(run, teamName)) {
+          throw error;
+        }
         run.pendingMemberRestarts.delete(memberName);
         this.setMemberSpawnStatus(
           run,
@@ -1666,6 +1682,9 @@ export class TeamProvisioningMemberLifecycleController {
         });
         return;
       } catch (error) {
+        if (!this.isRunStillCurrentAndAlive(run, teamName)) {
+          throw error;
+        }
         run.pendingMemberRestarts.delete(memberName);
         this.setMemberSpawnStatus(
           run,
@@ -1690,6 +1709,7 @@ export class TeamProvisioningMemberLifecycleController {
         mcpPolicy: configuredMember.mcpPolicy,
         run,
       });
+      this.assertRunStillCurrentAndAlive(run, teamName);
       const restartMessage = buildRestartMemberSpawnMessage(
         teamName,
         config?.name?.trim() || teamName,
@@ -1708,6 +1728,9 @@ export class TeamProvisioningMemberLifecycleController {
       await this.sendMessageToRun(run, restartMessage);
     } catch (error) {
       await this.removeTrackedMemberMcpLaunchConfig(run, restartMcpLaunchConfig).catch(() => {});
+      if (!this.isRunStillCurrentAndAlive(run, teamName)) {
+        throw error;
+      }
       run.pendingMemberRestarts.delete(memberName);
       this.setMemberSpawnStatus(
         run,

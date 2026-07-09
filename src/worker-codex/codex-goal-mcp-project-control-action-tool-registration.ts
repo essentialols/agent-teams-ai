@@ -1,0 +1,107 @@
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
+import {
+  jobIdInputSchema,
+  jobRegistryInputSchema,
+  type ProjectControlMcpArgs,
+} from "./codex-goal-mcp-inputs";
+import { withMcpErrors } from "./codex-goal-mcp-response";
+import {
+  projectControlCreateWorktree,
+  projectControlIntegrateCommit,
+  projectControlPushBranch,
+  projectControlStartStoredJob,
+} from "./codex-goal-mcp-project-control-tool-handlers";
+import {
+  projectAdmissionWorkerRoleSchemaValues,
+} from "./codex-goal-mcp-project-control-tool-schemas";
+
+export function registerCodexGoalProjectControlActionTools(server: McpServer): void {
+  server.registerTool(
+    "codex_goal_project_start",
+    {
+      title: "Project Control Start Codex Goal Worker",
+      description:
+        "Start a stored Codex goal worker through a ProjectScopedControl controller manifest and broker policy.",
+      inputSchema: {
+        ...jobIdInputSchema(),
+        controllerJobId: z.string().optional(),
+        confirmStart: z.boolean().optional(),
+        forceStart: z.boolean().optional(),
+        skipDoctor: z.boolean().optional(),
+        dependencyBootstrap: z.enum(["off", "preflight", "install"]).optional(),
+        confirmDependencyBootstrap: z.boolean().optional(),
+        staleAfterMs: z.number().int().positive().optional(),
+      },
+    },
+    async (args) => withMcpErrors(async () =>
+      projectControlStartStoredJob(args as ProjectControlMcpArgs),
+    ),
+  );
+
+  server.registerTool(
+    "codex_goal_project_create_worktree",
+    {
+      title: "Project Control Create Git Worktree",
+      description:
+        "Create a project git worktree through a ProjectScopedControl controller manifest and broker policy.",
+      inputSchema: {
+        ...jobRegistryInputSchema(),
+        controllerJobId: z.string().optional(),
+        sourceWorkspacePath: z.string().optional(),
+        path: z.string().optional(),
+        baseBranch: z.string().optional(),
+        sourceRef: z.string().optional(),
+        newBranch: z.string().optional(),
+        workerRole: z.enum(projectAdmissionWorkerRoleSchemaValues).optional(),
+        dependencyBootstrap: z.enum(["off", "preflight", "install"]).optional(),
+        confirmDependencyBootstrap: z.boolean().optional(),
+        confirmCreateWorktree: z.boolean().optional(),
+      },
+    },
+    async (args) => withMcpErrors(async () =>
+      projectControlCreateWorktree(args as ProjectControlMcpArgs),
+    ),
+  );
+
+  server.registerTool(
+    "codex_goal_project_integrate_commit",
+    {
+      title: "Project Control Integrate Git Commit",
+      description:
+        "Cherry-pick a reviewed commit into a scoped project worktree through broker policy.",
+      inputSchema: {
+        ...jobRegistryInputSchema(),
+        controllerJobId: z.string().optional(),
+        workspacePath: z.string().optional(),
+        branch: z.string().optional(),
+        commitSha: z.string().optional(),
+        confirmIntegrate: z.boolean().optional(),
+      },
+    },
+    async (args) => withMcpErrors(async () =>
+      projectControlIntegrateCommit(args as ProjectControlMcpArgs),
+    ),
+  );
+
+  server.registerTool(
+    "codex_goal_project_push_branch",
+    {
+      title: "Project Control Push Git Branch",
+      description:
+        "Push an allowed project branch through broker policy. Force uses --force-with-lease and must be allowed by scope.",
+      inputSchema: {
+        ...jobRegistryInputSchema(),
+        controllerJobId: z.string().optional(),
+        workspacePath: z.string().optional(),
+        branch: z.string().optional(),
+        remote: z.string().optional(),
+        force: z.boolean().optional(),
+        confirmPush: z.boolean().optional(),
+      },
+    },
+    async (args) => withMcpErrors(async () =>
+      projectControlPushBranch(args as ProjectControlMcpArgs),
+    ),
+  );
+}

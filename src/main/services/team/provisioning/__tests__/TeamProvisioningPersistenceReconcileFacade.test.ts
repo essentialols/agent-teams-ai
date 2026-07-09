@@ -79,7 +79,9 @@ function createPorts(
         })
       ),
       isLaunchStateNoopRefreshDue: vi.fn(() => false),
-      enqueue: vi.fn(<T>(_teamName: string, operation: () => Promise<T>) => operation()),
+      enqueue: vi.fn(<T>(_teamName: string, operation: () => Promise<T>) =>
+        operation()
+      ) as TeamProvisioningPersistenceReconcileFacadePorts<TestRun>['launchStateStoreBoundary']['enqueue'],
     };
   return {
     launchStateStoreBoundary,

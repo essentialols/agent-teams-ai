@@ -1,3 +1,4 @@
+import { type TeamRuntimeLanePlan } from '@features/team-runtime-lanes';
 import { createTeamRuntimeLaneCoordinator } from '@features/team-runtime-lanes/main';
 import { ConfigManager } from '@main/services/infrastructure/ConfigManager';
 import { NotificationManager } from '@main/services/infrastructure/NotificationManager';
@@ -696,11 +697,11 @@ export class TeamProvisioningService extends TeamProvisioningLaunchStateCompatib
       }
     );
 
-  private get openCodeRuntimeRecoveryIdentity(): TeamProvisioningOpenCodeRuntimeRecoveryFacade[openCodeRuntimeRecoveryIdentity] {
+  private get openCodeRuntimeRecoveryIdentity(): TeamProvisioningOpenCodeRuntimeRecoveryFacade['openCodeRuntimeRecoveryIdentity'] {
     return this.openCodeRuntimeRecoveryFacade.openCodeRuntimeRecoveryIdentity;
   }
 
-  protected readonly liveRuntimeMetadataPorts!: TeamProvisioningRuntimeProjection[liveRuntimeMetadataPorts];
+  protected readonly liveRuntimeMetadataPorts!: TeamProvisioningRuntimeProjection['liveRuntimeMetadataPorts'];
   private readonly launchStateWrittenRunIdByTeam = new Map<string, string>();
   private readonly launchStateStoreBoundary!: TeamProvisioningLaunchStateStoreBoundary;
   private readonly persistenceReconcileFacade!: TeamProvisioningPersistenceReconcileFacade<ProvisioningRun>;
@@ -1670,11 +1671,11 @@ export class TeamProvisioningService extends TeamProvisioningLaunchStateCompatib
    * Fires a "team_launched" notification when a team transitions to ready state.
    * Uses the existing addTeamNotification() pipeline.
    */
-  private async fireTeamLaunchedNotification(run: ProvisioningRun): Promise<void> {
+  protected async fireTeamLaunchedNotification(run: ProvisioningRun): Promise<void> {
     await this.launchNotifications.fireTeamLaunchedNotification(run);
   }
 
-  private async fireTeamLaunchIncompleteNotification(
+  protected async fireTeamLaunchIncompleteNotification(
     run: ProvisioningRun,
     failedMembers: readonly { name: string }[],
     launchSummary: {

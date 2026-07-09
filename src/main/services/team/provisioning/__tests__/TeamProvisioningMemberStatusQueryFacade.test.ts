@@ -127,7 +127,9 @@ class TestMemberStatusQueryFacade extends TeamProvisioningMemberStatusQueryFacad
     this.mutationPorts.emitMemberSpawnChange(run, memberName);
   }
 
-  protected async persistLaunchStateSnapshot(): Promise<unknown> {}
+  protected async persistLaunchStateSnapshot(): Promise<unknown> {
+    return null;
+  }
 }
 
 function createRun(): ProvisioningRun {
@@ -138,7 +140,7 @@ function createRun(): ProvisioningRun {
     progress: {
       runId: 'run-1',
       teamName: 'alpha',
-      state: 'running',
+      state: 'spawning',
       message: 'running',
       startedAt: '2026-07-08T00:00:00.000Z',
       updatedAt: '2026-07-08T00:00:00.000Z',
@@ -150,7 +152,7 @@ function createRun(): ProvisioningRun {
     memberSpawnStatuses: new Map(),
     memberSpawnLeadInboxCursorByMember: new Map(),
     lastMemberSpawnAuditAt: 0,
-  } as ProvisioningRun;
+  } as unknown as ProvisioningRun;
 }
 
 describe('TeamProvisioningMemberStatusQueryFacade', () => {

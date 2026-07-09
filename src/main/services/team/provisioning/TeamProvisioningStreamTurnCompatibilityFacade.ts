@@ -60,10 +60,10 @@ export abstract class TeamProvisioningStreamTurnCompatibilityFacade<
   protected captureTeamSpawnEvents(run: TRun, content: Record<string, unknown>[]): void {
     captureTeamSpawnEventsHelper(run, content, {
       logger,
-      setMemberSpawnStatus: (run, memberName, status, error) =>
-        this.setMemberSpawnStatus(run, memberName, status, error),
-      appendMemberBootstrapDiagnostic: (run, memberName, detail) =>
-        this.appendMemberBootstrapDiagnostic(run, memberName, detail),
+      setMemberSpawnStatus: (targetRun, memberName, status, error) =>
+        this.setMemberSpawnStatus(targetRun as TRun, memberName, status, error),
+      appendMemberBootstrapDiagnostic: (targetRun, memberName, detail) =>
+        this.appendMemberBootstrapDiagnostic(targetRun as TRun, memberName, detail),
       updateProgress,
     });
   }

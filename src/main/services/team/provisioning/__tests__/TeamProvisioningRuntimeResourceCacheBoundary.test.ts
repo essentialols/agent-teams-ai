@@ -38,15 +38,15 @@ describe('TeamProvisioningRuntimeResourceCacheBoundary', () => {
 
     expect(boundary.runtimeResourceSampling).toBe(runtimeResourceSampling);
     expect(createRuntimeResourceSampling).toHaveBeenCalledTimes(1);
-    expect(capturedCacheAccess?.getRuntimeSnapshotCacheGeneration('alpha')).toBe(0);
+    expect(capturedCacheAccess!.getRuntimeSnapshotCacheGeneration('alpha')).toBe(0);
 
     boundary.runtimeSnapshotCacheBoundary.invalidateRuntimeSnapshotCaches('alpha');
 
-    expect(capturedCacheAccess?.getRuntimeSnapshotCacheGeneration('alpha')).toBe(1);
-    expect(capturedCacheAccess?.getTrackedRunId('alpha')).toBe('run-1');
+    expect(capturedCacheAccess!.getRuntimeSnapshotCacheGeneration('alpha')).toBe(1);
+    expect(capturedCacheAccess!.getTrackedRunId('alpha')).toBe('run-1');
     expect(getTrackedRunId).toHaveBeenCalledWith('alpha');
 
-    capturedLogPorts?.logDebug('sample debug');
+    capturedLogPorts!.logDebug('sample debug');
 
     expect(logDebug).toHaveBeenCalledWith('sample debug');
   });

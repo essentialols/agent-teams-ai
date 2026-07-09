@@ -92,6 +92,12 @@ class TestDiagnosticsPreflightCompatibilityFacade extends TeamProvisioningDiagno
   protected readonly runtimeSnapshotFacade = {
     getTeamAgentRuntimeSnapshot: vi.fn(),
   };
+  protected readonly runtimeSnapshotCacheBoundary = {
+    getRuntimeSnapshotCacheGeneration: vi.fn(() => 0),
+  };
+  protected readonly liveRuntimeMetadataPorts = {
+    getLiveTeamAgentRuntimeMetadata: vi.fn(async () => new Map()),
+  };
   protected readonly prepareFacade = this
     .prepareFacadeMock as unknown as TeamProvisioningPrepareFacade;
   protected readonly providerRuntime = {} as never;
@@ -196,7 +202,9 @@ class TestDiagnosticsPreflightCompatibilityFacade extends TeamProvisioningDiagno
 
   protected emitMemberSpawnChange(): void {}
 
-  protected async persistLaunchStateSnapshot(): Promise<unknown> {}
+  protected async persistLaunchStateSnapshot(): Promise<unknown> {
+    return null;
+  }
 
   protected syncLeadTaskActivityForState(): void {}
 

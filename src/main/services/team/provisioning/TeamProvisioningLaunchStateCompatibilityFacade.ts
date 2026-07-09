@@ -1,6 +1,7 @@
 import { type TeamRuntimeLaneCoordinator } from '@features/team-runtime-lanes/main';
 import { createLogger } from '@shared/utils/logger';
 
+import { type TeamProvisioningBootstrapEvidenceFacade } from './TeamProvisioningBootstrapEvidenceFacade';
 import { type TeamProvisioningLaunchNotifications } from './TeamProvisioningLaunchNotifications';
 import {
   buildAggregatePendingLaunchMessage as buildAggregatePendingLaunchMessageHelper,
@@ -184,7 +185,7 @@ export interface TeamProvisioningLaunchStateCompatibilityServiceHost<
   >;
   bootstrapEvidenceFacade: Pick<
     TeamProvisioningBootstrapEvidenceFacade,
-    applyOpenCodeSecondaryEvidenceOverlay
+    'applyOpenCodeSecondaryEvidenceOverlay'
   >;
   primaryBootstrapTruthReporting: Pick<
     TeamProvisioningPrimaryBootstrapTruthReportingBoundary<TRun>,
@@ -201,6 +202,7 @@ export interface TeamProvisioningLaunchStateCompatibilityServiceHost<
   >;
   runtimeLaneCoordinator: Pick<TeamRuntimeLaneCoordinator, 'buildAggregateLaunchSnapshot'>;
   isProvisioningRunPromotedToAlive(run: TRun): boolean;
+  isMemberLifecycleOperationActive(teamName: string, memberName: string): boolean;
 }
 
 export function createTeamProvisioningLaunchStateCompatibilityBoundaryFromService<

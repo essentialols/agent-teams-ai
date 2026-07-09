@@ -214,6 +214,27 @@ function createHost(calls: string[]): TeamProvisioningOpenCodeRuntimeLaneRecover
         };
       },
     },
+    async readOpenCodeMemberDirectory(this: { calls: string[] }, teamName: string) {
+      this.calls.push(`orgConfigCompatibilityFacade.readOpenCodeMemberDirectory:${teamName}`);
+      return {
+        config: null,
+        teamMeta: null,
+        metaMembers: [],
+      };
+    },
+    resolveOpenCodeMemberIdentityFromDirectory(
+      this: { calls: string[] },
+      teamName: string,
+      memberName: string
+    ) {
+      this.calls.push(
+        `orgConfigCompatibilityFacade.resolveOpenCodeMemberIdentityFromDirectory:${teamName}:${memberName}`
+      );
+      return {
+        ok: false as const,
+        reason: 'opencode_recipient_unavailable' as const,
+      };
+    },
     async readConfigForObservation(this: { calls: string[] }, teamName: string) {
       this.calls.push(`host.readConfigForObservation:${teamName}`);
       return null;

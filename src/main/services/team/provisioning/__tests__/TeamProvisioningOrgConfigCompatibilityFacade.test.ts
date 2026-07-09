@@ -108,8 +108,8 @@ function createFacade(overrides: Partial<TeamProvisioningOrgConfigCompatibilityS
     },
     openCodeMemberIdentityBoundary: {
       resolveOpenCodeMemberIdentityFromDirectory: vi.fn(() => ({
-        ok: false,
-        reason: 'opencode_recipient_unavailable',
+        ok: false as const,
+        reason: 'opencode_recipient_unavailable' as const,
       })),
     },
     ...overrides,

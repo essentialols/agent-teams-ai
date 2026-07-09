@@ -107,7 +107,9 @@ class TestStatusQueryCompatibilityFacade extends TeamProvisioningStatusQueryComp
 
   protected emitMemberSpawnChange(): void {}
 
-  protected async persistLaunchStateSnapshot(): Promise<unknown> {}
+  protected async persistLaunchStateSnapshot(): Promise<unknown> {
+    return null;
+  }
 }
 
 describe('TeamProvisioningStatusQueryCompatibilityFacade', () => {

@@ -118,7 +118,7 @@ export abstract class TeamProvisioningStopCleanupCompatibilityFacade<
   private get stopFlowBoundary(): TeamProvisioningStopFlowBoundary {
     if (!this.stopFlowBoundaryValue) {
       this.stopFlowBoundaryValue = createTeamProvisioningStopFlowBoundary<TRun>(
-        createTeamProvisioningStopFlowDepsFromService(this.stopCleanupServiceHost, {
+        createTeamProvisioningStopFlowDepsFromService<TRun>(this.stopCleanupServiceHost, {
           getTeamsBasePath,
           clearOpenCodeRuntimeLaneStorage,
           killTeamProcess,

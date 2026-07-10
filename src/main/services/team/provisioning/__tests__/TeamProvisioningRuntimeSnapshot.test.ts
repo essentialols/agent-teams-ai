@@ -206,6 +206,79 @@ function processRows(): RuntimeTelemetryProcessTableRow[] {
 }
 
 describe('TeamProvisioningRuntimeSnapshot source precedence', () => {
+  it('preserves OpenCode runtime snapshot diagnostic compatibility at the mapper boundary', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(UPDATED_AT));
+    try {
+      const liveRuntimeByMember = new Map<string, LiveTeamAgentRuntimeMetadata>([
+        [
+          'Worker',
+          {
+            alive: false,
+            backendType: 'process',
+            providerId: 'opencode',
+            livenessKind: 'registered_only',
+            pidSource: 'persisted_metadata',
+            runtimeDiagnostic: 'registered runtime metadata without live process',
+            runtimeDiagnosticSeverity: 'warning',
+          },
+        ],
+      ]);
+
+      const snapshot = await buildTeamAgentRuntimeSnapshot({
+        teamName: TEAM_NAME,
+        runId: RUN_ID,
+        generationAtStart: 0,
+        runs: new Map([[RUN_ID, run()]]),
+        runtimeAdapterRunByTeam: new Map([[TEAM_NAME, runtimeAdapterRun()]]),
+        teamMetaStore: {
+          getMeta: vi.fn(async () => ({ providerId: 'opencode' as const })),
+        },
+        membersMetaStore: {
+          getMembers: vi.fn(async () => []),
+        },
+        launchStateStore: {
+          read: vi.fn(async () => null),
+        },
+        readConfigSnapshot: vi.fn(async () => config()),
+        readPersistedRuntimeMembers: vi.fn(() => []),
+        getMemberSpawnStatuses: vi.fn(
+          async (): Promise<MemberSpawnStatusesSnapshot> => ({
+            runId: RUN_ID,
+            source: 'live',
+            statuses: {},
+          })
+        ),
+        getLiveTeamAgentRuntimeMetadata: vi.fn(async () => liveRuntimeByMember),
+        readRuntimeProcessRowsForUsageSnapshot: vi.fn(async () => []),
+        readProcessUsageStatsByPid: vi.fn(async () => new Map()),
+        buildRuntimeUsageProcessTrees: vi.fn(() => new Map()),
+        buildRuntimeProcessLoadStats: vi.fn(() => undefined),
+        agentRuntimeResourceHistory: {
+          record: vi.fn(() => undefined),
+          prune: vi.fn(),
+        },
+        getRuntimeSnapshotCacheGeneration: vi.fn(() => 0),
+        getTrackedRunId: vi.fn(() => RUN_ID),
+        getAgentRuntimeSnapshotCacheTtlMs: vi.fn(() => 1_000),
+        rememberAgentRuntimeSnapshot: vi.fn(),
+        logDebug: vi.fn(),
+      });
+
+      expect(snapshot.members.Worker).toMatchObject({
+        alive: true,
+        livenessKind: 'confirmed_bootstrap',
+        pidSource: 'runtime_bootstrap',
+        pid: CURRENT_PID,
+        runtimeSessionId: 'session-current',
+        runtimeDiagnostic: 'OpenCode bootstrap confirmed; runtime host/session evidence present.',
+        runtimeDiagnosticSeverity: 'info',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('does not let a stale persisted OpenCode launch confirmation override current spawn evidence', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(UPDATED_AT));

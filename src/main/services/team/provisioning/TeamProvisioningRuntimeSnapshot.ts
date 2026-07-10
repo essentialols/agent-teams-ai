@@ -1089,6 +1089,8 @@ export async function buildTeamAgentRuntimeSnapshot(
       runtimeAdapterEvidence.runtimeAlive === true &&
       runtimeAdapterEvidence.hardFailure !== true &&
       hasOpenCodeRuntimeHandle;
+    const confirmedOpenCodeRuntimeBootstrapAlive =
+      confirmedOpenCodeRuntimeAlive || confirmedOpenCodeRuntimeAdapterAlive;
     const confirmedSpawnRuntimeFallback =
       !isOpenCodeMember &&
       spawnStatusConfirmsBootstrap &&
@@ -1108,8 +1110,13 @@ export async function buildTeamAgentRuntimeSnapshot(
       liveRuntimeDiagnosticSeverity: liveRuntimeMember?.runtimeDiagnosticSeverity,
       spawnRuntimeDiagnostic: confirmedSpawnRuntimeDiagnostic,
       spawnRuntimeDiagnosticSeverity: spawnStatusMember?.runtimeDiagnosticSeverity,
-      confirmedOpenCodeRuntimeAlive,
-      confirmedOpenCodeRuntimeAdapterAlive,
+      confirmedRuntimeBootstrapAlive: confirmedOpenCodeRuntimeBootstrapAlive,
+      ...(confirmedOpenCodeRuntimeBootstrapAlive
+        ? {
+            confirmedRuntimeBootstrapDiagnostic:
+              'OpenCode bootstrap confirmed; runtime host/session evidence present.',
+          }
+        : {}),
       confirmedSpawnRuntimeFallback,
       keepConfirmedSpawnRuntimeDiagnostic: shouldKeepConfirmedSpawnRuntimeDiagnostic,
     });

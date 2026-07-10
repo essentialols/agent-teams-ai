@@ -472,13 +472,43 @@ describe('runtime projection foundation', () => {
         livePidSource: 'opencode_bridge',
         liveRuntimeDiagnostic: 'candidate only',
         liveRuntimeDiagnosticSeverity: 'warning',
-        confirmedOpenCodeRuntimeAlive: true,
+        confirmedRuntimeBootstrapAlive: true,
       })
     ).toEqual({
       alive: true,
       livenessKind: 'confirmed_bootstrap',
       pidSource: 'opencode_bridge',
-      runtimeDiagnostic: 'OpenCode bootstrap confirmed; runtime host/session evidence present.',
+      runtimeDiagnostic: 'bootstrap confirmed; runtime host/session evidence present.',
+      runtimeDiagnosticSeverity: 'info',
+    });
+    expect(
+      projectRuntimeSnapshotMemberLivenessFields({
+        liveAlive: true,
+        liveLivenessKind: 'runtime_process',
+        livePidSource: 'opencode_bridge',
+        liveRuntimeDiagnostic: 'runtime process detected',
+        liveRuntimeDiagnosticSeverity: 'info',
+        confirmedRuntimeBootstrapAlive: true,
+      })
+    ).toEqual({
+      alive: true,
+      livenessKind: 'runtime_process',
+      pidSource: 'opencode_bridge',
+      runtimeDiagnostic: 'runtime process detected',
+      runtimeDiagnosticSeverity: 'info',
+    });
+    expect(
+      projectRuntimeSnapshotMemberLivenessFields({
+        liveAlive: false,
+        liveLivenessKind: 'registered_only',
+        confirmedRuntimeBootstrapAlive: true,
+        confirmedRuntimeBootstrapDiagnostic: 'runtime adapter confirmed bootstrap',
+      })
+    ).toEqual({
+      alive: true,
+      livenessKind: 'confirmed_bootstrap',
+      pidSource: 'runtime_bootstrap',
+      runtimeDiagnostic: 'runtime adapter confirmed bootstrap',
       runtimeDiagnosticSeverity: 'info',
     });
 
@@ -508,13 +538,13 @@ describe('runtime projection foundation', () => {
         livePidSource: 'persisted_metadata',
         liveRuntimeDiagnostic: 'registered runtime metadata without live process',
         liveRuntimeDiagnosticSeverity: 'warning',
-        confirmedOpenCodeRuntimeAdapterAlive: true,
+        confirmedRuntimeBootstrapAlive: true,
       })
     ).toEqual({
       alive: true,
       livenessKind: 'confirmed_bootstrap',
       pidSource: 'runtime_bootstrap',
-      runtimeDiagnostic: 'OpenCode bootstrap confirmed; runtime host/session evidence present.',
+      runtimeDiagnostic: 'bootstrap confirmed; runtime host/session evidence present.',
       runtimeDiagnosticSeverity: 'info',
     });
 
@@ -522,13 +552,13 @@ describe('runtime projection foundation', () => {
       projectRuntimeSnapshotMemberLivenessFields({
         liveAlive: false,
         liveLivenessKind: 'not_found',
-        confirmedOpenCodeRuntimeAdapterAlive: true,
+        confirmedRuntimeBootstrapAlive: true,
       })
     ).toEqual({
       alive: true,
       livenessKind: 'confirmed_bootstrap',
       pidSource: 'runtime_bootstrap',
-      runtimeDiagnostic: 'OpenCode bootstrap confirmed; runtime host/session evidence present.',
+      runtimeDiagnostic: 'bootstrap confirmed; runtime host/session evidence present.',
       runtimeDiagnosticSeverity: 'info',
     });
   });

@@ -131,6 +131,7 @@ export interface TeamProvisioningRuntimeSnapshotRun {
   effectiveMembers?: TeamCreateRequest['members'];
   memberSpawnStatuses?: Map<string, MemberSpawnStatusEntry>;
   mixedSecondaryLanes?: readonly {
+    laneId?: string;
     member: TeamCreateRequest['members'][number];
     result?: { members?: Record<string, TeamRuntimeMemberLaunchEvidence> } | null;
   }[];
@@ -215,6 +216,50 @@ function shouldUsePersistedRuntimeMemberRuntimeEvidence(
   }
   const bootstrapRunId = member.bootstrapRunId?.trim() ?? '';
   return bootstrapRunId.length > 0 && bootstrapRunId === activeRuntimeRunId;
+}
+
+function normalizeRuntimeLaneKind(value: unknown): 'primary' | 'secondary' | undefined {
+  return value === 'primary' || value === 'secondary' ? value : undefined;
+}
+
+function normalizeRuntimeLaneIdentity(
+  value: unknown
+): Pick<TeamAgentRuntimeEntry, 'laneId' | 'laneKind'> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+  const record = value as Record<string, unknown>;
+  const laneId = typeof record.laneId === 'string' ? record.laneId.trim() : '';
+  const laneKind = normalizeRuntimeLaneKind(record.laneKind);
+  return {
+    ...(laneId ? { laneId } : {}),
+    ...(laneKind ? { laneKind } : {}),
+  };
+}
+
+function resolveActiveRunLaneIdentity(
+  run: TeamProvisioningRuntimeSnapshotRun | null,
+  memberName: string
+): Pick<TeamAgentRuntimeEntry, 'laneId' | 'laneKind'> {
+  if (!run) {
+    return {};
+  }
+  for (const lane of run.mixedSecondaryLanes ?? []) {
+    const laneMemberName = lane.member.name?.trim() ?? '';
+    if (
+      !laneMemberName ||
+      (!matchesMemberNameOrBase(laneMemberName, memberName) &&
+        !matchesMemberNameOrBase(memberName, laneMemberName))
+    ) {
+      continue;
+    }
+    const laneId = typeof lane.laneId === 'string' ? lane.laneId.trim() : '';
+    return {
+      ...(laneId ? { laneId } : {}),
+      laneKind: 'secondary',
+    };
+  }
+  return normalizeRuntimeLaneIdentity(findEffectiveRunMember(run, memberName));
 }
 
 function normalizeRuntimePositiveInteger(value: unknown): number | undefined {
@@ -971,6 +1016,7 @@ export async function buildTeamAgentRuntimeSnapshot(
     )
       ? launchSnapshot?.members[memberName]
       : undefined;
+    const activeRunLaneIdentity = resolveActiveRunLaneIdentity(run, memberName);
     const runtimeAdapterEvidence = currentRuntimeAdapterRun?.members?.[memberName];
     const activeRunMember = activeRunMemberByName.get(memberName);
     const activeRunModel = activeRunMember?.model?.trim();
@@ -1198,8 +1244,8 @@ export async function buildTeamAgentRuntimeSnapshot(
       backendType,
       providerId: memberProviderId,
       providerBackendId: memberProviderBackendId,
-      laneId: launchMember?.laneId,
-      laneKind: launchMember?.laneKind,
+      laneId: activeRunLaneIdentity.laneId ?? launchMember?.laneId,
+      laneKind: activeRunLaneIdentity.laneKind ?? launchMember?.laneKind,
       pid: displayPid,
       runtimeModel,
       cwd: runtimeCwd,
@@ -1336,13 +1382,14 @@ export async function buildLiveTeamAgentRuntimeMetadata(
       member,
       activeRuntimeRunId
     );
+    const agentId =
+      typeof member.agentId === 'string' ? member.agentId.trim() || undefined : undefined;
     upsertMetadata(memberName, {
       providerId: normalizeOptionalTeamProviderId(member.providerId),
+      ...(agentId ? { agentId } : {}),
       ...(canUseRuntimeEvidence
         ? {
             backendType: normalizeTeamAgentRuntimeBackendType(member.backendType, false),
-            agentId:
-              typeof member.agentId === 'string' ? member.agentId.trim() || undefined : undefined,
             tmuxPaneId:
               typeof member.tmuxPaneId === 'string'
                 ? member.tmuxPaneId.trim() || undefined

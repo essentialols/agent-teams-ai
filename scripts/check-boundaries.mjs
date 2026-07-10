@@ -135,23 +135,6 @@ const forbidden = [
     message: "worker-core must stay provider and adapter neutral",
   },
   {
-    from: /^src\/orchestrator-core\//,
-    imports: [
-      /^node:fs(?:\/promises)?$/,
-      runtimeSubpathPattern("(?:provider-|worker-(?:codex|claude)|store-|runner-)"),
-      internalPathPattern("(?:provider-|worker-(?:codex|claude)|store-|runner-)"),
-      /bullmq/,
-      /temporal/i,
-      /jetstream/i,
-      /redis/i,
-      /webhook/i,
-      /progress\.json/i,
-      /latest-result\.json/i,
-    ],
-    message:
-      "orchestrator-core must consume runtime ports/read-models, not files, transports, providers, or stores",
-  },
-  {
     from: /^src\/worker-codex\//,
     imports: [
       runtimeSubpathPattern("(?:provider-claude|worker-claude|queue-)"),

@@ -6,7 +6,6 @@ export * as openaiCompatibleCodex from "./openai-compatible-codex/index.js";
 export * as providerClaude from "./provider-claude/index.js";
 export * as workerCore from "./worker-core/index.js";
 export * as workerCodex from "./worker-codex/index.js";
-export * as orchestratorCore from "./orchestrator-core/index.js";
 export * as queueCore from "./queue-core/index.js";
 export * as queueBullmq from "./queue-bullmq/index.js";
 export * as storeLocalFile from "./store-local-file/index.js";

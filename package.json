@@ -70,11 +70,6 @@
       "import": "./dist/worker-local/index.js",
       "default": "./dist/worker-local/index.js"
     },
-    "./orchestrator-core": {
-      "types": "./dist/orchestrator-core/index.d.ts",
-      "import": "./dist/orchestrator-core/index.js",
-      "default": "./dist/orchestrator-core/index.js"
-    },
     "./queue-core": {
       "types": "./dist/queue-core/index.d.ts",
       "import": "./dist/queue-core/index.js",

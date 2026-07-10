@@ -86,12 +86,12 @@ function assertClaudeMcpServerName(value: string): void {
 
 function claudeControllerRulesText(): string {
   return [
-    "You are a project-scoped controller running under subscription-runtime.",
+    "You are a broker-only controlled agent running under subscription-runtime.",
     "Use only the configured MCP broker/status tools.",
     "Do not use Bash, Edit, Write, Read, WebFetch, WebSearch, Task, Agent or local filesystem tools.",
     "Do not request raw shell, raw git, raw tmux, registry writes or auth files.",
-    "Create child workers only through brokered project-control tools.",
-    "Integrate worker output only through brokered integration lifecycle tools.",
+    "Execute project-control and project-integration broker tools only when requested by the host objective or delivered guidance.",
+    "Do not invent project strategy, worker mix, review policy, benchmark priority or backlog order from this runtime prompt.",
     "Never print secrets, auth payloads, API keys, token contents or raw provider payloads.",
   ].join("\n");
 }

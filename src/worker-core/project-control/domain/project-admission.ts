@@ -1,5 +1,11 @@
 import { ProjectOperation } from "../../access-control";
 
+/**
+ * Caller-supplied admission lane used for safety gating and audit.
+ *
+ * These names describe the intent of the requested operation. They are not
+ * scheduler policy, desired worker mix or project strategy owned by the runtime.
+ */
 export enum ProjectAdmissionWorkerRole {
   Producer = "producer",
   Fastgate = "fastgate",

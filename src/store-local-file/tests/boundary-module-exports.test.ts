@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import * as publicApi from "../index";
 import * as controlledAgentState from "../controlled-agent-state";
 import * as integrationAttempts from "../integration-attempts";
-import * as runEventOrchestratorState from "../run-event-orchestrator-state";
 import * as runEvents from "../run-events";
 import * as runObservationHistory from "../run-observation-history";
 import * as safeExecution from "../safe-execution";
@@ -34,9 +33,6 @@ describe("store-local-file boundary modules", () => {
     );
     expect(publicApi.LocalFileRunEventDeliveryCursorStore).toBe(
       runEvents.LocalFileRunEventDeliveryCursorStore,
-    );
-    expect(publicApi.LocalFileRunEventOrchestratorStateStore).toBe(
-      runEventOrchestratorState.LocalFileRunEventOrchestratorStateStore,
     );
     expect(publicApi.LocalFileRunObservationHistoryStore).toBe(
       runObservationHistory.LocalFileRunObservationHistoryStore,

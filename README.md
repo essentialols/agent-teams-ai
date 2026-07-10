@@ -11,6 +11,12 @@ single provider. Codex is the first production adapter, and the package layout
 is designed so Claude or another subscription-backed agent can be added without
 rewriting the host application.
 
+This package is not an orchestrator. It does not own project strategy, global
+task selection, worker mix, review policy, benchmark priority or autonomous
+coordination. Those responsibilities belong to a host application or a separate
+orchestrator library above this runtime. `subscription-runtime` exposes the
+safe execution, custody, broker and audit primitives that such a layer can call.
+
 Install the published package from GitHub Packages:
 
 ```ini
@@ -108,6 +114,11 @@ or when to launch a higher-level autonomous controller belong in a host
 orchestration layer above this package. That layer should call the
 `codex_goal_project_*` broker tools and admission snapshot APIs exposed here,
 not bypass them with raw shell, tmux, git or registry writes.
+
+Any field that sounds strategic, such as `workerRole`, is treated here as
+caller-supplied admission intent for safety gating and audit. The runtime may
+decide whether that requested operation is safe right now, but it must not
+decide the desired role mix, backlog strategy or project objective.
 
 When a new safety invariant is project-neutral, implement it here. When a new
 policy is about one project's goals, capacity strategy or task prioritization,

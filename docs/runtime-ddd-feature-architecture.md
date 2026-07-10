@@ -20,6 +20,16 @@ This means:
 Do not turn subscription-runtime into a project-specific orchestrator. It should
 be the reliable runtime, broker and policy enforcement layer.
 
+Layer contract:
+
+- runtime exposes provider-neutral execution, state, admission, brokered
+  operations and audit facts;
+- runtime validates whether a requested operation is safe and allowed;
+- runtime must not choose the project backlog, worker mix, review strategy,
+  benchmark priority or autonomous controller objective;
+- orchestrator or host code may depend on subscription-runtime, but
+  subscription-runtime must not depend on orchestrator concepts or policy.
+
 ## Current state
 
 The repository is already feature-sliced at package/module level:
@@ -32,7 +42,6 @@ The repository is already feature-sliced at package/module level:
 - `queue-core`
 - `queue-bullmq`
 - `account-diagnostics`
-- `orchestrator-core`
 
 Inside large modules such as `worker-core`, new complex features should use a
 bounded-context slice instead of adding more mixed files to the module root.
@@ -52,6 +61,7 @@ subscription-runtime owns:
 
 The orchestrator layer owns:
 
+- controller objectives and prompts that decide what to do next;
 - worker pool strategy;
 - task selection and decomposition;
 - review strategy;

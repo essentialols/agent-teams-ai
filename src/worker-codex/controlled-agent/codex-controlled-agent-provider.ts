@@ -356,10 +356,11 @@ function controlledAgentPrompt(
 
 function controlledAgentGoalObjective(input: ControlledAgentProviderStartInput): string {
   return [
-    "Act as the live broker-only project controller.",
+    "Act as the broker-only controlled-agent runtime shell for the project controller.",
     `Controller job: ${input.session.identity.controllerJobId}.`,
     `Project: ${input.session.identity.projectId}.`,
-    "Inspect project worker status, create scoped child workers when useful, review outputs, and integrate only through brokered lifecycle tools.",
+    "Follow the controller objective supplied by the host manifest. If no objective is supplied, report that the host must provide orchestration intent instead of inventing project strategy.",
+    "Use broker/status tools to inspect state, consume guidance, and execute only explicitly requested project-control or project-integration actions.",
     "Consume controller guidance through codex_goal_project_controller_consume_guidance at safe points so operator direction does not remain pending.",
     "Never use raw shell/git/tmux/registry/auth access.",
   ].join(" ");

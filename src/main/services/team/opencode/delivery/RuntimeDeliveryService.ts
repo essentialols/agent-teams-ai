@@ -124,14 +124,9 @@ export class RuntimeDeliveryService {
   async deliver(raw: unknown): Promise<RuntimeDeliveryAck> {
     const envelope = normalizeRuntimeDeliveryEnvelope(raw);
     const now = this.clock().toISOString();
-    const currentRunId = await this.runState.getCurrentRunId(envelope.teamName);
-    if (currentRunId !== envelope.runId) {
-      return {
-        ok: false,
-        delivered: false,
-        reason: 'stale_run',
-        idempotencyKey: envelope.idempotencyKey,
-      };
+    const staleRun = await this.rejectIfRunIsStale(envelope);
+    if (staleRun) {
+      return staleRun;
     }
 
     const destination = resolveRuntimeDeliveryDestination(envelope);
@@ -151,6 +146,14 @@ export class RuntimeDeliveryService {
       destinationMessageId,
       now,
     });
+
+    const journalCanBeMarkedTerminal = begin.state === 'new' || begin.state === 'resume_pending';
+    const staleRunAfterJournal = await this.rejectIfRunIsStale(envelope, {
+      markJournalRecordTerminal: journalCanBeMarkedTerminal,
+    });
+    if (staleRunAfterJournal) {
+      return staleRunAfterJournal;
+    }
 
     if (begin.state === 'payload_conflict') {
       await this.diagnostics.append({
@@ -188,6 +191,13 @@ export class RuntimeDeliveryService {
     const port = this.destinations.get(destination.kind);
     const preExisting = await port.verify({ destination, destinationMessageId });
     if (preExisting.found && preExisting.location) {
+      const staleRunBeforeDuplicateCommit = await this.rejectIfRunIsStale(envelope, {
+        markJournalRecordTerminal: true,
+      });
+      if (staleRunBeforeDuplicateCommit) {
+        return staleRunBeforeDuplicateCommit;
+      }
+
       await this.journal.markCommitted({
         idempotencyKey: envelope.idempotencyKey,
         runId: envelope.runId,
@@ -204,6 +214,13 @@ export class RuntimeDeliveryService {
       };
     }
 
+    const staleRunBeforeWrite = await this.rejectIfRunIsStale(envelope, {
+      markJournalRecordTerminal: true,
+    });
+    if (staleRunBeforeWrite) {
+      return staleRunBeforeWrite;
+    }
+
     try {
       const location = await port.write({ envelope, destinationMessageId });
       const verified = await port.verify({ destination, destinationMessageId, location });
@@ -214,6 +231,13 @@ export class RuntimeDeliveryService {
       }
 
       const committedLocation = verified.location ?? location;
+      const staleRunBeforeCommit = await this.rejectIfRunIsStale(envelope, {
+        markJournalRecordTerminal: true,
+      });
+      if (staleRunBeforeCommit) {
+        return staleRunBeforeCommit;
+      }
+
       await this.journal.markCommitted({
         idempotencyKey: envelope.idempotencyKey,
         runId: envelope.runId,
@@ -256,6 +280,34 @@ export class RuntimeDeliveryService {
       });
       throw error;
     }
+  }
+
+  private async rejectIfRunIsStale(
+    envelope: RuntimeDeliveryEnvelope,
+    options: { markJournalRecordTerminal?: boolean } = {}
+  ): Promise<RuntimeDeliveryAck | null> {
+    const currentRunId = await this.runState.getCurrentRunId(envelope.teamName);
+    if (currentRunId === envelope.runId) {
+      return null;
+    }
+
+    if (options.markJournalRecordTerminal) {
+      await this.journal.markFailed({
+        idempotencyKey: envelope.idempotencyKey,
+        runId: envelope.runId,
+        teamName: envelope.teamName,
+        status: 'failed_terminal',
+        error: 'stale_run',
+        updatedAt: this.clock().toISOString(),
+      });
+    }
+
+    return {
+      ok: false,
+      delivered: false,
+      reason: 'stale_run',
+      idempotencyKey: envelope.idempotencyKey,
+    };
   }
 
   private async emitChangeEventBestEffort(

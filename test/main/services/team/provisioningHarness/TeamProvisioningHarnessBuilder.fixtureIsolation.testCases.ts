@@ -15,6 +15,8 @@ import {
   TeamProvisioningHarnessBuilder,
 } from './index';
 
+import type { ToolApprovalRequest } from '@shared/types';
+
 describe('TeamProvisioningHarnessBuilder fixture isolation', () => {
   it('clones domain fixture inputs so caller mutation cannot leak between fake snapshots', () => {
     const members = [memberFixture.lead(), memberFixture.codex('Original')];
@@ -55,14 +57,21 @@ describe('TeamProvisioningHarnessBuilder fixture isolation', () => {
     diagnostics.push('mutated');
     expect(evidence.diagnostics).toEqual(['runtime-ready']);
 
-    const pendingApprovals = new Map([['approval-1', { status: 'pending' }]]);
+    const approval: ToolApprovalRequest = {
+      requestId: 'approval-1',
+      runId: 'harness-run-id',
+      teamName: 'map-isolation-team',
+      source: 'lead',
+      toolName: 'Read',
+      toolInput: { file_path: '/tmp/harness-fixture.txt' },
+      receivedAt: HARNESS_DEFAULT_NOW_ISO,
+    };
+    const pendingApprovals = new Map([['approval-1', approval]]);
     const runWithMapOverride = makeProvisioningRun({
-      overrides: { pendingApprovals } as never,
+      overrides: { pendingApprovals },
     });
-    pendingApprovals.get('approval-1')!.status = 'mutated';
-    expect(
-      (runWithMapOverride.pendingApprovals.get('approval-1') as { status: string }).status
-    ).toBe('pending');
+    pendingApprovals.get('approval-1')!.toolName = 'MutatedTool';
+    expect(runWithMapOverride.pendingApprovals.get('approval-1')?.toolName).toBe('Read');
   });
 
   it('keeps mutable fixture defaults isolated across calls', () => {

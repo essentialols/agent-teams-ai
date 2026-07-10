@@ -24,6 +24,7 @@ export async function projectControlRefillAccountNames(input: {
   readonly authRootDir?: string;
   readonly requestedAccounts: readonly string[];
   readonly allowedAccountIds: readonly string[];
+  readonly rotationKey?: string;
 }): Promise<readonly string[]> {
   const requestedAccounts = input.requestedAccounts.length
     ? uniqueProjectControlStrings(input.requestedAccounts)
@@ -32,7 +33,9 @@ export async function projectControlRefillAccountNames(input: {
   const scopedAccounts = requestedAccounts.filter((account) =>
     allowed.size === 0 || allowed.has(account)
   );
-  if (!input.authRootDir || scopedAccounts.length === 0) return scopedAccounts;
+  if (!input.authRootDir || scopedAccounts.length === 0) {
+    return rotateProjectControlAccountNames(scopedAccounts, input.rotationKey);
+  }
 
   const slots = await listCodexGoalAccountStatuses({
     authRootDir: input.authRootDir,
@@ -43,7 +46,26 @@ export async function projectControlRefillAccountNames(input: {
       .filter((slot) => slot.status === "ready")
       .map((slot) => slot.name),
   );
-  return ready.size > 0
+  const readyAccounts = ready.size > 0
     ? scopedAccounts.filter((account) => ready.has(account))
     : scopedAccounts;
+  return rotateProjectControlAccountNames(readyAccounts, input.rotationKey);
+}
+
+export function rotateProjectControlAccountNames(
+  accounts: readonly string[],
+  rotationKey?: string,
+): readonly string[] {
+  if (accounts.length < 2 || !rotationKey?.trim()) return [...accounts];
+  const offset = stableRotationOffset(rotationKey, accounts.length);
+  return [...accounts.slice(offset), ...accounts.slice(0, offset)];
+}
+
+function stableRotationOffset(rotationKey: string, accountCount: number): number {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < rotationKey.length; index += 1) {
+    hash ^= rotationKey.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0) % accountCount;
 }

@@ -235,6 +235,7 @@ export async function projectControlRefillWorkerView(
       : { authRootDir: requested.authRootDir }),
     requestedAccounts: requested.accounts,
     allowedAccountIds: controller.scope.allowedAccountIds ?? [],
+    rotationKey: requested.jobId,
   });
   if (!accounts.length) {
     throw new Error("project_control_refill_no_ready_account");

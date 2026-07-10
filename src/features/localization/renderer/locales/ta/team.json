@@ -773,6 +773,8 @@
     }
   },
   "modelSelector": {
+    "codexCatalogFallbackMessage": "Showing a fallback model list. Account-specific and newly released models may be missing.",
+    "codexCatalogFallbackTitle": "Live Codex models unavailable",
     "badges": {
       "configured": "கட்டமைக்கப்பட்டது",
       "connected": "இணைக்கப்பட்டது",

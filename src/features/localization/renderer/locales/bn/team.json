@@ -773,6 +773,8 @@
     }
   },
   "modelSelector": {
+    "codexCatalogFallbackMessage": "Showing a fallback model list. Account-specific and newly released models may be missing.",
+    "codexCatalogFallbackTitle": "Live Codex models unavailable",
     "badges": {
       "configured": "কনফিগার করা হয়েছে",
       "connected": "পরিচিতির সাথে সংযোগ করা হয়েছে",

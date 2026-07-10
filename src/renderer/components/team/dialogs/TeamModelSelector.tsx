@@ -17,6 +17,7 @@ import { Tabs, TabsList, TabsTrigger } from '@renderer/components/ui/tabs';
 import { useEffectiveCliProviderStatus } from '@renderer/hooks/useEffectiveCliProviderStatus';
 import { cn } from '@renderer/lib/utils';
 import { useStore } from '@renderer/store';
+import { isCodexModelCatalogFallbackActive } from '@renderer/utils/codexModelCatalogFallback';
 import {
   GEMINI_UI_DISABLED_BADGE_LABEL,
   GEMINI_UI_DISABLED_REASON,
@@ -61,6 +62,8 @@ import {
   Search,
   Star,
 } from 'lucide-react';
+
+import { CodexModelCatalogFallbackNotice } from './CodexModelCatalogFallbackNotice';
 
 import type { CliProviderStatus, TeamProviderId } from '@shared/types';
 
@@ -1487,6 +1490,9 @@ export const TeamModelSelector: React.FC<TeamModelSelectorProps> = ({
             }
           : null;
   const activeProviderNotice = providerNoticeById?.[effectiveProviderId] ?? null;
+  const codexModelCatalogFallbackActive = isCodexModelCatalogFallbackActive(
+    runtimeProviderStatus?.modelCatalog
+  );
   const getModelAdvisoryBadgeLabel = (reason: string | null): string =>
     reason?.toLowerCase().includes('ping not confirmed')
       ? t('modelSelector.advisory.pingNotConfirmed')
@@ -1839,10 +1845,19 @@ export const TeamModelSelector: React.FC<TeamModelSelectorProps> = ({
 
             <div className="p-3">
               {effectiveProviderId === 'codex' ? (
-                <CodexRuntimeUpdateNotice
-                  status={codexRuntimeStatus}
-                  onUpdate={() => setCodexRuntimeDialogOpen(true)}
-                />
+                <>
+                  <CodexModelCatalogFallbackNotice
+                    catalog={runtimeProviderStatus?.modelCatalog}
+                    runtimeStatus={codexRuntimeStatus}
+                    onUpdate={() => setCodexRuntimeDialogOpen(true)}
+                  />
+                  {!codexModelCatalogFallbackActive ? (
+                    <CodexRuntimeUpdateNotice
+                      status={codexRuntimeStatus}
+                      onUpdate={() => setCodexRuntimeDialogOpen(true)}
+                    />
+                  ) : null}
+                </>
               ) : null}
               {activeProviderNotice ? (
                 <div data-testid="team-model-selector-provider-notice" className="mb-3">

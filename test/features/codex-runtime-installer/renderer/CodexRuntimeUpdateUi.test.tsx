@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client';
 import {
   CodexRuntimeUpdateDialog,
   CodexRuntimeUpdateNotice,
+  getCodexRuntimeProgressPercent,
 } from '@features/codex-runtime-installer/renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -34,7 +35,7 @@ describe('Codex runtime update UI', () => {
     await act(async () => {
       root.render(
         <>
-          <CodexRuntimeUpdateNotice status={staleStatus} onUpdate={() => undefined} />
+          <CodexRuntimeUpdateNotice status={staleStatus} onUpdate={onInstall} />
           <CodexRuntimeUpdateDialog
             open
             onOpenChange={() => undefined}
@@ -48,6 +49,11 @@ describe('Codex runtime update UI', () => {
     });
 
     expect(host.querySelector('[data-testid="codex-runtime-update-notice"]')).not.toBeNull();
+    const noticeButton = host.querySelector('[data-testid="codex-runtime-update-notice"] button');
+    await act(async () => {
+      noticeButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
     const dialog = document.body.querySelector('[role="dialog"]');
     expect(dialog?.textContent).toContain('Update available');
     expect(dialog?.textContent).toContain('v0.139.0 -> v0.144.1');
@@ -60,7 +66,7 @@ describe('Codex runtime update UI', () => {
       await Promise.resolve();
     });
 
-    expect(onInstall).toHaveBeenCalledTimes(1);
+    expect(onInstall).toHaveBeenCalledTimes(2);
     await act(async () => root.unmount());
   });
 
@@ -97,6 +103,48 @@ describe('Codex runtime update UI', () => {
     const progress = document.body.querySelector('[role="progressbar"]');
     expect(progress?.getAttribute('aria-valuenow')).toBe('42');
     expect(document.body.textContent).toContain('Downloading Codex 42%');
+    await act(async () => root.unmount());
+  });
+
+  it('falls back safely for non-finite progress and missing completion detail', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    expect(
+      getCodexRuntimeProgressPercent({
+        ...staleStatus,
+        state: 'downloading',
+        progress: { phase: 'downloading', percent: Number.NaN },
+      })
+    ).toBe(35);
+    expect(
+      getCodexRuntimeProgressPercent({
+        ...staleStatus,
+        state: 'installing',
+        progress: { phase: 'installing', percent: Number.POSITIVE_INFINITY },
+      })
+    ).toBe(90);
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    await act(async () => {
+      root.render(
+        <CodexRuntimeUpdateDialog
+          open
+          onOpenChange={() => undefined}
+          status={{
+            ...staleStatus,
+            updateAvailable: false,
+            state: 'ready',
+            progress: { phase: 'ready', percent: 100 },
+          }}
+          loading={false}
+          onInstall={() => undefined}
+        />
+      );
+      await Promise.resolve();
+    });
+
+    expect(document.body.textContent).toContain('Update ready');
     await act(async () => root.unmount());
   });
 });

@@ -4,7 +4,7 @@ export function getCodexRuntimeProgressPercent(
   status: CodexRuntimeStatus | null | undefined
 ): number | null {
   const reportedPercent = status?.progress?.percent;
-  if (typeof reportedPercent === 'number') {
+  if (typeof reportedPercent === 'number' && Number.isFinite(reportedPercent)) {
     return Math.max(0, Math.min(100, reportedPercent));
   }
 

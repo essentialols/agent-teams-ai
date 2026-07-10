@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react';
 
 import { useAppTranslation } from '@features/localization/renderer';
 import { Button } from '@renderer/components/ui/button';
@@ -11,7 +12,6 @@ import {
   DialogTitle,
 } from '@renderer/components/ui/dialog';
 import { normalizeVersion } from '@shared/utils/version';
-import { AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react';
 
 import { getCodexRuntimeProgressPercent } from '../utils/codexRuntimeProgress';
 
@@ -120,7 +120,7 @@ export const CodexRuntimeUpdateDialog = ({
           {completed ? (
             <div className="flex items-center gap-2 rounded-md border border-emerald-300/25 bg-emerald-300/10 px-3 py-2 text-xs text-emerald-100">
               <CheckCircle2 className="size-3.5 shrink-0" />
-              <span>{status.progress?.detail}</span>
+              <span>{status.progress?.detail ?? commonT('updates.updateReady')}</span>
             </div>
           ) : null}
         </div>

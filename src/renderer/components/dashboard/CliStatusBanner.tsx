@@ -1362,6 +1362,7 @@ export const CliStatusBanner = (): React.JSX.Element | null => {
     openCodeRuntimeStatusLoading,
     codexRuntimeStatus,
     codexRuntimeStatusLoading,
+    codexRuntimeError,
     bootstrapCliStatus,
     fetchCliStatus,
     fetchCliProviderStatus,
@@ -1736,7 +1737,7 @@ export const CliStatusBanner = (): React.JSX.Element | null => {
           onOpenChange={setCodexRuntimeDialogOpen}
           status={codexRuntimeStatus}
           loading={codexRuntimeStatusLoading}
-          error={codexRuntimeStatus?.error ?? null}
+          error={codexRuntimeError}
           onInstall={() => void installCodexRuntime()}
         />
         {manageDialogOpen && (

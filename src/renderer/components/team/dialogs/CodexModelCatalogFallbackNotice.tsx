@@ -1,7 +1,8 @@
+import { AlertTriangle } from 'lucide-react';
+
 import { useAppTranslation } from '@features/localization/renderer';
 import { Button } from '@renderer/components/ui/button';
 import { isCodexModelCatalogFallbackActive } from '@renderer/utils/codexModelCatalogFallback';
-import { AlertTriangle } from 'lucide-react';
 
 import type { CodexRuntimeStatus } from '@features/codex-runtime-installer/contracts';
 import type { CliProviderModelCatalog } from '@shared/types';

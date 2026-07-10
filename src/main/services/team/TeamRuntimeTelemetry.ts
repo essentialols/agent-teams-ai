@@ -46,7 +46,8 @@ export class RuntimeTelemetryTimeoutError extends Error {
 }
 
 interface RuntimePidusageTelemetryEnv {
-  CLAUDE_TEAM_RUNTIME_PIDUSAGE_ENABLED?: string | undefined;
+  readonly [key: string]: string | undefined;
+  readonly CLAUDE_TEAM_RUNTIME_PIDUSAGE_ENABLED?: string | undefined;
 }
 
 export async function withRuntimeTelemetryTimeout<T>(

@@ -18,7 +18,6 @@ import type {
   StallJournalEntryRecord,
 } from '../../contracts/internalStorageContracts';
 import type {
-  ApplicationCommandLedgerStorageGateway,
   InternalStorageGateway,
   MemberWorkSyncStorageGateway,
 } from '../../core/application/ports';
@@ -36,16 +35,18 @@ import type {
   ApplicationCommandLedgerReadByCommandIdRequest,
   ApplicationCommandLedgerReadByIdempotencyKeyRequest,
   ApplicationCommandLedgerRecord,
-} from '@features/application-command-ledger/contracts';
+  ApplicationCommandLedgerStorageGateway,
+} from '@features/application-command-ledger';
 
 const logger = createLogger('Service:InternalStorageWorkerClient');
 
 // Keeps per-op payload typing for the journal ops; mws.* ops share one wire
 // shape and are typed by the public gateway methods instead.
-type InternalStorageWorkerPayloadFor<TOp extends InternalStorageWorkerRequest['op']> =
-  TOp extends `appCommandLedger.${string}` | `mws.${string}`
-    ? unknown
-    : Extract<InternalStorageWorkerRequest, { op: TOp }>['payload'];
+type InternalStorageWorkerPayloadFor<TOp extends InternalStorageWorkerRequest['op']> = TOp extends
+  | `appCommandLedger.${string}`
+  | `mws.${string}`
+  ? unknown
+  : Extract<InternalStorageWorkerRequest, { op: TOp }>['payload'];
 
 const WORKER_CALL_TIMEOUT_MS = 20_000;
 const WORKER_FILENAME = 'internal-storage-worker.cjs';
@@ -98,7 +99,10 @@ function resolveWorkerPath(): string | null {
  * all in-flight requests and the worker is recreated on the next call.
  */
 export class InternalStorageWorkerClient
-  implements InternalStorageGateway, MemberWorkSyncStorageGateway, ApplicationCommandLedgerStorageGateway
+  implements
+    InternalStorageGateway,
+    MemberWorkSyncStorageGateway,
+    ApplicationCommandLedgerStorageGateway
 {
   private worker: Worker | null = null;
   private readonly workerPath: string | null = resolveWorkerPath();

@@ -8,8 +8,10 @@ import type {
   ApplicationCommandLedgerReadByIdempotencyKeyRequest,
   ApplicationCommandLedgerRecord,
 } from '../../../contracts';
-import type { ApplicationCommandLedgerStore } from '../../../core/application';
-import type { ApplicationCommandLedgerStorageGateway } from '@features/internal-storage/core/application/ports';
+import type {
+  ApplicationCommandLedgerStorageGateway,
+  ApplicationCommandLedgerStore,
+} from '../../../core/application';
 
 export class InternalStorageApplicationCommandLedgerStore implements ApplicationCommandLedgerStore {
   constructor(private readonly gateway: ApplicationCommandLedgerStorageGateway) {}

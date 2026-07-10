@@ -96,7 +96,15 @@ export class ApplicationCommandLedgerWorkerOps {
       if (!current) {
         throw new Error(`Application command ledger entry not found: ${input.commandId}`);
       }
-      if (current.status !== ApplicationCommandLedgerStatus.Started) {
+      if (current.status === ApplicationCommandLedgerStatus.Completed) {
+        if (current.resultHash === input.resultHash && current.resultJson === input.resultJson) {
+          return;
+        }
+        throw new Error(
+          `Application command completion conflicts with stored result: ${input.commandId}`
+        );
+      }
+      if (!canFinalize(current.status)) {
         throw new Error(
           `Application command cannot be completed from status ${current.status}: ${input.commandId}`
         );
@@ -122,14 +130,22 @@ export class ApplicationCommandLedgerWorkerOps {
       if (!current) {
         throw new Error(`Application command ledger entry not found: ${input.commandId}`);
       }
-      if (current.status !== ApplicationCommandLedgerStatus.Started) {
+      const nextStatus = statusForFailure(input.failureKind);
+      if (
+        current.status === nextStatus &&
+        current.failureKind === input.failureKind &&
+        current.lastError === input.errorMessage
+      ) {
+        return;
+      }
+      if (!canFinalize(current.status)) {
         throw new Error(
           `Application command cannot be failed from status ${current.status}: ${input.commandId}`
         );
       }
       this.replaceRow({
         ...current,
-        status: statusForFailure(input.failureKind),
+        status: nextStatus,
         failureKind: input.failureKind,
         retryable: input.failureKind === ApplicationCommandFailureKind.Retryable,
         resultHash: null,
@@ -332,6 +348,13 @@ export class ApplicationCommandLedgerWorkerOps {
       )
       .run();
   }
+}
+
+function canFinalize(status: ApplicationCommandLedgerStatus): boolean {
+  return (
+    status === ApplicationCommandLedgerStatus.Started ||
+    status === ApplicationCommandLedgerStatus.UnknownAfterTimeout
+  );
 }
 
 function statusForFailure(

@@ -26,6 +26,29 @@ export interface ApplicationCommandLedgerStore {
   ): Promise<ApplicationCommandLedgerRecord<TOperation>[]>;
 }
 
+/**
+ * Worker-facing persistence operations. The application-command-ledger feature
+ * owns this port; internal-storage supplies the concrete SQLite implementation.
+ */
+export interface ApplicationCommandLedgerStorageGateway {
+  applicationCommandLedgerBegin<TOperation extends string>(
+    request: ApplicationCommandLedgerBeginRequest<TOperation>
+  ): Promise<ApplicationCommandLedgerBeginResult<TOperation>>;
+  applicationCommandLedgerMarkCompleted(
+    request: ApplicationCommandLedgerCompleteRequest
+  ): Promise<void>;
+  applicationCommandLedgerMarkFailed(request: ApplicationCommandLedgerFailRequest): Promise<void>;
+  applicationCommandLedgerGetByCommandId<TOperation extends string>(
+    request: ApplicationCommandLedgerReadByCommandIdRequest
+  ): Promise<ApplicationCommandLedgerRecord<TOperation> | null>;
+  applicationCommandLedgerGetByIdempotencyKey<TOperation extends string>(
+    request: ApplicationCommandLedgerReadByIdempotencyKeyRequest
+  ): Promise<ApplicationCommandLedgerRecord<TOperation> | null>;
+  applicationCommandLedgerListByScope<TOperation extends string>(
+    request: ApplicationCommandLedgerListScopeRequest
+  ): Promise<ApplicationCommandLedgerRecord<TOperation>[]>;
+}
+
 export interface ApplicationCommandHasher {
   hashJson(value: unknown): string;
   hashString(value: string): string;

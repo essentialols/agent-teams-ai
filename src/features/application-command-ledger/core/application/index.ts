@@ -1,2 +1,2 @@
 export * from './ApplicationCommandRunner';
-export * from './ports';
+export type * from './ports';

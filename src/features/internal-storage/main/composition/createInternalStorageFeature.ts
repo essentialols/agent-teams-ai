@@ -25,10 +25,8 @@ import { BackendSelectingTaskStallJournalStore } from './BackendSelectingTaskSta
 import { InternalStorageBackendSelector } from './InternalStorageBackendSelector';
 
 import type { InternalStorageBackendKind } from '../../contracts/internalStorageContracts';
-import type {
-  ApplicationCommandLedgerStorageGateway,
-  MemberWorkSyncStorageGateway,
-} from '../../core/application/ports';
+import type { MemberWorkSyncStorageGateway } from '../../core/application/ports';
+import type { ApplicationCommandLedgerStorageGateway } from '@features/application-command-ledger';
 import type { TaskStallJournalStore } from '@main/services/team/stallMonitor/TaskStallJournalStore';
 import type { TaskCommentNotificationJournalStore } from '@main/services/team/TaskCommentNotificationJournalStore';
 
@@ -58,6 +56,10 @@ export interface InternalStorageFeature {
    * worker bundle is unavailable — the caller stays on its JSON store.
    */
   memberWorkSyncBackend: InternalStorageMemberWorkSyncBackend | null;
+  /**
+   * SQLite gateway for the application-command-ledger feature. Null when the
+   * worker bundle is unavailable, so callers must leave durable commands off.
+   */
   applicationCommandLedgerBackend: InternalStorageApplicationCommandLedgerBackend | null;
   getBackendKind(): InternalStorageBackendKind;
   dispose(): Promise<void>;

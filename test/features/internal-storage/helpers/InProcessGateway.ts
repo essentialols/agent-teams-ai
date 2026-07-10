@@ -8,6 +8,7 @@ import type {
   ApplicationCommandLedgerReadByIdempotencyKeyRequest,
   ApplicationCommandLedgerRecord,
 } from '@features/application-command-ledger/contracts';
+import type { ApplicationCommandLedgerStorageGateway } from '@features/application-command-ledger/core/application';
 import type {
   CommentJournalEntryRecord,
   InternalStorageBackendInfo,
@@ -21,7 +22,6 @@ import type {
   StallJournalEntryRecord,
 } from '@features/internal-storage/contracts/internalStorageContracts';
 import type {
-  ApplicationCommandLedgerStorageGateway,
   InternalStorageGateway,
   MemberWorkSyncStorageGateway,
 } from '@features/internal-storage/core/application/ports';

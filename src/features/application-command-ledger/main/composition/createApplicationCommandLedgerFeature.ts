@@ -2,7 +2,7 @@ import { ApplicationCommandRunner } from '../../core/application';
 import { InternalStorageApplicationCommandLedgerStore } from '../adapters/output/InternalStorageApplicationCommandLedgerStore';
 import { NodeApplicationCommandHasher } from '../adapters/output/NodeApplicationCommandHasher';
 
-import type { ApplicationCommandLedgerStorageGateway } from '@features/internal-storage/core/application/ports';
+import type { ApplicationCommandLedgerStorageGateway } from '../../core/application';
 
 export interface ApplicationCommandLedgerFeature {
   ledgerStore: InternalStorageApplicationCommandLedgerStore;

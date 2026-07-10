@@ -37,6 +37,7 @@ export enum ApplicationCommandRunOutcome {
 
 export enum ApplicationCommandLedgerErrorCode {
   AlreadyStarted = 'already_started',
+  CompletedResultInvalid = 'completed_result_invalid',
   CompletedResultMissing = 'completed_result_missing',
   Conflict = 'conflict',
   FailedTerminal = 'failed_terminal',
@@ -54,8 +55,9 @@ export interface ApplicationCommandIdentity<TOperation extends string = string> 
   operation: TOperation;
 }
 
-export interface ApplicationCommandLedgerRecord<TOperation extends string = string>
-  extends ApplicationCommandIdentity<TOperation> {
+export interface ApplicationCommandLedgerRecord<
+  TOperation extends string = string,
+> extends ApplicationCommandIdentity<TOperation> {
   payloadHash: string;
   status: ApplicationCommandLedgerStatus;
   failureKind: ApplicationCommandFailureKind | null;
@@ -70,8 +72,9 @@ export interface ApplicationCommandLedgerRecord<TOperation extends string = stri
   lastError: string | null;
 }
 
-export interface ApplicationCommandLedgerBeginRequest<TOperation extends string = string>
-  extends ApplicationCommandIdentity<TOperation> {
+export interface ApplicationCommandLedgerBeginRequest<
+  TOperation extends string = string,
+> extends ApplicationCommandIdentity<TOperation> {
   payloadHash: string;
   metadataJson: string | null;
   nowIso: string;

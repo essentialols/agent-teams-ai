@@ -139,6 +139,60 @@ describe('InternalStorageApplicationCommandLedgerStore', () => {
     expect(blocked.record.completedAt).toBeNull();
   });
 
+  it('reconciles an unknown outcome to completed and replays the result', async () => {
+    const store = await makeStore();
+
+    await store.begin(makeBeginRequest());
+    await store.markFailed({
+      namespace: 'task-board',
+      scopeKey: 'team-a',
+      commandId: 'cmd-1',
+      failureKind: ApplicationCommandFailureKind.UnknownAfterTimeout,
+      errorMessage: 'timeout',
+      completedAtIso: '2026-07-09T10:01:00.000Z',
+    });
+    await store.markCompleted({
+      namespace: 'task-board',
+      scopeKey: 'team-a',
+      commandId: 'cmd-1',
+      resultHash: 'hash:result',
+      resultJson: '{"ok":true}',
+      completedAtIso: '2026-07-09T10:02:00.000Z',
+    });
+
+    await expect(store.begin(makeBeginRequest())).resolves.toMatchObject({
+      outcome: ApplicationCommandBeginOutcome.DuplicateCompleted,
+      record: { status: ApplicationCommandLedgerStatus.Completed, resultJson: '{"ok":true}' },
+    });
+  });
+
+  it('reconciles an unknown outcome to retryable and starts a new attempt', async () => {
+    const store = await makeStore();
+
+    await store.begin(makeBeginRequest());
+    await store.markFailed({
+      namespace: 'task-board',
+      scopeKey: 'team-a',
+      commandId: 'cmd-1',
+      failureKind: ApplicationCommandFailureKind.UnknownAfterTimeout,
+      errorMessage: 'timeout',
+      completedAtIso: '2026-07-09T10:01:00.000Z',
+    });
+    await store.markFailed({
+      namespace: 'task-board',
+      scopeKey: 'team-a',
+      commandId: 'cmd-1',
+      failureKind: ApplicationCommandFailureKind.Retryable,
+      errorMessage: 'destination not changed',
+      completedAtIso: '2026-07-09T10:02:00.000Z',
+    });
+
+    await expect(store.begin(makeBeginRequest())).resolves.toMatchObject({
+      outcome: ApplicationCommandBeginOutcome.RetryStarted,
+      record: { status: ApplicationCommandLedgerStatus.Started, attemptCount: 2 },
+    });
+  });
+
   async function makeStore(): Promise<InternalStorageApplicationCommandLedgerStore> {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'app-command-ledger-'));
     const core = new InternalStorageWorkerCore({

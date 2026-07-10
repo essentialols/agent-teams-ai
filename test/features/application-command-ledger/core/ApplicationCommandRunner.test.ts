@@ -58,19 +58,109 @@ describe('ApplicationCommandRunner', () => {
     });
     let executions = 0;
 
-    const first = await runner.run(makeInput(), async () => {
+    const first = await runner.run(makeInput(), () => {
       executions += 1;
-      return { ok: true, id: 'task-1' };
+      return Promise.resolve({ ok: true, id: 'task-1' });
     });
-    const second = await runner.run(makeInput(), async () => {
+    const second = await runner.run(makeInput(), () => {
       executions += 1;
-      return { ok: false };
+      return Promise.resolve({ ok: false });
     });
 
     expect(first.outcome).toBe(ApplicationCommandRunOutcome.Executed);
     expect(second.outcome).toBe(ApplicationCommandRunOutcome.Replayed);
     expect(second.result).toEqual({ ok: true, id: 'task-1' });
     expect(executions).toBe(1);
+  });
+
+  it('preserves undefined results when replaying void commands', async () => {
+    const runner = new ApplicationCommandRunner({
+      ledger: new InMemoryLedgerStore(),
+      hasher,
+      clock: fixedClock(),
+    });
+    let executions = 0;
+
+    const first = await runner.run(makeInput(), () => {
+      executions += 1;
+      return Promise.resolve(undefined);
+    });
+    const replay = await runner.run(makeInput(), () => {
+      executions += 1;
+      return Promise.resolve(undefined);
+    });
+
+    expect(first.result).toBeUndefined();
+    expect(replay.result).toBeUndefined();
+    expect(replay.outcome).toBe(ApplicationCommandRunOutcome.Replayed);
+    expect(executions).toBe(1);
+  });
+
+  it('rejects non-JSON payloads before creating a ledger record', async () => {
+    const store = new InMemoryLedgerStore();
+    const runner = new ApplicationCommandRunner({ ledger: store, hasher, clock: fixedClock() });
+    let executions = 0;
+
+    await expect(
+      runner.run(makeInput({ payload: new Map([['title', 'Task A']]) as never }), () => {
+        executions += 1;
+        return Promise.resolve({ ok: true });
+      })
+    ).rejects.toMatchObject({
+      code: ApplicationCommandLedgerErrorCode.InvalidInput,
+      details: { field: 'payload' },
+    });
+
+    expect(executions).toBe(0);
+    await expect(
+      store.getByCommandId({ namespace: 'task-board', scopeKey: 'team-a', commandId: 'cmd-1' })
+    ).resolves.toBeNull();
+  });
+
+  it('rejects a caller-supplied payload hash that does not match canonical JSON', async () => {
+    const store = new InMemoryLedgerStore();
+    const runner = new ApplicationCommandRunner({ ledger: store, hasher, clock: fixedClock() });
+    let executions = 0;
+
+    await expect(
+      runner.run(makeInput({ payloadHash: 'hash:wrong' }), () => {
+        executions += 1;
+        return Promise.resolve({ ok: true });
+      })
+    ).rejects.toMatchObject({
+      code: ApplicationCommandLedgerErrorCode.InvalidInput,
+      details: { field: 'payloadHash' },
+    });
+
+    expect(executions).toBe(0);
+  });
+
+  it('rejects a completed replay whose stored result hash is invalid', async () => {
+    const store = new InMemoryLedgerStore();
+    store.seed({
+      namespace: 'task-board',
+      scopeKey: 'team-a',
+      commandId: 'cmd-1',
+      idempotencyKey: 'idem-1',
+      operation: TestOperation.CreateTask,
+      payloadHash: hasher.hashJson({ title: 'Task A' }),
+      status: ApplicationCommandLedgerStatus.Completed,
+      failureKind: null,
+      retryable: false,
+      attemptCount: 1,
+      resultHash: 'hash:tampered',
+      resultJson: '{"ok":true}',
+      metadataJson: null,
+      startedAt: '2026-07-09T10:00:00.000Z',
+      updatedAt: '2026-07-09T10:01:00.000Z',
+      completedAt: '2026-07-09T10:01:00.000Z',
+      lastError: null,
+    });
+    const runner = new ApplicationCommandRunner({ ledger: store, hasher, clock: fixedClock() });
+
+    await expect(
+      runner.run(makeInput(), () => Promise.resolve({ ok: true }))
+    ).rejects.toMatchObject({ code: ApplicationCommandLedgerErrorCode.CompletedResultInvalid });
   });
 
   it('replays a completed command by idempotency key when command id changes', async () => {
@@ -82,13 +172,13 @@ describe('ApplicationCommandRunner', () => {
     });
     let executions = 0;
 
-    await runner.run(makeInput({ commandId: 'cmd-1' }), async () => {
+    await runner.run(makeInput({ commandId: 'cmd-1' }), () => {
       executions += 1;
-      return { ok: true, id: 'task-1' };
+      return Promise.resolve({ ok: true, id: 'task-1' });
     });
-    const replay = await runner.run(makeInput({ commandId: 'cmd-2' }), async () => {
+    const replay = await runner.run(makeInput({ commandId: 'cmd-2' }), () => {
       executions += 1;
-      return { ok: false };
+      return Promise.resolve({ ok: false });
     });
 
     expect(replay.outcome).toBe(ApplicationCommandRunOutcome.Replayed);
@@ -104,10 +194,10 @@ describe('ApplicationCommandRunner', () => {
       clock: fixedClock(),
     });
 
-    await runner.run(makeInput(), async () => ({ ok: true }));
+    await runner.run(makeInput(), () => Promise.resolve({ ok: true }));
 
     await expect(
-      runner.run(makeInput({ payload: { title: 'Changed' } }), async () => ({ ok: true }))
+      runner.run(makeInput({ payload: { title: 'Changed' } }), () => Promise.resolve({ ok: true }))
     ).rejects.toMatchObject({
       code: ApplicationCommandLedgerErrorCode.Conflict,
       details: { reason: ApplicationCommandConflictReason.PayloadHashMismatch },
@@ -126,12 +216,10 @@ describe('ApplicationCommandRunner', () => {
     });
 
     await expect(
-      runner.run(retryableInput, async () => {
-        throw new Error('temporary');
-      })
+      runner.run(retryableInput, () => Promise.reject(new Error('temporary')))
     ).rejects.toThrow('temporary');
 
-    const second = await runner.run(retryableInput, async () => ({ ok: true }));
+    const second = await runner.run(retryableInput, () => Promise.resolve({ ok: true }));
 
     expect(second.outcome).toBe(ApplicationCommandRunOutcome.Retried);
     expect(second.record.attemptCount).toBe(2);
@@ -152,15 +240,13 @@ describe('ApplicationCommandRunner', () => {
           commandId: 'cmd-1',
           classifyError: () => ({ failureKind: ApplicationCommandFailureKind.Retryable }),
         }),
-        async () => {
-          throw new Error('temporary');
-        }
+        () => Promise.reject(new Error('temporary'))
       )
     ).rejects.toThrow('temporary');
 
-    const retry = await runner.run(makeInput({ commandId: 'cmd-2' }), async () => ({
-      ok: true,
-    }));
+    const retry = await runner.run(makeInput({ commandId: 'cmd-2' }), () =>
+      Promise.resolve({ ok: true })
+    );
 
     expect(retry.outcome).toBe(ApplicationCommandRunOutcome.Retried);
     expect(retry.record.commandId).toBe('cmd-1');
@@ -182,13 +268,11 @@ describe('ApplicationCommandRunner', () => {
       classifyError: () => ({ failureKind: ApplicationCommandFailureKind.UnknownAfterTimeout }),
     });
 
-    await expect(
-      runner.run(input, async () => {
-        throw new Error('timeout');
-      })
-    ).rejects.toThrow('timeout');
+    await expect(runner.run(input, () => Promise.reject(new Error('timeout')))).rejects.toThrow(
+      'timeout'
+    );
 
-    await expect(runner.run(input, async () => ({ ok: true }))).rejects.toMatchObject({
+    await expect(runner.run(input, () => Promise.resolve({ ok: true }))).rejects.toMatchObject({
       code: ApplicationCommandLedgerErrorCode.UnknownOutcome,
     });
   });
@@ -222,12 +306,75 @@ describe('ApplicationCommandRunner', () => {
     let executions = 0;
 
     await expect(
-      runner.run(makeInput(), async () => {
+      runner.run(makeInput(), () => {
         executions += 1;
-        return { ok: true };
+        return Promise.resolve({ ok: true });
       })
     ).rejects.toMatchObject({ code: ApplicationCommandLedgerErrorCode.AlreadyStarted });
     expect(executions).toBe(0);
+  });
+
+  it('reports a completed side effect when ledger completion persistence fails', async () => {
+    const store = new InMemoryLedgerStore();
+    store.markCompletedError = new Error('worker unavailable');
+    const runner = new ApplicationCommandRunner({ ledger: store, hasher, clock: fixedClock() });
+    let executions = 0;
+
+    await expect(
+      runner.run(makeInput(), () => {
+        executions += 1;
+        return Promise.resolve({ ok: true });
+      })
+    ).rejects.toMatchObject({
+      code: ApplicationCommandLedgerErrorCode.StoreRejected,
+      details: { stage: 'mark_completed', sideEffectCompleted: true },
+    });
+
+    expect(executions).toBe(1);
+    await expect(
+      store.getByCommandId({ namespace: 'task-board', scopeKey: 'team-a', commandId: 'cmd-1' })
+    ).resolves.toMatchObject({ status: ApplicationCommandLedgerStatus.Started });
+  });
+
+  it('preserves the execution error as cause when failure persistence also fails', async () => {
+    const store = new InMemoryLedgerStore();
+    store.markFailedError = new Error('worker unavailable');
+    const runner = new ApplicationCommandRunner({ ledger: store, hasher, clock: fixedClock() });
+    const executionError = new Error('operation failed');
+
+    const rejection = await runner
+      .run(makeInput(), () => Promise.reject(executionError))
+      .catch((error: unknown) => error);
+
+    expect(rejection).toMatchObject({
+      code: ApplicationCommandLedgerErrorCode.StoreRejected,
+      cause: executionError,
+      details: { stage: 'execute', originalError: 'operation failed' },
+    });
+  });
+
+  it('marks the outcome unknown when error classification itself fails', async () => {
+    const store = new InMemoryLedgerStore();
+    const runner = new ApplicationCommandRunner({ ledger: store, hasher, clock: fixedClock() });
+    const executionError = new Error('operation failed');
+
+    await expect(
+      runner.run(
+        makeInput({
+          classifyError: () => {
+            throw new Error('classifier failed');
+          },
+        }),
+        () => Promise.reject(executionError)
+      )
+    ).rejects.toBe(executionError);
+
+    await expect(
+      store.getByCommandId({ namespace: 'task-board', scopeKey: 'team-a', commandId: 'cmd-1' })
+    ).resolves.toMatchObject({
+      status: ApplicationCommandLedgerStatus.UnknownAfterTimeout,
+      lastError: expect.stringContaining('classifier failed'),
+    });
   });
 });
 
@@ -247,28 +394,46 @@ function idempotencyKey(input: {
   return `${input.namespace}\0${input.scopeKey}\0${input.idempotencyKey}`;
 }
 
+function statusForFailure(
+  failureKind: ApplicationCommandFailureKind
+): ApplicationCommandLedgerStatus {
+  if (failureKind === ApplicationCommandFailureKind.Retryable) {
+    return ApplicationCommandLedgerStatus.FailedRetryable;
+  }
+  if (failureKind === ApplicationCommandFailureKind.Terminal) {
+    return ApplicationCommandLedgerStatus.FailedTerminal;
+  }
+  return ApplicationCommandLedgerStatus.UnknownAfterTimeout;
+}
+
 class InMemoryLedgerStore implements ApplicationCommandLedgerStore {
   private records = new Map<string, ApplicationCommandLedgerRecord<string>>();
+  markCompletedError: Error | null = null;
+  markFailedError: Error | null = null;
 
   seed(record: ApplicationCommandLedgerRecord<string>): void {
     this.records.set(key(record), record);
   }
 
-  async begin<TOperation extends string>(
+  begin<TOperation extends string>(
     request: ApplicationCommandLedgerBeginRequest<TOperation>
   ): Promise<ApplicationCommandLedgerBeginResult<TOperation>> {
     const existing = this.records.get(key(request));
     if (existing) {
-      return this.beginExisting(existing as ApplicationCommandLedgerRecord<TOperation>, request);
+      return Promise.resolve(
+        this.beginExisting(existing as ApplicationCommandLedgerRecord<TOperation>, request)
+      );
     }
     const existingByIdempotencyKey = [...this.records.values()].find(
       (record) => idempotencyKey(record) === idempotencyKey(request)
     );
     if (existingByIdempotencyKey) {
-      return this.beginExisting(
-        existingByIdempotencyKey as ApplicationCommandLedgerRecord<TOperation>,
-        request,
-        false
+      return Promise.resolve(
+        this.beginExisting(
+          existingByIdempotencyKey as ApplicationCommandLedgerRecord<TOperation>,
+          request,
+          false
+        )
       );
     }
     const created: ApplicationCommandLedgerRecord<TOperation> = {
@@ -285,10 +450,13 @@ class InMemoryLedgerStore implements ApplicationCommandLedgerStore {
       lastError: null,
     };
     this.records.set(key(created), created);
-    return { outcome: ApplicationCommandBeginOutcome.Started, record: created };
+    return Promise.resolve({ outcome: ApplicationCommandBeginOutcome.Started, record: created });
   }
 
-  async markCompleted(request: ApplicationCommandLedgerCompleteRequest): Promise<void> {
+  markCompleted(request: ApplicationCommandLedgerCompleteRequest): Promise<void> {
+    if (this.markCompletedError) {
+      return Promise.reject(this.markCompletedError);
+    }
     const current = this.requireRecord(request);
     this.records.set(key(current), {
       ...current,
@@ -298,18 +466,17 @@ class InMemoryLedgerStore implements ApplicationCommandLedgerStore {
       completedAt: request.completedAtIso,
       updatedAt: request.completedAtIso,
     });
+    return Promise.resolve();
   }
 
-  async markFailed(request: ApplicationCommandLedgerFailRequest): Promise<void> {
+  markFailed(request: ApplicationCommandLedgerFailRequest): Promise<void> {
+    if (this.markFailedError) {
+      return Promise.reject(this.markFailedError);
+    }
     const current = this.requireRecord(request);
     this.records.set(key(current), {
       ...current,
-      status:
-        request.failureKind === ApplicationCommandFailureKind.Retryable
-          ? ApplicationCommandLedgerStatus.FailedRetryable
-          : request.failureKind === ApplicationCommandFailureKind.Terminal
-            ? ApplicationCommandLedgerStatus.FailedTerminal
-            : ApplicationCommandLedgerStatus.UnknownAfterTimeout,
+      status: statusForFailure(request.failureKind),
       failureKind: request.failureKind,
       retryable: request.failureKind === ApplicationCommandFailureKind.Retryable,
       completedAt:
@@ -319,30 +486,35 @@ class InMemoryLedgerStore implements ApplicationCommandLedgerStore {
       updatedAt: request.completedAtIso,
       lastError: request.errorMessage,
     });
+    return Promise.resolve();
   }
 
-  async getByCommandId<TOperation extends string>(
+  getByCommandId<TOperation extends string>(
     request: ApplicationCommandLedgerReadByCommandIdRequest
   ): Promise<ApplicationCommandLedgerRecord<TOperation> | null> {
-    return (this.records.get(key(request)) as ApplicationCommandLedgerRecord<TOperation>) ?? null;
-  }
-
-  async getByIdempotencyKey<TOperation extends string>(
-    request: ApplicationCommandLedgerReadByIdempotencyKeyRequest
-  ): Promise<ApplicationCommandLedgerRecord<TOperation> | null> {
-    return (
-      ([...this.records.values()].find((record) => idempotencyKey(record) === idempotencyKey(request)) as
-        | ApplicationCommandLedgerRecord<TOperation>
-        | undefined) ?? null
+    return Promise.resolve(
+      (this.records.get(key(request)) as ApplicationCommandLedgerRecord<TOperation>) ?? null
     );
   }
 
-  async listByScope<TOperation extends string>(
+  getByIdempotencyKey<TOperation extends string>(
+    request: ApplicationCommandLedgerReadByIdempotencyKeyRequest
+  ): Promise<ApplicationCommandLedgerRecord<TOperation> | null> {
+    return Promise.resolve(
+      ([...this.records.values()].find(
+        (record) => idempotencyKey(record) === idempotencyKey(request)
+      ) as ApplicationCommandLedgerRecord<TOperation> | undefined) ?? null
+    );
+  }
+
+  listByScope<TOperation extends string>(
     request: ApplicationCommandLedgerListScopeRequest
   ): Promise<ApplicationCommandLedgerRecord<TOperation>[]> {
-    return [...this.records.values()].filter(
-      (record) => record.namespace === request.namespace && record.scopeKey === request.scopeKey
-    ) as ApplicationCommandLedgerRecord<TOperation>[];
+    return Promise.resolve(
+      [...this.records.values()].filter(
+        (record) => record.namespace === request.namespace && record.scopeKey === request.scopeKey
+      ) as ApplicationCommandLedgerRecord<TOperation>[]
+    );
   }
 
   private beginExisting<TOperation extends string>(

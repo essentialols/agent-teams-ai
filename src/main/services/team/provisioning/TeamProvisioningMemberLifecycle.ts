@@ -1267,6 +1267,7 @@ export class TeamProvisioningMemberLifecycleController {
       throw new Error(`Team "${teamName}" configuration is no longer available`);
     }
     const metaMembers = await this.membersMetaStore.getMembers(teamName).catch(() => []);
+    this.assertRunStillCurrentAndAlive(run, teamName);
     const configuredMember = this.resolveEffectiveConfiguredMember(
       config.members ?? [],
       metaMembers,
@@ -1434,6 +1435,7 @@ export class TeamProvisioningMemberLifecycleController {
     const leadProviderId = resolveTeamProviderId(run.request.providerId);
     const config = await this.readConfigForStrictDecision(teamName);
     const metaMembers = await this.membersMetaStore.getMembers(teamName).catch(() => []);
+    this.assertRunStillCurrentAndAlive(run, teamName);
     const configuredMember = this.resolveEffectiveConfiguredMember(
       config?.members ?? [],
       metaMembers,
@@ -1530,6 +1532,7 @@ export class TeamProvisioningMemberLifecycleController {
     };
 
     let currentConfiguredMemberState = await readCurrentConfiguredMember();
+    this.assertRunStillCurrentAndAlive(run, teamName);
     let config = currentConfiguredMemberState.config;
     let configuredMember = currentConfiguredMemberState.configuredMember;
     if (!config) {
@@ -1594,6 +1597,7 @@ export class TeamProvisioningMemberLifecycleController {
     }
 
     currentConfiguredMemberState = await readCurrentConfiguredMember();
+    this.assertRunStillCurrentAndAlive(run, teamName);
     config = currentConfiguredMemberState.config;
     configuredMember = currentConfiguredMemberState.configuredMember;
     if (!config) {
@@ -2266,6 +2270,7 @@ export class TeamProvisioningMemberLifecycleController {
     } catch {
       metaMembers = [];
     }
+    this.assertRunStillCurrentAndAlive(run, teamName);
     const configuredMember = this.resolveEffectiveConfiguredMember(
       config.members ?? [],
       metaMembers,

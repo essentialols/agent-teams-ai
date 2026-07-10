@@ -349,14 +349,12 @@ describe('HTTP team runtime routes', () => {
     }
   });
 
-  it('returns 501 for launch without the provisioning start facade', async () => {
+  it('returns 501 for launch without the optional team HTTP aggregate', async () => {
     const app = Fastify();
     const mocks = createServicesMock();
-    const { provisioningStart: _omittedProvisioningStart, ...teamApisWithoutProvisioningStart } =
-      mocks.services.teamApis!;
     registerTeamRoutes(app, {
       ...mocks.services,
-      teamApis: teamApisWithoutProvisioningStart,
+      teamApis: undefined,
     });
     await app.ready();
 
@@ -968,9 +966,7 @@ describe('HTTP team runtime routes', () => {
 
   it('maps runtime-control provider routing failures to 501', async () => {
     const { app, answerOpenCodeRuntimePermission } = await createApp();
-    const error = new Error(
-      'Runtime control provider opencode does not support answerPermission'
-    );
+    const error = new Error('Runtime control provider opencode does not support answerPermission');
     error.name = 'RuntimeControlProviderRoutingError';
     answerOpenCodeRuntimePermission.mockRejectedValueOnce(error);
 
@@ -995,14 +991,12 @@ describe('HTTP team runtime routes', () => {
     }
   });
 
-  it('returns 501 for provisioning status without the status facade', async () => {
+  it('returns 501 for provisioning status without the optional team HTTP aggregate', async () => {
     const app = Fastify();
     const mocks = createServicesMock();
-    const { provisioningStatus: _omittedProvisioningStatus, ...teamApisWithoutProvisioningStatus } =
-      mocks.services.teamApis!;
     registerTeamRoutes(app, {
       ...mocks.services,
-      teamApis: teamApisWithoutProvisioningStatus,
+      teamApis: undefined,
     });
     await app.ready();
 
@@ -1045,14 +1039,12 @@ describe('HTTP team runtime routes', () => {
     }
   });
 
-  it('returns 501 for OpenCode runtime callbacks without the runtime-control facade', async () => {
+  it('returns 501 for OpenCode runtime callbacks without the optional team HTTP aggregate', async () => {
     const app = Fastify();
     const mocks = createServicesMock();
-    const { runtimeControl: _omittedRuntimeControl, ...teamApisWithoutRuntimeControl } =
-      mocks.services.teamApis!;
     registerTeamRoutes(app, {
       ...mocks.services,
-      teamApis: teamApisWithoutRuntimeControl,
+      teamApis: undefined,
     });
     await app.ready();
 

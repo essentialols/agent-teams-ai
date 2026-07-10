@@ -51,9 +51,11 @@ describe('openCodeLiveTestHarness', () => {
   it('keeps explicit harness service overrides available for tests', () => {
     const svc = createServiceDouble();
     const override = { service: 'runtime-control-override' } as unknown as TeamProvisioningService;
+    const defaultTeamApis = buildLiveTeamControlApiServices(svc).teamApis!;
 
     const services = buildLiveTeamControlApiServices(svc, {
       teamApis: {
+        ...defaultTeamApis,
         runtimeControl: override,
       },
     });

@@ -35,9 +35,9 @@ type CreateTeamBody = TeamCreateConfigRequest;
 
 class HttpFeatureUnavailableError extends Error {}
 
-type TeamHttpProvisioningStartApi = NonNullable<TeamHttpHandlerApis['provisioningStart']>;
-type TeamHttpProvisioningStatusApi = NonNullable<TeamHttpHandlerApis['provisioningStatus']>;
-type TeamHttpRuntimeControlApi = NonNullable<TeamHttpHandlerApis['runtimeControl']>;
+type TeamHttpProvisioningStartApi = TeamHttpHandlerApis['provisioningStart'];
+type TeamHttpProvisioningStatusApi = TeamHttpHandlerApis['provisioningStatus'];
+type TeamHttpRuntimeControlApi = TeamHttpHandlerApis['runtimeControl'];
 
 function isMemberWorkSyncReportState(value: string): value is MemberWorkSyncReportState {
   return value === 'still_working' || value === 'blocked' || value === 'caught_up';

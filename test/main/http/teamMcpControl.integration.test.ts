@@ -18,6 +18,7 @@ import type {
   TeamProvisioningStartApi,
   TeamProvisioningStatusApi,
   TeamRuntimeControlCompatibilityApi,
+  TeamTaskActivityRepairApi,
 } from '@main/services/team/contracts/TeamProvisioningApis';
 import type {
   TeamCreateRequest,
@@ -274,6 +275,9 @@ function createServices(claudeRoot: string): {
       return Promise.resolve(progress);
     },
   } satisfies TeamProvisioningStatusApi;
+  const teamTaskActivityRepairApi = {
+    repairStaleTaskActivityIntervalsBeforeSnapshot: (): Promise<void> => Promise.resolve(),
+  } satisfies TeamTaskActivityRepairApi;
   const teamRuntimeApi = {
     getRuntimeState: (teamName: string): Promise<TeamRuntimeState> => {
       const runId = runIdByTeam.get(teamName) ?? null;
@@ -317,6 +321,7 @@ function createServices(claudeRoot: string): {
       teamApis: {
         provisioningStart: teamProvisioningStartApi,
         provisioningStatus: teamProvisioningStatusApi,
+        taskActivity: teamTaskActivityRepairApi,
         runtime: teamRuntimeApi,
         runtimeControl: teamRuntimeControlApi,
       } satisfies TeamHttpHandlerApis,

@@ -1,8 +1,11 @@
 import {
   bindTeamCrossTeamMessagingApi,
+  bindTeamHttpHandlerApis,
   bindTeamIpcHandlerApis,
 } from '@main/services/team/contracts/TeamProvisioningApis';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, expectTypeOf, it, vi } from 'vitest';
+
+import type { TeamHttpHandlerApis } from '@main/services/team/contracts/TeamProvisioningApis';
 
 function sortedKeys(value: object): string[] {
   return Object.keys(value).sort();
@@ -32,6 +35,11 @@ function createSource() {
     isTeamAlive: vi.fn(() => false),
     getAliveTeams: vi.fn(() => []),
     getCurrentRunId: vi.fn(() => null),
+    recordOpenCodeRuntimeBootstrapCheckin: vi.fn(),
+    deliverOpenCodeRuntimeMessage: vi.fn(),
+    recordOpenCodeRuntimeTaskEvent: vi.fn(),
+    recordOpenCodeRuntimeHeartbeat: vi.fn(),
+    answerOpenCodeRuntimePermission: vi.fn(),
     getMemberSpawnStatuses: vi.fn(async () => ({ statuses: {} })),
     attachLiveRosterMember: vi.fn(async () => undefined),
     detachLiveRosterMember: vi.fn(async () => undefined),
@@ -77,6 +85,21 @@ function createSource() {
     updateToolApprovalSettings: vi.fn(),
   };
 }
+
+describe('bindTeamHttpHandlerApis', () => {
+  it('returns one complete aggregate with every nested HTTP facade required', () => {
+    const api = bindTeamHttpHandlerApis(createSource() as never);
+
+    expectTypeOf<TeamHttpHandlerApis>().toMatchTypeOf<Required<TeamHttpHandlerApis>>();
+    expect(sortedKeys(api)).toEqual([
+      'provisioningStart',
+      'provisioningStatus',
+      'runtime',
+      'runtimeControl',
+      'taskActivity',
+    ]);
+  });
+});
 
 describe('bindTeamIpcHandlerApis', () => {
   it('groups TeamProvisioningService behind IPC-facing facade ports only', () => {
@@ -137,7 +160,7 @@ describe('bindTeamIpcHandlerApis', () => {
       'respondToToolApproval',
       'updateToolApprovalSettings',
     ]);
-    expect(((api as unknown) as Record<string, unknown>).extraServiceMethod).toBeUndefined();
+    expect((api as unknown as Record<string, unknown>).extraServiceMethod).toBeUndefined();
   });
 
   it('binds facade methods to the source service instance', async () => {
@@ -171,8 +194,8 @@ describe('bindTeamCrossTeamMessagingApi', () => {
       'relayLeadInboxMessages',
       'resolveCrossTeamReplyMetadata',
     ]);
-    expect(((api as unknown) as Record<string, unknown>).createTeam).toBeUndefined();
-    expect(((api as unknown) as Record<string, unknown>).sendMessageToTeam).toBeUndefined();
+    expect((api as unknown as Record<string, unknown>).createTeam).toBeUndefined();
+    expect((api as unknown as Record<string, unknown>).sendMessageToTeam).toBeUndefined();
     expect(resolveCrossTeamReplyMetadata('from-team', 'to-team')).toEqual({
       conversationId: 'bound-run:conversation',
       replyToConversationId: 'reply-conversation',

@@ -9,6 +9,10 @@ import type {
   TeamRuntimeControlCompatibilityApi,
 } from '@main/services/team/contracts/TeamProvisioningApis';
 
+function unexpectedTeamApiCall(): never {
+  throw new Error('Unexpected team API call in runtime-control validation fixture');
+}
+
 function createHttpServices(
   teamRuntimeControlApi: TeamRuntimeControlCompatibilityApi
 ): HttpServices {
@@ -21,6 +25,21 @@ function createHttpServices(
     updaterService: {} as HttpServices['updaterService'],
     sshConnectionManager: {} as HttpServices['sshConnectionManager'],
     teamApis: {
+      provisioningStart: {
+        createTeam: unexpectedTeamApiCall,
+        launchTeam: unexpectedTeamApiCall,
+      },
+      provisioningStatus: {
+        getProvisioningStatus: unexpectedTeamApiCall,
+      },
+      taskActivity: {
+        repairStaleTaskActivityIntervalsBeforeSnapshot: unexpectedTeamApiCall,
+      },
+      runtime: {
+        getRuntimeState: unexpectedTeamApiCall,
+        stopTeam: unexpectedTeamApiCall,
+        getAliveTeams: unexpectedTeamApiCall,
+      },
       runtimeControl: teamRuntimeControlApi,
     } satisfies TeamHttpHandlerApis,
   };

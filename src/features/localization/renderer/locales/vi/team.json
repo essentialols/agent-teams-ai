@@ -773,8 +773,8 @@
     }
   },
   "modelSelector": {
-    "codexCatalogFallbackMessage": "Showing a fallback model list. Account-specific and newly released models may be missing.",
-    "codexCatalogFallbackTitle": "Live Codex models unavailable",
+    "codexCatalogFallbackMessage": "Đang hiển thị danh sách mô hình dự phòng. Các mô hình dành riêng cho tài khoản và mới phát hành có thể bị thiếu.",
+    "codexCatalogFallbackTitle": "Không thể sử dụng các mô hình Codex trực tiếp",
     "badges": {
       "configured": "Đã cấu hình",
       "connected": "Đã kết nối",

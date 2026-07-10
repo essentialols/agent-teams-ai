@@ -773,8 +773,8 @@
     }
   },
   "modelSelector": {
-    "codexCatalogFallbackMessage": "Showing a fallback model list. Account-specific and newly released models may be missing.",
-    "codexCatalogFallbackTitle": "Live Codex models unavailable",
+    "codexCatalogFallbackMessage": "Er wordt een reservemodellenlijst weergegeven. Accountspecifieke en nieuw uitgebrachte modellen kunnen ontbreken.",
+    "codexCatalogFallbackTitle": "Live Codex-modellen niet beschikbaar",
     "badges": {
       "configured": "Geconfigureerd",
       "connected": "Verbonden",

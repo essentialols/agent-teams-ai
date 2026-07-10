@@ -773,8 +773,8 @@
     }
   },
   "modelSelector": {
-    "codexCatalogFallbackMessage": "Showing a fallback model list. Account-specific and newly released models may be missing.",
-    "codexCatalogFallbackTitle": "Live Codex models unavailable",
+    "codexCatalogFallbackMessage": "代替のモデル一覧を表示しています。アカウント固有のモデルや新しくリリースされたモデルが含まれていない可能性があります。",
+    "codexCatalogFallbackTitle": "Codex のライブモデルを利用できません",
     "badges": {
       "configured": "構成される",
       "connected": "コネクテッド",

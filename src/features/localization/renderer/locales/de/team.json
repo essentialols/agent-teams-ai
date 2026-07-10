@@ -773,8 +773,8 @@
     }
   },
   "modelSelector": {
-    "codexCatalogFallbackMessage": "Showing a fallback model list. Account-specific and newly released models may be missing.",
-    "codexCatalogFallbackTitle": "Live Codex models unavailable",
+    "codexCatalogFallbackMessage": "Es wird eine Ersatzmodellliste angezeigt. Kontospezifische und neu veröffentlichte Modelle fehlen möglicherweise.",
+    "codexCatalogFallbackTitle": "Live-Codex-Modelle nicht verfügbar",
     "badges": {
       "configured": "Konfiguriert",
       "connected": "verbunden",

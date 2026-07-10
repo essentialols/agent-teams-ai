@@ -773,8 +773,8 @@
     }
   },
   "modelSelector": {
-    "codexCatalogFallbackMessage": "Showing a fallback model list. Account-specific and newly released models may be missing.",
-    "codexCatalogFallbackTitle": "Live Codex models unavailable",
+    "codexCatalogFallbackMessage": "กำลังแสดงรายการโมเดลสำรอง โมเดลเฉพาะบัญชีและโมเดลที่เพิ่งเปิดตัวอาจไม่อยู่ในรายการ",
+    "codexCatalogFallbackTitle": "โมเดล Codex แบบสดไม่พร้อมใช้งาน",
     "badges": {
       "configured": "กำหนดค่าแล้ว",
       "connected": "เชื่อมต่อแล้ว",

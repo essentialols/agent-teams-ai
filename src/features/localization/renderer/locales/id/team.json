@@ -773,8 +773,8 @@
     }
   },
   "modelSelector": {
-    "codexCatalogFallbackMessage": "Showing a fallback model list. Account-specific and newly released models may be missing.",
-    "codexCatalogFallbackTitle": "Live Codex models unavailable",
+    "codexCatalogFallbackMessage": "Menampilkan daftar model cadangan. Model khusus akun dan model yang baru dirilis mungkin tidak tersedia.",
+    "codexCatalogFallbackTitle": "Model Codex langsung tidak tersedia",
     "badges": {
       "configured": "Dikonfigurasi",
       "connected": "Terhubung",

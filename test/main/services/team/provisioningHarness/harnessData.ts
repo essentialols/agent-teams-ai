@@ -18,6 +18,14 @@ export function cloneFixture<T>(value: T): T {
   if (Array.isArray(value)) {
     return value.map((item) => cloneFixture(item)) as T;
   }
+  if (value instanceof Map) {
+    return new Map(
+      Array.from(value.entries(), ([key, child]) => [cloneFixture(key), cloneFixture(child)])
+    ) as T;
+  }
+  if (value instanceof Set) {
+    return new Set(Array.from(value.values(), (item) => cloneFixture(item))) as T;
+  }
 
   const clone: Record<string, unknown> = {};
   for (const [key, child] of Object.entries(value)) {

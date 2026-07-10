@@ -4,11 +4,6 @@ import {
   type TeamProvisioningConfigFacadeReader,
 } from '@main/services/team/provisioning/TeamProvisioningConfigFacade';
 import { type TeamProvisioningLaunchExpectedMembersPorts } from '@main/services/team/provisioning/TeamProvisioningLaunchExpectedMembers';
-import {
-  getAutoDetectedClaudeBasePath,
-  getClaudeBasePath,
-  setClaudeBasePathOverride,
-} from '@main/utils/pathDecoder';
 import { rm } from 'fs/promises';
 
 import { createHarnessFacades, createHarnessStores, HarnessLogger } from './fakes';
@@ -34,6 +29,14 @@ import {
   writeHarnessFiles,
   writeHarnessStateFiles,
 } from './harnessFilesystem';
+import { applyHarnessPathOverride, assertCanApplyPathOverride } from './harnessPathOverride';
+import {
+  type HarnessCleanupFn,
+  HarnessClock,
+  HarnessUuidSource,
+  runCleanupFns,
+  TeamProvisioningHarnessImpl,
+} from './harnessRuntime';
 
 import type { TeamProvisioningConfigMaintenanceMembersMetaStore } from '@main/services/team/provisioning/TeamProvisioningConfigMaintenance';
 import type {
@@ -119,127 +122,6 @@ export interface TeamProvisioningHarness {
   readonly uuid: TeamProvisioningHarnessUuidSource;
   readonly logger: TeamProvisioningHarnessLogger;
   cleanup(): Promise<void>;
-}
-
-interface HarnessPathOverrideLease {
-  token: symbol;
-  claudeRoot: string;
-  previousClaudeBasePathOverride: string | null;
-}
-
-let activePathOverrideLease: HarnessPathOverrideLease | null = null;
-
-function assertCanApplyPathOverride(): void {
-  if (!activePathOverrideLease) {
-    return;
-  }
-
-  throw new Error(
-    `TeamProvisioningHarnessBuilder already owns a Claude path override for ${activePathOverrideLease.claudeRoot}; clean up the active harness before building another override-backed harness.`
-  );
-}
-
-function applyHarnessPathOverride(claudeRoot: string): () => void {
-  assertCanApplyPathOverride();
-
-  const previousClaudeBasePath = getClaudeBasePath();
-  const previousClaudeBasePathOverride =
-    previousClaudeBasePath === getAutoDetectedClaudeBasePath() ? null : previousClaudeBasePath;
-  const token = Symbol('TeamProvisioningHarnessPathOverride');
-  setClaudeBasePathOverride(claudeRoot);
-  activePathOverrideLease = {
-    token,
-    claudeRoot,
-    previousClaudeBasePathOverride,
-  };
-
-  return () => {
-    if (activePathOverrideLease?.token !== token) {
-      throw new Error('TeamProvisioningHarnessBuilder path override cleanup is not active.');
-    }
-
-    activePathOverrideLease = null;
-    setClaudeBasePathOverride(previousClaudeBasePathOverride);
-  };
-}
-
-async function runCleanupFns(cleanupFns: readonly (() => Promise<void> | void)[]): Promise<void> {
-  let firstError: unknown;
-  for (const cleanupFn of [...cleanupFns].reverse()) {
-    try {
-      await cleanupFn();
-    } catch (error) {
-      firstError ??= error;
-    }
-  }
-
-  if (firstError) {
-    throw firstError;
-  }
-}
-
-class HarnessClock implements TeamProvisioningHarnessClock {
-  private currentIso: string;
-
-  constructor(isoOrDate: string | Date = HARNESS_DEFAULT_NOW_ISO) {
-    this.currentIso = toIsoString(isoOrDate);
-  }
-
-  now(): Date {
-    return new Date(this.currentIso);
-  }
-
-  nowIso(): string {
-    return this.currentIso;
-  }
-
-  set(isoOrDate: string | Date): void {
-    this.currentIso = toIsoString(isoOrDate);
-  }
-}
-
-class HarnessUuidSource implements TeamProvisioningHarnessUuidSource {
-  private index = 0;
-  private readonly emitted: string[] = [];
-
-  constructor(private readonly sequence: readonly string[] = []) {
-    assertNoSecretLikeFixtureValues(sequence);
-  }
-
-  next(): string {
-    const value = this.sequence[this.index] ?? `harness-uuid-${this.index + 1}`;
-    this.index += 1;
-    this.emitted.push(value);
-    return value;
-  }
-
-  generated(): readonly string[] {
-    return [...this.emitted];
-  }
-}
-
-class TeamProvisioningHarnessImpl implements TeamProvisioningHarness {
-  private cleaned = false;
-
-  constructor(
-    readonly teamName: string,
-    readonly paths: TeamProvisioningHarnessPaths,
-    readonly stores: TeamProvisioningHarnessStores,
-    readonly facades: TeamProvisioningHarnessFacades,
-    readonly clock: TeamProvisioningHarnessClock,
-    readonly uuid: TeamProvisioningHarnessUuidSource,
-    readonly logger: TeamProvisioningHarnessLogger,
-    private readonly cleanupFns: readonly (() => Promise<void> | void)[]
-  ) {}
-
-  async cleanup(): Promise<void> {
-    if (this.cleaned) {
-      return;
-    }
-
-    this.cleaned = true;
-    await runCleanupFns(this.cleanupFns);
-  }
 }
 
 export class TeamProvisioningHarnessBuilder {
@@ -334,7 +216,7 @@ export class TeamProvisioningHarnessBuilder {
     this.validateInputsBeforeSideEffects();
 
     const paths = await createTempWorkspace(this.tempWorkspaceOptions);
-    const cleanupFns: (() => Promise<void> | void)[] = [
+    const cleanupFns: HarnessCleanupFn[] = [
       () => rm(paths.root, { recursive: true, force: true }),
     ];
 

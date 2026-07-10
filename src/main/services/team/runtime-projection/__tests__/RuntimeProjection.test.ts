@@ -464,21 +464,40 @@ describe('runtime projection foundation', () => {
     });
   });
 
-  it('projects runtime snapshot liveness overrides from bootstrap evidence', () => {
+  it('projects runtime snapshot liveness overrides from provider-agnostic bootstrap evidence', () => {
+    const genericBootstrapProjection = projectRuntimeSnapshotMemberLivenessFields({
+      liveAlive: false,
+      liveLivenessKind: 'runtime_process_candidate',
+      livePidSource: 'agent_process_table',
+      liveRuntimeDiagnostic: 'candidate only',
+      liveRuntimeDiagnosticSeverity: 'warning',
+      confirmedRuntimeBootstrapAlive: true,
+    });
+
+    expect(genericBootstrapProjection).toEqual({
+      alive: true,
+      livenessKind: 'confirmed_bootstrap',
+      pidSource: 'agent_process_table',
+      runtimeDiagnostic: 'bootstrap confirmed; runtime host/session evidence present.',
+      runtimeDiagnosticSeverity: 'info',
+    });
+    expect(genericBootstrapProjection.runtimeDiagnostic).not.toContain('OpenCode');
+
     expect(
       projectRuntimeSnapshotMemberLivenessFields({
         liveAlive: false,
         liveLivenessKind: 'runtime_process_candidate',
-        livePidSource: 'opencode_bridge',
+        livePidSource: 'agent_process_table',
         liveRuntimeDiagnostic: 'candidate only',
         liveRuntimeDiagnosticSeverity: 'warning',
         confirmedRuntimeBootstrapAlive: true,
+        confirmedRuntimeBootstrapDiagnostic: 'provider bootstrap confirmed',
       })
     ).toEqual({
       alive: true,
       livenessKind: 'confirmed_bootstrap',
-      pidSource: 'opencode_bridge',
-      runtimeDiagnostic: 'bootstrap confirmed; runtime host/session evidence present.',
+      pidSource: 'agent_process_table',
+      runtimeDiagnostic: 'provider bootstrap confirmed',
       runtimeDiagnosticSeverity: 'info',
     });
     expect(

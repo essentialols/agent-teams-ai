@@ -6,8 +6,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createTestStore } from './storeTestUtils';
 
-import type { TestStore } from './storeTestUtils';
 import type { FileTreeEntry, ReadDirResult } from '../../../src/shared/types/editor';
+import type { TestStore } from './storeTestUtils';
 
 // =============================================================================
 // Mock API
@@ -42,6 +42,7 @@ vi.mock('@renderer/api', () => ({
     getProjects: vi.fn(),
     getSessions: vi.fn(),
   },
+  supportsAppCapability: vi.fn(() => true),
 }));
 
 const mockBridge = {

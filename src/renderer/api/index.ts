@@ -16,6 +16,23 @@ import { HttpAPIClient } from './httpClient';
 
 import type { ElectronAPI } from '@shared/types/api';
 
+export type AppApi = ElectronAPI;
+
+export type AppApiRuntime = 'electron-preload' | 'hosted-web-http';
+
+export interface AppApiCapabilities {
+  runtime: AppApiRuntime;
+  electronPreload: boolean;
+  editorFileWatching: boolean;
+  nativeFilePathLookup: boolean;
+  nativeUpdater: boolean;
+  nativeWindowControls: boolean;
+}
+
+export type AppCapability = Exclude<keyof AppApiCapabilities, 'runtime'>;
+
+type WindowWithOptionalElectronApi = Window & { electronAPI?: ElectronAPI };
+
 /**
  * Resolves the base URL for the HTTP API client.
  *
@@ -34,8 +51,56 @@ function getHttpBaseUrl(): string {
 
 let httpClient: HttpAPIClient | null = null;
 
+function getElectronPreloadApi(): ElectronAPI | undefined {
+  return (window as WindowWithOptionalElectronApi).electronAPI;
+}
+
+function hasFunction(value: unknown): boolean {
+  return typeof value === 'function';
+}
+
+function getAppApiRuntime(): AppApiRuntime {
+  return getElectronPreloadApi() ? 'electron-preload' : 'hosted-web-http';
+}
+
+export function getAppCapabilities(): AppApiCapabilities {
+  const electronApi = getElectronPreloadApi();
+  const editor = electronApi?.editor as Partial<ElectronAPI['editor']> | undefined;
+  const updater = electronApi?.updater as Partial<ElectronAPI['updater']> | undefined;
+  const windowControls = electronApi?.windowControls as
+    | Partial<ElectronAPI['windowControls']>
+    | undefined;
+
+  return {
+    runtime: getAppApiRuntime(),
+    electronPreload: Boolean(electronApi),
+    editorFileWatching:
+      hasFunction(editor?.watchDir) &&
+      hasFunction(editor?.setWatchedFiles) &&
+      hasFunction(editor?.setWatchedDirs),
+    nativeFilePathLookup: hasFunction(electronApi?.getPathForFile),
+    nativeUpdater:
+      hasFunction(updater?.check) &&
+      hasFunction(updater?.download) &&
+      hasFunction(updater?.install) &&
+      hasFunction(updater?.onStatus),
+    nativeWindowControls:
+      hasFunction(windowControls?.minimize) &&
+      hasFunction(windowControls?.maximize) &&
+      hasFunction(windowControls?.close) &&
+      hasFunction(windowControls?.isMaximized) &&
+      hasFunction(windowControls?.isFullScreen) &&
+      hasFunction(windowControls?.relaunch),
+  };
+}
+
+export function supportsAppCapability(capability: AppCapability): boolean {
+  return getAppCapabilities()[capability];
+}
+
 function getImpl(): ElectronAPI {
-  if (window.electronAPI) return window.electronAPI;
+  const electronApi = getElectronPreloadApi();
+  if (electronApi) return electronApi;
   // Lazily create the HTTP client only when actually needed (browser mode).
   // Caching avoids creating multiple EventSource connections.
   if (!httpClient) {
@@ -54,9 +119,9 @@ function getImpl(): ElectronAPI {
  * Whether the app is running inside Electron (true) or in a browser via HTTP server (false).
  * Use this to hide Electron-only UI (settings, traffic lights, etc.) in browser mode.
  */
-export const isElectronMode = (): boolean => !!window.electronAPI;
+export const isElectronMode = (): boolean => getAppApiRuntime() === 'electron-preload';
 
-export const api: ElectronAPI = new Proxy({} as ElectronAPI, {
+export const api: AppApi = new Proxy({} as AppApi, {
   get(_target, prop, receiver) {
     const impl = getImpl();
     const value = Reflect.get(impl, prop, receiver) as unknown;

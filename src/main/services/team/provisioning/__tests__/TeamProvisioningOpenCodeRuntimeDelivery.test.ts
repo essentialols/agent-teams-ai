@@ -377,6 +377,159 @@ describe('TeamProvisioningOpenCodeRuntimeDelivery', () => {
         await rm(teamsBasePath, { recursive: true, force: true });
       }
     });
+
+    it.each([
+      {
+        name: 'candidate valid updatedAt is later than current valid updatedAt',
+        current: {
+          updatedAt: '2026-01-01T00:01:00.000Z',
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+        candidate: {
+          updatedAt: '2026-01-01T00:02:00.000Z',
+          createdAt: '2026-01-01T00:00:30.000Z',
+        },
+        expectedRecordId: 'delivery-candidate',
+      },
+      {
+        name: 'candidate valid updatedAt is earlier than current valid updatedAt',
+        current: {
+          updatedAt: '2026-01-01T00:02:00.000Z',
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+        candidate: {
+          updatedAt: '2026-01-01T00:01:00.000Z',
+          createdAt: '2026-01-01T00:03:00.000Z',
+        },
+        expectedRecordId: 'delivery-current',
+      },
+      {
+        name: 'candidate invalid updatedAt falls back to an earlier createdAt',
+        current: {
+          updatedAt: '2026-01-01T00:02:00.000Z',
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+        candidate: {
+          updatedAt: 'invalid',
+          createdAt: '2026-01-01T00:01:00.000Z',
+        },
+        expectedRecordId: 'delivery-current',
+      },
+      {
+        name: 'current invalid updatedAt falls back to an earlier createdAt',
+        current: {
+          updatedAt: 'invalid',
+          createdAt: '2026-01-01T00:01:00.000Z',
+        },
+        candidate: {
+          updatedAt: '2026-01-01T00:02:00.000Z',
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+        expectedRecordId: 'delivery-candidate',
+      },
+      {
+        name: 'candidate empty updatedAt falls back to a later createdAt',
+        current: {
+          updatedAt: '2026-01-01T00:01:00.000Z',
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+        candidate: {
+          updatedAt: '',
+          createdAt: '2026-01-01T00:02:00.000Z',
+        },
+        expectedRecordId: 'delivery-candidate',
+      },
+      {
+        name: 'candidate omitted timestamps cannot replace a valid current timestamp',
+        current: {
+          updatedAt: '2026-01-01T00:01:00.000Z',
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+        candidate: {},
+        expectedRecordId: 'delivery-current',
+      },
+      {
+        name: 'candidate valid createdAt replaces current empty and omitted timestamps',
+        current: { updatedAt: '' },
+        candidate: {
+          updatedAt: 'invalid',
+          createdAt: '2026-01-01T00:01:00.000Z',
+        },
+        expectedRecordId: 'delivery-candidate',
+      },
+      {
+        name: 'equal effective timestamps retain the current record',
+        current: {
+          updatedAt: '2026-01-01T00:01:00.000Z',
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+        candidate: {
+          updatedAt: 'invalid',
+          createdAt: '2026-01-01T00:01:00.000Z',
+        },
+        expectedRecordId: 'delivery-current',
+      },
+      {
+        name: 'entirely invalid timestamps retain the current record',
+        current: { updatedAt: 'invalid', createdAt: '' },
+        candidate: {},
+        expectedRecordId: 'delivery-current',
+      },
+    ])('$name', async ({ current, candidate, expectedRecordId }) => {
+      const teamsBasePath = await mkdtemp(join(tmpdir(), 'opencode-delivery-status-ordering-'));
+      const currentRecord = createPromptDeliveryRecordWithTimestamps({
+        id: 'delivery-current',
+        laneId: 'lane-current',
+        timestamps: current,
+      });
+      const candidateRecord = createPromptDeliveryRecordWithTimestamps({
+        id: 'delivery-candidate',
+        laneId: 'lane-candidate',
+        timestamps: candidate,
+      });
+      const decideOpenCodeRuntimeDeliveryUserFacingAdvisory = vi.fn(async (record) => ({
+        record,
+        decision: { action: 'suppress' as const },
+      }));
+
+      try {
+        await writeOpenCodeRuntimeLaneIndex(teamsBasePath, 'Team', {
+          version: 1,
+          updatedAt: '2026-01-01T00:03:00.000Z',
+          lanes: {
+            'lane-current': {
+              laneId: 'lane-current',
+              state: 'stopped',
+              updatedAt: '2026-01-01T00:01:00.000Z',
+            },
+            'lane-candidate': {
+              laneId: 'lane-candidate',
+              state: 'active',
+              updatedAt: '2026-01-01T00:02:00.000Z',
+            },
+          },
+        });
+
+        const status = await getOpenCodeRuntimeDeliveryStatus('Team', 'message-1', {
+          teamsBasePath,
+          createOpenCodePromptDeliveryLedger: (_teamName, laneId) =>
+            ({
+              list: vi.fn(async () =>
+                laneId === 'lane-current' ? [currentRecord] : [candidateRecord]
+              ),
+            }) as never,
+          decideOpenCodeRuntimeDeliveryUserFacingAdvisory,
+        });
+
+        expect(decideOpenCodeRuntimeDeliveryUserFacingAdvisory).toHaveBeenCalledOnce();
+        expect(decideOpenCodeRuntimeDeliveryUserFacingAdvisory).toHaveBeenCalledWith(
+          expectedRecordId === currentRecord.id ? currentRecord : candidateRecord
+        );
+        expect(status?.ledgerRecordId).toBe(expectedRecordId);
+      } finally {
+        await rm(teamsBasePath, { recursive: true, force: true });
+      }
+    });
   });
 
   describe('getOpenCodeRuntimeRecoveryLaneIds', () => {
@@ -476,6 +629,30 @@ function createPromptDeliveryRecord(
     updatedAt: '2026-01-01T00:00:00.000Z',
     ...overrides,
   } as OpenCodePromptDeliveryLedgerRecord;
+}
+
+function createPromptDeliveryRecordWithTimestamps(input: {
+  id: string;
+  laneId: string;
+  timestamps: { createdAt?: string; updatedAt?: string };
+}): OpenCodePromptDeliveryLedgerRecord {
+  const record = createPromptDeliveryRecord({
+    id: input.id,
+    laneId: input.laneId,
+    createdAt: input.timestamps.createdAt ?? '',
+    updatedAt: input.timestamps.updatedAt ?? '',
+  });
+  const persistedRecord = record as unknown as {
+    createdAt?: string;
+    updatedAt?: string;
+  };
+  if (input.timestamps.createdAt === undefined) {
+    delete persistedRecord.createdAt;
+  }
+  if (input.timestamps.updatedAt === undefined) {
+    delete persistedRecord.updatedAt;
+  }
+  return record;
 }
 
 function createBoundary(

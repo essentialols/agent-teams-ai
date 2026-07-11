@@ -518,18 +518,31 @@ function isOpenCodePromptDeliveryRecordNewer(
   candidate: OpenCodePromptDeliveryLedgerRecord,
   current: OpenCodePromptDeliveryLedgerRecord
 ): boolean {
-  const candidateUpdatedAt = Date.parse(candidate.updatedAt);
-  const currentUpdatedAt = Date.parse(current.updatedAt);
-  if (Number.isFinite(candidateUpdatedAt) && candidateUpdatedAt !== currentUpdatedAt) {
-    return !Number.isFinite(currentUpdatedAt) || candidateUpdatedAt > currentUpdatedAt;
+  const candidateTimestamp = getOpenCodePromptDeliveryRecordEffectiveTimestamp(candidate);
+  const currentTimestamp = getOpenCodePromptDeliveryRecordEffectiveTimestamp(current);
+
+  if (candidateTimestamp === null) {
+    return false;
+  }
+  if (currentTimestamp === null) {
+    return true;
   }
 
-  const candidateCreatedAt = Date.parse(candidate.createdAt);
-  const currentCreatedAt = Date.parse(current.createdAt);
-  return (
-    Number.isFinite(candidateCreatedAt) &&
-    (!Number.isFinite(currentCreatedAt) || candidateCreatedAt > currentCreatedAt)
-  );
+  // Preserve the first record encountered when effective timestamps tie. This also keeps
+  // entirely invalid timestamp records deterministic in the lane/ledger traversal order.
+  return candidateTimestamp > currentTimestamp;
+}
+
+function getOpenCodePromptDeliveryRecordEffectiveTimestamp(
+  record: OpenCodePromptDeliveryLedgerRecord
+): number | null {
+  const updatedAt = Date.parse(record.updatedAt);
+  if (Number.isFinite(updatedAt)) {
+    return updatedAt;
+  }
+
+  const createdAt = Date.parse(record.createdAt);
+  return Number.isFinite(createdAt) ? createdAt : null;
 }
 
 export async function tryGetActiveOpenCodePromptDeliveryRecord(

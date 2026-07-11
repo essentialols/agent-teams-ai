@@ -1,5 +1,6 @@
 import type {
   HostedWebEffortLevel,
+  HostedWebProvisioningState,
   HostedWebTeamFastMode,
   HostedWebTeamProviderId,
   HostedWebTeamReviewState,
@@ -129,6 +130,21 @@ export interface HostedWebLaunchTeamResponse {
   launchStatus: 'started' | 'already_launching' | 'already_running';
 }
 
+export interface HostedWebProvisioningStatusResponse {
+  runId: HostedWebRunId;
+  teamId: HostedWebTeamId;
+  state: HostedWebProvisioningState;
+  message: string;
+  startedAt: string;
+  updatedAt: string;
+  error?: string;
+  warnings?: string[];
+}
+
+export interface HostedWebAliveTeamsResponse {
+  teamIds: HostedWebTeamId[];
+}
+
 export interface HostedWebCreateTaskRequest {
   subject: string;
   description?: string;
@@ -175,6 +191,22 @@ export function hostedWebTeamRoute(teamId: HostedWebTeamId): string {
 
 export function hostedWebTeamLaunchRoute(teamId: HostedWebTeamId): string {
   return `${hostedWebTeamRoute(teamId)}/launch`;
+}
+
+export function hostedWebTeamStopRoute(teamId: HostedWebTeamId): string {
+  return `${hostedWebTeamRoute(teamId)}/stop`;
+}
+
+export function hostedWebTeamRuntimeRoute(teamId: HostedWebTeamId): string {
+  return `${hostedWebTeamRoute(teamId)}/runtime`;
+}
+
+export function hostedWebAliveTeamsRoute(): string {
+  return `${HOSTED_WEB_API_BASE}/teams/runtime/alive`;
+}
+
+export function hostedWebProvisioningStatusRoute(runId: HostedWebRunId): string {
+  return `${HOSTED_WEB_API_BASE}/teams/provisioning/${encodeURIComponent(runId)}`;
 }
 
 export function hostedWebTeamTasksRoute(teamId: HostedWebTeamId): string {

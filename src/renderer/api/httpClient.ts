@@ -7,6 +7,10 @@
  */
 
 import {
+  createHostedWebTransportClient,
+  type HostedWebTransportClient,
+} from '@features/hosted-web-transport/renderer';
+import {
   createEmptyMemberLogPreviewResponse,
   createEmptyMemberLogStreamResponse,
   createEmptyMemberRuntimeLogTailResponse,
@@ -47,6 +51,17 @@ import type {
   CodexStartChatgptLoginOptions,
 } from '@features/codex-account/contracts';
 import type { CodexRuntimeAPI } from '@features/codex-runtime-installer/contracts';
+import type {
+  HostedWebKanbanColumn,
+  HostedWebLaunchMemberRequest,
+  HostedWebLaunchTeamRequest,
+  HostedWebProvisioningStatusResponse,
+  HostedWebTaskSummary,
+  HostedWebTeamMemberSummary,
+  HostedWebTeamSnapshotResponse,
+  HostedWebTeamSummary,
+  HostedWebWorkspaceRef,
+} from '@features/hosted-web-transport/contracts';
 import type { MemberLogStreamApi } from '@features/member-log-stream/contracts';
 import type { DashboardRecentProjectsPayload } from '@features/recent-projects/contracts';
 import type { RuntimeProviderManagementApi } from '@features/runtime-provider-management/contracts';
@@ -75,6 +90,7 @@ import type {
   HttpServerAPI,
   HttpServerStatus,
   KanbanColumnId,
+  KanbanState,
   NotificationsAPI,
   NotificationTrigger,
   OpenCodeRuntimeAPI,
@@ -104,18 +120,22 @@ import type {
   TeamChangeEvent,
   TeamClaudeLogsQuery,
   TeamClaudeLogsResponse,
+  TeamConfig,
   TeamCreateRequest,
   TeamCreateResponse,
   TeamGetDataOptions,
   TeamLaunchFailureDiagnosticsBundle,
   TeamLaunchRequest,
   TeamLaunchResponse,
+  TeamMember,
   TeamMemberActivityMeta,
+  TeamMemberSnapshot,
   TeamProvisioningModelVerificationMode,
   TeamProvisioningPrepareResult,
   TeamProvisioningProgress,
   TeamsAPI,
   TeamSummary,
+  TeamSummaryMember,
   TeamTask,
   TeamTaskChangeSummariesResponse,
   TeamTaskChangeSummaryRequest,
@@ -155,8 +175,252 @@ function buildTokenUsageSnapshotRoute(request?: TokenUsageSnapshotRequest): stri
   return suffix ? `${TOKEN_USAGE_SNAPSHOT_ROUTE}?${suffix}` : TOKEN_USAGE_SNAPSHOT_ROUTE;
 }
 
+function mapHostedTeamSummary(team: HostedWebTeamSummary): TeamSummary {
+  const members = team.members.map(mapHostedTeamSummaryMember);
+  const lead = members[0];
+  return {
+    teamName: team.teamId,
+    displayName: team.displayName,
+    description: team.description,
+    ...(team.color !== undefined ? { color: team.color } : {}),
+    memberCount: members.length,
+    members,
+    ...(lead ? { leadName: lead.name, ...(lead.color ? { leadColor: lead.color } : {}) } : {}),
+    taskCount: team.taskCount,
+    lastActivity: team.lastActivity,
+    ...(team.project?.workspaceRef.id ? { projectPath: team.project.workspaceRef.id } : {}),
+    ...(team.pendingCreate !== undefined ? { pendingCreate: team.pendingCreate } : {}),
+    ...(team.partialLaunchFailure !== undefined
+      ? { partialLaunchFailure: team.partialLaunchFailure }
+      : {}),
+  };
+}
+
+function mapHostedTeamSummaryMember(member: HostedWebTeamMemberSummary): TeamSummaryMember {
+  return {
+    name: member.displayName,
+    agentId: member.memberId,
+    ...(member.role !== undefined ? { role: member.role } : {}),
+    ...(member.color !== undefined ? { color: member.color } : {}),
+  };
+}
+
+function mapHostedTeamSnapshot(snapshot: HostedWebTeamSnapshotResponse): TeamViewSnapshot {
+  const taskById = new Map(snapshot.tasks.map((task) => [task.taskId, task]));
+  const kanbanColumnByTaskId = new Map<string, 'review' | 'approved'>();
+  const columnOrder: KanbanState['columnOrder'] = {};
+  const kanbanTasks: KanbanState['tasks'] = {};
+
+  for (const column of snapshot.kanban) {
+    const columnId = mapHostedKanbanColumnId(column.status);
+    if (columnId) {
+      columnOrder[columnId] = column.taskIds;
+    }
+    if (column.status === 'review' || column.status === 'approved') {
+      for (const taskId of column.taskIds) {
+        kanbanColumnByTaskId.set(taskId, column.status);
+        const task = taskById.get(taskId);
+        kanbanTasks[taskId] = {
+          column: column.status,
+          movedAt: task?.updatedAt ?? task?.createdAt ?? new Date(0).toISOString(),
+        };
+      }
+    }
+  }
+
+  return {
+    teamName: snapshot.team.teamId,
+    config: mapHostedTeamConfig(snapshot.team),
+    tasks: snapshot.tasks.map((task) => mapHostedTask(task, kanbanColumnByTaskId.get(task.taskId))),
+    members: snapshot.team.members.map(mapHostedMemberSnapshot),
+    kanbanState: {
+      teamName: snapshot.team.teamId,
+      reviewers: [],
+      tasks: kanbanTasks,
+      columnOrder,
+    },
+    processes: [],
+    isAlive: snapshot.team.runtime.isAlive,
+  };
+}
+
+function mapHostedKanbanColumnId(
+  status: HostedWebKanbanColumn['status']
+): KanbanColumnId | undefined {
+  switch (status) {
+    case 'pending':
+      return 'todo';
+    case 'in_progress':
+      return 'in_progress';
+    case 'completed':
+      return 'done';
+    case 'review':
+    case 'approved':
+      return status;
+    case 'deleted':
+      return undefined;
+  }
+}
+
+function mapHostedTeamConfig(team: HostedWebTeamSummary): TeamConfig {
+  return {
+    name: team.displayName,
+    description: team.description,
+    ...(team.color !== undefined ? { color: team.color } : {}),
+    members: team.members.map(mapHostedTeamMember),
+    ...(team.project?.workspaceRef.id ? { projectPath: team.project.workspaceRef.id } : {}),
+  };
+}
+
+function mapHostedTeamMember(member: HostedWebTeamMemberSummary): TeamMember {
+  return {
+    name: member.displayName,
+    agentId: member.memberId,
+    ...(member.role !== undefined ? { role: member.role } : {}),
+    ...(member.color !== undefined ? { color: member.color } : {}),
+    ...(member.provider?.providerId !== undefined
+      ? { providerId: member.provider.providerId }
+      : {}),
+    ...(member.provider?.modelId !== undefined ? { model: member.provider.modelId } : {}),
+    ...(member.provider?.effort !== undefined ? { effort: member.provider.effort } : {}),
+    ...(member.provider?.fastMode !== undefined ? { fastMode: member.provider.fastMode } : {}),
+    ...(member.isolation === 'managed-worktree' ? { isolation: 'worktree' as const } : {}),
+  };
+}
+
+function mapHostedMemberSnapshot(member: HostedWebTeamMemberSummary): TeamMemberSnapshot {
+  return {
+    name: member.displayName,
+    agentId: member.memberId,
+    currentTaskId: member.currentTaskId,
+    taskCount: member.taskCount,
+    ...(member.color !== undefined ? { color: member.color } : {}),
+    ...(member.role !== undefined ? { role: member.role } : {}),
+    ...(member.provider?.providerId !== undefined
+      ? { providerId: member.provider.providerId }
+      : {}),
+    ...(member.provider?.modelId !== undefined ? { model: member.provider.modelId } : {}),
+    ...(member.provider?.effort !== undefined ? { effort: member.provider.effort } : {}),
+    ...(member.provider?.fastMode !== undefined
+      ? { selectedFastMode: member.provider.fastMode }
+      : {}),
+    ...(member.isolation === 'managed-worktree' ? { isolation: 'worktree' as const } : {}),
+  };
+}
+
+function mapHostedTask(
+  task: HostedWebTaskSummary,
+  kanbanColumn: 'review' | 'approved' | undefined
+): TeamTaskWithKanban {
+  return {
+    id: task.taskId,
+    ...(task.displayId !== undefined ? { displayId: task.displayId } : {}),
+    subject: task.subject,
+    status: task.status,
+    ...(task.ownerMemberId !== undefined ? { owner: task.ownerMemberId } : {}),
+    ...(task.reviewState !== undefined ? { reviewState: task.reviewState } : {}),
+    ...(task.blockedBy !== undefined ? { blockedBy: task.blockedBy } : {}),
+    ...(task.related !== undefined ? { related: task.related } : {}),
+    ...(task.createdAt !== undefined ? { createdAt: task.createdAt } : {}),
+    ...(task.updatedAt !== undefined ? { updatedAt: task.updatedAt } : {}),
+    ...(task.needsClarification !== undefined
+      ? { needsClarification: task.needsClarification }
+      : {}),
+    ...(kanbanColumn !== undefined ? { kanbanColumn } : {}),
+  };
+}
+
+function mapHostedLaunchResponse(response: {
+  runId: string;
+  launchStatus?: TeamLaunchResponse['launchStatus'];
+}): TeamLaunchResponse {
+  return {
+    runId: response.runId,
+    ...(response.launchStatus !== undefined ? { launchStatus: response.launchStatus } : {}),
+    ...(response.launchStatus === 'already_launching' ? { alreadyLaunching: true } : {}),
+    ...(response.launchStatus === 'already_running' ? { alreadyRunning: true } : {}),
+  };
+}
+
+function mapHostedProvisioningStatus(
+  response: HostedWebProvisioningStatusResponse
+): TeamProvisioningProgress {
+  return {
+    runId: response.runId,
+    teamName: response.teamId,
+    state: response.state,
+    message: response.message,
+    startedAt: response.startedAt,
+    updatedAt: response.updatedAt,
+    ...(response.error !== undefined ? { error: response.error } : {}),
+    ...(response.warnings !== undefined ? { warnings: response.warnings } : {}),
+  };
+}
+
+function mapTeamCreateRequestToHosted(request: TeamCreateRequest): HostedWebLaunchTeamRequest {
+  const provider = mapHostedProviderSelection(request);
+  return {
+    workspaceRef: workspaceRefFromCwd(request.cwd),
+    ...(request.prompt !== undefined ? { prompt: request.prompt } : {}),
+    ...(provider ? { provider } : {}),
+    members: request.members.map(mapHostedLaunchMemberRequest),
+    ...(request.limitContext !== undefined ? { limitContext: request.limitContext } : {}),
+    ...(request.skipPermissions === false ? { requireManualApproval: true } : {}),
+  };
+}
+
+function mapTeamLaunchRequestToHosted(request: TeamLaunchRequest): HostedWebLaunchTeamRequest {
+  const provider = mapHostedProviderSelection(request);
+  return {
+    workspaceRef: workspaceRefFromCwd(request.cwd),
+    ...(request.prompt !== undefined ? { prompt: request.prompt } : {}),
+    ...(provider ? { provider } : {}),
+    ...(request.limitContext !== undefined ? { limitContext: request.limitContext } : {}),
+    ...(request.skipPermissions === false ? { requireManualApproval: true } : {}),
+  };
+}
+
+function mapHostedLaunchMemberRequest(
+  member: TeamCreateRequest['members'][number]
+): HostedWebLaunchMemberRequest {
+  const provider = mapHostedProviderSelection(member);
+  return {
+    displayName: member.name,
+    ...(member.role !== undefined ? { role: member.role } : {}),
+    ...(member.workflow !== undefined ? { workflow: member.workflow } : {}),
+    ...(member.isolation === 'worktree'
+      ? { isolation: 'managed-worktree' as const }
+      : { isolation: 'shared-workspace' as const }),
+    ...(provider ? { provider } : {}),
+  };
+}
+
+function mapHostedProviderSelection(
+  input: Pick<TeamCreateRequest, 'providerId' | 'model' | 'effort' | 'fastMode'>
+): HostedWebLaunchTeamRequest['provider'] | undefined {
+  if (!input.providerId) {
+    return undefined;
+  }
+  return {
+    providerId: input.providerId,
+    ...(input.model !== undefined ? { modelId: input.model } : {}),
+    ...(input.effort !== undefined ? { effort: input.effort } : {}),
+    ...(input.fastMode !== undefined ? { fastMode: input.fastMode } : {}),
+  };
+}
+
+function workspaceRefFromCwd(cwd: string): HostedWebWorkspaceRef {
+  const trimmed = cwd.trim();
+  const pathParts = trimmed.split(/[\\/]/).filter(Boolean);
+  return {
+    id: trimmed,
+    displayName: pathParts[pathParts.length - 1] ?? trimmed,
+  };
+}
+
 export class HttpAPIClient implements ElectronAPI {
   private baseUrl: string;
+  private hostedWebTransport: HostedWebTransportClient;
   private eventSource: EventSource | null = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- event callbacks have varying signatures
   private eventListeners = new Map<string, Set<(...args: any[]) => void>>();
@@ -166,6 +430,7 @@ export class HttpAPIClient implements ElectronAPI {
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl;
+    this.hostedWebTransport = createHostedWebTransportClient({ baseUrl });
     this.initEventSource();
   }
 
@@ -886,14 +1151,11 @@ export class HttpAPIClient implements ElectronAPI {
 
   teams: TeamsAPI = {
     list: async (): Promise<TeamSummary[]> => {
-      console.warn('[HttpAPIClient] teams API is not available in browser mode');
-      return [];
+      const response = await this.hostedWebTransport.listTeams();
+      return response.teams.map(mapHostedTeamSummary);
     },
-    getData: async (
-      _teamName: string,
-      _options?: TeamGetDataOptions
-    ): Promise<TeamViewSnapshot> => {
-      throw new Error('Teams detail is not available in browser mode');
+    getData: async (teamName: string, _options?: TeamGetDataOptions): Promise<TeamViewSnapshot> => {
+      return mapHostedTeamSnapshot(await this.hostedWebTransport.getTeamSnapshot(teamName));
     },
     getTaskChangePresence: async (): Promise<
       Record<string, 'has_changes' | 'no_changes' | 'unknown'>
@@ -958,14 +1220,26 @@ export class HttpAPIClient implements ElectronAPI {
     createInitialGitCommit: async (_projectPath: string): Promise<TeamWorktreeGitStatus> => {
       throw new Error('Initial Git commit is not available in browser mode');
     },
-    createTeam: async (_request: TeamCreateRequest): Promise<TeamCreateResponse> => {
-      throw new Error('Team provisioning is not available in browser mode');
+    createTeam: async (request: TeamCreateRequest): Promise<TeamCreateResponse> => {
+      return mapHostedLaunchResponse(
+        await this.hostedWebTransport.launchTeam(
+          request.teamName,
+          mapTeamCreateRequestToHosted(request)
+        )
+      );
     },
-    launchTeam: async (_request: TeamLaunchRequest): Promise<TeamLaunchResponse> => {
-      throw new Error('Team launch is not available in browser mode');
+    launchTeam: async (request: TeamLaunchRequest): Promise<TeamLaunchResponse> => {
+      return mapHostedLaunchResponse(
+        await this.hostedWebTransport.launchTeam(
+          request.teamName,
+          mapTeamLaunchRequestToHosted(request)
+        )
+      );
     },
-    getProvisioningStatus: async (_runId: string): Promise<TeamProvisioningProgress> => {
-      throw new Error('Team provisioning is not available in browser mode');
+    getProvisioningStatus: async (runId: string): Promise<TeamProvisioningProgress> => {
+      return mapHostedProvisioningStatus(
+        await this.hostedWebTransport.getProvisioningStatus(runId)
+      );
     },
     getLaunchFailureDiagnostics: async (
       _teamName: string,
@@ -1055,14 +1329,14 @@ export class HttpAPIClient implements ElectronAPI {
     processSend: async (_teamName: string, _message: string): Promise<void> => {
       throw new Error('Team process communication is not available in browser mode');
     },
-    processAlive: async (_teamName: string): Promise<boolean> => {
-      return false;
+    processAlive: async (teamName: string): Promise<boolean> => {
+      return (await this.hostedWebTransport.getRuntimeState(teamName)).isAlive;
     },
     aliveList: async (): Promise<string[]> => {
-      return [];
+      return (await this.hostedWebTransport.listAliveTeams()).teamIds;
     },
-    stop: async (): Promise<void> => {
-      throw new Error('Team stop is not available in browser mode');
+    stop: async (teamName: string): Promise<void> => {
+      await this.hostedWebTransport.stopTeam(teamName);
     },
     createConfig: async (): Promise<void> => {
       throw new Error('Team config creation is not available in browser mode');

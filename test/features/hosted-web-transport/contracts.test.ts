@@ -2,11 +2,15 @@ import {
   HOSTED_WEB_ERROR_CODE_PREFIX,
   HOSTED_WEB_LAST_EVENT_ID_HEADER,
   HOSTED_WEB_SSE_EVENT_TYPES,
+  hostedWebAliveTeamsRoute,
   hostedWebErrorCode,
   type HostedWebEvent,
+  hostedWebProvisioningStatusRoute,
   hostedWebTeamEventsRoute,
   hostedWebTeamRoute,
+  hostedWebTeamRuntimeRoute,
   type HostedWebTeamSnapshotResponse,
+  hostedWebTeamStopRoute,
   parseHostedWebSseEvent,
 } from '@features/hosted-web-transport/contracts';
 import { describe, expect, it } from 'vitest';
@@ -16,6 +20,16 @@ describe('hosted web transport contracts', () => {
     expect(hostedWebTeamRoute('team/slash value')).toBe(
       '/api/hosted/v1/teams/team%2Fslash%20value'
     );
+    expect(hostedWebTeamRuntimeRoute('team/slash value')).toBe(
+      '/api/hosted/v1/teams/team%2Fslash%20value/runtime'
+    );
+    expect(hostedWebTeamStopRoute('team/slash value')).toBe(
+      '/api/hosted/v1/teams/team%2Fslash%20value/stop'
+    );
+    expect(hostedWebProvisioningStatusRoute('run/slash value')).toBe(
+      '/api/hosted/v1/teams/provisioning/run%2Fslash%20value'
+    );
+    expect(hostedWebAliveTeamsRoute()).toBe('/api/hosted/v1/teams/runtime/alive');
     expect(hostedWebTeamEventsRoute('team/slash value', { cursor: 'event 1' })).toBe(
       '/api/hosted/v1/events?teamId=team%2Fslash+value&cursor=event+1'
     );

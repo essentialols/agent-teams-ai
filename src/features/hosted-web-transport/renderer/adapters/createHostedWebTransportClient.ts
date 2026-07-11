@@ -2,11 +2,14 @@ import {
   HOSTED_WEB_API_BASE,
   HOSTED_WEB_EFFORT_LEVELS,
   HOSTED_WEB_LAST_EVENT_ID_HEADER,
+  HOSTED_WEB_PROVISIONING_STATES,
   HOSTED_WEB_SSE_EVENT_TYPES,
   HOSTED_WEB_TEAM_FAST_MODES,
   HOSTED_WEB_TEAM_PROVIDER_IDS,
   HOSTED_WEB_TEAM_REVIEW_STATES,
   HOSTED_WEB_TEAM_TASK_STATUSES,
+  type HostedWebAliveTeamsResponse,
+  hostedWebAliveTeamsRoute,
   type HostedWebCreateTaskRequest,
   type HostedWebCreateTaskResponse,
   type HostedWebErrorCode,
@@ -15,13 +18,19 @@ import {
   type HostedWebEventCursor,
   type HostedWebLaunchTeamRequest,
   type HostedWebLaunchTeamResponse,
+  type HostedWebProvisioningStatusResponse,
+  hostedWebProvisioningStatusRoute,
+  type HostedWebRunId,
+  type HostedWebRuntimeSummary,
   hostedWebTeamEventsRoute,
   type HostedWebTeamId,
   hostedWebTeamLaunchRoute,
   hostedWebTeamRoute,
+  hostedWebTeamRuntimeRoute,
   type HostedWebTeamsListResponse,
   type HostedWebTeamSnapshotResponse,
   hostedWebTeamsRoute,
+  hostedWebTeamStopRoute,
   hostedWebTeamTasksRoute,
   type HostedWebTerminalSessionId,
   type HostedWebTerminalSessionRequest,
@@ -61,6 +70,10 @@ export interface HostedWebTransportClient {
     teamId: HostedWebTeamId,
     request: HostedWebLaunchTeamRequest
   ): Promise<HostedWebLaunchTeamResponse>;
+  getProvisioningStatus(runId: HostedWebRunId): Promise<HostedWebProvisioningStatusResponse>;
+  getRuntimeState(teamId: HostedWebTeamId): Promise<HostedWebRuntimeSummary>;
+  listAliveTeams(): Promise<HostedWebAliveTeamsResponse>;
+  stopTeam(teamId: HostedWebTeamId): Promise<HostedWebRuntimeSummary>;
   createTask(
     teamId: HostedWebTeamId,
     request: HostedWebCreateTaskRequest
@@ -158,13 +171,14 @@ export function createHostedWebTransportClient(
   if (!fetchImpl) {
     throw new Error('Hosted web transport requires a fetch implementation');
   }
+  const baseUrl = normalizeHostedBaseUrl(dependencies.baseUrl);
 
   return {
     listTeams: () =>
       requestJson<HostedWebTeamsListResponse>(
         fetchImpl,
         hostedWebTeamsRoute(),
-        buildUrl(dependencies.baseUrl, hostedWebTeamsRoute()),
+        buildUrl(baseUrl, hostedWebTeamsRoute()),
         validateTeamsListResponse,
         {
           signal: dependencies.signal,
@@ -175,7 +189,7 @@ export function createHostedWebTransportClient(
       requestJson<HostedWebTeamSnapshotResponse>(
         fetchImpl,
         hostedWebTeamRoute(teamId),
-        buildUrl(dependencies.baseUrl, hostedWebTeamRoute(teamId)),
+        buildUrl(baseUrl, hostedWebTeamRoute(teamId)),
         validateTeamSnapshotResponse,
         { signal: dependencies.signal }
       ),
@@ -184,7 +198,7 @@ export function createHostedWebTransportClient(
       requestJson<HostedWebLaunchTeamResponse>(
         fetchImpl,
         hostedWebTeamLaunchRoute(teamId),
-        buildUrl(dependencies.baseUrl, hostedWebTeamLaunchRoute(teamId)),
+        buildUrl(baseUrl, hostedWebTeamLaunchRoute(teamId)),
         validateLaunchTeamResponse,
         {
           method: 'POST',
@@ -193,11 +207,50 @@ export function createHostedWebTransportClient(
         }
       ),
 
+    getProvisioningStatus: (runId) =>
+      requestJson<HostedWebProvisioningStatusResponse>(
+        fetchImpl,
+        hostedWebProvisioningStatusRoute(runId),
+        buildUrl(baseUrl, hostedWebProvisioningStatusRoute(runId)),
+        validateProvisioningStatusResponse,
+        { signal: dependencies.signal }
+      ),
+
+    getRuntimeState: (teamId) =>
+      requestJson<HostedWebRuntimeSummary>(
+        fetchImpl,
+        hostedWebTeamRuntimeRoute(teamId),
+        buildUrl(baseUrl, hostedWebTeamRuntimeRoute(teamId)),
+        validateRuntimeSummary,
+        { signal: dependencies.signal }
+      ),
+
+    listAliveTeams: () =>
+      requestJson<HostedWebAliveTeamsResponse>(
+        fetchImpl,
+        hostedWebAliveTeamsRoute(),
+        buildUrl(baseUrl, hostedWebAliveTeamsRoute()),
+        validateAliveTeamsResponse,
+        { signal: dependencies.signal }
+      ),
+
+    stopTeam: (teamId) =>
+      requestJson<HostedWebRuntimeSummary>(
+        fetchImpl,
+        hostedWebTeamStopRoute(teamId),
+        buildUrl(baseUrl, hostedWebTeamStopRoute(teamId)),
+        validateRuntimeSummary,
+        {
+          method: 'POST',
+          signal: dependencies.signal,
+        }
+      ),
+
     createTask: (teamId, request) =>
       requestJson<HostedWebCreateTaskResponse>(
         fetchImpl,
         hostedWebTeamTasksRoute(teamId),
-        buildUrl(dependencies.baseUrl, hostedWebTeamTasksRoute(teamId)),
+        buildUrl(baseUrl, hostedWebTeamTasksRoute(teamId)),
         validateCreateTaskResponse,
         {
           method: 'POST',
@@ -215,7 +268,7 @@ export function createHostedWebTransportClient(
       let lastEventId: HostedWebEventCursor | null = options.resumeAfterEventId ?? null;
       const source = new EventSourceImpl(
         buildUrl(
-          dependencies.baseUrl,
+          baseUrl,
           hostedWebTeamEventsRoute(options.teamId, { cursor: options.resumeAfterEventId })
         )
       );
@@ -270,8 +323,8 @@ export function createHostedWebTransportClient(
       requestJson<HostedWebTerminalSessionResponse>(
         fetchImpl,
         hostedWebTerminalSessionsRoute(teamId),
-        buildUrl(dependencies.baseUrl, hostedWebTerminalSessionsRoute(teamId)),
-        (payload) => validateTerminalSessionResponse(payload, dependencies.baseUrl),
+        buildUrl(baseUrl, hostedWebTerminalSessionsRoute(teamId)),
+        (payload) => validateTerminalSessionResponse(payload, baseUrl),
         {
           method: 'POST',
           body: JSON.stringify(request),
@@ -285,7 +338,7 @@ export function createHostedWebTransportClient(
         throw new Error('Hosted web terminal transport requires WebSocket');
       }
       const url = resolveTerminalWebSocketUrl({
-        baseUrl: dependencies.baseUrl,
+        baseUrl,
         terminalSessionId: options.terminalSessionId,
         webSocketUrl: options.webSocketUrl,
       });
@@ -368,6 +421,41 @@ function buildUrl(baseUrl: string | undefined, route: string): string {
   return `${baseUrl.replace(/\/$/, '')}${route}`;
 }
 
+function normalizeHostedBaseUrl(baseUrl: string | undefined): string | undefined {
+  if (!baseUrl) {
+    return undefined;
+  }
+
+  const trimmed = baseUrl.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  if (!isAbsoluteUrl(trimmed)) {
+    return trimmed.replace(/\/$/, '');
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch (cause) {
+    throw invalidBaseUrlError(cause);
+  }
+
+  if (
+    (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') ||
+    parsed.username ||
+    parsed.password ||
+    parsed.pathname !== '/' ||
+    parsed.search ||
+    parsed.hash
+  ) {
+    throw invalidBaseUrlError();
+  }
+
+  return parsed.origin;
+}
+
 function readHostedWebErrorPayload(payload: unknown): { code?: string } | null {
   if (!isRecord(payload) || !isRecord(payload.error)) {
     return null;
@@ -442,6 +530,37 @@ function validateLaunchTeamResponse(payload: unknown): HostedWebLaunchTeamRespon
     throw new Error('Hosted web response.launchStatus is invalid');
   }
   return payload as unknown as HostedWebLaunchTeamResponse;
+}
+
+function validateProvisioningStatusResponse(payload: unknown): HostedWebProvisioningStatusResponse {
+  assertRecord(payload, 'response');
+  assertNonEmptyString(payload.runId, 'response.runId');
+  assertNonEmptyString(payload.teamId, 'response.teamId');
+  if (!isOneOf(payload.state, HOSTED_WEB_PROVISIONING_STATES)) {
+    throw new Error('Hosted web response.state is invalid');
+  }
+  assertString(payload.message, 'response.message');
+  assertValidTimestamp(payload.startedAt, 'response.startedAt');
+  assertValidTimestamp(payload.updatedAt, 'response.updatedAt');
+  assertOptionalString(payload.error, 'response.error');
+  if (payload.warnings !== undefined) {
+    assertStringArray(payload.warnings, 'response.warnings');
+  }
+  return payload as unknown as HostedWebProvisioningStatusResponse;
+}
+
+function validateAliveTeamsResponse(payload: unknown): HostedWebAliveTeamsResponse {
+  assertRecord(payload, 'response');
+  assertStringArray(payload.teamIds, 'response.teamIds');
+  return payload as HostedWebAliveTeamsResponse;
+}
+
+function validateRuntimeSummary(payload: unknown): HostedWebRuntimeSummary {
+  assertRecord(payload, 'response');
+  assertBoolean(payload.isAlive, 'response.isAlive');
+  assertBoolean(payload.terminalAvailable, 'response.terminalAvailable');
+  assertNumber(payload.activeProcessCount, 'response.activeProcessCount');
+  return payload as HostedWebRuntimeSummary;
 }
 
 function validateCreateTaskResponse(payload: unknown): HostedWebCreateTaskResponse {
@@ -614,7 +733,7 @@ function resolveTerminalWebSocketUrl(options: {
     terminalSessionId: undefined,
     webSocketUrl: options.webSocketUrl,
   });
-  return options.webSocketUrl;
+  return normalizeTerminalWebSocketUrl(options.webSocketUrl, options.baseUrl);
 }
 
 function validateTerminalWebSocketTarget(options: {
@@ -686,6 +805,14 @@ function parseTerminalWebSocketUrl(value: string, baseUrl: string | undefined): 
   }
 }
 
+function normalizeTerminalWebSocketUrl(value: string, baseUrl: string | undefined): string {
+  if (isAbsoluteUrl(value) || !getTrustedHttpOrigin(baseUrl)) {
+    return value;
+  }
+
+  return parseTerminalWebSocketUrl(value, baseUrl)?.toString() ?? value;
+}
+
 function getTrustedHttpOrigin(baseUrl: string | undefined): string | null {
   if (baseUrl && isAbsoluteUrl(baseUrl)) {
     const parsed = new URL(baseUrl);
@@ -719,6 +846,14 @@ function invalidTerminalWebSocketTargetError(): HostedWebTransportError {
   return new HostedWebTransportError('Hosted web terminal stream target is not allowed', {
     kind: 'response_validation',
     code: hostedWebErrorCode('invalid_terminal_websocket_target'),
+  });
+}
+
+function invalidBaseUrlError(cause?: unknown): HostedWebTransportError {
+  return new HostedWebTransportError('Hosted web base URL is not allowed', {
+    kind: 'response_validation',
+    code: hostedWebErrorCode('invalid_base_url'),
+    cause,
   });
 }
 

@@ -90,6 +90,35 @@ describe('TeamProvisioningHarnessBuilder fixture isolation', () => {
     expect(secondRuntime.members.Builder?.alive).toBe(true);
   });
 
+  it('does not leak confirmed runtime defaults into non-confirmed OpenCode evidence', () => {
+    const failedEvidence = makeOpenCodeEvidence({ launchState: 'failed_to_start' });
+
+    expect(failedEvidence).toMatchObject({
+      launchState: 'failed_to_start',
+      agentToolAccepted: false,
+      runtimeAlive: false,
+      bootstrapConfirmed: false,
+      hardFailure: true,
+      livenessKind: 'registered_only',
+    });
+    expect(failedEvidence).not.toHaveProperty('sessionId');
+    expect(failedEvidence).not.toHaveProperty('runtimePid');
+    expect(failedEvidence).not.toHaveProperty('bootstrapEvidenceSource');
+    expect(failedEvidence).not.toHaveProperty('pidSource');
+
+    const pendingEvidence = makeOpenCodeEvidence({ launchState: 'runtime_pending_bootstrap' });
+    expect(pendingEvidence).toMatchObject({
+      launchState: 'runtime_pending_bootstrap',
+      agentToolAccepted: true,
+      runtimeAlive: false,
+      bootstrapConfirmed: false,
+      hardFailure: false,
+      livenessKind: 'runtime_process_candidate',
+      pidSource: 'opencode_bridge',
+    });
+    expect(pendingEvidence).not.toHaveProperty('bootstrapEvidenceSource');
+  });
+
   it('normalizes lead topology, teammate agent types, and provider/backend pairs', () => {
     const lead = memberFixture.lead({
       name: 'ignored-lead-override',

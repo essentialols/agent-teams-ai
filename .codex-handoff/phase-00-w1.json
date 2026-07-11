@@ -1,0 +1,260 @@
+{
+  "schemaVersion": 3,
+  "phaseId": "phase-00",
+  "laneId": "w1-remediation",
+  "packetRevision": "phase-00-r2",
+  "baseSha": "648bebed68f5a64c984e83b441e14dd7c587c403",
+  "canonicalBaseSha": "cbe501ad0f1fa0e51a038e832ad35fce4120321b",
+  "status": "characterized",
+  "provenance": {
+    "preservedSourceWorktree": "/var/data/agent-teams-hosted-web-refactor/worktrees/phase-00-remediation-w1-v1",
+    "salvagedDirtyPaths": 13,
+    "approvedInvariantSource": "/var/data/agent-teams-hosted-web-refactor/worktrees/phase-00-w1-parity-renderer-v1/docs/research/hosted-web/phase-0/parity-renderer/selection-reconciliation-invariants.md",
+    "approvedInvariantSha256": "sha256:b9f9a3b24720fbac112a1b97e40725ecf484e18c15f1d7b6596d2446b4f4eefe"
+  },
+  "remediates": {
+    "producerJob": "agent-teams-hosted-web-refactor-phase-00-remediation-w1-v1",
+    "reviewJobs": [
+      "agent-teams-hosted-web-refactor-phase-00-remediation-review-w1-w2-v3",
+      "agent-teams-hosted-web-refactor-phase-00-audit-cross-lane-v2"
+    ],
+    "findingIds": [
+      "R12-W1-001",
+      "R12-W1-002",
+      "R12-X-001",
+      "R12-W1-003",
+      "R12-W1-004",
+      "R12R-W1-001",
+      "R12R-W1-002",
+      "P0.V2.CONFLICT.W1.EXHAUSTIVENESS",
+      "P0.V2.CONFLICT.W1.APPROVED_FILE_REGRESSION"
+    ]
+  },
+  "evidence": [
+    {
+      "id": "P0.W1.API_PARITY_LEDGER",
+      "path": "docs/research/hosted-web/phase-0/parity-renderer/api-parity-ledger.json",
+      "proofLevel": "source_observed"
+    },
+    {
+      "id": "P0.W1.RENDERER_ACTIONS",
+      "path": "docs/research/hosted-web/phase-0/parity-renderer/renderer-action-inventory.json",
+      "proofLevel": "fixture_characterized"
+    },
+    {
+      "id": "P0.W1.RENDERER_CHILD_CONTROLS",
+      "path": "docs/research/hosted-web/phase-0/parity-renderer/renderer-child-control-catalog.json",
+      "proofLevel": "fixture_characterized"
+    },
+    {
+      "id": "P0.W1.LEGACY_BYPASSES",
+      "path": "docs/research/hosted-web/phase-0/parity-renderer/legacy-bypass-inventory.json",
+      "proofLevel": "source_observed"
+    },
+    {
+      "id": "P0.W1.SELECTION_INVARIANTS",
+      "path": "docs/research/hosted-web/phase-0/parity-renderer/selection-reconciliation-invariants.md",
+      "proofLevel": "source_observed"
+    },
+    {
+      "id": "P0.W1.SCANNER",
+      "path": "scripts/hosted-web/phase-0/parity-renderer/scan-api-and-actions.ts",
+      "proofLevel": "fixture_characterized"
+    },
+    {
+      "id": "P0.W1.ESTIMATE",
+      "path": "docs/research/hosted-web/phase-0/parity-renderer/estimate-input.json",
+      "proofLevel": "source_observed"
+    }
+  ],
+  "findingResolutions": [
+    {
+      "id": "R12R-W1-001",
+      "resolution": "The scanner now recursively follows relative and renderer-alias imports from the mounted TeamListView, TeamDetailView, and provider-management roots. The checked-in catalog declares all 167 reachable TSX files and maps all 726 scanner-visible occurrences exactly once. Eleven other production team TSX files and their 28 sites are omission-sensitive excludedSourceFiles because no import path exists from these roots. The real TeamListFilterPopover immediate-child omission and one of its mapping omissions are both failing negative mutations."
+    },
+    {
+      "id": "P0.V2.CONFLICT.W1.EXHAUSTIVENESS",
+      "resolution": "Replaced the four-file claim with a source-derived 167-file reachable closure, an explicit child-control catalog, exact missing/extra closure diagnostics, exact site-count/hash validation, repository-backed omission fixtures, and a regenerated excluded-file manifest."
+    },
+    {
+      "id": "R12R-W1-002",
+      "resolution": "All W1-owned files are generated in Prettier-compatible form and the scanner invokes the pinned repository Prettier for generated JSON before schema validation. Targeted Prettier, lint, scanner, fixture, typecheck, diff and bounded scans are recorded below."
+    },
+    {
+      "id": "P0.V2.CONFLICT.W1.APPROVED_FILE_REGRESSION",
+      "resolution": "Restored the pair-approved 137-line selection-reconciliation-invariants.md byte-for-byte at sha256:b9f9a3b24720fbac112a1b97e40725ecf484e18c15f1d7b6596d2446b4f4eefe."
+    },
+    {
+      "id": "R12-W1-001",
+      "resolution": "The 30 original reviewed semantic actions retain their exact IDs. The explicit child catalog adds reviewed component/handler action IDs without per-run manufacture; file/hash/count metadata is used only to detect stale or omitted mappings."
+    },
+    {
+      "id": "R12-W1-002",
+      "resolution": "Stable action IDs remain independent of line numbers and source location. Both original and child-catalog fixtures prove unrelated line insertion preserves source keys and explicit IDs."
+    },
+    {
+      "id": "R12-X-001",
+      "resolution": "team.lifecycle.stop remains team-lifecycle-owned; provider credential/auth controls remain runtime-provider-management-owned; repository-wide renderer callers stay bound to their exact TeamsAPI, ReviewAPI, or CrossTeamAPI member and canonical owner."
+    },
+    {
+      "id": "R12-W1-003",
+      "resolution": "Canonical net arithmetic remains 2.0k-3.0k, 2.1k-3.2k, and 2.8k-4.2k. Both greater-than-20-percent changes remain explicit controller scope-review inputs."
+    },
+    {
+      "id": "R12-W1-004",
+      "resolution": "The deterministic 610-row raw bypass projection stays outside Git under /tmp. Git retains the count, exact SHA-256, generator, summary and disposition rather than the raw rows."
+    }
+  ],
+  "requirementCoverage": [
+    {
+      "id": "P0.REQ.W1.001",
+      "status": "satisfied",
+      "proof": "All required W1 evidence IDs plus the child-control catalog and this handoff are present."
+    },
+    {
+      "id": "P0.REQ.W1.002",
+      "status": "satisfied",
+      "proof": "Pinned AST count remains 86/20/3; all 109 API members have exactly one disposition and owner."
+    },
+    {
+      "id": "P0.REQ.W1.003",
+      "status": "satisfied",
+      "proof": "The recursively derived 167-file mounted closure has 726 mapped sites; every non-reachable production team TSX file is explicitly regenerated as excluded."
+    },
+    {
+      "id": "P0.REQ.W1.004",
+      "status": "satisfied",
+      "proof": "Annotated/unannotated dynamic-dispatch fixtures pass and fail as required."
+    },
+    {
+      "id": "P0.REQ.W1.005",
+      "status": "satisfied",
+      "proof": "610 deterministic bypass observations are summarized and externally hashed without adopting oversized raw output."
+    },
+    {
+      "id": "P0.REQ.W1.006",
+      "status": "satisfied",
+      "proof": "The approved 137-line selection, snapshot, tombstone, pagination, event and poll invariant record is restored byte-for-byte."
+    },
+    {
+      "id": "P0.REQ.W1.007",
+      "status": "satisfied",
+      "proof": "Tests reject missing and duplicate API/semantic mappings, an actual omitted immediate child, and an actual omitted child-control mapping while proving root and child line-shift stability."
+    },
+    {
+      "id": "P0.REQ.W1.008",
+      "status": "satisfied",
+      "proof": "Canonical arithmetic, variance escalation, checked schemas and compact raw-evidence treatment remain explicit."
+    }
+  ],
+  "counts": {
+    "apiMembers": {
+      "TeamsAPI": 86,
+      "ReviewAPI": 20,
+      "CrossTeamAPI": 3,
+      "total": 109
+    },
+    "directRendererApiActionBindings": 95,
+    "reachableControlFiles": 167,
+    "reachableInteractionSites": 726,
+    "semanticActions": 436,
+    "deliberateAbsenceClasses": 5,
+    "excludedUnreachableTeamFiles": 11,
+    "excludedUnreachableInteractionSites": 28,
+    "legacyBypassRawRows": 610,
+    "legacyBypassRawSha256": "sha256:2ea065639675df126935790d86578cfdae9cf9feb60371826b03f1f877c5f497"
+  },
+  "estimateBuckets": [
+    {
+      "bucketId": "EST-CONTRACTS",
+      "netLines": {
+        "low": 2000,
+        "high": 3000
+      },
+      "varianceReview": false
+    },
+    {
+      "bucketId": "EST-RENDERER-LIFECYCLE",
+      "netLines": {
+        "low": 2100,
+        "high": 3200
+      },
+      "varianceReview": true
+    },
+    {
+      "bucketId": "EST-REMAINING-PARITY",
+      "netLines": {
+        "low": 2800,
+        "high": 4200
+      },
+      "varianceReview": true
+    }
+  ],
+  "changedPaths": [
+    ".codex-handoff/phase-00-w1.json",
+    "docs/research/hosted-web/phase-0/parity-renderer/README.md",
+    "docs/research/hosted-web/phase-0/parity-renderer/api-parity-ledger.json",
+    "docs/research/hosted-web/phase-0/parity-renderer/estimate-input.json",
+    "docs/research/hosted-web/phase-0/parity-renderer/legacy-bypass-inventory.json",
+    "docs/research/hosted-web/phase-0/parity-renderer/renderer-action-inventory.json",
+    "docs/research/hosted-web/phase-0/parity-renderer/renderer-child-control-catalog.json",
+    "docs/research/hosted-web/phase-0/parity-renderer/schemas/api-parity-ledger.schema.json",
+    "docs/research/hosted-web/phase-0/parity-renderer/schemas/estimate-input.schema.json",
+    "docs/research/hosted-web/phase-0/parity-renderer/schemas/legacy-bypass-inventory.schema.json",
+    "docs/research/hosted-web/phase-0/parity-renderer/schemas/renderer-action-inventory.schema.json",
+    "docs/research/hosted-web/phase-0/parity-renderer/schemas/renderer-child-control-catalog.schema.json",
+    "docs/research/hosted-web/phase-0/parity-renderer/selection-reconciliation-invariants.md",
+    "scripts/hosted-web/phase-0/parity-renderer/scan-api-and-actions.ts",
+    "test/architecture/hosted-web/phase-0/parity-renderer/scan-api-and-actions.test.ts"
+  ],
+  "checks": [
+    {
+      "command": "node --import tsx scripts/hosted-web/phase-0/parity-renderer/scan-api-and-actions.ts",
+      "exitCode": 0,
+      "result": "109 API members, 167 reachable files, 726 mapped control sites, schemas valid, raw bypass hash reproduced"
+    },
+    {
+      "command": "pnpm exec vitest run test/architecture/hosted-web/phase-0/parity-renderer/scan-api-and-actions.test.ts",
+      "exitCode": 0,
+      "result": "1 file, 9 tests passed"
+    },
+    {
+      "command": "pnpm lint:fast:files -- scripts/hosted-web/phase-0/parity-renderer/scan-api-and-actions.ts test/architecture/hosted-web/phase-0/parity-renderer/scan-api-and-actions.test.ts",
+      "exitCode": 0,
+      "result": "0 errors, 0 warnings"
+    },
+    {
+      "command": "pnpm typecheck",
+      "exitCode": 0,
+      "result": "no TypeScript diagnostics"
+    },
+    {
+      "command": "pnpm exec prettier --check <all 15 W1-owned paths>",
+      "exitCode": 0,
+      "result": "all matched files use Prettier code style"
+    },
+    {
+      "command": "git diff --check plus per-untracked-file git diff --no-index --check",
+      "exitCode": 0,
+      "result": "no whitespace diagnostics"
+    },
+    {
+      "command": "bounded secret, credential-pattern and prohibited real-project-path scan over all W1-owned paths",
+      "exitCode": 0,
+      "result": "no findings"
+    }
+  ],
+  "externalRawEvidence": {
+    "path": "/tmp/agent-teams-hosted-web-refactor-phase-00-remediation-w1-v7-artifacts/legacy-bypass-raw.json",
+    "sha256": "sha256:2ea065639675df126935790d86578cfdae9cf9feb60371826b03f1f877c5f497",
+    "recordCount": 610,
+    "ephemeral": true
+  },
+  "unverifiedClaims": [
+    "No hosted transport, browser mount, provider, runtime, terminal, Phase 1, broad CI, build or standalone smoke behavior was executed.",
+    "The two greater-than-20-percent estimate changes require controller scope review before the shared estimate can freeze.",
+    "This owner-authored terminal handoff requires a fresh focused W1 reciprocal re-review before controller adoption."
+  ],
+  "blockers": [],
+  "nextAction": "focused-w1-rereview-then-controller-estimate-scope-review"
+}

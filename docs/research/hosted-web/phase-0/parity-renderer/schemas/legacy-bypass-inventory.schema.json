@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "schemaId",
+    "schemaVersion",
+    "evidenceId",
+    "packetRevision",
+    "pinnedBaseSha",
+    "phaseStartSha",
+    "summary",
+    "rawArtifact"
+  ],
+  "properties": {
+    "rawArtifact": {
+      "type": "object",
+      "required": ["format", "recordCount", "sha256", "externalPath"]
+    }
+  }
+}

@@ -491,19 +491,45 @@ export async function getOpenCodeRuntimeDeliveryStatus(
         .filter(Boolean)
     ),
   ];
+  let recordForStatus: OpenCodePromptDeliveryLedgerRecord | null = null;
   for (const laneId of laneIds) {
     const records = await ports
       .createOpenCodePromptDeliveryLedger(teamName, laneId)
       .list()
       .catch(() => []);
-    const record = records.find((candidate) => candidate.inboxMessageId === normalizedMessageId);
-    if (record) {
-      const { record: latestRecord, decision } =
-        await ports.decideOpenCodeRuntimeDeliveryUserFacingAdvisory(record);
-      return toOpenCodeRuntimeDeliveryStatus({ record: latestRecord, decision });
+    for (const record of records) {
+      if (
+        record.inboxMessageId === normalizedMessageId &&
+        (!recordForStatus || isOpenCodePromptDeliveryRecordNewer(record, recordForStatus))
+      ) {
+        recordForStatus = record;
+      }
     }
   }
-  return null;
+  if (!recordForStatus) {
+    return null;
+  }
+  const { record: latestRecord, decision } =
+    await ports.decideOpenCodeRuntimeDeliveryUserFacingAdvisory(recordForStatus);
+  return toOpenCodeRuntimeDeliveryStatus({ record: latestRecord, decision });
+}
+
+function isOpenCodePromptDeliveryRecordNewer(
+  candidate: OpenCodePromptDeliveryLedgerRecord,
+  current: OpenCodePromptDeliveryLedgerRecord
+): boolean {
+  const candidateUpdatedAt = Date.parse(candidate.updatedAt);
+  const currentUpdatedAt = Date.parse(current.updatedAt);
+  if (Number.isFinite(candidateUpdatedAt) && candidateUpdatedAt !== currentUpdatedAt) {
+    return !Number.isFinite(currentUpdatedAt) || candidateUpdatedAt > currentUpdatedAt;
+  }
+
+  const candidateCreatedAt = Date.parse(candidate.createdAt);
+  const currentCreatedAt = Date.parse(current.createdAt);
+  return (
+    Number.isFinite(candidateCreatedAt) &&
+    (!Number.isFinite(currentCreatedAt) || candidateCreatedAt > currentCreatedAt)
+  );
 }
 
 export async function tryGetActiveOpenCodePromptDeliveryRecord(

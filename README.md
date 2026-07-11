@@ -280,9 +280,15 @@ Some RDP (Remote Desktop Protocol) sessions expose virtual GPU drivers that can 
 
 ---
 
-## Development
+## Roadmap (new)
+- [ ] Launching 24/7 autonomous teams in the cloud with current UI (in progress)
+- [ ] Automatic account switching  (in progress)
+- [ ] Navigating very complex long tasks without losing context (in progress)
+- [ ] Support for different coding agents (in progress)
+- [ ] A secure universal plugin system regardless of the type of agents
+- [ ] Efficiency and controllability under load with 20-100+ agents in parallel
 
-### Developer architecture docs
+## Development
 
 For feature architecture and implementation guidance:
 
@@ -293,7 +299,7 @@ For feature architecture and implementation guidance:
 
 ## Tech stack
 
-Electron 40, React 19, TypeScript 5, Tailwind CSS 3, Zustand 4. Data from `~/.claude/` (session logs, todos, tasks). The desktop app works with local runtime/session state, while some runtime modes may also use provider or startup capability services when required.
+Electron 40, React 19, TypeScript 5, Tailwind CSS 3, Zustand 4. The desktop app works with local runtime/session state, while some runtime modes may also use provider or startup capability services when required.
 
 <details>
 <summary><strong>Build from source</strong></summary>

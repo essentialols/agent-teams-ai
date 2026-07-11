@@ -140,6 +140,28 @@ describe("consumed output ledger", () => {
       commitSha: "abc1234",
     });
 
+    const emptyBackup = await createBackupEvidence(
+      root,
+      "integrated-with-pruned-patch",
+      workspace,
+      false,
+    );
+    await expect(consumedOutputRecordFromJson({
+      ledgerPath: join(root, "integrated-with-pruned-patch.json"),
+      source: localConsumedOutputLedgerSource(),
+      value: {
+        jobId: "integrated-with-pruned-patch",
+        status: "integrated",
+        closedAt: "2026-07-06T00:00:00.000Z",
+        commitSha: "def5678",
+        backup: emptyBackup,
+      },
+    })).resolves.toMatchObject({
+      valid: true,
+      hasAuthoredOutput: true,
+      commitSha: "def5678",
+    });
+
     const missingCommit = await consumedOutputRecordFromJson({
       ledgerPath: join(root, "integrated-missing-commit.json"),
       source: localConsumedOutputLedgerSource(),
@@ -163,6 +185,54 @@ describe("consumed output ledger", () => {
         severity: "blocking",
       }),
     ]);
+  });
+
+  it("records reviewed no-change output separately from infrastructure failures", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-no-change-ledger-"));
+    const workspace = join(root, "workspaces", "contracts-review-v1");
+    const backup = await createBackupEvidence(root, "contracts-review-v1", workspace, false);
+    const source = localConsumedOutputLedgerSource();
+
+    const reviewed = await consumedOutputRecordFromJson({
+      ledgerPath: join(root, "reviewed-no-change.json"),
+      source,
+      value: {
+        jobId: "contracts-review-v1",
+        status: "reviewed_no_change",
+        outcome: "reviewed_no_change",
+        closedAt: "2026-07-11T00:00:00.000Z",
+        backup,
+      },
+    });
+
+    expect(reviewed).toMatchObject({
+      status: "reviewed_no_change",
+      hasAuthoredOutput: false,
+      valid: true,
+    });
+    expect(consumedDebt(reviewed!)).toEqual([
+      expect.objectContaining({
+        reason: ProjectDebtReason.ConsumedDirtyWorkspace,
+        severity: "info",
+      }),
+    ]);
+
+    const missingOutcome = await consumedOutputRecordFromJson({
+      ledgerPath: join(root, "reviewed-no-change-missing-outcome.json"),
+      source,
+      value: {
+        jobId: "contracts-review-v1",
+        status: "reviewed_no_change",
+        closedAt: "2026-07-11T00:00:00.000Z",
+        backup,
+      },
+    });
+    expect(missingOutcome).toMatchObject({
+      valid: false,
+      evidence: expect.arrayContaining([
+        "reviewed_no_change record requires outcome=reviewed_no_change",
+      ]),
+    });
   });
 
   it("rejects terminal records without complete backup or with active claims", async () => {

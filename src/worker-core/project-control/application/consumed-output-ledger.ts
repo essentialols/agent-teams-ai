@@ -13,9 +13,11 @@ const CONSUMED_OUTPUT_TERMINAL_STATUSES = new Set([
   "superseded",
   "archived",
   "failed_no_output",
+  "reviewed_no_change",
 ]);
 
 const NO_OUTPUT_STATUS = "failed_no_output";
+const REVIEWED_NO_CHANGE_STATUS = "reviewed_no_change";
 
 export type ConsumedOutputRecord = {
   readonly jobId: string;
@@ -134,14 +136,18 @@ export async function consumedOutputRecordFromJson(input: {
       evidence: ["backup metadata is missing"],
     };
   evidence.push(...backupEvidence.evidence);
+  const commit = integratedOutputCommit(input.value);
+  const hasAuthoredOutput = backupEvidence.hasAuthoredOutput ||
+    (status === "integrated" && commit !== undefined);
   if (status === NO_OUTPUT_STATUS) {
-    evidence.push(...failedNoOutputEvidence(input.value, backupEvidence.hasAuthoredOutput));
-  } else if (!backupEvidence.hasAuthoredOutput) {
+    evidence.push(...failedNoOutputEvidence(input.value, hasAuthoredOutput));
+  } else if (status === REVIEWED_NO_CHANGE_STATUS) {
+    evidence.push(...reviewedNoChangeEvidence(input.value, hasAuthoredOutput));
+  } else if (!hasAuthoredOutput) {
     evidence.push(
       `terminal output status ${status} has no authored output evidence; use failed_no_output for infrastructure failures`,
     );
   }
-  const commit = integratedOutputCommit(input.value);
   if (status === "integrated" && !commit) {
     evidence.push("integrated consumed-output record is missing commit evidence");
   }
@@ -156,7 +162,7 @@ export async function consumedOutputRecordFromJson(input: {
     ...(workspace ? { workspace } : {}),
     ...(resolvedWorkspace ? { resolvedWorkspace } : {}),
     ...(commit ? { commitSha: commit } : {}),
-    hasAuthoredOutput: backupEvidence.hasAuthoredOutput,
+    hasAuthoredOutput,
     valid: evidence.length === 0,
     evidence: evidence.length === 0
       ? consumedOutputEvidence({
@@ -310,6 +316,20 @@ function failedNoOutputEvidence(
   }
   if (hasAuthoredOutput) {
     evidence.push("failed_no_output record contradicts non-empty authored output evidence");
+  }
+  return evidence;
+}
+
+function reviewedNoChangeEvidence(
+  value: Record<string, unknown>,
+  hasAuthoredOutput: boolean,
+): readonly string[] {
+  const evidence: string[] = [];
+  if (stringValue(value.outcome) !== REVIEWED_NO_CHANGE_STATUS) {
+    evidence.push("reviewed_no_change record requires outcome=reviewed_no_change");
+  }
+  if (hasAuthoredOutput) {
+    evidence.push("reviewed_no_change record contradicts non-empty authored output evidence");
   }
   return evidence;
 }

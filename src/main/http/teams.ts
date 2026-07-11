@@ -121,6 +121,18 @@ function isRuntimeControlProviderRoutingError(error: unknown): boolean {
   return error instanceof Error && error.name === 'RuntimeControlProviderRoutingError';
 }
 
+function withStableRuntimeObservedAt(teamName: string, body: unknown): Record<string, unknown> {
+  const payload = withRuntimeTeamName(teamName, body);
+  const observedAt = typeof payload.observedAt === 'string' ? payload.observedAt.trim() : '';
+  if (!observedAt) {
+    throw new HttpBadRequestError('OpenCode runtime payload missing observedAt');
+  }
+  if (!Number.isFinite(Date.parse(observedAt))) {
+    throw new HttpBadRequestError('OpenCode runtime payload invalid observedAt');
+  }
+  return payload;
+}
+
 function shouldLogError(error: unknown): boolean {
   const statusCode = getStatusCode(error);
   return (
@@ -438,7 +450,7 @@ export function registerTeamRoutes(app: FastifyInstance, services: HttpServices)
         }
         return reply.send(
           await getTeamRuntimeControlApi(services).recordOpenCodeRuntimeHeartbeat(
-            withRuntimeTeamName(validatedTeamName.value!, request.body)
+            withStableRuntimeObservedAt(validatedTeamName.value!, request.body)
           )
         );
       } catch (error) {

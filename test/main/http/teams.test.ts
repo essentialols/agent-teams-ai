@@ -878,6 +878,7 @@ describe('HTTP team runtime routes', () => {
     const callbackPayload = {
       runId: 'run-opencode',
       idempotencyKey: 'callback-1',
+      observedAt: '2026-03-12T00:00:02.000Z',
       location: { line: 12 },
     };
     const callbackCases = [
@@ -952,6 +953,7 @@ describe('HTTP team runtime routes', () => {
         url: '/api/teams/demo-team/opencode/runtime/heartbeat',
         payload: {
           teamName: 'demo-team',
+          observedAt: '2026-03-12T00:00:02.000Z',
         },
       });
 
@@ -959,6 +961,36 @@ describe('HTTP team runtime routes', () => {
       expect(response.json()).toEqual({
         error: 'OpenCode runtime payload missing runId',
       });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('rejects heartbeats without a stable observed-at identifier before delegation', async () => {
+    const { app, recordOpenCodeRuntimeHeartbeat } = await createApp();
+
+    try {
+      for (const observedAt of [undefined, 'not-a-date']) {
+        const response = await app.inject({
+          method: 'POST',
+          url: '/api/teams/demo-team/opencode/runtime/heartbeat',
+          payload: {
+            runId: 'run-opencode',
+            memberName: 'builder',
+            runtimeSessionId: 'session-1',
+            ...(observedAt === undefined ? {} : { observedAt }),
+          },
+        });
+
+        expect(response.statusCode).toBe(400);
+        expect(response.json()).toEqual({
+          error:
+            observedAt === undefined
+              ? 'OpenCode runtime payload missing observedAt'
+              : 'OpenCode runtime payload invalid observedAt',
+        });
+      }
+      expect(recordOpenCodeRuntimeHeartbeat).not.toHaveBeenCalled();
     } finally {
       await app.close();
     }

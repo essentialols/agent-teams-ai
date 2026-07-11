@@ -179,7 +179,7 @@ describe('TeamProvisioningPrepareCoordinator', () => {
     );
   });
 
-  it('executes coalesced set-like model checks in the canonical cache-key order', async () => {
+  it('coalesces set-like model checks without changing the first request order', async () => {
     let releaseVerification:
       | ((result: { details: string[]; warnings: string[]; blockingMessages: string[] }) => void)
       | null = null;
@@ -213,8 +213,8 @@ describe('TeamProvisioningPrepareCoordinator', () => {
     await vi.waitFor(() => expect(verifySelectedProviderModels).toHaveBeenCalledOnce());
     expect(verifySelectedProviderModels).toHaveBeenCalledWith(
       expect.objectContaining({
-        modelIds: ['alpha', 'zed'],
-        modelChecks: [{ modelId: 'alpha' }, { modelId: 'zed' }],
+        modelIds: ['zed', 'alpha'],
+        modelChecks: [{ modelId: 'zed' }, { modelId: 'alpha' }],
       })
     );
 

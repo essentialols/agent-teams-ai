@@ -2,8 +2,8 @@
  * HTTP route handlers for SSH Connection Management.
  *
  * Routes:
- * - POST /api/ssh/connect - Connect to SSH host
- * - POST /api/ssh/disconnect - Disconnect SSH
+ * - POST /api/ssh/connect - Unsupported over HTTP until route rebinding is context-aware
+ * - POST /api/ssh/disconnect - Unsupported over HTTP until route rebinding is context-aware
  * - GET /api/ssh/state - Get connection state
  * - POST /api/ssh/test - Test connection
  * - GET /api/ssh/config-hosts - Get SSH config hosts
@@ -24,38 +24,32 @@ import type { SshLastConnection } from '@shared/types';
 import type { FastifyInstance } from 'fastify';
 
 const logger = createLogger('HTTP:ssh');
+const HTTP_SSH_CONNECT_UNSUPPORTED_ERROR =
+  'HTTP SSH connect is not supported until context-aware route rebinding exists. Use the desktop Electron SSH controls.';
+const HTTP_SSH_DISCONNECT_UNSUPPORTED_ERROR =
+  'HTTP SSH disconnect is not supported until context-aware route rebinding exists. Use the desktop Electron SSH controls.';
 
 export function registerSshRoutes(
   app: FastifyInstance,
   connectionManager: SshConnectionManager,
-  modeSwitchCallback: (mode: 'local' | 'ssh') => Promise<void>
+  _modeSwitchCallback: (mode: 'local' | 'ssh') => Promise<void>
 ): void {
   const configManager = ConfigManager.getInstance();
 
   // Connect
-  app.post<{ Body: SshConnectionConfig }>('/api/ssh/connect', async (request) => {
-    try {
-      await connectionManager.connect(request.body);
-      await modeSwitchCallback('ssh');
-      return { success: true, data: connectionManager.getStatus() };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      logger.error('SSH connect failed:', message);
-      return { success: false, error: message };
-    }
+  app.post<{ Body: SshConnectionConfig }>('/api/ssh/connect', async (_request, reply) => {
+    return reply.status(501).send({
+      success: false,
+      error: HTTP_SSH_CONNECT_UNSUPPORTED_ERROR,
+    });
   });
 
   // Disconnect
-  app.post('/api/ssh/disconnect', async () => {
-    try {
-      connectionManager.disconnect();
-      await modeSwitchCallback('local');
-      return { success: true, data: connectionManager.getStatus() };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      logger.error('SSH disconnect failed:', message);
-      return { success: false, error: message };
-    }
+  app.post('/api/ssh/disconnect', async (_request, reply) => {
+    return reply.status(501).send({
+      success: false,
+      error: HTTP_SSH_DISCONNECT_UNSUPPORTED_ERROR,
+    });
   });
 
   // Get state

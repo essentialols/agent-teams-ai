@@ -142,6 +142,15 @@ describe('HTTP team route parsers', () => {
       () => parseCreateTeamRequest({ teamName: 'new-team', members: 'builder' }),
       'members must be an array'
     );
+
+    expectBadRequest(
+      () =>
+        parseCreateTeamRequest({
+          teamName: 'new-team',
+          members: [{ name: 'Builder' }, { name: 'builder' }],
+        }),
+      'member names must be unique'
+    );
   });
 
   it('merges draft launch bodies with saved requests without reusing provider-specific defaults', () => {

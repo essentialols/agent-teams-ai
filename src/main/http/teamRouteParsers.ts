@@ -198,10 +198,11 @@ export function parseCreateMembers(
       throw new HttpBadRequestError(nameValidation.error ?? 'Invalid member name');
     }
     const name = nameValidation.value!;
-    if (seenNames.has(name)) {
+    const normalizedName = name.toLowerCase();
+    if (seenNames.has(normalizedName)) {
       throw new HttpBadRequestError('member names must be unique');
     }
-    seenNames.add(name);
+    seenNames.add(normalizedName);
 
     const role = assertOptionalString(rawMember.role, 'member role');
     const workflow = assertOptionalString(rawMember.workflow, 'member workflow');

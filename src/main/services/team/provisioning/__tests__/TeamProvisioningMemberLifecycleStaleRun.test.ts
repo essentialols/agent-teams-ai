@@ -1219,4 +1219,51 @@ describe('TeamProvisioningMemberLifecycle stale run guards', () => {
       members: [expect.objectContaining({ name: 'Worker', providerId: 'opencode' })],
     });
   });
+
+  it('does not confirm or notify a retry whose run is replaced while reading its outcome', async () => {
+    const member: TeamCreateRequest['members'][number] = {
+      name: 'Worker',
+      role: 'Developer',
+      providerId: 'opencode',
+    };
+    const run = createRun(member);
+    let aliveRunId: string | null = run.runId;
+    const notifications: string[][] = [];
+    const host = createHost(run, {
+      getAliveRunId: () => aliveRunId,
+      getTrackedRunId: () => aliveRunId,
+      isCurrentTrackedRun: (candidateRun) => aliveRunId === candidateRun.runId,
+    });
+    const controller = new TeamProvisioningMemberLifecycleController(
+      host,
+      immediateOperationUseCases,
+      {
+        openCodeRetry: {
+          async collectFailedOpenCodeSecondaryRetryCandidates() {
+            return [{ memberName: 'Worker', laneId: 'secondary:opencode:worker' }];
+          },
+          async reattachOpenCodeOwnedMemberLaneUnlocked() {
+            return undefined;
+          },
+          async readOpenCodeSecondaryRetryOutcome() {
+            aliveRunId = 'run-2';
+            return { launchState: 'confirmed_alive' };
+          },
+          async notifyLeadAboutConfirmedOpenCodeRetries(_targetRun, result) {
+            notifications.push(result.confirmed);
+          },
+        },
+      }
+    );
+
+    await expect(controller.retryFailedOpenCodeSecondaryLanes('team-a')).resolves.toEqual({
+      attempted: ['Worker'],
+      confirmed: [],
+      pending: [],
+      failed: [],
+      skipped: [{ memberName: 'Worker', reason: 'Team stopped during retry' }],
+    });
+
+    expect(notifications).toEqual([]);
+  });
 });

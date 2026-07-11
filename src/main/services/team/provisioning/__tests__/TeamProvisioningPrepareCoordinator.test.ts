@@ -179,6 +179,60 @@ describe('TeamProvisioningPrepareCoordinator', () => {
     );
   });
 
+  it('executes coalesced set-like model checks in the canonical cache-key order', async () => {
+    let releaseVerification:
+      | ((result: { details: string[]; warnings: string[]; blockingMessages: string[] }) => void)
+      | null = null;
+    const verifySelectedProviderModels = vi.fn(
+      () =>
+        new Promise<{
+          details: string[];
+          warnings: string[];
+          blockingMessages: string[];
+        }>((resolve) => {
+          releaseVerification = resolve;
+        })
+    );
+    const coordinator = createCoordinator({ verifySelectedProviderModels });
+
+    const first = coordinator.prepareForProvisioning('/workspace/canonical-model-checks', {
+      providerId: 'codex',
+      modelChecks: [
+        { providerId: 'codex', model: 'zed' },
+        { providerId: 'codex', model: 'alpha' },
+      ],
+    });
+    const second = coordinator.prepareForProvisioning('/workspace/canonical-model-checks', {
+      providerId: 'codex',
+      modelChecks: [
+        { providerId: 'codex', model: 'alpha' },
+        { providerId: 'codex', model: 'zed' },
+      ],
+    });
+
+    await vi.waitFor(() => expect(verifySelectedProviderModels).toHaveBeenCalledOnce());
+    expect(verifySelectedProviderModels).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelIds: ['alpha', 'zed'],
+        modelChecks: [{ modelId: 'alpha' }, { modelId: 'zed' }],
+      })
+    );
+
+    const release = releaseVerification as
+      | ((result: { details: string[]; warnings: string[]; blockingMessages: string[] }) => void)
+      | null;
+    if (!release) {
+      throw new Error('Expected model verification release callback to be registered.');
+    }
+    release({ details: [], warnings: [], blockingMessages: [] });
+
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      expect.objectContaining({ ready: true }),
+      expect.objectContaining({ ready: true }),
+    ]);
+    expect(verifySelectedProviderModels).toHaveBeenCalledOnce();
+  });
+
   it('clears one probe cache entry per requested provider when forceFresh is set', async () => {
     const cachedResult = (cacheKey: string): CachedProbeResult => ({
       cacheKey,

@@ -29,7 +29,12 @@ import {
 } from './TeamProvisioningOpenCodeDiagnosticsPolicy';
 import { prepareSelectedOpenCodeModelsForProvisioning } from './TeamProvisioningOpenCodeModelPreparation';
 import { isAuthFailureWarning } from './TeamProvisioningOutputErrorPolicy';
-import { createPrepareForProvisioningInFlightKey as buildPrepareForProvisioningInFlightKey } from './TeamProvisioningPrepareCachePolicy';
+import {
+  createPrepareForProvisioningInFlightKey as buildPrepareForProvisioningInFlightKey,
+  normalizePrepareModelChecks,
+  normalizePrepareModelIds,
+  normalizePrepareProviderIds,
+} from './TeamProvisioningPrepareCachePolicy';
 import { isBinaryProbeWarning, isTransientProbeWarning } from './TeamProvisioningProbeWarnings';
 import {
   appendPreflightDebugLog,
@@ -44,7 +49,6 @@ import { buildMissingCliError } from './TeamProvisioningRuntimeFailureLabels';
 import {
   extractJsonObjectFromCli,
   normalizeProviderModelListModels,
-  normalizeProvisioningModelCheckRequests,
   type ProviderModelListCommandResponse,
   type RuntimeProviderLaunchFacts,
   type RuntimeStatusCommandResponse,
@@ -225,13 +229,7 @@ export class TeamProvisioningPrepareCoordinator {
     await (this.ports.validatePrepareCwd ?? this.validatePrepareCwd.bind(this))(
       targetCwdForValidation
     );
-    const providerIds = Array.from(
-      new Set(
-        [opts?.providerId, ...(opts?.providerIds ?? [])]
-          .map((providerId) => resolveTeamProviderId(providerId))
-          .filter((providerId): providerId is TeamProviderId => Boolean(providerId))
-      )
-    );
+    const providerIds = normalizePrepareProviderIds(opts);
     if (providerIds.length === 0) {
       providerIds.push('anthropic');
     }
@@ -252,10 +250,8 @@ export class TeamProvisioningPrepareCoordinator {
     const blockingMessages: string[] = [];
     const issues: TeamProvisioningPrepareIssue[] = [];
     const supportDiagnostics: TeamProvisioningSupportDiagnostic[] = [];
-    const selectedModelIds = Array.from(
-      new Set((opts?.modelIds ?? []).map((modelId) => modelId.trim()).filter(Boolean))
-    );
-    const selectedModelChecks = normalizeProvisioningModelCheckRequests(opts?.modelChecks);
+    const selectedModelIds = normalizePrepareModelIds(opts?.modelIds);
+    const selectedModelChecks = normalizePrepareModelChecks(opts?.modelChecks);
     const useStructuredModelChecks = selectedModelChecks.length > 0;
 
     for (const providerId of providerIds) {

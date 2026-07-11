@@ -36,7 +36,6 @@ import {
 } from "./project-control-operation-lifecycle";
 import { codexGoalAccountCapacityFacts } from "./codex-goal-mcp-account-capacity-facts";
 import {
-  projectControlDefaultAccountNames,
   projectControlRefillAccountNames,
 } from "./codex-goal-mcp-project-accounts";
 import {
@@ -121,10 +120,11 @@ export async function projectControlCreateCodexGoalJobView(
   const accessBoundary =
     requested.accessBoundary ?? AccessBoundary.IsolatedWorkspaceWrite;
   const workerRole = projectAdmissionWorkerRoleArg(args.workerRole);
-  const accounts = await projectControlDefaultAccountNames({
+  const accounts = await projectControlRefillAccountNames({
     ...(requested.authRootDir ? { authRootDir: requested.authRootDir } : {}),
     requestedAccounts: requested.accounts,
     allowedAccountIds: controller.scope.allowedAccountIds ?? [],
+    rotationKey: requested.jobId,
   });
   const createManifest: CodexGoalJobManifestInput = {
     ...requested,

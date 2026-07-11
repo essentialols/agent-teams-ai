@@ -32,7 +32,7 @@ describe('HTTP team route parsers', () => {
     expectBadRequest(() => assertOptionalString(42, 'displayName'), 'displayName must be a string');
   });
 
-  it('parses launch requests and preserves launch backend compatibility behavior', () => {
+  it('parses launch requests and rejects explicit incompatible backends', () => {
     expect(
       parseLaunchRequest('demo-team', {
         cwd: ' /Users/test/project ',
@@ -62,17 +62,15 @@ describe('HTTP team route parsers', () => {
       worktree: 'feature-branch',
     });
 
-    expect(
-      parseLaunchRequest('demo-team', {
-        cwd: '/Users/test/project',
-        providerId: 'anthropic',
-        providerBackendId: 'codex-native',
-      })
-    ).toEqual({
-      teamName: 'demo-team',
-      cwd: '/Users/test/project',
-      providerId: 'anthropic',
-    });
+    expectBadRequest(
+      () =>
+        parseLaunchRequest('demo-team', {
+          cwd: '/Users/test/project',
+          providerId: 'anthropic',
+          providerBackendId: 'codex-native',
+        }),
+      'providerBackendId must be valid for the selected provider'
+    );
 
     expectBadRequest(
       () =>
@@ -185,6 +183,23 @@ describe('HTTP team route parsers', () => {
     expect(request.effort).toBeUndefined();
     expect(request.fastMode).toBeUndefined();
     expect(request.limitContext).toBeUndefined();
+
+    expect(
+      parseDraftLaunchCreateRequest(
+        { ...savedRequest, providerId: 'anthropic', providerBackendId: 'codex-native' as never },
+        { cwd: '/Users/test/project' }
+      ).providerBackendId
+    ).toBeUndefined();
+
+    expectBadRequest(
+      () =>
+        parseDraftLaunchCreateRequest(savedRequest, {
+          cwd: '/Users/test/project',
+          providerId: 'anthropic',
+          providerBackendId: 'codex-native',
+        }),
+      'providerBackendId must be valid for the selected provider'
+    );
 
     expectBadRequest(
       () =>

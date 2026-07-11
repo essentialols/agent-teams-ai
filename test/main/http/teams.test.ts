@@ -512,9 +512,8 @@ describe('HTTP team runtime routes', () => {
     }
   });
 
-  it('drops a stale known backend when launching with a different provider over HTTP', async () => {
+  it('rejects explicit incompatible provider backends over HTTP launch', async () => {
     const { app, launchTeam } = await createApp();
-    launchTeam.mockResolvedValue({ runId: 'run-2' });
 
     try {
       const response = await app.inject({
@@ -529,17 +528,9 @@ describe('HTTP team runtime routes', () => {
         },
       });
 
-      expect(response.statusCode).toBe(200);
-      expect(launchTeam).toHaveBeenCalledWith(
-        {
-          teamName: 'demo-team',
-          cwd: '/Users/test/project',
-          providerId: 'anthropic',
-          model: 'sonnet',
-          effort: 'low',
-        },
-        expect.any(Function)
-      );
+      expect(response.statusCode).toBe(400);
+      expect(response.json().error).toContain('providerBackendId must be valid');
+      expect(launchTeam).not.toHaveBeenCalled();
     } finally {
       await app.close();
     }
@@ -708,6 +699,44 @@ describe('HTTP team runtime routes', () => {
       expect(request.effort).toBeUndefined();
       expect(request.fastMode).toBeUndefined();
       expect(request.limitContext).toBeUndefined();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('drops a stale saved draft backend when draft launch keeps the saved provider over HTTP', async () => {
+    const { app, createTeam, getSavedRequest } = await createApp();
+    getSavedRequest.mockResolvedValue({
+      teamName: 'draft-team',
+      displayName: 'Draft Team',
+      cwd: '/Users/test/saved-project',
+      providerId: 'codex',
+      providerBackendId: 'unknown-stale-backend' as never,
+      model: 'gpt-5.2',
+      effort: 'medium',
+      members: [{ name: 'builder', role: 'Engineer', providerId: 'codex' }],
+    });
+    createTeam.mockResolvedValue({ runId: 'run-draft-codex-stale-backend' });
+
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/teams/draft-team/launch',
+        payload: {
+          cwd: '/Users/test/project',
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const [request] = createTeam.mock.calls.at(-1)!;
+      expect(request).toMatchObject({
+        teamName: 'draft-team',
+        cwd: '/Users/test/project',
+        providerId: 'codex',
+        model: 'gpt-5.2',
+        effort: 'medium',
+      });
+      expect(request.providerBackendId).toBeUndefined();
     } finally {
       await app.close();
     }

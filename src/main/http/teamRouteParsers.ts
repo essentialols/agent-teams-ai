@@ -7,7 +7,7 @@ import {
   formatEffortLevelListForProvider,
   isTeamEffortLevelForProvider,
 } from '@shared/utils/effortLevels';
-import { isTeamProviderBackendId, migrateProviderBackendId } from '@shared/utils/providerBackend';
+import { migrateProviderBackendId } from '@shared/utils/providerBackend';
 import { normalizeTeamMemberMcpPolicy } from '@shared/utils/teamMemberMcpPolicy';
 import { isTeamProviderId } from '@shared/utils/teamProvider';
 import { isAbsolute } from 'path';
@@ -167,13 +167,17 @@ export function parseLaunchProviderBackendId(
 ): TeamLaunchRequest['providerBackendId'] | undefined {
   const rawProviderBackendId = assertOptionalString(value, 'providerBackendId');
   const providerBackendId = migrateProviderBackendId(providerId, rawProviderBackendId);
-  if (providerBackendId || !rawProviderBackendId) {
-    return providerBackendId;
+  if (rawProviderBackendId && !providerBackendId) {
+    throw new HttpBadRequestError(PROVIDER_BACKEND_ERROR);
   }
-  if (isTeamProviderBackendId(rawProviderBackendId)) {
-    return undefined;
-  }
-  throw new HttpBadRequestError(PROVIDER_BACKEND_ERROR);
+  return providerBackendId;
+}
+
+function migrateSavedLaunchProviderBackendId(
+  providerId: TeamLaunchRequest['providerId'],
+  value: TeamCreateRequest['providerBackendId']
+): TeamLaunchRequest['providerBackendId'] | undefined {
+  return migrateProviderBackendId(providerId, value);
 }
 
 export function parseCreateMembers(
@@ -360,14 +364,11 @@ export function parseDraftLaunchCreateRequest(
     : (savedRequest.providerId ?? 'anthropic');
   const providerChangedFromSaved =
     Object.hasOwn(payload, 'providerId') && providerId !== (savedRequest.providerId ?? 'anthropic');
-  const providerBackendId = parseLaunchProviderBackendId(
-    providerId,
-    Object.hasOwn(payload, 'providerBackendId')
-      ? payload.providerBackendId
-      : providerChangedFromSaved
-        ? undefined
-        : savedRequest.providerBackendId
-  );
+  const providerBackendId = Object.hasOwn(payload, 'providerBackendId')
+    ? parseLaunchProviderBackendId(providerId, payload.providerBackendId)
+    : providerChangedFromSaved
+      ? undefined
+      : migrateSavedLaunchProviderBackendId(providerId, savedRequest.providerBackendId);
   const effort = assertOptionalEffort(
     Object.hasOwn(payload, 'effort')
       ? payload.effort

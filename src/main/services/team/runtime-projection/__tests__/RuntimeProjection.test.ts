@@ -314,6 +314,22 @@ describe('runtime projection foundation', () => {
     ).toBeNull();
   });
 
+  it('does not verify a shell command that only repeats runtime identity flags', () => {
+    expect(
+      readVerifiedRuntimeProcessLivenessEvidence({
+        rows: [
+          {
+            pid: 200,
+            command: 'bash -c "echo --team-name demo --agent-id worker@demo"',
+          },
+        ],
+        teamName: 'demo',
+        agentId: 'worker@demo',
+        pidSource: 'agent_process_table',
+      })
+    ).toBeNull();
+  });
+
   it('projects runtimePid-only resource usage and history', () => {
     expect(
       projectRuntimeResource({

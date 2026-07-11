@@ -137,6 +137,30 @@ describe('TeamProvisioningToolApprovalTimeouts', () => {
     );
   });
 
+  it('restarts a timed-out teammate approval immediately when the response throws', () => {
+    settings = buildSettings({ timeoutAction: 'deny', timeoutSeconds: 2 });
+    run.pendingApprovals.set(
+      'req-worker',
+      buildApproval({ requestId: 'req-worker', source: 'Worker' })
+    );
+    vi.mocked(ports.respondToTeammatePermission).mockImplementationOnce(() => {
+      throw new Error('inbox unavailable synchronously');
+    });
+
+    timeouts.start(run, 'req-worker');
+    vi.advanceTimersByTime(2000);
+
+    expect(ports.respondToTeammatePermission).toHaveBeenCalledTimes(1);
+    expect(run.pendingApprovals.has('req-worker')).toBe(true);
+    expect(inFlightResponses.has('req-worker')).toBe(false);
+    expect(pendingTimeouts.has('req-worker')).toBe(true);
+    expect(ports.dismissApprovalNotification).not.toHaveBeenCalled();
+    expect(ports.emitToolApprovalEvent).not.toHaveBeenCalled();
+    expect(ports.logInfo).toHaveBeenCalledWith(
+      '[team-a] Failed to auto-resolve teammate approval req-worker: inbox unavailable synchronously'
+    );
+  });
+
   it('re-evaluates pending approvals for auto-allow and timeout setting changes', () => {
     settings = buildSettings({ autoAllowAll: true, timeoutAction: 'wait' });
     run.pendingApprovals.set('req-auto', buildApproval({ requestId: 'req-auto' }));

@@ -11,6 +11,16 @@ import type {
   ToolApprovalSettings,
 } from '@shared/types';
 
+type SynchronousCallResult<T> = { success: true; value: T } | { success: false; error: unknown };
+
+function captureSynchronousCall<T>(call: () => T): SynchronousCallResult<T> {
+  try {
+    return { success: true, value: call() };
+  } catch (error) {
+    return { success: false, error };
+  }
+}
+
 export interface TeamProvisioningToolApprovalTimeoutRun {
   runId: string;
   teamName: string;
@@ -189,15 +199,15 @@ export class TeamProvisioningToolApprovalTimeouts<
       }
     };
 
-    let response: Promise<void>;
-    try {
-      response = this.ports.respondToTeammatePermission(run, approval, allow, message);
-    } catch (error) {
-      handleFailure(error);
+    const response = captureSynchronousCall(() =>
+      this.ports.respondToTeammatePermission(run, approval, allow, message)
+    );
+    if (!response.success) {
+      handleFailure(response.error);
       return;
     }
 
-    void response.then(() => {
+    void response.value.then(() => {
       run.pendingApprovals.delete(requestId);
       this.maps.inFlightResponses.delete(requestId);
       this.ports.dismissApprovalNotification(requestId);

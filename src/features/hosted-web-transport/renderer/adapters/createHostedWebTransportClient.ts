@@ -550,17 +550,27 @@ function validateProvisioningStatusResponse(payload: unknown): HostedWebProvisio
 }
 
 function validateAliveTeamsResponse(payload: unknown): HostedWebAliveTeamsResponse {
+  assertAliveTeamsResponse(payload);
+  return payload;
+}
+
+function assertAliveTeamsResponse(
+  payload: unknown
+): asserts payload is HostedWebAliveTeamsResponse {
   assertRecord(payload, 'response');
   assertStringArray(payload.teamIds, 'response.teamIds');
-  return payload as HostedWebAliveTeamsResponse;
 }
 
 function validateRuntimeSummary(payload: unknown): HostedWebRuntimeSummary {
+  assertRuntimeSummary(payload);
+  return payload;
+}
+
+function assertRuntimeSummary(payload: unknown): asserts payload is HostedWebRuntimeSummary {
   assertRecord(payload, 'response');
   assertBoolean(payload.isAlive, 'response.isAlive');
   assertBoolean(payload.terminalAvailable, 'response.terminalAvailable');
   assertNumber(payload.activeProcessCount, 'response.activeProcessCount');
-  return payload as HostedWebRuntimeSummary;
 }
 
 function validateCreateTaskResponse(payload: unknown): HostedWebCreateTaskResponse {

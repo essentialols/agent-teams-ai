@@ -300,6 +300,38 @@ describe('createHostedWebTransportClient', () => {
     });
   });
 
+  it('rejects malformed alive teams response shapes', async () => {
+    const client = createHostedWebTransportClient({
+      fetch: vi.fn(async () => jsonResponse({ teamIds: ['team-1', 42] })),
+    });
+
+    await expect(client.listAliveTeams()).rejects.toMatchObject({
+      name: 'HostedWebTransportError',
+      kind: 'response_validation',
+      status: 200,
+      route: '/api/hosted/v1/teams/runtime/alive',
+      code: '/api/hosted/v1/errors/invalid_response',
+      message: 'Hosted web response did not match the expected schema',
+    });
+  });
+
+  it('rejects malformed runtime summary response shapes', async () => {
+    const client = createHostedWebTransportClient({
+      fetch: vi.fn(async () =>
+        jsonResponse({ isAlive: true, terminalAvailable: 'yes', activeProcessCount: 1 })
+      ),
+    });
+
+    await expect(client.getRuntimeState('team-1')).rejects.toMatchObject({
+      name: 'HostedWebTransportError',
+      kind: 'response_validation',
+      status: 200,
+      route: '/api/hosted/v1/teams/team-1/runtime',
+      code: '/api/hosted/v1/errors/invalid_response',
+      message: 'Hosted web response did not match the expected schema',
+    });
+  });
+
   it('rejects successful HTTP responses whose JSON cannot be parsed', async () => {
     const text = vi.fn(async () => 'sensitive backend fallback must not be read');
     const client = createHostedWebTransportClient({

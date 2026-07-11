@@ -300,6 +300,22 @@ describe('TeamProvisioningLaunchStateStoreBoundary', () => {
     expect(ports.launchStateStore.write).toHaveBeenCalledWith('demo', next);
   });
 
+  it('writes run-scoped snapshots when no run is currently tracked', async () => {
+    const next = snapshot();
+    const { boundary, ports, setTrackedRunId } = createBoundary();
+    setTrackedRunId(null);
+
+    const result = await boundary.writeLaunchStateSnapshotNow('demo', next, {
+      runId: 'run-1',
+    });
+
+    expect(result).toEqual({ snapshot: next, wrote: true });
+    expect(ports.launchStateStore.write).toHaveBeenCalledWith('demo', next);
+    expect(ports.launchStateStore.clear).not.toHaveBeenCalled();
+    expect(boundary.getWrittenRunIdByTeam().get('demo')).toBe('run-1');
+    expect(ports.logDebug).not.toHaveBeenCalled();
+  });
+
   it('does not overwrite a successor snapshot when a stale write starts after authority changed', async () => {
     const successorSnapshot = snapshot({ updatedAt: '2026-01-01T00:00:02.000Z' });
     const writtenRunIdByTeam = new Map([['demo', 'run-2']]);

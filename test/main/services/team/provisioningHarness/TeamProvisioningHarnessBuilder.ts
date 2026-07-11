@@ -217,8 +217,44 @@ export class TeamProvisioningHarnessBuilder {
   }
 
   async build(): Promise<TeamProvisioningHarness> {
-    this.validateInputsBeforeSideEffects();
+    const snapshot = this.snapshotForBuild();
+    snapshot.validateInputsBeforeSideEffects();
+    return snapshot.buildFromSnapshot();
+  }
 
+  private snapshotForBuild(): TeamProvisioningHarnessBuilder {
+    const snapshot = new TeamProvisioningHarnessBuilder();
+    snapshot.tempWorkspaceOptions = { ...this.tempWorkspaceOptions };
+    snapshot.defaultTeamName = this.defaultTeamName;
+    snapshot.clockIso = this.clockIso;
+    snapshot.uuidSequence = [...this.uuidSequence];
+
+    for (const [teamName, config] of this.teamConfigs) {
+      snapshot.teamConfigs.set(teamName, cloneFixture(config));
+    }
+    for (const [teamName, meta] of this.teamMeta) {
+      snapshot.teamMeta.set(teamName, cloneFixture(meta));
+    }
+    for (const [teamName, meta] of this.membersMeta) {
+      snapshot.membersMeta.set(teamName, cloneFixture(meta));
+    }
+    for (const [teamName, inboxes] of this.inboxMessages) {
+      snapshot.inboxMessages.set(teamName, cloneFixture(inboxes));
+    }
+    for (const [teamName, launchState] of this.launchStates) {
+      snapshot.launchStates.set(teamName, cloneFixture(launchState));
+    }
+    for (const [teamName, bootstrapState] of this.bootstrapStates) {
+      snapshot.bootstrapStates.set(teamName, cloneFixture(bootstrapState));
+    }
+    for (const [teamName, runtimeStore] of this.runtimeStores) {
+      snapshot.runtimeStores.set(teamName, cloneFixture(runtimeStore));
+    }
+
+    return snapshot;
+  }
+
+  private async buildFromSnapshot(): Promise<TeamProvisioningHarness> {
     const paths = await createTempWorkspace(this.tempWorkspaceOptions);
     const cleanupFns: HarnessCleanupFn[] = [() => rm(paths.root, { recursive: true, force: true })];
 

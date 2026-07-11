@@ -7,6 +7,7 @@ import { TeamProvisioningService } from '../../TeamProvisioningService';
 import {
   TEAM_PROVISIONING_SERVICE_COMPOSITION_KEYS,
   TEAM_PROVISIONING_SERVICE_COMPOSITION_KEYS_ARE_EXHAUSTIVE,
+  TEAM_PROVISIONING_SERVICE_COMPOSITION_KEYS_ARE_UNIQUE,
 } from '../TeamProvisioningServiceComposition';
 
 const { cleanupStaleAnthropicTeamApiKeyHelpersMock } = vi.hoisted(() => ({
@@ -40,6 +41,10 @@ describe('TeamProvisioningServiceComposition', () => {
     const service = new TeamProvisioningService();
 
     expect(TEAM_PROVISIONING_SERVICE_COMPOSITION_KEYS_ARE_EXHAUSTIVE).toBe(true);
+    expect(TEAM_PROVISIONING_SERVICE_COMPOSITION_KEYS_ARE_UNIQUE).toBe(true);
+    expect(new Set(TEAM_PROVISIONING_SERVICE_COMPOSITION_KEYS).size).toBe(
+      TEAM_PROVISIONING_SERVICE_COMPOSITION_KEYS.length
+    );
     for (const key of TEAM_PROVISIONING_SERVICE_COMPOSITION_KEYS) {
       expect(Object.hasOwn(service, key)).toBe(true);
       expect(Reflect.get(service, key)).toBeDefined();

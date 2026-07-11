@@ -316,8 +316,26 @@ type MissingTeamProvisioningServiceCompositionKey = Exclude<
   (typeof TEAM_PROVISIONING_SERVICE_COMPOSITION_KEYS)[number]
 >;
 
+type DuplicateTeamProvisioningServiceCompositionKey<
+  Keys extends readonly PropertyKey[],
+  Seen extends PropertyKey = never,
+> = Keys extends readonly [
+  infer Key extends PropertyKey,
+  ...infer RemainingKeys extends readonly PropertyKey[],
+]
+  ? Key extends Seen
+    ? Key
+    : DuplicateTeamProvisioningServiceCompositionKey<RemainingKeys, Seen | Key>
+  : never;
+
 export const TEAM_PROVISIONING_SERVICE_COMPOSITION_KEYS_ARE_EXHAUSTIVE: [
   MissingTeamProvisioningServiceCompositionKey,
+] extends [never]
+  ? true
+  : false = true;
+
+export const TEAM_PROVISIONING_SERVICE_COMPOSITION_KEYS_ARE_UNIQUE: [
+  DuplicateTeamProvisioningServiceCompositionKey<typeof TEAM_PROVISIONING_SERVICE_COMPOSITION_KEYS>,
 ] extends [never]
   ? true
   : false = true;

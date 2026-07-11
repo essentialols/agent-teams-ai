@@ -135,6 +135,7 @@ import {
   computeTeamWatchScope,
   resetTeamWatchScopeForTests,
 } from '../../../src/main/services/infrastructure/teamWatchScope';
+import { getAutoResumeService } from '../../../src/main/services/team/AutoResumeService';
 import { LaunchIoGovernor } from '../../../src/main/services/team/LaunchIoGovernor';
 import { getAppDataPath } from '../../../src/main/utils/pathDecoder';
 import {
@@ -726,6 +727,67 @@ describe('ipc teams handlers', () => {
   it('registers all expected handlers', () => {
     expect(ipcMain.handle).toHaveBeenCalledTimes(TEAM_HANDLER_KEYS.length);
     expect(new Set(handlers.keys())).toEqual(new Set(TEAM_HANDLER_KEYS));
+  });
+
+  it('preserves narrow facade receivers when auto-resume invokes its IPC dependencies', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-17T12:00:00.000Z'));
+    const configManager = ConfigManager.getInstance();
+    const actualConfig = configManager.getConfig();
+    const getConfigSpy = vi.spyOn(configManager, 'getConfig').mockImplementation(
+      () =>
+        ({
+          ...actualConfig,
+          notifications: {
+            ...actualConfig.notifications,
+            autoResumeOnRateLimit: true,
+          },
+        }) as never
+    );
+    const runtimeCalls: string[] = [];
+    const sentMessages: string[] = [];
+    const runtimeFacade = {
+      ...teamHandlerApis.runtime,
+      getCurrentRunId(teamName: string): string | null {
+        if (this !== runtimeFacade) throw new Error('runtime facade receiver lost');
+        runtimeCalls.push(`run:${teamName}`);
+        return 'run-receiver';
+      },
+      isTeamAlive(teamName: string): boolean {
+        if (this !== runtimeFacade) throw new Error('runtime facade receiver lost');
+        runtimeCalls.push(`alive:${teamName}`);
+        return true;
+      },
+    };
+    const messagingFacade = {
+      ...teamHandlerApis.messaging,
+      async sendMessageToTeam(teamName: string, message: string): Promise<void> {
+        if (this !== messagingFacade) throw new Error('messaging facade receiver lost');
+        sentMessages.push(`${teamName}:${message}`);
+      },
+    };
+
+    try {
+      initializeTeamHandlers(service as never, {
+        ...teamHandlerApis,
+        runtime: runtimeFacade,
+        messaging: messagingFacade,
+      });
+
+      getAutoResumeService().handleRateLimitMessage(
+        'my-team',
+        "You've hit your limit. Resets in 1 minute.",
+        new Date()
+      );
+      await vi.advanceTimersByTimeAsync(90_000);
+
+      expect(runtimeCalls).toEqual(['run:my-team', 'alive:my-team', 'run:my-team']);
+      expect(sentMessages).toHaveLength(1);
+      expect(sentMessages[0]).toContain('my-team:Your rate limit has reset.');
+    } finally {
+      getAutoResumeService().clearAllPendingAutoResume();
+      getConfigSpy.mockRestore();
+    }
   });
 
   it('forwards selected model checks with effort to prepareProvisioning', async () => {

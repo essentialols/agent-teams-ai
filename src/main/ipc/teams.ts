@@ -2698,10 +2698,22 @@ async function handlePrepareProvisioning(
     if (!Array.isArray(selectedModels)) {
       return { success: false, error: 'selectedModels must be an array when provided' };
     }
-    if (selectedModels.some((entry) => typeof entry !== 'string' || entry.trim().length === 0)) {
-      return { success: false, error: 'selectedModels entries must be non-empty strings' };
+    const normalized: string[] = [];
+    const seen = new Set<string>();
+    for (let index = 0; index < selectedModels.length; index += 1) {
+      if (!Object.hasOwn(selectedModels, index)) {
+        return { success: false, error: 'selectedModels entries must be non-empty strings' };
+      }
+      const entry = selectedModels[index];
+      if (typeof entry !== 'string' || entry.trim().length === 0) {
+        return { success: false, error: 'selectedModels entries must be non-empty strings' };
+      }
+      const model = entry.trim();
+      if (!seen.has(model)) {
+        seen.add(model);
+        normalized.push(model);
+      }
     }
-    const normalized = Array.from(new Set(selectedModels.map((entry) => entry.trim())));
     validatedSelectedModels = normalized;
   }
   if (limitContext !== undefined) {

@@ -346,9 +346,7 @@ describe('ipc teams handlers', () => {
         messages: [] as InboxMessage[],
       })
     ),
-    getAllTasks: vi.fn(() =>
-      resolved([{ id: 'task-1', teamName: 'my-team', subject: 'Task 1' }])
-    ),
+    getAllTasks: vi.fn(() => resolved([{ id: 'task-1', teamName: 'my-team', subject: 'Task 1' }])),
     getMessagesPage: vi.fn(
       (): Promise<MessagesPage> =>
         resolved({
@@ -445,34 +443,40 @@ describe('ipc teams handlers', () => {
   };
   const teamHandlerMocks = {
     getCliHelpOutput: vi.fn(() => resolved('Usage')),
-    prepareForProvisioning: vi.fn(() => resolved({
-      ready: true,
-      message: 'CLI прогрет и готов к запуску',
-    })),
+    prepareForProvisioning: vi.fn(() =>
+      resolved({
+        ready: true,
+        message: 'CLI прогрет и готов к запуску',
+      })
+    ),
     createTeam: vi.fn<CreateTeamMock>(() =>
       resolved({
         runId: 'run-1',
       })
     ),
-    getProvisioningStatus: vi.fn(() => resolved({
-      runId: 'run-1',
-      teamName: 'my-team',
-      state: 'spawning' as const,
-      message: 'Starting',
-      startedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    })),
+    getProvisioningStatus: vi.fn(() =>
+      resolved({
+        runId: 'run-1',
+        teamName: 'my-team',
+        state: 'spawning' as const,
+        message: 'Starting',
+        startedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })
+    ),
     cancelProvisioning: vi.fn(() => resolvedUndefined()),
     hasProvisioningRun: vi.fn(() => false),
     getClaudeLogs: vi.fn(() => resolved({ lines: [], total: 0, hasMore: false })),
     launchTeam: vi.fn(() => resolved({ runId: 'run-2' })),
     sendMessageToTeam: vi.fn(() => resolvedUndefined()),
-    getRuntimeState: vi.fn(() => resolved({
-      teamName: 'my-team',
-      isAlive: true,
-      runId: 'run-2',
-      progress: null,
-    })),
+    getRuntimeState: vi.fn(() =>
+      resolved({
+        teamName: 'my-team',
+        isAlive: true,
+        runId: 'run-2',
+        progress: null,
+      })
+    ),
     isTeamAlive: vi.fn(() => true),
     getCurrentRunId: vi.fn(() => 'run-2' as string | null),
     pushLiveLeadProcessMessage: vi.fn(),
@@ -484,53 +488,61 @@ describe('ipc teams handlers', () => {
     ) as ReturnType<
       typeof vi.fn<(teamName: string, memberName: string) => Promise<TeamProviderId | undefined>>
     >,
-    relayOpenCodeMemberInboxMessages: vi.fn(() => resolved({
-      relayed: 0,
-      attempted: 0,
-      delivered: 0,
-      failed: 0,
-      lastDelivery: undefined as
-        | {
-            delivered: boolean;
-            accepted?: boolean;
-            responsePending?: boolean;
-            acceptanceUnknown?: boolean;
-            responseState?: NonNullable<SendMessageResult['runtimeDelivery']>['responseState'];
-            ledgerStatus?: NonNullable<SendMessageResult['runtimeDelivery']>['ledgerStatus'];
-            ledgerRecordId?: string;
-            laneId?: string;
-            reason?: string;
-            diagnostics?: string[];
-          }
-        | undefined,
-    })),
-    getOpenCodeRuntimeDeliveryStatus: vi.fn(
-      () => resolved(null as OpenCodeRuntimeDeliveryStatus | null)
+    relayOpenCodeMemberInboxMessages: vi.fn(() =>
+      resolved({
+        relayed: 0,
+        attempted: 0,
+        delivered: 0,
+        failed: 0,
+        lastDelivery: undefined as
+          | {
+              delivered: boolean;
+              accepted?: boolean;
+              responsePending?: boolean;
+              acceptanceUnknown?: boolean;
+              responseState?: NonNullable<SendMessageResult['runtimeDelivery']>['responseState'];
+              ledgerStatus?: NonNullable<SendMessageResult['runtimeDelivery']>['ledgerStatus'];
+              ledgerRecordId?: string;
+              laneId?: string;
+              reason?: string;
+              diagnostics?: string[];
+            }
+          | undefined,
+      })
+    ),
+    getOpenCodeRuntimeDeliveryStatus: vi.fn(() =>
+      resolved(null as OpenCodeRuntimeDeliveryStatus | null)
     ),
     getLiveLeadProcessMessages: vi.fn(() => [] as InboxMessage[]),
     getCurrentLeadSessionId: vi.fn(() => null as string | null),
     getAliveTeams: vi.fn(() => ['my-team']),
     getLeadActivityState: vi.fn(() => ({ state: 'idle' as const, runId: 'run-2' })),
     getLeadContextUsage: vi.fn(() => ({ usage: null, runId: 'run-2' })),
-    getTeamAgentRuntimeSnapshot: vi.fn(() => resolved({
-      teamName: 'my-team',
-      runId: 'run-2',
-      updatedAt: new Date().toISOString(),
-      members: {},
-    })),
-    getMemberSpawnStatuses: vi.fn(() => resolved({
-      statuses: {},
-      runId: 'run-2',
-      updatedAt: new Date().toISOString(),
-    })),
+    getTeamAgentRuntimeSnapshot: vi.fn(() =>
+      resolved({
+        teamName: 'my-team',
+        runId: 'run-2',
+        updatedAt: new Date().toISOString(),
+        members: {},
+      })
+    ),
+    getMemberSpawnStatuses: vi.fn(() =>
+      resolved({
+        statuses: {},
+        runId: 'run-2',
+        updatedAt: new Date().toISOString(),
+      })
+    ),
     restartMember: vi.fn(() => resolvedUndefined()),
-    retryFailedOpenCodeSecondaryLanes: vi.fn(() => resolved({
-      attempted: [],
-      confirmed: [],
-      pending: [],
-      failed: [],
-      skipped: [],
-    })),
+    retryFailedOpenCodeSecondaryLanes: vi.fn(() =>
+      resolved({
+        attempted: [],
+        confirmed: [],
+        pending: [],
+        failed: [],
+        skipped: [],
+      })
+    ),
     skipMemberForLaunch: vi.fn(() => resolvedUndefined()),
     stopTeam: vi.fn(() => Promise.resolve()),
     repairStaleTaskActivityIntervalsBeforeSnapshot: vi.fn(() => Promise.resolve(undefined)),
@@ -615,8 +627,8 @@ describe('ipc teams handlers', () => {
     ),
   };
   const boardTaskExactLogsService = {
-    getTaskExactLogSummaries: vi.fn<() => Promise<BoardTaskExactLogSummariesResponse>>(
-      () => resolved({ items: [] })
+    getTaskExactLogSummaries: vi.fn<() => Promise<BoardTaskExactLogSummariesResponse>>(() =>
+      resolved({ items: [] })
     ),
   };
   const boardTaskExactLogDetailService = {
@@ -776,8 +788,39 @@ describe('ipc teams handlers', () => {
   });
 
   it.each([
+    { kind: 'omitted', selectedModels: undefined, expectedModelIds: undefined },
+    { kind: 'empty', selectedModels: [], expectedModelIds: [] },
+    {
+      kind: 'trimmed and deduplicated',
+      selectedModels: [' model-b ', 'model-a', 'model-b'],
+      expectedModelIds: ['model-b', 'model-a'],
+    },
+  ])('preserves $kind selected model input', async ({ selectedModels, expectedModelIds }) => {
+    const handler = handlers.get(TEAM_PREPARE_PROVISIONING)!;
+    const result = (await handler(
+      { sender: { send: vi.fn() } } as never,
+      os.tmpdir(),
+      'anthropic',
+      ['anthropic'],
+      selectedModels
+    )) as { success: boolean };
+
+    expect(result.success).toBe(true);
+    expect(teamHandlerMocks.prepareForProvisioning).toHaveBeenCalledWith(
+      os.tmpdir(),
+      expect.objectContaining({ modelIds: expectedModelIds })
+    );
+  });
+
+  it.each([
     { kind: 'non-string', selectedModels: ['claude-opus-4-6', 42] },
+    { kind: 'undefined', selectedModels: ['claude-opus-4-6', undefined] },
     { kind: 'empty', selectedModels: ['claude-opus-4-6', '   '] },
+    { kind: 'fully sparse', selectedModels: new Array<string>(2) },
+    {
+      kind: 'mixed sparse',
+      selectedModels: Object.assign(new Array<string>(2), { 0: 'claude-opus-4-6' }),
+    },
   ])(
     'rejects $kind selected model entries before preflight dispatch',
     async ({ selectedModels }) => {
@@ -797,6 +840,69 @@ describe('ipc teams handlers', () => {
       expect(teamHandlerMocks.prepareForProvisioning).not.toHaveBeenCalled();
     }
   );
+
+  it('rejects a sparse selected model inherited from Array.prototype before preflight dispatch', async () => {
+    const handler = handlers.get(TEAM_PREPARE_PROVISIONING)!;
+    const inheritedIndex = 1_000;
+    const originalDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, inheritedIndex);
+    const selectedModels = Array.from({ length: inheritedIndex + 1 }, () => 'own-model');
+    Reflect.deleteProperty(selectedModels, inheritedIndex);
+
+    Object.defineProperty(Array.prototype, inheritedIndex, {
+      configurable: true,
+      value: 'inherited-model',
+      writable: true,
+    });
+    try {
+      const result = (await handler(
+        { sender: { send: vi.fn() } } as never,
+        os.tmpdir(),
+        'anthropic',
+        ['anthropic'],
+        selectedModels
+      )) as { success: boolean; error: string };
+
+      expect(result).toEqual({
+        success: false,
+        error: 'selectedModels entries must be non-empty strings',
+      });
+      expect(teamHandlerMocks.prepareForProvisioning).not.toHaveBeenCalled();
+    } finally {
+      if (originalDescriptor) {
+        Object.defineProperty(Array.prototype, inheritedIndex, originalDescriptor);
+      } else {
+        Reflect.deleteProperty(Array.prototype, inheritedIndex);
+      }
+    }
+  });
+
+  it('rejects a proxy-backed sparse selected model before invoking its get trap or preflight', async () => {
+    const handler = handlers.get(TEAM_PREPARE_PROVISIONING)!;
+    const getTrap = vi.fn((target: string[], property: string | symbol, receiver: unknown) => {
+      if (property === '1') {
+        return 'proxy-model';
+      }
+      return Reflect.get(target, property, receiver);
+    });
+    const sparseTarget = ['own-model', 'deleted-model', 'later-own-model'];
+    Reflect.deleteProperty(sparseTarget, 1);
+    const selectedModels = new Proxy(sparseTarget, { get: getTrap });
+
+    const result = (await handler(
+      { sender: { send: vi.fn() } } as never,
+      os.tmpdir(),
+      'anthropic',
+      ['anthropic'],
+      selectedModels
+    )) as { success: boolean; error: string };
+
+    expect(result).toEqual({
+      success: false,
+      error: 'selectedModels entries must be non-empty strings',
+    });
+    expect(getTrap.mock.calls.map(([, property]) => property)).not.toContain('1');
+    expect(teamHandlerMocks.prepareForProvisioning).not.toHaveBeenCalled();
+  });
 
   it('updates change presence tracking for a team', async () => {
     const handler = handlers.get(TEAM_SET_CHANGE_PRESENCE_TRACKING);
@@ -1168,10 +1274,7 @@ describe('ipc teams handlers', () => {
     })) as { success: boolean; data?: SendMessageResult };
 
     expect(result.success).toBe(true);
-    expect(teamHandlerMocks.getOpenCodeRuntimeDeliveryStatus).toHaveBeenCalledWith(
-      'my-team',
-      'm1'
-    );
+    expect(teamHandlerMocks.getOpenCodeRuntimeDeliveryStatus).toHaveBeenCalledWith('my-team', 'm1');
     expect(result.data?.runtimeDelivery).toMatchObject({
       providerId: 'opencode',
       attempted: true,
@@ -1506,9 +1609,7 @@ describe('ipc teams handlers', () => {
           Awaited<ReturnType<typeof teamHandlerMocks.relayOpenCodeMemberInboxMessages>>
         >();
       teamHandlerMocks.resolveRuntimeRecipientProviderId.mockResolvedValueOnce('opencode');
-      teamHandlerMocks.relayOpenCodeMemberInboxMessages.mockReturnValueOnce(
-        deferredRelay.promise
-      );
+      teamHandlerMocks.relayOpenCodeMemberInboxMessages.mockReturnValueOnce(deferredRelay.promise);
       teamHandlerMocks.getOpenCodeRuntimeDeliveryStatus.mockResolvedValueOnce(null);
       const sendHandler = handlers.get(TEAM_SEND_MESSAGE);
       expect(sendHandler).toBeDefined();
@@ -1543,9 +1644,7 @@ describe('ipc teams handlers', () => {
           Awaited<ReturnType<typeof teamHandlerMocks.relayOpenCodeMemberInboxMessages>>
         >();
       teamHandlerMocks.resolveRuntimeRecipientProviderId.mockResolvedValueOnce('opencode');
-      teamHandlerMocks.relayOpenCodeMemberInboxMessages.mockReturnValueOnce(
-        deferredRelay.promise
-      );
+      teamHandlerMocks.relayOpenCodeMemberInboxMessages.mockReturnValueOnce(deferredRelay.promise);
       teamHandlerMocks.getOpenCodeRuntimeDeliveryStatus.mockResolvedValueOnce(null);
       const sendHandler = handlers.get(TEAM_SEND_MESSAGE);
       expect(sendHandler).toBeDefined();
@@ -3744,9 +3843,7 @@ describe('ipc teams handlers', () => {
         kanbanState: { teamName: 'my-team', reviewers: [], tasks: {} },
         processes: [],
       });
-      teamHandlerMocks.attachLiveRosterMember.mockRejectedValueOnce(
-        new Error('reattach failed')
-      );
+      teamHandlerMocks.attachLiveRosterMember.mockRejectedValueOnce(new Error('reattach failed'));
 
       const result = (await handler({} as never, 'my-team', {
         name: 'alice',
@@ -4460,9 +4557,7 @@ describe('ipc teams handlers', () => {
         kanbanState: { teamName: 'my-team', reviewers: [], tasks: {} },
         processes: [],
       });
-      teamHandlerMocks.attachLiveRosterMember.mockRejectedValueOnce(
-        new Error('reattach failed')
-      );
+      teamHandlerMocks.attachLiveRosterMember.mockRejectedValueOnce(new Error('reattach failed'));
 
       const result = (await handler({} as never, 'my-team', {
         members: [

@@ -414,6 +414,39 @@ describe('TeamProvisioningPrepareCoordinator', () => {
     expect(cache.get('probe-key')).toBeNull();
   });
 
+  it('does not let a superseded caller repopulate an invalidated cache epoch', async () => {
+    const cache = createInMemoryProviderProbeCachePort();
+    const staleAttempt = deferredPublication();
+    const staleCreate = vi.fn(() => staleAttempt.promise);
+    const freshCreate = vi.fn().mockResolvedValue({
+      result: { claudePath: '/fresh/claude', authSource: 'none' },
+      cacheable: true,
+    });
+    const staleCaller = cache.getOrCreate('probe-key', staleCreate);
+
+    await vi.waitFor(() => expect(staleCreate).toHaveBeenCalledOnce());
+    cache.invalidate('probe-key');
+    staleAttempt.resolve({
+      result: { claudePath: '/stale/claude', authSource: 'none' },
+      cacheable: true,
+    });
+
+    await expect(staleCaller).resolves.toEqual({
+      claudePath: '/stale/claude',
+      authSource: 'none',
+    });
+    await expect(cache.getOrCreate('probe-key', freshCreate)).resolves.toEqual({
+      claudePath: '/fresh/claude',
+      authSource: 'none',
+    });
+    expect(staleCreate).toHaveBeenCalledOnce();
+    expect(freshCreate).toHaveBeenCalledOnce();
+    expect(cache.get('probe-key')).toMatchObject({
+      claudePath: '/fresh/claude',
+      authSource: 'none',
+    });
+  });
+
   it.each(['success', 'rejection'] as const)(
     'starts a fresh probe after TTL while a superseded %s remains pending',
     async (staleOutcome) => {

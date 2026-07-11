@@ -121,7 +121,7 @@ export function createInMemoryProviderProbeCachePort({
     async getOrCreate(cacheKey, create) {
       incrementActiveCallCount(cacheKey);
       try {
-        let crossedEpoch = false;
+        let supersededAttempt: ProviderProbeAttempt | null = null;
         while (true) {
           let state = stateByCacheKey.get(cacheKey);
           if (!state) {
@@ -139,8 +139,8 @@ export function createInMemoryProviderProbeCachePort({
           }
 
           let inFlight = state.inFlight;
-          if (!inFlight && crossedEpoch && state.settledAttempt) {
-            const attempt = state.settledAttempt;
+          if (!inFlight && supersededAttempt) {
+            const attempt = state.settledAttempt ?? supersededAttempt;
             if ('error' in attempt) {
               throw attempt.error;
             }
@@ -179,7 +179,7 @@ export function createInMemoryProviderProbeCachePort({
 
           const attempt = await inFlight.promise;
           if (stateByCacheKey.get(cacheKey) !== state) {
-            crossedEpoch = true;
+            supersededAttempt = attempt;
             continue;
           }
           if ('error' in attempt) {

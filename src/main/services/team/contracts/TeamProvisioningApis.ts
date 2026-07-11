@@ -239,7 +239,7 @@ export interface TeamCrossTeamMessagingApi {
     inboxName: string,
     options?: TeamOpenCodeMemberInboxRelayOptions
   ): Promise<{
-    kind: string;
+    kind: 'ignored' | 'native_lead' | 'native_member_noop' | 'opencode_member';
     relayed: number;
     diagnostics?: string[];
     lastDelivery?: TeamOpenCodeMemberInboxDelivery;

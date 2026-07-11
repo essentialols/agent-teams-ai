@@ -6,6 +6,7 @@ import {
 import { isOpenCodeAttachmentDeliveryFailureReason } from '../opencode/delivery/OpenCodeRuntimeDeliveryAdvisoryPolicy';
 
 import {
+  INBOX_RELAY_IN_FLIGHT_LEASE_MS,
   isInboxRelayInFlightTimeoutError,
   waitForInboxRelayInFlight,
 } from './TeamProvisioningInboxRelayCandidates';
@@ -158,6 +159,106 @@ export interface OpenCodeMemberInboxDeliveryWakePorts {
   }): void;
 }
 
+interface OpenCodeMemberInboxRelayLease {
+  generation: number;
+  work: Promise<OpenCodeMemberInboxRelayResult>;
+  expiresAtMs: number;
+  expiryHandle: ReturnType<typeof setTimeout> | null;
+}
+
+const openCodeMemberInboxRelayLeases = new WeakMap<
+  Map<string, Promise<OpenCodeMemberInboxRelayResult>>,
+  Map<string, OpenCodeMemberInboxRelayLease>
+>();
+let nextOpenCodeMemberInboxRelayGeneration = 0;
+
+function getOpenCodeMemberInboxRelayLeaseStore(
+  inFlight: Map<string, Promise<OpenCodeMemberInboxRelayResult>>
+): Map<string, OpenCodeMemberInboxRelayLease> {
+  let leases = openCodeMemberInboxRelayLeases.get(inFlight);
+  if (!leases) {
+    leases = new Map();
+    openCodeMemberInboxRelayLeases.set(inFlight, leases);
+  }
+  return leases;
+}
+
+function releaseOpenCodeMemberInboxRelayLease(input: {
+  inFlight: Map<string, Promise<OpenCodeMemberInboxRelayResult>>;
+  relayKey: string;
+  lease: OpenCodeMemberInboxRelayLease;
+}): void {
+  const leases = getOpenCodeMemberInboxRelayLeaseStore(input.inFlight);
+  if (leases.get(input.relayKey)?.generation !== input.lease.generation) {
+    return;
+  }
+  if (input.inFlight.get(input.relayKey) === input.lease.work) {
+    input.inFlight.delete(input.relayKey);
+  }
+  if (input.lease.expiryHandle) {
+    clearTimeout(input.lease.expiryHandle);
+  }
+  leases.delete(input.relayKey);
+}
+
+function claimOpenCodeMemberInboxRelayLease(input: {
+  inFlight: Map<string, Promise<OpenCodeMemberInboxRelayResult>>;
+  relayKey: string;
+  work: Promise<OpenCodeMemberInboxRelayResult>;
+  nowMs?: number;
+}): OpenCodeMemberInboxRelayLease {
+  const leases = getOpenCodeMemberInboxRelayLeaseStore(input.inFlight);
+  const existingLease = leases.get(input.relayKey);
+  if (existingLease?.work === input.work) {
+    return existingLease;
+  }
+
+  const lease: OpenCodeMemberInboxRelayLease = {
+    generation: ++nextOpenCodeMemberInboxRelayGeneration,
+    work: input.work,
+    expiresAtMs: (input.nowMs ?? Date.now()) + INBOX_RELAY_IN_FLIGHT_LEASE_MS,
+    expiryHandle: null,
+  };
+  leases.set(input.relayKey, lease);
+  lease.expiryHandle = setTimeout(
+    () => releaseOpenCodeMemberInboxRelayLease({ ...input, lease }),
+    INBOX_RELAY_IN_FLIGHT_LEASE_MS
+  );
+  lease.expiryHandle.unref?.();
+  void input.work.then(
+    () => releaseOpenCodeMemberInboxRelayLease({ ...input, lease }),
+    () => releaseOpenCodeMemberInboxRelayLease({ ...input, lease })
+  );
+  return lease;
+}
+
+function getActiveOpenCodeMemberInboxRelayWork(input: {
+  inFlight: Map<string, Promise<OpenCodeMemberInboxRelayResult>>;
+  relayKey: string;
+  nowMs?: number;
+}): Promise<OpenCodeMemberInboxRelayResult> | undefined {
+  const work = input.inFlight.get(input.relayKey);
+  if (!work) {
+    return undefined;
+  }
+  const nowMs = input.nowMs ?? Date.now();
+  const lease = claimOpenCodeMemberInboxRelayLease({ ...input, work, nowMs });
+  if (nowMs < lease.expiresAtMs) {
+    return work;
+  }
+  releaseOpenCodeMemberInboxRelayLease({ ...input, lease });
+  return undefined;
+}
+
+function registerOpenCodeMemberInboxRelayWork(input: {
+  inFlight: Map<string, Promise<OpenCodeMemberInboxRelayResult>>;
+  relayKey: string;
+  work: Promise<OpenCodeMemberInboxRelayResult>;
+}): void {
+  input.inFlight.set(input.relayKey, input.work);
+  claimOpenCodeMemberInboxRelayLease(input);
+}
+
 export function createOpenCodeMemberInboxRelayResult(
   overrides: Partial<OpenCodeMemberInboxRelayResult> = {}
 ): OpenCodeMemberInboxRelayResult {
@@ -208,7 +309,10 @@ export async function relayOpenCodeMemberInboxMessagesWithPorts(
 ): Promise<OpenCodeMemberInboxRelayResult> {
   const { teamName, memberName, relayKey } = input;
   const options = input.options ?? {};
-  const existing = ports.inFlight.get(relayKey);
+  const existing = getActiveOpenCodeMemberInboxRelayWork({
+    inFlight: ports.inFlight,
+    relayKey,
+  });
   if (existing) {
     const onlyMessageId = options.onlyMessageId?.trim();
     if (!onlyMessageId) {
@@ -225,10 +329,6 @@ export async function relayOpenCodeMemberInboxMessagesWithPorts(
         const diagnostic = `opencode_member_inbox_relay_timed_out: ${ports.getErrorMessage(error)}`;
         ports.logWarning(`[${teamName}] ${diagnostic}`);
         return buildOpenCodeMemberInboxRelayTimeoutResult({ diagnostic, attempted: 0 });
-      } finally {
-        if (ports.inFlight.get(relayKey) === existing) {
-          ports.inFlight.delete(relayKey);
-        }
       }
     }
     const inboxMessages = await ports.readInboxMessages(teamName, memberName).catch(() => []);
@@ -269,7 +369,7 @@ export async function relayOpenCodeMemberInboxMessagesWithPorts(
 
   const work = runOpenCodeMemberInboxRelayWork(input, ports);
 
-  ports.inFlight.set(relayKey, work);
+  registerOpenCodeMemberInboxRelayWork({ inFlight: ports.inFlight, relayKey, work });
   try {
     return await waitForInboxRelayInFlight({
       promise: work,
@@ -286,10 +386,6 @@ export async function relayOpenCodeMemberInboxMessagesWithPorts(
       diagnostic,
       attempted: options.onlyMessageId ? 1 : 0,
     });
-  } finally {
-    if (ports.inFlight.get(relayKey) === work) {
-      ports.inFlight.delete(relayKey);
-    }
   }
 }
 

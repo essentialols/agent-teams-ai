@@ -1,0 +1,197 @@
+{
+  "schemaVersion": 1,
+  "phaseId": "phase-00",
+  "reviewId": "w3-w5-reciprocal",
+  "packetRevision": "phase-00-r2",
+  "baseSha": "a32f509e6d9bd31ba2135940e336729bf90c3d93",
+  "status": "rejected",
+  "evidencePath": "docs/research/hosted-web/phase-0/reciprocal-reviews/w3-w5.md",
+  "producerReviews": [
+    {
+      "laneId": "w3",
+      "producerWorktree": "phase-00-w3-state-writers-backup-v1",
+      "producerStatus": "characterized",
+      "disposition": "reject",
+      "acceptedEvidence": [
+        "P0.W3.STATE_FAMILY_CATALOG",
+        "P0.W3.WRITER_COORDINATION",
+        "P0.W3.SCHEMA_UNKNOWN_FIELDS",
+        "P0.W3.SQLITE_ONLINE_BACKUP_SPIKE",
+        "P0.W3.ESTIMATE"
+      ],
+      "rejectedEvidence": [
+        "P0.W3.BACKUP_BEHAVIOR"
+      ],
+      "findingIds": [
+        "RW35-001",
+        "RW35-006"
+      ],
+      "requiredCorrection": "Add marker-owned fault-injected TeamBackupService characterization and record a diff check that covers untracked additions."
+    },
+    {
+      "laneId": "w5",
+      "producerWorktree": "phase-00-w5-events-commands-recovery-v1",
+      "producerStatus": "characterized",
+      "disposition": "reject",
+      "acceptedEvidence": [
+        "P0.W5.EVENT_CURSOR_INVENTORY",
+        "P0.W5.ESTIMATE"
+      ],
+      "rejectedEvidence": [
+        "P0.W5.SNAPSHOT_HANDOFF_SCHEDULER",
+        "P0.W5.COMMAND_CATALOG",
+        "P0.W5.EFFECT_RECOVERY_MATRIX",
+        "P0.W5.FINGERPRINT_GOLDENS"
+      ],
+      "findingIds": [
+        "RW35-002",
+        "RW35-003",
+        "RW35-004",
+        "RW35-005",
+        "RW35-006"
+      ],
+      "requiredCorrection": "Model real crash transitions at every required boundary, reconcile retry classes with W3, complete fingerprint vectors, use an independent mutation census, and record a diff check that covers untracked additions."
+    }
+  ],
+  "findings": [
+    {
+      "id": "RW35-001",
+      "laneId": "w3",
+      "severity": "high",
+      "path": "docs/research/hosted-web/phase-0/state-writers/backup-behavior.json",
+      "line": 18,
+      "affectedAdrs": [
+        "ADR-32"
+      ],
+      "summary": "TeamBackupService fault outcomes are source deductions, not the full packet's required fault-injected characterization."
+    },
+    {
+      "id": "RW35-002",
+      "laneId": "w5",
+      "severity": "critical",
+      "path": "scripts/hosted-web/phase-0/recovery-events/model.mjs",
+      "line": 11,
+      "affectedAdrs": [
+        "ADR-33",
+        "ADR-34"
+      ],
+      "summary": "Commit, compensation, and event-publication labels are counted as exercised without real crash/resume transitions."
+    },
+    {
+      "id": "RW35-003",
+      "laneId": "w5",
+      "severity": "critical",
+      "path": "scripts/hosted-web/phase-0/recovery-events/generate-evidence.mjs",
+      "line": 28,
+      "affectedAdrs": [
+        "ADR-29",
+        "ADR-34"
+      ],
+      "summary": "Task and inbox effects are marked idempotent despite W3 proving active writers uncoordinated and durable lookup unproven."
+    },
+    {
+      "id": "RW35-004",
+      "laneId": "w5",
+      "severity": "high",
+      "path": "scripts/hosted-web/phase-0/recovery-events/generate-evidence.mjs",
+      "line": 264,
+      "affectedAdrs": [
+        "ADR-27",
+        "ADR-34"
+      ],
+      "summary": "Golden vectors omit fingerprint-version change and omitted-versus-default behavior."
+    },
+    {
+      "id": "RW35-005",
+      "laneId": "w5",
+      "severity": "medium",
+      "path": "scripts/hosted-web/phase-0/recovery-events/generate-evidence.mjs",
+      "line": 127,
+      "affectedAdrs": [
+        "ADR-34"
+      ],
+      "summary": "The required mutation census is derived from the generated catalog, so omissions cannot fail generation."
+    },
+    {
+      "id": "RW35-006",
+      "laneId": "w3-w5",
+      "severity": "low",
+      "path": ".codex-handoff/phase-00-w3.json",
+      "line": 62,
+      "affectedAdrs": [],
+      "summary": "Plain git diff --check did not inspect either producer's entirely untracked additions; reviewer no-index checks were clean."
+    }
+  ],
+  "scopeAudit": {
+    "w3ChangedFiles": 15,
+    "w5ChangedFiles": 15,
+    "w3OutOfScopePaths": [],
+    "w5OutOfScopePaths": [],
+    "producerEditsByReviewer": false,
+    "broadCiRun": false,
+    "phase1Implemented": false
+  },
+  "securityAudit": {
+    "userClaudeStateAccessed": false,
+    "likelySecretsFound": false,
+    "realUserPathsFound": false,
+    "scanClasses": [
+      "private-key headers",
+      "common provider/Git token prefixes",
+      "AWS access-key IDs",
+      "Bearer credentials",
+      "absolute user home paths"
+    ]
+  },
+  "checks": [
+    {
+      "command": "W3: node sqlite-online-backup-spike.mjs; node external-writer-negative-fixture.mjs; node verify-evidence.mjs; node --test state-writers.test.mjs",
+      "exitCode": 0
+    },
+    {
+      "command": "W5: node generate-evidence.mjs --check; node recovery-events.test.mjs",
+      "exitCode": 0
+    },
+    {
+      "command": "W3 targeted eslint --no-cache over all owned JavaScript",
+      "exitCode": 0
+    },
+    {
+      "command": "W5 targeted eslint --no-cache over all owned JavaScript",
+      "exitCode": 0
+    },
+    {
+      "command": "git diff --no-index --check /dev/null <each handoff-listed W3/W5 file>",
+      "exitCode": 0,
+      "result": "15 W3 files and 15 W5 files checked; zero whitespace findings"
+    },
+    {
+      "command": "high-confidence secret and real-user-path scan over every handoff-listed file",
+      "exitCode": 0
+    }
+  ],
+  "crossLaneAssumptions": [
+    {
+      "status": "contradicted",
+      "assumption": "Task and native inbox effects are idempotent by operation ID during an active external writer.",
+      "w3Evidence": "Task locks are process-local and native inbox lock adoption is unproven; both are quiescent-only.",
+      "w5Evidence": "The op helper assigns idempotent_by_operation_id with partial/unversioned current evidence."
+    },
+    {
+      "status": "characterized_only",
+      "assumption": "One SQLite transaction/worker seam can host command, event, keyring, and backup coordination.",
+      "w3Evidence": "Current single worker and WAL Online Backup are source/fixture characterized, but production async backup, final ABI, keyring preservation and deployment quiescence are unverified."
+    },
+    {
+      "status": "deduplicate",
+      "assumption": "W3 and W5 estimate ranges are additive.",
+      "w3Evidence": "W3 4.5k-7.25k and W5 4.5k-7.5k share command/event/storage/backup work and must be counted once."
+    }
+  ],
+  "changedPaths": [
+    ".codex-handoff/phase-00-review-w3-w5.json",
+    "docs/research/hosted-web/phase-0/reciprocal-reviews/w3-w5.md"
+  ],
+  "blockers": [],
+  "nextAction": "Return findings to W3 and W5 owners, then rerun focused reciprocal review before controller adoption."
+}

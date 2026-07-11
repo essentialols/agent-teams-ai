@@ -189,19 +189,19 @@ export class TeamProvisioningToolApprovalTimeouts<
       }
     };
 
-    let response: Promise<void>;
+    const respond = (): void => {
+      void this.ports.respondToTeammatePermission(run, approval, allow, message).then(() => {
+        run.pendingApprovals.delete(requestId);
+        this.maps.inFlightResponses.delete(requestId);
+        this.ports.dismissApprovalNotification(requestId);
+        this.ports.emitToolApprovalEvent(event);
+      }, handleFailure);
+    };
+
     try {
-      response = this.ports.respondToTeammatePermission(run, approval, allow, message);
+      respond();
     } catch (error) {
       handleFailure(error);
-      return;
     }
-
-    void response.then(() => {
-      run.pendingApprovals.delete(requestId);
-      this.maps.inFlightResponses.delete(requestId);
-      this.ports.dismissApprovalNotification(requestId);
-      this.ports.emitToolApprovalEvent(event);
-    }, handleFailure);
   }
 }

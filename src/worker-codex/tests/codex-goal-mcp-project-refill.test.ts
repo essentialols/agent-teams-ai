@@ -332,9 +332,7 @@ await writeFile(operationFilePath, JSON.stringify(operation, null, 2) + "\\n");
         taskId: "infinity-context-memory-fastgate-v1",
         accounts: ["account-a"],
         workerRole: "fastgate",
-        startWorker: false,
         confirmRefill: true,
-        executionMode: "bounded",
       });
 
       expect(result).toMatchObject({

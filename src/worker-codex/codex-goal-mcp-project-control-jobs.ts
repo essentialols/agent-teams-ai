@@ -209,7 +209,9 @@ export async function projectControlRefillWorkerView(
   args: ProjectControlMcpArgs,
   deps: CodexGoalMcpProjectControlJobsDeps,
 ): Promise<JsonObject> {
-  if (projectControlOperationExecutionMode(args.executionMode) === "bounded") {
+  const executionMode =
+    args.executionMode ?? (booleanValue(args.startWorker) === false ? "sync" : "bounded");
+  if (projectControlOperationExecutionMode(executionMode) === "bounded") {
     return projectControlRefillWorkerBoundedView(args, deps);
   }
   const controller = await deps.loadProjectControlController(args);

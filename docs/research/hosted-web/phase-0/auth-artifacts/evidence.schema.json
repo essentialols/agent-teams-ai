@@ -11,6 +11,7 @@
         "laneId",
         "packetRevision",
         "phaseStartSha",
+        "artifactAuthority",
         "evidence"
       ],
       "properties": {
@@ -20,6 +21,29 @@
         "laneId": { "const": "w6" },
         "packetRevision": { "const": "phase-00-r3" },
         "phaseStartSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "artifactAuthority": {
+          "type": "object",
+          "required": ["artifactEvolutionAssumption", "proofLevels"],
+          "properties": {
+            "artifactEvolutionAssumption": {
+              "const": "The existing standalone source/build path may evolve in place, but the exact canonical artifact is rejected and evolution remains unproved; any resulting candidate requires a separately reviewed packet."
+            },
+            "proofLevels": {
+              "type": "object",
+              "required": ["P0.W6.ARTIFACT_INVENTORY", "P0.W6.TERMINAL_ABSENCE_REPORT"],
+              "properties": {
+                "P0.W6.ARTIFACT_INVENTORY": {
+                  "const": "targeted_current_commit_build_observed"
+                },
+                "P0.W6.TERMINAL_ABSENCE_REPORT": {
+                  "const": "targeted_current_commit_build_observed"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
         "evidence": {
           "type": "array",
           "minItems": 7,
@@ -42,7 +66,12 @@
               "id": { "type": "string", "pattern": "^P0\\.W6\\." },
               "owner": { "const": "w6" },
               "proofLevel": {
-                "enum": ["source_observed", "fixture_characterized", "unverified"]
+                "enum": [
+                  "source_observed",
+                  "fixture_characterized",
+                  "targeted_current_commit_build_observed",
+                  "unverified"
+                ]
               },
               "status": { "type": "string", "minLength": 1 },
               "requirementIds": { "type": "array", "minItems": 1 },
@@ -56,6 +85,58 @@
           }
         }
       },
+      "allOf": [
+        {
+          "properties": {
+            "evidence": {
+              "contains": {
+                "type": "object",
+                "required": ["id", "proofLevel"],
+                "properties": {
+                  "id": { "const": "P0.W6.ARTIFACT_INVENTORY" },
+                  "proofLevel": { "const": "targeted_current_commit_build_observed" }
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "evidence": {
+              "contains": {
+                "type": "object",
+                "required": ["id", "proofLevel"],
+                "properties": {
+                  "id": { "const": "P0.W6.TERMINAL_ABSENCE_REPORT" },
+                  "proofLevel": { "const": "targeted_current_commit_build_observed" }
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "evidence": {
+              "contains": {
+                "type": "object",
+                "required": ["id", "facts"],
+                "properties": {
+                  "id": { "const": "P0.W6.ESTIMATE" },
+                  "facts": {
+                    "type": "object",
+                    "required": ["artifactEvolutionAssumption"],
+                    "properties": {
+                      "artifactEvolutionAssumption": {
+                        "const": "The existing standalone source/build path may evolve in place, but the exact canonical artifact is rejected and evolution remains unproved; any resulting candidate requires a separately reviewed packet."
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
       "additionalProperties": false
     },
     {
@@ -64,6 +145,66 @@
         "schemaVersion",
         "recordType",
         "phaseStartSha",
+        "canonicalSourceCommit",
+        "proofLevel",
+        "characterizationScope",
+        "build",
+        "historicalProvenance",
+        "source",
+        "emitted",
+        "terminalAbsence"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 2 },
+        "recordType": { "const": "w6-current-commit-artifact-scan" },
+        "phaseStartSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "canonicalSourceCommit": {
+          "const": "6cf53a3d71e1bd34ff71f99968b705a0e1aa939c"
+        },
+        "proofLevel": { "const": "targeted_current_commit_build_observed" },
+        "characterizationScope": {
+          "const": "exact_current_commit_targeted_standalone_build"
+        },
+        "build": {
+          "type": "object",
+          "required": ["command", "config", "input", "output", "sourceMaps", "comparison"],
+          "properties": {
+            "command": { "type": "string" },
+            "config": { "const": "docker/vite.standalone.config.ts" },
+            "input": { "const": "src/main/standalone.ts" },
+            "output": { "const": "ephemeral_target_directory" },
+            "sourceMaps": { "const": true },
+            "comparison": { "const": "exact_relative_path_byte_count_and_sha256" }
+          },
+          "additionalProperties": false
+        },
+        "historicalProvenance": {
+          "type": "object",
+          "required": ["authorityPath", "authorityRecordType", "relationship"],
+          "properties": {
+            "authorityPath": {
+              "const": "docs/research/hosted-web/phase-0/auth-artifacts/historical-rejected-candidate-artifact-scan.json"
+            },
+            "authorityRecordType": {
+              "const": "w6-historical-rejected-candidate-artifact-scan"
+            },
+            "relationship": { "const": "historical_only_not_current_commit_authority" }
+          },
+          "additionalProperties": false
+        },
+        "source": { "type": "object" },
+        "emitted": { "type": "object" },
+        "terminalAbsence": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "recordType",
+        "phaseStartSha",
+        "proofLevel",
         "characterizationScope",
         "provenance",
         "source",
@@ -72,8 +213,9 @@
       ],
       "properties": {
         "schemaVersion": { "const": 1 },
-        "recordType": { "const": "w6-observed-artifact-scan" },
+        "recordType": { "const": "w6-historical-rejected-candidate-artifact-scan" },
         "phaseStartSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "proofLevel": { "const": "historical_rejected_candidate_build_observed" },
         "characterizationScope": {
           "const": "canonical_integration_candidate_rejected_gate"
         },
@@ -91,7 +233,7 @@
         "emitted": { "type": "object" },
         "terminalAbsence": { "type": "object" }
       },
-      "additionalProperties": true
+      "additionalProperties": false
     },
     {
       "type": "object",
@@ -100,6 +242,7 @@
         "recordType",
         "phaseStartSha",
         "bucketId",
+        "artifactEvolutionAssumption",
         "packages",
         "lines",
         "excludedGeneratedVendor",
@@ -113,6 +256,9 @@
         "recordType": { "const": "w6-estimate-input" },
         "phaseStartSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
         "bucketId": { "const": "EST-HOSTED-OPS" },
+        "artifactEvolutionAssumption": {
+          "const": "The existing standalone source/build path may evolve in place, but the exact canonical artifact is rejected and evolution remains unproved; any resulting candidate requires a separately reviewed packet."
+        },
         "packages": { "type": "array" },
         "lines": { "type": "object" },
         "excludedGeneratedVendor": { "type": "array" },
@@ -143,8 +289,8 @@
         "schemaVersion": { "const": 1 },
         "recordType": { "const": "w6-standalone-artifact-characterization" },
         "phaseStartSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
-        "canonicalBaseSha": { "const": "f7d98790eb868714e536f77bd796072ea706911a" },
-        "proofLevel": { "const": "source_observed" },
+        "canonicalBaseSha": { "const": "6cf53a3d71e1bd34ff71f99968b705a0e1aa939c" },
+        "proofLevel": { "const": "targeted_current_commit_build_observed" },
         "status": { "const": "rejected_for_hosted_v1" },
         "controllerContractPath": { "type": "string" },
         "controllerContractSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
@@ -156,7 +302,7 @@
             "authorityPath": {
               "const": "docs/research/hosted-web/phase-0/auth-artifacts/observed-artifact-scan.json"
             },
-            "authorityRecordType": { "const": "w6-observed-artifact-scan" },
+            "authorityRecordType": { "const": "w6-current-commit-artifact-scan" },
             "authoritySha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
             "disposition": { "const": "rejected_for_hosted_v1" }
           },

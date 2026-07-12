@@ -3,6 +3,7 @@
   "recordType": "w6-estimate-input",
   "phaseStartSha": "a32f509e6d9bd31ba2135940e336729bf90c3d93",
   "bucketId": "EST-HOSTED-OPS",
+  "artifactEvolutionAssumption": "The existing standalone source/build path may evolve in place, but the exact canonical artifact is rejected and evolution remains unproved; any resulting candidate requires a separately reviewed packet.",
   "packages": [
     "hosted-access",
     "hosted composition/build",
@@ -28,7 +29,7 @@
     "one active device family",
     "no OIDC/passkey in v1",
     "no hosted terminal in v1",
-    "the current standalone artifact remains rejected; any later composition requires a separately reviewed packet"
+    "the exact canonical artifact remains rejected; artifact evolution is unproved and any resulting candidate requires a separately reviewed packet"
   ],
   "evidenceRefs": [
     "P0.W6.AUTH_TRANSITIONS",

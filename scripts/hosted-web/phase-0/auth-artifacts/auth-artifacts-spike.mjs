@@ -19,6 +19,10 @@ import {
   loadControllerArtifactContract,
   validateControllerArtifactProjection,
 } from '../w4-w6-contract/controller-artifact-contract.mjs';
+import {
+  drainEvidenceEnvelopeId,
+  validateDrainEvidenceEnvelope,
+} from '../w4-w6-contract/drain-evidence-envelope.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 export const repoRoot = resolve(scriptDir, '../../../..');
@@ -46,9 +50,9 @@ export function newAuthState() {
     processAnchor: {
       status: 'ready',
       protocolVersion: 1,
-      deploymentGeneration: 1,
-      processAnchorGeneration: 1,
-      controlChannelRef: 'anchor-control-channel-ref-1',
+      deploymentGeneration: 'deployment-generation-1',
+      processAnchorGeneration: 'process-anchor-generation-1',
+      processAnchorGenerationOrdinal: 1,
       anchorIdentity: 'anchor-identity-ref-1',
       spawnNonceHash: 'spawn-nonce-hash-ref-1',
     },
@@ -83,32 +87,71 @@ const activeAuthorityExists = (state) =>
   Object.values(state.sessions).some((session) => session.active && !session.revokedReason);
 
 export function validateDrainEvidence(state, evidence, purpose, resetGeneration, recorded = false) {
-  if (!evidence || evidence.kind !== 'w4_process_anchor_drain_evidence_v1') {
-    return 'typed_drain_required';
-  }
+  if (!evidence) return 'typed_drain_required';
+  if (evidence.envelopeId !== drainEvidenceEnvelopeId) return 'controller_drain_envelope_mismatch';
   const ready = evidence.ready;
   const drained = evidence.drained;
   if (!ready || !drained) {
     return 'runtime_state_unclassified';
   }
-  if (
-    Object.keys(evidence).sort().join(',') !== 'controlChannelRef,drained,kind,ready,source' ||
-    Object.keys(ready).sort().join(',') !==
-      'anchorIdentity,deploymentGeneration,mainPidfdReady,ownedProcessGroupReady,processAnchorGeneration,protocolVersion,purpose,resetGeneration,spawnNonceHash'
-  ) {
+  const controllerValidation = validateDrainEvidenceEnvelope(evidence);
+  if (!controllerValidation.ok) {
+    const violations = controllerValidation.violations;
+    if (violations.some((violation) => violation === 'const:ready:protocolVersion')) {
+      return 'drain_protocol_version_stale';
+    }
+    if (violations.some((violation) => violation === 'const:drained:protocolVersion')) {
+      return 'drain_protocol_version_stale';
+    }
+    if (violations.some((violation) => violation.startsWith('generation_binding:purpose'))) {
+      return 'drain_purpose_mismatch';
+    }
+    if (
+      violations.some((violation) => violation.startsWith('generation_binding:resetGeneration'))
+    ) {
+      return 'drain_reset_generation_stale';
+    }
+    if (
+      violations.some((violation) =>
+        violation.startsWith('generation_binding:deploymentGeneration')
+      )
+    ) {
+      return 'drain_deployment_generation_stale';
+    }
+    if (
+      violations.some((violation) =>
+        violation.startsWith('generation_binding:processAnchorGeneration')
+      )
+    ) {
+      return 'drain_process_anchor_generation_stale';
+    }
+    if (
+      violations.some(
+        (violation) =>
+          violation === 'const:ready:mainPidfdReady' ||
+          violation === 'const:ready:ownedProcessGroupReady'
+      )
+    ) {
+      return 'drain_anchor_not_ready';
+    }
+    if (
+      violations.some(
+        (violation) => violation === 'const:drained:kind' || violation === 'const:drained:outcome'
+      )
+    ) {
+      return 'runtime_state_unclassified';
+    }
+    if (violations.some((violation) => violation === 'max_items:drained:residuals')) {
+      return 'runtime_residuals_present';
+    }
+    if (violations.some((violation) => violation.includes(':drained:'))) {
+      return 'drain_response_shape_mismatch';
+    }
     return 'drain_evidence_shape_mismatch';
-  }
-  if (
-    Object.keys(drained).sort().join(',') !==
-    'classificationId,deploymentGeneration,kind,outcome,processAnchorGeneration,protocolVersion,purpose,resetGeneration,residuals'
-  ) {
-    return 'drain_response_shape_mismatch';
   }
   const anchor = state.processAnchor;
   if (anchor.status !== (recorded ? 'drained' : 'ready')) return 'drain_anchor_not_ready';
   if (
-    evidence.source !== 'w4_process_anchor_control_channel' ||
-    evidence.controlChannelRef !== anchor.controlChannelRef ||
     ready.anchorIdentity !== anchor.anchorIdentity ||
     ready.spawnNonceHash !== anchor.spawnNonceHash
   ) {
@@ -150,15 +193,16 @@ export function validateDrainEvidence(state, evidence, purpose, resetGeneration,
 }
 
 function advanceProcessAnchorGeneration(state) {
-  const processAnchorGeneration = state.processAnchor.processAnchorGeneration + 1;
+  const processAnchorGenerationOrdinal = state.processAnchor.processAnchorGenerationOrdinal + 1;
+  const processAnchorGeneration = `process-anchor-generation-${processAnchorGenerationOrdinal}`;
   state.processAnchor = {
     status: 'ready',
     protocolVersion: state.processAnchor.protocolVersion,
     deploymentGeneration: state.processAnchor.deploymentGeneration,
     processAnchorGeneration,
-    controlChannelRef: `anchor-control-channel-ref-${processAnchorGeneration}`,
-    anchorIdentity: `anchor-identity-ref-${processAnchorGeneration}`,
-    spawnNonceHash: `spawn-nonce-hash-ref-${processAnchorGeneration}`,
+    processAnchorGenerationOrdinal,
+    anchorIdentity: `anchor-identity-ref-${processAnchorGenerationOrdinal}`,
+    spawnNonceHash: `spawn-nonce-hash-ref-${processAnchorGenerationOrdinal}`,
   };
 }
 
@@ -169,9 +213,7 @@ export function drainEvidenceFor(state, purpose, resetGeneration, overrides = {}
   delete envelopeOverrides.drained;
   delete envelopeOverrides.ready;
   return {
-    kind: 'w4_process_anchor_drain_evidence_v1',
-    source: 'w4_process_anchor_control_channel',
-    controlChannelRef: state.processAnchor.controlChannelRef,
+    envelopeId: drainEvidenceEnvelopeId,
     ready: {
       protocolVersion: state.processAnchor.protocolVersion,
       spawnNonceHash: state.processAnchor.spawnNonceHash,
@@ -490,6 +532,52 @@ export function evaluateAuthorityCookieInput(input) {
 
 export const STANDALONE_CHARACTERIZATION_PATH =
   'docs/research/hosted-web/phase-0/auth-artifacts/observed-artifact-scan.json';
+export const STANDALONE_CHARACTERIZATION_RECORD_TYPE = 'w6-current-commit-artifact-scan';
+export const STANDALONE_CANONICAL_SOURCE_COMMIT = '6cf53a3d71e1bd34ff71f99968b705a0e1aa939c';
+export const ARTIFACT_EVOLUTION_ASSUMPTION =
+  'The existing standalone source/build path may evolve in place, but the exact canonical artifact is rejected and evolution remains unproved; any resulting candidate requires a separately reviewed packet.';
+export const ARTIFACT_PROOF_LEVELS = Object.freeze({
+  'P0.W6.ARTIFACT_INVENTORY': 'targeted_current_commit_build_observed',
+  'P0.W6.TERMINAL_ABSENCE_REPORT': 'targeted_current_commit_build_observed',
+});
+
+export function validateArtifactAuthorityProjections(authority, evidence, estimate, handoff) {
+  const violations = [];
+  if (authority?.artifactEvolutionAssumption !== ARTIFACT_EVOLUTION_ASSUMPTION) {
+    violations.push('artifact_authority:evolution_assumption');
+  }
+  if (JSON.stringify(authority?.proofLevels) !== JSON.stringify(ARTIFACT_PROOF_LEVELS)) {
+    violations.push('artifact_authority:proof_levels');
+  }
+  if (estimate?.artifactEvolutionAssumption !== authority?.artifactEvolutionAssumption) {
+    violations.push('estimate_input:artifact_evolution_assumption');
+  }
+  const rows = new Map((evidence?.evidence ?? []).map((row) => [row.id, row]));
+  const estimateRow = rows.get('P0.W6.ESTIMATE');
+  if (estimateRow?.facts?.artifactEvolutionAssumption !== authority?.artifactEvolutionAssumption) {
+    violations.push('P0.W6.ESTIMATE:artifact_evolution_assumption');
+  }
+  for (const [evidenceId, proofLevel] of Object.entries(authority?.proofLevels ?? {})) {
+    if (rows.get(evidenceId)?.proofLevel !== proofLevel) {
+      violations.push(`${evidenceId}:proof_level`);
+    }
+  }
+  if (handoff?.artifactEvolution?.assumption !== authority?.artifactEvolutionAssumption) {
+    violations.push('handoff:artifact_evolution_assumption');
+  }
+  if (
+    handoff?.proofLevels?.artifactInventory !== authority?.proofLevels?.['P0.W6.ARTIFACT_INVENTORY']
+  ) {
+    violations.push('handoff:artifact_inventory_proof_level');
+  }
+  if (
+    handoff?.proofLevels?.currentTerminalRuleEvaluation !==
+    authority?.proofLevels?.['P0.W6.TERMINAL_ABSENCE_REPORT']
+  ) {
+    violations.push('handoff:terminal_rule_proof_level');
+  }
+  return { ok: violations.length === 0, violations };
+}
 
 export function standaloneCharacterizationSha256(characterization) {
   return createHash('sha256').update(JSON.stringify(characterization)).digest('hex');
@@ -498,7 +586,7 @@ export function standaloneCharacterizationSha256(characterization) {
 export function buildStandaloneCharacterizationProjection(characterization) {
   return {
     authorityPath: STANDALONE_CHARACTERIZATION_PATH,
-    authorityRecordType: 'w6-observed-artifact-scan',
+    authorityRecordType: STANDALONE_CHARACTERIZATION_RECORD_TYPE,
     authoritySha256: standaloneCharacterizationSha256(characterization),
     disposition: 'rejected_for_hosted_v1',
   };
@@ -543,9 +631,27 @@ export function scanStandalone(root = repoRoot, { buildRoot = null } = {}) {
     .join('\n');
 
   return {
-    schemaVersion: 1,
-    recordType: 'w6-observed-artifact-scan',
+    schemaVersion: 2,
+    recordType: STANDALONE_CHARACTERIZATION_RECORD_TYPE,
     phaseStartSha: 'a32f509e6d9bd31ba2135940e336729bf90c3d93',
+    canonicalSourceCommit: STANDALONE_CANONICAL_SOURCE_COMMIT,
+    proofLevel: 'targeted_current_commit_build_observed',
+    characterizationScope: 'exact_current_commit_targeted_standalone_build',
+    build: {
+      command:
+        'pnpm exec vite build --config docker/vite.standalone.config.ts --outDir <ephemeral-dir> --emptyOutDir',
+      config: 'docker/vite.standalone.config.ts',
+      input: 'src/main/standalone.ts',
+      output: 'ephemeral_target_directory',
+      sourceMaps: true,
+      comparison: 'exact_relative_path_byte_count_and_sha256',
+    },
+    historicalProvenance: {
+      authorityPath:
+        'docs/research/hosted-web/phase-0/auth-artifacts/historical-rejected-candidate-artifact-scan.json',
+      authorityRecordType: 'w6-historical-rejected-candidate-artifact-scan',
+      relationship: 'historical_only_not_current_commit_authority',
+    },
     source: {
       standaloneInput: 'src/main/standalone.ts',
       rendererOutput: 'out/renderer',

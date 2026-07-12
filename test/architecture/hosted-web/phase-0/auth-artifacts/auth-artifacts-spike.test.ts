@@ -1,8 +1,11 @@
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 
 import { describe, expect, it } from 'vitest';
 
 import {
+  ARTIFACT_EVOLUTION_ASSUMPTION,
+  ARTIFACT_PROOF_LEVELS,
   AUTH_ACTION_TYPES,
   authTransition,
   buildStandaloneCharacterizationProjection,
@@ -15,8 +18,29 @@ import {
   runAbiSmokeProbe,
   runAuthSchedule,
   scanStandalone,
+  STANDALONE_CANONICAL_SOURCE_COMMIT,
+  STANDALONE_CHARACTERIZATION_RECORD_TYPE,
+  validateArtifactAuthorityProjections,
   validateStandaloneCharacterizationProjection,
 } from '../../../../../scripts/hosted-web/phase-0/auth-artifacts/auth-artifacts-spike.mjs';
+import {
+  drainEvidenceEnvelopeId,
+  drainEvidenceEnvelopeSchemaPath,
+  drainEvidenceEnvelopeSchemaSha256,
+  validateDrainEvidenceEnvelope,
+  validateW4DrainEvidenceProjection,
+} from '../../../../../scripts/hosted-web/phase-0/w4-w6-contract/drain-evidence-envelope.mjs';
+
+const localRequire = createRequire(import.meta.url);
+const requireFromFastify = createRequire(localRequire.resolve('fastify/package.json'));
+const Ajv = requireFromFastify('ajv');
+const evidenceSchema = JSON.parse(
+  readFileSync('docs/research/hosted-web/phase-0/auth-artifacts/evidence.schema.json', 'utf8')
+);
+const validateEvidenceSchema = new Ajv({ allErrors: true, jsonPointers: true }).compile(
+  evidenceSchema
+);
+const readJson = (path: string) => JSON.parse(readFileSync(path, 'utf8'));
 
 const proxyConfig = {
   publicOrigin: 'https://teams.example.test',
@@ -241,7 +265,7 @@ describe('ADR-7 transition schedules', () => {
     }
   });
 
-  it('accepts only the exact W4 ready/drained shapes and current trusted control provenance', () => {
+  it('consumes only the exact controller-owned W4/W6 drain envelope', () => {
     const state = pairedState();
     const reset = authTransition(state, { type: 'begin_reset', generation: 1 }).state;
     for (const [evidence, code] of [
@@ -250,8 +274,12 @@ describe('ADR-7 transition schedules', () => {
         'runtime_residuals_present',
       ],
       [
-        drainEvidenceFor(reset, 'host_reset', 1, { controlChannelRef: 'stale-channel' }),
-        'drain_provenance_mismatch',
+        drainEvidenceFor(reset, 'host_reset', 1, { envelopeId: 'stale-envelope' }),
+        'controller_drain_envelope_mismatch',
+      ],
+      [
+        drainEvidenceFor(reset, 'host_reset', 1, { authority: 'w6' }),
+        'drain_evidence_shape_mismatch',
       ],
       [
         drainEvidenceFor(reset, 'host_reset', 1, { ready: { mainPidfdReady: false } }),
@@ -309,6 +337,9 @@ describe('ADR-7 transition schedules', () => {
       expect(authTransition(reset, { type: 'record_drain_evidence', evidence }).code).toBe(code);
     }
     const currentEvidence = drainEvidenceFor(reset, 'host_reset', 1);
+    expect(Object.keys(currentEvidence).sort()).toEqual(['drained', 'envelopeId', 'ready']);
+    expect(currentEvidence.envelopeId).toBe(drainEvidenceEnvelopeId);
+    expect(validateDrainEvidenceEnvelope(currentEvidence)).toEqual({ ok: true, violations: [] });
     const recorded = authTransition(reset, {
       type: 'record_drain_evidence',
       evidence: currentEvidence,
@@ -319,6 +350,40 @@ describe('ADR-7 transition schedules', () => {
         evidence: currentEvidence,
       }).code
     ).toBe('drain_anchor_not_ready');
+  });
+
+  it('pins the controller drain-envelope ID, schema path, hash, and exact W4 projection', () => {
+    const nativeSchema = readJson(
+      'docs/research/hosted-web/phase-0/host-primitives/native-protocol.schema.json'
+    );
+    const processAnchor = readJson(
+      'docs/research/hosted-web/phase-0/host-primitives/process-anchor.protocol.json'
+    );
+    expect(nativeSchema['x-processAnchorDrainEvidence']).toMatchObject({
+      authority: 'phase-00-controller',
+      envelopeId: drainEvidenceEnvelopeId,
+      schemaPath: drainEvidenceEnvelopeSchemaPath,
+      schemaSha256: drainEvidenceEnvelopeSchemaSha256(),
+      projection: 'exact_required_fields_no_lane_owned_wrapper',
+    });
+    expect(validateW4DrainEvidenceProjection(nativeSchema, processAnchor)).toEqual({
+      ok: true,
+      violations: [],
+    });
+
+    for (const field of ['envelopeId', 'schemaPath', 'schemaSha256']) {
+      const drifted = structuredClone(nativeSchema);
+      drifted['x-processAnchorDrainEvidence'][field] = 'drifted';
+      expect(validateW4DrainEvidenceProjection(drifted, processAnchor)).toMatchObject({
+        ok: false,
+      });
+    }
+    const claimed = structuredClone(processAnchor);
+    claimed.sharedDrainDto.authority = 'w6';
+    expect(validateW4DrainEvidenceProjection(nativeSchema, claimed)).toMatchObject({
+      ok: false,
+      violations: ['w4_projection:w6_owned_authority_wrapper'],
+    });
   });
 
   it('distinguishes session logout from device-family revocation', () => {
@@ -438,6 +503,88 @@ describe('ADR-7/14 proxy and origin ordering', () => {
 });
 
 describe('ADR-17 artifact and terminal scanner', () => {
+  it('rejects every artifact-authority projection drift in schema and verifier logic', () => {
+    const evidence = readJson('docs/research/hosted-web/phase-0/auth-artifacts/evidence.json');
+    const estimate = readJson(
+      'docs/research/hosted-web/phase-0/auth-artifacts/estimate-input.json'
+    );
+    const handoff = readJson('.codex-handoff/phase-00-freeze-fix-w6-artifact-f16.json');
+    const authority = evidence.artifactAuthority;
+
+    expect(authority).toEqual({
+      artifactEvolutionAssumption: ARTIFACT_EVOLUTION_ASSUMPTION,
+      proofLevels: ARTIFACT_PROOF_LEVELS,
+    });
+    expect(validateEvidenceSchema(evidence)).toBe(true);
+    expect(validateEvidenceSchema(estimate)).toBe(true);
+    expect(validateArtifactAuthorityProjections(authority, evidence, estimate, handoff)).toEqual({
+      ok: true,
+      violations: [],
+    });
+
+    const authorityDrift = structuredClone(evidence);
+    authorityDrift.artifactAuthority.artifactEvolutionAssumption =
+      'existing build evolves in place';
+    expect(validateEvidenceSchema(authorityDrift)).toBe(false);
+    expect(
+      validateArtifactAuthorityProjections(
+        authorityDrift.artifactAuthority,
+        authorityDrift,
+        estimate,
+        handoff
+      ).violations
+    ).toContain('artifact_authority:evolution_assumption');
+
+    const estimateInputDrift = structuredClone(estimate);
+    estimateInputDrift.artifactEvolutionAssumption = 'existing build evolves in place';
+    expect(validateEvidenceSchema(estimateInputDrift)).toBe(false);
+    expect(
+      validateArtifactAuthorityProjections(authority, evidence, estimateInputDrift, handoff)
+        .violations
+    ).toContain('estimate_input:artifact_evolution_assumption');
+
+    const estimateEvidenceDrift = structuredClone(evidence);
+    estimateEvidenceDrift.evidence.find(
+      ({ id }: { id: string }) => id === 'P0.W6.ESTIMATE'
+    ).facts.artifactEvolutionAssumption = 'existing build evolves in place';
+    expect(validateEvidenceSchema(estimateEvidenceDrift)).toBe(false);
+    expect(
+      validateArtifactAuthorityProjections(authority, estimateEvidenceDrift, estimate, handoff)
+        .violations
+    ).toContain('P0.W6.ESTIMATE:artifact_evolution_assumption');
+
+    for (const [evidenceId, violation] of [
+      ['P0.W6.ARTIFACT_INVENTORY', 'P0.W6.ARTIFACT_INVENTORY:proof_level'],
+      ['P0.W6.TERMINAL_ABSENCE_REPORT', 'P0.W6.TERMINAL_ABSENCE_REPORT:proof_level'],
+    ]) {
+      const drifted = structuredClone(evidence);
+      drifted.evidence.find(({ id }: { id: string }) => id === evidenceId).proofLevel =
+        'fixture_characterized';
+      expect(validateEvidenceSchema(drifted)).toBe(false);
+      expect(
+        validateArtifactAuthorityProjections(authority, drifted, estimate, handoff).violations
+      ).toContain(violation);
+    }
+
+    const handoffAssumptionDrift = structuredClone(handoff);
+    handoffAssumptionDrift.artifactEvolution.assumption = 'existing build evolves in place';
+    expect(
+      validateArtifactAuthorityProjections(authority, evidence, estimate, handoffAssumptionDrift)
+        .violations
+    ).toContain('handoff:artifact_evolution_assumption');
+
+    for (const [field, violation] of [
+      ['artifactInventory', 'handoff:artifact_inventory_proof_level'],
+      ['currentTerminalRuleEvaluation', 'handoff:terminal_rule_proof_level'],
+    ]) {
+      const drifted = structuredClone(handoff);
+      drifted.proofLevels[field] = 'fixture_characterized';
+      expect(
+        validateArtifactAuthorityProjections(authority, evidence, estimate, drifted).violations
+      ).toContain(violation);
+    }
+  });
+
   it('characterizes source without consulting mutable ambient standalone output', () => {
     const scan = scanStandalone();
     const committed = JSON.parse(
@@ -452,6 +599,19 @@ describe('ADR-17 artifact and terminal scanner', () => {
       electronEmptyStubPresent: true,
       terminalServiceMarkerPresent: true,
     });
+    expect(committed).toMatchObject({
+      schemaVersion: 2,
+      recordType: STANDALONE_CHARACTERIZATION_RECORD_TYPE,
+      canonicalSourceCommit: STANDALONE_CANONICAL_SOURCE_COMMIT,
+      proofLevel: 'targeted_current_commit_build_observed',
+      characterizationScope: 'exact_current_commit_targeted_standalone_build',
+      historicalProvenance: {
+        authorityPath:
+          'docs/research/hosted-web/phase-0/auth-artifacts/historical-rejected-candidate-artifact-scan.json',
+        authorityRecordType: 'w6-historical-rejected-candidate-artifact-scan',
+        relationship: 'historical_only_not_current_commit_authority',
+      },
+    });
     expect(committed.emitted.files.length).toBeGreaterThan(0);
     expect(scan.source.nativeCatchAllEmptyStub).toBe(true);
     expect(scan.source.broadElectronStub).toBe(true);
@@ -463,6 +623,33 @@ describe('ADR-17 artifact and terminal scanner', () => {
     expect(scan.source).toEqual(committed.source);
     expect(scan.emitted).toMatchObject({ observed: false, files: [] });
     expect(committed.terminalAbsence).toEqual(evaluateV1TerminalAbsence(committed));
+  });
+
+  it('keeps rejected-candidate provenance historical and distinct from current-commit authority', () => {
+    const current = JSON.parse(
+      readFileSync(
+        'docs/research/hosted-web/phase-0/auth-artifacts/observed-artifact-scan.json',
+        'utf8'
+      )
+    );
+    const historical = JSON.parse(
+      readFileSync(
+        'docs/research/hosted-web/phase-0/auth-artifacts/historical-rejected-candidate-artifact-scan.json',
+        'utf8'
+      )
+    );
+    expect(historical).toMatchObject({
+      recordType: 'w6-historical-rejected-candidate-artifact-scan',
+      proofLevel: 'historical_rejected_candidate_build_observed',
+      provenance: {
+        canonicalBaseSha: 'f7d98790eb868714e536f77bd796072ea706911a',
+        disposition: 'rejected_non_integrable_stale_characterization',
+      },
+    });
+    expect(historical.emitted.files).not.toEqual(current.emitted.files);
+    expect(current.historicalProvenance.relationship).toBe(
+      'historical_only_not_current_commit_authority'
+    );
   });
 
   it('rejects stale standalone projections when emitted evidence changes', () => {

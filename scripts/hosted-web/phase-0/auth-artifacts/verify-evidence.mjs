@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 
 import { createRequire } from 'node:module';
-import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 
 import {
   evaluateHostedArtifactContract,
@@ -10,6 +13,9 @@ import {
   repoRoot,
   runAbiSmokeProbe,
   scanStandalone,
+  STANDALONE_CHARACTERIZATION_PATH,
+  STANDALONE_CHARACTERIZATION_RECORD_TYPE,
+  validateArtifactAuthorityProjections,
   validateStandaloneCharacterizationProjection,
 } from './auth-artifacts-spike.mjs';
 import {
@@ -17,6 +23,12 @@ import {
   loadControllerArtifactContract,
   validateControllerArtifactProjection,
 } from '../w4-w6-contract/controller-artifact-contract.mjs';
+import {
+  drainEvidenceEnvelopeId,
+  drainEvidenceEnvelopeSchemaPath,
+  drainEvidenceEnvelopeSchemaSha256,
+  validateW4DrainEvidenceProjection,
+} from '../w4-w6-contract/drain-evidence-envelope.mjs';
 
 const localRequire = createRequire(import.meta.url);
 const requireFromFastify = createRequire(localRequire.resolve('fastify/package.json'));
@@ -29,6 +41,7 @@ const validateEvidence = new Ajv({ allErrors: true, jsonPointers: true }).compil
 for (const file of [
   'evidence.json',
   'estimate-input.json',
+  'historical-rejected-candidate-artifact-scan.json',
   'observed-artifact-scan.json',
   'proposed-hosted-artifact-manifest.json',
   'finding-resolution.json',
@@ -49,6 +62,7 @@ if (!validateController(controller)) {
 }
 
 const evidence = readJson('docs/research/hosted-web/phase-0/auth-artifacts/evidence.json');
+const estimate = readJson('docs/research/hosted-web/phase-0/auth-artifacts/estimate-input.json');
 const expectedIds = [
   'P0.W6.AUTH_TRANSITIONS',
   'P0.W6.PROXY_ORIGIN_THREAT_MATRIX',
@@ -71,6 +85,22 @@ for (const row of evidence.evidence) {
   ) {
     throw new Error(`${row.id}: incomplete evidence shape`);
   }
+}
+
+const nativeProtocolSchema = readJson(
+  'docs/research/hosted-web/phase-0/host-primitives/native-protocol.schema.json'
+);
+const processAnchorProtocol = readJson(
+  'docs/research/hosted-web/phase-0/host-primitives/process-anchor.protocol.json'
+);
+const drainProjection = validateW4DrainEvidenceProjection(
+  nativeProtocolSchema,
+  processAnchorProtocol
+);
+if (!drainProjection.ok) {
+  throw new Error(
+    `controller drain-envelope projection drift: ${drainProjection.violations.join(',')}`
+  );
 }
 
 const w4Projection = readJson(
@@ -98,6 +128,50 @@ if (!artifactGate.contractPasses || artifactGate.releasePasses || artifactGate.h
 const committedScan = readJson(
   'docs/research/hosted-web/phase-0/auth-artifacts/observed-artifact-scan.json'
 );
+const targetedBuildRoot = mkdtempSync(resolve(tmpdir(), 'w6-current-standalone-build-'));
+const targetedBuildEnv = { ...process.env };
+delete targetedBuildEnv.AGENT_TEAMS_DISABLE_SOURCEMAPS;
+try {
+  const targetedBuild = spawnSync(
+    process.execPath,
+    [
+      resolve(repoRoot, 'node_modules/vite/bin/vite.js'),
+      'build',
+      '--config',
+      'docker/vite.standalone.config.ts',
+      '--outDir',
+      targetedBuildRoot,
+      '--emptyOutDir',
+    ],
+    {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      env: targetedBuildEnv,
+    }
+  );
+  if (targetedBuild.status !== 0) {
+    throw new Error(
+      `targeted standalone build failed (${targetedBuild.status}): ${targetedBuild.stderr || targetedBuild.stdout}`
+    );
+  }
+  const targetedBuildScanWithoutTerminal = scanStandalone(repoRoot, {
+    buildRoot: targetedBuildRoot,
+  });
+  const targetedBuildScan = {
+    ...targetedBuildScanWithoutTerminal,
+    terminalAbsence: evaluateV1TerminalAbsence(targetedBuildScanWithoutTerminal),
+  };
+  if (!isDeepStrictEqual(committedScan, targetedBuildScan)) {
+    const differingFields = Object.keys(committedScan).filter(
+      (field) => !isDeepStrictEqual(committedScan[field], targetedBuildScan[field])
+    );
+    throw new Error(
+      `current-commit standalone characterization differs from targeted current build: ${differingFields.join(',')}`
+    );
+  }
+} finally {
+  rmSync(targetedBuildRoot, { recursive: true, force: true });
+}
 const sourceScan = scanStandalone(repoRoot);
 if (JSON.stringify(committedScan.source) !== JSON.stringify(sourceScan.source)) {
   throw new Error('standalone source characterization is stale');
@@ -143,49 +217,54 @@ if (
   throw new Error(`ABI characterization mismatch: ${JSON.stringify(abiProbe)}`);
 }
 
-const handoff = readJson('.codex-handoff/phase-00-w6.json');
+const handoff = readJson('.codex-handoff/phase-00-freeze-fix-w6-artifact-f16.json');
 if (
-  handoff.schemaVersion !== 2 ||
-  handoff.taskId !== 'agent-teams-hosted-web-refactor-phase-00-remediation-w4-w6-v7' ||
-  handoff.jobId !== handoff.taskId ||
-  handoff.packetRevision !== 'phase-00-r3' ||
-  handoff.baseSha !== 'f7d98790eb868714e536f77bd796072ea706911a' ||
-  handoff.canonicalBaseSha !== 'f7d98790eb868714e536f77bd796072ea706911a' ||
-  handoff.sourceWorktree !==
-    '/var/data/agent-teams-hosted-web-refactor/worktrees/phase-00-remediation-w4-w6-v7' ||
-  handoff.remediationProvenance?.approvedV6ReviewSha256 !==
-    '5c4c0ed2792df575dfd74c3a197ff00af6ed2abcc001dd815c39e70a87f7ed7a' ||
-  handoff.remediationProvenance?.supersedingReviewRecordSha256 !==
-    'b68ad9f064e622edc64e96194bd00bea42b5c31467a0503b58b8e826911eaa8b' ||
-  handoff.remediationProvenance?.rejectedIntegrationArchiveSha256 !==
-    '1b49a4f0745b5e67fe8d56c97174ae55af4d9c5edb006112440b467bc9cea1dc' ||
-  handoff.remediationProvenance?.v6PreservedPatchSha256 !==
-    '479f78a3a89a7e132899ede39a7606c59ce9b201ebe04d97df281e3a4825f690' ||
-  handoff.salvage?.sourceTaskId !==
-    'agent-teams-hosted-web-refactor-phase-00-remediation-w4-w6-v5' ||
-  handoff.salvage?.preservedPatch !==
-    '/var/data/agent-teams-hosted-web-refactor/worker-jobs/jobs/agent-teams-hosted-web-refactor-phase-00-remediation-w4-w6-v5/agent-teams-hosted-web-refactor-phase-00-remediation-w4-w6-v5.preserved.patch' ||
-  handoff.salvage?.preservedPatchSha256 !==
-    '183069adf05cb254c846cbd37a7c39ac930b2cb5dd6994f6b5b96dc5d4304d79' ||
-  handoff.salvage?.independentlyVerified !== true ||
-  handoff.headVerifiedBeforeEdits !== true ||
-  handoff.status !== 'characterized'
+  handoff.schemaVersion !== 1 ||
+  handoff.taskId !== 'phase-00-freeze-fix-w6-artifact-f16' ||
+  handoff.canonicalSourceCommit !== '0d1a82fe2fb0c8d73b62cd3b5996b853bef2d7c3' ||
+  handoff.status !== 'remediation_complete_pending_review' ||
+  handoff.currentCommitAuthority?.path !== STANDALONE_CHARACTERIZATION_PATH ||
+  handoff.currentCommitAuthority?.recordType !== STANDALONE_CHARACTERIZATION_RECORD_TYPE ||
+  handoff.currentCommitAuthority?.semanticSha256 !==
+    standaloneProjection.expected.authoritySha256 ||
+  handoff.currentCommitAuthority?.proofLevel !== 'targeted_current_commit_build_observed' ||
+  handoff.currentCommitAuthority?.targetedBuildCompared !== true ||
+  handoff.historicalProvenance?.relationship !== 'historical_only_not_current_commit_authority' ||
+  handoff.drainEnvelopeConsumer?.envelopeId !== drainEvidenceEnvelopeId ||
+  handoff.drainEnvelopeConsumer?.schemaPath !== drainEvidenceEnvelopeSchemaPath ||
+  handoff.drainEnvelopeConsumer?.schemaSha256 !== drainEvidenceEnvelopeSchemaSha256() ||
+  handoff.drainEnvelopeConsumer?.authority !== 'phase-00-controller' ||
+  handoff.drainEnvelopeConsumer?.projection !== 'exact_required_fields_no_lane_owned_wrapper' ||
+  handoff.findings?.some(({ status }) => status !== 'resolved') ||
+  handoff.findings?.length !== 5
 ) {
-  throw new Error('W6 handoff provenance/status is stale');
+  throw new Error('W6 current-commit artifact authority handoff is stale');
+}
+const authorityProjection = validateArtifactAuthorityProjections(
+  evidence.artifactAuthority,
+  evidence,
+  estimate,
+  handoff
+);
+if (!authorityProjection.ok) {
+  throw new Error(
+    `W6 artifact-authority projection drift: ${authorityProjection.violations.join(',')}`
+  );
 }
 if (
   Object.values(handoff.scope).some((value) => value !== false && typeof value === 'boolean') ||
   handoff.scope.disposition !== 'standalone_artifact_rejected_for_hosted_v1'
 ) {
-  throw new Error('W6 handoff overstates r3 admission');
+  throw new Error('W6 artifact-authority handoff overstates admission');
 }
 
 const checkedPaths = [
-  '.codex-handoff/phase-00-w6.json',
+  '.codex-handoff/phase-00-freeze-fix-w6-artifact-f16.json',
   'docs/research/hosted-web/phase-0/auth-artifacts/estimate-input.json',
   'docs/research/hosted-web/phase-0/auth-artifacts/evidence.json',
   'docs/research/hosted-web/phase-0/auth-artifacts/evidence.schema.json',
   'docs/research/hosted-web/phase-0/auth-artifacts/finding-resolution.json',
+  'docs/research/hosted-web/phase-0/auth-artifacts/historical-rejected-candidate-artifact-scan.json',
   'docs/research/hosted-web/phase-0/auth-artifacts/observed-artifact-scan.json',
   'docs/research/hosted-web/phase-0/auth-artifacts/proposed-hosted-artifact-manifest.json',
   'docs/research/hosted-web/phase-0/auth-artifacts/report.md',
@@ -194,6 +273,7 @@ const checkedPaths = [
   'scripts/hosted-web/phase-0/auth-artifacts/auth-artifacts-spike.mjs',
   'scripts/hosted-web/phase-0/auth-artifacts/verify-evidence.mjs',
   'scripts/hosted-web/phase-0/w4-w6-contract/controller-artifact-contract.mjs',
+  'scripts/hosted-web/phase-0/w4-w6-contract/drain-evidence-envelope.mjs',
   'test/architecture/hosted-web/phase-0/auth-artifacts/auth-artifacts-spike.test.ts',
   'test/architecture/hosted-web/phase-0/w4-w6-contract/artifact-contract.test.ts',
 ];
@@ -210,5 +290,5 @@ for (const pattern of [
 }
 
 process.stdout.write(
-  `W6 r3 evidence, exact W4 DTO/artifact consumption, reset admission, current standalone rejection, terminal rule, ABI characterization and provenance passed (controller ${controllerHash})\n`
+  `W6 r3 evidence, controller drain envelope, exact artifact-authority projections, reset admission, exact current-commit targeted standalone rejection, terminal rule, ABI characterization and split historical provenance passed (controller ${controllerHash})\n`
 );

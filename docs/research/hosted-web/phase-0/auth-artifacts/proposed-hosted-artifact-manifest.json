@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "recordType": "w6-standalone-artifact-characterization",
   "phaseStartSha": "a32f509e6d9bd31ba2135940e336729bf90c3d93",
-  "canonicalBaseSha": "f7d98790eb868714e536f77bd796072ea706911a",
-  "proofLevel": "source_observed",
+  "canonicalBaseSha": "6cf53a3d71e1bd34ff71f99968b705a0e1aa939c",
+  "proofLevel": "targeted_current_commit_build_observed",
   "status": "rejected_for_hosted_v1",
   "controllerContractPath": "docs/research/hosted-web/phase-0/w4-w6-contract/controller-artifact-contract.json",
   "controllerContractSha256": "4e8f2b43f47f94586692530cba2f5198f6de3740225b51dfba627f36fc82812f",
@@ -62,8 +62,8 @@
   ],
   "currentStandalone": {
     "authorityPath": "docs/research/hosted-web/phase-0/auth-artifacts/observed-artifact-scan.json",
-    "authorityRecordType": "w6-observed-artifact-scan",
-    "authoritySha256": "50b954be77896963e5e32c5fc9e7785349ecff6bfb5455162671c751551fd3b4",
+    "authorityRecordType": "w6-current-commit-artifact-scan",
+    "authoritySha256": "606046d7d5b461e7293c5ee366c5145b94886e6c4ff2bd316fb428f9d41a06f3",
     "disposition": "rejected_for_hosted_v1"
   },
   "capabilityClaims": {

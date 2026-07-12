@@ -39,6 +39,49 @@
       "status": "resolved",
       "assertions": ["SELF_REVIEW.UNTRACKED.NO_INDEX"],
       "evidenceId": "W6_HANDOFF"
+    },
+    {
+      "id": "P0-FREEZE-W46-C1-001",
+      "status": "resolved_exact_current_commit_authority_with_historical_split",
+      "assertions": [
+        "ARTIFACT.CURRENT_COMMIT.AUTHORITY",
+        "ARTIFACT.HISTORICAL.PROVENANCE.SPLIT",
+        "ARTIFACT.TARGETED_BUILD.EXACT_COMPARE"
+      ],
+      "evidenceId": "P0.W6.ARTIFACT_INVENTORY"
+    },
+    {
+      "id": "P0.C1.W6.001",
+      "status": "resolved_evolution_assumption_and_proof_levels_aligned",
+      "assertions": [
+        "ARTIFACT.EVOLUTION.UNPROVED",
+        "ARTIFACT.PROOF_LEVEL.CURRENT_BUILD",
+        "TERMINAL.EXCLUSION.NOT_ACHIEVED"
+      ],
+      "evidenceId": "P0.W6.ARTIFACT_INVENTORY"
+    },
+    {
+      "id": "P0.C1.DRAIN.001.W6.CONSUME",
+      "status": "resolved_direct_controller_envelope_consumption",
+      "assertions": [
+        "AUTH.DRAIN.CONTROLLER_ENVELOPE",
+        "AUTH.DRAIN.SCHEMA_HASH_PINNED",
+        "AUTH.DRAIN.NO_W6_AUTHORITY_WRAPPER"
+      ],
+      "evidenceId": "P0.W6.AUTH_TRANSITIONS",
+      "dependencyOwner": "phase-00-controller"
+    },
+    {
+      "id": "P0-FREEZE-W6-E1-001",
+      "status": "resolved_all_authority_projections_fail_closed",
+      "assertions": [
+        "ARTIFACT.EVOLUTION.AUTHORITY",
+        "ARTIFACT.ESTIMATE.PROJECTION",
+        "ARTIFACT.INVENTORY.PROOF_LEVEL",
+        "TERMINAL.RULE.PROOF_LEVEL",
+        "ARTIFACT.PROJECTION.NEGATIVES"
+      ],
+      "evidenceId": "P0.W6.ARTIFACT_INVENTORY"
     }
   ],
   "requirements": [
@@ -79,7 +122,8 @@
     "w6": [
       "auth transition contract characterization",
       "PUBLIC_ORIGIN/proxy negative-policy characterization",
-      "current standalone artifact rejection",
+      "exact current-commit standalone artifact rejection",
+      "historical rejected-candidate provenance separation",
       "terminal-absence rule evaluation"
     ],
     "w2": ["machine runtime ingress credentials and provider ingress"],

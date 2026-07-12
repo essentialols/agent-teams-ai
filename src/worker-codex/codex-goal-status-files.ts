@@ -110,6 +110,7 @@ export async function gitWorkspaceStatus(
       path,
       "status",
       "--porcelain",
+      "--untracked-files=all",
     ], { timeout: gitStatusTimeoutMs });
     const changedFiles = stdout
       .split(/\r?\n/)

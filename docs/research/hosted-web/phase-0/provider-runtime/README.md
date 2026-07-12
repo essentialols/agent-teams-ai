@@ -15,9 +15,13 @@ provider payload was used.
   browser/runtime authority intersection: provider settings/auth use `provider.management.*`, team
   launch/stop/delete use `team.lifecycle.*`, and machine ingress cannot make either class of operator
   decision.
-- Environment discovery performs a production-source census across `src/main`, Codex account, and
-  member-work-sync paths instead of trusting a per-file allowlist. Every exact key or explicit
-  wildcard has its own source class, owner, platform scope, execution-unit IDs,
+- Environment discovery performs a production-source census across `src/main`, Codex account,
+  member-work-sync, and the workspace-trust provider-child sanitizer instead of trusting the
+  original three-root boundary. The workspace-trust census independently recognizes exact-key sets
+  and prefix policies, including `CLAUDE_TEAM_ANTHROPIC_AUTH_MODE_API_KEY_HELPER`,
+  `AGENT_TEAMS_RUNTIME_TURN_SETTLED_*`, `AGENT_TEAMS_MCP_*`, and `CLAUDE_TEAM_BOOTSTRAP_*`.
+  Dedicated negatives remove the sanitizer surface and each exact/prefix policy. Every exact key or
+  explicit wildcard has its own source class, owner, platform scope, execution-unit IDs,
   provider/backend/version bindings, credential-exposure-set membership, secret class, exact probe,
   child visibility, redaction rule, and source-observed/target-unverified status. Windows-only and
   POSIX-primary inputs resolve through separate profiles instead of inheriting a broad portable-row

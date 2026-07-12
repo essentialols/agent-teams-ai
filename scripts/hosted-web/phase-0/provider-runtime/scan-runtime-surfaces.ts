@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { extname, join, relative, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -128,6 +128,7 @@ const ENVIRONMENT_DISCOVERY_ROOTS = [
   'src/main',
   'src/features/codex-account',
   'src/features/member-work-sync',
+  'src/features/workspace-trust/main/infrastructure/workspaceTrustPreflightEnv.ts',
 ] as const;
 const ENVIRONMENT_DISCOVERY_EXCLUDED_SEGMENTS = ['/__tests__/', '/renderer/'];
 const PROVIDER_RUNTIME_ROUTING_KEYS = [
@@ -431,6 +432,18 @@ function extractEnvironmentTokens(source: string): string[] {
     );
   }
   for (const match of source.matchAll(
+    /\b[A-Z][A-Z0-9_]*ENV_KEYS\s*=\s*new Set\(\s*\[([\s\S]*?)\]\s*\)/g
+  )) {
+    candidates.push(...extractQuoted(match[1], /['"]([A-Z][A-Za-z0-9_]*|npm_config_[a-z_]+)['"]/g));
+  }
+  for (const match of source.matchAll(
+    /\b[A-Z][A-Z0-9_]*ENV_PREFIXES\s*=\s*\[([\s\S]*?)\]\s*(?:as const)?;/g
+  )) {
+    candidates.push(
+      ...extractQuoted(match[1], /['"]([A-Z][A-Za-z0-9_]*)['"]/g).map((prefix) => `${prefix}*`)
+    );
+  }
+  for (const match of source.matchAll(
     /\b(?:const|let)\s+(?:[A-Za-z][A-Za-z0-9_]*(?:Env|Environment)[A-Za-z0-9_]*|[A-Z][A-Z0-9_]*ENV[A-Z0-9_]*|env)(?:\s*:[^=]+)?\s*=\s*{([\s\S]{0,20000}?)\n\s*};/g
   )) {
     candidates.push(...extractQuoted(match[1], /\b([A-Z][A-Za-z0-9_]{2,})\s*:/g));
@@ -449,6 +462,7 @@ function extractEnvironmentTokens(source: string): string[] {
 function walkProductionSources(root: string, relativeRoot: string): string[] {
   const absoluteRoot = resolve(root, relativeRoot);
   const files: string[] = [];
+  if (statSync(absoluteRoot).isFile()) return [relativeRoot];
   const visit = (directory: string): void => {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
       const absolutePath = join(directory, entry.name);
@@ -645,7 +659,11 @@ export function resolvePerKeyEnvironmentEvidence(document: JsonRecord): JsonReco
             ? 'target_contract'
             : 'source_anchor',
         path: pathById.get(probePathId) ?? '',
-        token: exactKeyProbe ? key : String(group.sourceToken ?? ''),
+        token: exactKeyProbe
+          ? key.endsWith('*')
+            ? key.slice(0, -1)
+            : key
+          : String(group.sourceToken ?? ''),
         assertion: exactKeyProbe
           ? 'path_contains_exact_key'
           : targetProbe

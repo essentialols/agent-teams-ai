@@ -21,6 +21,7 @@ import {
   type SurfaceFixture,
   validateArtifactDocument,
   validateCredentialExposureLinks,
+  validateEnvironmentCompleteness,
   validateEnvironmentSemanticsFixture,
   validateFakeRuntimeMatrix,
   validatePerKeyEnvironmentEvidenceCoverage,
@@ -87,6 +88,15 @@ const ROUTING_SCENARIOS = [
   { providerId: 'codex', runtimeBackend: 'codex_configured' },
   { providerId: 'gemini', runtimeBackend: 'gemini_configured' },
 ] as const;
+
+const WORKSPACE_TRUST_PROHIBITIONS = [
+  'CLAUDE_TEAM_ANTHROPIC_AUTH_MODE_API_KEY_HELPER',
+  'AGENT_TEAMS_RUNTIME_TURN_SETTLED_*',
+  'AGENT_TEAMS_MCP_*',
+  'CLAUDE_TEAM_BOOTSTRAP_*',
+] as const;
+const WORKSPACE_TRUST_ENV_PATH =
+  'src/features/workspace-trust/main/infrastructure/workspaceTrustPreflightEnv.ts';
 
 function routingProvisioningPorts(customConfig: boolean): TeamProvisioningEnvBuilderPorts {
   return {
@@ -276,6 +286,44 @@ describe('Phase 0 W2 runtime surface scanner', () => {
       if (!omittedRow) throw new Error(`missing environment fixture row for ${key}`);
       omittedRow.keys = (omittedRow.keys as string[]).filter((candidate) => candidate !== key);
       expect(validatePerKeyEnvironmentEvidenceCoverage(omitted).join('\n')).toContain(key);
+    }
+  });
+
+  it('rejects omission of the workspace-trust provider-child sanitizer from the census', () => {
+    const environment = artifact('environment-provenance.json');
+    const discovered = discoverEnvironmentKeys(ROOT);
+    for (const policy of WORKSPACE_TRUST_PROHIBITIONS) {
+      expect(discovered.get(policy)).toContain(WORKSPACE_TRUST_ENV_PATH);
+    }
+
+    const withoutWorkspaceTrust = new Map(
+      [...discovered.entries()]
+        .map(
+          ([key, paths]) =>
+            [key, paths.filter((path) => path !== WORKSPACE_TRUST_ENV_PATH)] as const
+        )
+        .filter(([, paths]) => paths.length > 0)
+    );
+    const errors = validateEnvironmentCompleteness(ROOT, environment, withoutWorkspaceTrust).join(
+      '\n'
+    );
+    for (const policy of WORKSPACE_TRUST_PROHIBITIONS) {
+      expect(errors).toContain(`classified key has no source occurrence ${policy}`);
+    }
+  });
+
+  it('rejects omission of each workspace-trust exact and prefix prohibition', () => {
+    const environment = artifact('environment-provenance.json');
+    for (const policy of WORKSPACE_TRUST_PROHIBITIONS) {
+      const omitted = clone(environment);
+      const row = (omitted.records as JsonRecord[]).find((candidate) =>
+        (candidate.keys as string[]).includes(policy)
+      );
+      if (!row) throw new Error(`missing workspace-trust policy row for ${policy}`);
+      row.keys = (row.keys as string[]).filter((candidate) => candidate !== policy);
+      expect(validateEnvironmentCompleteness(ROOT, omitted).join('\n')).toContain(
+        `discovered unclassified key ${policy}`
+      );
     }
   });
 

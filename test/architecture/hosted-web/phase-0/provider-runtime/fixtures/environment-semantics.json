@@ -4950,6 +4950,82 @@
         "path": "src/main/services/team/provisioning/TeamProvisioningEnvBuilder.ts",
         "token": "XDG_STATE_HOME"
       }
+    },
+    {
+      "key": "CLAUDE_TEAM_ANTHROPIC_AUTH_MODE_API_KEY_HELPER",
+      "policyProfileId": "kp-37",
+      "semanticRole": "removed_child_key",
+      "providerBindings": [
+        {
+          "providerId": "anthropic",
+          "backendFamily": "provisioning_cli_primary",
+          "targetDisposition": "forbidden"
+        }
+      ],
+      "platformScope": "cross_platform_or_provider_conditional",
+      "childVisibility": "absent_current_and_target",
+      "credentialExposureSetId": "ces-host-only-denied",
+      "authority": {
+        "path": "src/features/workspace-trust/main/infrastructure/workspaceTrustPreflightEnv.ts",
+        "token": "CLAUDE_TEAM_ANTHROPIC_AUTH_MODE_API_KEY_HELPER"
+      }
+    },
+    {
+      "key": "AGENT_TEAMS_RUNTIME_TURN_SETTLED_*",
+      "policyProfileId": "kp-38",
+      "semanticRole": "removed_child_key",
+      "providerBindings": [
+        {
+          "providerId": "anthropic",
+          "backendFamily": "provisioning_cli_primary",
+          "targetDisposition": "forbidden"
+        }
+      ],
+      "platformScope": "cross_platform_or_provider_conditional",
+      "childVisibility": "absent_current_and_target",
+      "credentialExposureSetId": "ces-host-only-denied",
+      "authority": {
+        "path": "src/features/workspace-trust/main/infrastructure/workspaceTrustPreflightEnv.ts",
+        "token": "AGENT_TEAMS_RUNTIME_TURN_SETTLED_"
+      }
+    },
+    {
+      "key": "AGENT_TEAMS_MCP_*",
+      "policyProfileId": "kp-38",
+      "semanticRole": "removed_child_key",
+      "providerBindings": [
+        {
+          "providerId": "anthropic",
+          "backendFamily": "provisioning_cli_primary",
+          "targetDisposition": "forbidden"
+        }
+      ],
+      "platformScope": "cross_platform_or_provider_conditional",
+      "childVisibility": "absent_current_and_target",
+      "credentialExposureSetId": "ces-host-only-denied",
+      "authority": {
+        "path": "src/features/workspace-trust/main/infrastructure/workspaceTrustPreflightEnv.ts",
+        "token": "AGENT_TEAMS_MCP_"
+      }
+    },
+    {
+      "key": "CLAUDE_TEAM_BOOTSTRAP_*",
+      "policyProfileId": "kp-38",
+      "semanticRole": "removed_child_key",
+      "providerBindings": [
+        {
+          "providerId": "anthropic",
+          "backendFamily": "provisioning_cli_primary",
+          "targetDisposition": "forbidden"
+        }
+      ],
+      "platformScope": "cross_platform_or_provider_conditional",
+      "childVisibility": "absent_current_and_target",
+      "credentialExposureSetId": "ces-host-only-denied",
+      "authority": {
+        "path": "src/features/workspace-trust/main/infrastructure/workspaceTrustPreflightEnv.ts",
+        "token": "CLAUDE_TEAM_BOOTSTRAP_"
+      }
     }
   ],
   "delegatedExecutableSemantics": {

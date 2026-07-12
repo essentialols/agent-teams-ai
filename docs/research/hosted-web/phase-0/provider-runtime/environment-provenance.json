@@ -500,14 +500,47 @@
       "source": "src/main/index.ts",
       "sourceToken": "process.env",
       "discoveryDisposition": "source_discovered"
+    },
+    {
+      "id": "workspace-trust-exact-prohibition",
+      "keys": ["CLAUDE_TEAM_ANTHROPIC_AUTH_MODE_API_KEY_HELPER"],
+      "provenance": "workspace-trust Claude PTY preflight sanitizer removes the inherited helper-mode control before provider-child execution",
+      "providers": ["anthropic"],
+      "classification": "forbidden",
+      "currentBehavior": "explicitly removed from the workspace-trust preflight child environment",
+      "targetRule": "the helper-mode host control remains absent from every workspace-trust Claude provider child",
+      "source": "src/features/workspace-trust/main/infrastructure/workspaceTrustPreflightEnv.ts",
+      "sourceToken": "CLAUDE_TEAM_ANTHROPIC_AUTH_MODE_API_KEY_HELPER",
+      "discoveryDisposition": "source_discovered"
+    },
+    {
+      "id": "workspace-trust-prefix-prohibitions",
+      "keys": [
+        "AGENT_TEAMS_RUNTIME_TURN_SETTLED_*",
+        "AGENT_TEAMS_MCP_*",
+        "CLAUDE_TEAM_BOOTSTRAP_*"
+      ],
+      "provenance": "workspace-trust Claude PTY preflight sanitizer removes every inherited key in the runtime-settled, MCP, and team-bootstrap namespaces",
+      "providers": ["anthropic"],
+      "classification": "forbidden",
+      "currentBehavior": "all matching keys are explicitly removed from the workspace-trust preflight child environment",
+      "targetRule": "the three host-control namespaces remain absent from every workspace-trust Claude provider child",
+      "source": "src/features/workspace-trust/main/infrastructure/workspaceTrustPreflightEnv.ts",
+      "sourceToken": "STRIP_ENV_PREFIXES",
+      "discoveryDisposition": "source_discovered"
     }
   ],
   "sourceDiscovery": {
     "strategy": "repository_production_source_census",
-    "roots": ["src/main", "src/features/codex-account", "src/features/member-work-sync"],
+    "roots": [
+      "src/main",
+      "src/features/codex-account",
+      "src/features/member-work-sync",
+      "src/features/workspace-trust/main/infrastructure/workspaceTrustPreflightEnv.ts"
+    ],
     "excludedSegments": ["/__tests__/", "/renderer/"],
     "extensions": [".ts", ".tsx"],
-    "extractionVersion": 2
+    "extractionVersion": 3
   },
   "keyEvidence": {
     "fields": ["key", "groupId", "policyProfileId", "probePathId"],
@@ -739,6 +772,10 @@
       {
         "id": "sp-57",
         "path": "src/main/services/team/provisioning/TeamProvisioningEnvBuilder.ts"
+      },
+      {
+        "id": "sp-58",
+        "path": "src/features/workspace-trust/main/infrastructure/workspaceTrustPreflightEnv.ts"
       }
     ],
     "rows": [
@@ -1042,7 +1079,21 @@
       ["VITEST", "host-only-and-injection-inputs", "kp-26", "sp-56"],
       ["VITE_BUILD_ID", "host-only-and-injection-inputs", "kp-26", "sp-08"],
       ["VITE_DEV_SERVER_URL", "host-only-and-injection-inputs", "kp-26", "sp-08"],
-      ["VITE_GIT_SHA", "host-only-and-injection-inputs", "kp-26", "sp-08"]
+      ["VITE_GIT_SHA", "host-only-and-injection-inputs", "kp-26", "sp-08"],
+      [
+        "CLAUDE_TEAM_ANTHROPIC_AUTH_MODE_API_KEY_HELPER",
+        "workspace-trust-exact-prohibition",
+        "kp-37",
+        "sp-58"
+      ],
+      [
+        "AGENT_TEAMS_RUNTIME_TURN_SETTLED_*",
+        "workspace-trust-prefix-prohibitions",
+        "kp-38",
+        "sp-58"
+      ],
+      ["AGENT_TEAMS_MCP_*", "workspace-trust-prefix-prohibitions", "kp-38", "sp-58"],
+      ["CLAUDE_TEAM_BOOTSTRAP_*", "workspace-trust-prefix-prohibitions", "kp-38", "sp-58"]
     ]
   },
   "perKeyModel": {
@@ -2344,6 +2395,48 @@
       ],
       "childVisibility": "provider_child_visible_when_selected",
       "semanticRole": "emitted_child_key"
+    },
+    {
+      "id": "kp-37",
+      "sourceClass": "production_source_census",
+      "owner": "team_provisioning_policy",
+      "executionUnitIds": ["unit-primary-provisioning"],
+      "providerBindings": [
+        {
+          "providerId": "anthropic",
+          "backendFamily": "provisioning_cli_primary",
+          "versionScope": "canonical-base-c72fd2018-source-observed",
+          "targetDisposition": "forbidden"
+        }
+      ],
+      "credentialExposureSetIds": ["ces-host-only-denied"],
+      "secretClass": "non_secret_configuration",
+      "childVisibility": "absent_current_and_target",
+      "redactionRule": "record the exact prohibited key name only; never record inherited values",
+      "claimStatus": "source_observed_not_target_verified",
+      "platformScope": "cross_platform_or_provider_conditional",
+      "semanticRole": "removed_child_key"
+    },
+    {
+      "id": "kp-38",
+      "sourceClass": "production_source_census",
+      "owner": "team_provisioning_policy",
+      "executionUnitIds": ["unit-primary-provisioning"],
+      "providerBindings": [
+        {
+          "providerId": "anthropic",
+          "backendFamily": "provisioning_cli_primary",
+          "versionScope": "canonical-base-c72fd2018-source-observed",
+          "targetDisposition": "forbidden"
+        }
+      ],
+      "credentialExposureSetIds": ["ces-host-only-denied"],
+      "secretClass": "ambient_unknown_may_contain_secret",
+      "childVisibility": "absent_current_and_target",
+      "redactionRule": "record prohibited namespace prefixes only; never enumerate or record matching inherited values",
+      "claimStatus": "source_observed_not_target_verified",
+      "platformScope": "cross_platform_or_provider_conditional",
+      "semanticRole": "removed_child_key"
     }
   ]
 }

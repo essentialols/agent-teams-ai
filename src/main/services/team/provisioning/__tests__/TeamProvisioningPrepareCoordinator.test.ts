@@ -148,7 +148,7 @@ describe('TeamProvisioningPrepareCoordinator', () => {
 
   it('deeply isolates future prepare result fields between coalesced callers', async () => {
     type FuturePrepareResult = TeamProvisioningPrepareResult & {
-      runtimeFacts: { models: Array<{ id: string }> };
+      runtimeFacts: { models: { id: string }[] };
     };
     const sharedResult: FuturePrepareResult = {
       ready: true,
@@ -165,7 +165,7 @@ describe('TeamProvisioningPrepareCoordinator', () => {
       FuturePrepareResult,
     ];
 
-    firstResult.runtimeFacts.models[0]!.id = 'mutated';
+    firstResult.runtimeFacts.models[0].id = 'mutated';
 
     expect(secondResult.runtimeFacts.models).toEqual([{ id: 'original' }]);
     expect(sharedResult.runtimeFacts.models).toEqual([{ id: 'original' }]);
@@ -323,7 +323,7 @@ describe('TeamProvisioningPrepareCoordinator', () => {
 
   it('preserves and deeply isolates future cached fields through coordinator cache hits', async () => {
     type FutureProbeResult = ProbeResult & {
-      runtimeFacts: { models: Array<{ id: string }> };
+      runtimeFacts: { models: { id: string }[] };
     };
     const cwd = '/workspace/prepare-cache-hit-future-fields';
     const cacheKey = createProbeCacheKey(cwd, 'codex');
@@ -342,7 +342,7 @@ describe('TeamProvisioningPrepareCoordinator', () => {
     const coordinator = createCoordinator({ providerProbeCache });
 
     const first = (await coordinator.getCachedOrProbeResult(cwd, 'codex')) as FutureProbeResult;
-    first.runtimeFacts.models[0]!.id = 'mutated';
+    first.runtimeFacts.models[0].id = 'mutated';
     const second = (await coordinator.getCachedOrProbeResult(cwd, 'codex')) as FutureProbeResult;
 
     expect(second).toEqual({
@@ -478,7 +478,7 @@ describe('TeamProvisioningPrepareCoordinator', () => {
     type FutureProbeResult = ProbeResult & {
       cacheKey: { source: string };
       cachedAtMs: { source: string };
-      runtimeFacts: { models: Array<{ id: string }> };
+      runtimeFacts: { models: { id: string }[] };
     };
     const cache = createInMemoryProviderProbeCachePort();
     const publication = deferredPublication();
@@ -500,8 +500,8 @@ describe('TeamProvisioningPrepareCoordinator', () => {
       FutureProbeResult,
     ];
 
-    first.runtimeFacts.models[0]!.id = 'first-mutated';
-    publishedResult.runtimeFacts.models[0]!.id = 'publisher-mutated';
+    first.runtimeFacts.models[0].id = 'first-mutated';
+    publishedResult.runtimeFacts.models[0].id = 'publisher-mutated';
     const cacheHit = (await cache.getOrCreate('probe-key', async () => {
       throw new Error('Expected the cached probe result.');
     })) as FutureProbeResult;
@@ -510,7 +510,7 @@ describe('TeamProvisioningPrepareCoordinator', () => {
     expect(cacheHit.cacheKey).toEqual({ source: 'probe-result' });
     expect(cacheHit.cachedAtMs).toEqual({ source: 'probe-result' });
     expect(cacheHit.runtimeFacts.models).toEqual([{ id: 'original' }]);
-    cacheHit.runtimeFacts.models[0]!.id = 'cache-hit-mutated';
+    cacheHit.runtimeFacts.models[0].id = 'cache-hit-mutated';
     expect(cache.get('probe-key')).toMatchObject({
       result: { runtimeFacts: { models: [{ id: 'original' }] } },
     });

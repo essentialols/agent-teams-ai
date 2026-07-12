@@ -22,6 +22,7 @@ const POSTHOG_IDENTIFY_EVENT = '$identify';
 const POSTHOG_SET_EVENT = '$set';
 const POSTHOG_APP_SESSION_START_EVENT = 'app:session_start';
 const POSTHOG_PERSISTENCE_NAME = 'agent_teams_posthog_identity_v1';
+const POSTHOG_DEBUG_STORAGE_KEY = 'ph_debug';
 const POSTHOG_APP_SESSION_START_PROPERTIES: Properties = {
   surface: 'renderer',
 };
@@ -41,6 +42,12 @@ type PostHogIdentityContext = {
 
 function getElectronApi(): ElectronAPI | undefined {
   return (window as Window & { electronAPI?: ElectronAPI }).electronAPI;
+}
+
+function disablePostHogDebugLogging(): void {
+  const postHogWindow = window as Window & { POSTHOG_DEBUG?: boolean };
+  Reflect.deleteProperty(postHogWindow, 'POSTHOG_DEBUG');
+  window.localStorage?.removeItem(POSTHOG_DEBUG_STORAGE_KEY);
 }
 
 function normalizeEnvValue(value: unknown): string {
@@ -166,6 +173,7 @@ export function initPostHogRenderer(identityContext?: PostHogIdentityContext): v
 
   const options: Partial<PostHogConfig> = {
     api_host: getPostHogHost(),
+    debug: false,
     autocapture: false,
     capture_pageview: false,
     capture_pageleave: false,
@@ -204,13 +212,9 @@ export function initPostHogRenderer(identityContext?: PostHogIdentityContext): v
 
       return null;
     },
-    loaded: (client) => {
-      if (import.meta.env.DEV) {
-        client.debug();
-      }
-    },
   };
 
+  disablePostHogDebugLogging();
   posthog.init(apiKey, options);
   initialized = true;
   pausePostHogCapturing();

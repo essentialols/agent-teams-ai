@@ -102,6 +102,8 @@ describe('PostHog identity sync', () => {
       posthogMock.get_distinct_id.mockReturnValue('anonymous-after-reset');
     });
     clearElectronApiForTest();
+    window.localStorage.clear();
+    Reflect.deleteProperty(window as Window & { POSTHOG_DEBUG?: boolean }, 'POSTHOG_DEBUG');
   });
 
   it('does not initialize or capture before the app identity bridge is available', async () => {
@@ -153,6 +155,7 @@ describe('PostHog identity sync', () => {
     expect(posthogMock.init).toHaveBeenCalledWith(
       'phc_test',
       expect.objectContaining({
+        debug: false,
         bootstrap: {
           distinctID: 'stable-client-id',
           isIdentifiedID: true,
@@ -472,5 +475,34 @@ describe('PostHog identity sync', () => {
       prompt_length_bucket: '201_1000',
       team_size_bucket: '2_5',
     });
+  });
+
+  it('clears persisted PostHog debug logging before sdk init', async () => {
+    window.localStorage.setItem('ph_debug', 'true');
+    Object.defineProperty(window, 'POSTHOG_DEBUG', {
+      configurable: true,
+      value: true,
+      writable: true,
+    });
+    setElectronApiForTest({
+      telemetry: {
+        getSentryContext: vi.fn().mockResolvedValue({
+          userId: 'stable-client-id',
+          tags: { identity_source: 'created' },
+        }),
+      },
+    });
+    const posthogModule = await loadPostHogModule();
+
+    posthogModule.syncPostHogTelemetry(true);
+
+    await vi.waitFor(() => {
+      expect(posthogMock.init).toHaveBeenCalledWith(
+        'phc_test',
+        expect.objectContaining({ debug: false })
+      );
+    });
+    expect(window.localStorage.getItem('ph_debug')).toBeNull();
+    expect((window as Window & { POSTHOG_DEBUG?: boolean }).POSTHOG_DEBUG).toBeUndefined();
   });
 });

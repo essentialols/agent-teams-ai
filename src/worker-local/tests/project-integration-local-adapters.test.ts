@@ -406,10 +406,67 @@ describe("local project integration adapters", () => {
       },
     };
     await writer.record({ ledgerRoot, decision: base });
+    await expect(writer.assertCanRecord({
+      ledgerRoot,
+      decision: { ...base, archivePath: "/archive/two" },
+    })).rejects.toThrow("consumed_output_ledger_terminal_conflict");
     await expect(writer.record({
       ledgerRoot,
       decision: { ...base, archivePath: "/archive/two" },
     })).rejects.toThrow("consumed_output_ledger_terminal_conflict");
+  });
+
+  it("preserves a rejected attempt when a later attempt integrates the same worker", async () => {
+    const fixture = await createGitFixture();
+    const writer = new LocalConsumedOutputLedgerWriter();
+    const ledgerRoot = join(fixture.rootDir, "ledger");
+    const backup = {
+      workspace: fixture.workspacePath,
+      statusPath: "/archive/status",
+      patchPath: "/archive/patch",
+    };
+    await writer.record({
+      ledgerRoot,
+      decision: {
+        schemaVersion: 1,
+        jobId: "worker-1",
+        attemptId: "rejected-attempt",
+        status: "rejected",
+        closedAt: "2026-07-12T00:00:00.000Z",
+        archivePath: "/archive/rejected",
+        note: "rejected metadata-only attempt",
+        backup,
+      },
+    });
+    const integrated = {
+      schemaVersion: 1 as const,
+      jobId: "worker-1",
+      attemptId: "integrated-attempt",
+      status: "integrated" as const,
+      closedAt: "2026-07-12T01:00:00.000Z",
+      commitSha: "abc123",
+      archivePath: "/archive/integrated",
+      note: "integrated reviewed output",
+      backup,
+    };
+
+    await expect(writer.assertCanRecord({ ledgerRoot, decision: integrated }))
+      .resolves.toBeUndefined();
+    await writer.record({ ledgerRoot, decision: integrated });
+
+    const integratedRecord = JSON.parse(await readFile(
+      join(ledgerRoot, "items", "worker-1--integrated-attempt.json"),
+      "utf8",
+    )) as Record<string, unknown>;
+    expect(integratedRecord).toMatchObject({
+      status: "integrated",
+      attemptId: "integrated-attempt",
+      commitSha: "abc123",
+    });
+    await expect(readFile(
+      join(ledgerRoot, "items", "worker-1--rejected-attempt.json"),
+      "utf8",
+    )).resolves.toContain('"status": "rejected"');
   });
 
   it("runs pnpm checks through corepack when pnpm is not directly installed", async () => {

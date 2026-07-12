@@ -42,6 +42,10 @@ export interface IntegratedOutputLedgerPort {
     readonly commitSha: string;
   }): Promise<IntegratedOutputLedgerPreparation>;
 
+  preflightFinalize(input: {
+    readonly preparation: IntegratedOutputLedgerPreparation;
+  }): Promise<void>;
+
   finalize(input: {
     readonly preparation: IntegratedOutputLedgerPreparation;
     readonly pushedAt: string;

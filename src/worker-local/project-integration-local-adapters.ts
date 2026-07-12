@@ -233,6 +233,32 @@ export class LocalGitIntegrationAdapter implements GitPort {
     );
   }
 
+  async remoteBranchCommit(input: {
+    readonly workspacePath: string;
+    readonly remote: string;
+    readonly branch: string;
+  }): Promise<string | null> {
+    const workspacePath = await canonicalDirectory(input.workspacePath);
+    const result = await this.git(
+      ["ls-remote", "--refs", input.remote, `refs/heads/${input.branch}`],
+      workspacePath,
+    );
+    const output = result.stdout.trim();
+    if (!output) return null;
+    const lines = output.split("\n");
+    const [commit, ref, ...extraFields] = lines[0]!.trim().split(/\s+/);
+    if (
+      lines.length !== 1 ||
+      extraFields.length > 0 ||
+      !commit ||
+      !/^[a-f0-9]{40}$/i.test(commit) ||
+      ref !== `refs/heads/${input.branch}`
+    ) {
+      throw new Error("local_git_integration_remote_ref_invalid");
+    }
+    return commit;
+  }
+
   async currentBranch(input: {
     readonly workspacePath: string;
   }): Promise<string> {

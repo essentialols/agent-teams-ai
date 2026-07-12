@@ -26,14 +26,30 @@ const execFileAsync = promisify(execFile);
 
 export class LocalConsumedOutputLedgerWriter
   implements ConsumedOutputLedgerWriterPort {
+  async assertCanRecord(input: {
+    readonly ledgerRoot: string;
+    readonly decision: TerminalOutputDecision;
+  }): Promise<void> {
+    const ledgerPath = terminalLedgerPath(input.ledgerRoot, input.decision);
+    let existing: string;
+    try {
+      existing = await readFile(ledgerPath, "utf8");
+    } catch (error) {
+      if (isNodeErrorCode(error, "ENOENT")) return;
+      throw error;
+    }
+    if (!sameTerminalDecision(existing, input.decision)) {
+      throw new Error("consumed_output_ledger_terminal_conflict");
+    }
+  }
+
   async record(input: {
     readonly ledgerRoot: string;
     readonly decision: TerminalOutputDecision;
   }): Promise<TerminalOutputDecisionReceipt> {
-    const ledgerPath = join(
+    const ledgerPath = terminalLedgerPath(
       input.ledgerRoot,
-      "items",
-      `${safeLedgerName(input.decision.jobId)}.json`,
+      input.decision,
     );
     await mkdir(dirname(ledgerPath), { recursive: true });
     const contents = `${JSON.stringify(ledgerRecord(input.decision), null, 2)}\n`;
@@ -109,30 +125,23 @@ export class LocalIntegratedOutputLedgerAdapter
     return preparation;
   }
 
+  async preflightFinalize(input: {
+    readonly preparation: IntegratedOutputLedgerPreparation;
+  }): Promise<void> {
+    await this.writer.assertCanRecord({
+      ledgerRoot: this.requiredLedgerRoot(),
+      decision: integratedDecision(input.preparation, "1970-01-01T00:00:00.000Z"),
+    });
+  }
+
   async finalize(input: {
     readonly preparation: IntegratedOutputLedgerPreparation;
     readonly pushedAt: string;
   }): Promise<IntegratedOutputLedgerReceipt> {
     const ledgerRoot = this.requiredLedgerRoot();
-    const note = `Integrated reviewed worker output via project lifecycle attempt ${input.preparation.attemptId}.`;
     const receipt = await this.writer.record({
       ledgerRoot,
-      decision: {
-        schemaVersion: 1,
-        jobId: input.preparation.workerJobId,
-        attemptId: input.preparation.attemptId,
-        status: "integrated",
-        closedAt: input.pushedAt,
-        commitSha: input.preparation.commitSha,
-        archivePath: input.preparation.archivePath,
-        note,
-        backup: {
-          workspace: input.preparation.workerWorkspacePath,
-          statusPath: input.preparation.statusPath,
-          patchPath: input.preparation.patchPath,
-          numstatPath: input.preparation.numstatPath,
-        },
-      },
+      decision: integratedDecision(input.preparation, input.pushedAt),
     });
     return {
       ledgerPath: receipt.ledgerPath,
@@ -350,6 +359,42 @@ function ledgerRecord(decision: TerminalOutputDecision): Record<string, unknown>
       ...(decision.commitSha ? { commit: decision.commitSha } : {}),
     }],
   };
+}
+
+function integratedDecision(
+  preparation: IntegratedOutputLedgerPreparation,
+  pushedAt: string,
+): TerminalOutputDecision {
+  return {
+    schemaVersion: 1,
+    jobId: preparation.workerJobId,
+    attemptId: preparation.attemptId,
+    status: "integrated",
+    closedAt: pushedAt,
+    commitSha: preparation.commitSha,
+    archivePath: preparation.archivePath,
+    note: `Integrated reviewed worker output via project lifecycle attempt ${preparation.attemptId}.`,
+    backup: {
+      workspace: preparation.workerWorkspacePath,
+      statusPath: preparation.statusPath,
+      patchPath: preparation.patchPath,
+      numstatPath: preparation.numstatPath,
+    },
+  };
+}
+
+function terminalLedgerPath(
+  ledgerRoot: string,
+  decision: TerminalOutputDecision,
+): string {
+  const attemptSuffix = decision.attemptId
+    ? `--${safeLedgerName(decision.attemptId)}`
+    : "";
+  return join(
+    ledgerRoot,
+    "items",
+    `${safeLedgerName(decision.jobId)}${attemptSuffix}.json`,
+  );
 }
 
 function safeLedgerName(value: string): string {

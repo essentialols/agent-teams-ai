@@ -54,6 +54,12 @@ export interface GitPort {
     readonly force: boolean;
   }): Promise<void> | void;
 
+  remoteBranchCommit(input: {
+    readonly workspacePath: string;
+    readonly remote: string;
+    readonly branch: string;
+  }): Promise<string | null> | string | null;
+
   currentBranch(input: {
     readonly workspacePath: string;
   }): Promise<string> | string;

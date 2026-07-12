@@ -53,6 +53,7 @@ export async function pushApprovedCommit(
       attempt,
       commitSha: attempt.pushAttempt.commitSha,
     });
+    await deps.integratedOutputLedger.preflightFinalize({ preparation });
     await deps.integratedOutputLedger.finalize({
       preparation,
       pushedAt: attempt.pushAttempt.pushedAt,
@@ -95,13 +96,21 @@ export async function pushApprovedCommit(
     attempt,
     commitSha: attempt.commitCandidate.commitSha,
   });
-  await deps.git.push({
+  await deps.integratedOutputLedger.preflightFinalize({ preparation });
+  const remoteCommit = await deps.git.remoteBranchCommit({
     workspacePath: attempt.targetWorkspacePath,
     remote,
     branch,
-    commitSha: attempt.commitCandidate.commitSha,
-    force,
   });
+  if (remoteCommit !== attempt.commitCandidate.commitSha) {
+    await deps.git.push({
+      workspacePath: attempt.targetWorkspacePath,
+      remote,
+      branch,
+      commitSha: attempt.commitCandidate.commitSha,
+      force,
+    });
+  }
   const pushedAt = nowIso(deps.clock);
   await deps.integratedOutputLedger.finalize({ preparation, pushedAt });
   const updated = markPushed(attempt, {

@@ -223,7 +223,11 @@ describe("project integration safety kernel e2e", () => {
       status: ProjectAdmissionDecisionStatus.Allowed,
     });
 
-    const ledgerPath = join(ledgerRoot, "items", "synthetic-worker-1.json");
+    const ledgerPath = join(
+      ledgerRoot,
+      "items",
+      "synthetic-worker-1--synthetic-attempt-1.json",
+    );
     expect(JSON.parse(await readFile(ledgerPath, "utf8"))).toMatchObject({
       jobId: "synthetic-worker-1",
       status: "integrated",
@@ -340,7 +344,7 @@ describe("project integration safety kernel e2e", () => {
       const rawRecord = JSON.parse(await readFile(join(
         ledgerRoot,
         "items",
-        "synthetic-rejected-worker-1.json",
+        "synthetic-rejected-worker-1--synthetic-rejected-attempt-1.json",
       ), "utf8"));
       expect(rawRecord).toMatchObject({
         status: "rejected",

@@ -1,0 +1,98 @@
+{
+  "$schema": "./canonical-index.schema.json",
+  "schemaVersion": 1,
+  "indexType": "lane-identity",
+  "controllerOwner": "agent-teams-hosted-web-refactor-controller-v2",
+  "phaseId": "phase-00",
+  "phaseStartSha": "a32f509e6d9bd31ba2135940e336729bf90c3d93",
+  "currentIntegrationCommit": "0bf8f2d105def1fa34dd8dedfb8d345d720dc35e",
+  "generatedAt": "2026-07-12T01:47:35Z",
+  "lanes": [
+    {
+      "laneId": "w1",
+      "producerJobId": "agent-teams-hosted-web-refactor-phase-00-remediation-w1-v9",
+      "packetRevision": "phase-00-r2",
+      "phaseStartSha": "a32f509e6d9bd31ba2135940e336729bf90c3d93",
+      "sourceBaseSha": "f7d98790eb868714e536f77bd796072ea706911a",
+      "integratedAtCommit": "89c1358925033d480bcfe3bdfee6c899df556431",
+      "currentState": "integrated-current",
+      "handoff": {
+        "path": ".codex-handoff/phase-00-w1.json",
+        "sha256": "0cc95df4fe153e046788d8592dda638cfd2ebf199133f670917db22bab32a10e",
+        "scope": "repository"
+      },
+      "identityCorrection": "The producer field laneId=w1-remediation-v9 is historical job identity; the controller canonical lane is w1."
+    },
+    {
+      "laneId": "w2",
+      "producerJobId": "agent-teams-hosted-web-refactor-phase-00-w2-targeted-fix-a1",
+      "packetRevision": "phase-00-r2",
+      "phaseStartSha": "a32f509e6d9bd31ba2135940e336729bf90c3d93",
+      "sourceBaseSha": "c72fd201867b9bcd1ef77d5e0f95ba379adb4fca",
+      "integratedAtCommit": "0bf8f2d105def1fa34dd8dedfb8d345d720dc35e",
+      "currentState": "integrated-current",
+      "handoff": {
+        "path": ".codex-handoff/phase-00-w2.json",
+        "sha256": "d5064a798c6322642f26542214e317cd16ec2b38594efada6d0c8a481430d98f",
+        "scope": "repository"
+      },
+      "identityCorrection": "The producer incorrectly labeled its source base c72fd201... as phaseStartSha; a32f509e... is the sole Phase 0 start."
+    },
+    {
+      "laneId": "w3",
+      "producerJobId": "agent-teams-hosted-web-refactor-phase-00-remediation-w3-v1",
+      "packetRevision": "phase-00-r2",
+      "phaseStartSha": "a32f509e6d9bd31ba2135940e336729bf90c3d93",
+      "sourceBaseSha": "0e8431b1935c71a2e77bea1384b134ee25c8aa12",
+      "integratedAtCommit": "7f23e7b628b09e8fbed71c914af5e665f14dab25",
+      "currentState": "integrated-current",
+      "handoff": {
+        "path": ".codex-handoff/phase-00-w3.json",
+        "sha256": "02108287b2f1c1a25ce1cd80ffe5b7808cc5afc0f51f6aec15c46c8bd7b28816",
+        "scope": "repository"
+      }
+    },
+    {
+      "laneId": "w4",
+      "producerJobId": "agent-teams-hosted-web-refactor-phase-00-remediation-w4-w6-v7",
+      "packetRevision": "phase-00-r3",
+      "phaseStartSha": "a32f509e6d9bd31ba2135940e336729bf90c3d93",
+      "sourceBaseSha": "f7d98790eb868714e536f77bd796072ea706911a",
+      "integratedAtCommit": "c72fd201867b9bcd1ef77d5e0f95ba379adb4fca",
+      "currentState": "integrated-current",
+      "handoff": {
+        "path": ".codex-handoff/phase-00-w4.json",
+        "sha256": "87492c0695d241e07b9a6a9ea11c0dca744af2c816e64f47e4f12fc1d058b7a6",
+        "scope": "repository"
+      }
+    },
+    {
+      "laneId": "w5",
+      "producerJobId": "agent-teams-hosted-web-refactor-phase-00-remediation-w5-v3",
+      "packetRevision": "phase-00-r2",
+      "phaseStartSha": "a32f509e6d9bd31ba2135940e336729bf90c3d93",
+      "sourceBaseSha": "648bebed68f5a64c984e83b441e14dd7c587c403",
+      "integratedAtCommit": "ffaecae3fc70a42df1ac49c65469f84515ea5ed8",
+      "currentState": "integrated-current",
+      "handoff": {
+        "path": ".codex-handoff/phase-00-w5.json",
+        "sha256": "6b33b0323d928c3bdd63e4cba5d33bf82806a3f205dfbf2a31d3fcf497ddb051",
+        "scope": "repository"
+      }
+    },
+    {
+      "laneId": "w6",
+      "producerJobId": "agent-teams-hosted-web-refactor-phase-00-remediation-w4-w6-v7",
+      "packetRevision": "phase-00-r3",
+      "phaseStartSha": "a32f509e6d9bd31ba2135940e336729bf90c3d93",
+      "sourceBaseSha": "f7d98790eb868714e536f77bd796072ea706911a",
+      "integratedAtCommit": "c72fd201867b9bcd1ef77d5e0f95ba379adb4fca",
+      "currentState": "integrated-current",
+      "handoff": {
+        "path": ".codex-handoff/phase-00-w6.json",
+        "sha256": "61d8ff2016dbc117cfbea60e8fbe7de519b18a38b06f62706a6f6e16356c8001",
+        "scope": "repository"
+      }
+    }
+  ]
+}

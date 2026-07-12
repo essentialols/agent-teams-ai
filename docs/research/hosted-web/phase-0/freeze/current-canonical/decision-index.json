@@ -1,0 +1,80 @@
+{
+  "$schema": "./canonical-index.schema.json",
+  "schemaVersion": 1,
+  "indexType": "decision",
+  "controllerOwner": "agent-teams-hosted-web-refactor-controller-v2",
+  "phaseId": "phase-00",
+  "phaseStartSha": "a32f509e6d9bd31ba2135940e336729bf90c3d93",
+  "currentIntegrationCommit": "0bf8f2d105def1fa34dd8dedfb8d345d720dc35e",
+  "generatedAt": "2026-07-12T01:47:35Z",
+  "decisions": [
+    {
+      "decisionId": "P0.C1.IDENTITY.001",
+      "status": "resolved",
+      "decision": "The controller-owned lane identity index is the sole current identity authority for W1-W6. All lanes share phaseStartSha a32f509e6d9bd31ba2135940e336729bf90c3d93 and current integration commit 0bf8f2d105def1fa34dd8dedfb8d345d720dc35e.",
+      "authorityPaths": [
+        "docs/research/hosted-web/phase-0/freeze/current-canonical/lane-identity-index.json"
+      ]
+    },
+    {
+      "decisionId": "P0.C1.STALE.001",
+      "status": "resolved",
+      "decision": "Historical producer, review, audit, ledger and baseline records remain immutable evidence but no longer supply current lane identity, disposition, decision, or integration status.",
+      "authorityPaths": [
+        "docs/research/hosted-web/phase-0/freeze/current-canonical/supersession-index.json"
+      ]
+    },
+    {
+      "decisionId": "P0.CURRENT.PHASE_START",
+      "status": "accepted",
+      "decision": "a32f509e6d9bd31ba2135940e336729bf90c3d93 is the one true Phase 0 phaseStartSha. A lane source base, remediation base, review base, or integration commit is never a substitute.",
+      "authorityPaths": [
+        "docs/research/hosted-web/phase-0/freeze/current-canonical/lane-identity-index.json",
+        "docs/research/hosted-web/phase-0/freeze/current-canonical/supersession-index.json"
+      ]
+    },
+    {
+      "decisionId": "P0.CURRENT.W1.ADOPTION",
+      "status": "accepted",
+      "decision": "Adopt W1 v9 as the current W1 evidence bundle at integration commit 89c1358925033d480bcfe3bdfee6c899df556431.",
+      "authorityPaths": [
+        "docs/research/hosted-web/phase-0/freeze/current-canonical/evidence-index.json"
+      ]
+    },
+    {
+      "decisionId": "P0.CURRENT.W2.ADOPTION",
+      "status": "accepted",
+      "decision": "Adopt the approved W2 targeted A1 evidence bundle at integration commit 0bf8f2d105def1fa34dd8dedfb8d345d720dc35e while superseding its incorrect phaseStartSha claim.",
+      "authorityPaths": [
+        "docs/research/hosted-web/phase-0/freeze/current-canonical/evidence-index.json",
+        "docs/research/hosted-web/phase-0/freeze/current-canonical/supersession-index.json"
+      ]
+    },
+    {
+      "decisionId": "P0.CURRENT.W3_W5.ADOPTION",
+      "status": "narrowed",
+      "decision": "Adopt W3 and W5 evidence as a compatible evidence-only pair; retain all recorded later-phase and final-topology limitations.",
+      "authorityPaths": [
+        "docs/research/hosted-web/phase-0/freeze/current-canonical/review-disposition-index.json",
+        "docs/research/hosted-web/phase-0/freeze/current-canonical/evidence-index.json"
+      ]
+    },
+    {
+      "decisionId": "P0.CURRENT.W4_W6.ADOPTION",
+      "status": "narrowed",
+      "decision": "Adopt the approved paired W4/W6 characterization bundle without treating it as final-image admission, hosted mutation readiness, or terminal implementation.",
+      "authorityPaths": [
+        "docs/research/hosted-web/phase-0/freeze/current-canonical/review-disposition-index.json",
+        "docs/research/hosted-web/phase-0/freeze/current-canonical/evidence-index.json"
+      ]
+    },
+    {
+      "decisionId": "P0.CURRENT.HISTORICAL_PRESERVATION",
+      "status": "accepted",
+      "decision": "No historical file is rewritten. Supersession changes only which controller-owned record is authoritative for current state and interpretation.",
+      "authorityPaths": [
+        "docs/research/hosted-web/phase-0/freeze/current-canonical/supersession-index.json"
+      ]
+    }
+  ]
+}

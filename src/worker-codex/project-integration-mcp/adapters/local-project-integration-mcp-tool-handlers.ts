@@ -37,6 +37,7 @@ function localProjectIntegrationDeps(
   controller: ProjectIntegrationMcpController,
 ): ProjectIntegrationMcpUseCaseDeps {
   const rootDir = join(controller.controller.jobRootDir, "project-integration");
+  const archiveRoot = projectIntegrationArchiveRoot(controller);
   return {
     store: new LocalIntegrationAttemptStore({ rootDir }),
     git: new LocalGitIntegrationAdapter({
@@ -48,7 +49,7 @@ function localProjectIntegrationDeps(
     ),
     integratedOutputLedger: new LocalIntegratedOutputLedgerAdapter({
       ledgerRoots: controller.scope.consumedOutputLedgerRoots ?? [],
-      archiveRoot: join(controller.controller.jobRootDir, "archives"),
+      archiveRoot,
     }),
     checks: new LocalProjectCheckRunner(),
     scanner: new SimpleSecretScanner(),
@@ -65,5 +66,12 @@ function projectIntegrationAllowedPatchRoots(
   return [
     ...(controller.scope.workspaceRoots ?? []),
     ...(controller.scope.worktreeRoots ?? []),
+    projectIntegrationArchiveRoot(controller),
   ];
+}
+
+function projectIntegrationArchiveRoot(
+  controller: ProjectIntegrationMcpController,
+): string {
+  return join(controller.controller.jobRootDir, "archives");
 }

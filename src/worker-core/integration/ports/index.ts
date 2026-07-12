@@ -1,5 +1,7 @@
 export * from "./check-runner-port";
+export * from "./commit-identity-port";
 export * from "./git-port";
+export * from "./integrated-output-ledger-port";
 export * from "./integration-attempt-store-port";
 export * from "./integration-audit-port";
 export * from "./secret-scanner-port";

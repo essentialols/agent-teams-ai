@@ -2,6 +2,8 @@ import { join } from "node:path";
 import { LocalIntegrationAttemptStore } from "@vioxen/subscription-runtime/store-local-file";
 import {
   LocalGitIntegrationAdapter,
+  ConfiguredCommitIdentityAdapter,
+  LocalIntegratedOutputLedgerAdapter,
   LocalProjectCheckRunner,
   LocalWorkspaceIntegrationLock,
   SimpleSecretScanner,
@@ -39,6 +41,13 @@ function localProjectIntegrationDeps(
     store: new LocalIntegrationAttemptStore({ rootDir }),
     git: new LocalGitIntegrationAdapter({
       allowedPatchRoots: controller.scope.workspaceRoots ?? [],
+    }),
+    commitIdentity: new ConfiguredCommitIdentityAdapter(
+      controller.scope.commitIdentity,
+    ),
+    integratedOutputLedger: new LocalIntegratedOutputLedgerAdapter({
+      ledgerRoots: controller.scope.consumedOutputLedgerRoots ?? [],
+      archiveRoot: join(controller.controller.jobRootDir, "archives"),
     }),
     checks: new LocalProjectCheckRunner(),
     scanner: new SimpleSecretScanner(),

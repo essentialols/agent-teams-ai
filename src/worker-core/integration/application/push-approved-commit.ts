@@ -16,6 +16,7 @@ import {
   createAccessPolicyService,
 } from "../../access-control";
 import type { GitPort } from "../ports/git-port";
+import type { IntegratedOutputLedgerPort } from "../ports/integrated-output-ledger-port";
 import {
   loadIntegrationAttempt,
   nowIso,
@@ -25,6 +26,7 @@ import {
 
 export type PushApprovedCommitDeps = IntegrationUseCaseDeps & {
   readonly git: GitPort;
+  readonly integratedOutputLedger: IntegratedOutputLedgerPort;
 };
 
 export type PushApprovedCommitInput = {
@@ -41,6 +43,20 @@ export async function pushApprovedCommit(
 ): Promise<IntegrationAttempt> {
   const attempt = await loadIntegrationAttempt(deps.store, input.attemptId);
   if (attempt.status === IntegrationAttemptStatus.Pushed) {
+    if (!attempt.pushAttempt) {
+      throw new IntegrationError({
+        reason: IntegrationErrorReason.InvalidTransition,
+        message: "push_attempt_required",
+      });
+    }
+    const preparation = await deps.integratedOutputLedger.prepare({
+      attempt,
+      commitSha: attempt.pushAttempt.commitSha,
+    });
+    await deps.integratedOutputLedger.finalize({
+      preparation,
+      pushedAt: attempt.pushAttempt.pushedAt,
+    });
     return attempt;
   }
   assertStatus(attempt, [IntegrationAttemptStatus.CommitCreated]);
@@ -75,6 +91,10 @@ export async function pushApprovedCommit(
       evidence: [currentBranch, branch],
     });
   }
+  const preparation = await deps.integratedOutputLedger.prepare({
+    attempt,
+    commitSha: attempt.commitCandidate.commitSha,
+  });
   await deps.git.push({
     workspacePath: attempt.targetWorkspacePath,
     remote,
@@ -83,6 +103,7 @@ export async function pushApprovedCommit(
     force,
   });
   const pushedAt = nowIso(deps.clock);
+  await deps.integratedOutputLedger.finalize({ preparation, pushedAt });
   const updated = markPushed(attempt, {
     pushAttempt: {
       remote,

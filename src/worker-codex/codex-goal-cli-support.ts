@@ -176,7 +176,7 @@ export function usage(): string {
   subscription-runtime-codex-goal prompt <mcp_prompt_name> [--args-json '{"jobId":"..."}' | --args-file args.json]
 
 defaults:
-  --model gpt-5.5 --effort high --service-tier fast --execution-engine app-server-goal --timeout 72h --max-account-cycles 5
+  --model gpt-5.5 --effort high --service-tier default --execution-engine app-server-goal --timeout 72h --max-account-cycles 5
   --codex-goal-objective <text> sets a short app-server goal objective, max 4000 chars. Keep long instructions in --prompt.
 
 escape hatches:

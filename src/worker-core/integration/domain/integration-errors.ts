@@ -10,6 +10,7 @@ export enum IntegrationErrorReason {
   DiffCheckFailed = "diff_check_failed",
   UnexpectedFiles = "unexpected_files",
   InvalidCommitMessage = "invalid_commit_message",
+  CommitIdentityUnavailable = "commit_identity_unavailable",
   BranchMismatch = "branch_mismatch",
   StaleBase = "stale_base",
   PolicyDenied = "policy_denied",

@@ -3,6 +3,7 @@ import type {
   IntegrationAttempt,
   WorkerOutput,
 } from "../domain/integration-attempt";
+import type { CommitIdentity } from "./commit-identity-port";
 
 export type GitWorkspaceStatus = {
   readonly branch: string;
@@ -41,6 +42,7 @@ export interface GitPort {
     readonly workspacePath: string;
     readonly message: string;
     readonly files: readonly string[];
+    readonly identity: CommitIdentity;
   }): Promise<GitCommitResult> | GitCommitResult;
 
   push(input: {

@@ -122,7 +122,7 @@ Create one stored job per logical goal and per writer worktree:
   "tmuxSession": "my-task",
   "model": "gpt-5.5",
   "reasoningEffort": "high",
-  "serviceTier": "fast",
+  "serviceTier": "default",
   "executionEngine": "app-server-goal",
   "taskTimeoutMs": 259200000,
   "appServerStartupTimeoutMs": 120000,
@@ -312,7 +312,7 @@ broker audit trail for controller adoption. The caller still supplies the
 controlled task identity, including `jobId`, `workspacePath`, `sourceWorkspacePath`
 and `promptBody`; the helper does not invent product work by itself.
 `workerRole` is capacity taxonomy only: `producer`, `fastgate` or `reviewer`.
-New children default to `reasoningEffort: "high"` and `serviceTier: "fast"`
+New children default to `reasoningEffort: "high"` and `serviceTier: "default"`
 unless the caller supplies a more specific child manifest value.
 
 These child jobs should normally produce a diff, patch or handoff, not their own

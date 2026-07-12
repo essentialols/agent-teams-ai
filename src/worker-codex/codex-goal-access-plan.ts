@@ -192,6 +192,9 @@ export function parseCodexGoalProjectAccessScope(
       "consumedOutputLedgerRoots",
       fieldName,
     ),
+    ...(value.commitIdentity === undefined
+      ? {}
+      : { commitIdentity: parseCommitIdentity(value.commitIdentity, `${fieldName}.commitIdentity`) }),
     ...(stringValue(value.isolatedWorkspaceRoot) === undefined
       ? {}
       : {
@@ -216,6 +219,17 @@ export function parseCodexGoalProjectAccessScope(
     ...(value.allowForcePush === undefined
       ? {}
       : { allowForcePush: booleanValue(value.allowForcePush, `${fieldName}.allowForcePush`) }),
+  };
+}
+
+function parseCommitIdentity(
+  value: unknown,
+  fieldName: string,
+): NonNullable<ProjectAccessScope["commitIdentity"]> {
+  if (!isRecord(value)) throw new Error(`${fieldName}_invalid`);
+  return {
+    name: requiredString(value.name, `${fieldName}.name`),
+    email: requiredString(value.email, `${fieldName}.email`),
   };
 }
 

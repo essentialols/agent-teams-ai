@@ -18,6 +18,10 @@ import {
   type ProjectIntegrationPolicy,
 } from "../domain/integration-policy";
 import {
+  assertCommitIdentity,
+  type CommitIdentityPort,
+} from "../ports/commit-identity-port";
+import {
   commitCandidateFromGitResult,
   type GitPort,
 } from "../ports/git-port";
@@ -32,6 +36,7 @@ import {
 
 export type CommitApprovedChangesDeps = IntegrationUseCaseDeps & {
   readonly git: GitPort;
+  readonly commitIdentity: CommitIdentityPort;
   readonly scanner: SecretScannerPort;
   readonly locks: WorkspaceLockPort;
 };
@@ -86,10 +91,15 @@ export async function commitApprovedChanges(
       });
     }
     const committedAt = nowIso(deps.clock);
+    const identity = assertCommitIdentity(await deps.commitIdentity.approvedIdentity({
+      projectId: input.policy.access.scope?.projectId ?? "",
+      workspacePath: attempt.targetWorkspacePath,
+    }));
     const result = await deps.git.commit({
       workspacePath: attempt.targetWorkspacePath,
       message: input.message,
       files: dirtyFiles,
+      identity,
     });
     const commitCandidate = commitCandidateFromGitResult({
         message: input.message,

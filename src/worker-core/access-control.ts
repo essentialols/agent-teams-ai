@@ -127,6 +127,10 @@ export type ProjectAccessScope = {
   readonly readRoots?: readonly string[];
   readonly observedWorkspaceRoots?: readonly string[];
   readonly consumedOutputLedgerRoots?: readonly string[];
+  readonly commitIdentity?: {
+    readonly name: string;
+    readonly email: string;
+  };
   readonly isolatedWorkspaceRoot?: string;
   readonly workspaceRoots?: readonly string[];
   readonly worktreeRoots?: readonly string[];

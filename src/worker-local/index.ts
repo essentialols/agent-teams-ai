@@ -6,6 +6,7 @@ export * from "./host-command";
 export * from "./node-process-runner";
 export * from "./observability";
 export * from "./project-integration-local-adapters";
+export * from "./consumed-output-ledger-local-adapter";
 export * from "./stdout-run-event-publisher";
 export * from "./temp-workspace";
 export * from "./webhook-run-event-publisher";

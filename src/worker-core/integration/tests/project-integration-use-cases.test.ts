@@ -20,6 +20,8 @@ import {
   type CheckRunnerPort,
   type GitPort,
   type IntegrationAttempt,
+  type IntegratedOutputLedgerPort,
+  type IntegratedOutputLedgerPreparation,
   type IntegrationAttemptStorePort,
   type IntegrationAuditEvent,
   type ProjectAccessScope,
@@ -200,6 +202,70 @@ describe("project integration use cases", () => {
     ]);
   });
 
+  it("fails before git push when ledger preparation is unavailable", async () => {
+    const fixture = createFixture();
+    const opened = await openProjectIntegrationAttempt(fixture.deps(), input());
+    await applyWorkerOutput(fixture.deps(), { attemptId: opened.attemptId });
+    await runRequiredChecks(fixture.deps(), { attemptId: opened.attemptId });
+    await commitApprovedChanges(fixture.deps(), {
+      attemptId: opened.attemptId,
+      message: "fix(memory): integrate worker output",
+      policy: policy(),
+    });
+    fixture.ledger.prepareError = new Error("ledger_not_writable");
+
+    await expect(pushApprovedCommit(fixture.deps(), {
+      attemptId: opened.attemptId,
+      policy: policy(),
+    })).rejects.toThrow("ledger_not_writable");
+    expect(fixture.git.calls).not.toContain("push");
+  });
+
+  it("does not mark an attempt pushed when ledger finalization fails", async () => {
+    const fixture = createFixture();
+    const opened = await openProjectIntegrationAttempt(fixture.deps(), input());
+    await applyWorkerOutput(fixture.deps(), { attemptId: opened.attemptId });
+    await runRequiredChecks(fixture.deps(), { attemptId: opened.attemptId });
+    await commitApprovedChanges(fixture.deps(), {
+      attemptId: opened.attemptId,
+      message: "fix(memory): integrate worker output",
+      policy: policy(),
+    });
+    fixture.ledger.finalizeError = new Error("ledger_finalize_failed");
+
+    await expect(pushApprovedCommit(fixture.deps(), {
+      attemptId: opened.attemptId,
+      policy: policy(),
+    })).rejects.toThrow("ledger_finalize_failed");
+    expect(fixture.git.calls).toContain("push");
+    expect(fixture.store.get(opened.attemptId)?.status)
+      .toBe(IntegrationAttemptStatus.CommitCreated);
+  });
+
+  it("re-verifies ledger evidence when a pushed attempt is replayed", async () => {
+    const fixture = createFixture();
+    const opened = await openProjectIntegrationAttempt(fixture.deps(), input());
+    await applyWorkerOutput(fixture.deps(), { attemptId: opened.attemptId });
+    await runRequiredChecks(fixture.deps(), { attemptId: opened.attemptId });
+    await commitApprovedChanges(fixture.deps(), {
+      attemptId: opened.attemptId,
+      message: "fix(memory): integrate worker output",
+      policy: policy(),
+    });
+    await pushApprovedCommit(fixture.deps(), {
+      attemptId: opened.attemptId,
+      policy: policy(),
+    });
+    await pushApprovedCommit(fixture.deps(), {
+      attemptId: opened.attemptId,
+      policy: policy(),
+    });
+
+    expect(fixture.git.calls.filter((call) => call === "push")).toHaveLength(1);
+    expect(fixture.ledger.prepareCalls).toBe(2);
+    expect(fixture.ledger.finalizeCalls).toBe(2);
+  });
+
   it("fails closed when opening an attempt outside branch policy", async () => {
     const fixture = createFixture();
 
@@ -358,14 +424,24 @@ function createFixture(options: {
   const scanner = new FakeScanner(
     options.secretScanStatus ?? SecretScanStatus.Passed,
   );
+  const ledger = new FakeIntegratedOutputLedger();
   return {
     events,
     checks,
     git,
+    ledger,
+    store,
     deps() {
       return {
         store,
         git,
+        commitIdentity: {
+          approvedIdentity: () => ({
+            name: "Approved Integrator",
+            email: "integrator@example.com",
+          }),
+        },
+        integratedOutputLedger: ledger,
         locks,
         checks,
         scanner,
@@ -373,6 +449,44 @@ function createFixture(options: {
       };
     },
   };
+}
+
+class FakeIntegratedOutputLedger implements IntegratedOutputLedgerPort {
+  prepareError?: Error;
+  finalizeError?: Error;
+  prepareCalls = 0;
+  finalizeCalls = 0;
+
+  async prepare(input: {
+    readonly attempt: IntegrationAttempt;
+    readonly commitSha: string;
+  }): Promise<IntegratedOutputLedgerPreparation> {
+    this.prepareCalls += 1;
+    if (this.prepareError) throw this.prepareError;
+    return {
+      attemptId: input.attempt.attemptId,
+      workerJobId: input.attempt.workerOutput.workerJobId,
+      workerWorkspacePath: input.attempt.workerOutput.workspacePath,
+      commitSha: input.commitSha,
+      archivePath: "/archive",
+      statusPath: "/archive/status",
+      patchPath: "/archive/patch",
+      numstatPath: "/archive/numstat",
+    };
+  }
+
+  async finalize(input: {
+    readonly preparation: IntegratedOutputLedgerPreparation;
+  }) {
+    this.finalizeCalls += 1;
+    if (this.finalizeError) throw this.finalizeError;
+    return {
+      ledgerPath: "/ledger/item.json",
+      archivePath: input.preparation.archivePath,
+      commitSha: input.preparation.commitSha,
+      idempotentReplay: false,
+    };
+  }
 }
 
 class MemoryAttemptStore implements IntegrationAttemptStorePort {

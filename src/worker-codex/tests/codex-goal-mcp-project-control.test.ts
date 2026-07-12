@@ -800,6 +800,10 @@ describe("codex goal MCP project-control server", () => {
           allowedBranches: ["main"],
           allowedGitRemotes: ["origin"],
           consumedOutputLedgerRoots: [ledgerRoot],
+          commitIdentity: {
+            name: "Subscription Runtime Tests",
+            email: "tests@example.com",
+          },
         },
       });
 

@@ -26,6 +26,7 @@ const PROJECT_CONTROL_SCOPE_REPAIR_IMMUTABLE_FIELDS = [
   "observedWorkspaceRoots",
   "isolatedWorkspaceRoot",
   "workspaceRoots",
+  "commitIdentity",
   "worktreeRoots",
   "registryRoot",
   "authRoot",

@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -8,9 +8,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   CheckRunStatus,
   SecretScanStatus,
+  type IntegrationAttempt,
 } from "@vioxen/subscription-runtime/worker-core";
 import {
+  LocalConsumedOutputLedgerWriter,
   LocalGitIntegrationAdapter,
+  LocalIntegratedOutputLedgerAdapter,
   LocalProjectCheckRunner,
   LocalWorkspaceIntegrationLock,
   SimpleSecretScanner,
@@ -49,8 +52,18 @@ describe("local project integration adapters", () => {
       workspacePath: fixture.workspacePath,
       message: "fix(memory): integrate worker output",
       files: ["src/memory.ts"],
+      identity: {
+        name: "Approved Integrator",
+        email: "integrator@example.com",
+      },
     });
     expect(commit.commitSha).toMatch(/^[a-f0-9]{40}$/);
+    await expect(gitOutput(fixture.workspacePath, [
+      "show",
+      "-s",
+      "--format=%an <%ae>",
+      commit.commitSha,
+    ])).resolves.toBe("Approved Integrator <integrator@example.com>\n");
 
     await adapter.push({
       workspacePath: fixture.workspacePath,
@@ -126,6 +139,71 @@ describe("local project integration adapters", () => {
       exitCode: 1,
       safeOutputTail: "\nOPENAI_API_KEY=<redacted>\n",
     });
+  });
+
+  it("prepares evidence before push and finalizes an idempotent terminal ledger", async () => {
+    const fixture = await createGitFixture();
+    await writeFile(
+      join(fixture.workspacePath, "src", "memory.ts"),
+      "export const value = 3;\n",
+    );
+    const ledgerRoot = join(fixture.rootDir, "ledger");
+    const adapter = new LocalIntegratedOutputLedgerAdapter({
+      ledgerRoots: [ledgerRoot],
+      archiveRoot: join(fixture.rootDir, "archives"),
+    });
+    const attempt = {
+      attemptId: "attempt-1",
+      targetWorkspacePath: fixture.workspacePath,
+      workerOutput: {
+        workerJobId: "worker-1",
+        workspacePath: fixture.workspacePath,
+        changedFiles: ["src/memory.ts"],
+      },
+    } as unknown as IntegrationAttempt;
+    const preparation = await adapter.prepare({
+      attempt,
+      commitSha: fixture.workerCommitSha,
+    });
+    await expect(readFile(preparation.patchPath, "utf8"))
+      .resolves.toContain("export const value = 2");
+
+    const first = await adapter.finalize({
+      preparation,
+      pushedAt: "2026-07-12T00:00:00.000Z",
+    });
+    const replay = await adapter.finalize({
+      preparation,
+      pushedAt: "2026-07-12T00:01:00.000Z",
+    });
+    expect(first.idempotentReplay).toBe(false);
+    expect(replay.idempotentReplay).toBe(true);
+  });
+
+  it("rejects conflicting terminal decisions for the same worker", async () => {
+    const fixture = await createGitFixture();
+    const writer = new LocalConsumedOutputLedgerWriter();
+    const ledgerRoot = join(fixture.rootDir, "ledger");
+    const base = {
+      schemaVersion: 1 as const,
+      jobId: "worker-1",
+      attemptId: "attempt-1",
+      status: "integrated" as const,
+      closedAt: "2026-07-12T00:00:00.000Z",
+      commitSha: "abc1234",
+      archivePath: "/archive/one",
+      note: "approved integration",
+      backup: {
+        workspace: fixture.workspacePath,
+        statusPath: "/archive/one/status",
+        patchPath: "/archive/one/patch",
+      },
+    };
+    await writer.record({ ledgerRoot, decision: base });
+    await expect(writer.record({
+      ledgerRoot,
+      decision: { ...base, archivePath: "/archive/two" },
+    })).rejects.toThrow("consumed_output_ledger_terminal_conflict");
   });
 
   it("runs pnpm checks through corepack when pnpm is not directly installed", async () => {

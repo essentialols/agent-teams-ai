@@ -7,10 +7,13 @@ import { promisify } from "node:util";
 import { LocalFileWorkspaceLockStore } from "@vioxen/subscription-runtime/store-local-file";
 import {
   CheckRunStatus,
+  assertCommitIdentity,
   SecretScanStatus,
   normalizeProjectRelativePath,
   type CheckRun,
   type CheckRunnerPort,
+  type CommitIdentity,
+  type CommitIdentityPort,
   type GitApplyWorkerOutputResult,
   type GitCommitResult,
   type GitDiffCheckResult,
@@ -115,11 +118,27 @@ export class LocalGitIntegrationAdapter implements GitPort {
     readonly workspacePath: string;
     readonly message: string;
     readonly files: readonly string[];
+    readonly identity: CommitIdentity;
   }): Promise<GitCommitResult> {
     const workspacePath = await canonicalDirectory(input.workspacePath);
     const files = input.files.map(normalizeProjectRelativePath);
     await this.git(["add", "--", ...files], workspacePath);
-    await this.git(["commit", "-m", input.message], workspacePath);
+    const identity = assertCommitIdentity(input.identity);
+    await this.git([
+      "-c",
+      `user.name=${identity.name}`,
+      "-c",
+      `user.email=${identity.email}`,
+      "commit",
+      "-m",
+      input.message,
+    ], workspacePath, {
+      ...process.env,
+      GIT_AUTHOR_NAME: identity.name,
+      GIT_AUTHOR_EMAIL: identity.email,
+      GIT_COMMITTER_NAME: identity.name,
+      GIT_COMMITTER_EMAIL: identity.email,
+    });
     const commitSha = (
       await this.git(["rev-parse", "HEAD"], workspacePath)
     ).stdout.trim();
@@ -172,8 +191,9 @@ export class LocalGitIntegrationAdapter implements GitPort {
   private async git(
     args: readonly string[],
     cwd: string,
+    env?: Readonly<Record<string, string | undefined>>,
   ): Promise<CommandResult> {
-    const result = await this.tryGit(args, cwd);
+    const result = await this.tryGit(args, cwd, env);
     if (result.exitCode !== 0) {
       throw new Error(
         `local_git_integration_failed:${safeTail(result.stderr || result.stdout)}`,
@@ -196,14 +216,24 @@ export class LocalGitIntegrationAdapter implements GitPort {
   private async tryGit(
     args: readonly string[],
     cwd: string,
+    env?: Readonly<Record<string, string | undefined>>,
   ): Promise<CommandResult> {
     return runCommand({
       command: this.options.gitBinaryPath ?? "git",
       args,
       cwd,
+      ...(env ? { env } : {}),
       timeoutMs: this.options.timeoutMs ?? 60_000,
       maxBuffer: this.options.maxBuffer ?? 10 * 1024 * 1024,
     });
+  }
+}
+
+export class ConfiguredCommitIdentityAdapter implements CommitIdentityPort {
+  constructor(private readonly identity: CommitIdentity | undefined) {}
+
+  approvedIdentity(): CommitIdentity {
+    return assertCommitIdentity(this.identity);
   }
 }
 

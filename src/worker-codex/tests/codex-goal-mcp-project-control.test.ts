@@ -902,7 +902,7 @@ describe("codex goal MCP project-control server", () => {
       ]);
       expect(pushedSha.stdout.trim()).toBe(commitSha);
       await expect(readFile(
-        join(ledgerRoot, "items", "infinity-context-worker-v1.json"),
+        join(ledgerRoot, "items", "infinity-context-worker-v1--attempt-1.json"),
         "utf8",
       ).then((contents) => JSON.parse(contents) as Record<string, unknown>))
         .resolves.toMatchObject({

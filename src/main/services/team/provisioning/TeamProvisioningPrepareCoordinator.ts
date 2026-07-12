@@ -41,6 +41,7 @@ import {
 } from './TeamProvisioningProviderPreflight';
 import {
   cachedProviderProbeResultToProbeResult,
+  cloneCachedProviderProbeResult,
   cloneProviderProbeResult,
 } from './TeamProvisioningProviderProbeCache';
 import { getTeamProviderLabel } from './TeamProvisioningRuntimeDiagnostics';
@@ -327,7 +328,9 @@ export class TeamProvisioningPrepareCoordinator {
       }
 
       const cached = this.getFreshCachedProbeResult(targetCwdForValidation, providerId);
-      const probeResult = cached ?? (await this.getCachedOrProbeResult(targetCwd, providerId));
+      const probeResult = cached
+        ? cachedProviderProbeResultToProbeResult(cached)
+        : await this.getCachedOrProbeResult(targetCwd, providerId);
       if (!probeResult?.claudePath) {
         throw buildMissingCliError();
       }
@@ -880,7 +883,7 @@ export class TeamProvisioningPrepareCoordinator {
   ): CachedProbeResult | null {
     const cacheKey = createProbeCacheKey(cwd, providerId);
     const cached = this.ports.providerProbeCache.get(cacheKey);
-    return cached ? cloneProviderProbeResult(cached) : null;
+    return cached ? cloneCachedProviderProbeResult(cached) : null;
   }
 
   clearProbeCache(cwd: string, providerId: TeamProviderId | undefined): void {

@@ -9,18 +9,22 @@ export interface ProbeResult {
   [field: string]: unknown;
 }
 
-export interface CachedProbeResult extends ProbeResult {
+export interface CachedProbeResult {
   cacheKey: string;
   cachedAtMs: number;
+  result: ProbeResult;
 }
 
 export function cloneProviderProbeResult<T extends ProbeResult>(result: T): T {
   return structuredClone(result);
 }
 
+export function cloneCachedProviderProbeResult<T extends CachedProbeResult>(cached: T): T {
+  return structuredClone(cached);
+}
+
 export function cachedProviderProbeResultToProbeResult(cached: CachedProbeResult): ProbeResult {
-  const { cacheKey: _cacheKey, cachedAtMs: _cachedAtMs, ...result } = cached;
-  return cloneProviderProbeResult(result);
+  return cloneProviderProbeResult(cached.result);
 }
 
 export interface ProviderProbePublication {
@@ -82,7 +86,7 @@ export function createInMemoryProviderProbeCachePort({
       }
       return null;
     }
-    return cloneProviderProbeResult(cached);
+    return cloneCachedProviderProbeResult(cached);
   };
 
   const incrementActiveCallCount = (cacheKey: string): void => {
@@ -161,9 +165,9 @@ export function createInMemoryProviderProbeCachePort({
                     state.cached =
                       publication.cacheable && result
                         ? {
-                            ...cloneProviderProbeResult(result),
                             cacheKey,
                             cachedAtMs: now(),
+                            result: cloneProviderProbeResult(result),
                           }
                         : null;
                   }

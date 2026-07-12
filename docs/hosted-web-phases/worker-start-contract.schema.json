@@ -65,17 +65,17 @@
     "ownedPaths": { "$ref": "#/$defs/nonEmptyPathList" },
     "mandatoryDocs": {
       "allOf": [
-        { "$ref": "#/$defs/nonEmptyPathList" },
+        { "$ref": "#/$defs/boundedReadPathList" },
         { "contains": { "const": "AGENTS.md" } },
-        { "contains": { "const": "CLAUDE.md" } },
-        { "contains": { "const": "AGENT_CRITICAL_GUARDRAILS.md" } },
         { "contains": { "const": "docs/hosted-web-phases/START_HERE.md" } },
         { "contains": { "const": "docs/hosted-web-phases/EVIDENCE_LIFECYCLE.md" } },
-        { "contains": { "const": "docs/hosted-web-phases/ORCHESTRATION_GUARDS.md" } }
+        { "contains": { "const": "docs/hosted-web-phases/README.md" } },
+        { "contains": { "const": "docs/hosted-web-phases/EXECUTION_INDEX.json" } },
+        { "contains": { "const": "docs/hosted-web-phase-0-execution-packet.md" } }
       ]
     },
-    "mandatoryScripts": { "$ref": "#/$defs/nonEmptyPathList" },
-    "mandatoryFixtures": { "$ref": "#/$defs/nonEmptyPathList" },
+    "mandatoryScripts": { "$ref": "#/$defs/boundedReadPathList" },
+    "mandatoryFixtures": { "$ref": "#/$defs/boundedReadPathList" },
     "requiredChecks": {
       "type": "array",
       "minItems": 1,
@@ -130,6 +130,11 @@
         "properties": {
           "lanePacket": {
             "const": "docs/hosted-web-phases/phase-00/lanes/w1-parity-renderer.md"
+          },
+          "mandatoryDocs": {
+            "contains": {
+              "const": "docs/hosted-web-phases/phase-00/lanes/w1-parity-renderer.md"
+            }
           }
         }
       }
@@ -140,6 +145,11 @@
         "properties": {
           "lanePacket": {
             "const": "docs/hosted-web-phases/phase-00/lanes/w2-provider-runtime.md"
+          },
+          "mandatoryDocs": {
+            "contains": {
+              "const": "docs/hosted-web-phases/phase-00/lanes/w2-provider-runtime.md"
+            }
           }
         }
       }
@@ -150,6 +160,11 @@
         "properties": {
           "lanePacket": {
             "const": "docs/hosted-web-phases/phase-00/lanes/w3-state-writers-backup.md"
+          },
+          "mandatoryDocs": {
+            "contains": {
+              "const": "docs/hosted-web-phases/phase-00/lanes/w3-state-writers-backup.md"
+            }
           }
         }
       }
@@ -160,6 +175,11 @@
         "properties": {
           "lanePacket": {
             "const": "docs/hosted-web-phases/phase-00/lanes/w4-lease-guard-process.md"
+          },
+          "mandatoryDocs": {
+            "contains": {
+              "const": "docs/hosted-web-phases/phase-00/lanes/w4-lease-guard-process.md"
+            }
           }
         }
       }
@@ -170,6 +190,11 @@
         "properties": {
           "lanePacket": {
             "const": "docs/hosted-web-phases/phase-00/lanes/w5-events-commands-recovery.md"
+          },
+          "mandatoryDocs": {
+            "contains": {
+              "const": "docs/hosted-web-phases/phase-00/lanes/w5-events-commands-recovery.md"
+            }
           }
         }
       }
@@ -180,6 +205,11 @@
         "properties": {
           "lanePacket": {
             "const": "docs/hosted-web-phases/phase-00/lanes/w6-auth-proxy-artifacts.md"
+          },
+          "mandatoryDocs": {
+            "contains": {
+              "const": "docs/hosted-web-phases/phase-00/lanes/w6-auth-proxy-artifacts.md"
+            }
           }
         }
       }
@@ -198,6 +228,23 @@
       "minItems": 1,
       "uniqueItems": true,
       "items": { "$ref": "#/$defs/relativePath" }
+    },
+    "boundedReadPath": {
+      "allOf": [
+        { "$ref": "#/$defs/relativePath" },
+        {
+          "not": {
+            "enum": ["docs", "docs/research", "docs/research/hosted-web"]
+          }
+        }
+      ]
+    },
+    "boundedReadPathList": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/boundedReadPath" }
     }
   }
 }

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
@@ -8,14 +9,28 @@ import { fileURLToPath } from 'node:url';
 import {
   CANONICAL_SHA,
   computeWorkKey,
-  validateWorkerStartContract,
 } from '../../../../scripts/hosted-web/orchestration/contract-lib.mjs';
+import {
+  MAX_MANDATORY_READS_PER_LIST,
+  REQUIRED_WORKER_DOCS,
+  validateWorkerStartContract,
+} from '../../../../scripts/hosted-web/orchestration/validate-worker-start.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const templatePath = path.join(
   repoRoot,
   'test/architecture/hosted-web/orchestration/fixtures/valid-worker-start.template.json'
 );
+const localRequire = createRequire(import.meta.url);
+const requireFromFastify = createRequire(localRequire.resolve('fastify/package.json'));
+const requireFromAjvCompiler = createRequire(
+  requireFromFastify.resolve('@fastify/ajv-compiler/package.json')
+);
+const Ajv2020 = requireFromAjvCompiler('ajv/dist/2020').default;
+const workerSchema = JSON.parse(
+  readFileSync(path.join(repoRoot, 'docs/hosted-web-phases/worker-start-contract.schema.json'))
+);
+const validateWorkerSchema = new Ajv2020({ allErrors: true, strict: false }).compile(workerSchema);
 
 function validContract() {
   const template = JSON.parse(
@@ -113,6 +128,85 @@ test('requires both authoritative packet paths as mandatory worker reads', () =>
   );
 });
 
+test('requires the compact navigation baseline as mandatory worker reads', () => {
+  for (const requiredPath of REQUIRED_WORKER_DOCS) {
+    const contract = validContract();
+    contract.mandatoryDocs = contract.mandatoryDocs.filter((item) => item !== requiredPath);
+    const result = validate(contract);
+    assert.equal(result.ok, false, requiredPath);
+    assert.ok(
+      result.issues.includes(`mandatoryDocs:missing_required:${requiredPath}`),
+      requiredPath
+    );
+  }
+});
+
+test('rejects recursive, globbed, and numerically unbounded mandatory reads', () => {
+  const recursive = validContract();
+  recursive.mandatoryDocs.push('docs/research/hosted-web');
+  const recursiveResult = validate(recursive);
+  assert.equal(recursiveResult.ok, false);
+  assert.ok(
+    recursiveResult.issues.includes(
+      'mandatoryDocs:unbounded_read_root:docs/research/hosted-web'
+    )
+  );
+
+  const globbed = validContract();
+  globbed.mandatoryScripts = ['docs/research/hosted-web/**/*.json'];
+  const globbedResult = validate(globbed);
+  assert.equal(globbedResult.ok, false);
+  assert.ok(
+    globbedResult.issues.includes(
+      'mandatoryScripts:invalid_exact_path:docs/research/hosted-web/**/*.json'
+    )
+  );
+
+  const oversized = validContract();
+  oversized.mandatoryFixtures = Array.from(
+    { length: MAX_MANDATORY_READS_PER_LIST + 1 },
+    (_, index) => `fixtures/reference-${index}.json`
+  );
+  const oversizedResult = validate(oversized);
+  assert.equal(oversizedResult.ok, false);
+  assert.ok(
+    oversizedResult.issues.includes(
+      `mandatoryFixtures:exceeds_max_items:${MAX_MANDATORY_READS_PER_LIST + 1}:${MAX_MANDATORY_READS_PER_LIST}`
+    )
+  );
+});
+
+test('Draft 2020-12 schema enforces bounded exact mandatory reads', () => {
+  assert.equal(
+    validateWorkerSchema(validContract()),
+    true,
+    JSON.stringify(validateWorkerSchema.errors)
+  );
+  const mutations = [
+    (contract) => contract.mandatoryDocs.push('docs/research/hosted-web'),
+    (contract) => {
+      contract.mandatoryScripts = ['docs/research/hosted-web/**/*.json'];
+    },
+    (contract) => {
+      contract.mandatoryFixtures = Array.from(
+        { length: MAX_MANDATORY_READS_PER_LIST + 1 },
+        (_, index) => `fixtures/reference-${index}.json`
+      );
+    },
+    (contract) => {
+      contract.mandatoryDocs = contract.mandatoryDocs.filter(
+        (item) => item !== 'docs/hosted-web-phases/EXECUTION_INDEX.json'
+      );
+    },
+  ];
+
+  for (const mutate of mutations) {
+    const contract = validContract();
+    mutate(contract);
+    assert.equal(validateWorkerSchema(contract), false);
+  }
+});
+
 test('rejects the blocked Phase 1 proposal as worker authority', () => {
   const contract = validContract();
   contract.phaseId = 'phase-01';
@@ -134,13 +228,13 @@ function temporaryContractFixture() {
   const root = mkdtempSync(path.join(tmpdir(), 'hosted-web-worker-contract-'));
   for (const relativePath of [
     'AGENTS.md',
-    'CLAUDE.md',
-    'AGENT_CRITICAL_GUARDRAILS.md',
     'docs/hosted-web-phases/START_HERE.md',
     'docs/hosted-web-phases/EVIDENCE_LIFECYCLE.md',
-    'docs/hosted-web-phases/ORCHESTRATION_GUARDS.md',
+    'docs/hosted-web-phases/README.md',
+    'docs/hosted-web-phases/EXECUTION_INDEX.json',
     'docs/hosted-web-phase-0-execution-packet.md',
     'docs/hosted-web-phases/phase-00/lanes/w1-parity-renderer.md',
+    'docs/research/hosted-web/phase-0/exact-reference.json',
     'fixtures/prompt.md',
     'fixtures/input.json',
     'fixtures/required-script.mjs',
@@ -161,6 +255,39 @@ function temporaryContractFixture() {
   contract.executionPolicy.sandboxRoot = path.join(root, 'fixtures');
   return { contract, root };
 }
+
+test('accepts an exact research file listed by the lane packet', (t) => {
+  const { contract, root } = temporaryContractFixture();
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const exactReference = 'docs/research/hosted-web/phase-0/exact-reference.json';
+  contract.mandatoryDocs.push(exactReference);
+  writeFileSync(path.join(root, contract.lanePacket), `- \`${exactReference}\`\n`);
+  const result = validate(contract, { checkGitHead: false });
+  assert.deepEqual(result, { ok: true, issues: [] });
+});
+
+test('rejects a research file not listed by the lane packet', (t) => {
+  const { contract, root } = temporaryContractFixture();
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const exactReference = 'docs/research/hosted-web/phase-0/exact-reference.json';
+  contract.mandatoryDocs.push(exactReference);
+  const result = validate(contract, { checkGitHead: false });
+  assert.equal(result.ok, false);
+  assert.ok(
+    result.issues.includes(
+      `mandatoryReads:research_reference_not_in_lane_packet:${exactReference}`
+    )
+  );
+});
+
+test('rejects an existing directory as a recursive mandatory read', (t) => {
+  const { contract, root } = temporaryContractFixture();
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  contract.mandatoryFixtures = ['fixtures'];
+  const result = validate(contract, { checkGitHead: false });
+  assert.equal(result.ok, false);
+  assert.ok(result.issues.some((issue) => issue.startsWith('mandatoryFixtures:not_file:')));
+});
 
 test('rejects a symlink whose resolved target is a directory where a file is mandatory', (t) => {
   const { contract, root } = temporaryContractFixture();

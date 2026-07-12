@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 1,
+  "currentExecutablePhase": "phase-00",
+  "workerMandatoryBaseline": [
+    "AGENTS.md",
+    "docs/hosted-web-phases/START_HERE.md",
+    "docs/hosted-web-phases/EVIDENCE_LIFECYCLE.md",
+    "docs/hosted-web-phases/README.md",
+    "docs/hosted-web-phases/EXECUTION_INDEX.json"
+  ],
+  "authorityTiers": {
+    "execution-authority": [
+      {
+        "path": "AGENTS.md",
+        "role": "repository navigation and hard constraints"
+      },
+      {
+        "path": "docs/hosted-web-phases/START_HERE.md",
+        "role": "mandatory reading order and start gate"
+      },
+      {
+        "path": "docs/hosted-web-phases/EVIDENCE_LIFECYCLE.md",
+        "role": "evidence authority, retention, and supersession"
+      },
+      {
+        "path": "docs/hosted-web-phases/README.md",
+        "role": "active-phase router"
+      },
+      {
+        "path": "docs/hosted-web-phases/EXECUTION_INDEX.json",
+        "role": "machine-readable execution navigation"
+      }
+    ],
+    "current-phase": [
+      {
+        "path": "docs/hosted-web-phase-0-execution-packet.md",
+        "role": "phase-00 controller packet"
+      },
+      {
+        "path": "docs/hosted-web-phases/phase-00/lanes/w1-parity-renderer.md",
+        "role": "w1 lane packet"
+      },
+      {
+        "path": "docs/hosted-web-phases/phase-00/lanes/w2-provider-runtime.md",
+        "role": "w2 lane packet"
+      },
+      {
+        "path": "docs/hosted-web-phases/phase-00/lanes/w3-state-writers-backup.md",
+        "role": "w3 lane packet"
+      },
+      {
+        "path": "docs/hosted-web-phases/phase-00/lanes/w4-lease-guard-process.md",
+        "role": "w4 lane packet"
+      },
+      {
+        "path": "docs/hosted-web-phases/phase-00/lanes/w5-events-commands-recovery.md",
+        "role": "w5 lane packet"
+      },
+      {
+        "path": "docs/hosted-web-phases/phase-00/lanes/w6-auth-proxy-artifacts.md",
+        "role": "w6 lane packet"
+      }
+    ],
+    "reference-on-demand": [
+      {
+        "path": "docs/hosted-web-e2e-completion-plan.md",
+        "role": "architecture, ADR, invariant, and release reference"
+      },
+      {
+        "path": "docs/hosted-web-phases/ORCHESTRATION_GUARDS.md",
+        "role": "controller gate details"
+      },
+      {
+        "path": "docs/hosted-web-phases/phase-01/README.md",
+        "role": "blocked Phase 1 planning proposal; not executable authority"
+      }
+    ],
+    "historical-preserved": [
+      {
+        "path": "docs/research/hosted-web",
+        "role": "immutable evidence corpus",
+        "readPolicy": "never-recursive; read one file only when its exact path is listed by the assigned packet"
+      }
+    ]
+  }
+}

@@ -22,11 +22,10 @@
   "ownedPaths": ["docs/hosted-web-phases/START_HERE.md"],
   "mandatoryDocs": [
     "AGENTS.md",
-    "CLAUDE.md",
-    "AGENT_CRITICAL_GUARDRAILS.md",
     "docs/hosted-web-phases/START_HERE.md",
     "docs/hosted-web-phases/EVIDENCE_LIFECYCLE.md",
-    "docs/hosted-web-phases/ORCHESTRATION_GUARDS.md",
+    "docs/hosted-web-phases/README.md",
+    "docs/hosted-web-phases/EXECUTION_INDEX.json",
     "docs/hosted-web-phase-0-execution-packet.md",
     "docs/hosted-web-phases/phase-00/lanes/w1-parity-renderer.md",
     "test/architecture/hosted-web/orchestration/fixtures/required-doc.md"

@@ -340,6 +340,35 @@ describe('TeamProvisioningProviderDiagnostics provider probes', () => {
       'provider_one_shot_diagnostic_complete',
     ]);
   });
+
+  it('accepts PONG from stderr when stdout also contains diagnostic output', async () => {
+    const spawnProbe = vi
+      .fn<TeamProvisioningProviderDiagnosticsPorts['spawnProbe']>()
+      .mockResolvedValue({
+        exitCode: 0,
+        stdout: 'provider diagnostic banner',
+        stderr: 'PONG',
+      });
+    const appendPreflightDebugLog =
+      vi.fn<TeamProvisioningProviderDiagnosticsPorts['appendPreflightDebugLog']>();
+    const ports = createFakePorts({ spawnProbe, appendPreflightDebugLog });
+
+    await expect(
+      runProviderOneShotDiagnostic({
+        claudePath: '/fake/claude',
+        cwd: '/repo',
+        env: { PATH: '/bin' },
+        providerId: 'codex',
+        ports,
+      })
+    ).resolves.toEqual({});
+
+    expect(spawnProbe).toHaveBeenCalledOnce();
+    expect(appendPreflightDebugLog).toHaveBeenLastCalledWith(
+      'provider_one_shot_diagnostic_complete',
+      expect.objectContaining({ ok: true })
+    );
+  });
 });
 
 describe('TeamProvisioningProviderDiagnostics ports factory', () => {

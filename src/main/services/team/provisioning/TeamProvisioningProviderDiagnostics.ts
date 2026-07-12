@@ -14,8 +14,8 @@ import {
 import { ProviderConnectionService } from '../../runtime/ProviderConnectionService';
 import {
   buildProviderPreflightPingArgs,
-  getProviderModelProbeExpectedOutput,
   getProviderModelProbeTimeoutMs,
+  isProviderModelProbeSuccessOutput,
   normalizeProviderModelProbeFailureReason,
 } from '../../runtime/providerModelProbe';
 import { resolveTeamProviderId } from '../../runtime/providerRuntimeEnv';
@@ -496,10 +496,7 @@ export async function runProviderOneShotDiagnostic({
       };
     }
 
-    const pongCandidate = pingProbe.stdout.trim() || pingProbe.stderr.trim();
-    const isPong = new RegExp(`\\b${getProviderModelProbeExpectedOutput()}\\b`, 'i').test(
-      pongCandidate
-    );
+    const isPong = isProviderModelProbeSuccessOutput(combinedOutput);
     if (!isPong) {
       ports.appendPreflightDebugLog('provider_one_shot_diagnostic_complete', {
         providerId: resolvedProviderId,

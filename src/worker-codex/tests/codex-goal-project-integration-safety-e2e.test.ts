@@ -86,7 +86,20 @@ describe("project integration safety kernel e2e", () => {
         reviewReason: "focused preserved patch regression",
       } as const;
 
-      await handlers.openAttempt({ ...args, confirmOpen: true });
+      const opened = await handlers.openAttempt({ ...args, confirmOpen: true });
+      expect(opened.structuredContent).toMatchObject({
+        attempt: {
+          workerOutput: {
+            sourcePatchPath: patchPath,
+            patchPath: expect.stringContaining(
+              "project-integration/artifact-snapshots/phase-0-attempt-h6/",
+            ),
+            patchSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+          },
+        },
+      });
+      await writeFile(join(workerPath, "feature.ts"), "export const value = 999;\n");
+      await writeFile(patchPath, await gitOutput(workerPath, ["diff", "--binary"]));
       const applied = await handlers.applyWorkerOutput({ ...args, confirmApply: true });
 
       expect(applied.structuredContent).toMatchObject({ ok: true });
@@ -403,39 +416,30 @@ describe("project integration safety kernel e2e", () => {
         attemptId: "synthetic-adoption-sibling-attempt",
         workerPatchPath: siblingPatchPath,
       } as const;
-      await handlers.openAttempt({ ...siblingAttemptArgs, confirmOpen: true });
-      await expect(handlers.applyWorkerOutput({
+      await expect(handlers.openAttempt({
         ...siblingAttemptArgs,
-        confirmApply: true,
-      })).rejects.toThrow("local_project_integration_path_outside_root");
+        confirmOpen: true,
+      })).rejects.toThrow("project_integration_handoff_patch_unowned");
 
       const otherControllerAttemptArgs = {
         ...adoptionBaseArgs,
         attemptId: "synthetic-adoption-other-controller-attempt",
         workerPatchPath: otherControllerPatchPath,
       } as const;
-      await handlers.openAttempt({
+      await expect(handlers.openAttempt({
         ...otherControllerAttemptArgs,
         confirmOpen: true,
-      });
-      await expect(handlers.applyWorkerOutput({
-        ...otherControllerAttemptArgs,
-        confirmApply: true,
-      })).rejects.toThrow("local_project_integration_path_outside_root");
+      })).rejects.toThrow("project_integration_handoff_patch_unowned");
 
       const otherWorkerAttemptArgs = {
         ...adoptionBaseArgs,
         attemptId: "synthetic-adoption-other-worker-attempt",
         workerPatchPath: otherWorkerPatchPath,
       } as const;
-      await handlers.openAttempt({
+      await expect(handlers.openAttempt({
         ...otherWorkerAttemptArgs,
         confirmOpen: true,
-      });
-      await expect(handlers.applyWorkerOutput({
-        ...otherWorkerAttemptArgs,
-        confirmApply: true,
-      })).rejects.toThrow("local_project_integration_path_outside_root");
+      })).rejects.toThrow("project_integration_handoff_patch_unowned");
 
       const adoptionArgs = {
         ...adoptionBaseArgs,

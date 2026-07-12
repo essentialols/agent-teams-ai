@@ -25,7 +25,6 @@ import {
   isSubscriptionWorkerError,
   normalizeWorkerReport,
   type RuntimeRecommendedAction,
-  type RuntimeResultArtifact,
   type RuntimeResultEnvelopeInput,
   type RuntimeResultStatus,
   type WorkerReport,
@@ -45,10 +44,10 @@ import {
   codexGoalControlsForAccessBoundary,
 } from "./codex-goal-access-plan";
 import { readLocalGitHeadCommit } from "./codex-goal-git-revision";
+import { createCodexGoalResultRecorder } from "./codex-goal-runtime-result-io";
 import {
-  createCodexGoalResultRecorder,
-  GitPatchPreserver,
-} from "./codex-goal-runtime-result-io";
+  tryMaterializeTerminalCodexGoalHandoff,
+} from "./codex-goal-terminal-handoff-materialization";
 import {
   codexGoalRuntimeEventObservability,
   createCodexGoalRuntimeEventWriter,
@@ -683,14 +682,24 @@ async function codexRuntimeResultInput(input: {
     resultStatus: input.result.status,
     changedFilesCount: changedFiles.length,
   });
-  const artifacts = status === "done" || changedFiles.length === 0
-    ? []
-    : await preservePatchArtifacts(input.config);
+  const handoff = changedFiles.length === 0
+    ? null
+    : await tryMaterializeTerminalCodexGoalHandoff({
+        ...input.config,
+        ...(input.baseCommit === undefined
+          ? {}
+          : { expectedBaseCommit: input.baseCommit }),
+      });
+  const artifacts = handoff?.artifacts ?? [];
+  const exactChangedFiles = handoff?.changedPaths ?? changedFiles;
   const details = runtimeResultDetails({
     ...("failureDetails" in input.result && input.result.failureDetails
       ? { failureDetails: input.result.failureDetails }
       : {}),
     ...(input.baseCommit === undefined ? {} : { baseCommit: input.baseCommit }),
+    ...(handoff?.errorCode === undefined
+      ? {}
+      : { handoffArtifactError: handoff.errorCode }),
   });
   return {
     status,
@@ -698,11 +707,14 @@ async function codexRuntimeResultInput(input: {
     runId: input.config.jobId ?? input.config.taskId,
     taskId: input.config.taskId,
     reason,
-    changedFiles,
+    changedFiles: exactChangedFiles,
     evidence: [
       ...runtimeEvidenceFromSafeExecutionResult(input.result),
       ...artifacts.map((artifact) => `patch_preserved:${artifact.path ?? ""}`),
-      ...(changedFiles.length > 0 && artifacts.length === 0 && status !== "done"
+      ...(handoff?.errorCode === undefined
+        ? []
+        : [`handoff_artifact_materialization_failed:${handoff.errorCode}`]),
+      ...(changedFiles.length > 0 && artifacts.length === 0
         ? ["patch_preserve_unavailable"]
         : []),
     ],
@@ -727,9 +739,16 @@ async function codexExceptionRuntimeResultInput(input: {
   const failure = codexRunnerExceptionFailure(input.error);
   const workspace = await changedFilesFromWorkspace(input.config.workspacePath);
   const changedFiles = workspace.changedFiles;
-  const artifacts = changedFiles.length === 0
-    ? []
-    : await preservePatchArtifacts(input.config);
+  const handoff = changedFiles.length === 0
+    ? null
+    : await tryMaterializeTerminalCodexGoalHandoff({
+        ...input.config,
+        ...(input.baseCommit === undefined
+          ? {}
+          : { expectedBaseCommit: input.baseCommit }),
+      });
+  const artifacts = handoff?.artifacts ?? [];
+  const exactChangedFiles = handoff?.changedPaths ?? changedFiles;
   const details = runtimeResultDetails({
     failureDetails: {
       errorName: input.error instanceof Error ? input.error.name : "unknown",
@@ -738,6 +757,9 @@ async function codexExceptionRuntimeResultInput(input: {
         : { errorCode: failure.errorCode }),
     },
     ...(input.baseCommit === undefined ? {} : { baseCommit: input.baseCommit }),
+    ...(handoff?.errorCode === undefined
+      ? {}
+      : { handoffArtifactError: handoff.errorCode }),
   });
   return {
     status: changedFiles.length > 0 ? "partial" : "failed",
@@ -745,11 +767,14 @@ async function codexExceptionRuntimeResultInput(input: {
     runId: input.config.jobId ?? input.config.taskId,
     taskId: input.config.taskId,
     reason: failure.reason,
-    changedFiles,
+    changedFiles: exactChangedFiles,
     evidence: [
       failure.evidence,
       ...(workspace.warning ? [workspace.warning] : []),
       ...artifacts.map((artifact) => `patch_preserved:${artifact.path ?? ""}`),
+      ...(handoff?.errorCode === undefined
+        ? []
+        : [`handoff_artifact_materialization_failed:${handoff.errorCode}`]),
       ...(changedFiles.length > 0 && artifacts.length === 0
         ? ["patch_preserve_unavailable"]
         : []),
@@ -813,10 +838,14 @@ function errorCauseChain(error: unknown): readonly unknown[] {
 function runtimeResultDetails(input: {
   readonly failureDetails?: Readonly<Record<string, string>>;
   readonly baseCommit?: string;
+  readonly handoffArtifactError?: string;
 }): Readonly<Record<string, string>> | undefined {
   const details = {
     ...(input.failureDetails ?? {}),
     ...(input.baseCommit === undefined ? {} : { baseCommit: input.baseCommit }),
+    ...(input.handoffArtifactError === undefined
+      ? {}
+      : { handoffArtifactError: input.handoffArtifactError }),
   };
   return Object.keys(details).length === 0 ? undefined : details;
 }
@@ -926,20 +955,6 @@ function statusPorcelainPath(line: string): string {
   const path = line.length > 3 ? line.slice(3).trim() : line.trim();
   const renameTarget = path.split(" -> ").at(-1);
   return renameTarget?.trim() ?? path;
-}
-
-async function preservePatchArtifacts(
-  config: Pick<CodexGoalRunConfig, "workspacePath" | "jobRootDir" | "taskId">,
-): Promise<readonly RuntimeResultArtifact[]> {
-  try {
-    const artifact = await new GitPatchPreserver().preserve({
-      workspacePath: config.workspacePath,
-      outputPath: join(config.jobRootDir, `${config.taskId}.preserved.patch`),
-    });
-    return artifact ? [artifact] : [];
-  } catch {
-    return [];
-  }
 }
 
 function uniqueStrings(values: readonly string[]): readonly string[] {

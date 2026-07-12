@@ -1,0 +1,471 @@
+import { execFile } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  link,
+  lstat,
+  mkdir,
+  readFile,
+  realpath,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative } from "node:path";
+import { promisify } from "node:util";
+
+import { detectSecretLikeContent } from "@vioxen/subscription-runtime/worker-core";
+
+import type { ProjectIntegrationMcpController } from "../ports/project-integration-mcp-tool-handlers";
+
+const execFileAsync = promisify(execFile);
+const maxManifestBytes = 1024 * 1024;
+const maxPatchBytes = 16 * 1024 * 1024;
+
+export function localProjectIntegrationSnapshotRoot(
+  controller: ProjectIntegrationMcpController,
+): string {
+  return join(
+    controller.controller.jobRootDir,
+    "project-integration",
+    "artifact-snapshots",
+  );
+}
+
+export async function validateLocalWorkerHandoffArtifact(input: {
+  readonly controller: ProjectIntegrationMcpController;
+  readonly attemptId: string;
+  readonly workerJobId: string;
+  readonly workspacePath: string;
+  readonly patchPath: string;
+  readonly summaryPath?: string;
+  readonly manifestPath?: string;
+  readonly manifestSha256?: string;
+  readonly baseCommit?: string;
+  readonly changedPaths: readonly string[];
+}): Promise<{
+  readonly baseCommit?: string;
+  readonly manifestPath?: string;
+  readonly patchPath: string;
+  readonly patchSha256: string;
+  readonly summaryPath?: string;
+}> {
+  assertSafeWorkerJobId(input.workerJobId);
+  assertSafePathSegment(input.attemptId, "integration_attempt_id");
+  const expectedJobRoot = await canonicalDirectoryIfExists(join(
+    dirname(input.controller.controller.jobRootDir),
+    input.workerJobId,
+  ));
+  const patchFile = await readCanonicalRegularFile(input.patchPath, maxPatchBytes);
+  if (detectSecretLikeContent(patchFile.bytes) !== undefined) {
+    throw new Error("project_integration_handoff_secret_like_content");
+  }
+  const patchPath = patchFile.path;
+  const ownedByWorkerJob = expectedJobRoot !== undefined &&
+    pathInside(expectedJobRoot, patchPath);
+  const ownedByControllerArchive = await patchInsideControllerRejectedArchive({
+    controller: input.controller,
+    workerJobId: input.workerJobId,
+    patchPath,
+  });
+  if (
+    !ownedByWorkerJob &&
+    !ownedByControllerArchive &&
+    !await patchInsideProjectScope(input.controller, patchPath)
+  ) {
+    throw new Error(input.manifestPath || input.manifestSha256
+      ? "project_integration_handoff_manifest_unowned_patch"
+      : "project_integration_handoff_patch_unowned");
+  }
+  const isManifestHandoff = basename(patchPath).endsWith(".handoff.patch");
+  if (!isManifestHandoff) {
+    if (input.manifestPath || input.manifestSha256) {
+      throw new Error("project_integration_handoff_manifest_legacy_patch");
+    }
+    const snapshot = await snapshotValidatedPatch({
+      controller: input.controller,
+      attemptId: input.attemptId,
+      bytes: patchFile.bytes,
+    });
+    await assertExactPatchChangedPaths({
+      workspacePath: await realpath(input.workspacePath),
+      patchPath: snapshot.path,
+      expectedChangedPaths: input.changedPaths,
+    });
+    return {
+      patchPath: snapshot.path,
+      patchSha256: snapshot.sha256,
+    };
+  }
+  if (!ownedByWorkerJob) {
+    throw new Error("project_integration_handoff_manifest_unowned_patch");
+  }
+  if (!input.manifestPath || !input.manifestSha256) {
+    throw new Error("project_integration_handoff_manifest_required");
+  }
+  if (!/^[a-f0-9]{64}$/i.test(input.manifestSha256)) {
+    throw new Error("project_integration_handoff_manifest_hash_invalid");
+  }
+  const manifestFile = await readCanonicalRegularFile(
+    input.manifestPath,
+    maxManifestBytes,
+  );
+  const manifestPath = manifestFile.path;
+  if (!pathInside(expectedJobRoot, manifestPath)) {
+    throw new Error("project_integration_handoff_manifest_unowned");
+  }
+  const manifestBytes = manifestFile.bytes;
+  if (sha256(manifestBytes) !== input.manifestSha256.toLowerCase()) {
+    throw new Error("project_integration_handoff_manifest_hash_mismatch");
+  }
+  const manifest = parseManifest(manifestBytes);
+  const workspacePath = await realpath(input.workspacePath);
+  if (
+    manifest.workerJobId !== input.workerJobId ||
+    manifest.workspacePath !== workspacePath ||
+    manifest.jobRootDir !== expectedJobRoot ||
+    manifest.artifacts.patch.path !== patchPath
+  ) {
+    throw new Error("project_integration_handoff_manifest_ownership_mismatch");
+  }
+  if (input.baseCommit && manifest.baseCommit !== input.baseCommit) {
+    throw new Error("project_integration_handoff_base_commit_mismatch");
+  }
+  if (manifest.provenance.baseCommit !== manifest.baseCommit) {
+    throw new Error("project_integration_handoff_provenance_mismatch");
+  }
+  assertDescriptor(manifest.artifacts.patch, patchFile, maxPatchBytes);
+  const summaryFile = await readCanonicalRegularFile(
+    manifest.artifacts.summary.path,
+    maxManifestBytes,
+  );
+  const summaryPath = summaryFile.path;
+  if (!pathInside(expectedJobRoot, summaryPath)) {
+    throw new Error("project_integration_handoff_summary_unowned");
+  }
+  if (input.summaryPath && await realpath(input.summaryPath) !== summaryPath) {
+    throw new Error("project_integration_handoff_summary_mismatch");
+  }
+  assertDescriptor(
+    manifest.artifacts.summary,
+    summaryFile,
+    maxManifestBytes,
+  );
+  const manifestChangedPaths = uniqueSorted(
+    manifest.changedPaths.map(assertSafeChangedPath),
+  );
+  const requestedChangedPaths = uniqueSorted(
+    input.changedPaths.map(assertSafeChangedPath),
+  );
+  const snapshot = await snapshotValidatedPatch({
+    controller: input.controller,
+    attemptId: input.attemptId,
+    bytes: patchFile.bytes,
+  });
+  const patchChangedPaths = await patchChangedPathsFromGit(workspacePath, snapshot.path);
+  if (
+    !sameStrings(manifestChangedPaths, requestedChangedPaths) ||
+    !sameStrings(manifestChangedPaths, patchChangedPaths)
+  ) {
+    throw new Error("project_integration_handoff_changed_paths_mismatch");
+  }
+  return {
+    baseCommit: manifest.baseCommit,
+    manifestPath,
+    patchPath: snapshot.path,
+    patchSha256: snapshot.sha256,
+    summaryPath,
+  };
+}
+
+type ParsedManifest = {
+  readonly workerJobId: string;
+  readonly workspacePath: string;
+  readonly jobRootDir: string;
+  readonly baseCommit: string;
+  readonly changedPaths: readonly string[];
+  readonly provenance: { readonly baseCommit: string };
+  readonly artifacts: {
+    readonly patch: ParsedDescriptor;
+    readonly summary: ParsedDescriptor;
+  };
+};
+
+type ParsedDescriptor = {
+  readonly path: string;
+  readonly byteLength: number;
+  readonly sha256: string;
+};
+
+function parseManifest(bytes: Buffer): ParsedManifest {
+  let value: unknown;
+  try {
+    value = JSON.parse(bytes.toString("utf8"));
+  } catch {
+    throw new Error("project_integration_handoff_manifest_invalid");
+  }
+  if (
+    !isRecord(value) ||
+    value.schemaVersion !== 1 ||
+    value.kind !== "subscription-runtime-worker-handoff" ||
+    typeof value.workerJobId !== "string" ||
+    typeof value.workspacePath !== "string" ||
+    typeof value.jobRootDir !== "string" ||
+    typeof value.baseCommit !== "string" ||
+    !/^[a-f0-9]{40}$/i.test(value.baseCommit) ||
+    !isAbsolute(value.workspacePath) ||
+    !isAbsolute(value.jobRootDir) ||
+    !Array.isArray(value.changedPaths) ||
+    !value.changedPaths.every((path) => typeof path === "string") ||
+    !isRecord(value.provenance) ||
+    typeof value.provenance.baseCommit !== "string" ||
+    value.provenance.generator !== "subscription-runtime" ||
+    value.provenance.source !== "terminal-worker-workspace" ||
+    !isRecord(value.artifacts)
+  ) {
+    throw new Error("project_integration_handoff_manifest_invalid");
+  }
+  const patch = parseDescriptor(value.artifacts.patch);
+  const summary = parseDescriptor(value.artifacts.summary);
+  return {
+    workerJobId: value.workerJobId,
+    workspacePath: value.workspacePath,
+    jobRootDir: value.jobRootDir,
+    baseCommit: value.baseCommit,
+    changedPaths: value.changedPaths as readonly string[],
+    provenance: { baseCommit: value.provenance.baseCommit },
+    artifacts: { patch, summary },
+  };
+}
+
+function parseDescriptor(value: unknown): ParsedDescriptor {
+  if (
+    !isRecord(value) ||
+    typeof value.path !== "string" ||
+    !isAbsolute(value.path) ||
+    typeof value.byteLength !== "number" ||
+    !Number.isSafeInteger(value.byteLength) ||
+    value.byteLength < 0 ||
+    typeof value.sha256 !== "string" ||
+    !/^[a-f0-9]{64}$/i.test(value.sha256)
+  ) {
+    throw new Error("project_integration_handoff_descriptor_invalid");
+  }
+  return {
+    path: value.path,
+    byteLength: value.byteLength,
+    sha256: value.sha256.toLowerCase(),
+  };
+}
+
+function assertDescriptor(
+  descriptor: ParsedDescriptor,
+  file: { readonly path: string; readonly bytes: Buffer },
+  maxBytes: number,
+): void {
+  if (descriptor.path !== file.path) {
+    throw new Error("project_integration_handoff_descriptor_path_mismatch");
+  }
+  if (
+    file.bytes.byteLength !== descriptor.byteLength ||
+    file.bytes.byteLength > maxBytes ||
+    sha256(file.bytes) !== descriptor.sha256
+  ) {
+    throw new Error("project_integration_handoff_descriptor_hash_mismatch");
+  }
+}
+
+async function patchChangedPathsFromGit(
+  workspacePath: string,
+  patchPath: string,
+): Promise<readonly string[]> {
+  const { stdout } = await execFileAsync("git", [
+    "-C",
+    workspacePath,
+    "apply",
+    "--numstat",
+    "-z",
+    patchPath,
+  ], {
+    encoding: "utf8",
+    maxBuffer: 2 * 1024 * 1024,
+    timeout: 15_000,
+  });
+  return uniqueSorted(stdout.split("\0").filter(Boolean).map((record) => {
+    const fields = record.split("\t");
+    return assertSafeChangedPath(fields.slice(2).join("\t"));
+  }));
+}
+
+async function assertExactPatchChangedPaths(input: {
+  readonly workspacePath: string;
+  readonly patchPath: string;
+  readonly expectedChangedPaths: readonly string[];
+}): Promise<void> {
+  const actual = await patchChangedPathsFromGit(
+    input.workspacePath,
+    input.patchPath,
+  );
+  const expected = uniqueSorted(
+    input.expectedChangedPaths.map(assertSafeChangedPath),
+  );
+  if (!sameStrings(actual, expected)) {
+    throw new Error("project_integration_handoff_changed_paths_mismatch");
+  }
+}
+
+async function snapshotValidatedPatch(input: {
+  readonly controller: ProjectIntegrationMcpController;
+  readonly attemptId: string;
+  readonly bytes: Buffer;
+}): Promise<{ readonly path: string; readonly sha256: string }> {
+  const controllerRoot = await canonicalDirectoryIfExists(
+    input.controller.controller.jobRootDir,
+  );
+  if (controllerRoot === undefined) {
+    throw new Error("project_integration_controller_job_root_missing");
+  }
+  const snapshotRoot = localProjectIntegrationSnapshotRoot(input.controller);
+  const attemptRoot = join(snapshotRoot, input.attemptId);
+  await mkdir(attemptRoot, { recursive: true, mode: 0o700 });
+  const canonicalAttemptRoot = await realpath(attemptRoot);
+  if (!pathInside(controllerRoot, canonicalAttemptRoot)) {
+    throw new Error("project_integration_snapshot_root_unowned");
+  }
+  const digest = sha256(input.bytes);
+  const snapshotPath = join(canonicalAttemptRoot, `${digest}.patch`);
+  await publishExactSnapshot(snapshotPath, input.bytes);
+  return { path: snapshotPath, sha256: digest };
+}
+
+async function publishExactSnapshot(path: string, bytes: Buffer): Promise<void> {
+  const tempPath = join(
+    dirname(path),
+    `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`,
+  );
+  await writeFile(tempPath, bytes, { mode: 0o400, flag: "wx" });
+  try {
+    try {
+      await link(tempPath, path);
+    } catch (error) {
+      if (!isNodeError(error, "EEXIST")) throw error;
+      const existing = await readCanonicalRegularFile(path, maxPatchBytes);
+      if (!existing.bytes.equals(bytes)) {
+        throw new Error("project_integration_snapshot_content_mismatch");
+      }
+    }
+  } finally {
+    await unlink(tempPath).catch((error: unknown) => {
+      if (!isNodeError(error, "ENOENT")) throw error;
+    });
+  }
+}
+
+async function patchInsideProjectScope(
+  controller: ProjectIntegrationMcpController,
+  patchPath: string,
+): Promise<boolean> {
+  const roots = [
+    ...(controller.scope.workspaceRoots ?? []),
+    ...(controller.scope.worktreeRoots ?? []),
+  ];
+  for (const rootPath of roots) {
+    const root = await canonicalDirectoryIfExists(rootPath);
+    if (root !== undefined && pathInside(root, patchPath)) return true;
+  }
+  return false;
+}
+
+async function patchInsideControllerRejectedArchive(input: {
+  readonly controller: ProjectIntegrationMcpController;
+  readonly workerJobId: string;
+  readonly patchPath: string;
+}): Promise<boolean> {
+  const archiveRoot = await canonicalDirectoryIfExists(join(
+    input.controller.controller.jobRootDir,
+    "archives",
+  ));
+  if (archiveRoot === undefined || !pathInside(archiveRoot, input.patchPath)) {
+    return false;
+  }
+  const rel = relative(archiveRoot, input.patchPath);
+  const archiveDirectory = dirname(rel);
+  return basename(rel) === "tracked.diff" &&
+    dirname(archiveDirectory) === "." &&
+    archiveDirectory.startsWith(`${input.workerJobId}-rejected-`) &&
+    archiveDirectory.length > `${input.workerJobId}-rejected-`.length;
+}
+
+async function readCanonicalRegularFile(
+  path: string,
+  maxBytes: number,
+): Promise<{ readonly path: string; readonly bytes: Buffer }> {
+  const item = await lstat(path);
+  if (item.isSymbolicLink() || !item.isFile() || item.size > maxBytes) {
+    throw new Error("project_integration_handoff_artifact_unsafe");
+  }
+  const canonical = await realpath(path);
+  const bytes = await readFile(canonical);
+  if (bytes.byteLength > maxBytes) {
+    throw new Error("project_integration_handoff_artifact_unsafe");
+  }
+  return { path: canonical, bytes };
+}
+
+async function canonicalDirectoryIfExists(path: string): Promise<string | undefined> {
+  try {
+    const item = await lstat(path);
+    if (item.isSymbolicLink() || !item.isDirectory()) return undefined;
+    return await realpath(path);
+  } catch (error) {
+    if (isNodeError(error, "ENOENT")) return undefined;
+    throw error;
+  }
+}
+
+function assertSafeChangedPath(path: string): string {
+  if (
+    !path ||
+    isAbsolute(path) ||
+    path.includes("\\") ||
+    path.split("/").some((part) => !part || part === "." || part === "..")
+  ) {
+    throw new Error("project_integration_handoff_changed_path_invalid");
+  }
+  return path;
+}
+
+function assertSafeWorkerJobId(value: string): void {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value)) {
+    throw new Error("project_integration_worker_job_id_invalid");
+  }
+}
+
+function assertSafePathSegment(value: string, label: string): void {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value)) {
+    throw new Error(`${label}_invalid`);
+  }
+}
+
+function uniqueSorted(values: readonly string[]): readonly string[] {
+  return [...new Set(values)].sort();
+}
+
+function sameStrings(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function pathInside(root: string, path: string): boolean {
+  const rel = relative(root, path);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+function sha256(value: Buffer): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isNodeError(error: unknown, code: string): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error && error.code === code;
+}

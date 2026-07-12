@@ -17,6 +17,10 @@ import type {
   ProjectIntegrationMcpController,
   ProjectIntegrationMcpToolHandlers,
 } from "../ports/project-integration-mcp-tool-handlers";
+import {
+  localProjectIntegrationSnapshotRoot,
+  validateLocalWorkerHandoffArtifact,
+} from "./local-worker-handoff-artifact-validator";
 
 export type CreateLocalProjectIntegrationMcpToolHandlersOptions =
   Pick<
@@ -30,6 +34,7 @@ export function createLocalProjectIntegrationMcpToolHandlers(
   return createProjectIntegrationMcpToolHandlers({
     ...options,
     integrationDeps: localProjectIntegrationDeps,
+    validateWorkerHandoffArtifact: validateLocalWorkerHandoffArtifact,
   });
 }
 
@@ -67,6 +72,7 @@ function projectIntegrationAllowedPatchRoots(
   return [
     ...(controller.scope.workspaceRoots ?? []),
     ...(controller.scope.worktreeRoots ?? []),
+    localProjectIntegrationSnapshotRoot(controller),
   ];
 }
 

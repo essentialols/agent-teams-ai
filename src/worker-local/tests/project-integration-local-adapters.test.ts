@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -141,6 +142,35 @@ describe("local project integration adapters", () => {
       .toBe("");
     expect(await readFile(join(fixture.workspacePath, "src", "memory.ts"), "utf8"))
       .toBe("export const value = 1;\n");
+  });
+
+  it("rejects an attempt-owned patch when its stored SHA-256 no longer matches", async () => {
+    const fixture = await createGitFixture();
+    const patchPath = join(fixture.rootDir, "snapshot.patch");
+    const patch = await gitOutput(fixture.workspacePath, [
+      "show",
+      "--format=",
+      fixture.workerCommitSha,
+    ]);
+    const patchSha256 = createHash("sha256").update(patch).digest("hex");
+    await writeFile(patchPath, `${patch}\nsubstituted\n`);
+    const adapter = new LocalGitIntegrationAdapter({
+      allowedPatchRoots: [fixture.rootDir],
+    });
+
+    await expect(adapter.applyWorkerOutput({
+      attempt: {
+        targetWorkspacePath: fixture.workspacePath,
+        expectedFiles: ["src/memory.ts"],
+      },
+      workerOutput: {
+        workspacePath: fixture.workspacePath,
+        patchPath,
+        patchSha256,
+      },
+    })).rejects.toThrow("local_git_integration_patch_hash_mismatch");
+    expect(await gitOutput(fixture.workspacePath, ["status", "--porcelain"]))
+      .toBe("");
   });
 
   it("recognizes a fully applied patch only when idempotent recovery is allowed", async () => {

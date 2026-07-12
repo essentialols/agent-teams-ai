@@ -3,6 +3,8 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { format } from 'prettier';
+
 import {
   encodeIntent,
   fingerprintIntent,
@@ -11,12 +13,16 @@ import {
   runSnapshotScheduler,
   validateCommandCatalog,
 } from './model.mjs';
-import { verifyMutationCensus } from './mutation-census.mjs';
+import { verifyCrossLaneOwnerAgreement, verifyMutationCensus } from './mutation-census.mjs';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(SCRIPT_DIR, '../../../..');
 const OUT = resolve(ROOT, 'docs/research/hosted-web/phase-0/recovery-events');
 const MUTATION_MANIFEST_PATH = resolve(OUT, 'mutation-surface-manifest.json');
+const W1_API_PARITY_LEDGER_PATH = resolve(
+  ROOT,
+  'docs/research/hosted-web/phase-0/parity-renderer/api-parity-ledger.json'
+);
 const FINGERPRINT_ORACLE_PATH = resolve(
   ROOT,
   'test/architecture/hosted-web/phase-0/recovery-events/fixtures/fingerprint-oracle-vectors.json'
@@ -93,7 +99,11 @@ function descriptor(commandKind, featureOwner, sourceMethods, normalizedIntentFi
       'keyVersion',
       'digest',
     ],
-    effects: effects.map((effect) => ({ effectOwner: featureOwner, ...effect })),
+    effects: effects.map((effect, index) => ({
+      effectOwner: featureOwner,
+      effectRole: index === 0 ? 'coordinator_effect' : 'secondary_effect',
+      ...effect,
+    })),
   };
 }
 
@@ -150,7 +160,7 @@ function buildCommandCatalog(mutationManifest) {
     ),
     descriptor(
       'git.initialize_repository',
-      'workspace-git',
+      'workspace-registry',
       ['initializeGitRepository'],
       ['workspaceId', 'repositoryId', 'mountGeneration'],
       [
@@ -163,7 +173,7 @@ function buildCommandCatalog(mutationManifest) {
     ),
     descriptor(
       'git.create_initial_commit',
-      'workspace-git',
+      'workspace-registry',
       ['createInitialGitCommit'],
       ['workspaceId', 'repositoryId', 'expectedHead', 'treeDigest'],
       [
@@ -447,15 +457,18 @@ function buildCommandCatalog(mutationManifest) {
     ),
     descriptor(
       'member.restart',
-      'team-runtime-control',
+      'team-lifecycle',
       ['restartMember'],
       ['teamId', 'runId', 'runGeneration', 'memberId'],
       [
         tx('commit_restart_workflow'),
-        nonrec(
-          'provider_member_restart',
-          'spawn may occur before durable provider acknowledgement'
-        ),
+        {
+          ...nonrec(
+            'provider_member_restart',
+            'spawn may occur before durable provider acknowledgement'
+          ),
+          effectOwner: 'team-runtime-control',
+        },
       ]
     ),
     descriptor(
@@ -473,10 +486,16 @@ function buildCommandCatalog(mutationManifest) {
     ),
     descriptor(
       'member.skip_for_launch',
-      'team-runtime-control',
+      'team-lifecycle',
       ['skipMemberForLaunch'],
       ['teamId', 'runId', 'runGeneration', 'memberId'],
-      [tx(), op('write_launch_skip', 'memberId/run generation transition is uniquely journaled')]
+      [
+        tx(),
+        {
+          ...op('write_launch_skip', 'memberId/run generation transition is uniquely journaled'),
+          effectOwner: 'team-runtime-control',
+        },
+      ]
     ),
     descriptor(
       'process.kill',
@@ -1035,7 +1054,7 @@ function buildEstimate() {
   };
 }
 
-function buildMutationCensus(manifest, verification) {
+function buildMutationCensus(manifest, verification, crossLaneVerification) {
   return {
     schemaVersion: 1,
     artifactId: 'P0.W5.SUPPORTING.MUTATION_CENSUS',
@@ -1056,6 +1075,7 @@ function buildMutationCensus(manifest, verification) {
       everyMutationMappedExactlyOnce: true,
       noCatalogMethodOutsideRequiredDisposition: true,
       ownerAgreement: true,
+      crossLaneOwnerAgreement: crossLaneVerification.errors.length === 0,
       omissionNegativeFixturesRejected: true,
     },
   };
@@ -1109,6 +1129,7 @@ function buildReport({ catalog, scheduler, effectMatrix, goldens }) {
     `- Existing OpenCode delivery/bridge journals provide valuable conflict and ambiguity evidence. They are JSON-store/provider-specific, hash raw or partially normalized payloads without retained ADR-34 descriptor/key versions, and cannot serve as the hosted event journal.\n` +
     `- The deterministic snapshot scheduler explored ${scheduler.exploredScheduleCount} mutation schedules, including actual before/after commit transitions. All converged; lower-C0 schedules deliberately admitted duplicates. Both negative controls reproduced a lost committed event.\n` +
     `- The independent pinned-source census classifies ${catalog.coverage.observedSurfaceCount} extracted interface members and maps ${catalog.coverage.observedMethodCount} required mutations exactly once to ${catalog.commands.length} normalized command kinds and ${effectMatrix.effects.length} owned effects. Bidirectional missing/extra and omitted-descriptor fixtures fail closed.\n` +
+    `- The external ownership gate compares ${catalog.coverage.crossLaneOwnership.comparedRequiredW1W5Members} required W1/W5 API members against the W1 API parity ledger and fails generation on a missing row or primary command-owner drift. Coordinator effects remain owned by the primary command feature; published secondary effects retain their distinct effect owner.\n` +
     `- The recovery scheduler executed ${effectMatrix.faultScheduler.exploredScheduleCount} real two-process crash/restart schedules. Every attempt exited at its scheduled boundary, a different PID reloaded only durable command/provider files, and exact post-restart state/effect/compensation/publication counts passed. Stale, coincidentally equal, mismatched-operation and lost-response negative controls all fail closed.\n` +
     `- Current task/inbox/provider lookup and active-writer coordination remain unproved by W3, so those external effects are \`non_reconcilable\`/\`operator_required\`; a future operation-ID class remains only a candidate until independently exercised. Same-key changed intent resolves to \`${goldens.assertions.changedIntentReuseOutcome}\`.\n\n` +
     `## Accepted handoff contract\n\n` +
@@ -1135,6 +1156,7 @@ function buildReport({ catalog, scheduler, effectMatrix, goldens }) {
 
 async function renderOutputs() {
   const mutationManifest = JSON.parse(await readFile(MUTATION_MANIFEST_PATH, 'utf8'));
+  const w1ApiParityLedger = JSON.parse(await readFile(W1_API_PARITY_LEDGER_PATH, 'utf8'));
   const fingerprintOracle = JSON.parse(await readFile(FINGERPRINT_ORACLE_PATH, 'utf8'));
   const catalog = buildCommandCatalog(mutationManifest);
   const censusVerification = await verifyMutationCensus({
@@ -1144,6 +1166,16 @@ async function renderOutputs() {
   });
   if (censusVerification.errors.length) {
     throw new Error(`Mutation census invalid:\n${censusVerification.errors.join('\n')}`);
+  }
+  const crossLaneOwnerVerification = verifyCrossLaneOwnerAgreement({
+    w1Ledger: w1ApiParityLedger,
+    manifest: mutationManifest,
+    catalog,
+  });
+  if (crossLaneOwnerVerification.errors.length) {
+    throw new Error(
+      `W1-to-W5 command owner drift:\n${crossLaneOwnerVerification.errors.join('\n')}`
+    );
   }
   catalog.coverage.observedSurfaceCount = censusVerification.counts.extracted;
   catalog.coverage.observedMethodCount = censusVerification.counts.required;
@@ -1156,6 +1188,12 @@ async function renderOutputs() {
   catalog.coverage.exactlyOnceMapped = true;
   catalog.coverage.noCatalogMethodOutsideRequiredDisposition = true;
   catalog.coverage.ownerAgreement = true;
+  catalog.coverage.crossLaneOwnership = {
+    authorityArtifact: 'docs/research/hosted-web/phase-0/parity-renderer/api-parity-ledger.json',
+    authorityEvidenceId: w1ApiParityLedger.evidenceId,
+    ...crossLaneOwnerVerification.counts,
+    ownerAgreement: true,
+  };
   const errors = validateCommandCatalog(catalog);
   if (errors.length) throw new Error(`Command catalog invalid:\n${errors.join('\n')}`);
   const scheduler = runSnapshotScheduler();
@@ -1224,7 +1262,12 @@ async function renderOutputs() {
       'fresh Node process crash/restart fixture with durable command and independent external-adapter files; individual catalog rows admit automatic recovery only when automaticRecoveryAdmitted is true',
     ownershipAssertions: {
       everyEffectHasOwner: catalog.commands.every((command) =>
-        command.effects.every((effect) => effect.effectOwner === command.featureOwner)
+        command.effects.every((effect) => Boolean(effect.effectOwner))
+      ),
+      everyCoordinatorOwnedByCommandFeature: catalog.commands.every((command) =>
+        command.effects
+          .filter((effect) => effect.effectRole === 'coordinator_effect')
+          .every((effect) => effect.effectOwner === command.featureOwner)
       ),
       everyEffectHasWriterEvidence: catalog.commands.every((command) =>
         command.effects.every((effect) => effect.writerAuthority && effect.writerEvidenceRef)
@@ -1244,7 +1287,11 @@ async function renderOutputs() {
   };
   const goldens = buildFingerprintGoldens(fingerprintOracle);
   const estimate = buildEstimate();
-  const mutationCensus = buildMutationCensus(mutationManifest, censusVerification);
+  const mutationCensus = buildMutationCensus(
+    mutationManifest,
+    censusVerification,
+    crossLaneOwnerVerification
+  );
   const index = {
     schemaVersion: 1,
     laneId: 'w5',
@@ -1266,16 +1313,18 @@ async function renderOutputs() {
       ['P0.W5.ESTIMATE', 'estimate-input.json'],
     ].map(([id, path]) => ({ id, path })),
   };
-  const json = (value) => `${JSON.stringify(value)}\n`;
+  const json = (value, spacing) => `${JSON.stringify(value, null, spacing)}\n`;
+  const prettierJson = (value) =>
+    format(JSON.stringify(value), { parser: 'json', printWidth: 100, trailingComma: 'none' });
   return new Map([
     ['index.json', json(index)],
     ['event-cursor-inventory.json', json(eventInventory)],
     ['snapshot-handoff-scheduler.json', json(scheduler)],
-    ['command-catalog.json', json(catalog)],
-    ['effect-recovery-matrix.json', json(effectMatrix)],
+    ['command-catalog.json', await prettierJson(catalog)],
+    ['effect-recovery-matrix.json', json(effectMatrix, 2)],
     ['fingerprint-goldens.json', json(goldens)],
     ['estimate-input.json', json(estimate)],
-    ['mutation-census.json', json(mutationCensus)],
+    ['mutation-census.json', json(mutationCensus, 2)],
     ['README.md', buildReport({ catalog, scheduler, effectMatrix, goldens })],
   ]);
 }

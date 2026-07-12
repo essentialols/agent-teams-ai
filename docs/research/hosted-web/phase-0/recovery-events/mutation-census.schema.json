@@ -51,6 +51,7 @@
         "everyMutationMappedExactlyOnce",
         "noCatalogMethodOutsideRequiredDisposition",
         "ownerAgreement",
+        "crossLaneOwnerAgreement",
         "omissionNegativeFixturesRejected"
       ],
       "properties": {
@@ -60,6 +61,7 @@
         "everyMutationMappedExactlyOnce": { "const": true },
         "noCatalogMethodOutsideRequiredDisposition": { "const": true },
         "ownerAgreement": { "const": true },
+        "crossLaneOwnerAgreement": { "const": true },
         "omissionNegativeFixturesRejected": { "const": true }
       }
     }

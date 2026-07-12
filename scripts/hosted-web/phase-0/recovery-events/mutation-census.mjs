@@ -9,6 +9,72 @@ function sourceMethodForCatalog(row) {
   return row.id === 'CrossTeamAPI.send' ? 'crossTeam.send' : row.sourceMethod;
 }
 
+const W1_OWNERSHIP_INTERFACES = new Set(['TeamsAPI', 'CrossTeamAPI', 'ReviewAPI']);
+
+export function verifyCrossLaneOwnerAgreement({ w1Ledger, manifest, catalog }) {
+  const errors = [];
+  const w1ById = new Map();
+  for (const member of w1Ledger.members ?? []) {
+    const id = `${member.source}.${member.sourceMember}`;
+    if (w1ById.has(id)) errors.push(`duplicate W1 ownership row ${id}`);
+    w1ById.set(id, member);
+  }
+
+  const commandsByMethod = new Map();
+  for (const command of catalog.commands ?? []) {
+    for (const sourceMethod of command.sourceMethods ?? []) {
+      const commands = commandsByMethod.get(sourceMethod) ?? [];
+      commands.push(command);
+      commandsByMethod.set(sourceMethod, commands);
+    }
+  }
+
+  const comparedRows = (manifest.rows ?? []).filter(
+    (row) =>
+      row.disposition === 'required_hosted_v1_mutation' &&
+      W1_OWNERSHIP_INTERFACES.has(row.interfaceName)
+  );
+  let missingW1Rows = 0;
+  let ownerMismatches = 0;
+  for (const row of comparedRows) {
+    const w1Member = w1ById.get(row.id);
+    if (!w1Member) {
+      missingW1Rows += 1;
+      errors.push(`required W5 mutation missing W1 ownership row ${row.id}`);
+      continue;
+    }
+    const commands = commandsByMethod.get(sourceMethodForCatalog(row)) ?? [];
+    if (commands.length !== 1) {
+      errors.push(`required W5 mutation lacks one catalog owner ${row.id}=${commands.length}`);
+      continue;
+    }
+    const [command] = commands;
+    let rowOwnerMismatch = false;
+    if (row.owner !== w1Member.owningFeature) {
+      rowOwnerMismatch = true;
+      errors.push(
+        `cross-lane manifest owner mismatch ${row.id}: W5 ${row.owner} != W1 ${w1Member.owningFeature}`
+      );
+    }
+    if (command.featureOwner !== w1Member.owningFeature) {
+      rowOwnerMismatch = true;
+      errors.push(
+        `cross-lane command owner mismatch ${row.id}: W5 ${command.featureOwner} != W1 ${w1Member.owningFeature}`
+      );
+    }
+    if (rowOwnerMismatch) ownerMismatches += 1;
+  }
+
+  return {
+    errors,
+    counts: {
+      comparedRequiredW1W5Members: comparedRows.length,
+      missingW1Rows,
+      ownerMismatches,
+    },
+  };
+}
+
 export async function extractInterfaceMembers(root, sourceScopes) {
   const extracted = [];
   for (const scope of sourceScopes) {

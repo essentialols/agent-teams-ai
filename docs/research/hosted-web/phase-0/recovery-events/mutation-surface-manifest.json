@@ -147,7 +147,7 @@
       "sourceMethod": "initializeGitRepository",
       "sourceFile": "src/shared/types/api.ts",
       "disposition": "required_hosted_v1_mutation",
-      "owner": "workspace-git",
+      "owner": "workspace-registry",
       "commandKind": "git.initialize_repository"
     },
     {
@@ -156,7 +156,7 @@
       "sourceMethod": "createInitialGitCommit",
       "sourceFile": "src/shared/types/api.ts",
       "disposition": "required_hosted_v1_mutation",
-      "owner": "workspace-git",
+      "owner": "workspace-registry",
       "commandKind": "git.create_initial_commit"
     },
     {
@@ -599,7 +599,7 @@
       "sourceMethod": "restartMember",
       "sourceFile": "src/shared/types/api.ts",
       "disposition": "required_hosted_v1_mutation",
-      "owner": "team-runtime-control",
+      "owner": "team-lifecycle",
       "commandKind": "member.restart"
     },
     {
@@ -608,7 +608,7 @@
       "sourceMethod": "skipMemberForLaunch",
       "sourceFile": "src/shared/types/api.ts",
       "disposition": "required_hosted_v1_mutation",
-      "owner": "team-runtime-control",
+      "owner": "team-lifecycle",
       "commandKind": "member.skip_for_launch"
     },
     {

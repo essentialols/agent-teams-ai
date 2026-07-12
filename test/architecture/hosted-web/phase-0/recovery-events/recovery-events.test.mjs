@@ -12,11 +12,18 @@ import {
   runSnapshotScheduler,
   validateCommandCatalog,
 } from '../../../../../scripts/hosted-web/phase-0/recovery-events/model.mjs';
-import { verifyMutationCensus } from '../../../../../scripts/hosted-web/phase-0/recovery-events/mutation-census.mjs';
+import {
+  verifyCrossLaneOwnerAgreement,
+  verifyMutationCensus,
+} from '../../../../../scripts/hosted-web/phase-0/recovery-events/mutation-census.mjs';
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(TEST_DIR, '../../../../..');
 const EVIDENCE = resolve(ROOT, 'docs/research/hosted-web/phase-0/recovery-events');
+const W1_API_PARITY_LEDGER = resolve(
+  ROOT,
+  'docs/research/hosted-web/phase-0/parity-renderer/api-parity-ledger.json'
+);
 
 async function json(path) {
   return JSON.parse(await readFile(path, 'utf8'));
@@ -362,6 +369,63 @@ test('command catalog has bidirectional source census and omission proof', async
       .flatMap((command) => command.effects)
       .filter((effect) => effect.candidateRecoveryClass === 'idempotent_by_operation_id')
       .every((effect) => effect.recoveryClass === 'non_reconcilable')
+  );
+});
+
+test('external W1-to-W5 gate rejects primary command owner drift', async () => {
+  const catalog = await json(resolve(EVIDENCE, 'command-catalog.json'));
+  const manifest = await json(resolve(EVIDENCE, 'mutation-surface-manifest.json'));
+  const w1Ledger = await json(W1_API_PARITY_LEDGER);
+  const verification = verifyCrossLaneOwnerAgreement({ w1Ledger, manifest, catalog });
+  assert.deepEqual(verification.errors, []);
+  assert.deepEqual(verification.counts, {
+    comparedRequiredW1W5Members: 49,
+    missingW1Rows: 0,
+    ownerMismatches: 0,
+  });
+
+  const expectedOwners = new Map([
+    ['git.initialize_repository', 'workspace-registry'],
+    ['git.create_initial_commit', 'workspace-registry'],
+    ['member.restart', 'team-lifecycle'],
+    ['member.skip_for_launch', 'team-lifecycle'],
+  ]);
+  for (const [commandKind, owner] of expectedOwners) {
+    const command = catalog.commands.find((entry) => entry.commandKind === commandKind);
+    assert.equal(command?.featureOwner, owner, `${commandKind} primary owner`);
+    assert.equal(
+      command?.effects.filter((effect) => effect.effectRole === 'coordinator_effect').length,
+      1,
+      `${commandKind} coordinator effect`
+    );
+    assert.equal(
+      command?.effects.find((effect) => effect.effectRole === 'coordinator_effect')?.effectOwner,
+      owner,
+      `${commandKind} coordinator owner`
+    );
+  }
+  for (const commandKind of ['member.restart', 'member.skip_for_launch']) {
+    const command = catalog.commands.find((entry) => entry.commandKind === commandKind);
+    assert.equal(
+      command?.effects.find((effect) => effect.effectRole === 'secondary_effect')?.effectOwner,
+      'team-runtime-control',
+      `${commandKind} secondary runtime effect owner`
+    );
+  }
+
+  const driftedW1Ledger = clone(w1Ledger);
+  driftedW1Ledger.members.find(
+    (member) => member.source === 'TeamsAPI' && member.sourceMember === 'restartMember'
+  ).owningFeature = 'team-runtime-control';
+  const drifted = verifyCrossLaneOwnerAgreement({
+    w1Ledger: driftedW1Ledger,
+    manifest,
+    catalog,
+  });
+  assert.ok(
+    drifted.errors.includes(
+      'cross-lane command owner mismatch TeamsAPI.restartMember: W5 team-lifecycle != W1 team-runtime-control'
+    )
   );
 });
 

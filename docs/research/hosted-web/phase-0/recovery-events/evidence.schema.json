@@ -116,7 +116,8 @@
               "manifestToSourceComplete",
               "exactlyOnceMapped",
               "noCatalogMethodOutsideRequiredDisposition",
-              "ownerAgreement"
+              "ownerAgreement",
+              "crossLaneOwnership"
             ],
             "properties": {
               "censusArtifact": { "const": "mutation-census.json" },
@@ -124,7 +125,28 @@
               "manifestToSourceComplete": { "const": true },
               "exactlyOnceMapped": { "const": true },
               "noCatalogMethodOutsideRequiredDisposition": { "const": true },
-              "ownerAgreement": { "const": true }
+              "ownerAgreement": { "const": true },
+              "crossLaneOwnership": {
+                "type": "object",
+                "required": [
+                  "authorityArtifact",
+                  "authorityEvidenceId",
+                  "comparedRequiredW1W5Members",
+                  "missingW1Rows",
+                  "ownerMismatches",
+                  "ownerAgreement"
+                ],
+                "properties": {
+                  "authorityArtifact": {
+                    "const": "docs/research/hosted-web/phase-0/parity-renderer/api-parity-ledger.json"
+                  },
+                  "authorityEvidenceId": { "const": "P0.W1.API_PARITY_LEDGER" },
+                  "comparedRequiredW1W5Members": { "type": "integer", "minimum": 1 },
+                  "missingW1Rows": { "const": 0 },
+                  "ownerMismatches": { "const": 0 },
+                  "ownerAgreement": { "const": true }
+                }
+              }
             }
           },
           "commands": {
@@ -152,6 +174,7 @@
                     "type": "object",
                     "required": [
                       "effectOwner",
+                      "effectRole",
                       "effectId",
                       "recoveryClass",
                       "candidateRecoveryClass",
@@ -162,7 +185,10 @@
                       "currentRecoveryDisposition",
                       "writerAuthority",
                       "writerEvidenceRef"
-                    ]
+                    ],
+                    "properties": {
+                      "effectRole": { "enum": ["coordinator_effect", "secondary_effect"] }
+                    }
                   }
                 }
               }
@@ -187,11 +213,13 @@
             "type": "object",
             "required": [
               "everyEffectHasOwner",
+              "everyCoordinatorOwnedByCommandFeature",
               "everyEffectHasWriterEvidence",
               "unprovedEffectsFailClosed"
             ],
             "properties": {
               "everyEffectHasOwner": { "const": true },
+              "everyCoordinatorOwnedByCommandFeature": { "const": true },
               "everyEffectHasWriterEvidence": { "const": true },
               "unprovedEffectsFailClosed": { "const": true }
             }
@@ -267,6 +295,7 @@
               "required": [
                 "commandKind",
                 "effectOwner",
+                "effectRole",
                 "effectId",
                 "recoveryClass",
                 "candidateRecoveryClass",
@@ -277,7 +306,10 @@
                 "currentRecoveryDisposition",
                 "writerAuthority",
                 "writerEvidenceRef"
-              ]
+              ],
+              "properties": {
+                "effectRole": { "enum": ["coordinator_effect", "secondary_effect"] }
+              }
             }
           }
         }

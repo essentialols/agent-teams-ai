@@ -482,12 +482,25 @@ export function validateCommandCatalog(catalog) {
       if (sensitive.test(field))
         errors.push(`${command.commandKind} persists sensitive field ${field}`);
     }
+    const coordinatorEffects = (command.effects ?? []).filter(
+      (effect) => effect.effectRole === 'coordinator_effect'
+    );
+    if (coordinatorEffects.length !== 1) {
+      errors.push(`${command.commandKind} must have exactly one coordinator effect`);
+    }
     for (const effect of command.effects ?? []) {
       const qualified = `${command.commandKind}:${effect.effectId}`;
       if (effectIds.has(qualified)) errors.push(`duplicate effect ${qualified}`);
       effectIds.add(qualified);
-      if (effect.effectOwner !== command.featureOwner) {
-        errors.push(`${qualified} effect owner does not match command owner`);
+      if (!effect.effectOwner) errors.push(`${qualified} has no effect owner`);
+      if (!['coordinator_effect', 'secondary_effect'].includes(effect.effectRole)) {
+        errors.push(`${qualified} has invalid effect role ${effect.effectRole}`);
+      }
+      if (
+        effect.effectRole === 'coordinator_effect' &&
+        effect.effectOwner !== command.featureOwner
+      ) {
+        errors.push(`${qualified} coordinator owner does not match command owner`);
       }
       if (!effect.writerAuthority || !effect.writerEvidenceRef) {
         errors.push(`${qualified} has no writer authority evidence`);

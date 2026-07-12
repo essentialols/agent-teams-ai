@@ -153,6 +153,10 @@ Current Codex adapter status:
   safely backfill legacy completed jobs. Existing mismatched artifacts are never
   overwritten, and Project Integration validates manifest hash, base commit,
   artifact ownership and exact changed paths before opening an attempt;
+- confirmed integration opens snapshot validated patch bytes into the
+  controller job root. Attempts apply only that immutable snapshot after
+  repeated SHA-256 checks; later worker-path mutation cannot change integrated
+  output. Snapshot cleanup follows controller attempt/audit retention;
 - Codex access-boundary jobs must set `networkAccess: "restricted"`.
   The adapter fails closed for implicit or explicit `disabled` network mode until
   a real OS/container egress sandbox exists;

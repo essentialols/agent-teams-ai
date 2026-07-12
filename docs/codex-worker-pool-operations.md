@@ -792,6 +792,11 @@ more than 256 changed files, files larger than 4 MiB, more than 16 MiB of source
 bytes, or a patch larger than 16 MiB. See the access and integration policy in
 [Project access boundaries](project-access-boundaries.md).
 
+Provider completion and handoff readiness are separate. A terminal result may
+remain `done`, but `details.handoffArtifactError` makes brief/decision return a
+blocked manual-review action until safe artifacts can be materialized. The
+stored code is surfaced without raw file contents or credentials.
+
 `codex_accounts_status` returns `dedupedAccountNames` and
 `availableDedupedAccountNames` for worker pool inputs. If the same sanitized
 identity appears in multiple slots, the deduped list keeps the newest ready
@@ -1046,6 +1051,15 @@ Parallel worker split:
    Legacy `.preserved.patch` artifacts remain accepted under the existing
    canonical path policy; the manifest requirement applies to new
    `.handoff.patch` bundles.
+
+On confirmed open, Project Integration copies the already-validated patch bytes
+to an immutable attempt-owned snapshot under
+`<controllerJobRoot>/project-integration/artifact-snapshots/<attemptId>/` and
+stores its SHA-256 in the attempt. Numstat, applicability checks and apply use
+only this snapshot and revalidate its hash before each operation. Worker-owned
+patch paths are retained only as source provenance. Snapshots are durable audit
+evidence with the integration attempt and are removed only when the controller
+job root is retired through its normal lifecycle, never by worker cleanup.
 
 Read-only or analysis task:
 

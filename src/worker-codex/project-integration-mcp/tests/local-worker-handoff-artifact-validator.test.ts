@@ -52,6 +52,7 @@ describe("local worker handoff artifact validator", () => {
     };
     const input = {
       controller,
+      attemptId: "attempt-1",
       workerJobId: "worker-1",
       workspacePath,
       patchPath: materialized.patchPath,
@@ -62,9 +63,11 @@ describe("local worker handoff artifact validator", () => {
       changedPaths: ["feature.ts"],
     };
 
-    await expect(validateLocalWorkerHandoffArtifact(input)).resolves.toEqual({
+    await expect(validateLocalWorkerHandoffArtifact(input)).resolves.toMatchObject({
       baseCommit: materialized.baseCommit,
       manifestPath: materialized.manifestPath,
+      patchPath: expect.stringContaining("artifact-snapshots/attempt-1/"),
+      patchSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
       summaryPath: materialized.summaryPath,
     });
     await expect(validateLocalWorkerHandoffArtifact({
@@ -88,10 +91,14 @@ describe("local worker handoff artifact validator", () => {
     await writeFile(legacyPatchPath, await readFile(materialized.patchPath));
     await expect(validateLocalWorkerHandoffArtifact({
       controller,
+      attemptId: "attempt-legacy",
       workerJobId: "worker-1",
       workspacePath,
       patchPath: legacyPatchPath,
       changedPaths: ["feature.ts"],
-    })).resolves.toEqual({});
+    })).resolves.toMatchObject({
+      patchPath: expect.stringContaining("artifact-snapshots/attempt-legacy/"),
+      patchSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
   });
 });

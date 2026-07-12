@@ -105,6 +105,52 @@ describe("Codex goal handoff artifact materialization", () => {
       expectedBaseCommit: boundedFixture.baseCommit,
       limits: { maxFileBytes: 4 },
     })).rejects.toThrow("handoff_file_byte_limit_exceeded");
+
+    const envSecretFixture = await createFixture();
+    await writeFile(
+      join(envSecretFixture.workspacePath, "config.txt"),
+      "OPENAI_API_KEY=abcdefghijklmnopqrstuvwxyz\n",
+    );
+    await expect(materialize(envSecretFixture)).rejects.toThrow(
+      "handoff_raw_secret_rejected",
+    );
+
+    const deletedSecretFixture = await createFixture();
+    const deletedSecretPath = join(
+      deletedSecretFixture.workspacePath,
+      "deleted-config.txt",
+    );
+    await writeFile(
+      deletedSecretPath,
+      "OPENAI_API_KEY=abcdefghijklmnopqrstuvwxyz\n",
+    );
+    await git(deletedSecretFixture.workspacePath, ["add", "deleted-config.txt"]);
+    await git(deletedSecretFixture.workspacePath, ["commit", "-m", "secret fixture"]);
+    await rm(deletedSecretPath);
+    await expect(materializeCodexGoalHandoffArtifacts({
+      workerJobId: "worker-1",
+      taskId: "task-1",
+      workspacePath: deletedSecretFixture.workspacePath,
+      jobRootDir: deletedSecretFixture.jobRootDir,
+    })).rejects.toThrow("handoff_raw_secret_rejected");
+
+    const slackFixture = await createFixture();
+    await writeFile(
+      join(slackFixture.workspacePath, "slack.txt"),
+      `SLACK_TOKEN=xoxb-${"a".repeat(24)}\n`,
+    );
+    await expect(materialize(slackFixture)).rejects.toThrow(
+      "handoff_raw_secret_rejected",
+    );
+
+    const safeSourceFixture = await createFixture();
+    await writeFile(
+      join(safeSourceFixture.workspacePath, "config.ts"),
+      "export const apiKey = process.env.OPENAI_API_KEY;\n",
+    );
+    await expect(materialize(safeSourceFixture)).resolves.toMatchObject({
+      changedPaths: ["config.ts"],
+    });
   });
 
   it("captures tracked plus untracked paths and enforces file-count bounds", async () => {
@@ -156,6 +202,29 @@ describe("Codex goal handoff artifact materialization", () => {
       "handoff_job_root_unsafe",
     );
   });
+
+  it.each([1, 2] as const)(
+    "fails when HEAD changes after patch snapshot %s",
+    async (changedAfterSnapshot) => {
+      const fixture = await createFixture();
+      await writeFile(join(fixture.workspacePath, "README.md"), "changed\n");
+
+      await expect(materializeCodexGoalHandoffArtifacts({
+        workerJobId: "worker-1",
+        taskId: "task-1",
+        workspacePath: fixture.workspacePath,
+        jobRootDir: fixture.jobRootDir,
+        expectedBaseCommit: fixture.baseCommit,
+        testHooks: {
+          afterPatchSnapshot: async (snapshot) => {
+            if (snapshot !== changedAfterSnapshot) return;
+            await git(fixture.workspacePath, ["add", "README.md"]);
+            await git(fixture.workspacePath, ["commit", "-m", "move head"]);
+          },
+        },
+      })).rejects.toThrow("handoff_head_changed_during_materialization");
+    },
+  );
 });
 
 async function createFixture() {

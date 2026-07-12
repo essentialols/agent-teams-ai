@@ -19,7 +19,10 @@ import {
 } from "node:path";
 import { promisify } from "node:util";
 
-import type { RuntimeResultArtifact } from "@vioxen/subscription-runtime/worker-core";
+import {
+  detectSecretLikeContent,
+  type RuntimeResultArtifact,
+} from "@vioxen/subscription-runtime/worker-core";
 
 const execFileAsync = promisify(execFile);
 
@@ -80,6 +83,9 @@ export async function materializeCodexGoalHandoffArtifacts(input: {
   readonly jobRootDir: string;
   readonly expectedBaseCommit?: string;
   readonly limits?: Partial<HandoffArtifactLimits>;
+  readonly testHooks?: {
+    readonly afterPatchSnapshot?: (snapshot: 1 | 2) => Promise<void>;
+  };
 }): Promise<MaterializedCodexGoalHandoffArtifacts | null> {
   assertSafeId(input.workerJobId, "worker_job_id");
   assertSafeId(input.taskId, "task_id");
@@ -102,7 +108,7 @@ export async function materializeCodexGoalHandoffArtifacts(input: {
     throw new Error("handoff_base_commit_mismatch");
   }
 
-  const changedPaths = await gitChangedPaths(workspacePath);
+  const changedPaths = await gitChangedPaths(workspacePath, baseCommit);
   if (changedPaths.length === 0) return null;
   if (changedPaths.length > limits.maxChangedFiles) {
     throw new Error("handoff_changed_file_limit_exceeded");
@@ -115,10 +121,13 @@ export async function materializeCodexGoalHandoffArtifacts(input: {
   const patch = await buildDeterministicPatch({
     workspacePath,
     changedPaths,
+    baseCommit,
     limits,
   });
+  await input.testHooks?.afterPatchSnapshot?.(1);
+  await assertGitHeadUnchanged(workspacePath, baseCommit);
   assertNoRawSecret(Buffer.from(patch), "handoff.patch");
-  const confirmedChangedPaths = await gitChangedPaths(workspacePath);
+  const confirmedChangedPaths = await gitChangedPaths(workspacePath, baseCommit);
   if (!sameStrings(changedPaths, confirmedChangedPaths)) {
     throw new Error("handoff_workspace_changed_during_materialization");
   }
@@ -130,8 +139,11 @@ export async function materializeCodexGoalHandoffArtifacts(input: {
   const confirmedPatch = await buildDeterministicPatch({
     workspacePath,
     changedPaths: confirmedChangedPaths,
+    baseCommit,
     limits,
   });
+  await input.testHooks?.afterPatchSnapshot?.(2);
+  await assertGitHeadUnchanged(workspacePath, baseCommit);
   if (patch !== confirmedPatch) {
     throw new Error("handoff_workspace_changed_during_materialization");
   }
@@ -144,6 +156,7 @@ export async function materializeCodexGoalHandoffArtifacts(input: {
     patch,
     expectedChangedPaths: changedPaths,
   });
+  await assertGitHeadUnchanged(workspacePath, baseCommit);
 
   const patchDescriptor = descriptor(patchPath, patch);
   const summary = stableJson({
@@ -210,14 +223,17 @@ function handoffArtifactLimits(
   return limits;
 }
 
-async function gitChangedPaths(workspacePath: string): Promise<readonly string[]> {
+async function gitChangedPaths(
+  workspacePath: string,
+  baseCommit: string,
+): Promise<readonly string[]> {
   const [tracked, untracked] = await Promise.all([
     gitNullPaths(workspacePath, [
       "diff",
       "--name-only",
       "--no-renames",
       "-z",
-      "HEAD",
+      baseCommit,
       "--",
     ]),
     gitNullPaths(workspacePath, [
@@ -270,6 +286,7 @@ async function assertSafeChangedFiles(input: {
 async function buildDeterministicPatch(input: {
   readonly workspacePath: string;
   readonly changedPaths: readonly string[];
+  readonly baseCommit: string;
   readonly limits: HandoffArtifactLimits;
 }): Promise<string> {
   const untracked = new Set(await gitNullPaths(input.workspacePath, [
@@ -282,7 +299,7 @@ async function buildDeterministicPatch(input: {
     "diff",
     "--binary",
     "--no-renames",
-    "HEAD",
+    input.baseCommit,
     "--",
   ], input.limits.maxPatchBytes);
   const parts = trackedPatch ? [ensureTrailingNewline(trackedPatch)] : [];
@@ -305,6 +322,20 @@ async function buildDeterministicPatch(input: {
   const patch = parts.join("");
   if (!patch.trim()) throw new Error("handoff_patch_empty_for_dirty_workspace");
   return patch;
+}
+
+async function assertGitHeadUnchanged(
+  workspacePath: string,
+  expectedHead: string,
+): Promise<void> {
+  const currentHead = await gitText(workspacePath, [
+    "rev-parse",
+    "--verify",
+    "HEAD",
+  ]);
+  if (currentHead !== expectedHead) {
+    throw new Error("handoff_head_changed_during_materialization");
+  }
 }
 
 async function assertPatchChangedPaths(input: {
@@ -405,15 +436,7 @@ function assertNonSensitivePath(path: string): void {
 }
 
 function assertNoRawSecret(content: Buffer, path: string): void {
-  const text = content.toString("utf8");
-  const patterns = [
-    /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
-    /\bsk-[A-Za-z0-9_-]{20,}\b/,
-    /\bgh[pousr]_[A-Za-z0-9]{20,}\b/,
-    /\bAKIA[0-9A-Z]{16}\b/,
-    /["'](?:access_token|refresh_token|id_token)["']\s*:\s*["'][^"'\r\n]{16,}["']/i,
-  ];
-  if (patterns.some((pattern) => pattern.test(text))) {
+  if (detectSecretLikeContent(content) !== undefined) {
     throw new Error(`handoff_raw_secret_rejected:${path}`);
   }
 }

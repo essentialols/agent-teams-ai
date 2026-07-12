@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFile, realpath } from "node:fs/promises";
 import {
   basename,
@@ -17,6 +17,8 @@ import {
   assertCommitIdentity,
   SecretScanStatus,
   assertFilesWithinExpected,
+  detectSecretLikeContent,
+  matchesSecretLikeContentPatterns,
   normalizeProjectRelativePath,
   type CheckRun,
   type CheckRunnerPort,
@@ -75,6 +77,7 @@ export class LocalGitIntegrationAdapter implements GitPort {
       readonly workerJobId?: string;
       readonly commitSha?: string;
       readonly patchPath?: string;
+      readonly patchSha256?: string;
       readonly workspacePath: string;
     };
     readonly attempt: {
@@ -124,13 +127,16 @@ export class LocalGitIntegrationAdapter implements GitPort {
           ? {}
           : { controllerArchiveRoot: this.options.controllerArchiveRoot }),
       });
+      await assertPatchSha256(patchPath, input.workerOutput.patchSha256);
       const changedFiles = await this.patchChangedFiles(patchPath, workspacePath);
+      await assertPatchSha256(patchPath, input.workerOutput.patchSha256);
       assertFilesWithinExpected(changedFiles, input.attempt.expectedFiles);
       const forwardCheck = await this.tryGit(
         ["apply", "--check", "--whitespace=nowarn", patchPath],
         workspacePath,
       );
       if (forwardCheck.exitCode === 0) {
+        await assertPatchSha256(patchPath, input.workerOutput.patchSha256);
         await this.git(
           ["apply", "--whitespace=nowarn", patchPath],
           workspacePath,
@@ -139,6 +145,7 @@ export class LocalGitIntegrationAdapter implements GitPort {
         input.allowAlreadyApplied === true &&
         sameFiles(changedFiles, input.attempt.expectedFiles)
       ) {
+        await assertPatchSha256(patchPath, input.workerOutput.patchSha256);
         const reverseCheck = await this.tryGit(
           ["apply", "--reverse", "--check", "--whitespace=nowarn", patchPath],
           workspacePath,
@@ -350,6 +357,22 @@ function sameFiles(left: readonly string[], right: readonly string[]): boolean {
     normalizedLeft.every((file, index) => file === normalizedRight[index]);
 }
 
+async function assertPatchSha256(
+  patchPath: string,
+  expectedSha256: string | undefined,
+): Promise<void> {
+  if (expectedSha256 === undefined) return;
+  if (!/^[a-f0-9]{64}$/i.test(expectedSha256)) {
+    throw new Error("local_git_integration_patch_hash_invalid");
+  }
+  const actual = createHash("sha256")
+    .update(await readFile(patchPath))
+    .digest("hex");
+  if (actual !== expectedSha256.toLowerCase()) {
+    throw new Error("local_git_integration_patch_hash_mismatch");
+  }
+}
+
 export class ConfiguredCommitIdentityAdapter implements CommitIdentityPort {
   constructor(
     private readonly identity: CommitIdentity | undefined,
@@ -484,7 +507,6 @@ export class SimpleSecretScanner implements SecretScannerPort {
     readonly files: readonly string[];
   }): Promise<SecretScanResult> {
     const workspacePath = await canonicalDirectory(input.workspacePath);
-    const patterns = this.options.patterns ?? defaultSecretPatterns;
     const matches: string[] = [];
     for (const file of input.files.map(normalizeProjectRelativePath)) {
       const filePath = resolve(workspacePath, file);
@@ -516,7 +538,10 @@ export class SimpleSecretScanner implements SecretScannerPort {
       const sample = contents
         .subarray(0, this.options.maxFileBytes ?? 1024 * 1024)
         .toString("utf8");
-      if (patterns.some((pattern) => pattern.test(sample))) {
+      const secretLikeContent = this.options.patterns === undefined
+        ? detectSecretLikeContent(sample) !== undefined
+        : matchesSecretLikeContentPatterns(sample, this.options.patterns);
+      if (secretLikeContent) {
         matches.push(file);
       }
     }
@@ -789,12 +814,3 @@ function isNodeErrorCode(error: unknown, code: string): boolean {
     (error as NodeJS.ErrnoException).code === code
   );
 }
-
-const defaultSecretPatterns: readonly RegExp[] = [
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
-  /\bsk-[A-Za-z0-9_-]{20,}\b/,
-  /\bghp_[A-Za-z0-9_]{20,}\b/,
-  /\bgithub_pat_[A-Za-z0-9_]{20,}\b/,
-  /\bxox[baprs]-[A-Za-z0-9-]{20,}\b/,
-  /\b(api[_-]?key|access[_-]?token|refresh[_-]?token|secret)\b\s*[:=]\s*["']?[A-Za-z0-9_./+=-]{16,}/i,
-];

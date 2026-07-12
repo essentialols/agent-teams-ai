@@ -145,6 +145,7 @@ export async function buildCodexGoalBrief(input: {
       !workerLiveness.alive,
   );
   const strictResultExists = result.strict === true;
+  const handoffArtifactError = result.handoffArtifactError;
   const needsResultReconcile = Boolean(
     !workerLiveness.alive &&
       !strictResultExists &&
@@ -175,6 +176,11 @@ export async function buildCodexGoalBrief(input: {
     ? {
         tool: "manual_review",
         reason: "heartbeat_only_no_output",
+      }
+    : handoffArtifactError !== undefined
+    ? {
+        tool: "manual_review",
+        reason: "handoff_artifact_materialization_failed",
       }
     : stoppedWithoutResult && !maintenancePaused
     ? {
@@ -252,6 +258,9 @@ export async function buildCodexGoalBrief(input: {
       reviewedWithoutResult ? "reviewedWithoutResult true" : "reviewedWithoutResult false",
       stoppedWithoutResult ? "stoppedWithoutResult true" : "stoppedWithoutResult false",
       maintenancePaused ? "maintenancePaused true" : "maintenancePaused false",
+      handoffArtifactError
+        ? `handoffArtifactError ${handoffArtifactError}`
+        : "handoffArtifactError none",
     ].join(", "),
     lastProgressAt,
     lastProgressAgeMs,
@@ -273,6 +282,7 @@ export async function buildCodexGoalBrief(input: {
     handoffSummaryPath: result.summaryPath,
     handoffManifestPath: result.manifestPath,
     handoffManifestSha256: result.manifestSha256,
+    handoffArtifactError,
     activeWriterRisk: workerHealth.activeWriterRisk.kind,
     activeWriterRiskReasons: workerHealth.activeWriterRisk.reasons,
     silentStale,
@@ -307,6 +317,7 @@ export async function buildCodexGoalBrief(input: {
       hasAvailableAccount &&
       !reviewedStopped &&
       !reviewedWithoutResult &&
+      handoffArtifactError === undefined &&
       (!stoppedWithoutResult || maintenancePaused),
     hasAvailableAccount,
     configuredAccounts: input.accounts.map((slot) => slot.name),

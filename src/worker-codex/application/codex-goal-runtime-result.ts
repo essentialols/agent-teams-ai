@@ -12,6 +12,7 @@ export async function readRuntimeResultBrief(path: string): Promise<{
   readonly summaryPath?: string;
   readonly manifestPath?: string;
   readonly manifestSha256?: string;
+  readonly handoffArtifactError?: string;
   readonly artifacts?: readonly RuntimeResultArtifact[];
 }> {
   try {
@@ -25,6 +26,7 @@ export async function readRuntimeResultBrief(path: string): Promise<{
     const manifestPath = runtimeResultArtifactPath(artifacts, "manifest");
     const manifestSha256 = runtimeResultArtifactSha256(artifacts, "manifest");
     const baseCommit = runtimeResultBaseCommit(parsed);
+    const handoffArtifactError = runtimeResultHandoffArtifactError(parsed);
     return {
       ...(isRecord(lastAttempt) && typeof lastAttempt.accountId === "string"
         ? { currentAccount: lastAttempt.accountId }
@@ -42,12 +44,23 @@ export async function readRuntimeResultBrief(path: string): Promise<{
       ...(summaryPath === undefined ? {} : { summaryPath }),
       ...(manifestPath === undefined ? {} : { manifestPath }),
       ...(manifestSha256 === undefined ? {} : { manifestSha256 }),
+      ...(handoffArtifactError === undefined ? {} : { handoffArtifactError }),
       ...(artifacts.length === 0 ? {} : { artifacts }),
       strict: isStrictRuntimeResultBrief(parsed),
     };
   } catch {
     return {};
   }
+}
+
+function runtimeResultHandoffArtifactError(
+  parsed: Record<string, unknown>,
+): string | undefined {
+  if (!isRecord(parsed.details)) return undefined;
+  const value = parsed.details.handoffArtifactError;
+  return typeof value === "string" && /^handoff_[a-z0-9_]+$/.test(value)
+    ? value
+    : undefined;
 }
 
 export async function safeTail(path: string, lines: number): Promise<string> {

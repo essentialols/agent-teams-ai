@@ -84,6 +84,7 @@ type CodexGoalBriefView = {
   readonly handoffSummaryPath?: string | undefined;
   readonly handoffManifestPath?: string | undefined;
   readonly handoffManifestSha256?: string | undefined;
+  readonly handoffArtifactError?: string | undefined;
   readonly logExists?: boolean | undefined;
   readonly progressPath?: string | undefined;
   readonly progressExists?: boolean | undefined;
@@ -288,6 +289,15 @@ export function buildCodexGoalDecision(input: {
         "The worker heartbeat is fresh, but there is no result, log output or workspace change. Inspect process, app-server, log and worktree before stopping or recovery.",
     });
   }
+  if (input.brief.handoffArtifactError !== undefined) {
+    blockers.push({
+      code: "handoff_artifact_materialization_failed",
+      severity: "blocked",
+      message:
+        "Product execution completed, but its output is not ready for handoff or integration. Inspect the workspace and materialization policy failure.",
+      errorCode: input.brief.handoffArtifactError,
+    });
+  }
   if (
     input.brief.lifecycleMarkerTypes.includes("stop_event") &&
     !input.status.resultExists &&
@@ -399,6 +409,9 @@ function codexGoalDecisionKind(input: {
   if (input.blockedBySingleWriter) return "manual_review_single_writer_conflict";
   if (input.brief.silentStale) return "manual_review_silent_stale";
   if (input.brief.heartbeatOnlyNoOutput) return "manual_review_heartbeat_only_no_output";
+  if (input.brief.handoffArtifactError !== undefined) {
+    return "manual_review_handoff_artifact";
+  }
   if (input.brief.workerAlive) return "wait_for_worker";
   if (input.status.recommendedAction === "review_completed") return "review_completed";
   if (
@@ -690,6 +703,7 @@ export function buildCodexGoalHandoff(input: {
     `- recommendedAction: ${input.status.recommendedAction}`,
     `- resultStatus: ${input.status.resultStatus ?? ""}`,
     `- resultReason: ${input.status.resultReason ?? ""}`,
+    `- handoffArtifactError: ${input.brief.handoffArtifactError ?? ""}`,
     `- workspaceDirty: ${String(input.status.workspaceDirty)}`,
     `- changedFiles: ${(input.status.changedFiles ?? []).length}`,
     `- silentStale: ${String(input.brief.silentStale)}`,
@@ -751,6 +765,7 @@ export function buildCodexGoalHandoff(input: {
       recommendedAction: input.status.recommendedAction,
       resultStatus: input.status.resultStatus,
       resultReason: input.status.resultReason,
+      handoffArtifactError: input.brief.handoffArtifactError,
       workspaceDirty: input.status.workspaceDirty,
       changedFiles: input.status.changedFiles ?? [],
       handoffStatus: handoffContract.status,

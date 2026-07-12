@@ -71,6 +71,7 @@ export async function projectIntegrationOpenAttempt(
       options.validateWorkerHandoffArtifact
     ? await options.validateWorkerHandoffArtifact({
         controller,
+        attemptId,
         workerJobId,
         workspacePath: workerWorkspacePath,
         patchPath,
@@ -82,10 +83,13 @@ export async function projectIntegrationOpenAttempt(
         ...(baseCommit ? { baseCommit } : {}),
         changedPaths: changedFiles,
       })
-    : {};
-  const effectiveBaseCommit = baseCommit ?? validatedHandoff.baseCommit;
-  const effectiveSummaryPath = summaryPath ?? validatedHandoff.summaryPath;
-  const effectiveManifestPath = handoffManifestPath ?? validatedHandoff.manifestPath;
+    : undefined;
+  const effectiveBaseCommit = baseCommit ?? validatedHandoff?.baseCommit;
+  const effectivePatchPath = validatedHandoff?.patchPath ?? patchPath;
+  const effectivePatchSha256 = validatedHandoff?.patchSha256;
+  const effectiveSummaryPath = summaryPath ?? validatedHandoff?.summaryPath;
+  const effectiveManifestPath = handoffManifestPath ??
+    validatedHandoff?.manifestPath;
   const approvedFiles = stringArrayArg(args.approvedFiles);
   const requiredChecks = parseProjectIntegrationChecks(args.requiredChecks);
   const input = {
@@ -101,7 +105,11 @@ export async function projectIntegrationOpenAttempt(
       workerJobId,
       workspacePath: workerWorkspacePath,
       ...(commitSha ? { commitSha } : {}),
-      ...(patchPath ? { patchPath } : {}),
+      ...(effectivePatchPath ? { patchPath: effectivePatchPath } : {}),
+      ...(effectivePatchSha256 ? { patchSha256: effectivePatchSha256 } : {}),
+      ...(patchPath && effectivePatchPath !== patchPath
+        ? { sourcePatchPath: patchPath }
+        : {}),
       ...(effectiveSummaryPath ? { summaryPath: effectiveSummaryPath } : {}),
       ...(effectiveManifestPath
         ? { handoffManifestPath: effectiveManifestPath }

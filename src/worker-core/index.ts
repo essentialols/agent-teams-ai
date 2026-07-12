@@ -17,6 +17,7 @@ export * from "./run-observability";
 export * from "./run-events";
 export * from "./run-reconcile-preview";
 export * from "./runtime-result";
+export * from "./secret-detection";
 export * from "./safe-execution";
 export * from "./status-view";
 export * from "./project-control-broker";

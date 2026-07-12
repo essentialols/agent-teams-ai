@@ -30,6 +30,7 @@ export type CreateProjectIntegrationMcpToolHandlersOptions = {
   ) => ProjectIntegrationMcpUseCaseDeps;
   readonly validateWorkerHandoffArtifact?: (input: {
     readonly controller: ProjectIntegrationMcpController;
+    readonly attemptId: string;
     readonly workerJobId: string;
     readonly workspacePath: string;
     readonly patchPath: string;
@@ -41,6 +42,8 @@ export type CreateProjectIntegrationMcpToolHandlersOptions = {
   }) => Promise<{
     readonly baseCommit?: string;
     readonly manifestPath?: string;
+    readonly patchPath: string;
+    readonly patchSha256: string;
     readonly summaryPath?: string;
   }>;
 };

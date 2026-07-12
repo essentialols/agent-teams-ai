@@ -1,3 +1,4 @@
+import { sanitizeRuntimeProjectionProcessCommand } from './RuntimeProjectionCommandRedaction';
 import { projectRuntimeDiagnostics } from './RuntimeProjectionDiagnostics';
 
 import type {
@@ -9,6 +10,8 @@ import type {
   TeamAgentRuntimeLivenessKind,
   TeamAgentRuntimePidSource,
 } from '@shared/types';
+
+export { sanitizeRuntimeProjectionProcessCommand } from './RuntimeProjectionCommandRedaction';
 
 export interface RuntimeProjectionLivenessOptions {
   nowMs?: number;
@@ -36,9 +39,6 @@ export function isStrongRuntimeEvidence(
 }
 
 const DEFAULT_HEARTBEAT_STALE_AFTER_MS = 120_000;
-const SECRET_CLI_FLAG_PATTERN =
-  /(--(?:api-key|token|password|secret|authorization|auth-token)(?:=|\s+))("[^"]*"|'[^']*'|\S+)/gi;
-
 function positiveInteger(value: number | undefined): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value > 0
     ? Math.trunc(value)
@@ -67,13 +67,6 @@ function heartbeatTimestamp(
     normalizedIsoTimestamp(heartbeat?.lastSeenAt) ??
     normalizedIsoTimestamp(heartbeat?.lastHeartbeatAt)
   );
-}
-
-export function sanitizeRuntimeProjectionProcessCommand(
-  command: string | undefined
-): string | undefined {
-  const trimmed = nonEmptyString(command);
-  return trimmed?.replace(SECRET_CLI_FLAG_PATTERN, '$1[redacted]').slice(0, 500);
 }
 
 function hasPersistedRuntimeEvidence(evidence: RuntimeProjectionLivenessEvidence): boolean {

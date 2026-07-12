@@ -9,6 +9,7 @@ import type {
   TeamCrossTeamMessagingApi,
   TeamHttpHandlerApis,
   TeamIpcHandlerApis,
+  TeamProvisioningPreflightApi,
 } from '@main/services/team/contracts/TeamProvisioningApis';
 
 function sortedKeys(value: object): string[] {
@@ -42,7 +43,9 @@ function createSource() {
     ),
     repairStaleTaskActivityIntervalsBeforeSnapshot: vi.fn(() => Promise.resolve()),
     getCliHelpOutput: vi.fn(() => Promise.resolve('Usage')),
-    prepareForProvisioning: vi.fn(() => Promise.resolve({ ready: true, message: 'ready' })),
+    prepareForProvisioning: vi.fn<TeamProvisioningPreflightApi['prepareForProvisioning']>(() =>
+      Promise.resolve({ ready: true, message: 'ready' })
+    ),
     cancelProvisioning: vi.fn(() => Promise.resolve()),
     hasProvisioningRun: vi.fn(() => false),
     getRuntimeState: vi.fn(() =>
@@ -217,6 +220,23 @@ describe('bindTeamIpcHandlerApis', () => {
       runId: 'run-1',
       state: 'spawning',
     });
+  });
+
+  it('forwards dense model indexes through the IPC preflight facade', async () => {
+    const source = createSource();
+    const api: TeamIpcHandlerApis = bindTeamIpcHandlerApis(source);
+    const options = {
+      modelIds: ['gpt-5.4'],
+      modelChecks: [{ providerId: 'codex' as const, model: 'gpt-5.4', effort: 'medium' as const }],
+    };
+
+    await expect(api.preflight.prepareForProvisioning('/workspace/team', options)).resolves.toEqual(
+      {
+        ready: true,
+        message: 'ready',
+      }
+    );
+    expect(source.prepareForProvisioning).toHaveBeenCalledWith('/workspace/team', options);
   });
 
   it('rejects a sparse model index before dispatching through the IPC preflight facade', async () => {

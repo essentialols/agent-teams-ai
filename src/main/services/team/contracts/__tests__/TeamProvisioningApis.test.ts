@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import {
   bindTeamClaudeLogsApi,
@@ -870,6 +870,7 @@ describe('TeamProvisioning API binders', () => {
       cleared: string[];
       relayedTeamName: string | null;
       relayedInbox: string | null;
+      relayedOptions: TeamOpenCodeMemberInboxRelayOptions | undefined;
     }
 
     const source: CrossTeamSource = {
@@ -878,6 +879,7 @@ describe('TeamProvisioning API binders', () => {
       cleared: [],
       relayedTeamName: null,
       relayedInbox: null,
+      relayedOptions: undefined,
       resolveCrossTeamReplyMetadata(this: CrossTeamSource, teamName: string, toTeam: string) {
         return {
           conversationId: `${this.marker}:${teamName}:${toTeam}`,
@@ -906,9 +908,18 @@ describe('TeamProvisioning API binders', () => {
       relayInboxFileToLiveRecipient(
         this: CrossTeamSource,
         teamName: string,
-        inboxName: string
-      ): Promise<{ kind: 'native_lead'; relayed: number }> {
+        inboxName: string,
+        options?: TeamOpenCodeMemberInboxRelayOptions
+      ): ReturnType<TeamCrossTeamMessagingApi['relayInboxFileToLiveRecipient']> {
         this.relayedInbox = `${teamName}:${inboxName}`;
+        this.relayedOptions = options;
+        if (options?.onlyMessageId) {
+          return Promise.resolve({
+            kind: 'opencode_member',
+            relayed: 1,
+            lastDelivery: { delivered: true },
+          });
+        }
         return Promise.resolve({ kind: 'native_lead', relayed: 4 });
       },
       relayLeadInboxMessages(this: CrossTeamSource, teamName: string): Promise<number> {
@@ -925,6 +936,11 @@ describe('TeamProvisioning API binders', () => {
       api.clearPendingCrossTeamReplyExpectation.bind(undefined);
     const relayInboxFileToLiveRecipient = api.relayInboxFileToLiveRecipient.bind(undefined);
     const relayLeadInboxMessages = api.relayLeadInboxMessages.bind(undefined);
+
+    type RelayResult = Awaited<ReturnType<typeof relayInboxFileToLiveRecipient>>;
+    expectTypeOf<RelayResult['kind']>().toEqualTypeOf<
+      'ignored' | 'native_lead' | 'native_member_noop' | 'opencode_member'
+    >();
 
     expect(Object.keys(api).sort()).toEqual([
       'clearPendingCrossTeamReplyExpectation',
@@ -943,11 +959,21 @@ describe('TeamProvisioning API binders', () => {
     expect(source.registered).toEqual(['team-a:team-b:conversation-1']);
     expect(source.cleared).toEqual(['team-a:team-b:conversation-1']);
     expect(api.isTeamAlive('source-bound')).toBe(true);
+    await expect(
+      relayInboxFileToLiveRecipient('team-b', 'worker', { onlyMessageId: 'message-1' })
+    ).resolves.toEqual({
+      kind: 'opencode_member',
+      relayed: 1,
+      lastDelivery: { delivered: true },
+    });
+    expect(source.relayedInbox).toBe('team-b:worker');
+    expect(source.relayedOptions).toEqual({ onlyMessageId: 'message-1' });
     await expect(relayInboxFileToLiveRecipient('team-b', 'team-lead')).resolves.toEqual({
       kind: 'native_lead',
       relayed: 4,
     });
     expect(source.relayedInbox).toBe('team-b:team-lead');
+    expect(source.relayedOptions).toBeUndefined();
     await expect(relayLeadInboxMessages('team-b')).resolves.toBe(3);
     expect(source.relayedTeamName).toBe('team-b');
   });

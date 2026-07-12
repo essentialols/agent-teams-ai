@@ -106,15 +106,15 @@ function assertWorkerStartContract(contract: JsonObject): void {
     assertPattern(contract.supersedes, SHA256, "contract_supersedes_invalid");
   }
   if (contract.registryStatus !== "queued") fail("contract_registryStatus_not_queued");
-  if (contract.revision === 0 && (contract.retryCount !== 0 || contract.supersedes !== null)) {
-    fail("contract_initial_retry_or_supersession_forbidden");
-  }
+  // Builtin admission is intentionally serial-initial-only. Safe remediation/refill
+  // requires the future transactional shared work-key ledger.
   if (
-    typeof contract.revision === "number" && contract.revision > 0 &&
-    (!(typeof contract.retryCount === "number" && contract.retryCount > 0) ||
-      contract.supersedes === null)
+    contract.reviewKind === "remediation" ||
+    contract.revision !== 0 ||
+    contract.retryCount !== 0 ||
+    contract.supersedes !== null
   ) {
-    fail("contract_refill_retry_and_supersession_required");
+    fail("contract_serial_initial_only");
   }
   const expectedWorkKey = sha256(JSON.stringify(Object.fromEntries(
     WORK_KEY_FIELDS.map((field) => [field, contract[field]]),
@@ -241,6 +241,7 @@ function assertExecutionPolicy(value: unknown): void {
   }
   if (
     !Array.isArray(value.forbiddenRealProjects) ||
+    value.forbiddenRealProjects.length === 0 ||
     !value.forbiddenRealProjects.every((entry) => typeof entry === "string" && entry.length > 0) ||
     new Set(value.forbiddenRealProjects).size !== value.forbiddenRealProjects.length
   ) {

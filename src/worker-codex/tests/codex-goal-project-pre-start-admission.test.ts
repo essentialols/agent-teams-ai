@@ -154,7 +154,7 @@ describe("project pre-start admission", () => {
         },
         scope: fixture.scope,
       }),
-    ).rejects.toThrow("project_control_pre_start_validator_bundle_dirty");
+    ).rejects.toThrow("project_control_pre_start_workspace_dirty");
 
     const symlinkFixture = await createFixture();
     const outside = join(symlinkFixture.root, "outside-validator.mjs");
@@ -194,7 +194,7 @@ describe("project pre-start admission", () => {
         },
         scope: escapedScope,
       }),
-    ).rejects.toThrow("project_control_pre_start_validator_bundle_dirty");
+    ).rejects.toThrow("project_control_pre_start_workspace_dirty");
   });
 
   it("bounds serialized artifacts and registry records", async () => {
@@ -357,6 +357,35 @@ describe("builtin project pre-start admission", () => {
         records: mismatch.state.records.map((record) => ({ ...record, laneId: "other" })),
       },
     })).rejects.toThrow("project_control_pre_start_state_laneId_mismatch");
+
+    const remediation = await createBuiltinFixture();
+    const remediationContract = withWorkKey({
+      ...remediation.contract,
+      reviewKind: "remediation",
+      revision: 1,
+      retryCount: 1,
+      supersedes: "e".repeat(64),
+    });
+    await expect(prepareBuiltin(remediation, { contract: remediationContract }))
+      .rejects.toThrow("project_control_pre_start_builtin_contract_serial_initial_only");
+
+    const emptyForbidden = await createBuiltinFixture();
+    const emptyForbiddenContract = {
+      ...emptyForbidden.contract,
+      executionPolicy: {
+        ...emptyForbidden.contract.executionPolicy,
+        forbiddenRealProjects: [],
+      },
+    };
+    await expect(prepareBuiltin(emptyForbidden, { contract: emptyForbiddenContract }))
+      .rejects.toThrow("project_control_pre_start_builtin_contract_forbiddenRealProjects_invalid");
+  });
+
+  it("rejects dirty non-validator workspace content", async () => {
+    const fixture = await createBuiltinFixture();
+    await writeFile(join(fixture.workspacePath, "UNTRACKED.txt"), "dirty\n");
+    await expect(prepareBuiltin(fixture, {}))
+      .rejects.toThrow("project_control_pre_start_workspace_dirty");
   });
 
   it("rebinds prompt and workspace HEAD immediately before launch", async () => {
@@ -373,10 +402,32 @@ describe("builtin project pre-start admission", () => {
     });
     await assertProjectPreStartAdmissionLaunchBinding({ manifest, scope: fixture.scope });
 
+    await expect(assertProjectPreStartAdmissionLaunchBinding({
+      manifest: { ...manifest, description: "manifest changed after receipt" },
+      scope: fixture.scope,
+    })).rejects.toThrow("project_control_pre_start_launch_binding_mismatch");
+
     await writeFile(fixture.manifest.promptPath, "changed prompt\n");
     await expect(assertProjectPreStartAdmissionLaunchBinding({
       manifest,
       scope: fixture.scope,
+    })).rejects.toThrow("project_control_pre_start_launch_binding_mismatch");
+
+    const dirtyFixture = await createBuiltinFixture();
+    const dirtyPlan = dirtyFixture.plan();
+    const dirtyManifest = {
+      ...dirtyFixture.storedManifest,
+      projectPreStartAdmission: dirtyPlan.descriptor,
+    };
+    await prepareProjectPreStartAdmission({
+      plan: dirtyPlan,
+      manifest: dirtyManifest,
+      scope: dirtyFixture.scope,
+    });
+    await writeFile(join(dirtyFixture.workspacePath, "DIRTY.txt"), "dirty\n");
+    await expect(assertProjectPreStartAdmissionLaunchBinding({
+      manifest: dirtyManifest,
+      scope: dirtyFixture.scope,
     })).rejects.toThrow("project_control_pre_start_launch_binding_mismatch");
 
     const headFixture = await createBuiltinFixture();

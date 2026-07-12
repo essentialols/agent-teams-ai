@@ -193,12 +193,14 @@ export async function assertProjectPreStartAdmissionLaunchBinding(input: {
       receipt.contractSchema === descriptor.contractSchema);
   if (
     binding.workspaceHead !== contract.phaseStartSha ||
+    binding.workspaceStatus !== "" ||
     receipt.status !== "validated_not_launched" ||
     receipt.jobId !== input.manifest.jobId ||
     receipt.workKey !== contract.workKey ||
     receipt.contractSha256 !== binding.contractSha256 ||
     receipt.stateSha256 !== binding.stateSha256 ||
     receipt.promptSha256 !== binding.promptSha256 ||
+    receipt.manifestSha256 !== sha256(Buffer.from(JSON.stringify(input.manifest))) ||
     !builtinReceiptValid
   ) {
     throw new Error("project_control_pre_start_launch_binding_mismatch");
@@ -233,6 +235,9 @@ async function validateProjectPreStartAdmission(input: {
   assertContractBindings(contract, input.manifest);
   assertQueuedStateBinding(contract, state, input.manifest.jobId);
   const beforeBinding = await currentBinding(input.manifest, descriptor);
+  if (beforeBinding.workspaceStatus !== "") {
+    throw new Error("project_control_pre_start_workspace_dirty");
+  }
   let validatorReceipt: JsonObject;
   if (isBuiltinDescriptor(descriptor)) {
     assertBuiltinScope(input.scope, descriptor.contractSchema);
@@ -287,6 +292,9 @@ async function validateProjectPreStartAdmission(input: {
     };
   }
   const afterBinding = await currentBinding(input.manifest, descriptor);
+  if (afterBinding.workspaceStatus !== "") {
+    throw new Error("project_control_pre_start_workspace_dirty");
+  }
   if (JSON.stringify(beforeBinding) !== JSON.stringify(afterBinding)) {
     throw new Error("project_control_pre_start_binding_changed_during_validation");
   }
@@ -503,8 +511,14 @@ async function currentBinding(
     encoding: "utf8",
     timeout: VALIDATOR_TIMEOUT_MS,
   })).stdout.trim();
+  const workspaceStatus = (await execFileAsync(
+    "git",
+    ["-C", manifest.workspacePath, "status", "--porcelain", "--untracked-files=all"],
+    { encoding: "utf8", timeout: VALIDATOR_TIMEOUT_MS },
+  )).stdout.trim();
   return {
     workspaceHead,
+    workspaceStatus,
     contractSha256: sha256(Buffer.from(await readBoundedFile(descriptor.contractPath, MAX_CONTRACT_BYTES, "contract"))),
     stateSha256: sha256(Buffer.from(await readBoundedFile(descriptor.statePath, MAX_STATE_BYTES, "state"))),
     promptSha256: sha256(Buffer.from(await readBoundedFile(manifest.promptPath, MAX_PROMPT_BYTES, "prompt"))),

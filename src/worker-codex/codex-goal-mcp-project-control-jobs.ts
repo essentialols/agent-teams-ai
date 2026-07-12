@@ -397,6 +397,10 @@ export async function projectControlRefillWorkerView(
     });
     createJob = createResult.result;
     manifest = createResult.manifest;
+    await validateStoredProjectPreStartAdmission({
+      manifest,
+      scope: controller.scope,
+    });
     await assertProjectPreStartAdmissionLaunchBinding({
       manifest,
       scope: controller.scope,

@@ -1,5 +1,11 @@
 # Hosted Web Refactor: Execution Router
 
+> Start every controller and worker at [`START_HERE.md`](START_HERE.md). Evidence authority and
+> retention are defined in [`EVIDENCE_LIFECYCLE.md`](EVIDENCE_LIFECYCLE.md); executable worker and
+> refill gates are defined in [`ORCHESTRATION_GUARDS.md`](ORCHESTRATION_GUARDS.md). The pinned
+> canonical provenance SHA for these gates is `42ec333848e29e97c41699b9fed73ed199740e3f`;
+> each launch separately binds its worktree HEAD as `phaseStartSha`.
+
 ## Purpose
 
 This file is the entrypoint for autonomous execution. It does not redefine product or architecture.
@@ -93,6 +99,13 @@ a reason to start a speculative later-phase lane.
 11. Monitor evidence progress, not token output or a stale `running` state.
 12. Review and adopt through the declared integration order.
 13. Freeze the phase, then materialize the next packet from the resulting evidence.
+
+Before step 8, validate the rendered worker-start contract and registry together with
+`scripts/hosted-web/orchestration/validate-worker-admission.mjs`. It binds one contract to exactly
+one queued record and validates the Draft 2020-12 contract separately in focused tests. Before step
+10, perform replacements only through the capacity-aware atomic-refill contract in
+`ORCHESTRATION_GUARDS.md`. The repository helper is not a substitute for the separately required
+shared-runtime transaction and uniqueness enforcement.
 
 ## Worker read algorithm
 

@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -58,6 +58,53 @@ describe("codex goal runtime result IO", () => {
         path: outputPath,
       });
       expect(await readFile(outputPath, "utf8")).toContain("new file");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves a trailing blank context line before an untracked file patch", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-patch-boundary-"));
+    const workspacePath = join(root, "workspace");
+    const outputPath = join(root, "preserved.patch");
+    try {
+      await mkdir(workspacePath);
+      await execFileAsync("git", ["init"], { cwd: workspacePath });
+      await execFileAsync("git", ["config", "user.email", "runtime-test@example.com"], {
+        cwd: workspacePath,
+      });
+      await execFileAsync("git", ["config", "user.name", "Runtime Test"], {
+        cwd: workspacePath,
+      });
+      await writeFile(join(workspacePath, "tracked.txt"), "before\n\n");
+      await execFileAsync("git", ["add", "tracked.txt"], { cwd: workspacePath });
+      await execFileAsync("git", ["commit", "-m", "test: initialize fixture"], {
+        cwd: workspacePath,
+      });
+
+      await writeFile(join(workspacePath, "tracked.txt"), "after\n\n");
+      await writeFile(join(workspacePath, "untracked.txt"), "new file\n");
+      const { stdout: trackedPatch } = await execFileAsync(
+        "git",
+        ["diff", "--binary", "HEAD", "--"],
+        { cwd: workspacePath },
+      );
+      expect(trackedPatch.endsWith(" \n")).toBe(true);
+
+      await new GitPatchPreserver().preserve({
+        workspacePath,
+        outputPath,
+      });
+
+      const preservedPatch = await readFile(outputPath, "utf8");
+      expect(preservedPatch).toContain("+after\n \ndiff --git a/untracked.txt");
+
+      await execFileAsync("git", ["reset", "--hard", "HEAD"], { cwd: workspacePath });
+      await rm(join(workspacePath, "untracked.txt"), { force: true });
+      await execFileAsync("git", ["apply", "--check", outputPath], { cwd: workspacePath });
+      await execFileAsync("git", ["apply", outputPath], { cwd: workspacePath });
+      expect(await readFile(join(workspacePath, "tracked.txt"), "utf8")).toBe("after\n\n");
+      expect(await readFile(join(workspacePath, "untracked.txt"), "utf8")).toBe("new file\n");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

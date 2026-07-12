@@ -82,23 +82,46 @@ export async function readConsumedOutputLedgers(input: {
       source: input.source,
     });
     if (!record) continue;
-    byJobId.set(record.jobId, record);
+    setLatestRecord(byJobId, record.jobId, record);
     if (
       record.status !== NO_OUTPUT_STATUS &&
       record.status !== REVIEWED_NO_CHANGE_STATUS &&
       record.workspace
     ) {
-      byWorkspace.set(resolve(record.workspace), record);
+      setLatestRecord(byWorkspace, resolve(record.workspace), record);
     }
     if (
       record.status !== NO_OUTPUT_STATUS &&
       record.status !== REVIEWED_NO_CHANGE_STATUS &&
       record.resolvedWorkspace
     ) {
-      byWorkspace.set(record.resolvedWorkspace, record);
+      setLatestRecord(byWorkspace, record.resolvedWorkspace, record);
     }
   }
   return { byJobId, byWorkspace, debt };
+}
+
+function setLatestRecord(
+  records: Map<string, ConsumedOutputRecord>,
+  key: string,
+  candidate: ConsumedOutputRecord,
+): void {
+  const current = records.get(key);
+  if (!current || compareConsumedRecords(candidate, current) > 0) {
+    records.set(key, candidate);
+  }
+}
+
+function compareConsumedRecords(
+  left: ConsumedOutputRecord,
+  right: ConsumedOutputRecord,
+): number {
+  const leftTime = left.closedAt ? Date.parse(left.closedAt) : Number.NEGATIVE_INFINITY;
+  const rightTime = right.closedAt
+    ? Date.parse(right.closedAt)
+    : Number.NEGATIVE_INFINITY;
+  if (leftTime !== rightTime) return leftTime - rightTime;
+  return left.ledgerPath.localeCompare(right.ledgerPath);
 }
 
 export async function consumedOutputRecordFromJson(input: {

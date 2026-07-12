@@ -60,12 +60,12 @@ export class GitPatchPreserver implements RuntimePatchPreserverPort {
       workspacePath: input.workspacePath,
     });
     const patch = [trackedPatch, untrackedPatch]
-      .map((value) => value.trimEnd())
-      .filter(Boolean)
-      .join("\n");
+      .filter((value) => value.length > 0)
+      .map(ensureTrailingNewline)
+      .join("");
     if (!patch.trim()) return null;
     await mkdir(dirname(input.outputPath), { recursive: true, mode: 0o700 });
-    await writeFile(input.outputPath, `${patch}\n`, {
+    await writeFile(input.outputPath, patch, {
       encoding: "utf8",
       mode: 0o600,
     });
@@ -76,6 +76,10 @@ export class GitPatchPreserver implements RuntimePatchPreserverPort {
       byteLength: item.size,
     };
   }
+}
+
+function ensureTrailingNewline(value: string): string {
+  return value.endsWith("\n") ? value : `${value}\n`;
 }
 
 export async function writeAtomicJson(path: string, value: unknown): Promise<void> {

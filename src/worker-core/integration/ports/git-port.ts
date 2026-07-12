@@ -32,6 +32,7 @@ export interface GitPort {
   applyWorkerOutput(input: {
     readonly attempt: IntegrationAttempt;
     readonly workerOutput: WorkerOutput;
+    readonly allowAlreadyApplied?: boolean;
   }): Promise<GitApplyWorkerOutputResult> | GitApplyWorkerOutputResult;
 
   diffCheck(input: {
@@ -52,6 +53,12 @@ export interface GitPort {
     readonly commitSha: string;
     readonly force: boolean;
   }): Promise<void> | void;
+
+  remoteBranchCommit(input: {
+    readonly workspacePath: string;
+    readonly remote: string;
+    readonly branch: string;
+  }): Promise<string | null> | string | null;
 
   currentBranch(input: {
     readonly workspacePath: string;

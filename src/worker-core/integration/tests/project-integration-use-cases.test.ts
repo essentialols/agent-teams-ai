@@ -71,6 +71,7 @@ describe("project integration use cases", () => {
       "status",
       "commit",
       "branch",
+      "remote",
       "push",
     ]);
     expect(fixture.events.map((event) => event.type)).toEqual([
@@ -95,6 +96,30 @@ describe("project integration use cases", () => {
       evidence: ["src/unrelated.ts"],
     });
     expect(fixture.git.calls).toEqual(["status"]);
+  });
+
+  it("allows already-applied recovery only for exact expected dirty files", async () => {
+    const recoverable = createFixture();
+    recoverable.git.dirtyFiles = ["src/memory.ts"];
+    const opened = await openProjectIntegrationAttempt(recoverable.deps(), input());
+
+    await applyWorkerOutput(recoverable.deps(), {
+      attemptId: opened.attemptId,
+      allowedPreExistingDirtyFiles: ["src/memory.ts"],
+    });
+    expect(recoverable.git.lastAllowAlreadyApplied).toBe(true);
+
+    const superset = createFixture();
+    superset.git.dirtyFiles = ["src/memory.ts"];
+    const second = await openProjectIntegrationAttempt(superset.deps(), {
+      ...input(),
+      attemptId: "attempt-2",
+    });
+    await applyWorkerOutput(superset.deps(), {
+      attemptId: second.attemptId,
+      allowedPreExistingDirtyFiles: ["src/memory.ts", "src/extra.ts"],
+    });
+    expect(superset.git.lastAllowAlreadyApplied).toBe(false);
   });
 
   it("does not commit when required checks failed", async () => {
@@ -246,6 +271,53 @@ describe("project integration use cases", () => {
     expect(fixture.git.calls).not.toContain("push");
   });
 
+  it("fails before git push when terminal ledger preflight is incompatible", async () => {
+    const fixture = createFixture();
+    const opened = await openProjectIntegrationAttempt(fixture.deps(), input());
+    await applyWorkerOutput(fixture.deps(), { attemptId: opened.attemptId });
+    await runRequiredChecks(fixture.deps(), { attemptId: opened.attemptId });
+    await commitApprovedChanges(fixture.deps(), {
+      attemptId: opened.attemptId,
+      message: "fix(memory): integrate worker output",
+      policy: policy(),
+    });
+    fixture.ledger.preflightError = new Error(
+      "consumed_output_ledger_terminal_conflict",
+    );
+
+    await expect(pushApprovedCommit(fixture.deps(), {
+      attemptId: opened.attemptId,
+      policy: policy(),
+    })).rejects.toThrow("consumed_output_ledger_terminal_conflict");
+    expect(fixture.git.calls).not.toContain("remote");
+    expect(fixture.git.calls).not.toContain("push");
+  });
+
+  it("recovers an exact remote commit without pushing it again", async () => {
+    const fixture = createFixture();
+    const opened = await openProjectIntegrationAttempt(fixture.deps(), input());
+    await applyWorkerOutput(fixture.deps(), { attemptId: opened.attemptId });
+    await runRequiredChecks(fixture.deps(), { attemptId: opened.attemptId });
+    await commitApprovedChanges(fixture.deps(), {
+      attemptId: opened.attemptId,
+      message: "fix(memory): integrate worker output",
+      policy: policy(),
+    });
+    fixture.git.remoteCommit = "abc123";
+
+    const recovered = await pushApprovedCommit(fixture.deps(), {
+      attemptId: opened.attemptId,
+      policy: policy(),
+    });
+
+    expect(recovered.status).toBe(IntegrationAttemptStatus.Pushed);
+    expect(fixture.git.calls).toContain("remote");
+    expect(fixture.git.calls).not.toContain("push");
+    expect(fixture.ledger.finalizeCalls).toBe(1);
+    expect(fixture.store.get(opened.attemptId)?.status)
+      .toBe(IntegrationAttemptStatus.Pushed);
+  });
+
   it("does not mark an attempt pushed when ledger finalization fails", async () => {
     const fixture = createFixture();
     const opened = await openProjectIntegrationAttempt(fixture.deps(), input());
@@ -265,6 +337,15 @@ describe("project integration use cases", () => {
     expect(fixture.git.calls).toContain("push");
     expect(fixture.store.get(opened.attemptId)?.status)
       .toBe(IntegrationAttemptStatus.CommitCreated);
+
+    delete fixture.ledger.finalizeError;
+    const recovered = await pushApprovedCommit(fixture.deps(), {
+      attemptId: opened.attemptId,
+      policy: policy(),
+    });
+    expect(recovered.status).toBe(IntegrationAttemptStatus.Pushed);
+    expect(fixture.git.calls.filter((call) => call === "push")).toHaveLength(1);
+    expect(fixture.git.calls.filter((call) => call === "remote")).toHaveLength(2);
   });
 
   it("re-verifies ledger evidence when a pushed attempt is replayed", async () => {
@@ -478,6 +559,7 @@ function createFixture(options: {
 
 class FakeIntegratedOutputLedger implements IntegratedOutputLedgerPort {
   prepareError?: Error;
+  preflightError?: Error;
   finalizeError?: Error;
   prepareCalls = 0;
   finalizeCalls = 0;
@@ -514,6 +596,10 @@ class FakeIntegratedOutputLedger implements IntegratedOutputLedgerPort {
       commitSha: input.preparation.commitSha,
       idempotentReplay: false,
     };
+  }
+
+  async preflightFinalize() {
+    if (this.preflightError) throw this.preflightError;
   }
 
   async prepareRejection(input: {
@@ -574,6 +660,8 @@ class FakeGit implements GitPort {
   readonly calls: string[] = [];
   dirtyFiles: readonly string[] = [];
   branch = "main";
+  remoteCommit: string | null = null;
+  lastAllowAlreadyApplied: boolean | undefined;
 
   getStatus() {
     this.calls.push("status");
@@ -583,8 +671,9 @@ class FakeGit implements GitPort {
     };
   }
 
-  applyWorkerOutput() {
+  applyWorkerOutput(input: { readonly allowAlreadyApplied?: boolean }) {
     this.calls.push("apply");
+    this.lastAllowAlreadyApplied = input.allowAlreadyApplied;
     this.dirtyFiles = ["src/memory.ts"];
     return { changedFiles: ["src/memory.ts"] };
   }
@@ -603,8 +692,14 @@ class FakeGit implements GitPort {
     };
   }
 
-  push() {
+  push(input: { readonly commitSha: string }) {
     this.calls.push("push");
+    this.remoteCommit = input.commitSha;
+  }
+
+  remoteBranchCommit() {
+    this.calls.push("remote");
+    return this.remoteCommit;
   }
 
   currentBranch() {

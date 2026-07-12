@@ -25,6 +25,49 @@ import {
 } from "../index";
 
 describe("consumed output ledger", () => {
+  it("selects the latest attempt record deterministically for the same job", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-ledger-latest-"));
+    const workspace = join(root, "workspace");
+    const backup = await createBackupEvidence(root, "worker-1", workspace);
+    const local = localConsumedOutputLedgerSource();
+    const source: ConsumedOutputLedgerSourcePort = {
+      ...local,
+      async readEntries() {
+        return {
+          entries: [
+            {
+              ledgerPath: join(root, "worker-1--integrated.json"),
+              value: {
+                jobId: "worker-1",
+                status: "integrated",
+                closedAt: "2026-07-12T01:00:00.000Z",
+                integratedCommitSha: "abc1234",
+                backup,
+              },
+            },
+            {
+              ledgerPath: join(root, "worker-1--rejected.json"),
+              value: {
+                jobId: "worker-1",
+                status: "rejected",
+                closedAt: "2026-07-12T00:00:00.000Z",
+                backup,
+              },
+            },
+          ],
+          failures: [],
+        };
+      },
+    };
+
+    const ledger = await readConsumedOutputLedgers({ roots: [root], source });
+
+    expect(ledger.byJobId.get("worker-1")).toMatchObject({
+      status: "integrated",
+      commitSha: "abc1234",
+    });
+  });
+
   it("accepts terminal drain records with backup evidence", async () => {
     const root = await mkdtemp(join(tmpdir(), "subscription-runtime-consumed-ledger-"));
     const workspace = join(root, "workspaces", "infinity-context-memory-v1");

@@ -35,7 +35,7 @@
     {
       "path": "src/features/runtime-provider-management/renderer/ui/providerBrandIcons.tsx",
       "sha256": "sha256:4233b80a4e92a8d9c7654b5176ef7a7f04ad409a2508a32d78f907802fa1cd49",
-      "interactionSiteCount": 0
+      "interactionSiteCount": 1
     },
     {
       "path": "src/renderer/components/team/ClaudeLogsFilterPopover.tsx",
@@ -45,7 +45,7 @@
     {
       "path": "src/renderer/components/team/ClaudeLogsPanel.tsx",
       "sha256": "sha256:463ec93f8a03a03f1fa7d959da968c6dcd454ab44e23f5f6c2c33417b27c3d03",
-      "interactionSiteCount": 5
+      "interactionSiteCount": 6
     },
     {
       "path": "src/renderer/components/team/ClaudeLogsSection.tsx",
@@ -55,7 +55,7 @@
     {
       "path": "src/renderer/components/team/CliLogsRichView.tsx",
       "sha256": "sha256:629fe29ab03113f27293f6dcc69f02e17caa059a64f5246f9eaa021e2ecf752b",
-      "interactionSiteCount": 2
+      "interactionSiteCount": 7
     },
     {
       "path": "src/renderer/components/team/CollapsibleTeamSection.tsx",
@@ -160,12 +160,12 @@
     {
       "path": "src/renderer/components/team/ToolApprovalDiffPreview.tsx",
       "sha256": "sha256:16adbc01901746897fadd5c567461cd7922268de75e762ae5f5a0b662e6a2076",
-      "interactionSiteCount": 1
+      "interactionSiteCount": 3
     },
     {
       "path": "src/renderer/components/team/ToolApprovalSheet.tsx",
       "sha256": "sha256:d7ccadb65f8a43919f9b12630f68f72edcf33e461ba44f629cc10451cc5e1448",
-      "interactionSiteCount": 4
+      "interactionSiteCount": 11
     },
     {
       "path": "src/renderer/components/team/UnreadCommentsBadge.tsx",
@@ -180,7 +180,7 @@
     {
       "path": "src/renderer/components/team/activity/ActivityItem.tsx",
       "sha256": "sha256:3d238eb67bcae148e11b08024f0f82e1802a9dec1cf420224e48b793d794ae91",
-      "interactionSiteCount": 30
+      "interactionSiteCount": 31
     },
     {
       "path": "src/renderer/components/team/activity/ActivityTimeline.tsx",
@@ -195,7 +195,7 @@
     {
       "path": "src/renderer/components/team/activity/LeadThoughtsGroup.tsx",
       "sha256": "sha256:8625f65f6999512190a55df1b6a2f578ea35b193447b9925265801909fc7d8ee",
-      "interactionSiteCount": 10
+      "interactionSiteCount": 11
     },
     {
       "path": "src/renderer/components/team/activity/MessageExpandDialog.tsx",
@@ -215,7 +215,7 @@
     {
       "path": "src/renderer/components/team/activity/ThoughtBodyContent.tsx",
       "sha256": "sha256:9245fb456082ef547dbd855310e46d1bc1fe3ff41e8bc6e99caf73f86ed429cb",
-      "interactionSiteCount": 1
+      "interactionSiteCount": 2
     },
     {
       "path": "src/renderer/components/team/attachments/AttachmentDisplay.tsx",
@@ -260,7 +260,7 @@
     {
       "path": "src/renderer/components/team/dialogs/AdvancedCliSection.tsx",
       "sha256": "sha256:a89b9bd77952ee1125978942dc622d09c7bf876927b35059a363a5885a665504",
-      "interactionSiteCount": 6
+      "interactionSiteCount": 8
     },
     {
       "path": "src/renderer/components/team/dialogs/AnthropicExtraUsageWarning.tsx",
@@ -365,7 +365,7 @@
     {
       "path": "src/renderer/components/team/dialogs/SendMessageDialog.tsx",
       "sha256": "sha256:c13773bf0b1739de654baee83d32cde5f61f79ff0b021ee2d03a30873d52e445",
-      "interactionSiteCount": 10
+      "interactionSiteCount": 14
     },
     {
       "path": "src/renderer/components/team/dialogs/SkipPermissionsCheckbox.tsx",
@@ -380,7 +380,7 @@
     {
       "path": "src/renderer/components/team/dialogs/TaskAttachments.tsx",
       "sha256": "sha256:0c188aa534faa261ec5649113df4e21ae690aaa172451a11a8ccadbd932a025f",
-      "interactionSiteCount": 5
+      "interactionSiteCount": 7
     },
     {
       "path": "src/renderer/components/team/dialogs/TaskCommentAwaitingReply.tsx",
@@ -390,17 +390,17 @@
     {
       "path": "src/renderer/components/team/dialogs/TaskCommentInput.tsx",
       "sha256": "sha256:8e36c93689ff5608fadce2324a7abba462f719e67d0d9236231dd8fee1db201f",
-      "interactionSiteCount": 9
+      "interactionSiteCount": 10
     },
     {
       "path": "src/renderer/components/team/dialogs/TaskCommentsSection.tsx",
       "sha256": "sha256:1e28e0a2e9c82c9d6ec7b73625160dbfa3432234992b9381524b4da542bb4537",
-      "interactionSiteCount": 6
+      "interactionSiteCount": 7
     },
     {
       "path": "src/renderer/components/team/dialogs/TaskDetailDialog.tsx",
       "sha256": "sha256:2b1699b853b2b55ec4fee0769784ac45fa403cd5b5cffbd22b15dedff04fb759",
-      "interactionSiteCount": 26
+      "interactionSiteCount": 28
     },
     {
       "path": "src/renderer/components/team/dialogs/TeamModelSelector.tsx",
@@ -415,7 +415,7 @@
     {
       "path": "src/renderer/components/team/dialogs/ToolApprovalSettingsPanel.tsx",
       "sha256": "sha256:8d194a4c2c0dd70994dbf1924f5af5032e8ee7392903e14f060a14d03c81efe0",
-      "interactionSiteCount": 11
+      "interactionSiteCount": 14
     },
     {
       "path": "src/renderer/components/team/dialogs/WorktreeGitReadinessBanner.tsx",
@@ -445,7 +445,7 @@
     {
       "path": "src/renderer/components/team/editor/EditorContextMenu.tsx",
       "sha256": "sha256:d6b792f3c255daa7ed239ee2333d24df6dbb95c85ec736eff0e27dc5f4f64617",
-      "interactionSiteCount": 9
+      "interactionSiteCount": 10
     },
     {
       "path": "src/renderer/components/team/editor/EditorEmptyState.tsx",
@@ -465,12 +465,12 @@
     {
       "path": "src/renderer/components/team/editor/EditorFileTree.tsx",
       "sha256": "sha256:1bd56d4a55cd46e9d0ce6fc1e753646f3544342ecfaa59d082b55217d06686fd",
-      "interactionSiteCount": 12
+      "interactionSiteCount": 16
     },
     {
       "path": "src/renderer/components/team/editor/EditorImagePreview.tsx",
       "sha256": "sha256:c345cd2557fcc0f0f3cb3fa763cb71b6860247692557f6fba4a57bc321552369",
-      "interactionSiteCount": 2
+      "interactionSiteCount": 3
     },
     {
       "path": "src/renderer/components/team/editor/EditorSearchPanel.tsx",
@@ -480,7 +480,7 @@
     {
       "path": "src/renderer/components/team/editor/EditorSelectionMenu.tsx",
       "sha256": "sha256:f5a5a78d9b2aaa582f8165abb87cc621a34a18a35fd63da299727dd328364bc7",
-      "interactionSiteCount": 3
+      "interactionSiteCount": 4
     },
     {
       "path": "src/renderer/components/team/editor/EditorShortcutsHelp.tsx",
@@ -495,7 +495,7 @@
     {
       "path": "src/renderer/components/team/editor/EditorTabBar.tsx",
       "sha256": "sha256:a606f3b1fd5acf42c542798d1a3db7de214cd47ee9500af7ec7d113252e544c6",
-      "interactionSiteCount": 4
+      "interactionSiteCount": 7
     },
     {
       "path": "src/renderer/components/team/editor/EditorTabContextMenu.tsx",
@@ -510,7 +510,7 @@
     {
       "path": "src/renderer/components/team/editor/FileIcon.tsx",
       "sha256": "sha256:c58cb88731fe1182824a1ff3ac4b3686b18cd4e0c8f5d6ed41c3c4afc0d6e00c",
-      "interactionSiteCount": 0
+      "interactionSiteCount": 1
     },
     {
       "path": "src/renderer/components/team/editor/GitStatusBadge.tsx",
@@ -525,17 +525,17 @@
     {
       "path": "src/renderer/components/team/editor/MarkdownPreviewPane.tsx",
       "sha256": "sha256:ab02393c8219e164ccd30a60c4406db283f0015d8dab7731b101a3b8499807e2",
-      "interactionSiteCount": 0
+      "interactionSiteCount": 1
     },
     {
       "path": "src/renderer/components/team/editor/MarkdownSplitView.tsx",
       "sha256": "sha256:8300366484cd028e80e3e67355993eb2abb0632a73503069ce324c34bb5ab9f5",
-      "interactionSiteCount": 0
+      "interactionSiteCount": 2
     },
     {
       "path": "src/renderer/components/team/editor/NewFileDialog.tsx",
       "sha256": "sha256:ea9277927af8ca18a1638c00a8f802b2d3c39bfcbc00f3ef18b86bf02d1cd0bd",
-      "interactionSiteCount": 2
+      "interactionSiteCount": 3
     },
     {
       "path": "src/renderer/components/team/editor/ProjectEditorOverlay.tsx",
@@ -550,7 +550,7 @@
     {
       "path": "src/renderer/components/team/editor/SearchInFilesPanel.tsx",
       "sha256": "sha256:774bd58ef89295a11a8f8c7a2ac992b15917737a93273728f1dcd1f53eaea024",
-      "interactionSiteCount": 5
+      "interactionSiteCount": 6
     },
     {
       "path": "src/renderer/components/team/kanban/KanbanBoard.tsx",
@@ -575,7 +575,7 @@
     {
       "path": "src/renderer/components/team/kanban/KanbanSearchInput.tsx",
       "sha256": "sha256:533c3b1712b65f6039473ebb31fcfcb3c2f19f05fdea271c00ed51e23b2af6df",
-      "interactionSiteCount": 5
+      "interactionSiteCount": 6
     },
     {
       "path": "src/renderer/components/team/kanban/KanbanSortPopover.tsx",
@@ -605,7 +605,7 @@
     {
       "path": "src/renderer/components/team/members/MemberCard.tsx",
       "sha256": "sha256:51f72b534f19a0b37120b39f5ff774d405083b47f57da3b7ad858886de6588e3",
-      "interactionSiteCount": 14
+      "interactionSiteCount": 17
     },
     {
       "path": "src/renderer/components/team/members/MemberDetailDialog.tsx",
@@ -645,7 +645,7 @@
     {
       "path": "src/renderer/components/team/members/MemberList.tsx",
       "sha256": "sha256:2c166be277b732916871d55e80bb2050f90d99f5b7a73ef1add3f866641d11e0",
-      "interactionSiteCount": 1
+      "interactionSiteCount": 5
     },
     {
       "path": "src/renderer/components/team/members/MemberLogStreamWithLegacyFallback.tsx",
@@ -655,7 +655,7 @@
     {
       "path": "src/renderer/components/team/members/MemberLogsTab.tsx",
       "sha256": "sha256:eba29a2d24ffdc22b25f44664f9867c0a79d2913cac4a7f8d641f8c2f0200e62",
-      "interactionSiteCount": 2
+      "interactionSiteCount": 3
     },
     {
       "path": "src/renderer/components/team/members/MemberMessagesTab.tsx",
@@ -705,7 +705,7 @@
     {
       "path": "src/renderer/components/team/messages/MessageComposer.tsx",
       "sha256": "sha256:74c316989cb107a0a64ce0114160cd5b9a99d2fdf7bd1f71a6eb9a1d55f73926",
-      "interactionSiteCount": 16
+      "interactionSiteCount": 22
     },
     {
       "path": "src/renderer/components/team/messages/MessagesFilterPopover.tsx",
@@ -715,7 +715,7 @@
     {
       "path": "src/renderer/components/team/messages/MessagesPanel.tsx",
       "sha256": "sha256:ea8d33c332f6eeed559c6c2f579c460a0476efbd2065b9411741e89606b73f53",
-      "interactionSiteCount": 32
+      "interactionSiteCount": 35
     },
     {
       "path": "src/renderer/components/team/messages/OpenCodeDeliveryWarning.tsx",
@@ -740,7 +740,7 @@
     {
       "path": "src/renderer/components/team/review/CodeMirrorDiffView.tsx",
       "sha256": "sha256:0b614067c43efbd6f29203714ad46e68fa5b183de041232cd36d2045a69401e3",
-      "interactionSiteCount": 4
+      "interactionSiteCount": 6
     },
     {
       "path": "src/renderer/components/team/review/ConfidenceBadge.tsx",
@@ -835,7 +835,7 @@
     {
       "path": "src/renderer/components/team/schedule/ScheduleSection.tsx",
       "sha256": "sha256:e8e98a2715c2026be7b3c26c8d87c5eab7ba648d303b9683b77a3e1a0029de8f",
-      "interactionSiteCount": 9
+      "interactionSiteCount": 10
     },
     {
       "path": "src/renderer/components/team/schedule/ScheduleStatusBadge.tsx",
@@ -855,7 +855,7 @@
     {
       "path": "src/renderer/components/team/sidebar/TeamSidebarRail.tsx",
       "sha256": "sha256:3775bc6ae0bc176f07e28cb99e5a5ccd27eaadc3c74092e9ae454a24e3afc75d",
-      "interactionSiteCount": 1
+      "interactionSiteCount": 3
     },
     {
       "path": "src/renderer/components/team/taskLogs/ExecutionSessionsSection.tsx",
@@ -870,7 +870,7 @@
     {
       "path": "src/renderer/components/team/taskLogs/TaskActivitySection.tsx",
       "sha256": "sha256:3b057ceaf260340b5cfb9bd0799ebdfb50d6588cac78fbc5fed891f5904139ef",
-      "interactionSiteCount": 1
+      "interactionSiteCount": 2
     },
     {
       "path": "src/renderer/components/team/taskLogs/TaskLogStreamSection.tsx",
@@ -907,7 +907,7 @@
     {
       "path": "src/renderer/components/team/taskLogs/ExactTaskLogsSection.tsx",
       "reason": "No relative or renderer-alias static/dynamic import path exists from the mounted W1 team roots; the file is absent from this mount closure.",
-      "interactionSiteCount": 0
+      "interactionSiteCount": 1
     },
     {
       "path": "src/renderer/components/team/tasks/TaskList.tsx",
@@ -1798,6 +1798,36 @@
       ]
     },
     {
+      "id": "team.legacy-control.activity.activity.item.create-task",
+      "owner": "team-task-board",
+      "disposition": "decomposed",
+      "securityClass": "team-resource",
+      "target": "WP-8-TASK-BOARD",
+      "evidence": ["The contained click creates a task from activity context."],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/activity/ActivityItem.tsx",
+          "sourceHash": "sha256:2a2f9994cdddf0d2",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
+      "id": "team.legacy-control.activity.activity.item.expand-item",
+      "owner": "team-console",
+      "disposition": "direct",
+      "securityClass": "renderer-local",
+      "target": "WP-7-TEAM-CONSOLE",
+      "evidence": ["The contained click expands an activity item."],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/activity/ActivityItem.tsx",
+          "sourceHash": "sha256:9b1cd0dbc06e2b98",
+          "siteCount": 3
+        }
+      ]
+    },
+    {
       "id": "team.legacy-control.activity.activity.item.handle-header-toggle",
       "owner": "team-runtime-control",
       "disposition": "decomposed",
@@ -1810,6 +1840,11 @@
         {
           "file": "src/renderer/components/team/activity/ActivityItem.tsx",
           "sourceHash": "sha256:21d37e2405406467",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/activity/ActivityItem.tsx",
+          "sourceHash": "sha256:3f0d324d42e9187f",
           "siteCount": 1
         }
       ]
@@ -1845,6 +1880,93 @@
           "file": "src/renderer/components/team/activity/ActivityItem.tsx",
           "sourceHash": "sha256:96cd94c3da2fbb43",
           "siteCount": 4
+        },
+        {
+          "file": "src/renderer/components/team/activity/ActivityItem.tsx",
+          "sourceHash": "sha256:db8f2250885aaef2",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
+      "id": "team.legacy-control.activity.activity.item.open-task-link",
+      "owner": "team-task-board",
+      "disposition": "decomposed",
+      "securityClass": "team-resource",
+      "target": "WP-8-TASK-BOARD",
+      "evidence": [
+        "Captured task-link activation is a semantic navigation action even though the handler also contains the parent click event."
+      ],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/activity/ActivityItem.tsx",
+          "sourceHash": "sha256:0abbe7e35bc3e74d",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/activity/ActivityItem.tsx",
+          "sourceHash": "sha256:3597114d854da9e9",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/activity/ActivityItem.tsx",
+          "sourceHash": "sha256:ab652cf88de6aa42",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/activity/ActivityItem.tsx",
+          "sourceHash": "sha256:e05f22c26512f818",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/activity/ActivityItem.tsx",
+          "sourceHash": "sha256:fd94940e350e840a",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
+      "id": "team.legacy-control.activity.activity.item.reply-message",
+      "owner": "team-messaging",
+      "disposition": "decomposed",
+      "securityClass": "team-resource",
+      "target": "WP-8-MESSAGING",
+      "evidence": ["The contained click enters message reply."],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/activity/ActivityItem.tsx",
+          "sourceHash": "sha256:5c3bf89cda708003",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
+      "id": "team.legacy-control.activity.activity.item.restart-team",
+      "owner": "team-lifecycle",
+      "disposition": "decomposed",
+      "securityClass": "team-resource",
+      "target": "WP-7-TEAM-LIFECYCLE",
+      "evidence": ["The contained click restarts the failed team flow."],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/activity/ActivityItem.tsx",
+          "sourceHash": "sha256:3c184571207a875b",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
+      "id": "team.legacy-control.activity.activity.item.revise-message",
+      "owner": "team-messaging",
+      "disposition": "decomposed",
+      "securityClass": "team-resource",
+      "target": "WP-8-MESSAGING",
+      "evidence": ["The contained click enters message revision."],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/activity/ActivityItem.tsx",
+          "sourceHash": "sha256:3ee5a263eec43eec",
+          "siteCount": 1
         }
       ]
     },
@@ -1883,6 +2005,21 @@
       ]
     },
     {
+      "id": "team.legacy-control.activity.lead.thoughts.group.expand-item",
+      "owner": "team-console",
+      "disposition": "direct",
+      "securityClass": "renderer-local",
+      "target": "WP-7-TEAM-CONSOLE",
+      "evidence": ["The contained click expands a lead-thought activity item."],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/activity/LeadThoughtsGroup.tsx",
+          "sourceHash": "sha256:9b1cd0dbc06e2b98",
+          "siteCount": 3
+        }
+      ]
+    },
+    {
       "id": "team.legacy-control.activity.lead.thoughts.group.handle-body-toggle",
       "owner": "team-console",
       "disposition": "direct",
@@ -1895,6 +2032,21 @@
         {
           "file": "src/renderer/components/team/activity/LeadThoughtsGroup.tsx",
           "sourceHash": "sha256:760064b4e0e491ee",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/activity/LeadThoughtsGroup.tsx",
+          "sourceHash": "sha256:79d283e138e8aeb1",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/activity/LeadThoughtsGroup.tsx",
+          "sourceHash": "sha256:88576fbb278b499d",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/activity/LeadThoughtsGroup.tsx",
+          "sourceHash": "sha256:c3d65956de4b8afa",
           "siteCount": 1
         }
       ]
@@ -1946,6 +2098,36 @@
         {
           "file": "src/renderer/components/team/activity/ThoughtBodyContent.tsx",
           "sourceHash": "sha256:3df432be4adb4daa",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
+      "id": "team.legacy-control.activity.thought.body.content.open-task-link",
+      "owner": "team-task-board",
+      "disposition": "decomposed",
+      "securityClass": "team-resource",
+      "target": "WP-8-TASK-BOARD",
+      "evidence": ["Captured task-link activation is a semantic navigation action."],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/activity/ThoughtBodyContent.tsx",
+          "sourceHash": "sha256:436f1ae0b82487d7",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
+      "id": "team.legacy-control.attachments.attachment.display.reveal-file",
+      "owner": "agent-attachments",
+      "disposition": "direct",
+      "securityClass": "renderer-local",
+      "target": "WP-9-ATTACHMENTS",
+      "evidence": ["The contained click reveals the attachment in the editor."],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/attachments/AttachmentDisplay.tsx",
+          "sourceHash": "sha256:4549841228813945",
           "siteCount": 1
         }
       ]
@@ -2209,6 +2391,21 @@
       ]
     },
     {
+      "id": "team.legacy-control.claude.logs.section.open-dialog",
+      "owner": "team-console",
+      "disposition": "direct",
+      "securityClass": "renderer-local",
+      "target": "WP-7-TEAM-CONSOLE",
+      "evidence": ["The contained click opens the selected logs dialog."],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/ClaudeLogsSection.tsx",
+          "sourceHash": "sha256:f01a74e48ab0db88",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
       "id": "team.legacy-control.claude.logs.section.selected-member",
       "owner": "team-runtime-control",
       "disposition": "decomposed",
@@ -2256,6 +2453,21 @@
           "file": "src/renderer/components/team/CliLogsRichView.tsx",
           "sourceHash": "sha256:2646e344df8b7d3a",
           "siteCount": 2
+        },
+        {
+          "file": "src/renderer/components/team/CliLogsRichView.tsx",
+          "sourceHash": "sha256:92d41522fa881272",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/CliLogsRichView.tsx",
+          "sourceHash": "sha256:c7498daea8a3e729",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/CliLogsRichView.tsx",
+          "sourceHash": "sha256:d8284ab9c9fb0eb5",
+          "siteCount": 1
         }
       ]
     },
@@ -2328,6 +2540,21 @@
       ]
     },
     {
+      "id": "team.legacy-control.dialogs.advanced.cli.section.commit-worktree-name",
+      "owner": "team-console",
+      "disposition": "direct",
+      "securityClass": "renderer-local",
+      "target": "WP-7-TEAM-CONSOLE",
+      "evidence": ["Blur commits the selected worktree name to renderer-local history."],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/dialogs/AdvancedCliSection.tsx",
+          "sourceHash": "sha256:c1c7f5fbfb81fd53",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
       "id": "team.legacy-control.dialogs.advanced.cli.section.handle-custom-args-change",
       "owner": "team-console",
       "disposition": "direct",
@@ -2391,6 +2618,23 @@
         {
           "file": "src/renderer/components/team/dialogs/AdvancedCliSection.tsx",
           "sourceHash": "sha256:8d34f712f4b4025a",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
+      "id": "team.legacy-control.dialogs.advanced.cli.section.select-worktree-history",
+      "owner": "team-console",
+      "disposition": "direct",
+      "securityClass": "renderer-local",
+      "target": "WP-7-TEAM-CONSOLE",
+      "evidence": [
+        "Mouse selection updates the worktree name and closes its history popover; default suppression is only containment."
+      ],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/dialogs/AdvancedCliSection.tsx",
+          "sourceHash": "sha256:e6a6ac571f32e01f",
           "siteCount": 1
         }
       ]
@@ -3342,6 +3586,21 @@
       ]
     },
     {
+      "id": "team.legacy-control.dialogs.send.message.dialog.handle-paste-wrapper",
+      "owner": "agent-attachments",
+      "disposition": "decomposed",
+      "securityClass": "bounded-content",
+      "target": "WP-9-ATTACHMENTS",
+      "evidence": ["Clipboard files enter the bounded message attachment flow."],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/dialogs/SendMessageDialog.tsx",
+          "sourceHash": "sha256:5c60d794af536bea",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
       "id": "team.legacy-control.dialogs.send.message.dialog.handle-submit",
       "owner": "team-messaging",
       "disposition": "decomposed",
@@ -3529,6 +3788,21 @@
       ]
     },
     {
+      "id": "team.legacy-control.dialogs.task.attachments.remove",
+      "owner": "agent-attachments",
+      "disposition": "decomposed",
+      "securityClass": "bounded-content",
+      "target": "WP-9-ATTACHMENTS",
+      "evidence": ["The contained click removes a task attachment."],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/dialogs/TaskAttachments.tsx",
+          "sourceHash": "sha256:337463bd9f0728f8",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
       "id": "team.legacy-control.dialogs.task.comment.input.add-files",
       "owner": "team-task-board",
       "disposition": "decomposed",
@@ -3538,6 +3812,11 @@
         "Reviewed renderer control; exact source expression is pinned by the mapping hash and direct IPC semantics remain bound by P0.W1.API_PARITY_LEDGER."
       ],
       "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/dialogs/TaskCommentInput.tsx",
+          "sourceHash": "sha256:ae9794bc80701403",
+          "siteCount": 1
+        },
         {
           "file": "src/renderer/components/team/dialogs/TaskCommentInput.tsx",
           "sourceHash": "sha256:ce17f7b90a4ed042",
@@ -3609,6 +3888,21 @@
         {
           "file": "src/renderer/components/team/dialogs/TaskCommentInput.tsx",
           "sourceHash": "sha256:1930cef4ef48b7aa",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
+      "id": "team.legacy-control.dialogs.task.comment.input.remove-attachment",
+      "owner": "agent-attachments",
+      "disposition": "decomposed",
+      "securityClass": "bounded-content",
+      "target": "WP-9-ATTACHMENTS",
+      "evidence": ["The contained click removes a pending comment attachment."],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/dialogs/TaskCommentInput.tsx",
+          "sourceHash": "sha256:3b1bf79189c59b8e",
           "siteCount": 1
         }
       ]
@@ -3716,6 +4010,23 @@
       ]
     },
     {
+      "id": "team.legacy-control.dialogs.task.comments.section.open-task-link",
+      "owner": "team-task-board",
+      "disposition": "decomposed",
+      "securityClass": "team-resource",
+      "target": "WP-8-TASK-BOARD",
+      "evidence": [
+        "Captured task-link activation is a semantic navigation action even though the handler also contains the parent click event."
+      ],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/dialogs/TaskCommentsSection.tsx",
+          "sourceHash": "sha256:5e15e3064027e405",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
       "id": "team.legacy-control.dialogs.task.comments.section.set-reply-to",
       "owner": "team-task-board",
       "disposition": "decomposed",
@@ -3762,6 +4073,21 @@
         {
           "file": "src/renderer/components/team/dialogs/TaskCommentsSection.tsx",
           "sourceHash": "sha256:6ed15ef5d220029b",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
+      "id": "team.legacy-control.dialogs.task.detail.dialog.clear-clarification",
+      "owner": "team-task-board",
+      "disposition": "decomposed",
+      "securityClass": "team-resource",
+      "target": "WP-8-TASK-BOARD",
+      "evidence": ["The contained click clears the task clarification state."],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/dialogs/TaskDetailDialog.tsx",
+          "sourceHash": "sha256:948ebb56a04f9668",
           "siteCount": 1
         }
       ]
@@ -3848,6 +4174,63 @@
           "file": "src/renderer/components/team/dialogs/TaskDetailDialog.tsx",
           "sourceHash": "sha256:0f19fa7312b191e4",
           "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/dialogs/TaskDetailDialog.tsx",
+          "sourceHash": "sha256:4cecf1aa0432a3f8",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/dialogs/TaskDetailDialog.tsx",
+          "sourceHash": "sha256:e6859407fcfa8f46",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
+      "id": "team.legacy-control.dialogs.task.detail.dialog.open-file-in-editor",
+      "owner": "team-console",
+      "disposition": "direct",
+      "securityClass": "renderer-local",
+      "target": "WP-7-TEAM-CONSOLE",
+      "evidence": ["The contained click opens the changed file in the editor."],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/dialogs/TaskDetailDialog.tsx",
+          "sourceHash": "sha256:3396c30df3ddab56",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
+      "id": "team.legacy-control.dialogs.task.detail.dialog.open-task-link",
+      "owner": "team-task-board",
+      "disposition": "decomposed",
+      "securityClass": "team-resource",
+      "target": "WP-8-TASK-BOARD",
+      "evidence": [
+        "Captured description task-link activation is a semantic navigation action even though the handler also contains the parent click event."
+      ],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/dialogs/TaskDetailDialog.tsx",
+          "sourceHash": "sha256:e8f41755b35aa23e",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
+      "id": "team.legacy-control.dialogs.task.detail.dialog.refresh-changes",
+      "owner": "team-review",
+      "disposition": "decomposed",
+      "securityClass": "review-change-set",
+      "target": "WP-9-REVIEW",
+      "evidence": ["The contained click refreshes task changes."],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/dialogs/TaskDetailDialog.tsx",
+          "sourceHash": "sha256:4acf2eae8f586d13",
+          "siteCount": 1
         }
       ]
     },
@@ -3864,6 +4247,28 @@
         {
           "file": "src/renderer/components/team/dialogs/TaskDetailDialog.tsx",
           "sourceHash": "sha256:3829d019ae6f70fa",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
+      "id": "team.legacy-control.dialogs.task.detail.dialog.save-subject",
+      "owner": "team-task-board",
+      "disposition": "decomposed",
+      "securityClass": "team-resource",
+      "target": "WP-8-TASK-BOARD",
+      "evidence": [
+        "Enter and blur both commit the edited task subject through updateTaskFields; propagation containment on Enter is not the semantic effect."
+      ],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/dialogs/TaskDetailDialog.tsx",
+          "sourceHash": "sha256:b834d684e97eb77c",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/dialogs/TaskDetailDialog.tsx",
+          "sourceHash": "sha256:ffbee3e9b15abf4b",
           "siteCount": 1
         }
       ]
@@ -4180,6 +4585,21 @@
       ]
     },
     {
+      "id": "team.legacy-control.dialogs.tool.approval.settings.update-timeout-seconds",
+      "owner": "team-approvals",
+      "disposition": "decomposed",
+      "securityClass": "approval-policy",
+      "target": "WP-9-APPROVALS",
+      "evidence": ["Blur validates and persists the tool approval timeout setting."],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/dialogs/ToolApprovalSettingsPanel.tsx",
+          "sourceHash": "sha256:fa074c37a7cd5cec",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
       "id": "team.legacy-control.dialogs.worktree.git.readiness.banner.button-on-click",
       "owner": "team-console",
       "disposition": "direct",
@@ -4226,6 +4646,23 @@
         {
           "file": "src/renderer/components/team/editor/EditorBinaryPlaceholder.tsx",
           "sourceHash": "sha256:a834d7f422c4709a",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
+      "id": "team.legacy-control.editor.editor.context.menu.capture-target",
+      "owner": "team-console",
+      "disposition": "direct",
+      "securityClass": "renderer-local",
+      "target": "WP-7-TEAM-CONSOLE",
+      "evidence": [
+        "The context-menu event selects the file target used by the visible editor menu."
+      ],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/editor/EditorContextMenu.tsx",
+          "sourceHash": "sha256:f681bb4cde566ba3",
           "siteCount": 1
         }
       ]
@@ -4479,6 +4916,23 @@
       ]
     },
     {
+      "id": "team.legacy-control.editor.editor.file.tree.handle-drag-start",
+      "owner": "team-console",
+      "disposition": "direct",
+      "securityClass": "renderer-local",
+      "target": "WP-7-TEAM-CONSOLE",
+      "evidence": [
+        "Drag start establishes the editor file-tree item for the subsequent move action."
+      ],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/editor/EditorFileTree.tsx",
+          "sourceHash": "sha256:73a07f14b212f146",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
       "id": "team.legacy-control.editor.editor.file.tree.handle-key-down",
       "owner": "team-console",
       "disposition": "desktop-only",
@@ -4505,6 +4959,11 @@
         "Reviewed renderer control; exact source expression is pinned by the mapping hash and direct IPC semantics remain bound by P0.W1.API_PARITY_LEDGER."
       ],
       "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/editor/EditorFileTree.tsx",
+          "sourceHash": "sha256:151747a5e64177ec",
+          "siteCount": 1
+        },
         {
           "file": "src/renderer/components/team/editor/EditorFileTree.tsx",
           "sourceHash": "sha256:f689c4c30d5eb6d3",
@@ -4917,6 +5376,11 @@
           "file": "src/renderer/components/team/editor/EditorTabBar.tsx",
           "sourceHash": "sha256:3bea81922bfdd4ec",
           "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/editor/EditorTabBar.tsx",
+          "sourceHash": "sha256:6e2e253c731c77d9",
+          "siteCount": 1
         }
       ]
     },
@@ -4933,6 +5397,21 @@
         {
           "file": "src/renderer/components/team/editor/EditorTabBar.tsx",
           "sourceHash": "sha256:70b73e5fc93691a2",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
+      "id": "team.legacy-control.editor.editor.tab.bar.handle-drag-start",
+      "owner": "team-console",
+      "disposition": "direct",
+      "securityClass": "renderer-local",
+      "target": "WP-7-TEAM-CONSOLE",
+      "evidence": ["Drag start establishes the editor tab for the subsequent reorder action."],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/editor/EditorTabBar.tsx",
+          "sourceHash": "sha256:73a07f14b212f146",
           "siteCount": 1
         }
       ]
@@ -5227,6 +5706,21 @@
         {
           "file": "src/renderer/components/team/editor/GoToLineDialog.tsx",
           "sourceHash": "sha256:bb2b3396f7083929",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
+      "id": "team.legacy-control.editor.markdown.split.view.resize",
+      "owner": "team-console",
+      "disposition": "direct",
+      "securityClass": "renderer-local",
+      "target": "WP-7-TEAM-CONSOLE",
+      "evidence": ["Pointer-driven divider resizing changes the mounted editor layout."],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/editor/MarkdownSplitView.tsx",
+          "sourceHash": "sha256:f0dc8db4d8cbe64b",
           "siteCount": 1
         }
       ]
@@ -5692,6 +6186,11 @@
           "file": "src/renderer/components/team/editor/SearchInFilesPanel.tsx",
           "sourceHash": "sha256:2646e344df8b7d3a",
           "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/editor/SearchInFilesPanel.tsx",
+          "sourceHash": "sha256:714ae75d2984398e",
+          "siteCount": 1
         }
       ]
     },
@@ -5998,6 +6497,21 @@
       ]
     },
     {
+      "id": "team.legacy-control.kanban.kanban.task.card.approve-task",
+      "owner": "team-review",
+      "disposition": "decomposed",
+      "securityClass": "review-change-set",
+      "target": "WP-9-REVIEW",
+      "evidence": ["The contained click approves the task review."],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/kanban/KanbanTaskCard.tsx",
+          "sourceHash": "sha256:74c135b70a736526",
+          "siteCount": 2
+        }
+      ]
+    },
+    {
       "id": "team.legacy-control.kanban.kanban.task.card.button-on-click",
       "owner": "team-task-board",
       "disposition": "decomposed",
@@ -6015,6 +6529,51 @@
       ]
     },
     {
+      "id": "team.legacy-control.kanban.kanban.task.card.complete-task",
+      "owner": "team-task-board",
+      "disposition": "decomposed",
+      "securityClass": "team-resource",
+      "target": "WP-8-TASK-BOARD",
+      "evidence": ["The contained click completes the task."],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/kanban/KanbanTaskCard.tsx",
+          "sourceHash": "sha256:7d9fe604f5cad108",
+          "siteCount": 2
+        }
+      ]
+    },
+    {
+      "id": "team.legacy-control.kanban.kanban.task.card.delete-task",
+      "owner": "team-task-board",
+      "disposition": "decomposed",
+      "securityClass": "team-resource",
+      "target": "WP-8-TASK-BOARD",
+      "evidence": ["The contained click deletes the task."],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/kanban/KanbanTaskCard.tsx",
+          "sourceHash": "sha256:b9baa31930ee1747",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
+      "id": "team.legacy-control.kanban.kanban.task.card.move-back-to-done",
+      "owner": "team-task-board",
+      "disposition": "decomposed",
+      "securityClass": "team-resource",
+      "target": "WP-8-TASK-BOARD",
+      "evidence": ["The contained click returns the task to done."],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/kanban/KanbanTaskCard.tsx",
+          "sourceHash": "sha256:449c22d1f2d8cdfd",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
       "id": "team.legacy-control.kanban.kanban.task.card.on-task-click",
       "owner": "team-task-board",
       "disposition": "decomposed",
@@ -6027,6 +6586,56 @@
         {
           "file": "src/renderer/components/team/kanban/KanbanTaskCard.tsx",
           "sourceHash": "sha256:82cb75d1d6a964b7",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/kanban/KanbanTaskCard.tsx",
+          "sourceHash": "sha256:bcfa4c958fadb421",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
+      "id": "team.legacy-control.kanban.kanban.task.card.open-task",
+      "owner": "team-task-board",
+      "disposition": "direct",
+      "securityClass": "team-read",
+      "target": "WP-8-TASK-BOARD",
+      "evidence": ["The contained click opens the selected task."],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/kanban/KanbanTaskCard.tsx",
+          "sourceHash": "sha256:09fe3d215bf39d4d",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
+      "id": "team.legacy-control.kanban.kanban.task.card.request-changes",
+      "owner": "team-review",
+      "disposition": "decomposed",
+      "securityClass": "review-change-set",
+      "target": "WP-9-REVIEW",
+      "evidence": ["The contained click requests review changes."],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/kanban/KanbanTaskCard.tsx",
+          "sourceHash": "sha256:381d345194f1b837",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
+      "id": "team.legacy-control.kanban.kanban.task.card.request-review",
+      "owner": "team-review",
+      "disposition": "decomposed",
+      "securityClass": "review-change-set",
+      "target": "WP-9-REVIEW",
+      "evidence": ["The contained click requests task review."],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/kanban/KanbanTaskCard.tsx",
+          "sourceHash": "sha256:1758cd0fcf33fefe",
           "siteCount": 1
         }
       ]
@@ -6049,6 +6658,36 @@
         {
           "file": "src/renderer/components/team/kanban/KanbanTaskCard.tsx",
           "sourceHash": "sha256:26532b782722e3b0",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
+      "id": "team.legacy-control.kanban.kanban.task.card.start-task",
+      "owner": "team-task-board",
+      "disposition": "decomposed",
+      "securityClass": "team-resource",
+      "target": "WP-8-TASK-BOARD",
+      "evidence": ["The contained click starts the task."],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/kanban/KanbanTaskCard.tsx",
+          "sourceHash": "sha256:b1e9a1605b3b9e37",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
+      "id": "team.legacy-control.kanban.kanban.task.card.view-changes",
+      "owner": "team-review",
+      "disposition": "decomposed",
+      "securityClass": "review-change-set",
+      "target": "WP-9-REVIEW",
+      "evidence": ["The contained click opens task changes."],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/kanban/KanbanTaskCard.tsx",
+          "sourceHash": "sha256:f9bd2634aa08123e",
           "siteCount": 1
         }
       ]
@@ -6083,6 +6722,43 @@
         {
           "file": "src/renderer/components/team/kanban/TrashDialog.tsx",
           "sourceHash": "sha256:bce23b6a20b21a35",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
+      "id": "team.legacy-control.member.badge.select-member",
+      "owner": "team-console",
+      "disposition": "direct",
+      "securityClass": "renderer-local",
+      "target": "WP-7-TEAM-CONSOLE",
+      "evidence": ["The contained badge click selects a member."],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/MemberBadge.tsx",
+          "sourceHash": "sha256:b9d68bc2ebfb27be",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
+      "id": "team.legacy-control.members.current.task.indicator.open-task",
+      "owner": "team-task-board",
+      "disposition": "direct",
+      "securityClass": "team-read",
+      "target": "WP-8-TASK-BOARD",
+      "evidence": [
+        "Click and keyboard activation open the current task; containment prevents opening the member card."
+      ],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/members/CurrentTaskIndicator.tsx",
+          "sourceHash": "sha256:0f418a37e20a9ecc",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/members/CurrentTaskIndicator.tsx",
+          "sourceHash": "sha256:85ca85b4fcc679d7",
           "siteCount": 1
         }
       ]
@@ -6184,7 +6860,17 @@
       "sourceRefs": [
         {
           "file": "src/renderer/components/team/members/MemberCard.tsx",
+          "sourceHash": "sha256:8e766d8d02362756",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/members/MemberCard.tsx",
           "sourceHash": "sha256:be6067847d21e9e4",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/members/MemberCard.tsx",
+          "sourceHash": "sha256:e20ed8d3ae6565d5",
           "siteCount": 1
         }
       ]
@@ -6808,6 +7494,21 @@
       ]
     },
     {
+      "id": "team.legacy-control.members.member.hover.card.open-profile",
+      "owner": "team-console",
+      "disposition": "direct",
+      "securityClass": "renderer-local",
+      "target": "WP-7-TEAM-CONSOLE",
+      "evidence": ["The contained click opens the member profile."],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/members/MemberHoverCard.tsx",
+          "sourceHash": "sha256:73444aad60936a64",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
       "id": "team.legacy-control.members.member.launch.diagnostics.button.copy-diagnostics",
       "owner": "team-runtime-control",
       "disposition": "decomposed",
@@ -6854,6 +7555,11 @@
         {
           "file": "src/renderer/components/team/members/MemberLogsTab.tsx",
           "sourceHash": "sha256:2646e344df8b7d3a",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/members/MemberLogsTab.tsx",
+          "sourceHash": "sha256:99d9eed00c4b8c0f",
           "siteCount": 1
         }
       ]
@@ -6905,6 +7611,11 @@
         {
           "file": "src/renderer/components/team/members/MemberMessagesTab.tsx",
           "sourceHash": "sha256:400d43a4e8a45239",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/members/MemberMessagesTab.tsx",
+          "sourceHash": "sha256:48b58103af4e195f",
           "siteCount": 1
         }
       ]
@@ -7260,6 +7971,21 @@
       ]
     },
     {
+      "id": "team.legacy-control.messages.message.composer.handle-paste-wrapper",
+      "owner": "agent-attachments",
+      "disposition": "decomposed",
+      "securityClass": "bounded-content",
+      "target": "WP-9-ATTACHMENTS",
+      "evidence": ["Clipboard files enter the bounded composer attachment flow."],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/messages/MessageComposer.tsx",
+          "sourceHash": "sha256:9dce3273926e35d9",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
       "id": "team.legacy-control.messages.message.composer.handle-revision-cancel",
       "owner": "team-messaging",
       "disposition": "decomposed",
@@ -7553,6 +8279,58 @@
           "file": "src/renderer/components/team/messages/MessagesPanel.tsx",
           "sourceHash": "sha256:b7133cf15aba7f05",
           "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/messages/MessagesPanel.tsx",
+          "sourceHash": "sha256:c19a25c09f1236ae",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
+      "id": "team.legacy-control.messages.messages.panel.move-to-floating-composer",
+      "owner": "team-console",
+      "disposition": "direct",
+      "securityClass": "renderer-local",
+      "target": "WP-7-TEAM-CONSOLE",
+      "evidence": ["The contained click moves messages to the floating composer."],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/messages/MessagesPanel.tsx",
+          "sourceHash": "sha256:9565b8e4aadca5cc",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
+      "id": "team.legacy-control.messages.messages.panel.move-to-inline",
+      "owner": "team-console",
+      "disposition": "direct",
+      "securityClass": "renderer-local",
+      "target": "WP-7-TEAM-CONSOLE",
+      "evidence": [
+        "Closing the mounted message sheet moves the message surface to its inline position."
+      ],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/messages/MessagesPanel.tsx",
+          "sourceHash": "sha256:b0c71590e72d19c1",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
+      "id": "team.legacy-control.messages.messages.panel.move-to-sidebar",
+      "owner": "team-console",
+      "disposition": "direct",
+      "securityClass": "renderer-local",
+      "target": "WP-7-TEAM-CONSOLE",
+      "evidence": ["The contained click moves messages to the sidebar."],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/messages/MessagesPanel.tsx",
+          "sourceHash": "sha256:8a54843df3f8b1c2",
+          "siteCount": 1
         }
       ]
     },
@@ -7610,6 +8388,11 @@
         "Reviewed renderer control; exact source expression is pinned by the mapping hash and direct IPC semantics remain bound by P0.W1.API_PARITY_LEDGER."
       ],
       "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/messages/MessagesPanel.tsx",
+          "sourceHash": "sha256:7842557d5bb4a34c",
+          "siteCount": 1
+        },
         {
           "file": "src/renderer/components/team/messages/MessagesPanel.tsx",
           "sourceHash": "sha256:c894f06cdd1bdfb4",
@@ -7676,6 +8459,11 @@
         "Reviewed renderer control; exact source expression is pinned by the mapping hash and direct IPC semantics remain bound by P0.W1.API_PARITY_LEDGER."
       ],
       "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/messages/MessagesPanel.tsx",
+          "sourceHash": "sha256:23a4eea97b4a2f9f",
+          "siteCount": 1
+        },
         {
           "file": "src/renderer/components/team/messages/MessagesPanel.tsx",
           "sourceHash": "sha256:cf4e7b94acde4094",
@@ -7900,6 +8688,62 @@
         {
           "file": "src/renderer/components/team/review/ChangeReviewDialog.tsx",
           "sourceHash": "sha256:6374f29f0ed2999f",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
+      "id": "team.legacy-control.review.code.mirror.diff.view.accept-active-chunk",
+      "owner": "team-review",
+      "disposition": "decomposed",
+      "securityClass": "review-change-set",
+      "target": "WP-9-REVIEW",
+      "evidence": [
+        "Mouse activation accepts the active review chunk; default suppression only preserves editor focus."
+      ],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/review/CodeMirrorDiffView.tsx",
+          "sourceHash": "sha256:8d1e667f3f7399a2",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
+      "id": "team.legacy-control.review.code.mirror.diff.view.move-between-chunks",
+      "owner": "team-review",
+      "disposition": "direct",
+      "securityClass": "renderer-local",
+      "target": "WP-9-REVIEW",
+      "evidence": [
+        "Mouse activation navigates between review chunks; default suppression only preserves editor focus."
+      ],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/review/CodeMirrorDiffView.tsx",
+          "sourceHash": "sha256:4119204bd4815774",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/review/CodeMirrorDiffView.tsx",
+          "sourceHash": "sha256:b4834fa4d85f7d1b",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
+      "id": "team.legacy-control.review.code.mirror.diff.view.reject-active-chunk",
+      "owner": "team-review",
+      "disposition": "decomposed",
+      "securityClass": "review-change-set",
+      "target": "WP-9-REVIEW",
+      "evidence": [
+        "Mouse activation rejects the active review chunk; default suppression only preserves editor focus."
+      ],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/review/CodeMirrorDiffView.tsx",
+          "sourceHash": "sha256:668b838dfd60b27c",
           "siteCount": 1
         }
       ]
@@ -8492,6 +9336,11 @@
       "sourceRefs": [
         {
           "file": "src/renderer/components/team/schedule/ScheduleRunRow.tsx",
+          "sourceHash": "sha256:4608ad394dda92b8",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/schedule/ScheduleRunRow.tsx",
           "sourceHash": "sha256:74d0b7ee50c0aacc",
           "siteCount": 1
         }
@@ -8594,6 +9443,11 @@
       "sourceRefs": [
         {
           "file": "src/renderer/components/team/schedule/ScheduleSection.tsx",
+          "sourceHash": "sha256:087933c406a1ecac",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/schedule/ScheduleSection.tsx",
           "sourceHash": "sha256:6429bf3743988762",
           "siteCount": 1
         }
@@ -8651,6 +9505,36 @@
       ]
     },
     {
+      "id": "team.legacy-control.sidebar.team.sidebar.rail.resize-logs",
+      "owner": "team-console",
+      "disposition": "direct",
+      "securityClass": "renderer-local",
+      "target": "WP-7-TEAM-CONSOLE",
+      "evidence": ["Mouse-down begins resizing the mounted logs panel."],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/sidebar/TeamSidebarRail.tsx",
+          "sourceHash": "sha256:473f548b65cd06b2",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
+      "id": "team.legacy-control.sidebar.team.sidebar.rail.resize-sidebar",
+      "owner": "team-console",
+      "disposition": "direct",
+      "securityClass": "renderer-local",
+      "target": "WP-7-TEAM-CONSOLE",
+      "evidence": ["Mouse-down begins resizing the mounted team sidebar."],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/sidebar/TeamSidebarRail.tsx",
+          "sourceHash": "sha256:16913658139e8b59",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
       "id": "team.legacy-control.task.logs.task.activity.section.on-toggle",
       "owner": "team-task-board",
       "disposition": "decomposed",
@@ -8663,6 +9547,11 @@
         {
           "file": "src/renderer/components/team/taskLogs/TaskActivitySection.tsx",
           "sourceHash": "sha256:2646e344df8b7d3a",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/taskLogs/TaskActivitySection.tsx",
+          "sourceHash": "sha256:89b9575674feeb83",
           "siteCount": 1
         }
       ]
@@ -8740,12 +9629,37 @@
       "sourceRefs": [
         {
           "file": "src/renderer/components/team/TeamChangesSection.tsx",
+          "sourceHash": "sha256:525bc3f0efb44e02",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/TeamChangesSection.tsx",
+          "sourceHash": "sha256:75a0eb88c9577b60",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/TeamChangesSection.tsx",
           "sourceHash": "sha256:a1d006c56aa7ff68",
           "siteCount": 1
         },
         {
           "file": "src/renderer/components/team/TeamChangesSection.tsx",
           "sourceHash": "sha256:c37418c8c5a72dcf",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
+      "id": "team.legacy-control.team.changes.section.refresh",
+      "owner": "team-review",
+      "disposition": "decomposed",
+      "securityClass": "review-change-set",
+      "target": "WP-9-REVIEW",
+      "evidence": ["The contained click refreshes the visible change set."],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/TeamChangesSection.tsx",
+          "sourceHash": "sha256:34b70081a41b3c78",
           "siteCount": 1
         }
       ]
@@ -8905,6 +9819,11 @@
           "file": "src/renderer/components/team/TeamSessionsSection.tsx",
           "sourceHash": "sha256:1906099cc42207e7",
           "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/TeamSessionsSection.tsx",
+          "sourceHash": "sha256:9bdff1fbf589081b",
+          "siteCount": 1
         }
       ]
     },
@@ -8921,6 +9840,21 @@
         {
           "file": "src/renderer/components/team/TeamSessionsSection.tsx",
           "sourceHash": "sha256:4697e3c1af281087",
+          "siteCount": 1
+        }
+      ]
+    },
+    {
+      "id": "team.legacy-control.team.sessions.section.toggle-filter",
+      "owner": "team-runtime-control",
+      "disposition": "direct",
+      "securityClass": "renderer-local",
+      "target": "WP-5-RUNTIME-CONTROL",
+      "evidence": ["The contained click changes the session filter."],
+      "sourceRefs": [
+        {
+          "file": "src/renderer/components/team/TeamSessionsSection.tsx",
+          "sourceHash": "sha256:2371d0ec1c024ef2",
           "siteCount": 1
         }
       ]
@@ -8955,6 +9889,11 @@
         {
           "file": "src/renderer/components/team/dialogs/ToolApprovalSettingsPanel.tsx",
           "sourceHash": "sha256:2646e344df8b7d3a",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/ToolApprovalSheet.tsx",
+          "sourceHash": "sha256:6c558a10417d1bb1",
           "siteCount": 1
         }
       ]
@@ -10046,147 +10985,17 @@
       "sourceRefs": [
         {
           "file": "src/renderer/components/team/activity/ActivityItem.tsx",
-          "sourceHash": "sha256:0abbe7e35bc3e74d",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/activity/ActivityItem.tsx",
-          "sourceHash": "sha256:2a2f9994cdddf0d2",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/activity/ActivityItem.tsx",
-          "sourceHash": "sha256:3597114d854da9e9",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/activity/ActivityItem.tsx",
-          "sourceHash": "sha256:3c184571207a875b",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/activity/ActivityItem.tsx",
-          "sourceHash": "sha256:3ee5a263eec43eec",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/activity/ActivityItem.tsx",
-          "sourceHash": "sha256:3f0d324d42e9187f",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/activity/ActivityItem.tsx",
-          "sourceHash": "sha256:5c3bf89cda708003",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/activity/ActivityItem.tsx",
-          "sourceHash": "sha256:9b1cd0dbc06e2b98",
-          "siteCount": 3
-        },
-        {
-          "file": "src/renderer/components/team/activity/ActivityItem.tsx",
           "sourceHash": "sha256:bd2c930acae6fa82",
-          "siteCount": 3
-        },
-        {
-          "file": "src/renderer/components/team/activity/ActivityItem.tsx",
-          "sourceHash": "sha256:db8f2250885aaef2",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/activity/ActivityItem.tsx",
-          "sourceHash": "sha256:e05f22c26512f818",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/activity/ActivityItem.tsx",
-          "sourceHash": "sha256:fd94940e350e840a",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/activity/LeadThoughtsGroup.tsx",
-          "sourceHash": "sha256:79d283e138e8aeb1",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/activity/LeadThoughtsGroup.tsx",
-          "sourceHash": "sha256:88576fbb278b499d",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/activity/LeadThoughtsGroup.tsx",
-          "sourceHash": "sha256:9b1cd0dbc06e2b98",
           "siteCount": 3
         },
         {
           "file": "src/renderer/components/team/activity/LeadThoughtsGroup.tsx",
           "sourceHash": "sha256:bd2c930acae6fa82",
           "siteCount": 3
-        },
-        {
-          "file": "src/renderer/components/team/activity/LeadThoughtsGroup.tsx",
-          "sourceHash": "sha256:c3d65956de4b8afa",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/attachments/AttachmentDisplay.tsx",
-          "sourceHash": "sha256:4549841228813945",
-          "siteCount": 1
         },
         {
           "file": "src/renderer/components/team/attachments/AttachmentDisplay.tsx",
           "sourceHash": "sha256:a3a0edf693152a8e",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/ClaudeLogsSection.tsx",
-          "sourceHash": "sha256:f01a74e48ab0db88",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/dialogs/AdvancedCliSection.tsx",
-          "sourceHash": "sha256:b4c6e2f1b15995df",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/dialogs/TaskAttachments.tsx",
-          "sourceHash": "sha256:337463bd9f0728f8",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/dialogs/TaskCommentInput.tsx",
-          "sourceHash": "sha256:3b1bf79189c59b8e",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/dialogs/TaskDetailDialog.tsx",
-          "sourceHash": "sha256:3396c30df3ddab56",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/dialogs/TaskDetailDialog.tsx",
-          "sourceHash": "sha256:4acf2eae8f586d13",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/dialogs/TaskDetailDialog.tsx",
-          "sourceHash": "sha256:4cecf1aa0432a3f8",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/dialogs/TaskDetailDialog.tsx",
-          "sourceHash": "sha256:948ebb56a04f9668",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/dialogs/TaskDetailDialog.tsx",
-          "sourceHash": "sha256:e6859407fcfa8f46",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/dialogs/TaskDetailDialog.tsx",
-          "sourceHash": "sha256:ffbee3e9b15abf4b",
           "siteCount": 1
         },
         {
@@ -10196,12 +11005,12 @@
         },
         {
           "file": "src/renderer/components/team/editor/EditorFileTree.tsx",
-          "sourceHash": "sha256:151747a5e64177ec",
+          "sourceHash": "sha256:165e086f0e3330f1",
           "siteCount": 1
         },
         {
-          "file": "src/renderer/components/team/editor/EditorFileTree.tsx",
-          "sourceHash": "sha256:165e086f0e3330f1",
+          "file": "src/renderer/components/team/editor/EditorSelectionMenu.tsx",
+          "sourceHash": "sha256:47dcef1a90df906f",
           "siteCount": 1
         },
         {
@@ -10211,52 +11020,7 @@
         },
         {
           "file": "src/renderer/components/team/kanban/KanbanTaskCard.tsx",
-          "sourceHash": "sha256:09fe3d215bf39d4d",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/kanban/KanbanTaskCard.tsx",
-          "sourceHash": "sha256:1758cd0fcf33fefe",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/kanban/KanbanTaskCard.tsx",
-          "sourceHash": "sha256:381d345194f1b837",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/kanban/KanbanTaskCard.tsx",
-          "sourceHash": "sha256:449c22d1f2d8cdfd",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/kanban/KanbanTaskCard.tsx",
-          "sourceHash": "sha256:74c135b70a736526",
-          "siteCount": 2
-        },
-        {
-          "file": "src/renderer/components/team/kanban/KanbanTaskCard.tsx",
-          "sourceHash": "sha256:7d9fe604f5cad108",
-          "siteCount": 2
-        },
-        {
-          "file": "src/renderer/components/team/kanban/KanbanTaskCard.tsx",
           "sourceHash": "sha256:8fef14b8b3cb85fe",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/kanban/KanbanTaskCard.tsx",
-          "sourceHash": "sha256:b1e9a1605b3b9e37",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/kanban/KanbanTaskCard.tsx",
-          "sourceHash": "sha256:b9baa31930ee1747",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/kanban/KanbanTaskCard.tsx",
-          "sourceHash": "sha256:bcfa4c958fadb421",
           "siteCount": 1
         },
         {
@@ -10265,48 +11029,8 @@
           "siteCount": 1
         },
         {
-          "file": "src/renderer/components/team/kanban/KanbanTaskCard.tsx",
-          "sourceHash": "sha256:f9bd2634aa08123e",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/MemberBadge.tsx",
-          "sourceHash": "sha256:b9d68bc2ebfb27be",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/members/CurrentTaskIndicator.tsx",
-          "sourceHash": "sha256:0f418a37e20a9ecc",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/members/CurrentTaskIndicator.tsx",
-          "sourceHash": "sha256:85ca85b4fcc679d7",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/members/MemberCard.tsx",
-          "sourceHash": "sha256:8e766d8d02362756",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/members/MemberCard.tsx",
-          "sourceHash": "sha256:e20ed8d3ae6565d5",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/members/MemberHoverCard.tsx",
-          "sourceHash": "sha256:73444aad60936a64",
-          "siteCount": 1
-        },
-        {
           "file": "src/renderer/components/team/members/MemberLogsTab.tsx",
           "sourceHash": "sha256:87178eec6faacfd5",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/members/MemberMessagesTab.tsx",
-          "sourceHash": "sha256:48b58103af4e195f",
           "siteCount": 1
         },
         {
@@ -10316,87 +11040,248 @@
         },
         {
           "file": "src/renderer/components/team/messages/MessagesPanel.tsx",
-          "sourceHash": "sha256:23a4eea97b4a2f9f",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/messages/MessagesPanel.tsx",
           "sourceHash": "sha256:4a29a6745b4ec867",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/messages/MessagesPanel.tsx",
-          "sourceHash": "sha256:7842557d5bb4a34c",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/messages/MessagesPanel.tsx",
-          "sourceHash": "sha256:8a54843df3f8b1c2",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/messages/MessagesPanel.tsx",
-          "sourceHash": "sha256:9565b8e4aadca5cc",
-          "siteCount": 1
-        },
-        {
-          "file": "src/renderer/components/team/messages/MessagesPanel.tsx",
-          "sourceHash": "sha256:c19a25c09f1236ae",
           "siteCount": 1
         },
         {
           "file": "src/renderer/components/team/messages/MessagesPanel.tsx",
           "sourceHash": "sha256:c760d80cc9f1875b",
           "siteCount": 1
+        }
+      ]
+    },
+    {
+      "id": "P0.W1.ABSENCE.child-local-presentation",
+      "reason": "Hover, focus, scroll, drag-affordance, and tooltip presentation state creates no hosted semantic action.",
+      "sourceRefs": [
+        {
+          "file": "src/features/runtime-provider-management/renderer/ui/providerBrandIcons.tsx",
+          "sourceHash": "sha256:bb70f538871bb947",
+          "siteCount": 1
         },
         {
-          "file": "src/renderer/components/team/review/CodeMirrorDiffView.tsx",
-          "sourceHash": "sha256:1716657bb06e54dd",
+          "file": "src/renderer/components/team/activity/LeadThoughtsGroup.tsx",
+          "sourceHash": "sha256:6387e3393dd3ae35",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/ClaudeLogsPanel.tsx",
+          "sourceHash": "sha256:1280af97cd52326a",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/CliLogsRichView.tsx",
+          "sourceHash": "sha256:56c86c3686f3cb6d",
+          "siteCount": 2
+        },
+        {
+          "file": "src/renderer/components/team/dialogs/AdvancedCliSection.tsx",
+          "sourceHash": "sha256:e3fa633e40d5b512",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/dialogs/SendMessageDialog.tsx",
+          "sourceHash": "sha256:874c54e7c9a5b6dd",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/dialogs/SendMessageDialog.tsx",
+          "sourceHash": "sha256:8ea8d7742f3d3125",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/dialogs/SendMessageDialog.tsx",
+          "sourceHash": "sha256:95a4f8ff49aba399",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/dialogs/TaskAttachments.tsx",
+          "sourceHash": "sha256:540d6fbf5956bd35",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/dialogs/TaskAttachments.tsx",
+          "sourceHash": "sha256:d9fd063bad9cdf03",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/dialogs/ToolApprovalSettingsPanel.tsx",
+          "sourceHash": "sha256:b459c5798b12af22",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/dialogs/ToolApprovalSettingsPanel.tsx",
+          "sourceHash": "sha256:f11af62a1beaa1c5",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/editor/EditorFileTree.tsx",
+          "sourceHash": "sha256:0f82202e91b11be7",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/editor/EditorFileTree.tsx",
+          "sourceHash": "sha256:4af5671b033319ba",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/editor/EditorFileTree.tsx",
+          "sourceHash": "sha256:7318668c84f70c64",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/editor/EditorImagePreview.tsx",
+          "sourceHash": "sha256:4c80853062110e3b",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/editor/EditorTabBar.tsx",
+          "sourceHash": "sha256:4af5671b033319ba",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/editor/FileIcon.tsx",
+          "sourceHash": "sha256:dfa7d7b286637829",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/editor/MarkdownPreviewPane.tsx",
+          "sourceHash": "sha256:2c7c862ac45552e2",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/editor/MarkdownSplitView.tsx",
+          "sourceHash": "sha256:221f26b6c85e4bcf",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/editor/NewFileDialog.tsx",
+          "sourceHash": "sha256:7318668c84f70c64",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/kanban/KanbanSearchInput.tsx",
+          "sourceHash": "sha256:9630af694ccd1dfc",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/members/MemberCard.tsx",
+          "sourceHash": "sha256:6b592916076b2d06",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/members/MemberCard.tsx",
+          "sourceHash": "sha256:9a7336d73c7728be",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/members/MemberCard.tsx",
+          "sourceHash": "sha256:bf6e84c42f770025",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/members/MemberList.tsx",
+          "sourceHash": "sha256:b738dcd6113ca196",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/members/MemberList.tsx",
+          "sourceHash": "sha256:bd79976348fd0dd0",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/members/MemberList.tsx",
+          "sourceHash": "sha256:d2b85c3a43fadc2d",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/members/MemberList.tsx",
+          "sourceHash": "sha256:e8211337b0af9fff",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/messages/MessageComposer.tsx",
+          "sourceHash": "sha256:51ea68e718a54b92",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/messages/MessageComposer.tsx",
+          "sourceHash": "sha256:540d6fbf5956bd35",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/messages/MessageComposer.tsx",
+          "sourceHash": "sha256:57f9387f7461288f",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/messages/MessageComposer.tsx",
+          "sourceHash": "sha256:73481c2379d747fa",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/messages/MessageComposer.tsx",
+          "sourceHash": "sha256:d9fd063bad9cdf03",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/messages/MessagesPanel.tsx",
+          "sourceHash": "sha256:93d1b881ec3b8fd7",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/messages/MessagesPanel.tsx",
+          "sourceHash": "sha256:af6e8057703bf33a",
           "siteCount": 1
         },
         {
           "file": "src/renderer/components/team/review/CodeMirrorDiffView.tsx",
-          "sourceHash": "sha256:5b53823485560510",
+          "sourceHash": "sha256:b80a1ae5cb6e36de",
           "siteCount": 1
         },
         {
           "file": "src/renderer/components/team/review/CodeMirrorDiffView.tsx",
-          "sourceHash": "sha256:a49768fdb96a1d27",
+          "sourceHash": "sha256:c6dd1b048c150ff1",
           "siteCount": 1
         },
         {
-          "file": "src/renderer/components/team/review/CodeMirrorDiffView.tsx",
-          "sourceHash": "sha256:bba72af1eca8466f",
+          "file": "src/renderer/components/team/ToolApprovalDiffPreview.tsx",
+          "sourceHash": "sha256:b459c5798b12af22",
           "siteCount": 1
         },
         {
-          "file": "src/renderer/components/team/schedule/ScheduleRunRow.tsx",
-          "sourceHash": "sha256:4608ad394dda92b8",
+          "file": "src/renderer/components/team/ToolApprovalDiffPreview.tsx",
+          "sourceHash": "sha256:f11af62a1beaa1c5",
           "siteCount": 1
         },
         {
-          "file": "src/renderer/components/team/TeamChangesSection.tsx",
-          "sourceHash": "sha256:34b70081a41b3c78",
+          "file": "src/renderer/components/team/ToolApprovalSheet.tsx",
+          "sourceHash": "sha256:6bf5c0024c0bbbe0",
           "siteCount": 1
         },
         {
-          "file": "src/renderer/components/team/TeamChangesSection.tsx",
-          "sourceHash": "sha256:525bc3f0efb44e02",
+          "file": "src/renderer/components/team/ToolApprovalSheet.tsx",
+          "sourceHash": "sha256:91c42630baef09ef",
           "siteCount": 1
         },
         {
-          "file": "src/renderer/components/team/TeamChangesSection.tsx",
-          "sourceHash": "sha256:75a0eb88c9577b60",
+          "file": "src/renderer/components/team/ToolApprovalSheet.tsx",
+          "sourceHash": "sha256:9559a433ceebf5ec",
           "siteCount": 1
         },
         {
-          "file": "src/renderer/components/team/TeamSessionsSection.tsx",
-          "sourceHash": "sha256:2371d0ec1c024ef2",
+          "file": "src/renderer/components/team/ToolApprovalSheet.tsx",
+          "sourceHash": "sha256:b459c5798b12af22",
           "siteCount": 1
         },
         {
-          "file": "src/renderer/components/team/TeamSessionsSection.tsx",
-          "sourceHash": "sha256:9bdff1fbf589081b",
+          "file": "src/renderer/components/team/ToolApprovalSheet.tsx",
+          "sourceHash": "sha256:e56a6451194401d8",
+          "siteCount": 1
+        },
+        {
+          "file": "src/renderer/components/team/ToolApprovalSheet.tsx",
+          "sourceHash": "sha256:fbd8fb7c3324fe9e",
           "siteCount": 1
         }
       ]

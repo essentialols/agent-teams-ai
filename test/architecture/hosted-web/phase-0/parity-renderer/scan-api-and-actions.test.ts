@@ -8,6 +8,7 @@ import {
   CONTROL_ROOTS,
   discoverControlClosure,
   findDynamicDispatch,
+  isEventProp,
   LEGACY_CHILD_API_ACTION_IDS,
   scanApiInterfaces,
   scanControls,
@@ -63,6 +64,97 @@ describe('Phase 0 W1 semantic scanner', () => {
           },
         ]
       )
+    ).not.toThrow();
+  });
+
+  it('discovers omitted event families and capture variants', () => {
+    const eventSites = scanControls(
+      `<div
+        onBlur={saveOnBlur}
+        onPaste={addPastedFiles}
+        onContextMenu={openContextMenu}
+        onDragStart={beginDrag}
+        onClickCapture={openTaskLink}
+      />`,
+      file
+    );
+
+    expect(eventSites.map((site) => site.prop)).toEqual([
+      'onBlur',
+      'onPaste',
+      'onContextMenu',
+      'onDragStart',
+      'onClickCapture',
+    ]);
+  });
+
+  it('recognizes every React DOM event property in the pinned type surface', () => {
+    const reactTypes = readFileSync(
+      join(process.cwd(), 'node_modules/@types/react/index.d.ts'),
+      'utf8'
+    );
+    const domAttributes = reactTypes.slice(
+      reactTypes.indexOf('interface DOMAttributes<T>'),
+      reactTypes.indexOf('interface HTMLAttributes<T>')
+    );
+    const eventProps = [...domAttributes.matchAll(/^\s+(on[A-Z][A-Za-z]+)\??:/gm)].map(
+      (match) => match[1]
+    );
+
+    expect(eventProps.length).toBeGreaterThan(100);
+    expect(eventProps.filter((prop) => !isEventProp(prop))).toEqual([]);
+  });
+
+  it('discovers external-package callbacks without extending the React event allowlist', () => {
+    const eventSites = scanControls(
+      `import { DndContext } from '@dnd-kit/core';
+       import { Sheet } from 'react-modal-sheet';
+       <><DndContext onDragCancel={cancelDrag} /><Sheet onClose={close} onSnap={snap} /></>`,
+      file
+    );
+
+    expect(eventSites.map(({ element, prop }) => `${element}.${prop}`)).toEqual([
+      'DndContext.onDragCancel',
+      'Sheet.onClose',
+      'Sheet.onSnap',
+    ]);
+  });
+
+  it('rejects omission of any discovered event family', () => {
+    const eventSites = scanControls(
+      '<div onBlur={saveOnBlur} onPaste={addPastedFiles} onContextMenu={openContextMenu} onDragStart={beginDrag} />',
+      file
+    );
+    expect(() =>
+      validateSemanticCatalog(
+        eventSites,
+        [action('team.task.save-on-blur', eventSites.slice(0, 3).map(ref))],
+        []
+      )
+    ).toThrow(/Missing or stale semantic mapping/);
+  });
+
+  it('rejects assigning a mixed containment and semantic handler to absence', () => {
+    const [mixedSite] = scanControls(
+      '<Input onKeyDown={(event) => { event.stopPropagation(); saveSubject(); }} />',
+      file
+    );
+    expect(mixedSite.effects).toEqual(['containment', 'semantic']);
+    expect(() =>
+      validateSemanticCatalog(
+        [mixedSite],
+        [],
+        [
+          {
+            id: 'P0.W1.ABSENCE.event-containment',
+            reason: 'not an action',
+            sourceRefs: [ref(mixedSite)],
+          },
+        ]
+      )
+    ).toThrow(/Mixed containment\/semantic handler must map to a semantic action/);
+    expect(() =>
+      validateSemanticCatalog([mixedSite], [action('team.task.save-subject', [ref(mixedSite)])], [])
     ).not.toThrow();
   });
 
@@ -161,7 +253,117 @@ describe('Phase 0 W1 semantic scanner', () => {
     );
   });
 
-  it('includes every separately mounted approval/global-task control and all 17 sites', () => {
+  it('maps the repository omitted-family sites and both task-subject save paths', () => {
+    const root = process.cwd();
+    const catalog = JSON.parse(
+      readFileSync(
+        join(
+          root,
+          'docs/research/hosted-web/phase-0/parity-renderer/renderer-child-control-catalog.json'
+        ),
+        'utf8'
+      )
+    ) as ChildControlCatalog;
+    const cases = [
+      ['src/renderer/components/team/messages/MessageComposer.tsx', 'onPaste'],
+      ['src/renderer/components/team/editor/EditorContextMenu.tsx', 'onContextMenu'],
+      ['src/renderer/components/team/editor/EditorFileTree.tsx', 'onDragStart'],
+    ] as const;
+    for (const [sourceFile, prop] of cases) {
+      const [site] = scanControls(readFileSync(join(root, sourceFile), 'utf8'), sourceFile).filter(
+        (candidate) => candidate.prop === prop
+      );
+      expect(site).toBeDefined();
+      expect(catalog.mappings[`${sourceFile}#sha256:${site.sourceHash}`]).toMatch(/^1\|team\./);
+    }
+
+    const taskFile = 'src/renderer/components/team/dialogs/TaskDetailDialog.tsx';
+    const subjectSaveSites = scanControls(
+      readFileSync(join(root, taskFile), 'utf8'),
+      taskFile
+    ).filter((site) => site.text.includes('saveSubject'));
+    expect(subjectSaveSites.map((site) => site.prop)).toEqual(['onKeyDown', 'onBlur']);
+    expect(
+      subjectSaveSites.map((site) => catalog.mappings[`${taskFile}#sha256:${site.sourceHash}`])
+    ).toEqual([
+      '1|team.legacy-control.dialogs.task.detail.dialog.save-subject',
+      '1|team.legacy-control.dialogs.task.detail.dialog.save-subject',
+    ]);
+  });
+
+  it('maps every mounted external interaction callback found in the repository closure', () => {
+    const cases = [
+      ['src/renderer/components/team/editor/EditorFileTree.tsx', 'DndContext', 'onDragCancel'],
+      ['src/renderer/components/team/editor/EditorTabBar.tsx', 'DndContext', 'onDragCancel'],
+      ['src/renderer/components/team/messages/MessagesPanel.tsx', 'Sheet', 'onClose'],
+      ['src/renderer/components/team/messages/MessagesPanel.tsx', 'Sheet', 'onSnap'],
+    ] as const;
+    const catalog = JSON.parse(
+      readFileSync(
+        join(
+          process.cwd(),
+          'docs/research/hosted-web/phase-0/parity-renderer/renderer-child-control-catalog.json'
+        ),
+        'utf8'
+      )
+    ) as ChildControlCatalog;
+
+    for (const [sourceFile, element, prop] of cases) {
+      const sites = scanControls(readFileSync(join(process.cwd(), sourceFile), 'utf8'), sourceFile);
+      const site = sites.find(
+        (candidate) => candidate.element === element && candidate.prop === prop
+      );
+      expect(site, `${sourceFile} ${element}.${prop}`).toBeDefined();
+      expect(catalog.mappings[`${sourceFile}#sha256:${site!.sourceHash}`]).toBeDefined();
+    }
+  });
+
+  it.each([
+    [
+      'src/renderer/components/team/editor/EditorFileTree.tsx',
+      'onDragCancel={handleDragCancel}',
+      'DndContext.onDragCancel',
+    ],
+    [
+      'src/renderer/components/team/messages/MessagesPanel.tsx',
+      'onClose={moveToInline}',
+      'Sheet.onClose',
+    ],
+    [
+      'src/renderer/components/team/messages/MessagesPanel.tsx',
+      'onSnap={setBottomSheetSnapIndex}',
+      'Sheet.onSnap',
+    ],
+  ])(
+    'rejects repository evidence when %s omits %s (%s)',
+    (omittedFile, omittedSource, _callback) => {
+      const root = process.cwd();
+      const readSource = (sourceFile: string): string | undefined => {
+        const absolute = join(root, sourceFile);
+        if (!existsSync(absolute) || !statSync(absolute).isFile()) return undefined;
+        const source = readFileSync(absolute, 'utf8');
+        return sourceFile === omittedFile ? source.replace(omittedSource, '') : source;
+      };
+      const catalog = JSON.parse(
+        readFileSync(
+          join(
+            root,
+            'docs/research/hosted-web/phase-0/parity-renderer/renderer-child-control-catalog.json'
+          ),
+          'utf8'
+        )
+      ) as ChildControlCatalog;
+      const sites = discoverControlClosure(CONTROL_ROOTS, readSource).flatMap((sourceFile) =>
+        scanControls(readSource(sourceFile)!, sourceFile)
+      );
+
+      expect(() => validateChildControlCatalog(sites, catalog)).toThrow(
+        new RegExp(`Child control reference is stale: ${omittedFile}`)
+      );
+    }
+  );
+
+  it('includes every separately mounted approval/global-task control and all 29 sites', () => {
     const root = process.cwd();
     const readSource = (sourceFile: string): string | undefined => {
       const absolute = join(root, sourceFile);
@@ -206,9 +408,9 @@ describe('Phase 0 W1 semantic scanner', () => {
         ])
       )
     ).toEqual({
-      'src/renderer/components/team/ToolApprovalSheet.tsx': 4,
-      'src/renderer/components/team/ToolApprovalDiffPreview.tsx': 1,
-      'src/renderer/components/team/dialogs/ToolApprovalSettingsPanel.tsx': 11,
+      'src/renderer/components/team/ToolApprovalSheet.tsx': 11,
+      'src/renderer/components/team/ToolApprovalDiffPreview.tsx': 3,
+      'src/renderer/components/team/dialogs/ToolApprovalSettingsPanel.tsx': 14,
       'src/renderer/components/team/dialogs/GlobalTaskDetailDialog.tsx': 1,
     });
   });

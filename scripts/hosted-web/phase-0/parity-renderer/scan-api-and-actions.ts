@@ -31,20 +31,114 @@ const CONTROL_SCOPE_PREFIXES = [
   'src/renderer/components/team/',
   'src/features/runtime-provider-management/renderer/',
 ] as const;
+// Complete React interaction families plus the Radix value/open callbacks used by mounted controls.
+// Keeping whole families together prevents the previous allowlist bug where onBlur, onPaste,
+// onContextMenu, and onDragStart silently disappeared while sibling events were scanned. Additional
+// on* callbacks on components imported from external packages are discovered from each source file
+// rather than maintained as another selective allowlist.
 const EVENT_PROPS = new Set([
+  'onAnimationEnd',
+  'onAnimationIteration',
+  'onAnimationStart',
+  'onAbort',
+  'onAuxClick',
+  'onBeforeInput',
+  'onBeforeToggle',
+  'onBlur',
+  'onCanPlay',
+  'onCanPlayThrough',
   'onChange',
   'onCheckedChange',
   'onClick',
+  'onCompositionEnd',
+  'onCompositionStart',
+  'onCompositionUpdate',
+  'onContextMenu',
+  'onCopy',
+  'onCut',
   'onDoubleClick',
+  'onDrag',
   'onDragEnd',
+  'onDragEnter',
+  'onDragExit',
+  'onDragLeave',
+  'onDragOver',
+  'onDragStart',
   'onDrop',
+  'onDurationChange',
+  'onEmptied',
+  'onEncrypted',
+  'onEnded',
+  'onError',
+  'onFocus',
+  'onInput',
+  'onInvalid',
   'onKeyDown',
+  'onKeyPress',
+  'onKeyUp',
+  'onLoad',
+  'onLoadedData',
+  'onLoadedMetadata',
+  'onLoadStart',
+  'onMouseDown',
+  'onMouseEnter',
+  'onMouseLeave',
+  'onMouseMove',
+  'onMouseOut',
+  'onMouseOver',
+  'onMouseUp',
   'onOpenChange',
+  'onPaste',
+  'onPointerCancel',
   'onPointerDown',
+  'onPointerEnter',
+  'onPointerLeave',
+  'onPointerMove',
+  'onPointerOut',
+  'onPointerOver',
+  'onPointerUp',
+  'onGotPointerCapture',
+  'onLostPointerCapture',
+  'onPause',
+  'onPlay',
+  'onPlaying',
+  'onProgress',
+  'onRateChange',
+  'onReset',
+  'onScroll',
+  'onScrollEnd',
+  'onSeeked',
+  'onSeeking',
   'onSelect',
   'onSubmit',
+  'onStalled',
+  'onSuspend',
+  'onTimeUpdate',
+  'onTouchCancel',
+  'onTouchEnd',
+  'onTouchMove',
+  'onTouchStart',
+  'onToggle',
+  'onTransitionCancel',
+  'onTransitionEnd',
+  'onTransitionRun',
+  'onTransitionStart',
   'onValueChange',
+  'onVolumeChange',
+  'onWaiting',
+  'onWheel',
 ]);
+export const isEventProp = (name: string): boolean =>
+  EVENT_PROPS.has(name) ||
+  (name.endsWith('Capture') && EVENT_PROPS.has(name.slice(0, -'Capture'.length)));
+const INTERNAL_IMPORT_PREFIXES = [
+  '.',
+  '@features/',
+  '@main/',
+  '@preload/',
+  '@renderer/',
+  '@shared/',
+] as const;
 const IMPLICIT_CONTROLS = new Set([
   'Button',
   'SelectItem',
@@ -106,6 +200,7 @@ export type ControlSite = {
   element: string;
   prop: string;
   text: string;
+  effects: Array<'containment' | 'semantic'>;
 };
 export type ChildControlCatalog = {
   schemaId: string;
@@ -798,7 +893,74 @@ export function scanControls(sourceText: string, file: string): ControlSite[] {
     ts.ScriptKind.TSX
   );
   const rows: ControlSite[] = [];
-  const add = (element: string, prop: string, text: string): void => {
+  const externalComponentRoots = new Set<string>();
+  for (const statement of source.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) {
+      continue;
+    }
+    const moduleSpecifier = statement.moduleSpecifier.text;
+    if (INTERNAL_IMPORT_PREFIXES.some((prefix) => moduleSpecifier.startsWith(prefix))) continue;
+    const clause = statement.importClause;
+    if (!clause?.isTypeOnly && clause?.name) externalComponentRoots.add(clause.name.text);
+    if (!clause?.isTypeOnly && clause?.namedBindings) {
+      if (ts.isNamespaceImport(clause.namedBindings)) {
+        externalComponentRoots.add(clause.namedBindings.name.text);
+      } else {
+        for (const specifier of clause.namedBindings.elements) {
+          if (!specifier.isTypeOnly) externalComponentRoots.add(specifier.name.text);
+        }
+      }
+    }
+  }
+  const isInteractionProp = (element: string, prop: string): boolean =>
+    isEventProp(prop) ||
+    (/^on[A-Z]/.test(prop) && externalComponentRoots.has(element.split('.')[0]));
+  const classifyEffects = (
+    initializer: ts.JsxAttributeValue | undefined
+  ): ControlSite['effects'] => {
+    if (!initializer) return ['semantic'];
+    let containment = false;
+    let semantic = false;
+    const visitEffect = (node: ts.Node): void => {
+      if (ts.isCallExpression(node)) {
+        const expression = node.expression;
+        const method =
+          ts.isPropertyAccessExpression(expression) || ts.isPropertyAccessChain(expression)
+            ? expression.name.text
+            : undefined;
+        if (
+          method &&
+          ['preventDefault', 'stopImmediatePropagation', 'stopPropagation'].includes(method)
+        ) {
+          containment = true;
+        } else {
+          semantic = true;
+        }
+      } else if (
+        ts.isBinaryExpression(node) &&
+        node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+        node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+      ) {
+        semantic = true;
+      } else if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) {
+        semantic = true;
+      }
+      ts.forEachChild(node, visitEffect);
+    };
+    visitEffect(initializer);
+    // A referenced callback is an opaque semantic effect at the JSX boundary. Inline handlers that
+    // only contain propagation/default suppression remain deliberate absences.
+    if (!containment && !semantic) semantic = true;
+    return [containment ? 'containment' : undefined, semantic ? 'semantic' : undefined].filter(
+      (effect): effect is 'containment' | 'semantic' => effect !== undefined
+    );
+  };
+  const add = (
+    element: string,
+    prop: string,
+    text: string,
+    effects: ControlSite['effects'] = ['semantic']
+  ): void => {
     const clean = normalized(text);
     rows.push({
       file,
@@ -806,11 +968,17 @@ export function scanControls(sourceText: string, file: string): ControlSite[] {
       prop,
       text: clean,
       sourceHash: sha(`${element}|${prop}|${clean}`, 16),
+      effects,
     });
   };
   const visit = (node: ts.Node): void => {
-    if (ts.isJsxAttribute(node) && EVENT_PROPS.has(node.name.getText(source))) {
-      add(jsxElement(node), node.name.getText(source), node.initializer?.getText(source) ?? '');
+    if (ts.isJsxAttribute(node) && isInteractionProp(jsxElement(node), node.name.getText(source))) {
+      add(
+        jsxElement(node),
+        node.name.getText(source),
+        node.initializer?.getText(source) ?? '',
+        classifyEffects(node.initializer)
+      );
     }
     if (
       (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) &&
@@ -818,12 +986,9 @@ export function scanControls(sourceText: string, file: string): ControlSite[] {
     ) {
       const attributes = node.attributes.properties.filter(ts.isJsxAttribute);
       const names = new Set(attributes.map((attribute) => attribute.name.getText(source)));
-      if (![...names].some((name) => EVENT_PROPS.has(name)) && !names.has('asChild')) {
-        add(
-          node.tagName.getText(source),
-          node.tagName.getText(source) === 'a' ? 'navigate' : 'implicitAction',
-          node.getText(source)
-        );
+      const element = node.tagName.getText(source);
+      if (![...names].some((name) => isInteractionProp(element, name)) && !names.has('asChild')) {
+        add(element, element === 'a' ? 'navigate' : 'implicitAction', node.getText(source));
       }
     }
     ts.forEachChild(node, visit);
@@ -1093,11 +1258,13 @@ export function validateSemanticCatalog(
       throw new Error(`Non-canonical action ID: ${action.id}`);
   }
   const mapped = new Map<string, number>();
+  const mappedDisposition = new Map<string, 'action' | 'absence'>();
   for (const row of [...actions, ...absences])
     for (const ref of row.sourceRefs) {
       const key = `${ref.file}#${ref.sourceHash.replace('sha256:', '')}`;
       if (mapped.has(key)) throw new Error(`Source reference assigned twice: ${key}`);
       mapped.set(key, ref.siteCount);
+      mappedDisposition.set(key, 'reason' in row ? 'absence' : 'action');
     }
   const actual = new Map<string, number>();
   for (const site of sites) {
@@ -1106,6 +1273,16 @@ export function validateSemanticCatalog(
   }
   for (const [key, count] of actual)
     if (mapped.get(key) !== count) throw new Error(`Missing or stale semantic mapping: ${key}`);
+  for (const site of sites) {
+    const key = `${site.file}#${site.sourceHash}`;
+    if (
+      site.effects.includes('containment') &&
+      site.effects.includes('semantic') &&
+      mappedDisposition.get(key) === 'absence'
+    ) {
+      throw new Error(`Mixed containment/semantic handler must map to a semantic action: ${key}`);
+    }
+  }
   for (const key of mapped.keys())
     if (!actual.has(key)) throw new Error(`Catalog reference has no source site: ${key}`);
 }

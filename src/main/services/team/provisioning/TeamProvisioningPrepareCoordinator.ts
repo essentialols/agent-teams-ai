@@ -39,6 +39,10 @@ import {
   validatePrepareCwd as validatePrepareCwdForProvisioning,
   verifySelectedProviderModelsForProvisioning,
 } from './TeamProvisioningProviderPreflight';
+import {
+  cachedProviderProbeResultToProbeResult,
+  cloneProviderProbeResult,
+} from './TeamProvisioningProviderProbeCache';
 import { getTeamProviderLabel } from './TeamProvisioningRuntimeDiagnostics';
 import { buildMissingCliError } from './TeamProvisioningRuntimeFailureLabels';
 import {
@@ -208,13 +212,7 @@ export class TeamProvisioningPrepareCoordinator {
   clonePrepareForProvisioningResult(
     result: TeamProvisioningPrepareResult
   ): TeamProvisioningPrepareResult {
-    return {
-      ...result,
-      details: result.details ? [...result.details] : undefined,
-      warnings: result.warnings ? [...result.warnings] : undefined,
-      issues: result.issues?.map((issue) => ({ ...issue })),
-      supportDiagnostics: result.supportDiagnostics?.map((diagnostic) => ({ ...diagnostic })),
-    };
+    return structuredClone(result);
   }
 
   async prepareForProvisioningOnce(
@@ -881,7 +879,8 @@ export class TeamProvisioningPrepareCoordinator {
     providerId: TeamProviderId | undefined
   ): CachedProbeResult | null {
     const cacheKey = createProbeCacheKey(cwd, providerId);
-    return this.ports.providerProbeCache.get(cacheKey);
+    const cached = this.ports.providerProbeCache.get(cacheKey);
+    return cached ? cloneProviderProbeResult(cached) : null;
   }
 
   clearProbeCache(cwd: string, providerId: TeamProviderId | undefined): void {
@@ -900,14 +899,10 @@ export class TeamProvisioningPrepareCoordinator {
     const cacheKey = createProbeCacheKey(cwd, providerId);
     const cached = this.getFreshCachedProbeResult(cwd, providerId);
     if (cached) {
-      return {
-        claudePath: cached.claudePath,
-        authSource: cached.authSource,
-        warning: cached.warning,
-      };
+      return cachedProviderProbeResultToProbeResult(cached);
     }
 
-    return this.ports.providerProbeCache.getOrCreate(cacheKey, async () => {
+    const result = await this.ports.providerProbeCache.getOrCreate(cacheKey, async () => {
       const claudePath = await this.ports.resolveClaudeBinaryPath();
       if (!claudePath) {
         return { result: null, cacheable: false };
@@ -951,5 +946,6 @@ export class TeamProvisioningPrepareCoordinator {
 
       return { result, cacheable: shouldCache };
     });
+    return result ? cloneProviderProbeResult(result) : null;
   }
 }

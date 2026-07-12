@@ -2,18 +2,25 @@ import type { ProvisioningAuthSource } from './TeamProvisioningEnvBuilder';
 
 const PROBE_CACHE_TTL_MS = 36 * 60 * 60 * 1000;
 
-export interface CachedProbeResult {
-  cacheKey: string;
-  claudePath: string;
-  authSource: ProvisioningAuthSource;
-  warning?: string;
-  cachedAtMs: number;
-}
-
 export interface ProbeResult {
   claudePath: string;
   authSource: ProvisioningAuthSource;
   warning?: string;
+  [field: string]: unknown;
+}
+
+export interface CachedProbeResult extends ProbeResult {
+  cacheKey: string;
+  cachedAtMs: number;
+}
+
+export function cloneProviderProbeResult<T extends ProbeResult>(result: T): T {
+  return structuredClone(result);
+}
+
+export function cachedProviderProbeResultToProbeResult(cached: CachedProbeResult): ProbeResult {
+  const { cacheKey: _cacheKey, cachedAtMs: _cachedAtMs, ...result } = cached;
+  return cloneProviderProbeResult(result);
 }
 
 export interface ProviderProbePublication {
@@ -75,7 +82,7 @@ export function createInMemoryProviderProbeCachePort({
       }
       return null;
     }
-    return { ...cached };
+    return cloneProviderProbeResult(cached);
   };
 
   const incrementActiveCallCount = (cacheKey: string): void => {
@@ -131,11 +138,7 @@ export function createInMemoryProviderProbeCachePort({
 
           const cached = getCached(cacheKey, state);
           if (cached) {
-            return {
-              claudePath: cached.claudePath,
-              authSource: cached.authSource,
-              warning: cached.warning,
-            };
+            return cachedProviderProbeResultToProbeResult(cached);
           }
 
           let inFlight = state.inFlight;
@@ -144,24 +147,27 @@ export function createInMemoryProviderProbeCachePort({
             if ('error' in attempt) {
               throw attempt.error;
             }
-            return attempt.result ?? null;
+            return attempt.result ? cloneProviderProbeResult(attempt.result) : null;
           }
           if (!inFlight) {
             const promise: Promise<ProviderProbeAttempt> = Promise.resolve()
               .then(create)
               .then<ProviderProbeAttempt, ProviderProbeAttempt>(
                 (publication) => {
+                  const result = publication.result
+                    ? cloneProviderProbeResult(publication.result)
+                    : null;
                   if (stateByCacheKey.get(cacheKey) === state) {
                     state.cached =
-                      publication.cacheable && publication.result
+                      publication.cacheable && result
                         ? {
+                            ...cloneProviderProbeResult(result),
                             cacheKey,
-                            ...publication.result,
                             cachedAtMs: now(),
                           }
                         : null;
                   }
-                  return { result: publication.result };
+                  return { result };
                 },
                 (error: unknown) => ({ error })
               )
@@ -185,7 +191,7 @@ export function createInMemoryProviderProbeCachePort({
           if ('error' in attempt) {
             throw attempt.error;
           }
-          return attempt.result ?? null;
+          return attempt.result ? cloneProviderProbeResult(attempt.result) : null;
         }
       } finally {
         decrementActiveCallCount(cacheKey);

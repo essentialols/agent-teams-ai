@@ -9,7 +9,11 @@ vi.mock('@shared/utils/logger', () => ({
   createLogger: () => loggerMock,
 }));
 
-import { initializeTerminalHandlers, registerTerminalHandlers } from '@main/ipc/terminal';
+import {
+  initializeTerminalHandlers,
+  registerTerminalHandlers,
+  removeTerminalHandlers,
+} from '@main/ipc/terminal';
 
 import type { PtyTerminalService } from '@main/services';
 import type { IpcMain, IpcMainEvent } from 'electron';
@@ -18,24 +22,38 @@ type IpcListener = (event: IpcMainEvent, ...args: unknown[]) => void;
 
 function createMockIpcMain(): IpcMain & {
   emitToListener: (channel: string, ...args: unknown[]) => void;
+  listenerCount: (channel: string) => number;
 } {
-  const listeners = new Map<string, IpcListener>();
+  const listeners = new Map<string, IpcListener[]>();
   const ipcMain = {
     handle: vi.fn(),
+    removeHandler: vi.fn(),
     on: vi.fn((channel: string, listener: IpcListener) => {
-      listeners.set(channel, listener);
+      listeners.set(channel, [...(listeners.get(channel) ?? []), listener]);
+      return ipcMain;
+    }),
+    removeListener: vi.fn((channel: string, listener: IpcListener) => {
+      listeners.set(
+        channel,
+        (listeners.get(channel) ?? []).filter((registered) => registered !== listener)
+      );
+      return ipcMain;
     }),
     emitToListener: (channel: string, ...args: unknown[]) => {
-      const listener = listeners.get(channel);
-      if (!listener) {
+      const channelListeners = listeners.get(channel);
+      if (!channelListeners?.length) {
         throw new Error(`No listener for ${channel}`);
       }
-      listener({} as IpcMainEvent, ...args);
+      for (const listener of channelListeners) {
+        listener({} as IpcMainEvent, ...args);
+      }
     },
+    listenerCount: (channel: string) => listeners.get(channel)?.length ?? 0,
   };
 
   return ipcMain as unknown as IpcMain & {
     emitToListener: (channel: string, ...args: unknown[]) => void;
+    listenerCount: (channel: string) => number;
   };
 }
 
@@ -89,5 +107,42 @@ describe('terminal IPC handlers', () => {
     expect(resizeMock).toHaveBeenNthCalledWith(1, 'pty-1', 100, 30);
     expect(resizeMock).toHaveBeenNthCalledWith(2, 'pty-1', 101, 31);
     expect(loggerMock.warn).toHaveBeenCalledWith('terminal:resize error:', 'native resize failed');
+  });
+
+  it('owns idempotent registrations independently for each IpcMain instance', () => {
+    const otherIpcMain = createMockIpcMain();
+    const externalResizeListener = vi.fn<IpcListener>();
+    ipcMain.on('terminal:resize', externalResizeListener);
+
+    registerTerminalHandlers(ipcMain);
+    registerTerminalHandlers(otherIpcMain);
+
+    expect(ipcMain.handle).toHaveBeenCalledOnce();
+    expect(ipcMain.listenerCount('terminal:write')).toBe(1);
+    expect(ipcMain.listenerCount('terminal:resize')).toBe(2);
+    expect(ipcMain.listenerCount('terminal:kill')).toBe(1);
+    expect(otherIpcMain.handle).toHaveBeenCalledOnce();
+    expect(otherIpcMain.listenerCount('terminal:write')).toBe(1);
+    expect(otherIpcMain.listenerCount('terminal:resize')).toBe(1);
+    expect(otherIpcMain.listenerCount('terminal:kill')).toBe(1);
+
+    removeTerminalHandlers(ipcMain);
+    removeTerminalHandlers(ipcMain);
+
+    expect(ipcMain.removeHandler).toHaveBeenCalledOnce();
+    expect(ipcMain.removeListener).toHaveBeenCalledTimes(3);
+    expect(ipcMain.listenerCount('terminal:write')).toBe(0);
+    expect(ipcMain.listenerCount('terminal:resize')).toBe(1);
+    expect(ipcMain.listenerCount('terminal:kill')).toBe(0);
+    expect(otherIpcMain.listenerCount('terminal:write')).toBe(1);
+    expect(otherIpcMain.listenerCount('terminal:resize')).toBe(1);
+    expect(otherIpcMain.listenerCount('terminal:kill')).toBe(1);
+
+    ipcMain.emitToListener('terminal:resize', 'pty-1', 120, 40);
+    otherIpcMain.emitToListener('terminal:resize', 'pty-2', 121, 41);
+
+    expect(externalResizeListener).toHaveBeenCalledOnce();
+    expect(resizeMock).toHaveBeenCalledOnce();
+    expect(resizeMock).toHaveBeenCalledWith('pty-2', 121, 41);
   });
 });

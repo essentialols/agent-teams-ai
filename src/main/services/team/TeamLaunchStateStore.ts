@@ -86,11 +86,9 @@ export class TeamLaunchStateStore {
   }
 
   async clear(teamName: string): Promise<void> {
-    try {
-      await fs.promises.rm(getTeamLaunchStatePath(teamName), { force: true });
-      await fs.promises.rm(getTeamLaunchSummaryPath(teamName), { force: true });
-    } catch {
-      // best-effort
-    }
+    await Promise.allSettled([
+      fs.promises.rm(getTeamLaunchStatePath(teamName), { force: true }),
+      fs.promises.rm(getTeamLaunchSummaryPath(teamName), { force: true }),
+    ]);
   }
 }

@@ -4,6 +4,7 @@ import {
   getTeamLaunchSummaryPath,
   TeamLaunchStateStore,
 } from '@main/services/team/TeamLaunchStateStore';
+import * as fs from 'fs';
 import * as path from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -107,5 +108,22 @@ describe('TeamLaunchStateStore', () => {
       new TeamLaunchStateStore().write('removed-team', snapshot())
     ).resolves.toBeUndefined();
     expect(mocks.atomicWriteAsync).toHaveBeenCalledTimes(1);
+  });
+
+  it('attempts to clear both publication files when the first removal fails', async () => {
+    const stateRemovalError = Object.assign(new Error('state file is busy'), { code: 'EBUSY' });
+    const remove = vi
+      .spyOn(fs.promises, 'rm')
+      .mockRejectedValueOnce(stateRemovalError)
+      .mockResolvedValueOnce(undefined);
+
+    try {
+      await expect(new TeamLaunchStateStore().clear('demo')).resolves.toBeUndefined();
+
+      expect(remove).toHaveBeenNthCalledWith(1, getTeamLaunchStatePath('demo'), { force: true });
+      expect(remove).toHaveBeenNthCalledWith(2, getTeamLaunchSummaryPath('demo'), { force: true });
+    } finally {
+      remove.mockRestore();
+    }
   });
 });

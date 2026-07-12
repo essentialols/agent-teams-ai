@@ -23,7 +23,7 @@ vi.mock('@main/services/team/atomicWrite', () => ({
   atomicWriteAsync: mocks.atomicWriteAsync,
 }));
 
-function snapshot(): PersistedTeamLaunchSnapshot {
+function snapshot(updatedAt = '2026-01-01T00:00:00.000Z'): PersistedTeamLaunchSnapshot {
   return createPersistedLaunchSnapshot({
     teamName: 'demo',
     expectedMembers: ['Builder'],
@@ -39,7 +39,7 @@ function snapshot(): PersistedTeamLaunchSnapshot {
         lastEvaluatedAt: '2026-01-01T00:00:00.000Z',
       },
     },
-    updatedAt: '2026-01-01T00:00:00.000Z',
+    updatedAt,
   });
 }
 
@@ -81,8 +81,7 @@ describe('TeamLaunchStateStore', () => {
     const writing = new TeamLaunchStateStore().write('demo', snapshot()).then(() => {
       settled = true;
     });
-    await Promise.resolve();
-    await Promise.resolve();
+    await vi.waitFor(() => expect(mocks.atomicWriteAsync).toHaveBeenCalledTimes(2));
 
     expect(settled).toBe(false);
     const statePayload = JSON.parse(mocks.atomicWriteAsync.mock.calls[0][1] as string);
@@ -93,6 +92,74 @@ describe('TeamLaunchStateStore', () => {
     finishSummaryWrite();
     await writing;
     expect(settled).toBe(true);
+  });
+
+  it('serializes publications across store instances so snapshot generations cannot interleave', async () => {
+    let finishFirstSummaryWrite!: () => void;
+    const firstSummaryWrite = new Promise<void>((resolve) => {
+      finishFirstSummaryWrite = resolve;
+    });
+    mocks.atomicWriteAsync
+      .mockResolvedValueOnce(undefined)
+      .mockReturnValueOnce(firstSummaryWrite)
+      .mockResolvedValue(undefined);
+
+    const firstWrite = new TeamLaunchStateStore().write(
+      'demo',
+      snapshot('2026-01-01T00:00:00.000Z')
+    );
+    await vi.waitFor(() => expect(mocks.atomicWriteAsync).toHaveBeenCalledTimes(2));
+
+    const secondWrite = new TeamLaunchStateStore().write(
+      'demo',
+      snapshot('2026-01-01T00:00:01.000Z')
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(mocks.atomicWriteAsync).toHaveBeenCalledTimes(2);
+
+    finishFirstSummaryWrite();
+    await Promise.all([firstWrite, secondWrite]);
+
+    expect(mocks.atomicWriteAsync).toHaveBeenCalledTimes(4);
+    const persistedGenerations = mocks.atomicWriteAsync.mock.calls.map(([, payload]) =>
+      JSON.parse(payload as string)
+    );
+    expect(persistedGenerations.map(({ updatedAt }) => updatedAt)).toEqual([
+      '2026-01-01T00:00:00.000Z',
+      '2026-01-01T00:00:00.000Z',
+      '2026-01-01T00:00:01.000Z',
+      '2026-01-01T00:00:01.000Z',
+    ]);
+  });
+
+  it('does not revoke a publication while its summary is still being persisted', async () => {
+    let finishSummaryWrite!: () => void;
+    const summaryWrite = new Promise<void>((resolve) => {
+      finishSummaryWrite = resolve;
+    });
+    mocks.atomicWriteAsync.mockResolvedValueOnce(undefined).mockReturnValueOnce(summaryWrite);
+    const remove = vi.spyOn(fs.promises, 'rm').mockResolvedValue(undefined);
+
+    try {
+      const writing = new TeamLaunchStateStore().write('demo', snapshot());
+      await vi.waitFor(() => expect(mocks.atomicWriteAsync).toHaveBeenCalledTimes(2));
+
+      const clearing = new TeamLaunchStateStore().clear('demo');
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(remove).not.toHaveBeenCalled();
+
+      finishSummaryWrite();
+      await Promise.all([writing, clearing]);
+
+      expect(remove).toHaveBeenNthCalledWith(1, getTeamLaunchStatePath('demo'), { force: true });
+      expect(remove).toHaveBeenNthCalledWith(2, getTeamLaunchSummaryPath('demo'), { force: true });
+    } finally {
+      remove.mockRestore();
+    }
   });
 
   it('keeps the deleted-team directory race as a compatible no-op', async () => {

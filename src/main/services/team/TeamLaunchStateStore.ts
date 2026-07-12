@@ -15,6 +15,7 @@ import type { PersistedTeamLaunchSnapshot } from '@shared/types';
 const logger = createLogger('Service:TeamLaunchStateStore');
 const TEAM_LAUNCH_STATE_FILE = 'launch-state.json';
 const MAX_LAUNCH_STATE_BYTES = 256 * 1024;
+const publicationQueueByTeam = new Map<string, Promise<void>>();
 
 export function getTeamLaunchStatePath(teamName: string): string {
   return path.join(getTeamsBasePath(), teamName, TEAM_LAUNCH_STATE_FILE);
@@ -41,6 +42,17 @@ async function isMissingTeamDirectoryWriteRace(
   }
 }
 
+function enqueuePublication(teamName: string, operation: () => Promise<void>): Promise<void> {
+  const previous = publicationQueueByTeam.get(teamName);
+  const queued = (previous ?? Promise.resolve()).catch(() => undefined).then(operation);
+  publicationQueueByTeam.set(teamName, queued);
+  return queued.finally(() => {
+    if (publicationQueueByTeam.get(teamName) === queued) {
+      publicationQueueByTeam.delete(teamName);
+    }
+  });
+}
+
 export class TeamLaunchStateStore {
   async read(teamName: string): Promise<PersistedTeamLaunchSnapshot | null> {
     const targetPath = getTeamLaunchStatePath(teamName);
@@ -57,6 +69,10 @@ export class TeamLaunchStateStore {
   }
 
   async write(teamName: string, snapshot: PersistedTeamLaunchSnapshot): Promise<void> {
+    await enqueuePublication(teamName, () => this.writeNow(teamName, snapshot));
+  }
+
+  private async writeNow(teamName: string, snapshot: PersistedTeamLaunchSnapshot): Promise<void> {
     const launchStatePath = getTeamLaunchStatePath(teamName);
     const launchSummaryPath = getTeamLaunchSummaryPath(teamName);
     try {
@@ -79,9 +95,11 @@ export class TeamLaunchStateStore {
   }
 
   async clear(teamName: string): Promise<void> {
-    await Promise.allSettled([
-      fs.promises.rm(getTeamLaunchStatePath(teamName), { force: true }),
-      fs.promises.rm(getTeamLaunchSummaryPath(teamName), { force: true }),
-    ]);
+    await enqueuePublication(teamName, async () => {
+      await Promise.allSettled([
+        fs.promises.rm(getTeamLaunchStatePath(teamName), { force: true }),
+        fs.promises.rm(getTeamLaunchSummaryPath(teamName), { force: true }),
+      ]);
+    });
   }
 }

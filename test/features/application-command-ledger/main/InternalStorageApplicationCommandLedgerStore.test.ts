@@ -39,6 +39,7 @@ describe('InternalStorageApplicationCommandLedgerStore', () => {
       namespace: 'task-board',
       scopeKey: 'team-a',
       commandId: 'cmd-1',
+      attemptCount: 1,
       resultHash: 'hash:result',
       resultJson: '{"ok":true}',
       completedAtIso: '2026-07-09T10:01:00.000Z',
@@ -61,6 +62,7 @@ describe('InternalStorageApplicationCommandLedgerStore', () => {
       namespace: 'task-board',
       scopeKey: 'team-a',
       commandId: 'cmd-1',
+      attemptCount: 1,
       resultHash: 'hash:result',
       resultJson: '{"ok":true}',
       completedAtIso: '2026-07-09T10:01:00.000Z',
@@ -102,6 +104,7 @@ describe('InternalStorageApplicationCommandLedgerStore', () => {
       namespace: 'task-board',
       scopeKey: 'team-a',
       commandId: 'cmd-1',
+      attemptCount: 1,
       failureKind: ApplicationCommandFailureKind.Retryable,
       errorMessage: 'temporary',
       completedAtIso: '2026-07-09T10:01:00.000Z',
@@ -125,6 +128,7 @@ describe('InternalStorageApplicationCommandLedgerStore', () => {
       namespace: 'task-board',
       scopeKey: 'team-a',
       commandId: 'cmd-1',
+      attemptCount: 1,
       failureKind: ApplicationCommandFailureKind.UnknownAfterTimeout,
       errorMessage: 'timeout',
       completedAtIso: '2026-07-09T10:01:00.000Z',
@@ -147,6 +151,7 @@ describe('InternalStorageApplicationCommandLedgerStore', () => {
       namespace: 'task-board',
       scopeKey: 'team-a',
       commandId: 'cmd-1',
+      attemptCount: 1,
       failureKind: ApplicationCommandFailureKind.UnknownAfterTimeout,
       errorMessage: 'timeout',
       completedAtIso: '2026-07-09T10:01:00.000Z',
@@ -155,6 +160,7 @@ describe('InternalStorageApplicationCommandLedgerStore', () => {
       namespace: 'task-board',
       scopeKey: 'team-a',
       commandId: 'cmd-1',
+      attemptCount: 1,
       resultHash: 'hash:result',
       resultJson: '{"ok":true}',
       completedAtIso: '2026-07-09T10:02:00.000Z',
@@ -174,6 +180,7 @@ describe('InternalStorageApplicationCommandLedgerStore', () => {
       namespace: 'task-board',
       scopeKey: 'team-a',
       commandId: 'cmd-1',
+      attemptCount: 1,
       failureKind: ApplicationCommandFailureKind.UnknownAfterTimeout,
       errorMessage: 'timeout',
       completedAtIso: '2026-07-09T10:01:00.000Z',
@@ -182,6 +189,7 @@ describe('InternalStorageApplicationCommandLedgerStore', () => {
       namespace: 'task-board',
       scopeKey: 'team-a',
       commandId: 'cmd-1',
+      attemptCount: 1,
       failureKind: ApplicationCommandFailureKind.Retryable,
       errorMessage: 'destination not changed',
       completedAtIso: '2026-07-09T10:02:00.000Z',
@@ -191,6 +199,56 @@ describe('InternalStorageApplicationCommandLedgerStore', () => {
       outcome: ApplicationCommandBeginOutcome.RetryStarted,
       record: { status: ApplicationCommandLedgerStatus.Started, attemptCount: 2 },
     });
+  });
+
+  it('moves a stale started attempt to unknown before any retry', async () => {
+    const store = await makeStore();
+
+    await store.begin(makeBeginRequest());
+    const stale = await store.begin(
+      makeBeginRequest({
+        nowIso: '2026-07-09T10:01:00.000Z',
+        startedStaleAfterMs: 60_000,
+      })
+    );
+
+    expect(stale).toMatchObject({
+      outcome: ApplicationCommandBeginOutcome.UnknownAfterTimeout,
+      record: {
+        status: ApplicationCommandLedgerStatus.UnknownAfterTimeout,
+        attemptCount: 1,
+      },
+    });
+  });
+
+  it('rejects completion from a fenced attempt after a retry starts', async () => {
+    const store = await makeStore();
+
+    await store.begin(makeBeginRequest());
+    await store.markFailed({
+      namespace: 'task-board',
+      scopeKey: 'team-a',
+      commandId: 'cmd-1',
+      attemptCount: 1,
+      failureKind: ApplicationCommandFailureKind.Retryable,
+      errorMessage: 'not applied',
+      completedAtIso: '2026-07-09T10:01:00.000Z',
+    });
+    await store.begin(makeBeginRequest({ nowIso: '2026-07-09T10:02:00.000Z' }));
+
+    await expect(
+      Promise.resolve().then(() =>
+        store.markCompleted({
+          namespace: 'task-board',
+          scopeKey: 'team-a',
+          commandId: 'cmd-1',
+          attemptCount: 1,
+          resultHash: 'hash:stale',
+          resultJson: '{"stale":true}',
+          completedAtIso: '2026-07-09T10:03:00.000Z',
+        })
+      )
+    ).rejects.toThrow('attempt is stale');
   });
 
   async function makeStore(): Promise<InternalStorageApplicationCommandLedgerStore> {
@@ -216,6 +274,7 @@ function makeBeginRequest(
     payloadHash: 'hash:payload',
     metadataJson: null,
     nowIso: '2026-07-09T10:00:00.000Z',
+    startedStaleAfterMs: 60_000,
     ...overrides,
   };
 }

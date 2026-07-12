@@ -63,6 +63,7 @@ import type { TaskChangePresenceRepository } from './cache/TaskChangePresenceRep
 import type { TaskCommentNotificationJournalStore } from './TaskCommentNotificationJournalStore';
 import type { TeamLogSourceTracker } from './TeamLogSourceTracker';
 import type { TeamMetaFile } from './TeamMetaStore';
+import type { TaskBoardCommandFacade } from '@features/task-board-commands';
 import type {
   AddMemberRequest,
   AttachmentMeta,
@@ -117,7 +118,10 @@ const MAX_MESSAGES_PAGE_LIVE_OVERLAY_PAYLOAD = 200;
 const MIXED_TEAM_LIVE_MUTATION_BLOCK_MESSAGE =
   'Live roster mutation on a running mixed team is not supported in V1. Stop the team, edit the roster, then relaunch.';
 
-type RuntimeAgentTeamsController = Omit<AgentTeamsController, 'tasks' | 'kanban' | 'review' | 'taskBoard'> & {
+type RuntimeAgentTeamsController = Omit<
+  AgentTeamsController,
+  'tasks' | 'kanban' | 'review' | 'taskBoard'
+> & {
   tasks?: Partial<AgentTeamsController['tasks']>;
   kanban?: Partial<AgentTeamsController['kanban']>;
   review?: Partial<AgentTeamsController['review']>;
@@ -138,6 +142,10 @@ interface TeamNotificationContextCacheEntry {
 interface InFlightTeamNotificationContext {
   promise: Promise<TeamNotificationContext>;
   generation: number;
+}
+
+function isControllerTaskNotFoundError(error: unknown, taskId: string): boolean {
+  return error instanceof Error && error.message === `Task not found: ${taskId}`;
 }
 
 function compareInboxMessagesNewestFirst(left: InboxMessage, right: InboxMessage): number {
@@ -469,6 +477,7 @@ export class TeamDataService {
   private readonly notificationContextCache = new Map<string, TeamNotificationContextCacheEntry>();
   private readonly notificationContextInFlight = new Map<string, InFlightTeamNotificationContext>();
   private readonly notificationContextGenerationByTeam = new Map<string, number>();
+  private taskBoardCommandFacade: TaskBoardCommandFacade | null = null;
 
   constructor(
     private readonly configReader: TeamConfigReader = new TeamConfigReader(),
@@ -681,6 +690,10 @@ export class TeamDataService {
 
   setMemberRuntimeAdvisoryService(service: TeamMemberRuntimeAdvisoryService): void {
     this.memberRuntimeAdvisoryService = service;
+  }
+
+  setTaskBoardCommandFacade(facade: TaskBoardCommandFacade | null): void {
+    this.taskBoardCommandFacade = facade;
   }
 
   /** Composition-time backend swap; must run before notification processing starts. */
@@ -2188,8 +2201,8 @@ export class TeamDataService {
       /* best-effort */
     }
 
-    const shouldStart = request.owner && request.startImmediately === true;
-    const task = taskBoard.createTask({
+    const shouldStart = Boolean(request.owner && request.startImmediately === true);
+    const taskInput: Record<string, unknown> = {
       subject: request.subject,
       ...(request.description?.trim() ? { description: request.description.trim() } : {}),
       ...(request.descriptionTaskRefs?.length
@@ -2203,12 +2216,42 @@ export class TeamDataService {
       ...(request.prompt?.trim() ? { prompt: request.prompt.trim() } : {}),
       ...(request.promptTaskRefs?.length ? { promptTaskRefs: request.promptTaskRefs } : {}),
       ...(shouldStart ? { startImmediately: true } : {}),
-    }) as TeamTask;
+    };
+
+    let task: TeamTask;
+    let createdInAttempt = true;
+    if (request.command) {
+      if (!this.taskBoardCommandFacade || typeof taskBoard.getTask !== 'function') {
+        throw new Error('Durable task-board commands are unavailable');
+      }
+      const commandResult = await this.taskBoardCommandFacade.createTask({
+        teamName,
+        identity: request.command,
+        payload: taskInput,
+        destination: {
+          findById: (taskId) => {
+            try {
+              return taskBoard.getTask(taskId) as TeamTask;
+            } catch (error) {
+              if (isControllerTaskNotFoundError(error, taskId)) {
+                return null;
+              }
+              throw error;
+            }
+          },
+          create: (input) => taskBoard.createTask(input) as TeamTask,
+        },
+      });
+      task = commandResult.task;
+      createdInAttempt = commandResult.createdInAttempt;
+    } else {
+      task = taskBoard.createTask(taskInput) as TeamTask;
+    }
     this.invalidateGlobalTaskProjectionCache();
 
     // Controller's maybeNotifyAssignedOwner skips the lead (owner === lead).
     // For user-created tasks with startImmediately, ensure the lead also gets notified.
-    if (shouldStart) {
+    if (shouldStart && createdInAttempt) {
       try {
         const leadName = await this.resolveLeadName(teamName);
         if (this.isLeadOwner(task.owner!, leadName)) {

@@ -14,6 +14,7 @@ import type { ApplicationCommandHasher, ApplicationCommandLedgerStore } from './
 
 const STORED_RESULT_VERSION_KEY = '__applicationCommandResultVersion';
 const STORED_RESULT_VERSION = 1;
+const DEFAULT_STARTED_STALE_AFTER_MS = 60_000;
 
 export type ApplicationCommandResult = ApplicationCommandJsonValue | undefined;
 
@@ -22,15 +23,26 @@ export interface ApplicationCommandRunnerOptions {
   hasher: ApplicationCommandHasher;
   clock?: () => Date;
   stringifyError?: (error: unknown) => string;
+  startedStaleAfterMs?: number;
 }
+
+export type ApplicationCommandReconciliation<TResult extends ApplicationCommandResult> =
+  | { outcome: 'applied'; result: TResult }
+  | { outcome: 'not_applied'; message?: string }
+  | { outcome: 'unknown'; message?: string };
 
 export interface ApplicationCommandRunInput<
   TOperation extends string = string,
+  TResult extends ApplicationCommandResult = ApplicationCommandResult,
 > extends ApplicationCommandIdentity<TOperation> {
   payload: ApplicationCommandJsonValue;
   metadata?: ApplicationCommandJsonValue;
   payloadHash?: string;
+  startedStaleAfterMs?: number;
   classifyError(error: unknown): ApplicationCommandErrorClassification;
+  reconcile?(
+    record: ApplicationCommandLedgerRecord<TOperation>
+  ): Promise<ApplicationCommandReconciliation<TResult>>;
 }
 
 export interface ApplicationCommandRunResult<
@@ -62,17 +74,28 @@ export class ApplicationCommandRunner {
   private readonly hasher: ApplicationCommandHasher;
   private readonly clock: () => Date;
   private readonly stringifyError: (error: unknown) => string;
+  private readonly startedStaleAfterMs: number;
 
   constructor(options: ApplicationCommandRunnerOptions) {
     this.ledger = options.ledger;
     this.hasher = options.hasher;
     this.clock = options.clock ?? (() => new Date());
     this.stringifyError = options.stringifyError ?? stringifyError;
+    this.startedStaleAfterMs = options.startedStaleAfterMs ?? DEFAULT_STARTED_STALE_AFTER_MS;
+    validatePositiveInteger('startedStaleAfterMs', this.startedStaleAfterMs);
   }
 
   async run<TResult extends ApplicationCommandResult, TOperation extends string = string>(
-    input: ApplicationCommandRunInput<TOperation>,
-    execute: () => Promise<TResult>
+    input: ApplicationCommandRunInput<TOperation, TResult>,
+    execute: (record: ApplicationCommandLedgerRecord<TOperation>) => Promise<TResult>
+  ): Promise<ApplicationCommandRunResult<TResult, TOperation>> {
+    return this.runAttempt(input, execute, false);
+  }
+
+  private async runAttempt<TResult extends ApplicationCommandResult, TOperation extends string>(
+    input: ApplicationCommandRunInput<TOperation, TResult>,
+    execute: (record: ApplicationCommandLedgerRecord<TOperation>) => Promise<TResult>,
+    retriedAfterReconciliation: boolean
   ): Promise<ApplicationCommandRunResult<TResult, TOperation>> {
     this.validateInput(input);
     const payloadJson = this.stringifyInput('payload', input.payload);
@@ -86,6 +109,8 @@ export class ApplicationCommandRunner {
     }
     const payloadHash = input.payloadHash ?? computedPayloadHash;
     const nowIso = this.clock().toISOString();
+    const startedStaleAfterMs = input.startedStaleAfterMs ?? this.startedStaleAfterMs;
+    validatePositiveInteger('startedStaleAfterMs', startedStaleAfterMs);
     const metadataJson =
       input.metadata === undefined ? null : this.stringifyInput('metadata', input.metadata);
 
@@ -100,6 +125,7 @@ export class ApplicationCommandRunner {
         payloadHash,
         metadataJson,
         nowIso,
+        startedStaleAfterMs,
       });
     } catch (error) {
       throw this.storeError('begin', 'Application command could not be started', input, error);
@@ -117,6 +143,9 @@ export class ApplicationCommandRunner {
       begin.outcome !== ApplicationCommandBeginOutcome.Started &&
       begin.outcome !== ApplicationCommandBeginOutcome.RetryStarted
     ) {
+      if (begin.outcome === ApplicationCommandBeginOutcome.UnknownAfterTimeout && input.reconcile) {
+        return this.reconcileUnknown(input, execute, begin.record, retriedAfterReconciliation);
+      }
       throw this.toBeginError(begin);
     }
 
@@ -124,11 +153,12 @@ export class ApplicationCommandRunner {
       namespace: begin.record.namespace,
       scopeKey: begin.record.scopeKey,
       commandId: begin.record.commandId,
+      attemptCount: begin.record.attemptCount,
     };
 
     let result: TResult;
     try {
-      result = await execute();
+      result = await execute(begin.record);
     } catch (error) {
       const classification = this.classifyExecutionError(input, error);
       await this.persistFailure(activeIdentity, classification, error, 'execute');
@@ -151,22 +181,7 @@ export class ApplicationCommandRunner {
       throw error;
     }
 
-    try {
-      await this.ledger.markCompleted({
-        ...activeIdentity,
-        resultHash: this.hasher.hashString(resultJson),
-        resultJson,
-        completedAtIso: this.clock().toISOString(),
-      });
-    } catch (error) {
-      throw this.storeError(
-        'mark_completed',
-        'Application command side effect completed but ledger completion could not be confirmed',
-        activeIdentity,
-        error,
-        { sideEffectCompleted: true }
-      );
-    }
+    await this.markCompleted(activeIdentity, resultJson);
 
     const record = await this.readCommittedRecord<TOperation>(activeIdentity);
     return {
@@ -177,6 +192,108 @@ export class ApplicationCommandRunner {
       result,
       record,
     };
+  }
+
+  private async reconcileUnknown<
+    TResult extends ApplicationCommandResult,
+    TOperation extends string,
+  >(
+    input: ApplicationCommandRunInput<TOperation, TResult>,
+    execute: (record: ApplicationCommandLedgerRecord<TOperation>) => Promise<TResult>,
+    record: ApplicationCommandLedgerRecord<TOperation>,
+    retriedAfterReconciliation: boolean
+  ): Promise<ApplicationCommandRunResult<TResult, TOperation>> {
+    if (retriedAfterReconciliation || !input.reconcile) {
+      throw this.toBeginError({
+        outcome: ApplicationCommandBeginOutcome.UnknownAfterTimeout,
+        record,
+      });
+    }
+
+    let reconciliation: ApplicationCommandReconciliation<TResult>;
+    try {
+      reconciliation = await input.reconcile(record);
+    } catch (error) {
+      throw new ApplicationCommandLedgerError(
+        ApplicationCommandLedgerErrorCode.UnknownOutcome,
+        'Application command reconciliation failed',
+        { ...commandDetails(record), status: record.status },
+        error
+      );
+    }
+
+    if (reconciliation.outcome === 'unknown') {
+      throw new ApplicationCommandLedgerError(
+        ApplicationCommandLedgerErrorCode.UnknownOutcome,
+        reconciliation.message ??
+          'Application command outcome remains unknown after reconciliation',
+        { ...commandDetails(record), status: record.status }
+      );
+    }
+
+    const activeIdentity = {
+      namespace: record.namespace,
+      scopeKey: record.scopeKey,
+      commandId: record.commandId,
+      attemptCount: record.attemptCount,
+    };
+
+    if (reconciliation.outcome === 'applied') {
+      const resultJson = this.stringifyResultOrThrow(reconciliation.result);
+      await this.markCompleted(activeIdentity, resultJson);
+      return {
+        outcome: ApplicationCommandRunOutcome.Reconciled,
+        result: reconciliation.result,
+        record: await this.readCommittedRecord<TOperation>(activeIdentity),
+      };
+    }
+
+    await this.persistFailure(
+      activeIdentity,
+      {
+        failureKind: ApplicationCommandFailureKind.Retryable,
+        message:
+          reconciliation.message ?? 'Reconciliation proved the command side effect was not applied',
+      },
+      new Error(reconciliation.message ?? 'Command side effect not applied'),
+      'reconcile_not_applied'
+    );
+    return this.runAttempt(input, execute, true);
+  }
+
+  private stringifyResultOrThrow(result: ApplicationCommandResult): string {
+    try {
+      return serializeResult(result);
+    } catch (error) {
+      throw new ApplicationCommandLedgerError(
+        ApplicationCommandLedgerErrorCode.UnknownOutcome,
+        'Reconciled application command result could not be serialized',
+        { stage: 'serialize_reconciled_result' },
+        error
+      );
+    }
+  }
+
+  private async markCompleted(
+    identity: { namespace: string; scopeKey: string; commandId: string; attemptCount: number },
+    resultJson: string
+  ): Promise<void> {
+    try {
+      await this.ledger.markCompleted({
+        ...identity,
+        resultHash: this.hasher.hashString(resultJson),
+        resultJson,
+        completedAtIso: this.clock().toISOString(),
+      });
+    } catch (error) {
+      throw this.storeError(
+        'mark_completed',
+        'Application command side effect completed but ledger completion could not be confirmed',
+        identity,
+        error,
+        { sideEffectCompleted: true }
+      );
+    }
   }
 
   private classifyExecutionError<TOperation extends string>(
@@ -197,10 +314,10 @@ export class ApplicationCommandRunner {
   }
 
   private async persistFailure(
-    identity: { namespace: string; scopeKey: string; commandId: string },
+    identity: { namespace: string; scopeKey: string; commandId: string; attemptCount: number },
     classification: ApplicationCommandErrorClassification,
     originalError: unknown,
-    stage: 'execute' | 'serialize_result'
+    stage: 'execute' | 'serialize_result' | 'reconcile_not_applied'
   ): Promise<void> {
     try {
       await this.ledger.markFailed({
@@ -441,4 +558,14 @@ function commandDetails(input: {
 
 function stringifyError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function validatePositiveInteger(field: string, value: number): void {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new ApplicationCommandLedgerError(
+      ApplicationCommandLedgerErrorCode.InvalidInput,
+      `Application command ${field} must be a positive integer`,
+      { field }
+    );
+  }
 }

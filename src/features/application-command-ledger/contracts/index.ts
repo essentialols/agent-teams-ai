@@ -31,6 +31,7 @@ export enum ApplicationCommandConflictReason {
 
 export enum ApplicationCommandRunOutcome {
   Executed = 'executed',
+  Reconciled = 'reconciled',
   Retried = 'retried',
   Replayed = 'replayed',
 }
@@ -78,6 +79,8 @@ export interface ApplicationCommandLedgerBeginRequest<
   payloadHash: string;
   metadataJson: string | null;
   nowIso: string;
+  /** A matching started attempt older than this is fenced as unknown before reconciliation. */
+  startedStaleAfterMs: number;
 }
 
 export type ApplicationCommandLedgerBeginResult<TOperation extends string = string> =
@@ -111,6 +114,7 @@ export interface ApplicationCommandLedgerCompleteRequest {
   namespace: string;
   scopeKey: string;
   commandId: string;
+  attemptCount: number;
   resultHash: string;
   resultJson: string;
   completedAtIso: string;
@@ -120,6 +124,7 @@ export interface ApplicationCommandLedgerFailRequest {
   namespace: string;
   scopeKey: string;
   commandId: string;
+  attemptCount: number;
   failureKind: ApplicationCommandFailureKind;
   errorMessage: string;
   completedAtIso: string;

@@ -53,6 +53,7 @@ export class ApplicationCommandLedgerWorkerOps {
   constructor(private readonly getOrm: () => BetterSQLite3Database) {}
 
   begin(input: AppCommandBeginRequest): AppCommandBeginResult {
+    assertValidBeginTiming(input);
     const orm = this.getOrm();
     return orm.transaction((): AppCommandBeginResult => {
       const currentByCommand = this.readByCommandId(input);
@@ -104,6 +105,7 @@ export class ApplicationCommandLedgerWorkerOps {
           `Application command completion conflicts with stored result: ${input.commandId}`
         );
       }
+      assertAttemptMatches(current, input.attemptCount);
       if (!canFinalize(current.status)) {
         throw new Error(
           `Application command cannot be completed from status ${current.status}: ${input.commandId}`
@@ -130,6 +132,7 @@ export class ApplicationCommandLedgerWorkerOps {
       if (!current) {
         throw new Error(`Application command ledger entry not found: ${input.commandId}`);
       }
+      assertAttemptMatches(current, input.attemptCount);
       const nextStatus = statusForFailure(input.failureKind);
       if (
         current.status === nextStatus &&
@@ -227,6 +230,22 @@ export class ApplicationCommandLedgerWorkerOps {
   ): AppCommandBeginResult {
     switch (current.status) {
       case ApplicationCommandLedgerStatus.Started:
+        if (isStartedStale(current, input)) {
+          const next: AppCommandRecord = {
+            ...current,
+            status: ApplicationCommandLedgerStatus.UnknownAfterTimeout,
+            failureKind: ApplicationCommandFailureKind.UnknownAfterTimeout,
+            retryable: false,
+            updatedAt: input.nowIso,
+            completedAt: null,
+            lastError: `Started attempt ${current.attemptCount} exceeded ${input.startedStaleAfterMs}ms and requires reconciliation`,
+          };
+          this.replaceRow(next);
+          return {
+            outcome: ApplicationCommandBeginOutcome.UnknownAfterTimeout,
+            record: next,
+          };
+        }
         return { outcome: ApplicationCommandBeginOutcome.AlreadyStarted, record: current };
       case ApplicationCommandLedgerStatus.Completed:
         return { outcome: ApplicationCommandBeginOutcome.DuplicateCompleted, record: current };
@@ -355,6 +374,31 @@ function canFinalize(status: ApplicationCommandLedgerStatus): boolean {
     status === ApplicationCommandLedgerStatus.Started ||
     status === ApplicationCommandLedgerStatus.UnknownAfterTimeout
   );
+}
+
+function assertAttemptMatches(current: AppCommandRecord, requestedAttemptCount: number): void {
+  if (current.attemptCount !== requestedAttemptCount) {
+    throw new Error(
+      `Application command attempt is stale: ${current.commandId} expected=${current.attemptCount} actual=${requestedAttemptCount}`
+    );
+  }
+}
+
+function assertValidBeginTiming(input: AppCommandBeginRequest): void {
+  if (!Number.isSafeInteger(input.startedStaleAfterMs) || input.startedStaleAfterMs <= 0) {
+    throw new Error('Application command startedStaleAfterMs must be a positive integer');
+  }
+  if (!Number.isFinite(Date.parse(input.nowIso))) {
+    throw new Error('Application command nowIso must be a valid ISO timestamp');
+  }
+}
+
+function isStartedStale(current: AppCommandRecord, input: AppCommandBeginRequest): boolean {
+  const attemptStartedAtMs = Date.parse(current.updatedAt);
+  if (!Number.isFinite(attemptStartedAtMs)) {
+    return true;
+  }
+  return Date.parse(input.nowIso) - attemptStartedAtMs >= input.startedStaleAfterMs;
 }
 
 function statusForFailure(

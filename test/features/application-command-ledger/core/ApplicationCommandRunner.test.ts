@@ -277,6 +277,87 @@ describe('ApplicationCommandRunner', () => {
     });
   });
 
+  it('reconciles a stale started command as applied without executing it again', async () => {
+    const store = new InMemoryLedgerStore();
+    store.seed({
+      namespace: 'task-board',
+      scopeKey: 'team-a',
+      commandId: 'cmd-1',
+      idempotencyKey: 'idem-1',
+      operation: TestOperation.CreateTask,
+      payloadHash: hasher.hashJson({ title: 'Task A' }),
+      status: ApplicationCommandLedgerStatus.Started,
+      failureKind: null,
+      retryable: false,
+      attemptCount: 1,
+      resultHash: null,
+      resultJson: null,
+      metadataJson: null,
+      startedAt: '2026-07-09T10:00:00.000Z',
+      updatedAt: '2026-07-09T10:00:00.000Z',
+      completedAt: null,
+      lastError: null,
+    });
+    const runner = new ApplicationCommandRunner({
+      ledger: store,
+      hasher,
+      clock: () => new Date('2026-07-09T10:02:00.000Z'),
+    });
+    let executions = 0;
+
+    const result = await runner.run(
+      makeInput({
+        reconcile: () =>
+          Promise.resolve({ outcome: 'applied', result: { ok: true, id: 'task-1' } }),
+      }),
+      () => {
+        executions += 1;
+        return Promise.resolve({ ok: false, id: 'duplicate' });
+      }
+    );
+
+    expect(result.outcome).toBe(ApplicationCommandRunOutcome.Reconciled);
+    expect(result.result).toEqual({ ok: true, id: 'task-1' });
+    expect(executions).toBe(0);
+  });
+
+  it('retries once after reconciliation proves the side effect was not applied', async () => {
+    const store = new InMemoryLedgerStore();
+    store.seed({
+      namespace: 'task-board',
+      scopeKey: 'team-a',
+      commandId: 'cmd-1',
+      idempotencyKey: 'idem-1',
+      operation: TestOperation.CreateTask,
+      payloadHash: hasher.hashJson({ title: 'Task A' }),
+      status: ApplicationCommandLedgerStatus.UnknownAfterTimeout,
+      failureKind: ApplicationCommandFailureKind.UnknownAfterTimeout,
+      retryable: false,
+      attemptCount: 1,
+      resultHash: null,
+      resultJson: null,
+      metadataJson: null,
+      startedAt: '2026-07-09T10:00:00.000Z',
+      updatedAt: '2026-07-09T10:01:00.000Z',
+      completedAt: null,
+      lastError: 'timeout',
+    });
+    const runner = new ApplicationCommandRunner({ ledger: store, hasher, clock: fixedClock() });
+    let executions = 0;
+
+    const result = await runner.run(
+      makeInput({ reconcile: () => Promise.resolve({ outcome: 'not_applied' }) }),
+      () => {
+        executions += 1;
+        return Promise.resolve({ ok: true });
+      }
+    );
+
+    expect(result.outcome).toBe(ApplicationCommandRunOutcome.Retried);
+    expect(result.record.attemptCount).toBe(2);
+    expect(executions).toBe(1);
+  });
+
   it('blocks duplicate execution while the command is already started', async () => {
     const store = new InMemoryLedgerStore();
     store.seed({
@@ -458,6 +539,7 @@ class InMemoryLedgerStore implements ApplicationCommandLedgerStore {
       return Promise.reject(this.markCompletedError);
     }
     const current = this.requireRecord(request);
+    this.assertAttempt(current, request.attemptCount);
     this.records.set(key(current), {
       ...current,
       status: ApplicationCommandLedgerStatus.Completed,
@@ -474,6 +556,7 @@ class InMemoryLedgerStore implements ApplicationCommandLedgerStore {
       return Promise.reject(this.markFailedError);
     }
     const current = this.requireRecord(request);
+    this.assertAttempt(current, request.attemptCount);
     this.records.set(key(current), {
       ...current,
       status: statusForFailure(request.failureKind),
@@ -550,6 +633,20 @@ class InMemoryLedgerStore implements ApplicationCommandLedgerStore {
       return { outcome: ApplicationCommandBeginOutcome.DuplicateCompleted, record: existing };
     }
     if (existing.status === ApplicationCommandLedgerStatus.Started) {
+      if (
+        Date.parse(request.nowIso) - Date.parse(existing.updatedAt) >=
+        request.startedStaleAfterMs
+      ) {
+        const unknown: ApplicationCommandLedgerRecord<TOperation> = {
+          ...existing,
+          status: ApplicationCommandLedgerStatus.UnknownAfterTimeout,
+          failureKind: ApplicationCommandFailureKind.UnknownAfterTimeout,
+          updatedAt: request.nowIso,
+          lastError: 'stale started attempt',
+        };
+        this.records.set(key(unknown), unknown);
+        return { outcome: ApplicationCommandBeginOutcome.UnknownAfterTimeout, record: unknown };
+      }
       return { outcome: ApplicationCommandBeginOutcome.AlreadyStarted, record: existing };
     }
     if (existing.status === ApplicationCommandLedgerStatus.FailedTerminal) {
@@ -585,5 +682,14 @@ class InMemoryLedgerStore implements ApplicationCommandLedgerStore {
       );
     }
     return record;
+  }
+
+  private assertAttempt(
+    record: ApplicationCommandLedgerRecord<string>,
+    attemptCount: number
+  ): void {
+    if (record.attemptCount !== attemptCount) {
+      throw new Error('attempt is stale');
+    }
   }
 }

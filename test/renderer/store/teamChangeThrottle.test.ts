@@ -239,6 +239,7 @@ describe('team change throttling', () => {
     const originalFetchConfig = useStore.getState().fetchConfig;
     const originalBootstrapCliStatus = useStore.getState().bootstrapCliStatus;
     const originalFetchCliProviderStatus = useStore.getState().fetchCliProviderStatus;
+    const originalFetchOpenCodeRuntimeStatus = useStore.getState().fetchOpenCodeRuntimeStatus;
     const originalNavigatorPlatform = Object.getOwnPropertyDescriptor(window.navigator, 'platform');
     const startupConfig = useStore.getState().appConfig;
     if (!startupConfig) {
@@ -266,6 +267,7 @@ describe('team change throttling', () => {
     const fetchCliProviderStatus = vi.fn(
       async (..._args: Parameters<typeof originalFetchCliProviderStatus>) => true
     );
+    const fetchOpenCodeRuntimeStatus = vi.fn(async () => undefined);
 
     cleanup?.();
     cleanup = null;
@@ -273,8 +275,13 @@ describe('team change throttling', () => {
       configurable: true,
       value: 'MacIntel',
     });
-    Object.assign(api, { cliInstaller: {} });
-    useStore.setState({ fetchConfig, bootstrapCliStatus, fetchCliProviderStatus } as never);
+    Object.assign(api, { cliInstaller: {}, openCodeRuntime: {} });
+    useStore.setState({
+      fetchConfig,
+      bootstrapCliStatus,
+      fetchCliProviderStatus,
+      fetchOpenCodeRuntimeStatus,
+    } as never);
 
     try {
       cleanup = initializeNotificationListeners();
@@ -290,10 +297,12 @@ describe('team change throttling', () => {
 
       await vi.advanceTimersByTimeAsync(3_999);
       expect(fetchCliProviderStatus).not.toHaveBeenCalled();
+      expect(fetchOpenCodeRuntimeStatus).not.toHaveBeenCalled();
 
       await vi.advanceTimersByTimeAsync(1);
       expect(fetchCliProviderStatus).toHaveBeenCalledWith('opencode', { silent: false });
       expect(fetchCliProviderStatus).toHaveBeenCalledTimes(1);
+      expect(fetchOpenCodeRuntimeStatus).toHaveBeenCalledTimes(1);
 
       resolveBootstrap();
       await Promise.resolve();
@@ -307,6 +316,7 @@ describe('team change throttling', () => {
       cleanup?.();
       cleanup = null;
       Reflect.deleteProperty(api, 'cliInstaller');
+      Reflect.deleteProperty(api, 'openCodeRuntime');
       if (originalNavigatorPlatform) {
         Object.defineProperty(window.navigator, 'platform', originalNavigatorPlatform);
       } else {
@@ -316,6 +326,7 @@ describe('team change throttling', () => {
         fetchConfig: originalFetchConfig,
         bootstrapCliStatus: originalBootstrapCliStatus,
         fetchCliProviderStatus: originalFetchCliProviderStatus,
+        fetchOpenCodeRuntimeStatus: originalFetchOpenCodeRuntimeStatus,
       } as never);
     }
   });

@@ -97,7 +97,7 @@ const TEAM_VISIBLE_IDLE_WATCHDOG_POLL_MS = 10_000;
 const TEAM_VISIBLE_IDLE_WATCHDOG_STALE_MS = 60_000;
 const TEAM_MESSAGE_FALLBACK_POLL_MS = 10_000;
 const TASK_LOG_ACTIVITY_PULSE_MS = 3_500;
-const STARTUP_RUNTIME_STATUS_IDLE_DELAY_MS = 30_000;
+const STARTUP_CODEX_RUNTIME_STATUS_IDLE_DELAY_MS = 30_000;
 const STARTUP_PROVIDER_STATUS_MIN_DELAY_MS = 2_000;
 const STARTUP_PROVIDER_STATUS_MAX_DELAY_MS = 30_000;
 const STARTUP_OPENCODE_PROVIDER_STATUS_DELAY_MS = 4_000;
@@ -227,7 +227,7 @@ export function initializeNotificationListeners(): () => void {
   const cleanupFns: (() => void)[] = [];
   cleanupFns.push(installTeamRefreshFanoutDebugBridge());
   let cliStatusTimer: ReturnType<typeof setTimeout> | null = null;
-  let runtimeStatusTimer: ReturnType<typeof setTimeout> | null = null;
+  let codexRuntimeStatusTimer: ReturnType<typeof setTimeout> | null = null;
   let openCodeProviderStatusTimer: ReturnType<typeof setTimeout> | null = null;
   let deferredProviderStatusCleanup: (() => void) | null = null;
   let deferredGlobalTasksCleanup: (() => void) | null = null;
@@ -259,6 +259,9 @@ export function initializeNotificationListeners(): () => void {
           const state = useStore.getState();
           if (state.appConfig?.general?.multimodelEnabled === false) {
             return;
+          }
+          if (api.openCodeRuntime) {
+            void state.fetchOpenCodeRuntimeStatus();
           }
           if (
             state.cliStatus &&
@@ -313,15 +316,12 @@ export function initializeNotificationListeners(): () => void {
         cliStatusTimer = null;
       }, delayMs);
     }
-    runtimeStatusTimer = setTimeout(() => {
-      if (api.openCodeRuntime) {
-        void useStore.getState().fetchOpenCodeRuntimeStatus();
-      }
+    codexRuntimeStatusTimer = setTimeout(() => {
       if (api.codexRuntime) {
         void useStore.getState().fetchCodexRuntimeStatus();
       }
-      runtimeStatusTimer = null;
-    }, STARTUP_RUNTIME_STATUS_IDLE_DELAY_MS);
+      codexRuntimeStatusTimer = null;
+    }, STARTUP_CODEX_RUNTIME_STATUS_IDLE_DELAY_MS);
 
     // Keep immediately visible startup data first; global task aggregation can
     // scan all team task files, so hydrate it after first paint/idle.
@@ -347,7 +347,7 @@ export function initializeNotificationListeners(): () => void {
   cleanupFns.push(() => {
     disposed = true;
     if (cliStatusTimer) clearTimeout(cliStatusTimer);
-    if (runtimeStatusTimer) clearTimeout(runtimeStatusTimer);
+    if (codexRuntimeStatusTimer) clearTimeout(codexRuntimeStatusTimer);
     if (openCodeProviderStatusTimer) clearTimeout(openCodeProviderStatusTimer);
     if (deferredProviderStatusCleanup) deferredProviderStatusCleanup();
     if (deferredGlobalTasksCleanup) deferredGlobalTasksCleanup();

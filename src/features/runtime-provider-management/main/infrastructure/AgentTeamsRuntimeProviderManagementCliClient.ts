@@ -50,6 +50,7 @@ const COMMAND_ERROR_DETAIL_LIMIT = 1_600;
 const COMMAND_OUTPUT_PREVIEW_LIMIT = 1_200;
 const DIRECTORY_RESPONSE_CACHE_TTL_MS = 30_000;
 const DEFAULT_DIRECTORY_RESPONSE_CACHE_TTL_MS = 2 * 60_000;
+const MAX_DIRECTORY_RESPONSE_CACHE_ENTRIES = 32;
 const RUNTIME_PROVIDER_OAUTH_EVENT_PREFIX = '@@agent-teams-runtime-provider-oauth@@';
 const OAUTH_OPERATION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/;
 const OAUTH_EVENT_IDENTITY_FIELD_LIMIT = 256;
@@ -1362,7 +1363,25 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
       this.directoryResponseCache.delete(cacheKey);
       return null;
     }
+    // Refresh insertion order so the bounded map behaves as an LRU cache.
+    this.directoryResponseCache.delete(cacheKey);
+    this.directoryResponseCache.set(cacheKey, cached);
     return cached.response;
+  }
+
+  private pruneDirectoryResponseCache(now = Date.now()): void {
+    for (const [key, entry] of this.directoryResponseCache) {
+      if (entry.expiresAt <= now) {
+        this.directoryResponseCache.delete(key);
+      }
+    }
+    while (this.directoryResponseCache.size >= MAX_DIRECTORY_RESPONSE_CACHE_ENTRIES) {
+      const oldestKey = this.directoryResponseCache.keys().next().value as string | undefined;
+      if (!oldestKey) {
+        break;
+      }
+      this.directoryResponseCache.delete(oldestKey);
+    }
   }
 
   private writeDirectoryResponseCache(
@@ -1376,6 +1395,8 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
       response.directory &&
       !response.error
     ) {
+      this.directoryResponseCache.delete(cacheKey);
+      this.pruneDirectoryResponseCache();
       this.directoryResponseCache.set(cacheKey, {
         expiresAt: Date.now() + ttlMs,
         response,

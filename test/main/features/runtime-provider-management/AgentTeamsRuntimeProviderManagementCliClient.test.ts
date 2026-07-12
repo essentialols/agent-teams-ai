@@ -1770,6 +1770,54 @@ describe('AgentTeamsRuntimeProviderManagementCliClient', () => {
     expect(execCliMock).toHaveBeenCalledTimes(2);
   });
 
+  it('bounds provider directory responses and evicts the least recently used query', async () => {
+    execCliMock.mockImplementation(async (_binaryPath: string, args: string[]) => {
+      const queryIndex = args.indexOf('--query');
+      const query = queryIndex >= 0 ? args[queryIndex + 1] : null;
+      return {
+        stdout: JSON.stringify({
+          schemaVersion: 1,
+          runtimeId: 'opencode',
+          directory: {
+            runtimeId: 'opencode',
+            totalCount: 1,
+            returnedCount: 1,
+            query,
+            filter: 'all',
+            limit: 50,
+            cursor: null,
+            nextCursor: null,
+            fetchedAt: '2026-07-12T00:00:00.000Z',
+            entries: [],
+            diagnostics: [],
+          },
+        }),
+        stderr: '',
+      };
+    });
+
+    const client = new AgentTeamsRuntimeProviderManagementCliClient();
+    const loadQuery = (query: string) =>
+      client.loadProviderDirectory({
+        runtimeId: 'opencode',
+        projectPath: '/Users/test/project',
+        query,
+        filter: 'all',
+        limit: 50,
+      });
+
+    for (let index = 0; index < 33; index += 1) {
+      await loadQuery(`query-${index}`);
+    }
+    expect(execCliMock).toHaveBeenCalledTimes(33);
+
+    await loadQuery('query-0');
+    expect(execCliMock).toHaveBeenCalledTimes(34);
+
+    await loadQuery('query-32');
+    expect(execCliMock).toHaveBeenCalledTimes(34);
+  });
+
   it('shares an in-flight provider directory load across renderer reload requests', async () => {
     const directoryResponse = {
       schemaVersion: 1,

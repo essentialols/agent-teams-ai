@@ -43,6 +43,7 @@ function localProjectIntegrationDeps(
     git: new LocalGitIntegrationAdapter({
       allowedPatchRoots: projectIntegrationAllowedPatchRoots(controller),
       workerJobRootParent: dirname(controller.controller.jobRootDir),
+      controllerArchiveRoot: archiveRoot,
     }),
     commitIdentity: new ConfiguredCommitIdentityAdapter(
       controller.scope.commitIdentity,
@@ -66,7 +67,6 @@ function projectIntegrationAllowedPatchRoots(
   return [
     ...(controller.scope.workspaceRoots ?? []),
     ...(controller.scope.worktreeRoots ?? []),
-    projectIntegrationArchiveRoot(controller),
   ];
 }
 

@@ -300,7 +300,9 @@ describe('useRuntimeProviderOnboarding', () => {
       },
     }));
 
-    await act(async () => root.render(React.createElement(Harness, { providerId: 'github-copilot' })));
+    await act(async () =>
+      root.render(React.createElement(Harness, { providerId: 'github-copilot' }))
+    );
     await act(async () => {
       await new Promise((resolve) => window.setTimeout(resolve, 150));
     });
@@ -441,6 +443,41 @@ describe('useRuntimeProviderOnboarding', () => {
     expect(currentState?.activePlan?.id).toBe('kimi-code-membership');
     expect(loadSetupForm).toHaveBeenCalledWith(
       expect.objectContaining({ providerId: 'kimi-for-coding' })
+    );
+  });
+
+  it('surfaces provider directory failures instead of leaving setup loading forever', async () => {
+    loadProviderDirectory.mockResolvedValueOnce({
+      schemaVersion: 1 as const,
+      runtimeId: 'opencode' as const,
+      error: {
+        code: 'runtime-unhealthy',
+        message: 'OpenCode provider catalog is unavailable',
+        recoverable: true,
+      },
+    });
+
+    await act(async () => root.render(React.createElement(Harness)));
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 100));
+    });
+
+    expect(currentState?.stage).toBe('error');
+    expect(currentState?.stageError).toBe('OpenCode provider catalog is unavailable');
+    expect(currentState?.management.directoryLoading).toBe(false);
+    expect(loadSetupForm).not.toHaveBeenCalled();
+
+    loadProviderDirectory.mockResolvedValueOnce(
+      directoryResponse([directoryEntry('xai', 'available')])
+    );
+    await act(async () => currentActions?.beginConnect());
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 100));
+    });
+
+    expect(loadProviderDirectory).toHaveBeenCalledTimes(2);
+    expect(loadProviderDirectory).toHaveBeenLastCalledWith(
+      expect.objectContaining({ refresh: true })
     );
   });
 

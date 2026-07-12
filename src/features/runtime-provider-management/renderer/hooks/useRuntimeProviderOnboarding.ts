@@ -296,12 +296,16 @@ export function useRuntimeProviderOnboarding({
     if (!enabled || !activePlan || runtimeGate !== 'ready' || runtimeUpdateRequired) {
       return;
     }
-    if (!management.directoryLoaded || management.directoryLoading) {
-      return;
-    }
     if (management.activeFormProviderId === activePlan.providerId) {
       setStage('connect');
       setStageError(null);
+      return;
+    }
+    if (!management.directoryLoaded) {
+      if (management.directoryError && !management.directoryLoading) {
+        setStage('error');
+        setStageError(management.directoryError);
+      }
       return;
     }
     const entry = findDirectoryEntry(management, activePlan.providerId);
@@ -416,11 +420,16 @@ export function useRuntimeProviderOnboarding({
     if (!activePlan) {
       return;
     }
-    connectStartedPlanRef.current = activePlan.id;
     setStage('connect');
     setStageError(null);
+    if (management.directoryError && !management.directoryLoaded) {
+      connectStartedPlanRef.current = null;
+      void managementActions.refreshDirectory();
+      return;
+    }
+    connectStartedPlanRef.current = activePlan.id;
     managementActions.startConnect(activePlan.providerId);
-  }, [activePlan, managementActions]);
+  }, [activePlan, management.directoryError, management.directoryLoaded, managementActions]);
 
   const submitConnect = useCallback(async (): Promise<boolean> => {
     if (!activePlan) {

@@ -1248,7 +1248,7 @@ describe('RuntimeProviderManagementPanelView', () => {
               supported: true,
               title: 'Connect OpenRouter',
               description: null,
-              submitLabel: 'Connect',
+              submitLabel: 'Continue with OpenRouter',
               disabledReason: null,
               source: 'oauth',
               secret: null,
@@ -1262,9 +1262,9 @@ describe('RuntimeProviderManagementPanelView', () => {
       await Promise.resolve();
     });
 
-    const submitButton = Array.from(host.querySelectorAll('button'))
-      .filter((button) => button.textContent?.trim() === 'Connect')
-      .at(-1);
+    const submitButton = Array.from(host.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Continue with OpenRouter'
+    );
     expect(submitButton?.disabled).toBe(false);
   });
 

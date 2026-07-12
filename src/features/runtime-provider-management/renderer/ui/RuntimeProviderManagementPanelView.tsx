@@ -386,17 +386,20 @@ export function ProviderSetupFormPanel({
   state,
   busy,
   disabled,
+  preparing = false,
   actions,
 }: {
   readonly provider: Pick<RuntimeProviderConnectionDto, 'providerId' | 'displayName'>;
   readonly state: RuntimeProviderManagementState;
   readonly busy: boolean;
   readonly disabled: boolean;
+  readonly preparing?: boolean;
   readonly actions: RuntimeProviderManagementActions;
 }): JSX.Element {
   const { t } = useAppTranslation('settings');
   const form = state.setupForm?.providerId === provider.providerId ? state.setupForm : null;
-  const loading = state.setupFormLoading && state.activeFormProviderId === provider.providerId;
+  const loading =
+    preparing || (state.setupFormLoading && state.activeFormProviderId === provider.providerId);
   const error = state.setupFormError;
   const errorDiagnostics = state.setupFormErrorDiagnostics;
   const submitError =
@@ -647,7 +650,7 @@ export function ProviderSetupFormPanel({
             onClick={() => void actions.submitConnect(provider.providerId)}
           >
             {busy ? <Loader2 className="mr-1 size-3.5 animate-spin" /> : null}
-            {selectedMethod === 'oauth' ? 'Continue in browser' : (form?.submitLabel ?? 'Connect')}
+            {form?.submitLabel ?? (selectedMethod === 'oauth' ? 'Continue in browser' : 'Connect')}
           </Button>
         ) : null}
       </div>

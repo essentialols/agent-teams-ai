@@ -252,6 +252,74 @@ describe('RuntimeProviderOnboardingView', () => {
     expect(openCredentialPage).toHaveBeenCalledTimes(1);
   });
 
+  it('shows provider setup loading immediately while the directory is still resolving', async () => {
+    const plan = RUNTIME_PROVIDER_ONBOARDING_PLANS[0]!;
+    await act(async () => {
+      root.render(
+        React.createElement(RuntimeProviderOnboardingView, {
+          state: onboardingState({
+            mode: 'provider',
+            selectedPlanIds: [plan.id],
+            activePlan: plan,
+            stage: 'connect',
+            management: managementState({
+              directoryLoading: true,
+              directoryLoaded: false,
+            }),
+          }),
+          actions: onboardingActions(),
+          onAdvancedSettings: vi.fn(),
+          onDone: vi.fn(),
+        })
+      );
+    });
+
+    expect(host.textContent).toContain('Loading provider setup...');
+    expect(host.querySelector('[data-testid="runtime-provider-onboarding"]')).not.toBeNull();
+    const connectButton = [...host.querySelectorAll('button')].find(
+      (button) => button.textContent?.trim() === 'Connect'
+    );
+    expect(connectButton?.disabled).toBe(true);
+  });
+
+  it('closes onboarding when provider setup is cancelled', async () => {
+    const plan = RUNTIME_PROVIDER_ONBOARDING_PLANS[0]!;
+    const cancelConnect = vi.fn();
+    const onDone = vi.fn();
+    await act(async () => {
+      root.render(
+        React.createElement(RuntimeProviderOnboardingView, {
+          state: onboardingState({
+            mode: 'provider',
+            selectedPlanIds: [plan.id],
+            activePlan: plan,
+            stage: 'connect',
+            management: managementState({
+              activeFormProviderId: plan.providerId,
+              setupFormLoading: true,
+            }),
+          }),
+          actions: onboardingActions({
+            management: {
+              ...managementActions(),
+              cancelConnect,
+            },
+          }),
+          onAdvancedSettings: vi.fn(),
+          onDone,
+        })
+      );
+    });
+
+    const cancelButton = [...host.querySelectorAll('button')].find(
+      (button) => button.textContent?.trim() === 'Cancel'
+    );
+    act(() => cancelButton?.click());
+
+    expect(cancelConnect).toHaveBeenCalledTimes(1);
+    expect(onDone).toHaveBeenCalledTimes(1);
+  });
+
   it('offers reconnect after a saved credential fails live verification', async () => {
     const beginConnect = vi.fn();
     const plan = RUNTIME_PROVIDER_ONBOARDING_PLANS[0]!;

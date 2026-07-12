@@ -325,18 +325,24 @@ const ActivePlanFlow = ({
   state,
   actions,
   disabled,
+  onCancel,
 }: {
   readonly state: RuntimeProviderOnboardingState;
   readonly actions: RuntimeProviderOnboardingActions;
   readonly disabled: boolean;
+  readonly onCancel: () => void;
 }): JSX.Element => {
   const plan = state.activePlan;
   const setupActions = useMemo(
     () => ({
       ...actions.management,
+      cancelConnect: () => {
+        actions.management.cancelConnect();
+        onCancel();
+      },
       submitConnect: () => actions.submitConnect(),
     }),
-    [actions]
+    [actions, onCancel]
   );
   if (!plan) {
     return (
@@ -353,6 +359,12 @@ const ActivePlanFlow = ({
   }
 
   const provider = { providerId: plan.providerId, displayName: plan.displayName };
+  const preparingProviderSetup =
+    state.stage === 'connect' &&
+    state.management.activeFormProviderId !== plan.providerId &&
+    state.management.modelPickerProviderId !== plan.providerId &&
+    !state.management.setupForm &&
+    !state.management.setupFormError;
   return (
     <div className="space-y-4">
       <div className="flex items-start gap-3">
@@ -382,6 +394,7 @@ const ActivePlanFlow = ({
             state={state.management}
             busy={state.management.savingProviderId === plan.providerId}
             disabled={disabled}
+            preparing={preparingProviderSetup}
             actions={setupActions}
           />
         </div>
@@ -486,7 +499,7 @@ export const RuntimeProviderOnboardingView = ({
         <>
           <RuntimePrerequisite state={state} actions={actions} />
           {runtimeReady ? (
-            <ActivePlanFlow state={state} actions={actions} disabled={disabled} />
+            <ActivePlanFlow state={state} actions={actions} disabled={disabled} onCancel={onDone} />
           ) : null}
         </>
       )}

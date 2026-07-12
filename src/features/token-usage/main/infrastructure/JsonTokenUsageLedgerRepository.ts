@@ -20,7 +20,7 @@ interface TokenUsageLedgerFile {
   events: Record<string, TokenUsageEventDto>;
 }
 
-const MAX_LEDGER_BYTES = 8 * 1024 * 1024;
+const MAX_LEDGER_BYTES = 64 * 1024 * 1024;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)

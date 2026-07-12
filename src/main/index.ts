@@ -84,6 +84,7 @@ import {
   createTokenUsageFeature,
   registerTokenUsageIpc,
   removeTokenUsageIpc,
+  resolveClaudeMultimodelDataHomePath,
   TeamTaskUsageAttributionSource,
   type TokenUsageFeatureFacade,
 } from '@features/token-usage/main';
@@ -2103,6 +2104,7 @@ async function initializeServices(): Promise<void> {
     ),
     teamsBasePath: getTeamsBasePath(),
     claudeProjectsBasePath: getProjectsBasePath(),
+    openCodeDataHomePath: resolveClaudeMultimodelDataHomePath(),
     ccusageJsonPath: process.env.AGENT_TEAMS_TOKEN_USAGE_CCUSAGE_JSON,
     tokscaleJsonPath: process.env.AGENT_TEAMS_TOKEN_USAGE_TOKSCALE_JSON,
     ccusageCommand: readOptionalEnv('AGENT_TEAMS_TOKEN_USAGE_CCUSAGE_COMMAND'),

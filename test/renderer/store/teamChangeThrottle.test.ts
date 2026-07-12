@@ -235,7 +235,7 @@ describe('team change throttling', () => {
     expect(fetchAllTasksSpy).not.toHaveBeenCalled();
   });
 
-  it('loads OpenCode after four seconds outside the provider idle batch even when bootstrap is slow', async () => {
+  it('loads OpenCode after three seconds outside the provider idle batch even when bootstrap is slow', async () => {
     const originalFetchConfig = useStore.getState().fetchConfig;
     const originalBootstrapCliStatus = useStore.getState().bootstrapCliStatus;
     const originalFetchCliProviderStatus = useStore.getState().fetchCliProviderStatus;
@@ -295,7 +295,7 @@ describe('team change throttling', () => {
       });
       expect(fetchCliProviderStatus).not.toHaveBeenCalled();
 
-      await vi.advanceTimersByTimeAsync(3_999);
+      await vi.advanceTimersByTimeAsync(2_999);
       expect(fetchCliProviderStatus).not.toHaveBeenCalled();
       expect(fetchOpenCodeRuntimeStatus).not.toHaveBeenCalled();
 

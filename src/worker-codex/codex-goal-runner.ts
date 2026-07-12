@@ -906,6 +906,7 @@ async function changedFilesFromWorkspace(
       workspacePath,
       "status",
       "--porcelain",
+      "--untracked-files=all",
     ], { timeout: gitStatusTimeoutMs });
     const changedFiles = stdout
       .split(/\r?\n/)

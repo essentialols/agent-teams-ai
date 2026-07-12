@@ -618,7 +618,11 @@ describe("codex goal runner", () => {
         createExecutor: () => ({
           async run() {
             await writeFile(join(workspacePath, "tracked.txt"), "after\n");
-            await writeFile(join(workspacePath, "new.txt"), "new file\n");
+            await mkdir(join(workspacePath, "new"));
+            await writeFile(
+              join(workspacePath, "new", "nested.txt"),
+              "new file\n",
+            );
             throw new Error("synthetic executor failure");
           },
           async dispose() {},
@@ -629,7 +633,7 @@ describe("codex goal runner", () => {
         Record<string, unknown>;
       expect(result).toMatchObject({
         status: "partial",
-        changedFiles: ["tracked.txt", "new.txt"],
+        changedFiles: ["tracked.txt", "new/nested.txt"],
         nextAction: "preserve_patch",
       });
       expect(result.details).toMatchObject({ baseCommit });

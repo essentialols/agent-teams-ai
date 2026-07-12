@@ -182,7 +182,7 @@
       "reproduction": ["node scripts/hosted-web/phase-0/auth-artifacts/verify-evidence.mjs"],
       "facts": {
         "buildCommand": "pnpm exec vite build --config docker/vite.standalone.config.ts --outDir <ephemeral-dir> --emptyOutDir",
-        "buildResult": "the targeted build at canonical source commit 6cf53a3d71e1bd34ff71f99968b705a0e1aa939c emitted seven CJS files; the verifier rebuilds the current tree and compares every relative path, byte count and SHA-256 hash to the committed current-commit authority",
+        "buildResult": "the targeted build at canonical source commit 42ec333848e29e97c41699b9fed73ed199740e3f emitted seven CJS files; the verifier rebuilds the current tree and compares every relative path, byte count and SHA-256 hash to the committed current-commit authority",
         "topology": [
           {
             "artifact": "standalone server",
@@ -218,7 +218,7 @@
         "characterizationAuthority": {
           "authorityPath": "docs/research/hosted-web/phase-0/auth-artifacts/observed-artifact-scan.json",
           "authorityRecordType": "w6-current-commit-artifact-scan",
-          "authoritySha256": "606046d7d5b461e7293c5ee366c5145b94886e6c4ff2bd316fb428f9d41a06f3",
+          "authoritySha256": "079e04075c3f2d5bd0bd6cd9f5b7131297c6f14f18b86ff224535e9f1c543256",
           "disposition": "rejected_for_hosted_v1"
         },
         "emittedManifest": "observed-artifact-scan.json is the sole exact current-commit standalone characterization authority. historical-rejected-candidate-artifact-scan.json preserves the rejected integration candidate as historical provenance only; all other W6 records carry the current authority's checked semantic-hash projection.",

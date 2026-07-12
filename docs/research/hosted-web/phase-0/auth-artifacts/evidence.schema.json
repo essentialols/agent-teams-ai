@@ -159,7 +159,7 @@
         "recordType": { "const": "w6-current-commit-artifact-scan" },
         "phaseStartSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
         "canonicalSourceCommit": {
-          "const": "6cf53a3d71e1bd34ff71f99968b705a0e1aa939c"
+          "const": "42ec333848e29e97c41699b9fed73ed199740e3f"
         },
         "proofLevel": { "const": "targeted_current_commit_build_observed" },
         "characterizationScope": {
@@ -289,7 +289,7 @@
         "schemaVersion": { "const": 1 },
         "recordType": { "const": "w6-standalone-artifact-characterization" },
         "phaseStartSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
-        "canonicalBaseSha": { "const": "6cf53a3d71e1bd34ff71f99968b705a0e1aa939c" },
+        "canonicalBaseSha": { "const": "42ec333848e29e97c41699b9fed73ed199740e3f" },
         "proofLevel": { "const": "targeted_current_commit_build_observed" },
         "status": { "const": "rejected_for_hosted_v1" },
         "controllerContractPath": { "type": "string" },

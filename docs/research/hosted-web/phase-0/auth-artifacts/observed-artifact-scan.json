@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "recordType": "w6-current-commit-artifact-scan",
   "phaseStartSha": "a32f509e6d9bd31ba2135940e336729bf90c3d93",
-  "canonicalSourceCommit": "6cf53a3d71e1bd34ff71f99968b705a0e1aa939c",
+  "canonicalSourceCommit": "42ec333848e29e97c41699b9fed73ed199740e3f",
   "proofLevel": "targeted_current_commit_build_observed",
   "characterizationScope": "exact_current_commit_targeted_standalone_build",
   "build": {
@@ -60,9 +60,9 @@
     "observed": true,
     "files": [
       {
-        "path": "dist-standalone/assets/HttpServer-Cf8B_DEn.cjs",
-        "bytes": 360000,
-        "sha256": "6371eac58590a1e53edf1a9c002aa63dcbbeb6da7686b7a39575b991143739b7"
+        "path": "dist-standalone/assets/HttpServer-Bqe22d9M.cjs",
+        "bytes": 360996,
+        "sha256": "bc72691427933478a7c5d571c9996ef51e1371ab3679ae6b4b38d0d19a33ddbc"
       },
       {
         "path": "dist-standalone/assets/NotificationManager-B8_AtzLu.cjs",
@@ -80,9 +80,9 @@
         "sha256": "1d7d7c485d872c43cfad44ec8906db84dd613fb7b85e9a51b5ca9881d59fcef0"
       },
       {
-        "path": "dist-standalone/assets/index-8jS93jLd.cjs",
-        "bytes": 5171304,
-        "sha256": "a529e409a2b425f795ecc5593c7ec9d5174031486ec007e532f24b1d86b64c8e"
+        "path": "dist-standalone/assets/index-DiQK2OQV.cjs",
+        "bytes": 5189932,
+        "sha256": "7bee39b2dd444e31819a941276127ce7c25646cba3491005d7d4b3b30ed2a92d"
       },
       {
         "path": "dist-standalone/assets/tokenizer-BIjeYPC0.cjs",
@@ -92,7 +92,7 @@
       {
         "path": "dist-standalone/index.cjs",
         "bytes": 97537,
-        "sha256": "e8dfb38913cc8e5a54f8dfa22f7598534d9d6790fbcb26bff9aea7c3b08c9aba"
+        "sha256": "cd55734bd8996c23b638b20f8652130fae0f0f0b1f11fef7065280cceb7afd65"
       }
     ],
     "internalStorageWorkerPresent": false,

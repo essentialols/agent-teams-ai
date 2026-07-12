@@ -533,7 +533,7 @@ export function evaluateAuthorityCookieInput(input) {
 export const STANDALONE_CHARACTERIZATION_PATH =
   'docs/research/hosted-web/phase-0/auth-artifacts/observed-artifact-scan.json';
 export const STANDALONE_CHARACTERIZATION_RECORD_TYPE = 'w6-current-commit-artifact-scan';
-export const STANDALONE_CANONICAL_SOURCE_COMMIT = '6cf53a3d71e1bd34ff71f99968b705a0e1aa939c';
+export const STANDALONE_CANONICAL_SOURCE_COMMIT = '42ec333848e29e97c41699b9fed73ed199740e3f';
 export const ARTIFACT_EVOLUTION_ASSUMPTION =
   'The existing standalone source/build path may evolve in place, but the exact canonical artifact is rejected and evolution remains unproved; any resulting candidate requires a separately reviewed packet.';
 export const ARTIFACT_PROOF_LEVELS = Object.freeze({

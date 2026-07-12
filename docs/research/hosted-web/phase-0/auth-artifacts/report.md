@@ -1,6 +1,6 @@
 # Phase 0 W6 auth and standalone-artifact characterization
 
-Canonical current-commit source: `6cf53a3d71e1bd34ff71f99968b705a0e1aa939c`.
+Canonical current-commit source: `42ec333848e29e97c41699b9fed73ed199740e3f`.
 Historical rejected-candidate provenance is retained separately and is not current-commit authority.
 Historical producer phase start: `a32f509e6d9bd31ba2135940e336729bf90c3d93`.
 Packet narrowing: `phase-00-r3`.
@@ -35,7 +35,7 @@ protocol hash. Neither lane owns a competing path or hash table.
 
 `observed-artifact-scan.json` is the sole exact current-commit standalone-characterization authority.
 Its seven emitted CJS rows come from the configured targeted Vite build of canonical source commit
-`6cf53a3d71e1bd34ff71f99968b705a0e1aa939c` into an ephemeral directory. The verifier performs that
+`42ec333848e29e97c41699b9fed73ed199740e3f` into an ephemeral directory. The verifier performs that
 targeted build again and compares the complete record, including every relative path, byte count and
 SHA-256. It never accepts a mutable ambient `dist-standalone` as evidence.
 
@@ -63,3 +63,36 @@ Artifact inventory and current terminal-rule evaluation are
 `targeted_current_commit_build_observed`. Proxy/origin, auth transitions and ABI behavior remain
 fixture/current-host characterization at their declared levels. No live edge, browser, keyring crash
 schedule, Electron native load, final-image load, or production deployment was run.
+
+## Target-image gate: accepted Phase 0 capability narrowing
+
+The immutable source for this decision is commit
+`42ec333848e29e97c41699b9fed73ed199740e3f`, tree
+`4bc04a743c20ea48e06ada55c761d03881117cac`. That source is separate from the
+repository commit that later adopts this evidence. Verification requires the adopting HEAD to be the
+source or its descendant and reports that mutable evidence identity separately; it never rewrites the
+source identity inside the decision.
+
+Decision `P0.D.TARGET_IMAGE` is `accepted` with outcome `capability_narrowed`. Phase 0 closes its
+target-image gate by preserving the complete admission contract and all known gaps, not by claiming
+that a final image already exists. Phase 5 owns the production composition, build graph, native
+artifacts, hardened profile and in-image probes, so exact-image admission before Phase 5 would be
+circular. No hosted route, mutation, provider runtime, credential canary, production composition or
+terminal-negative image readiness is enabled by this decision.
+
+The deterministic canonical-source evaluation remains fail closed with exactly 51 obligations: 21
+composition, four image identity, three inventory, 12 runtime profile, two provider-runtime and nine
+terminal-negative scan obligations. The current standalone candidate is not a substitute and retains
+four observed terminal-absence violations. Terminal absence is still mandatory over capabilities,
+files, migrations, packages, ports, processes, renderer chunks, routes and volumes.
+
+The Phase 5 gate must remain closed until one reviewed immutable target-image manifest/profile is
+instantiated and supplies digest-bound complete inventory, native binary/builder/compiler and
+ownership/mode provenance, init/lock/anchor-before-Node ordering, target-executed provider canaries
+bound to the same digest, and negative terminal scans over every named surface. The same gate blocks
+Phase 5 route admission and capability advertisement and Phase 6 non-loopback mutations.
+
+Live Docker state is intentionally absent from deterministic decision facts. Phase 0 verification
+does not invoke or assume a Docker CLI, daemon or socket. Synthetic provider canaries check only
+redaction and cross-provider isolation in the admission harness; they remain explicitly below
+target-image provider execution. No real project or credential is used.

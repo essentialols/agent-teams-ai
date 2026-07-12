@@ -19,6 +19,12 @@ import {
   validateStandaloneCharacterizationProjection,
 } from './auth-artifacts-spike.mjs';
 import {
+  REQUIRED_CANONICAL_SOURCE_COMMIT,
+  REQUIRED_CANONICAL_SOURCE_TREE,
+  TARGET_IMAGE_DECISION_PATH,
+  verifyCommittedTargetImageDecision,
+} from './prove-target-image-admission.mjs';
+import {
   controllerArtifactContractSha256,
   loadControllerArtifactContract,
   validateControllerArtifactProjection,
@@ -217,14 +223,45 @@ if (
   throw new Error(`ABI characterization mismatch: ${JSON.stringify(abiProbe)}`);
 }
 
-const handoff = readJson('.codex-handoff/phase-00-freeze-fix-w6-artifact-f16.json');
+const targetImageDecision = readJson(TARGET_IMAGE_DECISION_PATH);
+const targetImageVerification = verifyCommittedTargetImageDecision(targetImageDecision);
+if (
+  !targetImageVerification.ok ||
+  targetImageDecision.decision?.state !== 'accepted' ||
+  targetImageDecision.decision?.outcome !== 'capability_narrowed' ||
+  targetImageDecision.decision?.phase0Gate !== 'closed_by_accepted_narrowing' ||
+  targetImageDecision.decision?.exactImageEarliestOwner !== 'phase-5' ||
+  targetImageDecision.sourceIdentity?.canonicalCommit !== REQUIRED_CANONICAL_SOURCE_COMMIT ||
+  targetImageDecision.sourceIdentity?.canonicalTree !== REQUIRED_CANONICAL_SOURCE_TREE ||
+  targetImageDecision.scope?.realUserProjectsOpened !== false ||
+  targetImageDecision.scope?.dockerSocketRequiredForPhase0Decision !== false ||
+  targetImageDecision.scope?.liveContainerRuntimeObservationInDeterministicFacts !== false ||
+  targetImageDecision.phase5AdmissionGate?.state !== 'fail_closed' ||
+  targetImageDecision.phase5AdmissionGate?.admitted !== false ||
+  targetImageDecision.phase5AdmissionGate?.canonicalSourceGapCount !== 51 ||
+  targetImageDecision.phase5AdmissionGate?.canonicalSourceGaps?.filter((gap) =>
+    gap.startsWith('terminal_negative:')
+  ).length !== 9 ||
+  targetImageDecision.canonicalSourceFacts?.currentCandidate?.terminalAbsence?.passes !== false ||
+  targetImageDecision.canonicalSourceFacts?.currentCandidate?.terminalAbsence?.violations
+    ?.length !== 4 ||
+  Object.values(targetImageDecision.claims ?? {}).some((value) => value !== false)
+) {
+  throw new Error(
+    `target-image narrowing or Phase 5 fail-closed gate drifted: ${JSON.stringify(targetImageVerification)}`
+  );
+}
+
+const handoff = readJson('.codex-handoff/target-image-decision-h2.json');
 if (
   handoff.schemaVersion !== 1 ||
-  handoff.taskId !== 'phase-00-freeze-fix-w6-artifact-f16' ||
-  handoff.canonicalSourceCommit !== '0d1a82fe2fb0c8d73b62cd3b5996b853bef2d7c3' ||
-  handoff.status !== 'remediation_complete_pending_review' ||
+  handoff.taskId !== 'target-image-decision-h2' ||
+  handoff.canonicalSource?.commit !== REQUIRED_CANONICAL_SOURCE_COMMIT ||
+  handoff.canonicalSource?.tree !== REQUIRED_CANONICAL_SOURCE_TREE ||
+  handoff.status !== 'ready_for_integration' ||
   handoff.currentCommitAuthority?.path !== STANDALONE_CHARACTERIZATION_PATH ||
   handoff.currentCommitAuthority?.recordType !== STANDALONE_CHARACTERIZATION_RECORD_TYPE ||
+  handoff.currentCommitAuthority?.canonicalSourceCommit !== REQUIRED_CANONICAL_SOURCE_COMMIT ||
   handoff.currentCommitAuthority?.semanticSha256 !==
     standaloneProjection.expected.authoritySha256 ||
   handoff.currentCommitAuthority?.proofLevel !== 'targeted_current_commit_build_observed' ||
@@ -235,10 +272,10 @@ if (
   handoff.drainEnvelopeConsumer?.schemaSha256 !== drainEvidenceEnvelopeSchemaSha256() ||
   handoff.drainEnvelopeConsumer?.authority !== 'phase-00-controller' ||
   handoff.drainEnvelopeConsumer?.projection !== 'exact_required_fields_no_lane_owned_wrapper' ||
-  handoff.findings?.some(({ status }) => status !== 'resolved') ||
-  handoff.findings?.length !== 5
+  handoff.reviewFindingResolutions?.some(({ status }) => status !== 'resolved') ||
+  handoff.reviewFindingResolutions?.length !== 3
 ) {
-  throw new Error('W6 current-commit artifact authority handoff is stale');
+  throw new Error('target-image decision/current-commit artifact authority handoff is stale');
 }
 const authorityProjection = validateArtifactAuthorityProjections(
   evidence.artifactAuthority,
@@ -252,13 +289,16 @@ if (!authorityProjection.ok) {
   );
 }
 if (
-  Object.values(handoff.scope).some((value) => value !== false && typeof value === 'boolean') ||
+  Object.entries(handoff.scope).some(
+    ([key, value]) => key !== 'disposition' && typeof value === 'boolean' && value !== false
+  ) ||
   handoff.scope.disposition !== 'standalone_artifact_rejected_for_hosted_v1'
 ) {
   throw new Error('W6 artifact-authority handoff overstates admission');
 }
 
 const checkedPaths = [
+  '.codex-handoff/target-image-decision-h2.json',
   '.codex-handoff/phase-00-freeze-fix-w6-artifact-f16.json',
   'docs/research/hosted-web/phase-0/auth-artifacts/estimate-input.json',
   'docs/research/hosted-web/phase-0/auth-artifacts/evidence.json',
@@ -268,13 +308,16 @@ const checkedPaths = [
   'docs/research/hosted-web/phase-0/auth-artifacts/observed-artifact-scan.json',
   'docs/research/hosted-web/phase-0/auth-artifacts/proposed-hosted-artifact-manifest.json',
   'docs/research/hosted-web/phase-0/auth-artifacts/report.md',
+  'docs/research/hosted-web/phase-0/auth-artifacts/target-image-admission.json',
   'docs/research/hosted-web/phase-0/w4-w6-contract/controller-artifact-contract.json',
   'docs/research/hosted-web/phase-0/w4-w6-contract/controller-artifact-contract.schema.json',
   'scripts/hosted-web/phase-0/auth-artifacts/auth-artifacts-spike.mjs',
+  'scripts/hosted-web/phase-0/auth-artifacts/prove-target-image-admission.mjs',
   'scripts/hosted-web/phase-0/auth-artifacts/verify-evidence.mjs',
   'scripts/hosted-web/phase-0/w4-w6-contract/controller-artifact-contract.mjs',
   'scripts/hosted-web/phase-0/w4-w6-contract/drain-evidence-envelope.mjs',
   'test/architecture/hosted-web/phase-0/auth-artifacts/auth-artifacts-spike.test.ts',
+  'test/architecture/hosted-web/phase-0/auth-artifacts/target-image-admission.test.ts',
   'test/architecture/hosted-web/phase-0/w4-w6-contract/artifact-contract.test.ts',
 ];
 const serialized = checkedPaths
@@ -290,5 +333,5 @@ for (const pattern of [
 }
 
 process.stdout.write(
-  `W6 r3 evidence, controller drain envelope, exact artifact-authority projections, reset admission, exact current-commit targeted standalone rejection, terminal rule, ABI characterization and split historical provenance passed (controller ${controllerHash})\n`
+  `W6 r3 evidence plus accepted Phase 0 target-image narrowing, descendant-stable normalized provenance, 51-obligation fail-closed Phase 5 admission, terminal rule, controller drain envelope, exact artifact-authority projections, reset admission, targeted standalone rejection, ABI characterization and split historical provenance passed (controller ${controllerHash})\n`
 );

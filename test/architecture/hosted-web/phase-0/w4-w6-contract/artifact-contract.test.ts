@@ -5,15 +5,21 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import {
-  drainEvidenceFor,
-  runAuthSchedule,
-} from '../../../../../scripts/hosted-web/phase-0/auth-artifacts/auth-artifacts-spike.mjs';
-import {
   controllerArtifactContractPath,
   controllerArtifactContractSha256,
   loadControllerArtifactContract,
   validateControllerArtifactProjection,
 } from '../../../../../scripts/hosted-web/phase-0/w4-w6-contract/controller-artifact-contract.mjs';
+import {
+  assertDrainEvidenceEnvelope,
+  createDrainEvidenceEnvelope,
+  drainEvidenceEnvelopeId,
+  drainEvidenceEnvelopeSchemaPath,
+  drainEvidenceEnvelopeSchemaSha256,
+  loadDrainEvidenceEnvelopeSchema,
+  validateDrainEvidenceEnvelope,
+  validateW4DrainEvidenceProjection,
+} from '../../../../../scripts/hosted-web/phase-0/w4-w6-contract/drain-evidence-envelope.mjs';
 
 const readJson = (path: string) => JSON.parse(readFileSync(path, 'utf8'));
 
@@ -21,6 +27,41 @@ const w4ProjectionPath =
   'docs/research/hosted-web/phase-0/host-primitives/native-artifact-contract.json';
 const w6ProjectionPath =
   'docs/research/hosted-web/phase-0/auth-artifacts/proposed-hosted-artifact-manifest.json';
+
+const validDrainEvidence = () => ({
+  envelopeId: drainEvidenceEnvelopeId,
+  ready: {
+    protocolVersion: 1,
+    spawnNonceHash: 'spawn-nonce-hash-7',
+    purpose: 'host_reset',
+    resetGeneration: 7,
+    deploymentGeneration: 'deployment-generation-3',
+    processAnchorGeneration: 'process-anchor-generation-11',
+    anchorIdentity: 'anchor-identity-11',
+    mainPidfdReady: true,
+    ownedProcessGroupReady: true,
+  },
+  drained: {
+    protocolVersion: 1,
+    kind: 'process_drain_outcome_v1',
+    outcome: 'drained',
+    purpose: 'host_reset',
+    resetGeneration: 7,
+    deploymentGeneration: 'deployment-generation-3',
+    processAnchorGeneration: 'process-anchor-generation-11',
+    classificationId: 'classification-11',
+    residuals: [] as string[],
+  },
+});
+
+type NativeSchemaFixture = {
+  'x-processAnchorDrainEvidence': Record<string, string>;
+};
+
+type ProcessAnchorProtocolFixture = {
+  responses: Array<{ type: string; fields: string[] }>;
+  sharedDrainDto: Record<string, string>;
+};
 
 describe('Phase 0 W4/W6 controller-owned artifact contract', () => {
   it('records identical V7 base, approved-review and rejected-gate provenance', () => {
@@ -63,28 +104,160 @@ describe('Phase 0 W4/W6 controller-owned artifact contract', () => {
     expect(joint.provenance).toEqual(w4.remediationProvenance);
   });
 
-  it('makes W6 consume W4 ready and drained DTO fields without an adapter downcast', () => {
+  it('projects the exact W4 ready and drained fields from controller authority', () => {
+    const schema = loadDrainEvidenceEnvelopeSchema();
+    const nativeSchema = readJson(
+      'docs/research/hosted-web/phase-0/host-primitives/native-protocol.schema.json'
+    );
     const protocol = readJson(
       'docs/research/hosted-web/phase-0/host-primitives/process-anchor.protocol.json'
     );
-    const evidence = drainEvidenceFor(runAuthSchedule([]).state, 'host_reset', 7);
-    const readyFields = protocol.responses.find(({ type }) => type === 'ready').fields;
-    const drainedFields = protocol.responses.find(({ type }) => type === 'drained').fields;
+    const readyFields = protocol.responses.find(
+      ({ type }: { type: string }) => type === 'ready'
+    ).fields;
+    const drainedFields = protocol.responses.find(
+      ({ type }: { type: string }) => type === 'drained'
+    ).fields;
 
-    expect(Object.keys(evidence.ready).sort()).toEqual([...readyFields].sort());
-    expect(Object.keys(evidence.drained).sort()).toEqual([...drainedFields].sort());
-    expect(evidence.ready).toMatchObject({
-      purpose: 'host_reset',
-      resetGeneration: 7,
-      deploymentGeneration: evidence.drained.deploymentGeneration,
-      processAnchorGeneration: evidence.drained.processAnchorGeneration,
+    expect(schema).toMatchObject({
+      $id: drainEvidenceEnvelopeId,
+      'x-controllerOwner': 'phase-00-controller',
     });
-    expect(evidence.drained).toMatchObject({
-      purpose: 'host_reset',
-      resetGeneration: 7,
-      deploymentGeneration: evidence.ready.deploymentGeneration,
-      processAnchorGeneration: evidence.ready.processAnchorGeneration,
+    expect(readyFields).toEqual(schema.$defs.ready.required);
+    expect(drainedFields).toEqual(schema.$defs.drained.required);
+    expect(nativeSchema['x-processAnchorDrainEvidence']).toMatchObject({
+      authority: 'phase-00-controller',
+      envelopeId: drainEvidenceEnvelopeId,
+      schemaPath: drainEvidenceEnvelopeSchemaPath,
+      schemaSha256: drainEvidenceEnvelopeSchemaSha256(),
+      projection: 'exact_required_fields_no_lane_owned_wrapper',
     });
+    expect(validateW4DrainEvidenceProjection(nativeSchema, protocol)).toEqual({
+      ok: true,
+      violations: [],
+    });
+  });
+
+  it('accepts only the controller envelope and preserves exact outcome fields', () => {
+    const evidence = validDrainEvidence();
+    expect(createDrainEvidenceEnvelope(evidence.ready, evidence.drained)).toEqual(evidence);
+    expect(validateDrainEvidenceEnvelope(evidence)).toEqual({ ok: true, violations: [] });
+    expect(Object.keys(evidence.ready)).toEqual(
+      loadDrainEvidenceEnvelopeSchema().$defs.ready.required
+    );
+    expect(Object.keys(evidence.drained)).toEqual(
+      loadDrainEvidenceEnvelopeSchema().$defs.drained.required
+    );
+  });
+
+  it.each([
+    [
+      'missing exact outcome field',
+      (evidence: ReturnType<typeof validDrainEvidence>) => {
+        delete (evidence.drained as Partial<typeof evidence.drained>).classificationId;
+      },
+      'missing_field:drained:classificationId',
+    ],
+    [
+      'extra lane-owned wrapper field',
+      (evidence: ReturnType<typeof validDrainEvidence>) => {
+        (evidence as typeof evidence & { source: string }).source = 'w6_wrapper';
+      },
+      'extra_field:envelope:source',
+    ],
+    [
+      'non-drained outcome',
+      (evidence: ReturnType<typeof validDrainEvidence>) => {
+        evidence.drained.outcome = 'unclassified';
+      },
+      'const:drained:outcome',
+    ],
+    [
+      'residual process',
+      (evidence: ReturnType<typeof validDrainEvidence>) => {
+        evidence.drained.residuals = ['pid:42'];
+      },
+      'max_items:drained:residuals',
+    ],
+    [
+      'stale reset generation',
+      (evidence: ReturnType<typeof validDrainEvidence>) => {
+        evidence.drained.resetGeneration += 1;
+      },
+      'generation_binding:resetGeneration',
+    ],
+    [
+      'stale deployment generation',
+      (evidence: ReturnType<typeof validDrainEvidence>) => {
+        evidence.drained.deploymentGeneration = 'deployment-generation-stale';
+      },
+      'generation_binding:deploymentGeneration',
+    ],
+    [
+      'stale process-anchor generation',
+      (evidence: ReturnType<typeof validDrainEvidence>) => {
+        evidence.drained.processAnchorGeneration = 'process-anchor-generation-stale';
+      },
+      'generation_binding:processAnchorGeneration',
+    ],
+  ])('fails closed for %s', (_name, mutate, expectedViolation) => {
+    const evidence = validDrainEvidence();
+    mutate(evidence);
+    const result = validateDrainEvidenceEnvelope(evidence);
+    expect(result.ok).toBe(false);
+    expect(result.violations).toContain(expectedViolation);
+    expect(() => assertDrainEvidenceEnvelope(evidence)).toThrow(
+      /invalid controller drain-evidence envelope/
+    );
+  });
+
+  it.each([
+    [
+      'schema hash drift',
+      (nativeSchema: NativeSchemaFixture) => {
+        nativeSchema['x-processAnchorDrainEvidence'].schemaSha256 = '0'.repeat(64);
+      },
+      'controller_reference:schemaSha256',
+    ],
+    [
+      'W4 ready projection drift',
+      (_nativeSchema: NativeSchemaFixture, protocol: ProcessAnchorProtocolFixture) => {
+        protocol.responses.find(({ type }) => type === 'ready')?.fields.pop();
+      },
+      'w4_projection:ready_fields',
+    ],
+    [
+      'W4 drained projection drift',
+      (_nativeSchema: NativeSchemaFixture, protocol: ProcessAnchorProtocolFixture) => {
+        protocol.responses.find(({ type }) => type === 'drained')?.fields.reverse();
+      },
+      'w4_projection:drained_fields',
+    ],
+    [
+      'W4 unclassified response drift',
+      (_nativeSchema: NativeSchemaFixture, protocol: ProcessAnchorProtocolFixture) => {
+        protocol.responses.find(({ type }) => type === 'unclassified_residual')?.fields.pop();
+      },
+      'w4_projection:unclassified_fields',
+    ],
+    [
+      'W6-owned authority wrapper',
+      (_nativeSchema: NativeSchemaFixture, protocol: ProcessAnchorProtocolFixture) => {
+        protocol.sharedDrainDto.authority = 'w6';
+      },
+      'w4_projection:w6_owned_authority_wrapper',
+    ],
+  ])('rejects %s', (_name, mutate, expectedViolation) => {
+    const nativeSchema = structuredClone(
+      readJson('docs/research/hosted-web/phase-0/host-primitives/native-protocol.schema.json')
+    ) as NativeSchemaFixture;
+    const protocol = structuredClone(
+      readJson('docs/research/hosted-web/phase-0/host-primitives/process-anchor.protocol.json')
+    ) as ProcessAnchorProtocolFixture;
+    mutate(nativeSchema, protocol);
+    const result = validateW4DrainEvidenceProjection(nativeSchema, protocol);
+    expect(result.ok).toBe(false);
+    expect(result.violations).toContain(expectedViolation);
   });
 
   it('makes both lanes consume the exact controller path, hash and artifact projection', () => {

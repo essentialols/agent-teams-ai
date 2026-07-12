@@ -10,6 +10,7 @@ import {
   loadControllerArtifactContract,
   validateControllerArtifactProjection,
 } from '../w4-w6-contract/controller-artifact-contract.mjs';
+import { validateW4DrainEvidenceProjection } from '../w4-w6-contract/drain-evidence-envelope.mjs';
 
 const requiredMarkdown = new Map([
   ['target-host-envelope.md', 'P0.W4.TARGET_HOST_ENVELOPE'],
@@ -132,38 +133,11 @@ export async function scanEvidence(directory) {
   }
 
   const processProtocol = records.get('process-anchor.protocol.json');
-  const expectedReadyFields = [
-    'protocolVersion',
-    'spawnNonceHash',
-    'purpose',
-    'resetGeneration',
-    'deploymentGeneration',
-    'processAnchorGeneration',
-    'anchorIdentity',
-    'mainPidfdReady',
-    'ownedProcessGroupReady',
-  ];
-  const expectedDrainFields = [
-    'protocolVersion',
-    'kind',
-    'outcome',
-    'purpose',
-    'resetGeneration',
-    'deploymentGeneration',
-    'processAnchorGeneration',
-    'classificationId',
-    'residuals',
-  ];
-  const expectedUnclassifiedFields = [
-    ...expectedDrainFields,
-    'reason',
-    'containerReplacementRequired',
-  ];
   if (processProtocol) {
-    const ready = processProtocol.responses?.find((response) => response.type === 'ready');
-    const drained = processProtocol.responses?.find((response) => response.type === 'drained');
-    const unclassified = processProtocol.responses?.find(
-      (response) => response.type === 'unclassified_residual'
+    const projection = validateW4DrainEvidenceProjection(
+      records.get('native-protocol.schema.json'),
+      processProtocol,
+      repositoryRoot
     );
     if (
       processProtocol.request?.numericPidTargetsAllowed !== false ||
@@ -172,13 +146,10 @@ export async function scanEvidence(directory) {
     ) {
       failures.push('process-anchor.protocol.json must forbid numeric PID and PGID signaling');
     }
-    if (
-      processProtocol.sharedDrainDto?.kind !== 'process_drain_outcome_v1' ||
-      JSON.stringify(ready?.fields) !== JSON.stringify(expectedReadyFields) ||
-      JSON.stringify(drained?.fields) !== JSON.stringify(expectedDrainFields) ||
-      JSON.stringify(unclassified?.fields) !== JSON.stringify(expectedUnclassifiedFields)
-    ) {
-      failures.push('process-anchor.protocol.json does not emit the exact shared W6 DTOs');
+    if (!projection.ok) {
+      failures.push(
+        `process-anchor.protocol.json differs from controller drain authority: ${projection.violations.join(',')}`
+      );
     }
   }
 

@@ -169,7 +169,7 @@ describe('planTeamRuntimeLanes', () => {
     expect(result).toMatchObject({
       ok: true,
       plan: {
-        mode: 'pure_opencode_worktree_root_lanes',
+        mode: 'pure_opencode_member_lanes',
         primaryMembers: [],
         sideLanes: [
           {
@@ -213,7 +213,7 @@ describe('planTeamRuntimeLanes', () => {
     expect(result).toMatchObject({
       ok: true,
       plan: {
-        mode: 'pure_opencode_worktree_root_lanes',
+        mode: 'pure_opencode_member_lanes',
         primaryMembers: [expect.objectContaining({ name: 'lead-dev', providerId: 'opencode' })],
         sideLanes: [
           {
@@ -223,6 +223,52 @@ describe('planTeamRuntimeLanes', () => {
               name: 'bob',
               providerId: 'opencode',
               cwd: '/repo/.worktrees/bob',
+            }),
+          },
+        ],
+      },
+    });
+  });
+
+  it('creates a secondary member lane when a pure OpenCode teammate uses another model', () => {
+    const result = planTeamRuntimeLanes({
+      leadProviderId: 'opencode',
+      leadModel: 'minimax-coding-plan/MiniMax-M3',
+      baseCwd: '/repo',
+      members: [
+        {
+          name: 'alice',
+          providerId: 'opencode',
+          model: 'minimax-coding-plan/MiniMax-M3',
+          cwd: '/repo',
+        },
+        {
+          name: 'bob',
+          providerId: 'opencode',
+          model: 'zai-coding-plan/glm-5.2',
+          cwd: '/repo',
+        },
+      ],
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      plan: {
+        mode: 'pure_opencode_member_lanes',
+        primaryMembers: [
+          expect.objectContaining({
+            name: 'alice',
+            model: 'minimax-coding-plan/MiniMax-M3',
+          }),
+        ],
+        sideLanes: [
+          {
+            laneId: 'secondary:opencode:bob',
+            providerId: 'opencode',
+            member: expect.objectContaining({
+              name: 'bob',
+              model: 'zai-coding-plan/glm-5.2',
+              cwd: '/repo',
             }),
           },
         ],

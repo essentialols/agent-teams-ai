@@ -500,7 +500,7 @@ describe('TeamLaunchFailureArtifactPack', () => {
     },
     {
       name: 'sanitized launch bootstrap fallback',
-      text: 'Bootstrap was not confirmed before the Codex runtime exited. Pending teammates: alice.',
+      text: 'Bootstrap was not confirmed before the agent runtime exited. Pending teammates: alice.',
       code: 'model_no_bootstrap',
     },
     {

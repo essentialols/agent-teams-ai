@@ -19,6 +19,12 @@ interface OpenCodeLivePreflightTestHooks {
     findMissingOpenCodeModels(output: string, requiredModels: string[]): string[];
     isHealthyOpenCodeHostResponse(response: { ok: boolean }): boolean;
     parseOpenCodeModels(output: string): string[];
+    runManagedOpenCodeModels(
+      requiredModels: string[],
+      cwd: string,
+      env: NodeJS.ProcessEnv
+    ): { ok: boolean; output: string };
+    shouldUseManagedAppCredentials(env: NodeJS.ProcessEnv): boolean;
     stopChild(child: FakeChild, options?: StopChildOptions): Promise<void>;
     taskkillProcessTree(pid: number): Promise<void>;
   };
@@ -61,6 +67,42 @@ describe('opencode live preflight cleanup', () => {
     expect(findMissingOpenCodeModels(output, ['openai/gpt-5.4-mini'])).toEqual([
       'openai/gpt-5.4-mini',
     ]);
+  });
+
+  it('uses the managed provider catalog only when app credentials and runtime CLI are explicit', async () => {
+    const { shouldUseManagedAppCredentials } = (await loadTestHooks())
+      .__opencodeLivePreflightTestHooks;
+
+    expect(
+      shouldUseManagedAppCredentials({
+        OPENCODE_E2E_USE_REAL_APP_CREDENTIALS: '1',
+        CLAUDE_AGENT_TEAMS_ORCHESTRATOR_CLI_PATH: '/tmp/cli-source',
+      })
+    ).toBe(true);
+    expect(
+      shouldUseManagedAppCredentials({
+        OPENCODE_E2E_USE_REAL_APP_CREDENTIALS: '1',
+      })
+    ).toBe(false);
+  });
+
+  runOnPosix('reads required models from the managed runtime provider catalog', async () => {
+    const { runManagedOpenCodeModels } = (await loadTestHooks())
+      .__opencodeLivePreflightTestHooks;
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'managed-opencode-preflight-'));
+    const cliPath = path.join(tempDir, 'runtime-cli');
+    await writeExecutable(cliPath, fakeManagedProviderCliScript());
+
+    const result = runManagedOpenCodeModels(
+      ['xai/grok-4.3', 'kiro/auto'],
+      tempDir,
+      {
+        ...process.env,
+        CLAUDE_AGENT_TEAMS_ORCHESTRATOR_CLI_PATH: cliPath,
+      }
+    );
+
+    expect(result).toEqual({ ok: true, output: 'xai/grok-4.3\nkiro/auto\n' });
   });
 
   it('waits for child close after Windows process-tree cleanup', async () => {
@@ -160,6 +202,15 @@ const fs = require('node:fs');
 
 fs.writeFileSync(process.env.FAKE_TASKKILL_ARGS_PATH, process.argv.slice(2).join(' ') + '\\n');
 process.exit(0);
+`;
+}
+
+function fakeManagedProviderCliScript(): string {
+  return `#!/usr/bin/env node
+const providerIndex = process.argv.indexOf('--provider');
+const provider = providerIndex >= 0 ? process.argv[providerIndex + 1] : '';
+const modelId = provider === 'xai' ? 'xai/grok-4.3' : provider === 'kiro' ? 'kiro/auto' : '';
+process.stdout.write(JSON.stringify({ models: { models: modelId ? [{ modelId }] : [] } }));
 `;
 }
 

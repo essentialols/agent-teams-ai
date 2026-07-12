@@ -1940,7 +1940,7 @@ export class TeamDataService {
     const suffixInfo = parseNumericSuffixName(name);
     if (suffixInfo && suffixInfo.suffix >= 2) {
       throw new Error(
-        `Member name "${name}" is not allowed (reserved for Claude CLI auto-suffix). Use "${suffixInfo.base}" instead.`
+        `Member name "${name}" is not allowed (reserved for runtime-managed numeric suffixes). Use "${suffixInfo.base}" instead.`
       );
     }
 
@@ -2028,7 +2028,7 @@ export class TeamDataService {
         const suffixInfo = parseNumericSuffixName(name);
         if (suffixInfo && suffixInfo.suffix >= 2) {
           throw new Error(
-            `Member name "${name}" is not allowed (reserved for Claude CLI auto-suffix). Use "${suffixInfo.base}" instead.`
+            `Member name "${name}" is not allowed (reserved for runtime-managed numeric suffixes). Use "${suffixInfo.base}" instead.`
           );
         }
         nextByName.add(name.toLowerCase());
@@ -3393,7 +3393,7 @@ export class TeamDataService {
           const suffixInfo = parseNumericSuffixName(name);
           if (suffixInfo && suffixInfo.suffix >= 2) {
             throw new Error(
-              `Member name "${name}" is not allowed (reserved for Claude CLI auto-suffix). Use "${suffixInfo.base}" instead.`
+              `Member name "${name}" is not allowed (reserved for runtime-managed numeric suffixes). Use "${suffixInfo.base}" instead.`
             );
           }
           return name;

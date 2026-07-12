@@ -290,6 +290,79 @@ describe('Team agent launch matrix safe e2e', () => {
     });
   });
 
+  it('launches distinct pure OpenCode models on separate member lanes', async () => {
+    const teamName = 'pure-opencode-distinct-model-lanes-safe-e2e';
+    const adapter = new FakeOpenCodeRuntimeAdapter();
+    const svc = new TeamProvisioningService();
+    svc.setRuntimeAdapterRegistry(new TeamRuntimeAdapterRegistry([adapter]));
+    const progressEvents: TeamProvisioningProgress[] = [];
+
+    await svc.createTeam(
+      {
+        teamName,
+        cwd: projectPath,
+        providerId: 'opencode',
+        model: 'minimax-coding-plan/MiniMax-M3',
+        skipPermissions: true,
+        members: [
+          {
+            name: 'alice',
+            role: 'MiniMax teammate',
+            providerId: 'opencode',
+            model: 'minimax-coding-plan/MiniMax-M3',
+          },
+          {
+            name: 'bob',
+            role: 'Z.AI teammate',
+            providerId: 'opencode',
+            model: 'zai-coding-plan/glm-5.2',
+          },
+        ],
+      },
+      (progress) => progressEvents.push(progress)
+    );
+
+    expect(adapter.launchInputs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          laneId: 'primary',
+          model: 'minimax-coding-plan/MiniMax-M3',
+          expectedMembers: [
+            expect.objectContaining({
+              name: 'alice',
+              model: 'minimax-coding-plan/MiniMax-M3',
+            }),
+          ],
+        }),
+        expect.objectContaining({
+          laneId: 'secondary:opencode:bob',
+          model: 'zai-coding-plan/glm-5.2',
+          runtimeOnly: true,
+          expectedMembers: [
+            expect.objectContaining({
+              name: 'bob',
+              model: 'zai-coding-plan/glm-5.2',
+            }),
+          ],
+        }),
+      ])
+    );
+    expect(progressEvents.at(-1)).toMatchObject({
+      state: 'ready',
+      message: 'OpenCode member lanes are ready',
+    });
+
+    const snapshot = await svc.getTeamAgentRuntimeSnapshot(teamName);
+    expect(snapshot.members.alice).toMatchObject({
+      alive: true,
+      runtimeModel: 'minimax-coding-plan/MiniMax-M3',
+    });
+    expect(snapshot.members.bob).toMatchObject({
+      alive: true,
+      runtimeModel: 'zai-coding-plan/glm-5.2',
+    });
+  });
+
   it('launches pure OpenCode worktree members as aggregate worktree-root lanes', async () => {
     const teamName = 'pure-opencode-worktree-root-lanes-safe-e2e';
     const bobWorktree = path.join(projectPath, '.agent-teams', 'bob');
@@ -379,7 +452,7 @@ describe('Team agent launch matrix safe e2e', () => {
     );
     expect(progressEvents.at(-1)).toMatchObject({
       state: 'ready',
-      message: 'OpenCode worktree lanes are ready',
+      message: 'OpenCode member lanes are ready',
     });
     expect(svc.getAliveTeams()).toContain(teamName);
 

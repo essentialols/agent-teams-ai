@@ -7,8 +7,8 @@ import {
   buildOpenCodeSecondaryLaneId,
   buildPlannedMemberLaneIdentity,
   isOpenCodeSideLanePlan,
+  isPureOpenCodeMemberLanePlan,
   isPureOpenCodeSoloLanePlan,
-  isPureOpenCodeWorktreeRootLanePlan,
   OPEN_CODE_SOLO_MEMBER_NAME,
   OPEN_CODE_SOLO_MEMBER_ROLE,
   type TeamRuntimeLanePlan,
@@ -4798,11 +4798,13 @@ export class TeamProvisioningService {
 
   private planRuntimeLanesOrThrow(
     leadProviderId: TeamProviderId | undefined,
+    leadModel: string | undefined,
     members: TeamCreateRequest['members'],
     baseCwd?: string
   ): TeamRuntimeLanePlan {
     return this.runtimeLaneCoordinator.planProvisioningMembers({
       leadProviderId,
+      leadModel,
       members,
       baseCwd,
       hasOpenCodeRuntimeAdapter: this.getOpenCodeRuntimeAdapter() !== null,
@@ -10328,7 +10330,7 @@ export class TeamProvisioningService {
     boundRunProvisioningOutputParts(run);
 
     const progress = updateProgress(run, 'failed', `${hint} failed — ${statusLabel}`, {
-      error: `Claude CLI reported ${statusLabel} during startup. The team was not started.`,
+      error: `${getRunRuntimeFailureLabel(run)} reported ${statusLabel} during startup. The team was not started.`,
       cliLogsTail: extractCliLogsFromRun(run),
     });
     run.onProgress(progress);
@@ -10476,12 +10478,16 @@ export class TeamProvisioningService {
       logger.error(`[${run.teamName}] Auth failure detected in ${source} after retry — giving up`);
       run.processKilled = true;
       killTeamProcess(run.child);
-      const progress = updateProgress(run, 'failed', 'Authentication failed — CLI requires login', {
-        error:
-          'Claude CLI is not authenticated. Run `claude auth login` (or start `claude` and run `/login`) ' +
-          'to authenticate, or set ANTHROPIC_API_KEY and try again.',
-        cliLogsTail: extractCliLogsFromRun(run),
-      });
+      const runtimeLabel = getRunRuntimeFailureLabel(run);
+      const progress = updateProgress(
+        run,
+        'failed',
+        `Authentication failed - ${runtimeLabel} requires sign-in`,
+        {
+          error: `${runtimeLabel} is not authenticated. Open the Dashboard, authenticate the required provider, and try again.`,
+          cliLogsTail: extractCliLogsFromRun(run),
+        }
+      );
       run.onProgress(progress);
       this.cleanupRun(run);
     }
@@ -10665,7 +10671,7 @@ export class TeamProvisioningService {
       });
     } catch (error) {
       run.authRetryInProgress = false;
-      const progress = updateProgress(run, 'failed', 'Failed to respawn Claude CLI', {
+      const progress = updateProgress(run, 'failed', 'Failed to respawn agent runtime', {
         error: error instanceof Error ? error.message : String(error),
       });
       run.onProgress(progress);
@@ -10735,10 +10741,15 @@ export class TeamProvisioningService {
           if (readyOnTimeout) return;
 
           const hint = run.isLaunch ? ' (launch)' : '';
-          const progress = updateProgress(run, 'failed', `Timed out waiting for CLI${hint}`, {
-            error: `Timed out waiting for CLI${hint}.`,
-            cliLogsTail: extractCliLogsFromRun(run),
-          });
+          const progress = updateProgress(
+            run,
+            'failed',
+            `Timed out waiting for agent runtime${hint}`,
+            {
+              error: `Timed out waiting for agent runtime${hint}.`,
+              cliLogsTail: extractCliLogsFromRun(run),
+            }
+          );
           run.onProgress(progress);
           this.cleanupRun(run);
         })();
@@ -10747,7 +10758,7 @@ export class TeamProvisioningService {
 
     child.once('error', (error) => {
       const hint = run.isLaunch ? ' (launch)' : '';
-      const progress = updateProgress(run, 'failed', `Failed to start Claude CLI${hint}`, {
+      const progress = updateProgress(run, 'failed', `Failed to start agent runtime${hint}`, {
         error: error.message,
         cliLogsTail: extractCliLogsFromRun(run),
       });
@@ -11062,6 +11073,7 @@ export class TeamProvisioningService {
       );
       const lanePlan = this.planRuntimeLanesOrThrow(
         request.providerId,
+        request.model,
         allEffectiveMemberSpecs,
         request.cwd
       );
@@ -11480,7 +11492,7 @@ export class TeamProvisioningService {
 
         emitProvisioningCheckpoint(
           run,
-          'Spawning Claude CLI process',
+          'Spawning agent runtime process',
           `args=${spawnArgs.length} cwd=${request.cwd}`
         );
         child = spawnCli(claudePath, spawnArgs, {
@@ -11516,7 +11528,7 @@ export class TeamProvisioningService {
         throw error;
       }
 
-      updateProgress(run, 'spawning', 'Starting Claude CLI process', {
+      updateProgress(run, 'spawning', 'Starting agent runtime process', {
         pid: child.pid ?? undefined,
         warnings: mergeProvisioningWarnings(run.progress.warnings, runtimeWarning),
       });
@@ -11559,9 +11571,9 @@ export class TeamProvisioningService {
               return; // cleanupRun already called inside tryCompleteAfterTimeout
             }
 
-            const progress = updateProgress(run, 'failed', 'Timed out waiting for CLI', {
+            const progress = updateProgress(run, 'failed', 'Timed out waiting for agent runtime', {
               error:
-                'Timed out waiting for CLI. Run `claude` once in terminal to complete onboarding and try again.',
+                'Timed out waiting for agent runtime. Open the Dashboard, verify the configured providers are ready, and try again.',
               cliLogsTail: extractCliLogsFromRun(run),
             });
             run.onProgress(progress);
@@ -11571,7 +11583,7 @@ export class TeamProvisioningService {
       }, getProvisioningRunTimeoutMs(run));
 
       child.once('error', (error) => {
-        const progress = updateProgress(run, 'failed', 'Failed to start Claude CLI', {
+        const progress = updateProgress(run, 'failed', 'Failed to start agent runtime', {
           error: error.message,
           cliLogsTail: extractCliLogsFromRun(run),
         });
@@ -11620,6 +11632,7 @@ export class TeamProvisioningService {
     });
     const lanePlan = this.planRuntimeLanesOrThrow(
       launchRequest.providerId,
+      launchRequest.model,
       effectiveMembers,
       launchRequest.cwd
     );
@@ -11653,8 +11666,8 @@ export class TeamProvisioningService {
       providerBackendId: launchRequest.providerBackendId,
     });
     await this.writeOpenCodeTeamConfig(launchRequest, effectiveMembers);
-    if (isPureOpenCodeWorktreeRootLanePlan(lanePlan)) {
-      return this.runOpenCodeWorktreeRootAggregateLaunch({
+    if (isPureOpenCodeMemberLanePlan(lanePlan)) {
+      return this.runOpenCodeMemberLaneAggregateLaunch({
         request: launchRequest,
         members: effectiveMembers,
         lanePlan,
@@ -11704,6 +11717,7 @@ export class TeamProvisioningService {
     });
     const lanePlan = this.planRuntimeLanesOrThrow(
       launchRequest.providerId,
+      launchRequest.model,
       effectiveMembers,
       launchRequest.cwd
     );
@@ -11728,8 +11742,8 @@ export class TeamProvisioningService {
       existingTasks,
       false
     );
-    if (isPureOpenCodeWorktreeRootLanePlan(lanePlan)) {
-      return this.runOpenCodeWorktreeRootAggregateLaunch({
+    if (isPureOpenCodeMemberLanePlan(lanePlan)) {
+      return this.runOpenCodeMemberLaneAggregateLaunch({
         request: launchRequest,
         members: effectiveMembers,
         lanePlan,
@@ -11754,7 +11768,7 @@ export class TeamProvisioningService {
     progress: TeamProvisioningProgress;
     request: TeamCreateRequest | TeamLaunchRequest;
     members: TeamCreateRequest['members'];
-    lanePlan: Extract<TeamRuntimeLanePlan, { mode: 'pure_opencode_worktree_root_lanes' }>;
+    lanePlan: Extract<TeamRuntimeLanePlan, { mode: 'pure_opencode_member_lanes' }>;
     onProgress: (progress: TeamProvisioningProgress) => void;
   }): ProvisioningRun {
     return {
@@ -11969,10 +11983,10 @@ export class TeamProvisioningService {
     return 'clean_success';
   }
 
-  private async runOpenCodeWorktreeRootAggregateLaunch(input: {
+  private async runOpenCodeMemberLaneAggregateLaunch(input: {
     request: TeamCreateRequest | TeamLaunchRequest;
     members: TeamCreateRequest['members'];
-    lanePlan: Extract<TeamRuntimeLanePlan, { mode: 'pure_opencode_worktree_root_lanes' }>;
+    lanePlan: Extract<TeamRuntimeLanePlan, { mode: 'pure_opencode_member_lanes' }>;
     prompt: string;
     sourceWarning?: string;
     onProgress: (progress: TeamProvisioningProgress) => void;
@@ -12015,7 +12029,7 @@ export class TeamProvisioningService {
       runId,
       teamName: input.request.teamName,
       state: 'validating',
-      message: 'Validating OpenCode worktree lane launch gate',
+      message: 'Validating OpenCode member lane launch gate',
       startedAt,
       updatedAt: startedAt,
       warnings: input.sourceWarning ? [input.sourceWarning] : undefined,
@@ -12045,7 +12059,7 @@ export class TeamProvisioningService {
       {
         ...initialRuntimeProgress,
         state: 'spawning',
-        message: 'Starting OpenCode worktree runtime lanes',
+        message: 'Starting OpenCode member runtime lanes',
         updatedAt: nowIso(),
       },
       input.onProgress
@@ -12085,17 +12099,17 @@ export class TeamProvisioningService {
           ...launching,
           state: success || pending ? 'ready' : 'failed',
           message: success
-            ? 'OpenCode worktree lanes are ready'
+            ? 'OpenCode member lanes are ready'
             : pending
-              ? 'OpenCode worktree lanes are waiting for runtime evidence or permissions'
-              : 'OpenCode worktree lane launch failed readiness gate',
+              ? 'OpenCode member lanes are waiting for runtime evidence or permissions'
+              : 'OpenCode member lane launch failed readiness gate',
           messageSeverity: pending ? 'warning' : failed ? 'error' : undefined,
           updatedAt: nowIso(),
           error: failed
             ? run.mixedSecondaryLanes
                 .flatMap((lane) => lane.diagnostics)
                 .filter(Boolean)
-                .join('\n') || 'OpenCode worktree lane launch failed'
+                .join('\n') || 'OpenCode member lane launch failed'
             : undefined,
           cliLogsTail:
             run.mixedSecondaryLanes.flatMap((lane) => lane.diagnostics).join('\n') || undefined,
@@ -12148,7 +12162,7 @@ export class TeamProvisioningService {
         {
           ...launching,
           state: 'failed',
-          message: 'OpenCode worktree lane launch failed',
+          message: 'OpenCode member lane launch failed',
           messageSeverity: 'error',
           updatedAt: nowIso(),
           error: message,
@@ -12777,6 +12791,7 @@ export class TeamProvisioningService {
       );
       const lanePlan = this.planRuntimeLanesOrThrow(
         request.providerId,
+        request.model,
         allEffectiveMemberSpecs,
         request.cwd
       );
@@ -13262,7 +13277,7 @@ export class TeamProvisioningService {
         }
         emitProvisioningCheckpoint(
           run,
-          'Spawning Claude CLI process for team launch',
+          'Spawning agent runtime process for team launch',
           `args=${finalLaunchArgs.length} cwd=${request.cwd}`
         );
         child = spawnCli(claudePath, finalLaunchArgs, {
@@ -13293,7 +13308,7 @@ export class TeamProvisioningService {
         throw error;
       }
 
-      updateProgress(run, 'spawning', 'Starting Claude CLI process for team launch', {
+      updateProgress(run, 'spawning', 'Starting agent runtime process for team launch', {
         pid: child.pid ?? undefined,
         warnings: mergeProvisioningWarnings(run.progress.warnings, runtimeWarning),
       });
@@ -13334,10 +13349,15 @@ export class TeamProvisioningService {
               return;
             }
 
-            const progress = updateProgress(run, 'failed', 'Timed out waiting for CLI (launch)', {
-              error: 'Timed out waiting for CLI during team launch.',
-              cliLogsTail: extractCliLogsFromRun(run),
-            });
+            const progress = updateProgress(
+              run,
+              'failed',
+              'Timed out waiting for agent runtime (launch)',
+              {
+                error: 'Timed out waiting for agent runtime during team launch.',
+                cliLogsTail: extractCliLogsFromRun(run),
+              }
+            );
             run.onProgress(progress);
             this.cleanupRun(run);
           })();
@@ -13345,7 +13365,7 @@ export class TeamProvisioningService {
       }, getProvisioningRunTimeoutMs(run));
 
       child.once('error', (error) => {
-        const progress = updateProgress(run, 'failed', 'Failed to start Claude CLI (launch)', {
+        const progress = updateProgress(run, 'failed', 'Failed to start agent runtime (launch)', {
           error: error.message,
           cliLogsTail: extractCliLogsFromRun(run),
         });

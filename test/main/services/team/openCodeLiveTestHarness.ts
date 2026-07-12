@@ -21,7 +21,10 @@ import {
   OpenCodeStateChangingBridgeCommandService,
   type RuntimeStoreManifestReader,
 } from '../../../../src/main/services/team/opencode/bridge/OpenCodeStateChangingBridgeCommandService';
-import { readOpenCodeRuntimeLaneIndex } from '../../../../src/main/services/team/opencode/store/OpenCodeRuntimeManifestEvidenceReader';
+import {
+  readCommittedOpenCodeBootstrapSessionEvidence,
+  readOpenCodeRuntimeLaneIndex,
+} from '../../../../src/main/services/team/opencode/store/OpenCodeRuntimeManifestEvidenceReader';
 import { OpenCodeTeamRuntimeAdapter } from '../../../../src/main/services/team/runtime/OpenCodeTeamRuntimeAdapter';
 import { TeamRuntimeAdapterRegistry } from '../../../../src/main/services/team/runtime/TeamRuntimeAdapter';
 import { resolveAgentTeamsMcpLaunchSpec } from '../../../../src/main/services/team/TeamMcpConfigBuilder';
@@ -253,7 +256,8 @@ export async function readInboxMessages(inboxPath: string): Promise<InboxMessage
 export async function waitUntil(
   predicate: () => Promise<boolean>,
   timeoutMs: number,
-  pollMs = 500
+  pollMs = 500,
+  getDiagnostics?: () => Promise<string>
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -262,7 +266,10 @@ export async function waitUntil(
     }
     await new Promise((resolve) => setTimeout(resolve, pollMs));
   }
-  throw new Error(`Timed out after ${timeoutMs}ms waiting for condition`);
+  const diagnostics = getDiagnostics ? await getDiagnostics() : null;
+  throw new Error(
+    `Timed out after ${timeoutMs}ms waiting for condition${diagnostics ? `\n${diagnostics}` : ''}`
+  );
 }
 
 export async function waitForOpenCodeLanesStopped(
@@ -281,6 +288,7 @@ export async function getRuntimeTranscript(input: {
   memberName: string;
   projectPath: string;
 }): Promise<unknown> {
+  const laneId = await resolveOpenCodeMemberLaneId(input.teamName, input.memberName);
   return input.bridgeClient
     .execute<
       { teamId: string; teamName: string; laneId: string; memberName: string },
@@ -290,7 +298,7 @@ export async function getRuntimeTranscript(input: {
       {
         teamId: input.teamName,
         teamName: input.teamName,
-        laneId: 'primary',
+        laneId,
         memberName: input.memberName,
       },
       { cwd: input.projectPath, timeoutMs: 60_000 }
@@ -299,6 +307,25 @@ export async function getRuntimeTranscript(input: {
       ok: false as const,
       error: String(transcriptError),
     }));
+}
+
+async function resolveOpenCodeMemberLaneId(
+  teamName: string,
+  memberName: string
+): Promise<string> {
+  const laneIndex = await readOpenCodeRuntimeLaneIndex(getTeamsBasePath(), teamName);
+  const laneIds = Object.keys(laneIndex.lanes);
+  for (const laneId of laneIds) {
+    const evidence = await readCommittedOpenCodeBootstrapSessionEvidence({
+      teamsBasePath: getTeamsBasePath(),
+      teamName,
+      laneId,
+    }).catch(() => null);
+    if (evidence?.sessions.some((session) => session.memberName === memberName)) {
+      return laneId;
+    }
+  }
+  return laneIds.includes('primary') ? 'primary' : (laneIds[0] ?? 'primary');
 }
 
 export async function waitForOpenCodeMemberIdle(input: {

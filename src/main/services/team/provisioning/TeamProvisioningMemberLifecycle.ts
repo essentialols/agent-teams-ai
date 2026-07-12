@@ -2747,7 +2747,7 @@ export class TeamProvisioningMemberLifecycleController {
       leadProviderId === 'opencode' && (run.mixedSecondaryLanes?.length ?? 0) > 0;
     if (leadProviderId === 'opencode' && !isOpenCodeAggregateRun) {
       throw new Error(
-        'Retrying OpenCode secondary lanes requires an active OpenCode worktree lane run.'
+        'Retrying OpenCode secondary lanes requires an active OpenCode member lane run.'
       );
     }
     if (!this.getOpenCodeRuntimeAdapter()) {
@@ -3248,7 +3248,7 @@ export class TeamProvisioningMemberLifecycleController {
     const leadProviderId = resolveTeamProviderId(run.request.providerId);
     if (leadProviderId === 'opencode' && (run.mixedSecondaryLanes?.length ?? 0) === 0) {
       throw new Error(
-        'OpenCode secondary lane reattach requires an active OpenCode worktree lane run.'
+        'OpenCode secondary lane reattach requires an active OpenCode member lane run.'
       );
     }
     if (!this.getOpenCodeRuntimeAdapter()) {

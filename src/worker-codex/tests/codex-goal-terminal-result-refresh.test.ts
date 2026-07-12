@@ -54,7 +54,7 @@ describe("completed Codex goal result refresh", () => {
         resultStatus: "done",
         workspaceExists: true,
         workspaceDirty: true,
-        changedFiles: ["tracked.txt"],
+        changedFiles: ["./"],
         recommendedAction: "review_completed",
         warnings: [],
       },

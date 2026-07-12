@@ -41,7 +41,7 @@ export async function refreshCompletedCodexGoalResultArtifacts(input: {
     classification: input.existingResult.classification,
     reason: input.existingResult.reason,
     details: input.existingResult.details,
-    changedFiles: input.changedFiles,
+    changedFiles: input.existingResult.changedFiles,
     evidence: [
       ...input.existingResult.evidence,
       "supervisor_refreshed_terminal_result_artifacts",

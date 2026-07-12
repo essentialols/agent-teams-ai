@@ -402,6 +402,21 @@ describe('TeamProvisioningDiagnosticsPreflightCompatibilityFacade', () => {
     expect(facade.providerRuntimeMock.spawnProbe).toHaveBeenCalledTimes(2);
   });
 
+  it('does not reuse cached CLI help output across working directories', async () => {
+    const facade = new TestDiagnosticsPreflightCompatibilityFacade();
+    facade.providerRuntimeMock.spawnProbe.mockImplementation(async (_claudePath, _args, cwd) => ({
+      exitCode: 0,
+      stdout: `Usage from ${cwd}`,
+      stderr: '',
+    }));
+
+    await expect(facade.getCliHelpOutput('/repo/first')).resolves.toBe('Usage from /repo/first');
+    await expect(facade.getCliHelpOutput('/repo/second')).resolves.toBe('Usage from /repo/second');
+
+    expect(facade.prepareFacadeMock.getCachedOrProbeResult).toHaveBeenCalledTimes(2);
+    expect(facade.providerRuntimeMock.spawnProbe).toHaveBeenCalledTimes(2);
+  });
+
   it('releases a failed CLI help preflight so a later request can retry', async () => {
     const facade = new TestDiagnosticsPreflightCompatibilityFacade();
     const probeError = new Error('probe failed');

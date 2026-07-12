@@ -9,11 +9,12 @@ import { createProbeCacheKey } from '../TeamProvisioningProviderPreflight';
 
 import type {
   CachedProbeResult,
+  ProbeResult,
   ProviderProbeCachePort,
   ProviderProbePublication,
   TeamProvisioningPrepareCoordinatorPorts,
 } from '../TeamProvisioningPrepareCoordinator';
-import type { TeamCreateRequest } from '@shared/types';
+import type { TeamCreateRequest, TeamProvisioningPrepareResult } from '@shared/types';
 
 function createCoordinator(
   overrides: Partial<TeamProvisioningPrepareCoordinatorPorts> = {}
@@ -145,6 +146,31 @@ describe('TeamProvisioningPrepareCoordinator', () => {
     expect(secondResult.warnings).toEqual(['diagnostic note']);
   });
 
+  it('deeply isolates future prepare result fields between coalesced callers', async () => {
+    type FuturePrepareResult = TeamProvisioningPrepareResult & {
+      runtimeFacts: { models: { id: string }[] };
+    };
+    const sharedResult: FuturePrepareResult = {
+      ready: true,
+      message: 'ready',
+      runtimeFacts: { models: [{ id: 'original' }] },
+    };
+    const coordinator = createCoordinator();
+    vi.spyOn(coordinator, 'prepareForProvisioningOnce').mockResolvedValue(sharedResult);
+
+    const first = coordinator.prepareForProvisioning('/workspace/future-prepare-fields');
+    const second = coordinator.prepareForProvisioning('/workspace/future-prepare-fields');
+    const [firstResult, secondResult] = (await Promise.all([first, second])) as [
+      FuturePrepareResult,
+      FuturePrepareResult,
+    ];
+
+    firstResult.runtimeFacts.models[0].id = 'mutated';
+
+    expect(secondResult.runtimeFacts.models).toEqual([{ id: 'original' }]);
+    expect(sharedResult.runtimeFacts.models).toEqual([{ id: 'original' }]);
+  });
+
   it('normalizes prepare in-flight keys for set-like provider and model options', () => {
     const coordinator = createCoordinator();
 
@@ -179,12 +205,68 @@ describe('TeamProvisioningPrepareCoordinator', () => {
     );
   });
 
+  it('coalesces set-like model checks without changing the first request order', async () => {
+    let releaseVerification:
+      | ((result: { details: string[]; warnings: string[]; blockingMessages: string[] }) => void)
+      | null = null;
+    const verifySelectedProviderModels = vi.fn(
+      () =>
+        new Promise<{
+          details: string[];
+          warnings: string[];
+          blockingMessages: string[];
+        }>((resolve) => {
+          releaseVerification = resolve;
+        })
+    );
+    const coordinator = createCoordinator({ verifySelectedProviderModels });
+
+    const first = coordinator.prepareForProvisioning('/workspace/canonical-model-checks', {
+      providerId: 'codex',
+      modelChecks: [
+        { providerId: 'codex', model: 'zed' },
+        { providerId: 'codex', model: 'alpha' },
+      ],
+    });
+    const second = coordinator.prepareForProvisioning('/workspace/canonical-model-checks', {
+      providerId: 'codex',
+      modelChecks: [
+        { providerId: 'codex', model: 'alpha' },
+        { providerId: 'codex', model: 'zed' },
+      ],
+    });
+
+    await vi.waitFor(() => expect(verifySelectedProviderModels).toHaveBeenCalledOnce());
+    expect(verifySelectedProviderModels).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelIds: ['zed', 'alpha'],
+        modelChecks: [{ modelId: 'zed' }, { modelId: 'alpha' }],
+      })
+    );
+
+    const release = releaseVerification as
+      | ((result: { details: string[]; warnings: string[]; blockingMessages: string[] }) => void)
+      | null;
+    if (!release) {
+      throw new Error('Expected model verification release callback to be registered.');
+    }
+    release({ details: [], warnings: [], blockingMessages: [] });
+
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      expect.objectContaining({ ready: true }),
+      expect.objectContaining({ ready: true }),
+    ]);
+    expect(verifySelectedProviderModels).toHaveBeenCalledOnce();
+  });
+
   it('clears one probe cache entry per requested provider when forceFresh is set', async () => {
     const cachedResult = (cacheKey: string): CachedProbeResult => ({
       cacheKey,
-      claudePath: '/fake/claude',
-      authSource: 'none',
       cachedAtMs: 1,
+      result: {
+        claudePath: '/fake/claude',
+        authSource: 'none',
+      },
     });
     const invalidateProbeCache = vi.fn();
     const providerProbeCache = createProviderProbeCacheFake({
@@ -219,9 +301,11 @@ describe('TeamProvisioningPrepareCoordinator', () => {
       }
       return {
         cacheKey,
-        claudePath: '/fake/claude',
-        authSource: 'codex_runtime',
         cachedAtMs: 1,
+        result: {
+          claudePath: '/fake/claude',
+          authSource: 'codex_runtime',
+        },
       };
     });
     const providerProbeCache = createProviderProbeCacheFake({ get: getProbeCache });
@@ -235,6 +319,39 @@ describe('TeamProvisioningPrepareCoordinator', () => {
 
     expect(getProbeCache).toHaveBeenCalledWith(cacheKey);
     expect(probeClaudeRuntime).not.toHaveBeenCalled();
+  });
+
+  it('preserves and deeply isolates future cached fields through coordinator cache hits', async () => {
+    type FutureProbeResult = ProbeResult & {
+      runtimeFacts: { models: { id: string }[] };
+    };
+    const cwd = '/workspace/prepare-cache-hit-future-fields';
+    const cacheKey = createProbeCacheKey(cwd, 'codex');
+    const cached: CachedProbeResult & { result: FutureProbeResult } = {
+      cacheKey,
+      cachedAtMs: 1,
+      result: {
+        claudePath: '/fake/claude',
+        authSource: 'codex_runtime',
+        runtimeFacts: { models: [{ id: 'original' }] },
+      },
+    };
+    const providerProbeCache = createProviderProbeCacheFake({
+      get: vi.fn(() => cached),
+    });
+    const coordinator = createCoordinator({ providerProbeCache });
+
+    const first = (await coordinator.getCachedOrProbeResult(cwd, 'codex')) as FutureProbeResult;
+    first.runtimeFacts.models[0].id = 'mutated';
+    const second = (await coordinator.getCachedOrProbeResult(cwd, 'codex')) as FutureProbeResult;
+
+    expect(second).toEqual({
+      claudePath: '/fake/claude',
+      authSource: 'codex_runtime',
+      runtimeFacts: { models: [{ id: 'original' }] },
+    });
+    expect(cached.result.runtimeFacts.models).toEqual([{ id: 'original' }]);
+    expect(providerProbeCache.getOrCreate).not.toHaveBeenCalled();
   });
 
   it('materializes non-Anthropic teammate defaults once per provider through ports', async () => {
@@ -345,16 +462,91 @@ describe('TeamProvisioningPrepareCoordinator', () => {
     if (!cached) {
       throw new Error('Expected cached probe result.');
     }
-    cached.claudePath = '/mutated';
+    cached.result.claudePath = '/mutated';
     cached.cachedAtMs = 0;
     expect(cache.get('probe-key')).toMatchObject({
-      claudePath: '/fake/claude',
       cachedAtMs: 1_000,
+      result: { claudePath: '/fake/claude' },
     });
     now = 1_009;
     expect(cache.get('probe-key')).not.toBeNull();
     now = 1_010;
     expect(cache.get('probe-key')).toBeNull();
+  });
+
+  it('deeply isolates future fields from probe publishers, coalesced callers, and cache hits', async () => {
+    type FutureProbeResult = ProbeResult & {
+      cacheKey: { source: string };
+      cachedAtMs: { source: string };
+      runtimeFacts: { models: { id: string }[] };
+    };
+    const cache = createInMemoryProviderProbeCachePort();
+    const publication = deferredPublication();
+    const publishedResult: FutureProbeResult = {
+      claudePath: '/fake/claude',
+      authSource: 'none',
+      cacheKey: { source: 'probe-result' },
+      cachedAtMs: { source: 'probe-result' },
+      runtimeFacts: { models: [{ id: 'original' }] },
+    };
+    const create = vi.fn(() => publication.promise);
+    const firstCall = cache.getOrCreate('probe-key', create);
+    const secondCall = cache.getOrCreate('probe-key', create);
+
+    await vi.waitFor(() => expect(create).toHaveBeenCalledOnce());
+    publication.resolve({ result: publishedResult, cacheable: true });
+    const [first, second] = (await Promise.all([firstCall, secondCall])) as [
+      FutureProbeResult,
+      FutureProbeResult,
+    ];
+
+    first.runtimeFacts.models[0].id = 'first-mutated';
+    publishedResult.runtimeFacts.models[0].id = 'publisher-mutated';
+    const cacheHit = (await cache.getOrCreate('probe-key', async () => {
+      throw new Error('Expected the cached probe result.');
+    })) as FutureProbeResult;
+
+    expect(second.runtimeFacts.models).toEqual([{ id: 'original' }]);
+    expect(cacheHit.cacheKey).toEqual({ source: 'probe-result' });
+    expect(cacheHit.cachedAtMs).toEqual({ source: 'probe-result' });
+    expect(cacheHit.runtimeFacts.models).toEqual([{ id: 'original' }]);
+    cacheHit.runtimeFacts.models[0].id = 'cache-hit-mutated';
+    expect(cache.get('probe-key')).toMatchObject({
+      result: { runtimeFacts: { models: [{ id: 'original' }] } },
+    });
+  });
+
+  it('does not pin a failed clone of a future probe result field', async () => {
+    const cache = createInMemoryProviderProbeCachePort();
+    const create = vi
+      .fn<() => Promise<ProviderProbePublication>>()
+      .mockResolvedValueOnce({
+        result: {
+          claudePath: '/uncloneable/claude',
+          authSource: 'none',
+          runtimeFacts: { format: () => 'future field' },
+        },
+        cacheable: true,
+      })
+      .mockResolvedValueOnce({
+        result: { claudePath: '/retry/claude', authSource: 'none' },
+        cacheable: true,
+      });
+    const first = cache.getOrCreate('probe-key', create);
+    const second = cache.getOrCreate('probe-key', create);
+
+    const failedAttempts = await Promise.allSettled([first, second]);
+
+    expect(failedAttempts.map((attempt) => attempt.status)).toEqual(['rejected', 'rejected']);
+    expect(create).toHaveBeenCalledOnce();
+    await expect(cache.getOrCreate('probe-key', create)).resolves.toEqual({
+      claudePath: '/retry/claude',
+      authSource: 'none',
+    });
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(cache.get('probe-key')).toMatchObject({
+      result: { claudePath: '/retry/claude', authSource: 'none' },
+    });
   });
 
   it('shares rejected probe attempts and permits a later retry', async () => {
@@ -442,8 +634,10 @@ describe('TeamProvisioningPrepareCoordinator', () => {
     expect(staleCreate).toHaveBeenCalledOnce();
     expect(freshCreate).toHaveBeenCalledOnce();
     expect(cache.get('probe-key')).toMatchObject({
-      claudePath: '/fresh/claude',
-      authSource: 'none',
+      result: {
+        claudePath: '/fresh/claude',
+        authSource: 'none',
+      },
     });
   });
 
@@ -500,8 +694,10 @@ describe('TeamProvisioningPrepareCoordinator', () => {
         authSource: 'none',
       });
       expect(cache.get('probe-key')).toMatchObject({
-        claudePath: '/after-ttl/claude',
-        authSource: 'none',
+        result: {
+          claudePath: '/after-ttl/claude',
+          authSource: 'none',
+        },
       });
       expect(staleCreate).toHaveBeenCalledOnce();
       expect(beforeTtlCreate).toHaveBeenCalledOnce();
@@ -624,10 +820,12 @@ describe('TeamProvisioningPrepareCoordinator', () => {
       authSource: 'codex_runtime',
     });
     expect(coordinator.getFreshCachedProbeResult(cwd, 'codex')).toMatchObject({
-      claudePath: '/fake/claude',
-      authSource: 'codex_runtime',
+      result: {
+        claudePath: '/fake/claude',
+        authSource: 'codex_runtime',
+      },
     });
-    expect(coordinator.getFreshCachedProbeResult(cwd, 'codex')?.warning).toBeUndefined();
+    expect(coordinator.getFreshCachedProbeResult(cwd, 'codex')?.result.warning).toBeUndefined();
     expect(buildProvisioningEnv).toHaveBeenCalledTimes(2);
     expect(probeClaudeRuntime).toHaveBeenCalledTimes(2);
   });
@@ -686,8 +884,10 @@ describe('TeamProvisioningPrepareCoordinator', () => {
     });
 
     expect(sharedCache.get(createProbeCacheKey(cwd, 'codex'))).toMatchObject({
-      claudePath: '/fresh/claude',
-      authSource: 'codex_runtime',
+      result: {
+        claudePath: '/fresh/claude',
+        authSource: 'codex_runtime',
+      },
     });
     expect(buildProvisioningEnv).toHaveBeenCalledTimes(2);
     expect(staleProbeRuntime).toHaveBeenCalledOnce();

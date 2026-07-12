@@ -836,7 +836,7 @@ describe('TeamProvisioning API binders', () => {
         this: CrossTeamSource,
         teamName: string,
         inboxName: string
-      ): Promise<{ kind: string; relayed: number }> {
+      ): Promise<{ kind: 'native_lead'; relayed: number }> {
         this.relayedInbox = `${teamName}:${inboxName}`;
         return Promise.resolve({ kind: 'native_lead', relayed: 4 });
       },

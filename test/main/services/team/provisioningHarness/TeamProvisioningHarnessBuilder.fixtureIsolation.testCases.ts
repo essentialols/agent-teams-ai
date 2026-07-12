@@ -5,6 +5,7 @@ import {
   assertNoSecretLikeFixtureValues,
   collectSecretLikeFixtureValues,
   HARNESS_DEFAULT_NOW_ISO,
+  makeLaunchState,
   makeOpenCodeEvidence,
   makeProvisioningRun,
   makeRuntimeSnapshot,
@@ -88,6 +89,73 @@ describe('TeamProvisioningHarnessBuilder fixture isolation', () => {
     const secondRuntime = makeRuntimeSnapshot();
     firstRuntime.members.Builder!.alive = false;
     expect(secondRuntime.members.Builder?.alive).toBe(true);
+  });
+
+  it('snapshots builder inputs when a build starts', async () => {
+    const teamName = 'in-flight-builder-isolation-team';
+    const builder = TeamProvisioningHarnessBuilder.create()
+      .withTempWorkspace({ applyPathOverride: false })
+      .withClock('2026-01-02T00:00:00.000Z')
+      .withUuidSequence(['first-build-uuid'])
+      .withTeam(teamName, teamConfigFixture.basic({ teamName, description: 'First build config' }))
+      .withLaunchState(teamName, { teamName, marker: 'first-build-state' });
+
+    const firstBuildPromise = builder.build();
+
+    builder
+      .withClock('2026-01-03T00:00:00.000Z')
+      .withUuidSequence(['second-build-uuid'])
+      .withTeam(teamName, teamConfigFixture.basic({ teamName, description: 'Second build config' }))
+      .withLaunchState(teamName, { teamName, marker: 'second-build-state' });
+
+    const [firstHarness, secondHarness] = await Promise.all([
+      track(firstBuildPromise),
+      track(builder.build()),
+    ]);
+
+    await expect(
+      firstHarness.stores.configReader.getConfigSnapshot(teamName)
+    ).resolves.toMatchObject({ description: 'First build config' });
+    await expect(firstHarness.stores.launchStateStore.read(teamName)).resolves.toMatchObject({
+      marker: 'first-build-state',
+    });
+    expect(firstHarness.clock.nowIso()).toBe('2026-01-02T00:00:00.000Z');
+    expect(firstHarness.uuid.next()).toBe('first-build-uuid');
+
+    await expect(
+      secondHarness.stores.configReader.getConfigSnapshot(teamName)
+    ).resolves.toMatchObject({ description: 'Second build config' });
+    await expect(secondHarness.stores.launchStateStore.read(teamName)).resolves.toMatchObject({
+      marker: 'second-build-state',
+    });
+    expect(secondHarness.clock.nowIso()).toBe('2026-01-03T00:00:00.000Z');
+    expect(secondHarness.uuid.next()).toBe('second-build-uuid');
+  });
+
+  it('does not mutate caller-owned launch-state members while filling expected defaults', () => {
+    const members = {
+      Existing: {
+        name: 'Existing',
+        launchState: 'confirmed_alive' as const,
+        agentToolAccepted: true,
+        runtimeAlive: true,
+        bootstrapConfirmed: true,
+        hardFailure: false,
+        lastEvaluatedAt: HARNESS_DEFAULT_NOW_ISO,
+        diagnostics: [],
+      },
+    };
+
+    const snapshot = makeLaunchState({
+      expectedMembers: ['Builder'],
+      members,
+    });
+
+    expect(snapshot.members).toHaveProperty('Builder');
+    expect(members).toEqual({
+      Existing: expect.objectContaining({ name: 'Existing' }),
+    });
+    expect(members).not.toHaveProperty('Builder');
   });
 
   it('does not leak confirmed runtime defaults into non-confirmed OpenCode evidence', () => {

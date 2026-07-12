@@ -67,10 +67,10 @@ function createBoundary(overrides: Partial<TeamProvisioningLaunchStateStoreBound
   boundary: TeamProvisioningLaunchStateStoreBoundary;
   ports: TeamProvisioningLaunchStateStoreBoundaryPorts;
   setCurrentSnapshot(snapshot: PersistedTeamLaunchSnapshot | null): void;
-  setTrackedRunId(runId: string | null): void;
+  setTrackedRunId(runId: string | null | undefined): void;
 } {
   let currentSnapshot: PersistedTeamLaunchSnapshot | null = null;
-  let trackedRunId: string | null = 'run-1';
+  let trackedRunId: string | null | undefined = 'run-1';
   const ports: TeamProvisioningLaunchStateStoreBoundaryPorts = {
     launchStateStore: {
       read: vi.fn(async () => currentSnapshot),
@@ -152,6 +152,56 @@ describe('TeamProvisioningLaunchStateStoreBoundary', () => {
     expect(launchStateStore.clear).toHaveBeenCalledWith('demo');
     expect(defaultLaunchStateStore.clear).toHaveBeenCalledWith('demo');
     expect(clearBootstrapState).toHaveBeenCalledWith('demo');
+    expect(invalidateRuntimeSnapshotCaches).toHaveBeenCalledWith('demo');
+  });
+
+  it('notifies readers only after both service stores confirm the publication', async () => {
+    const nextSnapshot = snapshot();
+    const defaultWriteStarted = deferred();
+    const defaultWriteGate = deferred();
+    const launchStateStore = {
+      read: vi.fn(async () => null),
+      write: vi.fn(async () => undefined),
+      clear: vi.fn(async () => undefined),
+    };
+    const defaultLaunchStateStore = {
+      write: vi.fn(async () => {
+        defaultWriteStarted.resolve();
+        await defaultWriteGate.promise;
+      }),
+      clear: vi.fn(async () => undefined),
+    };
+    const invalidateRuntimeSnapshotCaches = vi.fn();
+    const service = {
+      launchStateStore,
+      defaultLaunchStateStore,
+      membersMetaStore: {
+        getMembers: vi.fn(async () => [{ name: 'Builder', joinedAt: 1 }]),
+      },
+      getTrackedRunId: vi.fn(() => 'run-1'),
+      applyOpenCodeSecondaryEvidenceOverlay: vi.fn(
+        async ({ snapshot: inputSnapshot }) => inputSnapshot
+      ),
+      applyOpenCodeSecondaryBootstrapStallOverlay: vi.fn(() => null),
+      invalidateRuntimeSnapshotCaches,
+      launchStateWrittenRunIdByTeam: new Map<string, string>(),
+    } satisfies TeamProvisioningLaunchStateStoreBoundaryServiceHost;
+    const boundary = createTeamProvisioningLaunchStateStoreBoundaryFromService(service, {
+      areSnapshotsSemanticallyEqual: vi.fn(() => false),
+      clearBootstrapState: vi.fn(async () => undefined),
+      logDebug: vi.fn(),
+      nowMs: vi.fn(() => Date.parse(at)),
+    });
+
+    const publishing = boundary.writeLaunchStateSnapshot('demo', nextSnapshot);
+    await defaultWriteStarted.promise;
+
+    expect(launchStateStore.write).toHaveBeenCalledWith('demo', nextSnapshot);
+    expect(defaultLaunchStateStore.write).toHaveBeenCalledWith('demo', nextSnapshot);
+    expect(invalidateRuntimeSnapshotCaches).not.toHaveBeenCalled();
+
+    defaultWriteGate.resolve();
+    await expect(publishing).resolves.toEqual(nextSnapshot);
     expect(invalidateRuntimeSnapshotCaches).toHaveBeenCalledWith('demo');
   });
 
@@ -300,21 +350,24 @@ describe('TeamProvisioningLaunchStateStoreBoundary', () => {
     expect(ports.launchStateStore.write).toHaveBeenCalledWith('demo', next);
   });
 
-  it('writes run-scoped snapshots when no run is currently tracked', async () => {
-    const next = snapshot();
-    const { boundary, ports, setTrackedRunId } = createBoundary();
-    setTrackedRunId(null);
+  it.each([null, undefined])(
+    'writes run-scoped snapshots when the tracked run id is %s',
+    async (trackedRunId) => {
+      const next = snapshot();
+      const { boundary, ports, setTrackedRunId } = createBoundary();
+      setTrackedRunId(trackedRunId);
 
-    const result = await boundary.writeLaunchStateSnapshotNow('demo', next, {
-      runId: 'run-1',
-    });
+      const result = await boundary.writeLaunchStateSnapshotNow('demo', next, {
+        runId: 'run-1',
+      });
 
-    expect(result).toEqual({ snapshot: next, wrote: true });
-    expect(ports.launchStateStore.write).toHaveBeenCalledWith('demo', next);
-    expect(ports.launchStateStore.clear).not.toHaveBeenCalled();
-    expect(boundary.getWrittenRunIdByTeam().get('demo')).toBe('run-1');
-    expect(ports.logDebug).not.toHaveBeenCalled();
-  });
+      expect(result).toEqual({ snapshot: next, wrote: true });
+      expect(ports.launchStateStore.write).toHaveBeenCalledWith('demo', next);
+      expect(ports.launchStateStore.clear).not.toHaveBeenCalled();
+      expect(boundary.getWrittenRunIdByTeam().get('demo')).toBe('run-1');
+      expect(ports.logDebug).not.toHaveBeenCalled();
+    }
+  );
 
   it('does not overwrite a successor snapshot when a stale write starts after authority changed', async () => {
     const successorSnapshot = snapshot({ updatedAt: '2026-01-01T00:00:02.000Z' });

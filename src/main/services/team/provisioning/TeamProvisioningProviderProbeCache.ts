@@ -2,18 +2,29 @@ import type { ProvisioningAuthSource } from './TeamProvisioningEnvBuilder';
 
 const PROBE_CACHE_TTL_MS = 36 * 60 * 60 * 1000;
 
-export interface CachedProbeResult {
-  cacheKey: string;
-  claudePath: string;
-  authSource: ProvisioningAuthSource;
-  warning?: string;
-  cachedAtMs: number;
-}
-
 export interface ProbeResult {
   claudePath: string;
   authSource: ProvisioningAuthSource;
   warning?: string;
+  [field: string]: unknown;
+}
+
+export interface CachedProbeResult {
+  cacheKey: string;
+  cachedAtMs: number;
+  result: ProbeResult;
+}
+
+export function cloneProviderProbeResult<T extends ProbeResult>(result: T): T {
+  return structuredClone(result);
+}
+
+export function cloneCachedProviderProbeResult<T extends CachedProbeResult>(cached: T): T {
+  return structuredClone(cached);
+}
+
+export function cachedProviderProbeResultToProbeResult(cached: CachedProbeResult): ProbeResult {
+  return cloneProviderProbeResult(cached.result);
 }
 
 export interface ProviderProbePublication {
@@ -75,7 +86,7 @@ export function createInMemoryProviderProbeCachePort({
       }
       return null;
     }
-    return { ...cached };
+    return cloneCachedProviderProbeResult(cached);
   };
 
   const incrementActiveCallCount = (cacheKey: string): void => {
@@ -131,11 +142,7 @@ export function createInMemoryProviderProbeCachePort({
 
           const cached = getCached(cacheKey, state);
           if (cached) {
-            return {
-              claudePath: cached.claudePath,
-              authSource: cached.authSource,
-              warning: cached.warning,
-            };
+            return cachedProviderProbeResultToProbeResult(cached);
           }
 
           let inFlight = state.inFlight;
@@ -144,25 +151,29 @@ export function createInMemoryProviderProbeCachePort({
             if ('error' in attempt) {
               throw attempt.error;
             }
-            return attempt.result ?? null;
+            return attempt.result ? cloneProviderProbeResult(attempt.result) : null;
           }
           if (!inFlight) {
             const promise: Promise<ProviderProbeAttempt> = Promise.resolve()
               .then(create)
+              .then<ProviderProbeAttempt>((publication) => {
+                const result = publication.result
+                  ? cloneProviderProbeResult(publication.result)
+                  : null;
+                if (stateByCacheKey.get(cacheKey) === state) {
+                  state.cached =
+                    publication.cacheable && result
+                      ? {
+                          cacheKey,
+                          cachedAtMs: now(),
+                          result: cloneProviderProbeResult(result),
+                        }
+                      : null;
+                }
+                return { result };
+              })
               .then<ProviderProbeAttempt, ProviderProbeAttempt>(
-                (publication) => {
-                  if (stateByCacheKey.get(cacheKey) === state) {
-                    state.cached =
-                      publication.cacheable && publication.result
-                        ? {
-                            cacheKey,
-                            ...publication.result,
-                            cachedAtMs: now(),
-                          }
-                        : null;
-                  }
-                  return { result: publication.result };
-                },
+                (attempt) => attempt,
                 (error: unknown) => ({ error })
               )
               .then((attempt) => {
@@ -185,7 +196,7 @@ export function createInMemoryProviderProbeCachePort({
           if ('error' in attempt) {
             throw attempt.error;
           }
-          return attempt.result ?? null;
+          return attempt.result ? cloneProviderProbeResult(attempt.result) : null;
         }
       } finally {
         decrementActiveCallCount(cacheKey);

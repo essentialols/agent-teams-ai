@@ -5,7 +5,10 @@ import {
 } from '@main/services/team/contracts/TeamProvisioningApis';
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 
-import type { TeamHttpHandlerApis } from '@main/services/team/contracts/TeamProvisioningApis';
+import type {
+  TeamCrossTeamMessagingApi,
+  TeamHttpHandlerApis,
+} from '@main/services/team/contracts/TeamProvisioningApis';
 
 function sortedKeys(value: object): string[] {
   return Object.keys(value).sort();
@@ -64,7 +67,7 @@ function createSource() {
       failed: 0,
     })),
     relayInboxFileToLiveRecipient: vi.fn(async () => ({
-      kind: 'native_lead',
+      kind: 'native_lead' as const,
       relayed: 0,
     })),
     relayLeadInboxMessages: vi.fn(async () => 0),
@@ -179,6 +182,16 @@ describe('bindTeamIpcHandlerApis', () => {
 });
 
 describe('bindTeamCrossTeamMessagingApi', () => {
+  it('preserves the closed live-inbox relay kind union', () => {
+    type RelayResult = Awaited<
+      ReturnType<TeamCrossTeamMessagingApi['relayInboxFileToLiveRecipient']>
+    >;
+
+    expectTypeOf<RelayResult['kind']>().toEqualTypeOf<
+      'ignored' | 'native_lead' | 'native_member_noop' | 'opencode_member'
+    >();
+  });
+
   it('exposes only cross-team relay methods and binds them to the source service', async () => {
     const source = createSource();
     const api = bindTeamCrossTeamMessagingApi(source as never);

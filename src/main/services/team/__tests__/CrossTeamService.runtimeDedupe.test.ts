@@ -61,7 +61,7 @@ function createService() {
     clearPendingCrossTeamReplyExpectation: vi.fn(),
     isTeamAlive: vi.fn(() => false),
     relayInboxFileToLiveRecipient: vi.fn(async () => ({
-      kind: 'opencode_member',
+      kind: 'opencode_member' as const,
       relayed: 1,
     })),
     relayLeadInboxMessages: vi.fn(async () => 0),

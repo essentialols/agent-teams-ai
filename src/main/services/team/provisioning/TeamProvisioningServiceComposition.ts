@@ -480,6 +480,16 @@ export function createTeamProvisioningServiceComposition(
     'runtimeSnapshotFacade',
     runtimeProjection.runtimeSnapshotFacade
   );
+  const openCodePromptDeliveryWatchdogScheduler =
+    createOpenCodePromptDeliveryWatchdogSchedulerFromService(host.watchdogScheduler, {
+      logger,
+      getErrorMessage,
+    });
+  assignCompositionPart(
+    host.installTarget,
+    'openCodePromptDeliveryWatchdogScheduler',
+    openCodePromptDeliveryWatchdogScheduler
+  );
   const openCodeRuntimeDeliveryBoundaryHost =
     servicePorts.createOpenCodeRuntimeDeliveryBoundaryHost();
   assignCompositionPart(
@@ -571,16 +581,6 @@ export function createTeamProvisioningServiceComposition(
     host.installTarget,
     'openCodeRuntimeRecoveryFacade',
     openCodeRuntimeRecoveryFacade
-  );
-  const openCodePromptDeliveryWatchdogScheduler =
-    createOpenCodePromptDeliveryWatchdogSchedulerFromService(host.watchdogScheduler, {
-      logger,
-      getErrorMessage,
-    });
-  assignCompositionPart(
-    host.installTarget,
-    'openCodePromptDeliveryWatchdogScheduler',
-    openCodePromptDeliveryWatchdogScheduler
   );
   const compatibilityDelegation: TeamProvisioningCompatibilityDelegation<ProvisioningRun> = {
     providerRuntimeCompatibility,

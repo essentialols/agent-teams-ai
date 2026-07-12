@@ -835,10 +835,13 @@ export function initializeTeamHandlers(
   teamClaudeLogsApi = teamHandlerApis.claudeLogs;
   teamMessagingApi = teamHandlerApis.messaging;
   teamToolApprovalApi = teamHandlerApis.toolApproval;
+  const autoResumeRuntimeApi = teamRuntimeApi;
+  const autoResumeMessagingApi = teamMessagingApi;
   initializeAutoResumeService({
-    getCurrentRunId: teamRuntimeApi.getCurrentRunId,
-    isTeamAlive: teamRuntimeApi.isTeamAlive,
-    sendMessageToTeam: teamMessagingApi.sendMessageToTeam,
+    getCurrentRunId: (teamName) => autoResumeRuntimeApi.getCurrentRunId(teamName),
+    isTeamAlive: (teamName) => autoResumeRuntimeApi.isTeamAlive(teamName),
+    sendMessageToTeam: (teamName, message) =>
+      autoResumeMessagingApi.sendMessageToTeam(teamName, message),
   });
   teamMemberLogsFinder = logsFinder ?? null;
   memberStatsComputer = statsComputer ?? null;

@@ -76,6 +76,16 @@ describe('TeamProvisioningServiceComposition', () => {
     expect(compositionSource).not.toContain('TeamProvisioningServiceCompositionHost =');
   });
 
+  it('shares the composed watchdog scheduler with the runtime delivery host', () => {
+    const service = new TeamProvisioningService();
+    const scheduler = Reflect.get(service, 'openCodePromptDeliveryWatchdogScheduler');
+    const deliveryHost = Reflect.get(service, 'openCodeRuntimeDeliveryBoundaryHost') as {
+      openCodePromptDeliveryWatchdogScheduler?: unknown;
+    };
+
+    expect(deliveryHost.openCodePromptDeliveryWatchdogScheduler).toBe(scheduler);
+  });
+
   it('runs the production admission closures for public create and launch entrypoints', async () => {
     const service = new TeamProvisioningService();
     const onProgress = vi.fn();

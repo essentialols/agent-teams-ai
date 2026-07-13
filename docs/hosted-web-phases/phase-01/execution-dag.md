@@ -1,7 +1,7 @@
 # Phase 1 execution DAG and ownership
 
-Status: P1.S0, P1.S1, and P1.S2 are accepted and integrated. P1.R1 is the sole current review node
-after its router-integration and live-controller gate. P1.1D and later nodes are blocked.
+Status: P1.S0, P1.S1, P1.S2, and P1.R1 are accepted and integrated. P1.1D is the sole current serial
+product node after its router-policy-integration and live-controller gate. Later nodes are blocked.
 
 ## Current DAG
 
@@ -10,58 +10,62 @@ P1.S0 accepted
   -> P1.S1 / P1.1A accepted + integrated at 041b5c7c2
        -> P1.S2 / P1.1B routes accepted at 74038b54e ------+
        -> P1.S2 / P1.1C conformance accepted at 6a9e9ab71 -+
-                                                             -> P1.R1 formal review (current)
-                                                                  -X-> P1.1D
-                                                                        -> P1.R2
-                                                                          -> P1.I
-                                                                            -> P1.F
-                                                                              -> Phase 2+
+                                                             -> P1.R1 ACCEPT at 759a5d4f4
+                                                                  -> P1.1D read/list proof (current)
+                                                                       -X-> P1.R2
+                                                                             -> P1.I
+                                                                               -> P1.F
+                                                                                 -> Phase 2+
 ```
 
-The admission review of byte-identical combined input `02a6b3ac5` authorizes the transition into
-P1.R1 but is not P1.R1 itself. `-X->` remains blocked even if the formal reviewer returns `ACCEPT`;
-the accepted review must first be integrated and a later router must separately advance P1.1D.
+P1.R1 reviewer `agent-teams-hosted-web-refactor-p1-r1-review-v16-r1` recorded routes 16/16,
+conformance 13/13, and zero P0/P1/P2 findings. Its accepted evidence is integrated at
+`759a5d4f45c2142485a0acc13760f3de4d0ff6ea`. `-X->` remains blocked after the P1.1D producer returns;
+a later review and router must separately advance authority.
 
 ## Current lane registry
 
-| Node    | Mission                                                                        | Dependency                           | Output                                                        | Packet                  |
-| ------- | ------------------------------------------------------------------------------ | ------------------------------------ | ------------------------------------------------------------- | ----------------------- |
-| `P1.R1` | Independently review canonical routes, capabilities, conformance, and ratchets | accepted canonical P1.S2 `6a9e9ab71` | `docs/research/hosted-web/phase-1/reviews/routes-ratchets.md` | `lanes/p1-r1-review.md` |
+| Node    | Mission                                                          | Dependency                 | Evidence IDs                                                                                                      | Packet                               |
+| ------- | ---------------------------------------------------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| `P1.1D` | Prove one transport-neutral team-lifecycle read/list application | accepted P1.R1 `759a5d4f4` | `P1.1D.TEAM_LIFECYCLE_READ_CONTRACT`, `P1.1D.TEAM_LIFECYCLE_READ_USE_CASE`, `P1.1D.TEAM_LIFECYCLE_SEMANTIC_PROOF` | `lanes/p1-1d-team-lifecycle-read.md` |
 
-Capacity is zero until the seven-path router commit is integrated and its successor controller is
-`live=true`. Afterward it is exactly one reviewer. The reviewer must be distinct from both P1.S2
-producers and admission reviewer `agent-teams-hosted-web-refactor-p1-s2-admission-review-v15-r2`.
-There is no retry, refill, producer, repair, integration, or later-node capacity.
-
-## Canonical input projection
-
-Canonical `6a9e9ab714359638fb93a6880855a53c9e8ef4be` contains the two disjoint accepted producer sets:
-
-- P1.1B: 9 paths, evidence IDs `P1.1B.ROUTES` and `P1.1B.CAPABILITIES`, accepted producer commit
-  `74038b54eee23e93798b3aa5d11411d3f7e9adcf`;
-- P1.1C: 28 paths, evidence IDs `P1.1C.CONFORMANCE` and `P1.1C.RATCHETS`, accepted producer and
-  canonical commit `6a9e9ab714359638fb93a6880855a53c9e8ef4be`.
-
-The exact 37-path list and all required gates are frozen in the current review packet. Combined
-admission input `02a6b3ac5ac2baaad55c413f8547252dddee4d41` and canonical P1.S2 have identical tree
-`22020029327465ed389cd4479db340082ae81601`.
+Capacity is zero until the exact seven-path router commit is policy-integrated and its successor
+controller reports `live=true`. Afterward it is exactly one serial producer. There is no second
+producer, review, retry, refill, repair, integration, or later-node capacity.
 
 ## Exact exclusive writer set
 
-P1.R1 owns exactly:
+P1.1D product paths:
 
-- `docs/research/hosted-web/phase-1/reviews/routes-ratchets.md`
+- `src/features/team-lifecycle/contracts/team-lifecycle-read.ts`
+- `src/features/team-lifecycle/contracts/index.ts`
+- `src/features/team-lifecycle/core/application/ListTeamLifecycle.ts`
+- `src/features/team-lifecycle/core/application/index.ts`
+- `src/features/team-lifecycle/index.ts`
 
-Every other path is read-only. In particular, the 37 canonical input paths, both handoffs, product
-source, tests, fixtures, scripts, package/lock/config files, router docs, existing research evidence,
-and all P1.1D+ paths cannot be edited. A finding produces `REJECT`; it never grants repair authority.
+P1.1D test paths:
 
-## Handoff and blocked successor
+- `test/features/team-lifecycle/core/ListTeamLifecycle.test.ts`
+- `test/architecture/hosted-web/phase-1/team-lifecycle/team-lifecycle-read-contract.test.ts`
+- `test/architecture/hosted-web/phase-1/team-lifecycle/team-lifecycle-read-boundaries.test.ts`
 
-The reviewer writes its formal result only to the owned review path, with exact provenance,
-independence, commands, exit codes, negative diagnostics, scope proof, findings, and one disposition:
-`ACCEPT` or `REJECT`. It must not create a second handoff or evidence file.
+P1.1D handoff path:
 
-Neither result launches or integrates anything. P1.1D, P1.R2, integration/P1.I, P1.F, and Phase 2+
-remain blocked until a formal P1.R1 `ACCEPT` is integrated and a separate later router explicitly
-authorizes the next node through its own router-integration and successor-controller-live gate.
+- `.codex-handoff/phase-01-p1-1d.json`
+
+These five-product, three-test, and one-handoff sets are exact and mutually disjoint. Every other path
+is read-only. In particular, accepted shared contracts, RouteCatalog/capability sources, conformance
+tools, fixture corpus, IPC/HTTP/preload/renderer code, filesystem and production composition,
+package/config files, existing handoffs, router docs, and research evidence cannot be edited.
+
+## Boundary and blocked successor
+
+The product paths contain only browser-safe contracts, runtime value parsing, a pure application port
+and use case, and narrow public entrypoints. Test-owned in-memory values may drive the port; no product
+test double, fake browser, filesystem adapter, transport adapter, production mount, or real runtime is
+part of this node.
+
+The producer returns one exact handoff with the three evidence IDs, all checks, the complete focused
+negative matrix, path hashes, unverified claims, and next action `review`. P1.R2, P1.I, P1.F, and Phase
+2+ remain blocked. Neither producer success nor handoff creation authorizes integration, commit, push,
+successor launch, or scope expansion.

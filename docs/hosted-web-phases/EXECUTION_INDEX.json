@@ -1,24 +1,24 @@
 {
   "schemaVersion": 1,
   "currentExecutablePhase": "phase-01",
-  "currentExecutableSubphase": "P1.R1",
-  "currentExecutableNodes": ["P1.R1"],
+  "currentExecutableSubphase": "P1.1D",
+  "currentExecutableNodes": ["P1.1D"],
   "workerStartAuthority": "hosting/subscription-runtime builtin worker-start-v1",
   "currentRoute": {
     "controllerPacket": "docs/hosted-web-phases/phase-01/controller-packet.md",
     "lanePackets": [
       {
-        "subphase": "P1.R1",
-        "node": "P1.R1",
-        "path": "docs/hosted-web-phases/phase-01/lanes/p1-r1-review.md",
-        "packetRevision": "phase-01-p1-r1-review-r1"
+        "subphase": "P1.1D",
+        "node": "P1.1D",
+        "path": "docs/hosted-web-phases/phase-01/lanes/p1-1d-team-lifecycle-read.md",
+        "packetRevision": "phase-01-p1-1d-team-lifecycle-read-r1"
       }
     ],
-    "baseSha": "6a9e9ab714359638fb93a6880855a53c9e8ef4be",
-    "supersedesWorkerStartRevisions": ["phase-01-s2-routes-r1", "phase-01-s2-conformance-r1"],
+    "baseSha": "759a5d4f45c2142485a0acc13760f3de4d0ff6ea",
+    "supersedesWorkerStartRevisions": ["phase-01-p1-r1-review-r1"],
     "launchGate": {
       "required": {
-        "routerCommitIntegrated": true,
+        "routerCommitPolicyIntegrated": true,
         "successorControllerLive": true,
         "controllerValue": "live=true"
       },
@@ -37,16 +37,7 @@
   },
   "acceptedPhase1Bootstrap": {
     "status": "accepted",
-    "commit": "6f1a87daa9a4bfdf5d754347d92f313f28d0f95d",
-    "historicalPhaseStartSha": "5f30df49e052d1cc1d0e7efd03aa105673b5b614",
-    "evidencePaths": [
-      "docs/research/hosted-web/phase-1/bootstrap/phase-start.json",
-      "docs/research/hosted-web/phase-1/bootstrap/packet-revision.json",
-      "docs/research/hosted-web/phase-1/bootstrap/ownership-manifest.json",
-      "docs/research/hosted-web/phase-1/bootstrap/baseline-fingerprints.json",
-      "docs/research/hosted-web/phase-1/bootstrap/estimate-allocation.json",
-      "docs/research/hosted-web/phase-1/bootstrap/bootstrap-report.md"
-    ]
+    "commit": "6f1a87daa9a4bfdf5d754347d92f313f28d0f95d"
   },
   "acceptedPhase1FoundationsAndRemediation": {
     "status": "independently-accepted-integrated",
@@ -59,52 +50,54 @@
     "canonicalCommit": "6a9e9ab714359638fb93a6880855a53c9e8ef4be",
     "canonicalTree": "22020029327465ed389cd4479db340082ae81601",
     "acceptedNodes": ["P1.1B", "P1.1C"],
-    "producerCommits": {
-      "routes": "74038b54eee23e93798b3aa5d11411d3f7e9adcf",
-      "conformance": "6a9e9ab714359638fb93a6880855a53c9e8ef4be"
-    },
-    "evidenceIds": ["P1.1B.ROUTES", "P1.1B.CAPABILITIES", "P1.1C.CONFORMANCE", "P1.1C.RATCHETS"],
-    "admissionReview": {
-      "reviewer": "agent-teams-hosted-web-refactor-p1-s2-admission-review-v15-r2",
-      "disposition": "ACCEPT",
-      "routesStagingCommit": "a9dd473d0847d090ece42b7ea7a0feed81de20c6",
-      "combinedInputCommit": "02a6b3ac5ac2baaad55c413f8547252dddee4d41",
-      "combinedInputTree": "22020029327465ed389cd4479db340082ae81601",
-      "canonicalTreeEquivalent": true,
-      "exactPathCount": 37,
-      "disjointPaths": true,
-      "routesTests": "16/16",
-      "conformanceTests": "13/13",
-      "lint": "green",
-      "prettier": "green",
-      "diff": "green",
-      "secretScan": "green",
-      "typecheck": "seven unchanged inherited Phase 0 diagnostics",
-      "findings": {
-        "P0": 0,
-        "P1": 0,
-        "P2": 0
-      },
-      "workspace": "clean"
+    "evidenceIds": ["P1.1B.ROUTES", "P1.1B.CAPABILITIES", "P1.1C.CONFORMANCE", "P1.1C.RATCHETS"]
+  },
+  "acceptedPhase1FormalRoutesAndRatchetsReview": {
+    "status": "accepted-policy-integrated",
+    "commit": "759a5d4f45c2142485a0acc13760f3de4d0ff6ea",
+    "reviewer": "agent-teams-hosted-web-refactor-p1-r1-review-v16-r1",
+    "reviewEvidencePath": "docs/research/hosted-web/phase-1/reviews/routes-ratchets.md",
+    "disposition": "ACCEPT",
+    "routesTests": "16/16",
+    "conformanceTests": "13/13",
+    "findings": {
+      "P0": 0,
+      "P1": 0,
+      "P2": 0
     }
   },
   "authorization": {
-    "authorized": ["P1.R1"],
-    "authorizedNodes": ["P1.R1"],
-    "blocked": ["P1.1D", "P1.R2", "P1.I", "P1.F", "Phase 2+"],
-    "productSourceImplementationAuthorized": false,
-    "reviewAuthorized": true,
-    "authorizationEffectiveOnlyAfterLaunchGate": true,
-    "reviewerCount": 1,
-    "serialOnly": true,
-    "reviewerMustBeIndependent": true,
-    "reviewerExcludedIdentity": "agent-teams-hosted-web-refactor-p1-s2-admission-review-v15-r2",
-    "reviewerWritablePath": "docs/research/hosted-web/phase-1/reviews/routes-ratchets.md",
+    "authorized": ["P1.1D"],
+    "authorizedNodes": ["P1.1D"],
+    "blocked": ["P1.R2", "P1.I", "P1.F", "Phase 2+"],
+    "productSourceImplementationAuthorized": true,
+    "productAuthorizationLimitedToOwnedPaths": true,
+    "reviewAuthorized": false,
     "integrationAuthorized": false,
-    "launchBeforeRouterIntegration": false,
+    "authorizationEffectiveOnlyAfterLaunchGate": true,
+    "producerCount": 1,
+    "serialOnly": true,
+    "launchBeforeRouterPolicyIntegration": false,
     "launchBeforeSuccessorControllerLive": false,
     "retryOrRefillAuthorized": false,
-    "successorAuthorizationRequiresFormalAcceptAndLaterRouter": true
+    "successorAuthorizationRequiresReviewAndLaterRouter": true
+  },
+  "p11dExclusiveOwnership": {
+    "productPaths": [
+      "src/features/team-lifecycle/contracts/team-lifecycle-read.ts",
+      "src/features/team-lifecycle/contracts/index.ts",
+      "src/features/team-lifecycle/core/application/ListTeamLifecycle.ts",
+      "src/features/team-lifecycle/core/application/index.ts",
+      "src/features/team-lifecycle/index.ts"
+    ],
+    "testPaths": [
+      "test/features/team-lifecycle/core/ListTeamLifecycle.test.ts",
+      "test/architecture/hosted-web/phase-1/team-lifecycle/team-lifecycle-read-contract.test.ts",
+      "test/architecture/hosted-web/phase-1/team-lifecycle/team-lifecycle-read-boundaries.test.ts"
+    ],
+    "handoffPaths": [".codex-handoff/phase-01-p1-1d.json"],
+    "setsDisjoint": true,
+    "allOtherPaths": "read-only"
   },
   "workerMandatoryBaseline": [
     "AGENTS.md",
@@ -113,7 +106,7 @@
     "docs/hosted-web-phases/README.md",
     "docs/hosted-web-phases/EXECUTION_INDEX.json",
     "docs/hosted-web-phases/phase-01/controller-packet.md",
-    "docs/hosted-web-phases/phase-01/lanes/p1-r1-review.md"
+    "docs/hosted-web-phases/phase-01/lanes/p1-1d-team-lifecycle-read.md"
   ],
   "authorityTiers": {
     "execution-authority": [
@@ -127,21 +120,18 @@
       "docs/hosted-web-phases/phase-01/README.md",
       "docs/hosted-web-phases/phase-01/controller-packet.md",
       "docs/hosted-web-phases/phase-01/execution-dag.md",
-      "docs/hosted-web-phases/phase-01/lanes/p1-r1-review.md"
+      "docs/hosted-web-phases/phase-01/lanes/p1-1d-team-lifecycle-read.md"
     ],
-    "current-review-output": ["docs/research/hosted-web/phase-1/reviews/routes-ratchets.md"],
+    "accepted-review-input": ["docs/research/hosted-web/phase-1/reviews/routes-ratchets.md"],
     "historical-preserved": [
       "docs/hosted-web-phases/phase-01/lanes/p1-s0-serial-bootstrap.md",
       "docs/hosted-web-phases/phase-01/lanes/p1-s1-foundations.md",
       "docs/hosted-web-phases/phase-01/lanes/p1-s1-schema-version-remediation.md",
       "docs/hosted-web-phases/phase-01/lanes/p1-s2-routes.md",
       "docs/hosted-web-phases/phase-01/lanes/p1-s2-conformance.md",
+      "docs/hosted-web-phases/phase-01/lanes/p1-r1-review.md",
       "docs/research/hosted-web"
     ],
-    "evidenceWriteException": {
-      "path": "docs/research/hosted-web/phase-1/reviews/routes-ratchets.md",
-      "owner": "current formal P1.R1 reviewer only",
-      "allOtherResearchPaths": "read-only"
-    }
+    "researchWriteException": null
   }
 }

@@ -1,56 +1,62 @@
 # Phase 1: contracts and conformance
 
-Status: **one formal P1.R1 review lane after the router-integration and successor-controller-live
-gate**. P1.1D and every later node remain blocked.
+Status: **one serial P1.1D producer after the router-policy-integration and
+successor-controller-live gate**. P1.R2 and every later node remain blocked.
 
 ## Accepted predecessors and provenance
 
-P1.S0 is accepted at `6f1a87daa9a4bfdf5d754347d92f313f28d0f95d`; its six bootstrap evidence
-paths and historical `phaseStartSha` remain immutable. P1.S1 is accepted and integrated at
-`041b5c7c2d3225b7dc2eca9e9b7b71aa33217060`.
+P1.S0 is accepted at `6f1a87daa9a4bfdf5d754347d92f313f28d0f95d`; P1.S1 is accepted and
+integrated at `041b5c7c2d3225b7dc2eca9e9b7b71aa33217060`. P1.S2 routes and conformance are
+accepted and policy-integrated at `6a9e9ab714359638fb93a6880855a53c9e8ef4be`.
 
-P1.S2 began from accepted router `a0dc964e9a71b782b1bbad4769db62a691e50c97`. Routes commit
-`74038b54eee23e93798b3aa5d11411d3f7e9adcf` and conformance commit
-`6a9e9ab714359638fb93a6880855a53c9e8ef4be` are independently accepted and
-policy-integrated/pushed. Independent admission reviewer
-`agent-teams-hosted-web-refactor-p1-s2-admission-review-v15-r2` accepted combined input
-`02a6b3ac5ac2baaad55c413f8547252dddee4d41`. The admitted input and canonical P1.S2 share tree
-`22020029327465ed389cd4479db340082ae81601`; the admission result therefore applies to the exact
-canonical bytes while remaining distinct from formal P1.R1 review.
+Formal reviewer `agent-teams-hosted-web-refactor-p1-r1-review-v16-r1` returned `ACCEPT` for P1.R1.
+The review evidence is policy-integrated at canonical commit
+`759a5d4f45c2142485a0acc13760f3de4d0ff6ea` and records routes 16/16, conformance 13/13, and zero P0,
+P1, and P2 findings. That commit is the immutable P1.1D base.
 
 ## Current route
 
-The route contains exactly these packets:
+The route contains exactly these executable packets:
 
 1. [`controller-packet.md`](controller-packet.md)
-2. [`lanes/p1-r1-review.md`](lanes/p1-r1-review.md)
+2. [`lanes/p1-1d-team-lifecycle-read.md`](lanes/p1-1d-team-lifecycle-read.md)
 
-There is one reviewer slot and no producer, repair, integration, retry, refill, or successor slot. The
-reviewer is identity-independent from both producers and the admission reviewer. It owns only
-`docs/research/hosted-web/phase-1/reviews/routes-ratchets.md`; every other path is read-only.
+There is one producer slot and no parallel, review, repair, integration, retry, refill, or successor
+slot. The producer owns only the packet's exact five product paths, three test paths, and one handoff
+path. Those three ownership sets are mutually disjoint; every other path is read-only.
 
 ## Launch and capacity
 
-This seven-path docs-only transition does not launch workers or controllers. No reviewer may start
-until the router commit containing these exact packets is integrated after canonical P1.S2 and a
-successor controller reports `live=true`. The runtime must bind the integrated router commit as both
-`planBundleCommit` and `phaseStartSha`, `6a9e9ab714359638fb93a6880855a53c9e8ef4be` as `baseSha`, and
-the one current review packet.
+This seven-path docs-only transition does not launch workers or controllers. No producer may start
+until the router commit containing these exact packets is policy-integrated after canonical P1.R1 and
+a successor controller reports exactly `live=true`. The runtime must bind the integrated router
+commit as both `planBundleCommit` and `phaseStartSha`,
+`759a5d4f45c2142485a0acc13760f3de4d0ff6ea` as `baseSha`, and the one current P1.1D packet at revision
+`phase-01-p1-1d-team-lifecycle-read-r1`.
 
-Before that gate, capacity is zero. After it, capacity is exactly one formal P1.R1 reviewer. A stale
-base, wrong packet revision, non-independent identity, second worker, or controller value other than
+Before that gate, capacity is zero. After it, capacity is exactly one serial P1.1D producer. A stale
+base, wrong packet revision, second worker, extra writable path, or controller value other than
 `live=true` fails closed.
+
+## P1.1D boundary
+
+P1.1D defines one feature-owned read/list contract, runtime parser, transport-neutral application
+port/use case, narrow public entrypoints, and focused tests. It proves deterministic semantic outcomes
+against the accepted synthetic corpus and supplies the remaining positive neighbors for
+`P1.NEG.LEGACY_GOD_DTO`, `P1.NEG.NO_FILESYSTEM_ADAPTER_PHASE1`, and
+`P1.NEG.SEMANTIC_OUTCOME`.
+
+The node does not add or edit IPC, HTTP, preload, renderer, route-catalog, filesystem, composition,
+infrastructure, package/config, fixture, or research paths. It does not mount production behavior,
+run a real runtime/project, or create a fake browser implementation. Electron, renderer, transport,
+and filesystem responsibilities remain outside the contracts and core application layers.
 
 ## Review and successor boundary
 
-The reviewer independently evaluates the exact 37-path canonical P1.S2 input, the four evidence IDs,
-handoff consistency, boundaries, positive tests, deliberate negatives, and inherited diagnostics. It
-runs the packet's exact architecture, scope, negative, focused, lint, Prettier, diff, typecheck, and
-secret/path gates and writes one `ACCEPT` or `REJECT` result without modifying an input.
-
-Neither disposition starts later work. P1.1D, P1.R2, integration/P1.I, P1.F, and Phase 2+ remain
-blocked until formal P1.R1 `ACCEPT` is integrated and a later docs-only router independently advances
-authority.
+The producer writes the single structured handoff `.codex-handoff/phase-01-p1-1d.json` and returns it
+for a later review decision. Producer completion does not integrate its changes and does not start
+later work. P1.R2, integration/P1.I, P1.F, and Phase 2+ remain blocked until a later reviewed router
+separately advances authority.
 
 The authoritative current dependency and ownership projection is
 [`execution-dag.md`](execution-dag.md).

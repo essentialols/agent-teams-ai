@@ -56,6 +56,51 @@ function createSpawnProcess(
   };
 }
 
+function createModelsResponse(
+  providerId = 'openrouter',
+  modelId = `${providerId}/test-model`
+): {
+  schemaVersion: 1;
+  runtimeId: 'opencode';
+  models: {
+    runtimeId: 'opencode';
+    providerId: string;
+    models: readonly {
+      modelId: string;
+      providerId: string;
+      displayName: string;
+      sourceLabel: string;
+      free: boolean;
+      default: boolean;
+      availability: 'available';
+    }[];
+    defaultModelId: null;
+    diagnostics: readonly string[];
+  };
+} {
+  return {
+    schemaVersion: 1,
+    runtimeId: 'opencode',
+    models: {
+      runtimeId: 'opencode',
+      providerId,
+      models: [
+        {
+          modelId,
+          providerId,
+          displayName: modelId,
+          sourceLabel: providerId,
+          free: false,
+          default: false,
+          availability: 'available',
+        },
+      ],
+      defaultModelId: null,
+      diagnostics: [],
+    },
+  };
+}
+
 vi.mock('@main/services/runtime/providerAwareCliEnv', () => ({
   buildProviderAwareCliEnv: (...args: unknown[]) => buildProviderAwareCliEnvMock(...args),
 }));
@@ -2039,6 +2084,322 @@ describe('AgentTeamsRuntimeProviderManagementCliClient', () => {
     const afterMutation = await client.loadProviderDirectory(request);
     expect(afterMutation.directory?.totalCount).toBe(2);
     expect(execCliMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('reuses a recent model response and keeps query, limit, cursor, and project caches separate', async () => {
+    execCliMock.mockImplementation(async (_binaryPath: string, args: string[]) => {
+      const queryIndex = args.indexOf('--query');
+      const cursorIndex = args.indexOf('--cursor');
+      const query = queryIndex >= 0 ? args[queryIndex + 1] : 'all';
+      const cursor = cursorIndex >= 0 ? args[cursorIndex + 1] : 'first';
+      return {
+        stdout: JSON.stringify(createModelsResponse('openrouter', `${query}-${cursor}`)),
+        stderr: '',
+      };
+    });
+
+    const client = new AgentTeamsRuntimeProviderManagementCliClient();
+    const request = {
+      runtimeId: 'opencode',
+      providerId: 'openrouter',
+      projectPath: '/Users/test/project',
+      query: 'deep',
+      limit: 100,
+      cursor: null,
+    } as const;
+
+    const first = await client.loadModels(request);
+    const cached = await client.loadModels({ ...request });
+    await client.loadModels({ ...request, limit: 50 });
+    await client.loadModels({ ...request, cursor: '100' });
+    await client.loadModels({ ...request, projectPath: '/Users/test/other-project' });
+
+    expect(cached).toBe(first);
+    expect(execCliMock).toHaveBeenCalledTimes(4);
+    expect(execCliMock.mock.calls[2]?.[1]).toEqual(
+      expect.arrayContaining(['--cursor', '100'])
+    );
+  });
+
+  it('expires model search responses after their short TTL', async () => {
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+    execCliMock.mockResolvedValue({
+      stdout: JSON.stringify(createModelsResponse()),
+      stderr: '',
+    });
+
+    try {
+      const client = new AgentTeamsRuntimeProviderManagementCliClient();
+      const request = {
+        runtimeId: 'opencode' as const,
+        providerId: 'openrouter',
+        query: 'deep',
+      };
+
+      await client.loadModels(request);
+      nowSpy.mockReturnValue(30_999);
+      await client.loadModels(request);
+      expect(execCliMock).toHaveBeenCalledTimes(1);
+
+      nowSpy.mockReturnValue(31_001);
+      await client.loadModels(request);
+      expect(execCliMock).toHaveBeenCalledTimes(2);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  it('refreshes model cache generation without aborting an already-visible model load', async () => {
+    let modelLoadCount = 0;
+    let modelSignal: AbortSignal | undefined;
+    let finishFirstModelLoad: ((value: { stdout: string; stderr: string }) => void) | undefined;
+    execCliMock.mockImplementation(
+      (_binaryPath: string, args: string[], options: { signal?: AbortSignal }) => {
+        if (args.includes('directory')) {
+          return Promise.resolve({
+            stdout: JSON.stringify({
+              schemaVersion: 1,
+              runtimeId: 'opencode',
+              directory: { entries: [], diagnostics: [] },
+            }),
+            stderr: '',
+          });
+        }
+        modelLoadCount += 1;
+        if (modelLoadCount === 1) {
+          modelSignal = options.signal;
+          return new Promise<{ stdout: string; stderr: string }>((resolve) => {
+            finishFirstModelLoad = resolve;
+          });
+        }
+        return Promise.resolve({
+          stdout: JSON.stringify(createModelsResponse()),
+          stderr: '',
+        });
+      }
+    );
+
+    const client = new AgentTeamsRuntimeProviderManagementCliClient();
+    const request = {
+      runtimeId: 'opencode' as const,
+      providerId: 'openrouter',
+      requestGroupId: 'provider-model-search',
+    };
+    const visibleLoad = client.loadModels(request);
+    await vi.waitFor(() => expect(modelSignal).toBeDefined());
+
+    await client.loadProviderDirectory({ runtimeId: 'opencode', refresh: true });
+    expect(modelSignal?.aborted).toBe(false);
+
+    await client.loadModels(request);
+    expect(modelLoadCount).toBe(2);
+
+    finishFirstModelLoad?.({ stdout: JSON.stringify(createModelsResponse()), stderr: '' });
+    await visibleLoad;
+    await client.loadModels(request);
+    expect(modelLoadCount).toBe(2);
+  });
+
+  it('bounds model responses and evicts the least recently used query', async () => {
+    execCliMock.mockImplementation(async (_binaryPath: string, args: string[]) => {
+      const queryIndex = args.indexOf('--query');
+      const query = queryIndex >= 0 ? args[queryIndex + 1] : 'all';
+      return {
+        stdout: JSON.stringify(createModelsResponse('openrouter', query)),
+        stderr: '',
+      };
+    });
+
+    const client = new AgentTeamsRuntimeProviderManagementCliClient();
+    const loadQuery = (query: string) =>
+      client.loadModels({
+        runtimeId: 'opencode',
+        providerId: 'openrouter',
+        query,
+      });
+
+    for (let index = 0; index < 33; index += 1) {
+      await loadQuery(`query-${index}`);
+    }
+    expect(execCliMock).toHaveBeenCalledTimes(33);
+
+    await loadQuery('query-0');
+    expect(execCliMock).toHaveBeenCalledTimes(34);
+
+    await loadQuery('query-32');
+    expect(execCliMock).toHaveBeenCalledTimes(34);
+  });
+
+  it('shares an identical in-flight model load without aborting it', async () => {
+    let finishCommand: ((value: { stdout: string; stderr: string }) => void) | undefined;
+    let commandSignal: AbortSignal | undefined;
+    execCliMock.mockImplementationOnce(
+      (_binaryPath: string, _args: string[], options: { signal?: AbortSignal }) => {
+        commandSignal = options.signal;
+        return new Promise<{ stdout: string; stderr: string }>((resolve) => {
+          finishCommand = resolve;
+        });
+      }
+    );
+
+    const client = new AgentTeamsRuntimeProviderManagementCliClient();
+    const request = {
+      runtimeId: 'opencode',
+      providerId: 'openrouter',
+      query: 'deep',
+      requestGroupId: 'provider-model-search',
+    } as const;
+    const first = client.loadModels(request);
+    const duplicate = client.loadModels({ ...request });
+
+    await vi.waitFor(() => expect(execCliMock).toHaveBeenCalledTimes(1));
+    expect(commandSignal?.aborted).toBe(false);
+    finishCommand?.({ stdout: JSON.stringify(createModelsResponse()), stderr: '' });
+
+    const [firstResult, duplicateResult] = await Promise.all([first, duplicate]);
+    expect(duplicateResult).toBe(firstResult);
+    expect(commandSignal?.aborted).toBe(false);
+  });
+
+  it('aborts a superseded model load only when its request group has no other subscriber', async () => {
+    let firstSignal: AbortSignal | undefined;
+    execCliMock.mockImplementation(
+      (_binaryPath: string, args: string[], options: { signal?: AbortSignal }) => {
+        const queryIndex = args.indexOf('--query');
+        const query = queryIndex >= 0 ? args[queryIndex + 1] : 'all';
+        if (query !== 'd') {
+          return Promise.resolve({
+            stdout: JSON.stringify(createModelsResponse('openrouter', query)),
+            stderr: '',
+          });
+        }
+        firstSignal = options.signal;
+        return new Promise<{ stdout: string; stderr: string }>((_resolve, reject) => {
+          const rejectAbort = (): void => {
+            const error = new Error('Command aborted');
+            error.name = 'AbortError';
+            reject(error);
+          };
+          if (options.signal?.aborted) {
+            rejectAbort();
+            return;
+          }
+          options.signal?.addEventListener('abort', rejectAbort, { once: true });
+        });
+      }
+    );
+
+    const client = new AgentTeamsRuntimeProviderManagementCliClient();
+    const first = client.loadModels({
+      runtimeId: 'opencode',
+      providerId: 'openrouter',
+      query: 'd',
+      requestGroupId: 'provider-model-search',
+    });
+    await vi.waitFor(() => expect(firstSignal).toBeDefined());
+
+    const latest = client.loadModels({
+      runtimeId: 'opencode',
+      providerId: 'openrouter',
+      query: 'deep',
+      requestGroupId: 'provider-model-search',
+    });
+
+    expect((await latest).models?.models[0]?.modelId).toBe('deep');
+    expect(firstSignal?.aborted).toBe(true);
+    expect((await first).error).toBeDefined();
+    expect(execCliMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not abort a shared model load when an ungrouped caller still needs it', async () => {
+    let sharedSignal: AbortSignal | undefined;
+    let finishShared: ((value: { stdout: string; stderr: string }) => void) | undefined;
+    execCliMock.mockImplementation(
+      (_binaryPath: string, args: string[], options: { signal?: AbortSignal }) => {
+        const queryIndex = args.indexOf('--query');
+        const query = queryIndex >= 0 ? args[queryIndex + 1] : 'all';
+        if (query === 'shared') {
+          sharedSignal = options.signal;
+          return new Promise<{ stdout: string; stderr: string }>((resolve) => {
+            finishShared = resolve;
+          });
+        }
+        return Promise.resolve({
+          stdout: JSON.stringify(createModelsResponse('openrouter', query)),
+          stderr: '',
+        });
+      }
+    );
+
+    const client = new AgentTeamsRuntimeProviderManagementCliClient();
+    const firstGroup = client.loadModels({
+      runtimeId: 'opencode',
+      providerId: 'openrouter',
+      query: 'shared',
+      requestGroupId: 'search-a',
+    });
+    const ungrouped = client.loadModels({
+      runtimeId: 'opencode',
+      providerId: 'openrouter',
+      query: 'shared',
+    });
+    await vi.waitFor(() => expect(sharedSignal).toBeDefined());
+
+    await client.loadModels({
+      runtimeId: 'opencode',
+      providerId: 'openrouter',
+      query: 'latest',
+      requestGroupId: 'search-a',
+    });
+    expect(sharedSignal?.aborted).toBe(false);
+
+    finishShared?.({ stdout: JSON.stringify(createModelsResponse()), stderr: '' });
+    await Promise.all([firstGroup, ungrouped]);
+    expect(sharedSignal?.aborted).toBe(false);
+  });
+
+  it('invalidates model responses before and after a default-model mutation', async () => {
+    let modelLoadCount = 0;
+    execCliMock.mockImplementation(async (_binaryPath: string, args: string[]) => {
+      if (args.includes('models')) {
+        modelLoadCount += 1;
+        return {
+          stdout: JSON.stringify(
+            createModelsResponse('openrouter', `openrouter/model-${modelLoadCount}`)
+          ),
+          stderr: '',
+        };
+      }
+      return {
+        stdout: JSON.stringify({
+          schemaVersion: 1,
+          runtimeId: 'opencode',
+          view: { providers: [], diagnostics: [] },
+        }),
+        stderr: '',
+      };
+    });
+
+    const client = new AgentTeamsRuntimeProviderManagementCliClient();
+    const request = {
+      runtimeId: 'opencode' as const,
+      providerId: 'openrouter',
+      projectPath: '/Users/test/project',
+    };
+    const first = await client.loadModels(request);
+    await client.loadModels(request);
+    expect(modelLoadCount).toBe(1);
+
+    await client.setDefaultModel({
+      ...request,
+      modelId: 'openrouter/model-1',
+      scope: 'project',
+    });
+    const afterMutation = await client.loadModels(request);
+
+    expect(first.models?.models[0]?.modelId).toBe('openrouter/model-1');
+    expect(afterMutation.models?.models[0]?.modelId).toBe('openrouter/model-2');
+    expect(modelLoadCount).toBe(2);
   });
 
   it('passes all-projects default scope to the runtime CLI', async () => {

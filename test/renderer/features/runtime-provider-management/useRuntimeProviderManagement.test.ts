@@ -2442,6 +2442,160 @@ describe('useRuntimeProviderManagement', () => {
     });
   });
 
+  it('debounces provider model search and groups superseded picker requests', async () => {
+    const localProvider = createOpenAiLocalProvider();
+    const loadModels = vi.fn(() =>
+      Promise.resolve({
+        schemaVersion: 1 as const,
+        runtimeId: 'opencode' as const,
+        models: {
+          runtimeId: 'opencode' as const,
+          providerId: 'openai',
+          models: [],
+          defaultModelId: null,
+          diagnostics: [],
+          totalCount: 0,
+          returnedCount: 0,
+          limit: 250,
+          cursor: null,
+          nextCursor: null,
+        },
+      })
+    );
+    Object.defineProperty(window, 'electronAPI', {
+      configurable: true,
+      value: {
+        runtimeProviderManagement: {
+          loadView: vi.fn(() =>
+            Promise.resolve({
+              schemaVersion: 1,
+              runtimeId: 'opencode',
+              view: createRuntimeView([localProvider]),
+            })
+          ),
+          loadProviderDirectory: vi.fn(() => Promise.resolve(createEmptyDirectoryResponse())),
+          loadModels,
+        },
+      } as unknown as ElectronAPI,
+    });
+
+    const root = createRoot(host);
+    await act(async () => {
+      root.render(React.createElement(EnabledHarness, { projectPath: '/tmp/project-a' }));
+    });
+    await act(async () => {
+      await vi.waitFor(() => expect(loadModels).toHaveBeenCalledTimes(1));
+    });
+    loadModels.mockClear();
+
+    await act(async () => {
+      actions?.setModelQuery('g');
+      actions?.setModelQuery('gp');
+      actions?.setModelQuery('gpt');
+    });
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 100));
+    });
+    expect(loadModels).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 250));
+    });
+    expect(loadModels).toHaveBeenCalledTimes(1);
+    expect(loadModels).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        providerId: 'openai',
+        projectPath: '/tmp/project-a',
+        query: 'gpt',
+        limit: 250,
+        cursor: null,
+        requestGroupId: 'provider-model-picker:opencode:/tmp/project-a:openai',
+      })
+    );
+
+    await act(async () => root.unmount());
+  });
+
+  it('appends paged provider models without duplicates', async () => {
+    const localProvider = createOpenAiLocalProvider();
+    const makeModel = (modelId: string) => ({
+      modelId,
+      providerId: 'openai',
+      displayName: modelId,
+      sourceLabel: 'OpenCode catalog',
+      free: false,
+      default: false,
+      availability: 'available' as const,
+    });
+    const loadModels = vi.fn((input: { cursor?: string | null }) => {
+      const secondPage = input.cursor === '2';
+      return Promise.resolve({
+        schemaVersion: 1 as const,
+        runtimeId: 'opencode' as const,
+        models: {
+          runtimeId: 'opencode' as const,
+          providerId: 'openai',
+          models: secondPage
+            ? [makeModel('openai/b'), makeModel('openai/c')]
+            : [makeModel('openai/a'), makeModel('openai/b')],
+          defaultModelId: null,
+          diagnostics: [],
+          totalCount: 3,
+          returnedCount: 2,
+          limit: 250,
+          cursor: secondPage ? '2' : null,
+          nextCursor: secondPage ? null : '2',
+        },
+      });
+    });
+    Object.defineProperty(window, 'electronAPI', {
+      configurable: true,
+      value: {
+        runtimeProviderManagement: {
+          loadView: vi.fn(() =>
+            Promise.resolve({
+              schemaVersion: 1,
+              runtimeId: 'opencode',
+              view: createRuntimeView([localProvider]),
+            })
+          ),
+          loadProviderDirectory: vi.fn(() => Promise.resolve(createEmptyDirectoryResponse())),
+          loadModels,
+        },
+      } as unknown as ElectronAPI,
+    });
+
+    const root = createRoot(host);
+    await act(async () => {
+      root.render(React.createElement(EnabledHarness, { projectPath: '/tmp/project-a' }));
+    });
+    await vi.waitFor(() => expect(state?.modelsNextCursor).toBe('2'));
+
+    await act(async () => {
+      await actions?.loadMoreModels();
+    });
+
+    expect(loadModels).toHaveBeenLastCalledWith(expect.objectContaining({ cursor: '2' }));
+    expect(state?.models.map((model) => model.modelId)).toEqual([
+      'openai/a',
+      'openai/b',
+      'openai/c',
+    ]);
+    expect(state?.modelsTotalCount).toBe(3);
+    expect(state?.modelsNextCursor).toBeNull();
+
+    await act(async () => {
+      await actions?.refreshDirectory();
+    });
+
+    expect(loadModels).toHaveBeenCalledTimes(3);
+    expect(loadModels).toHaveBeenLastCalledWith(expect.objectContaining({ cursor: null }));
+    expect(state?.models.map((model) => model.modelId)).toEqual(['openai/a', 'openai/b']);
+    expect(state?.modelsNextCursor).toBe('2');
+
+    await act(async () => root.unmount());
+  });
+
   it('tracks concurrent model probes independently', async () => {
     const firstModelId = 'openrouter/anthropic/claude-3.5-haiku';
     const secondModelId = 'openrouter/openai/gpt-oss-20b:free';

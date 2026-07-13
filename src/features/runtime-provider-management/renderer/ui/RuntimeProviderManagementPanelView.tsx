@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useAppTranslation } from '@features/localization/renderer';
 import { CopyButton } from '@renderer/components/common/CopyButton';
@@ -28,6 +28,7 @@ import {
   isOpenCodeTeamModelRecommended,
 } from '@renderer/utils/openCodeModelRecommendations';
 import { isOpenCodeWindowsNodeModulesSymlinkPermissionDiagnostic } from '@shared/utils/openCodeWindowsAccessDenied';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   AlertTriangle,
   Check,
@@ -112,6 +113,8 @@ type OpenCodeSettingsSection = 'models' | 'providers';
 type SettingsT = ReturnType<typeof useAppTranslation>['t'];
 
 const NO_PROJECT_CONTEXT_VALUE = '__runtime-provider-no-project-context__';
+const PROVIDER_MODEL_VIRTUALIZATION_THRESHOLD = 40;
+const PROVIDER_MODEL_ROW_ESTIMATE_PX = 112;
 
 function getDirectoryAction(
   provider: RuntimeProviderDirectoryEntryDto,
@@ -2409,6 +2412,8 @@ function ProviderModelList({
 }): JSX.Element {
   const { t } = useAppTranslation('settings');
   const pickerOpen = state.modelPickerProviderId === provider.providerId;
+  const modelListRef = useRef<HTMLDivElement | null>(null);
+  const requestedModelCursorRef = useRef<string | null>(null);
   const [recommendedOnly, setRecommendedOnly] = useState(false);
   const [freeOnly, setFreeOnly] = useState(false);
   const hasRecommendedModels = useMemo(
@@ -2432,10 +2437,16 @@ function ProviderModelList({
     }
   }, [hasFreeModels]);
 
+  const normalizedModelQuery = state.modelQuery.trim().toLowerCase();
   const visibleModels = useMemo(
     () =>
       state.models
         .map((model, index) => ({ model, index }))
+        .filter(
+          ({ model }) =>
+            !normalizedModelQuery ||
+            getOpenCodeModelSearchText(model).includes(normalizedModelQuery)
+        )
         .filter(({ model }) => !recommendedOnly || isOpenCodeTeamModelRecommended(model.modelId))
         .filter(({ model }) => !freeOnly || isFreeRuntimeProviderModel(model))
         .sort((left, right) => {
@@ -2446,7 +2457,7 @@ function ProviderModelList({
           return recommendationOrder || left.index - right.index;
         })
         .map(({ model }) => model),
-    [freeOnly, recommendedOnly, state.models]
+    [freeOnly, normalizedModelQuery, recommendedOnly, state.models]
   );
   const emptyModelListMessage = recommendedOnly
     ? freeOnly
@@ -2455,6 +2466,105 @@ function ProviderModelList({
     : freeOnly
       ? t('runtimeProvider.models.emptyFree')
       : t('runtimeProvider.models.empty');
+  const shouldVirtualize =
+    pickerOpen && visibleModels.length > PROVIDER_MODEL_VIRTUALIZATION_THRESHOLD;
+  const modelVirtualizer = useVirtualizer({
+    count: shouldVirtualize ? visibleModels.length : 0,
+    enabled: shouldVirtualize,
+    getScrollElement: () => modelListRef.current,
+    estimateSize: () => PROVIDER_MODEL_ROW_ESTIMATE_PX,
+    getItemKey: (index) => visibleModels[index]?.modelId ?? index,
+    overscan: 5,
+  });
+
+  useEffect(() => {
+    if (!shouldVirtualize) {
+      return;
+    }
+    // Probe results and wrapped diagnostics can change a row's height after it
+    // mounts. ResizeObserver normally catches that; explicitly remeasuring the
+    // mounted window also keeps the list correct without ResizeObserver.
+    modelListRef.current
+      ?.querySelectorAll<HTMLElement>('[data-runtime-provider-model-virtual-row]')
+      .forEach((row) => modelVirtualizer.measureElement(row));
+  }, [modelVirtualizer, shouldVirtualize, state.modelResults, state.testingModelIds]);
+
+  const requestNextModelPage = useCallback((): void => {
+    const cursor = state.modelsNextCursor;
+    if (
+      !pickerOpen ||
+      !cursor ||
+      state.modelsLoading ||
+      state.modelsLoadingMore ||
+      Boolean(state.modelsError) ||
+      requestedModelCursorRef.current === cursor
+    ) {
+      return;
+    }
+    requestedModelCursorRef.current = cursor;
+    void actions
+      .loadMoreModels()
+      .catch(() => undefined)
+      .finally(() => {
+        if (requestedModelCursorRef.current === cursor) {
+          requestedModelCursorRef.current = null;
+        }
+      });
+  }, [
+    actions,
+    pickerOpen,
+    state.modelsError,
+    state.modelsLoading,
+    state.modelsLoadingMore,
+    state.modelsNextCursor,
+  ]);
+
+  const loadNextModelPageNearEnd = useCallback(
+    (element: HTMLDivElement): void => {
+      const remainingScrollDistance =
+        element.scrollHeight - element.scrollTop - element.clientHeight;
+      if (remainingScrollDistance <= Math.max(element.clientHeight, 240)) {
+        requestNextModelPage();
+      }
+    },
+    [requestNextModelPage]
+  );
+
+  useEffect(() => {
+    const element = modelListRef.current;
+    if (
+      !element ||
+      !state.modelsNextCursor ||
+      state.modelsLoading ||
+      state.modelsLoadingMore ||
+      state.modelsError
+    ) {
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => loadNextModelPageNearEnd(element));
+    return () => window.cancelAnimationFrame(frame);
+  }, [
+    loadNextModelPageNearEnd,
+    state.modelsError,
+    state.models.length,
+    state.modelsLoading,
+    state.modelsLoadingMore,
+    state.modelsNextCursor,
+    visibleModels.length,
+  ]);
+
+  const renderModel = (model: RuntimeProviderModelDto): JSX.Element => (
+    <ModelRow
+      provider={provider}
+      model={model}
+      selected={state.selectedModelId === model.modelId}
+      disabled={disabled}
+      hasProjectContext={hasProjectContext}
+      testing={state.testingModelIds.includes(model.modelId)}
+      result={state.modelResults[model.modelId]}
+      actions={actions}
+    />
+  );
 
   return (
     <div className="space-y-3 border-t border-white/10 pt-3">
@@ -2521,6 +2631,11 @@ function ProviderModelList({
             </Label>
           </div>
         ) : null}
+        {state.modelsTotalCount !== null && state.modelsTotalCount > state.models.length ? (
+          <div className="ml-auto text-xs tabular-nums text-[var(--color-text-muted)]">
+            {state.models.length} / {state.modelsTotalCount}
+          </div>
+        ) : null}
       </div>
 
       {state.modelsError ? (
@@ -2532,29 +2647,53 @@ function ProviderModelList({
       ) : null}
 
       <div
+        ref={modelListRef}
         data-testid="runtime-provider-model-list"
-        className="space-y-2 overflow-y-auto pr-1"
+        className={cn(!shouldVirtualize && 'space-y-2', 'overflow-y-auto pr-1')}
         style={{ maxHeight: 300 }}
+        onScroll={(event) => loadNextModelPageNearEnd(event.currentTarget)}
       >
         {!pickerOpen || state.modelsLoading ? <RuntimeProviderModelLoadingSkeleton /> : null}
         {pickerOpen && !state.modelsLoading && visibleModels.length === 0 && !state.modelsError ? (
           <div className="text-sm text-[var(--color-text-muted)]">{emptyModelListMessage}</div>
         ) : null}
-        {pickerOpen
-          ? visibleModels.map((model) => (
-              <ModelRow
-                key={model.modelId}
-                provider={provider}
-                model={model}
-                selected={state.selectedModelId === model.modelId}
-                disabled={disabled}
-                hasProjectContext={hasProjectContext}
-                testing={state.testingModelIds.includes(model.modelId)}
-                result={state.modelResults[model.modelId]}
-                actions={actions}
-              />
-            ))
-          : null}
+        {pickerOpen && shouldVirtualize ? (
+          <div
+            data-testid="runtime-provider-model-virtual-list"
+            className="relative w-full"
+            style={{ height: modelVirtualizer.getTotalSize() }}
+          >
+            {modelVirtualizer.getVirtualItems().map((virtualRow) => {
+              const model = visibleModels[virtualRow.index];
+              if (!model) {
+                return null;
+              }
+              return (
+                <div
+                  key={virtualRow.key}
+                  ref={modelVirtualizer.measureElement}
+                  data-index={virtualRow.index}
+                  data-runtime-provider-model-virtual-row
+                  className="absolute left-0 top-0 w-full pb-2"
+                  style={{ transform: `translateY(${virtualRow.start}px)` }}
+                >
+                  {renderModel(model)}
+                </div>
+              );
+            })}
+          </div>
+        ) : pickerOpen ? (
+          visibleModels.map((model) => <div key={model.modelId}>{renderModel(model)}</div>)
+        ) : null}
+        {pickerOpen && state.modelsLoadingMore ? (
+          <div
+            data-testid="runtime-provider-model-loading-more"
+            className="flex items-center justify-center gap-2 py-3 text-xs text-[var(--color-text-muted)]"
+          >
+            <Loader2 className="size-3.5 animate-spin" />
+            {state.models.length} / {state.modelsTotalCount ?? state.models.length}
+          </div>
+        ) : null}
       </div>
     </div>
   );

@@ -83,6 +83,9 @@ function createState(
     modelQuery: '',
     models: [],
     modelsLoading: false,
+    modelsLoadingMore: false,
+    modelsTotalCount: null,
+    modelsNextCursor: null,
     modelsError: null,
     modelsErrorDiagnostics: null,
     selectedModelId: null,
@@ -121,6 +124,7 @@ function createActions(): RuntimeProviderManagementActions {
     openModelPicker: vi.fn(),
     closeModelPicker: vi.fn(),
     setModelQuery: vi.fn(),
+    loadMoreModels: vi.fn(() => Promise.resolve()),
     selectModel: vi.fn(),
     useModelForNewTeams: vi.fn(),
     testModel: vi.fn((providerId: string, modelId: string) =>
@@ -2627,6 +2631,8 @@ describe('RuntimeProviderManagementPanelView', () => {
     );
     expect(modelSearch?.style.paddingLeft).toBe('42px');
     expect(modelList?.style.maxHeight).toBe('300px');
+    expect(host.querySelector('[data-testid="runtime-provider-model-virtual-list"]')).toBeNull();
+    expect(host.querySelectorAll('[data-testid^="runtime-provider-model-row-"]')).toHaveLength(7);
     expect(host.textContent).not.toContain('OpenRouterfree');
     const firstTestButton = Array.from(host.querySelectorAll('button')).find(
       (button) => button.textContent?.trim() === 'Test'
@@ -2696,6 +2702,182 @@ describe('RuntimeProviderManagementPanelView', () => {
       'openrouter/openai/gpt-oss-20b:free'
     );
     expect(actions.useModelForNewTeams).not.toHaveBeenCalled();
+  });
+
+  it('virtualizes large provider model lists while keeping the full scroll range', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const actions = createActions();
+    const connectedProvider = {
+      ...createState().view!.providers[0],
+      state: 'connected' as const,
+      ownership: ['managed'] as const,
+      modelCount: 80,
+      actions: [],
+    };
+    const models = Array.from({ length: 80 }, (_, index) => ({
+      providerId: 'openrouter',
+      modelId: `openrouter/test/model-${index}`,
+      displayName: `test/model-${index}`,
+      sourceLabel: 'OpenRouter',
+      free: false,
+      default: false,
+      availability: 'untested' as const,
+    }));
+    const offsetHeightSpy = vi
+      .spyOn(HTMLElement.prototype, 'offsetHeight', 'get')
+      .mockImplementation(function getOffsetHeight(this: HTMLElement) {
+        return this.getAttribute('data-testid') === 'runtime-provider-model-list' ? 300 : 112;
+      });
+    const offsetWidthSpy = vi
+      .spyOn(HTMLElement.prototype, 'offsetWidth', 'get')
+      .mockReturnValue(900);
+
+    try {
+      await act(async () => {
+        root.render(
+          React.createElement(RuntimeProviderManagementPanelView, {
+            state: createState({
+              view: {
+                ...createState().view!,
+                providers: [connectedProvider],
+              },
+              providers: [connectedProvider],
+              selectedProviderId: 'openrouter',
+              modelPickerProviderId: 'openrouter',
+              modelPickerMode: 'use',
+              models,
+            }),
+            actions,
+            disabled: false,
+          })
+        );
+        await Promise.resolve();
+      });
+
+      const virtualList = host.querySelector<HTMLElement>(
+        '[data-testid="runtime-provider-model-virtual-list"]'
+      );
+      const renderedRows = host.querySelectorAll(
+        '[data-testid^="runtime-provider-model-row-"]'
+      );
+
+      expect(virtualList).not.toBeNull();
+      expect(Number.parseFloat(virtualList?.style.height ?? '0')).toBeGreaterThan(300);
+      expect(renderedRows.length).toBeGreaterThan(0);
+      expect(renderedRows.length).toBeLessThan(models.length);
+    } finally {
+      offsetHeightSpy.mockRestore();
+      offsetWidthSpy.mockRestore();
+    }
+  });
+
+  it('loads the next model page once when the current page does not fill the viewport', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    let finishLoadMore: (() => void) | undefined;
+    const actions = createActions();
+    actions.loadMoreModels = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishLoadMore = resolve;
+        })
+    );
+    const connectedProvider = {
+      ...createState().view!.providers[0],
+      state: 'connected' as const,
+      ownership: ['managed'] as const,
+      modelCount: 2,
+      actions: [],
+    };
+
+    await act(async () => {
+      root.render(
+        React.createElement(RuntimeProviderManagementPanelView, {
+          state: createState({
+            view: {
+              ...createState().view!,
+              providers: [connectedProvider],
+            },
+            providers: [connectedProvider],
+            selectedProviderId: 'openrouter',
+            modelPickerProviderId: 'openrouter',
+            modelPickerMode: 'use',
+            models: [
+              {
+                providerId: 'openrouter',
+                modelId: 'openrouter/test/model-1',
+                displayName: 'test/model-1',
+                sourceLabel: 'OpenRouter',
+                free: false,
+                default: false,
+                availability: 'untested',
+              },
+            ],
+            modelsTotalCount: 2,
+            modelsNextCursor: '1',
+          }),
+          actions,
+          disabled: false,
+        })
+      );
+      await new Promise((resolve) => window.requestAnimationFrame(resolve));
+    });
+
+    expect(actions.loadMoreModels).toHaveBeenCalledTimes(1);
+    const modelList = host.querySelector<HTMLElement>(
+      '[data-testid="runtime-provider-model-list"]'
+    );
+    await act(async () => {
+      modelList?.dispatchEvent(new Event('scroll', { bubbles: true }));
+      modelList?.dispatchEvent(new Event('scroll', { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(actions.loadMoreModels).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      finishLoadMore?.();
+      await Promise.resolve();
+    });
+  });
+
+  it('does not retry model pagination automatically while its error is visible', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const actions = createActions();
+    const connectedProvider = {
+      ...createState().view!.providers[0],
+      state: 'connected' as const,
+      ownership: ['managed'] as const,
+      modelCount: 2,
+      actions: [],
+    };
+
+    await act(async () => {
+      root.render(
+        React.createElement(RuntimeProviderManagementPanelView, {
+          state: createState({
+            view: { ...createState().view!, providers: [connectedProvider] },
+            providers: [connectedProvider],
+            selectedProviderId: 'openrouter',
+            modelPickerProviderId: 'openrouter',
+            modelPickerMode: 'use',
+            modelsError: 'Provider models load timed out',
+            modelsTotalCount: 2,
+            modelsNextCursor: '1',
+          }),
+          actions,
+          disabled: false,
+        })
+      );
+      await new Promise((resolve) => window.requestAnimationFrame(resolve));
+    });
+
+    expect(actions.loadMoreModels).not.toHaveBeenCalled();
+    expect(host.textContent).toContain('Provider models load timed out');
   });
 
   it('filters provider model picker rows to free models', async () => {

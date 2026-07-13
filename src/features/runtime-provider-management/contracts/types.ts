@@ -397,6 +397,11 @@ export interface RuntimeProviderManagementModelsDto {
   models: readonly RuntimeProviderModelDto[];
   defaultModelId: string | null;
   diagnostics: readonly string[];
+  totalCount?: number;
+  returnedCount?: number;
+  limit?: number | null;
+  cursor?: string | null;
+  nextCursor?: string | null;
 }
 
 export interface RuntimeProviderManagementModelsResponse {
@@ -489,6 +494,9 @@ export interface RuntimeProviderManagementLoadModelsInput {
   projectPath?: string | null;
   query?: string | null;
   limit?: number | null;
+  cursor?: string | null;
+  /** App-local cancellation group. It is not forwarded to the runtime CLI. */
+  requestGroupId?: string | null;
 }
 
 export interface RuntimeProviderManagementTestModelInput {

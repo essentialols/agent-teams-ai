@@ -52,6 +52,9 @@ function managementState(
     modelQuery: '',
     models: [],
     modelsLoading: false,
+    modelsLoadingMore: false,
+    modelsTotalCount: null,
+    modelsNextCursor: null,
     modelsError: null,
     modelsErrorDiagnostics: null,
     selectedModelId: null,
@@ -90,6 +93,7 @@ function managementActions(): RuntimeProviderManagementActions {
     openModelPicker: vi.fn(),
     closeModelPicker: vi.fn(),
     setModelQuery: vi.fn(),
+    loadMoreModels: vi.fn(async () => undefined),
     selectModel: vi.fn(),
     useModelForNewTeams: vi.fn(),
     testModel: vi.fn(async (providerId: string, modelId: string) => ({
@@ -412,7 +416,7 @@ describe('RuntimeProviderOnboardingView', () => {
     });
 
     const reconnectButton = [...host.querySelectorAll('button')].find(
-      (button) => button.textContent?.trim() === 'Reconnect plan'
+      (button) => button.textContent?.trim() === 'Reconnect'
     );
     act(() => reconnectButton?.click());
     expect(beginConnect).toHaveBeenCalledTimes(1);

@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 
+import { useAppTranslation } from '@features/localization/renderer';
 import { Button } from '@renderer/components/ui/button';
 import { Checkbox } from '@renderer/components/ui/checkbox';
 import { Label } from '@renderer/components/ui/label';
@@ -379,6 +380,7 @@ const ActivePlanFlow = ({
   readonly disabled: boolean;
   readonly onCancel: () => void;
 }): JSX.Element => {
+  const { t } = useAppTranslation('settings');
   const plan = state.activePlan;
   const setupActions = useMemo(
     () => ({
@@ -445,7 +447,7 @@ const ActivePlanFlow = ({
               </div>
               <div className="mt-3 flex flex-wrap justify-end gap-2">
                 <Button type="button" variant="ghost" size="sm" onClick={actions.beginConnect}>
-                  Reconnect
+                  {t('runtimeProvider.actions.reconnect')}
                 </Button>
                 <Button type="button" size="sm" onClick={actions.beginVerification}>
                   Verify and choose model
@@ -530,7 +532,7 @@ const ActivePlanFlow = ({
                   variant="ghost"
                   onClick={() => actions.beginConnect()}
                 >
-                  Reconnect plan
+                  {t('runtimeProvider.actions.reconnect')}
                 </Button>
                 <Button
                   type="button"

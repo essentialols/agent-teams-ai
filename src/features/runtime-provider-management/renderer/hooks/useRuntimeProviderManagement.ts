@@ -44,10 +44,23 @@ interface UseRuntimeProviderManagementOptions {
 export type RuntimeProviderModelPickerMode = 'use' | 'runtime-default';
 
 const DEFAULT_DIRECTORY_FILTER: RuntimeProviderDirectoryFilterDto = 'all';
+const MODEL_PAGE_SIZE = 250;
+const MODEL_SEARCH_DEBOUNCE_MS = 300;
 
 interface ProjectContextSnapshot {
   path: string | null;
   generation: number;
+}
+
+function mergeModelPages(
+  current: readonly RuntimeProviderModelDto[],
+  incoming: readonly RuntimeProviderModelDto[]
+): readonly RuntimeProviderModelDto[] {
+  const merged = new Map(current.map((model) => [model.modelId, model]));
+  for (const model of incoming) {
+    merged.set(model.modelId, model);
+  }
+  return [...merged.values()];
 }
 
 export interface RuntimeProviderManagementState {
@@ -84,6 +97,9 @@ export interface RuntimeProviderManagementState {
   modelQuery: string;
   models: readonly RuntimeProviderModelDto[];
   modelsLoading: boolean;
+  modelsLoadingMore: boolean;
+  modelsTotalCount: number | null;
+  modelsNextCursor: string | null;
   modelsError: string | null;
   modelsErrorDiagnostics: RuntimeProviderManagementErrorDiagnosticsDto | null;
   selectedModelId: string | null;
@@ -119,6 +135,7 @@ export interface RuntimeProviderManagementActions {
   openModelPicker: (providerId: string, mode: RuntimeProviderModelPickerMode) => void;
   closeModelPicker: () => void;
   setModelQuery: (value: string) => void;
+  loadMoreModels: () => Promise<void>;
   selectModel: (modelId: string) => void;
   useModelForNewTeams: (modelId: string) => void;
   testModel: (providerId: string, modelId: string) => Promise<RuntimeProviderModelTestResultDto>;
@@ -341,8 +358,12 @@ export function useRuntimeProviderManagement(
     null
   );
   const [modelQuery, setModelQuery] = useState('');
+  const [debouncedModelQuery, setDebouncedModelQuery] = useState('');
   const [models, setModels] = useState<readonly RuntimeProviderModelDto[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelsLoadingMore, setModelsLoadingMore] = useState(false);
+  const [modelsTotalCount, setModelsTotalCount] = useState<number | null>(null);
+  const [modelsNextCursor, setModelsNextCursor] = useState<string | null>(null);
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [modelsErrorDiagnostics, setModelsErrorDiagnostics] =
     useState<RuntimeProviderManagementErrorDiagnosticsDto | null>(null);
@@ -423,8 +444,12 @@ export function useRuntimeProviderManagement(
       setModelPickerProviderId(providerId);
       setModelPickerMode(mode);
       setModelQuery('');
+      setDebouncedModelQuery('');
       setModels([]);
       setModelsLoading(false);
+      setModelsLoadingMore(false);
+      setModelsTotalCount(null);
+      setModelsNextCursor(null);
       setModelsError(null);
       setModelsErrorDiagnostics(null);
       setSelectedModelId(null);
@@ -441,8 +466,12 @@ export function useRuntimeProviderManagement(
     setModelPickerProviderId(null);
     setModelPickerMode(null);
     setModelQuery('');
+    setDebouncedModelQuery('');
     setModels([]);
     setModelsLoading(false);
+    setModelsLoadingMore(false);
+    setModelsTotalCount(null);
+    setModelsNextCursor(null);
     setModelsError(null);
     setModelsErrorDiagnostics(null);
     setSelectedModelId(null);
@@ -480,6 +509,9 @@ export function useRuntimeProviderManagement(
     setSetupMetadata({});
     setModels([]);
     setModelsLoading(false);
+    setModelsLoadingMore(false);
+    setModelsTotalCount(null);
+    setModelsNextCursor(null);
     setModelsError(null);
     setModelsErrorDiagnostics(null);
     setSelectedModelId(null);
@@ -748,56 +780,92 @@ export function useRuntimeProviderManagement(
 
   useEffect(() => {
     if (!options.enabled || !modelPickerProviderId) {
-      modelLoadRequestSeq.current += 1;
-      setModelsLoading(false);
-      setModelsErrorDiagnostics(null);
       return;
     }
+    const normalizedQuery = modelQuery.trim();
+    if (normalizedQuery === debouncedModelQuery) {
+      return;
+    }
+    const timeout = window.setTimeout(
+      () => setDebouncedModelQuery(normalizedQuery),
+      normalizedQuery ? MODEL_SEARCH_DEBOUNCE_MS : 0
+    );
+    return () => window.clearTimeout(timeout);
+  }, [debouncedModelQuery, modelPickerProviderId, modelQuery, options.enabled]);
 
-    const requestSeq = modelLoadRequestSeq.current + 1;
-    modelLoadRequestSeq.current = requestSeq;
-    const providerId = modelPickerProviderId;
-    const projectContext = getProjectContextSnapshot();
-    const requestIsCurrent = (): boolean =>
-      modelLoadRequestSeq.current === requestSeq &&
-      activeModelPickerProviderRef.current === providerId &&
-      isProjectContextCurrent(projectContext);
-    let cancelled = false;
-    setModelsLoading(true);
-    setModelsError(null);
-    setModelsErrorDiagnostics(null);
-    void withUiTimeout(
-      api.runtimeProviderManagement.loadModels({
-        runtimeId: options.runtimeId,
-        providerId,
-        projectPath: projectContext.path,
-        query: modelQuery.trim() || null,
-        limit: 250,
-      }),
-      'Provider models load timed out'
-    )
-      .then((response) => {
-        if (cancelled || !requestIsCurrent()) {
+  const loadModelsPage = useCallback(
+    async (input: { append?: boolean; cursor?: string | null } = {}): Promise<void> => {
+      if (!options.enabled || !modelPickerProviderId) {
+        return;
+      }
+      const append = input.append === true;
+      const providerId = modelPickerProviderId;
+      const projectContext = getProjectContextSnapshot();
+      const requestSeq = modelLoadRequestSeq.current + 1;
+      modelLoadRequestSeq.current = requestSeq;
+      const requestIsCurrent = (): boolean =>
+        modelLoadRequestSeq.current === requestSeq &&
+        activeModelPickerProviderRef.current === providerId &&
+        isProjectContextCurrent(projectContext);
+
+      if (append) {
+        setModelsLoadingMore(true);
+      } else {
+        setModelsLoading(true);
+      }
+      setModelsError(null);
+      setModelsErrorDiagnostics(null);
+
+      try {
+        const response = await withUiTimeout(
+          api.runtimeProviderManagement.loadModels({
+            runtimeId: options.runtimeId,
+            providerId,
+            projectPath: projectContext.path,
+            query: debouncedModelQuery || null,
+            limit: MODEL_PAGE_SIZE,
+            cursor: input.cursor ?? null,
+            requestGroupId: `provider-model-picker:${options.runtimeId}:${projectContext.path ?? ''}:${providerId}`,
+          }),
+          'Provider models load timed out',
+          100_000
+        );
+        if (!requestIsCurrent()) {
           return;
         }
         if (response.error) {
-          setModels([]);
+          if (!append) {
+            setModels([]);
+            setModelsTotalCount(null);
+            setModelsNextCursor(null);
+          }
           setModelsError(response.error.message);
           setModelsErrorDiagnostics(response.error.diagnostics ?? null);
           return;
         }
-        const nextModels = response.models?.models ?? [];
-        setModels(nextModels);
+        const modelPage = response.models;
+        const nextModels = modelPage?.models ?? [];
+        setModels((current) => (append ? mergeModelPages(current, nextModels) : nextModels));
+        setModelsTotalCount(
+          (current) => modelPage?.totalCount ?? (append ? current : nextModels.length)
+        );
+        setModelsNextCursor(modelPage?.nextCursor ?? null);
         setSelectedModelId((current) => {
+          if (append) {
+            return current ?? resolveSavedModelForNewTeams(nextModels);
+          }
           if (current && nextModels.some((model) => model.modelId === current)) {
             return current;
           }
           return resolveSavedModelForNewTeams(nextModels);
         });
-      })
-      .catch((modelsLoadError) => {
-        if (!cancelled && requestIsCurrent()) {
-          setModels([]);
+      } catch (modelsLoadError) {
+        if (requestIsCurrent()) {
+          if (!append) {
+            setModels([]);
+            setModelsTotalCount(null);
+            setModelsNextCursor(null);
+          }
           setModelsError(
             modelsLoadError instanceof Error
               ? modelsLoadError.message
@@ -805,24 +873,41 @@ export function useRuntimeProviderManagement(
           );
           setModelsErrorDiagnostics(null);
         }
-      })
-      .finally(() => {
-        if (!cancelled && requestIsCurrent()) {
-          setModelsLoading(false);
+      } finally {
+        if (requestIsCurrent()) {
+          if (append) {
+            setModelsLoadingMore(false);
+          } else {
+            setModelsLoading(false);
+          }
         }
-      });
+      }
+    },
+    [
+      debouncedModelQuery,
+      getProjectContextSnapshot,
+      isProjectContextCurrent,
+      modelPickerProviderId,
+      options.enabled,
+      options.runtimeId,
+    ]
+  );
 
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    getProjectContextSnapshot,
-    isProjectContextCurrent,
-    modelPickerProviderId,
-    modelQuery,
-    options.enabled,
-    options.runtimeId,
-  ]);
+  const loadModelsPageRef = useRef(loadModelsPage);
+  useEffect(() => {
+    loadModelsPageRef.current = loadModelsPage;
+  }, [loadModelsPage]);
+
+  useEffect(() => {
+    if (!options.enabled || !modelPickerProviderId) {
+      modelLoadRequestSeq.current += 1;
+      setModelsLoading(false);
+      setModelsLoadingMore(false);
+      setModelsErrorDiagnostics(null);
+      return;
+    }
+    void loadModelsPageRef.current();
+  }, [currentProjectPath, debouncedModelQuery, modelPickerProviderId, options.enabled]);
 
   useEffect(() => {
     if (!options.enabled || activeFormProviderId) {
@@ -872,6 +957,16 @@ export function useRuntimeProviderManagement(
     });
   }, [directoryLoading, directoryNextCursor, directoryRefreshing, loadDirectoryPage]);
 
+  const loadMoreModels = useCallback(async (): Promise<void> => {
+    if (!modelsNextCursor || modelsLoading || modelsLoadingMore) {
+      return;
+    }
+    await loadModelsPage({
+      append: true,
+      cursor: modelsNextCursor,
+    });
+  }, [loadModelsPage, modelsLoading, modelsLoadingMore, modelsNextCursor]);
+
   const refreshDirectory = useCallback(async (): Promise<void> => {
     setSuccessMessage(null);
     await Promise.all([
@@ -882,7 +977,10 @@ export function useRuntimeProviderManagement(
         cursor: null,
       }),
     ]);
-  }, [loadDirectoryPage, refresh]);
+    if (modelPickerProviderId) {
+      await loadModelsPage();
+    }
+  }, [loadDirectoryPage, loadModelsPage, modelPickerProviderId, refresh]);
 
   const selectDirectoryProvider = useCallback(
     (providerId: string): void => {
@@ -1053,6 +1151,14 @@ export function useRuntimeProviderManagement(
     },
     [directoryQuery, directorySupported, options.searchDirectoryOnQueryChange]
   );
+
+  const updateModelQuery = useCallback((value: string): void => {
+    modelLoadRequestSeq.current += 1;
+    setModelQuery(value);
+    setModelsLoading(false);
+    setModelsLoadingMore(false);
+    setModelsNextCursor(null);
+  }, []);
 
   const cancelConnect = useCallback((): void => {
     const cancellation = cancelActiveOAuthBestEffort();
@@ -1635,6 +1741,9 @@ export function useRuntimeProviderManagement(
       modelQuery,
       models,
       modelsLoading,
+      modelsLoadingMore,
+      modelsTotalCount,
+      modelsNextCursor,
       modelsError,
       modelsErrorDiagnostics,
       selectedModelId,
@@ -1683,6 +1792,9 @@ export function useRuntimeProviderManagement(
       modelsErrorDiagnostics,
       modelsError,
       modelsLoading,
+      modelsLoadingMore,
+      modelsNextCursor,
+      modelsTotalCount,
       providerQuery,
       savingDefaultModelId,
       savingProviderId,
@@ -1716,7 +1828,8 @@ export function useRuntimeProviderManagement(
       openProviderCredentialPage,
       openModelPicker,
       closeModelPicker,
-      setModelQuery,
+      setModelQuery: updateModelQuery,
+      loadMoreModels,
       selectModel: setSelectedModelId,
       useModelForNewTeams,
       testModel,
@@ -1727,6 +1840,7 @@ export function useRuntimeProviderManagement(
       closeModelPicker,
       forgetProvider,
       loadMoreDirectory,
+      loadMoreModels,
       openProviderCredentialPage,
       openModelPicker,
       refresh,
@@ -1743,6 +1857,7 @@ export function useRuntimeProviderManagement(
       submitOAuthCode,
       testModel,
       updateApiKeyValue,
+      updateModelQuery,
       updateProviderQuery,
       useModelForNewTeams,
     ]

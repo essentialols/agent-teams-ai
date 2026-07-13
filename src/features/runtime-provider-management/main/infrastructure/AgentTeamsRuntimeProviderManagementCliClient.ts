@@ -51,6 +51,9 @@ const COMMAND_OUTPUT_PREVIEW_LIMIT = 1_200;
 const DIRECTORY_RESPONSE_CACHE_TTL_MS = 30_000;
 const DEFAULT_DIRECTORY_RESPONSE_CACHE_TTL_MS = 2 * 60_000;
 const MAX_DIRECTORY_RESPONSE_CACHE_ENTRIES = 32;
+const MODEL_RESPONSE_CACHE_TTL_MS = 30_000;
+const DEFAULT_MODEL_RESPONSE_CACHE_TTL_MS = 2 * 60_000;
+const MAX_MODEL_RESPONSE_CACHE_ENTRIES = 32;
 const RUNTIME_PROVIDER_OAUTH_EVENT_PREFIX = '@@agent-teams-runtime-provider-oauth@@';
 const OAUTH_OPERATION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/;
 const OAUTH_EVENT_IDENTITY_FIELD_LIMIT = 256;
@@ -106,6 +109,18 @@ interface RuntimeProviderCommandFailure {
 interface DirectoryResponseCacheEntry {
   expiresAt: number;
   response: RuntimeProviderManagementDirectoryResponse;
+}
+
+interface ModelResponseCacheEntry {
+  expiresAt: number;
+  response: RuntimeProviderManagementModelsResponse;
+}
+
+interface ModelResponseInFlightEntry {
+  controller: AbortController;
+  hasUngroupedSubscriber: boolean;
+  requestGroups: Set<string>;
+  promise: Promise<RuntimeProviderManagementModelsResponse>;
 }
 
 export interface RuntimeProviderOAuthClientDependencies {
@@ -1382,6 +1397,10 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
     Promise<RuntimeProviderManagementDirectoryResponse>
   >();
   private directoryResponseCacheGeneration = 0;
+  private readonly modelResponseCache = new Map<string, ModelResponseCacheEntry>();
+  private readonly modelResponseInFlight = new Map<string, ModelResponseInFlightEntry>();
+  private readonly activeModelRequestGroups = new Map<string, string>();
+  private modelResponseCacheGeneration = 0;
   private readonly activeOAuthOperations = new Map<string, ActiveRuntimeProviderOAuthOperation>();
   private readonly openExternal: (url: string) => Promise<void>;
   private readonly emitOAuthProgress: (event: RuntimeProviderOAuthProgressDto) => void;
@@ -1467,6 +1486,146 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
     this.directoryResponseCacheGeneration += 1;
     this.directoryResponseCache.clear();
     this.directoryResponseInFlight.clear();
+  }
+
+  private getModelResponseCacheKey(
+    input: RuntimeProviderManagementLoadModelsInput,
+    projectPath: string | null
+  ): string {
+    const normalizedLimit =
+      typeof input.limit === 'number' && Number.isFinite(input.limit) && input.limit > 0
+        ? Math.floor(input.limit)
+        : null;
+    return JSON.stringify([
+      input.runtimeId,
+      projectPath,
+      input.providerId,
+      input.query?.trim() || null,
+      normalizedLimit,
+      input.cursor?.trim() || null,
+    ]);
+  }
+
+  private readModelResponseCache(cacheKey: string): RuntimeProviderManagementModelsResponse | null {
+    const cached = this.modelResponseCache.get(cacheKey);
+    if (!cached) {
+      return null;
+    }
+    if (cached.expiresAt <= Date.now()) {
+      this.modelResponseCache.delete(cacheKey);
+      return null;
+    }
+    // Refresh insertion order so the bounded map behaves as an LRU cache.
+    this.modelResponseCache.delete(cacheKey);
+    this.modelResponseCache.set(cacheKey, cached);
+    return cached.response;
+  }
+
+  private pruneModelResponseCache(now = Date.now()): void {
+    for (const [key, entry] of this.modelResponseCache) {
+      if (entry.expiresAt <= now) {
+        this.modelResponseCache.delete(key);
+      }
+    }
+    while (this.modelResponseCache.size >= MAX_MODEL_RESPONSE_CACHE_ENTRIES) {
+      const oldestKey = this.modelResponseCache.keys().next().value;
+      if (!oldestKey) {
+        break;
+      }
+      this.modelResponseCache.delete(oldestKey);
+    }
+  }
+
+  private writeModelResponseCache(
+    cacheKey: string,
+    response: RuntimeProviderManagementModelsResponse,
+    ttlMs: number,
+    cacheGeneration: number
+  ): RuntimeProviderManagementModelsResponse {
+    if (
+      cacheGeneration === this.modelResponseCacheGeneration &&
+      response.models &&
+      !response.error
+    ) {
+      this.modelResponseCache.delete(cacheKey);
+      this.pruneModelResponseCache();
+      this.modelResponseCache.set(cacheKey, {
+        expiresAt: Date.now() + ttlMs,
+        response,
+      });
+    }
+    return response;
+  }
+
+  private getModelResponseCacheTtlMs(input: RuntimeProviderManagementLoadModelsInput): number {
+    return !input.query?.trim() && !input.cursor?.trim()
+      ? DEFAULT_MODEL_RESPONSE_CACHE_TTL_MS
+      : MODEL_RESPONSE_CACHE_TTL_MS;
+  }
+
+  private invalidateModelResponseCache(abortInFlight = true): void {
+    this.modelResponseCacheGeneration += 1;
+    this.modelResponseCache.clear();
+    if (!abortInFlight) {
+      // Detach stale work from deduplication without disrupting callers that
+      // are already displaying it. A refresh can then start a fresh request
+      // immediately, and the detached response cannot repopulate the cache
+      // because its generation no longer matches.
+      this.modelResponseInFlight.clear();
+      this.activeModelRequestGroups.clear();
+      return;
+    }
+    for (const entry of this.modelResponseInFlight.values()) {
+      entry.controller.abort();
+    }
+    this.modelResponseInFlight.clear();
+    this.activeModelRequestGroups.clear();
+  }
+
+  private invalidateProviderResponseCaches(): void {
+    this.invalidateDirectoryResponseCache();
+    this.invalidateModelResponseCache();
+  }
+
+  private releaseSupersededModelRequest(requestGroupId: string, nextCacheKey: string): void {
+    const previousCacheKey = this.activeModelRequestGroups.get(requestGroupId);
+    if (!previousCacheKey || previousCacheKey === nextCacheKey) {
+      return;
+    }
+    this.activeModelRequestGroups.delete(requestGroupId);
+    const previousEntry = this.modelResponseInFlight.get(previousCacheKey);
+    if (!previousEntry) {
+      return;
+    }
+    previousEntry.requestGroups.delete(requestGroupId);
+    if (!previousEntry.hasUngroupedSubscriber && previousEntry.requestGroups.size === 0) {
+      previousEntry.controller.abort();
+    }
+  }
+
+  private registerModelRequestSubscriber(
+    entry: ModelResponseInFlightEntry,
+    cacheKey: string,
+    requestGroupId: string | null
+  ): void {
+    if (requestGroupId) {
+      entry.requestGroups.add(requestGroupId);
+      this.activeModelRequestGroups.set(requestGroupId, cacheKey);
+      return;
+    }
+    entry.hasUngroupedSubscriber = true;
+  }
+
+  private cleanupModelResponseInFlight(cacheKey: string, entry: ModelResponseInFlightEntry): void {
+    if (this.modelResponseInFlight.get(cacheKey) !== entry) {
+      return;
+    }
+    this.modelResponseInFlight.delete(cacheKey);
+    for (const requestGroupId of entry.requestGroups) {
+      if (this.activeModelRequestGroups.get(requestGroupId) === cacheKey) {
+        this.activeModelRequestGroups.delete(requestGroupId);
+      }
+    }
   }
 
   private getDirectoryResponseCacheTtlMs(
@@ -1570,6 +1729,9 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
         return existingRefresh;
       }
       this.invalidateDirectoryResponseCache();
+      // A catalog refresh should make the next model picker read fresh data,
+      // but it must not turn an already-visible model load into an AbortError.
+      this.invalidateModelResponseCache(false);
     } else {
       const cached = this.readDirectoryResponseCache(cacheKey);
       if (cached) {
@@ -1762,7 +1924,7 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
   async connectProvider(
     input: RuntimeProviderManagementConnectInput
   ): Promise<RuntimeProviderManagementProviderResponse> {
-    this.invalidateDirectoryResponseCache();
+    this.invalidateProviderResponseCaches();
     const projectPath = normalizeProjectPath(input.projectPath);
     const { binaryPath, env } = await resolveCliEnv();
     if (!binaryPath) {
@@ -1970,7 +2132,7 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
       // Provider credentials can change before a long OAuth command exits. A
       // dashboard read during that window may repopulate the cache with the old
       // disconnected state, so always discard it after the command settles.
-      this.invalidateDirectoryResponseCache();
+      this.invalidateProviderResponseCaches();
     }
   }
 
@@ -2028,7 +2190,7 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
     // The provider may already have persisted its credential before the user
     // closes the flow. Invalidate now, then wait for the child to settle and
     // invalidate again before the renderer refreshes provider status.
-    this.invalidateDirectoryResponseCache();
+    this.invalidateProviderResponseCaches();
     const child = active.child;
     const settled = new Promise<void>((resolve) => {
       let finished = false;
@@ -2051,7 +2213,7 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
     }, OAUTH_CANCEL_FORCE_KILL_DELAY_MS);
     forceKillTimer.unref?.();
     await settled;
-    this.invalidateDirectoryResponseCache();
+    this.invalidateProviderResponseCaches();
     return { ok: true };
   }
 
@@ -2062,7 +2224,7 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
   async connectWithApiKey(
     input: RuntimeProviderManagementConnectApiKeyInput
   ): Promise<RuntimeProviderManagementProviderResponse> {
-    this.invalidateDirectoryResponseCache();
+    this.invalidateProviderResponseCaches();
     const projectPath = normalizeProjectPath(input.projectPath);
     const { binaryPath, env } = await resolveCliEnv();
     if (!binaryPath) {
@@ -2139,13 +2301,15 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
         input.runtimeId,
         normalizeCommandFailure(error, context)
       );
+    } finally {
+      this.invalidateProviderResponseCaches();
     }
   }
 
   async forgetCredential(
     input: RuntimeProviderManagementForgetInput
   ): Promise<RuntimeProviderManagementProviderResponse> {
-    this.invalidateDirectoryResponseCache();
+    this.invalidateProviderResponseCaches();
     const projectPath = normalizeProjectPath(input.projectPath);
     const { binaryPath, env } = await resolveCliEnv();
     if (!binaryPath) {
@@ -2196,6 +2360,8 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
         input.runtimeId,
         normalizeCommandFailure(error, context)
       );
+    } finally {
+      this.invalidateProviderResponseCaches();
     }
   }
 
@@ -2203,6 +2369,57 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
     input: RuntimeProviderManagementLoadModelsInput
   ): Promise<RuntimeProviderManagementModelsResponse> {
     const projectPath = normalizeProjectPath(input.projectPath);
+    const cacheKey = this.getModelResponseCacheKey(input, projectPath);
+    const requestGroupId = input.requestGroupId?.trim() || null;
+    if (requestGroupId) {
+      this.releaseSupersededModelRequest(requestGroupId, cacheKey);
+    }
+
+    const cached = this.readModelResponseCache(cacheKey);
+    if (cached) {
+      if (requestGroupId && this.activeModelRequestGroups.get(requestGroupId) === cacheKey) {
+        this.activeModelRequestGroups.delete(requestGroupId);
+      }
+      return cached;
+    }
+
+    const existingRequest = this.modelResponseInFlight.get(cacheKey);
+    if (existingRequest) {
+      this.registerModelRequestSubscriber(existingRequest, cacheKey, requestGroupId);
+      return existingRequest.promise;
+    }
+
+    const controller = new AbortController();
+    const cacheGeneration = this.modelResponseCacheGeneration;
+    const promise = this.loadModelsUncached(
+      input,
+      projectPath,
+      cacheKey,
+      cacheGeneration,
+      controller.signal
+    );
+    const inFlightEntry: ModelResponseInFlightEntry = {
+      controller,
+      hasUngroupedSubscriber: false,
+      requestGroups: new Set<string>(),
+      promise,
+    };
+    this.registerModelRequestSubscriber(inFlightEntry, cacheKey, requestGroupId);
+    this.modelResponseInFlight.set(cacheKey, inFlightEntry);
+    try {
+      return await promise;
+    } finally {
+      this.cleanupModelResponseInFlight(cacheKey, inFlightEntry);
+    }
+  }
+
+  private async loadModelsUncached(
+    input: RuntimeProviderManagementLoadModelsInput,
+    projectPath: string | null,
+    cacheKey: string,
+    cacheGeneration: number,
+    signal: AbortSignal
+  ): Promise<RuntimeProviderManagementModelsResponse> {
     const { binaryPath, env } = await resolveCliEnv();
     if (!binaryPath) {
       return missingRuntimeBinaryResponse<RuntimeProviderManagementModelsResponse>(
@@ -2227,6 +2444,9 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
     if (typeof input.limit === 'number' && Number.isFinite(input.limit) && input.limit > 0) {
       args.push('--limit', String(Math.floor(input.limit)));
     }
+    if (input.cursor?.trim()) {
+      args.push('--cursor', input.cursor.trim());
+    }
     args = appendProjectPathArgs(args, projectPath);
     const context = createCommandContext(binaryPath, args, projectPath);
     const misconfigured = rejectWrongRuntimeBinary<RuntimeProviderManagementModelsResponse>(
@@ -2241,11 +2461,17 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
       const { stdout, stderr } = await execCli(binaryPath, args, {
         ...runtimeProviderCommandOptions({ env }, projectPath),
         timeout: COMMAND_TIMEOUT_MS,
+        signal,
       });
-      return extractJsonObjectWithContext<RuntimeProviderManagementModelsResponse>(
-        stdout,
-        context,
-        stderr
+      return this.writeModelResponseCache(
+        cacheKey,
+        extractJsonObjectWithContext<RuntimeProviderManagementModelsResponse>(
+          stdout,
+          context,
+          stderr
+        ),
+        this.getModelResponseCacheTtlMs(input),
+        cacheGeneration
       );
     } catch (error) {
       const response = extractJsonObjectFromError<RuntimeProviderManagementModelsResponse>(error);
@@ -2322,7 +2548,7 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
   async setDefaultModel(
     input: RuntimeProviderManagementSetDefaultModelInput
   ): Promise<RuntimeProviderManagementViewResponse> {
-    this.invalidateDirectoryResponseCache();
+    this.invalidateProviderResponseCaches();
     const projectPath = normalizeProjectPath(input.projectPath);
     const { binaryPath, env } = await resolveCliEnv();
     if (!binaryPath) {
@@ -2380,13 +2606,15 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
         normalizeCommandFailure(error, context),
         'model-test-failed'
       );
+    } finally {
+      this.invalidateProviderResponseCaches();
     }
   }
 
   async configureModelLimits(
     input: RuntimeProviderManagementConfigureModelLimitsInput
   ): Promise<RuntimeProviderManagementModelLimitsResponse> {
-    this.invalidateDirectoryResponseCache();
+    this.invalidateProviderResponseCaches();
     const projectPath = normalizeProjectPath(input.projectPath);
     const { binaryPath, env } = await resolveCliEnv();
     if (!binaryPath) {
@@ -2445,6 +2673,8 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
         normalizeCommandFailure(error, context),
         'model-test-failed'
       );
+    } finally {
+      this.invalidateProviderResponseCaches();
     }
   }
 }

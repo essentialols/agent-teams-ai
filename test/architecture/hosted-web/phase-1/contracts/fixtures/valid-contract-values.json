@@ -17,5 +17,13 @@
     "diagnosticId": "diag.fixture-a",
     "retryAfterMs": 1000
   },
-  "sameVersionResponse": { "schemaVersion": 1, "additiveField": "ignored" }
+  "sameVersionResponse": {
+    "schemaVersion": 1,
+    "revision": "revision_snapshot-a",
+    "additiveField": "ignored"
+  },
+  "sameVersionInput": {
+    "schemaVersion": 1,
+    "revision": "revision_snapshot-a"
+  }
 }

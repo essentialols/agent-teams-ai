@@ -1,21 +1,21 @@
 {
   "schemaVersion": 1,
   "currentExecutablePhase": "phase-01",
-  "currentExecutableSubphase": "P1.1D",
-  "currentExecutableNodes": ["P1.1D"],
+  "currentExecutableSubphase": "P1.1D-additive-response-remediation",
+  "currentExecutableNodes": ["P1.1D-additive-response-remediation"],
   "workerStartAuthority": "hosting/subscription-runtime builtin worker-start-v1",
   "currentRoute": {
     "controllerPacket": "docs/hosted-web-phases/phase-01/controller-packet.md",
     "lanePackets": [
       {
-        "subphase": "P1.1D",
-        "node": "P1.1D",
-        "path": "docs/hosted-web-phases/phase-01/lanes/p1-1d-team-lifecycle-read.md",
-        "packetRevision": "phase-01-p1-1d-team-lifecycle-read-r1"
+        "subphase": "P1.1D-additive-response-remediation",
+        "node": "P1.1D-additive-response-remediation",
+        "path": "docs/hosted-web-phases/phase-01/lanes/p1-1d-additive-response-remediation.md",
+        "packetRevision": "phase-01-p1-1d-additive-response-remediation-r1"
       }
     ],
-    "baseSha": "759a5d4f45c2142485a0acc13760f3de4d0ff6ea",
-    "supersedesWorkerStartRevisions": ["phase-01-p1-r1-review-r1"],
+    "baseSha": "1b37afb02bec25a1f08432d733595b553101ecab",
+    "supersedesWorkerStartRevisions": ["phase-01-p1-1d-team-lifecycle-read-r1"],
     "launchGate": {
       "required": {
         "routerCommitPolicyIntegrated": true,
@@ -66,13 +66,34 @@
       "P2": 0
     }
   },
+  "canonicalOriginalP11dRouter": {
+    "status": "canonical-policy-integrated",
+    "commit": "1b37afb02bec25a1f08432d733595b553101ecab",
+    "packetRevision": "phase-01-p1-1d-team-lifecycle-read-r1"
+  },
+  "rejectedP11dR3Candidate": {
+    "status": "independently-rejected-preserved",
+    "producerJob": "agent-teams-hosted-web-refactor-p1-1d-producer-v17-r3",
+    "baseCommit": "1b37afb02bec25a1f08432d733595b553101ecab",
+    "patchSha256": "a7d5539e68e62b1c64e5cdf663bc784d92d4db03e74a0087e29d9bb3b2faa7ee",
+    "disposition": "REJECT",
+    "findingSeverity": "P1",
+    "finding": "same-version response parsers reject additive fields at success, failure, inapplicable, and nested item response boundaries",
+    "requestsRemainStrict": true,
+    "immutable": true,
+    "integrated": false,
+    "workerStartAuthority": false
+  },
   "authorization": {
-    "authorized": ["P1.1D"],
-    "authorizedNodes": ["P1.1D"],
+    "authorized": ["P1.1D-additive-response-remediation"],
+    "authorizedNodes": ["P1.1D-additive-response-remediation"],
     "blocked": ["P1.R2", "P1.I", "P1.F", "Phase 2+"],
     "productSourceImplementationAuthorized": true,
     "productAuthorizationLimitedToOwnedPaths": true,
-    "reviewAuthorized": false,
+    "rejectedArtifactReadOnlySalvageAuthorized": true,
+    "rejectedArtifactMutationAuthorized": false,
+    "independentReviewRequiredBeforeIntegration": true,
+    "reviewAuthorizedByThisDocsTransition": false,
     "integrationAuthorized": false,
     "authorizationEffectiveOnlyAfterLaunchGate": true,
     "producerCount": 1,
@@ -80,9 +101,9 @@
     "launchBeforeRouterPolicyIntegration": false,
     "launchBeforeSuccessorControllerLive": false,
     "retryOrRefillAuthorized": false,
-    "successorAuthorizationRequiresReviewAndLaterRouter": true
+    "successorAuthorizationRequiresIndependentAcceptAndLaterRouter": true
   },
-  "p11dExclusiveOwnership": {
+  "p11dAdditiveResponseRemediationExclusiveOwnership": {
     "productPaths": [
       "src/features/team-lifecycle/contracts/team-lifecycle-read.ts",
       "src/features/team-lifecycle/contracts/index.ts",
@@ -106,7 +127,7 @@
     "docs/hosted-web-phases/README.md",
     "docs/hosted-web-phases/EXECUTION_INDEX.json",
     "docs/hosted-web-phases/phase-01/controller-packet.md",
-    "docs/hosted-web-phases/phase-01/lanes/p1-1d-team-lifecycle-read.md"
+    "docs/hosted-web-phases/phase-01/lanes/p1-1d-additive-response-remediation.md"
   ],
   "authorityTiers": {
     "execution-authority": [
@@ -120,7 +141,7 @@
       "docs/hosted-web-phases/phase-01/README.md",
       "docs/hosted-web-phases/phase-01/controller-packet.md",
       "docs/hosted-web-phases/phase-01/execution-dag.md",
-      "docs/hosted-web-phases/phase-01/lanes/p1-1d-team-lifecycle-read.md"
+      "docs/hosted-web-phases/phase-01/lanes/p1-1d-additive-response-remediation.md"
     ],
     "accepted-review-input": ["docs/research/hosted-web/phase-1/reviews/routes-ratchets.md"],
     "historical-preserved": [
@@ -130,7 +151,11 @@
       "docs/hosted-web-phases/phase-01/lanes/p1-s2-routes.md",
       "docs/hosted-web-phases/phase-01/lanes/p1-s2-conformance.md",
       "docs/hosted-web-phases/phase-01/lanes/p1-r1-review.md",
+      "docs/hosted-web-phases/phase-01/lanes/p1-1d-team-lifecycle-read.md",
       "docs/research/hosted-web"
+    ],
+    "external-rejected-evidence": [
+      "subscription-runtime patch a7d5539e68e62b1c64e5cdf663bc784d92d4db03e74a0087e29d9bb3b2faa7ee"
     ],
     "researchWriteException": null
   }

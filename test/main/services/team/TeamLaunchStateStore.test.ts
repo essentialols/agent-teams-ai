@@ -223,7 +223,7 @@ describe('TeamLaunchStateStore', () => {
     }
   });
 
-  it('attempts to clear both publication files when the first removal fails', async () => {
+  it('rejects an incomplete revocation after attempting to clear both publication files', async () => {
     const stateRemovalError = Object.assign(new Error('state file is busy'), { code: 'EBUSY' });
     const remove = vi
       .spyOn(fs.promises, 'rm')
@@ -231,8 +231,32 @@ describe('TeamLaunchStateStore', () => {
       .mockResolvedValueOnce(undefined);
 
     try {
-      await expect(new TeamLaunchStateStore().clear('demo')).resolves.toBeUndefined();
+      await expect(new TeamLaunchStateStore().clear('demo')).rejects.toBe(stateRemovalError);
 
+      expect(remove).toHaveBeenNthCalledWith(1, getTeamLaunchStatePath('demo'), { force: true });
+      expect(remove).toHaveBeenNthCalledWith(2, getTeamLaunchSummaryPath('demo'), { force: true });
+    } finally {
+      remove.mockRestore();
+    }
+  });
+
+  it('reports every I/O failure when neither publication file can be revoked', async () => {
+    const stateRemovalError = Object.assign(new Error('state file is busy'), { code: 'EBUSY' });
+    const summaryRemovalError = Object.assign(new Error('summary is read-only'), {
+      code: 'EROFS',
+    });
+    const remove = vi
+      .spyOn(fs.promises, 'rm')
+      .mockRejectedValueOnce(stateRemovalError)
+      .mockRejectedValueOnce(summaryRemovalError);
+
+    try {
+      const clearing = new TeamLaunchStateStore().clear('demo');
+
+      await expect(clearing).rejects.toMatchObject({
+        errors: [stateRemovalError, summaryRemovalError],
+        message: '[demo] Failed to clear launch-state publication',
+      });
       expect(remove).toHaveBeenNthCalledWith(1, getTeamLaunchStatePath('demo'), { force: true });
       expect(remove).toHaveBeenNthCalledWith(2, getTeamLaunchSummaryPath('demo'), { force: true });
     } finally {

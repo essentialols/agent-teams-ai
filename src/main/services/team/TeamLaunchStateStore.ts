@@ -96,10 +96,19 @@ export class TeamLaunchStateStore {
 
   async clear(teamName: string): Promise<void> {
     await enqueuePublication(teamName, async () => {
-      await Promise.allSettled([
+      const results = await Promise.allSettled([
         fs.promises.rm(getTeamLaunchStatePath(teamName), { force: true }),
         fs.promises.rm(getTeamLaunchSummaryPath(teamName), { force: true }),
       ]);
+      const errors = results
+        .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+        .map((result) => result.reason);
+      if (errors.length === 1) {
+        throw errors[0];
+      }
+      if (errors.length > 1) {
+        throw new AggregateError(errors, `[${teamName}] Failed to clear launch-state publication`);
+      }
     });
   }
 }

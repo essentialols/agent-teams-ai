@@ -66,7 +66,7 @@ export function registerCodexGoalProjectControlReviewTools(server: McpServer): v
     {
       title: "Project Control Record Failed Worker Without Output",
       description:
-        "Append an immutable failed_no_output terminal ledger correction for a stopped, clean worker with complete empty-output evidence.",
+        "Append an immutable failed_no_output terminal ledger correction for a stopped worker with complete empty authored-output evidence, including a verified preexisting workspace patch when applicable.",
       inputSchema: {
         ...jobIdInputSchema(),
         controllerJobId: z.string().min(1),
@@ -75,6 +75,9 @@ export function registerCodexGoalProjectControlReviewTools(server: McpServer): v
         failureCode: z.string().min(1),
         note: z.string().min(1).optional(),
         confirmFailedNoOutput: z.boolean().optional(),
+        preexistingWorkspacePatchPath: z.string().min(1).optional(),
+        preexistingWorkspacePatchSha256: z.string().regex(/^[a-fA-F0-9]{64}$/).optional(),
+        confirmPreexistingWorkspacePatch: z.boolean().optional(),
       },
     },
     async (args) => withMcpErrors(async () =>

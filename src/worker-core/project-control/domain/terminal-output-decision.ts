@@ -34,6 +34,10 @@ export type TerminalOutputDecision = {
     readonly authoredChanges: boolean;
     readonly workspaceDirty: boolean;
   };
+  readonly preexistingWorkspacePatch?: {
+    readonly path: string;
+    readonly sha256: string;
+  };
   readonly note: string;
   readonly backup: TerminalOutputBackup;
 };
@@ -65,6 +69,15 @@ export function assertTerminalOutputDecision(
     )
   ) {
     throw new Error("terminal_output_failed_no_output_evidence_required");
+  }
+  if (
+    decision.preexistingWorkspacePatch &&
+    (
+      !decision.preexistingWorkspacePatch.path.trim() ||
+      !/^[a-f0-9]{64}$/i.test(decision.preexistingWorkspacePatch.sha256)
+    )
+  ) {
+    throw new Error("terminal_output_preexisting_patch_evidence_invalid");
   }
   return decision;
 }

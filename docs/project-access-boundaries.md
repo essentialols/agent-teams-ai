@@ -354,6 +354,8 @@ The expected control loop is:
    patch copy or `git apply`;
    if an infrastructure failure produced no authored output, record it with
    `codex_goal_project_record_failed_no_output` instead of review/integration;
+   a dirty verifier worktree is accepted only when its preexisting producer
+   patch path and SHA-256 are explicitly verified;
 6. write a review marker with `codex_goal_project_mark_reviewed`;
 7. open the reviewed output with `codex_goal_project_open_integration_attempt`;
 8. apply it with `codex_goal_project_apply_worker_output`;

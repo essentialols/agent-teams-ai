@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -54,12 +55,14 @@ describe("project failed_no_output lifecycle", () => {
     const controllerJobId = "project-controller-v1";
     const workerJobId = "project-worker-v1";
     const dirtyWorkerJobId = "project-worker-dirty-v1";
+    const verifierJobId = "project-verifier-v1";
 
     try {
       await mkdir(authRoot, { recursive: true });
       await createCleanWorkspace(controllerWorkspace);
       await createCleanWorkspace(join(worktreeRoot, workerJobId));
       await createCleanWorkspace(join(worktreeRoot, dirtyWorkerJobId));
+      await createCleanWorkspace(join(worktreeRoot, verifierJobId));
       await createStoredJob({
         registryRootDir,
         root,
@@ -92,6 +95,13 @@ describe("project failed_no_output lifecycle", () => {
         authRoot,
         jobId: dirtyWorkerJobId,
         workspacePath: join(worktreeRoot, dirtyWorkerJobId),
+      });
+      await createStoredJob({
+        registryRootDir,
+        root,
+        authRoot,
+        jobId: verifierJobId,
+        workspacePath: join(worktreeRoot, verifierJobId),
       });
       await writeMislabeledNoOutput({ root, ledgerRoot, jobId: workerJobId });
       await writeMislabeledNoOutput({ root, ledgerRoot, jobId: dirtyWorkerJobId });
@@ -153,6 +163,43 @@ describe("project failed_no_output lifecycle", () => {
         terminalAttemptId: "terminalize-project-worker-dirty-v1",
         confirmFailedNoOutput: true,
       }, deps)).rejects.toThrow("failed_no_output_clean_workspace_required");
+
+      const baseline = await writeBaselineFailedNoOutput({
+        root,
+        ledgerRoot,
+        jobId: verifierJobId,
+      });
+      await writeFile(join(worktreeRoot, verifierJobId, "README.md"), "producer output\n");
+      const verifierArgs = {
+        ...args,
+        jobId: verifierJobId,
+        terminalAttemptId: "terminalize-project-verifier-v1",
+        confirmFailedNoOutput: true,
+        preexistingWorkspacePatchPath: baseline.path,
+        preexistingWorkspacePatchSha256: baseline.sha256,
+      };
+      await expect(projectControlRecordFailedNoOutputView(verifierArgs, deps)).resolves
+        .toMatchObject({
+          ok: false,
+          reason: "confirm_preexisting_workspace_patch_required",
+        });
+      const verifierRecorded = await projectControlRecordFailedNoOutputView({
+        ...verifierArgs,
+        confirmPreexistingWorkspacePatch: true,
+      }, deps);
+      expect(verifierRecorded).toMatchObject({
+        ok: true,
+        decision: {
+          status: "failed_no_output",
+          preexistingWorkspacePatch: baseline,
+        },
+      });
+      const reconciled = await readCodexGoalConsumedOutputLedgers({ roots: [ledgerRoot] });
+      expect(reconciled.byJobId.get(verifierJobId)).toMatchObject({
+        status: "failed_no_output",
+        preexistingWorkspacePatchValid: true,
+        valid: true,
+      });
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -165,6 +212,46 @@ async function createCleanWorkspace(path: string): Promise<void> {
   await writeFile(join(path, "README.md"), "base\n");
   await git(path, ["add", "README.md"]);
   await git(path, ["commit", "-m", "test: base"]);
+}
+
+async function writeBaselineFailedNoOutput(input: {
+  readonly root: string;
+  readonly ledgerRoot: string;
+  readonly jobId: string;
+}): Promise<{ readonly path: string; readonly sha256: string }> {
+  const evidenceRoot = join(
+    input.root,
+    "worker-jobs",
+    "archives",
+    `${input.jobId}-failed-test`,
+  );
+  const workspace = join(input.root, "worktrees", input.jobId);
+  await mkdir(join(input.ledgerRoot, "items"), { recursive: true });
+  await mkdir(evidenceRoot, { recursive: true });
+  const statusPath = join(evidenceRoot, "git-status.txt");
+  const patchPath = join(evidenceRoot, "verifier-output.patch");
+  const baselinePath = join(evidenceRoot, "producer-output.patch");
+  const baseline = "diff --git a/README.md b/README.md\n";
+  await writeFile(statusPath, " M README.md\n");
+  await writeFile(patchPath, "");
+  await writeFile(baselinePath, baseline);
+  await writeFile(
+    join(input.ledgerRoot, "items", `${input.jobId}.json`),
+    `${JSON.stringify({
+      schemaVersion: 1,
+      jobId: input.jobId,
+      status: "failed_no_output",
+      closedAt: "2026-07-13T20:00:00.000Z",
+      failure: { category: "infrastructure", code: "terminal_result_missing" },
+      output: { authoredChanges: false, workspaceDirty: false },
+      note: "Verifier failed after the producer patch was applied.",
+      backup: { workspace, statusPath, patchPath },
+    }, null, 2)}\n`,
+  );
+  return {
+    path: baselinePath,
+    sha256: createHash("sha256").update(baseline).digest("hex"),
+  };
 }
 
 async function createStoredJob(input: {

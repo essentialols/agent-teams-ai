@@ -8,6 +8,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -169,6 +170,40 @@ describe("consumed output ledger", () => {
         "terminal output status rejected has no authored output evidence; use failed_no_output for infrastructure failures",
       ]),
     });
+  });
+
+  it("accepts a failed verifier with a verified preexisting workspace patch", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-preexisting-ledger-"));
+    const workspace = join(root, "workspaces", "verifier-v1");
+    const backup = await createBackupEvidence(root, "verifier-v1", workspace, false);
+    await writeFile(backup.statusPath!, " M producer-output.ts\n");
+    const preexistingPatchPath = join(root, "producer.patch");
+    const preexistingPatch = "diff --git a/producer-output.ts b/producer-output.ts\n";
+    await writeFile(preexistingPatchPath, preexistingPatch);
+
+    const record = await consumedOutputRecordFromJson({
+      ledgerPath: join(root, "failed-verifier.json"),
+      source: localConsumedOutputLedgerSource(),
+      value: {
+        jobId: "verifier-v1",
+        status: "failed_no_output",
+        closedAt: "2026-07-13T00:00:00.000Z",
+        failure: { category: "infrastructure", code: "terminal_result_missing" },
+        output: { authoredChanges: false, workspaceDirty: false },
+        preexistingWorkspacePatch: {
+          path: preexistingPatchPath,
+          sha256: createHash("sha256").update(preexistingPatch).digest("hex"),
+        },
+        backup,
+      },
+    });
+
+    expect(record).toMatchObject({
+      status: "failed_no_output",
+      preexistingWorkspacePatchValid: true,
+      valid: true,
+    });
+    expect(consumedDebt(record!)).toEqual([]);
   });
 
   it("requires commit evidence for integrated records", async () => {

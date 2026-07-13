@@ -189,6 +189,9 @@ export type ProjectControlMcpArgs = GoalMcpArgs & JobRegistryMcpArgs & {
   readonly failureCategory?: string;
   readonly failureCode?: string;
   readonly confirmFailedNoOutput?: boolean;
+  readonly preexistingWorkspacePatchPath?: string;
+  readonly preexistingWorkspacePatchSha256?: string;
+  readonly confirmPreexistingWorkspacePatch?: boolean;
 };
 
 export type ProjectControllerLaunchPlanMcpArgs = ProjectControlMcpArgs & {

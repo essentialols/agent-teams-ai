@@ -306,9 +306,11 @@ codex_goal_project_reject_integration_attempt({ controllerJobId, attemptId, ... 
 ```
 
 Use `codex_goal_project_record_failed_no_output` only for a stopped worker whose
-workspace and immutable backup status are clean and whose patch/numstat evidence
-is empty. The command appends a new terminal receipt and never rewrites the
-original ledger record.
+immutable patch/numstat evidence proves it authored no output. The workspace
+must be clean unless it contains a preexisting producer patch. In that case,
+pass its scoped path and verified SHA-256 with
+`confirmPreexistingWorkspacePatch: true`. The command appends a new terminal
+receipt and never rewrites the original ledger record.
 
 Child jobs created by `codex_goal_project_create_job` inherit a narrowed scope
 from the controller. They default to

@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 
 import {
@@ -87,6 +89,15 @@ export async function projectControlRecordFailedNoOutputView(
     jobId: loaded.manifest.jobId,
     jobRootDir: loaded.manifest.jobRootDir,
   });
+  const preexistingWorkspacePatch = await requestedPreexistingWorkspacePatch(
+    args,
+    {
+      scope: controller.scope,
+      registryRootDir: controller.registryRootDir,
+      jobId: loaded.manifest.jobId,
+      jobRootDir: loaded.manifest.jobRootDir,
+    },
+  );
   if (sourceRecord.valid && sourceRecord.status === "failed_no_output") {
     return {
       ok: true,
@@ -126,6 +137,28 @@ export async function projectControlRecordFailedNoOutputView(
         closedAt,
         failure: { category: failureCategory, code: failureCode },
         note,
+        ...(preexistingWorkspacePatch ? { preexistingWorkspacePatch } : {}),
+      },
+    };
+  }
+  if (preexistingWorkspacePatch && !args.confirmPreexistingWorkspacePatch) {
+    return {
+      ok: false,
+      reason: "confirm_preexisting_workspace_patch_required",
+      mode: "project_control_record_failed_no_output",
+      controllerJobId: controller.controller.jobId,
+      jobId: loaded.manifest.jobId,
+      requiredOverride: "confirmPreexistingWorkspacePatch",
+      sourceRecord,
+      status,
+      workerLiveness,
+      decisionPreview: {
+        status: "failed_no_output",
+        attemptId,
+        closedAt,
+        failure: { category: failureCategory, code: failureCode },
+        note,
+        preexistingWorkspacePatch,
       },
     };
   }
@@ -145,6 +178,7 @@ export async function projectControlRecordFailedNoOutputView(
       failureCategory,
       failureCode,
       note,
+      ...(preexistingWorkspacePatch ? { preexistingWorkspacePatch } : {}),
     },
   );
   const accountReservationReleased = await releaseCodexProjectAccount({
@@ -164,6 +198,29 @@ export async function projectControlRecordFailedNoOutputView(
     accountReservationReleased,
     decision: receipt.decision,
   };
+}
+
+async function requestedPreexistingWorkspacePatch(
+  args: ProjectControlMcpArgs,
+  input: {
+    readonly scope: ProjectAccessScope;
+    readonly registryRootDir: string;
+    readonly jobId: string;
+    readonly jobRootDir: string;
+  },
+): Promise<{ readonly path: string; readonly sha256: string } | undefined> {
+  const path = stringValue(args.preexistingWorkspacePatchPath);
+  const expectedSha256 = stringValue(args.preexistingWorkspacePatchSha256)?.toLowerCase();
+  if (!path && !expectedSha256) return undefined;
+  if (!path || !expectedSha256 || !/^[a-f0-9]{64}$/.test(expectedSha256)) {
+    throw new Error("failed_no_output_preexisting_patch_evidence_required");
+  }
+  await assertEvidencePathReadable(path, input);
+  const actualSha256 = createHash("sha256").update(await readFile(path)).digest("hex");
+  if (actualSha256 !== expectedSha256) {
+    throw new Error("failed_no_output_preexisting_patch_sha256_mismatch");
+  }
+  return { path, sha256: expectedSha256 };
 }
 
 function failedNoOutputClosedAt(sourceClosedAt: string | undefined): string {
@@ -191,30 +248,42 @@ async function assertBackupPathsReadable(
     backup.untrackedArchivePath,
   ]) {
     if (!path) continue;
-    const evidenceRoot = projectOwnedEvidenceRoot(path, input);
-    const scope = evidenceRoot
-      ? {
-          ...input.scope,
-          readRoots: Array.from(new Set([
-            ...(input.scope.readRoots ?? []),
-            evidenceRoot,
-          ])),
-        }
-      : input.scope;
-    const policy = createAccessPolicyService({
-      boundary: AccessBoundary.ProjectScopedControl,
-      scope,
-    });
-    const realPath = await projectControlRealPathOutsideReadScope(path, scope);
-    const decision = policy.canReadPath({
-      path,
-      ...(realPath ? { realPath } : {}),
-    });
-    if (!decision.allowed) {
-      throw new Error(
-        `project_control_failed_no_output_backup_denied:${decision.reason}`,
-      );
-    }
+    await assertEvidencePathReadable(path, input);
+  }
+}
+
+async function assertEvidencePathReadable(
+  path: string,
+  input: {
+    readonly scope: ProjectAccessScope;
+    readonly registryRootDir: string;
+    readonly jobId: string;
+    readonly jobRootDir: string;
+  },
+): Promise<void> {
+  const evidenceRoot = projectOwnedEvidenceRoot(path, input);
+  const scope = evidenceRoot
+    ? {
+        ...input.scope,
+        readRoots: Array.from(new Set([
+          ...(input.scope.readRoots ?? []),
+          evidenceRoot,
+        ])),
+      }
+    : input.scope;
+  const policy = createAccessPolicyService({
+    boundary: AccessBoundary.ProjectScopedControl,
+    scope,
+  });
+  const realPath = await projectControlRealPathOutsideReadScope(path, scope);
+  const decision = policy.canReadPath({
+    path,
+    ...(realPath ? { realPath } : {}),
+  });
+  if (!decision.allowed) {
+    throw new Error(
+      `project_control_failed_no_output_backup_denied:${decision.reason}`,
+    );
   }
 }
 

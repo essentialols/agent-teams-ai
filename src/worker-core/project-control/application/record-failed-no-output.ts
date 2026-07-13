@@ -20,6 +20,10 @@ export type RecordFailedNoOutputInput = {
   readonly failureCategory: string;
   readonly failureCode: string;
   readonly note: string;
+  readonly preexistingWorkspacePatch?: {
+    readonly path: string;
+    readonly sha256: string;
+  };
 };
 
 export async function recordFailedNoOutput(
@@ -44,6 +48,9 @@ export async function recordFailedNoOutput(
         authoredChanges: false,
         workspaceDirty: false,
       },
+      ...(input.preexistingWorkspacePatch
+        ? { preexistingWorkspacePatch: input.preexistingWorkspacePatch }
+        : {}),
       note: input.note,
       backup: input.sourceRecord.backup!,
     },
@@ -59,7 +66,7 @@ function assertFailedNoOutputEvidence(input: RecordFailedNoOutputInput): void {
   }
   if (!input.note.trim()) throw new Error("failed_no_output_note_required");
   if (input.workerAlive) throw new Error("failed_no_output_worker_still_alive");
-  if (input.workspaceDirty !== false) {
+  if (input.workspaceDirty !== false && !input.preexistingWorkspacePatch) {
     throw new Error("failed_no_output_clean_workspace_required");
   }
   if (input.sourceRecord.jobId !== input.jobId) {
@@ -68,10 +75,19 @@ function assertFailedNoOutputEvidence(input: RecordFailedNoOutputInput): void {
   if (input.sourceRecord.valid) {
     throw new Error("failed_no_output_source_already_valid");
   }
+  const baselineCorrection = Boolean(
+    input.preexistingWorkspacePatch &&
+      input.workspaceDirty === true &&
+      input.sourceRecord.status === "failed_no_output" &&
+      input.sourceRecord.backupWorkspaceDirty === true &&
+      input.sourceRecord.evidence.every(
+        (item) => item ===
+          "failed_no_output record contradicts non-empty workspace status evidence",
+      ),
+  );
   if (
-    input.sourceRecord.reclassifiableAsFailedNoOutput !== true ||
+    (!baselineCorrection && input.sourceRecord.reclassifiableAsFailedNoOutput !== true) ||
     input.sourceRecord.backupEvidenceValid !== true ||
-    input.sourceRecord.backupWorkspaceDirty !== false ||
     input.sourceRecord.hasAuthoredOutput ||
     !input.sourceRecord.backup
   ) {

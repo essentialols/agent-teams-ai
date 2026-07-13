@@ -386,6 +386,16 @@ async function runLeadInboxRelayForTeam<TRun extends LeadInboxRelayFlowRun>(
     return 0;
   }
 
+  const captureResult = await finalizeLeadRelayCapture(run, capturePromise, ports);
+  if (!captureResult.deliveryConfirmed) {
+    run.activeCrossTeamReplyHints = [];
+    ports.logger.debug(
+      `[${teamName}] lead relay did not receive delivery proof; leaving ${batch.length} message(s) unread for retry`
+    );
+    ports.scheduleLeadInboxFollowUpRelay(teamName);
+    return 0;
+  }
+
   rememberRecentCrossTeamLeadDeliveryMessageIds(
     ports.recentCrossTeamLeadDeliveryMessageIds,
     teamName,
@@ -395,8 +405,6 @@ async function runLeadInboxRelayForTeam<TRun extends LeadInboxRelayFlowRun>(
     ports.nowMs(),
     ports.recentCrossTeamDeliveryTtlMs
   );
-
-  const captureResult = await finalizeLeadRelayCapture(run, capturePromise, ports);
 
   const readCommitBatch = await getLeadRelayReadCommitBatch({
     teamName,
@@ -519,12 +527,15 @@ async function finalizeLeadRelayCapture<TRun extends LeadInboxRelayFlowRun>(
   replyText: string | null;
   capturedVisibleSendMessage: boolean;
   capturedUserVisibleSendMessage: boolean;
+  deliveryConfirmed: boolean;
 }> {
   let replyText: string | null = null;
   let capturedVisibleSendMessage = false;
   let capturedUserVisibleSendMessage = false;
+  let deliveryConfirmed = false;
   try {
     replyText = (await capturePromise).trim() || null;
+    deliveryConfirmed = true;
   } catch {
     const partial = run.leadRelayCapture ? joinLeadRelayCaptureText(run.leadRelayCapture) : null;
     replyText = partial && partial.length > 0 ? partial : null;
@@ -540,5 +551,10 @@ async function finalizeLeadRelayCapture<TRun extends LeadInboxRelayFlowRun>(
       run.leadRelayCapture = null;
     }
   }
-  return { replyText, capturedVisibleSendMessage, capturedUserVisibleSendMessage };
+  return {
+    replyText,
+    capturedVisibleSendMessage,
+    capturedUserVisibleSendMessage,
+    deliveryConfirmed,
+  };
 }

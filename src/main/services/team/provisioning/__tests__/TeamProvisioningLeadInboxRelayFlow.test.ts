@@ -228,6 +228,43 @@ describe('lead inbox relay flow', () => {
     expect(run.leadRelayCapture).toBeNull();
   });
 
+  it('keeps an unconfirmed scoped delivery retryable for a queued unscoped relay', async () => {
+    const run = createRun();
+    const ports = createPorts(run, [
+      createMessage({
+        from: 'peer-team.team-lead',
+        source: 'cross_team',
+        conversationId: 'conv-1',
+      }),
+    ]);
+    const captureTimeouts: (() => void)[] = [];
+    vi.mocked(ports.setTimeout).mockImplementation((callback) => {
+      captureTimeouts.push(callback);
+      return {} as NodeJS.Timeout;
+    });
+    let sendAttempt = 0;
+    vi.mocked(ports.sendMessageToRun).mockImplementation(async (_run, message) => {
+      ports.sentMessages.push(message);
+      sendAttempt += 1;
+      if (sendAttempt === 1) {
+        captureTimeouts.shift()?.();
+      } else {
+        run.leadRelayCapture?.resolveOnce('Retry delivery completed.');
+      }
+    });
+
+    const results = await Promise.all([
+      relayLeadInboxMessagesForTeam('alpha', ports, { onlyMessageId: 'msg-1' }),
+      relayLeadInboxMessagesForTeam('alpha', ports),
+    ]);
+
+    expect(results).toEqual([0, 1]);
+    expect(ports.sendMessageToRun).toHaveBeenCalledTimes(2);
+    expect(ports.relayedLeadInboxMessageIds.get('alpha')).toEqual(new Set(['msg-1']));
+    expect(ports.markInboxMessagesRead).toHaveBeenCalledTimes(1);
+    expect(ports.scheduleLeadInboxFollowUpRelay).toHaveBeenCalledTimes(1);
+  });
+
   it('rechecks cancellation before starting a queued relay', async () => {
     const run = createRun();
     const ports = createPorts(run, [createMessage()]);

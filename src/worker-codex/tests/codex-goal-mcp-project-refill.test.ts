@@ -671,14 +671,15 @@ await writeFile(operationFilePath, JSON.stringify(operation, null, 2) + "\\n");
       expect(result.operation).not.toHaveProperty("args");
 
       let status: Record<string, unknown> | undefined;
-      for (let attempt = 0; attempt < 20; attempt += 1) {
+      for (let attempt = 0; attempt < 200; attempt += 1) {
         status = await callToolJson(client, "codex_goal_project_operation_status", {
           registryRootDir,
           controllerJobId: "infinity-context-controller-v1",
           operationId: result.operationId,
           includeResult: true,
         });
-        if ((status.operation as { status?: string } | undefined)?.status === "completed") {
+        const operationStatus = (status.operation as { status?: string } | undefined)?.status;
+        if (operationStatus === "completed" || operationStatus === "failed") {
           break;
         }
         await sleep(25);

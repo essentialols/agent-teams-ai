@@ -1,0 +1,12 @@
+{
+  "schemaVersions": [null, "1", 0, 2, 1.1],
+  "identifiers": [
+    "",
+    "actor_bad value",
+    "actor_/unsafe",
+    "actor_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  ],
+  "rawCrossKindActorId": "session_fixture-a",
+  "revisionAsCursor": "revision_snapshot-a",
+  "unknownInputField": "headers"
+}

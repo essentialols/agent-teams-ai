@@ -2,15 +2,20 @@
   "schemaVersion": 1,
   "currentExecutablePhase": "phase-01",
   "currentExecutableSubphase": "P1.S1",
+  "currentExecutableNode": "P1.S1-schema-version-remediation",
   "workerStartAuthority": "hosting/subscription-runtime builtin worker-start-v1",
   "currentRoute": {
     "controllerPacket": "docs/hosted-web-phases/phase-01/controller-packet.md",
     "lanePackets": [
       {
         "subphase": "P1.S1",
-        "path": "docs/hosted-web-phases/phase-01/lanes/p1-s1-foundations.md"
+        "node": "P1.S1-schema-version-remediation",
+        "path": "docs/hosted-web-phases/phase-01/lanes/p1-s1-schema-version-remediation.md"
       }
-    ]
+    ],
+    "packetRevision": "phase-01-s1-schema-version-remediation-r1",
+    "baseSha": "da9625e78c0c96699162793a7ebba0657140d937",
+    "supersedesWorkerStartRevision": "phase-01-s1-foundations-r1"
   },
   "acceptedPhase0Freeze": {
     "status": "accepted-frozen",
@@ -36,12 +41,27 @@
       "docs/research/hosted-web/phase-1/bootstrap/bootstrap-report.md"
     ]
   },
+  "integratedPhase1Foundations": {
+    "status": "review-rejected-remediation-required",
+    "commit": "da9625e78c0c96699162793a7ebba0657140d937",
+    "preservation": "preserve all useful integrated P1.S1 kernel work",
+    "independentReviewProvenance": {
+      "source": "authoritative operator-provided independent integration review finding",
+      "finding": "Independent integration review formally REJECTED P1.S1 commit da9625e78 only for incomplete P1.NEG.SCHEMA_VERSION.",
+      "rejectedEvidenceId": "P1.NEG.SCHEMA_VERSION"
+    }
+  },
   "authorization": {
     "authorized": ["P1.S1"],
+    "authorizedNode": "P1.S1-schema-version-remediation",
     "blockedUntilRouterAdvance": ["P1.S2", "P1.S3", "P1.S4", "P1.S5"],
     "productSourceImplementationAuthorized": true,
-    "productSourceImplementationOwner": "P1.1A",
-    "productSourceImplementationScope": "exact writable paths in docs/hosted-web-phases/phase-01/lanes/p1-s1-foundations.md"
+    "productSourceImplementationOwner": "P1.1A-schema-version-remediation",
+    "productSourceImplementationScope": "exact revision/schema-version implementation, focused test, fixture, and handoff paths in docs/hosted-web-phases/phase-01/lanes/p1-s1-schema-version-remediation.md",
+    "producerCount": 1,
+    "serialOnly": true,
+    "launchBeforePacketIntegration": false,
+    "retryOrRefillAuthorized": false
   },
   "workerMandatoryBaseline": [
     "AGENTS.md",
@@ -76,21 +96,25 @@
     "current-phase": [
       {
         "path": "docs/hosted-web-phases/phase-01/README.md",
-        "role": "Phase 1 entrypoint; P1.S1 authorization boundary"
+        "role": "Phase 1 entrypoint; one-shot P1.S1 schema-version remediation boundary"
       },
       {
         "path": "docs/hosted-web-phases/phase-01/controller-packet.md",
-        "role": "current controller authority for bounded P1.S1 foundations only"
+        "role": "current controller authority for one future serial P1.S1 schema-version remediation only"
       },
       {
-        "path": "docs/hosted-web-phases/phase-01/lanes/p1-s1-foundations.md",
-        "role": "the single current lane packet; P1.1A contract kernel and focused tests only"
+        "path": "docs/hosted-web-phases/phase-01/lanes/p1-s1-schema-version-remediation.md",
+        "role": "the single current lane packet; revision/schema-version implementation, focused tests, fixtures, and handoff only"
       }
     ],
     "reference-on-demand": [
       {
         "path": "docs/hosted-web-phases/phase-01/lanes/p1-s0-serial-bootstrap.md",
         "role": "accepted P1.S0 lane history; not executable"
+      },
+      {
+        "path": "docs/hosted-web-phases/phase-01/lanes/p1-s1-foundations.md",
+        "role": "superseded P1.S1 worker-start packet history; not executable"
       },
       {
         "path": "docs/hosted-web-phase-0-execution-packet.md",

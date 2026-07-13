@@ -1,6 +1,7 @@
 # Phase 1 execution entrypoint
 
-Status: **current for `P1.S1` foundations only**. `P1.S2` and every later subphase remain blocked.
+Status: **current only for one future serial `P1.S1` schema-version remediation node**. `P1.S2` and
+every later subphase remain blocked.
 
 Phase 0 is accepted and frozen at `f4fa24aac9615a4ce10632965a2244a2e11a273e`. That candidate
 includes the accepted fail-closed target-image narrowing, final gate, orchestration authority, bounded
@@ -13,17 +14,24 @@ transition base `f12a85af0fddadd06f69a27ef408d26bc27eb3fc`. Its exact six bootst
 paths are unchanged. The evidence continues to record the historical S0 worker `phaseStartSha`
 `5f30df49e052d1cc1d0e7efd03aa105673b5b614`; the transition does not rewrite it.
 
-> The router authorizes exactly one producer target: `P1.S1`, implemented by frozen owner `P1.1A`.
-> The exact paths, identifiers, checks, and estimate are those accepted in the S0 bootstrap. `P1.S2`
-> and all route/catalog, conformance/ratchet, feature-slice, review, integration, and production
-> transport work remain blocked.
+Integrated P1.S1 commit `da9625e78c0c96699162793a7ebba0657140d937` preserves the useful `P1.1A`
+kernel. The authoritative operator-provided independent integration review finding is:
+
+> "Independent integration review formally REJECTED P1.S1 commit da9625e78 only for incomplete
+> P1.NEG.SCHEMA_VERSION."
+
+> The router therefore authorizes exactly one future serial producer target: bounded revision/
+> schema-version remediation by `P1.1A-schema-version-remediation`. The remediation packet explicitly
+> supersedes `phase-01-s1-foundations-r1` as worker-start authority. `P1.S2` and all route/catalog,
+> conformance/ratchet, feature-slice, review, integration, and production transport work remain
+> blocked.
 
 ## Validated worker route
 
 The current route contains exactly these packets, in this order:
 
 1. `docs/hosted-web-phases/phase-01/controller-packet.md`
-2. `docs/hosted-web-phases/phase-01/lanes/p1-s1-foundations.md`
+2. `docs/hosted-web-phases/phase-01/lanes/p1-s1-schema-version-remediation.md`
 
 After both packets, read only the exact files in the subscription-runtime `worker-start-v1`
 contract. The documents below remain reference-on-demand; their presence in this directory is not an
@@ -57,10 +65,13 @@ The practical boundary is therefore contracts plus conformance, not a disguised 
 - isolated test/IPC/HTTP conformance adapters that normalize the same application outcomes;
 - architecture ratchets that stop a second god API from forming.
 
-Only the exact `P1.1A` shared contract-kernel files and focused tests named by the current lane packet
-are authorized by this transition. No production route, registration, adapter, renderer, feature
-slice, filesystem access, dependency, or configuration change is authorized.
+Only the exact revision/schema-version implementation, focused test, fixture, and handoff paths named
+by the current lane packet are authorized after this docs-only router packet is integrated. No other
+product code, test, fixture, production route, registration, adapter, renderer, feature slice,
+filesystem access, dependency, configuration, research, docs, or orchestration change is authorized.
+This packet production does not launch the remediation worker.
 
-`P1.S1` must return its two frozen evidence IDs and exact check results to the controller. Passing the
-lane does not authorize `P1.S2`; a separate reviewed integration and explicit router advance is
-required.
+The one-shot remediation node must return its revised version evidence, the exact
+`P1.NEG.SCHEMA_VERSION` negative result, patch manifest, and exact check results to the controller.
+Passing the lane does not authorize `P1.S2`; independent review, separate integration, and a later
+explicit router advance are required.

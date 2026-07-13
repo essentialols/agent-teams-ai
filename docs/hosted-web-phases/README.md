@@ -25,13 +25,22 @@ Phase 1 is current. Serial bootstrap `P1.S0` is accepted at
 unchanged, and their historical `phaseStartSha` remains
 `5f30df49e052d1cc1d0e7efd03aa105673b5b614`.
 
-Authorization is now deliberately limited to foundations `P1.S1`. A subscription-runtime
-`worker-start-v1` contract must bind the current
-[`controller packet`](phase-01/controller-packet.md) and exactly one lane packet: the bounded
-[`P1.S1 foundations packet`](phase-01/lanes/p1-s1-foundations.md). Only after those two packets may
-the worker read the exact contract-listed references. This transition authorizes only the frozen
-`P1.1A` contract-kernel ownership. `P1.S2` and every later producer remain blocked; no route/catalog,
-conformance, feature-slice, review, integration, or production transport work is authorized.
+Integrated P1.S1 commit `da9625e78c0c96699162793a7ebba0657140d937` is the remediation base. The
+authoritative operator-provided independent integration review finding is:
+
+> "Independent integration review formally REJECTED P1.S1 commit da9625e78 only for incomplete
+> P1.NEG.SCHEMA_VERSION."
+
+All useful integrated kernel work remains in place. Authorization is now deliberately limited to one
+future serial P1.S1 schema-version remediation node. A subscription-runtime `worker-start-v1`
+contract must bind the current [`controller packet`](phase-01/controller-packet.md) and exactly one
+lane packet: the bounded
+[`P1.S1 schema-version remediation packet`](phase-01/lanes/p1-s1-schema-version-remediation.md).
+Only after this docs-only router packet is integrated may that worker start or read the exact
+contract-listed references. The remediation packet explicitly supersedes
+`phase-01-s1-foundations-r1` as worker-start authority. `P1.S2` and every later producer remain
+blocked; no route/catalog, conformance, feature-slice, review, integration, or production transport
+work is authorized.
 
 ## Evidence boundary
 
@@ -41,7 +50,9 @@ retained unchanged under [`EVIDENCE_LIFECYCLE.md`](EVIDENCE_LIFECYCLE.md).
 
 ## Start and completion
 
-The hosting controller admits the one S1 worker only through subscription-runtime's builtin
-`worker-start-v1` boundary. Completion states are `verified`, `characterized`, `blocked`, `failed`,
-or `superseded`; vague states such as `done` are not evidence. This product repository supplies the
-packets and evidence inputs, not the hosted-worker orchestration engine.
+The hosting controller may admit the one future remediation worker only through
+subscription-runtime's builtin `worker-start-v1` boundary after packet integration. The node is
+one-shot: no retry loop, refill, duplicate producer, or automatic successor is authorized. Completion
+states are `verified`, `characterized`, `blocked`, `failed`, or `superseded`; vague states such as
+`done` are not evidence. This product repository supplies the packets and evidence inputs, not the
+hosted-worker orchestration engine, and this packet production does not launch the worker.

@@ -2,29 +2,44 @@
 
 ## Status and authority
 
-- Status: current execution authority for bounded `P1.S1` foundations only
-- Worker-start packet revision: `phase-01-s1-foundations-r1`
+- Status: current execution authority only for one future serial `P1.S1` schema-version remediation
+- Worker-start packet revision: `phase-01-s1-schema-version-remediation-r1`
+- Remediation base: integrated P1.S1 commit `da9625e78c0c96699162793a7ebba0657140d937`
 - Transition base: `f12a85af0fddadd06f69a27ef408d26bc27eb3fc`
 - Accepted P1.S0 commit: `6f1a87daa9a4bfdf5d754347d92f313f28d0f95d`
 - Historical P1.S0 phase start SHA: `5f30df49e052d1cc1d0e7efd03aa105673b5b614`
 - Preserved proposal planning base: `3bc0dfa7c00261785c0c752270cb302a9294e751`
 - Phase 0 accepted freeze commit: `f4fa24aac9615a4ce10632965a2244a2e11a273e`
-- P1.S1 start SHA: the isolated worker `workspaceRoot` Git HEAD bound as `phaseStartSha`; it must
-  contain this router transition and descend from the transition base
+- Remediation start SHA: the isolated worker `workspaceRoot` Git HEAD bound as `phaseStartSha`; it
+  must contain the integrated docs-only remediation router packet, descend from the remediation base,
+  and leave non-router paths unchanged from that base
 - Required decisions: ADR-15, ADR-19, ADR-20, plus the eventual frozen Phase 0 register
-- Explicit authorization: `P1.S1` foundations, frozen owner `P1.1A`, only
-- Authorized producer target: **one serial S1 worker**
+- Explicit authorization: revision/schema-version remediation for rejected `P1.NEG.SCHEMA_VERSION`,
+  owner `P1.1A-schema-version-remediation`, only
+- Authorized producer target: **one future serial remediation worker after packet integration**
 - Later-subphase producer target: **zero**
 
-S0 froze the downstream identifiers, paths, ownership, commands, and pairings. This controller may
-render one bounded S1 foundations contract using only the accepted `P1.1A` row. It cannot render or
-admit an S2-or-later worker.
+S0 froze the downstream identifiers, paths, ownership, commands, and pairings. Integrated P1.S1
+commit `da9625e78c0c96699162793a7ebba0657140d937` preserves the useful kernel implementation. The
+authoritative operator-provided independent integration review finding is quoted verbatim:
 
-The exact worker-start identity is `phaseId: phase-01`, `laneId: p1-s1`, controller
+> "Independent integration review formally REJECTED P1.S1 commit da9625e78 only for incomplete
+> P1.NEG.SCHEMA_VERSION."
+
+This finding is the independent-review provenance for the only current producer authority. The
+remediation packet explicitly supersedes `phase-01-s1-foundations-r1` as worker-start authority while
+preserving the integrated commit, its handoff, and accepted S0 evidence. This controller cannot render
+or admit an S2-or-later worker.
+
+The exact worker-start identity is `projectId: agent-teams-hosted-web-refactor`,
+`controllerJobId: phase-01-p1-s1-schema-version-remediation-controller-r1`, `phaseId: phase-01`,
+`laneId: p1-s1-schema-version-remediation`, controller
 `docs/hosted-web-phases/phase-01/controller-packet.md`, lane
-`docs/hosted-web-phases/phase-01/lanes/p1-s1-foundations.md`, and revision
-`phase-01-s1-foundations-r1`. Every cross-product with Phase 0, accepted S0 history, or a later Phase
-1 subphase fails closed.
+`docs/hosted-web-phases/phase-01/lanes/p1-s1-schema-version-remediation.md`, revision
+`phase-01-s1-schema-version-remediation-r1`, and base
+`da9625e78c0c96699162793a7ebba0657140d937`. Every cross-product with the superseded foundations
+packet, Phase 0, accepted S0 history, a second remediation job, or a later Phase 1 subphase fails
+closed.
 
 The accepted `P0.D.TARGET_IMAGE` narrowing in the planning base closes that single Phase 0 gate for
 the Phase 0-to-Phase 1 transition. It does not admit an image or composition: Phase 5 retains the exact
@@ -41,14 +56,41 @@ immutable accepted input and remain unchanged at the transition base. Their reco
 `phaseStartSha` remains `5f30df49e052d1cc1d0e7efd03aa105673b5b614`; it is not replaced by the
 acceptance commit, transition base, router-transition commit, or an S1 worker SHA.
 
-## P1.S1 authorization boundary
+## P1.S1 remediation authorization boundary
 
-P1.S1 may create only the minimal shared hosted contract kernel and its contract tests frozen for
-owner `P1.1A`. It may not create route/catalog conventions (`P1.1B`), conformance or ratchets
-(`P1.1C`), the team-lifecycle feature (`P1.1D`), review or integration evidence, production transport
-registration, or any filesystem-backed adapter. The only current lane packet is
-[`lanes/p1-s1-foundations.md`](./lanes/p1-s1-foundations.md). A worker-start contract that binds any
-other Phase 1 lane conflicts with this controller and must be rejected.
+The one future worker may change only the revision/schema-version implementation, focused tests,
+fixtures, and handoff paths listed exactly in
+[`lanes/p1-s1-schema-version-remediation.md`](./lanes/p1-s1-schema-version-remediation.md). It must
+validate known response fields before discarding additive response fields and must reject disallowed
+unknown input-object fields with `phase1-schema-version-invalid-or-unsupported`. It may not change any
+other integrated kernel work or create route/catalog conventions (`P1.1B`), conformance or ratchets
+(`P1.1C`), the team-lifecycle feature (`P1.1D`), review/integration evidence, production transport
+registration, or a filesystem-backed adapter. A worker-start contract that binds any other Phase 1
+lane conflicts with this controller and must be rejected.
+
+## Remediation ready gate, ownership, and capacity
+
+Before the single admission, the controller must prove all of the following:
+
+1. The exact docs-only router packet commit is integrated after `da9625e78`, and the runtime binds it
+   as both `planBundleCommit` and `phaseStartSha`; no product remediation occurred before integration.
+2. The non-router tree at `phaseStartSha` matches `da9625e78`, including all accepted S0 evidence and
+   useful integrated P1.S1 work.
+3. The runtime contract binds the exact identity, bounded reads, five owned implementation/test/
+   fixture paths, handoff path, and commands in the remediation lane packet.
+4. No producer is active or has already consumed this packet revision, and the `P1.S2` producer count
+   is zero.
+
+The lane registry contains exactly one current row:
+
+| Lane                               | Packet                                      | Dependency  | Evidence IDs                                         | Capacity |
+| ---------------------------------- | ------------------------------------------- | ----------- | ---------------------------------------------------- | -------- |
+| `p1-s1-schema-version-remediation` | `lanes/p1-s1-schema-version-remediation.md` | `da9625e78` | `P1.1A.VERSION.REMEDIATION`, `P1.NEG.SCHEMA_VERSION` | one-shot |
+
+Only that lane owns the exact writable paths in its packet. Every other source, test, fixture,
+handoff, docs, research, evidence, configuration, and orchestration path is read-only. A blocked,
+failed, or rejected result closes the one capacity slot: there is no retry loop, refill, salvage into
+a broader worktree, or automatic successor.
 
 ## Outcome
 
@@ -102,14 +144,15 @@ blocked on Phase 2.
 
 ## Proposed subphases
 
-| Subphase                       | Result                                                                                 | Admission                                       |
-| ------------------------------ | -------------------------------------------------------------------------------------- | ----------------------------------------------- |
-| `P1.S0` serial bootstrap       | Freeze exact IDs, files, owners, fixtures, baseline fingerprints, and packet revision. | Accepted at `6f1a87da`.                         |
-| `P1.S1` foundations            | `P1.1A` minimal shared contract kernel and focused contract tests.                     | Authorized now from transition base `f12a85af`. |
-| `P1.S2` parallel production    | `P1.1B` route assertions and `P1.1C` conformance/ratchets on disjoint paths.           | Blocked until reviewed S1 integration.          |
-| `P1.S3` seam review            | R1 falsifies 1B/1C architecture, omission sensitivity, and production isolation.       | Both 1B and 1C complete.                        |
-| `P1.S4` first proof and review | Team-lifecycle list query plus isolated test adapters, then R2 semantic review.        | R1 accepted before 1D; 1D complete before R2.   |
-| `P1.S5` serialized integration | Shared ratchet/evidence wiring, full gate, rollback proof, evidence freeze.            | R2 accepted; one integration owner.             |
+| Subphase                       | Result                                                                                 | Admission                                                                |
+| ------------------------------ | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `P1.S0` serial bootstrap       | Freeze exact IDs, files, owners, fixtures, baseline fingerprints, and packet revision. | Accepted at `6f1a87da`.                                                  |
+| `P1.S1` foundations            | `P1.1A` minimal shared contract kernel and focused contract tests.                     | Integrated at `da9625e78`; review rejected only `P1.NEG.SCHEMA_VERSION`. |
+| `P1.S1` schema remediation     | Known-field-first response parsing, additive response discard, strict input fields.    | One future serial node after this packet is integrated.                  |
+| `P1.S2` parallel production    | `P1.1B` route assertions and `P1.1C` conformance/ratchets on disjoint paths.           | Blocked until reviewed S1 integration.                                   |
+| `P1.S3` seam review            | R1 falsifies 1B/1C architecture, omission sensitivity, and production isolation.       | Both 1B and 1C complete.                                                 |
+| `P1.S4` first proof and review | Team-lifecycle list query plus isolated test adapters, then R2 semantic review.        | R1 accepted before 1D; 1D complete before R2.                            |
+| `P1.S5` serialized integration | Shared ratchet/evidence wiring, full gate, rollback proof, evidence freeze.            | R2 accepted; one integration owner.                                      |
 
 The detailed DAG and proposed ownership are in [execution-dag.md](./execution-dag.md).
 
@@ -117,13 +160,13 @@ The detailed DAG and proposed ownership are in [execution-dag.md](./execution-da
 
 1. Preserve the accepted S0 commit, exact evidence paths, and historical `phaseStartSha`; never rerun
    or rewrite S0 during an S1 transition or worker start.
-2. The S1 child starts from one `phaseStartSha` containing this transition and the accepted serial
-   bootstrap evidence.
+2. The remediation child starts from one `phaseStartSha` containing this docs-only packet and the
+   accepted serial bootstrap evidence; no product remediation may precede packet integration.
 3. A path has one live writer. Production registration files are read-only throughout Phase 1; any
    other existing shared ratchet/evidence file has only the integration owner.
 4. A frozen ID has one evidence owner; reviewers may falsify it but not publish a competing row.
-5. No lane is refilled merely to preserve concurrency. Replacement preserves worktree and handoff or
-   records an explicit salvage/supersession decision.
+5. This one-shot lane is never retried or refilled. Any further attempt requires a separately reviewed
+   packet revision and new controller decision.
 6. Test-only IPC and HTTP adapter/composition modules must be impossible to import or mount from any
    production composition, preload, renderer API, IPC registry, or HTTP registry.
 7. Negative fixtures are acceptance evidence; weakening them requires packet revision and review.
@@ -132,49 +175,37 @@ The detailed DAG and proposed ownership are in [execution-dag.md](./execution-da
 
 ## Monitoring and stop conditions
 
-Check useful progress at least every ten minutes while jobs exist. Stop the affected lane on stale
-base/revision, write overlap, unknown evidence ID, source/packet mismatch, dependency change,
-production IPC/HTTP exposure, direct renderer transport bypass, fake browser implementation, raw path
-or secret evidence, filesystem-backed Phase 1 adapter, god contract, or unclassified baseline failure.
-Return the blocker record defined by
-`PACKET_STANDARD.md`; unrelated lanes may continue only when their inputs and paths remain valid.
+Check useful progress at least every ten minutes while the one job exists. Stop it on a stale base,
+revision, plan bundle, or phase start; a missing or altered review quote; pre-integration product
+remediation; prior packet consumption; write overlap; unknown evidence ID; source/packet mismatch;
+dependency, docs, research, orchestration, or non-owned change; failure to produce the exact
+schema-version diagnostic or semantics; raw path or secret evidence; production exposure; or an
+unclassified owned-path baseline failure. Return the blocker record defined by `PACKET_STANDARD.md`.
+There is no unrelated current lane and no automatic retry.
 
-## Integration gate
+## Remediation integration gate
 
-The integration owner follows [conformance-and-tests.md](./conformance-and-tests.md) and must prove:
+Independent review must prove all seven acceptance items and all checks in the remediation lane
+packet. In particular, a same-version response is accepted only after known fields validate and its
+returned projection discards additive fields; a disallowed unknown input-object field fails with
+`phase1-schema-version-invalid-or-unsupported`. The review must reconcile the exact changed-path set,
+patch-manifest hash, per-file hashes, base/start/result SHAs, original review provenance, and explicit
+packet supersession. Any missing negative control, non-owned change, vague result, or absent command
+and exit code rejects the candidate and closes this one-shot node.
 
-1. Contracts, domain, and application ports import no Electron, Fastify, React, Zustand, Node
-   infrastructure, or `@main`.
-2. Direct, IPC-shaped, and HTTP-shaped test adapters normalize the same complete use-case outcome
-   oracle, including explicit applicability/deferral classifications.
-3. Route and capability sources cross-reference stable IDs but remain separate data structures.
-4. Both transport-shaped adapters and their route/channel identifiers are absent from production
-   composition; a deliberate production import/mount of either fails before runtime.
-5. Unknown-field/version, revision, cursor, auth, error redaction, and cancellation semantics pass.
-6. ADR-19 checks detect legacy signature drift and missing route/action/client/schema/test references.
-7. ADR-20 checks detect direct transport imports and hosted reachability of desktop-only modules.
-8. Deliberately invalid dependencies, route duplicates, unsupported UI actions, ElectronAPI facet
-   implementations, and any path-taking/filesystem-backed Phase 1 reader or adapter fail for the
-   expected diagnostic.
-9. Formatting, focused tests, typecheck, full relevant architecture tests, diff check, scope check, and
-   secret/path scan pass or have an unchanged inherited-failure fingerprint.
+## Definition of Done and successor-controller objective
 
-## Definition of Done
+- [ ] Every remediation Ready item passed before the one worker started.
+- [ ] Only the exact owned implementation, focused test, fixture, and handoff paths changed.
+- [ ] `P1.NEG.SCHEMA_VERSION` passes all required positive and negative semantics with the exact stable
+      diagnostic, and all required checks and scope scans are recorded with exit codes.
+- [ ] Independent review accepts the remediation candidate and its patch/manifest evidence against
+      the quoted finding.
+- [ ] The controller integrates the accepted candidate on top of the router packet commit and records
+      the exact integration SHA and reciprocal provenance without modifying unrelated P1.S1 work.
+- [ ] `P1.S2` remains blocked and no successor worker is launched.
 
-- [ ] Every Ready item passed before work began.
-- [ ] All frozen evidence IDs are adopted, rejected, or explicitly deferred with rationale.
-- [ ] One minimal contract kernel and the first feature-owned contracts exist; no speculative parity
-      DTOs or empty ceremonial layers exist.
-- [ ] The three-adapter conformance matrix passes against the same fixture vectors and use-case spy.
-- [ ] RouteCatalog, capability descriptors, auth policies, parity records, and test metadata reconcile
-      without merging into one runtime manifest.
-- [ ] Every current TeamsAPI member and renderer bypass remains classified; only the first proposed
-      read mapping advances proof level.
-- [ ] Production hosted routing remains unchanged; renderer and legacy API behavior remain unchanged.
-- [ ] Ratchet, migration, rollback, observability, performance, dependency, and cache evidence pass.
-- [ ] Reciprocal reviewers approve scope/architecture and semantic/security evidence.
-- [ ] Clean integration attempt and required checks are recorded with exit codes and exact SHA.
-- [ ] Decision register, evidence index, estimate reconciliation, risk disposition, and Phase 2 input
-      packet are frozen from actual integrated evidence.
-
-None of these Phase 1 completion conditions is claimed by the S1-only authorization.
+After a verified handoff, the successor controller's only objective is to independently review and,
+if accepted, integrate this schema-version remediation while preserving the rest of `da9625e78` and
+keeping `P1.S2` blocked. Any later `P1.S2` authorization requires a separate router packet. This
+controller packet claims neither complete Phase 1 nor production hosted behavior.

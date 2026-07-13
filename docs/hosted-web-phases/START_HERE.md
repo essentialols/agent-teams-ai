@@ -16,7 +16,7 @@ Read only this bounded sequence before working:
 3. `docs/hosted-web-phases/EVIDENCE_LIFECYCLE.md`.
 4. `docs/hosted-web-phases/README.md`, then `docs/hosted-web-phases/EXECUTION_INDEX.json`.
 5. The current controller packet named by the subscription-runtime `worker-start-v1` contract. The
-   compact router currently authorizes only Phase 1 foundations `P1.S1`.
+   compact router currently authorizes only the bounded `P1.S1` schema-version remediation.
 6. The one assigned lane packet, followed only by the exact files in that runtime contract's
    `mandatoryDocs`, `mandatoryScripts`, and `mandatoryFixtures` lists.
 
@@ -47,5 +47,8 @@ remain explicit later-phase implementation risks. They do not reopen Phase 0 or 
 research. `P1.S0` is accepted at `6f1a87daa9a4bfdf5d754347d92f313f28d0f95d` and is an ancestor of
 the transition base `f12a85af0fddadd06f69a27ef408d26bc27eb3fc`; its exact six bootstrap evidence
 paths remain immutable. Its historical `phaseStartSha` remains
-`5f30df49e052d1cc1d0e7efd03aa105673b5b614`. This router transition authorizes exactly `P1.S1`;
-`P1.S2` and every later Phase 1 subphase remain blocked.
+`5f30df49e052d1cc1d0e7efd03aa105673b5b614`. Integrated P1.S1 commit
+`da9625e78c0c96699162793a7ebba0657140d937` is preserved, but independent integration review rejected
+only its incomplete `P1.NEG.SCHEMA_VERSION` proof. This router transition authorizes exactly one future
+serial P1.S1 schema-version remediation node after packet integration; `P1.S2` and every later Phase 1
+subphase remain blocked.

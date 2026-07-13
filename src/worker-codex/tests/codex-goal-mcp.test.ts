@@ -208,6 +208,7 @@ describe("codex goal MCP server", () => {
           readonly name?: string;
           readonly inputSchema?: {
             readonly properties?: Record<string, unknown>;
+            readonly required?: readonly string[];
           };
         }[];
       }).tools ?? [];
@@ -233,6 +234,34 @@ describe("codex goal MCP server", () => {
         requiredChecks: expect.any(Object),
         confirmOpen: expect.any(Object),
       });
+      expect(
+        toolsByName.get("codex_goal_project_open_integration_attempt")
+          ?.inputSchema?.required,
+      ).toEqual([
+        "attemptId",
+        "targetWorkspacePath",
+        "targetBranch",
+      ]);
+      expect(
+        toolsByName.get("codex_goal_project_apply_worker_output")
+          ?.inputSchema?.required,
+      ).toEqual(["attemptId"]);
+      expect(
+        toolsByName.get("codex_goal_project_run_required_checks")
+          ?.inputSchema?.required,
+      ).toEqual(["attemptId"]);
+      expect(
+        toolsByName.get("codex_goal_project_commit_approved_changes")
+          ?.inputSchema?.required,
+      ).toEqual(["attemptId", "message"]);
+      expect(
+        toolsByName.get("codex_goal_project_push_approved_commit")
+          ?.inputSchema?.required,
+      ).toEqual(["attemptId"]);
+      expect(
+        toolsByName.get("codex_goal_project_reject_integration_attempt")
+          ?.inputSchema?.required,
+      ).toEqual(["attemptId", "reason"]);
       expect(
         toolsByName.get("codex_goal_project_commit_approved_changes")
           ?.inputSchema?.properties,

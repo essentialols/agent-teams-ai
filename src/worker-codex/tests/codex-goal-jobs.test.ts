@@ -164,6 +164,23 @@ describe("codex goal job registry", () => {
       })).rejects.toThrow(
         "codex_goal_job_projectPreStartAdmission_unexpected_field:contractSchema",
       );
+
+      await expect(createCodexGoalJob({
+        registryRootDir: join(root, "registry"),
+        manifest: {
+          ...jobManifest(root),
+          projectAccessScope: {
+            ...jobManifest(root).projectAccessScope,
+            preStartAdmission: {
+              required: true,
+              mode: "serial-builtin",
+              contractSchema: "worker-start-v1",
+            },
+          },
+        } as unknown as CodexGoalJobManifestInput,
+      })).rejects.toThrow(
+        "projectAccessScope.preStartAdmission.unexpected_field:contractSchema",
+      );
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -196,6 +213,14 @@ describe("codex goal job registry", () => {
         ...(stored.projectPreStartAdmission as Record<string, unknown>),
         contractSchema: "worker-start-v1",
       };
+      stored.projectAccessScope = {
+        ...(stored.projectAccessScope as Record<string, unknown>),
+        preStartAdmission: {
+          required: true,
+          mode: "serial-builtin",
+          contractSchema: "worker-start-v1",
+        },
+      };
       await writeFile(path, `${JSON.stringify(stored, null, 2)}\n`);
 
       const read = await readCodexGoalJob({
@@ -208,6 +233,10 @@ describe("codex goal job registry", () => {
         contractPath: join(root, "contract.json"),
         statePath: join(root, "state.json"),
         receiptPath: join(root, "receipt.json"),
+      });
+      expect(read.projectAccessScope?.preStartAdmission).toEqual({
+        required: true,
+        mode: "serial-builtin",
       });
     } finally {
       await rm(root, { recursive: true, force: true });

@@ -355,7 +355,9 @@ function parseCodexGoalJobManifestValue(
   );
   const accessBoundary = optionalCodexGoalAccessBoundary(value.accessBoundary);
   const projectAccessScope = parseCodexGoalProjectAccessScope(
-    value.projectAccessScope,
+    options.allowLegacyBuiltinContractSchema === true
+      ? normalizeStoredCodexGoalProjectAccessScope(value.projectAccessScope)
+      : value.projectAccessScope,
   );
   const networkAccess = optionalCodexGoalNetworkAccess(value.networkAccess);
   assertCodexGoalProviderSandboxModeAllowed({
@@ -473,6 +475,26 @@ function parseCodexGoalJobManifestValue(
         }),
   };
   return manifest;
+}
+
+function normalizeStoredCodexGoalProjectAccessScope(value: unknown): unknown {
+  if (!isRecord(value) || !isRecord(value.preStartAdmission)) return value;
+  const admission = value.preStartAdmission;
+  if (admission.contractSchema === undefined) return value;
+  if (
+    admission.mode !== "serial-builtin" ||
+    admission.contractSchema !== "worker-start-v1"
+  ) {
+    throw new Error(
+      "codex_goal_job_projectAccessScope_preStartAdmission_contractSchema_invalid",
+    );
+  }
+  const normalizedAdmission = { ...admission };
+  delete normalizedAdmission.contractSchema;
+  return {
+    ...value,
+    preStartAdmission: normalizedAdmission,
+  };
 }
 
 function parseProjectPreStartAdmissionManifest(

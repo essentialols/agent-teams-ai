@@ -15,6 +15,35 @@ export interface RuntimeProviderCompanionState {
   refresh: () => Promise<void>;
 }
 
+function companionDisplayName(companionId: RuntimeProviderCompanionIdDto): string {
+  return companionId === 'kiro-cli' ? 'Amazon Q Developer / Kiro' : 'Cursor';
+}
+
+function companionErrorStatus(
+  companionId: RuntimeProviderCompanionIdDto,
+  error: unknown,
+  current: RuntimeProviderCompanionStatusDto | null
+): RuntimeProviderCompanionStatusDto {
+  const displayName = current?.displayName ?? companionDisplayName(companionId);
+  const message = error instanceof Error ? error.message : `${displayName} setup failed`;
+  return {
+    companionId,
+    displayName,
+    phase: 'error',
+    installed: current?.installed ?? false,
+    authenticated: current?.authenticated ?? false,
+    binaryPath: current?.binaryPath ?? null,
+    version: current?.version ?? null,
+    percent: null,
+    message: `${displayName} setup failed`,
+    detail: current?.detail ?? null,
+    error: message,
+    manualCommand: current?.manualCommand ?? '',
+    manualUrl: current?.manualUrl ?? '',
+    updatedAt: new Date().toISOString(),
+  };
+}
+
 export function useRuntimeProviderCompanion(
   companionId: RuntimeProviderCompanionIdDto,
   enabled: boolean,
@@ -40,6 +69,10 @@ export function useRuntimeProviderCompanion(
         projectPath,
       });
       if (mountedRef.current) setStatus(next);
+    } catch (error) {
+      if (mountedRef.current) {
+        setStatus((current) => companionErrorStatus(companionId, error, current));
+      }
     } finally {
       if (mountedRef.current) setLoading(false);
     }
@@ -84,19 +117,7 @@ export function useRuntimeProviderCompanion(
         if (mountedRef.current) setStatus(next);
       } catch (error) {
         if (!mountedRef.current) return;
-        setStatus((current) =>
-          current
-            ? {
-                ...current,
-                phase: 'error',
-                percent: null,
-                message: `${current.displayName} setup failed`,
-                error:
-                  error instanceof Error ? error.message : `${current.displayName} setup failed`,
-                updatedAt: new Date().toISOString(),
-              }
-            : current
-        );
+        setStatus((current) => companionErrorStatus(companionId, error, current));
       } finally {
         if (mountedRef.current) setLoading(false);
       }

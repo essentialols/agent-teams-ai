@@ -191,6 +191,8 @@ export interface RuntimeProviderConnectionDto {
   authMethods: readonly RuntimeProviderAuthMethodDto[];
   actions: readonly RuntimeProviderActionDescriptorDto[];
   detail: string | null;
+  connectedAuthHint?: RuntimeProviderAuthMethodDto | null;
+  verifiedModelId?: string | null;
 }
 
 export type RuntimeProviderDirectoryFilterDto =
@@ -426,6 +428,7 @@ export interface RuntimeProviderManagementLoadViewInput {
 
 export interface RuntimeProviderManagementLoadDirectoryInput {
   runtimeId: RuntimeProviderManagementRuntimeId;
+  summary?: boolean | null;
   projectPath?: string | null;
   query?: string | null;
   filter?: RuntimeProviderDirectoryFilterDto | null;

@@ -51,14 +51,16 @@ export const RuntimeProviderCompanionSetupDialog = ({
   const { t } = useAppTranslation('dashboard');
   const phaseBusy = busy || (status ? BUSY_PHASES.has(status.phase) : false);
   const connected = status?.phase === 'connected';
+  const hasManualFallback = Boolean(status?.manualCommand?.trim() || status?.manualUrl?.trim());
   const showFallback =
-    status?.phase === 'needs-manual-step' || (status?.phase === 'error' && !status.installed);
+    hasManualFallback &&
+    (status?.phase === 'needs-manual-step' || (status?.phase === 'error' && !status.installed));
   const needsInstall = !status?.installed;
   const percent = status?.percent;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[min(92vw,31rem)] gap-4 p-5">
+      <DialogContent className="w-[min(calc(100vw-2rem),31rem)] gap-4 p-5">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
@@ -66,6 +68,9 @@ export const RuntimeProviderCompanionSetupDialog = ({
 
         <div
           className="rounded-lg border p-3"
+          role={showFallback ? 'alert' : 'status'}
+          aria-live={showFallback ? 'assertive' : 'polite'}
+          aria-busy={phaseBusy}
           style={{
             borderColor: connected
               ? 'rgba(52, 211, 153, 0.3)'
@@ -122,6 +127,13 @@ export const RuntimeProviderCompanionSetupDialog = ({
             </div>
           ) : null}
         </div>
+
+        {phaseBusy ? (
+          <p className="text-center text-[11px] text-[var(--color-text-muted)]">
+            Setup continues in the background if you close this window. Reopen the card to check
+            progress.
+          </p>
+        ) : null}
 
         {showFallback && status ? (
           <div className="rounded-lg border border-amber-300/20 bg-amber-300/[0.04] p-3">

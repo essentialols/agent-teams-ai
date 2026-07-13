@@ -1900,7 +1900,14 @@ export const CliStatusBanner = ({
   }, []);
 
   const handleOpenCodeProviderAction = useCallback(
-    (providerId: string, _action: 'connect' | 'select') => {
+    (providerId: string, action: 'connect' | 'select') => {
+      if (action === 'select') {
+        setManageProviderId('opencode');
+        setManageRuntimeProviderId(providerId);
+        setManageRuntimeProviderAction('select');
+        setManageDialogOpen(true);
+        return;
+      }
       setProviderOnboardingRequest({ mode: 'provider', providerId });
     },
     []
@@ -2035,7 +2042,8 @@ export const CliStatusBanner = ({
             runtimeUpdateRequired={
               isOpenCodeProviderOAuthBridgeOutdated(openCodeRuntimeStatus) &&
               (providerOnboardingRequest.mode === 'wizard' ||
-                providerOnboardingRequest.providerId === 'xai')
+                providerOnboardingRequest.providerId === 'xai' ||
+                providerOnboardingRequest.providerId === 'github-copilot')
             }
             disabled={isBusy || cliStatusLoading}
             onInstallOrUpdateRuntime={() => installOpenCodeRuntime()}

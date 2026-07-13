@@ -94,7 +94,7 @@ describe('useRuntimeProviderQuickConnect', () => {
     current = null;
   });
 
-  it('loads the full provider directory once after a short startup defer', async () => {
+  it('loads the lightweight provider summary once after a short startup defer', async () => {
     await act(async () => root.render(React.createElement(Harness)));
     expect(loadProviderDirectory).not.toHaveBeenCalled();
 
@@ -105,10 +105,11 @@ describe('useRuntimeProviderQuickConnect', () => {
     expect(loadProviderDirectory).toHaveBeenCalledTimes(1);
     expect(loadProviderDirectory).toHaveBeenCalledWith({
       runtimeId: 'opencode',
+      summary: true,
       projectPath: '/tmp/test-project',
       query: null,
       filter: 'all',
-      limit: 250,
+      limit: 100,
       cursor: null,
       refresh: false,
     });

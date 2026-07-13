@@ -498,6 +498,10 @@ function getCompactOpenCodeProviderDetailMessage(detailMessage?: string | null):
     typeof firstInternalDetailIndex === 'number'
       ? trimmed.slice(0, firstInternalDetailIndex).trim()
       : trimmed;
+  const connectedVersion = compact.match(/^version\s+([^\s]+)\s+-\s+connected\b/i)?.[1];
+  if (connectedVersion) {
+    return `OpenCode ${connectedVersion} is ready.`;
+  }
   return compact || null;
 }
 
@@ -871,6 +875,8 @@ export const ProviderRuntimeSettingsDialog = ({
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
   const [connectionSaving, setConnectionSaving] = useState(false);
+  const [runtimeProviderOperationBlocking, setRuntimeProviderOperationBlocking] = useState(false);
+  const selectedProviderTabRef = useRef<HTMLButtonElement | null>(null);
   const [runtimeSaving, setRuntimeSaving] = useState(false);
   const [pendingConnectionAction, setPendingConnectionAction] =
     useState<PendingConnectionAction>(null);
@@ -1826,32 +1832,69 @@ export const ProviderRuntimeSettingsDialog = ({
     }
   };
 
+  useEffect(() => {
+    if (!open) return;
+    const frame = window.requestAnimationFrame(() => {
+      selectedProviderTabRef.current?.scrollIntoView({
+        block: 'nearest',
+        inline: 'center',
+        behavior: 'auto',
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [open, selectedProviderId]);
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[min(96vw,980px)] max-w-[min(96vw,980px)]">
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen && runtimeProviderOperationBlocking) return;
+        onOpenChange(nextOpen);
+      }}
+    >
+      <DialogContent
+        closeDisabled={runtimeProviderOperationBlocking}
+        className="w-[min(calc(100vw-2rem),980px)] max-w-[min(calc(100vw-2rem),980px)]"
+        onEscapeKeyDown={(event) => {
+          if (runtimeProviderOperationBlocking) event.preventDefault();
+        }}
+        onPointerDownOutside={(event) => {
+          if (runtimeProviderOperationBlocking) event.preventDefault();
+        }}
+      >
         <DialogHeader>
           <DialogTitle>{t('providerRuntime.title')}</DialogTitle>
           <DialogDescription>{t('providerRuntime.description')}</DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
           <div className="space-y-2">
             <div className="text-[11px] font-medium" style={{ color: 'var(--color-text-muted)' }}>
               {t('providerRuntime.provider')}
             </div>
             <Tabs
               value={selectedProvider?.providerId ?? selectedProviderId}
-              onValueChange={(value) => setSelectedProviderId(value as CliProviderId)}
+              onValueChange={(value) => {
+                if (!runtimeProviderOperationBlocking) {
+                  setSelectedProviderId(value as CliProviderId);
+                }
+              }}
             >
               <div
-                className="-mx-1 border-b px-1"
+                className="-mx-1 overflow-x-auto border-b px-1"
                 style={{ borderColor: 'var(--color-border-subtle)' }}
               >
-                <TabsList className="gap-1 rounded-b-none">
+                <TabsList className="w-max min-w-full gap-1 rounded-b-none">
                   {providers.map((provider) => (
                     <TabsTrigger
                       key={provider.providerId}
+                      ref={
+                        provider.providerId === (selectedProvider?.providerId ?? selectedProviderId)
+                          ? selectedProviderTabRef
+                          : undefined
+                      }
                       value={provider.providerId}
+                      disabled={runtimeProviderOperationBlocking}
                       className="relative rounded-b-none data-[state=active]:z-10 data-[state=active]:-mb-px data-[state=active]:bg-[var(--color-surface)] data-[state=active]:shadow-none data-[state=active]:after:absolute data-[state=active]:after:inset-x-0 data-[state=active]:after:-bottom-px data-[state=active]:after:h-1 data-[state=active]:after:bg-[var(--color-surface)] data-[state=active]:after:content-['']"
                     >
                       <span className="inline-flex items-center gap-2">
@@ -1935,6 +1978,7 @@ export const ProviderRuntimeSettingsDialog = ({
                 initialProviderAction={initialRuntimeProviderAction}
                 disabled={disabled || selectedProviderLoading}
                 onProviderChanged={() => onRefreshProvider?.('opencode')}
+                onBlockingOperationChange={setRuntimeProviderOperationBlocking}
               />
             ) : (
               <div className="space-y-3">

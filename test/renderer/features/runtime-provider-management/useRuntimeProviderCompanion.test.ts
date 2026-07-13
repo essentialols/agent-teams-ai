@@ -136,4 +136,36 @@ describe('useRuntimeProviderCompanion', () => {
     expect(current?.status?.phase).toBe('installing');
     expect(current?.status?.percent).toBe(42);
   });
+
+  it('surfaces an initial status failure instead of checking forever', async () => {
+    mocks.getCompanionStatus.mockRejectedValue(new Error('Companion status IPC failed'));
+
+    await act(async () => root.render(React.createElement(Harness, { companionId: 'kiro-cli' })));
+    await act(async () => Promise.resolve());
+
+    expect(current?.loading).toBe(false);
+    expect(current?.status).toMatchObject({
+      companionId: 'kiro-cli',
+      displayName: 'Amazon Q Developer / Kiro',
+      phase: 'error',
+      error: 'Companion status IPC failed',
+    });
+  });
+
+  it('surfaces an operation failure even when no status was loaded first', async () => {
+    mocks.getCompanionStatus.mockRejectedValue(new Error('Initial status failed'));
+    mocks.connectCompanion.mockRejectedValue(new Error('Browser sign-in could not start'));
+
+    await act(async () =>
+      root.render(React.createElement(Harness, { companionId: 'cursor-agent' }))
+    );
+    await act(async () => Promise.resolve());
+    await act(async () => current?.runConnect());
+
+    expect(current?.status).toMatchObject({
+      companionId: 'cursor-agent',
+      phase: 'error',
+      error: 'Browser sign-in could not start',
+    });
+  });
 });

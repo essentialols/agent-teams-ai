@@ -13,7 +13,10 @@ import {
   useRuntimeProviderOnboarding,
 } from '../../../../src/features/runtime-provider-management/renderer/hooks/useRuntimeProviderOnboarding';
 
-import type { RuntimeProviderDirectoryEntryDto } from '../../../../src/features/runtime-provider-management/contracts';
+import type {
+  RuntimeProviderDirectoryEntryDto,
+  RuntimeProviderManagementDirectoryResponse,
+} from '../../../../src/features/runtime-provider-management/contracts';
 import type { RuntimeProviderOnboardingProgressRepository } from '../../../../src/features/runtime-provider-management/renderer/adapters/runtimeProviderOnboardingProgressRepository';
 import type { ElectronAPI } from '../../../../src/shared/types/api';
 
@@ -79,6 +82,7 @@ describe('useRuntimeProviderOnboarding', () => {
   let loadSetupForm: ReturnType<typeof vi.fn>;
   let loadModels: ReturnType<typeof vi.fn>;
   let testModel: ReturnType<typeof vi.fn>;
+  let connectProvider: ReturnType<typeof vi.fn>;
 
   function Harness({
     mode = 'provider',
@@ -180,6 +184,7 @@ describe('useRuntimeProviderOnboarding', () => {
         diagnostics: [],
       },
     }));
+    connectProvider = vi.fn();
     Object.defineProperty(window, 'electronAPI', {
       configurable: true,
       value: {
@@ -189,7 +194,7 @@ describe('useRuntimeProviderOnboarding', () => {
           loadModels,
           testModel,
           loadView: vi.fn(),
-          connectProvider: vi.fn(),
+          connectProvider,
           connectWithApiKey: vi.fn(),
           forgetCredential: vi.fn(),
           setDefaultModel: vi.fn(),
@@ -211,9 +216,15 @@ describe('useRuntimeProviderOnboarding', () => {
     currentActions = null;
   });
 
-  it('skips credential entry for a connected plan and verifies a recommended model', async () => {
+  it('requires explicit confirmation before verifying an already connected plan', async () => {
     await act(async () => root.render(React.createElement(Harness)));
 
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 50));
+    });
+    expect(currentState?.stage).toBe('connect');
+    expect(testModel).not.toHaveBeenCalled();
+    await act(async () => currentActions?.beginVerification());
     await act(async () => {
       await new Promise((resolve) => window.setTimeout(resolve, 100));
     });
@@ -304,6 +315,11 @@ describe('useRuntimeProviderOnboarding', () => {
       root.render(React.createElement(Harness, { providerId: 'github-copilot' }))
     );
     await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 50));
+    });
+    expect(testModel).not.toHaveBeenCalled();
+    await act(async () => currentActions?.beginVerification());
+    await act(async () => {
       await new Promise((resolve) => window.setTimeout(resolve, 150));
     });
 
@@ -330,6 +346,11 @@ describe('useRuntimeProviderOnboarding', () => {
     });
 
     await act(async () => root.render(React.createElement(Harness)));
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 50));
+    });
+    expect(testModel).not.toHaveBeenCalled();
+    await act(async () => currentActions?.beginVerification());
     await act(async () => {
       await new Promise((resolve) => window.setTimeout(resolve, 100));
     });
@@ -373,6 +394,11 @@ describe('useRuntimeProviderOnboarding', () => {
 
     await act(async () => root.render(React.createElement(Harness, { providerId: 'cursor-acp' })));
     await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 50));
+    });
+    expect(testModel).not.toHaveBeenCalled();
+    await act(async () => currentActions?.beginVerification());
+    await act(async () => {
       await new Promise((resolve) => window.setTimeout(resolve, 100));
     });
 
@@ -412,6 +438,11 @@ describe('useRuntimeProviderOnboarding', () => {
 
     await act(async () => root.render(React.createElement(Harness, { providerId: 'kiro' })));
     await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 50));
+    });
+    expect(testModel).not.toHaveBeenCalled();
+    await act(async () => currentActions?.beginVerification());
+    await act(async () => {
       await new Promise((resolve) => window.setTimeout(resolve, 100));
     });
 
@@ -443,6 +474,175 @@ describe('useRuntimeProviderOnboarding', () => {
     expect(currentState?.activePlan?.id).toBe('kimi-code-membership');
     expect(loadSetupForm).toHaveBeenCalledWith(
       expect.objectContaining({ providerId: 'kimi-for-coding' })
+    );
+  });
+
+  it('retries one transient runtime setup failure without leaving the user on an error screen', async () => {
+    loadProviderDirectory.mockResolvedValueOnce(
+      directoryResponse([directoryEntry('kimi-for-coding', 'available')])
+    );
+    loadSetupForm
+      .mockResolvedValueOnce({
+        schemaVersion: 1 as const,
+        runtimeId: 'opencode' as const,
+        error: {
+          code: 'runtime-missing' as const,
+          message: 'The runtime was still restarting after the OpenCode update.',
+          recoverable: true,
+          diagnostics: {
+            errorCode: 'runtime-missing' as const,
+            summary: 'Runtime restart in progress',
+            likelyCause: null,
+            binaryPath: null,
+            command: null,
+            projectPath: null,
+            exitCode: null,
+            stderrPreview: null,
+            stdoutPreview: null,
+            hints: [],
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        schemaVersion: 1 as const,
+        runtimeId: 'opencode' as const,
+        setupForm: {
+          runtimeId: 'opencode' as const,
+          providerId: 'kimi-for-coding',
+          displayName: 'Kimi Code Membership',
+          method: 'api' as const,
+          supported: true,
+          title: 'Connect Kimi Code Membership',
+          description: null,
+          submitLabel: 'Connect',
+          disabledReason: null,
+          source: 'curated' as const,
+          secret: {
+            key: 'key' as const,
+            label: 'Membership Key',
+            placeholder: 'Paste key',
+            required: true,
+          },
+          prompts: [],
+        },
+      });
+
+    await act(async () =>
+      root.render(React.createElement(Harness, { providerId: 'kimi-for-coding' }))
+    );
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 100));
+    });
+    expect(currentState?.management.setupFormErrorDiagnostics?.errorCode).toBe('runtime-missing');
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 1_000));
+    });
+
+    expect(loadSetupForm).toHaveBeenCalledTimes(2);
+    expect(currentState?.management.setupForm?.providerId).toBe('kimi-for-coding');
+    expect(currentState?.management.setupFormError).toBeNull();
+  });
+
+  it('uses the connect execution proof without issuing a duplicate model request', async () => {
+    const available = directoryEntry('minimax-coding-plan', 'available');
+    let resolveRefresh: ((value: RuntimeProviderManagementDirectoryResponse) => void) | null = null;
+    loadProviderDirectory
+      .mockResolvedValueOnce(directoryResponse([available]))
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveRefresh = resolve;
+          })
+      );
+    loadModels.mockResolvedValue({
+      schemaVersion: 1 as const,
+      runtimeId: 'opencode' as const,
+      models: {
+        runtimeId: 'opencode' as const,
+        providerId: 'minimax-coding-plan',
+        defaultModelId: 'minimax-coding-plan/MiniMax-M2',
+        diagnostics: [],
+        models: [
+          {
+            modelId: 'minimax-coding-plan/MiniMax-M2',
+            providerId: 'minimax-coding-plan',
+            displayName: 'MiniMax M2',
+            sourceLabel: 'OpenCode',
+            free: false,
+            default: true,
+            availability: 'untested' as const,
+          },
+          {
+            modelId: 'minimax-coding-plan/MiniMax-M3',
+            providerId: 'minimax-coding-plan',
+            displayName: 'MiniMax M3',
+            sourceLabel: 'OpenCode',
+            free: false,
+            default: false,
+            availability: 'untested' as const,
+          },
+        ],
+      },
+    });
+    connectProvider.mockResolvedValue({
+      schemaVersion: 1 as const,
+      runtimeId: 'opencode' as const,
+      provider: {
+        providerId: 'minimax-coding-plan',
+        displayName: 'MiniMax Token Plan',
+        state: 'connected' as const,
+        ownership: ['managed'] as const,
+        recommended: true,
+        modelCount: 1,
+        defaultModelId: 'minimax-coding-plan/MiniMax-M2',
+        authMethods: ['api'] as const,
+        actions: [],
+        detail: 'Connected and verified',
+        connectedAuthHint: 'api' as const,
+        verifiedModelId: 'minimax-coding-plan/MiniMax-M3',
+      },
+    });
+
+    await act(async () =>
+      root.render(React.createElement(Harness, { providerId: 'minimax-coding-plan' }))
+    );
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 100));
+    });
+    expect(currentState?.management.activeFormProviderId).toBe('minimax-coding-plan');
+
+    await act(async () => currentActions?.management.setApiKeyValue('sk-cp-test'));
+    let submitPromise: Promise<boolean> | undefined;
+    await act(async () => {
+      submitPromise = currentActions?.submitConnect();
+      await vi.waitFor(() => expect(connectProvider).toHaveBeenCalledTimes(1));
+      await new Promise((resolve) => window.setTimeout(resolve, 25));
+    });
+
+    expect(currentState?.stage).toBe('verifying');
+    expect(currentState?.verifiedModelId).toBeNull();
+    expect(testModel).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveRefresh?.({
+        schemaVersion: 1,
+        runtimeId: 'opencode',
+        error: {
+          code: 'runtime-unhealthy',
+          message: 'Provider refresh is temporarily unavailable',
+          recoverable: true,
+        },
+      });
+      await submitPromise;
+      await new Promise((resolve) => window.setTimeout(resolve, 100));
+    });
+
+    expect(connectProvider).toHaveBeenCalledTimes(1);
+    expect(testModel).not.toHaveBeenCalled();
+    expect(currentState?.stage).toBe('choose-model');
+    expect(currentState?.verifiedModelId).toBe('minimax-coding-plan/MiniMax-M3');
+    expect(currentState?.management.directoryError).toBe(
+      'Provider refresh is temporarily unavailable'
     );
   });
 
@@ -487,6 +687,12 @@ describe('useRuntimeProviderOnboarding', () => {
     );
 
     await act(async () => currentActions?.startWizard());
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 50));
+    });
+    expect(currentState?.stage).toBe('connect');
+    expect(testModel).not.toHaveBeenCalled();
+    await act(async () => currentActions?.beginVerification());
     await act(async () => {
       await new Promise((resolve) => window.setTimeout(resolve, 100));
     });

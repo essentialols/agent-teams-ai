@@ -69,9 +69,9 @@ describe('XiaomiMiMoTokenPlanSetupDialog', () => {
     if (!input) throw new Error('MiMo Base URL input was not rendered');
     await enterBaseUrl(input, 'https://token-plan-sgp.xiaomimimo.com/anthropic');
 
-    expect(document.querySelector('[data-testid="xiaomi-mimo-detected-region"]')?.textContent).toContain(
-      'Singapore endpoint detected'
-    );
+    expect(
+      document.querySelector('[data-testid="xiaomi-mimo-detected-region"]')?.textContent
+    ).toContain('Singapore endpoint detected');
     await act(async () => {
       document.querySelector<HTMLButtonElement>('[data-testid="xiaomi-mimo-continue"]')?.click();
     });
@@ -102,5 +102,49 @@ describe('XiaomiMiMoTokenPlanSetupDialog', () => {
 
     expect(document.querySelector('[role="alert"]')?.textContent).toContain('not recognized');
     expect(onConnect).not.toHaveBeenCalled();
+  });
+
+  it('opens the official plan page and resets a cancelled invalid URL', async () => {
+    const onOpenPlanPage = vi.fn();
+    const props = {
+      onOpenChange: vi.fn(),
+      onConnect: vi.fn(),
+      onOpenPlanPage,
+    };
+    await act(async () => {
+      root.render(React.createElement(XiaomiMiMoTokenPlanSetupDialog, { ...props, open: true }));
+    });
+
+    const continueButton = document.querySelector<HTMLButtonElement>(
+      '[data-testid="xiaomi-mimo-continue"]'
+    );
+    expect(continueButton?.disabled).toBe(true);
+    const input = document.querySelector<HTMLInputElement>('[data-testid="xiaomi-mimo-base-url"]');
+    if (!input) throw new Error('MiMo Base URL input was not rendered');
+    await enterBaseUrl(input, 'https://example.com/v1');
+    await act(async () => continueButton?.click());
+    expect(document.querySelector('[role="alert"]')).not.toBeNull();
+
+    const planButton = Array.from(document.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Open Token Plan page')
+    );
+    await act(async () => planButton?.click());
+    expect(onOpenPlanPage).toHaveBeenCalledWith(
+      'https://platform.xiaomimimo.com/console/plan-manage'
+    );
+
+    await act(async () => {
+      root.render(React.createElement(XiaomiMiMoTokenPlanSetupDialog, { ...props, open: false }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      root.render(React.createElement(XiaomiMiMoTokenPlanSetupDialog, { ...props, open: true }));
+      await Promise.resolve();
+    });
+
+    expect(
+      document.querySelector<HTMLInputElement>('[data-testid="xiaomi-mimo-base-url"]')?.value
+    ).toBe('');
+    expect(document.querySelector('[role="alert"]')).toBeNull();
   });
 });

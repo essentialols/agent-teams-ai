@@ -61,12 +61,13 @@ export function useRuntimeProviderQuickConnect({
       void api.runtimeProviderManagement
         .loadProviderDirectory({
           runtimeId: 'opencode',
+          summary: true,
           projectPath,
           query: null,
           filter: 'all',
-          // Quick-connect cards include curated providers near the end of the
-          // OpenCode catalog (for example Xiaomi MiMo regional plans).
-          limit: 250,
+          // The dashboard only needs the curated provider snapshot. Browse all
+          // providers keeps using the authoritative full live catalog.
+          limit: 100,
           cursor: null,
           refresh: refreshRequested,
         })

@@ -62,10 +62,37 @@ export const RuntimeProviderOnboardingDialog = ({
   });
   const title =
     mode === 'wizard' ? 'Connect all my plans' : `Set up ${plan?.displayName ?? 'plan'}`;
+  const activeAuthOption = state.management.setupForm?.authOptions?.find(
+    (option) => option.id === state.management.selectedAuthOptionId
+  );
+  const activeSetupMethod = activeAuthOption?.method ?? state.management.setupForm?.method ?? null;
+  const blockingCredentialWrite = Boolean(
+    state.management.savingProviderId && activeSetupMethod && activeSetupMethod !== 'oauth'
+  );
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[min(88vh,820px)] max-w-2xl overflow-y-auto">
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen && blockingCredentialWrite) {
+          return;
+        }
+        if (!nextOpen) {
+          actions.management.cancelConnect();
+        }
+        onOpenChange(nextOpen);
+      }}
+    >
+      <DialogContent
+        closeDisabled={blockingCredentialWrite}
+        className="max-h-[min(88vh,820px)] max-w-2xl overflow-y-auto"
+        onEscapeKeyDown={(event) => {
+          if (blockingCredentialWrite) event.preventDefault();
+        }}
+        onPointerDownOutside={(event) => {
+          if (blockingCredentialWrite) event.preventDefault();
+        }}
+      >
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
@@ -76,10 +103,14 @@ export const RuntimeProviderOnboardingDialog = ({
           state={state}
           actions={actions}
           disabled={disabled}
-          onAdvancedSettings={onAdvancedSettings}
+          onAdvancedSettings={() => {
+            if (blockingCredentialWrite) return;
+            actions.management.cancelConnect();
+            onAdvancedSettings();
+          }}
           onDone={() => onOpenChange(false)}
         />
       </DialogContent>
     </Dialog>
   );
-}
+};

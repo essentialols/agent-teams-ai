@@ -140,21 +140,25 @@ describe('useRuntimeProviderManagement', () => {
   function ConfigurableHarness(props: {
     enabled: boolean;
     directoryPageSize?: number;
+    directorySummaryOnEnable?: boolean;
     projectPath?: string | null;
     loadViewOnEnable?: boolean;
     searchDirectoryOnQueryChange?: boolean;
     initialProviderId?: string | null;
     initialProviderAction?: 'connect' | 'select' | null;
+    onProviderChanged?: () => Promise<void> | void;
   }): React.ReactElement {
     const hook = useRuntimeProviderManagement({
       runtimeId: 'opencode',
       enabled: props.enabled,
       directoryPageSize: props.directoryPageSize,
+      directorySummaryOnEnable: props.directorySummaryOnEnable,
       projectPath: props.projectPath,
       loadViewOnEnable: props.loadViewOnEnable,
       searchDirectoryOnQueryChange: props.searchDirectoryOnQueryChange,
       initialProviderId: props.initialProviderId,
       initialProviderAction: props.initialProviderAction,
+      onProviderChanged: props.onProviderChanged,
     });
     state = hook[0];
     actions = hook[1];
@@ -336,6 +340,7 @@ describe('useRuntimeProviderManagement', () => {
         React.createElement(ConfigurableHarness, {
           enabled: true,
           loadViewOnEnable: false,
+          directorySummaryOnEnable: true,
           searchDirectoryOnQueryChange: false,
           initialProviderId: 'xai',
           initialProviderAction: 'connect',
@@ -346,6 +351,7 @@ describe('useRuntimeProviderManagement', () => {
     await act(async () => {
       await vi.waitFor(() => expect(loadProviderDirectory).toHaveBeenCalledTimes(1));
     });
+    expect(loadProviderDirectory).toHaveBeenCalledWith(expect.objectContaining({ summary: true }));
     expect(loadSetupForm).not.toHaveBeenCalled();
 
     await act(async () => {
@@ -1060,7 +1066,7 @@ describe('useRuntimeProviderManagement', () => {
       })
     );
     const connectProvider = vi.fn(
-      () =>
+      (_input: { oauthOperationId?: string }) =>
         new Promise<RuntimeProviderManagementProviderResponse>((resolve) => {
           resolveConnect = resolve;
         })
@@ -1901,6 +1907,251 @@ describe('useRuntimeProviderManagement', () => {
     expect(state?.setupSubmitError).toBeNull();
 
     await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it('keeps the actual API credential hint when xAI refresh fails after connect', async () => {
+    const xaiEntry: RuntimeProviderDirectoryEntryDto = {
+      providerId: 'xai',
+      displayName: 'xAI',
+      state: 'available',
+      connectedAuthHint: null,
+      setupKind: 'connect-api-key',
+      ownership: [],
+      recommended: true,
+      modelCount: 4,
+      authMethods: ['oauth', 'api'],
+      defaultModelId: 'xai/grok-4.3',
+      sources: ['inventory'],
+      sourceLabel: 'OpenCode',
+      providerSource: null,
+      detail: null,
+      actions: [],
+      metadata: {
+        hasKnownModels: true,
+        requiresManualConfig: false,
+        supportedInlineAuth: true,
+        configuredAuthless: false,
+      },
+    };
+    const initialDirectoryResponse: RuntimeProviderManagementDirectoryResponse = {
+        ...createEmptyDirectoryResponse(),
+        directory: {
+          ...createEmptyDirectoryResponse().directory!,
+          totalCount: 1,
+          returnedCount: 1,
+          entries: [xaiEntry],
+        },
+      };
+    const loadProviderDirectory = vi.fn((input: { refresh?: boolean }) =>
+      Promise.resolve(
+        input.refresh
+          ? {
+              schemaVersion: 1 as const,
+              runtimeId: 'opencode' as const,
+              error: {
+                code: 'runtime-unhealthy' as const,
+                message: 'Catalog refresh failed',
+                recoverable: true,
+              },
+            }
+          : initialDirectoryResponse
+      )
+    );
+    const loadSetupForm = vi.fn(() =>
+      Promise.resolve({
+        schemaVersion: 1 as const,
+        runtimeId: 'opencode' as const,
+        setupForm: {
+          runtimeId: 'opencode' as const,
+          providerId: 'xai',
+          displayName: 'xAI',
+          method: 'api' as const,
+          supported: true,
+          title: 'Connect xAI API key',
+          description: null,
+          submitLabel: 'Connect',
+          disabledReason: null,
+          source: 'curated' as const,
+          secret: {
+            key: 'key' as const,
+            label: 'API key',
+            placeholder: 'xai-...',
+            required: true,
+          },
+          prompts: [],
+        },
+      })
+    );
+    const connectProvider = vi.fn(() =>
+      Promise.resolve({
+        schemaVersion: 1 as const,
+        runtimeId: 'opencode' as const,
+        provider: {
+          providerId: 'xai',
+          displayName: 'xAI',
+          state: 'connected' as const,
+          ownership: ['managed'] as const,
+          recommended: true,
+          modelCount: 4,
+          defaultModelId: 'xai/grok-4.3',
+          authMethods: ['oauth', 'api'] as const,
+          actions: [],
+          detail: 'Connected with API key',
+        },
+      })
+    );
+    Object.defineProperty(window, 'electronAPI', {
+      configurable: true,
+      value: {
+        runtimeProviderManagement: {
+          loadProviderDirectory,
+          loadSetupForm,
+          connectProvider,
+          loadModels: vi.fn(() =>
+            Promise.resolve({
+              schemaVersion: 1,
+              runtimeId: 'opencode',
+              models: {
+                runtimeId: 'opencode',
+                providerId: 'xai',
+                models: [],
+                defaultModelId: null,
+                diagnostics: [],
+              },
+            })
+          ),
+        },
+      } as unknown as ElectronAPI,
+    });
+
+    const root = createRoot(host);
+    await act(async () => {
+      root.render(
+        React.createElement(ConfigurableHarness, {
+          enabled: true,
+          loadViewOnEnable: false,
+        })
+      );
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 100));
+    });
+    expect(state?.directoryLoaded).toBe(true);
+    act(() => actions?.startConnect('xai'));
+    await act(async () => {
+      await vi.waitFor(() => expect(loadSetupForm).toHaveBeenCalledTimes(1));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(state?.setupForm?.providerId).toBe('xai');
+    act(() => actions?.setApiKeyValue('xai-test-key'));
+    await act(async () => {
+      await actions?.submitConnect('xai');
+    });
+
+    expect(state?.directoryEntries[0]?.state).toBe('connected');
+    expect(state?.directoryEntries[0]?.connectedAuthHint).toBe('api');
+    expect(state?.directoryError).toBe('Catalog refresh failed');
+
+    await act(async () => root.unmount());
+  });
+
+  it('refreshes provider status after a cancelled OAuth child settles', async () => {
+    const loadSetupForm = vi.fn(() =>
+      Promise.resolve({
+        schemaVersion: 1 as const,
+        runtimeId: 'opencode' as const,
+        setupForm: {
+          runtimeId: 'opencode' as const,
+          providerId: 'xai',
+          displayName: 'SuperGrok',
+          method: 'oauth' as const,
+          supported: true,
+          title: 'Connect SuperGrok',
+          description: null,
+          submitLabel: 'Get browser code',
+          disabledReason: null,
+          source: 'oauth' as const,
+          secret: null,
+          prompts: [],
+        },
+      })
+    );
+    let resolveConnect: ((value: RuntimeProviderManagementProviderResponse) => void) | null = null;
+    let capturedOperationId: string | undefined;
+    const connectProvider = vi.fn((input: { oauthOperationId?: string }) => {
+      capturedOperationId = input.oauthOperationId;
+      return new Promise<RuntimeProviderManagementProviderResponse>((resolve) => {
+        resolveConnect = resolve;
+      });
+    });
+    let resolveCancel: (() => void) | null = null;
+    const cancelOAuth = vi.fn(
+      () =>
+        new Promise<{ ok: true }>((resolve) => {
+          resolveCancel = () => resolve({ ok: true });
+        })
+    );
+    const onProviderChanged = vi.fn();
+    Object.defineProperty(window, 'electronAPI', {
+      configurable: true,
+      value: {
+        runtimeProviderManagement: {
+          loadSetupForm,
+          connectProvider,
+          cancelOAuth,
+        },
+      } as unknown as ElectronAPI,
+    });
+
+    const root = createRoot(host);
+    await act(async () => {
+      root.render(
+        React.createElement(ConfigurableHarness, {
+          enabled: false,
+          onProviderChanged,
+        })
+      );
+      await Promise.resolve();
+    });
+    act(() => actions?.startConnect('xai'));
+    await act(async () => {
+      await vi.waitFor(() => expect(loadSetupForm).toHaveBeenCalled());
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(state?.setupForm?.providerId).toBe('xai');
+
+    let submitPromise: ReturnType<RuntimeProviderManagementActions['submitConnect']> | null = null;
+    await act(async () => {
+      submitPromise = actions?.submitConnect('xai') ?? null;
+      await vi.waitFor(() => expect(connectProvider).toHaveBeenCalled());
+    });
+    const operationId = capturedOperationId;
+
+    await act(async () => {
+      actions?.cancelConnect();
+      await Promise.resolve();
+    });
+    expect(cancelOAuth).toHaveBeenCalledWith({ operationId });
+    expect(onProviderChanged).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveCancel?.();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => expect(onProviderChanged).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      resolveConnect?.({
+        schemaVersion: 1,
+        runtimeId: 'opencode',
+        error: { code: 'auth-failed', message: 'Authorization cancelled', recoverable: true },
+      });
+      await submitPromise;
       root.unmount();
     });
   });

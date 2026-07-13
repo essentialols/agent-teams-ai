@@ -1227,6 +1227,63 @@ function parseOAuthAuthorizationEvent(
   };
 }
 
+function getOAuthRuntimeEventType(line: string): string | null {
+  try {
+    const value = JSON.parse(line.slice(RUNTIME_PROVIDER_OAUTH_EVENT_PREFIX.length)) as unknown;
+    return isRecord(value) && typeof value.event === 'string' ? value.event : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseOAuthVerificationEvent(
+  line: string,
+  expected: {
+    operationId: string;
+    providerId: string;
+    runtimeId: RuntimeProviderManagementRuntimeId;
+    authOptionId: string;
+    methodIndex: number;
+  }
+): RuntimeProviderOAuthProgressDto {
+  const value = JSON.parse(line.slice(RUNTIME_PROVIDER_OAUTH_EVENT_PREFIX.length)) as unknown;
+  if (!isRecord(value)) {
+    throw new Error('Runtime returned an invalid OAuth verification event');
+  }
+  const operationId = typeof value.operationId === 'string' ? value.operationId.trim() : '';
+  const providerId = typeof value.providerId === 'string' ? value.providerId.trim() : '';
+  const authOptionId = typeof value.authOptionId === 'string' ? value.authOptionId.trim() : '';
+  const displayName = typeof value.displayName === 'string' ? value.displayName.trim() : '';
+  const methodIndex = value.methodIndex;
+  const completionMethod = value.completionMethod;
+  if (
+    value.schemaVersion !== 1 ||
+    value.event !== 'verification' ||
+    operationId !== expected.operationId ||
+    providerId !== expected.providerId ||
+    authOptionId !== expected.authOptionId ||
+    !displayName ||
+    displayName.length > OAUTH_EVENT_IDENTITY_FIELD_LIMIT ||
+    !Number.isInteger(methodIndex) ||
+    methodIndex !== expected.methodIndex ||
+    (completionMethod !== 'auto' && completionMethod !== 'code')
+  ) {
+    throw new Error('Runtime returned an invalid OAuth verification event');
+  }
+  return {
+    operationId,
+    runtimeId: expected.runtimeId,
+    providerId,
+    displayName,
+    authOptionId,
+    methodIndex: methodIndex as number,
+    phase: 'completing',
+    completionMethod,
+    instructions: null,
+    message: 'Authorization received. Verifying your plan...',
+  };
+}
+
 function collectOAuthSpawnOutput(input: {
   child: ChildProcessWithoutNullStreams;
   stdinValue: string;
@@ -1344,6 +1401,7 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
   ): string {
     return JSON.stringify([
       input.runtimeId,
+      input.summary === true ? 'summary' : 'full',
       projectPath,
       input.query?.trim() || null,
       input.filter ?? null,
@@ -1560,6 +1618,9 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
     }
 
     const args = ['runtime', 'providers', 'directory', '--runtime', input.runtimeId, '--json'];
+    if (input.summary === true) {
+      args.push('--summary');
+    }
     appendOptionalArg(args, '--project-path', projectPath);
     appendOptionalArg(args, '--query', input.query ?? null);
     appendOptionalArg(args, '--filter', input.filter ?? null);
@@ -1787,6 +1848,7 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
           : {}),
         ...(input.authOptionId ? { authOptionId: input.authOptionId } : {}),
         ...(input.oauthOperationId ? { oauthOperationId: input.oauthOperationId } : {}),
+        ...(isOAuth ? { oauthProgressProtocol: 2 } : {}),
       });
       let result: Awaited<ReturnType<typeof collectSpawnOutput>>;
       if (isOAuth) {
@@ -1812,8 +1874,26 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
           stdinValue,
           onAuthorization: async (line) => {
             const active = this.activeOAuthOperations.get(oauthOperationId);
-            if (active?.child !== child || active.latestProgress !== null) {
-              throw new Error('OAuth operation was cancelled or returned duplicate authorization');
+            if (active?.child !== child) {
+              throw new Error('OAuth operation was cancelled');
+            }
+            if (getOAuthRuntimeEventType(line) === 'verification') {
+              if (!active.latestProgress || active.latestProgress.phase === 'cancelled') {
+                throw new Error('OAuth verification arrived before authorization');
+              }
+              const progress = parseOAuthVerificationEvent(line, {
+                operationId: oauthOperationId,
+                providerId: input.providerId,
+                runtimeId: input.runtimeId,
+                authOptionId: oauthAuthOptionId,
+                methodIndex: oauthAuthMethodIndex!,
+              });
+              active.latestProgress = progress;
+              this.emitOAuthProgress(progress);
+              return;
+            }
+            if (active.latestProgress !== null) {
+              throw new Error('OAuth operation returned duplicate authorization');
             }
             const authorization = parseOAuthAuthorizationEvent(line, {
               operationId: oauthOperationId,
@@ -1887,6 +1967,10 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
       if (isOAuth) {
         this.activeOAuthOperations.delete(oauthOperationId);
       }
+      // Provider credentials can change before a long OAuth command exits. A
+      // dashboard read during that window may repopulate the cache with the old
+      // disconnected state, so always discard it after the command settles.
+      this.invalidateDirectoryResponseCache();
     }
   }
 
@@ -1941,8 +2025,24 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
     };
     active.latestProgress = progress;
     this.emitOAuthProgress(progress);
-    killProcessTree(active.child, 'SIGTERM');
+    // The provider may already have persisted its credential before the user
+    // closes the flow. Invalidate now, then wait for the child to settle and
+    // invalidate again before the renderer refreshes provider status.
+    this.invalidateDirectoryResponseCache();
     const child = active.child;
+    const settled = new Promise<void>((resolve) => {
+      let finished = false;
+      const finish = (): void => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(settlementTimeout);
+        resolve();
+      };
+      child.once('close', finish);
+      const settlementTimeout = setTimeout(finish, OAUTH_CANCEL_FORCE_KILL_DELAY_MS + 1_000);
+      settlementTimeout.unref?.();
+    });
+    killProcessTree(child, 'SIGTERM');
     const forceKillTimer = setTimeout(() => {
       const current = this.activeOAuthOperations.get(operationId);
       if (current?.child === child && current.latestProgress?.phase === 'cancelled') {
@@ -1950,6 +2050,8 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
       }
     }, OAUTH_CANCEL_FORCE_KILL_DELAY_MS);
     forceKillTimer.unref?.();
+    await settled;
+    this.invalidateDirectoryResponseCache();
     return { ok: true };
   }
 

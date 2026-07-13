@@ -1695,6 +1695,7 @@ describe('AgentTeamsRuntimeProviderManagementCliClient', () => {
     const client = new AgentTeamsRuntimeProviderManagementCliClient();
     const response = await client.loadProviderDirectory({
       runtimeId: 'opencode',
+      summary: true,
       projectPath: '/Users/test/project',
       query: 'deep',
       filter: 'connectable',
@@ -1712,6 +1713,7 @@ describe('AgentTeamsRuntimeProviderManagementCliClient', () => {
         '--runtime',
         'opencode',
         '--json',
+        '--summary',
         '--project-path',
         '/Users/test/project',
         '--query',
@@ -1768,6 +1770,45 @@ describe('AgentTeamsRuntimeProviderManagementCliClient', () => {
     await client.loadProviderDirectory({ ...request, refresh: true });
 
     expect(execCliMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps lightweight summary and full provider directory caches separate', async () => {
+    execCliMock.mockResolvedValue({
+      stdout: JSON.stringify({
+        schemaVersion: 1,
+        runtimeId: 'opencode',
+        directory: {
+          runtimeId: 'opencode',
+          totalCount: 1,
+          returnedCount: 1,
+          query: null,
+          filter: 'all',
+          limit: 100,
+          cursor: null,
+          nextCursor: null,
+          fetchedAt: '2026-07-13T00:00:00.000Z',
+          entries: [],
+          diagnostics: [],
+        },
+      }),
+      stderr: '',
+    });
+
+    const client = new AgentTeamsRuntimeProviderManagementCliClient();
+    const request = {
+      runtimeId: 'opencode' as const,
+      projectPath: '/Users/test/project',
+      limit: 100,
+    };
+
+    await client.loadProviderDirectory({ ...request, summary: true });
+    await client.loadProviderDirectory({ ...request, summary: false });
+    await client.loadProviderDirectory({ ...request, summary: true });
+    await client.loadProviderDirectory({ ...request, summary: false });
+
+    expect(execCliMock).toHaveBeenCalledTimes(2);
+    expect(execCliMock.mock.calls[0]?.[1]).toContain('--summary');
+    expect(execCliMock.mock.calls[1]?.[1]).not.toContain('--summary');
   });
 
   it('bounds provider directory responses and evicts the least recently used query', async () => {
@@ -2196,6 +2237,15 @@ describe('AgentTeamsRuntimeProviderManagementCliClient', () => {
               authorizationUrl,
               instructions: `Open ${authorizationUrl} and use access_token=oauth-secret-value-12345`,
               completionMethod: 'auto',
+            })}\n@@agent-teams-runtime-provider-oauth@@${JSON.stringify({
+              schemaVersion: 1,
+              event: 'verification',
+              operationId: 'oauth-operation-123',
+              providerId: 'xai',
+              displayName: 'xAI',
+              authOptionId: 'oauth:0',
+              methodIndex: 0,
+              completionMethod: 'auto',
             })}\n${JSON.stringify({ schemaVersion: 1, runtimeId: 'opencode', provider })}`
           )
         );
@@ -2239,6 +2289,7 @@ describe('AgentTeamsRuntimeProviderManagementCliClient', () => {
         authMethodIndex: 0,
         authOptionId: 'oauth:0',
         oauthOperationId: 'oauth-operation-123',
+        oauthProgressProtocol: 2,
       })}\n`
     );
     expect(JSON.stringify(emitOAuthProgress.mock.calls)).not.toContain(authorizationUrl);
@@ -2253,6 +2304,14 @@ describe('AgentTeamsRuntimeProviderManagementCliClient', () => {
         operationId: 'oauth-operation-123',
         phase: 'waiting-for-browser',
         completionMethod: 'auto',
+      })
+    );
+    expect(emitOAuthProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operationId: 'oauth-operation-123',
+        phase: 'completing',
+        instructions: null,
+        message: 'Authorization received. Verifying your plan...',
       })
     );
   });
@@ -2468,10 +2527,10 @@ describe('AgentTeamsRuntimeProviderManagementCliClient', () => {
     });
 
     const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
-    await expect(
-      client.cancelOAuth({ operationId: 'oauth-cancel-operation-123' })
-    ).resolves.toEqual({ ok: true });
-    expect(killProcessTreeMock).toHaveBeenCalledWith(child, 'SIGTERM');
+    const cancelPromise = client.cancelOAuth({ operationId: 'oauth-cancel-operation-123' });
+    await vi.waitFor(() => {
+      expect(killProcessTreeMock).toHaveBeenCalledWith(child, 'SIGTERM');
+    });
     expect(emitOAuthProgress).toHaveBeenCalledWith(expect.objectContaining({ phase: 'cancelled' }));
     const forceKillCallback = setTimeoutSpy.mock.calls.find(([, delay]) => delay === 2_000)?.[0] as
       | (() => void)
@@ -2479,9 +2538,10 @@ describe('AgentTeamsRuntimeProviderManagementCliClient', () => {
     expect(forceKillCallback).toBeTypeOf('function');
     forceKillCallback?.();
     expect(killProcessTreeMock).toHaveBeenCalledWith(child, 'SIGKILL');
-    setTimeoutSpy.mockRestore();
 
     processEvents.emit('close', null);
+    await expect(cancelPromise).resolves.toEqual({ ok: true });
+    setTimeoutSpy.mockRestore();
     await connectPromise;
     await expect(
       client.cancelOAuth({ operationId: 'oauth-cancel-operation-123' })

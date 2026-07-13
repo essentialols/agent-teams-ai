@@ -69,6 +69,8 @@ let providerRuntimeSettingsDialogProps: {
   onSelectBackend?: (providerId: string, backendId: string) => Promise<void> | void;
   open?: boolean;
   initialProviderId?: string;
+  initialRuntimeProviderId?: string | null;
+  initialRuntimeProviderAction?: 'connect' | 'select' | null;
 } | null = null;
 let runtimeProviderOnboardingDialogProps: {
   mode?: 'provider' | 'wizard';
@@ -130,6 +132,14 @@ vi.mock('@features/runtime-provider-management/renderer', async (importOriginal)
             onClick: () => props.onOpenCodeProviderAction?.('xai', 'connect'),
           },
           'Connect SuperGrok'
+        ),
+        React.createElement(
+          'button',
+          {
+            'data-testid': 'manage-supergrok',
+            onClick: () => props.onOpenCodeProviderAction?.('xai', 'select'),
+          },
+          'Configure SuperGrok'
         )
       );
     },
@@ -157,6 +167,8 @@ vi.mock('@renderer/components/runtime/ProviderRuntimeSettingsDialog', () => ({
     onSelectBackend?: (providerId: string, backendId: string) => Promise<void> | void;
     open?: boolean;
     initialProviderId?: string;
+    initialRuntimeProviderId?: string | null;
+    initialRuntimeProviderAction?: 'connect' | 'select' | null;
   }) => {
     providerRuntimeSettingsDialogProps = props;
     return React.createElement(
@@ -212,10 +224,7 @@ vi.mock('@renderer/components/terminal/TerminalLogPanel', () => ({
 }));
 
 vi.mock('@renderer/components/terminal/TerminalModal', () => ({
-  TerminalModal: (props: {
-    onClose?: () => void;
-    onExit?: (exitCode: number) => void;
-  }) => {
+  TerminalModal: (props: { onClose?: () => void; onExit?: (exitCode: number) => void }) => {
     terminalModalProps = props;
     return React.createElement(
       'div',
@@ -525,6 +534,63 @@ describe('CLI status visibility during completed install state', () => {
     });
     expect(runtimeProviderOnboardingDialogProps?.mode).toBe('provider');
     expect(runtimeProviderOnboardingDialogProps?.providerId).toBe('xai');
+
+    await act(async () => {
+      root.unmount();
+      await Promise.resolve();
+    });
+  });
+
+  it('opens connected OpenCode providers in settings without restarting onboarding', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    storeState.cliInstallerState = 'idle';
+    storeState.openCodeRuntimeStatus = {
+      installed: true,
+      source: 'app-managed',
+      state: 'ready',
+      version: '1.17.18',
+    };
+    storeState.cliStatus = createInstalledCliStatus({
+      flavor: 'agent_teams_orchestrator',
+      displayName: 'Multimodel runtime',
+      supportsSelfUpdate: false,
+      showVersionDetails: false,
+      showBinaryPath: false,
+      authLoggedIn: true,
+      providers: [
+        {
+          providerId: 'opencode',
+          displayName: 'OpenCode',
+          supported: true,
+          authenticated: true,
+          authMethod: 'managed',
+          verificationState: 'verified',
+          statusMessage: null,
+          models: ['xai/grok-4.3'],
+          canLoginFromUi: false,
+          capabilities: { teamLaunch: true, oneShot: true },
+        },
+      ],
+    });
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+
+    await act(async () => {
+      root.render(React.createElement(CliStatusBanner));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[data-testid="manage-supergrok"]')?.click();
+      await Promise.resolve();
+    });
+
+    expect(runtimeProviderOnboardingDialogProps).toBeNull();
+    expect(providerRuntimeSettingsDialogProps).toMatchObject({
+      initialProviderId: 'opencode',
+      initialRuntimeProviderId: 'xai',
+      initialRuntimeProviderAction: 'select',
+    });
 
     await act(async () => {
       root.unmount();
@@ -2378,7 +2444,9 @@ describe('CLI status visibility during completed install state', () => {
     expect(host.textContent).toContain('Providers: 1 connected');
     expect(host.textContent).not.toContain('Anthropic');
     expect(host.textContent).not.toContain('Manage');
-    expect(host.querySelector('[role="button"][aria-label="Expand provider details"]')).not.toBeNull();
+    expect(
+      host.querySelector('[role="button"][aria-label="Expand provider details"]')
+    ).not.toBeNull();
 
     await act(async () => {
       root.unmount();

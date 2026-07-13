@@ -6,6 +6,7 @@ import { api } from '@renderer/api';
 import {
   getRuntimeProviderOnboardingPlan,
   isOpenCodeProviderOAuthBridgeOutdated,
+  isRuntimeProviderOnboardingPlanRoutable,
   resolveOpenCodeQuickConnectGate,
   resolveOpenCodeQuickPlanState,
 } from '../core/domain';
@@ -167,18 +168,22 @@ export const RuntimeProviderQuickConnect = ({
     cliStatusLoading,
   });
   const directory = useRuntimeProviderQuickConnect({
-    enabled: enabled && gate === 'ready',
+    // Warm the provider directory while the lightweight OpenCode readiness
+    // check is still running. Waiting for the gate made these independent
+    // probes sequential and kept every plan card in a loading state longer.
+    enabled: enabled && (gate === 'checking' || gate === 'ready'),
     projectPath,
     refreshKey,
   });
+  const canWarmProviderStatus = enabled && (gate === 'checking' || gate === 'ready');
   const kiroCompanion = useRuntimeProviderCompanion(
     'kiro-cli',
-    enabled && gate === 'ready',
+    canWarmProviderStatus,
     projectPath ?? null
   );
   const cursorCompanion = useRuntimeProviderCompanion(
     'cursor-agent',
-    enabled && gate === 'ready',
+    canWarmProviderStatus,
     projectPath ?? null
   );
   const [activeCompanionPlanId, setActiveCompanionPlanId] = useState<CompanionPlanId | null>(null);
@@ -261,6 +266,26 @@ export const RuntimeProviderQuickConnect = ({
           };
         }
         if (status.phase === 'connected') {
+          const bridgeEntry = findDirectoryEntry(directory.entries, plan.providerId);
+          if (
+            directory.loaded &&
+            !isRuntimeProviderOnboardingPlanRoutable(
+              getRuntimeProviderOnboardingPlan(plan.id),
+              bridgeEntry
+            )
+          ) {
+            return {
+              id: plan.id,
+              providerId: plan.providerId,
+              displayName: plan.displayName,
+              description: t(`cliStatus.quickConnect.${plan.descriptionKey}`),
+              state: 'manual',
+              stateLabel: t('cliStatus.quickConnect.statusUnavailable'),
+              actionLabel: t('cliStatus.quickConnect.checkAndConnect'),
+              onAction: () => void runCompanionOperation(companionPlanId, 'connect'),
+              progress,
+            };
+          }
           return {
             id: plan.id,
             providerId: plan.providerId,
@@ -276,33 +301,32 @@ export const RuntimeProviderQuickConnect = ({
             progress,
           };
         }
+        const failed = status.phase === 'error';
         const needsInstall = !status.installed;
         return {
           id: plan.id,
           providerId: plan.providerId,
           displayName: plan.displayName,
           description: t(`cliStatus.quickConnect.${plan.descriptionKey}`),
-          state: needsInstall
-            ? 'update-required'
-            : status.phase === 'error'
-              ? 'manual'
-              : 'connectable',
-          stateLabel: needsInstall
-            ? status.phase === 'needs-manual-step'
-              ? status.message
-              : t('cliStatus.quickConnect.cliNotInstalled')
-            : status.message,
-          actionLabel: needsInstall
-            ? t('cliStatus.quickConnect.installAndConnect')
-            : status.phase === 'error'
-              ? t('cliStatus.quickConnect.checkAndConnect')
+          state: failed ? 'manual' : needsInstall ? 'update-required' : 'connectable',
+          stateLabel: failed
+            ? (status.error ?? status.message)
+            : needsInstall
+              ? status.phase === 'needs-manual-step'
+                ? status.message
+                : t('cliStatus.quickConnect.cliNotInstalled')
+              : status.message,
+          actionLabel: failed
+            ? t('cliStatus.quickConnect.checkAndConnect')
+            : needsInstall
+              ? t('cliStatus.quickConnect.installAndConnect')
               : t('cliStatus.quickConnect.signIn'),
           onAction: () => handleCompanionCardAction(companionPlanId),
           progress,
         };
       }
 
-      if (directory.loading || (!directory.loaded && !directory.error)) {
+      if ((directory.loading && !directory.loaded) || (!directory.loaded && !directory.error)) {
         return {
           id: plan.id,
           providerId: plan.providerId,
@@ -315,7 +339,7 @@ export const RuntimeProviderQuickConnect = ({
         };
       }
 
-      if (directory.error) {
+      if (directory.error && directory.entries.length === 0) {
         return {
           id: plan.id,
           providerId: plan.providerId,
@@ -332,7 +356,7 @@ export const RuntimeProviderQuickConnect = ({
       const state = resolveOpenCodeQuickPlanState({
         entry,
         requiresOAuthCredential: plan.requiresOAuthCredential,
-        oauthBridgeOutdated: plan.id === 'supergrok' && oauthBridgeOutdated,
+        oauthBridgeOutdated: Boolean(plan.requiresOAuthCredential && oauthBridgeOutdated),
       });
       const isSuperGrok = plan.id === 'supergrok';
       const stateLabel =
@@ -392,8 +416,10 @@ export const RuntimeProviderQuickConnect = ({
     );
     const connectedXiaomiEntry = xiaomiEntries.find((entry) => entry.state === 'connected') ?? null;
     const xiaomiConnected = connectedXiaomiEntry !== null;
-    const xiaomiLoading = gate === 'checking' || gate === 'installing' || directory.loading;
+    const xiaomiLoading =
+      gate === 'checking' || gate === 'installing' || (directory.loading && !directory.loaded);
     const xiaomiAvailable = xiaomiEntries.length > 0;
+    const xiaomiDirectoryUnavailable = Boolean(directory.error && xiaomiEntries.length === 0);
     planCards.push({
       id: 'xiaomi-mimo-token-plan',
       providerId: 'xiaomi',
@@ -403,7 +429,7 @@ export const RuntimeProviderQuickConnect = ({
         ? 'checking'
         : xiaomiConnected
           ? 'connected'
-          : gate !== 'ready' || directory.error || !xiaomiAvailable
+          : gate !== 'ready' || xiaomiDirectoryUnavailable || !xiaomiAvailable
             ? 'unavailable'
             : 'connectable',
       stateLabel: xiaomiLoading
@@ -412,19 +438,19 @@ export const RuntimeProviderQuickConnect = ({
           ? t('cliStatus.quickConnect.planConnected')
           : gate !== 'ready'
             ? t('cliStatus.quickConnect.requiresOpenCode')
-            : directory.error
+            : xiaomiDirectoryUnavailable
               ? t('cliStatus.quickConnect.statusUnavailable')
               : xiaomiAvailable
                 ? t('cliStatus.quickConnect.pasteBaseUrl')
                 : t('cliStatus.quickConnect.notInCatalog'),
       actionLabel:
-        xiaomiLoading || directory.error || !xiaomiAvailable
+        xiaomiLoading || xiaomiDirectoryUnavailable || !xiaomiAvailable
           ? null
           : xiaomiConnected
             ? t('cliStatus.actions.manage')
             : t('cliStatus.actions.connect'),
       onAction:
-        xiaomiLoading || directory.error || !xiaomiAvailable
+        xiaomiLoading || xiaomiDirectoryUnavailable || !xiaomiAvailable
           ? null
           : xiaomiConnected && connectedXiaomiEntry
             ? () => onOpenCodeProviderAction(connectedXiaomiEntry.providerId, 'select')
@@ -442,9 +468,18 @@ export const RuntimeProviderQuickConnect = ({
     oauthBridgeOutdated,
     onInstallOpenCode,
     onOpenCodeProviderAction,
+    runCompanionOperation,
     t,
   ]);
-  const connectedCount = openCodeCards.filter((card) => card.state === 'connected').length;
+  const observedConnectedCount = openCodeCards.filter((card) => card.state === 'connected').length;
+  const [lastReadyConnectedCount, setLastReadyConnectedCount] = useState(0);
+  useEffect(() => {
+    if (gate === 'ready') {
+      setLastReadyConnectedCount(observedConnectedCount);
+    }
+  }, [gate, observedConnectedCount]);
+  const connectedCount =
+    gate === 'checking' || gate === 'installing' ? lastReadyConnectedCount : observedConnectedCount;
 
   useEffect(() => {
     onConnectedCountChange?.(connectedCount);

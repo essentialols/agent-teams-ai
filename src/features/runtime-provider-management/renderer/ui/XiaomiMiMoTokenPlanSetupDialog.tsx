@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { useAppTranslation } from '@features/localization/renderer';
 import { Button } from '@renderer/components/ui/button';
@@ -40,6 +40,13 @@ export const XiaomiMiMoTokenPlanSetupDialog = ({
   const [submitted, setSubmitted] = useState(false);
   const resolution = useMemo(() => resolveXiaomiMiMoTokenPlanProvider(baseUrl), [baseUrl]);
 
+  useEffect(() => {
+    if (!open) {
+      setBaseUrl('');
+      setSubmitted(false);
+    }
+  }, [open]);
+
   const handleSubmit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
     setSubmitted(true);
@@ -54,7 +61,7 @@ export const XiaomiMiMoTokenPlanSetupDialog = ({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[min(92vw,34rem)] gap-4 p-5">
+      <DialogContent className="w-[min(calc(100vw-2rem),34rem)] gap-4 p-5">
         <DialogHeader>
           <DialogTitle>{t('cliStatus.quickConnect.xiaomiSetupTitle')}</DialogTitle>
           <DialogDescription>
@@ -81,6 +88,7 @@ export const XiaomiMiMoTokenPlanSetupDialog = ({
               id="xiaomi-mimo-base-url"
               data-testid="xiaomi-mimo-base-url"
               autoComplete="off"
+              autoCapitalize="none"
               autoFocus
               spellCheck={false}
               placeholder="https://token-plan-sgp.xiaomimimo.com/v1"
@@ -99,6 +107,8 @@ export const XiaomiMiMoTokenPlanSetupDialog = ({
           {resolution.ok ? (
             <div
               data-testid="xiaomi-mimo-detected-region"
+              role="status"
+              aria-live="polite"
               className="flex items-start gap-2.5 rounded-lg border border-emerald-300/25 bg-emerald-300/[0.05] p-3"
             >
               <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-300" />
@@ -128,7 +138,7 @@ export const XiaomiMiMoTokenPlanSetupDialog = ({
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
               {t('cliStatus.quickConnect.cancel')}
             </Button>
-            <Button type="submit" data-testid="xiaomi-mimo-continue">
+            <Button type="submit" data-testid="xiaomi-mimo-continue" disabled={!baseUrl.trim()}>
               {t('cliStatus.quickConnect.continue')}
             </Button>
           </DialogFooter>

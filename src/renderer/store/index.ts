@@ -100,7 +100,6 @@ const TASK_LOG_ACTIVITY_PULSE_MS = 3_500;
 const STARTUP_CODEX_RUNTIME_STATUS_IDLE_DELAY_MS = 30_000;
 const STARTUP_PROVIDER_STATUS_MIN_DELAY_MS = 2_000;
 const STARTUP_PROVIDER_STATUS_MAX_DELAY_MS = 30_000;
-const STARTUP_OPENCODE_PROVIDER_STATUS_DELAY_MS = 3_000;
 const STARTUP_GLOBAL_TASKS_MIN_DELAY_MS = 5_000;
 const STARTUP_GLOBAL_TASKS_MAX_DELAY_MS = 30_000;
 const ACTIVE_PROVISIONING_STATES_FOR_PROCESS_LITE: ReadonlySet<TeamProvisioningProgress['state']> =
@@ -228,7 +227,6 @@ export function initializeNotificationListeners(): () => void {
   cleanupFns.push(installTeamRefreshFanoutDebugBridge());
   let cliStatusTimer: ReturnType<typeof setTimeout> | null = null;
   let codexRuntimeStatusTimer: ReturnType<typeof setTimeout> | null = null;
-  let openCodeProviderStatusTimer: ReturnType<typeof setTimeout> | null = null;
   let deferredProviderStatusCleanup: (() => void) | null = null;
   let deferredGlobalTasksCleanup: (() => void) | null = null;
   let disposed = false;
@@ -250,28 +248,11 @@ export function initializeNotificationListeners(): () => void {
 
     if (api.cliInstaller) {
       const multimodelEnabled = loadedConfig?.general?.multimodelEnabled ?? true;
-      if (multimodelEnabled) {
-        openCodeProviderStatusTimer = setTimeout(() => {
-          openCodeProviderStatusTimer = null;
-          if (disposed) {
-            return;
-          }
-          const state = useStore.getState();
-          if (state.appConfig?.general?.multimodelEnabled === false) {
-            return;
-          }
-          if (api.openCodeRuntime) {
-            void state.fetchOpenCodeRuntimeStatus();
-          }
-          if (
-            state.cliStatus &&
-            (state.cliStatus.flavor !== 'agent_teams_orchestrator' ||
-              !getIncompleteMultimodelProviderIds(state.cliStatus).includes('opencode'))
-          ) {
-            return;
-          }
-          void state.fetchCliProviderStatus('opencode', { silent: false });
-        }, STARTUP_OPENCODE_PROVIDER_STATUS_DELAY_MS);
+      if (multimodelEnabled && api.openCodeRuntime) {
+        // The dashboard provider gate only needs the lightweight runtime
+        // installer status. Start it immediately; the slower generic OpenCode
+        // provider hydration belongs to the idle provider batch below.
+        void useStore.getState().fetchOpenCodeRuntimeStatus();
       }
       // Resolve the configured CLI flavor after config has loaded to avoid
       // bootstrapping multimodel placeholder state in Claude-only mode.
@@ -298,7 +279,7 @@ export function initializeNotificationListeners(): () => void {
               () => {
                 const providerIds = getIncompleteMultimodelProviderIds(
                   useStore.getState().cliStatus
-                ).filter((providerId) => providerId !== 'opencode');
+                );
                 for (const providerId of providerIds) {
                   void useStore.getState().fetchCliProviderStatus(providerId, { silent: false });
                 }
@@ -348,7 +329,6 @@ export function initializeNotificationListeners(): () => void {
     disposed = true;
     if (cliStatusTimer) clearTimeout(cliStatusTimer);
     if (codexRuntimeStatusTimer) clearTimeout(codexRuntimeStatusTimer);
-    if (openCodeProviderStatusTimer) clearTimeout(openCodeProviderStatusTimer);
     if (deferredProviderStatusCleanup) deferredProviderStatusCleanup();
     if (deferredGlobalTasksCleanup) deferredGlobalTasksCleanup();
   });

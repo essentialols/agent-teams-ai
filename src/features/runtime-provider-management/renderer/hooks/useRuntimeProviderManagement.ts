@@ -27,6 +27,7 @@ interface UseRuntimeProviderManagementOptions {
   runtimeId: RuntimeProviderManagementRuntimeId;
   enabled: boolean;
   directoryPageSize?: number;
+  directorySummaryOnEnable?: boolean;
   loadViewOnEnable?: boolean;
   searchDirectoryOnQueryChange?: boolean;
   projectPath?: string | null;
@@ -57,6 +58,7 @@ export interface RuntimeProviderManagementState {
   directoryTotalCount: number | null;
   directoryNextCursor: string | null;
   directoryLoaded: boolean;
+  directorySummary: boolean;
   directorySelectedProviderId: string | null;
   directorySupported: boolean;
   activeFormProviderId: string | null;
@@ -104,7 +106,7 @@ export interface RuntimeProviderManagementActions {
   setSetupMetadataValue: (key: string, value: string) => void;
   setOAuthCodeValue: (value: string) => void;
   submitOAuthCode: () => Promise<void>;
-  submitConnect: (providerId: string) => Promise<boolean>;
+  submitConnect: (providerId: string) => Promise<RuntimeProviderConnectOutcome | null>;
   forgetProvider: (providerId: string) => Promise<void>;
   openProviderCredentialPage: (providerId: string) => Promise<void>;
   openModelPicker: (providerId: string, mode: RuntimeProviderModelPickerMode) => void;
@@ -120,6 +122,10 @@ export interface RuntimeProviderManagementActions {
   ) => Promise<void>;
 }
 
+export interface RuntimeProviderConnectOutcome {
+  readonly verifiedModelId: string | null;
+}
+
 function replaceProvider(
   view: RuntimeProviderManagementViewDto | null,
   provider: RuntimeProviderConnectionDto
@@ -133,6 +139,33 @@ function replaceProvider(
       entry.providerId === provider.providerId ? provider : entry
     ),
   };
+}
+
+function replaceDirectoryProvider(
+  entries: readonly RuntimeProviderDirectoryEntryDto[],
+  provider: RuntimeProviderConnectionDto,
+  connectedMethod: 'api' | 'oauth' | null
+): readonly RuntimeProviderDirectoryEntryDto[] {
+  return entries.map((entry) => {
+    if (entry.providerId !== provider.providerId) {
+      return entry;
+    }
+    const connectedAuthHint =
+      provider.connectedAuthHint ?? connectedMethod ?? entry.connectedAuthHint;
+    return {
+      ...entry,
+      state: provider.state,
+      setupKind: provider.state === 'connected' ? 'connected' : entry.setupKind,
+      connectedAuthHint,
+      ownership: provider.ownership,
+      recommended: provider.recommended,
+      modelCount: provider.modelCount,
+      defaultModelId: provider.defaultModelId,
+      authMethods: provider.authMethods,
+      actions: provider.actions,
+      detail: provider.detail,
+    };
+  });
 }
 
 function withUiTimeout<T>(promise: Promise<T>, message: string, timeoutMs = 70_000): Promise<T> {
@@ -256,6 +289,7 @@ function createOAuthOperationId(): string {
 export function useRuntimeProviderManagement(
   options: UseRuntimeProviderManagementOptions
 ): [RuntimeProviderManagementState, RuntimeProviderManagementActions] {
+  const onProviderChanged = options.onProviderChanged;
   const [view, setView] = useState<RuntimeProviderManagementViewDto | null>(null);
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
   const [providerQuery, setProviderQuery] = useState('');
@@ -271,6 +305,9 @@ export function useRuntimeProviderManagement(
   const [directoryNextCursor, setDirectoryNextCursor] = useState<string | null>(null);
   const [directoryQuery, setDirectoryQuery] = useState('');
   const [directoryLoaded, setDirectoryLoaded] = useState(false);
+  const [directorySummary, setDirectorySummary] = useState(
+    options.directorySummaryOnEnable === true
+  );
   const [directorySelectedProviderId, setDirectorySelectedProviderId] = useState<string | null>(
     null
   );
@@ -320,12 +357,23 @@ export function useRuntimeProviderManagement(
   const activeModelPickerProviderRef = useRef<string | null>(null);
   const appliedInitialProviderRef = useRef<string | null>(null);
   const activeOAuthOperationRef = useRef<string | null>(null);
-  const cancelActiveOAuthBestEffort = useCallback((): void => {
+  const activeOAuthPhaseRef = useRef<RuntimeProviderOAuthProgressDto['phase'] | null>(null);
+  const cancelActiveOAuthBestEffort = useCallback((): Promise<void> | null => {
+    // Once a credential has been received, let the bounded backend verification
+    // finish. Terminating here can leave a saved but unverified credential.
+    if (activeOAuthPhaseRef.current === 'completing') {
+      return null;
+    }
     const operationId = activeOAuthOperationRef.current;
     activeOAuthOperationRef.current = null;
-    if (operationId) {
-      void api.runtimeProviderManagement.cancelOAuth?.({ operationId });
+    activeOAuthPhaseRef.current = null;
+    if (!operationId) {
+      return null;
     }
+    const cancellation = api.runtimeProviderManagement.cancelOAuth?.({ operationId });
+    return cancellation
+      ? cancellation.then(() => undefined).catch(() => undefined)
+      : Promise.resolve();
   }, []);
   const currentProjectPath = normalizeProjectContextPath(options.projectPath);
   const projectContextRef = useRef<ProjectContextSnapshot>({
@@ -410,7 +458,7 @@ export function useRuntimeProviderManagement(
     setSelectedAuthOptionId(null);
     setOAuthProgress(null);
     setOAuthCodeValue('');
-    cancelActiveOAuthBestEffort();
+    void cancelActiveOAuthBestEffort();
     setSetupMetadata({});
     setModels([]);
     setModelsLoading(false);
@@ -491,6 +539,7 @@ export function useRuntimeProviderManagement(
         query?: string;
         filter?: RuntimeProviderDirectoryFilterDto;
         cursor?: string | null;
+        summary?: boolean;
       } = {}
     ): Promise<void> => {
       if (!options.enabled || !directorySupported) {
@@ -502,6 +551,7 @@ export function useRuntimeProviderManagement(
       const query = input.query ?? directoryQuery;
       const filter = input.filter ?? DEFAULT_DIRECTORY_FILTER;
       const cursor = input.cursor ?? null;
+      const summary = input.summary ?? directorySummary;
       const projectContext = getProjectContextSnapshot();
       const requestSeq = directoryRequestSeq.current + 1;
       directoryRequestSeq.current = requestSeq;
@@ -521,6 +571,7 @@ export function useRuntimeProviderManagement(
       try {
         const response = await api.runtimeProviderManagement.loadProviderDirectory({
           runtimeId: options.runtimeId,
+          ...(summary ? { summary: true } : {}),
           projectPath: projectContext.path,
           query: query.trim() || null,
           filter,
@@ -549,6 +600,7 @@ export function useRuntimeProviderManagement(
           return;
         }
         setDirectoryLoaded(true);
+        setDirectorySummary(summary);
         setDirectoryTotalCount(directory.totalCount);
         setDirectoryNextCursor(directory.nextCursor);
         setDirectoryEntries((current) =>
@@ -570,6 +622,7 @@ export function useRuntimeProviderManagement(
     },
     [
       directoryQuery,
+      directorySummary,
       directorySupported,
       getProjectContextSnapshot,
       isProjectContextCurrent,
@@ -578,6 +631,10 @@ export function useRuntimeProviderManagement(
       options.runtimeId,
     ]
   );
+  const loadDirectoryPageRef = useRef(loadDirectoryPage);
+  useEffect(() => {
+    loadDirectoryPageRef.current = loadDirectoryPage;
+  }, [loadDirectoryPage]);
 
   useEffect(() => {
     if (!options.enabled) {
@@ -604,13 +661,14 @@ export function useRuntimeProviderManagement(
       setDirectoryNextCursor(null);
       setDirectoryQuery('');
       setDirectoryLoaded(false);
+      setDirectorySummary(options.directorySummaryOnEnable === true);
       setDirectorySelectedProviderId(null);
       setDirectorySupported(true);
       setApiKeyValue('');
       setSelectedAuthOptionId(null);
       setOAuthProgress(null);
       setOAuthCodeValue('');
-      cancelActiveOAuthBestEffort();
+      void cancelActiveOAuthBestEffort();
       setSetupMetadata({});
       setSetupForm(null);
       setSetupFormLoading(false);
@@ -630,6 +688,7 @@ export function useRuntimeProviderManagement(
     cancelActiveOAuthBestEffort,
     currentProjectPath,
     options.enabled,
+    options.directorySummaryOnEnable,
     options.loadViewOnEnable,
     refresh,
   ]);
@@ -642,6 +701,7 @@ export function useRuntimeProviderManagement(
       if (event.operationId !== activeOAuthOperationRef.current) {
         return;
       }
+      activeOAuthPhaseRef.current = event.phase;
       setOAuthProgress(event);
       if (event.phase === 'failed') {
         setSetupSubmitError(event.message ?? 'Browser authorization failed');
@@ -653,10 +713,9 @@ export function useRuntimeProviderManagement(
     if (!options.enabled || !directorySupported) {
       return;
     }
-
     const timeout = window.setTimeout(
       () => {
-        void loadDirectoryPage({
+        void loadDirectoryPageRef.current({
           append: false,
           query: directoryQuery,
           filter: DEFAULT_DIRECTORY_FILTER,
@@ -667,7 +726,7 @@ export function useRuntimeProviderManagement(
     );
 
     return () => window.clearTimeout(timeout);
-  }, [currentProjectPath, directoryQuery, directorySupported, loadDirectoryPage, options.enabled]);
+  }, [currentProjectPath, directoryQuery, directorySupported, options.enabled]);
 
   useEffect(() => {
     if (!options.enabled || !modelPickerProviderId) {
@@ -800,6 +859,7 @@ export function useRuntimeProviderManagement(
     await Promise.all([
       viewRequestedRef.current ? refresh({ silent: true }) : Promise.resolve(),
       loadDirectoryPage({
+        summary: false,
         refresh: true,
         cursor: null,
       }),
@@ -821,7 +881,7 @@ export function useRuntimeProviderManagement(
       setSelectedAuthOptionId(null);
       setOAuthProgress(null);
       setOAuthCodeValue('');
-      cancelActiveOAuthBestEffort();
+      void cancelActiveOAuthBestEffort();
 
       const compactProvider = view?.providers.find(
         (provider) => provider.providerId === providerId
@@ -851,6 +911,7 @@ export function useRuntimeProviderManagement(
   );
 
   const searchAllProviders = useCallback((query: string): void => {
+    setDirectorySummary(false);
     setDirectoryQuery(query);
     setDirectoryError(null);
     setDirectoryErrorDiagnostics(null);
@@ -866,7 +927,7 @@ export function useRuntimeProviderManagement(
       setSelectedAuthOptionId(null);
       setOAuthProgress(null);
       setOAuthCodeValue('');
-      cancelActiveOAuthBestEffort();
+      void cancelActiveOAuthBestEffort();
       setSetupMetadata({});
       setSetupForm(null);
       setSetupFormError(null);
@@ -955,7 +1016,7 @@ export function useRuntimeProviderManagement(
   );
 
   const cancelConnect = useCallback((): void => {
-    cancelActiveOAuthBestEffort();
+    const cancellation = cancelActiveOAuthBestEffort();
     setupFormRequestSeq.current += 1;
     setActiveFormProviderId(null);
     setApiKeyValue('');
@@ -971,7 +1032,10 @@ export function useRuntimeProviderManagement(
     setSetupSubmitErrorDiagnostics(null);
     setError(null);
     setErrorDiagnostics(null);
-  }, [cancelActiveOAuthBestEffort]);
+    if (cancellation) {
+      void cancellation.then(() => onProviderChanged?.()).catch(() => undefined);
+    }
+  }, [cancelActiveOAuthBestEffort, onProviderChanged]);
 
   const updateApiKeyValue = useCallback((value: string): void => {
     setApiKeyValue(value);
@@ -1014,31 +1078,31 @@ export function useRuntimeProviderManagement(
   }, []);
 
   const submitConnect = useCallback(
-    async (providerId: string): Promise<boolean> => {
+    async (providerId: string): Promise<RuntimeProviderConnectOutcome | null> => {
       if (!setupForm) {
         setSetupSubmitError(setupFormError ?? 'Provider setup form is not loaded');
         setSetupSubmitErrorDiagnostics(setupFormErrorDiagnostics ?? null);
-        return false;
+        return null;
       }
       if (!setupForm.supported) {
         setSetupSubmitError(
           setupForm.disabledReason ?? 'Provider setup is not supported in the app'
         );
         setSetupSubmitErrorDiagnostics(null);
-        return false;
+        return null;
       }
       const authOption = resolveSetupAuthOption(setupForm, selectedAuthOptionId);
       if (authOption && !authOption.supported) {
         setSetupSubmitError(authOption.disabledReason ?? 'This sign-in method is unavailable');
         setSetupSubmitErrorDiagnostics(null);
-        return false;
+        return null;
       }
       const apiKey = apiKeyValue.trim();
       const secret = authOption?.secret ?? setupForm.secret;
       if (secret?.required && !apiKey) {
         setSetupSubmitError(`${secret.label} is required`);
         setSetupSubmitErrorDiagnostics(null);
-        return false;
+        return null;
       }
 
       setSavingProviderId(providerId);
@@ -1051,6 +1115,7 @@ export function useRuntimeProviderManagement(
       const method = authOption?.method ?? setupForm.method;
       const oauthOperationId = method === 'oauth' ? createOAuthOperationId() : null;
       activeOAuthOperationRef.current = oauthOperationId;
+      activeOAuthPhaseRef.current = null;
       setOAuthProgress(null);
       try {
         const response = await withUiTimeout(
@@ -1068,18 +1133,25 @@ export function useRuntimeProviderManagement(
             projectPath: projectContext.path,
           }),
           'Provider connect timed out',
-          method === 'oauth' ? 370_000 : 70_000
+          method === 'oauth' ? 370_000 : 100_000
         );
         if (!isProjectContextCurrent(projectContext)) {
-          return false;
+          return null;
         }
         if (response.error) {
           setSetupSubmitError(response.error.message);
           setSetupSubmitErrorDiagnostics(response.error.diagnostics ?? null);
-          return false;
+          return null;
         }
         if (response.provider) {
           setView((current) => replaceProvider(current, response.provider!));
+          setDirectoryEntries((current) =>
+            replaceDirectoryProvider(
+              current,
+              response.provider!,
+              method === 'manual' ? null : method
+            )
+          );
         }
         setActiveFormProviderId(null);
         setSuccessMessage(null);
@@ -1088,6 +1160,7 @@ export function useRuntimeProviderManagement(
         setOAuthProgress(null);
         setOAuthCodeValue('');
         activeOAuthOperationRef.current = null;
+        activeOAuthPhaseRef.current = null;
         setSetupMetadata({});
         setSetupForm(null);
         setSetupFormError(null);
@@ -1097,7 +1170,7 @@ export function useRuntimeProviderManagement(
         try {
           await options.onProviderChanged?.();
           if (!isProjectContextCurrent(projectContext)) {
-            return false;
+            return null;
           }
           await Promise.all([
             viewRequestedRef.current ? refresh({ silent: true }) : Promise.resolve(),
@@ -1105,26 +1178,27 @@ export function useRuntimeProviderManagement(
           ]);
         } catch (refreshError) {
           if (!isProjectContextCurrent(projectContext)) {
-            return false;
+            return null;
           }
           setError(
             refreshError instanceof Error ? refreshError.message : 'Failed to refresh providers'
           );
           setErrorDiagnostics(null);
         }
-        return true;
+        return { verifiedModelId: response.provider?.verifiedModelId ?? null };
       } catch (connectError) {
         if (!isProjectContextCurrent(projectContext)) {
-          return false;
+          return null;
         }
         setSetupSubmitError(
           connectError instanceof Error ? connectError.message : 'Failed to connect provider'
         );
         setSetupSubmitErrorDiagnostics(null);
-        return false;
+        return null;
       } finally {
         if (activeOAuthOperationRef.current === oauthOperationId) {
           activeOAuthOperationRef.current = null;
+          activeOAuthPhaseRef.current = null;
         }
         if (isProjectContextCurrent(projectContext)) {
           setSavingProviderId(null);
@@ -1430,7 +1504,7 @@ export function useRuntimeProviderManagement(
       setSelectedAuthOptionId(null);
       setOAuthProgress(null);
       setOAuthCodeValue('');
-      cancelActiveOAuthBestEffort();
+      void cancelActiveOAuthBestEffort();
       if (activeModelPickerProviderRef.current !== providerId) {
         closeModelPickerState();
       }
@@ -1492,6 +1566,7 @@ export function useRuntimeProviderManagement(
       directoryTotalCount,
       directoryNextCursor,
       directoryLoaded,
+      directorySummary,
       directorySelectedProviderId,
       directorySupported,
       activeFormProviderId,
@@ -1540,6 +1615,7 @@ export function useRuntimeProviderManagement(
       directoryError,
       directoryErrorDiagnostics,
       directoryLoaded,
+      directorySummary,
       directoryLoading,
       directoryNextCursor,
       directoryRefreshing,

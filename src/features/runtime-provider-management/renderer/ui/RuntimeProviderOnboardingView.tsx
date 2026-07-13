@@ -21,6 +21,11 @@ import {
   Settings2,
 } from 'lucide-react';
 
+import {
+  isRuntimeProviderOnboardingPlanRoutable,
+  rankRecommendedRuntimeProviderModels,
+} from '../../core/domain';
+
 import { ProviderBrandIcon } from './providerBrandIcons';
 import { ProviderSetupFormPanel } from './RuntimeProviderManagementPanelView';
 
@@ -74,6 +79,7 @@ const OnboardingSteps = ({
         return (
           <li key={step} className="min-w-0">
             <div
+              aria-hidden="true"
               className="h-1 rounded-full"
               style={{
                 backgroundColor: complete
@@ -84,7 +90,8 @@ const OnboardingSteps = ({
               }}
             />
             <div
-              className="mt-1 truncate text-[10px]"
+              aria-current={active ? 'step' : undefined}
+              className="mt-1 text-center text-[9px] leading-tight min-[380px]:text-[10px]"
               style={{
                 color:
                   complete || active ? 'var(--color-text-secondary)' : 'var(--color-text-muted)',
@@ -114,37 +121,63 @@ const RuntimePrerequisite = ({
     state.runtimePreparing ||
     state.runtimeGate === 'checking' ||
     state.runtimeGate === 'installing';
+  const installing = state.runtimeGate === 'installing';
   const update = state.runtimeUpdateRequired;
+  const failed = state.runtimeGate === 'error' || Boolean(state.stageError);
   return (
     <div
       className="rounded-lg border p-4"
+      role={failed ? 'alert' : 'status'}
+      aria-live={failed ? 'assertive' : 'polite'}
+      aria-busy={busy}
       style={{
-        borderColor: 'rgba(56, 189, 248, 0.28)',
-        backgroundColor: 'rgba(56, 189, 248, 0.06)',
+        borderColor: failed ? 'rgba(248, 113, 113, 0.3)' : 'rgba(56, 189, 248, 0.28)',
+        backgroundColor: failed ? 'rgba(248, 113, 113, 0.06)' : 'rgba(56, 189, 248, 0.06)',
       }}
     >
       <div className="flex items-start gap-3">
         {busy ? (
           <Loader2 className="mt-0.5 size-5 shrink-0 animate-spin text-sky-300" />
+        ) : failed ? (
+          <AlertTriangle className="mt-0.5 size-5 shrink-0 text-red-300" />
         ) : (
           <Download className="mt-0.5 size-5 shrink-0 text-sky-300" />
         )}
         <div className="min-w-0 flex-1">
           <div className="text-sm font-medium text-[var(--color-text)]">
-            {update ? 'Update OpenCode to continue' : 'OpenCode is required'}
+            {failed
+              ? 'OpenCode setup needs attention'
+              : busy
+                ? installing
+                  ? 'Installing OpenCode'
+                  : 'Preparing OpenCode'
+                : update
+                  ? 'Update OpenCode to continue'
+                  : 'OpenCode is required'}
           </div>
           <div className="mt-1 text-xs text-[var(--color-text-muted)]">
-            {update
-              ? 'The latest provider authentication bridge is needed for this plan.'
-              : 'Agent Teams will install and manage OpenCode for these subscription plans.'}
+            {failed
+              ? (state.stageError ??
+                'OpenCode could not be prepared. Retry or open Advanced settings for details.')
+              : busy
+                ? installing
+                  ? 'Installing the managed OpenCode runtime. This window updates automatically.'
+                  : 'Checking that OpenCode is installed and ready...'
+                : update
+                  ? 'The latest provider authentication bridge is needed for this plan.'
+                  : 'Agent Teams will install and manage OpenCode for these subscription plans.'}
           </div>
         </div>
       </div>
       {!busy ? (
         <div className="mt-3 flex justify-end">
           <Button type="button" size="sm" onClick={() => void actions.installOrUpdateRuntime()}>
-            <Download className="mr-1.5 size-3.5" />
-            {update ? 'Update OpenCode' : 'Install OpenCode'}
+            {failed ? (
+              <RefreshCw className="mr-1.5 size-3.5" />
+            ) : (
+              <Download className="mr-1.5 size-3.5" />
+            )}
+            {failed ? 'Retry OpenCode' : update ? 'Update OpenCode' : 'Install OpenCode'}
           </Button>
         </div>
       ) : null}
@@ -207,7 +240,11 @@ const WizardPlanPicker = ({
           );
         })}
       </div>
-      {state.stageError ? <div className="text-xs text-red-300">{state.stageError}</div> : null}
+      {state.stageError ? (
+        <div role="alert" className="text-xs text-red-300">
+          {state.stageError}
+        </div>
+      ) : null}
       <div className="flex justify-end">
         <Button
           type="button"
@@ -270,6 +307,13 @@ const ConnectedModelStep = ({
   const verifiedModel = state.management.models.find(
     (model) => model.modelId === state.verifiedModelId
   );
+  const selectableModels = useMemo(
+    () =>
+      state.activePlan
+        ? rankRecommendedRuntimeProviderModels(state.activePlan, state.management.models)
+        : [],
+    [state.activePlan, state.management.models]
+  );
   return (
     <div className="space-y-3">
       <div
@@ -284,13 +328,13 @@ const ConnectedModelStep = ({
           <div className="min-w-0">
             <div className="text-sm font-medium text-[var(--color-text)]">Connection verified</div>
             <div className="mt-1 text-xs text-[var(--color-text-muted)]">
-              A real request completed successfully. Choose the model Agent Teams should suggest.
+              Your plan completed a real request. Choose the model Agent Teams should suggest.
             </div>
           </div>
         </div>
       </div>
       <div className="space-y-1.5">
-        <Label className="text-xs">Recommended model</Label>
+        <Label className="text-xs">Model for Agent Teams</Label>
         <Select
           value={verifiedModel?.modelId ?? state.recommendedModel?.modelId ?? ''}
           disabled={disabled}
@@ -300,13 +344,16 @@ const ConnectedModelStep = ({
             <SelectValue placeholder="Choose a model" />
           </SelectTrigger>
           <SelectContent>
-            {state.management.models.map((model) => (
+            {selectableModels.map((model) => (
               <SelectItem key={model.modelId} value={model.modelId}>
                 {model.displayName} {model.default ? '(provider default)' : ''}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
+        <div className="text-[11px] text-[var(--color-text-muted)]">
+          Changing the model runs one short verification request before it is selected.
+        </div>
       </div>
       <div className="flex justify-end">
         <Button
@@ -340,7 +387,8 @@ const ActivePlanFlow = ({
         actions.management.cancelConnect();
         onCancel();
       },
-      submitConnect: () => actions.submitConnect(),
+      submitConnect: async () =>
+        (await actions.submitConnect()) ? { verifiedModelId: null } : null,
     }),
     [actions, onCancel]
   );
@@ -359,6 +407,10 @@ const ActivePlanFlow = ({
   }
 
   const provider = { providerId: plan.providerId, displayName: plan.displayName };
+  const directoryEntry = state.management.directoryEntries.find(
+    (entry) => entry.providerId.toLowerCase() === plan.providerId.toLowerCase()
+  );
+  const alreadyConnected = isRuntimeProviderOnboardingPlanRoutable(plan, directoryEntry ?? null);
   const preparingProviderSetup =
     state.stage === 'connect' &&
     state.management.activeFormProviderId !== plan.providerId &&
@@ -378,7 +430,32 @@ const ActivePlanFlow = ({
 
       {state.stage === 'connect' ? (
         <div>
-          {plan.credentialUrl ? (
+          {alreadyConnected && state.management.activeFormProviderId !== plan.providerId ? (
+            <div className="rounded-lg border border-emerald-400/25 bg-emerald-400/[0.06] p-4">
+              <div className="flex items-start gap-2.5">
+                <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-300" />
+                <div>
+                  <div className="text-sm font-medium text-emerald-200">
+                    This plan is already connected
+                  </div>
+                  <div className="mt-1 text-xs text-[var(--color-text-muted)]">
+                    Continue when you are ready. Verification sends one short model request.
+                  </div>
+                </div>
+              </div>
+              <div className="mt-3 flex flex-wrap justify-end gap-2">
+                <Button type="button" variant="ghost" size="sm" onClick={actions.beginConnect}>
+                  Reconnect
+                </Button>
+                <Button type="button" size="sm" onClick={actions.beginVerification}>
+                  Verify and choose model
+                </Button>
+              </div>
+            </div>
+          ) : null}
+          {!alreadyConnected &&
+          plan.credentialUrl &&
+          !plan.providerId.startsWith('xiaomi-token-plan-') ? (
             <Button
               type="button"
               variant="outline"
@@ -389,14 +466,16 @@ const ActivePlanFlow = ({
               Open subscription key page
             </Button>
           ) : null}
-          <ProviderSetupFormPanel
-            provider={provider}
-            state={state.management}
-            busy={state.management.savingProviderId === plan.providerId}
-            disabled={disabled}
-            preparing={preparingProviderSetup}
-            actions={setupActions}
-          />
+          {!alreadyConnected || state.management.activeFormProviderId === plan.providerId ? (
+            <ProviderSetupFormPanel
+              provider={provider}
+              state={state.management}
+              busy={state.management.savingProviderId === plan.providerId}
+              disabled={disabled}
+              preparing={preparingProviderSetup}
+              actions={setupActions}
+            />
+          ) : null}
         </div>
       ) : null}
 
@@ -423,7 +502,27 @@ const ActivePlanFlow = ({
             <span>{state.stageError ?? 'Provider setup could not be completed.'}</span>
           </div>
           <div className="mt-3 flex flex-wrap justify-end gap-2">
-            {state.management.models.length > 0 ? (
+            {state.management.modelsError ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => actions.management.openModelPicker(plan.providerId, 'use')}
+              >
+                <RefreshCw className="mr-1.5 size-3.5" />
+                Retry model catalog
+              </Button>
+            ) : state.management.directoryError && !state.management.directoryLoaded ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => void actions.management.refreshDirectory()}
+              >
+                <RefreshCw className="mr-1.5 size-3.5" />
+                Retry provider catalog
+              </Button>
+            ) : state.management.models.length > 0 ? (
               <>
                 <Button
                   type="button"
@@ -469,7 +568,7 @@ const ActivePlanFlow = ({
             Ready for Agent Teams
           </div>
           <div className="mt-1 text-xs text-[var(--color-text-muted)]">
-            {state.verifiedModelId} passed verification and is selected for new teams.
+            The provider is verified and {state.verifiedModelId} is selected for new teams.
           </div>
         </div>
       ) : null}
@@ -488,6 +587,7 @@ export const RuntimeProviderOnboardingView = ({
   const wizardFinished =
     state.mode === 'wizard' && state.wizardStarted && state.activePlan === null;
   const providerFinished = state.mode === 'provider' && state.stage === 'ready';
+  const unsupportedProvider = state.mode === 'provider' && state.activePlan === null;
 
   return (
     <div className="space-y-4" data-testid="runtime-provider-onboarding">
@@ -495,6 +595,19 @@ export const RuntimeProviderOnboardingView = ({
 
       {state.mode === 'wizard' && !state.wizardStarted ? (
         <WizardPlanPicker state={state} actions={actions} disabled={disabled} />
+      ) : unsupportedProvider ? (
+        <div role="alert" className="rounded-lg border border-amber-400/25 bg-amber-400/[0.06] p-4">
+          <div className="flex items-start gap-2 text-sm text-amber-100">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+            <div>
+              <div className="font-medium">Use Advanced settings for this provider</div>
+              <div className="mt-1 text-xs text-[var(--color-text-muted)]">
+                {state.stageError ??
+                  'This provider does not have a guided setup flow yet, but it can still be configured in the full OpenCode catalog.'}
+              </div>
+            </div>
+          </div>
+        </div>
       ) : (
         <>
           <RuntimePrerequisite state={state} actions={actions} />
@@ -505,7 +618,13 @@ export const RuntimeProviderOnboardingView = ({
       )}
 
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-white/10 pt-3">
-        <Button type="button" variant="ghost" size="sm" onClick={onAdvancedSettings}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          disabled={disabled || state.management.savingProviderId !== null}
+          onClick={onAdvancedSettings}
+        >
           <Settings2 className="mr-1.5 size-3.5" />
           Advanced settings
         </Button>

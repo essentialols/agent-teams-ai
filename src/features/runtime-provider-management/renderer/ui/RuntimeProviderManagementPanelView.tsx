@@ -34,6 +34,8 @@ import {
   CheckCircle2,
   ClipboardList,
   ExternalLink,
+  Eye,
+  EyeOff,
   KeyRound,
   Loader2,
   RefreshCcw,
@@ -113,12 +115,13 @@ function getDirectoryAction(
 }
 
 function formatDirectorySetupKind(provider: RuntimeProviderDirectoryEntryDto): string {
+  if (provider.state === 'connected' || provider.setupKind === 'connected') {
+    return 'Connected';
+  }
   if (provider.metadata.configuredAuthless) {
     return 'Configured local';
   }
   switch (provider.setupKind) {
-    case 'connected':
-      return 'Connected';
     case 'connect-oauth':
     case 'connect-api-key':
       return 'Connect';
@@ -252,12 +255,13 @@ function directoryEntryMatchesQuery(
 }
 
 function directorySetupKindClassName(provider: RuntimeProviderDirectoryEntryDto): string {
+  if (provider.state === 'connected' || provider.setupKind === 'connected') {
+    return 'border-emerald-300/70 bg-emerald-600 text-emerald-50';
+  }
   if (provider.metadata.configuredAuthless) {
     return 'border-cyan-400/35 bg-cyan-400/10 text-cyan-100';
   }
   switch (provider.setupKind) {
-    case 'connected':
-      return 'border-emerald-300/70 bg-emerald-600 text-emerald-50';
     case 'connect-oauth':
     case 'connect-api-key':
     case 'available-readonly':
@@ -378,7 +382,9 @@ function eventStartedInInteractiveChild(
   if (!(target instanceof HTMLElement) || target === currentTarget) {
     return false;
   }
-  return Boolean(target.closest('button, input, select, textarea, a, [role="button"], [tabindex]'));
+  return Boolean(
+    target.closest('form, button, input, select, textarea, a, [role="button"], [tabindex]')
+  );
 }
 
 export function ProviderSetupFormPanel({
@@ -406,7 +412,6 @@ export function ProviderSetupFormPanel({
     state.activeFormProviderId === provider.providerId ? state.setupSubmitError : null;
   const submitErrorDiagnostics =
     state.activeFormProviderId === provider.providerId ? state.setupSubmitErrorDiagnostics : null;
-  const canSubmit = setupFormCanSubmit(state, provider.providerId);
   const authOption = form ? resolveSelectedSetupAuthOption(form, state.selectedAuthOptionId) : null;
   const secret = authOption?.secret ?? form?.secret ?? null;
   const prompts = authOption?.prompts ?? form?.prompts ?? [];
@@ -419,12 +424,60 @@ export function ProviderSetupFormPanel({
       ? 'xAI'
       : (oauthProgress?.displayName ?? provider.displayName);
   const isXiaomiTokenPlan = provider.providerId.startsWith('xiaomi-token-plan-');
+  const expectedSecretPrefix = isXiaomiTokenPlan
+    ? 'tp-'
+    : provider.providerId === 'minimax-coding-plan'
+      ? 'sk-cp-'
+      : null;
+  const secretValue = state.apiKeyValue.trim();
+  const secretPrefixInvalid = Boolean(
+    expectedSecretPrefix && secretValue && !secretValue.startsWith(expectedSecretPrefix)
+  );
+  const canSubmit = setupFormCanSubmit(state, provider.providerId) && !secretPrefixInvalid;
+  const [secretVisible, setSecretVisible] = useState(false);
+  const selectedAuthLabel = authOption?.label.toLowerCase() ?? '';
+  const submitLabel =
+    selectedMethod === 'api'
+      ? 'Connect'
+      : selectedMethod === 'oauth'
+        ? selectedAuthLabel.includes('browser code')
+          ? 'Get browser code'
+          : 'Continue in browser'
+        : (form?.submitLabel ?? 'Connect');
+  const formDescription =
+    provider.providerId === 'xai' && selectedMethod === 'api'
+      ? 'Paste an xAI API key. This uses xAI API billing, not your SuperGrok subscription quota.'
+      : provider.providerId === 'xai' &&
+          selectedMethod === 'oauth' &&
+          !selectedAuthLabel.includes('browser code')
+        ? 'Continue in your browser to sign in with your SuperGrok subscription. OpenCode handles authorization and token refresh.'
+        : form?.description;
+
+  useEffect(() => {
+    setSecretVisible(false);
+  }, [authOption?.id, provider.providerId]);
+
+  const submitForm = (): void => {
+    if (oauthProgress?.phase === 'waiting-for-code') {
+      if (state.oauthCodeValue.trim()) {
+        void actions.submitOAuthCode();
+      }
+      return;
+    }
+    if (disabled || busy || loading || oauthInProgress || !canSubmit) {
+      return;
+    }
+    void actions.submitConnect(provider.providerId);
+  };
 
   return (
-    <div
+    <form
       className="mt-3 rounded-md border p-3"
       style={{ borderColor: 'var(--color-border-subtle)' }}
-      onClick={(event) => event.stopPropagation()}
+      onSubmit={(event) => {
+        event.preventDefault();
+        submitForm();
+      }}
     >
       {loading ? (
         <div className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)]">
@@ -434,20 +487,33 @@ export function ProviderSetupFormPanel({
       ) : null}
 
       {!loading && error ? (
-        <RuntimeProviderErrorAlert
-          message={error}
-          diagnostics={errorDiagnostics}
-          testId="runtime-provider-setup-form-error"
-        />
+        <div className="space-y-2">
+          <RuntimeProviderErrorAlert
+            message={error}
+            diagnostics={errorDiagnostics}
+            testId="runtime-provider-setup-form-error"
+          />
+          <div className="flex justify-end">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => actions.startConnect(provider.providerId)}
+            >
+              <RefreshCcw className="mr-1.5 size-3.5" />
+              Retry setup
+            </Button>
+          </div>
+        </div>
       ) : null}
 
       {!loading && form ? (
         <div className="space-y-3">
           <div>
             <div className="text-xs font-medium text-[var(--color-text)]">{form.title}</div>
-            {form.description ? (
+            {formDescription ? (
               <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
-                {form.description}
+                {formDescription}
               </div>
             ) : null}
             {isXiaomiTokenPlan ? (
@@ -495,17 +561,53 @@ export function ProviderSetupFormPanel({
             <div className="space-y-1.5">
               <Label htmlFor={`runtime-provider-key-${provider.providerId}`} className="text-xs">
                 {secret.label}
+                {secret.required ? ' *' : ''}
               </Label>
-              <Input
-                id={`runtime-provider-key-${provider.providerId}`}
-                type="password"
-                value={state.apiKeyValue}
-                disabled={disabled || busy || !form.supported}
-                onChange={(event) => actions.setApiKeyValue(event.target.value)}
-                placeholder={secret.placeholder ?? 'Paste API key'}
-                className="h-9 text-sm"
-                autoFocus
-              />
+              <div className="relative">
+                <Input
+                  id={`runtime-provider-key-${provider.providerId}`}
+                  type={secretVisible ? 'text' : 'password'}
+                  value={state.apiKeyValue}
+                  disabled={disabled || busy || !form.supported}
+                  onChange={(event) => actions.setApiKeyValue(event.target.value)}
+                  placeholder={secret.placeholder ?? 'Paste API key'}
+                  className="h-9 pr-10 text-sm"
+                  autoComplete="new-password"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  aria-invalid={secretPrefixInvalid || undefined}
+                  aria-describedby={
+                    expectedSecretPrefix && secretValue
+                      ? `runtime-provider-key-help-${provider.providerId}`
+                      : undefined
+                  }
+                  autoFocus
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-0 top-0 size-9 text-[var(--color-text-muted)]"
+                  aria-label={secretVisible ? 'Hide key' : 'Show key'}
+                  disabled={disabled || busy}
+                  onClick={() => setSecretVisible((visible) => !visible)}
+                >
+                  {secretVisible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                </Button>
+              </div>
+              {expectedSecretPrefix && secretValue ? (
+                <div
+                  id={`runtime-provider-key-help-${provider.providerId}`}
+                  className={cn(
+                    'text-[11px]',
+                    secretPrefixInvalid ? 'text-red-300' : 'text-emerald-300'
+                  )}
+                >
+                  {secretPrefixInvalid
+                    ? `This plan requires a key starting with ${expectedSecretPrefix}`
+                    : 'Token Plan key format detected'}
+                </div>
+              ) : null}
             </div>
           ) : null}
 
@@ -518,6 +620,7 @@ export function ProviderSetupFormPanel({
                   className="text-xs"
                 >
                   {prompt.label}
+                  {prompt.required ? ' *' : ''}
                 </Label>
                 {prompt.type === 'select' ? (
                   <Select
@@ -534,7 +637,14 @@ export function ProviderSetupFormPanel({
                     <SelectContent>
                       {prompt.options.map((option) => (
                         <SelectItem key={option.value} value={option.value}>
-                          {option.label}
+                          <span className="flex flex-col">
+                            <span>{option.label}</span>
+                            {option.hint ? (
+                              <span className="text-[10px] text-[var(--color-text-muted)]">
+                                {option.hint}
+                              </span>
+                            ) : null}
+                          </span>
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -550,6 +660,9 @@ export function ProviderSetupFormPanel({
                     }
                     placeholder={prompt.placeholder ?? undefined}
                     className="h-9 text-sm"
+                    autoComplete={prompt.secret ? 'new-password' : 'off'}
+                    autoCapitalize="none"
+                    spellCheck={false}
                   />
                 )}
               </div>
@@ -565,6 +678,9 @@ export function ProviderSetupFormPanel({
             <div
               className="rounded-md border border-white/10 bg-white/[0.03] px-3 py-2.5 text-xs"
               data-testid="runtime-provider-oauth-progress"
+              role="status"
+              aria-live="polite"
+              aria-busy="true"
             >
               <div className="flex items-center gap-2 text-[var(--color-text)]">
                 <Loader2 className="size-3.5 animate-spin" />
@@ -577,14 +693,14 @@ export function ProviderSetupFormPanel({
               ) : null}
               {oauthDeviceCode ? (
                 <div
-                  className="mt-3 flex w-full items-end justify-between gap-4 border-l-2 border-sky-400/60 bg-gradient-to-r from-sky-400/[0.08] to-transparent px-4 py-3"
+                  className="mt-3 flex w-full flex-col items-stretch gap-3 border-l-2 border-sky-400/60 bg-gradient-to-r from-sky-400/[0.08] to-transparent px-3 py-3 sm:flex-row sm:items-end sm:justify-between sm:gap-4 sm:px-4"
                   data-testid="runtime-provider-oauth-device-code"
                 >
                   <div className="min-w-0">
                     <div className="text-[11px] font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
                       Enter this code in {oauthDeviceCodeDestination}
                     </div>
-                    <div className="mt-1 font-mono text-2xl font-bold tracking-[0.18em] text-sky-100 sm:text-3xl">
+                    <div className="mt-1 break-all font-mono text-xl font-bold tracking-[0.12em] text-sky-100 min-[380px]:text-2xl min-[380px]:tracking-[0.18em] sm:text-3xl">
                       {oauthDeviceCode}
                     </div>
                     <div className="mt-1.5 flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]">
@@ -592,7 +708,7 @@ export function ProviderSetupFormPanel({
                       Waiting for confirmation - this updates automatically
                     </div>
                   </div>
-                  <div className="mb-1 shrink-0 rounded-md border border-white/10 bg-white/[0.04] p-1">
+                  <div className="self-end rounded-md border border-white/10 bg-white/[0.04] p-1 sm:mb-1 sm:self-auto">
                     <CopyButton text={oauthDeviceCode} inline />
                   </div>
                 </div>
@@ -605,6 +721,9 @@ export function ProviderSetupFormPanel({
                     onChange={(event) => actions.setOAuthCodeValue(event.target.value)}
                     placeholder="Paste authorization code"
                     className="h-9 text-sm"
+                    autoComplete="one-time-code"
+                    autoCapitalize="none"
+                    spellCheck={false}
                     autoFocus
                   />
                   <Button
@@ -617,6 +736,17 @@ export function ProviderSetupFormPanel({
                   </Button>
                 </div>
               ) : null}
+            </div>
+          ) : null}
+          {busy && selectedMethod !== 'oauth' ? (
+            <div
+              className="rounded-md border border-sky-400/20 bg-sky-400/[0.05] px-3 py-2 text-[11px] text-[var(--color-text-secondary)]"
+              role="status"
+              aria-live="polite"
+              aria-busy="true"
+            >
+              Securely saving your credential and verifying one model request. Keep this window open
+              until verification finishes.
             </div>
           ) : null}
         </div>
@@ -643,18 +773,13 @@ export function ProviderSetupFormPanel({
           {t('runtimeProvider.actions.cancel')}
         </Button>
         {!oauthInProgress ? (
-          <Button
-            type="button"
-            size="sm"
-            disabled={disabled || busy || loading || !canSubmit}
-            onClick={() => void actions.submitConnect(provider.providerId)}
-          >
+          <Button type="submit" size="sm" disabled={disabled || busy || loading || !canSubmit}>
             {busy ? <Loader2 className="mr-1 size-3.5 animate-spin" /> : null}
-            {form?.submitLabel ?? (selectedMethod === 'oauth' ? 'Continue in browser' : 'Connect')}
+            {submitLabel}
           </Button>
         ) : null}
       </div>
-    </div>
+    </form>
   );
 }
 
@@ -1157,6 +1282,7 @@ function ProviderRow({
     provider.modelCount > 0 && (provider.state === 'connected' || test?.enabled === true);
   const clickable = !disabled && (canOpenConnect || canSelectModels);
   const visuallyActive = active && (canSelectModels || formOpen);
+  const rowInteractive = clickable && !formOpen && !(active && canSelectModels);
   const handleActivate = (): void => {
     if (!clickable) {
       return;
@@ -1180,8 +1306,8 @@ function ProviderRow({
 
   return (
     <div
-      role={clickable ? 'button' : undefined}
-      tabIndex={clickable ? 0 : -1}
+      role={rowInteractive ? 'button' : undefined}
+      tabIndex={rowInteractive ? 0 : -1}
       data-testid={`runtime-provider-row-${provider.providerId}`}
       className={`rounded-lg border p-3 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/40 ${
         clickable
@@ -1192,7 +1318,11 @@ function ProviderRow({
           ? 'border-sky-300/70 bg-sky-400/[0.075] shadow-[0_0_0_1px_rgba(125,211,252,0.22)]'
           : 'border-[var(--color-border-subtle)] bg-white/[0.02]'
       }`}
-      onClick={handleActivate}
+      onClick={(event) => {
+        if (rowInteractive && !eventStartedInInteractiveChild(event.currentTarget, event.target)) {
+          handleActivate();
+        }
+      }}
       onKeyDown={handleKeyDown}
     >
       <div className="grid w-full grid-cols-[1fr_auto] items-start gap-3">
@@ -1303,6 +1433,7 @@ function DirectoryProviderRow({
       test?.enabled === true);
   const clickable = !disabled && (canOpenConnect || canSelectModels);
   const visuallyActive = active && (canSelectModels || formOpen);
+  const rowInteractive = clickable && !formOpen && !(active && canSelectModels);
   const handleActivate = (): void => {
     if (!clickable) {
       return;
@@ -1316,8 +1447,8 @@ function DirectoryProviderRow({
 
   return (
     <div
-      role={clickable ? 'button' : undefined}
-      tabIndex={clickable ? 0 : -1}
+      role={rowInteractive ? 'button' : undefined}
+      tabIndex={rowInteractive ? 0 : -1}
       data-testid={`runtime-provider-directory-row-${provider.providerId}`}
       className={`rounded-lg border p-3 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/40 ${
         clickable
@@ -1328,7 +1459,11 @@ function DirectoryProviderRow({
           ? 'border-sky-300/70 bg-sky-400/[0.075] shadow-[0_0_0_1px_rgba(125,211,252,0.22)]'
           : 'border-[var(--color-border-subtle)] bg-white/[0.02]'
       }`}
-      onClick={handleActivate}
+      onClick={(event) => {
+        if (rowInteractive && !eventStartedInInteractiveChild(event.currentTarget, event.target)) {
+          handleActivate();
+        }
+      }}
       onKeyDown={(event) => {
         if (!clickable || (event.key !== 'Enter' && event.key !== ' ')) {
           return;
@@ -1803,6 +1938,7 @@ function OpenCodeModelScopeControls({
   projectPath,
   projects,
   loading,
+  disabled,
   error,
   onProjectContextChange,
 }: {
@@ -1811,6 +1947,7 @@ function OpenCodeModelScopeControls({
   readonly projectPath: string | null | undefined;
   readonly projects: readonly ProjectPathProject[];
   readonly loading: boolean;
+  readonly disabled: boolean;
   readonly error: string | null;
   readonly onProjectContextChange?: (projectPath: string | null) => void;
 }): JSX.Element {
@@ -1872,6 +2009,7 @@ function OpenCodeModelScopeControls({
                   ? 'bg-[var(--color-surface-raised)] text-[var(--color-text)] shadow-sm'
                   : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]'
               }`}
+              disabled={disabled}
               onClick={() => onDefaultScopeChange(scope)}
             >
               {scope === 'all_projects'
@@ -1890,7 +2028,7 @@ function OpenCodeModelScopeControls({
           <div className="mt-1">
             <Select
               value={selectedValue}
-              disabled={loading || !onProjectContextChange}
+              disabled={disabled || loading || !onProjectContextChange}
               onValueChange={(value) => {
                 onProjectContextChange?.(value === NO_PROJECT_CONTEXT_VALUE ? null : value);
               }}
@@ -2342,8 +2480,9 @@ export function RuntimeProviderManagementPanelView({
   const visibleDirectoryRows = state.directoryEntries.filter((provider) =>
     directoryEntryMatchesQuery(provider, providerQuery)
   );
-  const providerCountLabel =
-    state.directoryTotalCount !== null
+  const providerCountLabel = state.directorySummary
+    ? t('runtimeProvider.providers.countFallback')
+    : state.directoryTotalCount !== null
       ? formatOpenCodeProviderCount(state.directoryTotalCount)
       : state.directorySupported
         ? t('runtimeProvider.providers.catalog')
@@ -2352,6 +2491,13 @@ export function RuntimeProviderManagementPanelView({
   const modelsLoading = state.loading && launchableModelCount === 0;
   const activeSection = selectedSection ?? 'providers';
   const hasProjectContext = Boolean(projectPath?.trim());
+  const activeAuthOption = state.setupForm?.authOptions?.find(
+    (option) => option.id === state.selectedAuthOptionId
+  );
+  const activeSetupMethod = activeAuthOption?.method ?? state.setupForm?.method ?? null;
+  const blockingCredentialWrite = Boolean(
+    state.savingProviderId && activeSetupMethod && activeSetupMethod !== 'oauth'
+  );
 
   return (
     <div className="space-y-3">
@@ -2380,6 +2526,7 @@ export function RuntimeProviderManagementPanelView({
       <Tabs
         value={activeSection}
         onValueChange={(value) => {
+          if (blockingCredentialWrite) return;
           const section = value as OpenCodeSettingsSection;
           setSelectedSection(section);
           if (section === 'models' && !state.view && !state.loading) {
@@ -2391,6 +2538,7 @@ export function RuntimeProviderManagementPanelView({
           <TabsList className="gap-1 rounded-b-none">
             <TabsTrigger
               value="models"
+              disabled={blockingCredentialWrite}
               className="rounded-b-none data-[state=active]:bg-[var(--color-surface)]"
             >
               {t('runtimeProvider.tabs.models')}
@@ -2402,6 +2550,7 @@ export function RuntimeProviderManagementPanelView({
             </TabsTrigger>
             <TabsTrigger
               value="providers"
+              disabled={blockingCredentialWrite}
               className="rounded-b-none data-[state=active]:bg-[var(--color-surface)]"
             >
               {t('runtimeProvider.tabs.providers')}
@@ -2438,6 +2587,7 @@ export function RuntimeProviderManagementPanelView({
             projectPath={projectPath}
             projects={projectContextProjects}
             loading={projectContextLoading}
+            disabled={blockingCredentialWrite}
             error={projectContextError}
             onProjectContextChange={onProjectContextChange}
           />
@@ -2482,6 +2632,9 @@ export function RuntimeProviderManagementPanelView({
                 type="button"
                 size="sm"
                 variant="ghost"
+                title={
+                  state.directorySummary ? 'Load the full OpenCode provider catalog' : undefined
+                }
                 disabled={disabled || state.directoryLoading || state.directoryRefreshing}
                 onClick={() => void actions.refreshDirectory()}
               >

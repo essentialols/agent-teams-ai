@@ -31,6 +31,7 @@ function managementState(
     directoryTotalCount: null,
     directoryNextCursor: null,
     directoryLoaded: true,
+    directorySummary: false,
     directorySelectedProviderId: null,
     directorySupported: true,
     activeFormProviderId: null,
@@ -81,7 +82,7 @@ function managementActions(): RuntimeProviderManagementActions {
     setSetupMetadataValue: vi.fn(),
     setOAuthCodeValue: vi.fn(),
     submitOAuthCode: vi.fn(async () => undefined),
-    submitConnect: vi.fn(async () => true),
+    submitConnect: vi.fn(async () => ({ verifiedModelId: null })),
     forgetProvider: vi.fn(async () => undefined),
     openProviderCredentialPage: vi.fn(async () => undefined),
     openModelPicker: vi.fn(),
@@ -138,6 +139,7 @@ function onboardingActions(
     restartWizard: vi.fn(),
     installOrUpdateRuntime: vi.fn(async () => undefined),
     beginConnect: vi.fn(),
+    beginVerification: vi.fn(),
     submitConnect: vi.fn(async () => true),
     verifyModel: vi.fn(async () => undefined),
     acceptVerifiedModel: vi.fn(),
@@ -192,6 +194,60 @@ describe('RuntimeProviderOnboardingView', () => {
     );
     act(() => advancedButton?.click());
     expect(advanced).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks before spending quota to verify an already connected plan', async () => {
+    const beginVerification = vi.fn();
+    const beginConnect = vi.fn();
+    const plan = RUNTIME_PROVIDER_ONBOARDING_PLANS.find((candidate) => candidate.id === 'supergrok')!;
+    await act(async () => {
+      root.render(
+        React.createElement(RuntimeProviderOnboardingView, {
+          state: onboardingState({
+            mode: 'provider',
+            selectedPlanIds: ['supergrok'],
+            activePlan: plan,
+            management: managementState({
+              directoryEntries: [
+                {
+                  providerId: 'xai',
+                  displayName: 'xAI',
+                  state: 'connected',
+                  connectedAuthHint: 'oauth',
+                  setupKind: 'connected',
+                  ownership: ['managed'],
+                  recommended: true,
+                  modelCount: 1,
+                  authMethods: ['oauth'],
+                  defaultModelId: 'xai/grok-4.3',
+                  sources: ['inventory'],
+                  sourceLabel: 'OpenCode',
+                  providerSource: null,
+                  detail: null,
+                  actions: [],
+                  metadata: {
+                    hasKnownModels: true,
+                    requiresManualConfig: false,
+                    supportedInlineAuth: true,
+                    configuredAuthless: false,
+                  },
+                },
+              ],
+            }),
+          }),
+          actions: onboardingActions({ beginVerification, beginConnect }),
+          onAdvancedSettings: vi.fn(),
+          onDone: vi.fn(),
+        })
+      );
+    });
+
+    expect(host.textContent).toContain('This plan is already connected');
+    expect(host.textContent).toContain('Verification sends one short model request');
+    const buttons = [...host.querySelectorAll('button')];
+    act(() => buttons.find((button) => button.textContent?.includes('Verify and choose'))?.click());
+    expect(beginVerification).toHaveBeenCalledTimes(1);
+    expect(beginConnect).not.toHaveBeenCalled();
   });
 
   it('shows a verified provider as ready without returning to the provider catalog', async () => {
@@ -359,5 +415,88 @@ describe('RuntimeProviderOnboardingView', () => {
     act(() => reconnectButton?.click());
     expect(beginConnect).toHaveBeenCalledTimes(1);
     expect(host.textContent).toContain('Retry verification');
+  });
+
+  it('shows the OpenCode preparation error and offers a retry', async () => {
+    const installOrUpdateRuntime = vi.fn(async () => undefined);
+    const plan = RUNTIME_PROVIDER_ONBOARDING_PLANS[0]!;
+    await act(async () => {
+      root.render(
+        React.createElement(RuntimeProviderOnboardingView, {
+          state: onboardingState({
+            mode: 'provider',
+            activePlan: plan,
+            selectedPlanIds: [plan.id],
+            runtimeGate: 'error',
+            stage: 'error',
+            stageError: 'OpenCode download failed. Check your connection.',
+          }),
+          actions: onboardingActions({ installOrUpdateRuntime }),
+          onAdvancedSettings: vi.fn(),
+          onDone: vi.fn(),
+        })
+      );
+    });
+
+    expect(host.textContent).toContain('OpenCode setup needs attention');
+    expect(host.textContent).toContain('OpenCode download failed. Check your connection.');
+    const retryButton = [...host.querySelectorAll('button')].find(
+      (button) => button.textContent?.trim() === 'Retry OpenCode'
+    );
+    await act(async () => retryButton?.click());
+    expect(installOrUpdateRuntime).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps installation progress explicit after an OpenCode update starts', async () => {
+    const plan = RUNTIME_PROVIDER_ONBOARDING_PLANS[0]!;
+    await act(async () => {
+      root.render(
+        React.createElement(RuntimeProviderOnboardingView, {
+          state: onboardingState({
+            mode: 'provider',
+            activePlan: plan,
+            selectedPlanIds: [plan.id],
+            runtimeGate: 'installing',
+            runtimePreparing: true,
+          }),
+          actions: onboardingActions(),
+          onAdvancedSettings: vi.fn(),
+          onDone: vi.fn(),
+        })
+      );
+    });
+
+    expect(host.textContent).toContain('Installing OpenCode');
+    expect(host.textContent).toContain(
+      'Installing the managed OpenCode runtime. This window updates automatically.'
+    );
+    expect(host.textContent).not.toContain('OpenCode is required');
+  });
+
+  it('routes providers without guided setup to Advanced settings without a false success', async () => {
+    const onAdvancedSettings = vi.fn();
+    await act(async () => {
+      root.render(
+        React.createElement(RuntimeProviderOnboardingView, {
+          state: onboardingState({
+            mode: 'provider',
+            activePlan: null,
+            stage: 'error',
+            stageError: 'This provider is only available in Advanced settings.',
+          }),
+          actions: onboardingActions(),
+          onAdvancedSettings,
+          onDone: vi.fn(),
+        })
+      );
+    });
+
+    expect(host.textContent).toContain('Use Advanced settings for this provider');
+    expect(host.textContent).not.toContain('All selected plans are ready');
+    const advancedButton = [...host.querySelectorAll('button')].find((button) =>
+      button.textContent?.includes('Advanced settings')
+    );
+    act(() => advancedButton?.click());
+    expect(onAdvancedSettings).toHaveBeenCalledTimes(1);
   });
 });

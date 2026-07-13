@@ -62,6 +62,7 @@ function createState(
     directoryTotalCount: null,
     directoryNextCursor: null,
     directoryLoaded: false,
+    directorySummary: false,
     directorySelectedProviderId: null,
     directorySupported: true,
     activeFormProviderId: null,
@@ -112,7 +113,7 @@ function createActions(): RuntimeProviderManagementActions {
     setSetupMetadataValue: vi.fn(),
     setOAuthCodeValue: vi.fn(),
     submitOAuthCode: vi.fn(() => Promise.resolve()),
-    submitConnect: vi.fn(() => Promise.resolve(true)),
+    submitConnect: vi.fn(() => Promise.resolve({ verifiedModelId: null })),
     forgetProvider: vi.fn(() => Promise.resolve()),
     openProviderCredentialPage: vi.fn(() => Promise.resolve()),
     openModelPicker: vi.fn(),
@@ -1226,7 +1227,7 @@ describe('RuntimeProviderManagementPanelView', () => {
     expect(host.textContent).not.toContain('sk-secret-value');
   });
 
-  it('allows supported setup forms that do not require a secret to submit', async () => {
+  it('allows supported OAuth setup forms that do not require a secret to submit', async () => {
     const host = document.createElement('div');
     document.body.appendChild(host);
     const root = createRoot(host);
@@ -1263,7 +1264,7 @@ describe('RuntimeProviderManagementPanelView', () => {
     });
 
     const submitButton = Array.from(host.querySelectorAll('button')).find(
-      (button) => button.textContent?.trim() === 'Continue with OpenRouter'
+      (button) => button.textContent?.trim() === 'Continue in browser'
     );
     expect(submitButton?.disabled).toBe(false);
   });
@@ -1288,6 +1289,7 @@ describe('RuntimeProviderManagementPanelView', () => {
             view: { ...state.view!, providers: [provider] },
             providers: [provider],
             activeFormProviderId: provider.providerId,
+            apiKeyValue: 'sk-regular-payg-key',
             setupForm: {
               runtimeId: 'opencode',
               providerId: provider.providerId,
@@ -1320,6 +1322,98 @@ describe('RuntimeProviderManagementPanelView', () => {
     expect(host.textContent).toContain('Token Plan API Key (tp-...)');
     expect(host.textContent).toContain('token-plan-ams.xiaomimimo.com');
     expect(host.querySelector('input[placeholder="tp-xxxxx"]')).not.toBeNull();
+    expect(host.textContent).toContain('This plan requires a key starting with tp-');
+    const connectButton = Array.from(
+      host.querySelector('form')?.querySelectorAll('button') ?? []
+    ).find((button) => button.textContent?.trim() === 'Connect');
+    expect(connectButton?.disabled).toBe(true);
+
+    await act(async () => {
+      root.render(
+        React.createElement(RuntimeProviderManagementPanelView, {
+          state: {
+            ...state,
+            view: { ...state.view!, providers: [provider] },
+            providers: [provider],
+            activeFormProviderId: provider.providerId,
+            apiKeyValue: 'tp-valid-token-plan-key',
+            setupForm: {
+              runtimeId: 'opencode',
+              providerId: provider.providerId,
+              displayName: provider.displayName,
+              method: 'api',
+              supported: true,
+              title: `Connect ${provider.displayName}`,
+              description: 'Use the Token Plan key.',
+              submitLabel: 'Connect',
+              disabledReason: null,
+              source: 'curated',
+              secret: {
+                key: 'key',
+                label: 'Token Plan API Key (tp-...)',
+                placeholder: 'tp-xxxxx',
+                required: true,
+              },
+              prompts: [],
+            },
+          },
+          actions,
+          disabled: false,
+        })
+      );
+      await Promise.resolve();
+    });
+
+    expect(host.textContent).toContain('Token Plan key format detected');
+    const keyInput = host.querySelector<HTMLInputElement>('input[placeholder="tp-xxxxx"]');
+    expect(keyInput?.type).toBe('password');
+    expect(keyInput?.autocomplete).toBe('new-password');
+    expect(keyInput?.getAttribute('spellcheck')).toBe('false');
+    const showKeyButton = Array.from(host.querySelectorAll('button')).find(
+      (button) => button.getAttribute('aria-label') === 'Show key'
+    );
+    act(() => showKeyButton?.click());
+    expect(keyInput?.type).toBe('text');
+    expect(actions.startConnect).not.toHaveBeenCalled();
+
+    await act(async () => {
+      host
+        .querySelector('form')
+        ?.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+    expect(actions.submitConnect).toHaveBeenCalledWith(provider.providerId);
+    expect(actions.submitConnect).toHaveBeenCalledTimes(1);
+    expect(actions.startConnect).not.toHaveBeenCalled();
+  });
+
+  it('offers retry when provider setup form loading fails', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const actions = createActions();
+    const state = createState();
+
+    await act(async () => {
+      root.render(
+        React.createElement(RuntimeProviderManagementPanelView, {
+          state: {
+            ...state,
+            providers: state.view?.providers ?? [],
+            activeFormProviderId: 'openrouter',
+            setupFormError: 'Provider setup could not be loaded',
+          },
+          actions,
+          disabled: false,
+        })
+      );
+    });
+
+    const retry = Array.from(host.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Retry setup'
+    );
+    act(() => retry?.click());
+    expect(actions.startConnect).toHaveBeenCalledWith('openrouter');
   });
 
   it('shows generic OAuth browser progress and keeps cancellation available', async () => {
@@ -1412,6 +1506,85 @@ describe('RuntimeProviderManagementPanelView', () => {
     expect(cancelButton?.disabled).toBe(false);
   });
 
+  it('updates the submit action when the selected SuperGrok auth method changes', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const state = createState();
+    const xaiProvider = {
+      ...state.view!.providers[0],
+      providerId: 'xai',
+      displayName: 'SuperGrok',
+    };
+
+    await act(async () => {
+      root.render(
+        React.createElement(RuntimeProviderManagementPanelView, {
+          state: {
+            ...state,
+            view: { ...state.view!, providers: [xaiProvider] },
+            providers: [xaiProvider],
+            activeFormProviderId: 'xai',
+            selectedAuthOptionId: 'api:2',
+            apiKeyValue: 'secret',
+            setupForm: {
+              runtimeId: 'opencode',
+              providerId: 'xai',
+              displayName: 'xAI',
+              method: 'oauth',
+              supported: true,
+              title: 'Connect xAI',
+              description: 'Use a subscription or an API key.',
+              submitLabel: 'Get browser code',
+              disabledReason: null,
+              source: 'oauth',
+              secret: null,
+              prompts: [],
+              defaultAuthOptionId: 'oauth:1',
+              authOptions: [
+                {
+                  id: 'oauth:1',
+                  method: 'oauth',
+                  methodIndex: 1,
+                  label: 'SuperGrok browser code (recommended)',
+                  supported: true,
+                  disabledReason: null,
+                  secret: null,
+                  prompts: [],
+                },
+                {
+                  id: 'api:2',
+                  method: 'api',
+                  methodIndex: 2,
+                  label: 'Manually enter API Key',
+                  supported: true,
+                  disabledReason: null,
+                  secret: {
+                    key: 'key',
+                    label: 'Manually enter API Key',
+                    placeholder: 'Paste API key',
+                    required: true,
+                  },
+                  prompts: [],
+                },
+              ],
+            },
+          },
+          actions: createActions(),
+          disabled: false,
+        })
+      );
+    });
+
+    expect(
+      [...host.querySelectorAll('button')].some((button) => button.textContent?.trim() === 'Connect')
+    ).toBe(true);
+    expect(host.textContent).not.toContain('Get browser code');
+    expect(host.textContent).toContain(
+      'This uses xAI API billing, not your SuperGrok subscription quota.'
+    );
+  });
+
   it('shows the SuperGrok device code as a prominent copyable value', async () => {
     const host = document.createElement('div');
     document.body.appendChild(host);
@@ -1485,8 +1658,69 @@ describe('RuntimeProviderManagementPanelView', () => {
     expect(code?.textContent).toContain('Enter this code in xAI');
     expect(code?.textContent).toContain('C8ZB-RJ9G');
     expect(code?.textContent).toContain('Waiting for confirmation - this updates automatically');
-    expect(code?.querySelector('.text-2xl')).not.toBeNull();
+    expect(code?.querySelector('.text-xl')).not.toBeNull();
+    expect(code?.className).toContain('flex-col');
     expect(code?.querySelector('button')).not.toBeNull();
+
+    await act(async () => {
+      root.render(
+        React.createElement(RuntimeProviderManagementPanelView, {
+          state: {
+            ...state,
+            view: { ...state.view!, providers: [xaiProvider] },
+            providers: [xaiProvider],
+            activeFormProviderId: 'xai',
+            savingProviderId: 'xai',
+            selectedAuthOptionId: 'oauth:1',
+            setupForm: {
+              runtimeId: 'opencode',
+              providerId: 'xai',
+              displayName: 'SuperGrok',
+              method: 'oauth',
+              supported: true,
+              title: 'Connect SuperGrok',
+              description: 'Use the browser device code.',
+              submitLabel: 'Get browser code',
+              disabledReason: null,
+              source: 'oauth',
+              secret: null,
+              prompts: [],
+              defaultAuthOptionId: 'oauth:1',
+              authOptions: [
+                {
+                  id: 'oauth:1',
+                  method: 'oauth',
+                  methodIndex: 1,
+                  label: 'SuperGrok browser code (recommended)',
+                  supported: true,
+                  disabledReason: null,
+                  secret: null,
+                  prompts: [],
+                },
+              ],
+            },
+            oauthProgress: {
+              operationId: 'oauth-operation-device',
+              runtimeId: 'opencode',
+              providerId: 'xai',
+              displayName: 'SuperGrok',
+              authOptionId: 'oauth:1',
+              methodIndex: 1,
+              phase: 'completing',
+              completionMethod: 'auto',
+              instructions: null,
+              message: 'Authorization received. Verifying your plan...',
+            },
+          },
+          actions,
+          disabled: false,
+        })
+      );
+    });
+
+    expect(host.textContent).toContain('Authorization received. Verifying your plan...');
+    expect(host.textContent).not.toContain('C8ZB-RJ9G');
+    expect(host.querySelector('[data-testid="runtime-provider-oauth-device-code"]')).toBeNull();
   });
 
   it('renders multiple compact provider actions without hiding forget behind connect', async () => {
@@ -1980,6 +2214,54 @@ describe('RuntimeProviderManagementPanelView', () => {
     });
 
     expect(actions.selectDirectoryProvider).toHaveBeenCalledWith('llama.cpp');
+  });
+
+  it('labels connected authless bridges as connected instead of configured local', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+
+    await act(async () => {
+      root.render(
+        React.createElement(RuntimeProviderManagementPanelView, {
+          state: createState({
+            directoryLoaded: true,
+            directoryTotalCount: 1,
+            directoryEntries: [
+              {
+                providerId: 'cursor-acp',
+                displayName: 'Cursor ACP',
+                state: 'connected',
+                setupKind: 'connected',
+                ownership: ['managed'],
+                recommended: false,
+                modelCount: 1,
+                defaultModelId: 'cursor-acp/auto',
+                authMethods: [],
+                actions: [],
+                sources: ['config-provider'],
+                sourceLabel: 'configured',
+                providerSource: 'config',
+                detail: 'Connected through the managed OpenCode bridge',
+                metadata: {
+                  hasKnownModels: true,
+                  requiresManualConfig: false,
+                  supportedInlineAuth: false,
+                  configuredAuthless: true,
+                },
+              },
+            ],
+          }),
+          actions: createActions(),
+          disabled: false,
+        })
+      );
+      await Promise.resolve();
+    });
+
+    const row = host.querySelector('[data-testid="runtime-provider-directory-row-cursor-acp"]');
+    expect(row?.textContent).toContain('Connected');
+    expect(row?.textContent).not.toContain('Configured local');
   });
 
   it('uses the unified provider search when compact search has no matches', async () => {

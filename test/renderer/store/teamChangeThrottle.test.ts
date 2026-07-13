@@ -235,7 +235,7 @@ describe('team change throttling', () => {
     expect(fetchAllTasksSpy).not.toHaveBeenCalled();
   });
 
-  it('loads OpenCode after three seconds outside the provider idle batch even when bootstrap is slow', async () => {
+  it('checks the OpenCode runtime immediately and defers generic provider hydration to idle', async () => {
     const originalFetchConfig = useStore.getState().fetchConfig;
     const originalBootstrapCliStatus = useStore.getState().bootstrapCliStatus;
     const originalFetchCliProviderStatus = useStore.getState().fetchCliProviderStatus;
@@ -294,19 +294,16 @@ describe('team change throttling', () => {
         providerStatusMode: 'defer',
       });
       expect(fetchCliProviderStatus).not.toHaveBeenCalled();
+      expect(fetchOpenCodeRuntimeStatus).toHaveBeenCalledTimes(1);
 
-      await vi.advanceTimersByTimeAsync(2_999);
+      await vi.advanceTimersByTimeAsync(3_000);
       expect(fetchCliProviderStatus).not.toHaveBeenCalled();
-      expect(fetchOpenCodeRuntimeStatus).not.toHaveBeenCalled();
-
-      await vi.advanceTimersByTimeAsync(1);
-      expect(fetchCliProviderStatus).toHaveBeenCalledWith('opencode', { silent: false });
-      expect(fetchCliProviderStatus).toHaveBeenCalledTimes(1);
       expect(fetchOpenCodeRuntimeStatus).toHaveBeenCalledTimes(1);
 
       resolveBootstrap();
       await Promise.resolve();
       await vi.advanceTimersByTimeAsync(2_000);
+      expect(fetchCliProviderStatus).toHaveBeenCalledWith('opencode', { silent: false });
       expect(fetchCliProviderStatus).toHaveBeenCalledWith('anthropic', { silent: false });
       expect(fetchCliProviderStatus).toHaveBeenCalledWith('codex', { silent: false });
       expect(

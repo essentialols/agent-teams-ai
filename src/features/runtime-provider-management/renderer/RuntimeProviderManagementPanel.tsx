@@ -1,4 +1,4 @@
-import { type JSX, useEffect, useMemo, useState } from 'react';
+import { type JSX, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   loadProjectPathProjects,
@@ -20,6 +20,7 @@ interface RuntimeProviderManagementPanelProps {
   readonly initialProviderAction?: 'connect' | 'select' | null;
   readonly disabled?: boolean;
   readonly onProviderChanged?: () => Promise<void> | void;
+  readonly onBlockingOperationChange?: (blocking: boolean) => void;
 }
 
 export const RuntimeProviderManagementPanel = ({
@@ -30,6 +31,7 @@ export const RuntimeProviderManagementPanel = ({
   initialProviderAction = null,
   disabled = false,
   onProviderChanged,
+  onBlockingOperationChange,
 }: RuntimeProviderManagementPanelProps): JSX.Element => {
   const repositoryGroups = useStore(useShallow((state) => state.repositoryGroups));
   const initialProjectPath = useMemo(() => projectPath?.trim() || null, [projectPath]);
@@ -37,6 +39,7 @@ export const RuntimeProviderManagementPanel = ({
   const [projectContextProjects, setProjectContextProjects] = useState<ProjectPathProject[]>([]);
   const [projectContextLoading, setProjectContextLoading] = useState(false);
   const [projectContextError, setProjectContextError] = useState<string | null>(null);
+  const backgroundHydrationKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!open) {
@@ -79,9 +82,10 @@ export const RuntimeProviderManagementPanel = ({
   const [state, actions] = useRuntimeProviderManagement({
     runtimeId,
     enabled: open,
-    // Match the Dashboard quick-connect request so the main process can reuse
-    // its full-catalog cache when provider settings opens.
-    directoryPageSize: 250,
+    // A quick-card Manage action can reuse the dashboard summary immediately.
+    // Browse-all opens without an initial provider and loads the full catalog.
+    directoryPageSize: initialProviderId ? 100 : 250,
+    directorySummaryOnEnable: Boolean(initialProviderId),
     loadViewOnEnable: false,
     searchDirectoryOnQueryChange: false,
     projectPath: activeProjectPath,
@@ -89,6 +93,57 @@ export const RuntimeProviderManagementPanel = ({
     initialProviderAction,
     onProviderChanged,
   });
+  const activeAuthOption = state.setupForm?.authOptions?.find(
+    (option) => option.id === state.selectedAuthOptionId
+  );
+  const activeSetupMethod = activeAuthOption?.method ?? state.setupForm?.method ?? null;
+  const blockingCredentialWrite = Boolean(
+    state.savingProviderId && activeSetupMethod && activeSetupMethod !== 'oauth'
+  );
+  const refreshDirectory = actions.refreshDirectory;
+
+  useEffect(() => {
+    onBlockingOperationChange?.(blockingCredentialWrite);
+    return () => onBlockingOperationChange?.(false);
+  }, [blockingCredentialWrite, onBlockingOperationChange]);
+
+  useEffect(() => {
+    if (
+      !open ||
+      !initialProviderId ||
+      !state.directoryLoaded ||
+      !state.directorySummary ||
+      state.directoryRefreshing
+    ) {
+      return;
+    }
+    const hydrationKey = `${activeProjectPath ?? ''}:${initialProviderId}`;
+    if (backgroundHydrationKeyRef.current === hydrationKey) {
+      return;
+    }
+    backgroundHydrationKeyRef.current = hydrationKey;
+    const timeout = window.setTimeout(() => refreshDirectory(), 0);
+    return () => window.clearTimeout(timeout);
+  }, [
+    activeProjectPath,
+    initialProviderId,
+    open,
+    refreshDirectory,
+    state.directoryLoaded,
+    state.directoryRefreshing,
+    state.directorySummary,
+  ]);
+
+  const cancelConnectRef = useRef(actions.cancelConnect);
+  useEffect(() => {
+    cancelConnectRef.current = actions.cancelConnect;
+  }, [actions.cancelConnect]);
+  useEffect(
+    () => () => {
+      cancelConnectRef.current();
+    },
+    []
+  );
 
   return (
     <RuntimeProviderManagementPanelView

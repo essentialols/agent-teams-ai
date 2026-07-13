@@ -51,6 +51,7 @@ describe('RuntimeProviderCompanionSetupDialog', () => {
   });
 
   it('shows live staged progress while automatic installation runs', async () => {
+    const onOpenChange = vi.fn();
     await act(async () => {
       root.render(
         React.createElement(RuntimeProviderCompanionSetupDialog, {
@@ -59,7 +60,7 @@ describe('RuntimeProviderCompanionSetupDialog', () => {
           description: 'Use Kiro through OpenCode.',
           status: status(),
           busy: true,
-          onOpenChange: vi.fn(),
+          onOpenChange,
           onInstallAndConnect: vi.fn(),
           onConnect: vi.fn(),
           onCopyManualCommand: vi.fn(),
@@ -71,6 +72,14 @@ describe('RuntimeProviderCompanionSetupDialog', () => {
     const progressbar = document.body.querySelector('[role="progressbar"]');
     expect(progressbar?.getAttribute('aria-valuenow')).toBe('42');
     expect(document.body.textContent).toContain('Downloading the signed Kiro CLI package');
+    expect(document.body.textContent).toContain('Setup continues in the background');
+    const close = document.body.querySelector<HTMLButtonElement>('button[aria-label], button');
+    const closeButton = [...document.body.querySelectorAll('button')].find((button) =>
+      button.textContent?.includes('actions.close')
+    );
+    expect(close ?? closeButton).not.toBeNull();
+    act(() => (closeButton ?? close)?.click());
+    expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
   it('exposes a copyable official fallback after a safe installer stop', async () => {
@@ -106,6 +115,35 @@ describe('RuntimeProviderCompanionSetupDialog', () => {
     expect(onOpenManualGuide).toHaveBeenCalledTimes(1);
   });
 
+  it('does not render unusable fallback actions when status loading fails without a guide', async () => {
+    await act(async () => {
+      root.render(
+        React.createElement(RuntimeProviderCompanionSetupDialog, {
+          open: true,
+          title: 'Amazon Q Developer / Kiro',
+          description: 'Use Kiro through OpenCode.',
+          status: status({
+            phase: 'error',
+            percent: null,
+            error: 'Status check failed',
+            manualCommand: '',
+            manualUrl: '',
+          }),
+          busy: false,
+          onOpenChange: vi.fn(),
+          onInstallAndConnect: vi.fn(),
+          onConnect: vi.fn(),
+          onCopyManualCommand: vi.fn(),
+          onOpenManualGuide: vi.fn(),
+        })
+      );
+    });
+
+    expect(document.body.textContent).toContain('Status check failed');
+    expect(document.body.textContent).not.toContain('copyCommand');
+    expect(document.body.textContent).not.toContain('openKiroGuide');
+  });
+
   it('renders Cursor in the same provider-agnostic setup dialog', async () => {
     const onInstallAndConnect = vi.fn();
     await act(async () => {
@@ -139,5 +177,39 @@ describe('RuntimeProviderCompanionSetupDialog', () => {
     );
     act(() => install?.click());
     expect(onInstallAndConnect).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets the user close the dialog after verification completes', async () => {
+    const onOpenChange = vi.fn();
+    await act(async () => {
+      root.render(
+        React.createElement(RuntimeProviderCompanionSetupDialog, {
+          open: true,
+          title: 'Cursor',
+          description: 'Use Cursor through OpenCode.',
+          status: status({
+            companionId: 'cursor-agent',
+            displayName: 'Cursor Agent CLI',
+            phase: 'connected',
+            installed: true,
+            authenticated: true,
+            percent: 100,
+            message: 'Cursor account connected and verified',
+          }),
+          busy: false,
+          onOpenChange,
+          onInstallAndConnect: vi.fn(),
+          onConnect: vi.fn(),
+          onCopyManualCommand: vi.fn(),
+          onOpenManualGuide: vi.fn(),
+        })
+      );
+    });
+
+    const done = [...document.body.querySelectorAll('button')].find((button) =>
+      button.textContent?.includes('done')
+    );
+    act(() => done?.click());
+    expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 });

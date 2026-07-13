@@ -2194,6 +2194,32 @@ describe('ProviderRuntimeSettingsDialog', () => {
     expect(host.textContent).not.toContain('Desktop currently exposes status only.');
   });
 
+  it('summarizes OpenCode readiness without dumping duplicate provider ids', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const provider = {
+      ...createOpenCodeProvider(),
+      detailMessage:
+        'version 1.17.18 - connected xai, zai-coding-plan, z.ai-coding-plan, minimax-coding-plan - managed profile',
+    };
+
+    await act(async () => {
+      root.render(
+        React.createElement(ProviderRuntimeSettingsDialog, {
+          open: true,
+          onOpenChange: vi.fn(),
+          providers: [provider],
+          initialProviderId: 'opencode',
+          onSelectBackend: vi.fn(),
+        })
+      );
+    });
+
+    expect(host.textContent).toContain('OpenCode 1.17.18 is ready.');
+    expect(host.textContent).not.toContain('z.ai-coding-plan');
+  });
+
   it('shows OpenCode inventory fallback as models available instead of disconnected', async () => {
     const host = document.createElement('div');
     document.body.appendChild(host);

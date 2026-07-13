@@ -64,6 +64,7 @@ export interface RuntimeProviderOnboardingActions {
   restartWizard(): void;
   installOrUpdateRuntime(): Promise<void>;
   beginConnect(): void;
+  beginVerification(): void;
   submitConnect(): Promise<boolean>;
   verifyModel(modelId: string): Promise<void>;
   acceptVerifiedModel(): void;
@@ -142,8 +143,19 @@ export function useRuntimeProviderOnboarding({
   const [recommendedModel, setRecommendedModel] = useState<RuntimeProviderModelDto | null>(null);
   const [verifiedModelId, setVerifiedModelId] = useState<string | null>(null);
   const [runtimePreparing, setRuntimePreparing] = useState(false);
+  const [pendingConnectionPlanId, setPendingConnectionPlanId] =
+    useState<RuntimeProviderOnboardingPlanId | null>(null);
+  const [acceptedConnectionProof, setAcceptedConnectionProof] = useState<{
+    readonly planId: RuntimeProviderOnboardingPlanId;
+    readonly modelId: string;
+  } | null>(null);
+  const [verificationRequestedPlanId, setVerificationRequestedPlanId] =
+    useState<RuntimeProviderOnboardingPlanId | null>(null);
+  const [reconnectRequestedPlanId, setReconnectRequestedPlanId] =
+    useState<RuntimeProviderOnboardingPlanId | null>(null);
   const initializedSessionRef = useRef<string | null>(null);
   const connectStartedPlanRef = useRef<RuntimeProviderOnboardingPlanId | null>(null);
+  const transientSetupRetryPlanRef = useRef<RuntimeProviderOnboardingPlanId | null>(null);
   const activePlanRef = useRef<RuntimeProviderOnboardingPlanId | null>(null);
   const probeSequenceRef = useRef(0);
 
@@ -151,6 +163,7 @@ export function useRuntimeProviderOnboarding({
     runtimeId: 'opencode',
     enabled,
     directoryPageSize: 100,
+    directorySummaryOnEnable: true,
     loadViewOnEnable: false,
     searchDirectoryOnQueryChange: false,
     projectPath,
@@ -158,6 +171,9 @@ export function useRuntimeProviderOnboarding({
     initialProviderAction: null,
     onProviderChanged,
   });
+
+  const retryCancelConnect = managementActions.cancelConnect;
+  const retryStartConnect = managementActions.startConnect;
 
   useEffect(() => {
     if (!enabled) {
@@ -173,8 +189,13 @@ export function useRuntimeProviderOnboarding({
     setStageError(null);
     setRecommendedModel(null);
     setVerifiedModelId(null);
+    setVerificationRequestedPlanId(null);
+    setReconnectRequestedPlanId(null);
     setRuntimePreparing(false);
+    setPendingConnectionPlanId(null);
+    setAcceptedConnectionProof(null);
     connectStartedPlanRef.current = null;
+    transientSetupRetryPlanRef.current = null;
     activePlanRef.current = null;
     probeSequenceRef.current += 1;
 
@@ -238,12 +259,52 @@ export function useRuntimeProviderOnboarding({
     }
     activePlanRef.current = nextActivePlanId;
     connectStartedPlanRef.current = null;
+    transientSetupRetryPlanRef.current = null;
+    setPendingConnectionPlanId(null);
+    setAcceptedConnectionProof(null);
+    setVerificationRequestedPlanId(null);
+    setReconnectRequestedPlanId(null);
     probeSequenceRef.current += 1;
     setStage(activePlan ? 'connect' : wizardStarted ? 'ready' : 'connect');
     setStageError(null);
     setRecommendedModel(null);
     setVerifiedModelId(null);
   }, [activePlan, wizardStarted]);
+
+  useEffect(() => {
+    const setupErrorCode = management.setupFormErrorDiagnostics?.errorCode ?? null;
+    const transientSetupError =
+      enabled &&
+      activePlan &&
+      runtimeGate === 'ready' &&
+      !runtimeUpdateRequired &&
+      management.activeFormProviderId === activePlan.providerId &&
+      Boolean(management.setupFormError) &&
+      (setupErrorCode === 'runtime-missing' || setupErrorCode === 'runtime-unhealthy') &&
+      management.savingProviderId !== activePlan.providerId;
+    if (!transientSetupError || transientSetupRetryPlanRef.current === activePlan.id) {
+      return;
+    }
+
+    const retryTimer = window.setTimeout(() => {
+      transientSetupRetryPlanRef.current = activePlan.id;
+      retryCancelConnect();
+      connectStartedPlanRef.current = activePlan.id;
+      retryStartConnect(activePlan.providerId);
+    }, 750);
+    return () => window.clearTimeout(retryTimer);
+  }, [
+    activePlan,
+    enabled,
+    management.activeFormProviderId,
+    management.savingProviderId,
+    management.setupFormError,
+    management.setupFormErrorDiagnostics?.errorCode,
+    retryCancelConnect,
+    retryStartConnect,
+    runtimeGate,
+    runtimeUpdateRequired,
+  ]);
 
   const verifyModelCandidates = useCallback(
     async (modelIds: readonly string[]): Promise<void> => {
@@ -296,11 +357,6 @@ export function useRuntimeProviderOnboarding({
     if (!enabled || !activePlan || runtimeGate !== 'ready' || runtimeUpdateRequired) {
       return;
     }
-    if (management.activeFormProviderId === activePlan.providerId) {
-      setStage('connect');
-      setStageError(null);
-      return;
-    }
     if (!management.directoryLoaded) {
       if (management.directoryError && !management.directoryLoading) {
         setStage('error');
@@ -322,6 +378,30 @@ export function useRuntimeProviderOnboarding({
         connectStartedPlanRef.current = activePlan.id;
         managementActions.startConnect(activePlan.providerId);
       }
+      return;
+    }
+
+    if (pendingConnectionPlanId === activePlan.id) {
+      setStage('verifying');
+      return;
+    }
+    if (
+      reconnectRequestedPlanId === activePlan.id &&
+      management.activeFormProviderId === activePlan.providerId
+    ) {
+      setStage('connect');
+      setStageError(null);
+      return;
+    }
+    if (verificationRequestedPlanId !== activePlan.id) {
+      if (
+        management.activeFormProviderId === activePlan.providerId &&
+        management.savingProviderId !== activePlan.providerId
+      ) {
+        managementActions.cancelConnect();
+      }
+      setStage('connect');
+      setStageError(null);
       return;
     }
 
@@ -348,6 +428,19 @@ export function useRuntimeProviderOnboarding({
       setStageError('No usable model was reported for this connected provider.');
       return;
     }
+    if (acceptedConnectionProof?.planId === activePlan.id) {
+      const provenModel = candidates.find(
+        (candidate) => candidate.modelId === acceptedConnectionProof.modelId
+      );
+      setAcceptedConnectionProof(null);
+      if (provenModel) {
+        setRecommendedModel(provenModel);
+        setVerifiedModelId(provenModel.modelId);
+        managementActions.selectModel(provenModel.modelId);
+        setStage('choose-model');
+        return;
+      }
+    }
     void verifyModelCandidates(
       candidates
         .slice(0, getAutomaticModelProbeLimit(activePlan))
@@ -355,13 +448,17 @@ export function useRuntimeProviderOnboarding({
     );
   }, [
     activePlan,
+    acceptedConnectionProof,
     enabled,
     management,
     managementActions,
+    pendingConnectionPlanId,
+    reconnectRequestedPlanId,
     recommendedModel,
     runtimeGate,
     runtimeUpdateRequired,
     verifiedModelId,
+    verificationRequestedPlanId,
     verifyModelCandidates,
   ]);
 
@@ -413,6 +510,8 @@ export function useRuntimeProviderOnboarding({
     setStageError(null);
     setRecommendedModel(null);
     setVerifiedModelId(null);
+    setVerificationRequestedPlanId(null);
+    setReconnectRequestedPlanId(null);
     managementActions.cancelConnect();
   }, [managementActions]);
 
@@ -422,6 +521,8 @@ export function useRuntimeProviderOnboarding({
     }
     setStage('connect');
     setStageError(null);
+    setReconnectRequestedPlanId(activePlan.id);
+    setVerificationRequestedPlanId(null);
     if (management.directoryError && !management.directoryLoaded) {
       connectStartedPlanRef.current = null;
       void managementActions.refreshDirectory();
@@ -431,16 +532,34 @@ export function useRuntimeProviderOnboarding({
     managementActions.startConnect(activePlan.providerId);
   }, [activePlan, management.directoryError, management.directoryLoaded, managementActions]);
 
+  const beginVerification = useCallback((): void => {
+    if (!activePlan) {
+      return;
+    }
+    setReconnectRequestedPlanId(null);
+    setVerificationRequestedPlanId(activePlan.id);
+    setStage('verifying');
+    setStageError(null);
+  }, [activePlan]);
+
   const submitConnect = useCallback(async (): Promise<boolean> => {
     if (!activePlan) {
       return false;
     }
-    const connected = await managementActions.submitConnect(activePlan.providerId);
-    if (connected) {
+    setPendingConnectionPlanId(activePlan.id);
+    setAcceptedConnectionProof(null);
+    const outcome = await managementActions.submitConnect(activePlan.providerId);
+    setPendingConnectionPlanId(null);
+    if (outcome) {
+      setReconnectRequestedPlanId(null);
+      setVerificationRequestedPlanId(activePlan.id);
+      if (outcome.verifiedModelId) {
+        setAcceptedConnectionProof({ planId: activePlan.id, modelId: outcome.verifiedModelId });
+      }
       setStage('verifying');
       setStageError(null);
     }
-    return connected;
+    return outcome !== null;
   }, [activePlan, managementActions]);
 
   const acceptVerifiedModel = useCallback((): void => {
@@ -515,6 +634,7 @@ export function useRuntimeProviderOnboarding({
       restartWizard,
       installOrUpdateRuntime,
       beginConnect,
+      beginVerification,
       submitConnect,
       verifyModel,
       acceptVerifiedModel,

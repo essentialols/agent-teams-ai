@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import { CursorAgentCompanionService } from '../infrastructure/CursorAgentCompanionService';
@@ -9,6 +11,7 @@ import type { RuntimeProviderManagementPort } from '../../core/application';
 
 describe('createRuntimeProviderManagementFeature companion flow', () => {
   it('verifies kiro/auto through OpenCode before reporting connected', async () => {
+    const projectPath = path.join(process.cwd(), '.test-projects', 'agent-teams-kiro-test');
     const testModel = vi.fn(async () => ({
       schemaVersion: 1 as const,
       runtimeId: 'opencode' as const,
@@ -53,14 +56,14 @@ describe('createRuntimeProviderManagementFeature companion flow', () => {
 
     const result = await feature.connectCompanion({
       companionId: 'kiro-cli',
-      projectPath: '/tmp/agent-teams-kiro-test',
+      projectPath,
     });
 
     expect(testModel).toHaveBeenCalledWith({
       runtimeId: 'opencode',
       providerId: 'kiro',
       modelId: 'kiro/auto',
-      projectPath: '/tmp/agent-teams-kiro-test',
+      projectPath,
     });
     expect(progress).toContain('verifying-model');
     expect(result.phase).toBe('connected');
@@ -68,6 +71,7 @@ describe('createRuntimeProviderManagementFeature companion flow', () => {
   });
 
   it('routes Cursor through cursor-acp/auto before reporting connected', async () => {
+    const projectPath = path.join(process.cwd(), '.test-projects', 'agent-teams-cursor-test');
     const testModel = vi.fn(async () => ({
       schemaVersion: 1 as const,
       runtimeId: 'opencode' as const,
@@ -121,14 +125,14 @@ describe('createRuntimeProviderManagementFeature companion flow', () => {
 
     const result = await feature.connectCompanion({
       companionId: 'cursor-agent',
-      projectPath: '/tmp/agent-teams-cursor-test',
+      projectPath,
     });
 
     expect(testModel).toHaveBeenCalledWith({
       runtimeId: 'opencode',
       providerId: 'cursor-acp',
       modelId: 'cursor-acp/auto',
-      projectPath: '/tmp/agent-teams-cursor-test',
+      projectPath,
     });
     expect(result.phase).toBe('connected');
     expect(result.message).toContain('verified');

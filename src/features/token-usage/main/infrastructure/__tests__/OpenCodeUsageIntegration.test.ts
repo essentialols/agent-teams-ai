@@ -149,6 +149,7 @@ async function createFixture({ includeLaunchState }: { includeLaunchState: boole
   const dataHomePath = path.join(root, 'runtime-data');
   const profileRootKey = '0123456789abcdef';
   const sessionId = 'ses_usage_test_1';
+  const projectPath = path.join(root, 'project');
   const databasePath = path.join(
     dataHomePath,
     'opencode',
@@ -164,7 +165,7 @@ async function createFixture({ includeLaunchState }: { includeLaunchState: boole
     path.join(teamDir, 'config.json'),
     JSON.stringify({
       name: teamName,
-      projectPath: '/tmp/token-usage-opencode-project',
+      projectPath,
       members: [
         {
           name: 'worker',
@@ -211,7 +212,7 @@ async function createFixture({ includeLaunchState }: { includeLaunchState: boole
           selectedModel: includeLaunchState
             ? 'xiaomi-token-plan-sgp/mimo-v2.5-pro'
             : 'xai/grok-4.3',
-          projectPath: '/tmp/token-usage-opencode-project',
+          projectPath,
           profileRootKey,
           opencodeSessionId: sessionId,
           lastKnownDurableState: 'idle',

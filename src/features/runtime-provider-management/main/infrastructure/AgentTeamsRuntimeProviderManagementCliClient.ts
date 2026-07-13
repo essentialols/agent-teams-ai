@@ -1276,7 +1276,7 @@ function parseOAuthVerificationEvent(
     providerId,
     displayName,
     authOptionId,
-    methodIndex: methodIndex as number,
+    methodIndex,
     phase: 'completing',
     completionMethod,
     instructions: null,
@@ -1434,7 +1434,7 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
       }
     }
     while (this.directoryResponseCache.size >= MAX_DIRECTORY_RESPONSE_CACHE_ENTRIES) {
-      const oldestKey = this.directoryResponseCache.keys().next().value as string | undefined;
+      const oldestKey = this.directoryResponseCache.keys().next().value;
       if (!oldestKey) {
         break;
       }

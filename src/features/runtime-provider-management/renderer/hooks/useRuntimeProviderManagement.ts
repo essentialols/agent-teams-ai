@@ -370,10 +370,13 @@ export function useRuntimeProviderManagement(
     if (!operationId) {
       return null;
     }
-    const cancellation = api.runtimeProviderManagement.cancelOAuth?.({ operationId });
-    return cancellation
-      ? cancellation.then(() => undefined).catch(() => undefined)
-      : Promise.resolve();
+    const cancelOAuth = api.runtimeProviderManagement.cancelOAuth;
+    if (!cancelOAuth) {
+      return Promise.resolve();
+    }
+    return cancelOAuth({ operationId })
+      .then(() => undefined)
+      .catch(() => undefined);
   }, []);
   const currentProjectPath = normalizeProjectContextPath(options.projectPath);
   const projectContextRef = useRef<ProjectContextSnapshot>({

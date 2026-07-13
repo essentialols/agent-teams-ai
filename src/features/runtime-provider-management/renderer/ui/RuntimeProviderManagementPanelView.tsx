@@ -372,7 +372,7 @@ function extractOAuthDeviceCode(instructions: string | null | undefined): string
   if (!instructions) {
     return null;
   }
-  return instructions.match(/\b[A-Z0-9]{4}-[A-Z0-9]{4}\b/)?.[0] ?? null;
+  return /\b[A-Z0-9]{4}-[A-Z0-9]{4}\b/.exec(instructions)?.[0] ?? null;
 }
 
 function eventStartedInInteractiveChild(

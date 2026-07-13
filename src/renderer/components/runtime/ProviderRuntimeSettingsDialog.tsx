@@ -498,7 +498,7 @@ function getCompactOpenCodeProviderDetailMessage(detailMessage?: string | null):
     typeof firstInternalDetailIndex === 'number'
       ? trimmed.slice(0, firstInternalDetailIndex).trim()
       : trimmed;
-  const connectedVersion = compact.match(/^version\s+([^\s]+)\s+-\s+connected\b/i)?.[1];
+  const connectedVersion = /^version\s+([^\s]+)\s+-\s+connected\b/i.exec(compact)?.[1];
   if (connectedVersion) {
     return `OpenCode ${connectedVersion} is ready.`;
   }

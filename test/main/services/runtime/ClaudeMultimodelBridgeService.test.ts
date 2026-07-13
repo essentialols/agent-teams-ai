@@ -2084,12 +2084,13 @@ describe('ClaudeMultimodelBridgeService', () => {
           hidden: false,
           source: 'anthropic-models-api',
           badgeLabel: 'Opus 4.8',
-          metadata: {
+          metadata: expect.objectContaining({
             cost: { input: 0, output: 0 },
             context: 200000,
             limits: { context: 200000, output: 32000 },
             free: true,
-          },
+            releaseDate: null,
+          }),
         }),
         expect.objectContaining({
           launchModel: 'opus[1m]',

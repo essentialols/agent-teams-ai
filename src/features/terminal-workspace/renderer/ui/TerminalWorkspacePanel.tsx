@@ -4470,7 +4470,7 @@ function isDuplicatedLeadingTerminalCommandEcho(
   return (
     normalizedCommand.length > 0 &&
     normalizedCandidate.length === normalizedCommand.length + 1 &&
-    normalizedCandidate[0] === normalizedCommand[0] &&
+    normalizedCandidate.startsWith(normalizedCommand.slice(0, 1)) &&
     normalizedCandidate.slice(1) === normalizedCommand
   );
 }

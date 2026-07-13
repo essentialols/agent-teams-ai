@@ -19296,9 +19296,25 @@ describe('TeamProvisioningService', () => {
       allowConsoleLogs();
       const adapterLaunch = vi.fn(async (input: Record<string, unknown>) => {
         const expectedMembers = input.expectedMembers as Array<{ name: string }>;
+        const teamName = String(input.teamName);
+        const laneId = String(input.laneId);
+        const runId = String(input.runId);
+        await writeCommittedOpenCodeSessionStore({
+          teamName,
+          laneId,
+          runId,
+          sessions: expectedMembers.map((member) => ({
+            id: `oc-session-${laneId}-${member.name}`,
+            teamName,
+            memberName: member.name,
+            laneId,
+            runId,
+            source: 'runtime_bootstrap_checkin',
+          })),
+        });
         return {
-          runId: String(input.runId),
-          teamName: String(input.teamName),
+          runId,
+          teamName,
           launchPhase: 'finished',
           teamLaunchState: 'clean_success',
           leadSessionId: 'opencode-lead-session',
@@ -19365,24 +19381,29 @@ describe('TeamProvisioningService', () => {
       expect(runId).toEqual(expect.any(String));
       expect(spawnCli).not.toHaveBeenCalled();
       expect(ClaudeBinaryResolver.resolve).not.toHaveBeenCalled();
+      expect(adapterLaunch).toHaveBeenCalledTimes(2);
       expect(adapterLaunch).toHaveBeenCalledWith(
         expect.objectContaining({
-          laneId: 'primary',
+          laneId: 'secondary:opencode:bob',
           providerId: 'opencode',
-          model: 'big-pickle',
-          effort: 'medium',
+          model: 'minimax-m2.5-free',
           cwd: tempClaudeRoot,
           expectedMembers: [
-            expect.objectContaining({
-              name: 'team-lead',
-              providerId: 'opencode',
-              model: 'big-pickle',
-            }),
             expect.objectContaining({
               name: 'bob',
               providerId: 'opencode',
               model: 'minimax-m2.5-free',
             }),
+          ],
+        })
+      );
+      expect(adapterLaunch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          laneId: 'secondary:opencode:tom',
+          providerId: 'opencode',
+          model: 'nemotron-3-super-free',
+          cwd: tempClaudeRoot,
+          expectedMembers: [
             expect.objectContaining({
               name: 'tom',
               providerId: 'opencode',
@@ -20290,7 +20311,7 @@ describe('TeamProvisioningService', () => {
       expect(adapterLaunch).toHaveBeenCalledTimes(2);
       expect(adapterLaunch).toHaveBeenCalledWith(
         expect.objectContaining({
-          laneId: 'primary',
+          laneId: 'secondary:opencode:tom',
           cwd: tempClaudeRoot,
           expectedMembers: [
             expect.objectContaining({
@@ -20321,6 +20342,11 @@ describe('TeamProvisioningService', () => {
           laneId: 'secondary:opencode:bob',
           state: 'finished',
           member: expect.objectContaining({ name: 'bob', cwd: bobWorktree }),
+        }),
+        expect.objectContaining({
+          laneId: 'secondary:opencode:tom',
+          state: 'finished',
+          member: expect.objectContaining({ name: 'tom' }),
         }),
       ]);
     });

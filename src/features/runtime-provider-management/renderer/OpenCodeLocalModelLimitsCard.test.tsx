@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 
@@ -134,8 +136,9 @@ describe('OpenCodeLocalModelLimitsCard', () => {
 
   it('deduplicates project-scoped model loading for repeated teammate cards', async () => {
     mocks.loadModels.mockResolvedValue(modelsResponse([makeModel('local/qwen')]));
+    const projectPath = path.join(process.cwd(), '.test-projects', 'local-limits-dedupe');
     const input = {
-      projectPath: '/tmp/local-limits-dedupe',
+      projectPath,
       providerId: 'local',
       modelId: 'local/qwen',
     };
@@ -146,14 +149,14 @@ describe('OpenCodeLocalModelLimitsCard', () => {
     expect(mocks.loadModels).toHaveBeenCalledWith({
       runtimeId: 'opencode',
       providerId: 'local',
-      projectPath: '/tmp/local-limits-dedupe',
+      projectPath,
       query: 'local/qwen',
       limit: 50,
     });
   });
 
   it('rehydrates saved limits and completes Apply & verify through the scoped API', async () => {
-    const projectPath = '/tmp/local-limits-rehydrate';
+    const projectPath = path.join(process.cwd(), '.test-projects', 'local-limits-rehydrate');
     mocks.loadModels.mockResolvedValue(
       modelsResponse([
         makeModel('llama.cpp/qwen-test:0.5b', {
@@ -219,7 +222,7 @@ describe('OpenCodeLocalModelLimitsCard', () => {
       ])
     );
     mocks.configureModelLimits.mockReturnValue(probePromise);
-    const projectPath = '/tmp/local-limits-stale-request';
+    const projectPath = path.join(process.cwd(), '.test-projects', 'local-limits-stale-request');
     const { host, root } = await renderCard({ model: 'local/model-a', projectPath });
 
     act(() => {

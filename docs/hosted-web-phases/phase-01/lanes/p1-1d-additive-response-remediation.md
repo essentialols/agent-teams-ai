@@ -1,4 +1,60 @@
-# P1.1D additive-response remediation independent-review lane
+# P1.1D shadowed-map implementation remediation lane
+
+## Current r4 producer contract
+
+- Packet revision: `phase-01-p1-1d-shadowed-map-remediation-r4`
+- Mode/capacity: implementation remediation / exactly one producer
+- Original product `baseSha`: `1b37afb02bec25a1f08432d733595b553101ecab`
+- `canonicalSha`, `phaseStartSha`, `planBundleCommit`, and worktree `HEAD`:
+  `3405da177b040c65caad10ef2df4d4f4338feed0`
+- Runtime carrier: `1f9c6a2a28e5540c61d1395bc51a34a7c0db31855bae575abc9582f839118b49`
+- Semantic reconstruction: `fa46617652b072e887563f5a751f7bd0260e0e1d4fb96b628badea91ea7ae9d6`
+
+Read the exact mandatory sources below in order through item 38, using the current r4 controller and
+lane values; the absent candidate reads and ledger reads in items 39-42 are superseded by this
+materialization contract. Do not glob or inspect siblings. The runtime must materialize reviewed
+output `693d79c9314c46b9ac0ae13c8c62cb7951461fb7d335ec426119fc8a86a23c91` as `output.patch`, verified
+by `inputPatchHash` `521d8bab2ed7bc4334b38a5786dd5685f5e4f033c3962cab566f9ab3b60d0000`.
+
+Canonical HEAD contains none of the candidate files. Materialize the complete exact nine-path carrier
+listed below. Preserve these six paths byte-for-byte from reviewed output: the four product entrypoint
+and application files other than `team-lifecycle-read.ts`, `ListTeamLifecycle.test.ts`, and
+`team-lifecycle-read-boundaries.test.ts`. Semantically edit only:
+
+1. `src/features/team-lifecycle/contracts/team-lifecycle-read.ts`
+2. `test/architecture/hosted-web/phase-1/team-lifecycle/team-lifecycle-read-contract.test.ts`
+3. `.codex-handoff/phase-01-p1-1d.json` (regenerated)
+
+For `items`, capture a validated length before traversal, allocate a trusted fresh plain array, own
+each output index, reject every sparse input, read every input index exactly once, and call `parseItem`
+for every element. Never dispatch input-owned `map`, iterator, constructor, or species behavior.
+Perform deterministic ordering and freeze only on trusted arrays. Preserve strict request rejection,
+same-version additive response validation/discard, safe projections, all ten fixture outcomes,
+transport neutrality, source-call behavior, original negative diagnostics, and public boundaries.
+
+Run every focused test, lint, typecheck-classification, Prettier-check, diff, ownership, provenance,
+hash, and safety gate already listed below. Typecheck may report only the exact seven unchanged Phase 0
+diagnostics in the same three files. Regenerate the handoff with the r4 packet identity, exact nine
+changed paths, six byte-preservation proofs, three semantic-edit hashes, command results, and
+`nextAction: "review"`.
+
+Admission is `codex_goal_project_refill_worker`, outer `workerRole: producer`, `serial-builtin`
+internal `kind: worker-launch`, `format: 1`, `reviewKind: implementation`, and the reviewed snapshot
+patch as `inputPatchHash`. After producer completion, require a fresh independent exact-read reviewer.
+Do not integrate, commit, push, launch a reviewer/controller, start P1.R2/P1.I/P1.F/Phase 2+, or touch
+the exact five PR conflict files. End `HOLD`.
+
+Reviewer r2 binding evidence is strict result
+`b8dca625e5eedfc457fd9908a7c0f41489db1dc784c98b52598a1e26504dc895`, audited attempt
+`p1-1d-review-v17-r2-formal-reject`, with product P1-001 and process-only fail-closed P1-002. Broad r3
+output `5e1f1bcb6bfc076d59346b0fddc97db271800af4a9e17e85c604de0f2d046822`, patch
+`8f74ea9cf5b3e187a75a36c0e4e90378752e52d5e1b06893d961811c54ab5dcf`, audited attempt
+`p1-1d-shadowed-map-router-v17-r3-scope-reject` is rejected evidence and must never be copied/applied.
+
+## Retained rejected r2 review packet
+
+The review-only text below is preserved as prior provenance and is non-executable. Its focused checks,
+exact scope lists, safety rules, and blocked successors remain binding where compatible with r4.
 
 ## Authority and provenance
 

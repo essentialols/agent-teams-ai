@@ -6,33 +6,33 @@
   "currentRouterTerminalState": "HOLD",
   "workerStartAuthority": "ProjectScopedControl codex_goal_project_refill_worker",
   "currentRoute": {
-    "mode": "review-only",
+    "mode": "implementation-remediation",
     "controllerPacket": "docs/hosted-web-phases/phase-01/controller-packet.md",
     "lanePackets": [
       {
         "subphase": "P1.1D-additive-response-remediation",
         "node": "P1.1D-additive-response-remediation",
-        "laneId": "p1-1d-additive-response-remediation-review",
+        "laneId": "p1-1d-additive-response-remediation",
         "path": "docs/hosted-web-phases/phase-01/lanes/p1-1d-additive-response-remediation.md",
-        "packetRevision": "phase-01-p1-1d-additive-response-review-r2"
+        "packetRevision": "phase-01-p1-1d-shadowed-map-remediation-r4"
       }
     ],
     "baseSha": "1b37afb02bec25a1f08432d733595b553101ecab",
-    "canonicalSha": "bbfd2551baaa904061e705511f07716e0f6db17d",
-    "phaseStartSha": "bbfd2551baaa904061e705511f07716e0f6db17d",
-    "planBundleCommit": "bbfd2551baaa904061e705511f07716e0f6db17d",
-    "reviewerWorktreeHead": "bbfd2551baaa904061e705511f07716e0f6db17d",
-    "supersedesWorkerStartRevisions": ["phase-01-p1-1d-additive-response-remediation-r1"],
+    "canonicalSha": "3405da177b040c65caad10ef2df4d4f4338feed0",
+    "phaseStartSha": "3405da177b040c65caad10ef2df4d4f4338feed0",
+    "planBundleCommit": "3405da177b040c65caad10ef2df4d4f4338feed0",
+    "workerWorktreeHead": "3405da177b040c65caad10ef2df4d4f4338feed0",
+    "supersedesWorkerStartRevisions": ["phase-01-p1-1d-additive-response-review-r2"],
     "launchGate": {
       "required": {
-        "correctionRouterPolicyIntegrated": true,
+        "minimalRouterPolicyIntegrated": true,
         "sameDurableController": true,
         "durableControllerLive": true,
         "controllerValue": "live=true",
-        "structuredReviewScopeUpdateApplied": true,
-        "producerAuthorityRetired": true,
-        "rejectedLedgerRecordsPresent": true,
-        "blockingOutputDebt": false
+        "structuredRemediationScopeUpdateApplied": true,
+        "reviewAuthorityRetired": true,
+        "reviewedOutputPatchVerified": true,
+        "canonicalCandidatePathsAbsent": true
       },
       "attestedByThisDocsTransition": false
     }
@@ -78,63 +78,60 @@
       "P2": 0
     }
   },
-  "rejectedP11dReviewInputRouter": {
+  "rejectedP11dBroadRouterR3": {
     "status": "immutable-rejected-evidence",
-    "reviewedOutputId": "1ad2849056be658ab629b9810914ace7eab3287745ecb39c1d76ac1c124d0eb7",
-    "patchSha256": "657c1c5ff6421f6b206ef14509586d09fad72e8c511efe1a6f9bf6b8dce5f577",
-    "baseCommit": "bbfd2551baaa904061e705511f07716e0f6db17d",
+    "reviewedOutputId": "5e1f1bcb6bfc076d59346b0fddc97db271800af4a9e17e85c604de0f2d046822",
+    "patchSha256": "8f74ea9cf5b3e187a75a36c0e4e90378752e52d5e1b06893d961811c54ab5dcf",
+    "auditedAttempt": "p1-1d-shadowed-map-router-v17-r3-scope-reject",
     "disposition": "REJECT",
-    "findingSeverity": "P1",
-    "findingCount": 2,
-    "admissionDefects": [
-      "immutable product baseSha was conflated with reviewer canonical/start provenance",
-      "reviewer admission used an unsupported tool/contract name instead of the stable ProjectScopedControl refill shape"
-    ],
+    "reason": "broad-scope-router-rejected",
     "integrated": false,
     "modifiedByThisCorrection": false
   },
   "immutableP11dCandidate": {
-    "status": "complete-immutable-awaiting-fresh-independent-review",
+    "status": "reviewed-rejected-awaiting-narrow-remediation",
     "baseSha": "1b37afb02bec25a1f08432d733595b553101ecab",
     "runtimeNinePathHandoffCarrierSha256": "1f9c6a2a28e5540c61d1395bc51a34a7c0db31855bae575abc9582f839118b49",
     "finalEightPathSemanticReconstructionSha256": "fa46617652b072e887563f5a751f7bd0260e0e1d4fb96b628badea91ea7ae9d6",
-    "containsOrClaimsStaleExternalAssertion": false,
-    "staleExternalAssertion": "7672e922",
-    "immutable": true,
+    "reviewedOutputId": "693d79c9314c46b9ac0ae13c8c62cb7951461fb7d335ec426119fc8a86a23c91",
+    "canonicalCandidatePathsPresent": false,
+    "immutableBeforeRemediation": true,
     "integrated": false,
-    "productRerunAuthorized": false,
-    "productMutationAuthorized": false
+    "productRerunAuthorized": true,
+    "productMutationAuthorized": true
   },
-  "reviewerRuntimeBinding": {
-    "canonicalSha": "bbfd2551baaa904061e705511f07716e0f6db17d",
-    "phaseStartSha": "bbfd2551baaa904061e705511f07716e0f6db17d",
-    "planBundleCommit": "bbfd2551baaa904061e705511f07716e0f6db17d",
-    "worktreeHead": "bbfd2551baaa904061e705511f07716e0f6db17d"
+  "remediationRuntimeBinding": {
+    "canonicalSha": "3405da177b040c65caad10ef2df4d4f4338feed0",
+    "phaseStartSha": "3405da177b040c65caad10ef2df4d4f4338feed0",
+    "planBundleCommit": "3405da177b040c65caad10ef2df4d4f4338feed0",
+    "worktreeHead": "3405da177b040c65caad10ef2df4d4f4338feed0"
   },
   "priorP11dIndependentReview": {
     "status": "binding-reject-preserved",
-    "strictResultSha256": "29ad2243be1a1e0c7aa95cb1a32ae32b8f15db8ebe1a260cd41dd85d2c079934",
+    "strictResultSha256": "b8dca625e5eedfc457fd9908a7c0f41489db1dc784c98b52598a1e26504dc895",
+    "reviewedOutputId": "693d79c9314c46b9ac0ae13c8c62cb7951461fb7d335ec426119fc8a86a23c91",
+    "auditedAttempt": "p1-1d-review-v17-r2-formal-reject",
     "disposition": "REJECT",
     "findingSeverity": "P1",
-    "findingCount": 1,
-    "soleFinding": "external review instruction mislabeled a transient interim hash as the final handoff hash",
-    "staleExternalAssertion": "7672e922",
-    "candidateContainedOrClaimedAssertion": false,
+    "findingCount": 2,
+    "findings": {
+      "P1-001": "input-owned items.map can bypass parseItem/projection",
+      "P1-002": "reviewer read-order failure is process-only and fail-closed"
+    },
     "reinterpretedAsAccept": false,
-    "freshReviewRequired": true
+    "remediationRequired": true
   },
-  "rejectionLedgerConsumption": {
-    "reviewedWorkspaceSnapshotSha256": "521d8bab2ed7bc4334b38a5786dd5685f5e4f033c3962cab566f9ab3b60d0000",
-    "purpose": "prior-rejection-ledger-consumption-only",
-    "candidateIdentityAuthorized": false,
-    "producerOutputLedgerStatus": "formal-rejected-record-present",
-    "reviewerOutputLedgerStatus": "formal-rejected-record-present",
-    "admissionBlockingOutputDebt": false,
+  "reviewedOutputMaterialization": {
+    "reviewedSnapshotPatchSha256": "521d8bab2ed7bc4334b38a5786dd5685f5e4f033c3962cab566f9ab3b60d0000",
+    "purpose": "materialize-reviewed-output-as-output.patch",
+    "candidateIdentityAuthorized": true,
+    "preserveCarrierPathCountByteForByte": 6,
+    "semanticEditPathCount": 3,
     "integrationAuthority": false
   },
-  "projectScopedReviewerAdmission": {
+  "projectScopedProducerAdmission": {
     "operation": "codex_goal_project_refill_worker",
-    "workerRole": "reviewer",
+    "workerRole": "producer",
     "reasoningEffort": "xhigh",
     "serviceTier": "default",
     "preStartAdmission": {
@@ -142,16 +139,16 @@
       "contract": {
         "kind": "worker-launch",
         "format": 1,
-        "canonicalSha": "bbfd2551baaa904061e705511f07716e0f6db17d",
+        "canonicalSha": "3405da177b040c65caad10ef2df4d4f4338feed0",
         "baseSha": "1b37afb02bec25a1f08432d733595b553101ecab",
-        "phaseStartSha": "bbfd2551baaa904061e705511f07716e0f6db17d",
-        "packetRevision": "phase-01-p1-1d-additive-response-review-r2",
+        "phaseStartSha": "3405da177b040c65caad10ef2df4d4f4338feed0",
+        "packetRevision": "phase-01-p1-1d-shadowed-map-remediation-r4",
         "controllerPacket": "docs/hosted-web-phases/phase-01/controller-packet.md",
         "lanePacket": "docs/hosted-web-phases/phase-01/lanes/p1-1d-additive-response-remediation.md",
         "phaseId": "phase-01",
-        "laneId": "p1-1d-additive-response-remediation-review",
-        "inputPatchHash": "1f9c6a2a28e5540c61d1395bc51a34a7c0db31855bae575abc9582f839118b49",
-        "reviewKind": "review"
+        "laneId": "p1-1d-additive-response-remediation",
+        "inputPatchHash": "521d8bab2ed7bc4334b38a5786dd5685f5e4f033c3962cab566f9ab3b60d0000",
+        "reviewKind": "implementation"
       },
       "requiredContractCollections": [
         "ownedPaths",
@@ -163,13 +160,13 @@
       ],
       "requiredContractCollectionsSource": "exact lane packet"
     },
-    "planBundleCommitBinding": "bbfd2551baaa904061e705511f07716e0f6db17d",
+    "planBundleCommitBinding": "3405da177b040c65caad10ef2df4d4f4338feed0",
     "planBundleCommitIsWorkerLaunchContractField": false
   },
   "authorization": {
-    "authorized": ["P1.1D-additive-response-remediation-independent-review"],
+    "authorized": ["P1.1D-shadowed-map-implementation-remediation"],
     "authorizedNodes": ["P1.1D-additive-response-remediation"],
-    "mode": "review-only",
+    "mode": "implementation-remediation",
     "blocked": [
       "product integration",
       "P1.R2",
@@ -180,26 +177,26 @@
     ],
     "prConflictFileCount": 5,
     "prConflictFilesBlocked": true,
-    "reviewerCount": 1,
-    "freshReviewerRequired": true,
+    "producerCount": 1,
+    "freshReviewerAfterProducerRequired": true,
     "independentFromRouterAuthor": true,
     "independentFromAllP11dProducers": true,
     "independentFromPriorRejectedReviewer": true,
     "reasoningEffort": "xhigh",
     "serviceTier": "default",
-    "explicitDispositionRequired": ["ACCEPT", "REJECT"],
-    "reviewAuthorized": true,
-    "productChangeAuthorized": false,
-    "productRerunAuthorized": false,
-    "producerRetryOrRefillAuthorized": false,
+    "postProducerReviewerDispositionRequired": ["ACCEPT", "REJECT"],
+    "reviewAuthorized": false,
+    "productChangeAuthorized": true,
+    "productRerunAuthorized": true,
+    "producerRemediationRefillAuthorized": true,
     "integrationAuthorized": false,
     "commitAuthorized": false,
     "pushAuthorized": false,
     "controllerReplacementAuthorized": false,
-    "reviewLaunchPerformedByThisDocsJob": false,
+    "workerLaunchPerformedByThisDocsJob": false,
     "authorizationEffectiveOnlyAfterLaunchGate": true
   },
-  "p11dImmutableReviewScope": {
+  "p11dRemediationCarrierScope": {
     "productPaths": [
       "src/features/team-lifecycle/contracts/team-lifecycle-read.ts",
       "src/features/team-lifecycle/contracts/index.ts",
@@ -216,7 +213,13 @@
     "pathCount": 9,
     "semanticReconstructionPathCount": 8,
     "setsDisjoint": true,
-    "reviewerWriterAuthority": false,
+    "producerWriterAuthority": true,
+    "bytePreservedPathCount": 6,
+    "semanticEditPaths": [
+      "src/features/team-lifecycle/contracts/team-lifecycle-read.ts",
+      "test/architecture/hosted-web/phase-1/team-lifecycle/team-lifecycle-read-contract.test.ts",
+      ".codex-handoff/phase-01-p1-1d.json"
+    ],
     "allOtherPaths": "read-only"
   },
   "routerExclusiveOwnership": [
@@ -232,11 +235,11 @@
     "algorithm": "sha256",
     "controllerPacket": {
       "path": "docs/hosted-web-phases/phase-01/controller-packet.md",
-      "sha256": "86b4004fd772254459d8c324588750d89d6c5120cf06294f80c2ac926fbd0f9e"
+      "sha256": "20ad8b4e2229bd1ae8d17538c6e856a128f37cd7db8d3d356299bd3a7970edbd"
     },
     "lanePacket": {
       "path": "docs/hosted-web-phases/phase-01/lanes/p1-1d-additive-response-remediation.md",
-      "sha256": "3e170ab0de9472ffe3d6f95bc57e10add6f7e84300a06499d08eff1d51a3f03d"
+      "sha256": "cddc1bc047e7323d6ea10310c21e1244a017ad12d2cf7e1460ae6b8a18729ffe"
     }
   },
   "workerMandatoryBaseline": [
@@ -268,7 +271,8 @@
       "semantic reconstruction fa46617652b072e887563f5a751f7bd0260e0e1d4fb96b628badea91ea7ae9d6"
     ],
     "rejected-external-record": [
-      "strict result 29ad2243be1a1e0c7aa95cb1a32ae32b8f15db8ebe1a260cd41dd85d2c079934"
+      "strict result b8dca625e5eedfc457fd9908a7c0f41489db1dc784c98b52598a1e26504dc895",
+      "router r3 output 5e1f1bcb6bfc076d59346b0fddc97db271800af4a9e17e85c604de0f2d046822"
     ],
     "researchWriteException": null
   }

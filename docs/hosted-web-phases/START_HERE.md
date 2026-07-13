@@ -1,5 +1,11 @@
 # Hosted-web execution: start here
 
+> Current r4 override: reviewer r2 rejected reviewed output
+> `693d79c9314c46b9ac0ae13c8c62cb7951461fb7d335ec426119fc8a86a23c91`; the sole executable
+> authority is one implementation remediation producer under
+> `phase-01-p1-1d-shadowed-map-remediation-r4` at `3405da177b040c65caad10ef2df4d4f4338feed0`.
+> Review-only r2 descriptions below are retained non-executable provenance. End `HOLD`.
+
 This is the canonical entrypoint for every hosted-web controller and worker. Phase 0 is accepted and
 frozen at `f4fa24aac9615a4ce10632965a2244a2e11a273e`. Phase 1 serial bootstrap, foundations,
 routes, conformance, and formal P1.R1 are accepted. The P1.1D additive-response remediation product

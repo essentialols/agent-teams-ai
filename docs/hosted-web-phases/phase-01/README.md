@@ -1,5 +1,10 @@
 # Phase 1: contracts and conformance
 
+> Current r4 override: exactly one shadowed-map implementation remediation producer is executable at
+> `3405da177b040c65caad10ef2df4d4f4338feed0`; review-only r2 text below is retained non-executable
+> provenance. A fresh independent exact-read reviewer follows the producer. P1.R2, integration,
+> P1.I, P1.F, Phase 2+, and the exact five PR conflict files remain blocked. End `HOLD`.
+
 Status: **one fresh P1.1D independent reviewer after correction-router integration and the existing
 durable controller's structured review-scope update**. P1.R2 and every later node remain blocked.
 

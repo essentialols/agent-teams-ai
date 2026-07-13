@@ -1,5 +1,10 @@
 # Phase 1 execution DAG and ownership
 
+> Current r4 override: the sole active edge is reviewer r2 `REJECT` -> exactly one shadowed-map
+> remediation producer -> fresh independent exact-read review. Packet/start/HEAD is
+> `3405da177b040c65caad10ef2df4d4f4338feed0`; all review-only r2 DAG text below is retained
+> non-executable provenance. Integration and later nodes remain blocked. End `HOLD`.
+
 Status: P1.S0, P1.S1, P1.S2, and P1.R1 are accepted and integrated. The immutable P1.1D remediation
 candidate is complete. Its first independent review returned binding `REJECT` P1 because the external
 review input mislabeled one transient interim hash. A single corrected fresh review is the sole current

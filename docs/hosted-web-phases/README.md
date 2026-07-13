@@ -1,5 +1,11 @@
 # Hosted Web execution router
 
+> Current r4 override: exactly one implementation remediation producer is executable under
+> `phase-01-p1-1d-shadowed-map-remediation-r4` at `3405da177b040c65caad10ef2df4d4f4338feed0`.
+> The review-only r2 routing below is retained non-executable provenance. A fresh independent
+> exact-read reviewer is required after producer completion; all integration/later work remains
+> blocked. End `HOLD`.
+
 Always begin with [`START_HERE.md`](START_HERE.md). This router selects executable authority; it does
 not redefine product architecture or turn a rejected record into acceptance.
 

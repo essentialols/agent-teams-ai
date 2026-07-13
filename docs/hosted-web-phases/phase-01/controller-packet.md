@@ -1,4 +1,60 @@
-# Phase 1 controller packet: P1.1D corrected independent review
+# Phase 1 controller packet: P1.1D shadowed-map remediation r4
+
+## Current r4 authority
+
+- Current node: `P1.1D-additive-response-remediation`
+- Mode/revision: implementation remediation / `phase-01-p1-1d-shadowed-map-remediation-r4`
+- Original product `baseSha`: `1b37afb02bec25a1f08432d733595b553101ecab`
+- Router `canonicalSha`, `phaseStartSha`, `planBundleCommit`, and worktree `HEAD`:
+  `3405da177b040c65caad10ef2df4d4f4338feed0`
+- Capacity after admission: exactly one producer; this docs job launches none
+
+The same durable controller must remain `live=true` and bind this r4 scope without replacement.
+ProjectScopedControl admission is exactly:
+
+```text
+operation: codex_goal_project_refill_worker
+workerRole: producer
+preStartAdmission.mode: serial-builtin
+preStartAdmission.contract.kind: worker-launch
+preStartAdmission.contract.format: 1
+preStartAdmission.contract.canonicalSha: 3405da177b040c65caad10ef2df4d4f4338feed0
+preStartAdmission.contract.baseSha: 1b37afb02bec25a1f08432d733595b553101ecab
+preStartAdmission.contract.phaseStartSha: 3405da177b040c65caad10ef2df4d4f4338feed0
+preStartAdmission.contract.packetRevision: phase-01-p1-1d-shadowed-map-remediation-r4
+preStartAdmission.contract.inputPatchHash: 521d8bab2ed7bc4334b38a5786dd5685f5e4f033c3962cab566f9ab3b60d0000
+preStartAdmission.contract.reviewKind: implementation
+```
+
+The runtime materializes reviewed output
+`693d79c9314c46b9ac0ae13c8c62cb7951461fb7d335ec426119fc8a86a23c91` as `output.patch`. Canonical
+HEAD contains none of the candidate files, so the producer owns the full existing exact nine-path
+carrier listed below. It preserves six paths byte-for-byte and semantically edits only
+`team-lifecycle-read.ts`, its contract test, and the regenerated handoff.
+
+The parser must capture and validate length, allocate a trusted fresh plain array, own every numeric
+index, read each input index exactly once, call `parseItem` for every item, reject sparse input, and
+perform only trusted sort/freeze operations. It must not dispatch input-owned `map`, iterator,
+constructor, or species behavior. Strict request parsing, additive-response discard, all fixtures,
+transport neutrality, focused gates, and exactly seven unchanged inherited Phase 0 typecheck
+diagnostics remain binding. A fresh independent exact-read reviewer is mandatory after completion.
+
+Reviewer r2 strict result
+`b8dca625e5eedfc457fd9908a7c0f41489db1dc784c98b52598a1e26504dc895` is binding `REJECT` for
+P1-001 (input-owned `items.map` bypass) and process-only fail-closed P1-002; audited attempt
+`p1-1d-review-v17-r2-formal-reject`. Broad router r3 output
+`5e1f1bcb6bfc076d59346b0fddc97db271800af4a9e17e85c604de0f2d046822`, patch
+`8f74ea9cf5b3e187a75a36c0e4e90378752e52d5e1b06893d961811c54ab5dcf`, attempt
+`p1-1d-shadowed-map-router-v17-r3-scope-reject` remains rejected and must never be copied or applied.
+
+Product integration, P1.R2, P1.I, P1.F, Phase 2+, and the exact five PR conflict files remain blocked.
+Do not launch, integrate, stage, commit, push, or create a controller. Terminal state: `HOLD`.
+
+## Retained rejected r2 packet context
+
+The review-only r2 text below is preserved as prior provenance and is non-executable. Its exact
+seven-path ownership, safety, no-stage, and HOLD guardrails remain binding where they do not conflict
+with the current r4 authority above.
 
 ## Status and authority
 

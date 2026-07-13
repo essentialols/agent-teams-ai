@@ -688,6 +688,45 @@ describe('TeamProvisioningPrepareCoordinator', () => {
     expect(getterCalls).toBe(0);
   });
 
+  it('preserves and isolates future non-enumerable Error data fields across misses and hits', async () => {
+    interface ProbeError extends Error {
+      diagnostics: { attempts: { status: string }[] };
+    }
+    type FutureProbeResult = ProbeResult & { runtimeFacts: { error: ProbeError } };
+
+    const cache = createInMemoryProviderProbeCachePort();
+    const error = new Error('probe failed') as ProbeError;
+    Object.defineProperty(error, 'diagnostics', {
+      configurable: true,
+      enumerable: false,
+      value: { attempts: [{ status: 'original' }] },
+      writable: true,
+    });
+    const publishedResult: FutureProbeResult = {
+      claudePath: '/fake/claude',
+      authSource: 'none',
+      runtimeFacts: { error },
+    };
+    const create = vi.fn().mockResolvedValue({ result: publishedResult, cacheable: true });
+
+    const miss = (await cache.getOrCreate('probe-key', create)) as FutureProbeResult;
+    expect(miss.runtimeFacts.error.diagnostics.attempts).toEqual([{ status: 'original' }]);
+    expect(Object.getOwnPropertyDescriptor(miss.runtimeFacts.error, 'diagnostics')).toMatchObject({
+      enumerable: false,
+    });
+
+    miss.runtimeFacts.error.diagnostics.attempts[0].status = 'caller-mutated';
+    error.diagnostics.attempts[0].status = 'publisher-mutated';
+    const hit = (await cache.getOrCreate('probe-key', create)) as FutureProbeResult;
+
+    expect(hit.runtimeFacts.error.diagnostics.attempts).toEqual([{ status: 'original' }]);
+    hit.runtimeFacts.error.diagnostics.attempts[0].status = 'hit-mutated';
+    const laterHit = (await cache.getOrCreate('probe-key', create)) as FutureProbeResult;
+
+    expect(laterHit.runtimeFacts.error.diagnostics.attempts).toEqual([{ status: 'original' }]);
+    expect(create).toHaveBeenCalledOnce();
+  });
+
   it('does not pin a failed clone of a future probe result field', async () => {
     const cache = createInMemoryProviderProbeCachePort();
     const create = vi

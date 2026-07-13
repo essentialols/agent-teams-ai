@@ -1,4 +1,6 @@
 import {
+  ProjectAdmissionWorkerRole,
+  ReviewDecisionStatus,
   type ProjectAccessScope,
   type ProjectControlBroker,
 } from "@vioxen/subscription-runtime/worker-core";
@@ -67,6 +69,13 @@ import {
 import {
   ensureTerminalCodexGoalHandoffArtifacts,
 } from "./application/ensure-codex-goal-handoff-artifacts";
+import {
+  localReviewedWorkerOutputDeps,
+  resolveReviewedWorkerContinuation,
+  reviewedWorkerOutputRoot,
+  sanitizeReviewedWorkerContinuationEnvironment,
+  type ReviewedWorkerOutputSnapshot,
+} from "./reviewed-worker-output";
 import {
   booleanValue,
   requiredRawString,
@@ -182,6 +191,46 @@ export async function projectControlStartStoredJobView(
       status,
     };
   }
+  const reviewedOutputId = stringValue(args.reviewedOutputId);
+  const dirtyContinuation = status.workspaceDirty === true;
+  let reviewedContinuation: ReviewedWorkerOutputSnapshot | undefined;
+  let reviewedOutputDeps: ReturnType<typeof localReviewedWorkerOutputDeps> | undefined;
+  if (dirtyContinuation) {
+    if (!args.forceStart) {
+      throw new Error("project_control_reviewed_dirty_continuation_force_required");
+    }
+    if (!reviewedOutputId) {
+      throw new Error("project_control_reviewed_dirty_continuation_output_required");
+    }
+    reviewedOutputDeps = localReviewedWorkerOutputDeps({
+      rootDir: reviewedWorkerOutputRoot(controller.registryRootDir),
+    });
+    reviewedContinuation = await resolveReviewedWorkerContinuation({
+      store: reviewedOutputDeps.store,
+      projectId: controller.scope.projectId,
+      controllerJobId: controller.controller.jobId,
+      workerJobId: loaded.manifest.jobId,
+      taskId: loaded.launch.config.taskId,
+      workspacePath: loaded.launch.config.workspacePath,
+      reviewedOutputId,
+    });
+    const sanitized = await sanitizeReviewedWorkerContinuationEnvironment(
+      reviewedOutputDeps,
+      reviewedContinuation,
+    );
+    if (sanitized.removedPaths.length > 0) {
+      return {
+        ok: false,
+        reason: "project_control_dependency_environment_sanitized_recapture_required",
+        controllerJobId: controller.controller.jobId,
+        jobId: loaded.manifest.jobId,
+        reviewedOutputId,
+        sanitizedPaths: sanitized.removedPaths,
+      };
+    }
+  } else if (reviewedOutputId) {
+    throw new Error("project_control_reviewed_dirty_continuation_clean_workspace");
+  }
   const dependencyPreflight = await runDependencyBootstrap({
     workspacePath: loaded.manifest.workspacePath,
     jobRootDir: loaded.manifest.jobRootDir,
@@ -193,23 +242,34 @@ export async function projectControlStartStoredJobView(
   await assertProjectPreStartAdmissionLaunchBinding({
     manifest: loaded.manifest,
     scope: controller.scope,
+    ...(dirtyContinuation
+      ? { workspaceMode: "reviewed_dirty_continuation" as const }
+      : {}),
   });
-
   const broker = deps.codexProjectControlBroker({
     registryRootDir: controller.registryRootDir,
     controller: controller.controller,
     scope: controller.scope,
     startLaunch: loaded.launch,
     startSkipDoctor: booleanValue(args.skipDoctor) ?? false,
+    ...(reviewedContinuation ? { reviewedContinuation } : {}),
   });
   const realWorkspacePath = await projectControlRealPathOutsideWorkspaceScope(
     loaded.launch.config.workspacePath,
     controller.scope,
   );
-  await validateStoredProjectPreStartAdmission({
-    manifest: loaded.manifest,
-    scope: controller.scope,
-  });
+  if (dirtyContinuation) {
+    await assertProjectPreStartAdmissionLaunchBinding({
+      manifest: loaded.manifest,
+      scope: controller.scope,
+      workspaceMode: "reviewed_dirty_continuation",
+    });
+  } else {
+    await validateStoredProjectPreStartAdmission({
+      manifest: loaded.manifest,
+      scope: controller.scope,
+    });
+  }
   const result = await broker.startWorker({
     jobId: loaded.manifest.jobId,
     registryRoot: controller.registryRootDir,
@@ -217,6 +277,9 @@ export async function projectControlStartStoredJobView(
     ...(realWorkspacePath ? { realWorkspacePath } : {}),
     tmuxSession: loaded.launch.tmuxSession,
     accounts: loaded.manifest.accounts,
+    ...(dirtyContinuation
+      ? { workerRole: ProjectAdmissionWorkerRole.Adoption }
+      : {}),
     ...(loaded.manifest.tags ? { tags: loaded.manifest.tags } : {}),
   });
   return {
@@ -583,9 +646,6 @@ export async function projectControlMarkReviewedView(
   if (!captureReviewedOutput) {
     await ensureTerminalCodexGoalHandoffArtifacts({ launch: loaded.launch });
   }
-  if (captureReviewedOutput && args.reviewDecision !== "approved") {
-    throw new Error("reviewed_worker_output_approved_decision_required");
-  }
   const reviewNote = stringValue(args.note) ?? "project_control_reviewed";
   const broker = deps.codexProjectControlBroker({
     registryRootDir: controller.registryRootDir,
@@ -602,6 +662,7 @@ export async function projectControlMarkReviewedView(
               args.expectedPatchSha256,
               "expectedPatchSha256",
             ),
+            decision: requiredReviewDecision(args.reviewDecision),
             reviewedBy: stringValue(args.reviewedBy) ?? controller.controller.jobId,
             reason: stringValue(args.reviewReason) ?? reviewNote,
             approvedFiles: requiredStringArrayArg(
@@ -638,4 +699,11 @@ export async function projectControlMarkReviewedView(
       : {}),
     result: result as unknown as JsonObject,
   };
+}
+
+function requiredReviewDecision(value: unknown): ReviewDecisionStatus {
+  if (value === "approved") return ReviewDecisionStatus.Approved;
+  if (value === "rejected") return ReviewDecisionStatus.Rejected;
+  if (value === "needs_human") return ReviewDecisionStatus.NeedsHuman;
+  throw new Error("reviewed_worker_output_review_decision_required");
 }

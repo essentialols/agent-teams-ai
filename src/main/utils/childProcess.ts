@@ -36,7 +36,7 @@ function execFileAsync(
   options: ExecFileOptions = {}
 ): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const { timeout, killSignal, ...execOptions } = options;
+    const { timeout, killSignal, signal, ...execOptions } = options;
     const timeoutMs = typeof timeout === 'number' && timeout > 0 ? timeout : 0;
     const timeoutSignal = normalizeKillSignal(killSignal);
     let child: ChildProcess | null = null;
@@ -44,12 +44,41 @@ function execFileAsync(
     let stdoutText = '';
     let stderrText = '';
     let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+    const cleanup = (): void => {
+      timeoutHandle = cleanupTimedCliProcess(child, timeoutHandle);
+      signal?.removeEventListener('abort', handleAbort);
+    };
+    const rejectAborted = (): void => {
+      const error = new Error(`Command aborted: ${cmd} ${args.join(' ')}`);
+      error.name = 'AbortError';
+      Object.assign(error, {
+        killed: true,
+        signal: timeoutSignal,
+        stdout: stdoutText,
+        stderr: stderrText,
+      });
+      reject(error);
+    };
+    const handleAbort = (): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      killProcessTree(child, timeoutSignal);
+      rejectAborted();
+    };
+    if (signal?.aborted) {
+      settled = true;
+      rejectAborted();
+      return;
+    }
     child = execFile(cmd, args, execOptions, (err, stdout, stderr) => {
       if (settled) {
         return;
       }
       settled = true;
-      timeoutHandle = cleanupTimedCliProcess(child, timeoutHandle);
+      cleanup();
       if (err) {
         const normalizedError =
           err instanceof Error ? err : new Error(typeof err === 'string' ? err : 'Unknown error');
@@ -62,19 +91,22 @@ function execFileAsync(
     });
     if (!settled) {
       trackCliProcess(child);
-      if (timeoutMs > 0) {
+      signal?.addEventListener('abort', handleAbort, { once: true });
+      if (timeoutMs > 0 || signal) {
         child.stdout?.on('data', (chunk: Buffer | string) => {
           stdoutText = boundExecCliTimeoutOutput(stdoutText + chunk.toString());
         });
         child.stderr?.on('data', (chunk: Buffer | string) => {
           stderrText = boundExecCliTimeoutOutput(stderrText + chunk.toString());
         });
+      }
+      if (timeoutMs > 0) {
         timeoutHandle = setTimeout(() => {
           if (settled) {
             return;
           }
           settled = true;
-          timeoutHandle = cleanupTimedCliProcess(child, timeoutHandle);
+          cleanup();
           killProcessTree(child, timeoutSignal);
           const error = new Error(
             `Command timed out after ${timeoutMs}ms: ${cmd} ${args.join(' ')}`

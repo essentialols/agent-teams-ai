@@ -8,42 +8,46 @@ not redefine product architecture or turn preserved evidence into worker instruc
 1. Read the baseline in `START_HERE.md`.
 2. Confirm the route in [`EXECUTION_INDEX.json`](EXECUTION_INDEX.json).
 3. Read the current [`Phase 1 controller packet`](phase-01/controller-packet.md).
-4. Read exactly one assigned lane packet.
-5. Read only exact lane references listed in the runtime contract.
+4. Read the single assigned [`P1.R1 review packet`](phase-01/lanes/p1-r1-review.md).
+5. Read only the exact inputs listed by that packet.
 
 On conflict, stop with `packet_conflict`. A packet may narrow its authority but may not broaden scope,
-change an ADR, weaken a guardrail, or skip an exit gate.
+change an ADR, weaken a guardrail, skip a gate, or repair a reviewed input.
+
+## Accepted P1.S2 provenance
+
+P1.S2 is accepted and policy-integrated/pushed. Its canonical lineage is:
+
+- accepted router/start commit `a0dc964e9a71b782b1bbad4769db62a691e50c97`;
+- independently accepted routes commit `74038b54eee23e93798b3aa5d11411d3f7e9adcf`;
+- independently accepted conformance and canonical combined commit
+  `6a9e9ab714359638fb93a6880855a53c9e8ef4be`.
+
+Independent admission reviewer `agent-teams-hosted-web-refactor-p1-s2-admission-review-v15-r2`
+returned `ACCEPT` for combined input `02a6b3ac5ac2baaad55c413f8547252dddee4d41` with exactly 37
+disjoint paths, routes 16/16, conformance 13/13, lint, Prettier, diff, and secret checks green, only the
+unchanged seven inherited Phase 0 typecheck diagnostics, no P0/P1/P2 finding, and a clean workspace.
+That input and canonical P1.S2 have identical tree `22020029327465ed389cd4479db340082ae81601`.
 
 ## Current execution
 
-Phase 0 and P1.S0 are accepted history. P1.S1 foundations and the bounded schema-version remediation
-were independently accepted and integrated in canonical commit
-`041b5c7c2d3225b7dc2eca9e9b7b71aa33217060`; this disposition supersedes the remediation handoff's
-then-unverified review and integration claims without rewriting that preserved handoff.
+P1.R1 is the sole current node. Its only packet is
+[`p1-r1-review.md`](phase-01/lanes/p1-r1-review.md). Capacity is zero until this exact seven-path
+docs-only router commit is integrated and its successor controller reports `live=true`; afterward
+capacity is exactly one formal reviewer.
 
-P1.S2 is current. Its sole router packet set is:
-
-- [`p1-s2-routes.md`](phase-01/lanes/p1-s2-routes.md) for `P1.1B.ROUTES` and
-  `P1.1B.CAPABILITIES`;
-- [`p1-s2-conformance.md`](phase-01/lanes/p1-s2-conformance.md) for `P1.1C.CONFORMANCE` and
-  `P1.1C.RATCHETS`.
-
-These are exactly two parallel producer slots with disjoint writer sets frozen by the accepted
-ownership manifest. Neither lane may edit the other's paths, shared/global files, documentation,
-research, dependencies, configuration, or production transport registration.
-
-## Launch boundary
-
-No product worker may start from the canonical P1.S1 commit alone. The exact docs-only router commit
-must first be integrated, and the successor controller must be live with `live=true`. Each
-`worker-start-v1` contract must bind that router commit as `planBundleCommit` and `phaseStartSha`,
-`041b5c7c2d3225b7dc2eca9e9b7b71aa33217060` as `baseSha`, and exactly one of the two current lane
-packets. Before both gates, current producer count is zero; after them, capacity is exactly one worker
-per lane and two total. This packet production does not launch either worker.
+The reviewer must be independent from both P1.S2 producers and the admission reviewer above. It
+reviews canonical `6a9e9ab714359638fb93a6880855a53c9e8ef4be`, may write only
+`docs/research/hosted-web/phase-1/reviews/routes-ratchets.md`, runs the packet's exact architecture,
+scope, negative, focused, and hygiene gates, and returns exactly `ACCEPT` or `REJECT`. It may not
+repair, integrate, or extend the input.
 
 ## Blocked successors and evidence boundary
 
-P1.S3/P1.R1, P1.S4, P1.S5, Phase 2, and all later work remain blocked. Completion of both producers
-returns two handoffs to the controller; it does not start review, integration, feature-slice, or
-production work. `docs/research/hosted-web` remains preserved evidence and may be read only by exact
-path when a current packet requires it.
+P1.1D, P1.R2, integration/P1.I, P1.F, Phase 2, and all later work remain blocked. A P1.R1 `ACCEPT` is
+necessary but not sufficient to start any of them: the accepted review must be integrated and a later
+reviewed router transition must separately advance authority. `REJECT` leaves the same nodes blocked.
+
+All existing product, test, handoff, and research evidence paths are read-only. The only writable
+research path is the new review result explicitly owned by the current packet. This transition does
+not launch a worker or controller.

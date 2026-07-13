@@ -1,104 +1,128 @@
-# Phase 1 controller packet: P1.1D transport-neutral team-lifecycle read
+# Phase 1 controller packet: P1.1D additive-response remediation
 
 ## Status and authority
 
-- Current node: `P1.1D`
-- Canonical product base: `759a5d4f45c2142485a0acc13760f3de4d0ff6ea`
-- Accepted predecessor: formal P1.R1 `ACCEPT`, policy-integrated at the canonical base
-- Current packet: `phase-01-p1-1d-team-lifecycle-read-r1`
-- Capacity after admission: exactly one serial producer
+- Current node: `P1.1D-additive-response-remediation`
+- Canonical remediation base: `1b37afb02bec25a1f08432d733595b553101ecab`
+- Accepted predecessor: formal P1.R1 `ACCEPT`, policy-integrated at
+  `759a5d4f45c2142485a0acc13760f3de4d0ff6ea`
+- Superseded worker-start packet: `phase-01-p1-1d-team-lifecycle-read-r1`
+- Current packet: `phase-01-p1-1d-additive-response-remediation-r1`
+- Capacity after admission: exactly one serial, one-shot remediation producer
 - Producer handoff: `.codex-handoff/phase-01-p1-1d.json`
-- Blocked: P1.R2, integration/P1.I, P1.F, and Phase 2+
+- Required disposition before any integration: independent `ACCEPT`
+- Blocked: P1.R2, P1.I, P1.F, and Phase 2+
 
-This transition authorizes one bounded product node. It does not reopen P1.R1, authorize another
-producer, review or integrate a handoff, mount a transport, or advance a successor.
+This transition replaces worker-start authority for the rejected P1.1D attempt. It does not alter
+accepted P1.R1, revive or integrate r3, authorize a second producer, perform review or integration,
+mount a transport, or advance a successor node.
 
-## Accepted P1.R1 provenance
+## Exact rejected-candidate provenance
 
-| Field                  | Accepted value                                                |
-| ---------------------- | ------------------------------------------------------------- |
-| Reviewer               | `agent-teams-hosted-web-refactor-p1-r1-review-v16-r1`         |
-| Review evidence commit | `759a5d4f45c2142485a0acc13760f3de4d0ff6ea`                    |
-| Disposition            | `ACCEPT`                                                      |
-| Routes                 | 16/16                                                         |
-| Conformance            | 13/13                                                         |
-| P0 / P1 / P2 findings  | 0 / 0 / 0                                                     |
-| Preserved result       | `docs/research/hosted-web/phase-1/reviews/routes-ratchets.md` |
+| Field               | Value                                                              |
+| ------------------- | ------------------------------------------------------------------ |
+| Producer job        | `agent-teams-hosted-web-refactor-p1-1d-producer-v17-r3`            |
+| Candidate base      | `1b37afb02bec25a1f08432d733595b553101ecab`                         |
+| Patch SHA-256       | `a7d5539e68e62b1c64e5cdf663bc784d92d4db03e74a0087e29d9bb3b2faa7ee` |
+| Review disposition  | `REJECT`                                                           |
+| Finding severity    | P1                                                                 |
+| Integration status  | never integrated                                                   |
+| Preservation status | immutable rejected evidence                                        |
 
-The accepted result proves the P1.S2 route/catalog and conformance inputs reviewed there. It leaves
-P1.1D semantics and their positive neighbors unverified, which is the exact work this packet now
-owns. The result and every other research-evidence path remain immutable.
+The independent watchdog record states verbatim:
+
+> FORMAL REJECT P1 by independent watchdog. Same-version response parsers exact-key reject additive
+> fields for success, failure, inapplicable, and nested item values, contrary to phase-01 response
+> compatibility policy. Requests remain strict. Preserve immutable output and rejected patch
+> a7d5539e68e62b1c64e5cdf663bc784d92d4db03e74a0087e29d9bb3b2faa7ee; do not integrate or modify.
+> Authorized next action is one docs-only remediation router from canonical
+> 1b37afb02bec25a1f08432d733595b553101ecab.
+
+The patch, rejected handoff, recorded hashes, worker workspace, and review record retain their exact
+bytes and rejected disposition. They have no current authority. A future producer may read that
+artifact and reproduce useful narrow work in a new isolated worktree, but may not edit it, apply it to
+an integration branch, treat its green checks as current proof, or copy its handoff/hashes as the new
+candidate's proof.
 
 ## Outcome
 
-Produce the first feature-owned, transport-neutral team-lifecycle read/list proof:
+Produce a fresh nine-path P1.1D candidate that keeps every valid original deliverable and gate while
+closing only the additive-response finding:
 
-1. a narrow versioned request/response contract and runtime parser using the accepted hosted shared
-   kernel;
-2. a pure application port and list use case with deterministic safe outcomes;
-3. narrow browser-safe public entrypoints;
-4. focused product and architecture tests that prove `P1.NEG.SEMANTIC_OUTCOME` and the remaining
-   P1.1D positive neighbors for `P1.NEG.LEGACY_GOD_DTO` and
-   `P1.NEG.NO_FILESYSTEM_ADAPTER_PHASE1`; and
-5. one structured handoff carrying evidence IDs `P1.1D.TEAM_LIFECYCLE_READ_CONTRACT`,
-   `P1.1D.TEAM_LIFECYCLE_READ_USE_CASE`, and `P1.1D.TEAM_LIFECYCLE_SEMANTIC_PROOF`.
+1. keep request objects strict at the top-level and nested query-context boundary;
+2. for every same-version response variant, validate every declared known field before considering
+   additive fields;
+3. build and return a fresh known-field-only projection, never the input object or a spread retaining
+   additive state;
+4. discard additive own string and symbol fields from top-level success, failure, and inapplicable
+   response objects and from nested list-item and safe-error response objects;
+5. reject unsupported versions, missing or invalid known fields, and invalid semantic combinations
+   even when additive fields are present;
+6. rerun every original P1.1D semantic, negative, architecture, quality, provenance, ownership, hash,
+   and safety gate; and
+7. regenerate `.codex-handoff/phase-01-p1-1d.json`, every per-file SHA-256, and the deterministic
+   patch SHA-256 from the new worktree.
 
-This node proves contracts and application semantics only. It deliberately stops before a driving or
-driven production adapter.
+The evidence IDs remain `P1.1D.TEAM_LIFECYCLE_READ_CONTRACT`,
+`P1.1D.TEAM_LIFECYCLE_READ_USE_CASE`, and `P1.1D.TEAM_LIFECYCLE_SEMANTIC_PROOF`. The output is a
+candidate only until a distinct reviewer returns `ACCEPT`.
 
-## Immutable inputs and dependencies
+## Immutable inputs and non-goals
 
-- P1.1A shared contract conventions accepted at `041b5c7c2d3225b7dc2eca9e9b7b71aa33217060`.
-- P1.1B/P1.1C routes, capability assertions, semantic harness, fixture corpus, and ratchets accepted
-  at `6a9e9ab714359638fb93a6880855a53c9e8ef4be`.
-- Formal P1.R1 `ACCEPT` integrated at `759a5d4f45c2142485a0acc13760f3de4d0ff6ea`.
-- `docs/FEATURE_ARCHITECTURE_STANDARD.md`, the P1.1D packet, and the two Phase 1 sections named by
-  that packet.
+Immutable inputs include the accepted P1.1A shared kernel, accepted P1.1B/P1.1C routes and
+conformance, formal P1.R1, canonical router commit `1b37afb02bec25a1f08432d733595b553101ecab`, the
+original P1.1D packet, the frozen synthetic fixture corpus, and the rejected r3 artifact and review
+record. No input is repaired or rewritten.
 
-P1.1D depends on those exact accepted inputs. It does not depend on or authorize P1.R2, an IPC/HTTP
-adapter, renderer work, production composition, or any Phase 2+ artifact.
+No IPC/HTTP route, client, handler, or conformance adapter; preload/renderer surface; filesystem or
+infrastructure adapter; route catalog; production composition/mount; fake browser; real app/runtime/
+project/provider; package/config/lockfile; fixture; shared-kernel; research; evidence-catalog; or
+orchestration change is in scope. This node makes no transport parity, production support, Phase 1
+completion, or later-phase claim.
 
-## Launch gate
+## Launch gate and exact worker identity
 
 This packet is dormant until both conditions are true:
 
-1. the exact docs-only router commit containing this controller packet, the single P1.1D packet, and
-   the consistent router/index updates is policy-integrated after canonical P1.R1; and
+1. the exact seven-path docs-only router containing this controller packet and the one remediation
+   lane is policy-integrated after `1b37afb02bec25a1f08432d733595b553101ecab`; and
 2. the successor controller responsible for that integrated packet reports exactly `live=true`.
 
-No controller exists or is launched by this docs change. Before both conditions, producer capacity is
-zero. After both, the single `worker-start-v1` contract must bind:
+No controller is created or launched by this docs change. Before both conditions, producer capacity
+is zero. After both, one `worker-start-v1` contract must bind:
 
 - `projectId: agent-teams-hosted-web-refactor`;
-- `phaseId: phase-01`, `laneId: p1-1d`, and
-  `baseSha: 759a5d4f45c2142485a0acc13760f3de4d0ff6ea`;
-- the integrated router commit as both `planBundleCommit` and `phaseStartSha`;
-- this controller packet and `lanes/p1-1d-team-lifecycle-read.md` at revision
-  `phase-01-p1-1d-team-lifecycle-read-r1`;
-- one controller job and one source worktree; and
-- the exact reads, writer paths, checks, evidence IDs, handoff, and stop conditions in the lane
-  packet.
+- `phaseId: phase-01` and `laneId: p1-1d-additive-response-remediation`;
+- `packetRevision: phase-01-p1-1d-additive-response-remediation-r1`;
+- `baseSha: 1b37afb02bec25a1f08432d733595b553101ecab`;
+- the integrated remediation-router commit as both `planBundleCommit` and `phaseStartSha`;
+- this controller packet and
+  `docs/hosted-web-phases/phase-01/lanes/p1-1d-additive-response-remediation.md`;
+- the rejected r3 patch SHA-256 and formal `REJECT` record as immutable read-only salvage input;
+- one new isolated source worktree and one producer; and
+- the exact mandatory reads, nine writable paths, checks, evidence IDs, handoff, and stop conditions
+  in the lane packet.
 
-Any pre-integration start, `live!=true`, stale base, mixed packet/revision, second producer, extra
-writable path, review/integration contract, or later-node contract fails closed with `packet_stale` or
+The integrated router commit must differ from `baseSha` on exactly the seven router paths below. Any
+pre-integration start, `live!=true`, stale/mixed identity, second producer, reused rejected worktree,
+extra writable path, integration contract, or later-node contract fails closed with `packet_stale` or
 `packet_conflict`.
 
-The router commit may differ from canonical P1.R1 on exactly these seven contract-owned documentation
-paths:
+## Exact seven-path router ownership
 
-- `docs/hosted-web-phases/START_HERE.md`
-- `docs/hosted-web-phases/README.md`
-- `docs/hosted-web-phases/EXECUTION_INDEX.json`
-- `docs/hosted-web-phases/phase-01/README.md`
-- `docs/hosted-web-phases/phase-01/controller-packet.md`
-- `docs/hosted-web-phases/phase-01/execution-dag.md`
-- `docs/hosted-web-phases/phase-01/lanes/p1-1d-team-lifecycle-read.md`
+1. `docs/hosted-web-phases/START_HERE.md`
+2. `docs/hosted-web-phases/README.md`
+3. `docs/hosted-web-phases/EXECUTION_INDEX.json`
+4. `docs/hosted-web-phases/phase-01/README.md`
+5. `docs/hosted-web-phases/phase-01/controller-packet.md`
+6. `docs/hosted-web-phases/phase-01/execution-dag.md`
+7. `docs/hosted-web-phases/phase-01/lanes/p1-1d-additive-response-remediation.md`
 
-The prior `lanes/p1-r1-review.md` and accepted review result are preserved, not router-owned. Any
-eighth path, or any product, test, fixture, handoff, review-evidence, package, or config change in this
-router rejects the transition.
+The original `lanes/p1-1d-team-lifecycle-read.md`, every product/test/handoff path, accepted review
+evidence, and external r3 artifact are read-only for this router author. An eighth path rejects this
+transition.
 
-## Exact producer ownership
+## Exact remediation-producer ownership
 
 Product paths:
 
@@ -118,79 +142,106 @@ Handoff path:
 
 - `.codex-handoff/phase-01-p1-1d.json`
 
-The three sets are exact and mutually disjoint: five product + three test + one handoff = nine total
-paths. All are exclusive to the one producer. Every unlisted path is read-only.
+The sets are exact and mutually disjoint: five product + three test + one handoff = nine paths. All
+other repository paths are read-only.
 
-## Non-goals and architecture boundary
+## Contract correction invariant
 
-P1.1D must preserve the standard feature boundaries:
+Request and response policy is intentionally asymmetric:
 
-- contracts contain only DTOs, parsers, constants, and browser-safe shared contract imports;
-- core application contains only the source port and use-case orchestration;
-- test-owned in-memory values may implement the port, but product code contains no fake adapter;
-- Electron, preload, renderer, IPC, HTTP/Fastify, filesystem/path/process, infrastructure,
-  composition, route registration, and production mounts remain absent; and
-- app shell, RouteCatalog/capabilities, fixtures, shared kernel, dependencies, package/config, and
-  existing handoffs/evidence remain unchanged.
+- Requests validate every known field and reject every unknown own string or symbol field. This
+  strictness applies to the request top level and nested query context. The remediation must not
+  weaken `createQueryContext` or any accepted shared parser.
+- Same-version responses first require and validate every known field. Only after validation may
+  additive fields be ignored. Missing/invalid known fields, invalid discriminants/combinations,
+  malformed IDs/revisions/cursors, and unsupported schema versions still fail safely.
+- Successful parsing constructs fresh frozen values containing only declared known fields. It never
+  returns an input object/array by reference, spreads unknown input state, or mutates the source.
+- Additive own string and symbol fields are accepted then discarded at each response-object boundary:
+  success, failure, and inapplicable top levels; every success `items[]` entry; and the nested safe
+  `error` object in a failure.
+- Tests must prove the returned projections lack the additive keys/symbols. Merely proving that the
+  source object retains them is insufficient.
+- Tests must combine an additive field with each missing or invalid known-field case and prove the
+  known-field error still wins. Additive data is never a bypass or substitute for required data.
 
-No fake browser implementation, real runtime/project access, raw provider/runtime payload, legacy
-aggregate team DTO, path-bearing contract, transport-only error, or Phase 1 completion claim is
-allowed.
+All other original contract, semantic-outcome, ordering, safe-error, path/secret exclusion,
+feature-boundary, and public-entrypoint requirements remain unchanged.
 
 ## Definition of Ready
 
 - [ ] This exact seven-path router is policy-integrated after
-      `759a5d4f45c2142485a0acc13760f3de4d0ff6ea`.
+      `1b37afb02bec25a1f08432d733595b553101ecab`.
 - [ ] The successor controller reports `live=true` and binds the integrated router SHA.
-- [ ] Exactly one producer starts from the canonical base with packet revision
-      `phase-01-p1-1d-team-lifecycle-read-r1`.
-- [ ] The nine producer paths are absent or unchanged at the canonical base as classified by the
-      packet, and the source worktree has no unclassified change.
-- [ ] No P1.R2, integration, P1.F, Phase 2+, transport, renderer, filesystem, or runtime worker exists.
+- [ ] The runtime verifies the rejected artifact hash and formal `REJECT` without changing either.
+- [ ] Exactly one producer starts in a fresh isolated worktree with the current remediation revision.
+- [ ] The nine producer paths match the canonical base before salvage; every other path is unchanged.
+- [ ] No prior attempt consumed this one-shot packet revision and no other producer/reviewer exists.
+- [ ] P1.R2, P1.I, P1.F, Phase 2+, transport, renderer, filesystem, runtime, integration, and launch
+      work remain absent.
 
-Failure of any item stops admission. This router author cannot launch, repair, integrate, commit, or
-push.
-
-## Monitoring and stop conditions
-
-While the one producer exists, the successor controller checks useful progress, packet/base/start
-freshness, exact ownership, and boundary compliance at least every ten minutes. Stop on stale runtime
-facts, a second worker, an unowned path, accepted-input drift, an IPC/HTTP/preload/renderer or
-filesystem change, production mount, package/config edit, fake browser implementation, real
-runtime/project access, secret/private-path evidence, inherited-diagnostic drift, or later-node
-activity. Return the blocker record from `PACKET_STANDARD.md`; do not retry, refill, widen, repair
-outside ownership, or convert production into integration work.
+Failure of any item stops admission. This router author cannot repair product code, launch a worker or
+reviewer, integrate, commit, or push.
 
 ## Producer completion gate
 
-- [ ] Only the exact nine producer-owned paths changed.
+- [ ] Exactly the nine producer-owned paths changed and nothing is staged.
 - [ ] All three evidence IDs are `target_verified` and map only to owned paths.
-- [ ] The narrow DTO/parser and pure list use case pass the packet's positive, negative, boundary,
-      focused, lint, typecheck-classification, Prettier, diff, ownership, and safety gates.
-- [ ] `P1.NEG.SEMANTIC_OUTCOME` rejects the deliberate drift and its adjacent valid outcomes pass.
-- [ ] The legacy-god-DTO and no-filesystem P1.1D positive neighbors pass without weakening the
-      inherited ratchets.
-- [ ] The handoff records all commands, exit codes, hashes, findings, unverified claims, and exact
-      next action `review`.
-- [ ] No adapter, transport, production mount, integration, commit, push, review, or successor exists.
+- [ ] Every original positive semantic scenario and all three original negative/positive-neighbor rows
+      pass with their exact diagnostics.
+- [ ] Additive fields are accepted and discarded at all five response-object categories after
+      known-field validation; returned values are fresh known-field-only projections.
+- [ ] Top-level and nested request unknown fields remain rejected, including symbol fields.
+- [ ] Invalid/missing known response fields and unsupported versions still reject in the presence of
+      additive fields.
+- [ ] Every original focused/ratchet test, lint, inherited-typecheck classification, Prettier, diff,
+      provenance, ownership, binary, and lexical safety gate passes.
+- [ ] The handoff is regenerated with the current packet/base/start identity, rejected-r3 provenance,
+      all commands/counts, a complete negative/additive matrix, new per-file hashes, and a new patch
+      hash; it does not reuse r3 hashes.
+- [ ] No adapter, transport, mount, real runtime/project, integration, commit, push, P1.R2, P1.I,
+      P1.F, or Phase 2+ work exists.
 
-Successful production returns the handoff for a later review/router decision. P1.R2, P1.I, P1.F, and
-Phase 2+ remain blocked.
+Successful production returns only a candidate with `nextAction: "review"`.
 
-## Focused docs-router checks
+## Independent review gate
 
-The router author runs only these checks before handoff:
+The reviewer must be a new job and isolated worktree, distinct from this router author and all P1.1D
+producers. The reviewer must independently inspect the complete nine-path diff, rerun every required
+command, reproduce all observed counts, recompute all hashes, exercise the full additive/strictness
+matrix, verify r3 remains immutable and unintegrated, and return an explicit `ACCEPT` or `REJECT` with
+P0/P1/P2 findings.
+
+Only `ACCEPT` makes the candidate eligible for a separately authorized integration. This router does
+not authorize or perform that integration. `REJECT`, `blocked`, or missing evidence ends this one-shot
+node; there is no retry/refill. Independent `ACCEPT` and even later remediation integration still do
+not authorize P1.R2, P1.I, P1.F, or Phase 2+.
+
+## Monitoring and stop conditions
+
+The live successor controller checks useful progress, base/start/packet freshness, single-worker
+cardinality, exact ownership, rejected-artifact immutability, request strictness, response projection,
+and architecture boundaries at least every ten minutes. Stop on stale identity, a second worker,
+unowned or staged changes, accepted/rejected input mutation, failed additive or known-field negative,
+weakened strict request parsing, reused r3 handoff/hash, inherited-diagnostic drift, an adapter/mount/
+runtime/config/research edit, sensitive or binary data, or later-node activity. Return the blocker
+record from `PACKET_STANDARD.md`; do not retry, refill, widen, repair outside ownership, or salvage into
+another worktree.
+
+## Exact docs-router checks
+
+Run each command independently from this worktree:
 
 ```bash
 export PATH=/usr/local/bin:/usr/bin:/bin:$PATH
 node <<'NODE'
 const fs = require('node:fs')
 const path = require('node:path')
-const same = (actual, expected) =>
-  actual.length === expected.length && actual.every((value, index) => value === expected[index])
 const assert = (condition, message) => {
   if (!condition) throw new Error(message)
 }
+const same = (actual, expected) =>
+  actual.length === expected.length && actual.every((value, index) => value === expected[index])
 const routerPaths = [
   'docs/hosted-web-phases/START_HERE.md',
   'docs/hosted-web-phases/README.md',
@@ -198,7 +249,7 @@ const routerPaths = [
   'docs/hosted-web-phases/phase-01/README.md',
   'docs/hosted-web-phases/phase-01/controller-packet.md',
   'docs/hosted-web-phases/phase-01/execution-dag.md',
-  'docs/hosted-web-phases/phase-01/lanes/p1-1d-team-lifecycle-read.md',
+  'docs/hosted-web-phases/phase-01/lanes/p1-1d-additive-response-remediation.md',
 ]
 const productPaths = [
   'src/features/team-lifecycle/contracts/team-lifecycle-read.ts',
@@ -213,37 +264,40 @@ const testPaths = [
   'test/architecture/hosted-web/phase-1/team-lifecycle/team-lifecycle-read-boundaries.test.ts',
 ]
 const handoffPaths = ['.codex-handoff/phase-01-p1-1d.json']
-const index = JSON.parse(fs.readFileSync('docs/hosted-web-phases/EXECUTION_INDEX.json', 'utf8'))
-assert(index.currentExecutableSubphase === 'P1.1D', 'wrong current subphase')
-assert(same(index.currentExecutableNodes, ['P1.1D']), 'wrong executable nodes')
-assert(index.currentRoute.baseSha === '759a5d4f45c2142485a0acc13760f3de4d0ff6ea', 'wrong base')
+const index = JSON.parse(fs.readFileSync(routerPaths[2], 'utf8'))
+const node = 'P1.1D-additive-response-remediation'
+assert(index.currentExecutableSubphase === node, 'wrong current subphase')
+assert(same(index.currentExecutableNodes, [node]), 'wrong executable nodes')
+assert(index.currentRoute.baseSha === '1b37afb02bec25a1f08432d733595b553101ecab', 'wrong base')
 assert(index.currentRoute.lanePackets.length === 1, 'lane count is not one')
 assert(index.currentRoute.lanePackets[0].path === routerPaths[6], 'wrong lane path')
 assert(
   index.currentRoute.lanePackets[0].packetRevision ===
-    'phase-01-p1-1d-team-lifecycle-read-r1',
-  'wrong packet revision',
+    'phase-01-p1-1d-additive-response-remediation-r1',
+  'wrong packet revision'
 )
-const review = index.acceptedPhase1FormalRoutesAndRatchetsReview
-assert(review.commit === '759a5d4f45c2142485a0acc13760f3de4d0ff6ea', 'wrong review commit')
+assert(index.rejectedP11dR3Candidate.disposition === 'REJECT', 'wrong r3 disposition')
+assert(index.rejectedP11dR3Candidate.immutable === true, 'r3 is not immutable')
+assert(index.rejectedP11dR3Candidate.integrated === false, 'r3 marked integrated')
 assert(
-  review.reviewer === 'agent-teams-hosted-web-refactor-p1-r1-review-v16-r1',
-  'wrong reviewer',
+  index.rejectedP11dR3Candidate.patchSha256 ===
+    'a7d5539e68e62b1c64e5cdf663bc784d92d4db03e74a0087e29d9bb3b2faa7ee',
+  'wrong r3 patch'
 )
-assert(review.disposition === 'ACCEPT', 'wrong disposition')
-assert(review.routesTests === '16/16' && review.conformanceTests === '13/13', 'wrong counts')
-assert(Object.values(review.findings).every(value => value === 0), 'nonzero finding')
-assert(same(index.authorization.authorizedNodes, ['P1.1D']), 'wrong authorization')
+assert(same(index.authorization.authorizedNodes, [node]), 'wrong authorization')
 assert(
   same(index.authorization.blocked, ['P1.R2', 'P1.I', 'P1.F', 'Phase 2+']),
-  'wrong blocked set',
+  'wrong blocked set'
 )
-assert(same(index.p11dExclusiveOwnership.productPaths, productPaths), 'product ownership drift')
-assert(same(index.p11dExclusiveOwnership.testPaths, testPaths), 'test ownership drift')
-assert(same(index.p11dExclusiveOwnership.handoffPaths, handoffPaths), 'handoff ownership drift')
+assert(index.authorization.independentReviewRequiredBeforeIntegration === true, 'review not required')
+assert(index.authorization.integrationAuthorized === false, 'integration authorized')
+const owned = index.p11dAdditiveResponseRemediationExclusiveOwnership
+assert(same(owned.productPaths, productPaths), 'product ownership drift')
+assert(same(owned.testPaths, testPaths), 'test ownership drift')
+assert(same(owned.handoffPaths, handoffPaths), 'handoff ownership drift')
 assert(new Set([...productPaths, ...testPaths, ...handoffPaths]).size === 9, 'ownership overlap')
 for (const routerPath of routerPaths) assert(fs.existsSync(routerPath), `missing ${routerPath}`)
-for (const routerPath of routerPaths.filter(value => value.endsWith('.md'))) {
+for (const routerPath of routerPaths.filter((value) => value.endsWith('.md'))) {
   const source = fs.readFileSync(routerPath, 'utf8')
   for (const match of source.matchAll(/\]\(([^)]+)\)/g)) {
     const target = match[1].replace(/^<|>$/g, '').split('#')[0]
@@ -253,12 +307,25 @@ for (const routerPath of routerPaths.filter(value => value.endsWith('.md'))) {
 }
 console.log('router-json-links-provenance: ok')
 NODE
-pnpm exec prettier --write docs/hosted-web-phases/START_HERE.md docs/hosted-web-phases/README.md docs/hosted-web-phases/EXECUTION_INDEX.json docs/hosted-web-phases/phase-01/README.md docs/hosted-web-phases/phase-01/controller-packet.md docs/hosted-web-phases/phase-01/execution-dag.md docs/hosted-web-phases/phase-01/lanes/p1-1d-team-lifecycle-read.md
-pnpm exec prettier --check docs/hosted-web-phases/START_HERE.md docs/hosted-web-phases/README.md docs/hosted-web-phases/EXECUTION_INDEX.json docs/hosted-web-phases/phase-01/README.md docs/hosted-web-phases/phase-01/controller-packet.md docs/hosted-web-phases/phase-01/execution-dag.md docs/hosted-web-phases/phase-01/lanes/p1-1d-team-lifecycle-read.md
+cd .. && node -e "JSON.parse(require('node:fs').readFileSync('docs/hosted-web-phases/EXECUTION_INDEX.json','utf8'))"
+cd .. && pnpm exec prettier --check docs/hosted-web-phases/START_HERE.md docs/hosted-web-phases/README.md docs/hosted-web-phases/EXECUTION_INDEX.json docs/hosted-web-phases/phase-01/README.md docs/hosted-web-phases/phase-01/controller-packet.md docs/hosted-web-phases/phase-01/execution-dag.md docs/hosted-web-phases/phase-01/lanes/p1-1d-additive-response-remediation.md
+cd .. && git diff --check
+cd .. && git status --short
+```
+
+The four `cd ..` commands are the exact subscription-runtime checks and run from `src`. Run the
+embedded semantic verifier from the repository root. Also require:
+
+```bash
+git diff --exit-code HEAD -- docs/hosted-web-phases/phase-01/lanes/p1-1d-team-lifecycle-read.md
+test "$(git status --short)" = "$(printf '%s\n' ' M docs/hosted-web-phases/EXECUTION_INDEX.json' ' M docs/hosted-web-phases/README.md' ' M docs/hosted-web-phases/START_HERE.md' ' M docs/hosted-web-phases/phase-01/README.md' ' M docs/hosted-web-phases/phase-01/controller-packet.md' ' M docs/hosted-web-phases/phase-01/execution-dag.md' '?? docs/hosted-web-phases/phase-01/lanes/p1-1d-additive-response-remediation.md')"
+router_paths=(docs/hosted-web-phases/START_HERE.md docs/hosted-web-phases/README.md docs/hosted-web-phases/EXECUTION_INDEX.json docs/hosted-web-phases/phase-01/README.md docs/hosted-web-phases/phase-01/controller-packet.md docs/hosted-web-phases/phase-01/execution-dag.md docs/hosted-web-phases/phase-01/lanes/p1-1d-additive-response-remediation.md)
+rg -n -i '(-----BEGIN [A-Z ]*PR[I]VATE KEY-----|\bBearer[[:space:]]+[A-Za-z0-9]|\b(?:sk|ghp)_[A-Za-z0-9]{12,}|/(?:U[s]ers|h[o]me|r[o]ot)/|[A-Za-z]:\\U[s]ers\\|claude[-]runtime|(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|cookie|authorization|auth[_-]?payload|provider[_-]?payload|raw[_-]?(?:command|runtime)[_-]?body)[[:space:]]*[:=][[:space:]]*[^[:space:]]+)' "${router_paths[@]}"
+file --mime-type "${router_paths[@]}"
 git diff --check
-test "$(git status --short)" = "$(printf '%s\n' ' M docs/hosted-web-phases/EXECUTION_INDEX.json' ' M docs/hosted-web-phases/README.md' ' M docs/hosted-web-phases/START_HERE.md' ' M docs/hosted-web-phases/phase-01/README.md' ' M docs/hosted-web-phases/phase-01/controller-packet.md' ' M docs/hosted-web-phases/phase-01/execution-dag.md' '?? docs/hosted-web-phases/phase-01/lanes/p1-1d-team-lifecycle-read.md')"
 git status --short
 ```
 
-The expected final status is exactly the seven router paths listed above and no other path. These
-checks author a packet only; they do not start its producer.
+The high-signal lexical scan must exit 1 with zero matches; every file must be textual; the status must
+be exactly the seven router paths with nothing staged. These checks author a dormant packet only. End
+on `HOLD`: no commit, push, integration, reviewer/controller/producer launch, or later-node work.

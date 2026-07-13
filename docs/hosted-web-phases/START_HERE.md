@@ -2,8 +2,9 @@
 
 This is the canonical entrypoint for every hosted-web controller and worker. Phase 0 is accepted and
 frozen at `f4fa24aac9615a4ce10632965a2244a2e11a273e`. Phase 1 serial bootstrap, foundations,
-routes, and conformance are accepted. Formal P1.R1 review is `ACCEPT` and policy-integrated at
-canonical commit `759a5d4f45c2142485a0acc13760f3de4d0ff6ea`.
+routes, conformance, and formal P1.R1 are accepted. The original P1.1D router is canonical at
+`1b37afb02bec25a1f08432d733595b553101ecab`, but the P1.1D r3 implementation candidate was
+independently rejected and was never integrated.
 
 ## Deterministic reading order
 
@@ -15,47 +16,50 @@ Read only this bounded sequence before working:
 4. `docs/hosted-web-phases/README.md`, then `docs/hosted-web-phases/EXECUTION_INDEX.json`.
 5. The current `docs/hosted-web-phases/phase-01/controller-packet.md` named by the
    subscription-runtime `worker-start-v1` contract.
-6. The single assigned P1.1D lane packet:
-   `docs/hosted-web-phases/phase-01/lanes/p1-1d-team-lifecycle-read.md`.
+6. The single assigned remediation packet:
+   `docs/hosted-web-phases/phase-01/lanes/p1-1d-additive-response-remediation.md`.
 7. Only the exact files and plan headings in that packet's mandatory-read list.
 
-Do not recursively explore documentation or evidence directories. In particular,
-`docs/research/hosted-web` is preserved evidence, not a reading queue. The accepted P1.R1 result is
-an immutable input; this route grants no research-evidence write exception.
+Do not recursively explore documentation or evidence directories. Preserved research, accepted
+P1.R1 evidence, and the rejected r3 artifact are immutable inputs, not writer paths.
 
-## Start gate
+## Current route and start gate
 
-P1.1D is authorized but not self-starting. Its sole producer is forbidden until this exact seven-path
-docs-only router commit is policy-integrated after canonical P1.R1 and a successor controller reports
-exactly `live=true`. Only then may the hosting controller admit one producer through
-subscription-runtime's builtin `worker-start-v1` boundary, binding the integrated router commit as
-both `planBundleCommit` and `phaseStartSha`, canonical P1.R1 commit
-`759a5d4f45c2142485a0acc13760f3de4d0ff6ea` as `baseSha`, the controller packet, and the one current
-P1.1D packet. This repository contains no hosted-worker admission or launch implementation.
+The sole current node is `P1.1D-additive-response-remediation`. Capacity is zero until this exact
+seven-path docs-only router is policy-integrated after canonical router commit
+`1b37afb02bec25a1f08432d733595b553101ecab` and a successor controller reports exactly
+`live=true`. Only then may the hosting controller admit one serial remediation producer through the
+subscription-runtime builtin `worker-start-v1` boundary. The runtime must bind the integrated
+remediation-router commit as both `planBundleCommit` and `phaseStartSha`, canonical commit
+`1b37afb02bec25a1f08432d733595b553101ecab` as `baseSha`, the current controller packet, and the
+one remediation packet. This repository contains no hosted-worker admission or launch
+implementation.
 
-## Accepted P1.R1 provenance
+## Rejected r3 provenance
 
-Formal reviewer `agent-teams-hosted-web-refactor-p1-r1-review-v16-r1` returned `ACCEPT`. The review
-evidence is policy-integrated in canonical commit `759a5d4f45c2142485a0acc13760f3de4d0ff6ea` and records:
+Independent review returned formal `REJECT` with one P1 finding: same-version response parsers
+exact-key rejected additive fields for success, failure, inapplicable, and nested item values,
+contrary to the frozen Phase 1 response-compatibility policy. Requests correctly remained strict.
 
-- P0 findings: 0;
-- P1 findings: 0;
-- P2 findings: 0;
-- routes: 16/16; and
-- conformance: 13/13.
+The rejected subscription-runtime patch is
+`a7d5539e68e62b1c64e5cdf663bc784d92d4db03e74a0087e29d9bb3b2faa7ee`, produced by
+`agent-teams-hosted-web-refactor-p1-1d-producer-v17-r3` from canonical router commit
+`1b37afb02bec25a1f08432d733595b553101ecab`. Its nine-path output and review record remain immutable
+rejected evidence. They are not integrated, canonical, or executable authority. A remediation
+producer may consume that artifact read-only and reproduce useful work into a fresh candidate; it
+must never modify, relabel, or revive the rejected artifact or reuse its handoff/hashes as fresh
+proof.
 
-The result accepts P1.S2 routes, capabilities, conformance, and ratchets. It does not prove the first
-team-lifecycle list use case or authorize a transport, mount, runtime, or later phase.
+## Authority and blocked successors
 
-## Authority and preservation
+[`EXECUTION_INDEX.json`](EXECUTION_INDEX.json) classifies current authority and preserved history. A
+lower tier may narrow work but cannot broaden scope or weaken a guardrail. Existing evidence remains
+immutable under [`EVIDENCE_LIFECYCLE.md`](EVIDENCE_LIFECYCLE.md).
 
-[`EXECUTION_INDEX.json`](EXECUTION_INDEX.json) classifies execution authority, current-phase inputs,
-and preserved history. A lower tier may narrow work but cannot broaden scope or weaken a guardrail.
-Existing evidence is immutable input under [`EVIDENCE_LIFECYCLE.md`](EVIDENCE_LIFECYCLE.md).
-
-The current route authorizes exactly one serial P1.1D product node for a transport-neutral
-team-lifecycle read/list proof. It authorizes only the packet's exact product, test, and handoff paths.
+The current route authorizes only one fresh nine-path P1.1D additive-response remediation candidate.
 It authorizes no IPC or HTTP adapter, preload or renderer work, filesystem adapter, production mount,
-fake browser implementation, real runtime, review, integration, or release work. P1.R2, P1.I, P1.F,
-and Phase 2+ remain blocked even after the producer finishes; only a later docs-only router may
-advance them.
+fake browser implementation, real runtime, integration, commit, push, or launch by this docs author.
+The candidate must pass every original P1.1D gate and a distinct independent review must return
+`ACCEPT` before any separately authorized integration. P1.R2, P1.I, P1.F, and Phase 2+ remain blocked
+even after remediation or independent acceptance; only a later policy-integrated docs-only router
+with its own live successor controller may advance them.

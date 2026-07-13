@@ -52,6 +52,12 @@ function normalizeTask(rawTask, filePath) {
   if (!id) {
     throw new Error(`Task is missing id${filePath ? `: ${filePath}` : ''}`);
   }
+  if (filePath) {
+    const fileTaskId = path.basename(filePath, '.json');
+    if (id !== fileTaskId) {
+      throw new Error(`Task id "${id}" does not match file name "${fileTaskId}": ${filePath}`);
+    }
+  }
 
   const task = {
     ...rawTask,
@@ -534,7 +540,9 @@ function assertLegacyTaskMatchesCreationInput(task, input) {
         ? input.createdBy.trim()
         : undefined;
   if (task.createdBy !== expectedCreatedBy) {
-    throw new Error(`Task creation command conflict: legacy task ${task.id} does not match payload`);
+    throw new Error(
+      `Task creation command conflict: legacy task ${task.id} does not match payload`
+    );
   }
 }
 

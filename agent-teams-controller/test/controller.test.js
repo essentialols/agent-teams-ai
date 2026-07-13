@@ -2533,6 +2533,31 @@ controller.messages.sendMessage({
     expect(leadBriefing).toContain('anomalies=1');
   });
 
+  it('rejects payload and file task identity mismatches before an update can fork the row', async () => {
+    const claudeDir = makeClaudeDir();
+    const controller = createController({ teamName: 'my-team', claudeDir });
+    const task = controller.taskBoard.createTask({ subject: 'Stable identity' });
+    const taskPath = path.join(claudeDir, 'tasks', 'my-team', `${task.id}.json`);
+    const foreignTaskId = '11111111-1111-4111-8111-111111111111';
+    const persistedTask = readTaskFile(claudeDir, task.id);
+    persistedTask.id = foreignTaskId;
+    fs.writeFileSync(taskPath, JSON.stringify(persistedTask, null, 2), 'utf8');
+
+    expect(() =>
+      controller.taskBoard.updateTaskFields(task.id, { description: 'must not fork' })
+    ).toThrow(`Task id "${foreignTaskId}" does not match file name "${task.id}"`);
+    expect(fs.existsSync(path.join(claudeDir, 'tasks', 'my-team', `${foreignTaskId}.json`))).toBe(
+      false
+    );
+
+    const leadBriefing = await controller.taskBoard.leadBriefing();
+    expect(leadBriefing).toContain('Board anomalies:');
+    expect(leadBriefing).toContain(`unreadable_task (${foreignTaskId})`);
+    expect(leadBriefing).toContain(
+      `Task id "${foreignTaskId}" does not match file name "${task.id}"`
+    );
+  });
+
   it('caps large member briefings and points agents to drill-down tools', async () => {
     const claudeDir = makeClaudeDir();
     const controller = createController({ teamName: 'my-team', claudeDir });

@@ -1,77 +1,59 @@
-# Phase 1 execution entrypoint
+# Phase 1: contracts and conformance
 
-Status: **current only for one future serial `P1.S1` schema-version remediation node**. `P1.S2` and
-every later subphase remain blocked.
+Status: **P1.S2 router authority for exactly two parallel, non-overlapping producers after the launch
+gate**. P1.S3 and every later subphase remain blocked.
 
-Phase 0 is accepted and frozen at `f4fa24aac9615a4ce10632965a2244a2e11a273e`. That candidate
-includes the accepted fail-closed target-image narrowing, final gate, orchestration authority, bounded
-navigation contract, and estimate reconciliation. Exact-image construction and admission remain fail
-closed and belong to Phase 5; provider canaries, production composition, and terminal-negative
-admission remain explicit implementation risks. They do not reopen Phase 0.
+## Accepted predecessors
 
-`P1.S0` is accepted at `6f1a87daa9a4bfdf5d754347d92f313f28d0f95d`, an ancestor of the
-transition base `f12a85af0fddadd06f69a27ef408d26bc27eb3fc`. Its exact six bootstrap evidence
-paths are unchanged. The evidence continues to record the historical S0 worker `phaseStartSha`
-`5f30df49e052d1cc1d0e7efd03aa105673b5b614`; the transition does not rewrite it.
+P1.S0 is accepted at `6f1a87daa9a4bfdf5d754347d92f313f28d0f95d`; its six bootstrap evidence
+paths and historical `phaseStartSha` remain immutable. P1.S1 foundations and schema-version
+remediation are independently accepted and integrated in canonical commit
+`041b5c7c2d3225b7dc2eca9e9b7b71aa33217060`. The preserved remediation handoff remains historical
+input; this operator-directed disposition closes its then-unverified review and integration claims.
 
-Integrated P1.S1 commit `da9625e78c0c96699162793a7ebba0657140d937` preserves the useful `P1.1A`
-kernel. The authoritative operator-provided independent integration review finding is:
+## Current route
 
-> "Independent integration review formally REJECTED P1.S1 commit da9625e78 only for incomplete
-> P1.NEG.SCHEMA_VERSION."
+The route contains exactly these packets:
 
-> The router therefore authorizes exactly one future serial producer target: bounded revision/
-> schema-version remediation by `P1.1A-schema-version-remediation`. The remediation packet explicitly
-> supersedes `phase-01-s1-foundations-r1` as worker-start authority. `P1.S2` and all route/catalog,
-> conformance/ratchet, feature-slice, review, integration, and production transport work remain
-> blocked.
+1. [`controller-packet.md`](controller-packet.md)
+2. exactly one of:
+   - [`lanes/p1-s2-routes.md`](lanes/p1-s2-routes.md) — `P1.1B` route/catalog and capability
+     assertions;
+   - [`lanes/p1-s2-conformance.md`](lanes/p1-s2-conformance.md) — `P1.1C` conformance and ratchets.
 
-## Validated worker route
+The lanes may run concurrently only because the accepted ownership manifest gives them disjoint exact
+writer sets. Each worker receives one lane packet and may not repair, complete, or edit the other lane.
 
-The current route contains exactly these packets, in this order:
+## Launch and capacity
 
-1. `docs/hosted-web-phases/phase-01/controller-packet.md`
-2. `docs/hosted-web-phases/phase-01/lanes/p1-s1-schema-version-remediation.md`
+This docs-only transition does not launch workers. No product worker may start until the router commit
+containing these exact packets is integrated and a successor controller reports `live=true`. The
+runtime must bind the integrated router commit as both `planBundleCommit` and `phaseStartSha`, canonical
+P1.S1 commit `041b5c7c2d3225b7dc2eca9e9b7b71aa33217060` as `baseSha`, and exactly one lane packet.
 
-After both packets, read only the exact files in the subscription-runtime `worker-start-v1`
-contract. The documents below remain reference-on-demand; their presence in this directory is not an
-unconditional reading queue:
+Before that gate, capacity is zero. After it, capacity is exactly two producers total: one P1.1B and
+one P1.1C. There is no duplicate, refill, retry, replacement, reviewer, feature-slice, integration, or
+later-phase slot in this route.
 
-- `docs/hosted-web-phases/phase-01/packet-inputs.md`
-- `docs/hosted-web-phases/phase-01/architecture-and-contracts.md`
-- `docs/hosted-web-phases/phase-01/execution-dag.md`
-- `docs/hosted-web-phases/phase-01/conformance-and-tests.md`
-- `docs/hosted-web-phases/phase-01/operations-and-risk.md`
-- `docs/hosted-web-phases/phase-01/execution-packet-templates.md`
+## Scope and successor boundary
 
-## Planning result
+P1.1B owns only the exact RouteCatalog, route-type, route-test, negative-fixture, and handoff paths in
+its packet. P1.1C owns only the exact three scanners, architecture tests, synthetic fixture corpus,
+and handoff path in its packet. Package/lock/config files, legacy APIs, global composition, production
+IPC/HTTP/preload/renderer registration, documentation, and research are read-only to both.
 
-The proposed first proof is a paginated, read-only `ListTeamLifecycleSummaries` use case. It is chosen
-because the legacy `TeamsAPI.list`, IPC `team:list`, HTTP `GET /api/teams`, and browser stub expose the
-same visible seam while currently disagreeing on errors and browser support. Phase 1 would prove the
-new application seam with in-memory fixtures plus IPC-shaped and HTTP-shaped adapters that live only
-inside an isolated conformance test composition. Neither adapter can be imported or registered by a
-production composition. Phase 1 would **not** cut the renderer over, add a preload channel, expose an
-unauthenticated hosted route, generate
-canonical `TeamId` values from names, or replace the legacy list route. Stable identity and production
-read rollout remain Phase 2 work. Standalone production composition and exact-image admission remain
-Phase 5 work.
+Both handoffs are inputs to a later independent P1.R1 review. They do not authorize P1.S3/P1.R1 or
+P1.1D. A separate reviewed router transition is required before any later worker or controller
+objective can become live.
 
-The practical boundary is therefore contracts plus conformance, not a disguised lifecycle rewrite:
+The planning files below remain exact reference-on-demand inputs only when a current packet lists
+them; they are not an unconditional reading queue:
 
-- a tiny cross-feature contract kernel;
-- feature-owned team-lifecycle DTOs, parsers, query, and consumer-owned read port;
-- separate route and capability descriptors;
-- isolated test/IPC/HTTP conformance adapters that normalize the same application outcomes;
-- architecture ratchets that stop a second god API from forming.
+- `architecture-and-contracts.md`
+- `conformance-and-tests.md`
+- `operations-and-risk.md`
+- `execution-packet-templates.md`
+- `packet-inputs.md`
 
-Only the exact revision/schema-version implementation, focused test, fixture, and handoff paths named
-by the current lane packet are authorized after this docs-only router packet is integrated. No other
-product code, test, fixture, production route, registration, adapter, renderer, feature slice,
-filesystem access, dependency, configuration, research, docs, or orchestration change is authorized.
-This packet production does not launch the remediation worker.
-
-The one-shot remediation node must return its revised version evidence, the exact
-`P1.NEG.SCHEMA_VERSION` negative result, patch manifest, and exact check results to the controller.
-Passing the lane does not authorize `P1.S2`; independent review, separate integration, and a later
-explicit router advance are required.
+The authoritative current dependency and ownership projection is
+[`execution-dag.md`](execution-dag.md).

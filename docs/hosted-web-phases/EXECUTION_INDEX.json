@@ -1,21 +1,35 @@
 {
   "schemaVersion": 1,
   "currentExecutablePhase": "phase-01",
-  "currentExecutableSubphase": "P1.S1",
-  "currentExecutableNode": "P1.S1-schema-version-remediation",
+  "currentExecutableSubphase": "P1.S2",
+  "currentExecutableNodes": ["P1.1B", "P1.1C"],
   "workerStartAuthority": "hosting/subscription-runtime builtin worker-start-v1",
   "currentRoute": {
     "controllerPacket": "docs/hosted-web-phases/phase-01/controller-packet.md",
     "lanePackets": [
       {
-        "subphase": "P1.S1",
-        "node": "P1.S1-schema-version-remediation",
-        "path": "docs/hosted-web-phases/phase-01/lanes/p1-s1-schema-version-remediation.md"
+        "subphase": "P1.S2",
+        "node": "P1.1B",
+        "path": "docs/hosted-web-phases/phase-01/lanes/p1-s2-routes.md",
+        "packetRevision": "phase-01-s2-routes-r1"
+      },
+      {
+        "subphase": "P1.S2",
+        "node": "P1.1C",
+        "path": "docs/hosted-web-phases/phase-01/lanes/p1-s2-conformance.md",
+        "packetRevision": "phase-01-s2-conformance-r1"
       }
     ],
-    "packetRevision": "phase-01-s1-schema-version-remediation-r1",
-    "baseSha": "da9625e78c0c96699162793a7ebba0657140d937",
-    "supersedesWorkerStartRevision": "phase-01-s1-foundations-r1"
+    "baseSha": "041b5c7c2d3225b7dc2eca9e9b7b71aa33217060",
+    "supersedesWorkerStartRevision": "phase-01-s1-schema-version-remediation-r1",
+    "launchGate": {
+      "required": {
+        "routerCommitIntegrated": true,
+        "successorControllerLive": true,
+        "controllerValue": "live=true"
+      },
+      "attestedByThisDocsTransition": false
+    }
   },
   "acceptedPhase0Freeze": {
     "status": "accepted-frozen",
@@ -30,7 +44,6 @@
   "acceptedPhase1Bootstrap": {
     "status": "accepted",
     "commit": "6f1a87daa9a4bfdf5d754347d92f313f28d0f95d",
-    "transitionBase": "f12a85af0fddadd06f69a27ef408d26bc27eb3fc",
     "historicalPhaseStartSha": "5f30df49e052d1cc1d0e7efd03aa105673b5b614",
     "evidencePaths": [
       "docs/research/hosted-web/phase-1/bootstrap/phase-start.json",
@@ -41,26 +54,24 @@
       "docs/research/hosted-web/phase-1/bootstrap/bootstrap-report.md"
     ]
   },
-  "integratedPhase1Foundations": {
-    "status": "review-rejected-remediation-required",
-    "commit": "da9625e78c0c96699162793a7ebba0657140d937",
-    "preservation": "preserve all useful integrated P1.S1 kernel work",
-    "independentReviewProvenance": {
-      "source": "authoritative operator-provided independent integration review finding",
-      "finding": "Independent integration review formally REJECTED P1.S1 commit da9625e78 only for incomplete P1.NEG.SCHEMA_VERSION.",
-      "rejectedEvidenceId": "P1.NEG.SCHEMA_VERSION"
-    }
+  "acceptedPhase1FoundationsAndRemediation": {
+    "status": "independently-accepted-integrated",
+    "commit": "041b5c7c2d3225b7dc2eca9e9b7b71aa33217060",
+    "acceptedNodes": ["P1.1A", "P1.1A-schema-version-remediation"],
+    "provenance": "authoritative operator directive for this P1.S2 router transition",
+    "preservation": "preserve canonical P1.S1 product and handoff paths unchanged"
   },
   "authorization": {
-    "authorized": ["P1.S1"],
-    "authorizedNode": "P1.S1-schema-version-remediation",
-    "blockedUntilRouterAdvance": ["P1.S2", "P1.S3", "P1.S4", "P1.S5"],
+    "authorized": ["P1.S2"],
+    "authorizedNodes": ["P1.1B", "P1.1C"],
+    "blocked": ["P1.S3", "P1.S4", "P1.S5", "Phase 2+"],
     "productSourceImplementationAuthorized": true,
-    "productSourceImplementationOwner": "P1.1A-schema-version-remediation",
-    "productSourceImplementationScope": "exact revision/schema-version implementation, focused test, fixture, and handoff paths in docs/hosted-web-phases/phase-01/lanes/p1-s1-schema-version-remediation.md",
-    "producerCount": 1,
-    "serialOnly": true,
-    "launchBeforePacketIntegration": false,
+    "authorizationEffectiveOnlyAfterLaunchGate": true,
+    "producerCount": 2,
+    "parallelOnly": true,
+    "nonOverlappingWriters": true,
+    "launchBeforeRouterIntegration": false,
+    "launchBeforeSuccessorControllerLive": false,
     "retryOrRefillAuthorized": false
   },
   "workerMandatoryBaseline": [
@@ -68,97 +79,29 @@
     "docs/hosted-web-phases/START_HERE.md",
     "docs/hosted-web-phases/EVIDENCE_LIFECYCLE.md",
     "docs/hosted-web-phases/README.md",
-    "docs/hosted-web-phases/EXECUTION_INDEX.json"
+    "docs/hosted-web-phases/EXECUTION_INDEX.json",
+    "docs/hosted-web-phases/phase-01/controller-packet.md"
   ],
   "authorityTiers": {
     "execution-authority": [
-      {
-        "path": "AGENTS.md",
-        "role": "repository navigation and hard constraints"
-      },
-      {
-        "path": "docs/hosted-web-phases/START_HERE.md",
-        "role": "mandatory reading order and start gate"
-      },
-      {
-        "path": "docs/hosted-web-phases/EVIDENCE_LIFECYCLE.md",
-        "role": "evidence authority, retention, and supersession"
-      },
-      {
-        "path": "docs/hosted-web-phases/README.md",
-        "role": "active-phase router"
-      },
-      {
-        "path": "docs/hosted-web-phases/EXECUTION_INDEX.json",
-        "role": "machine-readable execution navigation"
-      }
+      "AGENTS.md",
+      "docs/hosted-web-phases/START_HERE.md",
+      "docs/hosted-web-phases/EVIDENCE_LIFECYCLE.md",
+      "docs/hosted-web-phases/README.md",
+      "docs/hosted-web-phases/EXECUTION_INDEX.json"
     ],
     "current-phase": [
-      {
-        "path": "docs/hosted-web-phases/phase-01/README.md",
-        "role": "Phase 1 entrypoint; one-shot P1.S1 schema-version remediation boundary"
-      },
-      {
-        "path": "docs/hosted-web-phases/phase-01/controller-packet.md",
-        "role": "current controller authority for one future serial P1.S1 schema-version remediation only"
-      },
-      {
-        "path": "docs/hosted-web-phases/phase-01/lanes/p1-s1-schema-version-remediation.md",
-        "role": "the single current lane packet; revision/schema-version implementation, focused tests, fixtures, and handoff only"
-      }
-    ],
-    "reference-on-demand": [
-      {
-        "path": "docs/hosted-web-phases/phase-01/lanes/p1-s0-serial-bootstrap.md",
-        "role": "accepted P1.S0 lane history; not executable"
-      },
-      {
-        "path": "docs/hosted-web-phases/phase-01/lanes/p1-s1-foundations.md",
-        "role": "superseded P1.S1 worker-start packet history; not executable"
-      },
-      {
-        "path": "docs/hosted-web-phase-0-execution-packet.md",
-        "role": "accepted and frozen Phase 0 controller history; not executable"
-      },
-      {
-        "path": "docs/hosted-web-e2e-completion-plan.md",
-        "role": "architecture, ADR, invariant, and release reference"
-      },
-      {
-        "path": "docs/hosted-web-phases/ORCHESTRATION_GUARDS.md",
-        "role": "hosted-worker responsibility boundary; admission and launch are owned by subscription-runtime worker-start-v1"
-      },
-      {
-        "path": "docs/hosted-web-phases/phase-01/packet-inputs.md",
-        "role": "preserved pre-freeze Phase 1 input proposal; current router decisions supersede its blocker projection"
-      },
-      {
-        "path": "docs/hosted-web-phases/phase-01/architecture-and-contracts.md",
-        "role": "Phase 1 boundary and contract proposal; read only when the runtime worker-start-v1 contract lists it"
-      },
-      {
-        "path": "docs/hosted-web-phases/phase-01/execution-dag.md",
-        "role": "proposed successor DAG and ownership; read only when the runtime worker-start-v1 contract lists it"
-      },
-      {
-        "path": "docs/hosted-web-phases/phase-01/conformance-and-tests.md",
-        "role": "Phase 1 conformance proposal; read only when the runtime worker-start-v1 contract lists it"
-      },
-      {
-        "path": "docs/hosted-web-phases/phase-01/operations-and-risk.md",
-        "role": "Phase 1 operations proposal; read only when the runtime worker-start-v1 contract lists it"
-      },
-      {
-        "path": "docs/hosted-web-phases/phase-01/execution-packet-templates.md",
-        "role": "blocked successor packet templates; read only when the runtime worker-start-v1 contract lists it"
-      }
+      "docs/hosted-web-phases/phase-01/README.md",
+      "docs/hosted-web-phases/phase-01/controller-packet.md",
+      "docs/hosted-web-phases/phase-01/execution-dag.md",
+      "docs/hosted-web-phases/phase-01/lanes/p1-s2-routes.md",
+      "docs/hosted-web-phases/phase-01/lanes/p1-s2-conformance.md"
     ],
     "historical-preserved": [
-      {
-        "path": "docs/research/hosted-web",
-        "role": "immutable evidence corpus",
-        "readPolicy": "never-recursive; read one file only when its exact path is listed by the assigned packet"
-      }
+      "docs/hosted-web-phases/phase-01/lanes/p1-s0-serial-bootstrap.md",
+      "docs/hosted-web-phases/phase-01/lanes/p1-s1-foundations.md",
+      "docs/hosted-web-phases/phase-01/lanes/p1-s1-schema-version-remediation.md",
+      "docs/research/hosted-web"
     ]
   }
 }

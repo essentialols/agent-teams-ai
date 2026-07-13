@@ -1,126 +1,99 @@
-# Proposed execution DAG, ownership, and integration
+# Phase 1 execution DAG and ownership
 
-Status: `P1.S0` is current and executable. IDs, paths, owners, estimates, commands, and pairings for
-every successor remain proposed until serial bootstrap is integrated and the router advances.
+Status: P1.S0 and P1.S1 are accepted and integrated. P1.S2 is the sole current producer epoch after
+its router-integration and live-controller gate. P1.S3 and later nodes are blocked.
 
-## DAG
+## Current DAG
 
 ```text
-P1.S0 serial bootstrap
-  -X-> P1.1A contract kernel
-      -> P1.1B route/catalog conventions ----+
-      -> P1.1C conformance + ratchets --------+-> P1.R1 seam review
-                                                -> P1.1D first read proof
-                                                  -> P1.R2 semantic review
-                                                    -> P1.I serialized integration
-                                                      -> P1.F freeze
+P1.S0 accepted
+  -> P1.S1 / P1.1A accepted + integrated at 041b5c7c2
+       -> P1.S2: P1.1B routes + capabilities ----+
+       -> P1.S2: P1.1C conformance + ratchets ---+ -X-> P1.S3 / P1.R1
+                                                        -> P1.1D
+                                                          -> P1.R2
+                                                            -> P1.I
+                                                              -> P1.F
 ```
 
-`-X->` is a blocked transition, not an executable edge. Current authorization ends when S0 produces
-its reviewed bootstrap evidence. S0 may not start, refill, or pre-provision `1A`.
-The sole executable node is defined by the compact
-[`P1.S0 serial-bootstrap lane packet`](./lanes/p1-s0-serial-bootstrap.md); this proposal is not a
-substitute for that lane packet.
+`P1.1B` and `P1.1C` are independent siblings, not dependencies of one another. `-X->` is a blocked
+transition: completing both handoffs does not launch P1.R1. The later chain remains exactly
+`P1.1B + P1.1C -> P1.R1 -> P1.1D -> P1.R2 -> P1.I -> P1.F` and requires separate router decisions.
 
-`1B` and `1C` may run in parallel only after `1A` is integrated. The required chain is exactly
-`1B + 1C -> R1 -> 1D -> R2 -> I`: R1 acceptance is an admission dependency of 1D, and R2 acceptance
-is an admission dependency of integration. `1D` consumes reviewed interfaces; it does not copy them.
-Reviews write only review evidence. `P1.I` is the sole writer of shared existing files.
+## Current lane registry
 
-## Proposed lane registry
+| Node    | Mission                                                         | Dependency                  | Evidence IDs                          | Packet                       |
+| ------- | --------------------------------------------------------------- | --------------------------- | ------------------------------------- | ---------------------------- |
+| `P1.1B` | RouteCatalog assertions and separate capability cross-reference | accepted/integrated `P1.1A` | `P1.1B.ROUTES`, `P1.1B.CAPABILITIES`  | `lanes/p1-s2-routes.md`      |
+| `P1.1C` | Semantic harness, ADR-19/20 ratchets, synthetic fixture corpus  | accepted/integrated `P1.1A` | `P1.1C.CONFORMANCE`, `P1.1C.RATCHETS` | `lanes/p1-s2-conformance.md` |
 
-| Slot    | Mission                                                                                    | Depends on    | Proposed evidence                      | Unique estimate bucket |
-| ------- | ------------------------------------------------------------------------------------------ | ------------- | -------------------------------------- | ---------------------- |
-| `P1.S0` | Resolve/freeze all proposal tokens and baseline fingerprints; no product source.           | Authorized    | `P1.S0.BOOTSTRAP`, `P1.S0.BASELINE`    | 120–220 lines          |
-| `P1.1A` | Minimal kernel, parsers, and import negatives.                                             | `S0`          | `P1.1A.KERNEL`, `P1.1A.VERSION`        | 180–300 lines          |
-| `P1.1B` | RouteCatalog assertions and separate capability cross-reference.                           | `1A`          | `P1.1B.ROUTES`, `P1.1B.CAPABILITIES`   | 180–320 lines          |
-| `P1.1C` | IPC/HTTP semantic harness plus ADR-19/20/dependency negatives.                             | `1A`          | `P1.1C.CONFORMANCE`, `P1.1C.RATCHETS`  | 240–420 lines          |
-| `P1.1D` | List query, feature contracts/port, in-memory reader, isolated test IPC/HTTP adapters.     | accepted `R1` | `P1.1D.LIST_SLICE`, `P1.1D.TRANSPORTS` | 300–520 lines          |
-| `P1.R1` | Review 1B architecture and 1C false-positive/negative behavior.                            | `1B`, `1C`    | `P1.R1.ARCH_REVIEW`                    | 60–110 lines           |
-| `P1.R2` | Review 1D semantic/auth/error/cursor behavior and recheck 1A kernel size.                  | `1D`          | `P1.R2.SEMANTIC_REVIEW`                | 60–110 lines           |
-| `P1.I`  | Adopt in order, perform shared ratchet wiring, gates, rollback proof, and evidence freeze. | accepted `R2` | `P1.I.INTEGRATION`, `P1.I.ROLLBACK`    | 100–220 lines          |
+Capacity is zero until the router commit is integrated and the successor controller is `live=true`.
+Afterward it is exactly one producer per row, two total, running in parallel. No retry or refill is
+authorized.
 
-The 1,240–2,220 planning range is intentionally reconciled as unique buckets; serial bootstrap must
-compare it with the parent 900–1,600 estimate and either narrow scope or record an approved variance.
-Review/evidence lines are not silently excluded.
+## Exact exclusive writer sets
 
-## Proposed exclusive paths
+P1.1B owns exactly:
 
-Each row is an all-or-nothing proposed writer set. Serial bootstrap must resolve globs into exact files
-before a worker starts.
+- `.codex-handoff/phase-01-p1-1b.json`
+- `src/main/composition/hosted/routing/RouteCatalog.ts`
+- `src/main/composition/hosted/routing/index.ts`
+- `src/main/composition/hosted/routing/route-types.ts`
+- `test/architecture/hosted-web/phase-1/routes/RouteCatalog.test.ts`
+- `test/architecture/hosted-web/phase-1/routes/capability-descriptors.test.ts`
+- `test/architecture/hosted-web/phase-1/routes/fixtures/duplicate-route.ts`
+- `test/architecture/hosted-web/phase-1/routes/fixtures/missing-reference.ts`
+- `test/architecture/hosted-web/phase-1/routes/fixtures/test-only-production-route.ts`
 
-| Owner   | Proposed exclusive writable paths                                                                                                                                                                                                                       |
-| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `P1.1A` | `src/shared/contracts/hosted/{identifiers,query-context,revision,app-error,index}.ts`; `test/architecture/hosted-web/phase-1/contracts/**`                                                                                                              |
-| `P1.1B` | `src/main/composition/hosted/routing/{RouteCatalog,route-types,index}.ts`; `test/architecture/hosted-web/phase-1/routes/**`                                                                                                                             |
-| `P1.1C` | `scripts/hosted-web/phase-1/{check-parity-references,check-renderer-boundaries,check-feature-dependencies}.ts`; `test/architecture/hosted-web/phase-1/{conformance,parity,renderer-boundaries,dependencies}/**`                                         |
-| `P1.1D` | `src/features/team-lifecycle/index.ts`; `src/features/team-lifecycle/contracts/**`; `src/features/team-lifecycle/core/application/**`; `test/features/team-lifecycle/**` (including the only in-memory reader and IPC/HTTP-shaped adapters/composition) |
-| `P1.R1` | `docs/research/hosted-web/phase-1/reviews/routes-ratchets.md`                                                                                                                                                                                           |
-| `P1.R2` | `docs/research/hosted-web/phase-1/reviews/list-semantics.md`                                                                                                                                                                                            |
-| `P1.I`  | only the shared-writer paths below plus `docs/research/hosted-web/phase-1/{decision-register,evidence-index,estimate-reconciliation,integration-report}.json`                                                                                           |
+P1.1C owns exactly:
 
-No producer may edit `package.json`, lockfiles, TypeScript configs, ESLint configs, legacy APIs, global
-composition, or another lane's test directory.
+- `.codex-handoff/phase-01-p1-1c.json`
+- `scripts/hosted-web/phase-1/check-feature-dependencies.ts`
+- `scripts/hosted-web/phase-1/check-parity-references.ts`
+- `scripts/hosted-web/phase-1/check-renderer-boundaries.ts`
+- `test/architecture/hosted-web/phase-1/conformance/semantic-harness.test.ts`
+- `test/architecture/hosted-web/phase-1/conformance/semantic-harness.ts`
+- `test/architecture/hosted-web/phase-1/dependencies/feature-dependencies.test.ts`
+- `test/architecture/hosted-web/phase-1/fixtures/core-side-effect.ts`
+- `test/architecture/hosted-web/phase-1/fixtures/filesystem-adapter.ts`
+- `test/architecture/hosted-web/phase-1/fixtures/forbidden-core-import.ts`
+- `test/architecture/hosted-web/phase-1/fixtures/hosted-electron-api.ts`
+- `test/architecture/hosted-web/phase-1/fixtures/legacy-god-dto.ts`
+- `test/architecture/hosted-web/phase-1/fixtures/path-secret-leak.ts`
+- `test/architecture/hosted-web/phase-1/fixtures/production-adapter-mount.ts`
+- `test/architecture/hosted-web/phase-1/fixtures/ratchet-regression.ts`
+- `test/architecture/hosted-web/phase-1/parity/parity-references.test.ts`
+- `test/architecture/hosted-web/phase-1/renderer-boundaries/renderer-boundaries.test.ts`
+- `test/fixtures/hosted-web/phase-1/team-lifecycle/manifest.json`
+- `test/fixtures/hosted-web/phase-1/team-lifecycle/outcomes/corrupt.json`
+- `test/fixtures/hosted-web/phase-1/team-lifecycle/outcomes/draft.json`
+- `test/fixtures/hosted-web/phase-1/team-lifecycle/outcomes/empty.json`
+- `test/fixtures/hosted-web/phase-1/team-lifecycle/outcomes/not-found-inapplicable.json`
+- `test/fixtures/hosted-web/phase-1/team-lifecycle/outcomes/partial.json`
+- `test/fixtures/hosted-web/phase-1/team-lifecycle/outcomes/provisioning-inapplicable.json`
+- `test/fixtures/hosted-web/phase-1/team-lifecycle/outcomes/stale.json`
+- `test/fixtures/hosted-web/phase-1/team-lifecycle/outcomes/success.json`
+- `test/fixtures/hosted-web/phase-1/team-lifecycle/outcomes/unavailable.json`
+- `test/fixtures/hosted-web/phase-1/team-lifecycle/outcomes/unexpected.json`
 
-## Proposed single shared-writer paths
+These exact no-glob sets are copied from the accepted ownership manifest. Any overlap is
+`scope_overlap`, never permission for cooperative editing.
 
-Only `P1.I`, after accepted R2 evidence, may edit these existing/global files:
+## Global read-only boundary
 
-- `src/main/ipc/teams.ts`, `src/main/http/teams.ts`, `src/main/http/index.ts`,
-  `src/main/services/infrastructure/HttpServer.ts`, `src/main/standalone.ts`,
-  `src/preload/constants/ipcChannels.ts`, `src/preload/index.ts`, and
-  `src/renderer/api/index.ts` are explicitly **read-only** in Phase 1. Their unchanged import/mount
-  graph is positive evidence; no exception or “dormant” registration is allowed.
-- `scripts/hosted-web/phase-0/parity-renderer/scan-api-and-actions.ts` and the adopted parity ledger only
-  when bootstrap proves a generator-owned cross-reference is required;
-- `package.json`, lint/TS configs, and lockfiles: read-only unless a new reviewed packet revision names
-  the exact need and owner.
+Both producers must leave package and lock files, TypeScript/ESLint configuration, legacy APIs,
+existing shared contracts, documentation, research, accepted evidence, and all production
+registration/composition paths unchanged. In particular, `src/main/ipc/teams.ts`,
+`src/main/http/teams.ts`, `src/main/http/index.ts`,
+`src/main/services/infrastructure/HttpServer.ts`, `src/main/standalone.ts`,
+`src/preload/constants/ipcChannels.ts`, `src/preload/index.ts`, and `src/renderer/api/index.ts` are
+read-only. No production IPC channel, HTTP route, preload/global facet, renderer API, filesystem
+adapter, dependency, or real-project/runtime access is allowed.
 
-An overlap is `scope_overlap`, not permission for cooperative concurrent editing. Integration returns a
-finding to the owning lane rather than repairing producer code in shared files.
+## Handoff and blocked review
 
-## Sandbox and fixture topology
-
-- `test/fixtures/hosted-web/phase-1/team-lifecycle/` is proposed as one integration-owned data-fixture
-  root; producer tests may reference it read-only after bootstrap.
-- Fixtures use synthetic UUID-like IDs, fixed clocks, deterministic revisions/cursors, fake
-  principals, and in-memory records only. They contain no path/root field or filesystem helper.
-- Positive vectors: empty page, single page, stable multi-page ordering, additive response field,
-  cancellation, and equal application outcome through all adapters.
-- Negative vectors: invalid/foreign/expired cursor, unknown request field, unsupported schema version,
-  unauthenticated/forbidden admission, unavailable port, corrupt/partial/unexpected reader outcomes,
-  duplicate route/action, missing handler/schema/policy/client/test reference, forbidden import,
-  direct Electron/global access, production import/mount of either transport-shaped adapter, a hosted
-  facet attempting to implement `ElectronAPI`, and any path-taking/filesystem-backed adapter.
-- No fixture or Phase 1 command opens or creates a home/runtime/project root, real workspace, provider
-  CLI, credential store, network listener, terminal, child process, user project, filesystem watcher,
-  repair path, cleanup path, or mutable host-global cache.
-- `P1.NEG.TEST_ROOT_ESCAPE` is deferred to Phase 2's first filesystem-backed adapter with marked-root,
-  pre-access escape rejection, and marker-checked cleanup requirements. Phase 1 must pass
-  `P1.NEG.NO_FILESYSTEM_ADAPTER_PHASE1`; otherwise the deferral is invalid and work stops.
-
-## Review and integration order
-
-1. Adopt `1A`; run its parser/import checks.
-2. Complete `1B` and `1C` in parallel on disjoint paths.
-3. `R1` reviews both together for catalog minimality, route/capability separation, omission
-   sensitivity, deliberate failures, no-filesystem enforcement, and production adapter isolation.
-4. Only after accepted `R1`, rebase/start `1D` on the reviewed interfaces.
-5. `R2` independently compares every applicable/non-applicable semantic vector across
-   direct/IPC-shaped/HTTP-shaped tests, reviews redaction/cursor behavior, and rechecks `1A` for unused
-   abstractions.
-6. Only after accepted `R2`, `P1.I` adopts in dependency order
-   `1A -> (1B + 1C) -> R1 -> 1D -> R2`, performs shared ratchet/evidence wiring without transport
-   registration, runs the full matrix, and either freezes or rejects. No squash may erase
-   evidence-to-commit provenance.
-
-Reviewers must be different from the producer for the reviewed evidence. A rejected finding names the
-evidence ID, smallest reproducer, owner, and whether unaffected integration can continue.
-
-## Capacity and recovery
-
-Current maximum active producer slots: one (`P1.S0`). The proposed later maximum is two (`1B`, `1C`)
-only after the router separately authorizes the required predecessors. `R1`, `1D`, `R2`, and `I` then
-run serially in that proposed order. A replacement worker resumes the same worktree and handoff after
-validating base, packet revision, existing diff, and checks. Duplicate completion requires controller
-supersession, never refill.
+Each producer writes only its manifest-owned handoff with exact checks, proof levels, changed paths,
+negative results, unverified claims, and patch hashes. Only after both handoffs are independently
+reviewed by a reviewer different from both producers may a later router consider P1.S3/P1.R1 and its
+manifest-owned review path `docs/research/hosted-web/phase-1/reviews/routes-ratchets.md`. That review
+path is not writable in P1.S2.

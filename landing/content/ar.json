@@ -49,12 +49,12 @@
     {
       "id": "whatIsIt",
       "question": "ما هو Agent Teams؟",
-      "answer": "تطبيق سطح مكتب لتنظيم فرق وكلاء الذكاء الاصطناعي عبر طبقة تنسيق محلية خاصة بنا. لكل وكيل دور، يعمل بشكل مستقل، ويتعاون عبر لوحة كانبان، ويمكن تشغيله مع Claude أو Codex أو OpenCode."
+      "answer": "تطبيق سطح مكتب لتنظيم فرق وكلاء الذكاء الاصطناعي عبر طبقة تنسيق محلية خاصة بنا. لكل وكيل دور، يعمل بشكل مستقل، ويتعاون عبر لوحة كانبان، ويمكن تشغيله مع Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro."
     },
     {
       "id": "isFree",
       "question": "هل هو مجاني فعلاً؟",
-      "answer": "نعم. التطبيق مجاني ومفتوح المصدر، ويمكنك البدء بنموذج مجاني بدون مصادقة - بدون تسجيل أو مفتاح API أو بطاقة ائتمان. إذا أردت نماذج أكثر، وصّل Claude أو Codex أو OpenCode/OpenRouter أو مزوداً مدعوماً آخر."
+      "answer": "نعم. التطبيق مجاني ومفتوح المصدر، ويمكنك البدء بنموذج مجاني بدون مصادقة - بدون تسجيل أو مفتاح API أو بطاقة ائتمان. إذا أردت نماذج أكثر، وصّل Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro أو مزوداً مدعوماً آخر."
     },
     {
       "id": "platforms",
@@ -99,7 +99,7 @@
       "features": [
         "نموذج مجاني بدون مصادقة لأول تشغيل",
         "لا تحتاج حساباً أو تسجيل دخول مزود للتجربة",
-        "وصول اختياري إلى Claude وCodex وOpenCode",
+        "وصول اختياري إلى Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro",
         "فرق وكلاء غير محدودة",
         "لوحة كانبان بتحديثات فورية",
         "مراجعة كود مع عرض diff",

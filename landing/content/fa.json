@@ -49,12 +49,12 @@
     {
       "id": "whatIsIt",
       "question": "Agent Teams چیست؟",
-      "answer": "یک برنامه دسکتاپ برای هماهنگ‌کردن تیم‌های عامل AI با لایه هماهنگی محلی خودمان است. عامل‌ها نقش دارند، مستقل کار می‌کنند، از طریق کانبان همکاری می‌کنند و می‌توانند با Claude، Codex یا OpenCode اجرا شوند."
+      "answer": "یک برنامه دسکتاپ برای هماهنگ‌کردن تیم‌های عامل AI با لایه هماهنگی محلی خودمان است. عامل‌ها نقش دارند، مستقل کار می‌کنند، از طریق کانبان همکاری می‌کنند و می‌توانند با Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro اجرا شوند."
     },
     {
       "id": "isFree",
       "question": "واقعاً رایگان است؟",
-      "answer": "بله. برنامه رایگان و متن‌باز است و می‌توانید با یک مدل رایگان بدون احراز هویت شروع کنید - بدون ثبت‌نام، API key یا کارت اعتباری. اگر مدل‌های بیشتری خواستید، Claude، Codex، OpenCode/OpenRouter یا provider پشتیبانی‌شده دیگری را وصل کنید."
+      "answer": "بله. برنامه رایگان و متن‌باز است و می‌توانید با یک مدل رایگان بدون احراز هویت شروع کنید - بدون ثبت‌نام، API key یا کارت اعتباری. اگر مدل‌های بیشتری خواستید، Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro یا provider پشتیبانی‌شده دیگری را وصل کنید."
     },
     {
       "id": "platforms",
@@ -129,7 +129,7 @@
       "features": [
         "مدل رایگان بدون احراز هویت برای اجراهای اول",
         "برای تست به حساب یا ورود provider نیاز نیست",
-        "دسترسی اختیاری به Claude، Codex و OpenCode",
+        "دسترسی اختیاری به Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro",
         "تیم‌های عامل نامحدود",
         "کانبان با به‌روزرسانی لحظه‌ای",
         "بازبینی کد با نمای diff",

@@ -39,19 +39,49 @@ const localizedHeroMessages = computed(() => getLocalizedHeroMessages(locale.val
 const activeHeroMessage = computed(() => localizedHeroMessages.value[activeHeroMessageIndex.value] ?? null);
 const supportedProviders = [
   {
-    id: "codex",
-    name: "Codex",
-    accent: "cyan",
+    id: "claude",
+    name: "Claude Code",
+    accent: "#d97757",
   },
   {
-    id: "anthropic",
-    name: "Anthropic",
-    accent: "amber",
+    id: "codex",
+    name: "Codex",
+    accent: "#10e7ff",
   },
   {
     id: "opencode",
     name: "OpenCode",
-    accent: "magenta",
+    accent: "#a78bfa",
+  },
+  {
+    id: "cursor",
+    name: "Cursor",
+    accent: "#f2f0e9",
+  },
+  {
+    id: "supergrok",
+    name: "SuperGrok",
+    accent: "#f8fafc",
+  },
+  {
+    id: "github-copilot",
+    name: "GitHub Copilot",
+    accent: "#f8fafc",
+  },
+  {
+    id: "zai",
+    name: "Z.AI",
+    accent: "#7aa2ff",
+  },
+  {
+    id: "minimax",
+    name: "MiniMax",
+    accent: "#e73562",
+  },
+  {
+    id: "kiro",
+    name: "Kiro",
+    accent: "#a66bff",
   },
 ] as const;
 const supportedProvidersLabel = computed(() => (
@@ -189,12 +219,15 @@ onUnmounted(() => {
             class="cyber-hero__providers"
             :aria-label="supportedProvidersLabel"
           >
+            <p class="cyber-hero__providers-label">
+              {{ supportedProvidersLabel }}
+            </p>
             <div class="cyber-hero__provider-list">
               <div
                 v-for="provider in supportedProviders"
                 :key="provider.id"
                 class="cyber-hero__provider"
-                :class="`cyber-hero__provider--${provider.accent}`"
+                :style="{ '--provider-accent': provider.accent }"
               >
                 <span class="cyber-hero__provider-icon" aria-hidden="true">
                   <CyberProviderIcon :provider="provider.id" />

@@ -86,7 +86,7 @@
   },
   "pricing": {
     "sectionTitle": "インストール無料。無料モデル付き。",
-    "sectionSubtitle": "認証なしの無料モデルですぐに開始できます - アカウント、APIキー、クレジットカードは不要。追加モデルが必要な時だけ Claude、Codex、OpenCode/OpenRouter などを接続できます。",
+    "sectionSubtitle": "認証なしの無料モデルですぐに開始できます - アカウント、APIキー、クレジットカードは不要。追加モデルが必要な時だけ Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro などを接続できます。",
     "getStarted": "ダウンロード",
     "popular": "無料",
     "freeModelCallout": "認証なしの無料モデルが含まれています",
@@ -159,9 +159,9 @@
   },
   "meta": {
     "homeTitle": "Agent Teams - 開発者向けAIエージェントオーケストレーション",
-    "homeDescription": "AIエージェントチーム向けの無料オープンソースデスクトップアプリ。認証なしの無料モデルから始め、必要に応じて Claude、Codex、OpenCode を接続できます。",
+    "homeDescription": "AIエージェントチーム向けの無料オープンソースデスクトップアプリ。認証なしの無料モデルから始め、必要に応じて Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro を接続できます。",
     "downloadTitle": "macOS、Windows、Linux向けAgent Teamsをダウンロード",
-    "downloadDescription": "macOS、Windows、Linux向けAgent Teamsをダウンロード。Claude、Codex、OpenCodeエージェントチーム用の無料オープンソースデスクトップアプリ。"
+    "downloadDescription": "macOS、Windows、Linux向けAgent Teamsをダウンロード。Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiroエージェントチーム用の無料オープンソースデスクトップアプリ。"
   },
   "error": {
     "notFoundTitle": "ページが見つかりません",

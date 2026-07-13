@@ -86,7 +86,7 @@
   },
   "pricing": {
     "sectionTitle": "Bebas untuk memasang. Termasuk model gratis.",
-    "sectionSubtitle": "Mulailah dengan model gratis tanpa auth - tidak ada account, API kunci, atau kartu kredit. Sambung Claude, Codex, OpenCode/OpenRouter, atau akses penyedia lain hanya ketika Anda ingin lebih banyak model.",
+    "sectionSubtitle": "Mulailah dengan model gratis tanpa auth - tidak ada account, API kunci, atau kartu kredit. Sambung Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro, atau akses penyedia lain hanya ketika Anda ingin lebih banyak model.",
     "getStarted": "Unduh Sekarang",
     "popular": "Bebas",
     "freeModelCallout": "Model bebas tanpa auth disertakan",
@@ -159,9 +159,9 @@
   },
   "meta": {
     "homeTitle": "Agent Teams - AI Agen Orkestra untuk Pengembang",
-    "homeDescription": "Aplikasi desktop open-source bebas untuk AI Agen tim. Mulai dengan model bebas tanpa auth, kemudian hubungkan Claude, Codex, atau OpenCode ketika Anda membutuhkan lebih banyak model.",
+    "homeDescription": "Aplikasi desktop open-source bebas untuk AI Agen tim. Mulai dengan model bebas tanpa auth, kemudian hubungkan Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro ketika Anda membutuhkan lebih banyak model.",
     "downloadTitle": "Unduh Agent Teams untuk macOS, Windows, dan Linux",
-    "downloadDescription": "Unduh Agent Teams untuk macOS, Windows, dan Linux. Aplikasi desktop open-source gratis untuk tim agen Claude, Codex, dan OpenCode."
+    "downloadDescription": "Unduh Agent Teams untuk macOS, Windows, dan Linux. Aplikasi desktop open-source gratis untuk tim agen Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro."
   },
   "error": {
     "notFoundTitle": "Halaman tak ditemukan",

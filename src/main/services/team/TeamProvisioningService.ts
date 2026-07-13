@@ -469,6 +469,7 @@ import {
   OPENCODE_APP_MANAGED_BOOTSTRAP_STALLED_DIAGNOSTIC,
   promoteCommittedOpenCodeAppManagedBootstrapEvidence,
   selectOpenCodeSecondaryBootstrapStallDiagnostic,
+  shouldRetainOpenCodeRuntimeLaunch,
   shouldMarkPersistedOpenCodeBootstrapStalled,
   summarizeRuntimeLaunchResultMembers,
   toOpenCodePersistedLaunchMember as toOpenCodePersistedLaunchMemberHelper,
@@ -11952,7 +11953,7 @@ export class TeamProvisioningService {
       teamColor: params.run.request.color,
       teamDisplayName: params.run.request.displayName,
     });
-    if (result.teamLaunchState !== 'partial_failure') {
+    if (shouldRetainOpenCodeRuntimeLaunch(result)) {
       this.runtimeAdapterRunByTeam.set(teamName, {
         runId,
         providerId: 'opencode',
@@ -12094,18 +12095,28 @@ export class TeamProvisioningService {
       const success = launchState === 'clean_success';
       const pending = launchState === 'partial_pending';
       const failed = launchState === 'partial_failure';
+      const retainableResults = [
+        primaryResult,
+        ...run.mixedSecondaryLanes.map((lane) => lane.result),
+      ].filter((result): result is TeamRuntimeLaunchResult => result !== null);
+      const partialTeamCanContinue =
+        failed && retainableResults.some((result) => shouldRetainOpenCodeRuntimeLaunch(result));
+      const terminalFailure = failed && !partialTeamCanContinue;
       const finalProgress = this.setRuntimeAdapterProgress(
         {
           ...launching,
-          state: success || pending ? 'ready' : 'failed',
+          state: terminalFailure ? 'failed' : 'ready',
           message: success
             ? 'OpenCode member lanes are ready'
             : pending
               ? 'OpenCode member lanes are waiting for runtime evidence or permissions'
-              : 'OpenCode member lane launch failed readiness gate',
-          messageSeverity: pending ? 'warning' : failed ? 'error' : undefined,
+              : partialTeamCanContinue
+                ? 'OpenCode team is running with unavailable members'
+                : 'OpenCode member lane launch failed readiness gate',
+          messageSeverity:
+            pending || partialTeamCanContinue ? 'warning' : failed ? 'error' : undefined,
           updatedAt: nowIso(),
-          error: failed
+          error: terminalFailure
             ? run.mixedSecondaryLanes
                 .flatMap((lane) => lane.diagnostics)
                 .filter(Boolean)
@@ -12118,7 +12129,7 @@ export class TeamProvisioningService {
         input.onProgress
       );
       run.progress = finalProgress;
-      if (success || pending) {
+      if (!terminalFailure) {
         this.setAliveRunId(input.request.teamName, runId);
       } else {
         this.deleteAliveRunId(input.request.teamName);
@@ -12313,32 +12324,32 @@ export class TeamProvisioningService {
       const success = result.teamLaunchState === 'clean_success';
       const pending = result.teamLaunchState === 'partial_pending';
       const failed = result.teamLaunchState === 'partial_failure';
+      const partialTeamCanContinue = failed && shouldRetainOpenCodeRuntimeLaunch(result);
+      const terminalFailure = failed && !partialTeamCanContinue;
       const finalProgress = this.setRuntimeAdapterProgress(
         {
           ...launching,
-          state: success || pending ? 'ready' : 'failed',
+          state: terminalFailure ? 'failed' : 'ready',
           message: success
             ? 'OpenCode team launch is ready'
             : pending
               ? 'OpenCode team launch is waiting for runtime evidence or permissions'
-              : 'OpenCode team launch failed readiness gate',
-          messageSeverity: pending
-            ? 'warning'
-            : result.teamLaunchState === 'partial_failure'
-              ? 'error'
-              : undefined,
+              : partialTeamCanContinue
+                ? 'OpenCode team is running with unavailable members'
+                : 'OpenCode team launch failed readiness gate',
+          messageSeverity:
+            pending || partialTeamCanContinue ? 'warning' : terminalFailure ? 'error' : undefined,
           updatedAt: nowIso(),
           warnings: result.warnings.length > 0 ? result.warnings : launching.warnings,
-          error:
-            result.teamLaunchState === 'partial_failure'
-              ? result.diagnostics.join('\n') || 'OpenCode launch failed'
-              : undefined,
+          error: terminalFailure
+            ? result.diagnostics.join('\n') || 'OpenCode launch failed'
+            : undefined,
           cliLogsTail: result.diagnostics.join('\n') || undefined,
           configReady: true,
         },
         input.onProgress
       );
-      if (failed) {
+      if (terminalFailure) {
         await clearOpenCodeRuntimeLaneStorage({
           teamsBasePath: getTeamsBasePath(),
           teamName: input.request.teamName,
@@ -20609,8 +20620,9 @@ export class TeamProvisioningService {
         result,
         launchInput
       );
-      if (committed.teamLaunchState === 'partial_failure') {
+      if (!shouldRetainOpenCodeRuntimeLaunch(committed)) {
         this.runtimeAdapterRunByTeam.delete(entry.approval.teamName);
+        this.deleteAliveRunId(entry.approval.teamName);
       } else {
         this.runtimeAdapterRunByTeam.set(entry.approval.teamName, {
           runId: entry.approval.runId,

@@ -86,7 +86,7 @@
   },
   "pricing": {
     "sectionTitle": "التثبيت مجاني. نموذج مجاني مضمّن.",
-    "sectionSubtitle": "ابدأ فوراً بنموذج مجاني بدون مصادقة - بدون حساب أو مفتاح API أو بطاقة. وصّل Claude أو Codex أو OpenCode/OpenRouter أو مزودين آخرين فقط عندما تحتاج نماذج إضافية.",
+    "sectionSubtitle": "ابدأ فوراً بنموذج مجاني بدون مصادقة - بدون حساب أو مفتاح API أو بطاقة. وصّل Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro أو مزودين آخرين فقط عندما تحتاج نماذج إضافية.",
     "getStarted": "حمّل الآن",
     "popular": "مجاني",
     "freeModelCallout": "نموذج مجاني بدون مصادقة مضمّن",
@@ -159,9 +159,9 @@
   },
   "meta": {
     "homeTitle": "Agent Teams - تنسيق وكلاء الذكاء الاصطناعي للمطورين",
-    "homeDescription": "تطبيق سطح مكتب مجاني ومفتوح المصدر لفرق وكلاء الذكاء الاصطناعي. ابدأ بنموذج مجاني بدون مصادقة، ثم وصّل Claude أو Codex أو OpenCode عند الحاجة.",
+    "homeDescription": "تطبيق سطح مكتب مجاني ومفتوح المصدر لفرق وكلاء الذكاء الاصطناعي. ابدأ بنموذج مجاني بدون مصادقة، ثم وصّل Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro عند الحاجة.",
     "downloadTitle": "تنزيل Agent Teams لنظام macOS وWindows وLinux",
-    "downloadDescription": "نزّل Agent Teams لنظام macOS وWindows وLinux. تطبيق سطح مكتب مجاني ومفتوح المصدر لفرق وكلاء Claude وCodex وOpenCode."
+    "downloadDescription": "نزّل Agent Teams لنظام macOS وWindows وLinux. تطبيق سطح مكتب مجاني ومفتوح المصدر لفرق وكلاء Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro."
   },
   "error": {
     "notFoundTitle": "الصفحة غير موجودة",

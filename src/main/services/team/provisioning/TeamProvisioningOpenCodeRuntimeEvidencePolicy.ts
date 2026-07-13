@@ -304,6 +304,25 @@ export function summarizeRuntimeLaunchResultMembers(
   return 'partial_pending';
 }
 
+export function hasConfirmedOpenCodeRuntimeMember(result: TeamRuntimeLaunchResult): boolean {
+  return Object.values(result.members).some(
+    (member) =>
+      member.launchState === 'confirmed_alive' &&
+      member.bootstrapConfirmed === true &&
+      member.runtimeAlive === true &&
+      member.hardFailure !== true
+  );
+}
+
+/**
+ * A partial member failure is not a terminal team failure while another
+ * OpenCode member is confirmed alive. Clean and pending launches remain
+ * retainable under their existing lifecycle rules.
+ */
+export function shouldRetainOpenCodeRuntimeLaunch(result: TeamRuntimeLaunchResult): boolean {
+  return result.teamLaunchState !== 'partial_failure' || hasConfirmedOpenCodeRuntimeMember(result);
+}
+
 export function normalizeRecoverableOpenCodeBootstrapPendingLaunchResult(
   result: TeamRuntimeLaunchResult,
   memberName: string,

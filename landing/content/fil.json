@@ -49,12 +49,12 @@
     {
       "id": "whatIsIt",
       "question": "Ano ang Agent Teams?",
-      "answer": "Desktop app para mag-orchestrate ng AI agent teams gamit ang sarili naming local coordination layer. May roles ang agents, autonomous silang nagtatrabaho, nagco-collaborate sa kanban board, at puwedeng tumakbo sa Claude, Codex, o OpenCode."
+      "answer": "Desktop app para mag-orchestrate ng AI agent teams gamit ang sarili naming local coordination layer. May roles ang agents, autonomous silang nagtatrabaho, nagco-collaborate sa kanban board, at puwedeng tumakbo sa Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro."
     },
     {
       "id": "isFree",
       "question": "Libre ba talaga?",
-      "answer": "Oo. Libre at open source ang app. Puwede kang magsimula sa free model na walang auth - walang registration, API key, o credit card. Kung gusto mo ng mas maraming models, ikonekta ang Claude, Codex, OpenCode/OpenRouter, o ibang supported provider."
+      "answer": "Oo. Libre at open source ang app. Puwede kang magsimula sa free model na walang auth - walang registration, API key, o credit card. Kung gusto mo ng mas maraming models, ikonekta ang Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro, o ibang supported provider."
     },
     {
       "id": "platforms",
@@ -125,7 +125,7 @@
       "name": "Libre",
       "price": "$0",
       "period": "",
-      "description": "Oo. Libre at open source ang app. Puwede kang magsimula sa free model na walang auth - walang registration, API key, o credit card. Kung gusto mo ng mas maraming models, ikonekta ang Claude, Codex, OpenCode/OpenRouter, o ibang supported provider.",
+      "description": "Oo. Libre at open source ang app. Puwede kang magsimula sa free model na walang auth - walang registration, API key, o credit card. Kung gusto mo ng mas maraming models, ikonekta ang Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro, o ibang supported provider.",
       "features": [
         "Mga agent team",
         "Kanban board",

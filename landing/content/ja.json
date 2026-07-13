@@ -49,12 +49,12 @@
     {
       "id": "whatIsIt",
       "question": "Agent Teamsとは？",
-      "answer": "独自のローカル協調レイヤーでAIエージェントチームをオーケストレーションできるデスクトップアプリです。各エージェントは役割を持ち、自律的に動き、カンバン上で連携し、Claude、Codex、OpenCode で実行できます。"
+      "answer": "独自のローカル協調レイヤーでAIエージェントチームをオーケストレーションできるデスクトップアプリです。各エージェントは役割を持ち、自律的に動き、カンバン上で連携し、Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro で実行できます。"
     },
     {
       "id": "isFree",
       "question": "本当に無料ですか？",
-      "answer": "はい。アプリは無料のオープンソースで、登録、APIキー、クレジットカードなしで認証なしの無料モデルから始められます。さらに多くのモデルが必要な場合は、Claude、Codex、OpenCode/OpenRouter など対応 provider を接続できます。"
+      "answer": "はい。アプリは無料のオープンソースで、登録、APIキー、クレジットカードなしで認証なしの無料モデルから始められます。さらに多くのモデルが必要な場合は、Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro など対応 provider を接続できます。"
     },
     {
       "id": "platforms",
@@ -99,7 +99,7 @@
       "features": [
         "最初の実行に使える認証なしの無料モデル",
         "試用にアカウントや provider ログインは不要",
-        "Claude、Codex、OpenCode provider 接続は任意",
+        "Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro provider 接続は任意",
         "無制限のエージェントチーム",
         "リアルタイム更新のカンバンボード",
         "Diffビュー付きコードレビュー",

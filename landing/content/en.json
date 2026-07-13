@@ -49,12 +49,12 @@
     {
       "id": "whatIsIt",
       "question": "What is Agent Teams?",
-      "answer": "A desktop app for orchestrating AI agent teams with our own local coordination layer. Agents have roles, work autonomously, collaborate through a kanban board, and can run on Claude, Codex, or OpenCode."
+      "answer": "A desktop app for orchestrating AI agent teams with our own local coordination layer. Use Claude Code, Codex, or OpenCode runtimes, then connect Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, or Kiro through supported provider routes."
     },
     {
       "id": "isFree",
       "question": "Is it really free?",
-      "answer": "Yes. The app is free and open source, and you can start with a free model with no auth - no registration, API keys, or credit card. If you want more models, connect Claude, Codex, OpenCode/OpenRouter, or another supported provider."
+      "answer": "Yes. The app is free and open source, and you can start with a free model with no auth - no registration, API keys, or credit card. For more models, connect Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro, or another supported provider."
     },
     {
       "id": "platforms",
@@ -69,7 +69,7 @@
     {
       "id": "privacy",
       "question": "Is my code private?",
-      "answer": "Everything runs locally on your machine. No data is sent to external servers. Your code, conversations, and agent activity stay entirely private."
+      "answer": "Coordination state, project workflows, and app data stay local on your machine. When you choose a provider-backed model, prompts and the relevant project context are sent only through that provider path."
     },
     {
       "id": "requirements",
@@ -99,7 +99,7 @@
       "features": [
         "Free model with no auth for first runs",
         "No account or provider login required to try",
-        "Optional Claude, Codex, and OpenCode provider access",
+        "Optional access to Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, and Kiro",
         "Unlimited agent teams",
         "Kanban board with real-time updates",
         "Code review with diff view",

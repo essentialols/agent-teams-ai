@@ -86,7 +86,7 @@
   },
   "pricing": {
     "sectionTitle": "நிறுவ இலவசம். இலவச மாதிரி உள்ளடக்கப்பட்டுள்ளது.",
-    "sectionSubtitle": "auth இல்லாத இலவச மாதிரியுடன் உடனடியாகத் தொடங்குங்கள் - கணக்கு, API key அல்லது credit card இல்லை. அதிக மாதிரிகள் வேண்டும்போது மட்டுமே Claude, Codex, OpenCode/OpenRouter அல்லது பிற வழங்குநர் அணுகலை இணைக்கவும்.",
+    "sectionSubtitle": "auth இல்லாத இலவச மாதிரியுடன் உடனடியாகத் தொடங்குங்கள் - கணக்கு, API key அல்லது credit card இல்லை. அதிக மாதிரிகள் வேண்டும்போது மட்டுமே Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro அல்லது பிற வழங்குநர் அணுகலை இணைக்கவும்.",
     "getStarted": "இப்போது பதிவிறக்கு",
     "popular": "இலவசம்",
     "freeModelCallout": "auth இல்லாத இலவச மாதிரி உள்ளடக்கப்பட்டுள்ளது",
@@ -159,9 +159,9 @@
   },
   "meta": {
     "homeTitle": "Agent Teams - டெவலப்பர்களுக்கான AI Agent Orchestration",
-    "homeDescription": "AI agent teams க்கான இலவச, திறந்த மூல desktop பயன்பாடு. auth இல்லாத இலவச மாதிரியுடன் தொடங்கி, அதிக மாதிரிகள் தேவைப்படும்போது Claude, Codex அல்லது OpenCode ஐ இணைக்கவும்.",
+    "homeDescription": "AI agent teams க்கான இலவச, திறந்த மூல desktop பயன்பாடு. auth இல்லாத இலவச மாதிரியுடன் தொடங்கி, அதிக மாதிரிகள் தேவைப்படும்போது Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro ஐ இணைக்கவும்.",
     "downloadTitle": "macOS, Windows மற்றும் Linux க்கான Agent Teams ஐ பதிவிறக்கு",
-    "downloadDescription": "macOS, Windows மற்றும் Linux க்கான Agent Teams ஐ பதிவிறக்கு. Claude, Codex மற்றும் OpenCode agent teams க்கான இலவச திறந்த மூல desktop பயன்பாடு."
+    "downloadDescription": "macOS, Windows மற்றும் Linux க்கான Agent Teams ஐ பதிவிறக்கு. Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro agent teams க்கான இலவச திறந்த மூல desktop பயன்பாடு."
   },
   "error": {
     "notFoundTitle": "பக்கம் கிடைக்கவில்லை",

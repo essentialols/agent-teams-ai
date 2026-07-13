@@ -119,6 +119,7 @@ const RUNTIME_DIAGNOSTIC_RULES: readonly RuntimeDiagnosticRule[] = [
       'capacity exceeded',
       'quota exceeded',
       'quota exhausted',
+      'usage limit',
       'usage exceeded',
       'free usage exceeded',
       'insufficient credits',

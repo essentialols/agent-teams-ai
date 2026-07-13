@@ -100,6 +100,7 @@ export function hasRealOpenCodeFailureDiagnostic(text: string): boolean {
     text.includes('not found in live opencode catalog') ||
     text.includes('provider unavailable') ||
     text.includes('quota') ||
+    text.includes('usage limit') ||
     text.includes('credits') ||
     text.includes('max_tokens') ||
     text.includes('rate limit') ||
@@ -262,6 +263,10 @@ export function boundOpenCodeAppManagedBriefingText(value: string): string {
 export function isGenericOpenCodePersistedFailureReason(value: string | undefined): boolean {
   const normalized = normalizeOpenCodePersistedFailureReason(value);
   return (
+    normalized === 'model_unavailable' ||
+    normalized === 'not_authenticated' ||
+    normalized === 'mcp_unavailable' ||
+    normalized === 'unknown_error' ||
     normalized === OPEN_CODE_GENERIC_MEMBER_LAUNCH_FAILURE_REASON ||
     normalized?.startsWith(`${OPEN_CODE_GENERIC_MEMBER_LAUNCH_FAILURE_REASON}:`) === true ||
     normalized?.startsWith('OpenCode secondary lane timing:') === true ||
@@ -274,6 +279,11 @@ export function isGenericOpenCodePersistedFailureReason(value: string | undefine
     normalized?.startsWith(
       'OpenCode bootstrap MCP did not complete required tools before assistant response:'
     ) === true ||
+    normalized?.startsWith('OpenCode command timed out after') === true ||
+    normalized?.startsWith('CLI-authenticated providers missing from live host') === true ||
+    normalized?.startsWith('OpenCode session status') === true ||
+    (normalized?.startsWith('opencode_app_mcp_tool_proof_') === true &&
+      normalized.includes('cache_hit')) ||
     normalized?.startsWith('info:opencode_launch_member_timing:') === true ||
     normalized?.startsWith('info:opencode_launch_total_timing:') === true
   );

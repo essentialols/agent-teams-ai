@@ -85,7 +85,7 @@ const ruNotes: Record<string, string> = {
   'Worktrees / branches': 'Worktrees / branches',
   'Agents Window worktrees': 'Worktrees в Agents Window',
   'Built-in for sessions and subagents': 'Встроено для сессий и субагентов',
-  'Claude, Codex, and OpenCode in one team': 'Claude, Codex и OpenCode в одной команде',
+  '9 supported runtime and provider paths in one team': '9 runtime- и provider-путей в одной команде',
   'Many providers, terminal-first': 'Много провайдеров, terminal-first',
   'Bring your own agents/runtimes': 'Подключайте своих агентов и runtimes',
   'Multi-model agents, no shared team': 'Мультимодельные агенты, без общей команды',
@@ -295,7 +295,7 @@ const rows = computed<ComparisonRow[]>(() => [
   },
   {
     feature: t('comparison.features.multiAgent'),
-    us: { status: 'yes', note: note('Claude, Codex, and OpenCode in one team') },
+    us: { status: 'yes', note: note('9 supported runtime and provider paths in one team') },
     gastown: { status: 'yes', note: note('Many providers, terminal-first') },
     paperclip: { status: 'yes', note: note('Bring your own agents/runtimes') },
     cursor: { status: 'partial', note: note('Multi-model agents, no shared team') },

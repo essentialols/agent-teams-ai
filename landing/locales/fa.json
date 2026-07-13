@@ -86,7 +86,7 @@
   },
   "pricing": {
     "sectionTitle": "نصب رایگان. مدل رایگان همراه آن.",
-    "sectionSubtitle": "بلافاصله با یک مدل رایگان بدون احراز هویت شروع کنید - بدون حساب کاربری، کلید API یا کارت اعتباری. تنها زمانی که مدل‌های بیشتری بخواهید، دسترسی Claude، Codex، OpenCode/OpenRouter یا ارائه‌دهنده دیگری را متصل کنید.",
+    "sectionSubtitle": "بلافاصله با یک مدل رایگان بدون احراز هویت شروع کنید - بدون حساب کاربری، کلید API یا کارت اعتباری. تنها زمانی که مدل‌های بیشتری بخواهید، دسترسی Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro یا ارائه‌دهنده دیگری را متصل کنید.",
     "getStarted": "اکنون دانلود کنید",
     "popular": "رایگان",
     "freeModelCallout": "مدل رایگان بدون احراز هویت همراه آن",
@@ -159,9 +159,9 @@
   },
   "meta": {
     "homeTitle": "Agent Teams - ارکستراسیون عامل‌های هوش مصنوعی برای توسعه‌دهندگان",
-    "homeDescription": "برنامه دسکتاپ رایگان و متن‌باز برای تیم‌های عامل هوش مصنوعی. با یک مدل رایگان بدون احراز هویت شروع کنید، سپس هنگام نیاز به مدل‌های بیشتر Claude، Codex یا OpenCode را متصل کنید.",
+    "homeDescription": "برنامه دسکتاپ رایگان و متن‌باز برای تیم‌های عامل هوش مصنوعی. با یک مدل رایگان بدون احراز هویت شروع کنید، سپس هنگام نیاز به مدل‌های بیشتر Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro را متصل کنید.",
     "downloadTitle": "دانلود Agent Teams برای macOS، Windows و Linux",
-    "downloadDescription": "Agent Teams را برای macOS، Windows و Linux دانلود کنید. برنامه دسکتاپ رایگان و متن‌باز برای تیم‌های عامل Claude، Codex و OpenCode."
+    "downloadDescription": "Agent Teams را برای macOS، Windows و Linux دانلود کنید. برنامه دسکتاپ رایگان و متن‌باز برای تیم‌های عامل Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro."
   },
   "error": {
     "notFoundTitle": "صفحه یافت نشد",

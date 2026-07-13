@@ -183,7 +183,7 @@ export const heroFeatureRail = [
   {
     id: "developers",
     title: "Bring Your AI Stack",
-    text: "Claude, Codex, and OpenCode teammates in one desktop cockpit.",
+    text: "Mix Claude Code, Codex, OpenCode, Cursor, SuperGrok, Copilot, Z.AI, MiniMax, and Kiro teammates.",
   },
   {
     id: "secure",
@@ -247,7 +247,7 @@ const ruHeroFeatureRail: Record<string, { title: string; text: string }> = {
   },
   developers: {
     title: "Подключайте свой AI-стек",
-    text: "Claude, Codex и OpenCode в одном десктопном центре управления.",
+    text: "Объединяйте Claude Code, Codex, OpenCode, Cursor, SuperGrok, Copilot, Z.AI, MiniMax и Kiro.",
   },
   secure: {
     title: "Оставайтесь в контуре",

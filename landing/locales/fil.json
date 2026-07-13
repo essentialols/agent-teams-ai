@@ -86,7 +86,7 @@
   },
   "pricing": {
     "sectionTitle": "Libreng i-install. Kasama ang libreng model.",
-    "sectionSubtitle": "Magsimula agad gamit ang isang libreng model na walang auth - walang account, API key, o credit card. Ikonekta ang Claude, Codex, OpenCode/OpenRouter, o ibang provider access kapag gusto mo ng mas maraming model.",
+    "sectionSubtitle": "Magsimula agad gamit ang isang libreng model na walang auth - walang account, API key, o credit card. Ikonekta ang Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro, o ibang provider access kapag gusto mo ng mas maraming model.",
     "getStarted": "I-download Ngayon",
     "popular": "Libre",
     "freeModelCallout": "Kasama ang libreng model na walang auth",
@@ -159,9 +159,9 @@
   },
   "meta": {
     "homeTitle": "Agent Teams - AI Agent Orchestration para sa mga Developer",
-    "homeDescription": "Libre at open-source na desktop app para sa AI agent teams. Magsimula sa isang libreng model na walang auth, pagkatapos ay ikonekta ang Claude, Codex, o OpenCode kapag kailangan mo ng mas maraming model.",
+    "homeDescription": "Libre at open-source na desktop app para sa AI agent teams. Magsimula sa isang libreng model na walang auth, pagkatapos ay ikonekta ang Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro kapag kailangan mo ng mas maraming model.",
     "downloadTitle": "I-download ang Agent Teams para sa macOS, Windows, at Linux",
-    "downloadDescription": "I-download ang Agent Teams para sa macOS, Windows, at Linux. Libre at open-source na desktop app para sa mga agent team ng Claude, Codex, at OpenCode."
+    "downloadDescription": "I-download ang Agent Teams para sa macOS, Windows, at Linux. Libre at open-source na desktop app para sa mga agent team ng Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro."
   },
   "error": {
     "notFoundTitle": "Hindi nahanap ang page",

@@ -32,7 +32,7 @@
     },
     "watchDemo": "Смотреть демо",
     "videoUnavailable": "Видео недоступно",
-    "supportedProviders": "Поддерживаем AI-провайдеры",
+    "supportedProviders": "Поддерживаемые AI-провайдеры",
     "slogan": "Делайте много, почти ничего не делая",
     "platformDefault": "Для вашей платформы",
     "guidesSetup": "Гайды и настройка",
@@ -86,7 +86,7 @@
   },
   "pricing": {
     "sectionTitle": "Бесплатно установить. Бесплатная модель уже внутри.",
-    "sectionSubtitle": "Можно сразу начать с бесплатной модели без авторизации - без регистрации, API-ключей и карты. Claude, Codex, OpenCode/OpenRouter и другие провайдеры подключайте только если нужны дополнительные модели.",
+    "sectionSubtitle": "Можно сразу начать с бесплатной модели без авторизации - без регистрации, API-ключей и карты. Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax и Kiro подключайте только для дополнительных моделей.",
     "getStarted": "Скачать",
     "popular": "Бесплатно",
     "freeModelCallout": "Бесплатная модель без авторизации включена",
@@ -159,9 +159,9 @@
   },
   "meta": {
     "homeTitle": "Agent Teams - Оркестрация ИИ-агентов для разработчиков",
-    "homeDescription": "Бесплатное open-source desktop-приложение для команд ИИ-агентов. Начните с бесплатной модели без авторизации, а Claude, Codex или OpenCode подключайте когда нужны дополнительные модели.",
+    "homeDescription": "Бесплатное open-source desktop-приложение для команд ИИ-агентов с Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax и Kiro.",
     "downloadTitle": "Скачать Agent Teams для macOS, Windows и Linux",
-    "downloadDescription": "Скачайте Agent Teams для macOS, Windows и Linux. Бесплатное open-source приложение для команд агентов Claude, Codex и OpenCode."
+    "downloadDescription": "Скачайте Agent Teams для macOS, Windows и Linux. Собирайте смешанные команды с Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax и Kiro."
   },
   "error": {
     "notFoundTitle": "Страница не найдена",

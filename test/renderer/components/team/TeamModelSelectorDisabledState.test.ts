@@ -24,8 +24,12 @@ vi.mock('@renderer/components/ui/tabs', () => {
       currentOnValueChange = onValueChange ?? null;
       return React.createElement('div', { 'data-tabs-value': value }, children);
     },
-    TabsList: ({ children }: { children: React.ReactNode }) =>
-      React.createElement('div', null, children),
+    TabsList: React.forwardRef<
+      HTMLDivElement,
+      { children: React.ReactNode; 'data-testid'?: string }
+    >(({ children, 'data-testid': testId }, ref) =>
+      React.createElement('div', { ref, 'data-testid': testId }, children)
+    ),
     TabsTrigger: ({
       children,
       value,
@@ -43,6 +47,7 @@ vi.mock('@renderer/components/ui/tabs', () => {
         'button',
         {
           type: 'button',
+          role: 'tab',
           disabled,
           title,
           'aria-disabled': ariaDisabled,
@@ -2771,7 +2776,7 @@ describe('TeamModelSelector disabled Codex models', () => {
           detailMessage: null,
           statusMessage: null,
           capabilities: { teamLaunch: true },
-          models: ['github-copilot/gpt-4.1', 'xai/grok-4'],
+          models: ['cursor-acp/auto', 'github-copilot/gpt-4.1', 'xai/grok-4'],
           modelCatalog: {
             schemaVersion: 1,
             providerId: 'opencode',
@@ -2782,6 +2787,31 @@ describe('TeamModelSelector disabled Codex models', () => {
             defaultModelId: null,
             defaultLaunchModel: null,
             models: [
+              {
+                id: 'cursor-acp/auto',
+                launchModel: 'cursor-acp/auto',
+                displayName: 'auto',
+                hidden: false,
+                supportedReasoningEfforts: [],
+                defaultReasoningEffort: null,
+                inputModalities: ['text'],
+                supportsPersonality: false,
+                isDefault: false,
+                upgrade: false,
+                source: 'app-server',
+                metadata: {
+                  opencode: {
+                    providerId: 'cursor-acp',
+                    modelId: 'auto',
+                    sourceLabel: 'Cursor ACP',
+                    accessKind: 'credentialed',
+                    routeKind: 'configured_local',
+                    proofState: 'verified',
+                    requiresExecutionProof: true,
+                    reason: null,
+                  },
+                },
+              },
               {
                 id: 'github-copilot/gpt-4.1',
                 launchModel: 'github-copilot/gpt-4.1',
@@ -2868,6 +2898,204 @@ describe('TeamModelSelector disabled Codex models', () => {
     });
 
     expect(onProviderChange).toHaveBeenCalledWith('opencode');
+
+    await act(async () => {
+      root.unmount();
+      await Promise.resolve();
+    });
+
+    const remountedRoot = createRoot(host);
+    await act(async () => {
+      remountedRoot.render(
+        React.createElement(TeamModelSelector, {
+          providerId: 'opencode',
+          onProviderChange,
+          value: 'cursor-acp/auto',
+          onValueChange: () => undefined,
+        })
+      );
+      await Promise.resolve();
+    });
+
+    const cursorTab = Array.from(host.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Cursor'
+    );
+    const openCodeTab = Array.from(host.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'OpenCode'
+    );
+    expect(cursorTab?.getAttribute('data-state')).toBe('active');
+    expect(openCodeTab?.getAttribute('data-state')).toBe('inactive');
+    expect(host.textContent).toContain('auto');
+    expect(host.textContent).not.toContain('GPT-4.1');
+
+    await act(async () => {
+      remountedRoot.unmount();
+      await Promise.resolve();
+    });
+  });
+
+  it('keeps the restored OpenCode source tab through deferred catalog hydration and model sync', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    const cursorModel = {
+      id: 'cursor-acp/auto',
+      launchModel: 'cursor-acp/auto',
+      displayName: 'auto',
+      hidden: false,
+      supportedReasoningEfforts: [],
+      defaultReasoningEffort: null,
+      inputModalities: ['text'],
+      supportsPersonality: false,
+      isDefault: false,
+      upgrade: false,
+      source: 'app-server',
+      metadata: {
+        free: false,
+        opencode: {
+          providerId: 'cursor-acp',
+          modelId: 'auto',
+          sourceLabel: 'Cursor ACP',
+          accessKind: 'credentialed',
+          routeKind: 'configured_local',
+          proofState: 'verified',
+          requiresExecutionProof: true,
+          reason: null,
+        },
+      },
+    };
+    const kiroModel = {
+      ...cursorModel,
+      id: 'kiro/auto',
+      launchModel: 'kiro/auto',
+      metadata: {
+        free: false,
+        opencode: {
+          ...cursorModel.metadata.opencode,
+          providerId: 'kiro',
+          modelId: 'auto',
+          sourceLabel: 'Kiro',
+        },
+      },
+    };
+    const freeModel = {
+      ...cursorModel,
+      id: 'opencode/big-pickle',
+      launchModel: 'opencode/big-pickle',
+      displayName: 'Big Pickle',
+      metadata: {
+        free: true,
+        opencode: {
+          ...cursorModel.metadata.opencode,
+          providerId: 'opencode',
+          modelId: 'big-pickle',
+          sourceLabel: 'OpenCode',
+          accessKind: 'builtin_free',
+          routeKind: 'builtin_free',
+          proofState: 'not_required',
+          requiresExecutionProof: false,
+        },
+      },
+    };
+    storeState.cliStatus = {
+      flavor: 'agent_teams_orchestrator',
+      providers: [
+        {
+          providerId: 'opencode',
+          supported: true,
+          authenticated: true,
+          capabilities: { teamLaunch: true },
+          models: ['cursor-acp/auto'],
+          modelCatalog: null,
+          modelCatalogRefreshState: 'loading',
+          runtimeCapabilities: { modelCatalog: { dynamic: true, source: 'app-server' } },
+          modelVerificationState: 'idle',
+          modelAvailability: [],
+        },
+      ],
+    };
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const renderSelector = async (value: string): Promise<void> => {
+      await act(async () => {
+        root.render(
+          React.createElement(TeamModelSelector, {
+            providerId: 'opencode',
+            onProviderChange: () => undefined,
+            value,
+            onValueChange: () => undefined,
+          })
+        );
+        await Promise.resolve();
+      });
+    };
+
+    await renderSelector('cursor-acp/auto');
+    expect(host.querySelector('[data-tabs-value="opencode"]')).not.toBeNull();
+
+    storeState.cliStatus = {
+      flavor: 'agent_teams_orchestrator',
+      providers: [
+        {
+          providerId: 'opencode',
+          supported: true,
+          authenticated: true,
+          capabilities: { teamLaunch: true },
+          models: ['cursor-acp/auto', 'kiro/auto', 'opencode/big-pickle'],
+          modelCatalogRefreshState: 'ready',
+          modelCatalog: {
+            schemaVersion: 1,
+            providerId: 'opencode',
+            source: 'app-server',
+            status: 'ready',
+            fetchedAt: '2026-07-13T00:00:00.000Z',
+            staleAt: '2026-07-13T00:10:00.000Z',
+            defaultModelId: null,
+            defaultLaunchModel: null,
+            models: [cursorModel, kiroModel, freeModel],
+            diagnostics: { configReadState: 'ready', appServerState: 'healthy' },
+          },
+        },
+      ],
+    };
+
+    await renderSelector('cursor-acp/auto');
+    expect(host.querySelector('[data-tabs-value="opencode-source:cursor-acp"]')).not.toBeNull();
+
+    const tabsList = host.querySelector<HTMLElement>(
+      '[data-testid="team-model-selector-provider-tabs"]'
+    );
+    const kiroTab = Array.from(host.querySelectorAll<HTMLElement>('[role="tab"]')).find(
+      (tab) => tab.textContent?.trim() === 'Kiro'
+    );
+    expect(tabsList).not.toBeNull();
+    expect(kiroTab).toBeDefined();
+    const scrollTo = vi.fn();
+    Object.defineProperty(tabsList, 'clientWidth', { configurable: true, value: 300 });
+    if (tabsList) {
+      tabsList.scrollTo = scrollTo;
+      tabsList.getBoundingClientRect = () =>
+        ({ left: 0, right: 300, width: 300, top: 0, bottom: 48, height: 48 }) as DOMRect;
+    }
+    if (kiroTab) {
+      kiroTab.getBoundingClientRect = () =>
+        ({ left: 500, right: 620, width: 120, top: 0, bottom: 48, height: 48 }) as DOMRect;
+    }
+
+    await renderSelector('kiro/auto');
+    expect(host.querySelector('[data-tabs-value="opencode-source:kiro"]')).not.toBeNull();
+    expect(scrollTo).toHaveBeenCalledWith({ left: 410, behavior: 'auto' });
+
+    await renderSelector('');
+    expect(host.querySelector('[data-tabs-value="opencode-source:kiro"]')).not.toBeNull();
+
+    const freeOnlyToggle = host.querySelector<HTMLElement>('#opencode-team-model-free-only');
+    expect(freeOnlyToggle).not.toBeNull();
+    await act(async () => {
+      freeOnlyToggle?.click();
+      await Promise.resolve();
+    });
+    expect(host.querySelector('[data-tabs-value="opencode-source:kiro"]')).not.toBeNull();
 
     await act(async () => {
       root.unmount();

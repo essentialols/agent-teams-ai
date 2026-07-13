@@ -49,12 +49,12 @@
     {
       "id": "whatIsIt",
       "question": "Що таке Agent Teams?",
-      "answer": "Desktop-додаток для оркестрації AI-команд з нашою локальною координацією. Агенти мають ролі, працюють автономно, співпрацюють через kanban і можуть працювати з Claude, Codex або OpenCode."
+      "answer": "Desktop-додаток для оркестрації AI-команд з нашою локальною координацією. Агенти мають ролі, працюють автономно, співпрацюють через kanban і можуть працювати з Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro."
     },
     {
       "id": "isFree",
       "question": "Це справді безкоштовно?",
-      "answer": "Так. Додаток безкоштовний і open source. Можна стартувати з безкоштовною моделлю без auth - без реєстрації, API keys чи картки. Для інших моделей підключіть Claude, Codex, OpenCode/OpenRouter або інший підтримуваний provider."
+      "answer": "Так. Додаток безкоштовний і open source. Можна стартувати з безкоштовною моделлю без auth - без реєстрації, API keys чи картки. Для інших моделей підключіть Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro або інший підтримуваний provider."
     },
     {
       "id": "platforms",
@@ -125,7 +125,7 @@
       "name": "Безкоштовно",
       "price": "$0",
       "period": "",
-      "description": "Так. Додаток безкоштовний і open source. Можна стартувати з безкоштовною моделлю без auth - без реєстрації, API keys чи картки. Для інших моделей підключіть Claude, Codex, OpenCode/OpenRouter або інший підтримуваний provider.",
+      "description": "Так. Додаток безкоштовний і open source. Можна стартувати з безкоштовною моделлю без auth - без реєстрації, API keys чи картки. Для інших моделей підключіть Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro або інший підтримуваний provider.",
       "features": [
         "Команди агентів",
         "Kanban-дошка",

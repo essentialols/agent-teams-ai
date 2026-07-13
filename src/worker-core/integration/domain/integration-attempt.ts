@@ -90,8 +90,16 @@ export type CheckRunRollup = {
   readonly failedCheckIds: readonly string[];
 };
 
+export type MergeIntegrationPlan = {
+  readonly sourceRemote: string;
+  readonly sourceBranch: string;
+  readonly sourceCommit: string;
+  readonly expectedTargetCommit: string;
+};
+
 export type CommitCandidate = {
   readonly commitSha: string;
+  readonly parentCommits?: readonly string[];
   readonly message: string;
   readonly files: readonly string[];
   readonly diffStat?: string;
@@ -117,6 +125,8 @@ export type IntegrationAttempt = {
   readonly targetBranch: string;
   readonly targetRemote: string;
   readonly expectedFiles: readonly string[];
+  readonly merge?: MergeIntegrationPlan;
+  readonly appliedFiles?: readonly string[];
   readonly status: IntegrationAttemptStatus;
   readonly workerOutput: WorkerOutput;
   readonly reviewDecision: ReviewDecision;
@@ -136,6 +146,7 @@ export type OpenIntegrationAttemptInput = {
   readonly targetWorkspacePath: string;
   readonly targetBranch: string;
   readonly targetRemote: string;
+  readonly merge?: MergeIntegrationPlan;
   readonly workerOutput: WorkerOutput;
   readonly reviewDecision: ReviewDecision;
   readonly now: string;
@@ -152,6 +163,9 @@ export function openIntegrationAttempt(
   }
   const expectedFiles = normalizeExpectedFiles(input.reviewDecision.approvedFiles);
   assertFilesWithinExpected(input.workerOutput.changedFiles, expectedFiles);
+  const merge = input.merge
+    ? normalizeMergeIntegrationPlan(input.merge, input.workerOutput)
+    : undefined;
   return {
     attemptId: input.attemptId,
     projectId: input.projectId,
@@ -162,6 +176,7 @@ export function openIntegrationAttempt(
     targetBranch: input.targetBranch,
     targetRemote: input.targetRemote,
     expectedFiles,
+    ...(merge ? { merge } : {}),
     status: IntegrationAttemptStatus.Opened,
     workerOutput: {
       ...input.workerOutput,
@@ -190,10 +205,14 @@ export function markWorkerOutputApplied(
   return {
     ...attempt,
     status: IntegrationAttemptStatus.Applied,
-    workerOutput: {
-      ...attempt.workerOutput,
-      changedFiles,
-    },
+    ...(attempt.merge
+      ? { appliedFiles: changedFiles }
+      : {
+          workerOutput: {
+            ...attempt.workerOutput,
+            changedFiles,
+          },
+        }),
     updatedAt: input.now,
   };
 }
@@ -262,6 +281,12 @@ export function markCommitCreated(
 ): IntegrationAttempt {
   assertStatus(attempt, [IntegrationAttemptStatus.ChecksPassed]);
   assertFilesWithinExpected(input.commitCandidate.files, attempt.expectedFiles);
+  if (attempt.merge) {
+    assertMergeCommitParents(
+      input.commitCandidate.parentCommits,
+      attempt.merge,
+    );
+  }
   return {
     ...attempt,
     status: IntegrationAttemptStatus.CommitCreated,
@@ -271,6 +296,91 @@ export function markCommitCreated(
     },
     updatedAt: input.now,
   };
+}
+
+export function integrationAppliedFiles(
+  attempt: IntegrationAttempt,
+): readonly string[] {
+  return attempt.appliedFiles ?? attempt.workerOutput.changedFiles;
+}
+
+export function assertMergeCommitParents(
+  parentCommits: readonly string[] | undefined,
+  merge: MergeIntegrationPlan,
+): void {
+  const expected = [merge.expectedTargetCommit, merge.sourceCommit];
+  if (
+    !parentCommits ||
+    parentCommits.length !== expected.length ||
+    !parentCommits.every((parent, index) => parent === expected[index])
+  ) {
+    throw new IntegrationError({
+      reason: IntegrationErrorReason.MergeParentsMismatch,
+      evidence: [
+        `expected:${expected.join(",")}`,
+        `actual:${parentCommits?.join(",") ?? "missing"}`,
+      ],
+    });
+  }
+}
+
+function normalizeMergeIntegrationPlan(
+  merge: MergeIntegrationPlan,
+  workerOutput: WorkerOutput,
+): MergeIntegrationPlan {
+  const normalized = {
+    sourceRemote: requiredMergeValue(merge.sourceRemote, "source_remote"),
+    sourceBranch: requiredMergeValue(merge.sourceBranch, "source_branch"),
+    sourceCommit: normalizeMergeCommit(merge.sourceCommit, "source_commit"),
+    expectedTargetCommit: normalizeMergeCommit(
+      merge.expectedTargetCommit,
+      "expected_target_commit",
+    ),
+  };
+  if (normalized.sourceCommit === normalized.expectedTargetCommit) {
+    throw new IntegrationError({
+      reason: IntegrationErrorReason.InvalidMergePlan,
+      evidence: ["merge_parents_must_differ"],
+    });
+  }
+  if (workerOutput.baseCommit !== normalized.expectedTargetCommit) {
+    throw new IntegrationError({
+      reason: IntegrationErrorReason.InvalidMergePlan,
+      evidence: [
+        `worker_base:${workerOutput.baseCommit ?? "missing"}`,
+        `target:${normalized.expectedTargetCommit}`,
+      ],
+    });
+  }
+  if (!workerOutput.patchPath || !workerOutput.patchSha256) {
+    throw new IntegrationError({
+      reason: IntegrationErrorReason.InvalidMergePlan,
+      evidence: ["reviewed_resolution_patch_required"],
+    });
+  }
+  return normalized;
+}
+
+function normalizeMergeCommit(value: string, field: string): string {
+  const normalized = requiredMergeValue(value, field).toLowerCase();
+  if (!/^[a-f0-9]{40}$/.test(normalized)) {
+    throw new IntegrationError({
+      reason: IntegrationErrorReason.InvalidMergePlan,
+      evidence: [`${field}_invalid`],
+    });
+  }
+  return normalized;
+}
+
+function requiredMergeValue(value: string, field: string): string {
+  const normalized = value.trim();
+  if (!normalized || normalized.includes("\0")) {
+    throw new IntegrationError({
+      reason: IntegrationErrorReason.InvalidMergePlan,
+      evidence: [`${field}_required`],
+    });
+  }
+  return normalized;
 }
 
 export function markPushed(

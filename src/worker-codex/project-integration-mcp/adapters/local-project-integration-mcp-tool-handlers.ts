@@ -26,6 +26,7 @@ import {
   resolveReviewedWorkerOutput,
   reviewedWorkerOutputRoot,
 } from "../../reviewed-worker-output";
+import { projectControlWorkspaceLockRoot } from "../../codex-goal-project-workspace-lock";
 
 export type CreateLocalProjectIntegrationMcpToolHandlersOptions =
   Pick<
@@ -76,7 +77,7 @@ function localProjectIntegrationDeps(
     checks: new LocalProjectCheckRunner(),
     scanner: new SimpleSecretScanner(),
     locks: new LocalWorkspaceIntegrationLock({
-      rootDir: join(rootDir, "locks"),
+      rootDir: projectControlWorkspaceLockRoot(controller.registryRootDir),
       staleLockMs: 30 * 60_000,
     }),
   };

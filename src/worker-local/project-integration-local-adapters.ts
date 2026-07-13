@@ -11,9 +11,20 @@ import {
 } from "node:path";
 import { promisify } from "node:util";
 
+import {
+  abortPendingMerge,
+  adoptExistingReviewedMergeCommit,
+  applyReviewedMerge,
+  assertPendingMergeParents,
+  commitParents,
+  type LocalGitMergeRuntime,
+} from "./project-integration-local-merge-coordinator";
+
 import { LocalFileWorkspaceLockStore } from "@vioxen/subscription-runtime/store-local-file";
 import {
   CheckRunStatus,
+  IntegrationError,
+  IntegrationErrorReason,
   assertCommitIdentity,
   SecretScanStatus,
   assertFilesWithinExpected,
@@ -29,10 +40,12 @@ import {
   type GitDiffCheckResult,
   type GitPort,
   type GitWorkspaceStatus,
+  type IntegrationAttempt,
   type SecretScannerPort,
   type SecretScanResult,
   type WorkspaceLock,
   type WorkspaceLockPort,
+  type WorkerOutput,
 } from "@vioxen/subscription-runtime/worker-core";
 
 const execFileAsync = promisify(execFile);
@@ -45,6 +58,14 @@ export type LocalGitIntegrationAdapterOptions = {
   readonly workerJobRootParent?: string;
   readonly controllerArchiveRoot?: string;
 };
+
+type LocalGitWorkerOutput = Pick<WorkerOutput, "workspacePath"> &
+  Partial<Omit<WorkerOutput, "workspacePath">>;
+
+type LocalGitAttempt = Pick<
+  IntegrationAttempt,
+  "targetWorkspacePath" | "expectedFiles"
+> & Partial<Omit<IntegrationAttempt, "targetWorkspacePath" | "expectedFiles">>;
 
 export class LocalGitIntegrationAdapter implements GitPort {
   constructor(
@@ -73,19 +94,19 @@ export class LocalGitIntegrationAdapter implements GitPort {
   }
 
   async applyWorkerOutput(input: {
-    readonly workerOutput: {
-      readonly workerJobId?: string;
-      readonly commitSha?: string;
-      readonly patchPath?: string;
-      readonly patchSha256?: string;
-      readonly workspacePath: string;
-    };
-    readonly attempt: {
-      readonly targetWorkspacePath: string;
-      readonly expectedFiles: readonly string[];
-    };
+    readonly workerOutput: LocalGitWorkerOutput;
+    readonly attempt: LocalGitAttempt;
     readonly allowAlreadyApplied?: boolean;
   }): Promise<GitApplyWorkerOutputResult> {
+    if (input.attempt.merge) {
+      return applyReviewedMerge({
+        runtime: this.mergeRuntime(),
+        workspacePath: await canonicalDirectory(
+          input.attempt.targetWorkspacePath,
+        ),
+        ...input,
+      });
+    }
     const workspacePath = await canonicalDirectory(
       input.attempt.targetWorkspacePath,
     );
@@ -164,6 +185,37 @@ export class LocalGitIntegrationAdapter implements GitPort {
     };
   }
 
+  private async canonicalWorkerPatch(
+    workerOutput: LocalGitWorkerOutput,
+  ): Promise<string> {
+    if (!workerOutput.patchPath) {
+      throw new Error("local_git_integration_worker_patch_required");
+    }
+    if (!workerOutput.workerJobId) {
+      throw new Error("local_git_integration_worker_job_required");
+    }
+    const workerJobRoot = this.options.workerJobRootParent === undefined
+      ? []
+      : [
+          workerJobRootPath(
+            this.options.workerJobRootParent,
+            workerOutput.workerJobId,
+          ),
+        ];
+    return canonicalPatchPath({
+      workspacePath: workerOutput.workspacePath,
+      path: workerOutput.patchPath,
+      workerJobId: workerOutput.workerJobId,
+      allowedPatchRoots: [
+        ...(this.options.allowedPatchRoots ?? []),
+        ...workerJobRoot,
+      ],
+      ...(this.options.controllerArchiveRoot === undefined
+        ? {}
+        : { controllerArchiveRoot: this.options.controllerArchiveRoot }),
+    });
+  }
+
   async diffCheck(input: {
     readonly workspacePath: string;
   }): Promise<GitDiffCheckResult> {
@@ -187,10 +239,36 @@ export class LocalGitIntegrationAdapter implements GitPort {
     readonly message: string;
     readonly files: readonly string[];
     readonly identity: CommitIdentity;
+    readonly expectedParentCommits?: readonly string[];
   }): Promise<GitCommitResult> {
     const workspacePath = await canonicalDirectory(input.workspacePath);
     const files = input.files.map(normalizeProjectRelativePath);
+    if (input.expectedParentCommits) {
+      const existing = await adoptExistingReviewedMergeCommit({
+        runtime: this.mergeRuntime(),
+        workspacePath,
+        expectedParentCommits: input.expectedParentCommits,
+        files,
+        message: input.message,
+        identity: assertCommitIdentity(input.identity),
+      });
+      if (existing) return existing;
+      await assertPendingMergeParents(
+        this.mergeRuntime(),
+        workspacePath,
+        input.expectedParentCommits,
+      );
+    }
     await this.git(["add", "--", ...files], workspacePath);
+    const unmerged = await this.gitNullTerminatedPaths(
+      ["diff", "--name-only", "--diff-filter=U", "-z"],
+      workspacePath,
+    );
+    if (unmerged.length > 0) {
+      throw new Error(
+        `local_git_integration_unresolved_merge:${unmerged.join(",")}`,
+      );
+    }
     const identity = assertCommitIdentity(input.identity);
     await this.git([
       "-c",
@@ -210,16 +288,49 @@ export class LocalGitIntegrationAdapter implements GitPort {
     const commitSha = (
       await this.git(["rev-parse", "HEAD"], workspacePath)
     ).stdout.trim();
+    const parentCommits = await commitParents(
+      this.mergeRuntime(),
+      workspacePath,
+      commitSha,
+    );
+    if (
+      input.expectedParentCommits &&
+      !sameCommits(parentCommits, input.expectedParentCommits)
+    ) {
+      throw new IntegrationError({
+        reason: IntegrationErrorReason.MergeParentsMismatch,
+        evidence: [
+          `expected:${input.expectedParentCommits.join(",")}`,
+          `actual:${parentCommits.join(",")}`,
+        ],
+      });
+    }
     const diffStat = (
       await this.git(
-        ["show", "--stat", "--format=", "--no-renames", "HEAD"],
+        input.expectedParentCommits
+          ? ["diff", "--stat", "--no-renames", `${commitSha}^1`, commitSha]
+          : ["show", "--stat", "--format=", "--no-renames", "HEAD"],
         workspacePath,
       )
     ).stdout.trim();
     return {
       commitSha,
+      ...(input.expectedParentCommits ? { parentCommits } : {}),
       ...(diffStat ? { diffStat } : {}),
     };
+  }
+
+  async abortMerge(input: {
+    readonly attempt: IntegrationAttempt;
+  }): Promise<void> {
+    const workspacePath = await canonicalDirectory(
+      input.attempt.targetWorkspacePath,
+    );
+    await abortPendingMerge(
+      this.mergeRuntime(),
+      workspacePath,
+      input.attempt.merge?.expectedTargetCommit,
+    );
   }
 
   async push(input: {
@@ -280,6 +391,22 @@ export class LocalGitIntegrationAdapter implements GitPort {
     return (
       await this.git(["rev-parse", "--abbrev-ref", "HEAD"], workspacePath)
     ).stdout.trim();
+  }
+
+  private mergeRuntime(): LocalGitMergeRuntime {
+    return {
+      git: (args, cwd) => this.git(args, cwd),
+      tryGit: (args, cwd) => this.tryGit(args, cwd),
+      gitNullTerminatedPaths: (args, cwd) =>
+        this.gitNullTerminatedPaths(args, cwd),
+      getStatus: (workspacePath) => this.getStatus({ workspacePath }),
+      remoteBranchCommit: (input) => this.remoteBranchCommit(input),
+      canonicalWorkerPatch: (workerOutput) =>
+        this.canonicalWorkerPatch(workerOutput),
+      assertPatchSha256,
+      patchChangedFiles: (patchPath, cwd) =>
+        this.patchChangedFiles(patchPath, cwd),
+    };
   }
 
   private async git(
@@ -355,6 +482,12 @@ function sameFiles(left: readonly string[], right: readonly string[]): boolean {
   const normalizedRight = uniqueSorted(right.map(normalizeProjectRelativePath));
   return normalizedLeft.length === normalizedRight.length &&
     normalizedLeft.every((file, index) => file === normalizedRight[index]);
+}
+
+function sameCommits(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every(
+    (commit, index) => commit.toLowerCase() === right[index]?.toLowerCase(),
+  );
 }
 
 async function assertPatchSha256(

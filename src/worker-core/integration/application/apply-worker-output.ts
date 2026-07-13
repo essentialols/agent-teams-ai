@@ -1,5 +1,6 @@
 import {
   assertFilesWithinExpected,
+  integrationAppliedFiles,
   markWorkerOutputApplied,
   normalizeProjectRelativePath,
   type IntegrationAttempt,
@@ -49,30 +50,68 @@ export async function applyWorkerOutput(
     }
     const allowedPreExistingDirtyFiles =
       input.allowedPreExistingDirtyFiles ?? [];
-    assertDirtyFilesAllowed(status.dirtyFiles, allowedPreExistingDirtyFiles);
-    const result = await deps.git.applyWorkerOutput({
-      attempt,
-      workerOutput: attempt.workerOutput,
-      allowAlreadyApplied:
-        sameFiles(allowedPreExistingDirtyFiles, attempt.expectedFiles) &&
-        sameFiles(status.dirtyFiles, attempt.expectedFiles),
-    });
-    assertFilesWithinExpected(result.changedFiles, attempt.expectedFiles);
-    const now = nowIso(deps.clock);
-    const updated = markWorkerOutputApplied(attempt, {
-      changedFiles: result.changedFiles,
-      now,
-    });
-    await deps.store.update(updated);
+    assertDirtyFilesAllowed(
+      status.dirtyFiles,
+      attempt.merge ? [] : allowedPreExistingDirtyFiles,
+    );
+    let updated: IntegrationAttempt;
+    try {
+      const result = await deps.git.applyWorkerOutput({
+        attempt,
+        workerOutput: attempt.workerOutput,
+        allowAlreadyApplied: attempt.merge
+          ? false
+          : sameFiles(allowedPreExistingDirtyFiles, attempt.expectedFiles) &&
+            sameFiles(status.dirtyFiles, attempt.expectedFiles),
+      });
+      assertFilesWithinExpected(result.changedFiles, attempt.expectedFiles);
+      const now = nowIso(deps.clock);
+      updated = markWorkerOutputApplied(attempt, {
+        changedFiles: result.changedFiles,
+        now,
+      });
+      await deps.store.update(updated);
+    } catch (error) {
+      if (attempt.merge) await rollbackFailedMerge(deps.git, attempt, error);
+      throw error;
+    }
     await recordIntegrationAudit(deps, updated, {
       type: IntegrationAuditEventType.AttemptApplied,
-      occurredAt: now,
-      files: updated.workerOutput.changedFiles,
+      occurredAt: updated.updatedAt,
+      files: integrationAppliedFiles(updated),
     });
     return updated;
   } finally {
     await deps.locks.release(lock);
   }
+}
+
+async function rollbackFailedMerge(
+  git: GitPort,
+  attempt: IntegrationAttempt,
+  originalError: unknown,
+): Promise<void> {
+  if (!git.abortMerge) {
+    throw new IntegrationError({
+      reason: IntegrationErrorReason.MergeRollbackFailed,
+      evidence: ["git_abort_merge_unavailable", safeErrorMessage(originalError)],
+    });
+  }
+  try {
+    await git.abortMerge({ attempt });
+  } catch (rollbackError) {
+    throw new IntegrationError({
+      reason: IntegrationErrorReason.MergeRollbackFailed,
+      evidence: [
+        safeErrorMessage(originalError),
+        safeErrorMessage(rollbackError),
+      ],
+    });
+  }
+}
+
+function safeErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function sameFiles(left: readonly string[], right: readonly string[]): boolean {

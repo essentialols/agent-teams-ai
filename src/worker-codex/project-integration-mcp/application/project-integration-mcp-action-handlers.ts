@@ -8,6 +8,9 @@ import {
   runRequiredChecks,
 } from "@vioxen/subscription-runtime/worker-core";
 import type {
+  ReviewedWorkerOutputSnapshot,
+} from "../../reviewed-worker-output";
+import type {
   ProjectIntegrationMcpArgs,
   ProjectIntegrationMcpToolResponse,
 } from "../ports/project-integration-mcp-tool-handlers";
@@ -34,6 +37,9 @@ export async function projectIntegrationOpenAttempt(
   options: CreateProjectIntegrationMcpToolHandlersOptions,
   args: ProjectIntegrationMcpArgs,
 ): Promise<ProjectIntegrationMcpToolResponse> {
+  if ((args as ProjectIntegrationMcpArgs & { readonly merge?: unknown }).merge !== undefined) {
+    throw new Error("project_integration_merge_must_be_bound_to_reviewed_output");
+  }
   const controller = await options.loadController(args);
   const attemptId = requiredRawString(args.attemptId, "attemptId");
   const reviewedOutputId = stringValue(args.reviewedOutputId);
@@ -64,6 +70,7 @@ export async function projectIntegrationOpenAttempt(
   const targetRemote = stringValue(args.targetRemote ?? args.remote) ?? "origin";
   assertSafeGitRefName(targetBranch, "targetBranch");
   assertSafeGitRemoteName(targetRemote, "targetRemote");
+  const merge = parseMergePlan(controller, resolvedReviewedOutput?.snapshot.merge);
   const commitSha = resolvedReviewedOutput?.workerOutput.commitSha ??
     stringValue(args.workerCommitSha ?? args.commitSha);
   if (commitSha) assertSafeGitCommitSha(commitSha);
@@ -79,7 +86,15 @@ export async function projectIntegrationOpenAttempt(
   const baseCommit = resolvedReviewedOutput?.workerOutput.baseCommit ??
     stringValue(args.workerBaseCommit);
   if (baseCommit) assertSafeGitCommitSha(baseCommit);
-  const targetCommit = stringValue(args.targetCommit);
+  const requestedTargetCommit = stringValue(args.targetCommit);
+  if (
+    merge &&
+    requestedTargetCommit &&
+    requestedTargetCommit.toLowerCase() !== merge.expectedTargetCommit
+  ) {
+    throw new Error("project_integration_merge_target_commit_mismatch");
+  }
+  const targetCommit = merge?.expectedTargetCommit ?? requestedTargetCommit;
   if (targetCommit) assertSafeGitCommitSha(targetCommit);
   const baseStatus = optionalBaseRevisionStatus(args.baseStatus);
   const baseRevisionReasons = stringArrayArg(args.baseRevisionReasons);
@@ -130,6 +145,7 @@ export async function projectIntegrationOpenAttempt(
     targetWorkspacePath,
     targetBranch,
     targetRemote,
+    ...(merge ? { merge } : {}),
     workerOutput: {
       workerJobId,
       workspacePath: workerWorkspacePath,
@@ -176,6 +192,43 @@ export async function projectIntegrationOpenAttempt(
     controllerJobId: controller.controller.jobId,
     attempt: attempt as unknown as JsonObject,
   });
+}
+
+function parseMergePlan(
+  controller: Awaited<ReturnType<CreateProjectIntegrationMcpToolHandlersOptions["loadController"]>>,
+  value: ReviewedWorkerOutputSnapshot["merge"],
+) {
+  if (value === undefined) return undefined;
+  const sourceRemote = requiredRawString(value.sourceRemote, "merge.sourceRemote");
+  const sourceBranch = requiredRawString(value.sourceBranch, "merge.sourceBranch");
+  const sourceCommit = requiredRawString(value.sourceCommit, "merge.sourceCommit")
+    .toLowerCase();
+  const expectedTargetCommit = requiredRawString(
+    value.expectedTargetCommit,
+    "merge.expectedTargetCommit",
+  ).toLowerCase();
+  assertSafeGitRemoteName(sourceRemote, "merge.sourceRemote");
+  assertSafeGitRefName(sourceBranch, "merge.sourceBranch");
+  assertExactMergeCommit(sourceCommit, "merge.sourceCommit");
+  assertExactMergeCommit(expectedTargetCommit, "merge.expectedTargetCommit");
+  if (!controller.scope.allowedGitRemotes?.includes(sourceRemote)) {
+    throw new Error("project_integration_merge_source_remote_denied");
+  }
+  if (!controller.scope.allowedBranches?.includes(sourceBranch)) {
+    throw new Error("project_integration_merge_source_branch_denied");
+  }
+  return {
+    sourceRemote,
+    sourceBranch,
+    sourceCommit,
+    expectedTargetCommit,
+  };
+}
+
+function assertExactMergeCommit(value: string, fieldName: string): void {
+  if (!/^[a-f0-9]{40}$/.test(value)) {
+    throw new Error(`project_control_${fieldName}_invalid`);
+  }
 }
 
 function requiredReviewedOutputResolver(

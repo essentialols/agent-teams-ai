@@ -17,13 +17,19 @@ export function projectControlWorkspaceLocks(
   registryRootDir: string,
 ): WorkspaceLockPort {
   return new LocalWorkspaceIntegrationLock({
-    rootDir: join(
-      dirname(registryRootDir),
-      "reviewed-worker-outputs",
-      ".locks",
-    ),
+    rootDir: projectControlWorkspaceLockRoot(registryRootDir),
     staleLockMs: 30 * 60_000,
   });
+}
+
+export function projectControlWorkspaceLockRoot(
+  registryRootDir: string,
+): string {
+  return join(
+    dirname(registryRootDir),
+    "reviewed-worker-outputs",
+    ".locks",
+  );
 }
 
 export async function withValidatedProjectWorkspaceLock<T>(input: {

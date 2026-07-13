@@ -1,0 +1,413 @@
+import {
+  IntegrationError,
+  IntegrationErrorReason,
+  assertFilesWithinExpected,
+  type GitApplyWorkerOutputResult,
+  type GitCommitResult,
+  type GitWorkspaceStatus,
+  type CommitIdentity,
+  type IntegrationAttempt,
+  type WorkerOutput,
+} from "@vioxen/subscription-runtime/worker-core";
+
+export type LocalGitMergeWorkerOutput = Pick<WorkerOutput, "workspacePath"> &
+  Partial<Omit<WorkerOutput, "workspacePath">>;
+
+export type LocalGitMergeAttempt = Pick<
+  IntegrationAttempt,
+  "targetWorkspacePath" | "expectedFiles"
+> & Partial<Omit<IntegrationAttempt, "targetWorkspacePath" | "expectedFiles">>;
+
+export type LocalGitCommandResult = {
+  readonly exitCode: number;
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly timedOut: boolean;
+};
+
+export type LocalGitMergeRuntime = {
+  readonly git: (
+    args: readonly string[],
+    cwd: string,
+  ) => Promise<LocalGitCommandResult>;
+  readonly tryGit: (
+    args: readonly string[],
+    cwd: string,
+  ) => Promise<LocalGitCommandResult>;
+  readonly gitNullTerminatedPaths: (
+    args: readonly string[],
+    cwd: string,
+  ) => Promise<readonly string[]>;
+  readonly getStatus: (
+    workspacePath: string,
+  ) => Promise<GitWorkspaceStatus>;
+  readonly remoteBranchCommit: (input: {
+    readonly workspacePath: string;
+    readonly remote: string;
+    readonly branch: string;
+  }) => Promise<string | null>;
+  readonly canonicalWorkerPatch: (
+    workerOutput: LocalGitMergeWorkerOutput,
+  ) => Promise<string>;
+  readonly assertPatchSha256: (
+    patchPath: string,
+    expectedSha256: string | undefined,
+  ) => Promise<void>;
+  readonly patchChangedFiles: (
+    patchPath: string,
+    cwd: string,
+  ) => Promise<readonly string[]>;
+};
+
+export async function applyReviewedMerge(input: {
+  readonly runtime: LocalGitMergeRuntime;
+  readonly workspacePath: string;
+  readonly workerOutput: LocalGitMergeWorkerOutput;
+  readonly attempt: LocalGitMergeAttempt;
+  readonly allowAlreadyApplied?: boolean;
+}): Promise<GitApplyWorkerOutputResult> {
+  const { runtime, workspacePath } = input;
+  const merge = input.attempt.merge;
+  if (!merge) throw new Error("local_git_integration_merge_plan_required");
+  assertSafeMergeRemote(merge.sourceRemote);
+  assertSafeMergeBranch(merge.sourceBranch);
+  if (!input.workerOutput.workerJobId) {
+    throw new Error("local_git_integration_merge_worker_job_required");
+  }
+  if (!input.workerOutput.changedFiles) {
+    throw new Error("local_git_integration_merge_changed_files_required");
+  }
+  if (input.allowAlreadyApplied === true) {
+    throw new Error("local_git_integration_merge_replay_forbidden");
+  }
+  const status = await runtime.getStatus(workspacePath);
+  if (status.dirtyFiles.length > 0) {
+    throw new Error("local_git_integration_merge_target_dirty");
+  }
+  const targetHead = (
+    await runtime.git(["rev-parse", "HEAD"], workspacePath)
+  ).stdout.trim().toLowerCase();
+  if (targetHead !== merge.expectedTargetCommit) {
+    throw new Error("local_git_integration_merge_target_head_mismatch");
+  }
+  const remoteHead = await runtime.remoteBranchCommit({
+    workspacePath,
+    remote: merge.sourceRemote,
+    branch: merge.sourceBranch,
+  });
+  if (remoteHead?.toLowerCase() !== merge.sourceCommit) {
+    throw new Error("local_git_integration_merge_source_head_mismatch");
+  }
+
+  let mergeStarted = false;
+  try {
+    await runtime.git(
+      [
+        "fetch",
+        "--no-tags",
+        merge.sourceRemote,
+        `refs/heads/${merge.sourceBranch}`,
+      ],
+      workspacePath,
+    );
+    const fetchedHead = (
+      await runtime.git(["rev-parse", "FETCH_HEAD"], workspacePath)
+    ).stdout.trim().toLowerCase();
+    if (fetchedHead !== merge.sourceCommit) {
+      throw new Error("local_git_integration_merge_fetched_head_mismatch");
+    }
+
+    const mergeResult = await runtime.tryGit(
+      ["merge", "--no-ff", "--no-commit", merge.sourceCommit],
+      workspacePath,
+    );
+    mergeStarted = await hasMergeHead(runtime, workspacePath);
+    if (!mergeStarted) {
+      throw new Error(
+        mergeResult.exitCode === 0
+          ? "local_git_integration_merge_conflicts_required"
+          : `local_git_integration_merge_start_failed:${safeTail(
+              mergeResult.stderr || mergeResult.stdout,
+            )}`,
+      );
+    }
+    const conflictFiles = await runtime.gitNullTerminatedPaths(
+      ["diff", "--name-only", "--diff-filter=U", "-z"],
+      workspacePath,
+    );
+    if (!sameFiles(conflictFiles, input.workerOutput.changedFiles)) {
+      throw new Error(
+        `local_git_integration_merge_conflict_set_mismatch:expected=${
+          uniqueSorted(input.workerOutput.changedFiles).join(",")
+        };actual=${conflictFiles.join(",")}`,
+      );
+    }
+    await restoreConflictFilesToFirstParent(
+      runtime,
+      workspacePath,
+      conflictFiles,
+    );
+
+    const patchPath = await runtime.canonicalWorkerPatch(input.workerOutput);
+    await runtime.assertPatchSha256(
+      patchPath,
+      input.workerOutput.patchSha256,
+    );
+    const patchFiles = await runtime.patchChangedFiles(patchPath, workspacePath);
+    if (!sameFiles(patchFiles, conflictFiles)) {
+      throw new Error(
+        `local_git_integration_merge_resolution_set_mismatch:expected=${
+          conflictFiles.join(",")
+        };actual=${patchFiles.join(",")}`,
+      );
+    }
+    const forwardCheck = await runtime.tryGit(
+      ["apply", "--check", "--whitespace=nowarn", patchPath],
+      workspacePath,
+    );
+    if (forwardCheck.exitCode !== 0) {
+      throw new Error("local_git_integration_merge_resolution_not_applicable");
+    }
+    await runtime.assertPatchSha256(
+      patchPath,
+      input.workerOutput.patchSha256,
+    );
+    await runtime.git(
+      ["apply", "--whitespace=nowarn", patchPath],
+      workspacePath,
+    );
+    const unmerged = await runtime.gitNullTerminatedPaths(
+      ["diff", "--name-only", "--diff-filter=U", "-z"],
+      workspacePath,
+    );
+    if (unmerged.length > 0) {
+      throw new Error(
+        `local_git_integration_unresolved_merge:${unmerged.join(",")}`,
+      );
+    }
+    const changedFiles = (await runtime.getStatus(workspacePath)).dirtyFiles;
+    assertFilesWithinExpected(changedFiles, input.attempt.expectedFiles);
+    return { changedFiles };
+  } catch (error) {
+    if (mergeStarted || await hasMergeHead(runtime, workspacePath)) {
+      try {
+        await abortPendingMerge(
+          runtime,
+          workspacePath,
+          merge.expectedTargetCommit,
+        );
+      } catch (rollbackError) {
+        throw new IntegrationError({
+          reason: IntegrationErrorReason.MergeRollbackFailed,
+          evidence: [safeError(error), safeError(rollbackError)],
+        });
+      }
+    }
+    throw error;
+  }
+}
+
+export async function abortPendingMerge(
+  runtime: Pick<LocalGitMergeRuntime, "git" | "tryGit" | "getStatus">,
+  workspacePath: string,
+  expectedTargetCommit: string | undefined,
+): Promise<void> {
+  if (await hasMergeHead(runtime, workspacePath)) {
+    await runtime.git(["merge", "--abort"], workspacePath);
+  }
+  if (expectedTargetCommit) {
+    const head = (
+      await runtime.git(["rev-parse", "HEAD"], workspacePath)
+    ).stdout.trim().toLowerCase();
+    if (head !== expectedTargetCommit) {
+      throw new Error("local_git_integration_merge_abort_head_mismatch");
+    }
+  }
+  const status = await runtime.getStatus(workspacePath);
+  if (status.dirtyFiles.length > 0) {
+    throw new Error("local_git_integration_merge_abort_left_dirty_workspace");
+  }
+}
+
+export async function assertPendingMergeParents(
+  runtime: Pick<LocalGitMergeRuntime, "git">,
+  workspacePath: string,
+  expectedParentCommits: readonly string[],
+): Promise<void> {
+  if (expectedParentCommits.length !== 2) {
+    throw new Error("local_git_integration_merge_parent_count_invalid");
+  }
+  const [expectedFirst, expectedSecond] = expectedParentCommits.map((commit) =>
+    commit.toLowerCase()
+  );
+  const first = (
+    await runtime.git(["rev-parse", "HEAD"], workspacePath)
+  ).stdout.trim().toLowerCase();
+  const second = (
+    await runtime.git(["rev-parse", "MERGE_HEAD"], workspacePath)
+  ).stdout.trim().toLowerCase();
+  if (first !== expectedFirst || second !== expectedSecond) {
+    throw new IntegrationError({
+      reason: IntegrationErrorReason.MergeParentsMismatch,
+      evidence: [
+        `expected:${expectedFirst},${expectedSecond}`,
+        `actual:${first},${second}`,
+      ],
+    });
+  }
+}
+
+export async function adoptExistingReviewedMergeCommit(input: {
+  readonly runtime: Pick<
+    LocalGitMergeRuntime,
+    "git" | "tryGit" | "gitNullTerminatedPaths"
+  >;
+  readonly workspacePath: string;
+  readonly expectedParentCommits: readonly string[];
+  readonly files: readonly string[];
+  readonly message: string;
+  readonly identity: CommitIdentity;
+}): Promise<GitCommitResult | undefined> {
+  if (await hasMergeHead(input.runtime, input.workspacePath)) return undefined;
+  const commitSha = (
+    await input.runtime.git(["rev-parse", "HEAD"], input.workspacePath)
+  ).stdout.trim().toLowerCase();
+  const parentCommits = await commitParents(
+    input.runtime,
+    input.workspacePath,
+    commitSha,
+  );
+  if (!sameCommits(parentCommits, input.expectedParentCommits)) {
+    return undefined;
+  }
+  const files = await input.runtime.gitNullTerminatedPaths(
+    ["diff", "--name-only", "--no-renames", "-z", `${commitSha}^1`, commitSha],
+    input.workspacePath,
+  );
+  const message = (
+    await input.runtime.git(["log", "-1", "--format=%B", commitSha], input.workspacePath)
+  ).stdout.trim();
+  const identityFields = (
+    await input.runtime.git(
+      ["show", "-s", "--format=%an%x00%ae%x00%cn%x00%ce", commitSha],
+      input.workspacePath,
+    )
+  ).stdout.trim().split("\0");
+  if (
+    !sameFiles(files, input.files) ||
+    message !== input.message.trim() ||
+    identityFields.length !== 4 ||
+    identityFields[0] !== input.identity.name ||
+    identityFields[1] !== input.identity.email ||
+    identityFields[2] !== input.identity.name ||
+    identityFields[3] !== input.identity.email
+  ) {
+    throw new IntegrationError({
+      reason: IntegrationErrorReason.MergeCommitRecoveryMismatch,
+      evidence: ["existing_merge_commit_does_not_match_approved_transition"],
+    });
+  }
+  const diffStat = (
+    await input.runtime.git(
+      ["diff", "--stat", "--no-renames", `${commitSha}^1`, commitSha],
+      input.workspacePath,
+    )
+  ).stdout.trim();
+  return {
+    commitSha,
+    parentCommits,
+    ...(diffStat ? { diffStat } : {}),
+  };
+}
+
+export async function commitParents(
+  runtime: Pick<LocalGitMergeRuntime, "git">,
+  workspacePath: string,
+  commitSha: string,
+): Promise<readonly string[]> {
+  const fields = (
+    await runtime.git(
+      ["rev-list", "--parents", "-n", "1", commitSha],
+      workspacePath,
+    )
+  ).stdout.trim().split(/\s+/);
+  if (fields[0]?.toLowerCase() !== commitSha.toLowerCase()) {
+    throw new Error("local_git_integration_commit_parent_read_invalid");
+  }
+  return fields.slice(1).map((parent) => parent.toLowerCase());
+}
+
+function hasMergeHead(
+  runtime: Pick<LocalGitMergeRuntime, "tryGit">,
+  workspacePath: string,
+): Promise<boolean> {
+  return runtime.tryGit(
+    ["rev-parse", "--verify", "MERGE_HEAD"],
+    workspacePath,
+  ).then((result) => result.exitCode === 0);
+}
+
+async function restoreConflictFilesToFirstParent(
+  runtime: Pick<LocalGitMergeRuntime, "git" | "tryGit">,
+  workspacePath: string,
+  conflictFiles: readonly string[],
+): Promise<void> {
+  for (const file of conflictFiles) {
+    const tracked = await runtime.tryGit(
+      ["cat-file", "-e", `HEAD:${file}`],
+      workspacePath,
+    );
+    if (tracked.exitCode === 0) {
+      await runtime.git(["checkout", "HEAD", "--", file], workspacePath);
+    } else {
+      await runtime.git(
+        ["rm", "-f", "--ignore-unmatch", "--", file],
+        workspacePath,
+      );
+    }
+  }
+}
+
+function sameFiles(left: readonly string[], right: readonly string[]): boolean {
+  const normalizedLeft = uniqueSorted(left);
+  const normalizedRight = uniqueSorted(right);
+  return normalizedLeft.length === normalizedRight.length &&
+    normalizedLeft.every((file, index) => file === normalizedRight[index]);
+}
+
+function sameCommits(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every(
+    (commit, index) => commit.toLowerCase() === right[index]?.toLowerCase(),
+  );
+}
+
+function uniqueSorted(values: readonly string[]): readonly string[] {
+  return [...new Set(values)].sort();
+}
+
+function assertSafeMergeRemote(value: string): void {
+  if (value.startsWith("-") || !/^[A-Za-z0-9._-]+$/.test(value)) {
+    throw new Error("local_git_integration_merge_remote_invalid");
+  }
+}
+
+function assertSafeMergeBranch(value: string): void {
+  if (
+    value.startsWith("-") ||
+    value.includes("..") ||
+    /[\s~^:?*\\[\]\x00-\x1f\x7f]/.test(value) ||
+    value.endsWith("/") ||
+    value.endsWith(".") ||
+    value.includes("//")
+  ) {
+    throw new Error("local_git_integration_merge_branch_invalid");
+  }
+}
+
+function safeError(error: unknown): string {
+  return safeTail(error instanceof Error ? error.message : String(error));
+}
+
+function safeTail(value: string): string {
+  return value.replace(/[\r\n]+/g, " ").slice(-500);
+}

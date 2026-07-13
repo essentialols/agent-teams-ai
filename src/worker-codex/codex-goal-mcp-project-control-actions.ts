@@ -790,6 +790,9 @@ export async function projectControlMarkReviewedView(
               "approvedFiles",
             ),
             requiredChecks: parseProjectIntegrationChecks(args.requiredChecks),
+            ...(args.merge
+              ? { merge: parseReviewedOutputMerge(controller.scope, args.merge) }
+              : {}),
           },
         }
       : {}),
@@ -827,6 +830,31 @@ export async function projectControlMarkReviewedView(
       : {}),
     result: result as unknown as JsonObject,
   };
+}
+
+function parseReviewedOutputMerge(
+  scope: ProjectAccessScope,
+  value: NonNullable<ProjectControlMcpArgs["merge"]>,
+) {
+  const sourceRemote = requiredRawString(value.sourceRemote, "merge.sourceRemote");
+  const sourceBranch = requiredRawString(value.sourceBranch, "merge.sourceBranch");
+  const sourceCommit = requiredRawString(value.sourceCommit, "merge.sourceCommit")
+    .toLowerCase();
+  const expectedTargetCommit = requiredRawString(
+    value.expectedTargetCommit,
+    "merge.expectedTargetCommit",
+  ).toLowerCase();
+  assertSafeGitRemoteName(sourceRemote, "merge.sourceRemote");
+  assertSafeGitRefName(sourceBranch, "merge.sourceBranch");
+  assertSafeGitCommitSha(sourceCommit);
+  assertSafeGitCommitSha(expectedTargetCommit);
+  if (!scope.allowedGitRemotes?.includes(sourceRemote)) {
+    throw new Error("reviewed_worker_output_merge_source_remote_denied");
+  }
+  if (!scope.allowedBranches?.includes(sourceBranch)) {
+    throw new Error("reviewed_worker_output_merge_source_branch_denied");
+  }
+  return { sourceRemote, sourceBranch, sourceCommit, expectedTargetCommit };
 }
 
 function requiredReviewDecision(value: unknown): ReviewDecisionStatus {

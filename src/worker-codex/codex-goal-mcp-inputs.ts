@@ -193,6 +193,12 @@ export type ProjectControlMcpArgs = GoalMcpArgs & JobRegistryMcpArgs & {
   readonly preexistingWorkspacePatchPath?: string;
   readonly preexistingWorkspacePatchSha256?: string;
   readonly confirmPreexistingWorkspacePatch?: boolean;
+  readonly merge?: {
+    readonly sourceRemote?: string;
+    readonly sourceBranch?: string;
+    readonly sourceCommit?: string;
+    readonly expectedTargetCommit?: string;
+  };
 };
 
 export type ProjectControllerLaunchPlanMcpArgs = ProjectControlMcpArgs & {

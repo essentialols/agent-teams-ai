@@ -3,6 +3,7 @@ import {
   SecretScanStatus,
   assertFilesWithinExpected,
   assertStatus,
+  integrationAppliedFiles,
   markCommitCreated,
   normalizeProjectRelativePath,
   type IntegrationAttempt,
@@ -72,7 +73,12 @@ export async function commitApprovedChanges(
     const status = await deps.git.getStatus({
       workspacePath: attempt.targetWorkspacePath,
     });
-    const dirtyFiles = status.dirtyFiles.map(normalizeProjectRelativePath).sort();
+    const observedDirtyFiles = status.dirtyFiles
+      .map(normalizeProjectRelativePath)
+      .sort();
+    const dirtyFiles = attempt.merge && observedDirtyFiles.length === 0
+      ? [...integrationAppliedFiles(attempt)]
+      : observedDirtyFiles;
     if (dirtyFiles.length === 0) {
       throw new IntegrationError({
         reason: IntegrationErrorReason.UnexpectedFiles,
@@ -80,6 +86,19 @@ export async function commitApprovedChanges(
       });
     }
     assertFilesWithinExpected(dirtyFiles, attempt.expectedFiles);
+    if (
+      attempt.merge &&
+      observedDirtyFiles.length > 0 &&
+      !sameFiles(dirtyFiles, integrationAppliedFiles(attempt))
+    ) {
+      throw new IntegrationError({
+        reason: IntegrationErrorReason.UnexpectedFiles,
+        evidence: [
+          `expected:${integrationAppliedFiles(attempt).join(",")}`,
+          `actual:${dirtyFiles.join(",")}`,
+        ],
+      });
+    }
     const scan = await deps.scanner.scanFiles({
       workspacePath: attempt.targetWorkspacePath,
       files: dirtyFiles,
@@ -100,6 +119,14 @@ export async function commitApprovedChanges(
       message: input.message,
       files: dirtyFiles,
       identity,
+      ...(attempt.merge
+        ? {
+            expectedParentCommits: [
+              attempt.merge.expectedTargetCommit,
+              attempt.merge.sourceCommit,
+            ],
+          }
+        : {}),
     });
     const commitCandidate = commitCandidateFromGitResult({
         message: input.message,
@@ -123,4 +150,11 @@ export async function commitApprovedChanges(
   } finally {
     await deps.locks.release(lock);
   }
+}
+
+function sameFiles(left: readonly string[], right: readonly string[]): boolean {
+  const normalizedLeft = [...new Set(left.map(normalizeProjectRelativePath))].sort();
+  const normalizedRight = [...new Set(right.map(normalizeProjectRelativePath))].sort();
+  return normalizedLeft.length === normalizedRight.length &&
+    normalizedLeft.every((file, index) => file === normalizedRight[index]);
 }

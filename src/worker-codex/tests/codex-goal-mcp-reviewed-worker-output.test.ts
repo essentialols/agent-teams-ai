@@ -120,7 +120,8 @@ describe("Codex project reviewed worker output", () => {
           jobIdPrefixes: ["project-"],
           tmuxSessionPrefixes: ["project-"],
           allowedAccountIds: ["account-a"],
-          allowedBranches: ["main"],
+          allowedBranches: ["main", "base/current"],
+          allowedGitRemotes: ["origin"],
         },
       });
 
@@ -138,6 +139,12 @@ describe("Codex project reviewed worker output", () => {
           reviewReason: "Exact packet diff accepted.",
           approvedFiles: ["docs/packet.md"],
           requiredChecks: [],
+          merge: {
+            sourceRemote: "origin",
+            sourceBranch: "base/current",
+            sourceCommit: "2".repeat(40),
+            expectedTargetCommit: "3".repeat(40),
+          },
           note: "ACCEPT",
         },
       );
@@ -163,6 +170,12 @@ describe("Codex project reviewed worker output", () => {
           reviewedOutputId,
           patchSha256: sha256(patch),
           changedFiles: ["docs/packet.md"],
+          merge: {
+            sourceRemote: "origin",
+            sourceBranch: "base/current",
+            sourceCommit: "2".repeat(40),
+            expectedTargetCommit: "3".repeat(40),
+          },
         },
       });
 
@@ -186,6 +199,13 @@ describe("Codex project reviewed worker output", () => {
             workerJobId,
             patchSha256: sha256(patch),
             changedFiles: ["docs/packet.md"],
+            targetCommit: "3".repeat(40),
+          },
+          merge: {
+            sourceRemote: "origin",
+            sourceBranch: "base/current",
+            sourceCommit: "2".repeat(40),
+            expectedTargetCommit: "3".repeat(40),
           },
           reviewDecision: {
             reviewedBy: controllerJobId,

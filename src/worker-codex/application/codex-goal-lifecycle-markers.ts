@@ -94,6 +94,9 @@ export async function writeCodexGoalReviewMarker(input: {
               changedFiles: input.reviewedOutput.changedFiles,
               reviewedBy: input.reviewedOutput.reviewDecision.reviewedBy,
               decision: input.reviewedOutput.reviewDecision.decision,
+              ...(input.reviewedOutput.merge
+                ? { merge: input.reviewedOutput.merge }
+                : {}),
               capturedAt: input.reviewedOutput.capturedAt,
             },
           }

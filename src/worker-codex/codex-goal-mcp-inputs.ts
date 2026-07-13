@@ -183,6 +183,12 @@ export type ProjectControlMcpArgs = GoalMcpArgs & JobRegistryMcpArgs & {
   readonly reviewReason?: string;
   readonly approvedFiles?: readonly string[] | string;
   readonly requiredChecks?: readonly unknown[];
+  readonly merge?: {
+    readonly sourceRemote?: string;
+    readonly sourceBranch?: string;
+    readonly sourceCommit?: string;
+    readonly expectedTargetCommit?: string;
+  };
 };
 
 export type ProjectControllerLaunchPlanMcpArgs = ProjectControlMcpArgs & {

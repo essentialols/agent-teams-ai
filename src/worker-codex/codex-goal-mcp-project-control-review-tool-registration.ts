@@ -53,6 +53,12 @@ export function registerCodexGoalProjectControlReviewTools(server: McpServer): v
           cwd: z.string().optional(),
           timeoutMs: z.number().int().positive().optional(),
         })).optional(),
+        merge: z.object({
+          sourceRemote: z.string(),
+          sourceBranch: z.string(),
+          sourceCommit: z.string().regex(/^[a-fA-F0-9]{40}$/),
+          expectedTargetCommit: z.string().regex(/^[a-fA-F0-9]{40}$/),
+        }).strict().optional(),
       },
     },
     async (args) => withMcpErrors(async () =>

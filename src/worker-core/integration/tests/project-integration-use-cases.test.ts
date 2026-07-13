@@ -458,7 +458,229 @@ describe("project integration use cases", () => {
       },
     });
   });
+
+  it("opens and applies a pinned merge while preserving reviewed conflict files", async () => {
+    const fixture = createFixture();
+    fixture.git.appliedFiles = ["src/base-change.ts", "src/memory.ts"];
+
+    const opened = await openProjectIntegrationAttempt(
+      fixture.deps(),
+      mergeInput(),
+    );
+    const applied = await applyWorkerOutput(fixture.deps(), {
+      attemptId: opened.attemptId,
+    });
+
+    expect(applied).toMatchObject({
+      merge: {
+        sourceRemote: "origin",
+        sourceBranch: "base",
+        sourceCommit: MERGE_SOURCE_COMMIT,
+        expectedTargetCommit: MERGE_TARGET_COMMIT,
+      },
+      workerOutput: {
+        changedFiles: ["src/memory.ts"],
+      },
+      appliedFiles: ["src/base-change.ts", "src/memory.ts"],
+    });
+    expect(fixture.git.lastAllowAlreadyApplied).toBe(false);
+  });
+
+  it("rejects a merge whose reviewed patch is not based on the target parent", async () => {
+    const fixture = createFixture();
+    const candidate = mergeInput();
+
+    await expect(openProjectIntegrationAttempt(fixture.deps(), {
+      ...candidate,
+      workerOutput: {
+        ...candidate.workerOutput,
+        baseCommit: "c".repeat(40),
+      },
+    })).rejects.toMatchObject({
+      reason: IntegrationErrorReason.InvalidMergePlan,
+    });
+  });
+
+  it("aborts a merge when applied files exceed the approved merge footprint", async () => {
+    const fixture = createFixture();
+    fixture.git.appliedFiles = ["src/memory.ts", "test/outside.ts"];
+    const opened = await openProjectIntegrationAttempt(
+      fixture.deps(),
+      mergeInput(),
+    );
+
+    await expect(applyWorkerOutput(fixture.deps(), {
+      attemptId: opened.attemptId,
+    })).rejects.toMatchObject({
+      reason: IntegrationErrorReason.PathOutsideExpectedFiles,
+      evidence: ["test/outside.ts"],
+    });
+    expect(fixture.git.calls).toEqual(["status", "apply", "abortMerge"]);
+    expect(fixture.store.get(opened.attemptId)?.status).toBe(
+      IntegrationAttemptStatus.Opened,
+    );
+  });
+
+  it("records an exact ordered two-parent merge commit", async () => {
+    const fixture = createFixture();
+    fixture.git.appliedFiles = ["src/base-change.ts", "src/memory.ts"];
+    const opened = await openProjectIntegrationAttempt(
+      fixture.deps(),
+      mergeInput(),
+    );
+    await applyWorkerOutput(fixture.deps(), { attemptId: opened.attemptId });
+    await runRequiredChecks(fixture.deps(), { attemptId: opened.attemptId });
+
+    const committed = await commitApprovedChanges(fixture.deps(), {
+      attemptId: opened.attemptId,
+      message: "chore(git): merge base branch",
+      policy: policy(),
+    });
+
+    expect(committed.commitCandidate?.parentCommits).toEqual([
+      MERGE_TARGET_COMMIT,
+      MERGE_SOURCE_COMMIT,
+    ]);
+    expect(fixture.git.lastExpectedParentCommits).toEqual([
+      MERGE_TARGET_COMMIT,
+      MERGE_SOURCE_COMMIT,
+    ]);
+  });
+
+  it("fails closed when a merge commit reports different parents", async () => {
+    const fixture = createFixture();
+    fixture.git.appliedFiles = ["src/base-change.ts", "src/memory.ts"];
+    fixture.git.commitParents = [MERGE_SOURCE_COMMIT, MERGE_TARGET_COMMIT];
+    const opened = await openProjectIntegrationAttempt(
+      fixture.deps(),
+      mergeInput(),
+    );
+    await applyWorkerOutput(fixture.deps(), { attemptId: opened.attemptId });
+    await runRequiredChecks(fixture.deps(), { attemptId: opened.attemptId });
+
+    await expect(commitApprovedChanges(fixture.deps(), {
+      attemptId: opened.attemptId,
+      message: "chore(git): merge base branch",
+      policy: policy(),
+    })).rejects.toMatchObject({
+      reason: IntegrationErrorReason.MergeParentsMismatch,
+    });
+  });
+
+  it("rolls back an applied merge before recording rejection", async () => {
+    const fixture = createFixture();
+    fixture.git.appliedFiles = ["src/base-change.ts", "src/memory.ts"];
+    const opened = await openProjectIntegrationAttempt(
+      fixture.deps(),
+      mergeInput(),
+    );
+    await applyWorkerOutput(fixture.deps(), { attemptId: opened.attemptId });
+    const rejected = await rejectIntegrationAttempt(fixture.deps(), {
+      attemptId: opened.attemptId,
+      reason: "merge review rejected",
+    });
+    expect(rejected.status).toBe(IntegrationAttemptStatus.Rejected);
+    expect(fixture.git.calls).toContain("abortMerge");
+  });
+
+  it("rejects a committed merge without attempting to abort completed Git state", async () => {
+    const fixture = createFixture();
+    fixture.git.appliedFiles = ["src/base-change.ts", "src/memory.ts"];
+    const opened = await openProjectIntegrationAttempt(
+      fixture.deps(),
+      mergeInput(),
+    );
+    await applyWorkerOutput(fixture.deps(), { attemptId: opened.attemptId });
+    await runRequiredChecks(fixture.deps(), { attemptId: opened.attemptId });
+    await commitApprovedChanges(fixture.deps(), {
+      attemptId: opened.attemptId,
+      message: "chore(git): merge base branch",
+      policy: policy(),
+    });
+    const rejected = await rejectIntegrationAttempt(fixture.deps(), {
+      attemptId: opened.attemptId,
+      reason: "post-commit policy rejection",
+    });
+    expect(rejected.status).toBe(IntegrationAttemptStatus.Rejected);
+    expect(fixture.git.calls.filter((call) => call === "abortMerge")).toEqual([]);
+  });
+
+  it("adopts an exact merge commit after state persistence fails", async () => {
+    const fixture = createFixture();
+    fixture.git.appliedFiles = ["src/base-change.ts", "src/memory.ts"];
+    const opened = await openProjectIntegrationAttempt(
+      fixture.deps(),
+      mergeInput(),
+    );
+    await applyWorkerOutput(fixture.deps(), { attemptId: opened.attemptId });
+    await runRequiredChecks(fixture.deps(), { attemptId: opened.attemptId });
+    fixture.store.failNextUpdate = new Error("simulated state persistence crash");
+    await expect(commitApprovedChanges(fixture.deps(), {
+      attemptId: opened.attemptId,
+      message: "chore(git): merge base branch",
+      policy: policy(),
+    })).rejects.toThrow("simulated state persistence crash");
+    expect(fixture.store.get(opened.attemptId)?.status).toBe(
+      IntegrationAttemptStatus.ChecksPassed,
+    );
+    const recovered = await commitApprovedChanges(fixture.deps(), {
+      attemptId: opened.attemptId,
+      message: "chore(git): merge base branch",
+      policy: policy(),
+    });
+    expect(recovered.status).toBe(IntegrationAttemptStatus.CommitCreated);
+    expect(fixture.git.calls.filter((call) => call === "commit")).toHaveLength(2);
+  });
+
+  it("does not record merge rejection when rollback fails", async () => {
+    const fixture = createFixture();
+    fixture.git.appliedFiles = ["src/base-change.ts", "src/memory.ts"];
+    const opened = await openProjectIntegrationAttempt(
+      fixture.deps(),
+      mergeInput(),
+    );
+    await applyWorkerOutput(fixture.deps(), { attemptId: opened.attemptId });
+    fixture.git.abortMergeError = new Error("merge abort failed");
+
+    await expect(rejectIntegrationAttempt(fixture.deps(), {
+      attemptId: opened.attemptId,
+      reason: "merge review rejected",
+    })).rejects.toMatchObject({
+      reason: IntegrationErrorReason.MergeRollbackFailed,
+    });
+    expect(fixture.store.get(opened.attemptId)?.status).toBe(
+      IntegrationAttemptStatus.Applied,
+    );
+  });
 });
+
+const MERGE_TARGET_COMMIT = "a".repeat(40);
+const MERGE_SOURCE_COMMIT = "b".repeat(40);
+
+function mergeInput() {
+  const base = input();
+  const { commitSha: _commitSha, ...workerOutput } = base.workerOutput;
+  return {
+    ...base,
+    merge: {
+      sourceRemote: "origin",
+      sourceBranch: "base",
+      sourceCommit: MERGE_SOURCE_COMMIT,
+      expectedTargetCommit: MERGE_TARGET_COMMIT,
+    },
+    workerOutput: {
+      ...workerOutput,
+      patchPath: "/evidence/merge-resolution.patch",
+      patchSha256: "d".repeat(64),
+      baseCommit: MERGE_TARGET_COMMIT,
+      changedFiles: ["src/memory.ts"],
+    },
+    reviewDecision: {
+      ...base.reviewDecision,
+      approvedFiles: ["src/base-change.ts", "src/memory.ts"],
+    },
+  };
+}
 
 function input() {
   return {
@@ -635,6 +857,7 @@ class FakeIntegratedOutputLedger implements IntegratedOutputLedgerPort {
 
 class MemoryAttemptStore implements IntegrationAttemptStorePort {
   private attempts = new Map<string, IntegrationAttempt>();
+  failNextUpdate: Error | undefined;
 
   constructor(private readonly events: IntegrationAuditEvent[]) {}
 
@@ -648,6 +871,11 @@ class MemoryAttemptStore implements IntegrationAttemptStorePort {
   }
 
   update(attempt: IntegrationAttempt): void {
+    if (this.failNextUpdate) {
+      const error = this.failNextUpdate;
+      this.failNextUpdate = undefined;
+      throw error;
+    }
     this.attempts.set(attempt.attemptId, attempt);
   }
 
@@ -662,6 +890,10 @@ class FakeGit implements GitPort {
   branch = "main";
   remoteCommit: string | null = null;
   lastAllowAlreadyApplied: boolean | undefined;
+  appliedFiles: readonly string[] = ["src/memory.ts"];
+  commitParents: readonly string[] | undefined;
+  lastExpectedParentCommits: readonly string[] | undefined;
+  abortMergeError: Error | undefined;
 
   getStatus() {
     this.calls.push("status");
@@ -674,8 +906,8 @@ class FakeGit implements GitPort {
   applyWorkerOutput(input: { readonly allowAlreadyApplied?: boolean }) {
     this.calls.push("apply");
     this.lastAllowAlreadyApplied = input.allowAlreadyApplied;
-    this.dirtyFiles = ["src/memory.ts"];
-    return { changedFiles: ["src/memory.ts"] };
+    this.dirtyFiles = this.appliedFiles;
+    return { changedFiles: this.appliedFiles };
   }
 
   diffCheck() {
@@ -683,13 +915,23 @@ class FakeGit implements GitPort {
     return { ok: true };
   }
 
-  commit() {
+  commit(input: { readonly expectedParentCommits?: readonly string[] }) {
     this.calls.push("commit");
+    this.lastExpectedParentCommits = input.expectedParentCommits;
     this.dirtyFiles = [];
     return {
       commitSha: "abc123",
+      ...(input.expectedParentCommits
+        ? { parentCommits: this.commitParents ?? input.expectedParentCommits }
+        : {}),
       diffStat: "1 file changed",
     };
+  }
+
+  abortMerge() {
+    this.calls.push("abortMerge");
+    if (this.abortMergeError) throw this.abortMergeError;
+    this.dirtyFiles = [];
   }
 
   push(input: { readonly commitSha: string }) {

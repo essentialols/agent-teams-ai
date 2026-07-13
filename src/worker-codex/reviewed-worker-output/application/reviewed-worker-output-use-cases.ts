@@ -57,6 +57,7 @@ export async function captureReviewedWorkerOutput(
       approvedFiles,
       requiredChecks: input.requiredChecks,
     });
+    const merge = normalizeReviewedOutputMerge(input.merge);
     const capturedAt = (deps.clock ?? { now: () => new Date() })
       .now()
       .toISOString();
@@ -72,6 +73,7 @@ export async function captureReviewedWorkerOutput(
       patchSha256,
       changedFiles,
       reviewDecision,
+      ...(merge ? { merge } : {}),
     });
     return await deps.store.create({
       snapshot: {
@@ -88,6 +90,7 @@ export async function captureReviewedWorkerOutput(
         baseCommit: captured.baseCommit,
         changedFiles,
         reviewDecision,
+        ...(merge ? { merge } : {}),
         capturedAt,
       },
       patch: captured.patch,
@@ -95,6 +98,28 @@ export async function captureReviewedWorkerOutput(
   } finally {
     await deps.locks.release(lock);
   }
+}
+
+function normalizeReviewedOutputMerge(
+  input: CaptureReviewedWorkerOutputInput["merge"],
+) {
+  if (!input) return undefined;
+  const merge = {
+    sourceRemote: input.sourceRemote.trim(),
+    sourceBranch: input.sourceBranch.trim(),
+    sourceCommit: input.sourceCommit.toLowerCase(),
+    expectedTargetCommit: input.expectedTargetCommit.toLowerCase(),
+  };
+  if (
+    !/^[A-Za-z0-9._-]+$/.test(merge.sourceRemote) ||
+    merge.sourceBranch.startsWith("-") ||
+    !merge.sourceBranch ||
+    !/^[a-f0-9]{40}$/.test(merge.sourceCommit) ||
+    !/^[a-f0-9]{40}$/.test(merge.expectedTargetCommit)
+  ) {
+    throw new Error("reviewed_worker_output_merge_invalid");
+  }
+  return merge;
 }
 
 export function reviewedWorkerOutputId(

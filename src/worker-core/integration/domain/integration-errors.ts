@@ -13,6 +13,10 @@ export enum IntegrationErrorReason {
   CommitIdentityUnavailable = "commit_identity_unavailable",
   BranchMismatch = "branch_mismatch",
   StaleBase = "stale_base",
+  InvalidMergePlan = "invalid_merge_plan",
+  MergeParentsMismatch = "merge_parents_mismatch",
+  MergeCommitRecoveryMismatch = "merge_commit_recovery_mismatch",
+  MergeRollbackFailed = "merge_rollback_failed",
   PolicyDenied = "policy_denied",
 }
 

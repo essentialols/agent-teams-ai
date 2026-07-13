@@ -1,6 +1,7 @@
 import {
   ReviewDecisionStatus,
   type ProjectIntegrationCheckSpec,
+  type MergeIntegrationPlan,
   type ReviewDecision,
   type WorkerOutput,
 } from "@vioxen/subscription-runtime/worker-core";
@@ -22,6 +23,7 @@ export type ReviewedWorkerOutputSnapshot = {
   readonly baseCommit: string;
   readonly changedFiles: readonly string[];
   readonly reviewDecision: ReviewDecision;
+  readonly merge?: MergeIntegrationPlan;
   readonly capturedAt: string;
 };
 
@@ -37,6 +39,7 @@ export type CaptureReviewedWorkerOutputInput = {
   readonly reason: string;
   readonly approvedFiles: readonly string[];
   readonly requiredChecks: readonly ProjectIntegrationCheckSpec[];
+  readonly merge?: MergeIntegrationPlan;
 };
 
 export type ReviewedWorkerOutputWorkspaceSnapshot = {
@@ -58,6 +61,7 @@ export type ReviewedWorkerOutputIdentity = Pick<
   | "patchSha256"
   | "changedFiles"
   | "reviewDecision"
+  | "merge"
 >;
 
 export type ReviewedWorkerOutputReviewAttestation = {
@@ -84,6 +88,7 @@ export function reviewedWorkerOutputIdentityPayload(
     patchSha256: input.patchSha256,
     changedFiles: input.changedFiles,
     reviewDecision: input.reviewDecision,
+    ...(input.merge ? { merge: input.merge } : {}),
   });
 }
 

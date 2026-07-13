@@ -21,6 +21,7 @@ export type GitDiffCheckResult = {
 
 export type GitCommitResult = {
   readonly commitSha: string;
+  readonly parentCommits?: readonly string[];
   readonly diffStat?: string;
 };
 
@@ -44,7 +45,12 @@ export interface GitPort {
     readonly message: string;
     readonly files: readonly string[];
     readonly identity: CommitIdentity;
+    readonly expectedParentCommits?: readonly string[];
   }): Promise<GitCommitResult> | GitCommitResult;
+
+  abortMerge?(input: {
+    readonly attempt: IntegrationAttempt;
+  }): Promise<void> | void;
 
   push(input: {
     readonly workspacePath: string;
@@ -74,6 +80,9 @@ export function commitCandidateFromGitResult(input: {
 }): CommitCandidate {
   return {
     commitSha: input.result.commitSha,
+    ...(input.result.parentCommits
+      ? { parentCommits: input.result.parentCommits }
+      : {}),
     message: input.message,
     files: input.files,
     secretScanStatus: input.secretScanStatus,

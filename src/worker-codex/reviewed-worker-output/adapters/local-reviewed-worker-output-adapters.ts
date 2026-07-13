@@ -321,6 +321,7 @@ export class LocalReviewedWorkerOutputStore implements ReviewedWorkerOutputStore
             patchSha256: snapshot.patchSha256,
             changedFiles: snapshot.changedFiles,
             reviewDecision: snapshot.reviewDecision,
+            ...(snapshot.merge ? { merge: snapshot.merge } : {}),
           }),
         ) !== reviewedOutputId
       ) {
@@ -443,6 +444,7 @@ export class LocalReviewedWorkerOutputReviewMarkerVerifier implements ReviewedWo
       "changedFiles",
       "reviewedBy",
       "decision",
+      "merge",
       "capturedAt",
     ]);
     if (
@@ -457,6 +459,8 @@ export class LocalReviewedWorkerOutputReviewMarkerVerifier implements ReviewedWo
         input.snapshot.reviewDecision.reviewedBy ||
       value.reviewedOutput.decision !==
         input.snapshot.reviewDecision.decision ||
+      stableJson(value.reviewedOutput.merge) !==
+        stableJson(input.snapshot.merge) ||
       value.reviewedOutput.capturedAt !== input.snapshot.capturedAt
     ) {
       throw new Error("reviewed_worker_output_review_marker_mismatch");
@@ -530,6 +534,7 @@ function parseSnapshot(
     "baseCommit",
     "changedFiles",
     "reviewDecision",
+    "merge",
     "capturedAt",
   ]);
   const reviewDecision = parseReviewDecision(value.reviewDecision);
@@ -548,6 +553,7 @@ function parseSnapshot(
     baseCommit: requiredString(value.baseCommit),
     changedFiles: requiredStringArray(value.changedFiles),
     reviewDecision,
+    ...(value.merge === undefined ? {} : { merge: parseMergePlan(value.merge) }),
     capturedAt: requiredString(value.capturedAt),
   };
   if (
@@ -560,6 +566,34 @@ function parseSnapshot(
   assertSha256(snapshot.reviewedOutputId);
   assertSha256(snapshot.patchSha256);
   return snapshot;
+}
+
+function parseMergePlan(value: unknown): NonNullable<ReviewedWorkerOutputSnapshot["merge"]> {
+  if (!isRecord(value)) {
+    throw new Error("reviewed_worker_output_merge_invalid");
+  }
+  assertExactKeys(value, [
+    "sourceRemote",
+    "sourceBranch",
+    "sourceCommit",
+    "expectedTargetCommit",
+  ]);
+  const merge = {
+    sourceRemote: requiredString(value.sourceRemote),
+    sourceBranch: requiredString(value.sourceBranch),
+    sourceCommit: requiredString(value.sourceCommit).toLowerCase(),
+    expectedTargetCommit: requiredString(value.expectedTargetCommit).toLowerCase(),
+  };
+  if (
+    !/^[A-Za-z0-9._-]+$/.test(merge.sourceRemote) ||
+    !merge.sourceBranch ||
+    merge.sourceBranch.startsWith("-") ||
+    !/^[a-f0-9]{40}$/.test(merge.sourceCommit) ||
+    !/^[a-f0-9]{40}$/.test(merge.expectedTargetCommit)
+  ) {
+    throw new Error("reviewed_worker_output_merge_invalid");
+  }
+  return merge;
 }
 
 function parseReviewDecision(value: unknown): ReviewDecision {

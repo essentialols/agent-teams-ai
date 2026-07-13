@@ -30,6 +30,48 @@ afterEach(async () => {
 });
 
 describe("reviewed worker output", () => {
+  it("binds an exact merge source into the immutable reviewed output identity", async () => {
+    const fixture = await reviewedOutputFixture();
+    const patch = await captureGitWorkspacePatch({
+      workspacePath: fixture.workspacePath,
+    });
+    const deps = localReviewedWorkerOutputDeps({ rootDir: fixture.storeRoot });
+    const capture = (sourceCommit: string) => captureReviewedWorkerOutput(deps, {
+      projectId: "project-1",
+      controllerJobId: "project-1-controller",
+      workerJobId: "project-1-worker",
+      taskId: "task-1",
+      workspacePath: fixture.workspacePath,
+      expectedPatchSha256: sha256(patch),
+      decision: ReviewDecisionStatus.Approved,
+      reviewedBy: "project-1-controller",
+      reason: "Reviewed conflict resolution.",
+      approvedFiles: ["src/value.ts", "src/new.ts"],
+      requiredChecks: [],
+      merge: {
+        sourceRemote: "origin",
+        sourceBranch: "base/current",
+        sourceCommit,
+        expectedTargetCommit: fixture.baseCommit,
+      },
+    });
+
+    const first = await capture("1".repeat(40));
+    const second = await capture("2".repeat(40));
+
+    expect(first.reviewedOutputId).not.toBe(second.reviewedOutputId);
+    expect(first.merge).toEqual({
+      sourceRemote: "origin",
+      sourceBranch: "base/current",
+      sourceCommit: "1".repeat(40),
+      expectedTargetCommit: fixture.baseCommit,
+    });
+    expect(JSON.parse(await readFile(
+      join(fixture.storeRoot, first.reviewedOutputId, "manifest.json"),
+      "utf8",
+    ))).toMatchObject({ merge: first.merge });
+  });
+
   it("captures an immutable reviewed patch and resolves it as integration input", async () => {
     const fixture = await reviewedOutputFixture();
     const patch = await captureGitWorkspacePatch({

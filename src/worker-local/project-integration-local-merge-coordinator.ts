@@ -95,9 +95,10 @@ export async function applyReviewedMerge(input: {
     remote: merge.sourceRemote,
     branch: merge.sourceBranch,
   });
-  if (remoteHead?.toLowerCase() !== merge.sourceCommit) {
-    throw new Error("local_git_integration_merge_source_head_mismatch");
+  if (!remoteHead) {
+    throw new Error("local_git_integration_merge_source_missing");
   }
+  const expectedFetchedHead = remoteHead.toLowerCase();
 
   let mergeStarted = false;
   try {
@@ -113,8 +114,42 @@ export async function applyReviewedMerge(input: {
     const fetchedHead = (
       await runtime.git(["rev-parse", "FETCH_HEAD"], workspacePath)
     ).stdout.trim().toLowerCase();
-    if (fetchedHead !== merge.sourceCommit) {
+    if (fetchedHead !== expectedFetchedHead) {
       throw new Error("local_git_integration_merge_fetched_head_mismatch");
+    }
+    const stableRemoteHead = await runtime.remoteBranchCommit({
+      workspacePath,
+      remote: merge.sourceRemote,
+      branch: merge.sourceBranch,
+    });
+    if (stableRemoteHead?.toLowerCase() !== fetchedHead) {
+      throw new Error("local_git_integration_merge_source_head_changed");
+    }
+    const sourceExists = await runtime.tryGit(
+      ["cat-file", "-e", `${merge.sourceCommit}^{commit}`],
+      workspacePath,
+    );
+    if (sourceExists.exitCode !== 0) {
+      throw new Error("local_git_integration_merge_source_commit_unreachable");
+    }
+    const sourceIsAncestor = await runtime.tryGit(
+      ["merge-base", "--is-ancestor", merge.sourceCommit, fetchedHead],
+      workspacePath,
+    );
+    if (sourceIsAncestor.exitCode !== 0) {
+      throw new Error("local_git_integration_merge_source_commit_not_ancestor");
+    }
+    const statusAfterFetch = await runtime.getStatus(workspacePath);
+    if (statusAfterFetch.dirtyFiles.length > 0) {
+      throw new Error("local_git_integration_merge_target_changed_during_fetch");
+    }
+    const targetHeadAfterFetch = (
+      await runtime.git(["rev-parse", "HEAD"], workspacePath)
+    ).stdout.trim().toLowerCase();
+    if (targetHeadAfterFetch !== merge.expectedTargetCommit) {
+      throw new Error(
+        "local_git_integration_merge_target_head_changed_during_fetch",
+      );
     }
 
     const mergeResult = await runtime.tryGit(

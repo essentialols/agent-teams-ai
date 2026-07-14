@@ -137,6 +137,111 @@ describe("local project integration adapters", () => {
     )).resolves.toBe("export const value = 3;\n");
   });
 
+  it("merges the reviewed ancestor when the remote branch has advanced", async () => {
+    const fixture = await createMergeFixture();
+    await git(fixture.workspacePath, ["checkout", "base"]);
+    await writeFile(
+      join(fixture.workspacePath, "src", "after-review.ts"),
+      "export const afterReview = true;\n",
+    );
+    await git(fixture.workspacePath, ["add", "src/after-review.ts"]);
+    await git(fixture.workspacePath, ["commit", "-m", "feat: advance base"]);
+    const advancedHead = (await gitOutput(
+      fixture.workspacePath,
+      ["rev-parse", "HEAD"],
+    )).trim();
+    await git(fixture.workspacePath, ["push", "origin", "base"]);
+    await git(fixture.workspacePath, ["checkout", "main"]);
+
+    const adapter = new LocalGitIntegrationAdapter({
+      allowedPatchRoots: [fixture.rootDir],
+    });
+    const attempt = {
+      targetWorkspacePath: fixture.workspacePath,
+      expectedFiles: ["src/memory.ts"],
+      merge: {
+        sourceRemote: "origin",
+        sourceBranch: "base",
+        sourceCommit: fixture.sourceCommit,
+        expectedTargetCommit: fixture.targetCommit,
+      },
+    };
+    const workerOutput = {
+      workerJobId: "merge-resolution-worker",
+      workspacePath: fixture.workspacePath,
+      patchPath: fixture.patchPath,
+      patchSha256: fixture.patchSha256,
+      baseCommit: fixture.targetCommit,
+      changedFiles: ["src/memory.ts"],
+    };
+
+    await expect(adapter.applyWorkerOutput({ attempt, workerOutput }))
+      .resolves.toEqual({ changedFiles: ["src/memory.ts"] });
+    const commit = await adapter.commit({
+      workspacePath: fixture.workspacePath,
+      message: "merge: integrate reviewed base ancestor",
+      files: ["src/memory.ts"],
+      identity: { name: "Integrator", email: "integrator@example.com" },
+      expectedParentCommits: [fixture.targetCommit, fixture.sourceCommit],
+    });
+
+    expect(commit.parentCommits).toEqual([
+      fixture.targetCommit,
+      fixture.sourceCommit,
+    ]);
+    expect(commit.parentCommits).not.toContain(advancedHead);
+    await expect(readFile(
+      join(fixture.workspacePath, "src", "after-review.ts"),
+      "utf8",
+    )).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects a reviewed source after the remote branch was rewritten", async () => {
+    const fixture = await createMergeFixture();
+    await git(fixture.workspacePath, ["checkout", "--orphan", "rewritten-base"]);
+    await git(fixture.workspacePath, ["rm", "-rf", "."]);
+    await writeFile(join(fixture.workspacePath, "REWRITTEN.md"), "rewritten\n");
+    await git(fixture.workspacePath, ["add", "REWRITTEN.md"]);
+    await git(fixture.workspacePath, ["commit", "-m", "feat: rewrite base"]);
+    await git(fixture.workspacePath, [
+      "push",
+      "--force",
+      "origin",
+      "HEAD:base",
+    ]);
+    await git(fixture.workspacePath, ["checkout", "main"]);
+
+    const adapter = new LocalGitIntegrationAdapter({
+      allowedPatchRoots: [fixture.rootDir],
+    });
+    await expect(adapter.applyWorkerOutput({
+      attempt: {
+        targetWorkspacePath: fixture.workspacePath,
+        expectedFiles: ["src/memory.ts"],
+        merge: {
+          sourceRemote: "origin",
+          sourceBranch: "base",
+          sourceCommit: fixture.sourceCommit,
+          expectedTargetCommit: fixture.targetCommit,
+        },
+      },
+      workerOutput: {
+        workerJobId: "merge-resolution-worker",
+        workspacePath: fixture.workspacePath,
+        patchPath: fixture.patchPath,
+        patchSha256: fixture.patchSha256,
+        baseCommit: fixture.targetCommit,
+        changedFiles: ["src/memory.ts"],
+      },
+    })).rejects.toThrow(
+      "local_git_integration_merge_source_commit_not_ancestor",
+    );
+    expect((await gitOutput(fixture.workspacePath, ["rev-parse", "HEAD"])).trim())
+      .toBe(fixture.targetCommit);
+    expect(await gitOutput(fixture.workspacePath, ["status", "--porcelain"]))
+      .toBe("");
+  });
+
   it("refuses to adopt an existing merge commit with different provenance", async () => {
     const fixture = await createMergeFixture();
     const adapter = new LocalGitIntegrationAdapter({

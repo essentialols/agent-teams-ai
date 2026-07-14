@@ -4,7 +4,7 @@ import type { ProjectAccessScope } from "@vioxen/subscription-runtime/worker-cor
 import type { CodexGoalJobManifest } from "../../codex-goal-jobs";
 import {
   assertProjectPreStartAdmissionLaunchBinding,
-  type ProjectPreStartAdmissionDirtyContinuationMode,
+  type ProjectPreStartAdmissionLaunchWorkspaceMode,
 } from "./codex-goal-project-pre-start-admission";
 
 const MAX_RECEIPT_BYTES = 64 * 1024;
@@ -20,7 +20,7 @@ export type ProjectPreStartAdmissionLaunchAuthorization = {
 export async function authorizeProjectPreStartAdmissionLaunch(input: {
   readonly manifest: CodexGoalJobManifest;
   readonly scope: ProjectAccessScope;
-  readonly workspaceMode?: ProjectPreStartAdmissionDirtyContinuationMode;
+  readonly workspaceMode?: ProjectPreStartAdmissionLaunchWorkspaceMode;
 }): Promise<ProjectPreStartAdmissionLaunchAuthorization | undefined> {
   const descriptor = input.manifest.projectPreStartAdmission;
   if (!descriptor) {
@@ -74,7 +74,7 @@ export async function withProjectPreStartAdmissionLaunchAuthorization<T>(
   input: {
     readonly manifest: CodexGoalJobManifest;
     readonly scope: ProjectAccessScope;
-    readonly workspaceMode?: ProjectPreStartAdmissionDirtyContinuationMode;
+    readonly workspaceMode?: ProjectPreStartAdmissionLaunchWorkspaceMode;
   },
   start: () => Promise<T>,
 ): Promise<T> {

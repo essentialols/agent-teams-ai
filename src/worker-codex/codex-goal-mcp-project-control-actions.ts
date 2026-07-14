@@ -35,6 +35,7 @@ import {
   assertProjectPreStartAdmissionLaunchBinding,
   validateStoredProjectPreStartAdmission,
 } from "./application/project-control/codex-goal-project-pre-start-admission";
+import { isAdmittedInputPatchCapacityContinuation } from "./application/project-control/codex-goal-project-admitted-input-patch-continuation";
 import {
   terminalHandoffDependencyRecoveryRequested,
   verifyTerminalHandoffRecovery,
@@ -199,7 +200,11 @@ export async function projectControlStartStoredJobView(
     };
   }
   const reviewedOutputId = stringValue(args.reviewedOutputId);
-  const dirtyContinuation = status.workspaceDirty === true;
+  const workspaceDirty = status.workspaceDirty === true;
+  const admittedInputPatchContinuation =
+    !reviewedOutputId &&
+    loaded.manifest.projectPreStartAdmission !== undefined &&
+    isAdmittedInputPatchCapacityContinuation(status);
   const terminalHandoffDependencyRecovery =
     terminalHandoffDependencyRecoveryRequested({
       status,
@@ -211,7 +216,7 @@ export async function projectControlStartStoredJobView(
       confirmDependencyBootstrap:
         booleanValue(args.confirmDependencyBootstrap) === true,
     });
-  if (dirtyContinuation) {
+  if (workspaceDirty && !admittedInputPatchContinuation) {
     if (!args.forceStart) {
       throw new Error(
         "project_control_reviewed_dirty_continuation_force_required",
@@ -254,7 +259,16 @@ export async function projectControlStartStoredJobView(
           status: lockedStatus,
         };
       }
-      if (lockedStatus.workspaceDirty === true !== dirtyContinuation) {
+      if (lockedStatus.workspaceDirty === true !== workspaceDirty) {
+        throw new Error("project_control_workspace_state_changed_before_start");
+      }
+      const lockedAdmittedInputPatchContinuation =
+        !reviewedOutputId &&
+        loaded.manifest.projectPreStartAdmission !== undefined &&
+        isAdmittedInputPatchCapacityContinuation(lockedStatus);
+      if (
+        lockedAdmittedInputPatchContinuation !== admittedInputPatchContinuation
+      ) {
         throw new Error("project_control_workspace_state_changed_before_start");
       }
       if (
@@ -288,7 +302,7 @@ export async function projectControlStartStoredJobView(
         locks,
       });
       const reviewedContinuation =
-        dirtyContinuation && reviewedOutputId
+        workspaceDirty && reviewedOutputId
           ? await resolveReviewedWorkerContinuation({
               store: reviewedOutputDeps.store,
               projectId: controller.scope.projectId,
@@ -324,6 +338,13 @@ export async function projectControlStartStoredJobView(
             sanitizedPaths: sanitized.removedPaths,
           };
         }
+      }
+      if (admittedInputPatchContinuation) {
+        await assertProjectPreStartAdmissionLaunchBinding({
+          manifest: loaded.manifest,
+          scope: controller.scope,
+          workspaceMode: "admitted_input_patch_continuation",
+        });
       }
       const dependencyPreflight = await (
         deps.dependencyBootstrap ?? runDependencyBootstrap
@@ -367,6 +388,12 @@ export async function projectControlStartStoredJobView(
           scope: controller.scope,
           workspaceMode: "terminal_handoff_dependency_recovery",
         });
+      } else if (admittedInputPatchContinuation) {
+        await assertProjectPreStartAdmissionLaunchBinding({
+          manifest: loaded.manifest,
+          scope: controller.scope,
+          workspaceMode: "admitted_input_patch_continuation",
+        });
       } else {
         await validateStoredProjectPreStartAdmission({
           manifest: loaded.manifest,
@@ -403,6 +430,11 @@ export async function projectControlStartStoredJobView(
                   startAdmissionWorkspaceMode:
                     "terminal_handoff_dependency_recovery" as const,
                 }
+              : admittedInputPatchContinuation
+                ? {
+                    startAdmissionWorkspaceMode:
+                      "admitted_input_patch_continuation" as const,
+                  }
               : {}),
           startWorkspaceLease: workspace,
           startSkipDoctor: booleanValue(args.skipDoctor) ?? false,
@@ -415,7 +447,7 @@ export async function projectControlStartStoredJobView(
             ? { tmuxSession: reservedLaunch.tmuxSession }
             : {}),
           accounts: [accountReservation.accountId],
-          ...(dirtyContinuation
+          ...(reviewedContinuation || terminalRecovery
             ? { workerRole: ProjectAdmissionWorkerRole.Adoption }
             : {}),
           ...(loaded.manifest.tags ? { tags: loaded.manifest.tags } : {}),

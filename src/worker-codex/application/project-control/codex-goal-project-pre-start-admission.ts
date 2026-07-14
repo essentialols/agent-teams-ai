@@ -219,14 +219,17 @@ export async function validateStoredProjectPreStartAdmission(input: {
 export type ProjectPreStartAdmissionDirtyContinuationMode =
   "reviewed_dirty_continuation" | "terminal_handoff_dependency_recovery";
 
+export type ProjectPreStartAdmissionLaunchWorkspaceMode =
+  | "clean_first_launch"
+  | "admitted_input_patch"
+  | "admitted_input_patch_continuation"
+  | ProjectPreStartAdmissionDirtyContinuationMode;
+
 export async function assertProjectPreStartAdmissionLaunchBinding(input: {
   readonly manifest: CodexGoalJobManifest;
   readonly scope: ProjectAccessScope;
   readonly expectedInputPatchArtifactSha256?: string;
-  readonly workspaceMode?:
-    | "clean_first_launch"
-    | "admitted_input_patch"
-    | ProjectPreStartAdmissionDirtyContinuationMode;
+  readonly workspaceMode?: ProjectPreStartAdmissionLaunchWorkspaceMode;
 }): Promise<void> {
   const descriptor = input.manifest.projectPreStartAdmission;
   if (!descriptor) {
@@ -260,12 +263,16 @@ export async function assertProjectPreStartAdmissionLaunchBinding(input: {
   const dirtyContinuation =
     input.workspaceMode === "reviewed_dirty_continuation" ||
     input.workspaceMode === "terminal_handoff_dependency_recovery";
-  const receiptStatusValid = dirtyContinuation
+  const admittedInputPatchContinuation =
+    input.workspaceMode === "admitted_input_patch_continuation";
+  const receiptStatusValid = dirtyContinuation || admittedInputPatchContinuation
     ? receipt.status === "launch_authorized" ||
       receipt.status === "validated_not_launched"
     : receipt.status === "validated_not_launched";
   const workspaceBindingValid =
-    input.workspaceMode === "admitted_input_patch" || dirtyContinuation
+    input.workspaceMode === "admitted_input_patch" ||
+      admittedInputPatchContinuation ||
+      dirtyContinuation
       ? binding.workspaceStatus !== ""
       : verifiedInputPatch
       ? verifiedInputPatchBindingValid(binding, verifiedInputPatch)
@@ -278,6 +285,9 @@ export async function assertProjectPreStartAdmissionLaunchBinding(input: {
   const mismatches = [
     binding.workspaceHead !== contract.phaseStartSha
       ? "workspace_head"
+      : undefined,
+    admittedInputPatchContinuation && verifiedInputPatch === undefined
+      ? "input_patch_artifact"
       : undefined,
     input.expectedInputPatchArtifactSha256 !== undefined &&
         verifiedInputPatch?.artifactSha256 !==

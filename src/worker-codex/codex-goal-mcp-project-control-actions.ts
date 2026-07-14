@@ -85,6 +85,7 @@ import {
   releaseCodexProjectAccount,
   reserveCodexProjectAccount,
 } from "./application/project-control/codex-goal-project-account-reservation";
+import { decideCodexGoalProjectStop } from "./application/project-control/codex-goal-project-stop-policy";
 import {
   projectControlWorkspaceLocks,
   withValidatedProjectWorkspaceLock,
@@ -666,24 +667,29 @@ export async function projectControlStopStoredJobView(
     : status.progressPid === undefined
       ? "no direct process pid"
       : `kill -TERM ${status.progressPid}`;
-  if (
-    workerLiveness.alive &&
-    !brief.silentStale &&
-    !brief.heartbeatOnlyNoOutput &&
-    !args.forceStop
-  ) {
+  const stopPolicy = decideCodexGoalProjectStop({
+    workerAlive: workerLiveness.alive,
+    silentStale: brief.silentStale,
+    heartbeatOnlyNoOutput: brief.heartbeatOnlyNoOutput,
+    freshProgressAlive: workerLiveness.freshProgressAlive,
+    progressCpuActive: status.progressCpuActive,
+    appServerProcessAlive: status.appServerProcessAlive,
+    recommendedAction: status.recommendedAction,
+  });
+  if (!stopPolicy.allowed) {
     return {
       ok: false,
-      reason: "worker_not_silent_stale_or_heartbeat_only_no_output",
+      reason: stopPolicy.reason,
       controllerJobId: controller.controller.jobId,
       jobId: loaded.manifest.jobId,
       ...(loaded.launch.tmuxSession
         ? { tmuxSession: loaded.launch.tmuxSession }
         : {}),
-      requiredOverride: "forceStop",
+      requiredState: stopPolicy.requiredState,
       stopCommand: stopCommandPreview,
       status,
       brief,
+      safeMessage: stopPolicy.safeMessage,
     };
   }
   if (!args.confirmStop) {

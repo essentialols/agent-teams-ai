@@ -876,8 +876,8 @@ await writeFile(operationFilePath, JSON.stringify(operation, null, 2) + "\\n");
       });
       expect(stopped).toMatchObject({
         ok: false,
-        reason: "worker_not_silent_stale_or_heartbeat_only_no_output",
-        requiredOverride: "forceStop",
+        reason: "project_control_fresh_worker_stop_denied",
+        requiredState: "silent_stale_or_heartbeat_only_no_output",
         stopCommand: "no direct process pid",
         brief: {
           workerAlive: true,

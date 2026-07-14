@@ -24,7 +24,9 @@ export function registerCodexGoalProjectControlReviewTools(server: McpServer): v
         ...jobIdInputSchema(),
         controllerJobId: z.string().optional(),
         confirmStop: z.boolean().optional(),
-        forceStop: z.boolean().optional(),
+        forceStop: z.boolean().optional().describe(
+          "Deprecated compatibility field. It cannot authorize stopping a live ProjectScoped worker.",
+        ),
       },
     },
     async (args) => withMcpErrors(async () =>

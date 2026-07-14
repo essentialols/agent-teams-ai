@@ -25,6 +25,7 @@ import {
   type CodexGoalLaunchInput,
 } from "./codex-goal-ops";
 import { writeCodexGoalReviewMarker } from "./codex-goal-mcp-lifecycle-markers";
+import { buildCodexGoalBrief } from "./codex-goal-mcp-brief";
 import { codexGoalStatusInputFromLaunch as statusInput } from "./codex-goal-mcp-status-input";
 import {
   codexProjectAdmissionGate,
@@ -36,6 +37,7 @@ import {
 import {
   assertCodexGoalProjectJobNotTerminal,
 } from "./application/project-control/codex-goal-consumed-output-ledger-io";
+import { decideCodexGoalProjectStop } from "./application/project-control/codex-goal-project-stop-policy";
 import type {
   CaptureReviewedWorkerOutputInput,
   ReviewedWorkerOutputSnapshot,
@@ -293,6 +295,33 @@ function codexProjectControlPorts(
         const status = await collectCodexGoalStatus(
           statusInput(input.stopLaunch),
         );
+        const progressStale =
+          status.progressHeartbeatAgeMs !== undefined &&
+          status.progressHeartbeatAgeMs > 10 * 60_000;
+        const workerLiveness = resolveCodexGoalWorkerLiveness({
+          status,
+          progressStale,
+        });
+        const brief = await buildCodexGoalBrief({
+          jobId: input.stopLaunch.config.taskId,
+          launch: input.stopLaunch,
+          status,
+          accounts: [],
+          staleAfterMs: 10 * 60_000,
+          tailLines: 20,
+        });
+        const stopPolicy = decideCodexGoalProjectStop({
+          workerAlive: workerLiveness.alive,
+          silentStale: brief.silentStale,
+          heartbeatOnlyNoOutput: brief.heartbeatOnlyNoOutput,
+          freshProgressAlive: workerLiveness.freshProgressAlive,
+          progressCpuActive: status.progressCpuActive,
+          appServerProcessAlive: status.appServerProcessAlive,
+          recommendedAction: status.recommendedAction,
+        });
+        if (!stopPolicy.allowed) {
+          throw new Error(stopPolicy.reason);
+        }
         if (input.stopLaunch.tmuxSession) {
           if (status.tmuxAlive === false) {
             return noopOperationResult(

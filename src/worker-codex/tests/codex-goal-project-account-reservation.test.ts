@@ -9,6 +9,7 @@ import {
 import type { CodexGoalJobManifest } from "../codex-goal-jobs";
 import type { CodexGoalLaunchInput } from "../codex-goal-ops";
 import {
+  codexProjectAccountLeaseMode,
   releaseCodexProjectAccount,
   reserveCodexProjectAccount,
 } from "../application/project-control/codex-goal-project-account-reservation";
@@ -26,19 +27,70 @@ afterEach(async () => {
 });
 
 describe("project account reservation", () => {
+  it("shares an account across concurrent jobs by default", async () => {
+    const root = await mkdtemp(join(tmpdir(), "project-account-shared-"));
+    roots.push(root);
+    const capacityStore = new InMemoryWorkerAccountCapacityStore();
+    const leaseStore = new InMemoryWorkerAccountLeaseStore();
+    const now = new Date("2026-07-13T00:00:00.000Z");
+    const deps = { capacityStore, leaseStore, now, leaseMode: "shared" as const };
+    const first = singleAccountFixture(root, "job-1");
+    const second = singleAccountFixture(root, "job-2");
+
+    const firstSelection = await reserveCodexProjectAccount({ ...first, deps });
+    const secondSelection = await reserveCodexProjectAccount({ ...second, deps });
+
+    expect(firstSelection).toMatchObject({ mode: "shared", accountId: "account-a" });
+    expect(secondSelection).toMatchObject({ mode: "shared", accountId: "account-a" });
+    await expect(leaseStore.acquire({
+      accountId: "account-a",
+      ownerId: "independent-job",
+      ttlMs: 60_000,
+      now,
+    })).resolves.toMatchObject({ status: "granted" });
+    await expect(releaseCodexProjectAccount({
+      ...first,
+      reason: "shared jobs have no lease",
+      deps: { leaseStore, now },
+    })).resolves.toBe(false);
+  });
+
+  it("keeps exclusive account leases behind an explicit feature flag", () => {
+    expect(codexProjectAccountLeaseMode({})).toBe("shared");
+    expect(codexProjectAccountLeaseMode({
+      SUBSCRIPTION_RUNTIME_PROJECT_ACCOUNT_EXCLUSIVE_LEASES: "0",
+    })).toBe("shared");
+    expect(codexProjectAccountLeaseMode({
+      SUBSCRIPTION_RUNTIME_PROJECT_ACCOUNT_EXCLUSIVE_LEASES: "1",
+    })).toBe("exclusive");
+    expect(() => codexProjectAccountLeaseMode({
+      SUBSCRIPTION_RUNTIME_PROJECT_ACCOUNT_EXCLUSIVE_LEASES: "true",
+    })).toThrow("project_control_account_exclusive_leases_flag_invalid");
+  });
+
   it("reserves before launch, is reentrant and fences concurrent jobs", async () => {
     const root = await mkdtemp(join(tmpdir(), "project-account-reservation-"));
     roots.push(root);
     const capacityStore = new InMemoryWorkerAccountCapacityStore();
     const leaseStore = new InMemoryWorkerAccountLeaseStore();
     const now = new Date("2026-07-13T00:00:00.000Z");
-    const deps = { capacityStore, leaseStore, now };
+    const deps = {
+      capacityStore,
+      leaseStore,
+      now,
+      leaseMode: "exclusive" as const,
+    };
     const first = fixture(root, "job-1");
     const second = fixture(root, "job-2", "high");
 
     const firstReservation = await reserveCodexProjectAccount({ ...first, deps });
     const secondReservation = await reserveCodexProjectAccount({ ...second, deps });
     const firstReplay = await reserveCodexProjectAccount({ ...first, deps });
+    expect(firstReservation.mode).toBe("exclusive");
+    expect(firstReplay.mode).toBe("exclusive");
+    if (firstReservation.mode !== "exclusive" || firstReplay.mode !== "exclusive") {
+      throw new Error("exclusive_reservation_expected");
+    }
 
     expect(firstReservation.accountId).toBe("account-a");
     expect(firstReservation.launch.config.accounts.map((item) => item.name)).toEqual([
@@ -58,6 +110,10 @@ describe("project account reservation", () => {
     })).resolves.toBe(true);
     const third = fixture(root, "job-3");
     const thirdReservation = await reserveCodexProjectAccount({ ...third, deps });
+    expect(thirdReservation.mode).toBe("exclusive");
+    if (thirdReservation.mode !== "exclusive") {
+      throw new Error("exclusive_reservation_expected");
+    }
     expect(thirdReservation.accountId).toBe("account-a");
     expect(thirdReservation.fencingToken).toBeGreaterThan(
       firstReservation.fencingToken,
@@ -82,7 +138,12 @@ describe("project account reservation", () => {
         config: { ...account.launch.config, workspacePath },
       },
     };
-    const deps = { capacityStore, leaseStore, now };
+    const deps = {
+      capacityStore,
+      leaseStore,
+      now,
+      leaseMode: "exclusive" as const,
+    };
     await reserveCodexProjectAccount({ ...scoped, deps });
     let allowStopRelease!: () => void;
     const stopMayRelease = new Promise<void>((resolve) => {
@@ -136,6 +197,10 @@ describe("project account reservation", () => {
       effect: async () =>
         await reserveCodexProjectAccount({ ...scoped, deps }),
     });
+    expect(successor.mode).toBe("exclusive");
+    if (successor.mode !== "exclusive") {
+      throw new Error("exclusive_reservation_expected");
+    }
     expect(successor.fencingToken).toBeGreaterThan(1);
     await expect(releaseCodexProjectAccount({
       ...scoped,
@@ -144,6 +209,23 @@ describe("project account reservation", () => {
     })).resolves.toBe(true);
   });
 });
+
+function singleAccountFixture(
+  root: string,
+  jobId: string,
+): ReturnType<typeof fixture> {
+  const value = fixture(root, jobId);
+  return {
+    manifest: { ...value.manifest, accounts: ["account-a"] },
+    launch: {
+      ...value.launch,
+      config: {
+        ...value.launch.config,
+        accounts: [{ name: "account-a" }],
+      },
+    },
+  };
+}
 
 function fixture(
   root: string,

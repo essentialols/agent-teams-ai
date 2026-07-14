@@ -556,9 +556,14 @@ export async function projectControlRefillWorkerView(
     ...(accountReservation
       ? {
           accountReservation: {
+            mode: accountReservation.mode,
             accountId: accountReservation.accountId,
-            fencingToken: accountReservation.fencingToken,
-            expiresAt: accountReservation.expiresAt,
+            ...(accountReservation.mode === "exclusive"
+              ? {
+                fencingToken: accountReservation.fencingToken,
+                expiresAt: accountReservation.expiresAt,
+              }
+              : {}),
           },
         }
       : {}),

@@ -440,9 +440,14 @@ export async function projectControlStartStoredJobView(
         statusBefore: lockedStatus,
         dependencyPreflight: dependencyPreflight as unknown as JsonObject,
         accountReservation: {
+          mode: accountReservation.mode,
           accountId: accountReservation.accountId,
-          fencingToken: accountReservation.fencingToken,
-          expiresAt: accountReservation.expiresAt,
+          ...(accountReservation.mode === "exclusive"
+            ? {
+              fencingToken: accountReservation.fencingToken,
+              expiresAt: accountReservation.expiresAt,
+            }
+            : {}),
         },
         result: result as unknown as JsonObject,
       };

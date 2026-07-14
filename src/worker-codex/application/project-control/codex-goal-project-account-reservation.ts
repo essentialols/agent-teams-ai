@@ -2,9 +2,12 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import {
+  buildRuntimeAccountWaitPlan,
   SelectRuntimeAccountUseCase,
+  selectableWorkerAccountIds,
   type WorkerAccountCapacityStore,
   type WorkerAccountLeaseStore,
+  type WorkerRuntimeDemand,
 } from "@vioxen/subscription-runtime/worker-core";
 import { LocalFileWorkerAccountLeaseStore } from "@vioxen/subscription-runtime/store-local-file";
 import type { CodexGoalJobManifest } from "../../codex-goal-jobs";
@@ -16,6 +19,10 @@ import {
 
 const reservationSchemaVersion = 1 as const;
 const reservationGraceMs = 10 * 60_000;
+const exclusiveLeaseFlag =
+  "SUBSCRIPTION_RUNTIME_PROJECT_ACCOUNT_EXCLUSIVE_LEASES";
+
+export type CodexProjectAccountLeaseMode = "shared" | "exclusive";
 
 type PersistedCodexProjectAccountReservation = {
   readonly schemaVersion: typeof reservationSchemaVersion;
@@ -26,7 +33,14 @@ type PersistedCodexProjectAccountReservation = {
   readonly expiresAt: string;
 };
 
-export type CodexProjectAccountReservation = {
+type CodexProjectSharedAccountReservation = {
+  readonly mode: "shared";
+  readonly accountId: string;
+  readonly launch: CodexGoalLaunchInput;
+};
+
+type CodexProjectExclusiveAccountReservation = {
+  readonly mode: "exclusive";
   readonly accountId: string;
   readonly fencingToken: number;
   readonly acquiredAt: string;
@@ -34,31 +48,60 @@ export type CodexProjectAccountReservation = {
   readonly launch: CodexGoalLaunchInput;
 };
 
+export type CodexProjectAccountReservation =
+  | CodexProjectSharedAccountReservation
+  | CodexProjectExclusiveAccountReservation;
+
 export type CodexProjectAccountReservationDeps = {
   readonly capacityStore?: WorkerAccountCapacityStore;
   readonly leaseStore?: WorkerAccountLeaseStore;
+  readonly leaseMode?: CodexProjectAccountLeaseMode;
   readonly now?: Date;
 };
+
+export function codexProjectAccountLeaseMode(
+  sourceEnv: Readonly<Record<string, string | undefined>> = process.env,
+): CodexProjectAccountLeaseMode {
+  const configured = sourceEnv[exclusiveLeaseFlag]?.trim();
+  // Hosted Codex auth refresh is disabled, so an account identity is safe to
+  // share across jobs. Exclusive leases remain opt-in for mutable auth homes.
+  if (configured === undefined || configured === "" || configured === "0") {
+    return "shared";
+  }
+  if (configured === "1") return "exclusive";
+  throw new Error("project_control_account_exclusive_leases_flag_invalid");
+}
 
 export async function reserveCodexProjectAccount(input: {
   readonly manifest: CodexGoalJobManifest;
   readonly launch: CodexGoalLaunchInput;
   readonly deps?: CodexProjectAccountReservationDeps;
 }): Promise<CodexProjectAccountReservation> {
+  const leaseMode = input.deps?.leaseMode ?? codexProjectAccountLeaseMode();
+  if (leaseMode === "shared")
+    return await selectSharedCodexProjectAccount(input);
+  return await reserveExclusiveCodexProjectAccount(input);
+}
+
+async function reserveExclusiveCodexProjectAccount(input: {
+  readonly manifest: CodexGoalJobManifest;
+  readonly launch: CodexGoalLaunchInput;
+  readonly deps?: CodexProjectAccountReservationDeps;
+}): Promise<CodexProjectExclusiveAccountReservation> {
   const now = input.deps?.now ?? new Date();
   const ttlMs = Math.max(
     reservationGraceMs,
     (input.launch.config.taskTimeoutMs ?? 0) + reservationGraceMs,
   );
-  const leaseStore = input.deps?.leaseStore ?? codexProjectAccountLeaseStore(
-    input.launch.config.authRootDir,
-  );
+  const leaseStore =
+    input.deps?.leaseStore ??
+    codexProjectAccountLeaseStore(input.launch.config.authRootDir);
   const receiptPath = codexProjectAccountReservationPath(input.manifest);
   const existing = await readReservation(receiptPath);
   if (
     existing &&
-    input.launch.config.accounts.some((account) =>
-      account.name === existing.accountId
+    input.launch.config.accounts.some(
+      (account) => account.name === existing.accountId,
     )
   ) {
     const renewed = await leaseStore.renew({
@@ -74,32 +117,20 @@ export async function reserveCodexProjectAccount(input: {
     }
   }
 
-  const capacityStore = input.deps?.capacityStore ?? codexAccountCapacityStore(
-    input.launch.config.authRootDir,
-    {
+  const capacityStore =
+    input.deps?.capacityStore ??
+    codexAccountCapacityStore(input.launch.config.authRootDir, {
       authJsonPaths: Object.fromEntries(
         input.launch.config.accounts.flatMap((account) =>
-          account.authJsonPath
-            ? [[account.name, account.authJsonPath]]
-            : []
+          account.authJsonPath ? [[account.name, account.authJsonPath]] : [],
         ),
       ),
-    },
-  );
+    });
   const selection = await new SelectRuntimeAccountUseCase().execute({
-    allowedAccounts: input.launch.config.accounts.map((account) => account.name),
-    demand: {
-      provider: "codex",
-      ...(input.launch.config.model
-        ? { model: input.launch.config.model }
-        : {}),
-      ...(input.launch.config.reasoningEffort
-        ? { reasoningEffort: input.launch.config.reasoningEffort }
-        : {}),
-      ...(input.launch.config.serviceTier
-        ? { serviceTier: input.launch.config.serviceTier }
-        : {}),
-    },
+    allowedAccounts: input.launch.config.accounts.map(
+      (account) => account.name,
+    ),
+    demand: projectAccountDemand(input.launch),
     leaseDemand: null,
     ownerId: input.manifest.jobId,
     leaseTtlMs: ttlMs,
@@ -130,18 +161,74 @@ export async function reserveCodexProjectAccount(input: {
   return reservationResult(input.launch, receipt);
 }
 
+async function selectSharedCodexProjectAccount(input: {
+  readonly manifest: CodexGoalJobManifest;
+  readonly launch: CodexGoalLaunchInput;
+  readonly deps?: CodexProjectAccountReservationDeps;
+}): Promise<CodexProjectSharedAccountReservation> {
+  const now = input.deps?.now ?? new Date();
+  const capacityStore =
+    input.deps?.capacityStore ??
+    codexAccountCapacityStore(input.launch.config.authRootDir, {
+      authJsonPaths: Object.fromEntries(
+        input.launch.config.accounts.flatMap((account) =>
+          account.authJsonPath ? [[account.name, account.authJsonPath]] : [],
+        ),
+      ),
+    });
+  const demand = projectAccountDemand(input.launch);
+  const unavailable: Array<{
+    accountId: string;
+    reason: string;
+    waitUntil?: Date;
+  }> = [];
+  const accounts = stableSharedAccountOrder(
+    selectableWorkerAccountIds(
+      input.launch.config.accounts.map((account) => account.name),
+      undefined,
+    ),
+    input.manifest.jobId,
+  );
+
+  for (const accountId of accounts) {
+    const capacity = capacityStore.read({ accountId, demand, now });
+    if (capacity && capacity.availability !== "available") {
+      unavailable.push({
+        accountId,
+        reason: capacity.reason ?? capacity.availability,
+        ...(capacity.cooldownUntil
+          ? { waitUntil: capacity.cooldownUntil }
+          : {}),
+      });
+      continue;
+    }
+    return sharedReservationResult(input.launch, accountId);
+  }
+
+  const waitPlan = buildRuntimeAccountWaitPlan(unavailable, now);
+  const retryAt = waitPlan.waitUntil?.toISOString();
+  throw new Error(
+    retryAt
+      ? `project_control_account_reservation_unavailable_until:${retryAt}`
+      : "project_control_account_reservation_unavailable",
+  );
+}
+
 export async function releaseCodexProjectAccount(input: {
   readonly manifest: CodexGoalJobManifest;
   readonly launch: CodexGoalLaunchInput;
   readonly reason: string;
-  readonly deps?: Pick<CodexProjectAccountReservationDeps, "leaseStore" | "now">;
+  readonly deps?: Pick<
+    CodexProjectAccountReservationDeps,
+    "leaseStore" | "now"
+  >;
 }): Promise<boolean> {
   const receiptPath = codexProjectAccountReservationPath(input.manifest);
   const receipt = await readReservation(receiptPath);
   if (!receipt) return false;
-  const leaseStore = input.deps?.leaseStore ?? codexProjectAccountLeaseStore(
-    input.launch.config.authRootDir,
-  );
+  const leaseStore =
+    input.deps?.leaseStore ??
+    codexProjectAccountLeaseStore(input.launch.config.authRootDir);
   await leaseStore.release({
     leaseId: receipt.leaseId,
     ownerId: input.manifest.jobId,
@@ -174,12 +261,13 @@ function codexProjectAccountLeaseStore(
 function reservationResult(
   launch: CodexGoalLaunchInput,
   receipt: PersistedCodexProjectAccountReservation,
-): CodexProjectAccountReservation {
-  const account = launch.config.accounts.find((candidate) =>
-    candidate.name === receipt.accountId
+): CodexProjectExclusiveAccountReservation {
+  const account = launch.config.accounts.find(
+    (candidate) => candidate.name === receipt.accountId,
   );
   if (!account) throw new Error("project_control_reserved_account_missing");
   return {
+    mode: "exclusive",
     accountId: receipt.accountId,
     fencingToken: receipt.fencingToken,
     acquiredAt: receipt.acquiredAt,
@@ -193,6 +281,56 @@ function reservationResult(
       },
     },
   };
+}
+
+function sharedReservationResult(
+  launch: CodexGoalLaunchInput,
+  accountId: string,
+): CodexProjectSharedAccountReservation {
+  const account = launch.config.accounts.find(
+    (candidate) => candidate.name === accountId,
+  );
+  if (!account) throw new Error("project_control_reserved_account_missing");
+  return {
+    mode: "shared",
+    accountId,
+    launch: {
+      ...launch,
+      config: {
+        ...launch.config,
+        accounts: [account],
+        maxAccountCycles: 1,
+      },
+    },
+  };
+}
+
+function projectAccountDemand(
+  launch: CodexGoalLaunchInput,
+): WorkerRuntimeDemand {
+  return {
+    provider: "codex",
+    ...(launch.config.model ? { model: launch.config.model } : {}),
+    ...(launch.config.reasoningEffort
+      ? { reasoningEffort: launch.config.reasoningEffort }
+      : {}),
+    ...(launch.config.serviceTier
+      ? { serviceTier: launch.config.serviceTier }
+      : {}),
+  };
+}
+
+function stableSharedAccountOrder(
+  accounts: readonly string[],
+  ownerId: string,
+): readonly string[] {
+  if (accounts.length < 2) return accounts;
+  let hash = 0;
+  for (const character of ownerId) {
+    hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
+  }
+  const offset = hash % accounts.length;
+  return [...accounts.slice(offset), ...accounts.slice(0, offset)];
 }
 
 function receiptFromLease(lease: {

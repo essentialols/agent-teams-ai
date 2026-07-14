@@ -113,11 +113,15 @@ patch to the index. The pre-start contract must bind `inputPatchHash` to that
 exact staged patch, so unrelated staged, unstaged or untracked content fails
 closed.
 
-Before `start_worker`, the runtime reserves one available account with a durable
-TTL lease and fencing token. The launched worker receives only that account;
-the reservation is released on failed start, brokered stop or review, and
-otherwise expires after the task timeout plus grace. Account choice remains a
-runtime safety mechanism, not project worker-mix policy.
+Before `start_worker`, the runtime selects one capacity-eligible account and the
+launched worker receives only that account. Account identities are shared across
+jobs by default because hosted Codex auth refresh is disabled and artifacts do
+not depend on an account lease. Set
+`SUBSCRIPTION_RUNTIME_PROJECT_ACCOUNT_EXCLUSIVE_LEASES=1` only for deployments
+whose mutable auth home requires a durable TTL lease and fencing token. Exclusive
+reservations are released on failed start, brokered stop or review, and otherwise
+expire after the task timeout plus grace. Account choice remains a runtime safety
+mechanism, not project worker-mix policy.
 
 Bounded project-control operations publish request, result and claim state with
 durable atomic files. `codex_goal_project_recover_operations` reconciles a

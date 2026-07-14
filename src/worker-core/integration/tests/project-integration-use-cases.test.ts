@@ -501,9 +501,27 @@ describe("project integration use cases", () => {
     });
   });
 
-  it("aborts a merge when applied files exceed the approved merge footprint", async () => {
+  it("requires the reviewed merge files to equal the conflict patch set", async () => {
     const fixture = createFixture();
-    fixture.git.appliedFiles = ["src/memory.ts", "test/outside.ts"];
+    const candidate = mergeInput();
+
+    await expect(openProjectIntegrationAttempt(fixture.deps(), {
+      ...candidate,
+      reviewDecision: {
+        ...candidate.reviewDecision,
+        approvedFiles: ["src/base-change.ts", "src/memory.ts"],
+      },
+    })).rejects.toMatchObject({
+      reason: IntegrationErrorReason.UnexpectedFiles,
+      evidence: [
+        "reviewed_merge_conflict_set_mismatch:expected=src/base-change.ts,src/memory.ts;actual=src/memory.ts",
+      ],
+    });
+  });
+
+  it("aborts a merge when the reviewed conflict is absent from the result", async () => {
+    const fixture = createFixture();
+    fixture.git.appliedFiles = ["src/base-change.ts"];
     const opened = await openProjectIntegrationAttempt(
       fixture.deps(),
       mergeInput(),
@@ -512,8 +530,8 @@ describe("project integration use cases", () => {
     await expect(applyWorkerOutput(fixture.deps(), {
       attemptId: opened.attemptId,
     })).rejects.toMatchObject({
-      reason: IntegrationErrorReason.PathOutsideExpectedFiles,
-      evidence: ["test/outside.ts"],
+      reason: IntegrationErrorReason.UnexpectedFiles,
+      evidence: ["reviewed_merge_conflicts_missing:src/memory.ts"],
     });
     expect(fixture.git.calls).toEqual(["status", "apply", "abortMerge"]);
     expect(fixture.store.get(opened.attemptId)?.status).toBe(
@@ -544,6 +562,14 @@ describe("project integration use cases", () => {
     expect(fixture.git.lastExpectedParentCommits).toEqual([
       MERGE_TARGET_COMMIT,
       MERGE_SOURCE_COMMIT,
+    ]);
+    expect(fixture.git.lastCommittedFiles).toEqual([
+      "src/base-change.ts",
+      "src/memory.ts",
+    ]);
+    expect(fixture.scanner.lastFiles).toEqual([
+      "src/base-change.ts",
+      "src/memory.ts",
     ]);
   });
 
@@ -677,7 +703,7 @@ function mergeInput() {
     },
     reviewDecision: {
       ...base.reviewDecision,
-      approvedFiles: ["src/base-change.ts", "src/memory.ts"],
+      approvedFiles: ["src/memory.ts"],
     },
   };
 }
@@ -758,6 +784,7 @@ function createFixture(options: {
     checks,
     git,
     ledger,
+    scanner,
     store,
     deps() {
       return {
@@ -893,6 +920,7 @@ class FakeGit implements GitPort {
   appliedFiles: readonly string[] = ["src/memory.ts"];
   commitParents: readonly string[] | undefined;
   lastExpectedParentCommits: readonly string[] | undefined;
+  lastCommittedFiles: readonly string[] | undefined;
   abortMergeError: Error | undefined;
 
   getStatus() {
@@ -915,9 +943,13 @@ class FakeGit implements GitPort {
     return { ok: true };
   }
 
-  commit(input: { readonly expectedParentCommits?: readonly string[] }) {
+  commit(input: {
+    readonly files: readonly string[];
+    readonly expectedParentCommits?: readonly string[];
+  }) {
     this.calls.push("commit");
     this.lastExpectedParentCommits = input.expectedParentCommits;
+    this.lastCommittedFiles = input.files;
     this.dirtyFiles = [];
     return {
       commitSha: "abc123",
@@ -969,9 +1001,12 @@ class FakeChecks implements CheckRunnerPort {
 }
 
 class FakeScanner implements SecretScannerPort {
+  lastFiles: readonly string[] | undefined;
+
   constructor(private readonly status: SecretScanStatus) {}
 
-  scanFiles() {
+  scanFiles(input: { readonly files: readonly string[] }) {
+    this.lastFiles = input.files;
     return {
       status: this.status,
       ...(this.status === SecretScanStatus.Failed

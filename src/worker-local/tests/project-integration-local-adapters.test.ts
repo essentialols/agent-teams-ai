@@ -111,11 +111,13 @@ describe("local project integration adapters", () => {
     };
 
     await expect(adapter.applyWorkerOutput({ attempt, workerOutput }))
-      .resolves.toEqual({ changedFiles: ["src/memory.ts"] });
+      .resolves.toEqual({
+        changedFiles: ["src/base-change.ts", "src/memory.ts"],
+      });
     const commit = await adapter.commit({
       workspacePath: fixture.workspacePath,
       message: "merge: integrate current base",
-      files: ["src/memory.ts"],
+      files: ["src/base-change.ts", "src/memory.ts"],
       identity: { name: "Integrator", email: "integrator@example.com" },
       expectedParentCommits: [fixture.targetCommit, fixture.sourceCommit],
     });
@@ -127,7 +129,7 @@ describe("local project integration adapters", () => {
     await expect(adapter.commit({
       workspacePath: fixture.workspacePath,
       message: "merge: integrate current base",
-      files: ["src/memory.ts"],
+      files: ["src/base-change.ts", "src/memory.ts"],
       identity: { name: "Integrator", email: "integrator@example.com" },
       expectedParentCommits: [fixture.targetCommit, fixture.sourceCommit],
     })).resolves.toEqual(commit);
@@ -135,6 +137,57 @@ describe("local project integration adapters", () => {
       join(fixture.workspacePath, "src", "memory.ts"),
       "utf8",
     )).resolves.toBe("export const value = 3;\n");
+  });
+
+  it("restores reviewed conflicts after a post-patch merge failure", async () => {
+    const fixture = await createMergeFixture();
+    const adapter = new LocalGitIntegrationAdapter({
+      allowedPatchRoots: [fixture.rootDir],
+    });
+    const attempt = {
+      targetWorkspacePath: fixture.workspacePath,
+      expectedFiles: ["src/memory.ts"],
+      merge: {
+        sourceRemote: "origin",
+        sourceBranch: "base",
+        sourceCommit: fixture.sourceCommit,
+        expectedTargetCommit: fixture.targetCommit,
+      },
+    };
+    const workerOutput = {
+      workerJobId: "merge-resolution-worker",
+      workspacePath: fixture.workspacePath,
+      patchPath: fixture.patchPath,
+      patchSha256: fixture.patchSha256,
+      baseCommit: fixture.targetCommit,
+      changedFiles: ["src/memory.ts"],
+    };
+
+    await adapter.applyWorkerOutput({ attempt, workerOutput });
+    await git(fixture.workspacePath, ["reset", "--hard", fixture.targetCommit]);
+    await writeFile(
+      join(fixture.workspacePath, "src", "memory.ts"),
+      "export const value = 3;\n",
+    );
+    await expect(execFileAsync("git", ["rev-parse", "--verify", "MERGE_HEAD"], {
+      cwd: fixture.workspacePath,
+    })).rejects.toBeDefined();
+    await adapter.abortMerge({
+      attempt: { ...attempt, workerOutput } as unknown as IntegrationAttempt,
+    });
+
+    expect((await gitOutput(fixture.workspacePath, ["rev-parse", "HEAD"])).trim())
+      .toBe(fixture.targetCommit);
+    expect(await gitOutput(fixture.workspacePath, ["status", "--porcelain"]))
+      .toBe("");
+    await expect(readFile(
+      join(fixture.workspacePath, "src", "memory.ts"),
+      "utf8",
+    )).resolves.toBe("export const value = 4;\n");
+    await expect(readFile(
+      join(fixture.workspacePath, "src", "base-change.ts"),
+      "utf8",
+    )).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("merges the reviewed ancestor when the remote branch has advanced", async () => {
@@ -176,11 +229,13 @@ describe("local project integration adapters", () => {
     };
 
     await expect(adapter.applyWorkerOutput({ attempt, workerOutput }))
-      .resolves.toEqual({ changedFiles: ["src/memory.ts"] });
+      .resolves.toEqual({
+        changedFiles: ["src/base-change.ts", "src/memory.ts"],
+      });
     const commit = await adapter.commit({
       workspacePath: fixture.workspacePath,
       message: "merge: integrate reviewed base ancestor",
-      files: ["src/memory.ts"],
+      files: ["src/base-change.ts", "src/memory.ts"],
       identity: { name: "Integrator", email: "integrator@example.com" },
       expectedParentCommits: [fixture.targetCommit, fixture.sourceCommit],
     });
@@ -271,7 +326,7 @@ describe("local project integration adapters", () => {
     await adapter.commit({
       workspacePath: fixture.workspacePath,
       message: "merge: integrate current base",
-      files: ["src/memory.ts"],
+      files: ["src/base-change.ts", "src/memory.ts"],
       identity: { name: "Integrator", email: "integrator@example.com" },
       expectedParentCommits: [fixture.targetCommit, fixture.sourceCommit],
     });
@@ -279,7 +334,7 @@ describe("local project integration adapters", () => {
     await expect(adapter.commit({
       workspacePath: fixture.workspacePath,
       message: "merge: different message",
-      files: ["src/memory.ts"],
+      files: ["src/base-change.ts", "src/memory.ts"],
       identity: { name: "Integrator", email: "integrator@example.com" },
       expectedParentCommits: [fixture.targetCommit, fixture.sourceCommit],
     })).rejects.toMatchObject({
@@ -296,7 +351,7 @@ describe("local project integration adapters", () => {
     await expect(adapter.applyWorkerOutput({
       attempt: {
         targetWorkspacePath: fixture.workspacePath,
-        expectedFiles: ["src/memory.ts"],
+        expectedFiles: ["src/not-the-conflict.ts"],
         merge: {
           sourceRemote: "origin",
           sourceBranch: "base",
@@ -944,6 +999,10 @@ async function createMergeFixture(): Promise<{
   await writeFile(
     join(workspacePath, "src", "memory.ts"),
     "export const value = 2;\n",
+  );
+  await writeFile(
+    join(workspacePath, "src", "base-change.ts"),
+    "export const baseChange = true;\n",
   );
   await git(workspacePath, ["add", "."]);
   await git(workspacePath, ["commit", "-m", "feat: update base"]);

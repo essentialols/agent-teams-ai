@@ -162,10 +162,18 @@ export function openIntegrationAttempt(
     });
   }
   const expectedFiles = normalizeExpectedFiles(input.reviewDecision.approvedFiles);
-  assertFilesWithinExpected(input.workerOutput.changedFiles, expectedFiles);
   const merge = input.merge
     ? normalizeMergeIntegrationPlan(input.merge, input.workerOutput)
     : undefined;
+  if (merge) {
+    assertSameFiles(
+      input.workerOutput.changedFiles,
+      expectedFiles,
+      "reviewed_merge_conflict_set_mismatch",
+    );
+  } else {
+    assertFilesWithinExpected(input.workerOutput.changedFiles, expectedFiles);
+  }
   return {
     attemptId: input.attemptId,
     projectId: input.projectId,
@@ -201,7 +209,7 @@ export function markWorkerOutputApplied(
 ): IntegrationAttempt {
   assertStatus(attempt, [IntegrationAttemptStatus.Opened]);
   const changedFiles = normalizeExpectedFiles(input.changedFiles);
-  assertFilesWithinExpected(changedFiles, attempt.expectedFiles);
+  assertIntegrationAppliedFiles(attempt, changedFiles);
   return {
     ...attempt,
     status: IntegrationAttemptStatus.Applied,
@@ -280,7 +288,7 @@ export function markCommitCreated(
   },
 ): IntegrationAttempt {
   assertStatus(attempt, [IntegrationAttemptStatus.ChecksPassed]);
-  assertFilesWithinExpected(input.commitCandidate.files, attempt.expectedFiles);
+  assertIntegrationCommitFiles(attempt, input.commitCandidate.files);
   if (attempt.merge) {
     assertMergeCommitParents(
       input.commitCandidate.parentCommits,
@@ -302,6 +310,32 @@ export function integrationAppliedFiles(
   attempt: IntegrationAttempt,
 ): readonly string[] {
   return attempt.appliedFiles ?? attempt.workerOutput.changedFiles;
+}
+
+export function assertIntegrationAppliedFiles(
+  attempt: IntegrationAttempt,
+  files: readonly string[],
+): void {
+  if (!attempt.merge) {
+    assertFilesWithinExpected(files, attempt.expectedFiles);
+    return;
+  }
+  assertFilesInclude(files, attempt.expectedFiles, "reviewed_merge_conflicts_missing");
+}
+
+export function assertIntegrationCommitFiles(
+  attempt: IntegrationAttempt,
+  files: readonly string[],
+): void {
+  if (!attempt.merge) {
+    assertFilesWithinExpected(files, attempt.expectedFiles);
+    return;
+  }
+  assertSameFiles(
+    files,
+    integrationAppliedFiles(attempt),
+    "merge_commit_files_mismatch",
+  );
 }
 
 export function assertMergeCommitParents(
@@ -472,6 +506,43 @@ export function assertFilesWithinExpected(
     throw new IntegrationError({
       reason: IntegrationErrorReason.PathOutsideExpectedFiles,
       evidence: outside,
+    });
+  }
+}
+
+function assertFilesInclude(
+  files: readonly string[],
+  requiredFiles: readonly string[],
+  evidencePrefix: string,
+): void {
+  const actual = new Set(normalizeExpectedFiles(files));
+  const missing = normalizeExpectedFiles(requiredFiles).filter(
+    (file) => !actual.has(file),
+  );
+  if (missing.length > 0) {
+    throw new IntegrationError({
+      reason: IntegrationErrorReason.UnexpectedFiles,
+      evidence: [`${evidencePrefix}:${missing.join(",")}`],
+    });
+  }
+}
+
+function assertSameFiles(
+  files: readonly string[],
+  expectedFiles: readonly string[],
+  evidencePrefix: string,
+): void {
+  const actual = normalizeExpectedFiles(files);
+  const expected = normalizeExpectedFiles(expectedFiles);
+  if (
+    actual.length !== expected.length ||
+    !actual.every((file, index) => file === expected[index])
+  ) {
+    throw new IntegrationError({
+      reason: IntegrationErrorReason.UnexpectedFiles,
+      evidence: [
+        `${evidencePrefix}:expected=${expected.join(",")};actual=${actual.join(",")}`,
+      ],
     });
   }
 }

@@ -536,11 +536,19 @@ describe("local project integration adapters", () => {
     });
     await expect(readFile(preparation.patchPath, "utf8"))
       .resolves.toContain("export const value = 2");
+    await expect(adapter.preflightFinalize({ preparation }))
+      .resolves.toBeUndefined();
 
     const first = await adapter.finalize({
       preparation,
       pushedAt: "2026-07-12T00:00:00.000Z",
     });
+    await expect(adapter.preflightFinalize({ preparation }))
+      .rejects.toThrow("consumed_output_ledger_terminal_conflict");
+    await expect(adapter.preflightFinalize({
+      preparation,
+      pushedAt: "2026-07-12T00:00:00.000Z",
+    })).resolves.toBeUndefined();
     const replay = await adapter.finalize({
       preparation,
       pushedAt: "2026-07-12T00:00:00.000Z",

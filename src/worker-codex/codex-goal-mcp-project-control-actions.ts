@@ -265,7 +265,7 @@ export async function projectControlStartStoredJobView(
             controllerJobId: controller.controller.jobId,
             workerJobId: loaded.manifest.jobId,
             taskId: loaded.launch.config.taskId,
-            workspacePath: loaded.launch.config.workspacePath,
+            workspacePath: workspace.canonicalWorkspacePath,
             reviewedOutputId: reviewedOutputId!,
           })
         : undefined;

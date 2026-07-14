@@ -79,7 +79,7 @@ export async function captureReviewedWorkerOutputLocked(
     controllerJobId: input.controllerJobId,
     workerJobId: input.workerJobId,
     taskId: input.taskId,
-    sourceWorkspacePath: input.workspacePath,
+    sourceWorkspacePath: lock.workspacePath,
     baseCommit: captured.baseCommit,
     patchSha256,
     changedFiles,
@@ -95,7 +95,7 @@ export async function captureReviewedWorkerOutputLocked(
       controllerJobId: input.controllerJobId,
       workerJobId: input.workerJobId,
       taskId: input.taskId,
-      sourceWorkspacePath: input.workspacePath,
+      sourceWorkspacePath: lock.workspacePath,
       patchSha256,
       patchByteLength: Buffer.byteLength(captured.patch),
       baseCommit: captured.baseCommit,
@@ -311,11 +311,11 @@ export async function resolveReviewedWorkerContinuation(input: {
   if (snapshot.taskId !== input.taskId) {
     throw new Error("reviewed_worker_output_task_mismatch");
   }
-  if (snapshot.sourceWorkspacePath !== input.workspacePath) {
-    throw new Error("reviewed_worker_output_workspace_mismatch");
-  }
   if (snapshot.reviewDecision.decision !== ReviewDecisionStatus.Rejected) {
     throw new Error("reviewed_worker_output_rejected_continuation_required");
+  }
+  if (snapshot.sourceWorkspacePath !== input.workspacePath) {
+    throw new Error("reviewed_worker_output_workspace_mismatch");
   }
   return snapshot;
 }

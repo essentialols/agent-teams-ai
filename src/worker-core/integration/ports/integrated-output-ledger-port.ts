@@ -44,6 +44,7 @@ export interface IntegratedOutputLedgerPort {
 
   preflightFinalize(input: {
     readonly preparation: IntegratedOutputLedgerPreparation;
+    readonly pushedAt?: string;
   }): Promise<void>;
 
   finalize(input: {

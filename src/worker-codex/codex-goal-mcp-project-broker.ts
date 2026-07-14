@@ -33,7 +33,7 @@ import {
 } from "./application/project-control/codex-goal-project-admission";
 import {
   withProjectPreStartAdmissionLaunchAuthorization,
-} from "./application/project-control/codex-goal-project-pre-start-admission";
+} from "./application/project-control/codex-goal-project-pre-start-launch-authorization";
 import {
   assertCodexGoalProjectJobNotTerminal,
 } from "./application/project-control/codex-goal-consumed-output-ledger-io";

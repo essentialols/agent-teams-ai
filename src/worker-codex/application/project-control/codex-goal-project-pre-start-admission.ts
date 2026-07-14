@@ -11,7 +11,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
-import { isDeepStrictEqual, promisify } from "node:util";
+import { promisify } from "node:util";
 import type { ProjectAccessScope } from "@vioxen/subscription-runtime/worker-core";
 import type {
   CodexGoalJobManifest,
@@ -286,99 +286,6 @@ export async function assertProjectPreStartAdmissionLaunchBinding(input: {
     !validatorReceiptValid
   ) {
     throw new Error("project_control_pre_start_launch_binding_mismatch");
-  }
-}
-
-export type ProjectPreStartAdmissionLaunchAuthorization = {
-  readonly receiptPath: string;
-  readonly previousReceipt: Readonly<Record<string, unknown>>;
-  readonly authorizedReceipt: Readonly<Record<string, unknown>>;
-};
-
-export async function authorizeProjectPreStartAdmissionLaunch(input: {
-  readonly manifest: CodexGoalJobManifest;
-  readonly scope: ProjectAccessScope;
-  readonly workspaceMode?: "reviewed_dirty_continuation";
-}): Promise<ProjectPreStartAdmissionLaunchAuthorization | undefined> {
-  const descriptor = input.manifest.projectPreStartAdmission;
-  if (!descriptor) {
-    if (input.scope.preStartAdmission?.required) {
-      throw new Error("project_control_pre_start_admission_required");
-    }
-    return undefined;
-  }
-  await assertProjectPreStartAdmissionLaunchBinding({
-    manifest: input.manifest,
-    scope: input.scope,
-    ...(input.workspaceMode ? { workspaceMode: input.workspaceMode } : {}),
-  });
-  const receipt = await readJsonObject(
-    descriptor.receiptPath,
-    "receipt",
-    64 * 1024,
-  );
-  const authorizationCount =
-    typeof receipt.launchAuthorizationCount === "number" &&
-      Number.isSafeInteger(receipt.launchAuthorizationCount) &&
-      receipt.launchAuthorizationCount >= 0
-      ? receipt.launchAuthorizationCount
-      : 0;
-  const authorizedReceipt = {
-    ...receipt,
-    status: "launch_authorized",
-    launchAuthorizationCount: authorizationCount + 1,
-    launchAuthorizedAt: new Date().toISOString(),
-  };
-  await writeJsonAtomically(descriptor.receiptPath, authorizedReceipt);
-  return {
-    receiptPath: descriptor.receiptPath,
-    previousReceipt: receipt,
-    authorizedReceipt,
-  };
-}
-
-export async function rollbackProjectPreStartAdmissionLaunch(
-  authorization: ProjectPreStartAdmissionLaunchAuthorization,
-): Promise<void> {
-  const currentReceipt = await readJsonObject(
-    authorization.receiptPath,
-    "receipt",
-    64 * 1024,
-  );
-  if (!isDeepStrictEqual(currentReceipt, authorization.authorizedReceipt)) {
-    throw new Error(
-      "project_control_pre_start_launch_authorization_rollback_conflict",
-    );
-  }
-  await writeJsonAtomically(
-    authorization.receiptPath,
-    authorization.previousReceipt,
-  );
-}
-
-export async function withProjectPreStartAdmissionLaunchAuthorization<T>(
-  input: {
-    readonly manifest: CodexGoalJobManifest;
-    readonly scope: ProjectAccessScope;
-    readonly workspaceMode?: "reviewed_dirty_continuation";
-  },
-  start: () => Promise<T>,
-): Promise<T> {
-  const authorization = await authorizeProjectPreStartAdmissionLaunch(input);
-  try {
-    return await start();
-  } catch (error) {
-    if (authorization) {
-      try {
-        await rollbackProjectPreStartAdmissionLaunch(authorization);
-      } catch (rollbackError) {
-        throw new AggregateError(
-          [error, rollbackError],
-          "project_control_pre_start_launch_rollback_failed",
-        );
-      }
-    }
-    throw error;
   }
 }
 

@@ -185,10 +185,14 @@ export class LocalIntegratedOutputLedgerAdapter
 
   async preflightFinalize(input: {
     readonly preparation: IntegratedOutputLedgerPreparation;
+    readonly pushedAt?: string;
   }): Promise<void> {
     await this.writer.assertCanRecord({
       ledgerRoot: this.requiredLedgerRoot(),
-      decision: integratedDecision(input.preparation, "1970-01-01T00:00:00.000Z"),
+      decision: integratedDecision(
+        input.preparation,
+        input.pushedAt ?? "1970-01-01T00:00:00.000Z",
+      ),
     });
   }
 

@@ -53,7 +53,10 @@ export async function pushApprovedCommit(
       attempt,
       commitSha: attempt.pushAttempt.commitSha,
     });
-    await deps.integratedOutputLedger.preflightFinalize({ preparation });
+    await deps.integratedOutputLedger.preflightFinalize({
+      preparation,
+      pushedAt: attempt.pushAttempt.pushedAt,
+    });
     await deps.integratedOutputLedger.finalize({
       preparation,
       pushedAt: attempt.pushAttempt.pushedAt,

@@ -307,7 +307,7 @@ describe("reviewed worker output", () => {
       controllerJobId: "project-1-controller",
       workerJobId: "project-1-worker",
       taskId: "task-1",
-      workspacePath: fixture.workspacePath,
+      workspacePath: snapshot.sourceWorkspacePath,
       reviewedOutputId: snapshot.reviewedOutputId,
     })).resolves.toEqual(snapshot);
     await expect(resolveReviewedWorkerContinuation({

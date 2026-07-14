@@ -3,7 +3,9 @@ import {
   chmod,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
+  realpath,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -14,15 +16,23 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
 import {
   AccessBoundary,
+  InMemoryAttemptJournal,
   NetworkAccessMode,
+  type ProjectControlBroker,
   type ProjectAccessScope,
 } from "@vioxen/subscription-runtime/worker-core";
 import { materializeCodexGoalHandoffArtifacts } from "../codex-goal-handoff-artifacts";
 import {
   codexGoalJobManifestPath,
   parseCodexGoalJobManifest,
+  readCodexGoalJob,
 } from "../codex-goal-jobs";
+import type { CodexGoalLaunchInput } from "../codex-goal-ops";
 import { createCodexGoalMcpServer } from "../codex-goal-mcp";
+import {
+  projectControlStartStoredJobView,
+  type CodexGoalMcpProjectControlActionsDeps,
+} from "../codex-goal-mcp-project-control-actions";
 import { assertProjectPreStartAdmissionLaunchBinding } from "../application/project-control/codex-goal-project-pre-start-admission";
 import { authorizeProjectPreStartAdmissionLaunch } from "../application/project-control/codex-goal-project-pre-start-launch-authorization";
 import {
@@ -418,6 +428,274 @@ await writeFile(file, JSON.stringify(operation, null, 2) + "\\n");
       }
     },
   );
+
+  it("continues the same prepared verifier with the admitted immutable patch", async () => {
+    const root = await mkdtemp(
+      join(tmpdir(), "verifier-capacity-continuation-"),
+    );
+    const registryRootDir = join(root, "worker-jobs", "registry");
+    const controllerJobRoot = join(root, "worker-jobs", "controller");
+    const producerJobRoot = join(root, "worker-jobs", "producer");
+    const sourceWorkspacePath = join(root, "workspaces", "canonical");
+    const producerWorkspacePath = join(root, "worktrees", "producer");
+    const verifierWorkspacePath = join(root, "worktrees", "verifier");
+    const remotePath = join(root, "remote.git");
+    const server = createCodexGoalMcpServer();
+    const client = new Client({ name: "test", version: "0.0.0" });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+
+    try {
+      await git(root, ["init", "--bare", remotePath]);
+      await Promise.all([
+        mkdir(sourceWorkspacePath, { recursive: true }),
+        mkdir(join(root, "control", "consumed-output-ledger", "items"), {
+          recursive: true,
+        }),
+      ]);
+      await gitInitRepository(sourceWorkspacePath);
+      await Promise.all([
+        writeFile(join(sourceWorkspacePath, "README.md"), "base\n"),
+        writeFile(join(sourceWorkspacePath, "controller.md"), "controller\n"),
+        writeFile(join(sourceWorkspacePath, "lane.md"), "lane\n"),
+        writeFile(join(sourceWorkspacePath, "feature.txt"), "base\n"),
+        mkdir(join(sourceWorkspacePath, "checks")),
+      ]);
+      await writeFile(join(sourceWorkspacePath, "checks", ".keep"), "");
+      await git(sourceWorkspacePath, ["add", "."]);
+      await git(sourceWorkspacePath, ["commit", "-m", "test: base"]);
+      const canonicalSha = await revision(sourceWorkspacePath);
+      await git(sourceWorkspacePath, ["remote", "add", "origin", remotePath]);
+      await git(sourceWorkspacePath, ["push", "-u", "origin", "HEAD:main"]);
+
+      await git(root, ["clone", sourceWorkspacePath, producerWorkspacePath]);
+      await git(producerWorkspacePath, [
+        "config",
+        "user.email",
+        "test@example.com",
+      ]);
+      await git(producerWorkspacePath, ["config", "user.name", "Test User"]);
+      await writeFile(join(producerWorkspacePath, "feature.txt"), "producer\n");
+      const handoff = await materializeCodexGoalHandoffArtifacts({
+        workerJobId: "project-producer",
+        taskId: "project-producer",
+        workspacePath: producerWorkspacePath,
+        jobRootDir: producerJobRoot,
+      });
+      if (!handoff) throw new Error("expected producer handoff");
+      await writeFile(
+        join(producerJobRoot, "project-producer.latest-result.json"),
+        `${JSON.stringify({
+          status: "done",
+          changedFiles: handoff.changedPaths,
+          evidence: [],
+          blockers: [],
+          nextAction: "review_completed",
+          artifacts: handoff.artifacts,
+          details: { baseCommit: handoff.baseCommit },
+        })}\n`,
+      );
+
+      await Promise.all([
+        server.connect(serverTransport),
+        client.connect(clientTransport),
+      ]);
+      await createProducerJob({
+        client,
+        root,
+        registryRootDir,
+        producerJobRoot,
+        producerWorkspacePath,
+      });
+      const allowedAccountIds = ["account-c", "account-g"];
+      await createControllerJob({
+        client,
+        root,
+        registryRootDir,
+        controllerJobRoot,
+        sourceWorkspacePath,
+        allowedAccountIds,
+      });
+      await prepareVerifier({
+        client,
+        root,
+        registryRootDir,
+        sourceWorkspacePath,
+        verifierWorkspacePath,
+        producerBase: canonicalSha,
+        canonicalSha,
+        patchSha256: handoff.manifest.artifacts.patch.sha256,
+        executionMode: "sync",
+        accounts: allowedAccountIds,
+      });
+
+      const verifierManifestPath = codexGoalJobManifestPath({
+        registryRootDir,
+        jobId: "project-verifier",
+      });
+      const verifierManifest = await readCodexGoalJob({
+        registryRootDir,
+        jobId: "project-verifier",
+      });
+      const controller = await readCodexGoalJob({
+        registryRootDir,
+        jobId: "project-controller",
+      });
+      const scope = projectScope({
+        root,
+        registryRootDir,
+        sourceWorkspacePath,
+        allowedAccountIds,
+      });
+      await authorizeProjectPreStartAdmissionLaunch({
+        manifest: verifierManifest,
+        scope,
+        workspaceMode: "admitted_input_patch",
+      });
+      await writeFile(
+        join(
+          verifierManifest.jobRootDir,
+          `${verifierManifest.taskId}.latest-result.json`,
+        ),
+        `${JSON.stringify({
+          status: "blocked",
+          reason: "account_unavailable",
+          changedFiles: [],
+          evidence: ["safe_execution_status:waiting_capacity"],
+          blockers: ["account_unavailable"],
+          nextAction: "wait",
+        })}\n`,
+      );
+      const journal = new InMemoryAttemptJournal();
+      await recordUnavailableAttempt({
+        journal,
+        taskId: verifierManifest.taskId,
+        workspacePath: verifierManifest.workspacePath,
+        accountId: "account-c",
+      });
+
+      const stagedPatchBefore = await stagedPatchSha256(verifierWorkspacePath);
+      const manifestBefore = await readFile(verifierManifestPath, "utf8");
+      const registryEntriesBefore = await directoryEntries(registryRootDir);
+      const worktreesBefore = await gitStdout(sourceWorkspacePath, [
+        "worktree",
+        "list",
+        "--porcelain",
+      ]);
+      let brokerCalls = 0;
+      let reservedLaunch: CodexGoalLaunchInput | undefined;
+      let startManifest = verifierManifest;
+      let startAdmissionWorkspaceMode: string | undefined;
+      const deps: CodexGoalMcpProjectControlActionsDeps = {
+        loadProjectControlController: async () => ({
+          registryRootDir,
+          controller,
+          scope,
+        }),
+        loadJobLaunch: async () => {
+          throw new Error("unexpected_load_job_launch");
+        },
+        safeExecutionJournal: journal,
+        dependencyBootstrap: async () => ({
+          mode: "install",
+          workspacePath: verifierWorkspacePath,
+          nodeModulesPath: join(verifierWorkspacePath, "node_modules"),
+          nodeModulesExists: true,
+          binaryChecks: [],
+          fingerprintInputs: [],
+          status: "installed",
+          warnings: [],
+        }),
+        codexProjectControlBroker: (input) => {
+          brokerCalls += 1;
+          if (!input.startLaunch || !input.startManifest) {
+            throw new Error("expected_start_binding");
+          }
+          reservedLaunch = input.startLaunch;
+          startManifest = input.startManifest;
+          startAdmissionWorkspaceMode = input.startAdmissionWorkspaceMode;
+          return {
+            startWorker: async () => {
+              await authorizeProjectPreStartAdmissionLaunch({
+                manifest: input.startManifest!,
+                scope,
+                ...(input.startAdmissionWorkspaceMode
+                  ? { workspaceMode: input.startAdmissionWorkspaceMode }
+                  : {}),
+              });
+              return { status: "started" };
+            },
+          } as unknown as ProjectControlBroker;
+        },
+      };
+      const startArgs = {
+        registryRootDir,
+        controllerJobId: controller.jobId,
+        jobId: verifierManifest.jobId,
+        confirmStart: true,
+      };
+      const started = await projectControlStartStoredJobView(startArgs, deps);
+
+      expect(started).toMatchObject({
+        ok: true,
+        accountReservation: { accountId: "account-g" },
+      });
+      expect(brokerCalls).toBe(1);
+      expect(startAdmissionWorkspaceMode).toBe(
+        "admitted_input_patch_continuation",
+      );
+      expect(startManifest.jobId).toBe(verifierManifest.jobId);
+      expect(startManifest.taskId).toBe(verifierManifest.taskId);
+      expect(startManifest.workspacePath).toBe(verifierManifest.workspacePath);
+      expect(reservedLaunch?.config.taskId).toBe(verifierManifest.taskId);
+      expect(reservedLaunch?.config.workspacePath).toBe(
+        await realpath(verifierManifest.workspacePath),
+      );
+      expect(reservedLaunch?.config.accounts).toEqual([{ name: "account-g" }]);
+      expect(await stagedPatchSha256(verifierWorkspacePath)).toBe(
+        stagedPatchBefore,
+      );
+      expect(stagedPatchBefore).toBe(handoff.manifest.artifacts.patch.sha256);
+      expect(await readFile(verifierManifestPath, "utf8")).toBe(manifestBefore);
+      expect(await directoryEntries(registryRootDir)).toEqual(
+        registryEntriesBefore,
+      );
+      expect(
+        await gitStdout(sourceWorkspacePath, [
+          "worktree",
+          "list",
+          "--porcelain",
+        ]),
+      ).toBe(worktreesBefore);
+      const receipt = JSON.parse(
+        await readFile(
+          verifierManifest.projectPreStartAdmission!.receiptPath,
+          "utf8",
+        ),
+      ) as Record<string, unknown>;
+      expect(receipt.launchAuthorizationCount).toBe(2);
+
+      await writeFile(join(verifierWorkspacePath, "UNTRACKED.txt"), "drift\n");
+      await expect(
+        projectControlStartStoredJobView(startArgs, deps),
+      ).rejects.toThrow("project_control_pre_start_launch_binding_mismatch");
+      expect(brokerCalls).toBe(1);
+      expect(await readFile(verifierManifestPath, "utf8")).toBe(manifestBefore);
+      expect(await directoryEntries(registryRootDir)).toEqual(
+        registryEntriesBefore,
+      );
+      expect(
+        await gitStdout(sourceWorkspacePath, [
+          "worktree",
+          "list",
+          "--porcelain",
+        ]),
+      ).toBe(worktreesBefore);
+    } finally {
+      await Promise.allSettled([client.close(), server.close()]);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
 
 async function createProducerJob(input: {
@@ -457,6 +735,7 @@ async function createControllerJob(input: {
   readonly registryRootDir: string;
   readonly controllerJobRoot: string;
   readonly sourceWorkspacePath: string;
+  readonly allowedAccountIds?: readonly string[];
 }): Promise<void> {
   const result = await callToolJson(input.client, "codex_goal_create_job", {
     registryRootDir: input.registryRootDir,
@@ -466,7 +745,7 @@ async function createControllerJob(input: {
     workspacePath: input.sourceWorkspacePath,
     promptPath: join(input.controllerJobRoot, "prompt.md"),
     taskId: "project-controller",
-    accounts: ["account-a"],
+    accounts: [input.allowedAccountIds?.[0] ?? "account-a"],
     accessBoundary: AccessBoundary.ProjectScopedControl,
     networkAccess: NetworkAccessMode.Restricted,
     projectAccessScope: projectScope(input),
@@ -478,6 +757,7 @@ function projectScope(input: {
   readonly root: string;
   readonly registryRootDir: string;
   readonly sourceWorkspacePath: string;
+  readonly allowedAccountIds?: readonly string[];
 }): ProjectAccessScope {
   return {
     projectId: "project",
@@ -492,7 +772,7 @@ function projectScope(input: {
     tmuxSessionPrefixes: ["project-"],
     allowedBranches: ["main", "origin/main", "review/*"],
     allowedGitRemotes: ["origin"],
-    allowedAccountIds: ["account-a"],
+    allowedAccountIds: input.allowedAccountIds ?? ["account-a"],
     deniedRoots: [join(input.root, "real-user-project")],
     preStartAdmission: { required: true, mode: "serial-builtin" },
   };
@@ -510,6 +790,7 @@ async function prepareVerifier(input: {
   readonly executionMode: "sync" | "bounded";
   readonly jobId?: string;
   readonly baseBranch?: string;
+  readonly accounts?: readonly string[];
 }): Promise<Record<string, unknown>> {
   const jobId = input.jobId ?? "project-verifier";
   const response = await input.client.callTool({
@@ -525,7 +806,7 @@ async function prepareVerifier(input: {
       newBranch: "review/verifier",
       workspacePath: input.verifierWorkspacePath,
       promptBody: "Review immutable producer output.\n",
-      accounts: ["account-a"],
+      accounts: input.accounts ?? ["account-a"],
       workerRole: "reviewer",
       preStartAdmission: {
         mode: "serial-builtin",
@@ -577,4 +858,58 @@ async function prepareVerifier(input: {
 
 async function revision(workspacePath: string): Promise<string> {
   return (await gitStdout(workspacePath, ["rev-parse", "HEAD"])).trim();
+}
+
+async function stagedPatchSha256(workspacePath: string): Promise<string> {
+  const patch = await gitStdout(workspacePath, [
+    "diff",
+    "--cached",
+    "--binary",
+    "--no-ext-diff",
+  ]);
+  return createHash("sha256").update(patch).digest("hex");
+}
+
+async function directoryEntries(path: string): Promise<readonly string[]> {
+  return (await readdir(path)).sort();
+}
+
+async function recordUnavailableAttempt(input: {
+  readonly journal: InMemoryAttemptJournal;
+  readonly taskId: string;
+  readonly workspacePath: string;
+  readonly accountId: string;
+}): Promise<void> {
+  const now = new Date("2026-07-14T00:00:00.000Z");
+  await input.journal.startTask({
+    taskId: input.taskId,
+    workspaceRunId: "verifier-workspace-run",
+    workspacePath: input.workspacePath,
+    effectMode: "workspace_patch",
+    provider: "codex",
+    now,
+  });
+  await input.journal.appendAttempt({
+    taskId: input.taskId,
+    attempt: {
+      taskId: input.taskId,
+      attemptNumber: 1,
+      accountId: input.accountId,
+      provider: "codex",
+      startedAt: now,
+      finishedAt: now,
+      status: "blocked",
+      failureReason: "account_unavailable",
+      workspaceDirtyBefore: true,
+      workspaceDirtyAfter: true,
+      changedFiles: [],
+    },
+    now,
+  });
+  await input.journal.markPartial({
+    taskId: input.taskId,
+    status: "waiting_capacity",
+    reason: "account_unavailable",
+    now,
+  });
 }

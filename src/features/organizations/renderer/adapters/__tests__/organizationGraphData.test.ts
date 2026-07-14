@@ -748,6 +748,7 @@ describe('buildOrganizationGraphData', () => {
     });
     expect(graph.layout?.mode).toBe('grid-under-lead');
     expect(graph.layout?.showTasks).toBe(true);
+    expect(graph.layout?.fitTaskRowsToContent).toBe(true);
     expect(graph.layout?.showEmptyTaskPlaceholders).toBeUndefined();
     expect(graph.edges).toEqual(
       expect.arrayContaining([

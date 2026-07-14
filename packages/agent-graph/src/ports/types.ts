@@ -76,6 +76,8 @@ export interface GraphLayoutPort {
   showLogs?: boolean;
   showTasks?: boolean;
   showEmptyTaskPlaceholders?: boolean;
+  /** Size task bands from their rendered rows instead of reserving the maximum height. */
+  fitTaskRowsToContent?: boolean;
   alignGridColumns?: boolean;
   ownerOrder: string[];
   slotAssignments: Record<string, GraphOwnerSlotAssignment>;

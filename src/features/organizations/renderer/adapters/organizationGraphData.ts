@@ -1522,6 +1522,7 @@ function buildHierarchicalOrganizationGraphData(
       showActivity: false,
       showLogs: false,
       showTasks: renderedAgentTeamNodes.length > 0,
+      fitTaskRowsToContent: true,
       ownerOrder: renderedAgentTeamNodes.map((node) => node.id),
       slotAssignments: {},
       nodePositions: buildHierarchyNodePositions(
@@ -1599,6 +1600,7 @@ export function buildOrganizationGraphData(
             showActivity: false,
             showLogs: false,
             showTasks: context.renderedAgentTeamIds.size > 0,
+            fitTaskRowsToContent: true,
             alignGridColumns: true,
             ownerOrder,
             slotAssignments: buildLayoutSlotAssignments(viewModel, ownerOrder, context.layoutMode),

@@ -11,6 +11,7 @@ import {
 } from '@renderer/components/ui/select';
 import { Bot, Building2, Link2, Network, Pencil, RadioTower, RefreshCw, Users } from 'lucide-react';
 
+import { DEFAULT_ORGANIZATION_MAP_LAYOUT_MODE } from '../adapters/organizationMapLayout';
 import { getOrganizationIdForNodeId } from '../adapters/organizationMapViewModel';
 import { useOrganizationCreateTeamDialog } from '../hooks/useOrganizationCreateTeamDialog';
 import { useOrganizationMap } from '../hooks/useOrganizationMap';
@@ -40,7 +41,9 @@ export const OrganizationMapTab = ({
   const { t } = useAppTranslation('team');
   const [collapsedNodeIds, setCollapsedNodeIds] = useState<ReadonlySet<string>>(() => new Set());
   const [editMode, setEditMode] = useState(false);
-  const [layoutMode, setLayoutMode] = useState<GraphLayoutMode>('grid-under-lead');
+  const [layoutMode, setLayoutMode] = useState<GraphLayoutMode>(
+    DEFAULT_ORGANIZATION_MAP_LAYOUT_MODE
+  );
   const [mapScope, setMapScope] = useState<OrganizationMapScope>('all');
   const [activeOrganizationId, setActiveOrganizationId] = useState<string | undefined>(undefined);
   const [createTeamPlacement, setCreateTeamPlacement] =

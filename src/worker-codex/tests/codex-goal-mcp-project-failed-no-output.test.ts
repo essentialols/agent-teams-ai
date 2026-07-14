@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import {
   AccessBoundary,
   NetworkAccessMode,
+  ReviewDecisionStatus,
 } from "@vioxen/subscription-runtime/worker-core";
 import { createCodexGoalJob } from "../codex-goal-jobs";
 import { createCodexGoalMcpServer } from "../codex-goal-mcp";
@@ -379,7 +380,7 @@ function rejectedContinuationSnapshot(input: {
     changedFiles: ["output.txt"],
     reviewDecision: {
       reviewedBy: "project-reviewer",
-      decision: "rejected",
+      decision: ReviewDecisionStatus.Rejected,
       reason: "Same-job remediation required.",
       approvedFiles: ["output.txt"],
       requiredChecks: [],

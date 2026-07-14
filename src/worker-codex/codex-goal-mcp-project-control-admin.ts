@@ -6,12 +6,19 @@ import {
   type ProjectAccessScope,
 } from "@vioxen/subscription-runtime/worker-core";
 import {
+  codexGoalJobToArgs,
   readCodexGoalJob,
   summarizeCodexGoalJob,
   updateCodexGoalJob,
   type CodexGoalJobManifest,
   type CodexGoalJobManifestPatch,
 } from "./codex-goal-jobs";
+import {
+  collectCodexGoalStatus,
+  resolveCodexGoalWorkerLiveness,
+} from "./codex-goal-ops";
+import { goalLaunchInput } from "./codex-goal-mcp-launch-input";
+import { codexGoalStatusInputFromLaunch } from "./codex-goal-mcp-status-input";
 import {
   parseCodexGoalProjectAccessScope,
 } from "./codex-goal-access-plan";
@@ -213,6 +220,28 @@ export async function projectControlRepairJobManifestView(
     if (projectScopeFieldFingerprint(existing.accounts) !==
       projectScopeFieldFingerprint(repairedAccounts)) {
       patch.accounts = repairedAccounts;
+    }
+  }
+  if (args.serviceTier !== undefined) {
+    const requestedServiceTier = stringValue(args.serviceTier);
+    if (
+      requestedServiceTier !== "default" &&
+      requestedServiceTier !== "fast"
+    ) {
+      throw new Error("project_control_repair_service_tier_invalid");
+    }
+    if (requestedServiceTier !== existing.serviceTier) {
+      const launch = await goalLaunchInput(codexGoalJobToArgs(existing));
+      const status = await collectCodexGoalStatus(
+        codexGoalStatusInputFromLaunch(launch),
+      );
+      const progressStale =
+        status.progressHeartbeatAgeMs !== undefined &&
+        status.progressHeartbeatAgeMs > 10 * 60_000;
+      if (resolveCodexGoalWorkerLiveness({ status, progressStale }).alive) {
+        throw new Error("project_control_repair_live_worker_profile_denied");
+      }
+      patch.serviceTier = requestedServiceTier;
     }
   }
   if (args.description !== undefined) {

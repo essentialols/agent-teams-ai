@@ -66,6 +66,7 @@ export function registerCodexGoalProjectControlAdminTools(server: McpServer): vo
         ...jobIdInputSchema(),
         controllerJobId: z.string().optional(),
         accounts: z.union([z.string(), z.array(z.string())]).optional(),
+        serviceTier: z.enum(["default", "fast"]).optional(),
         description: z.string().optional(),
         tags: z.union([z.string(), z.array(z.string())]).optional(),
         confirmRepair: z.boolean().optional(),

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -11,7 +11,7 @@ import type { CodexGoalJobManifest } from "../codex-goal-jobs";
 import type { CodexGoalLaunchInput } from "../codex-goal-ops";
 import {
   codexProjectContinuationReservationInput,
-  codexProjectContinuationExcludedAccountIds,
+  codexProjectAccountReservationPath,
   codexProjectAccountLeaseMode,
   releaseCodexProjectAccount,
   reserveCodexProjectAccount,
@@ -30,29 +30,6 @@ afterEach(async () => {
 });
 
 describe("project account reservation", () => {
-  it("excludes the failed account only for an evidenced capacity continuation", () => {
-    const status = {
-      recommendedAction: "continue_after_capacity",
-      resultReason: "account_unavailable",
-      progressCurrentAccount: "account-a",
-    } as const;
-    expect(codexProjectContinuationExcludedAccountIds(status)).toEqual([
-      "account-a",
-    ]);
-    expect(codexProjectContinuationExcludedAccountIds({
-      ...status,
-      recommendedAction: "inspect_failure",
-    })).toEqual([]);
-    expect(codexProjectContinuationExcludedAccountIds({
-      ...status,
-      resultReason: "capacity_unavailable",
-    })).toEqual([]);
-    expect(codexProjectContinuationExcludedAccountIds({
-      recommendedAction: status.recommendedAction,
-      resultReason: status.resultReason,
-    })).toEqual([]);
-  });
-
   it("selects another shared account after account_unavailable", async () => {
     const root = await mkdtemp(join(tmpdir(), "project-account-excluded-"));
     roots.push(root);
@@ -120,6 +97,51 @@ describe("project account reservation", () => {
     expect(continued.accountId).not.toBe(first.accountId);
     await expect(leaseStore.acquire({
       accountId: first.accountId,
+      ownerId: "independent-job",
+      ttlMs: 60_000,
+      now,
+    })).resolves.toMatchObject({ status: "granted" });
+  });
+
+  it("validates an exhausted continuation before mutating exclusive leases", async () => {
+    const root = await mkdtemp(join(tmpdir(), "project-account-exhausted-"));
+    roots.push(root);
+    const leaseStore = new InMemoryWorkerAccountLeaseStore();
+    const now = new Date("2026-07-13T00:00:00.000Z");
+    const scoped = fixture(root, "job-1");
+    const bounded = {
+      ...scoped,
+      launch: {
+        ...scoped.launch,
+        config: { ...scoped.launch.config, maxAccountCycles: 1 },
+      },
+    };
+    const deps = {
+      capacityStore: new InMemoryWorkerAccountCapacityStore(),
+      leaseStore,
+      leaseMode: "exclusive" as const,
+      now,
+    };
+    const first = await reserveCodexProjectAccount({ ...bounded, deps });
+    const receiptPath = codexProjectAccountReservationPath(bounded.manifest);
+    const receiptBefore = await readFile(receiptPath, "utf8");
+
+    await expect(reserveCodexProjectAccount({
+      ...bounded,
+      excludedAccountIds: [first.accountId],
+      continuation: { previousAttemptCount: 2 },
+      deps: { ...deps, now: new Date(now.getTime() + 60_000) },
+    })).rejects.toThrow("project_control_continuation_attempt_budget_exhausted");
+
+    expect(await readFile(receiptPath, "utf8")).toBe(receiptBefore);
+    await expect(leaseStore.acquire({
+      accountId: first.accountId,
+      ownerId: "independent-job",
+      ttlMs: 60_000,
+      now,
+    })).resolves.toMatchObject({ status: "denied", reason: "leased" });
+    await expect(leaseStore.acquire({
+      accountId: "account-b",
       ownerId: "independent-job",
       ttlMs: 60_000,
       now,

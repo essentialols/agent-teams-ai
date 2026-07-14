@@ -85,19 +85,23 @@ export async function reserveCodexProjectAccount(input: {
   readonly continuation?: CodexProjectAccountContinuation;
   readonly deps?: CodexProjectAccountReservationDeps;
 }): Promise<CodexProjectAccountReservation> {
+  const maxAccountCycles = reservedAttemptBudget(input);
   const leaseMode = input.deps?.leaseMode ?? codexProjectAccountLeaseMode();
   if (leaseMode === "shared")
-    return await selectSharedCodexProjectAccount(input);
-  return await reserveExclusiveCodexProjectAccount(input);
+    return await selectSharedCodexProjectAccount(input, maxAccountCycles);
+  return await reserveExclusiveCodexProjectAccount(input, maxAccountCycles);
 }
 
-async function reserveExclusiveCodexProjectAccount(input: {
-  readonly manifest: CodexGoalJobManifest;
-  readonly launch: CodexGoalLaunchInput;
-  readonly excludedAccountIds?: readonly string[];
-  readonly continuation?: CodexProjectAccountContinuation;
-  readonly deps?: CodexProjectAccountReservationDeps;
-}): Promise<CodexProjectExclusiveAccountReservation> {
+async function reserveExclusiveCodexProjectAccount(
+  input: {
+    readonly manifest: CodexGoalJobManifest;
+    readonly launch: CodexGoalLaunchInput;
+    readonly excludedAccountIds?: readonly string[];
+    readonly continuation?: CodexProjectAccountContinuation;
+    readonly deps?: CodexProjectAccountReservationDeps;
+  },
+  maxAccountCycles: number,
+): Promise<CodexProjectExclusiveAccountReservation> {
   const now = input.deps?.now ?? new Date();
   const ttlMs = Math.max(
     reservationGraceMs,
@@ -122,7 +126,7 @@ async function reserveExclusiveCodexProjectAccount(input: {
     if (renewed.status === "renewed") {
       const receipt = receiptFromLease(renewed.lease);
       await writeReservation(receiptPath, receipt);
-      return reservationResult(input.launch, receipt, reservedAttemptBudget(input));
+      return reservationResult(input.launch, receipt, maxAccountCycles);
     }
   }
   if (existing) {
@@ -174,16 +178,19 @@ async function reserveExclusiveCodexProjectAccount(input: {
     });
     throw error;
   }
-  return reservationResult(input.launch, receipt, reservedAttemptBudget(input));
+  return reservationResult(input.launch, receipt, maxAccountCycles);
 }
 
-async function selectSharedCodexProjectAccount(input: {
-  readonly manifest: CodexGoalJobManifest;
-  readonly launch: CodexGoalLaunchInput;
-  readonly excludedAccountIds?: readonly string[];
-  readonly continuation?: CodexProjectAccountContinuation;
-  readonly deps?: CodexProjectAccountReservationDeps;
-}): Promise<CodexProjectSharedAccountReservation> {
+async function selectSharedCodexProjectAccount(
+  input: {
+    readonly manifest: CodexGoalJobManifest;
+    readonly launch: CodexGoalLaunchInput;
+    readonly excludedAccountIds?: readonly string[];
+    readonly continuation?: CodexProjectAccountContinuation;
+    readonly deps?: CodexProjectAccountReservationDeps;
+  },
+  maxAccountCycles: number,
+): Promise<CodexProjectSharedAccountReservation> {
   const now = input.deps?.now ?? new Date();
   const capacityStore =
     input.deps?.capacityStore ??
@@ -223,7 +230,7 @@ async function selectSharedCodexProjectAccount(input: {
     return sharedReservationResult(
       input.launch,
       accountId,
-      reservedAttemptBudget(input),
+      maxAccountCycles,
     );
   }
 
@@ -234,26 +241,6 @@ async function selectSharedCodexProjectAccount(input: {
       ? `project_control_account_reservation_unavailable_until:${retryAt}`
       : "project_control_account_reservation_unavailable",
   );
-}
-
-export function codexProjectContinuationExcludedAccountIds(
-  status: Pick<
-    CodexGoalStatus,
-    | "recommendedAction"
-    | "resultReason"
-    | "progressResultReason"
-    | "progressCurrentAccount"
-  >,
-): readonly string[] {
-  if (
-    status.recommendedAction !== "continue_after_capacity" ||
-    (status.resultReason !== "account_unavailable" &&
-      status.progressResultReason !== "account_unavailable") ||
-    !status.progressCurrentAccount
-  ) {
-    return [];
-  }
-  return [status.progressCurrentAccount];
 }
 
 export async function codexProjectContinuationReservationInput(input: {

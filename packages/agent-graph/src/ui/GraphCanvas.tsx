@@ -41,6 +41,7 @@ import {
   shouldRenderGroupFrameLabel,
 } from '../canvas/group-frames';
 import { hexWithAlpha } from '../canvas/render-cache';
+import { getGraphSemanticZoomLevel } from '../canvas/semantic-zoom';
 import { NODE } from '../constants/canvas-constants';
 import { KanbanLayoutEngine } from '../layout/kanbanLayout';
 
@@ -341,25 +342,29 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, GraphCanvasProps>(funct
             hasFocusedEdges: (prioritizedEdgeIds?.size ?? 0) > 0,
             zoom,
           });
-          const renderableParticles = selectRenderableParticles({
-            particles: state.particles,
-            visibleEdgeIds,
-            focusEdgeIds: prioritizedEdgeIds,
-            budget: particleBudget,
-          });
+          const semanticLevel = getGraphSemanticZoomLevel(zoom);
+          const renderableParticles =
+            semanticLevel === 'overview'
+              ? []
+              : selectRenderableParticles({
+                  particles: state.particles,
+                  visibleEdgeIds,
+                  focusEdgeIds: prioritizedEdgeIds,
+                  budget: particleBudget,
+                });
           updateTransientHandoffState(handoffStateRef.current, {
             particles: state.particles,
             edgeMap,
             nodeMap,
             time: state.time,
           });
-          const renderableHandoffCards = selectRenderableTransientHandoffCards(
-            handoffStateRef.current,
-            {
-              focusNodeIds: state.focusNodeIds,
-              focusEdgeIds: prioritizedEdgeIds ?? state.focusEdgeIds,
-            }
-          ).filter((card) => card.anchorKind !== 'lead' && card.anchorKind !== 'member');
+          const renderableHandoffCards =
+            semanticLevel === 'detail'
+              ? selectRenderableTransientHandoffCards(handoffStateRef.current, {
+                  focusNodeIds: state.focusNodeIds,
+                  focusEdgeIds: prioritizedEdgeIds ?? state.focusEdgeIds,
+                }).filter((card) => card.anchorKind !== 'lead' && card.anchorKind !== 'member')
+              : [];
           drawParticles(ctx, renderableParticles, edgeMap, nodeMap, state.time, prioritizedEdgeIds);
 
           // 2c. Visible nodes only (back to front: process → task → member/lead)
@@ -670,6 +675,7 @@ function drawGroupFrameLabel(
   const labelScaleZoom = getGroupFrameLabelScaleZoom(zoom);
   const fontSize = (prepared.frame.priority === 'primary' ? 12 : 11) / labelScaleZoom;
   const label = prepared.frame.label;
+  const secondaryLabel = zoom < 0.24 ? prepared.frame.semanticSummary : undefined;
 
   ctx.save();
   ctx.font = `600 ${fontSize}px ui-monospace, SFMono-Regular, Menlo, monospace`;
@@ -684,6 +690,7 @@ function drawGroupFrameLabel(
       horizontalOffsetPx: getGroupFrameLabelHorizontalOffsetPx(prepared.frame),
       placement: getGroupFrameLabelPlacement(prepared.frame),
       verticalOffsetPx: getGroupFrameLabelVerticalOffsetPx(prepared.frame),
+      secondaryLabel,
     }
   );
 
@@ -702,6 +709,11 @@ function drawGroupFrameLabel(
   ctx.stroke();
   ctx.fillStyle = hexWithAlpha(color, selected ? 0.98 : 0.86);
   ctx.fillText(label, labelBounds.textX, labelBounds.textY);
+  if (secondaryLabel && labelBounds.secondaryTextY != null) {
+    ctx.font = `500 ${fontSize * 0.78}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+    ctx.fillStyle = 'rgba(190, 211, 235, 0.82)';
+    ctx.fillText(secondaryLabel, labelBounds.textX, labelBounds.secondaryTextY);
+  }
   ctx.restore();
 }
 

@@ -162,6 +162,26 @@ export const OrganizationMapTab = ({
     },
     [mapScope, setSelectedNodeId, viewModel]
   );
+  const revealOrganizationNode = useCallback(
+    (nodeId: string) => {
+      if (!viewModel) return;
+      setCollapsedNodeIds((current) => {
+        const next = new Set(current);
+        const seen = new Set<string>();
+        let currentNodeId: string | undefined = nodeId;
+        while (currentNodeId && !seen.has(currentNodeId)) {
+          seen.add(currentNodeId);
+          const parentNodeId = viewModel.parentNodeIdByChildId.get(currentNodeId);
+          if (!parentNodeId) break;
+          next.delete(parentNodeId);
+          currentNodeId = parentNodeId;
+        }
+        return next;
+      });
+      selectOrganizationNode(nodeId);
+    },
+    [selectOrganizationNode, viewModel]
+  );
 
   return (
     <div className="flex size-full flex-col bg-[var(--color-background)]">
@@ -291,6 +311,7 @@ export const OrganizationMapTab = ({
               showSelectedTeamDetails={!editMode}
               onLayoutModeChange={setLayoutMode}
               onSelectNode={selectOrganizationNode}
+              onRevealNode={revealOrganizationNode}
               onToggleNodeCollapse={toggleNodeCollapse}
             />
           ) : (

@@ -83,6 +83,24 @@ function createTaskNode(hasLiveTaskLogs: boolean): GraphNode {
 }
 
 describe('drawTasks', () => {
+  it('shows task content only at detail zoom unless the task is selected', () => {
+    const overview = createMockContext();
+    const summary = createMockContext();
+    const detail = createMockContext();
+    const selected = createMockContext();
+    const node = createTaskNode(false);
+
+    drawTasks(overview.ctx, [node], 1, null, null, null, 0.1);
+    drawTasks(summary.ctx, [node], 1, null, null, null, 0.4);
+    drawTasks(detail.ctx, [node], 1, null, null, null, 0.8);
+    drawTasks(selected.ctx, [node], 1, node.id, null, null, 0.4);
+
+    expect(overview.fillTextCalls).toHaveLength(0);
+    expect(summary.fillTextCalls).toHaveLength(0);
+    expect(detail.fillTextCalls.some((call) => call.text === 'Live log task')).toBe(true);
+    expect(selected.fillTextCalls.some((call) => call.text === 'Live log task')).toBe(true);
+  });
+
   it('draws the live log indicator only for task nodes with live log activity', () => {
     const active = createMockContext();
     drawTasks(active.ctx, [createTaskNode(true)], 1, null, null, null, 1);

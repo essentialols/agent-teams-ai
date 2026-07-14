@@ -487,6 +487,11 @@ export async function projectControlRefillWorkerView(
         plan: preStartAdmission,
         manifest: createManifest,
         scope: controller.scope,
+        ...(producerHandoff
+          ? {
+              verifiedInputPatchArtifactSha256: producerHandoff.patchSha256,
+            }
+          : {}),
       });
       admissionCreatedPaths = prepared.createdPaths;
     }

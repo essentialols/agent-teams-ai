@@ -24,6 +24,7 @@ interface OrgGraphFocusHudProps {
 }
 
 const SEARCH_RESULTS_ID = 'organization-map-search-results';
+const SEARCH_PANEL_ID = 'organization-map-search-panel';
 
 export const OrgGraphFocusHud = ({
   viewModel,
@@ -37,9 +38,11 @@ export const OrgGraphFocusHud = ({
 }: OrgGraphFocusHudProps): React.JSX.Element => {
   const { t } = useAppTranslation('team');
   const [query, setQuery] = useState('');
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isResultsOpen, setIsResultsOpen] = useState(false);
   const [activeResultIndex, setActiveResultIndex] = useState(0);
   const panelRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const searchResults = useMemo(
     () => searchOrganizationNodes(viewModel, query),
     [query, viewModel]
@@ -61,6 +64,14 @@ export const OrgGraphFocusHud = ({
   }, [query]);
 
   useEffect(() => {
+    if (!isSearchOpen) {
+      return undefined;
+    }
+    const frameId = window.requestAnimationFrame(() => searchInputRef.current?.focus());
+    return () => window.cancelAnimationFrame(frameId);
+  }, [isSearchOpen]);
+
+  useEffect(() => {
     const handlePointerDown = (event: MouseEvent): void => {
       if (!panelRef.current?.contains(event.target as Node | null)) {
         setIsResultsOpen(false);
@@ -74,7 +85,16 @@ export const OrgGraphFocusHud = ({
     onFocusModeChange('context');
     onSelectNode(nodeId, true);
     setQuery('');
+    setIsSearchOpen(false);
     setIsResultsOpen(false);
+  };
+
+  const toggleSearch = (): void => {
+    setIsSearchOpen((isOpen) => {
+      const nextIsOpen = !isOpen;
+      setIsResultsOpen(nextIsOpen && query.trim().length > 0);
+      return nextIsOpen;
+    });
   };
 
   const toggleFocusMode = (mode: Exclude<OrganizationGraphFocusMode, 'context'>): void => {
@@ -84,116 +104,142 @@ export const OrgGraphFocusHud = ({
   return (
     <div
       ref={panelRef}
-      className="pointer-events-auto absolute left-4 top-14 w-[min(430px,calc(100%-2rem))] rounded-xl border border-sky-300/15 bg-[color-mix(in_srgb,var(--color-surface-overlay)_94%,transparent)] p-2 shadow-2xl shadow-black/30 backdrop-blur-xl"
+      className="pointer-events-none absolute left-3 top-3 z-20 w-[min(430px,calc(100%-1.5rem))]"
     >
-      <div className="relative">
-        <Search
-          size={14}
-          className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)]"
-        />
-        <input
-          type="search"
-          role="combobox"
-          aria-label={t('organizations.graph.focus.searchLabel')}
-          aria-controls={SEARCH_RESULTS_ID}
-          aria-expanded={isResultsOpen && query.trim().length > 0}
-          aria-autocomplete="list"
-          aria-activedescendant={
-            isResultsOpen && searchResults[activeResultIndex]
-              ? `${SEARCH_RESULTS_ID}-${activeResultIndex}`
-              : undefined
-          }
-          value={query}
-          placeholder={t('organizations.graph.focus.searchPlaceholder')}
-          className="h-8 w-full rounded-lg border border-white/10 bg-black/20 pl-8 pr-8 text-xs text-[var(--color-text)] outline-none transition-colors placeholder:text-[var(--color-text-muted)] focus:border-sky-300/40 focus:ring-2 focus:ring-sky-400/10"
-          onFocus={() => setIsResultsOpen(true)}
-          onChange={(event) => {
-            setQuery(event.target.value);
-            setIsResultsOpen(true);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === 'ArrowDown' && searchResults.length > 0) {
-              event.preventDefault();
-              setActiveResultIndex((current) => (current + 1) % searchResults.length);
-            } else if (event.key === 'ArrowUp' && searchResults.length > 0) {
-              event.preventDefault();
-              setActiveResultIndex(
-                (current) => (current - 1 + searchResults.length) % searchResults.length
-              );
-            } else if (event.key === 'Enter' && searchResults[activeResultIndex]) {
-              event.preventDefault();
-              selectSearchResult(searchResults[activeResultIndex].nodeId);
-            } else if (event.key === 'Escape') {
-              setQuery('');
-              setIsResultsOpen(false);
-            }
-          }}
-        />
-        {query ? (
-          <button
-            type="button"
-            aria-label={t('organizations.graph.focus.clearSearch')}
-            className="absolute right-1.5 top-1/2 flex size-6 -translate-y-1/2 items-center justify-center rounded-md text-[var(--color-text-muted)] hover:bg-white/5 hover:text-[var(--color-text)]"
-            onClick={() => {
-              setQuery('');
-              setIsResultsOpen(false);
-            }}
-          >
-            <X size={13} />
-          </button>
-        ) : null}
+      <button
+        type="button"
+        aria-label={t('organizations.graph.focus.searchLabel')}
+        aria-controls={SEARCH_PANEL_ID}
+        aria-expanded={isSearchOpen}
+        title={t('organizations.graph.focus.searchLabel')}
+        className={`pointer-events-auto flex size-[25px] items-center justify-center rounded-md border backdrop-blur-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300/60 ${
+          isSearchOpen
+            ? 'border-[rgba(100,200,255,0.18)] bg-[rgba(100,200,255,0.14)] text-[#aaeeff]'
+            : 'border-[rgba(100,200,255,0.08)] bg-[rgba(8,12,24,0.8)] text-[#66ccff90] hover:bg-[rgba(100,200,255,0.1)] hover:text-[#aaeeff]'
+        }`}
+        onClick={toggleSearch}
+      >
+        <Search size={10} />
+      </button>
 
-        {isResultsOpen && query.trim() ? (
-          <div
-            id={SEARCH_RESULTS_ID}
-            role="listbox"
-            className="absolute inset-x-0 top-[calc(100%+0.4rem)] z-30 max-h-72 overflow-y-auto rounded-lg border border-sky-300/15 bg-[var(--color-surface-overlay)] p-1 shadow-2xl shadow-black/50"
-          >
-            {searchResults.length > 0 ? (
-              searchResults.map((result, index) => (
-                <button
-                  id={`${SEARCH_RESULTS_ID}-${index}`}
-                  key={result.nodeId}
-                  type="button"
-                  role="option"
-                  aria-selected={activeResultIndex === index}
-                  className={`flex w-full items-start gap-2 rounded-md px-2 py-2 text-left transition-colors ${
-                    activeResultIndex === index
-                      ? 'bg-sky-400/15 text-sky-50'
-                      : 'text-[var(--color-text)] hover:bg-white/5'
-                  }`}
-                  onMouseEnter={() => setActiveResultIndex(index)}
-                  onClick={() => selectSearchResult(result.nodeId)}
-                >
-                  <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-md bg-white/5 text-sky-200">
-                    {result.kind === 'team' ? <Users size={12} /> : <Network size={12} />}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-xs font-medium">{result.label}</span>
-                    <span className="mt-0.5 block truncate text-[10px] text-[var(--color-text-muted)]">
-                      {result.matchedTaskSubject
-                        ? t('organizations.graph.focus.taskMatch', {
-                            task: result.matchedTaskSubject,
-                          })
-                        : result.pathLabels.slice(0, -1).join(' / ')}
-                    </span>
-                  </span>
-                  <span className="mt-1 rounded border border-white/10 px-1 py-0.5 text-[9px] uppercase tracking-wide text-[var(--color-text-muted)]">
-                    {t(`organizations.graph.focus.kind.${result.kind}`)}
-                  </span>
-                </button>
-              ))
-            ) : (
-              <div className="px-3 py-4 text-center text-xs text-[var(--color-text-muted)]">
-                {t('organizations.graph.focus.noResults')}
+      {isSearchOpen ? (
+        <div
+          id={SEARCH_PANEL_ID}
+          className="pointer-events-auto mt-2 rounded-xl border border-sky-300/15 bg-[color-mix(in_srgb,var(--color-surface-overlay)_94%,transparent)] p-2 shadow-2xl shadow-black/30 backdrop-blur-xl"
+        >
+          <div className="relative">
+            <Search
+              size={14}
+              className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)]"
+            />
+            <input
+              ref={searchInputRef}
+              type="search"
+              role="combobox"
+              aria-label={t('organizations.graph.focus.searchLabel')}
+              aria-controls={SEARCH_RESULTS_ID}
+              aria-expanded={isResultsOpen && query.trim().length > 0}
+              aria-autocomplete="list"
+              aria-activedescendant={
+                isResultsOpen && searchResults[activeResultIndex]
+                  ? `${SEARCH_RESULTS_ID}-${activeResultIndex}`
+                  : undefined
+              }
+              value={query}
+              placeholder={t('organizations.graph.focus.searchPlaceholder')}
+              className="h-8 w-full rounded-lg border border-white/10 bg-black/20 pl-8 pr-8 text-xs text-[var(--color-text)] outline-none transition-colors placeholder:text-[var(--color-text-muted)] focus:border-sky-300/40 focus:ring-2 focus:ring-sky-400/10"
+              onFocus={() => setIsResultsOpen(true)}
+              onChange={(event) => {
+                setQuery(event.target.value);
+                setIsResultsOpen(true);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'ArrowDown' && searchResults.length > 0) {
+                  event.preventDefault();
+                  setActiveResultIndex((current) => (current + 1) % searchResults.length);
+                } else if (event.key === 'ArrowUp' && searchResults.length > 0) {
+                  event.preventDefault();
+                  setActiveResultIndex(
+                    (current) => (current - 1 + searchResults.length) % searchResults.length
+                  );
+                } else if (event.key === 'Enter' && searchResults[activeResultIndex]) {
+                  event.preventDefault();
+                  selectSearchResult(searchResults[activeResultIndex].nodeId);
+                } else if (event.key === 'Escape') {
+                  setQuery('');
+                  setIsSearchOpen(false);
+                  setIsResultsOpen(false);
+                }
+              }}
+            />
+            {query ? (
+              <button
+                type="button"
+                aria-label={t('organizations.graph.focus.clearSearch')}
+                className="absolute right-1.5 top-1/2 flex size-6 -translate-y-1/2 items-center justify-center rounded-md text-[var(--color-text-muted)] hover:bg-white/5 hover:text-[var(--color-text)]"
+                onClick={() => {
+                  setQuery('');
+                  setIsResultsOpen(false);
+                  searchInputRef.current?.focus();
+                }}
+              >
+                <X size={13} />
+              </button>
+            ) : null}
+
+            {isResultsOpen && query.trim() ? (
+              <div
+                id={SEARCH_RESULTS_ID}
+                role="listbox"
+                className="absolute inset-x-0 top-[calc(100%+0.4rem)] z-30 max-h-72 overflow-y-auto rounded-lg border border-sky-300/15 bg-[var(--color-surface-overlay)] p-1 shadow-2xl shadow-black/50"
+              >
+                {searchResults.length > 0 ? (
+                  searchResults.map((result, index) => (
+                    <button
+                      id={`${SEARCH_RESULTS_ID}-${index}`}
+                      key={result.nodeId}
+                      type="button"
+                      role="option"
+                      aria-selected={activeResultIndex === index}
+                      className={`flex w-full items-start gap-2 rounded-md px-2 py-2 text-left transition-colors ${
+                        activeResultIndex === index
+                          ? 'bg-sky-400/15 text-sky-50'
+                          : 'text-[var(--color-text)] hover:bg-white/5'
+                      }`}
+                      onMouseEnter={() => setActiveResultIndex(index)}
+                      onClick={() => selectSearchResult(result.nodeId)}
+                    >
+                      <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-md bg-white/5 text-sky-200">
+                        {result.kind === 'team' ? <Users size={12} /> : <Network size={12} />}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-xs font-medium">{result.label}</span>
+                        <span className="mt-0.5 block truncate text-[10px] text-[var(--color-text-muted)]">
+                          {result.matchedTaskSubject
+                            ? t('organizations.graph.focus.taskMatch', {
+                                task: result.matchedTaskSubject,
+                              })
+                            : result.pathLabels.slice(0, -1).join(' / ')}
+                        </span>
+                      </span>
+                      <span className="mt-1 rounded border border-white/10 px-1 py-0.5 text-[9px] uppercase tracking-wide text-[var(--color-text-muted)]">
+                        {t(`organizations.graph.focus.kind.${result.kind}`)}
+                      </span>
+                    </button>
+                  ))
+                ) : (
+                  <div className="px-3 py-4 text-center text-xs text-[var(--color-text-muted)]">
+                    {t('organizations.graph.focus.noResults')}
+                  </div>
+                )}
               </div>
-            )}
+            ) : null}
           </div>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
 
       {selectedNode ? (
-        <div className="mt-2 border-t border-white/5 pt-2">
+        <div className="pointer-events-auto mt-2 rounded-xl border border-sky-300/15 bg-[color-mix(in_srgb,var(--color-surface-overlay)_94%,transparent)] p-2 shadow-2xl shadow-black/30 backdrop-blur-xl">
           <div className="flex min-w-0 items-center gap-0.5 overflow-x-auto pb-1 text-[10px] text-[var(--color-text-muted)]">
             {selectedPath.map((node, index) => (
               <span key={node.id} className="inline-flex shrink-0 items-center gap-0.5">

@@ -115,8 +115,18 @@ describe('OrgGraphFocusHud', () => {
       await Promise.resolve();
     });
 
+    const searchToggle = host.querySelector<HTMLButtonElement>(
+      'button[aria-controls="organization-map-search-panel"]'
+    );
+    expect(searchToggle?.getAttribute('aria-expanded')).toBe('false');
+    await act(async () => {
+      searchToggle?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await new Promise((resolve) => window.requestAnimationFrame(resolve));
+    });
     const searchInput = host.querySelector<HTMLInputElement>('input[role="combobox"]');
     expect(searchInput).not.toBeNull();
+    expect(searchToggle?.getAttribute('aria-expanded')).toBe('true');
+    expect(document.activeElement).toBe(searchInput);
     await act(async () => {
       const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
       valueSetter?.call(searchInput, 'live search');
@@ -132,6 +142,49 @@ describe('OrgGraphFocusHud', () => {
 
     expect(onFocusModeChange).toHaveBeenCalledWith('context');
     expect(onSelectNode).toHaveBeenCalledWith('team:alpha', true);
+
+    await act(async () => root.unmount());
+  });
+
+  it('opens and hides the search panel from the icon button', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+
+    await act(async () => {
+      root.render(
+        <OrgGraphFocusHud
+          viewModel={buildViewModel()}
+          selectedNodeId={null}
+          focusMode="context"
+          connectedTeamCount={0}
+          collapsedNodeIds={new Set()}
+          onFocusModeChange={vi.fn()}
+          onSelectNode={vi.fn()}
+          onToggleNodeCollapse={vi.fn()}
+        />
+      );
+      await Promise.resolve();
+    });
+
+    const toggle = host.querySelector<HTMLButtonElement>(
+      'button[aria-controls="organization-map-search-panel"]'
+    );
+    expect(toggle).not.toBeNull();
+    expect(host.querySelector('#organization-map-search-panel')).toBeNull();
+
+    await act(async () => {
+      toggle?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await new Promise((resolve) => window.requestAnimationFrame(resolve));
+    });
+    expect(host.querySelector('#organization-map-search-panel')).not.toBeNull();
+
+    await act(async () => {
+      toggle?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(host.querySelector('#organization-map-search-panel')).toBeNull();
+    expect(toggle?.getAttribute('aria-expanded')).toBe('false');
 
     await act(async () => root.unmount());
   });

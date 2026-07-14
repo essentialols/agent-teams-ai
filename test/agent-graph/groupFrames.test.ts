@@ -135,7 +135,7 @@ describe('group frame hit detection', () => {
     expect(parentBounds.bottom).toBeGreaterThan(childBounds.bottom);
   });
 
-  it('keeps frame vertical padding balanced around contained nodes', () => {
+  it('reserves a clear bottom lane for a deeply nested frame label', () => {
     const nodeMap = new Map<string, GraphNode>([['team:alpha', buildTeamNode('team:alpha', 0, 0)]]);
     const frame: GraphGroupFrame = {
       id: 'unit:child',
@@ -149,10 +149,13 @@ describe('group frame hit detection', () => {
     expect(prepared).not.toBeNull();
 
     const paddedBounds = getPaddedGroupFrameBounds(prepared!.bounds, 1, frame);
+    const labelBounds = getGroupFrameLabelBounds(frame.label, paddedBounds, 1, undefined, {
+      placement: getGroupFrameLabelPlacement(frame),
+      verticalOffsetPx: getGroupFrameLabelVerticalOffsetPx(frame),
+    });
 
-    expect(prepared!.bounds.top - paddedBounds.top).toBe(
-      paddedBounds.bottom - prepared!.bounds.bottom
-    );
+    expect(labelBounds.top).toBeGreaterThan(prepared!.bounds.bottom);
+    expect(paddedBounds.bottom - labelBounds.bottom).toBe(8);
   });
 
   it('caps low-zoom frame padding so nested frames do not balloon into each other', () => {
@@ -202,6 +205,7 @@ describe('group frame hit detection', () => {
       label: 'Parent Group',
       nodeIds: ['team:alpha'],
       depth: 1,
+      labelLane: 1,
       priority: 'normal',
     };
     const childFrame: GraphGroupFrame = {
@@ -209,11 +213,14 @@ describe('group frame hit detection', () => {
       id: 'unit:child',
       label: 'Child Group',
       depth: 2,
+      labelLane: 0,
     };
-    const sharedBounds = { left: 0, top: 0, right: 600, bottom: 600 };
+    const contentBounds = { left: 0, top: 0, right: 600, bottom: 600 };
+    const parentBounds = getPaddedGroupFrameBounds(contentBounds, 1, parentFrame);
+    const childBounds = getPaddedGroupFrameBounds(contentBounds, 1, childFrame);
     const parentLabelBounds = getGroupFrameLabelBounds(
       parentFrame.label,
-      sharedBounds,
+      parentBounds,
       1,
       undefined,
       {
@@ -223,7 +230,7 @@ describe('group frame hit detection', () => {
     );
     const childLabelBounds = getGroupFrameLabelBounds(
       childFrame.label,
-      sharedBounds,
+      childBounds,
       1,
       undefined,
       {
@@ -233,6 +240,7 @@ describe('group frame hit detection', () => {
     );
 
     expect(childLabelBounds.bottom).toBeLessThan(parentLabelBounds.top);
+    expect(childBounds.bottom).toBeLessThan(parentBounds.bottom);
   });
 
   it('reveals group frame labels progressively by zoom and depth', () => {

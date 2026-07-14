@@ -93,6 +93,8 @@ export interface GraphGroupFrame {
   nodeIds: string[];
   color?: string;
   depth?: number;
+  /** Number of nested label rows below this frame's content. */
+  labelLane?: number;
   priority?: 'primary' | 'normal';
 }
 

@@ -1039,6 +1039,7 @@ describe('buildOrganizationGraphData', () => {
         nodeIds: ['unit:product:engineering', 'team:alpha', 'agent:alpha:alice'],
         color: '#4f8cff',
         depth: 0,
+        labelLane: 1,
         priority: 'primary',
       },
       {

@@ -1301,6 +1301,18 @@ function buildOrganizationGroupFrames(
         node.id,
         context.visibleOrganizationNodeIds
       );
+      const depth = getGroupFrameDepth(viewModel, node.id);
+      const deepestVisibleFrameDepth = descendantNodeIds.reduce((deepestDepth, descendantId) => {
+        const descendantNode = viewModel.nodeById.get(descendantId);
+        if (
+          !descendantNode ||
+          (descendantNode.kind !== 'container' && descendantNode.kind !== 'organization')
+        ) {
+          return deepestDepth;
+        }
+        return Math.max(deepestDepth, getGroupFrameDepth(viewModel, descendantId));
+      }, depth);
+      const labelLane = Math.max(0, deepestVisibleFrameDepth - depth);
       if (context.collapsedVisibleContainerNodeIds.has(node.id) || descendantNodeIds.length === 0) {
         const stats = collectDescendantTeamStats(viewModel, node.id);
         return {
@@ -1313,7 +1325,8 @@ function buildOrganizationGroupFrames(
           ),
           nodeIds: [node.id],
           color: node.color ?? (node.kind === 'organization' ? '#4f8cff' : '#8bd3ff'),
-          depth: getGroupFrameDepth(viewModel, node.id),
+          depth,
+          ...(labelLane > 0 ? { labelLane } : {}),
           priority: node.kind === 'organization' ? ('primary' as const) : ('normal' as const),
         };
       }
@@ -1333,7 +1346,8 @@ function buildOrganizationGroupFrames(
         semanticSummary: text.groupSummary(stats.teamCount, stats.activeTeamCount, stats.taskCount),
         nodeIds: [...descendantNodeIds, ...renderedAgentNodeIds],
         color: node.color ?? (node.kind === 'organization' ? '#4f8cff' : '#8bd3ff'),
-        depth: getGroupFrameDepth(viewModel, node.id),
+        depth,
+        ...(labelLane > 0 ? { labelLane } : {}),
         priority: node.kind === 'organization' ? ('primary' as const) : ('normal' as const),
       };
     })

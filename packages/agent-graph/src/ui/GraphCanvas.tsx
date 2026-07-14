@@ -715,7 +715,7 @@ function drawGroupFrameLabel(
     zoom,
     (value) => ctx.measureText(value).width,
     {
-      horizontalOffsetPx: getGroupFrameLabelHorizontalOffsetPx(prepared.frame),
+      horizontalOffsetPx: getGroupFrameLabelHorizontalOffsetPx(),
       placement: getGroupFrameLabelPlacement(prepared.frame),
       verticalOffsetPx: getGroupFrameLabelVerticalOffsetPx(prepared.frame),
       secondaryLabel,

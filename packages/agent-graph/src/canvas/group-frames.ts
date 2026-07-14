@@ -91,12 +91,10 @@ export function getGroupFrameLabelVerticalOffsetPx(frame: GraphGroupFrame): numb
   if (frame.priority === 'primary') {
     return 6;
   }
-  const depth = getDepthLevel(frame, 0);
-  return depth > 0 ? 12 + (depth - 1) * 22 : 8;
+  return 8;
 }
 
-export function getGroupFrameLabelHorizontalOffsetPx(frame: GraphGroupFrame): number {
-  void frame;
+export function getGroupFrameLabelHorizontalOffsetPx(): number {
   return 0;
 }
 
@@ -165,21 +163,25 @@ export function getPaddedGroupFrameBounds(
   const paddingZoom = Math.max(safeZoom, GROUP_FRAME_PADDING_MIN_ZOOM);
   const depth = frame ? Math.min(getDepthLevel(frame, 0), 5) : 0;
   const hasDepth = frame?.depth != null;
-  const horizontalPaddingPx = hasDepth
-    ? frame.priority === 'primary'
-      ? Math.max(8, 26 - depth * 6)
-      : depth === 0
-        ? 22
-        : Math.max(1, 25 - depth * 7)
-    : 30;
-  const topPaddingPx = hasDepth
-    ? frame.priority === 'primary'
-      ? Math.max(28, 52 - depth * 10)
-      : depth === 0
-        ? 44
-        : Math.max(8, 49 - depth * 11)
-    : 46;
-  const bottomPaddingPx = topPaddingPx;
+  let horizontalPaddingPx = 30;
+  let topPaddingPx = 46;
+  if (hasDepth && frame) {
+    if (frame.priority === 'primary') {
+      horizontalPaddingPx = Math.max(8, 26 - depth * 6);
+      topPaddingPx = Math.max(28, 52 - depth * 10);
+    } else if (depth === 0) {
+      horizontalPaddingPx = 22;
+      topPaddingPx = 44;
+    } else {
+      horizontalPaddingPx = Math.max(1, 25 - depth * 7);
+      topPaddingPx = Math.max(8, 49 - depth * 11);
+    }
+  }
+  const labelLane = Math.max(0, Math.floor(frame?.labelLane ?? 0));
+  const usesBottomLabelLane =
+    Boolean(frame && hasDepth && frame.priority !== 'primary' && depth > 0) || labelLane > 0;
+  const nestedLabelPaddingPx = usesBottomLabelLane ? 36 + labelLane * 28 : 0;
+  const bottomPaddingPx = Math.max(topPaddingPx, nestedLabelPaddingPx);
   const horizontalPadding = horizontalPaddingPx / paddingZoom;
   const topPadding = topPaddingPx / paddingZoom;
   const bottomPadding = bottomPaddingPx / paddingZoom;
@@ -304,7 +306,7 @@ export function findGroupFrameHitAt(
           x,
           y,
           getGroupFrameLabelBounds(prepared.frame.label, bounds, zoom, undefined, {
-            horizontalOffsetPx: getGroupFrameLabelHorizontalOffsetPx(prepared.frame),
+            horizontalOffsetPx: getGroupFrameLabelHorizontalOffsetPx(),
             placement: getGroupFrameLabelPlacement(prepared.frame),
             verticalOffsetPx: getGroupFrameLabelVerticalOffsetPx(prepared.frame),
             secondaryLabel: shouldRenderGroupFrameSemanticSummary(prepared.frame, zoom)

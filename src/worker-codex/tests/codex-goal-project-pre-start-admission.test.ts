@@ -583,7 +583,9 @@ describe("builtin project pre-start admission", () => {
     await expect(assertProjectPreStartAdmissionLaunchBinding({
       manifest: { ...manifest, description: "manifest changed after receipt" },
       scope: fixture.scope,
-    })).rejects.toThrow("project_control_pre_start_launch_binding_mismatch");
+    })).rejects.toThrow(
+      "project_control_pre_start_launch_binding_mismatch:manifest_sha256",
+    );
     await writeFile(join(fixture.workspacePath, "DIRTY.txt"), "dirty\n");
     await expect(assertProjectPreStartAdmissionLaunchBinding({
       manifest: { ...manifest, description: "manifest changed after receipt" },

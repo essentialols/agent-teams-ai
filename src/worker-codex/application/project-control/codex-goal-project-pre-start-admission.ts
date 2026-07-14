@@ -275,23 +275,39 @@ export async function assertProjectPreStartAdmissionLaunchBinding(input: {
     (verifiedInputPatch
       ? verifiedInputPatchBindingValid(binding, verifiedInputPatch)
       : projectInputPatchBindingMatches(binding, contract));
-  if (
-    binding.workspaceHead !== contract.phaseStartSha ||
-    (input.expectedInputPatchArtifactSha256 !== undefined &&
-      verifiedInputPatch?.artifactSha256 !==
-        input.expectedInputPatchArtifactSha256) ||
-    !inputPatchBindingValid ||
-    !workspaceBindingValid ||
-    !receiptStatusValid ||
-    receipt.jobId !== input.manifest.jobId ||
-    receipt.workKey !== contract.workKey ||
-    receipt.contractSha256 !== binding.contractSha256 ||
-    receipt.stateSha256 !== binding.stateSha256 ||
-    receipt.promptSha256 !== binding.promptSha256 ||
-    receipt.manifestSha256 !== sha256(Buffer.from(JSON.stringify(input.manifest))) ||
-    !validatorReceiptValid
-  ) {
-    throw new Error("project_control_pre_start_launch_binding_mismatch");
+  const mismatches = [
+    binding.workspaceHead !== contract.phaseStartSha
+      ? "workspace_head"
+      : undefined,
+    input.expectedInputPatchArtifactSha256 !== undefined &&
+        verifiedInputPatch?.artifactSha256 !==
+          input.expectedInputPatchArtifactSha256
+      ? "input_patch_artifact"
+      : undefined,
+    !inputPatchBindingValid ? "input_patch_binding" : undefined,
+    !workspaceBindingValid ? "workspace_binding" : undefined,
+    !receiptStatusValid ? "receipt_status" : undefined,
+    receipt.jobId !== input.manifest.jobId ? "job_id" : undefined,
+    receipt.workKey !== contract.workKey ? "work_key" : undefined,
+    receipt.contractSha256 !== binding.contractSha256
+      ? "contract_sha256"
+      : undefined,
+    receipt.stateSha256 !== binding.stateSha256
+      ? "state_sha256"
+      : undefined,
+    receipt.promptSha256 !== binding.promptSha256
+      ? "prompt_sha256"
+      : undefined,
+    receipt.manifestSha256 !==
+        sha256(Buffer.from(JSON.stringify(input.manifest)))
+      ? "manifest_sha256"
+      : undefined,
+    !validatorReceiptValid ? "validator_receipt" : undefined,
+  ].filter((value): value is string => value !== undefined);
+  if (mismatches.length > 0) {
+    throw new Error(
+      `project_control_pre_start_launch_binding_mismatch:${mismatches.join(",")}`,
+    );
   }
 }
 

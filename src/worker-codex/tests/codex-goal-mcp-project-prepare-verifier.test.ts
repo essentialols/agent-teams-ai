@@ -261,7 +261,8 @@ await writeFile(file, JSON.stringify(operation, null, 2) + "\\n");
             },
           )).resolves.toMatchObject({
             ok: false,
-            error: "project_control_pre_start_launch_binding_mismatch",
+            error:
+              "project_control_pre_start_launch_binding_mismatch:input_patch_artifact",
           });
           await expect(callToolJson(
             client,

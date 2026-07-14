@@ -39,6 +39,8 @@ import {
   type PreparedGroupFrame,
   prepareGroupFrame,
   shouldRenderGroupFrameLabel,
+  shouldRenderGroupFrameSemanticSummary,
+  truncateGroupFrameLabel,
 } from '../canvas/group-frames';
 import { hexWithAlpha } from '../canvas/render-cache';
 import { getGraphSemanticZoomLevel } from '../canvas/semantic-zoom';
@@ -674,13 +676,36 @@ function drawGroupFrameLabel(
 
   const labelScaleZoom = getGroupFrameLabelScaleZoom(zoom);
   const fontSize = (prepared.frame.priority === 'primary' ? 12 : 11) / labelScaleZoom;
-  const label = prepared.frame.label;
-  const secondaryLabel = zoom < 0.24 ? prepared.frame.semanticSummary : undefined;
+  const availableTextWidth = Math.max(
+    0,
+    Math.min(260 / labelScaleZoom, bounds.right - bounds.left - 28 / labelScaleZoom)
+  );
 
   ctx.save();
   ctx.font = `600 ${fontSize}px ui-monospace, SFMono-Regular, Menlo, monospace`;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
+  const label = truncateGroupFrameLabel(
+    prepared.frame.label,
+    availableTextWidth,
+    (value) => ctx.measureText(value).width
+  );
+  const rawSecondaryLabel = shouldRenderGroupFrameSemanticSummary(prepared.frame, zoom)
+    ? prepared.frame.semanticSummary
+    : undefined;
+  ctx.font = `500 ${fontSize * 0.78}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+  const secondaryLabel = rawSecondaryLabel
+    ? truncateGroupFrameLabel(
+        rawSecondaryLabel,
+        availableTextWidth,
+        (value) => ctx.measureText(value).width
+      )
+    : undefined;
+  if (!label && !secondaryLabel) {
+    ctx.restore();
+    return;
+  }
+  ctx.font = `600 ${fontSize}px ui-monospace, SFMono-Regular, Menlo, monospace`;
   const labelBounds = getGroupFrameLabelBounds(
     label,
     bounds,

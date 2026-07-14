@@ -5,7 +5,10 @@ import {
   getGroupFrameLabelPlacement,
   getGroupFrameLabelScaleZoom,
   getGroupFrameLabelVerticalOffsetPx,
+  getPaddedGroupFrameBounds,
   shouldRenderGroupFrameLabel,
+  shouldRenderGroupFrameSemanticSummary,
+  truncateGroupFrameLabel,
 } from '../../../../packages/agent-graph/src/canvas/group-frames';
 
 import type { GraphGroupFrame } from '@claude-teams/agent-graph';
@@ -25,7 +28,10 @@ describe('group frame labels', () => {
     expect(shouldRenderGroupFrameLabel(groupFrame(), 0.02)).toBe(true);
     expect(shouldRenderGroupFrameLabel(groupFrame(), 0.06)).toBe(true);
     expect(shouldRenderGroupFrameLabel(groupFrame({ depth: 3 }), 0.02)).toBe(false);
-    expect(shouldRenderGroupFrameLabel(groupFrame({ depth: 3 }), 0.2)).toBe(true);
+    expect(shouldRenderGroupFrameLabel(groupFrame({ depth: 1 }), 0.2)).toBe(false);
+    expect(shouldRenderGroupFrameLabel(groupFrame({ depth: 1 }), 0.24)).toBe(true);
+    expect(shouldRenderGroupFrameLabel(groupFrame({ depth: 3 }), 0.35)).toBe(false);
+    expect(shouldRenderGroupFrameLabel(groupFrame({ depth: 3 }), 0.36)).toBe(true);
   });
 
   it('reserves a second overview line for aggregate counts', () => {
@@ -45,6 +51,32 @@ describe('group frame labels', () => {
 
     expect(aggregate.height).toBeGreaterThan(singleLine.height);
     expect(aggregate.secondaryTextY).toBeGreaterThan(aggregate.textY);
+  });
+
+  it('shows aggregate summaries only for overview-level frames', () => {
+    const overview = groupFrame({ depth: 0, semanticSummary: '12 teams · 4 active · 18 tasks' });
+    const nested = groupFrame({ depth: 1, semanticSummary: '4 teams · 2 active · 6 tasks' });
+
+    expect(shouldRenderGroupFrameSemanticSummary(overview, 0.2)).toBe(true);
+    expect(shouldRenderGroupFrameSemanticSummary(nested, 0.2)).toBe(false);
+    expect(shouldRenderGroupFrameSemanticSummary(overview, 0.3)).toBe(false);
+  });
+
+  it('truncates long labels to the available frame width', () => {
+    const measure = (value: string): number => value.length * 10;
+
+    expect(truncateGroupFrameLabel('Государственные предприятия', 120, measure)).toBe(
+      'Государстве…'
+    );
+    expect(truncateGroupFrameLabel('Коротко', 120, measure)).toBe('Коротко');
+  });
+
+  it('uses compact padding for depth-aware organization frames', () => {
+    const bounds = { left: -100, top: -50, right: 100, bottom: 50 };
+    const padded = getPaddedGroupFrameBounds(bounds, 1, groupFrame({ depth: 0 }));
+
+    expect(bounds.top - padded.top).toBe(44);
+    expect(bounds.left - padded.left).toBe(22);
   });
 
   it('keeps labels readable at far zoom', () => {

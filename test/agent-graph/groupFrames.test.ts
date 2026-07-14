@@ -41,8 +41,20 @@ describe('group frame hit detection', () => {
       },
     ];
 
-    const labelHit = findGroupFrameHitAt(-142, -105, frames, nodeMap, 1);
-    const borderHit = findGroupFrameHitAt(-160, 0, frames, nodeMap, 1);
+    const prepared = prepareGroupFrame(frames[0]!, nodeMap)!;
+    const frameBounds = getPaddedGroupFrameBounds(prepared.bounds, 1, frames[0]);
+    const labelBounds = getGroupFrameLabelBounds(frames[0]!.label, frameBounds, 1, undefined, {
+      placement: getGroupFrameLabelPlacement(frames[0]!),
+      verticalOffsetPx: getGroupFrameLabelVerticalOffsetPx(frames[0]!),
+    });
+    const labelHit = findGroupFrameHitAt(
+      labelBounds.left + labelBounds.width / 2,
+      labelBounds.top + labelBounds.height / 2,
+      frames,
+      nodeMap,
+      1
+    );
+    const borderHit = findGroupFrameHitAt(frameBounds.left, 0, frames, nodeMap, 1);
     const fillHit = findGroupFrameHitAt(0, 0, frames, nodeMap, 1);
 
     expect(labelHit?.frame.id).toBe('unit:product');
@@ -72,9 +84,23 @@ describe('group frame hit detection', () => {
       },
     ];
 
-    expect(findGroupFrameAt(-150, -107, frames, nodeMap, 1)?.id).toBe('unit:inner');
-    expect(findGroupFrameHitAt(0, 90, frames, nodeMap, 1)?.frame.id).toBe('unit:inner');
-    expect(findGroupFrameHitAt(0, 90, frames, nodeMap, 1)?.target).toBe('fill');
+    const innerPrepared = prepareGroupFrame(frames[1]!, nodeMap)!;
+    const innerBounds = getPaddedGroupFrameBounds(innerPrepared.bounds, 1, frames[1]);
+    const innerLabelBounds = getGroupFrameLabelBounds(frames[1]!.label, innerBounds, 1, undefined, {
+      placement: getGroupFrameLabelPlacement(frames[1]!),
+      verticalOffsetPx: getGroupFrameLabelVerticalOffsetPx(frames[1]!),
+    });
+    expect(
+      findGroupFrameAt(
+        innerLabelBounds.left + innerLabelBounds.width / 2,
+        innerLabelBounds.top + innerLabelBounds.height / 2,
+        frames,
+        nodeMap,
+        1
+      )?.id
+    ).toBe('unit:inner');
+    expect(findGroupFrameHitAt(0, 0, frames, nodeMap, 1)?.frame.id).toBe('unit:inner');
+    expect(findGroupFrameHitAt(0, 0, frames, nodeMap, 1)?.target).toBe('fill');
   });
 
   it('insets depth-aware nested frames from their parent bounds', () => {
@@ -187,7 +213,7 @@ describe('group frame hit detection', () => {
     };
 
     expect(shouldRenderGroupFrameLabel(primaryFrame, 0.14)).toBe(true);
-    expect(shouldRenderGroupFrameLabel(normalFrame, 0.02)).toBe(true);
+    expect(shouldRenderGroupFrameLabel(normalFrame, 0.02)).toBe(false);
     expect(shouldRenderGroupFrameLabel(normalFrame, 0.45)).toBe(true);
   });
 });

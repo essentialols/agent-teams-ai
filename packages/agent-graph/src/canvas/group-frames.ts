@@ -51,6 +51,42 @@ function getDepthLevel(frame: GraphGroupFrame, fallbackDepth: number): number {
   return Math.max(0, Math.floor(frame.depth));
 }
 
+export function shouldRenderGroupFrameSemanticSummary(
+  frame: GraphGroupFrame,
+  zoom: number
+): boolean {
+  return (
+    zoom < 0.24 &&
+    Boolean(frame.semanticSummary) &&
+    (frame.priority === 'primary' || getDepthLevel(frame, 0) === 0)
+  );
+}
+
+export function truncateGroupFrameLabel(
+  label: string,
+  maxWidth: number,
+  measureTextWidth: (value: string) => number
+): string {
+  if (maxWidth <= 0) return '';
+  if (measureTextWidth(label) <= maxWidth) return label;
+
+  const ellipsis = '…';
+  if (measureTextWidth(ellipsis) > maxWidth) return '';
+
+  let low = 0;
+  let high = label.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    const candidate = `${label.slice(0, middle).trimEnd()}${ellipsis}`;
+    if (measureTextWidth(candidate) <= maxWidth) {
+      low = middle;
+    } else {
+      high = middle - 1;
+    }
+  }
+  return `${label.slice(0, low).trimEnd()}${ellipsis}`;
+}
+
 export function getGroupFrameLabelVerticalOffsetPx(frame: GraphGroupFrame): number {
   if (frame.priority === 'primary') {
     return 6;
@@ -129,12 +165,12 @@ export function getPaddedGroupFrameBounds(
   const depth = frame ? Math.min(getDepthLevel(frame, 0), 5) : 0;
   const hasDepth = frame?.depth != null;
   const horizontalPaddingPx = hasDepth
-    ? Math.max(10, (frame.priority === 'primary' ? 36 : 30) - depth * 12)
+    ? Math.max(8, (frame.priority === 'primary' ? 26 : 22) - depth * 6)
     : 30;
   const topPaddingPx = hasDepth
     ? frame.priority === 'primary'
-      ? Math.max(36, 92 - depth * 32)
-      : Math.max(32, 72 - depth * 20)
+      ? Math.max(28, 52 - depth * 10)
+      : Math.max(20, 44 - depth * 10)
     : 46;
   const bottomPaddingPx = topPaddingPx;
   const horizontalPadding = horizontalPaddingPx / paddingZoom;
@@ -151,8 +187,10 @@ export function getPaddedGroupFrameBounds(
 export function shouldRenderGroupFrameLabel(frame: GraphGroupFrame, zoom: number): boolean {
   const safeZoom = getGroupFrameLabelScaleZoom(zoom);
   const depth = getDepthLevel(frame, 0);
-  if (safeZoom < 0.08 && frame.priority !== 'primary' && depth > 0) return false;
-  if (safeZoom < 0.16 && frame.priority !== 'primary' && depth > 1) return false;
+  if (frame.depth != null && frame.priority !== 'primary') {
+    if (safeZoom < 0.24 && depth > 0) return false;
+    if (safeZoom < 0.36 && depth > 1) return false;
+  }
   if (frame.priority === 'primary') {
     return (
       safeZoom >=
@@ -262,7 +300,9 @@ export function findGroupFrameHitAt(
             horizontalOffsetPx: getGroupFrameLabelHorizontalOffsetPx(prepared.frame),
             placement: getGroupFrameLabelPlacement(prepared.frame),
             verticalOffsetPx: getGroupFrameLabelVerticalOffsetPx(prepared.frame),
-            secondaryLabel: zoom < 0.24 ? prepared.frame.semanticSummary : undefined,
+            secondaryLabel: shouldRenderGroupFrameSemanticSummary(prepared.frame, zoom)
+              ? prepared.frame.semanticSummary
+              : undefined,
           })
         )
       : false;

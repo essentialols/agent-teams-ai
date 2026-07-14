@@ -11,6 +11,7 @@ export type CodexGoalProjectCreateWorktreeInput = {
   readonly realPath?: string;
   readonly expectedRealPath?: string;
   readonly expectedRevision: string;
+  readonly sourceRevisionPinned?: boolean;
   readonly baseBranch?: string;
   readonly sourceRef?: string;
   readonly newBranch?: string;

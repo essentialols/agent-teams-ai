@@ -518,6 +518,7 @@ operation.result = {
   jobId: operation.targetJobId,
   executionMode: operation.args.executionMode,
   sourceRef: operation.args.sourceRef,
+  expectedSourceCommit: operation.args.expectedSourceCommit,
   newBranch: operation.args.newBranch
 };
 await mkdir(dirname(operation.resultPath), { recursive: true });
@@ -650,6 +651,7 @@ await writeFile(operationFilePath, JSON.stringify(operation, null, 2) + "\\n");
         sourceWorkspacePath,
         workspacePath: childWorkspace,
         sourceRef: "main",
+        expectedSourceCommit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         newBranch: "refactor/infinity-context-memory-fastgate-v1",
         promptBody: "Run bounded refill.\n",
         taskId: "infinity-context-memory-fastgate-v1",
@@ -694,6 +696,7 @@ await writeFile(operationFilePath, JSON.stringify(operation, null, 2) + "\\n");
             jobId: "infinity-context-memory-fastgate-v1",
             executionMode: "sync",
             sourceRef: "main",
+            expectedSourceCommit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             newBranch: "refactor/infinity-context-memory-fastgate-v1",
           },
         },

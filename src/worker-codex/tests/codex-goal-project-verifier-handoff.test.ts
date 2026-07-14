@@ -11,6 +11,7 @@ import {
   applyVerifiedInputPatch,
   assertCanonicalRemoteRevision,
   canonicalRemoteWorktreeSourceRef,
+  materializePinnedRemoteCommit,
   resolveCanonicalRemoteHead,
 } from "../application/project-control/codex-goal-project-git";
 import { readVerifiedProducerHandoff } from "../application/project-control/codex-goal-project-verifier-handoff";
@@ -151,6 +152,70 @@ describe("project verifier handoff", () => {
     expect(await gitText(workspacePath, ["rev-parse", sourceRef])).toBe(
       canonicalRevision,
     );
+  });
+
+  it("materializes a pinned remote commit without mutating local tracking refs", async () => {
+    const root = await temporaryRoot("pinned-remote-source-");
+    const remotePath = join(root, "remote.git");
+    const workspacePath = join(root, "source");
+    const publisherPath = join(root, "publisher");
+    await git(root, ["init", "--bare", remotePath]);
+    await initRepository(workspacePath);
+    await git(workspacePath, ["remote", "add", "origin", remotePath]);
+    await git(workspacePath, ["push", "-u", "origin", "HEAD:main"]);
+    const staleTrackingRevision = await gitText(workspacePath, [
+      "rev-parse",
+      "origin/main",
+    ]);
+
+    await git(root, ["clone", remotePath, publisherPath]);
+    await configureRepository(publisherPath);
+    await git(publisherPath, ["switch", "main"]);
+    await writeFile(join(publisherPath, "remote.txt"), "remote only\n");
+    await git(publisherPath, ["add", "remote.txt"]);
+    await git(publisherPath, ["commit", "-m", "test: advance remote"]);
+    await git(publisherPath, ["push", "origin", "HEAD:main"]);
+    const expectedCommit = await gitText(publisherPath, ["rev-parse", "HEAD"]);
+    const fetchHeadPath = join(workspacePath, ".git", "FETCH_HEAD");
+    await writeFile(fetchHeadPath, "sentinel fetch head\n");
+
+    const materialized = await materializePinnedRemoteCommit({
+      workspacePath,
+      remoteTrackingRef: "origin/main",
+      expectedCommit,
+    });
+
+    expect(materialized.oid).toBe(expectedCommit);
+    expect(await gitText(workspacePath, ["rev-parse", "origin/main"])).toBe(
+      staleTrackingRevision,
+    );
+    expect(await gitText(workspacePath, ["rev-parse", expectedCommit])).toBe(
+      expectedCommit,
+    );
+    expect(await readFile(fetchHeadPath, "utf8")).toBe("sentinel fetch head\n");
+  });
+
+  it("rejects a pinned commit that is not the current remote branch head", async () => {
+    const root = await temporaryRoot("pinned-remote-mismatch-");
+    const remotePath = join(root, "remote.git");
+    const workspacePath = join(root, "source");
+    await git(root, ["init", "--bare", remotePath]);
+    await initRepository(workspacePath);
+    await git(workspacePath, ["remote", "add", "origin", remotePath]);
+    await git(workspacePath, ["push", "-u", "origin", "HEAD:main"]);
+    const oldCommit = await gitText(workspacePath, ["rev-parse", "HEAD"]);
+    await writeFile(join(workspacePath, "remote.txt"), "advance\n");
+    await git(workspacePath, ["add", "remote.txt"]);
+    await git(workspacePath, ["commit", "-m", "test: advance remote"]);
+    await git(workspacePath, ["push", "origin", "HEAD:main"]);
+
+    await expect(
+      materializePinnedRemoteCommit({
+        workspacePath,
+        remoteTrackingRef: "origin/main",
+        expectedCommit: oldCommit,
+      }),
+    ).rejects.toThrow("project_control_pinned_source_head_mismatch");
   });
 
   it("applies an immutable handoff to a descendant with no owned-path drift", async () => {

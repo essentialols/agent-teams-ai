@@ -86,6 +86,91 @@ function applied(path: string): ProjectControlOperationResult {
 }
 
 describe("project refill worktree identity", () => {
+  it("creates a public broker worktree at the pinned remote head without moving the tracking ref", async () => {
+    const fixture = await createFixture();
+    const remotePath = join(fixture.root, "remote.git");
+    const publisherPath = join(fixture.root, "publisher");
+    const registryRootDir = join(fixture.root, "worker-jobs", "registry");
+    const controllerJobRoot = join(fixture.root, "worker-jobs", "controller");
+    const worktreeRoot = join(fixture.root, "worktrees");
+    const pinnedWorktree = join(worktreeRoot, "pinned-source");
+    const server = createCodexGoalMcpServer();
+    const client = new Client({ name: "pinned-worktree-test", version: "0.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    try {
+      await git(fixture.root, ["init", "--bare", remotePath]);
+      await git(fixture.sourceWorkspacePath, ["remote", "add", "origin", remotePath]);
+      await git(fixture.sourceWorkspacePath, ["push", "origin", "HEAD:main"]);
+      const staleTrackingRevision = (await gitStdout(
+        fixture.sourceWorkspacePath,
+        ["rev-parse", "origin/main"],
+      )).trim();
+      await git(fixture.root, ["clone", remotePath, publisherPath]);
+      await git(publisherPath, ["config", "user.email", "test@example.com"]);
+      await git(publisherPath, ["config", "user.name", "Runtime Test"]);
+      await git(publisherPath, ["switch", "main"]);
+      await writeFile(join(publisherPath, "remote.md"), "remote source\n");
+      await git(publisherPath, ["add", "remote.md"]);
+      await git(publisherPath, ["commit", "-m", "test: advance remote"]);
+      await git(publisherPath, ["push", "origin", "HEAD:main"]);
+      const expectedSourceCommit = (await gitStdout(publisherPath, [
+        "rev-parse",
+        "HEAD",
+      ])).trim();
+
+      await Promise.all([
+        server.connect(serverTransport),
+        client.connect(clientTransport),
+      ]);
+      await callToolJson(client, "codex_goal_create_job", {
+        registryRootDir,
+        jobId: "pinned-controller",
+        jobRootDir: controllerJobRoot,
+        workspacePath: fixture.sourceWorkspacePath,
+        promptPath: join(controllerJobRoot, "prompt.md"),
+        taskId: "pinned-controller",
+        accounts: ["account-a"],
+        accessBoundary: AccessBoundary.ProjectScopedControl,
+        networkAccess: NetworkAccessMode.Restricted,
+        projectAccessScope: {
+          projectId: "pinned-test",
+          workspaceRoots: [fixture.sourceWorkspacePath],
+          worktreeRoots: [worktreeRoot],
+          registryRoot: registryRootDir,
+          jobIdPrefixes: ["pinned-"],
+          tmuxSessionPrefixes: ["pinned-"],
+          allowedBranches: ["main"],
+        },
+      });
+
+      const result = await callToolJson(
+        client,
+        "codex_goal_project_create_worktree",
+        {
+          registryRootDir,
+          controllerJobId: "pinned-controller",
+          sourceWorkspacePath: fixture.sourceWorkspacePath,
+          path: pinnedWorktree,
+          baseBranch: "origin/main",
+          expectedSourceCommit,
+          confirmCreateWorktree: true,
+        },
+      );
+      expect(result).toMatchObject({ ok: true });
+      expect((await gitStdout(pinnedWorktree, ["rev-parse", "HEAD"])).trim()).toBe(
+        expectedSourceCommit,
+      );
+      expect((await gitStdout(
+        fixture.sourceWorkspacePath,
+        ["rev-parse", "origin/main"],
+      )).trim()).toBe(staleTrackingRevision);
+    } finally {
+      await client.close();
+      await server.close();
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
   it("rejects source symlink substitution after revision resolution", async () => {
     const fixture = await createFixture();
     const outside = await mkdtemp(join(tmpdir(), "subscription-runtime-outside-source-"));

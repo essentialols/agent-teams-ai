@@ -143,6 +143,7 @@ export type ProjectControlMcpArgs = GoalMcpArgs & JobRegistryMcpArgs & {
   readonly sourceWorkspacePath?: string;
   readonly baseBranch?: string;
   readonly sourceRef?: string;
+  readonly expectedSourceCommit?: string;
   readonly newBranch?: string;
   readonly workspacePath?: string;
   readonly branch?: string;

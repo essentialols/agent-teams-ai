@@ -59,11 +59,10 @@ import {
   projectControlWorkerRole,
 } from "./codex-goal-mcp-project-scope";
 import {
-  assertCanonicalRemoteRevision,
   assertSafeGitRefName,
   canonicalRemoteWorktreeSourceRef,
-  resolveCanonicalRemoteHead,
 } from "./codex-goal-mcp-project-git";
+import { resolveProjectSourceRevision } from "./application/project-control/codex-goal-project-source-revision";
 import {
   matchesProjectControlPrefix,
   uniqueProjectControlStrings,
@@ -335,6 +334,7 @@ export async function projectControlRefillWorkerView(
   assertSafeGitRefName(baseBranch, "baseBranch");
   const sourceRef = stringValue(args.sourceRef);
   if (sourceRef) assertSafeGitRefName(sourceRef, "sourceRef");
+  const expectedSourceCommit = stringValue(args.expectedSourceCommit);
   const newBranch = stringValue(args.newBranch);
   if (newBranch) assertSafeGitRefName(newBranch, "newBranch");
   const realSourceWorkspacePath =
@@ -401,18 +401,14 @@ export async function projectControlRefillWorkerView(
     : requestedWorktreeAccessInput;
   const resolvedSource =
     await resolverBroker.resolveWorktreeRevision(worktreeAccessInput);
-  const canonicalRemoteHead = canonicalSourceWorkspacePath
-    ? await resolveCanonicalRemoteHead({
-        workspacePath: resolvedSource.sourceRealPath,
-        remoteTrackingRef: baseBranch,
-      })
-    : undefined;
-  if (canonicalRemoteHead) {
-    assertCanonicalRemoteRevision({
-      canonical: canonicalRemoteHead,
-      resolvedRevision: resolvedSource.revision,
-    });
-  }
+  const sourceRevision = await resolveProjectSourceRevision({
+    resolvedSource,
+    remoteTrackingRef: canonicalSourceWorkspacePath
+      ? baseBranch
+      : (sourceRef ?? baseBranch),
+    ...(expectedSourceCommit ? { expectedSourceCommit } : {}),
+    requireRemoteHead: canonicalSourceWorkspacePath !== undefined,
+  });
   const producerHandoff = producerJobId
     ? await resolveProducerHandoffForVerifier({
         registryRootDir: controller.registryRootDir,
@@ -422,11 +418,12 @@ export async function projectControlRefillWorkerView(
     : undefined;
   assertProjectPreStartAdmissionSourceRevision({
     plan: preStartAdmission,
-    sourceRevision: resolvedSource.revision,
+    sourceRevision: sourceRevision.revision,
   });
   const createWorktreeInput: CodexGoalProjectCreateWorktreeInput = {
     ...worktreeAccessInput,
-    expectedRevision: resolvedSource.revision,
+    expectedRevision: sourceRevision.revision,
+    ...(sourceRevision.pinned ? { sourceRevisionPinned: true } : {}),
     expectedSourceRealPath: resolvedSource.sourceRealPath,
     ...(producerHandoff
       ? {
@@ -655,7 +652,9 @@ export async function projectControlRefillWorkerView(
     workerRole: role,
     targetJobId: manifest.jobId,
     baseBranch,
-    ...(canonicalRemoteHead ? { canonicalRemoteHead } : {}),
+    ...(sourceRevision.remoteHead
+      ? { canonicalRemoteHead: sourceRevision.remoteHead }
+      : {}),
     ...(producerHandoff ? { producerHandoff } : {}),
     prompt,
     accountCapacityFacts,
@@ -804,6 +803,7 @@ async function projectControlRefillWorkerBoundedView(
     assertSafeGitRefName(baseBranch, "baseBranch");
     const sourceRef = stringValue(args.sourceRef);
     if (sourceRef) assertSafeGitRefName(sourceRef, "sourceRef");
+    const expectedSourceCommit = stringValue(args.expectedSourceCommit);
     const newBranch = stringValue(args.newBranch);
     if (newBranch) assertSafeGitRefName(newBranch, "newBranch");
     const realSourceWorkspacePath =
@@ -847,19 +847,17 @@ async function projectControlRefillWorkerBoundedView(
       : requestedWorktreeAccessInput;
     const resolvedSource =
       await resolverBroker.resolveWorktreeRevision(worktreeAccessInput);
-    if (canonicalSourceWorkspacePath) {
-      const canonicalRemoteHead = await resolveCanonicalRemoteHead({
-        workspacePath: resolvedSource.sourceRealPath,
-        remoteTrackingRef: baseBranch,
-      });
-      assertCanonicalRemoteRevision({
-        canonical: canonicalRemoteHead,
-        resolvedRevision: resolvedSource.revision,
-      });
-    }
+    const sourceRevision = await resolveProjectSourceRevision({
+      resolvedSource,
+      remoteTrackingRef: canonicalSourceWorkspacePath
+        ? baseBranch
+        : (sourceRef ?? baseBranch),
+      ...(expectedSourceCommit ? { expectedSourceCommit } : {}),
+      requireRemoteHead: canonicalSourceWorkspacePath !== undefined,
+    });
     assertProjectPreStartAdmissionSourceRevision({
       plan: preStartAdmission,
-      sourceRevision: resolvedSource.revision,
+      sourceRevision: sourceRevision.revision,
     });
   }
   const operationArgs = {

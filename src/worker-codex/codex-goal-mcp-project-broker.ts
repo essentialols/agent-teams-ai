@@ -362,9 +362,6 @@ function codexProjectControlPorts(
           recursive: true,
           mode: 0o700,
         });
-        const sourceRef =
-          input.createWorktreeInput.sourceRef ??
-          input.createWorktreeInput.baseBranch;
         const newBranch = input.createWorktreeInput.newBranch;
         const existingBranch = newBranch
           ? (
@@ -388,7 +385,13 @@ function codexProjectControlPorts(
             ? [newBranch]
             : newBranch
               ? [input.createWorktreeInput.expectedRevision]
-              : [sourceRef ?? input.createWorktreeInput.expectedRevision]),
+              : input.createWorktreeInput.sourceRevisionPinned
+                ? [input.createWorktreeInput.expectedRevision]
+                : [
+                    input.createWorktreeInput.sourceRef ??
+                      input.createWorktreeInput.baseBranch ??
+                      input.createWorktreeInput.expectedRevision,
+                  ]),
         ];
         await execGit(args);
         if (input.createWorktreeInput.inputPatch) {

@@ -49,6 +49,7 @@ import {
   assertSafeGitRefName,
   assertSafeGitRemoteName,
 } from "./codex-goal-mcp-project-git";
+import { resolveProjectSourceRevision } from "./application/project-control/codex-goal-project-source-revision";
 import {
   writeCodexGoalStopEvent,
   writeCodexGoalStoppedProgress,
@@ -399,6 +400,10 @@ export async function projectControlCreateWorktreeView(
   const newBranch = stringValue(args.newBranch);
   if (newBranch) assertSafeGitRefName(newBranch, "newBranch");
   const effectiveSourceRef = sourceRef ?? baseBranch;
+  const expectedSourceCommit = stringValue(args.expectedSourceCommit);
+  if (expectedSourceCommit && !effectiveSourceRef) {
+    throw new Error("project_control_pinned_source_ref_required");
+  }
   const workerRole = projectAdmissionWorkerRoleArg(args.workerRole);
   const realSourceWorkspacePath =
     await projectControlRealPathOutsideWorkspaceScope(
@@ -449,9 +454,15 @@ export async function projectControlCreateWorktreeView(
   const resolvedSource =
     await resolverBroker.resolveWorktreeRevision(worktreeAccessInput);
   assertSafeGitCommitSha(resolvedSource.revision);
+  const sourceRevision = await resolveProjectSourceRevision({
+    resolvedSource,
+    remoteTrackingRef: effectiveSourceRef ?? "HEAD",
+    ...(expectedSourceCommit ? { expectedSourceCommit } : {}),
+  });
   const createWorktreeInput: CodexGoalProjectCreateWorktreeInput = {
     ...worktreeAccessInput,
-    expectedRevision: resolvedSource.revision,
+    expectedRevision: sourceRevision.revision,
+    ...(sourceRevision.pinned ? { sourceRevisionPinned: true } : {}),
     expectedSourceRealPath: resolvedSource.sourceRealPath,
   };
   const broker = deps.codexProjectControlBroker({

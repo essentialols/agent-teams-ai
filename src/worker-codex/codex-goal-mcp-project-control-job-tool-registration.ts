@@ -59,6 +59,10 @@ export function registerCodexGoalProjectControlJobTools(server: McpServer): void
         sourceWorkspacePath: z.string().optional(),
         baseBranch: z.string().optional(),
         sourceRef: z.string().optional(),
+        expectedSourceCommit: z
+          .string()
+          .regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i)
+          .optional(),
         newBranch: z.string().optional(),
         promptBody: z.string().optional(),
         preStartAdmission: workerLaunchAdmissionSchema

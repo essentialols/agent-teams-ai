@@ -38,6 +38,12 @@ export function assertSafeGitCommitSha(value: string): void {
   }
 }
 
+function assertFullGitObjectId(value: string): void {
+  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(value)) {
+    throw new Error("project_control_pinned_source_commit_invalid");
+  }
+}
+
 export async function assertGitCurrentBranch(input: {
   readonly workspacePath: string;
   readonly branch: string;
@@ -94,6 +100,57 @@ export async function resolveCanonicalRemoteHead(input: {
     fullRef,
     oid: oid.toLowerCase(),
   };
+}
+
+export async function materializePinnedRemoteCommit(input: {
+  readonly workspacePath: string;
+  readonly remoteTrackingRef: string;
+  readonly expectedCommit: string;
+}): Promise<CanonicalRemoteHead> {
+  assertFullGitObjectId(input.expectedCommit);
+  const expectedCommit = input.expectedCommit.toLowerCase();
+  const beforeFetch = await resolveCanonicalRemoteHead({
+    workspacePath: input.workspacePath,
+    remoteTrackingRef: input.remoteTrackingRef,
+  });
+  if (beforeFetch.oid !== expectedCommit) {
+    throw new Error("project_control_pinned_source_head_mismatch");
+  }
+
+  await execGitStdout([
+    "-C",
+    input.workspacePath,
+    "fetch",
+    "--no-tags",
+    "--no-write-fetch-head",
+    "--refmap=",
+    beforeFetch.remote,
+    beforeFetch.fullRef,
+  ]);
+
+  const resolvedCommit = (
+    await execGitStdout([
+      "-C",
+      input.workspacePath,
+      "rev-parse",
+      "--verify",
+      `${expectedCommit}^{commit}`,
+    ])
+  )
+    .trim()
+    .toLowerCase();
+  if (resolvedCommit !== expectedCommit) {
+    throw new Error("project_control_pinned_source_object_mismatch");
+  }
+
+  const afterFetch = await resolveCanonicalRemoteHead({
+    workspacePath: input.workspacePath,
+    remoteTrackingRef: input.remoteTrackingRef,
+  });
+  if (afterFetch.oid !== expectedCommit) {
+    throw new Error("project_control_pinned_source_changed_during_fetch");
+  }
+  return afterFetch;
 }
 
 export function canonicalRemoteWorktreeSourceRef(
@@ -277,6 +334,7 @@ function gitOperationLabel(args: readonly string[]): string {
       arg === "cherry-pick" ||
       arg === "push" ||
       arg === "apply" ||
+      arg === "fetch" ||
       arg === "ls-remote" ||
       arg === "rev-parse",
   );

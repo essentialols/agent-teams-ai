@@ -87,6 +87,7 @@ import type {
 } from "./codex-goal-mcp-inputs";
 import { goalLaunchInput } from "./codex-goal-mcp-launch-input";
 import {
+  codexProjectContinuationExcludedAccountIds,
   releaseCodexProjectAccount,
   reserveCodexProjectAccount,
 } from "./application/project-control/codex-goal-project-account-reservation";
@@ -410,6 +411,8 @@ export async function projectControlStartStoredJobView(
       const accountReservation = await reserveCodexProjectAccount({
         manifest: loaded.manifest,
         launch: canonicalLaunch,
+        excludedAccountIds:
+          codexProjectContinuationExcludedAccountIds(lockedStatus),
       });
       const reservedLaunch = accountReservation.launch;
       let result;

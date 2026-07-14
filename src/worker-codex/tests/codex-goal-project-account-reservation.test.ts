@@ -9,6 +9,7 @@ import {
 import type { CodexGoalJobManifest } from "../codex-goal-jobs";
 import type { CodexGoalLaunchInput } from "../codex-goal-ops";
 import {
+  codexProjectContinuationExcludedAccountIds,
   codexProjectAccountLeaseMode,
   releaseCodexProjectAccount,
   reserveCodexProjectAccount,
@@ -27,6 +28,81 @@ afterEach(async () => {
 });
 
 describe("project account reservation", () => {
+  it("excludes the failed account only for an evidenced capacity continuation", () => {
+    const status = {
+      recommendedAction: "continue_after_capacity",
+      resultReason: "account_unavailable",
+      progressCurrentAccount: "account-a",
+    } as const;
+    expect(codexProjectContinuationExcludedAccountIds(status)).toEqual([
+      "account-a",
+    ]);
+    expect(codexProjectContinuationExcludedAccountIds({
+      ...status,
+      recommendedAction: "inspect_failure",
+    })).toEqual([]);
+    expect(codexProjectContinuationExcludedAccountIds({
+      ...status,
+      resultReason: "capacity_unavailable",
+    })).toEqual([]);
+    expect(codexProjectContinuationExcludedAccountIds({
+      recommendedAction: status.recommendedAction,
+      resultReason: status.resultReason,
+    })).toEqual([]);
+  });
+
+  it("selects another shared account after account_unavailable", async () => {
+    const root = await mkdtemp(join(tmpdir(), "project-account-excluded-"));
+    roots.push(root);
+    const capacityStore = new InMemoryWorkerAccountCapacityStore();
+    const scoped = fixture(root, "job-1");
+    const deps = {
+      capacityStore,
+      leaseMode: "shared" as const,
+      now: new Date("2026-07-13T00:00:00.000Z"),
+    };
+    const first = await reserveCodexProjectAccount({ ...scoped, deps });
+    const continued = await reserveCodexProjectAccount({
+      ...scoped,
+      excludedAccountIds: [first.accountId],
+      deps,
+    });
+
+    expect(continued.accountId).not.toBe(first.accountId);
+    expect(continued.launch.config.accounts.map((item) => item.name)).toEqual([
+      continued.accountId,
+    ]);
+  });
+
+  it("releases an excluded exclusive reservation before selecting another account", async () => {
+    const root = await mkdtemp(join(tmpdir(), "project-account-reselected-"));
+    roots.push(root);
+    const capacityStore = new InMemoryWorkerAccountCapacityStore();
+    const leaseStore = new InMemoryWorkerAccountLeaseStore();
+    const now = new Date("2026-07-13T00:00:00.000Z");
+    const scoped = fixture(root, "job-1");
+    const deps = {
+      capacityStore,
+      leaseStore,
+      leaseMode: "exclusive" as const,
+      now,
+    };
+    const first = await reserveCodexProjectAccount({ ...scoped, deps });
+    const continued = await reserveCodexProjectAccount({
+      ...scoped,
+      excludedAccountIds: [first.accountId],
+      deps,
+    });
+
+    expect(continued.accountId).not.toBe(first.accountId);
+    await expect(leaseStore.acquire({
+      accountId: first.accountId,
+      ownerId: "independent-job",
+      ttlMs: 60_000,
+      now,
+    })).resolves.toMatchObject({ status: "granted" });
+  });
+
   it("shares an account across concurrent jobs by default", async () => {
     const root = await mkdtemp(join(tmpdir(), "project-account-shared-"));
     roots.push(root);

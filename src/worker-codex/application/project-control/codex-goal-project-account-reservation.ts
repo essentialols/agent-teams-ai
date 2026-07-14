@@ -11,7 +11,10 @@ import {
 } from "@vioxen/subscription-runtime/worker-core";
 import { LocalFileWorkerAccountLeaseStore } from "@vioxen/subscription-runtime/store-local-file";
 import type { CodexGoalJobManifest } from "../../codex-goal-jobs";
-import type { CodexGoalLaunchInput } from "../../codex-goal-ops";
+import type {
+  CodexGoalLaunchInput,
+  CodexGoalStatus,
+} from "../../codex-goal-ops";
 import {
   codexAccountCapacityRootDir,
   codexAccountCapacityStore,
@@ -75,6 +78,7 @@ export function codexProjectAccountLeaseMode(
 export async function reserveCodexProjectAccount(input: {
   readonly manifest: CodexGoalJobManifest;
   readonly launch: CodexGoalLaunchInput;
+  readonly excludedAccountIds?: readonly string[];
   readonly deps?: CodexProjectAccountReservationDeps;
 }): Promise<CodexProjectAccountReservation> {
   const leaseMode = input.deps?.leaseMode ?? codexProjectAccountLeaseMode();
@@ -86,6 +90,7 @@ export async function reserveCodexProjectAccount(input: {
 async function reserveExclusiveCodexProjectAccount(input: {
   readonly manifest: CodexGoalJobManifest;
   readonly launch: CodexGoalLaunchInput;
+  readonly excludedAccountIds?: readonly string[];
   readonly deps?: CodexProjectAccountReservationDeps;
 }): Promise<CodexProjectExclusiveAccountReservation> {
   const now = input.deps?.now ?? new Date();
@@ -98,11 +103,10 @@ async function reserveExclusiveCodexProjectAccount(input: {
     codexProjectAccountLeaseStore(input.launch.config.authRootDir);
   const receiptPath = codexProjectAccountReservationPath(input.manifest);
   const existing = await readReservation(receiptPath);
+  const eligibleAccountIds = projectEligibleAccountIds(input);
   if (
     existing &&
-    input.launch.config.accounts.some(
-      (account) => account.name === existing.accountId,
-    )
+    eligibleAccountIds.includes(existing.accountId)
   ) {
     const renewed = await leaseStore.renew({
       leaseId: existing.leaseId,
@@ -116,6 +120,15 @@ async function reserveExclusiveCodexProjectAccount(input: {
       return reservationResult(input.launch, receipt);
     }
   }
+  if (existing) {
+    await leaseStore.release({
+      leaseId: existing.leaseId,
+      ownerId: input.manifest.jobId,
+      reason: "account_excluded_from_continuation",
+      now,
+    });
+    await rm(receiptPath, { force: true });
+  }
 
   const capacityStore =
     input.deps?.capacityStore ??
@@ -127,9 +140,7 @@ async function reserveExclusiveCodexProjectAccount(input: {
       ),
     });
   const selection = await new SelectRuntimeAccountUseCase().execute({
-    allowedAccounts: input.launch.config.accounts.map(
-      (account) => account.name,
-    ),
+    allowedAccounts: eligibleAccountIds,
     demand: projectAccountDemand(input.launch),
     leaseDemand: null,
     ownerId: input.manifest.jobId,
@@ -164,6 +175,7 @@ async function reserveExclusiveCodexProjectAccount(input: {
 async function selectSharedCodexProjectAccount(input: {
   readonly manifest: CodexGoalJobManifest;
   readonly launch: CodexGoalLaunchInput;
+  readonly excludedAccountIds?: readonly string[];
   readonly deps?: CodexProjectAccountReservationDeps;
 }): Promise<CodexProjectSharedAccountReservation> {
   const now = input.deps?.now ?? new Date();
@@ -184,7 +196,7 @@ async function selectSharedCodexProjectAccount(input: {
   }> = [];
   const accounts = stableSharedAccountOrder(
     selectableWorkerAccountIds(
-      input.launch.config.accounts.map((account) => account.name),
+      projectEligibleAccountIds(input),
       undefined,
     ),
     input.manifest.jobId,
@@ -212,6 +224,26 @@ async function selectSharedCodexProjectAccount(input: {
       ? `project_control_account_reservation_unavailable_until:${retryAt}`
       : "project_control_account_reservation_unavailable",
   );
+}
+
+export function codexProjectContinuationExcludedAccountIds(
+  status: Pick<
+    CodexGoalStatus,
+    | "recommendedAction"
+    | "resultReason"
+    | "progressResultReason"
+    | "progressCurrentAccount"
+  >,
+): readonly string[] {
+  if (
+    status.recommendedAction !== "continue_after_capacity" ||
+    (status.resultReason !== "account_unavailable" &&
+      status.progressResultReason !== "account_unavailable") ||
+    !status.progressCurrentAccount
+  ) {
+    return [];
+  }
+  return [status.progressCurrentAccount];
 }
 
 export async function releaseCodexProjectAccount(input: {
@@ -318,6 +350,20 @@ function projectAccountDemand(
       ? { serviceTier: launch.config.serviceTier }
       : {}),
   };
+}
+
+function projectEligibleAccountIds(input: {
+  readonly launch: CodexGoalLaunchInput;
+  readonly excludedAccountIds?: readonly string[];
+}): readonly string[] {
+  const excluded = new Set(input.excludedAccountIds ?? []);
+  const eligible = input.launch.config.accounts
+    .map((account) => account.name)
+    .filter((accountId) => !excluded.has(accountId));
+  if (eligible.length === 0) {
+    throw new Error("project_control_account_reservation_no_eligible_accounts");
+  }
+  return eligible;
 }
 
 function stableSharedAccountOrder(

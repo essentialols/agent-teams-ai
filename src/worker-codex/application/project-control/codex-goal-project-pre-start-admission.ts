@@ -260,9 +260,10 @@ export async function assertProjectPreStartAdmissionLaunchBinding(input: {
   const dirtyContinuation =
     input.workspaceMode === "reviewed_dirty_continuation" ||
     input.workspaceMode === "terminal_handoff_dependency_recovery";
-  const expectedReceiptStatus = dirtyContinuation
-    ? "launch_authorized"
-    : "validated_not_launched";
+  const receiptStatusValid = dirtyContinuation
+    ? receipt.status === "launch_authorized" ||
+      receipt.status === "validated_not_launched"
+    : receipt.status === "validated_not_launched";
   const workspaceBindingValid =
     input.workspaceMode === "admitted_input_patch" || dirtyContinuation
       ? binding.workspaceStatus !== ""
@@ -281,7 +282,7 @@ export async function assertProjectPreStartAdmissionLaunchBinding(input: {
         input.expectedInputPatchArtifactSha256) ||
     !inputPatchBindingValid ||
     !workspaceBindingValid ||
-    receipt.status !== expectedReceiptStatus ||
+    !receiptStatusValid ||
     receipt.jobId !== input.manifest.jobId ||
     receipt.workKey !== contract.workKey ||
     receipt.contractSha256 !== binding.contractSha256 ||

@@ -726,4 +726,42 @@ describe("builtin project pre-start admission", () => {
       launchAuthorizationCount: 3,
     });
   });
+
+  it("upgrades a legacy validated receipt only for a reviewed dirty continuation", async () => {
+    const fixture = await createBuiltinFixture();
+    const plan = fixture.plan();
+    const manifest = {
+      ...fixture.storedManifest,
+      projectPreStartAdmission: plan.descriptor,
+    };
+    await prepareProjectPreStartAdmission({
+      plan,
+      manifest,
+      scope: fixture.scope,
+    });
+    await writeFile(join(fixture.workspacePath, "reviewed-change.ts"), "dirty\n");
+
+    await expect(assertProjectPreStartAdmissionLaunchBinding({
+      manifest,
+      scope: fixture.scope,
+    })).rejects.toThrow("project_control_pre_start_launch_binding_mismatch");
+    await expect(assertProjectPreStartAdmissionLaunchBinding({
+      manifest,
+      scope: fixture.scope,
+      workspaceMode: "reviewed_dirty_continuation",
+    })).resolves.toBeUndefined();
+
+    await authorizeProjectPreStartAdmissionLaunch({
+      manifest,
+      scope: fixture.scope,
+      workspaceMode: "reviewed_dirty_continuation",
+    });
+    const receipt = JSON.parse(
+      await readFile(plan.descriptor.receiptPath, "utf8"),
+    ) as Record<string, unknown>;
+    expect(receipt).toMatchObject({
+      status: "launch_authorized",
+      launchAuthorizationCount: 1,
+    });
+  });
 });

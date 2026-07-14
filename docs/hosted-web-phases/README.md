@@ -1,9 +1,9 @@
 # Hosted Web execution router
 
-> Current authority: `phase-01-pr252-task-provenance-remediation-router-r2` corrects only producer
-> r3's remediation launch. It conditionally routes one reviewed-dirty continuation of the exact
-> rejected r3 job/workspace, then one fresh independent reviewer. This docs transition launches
-> nothing and ends `HOLD`.
+> Current authority: `phase-01-pr252-provenance-fallback-router-r2` conditionally routes one
+> continuation of the exact held r3 job, followed by one fresh independent reviewer. Every future
+> job is `gpt-5.6-sol`, `xhigh`, `serviceTier: "default"`. This docs transition launches nothing and
+> ends `HOLD`.
 
 Always begin with [`START_HERE.md`](START_HERE.md). Machine-readable authority is
 [`EXECUTION_INDEX.json`](EXECUTION_INDEX.json); the current Phase 1 controller and lane packets are
@@ -11,65 +11,51 @@ the only executable packets.
 
 ## Current route
 
-Reviewer r4 rejected producer r3 at P0/P1/P2 `0/1/0`. The sole P1 proved that a
-`TaskBoardCommandFacade` fallback could accept an unrelated same-ID task when destination
-`reconcile` and task `creationCommand` were absent; the executed result returned subject
-`UNRELATED SUBJECT`. All other r3 semantics and checks passed.
+The exact held job/task is
+`agent-teams-hosted-web-refactor-pr252-semantic-conflict-resolution-v17-r3`. Its workspace remains at
+base/`HEAD` `3256ee3b5b8e81b144aa0a14eac1bca080c9b779` with an empty index, no untracked paths,
+and the five-path raw patch
+`9f5016c669ab777a80d1395352ee7e51d945e2409a3d43efa4735dea8d23b2a0`.
 
-Useful handoff
-`f810a0aa191e82316737c5c0069ee6225597d8a477d77b50c57bc3fd931fe579` and full rejected diff
-`cb534246905f6fd7cc03b0b761018157ed12d204d11819f0978915af7c778491` bind the successor. The
-first is the raw existing workspace patch identity and preserved remediation input. The second is
-provenance-only: it is not a carrier and must not be replayed, materialized, or directly integrated.
-The successor is a remediation of that reviewed work, not a clean rewrite.
+Rejected test-only router
+`daa462aba1b21cdf41a05575d3967d8314d5c9a734e76f4cda5678a136ba7902` is terminal because it
+omitted the required source change. Prior seven-doc output
+`c5f33adf53ef93ab69789a0d1f2b2041ffb2e2694f852b32e8cb189edddc8660` is terminal solely for
+authorizing a non-default tier. Neither rejected output is a patch carrier or implementation input.
 
-Rejected `ReviewedWorkerOutput`
-`1796cc59fb1a6c291c54a589ef8a0e10d694b8c61128a5486e5307831afaee9b` binds
-`decision=rejected`, r3 worker/task identity, the existing r3 workspace, base/`HEAD` `3256ee3b...`,
-raw patch `f810a0aa...`, and the exact five paths. The accepted and pushed predecessor authority is
-`f5e3ce8257d05c6ff2a5c19e944d75999868550d`.
-
-Direct `git ls-remote` authority supersedes the stale GitHub PR `baseOid`. The current real base and
-pinned merge source is
-`origin/refactor/team-provisioning-round2-reapply@e9ffa30cc016ad3cb833fcc0a138fa4f026eb850`.
-Stale `d2585e7634800eb795644c4b6d0e8baf5f81c98f` is its ancestor by 52 commits, and old source
-`7afc908ce92f14b4b0ebd06cc4aa3a4cf33807d0` is also its ancestor. Fresh merge-tree proof between
-continued-workspace target baseline `3256ee3b5b8e81b144aa0a14eac1bca080c9b779` and
-`e9ffa30c...` reports the same exact five conflicts. Therefore the conflict route, ordered true
-merge, and final source-only test remain real; the standalone-normal-push interpretation is
-superseded.
+The router authoring base is `c0ade7cb040c9dea97a38ee58e667f56c0e39b8e`. The immutable source
+parent is `e9ffa30cc016ad3cb833fcc0a138fa4f026eb850`, and the pinned merge source is
+`3b48f9391b4bff1d82bc85ef01a2d5e0e5b50e95`.
 
 ## Authorized successor
 
 After this exact seven-document router is independently accepted, integrated, and pushed,
-`ProjectScopedControl` resolves its pushed commit once, revalidates the rejected-output manifest and
-the existing reviewed-dirty workspace snapshot, and invokes `codex_goal_project_start` exactly once
-for the same r3 job. The call binds the reviewed output above and uses `forceStart=true`,
-`confirmStart=true`, and `dependencyBootstrap=install`. It creates no job, task, or worktree.
+`ProjectScopedControl` resolves its pushed SHA once as `storedRouterCommit`, revalidates the exact
+held r3 workspace snapshot, and continues that same r3 job exactly once. It creates no job, task,
+workspace, worktree, or duplicate.
 
-The worker keeps `HEAD=3256ee3b...` and reads r2 authority only with
-`git show <storedRouterCommit>:<path>`. It preserves the existing five-path patch and changes only
-`TaskBoardCommandFacade.ts` for the P1 subject-safety fix and `TaskBoardCommands.e2e.test.ts` for the
-exact tenth `UNRELATED SUBJECT` regression. Destination reconciliation remains optional; no
-`creationCommand`, `createdBy`, or relation provenance is required. The index remains empty. Fetch,
-checkout, reset, rebase, clean rewrite, rejected-patch replay, a new job/worktree, and duplicates are
-forbidden.
+The worker keeps `HEAD=3256ee3b...`, reads router authority only with
+`git show <storedRouterCommit>:<path>`, and preserves the existing five-path patch. New bytes are
+allowed only in `TaskBoardCommandFacade.ts` and `TaskBoardCommands.e2e.test.ts`.
 
-The continued r3 self-review ends `HOLD`. Then exactly one fresh independent reviewer is admitted
-with `codex_goal_project_prepare_verifier`. The reviewer uses model `gpt-5.6-sol`, reasoning effort
-`xhigh`, and `serviceTier: "fast"`; machine request envelopes contain no `fastMode` field.
-Only fresh `ACCEPT` with P0/P1/P2 `0/0/0` permits broker integration.
+When a create failure is classified as `TaskBoardCreateDestinationConflictError` and a known task
+exists, the facade calls the existing `assertMatchingTask` using the exact requested ID and trimmed
+requested subject before returning that task. The no-known, mismatch, terminal, and other-error paths
+are preserved. No `creationCommand`, payload-hash, `createdBy`, or relation comparison is introduced,
+and `taskStore` is not weakened.
 
-Immediately before integration, the broker reruns `git ls-remote origin
-refs/heads/refactor/team-provisioning-round2-reapply`. It must still return exactly `e9ffa30c...` or
-the route ends `HOLD` for a new-base review. With an unchanged source, integration creates a true
-merge with ordered parents `[storedRouterCommit, e9ffa30c...]`, proves the exact five
-conflicts, materializes source non-conflicts, applies the accepted output, reruns every focused gate,
-runs `test/renderer/utils/createTaskCommandIdentity.test.ts`, conventionally commits, and pushes.
+The TaskBoard suite remains exactly ten cases. Exactly two existing cases change to the respective
+`Executed` and `Reconciled` outcomes; each has `createdInAttempt: false`, `Completed`,
+`attemptCount: 1`, and one task. `UNRELATED SUBJECT` remains terminal.
 
-## HOLD
+## Review, integration, and HOLD
 
-All inherited tests, the exact native seven-diagnostic TypeScript baseline, bounded lint, Prettier,
-index-empty, diff/ownership, conflict, secret, private-path, and binary gates remain mandatory.
-P1.R2, P1.I, P1.F, and Phase 2+ remain blocked until the validated ordered merge is pushed. This docs
-router performs no launch, fetch, stage, commit, merge, push, or lifecycle action. End `HOLD`.
+The continued r3 self-review ends `HOLD`. Exactly one fresh independent reviewer follows with
+`gpt-5.6-sol`, `xhigh`, and `serviceTier: "default"`; no machine `fastMode` field is accepted. It
+must independently prove `10/10`, `127/127`, native TypeScript `7 inherited / 0 owned / 0
+unexpected`, all checks/scans, and return `ACCEPT` with P0/P1/P2 `0/0/0`.
+
+Only then may the broker revalidate the pinned source and create the ordered true merge
+`[storedRouterCommit, 3b48f9391b4bff1d82bc85ef01a2d5e0e5b50e95]`, rerun final-shape gates,
+commit, and push. P1.R2, P1.I, P1.F, and Phase 2+ stay blocked until that push. The docs author
+performs no fetch, stage, commit, merge, push, lifecycle action, or real-project access. End `HOLD`.

@@ -242,6 +242,9 @@ await writeFile(file, JSON.stringify(operation, null, 2) + "\\n");
           expect(result).toMatchObject({
             executionMode: "bounded",
             operationId: expect.any(String),
+            operation: {
+              toolName: "codex_goal_project_prepare_verifier",
+            },
           });
         }
       } finally {

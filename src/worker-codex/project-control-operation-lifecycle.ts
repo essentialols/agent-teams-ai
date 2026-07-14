@@ -19,7 +19,8 @@ export {
 } from "./project-control-operation-recovery";
 
 export type ProjectControlOperationToolName =
-  | "codex_goal_project_refill_worker";
+  | "codex_goal_project_refill_worker"
+  | "codex_goal_project_prepare_verifier";
 
 export enum ProjectControlOperationStatus {
   Queued = "queued",
@@ -619,7 +620,12 @@ function projectControlOperationStatus(value: unknown): ProjectControlOperationS
 }
 
 function projectControlOperationToolName(value: unknown): ProjectControlOperationToolName {
-  if (value === "codex_goal_project_refill_worker") return value;
+  if (
+    value === "codex_goal_project_refill_worker" ||
+    value === "codex_goal_project_prepare_verifier"
+  ) {
+    return value;
+  }
   throw new Error("project_control_operation_tool_invalid");
 }
 

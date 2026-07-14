@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { hostname, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -63,6 +63,45 @@ describe("project control operation lifecycle", () => {
         operationId: operation.operationId,
         result: { ok: true },
       });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves prepare-verifier identity through the durable runner", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-operation-verifier-"));
+    try {
+      const operation = await createProjectControlOperation({
+        operationsRootDir: projectControlOperationsRoot(root),
+        controllerJobId: "controller-v1",
+        toolName: "codex_goal_project_prepare_verifier",
+        targetJobId: "reviewer-v1",
+        args: {
+          registryRootDir: join(root, "registry"),
+          controllerJobId: "controller-v1",
+          jobId: "reviewer-v1",
+          executionMode: "bounded",
+        },
+      });
+      const invocations: Array<{ toolName: string; args: unknown }> = [];
+
+      const result = await runProjectControlOperationFile({
+        operationFilePath: operation.operationFilePath,
+        invokeTool: async (toolName, args) => {
+          invocations.push({ toolName, args });
+          return { ok: true };
+        },
+      });
+
+      expect(result.ok).toBe(true);
+      expect(invocations).toEqual([{
+        toolName: "codex_goal_project_prepare_verifier",
+        args: expect.objectContaining({
+          jobId: "reviewer-v1",
+          executionMode: "sync",
+        }),
+      }]);
+      expect(await readdir(projectControlOperationsRoot(root))).toHaveLength(1);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -299,6 +338,44 @@ describe("project control operation lifecycle", () => {
           lastRecoveredFromStatus: ProjectControlOperationStatus.Queued,
         },
       });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves prepare-verifier identity when recovering a queued operation", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-operation-verifier-recovery-"));
+    const operationsRootDir = projectControlOperationsRoot(root);
+    try {
+      await createProjectControlOperation({
+        operationsRootDir,
+        controllerJobId: "controller-v1",
+        toolName: "codex_goal_project_prepare_verifier",
+        targetJobId: "reviewer-v1",
+        args: {
+          jobId: "reviewer-v1",
+          executionMode: "bounded",
+        },
+      });
+      const invocations: Array<{ toolName: string; args: unknown }> = [];
+
+      const summary = await recoverProjectControlOperations({
+        operationsRootDir,
+        invokeTool: async (toolName, args) => {
+          invocations.push({ toolName, args });
+          return { ok: true };
+        },
+      });
+
+      expect(summary).toMatchObject({ recovered: 1, failed: 0 });
+      expect(invocations).toEqual([{
+        toolName: "codex_goal_project_prepare_verifier",
+        args: expect.objectContaining({
+          jobId: "reviewer-v1",
+          executionMode: "sync",
+        }),
+      }]);
+      expect(await readdir(operationsRootDir)).toHaveLength(1);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

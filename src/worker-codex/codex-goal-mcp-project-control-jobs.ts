@@ -38,6 +38,7 @@ import {
   recoverProjectControlOperations,
   startProjectControlOperationRunner,
   type JsonRecord as ProjectControlOperationJsonRecord,
+  type ProjectControlOperationToolName,
 } from "./project-control-operation-lifecycle";
 import { codexGoalAccountCapacityFacts } from "./codex-goal-mcp-account-capacity-facts";
 import {
@@ -242,12 +243,14 @@ export async function projectControlCreateCodexGoalJobView(
 export async function projectControlRefillWorkerView(
   args: ProjectControlMcpArgs,
   deps: CodexGoalMcpProjectControlJobsDeps,
+  boundedToolName: ProjectControlOperationToolName =
+    "codex_goal_project_refill_worker",
 ): Promise<JsonObject> {
   const executionMode =
     args.executionMode ??
     (booleanValue(args.startWorker) === false ? "sync" : "bounded");
   if (projectControlOperationExecutionMode(executionMode) === "bounded") {
-    return projectControlRefillWorkerBoundedView(args, deps);
+    return projectControlRefillWorkerBoundedView(args, deps, boundedToolName);
   }
   const controller = await deps.loadProjectControlController(args);
   if (args.projectAccessScope !== undefined) {
@@ -691,6 +694,7 @@ export async function projectControlPrepareVerifierView(
       requireCanonicalRemoteHead: true,
     },
     deps,
+    "codex_goal_project_prepare_verifier",
   );
   return {
     ...result,
@@ -731,6 +735,7 @@ async function resolveProducerHandoffForVerifier(input: {
 async function projectControlRefillWorkerBoundedView(
   args: ProjectControlMcpArgs,
   deps: CodexGoalMcpProjectControlJobsDeps,
+  operationToolName: ProjectControlOperationToolName,
 ): Promise<JsonObject> {
   const controller = await deps.loadProjectControlController(args);
   if (args.projectAccessScope !== undefined) {
@@ -863,7 +868,7 @@ async function projectControlRefillWorkerBoundedView(
   const operation = await createProjectControlOperation({
     operationsRootDir,
     controllerJobId: controller.controller.jobId,
-    toolName: "codex_goal_project_refill_worker",
+    toolName: operationToolName,
     args: operationArgs,
     targetJobId: createManifest.jobId,
   });
@@ -945,13 +950,19 @@ export async function projectControlRecoverOperationsView(
       controller.controller.jobRootDir,
     ),
     invokeTool: async (toolName, operationArgs) => {
-      if (toolName !== "codex_goal_project_refill_worker") {
-        throw new Error("project_control_operation_tool_invalid");
+      if (toolName === "codex_goal_project_prepare_verifier") {
+        return projectControlPrepareVerifierView(
+          operationArgs as ProjectControlMcpArgs,
+          deps,
+        );
       }
-      return projectControlRefillWorkerView(
-        operationArgs as ProjectControlMcpArgs,
-        deps,
-      );
+      if (toolName === "codex_goal_project_refill_worker") {
+        return projectControlRefillWorkerView(
+          operationArgs as ProjectControlMcpArgs,
+          deps,
+        );
+      }
+      throw new Error("project_control_operation_tool_invalid");
     },
   });
   return {

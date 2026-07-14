@@ -122,7 +122,17 @@ describe("project failed_no_output lifecycle", () => {
         jobId: verifierJobId,
         workspacePath: join(worktreeRoot, verifierJobId),
       });
-      await writeMislabeledNoOutput({ root, ledgerRoot, jobId: workerJobId });
+      await writeMislabeledNoOutput({
+        root,
+        ledgerRoot,
+        jobId: workerJobId,
+        archiveRoot: join(
+          root,
+          "worker-jobs",
+          controllerJobId,
+          "archives",
+        ),
+      });
       await writeMislabeledNoOutput({ root, ledgerRoot, jobId: dirtyWorkerJobId });
 
       const deps = {
@@ -443,11 +453,10 @@ async function writeMislabeledNoOutput(input: {
   readonly root: string;
   readonly ledgerRoot: string;
   readonly jobId: string;
+  readonly archiveRoot?: string;
 }): Promise<void> {
   const evidenceRoot = join(
-    input.root,
-    "worker-jobs",
-    "archives",
+    input.archiveRoot ?? join(input.root, "worker-jobs", "archives"),
     `${input.jobId}-rejected-test`,
   );
   const workspace = join(input.root, "worktrees", input.jobId);

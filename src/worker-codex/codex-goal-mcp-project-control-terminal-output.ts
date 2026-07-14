@@ -24,6 +24,7 @@ import {
 import {
   releaseCodexProjectAccount,
 } from "./application/project-control/codex-goal-project-account-reservation";
+import { readRuntimeResultBrief } from "./application/codex-goal-runtime-result";
 import {
   readCodexGoalConsumedOutputLedgers,
 } from "./application/project-control/codex-goal-consumed-output-ledger-io";
@@ -207,6 +208,7 @@ export async function projectControlRecordFailedNoOutputView(
         registryRootDir: controller.registryRootDir,
         jobId: loaded.manifest.jobId,
         jobRootDir: loaded.manifest.jobRootDir,
+        controllerJobRootDir: controller.controller.jobRootDir,
       });
       if (
         lockedSourceRecord.valid &&
@@ -388,7 +390,7 @@ async function recordInitialFailedNoOutput(input: {
         throw new Error("failed_no_output_worker_still_alive");
       }
       if (input.preexistingWorkspacePatch) {
-        assertNoWorkerLaunchArtifacts(lockedStatus);
+        await assertNoAuthoredWorkerOutputEvidence(lockedStatus);
         if (lockedStatus.workspaceDirty !== true) {
           throw new Error(
             "failed_no_output_preexisting_patch_workspace_required",
@@ -518,17 +520,29 @@ async function archivePreexistingWorkspacePatch(input: {
   return { path, sha256: input.source.sha256 };
 }
 
-function assertNoWorkerLaunchArtifacts(
+async function assertNoAuthoredWorkerOutputEvidence(
   status: Awaited<ReturnType<typeof collectCodexGoalStatus>>,
-): void {
-  if (
+): Promise<void> {
+  const hasLaunchArtifacts =
     status.tmuxAlive === true ||
     status.resultExists !== false ||
     status.progressExists !== false ||
     status.logExists !== false ||
-    status.runtimeEventsExists !== false
-  ) {
+    status.runtimeEventsExists !== false;
+  if (!hasLaunchArtifacts) return;
+  if (status.resultExists !== true || !status.resultPath) {
     throw new Error("failed_no_output_worker_launch_artifacts_present");
+  }
+  const result = await readRuntimeResultBrief(status.resultPath);
+  if (
+    result.strict !== true ||
+    result.status !== "failed" ||
+    !result.changedFiles
+  ) {
+    throw new Error("failed_no_output_runtime_empty_output_evidence_required");
+  }
+  if (result.changedFiles.length > 0) {
+    throw new Error("failed_no_output_runtime_authored_changes_present");
   }
 }
 
@@ -539,6 +553,7 @@ async function requestedPreexistingWorkspacePatch(
     readonly registryRootDir: string;
     readonly jobId: string;
     readonly jobRootDir: string;
+    readonly controllerJobRootDir?: string;
   },
 ): Promise<{ readonly path: string; readonly sha256: string } | undefined> {
   const path = stringValue(args.preexistingWorkspacePatchPath);
@@ -577,6 +592,7 @@ async function assertBackupPathsReadable(
     readonly registryRootDir: string;
     readonly jobId: string;
     readonly jobRootDir: string;
+    readonly controllerJobRootDir?: string;
   },
 ): Promise<void> {
   if (!backup) throw new Error("failed_no_output_source_backup_required");
@@ -598,6 +614,7 @@ async function assertEvidencePathReadable(
     readonly registryRootDir: string;
     readonly jobId: string;
     readonly jobRootDir: string;
+    readonly controllerJobRootDir?: string;
   },
 ): Promise<void> {
   const evidenceRoot = projectOwnedEvidenceRoot(path, input);
@@ -632,14 +649,37 @@ function projectOwnedEvidenceRoot(
     readonly registryRootDir: string;
     readonly jobId: string;
     readonly jobRootDir: string;
+    readonly controllerJobRootDir?: string;
   },
 ): string | undefined {
   const candidate = resolve(path);
   const jobRoot = resolve(input.jobRootDir);
   if (pathInsideOrEqual(candidate, jobRoot)) return jobRoot;
 
-  const archiveRoot = join(dirname(resolve(input.registryRootDir)), "archives");
-  const archiveRelative = relative(archiveRoot, candidate);
+  const archiveRoots = [
+    join(dirname(resolve(input.registryRootDir)), "archives"),
+    ...(input.controllerJobRootDir
+      ? [join(resolve(input.controllerJobRootDir), "archives")]
+      : []),
+  ];
+  for (const archiveRoot of archiveRoots) {
+    const ownedRoot = projectOwnedArchiveRoot({
+      archiveRoot,
+      candidate,
+      jobId: input.jobId,
+    });
+    if (ownedRoot) return ownedRoot;
+  }
+  return undefined;
+}
+
+function projectOwnedArchiveRoot(input: {
+  readonly archiveRoot: string;
+  readonly candidate: string;
+  readonly jobId: string;
+}): string | undefined {
+  const archiveRoot = resolve(input.archiveRoot);
+  const archiveRelative = relative(archiveRoot, input.candidate);
   if (
     !archiveRelative ||
     archiveRelative === ".." ||

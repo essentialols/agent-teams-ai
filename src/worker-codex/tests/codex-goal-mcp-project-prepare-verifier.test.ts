@@ -283,7 +283,40 @@ await writeFile(file, JSON.stringify(operation, null, 2) + "\\n");
             ok: false,
             error: "failed_no_output_worker_launch_artifacts_present",
           });
-          await rm(verifierLogPath);
+          const verifierResultPath = verifierManifest.outputPath ?? join(
+            verifierManifest.jobRootDir,
+            `${verifierManifest.taskId}.latest-result.json`,
+          );
+          const strictFailedResult = {
+            status: "failed",
+            changedFiles: ["feature.txt"],
+            evidence: ["provider failed before completing the verifier"],
+            blockers: ["provider_failure"],
+            nextAction: "recover",
+            reason: "provider_failure",
+          };
+          await writeFile(
+            verifierResultPath,
+            `${JSON.stringify(strictFailedResult)}\n`,
+          );
+          await expect(callToolJson(
+            client,
+            "codex_goal_project_record_failed_no_output",
+            {
+              ...terminalArgs,
+              preexistingWorkspacePatchPath: preexistingPatchPath,
+              preexistingWorkspacePatchSha256:
+                handoff.manifest.artifacts.patch.sha256,
+              confirmPreexistingWorkspacePatch: true,
+            },
+          )).resolves.toMatchObject({
+            ok: false,
+            error: "failed_no_output_runtime_authored_changes_present",
+          });
+          await writeFile(
+            verifierResultPath,
+            `${JSON.stringify({ ...strictFailedResult, changedFiles: [] })}\n`,
+          );
           const archivedPreexistingPatchPath = join(
             verifierManifest.jobRootDir,
             "archives",

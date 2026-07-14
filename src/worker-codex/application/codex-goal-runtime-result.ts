@@ -3,6 +3,8 @@ import type { RuntimeResultArtifact } from "@vioxen/subscription-runtime/worker-
 import { tailCodexGoalLog } from "../codex-goal-ops";
 
 export async function readRuntimeResultBrief(path: string): Promise<{
+  readonly status?: string;
+  readonly changedFiles?: readonly string[];
   readonly currentAccount?: string;
   readonly lastFailureReason?: string;
   readonly updatedAt?: string;
@@ -27,7 +29,14 @@ export async function readRuntimeResultBrief(path: string): Promise<{
     const manifestSha256 = runtimeResultArtifactSha256(artifacts, "manifest");
     const baseCommit = runtimeResultBaseCommit(parsed);
     const handoffArtifactError = runtimeResultHandoffArtifactError(parsed);
+    const strict = isStrictRuntimeResultBrief(parsed);
     return {
+      ...(strict
+        ? {
+            status: parsed.status as string,
+            changedFiles: parsed.changedFiles as readonly string[],
+          }
+        : {}),
       ...(isRecord(lastAttempt) && typeof lastAttempt.accountId === "string"
         ? { currentAccount: lastAttempt.accountId }
         : {}),
@@ -46,7 +55,7 @@ export async function readRuntimeResultBrief(path: string): Promise<{
       ...(manifestSha256 === undefined ? {} : { manifestSha256 }),
       ...(handoffArtifactError === undefined ? {} : { handoffArtifactError }),
       ...(artifacts.length === 0 ? {} : { artifacts }),
-      strict: isStrictRuntimeResultBrief(parsed),
+      strict,
     };
   } catch {
     return {};

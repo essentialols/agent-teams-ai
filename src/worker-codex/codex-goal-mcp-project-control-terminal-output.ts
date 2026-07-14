@@ -21,33 +21,20 @@ import {
   collectCodexGoalStatus,
   resolveCodexGoalWorkerLiveness,
 } from "./codex-goal-ops";
-import {
-  releaseCodexProjectAccount,
-} from "./application/project-control/codex-goal-project-account-reservation";
+import { captureGitWorkspacePatch } from "./codex-goal-runtime-result-io";
+import { readCodexGoalLifecycleMarkers } from "./application/codex-goal-lifecycle-markers";
+import { releaseCodexProjectAccount } from "./application/project-control/codex-goal-project-account-reservation";
 import { readRuntimeResultBrief } from "./application/codex-goal-runtime-result";
-import {
-  readCodexGoalConsumedOutputLedgers,
-} from "./application/project-control/codex-goal-consumed-output-ledger-io";
-import {
-  assertProjectPreStartAdmissionLaunchBinding,
-} from "./application/project-control/codex-goal-project-pre-start-admission";
+import { readCodexGoalConsumedOutputLedgers } from "./application/project-control/codex-goal-consumed-output-ledger-io";
+import { assertProjectPreStartAdmissionLaunchBinding } from "./application/project-control/codex-goal-project-pre-start-admission";
 import {
   projectControlRealPathOutsideReadScope,
   projectControlRealPathOutsideWorkspaceScope,
 } from "./codex-goal-mcp-project-scope";
-import {
-  projectControlAuditPath,
-} from "./codex-goal-mcp-project-broker";
-import {
-  codexGoalStatusInputFromLaunch as statusInput,
-} from "./codex-goal-mcp-status-input";
-import {
-  requiredRawString,
-  stringValue,
-} from "./codex-goal-mcp-values";
-import type {
-  CodexGoalMcpProjectControlActionsDeps,
-} from "./codex-goal-mcp-project-control-actions";
+import { projectControlAuditPath } from "./codex-goal-mcp-project-broker";
+import { codexGoalStatusInputFromLaunch as statusInput } from "./codex-goal-mcp-status-input";
+import { requiredRawString, stringValue } from "./codex-goal-mcp-values";
+import type { CodexGoalMcpProjectControlActionsDeps } from "./codex-goal-mcp-project-control-actions";
 import {
   projectControlWorkspaceLocks,
   withValidatedProjectWorkspaceLock,
@@ -78,17 +65,23 @@ export async function projectControlRecordFailedNoOutputView(
     registryRoot: controller.registryRootDir,
     workspacePath: loaded.launch.config.workspacePath,
     ...(realWorkspacePath ? { realWorkspacePath } : {}),
-    ...(loaded.launch.tmuxSession ? { tmuxSession: loaded.launch.tmuxSession } : {}),
+    ...(loaded.launch.tmuxSession
+      ? { tmuxSession: loaded.launch.tmuxSession }
+      : {}),
   });
   if (!access.allowed) {
-    throw new Error(`project_control_record_failed_no_output_denied:${access.reason}`);
+    throw new Error(
+      `project_control_record_failed_no_output_denied:${access.reason}`,
+    );
   }
   const ledgerRoots = controller.scope.consumedOutputLedgerRoots ?? [];
   if (ledgerRoots.length !== 1) {
     throw new Error("project_control_consumed_output_ledger_required");
   }
   const ledgerRoot = ledgerRoots[0]!;
-  const ledger = await readCodexGoalConsumedOutputLedgers({ roots: ledgerRoots });
+  const ledger = await readCodexGoalConsumedOutputLedgers({
+    roots: ledgerRoots,
+  });
   const sourceRecord = consumedOutputRecordFor({
     ledger,
     jobId: loaded.manifest.jobId,
@@ -103,10 +96,17 @@ export async function projectControlRecordFailedNoOutputView(
       jobRootDir: loaded.manifest.jobRootDir,
     },
   );
-  const attemptId = requiredRawString(args.terminalAttemptId, "terminalAttemptId");
-  const failureCategory = requiredRawString(args.failureCategory, "failureCategory");
+  const attemptId = requiredRawString(
+    args.terminalAttemptId,
+    "terminalAttemptId",
+  );
+  const failureCategory = requiredRawString(
+    args.failureCategory,
+    "failureCategory",
+  );
   const failureCode = requiredRawString(args.failureCode, "failureCode");
-  const note = stringValue(args.note) ??
+  const note =
+    stringValue(args.note) ??
     `Closed ${loaded.manifest.jobId} after infrastructure failure without authored output.`;
   if (!sourceRecord) {
     return await recordInitialFailedNoOutput({
@@ -136,9 +136,13 @@ export async function projectControlRecordFailedNoOutputView(
     };
   }
   const status = await collectCodexGoalStatus(statusInput(loaded.launch));
-  const progressStale = status.progressHeartbeatAgeMs !== undefined &&
+  const progressStale =
+    status.progressHeartbeatAgeMs !== undefined &&
     status.progressHeartbeatAgeMs > 10 * 60_000;
-  const workerLiveness = resolveCodexGoalWorkerLiveness({ status, progressStale });
+  const workerLiveness = resolveCodexGoalWorkerLiveness({
+    status,
+    progressStale,
+  });
   const closedAt = failedNoOutputClosedAt(sourceRecord.closedAt);
 
   if (!args.confirmFailedNoOutput) {
@@ -232,7 +236,9 @@ export async function projectControlRecordFailedNoOutputView(
           workspacePath: workspace.canonicalWorkspacePath,
         },
       };
-      const lockedStatus = await collectCodexGoalStatus(statusInput(lockedLaunch));
+      const lockedStatus = await collectCodexGoalStatus(
+        statusInput(lockedLaunch),
+      );
       const lockedProgressStale =
         lockedStatus.progressHeartbeatAgeMs !== undefined &&
         lockedStatus.progressHeartbeatAgeMs > 10 * 60_000;
@@ -240,7 +246,9 @@ export async function projectControlRecordFailedNoOutputView(
         status: lockedStatus,
         progressStale: lockedProgressStale,
       });
-      const lockedClosedAt = failedNoOutputClosedAt(lockedSourceRecord.closedAt);
+      const lockedClosedAt = failedNoOutputClosedAt(
+        lockedSourceRecord.closedAt,
+      );
       const validationInput = {
         allowedLedgerRoots: ledgerRoots,
         ledgerRoot,
@@ -254,9 +262,7 @@ export async function projectControlRecordFailedNoOutputView(
         failureCategory,
         failureCode,
         note,
-        ...(preexistingWorkspacePatch
-          ? { preexistingWorkspacePatch }
-          : {}),
+        ...(preexistingWorkspacePatch ? { preexistingWorkspacePatch } : {}),
       };
       assertFailedNoOutputEvidence(validationInput);
       const archivedPreexistingWorkspacePatch = preexistingWorkspacePatch
@@ -296,12 +302,14 @@ export async function projectControlRecordFailedNoOutputView(
 }
 
 async function recordInitialFailedNoOutput(input: {
-  readonly controller: Awaited<ReturnType<
-    CodexGoalMcpProjectControlActionsDeps["loadProjectControlController"]
-  >>;
-  readonly loaded: Awaited<ReturnType<
-    CodexGoalMcpProjectControlActionsDeps["loadJobLaunch"]
-  >>;
+  readonly controller: Awaited<
+    ReturnType<
+      CodexGoalMcpProjectControlActionsDeps["loadProjectControlController"]
+    >
+  >;
+  readonly loaded: Awaited<
+    ReturnType<CodexGoalMcpProjectControlActionsDeps["loadJobLaunch"]>
+  >;
   readonly ledgerRoots: readonly string[];
   readonly ledgerRoot: string;
   readonly attemptId: string;
@@ -316,9 +324,13 @@ async function recordInitialFailedNoOutput(input: {
   };
 }): Promise<JsonObject> {
   const status = await collectCodexGoalStatus(statusInput(input.loaded.launch));
-  const progressStale = status.progressHeartbeatAgeMs !== undefined &&
+  const progressStale =
+    status.progressHeartbeatAgeMs !== undefined &&
     status.progressHeartbeatAgeMs > 10 * 60_000;
-  const workerLiveness = resolveCodexGoalWorkerLiveness({ status, progressStale });
+  const workerLiveness = resolveCodexGoalWorkerLiveness({
+    status,
+    progressStale,
+  });
   const closedAt = new Date().toISOString();
   const decisionPreview = {
     status: "failed_no_output",
@@ -390,7 +402,13 @@ async function recordInitialFailedNoOutput(input: {
         throw new Error("failed_no_output_worker_still_alive");
       }
       if (input.preexistingWorkspacePatch) {
-        await assertNoAuthoredWorkerOutputEvidence(lockedStatus);
+        await assertNoAuthoredWorkerOutputEvidence({
+          status: lockedStatus,
+          jobRootDir: input.loaded.manifest.jobRootDir,
+          taskId: input.loaded.manifest.taskId,
+          workspacePath: workspace.canonicalWorkspacePath,
+          preexistingWorkspacePatch: input.preexistingWorkspacePatch,
+        });
         if (lockedStatus.workspaceDirty !== true) {
           throw new Error(
             "failed_no_output_preexisting_patch_workspace_required",
@@ -408,8 +426,7 @@ async function recordInitialFailedNoOutput(input: {
       }
       const backup = await captureLocalTerminalOutputBackup({
         archiveRoot: join(input.loaded.manifest.jobRootDir, "archives"),
-        archiveName:
-          `${input.loaded.manifest.jobId}-failed-no-output-${input.attemptId}`,
+        archiveName: `${input.loaded.manifest.jobId}-failed-no-output-${input.attemptId}`,
         workspacePath: workspace.canonicalWorkspacePath,
         changedFiles: [],
       });
@@ -423,13 +440,12 @@ async function recordInitialFailedNoOutput(input: {
       ) {
         throw new Error("failed_no_output_clean_workspace_required");
       }
-      const archivedPreexistingWorkspacePatch =
-        input.preexistingWorkspacePatch
-          ? await archivePreexistingWorkspacePatch({
-              source: input.preexistingWorkspacePatch,
-              archivePath: backup.archivePath,
-            })
-          : undefined;
+      const archivedPreexistingWorkspacePatch = input.preexistingWorkspacePatch
+        ? await archivePreexistingWorkspacePatch({
+            source: input.preexistingWorkspacePatch,
+            archivePath: backup.archivePath,
+          })
+        : undefined;
       if (input.preexistingWorkspacePatch) {
         await assertProjectPreStartAdmissionLaunchBinding({
           manifest: input.loaded.manifest,
@@ -463,8 +479,7 @@ async function recordInitialFailedNoOutput(input: {
             output: { authoredChanges: false, workspaceDirty: false },
             ...(archivedPreexistingWorkspacePatch
               ? {
-                  preexistingWorkspacePatch:
-                    archivedPreexistingWorkspacePatch,
+                  preexistingWorkspacePatch: archivedPreexistingWorkspacePatch,
                 }
               : {}),
             note: input.note,
@@ -520,9 +535,17 @@ async function archivePreexistingWorkspacePatch(input: {
   return { path, sha256: input.source.sha256 };
 }
 
-async function assertNoAuthoredWorkerOutputEvidence(
-  status: Awaited<ReturnType<typeof collectCodexGoalStatus>>,
-): Promise<void> {
+async function assertNoAuthoredWorkerOutputEvidence(input: {
+  readonly status: Awaited<ReturnType<typeof collectCodexGoalStatus>>;
+  readonly jobRootDir: string;
+  readonly taskId: string;
+  readonly workspacePath: string;
+  readonly preexistingWorkspacePatch: {
+    readonly path: string;
+    readonly sha256: string;
+  };
+}): Promise<void> {
+  const { status } = input;
   const hasLaunchArtifacts =
     status.tmuxAlive === true ||
     status.resultExists !== false ||
@@ -531,7 +554,23 @@ async function assertNoAuthoredWorkerOutputEvidence(
     status.runtimeEventsExists !== false;
   if (!hasLaunchArtifacts) return;
   if (status.resultExists !== true || !status.resultPath) {
-    throw new Error("failed_no_output_worker_launch_artifacts_present");
+    const lifecycleMarkers = await readCodexGoalLifecycleMarkers({
+      jobRootDir: input.jobRootDir,
+      taskId: input.taskId,
+    });
+    if (!lifecycleMarkers.some((marker) => marker.type === "stop_event")) {
+      throw new Error("failed_no_output_worker_launch_artifacts_present");
+    }
+    const workspacePatch = await captureGitWorkspacePatch({
+      workspacePath: input.workspacePath,
+    });
+    const workspacePatchSha256 = createHash("sha256")
+      .update(workspacePatch)
+      .digest("hex");
+    if (workspacePatchSha256 !== input.preexistingWorkspacePatch.sha256) {
+      throw new Error("failed_no_output_runtime_authored_changes_present");
+    }
+    return;
   }
   const result = await readRuntimeResultBrief(status.resultPath);
   if (
@@ -557,7 +596,9 @@ async function requestedPreexistingWorkspacePatch(
   },
 ): Promise<{ readonly path: string; readonly sha256: string } | undefined> {
   const path = stringValue(args.preexistingWorkspacePatchPath);
-  const expectedSha256 = stringValue(args.preexistingWorkspacePatchSha256)?.toLowerCase();
+  const expectedSha256 = stringValue(
+    args.preexistingWorkspacePatchSha256,
+  )?.toLowerCase();
   if (!path && !expectedSha256) return undefined;
   if (!path || !expectedSha256 || !/^[a-f0-9]{64}$/.test(expectedSha256)) {
     throw new Error("failed_no_output_preexisting_patch_evidence_required");
@@ -621,10 +662,9 @@ async function assertEvidencePathReadable(
   const scope = evidenceRoot
     ? {
         ...input.scope,
-        readRoots: Array.from(new Set([
-          ...(input.scope.readRoots ?? []),
-          evidenceRoot,
-        ])),
+        readRoots: Array.from(
+          new Set([...(input.scope.readRoots ?? []), evidenceRoot]),
+        ),
       }
     : input.scope;
   const policy = createAccessPolicyService({
@@ -699,6 +739,8 @@ function projectOwnedArchiveRoot(input: {
 
 function pathInsideOrEqual(path: string, root: string): boolean {
   const relativePath = relative(root, path);
-  return relativePath === "" ||
-    relativePath !== ".." && !relativePath.startsWith(`..${sep}`);
+  return (
+    relativePath === "" ||
+    (relativePath !== ".." && !relativePath.startsWith(`..${sep}`))
+  );
 }

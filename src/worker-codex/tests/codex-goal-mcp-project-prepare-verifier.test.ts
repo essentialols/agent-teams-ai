@@ -248,58 +248,53 @@ await writeFile(file, JSON.stringify(operation, null, 2) + "\\n");
             failureCode: "account_reservation_unavailable",
             confirmFailedNoOutput: true,
           };
-          await expect(callToolJson(
-            client,
-            "codex_goal_project_record_failed_no_output",
-            {
+          await expect(
+            callToolJson(client, "codex_goal_project_record_failed_no_output", {
               ...terminalArgs,
               preexistingWorkspacePatchPath: unrelatedPatchPath,
               preexistingWorkspacePatchSha256: createHash("sha256")
                 .update(unrelatedPatch)
                 .digest("hex"),
               confirmPreexistingWorkspacePatch: true,
-            },
-          )).resolves.toMatchObject({
+            }),
+          ).resolves.toMatchObject({
             ok: false,
             error:
               "project_control_pre_start_launch_binding_mismatch:input_patch_artifact",
           });
-          await expect(callToolJson(
-            client,
-            "codex_goal_project_record_failed_no_output",
-            {
+          await expect(
+            callToolJson(client, "codex_goal_project_record_failed_no_output", {
               ...terminalArgs,
               preexistingWorkspacePatchPath: preexistingPatchPath,
               preexistingWorkspacePatchSha256:
                 handoff.manifest.artifacts.patch.sha256,
-            },
-          )).resolves.toMatchObject({
+            }),
+          ).resolves.toMatchObject({
             ok: false,
             reason: "confirm_preexisting_workspace_patch_required",
           });
-          const verifierLogPath = verifierManifest.logPath ?? join(
-            verifierManifest.jobRootDir,
-            `${verifierManifest.taskId}.log`,
-          );
+          const verifierLogPath =
+            verifierManifest.logPath ??
+            join(verifierManifest.jobRootDir, `${verifierManifest.taskId}.log`);
           await writeFile(verifierLogPath, "worker launch evidence\n");
-          await expect(callToolJson(
-            client,
-            "codex_goal_project_record_failed_no_output",
-            {
+          await expect(
+            callToolJson(client, "codex_goal_project_record_failed_no_output", {
               ...terminalArgs,
               preexistingWorkspacePatchPath: preexistingPatchPath,
               preexistingWorkspacePatchSha256:
                 handoff.manifest.artifacts.patch.sha256,
               confirmPreexistingWorkspacePatch: true,
-            },
-          )).resolves.toMatchObject({
+            }),
+          ).resolves.toMatchObject({
             ok: false,
             error: "failed_no_output_worker_launch_artifacts_present",
           });
-          const verifierResultPath = verifierManifest.outputPath ?? join(
-            verifierManifest.jobRootDir,
-            `${verifierManifest.taskId}.latest-result.json`,
-          );
+          const verifierResultPath =
+            verifierManifest.outputPath ??
+            join(
+              verifierManifest.jobRootDir,
+              `${verifierManifest.taskId}.latest-result.json`,
+            );
           const strictFailedResult = {
             status: "failed",
             changedFiles: ["feature.txt"],
@@ -312,23 +307,31 @@ await writeFile(file, JSON.stringify(operation, null, 2) + "\\n");
             verifierResultPath,
             `${JSON.stringify(strictFailedResult)}\n`,
           );
-          await expect(callToolJson(
-            client,
-            "codex_goal_project_record_failed_no_output",
-            {
+          await expect(
+            callToolJson(client, "codex_goal_project_record_failed_no_output", {
               ...terminalArgs,
               preexistingWorkspacePatchPath: preexistingPatchPath,
               preexistingWorkspacePatchSha256:
                 handoff.manifest.artifacts.patch.sha256,
               confirmPreexistingWorkspacePatch: true,
-            },
-          )).resolves.toMatchObject({
+            }),
+          ).resolves.toMatchObject({
             ok: false,
             error: "failed_no_output_runtime_authored_changes_present",
           });
+          await rm(verifierResultPath);
           await writeFile(
-            verifierResultPath,
-            `${JSON.stringify({ ...strictFailedResult, changedFiles: [] })}\n`,
+            join(
+              verifierManifest.jobRootDir,
+              `${verifierManifest.taskId}.stop-event.json`,
+            ),
+            `${JSON.stringify({
+              schemaVersion: 1,
+              jobId: verifierManifest.jobId,
+              taskId: verifierManifest.taskId,
+              stoppedAt: new Date().toISOString(),
+              forceStop: true,
+            })}\n`,
           );
           const archivedPreexistingPatchPath = join(
             verifierManifest.jobRootDir,
@@ -336,17 +339,15 @@ await writeFile(file, JSON.stringify(operation, null, 2) + "\\n");
             "project-verifier-failed-no-output-verifier-account-unavailable",
             "preexisting-workspace.patch",
           );
-          await expect(callToolJson(
-            client,
-            "codex_goal_project_record_failed_no_output",
-            {
+          await expect(
+            callToolJson(client, "codex_goal_project_record_failed_no_output", {
               ...terminalArgs,
               preexistingWorkspacePatchPath: preexistingPatchPath,
               preexistingWorkspacePatchSha256:
                 handoff.manifest.artifacts.patch.sha256,
               confirmPreexistingWorkspacePatch: true,
-            },
-          )).resolves.toMatchObject({
+            }),
+          ).resolves.toMatchObject({
             ok: true,
             decision: {
               status: "failed_no_output",

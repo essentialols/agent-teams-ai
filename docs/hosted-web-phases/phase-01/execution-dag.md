@@ -1,9 +1,8 @@
 # Phase 1 execution DAG and ownership
 
 Status: P1.S0, P1.S1, P1.S2, P1.R1, and P1.1D are accepted and integrated. P1.1D's pushed commit
-`e7e7e734c82c49105682e7a19bbedafa1f5ddbad` is historical provenance only. The sole current serial
-edge is the exact PR #252 five-file base-conflict resolution lane, gated by one JIT canonical binding
-under the unchanged `controller-v17`. End `HOLD`.
+`e7e7e734c82c49105682e7a19bbedafa1f5ddbad` is historical provenance only. The sole current edge is
+the PR #252 semantic five-path remediation router r2. End `HOLD`.
 
 ## Current DAG
 
@@ -15,94 +14,113 @@ P1.S0 accepted
                  -> P1.1D remediation
                       -> independent FORMAL ACCEPT P0/P1/P2=0
                            -> accepted P1.1D integration pushed
-                                -> target-binding correction accepted + policy-integrated + pushed
-                                     -> controller-v17 resolves canonicalAtProducerAdmission once
-                                          -> PR #252 exact five-file producer (one; xhigh/default; no Fast)
-                                               -> immutable resolution output
-                                                    -> independent integration review (one; xhigh/default)
-                                                         -> explicit ACCEPT or REJECT
-                                                              -> runtime validates target equality
-                                                                   -> true two-parent merge + push
-                                                                        -X-> P1.R2 -> P1.I -> P1.F -> Phase 2+
+                                -> byte-copy producer + reviewer REJECT (terminal; never reuse)
+                                     -> semantic router r1 REJECT (invalid launch contract; consumed)
+                                          -> semantic router r2 docs review
+                                               -> router ACCEPT + integration + push
+                                                    -> resolve accepted pushed router SHA once
+                                                         -> render one fully concrete producer request
+                                                              -> semantic five-path producer
+                                                                   -> self-review + immutable output + HOLD
+                                                                        -> prepare fresh independent no-write verifier
+                                                                             -> strict reviewKind=review
+                                                                             -> ACCEPT only at P0/P1/P2=0/0/0
+                                                                                  -> ProjectScopedControl true merge
+                                                                                       -> source non-conflicts materialized
+                                                                                            -> all gates + command-identity test
+                                                                                                 -> conventional commit + push
+                                                                                                      -X-> P1.R2 -> P1.I -> P1.F -> Phase 2+
 ```
 
-The runtime does not select or alter this DAG or choose a branch. The packet fixes the route and
-source identity; runtime only validates that all resolved target fields still equal current canonical
-and fails closed on drift.
+The runtime does not select or alter this DAG. It validates stored identities and fails closed on
+drift. Neither a rejected job nor a moving ref supplies execution authority.
 
-The earlier r1 worker on the current edge is terminal `failed_no_output`; it has no reusable output
-or authority and is never inspected or resumed. Packet revision
-`phase-01-pr252-target-binding-correction-r1` supersedes the prior packet's self-staling target
-binding and is the worker's sole authorized replacement.
+## Provenance and fixed identities
 
-## Binding accepted input and merge identity
+| Record                          | Identity                                                                                    | Disposition / use                                            |
+| ------------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| Fixed router base               | `7c502f45df32b58bbc161b26dcc28df8a17107c9`                                                  | immutable `baseSha`                                          |
+| Byte-copy implementation patch  | `a0fade213fd86c52022f944c9d3a9f169175f1fd5a54f6c19652173ae5307304`                          | producer/reviewer `REJECT`; provenance only                  |
+| Semantic router r1 patch        | `95dcdae236fdadbd63bfb3022441accc4354cffdc5ca6db7447e7a01e9d53221`                          | `REJECT`; invalid future launch contract                     |
+| Router r1 rejection consumption | `pr252-semantic-router-r1-contract-reject-consume-v1`                                       | terminal decision record                                     |
+| Current packet revision         | `phase-01-pr252-semantic-conflict-remediation-router-r2`                                    | sole correction authority                                    |
+| Merge source                    | `origin/refactor/team-provisioning-round2-reapply@7afc908ce92f14b4b0ebd06cc4aa3a4cf33807d0` | immutable source metadata outside the strict worker contract |
 
-P1.1D's accepted review was performed by
-`agent-teams-hosted-web-refactor-p1-1d-shadowed-map-review-v17-r4`. The strict result SHA-256 is
-`be0c9abd679f817c386d1d06d1b738c2a1505bb3c4718279129ab74842c98fa6`; reviewed output ID is
-`f3394026185348c84673d44a9b30a82667c3ff9435b5d4d7609c04785c274f41`; accepted integration is
-`p1-1d-shadowed-map-r4-accepted-integration-v3`; and its accepted/pushed P1.1D commit was
-`e7e7e734c82c49105682e7a19bbedafa1f5ddbad`. These values remain immutable historical provenance.
+No rejected patch is an implementation input. The clean producer attempt has
+`inputPatchHash=null`, `revision=0`, `retryCount=0`, and `supersedes=null`.
 
-`canonicalAtProducerAdmission` is the exact current canonical commit after this correction router is
-accepted, policy-integrated, and pushed. No product worker starts before that point. Immediately
-before producer admission, `controller-v17` resolves the binding exactly once to a full SHA. The same
-value becomes `canonicalSha`, `phaseStartSha`, `baseSha`, materialization `HEAD`,
-`planBundleCommit`, `expectedTargetCommit`, reviewer materialization, `mark_reviewed` target metadata,
-and integration target. A second resolution or unequal field fails closed.
+## Post-push target edge
 
-The PR source remains `origin/refactor/team-provisioning-round2-reapply`, pinned to
-`7afc908ce92f14b4b0ebd06cc4aa3a4cf33807d0`. A moving branch head is not an admissible substitute.
+Product-worker capacity is zero until r2 receives independent `ACCEPT`, is integrated, and is
+pushed. `ProjectScopedControl` then resolves that accepted pushed router commit once and stores the
+full SHA. It binds the stored SHA to:
+
+- producer `canonicalSha` and `phaseStartSha`;
+- outer `sourceRef` and `baseBranch` plan metadata;
+- producer worktree `HEAD` materialization metadata;
+- reviewer target and materialization;
+- `mark_reviewed` and integration target; and
+- the true merge's first parent.
+
+`baseSha` stays `7c502f45df32b58bbc161b26dcc28df8a17107c9`. The merge source stays the pinned
+`7afc908ce92f14b4b0ebd06cc4aa3a4cf33807d0` commit. Any second resolution, placeholder, unequal
+binding, moving ref, or canonical drift stops the DAG.
+
+The concrete producer/reviewer contract check list is seven exact `{id,cwd,command}` objects with
+`cwd="src"` and `cd .. && ` command prefixes, never the human prose gate list. Its execution policy
+has exactly `mode`, the fully concrete isolated `sandboxRoot`, and a fixed nonempty
+`forbiddenRealProjects` list. Extended orchestration safety flags remain outside the strict contract;
+string checks, extra policy keys, and unresolved binding/copy objects stop the DAG.
 
 ## Current lane registry
 
-| Node                             | Mission                                                                     | Capacity                                    | Packet / revision                                                                         |
-| -------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `PR252-base-conflict-resolution` | Resolve exactly five PR #252 conflicts byte-for-byte to pinned source blobs | one producer, then one independent reviewer | `lanes/pr252-base-conflict-resolution.md` / `phase-01-pr252-target-binding-correction-r1` |
+| Node                                  | Mission                                           | Capacity                                    | Packet / revision                                                                                    |
+| ------------------------------------- | ------------------------------------------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `PR252-semantic-conflict-remediation` | Semantically reconcile exactly five PR #252 paths | one producer, then one independent reviewer | `lanes/pr252-base-conflict-resolution.md` / `phase-01-pr252-semantic-conflict-remediation-router-r2` |
 
-Both workers use `xhigh` reasoning and `default` service tier with Fast disabled. The producer owns
-only the five conflict paths and produces an immutable runtime-captured patch. The reviewer owns no
-repository path. Neither worker may merge, stage, commit, or push.
+Both workers use `xhigh` reasoning and the `default` service tier with Fast forbidden. The producer
+owns only the five paths below. The reviewer owns no repository path. Neither worker may stage,
+merge, commit, or push.
 
-## Exact conflict scope
+## Exact semantic scope
 
-| Path                                                                          | Required final blob OID                    |
-| ----------------------------------------------------------------------------- | ------------------------------------------ |
-| `src/features/task-board-commands/core/application/TaskBoardCommandFacade.ts` | `f5515ddac4cd7bee957a75bc06aad78309ad3a74` |
-| `src/main/services/team/TeamDataService.ts`                                   | `a8fea50ddbd71563f2ab7853978d6420eed6c441` |
-| `src/renderer/components/team/TeamDetailView.tsx`                             | `5cbaef7f23046dab598a1c2878811adbfd62ea4c` |
-| `test/features/task-board-commands/TaskBoardCommands.e2e.test.ts`             | `0c0a717fea61031c3c24a4ef787c0acd9bd80ad5` |
-| `test/main/services/team/TeamDataService.test.ts`                             | `c281cac6493e07abf1ddd201255539e902122af2` |
+1. `src/features/task-board-commands/core/application/TaskBoardCommandFacade.ts`
+2. `src/main/services/team/TeamDataService.ts`
+3. `src/renderer/components/team/TeamDetailView.tsx`
+4. `test/features/task-board-commands/TaskBoardCommands.e2e.test.ts`
+5. `test/main/services/team/TeamDataService.test.ts`
 
-The producer diff, runtime-recreated merge conflict set, reviewed output, and final merge resolution
-set must all equal this exact five-path set. An extra or missing path fails closed.
+The producer must combine target and source intent within these paths, not copy complete source
+blobs. Facade destination `reconcile` is optional and capability-driven; absent capability falls back
+to `findById` plus validation, present mismatched provenance is terminal, and an unknown outcome
+cannot become success. `TeamDataService` narrowly guards `reconcileTaskCreation`, omits the port when
+absent, keeps `projectPath` outside the hashed payload, and sorts/dedupes relations.
+
+`TeamDetailView` provides a dual-signature async adapter for the target positional and source
+request-object Promise callbacks, retaining stable positional command identity and preserving
+`request.command`. The TaskBoard E2E file keeps the four target cases and ports the five source cases
+for exactly nine without unguarded real-controller reconcile. The supported final task-board API
+keeps the coherent `reconcileTaskCreation` path; a narrow target-mock or older-boundary guard does
+not authorize its omission when the capability exists. No sixth producer path may change.
 
 ## Review and integration edges
 
-The independent reviewer materializes the immutable output against the already-resolved full SHA and
-reruns both focused test files, the inherited typecheck-baseline classification, exact five-file
-`lint:fast:files`, Prettier, diff, blob, secret/private-path, binary, ownership, provenance, and
-no-stage checks. Only a complete `ACCEPT` with P0/P1/P2 `0/0/0` permits `mark_reviewed`.
+The producer must prove an empty index, run both focused suites, classify exactly the inherited seven
+Phase 0 typecheck diagnostics, run exact five-file `lint:fast:files` and Prettier, and pass diff,
+ownership, conflict-marker, secret/private-path, and binary scans. It self-reviews, emits one
+immutable output, and ends `HOLD`.
 
-`mark_reviewed` binds the immutable reviewed output to:
+`ProjectScopedControl` invokes `codex_goal_project_prepare_verifier` exactly once for the fresh
+independent reviewer. It uses `workerRole: reviewer`, strict runtime `reviewKind: review`, and the
+no-write policy; architecture/integration remains purpose prose. The concrete request fails closed
+on drift, and the reviewer reruns the same gates without writes. `ACCEPT` requires P0/P1/P2 `0/0/0`;
+every other result blocks. Only after acceptance may `ProjectScopedControl` bind the reviewed output
+to the stored target and pinned source, create the true ordered two-parent merge
+`[stored accepted router target, 7afc908ce92f14b4b0ebd06cc4aa3a4cf33807d0]`, materialize the
+pinned source's non-conflict paths, apply the reviewed output to the five conflicts, rerun all gates
+on that final shape, and also run
+`pnpm exec vitest run test/renderer/utils/createTaskCommandIdentity.test.ts`, make a conventional
+commit, and push.
 
-```json
-{
-  "sourceRemote": "origin",
-  "sourceBranch": "refactor/team-provisioning-round2-reapply",
-  "sourceCommit": "7afc908ce92f14b4b0ebd06cc4aa3a4cf33807d0",
-  "expectedTargetCommit": "<resolved canonicalAtProducerAdmission full SHA>"
-}
-```
-
-The controller must render the concrete full SHA; the explanatory placeholder above is never valid
-runtime input. `open_integration_attempt` consumes only `reviewedOutputId`. Runtime creates the true
-merge and requires final parents, in order, `[resolved canonicalAtProducerAdmission,
-7afc908ce92f14b4b0ebd06cc4aa3a4cf33807d0]`. A patch-only, squash, synthetic one-parent, reversed,
-moving-head, or canonical-drifted result is rejected.
-
-## Blocked successor
-
-P1.R2, P1.I, P1.F, and Phase 2+ remain blocked through review and integration and until the validated
-two-parent merge is pushed. This docs author launches no worker/controller/integration attempt and
-performs no fetch, stage, commit, merge, or push. Terminal state: `HOLD`.
+P1.R2, P1.I, P1.F, and Phase 2+ remain blocked until that push. This docs author launches no job and
+performs no fetch, stage, commit, merge, push, or integration attempt. Terminal state: `HOLD`.

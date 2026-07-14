@@ -1,8 +1,9 @@
 {
   "schemaVersion": 1,
   "currentExecutablePhase": "phase-01",
-  "currentExecutableSubphase": "PR252-base-conflict-resolution",
-  "currentExecutableNodes": ["PR252-base-conflict-resolution"],
+  "currentExecutableSubphase": "PR252-semantic-conflict-remediation",
+  "currentExecutableNodes": ["PR252-semantic-conflict-remediation"],
+  "currentRouterRevision": "phase-01-pr252-semantic-conflict-remediation-router-r2",
   "currentRouterTerminalState": "HOLD",
   "durableController": {
     "identity": "controller-v17",
@@ -10,83 +11,74 @@
     "replacementAuthorized": false
   },
   "workerStartAuthority": "ProjectScopedControl codex_goal_project_refill_worker",
-  "jitCanonicalBinding": {
-    "name": "canonicalAtProducerAdmission",
-    "definition": "the exact current canonical commit after this correction router has been accepted, policy-integrated, and pushed",
+  "verifierStartAuthority": "ProjectScopedControl codex_goal_project_prepare_verifier",
+  "fixedRouterBaseSha": "7c502f45df32b58bbc161b26dcc28df8a17107c9",
+  "storedAcceptedPushedRouterCommit": {
+    "definition": "the full commit SHA of semantic router r2 after independent ACCEPT, integration, and push",
     "stateInThisDocsRouter": "unresolved",
-    "resolvedBy": "controller-v17",
+    "resolvedBy": "ProjectScopedControl",
     "requiredResolutionCount": 1,
-    "resolutionTiming": "immediately-before-producer-admission",
-    "resolutionPreconditions": [
-      "target-binding-correction-accepted",
-      "target-binding-correction-policy-integrated",
-      "target-binding-correction-pushed",
-      "controller-v17-live=true"
-    ],
+    "resolutionTiming": "after-router-accept-integration-push-and-before-producer-admission",
     "resolvedValueFormat": "full-40-character-commit-sha",
     "downstreamReresolutionAuthorized": false,
+    "baseShaDoesNotRebind": true,
     "boundFieldPaths": [
       "currentRoute.canonicalSha",
-      "currentRoute.baseSha",
       "currentRoute.phaseStartSha",
-      "currentRoute.planBundleCommit",
-      "currentRoute.materializationHead",
-      "currentRoute.expectedTargetCommit",
-      "projectScopedProducerAdmission.preStartAdmission.contract.canonicalSha",
-      "projectScopedProducerAdmission.preStartAdmission.contract.baseSha",
-      "projectScopedProducerAdmission.preStartAdmission.contract.phaseStartSha",
-      "projectScopedProducerAdmission.preStartAdmission.contract.planBundleCommit",
-      "projectScopedProducerAdmission.preStartAdmission.contract.materializationHead",
-      "projectScopedProducerAdmission.preStartAdmission.contract.expectedTargetCommit",
-      "projectScopedProducerAdmission.planBundleCommitBinding",
-      "integrationReviewAdmission.materialization.canonicalSha",
-      "integrationReviewAdmission.materialization.baseSha",
-      "integrationReviewAdmission.materialization.phaseStartSha",
-      "integrationReviewAdmission.materialization.materializationHead",
-      "integrationReviewAdmission.materialization.expectedTargetCommit",
-      "pr252BaseConflictScope.expectedTargetCommit",
-      "reviewedIntegrationProtocol.markReviewedMergeBinding.expectedTargetCommit",
-      "reviewedIntegrationProtocol.integrationTargetCommit",
+      "currentRoute.sourceRef",
+      "currentRoute.baseBranch",
+      "currentRoute.worktreeHead",
+      "projectScopedProducerAdmission.orchestrationLaunchTemplate.planMetadata.sourceRef",
+      "projectScopedProducerAdmission.orchestrationLaunchTemplate.planMetadata.baseBranch",
+      "projectScopedProducerAdmission.orchestrationLaunchTemplate.planMetadata.planBundleCommit",
+      "projectScopedProducerAdmission.orchestrationLaunchTemplate.materializationMetadata.worktreeHead",
+      "projectScopedProducerAdmission.orchestrationLaunchTemplate.contractRenderer.valueSources.canonicalSha",
+      "projectScopedProducerAdmission.orchestrationLaunchTemplate.contractRenderer.valueSources.phaseStartSha",
+      "integrationReviewAdmission.storedTarget",
+      "integrationReviewAdmission.materialization.worktreeHead",
+      "integrationReviewAdmission.strictContractRenderer.valueSources.canonicalSha",
+      "integrationReviewAdmission.strictContractRenderer.valueSources.phaseStartSha",
+      "reviewedIntegrationProtocol.markReviewedTarget",
+      "reviewedIntegrationProtocol.integrationTarget",
       "reviewedIntegrationProtocol.requiredParentOrder[0]"
     ]
   },
   "currentRoute": {
-    "mode": "base-conflict-resolution",
+    "mode": "semantic-conflict-remediation",
     "controllerPacket": "docs/hosted-web-phases/phase-01/controller-packet.md",
     "lanePackets": [
       {
-        "subphase": "PR252-base-conflict-resolution",
-        "node": "PR252-base-conflict-resolution",
-        "laneId": "pr252-base-conflict-resolution",
+        "subphase": "PR252-semantic-conflict-remediation",
+        "node": "PR252-semantic-conflict-remediation",
+        "laneId": "pr252-semantic-conflict-remediation",
         "path": "docs/hosted-web-phases/phase-01/lanes/pr252-base-conflict-resolution.md",
-        "packetRevision": "phase-01-pr252-target-binding-correction-r1"
+        "packetRevision": "phase-01-pr252-semantic-conflict-remediation-router-r2"
       }
     ],
-    "canonicalSha": { "binding": "canonicalAtProducerAdmission" },
-    "baseSha": { "binding": "canonicalAtProducerAdmission" },
-    "phaseStartSha": { "binding": "canonicalAtProducerAdmission" },
-    "planBundleCommit": { "binding": "canonicalAtProducerAdmission" },
-    "materializationHead": { "binding": "canonicalAtProducerAdmission" },
-    "expectedTargetCommit": { "binding": "canonicalAtProducerAdmission" },
-    "sourceRemote": "origin",
-    "sourceBranch": "refactor/team-provisioning-round2-reapply",
-    "sourceCommit": "7afc908ce92f14b4b0ebd06cc4aa3a4cf33807d0",
+    "canonicalSha": { "binding": "storedAcceptedPushedRouterCommit" },
+    "baseSha": "7c502f45df32b58bbc161b26dcc28df8a17107c9",
+    "phaseStartSha": { "binding": "storedAcceptedPushedRouterCommit" },
+    "sourceRef": { "binding": "storedAcceptedPushedRouterCommit" },
+    "baseBranch": { "binding": "storedAcceptedPushedRouterCommit" },
+    "worktreeHead": { "binding": "storedAcceptedPushedRouterCommit" },
+    "mergeSource": {
+      "remote": "origin",
+      "branch": "refactor/team-provisioning-round2-reapply",
+      "commit": "7afc908ce92f14b4b0ebd06cc4aa3a4cf33807d0"
+    },
     "launchGate": {
       "required": {
-        "exactSevenPathTargetBindingCorrectionAccepted": true,
-        "exactSevenPathTargetBindingCorrectionPolicyIntegrated": true,
-        "exactSevenPathTargetBindingCorrectionPushed": true,
+        "semanticRouterR2Accepted": true,
+        "semanticRouterR2Integrated": true,
+        "semanticRouterR2Pushed": true,
         "sameDurableControllerV17": true,
         "durableControllerLive": true,
-        "controllerValue": "live=true",
-        "canonicalAtProducerAdmissionResolvedExactlyOnce": true,
-        "allTargetFieldsBoundToResolvedFullSha": true,
-        "p11dFormalAcceptVerified": true,
-        "p11dAcceptedCommitPushed": true,
-        "resolvedTargetAndPinnedSourceMaterialized": true,
-        "fiveSourceBlobsVerified": true,
-        "r1TerminalFailedNoOutput": true,
-        "noPriorConflictWorkerActive": true
+        "storedAcceptedPushedRouterCommitResolvedExactlyOnce": true,
+        "allStoredTargetFieldsEqual": true,
+        "fixedBaseShaVerified": true,
+        "pinnedMergeSourceVerified": true,
+        "rejectedJobsTerminalAndUnused": true,
+        "noPriorPr252WorkerActive": true
       },
       "attestedByThisDocsTransition": false
     }
@@ -94,37 +86,6 @@
   "acceptedPhase0Freeze": {
     "status": "accepted-frozen",
     "commit": "f4fa24aac9615a4ce10632965a2244a2e11a273e"
-  },
-  "acceptedPhase1Bootstrap": {
-    "status": "accepted",
-    "commit": "6f1a87daa9a4bfdf5d754347d92f313f28d0f95d"
-  },
-  "acceptedPhase1FoundationsAndRemediation": {
-    "status": "independently-accepted-integrated",
-    "commit": "041b5c7c2d3225b7dc2eca9e9b7b71aa33217060",
-    "acceptedNodes": ["P1.1A", "P1.1A-schema-version-remediation"]
-  },
-  "acceptedPhase1RoutesAndConformance": {
-    "status": "independently-accepted-policy-integrated-pushed",
-    "routerCommit": "a0dc964e9a71b782b1bbad4769db62a691e50c97",
-    "canonicalCommit": "6a9e9ab714359638fb93a6880855a53c9e8ef4be",
-    "canonicalTree": "22020029327465ed389cd4479db340082ae81601",
-    "acceptedNodes": ["P1.1B", "P1.1C"],
-    "evidenceIds": ["P1.1B.ROUTES", "P1.1B.CAPABILITIES", "P1.1C.CONFORMANCE", "P1.1C.RATCHETS"]
-  },
-  "acceptedPhase1FormalRoutesAndRatchetsReview": {
-    "status": "accepted-policy-integrated",
-    "commit": "759a5d4f45c2142485a0acc13760f3de4d0ff6ea",
-    "reviewer": "agent-teams-hosted-web-refactor-p1-r1-review-v16-r1",
-    "reviewEvidencePath": "docs/research/hosted-web/phase-1/reviews/routes-ratchets.md",
-    "disposition": "ACCEPT",
-    "routesTests": "16/16",
-    "conformanceTests": "13/13",
-    "findings": {
-      "P0": 0,
-      "P1": 0,
-      "P2": 0
-    }
   },
   "acceptedP11dShadowedMapRemediation": {
     "status": "independently-formally-accepted-integrated-pushed",
@@ -142,50 +103,325 @@
     "acceptedCommitUse": "immutable-historical-provenance-only",
     "pushed": true
   },
-  "retiredPr252BaseConflictR1": {
-    "status": "failed_no_output",
-    "terminal": true,
-    "authoredOutput": false,
-    "inspectAuthorized": false,
-    "resumeAuthorized": false,
+  "supersededPr252TargetBindingRouter": {
+    "packetRevision": "phase-01-pr252-target-binding-correction-r1",
+    "status": "superseded-by-semantic-router-r2",
+    "baseCommit": "7c502f45df32b58bbc161b26dcc28df8a17107c9",
+    "inspectJobStateAuthorized": false,
     "reuseAuthorized": false,
-    "soleReplacementPacket": "phase-01-pr252-target-binding-correction-r1"
+    "continueAuthorized": false
   },
-  "supersededPr252TargetBindingPacket": {
-    "status": "superseded-self-staling-target-binding",
-    "inspectAuthorized": false,
-    "resumeAuthorized": false,
+  "rejectedPr252SemanticRouterR1": {
+    "packetRevision": "phase-01-pr252-semantic-conflict-remediation-router-r1",
+    "patchSha256": "95dcdae236fdadbd63bfb3022441accc4354cffdc5ca6db7447e7a01e9d53221",
+    "disposition": "REJECT",
+    "reason": "invalid-future-launch-contract",
+    "consumedBy": "pr252-semantic-router-r1-contract-reject-consume-v1",
+    "terminal": true,
+    "integrateAuthorized": false,
     "reuseAuthorized": false,
-    "replacementPacket": "phase-01-pr252-target-binding-correction-r1"
+    "continueAuthorized": false,
+    "implementationInputAuthorized": false,
+    "replacementPacket": "phase-01-pr252-semantic-conflict-remediation-router-r2"
+  },
+  "rejectedPr252ByteCopyAttempt": {
+    "patchSha256": "a0fade213fd86c52022f944c9d3a9f169175f1fd5a54f6c19652173ae5307304",
+    "producerDisposition": "REJECT",
+    "reviewerDisposition": "REJECT",
+    "reason": "whole-source-blob-copy-is-not-semantic-conflict-resolution",
+    "terminal": true,
+    "integrateAuthorized": false,
+    "reuseAuthorized": false,
+    "retryAuthorized": false,
+    "continueAuthorized": false,
+    "implementationInputAuthorized": false
+  },
+  "producerOwnedPaths": [
+    "src/features/task-board-commands/core/application/TaskBoardCommandFacade.ts",
+    "src/main/services/team/TeamDataService.ts",
+    "src/renderer/components/team/TeamDetailView.tsx",
+    "test/features/task-board-commands/TaskBoardCommands.e2e.test.ts",
+    "test/main/services/team/TeamDataService.test.ts"
+  ],
+  "workerMandatoryDocs": [
+    "AGENTS.md",
+    "docs/hosted-web-phases/START_HERE.md",
+    "docs/hosted-web-phases/EVIDENCE_LIFECYCLE.md",
+    "docs/hosted-web-phases/README.md",
+    "docs/hosted-web-phases/EXECUTION_INDEX.json",
+    "docs/hosted-web-phases/phase-01/controller-packet.md",
+    "docs/hosted-web-phases/phase-01/lanes/pr252-base-conflict-resolution.md",
+    "CLAUDE.md",
+    "AGENT_CRITICAL_GUARDRAILS.md",
+    "docs/hosted-web-phases/PACKET_STANDARD.md"
+  ],
+  "workerMandatoryScripts": [],
+  "workerMandatoryFixtures": [],
+  "producerRequiredChecks": [
+    "git diff --cached --quiet",
+    "pnpm exec vitest run test/features/task-board-commands/TaskBoardCommands.e2e.test.ts",
+    "pnpm exec vitest run test/main/services/team/TeamDataService.test.ts",
+    "pnpm typecheck with exact inherited seven Phase 0 diagnostics only",
+    "pnpm lint:fast:files -- src/features/task-board-commands/core/application/TaskBoardCommandFacade.ts src/main/services/team/TeamDataService.ts src/renderer/components/team/TeamDetailView.tsx test/features/task-board-commands/TaskBoardCommands.e2e.test.ts test/main/services/team/TeamDataService.test.ts",
+    "pnpm exec prettier --check src/features/task-board-commands/core/application/TaskBoardCommandFacade.ts src/main/services/team/TeamDataService.ts src/renderer/components/team/TeamDetailView.tsx test/features/task-board-commands/TaskBoardCommands.e2e.test.ts test/main/services/team/TeamDataService.test.ts",
+    "git diff --check",
+    "exact five-path diff and ownership proof",
+    "semantic no-whole-source-blob-copy proof",
+    "conflict-marker scan over exact five owned paths",
+    "secret and private-path scan over exact five owned paths",
+    "textual and non-binary scan over exact five owned paths"
+  ],
+  "strictRequiredChecks": [
+    {
+      "id": "index-empty",
+      "cwd": "src",
+      "command": "cd .. && git diff --cached --quiet"
+    },
+    {
+      "id": "task-board-commands-e2e",
+      "cwd": "src",
+      "command": "cd .. && pnpm exec vitest run test/features/task-board-commands/TaskBoardCommands.e2e.test.ts"
+    },
+    {
+      "id": "team-data-service-tests",
+      "cwd": "src",
+      "command": "cd .. && pnpm exec vitest run test/main/services/team/TeamDataService.test.ts"
+    },
+    {
+      "id": "typecheck",
+      "cwd": "src",
+      "command": "cd .. && node scripts/hosted-web/phase-0/final-gate/normalize-typescript-diagnostics.mjs --mode milestone"
+    },
+    {
+      "id": "lint-owned-paths",
+      "cwd": "src",
+      "command": "cd .. && pnpm lint:fast:files -- src/features/task-board-commands/core/application/TaskBoardCommandFacade.ts src/main/services/team/TeamDataService.ts src/renderer/components/team/TeamDetailView.tsx test/features/task-board-commands/TaskBoardCommands.e2e.test.ts test/main/services/team/TeamDataService.test.ts"
+    },
+    {
+      "id": "prettier-owned-paths",
+      "cwd": "src",
+      "command": "cd .. && pnpm exec prettier --check src/features/task-board-commands/core/application/TaskBoardCommandFacade.ts src/main/services/team/TeamDataService.ts src/renderer/components/team/TeamDetailView.tsx test/features/task-board-commands/TaskBoardCommands.e2e.test.ts test/main/services/team/TeamDataService.test.ts"
+    },
+    {
+      "id": "diff-check",
+      "cwd": "src",
+      "command": "cd .. && git diff --check"
+    }
+  ],
+  "workerExecutionPolicy": {
+    "workspace": "isolated-sandbox-only",
+    "network": false,
+    "fetch": false,
+    "appRuntimeOrTeamLaunch": false,
+    "realProjectAccess": false,
+    "fastMode": false,
+    "writerScope": "ownedPaths-only",
+    "stage": false,
+    "merge": false,
+    "commit": false,
+    "push": false
+  },
+  "producerStrictExecutionPolicy": {
+    "mode": "sandbox-only",
+    "sandboxRoot": "/var/data/agent-teams-hosted-web-refactor/worktrees/pr252-semantic-conflict-producer-v17-r1",
+    "forbiddenRealProjects": ["/Users/belief/dev/projects/ai/claude-runtime"]
+  },
+  "reviewerStrictExecutionPolicy": {
+    "mode": "sandbox-only",
+    "sandboxRoot": "/var/data/agent-teams-hosted-web-refactor/worktrees/pr252-semantic-conflict-reviewer-v17-r1",
+    "forbiddenRealProjects": ["/Users/belief/dev/projects/ai/claude-runtime"]
+  },
+  "reviewerExecutionPolicy": {
+    "workspace": "isolated-sandbox-only",
+    "network": false,
+    "fetch": false,
+    "appRuntimeOrTeamLaunch": false,
+    "realProjectAccess": false,
+    "fastMode": false,
+    "writerScope": "none",
+    "stage": false,
+    "merge": false,
+    "commit": false,
+    "push": false
+  },
+  "semanticAcceptance": {
+    "wholeSourceBlobCopyAuthorized": false,
+    "rejectedPatchReuseAuthorized": false,
+    "preserveTargetTaskBoardApi": true,
+    "supportedFinalApiRetainsReconcileTaskCreation": true,
+    "facadeDestinationReconcile": {
+      "required": false,
+      "useWhenAvailable": true,
+      "fallbackWhenUnavailable": "findById-plus-validation",
+      "presentMismatchedProvenanceDisposition": "terminal",
+      "unknownOutcomeMayBeReportedAsSuccess": false
+    },
+    "teamDataServiceReconcilePort": {
+      "capabilityGuard": "narrow-runtime-function-guard",
+      "omitWhenUnavailable": true,
+      "absenceDisablesDurableFacade": false
+    },
+    "durableCommandPayload": {
+      "projectPathIncluded": false,
+      "relationNormalization": "filter-sort-dedupe"
+    },
+    "teamDetailViewCreateTaskAdapter": {
+      "async": true,
+      "acceptedSignatures": ["target-positional", "source-request-object-promise"],
+      "stablePositionalCommandIdentity": true,
+      "preserveRequestCommand": true
+    },
+    "taskBoardE2ECoverage": {
+      "retainedTargetCases": 4,
+      "portedSourceCases": 5,
+      "requiredTotalCases": 9,
+      "unguardedRealControllerReconcileAuthorized": false
+    },
+    "preserveTargetTests": true,
+    "pathCount": 5,
+    "exactConflictSetRequired": true,
+    "allOtherPaths": "read-only"
   },
   "projectScopedProducerAdmission": {
     "operation": "codex_goal_project_refill_worker",
     "workerRole": "producer",
+    "producerCount": 1,
+    "mode": "serial-builtin",
     "reasoningEffort": "xhigh",
     "serviceTier": "default",
     "fastMode": false,
-    "producerCount": 1,
-    "preStartAdmission": {
-      "mode": "serial-builtin",
-      "contractStateBeforeJitResolution": "binding-template",
-      "contractStateRequiredAtAdmission": "all-bound-fields-concrete-full-sha",
-      "contract": {
-        "kind": "worker-launch",
-        "format": 1,
-        "canonicalSha": { "binding": "canonicalAtProducerAdmission" },
-        "baseSha": { "binding": "canonicalAtProducerAdmission" },
-        "phaseStartSha": { "binding": "canonicalAtProducerAdmission" },
-        "planBundleCommit": { "binding": "canonicalAtProducerAdmission" },
-        "materializationHead": { "binding": "canonicalAtProducerAdmission" },
-        "expectedTargetCommit": { "binding": "canonicalAtProducerAdmission" },
-        "packetRevision": "phase-01-pr252-target-binding-correction-r1",
-        "controllerPacket": "docs/hosted-web-phases/phase-01/controller-packet.md",
-        "lanePacket": "docs/hosted-web-phases/phase-01/lanes/pr252-base-conflict-resolution.md",
-        "phaseId": "phase-01",
-        "laneId": "pr252-base-conflict-resolution",
-        "reviewKind": "implementation"
+    "authorizedOnlyAfterLaunchGate": true,
+    "cleanImplementationAttempt": {
+      "revision": 0,
+      "retryCount": 0,
+      "supersedes": null,
+      "inputPatchHash": null
+    },
+    "orchestrationLaunchTemplate": {
+      "templateKind": "post-push-single-render",
+      "templateIsLaunchRequest": false,
+      "renderCount": 1,
+      "renderOnlyAfterStoredTargetResolution": true,
+      "renderedRequestMustBeFullyConcrete": true,
+      "placeholdersAuthorized": false,
+      "bindingObjectsInRenderedRequestAuthorized": false,
+      "requestEnvelope": {
+        "operation": "codex_goal_project_refill_worker",
+        "workerRole": "producer",
+        "reasoningEffort": "xhigh",
+        "serviceTier": "default",
+        "fastMode": false,
+        "serial": true
       },
-      "requiredContractCollections": [
+      "attemptMetadata": {
+        "revision": 0,
+        "retryCount": 0,
+        "supersedes": null
+      },
+      "mergeSourceMetadata": {
+        "remote": "origin",
+        "branch": "refactor/team-provisioning-round2-reapply",
+        "commit": "7afc908ce92f14b4b0ebd06cc4aa3a4cf33807d0"
+      },
+      "planMetadata": {
+        "sourceRef": { "binding": "storedAcceptedPushedRouterCommit" },
+        "baseBranch": { "binding": "storedAcceptedPushedRouterCommit" },
+        "planBundleCommit": { "binding": "storedAcceptedPushedRouterCommit" }
+      },
+      "materializationMetadata": {
+        "worktreeHead": { "binding": "storedAcceptedPushedRouterCommit" }
+      },
+      "contractRenderer": {
+        "outputAdditionalProperties": false,
+        "outputKeyOrder": [
+          "kind",
+          "format",
+          "canonicalSha",
+          "baseSha",
+          "phaseStartSha",
+          "packetRevision",
+          "controllerPacket",
+          "lanePacket",
+          "phaseId",
+          "laneId",
+          "inputPatchHash",
+          "reviewKind",
+          "ownedPaths",
+          "mandatoryDocs",
+          "mandatoryScripts",
+          "mandatoryFixtures",
+          "requiredChecks",
+          "executionPolicy"
+        ],
+        "valueSources": {
+          "kind": "worker-launch",
+          "format": 1,
+          "canonicalSha": { "binding": "storedAcceptedPushedRouterCommit" },
+          "baseSha": "7c502f45df32b58bbc161b26dcc28df8a17107c9",
+          "phaseStartSha": { "binding": "storedAcceptedPushedRouterCommit" },
+          "packetRevision": "phase-01-pr252-semantic-conflict-remediation-router-r2",
+          "controllerPacket": "docs/hosted-web-phases/phase-01/controller-packet.md",
+          "lanePacket": "docs/hosted-web-phases/phase-01/lanes/pr252-base-conflict-resolution.md",
+          "phaseId": "phase-01",
+          "laneId": "pr252-semantic-conflict-remediation",
+          "inputPatchHash": null,
+          "reviewKind": "implementation",
+          "ownedPaths": { "copyExactFrom": "producerOwnedPaths" },
+          "mandatoryDocs": { "copyExactFrom": "workerMandatoryDocs" },
+          "mandatoryScripts": { "copyExactFrom": "workerMandatoryScripts" },
+          "mandatoryFixtures": { "copyExactFrom": "workerMandatoryFixtures" },
+          "requiredChecks": { "copyExactFrom": "strictRequiredChecks" },
+          "executionPolicy": { "copyExactFrom": "producerStrictExecutionPolicy" }
+        }
+      },
+      "failClosedOnMissingExtraPlaceholderOrDrift": true
+    },
+    "producerTerminalState": "HOLD",
+    "producerSelfReviewRequired": true,
+    "producerLaunchesReviewer": false
+  },
+  "integrationReviewAdmission": {
+    "operation": "codex_goal_project_prepare_verifier",
+    "workerRole": "reviewer",
+    "reviewKind": "review",
+    "reviewerPurpose": "independent architecture/integration review",
+    "reviewerCount": 1,
+    "freshIndependentReviewerRequired": true,
+    "reasoningEffort": "xhigh",
+    "serviceTier": "default",
+    "fastMode": false,
+    "repositoryWriterAuthority": false,
+    "repairAuthority": false,
+    "canonicalReresolutionAuthorized": false,
+    "storedTarget": { "binding": "storedAcceptedPushedRouterCommit" },
+    "materialization": {
+      "worktreeHead": { "binding": "storedAcceptedPushedRouterCommit" }
+    },
+    "immutableProducerOutputPatchHash": {
+      "stateBeforeProducerHold": "unresolved",
+      "resolvedBy": "ProjectScopedControl from the single immutable held producer output",
+      "requiredResolutionCount": 1,
+      "resolvedValueFormat": "sha256"
+    },
+    "strictContractRenderer": {
+      "renderOnlyAfterProducerHold": true,
+      "renderedRequestMustBeFullyConcrete": true,
+      "placeholdersAuthorized": false,
+      "bindingObjectsInRenderedRequestAuthorized": false,
+      "outputAdditionalProperties": false,
+      "outputKeyOrder": [
+        "kind",
+        "format",
+        "canonicalSha",
+        "baseSha",
+        "phaseStartSha",
+        "packetRevision",
+        "controllerPacket",
+        "lanePacket",
+        "phaseId",
+        "laneId",
+        "inputPatchHash",
+        "reviewKind",
         "ownedPaths",
         "mandatoryDocs",
         "mandatoryScripts",
@@ -193,39 +429,29 @@
         "requiredChecks",
         "executionPolicy"
       ],
-      "requiredContractCollectionsSource": "exact lane packet",
-      "mandatoryScripts": [],
-      "mandatoryFixtures": [],
-      "inputPatchHash": null,
-      "inputPatchHashReason": "no preexisting patch; never relabel the pinned source commit"
+      "valueSources": {
+        "kind": "worker-launch",
+        "format": 1,
+        "canonicalSha": { "binding": "storedAcceptedPushedRouterCommit" },
+        "baseSha": "7c502f45df32b58bbc161b26dcc28df8a17107c9",
+        "phaseStartSha": { "binding": "storedAcceptedPushedRouterCommit" },
+        "packetRevision": "phase-01-pr252-semantic-conflict-remediation-router-r2",
+        "controllerPacket": "docs/hosted-web-phases/phase-01/controller-packet.md",
+        "lanePacket": "docs/hosted-web-phases/phase-01/lanes/pr252-base-conflict-resolution.md",
+        "phaseId": "phase-01",
+        "laneId": "pr252-semantic-conflict-remediation",
+        "inputPatchHash": { "binding": "immutableProducerOutputPatchHash" },
+        "reviewKind": "review",
+        "ownedPaths": { "copyExactFrom": "producerOwnedPaths" },
+        "mandatoryDocs": { "copyExactFrom": "workerMandatoryDocs" },
+        "mandatoryScripts": { "copyExactFrom": "workerMandatoryScripts" },
+        "mandatoryFixtures": { "copyExactFrom": "workerMandatoryFixtures" },
+        "requiredChecks": { "copyExactFrom": "strictRequiredChecks" },
+        "executionPolicy": { "copyExactFrom": "reviewerStrictExecutionPolicy" }
+      },
+      "failClosedOnMissingExtraPlaceholderOrDrift": true
     },
-    "planBundleCommitBinding": { "binding": "canonicalAtProducerAdmission" },
-    "sourceRemoteBinding": "origin",
-    "sourceBranchBinding": "refactor/team-provisioning-round2-reapply",
-    "sourceCommitBinding": "7afc908ce92f14b4b0ebd06cc4aa3a4cf33807d0"
-  },
-  "integrationReviewAdmission": {
-    "operation": "codex_goal_project_refill_worker",
-    "workerRole": "reviewer",
-    "reviewKind": "integration",
-    "reviewerCount": 1,
-    "freshIndependentReviewerRequired": true,
-    "reasoningEffort": "xhigh",
-    "serviceTier": "default",
-    "fastMode": false,
-    "independentFromRouterAuthor": true,
-    "independentFromCurrentProducer": true,
-    "independentFromAllP11dWorkers": true,
-    "independentFromPriorPr252ConflictWorkers": true,
-    "repositoryWriterAuthority": false,
-    "canonicalReresolutionAuthorized": false,
-    "materialization": {
-      "canonicalSha": { "binding": "canonicalAtProducerAdmission" },
-      "baseSha": { "binding": "canonicalAtProducerAdmission" },
-      "phaseStartSha": { "binding": "canonicalAtProducerAdmission" },
-      "materializationHead": { "binding": "canonicalAtProducerAdmission" },
-      "expectedTargetCommit": { "binding": "canonicalAtProducerAdmission" }
-    },
+    "requiredChecksSource": "strictRequiredChecks",
     "requiredDisposition": ["ACCEPT", "REJECT"],
     "acceptFindingCounts": {
       "P0": 0,
@@ -233,86 +459,40 @@
       "P2": 0
     }
   },
-  "pr252BaseConflictScope": {
-    "expectedTargetCommit": { "binding": "canonicalAtProducerAdmission" },
-    "sourceRemote": "origin",
-    "sourceBranch": "refactor/team-provisioning-round2-reapply",
-    "sourceCommit": "7afc908ce92f14b4b0ebd06cc4aa3a4cf33807d0",
-    "ownedPaths": [
-      "src/features/task-board-commands/core/application/TaskBoardCommandFacade.ts",
-      "src/main/services/team/TeamDataService.ts",
-      "src/renderer/components/team/TeamDetailView.tsx",
-      "test/features/task-board-commands/TaskBoardCommands.e2e.test.ts",
-      "test/main/services/team/TeamDataService.test.ts"
-    ],
-    "sourceBlobOids": {
-      "src/features/task-board-commands/core/application/TaskBoardCommandFacade.ts": "f5515ddac4cd7bee957a75bc06aad78309ad3a74",
-      "src/main/services/team/TeamDataService.ts": "a8fea50ddbd71563f2ab7853978d6420eed6c441",
-      "src/renderer/components/team/TeamDetailView.tsx": "5cbaef7f23046dab598a1c2878811adbfd62ea4c",
-      "test/features/task-board-commands/TaskBoardCommands.e2e.test.ts": "0c0a717fea61031c3c24a4ef787c0acd9bd80ad5",
-      "test/main/services/team/TeamDataService.test.ts": "c281cac6493e07abf1ddd201255539e902122af2"
-    },
-    "pathCount": 5,
-    "exactConflictSetRequired": true,
-    "byteForByteSourceResolutionRequired": true,
-    "producerMergeAuthorized": false,
-    "producerStageAuthorized": false,
-    "producerCommitAuthorized": false,
-    "producerPushAuthorized": false,
-    "allOtherPaths": "read-only"
-  },
   "reviewedIntegrationProtocol": {
-    "markReviewedMergeBinding": {
-      "sourceRemote": "origin",
-      "sourceBranch": "refactor/team-provisioning-round2-reapply",
-      "sourceCommit": "7afc908ce92f14b4b0ebd06cc4aa3a4cf33807d0",
-      "expectedTargetCommit": { "binding": "canonicalAtProducerAdmission" }
+    "performedBy": "ProjectScopedControl",
+    "authorizedOnlyAfterReviewerAccept": true,
+    "markReviewedTarget": { "binding": "storedAcceptedPushedRouterCommit" },
+    "integrationTarget": { "binding": "storedAcceptedPushedRouterCommit" },
+    "mergeSource": {
+      "remote": "origin",
+      "branch": "refactor/team-provisioning-round2-reapply",
+      "commit": "7afc908ce92f14b4b0ebd06cc4aa3a4cf33807d0"
     },
-    "openIntegrationAttemptAcceptedFields": ["reviewedOutputId"],
-    "integrationTargetCommit": { "binding": "canonicalAtProducerAdmission" },
     "runtimeCreatesTrueMerge": true,
-    "runtimeValidatesExactConflictSet": true,
-    "runtimeValidation": {
-      "role": "validation-only",
-      "choosesDag": false,
-      "choosesBranch": false,
-      "resolvesCanonicalBinding": false,
-      "allResolvedTargetFieldsMustEqualStoredBinding": true,
-      "allResolvedTargetFieldsMustEqualCurrentCanonical": true,
-      "failClosedOnDrift": true
-    },
     "requiredParentOrder": [
-      { "binding": "canonicalAtProducerAdmission" },
+      { "binding": "storedAcceptedPushedRouterCommit" },
       "7afc908ce92f14b4b0ebd06cc4aa3a4cf33807d0"
     ],
-    "runtimePushRequiredBeforeAdvance": true
+    "runtimeValidatesExactConflictSet": true,
+    "runtimeRerunsAllRequiredChecks": true,
+    "sourceNonConflictMaterializationPrecedesFinalChecks": true,
+    "postSourceMaterializationRequiredChecks": [
+      "pnpm exec vitest run test/renderer/utils/createTaskCommandIdentity.test.ts"
+    ],
+    "conventionalCommitRequired": true,
+    "pushRequiredBeforeAdvance": true,
+    "failClosedOnDrift": true
   },
-  "requiredChecks": [
-    "pnpm exec vitest run test/features/task-board-commands/TaskBoardCommands.e2e.test.ts",
-    "pnpm exec vitest run test/main/services/team/TeamDataService.test.ts",
-    "pnpm typecheck",
-    "pnpm lint:fast:files -- src/features/task-board-commands/core/application/TaskBoardCommandFacade.ts src/main/services/team/TeamDataService.ts src/renderer/components/team/TeamDetailView.tsx test/features/task-board-commands/TaskBoardCommands.e2e.test.ts test/main/services/team/TeamDataService.test.ts",
-    "pnpm exec prettier --check src/features/task-board-commands/core/application/TaskBoardCommandFacade.ts src/main/services/team/TeamDataService.ts src/renderer/components/team/TeamDetailView.tsx test/features/task-board-commands/TaskBoardCommands.e2e.test.ts test/main/services/team/TeamDataService.test.ts",
-    "git diff --check",
-    "exact five-path diff and no-stage proof",
-    "five complete source-blob OID proofs",
-    "secret/private-path and binary scans",
-    "final merge parents and exact conflict-set proof"
-  ],
   "authorization": {
     "authorizedNow": [],
-    "conditionallyAuthorizedAfterLaunchGate": ["PR252-base-conflict-resolution-producer"],
-    "authorizedNodesAfterLaunchGate": ["PR252-base-conflict-resolution"],
-    "mode": "base-conflict-resolution",
+    "conditionallyAuthorizedAfterRouterAcceptIntegrationPush": [
+      "PR252-semantic-conflict-remediation-producer"
+    ],
+    "reviewAuthorizedOnlyAfterProducerHold": true,
+    "integrationAuthorizedOnlyAfterReviewerAccept": true,
     "producerCount": 1,
-    "integrationReviewerCountAfterProducer": 1,
-    "producerReasoningEffort": "xhigh",
-    "reviewerReasoningEffort": "xhigh",
-    "serviceTier": "default",
-    "fastMode": false,
-    "reviewAuthorizedAfterProducer": true,
-    "markReviewedAuthorizedAfterAccept": true,
-    "runtimeIntegrationAuthorizedAfterAccept": true,
+    "reviewerCount": 1,
     "workerMergeAuthorized": false,
     "workerCommitAuthorized": false,
     "workerPushAuthorized": false,
@@ -333,27 +513,15 @@
     "docs/hosted-web-phases/phase-01/execution-dag.md",
     "docs/hosted-web-phases/phase-01/lanes/pr252-base-conflict-resolution.md"
   ],
-  "workerMandatoryBaseline": [
-    "AGENTS.md",
-    "docs/hosted-web-phases/START_HERE.md",
-    "docs/hosted-web-phases/EVIDENCE_LIFECYCLE.md",
-    "docs/hosted-web-phases/README.md",
-    "docs/hosted-web-phases/EXECUTION_INDEX.json",
-    "docs/hosted-web-phases/phase-01/controller-packet.md",
-    "docs/hosted-web-phases/phase-01/lanes/pr252-base-conflict-resolution.md",
-    "CLAUDE.md",
-    "AGENT_CRITICAL_GUARDRAILS.md",
-    "docs/hosted-web-phases/PACKET_STANDARD.md"
-  ],
   "packetHashes": {
     "algorithm": "sha256",
     "controllerPacket": {
       "path": "docs/hosted-web-phases/phase-01/controller-packet.md",
-      "sha256": "fa369d245b95defa44dece737bfb0ac8c314f127d3b1fa6ca4caa386232e8009"
+      "sha256": "6f993a7bf3366b99aab268dfd52c341f81dfdacb295dbe9fdc18048f43d2cfd0"
     },
     "lanePacket": {
       "path": "docs/hosted-web-phases/phase-01/lanes/pr252-base-conflict-resolution.md",
-      "sha256": "1d48c8dfd565edc996c50387528dc525900c890650cdd76f2bc531636f035290"
+      "sha256": "f2fd7972dff3e7db4d7fafe8a51906ba8dd061ec9709342f857c6fb601ae0149"
     }
   },
   "authorityTiers": {
@@ -370,11 +538,10 @@
       "docs/hosted-web-phases/phase-01/execution-dag.md",
       "docs/hosted-web-phases/phase-01/lanes/pr252-base-conflict-resolution.md"
     ],
-    "accepted-p11d-historical-provenance": [
-      "strict result be0c9abd679f817c386d1d06d1b738c2a1505bb3c4718279129ab74842c98fa6",
-      "reviewed output f3394026185348c84673d44a9b30a82667c3ff9435b5d4d7609c04785c274f41",
-      "integration p1-1d-shadowed-map-r4-accepted-integration-v3",
-      "accepted/pushed P1.1D commit e7e7e734c82c49105682e7a19bbedafa1f5ddbad"
+    "rejected-provenance-only": [
+      "semantic router r1 patch 95dcdae236fdadbd63bfb3022441accc4354cffdc5ca6db7447e7a01e9d53221",
+      "semantic router r1 consume pr252-semantic-router-r1-contract-reject-consume-v1",
+      "byte-copy patch a0fade213fd86c52022f944c9d3a9f169175f1fd5a54f6c19652173ae5307304"
     ],
     "researchWriteException": null
   }

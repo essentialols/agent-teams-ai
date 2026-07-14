@@ -299,6 +299,20 @@ export async function resolveReviewedWorkerContinuation(input: {
 }): Promise<ReviewedWorkerOutputSnapshot> {
   const snapshot = await input.store.get(normalizeSha256(input.reviewedOutputId));
   if (!snapshot) throw new Error("reviewed_worker_output_not_found");
+  assertReviewedWorkerContinuationContext(snapshot, input);
+  return snapshot;
+}
+
+export function assertReviewedWorkerContinuationContext(
+  snapshot: ReviewedWorkerOutputSnapshot,
+  input: {
+    readonly projectId: string;
+    readonly controllerJobId: string;
+    readonly workerJobId: string;
+    readonly taskId: string;
+    readonly workspacePath: string;
+  },
+): void {
   if (snapshot.projectId !== input.projectId) {
     throw new Error("reviewed_worker_output_project_mismatch");
   }
@@ -317,7 +331,6 @@ export async function resolveReviewedWorkerContinuation(input: {
   if (snapshot.sourceWorkspacePath !== input.workspacePath) {
     throw new Error("reviewed_worker_output_workspace_mismatch");
   }
-  return snapshot;
 }
 
 function normalizeSha256(value: string): string {

@@ -10,6 +10,10 @@ import {
   type ConsumedOutputLedgerReadFailure,
   type ConsumedOutputLedgerSourcePort,
 } from "@vioxen/subscription-runtime/worker-core";
+import {
+  assertReviewedWorkerContinuationContext,
+  type ReviewedWorkerOutputSnapshot,
+} from "../../reviewed-worker-output";
 
 export async function readCodexGoalConsumedOutputLedgers(input: {
   readonly roots: readonly string[];
@@ -23,8 +27,12 @@ export async function readCodexGoalConsumedOutputLedgers(input: {
 
 export async function assertCodexGoalProjectJobNotTerminal(input: {
   readonly roots: readonly string[];
+  readonly projectId: string;
+  readonly controllerJobId: string;
   readonly jobId: string;
+  readonly taskId: string;
   readonly workspacePath: string;
+  readonly reviewedContinuation?: ReviewedWorkerOutputSnapshot;
 }): Promise<void> {
   if (input.roots.length === 0) return;
   const ledger = await readCodexGoalConsumedOutputLedgers({
@@ -35,11 +43,20 @@ export async function assertCodexGoalProjectJobNotTerminal(input: {
     jobId: input.jobId,
     workspacePath: input.workspacePath,
   });
-  if (record?.valid) {
-    throw new Error(
-      `project_control_terminal_job_start_denied:${record.status}`,
-    );
+  if (!record?.valid) return;
+  if (record.status === "rejected" && input.reviewedContinuation) {
+    assertReviewedWorkerContinuationContext(input.reviewedContinuation, {
+      projectId: input.projectId,
+      controllerJobId: input.controllerJobId,
+      workerJobId: input.jobId,
+      taskId: input.taskId,
+      workspacePath: resolve(input.workspacePath),
+    });
+    return;
   }
+  throw new Error(
+    `project_control_terminal_job_start_denied:${record.status}`,
+  );
 }
 
 class LocalConsumedOutputLedgerSource implements ConsumedOutputLedgerSourcePort {

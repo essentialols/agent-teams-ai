@@ -445,6 +445,7 @@ export async function projectControlStartStoredJobView(
             : {}),
           startWorkspaceLease: workspace,
           startSkipDoctor: booleanValue(args.skipDoctor) ?? false,
+          ...(reviewedContinuation ? { reviewedContinuation } : {}),
         });
         result = await broker.startWorker({
           jobId: loaded.manifest.jobId,

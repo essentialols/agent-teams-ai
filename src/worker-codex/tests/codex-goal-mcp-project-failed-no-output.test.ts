@@ -24,6 +24,7 @@ import {
   assertCodexGoalProjectJobNotTerminal,
   readCodexGoalConsumedOutputLedgers,
 } from "../application/project-control/codex-goal-consumed-output-ledger-io";
+import type { ReviewedWorkerOutputSnapshot } from "../reviewed-worker-output";
 import { git, gitInitRepository } from "./codex-goal-mcp-test-support";
 
 describe("project failed_no_output lifecycle", () => {
@@ -200,8 +201,18 @@ describe("project failed_no_output lifecycle", () => {
       );
       await expect(assertCodexGoalProjectJobNotTerminal({
         roots: [ledgerRoot],
+        projectId: "project",
+        controllerJobId,
         jobId: freshWorkerJobId,
+        taskId: freshWorkerJobId,
         workspacePath: join(worktreeRoot, freshWorkerJobId),
+        reviewedContinuation: rejectedContinuationSnapshot({
+          projectId: "project",
+          controllerJobId,
+          workerJobId: freshWorkerJobId,
+          taskId: freshWorkerJobId,
+          sourceWorkspacePath: join(worktreeRoot, freshWorkerJobId),
+        }),
       })).rejects.toThrow(
         "project_control_terminal_job_start_denied:failed_no_output",
       );
@@ -348,6 +359,34 @@ describe("project failed_no_output lifecycle", () => {
     }
   });
 });
+
+function rejectedContinuationSnapshot(input: {
+  readonly projectId: string;
+  readonly controllerJobId: string;
+  readonly workerJobId: string;
+  readonly taskId: string;
+  readonly sourceWorkspacePath: string;
+}): ReviewedWorkerOutputSnapshot {
+  return {
+    format: "reviewed-worker-output",
+    formatRevision: 1,
+    reviewedOutputId: "a".repeat(64),
+    ...input,
+    patchPath: join(input.sourceWorkspacePath, "worker-output.patch"),
+    patchSha256: "b".repeat(64),
+    patchByteLength: 1,
+    baseCommit: "c".repeat(40),
+    changedFiles: ["output.txt"],
+    reviewDecision: {
+      reviewedBy: "project-reviewer",
+      decision: "rejected",
+      reason: "Same-job remediation required.",
+      approvedFiles: ["output.txt"],
+      requiredChecks: [],
+    },
+    capturedAt: "2026-07-14T19:00:00.000Z",
+  };
+}
 
 async function createCleanWorkspace(path: string): Promise<void> {
   await mkdir(path, { recursive: true });

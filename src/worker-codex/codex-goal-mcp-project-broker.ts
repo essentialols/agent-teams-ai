@@ -255,8 +255,14 @@ function codexProjectControlPorts(
         const start = async () => {
           await assertCodexGoalProjectJobNotTerminal({
             roots: input.scope.consumedOutputLedgerRoots ?? [],
+            projectId: input.scope.projectId,
+            controllerJobId: input.controller.jobId,
             jobId: input.startManifest?.jobId ?? startLaunch.config.taskId,
+            taskId: startLaunch.config.taskId,
             workspacePath: startLaunch.config.workspacePath,
+            ...(input.reviewedContinuation
+              ? { reviewedContinuation: input.reviewedContinuation }
+              : {}),
           });
           await prepareCodexGoalLaunchPaths(startLaunch);
           if (!input.startSkipDoctor) {

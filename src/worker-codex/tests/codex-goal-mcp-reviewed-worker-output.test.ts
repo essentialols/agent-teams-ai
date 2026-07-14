@@ -40,6 +40,7 @@ describe("Codex project reviewed worker output", () => {
     );
     roots.push(root);
     const registryRootDir = join(root, "worker-jobs", "registry");
+    const ledgerRoot = join(root, "control", "consumed-output-ledger");
     const controllerJobId = "project-controller";
     const workerJobId = "project-worker";
     const controllerJobRoot = join(root, "worker-jobs", controllerJobId);
@@ -131,6 +132,7 @@ describe("Codex project reviewed worker output", () => {
           workspaceRoots: [targetWorkspacePath],
           worktreeRoots: [join(root, "worktrees")],
           registryRoot: registryRootDir,
+          consumedOutputLedgerRoots: [ledgerRoot],
           jobIdPrefixes: ["project-"],
           tmuxSessionPrefixes: ["project-"],
           allowedAccountIds: ["account-a"],
@@ -336,6 +338,37 @@ describe("Codex project reviewed worker output", () => {
       await expect(
         access(join(workerWorkspacePath, "node_modules")),
       ).rejects.toMatchObject({ code: "ENOENT" });
+      const rejectedEvidenceRoot = join(
+        root,
+        "worker-jobs",
+        "archives",
+        `${workerJobId}-rejected-reviewed-continuation`,
+      );
+      await Promise.all([
+        mkdir(join(ledgerRoot, "items"), { recursive: true }),
+        mkdir(rejectedEvidenceRoot, { recursive: true }),
+      ]);
+      const rejectedStatusPath = join(rejectedEvidenceRoot, "git-status.txt");
+      const rejectedPatchPath = join(rejectedEvidenceRoot, "worker-output.patch");
+      await Promise.all([
+        writeFile(rejectedStatusPath, " M docs/packet.md\n"),
+        writeFile(rejectedPatchPath, patch),
+      ]);
+      await writeFile(
+        join(ledgerRoot, "items", `${workerJobId}.json`),
+        `${JSON.stringify({
+          schemaVersion: 1,
+          jobId: workerJobId,
+          status: "rejected",
+          closedAt: "2026-07-14T19:00:00.000Z",
+          note: "Independent review rejected this exact patch for same-job remediation.",
+          backup: {
+            workspace: workerWorkspacePath,
+            statusPath: rejectedStatusPath,
+            patchPath: rejectedPatchPath,
+          },
+        }, null, 2)}\n`,
+      );
       const continuation = await callToolJson(
         client,
         "codex_goal_project_start",

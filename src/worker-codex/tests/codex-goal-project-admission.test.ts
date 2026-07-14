@@ -338,6 +338,8 @@ describe("Codex project admission snapshot", () => {
       const deps = (input: {
         readonly currentUpdatedAt: string;
         readonly consumingUpdatedAt?: string;
+        readonly activeWriterRisk?: string;
+        readonly workspaceConflict?: boolean;
       }): CodexProjectAdmissionDeps => ({
         listJobs: async () => [
           summary("project-router-r1", input.currentUpdatedAt),
@@ -351,6 +353,12 @@ describe("Codex project admission snapshot", () => {
           workspacePath,
           workspaceDirty: true,
           workerAlive: false,
+          activeWriterRisk:
+            input.activeWriterRisk ?? "dirty_workspace_without_worker",
+          activeWriterRiskReasons: [
+            input.activeWriterRisk ?? "dirty_workspace_without_worker",
+          ],
+          workspaceConflict: input.workspaceConflict ?? false,
           resultStatus: "completed",
           tags: ["worker-role-producer"],
         }],
@@ -365,9 +373,42 @@ describe("Codex project admission snapshot", () => {
         }),
       });
       expect(consumed.counts).toMatchObject({
+        activeWriterConflicts: 0,
         consumedDirtyWorkspaces: 1,
         incompleteConsumedOutputRecords: 0,
       });
+
+      const stateMismatch = await buildCodexProjectAdmissionSnapshot({
+        registryRootDir: join(root, "registry"),
+        scope,
+        deps: deps({
+          currentUpdatedAt: "2026-07-13T13:30:00.000Z",
+          consumingUpdatedAt: "2026-07-13T13:32:00.000Z",
+          activeWriterRisk: "state_mismatch",
+        }),
+      });
+      expect(stateMismatch.debt).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          reason: ProjectDebtReason.ActiveWriterConflict,
+          severity: "blocking",
+        }),
+      ]));
+
+      const workspaceConflict = await buildCodexProjectAdmissionSnapshot({
+        registryRootDir: join(root, "registry"),
+        scope,
+        deps: deps({
+          currentUpdatedAt: "2026-07-13T13:30:00.000Z",
+          consumingUpdatedAt: "2026-07-13T13:32:00.000Z",
+          workspaceConflict: true,
+        }),
+      });
+      expect(workspaceConflict.debt).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          reason: ProjectDebtReason.ActiveWriterConflict,
+          severity: "blocking",
+        }),
+      ]));
 
       const newerDirtyJob = await buildCodexProjectAdmissionSnapshot({
         registryRootDir: join(root, "registry"),

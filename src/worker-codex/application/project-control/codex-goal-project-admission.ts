@@ -370,7 +370,7 @@ async function debtFromOverviewItem(input: {
       ...(resolvedWorkspacePath ? { resolvedWorkspacePath } : {}),
     })
   ) {
-    return debt;
+    return withoutInactiveDirtyWorkspaceConflict(debt, item);
   }
   // A refill may intentionally reuse an inactive job's physical worktree. Only
   // a registered newer job on that same worktree can consume the older entry.
@@ -384,7 +384,7 @@ async function debtFromOverviewItem(input: {
       ...(resolvedWorkspacePath ? { resolvedWorkspacePath } : {}),
     })
   ) {
-    return debt;
+    return withoutInactiveDirtyWorkspaceConflict(debt, item);
   }
   const consumed = consumedOutputRecordFor({
     ledger: input.consumedOutput,
@@ -413,6 +413,21 @@ async function debtFromOverviewItem(input: {
     ],
   });
   return debt;
+}
+
+function withoutInactiveDirtyWorkspaceConflict(
+  debt: readonly ProjectDebtItem[],
+  item: JsonObject,
+): ProjectDebtItem[] {
+  if (
+    item.workspaceConflict === true ||
+    stringValue(item.activeWriterRisk) !== "dirty_workspace_without_worker"
+  ) {
+    return [...debt];
+  }
+  return debt.filter(
+    (entry) => entry.reason !== ProjectDebtReason.ActiveWriterConflict,
+  );
 }
 
 const activeWriterRiskKinds = new Set<string>([

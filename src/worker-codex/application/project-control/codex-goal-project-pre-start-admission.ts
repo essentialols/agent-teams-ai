@@ -23,6 +23,10 @@ import {
   validateBuiltinWorkerLaunchSpec,
 } from "./codex-goal-project-builtin-pre-start-admission";
 import {
+  assertProjectInputPatchContract,
+  projectInputPatchBindingMatches,
+} from "./codex-goal-project-input-patch-policy";
+import {
   DEFAULT_HANDOFF_ARTIFACT_LIMITS,
 } from "../../codex-goal-handoff-artifacts";
 
@@ -228,6 +232,10 @@ export async function assertProjectPreStartAdmissionLaunchBinding(input: {
   const contract = await readJsonObject(descriptor.contractPath, "contract", MAX_CONTRACT_BYTES);
   const state = await readJsonObject(descriptor.statePath, "state", MAX_STATE_BYTES);
   const receipt = await readJsonObject(descriptor.receiptPath, "receipt", 64 * 1024);
+  assertProjectInputPatchContract({
+    builtin: isBuiltinDescriptor(descriptor),
+    contract,
+  });
   assertContractBindings(contract, input.manifest);
   assertQueuedStateBinding(contract, state, input.manifest.jobId);
   const binding = await currentBinding(input.manifest, descriptor);
@@ -251,7 +259,7 @@ export async function assertProjectPreStartAdmissionLaunchBinding(input: {
   const inputPatchBindingValid = input.workspaceMode === "reviewed_dirty_continuation" ||
     (verifiedInputPatch
       ? verifiedInputPatchBindingValid(binding, verifiedInputPatch)
-      : bindingMatchesInputPatch(binding, contract));
+      : projectInputPatchBindingMatches(binding, contract));
   if (
     binding.workspaceHead !== contract.phaseStartSha ||
     (input.expectedInputPatchArtifactSha256 !== undefined &&
@@ -362,14 +370,17 @@ async function validateProjectPreStartAdmission(input: {
     "state",
     MAX_STATE_BYTES,
   );
+  assertProjectInputPatchContract({
+    builtin: isBuiltinDescriptor(descriptor),
+    contract,
+  });
   assertContractBindings(contract, input.manifest);
   assertQueuedStateBinding(contract, state, input.manifest.jobId);
   const verifiedInputPatch = input.verifiedInputPatch ??
     await readVerifiedInputPatchFromExistingReceipt(descriptor, contract);
   if (
     verifiedInputPatch &&
-    verifiedInputPatch.artifactSha256 !==
-      requiredSha256(contract.inputPatchHash, "inputPatchHash")
+    verifiedInputPatch.artifactSha256 !== contract.inputPatchHash
   ) {
     throw new Error("project_control_pre_start_verified_input_patch_mismatch");
   }
@@ -377,7 +388,7 @@ async function validateProjectPreStartAdmission(input: {
   if (
     verifiedInputPatch
       ? !verifiedInputPatchBindingValid(beforeBinding, verifiedInputPatch)
-      : !bindingMatchesInputPatch(beforeBinding, contract)
+      : !projectInputPatchBindingMatches(beforeBinding, contract)
   ) {
     throw new Error("project_control_pre_start_workspace_dirty");
   }
@@ -437,7 +448,7 @@ async function validateProjectPreStartAdmission(input: {
   if (
     verifiedInputPatch
       ? !verifiedInputPatchBindingValid(afterBinding, verifiedInputPatch)
-      : !bindingMatchesInputPatch(afterBinding, contract)
+      : !projectInputPatchBindingMatches(afterBinding, contract)
   ) {
     throw new Error("project_control_pre_start_workspace_dirty");
   }
@@ -709,22 +720,6 @@ async function currentBinding(
     stateSha256: sha256(Buffer.from(await readBoundedFile(descriptor.statePath, MAX_STATE_BYTES, "state"))),
     promptSha256: sha256(Buffer.from(await readBoundedFile(manifest.promptPath, MAX_PROMPT_BYTES, "prompt"))),
   };
-}
-
-function bindingMatchesInputPatch(
-  binding: Awaited<ReturnType<typeof currentBinding>>,
-  contract: JsonObject,
-): boolean {
-  const inputPatchHash = requiredString(contract.inputPatchHash, "inputPatchHash");
-  if (!/^[0-9a-f]{64}$/.test(inputPatchHash)) return false;
-  const emptyPatchHash = sha256(Buffer.alloc(0));
-  if (inputPatchHash === emptyPatchHash) {
-    return binding.workspaceStatus === "" &&
-      binding.workspaceStagedPatchSha256 === emptyPatchHash;
-  }
-  return binding.workspaceStatus !== "" &&
-    !binding.workspaceUnstagedDirty &&
-    binding.workspaceStagedPatchSha256 === inputPatchHash;
 }
 
 type VerifiedInputPatchBinding = {

@@ -1,5 +1,4 @@
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
 import { access, chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -165,7 +164,7 @@ describe("codex goal MCP server", () => {
           lanePacket: "lane.md",
           phaseId: "phase-01",
           laneId: "p1-s0",
-          inputPatchHash: createHash("sha256").update("").digest("hex"),
+          inputPatchHash: null,
           reviewKind: "implementation",
           ownedPaths: ["src/example.ts"],
           mandatoryDocs: ["README.md", "controller.md", "lane.md"],

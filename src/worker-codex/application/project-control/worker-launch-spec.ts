@@ -112,7 +112,7 @@ const workerLaunchDeclarativeShape = {
   lanePacket: relativePathSchema,
   phaseId: phaseIdSchema,
   laneId: laneIdSchema,
-  inputPatchHash: sha256Schema,
+  inputPatchHash: sha256Schema.nullable(),
   reviewKind: z.enum(["implementation", "review", "remediation"]),
   ownedPaths: uniqueRelativePathsSchema(1),
   mandatoryDocs: uniqueRelativePathsSchema(1),
@@ -166,6 +166,20 @@ function addWorkerLaunchCrossFieldIssues(context: {
   readonly value: Readonly<Record<string, unknown>>;
   readonly issues: Array<Record<string, unknown>>;
 }): void {
+  if (
+    context.value.inputPatchHash === null &&
+    (context.value.reviewKind !== "implementation" ||
+      ("revision" in context.value && context.value.revision !== 0) ||
+      ("retryCount" in context.value && context.value.retryCount !== 0) ||
+      ("supersedes" in context.value && context.value.supersedes !== null))
+  ) {
+    context.issues.push({
+      code: "custom",
+      input: context.value.inputPatchHash,
+      path: ["inputPatchHash"],
+      message: "contract_inputPatchHash_null_invalid",
+    });
+  }
   for (const packet of workerLaunchMissingPackets(context.value)) {
     context.issues.push({
       code: "custom",
@@ -240,7 +254,7 @@ const workerLaunchStateRecordSchema = z
     packetRevision: simpleIdSchema,
     controllerPacket: relativePathSchema,
     lanePacket: relativePathSchema,
-    inputPatchHash: sha256Schema,
+    inputPatchHash: sha256Schema.nullable(),
     reviewKind: z.enum(["implementation", "review", "remediation"]),
     revision: nonNegativeIntegerSchema,
     retryCount: nonNegativeIntegerSchema,
@@ -249,7 +263,8 @@ const workerLaunchStateRecordSchema = z
     supersededBy: sha256Schema.nullable().optional(),
     supersededFrom: sha256Schema.nullable().optional(),
   })
-  .strict();
+  .strict()
+  .check(addWorkerLaunchCrossFieldIssues);
 
 export const workerLaunchStateSchema = z
   .object({

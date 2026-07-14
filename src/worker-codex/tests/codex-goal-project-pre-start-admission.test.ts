@@ -481,6 +481,66 @@ describe("builtin project pre-start admission", () => {
       .rejects.toThrow("project_control_pre_start_workspace_dirty");
   });
 
+  it("accepts a clean first builtin implementation and validates its launch binding", async () => {
+    const fixture = await createBuiltinFixture();
+    const contract = withWorkKey({
+      ...fixture.contract,
+      inputPatchHash: null,
+    });
+    const plan = fixture.plan({ contract });
+    const manifest = {
+      ...fixture.storedManifest,
+      projectPreStartAdmission: plan.descriptor,
+    };
+
+    await prepareBuiltin(fixture, { contract });
+    await validateStoredProjectPreStartAdmission({
+      manifest,
+      scope: fixture.scope,
+    });
+    await expect(assertProjectPreStartAdmissionLaunchBinding({
+      manifest,
+      scope: fixture.scope,
+    })).resolves.toBeUndefined();
+  });
+
+  it("keeps null input patches out of external and remediation admission", async () => {
+    const external = await createFixture();
+    const externalContract = {
+      ...external.contract,
+      inputPatchHash: null,
+      reviewKind: "review",
+    };
+    const externalPlan = external.plan({
+      contract: externalContract,
+      state: {
+        ...external.state,
+        records: [{
+          ...external.state.records[0],
+          inputPatchHash: null,
+          reviewKind: "review",
+        }],
+      },
+    });
+    await expect(prepareProjectPreStartAdmission({
+      plan: externalPlan,
+      manifest: {
+        ...external.manifest,
+        projectPreStartAdmission: externalPlan.descriptor,
+      },
+      scope: external.scope,
+    })).rejects.toThrow("project_control_pre_start_input_patch_hash_required");
+
+    const remediation = await createBuiltinFixture();
+    const remediationContract = withWorkKey({
+      ...remediation.contract,
+      inputPatchHash: null,
+      reviewKind: "remediation",
+    });
+    await expect(prepareBuiltin(remediation, { contract: remediationContract }))
+      .rejects.toThrow("contract_inputPatchHash_null_invalid");
+  });
+
   it("accepts only the staged patch bound by inputPatchHash", async () => {
     const fixture = await createBuiltinFixture();
     await mkdir(join(fixture.workspacePath, "src"), { recursive: true });

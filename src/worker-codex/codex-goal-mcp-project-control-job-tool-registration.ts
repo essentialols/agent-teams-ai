@@ -67,7 +67,7 @@ export function registerCodexGoalProjectControlJobTools(server: McpServer): void
         promptBody: z.string().optional(),
         preStartAdmission: workerLaunchAdmissionSchema
           .describe(
-            "Declarative worker launch admission. Runtime computes job identity, workKey, paths and state. phaseStartSha must match sourceRef/baseBranch HEAD; inputPatchHash binds the admitted input patch.",
+            "Declarative worker launch admission. Runtime computes job identity, workKey, paths and state. phaseStartSha must match sourceRef/baseBranch HEAD; inputPatchHash binds a preexisting input patch and is null only for a clean first implementation.",
           )
           .optional(),
         confirmPreStartAdmission: z.boolean().optional(),

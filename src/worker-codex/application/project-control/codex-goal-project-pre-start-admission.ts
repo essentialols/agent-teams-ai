@@ -22,6 +22,11 @@ import {
   materializeBuiltinWorkerLaunchSpec,
   validateBuiltinWorkerLaunchSpec,
 } from "./codex-goal-project-builtin-pre-start-admission";
+import type { ProjectPreStartAdmissionLaunchWorkspaceMode } from "./codex-goal-project-pre-start-admission-types";
+export type {
+  ProjectPreStartAdmissionDirtyContinuationMode,
+  ProjectPreStartAdmissionLaunchWorkspaceMode,
+} from "./codex-goal-project-pre-start-admission-types";
 import {
   assertProjectInputPatchContract,
   projectInputPatchBindingMatches,
@@ -215,15 +220,6 @@ export async function validateStoredProjectPreStartAdmission(input: {
   }
   await validateProjectPreStartAdmission(input);
 }
-
-export type ProjectPreStartAdmissionDirtyContinuationMode =
-  "reviewed_dirty_continuation" | "terminal_handoff_dependency_recovery";
-
-export type ProjectPreStartAdmissionLaunchWorkspaceMode =
-  | "clean_first_launch"
-  | "admitted_input_patch"
-  | "admitted_input_patch_continuation"
-  | ProjectPreStartAdmissionDirtyContinuationMode;
 
 export async function assertProjectPreStartAdmissionLaunchBinding(input: {
   readonly manifest: CodexGoalJobManifest;

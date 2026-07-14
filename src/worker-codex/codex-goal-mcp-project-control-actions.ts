@@ -1,6 +1,5 @@
 import {
   ProjectAdmissionWorkerRole,
-  ReviewDecisionStatus,
   type ProjectAccessScope,
   type ProjectControlBroker,
 } from "@vioxen/subscription-runtime/worker-core";
@@ -96,6 +95,10 @@ import {
   projectControlWorkspaceLocks,
   withValidatedProjectWorkspaceLock,
 } from "./codex-goal-project-workspace-lock";
+import {
+  parseReviewedOutputMerge,
+  requiredReviewDecision,
+} from "./codex-goal-mcp-project-control-reviewed-output";
 
 type JsonObject = Readonly<Record<string, unknown>>;
 
@@ -986,36 +989,4 @@ export async function projectControlMarkReviewedView(
   };
     },
   });
-}
-
-function parseReviewedOutputMerge(
-  scope: ProjectAccessScope,
-  value: NonNullable<ProjectControlMcpArgs["merge"]>,
-) {
-  const sourceRemote = requiredRawString(value.sourceRemote, "merge.sourceRemote");
-  const sourceBranch = requiredRawString(value.sourceBranch, "merge.sourceBranch");
-  const sourceCommit = requiredRawString(value.sourceCommit, "merge.sourceCommit")
-    .toLowerCase();
-  const expectedTargetCommit = requiredRawString(
-    value.expectedTargetCommit,
-    "merge.expectedTargetCommit",
-  ).toLowerCase();
-  assertSafeGitRemoteName(sourceRemote, "merge.sourceRemote");
-  assertSafeGitRefName(sourceBranch, "merge.sourceBranch");
-  assertSafeGitCommitSha(sourceCommit);
-  assertSafeGitCommitSha(expectedTargetCommit);
-  if (!scope.allowedGitRemotes?.includes(sourceRemote)) {
-    throw new Error("reviewed_worker_output_merge_source_remote_denied");
-  }
-  if (!scope.allowedBranches?.includes(sourceBranch)) {
-    throw new Error("reviewed_worker_output_merge_source_branch_denied");
-  }
-  return { sourceRemote, sourceBranch, sourceCommit, expectedTargetCommit };
-}
-
-function requiredReviewDecision(value: unknown): ReviewDecisionStatus {
-  if (value === "approved") return ReviewDecisionStatus.Approved;
-  if (value === "rejected") return ReviewDecisionStatus.Rejected;
-  if (value === "needs_human") return ReviewDecisionStatus.NeedsHuman;
-  throw new Error("reviewed_worker_output_review_decision_required");
 }

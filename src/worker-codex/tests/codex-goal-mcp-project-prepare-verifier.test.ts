@@ -24,6 +24,7 @@ import {
 } from "../codex-goal-jobs";
 import { createCodexGoalMcpServer } from "../codex-goal-mcp";
 import { assertProjectPreStartAdmissionLaunchBinding } from "../application/project-control/codex-goal-project-pre-start-admission";
+import { authorizeProjectPreStartAdmissionLaunch } from "../application/project-control/codex-goal-project-pre-start-launch-authorization";
 import {
   callToolJson,
   git,
@@ -224,6 +225,11 @@ await writeFile(file, JSON.stringify(operation, null, 2) + "\\n");
               workspaceMode: "admitted_input_patch",
             }),
           ).resolves.toBeUndefined();
+          await authorizeProjectPreStartAdmissionLaunch({
+            manifest: verifierManifest,
+            scope,
+            workspaceMode: "admitted_input_patch",
+          });
 
           const preexistingPatchPath = join(
             verifierManifest.jobRootDir,

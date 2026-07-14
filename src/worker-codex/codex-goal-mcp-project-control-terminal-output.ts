@@ -417,7 +417,7 @@ async function recordInitialFailedNoOutput(input: {
         await assertProjectPreStartAdmissionLaunchBinding({
           manifest: input.loaded.manifest,
           scope: input.controller.scope,
-          workspaceMode: "admitted_input_patch",
+          workspaceMode: "admitted_input_patch_continuation",
           expectedInputPatchArtifactSha256:
             input.preexistingWorkspacePatch.sha256,
         });
@@ -450,7 +450,7 @@ async function recordInitialFailedNoOutput(input: {
         await assertProjectPreStartAdmissionLaunchBinding({
           manifest: input.loaded.manifest,
           scope: input.controller.scope,
-          workspaceMode: "admitted_input_patch",
+          workspaceMode: "admitted_input_patch_continuation",
           expectedInputPatchArtifactSha256:
             input.preexistingWorkspacePatch.sha256,
         });

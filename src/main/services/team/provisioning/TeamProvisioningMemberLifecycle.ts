@@ -526,6 +526,7 @@ export interface TeamProvisioningMemberLifecycleHost {
     sourceWarning?: string;
     onProgress: (progress: unknown) => void;
   }): Promise<unknown>;
+  restartPureOpenCodeAggregatePrimaryMember(teamName: string, memberName: string): Promise<boolean>;
   createMixedSecondaryLaneStateForMember(
     run: ProvisioningRun,
     member: TeamCreateRequest['members'][number]
@@ -2290,6 +2291,14 @@ export class TeamProvisioningMemberLifecycleController {
         reason: 'manual_restart',
       });
       return;
+    }
+    if (desiredProviderId === 'opencode' && leadProviderId === 'opencode') {
+      const restartAggregatePrimary = this.getHostSeam<
+        (targetTeamName: string, targetMemberName: string) => Promise<boolean>
+      >('restartPureOpenCodeAggregatePrimaryMember');
+      if (restartAggregatePrimary && (await restartAggregatePrimary(teamName, memberName))) {
+        return;
+      }
     }
     if (run.pendingMemberRestarts.has(memberName)) {
       throw new Error(`Restart for teammate "${memberName}" is already in progress`);

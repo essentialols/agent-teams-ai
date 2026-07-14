@@ -71,7 +71,8 @@ export async function rejectIntegrationAttempt(
 }
 
 function mergeCanStillBePending(status: IntegrationAttemptStatus): boolean {
-  return status === IntegrationAttemptStatus.Applied ||
+  return status === IntegrationAttemptStatus.Opened ||
+    status === IntegrationAttemptStatus.Applied ||
     status === IntegrationAttemptStatus.ChecksRunning ||
     status === IntegrationAttemptStatus.ChecksFailed ||
     status === IntegrationAttemptStatus.ChecksPassed;

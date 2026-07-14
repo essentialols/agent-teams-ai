@@ -609,6 +609,22 @@ describe("project integration use cases", () => {
     expect(fixture.git.calls).toContain("abortMerge");
   });
 
+  it("rolls back an opened merge after apply failed before persistence", async () => {
+    const fixture = createFixture();
+    const opened = await openProjectIntegrationAttempt(
+      fixture.deps(),
+      mergeInput(),
+    );
+
+    const rejected = await rejectIntegrationAttempt(fixture.deps(), {
+      attemptId: opened.attemptId,
+      reason: "apply failed after Git materialization",
+    });
+
+    expect(rejected.status).toBe(IntegrationAttemptStatus.Rejected);
+    expect(fixture.git.calls).toContain("abortMerge");
+  });
+
   it("rejects a committed merge without attempting to abort completed Git state", async () => {
     const fixture = createFixture();
     fixture.git.appliedFiles = ["src/base-change.ts", "src/memory.ts"];

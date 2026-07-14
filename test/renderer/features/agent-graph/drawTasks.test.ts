@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { drawTasks } from '../../../../packages/agent-graph/src/canvas/draw-tasks';
+import {
+  drawColumnHeaders,
+  drawTasks,
+} from '../../../../packages/agent-graph/src/canvas/draw-tasks';
 
+import type { KanbanZoneInfo } from '../../../../packages/agent-graph/src/layout/kanbanLayout';
 import type { GraphNode } from '@claude-teams/agent-graph';
 
 function createMockContext() {
@@ -83,6 +87,45 @@ function createTaskNode(hasLiveTaskLogs: boolean): GraphNode {
 }
 
 describe('drawTasks', () => {
+  it('hides task headers when semantic zoom hides their task cards', () => {
+    const hidden = createMockContext();
+    const visible = createMockContext();
+    const zones: KanbanZoneInfo[] = [
+      {
+        ownerId: 'team:alpha',
+        ownerX: 0,
+        ownerY: 0,
+        headers: [{ label: 'In Progress', x: 120, y: 80, color: '#38bdf8' }],
+      },
+    ];
+
+    drawColumnHeaders(hidden.ctx, zones, 0.4, new Set());
+    drawColumnHeaders(visible.ctx, zones, 0.4, new Set(['team:alpha']));
+
+    expect(hidden.fillTextCalls).toHaveLength(0);
+    expect(visible.fillTextCalls.length).toBeGreaterThan(0);
+  });
+
+  it('shows empty task placeholders only at detail zoom', () => {
+    const summary = createMockContext();
+    const detail = createMockContext();
+    const zones: KanbanZoneInfo[] = [
+      {
+        ownerId: 'team:alpha',
+        ownerX: 0,
+        ownerY: 0,
+        headers: [{ label: 'In Progress', x: 120, y: 80, color: '#38bdf8' }],
+        emptyPlaceholder: { label: 'No active tasks', x: 120, y: 120, color: '#64748b' },
+      },
+    ];
+
+    drawColumnHeaders(summary.ctx, zones, 0.4, new Set());
+    drawColumnHeaders(detail.ctx, zones, 0.8, new Set());
+
+    expect(summary.fillTextCalls).toHaveLength(0);
+    expect(detail.fillTextCalls.some((call) => call.text === 'No active tasks')).toBe(true);
+  });
+
   it('shows task content only at detail zoom unless the task is selected', () => {
     const overview = createMockContext();
     const summary = createMockContext();

@@ -43,9 +43,13 @@ import {
   truncateGroupFrameLabel,
 } from '../canvas/group-frames';
 import { hexWithAlpha } from '../canvas/render-cache';
-import { getGraphSemanticZoomLevel, shouldRenderParticlesAtZoom } from '../canvas/semantic-zoom';
+import {
+  getGraphSemanticZoomLevel,
+  shouldRenderParticlesAtZoom,
+  shouldRenderTaskAtZoom,
+} from '../canvas/semantic-zoom';
 import { NODE } from '../constants/canvas-constants';
-import { KanbanLayoutEngine } from '../layout/kanbanLayout';
+import { KanbanLayoutEngine, type KanbanZoneInfo } from '../layout/kanbanLayout';
 
 import {
   computeAdaptiveParticleBudget,
@@ -194,6 +198,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, GraphCanvasProps>(funct
   const visibleNodeIdsCache = useRef(new Set<string>());
   const visibleEdgeIdsCache = useRef(new Set<string>());
   const activeParticleEdgesCache = useRef(new Set<string>());
+  const renderableTaskZoneOwnerIdsCache = useRef(new Set<string>());
   const handoffStateRef = useRef(createTransientHandoffState());
   const lastTeamNameRef = useRef<string | null>(null);
   const lastDrawTimeRef = useRef(0);
@@ -223,6 +228,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, GraphCanvasProps>(funct
 
           const cam = state.camera;
           const zoom = cam.zoom;
+          const semanticLevel = getGraphSemanticZoomLevel(zoom);
 
           // ─── Frustum culling: compute visible world-space bounds ──────────
           const viewLeft = -cam.x / zoom;
@@ -233,8 +239,16 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, GraphCanvasProps>(funct
 
           // ─── Reuse cached maps (avoid per-frame allocation) ───────────────
           const nodeMap = nodeMapCache.current;
-          nodeMap.clear();
-          for (const n of state.nodes) nodeMap.set(n.id, n);
+          const renderableTaskZoneOwnerIds = prepareNodeMapAndTaskZoneOwners({
+            nodeMap,
+            targetOwnerIds: renderableTaskZoneOwnerIdsCache.current,
+            nodes: state.nodes,
+            zones: KanbanLayoutEngine.zones,
+            zoom,
+            semanticLevel,
+            selectedNodeId: state.selectedNodeId,
+            hoveredNodeId: state.hoveredNodeId,
+          });
 
           const edgeMap = edgeMapCache.current;
           edgeMap.clear();
@@ -296,6 +310,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, GraphCanvasProps>(funct
             groups: state.ownerColumnGroupRects,
             zoom,
             focusNodeIds: state.focusNodeIds,
+            renderableTaskZoneOwnerIds,
           });
           drawGroupFrames(ctx, {
             frames: state.groupFrames,
@@ -345,7 +360,6 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, GraphCanvasProps>(funct
             hasFocusedEdges: (prioritizedEdgeIds?.size ?? 0) > 0,
             zoom,
           });
-          const semanticLevel = getGraphSemanticZoomLevel(zoom);
           const renderableParticles = shouldRenderParticlesAtZoom(
             zoom,
             state.animateOverviewParticles
@@ -390,7 +404,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, GraphCanvasProps>(funct
             state.hoveredNodeId,
             state.focusNodeIds
           );
-          drawColumnHeaders(ctx, KanbanLayoutEngine.zones, zoom);
+          drawColumnHeaders(ctx, KanbanLayoutEngine.zones, zoom, renderableTaskZoneOwnerIds);
           drawTasks(
             ctx,
             visibleNodes,
@@ -512,6 +526,43 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, GraphCanvasProps>(funct
     </div>
   );
 });
+
+function prepareNodeMapAndTaskZoneOwners(args: {
+  nodeMap: Map<string, GraphNode>;
+  targetOwnerIds: Set<string>;
+  nodes: readonly GraphNode[];
+  zones: readonly KanbanZoneInfo[];
+  zoom: number;
+  semanticLevel: ReturnType<typeof getGraphSemanticZoomLevel>;
+  selectedNodeId: string | null;
+  hoveredNodeId: string | null;
+}): ReadonlySet<string> {
+  args.nodeMap.clear();
+  args.targetOwnerIds.clear();
+
+  for (const node of args.nodes) {
+    args.nodeMap.set(node.id, node);
+    if (
+      node.kind === 'task' &&
+      node.taskStatus !== 'deleted' &&
+      shouldRenderTaskAtZoom(
+        args.zoom,
+        node.id === args.selectedNodeId || node.id === args.hoveredNodeId,
+        node.taskZoomVisibility
+      )
+    ) {
+      args.targetOwnerIds.add(node.ownerId ?? '__unassigned__');
+    }
+  }
+
+  if (args.semanticLevel === 'detail') {
+    for (const zone of args.zones) {
+      if (zone.emptyPlaceholder) args.targetOwnerIds.add(zone.ownerId);
+    }
+  }
+
+  return args.targetOwnerIds;
+}
 
 function drawGroupFrames(
   ctx: CanvasRenderingContext2D,
@@ -751,6 +802,7 @@ function drawOwnerColumnGroups(
     groups: readonly OwnerColumnGroupRect[];
     zoom: number;
     focusNodeIds: ReadonlySet<string> | null;
+    renderableTaskZoneOwnerIds: ReadonlySet<string>;
   }
 ): void {
   if (args.groups.length === 0 || args.zoom < 0.1) {
@@ -761,6 +813,7 @@ function drawOwnerColumnGroups(
   const radius = 8;
 
   for (const group of args.groups) {
+    if (!args.renderableTaskZoneOwnerIds.has(group.ownerId)) continue;
     const rect = group.rect;
     if (rect.width <= 0 || rect.height <= 0) {
       continue;

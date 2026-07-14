@@ -9,7 +9,7 @@ import { COLORS, getReviewStateColor, getTaskStatusColor } from '../constants/co
 import { wrapTextLines } from './draw-misc';
 import { drawPillShell } from './draw-pill-shell';
 import { hexWithAlpha } from './render-cache';
-import { shouldRenderTaskAtZoom } from './semantic-zoom';
+import { getGraphSemanticZoomLevel, shouldRenderTaskAtZoom } from './semantic-zoom';
 
 import type { KanbanZoneInfo } from '../layout/kanbanLayout';
 import type { GraphNode } from '../ports/types';
@@ -447,10 +447,16 @@ function drawLeftSpacedText(
 export function drawColumnHeaders(
   ctx: CanvasRenderingContext2D,
   zones: KanbanZoneInfo[],
-  zoom = 1
+  zoom = 1,
+  renderableTaskZoneOwnerIds?: ReadonlySet<string>
 ): void {
   if (zoom < 0.22) return;
   for (const zone of zones) {
+    const hasRenderableTask = renderableTaskZoneOwnerIds?.has(zone.ownerId) ?? true;
+    const showsEmptyPlaceholder =
+      Boolean(zone.emptyPlaceholder) && getGraphSemanticZoomLevel(zoom) === 'detail';
+    if (!hasRenderableTask && !showsEmptyPlaceholder) continue;
+
     // Section header for unassigned tasks — larger, centered above all columns
     if (zone.ownerId === '__unassigned__') {
       ctx.font = KANBAN_HEADER_FONT;
@@ -477,7 +483,7 @@ export function drawColumnHeaders(
       );
     }
 
-    if (zone.emptyPlaceholder && zoom >= 0.35) {
+    if (zone.emptyPlaceholder && showsEmptyPlaceholder) {
       drawEmptyTaskPlaceholder(ctx, zone.emptyPlaceholder);
     }
   }

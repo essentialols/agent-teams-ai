@@ -14,7 +14,11 @@ import {
 import { alphaHex, COLORS, getStateColor } from '../constants/colors';
 
 import { drawHexagon } from './draw-misc';
-import { getGraphNodeCardSize, type GraphNodeVisualSize } from './node-geometry';
+import {
+  getGraphNodeCardSize,
+  getGraphNodeOverviewSize,
+  type GraphNodeVisualSize,
+} from './node-geometry';
 import { getAgentGlowSprite, hexWithAlpha } from './render-cache';
 import { getGraphSemanticZoomLevel, shouldRenderOverviewHierarchyNode } from './semantic-zoom';
 
@@ -376,15 +380,20 @@ function drawHierarchyOverviewBadge(
   isHovered: boolean,
   zoom: number
 ): void {
-  const inverseZoom = 1 / Math.max(zoom, 0.015);
-  const titleFontSize = 12 * inverseZoom;
-  const summaryFontSize = 9.5 * inverseZoom;
-  const paddingX = 8 * inverseZoom;
-  const height = 32 * inverseZoom;
-  const radius = 6 * inverseZoom;
+  const overviewSize = getGraphNodeOverviewSize(node, zoom);
+  if (!overviewSize) return;
+  const effectiveZoom =
+    node.visualVariant === 'team' ? Math.max(zoom, 0.19) : Math.max(zoom, 0.015);
+  const inverseZoom = 1 / effectiveZoom;
+  const isTeam = node.visualVariant === 'team';
+  const titleFontSize = (isTeam ? 9 : 12) * inverseZoom;
+  const summaryFontSize = (isTeam ? 6.5 : 9.5) * inverseZoom;
+  const paddingX = (isTeam ? 6 : 8) * inverseZoom;
+  const height = overviewSize.height;
+  const radius = (isTeam ? 5 : 6) * inverseZoom;
 
   ctx.save();
-  const maxWidth = 220 * inverseZoom;
+  const maxWidth = overviewSize.width;
   ctx.font = `600 ${titleFontSize}px ui-monospace, SFMono-Regular, Menlo, monospace`;
   const renderedTitle = truncateCardText(ctx, node.label, maxWidth - paddingX * 2);
   const titleWidth = ctx.measureText(renderedTitle).width;
@@ -393,13 +402,15 @@ function drawHierarchyOverviewBadge(
     ? truncateCardText(ctx, node.semanticSummary, maxWidth - paddingX * 2)
     : '';
   const summaryWidth = ctx.measureText(renderedSummary).width;
-  const width = Math.min(maxWidth, Math.max(titleWidth, summaryWidth) + paddingX * 2);
+  const width = isTeam
+    ? maxWidth
+    : Math.min(maxWidth, Math.max(titleWidth, summaryWidth) + paddingX * 2);
   const left = x - width / 2;
   const top = y - height / 2;
 
   ctx.beginPath();
   ctx.roundRect(left, top, width, height, radius);
-  ctx.fillStyle = 'rgba(7, 14, 29, 0.94)';
+  ctx.fillStyle = isTeam ? 'rgba(7, 14, 29, 0.9)' : 'rgba(7, 14, 29, 0.94)';
   ctx.fill();
   let borderAlpha = 0.5;
   if (isSelected) borderAlpha = 0.92;
@@ -409,7 +420,13 @@ function drawHierarchyOverviewBadge(
   ctx.stroke();
 
   ctx.beginPath();
-  ctx.arc(left + 8 * inverseZoom, y - 5 * inverseZoom, 2.5 * inverseZoom, 0, Math.PI * 2);
+  ctx.arc(
+    left + (isTeam ? 6 : 8) * inverseZoom,
+    y - (isTeam ? 4.5 : 5) * inverseZoom,
+    (isTeam ? 1.8 : 2.5) * inverseZoom,
+    0,
+    Math.PI * 2
+  );
   ctx.fillStyle = node.state === 'active' ? '#34d399' : getStateColor(node.state);
   ctx.fill();
 
@@ -417,7 +434,11 @@ function drawHierarchyOverviewBadge(
   ctx.textBaseline = 'middle';
   ctx.font = `600 ${titleFontSize}px ui-monospace, SFMono-Regular, Menlo, monospace`;
   ctx.fillStyle = 'rgba(228, 240, 255, 0.96)';
-  ctx.fillText(renderedTitle, left + 15 * inverseZoom, y - 5 * inverseZoom);
+  ctx.fillText(
+    renderedTitle,
+    left + (isTeam ? 11 : 15) * inverseZoom,
+    y - (isTeam ? 4.5 : 5) * inverseZoom
+  );
   if (renderedSummary) {
     ctx.font = `500 ${summaryFontSize}px ui-monospace, SFMono-Regular, Menlo, monospace`;
     ctx.fillStyle = 'rgba(174, 199, 227, 0.84)';

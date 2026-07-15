@@ -127,11 +127,10 @@ export const GraphMinimap = forwardRef<GraphMinimapHandle, Readonly<GraphMinimap
         ref={canvasRef}
         width={MINIMAP_WIDTH}
         height={MINIMAP_HEIGHT}
-        className="pointer-events-auto absolute bottom-14 right-4 z-[4] h-[124px] w-[196px] cursor-crosshair rounded-xl border border-sky-300/20 bg-slate-950/90 shadow-xl shadow-black/35 backdrop-blur-md"
+        className="pointer-events-auto absolute bottom-14 right-4 z-[4] h-[124px] w-[196px] cursor-crosshair rounded-xl border border-sky-300/10 bg-slate-950/50 opacity-75 shadow-lg shadow-black/20 backdrop-blur-sm transition-opacity hover:opacity-95 focus-visible:opacity-95"
         role="button"
         tabIndex={0}
         aria-label={label}
-        title={label}
         onPointerDown={navigateFromPointer}
         onPointerMove={navigateFromPointer}
         onKeyDown={navigateFromKeyboard}
@@ -210,8 +209,8 @@ function drawGraphMinimap(
 ): void {
   ctx.clearRect(0, 0, MINIMAP_WIDTH, MINIMAP_HEIGHT);
   const background = ctx.createLinearGradient(0, 0, MINIMAP_WIDTH, MINIMAP_HEIGHT);
-  background.addColorStop(0, 'rgba(8, 18, 35, 0.96)');
-  background.addColorStop(1, 'rgba(4, 10, 24, 0.96)');
+  background.addColorStop(0, 'rgba(8, 18, 35, 0.52)');
+  background.addColorStop(1, 'rgba(4, 10, 24, 0.52)');
   ctx.fillStyle = background;
   ctx.fillRect(0, 0, MINIMAP_WIDTH, MINIMAP_HEIGHT);
 

@@ -751,7 +751,7 @@ describe('buildOrganizationGraphData', () => {
     expect(graph.layout?.fitTaskRowsToContent).toBe(true);
     expect(graph.layout?.showEmptyTaskPlaceholders).toBeUndefined();
     expect(graph.nodes.find((node) => node.id === 'agent:alpha:alice')).toMatchObject({
-      taskZoomVisibility: 'summary',
+      taskZoomVisibility: 'overview',
     });
     expect(graph.edges).toEqual(
       expect.arrayContaining([
@@ -1367,10 +1367,10 @@ describe('buildOrganizationGraphData', () => {
     expect(rowsGraph.layout?.mode).toBe('grid-under-lead');
     expect(radialGraph.layout?.mode).toBe('radial');
     expect(rowsGraph.nodes.find((node) => node.kind === 'task')?.taskZoomVisibility).toBe(
-      'summary'
+      'overview'
     );
     expect(radialGraph.nodes.find((node) => node.kind === 'task')?.taskZoomVisibility).toBe(
-      'detail'
+      'overview'
     );
     expect(maxGridColumnIndex).toBeGreaterThan(1);
     expect(maxGridRowIndex).toBeLessThan(5);
@@ -1393,7 +1393,7 @@ describe('buildOrganizationGraphData', () => {
           state: 'active',
           ownerId: 'team:alpha',
           sublabel: 'Build org overview',
-          taskZoomVisibility: 'summary',
+          taskZoomVisibility: 'overview',
         }),
       ])
     );

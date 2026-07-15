@@ -132,6 +132,7 @@ describe('drawTasks', () => {
     const detail = createMockContext();
     const selected = createMockContext();
     const hierarchySummary = createMockContext();
+    const hierarchyOverview = createMockContext();
     const node = createTaskNode(false);
 
     drawTasks(overview.ctx, [node], 1, null, null, null, 0.1);
@@ -147,12 +148,22 @@ describe('drawTasks', () => {
       null,
       0.4
     );
+    drawTasks(
+      hierarchyOverview.ctx,
+      [{ ...node, taskZoomVisibility: 'overview' }],
+      1,
+      null,
+      null,
+      null,
+      0.1
+    );
 
     expect(overview.fillTextCalls).toHaveLength(0);
     expect(summary.fillTextCalls).toHaveLength(0);
     expect(detail.fillTextCalls.some((call) => call.text === 'Live log task')).toBe(true);
     expect(selected.fillTextCalls.some((call) => call.text === 'Live log task')).toBe(true);
     expect(hierarchySummary.fillTextCalls.some((call) => call.text === 'Live log task')).toBe(true);
+    expect(hierarchyOverview.fillTextCalls.some((call) => call.text === 'Live log task')).toBe(true);
   });
 
   it('draws the live log indicator only for task nodes with live log activity', () => {

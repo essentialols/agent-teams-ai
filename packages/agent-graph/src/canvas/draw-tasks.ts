@@ -8,6 +8,7 @@ import { COLORS, getReviewStateColor, getTaskStatusColor } from '../constants/co
 
 import { wrapTextLines } from './draw-misc';
 import { drawPillShell } from './draw-pill-shell';
+import { getGraphNodeOverviewSize } from './node-geometry';
 import { hexWithAlpha } from './render-cache';
 import { getGraphSemanticZoomLevel, shouldRenderTaskAtZoom } from './semantic-zoom';
 
@@ -45,10 +46,54 @@ export function drawTasks(
     ctx.save();
     ctx.globalAlpha = opacity;
 
-    drawTaskPill(ctx, x, y, node, time, isSelected, isHovered);
+    if (getGraphSemanticZoomLevel(zoom) === 'overview' && !isSelected && !isHovered) {
+      drawTaskOverviewBadge(ctx, x, y, node, zoom);
+    } else {
+      drawTaskPill(ctx, x, y, node, time, isSelected, isHovered);
+    }
 
     ctx.restore();
   }
+}
+
+function drawTaskOverviewBadge(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  node: GraphNode,
+  zoom: number
+): void {
+  const size = getGraphNodeOverviewSize(node, zoom);
+  if (!size) return;
+  const inverseZoom = 1 / Math.max(zoom, 0.19);
+  const statusColor = getTaskStatusColor(node.taskStatus);
+  const left = x - size.width / 2;
+  const top = y - size.height / 2;
+  const radius = 4 * inverseZoom;
+
+  ctx.beginPath();
+  ctx.roundRect(left, top, size.width, size.height, radius);
+  ctx.fillStyle = node.isBlocked ? 'rgba(42, 15, 26, 0.9)' : 'rgba(10, 20, 38, 0.9)';
+  ctx.fill();
+  ctx.strokeStyle = node.isBlocked
+    ? hexWithAlpha(COLORS.edgeBlocking, 0.82)
+    : hexWithAlpha(statusColor, 0.72);
+  ctx.lineWidth = 1 * inverseZoom;
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.roundRect(left, top, 3 * inverseZoom, size.height, radius);
+  ctx.fillStyle = node.isBlocked ? COLORS.edgeBlocking : statusColor;
+  ctx.fill();
+
+  ctx.font = `600 ${7 * inverseZoom}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = 'rgba(220, 235, 251, 0.94)';
+  const title = node.sublabel ?? node.label;
+  const maxWidth = size.width - 12 * inverseZoom;
+  const text = title.length > 34 ? `${title.slice(0, 31)}...` : title;
+  ctx.fillText(text, left + 7 * inverseZoom, y, maxWidth);
 }
 
 // ─── Private ────────────────────────────────────────────────────────────────

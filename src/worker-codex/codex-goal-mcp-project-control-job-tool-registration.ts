@@ -63,6 +63,7 @@ export function registerCodexGoalProjectControlJobTools(server: McpServer): void
           .string()
           .regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i)
           .optional(),
+        producerJobId: z.string().optional(),
         newBranch: z.string().optional(),
         promptBody: z.string().optional(),
         preStartAdmission: workerLaunchAdmissionSchema

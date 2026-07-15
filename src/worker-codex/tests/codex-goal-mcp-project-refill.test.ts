@@ -541,6 +541,7 @@ await writeFile(operationFilePath, JSON.stringify(operation, null, 2) + "\\n");
       expect(refillTool?.inputSchema.properties).toMatchObject({
         sourceRef: expect.any(Object),
         newBranch: expect.any(Object),
+        producerJobId: expect.any(Object),
       });
       const refillSchema = refillTool?.inputSchema.properties
         ?.preStartAdmission as TestJsonSchema;

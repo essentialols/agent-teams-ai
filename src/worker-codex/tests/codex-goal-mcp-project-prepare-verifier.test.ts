@@ -53,6 +53,7 @@ describe("project verifier preparation", () => {
       const sourceWorkspacePath = join(root, "workspaces", "canonical");
       const producerWorkspacePath = join(root, "worktrees", "producer");
       const verifierWorkspacePath = join(root, "worktrees", "verifier");
+      const remediationWorkspacePath = join(root, "worktrees", "remediation");
       const remotePath = join(root, "remote.git");
       const server = createCodexGoalMcpServer();
       const client = new Client({ name: "test", version: "0.0.0" });
@@ -170,6 +171,10 @@ await writeFile(file, JSON.stringify(operation, null, 2) + "\\n");
           controllerJobRoot,
           sourceWorkspacePath,
         });
+        await writeRejectedProducerLedger({
+          root,
+          producerWorkspacePath,
+        });
 
         if (executionMode === "sync") {
           await expect(
@@ -187,6 +192,30 @@ await writeFile(file, JSON.stringify(operation, null, 2) + "\\n");
               baseBranch: "blocked/main",
             }),
           ).rejects.toThrow(/project_control_denied:remote_denied/);
+        }
+
+        let remediation: Record<string, unknown> | undefined;
+        if (executionMode === "sync") {
+          await git(sourceWorkspacePath, [
+            "update-ref",
+            "refs/remotes/origin/main",
+            canonicalSha,
+          ]);
+          remediation = await prepareRemediation({
+            client,
+            root,
+            registryRootDir,
+            sourceWorkspacePath,
+            remediationWorkspacePath,
+            producerBase,
+            canonicalSha,
+            patchSha256: handoff.manifest.artifacts.patch.sha256,
+          });
+          await git(sourceWorkspacePath, [
+            "update-ref",
+            "refs/remotes/origin/main",
+            producerBase,
+          ]);
         }
 
         const result = await prepareVerifier({
@@ -211,6 +240,38 @@ await writeFile(file, JSON.stringify(operation, null, 2) + "\\n");
             startSkipped: true,
             canonicalRemoteHead: { oid: canonicalSha },
           });
+          expect(remediation).toMatchObject({
+            ok: true,
+            mode: "project_control_refill_worker",
+            workerRole: "producer",
+            worktree: { status: "applied" },
+            startSkipped: true,
+          });
+          expect(await revision(remediationWorkspacePath)).toBe(canonicalSha);
+          expect(await stagedPatchSha256(remediationWorkspacePath)).toBe(
+            handoff.manifest.artifacts.patch.sha256,
+          );
+          expect(await gitStdout(remediationWorkspacePath, [
+            "diff",
+            "--name-only",
+            "--",
+          ])).toBe("");
+          expect(await gitStdout(remediationWorkspacePath, [
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+          ])).toBe("");
+          const remediationManifest = await readCodexGoalJob({
+            registryRootDir,
+            jobId: "project-remediation",
+          });
+          await expect(assertProjectPreStartAdmissionLaunchBinding({
+            manifest: remediationManifest,
+            scope: projectScope({ root, registryRootDir, sourceWorkspacePath }),
+            workspaceMode: "admitted_input_patch",
+            expectedInputPatchArtifactSha256:
+              handoff.manifest.artifacts.patch.sha256,
+          })).resolves.toBeUndefined();
           expect(await revision(verifierWorkspacePath)).toBe(canonicalSha);
           const verifierManifest = parseCodexGoalJobManifest(
             JSON.parse(
@@ -854,6 +915,109 @@ async function prepareVerifier(input: {
   const result = JSON.parse(text) as Record<string, unknown>;
   if (result.ok !== true) throw new Error(JSON.stringify(result));
   return result;
+}
+
+async function prepareRemediation(input: {
+  readonly client: Client;
+  readonly root: string;
+  readonly registryRootDir: string;
+  readonly sourceWorkspacePath: string;
+  readonly remediationWorkspacePath: string;
+  readonly producerBase: string;
+  readonly canonicalSha: string;
+  readonly patchSha256: string;
+}): Promise<Record<string, unknown>> {
+  const response = await input.client.callTool({
+    name: "codex_goal_project_refill_worker",
+    arguments: {
+      registryRootDir: input.registryRootDir,
+      controllerJobId: "project-controller",
+      producerJobId: "project-producer",
+      jobId: "project-remediation",
+      taskId: "project-remediation",
+      sourceWorkspacePath: input.sourceWorkspacePath,
+      baseBranch: "origin/main",
+      newBranch: "review/remediation",
+      workspacePath: input.remediationWorkspacePath,
+      promptBody: "Remediate immutable rejected producer output.\n",
+      accounts: ["account-a"],
+      workerRole: "producer",
+      preStartAdmission: {
+        mode: "serial-builtin",
+        contract: {
+          kind: "worker-launch",
+          format: 1,
+          canonicalSha: input.canonicalSha,
+          baseSha: input.producerBase,
+          phaseStartSha: input.canonicalSha,
+          packetRevision: "remediation-r1",
+          controllerPacket: "controller.md",
+          lanePacket: "lane.md",
+          phaseId: "phase-01",
+          laneId: "remediation",
+          inputPatchHash: input.patchSha256,
+          reviewKind: "implementation",
+          ownedPaths: ["feature.txt"],
+          mandatoryDocs: ["README.md", "controller.md", "lane.md"],
+          mandatoryScripts: [],
+          mandatoryFixtures: [],
+          requiredChecks: [{
+            id: "focused",
+            cwd: "checks",
+            command: "cd .. && git diff --check",
+          }],
+          executionPolicy: {
+            mode: "sandbox-only",
+            sandboxRoot: input.remediationWorkspacePath,
+            forbiddenRealProjects: [join(input.root, "real-user-project")],
+          },
+        },
+      },
+      confirmPreStartAdmission: true,
+      startWorker: false,
+      executionMode: "sync",
+      confirmRefill: true,
+    },
+  });
+  const text = (
+    response as { readonly content?: readonly { readonly text?: string }[] }
+  ).content?.[0]?.text;
+  if (!text?.startsWith("{")) throw new Error(text ?? "missing response");
+  const result = JSON.parse(text) as Record<string, unknown>;
+  if (result.ok !== true) throw new Error(JSON.stringify(result));
+  return result;
+}
+
+async function writeRejectedProducerLedger(input: {
+  readonly root: string;
+  readonly producerWorkspacePath: string;
+}): Promise<void> {
+  const ledgerRoot = join(input.root, "control", "consumed-output-ledger");
+  const backupRoot = join(input.root, "control", "producer-rejection-backup");
+  await mkdir(join(ledgerRoot, "items"), { recursive: true });
+  await mkdir(backupRoot, { recursive: true });
+  const statusPath = join(backupRoot, "status.txt");
+  const patchPath = join(backupRoot, "tracked.patch");
+  const numstatPath = join(backupRoot, "numstat.txt");
+  await writeFile(statusPath, " M feature.txt\n");
+  await writeFile(patchPath, "diff --git a/feature.txt b/feature.txt\n");
+  await writeFile(numstatPath, "1\t1\tfeature.txt\n");
+  await writeFile(
+    join(ledgerRoot, "items", "project-producer.json"),
+    `${JSON.stringify({
+      schemaVersion: 1,
+      jobId: "project-producer",
+      status: "rejected",
+      closedAt: "2026-07-15T00:00:00.000Z",
+      note: "Rejected producer output retained for bounded remediation.",
+      backup: {
+        workspace: input.producerWorkspacePath,
+        statusPath,
+        patchPath,
+        numstatPath,
+      },
+    }, null, 2)}\n`,
+  );
 }
 
 async function revision(workspacePath: string): Promise<string> {

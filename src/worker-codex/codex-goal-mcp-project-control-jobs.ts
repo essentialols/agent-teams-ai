@@ -64,6 +64,7 @@ import {
   stagedPatchSha256ForRevision,
 } from "./codex-goal-mcp-project-git";
 import { resolveProjectSourceRevision } from "./application/project-control/codex-goal-project-source-revision";
+import { assertProjectRefillInputPatchSource } from "./application/project-control/codex-goal-project-input-patch-policy";
 import {
   matchesProjectControlPrefix,
   uniqueProjectControlStrings,
@@ -180,9 +181,6 @@ export async function projectControlRefillWorkerView(
   }
   const role = projectControlWorkerRole(args.workerRole);
   const producerJobId = stringValue(args.producerJobId);
-  if (producerJobId && role === "producer") {
-    throw new Error("project_control_verifier_role_required");
-  }
   const accessBoundary =
     requested.accessBoundary ?? AccessBoundary.IsolatedWorkspaceWrite;
   const baseCreateManifest: CodexGoalJobManifestInput = {
@@ -209,6 +207,13 @@ export async function projectControlRefillWorkerView(
     scope: controller.scope,
     manifest: baseCreateManifest,
   });
+  if (boundedToolName === "codex_goal_project_refill_worker") {
+    assertProjectRefillInputPatchSource({
+      contract: preStartAdmission?.contract,
+      producerJobId,
+      workerRole: role,
+    });
+  }
   const createManifest: CodexGoalJobManifestInput = {
     ...baseCreateManifest,
     ...(preStartAdmission
@@ -693,6 +698,13 @@ async function projectControlRefillWorkerBoundedView(
     scope: controller.scope,
     manifest: createManifest,
   });
+  if (operationToolName === "codex_goal_project_refill_worker") {
+    assertProjectRefillInputPatchSource({
+      contract: preStartAdmission?.contract,
+      producerJobId: stringValue(args.producerJobId),
+      workerRole: projectControlWorkerRole(args.workerRole),
+    });
+  }
   assertProjectControlCreateManifestPaths({
     scope: controller.scope,
     registryRootDir: controller.registryRootDir,

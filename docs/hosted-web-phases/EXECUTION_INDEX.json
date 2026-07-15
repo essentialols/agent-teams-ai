@@ -1,17 +1,19 @@
 {
   "schemaVersion": 1,
   "currentExecutablePhase": "phase-01",
-  "currentExecutableSubphase": "P1.R2-semantic-review",
-  "currentExecutableNodes": ["P1.R2"],
-  "currentRouterRevision": "phase-01-p1-r2-router-r1",
+  "currentExecutableSubphase": "P1.I-integration-freeze",
+  "currentExecutableNodes": ["P1.I"],
+  "currentRouterRevision": "phase-01-p1-i-router-r1",
   "currentRouterTerminalState": "HOLD",
   "canonicalAuthority": {
-    "packetBaseSha": "48d79e2b13e258fc82ad55723875f15d6e162872",
-    "packetBaseRole": "router-remediation-authoring-base-only",
+    "packetBaseSha": "c5d842f75ca7a647a0773b0c30d303d7da21d1d6",
+    "packetBaseParentSha": "f6794b607609c57dc92def696d05946c9c96856a",
+    "packetBaseRole": "accepted-p1-r2-evidence-integration-and-router-authoring-base",
+    "acceptedP1R2IntegrationSha": "c5d842f75ca7a647a0773b0c30d303d7da21d1d6",
     "postIntegrationAuthoritySha": null,
-    "postIntegrationAuthorityShaState": "resolve-after-router-accept-policy-integration-push",
+    "postIntegrationAuthorityShaState": "resolve-after-router-accept-broker-integration-push",
     "postIntegrationAuthoritySource": "exact-broker-returned-and-pushed-commit",
-    "reviewAuthorityBinding": "postIntegrationAuthoritySha",
+    "producerAuthorityBinding": "postIntegrationAuthoritySha",
     "remoteName": "origin",
     "remoteBranch": "refactor/hosted-web-feature-boundaries",
     "remoteRef": "refs/heads/refactor/hosted-web-feature-boundaries",
@@ -19,22 +21,30 @@
     "rootImmutableAuthorityAttestationRequired": true,
     "cleanPostIntegrationWorktreeRequired": true,
     "remoteEqualityToPostIntegrationAuthorityRequired": true,
-    "reviewerNetworkRecheckAuthorized": false,
+    "producerNetworkRecheckAuthorized": false,
     "upstreamTrackingEvidenceAuthorized": false,
-    "mustBeResolvedAndAttestedBeforeReviewerStart": true,
+    "mustBeResolvedAndAttestedBeforeProducerStart": true,
     "missingOrMismatchedAttestationDisposition": "HOLD"
   },
-  "reviewedProductSnapshotAuthority": {
+  "acceptedP1R2": {
+    "integrationSha": "c5d842f75ca7a647a0773b0c30d303d7da21d1d6",
+    "reviewAuthoritySha": "f6794b607609c57dc92def696d05946c9c96856a",
     "reviewedProductSnapshotSha": "666042037a9c91df572b1d8274bf6024f8d00f40",
-    "unchangedExactInputPathCount": 32,
-    "unchangedAtPostIntegrationAuthorityHeadRequired": true,
-    "trueTwoParentMerge": true,
-    "orderedParents": [
-      "c3135d40c6e70e4b2ddc905dc815407397197634",
-      "3b48f9391b4bff1d82bc85ef01a2d5e0e5b50e95"
-    ],
-    "pr252ConflictGateAccepted": true,
-    "p11dAccepted": true
+    "evidenceId": "P1.R2.SEMANTIC_REVIEW",
+    "disposition": "ACCEPT",
+    "findingCounts": {
+      "P0": 0,
+      "P1": 0,
+      "P2": 0
+    },
+    "handoffPath": ".codex-handoff/phase-01-p1-r2.json",
+    "handoffSha256": "bbf61b20dad577af7536f78f108116531acd17925ca9a17140c4d9fadb7d038c",
+    "resultPath": "docs/research/hosted-web/phase-1/reviews/list-semantics.md",
+    "resultSha256": "de4b1e4fc0f633a40703e6af106bcdfcd2ab3a7d524b28f19df376a4052cdc70",
+    "integrationCommitExactPathCount": 2,
+    "integrated": true,
+    "modificationAuthorized": false,
+    "reintegrationAuthorized": false
   },
   "orchestrationAuthority": {
     "rootRole": "sole-orchestrator",
@@ -47,33 +57,41 @@
     "controllerRestartAuthorized": false,
     "controllerReplacementAuthorized": false,
     "successorControllerAuthorized": false,
-    "reviewerStartAuthority": "root-after-router-accept-policy-integration-push",
+    "producerStartAuthority": "root-after-router-independent-accept-broker-integration-push",
+    "reviewerStartAuthority": "root-after-producer-terminal-and-broker-captured-immutable-output",
     "acceptedResultMechanicalVerifier": "root",
     "acceptedResultLifecycleAction": "mark_reviewed",
     "acceptedResultIntegrator": "broker"
   },
+  "producerProfile": {
+    "model": "gpt-5.6-sol",
+    "reasoningEffort": "xhigh",
+    "serviceTier": "default",
+    "fastAuthorized": false
+  },
   "reviewerProfile": {
     "model": "gpt-5.6-sol",
     "reasoningEffort": "xhigh",
-    "serviceTier": "default"
+    "serviceTier": "default",
+    "fastAuthorized": false
   },
   "currentRoute": {
-    "mode": "formal-semantic-review-only",
+    "mode": "serialized-integration-evidence-freeze-independent-review",
     "controllerPacket": "docs/hosted-web-phases/phase-01/controller-packet.md",
     "lanePackets": [
       {
-        "subphase": "P1.R2-semantic-review",
-        "node": "P1.R2",
-        "laneId": "p1-r2",
-        "path": "docs/hosted-web-phases/phase-01/lanes/p1-r2-review.md",
-        "packetRevision": "phase-01-p1-r2-review-r1",
-        "evidenceId": "P1.R2.SEMANTIC_REVIEW"
+        "subphase": "P1.I-integration-freeze",
+        "node": "P1.I",
+        "laneId": "p1-i",
+        "path": "docs/hosted-web-phases/phase-01/lanes/p1-i-integration.md",
+        "packetRevision": "phase-01-p1-i-integration-r1",
+        "evidenceIds": ["P1.I.INTEGRATION", "P1.I.ROLLBACK"]
       }
     ],
     "launchGate": {
       "required": {
-        "routerAccepted": true,
-        "routerPolicyIntegrated": true,
+        "routerIndependentlyAccepted": true,
+        "routerBrokerIntegrated": true,
         "routerPushed": true,
         "rootRemainsSoleOrchestrator": true,
         "controllerV17HoldObservationOnly": true,
@@ -83,24 +101,21 @@
         "postIntegrationAuthorityAttestationImmutable": true,
         "postIntegrationWorktreeClean": true,
         "postIntegrationAuthorityRemoteEqual": true,
-        "authorityAndRuntimeBindingsExact": true,
-        "reviewerWorktreeHeadExact": true,
-        "handoffAuthorityBindingsExact": true,
         "remoteEqualityUsesExactLsRemoteRef": true,
         "upstreamTrackingEvidenceForbidden": true,
-        "reviewerNetworkRecheckForbidden": true,
-        "reviewedProductSnapshotExact": true,
-        "reviewedProductSnapshotInputsUnchanged": true,
-        "reviewedProductSnapshotOrderedMergeParentsExact": true,
-        "pr252ConflictGateAccepted": true,
-        "p11dAccepted": true,
-        "noReviewerActive": true,
-        "reviewerIndependenceVerified": true,
+        "producerNetworkRecheckForbidden": true,
+        "acceptedP1R2IntegrationShaExact": true,
+        "acceptedP1R2EvidenceHashesExact": true,
+        "acceptedP1R2StrictAcceptZeroFindings": true,
+        "p1R2EvidenceReintegrationForbidden": true,
+        "phase1CanonicalInputsUnchanged": true,
+        "producerWorktreeHeadExact": true,
+        "handoffAuthorityBindingsExact": true,
+        "noP1IProducerActive": true,
         "defaultOnlyProfileVerified": true,
         "dependenciesBrokerMaterializedOffline": true,
         "workerDependencyInstallDisabled": true,
-        "exactInputsVerified": true,
-        "outputsInitiallyAbsent": true,
+        "fiveOutputsInitiallyAbsent": true,
         "blockedSuccessorsInactive": true
       },
       "attestedByThisDocsTransition": false,
@@ -116,62 +131,64 @@
       "required": ["strict-terminal-result", "immutable-output"],
       "immutableOutputBindsExactResultPaths": true,
       "immutableOutputPaths": [
-        ".codex-handoff/phase-01-p1-r2.json",
-        "docs/research/hosted-web/phase-1/reviews/list-semantics.md"
+        ".codex-handoff/phase-01-p1-i.json",
+        "docs/research/hosted-web/phase-1/decision-register.json",
+        "docs/research/hosted-web/phase-1/estimate-reconciliation.json",
+        "docs/research/hosted-web/phase-1/evidence-index.json",
+        "docs/research/hosted-web/phase-1/integration-report.json"
       ],
       "insufficientSignals": ["changedFiles", "heartbeat", "PID", "tmux", "providerObserved"]
     },
-    "resultClassification": {
-      "reviewFindingClasses": ["semantic", "content", "gate"],
-      "reviewFindingDisposition": "REJECT",
-      "runtimeIncidentClasses": ["admission", "provider", "environment", "no-strict-result"],
-      "runtimeIncidentDisposition": "HOLD",
-      "missingAuthorityAttestationClassification": "runtime-admission-incident",
-      "remoteQueryOrNetworkFailureClassification": "runtime-environment-incident",
-      "syntheticRejectForRuntimeIncidentAuthorized": false
+    "producerCompletionBoundary": {
+      "terminalState": "HOLD",
+      "independentVerificationRequired": true,
+      "independentVerificationAuthorizedByThisRouter": true,
+      "freshIndependentReviewerCount": 1,
+      "producerAndReviewerConcurrencyAuthorized": false,
+      "maximumActiveReviewerCount": 1,
+      "brokerIntegrationRequiredAfterIndependentAccept": true,
+      "brokerIntegrationAuthorizedByThisRouterAfterIndependentAccept": true,
+      "rootMarkReviewedRequiredBeforeBrokerIntegration": true,
+      "p1fTransitionMustBeSeparate": true,
+      "p1fAuthorized": false,
+      "phase2PlusAuthorized": false,
+      "successorControllerAuthorized": false
     },
-    "attemptPolicy": {
-      "maxConcurrentAttempts": 1,
-      "maxCorrectedAttempts": 1,
-      "correctedAttemptOnlyFor": ["admission", "provider", "environment", "no-strict-result"],
-      "priorAttemptTerminalOrNoRunnerProofRequired": true,
-      "exactAssignmentRequired": true,
-      "correctedAttemptAfterRejectAuthorized": false
-    },
-    "acceptedResultLifecycle": {
-      "requiredDisposition": "ACCEPT",
-      "requiredFindingCounts": {
+    "independentReview": {
+      "scope": "P1.I-milestone",
+      "startCondition": "producer-terminal-and-broker-captured-immutable-five-path-output",
+      "freshReviewerRequired": true,
+      "independenceRequired": true,
+      "readOnlyCanonicalInputPathCount": 68,
+      "readOnlyCandidateOutputPathCount": 5,
+      "readOnlyTotalPathCount": 73,
+      "allowedDispositions": ["ACCEPT", "REJECT"],
+      "acceptFindingCounts": {
         "P0": 0,
         "P1": 0,
         "P2": 0
       },
-      "rootMechanicalVerificationRequired": true,
-      "markReviewedAction": "mark_reviewed",
-      "markReviewedRequiredBeforeIntegration": true,
-      "integrationActor": "broker",
-      "integrationPaths": [
-        ".codex-handoff/phase-01-p1-r2.json",
-        "docs/research/hosted-web/phase-1/reviews/list-semantics.md"
-      ],
-      "pushRequired": true,
-      "authorizesP1I": false,
-      "p1iAuthorizationAuthority": "later-separately-reviewed-docs-router-only",
-      "laterDocsRouterReintegratesEvidence": false
+      "rejectRequiresAtLeastOneFinding": true,
+      "strictTerminalPrefix": "P1_I_REVIEW_RESULT",
+      "immutableResultRequired": true,
+      "immutableFindingDetailsRequiredOnReject": true,
+      "repositoryWritesAuthorized": false,
+      "acceptLifecycle": ["root-mark_reviewed", "broker-integrate-and-push-exact-five-outputs"],
+      "rejectLifecycle": ["HOLD", "no-mark_reviewed", "no-integration"]
     }
   },
-  "historicalAuthority": {
-    "pr252Lane": {
-      "path": "docs/hosted-web-phases/phase-01/lanes/pr252-base-conflict-resolution.md",
-      "sha256": "f55c7d77f7cb54d90208fb6fe6f61e257fa75f0b063b5fd71e5677c83d148842",
-      "state": "accepted-history-frozen",
-      "currentExecutionAuthority": false,
-      "modificationAuthorized": false
-    }
-  },
-  "reviewCanonicalInputs": {
-    "reviewedProductSnapshotSha": "666042037a9c91df572b1d8274bf6024f8d00f40",
+  "phase1CanonicalInputs": {
+    "snapshotSha": "c5d842f75ca7a647a0773b0c30d303d7da21d1d6",
     "authorityShaBinding": "postIntegrationAuthoritySha",
     "allInputBytesUnchangedAtPostIntegrationAuthorityHeadRequired": true,
+    "bootstrapPaths": [
+      "docs/research/hosted-web/phase-1/bootstrap/phase-start.json",
+      "docs/research/hosted-web/phase-1/bootstrap/packet-revision.json",
+      "docs/research/hosted-web/phase-1/bootstrap/ownership-manifest.json",
+      "docs/research/hosted-web/phase-1/bootstrap/baseline-fingerprints.json",
+      "docs/research/hosted-web/phase-1/bootstrap/estimate-allocation.json",
+      "docs/research/hosted-web/phase-1/bootstrap/bootstrap-report.md"
+    ],
     "p11aPaths": [
       ".codex-handoff/phase-01-p1-1a.json",
       "src/shared/contracts/hosted/app-error.ts",
@@ -186,18 +203,38 @@
       "test/architecture/hosted-web/phase-1/contracts/query-context.test.ts",
       "test/architecture/hosted-web/phase-1/contracts/revision.test.ts"
     ],
-    "p11dPaths": [
-      ".codex-handoff/phase-01-p1-1d.json",
-      "src/features/team-lifecycle/contracts/team-lifecycle-read.ts",
-      "src/features/team-lifecycle/contracts/index.ts",
-      "src/features/team-lifecycle/core/application/ListTeamLifecycle.ts",
-      "src/features/team-lifecycle/core/application/index.ts",
-      "src/features/team-lifecycle/index.ts",
-      "test/features/team-lifecycle/core/ListTeamLifecycle.test.ts",
-      "test/architecture/hosted-web/phase-1/team-lifecycle/team-lifecycle-read-contract.test.ts",
-      "test/architecture/hosted-web/phase-1/team-lifecycle/team-lifecycle-read-boundaries.test.ts"
+    "p11aRemediationProvenancePaths": [
+      ".codex-handoff/phase-01-p1-s1-schema-version-remediation.json"
     ],
-    "semanticCorpusPaths": [
+    "p11bPaths": [
+      ".codex-handoff/phase-01-p1-1b.json",
+      "src/main/composition/hosted/routing/RouteCatalog.ts",
+      "src/main/composition/hosted/routing/index.ts",
+      "src/main/composition/hosted/routing/route-types.ts",
+      "test/architecture/hosted-web/phase-1/routes/RouteCatalog.test.ts",
+      "test/architecture/hosted-web/phase-1/routes/capability-descriptors.test.ts",
+      "test/architecture/hosted-web/phase-1/routes/fixtures/duplicate-route.ts",
+      "test/architecture/hosted-web/phase-1/routes/fixtures/missing-reference.ts",
+      "test/architecture/hosted-web/phase-1/routes/fixtures/test-only-production-route.ts"
+    ],
+    "p11cPaths": [
+      ".codex-handoff/phase-01-p1-1c.json",
+      "scripts/hosted-web/phase-1/check-feature-dependencies.ts",
+      "scripts/hosted-web/phase-1/check-parity-references.ts",
+      "scripts/hosted-web/phase-1/check-renderer-boundaries.ts",
+      "test/architecture/hosted-web/phase-1/conformance/semantic-harness.test.ts",
+      "test/architecture/hosted-web/phase-1/conformance/semantic-harness.ts",
+      "test/architecture/hosted-web/phase-1/dependencies/feature-dependencies.test.ts",
+      "test/architecture/hosted-web/phase-1/fixtures/core-side-effect.ts",
+      "test/architecture/hosted-web/phase-1/fixtures/filesystem-adapter.ts",
+      "test/architecture/hosted-web/phase-1/fixtures/forbidden-core-import.ts",
+      "test/architecture/hosted-web/phase-1/fixtures/hosted-electron-api.ts",
+      "test/architecture/hosted-web/phase-1/fixtures/legacy-god-dto.ts",
+      "test/architecture/hosted-web/phase-1/fixtures/path-secret-leak.ts",
+      "test/architecture/hosted-web/phase-1/fixtures/production-adapter-mount.ts",
+      "test/architecture/hosted-web/phase-1/fixtures/ratchet-regression.ts",
+      "test/architecture/hosted-web/phase-1/parity/parity-references.test.ts",
+      "test/architecture/hosted-web/phase-1/renderer-boundaries/renderer-boundaries.test.ts",
       "test/fixtures/hosted-web/phase-1/team-lifecycle/manifest.json",
       "test/fixtures/hosted-web/phase-1/team-lifecycle/outcomes/corrupt.json",
       "test/fixtures/hosted-web/phase-1/team-lifecycle/outcomes/draft.json",
@@ -210,63 +247,107 @@
       "test/fixtures/hosted-web/phase-1/team-lifecycle/outcomes/unavailable.json",
       "test/fixtures/hosted-web/phase-1/team-lifecycle/outcomes/unexpected.json"
     ],
-    "requiredP11aPathCount": 12,
-    "requiredP11dPathCount": 9,
-    "requiredSemanticCorpusPathCount": 11,
-    "requiredTotalPathCount": 32,
+    "p1r1Paths": ["docs/research/hosted-web/phase-1/reviews/routes-ratchets.md"],
+    "p11dPaths": [
+      ".codex-handoff/phase-01-p1-1d.json",
+      "src/features/team-lifecycle/contracts/team-lifecycle-read.ts",
+      "src/features/team-lifecycle/contracts/index.ts",
+      "src/features/team-lifecycle/core/application/ListTeamLifecycle.ts",
+      "src/features/team-lifecycle/core/application/index.ts",
+      "src/features/team-lifecycle/index.ts",
+      "test/features/team-lifecycle/core/ListTeamLifecycle.test.ts",
+      "test/architecture/hosted-web/phase-1/team-lifecycle/team-lifecycle-read-contract.test.ts",
+      "test/architecture/hosted-web/phase-1/team-lifecycle/team-lifecycle-read-boundaries.test.ts"
+    ],
+    "p1r2Paths": [
+      ".codex-handoff/phase-01-p1-r2.json",
+      "docs/research/hosted-web/phase-1/reviews/list-semantics.md"
+    ],
+    "requiredGroupCounts": {
+      "bootstrap": 6,
+      "p11a": 12,
+      "p11aRemediationProvenance": 1,
+      "p11b": 9,
+      "p11c": 28,
+      "p1r1": 1,
+      "p11d": 9,
+      "p1r2": 2
+    },
+    "requiredTotalPathCount": 68,
     "allPathsReadOnly": true
   },
-  "reviewFocus": {
-    "semanticOutcomes": "all-ten-immutable-scenarios-and-deliberate-mismatch",
-    "authorizationContext": "strict-validated-value-only-no-production-auth-claim",
-    "safeErrors": "bounded-safe-fields-no-raw-or-provider-private-values",
-    "revisionCursor": "opaque-kind-separated-no-parse-increment-sort-or-page-one-fallback",
-    "trustedArray": "length-captured-max-1000-dense-indexed-copy-no-input-owned-dispatch",
-    "kernel": {
-      "productPathCount": 5,
-      "primitiveFamilyCount": 5,
-      "sourceLineCount": 159,
-      "sourceByteCount": 7242,
-      "acceptedGrossOwnedLines": 299,
-      "sixthPrimitiveFamilyAuthorized": false
-    },
-    "productionAuthVerified": false,
-    "adapterCursorIntegrityVerified": false,
-    "productionMountVerified": false
+  "rollbackPayload": {
+    "bootstrapSha": "5f30df49e052d1cc1d0e7efd03aa105673b5b614",
+    "acceptedPayloadSha": "c5d842f75ca7a647a0773b0c30d303d7da21d1d6",
+    "pathCount": 54,
+    "allPathsRequiredAbsentAtBootstrap": true,
+    "evidenceAndReviewPathsRetained": true,
+    "workspaceApplyAuthorized": false,
+    "scratchRoundTripRequired": true,
+    "paths": [
+      "src/shared/contracts/hosted/app-error.ts",
+      "src/shared/contracts/hosted/identifiers.ts",
+      "src/shared/contracts/hosted/index.ts",
+      "src/shared/contracts/hosted/query-context.ts",
+      "src/shared/contracts/hosted/revision.ts",
+      "test/architecture/hosted-web/phase-1/contracts/app-error.test.ts",
+      "test/architecture/hosted-web/phase-1/contracts/fixtures/invalid-contract-values.json",
+      "test/architecture/hosted-web/phase-1/contracts/fixtures/valid-contract-values.json",
+      "test/architecture/hosted-web/phase-1/contracts/identifiers.test.ts",
+      "test/architecture/hosted-web/phase-1/contracts/query-context.test.ts",
+      "test/architecture/hosted-web/phase-1/contracts/revision.test.ts",
+      "src/main/composition/hosted/routing/RouteCatalog.ts",
+      "src/main/composition/hosted/routing/index.ts",
+      "src/main/composition/hosted/routing/route-types.ts",
+      "test/architecture/hosted-web/phase-1/routes/RouteCatalog.test.ts",
+      "test/architecture/hosted-web/phase-1/routes/capability-descriptors.test.ts",
+      "test/architecture/hosted-web/phase-1/routes/fixtures/duplicate-route.ts",
+      "test/architecture/hosted-web/phase-1/routes/fixtures/missing-reference.ts",
+      "test/architecture/hosted-web/phase-1/routes/fixtures/test-only-production-route.ts",
+      "scripts/hosted-web/phase-1/check-feature-dependencies.ts",
+      "scripts/hosted-web/phase-1/check-parity-references.ts",
+      "scripts/hosted-web/phase-1/check-renderer-boundaries.ts",
+      "test/architecture/hosted-web/phase-1/conformance/semantic-harness.test.ts",
+      "test/architecture/hosted-web/phase-1/conformance/semantic-harness.ts",
+      "test/architecture/hosted-web/phase-1/dependencies/feature-dependencies.test.ts",
+      "test/architecture/hosted-web/phase-1/fixtures/core-side-effect.ts",
+      "test/architecture/hosted-web/phase-1/fixtures/filesystem-adapter.ts",
+      "test/architecture/hosted-web/phase-1/fixtures/forbidden-core-import.ts",
+      "test/architecture/hosted-web/phase-1/fixtures/hosted-electron-api.ts",
+      "test/architecture/hosted-web/phase-1/fixtures/legacy-god-dto.ts",
+      "test/architecture/hosted-web/phase-1/fixtures/path-secret-leak.ts",
+      "test/architecture/hosted-web/phase-1/fixtures/production-adapter-mount.ts",
+      "test/architecture/hosted-web/phase-1/fixtures/ratchet-regression.ts",
+      "test/architecture/hosted-web/phase-1/parity/parity-references.test.ts",
+      "test/architecture/hosted-web/phase-1/renderer-boundaries/renderer-boundaries.test.ts",
+      "test/fixtures/hosted-web/phase-1/team-lifecycle/manifest.json",
+      "test/fixtures/hosted-web/phase-1/team-lifecycle/outcomes/corrupt.json",
+      "test/fixtures/hosted-web/phase-1/team-lifecycle/outcomes/draft.json",
+      "test/fixtures/hosted-web/phase-1/team-lifecycle/outcomes/empty.json",
+      "test/fixtures/hosted-web/phase-1/team-lifecycle/outcomes/not-found-inapplicable.json",
+      "test/fixtures/hosted-web/phase-1/team-lifecycle/outcomes/partial.json",
+      "test/fixtures/hosted-web/phase-1/team-lifecycle/outcomes/provisioning-inapplicable.json",
+      "test/fixtures/hosted-web/phase-1/team-lifecycle/outcomes/stale.json",
+      "test/fixtures/hosted-web/phase-1/team-lifecycle/outcomes/success.json",
+      "test/fixtures/hosted-web/phase-1/team-lifecycle/outcomes/unavailable.json",
+      "test/fixtures/hosted-web/phase-1/team-lifecycle/outcomes/unexpected.json",
+      "src/features/team-lifecycle/contracts/team-lifecycle-read.ts",
+      "src/features/team-lifecycle/contracts/index.ts",
+      "src/features/team-lifecycle/core/application/ListTeamLifecycle.ts",
+      "src/features/team-lifecycle/core/application/index.ts",
+      "src/features/team-lifecycle/index.ts",
+      "test/features/team-lifecycle/core/ListTeamLifecycle.test.ts",
+      "test/architecture/hosted-web/phase-1/team-lifecycle/team-lifecycle-read-contract.test.ts",
+      "test/architecture/hosted-web/phase-1/team-lifecycle/team-lifecycle-read-boundaries.test.ts"
+    ]
   },
-  "reviewerMandatoryDocs": [
-    "AGENTS.md",
-    "docs/hosted-web-phases/START_HERE.md",
-    "docs/hosted-web-phases/EVIDENCE_LIFECYCLE.md",
-    "docs/hosted-web-phases/README.md",
-    "docs/hosted-web-phases/EXECUTION_INDEX.json",
-    "docs/hosted-web-phases/phase-01/controller-packet.md",
-    "docs/hosted-web-phases/phase-01/lanes/p1-r2-review.md",
-    "CLAUDE.md",
-    "AGENT_CRITICAL_GUARDRAILS.md",
-    "docs/FEATURE_ARCHITECTURE_STANDARD.md",
-    "docs/hosted-web-phases/PACKET_STANDARD.md",
-    "docs/hosted-web-phases/phase-01/README.md",
-    "docs/hosted-web-phases/phase-01/execution-dag.md",
-    "docs/hosted-web-phases/phase-01/architecture-and-contracts.md",
-    "docs/hosted-web-phases/phase-01/lanes/p1-s1-foundations.md",
-    "docs/hosted-web-phases/phase-01/lanes/p1-1d-team-lifecycle-read.md",
-    "docs/hosted-web-phases/phase-01/lanes/p1-1d-additive-response-remediation.md"
-  ],
-  "reviewAdmission": {
-    "reviewerCount": 1,
-    "freshIndependentReviewerRequired": true,
-    "independentOf": [
-      "p1-r2-router-author",
-      "all-p1-1a-and-p1-1d-producers-remediation-workers-reviewers",
-      "all-pr252-conflict-resolution-producers-reviewers",
-      "all-prior-phase-1-formal-reviewers"
-    ],
+  "producerAdmission": {
+    "producerCount": 1,
+    "workerRole": "producer",
     "model": "gpt-5.6-sol",
     "reasoningEffort": "xhigh",
     "serviceTier": "default",
     "projectScopedControlOperation": "codex_goal_project_refill_worker",
-    "workerRole": "reviewer",
     "sourceRemote": "origin",
     "sourceBranch": "refactor/hosted-web-feature-boundaries",
     "expectedSourceCommitBinding": "postIntegrationAuthoritySha",
@@ -287,51 +368,108 @@
         "canonicalShaBinding": "postIntegrationAuthoritySha",
         "baseShaBinding": "postIntegrationAuthoritySha",
         "phaseStartShaBinding": "postIntegrationAuthoritySha",
-        "packetRevision": "phase-01-p1-r2-review-r1",
+        "packetRevision": "phase-01-p1-i-integration-r1",
         "controllerPacket": "docs/hosted-web-phases/phase-01/controller-packet.md",
-        "lanePacket": "docs/hosted-web-phases/phase-01/lanes/p1-r2-review.md",
+        "lanePacket": "docs/hosted-web-phases/phase-01/lanes/p1-i-integration.md",
         "phaseId": "phase-01",
-        "laneId": "p1-r2",
+        "laneId": "p1-i",
         "inputPatchHash": null,
-        "reviewKind": "review"
+        "reviewKind": "implementation"
       }
     },
-    "prepareVerifierAuthorized": false,
-    "forbiddenReviewerLaunchOperations": [
-      "codex_goal_project_prepare_verifier",
-      "prepare_verifier"
-    ],
-    "reviewedProductSnapshotSha": "666042037a9c91df572b1d8274bf6024f8d00f40",
-    "remoteEqualityAttestedBy": "root-pre-start-immutable-authority-attestation",
-    "remoteEqualityCommand": "git ls-remote origin refs/heads/refactor/hosted-web-feature-boundaries",
-    "reviewerRemoteEqualityRecheckAuthorized": false,
-    "focusedCommand": "pnpm exec vitest run test/architecture/hosted-web/phase-1/contracts test/features/team-lifecycle",
-    "writablePaths": [
-      ".codex-handoff/phase-01-p1-r2.json",
-      "docs/research/hosted-web/phase-1/reviews/list-semantics.md"
-    ],
-    "evidenceId": "P1.R2.SEMANTIC_REVIEW",
-    "repositoryWriterAuthority": "exact-two-result-paths-only",
+    "workerDependencyInstallAuthorized": false,
+    "repositoryWriterAuthority": "exact-five-result-paths-only",
+    "productRepairAuthority": false,
+    "producerSelfRetryOrRefillAuthority": false,
+    "producerIntegrationAuthority": false,
+    "successorLaunchAuthority": false
+  },
+  "reviewerAdmission": {
+    "reviewerCount": 1,
+    "workerRole": "reviewer",
+    "reviewScope": "P1.I-milestone",
+    "model": "gpt-5.6-sol",
+    "reasoningEffort": "xhigh",
+    "serviceTier": "default",
+    "fastAuthorized": false,
+    "projectScopedControlOperation": "codex_goal_project_prepare_verifier",
+    "sourceRemote": "origin",
+    "sourceBranch": "refactor/hosted-web-feature-boundaries",
+    "expectedSourceCommitBinding": "postIntegrationAuthoritySha",
+    "inputPatchHashBinding": "brokerCapturedProducerImmutableOutputHash",
+    "canonicalInputPathSource": "phase1CanonicalInputs",
+    "candidateOutputPathSource": "outputs.writablePaths",
+    "requiredReadOnlyPathCount": 73,
+    "freshReviewerRequired": true,
+    "independenceRequired": true,
+    "rootPreStartIndependenceAttestationRequired": true,
+    "producerTerminalRequired": true,
+    "brokerCapturedImmutableOutputRequired": true,
+    "producerAndReviewerConcurrencyAuthorized": false,
+    "additionalConcurrentReviewerAuthorized": false,
+    "repositoryWriterAuthority": "none-read-only",
     "repairAuthority": false,
     "reviewerSelfRetryOrRefillAuthority": false,
-    "rootCorrectedAttemptAuthority": "at-most-one-under-runtime-incident-policy",
     "reviewerIntegrationAuthority": false,
-    "dependenciesMaterializedBy": "broker",
-    "dependencyMaterializationMode": "offline",
-    "workerDependencyInstallAuthorized": false,
     "successorLaunchAuthority": false,
-    "authorizedOnlyAfterLaunchGate": true
+    "authorizedOnlyAfterProducerCompletionGate": true,
+    "preStartAdmission": {
+      "mode": "serial-builtin",
+      "contract": {
+        "kind": "worker-launch",
+        "format": 1,
+        "canonicalShaBinding": "postIntegrationAuthoritySha",
+        "baseShaBinding": "postIntegrationAuthoritySha",
+        "phaseStartShaBinding": "postIntegrationAuthoritySha",
+        "packetRevision": "phase-01-p1-i-integration-r1",
+        "controllerPacket": "docs/hosted-web-phases/phase-01/controller-packet.md",
+        "lanePacket": "docs/hosted-web-phases/phase-01/lanes/p1-i-integration.md",
+        "phaseId": "phase-01",
+        "laneId": "p1-i",
+        "inputPatchHashBinding": "brokerCapturedProducerImmutableOutputHash",
+        "reviewKind": "review"
+      }
+    }
   },
+  "requiredGateIds": [
+    "P1.GATE.PROVENANCE",
+    "P1.GATE.PREDECESSORS",
+    "P1.GATE.SCOPE",
+    "P1.GATE.TESTS",
+    "P1.GATE.TYPECHECK",
+    "P1.GATE.LINT",
+    "P1.GATE.FORMAT",
+    "P1.GATE.NEGATIVES",
+    "P1.GATE.RATCHET",
+    "P1.GATE.SECURITY",
+    "P1.GATE.ROLLBACK",
+    "P1.GATE.ESTIMATE",
+    "P1.GATE.DECISIONS",
+    "P1.GATE.EVIDENCE_FREEZE"
+  ],
   "requiredExactResults": {
-    "focused": {
-      "testFiles": 5,
-      "passed": 14,
-      "total": 14
+    "fullPhase1Vitest": {
+      "command": "pnpm exec vitest run test/features/team-lifecycle test/architecture/hosted-web/phase-1",
+      "testFiles": 13,
+      "passed": 59,
+      "total": 59
+    },
+    "ratchetRegressionFocused": {
+      "command": "pnpm exec vitest run test/architecture/hosted-web/phase-1/parity/parity-references.test.ts",
+      "testFiles": 1,
+      "passed": 3,
+      "total": 3,
+      "evidenceId": "P1.NEG.RATCHET_REGRESSION",
+      "diagnostic": "phase1-ratchet-regression"
     },
     "nativeTypeScript": {
       "inherited": 7,
       "owned": 0,
       "unexpected": 0
+    },
+    "fullLint": {
+      "command": "pnpm lint",
+      "exitCode": 0
     }
   },
   "inheritedNativeTypeScriptDiagnostics": [
@@ -380,42 +518,42 @@
   ],
   "requiredChecks": [
     {
-      "id": "packet-authoring-base-head",
-      "actor": "router-author",
-      "command": "test \"$(git rev-parse HEAD)\" = 48d79e2b13e258fc82ad55723875f15d6e162872"
+      "id": "accepted-p1-r2-integration-sha",
+      "command": "test \"$(git rev-parse c5d842f75ca7a647a0773b0c30d303d7da21d1d6)\" = c5d842f75ca7a647a0773b0c30d303d7da21d1d6"
     },
     {
-      "id": "post-integration-authority-explicit-remote-ref-equality",
-      "actor": "root-pre-start",
-      "command": "git ls-remote origin refs/heads/refactor/hosted-web-feature-boundaries",
-      "requiredShaBinding": "postIntegrationAuthoritySha",
-      "attestedBy": "root-pre-start-immutable-authority-attestation"
-    },
-    {
-      "id": "reviewer-local-authority-head",
-      "actor": "reviewer",
+      "id": "producer-local-authority-head",
+      "actor": "producer",
       "command": "test \"$(git rev-parse HEAD)\" = \"$expectedSourceCommit\"",
       "expectedSourceCommitBinding": "postIntegrationAuthoritySha"
     },
     {
-      "id": "reviewed-product-snapshot-topology",
-      "command": "git rev-list --parents -n 1 666042037a9c91df572b1d8274bf6024f8d00f40"
+      "id": "phase1-canonical-inputs-unchanged",
+      "commandSource": "docs/hosted-web-phases/phase-01/lanes/p1-i-integration.md#provenance-and-scope-proof"
     },
     {
-      "id": "reviewed-product-snapshot-32-inputs-unchanged",
-      "commandSource": "docs/hosted-web-phases/phase-01/lanes/p1-r2-review.md#prettier-diff-and-exact-two-path-scope"
+      "id": "full-phase1-vitest-plus-team-lifecycle",
+      "command": "pnpm exec vitest run test/features/team-lifecycle test/architecture/hosted-web/phase-1"
     },
     {
-      "id": "focused-contracts-and-team-lifecycle",
-      "command": "pnpm exec vitest run test/architecture/hosted-web/phase-1/contracts test/features/team-lifecycle"
+      "id": "p1-neg-ratchet-regression",
+      "command": "pnpm exec vitest run test/architecture/hosted-web/phase-1/parity/parity-references.test.ts"
     },
     {
       "id": "native-typescript-7-inherited-0-owned-0-unexpected",
       "command": "pnpm typecheck"
     },
     {
-      "id": "prettier-exact-inputs-and-outputs",
-      "commandSource": "docs/hosted-web-phases/phase-01/lanes/p1-r2-review.md#prettier-diff-and-exact-two-path-scope"
+      "id": "full-lint",
+      "command": "pnpm lint"
+    },
+    {
+      "id": "prettier-exact-73-path-scope",
+      "commandSource": "docs/hosted-web-phases/phase-01/lanes/p1-i-integration.md#full-test-typecheck-lint-and-quality-gates"
+    },
+    {
+      "id": "rollback-forward-reverse-scratch-round-trip",
+      "commandSource": "docs/hosted-web-phases/phase-01/lanes/p1-i-integration.md#rollback-and-apply-proof"
     },
     {
       "id": "diff-check",
@@ -430,32 +568,32 @@
       "command": "git diff --exit-code"
     },
     {
-      "id": "exact-two-output-status",
+      "id": "exact-five-output-status",
       "command": "git status --short"
     }
   ],
   "requiredClassifiedScans": [
-    "secret-and-credential-values-over-exact-34-path-scope",
-    "auth-and-provider-payload-values-over-exact-34-path-scope",
-    "private-user-and-real-project-paths-over-exact-34-path-scope"
+    "secret-and-credential-values-over-exact-73-path-scope",
+    "auth-and-provider-payload-values-over-exact-73-path-scope",
+    "private-user-real-project-and-task-temporary-paths-over-exact-73-path-scope",
+    "binary-file-scan-over-exact-73-path-scope"
   ],
-  "acceptance": {
-    "requiredDisposition": ["ACCEPT", "REJECT"],
-    "conditionalAcceptanceAuthorized": false,
-    "acceptFindingCounts": {
-      "P0": 0,
-      "P1": 0,
-      "P2": 0
-    },
-    "resultPath": "docs/research/hosted-web/phase-1/reviews/list-semantics.md",
-    "handoffPath": ".codex-handoff/phase-01-p1-r2.json",
-    "reviewFindingDisposition": "REJECT",
-    "runtimeIncidentDisposition": "HOLD",
-    "nextAction": "controller-hold",
+  "outputs": {
+    "writablePaths": [
+      ".codex-handoff/phase-01-p1-i.json",
+      "docs/research/hosted-web/phase-1/decision-register.json",
+      "docs/research/hosted-web/phase-1/estimate-reconciliation.json",
+      "docs/research/hosted-web/phase-1/evidence-index.json",
+      "docs/research/hosted-web/phase-1/integration-report.json"
+    ],
+    "evidenceIds": ["P1.I.INTEGRATION", "P1.I.ROLLBACK"],
+    "ratchetAcceptanceEvidenceId": "P1.NEG.RATCHET_REGRESSION",
+    "handoffPath": ".codex-handoff/phase-01-p1-i.json",
+    "nextAction": "independent-verification",
     "terminalState": "HOLD"
   },
-  "reviewerExecutionPolicy": {
-    "workspace": "isolated-review-worktree-only",
+  "producerExecutionPolicy": {
+    "workspace": "isolated-producer-worktree-only",
     "network": false,
     "githubAccess": false,
     "remoteQuery": false,
@@ -464,48 +602,68 @@
     "appRuntimeServerOrTeamLaunch": false,
     "providerCheck": false,
     "realProjectAccess": false,
-    "writerScope": "exact-two-result-paths",
+    "writerScope": "exact-five-result-paths",
+    "registryWrite": false,
+    "agentFlowTest": false,
     "stage": false,
     "commit": false,
     "merge": false,
     "push": false,
-    "repair": false,
+    "productEdit": false,
+    "rawGitIntegration": false,
     "reviewIntegration": false
   },
   "authorization": {
     "authorizedNow": [],
-    "conditionallyAuthorizedAfterRouterAcceptPolicyIntegrationPush": [
-      "one-independent-p1-r2-semantic-reviewer"
+    "conditionallyAuthorizedAfterRouterIndependentAcceptBrokerIntegrationPush": [
+      "one-p1-i-integration-evidence-freeze-producer"
     ],
-    "conditionallyAuthorizedAfterStrictAcceptMechanicalVerificationAndMarkReviewed": [
-      "broker-integrate-and-push-exact-p1-r2-evidence-paths"
+    "conditionallyAuthorizedAfterProducerTerminalImmutableOutput": [
+      "one-fresh-independent-p1-i-milestone-reviewer"
     ],
+    "conditionallyAuthorizedAfterP1IReviewerAccept": [
+      "root-mark_reviewed",
+      "broker-integrate-and-push-exact-five-p1-i-outputs"
+    ],
+    "producerCount": 1,
     "reviewerCount": 1,
     "productWorkerCount": 0,
-    "controllerReplacementAuthorized": false,
-    "successorControllerAuthorized": false,
-    "reviewerIntegrationAuthorized": false,
-    "rootGitIntegrationAuthorized": false,
-    "brokerAcceptedEvidenceIntegrationAuthorized": true,
-    "brokerAcceptedEvidencePushAuthorized": true,
-    "brokerAcceptedEvidenceIntegrationPaths": [
-      ".codex-handoff/phase-01-p1-r2.json",
-      "docs/research/hosted-web/phase-1/reviews/list-semantics.md"
-    ],
-    "brokerIntegrationRequiresRootMechanicalVerification": true,
-    "brokerIntegrationRequiresMarkReviewed": true,
-    "p1iAuthorized": false,
+    "p1iReviewerAuthorizedByThisRouter": true,
+    "p1iReviewerConcurrentWithProducerAuthorized": false,
+    "additionalConcurrentP1IReviewerAuthorized": false,
+    "p1iBrokerIntegrationAuthorizedAfterReviewerAcceptAndMarkReviewed": true,
+    "p1iBrokerIntegrationBeforeReviewerAcceptAuthorized": false,
+    "p1r2EvidenceReintegrationAuthorized": false,
     "p1fAuthorized": false,
     "phase2PlusAuthorized": false,
+    "controllerReplacementAuthorized": false,
+    "successorControllerAuthorized": false,
+    "rootGitIntegrationAuthorized": false,
     "docsJobLifecycleActionPerformed": false,
     "docsJobFetchAuthorized": false,
     "docsJobStageAuthorized": false,
     "docsJobCommitAuthorized": false,
     "docsJobMergeAuthorized": false,
     "docsJobPushAuthorized": false,
-    "p1iAuthorizationAuthority": "later-separately-reviewed-docs-router-only",
-    "laterDocsRouterReintegratesP1R2Evidence": false,
-    "blockedUntilLaterDocsRouterAuthorization": ["P1.I", "P1.F", "Phase 2+", "product workers"]
+    "blocked": ["P1.F", "Phase 2+", "product workers", "successor controllers"]
+  },
+  "historicalAuthority": {
+    "p1R2LanePacket": {
+      "path": "docs/hosted-web-phases/phase-01/lanes/p1-r2-review.md",
+      "sha256": "8b089ab8337467da201be884fc8f52bfff6d6377f63722f6f8d1aa6d5f6778c3",
+      "state": "accepted-history-frozen",
+      "currentExecutionAuthority": false,
+      "modificationAuthorized": false
+    },
+    "p1R2EvidencePaths": {
+      "state": "integrated-accepted-frozen",
+      "paths": [
+        ".codex-handoff/phase-01-p1-r2.json",
+        "docs/research/hosted-web/phase-1/reviews/list-semantics.md"
+      ],
+      "modificationAuthorized": false,
+      "reintegrationAuthorized": false
+    }
   },
   "routerExclusiveOwnership": [
     "docs/hosted-web-phases/EXECUTION_INDEX.json",
@@ -514,17 +672,17 @@
     "docs/hosted-web-phases/phase-01/README.md",
     "docs/hosted-web-phases/phase-01/controller-packet.md",
     "docs/hosted-web-phases/phase-01/execution-dag.md",
-    "docs/hosted-web-phases/phase-01/lanes/p1-r2-review.md"
+    "docs/hosted-web-phases/phase-01/lanes/p1-i-integration.md"
   ],
   "packetHashes": {
     "algorithm": "sha256",
     "controllerPacket": {
       "path": "docs/hosted-web-phases/phase-01/controller-packet.md",
-      "sha256": "9b4b27f5029df8e21214fe6d4a372cbfc3e6d6c6f6506351954243026c33291d"
+      "sha256": "7ecbbbb841b5da9ea52cd7d28d733a2be5935ba56e341c0cca3f1c22e5272226"
     },
     "lanePacket": {
-      "path": "docs/hosted-web-phases/phase-01/lanes/p1-r2-review.md",
-      "sha256": "8b089ab8337467da201be884fc8f52bfff6d6377f63722f6f8d1aa6d5f6778c3"
+      "path": "docs/hosted-web-phases/phase-01/lanes/p1-i-integration.md",
+      "sha256": "892cf9db07ceeb0b7d80a5f4ca62277749b069c79a9d72313d97c88192b18f97"
     }
   },
   "authorityTiers": {
@@ -538,14 +696,17 @@
       "docs/hosted-web-phases/phase-01/README.md",
       "docs/hosted-web-phases/phase-01/controller-packet.md",
       "docs/hosted-web-phases/phase-01/execution-dag.md",
-      "docs/hosted-web-phases/phase-01/lanes/p1-r2-review.md"
+      "docs/hosted-web-phases/phase-01/lanes/p1-i-integration.md"
     ],
-    "historicalOnly": ["docs/hosted-web-phases/phase-01/lanes/pr252-base-conflict-resolution.md"],
+    "historicalOnly": ["docs/hosted-web-phases/phase-01/lanes/p1-r2-review.md"],
     "researchWriteException": {
-      "evidenceId": "P1.R2.SEMANTIC_REVIEW",
+      "evidenceIds": ["P1.I.INTEGRATION", "P1.I.ROLLBACK"],
       "paths": [
-        ".codex-handoff/phase-01-p1-r2.json",
-        "docs/research/hosted-web/phase-1/reviews/list-semantics.md"
+        ".codex-handoff/phase-01-p1-i.json",
+        "docs/research/hosted-web/phase-1/decision-register.json",
+        "docs/research/hosted-web/phase-1/estimate-reconciliation.json",
+        "docs/research/hosted-web/phase-1/evidence-index.json",
+        "docs/research/hosted-web/phase-1/integration-report.json"
       ]
     }
   }

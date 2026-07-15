@@ -1,155 +1,155 @@
 # Phase 1 execution DAG and ownership
 
-Status: current revision is `phase-01-p1-r2-router-r1`; end `HOLD`.
+Status: current revision is `phase-01-p1-i-router-r1`; terminal state is `HOLD`.
 
 ## Current DAG
 
 ```text
-accepted P1.1D lineage -> c3135d40...
-accepted PR #252 source -> 3b48f939...
-                          |
-                          v
-accepted product true merge 66604203...
-ordered parents [c3135d40..., 3b48f939...]
-PR #252 conflict gate ACCEPTED + P1.1D ACCEPTED
-                          |
-                          v
-unchanged exact 32 product inputs -> reviewedProductSnapshotSha 66604203...
-                          |
-                          v
-seven-path P1.R2 router authored at packetBaseSha 48d79e2b...
-                          |
-                          v
-router review -> policy integration + push
-                          |
-                          v
-broker returns + pushes exact postIntegrationAuthoritySha (unknown before integration)
-                          |
-                          v
-root resolves/immutably attests postIntegrationAuthoritySha
-clean + explicit origin refs/heads/refactor/hosted-web-feature-boundaries equality
-                          |
-                          v
-root uses codex_goal_project_refill_worker for exactly one clean independent reviewer
-reviewKind=review + inputPatchHash=null; prepare_verifier forbidden
-expectedSourceCommit/worktree HEAD = postIntegrationAuthoritySha
-contract canonical/base/start = postIntegrationAuthoritySha
-handoff base/canonical/plan-bundle/start/head = postIntegrationAuthoritySha
-handoff reviewedProductSnapshotSha = 66604203...
-broker has materialized dependencies offline; reviewer installs nothing
-                          |
-                          v
-focused contracts + team-lifecycle command
-                          |
-                          v
-semantic/auth/error/cursor/kernel-size review
-                          |
-                          v
-typecheck baseline + Prettier/diff + two-path scope + classified scans
-                          |
-                          v
-explicit ACCEPT or REJECT with P0/P1/P2 counts
-                          |
-                          v
-strict terminal result + broker-captured immutable output required
-immutable output binds bytes/hashes of both exact result paths
-                          |
-              +-----------+--------------------+
-              |                                |
-              v                                v
-semantic/content/gate finding              ACCEPT 0/0/0
-       -> REJECT -> HOLD                       |
-                                               v
-                              root mechanically verifies
-                                      -> mark_reviewed
-                                               |
-                                               v
-                              broker integrates + pushes exactly
-                              the handoff and Markdown evidence
-                                               |
-                                               v
-                                              HOLD
-                                               |
-                                               -X-> later docs router may authorize P1.I
-                                                    without reintegrating P1.R2 evidence
-                                                    -> P1.F -> Phase 2+ / product workers
-
-missing/invalid authority attestation, checkout, remote-query/network,
-admission/provider/environment/no-strict-result runtime incident -> HOLD
-                          |
-                          `-> at most one exact corrected attempt, only after
-                              terminal/no-runner proof and never concurrently
+accepted P1.R1 architecture/ratchet review
+                         |
+                         v
+accepted P1.1D transport-neutral list contract and remediation
+                         |
+                         v
+P1.R2 formal semantic review at f6794b607...
+ACCEPT + P0/P1/P2 0/0/0
+                         |
+                         v
+exact two evidence paths broker-integrated at c5d842f75...
+                         |
+                         v
+seven-path P1.I router authored at c5d842f75...
+                         |
+                         v
+independent router review -> broker integration + push
+                         |
+                         v
+root resolves and immutably attests postIntegrationAuthoritySha
+clean + exact origin refs/heads/refactor/hosted-web-feature-boundaries equality
+                         |
+                         v
+root admits exactly one P1.I producer
+gpt-5.6-sol + xhigh + default service tier; Fast prohibited
+expectedSourceCommit/HEAD/contract authority = postIntegrationAuthoritySha
+                         |
+                         v
+serialized adoption of 68 immutable canonical inputs
+P1.R2 evidence consumed; never edited or reintegrated
+                         |
+                         v
+full Phase 1 Vitest plus team-lifecycle: 13 files / 59 tests
+focused P1.NEG.RATCHET_REGRESSION: 1 file / 3 tests
+                         |
+                         v
+typecheck 7 inherited / 0 owned / 0 unexpected
+full lint + exact Prettier + diff/scope + classified scans
+                         |
+                         v
+54-path scratch-only forward/reverse rollback/apply proof
+                         |
+                         v
+decision + estimate + evidence + integration + handoff freeze candidate
+exact five JSON outputs
+                         |
+                         v
+strict P1_I_PRODUCER_RESULT + immutable five-path output
+                         |
+                         v
+                        HOLD
+                         |
+                         v
+root admits exactly one fresh independent P1.I milestone reviewer
+gpt-5.6-sol + xhigh + default service tier; Fast prohibited
+read-only 68 frozen inputs + 5 immutable outputs; no concurrent reviewer
+                         |
+                         v
+explicit ACCEPT or REJECT
+             ACCEPT ----+---- REJECT -> HOLD; no mark_reviewed or integration
+                |
+                v
+root mark_reviewed -> broker integrates + pushes exactly five P1.I outputs
+                |
+                v
+               HOLD
+                |
+                -X-> P1.F requires a separate reviewed router after accepted integration
+                         -X-> Phase 2+ / product workers / successor controllers
 ```
 
 Root is the sole orchestrator. `controller-v17` remains `HOLD` and observation-only. Controller
-launch, admission, integration, restart, replacement, and successor creation are not DAG edges. This
-docs router launches no edge.
+launch, admission, integration, restart, replacement, and successor creation are not DAG edges. The
+router author launches nothing.
 
 ## Proven identities
 
-| Record                     | Identity                                                            | Authority                                               |
-| -------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------- |
-| Router `packetBaseSha`     | `48d79e2b13e258fc82ad55723875f15d6e162872`                          | authoring base only; never future review authority      |
-| Post-integration authority | `postIntegrationAuthoritySha`                                       | broker-returned pushed commit; intentionally unresolved |
-| Authority remote ref       | `origin refs/heads/refactor/hosted-web-feature-boundaries`          | root immutable `git ls-remote` attestation              |
-| Reviewed product snapshot  | `666042037a9c91df572b1d8274bf6024f8d00f40`                          | exact 32 unchanged product inputs                       |
-| Ordered first parent       | `c3135d40c6e70e4b2ddc905dc815407397197634`                          | accepted P1.1D-side lineage                             |
-| Ordered second parent      | `3b48f9391b4bff1d82bc85ef01a2d5e0e5b50e95`                          | accepted PR #252 merge source                           |
-| Merge shape                | exact true two-parent merge                                         | accepted product-snapshot topology                      |
-| PR #252 conflict gate      | complete and accepted                                               | immutable predecessor                                   |
-| P1.1D                      | complete and accepted                                               | immutable predecessor                                   |
-| Historical PR #252 lane    | `phase-01/lanes/pr252-base-conflict-resolution.md`, SHA-256 `f55c…` | unchanged provenance; non-executable                    |
-| Current evidence           | `P1.R2.SEMANTIC_REVIEW`                                             | pending one independent formal review                   |
+| Record                     | Identity                                   | Authority                                                     |
+| -------------------------- | ------------------------------------------ | ------------------------------------------------------------- |
+| P1.S0 bootstrap            | `5f30df49e052d1cc1d0e7efd03aa105673b5b614` | rollback payload absence/base provenance                      |
+| Reviewed product snapshot  | `666042037a9c91df572b1d8274bf6024f8d00f40` | P1.R2's exact 32 reviewed product inputs                      |
+| P1.R2 review authority     | `f6794b607609c57dc92def696d05946c9c96856a` | formal review worktree authority                              |
+| Accepted P1.R2 integration | `c5d842f75ca7a647a0773b0c30d303d7da21d1d6` | exact two frozen evidence paths and router authoring base     |
+| Router authority           | `phase-01-p1-i-router-r1` at `c5d842f75…`  | current seven-path candidate only                             |
+| Producer authority         | `postIntegrationAuthoritySha`              | exact future broker-returned pushed router integration commit |
+| Current evidence           | `P1.I.INTEGRATION`, `P1.I.ROLLBACK`        | pending one producer, one serial reviewer, and integration    |
+
+The distinct SHA roles cannot be collapsed. The future producer authority does not rewrite the
+accepted P1.R2 integration or reviewed-product snapshot.
 
 ## Current capacity and ownership
 
-Capacity is exactly one fresh independent reviewer using `gpt-5.6-sol`, `xhigh`, and
-`serviceTier: "default"`. Fast is not authorized. Dependencies are broker-materialized offline and
-the reviewer must not install them. The reviewer writes exactly:
+Capacity is exactly one P1.I producer after the router's independent acceptance, broker integration,
+push, and authority attestation, followed by exactly one fresh independent milestone reviewer after
+producer termination and immutable output capture. Both profiles are `gpt-5.6-sol`, `xhigh`, and
+`serviceTier: "default"`; Fast is prohibited. Dependencies are broker-materialized offline.
 
-1. `.codex-handoff/phase-01-p1-r2.json`
-2. `docs/research/hosted-web/phase-1/reviews/list-semantics.md`
+The producer writes exactly:
 
-Every reviewed product, test, fixture, prior handoff, router, research, configuration, package,
-lockfile, runtime, and historical packet is read-only. A third output, staged path,
-reviewed-product-input edit, or product change is not a DAG edge and requires `REJECT`.
+1. `.codex-handoff/phase-01-p1-i.json`
+2. `docs/research/hosted-web/phase-1/decision-register.json`
+3. `docs/research/hosted-web/phase-1/estimate-reconciliation.json`
+4. `docs/research/hosted-web/phase-1/evidence-index.json`
+5. `docs/research/hosted-web/phase-1/integration-report.json`
 
-## Required review transition
+The 68 canonical inputs, the 54 rollback-payload paths, the P1.R1/P1.R2 reviews, all product/test
+bytes, router files, configuration, packages, lockfiles, and every unrelated path are read-only. A
+sixth output, staged path, tracked diff, product edit, P1.R2 evidence edit, or repository patch apply
+is not a DAG edge.
 
-The focused command is exactly:
+## Gate transition
+
+All 14 gate IDs in `EXECUTION_INDEX.json` must pass. The broad commands are:
 
 ```bash
-pnpm exec vitest run test/architecture/hosted-web/phase-1/contracts test/features/team-lifecycle
+pnpm exec vitest run test/features/team-lifecycle test/architecture/hosted-web/phase-1
+pnpm exec vitest run test/architecture/hosted-web/phase-1/parity/parity-references.test.ts
+pnpm typecheck
+pnpm lint
+pnpm exec prettier --check <exact 73-path scope>
+git diff --check
+git diff --cached --quiet
+git diff --exit-code
+git status --short
 ```
 
-It must pass 5 files and 14/14 tests. Typecheck must match the current accepted baseline exactly:
-seven inherited Phase 0 diagnostics, zero P1.R2-owned diagnostics, and zero unexpected diagnostics.
-Prettier, diff, exact two-path ownership, secret/provider/private-path scans,
-authority/snapshot/parent provenance, and all semantic review requirements must pass.
+The ratchet transition requires positive pinned references/counts and deliberate over-count-after-
+rename plus expired-quarantine failures with exact `phase1-ratchet-regression`. The rollback
+transition requires a 54-path binary patch, forward byte comparison, reverse absence proof, scratch
+cleanup, and unchanged repository state. No actual repository integration or product rollback occurs.
 
-Root first resolves `postIntegrationAuthoritySha` from the exact broker-returned pushed commit and
-captures immutable pre-start `git ls-remote origin
-refs/heads/refactor/hosted-web-feature-boundaries` equality evidence. The reviewer performs no network
-query: it validates that attestation, proves local `HEAD` equals its bound `expectedSourceCommit`,
-binds all five handoff authority SHA fields to `postIntegrationAuthoritySha`, and proves every one of
-the 32 product inputs matches reviewed product snapshot
-`666042037a9c91df572b1d8274bf6024f8d00f40` byte-for-byte.
+Any authority, input, gate, output, safety, rollback, decision, estimate, or evidence-lifecycle failure
+ends `HOLD`. There is no producer repair, retry, refill, second attempt, or narrower completion path.
 
-The strict result is exactly `ACCEPT` or `REJECT`, with explicit P0/P1/P2 counts. `ACCEPT` requires
-P0/P1/P2 `0/0/0`; there is no conditional acceptance or repair authority. Semantic, content, and
-review-gate findings produce `REJECT`. Admission, provider, environment, and no-strict-result
-failures are runtime incidents and produce `HOLD` without a synthetic disposition. No concurrent
-duplicate is permitted; root may authorize at most one exact corrected attempt after proving the
-affected attempt terminal or proving no runner exists.
-Missing or invalid immutable authority attestation, checkout failure, and root remote-query/network
-failure are admission/environment incidents under this rule, not semantic findings.
+## Completion boundary
 
-Completion requires both the strict terminal result and broker-captured immutable output binding the
-bytes and hashes of both exact result paths. `changedFiles`, heartbeat, PID, tmux, and
-`providerObserved` cannot satisfy that edge. On strict `ACCEPT` 0/0/0, root mechanically verifies
-both proofs, invokes `mark_reviewed`, and the broker integrates and pushes exactly the two evidence
-paths. Neither root nor the reviewer performs that Git lifecycle.
+P1.I producer completion requires the strict terminal line and broker-captured immutable output
+binding all five result paths. `changedFiles`, heartbeat, PID, tmux, and `providerObserved` cannot
+close the edge.
 
-P1.I, P1.F, Phase 2+, and every product worker remain blocked after evidence integration. Only a
-later separately reviewed docs router may authorize P1.I; it uses the already integrated evidence
-and must never integrate either P1.R2 evidence path again. No edge launches a successor controller.
+The five-file candidate then remains `HOLD` while root serially starts the one authorized milestone
+reviewer. The reviewer has no repository writer authority and reads exactly the 68 frozen inputs plus
+the five immutable outputs. It returns explicit `ACCEPT` or `REJECT`. On `ACCEPT`, root may call
+`mark_reviewed`, then the broker may integrate and push exactly the five P1.I outputs. On `REJECT`,
+neither action is authorized. The already integrated P1.R2 evidence is never in that integration set.
+
+P1.F remains blocked even after a future P1.I integration until a separate reviewed router transition.
+No edge authorizes Phase 2+, product work, controller replacement, or a successor controller.

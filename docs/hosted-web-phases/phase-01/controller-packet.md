@@ -1,166 +1,136 @@
-# Phase 1 controller packet: P1.R2 semantic review router
+# Phase 1 controller packet: P1.I integration-freeze router
 
 ## Status and authority
 
-- Phase/current node: `phase-01` / `P1.R2`
-- Router revision: `phase-01-p1-r2-router-r1`
-- Lane packet revision: `phase-01-p1-r2-review-r1`
-- Router remediation `packetBaseSha`:
-  `48d79e2b13e258fc82ad55723875f15d6e162872` (authoring base only)
-- Formal-review `postIntegrationAuthoritySha`: intentionally unresolved until the broker returns and
-  pushes the exact accepted policy-integration commit; never hardcode it to `packetBaseSha` or guess it
-- Authority state required before reviewer start: resolved by root from that broker result, clean, and
-  bound by immutable pre-start attestation to the sole result of
-  `git ls-remote origin refs/heads/refactor/hosted-web-feature-boundaries`; upstream-tracking
-  assumptions are not evidence
-- Reviewed product snapshot for the unchanged exact 32 inputs:
+- Phase/current node: `phase-01` / `P1.I`
+- Router revision: `phase-01-p1-i-router-r1`
+- Lane packet revision: `phase-01-p1-i-integration-r1`
+- Router `packetBaseSha`: `c5d842f75ca7a647a0773b0c30d303d7da21d1d6`
+- Packet-base role: integrated P1.R2 `ACCEPT` evidence and this router's authoring base
+- Accepted P1.R2 review authority SHA: `f6794b607609c57dc92def696d05946c9c96856a`
+- Accepted P1.R2 reviewed-product snapshot SHA:
   `666042037a9c91df572b1d8274bf6024f8d00f40`
-- Reviewed product snapshot topology: true two-parent merge with ordered parents
-  `[c3135d40c6e70e4b2ddc905dc815407397197634,
-3b48f9391b4bff1d82bc85ef01a2d5e0e5b50e95]`
-- Accepted predecessor gates: PR #252 conflict gate and P1.1D, both complete and accepted
+- Producer `postIntegrationAuthoritySha`: intentionally unresolved until independent router review,
+  broker integration, and push
 - Root role: sole orchestrator
 - Durable controller: `controller-v17`, `HOLD`, observation-only
-- Reviewer capacity: exactly one fresh independent P1.R2 reviewer
-- Reviewer profile: `gpt-5.6-sol`, `xhigh`, `serviceTier: "default"`; Fast is not authorized
-- Dependency source: broker-materialized offline before admission; worker installation is forbidden
-- Evidence ID: `P1.R2.SEMANTIC_REVIEW`
-- This docs router launches none and ends `HOLD`
+- Capacity: exactly one P1.I producer after the launch gate, then exactly one fresh independent P1.I
+  milestone reviewer after producer termination and immutable output capture
+- Producer and reviewer profile: `gpt-5.6-sol`, `xhigh`, `serviceTier: "default"`; Fast is prohibited
+- Producer evidence: `P1.I.INTEGRATION` and `P1.I.ROLLBACK`
+- Router terminal state: `HOLD`
+
+The accepted P1.R2 handoff and result are integrated at `c5d842f75…`, have strict disposition
+`ACCEPT`, and contain P0/P1/P2 `0/0/0`. Those two files are frozen inputs and cannot be edited or
+reintegrated. The P1.R2 lane packet is accepted history, not current execution authority.
+
+Root may start P1.I only after this exact seven-path router is independently accepted,
+broker-integrated, and pushed. Root then resolves the exact broker-returned pushed commit as
+`postIntegrationAuthoritySha`, proves a clean worktree, and captures immutable equality to the sole
+result of `git ls-remote origin refs/heads/refactor/hosted-web-feature-boundaries`. A moving branch or
+upstream-tracking assumption is not evidence. The producer performs no network or remote query.
 
 `controller-v17` cannot launch, admit, integrate, restart, replace itself, or create a successor.
-Root may start the reviewer only after this exact seven-path router is independently accepted,
-policy-integrated, and pushed. No successor controller is authorized.
+This packet authorizes no successor controller.
 
 ## Outcome
 
-Produce one independent formal `ACCEPT` or `REJECT` review of the unchanged shared hosted kernel and
-team-lifecycle list semantics at reviewed product snapshot
-`666042037a9c91df572b1d8274bf6024f8d00f40`, from reviewer worktree authority `HEAD` equal to the
-resolved `postIntegrationAuthoritySha`, with explicit P0/P1/P2 counts and exact gate evidence.
-`ACCEPT` is legal only at P0/P1/P2 `0/0/0`. Semantic, content, or review-gate findings produce
-`REJECT`.
+Authorize one evidence-only P1.I producer to adopt the already integrated Phase 1 bytes serially,
+close the full Phase 1 gate matrix, prove exact scratch-only forward/reverse rollback, and write a
+five-file freeze candidate. The producer performs no product implementation, raw Git integration,
+registry mutation, runtime/agent-flow test, or real-project access.
 
-Admission, provider, environment, or no-strict-result failures are runtime incidents and end `HOLD`;
-they must never be converted into a synthetic `REJECT`. A review completes only when root possesses
-both the strict terminal result and broker-captured immutable output that binds the bytes and hashes
-of both exact result paths. `changedFiles`, a heartbeat, PID, tmux state, or `providerObserved` state
-cannot substitute for either proof.
+The producer must return `HOLD` after writing and verifying the candidate. Its work is not independent
+acceptance and is not integration authority. This router serially authorizes exactly one fresh
+independent milestone reviewer after producer termination and immutable five-path output capture. The
+reviewer is read-only over the 68 frozen inputs plus five outputs and returns explicit `ACCEPT` or
+`REJECT`. On `ACCEPT`, root may call `mark_reviewed`, then the broker may integrate and push exactly
+the five outputs. P1.F still requires a separate reviewed router transition.
 
-On strict `ACCEPT` with P0/P1/P2 `0/0/0`, root mechanically verifies the terminal result, immutable
-output, bound evidence bytes, commands, hashes, scope, and disposition; invokes `mark_reviewed`;
-then directs the broker to integrate and push exactly `.codex-handoff/phase-01-p1-r2.json` and
-`docs/research/hosted-web/phase-1/reviews/list-semantics.md`. Root and the reviewer never perform the
-Git integration. P1.I, P1.F, Phase 2+, and product workers remain blocked after that push. Only a
-later separately reviewed docs router may authorize P1.I, and it consumes but never integrates those
-already integrated evidence paths.
+## Immutable inputs
 
-## Immutable inputs and historical boundary
+Machine authority is `EXECUTION_INDEX.json`:
 
-`packetBaseSha` `48d79e2b13e258fc82ad55723875f15d6e162872` proves only where this router
-remediation is authored. After the accepted router is policy-integrated and pushed, root resolves
-`postIntegrationAuthoritySha` from the exact commit returned and pushed by the broker. Reviewer
-`expectedSourceCommit`, worktree `HEAD`, canonical, base, plan bundle, and phase start all bind that
-resolved value. Before reviewer start, root must prove the resulting worktree clean and capture
-immutable evidence of exact equality between that value and the sole result of
-`git ls-remote origin refs/heads/refactor/hosted-web-feature-boundaries`. Neither an upstream-tracking
-ref nor a guessed/future SHA may substitute for the broker result and explicit remote-ref query.
+- `acceptedP1R2` freezes the exact integration, review, snapshot, disposition, finding counts, paths,
+  and content hashes;
+- `phase1CanonicalInputs` freezes 68 distinct read-only Phase 1 paths at
+  `c5d842f75ca7a647a0773b0c30d303d7da21d1d6`;
+- `rollbackPayload` freezes 54 distinct product/test/fixture/scanner paths that were absent at P1.S0
+  bootstrap SHA `5f30df49…` and are present at the accepted P1.R2 integration SHA;
+- `inheritedNativeTypeScriptDiagnostics` freezes exactly seven inherited Phase 0 diagnostics; and
+- `outputs.writablePaths` reproduces exactly the five P1.I paths frozen under `ownerId: "P1.I"` in
+  `bootstrap/ownership-manifest.json`.
 
-The review's exact 32 product inputs are separately bound to `reviewedProductSnapshotSha`
-`666042037a9c91df572b1d8274bf6024f8d00f40`. Every one must be byte-identical at the authority
-`HEAD` and the reviewed product snapshot. The snapshot's exact parent order is binding and must be
-re-proved locally without rebinding.
-
-The accepted PR #252 lane at
-[`lanes/pr252-base-conflict-resolution.md`](lanes/pr252-base-conflict-resolution.md) remains
-byte-for-byte historical with SHA-256
-`f55c7d77f7cb54d90208fb6fe6f61e257fa75f0b063b5fd71e5677c83d148842`. It is not current
-authority and must not change in this router.
-
-The product review input is exactly the 32 paths in
-[`lanes/p1-r2-review.md`](lanes/p1-r2-review.md): 12 accepted P1.1A kernel paths, 9 accepted P1.1D
-paths, and 11 immutable semantic-corpus paths. No moving ref, prior rejected output, historical lane,
-or sibling research path may replace or expand that input.
+All 68 canonical inputs must be byte-identical between the accepted P1.R2 integration SHA and the
+future producer authority `HEAD`. Missing, additional, overlapping, or modified input is a stop, not
+repair authority.
 
 ## Non-goals
 
-This packet does not authorize a product producer, repair, refill, concurrent or second reviewer,
-product edit, root/reviewer Git integration, P1.I, P1.F, Phase 2+, route/capability work,
-IPC/HTTP/preload/renderer work, production auth, adapter/runtime/filesystem work,
-app/team/server/provider launch, real-project access, arbitrary Git mutation, or successor
-controller. The only post-review Git authority is the broker's exact two-path integration and push
-after mechanically verified strict `ACCEPT` with P0/P1/P2 `0/0/0` and `mark_reviewed`.
+This packet does not authorize:
+
+- edits to product, tests, fixtures, scripts, configuration, packages, lockfiles, router history,
+  P1.R1/P1.R2 evidence, or any non-output path;
+- replay or integration of a producer patch or commit;
+- staging, committing, merging, pushing, raw Git integration, or repository-index mutation;
+- network, GitHub, fetch, dependency installation/update, provider checks, app/server/runtime/team
+  launch, agent-flow tests, registry writes, or real-project access;
+- production route, IPC, preload, renderer, HTTP, authorization, cursor-integrity, filesystem, or
+  runtime claims;
+- a reviewer concurrent with the producer or another reviewer, reviewer writes, integration before
+  explicit reviewer `ACCEPT`, P1.F, Phase 2+, product work, controller replacement, or a successor
+  controller.
 
 ## Definition of Ready
 
-Root must prove in one pre-start snapshot:
+Root must prove the lane packet's complete start gate. In particular:
 
-1. this exact seven-path router was independently accepted, policy-integrated, and pushed;
-2. the broker returned and pushed one exact commit and root resolved it as
-   `postIntegrationAuthoritySha`, distinct in role from router `packetBaseSha`;
-3. reviewer `expectedSourceCommit`, worktree `HEAD`, canonical, base, plan bundle, and phase start all
-   bind that resolved authority SHA;
-4. the authority worktree is clean, and root's immutable pre-start attestation records the exact
-   broker result plus command, exit code, output, and equality proving the sole result of
-   `git ls-remote origin refs/heads/refactor/hosted-web-feature-boundaries` binds that SHA;
-5. `reviewedProductSnapshotSha` is
-   `666042037a9c91df572b1d8274bf6024f8d00f40`, has exactly the two ordered parents above, and every
-   one of the exact 32 inputs is byte-identical at the authority `HEAD` and that snapshot;
-6. the PR #252 conflict gate and P1.1D remain accepted, with no reopened predecessor work;
-7. root remains sole orchestrator and `controller-v17` remains `HOLD`, observation-only;
-8. no P1.R2 reviewer exists or is active, and the fresh identity/job/worktree independence gate
-   passes;
-9. admission is exactly `codex_goal_project_refill_worker`, `workerRole: reviewer`, source
-   `origin/refactor/hosted-web-feature-boundaries`, `reviewKind: review`, `inputPatchHash: null`, and
-   never `prepare_verifier`;
-10. the request is exactly `gpt-5.6-sol`, `xhigh`, and `serviceTier: "default"`, with no Fast mode;
-11. the broker has materialized dependencies offline and the assignment forbids the worker from
-    installing, fetching, or updating them;
-12. the exact 32 inputs exist and both output paths are absent; and
-13. no product worker, P1.I, P1.F, Phase 2+, integration, or successor-controller activity exists.
+1. the router is independently accepted, broker-integrated, and pushed;
+2. the exact broker-returned pushed commit is resolved and immutably attested as the remote branch
+   authority;
+3. local producer `HEAD`, admission `expectedSourceCommit`, and all five handoff authority fields bind
+   that same SHA;
+4. integrated P1.R2 evidence is exact, accepted, zero-finding, hash-matched, and unchanged;
+5. all 68 canonical inputs match `c5d842f75…` byte-for-byte;
+6. the exact five P1.I outputs are absent;
+7. no P1.I producer or blocked successor is active;
+8. the exact default-only model/effort/tier profile is admitted; and
+9. dependencies are broker-materialized offline and worker installation/fetch/update is disabled.
 
-Any admission mismatch ends `HOLD` without launch. There is no replacement, fallback, refill, or
-profile substitution authority. One exact corrected attempt is the sole exception: root may
-authorize it only for an admission, provider, environment, or no-strict-result runtime incident,
-only after proving the affected attempt terminal or proving no runner exists, and never while
-another attempt is active. No corrected attempt follows a semantic, content, or gate `REJECT`.
+Any failure ends `HOLD` without launch. No replacement, fallback, retry, refill, alternate profile,
+or profile-tier substitution is authorized.
 
-Root performs the exact ProjectScopedControl launch defined in the lane packet:
-`codex_goal_project_refill_worker`, `workerRole: reviewer`, `sourceRemote: origin`,
-`sourceBranch: refactor/hosted-web-feature-boundaries`, and `expectedSourceCommit` equal to the
-resolved `postIntegrationAuthoritySha`; serial built-in contract `canonicalSha`, `baseSha`, and
-`phaseStartSha` equal to that same authority; `inputPatchHash: null`; and `reviewKind: review`.
-`prepare_verifier` is forbidden. The reviewer performs no network or remote query.
-
-## DAG, lane registry, and capacity
-
-The serial DAG is:
+## DAG and capacity
 
 ```text
-accepted product snapshot 66604203... with exact 32 unchanged inputs
-  -> seven-path router authored at packetBaseSha 48d79e2b...
-    -> current router ACCEPT + policy integration + push
-    -> broker returns/pushes exact postIntegrationAuthoritySha
-    -> root resolves + immutably attests exact remote-ref equality
-    -> codex_goal_project_refill_worker starts exactly one independent P1.R2 reviewer
-      -> exact focused command + semantic/auth/error/cursor/kernel-size review
-        -> typecheck + Prettier/diff + two-path scope + classified scans
-          -> strict terminal result + broker-captured immutable output binding both exact paths
-            -> semantic/content/gate finding -> REJECT -> HOLD
-            -> authority-attestation/admission/environment runtime incident -> HOLD
-               at most one serialized exact corrected attempt
-            -> ACCEPT 0/0/0 -> root mechanical verification -> mark_reviewed
-              -> broker integrates and pushes exact two outputs -> HOLD
-                -X-> later docs router alone may authorize P1.I; it never reintegrates evidence
+P1.R1 ACCEPT
+  -> P1.1D accepted implementation/remediation
+    -> P1.R2 ACCEPT 0/0/0
+      -> exact two-path P1.R2 evidence integrated at c5d842f75...
+        -> seven-path P1.I router authored at c5d842f75...
+          -> independent router review
+            -> broker integrates + pushes router
+              -> root resolves/attests postIntegrationAuthoritySha
+                -> exactly one P1.I producer
+                  -> 68-input adoption + complete gates + evidence freeze
+                    -> full Vitest 13/59 + focused ratchet 1/3
+                    -> typecheck 7/0/0 + full lint + Prettier
+                    -> scope/scans + 54-path scratch rollback/apply proof
+                    -> exact five JSON outputs + strict producer result
+                      -> HOLD
+                        -> exactly one fresh independent P1.I milestone reviewer
+                          -> read-only 68 frozen inputs + 5 immutable outputs
+                            -> ACCEPT -> root mark_reviewed
+                              -> broker integrates + pushes exactly five outputs
+                                -> HOLD
+                            -> REJECT -> HOLD without integration
+                                -X-> P1.F requires a later separate reviewed transition
 ```
 
-| Lane  | Packet                           | Dependency                 | Evidence                | Capacity |
-| ----- | -------------------------------- | -------------------------- | ----------------------- | -------- |
-| P1.R2 | `phase-01/lanes/p1-r2-review.md` | accepted integrated router | `P1.R2.SEMANTIC_REVIEW` | one      |
-
-There is one reviewer slot and no concurrent duplicate. The reviewer may not launch a worker,
-reviewer, controller, or successor. Missing or failed output is a runtime incident, not completion.
-After terminal/no-runner proof, root may use at most one exact corrected attempt for the four runtime
-incident classes; rejected evidence never creates retry or refill authority.
+Capacity is one producer followed by one reviewer, never concurrently. A heartbeat, PID, tmux pane,
+`providerObserved`, or changed-file notice does not establish completion. Producer completion
+requires the strict terminal result and broker-captured immutable output binding all five output
+bytes and hashes. Reviewer completion requires its strict immutable `ACCEPT` or `REJECT` result.
 
 ## Ownership
 
@@ -172,104 +142,131 @@ The docs-router author owns exactly:
 4. `docs/hosted-web-phases/phase-01/README.md`
 5. `docs/hosted-web-phases/phase-01/controller-packet.md`
 6. `docs/hosted-web-phases/phase-01/execution-dag.md`
-7. `docs/hosted-web-phases/phase-01/lanes/p1-r2-review.md`
+7. `docs/hosted-web-phases/phase-01/lanes/p1-i-integration.md`
 
-The P1.R2 reviewer owns exactly:
+The P1.I producer owns exactly:
 
-1. `.codex-handoff/phase-01-p1-r2.json`
-2. `docs/research/hosted-web/phase-1/reviews/list-semantics.md`
+1. `.codex-handoff/phase-01-p1-i.json`
+2. `docs/research/hosted-web/phase-1/decision-register.json`
+3. `docs/research/hosted-web/phase-1/estimate-reconciliation.json`
+4. `docs/research/hosted-web/phase-1/evidence-index.json`
+5. `docs/research/hosted-web/phase-1/integration-report.json`
 
-All product, tests, fixtures, prior handoffs, historical lanes, research, evidence, scripts,
-configuration, packages, lockfiles, runtime, orchestration implementation, and integration paths are
-read-only. There is no compile-coherence or generated-file exception.
+Everything else is read-only. The P1.R2 evidence paths and `lanes/p1-r2-review.md` are explicitly
+frozen. There is no generated-file, formatting, compile-coherence, or cleanup exception.
 
-## Review gates
+## Required producer gates
 
-The exact focused command is:
+The lane packet is authoritative for commands and schemas. The producer must pass all 14 machine gate
+IDs from the execution index. The broad checks are:
 
 ```bash
-pnpm exec vitest run test/architecture/hosted-web/phase-1/contracts test/features/team-lifecycle
+pnpm exec vitest run test/features/team-lifecycle test/architecture/hosted-web/phase-1
+pnpm exec vitest run test/architecture/hosted-web/phase-1/parity/parity-references.test.ts
+pnpm typecheck
+pnpm lint
+pnpm exec prettier --check <exact 68 inputs plus exact five outputs>
+git diff --check
+git diff --cached --quiet
+git diff --exit-code
+git status --short
 ```
 
-It must pass exactly 5 files and 14/14 tests. The reviewer must independently prove every
-semantic/auth/error/cursor/kernel-size requirement and both negative diagnostics frozen in the lane
-packet.
+Exact acceptance is 13/13 Vitest files and 59/59 tests; the focused ratchet file is 1/1 and 3/3.
+Typecheck is exactly seven inherited, zero owned, and zero unexpected diagnostics. Full lint exits
+zero. Prettier covers exactly 73 paths. Status resolves exactly the five untracked output paths, with
+no tracked or staged change.
 
-`pnpm typecheck` must match the exact current accepted baseline: seven inherited Phase 0 diagnostics,
-zero diagnostics in the reviewed product inputs or two reviewer outputs, and zero unexpected diagnostics.
-The exact seven file/code/location records are frozen in the lane packet; any drift fails.
+`P1.NEG.RATCHET_REGRESSION` must freshly prove both over-count-after-rename and expired-quarantine
+rejection with `phase1-ratchet-regression`, while the pinned current references/counts pass. This proof
+is recorded in the decision register, evidence index, integration report, and handoff.
 
-The lane's local post-integration-authority-`HEAD`, reviewed-product-snapshot topology and
-byte-equality checks, exact
-Prettier command, `git diff --check`, `git diff --cached --quiet`, clean tracked diff, and exact
-two-untracked-path status must pass. Root's pre-start snapshot must record the exact `git ls-remote`
-command, exit code, output, equality result, broker-returned pushed commit, and clean state. The
-reviewer validates that immutable attestation and local `HEAD` without GitHub or network access. The
-secret, provider, and private-path scans must cover all 32 inputs
-and both outputs, record exit codes, and classify every lexical match. Any unsafe or unclassified
-value fails.
+The rollback gate creates a binary patch over exactly 54 paths between P1.S0 and accepted P1.R2
+integration, applies and reverses it only in a new external scratch tree, compares all forward bytes to
+the accepted SHA, proves all 54 paths absent after reverse, removes scratch narrowly, and re-proves the
+repository unchanged. An actual repository apply is forbidden.
 
-The reviewer result and handoff must agree on provenance, independence, commands, observed counts,
-scope, disposition, findings, unverified claims, blocked successors, and terminal `HOLD`.
-Completion additionally requires the broker-captured immutable output and strict terminal result to
-agree on the bytes and hashes of both exact result paths. Runtime observations such as
-`changedFiles`, heartbeat, PID, tmux, and `providerObserved` are not completion evidence.
+Classified scans cover the same exact 68 inputs plus five outputs. A real credential, auth/provider
+payload, private or real-project path, task-temporary path value, raw command/runtime body, binary
+output, or unclassified lexical match fails.
+
+## Freeze artifact policy
+
+The five outputs form one candidate freeze:
+
+- `decision-register.json` resolves all ten Phase 1 gaps, all negative controls, predecessor reviews,
+  risks, deferrals, narrowings, unverified production boundaries, and blocked successors.
+- `estimate-reconciliation.json` counts each unique bucket and path once, records exact actuals and
+  variance, and does not remove evidence to fit a range.
+- `evidence-index.json` follows `EVIDENCE_LIFECYCLE.md`, preserves accepted predecessor authority,
+  records real supersession only, and keeps the new P1.I rows generated/pending until independent
+  review.
+- `integration-report.json` records every gate, command, count, version, hash, scope, scan,
+  rollback/apply observation, and unverified claim.
+- `.codex-handoff/phase-01-p1-i.json` binds the two P1.I evidence IDs to the report, exact authority
+  roles, exact five-path scope, result hashes, next action `independent-verification`, and terminal
+  `HOLD`.
+
+The producer must not self-approve or call the candidate independently accepted, integrated, or Phase
+1/P1.F authorized.
 
 ## Monitoring and stop policy
 
-Root observes only reviewer existence, identity/profile, output freshness, exact scope, command
-completion, strict terminal state, and final disposition. `controller-v17` observes but cannot
-intervene or start work. Changed-file notices, heartbeat, PID, tmux, and `providerObserved` signals
-remain non-terminal observations even when all look healthy.
+Root observes only admitted identity/profile, immutable authority, useful output progress, exact scope,
+command completion, strict terminal state, and final candidate status. `controller-v17` observes only.
 
-Classify stops without collapsing execution failures into review findings:
+Stop `HOLD` on authority or hash drift, invalid P1.R2 acceptance, missing input, changed immutable
+input, output overlap, product/non-output change, dependency/config need, test/lint/format failure,
+typecheck drift, unsafe or unclassified scan match, rollback failure, decision or estimate omission,
+evidence lifecycle invalidity, stale packet, or unsupported claim. Do not repair an input, retry a
+producer, or continue on a smaller subset.
 
-- A strict reviewer result establishing reviewed-product-snapshot, parent-order, accepted-predecessor,
-  reviewed-input/output-scope drift,
-  semantic/auth/error/cursor/kernel-size defects,
-  test/typecheck/Prettier/diff/scan failure, unsafe content, incomplete evidence content, or any other
-  review gate finding is `REJECT` and `HOLD`. It authorizes no repair or retry.
-- Unresolved/mismatched authority, missing/invalid immutable authority attestation, authority checkout
-  mismatch, admission failure or drift, provider failure, root remote-query/network failure,
-  environment failure, or absence of a strict terminal result is a runtime incident and `HOLD`, never
-  `REJECT`. It authorizes no concurrent duplicate.
-  Root may authorize at most one exact corrected attempt only after terminal/no-runner proof.
-- Any P1.I, P1.F, Phase 2+, product-worker, or successor-controller activity remains an immediate
-  `HOLD` policy violation and creates no authority.
+Any reviewer launch before producer termination, concurrent reviewer, integration before explicit
+reviewer `ACCEPT`, or P1.F/Phase 2+/product/successor-controller activity is a policy violation and
+creates no authority.
 
-## Disposition and policy-integration boundary
+## Producer completion and integration boundary
 
-The reviewer writes only `.codex-handoff/phase-01-p1-r2.json` and
-`docs/research/hosted-web/phase-1/reviews/list-semantics.md`. The Markdown file carries the sole formal
-`Disposition: ACCEPT | REJECT`; the handoff maps it to `P1.R2.SEMANTIC_REVIEW`.
+The producer emits the lane packet's one-line `P1_I_PRODUCER_RESULT` and ends `HOLD`. `VERIFIED`
+requires all gates and exact outputs, but remains only a producer result.
 
-Only `ACCEPT` with every gate green and P0/P1/P2 `0/0/0` may be considered acceptable evidence.
-Root mechanically verifies the strict terminal result, broker-captured immutable output, and both
-bound result-path byte/hash pairs. On exact agreement it invokes `mark_reviewed`; only then does the
-broker integrate and push exactly those two paths. Neither root nor the reviewer stages, commits,
-integrates, or pushes them, and no other path may enter that broker integration.
+After the producer is terminal and the broker has immutably captured the exact five-path output, root
+must prove no producer or reviewer is active and may start exactly one fresh independent P1.I
+milestone reviewer. The reviewer uses `gpt-5.6-sol`, `xhigh`, and `serviceTier: "default"`; Fast is
+prohibited. It has read-only access to the exact 68 frozen inputs and five candidate outputs, no
+repository writer or repair authority, and no retry or replacement authority.
 
-That integration adopts `P1.R2.SEMANTIC_REVIEW` but authorizes no later node. P1.I, P1.F, Phase 2+,
-and product workers remain blocked. A later docs-only router must independently review the already
-integrated accepted evidence before it may authorize P1.I; it must never integrate the P1.R2 handoff
-or result again. No successor controller is implied or authorized.
+The reviewer returns one immutable strict result with explicit `ACCEPT` or `REJECT`. `ACCEPT`
+requires zero P0/P1/P2 findings and complete evidence that the five outputs satisfy the lane packet;
+`REJECT` identifies at least one semantic, content, or gate finding. Admission, provider, environment,
+or missing-result incidents end `HOLD` and are not synthetic `REJECT` results.
+
+On `ACCEPT`, root mechanically verifies the result and may call `mark_reviewed`. Only after that
+lifecycle action may the broker integrate and push exactly the five P1.I output paths. Neither root,
+the producer, nor the reviewer performs raw Git integration. On `REJECT`, root may not mark reviewed
+and the broker may not integrate. The already integrated P1.R2 files are never part of the P1.I
+integration set.
+
+Even after P1.I output integration, P1.F remains blocked until a separate reviewed router transition.
+No successor controller is implied.
 
 ## Definition of Done
 
-P1.R2 review is complete only when root has both a strict terminal result and broker-captured
-immutable output binding both exact result paths from the sole active attempt; the handoff is valid;
-`P1.R2.SEMANTIC_REVIEW` is `target_verified`; every required check and scan is recorded; the
-disposition is explicit; P0/P1/P2 counts are complete; authority and snapshot bindings are exact;
-the 32 reviewed product inputs are unchanged; and the work ends `HOLD`. No observation-only signal
-can satisfy this definition.
+The P1.I producer candidate is complete only when the same admitted attempt has:
 
-For `ACCEPT` 0/0/0, lifecycle completion additionally requires root mechanical verification of the
-terminal result, immutable output, and bound evidence bytes; `mark_reviewed`; and broker integration
-and push of exactly the two outputs. The broker's push does not unblock P1.I.
+1. exact post-integration authority and unchanged 68-path input provenance;
+2. all 14 gates passed and recorded;
+3. full Phase 1 Vitest 13/59 and focused ratchet 1/3;
+4. typecheck 7/0/0, full lint, exact Prettier, diff, ownership, and safety gates;
+5. exact 54-path scratch forward/reverse proof;
+6. coherent decision, estimate, evidence, integration, and handoff JSON;
+7. exactly five output paths and complete non-cyclic hashes;
+8. strict terminal result plus immutable output for all five paths; and
+9. next action `independent-verification` with terminal `HOLD`.
 
-This controller packet is not Phase 1 completion. P1.I, P1.F, Phase 2+, and product workers remain
-blocked until a later separately reviewed docs router authorizes P1.I from the already integrated
-accepted P1.R2 evidence.
+That producer completion is not Phase 1 freeze adoption. The one authorized milestone review and,
+only on `ACCEPT`, root `mark_reviewed` plus exact five-path broker integration remain serial lifecycle
+steps. P1.F, Phase 2+, product workers, and successor controllers remain blocked.
 
 ## Exact docs-router checks
 
@@ -282,24 +279,17 @@ const crypto = require('node:crypto')
 const fs = require('node:fs')
 const path = require('node:path')
 
-const packetBase = '48d79e2b13e258fc82ad55723875f15d6e162872'
-const authorityBinding = 'postIntegrationAuthoritySha'
-const reviewedProductSnapshot = '666042037a9c91df572b1d8274bf6024f8d00f40'
-const remoteName = 'origin'
-const remoteBranch = 'refactor/hosted-web-feature-boundaries'
-const remoteRef = 'refs/heads/refactor/hosted-web-feature-boundaries'
-const remoteEqualityCommand = `git ls-remote ${remoteName} ${remoteRef}`
-const upstreamTrackingSyntax = '@' + '{upstream}'
-const parents = [
-  'c3135d40c6e70e4b2ddc905dc815407397197634',
-  '3b48f9391b4bff1d82bc85ef01a2d5e0e5b50e95',
-]
-const revision = 'phase-01-p1-r2-router-r1'
-const focused =
-  'pnpm exec vitest run test/architecture/hosted-web/phase-1/contracts test/features/team-lifecycle'
+const base = 'c5d842f75ca7a647a0773b0c30d303d7da21d1d6'
+const parent = 'f6794b607609c57dc92def696d05946c9c96856a'
+const reviewSnapshot = '666042037a9c91df572b1d8274bf6024f8d00f40'
+const revision = 'phase-01-p1-i-router-r1'
+const laneRevision = 'phase-01-p1-i-integration-r1'
 const outputs = [
-  '.codex-handoff/phase-01-p1-r2.json',
-  'docs/research/hosted-web/phase-1/reviews/list-semantics.md',
+  '.codex-handoff/phase-01-p1-i.json',
+  'docs/research/hosted-web/phase-1/decision-register.json',
+  'docs/research/hosted-web/phase-1/estimate-reconciliation.json',
+  'docs/research/hosted-web/phase-1/evidence-index.json',
+  'docs/research/hosted-web/phase-1/integration-report.json',
 ]
 const routerPaths = [
   'docs/hosted-web-phases/EXECUTION_INDEX.json',
@@ -308,11 +298,10 @@ const routerPaths = [
   'docs/hosted-web-phases/phase-01/README.md',
   'docs/hosted-web-phases/phase-01/controller-packet.md',
   'docs/hosted-web-phases/phase-01/execution-dag.md',
-  'docs/hosted-web-phases/phase-01/lanes/p1-r2-review.md',
+  'docs/hosted-web-phases/phase-01/lanes/p1-i-integration.md',
 ]
-const historicalLane = 'docs/hosted-web-phases/phase-01/lanes/pr252-base-conflict-resolution.md'
-const historicalLaneHash = 'f55c7d77f7cb54d90208fb6fe6f61e257fa75f0b063b5fd71e5677c83d148842'
 const exact = (left, right) => JSON.stringify(left) === JSON.stringify(right)
+const sha = (file) => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')
 const hasKey = (value, key) => {
   if (!value || typeof value !== 'object') return false
   if (Object.prototype.hasOwnProperty.call(value, key)) return true
@@ -329,284 +318,150 @@ const index = JSON.parse(fs.readFileSync(routerPaths[0], 'utf8'))
 assert.equal(index.currentRouterRevision, revision)
 assert.equal(index.currentRouterTerminalState, 'HOLD')
 assert.equal(index.currentExecutablePhase, 'phase-01')
-assert.equal(index.currentExecutableSubphase, 'P1.R2-semantic-review')
-assert(exact(index.currentExecutableNodes, ['P1.R2']))
-assert.equal(index.canonicalAuthority.packetBaseSha, packetBase)
-assert.equal(index.canonicalAuthority.packetBaseRole, 'router-remediation-authoring-base-only')
+assert.equal(index.currentExecutableSubphase, 'P1.I-integration-freeze')
+assert(exact(index.currentExecutableNodes, ['P1.I']))
+assert.equal(index.canonicalAuthority.packetBaseSha, base)
+assert.equal(index.canonicalAuthority.packetBaseParentSha, parent)
+assert.equal(index.canonicalAuthority.acceptedP1R2IntegrationSha, base)
 assert.equal(index.canonicalAuthority.postIntegrationAuthoritySha, null)
-assert.equal(
-  index.canonicalAuthority.postIntegrationAuthorityShaState,
-  'resolve-after-router-accept-policy-integration-push'
-)
-assert.equal(
-  index.canonicalAuthority.postIntegrationAuthoritySource,
-  'exact-broker-returned-and-pushed-commit'
-)
-assert.equal(index.canonicalAuthority.reviewAuthorityBinding, authorityBinding)
-assert.equal(index.canonicalAuthority.remoteName, remoteName)
-assert.equal(index.canonicalAuthority.remoteBranch, remoteBranch)
-assert.equal(index.canonicalAuthority.remoteRef, remoteRef)
-assert.equal(index.canonicalAuthority.remoteEqualityCommand, remoteEqualityCommand)
-assert(index.canonicalAuthority.rootImmutableAuthorityAttestationRequired)
-assert(index.canonicalAuthority.cleanPostIntegrationWorktreeRequired)
-assert(index.canonicalAuthority.remoteEqualityToPostIntegrationAuthorityRequired)
-assert(!index.canonicalAuthority.reviewerNetworkRecheckAuthorized)
-assert(!index.canonicalAuthority.upstreamTrackingEvidenceAuthorized)
-assert(index.canonicalAuthority.mustBeResolvedAndAttestedBeforeReviewerStart)
-assert.equal(index.canonicalAuthority.missingOrMismatchedAttestationDisposition, 'HOLD')
-assert.equal(index.reviewedProductSnapshotAuthority.reviewedProductSnapshotSha, reviewedProductSnapshot)
-assert.equal(index.reviewedProductSnapshotAuthority.unchangedExactInputPathCount, 32)
-assert(index.reviewedProductSnapshotAuthority.unchangedAtPostIntegrationAuthorityHeadRequired)
-assert(index.reviewedProductSnapshotAuthority.trueTwoParentMerge)
-assert(exact(index.reviewedProductSnapshotAuthority.orderedParents, parents))
-assert(index.reviewedProductSnapshotAuthority.pr252ConflictGateAccepted)
-assert(index.reviewedProductSnapshotAuthority.p11dAccepted)
-
+assert.equal(index.canonicalAuthority.producerAuthorityBinding, 'postIntegrationAuthoritySha')
+assert.equal(index.acceptedP1R2.integrationSha, base)
+assert.equal(index.acceptedP1R2.reviewAuthoritySha, parent)
+assert.equal(index.acceptedP1R2.reviewedProductSnapshotSha, reviewSnapshot)
+assert.equal(index.acceptedP1R2.disposition, 'ACCEPT')
+assert(exact(index.acceptedP1R2.findingCounts, { P0: 0, P1: 0, P2: 0 }))
+assert(!index.acceptedP1R2.modificationAuthorized)
+assert(!index.acceptedP1R2.reintegrationAuthorized)
 assert.equal(index.orchestrationAuthority.rootRole, 'sole-orchestrator')
 assert.equal(index.orchestrationAuthority.durableController, 'controller-v17')
 assert.equal(index.orchestrationAuthority.controllerState, 'HOLD')
-assert.equal(index.orchestrationAuthority.controllerMode, 'observation-only')
 assert(!index.orchestrationAuthority.controllerLaunchAuthorized)
-assert(!index.orchestrationAuthority.controllerIntegrationAuthorized)
 assert(!index.orchestrationAuthority.successorControllerAuthorized)
-assert.equal(index.orchestrationAuthority.acceptedResultMechanicalVerifier, 'root')
+assert.equal(
+  index.orchestrationAuthority.reviewerStartAuthority,
+  'root-after-producer-terminal-and-broker-captured-immutable-output'
+)
 assert.equal(index.orchestrationAuthority.acceptedResultLifecycleAction, 'mark_reviewed')
 assert.equal(index.orchestrationAuthority.acceptedResultIntegrator, 'broker')
-
-assert(exact(index.reviewerProfile, {
+assert(exact(index.producerProfile, {
   model: 'gpt-5.6-sol',
   reasoningEffort: 'xhigh',
   serviceTier: 'default',
+  fastAuthorized: false,
 }))
+assert(exact(index.reviewerProfile, index.producerProfile))
 assert(!hasKey(index, 'fastMode'))
-assert(collectKey(index, 'serviceTier').length > 0)
 assert(collectKey(index, 'serviceTier').every((value) => value === 'default'))
-assert(exact(index.currentRoute.dependencyPolicy, {
-  materializedBy: 'broker',
-  mode: 'offline',
-  workerInstallAuthorized: false,
-  workerFetchOrUpdateAuthorized: false,
-}))
-assert(index.currentRoute.launchGate.required.dependenciesBrokerMaterializedOffline)
-assert(index.currentRoute.launchGate.required.workerDependencyInstallDisabled)
-assert(index.currentRoute.launchGate.required.postIntegrationAuthorityResolvedFromBrokerReturn)
-assert(index.currentRoute.launchGate.required.postIntegrationAuthorityPushed)
-assert(index.currentRoute.launchGate.required.postIntegrationAuthorityAttestationImmutable)
-assert(index.currentRoute.launchGate.required.postIntegrationWorktreeClean)
-assert(index.currentRoute.launchGate.required.postIntegrationAuthorityRemoteEqual)
-assert(index.currentRoute.launchGate.required.reviewerWorktreeHeadExact)
-assert(index.currentRoute.launchGate.required.handoffAuthorityBindingsExact)
-assert(index.currentRoute.launchGate.required.remoteEqualityUsesExactLsRemoteRef)
-assert(index.currentRoute.launchGate.required.upstreamTrackingEvidenceForbidden)
-assert(index.currentRoute.launchGate.required.reviewerNetworkRecheckForbidden)
-assert(index.currentRoute.launchGate.required.reviewedProductSnapshotExact)
-assert(index.currentRoute.launchGate.required.reviewedProductSnapshotInputsUnchanged)
-assert(index.currentRoute.launchGate.required.reviewedProductSnapshotOrderedMergeParentsExact)
-assert(exact(index.currentRoute.completionProof.required, [
-  'strict-terminal-result',
-  'immutable-output',
-]))
-assert(index.currentRoute.completionProof.immutableOutputBindsExactResultPaths)
-assert(exact(index.currentRoute.completionProof.immutableOutputPaths, outputs))
-assert(exact(index.currentRoute.completionProof.insufficientSignals, [
-  'changedFiles',
-  'heartbeat',
-  'PID',
-  'tmux',
-  'providerObserved',
-]))
-assert(exact(index.currentRoute.resultClassification.reviewFindingClasses, [
-  'semantic',
-  'content',
-  'gate',
-]))
-assert.equal(index.currentRoute.resultClassification.reviewFindingDisposition, 'REJECT')
-assert(exact(index.currentRoute.resultClassification.runtimeIncidentClasses, [
-  'admission',
-  'provider',
-  'environment',
-  'no-strict-result',
-]))
-assert.equal(index.currentRoute.resultClassification.runtimeIncidentDisposition, 'HOLD')
-assert.equal(
-  index.currentRoute.resultClassification.missingAuthorityAttestationClassification,
-  'runtime-admission-incident'
+assert.equal(index.currentRoute.lanePackets.length, 1)
+assert.equal(index.currentRoute.lanePackets[0].node, 'P1.I')
+assert.equal(index.currentRoute.lanePackets[0].packetRevision, laneRevision)
+assert(index.currentRoute.producerCompletionBoundary.independentVerificationAuthorizedByThisRouter)
+assert.equal(index.currentRoute.producerCompletionBoundary.freshIndependentReviewerCount, 1)
+assert(!index.currentRoute.producerCompletionBoundary.producerAndReviewerConcurrencyAuthorized)
+assert.equal(index.currentRoute.producerCompletionBoundary.maximumActiveReviewerCount, 1)
+assert(
+  index.currentRoute.producerCompletionBoundary
+    .brokerIntegrationAuthorizedByThisRouterAfterIndependentAccept
 )
-assert.equal(
-  index.currentRoute.resultClassification.remoteQueryOrNetworkFailureClassification,
-  'runtime-environment-incident'
-)
-assert(!index.currentRoute.resultClassification.syntheticRejectForRuntimeIncidentAuthorized)
-assert.equal(index.currentRoute.attemptPolicy.maxConcurrentAttempts, 1)
-assert.equal(index.currentRoute.attemptPolicy.maxCorrectedAttempts, 1)
-assert(exact(index.currentRoute.attemptPolicy.correctedAttemptOnlyFor, [
-  'admission',
-  'provider',
-  'environment',
-  'no-strict-result',
-]))
-assert(index.currentRoute.attemptPolicy.priorAttemptTerminalOrNoRunnerProofRequired)
-assert(index.currentRoute.attemptPolicy.exactAssignmentRequired)
-assert(!index.currentRoute.attemptPolicy.correctedAttemptAfterRejectAuthorized)
-assert.equal(index.currentRoute.acceptedResultLifecycle.requiredDisposition, 'ACCEPT')
-assert(exact(index.currentRoute.acceptedResultLifecycle.requiredFindingCounts, {
-  P0: 0,
-  P1: 0,
-  P2: 0,
-}))
-assert(index.currentRoute.acceptedResultLifecycle.rootMechanicalVerificationRequired)
-assert.equal(index.currentRoute.acceptedResultLifecycle.markReviewedAction, 'mark_reviewed')
-assert(index.currentRoute.acceptedResultLifecycle.markReviewedRequiredBeforeIntegration)
-assert.equal(index.currentRoute.acceptedResultLifecycle.integrationActor, 'broker')
-assert(exact(index.currentRoute.acceptedResultLifecycle.integrationPaths, outputs))
-assert(index.currentRoute.acceptedResultLifecycle.pushRequired)
-assert(!index.currentRoute.acceptedResultLifecycle.authorizesP1I)
-assert.equal(
-  index.currentRoute.acceptedResultLifecycle.p1iAuthorizationAuthority,
-  'later-separately-reviewed-docs-router-only'
-)
-assert(!index.currentRoute.acceptedResultLifecycle.laterDocsRouterReintegratesEvidence)
-const reviewInputs = index.reviewCanonicalInputs
-assert.equal(reviewInputs.reviewedProductSnapshotSha, reviewedProductSnapshot)
-assert.equal(reviewInputs.authorityShaBinding, authorityBinding)
-assert(reviewInputs.allInputBytesUnchangedAtPostIntegrationAuthorityHeadRequired)
-assert.equal(reviewInputs.requiredP11aPathCount, 12)
-assert.equal(reviewInputs.requiredP11dPathCount, 9)
-assert.equal(reviewInputs.requiredSemanticCorpusPathCount, 11)
-assert.equal(reviewInputs.requiredTotalPathCount, 32)
-const exactInputPaths = [
-  ...reviewInputs.p11aPaths,
-  ...reviewInputs.p11dPaths,
-  ...reviewInputs.semanticCorpusPaths,
+assert(index.currentRoute.producerCompletionBoundary.rootMarkReviewedRequiredBeforeBrokerIntegration)
+assert(!index.currentRoute.producerCompletionBoundary.p1fAuthorized)
+assert(index.currentRoute.producerCompletionBoundary.p1fTransitionMustBeSeparate)
+assert(exact(index.currentRoute.independentReview.allowedDispositions, ['ACCEPT', 'REJECT']))
+assert.equal(index.currentRoute.independentReview.readOnlyCanonicalInputPathCount, 68)
+assert.equal(index.currentRoute.independentReview.readOnlyCandidateOutputPathCount, 5)
+assert.equal(index.currentRoute.independentReview.readOnlyTotalPathCount, 73)
+assert(!index.currentRoute.independentReview.repositoryWritesAuthorized)
+
+const inputGroups = index.phase1CanonicalInputs
+const inputs = [
+  ...inputGroups.bootstrapPaths,
+  ...inputGroups.p11aPaths,
+  ...inputGroups.p11aRemediationProvenancePaths,
+  ...inputGroups.p11bPaths,
+  ...inputGroups.p11cPaths,
+  ...inputGroups.p1r1Paths,
+  ...inputGroups.p11dPaths,
+  ...inputGroups.p1r2Paths,
 ]
-assert.equal(exactInputPaths.length, 32)
-assert.equal(new Set(exactInputPaths).size, 32)
-assert.equal(index.reviewAdmission.reviewerCount, 1)
-assert(index.reviewAdmission.freshIndependentReviewerRequired)
-assert.equal(index.reviewAdmission.projectScopedControlOperation, 'codex_goal_project_refill_worker')
-assert.equal(index.reviewAdmission.workerRole, 'reviewer')
-assert.equal(index.reviewAdmission.sourceRemote, remoteName)
-assert.equal(index.reviewAdmission.sourceBranch, remoteBranch)
-assert.equal(index.reviewAdmission.expectedSourceCommitBinding, authorityBinding)
-assert.equal(index.reviewAdmission.worktreeHeadShaBinding, authorityBinding)
-assert.equal(index.reviewAdmission.handoffAuthorityBindingSource, authorityBinding)
-assert(exact(index.reviewAdmission.handoffAuthorityFields, [
-  'baseSha',
-  'canonicalSha',
-  'planBundleCommit',
-  'phaseStartSha',
-  'headSha',
-]))
-assert.equal(index.reviewAdmission.preStartAdmission.mode, 'serial-builtin')
-assert(exact(index.reviewAdmission.preStartAdmission.contract, {
-  kind: 'worker-launch',
-  format: 1,
-  canonicalShaBinding: authorityBinding,
-  baseShaBinding: authorityBinding,
-  phaseStartShaBinding: authorityBinding,
-  packetRevision: 'phase-01-p1-r2-review-r1',
-  controllerPacket: 'docs/hosted-web-phases/phase-01/controller-packet.md',
-  lanePacket: 'docs/hosted-web-phases/phase-01/lanes/p1-r2-review.md',
-  phaseId: 'phase-01',
-  laneId: 'p1-r2',
-  inputPatchHash: null,
-  reviewKind: 'review',
+assert.equal(inputs.length, 68)
+assert.equal(new Set(inputs).size, 68)
+assert(inputs.every((input) => fs.existsSync(input)))
+assert.equal(inputGroups.snapshotSha, base)
+assert.equal(inputGroups.requiredTotalPathCount, 68)
+assert(inputGroups.allPathsReadOnly)
+assert.equal(index.rollbackPayload.bootstrapSha, '5f30df49e052d1cc1d0e7efd03aa105673b5b614')
+assert.equal(index.rollbackPayload.acceptedPayloadSha, base)
+assert.equal(index.rollbackPayload.paths.length, 54)
+assert.equal(new Set(index.rollbackPayload.paths).size, 54)
+assert(index.rollbackPayload.paths.every((value) => inputs.includes(value)))
+assert(!index.rollbackPayload.workspaceApplyAuthorized)
+assert(index.rollbackPayload.scratchRoundTripRequired)
+
+const ownership = JSON.parse(
+  fs.readFileSync('docs/research/hosted-web/phase-1/bootstrap/ownership-manifest.json', 'utf8')
+)
+const p1iOwner = ownership.writers.find((writer) => writer.ownerId === 'P1.I')
+assert(p1iOwner)
+assert(exact(p1iOwner.writablePaths, outputs))
+assert(exact(index.outputs.writablePaths, outputs))
+assert(exact(index.currentRoute.completionProof.immutableOutputPaths, outputs))
+assert(exact(index.routerExclusiveOwnership, routerPaths))
+assert(exact(index.requiredExactResults.fullPhase1Vitest, {
+  command: 'pnpm exec vitest run test/features/team-lifecycle test/architecture/hosted-web/phase-1',
+  testFiles: 13,
+  passed: 59,
+  total: 59,
 }))
-assert(!index.reviewAdmission.prepareVerifierAuthorized)
-assert(exact(index.reviewAdmission.forbiddenReviewerLaunchOperations, [
-  'codex_goal_project_prepare_verifier',
-  'prepare_verifier',
-]))
-assert.equal(index.reviewAdmission.reviewedProductSnapshotSha, reviewedProductSnapshot)
-assert.equal(
-  index.reviewAdmission.remoteEqualityAttestedBy,
-  'root-pre-start-immutable-authority-attestation'
-)
-assert.equal(index.reviewAdmission.remoteEqualityCommand, remoteEqualityCommand)
-assert(!index.reviewAdmission.reviewerRemoteEqualityRecheckAuthorized)
-assert.equal(index.reviewAdmission.focusedCommand, focused)
-assert(exact(index.reviewAdmission.writablePaths, outputs))
-assert.equal(index.reviewAdmission.evidenceId, 'P1.R2.SEMANTIC_REVIEW')
-assert.equal(index.reviewAdmission.dependenciesMaterializedBy, 'broker')
-assert.equal(index.reviewAdmission.dependencyMaterializationMode, 'offline')
-assert(!index.reviewAdmission.workerDependencyInstallAuthorized)
-assert(!index.reviewAdmission.reviewerSelfRetryOrRefillAuthority)
-assert.equal(
-  index.reviewAdmission.rootCorrectedAttemptAuthority,
-  'at-most-one-under-runtime-incident-policy'
-)
-assert(!index.reviewAdmission.reviewerIntegrationAuthority)
-const packetBaseCheck = index.requiredChecks.find((check) => check.id === 'packet-authoring-base-head')
-assert.equal(packetBaseCheck.actor, 'router-author')
-assert(packetBaseCheck.command.includes(packetBase))
-const rootRemoteCheck = index.requiredChecks.find(
-  (check) => check.id === 'post-integration-authority-explicit-remote-ref-equality'
-)
-assert.equal(rootRemoteCheck.actor, 'root-pre-start')
-assert.equal(rootRemoteCheck.command, remoteEqualityCommand)
-assert.equal(rootRemoteCheck.requiredShaBinding, authorityBinding)
-const reviewerHeadCheck = index.requiredChecks.find(
-  (check) => check.id === 'reviewer-local-authority-head'
-)
-assert.equal(reviewerHeadCheck.actor, 'reviewer')
-assert.equal(reviewerHeadCheck.expectedSourceCommitBinding, authorityBinding)
-assert(!reviewerHeadCheck.command.includes(packetBase))
-assert(exact(index.requiredExactResults.focused, { testFiles: 5, passed: 14, total: 14 }))
-assert(exact(index.requiredExactResults.nativeTypeScript, {
-  inherited: 7,
-  owned: 0,
-  unexpected: 0,
-}))
-assert(exact(index.acceptance.acceptFindingCounts, { P0: 0, P1: 0, P2: 0 }))
-assert.equal(index.acceptance.reviewFindingDisposition, 'REJECT')
-assert.equal(index.acceptance.runtimeIncidentDisposition, 'HOLD')
-assert(!index.reviewerExecutionPolicy.network)
-assert(!index.reviewerExecutionPolicy.githubAccess)
-assert(!index.reviewerExecutionPolicy.remoteQuery)
-assert(!index.reviewerExecutionPolicy.fetch)
-assert(!index.reviewerExecutionPolicy.dependencyInstall)
-assert(!index.reviewerExecutionPolicy.stage)
-assert(!index.reviewerExecutionPolicy.commit)
-assert(!index.reviewerExecutionPolicy.merge)
-assert(!index.reviewerExecutionPolicy.push)
-assert(!index.reviewerExecutionPolicy.reviewIntegration)
-assert(exact(index.authorization.authorizedNow, []))
-assert(!index.authorization.reviewerIntegrationAuthorized)
-assert(!index.authorization.rootGitIntegrationAuthorized)
-assert(index.authorization.brokerAcceptedEvidenceIntegrationAuthorized)
-assert(index.authorization.brokerAcceptedEvidencePushAuthorized)
-assert(exact(
-  index.authorization.conditionallyAuthorizedAfterStrictAcceptMechanicalVerificationAndMarkReviewed,
-  ['broker-integrate-and-push-exact-p1-r2-evidence-paths']
-))
-assert(exact(index.authorization.brokerAcceptedEvidenceIntegrationPaths, outputs))
-assert(index.authorization.brokerIntegrationRequiresRootMechanicalVerification)
-assert(index.authorization.brokerIntegrationRequiresMarkReviewed)
-assert(!index.authorization.p1iAuthorized)
+assert.equal(index.requiredExactResults.ratchetRegressionFocused.evidenceId, 'P1.NEG.RATCHET_REGRESSION')
+assert.equal(index.requiredExactResults.ratchetRegressionFocused.diagnostic, 'phase1-ratchet-regression')
+assert(exact(index.requiredExactResults.nativeTypeScript, { inherited: 7, owned: 0, unexpected: 0 }))
+assert.equal(index.requiredExactResults.fullLint.command, 'pnpm lint')
+assert.equal(index.requiredGateIds.length, 14)
+assert.equal(new Set(index.requiredGateIds).size, 14)
+assert(index.authorization.p1iReviewerAuthorizedByThisRouter)
+assert(!index.authorization.p1iReviewerConcurrentWithProducerAuthorized)
+assert(!index.authorization.additionalConcurrentP1IReviewerAuthorized)
+assert(index.authorization.p1iBrokerIntegrationAuthorizedAfterReviewerAcceptAndMarkReviewed)
+assert(!index.authorization.p1iBrokerIntegrationBeforeReviewerAcceptAuthorized)
+assert(!index.authorization.p1r2EvidenceReintegrationAuthorized)
 assert(!index.authorization.p1fAuthorized)
 assert(!index.authorization.phase2PlusAuthorized)
-assert.equal(index.authorization.p1iAuthorizationAuthority, 'later-separately-reviewed-docs-router-only')
-assert(!index.authorization.laterDocsRouterReintegratesP1R2Evidence)
-assert(exact(index.authorization.blockedUntilLaterDocsRouterAuthorization, [
-  'P1.I',
-  'P1.F',
-  'Phase 2+',
-  'product workers',
-]))
-assert(exact(index.routerExclusiveOwnership, routerPaths))
+assert(!index.authorization.successorControllerAuthorized)
+assert(!index.producerExecutionPolicy.network)
+assert(!index.producerExecutionPolicy.dependencyInstall)
+assert(!index.producerExecutionPolicy.productEdit)
+assert(!index.producerExecutionPolicy.rawGitIntegration)
+assert(!index.producerExecutionPolicy.registryWrite)
+assert(!index.producerExecutionPolicy.agentFlowTest)
+assert(!index.producerExecutionPolicy.stage)
+assert(!index.producerExecutionPolicy.commit)
+assert(!index.producerExecutionPolicy.push)
+assert.equal(index.reviewerAdmission.reviewerCount, 1)
+assert.equal(index.reviewerAdmission.workerRole, 'reviewer')
+assert.equal(index.reviewerAdmission.reviewScope, 'P1.I-milestone')
+assert.equal(index.reviewerAdmission.projectScopedControlOperation, 'codex_goal_project_prepare_verifier')
+assert.equal(index.reviewerAdmission.requiredReadOnlyPathCount, 73)
+assert(index.reviewerAdmission.freshReviewerRequired)
+assert(index.reviewerAdmission.independenceRequired)
+assert(!index.reviewerAdmission.producerAndReviewerConcurrencyAuthorized)
+assert(!index.reviewerAdmission.additionalConcurrentReviewerAuthorized)
+assert.equal(index.reviewerAdmission.repositoryWriterAuthority, 'none-read-only')
+assert(!index.reviewerAdmission.reviewerIntegrationAuthority)
 
+const p1r2Handoff = JSON.parse(fs.readFileSync(index.acceptedP1R2.handoffPath, 'utf8'))
+assert.equal(p1r2Handoff.disposition, 'ACCEPT')
+assert(exact(p1r2Handoff.findingCounts, { P0: 0, P1: 0, P2: 0 }))
+assert.equal(p1r2Handoff.resultFileSha256, index.acceptedP1R2.resultSha256)
+assert.equal(sha(index.acceptedP1R2.handoffPath), index.acceptedP1R2.handoffSha256)
+assert.equal(sha(index.acceptedP1R2.resultPath), index.acceptedP1R2.resultSha256)
 assert.equal(
-  crypto.createHash('sha256').update(fs.readFileSync(historicalLane)).digest('hex'),
-  historicalLaneHash
+  sha(index.historicalAuthority.p1R2LanePacket.path),
+  index.historicalAuthority.p1R2LanePacket.sha256
 )
 for (const packet of [index.packetHashes.controllerPacket, index.packetHashes.lanePacket]) {
-  const actual = crypto.createHash('sha256').update(fs.readFileSync(packet.path)).digest('hex')
-  assert.equal(actual, packet.sha256, `packet hash drift ${packet.path}`)
+  assert.equal(sha(packet.path), packet.sha256, `packet hash drift ${packet.path}`)
 }
-for (const routerPath of routerPaths) {
-  const text = fs.readFileSync(routerPath, 'utf8')
-  assert(!text.includes(upstreamTrackingSyntax), `upstream-tracking assumption ${routerPath}`)
-}
+for (const output of outputs) assert(!fs.existsSync(output), `premature P1.I output ${output}`)
 for (const routerPath of routerPaths.filter((value) => value.endsWith('.md'))) {
   const text = fs.readFileSync(routerPath, 'utf8')
   assert(text.includes(revision), `missing revision ${routerPath}`)
@@ -616,24 +471,32 @@ for (const routerPath of routerPaths.filter((value) => value.endsWith('.md'))) {
     assert(fs.existsSync(path.resolve(path.dirname(routerPath), targetPath)), `broken link ${targetPath}`)
   }
 }
-
-console.log('phase-01-p1-r2-router-r1: ok')
+console.log('phase-01-p1-i-router-r1: ok')
 NODE
-test "$(git rev-parse HEAD)" = 48d79e2b13e258fc82ad55723875f15d6e162872
+test "$(git rev-parse HEAD)" = c5d842f75ca7a647a0773b0c30d303d7da21d1d6
 test "$(git rev-list --parents -n 1 HEAD)" = \
-  "48d79e2b13e258fc82ad55723875f15d6e162872 666042037a9c91df572b1d8274bf6024f8d00f40"
-test "$(git rev-list --parents -n 1 666042037a9c91df572b1d8274bf6024f8d00f40)" = \
-  "666042037a9c91df572b1d8274bf6024f8d00f40 c3135d40c6e70e4b2ddc905dc815407397197634 3b48f9391b4bff1d82bc85ef01a2d5e0e5b50e95"
-mapfile -t review_input_paths < <(node -e \
-  "const i=require('./docs/hosted-web-phases/EXECUTION_INDEX.json').reviewCanonicalInputs; console.log([...i.p11aPaths,...i.p11dPaths,...i.semanticCorpusPaths].join('\\n'))")
-test "${#review_input_paths[@]}" -eq 32
+  "c5d842f75ca7a647a0773b0c30d303d7da21d1d6 f6794b607609c57dc92def696d05946c9c96856a"
+test "$(git diff-tree --no-commit-id --name-only -r HEAD)" = \
+  "$(printf '%s\n' .codex-handoff/phase-01-p1-r2.json docs/research/hosted-web/phase-1/reviews/list-semantics.md)"
+git diff --exit-code HEAD -- \
+  .codex-handoff/phase-01-p1-r2.json \
+  docs/research/hosted-web/phase-1/reviews/list-semantics.md \
+  docs/hosted-web-phases/phase-01/lanes/p1-r2-review.md
+mapfile -t phase1_input_paths < <(node -e \
+  "const i=require('./docs/hosted-web-phases/EXECUTION_INDEX.json').phase1CanonicalInputs; console.log([...i.bootstrapPaths,...i.p11aPaths,...i.p11aRemediationProvenancePaths,...i.p11bPaths,...i.p11cPaths,...i.p1r1Paths,...i.p11dPaths,...i.p1r2Paths].join('\\n'))")
+test "${#phase1_input_paths[@]}" -eq 68
 git diff --exit-code \
-  666042037a9c91df572b1d8274bf6024f8d00f40 \
-  48d79e2b13e258fc82ad55723875f15d6e162872 \
-  -- "${review_input_paths[@]}"
-git diff --exit-code \
-  48d79e2b13e258fc82ad55723875f15d6e162872 \
-  -- "${review_input_paths[@]}"
+  c5d842f75ca7a647a0773b0c30d303d7da21d1d6 \
+  -- "${phase1_input_paths[@]}"
+pnpm exec prettier --check \
+  docs/hosted-web-phases/EXECUTION_INDEX.json \
+  docs/hosted-web-phases/README.md \
+  docs/hosted-web-phases/START_HERE.md \
+  docs/hosted-web-phases/phase-01/README.md \
+  docs/hosted-web-phases/phase-01/controller-packet.md \
+  docs/hosted-web-phases/phase-01/execution-dag.md \
+  docs/hosted-web-phases/phase-01/lanes/p1-i-integration.md
+git diff --check
 git diff --cached --quiet
 actual_paths=$(git status --short | sed 's/^...//')
 expected_paths=$(printf '%s\n' \
@@ -643,35 +506,25 @@ expected_paths=$(printf '%s\n' \
   docs/hosted-web-phases/phase-01/README.md \
   docs/hosted-web-phases/phase-01/controller-packet.md \
   docs/hosted-web-phases/phase-01/execution-dag.md \
-  docs/hosted-web-phases/phase-01/lanes/p1-r2-review.md)
+  docs/hosted-web-phases/phase-01/lanes/p1-i-integration.md)
 test "$actual_paths" = "$expected_paths"
-git diff --exit-code HEAD -- docs/hosted-web-phases/phase-01/lanes/pr252-base-conflict-resolution.md
-pnpm exec prettier --check \
-  docs/hosted-web-phases/EXECUTION_INDEX.json \
-  docs/hosted-web-phases/README.md \
-  docs/hosted-web-phases/START_HERE.md \
-  docs/hosted-web-phases/phase-01/README.md \
-  docs/hosted-web-phases/phase-01/controller-packet.md \
-  docs/hosted-web-phases/phase-01/execution-dag.md \
-  docs/hosted-web-phases/phase-01/lanes/p1-r2-review.md
-git diff --check
+mapfile -t router_paths < <(printf '%s\n' "$expected_paths")
+test "${#router_paths[@]}" -eq 7
+rg -n -i \
+  '(api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|bearer|cookie|authorization)' \
+  "${router_paths[@]}"
+rg -n \
+  '(/Users/|/home/|/root/|/tmp/|~/|[A-Za-z]:\\Users\\|real[-_ ]project)' \
+  "${router_paths[@]}"
 ```
 
-The docs-router `HEAD`, parent, and 32-input diff checks above use `packetBaseSha` only to verify this
-uncommitted seven-path authoring workspace. They do not resolve or attest formal-review authority.
-This router author must not pre-run the future root launch gate or bind remote equality to
-`packetBaseSha`; root performs that gate only after the broker returns and pushes
-`postIntegrationAuthoritySha`.
+For this docs-only architecture correction, the declared router checks are limited to JSON parsing,
+the exact-path link/provenance assertions above, exact seven-path Prettier, `git diff --check`, staged
+and seven-path scope checks, and the exact seven-path secret/private-path scans. Do not rerun source
+ESLint, Vitest, typecheck, or product checks for this correction. Record and classify every scan match;
+required control terms and scan-pattern literals are not payload values.
 
-Also scan exactly the seven router paths for secret values, auth/provider payloads, private user or
-real-project paths, and non-default service-tier authority. Classify required model/profile metadata,
-scan-pattern literals, and repository-relative paths explicitly. JSON must parse; every relative link
-must resolve; only the exact seven paths may differ; the old PR #252 lane must retain its recorded
-hash; every machine `serviceTier` value must be `default`; and no machine request may contain a
-`fastMode` field.
-
-## Router HOLD
-
-The router author performs no fetch, dependency installation, stage, commit, merge, push, lifecycle,
-runtime, team, provider, real-project, review, integration, or successor-controller action. After
-validation and self-review, return the seven-path diff and end `HOLD`.
+The router author performs no fetch, dependency installation, lifecycle action, stage, commit, merge,
+push, integration, registry write, runtime/team/provider action, agent-flow test, real-project access,
+review launch, producer launch, P1.F transition, or successor-controller action. After validation and
+self-review, return the exact seven-path diff and end `HOLD`.

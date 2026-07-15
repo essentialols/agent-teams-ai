@@ -121,6 +121,7 @@ vi.mock('@renderer/hooks/useTheme', () => ({
   useTheme: () => ({ isLight: false }),
 }));
 
+import { FLAT_ROSTER_GRID_COLUMNS } from './flatRosterLayout';
 import { MemberDraftRow } from './MemberDraftRow';
 import { createMemberDraft } from './membersEditorUtils';
 
@@ -166,6 +167,22 @@ describe('MemberDraftRow', () => {
 
   afterEach(() => {
     document.body.innerHTML = '';
+  });
+
+  it('uses the compact shared grid while keeping the editable name visibly field-like', () => {
+    const { host, root } = renderMemberDraftRow({ layoutVariant: 'flat' });
+    const row = host.querySelector<HTMLElement>('[data-role="member-row"]')!;
+    const nameInput = host.querySelector<HTMLInputElement>('input[type="text"]')!;
+
+    expect(row.className).toContain(FLAT_ROSTER_GRID_COLUMNS);
+    expect(nameInput.value).toBe('alice');
+    expect(nameInput.className).not.toContain('border-transparent');
+    expect(nameInput.className).not.toContain('shadow-none');
+    expect(nameInput.className).not.toContain('font-semibold');
+
+    act(() => {
+      root.unmount();
+    });
   });
 
   it('does not show the sync tooltip copy when model controls are unlocked', () => {

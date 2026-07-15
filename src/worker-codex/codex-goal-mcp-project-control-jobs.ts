@@ -208,11 +208,13 @@ export async function projectControlRefillWorkerView(
     manifest: baseCreateManifest,
   });
   if (boundedToolName === "codex_goal_project_refill_worker") {
-    assertProjectRefillInputPatchSource({
-      contract: preStartAdmission?.contract,
-      producerJobId,
-      workerRole: role,
-    });
+    if (role !== "adoption") {
+      assertProjectRefillInputPatchSource({
+        contract: preStartAdmission?.contract,
+        producerJobId,
+        workerRole: role,
+      });
+    }
   }
   const createManifest: CodexGoalJobManifestInput = {
     ...baseCreateManifest,

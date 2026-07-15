@@ -18,6 +18,7 @@ import type {
   CodexGoalJobManifestInput,
   CodexGoalProjectPreStartAdmission,
 } from "../../codex-goal-jobs";
+import { captureGitWorkspacePatch } from "../../codex-goal-runtime-result-io";
 import {
   materializeBuiltinWorkerLaunchSpec,
   validateBuiltinWorkerLaunchSpec,
@@ -256,31 +257,36 @@ export async function assertProjectPreStartAdmissionLaunchBinding(input: {
     scope: input.scope,
   });
   const verifiedInputPatch = verifiedInputPatchFromReceipt(receipt, contract);
+  const adoptionInput = isAdoptionManifest(input.manifest);
   const dirtyContinuation =
     input.workspaceMode === "reviewed_dirty_continuation" ||
     input.workspaceMode === "terminal_handoff_dependency_recovery";
   const admittedInputPatchContinuation =
     input.workspaceMode === "admitted_input_patch_continuation";
   const cleanCapacityContinuation = input.workspaceMode === "clean_capacity_continuation";
-  const receiptStatusValid = dirtyContinuation ||
+  const receiptStatusValid = adoptionInput ||
+      dirtyContinuation ||
       admittedInputPatchContinuation ||
       cleanCapacityContinuation
     ? receipt.status === "launch_authorized" ||
       receipt.status === "validated_not_launched"
     : receipt.status === "validated_not_launched";
   const workspaceBindingValid =
-    input.workspaceMode === "admitted_input_patch" ||
+    adoptionInput ||
+      input.workspaceMode === "admitted_input_patch" ||
       admittedInputPatchContinuation ||
       dirtyContinuation
       ? binding.workspaceStatus !== ""
       : verifiedInputPatch
       ? verifiedInputPatchBindingValid(binding, verifiedInputPatch)
       : binding.workspaceStatus === "";
-  const inputPatchBindingValid =
-    dirtyContinuation ||
-    (verifiedInputPatch
-      ? verifiedInputPatchBindingValid(binding, verifiedInputPatch)
-      : projectInputPatchBindingMatches(binding, contract));
+  const inputPatchBindingValid = adoptionInput
+    ? contract.inputPatchHash === binding.workspacePatchSha256 &&
+      receipt.workspacePatchSha256 === binding.workspacePatchSha256
+    : dirtyContinuation ||
+      (verifiedInputPatch
+        ? verifiedInputPatchBindingValid(binding, verifiedInputPatch)
+        : projectInputPatchBindingMatches(binding, contract));
   const mismatches = [
     binding.workspaceHead !== contract.phaseStartSha
       ? "workspace_head"
@@ -477,11 +483,16 @@ async function validateProjectPreStartAdmission(input: {
     throw new Error("project_control_pre_start_verified_input_patch_mismatch");
   }
   const beforeBinding = await currentBinding(input.manifest, descriptor);
-  if (
-    verifiedInputPatch
-      ? !verifiedInputPatchBindingValid(beforeBinding, verifiedInputPatch)
-      : !projectInputPatchBindingMatches(beforeBinding, contract)
-  ) {
+  const adoptionInput = isAdoptionManifest(input.manifest);
+  const beforeBindingValid = adoptionInput
+    ? contract.inputPatchHash === beforeBinding.workspacePatchSha256
+    : verifiedInputPatch
+    ? verifiedInputPatchBindingValid(beforeBinding, verifiedInputPatch)
+    : projectInputPatchBindingMatches(beforeBinding, contract);
+  if (!beforeBindingValid) {
+    if (adoptionInput) {
+      throw new Error("project_control_pre_start_input_patch_hash_mismatch");
+    }
     throw new Error("project_control_pre_start_workspace_dirty");
   }
   let validatorReceipt: JsonObject;
@@ -537,11 +548,12 @@ async function validateProjectPreStartAdmission(input: {
     };
   }
   const afterBinding = await currentBinding(input.manifest, descriptor);
-  if (
-    verifiedInputPatch
-      ? !verifiedInputPatchBindingValid(afterBinding, verifiedInputPatch)
-      : !projectInputPatchBindingMatches(afterBinding, contract)
-  ) {
+  const afterBindingValid = adoptionInput
+    ? contract.inputPatchHash === afterBinding.workspacePatchSha256
+    : verifiedInputPatch
+    ? verifiedInputPatchBindingValid(afterBinding, verifiedInputPatch)
+    : projectInputPatchBindingMatches(afterBinding, contract);
+  if (!afterBindingValid) {
     throw new Error("project_control_pre_start_workspace_dirty");
   }
   if (JSON.stringify(beforeBinding) !== JSON.stringify(afterBinding)) {
@@ -559,6 +571,9 @@ async function validateProjectPreStartAdmission(input: {
     contractSha256: afterBinding.contractSha256,
     stateSha256: afterBinding.stateSha256,
     promptSha256: afterBinding.promptSha256,
+    ...(adoptionInput
+      ? { workspacePatchSha256: afterBinding.workspacePatchSha256 }
+      : {}),
     workspaceHead,
     ...(verifiedInputPatch
       ? {
@@ -798,12 +813,16 @@ async function currentBinding(
     ["-C", manifest.workspacePath, "ls-files", "--others", "--exclude-standard", "-z"],
     { encoding: "utf8", timeout: VALIDATOR_TIMEOUT_MS },
   )).stdout;
+  const workspacePatchSha256 = sha256(Buffer.from(
+    await captureGitWorkspacePatch({ workspacePath: manifest.workspacePath }),
+  ));
   return {
     workspaceHead,
     workspaceStatus,
     workspaceStagedPatchSha256,
     workspaceUnstagedDirty:
       workspaceUnstagedPaths.length > 0 || workspaceUntrackedPaths.length > 0,
+    workspacePatchSha256,
     contractSha256: sha256(Buffer.from(await readBoundedFile(descriptor.contractPath, MAX_CONTRACT_BYTES, "contract"))),
     stateSha256: sha256(Buffer.from(await readBoundedFile(descriptor.statePath, MAX_STATE_BYTES, "state"))),
     promptSha256: sha256(Buffer.from(await readBoundedFile(manifest.promptPath, MAX_PROMPT_BYTES, "prompt"))),
@@ -879,6 +898,12 @@ function verifiedInputPatchFromReceipt(
     throw new Error("project_control_pre_start_verified_input_patch_mismatch");
   }
   return { artifactSha256, stagedPatchSha256: expectedStagedPatchSha256 };
+}
+
+function isAdoptionManifest(
+  manifest: CodexGoalJobManifest | CodexGoalJobManifestInput,
+): boolean {
+  return manifest.tags?.includes("worker-role-adoption") === true;
 }
 
 function assertDescriptorPaths(

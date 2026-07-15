@@ -246,6 +246,61 @@ describe("project control operation lifecycle", () => {
     }
   });
 
+  it("does not replace an out-of-band terminal result with a stale queued update", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-operation-terminal-race-"));
+    try {
+      const operation = await createProjectControlOperation({
+        operationsRootDir: projectControlOperationsRoot(root),
+        controllerJobId: "controller-v1",
+        toolName: "codex_goal_project_refill_worker",
+        args: { confirmRefill: true },
+      });
+      const completedAt = "2026-07-14T00:00:02.000Z";
+
+      const updated = await updateProjectControlOperation({
+        operationFilePath: operation.operationFilePath,
+        update: () => ({
+          runner: {
+            hostname: "parent-host",
+            pid: 101,
+            command: ["node", "runner"],
+            startedAt: "2026-07-14T00:00:00.000Z",
+          },
+        }),
+        beforePersist: async () => {
+          const latest = await readProjectControlOperation(operation.operationFilePath);
+          await writeFile(
+            operation.operationFilePath,
+            `${JSON.stringify({
+              ...latest,
+              status: ProjectControlOperationStatus.Completed,
+              completedAt,
+              updatedAt: completedAt,
+              runner: {
+                hostname: "detached-runner",
+                pid: 202,
+                command: ["node", "detached-runner"],
+                startedAt: "2026-07-14T00:00:01.000Z",
+              },
+              result: { ok: true, mode: "detached-result" },
+            }, null, 2)}\n`,
+          );
+        },
+      });
+
+      expect(updated).toMatchObject({
+        status: ProjectControlOperationStatus.Completed,
+        completedAt,
+        runner: { hostname: "detached-runner", pid: 202 },
+        result: { ok: true, mode: "detached-result" },
+      });
+      await expect(readProjectControlOperation(operation.operationFilePath))
+        .resolves.toMatchObject(updated);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("fences a stale update-lock holder after successor takeover", async () => {
     const root = await mkdtemp(join(tmpdir(), "subscription-runtime-operation-lock-fence-"));
     try {

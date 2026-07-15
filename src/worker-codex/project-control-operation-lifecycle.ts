@@ -237,13 +237,27 @@ export async function updateProjectControlOperation(input: {
       if (record === current) return current;
       await input.beforePersist?.();
       return lockFence.runIfOwned(async () => {
-        const persist = () => writeProjectControlOperation(record);
+        const persist = async (): Promise<ProjectControlOperationRecord> => {
+          // Detached runners from an older runtime may not participate in this
+          // process's update lock. Re-read at the persistence boundary so their
+          // terminal result cannot be replaced by a stale parent snapshot.
+          const latest = await readProjectControlOperation(input.operationFilePath);
+          const latestRecord = monotonicProjectControlOperationUpdate(latest, patch);
+          if (latestRecord === latest) return latest;
+          await writeProjectControlOperation(latestRecord);
+          return latestRecord;
+        };
         if (input.persistFence) {
-          await input.persistFence(persist);
-        } else {
-          await persist();
+          let persisted: ProjectControlOperationRecord | undefined;
+          await input.persistFence(async () => {
+            persisted = await persist();
+          });
+          if (!persisted) {
+            throw new Error("project_control_operation_persist_fence_skipped");
+          }
+          return persisted;
         }
-        return record;
+        return persist();
       });
     },
   });
@@ -814,12 +828,7 @@ function monotonicProjectControlOperationUpdate(
   patch: Partial<Omit<ProjectControlOperationRecord, "operationId" | "operationFilePath">>,
 ): ProjectControlOperationRecord {
   if (Object.keys(patch).length === 0) return current;
-  if (
-    operationIsTerminal(current) &&
-    patch.status !== undefined
-  ) {
-    return current;
-  }
+  if (operationIsTerminal(current)) return current;
   if (
     current.status === ProjectControlOperationStatus.Running &&
     patch.status === ProjectControlOperationStatus.Queued

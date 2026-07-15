@@ -14,7 +14,10 @@ import {
   materializePinnedRemoteCommit,
   resolveCanonicalRemoteHead,
 } from "../application/project-control/codex-goal-project-git";
-import { readVerifiedProducerHandoff } from "../application/project-control/codex-goal-project-verifier-handoff";
+import {
+  readVerifiableProducerHandoff,
+  readVerifiedProducerHandoff,
+} from "../application/project-control/codex-goal-project-verifier-handoff";
 
 const execFileAsync = promisify(execFile);
 const roots: string[] = [];
@@ -83,6 +86,118 @@ describe("project verifier handoff", () => {
     await expect(readVerifiedProducerHandoff({ producer })).rejects.toThrow(
       "project_control_verifier_handoff_descriptor_mismatch",
     );
+  });
+
+  it("allows only a verifier to inspect a captured provider-output failure", async () => {
+    const root = await temporaryRoot("verifier-provider-output-invalid-");
+    const workspacePath = join(root, "producer");
+    const jobRootDir = join(root, "jobs", "producer-1");
+    await initRepository(workspacePath);
+    await mkdir(jobRootDir, { recursive: true });
+    await writeFile(join(workspacePath, "feature.txt"), "changed\n");
+    const materialized = await materializeCodexGoalHandoffArtifacts({
+      workerJobId: "producer-1",
+      taskId: "task-1",
+      workspacePath,
+      jobRootDir,
+    });
+    if (!materialized) throw new Error("expected producer handoff");
+    await writeFile(
+      join(jobRootDir, "task-1.latest-result.json"),
+      `${JSON.stringify({
+        status: "failed",
+        reason: "provider_output_invalid",
+        changedFiles: materialized.changedPaths,
+        evidence: ["immutable_handoff_captured"],
+        blockers: ["provider_output_invalid"],
+        nextAction: "preserve_patch",
+        artifacts: materialized.artifacts,
+        details: { baseCommit: materialized.baseCommit },
+      })}\n`,
+    );
+    const producer = manifest({ workspacePath, jobRootDir });
+
+    await expect(readVerifiedProducerHandoff({ producer })).rejects.toThrow(
+      "project_control_verifier_handoff_result_invalid",
+    );
+    await expect(
+      readVerifiableProducerHandoff({ producer }),
+    ).resolves.toMatchObject({
+      producerJobId: "producer-1",
+      baseCommit: materialized.baseCommit,
+      changedPaths: ["feature.txt"],
+      patchSha256: materialized.manifest.artifacts.patch.sha256,
+    });
+  });
+
+  it("rejects unrelated failed producer output from verifier admission", async () => {
+    const root = await temporaryRoot("verifier-unrelated-failure-");
+    const workspacePath = join(root, "producer");
+    const jobRootDir = join(root, "jobs", "producer-1");
+    await initRepository(workspacePath);
+    await mkdir(jobRootDir, { recursive: true });
+    await writeFile(join(workspacePath, "feature.txt"), "changed\n");
+    const materialized = await materializeCodexGoalHandoffArtifacts({
+      workerJobId: "producer-1",
+      taskId: "task-1",
+      workspacePath,
+      jobRootDir,
+    });
+    if (!materialized) throw new Error("expected producer handoff");
+    await writeFile(
+      join(jobRootDir, "task-1.latest-result.json"),
+      `${JSON.stringify({
+        status: "failed",
+        reason: "provider_session_invalid",
+        changedFiles: materialized.changedPaths,
+        evidence: ["immutable_handoff_captured"],
+        blockers: ["provider_session_invalid"],
+        nextAction: "preserve_patch",
+        artifacts: materialized.artifacts,
+        details: { baseCommit: materialized.baseCommit },
+      })}\n`,
+    );
+
+    await expect(
+      readVerifiableProducerHandoff({
+        producer: manifest({ workspacePath, jobRootDir }),
+      }),
+    ).rejects.toThrow("project_control_verifier_handoff_result_invalid");
+  });
+
+  it("rejects a provider-output failure whose result paths drift from its patch", async () => {
+    const root = await temporaryRoot("verifier-result-path-drift-");
+    const workspacePath = join(root, "producer");
+    const jobRootDir = join(root, "jobs", "producer-1");
+    await initRepository(workspacePath);
+    await mkdir(jobRootDir, { recursive: true });
+    await writeFile(join(workspacePath, "feature.txt"), "changed\n");
+    const materialized = await materializeCodexGoalHandoffArtifacts({
+      workerJobId: "producer-1",
+      taskId: "task-1",
+      workspacePath,
+      jobRootDir,
+    });
+    if (!materialized) throw new Error("expected producer handoff");
+    await writeFile(
+      join(jobRootDir, "task-1.latest-result.json"),
+      `${JSON.stringify({
+        status: "partial",
+        reason: "provider_output_invalid",
+        changedFiles: ["different.txt"],
+        evidence: ["immutable_handoff_captured"],
+        blockers: ["provider_output_invalid"],
+        nextAction: "preserve_patch",
+        artifacts: materialized.artifacts,
+        details: { baseCommit: materialized.baseCommit },
+      })}\n`,
+    );
+
+    await expect(
+      readVerifiableProducerHandoff({
+        producer: manifest({ workspacePath, jobRootDir }),
+      }),
+    ).rejects.toThrow("project_control_verifier_handoff_result_paths_mismatch");
   });
 
   it("resolves the authoritative remote branch and rejects a stale local ref", async () => {

@@ -102,6 +102,7 @@ import type {
 import { goalLaunchInput } from "./codex-goal-mcp-launch-input";
 import { ensureTerminalCodexGoalHandoffArtifacts } from "./application/ensure-codex-goal-handoff-artifacts";
 import {
+  readVerifiableProducerHandoff,
   readVerifiedProducerHandoff,
   type VerifiedProducerHandoff,
 } from "./application/project-control/codex-goal-project-verifier-handoff";
@@ -134,8 +135,7 @@ export { projectControlCreateCodexGoalJobView } from "./codex-goal-mcp-project-c
 export async function projectControlRefillWorkerView(
   args: ProjectControlMcpArgs,
   deps: CodexGoalMcpProjectControlJobsDeps,
-  boundedToolName: ProjectControlOperationToolName =
-    "codex_goal_project_refill_worker",
+  boundedToolName: ProjectControlOperationToolName = "codex_goal_project_refill_worker",
 ): Promise<JsonObject> {
   const executionMode =
     args.executionMode ??
@@ -310,6 +310,8 @@ export async function projectControlRefillWorkerView(
         registryRootDir: controller.registryRootDir,
         producerJobId,
         expectedInputPatchHash: preStartAdmission?.contract.inputPatchHash,
+        allowProviderOutputInvalid:
+          boundedToolName === "codex_goal_project_prepare_verifier",
       })
     : undefined;
   assertProjectPreStartAdmissionSourceRevision({
@@ -391,8 +393,7 @@ export async function projectControlRefillWorkerView(
         ...(producerInputPatch
           ? {
               verifiedInputPatchArtifactSha256: producerInputPatch.sha256,
-              verifiedInputPatchStagedSha256:
-                producerInputPatch.stagedSha256,
+              verifiedInputPatchStagedSha256: producerInputPatch.stagedSha256,
             }
           : {}),
       });
@@ -569,9 +570,9 @@ export async function projectControlRefillWorkerView(
             accountId: accountReservation.accountId,
             ...(accountReservation.mode === "exclusive"
               ? {
-                fencingToken: accountReservation.fencingToken,
-                expiresAt: accountReservation.expiresAt,
-              }
+                  fencingToken: accountReservation.fencingToken,
+                  expiresAt: accountReservation.expiresAt,
+                }
               : {}),
           },
         }
@@ -619,6 +620,7 @@ async function resolveProducerHandoffForVerifier(input: {
   readonly registryRootDir: string;
   readonly producerJobId: string;
   readonly expectedInputPatchHash: unknown;
+  readonly allowProviderOutputInvalid: boolean;
 }): Promise<VerifiedProducerHandoff> {
   const producer = await readCodexGoalJob({
     registryRootDir: input.registryRootDir,
@@ -635,7 +637,9 @@ async function resolveProducerHandoffForVerifier(input: {
   if (resolveCodexGoalWorkerLiveness({ status }).alive) {
     throw new Error("project_control_verifier_producer_still_running");
   }
-  const handoff = await readVerifiedProducerHandoff({ producer });
+  const handoff = input.allowProviderOutputInvalid
+    ? await readVerifiableProducerHandoff({ producer })
+    : await readVerifiedProducerHandoff({ producer });
   if (
     typeof input.expectedInputPatchHash !== "string" ||
     input.expectedInputPatchHash.toLowerCase() !== handoff.patchSha256
@@ -820,10 +824,8 @@ async function projectControlRefillWorkerBoundedView(
   const updated = await updateProjectControlOperation({
     operationFilePath: operation.operationFilePath,
     update: (current) =>
-      (
-        current.status === ProjectControlOperationStatus.Queued &&
-        current.runner === undefined
-      )
+      current.status === ProjectControlOperationStatus.Queued &&
+      current.runner === undefined
         ? {
             runner: {
               hostname: hostname(),

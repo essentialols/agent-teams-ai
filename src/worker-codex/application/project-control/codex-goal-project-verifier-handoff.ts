@@ -26,11 +26,39 @@ export type VerifiedProducerHandoff = {
 export async function readVerifiedProducerHandoff(input: {
   readonly producer: CodexGoalJobManifest;
 }): Promise<VerifiedProducerHandoff> {
+  return readProducerHandoff({
+    producer: input.producer,
+    allowProviderOutputInvalid: false,
+  });
+}
+
+/**
+ * Reads a terminal producer patch for independent verification. A provider may
+ * fail to serialize its final envelope after the runtime has already captured
+ * an immutable handoff. That failure is not completion or approval: it only
+ * makes the hash-bound patch eligible to be inspected by a verifier.
+ */
+export async function readVerifiableProducerHandoff(input: {
+  readonly producer: CodexGoalJobManifest;
+}): Promise<VerifiedProducerHandoff> {
+  return readProducerHandoff({
+    producer: input.producer,
+    allowProviderOutputInvalid: true,
+  });
+}
+
+async function readProducerHandoff(input: {
+  readonly producer: CodexGoalJobManifest;
+  readonly allowProviderOutputInvalid: boolean;
+}): Promise<VerifiedProducerHandoff> {
   const producerJobRoot = await canonicalDirectory(input.producer.jobRootDir);
-  const producerWorkspace = await canonicalDirectory(input.producer.workspacePath);
+  const producerWorkspace = await canonicalDirectory(
+    input.producer.workspacePath,
+  );
   const resultHandoff = await currentResultHandoff({
     producer: input.producer,
     producerJobRoot,
+    allowProviderOutputInvalid: input.allowProviderOutputInvalid,
   });
   const manifestPath = await realpath(
     resultHandoff?.manifestPath ??
@@ -44,7 +72,9 @@ export async function readVerifiedProducerHandoff(input: {
     resultHandoff &&
     resultHandoff.manifestSha256 !== sha256(manifestFile.bytes)
   ) {
-    throw new Error("project_control_verifier_handoff_result_manifest_mismatch");
+    throw new Error(
+      "project_control_verifier_handoff_result_manifest_mismatch",
+    );
   }
   const manifest = parseManifest(manifestFile.bytes);
   if (
@@ -69,6 +99,12 @@ export async function readVerifiedProducerHandoff(input: {
   if (!sameStrings(changedPaths, manifest.changedPaths)) {
     throw new Error("project_control_verifier_handoff_changed_paths_mismatch");
   }
+  if (
+    resultHandoff?.changedFiles &&
+    !sameStrings(changedPaths, resultHandoff.changedFiles)
+  ) {
+    throw new Error("project_control_verifier_handoff_result_paths_mismatch");
+  }
   return {
     producerJobId: input.producer.jobId,
     ...(resultHandoff ? { resultPath: resultHandoff.resultPath } : {}),
@@ -85,11 +121,16 @@ export async function readVerifiedProducerHandoff(input: {
 async function currentResultHandoff(input: {
   readonly producer: CodexGoalJobManifest;
   readonly producerJobRoot: string;
-}): Promise<{
-  readonly resultPath: string;
-  readonly manifestPath: string;
-  readonly manifestSha256: string;
-} | undefined> {
+  readonly allowProviderOutputInvalid: boolean;
+}): Promise<
+  | {
+      readonly resultPath: string;
+      readonly manifestPath: string;
+      readonly manifestSha256: string;
+      readonly changedFiles?: readonly string[];
+    }
+  | undefined
+> {
   const requestedResultPath =
     input.producer.outputPath ??
     join(input.producerJobRoot, `${input.producer.taskId}.latest-result.json`);
@@ -104,9 +145,15 @@ async function currentResultHandoff(input: {
     throw new Error("project_control_verifier_handoff_result_unowned");
   }
   const result = await readRuntimeResultBrief(resultPath);
+  const completed = result.status === "done";
+  const verifiableProviderOutputFailure =
+    input.allowProviderOutputInvalid &&
+    (result.status === "failed" || result.status === "partial") &&
+    result.lastFailureReason === "provider_output_invalid" &&
+    result.handoffArtifactError === undefined;
   if (
     result.strict !== true ||
-    result.status !== "done" ||
+    (!completed && !verifiableProviderOutputFailure) ||
     !result.manifestPath ||
     !result.manifestSha256 ||
     !/^[0-9a-f]{64}$/i.test(result.manifestSha256)
@@ -117,6 +164,7 @@ async function currentResultHandoff(input: {
     resultPath,
     manifestPath: result.manifestPath,
     manifestSha256: result.manifestSha256.toLowerCase(),
+    ...(result.changedFiles ? { changedFiles: result.changedFiles } : {}),
   };
 }
 
@@ -214,18 +262,20 @@ async function patchChangedPaths(
   workspacePath: string,
   patchPath: string,
 ): Promise<readonly string[]> {
-  const { stdout } = await execFileAsync("git", [
-    "-C",
-    workspacePath,
-    "apply",
-    "--numstat",
-    "-z",
-    patchPath,
-  ], { encoding: "utf8", timeout: 15_000, maxBuffer: 2 * 1024 * 1024 });
-  return uniqueSorted(stdout.split("\0").filter(Boolean).map((record) => {
-    const fields = record.split("\t");
-    return assertSafeChangedPath(fields.slice(2).join("\t"));
-  }));
+  const { stdout } = await execFileAsync(
+    "git",
+    ["-C", workspacePath, "apply", "--numstat", "-z", patchPath],
+    { encoding: "utf8", timeout: 15_000, maxBuffer: 2 * 1024 * 1024 },
+  );
+  return uniqueSorted(
+    stdout
+      .split("\0")
+      .filter(Boolean)
+      .map((record) => {
+        const fields = record.split("\t");
+        return assertSafeChangedPath(fields.slice(2).join("\t"));
+      }),
+  );
 }
 
 async function canonicalDirectory(path: string): Promise<string> {
@@ -272,8 +322,14 @@ function uniqueSorted(values: readonly string[]): readonly string[] {
   return [...new Set(values)].sort();
 }
 
-function sameStrings(left: readonly string[], right: readonly string[]): boolean {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
+function sameStrings(
+  left: readonly string[],
+  right: readonly string[],
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every((value, index) => value === right[index])
+  );
 }
 
 function sha256(bytes: Buffer): string {

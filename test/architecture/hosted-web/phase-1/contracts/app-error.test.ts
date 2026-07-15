@@ -23,3 +23,24 @@ test('hosted errors freeze safe fields and reject unsafe or transport-shaped val
   ).toThrow();
   expect(() => hosted.createSafeAppError({ code: 'other', reason: 'unexpected' })).toThrow();
 });
+
+test('hosted error diagnostic IDs survive only in frozen known-field projections', () => {
+  const diagnosticId = 'diag.focused-regression';
+  const safeError = hosted.createSafeAppError({
+    code: 'internal',
+    reason: 'unexpected',
+    diagnosticId,
+  });
+
+  expect(safeError).toEqual({ code: 'internal', reason: 'unexpected', diagnosticId });
+  expect(safeError.diagnosticId).toBe(diagnosticId);
+  expect(Reflect.ownKeys(safeError)).toEqual(['code', 'reason', 'diagnosticId']);
+  expect(Object.isFrozen(safeError)).toBe(true);
+  expect(() =>
+    hosted.createSafeAppError({
+      code: 'internal',
+      reason: 'unexpected',
+      diagnosticId: 'unsafe diagnostic',
+    })
+  ).toThrowError('hosted-contract-safe-error-invalid');
+});

@@ -26,7 +26,7 @@ export function createSafeAppError(value: unknown) {
   return Object.freeze({
     code: input.code as AppErrorCode,
     reason: input.reason,
-    ...(input.diagnosticId === undefined ? {} : { diagnosticId: input.diagnosticId as string }),
+    ...(input.diagnosticId === undefined ? {} : { diagnosticId: input.diagnosticId }),
     ...(retry === undefined ? {} : { retryAfterMs: retry as number }),
   });
 }

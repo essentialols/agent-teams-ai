@@ -1,61 +1,75 @@
 # Hosted Web execution router
 
-> Current authority: `phase-01-pr252-provenance-fallback-router-r2` conditionally routes one
-> continuation of the exact held r3 job, followed by one fresh independent reviewer. Every future
-> job is `gpt-5.6-sol`, `xhigh`, `serviceTier: "default"`. This docs transition launches nothing and
-> ends `HOLD`.
+> Current authority: `phase-01-p1-r2-router-r1` conditionally authorizes exactly one independent
+> P1.R2 semantic/auth/error/cursor/kernel-size reviewer. The profile is `gpt-5.6-sol`, `xhigh`,
+> `serviceTier: "default"`; Fast is not authorized. This docs transition launches nothing and ends
+> `HOLD`. Dependencies are broker-materialized offline; the reviewer may not install them.
 
 Always begin with [`START_HERE.md`](START_HERE.md). Machine-readable authority is
-[`EXECUTION_INDEX.json`](EXECUTION_INDEX.json); the current Phase 1 controller and lane packets are
-the only executable packets.
+[`EXECUTION_INDEX.json`](EXECUTION_INDEX.json). The current
+[`controller-packet.md`](phase-01/controller-packet.md) and
+[`p1-r2-review.md`](phase-01/lanes/p1-r2-review.md) are the only executable packets.
 
-## Current route
+## Canonical transition state
 
-The exact held job/task is
-`agent-teams-hosted-web-refactor-pr252-semantic-conflict-resolution-v17-r3`. Its workspace remains at
-base/`HEAD` `3256ee3b5b8e81b144aa0a14eac1bca080c9b779` with an empty index, no untracked paths,
-and the five-path raw patch
-`9f5016c669ab777a80d1395352ee7e51d945e2409a3d43efa4735dea8d23b2a0`.
+Canonical, base, phase start, and `HEAD` are all
+`666042037a9c91df572b1d8274bf6024f8d00f40`. The worktree is clean and remote-equal. This is the
+accepted true two-parent PR #252 merge with ordered parents:
 
-Rejected test-only router
-`daa462aba1b21cdf41a05575d3967d8314d5c9a734e76f4cda5678a136ba7902` is terminal because it
-omitted the required source change. Prior seven-doc output
-`c5f33adf53ef93ab69789a0d1f2b2041ffb2e2694f852b32e8cb189edddc8660` is terminal solely for
-authorizing a non-default tier. Neither rejected output is a patch carrier or implementation input.
+1. `c3135d40c6e70e4b2ddc905dc815407397197634`
+2. `3b48f9391b4bff1d82bc85ef01a2d5e0e5b50e95`
 
-The router authoring base is `c0ade7cb040c9dea97a38ee58e667f56c0e39b8e`. The immutable source
-parent is `e9ffa30cc016ad3cb833fcc0a138fa4f026eb850`, and the pinned merge source is
-`3b48f9391b4bff1d82bc85ef01a2d5e0e5b50e95`.
+The PR #252 conflict gate and P1.1D are complete and accepted. The prior
+[`pr252-base-conflict-resolution.md`](phase-01/lanes/pr252-base-conflict-resolution.md) lane remains
+byte-for-byte frozen as history. It is not a current node, successor, or implementation source.
 
-## Authorized successor
+## Orchestration boundary
 
-After this exact seven-document router is independently accepted, integrated, and pushed,
-`ProjectScopedControl` resolves its pushed SHA once as `storedRouterCommit`, revalidates the exact
-held r3 workspace snapshot, and continues that same r3 job exactly once. It creates no job, task,
-workspace, worktree, or duplicate.
+Root remains the sole orchestrator. `controller-v17` is retained only in `HOLD`, observation-only
+mode. Controller replacement, restart, launch, admission, integration, and successor-controller
+creation are not authorized.
 
-The worker keeps `HEAD=3256ee3b...`, reads router authority only with
-`git show <storedRouterCommit>:<path>`, and preserves the existing five-path patch. New bytes are
-allowed only in `TaskBoardCommandFacade.ts` and `TaskBoardCommands.e2e.test.ts`.
+After this exact seven-path router is independently accepted, policy-integrated, and pushed, root may
+start exactly one fresh independent P1.R2 reviewer. The router author starts no reviewer and performs
+no lifecycle action.
 
-When a create failure is classified as `TaskBoardCreateDestinationConflictError` and a known task
-exists, the facade calls the existing `assertMatchingTask` using the exact requested ID and trimmed
-requested subject before returning that task. The no-known, mismatch, terminal, and other-error paths
-are preserved. No `creationCommand`, payload-hash, `createdBy`, or relation comparison is introduced,
-and `taskStore` is not weakened.
+## Authorized review
 
-The TaskBoard suite remains exactly ten cases. Exactly two existing cases change to the respective
-`Executed` and `Reconciled` outcomes; each has `createdInAttempt: false`, `Completed`,
-`attemptCount: 1`, and one task. `UNRELATED SUBJECT` remains terminal.
+The reviewer is read-only except for exactly:
 
-## Review, integration, and HOLD
+1. `.codex-handoff/phase-01-p1-r2.json`
+2. `docs/research/hosted-web/phase-1/reviews/list-semantics.md`
 
-The continued r3 self-review ends `HOLD`. Exactly one fresh independent reviewer follows with
-`gpt-5.6-sol`, `xhigh`, and `serviceTier: "default"`; no machine `fastMode` field is accepted. It
-must independently prove `10/10`, `127/127`, native TypeScript `7 inherited / 0 owned / 0
-unexpected`, all checks/scans, and return `ACCEPT` with P0/P1/P2 `0/0/0`.
+The sole evidence ID is `P1.R2.SEMANTIC_REVIEW`. The review independently checks:
 
-Only then may the broker revalidate the pinned source and create the ordered true merge
-`[storedRouterCommit, 3b48f9391b4bff1d82bc85ef01a2d5e0e5b50e95]`, rerun final-shape gates,
-commit, and push. P1.R2, P1.I, P1.F, and Phase 2+ stay blocked until that push. The docs author
-performs no fetch, stage, commit, merge, push, lifecycle action, or real-project access. End `HOLD`.
+- team-lifecycle list semantics and all ten immutable outcomes;
+- strict request identity, authorization-scope, deadline, and cancellation handling without
+  production-auth claims;
+- safe error normalization and absence of raw/provider/private values;
+- opaque revision/cursor behavior and deterministic ordering;
+- the accepted five-family shared-kernel boundary and the bounded 1,000-item parser; and
+- P1.1D's trusted-array, additive-response, public-entrypoint, and transport-neutral invariants.
+
+The exact focused command is:
+
+```bash
+pnpm exec vitest run test/architecture/hosted-web/phase-1/contracts test/features/team-lifecycle
+```
+
+Acceptance additionally requires the current typecheck baseline at seven inherited, zero owned, and
+zero unexpected diagnostics; green Prettier and diff checks; exact two-path output scope; classified
+secret/provider/private-path scans; and explicit `ACCEPT` with P0/P1/P2 `0/0/0`. Otherwise the result
+is `REJECT` only for a semantic, content, or review-gate finding.
+
+Admission, provider, environment, and no-strict-result failures are runtime incidents and end
+`HOLD`; they are not adverse review findings. There may be no concurrent duplicate. After root has
+proved the affected attempt terminal or proved no runner exists, root may authorize at most one
+exact corrected attempt with the same inputs, profile, commands, and two-path authority. A strict
+terminal result and broker-captured immutable output binding both exact result paths are required for
+completion; `changedFiles`, heartbeat, PID, tmux, and `providerObserved` are insufficient.
+
+For strict `ACCEPT` with P0/P1/P2 `0/0/0`, root mechanically verifies the result, immutable output,
+and bound evidence bytes; invokes `mark_reviewed`; and has the broker integrate and push exactly
+those two evidence paths. P1.I, P1.F, Phase 2+, and product workers remain blocked. Only a later
+separately reviewed docs router may authorize P1.I, and it must never reintegrate either already
+integrated evidence path. This router authorizes no successor controller or later node. End `HOLD`.

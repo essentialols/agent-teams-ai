@@ -1,75 +1,123 @@
 # Phase 1 execution DAG and ownership
 
-Status: current revision is `phase-01-pr252-provenance-fallback-router-r2`; end `HOLD`.
+Status: current revision is `phase-01-p1-r2-router-r1`; end `HOLD`.
 
 ## Current DAG
 
 ```text
-router authoring base c0ade7cb...
-  -> test-only router daa462ab... REJECTED and terminal
-       -> non-default-tier seven-doc output c5f33adf... REJECTED and terminal
-            -> current default-only seven-doc router review -> integration + push
-                 -> store pushed router commit once
-                      -> revalidate exact r3 job/task/workspace/HEAD/patch/five paths/index
-                           -> exactly one SAME-JOB continuation
-                                -> facade conflict fallback + two exact test corrections only
-                                     -> TaskBoard 10/10 + TeamDataService 127/127
-                                          -> native TS 7 inherited / 0 owned / 0 unexpected
-                                               -> r3 self-review + immutable output + HOLD
-                                                    -> one fresh independent default-tier reviewer
-                                                         -> ACCEPT only at P0/P1/P2 0/0/0
-                                                              -> revalidate pinned merge source 3b48f939...
-                                                                   -> ordered broker true merge
-                                                                        -> final checks + commit + push
-                                                                             -X-> P1.R2 -> P1.I -> P1.F -> Phase 2+
+accepted P1.1D lineage -> c3135d40...
+accepted PR #252 source -> 3b48f939...
+                          |
+                          v
+canonical accepted true merge 66604203...
+ordered parents [c3135d40..., 3b48f939...]
+PR #252 conflict gate ACCEPTED + P1.1D ACCEPTED
+                          |
+                          v
+current seven-path P1.R2 router review -> policy integration + push
+                          |
+                          v
+root starts exactly one independent default-tier P1.R2 reviewer
+broker has materialized dependencies offline; reviewer installs nothing
+                          |
+                          v
+focused contracts + team-lifecycle command
+                          |
+                          v
+semantic/auth/error/cursor/kernel-size review
+                          |
+                          v
+typecheck baseline + Prettier/diff + two-path scope + classified scans
+                          |
+                          v
+explicit ACCEPT or REJECT with P0/P1/P2 counts
+                          |
+                          v
+strict terminal result + broker-captured immutable output required
+immutable output binds bytes/hashes of both exact result paths
+                          |
+              +-----------+--------------------+
+              |                                |
+              v                                v
+semantic/content/gate finding              ACCEPT 0/0/0
+       -> REJECT -> HOLD                       |
+                                               v
+                              root mechanically verifies
+                                      -> mark_reviewed
+                                               |
+                                               v
+                              broker integrates + pushes exactly
+                              the handoff and Markdown evidence
+                                               |
+                                               v
+                                              HOLD
+                                               |
+                                               -X-> later docs router may authorize P1.I
+                                                    without reintegrating P1.R2 evidence
+                                                    -> P1.F -> Phase 2+ / product workers
 
-source lineage:
-e9ffa30c... (recorded parent) -> 3b48f939... (pinned merge source)
+admission/provider/environment/no-strict-result runtime incident -> HOLD
+                          |
+                          `-> at most one exact corrected attempt, only after
+                              terminal/no-runner proof and never concurrently
 ```
 
-Root remains orchestrator. `controller-v17` remains exactly live; replacement and restart are not
-edges. This docs router launches no edge.
+Root is the sole orchestrator. `controller-v17` remains `HOLD` and observation-only. Controller
+launch, admission, integration, restart, replacement, and successor creation are not DAG edges. This
+docs router launches no edge.
 
 ## Proven identities
 
-| Record                   | Identity                                                           | Authority                                |
-| ------------------------ | ------------------------------------------------------------------ | ---------------------------------------- |
-| Router authoring base    | `c0ade7cb040c9dea97a38ee58e667f56c0e39b8e`                         | immutable seven-doc base                 |
-| R3 workspace base/HEAD   | `3256ee3b5b8e81b144aa0a14eac1bca080c9b779`                         | preserved target-side merge baseline     |
-| Existing r3 patch        | `9f5016c669ab777a80d1395352ee7e51d945e2409a3d43efa4735dea8d23b2a0` | preserved held five-path snapshot        |
-| Rejected test-only route | `daa462aba1b21cdf41a05575d3967d8314d5c9a734e76f4cda5678a136ba7902` | terminal; no reuse                       |
-| Rejected tier route      | `c5f33adf53ef93ab69789a0d1f2b2041ffb2e2694f852b32e8cb189edddc8660` | terminal; tier-only rejection provenance |
-| Source parent            | `e9ffa30cc016ad3cb833fcc0a138fa4f026eb850`                         | immutable source lineage                 |
-| Merge source             | `3b48f9391b4bff1d82bc85ef01a2d5e0e5b50e95`                         | pinned second parent                     |
-| Merge conflicts          | exact five producer-owned paths                                    | active conflict route                    |
+| Record                  | Identity                                                            | Authority                             |
+| ----------------------- | ------------------------------------------------------------------- | ------------------------------------- |
+| Canonical/base/start    | `666042037a9c91df572b1d8274bf6024f8d00f40`                          | clean, remote-equal accepted merge    |
+| Ordered first parent    | `c3135d40c6e70e4b2ddc905dc815407397197634`                          | accepted P1.1D-side lineage           |
+| Ordered second parent   | `3b48f9391b4bff1d82bc85ef01a2d5e0e5b50e95`                          | accepted PR #252 merge source         |
+| Merge shape             | exact true two-parent merge                                         | accepted canonical topology           |
+| PR #252 conflict gate   | complete and accepted                                               | immutable predecessor                 |
+| P1.1D                   | complete and accepted                                               | immutable predecessor                 |
+| Historical PR #252 lane | `phase-01/lanes/pr252-base-conflict-resolution.md`, SHA-256 `f55c…` | unchanged provenance; non-executable  |
+| Current evidence        | `P1.R2.SEMANTIC_REVIEW`                                             | pending one independent formal review |
 
-## Capacity, scope, and transition
+## Current capacity and ownership
 
-Exactly one continuation of the existing r3 job, then one fresh reviewer, is permitted. Both use
-`gpt-5.6-sol`, `xhigh`, and `serviceTier: "default"`. Machine request envelopes omit `fastMode`.
-The reviewed dirty scope is exactly:
+Capacity is exactly one fresh independent reviewer using `gpt-5.6-sol`, `xhigh`, and
+`serviceTier: "default"`. Fast is not authorized. Dependencies are broker-materialized offline and
+the reviewer must not install them. The reviewer writes exactly:
 
-1. `src/features/task-board-commands/core/application/TaskBoardCommandFacade.ts`
-2. `src/main/services/team/TeamDataService.ts`
-3. `src/renderer/components/team/TeamDetailView.tsx`
-4. `test/features/task-board-commands/TaskBoardCommands.e2e.test.ts`
-5. `test/main/services/team/TeamDataService.test.ts`
+1. `.codex-handoff/phase-01-p1-r2.json`
+2. `docs/research/hosted-web/phase-1/reviews/list-semantics.md`
 
-Only paths 1 and 4 may receive new bytes. The facade adds the classified-conflict known-task
-`assertMatchingTask` guard; the E2E file corrects exactly two existing cases. Paths 2, 3, and 5 and
-all unrelated hunks stay byte-identical to the held patch. The workspace stays at `HEAD=3256ee3b...`,
-reads authority via `git show <storedRouterCommit>:<path>`, and keeps an empty index and no untracked
-path.
+Every canonical product, test, fixture, prior handoff, router, research, configuration, package,
+lockfile, runtime, and historical packet is read-only. A third output, staged path, canonical-input
+edit, or product change is not a DAG edge and requires `REJECT`.
 
-New jobs, tasks, worktrees, duplicate starts, fetch, checkout, reset, rebase, clean rewrite,
-rejected-output replay, provenance-field comparison, task-store weakening, or staging are not DAG
-edges.
+## Required review transition
 
-The worker and reviewer require TaskBoard `10/10`, TeamDataService `127/127`, native TypeScript
-`7 inherited / 0 owned / 0 unexpected`, bounded lint and Prettier, index/diff checks, exact ownership,
-and classified conflict, secret, private-path, and binary scans. Broker integration creates only
-`[storedRouterCommit, 3b48f9391b4bff1d82bc85ef01a2d5e0e5b50e95]`, reruns every gate, commits,
-and pushes.
+The focused command is exactly:
 
-P1.R2, P1.I, P1.F, and Phase 2+ remain blocked until the validated true merge is pushed. Terminal
-state: `HOLD`.
+```bash
+pnpm exec vitest run test/architecture/hosted-web/phase-1/contracts test/features/team-lifecycle
+```
+
+It must pass 5 files and 14/14 tests. Typecheck must match the current accepted baseline exactly:
+seven inherited Phase 0 diagnostics, zero P1.R2-owned diagnostics, and zero unexpected diagnostics.
+Prettier, diff, exact two-path ownership, secret/provider/private-path scans, canonical/parent
+provenance, and all semantic review requirements must pass.
+
+The strict result is exactly `ACCEPT` or `REJECT`, with explicit P0/P1/P2 counts. `ACCEPT` requires
+P0/P1/P2 `0/0/0`; there is no conditional acceptance or repair authority. Semantic, content, and
+review-gate findings produce `REJECT`. Admission, provider, environment, and no-strict-result
+failures are runtime incidents and produce `HOLD` without a synthetic disposition. No concurrent
+duplicate is permitted; root may authorize at most one exact corrected attempt after proving the
+affected attempt terminal or proving no runner exists.
+
+Completion requires both the strict terminal result and broker-captured immutable output binding the
+bytes and hashes of both exact result paths. `changedFiles`, heartbeat, PID, tmux, and
+`providerObserved` cannot satisfy that edge. On strict `ACCEPT` 0/0/0, root mechanically verifies
+both proofs, invokes `mark_reviewed`, and the broker integrates and pushes exactly the two evidence
+paths. Neither root nor the reviewer performs that Git lifecycle.
+
+P1.I, P1.F, Phase 2+, and every product worker remain blocked after evidence integration. Only a
+later separately reviewed docs router may authorize P1.I; it uses the already integrated evidence
+and must never integrate either P1.R2 evidence path again. No edge launches a successor controller.

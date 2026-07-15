@@ -3,7 +3,9 @@ import type { WorkerHealthSnapshot } from "@vioxen/subscription-runtime/worker-c
 export type CodexGoalProjectStopPolicyInput = Pick<
   WorkerHealthSnapshot,
   "alive" | "silentStale" | "heartbeatOnlyNoOutput"
->;
+> & {
+  readonly terminalCapacityPause?: boolean;
+};
 
 export type CodexGoalProjectStopPolicyDecision =
   | { readonly allowed: true }
@@ -22,7 +24,12 @@ export type CodexGoalProjectStopPolicyDecision =
 export function decideCodexGoalProjectStop(
   input: CodexGoalProjectStopPolicyInput,
 ): CodexGoalProjectStopPolicyDecision {
-  if (!input.alive || input.silentStale || input.heartbeatOnlyNoOutput) {
+  if (
+    !input.alive ||
+    input.silentStale ||
+    input.heartbeatOnlyNoOutput ||
+    input.terminalCapacityPause === true
+  ) {
     return { allowed: true };
   }
 

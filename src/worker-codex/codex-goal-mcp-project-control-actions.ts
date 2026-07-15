@@ -154,6 +154,12 @@ export async function projectControlStartStoredJobView(
     launch: await goalLaunchInput(codexGoalJobToArgs(manifest)),
   };
   const status = await collectCodexGoalStatus(statusInput(loaded.launch));
+  const reviewedOutputId = stringValue(args.reviewedOutputId);
+  const capacityContinuationMode = projectPreStartCapacityContinuationMode({
+    manifest: loaded.manifest,
+    ...(reviewedOutputId ? { reviewedOutputId } : {}),
+    status,
+  });
   const progressStale =
     status.progressHeartbeatAgeMs !== undefined &&
     status.progressHeartbeatAgeMs > 10 * 60_000;
@@ -161,7 +167,7 @@ export async function projectControlStartStoredJobView(
     status,
     progressStale,
   });
-  if (workerLiveness.alive) {
+  if (workerLiveness.alive && capacityContinuationMode === undefined) {
     return {
       ok: false,
       reason: "worker_already_running",
@@ -200,13 +206,7 @@ export async function projectControlStartStoredJobView(
       status,
     };
   }
-  const reviewedOutputId = stringValue(args.reviewedOutputId);
   const workspaceDirty = status.workspaceDirty === true;
-  const capacityContinuationMode = projectPreStartCapacityContinuationMode({
-    manifest: loaded.manifest,
-    ...(reviewedOutputId ? { reviewedOutputId } : {}),
-    status,
-  });
   const terminalHandoffDependencyRecovery =
     terminalHandoffDependencyRecoveryRequested({
       status,
@@ -247,11 +247,19 @@ export async function projectControlStartStoredJobView(
       const lockedProgressStale =
         lockedStatus.progressHeartbeatAgeMs !== undefined &&
         lockedStatus.progressHeartbeatAgeMs > 10 * 60_000;
-      if (
-        resolveCodexGoalWorkerLiveness({
+      const lockedCapacityContinuationMode =
+        projectPreStartCapacityContinuationMode({
+          manifest: loaded.manifest,
+          ...(reviewedOutputId ? { reviewedOutputId } : {}),
           status: lockedStatus,
-          progressStale: lockedProgressStale,
-        }).alive
+        });
+      const lockedWorkerLiveness = resolveCodexGoalWorkerLiveness({
+        status: lockedStatus,
+        progressStale: lockedProgressStale,
+      });
+      if (
+        lockedWorkerLiveness.alive &&
+        lockedCapacityContinuationMode === undefined
       ) {
         return {
           ok: false,
@@ -264,12 +272,6 @@ export async function projectControlStartStoredJobView(
       if (lockedStatus.workspaceDirty === true !== workspaceDirty) {
         throw new Error("project_control_workspace_state_changed_before_start");
       }
-      const lockedCapacityContinuationMode =
-        projectPreStartCapacityContinuationMode({
-          manifest: loaded.manifest,
-          ...(reviewedOutputId ? { reviewedOutputId } : {}),
-          status: lockedStatus,
-        });
       if (lockedCapacityContinuationMode !== capacityContinuationMode) {
         throw new Error("project_control_workspace_state_changed_before_start");
       }
@@ -348,6 +350,46 @@ export async function projectControlStartStoredJobView(
           workspaceMode: capacityContinuationMode,
         });
       }
+      const canonicalLaunch: CodexGoalLaunchInput = {
+        ...loaded.launch,
+        config: {
+          ...loaded.launch.config,
+          workspacePath: workspace.canonicalWorkspacePath,
+        },
+      };
+      let capacitySupervisorReap;
+      if (lockedWorkerLiveness.alive && capacityContinuationMode) {
+        const reapBroker = deps.codexProjectControlBroker({
+          registryRootDir: controller.registryRootDir,
+          controller: controller.controller,
+          scope: controller.scope,
+          startLaunch: canonicalLaunch,
+          startManifest: loaded.manifest,
+          startAdmissionWorkspaceMode: capacityContinuationMode,
+          startWorkspaceLease: workspace,
+          stopLaunch: canonicalLaunch,
+        });
+        capacitySupervisorReap = await reapBroker.stopWorker({
+          jobId: loaded.manifest.jobId,
+          registryRoot: controller.registryRootDir,
+          workspacePath: loaded.manifest.workspacePath,
+          ...(canonicalLaunch.tmuxSession
+            ? { tmuxSession: canonicalLaunch.tmuxSession }
+            : {}),
+        });
+        const statusAfterReap = await collectCodexGoalStatus(
+          statusInput(canonicalLaunch),
+        );
+        const livenessAfterReap = resolveCodexGoalWorkerLiveness({
+          status: statusAfterReap,
+          progressStale: false,
+        });
+        if (livenessAfterReap.alive) {
+          throw new Error(
+            "project_control_terminal_capacity_supervisor_reap_failed",
+          );
+        }
+      }
       const dependencyPreflight = await (
         deps.dependencyBootstrap ?? runDependencyBootstrap
       )({
@@ -402,13 +444,6 @@ export async function projectControlStartStoredJobView(
           scope: controller.scope,
         });
       }
-      const canonicalLaunch: CodexGoalLaunchInput = {
-        ...loaded.launch,
-        config: {
-          ...loaded.launch.config,
-          workspacePath: workspace.canonicalWorkspacePath,
-        },
-      };
       const continuationReservation =
         await codexProjectContinuationReservationInput({
           status: lockedStatus,
@@ -484,12 +519,14 @@ export async function projectControlStartStoredJobView(
             }
             : {}),
         },
+        ...(capacitySupervisorReap
+          ? { capacitySupervisorReap: capacitySupervisorReap as unknown as JsonObject }
+          : {}),
         result: result as unknown as JsonObject,
       };
     },
   });
 }
-
 export async function projectControlCreateWorktreeView(
   args: ProjectControlMcpArgs,
   deps: CodexGoalMcpProjectControlActionsDeps,

@@ -63,7 +63,6 @@ export class SafeExecutionError extends Error {
 
   readonly details: Readonly<Record<string, string>>;
 }
-
 export function isSafeExecutionError(
   error: unknown,
 ): error is SafeExecutionError {
@@ -228,7 +227,6 @@ export function shouldDeliverSafeExecutionControlForContinuation(
   previousFailureReason: AttemptFailureReason,
 ): boolean {
   return (
-    previousFailureReason !== "account_unavailable" &&
     previousFailureReason !== "model_unavailable" &&
     previousFailureReason !== "reconnect_required"
   );

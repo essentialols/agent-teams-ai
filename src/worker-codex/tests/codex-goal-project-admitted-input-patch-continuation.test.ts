@@ -464,6 +464,7 @@ describe("clean pre-start capacity continuation", () => {
       projectAccessScope: scope,
     } as CodexGoalJobManifest;
     let bootstrapCalls = 0;
+    let capacitySupervisorReapCalls = 0;
     let reservedLaunch: CodexGoalLaunchInput | undefined;
     let startAdmissionWorkspaceMode: string | undefined;
     const deps: CodexGoalMcpProjectControlActionsDeps = {
@@ -494,6 +495,16 @@ describe("clean pre-start capacity continuation", () => {
         reservedLaunch = input.startLaunch;
         startAdmissionWorkspaceMode = input.startAdmissionWorkspaceMode;
         return {
+          stopWorker: async () => {
+            capacitySupervisorReapCalls += 1;
+            await writeFile(progressPath, `${JSON.stringify({
+              schemaVersion: 1,
+              taskId: manifest.taskId,
+              status: "stopped",
+              updatedAt: new Date().toISOString(),
+            })}\n`);
+            return { status: "applied" };
+          },
           startWorker: async () => ({ status: "started" }),
         } as unknown as ProjectControlBroker;
       },
@@ -529,14 +540,18 @@ describe("clean pre-start capacity continuation", () => {
     await writeFile(progressPath, `${JSON.stringify({
       schemaVersion: 1,
       taskId: manifest.taskId,
-      status: "running",
+      status: "blocked",
+      resultStatus: "waiting_capacity",
+      reason: "account_unavailable",
       updatedAt: new Date().toISOString(),
       pid: process.pid,
     })}\n`);
     await expect(projectControlStartStoredJobView(args, deps)).resolves.toMatchObject({
-      ok: false,
-      reason: "worker_already_running",
+      ok: true,
+      capacitySupervisorReap: { status: "applied" },
+      accountReservation: { accountId: "account-g" },
     });
+    expect(capacitySupervisorReapCalls).toBe(1);
     await writeCapacityResult();
 
     const originalPrompt = await readFile(manifest.promptPath, "utf8");
@@ -551,10 +566,11 @@ describe("clean pre-start capacity continuation", () => {
       ok: true,
       accountReservation: { accountId: "account-g" },
     });
-    expect(bootstrapCalls).toBe(2);
+    expect(bootstrapCalls).toBe(3);
     expect(reservedLaunch?.config.accounts).toEqual([{ name: "account-g" }]);
     expect(reservedLaunch?.config.maxAccountCycles).toBe(2);
     expect(startAdmissionWorkspaceMode).toBe("clean_capacity_continuation");
+    expect(capacitySupervisorReapCalls).toBe(1);
     await authorizeProjectPreStartAdmissionLaunch({
       manifest,
       scope,
@@ -569,7 +585,6 @@ describe("clean pre-start capacity continuation", () => {
 function sha256(value: Uint8Array): string {
   return createHash("sha256").update(value).digest("hex");
 }
-
 async function recordUnavailableAttempt(
   journal: InMemoryAttemptJournal,
   taskId: string,

@@ -47,6 +47,15 @@ describe("project worker stop policy", () => {
     });
   });
 
+  it("allows a broker-bound terminal capacity supervisor to be reaped", () => {
+    expect(
+      decideCodexGoalProjectStop({
+        ...workerHealth(),
+        terminalCapacityPause: true,
+      }),
+    ).toEqual({ allowed: true });
+  });
+
   it("does not let forceStop terminate a fresh live project worker", async () => {
     if (!(await hasTmux())) return;
 
@@ -177,6 +186,25 @@ describe("project worker stop policy", () => {
       await expect(
         readFile(join(childJobRoot, "project-child.progress.json"), "utf8"),
       ).resolves.toContain('"status":"running"');
+
+      const capacityRecoveryBroker = codexProjectControlBroker({
+        registryRootDir,
+        controller: controller.controller,
+        scope: controller.scope,
+        stopLaunch: child.launch,
+        startAdmissionWorkspaceMode: "clean_capacity_continuation",
+      });
+      await expect(
+        capacityRecoveryBroker.stopWorker({
+          jobId: "project-child",
+          registryRoot: registryRootDir,
+          workspacePath: child.launch.config.workspacePath,
+          tmuxSession,
+        }),
+      ).resolves.toMatchObject({ status: "applied" });
+      await expect(
+        execFileAsync("tmux", ["has-session", "-t", tmuxSession]),
+      ).rejects.toBeDefined();
     } finally {
       await execFileAsync("tmux", ["kill-session", "-t", tmuxSession]).catch(
         () => undefined,

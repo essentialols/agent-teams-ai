@@ -98,7 +98,6 @@ export async function resolveBoundProjectWorktreeSource(input: {
   }
   return sourceRealPath;
 }
-
 export type CodexProjectControlBrokerInput = {
   readonly registryRootDir: string;
   readonly controller: CodexGoalJobManifest;
@@ -341,7 +340,14 @@ function codexProjectControlPorts(
           staleAfterMs: 10 * 60_000,
           tailLines: 20,
         });
-        const stopPolicy = decideCodexGoalProjectStop(brief.workerHealth);
+        const capacityContinuation =
+          input.startAdmissionWorkspaceMode ===
+            "admitted_input_patch_continuation" ||
+          input.startAdmissionWorkspaceMode === "clean_capacity_continuation";
+        const stopPolicy = decideCodexGoalProjectStop({
+          ...brief.workerHealth,
+          terminalCapacityPause: capacityContinuation,
+        });
         if (!stopPolicy.allowed) {
           throw new Error(stopPolicy.reason);
         }

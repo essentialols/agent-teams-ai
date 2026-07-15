@@ -445,6 +445,9 @@ describe("Codex provider app-server adapter", () => {
         processFactory: fakeFactory.create,
         cleanThreadPrewarm: false,
         sourceEnv: {
+          SUBSCRIPTION_RUNTIME_JOB_ROOT: "/var/data/jobs/scoped-worker",
+          SUBSCRIPTION_RUNTIME_TMPDIR: "/var/data/jobs/scoped-worker/tmp",
+          TMPDIR: "/var/data/jobs/scoped-worker/tmp/agent",
           SUBSCRIPTION_RUNTIME_CODEX_EXTRA_WRITABLE_ROOTS: "/var/data/quanta/control",
           SUBSCRIPTION_RUNTIME_CODEX_SUPPRESS_EXTRA_WRITABLE_ROOTS: "1",
         },
@@ -474,12 +477,12 @@ describe("Codex provider app-server adapter", () => {
         (request) => request.method === "turn/start",
       );
       expect(threadStart?.params).toMatchObject({
-        runtimeWorkspaceRoots: [workspace],
+        runtimeWorkspaceRoots: [workspace, "/var/data/jobs/scoped-worker/tmp/agent"],
       });
       expect(turnStart?.params).toMatchObject({
         sandboxPolicy: {
           type: "workspaceWrite",
-          writableRoots: [workspace],
+          writableRoots: [workspace, "/var/data/jobs/scoped-worker/tmp/agent"],
         },
       });
     } finally {

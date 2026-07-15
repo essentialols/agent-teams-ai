@@ -33,6 +33,10 @@ import {
   FileBackendCodexSafeExecutor,
   type FileBackendCodexSafeExecutorOptions,
 } from "./file-backend-codex-safe-executor";
+import {
+  ensureCodexAgentTempRoot,
+  removeCodexAgentTempRoot,
+} from "../provider-codex/codex-runtime-temp";
 import { migrateLegacyCodexAccountCapacity } from "./application/codex-account-capacity-store";
 import type {
   CodexWorkerExecutionEngine,
@@ -241,16 +245,25 @@ export async function runCodexGoal(
   );
   const stateRootDir = config.stateRootDir ?? join(config.jobRootDir, "state");
   await mkdir(stateRootDir, { recursive: true, mode: 0o700 });
+  const agentTempRoot = await ensureCodexAgentTempRoot({
+    sourceEnv: config.sourceEnv,
+  });
 
-  const executor = (
-    deps.createExecutor ??
-    ((options) => new FileBackendCodexSafeExecutor(options))
-  )(buildCodexGoalExecutorOptions({
-    config,
-    stateRootDir,
-    encryptionKey,
-    observability,
-  }));
+  let executor: CodexGoalExecutor;
+  try {
+    executor = (
+      deps.createExecutor ??
+      ((options) => new FileBackendCodexSafeExecutor(options))
+    )(buildCodexGoalExecutorOptions({
+      config,
+      stateRootDir,
+      encryptionKey,
+      observability,
+    }));
+  } catch (error) {
+    await removeCodexAgentTempRoot(agentTempRoot);
+    throw error;
+  }
 
   try {
     progressHeartbeat.start();
@@ -321,7 +334,21 @@ export async function runCodexGoal(
     throw error;
   } finally {
     await progressHeartbeat.stop();
-    await executor.dispose();
+    try {
+      await executor.dispose();
+    } finally {
+      const cleanupWarning = await removeCodexAgentTempRoot(agentTempRoot);
+      if (cleanupWarning) {
+        try {
+          await runtimeEvents.write("agent_temp_cleanup_warning", {
+            level: "warning",
+            reason: cleanupWarning,
+          });
+        } catch {
+          // Cleanup observability must never mask the executor result.
+        }
+      }
+    }
     await runtimeEvents.write("runner_disposed", {
       jobId: config.jobId ?? config.taskId,
     });

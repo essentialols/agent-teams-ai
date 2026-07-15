@@ -104,12 +104,16 @@ export function runConfigFromFlags(
     "--network-access",
   );
   const resolvedJobRootDir = resolvePath(cwd, jobRootDir);
+  const runtimeTempRoot =
+    env.SUBSCRIPTION_RUNTIME_TMPDIR ?? join(resolvedJobRootDir, "tmp");
+  const agentTempRoot = join(runtimeTempRoot, "agent");
   const sourceEnv = {
     ...env,
     SUBSCRIPTION_RUNTIME_JOB_ROOT: resolvedJobRootDir,
-    SUBSCRIPTION_RUNTIME_TMPDIR:
-      env.SUBSCRIPTION_RUNTIME_TMPDIR ?? join(resolvedJobRootDir, "tmp"),
-    TMPDIR: env.TMPDIR ?? join(resolvedJobRootDir, "tmp"),
+    SUBSCRIPTION_RUNTIME_TMPDIR: runtimeTempRoot,
+    TMPDIR: agentTempRoot,
+    TMP: agentTempRoot,
+    TEMP: agentTempRoot,
   } as const;
   const config: CodexGoalRunConfigWithAppServerStartupTimeout = {
     ...(option(values, env, "--job-id", ["SUBSCRIPTION_RUNTIME_JOB_ID"]) === undefined

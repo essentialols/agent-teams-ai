@@ -1,3 +1,4 @@
+import { isAbsolute, join, relative, resolve } from "node:path";
 import type {
   AgentUsage,
   ManagedRunInputRequest,
@@ -130,6 +131,31 @@ export function codexExtraWritableRootsFromEnv(
   return uniqueNonEmptyStrings(raw.split(/[,\n:]/u));
 }
 
+export function codexAgentTempRootFromEnv(
+  sourceEnv: Readonly<Record<string, string | undefined>> | undefined,
+): string | null {
+  const jobRoot = sourceEnv?.SUBSCRIPTION_RUNTIME_JOB_ROOT?.trim();
+  const runtimeTempRoot = sourceEnv?.SUBSCRIPTION_RUNTIME_TMPDIR?.trim();
+  const agentTempRoot = sourceEnv?.TMPDIR?.trim();
+  if (!jobRoot || !runtimeTempRoot || !agentTempRoot) return null;
+  if (!isAbsolute(jobRoot) || !isAbsolute(runtimeTempRoot) || !isAbsolute(agentTempRoot)) {
+    return null;
+  }
+  const resolvedJobRoot = resolve(jobRoot);
+  const resolvedRuntimeTempRoot = resolve(runtimeTempRoot);
+  const resolvedAgentTempRoot = resolve(agentTempRoot);
+  if (relative(resolvedJobRoot, resolvedRuntimeTempRoot) !== "tmp") return null;
+  if (resolvedAgentTempRoot !== join(resolvedRuntimeTempRoot, "agent")) return null;
+  return resolvedAgentTempRoot;
+}
+
+export function codexAgentTempWritableRootsFromEnv(
+  sourceEnv: Readonly<Record<string, string | undefined>> | undefined,
+): readonly string[] {
+  const agentTempRoot = codexAgentTempRootFromEnv(sourceEnv);
+  return agentTempRoot ? [agentTempRoot] : [];
+}
+
 export function mergeDeveloperInstructions(input: {
   readonly base: string | null;
   readonly systemPrompt?: string | undefined;
@@ -147,12 +173,16 @@ export function codexAppServerThreadRuntimePolicy(input: {
   readonly baseDeveloperInstructions: string | null;
   readonly systemPrompt?: string | undefined;
 }): CodexAppServerThreadRuntimePolicy {
+  const sandboxMode = input.sandboxMode ?? "read-only";
   return {
     runtimeWorkspaceRoots: uniqueNonEmptyStrings([
       input.workspacePath,
+      ...(sandboxMode === "workspace-write"
+        ? codexAgentTempWritableRootsFromEnv(input.sourceEnv)
+        : []),
       ...codexExtraWritableRootsFromEnv(input.sourceEnv),
     ]),
-    sandboxMode: input.sandboxMode ?? "read-only",
+    sandboxMode,
     developerInstructions: mergeDeveloperInstructions({
       base: input.baseDeveloperInstructions,
       systemPrompt: input.systemPrompt,
@@ -174,6 +204,7 @@ export function codexAppServerSandboxPolicy(input: {
       type: "workspaceWrite",
       writableRoots: uniqueNonEmptyStrings([
         input.workspacePath,
+        ...codexAgentTempWritableRootsFromEnv(input.sourceEnv),
         ...codexExtraWritableRootsFromEnv(input.sourceEnv),
       ]),
       networkAccess: false,

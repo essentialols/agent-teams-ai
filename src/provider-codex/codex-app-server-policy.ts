@@ -9,6 +9,8 @@ export type {
 export {
   codexAppServerSandboxPolicy,
   codexAppServerThreadRuntimePolicy,
+  codexAgentTempRootFromEnv,
+  codexAgentTempWritableRootsFromEnv,
   codexExtraWritableRootsFromEnv,
   mergeDeveloperInstructions,
   normalizeSystemPrompt,

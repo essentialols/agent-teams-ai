@@ -65,6 +65,13 @@ describe("codex goal cli", () => {
       maxAccountCycles: 5,
       editMode: "allow-edits",
       requireGitWorkspace: true,
+      sourceEnv: {
+        SUBSCRIPTION_RUNTIME_JOB_ROOT: "/tmp/job",
+        SUBSCRIPTION_RUNTIME_TMPDIR: "/tmp/job/tmp",
+        TMPDIR: "/tmp/job/tmp/agent",
+        TMP: "/tmp/job/tmp/agent",
+        TEMP: "/tmp/job/tmp/agent",
+      },
     });
     expect(command.config.accounts.map((account) => account.name)).toEqual([
       "account-a",

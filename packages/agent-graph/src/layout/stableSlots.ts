@@ -158,6 +158,8 @@ const STRICT_SMALL_TEAM_RADIUS_STEP = 24;
 const GRID_UNDER_LEAD_DEFAULT_COLUMN_COUNT = 2;
 const GRID_UNDER_LEAD_LEAD_GAP = 77.7;
 const GRID_UNDER_LEAD_ROW_GAP = 77.7;
+const GRID_UNDER_LEAD_EMPTY_COLUMN_WIDTH = STABLE_SLOT_GEOMETRY.slotHorizontalGap;
+const GRID_UNDER_LEAD_EMPTY_ROW_HEIGHT = GRID_UNDER_LEAD_ROW_GAP;
 const ROW_ORBIT_MIN_OWNER_COUNT = 6;
 const ROW_ORBIT_MAX_OWNER_COUNT = 14;
 const ROW_ORBIT_HORIZONTAL_GAP = Math.max(112, STABLE_SLOT_GEOMETRY.slotHorizontalGap);
@@ -1801,6 +1803,15 @@ function planAlignedGridUnderLeadOwnerSlots(
       rowHeights[assignment.ringIndex] ?? 0,
       footprint.slotHeight
     );
+  }
+
+  // Sparse assignments deliberately reserve lanes between semantic groups.
+  // Give those lanes physical size instead of collapsing them to gap-only spacing.
+  for (let index = 0; index < columnWidths.length; index += 1) {
+    if (columnWidths[index] === 0) columnWidths[index] = GRID_UNDER_LEAD_EMPTY_COLUMN_WIDTH;
+  }
+  for (let index = 0; index < rowHeights.length; index += 1) {
+    if (rowHeights[index] === 0) rowHeights[index] = GRID_UNDER_LEAD_EMPTY_ROW_HEIGHT;
   }
 
   const totalWidth =

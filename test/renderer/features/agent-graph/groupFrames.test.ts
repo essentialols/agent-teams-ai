@@ -28,10 +28,10 @@ describe('group frame labels', () => {
     expect(shouldRenderGroupFrameLabel(groupFrame(), 0.02)).toBe(true);
     expect(shouldRenderGroupFrameLabel(groupFrame(), 0.06)).toBe(true);
     expect(shouldRenderGroupFrameLabel(groupFrame({ depth: 3 }), 0.02)).toBe(false);
-    expect(shouldRenderGroupFrameLabel(groupFrame({ depth: 1 }), 0.2)).toBe(false);
-    expect(shouldRenderGroupFrameLabel(groupFrame({ depth: 1 }), 0.24)).toBe(true);
-    expect(shouldRenderGroupFrameLabel(groupFrame({ depth: 3 }), 0.35)).toBe(false);
-    expect(shouldRenderGroupFrameLabel(groupFrame({ depth: 3 }), 0.36)).toBe(true);
+    expect(shouldRenderGroupFrameLabel(groupFrame({ depth: 1 }), 0.13)).toBe(false);
+    expect(shouldRenderGroupFrameLabel(groupFrame({ depth: 1 }), 0.14)).toBe(true);
+    expect(shouldRenderGroupFrameLabel(groupFrame({ depth: 3 }), 0.19)).toBe(false);
+    expect(shouldRenderGroupFrameLabel(groupFrame({ depth: 3 }), 0.2)).toBe(true);
   });
 
   it('reserves a second overview line for aggregate counts', () => {
@@ -58,7 +58,8 @@ describe('group frame labels', () => {
     const nested = groupFrame({ depth: 1, semanticSummary: '4 teams · 2 active · 6 tasks' });
 
     expect(shouldRenderGroupFrameSemanticSummary(overview, 0.2)).toBe(true);
-    expect(shouldRenderGroupFrameSemanticSummary(nested, 0.2)).toBe(false);
+    expect(shouldRenderGroupFrameSemanticSummary(overview, 0.1)).toBe(false);
+    expect(shouldRenderGroupFrameSemanticSummary(nested, 0.2)).toBe(true);
     expect(shouldRenderGroupFrameSemanticSummary(overview, 0.3)).toBe(false);
   });
 
@@ -94,8 +95,9 @@ describe('group frame labels', () => {
     expect(depthTwo.bottom - depthThree.bottom).toBe(28);
   });
 
-  it('keeps labels readable at far zoom', () => {
-    expect(getGroupFrameLabelScaleZoom(0.01)).toBe(0.015);
+  it('scales labels down with mini-map views to prevent cross-frame overlap', () => {
+    expect(getGroupFrameLabelScaleZoom(0.01)).toBe(0.16);
+    expect(getGroupFrameLabelScaleZoom(0.5)).toBe(0.5);
   });
 
   it('places group labels inside the frame instead of on the border', () => {

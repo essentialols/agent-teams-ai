@@ -10,8 +10,28 @@ export interface GraphNodeVisualSize {
 const HIERARCHY_CARD_SIZES = {
   organization: { width: 224, height: 78 },
   container: { width: 204, height: 72 },
-  team: { width: 192, height: 68 },
 } as const;
+
+const TEAM_CARD_MIN_WIDTH = 260;
+const TEAM_CARD_MAX_WIDTH = 340;
+const TEAM_CARD_HEIGHT = 84;
+const TEAM_CARD_TEXT_CHROME_WIDTH = 110;
+const TEAM_CARD_ESTIMATED_CHARACTER_WIDTH = 8;
+
+function getAdaptiveTeamCardSize(node: GraphNode): GraphNodeVisualSize {
+  const longestTextLength = Math.max(
+    node.label.length,
+    node.role?.length ?? 0,
+    node.semanticSummary?.length ?? 0,
+    node.runtimeLabel?.length ?? 0
+  );
+  const contentWidth =
+    TEAM_CARD_TEXT_CHROME_WIDTH + longestTextLength * TEAM_CARD_ESTIMATED_CHARACTER_WIDTH;
+  return {
+    width: Math.max(TEAM_CARD_MIN_WIDTH, Math.min(TEAM_CARD_MAX_WIDTH, contentWidth)),
+    height: TEAM_CARD_HEIGHT,
+  };
+}
 
 export function getGraphNodeCardSize(node: GraphNode): GraphNodeVisualSize | null {
   switch (node.visualVariant) {
@@ -20,7 +40,7 @@ export function getGraphNodeCardSize(node: GraphNode): GraphNodeVisualSize | nul
     case 'container':
       return HIERARCHY_CARD_SIZES.container;
     case 'team':
-      return HIERARCHY_CARD_SIZES.team;
+      return getAdaptiveTeamCardSize(node);
     default:
       return null;
   }

@@ -37,7 +37,12 @@ type MeasureTextWidth = (label: string, fontSize: number) => number;
 
 const GROUP_FRAME_PADDING_MIN_ZOOM = 0.42;
 export const GROUP_FRAME_RENDER_MIN_ZOOM = 0.015;
-const GROUP_FRAME_LABEL_MIN_SCALE_ZOOM = GROUP_FRAME_RENDER_MIN_ZOOM;
+// Below this zoom labels scale down with the map instead of keeping a fixed screen size.
+// Fixed-size labels collide with neighboring frames in overview/mini-map layouts.
+const GROUP_FRAME_LABEL_MIN_SCALE_ZOOM = 0.16;
+const GROUP_FRAME_SEMANTIC_SUMMARY_MIN_ZOOM = 0.16;
+const GROUP_FRAME_NESTED_LABEL_MIN_ZOOM = 0.14;
+const GROUP_FRAME_DEEP_LABEL_MIN_ZOOM = 0.2;
 const GROUP_FRAME_PRIMARY_LABEL_MIN_ZOOM = 0.015;
 const GROUP_FRAME_NESTED_PRIMARY_LABEL_MIN_ZOOM = 0.015;
 const GROUP_FRAME_NORMAL_LABEL_MIN_ZOOM = GROUP_FRAME_RENDER_MIN_ZOOM;
@@ -58,9 +63,10 @@ export function shouldRenderGroupFrameSemanticSummary(
   zoom: number
 ): boolean {
   return (
+    zoom >= GROUP_FRAME_SEMANTIC_SUMMARY_MIN_ZOOM &&
     zoom < 0.24 &&
     Boolean(frame.semanticSummary) &&
-    (frame.priority === 'primary' || getDepthLevel(frame, 0) === 0)
+    (frame.priority === 'primary' || getDepthLevel(frame, 0) <= 1)
   );
 }
 
@@ -109,6 +115,10 @@ export function getGroupFrameLabelPlacement(frame: GraphGroupFrame): GroupFrameL
 
 export function getGroupFrameLabelScaleZoom(zoom: number): number {
   return Math.max(zoom, GROUP_FRAME_LABEL_MIN_SCALE_ZOOM);
+}
+
+export function getGroupFrameLabelFontSizePx(frame: GraphGroupFrame): number {
+  return frame.priority === 'primary' ? 15 : 12;
 }
 
 export function prepareGroupFrame(
@@ -198,11 +208,11 @@ export function getPaddedGroupFrameBounds(
 }
 
 export function shouldRenderGroupFrameLabel(frame: GraphGroupFrame, zoom: number): boolean {
-  const safeZoom = getGroupFrameLabelScaleZoom(zoom);
+  const safeZoom = Math.max(zoom, GROUP_FRAME_RENDER_MIN_ZOOM);
   const depth = getDepthLevel(frame, 0);
   if (frame.depth != null && frame.priority !== 'primary') {
-    if (safeZoom < 0.24 && depth > 0) return false;
-    if (safeZoom < 0.36 && depth > 1) return false;
+    if (safeZoom < GROUP_FRAME_NESTED_LABEL_MIN_ZOOM && depth > 0) return false;
+    if (safeZoom < GROUP_FRAME_DEEP_LABEL_MIN_ZOOM && depth > 1) return false;
   }
   if (frame.priority === 'primary') {
     return (
@@ -226,6 +236,7 @@ export function getGroupFrameLabelBounds(
   zoom: number,
   measureTextWidth: MeasureTextWidth = estimateLabelWidth,
   options: {
+    fontSizePx?: number;
     horizontalOffsetPx?: number;
     verticalOffsetPx?: number;
     placement?: GroupFrameLabelPlacement;
@@ -233,7 +244,7 @@ export function getGroupFrameLabelBounds(
   } = {}
 ): GroupFrameLabelBounds {
   const safeZoom = getGroupFrameLabelScaleZoom(zoom);
-  const fontSize = 11 / safeZoom;
+  const fontSize = (options.fontSizePx ?? 11) / safeZoom;
   const horizontalPadding = 7 / safeZoom;
   const verticalPadding = 4 / safeZoom;
   const textX = frameBounds.left + (14 + (options.horizontalOffsetPx ?? 0)) / safeZoom;
@@ -310,6 +321,7 @@ export function findGroupFrameHitAt(
           x,
           y,
           getGroupFrameLabelBounds(prepared.frame.label, bounds, zoom, undefined, {
+            fontSizePx: getGroupFrameLabelFontSizePx(prepared.frame),
             horizontalOffsetPx: getGroupFrameLabelHorizontalOffsetPx(),
             placement: getGroupFrameLabelPlacement(prepared.frame),
             verticalOffsetPx: getGroupFrameLabelVerticalOffsetPx(prepared.frame),

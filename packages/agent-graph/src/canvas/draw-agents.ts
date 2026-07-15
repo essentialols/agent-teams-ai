@@ -305,7 +305,7 @@ function drawHierarchyCard(
   ctx.stroke();
 
   ctx.beginPath();
-  ctx.roundRect(left + 1.5, top + 8, 3.5, size.height - 16, 2);
+  ctx.roundRect(left + 7, top + 10, 4, size.height - 20, 2);
   ctx.fillStyle = hexWithAlpha(color, isActive ? 0.95 : 0.66);
   ctx.fill();
 
@@ -345,7 +345,7 @@ function drawHierarchyCard(
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
     ctx.font =
-      node.visualVariant === 'organization' ? '600 12px sans-serif' : '600 11px sans-serif';
+      node.visualVariant === 'organization' ? '600 15px sans-serif' : '600 14px sans-serif';
     ctx.fillStyle = 'rgba(228, 240, 255, 0.96)';
     ctx.fillText(
       truncateCardText(ctx, node.label, maxTextWidth),
@@ -356,7 +356,7 @@ function drawHierarchyCard(
     if (showMetadata) {
       const metadata = getHierarchyCardMetadata(node, semanticLevel);
       if (metadata) {
-        ctx.font = '9px sans-serif';
+        ctx.font = '11px sans-serif';
         ctx.fillStyle = 'rgba(142, 166, 197, 0.78)';
         ctx.fillText(truncateCardText(ctx, metadata, maxTextWidth), textX, y + 12);
       }
@@ -377,8 +377,8 @@ function drawHierarchyOverviewBadge(
   zoom: number
 ): void {
   const inverseZoom = 1 / Math.max(zoom, 0.015);
-  const titleFontSize = 9 * inverseZoom;
-  const summaryFontSize = 7.5 * inverseZoom;
+  const titleFontSize = 12 * inverseZoom;
+  const summaryFontSize = 9.5 * inverseZoom;
   const paddingX = 8 * inverseZoom;
   const height = 32 * inverseZoom;
   const radius = 6 * inverseZoom;
@@ -455,11 +455,15 @@ function drawHierarchyCardIcon(
 
   if (variant === 'team') {
     ctx.beginPath();
+    ctx.moveTo(cx - 1, cy - 4);
     ctx.arc(cx - 4, cy - 4, 3, 0, Math.PI * 2);
+    ctx.moveTo(cx + 7.5, cy - 3);
     ctx.arc(cx + 5, cy - 3, 2.5, 0, Math.PI * 2);
     ctx.stroke();
     ctx.beginPath();
+    ctx.moveTo(cx - 10, cy + 5);
     ctx.arc(cx - 4, cy + 5, 6, Math.PI, 0);
+    ctx.moveTo(cx, cy + 5);
     ctx.arc(cx + 5, cy + 5, 5, Math.PI, 0);
     ctx.stroke();
   } else if (variant === 'container') {

@@ -28,6 +28,7 @@ import { drawProcesses } from '../canvas/draw-processes';
 import { drawColumnHeaders, drawTasks } from '../canvas/draw-tasks';
 import {
   getGroupFrameLabelBounds,
+  getGroupFrameLabelFontSizePx,
   getGroupFrameLabelHorizontalOffsetPx,
   getGroupFrameLabelPlacement,
   getGroupFrameLabelScaleZoom,
@@ -729,7 +730,8 @@ function drawGroupFrameLabel(
   }
 
   const labelScaleZoom = getGroupFrameLabelScaleZoom(zoom);
-  const fontSize = (prepared.frame.priority === 'primary' ? 12 : 11) / labelScaleZoom;
+  const fontSizePx = getGroupFrameLabelFontSizePx(prepared.frame);
+  const fontSize = fontSizePx / labelScaleZoom;
   const availableTextWidth = Math.max(
     0,
     Math.min(260 / labelScaleZoom, bounds.right - bounds.left - 28 / labelScaleZoom)
@@ -766,6 +768,7 @@ function drawGroupFrameLabel(
     zoom,
     (value) => ctx.measureText(value).width,
     {
+      fontSizePx,
       horizontalOffsetPx: getGroupFrameLabelHorizontalOffsetPx(),
       placement: getGroupFrameLabelPlacement(prepared.frame),
       verticalOffsetPx: getGroupFrameLabelVerticalOffsetPx(prepared.frame),

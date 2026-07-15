@@ -178,8 +178,10 @@ describe('drawTasks', () => {
     drawTasks(ctx, [node], 1, null, null, null, 1);
 
     const firstTitleLine = fillTextCalls.find((call) => call.y === -16);
-    const secondTitleLine = fillTextCalls.find((call) => call.y === 2);
     const displayId = fillTextCalls.find((call) => call.text === '0f505654');
+    const secondTitleLine = fillTextCalls.find(
+      (call) => call.y > (firstTitleLine?.y ?? -Infinity) && call.y < (displayId?.y ?? Infinity)
+    );
 
     expect(firstTitleLine?.text).toContain('Review VitePress docs');
     expect(secondTitleLine?.text).toContain('...');

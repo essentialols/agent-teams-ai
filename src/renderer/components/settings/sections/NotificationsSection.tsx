@@ -380,7 +380,7 @@ export const NotificationsSection = ({
           backgroundColor: 'var(--color-surface-raised)',
         }}
       >
-        <div className="grid grid-cols-1 gap-x-6 xl:grid-cols-2">
+        <div className="grid grid-cols-1 gap-x-6 lg:grid-cols-2">
           <SettingRow
             label={t('notifications.team.leadInbox.label')}
             description={t('notifications.team.leadInbox.description')}
@@ -493,7 +493,7 @@ export const NotificationsSection = ({
           </SettingRow>
 
           {/* Task Status Change Notifications — nested within team card */}
-          <div className="*:last:border-b-0 xl:col-span-2">
+          <div className="*:last:border-b-0 lg:col-span-2">
             <SettingRow
               label={t('notifications.team.statusChange.label')}
               description={t('notifications.team.statusChange.description')}

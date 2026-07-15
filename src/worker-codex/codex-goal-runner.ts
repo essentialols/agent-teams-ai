@@ -675,7 +675,12 @@ async function codexRuntimeResultInput(input: {
   readonly result: SafeExecutionRunResult<FileBackendCodexWorkerResult>;
   readonly baseCommit?: string;
 }): Promise<RuntimeResultEnvelopeInput> {
-  const changedFiles = changedFilesFromSafeExecutionResult(input.result);
+  const reportedChangedFiles = changedFilesFromSafeExecutionResult(input.result);
+  const workspace = await changedFilesFromWorkspace(input.config.workspacePath);
+  const changedFiles = uniqueStrings([
+    ...reportedChangedFiles,
+    ...workspace.changedFiles,
+  ]);
   const workerReport = workerReportFromSafeExecutionResult(input.result);
   const reason = "reason" in input.result ? input.result.reason : undefined;
   const status = runtimeStatusFromSafeExecutionResult({
@@ -710,6 +715,7 @@ async function codexRuntimeResultInput(input: {
     changedFiles: exactChangedFiles,
     evidence: [
       ...runtimeEvidenceFromSafeExecutionResult(input.result),
+      ...(workspace.warning ? [workspace.warning] : []),
       ...artifacts.map((artifact) => `patch_preserved:${artifact.path ?? ""}`),
       ...(handoff?.errorCode === undefined
         ? []

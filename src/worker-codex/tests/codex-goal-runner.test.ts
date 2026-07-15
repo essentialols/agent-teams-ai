@@ -666,6 +666,104 @@ describe("codex goal runner", () => {
     }
   });
 
+  it("captures staged input plus unstaged remediation when completed attempts report no changes", async () => {
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), "subscription-runtime-goal-remediation-")),
+    );
+    const promptPath = join(root, "prompt.md");
+    const workspacePath = join(root, "workspace");
+    const outputPath = join(root, "job", "task-remediation.latest-result.json");
+    const config: CodexGoalRunConfig = {
+      jobId: "project-remediation",
+      jobRootDir: join(root, "job"),
+      authRootDir: join(root, "auth"),
+      workspacePath,
+      promptPath,
+      taskId: "task-remediation",
+      accounts: codexGoalAccountSlots(["account-a"]),
+      outputPath,
+    };
+
+    try {
+      await mkdir(config.jobRootDir, { recursive: true });
+      await mkdir(workspacePath, { recursive: true });
+      await writeFile(promptPath, "Repair the admitted producer output.\n");
+      await execFileAsync("git", ["init"], { cwd: workspacePath });
+      await execFileAsync("git", ["config", "user.email", "test@example.com"], {
+        cwd: workspacePath,
+      });
+      await execFileAsync("git", ["config", "user.name", "Test User"], {
+        cwd: workspacePath,
+      });
+      await writeFile(join(workspacePath, "packet.md"), "canonical\n");
+      await execFileAsync("git", ["add", "packet.md"], { cwd: workspacePath });
+      await execFileAsync("git", ["commit", "-m", "fixture"], {
+        cwd: workspacePath,
+      });
+
+      // The broker admits an immutable producer patch as staged input.
+      await writeFile(join(workspacePath, "packet.md"), "producer\n");
+      await writeFile(join(workspacePath, "new-packet.md"), "producer new\n");
+      await execFileAsync("git", ["add", "packet.md", "new-packet.md"], {
+        cwd: workspacePath,
+      });
+
+      await runCodexGoal(config, {
+        createExecutor: () => ({
+          async run() {
+            // The remediation is intentionally left unstaged on top of input.
+            await writeFile(join(workspacePath, "packet.md"), "remediated\n");
+            await writeFile(
+              join(workspacePath, "new-packet.md"),
+              "producer new\nremediated\n",
+            );
+            expect((await execFileAsync("git", ["status", "--short"], {
+              cwd: workspacePath,
+            })).stdout.trim().split("\n")).toEqual([
+              "AM new-packet.md",
+              "MM packet.md",
+            ]);
+            return {
+              status: "completed",
+              attempts: [{ changedFiles: [] }],
+              task: { outputText: "done" },
+            } as never;
+          },
+          async dispose() {},
+        }),
+      });
+
+      const result = JSON.parse(await readFile(outputPath, "utf8")) as
+        Record<string, unknown>;
+      expect(result).toMatchObject({
+        status: "done",
+        changedFiles: ["new-packet.md", "packet.md"],
+        nextAction: "review_completed",
+      });
+      const artifacts = result.artifacts as readonly Record<string, unknown>[];
+      const patchPath = String(
+        artifacts.find((artifact) => artifact.kind === "patch")?.path,
+      );
+      const manifestPath = String(
+        artifacts.find((artifact) => artifact.kind === "manifest")?.path,
+      );
+      const summaryPath = String(
+        artifacts.find((artifact) => artifact.kind === "summary")?.path,
+      );
+      expect(await readFile(patchPath, "utf8")).toContain("remediated");
+      expect(JSON.parse(await readFile(manifestPath, "utf8"))).toMatchObject({
+        workerJobId: "project-remediation",
+        changedPaths: ["new-packet.md", "packet.md"],
+      });
+      expect(JSON.parse(await readFile(summaryPath, "utf8"))).toMatchObject({
+        changedPaths: ["new-packet.md", "packet.md"],
+        changedFileCount: 2,
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("records stable evidence when a completed handoff cannot be materialized", async () => {
     const root = await mkdtemp(join(tmpdir(), "subscription-runtime-goal-handoff-blocked-"));
     const promptPath = join(root, "prompt.md");

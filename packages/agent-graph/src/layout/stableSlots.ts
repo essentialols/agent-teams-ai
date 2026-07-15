@@ -1,5 +1,7 @@
 import { KANBAN_ZONE, TASK_PILL } from '../constants/canvas-constants';
 
+import { getGraphNodeCardSize } from '../canvas/node-geometry';
+
 import { ACTIVITY_LANE } from './activityLane';
 import { STABLE_SLOT_GEOMETRY, STABLE_SLOT_SECTOR_VECTORS } from './stableSlotGeometry';
 
@@ -158,6 +160,8 @@ const STRICT_SMALL_TEAM_RADIUS_STEP = 24;
 const GRID_UNDER_LEAD_DEFAULT_COLUMN_COUNT = 2;
 const GRID_UNDER_LEAD_LEAD_GAP = 77.7;
 const GRID_UNDER_LEAD_ROW_GAP = 77.7;
+const GRID_UNDER_LEAD_EMPTY_COLUMN_WIDTH = STABLE_SLOT_GEOMETRY.slotHorizontalGap;
+const GRID_UNDER_LEAD_EMPTY_ROW_HEIGHT = GRID_UNDER_LEAD_ROW_GAP;
 const ROW_ORBIT_MIN_OWNER_COUNT = 6;
 const ROW_ORBIT_MAX_OWNER_COUNT = 14;
 const ROW_ORBIT_HORIZONTAL_GAP = Math.max(112, STABLE_SLOT_GEOMETRY.slotHorizontalGap);
@@ -395,12 +399,12 @@ export function computeOwnerFootprints(
     return [
       buildOwnerFootprint({
         ownerId,
+        ownerVisualWidth: getGraphNodeCardSize(ownerNode)?.width ?? 0,
         taskColumnCount: showTasks ? (taskColumns?.size ?? 0) : 0,
         taskRowCount: showTasks
           ? Math.max(0, ...taskColumnMetrics.map((metrics) => metrics.regularRowCount))
           : 0,
-        hasTaskOverflow:
-          showTasks && taskColumnMetrics.some((metrics) => metrics.hasOverflow),
+        hasTaskOverflow: showTasks && taskColumnMetrics.some((metrics) => metrics.hasOverflow),
         processCount: processCountByOwnerId.get(ownerId) ?? 0,
         showActivity,
         showLogs,
@@ -417,6 +421,7 @@ function computeOwnerFootprintForOwnerId(
   ownerId: string,
   layout?: GraphLayoutPort
 ): OwnerFootprint {
+  const ownerNode = nodes.find((node) => node.id === ownerId);
   const taskColumns = new Map<string, { regularRowCount: number; hasOverflow: boolean }>();
   let processCount = 0;
 
@@ -438,6 +443,7 @@ function computeOwnerFootprintForOwnerId(
 
   return buildOwnerFootprint({
     ownerId,
+    ownerVisualWidth: ownerNode ? (getGraphNodeCardSize(ownerNode)?.width ?? 0) : 0,
     taskColumnCount: taskColumns.size,
     taskRowCount: Math.max(
       0,
@@ -455,6 +461,7 @@ function computeOwnerFootprintForOwnerId(
 
 function buildOwnerFootprint(args: {
   ownerId: string;
+  ownerVisualWidth: number;
   taskColumnCount: number;
   taskRowCount: number;
   hasTaskOverflow: boolean;
@@ -489,10 +496,7 @@ function buildOwnerFootprint(args: {
     : 0;
   const kanbanBandHeight = args.showTasks
     ? args.fitTaskRowsToContent
-      ? Math.max(
-          contentTaskBandHeight,
-          args.hasTaskOverflow ? SLOT_GEOMETRY.kanbanBandHeight : 0
-        )
+      ? Math.max(contentTaskBandHeight, args.hasTaskOverflow ? SLOT_GEOMETRY.kanbanBandHeight : 0)
       : SLOT_GEOMETRY.kanbanBandHeight
     : 0;
   const processBandWidth = computeProcessBandWidth(args.processCount);
@@ -504,7 +508,12 @@ function buildOwnerFootprint(args: {
     kanbanBandHeight +
       (args.showTasks ? getKanbanBandTopInset({ activityColumnWidth, logColumnWidth }) : 0)
   );
-  const innerContentWidth = Math.max(SLOT_GEOMETRY.ownerMinWidth, processBandWidth, boardBandWidth);
+  const innerContentWidth = Math.max(
+    SLOT_GEOMETRY.ownerMinWidth,
+    args.ownerVisualWidth,
+    processBandWidth,
+    boardBandWidth
+  );
   const slotWidth = innerContentWidth + SLOT_GEOMETRY.memberSlotInnerPadding * 2;
   const slotHeight =
     SLOT_GEOMETRY.memberSlotInnerPadding * 2 +
@@ -1785,7 +1794,8 @@ function planAlignedGridUnderLeadOwnerSlots(
 
   const columnCount =
     Math.max(...assignedFootprints.map(({ assignment }) => assignment.sectorIndex)) + 1;
-  const rowCount = Math.max(...assignedFootprints.map(({ assignment }) => assignment.ringIndex)) + 1;
+  const rowCount =
+    Math.max(...assignedFootprints.map(({ assignment }) => assignment.ringIndex)) + 1;
   if (columnCount <= 0 || rowCount <= 0) {
     return null;
   }
@@ -1801,6 +1811,15 @@ function planAlignedGridUnderLeadOwnerSlots(
       rowHeights[assignment.ringIndex] ?? 0,
       footprint.slotHeight
     );
+  }
+
+  // Sparse assignments deliberately reserve lanes between semantic groups.
+  // Give those lanes physical size instead of collapsing them to gap-only spacing.
+  for (let index = 0; index < columnWidths.length; index += 1) {
+    if (columnWidths[index] === 0) columnWidths[index] = GRID_UNDER_LEAD_EMPTY_COLUMN_WIDTH;
+  }
+  for (let index = 0; index < rowHeights.length; index += 1) {
+    if (rowHeights[index] === 0) rowHeights[index] = GRID_UNDER_LEAD_EMPTY_ROW_HEIGHT;
   }
 
   const totalWidth =

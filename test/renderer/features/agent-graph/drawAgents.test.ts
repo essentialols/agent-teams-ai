@@ -12,6 +12,7 @@ vi.mock('../../../../packages/agent-graph/src/canvas/render-cache', async () => 
 });
 
 import { drawAgents } from '../../../../packages/agent-graph/src/canvas/draw-agents';
+import { getGraphNodeCardSize } from '../../../../packages/agent-graph/src/canvas/node-geometry';
 
 import type { GraphNode } from '@claude-teams/agent-graph';
 
@@ -98,6 +99,26 @@ function createMockContext() {
 }
 
 describe('drawAgents', () => {
+  it('sizes team cards to their content within parent-safe bounds', () => {
+    const baseNode: GraphNode = {
+      id: 'team:adaptive',
+      kind: 'member',
+      visualVariant: 'team',
+      label: 'API',
+      state: 'active',
+      domainRef: { kind: 'member', teamName: 'adaptive', memberName: 'team:adaptive' },
+    };
+    const shortCard = getGraphNodeCardSize(baseNode);
+    const longCard = getGraphNodeCardSize({
+      ...baseNode,
+      label: 'Agent Runtime Platform Integrations',
+      semanticSummary: '12 agents - 4 active - 28 tasks',
+    });
+
+    expect(shortCard).toEqual({ width: 260, height: 84 });
+    expect(longCard?.width).toBeGreaterThan(shortCard!.width);
+    expect(longCard?.width).toBeLessThanOrEqual(340);
+  });
   it('renders hierarchy cards with semantic text detail across zoom levels', () => {
     const node: GraphNode = {
       id: 'team:alpha',

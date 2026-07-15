@@ -21,9 +21,13 @@ const COMPACT_LAYOUT_MAX_OWNER_COUNT = 10;
 const ORGANIZATION_GRID_COMPACT_MAX_COLUMN_COUNT = 3;
 const ORGANIZATION_GRID_MAX_COLUMN_COUNT = 12;
 const ORGANIZATION_GRID_TOP_ROW_OFFSET = 0;
-const ORGANIZATION_GRID_BLOCK_ROW_GAP = 0;
-const ORGANIZATION_GRID_BLOCK_COLUMN_GAP = 0;
-const ORGANIZATION_GRID_TOP_LEVEL_ORG_ROW_GAP = 1;
+// Group frames extend beyond their owner cards for borders, labels, and semantic summaries.
+// Keep empty grid lanes between sibling frames so those visual bounds cannot overlap.
+const ORGANIZATION_GRID_BLOCK_ROW_GAP = 2;
+const ORGANIZATION_GRID_BLOCK_COLUMN_GAP = 1;
+// Primary organization labels render outside the top edge and retain a readable screen size
+// while zoomed out. Reserve enough physical lanes for the two-line label in mini-map views.
+const ORGANIZATION_GRID_TOP_LEVEL_ORG_ROW_GAP = 5;
 const ORGANIZATION_GRID_TOP_LEVEL_ORG_COLUMN_GAP = 1;
 const ORGANIZATION_GRID_SIDE_BY_SIDE_MAX_BLOCK_WIDTH = 3;
 const ORGANIZATION_GRID_SIDE_BY_SIDE_MAX_BLOCK_HEIGHT = 3;
@@ -35,7 +39,8 @@ const SELECTIVE_AGENT_DETAILS_TEAM_THRESHOLD = 1;
 const SELECTIVE_AGENT_DETAILS_AGENT_THRESHOLD = 60;
 const SELECTIVE_AGENT_DETAILS_MESSAGE_THRESHOLD = 80;
 const ALL_ORGANIZATIONS_ROOT_NODE_ID = 'org:__all-organizations__';
-const HIERARCHY_HORIZONTAL_GAP = 292;
+// Team cards grow up to 340px. Keep a readable connector gutter between sibling cards.
+const HIERARCHY_HORIZONTAL_GAP = 372;
 const HIERARCHY_VERTICAL_GAP = 164;
 const HIERARCHY_ROOT_GAP_IN_LEAVES = 1;
 const HIERARCHY_TASK_TOP_OFFSET = 112;
@@ -259,7 +264,7 @@ function collectDescendantTeamStats(
   if (node?.kind === 'team') {
     return {
       teamCount: 1,
-      activeTeamCount: (node.team?.taskCounts.inProgress ?? 0) > 0 ? 1 : 0,
+      activeTeamCount: node.team?.isOnline ? 1 : 0,
       activeAgentCount: node.team?.agents.filter((agent) => agent.status === 'active').length ?? 0,
       activeTaskCount: node.team?.taskCounts.inProgress ?? 0,
       taskCount: node.team
@@ -1582,7 +1587,11 @@ export function buildOrganizationGraphData(
   const renderedAgentTeamNodes = visibleTeamNodes.filter((node) =>
     renderedAgentTeamIds.has(node.id)
   );
-  const agentNodes = renderedAgentTeamNodes.flatMap((node) => buildAgentTaskNodes(node, text));
+  const agentNodes = renderedAgentTeamNodes.flatMap((node) =>
+    buildAgentTaskNodes(node, text, {
+      taskZoomVisibility: context.layoutMode === 'grid-under-lead' ? 'summary' : 'detail',
+    })
+  );
   const nodes = [...orgNodes, ...agentNodes];
   const graphNodeIds = new Set(nodes.map((node) => node.id));
   const renderedManualRelations = visibleManualRelations.filter(

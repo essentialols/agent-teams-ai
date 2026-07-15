@@ -14,7 +14,7 @@ import { getGraphSemanticZoomLevel, shouldRenderTaskAtZoom } from './semantic-zo
 import type { KanbanZoneInfo } from '../layout/kanbanLayout';
 import type { GraphNode } from '../ports/types';
 
-const KANBAN_HEADER_FONT = '600 10px monospace';
+const KANBAN_HEADER_FONT = '600 12px monospace';
 const KANBAN_HEADER_ALPHA = 0.92;
 const KANBAN_HEADER_LETTER_SPACING = 2;
 

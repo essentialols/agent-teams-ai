@@ -261,6 +261,7 @@ describe('group frame hit detection', () => {
 
     expect(shouldRenderGroupFrameLabel(primaryFrame, 0.14)).toBe(true);
     expect(shouldRenderGroupFrameLabel(normalFrame, 0.02)).toBe(false);
+    expect(shouldRenderGroupFrameLabel(normalFrame, 0.14)).toBe(true);
     expect(shouldRenderGroupFrameLabel(normalFrame, 0.45)).toBe(true);
   });
 });

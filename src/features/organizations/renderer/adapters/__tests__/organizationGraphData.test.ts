@@ -750,6 +750,9 @@ describe('buildOrganizationGraphData', () => {
     expect(graph.layout?.showTasks).toBe(true);
     expect(graph.layout?.fitTaskRowsToContent).toBe(true);
     expect(graph.layout?.showEmptyTaskPlaceholders).toBeUndefined();
+    expect(graph.nodes.find((node) => node.id === 'agent:alpha:alice')).toMatchObject({
+      taskZoomVisibility: 'summary',
+    });
     expect(graph.edges).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -970,6 +973,19 @@ describe('buildOrganizationGraphData', () => {
     ]);
   });
 
+  it('counts online teams in group aggregates independently of task status', () => {
+    const payload = buildNestedPayload();
+    const alpha = payload.nodes.find((node) => node.id === 'team:alpha');
+    if (!alpha?.team) throw new Error('Expected alpha team fixture');
+    alpha.team.isOnline = false;
+
+    const graph = buildOrganizationGraphData(buildOrganizationMapViewModel(payload));
+
+    expect(graph.groupFrames?.find((frame) => frame.id === 'unit:engineering')).toMatchObject({
+      semanticSummary: '1 teams · 0 active · 2 tasks',
+    });
+  });
+
   it('renders organizations as frames in all-organizations scope', () => {
     const viewModel = buildOrganizationMapViewModel(buildAllOrganizationsPayload());
     const graph = buildOrganizationGraphData(viewModel);
@@ -1085,16 +1101,10 @@ describe('buildOrganizationGraphData', () => {
     expect(
       (slots['team:beta']?.sectorIndex ?? 0) - (slots['team:alpha']?.sectorIndex ?? 0)
     ).toBeGreaterThanOrEqual(2);
-    expect(
-      (slots['team:beta']?.sectorIndex ?? 0) - (slots['team:alpha']?.sectorIndex ?? 0)
-    ).toBeLessThanOrEqual(2);
     expect(slots['team:beta']?.ringIndex).toBeLessThan(slots['team:gamma']?.ringIndex ?? -1);
     expect(
       (slots['team:gamma']?.ringIndex ?? 0) - (slots['team:beta']?.ringIndex ?? 0)
-    ).toBeGreaterThanOrEqual(2);
-    expect(
-      (slots['team:gamma']?.ringIndex ?? 0) - (slots['team:beta']?.ringIndex ?? 0)
-    ).toBeLessThanOrEqual(2);
+    ).toBeGreaterThanOrEqual(6);
   });
 
   it('packs narrow sibling groups side by side in rows layout', () => {
@@ -1106,6 +1116,9 @@ describe('buildOrganizationGraphData', () => {
     expect(slots['team:beta']?.ringIndex).toBe(slots['team:delta']?.ringIndex);
     expect(slots['team:alpha']?.sectorIndex).toBeLessThan(slots['team:gamma']?.sectorIndex ?? -1);
     expect(slots['team:beta']?.sectorIndex).toBeLessThan(slots['team:delta']?.sectorIndex ?? -1);
+    expect(
+      (slots['team:gamma']?.sectorIndex ?? 0) - (slots['team:alpha']?.sectorIndex ?? 0)
+    ).toBeGreaterThanOrEqual(2);
   });
 
   it('keeps sibling group slots stable when a neighboring group is collapsed', () => {
@@ -1353,6 +1366,12 @@ describe('buildOrganizationGraphData', () => {
 
     expect(rowsGraph.layout?.mode).toBe('grid-under-lead');
     expect(radialGraph.layout?.mode).toBe('radial');
+    expect(rowsGraph.nodes.find((node) => node.kind === 'task')?.taskZoomVisibility).toBe(
+      'summary'
+    );
+    expect(radialGraph.nodes.find((node) => node.kind === 'task')?.taskZoomVisibility).toBe(
+      'detail'
+    );
     expect(maxGridColumnIndex).toBeGreaterThan(1);
     expect(maxGridRowIndex).toBeLessThan(5);
     expect(rowsGraph.layout?.ownerOrder).toEqual(radialGraph.layout?.ownerOrder);
@@ -1418,10 +1437,10 @@ describe('buildOrganizationGraphData', () => {
     expect(positions['agent:alpha:alice']?.y).toBeGreaterThan(
       positions['team:alpha']?.y ?? Number.POSITIVE_INFINITY
     );
+    const hierarchyEdges = graph.edges.filter((edge) => edge.type === 'parent-child');
+    expect(hierarchyEdges.length).toBeGreaterThan(0);
     expect(
-      graph.edges
-        .filter((edge) => edge.type === 'parent-child')
-        .every((edge) => edge.routing === 'orthogonal' && edge.alwaysVisible === true)
+      hierarchyEdges.every((edge) => edge.routing === 'orthogonal' && edge.alwaysVisible === true)
     ).toBe(true);
     expect(graph.edges).toEqual(
       expect.arrayContaining([

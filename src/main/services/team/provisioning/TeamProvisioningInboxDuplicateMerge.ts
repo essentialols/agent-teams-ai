@@ -26,7 +26,16 @@ export interface MergeAndRemoveDuplicateInboxesInput {
   ports: DuplicateInboxMergePorts;
 }
 
-function parseRemovableDuplicateInboxMessageList(raw: string): unknown[] | null {
+interface ParsedDuplicateInboxMessageList {
+  mergeableRows: unknown[];
+  removable: boolean;
+}
+
+function parseDuplicateInboxMessageList(raw: string): ParsedDuplicateInboxMessageList | null {
+  if (raw.trim().length === 0) {
+    return { mergeableRows: [], removable: true };
+  }
+
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw) as unknown;
@@ -37,7 +46,11 @@ function parseRemovableDuplicateInboxMessageList(raw: string): unknown[] | null 
     return null;
   }
 
-  return parsed.every((item) => item !== null && typeof item === 'object') ? parsed : null;
+  const mergeableRows = parsed.filter((item) => item !== null && typeof item === 'object');
+  return {
+    mergeableRows,
+    removable: mergeableRows.length === parsed.length,
+  };
 }
 
 async function mergeSingleInboxBase(
@@ -62,11 +75,15 @@ async function mergeSingleInboxBase(
 
   const canonicalList = parseInboxMessageListRaw(canonicalRaw);
   const duplicateLists: unknown[][] = [];
-  // Only duplicates whose complete content made it into the merged canonical
-  // list may be removed; unreadable or malformed duplicates still hold data
-  // that would otherwise be destroyed unmerged.
+  // Merge every row that the canonical inbox representation can preserve, but
+  // only remove duplicates whose complete contents were represented. A mixed
+  // valid/malformed file must remain as evidence of its unrepresentable data.
   const removableDuplicateFiles: string[] = [];
-  for (const dupFile of mergePlan.duplicateFiles) {
+  let hasMergeableRows = false;
+  const duplicateFiles = [...mergePlan.duplicateFiles].sort((left, right) =>
+    left < right ? -1 : left > right ? 1 : 0
+  );
+  for (const dupFile of duplicateFiles) {
     const dupPath = path.join(input.inboxDir, dupFile);
     let dupRaw: string | null | undefined;
     try {
@@ -81,21 +98,33 @@ async function mergeSingleInboxBase(
       continue;
     }
 
-    const duplicateList = parseRemovableDuplicateInboxMessageList(dupRaw);
+    const duplicateList = parseDuplicateInboxMessageList(dupRaw);
     if (!duplicateList) {
       continue;
     }
 
-    removableDuplicateFiles.push(dupFile);
-    duplicateLists.push(duplicateList);
+    if (duplicateList.removable) {
+      removableDuplicateFiles.push(dupFile);
+    }
+    if (duplicateList.mergeableRows.length > 0) {
+      hasMergeableRows = true;
+      duplicateLists.push(duplicateList.mergeableRows);
+    }
+  }
+
+  if (!hasMergeableRows && removableDuplicateFiles.length === 0) {
+    return;
   }
 
   const mergedDeduped = mergeInboxMessageLists(canonicalList, duplicateLists);
+  const mergedRaw = JSON.stringify(mergedDeduped, null, 2);
 
-  try {
-    await input.ports.writeFileUtf8(canonicalPath, JSON.stringify(mergedDeduped, null, 2));
-  } catch {
-    return;
+  if (mergedRaw !== canonicalRaw) {
+    try {
+      await input.ports.writeFileUtf8(canonicalPath, mergedRaw);
+    } catch {
+      return;
+    }
   }
 
   for (const dupFile of removableDuplicateFiles) {

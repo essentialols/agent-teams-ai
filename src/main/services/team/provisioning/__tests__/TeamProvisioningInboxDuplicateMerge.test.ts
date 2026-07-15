@@ -177,4 +177,108 @@ describe('TeamProvisioningInboxDuplicateMerge', () => {
     expect(unlink).toHaveBeenCalledWith(path.join(inboxDir, 'Alice-3.json'));
     expect(unlink).not.toHaveBeenCalledWith(path.join(inboxDir, 'Alice-2.json'));
   });
+
+  it('merges valid rows from a mixed duplicate, preserves corrupt data, and reclaims empty files idempotently', async () => {
+    const inboxDir = '/fake/team/inboxes';
+    const files = new Map<string, string>([
+      [
+        'Alice.json',
+        JSON.stringify(
+          [{ messageId: 'a', timestamp: '2026-01-01T00:00:00.000Z', text: 'old' }],
+          null,
+          2
+        ),
+      ],
+      [
+        'Alice-2.json',
+        JSON.stringify([
+          { messageId: 'b', timestamp: '2026-01-02T00:00:00.000Z', text: 'deliver me' },
+          'corrupt row that cannot be represented in an inbox',
+        ]),
+      ],
+      ['Alice-3.json', ''],
+      ['Alice-4.json', ' \n\t '],
+    ]);
+    const writeFileUtf8 = vi.fn(async (filePath: string, contents: string) => {
+      files.set(path.basename(filePath), contents);
+    });
+    const unlink = vi.fn(async (filePath: string) => {
+      files.delete(path.basename(filePath));
+    });
+    const ports = createPorts({
+      readDir: vi.fn(async () => [...files.keys()]),
+      readRegularFileUtf8: vi.fn(
+        async (filePath: string) => files.get(path.basename(filePath)) ?? null
+      ),
+      writeFileUtf8,
+      unlink,
+    });
+    const input = {
+      inboxDir,
+      baseNames: new Set(['Alice']),
+      timeoutMs: 5_000,
+      maxBytes: 1_000_000,
+      ports,
+    };
+
+    await mergeAndRemoveDuplicateInboxes(input);
+    await mergeAndRemoveDuplicateInboxes(input);
+
+    expect(JSON.parse(files.get('Alice.json') ?? '[]')).toEqual([
+      { messageId: 'b', timestamp: '2026-01-02T00:00:00.000Z', text: 'deliver me' },
+      { messageId: 'a', timestamp: '2026-01-01T00:00:00.000Z', text: 'old' },
+    ]);
+    expect(files.has('Alice-2.json')).toBe(true);
+    expect(files.has('Alice-3.json')).toBe(false);
+    expect(files.has('Alice-4.json')).toBe(false);
+    expect(writeFileUtf8).toHaveBeenCalledTimes(1);
+    expect(unlink).toHaveBeenCalledTimes(2);
+  });
+
+  it('produces the same canonical inbox regardless of duplicate directory order', async () => {
+    const inboxDir = '/fake/team/inboxes';
+    const rawFiles = new Map<string, string>([
+      ['Alice.json', '[]'],
+      [
+        'Alice-2.json',
+        JSON.stringify([
+          { messageId: 'shared', timestamp: '2026-01-02T00:00:00.000Z', text: 'from two' },
+        ]),
+      ],
+      [
+        'Alice-10.json',
+        JSON.stringify([
+          { messageId: 'shared', timestamp: '2026-01-10T00:00:00.000Z', text: 'from ten' },
+        ]),
+      ],
+    ]);
+    const mergeWithOrder = async (entries: string[]): Promise<string> => {
+      const writeFileUtf8 = vi.fn(async (_filePath: string, _contents: string) => undefined);
+      const ports = createPorts({
+        readDir: vi.fn(async () => entries),
+        readRegularFileUtf8: vi.fn(
+          async (filePath: string) => rawFiles.get(path.basename(filePath)) ?? null
+        ),
+        writeFileUtf8,
+      });
+
+      await mergeAndRemoveDuplicateInboxes({
+        inboxDir,
+        baseNames: new Set(['Alice']),
+        timeoutMs: 5_000,
+        maxBytes: 1_000_000,
+        ports,
+      });
+
+      return vi.mocked(writeFileUtf8).mock.calls[0]?.[1] ?? '';
+    };
+
+    const forward = await mergeWithOrder(['Alice.json', 'Alice-2.json', 'Alice-10.json']);
+    const reverse = await mergeWithOrder(['Alice-10.json', 'Alice.json', 'Alice-2.json']);
+
+    expect(reverse).toBe(forward);
+    expect(JSON.parse(forward)).toEqual([
+      { messageId: 'shared', timestamp: '2026-01-02T00:00:00.000Z', text: 'from two' },
+    ]);
+  });
 });

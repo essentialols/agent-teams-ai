@@ -11,7 +11,7 @@ import { getEffectiveInboxMessageId } from './inboxMessageIdentity';
 
 import type { InboxMessage } from '@shared/types';
 
-const MAX_INBOX_FILE_BYTES = 10 * 1024 * 1024; // 10MB — skip corrupt/oversized inbox files
+export const MAX_INBOX_FILE_BYTES = 10 * 1024 * 1024; // 10MB — skip corrupt/oversized inbox files
 const INBOX_READ_CONCURRENCY = process.platform === 'win32' ? 4 : 12;
 const INBOX_FILE_CACHE_MAX_ENTRIES = 64;
 const INBOX_FILE_CACHE_MAX_BYTES = 32 * 1024 * 1024;
@@ -101,22 +101,26 @@ function isMessageAfterCursor(message: InboxMessage, cursor: InboxMessageCursor 
   return requireInboxMessageId(message).localeCompare(cursor.messageId) > 0;
 }
 
-function addInboxSourceRevisionMessage(
+function buildInboxSourceRevisionEntry(message: InboxMessage): string {
+  return JSON.stringify([
+    requireInboxMessageId(message),
+    message.timestamp ?? '',
+    message.from ?? '',
+    message.to ?? '',
+    message.source ?? '',
+    message.text ?? '',
+  ]);
+}
+
+function addInboxSourceRevisionEntries(
   hash: ReturnType<typeof createHash>,
-  message: InboxMessage
+  entries: string[]
 ): void {
-  hash.update(requireInboxMessageId(message));
-  hash.update('\0');
-  hash.update(message.timestamp ?? '');
-  hash.update('\0');
-  hash.update(message.from ?? '');
-  hash.update('\0');
-  hash.update(message.to ?? '');
-  hash.update('\0');
-  hash.update(message.source ?? '');
-  hash.update('\0');
-  hash.update(message.text ?? '');
-  hash.update('\n');
+  entries.sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
+  for (const entry of entries) {
+    hash.update(entry);
+    hash.update('\n');
+  }
 }
 
 function normalizeInboxMessageItem(item: unknown): InboxMessage | null {
@@ -591,6 +595,7 @@ export class TeamInboxReader {
     const inboxPath = path.join(getTeamsBasePath(), teamName, 'inboxes', `${member}.json`);
     const limit = Math.max(1, Math.floor(options.limit));
     const sourceRevisionHash = createHash('sha256');
+    const sourceRevisionEntries: string[] = [];
     let raw: string;
 
     try {
@@ -648,7 +653,7 @@ export class TeamInboxReader {
       }
       sourceMessageCount += 1;
       if (!isTeamInternalControlMessageEnvelope(message)) {
-        addInboxSourceRevisionMessage(sourceRevisionHash, message);
+        sourceRevisionEntries.push(buildInboxSourceRevisionEntry(message));
       }
       if (isMessageAfterCursor(message, options.cursor ?? null)) {
         windowMessages.push(message);
@@ -661,6 +666,7 @@ export class TeamInboxReader {
     });
 
     if (!parsed) {
+      addInboxSourceRevisionEntries(sourceRevisionHash, sourceRevisionEntries);
       sourceRevisionHash.update('parse-error\n');
       return {
         messages: [],
@@ -675,6 +681,7 @@ export class TeamInboxReader {
       truncated = true;
       windowMessages = windowMessages.slice(0, limit);
     }
+    addInboxSourceRevisionEntries(sourceRevisionHash, sourceRevisionEntries);
 
     return {
       messages: windowMessages,
@@ -691,6 +698,7 @@ export class TeamInboxReader {
   ): InboxMessagesWindow {
     const limit = Math.max(1, Math.floor(options.limit));
     const sourceRevisionHash = createHash('sha256');
+    const sourceRevisionEntries: string[] = [];
     let truncated = false;
     let windowMessages: InboxMessage[] = [];
 
@@ -699,7 +707,7 @@ export class TeamInboxReader {
         message.to = member;
       }
       if (!isTeamInternalControlMessageEnvelope(message)) {
-        addInboxSourceRevisionMessage(sourceRevisionHash, message);
+        sourceRevisionEntries.push(buildInboxSourceRevisionEntry(message));
       }
       if (isMessageAfterCursor(message, options.cursor ?? null)) {
         windowMessages.push(message);
@@ -716,6 +724,7 @@ export class TeamInboxReader {
       truncated = true;
       windowMessages = windowMessages.slice(0, limit);
     }
+    addInboxSourceRevisionEntries(sourceRevisionHash, sourceRevisionEntries);
 
     return {
       messages: windowMessages,

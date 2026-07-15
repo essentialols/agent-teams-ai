@@ -90,6 +90,74 @@ describe("Codex project admission snapshot", () => {
     }
   });
 
+  it("admits only the verified input-patch target through its self debt", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-admitted-patch-start-"));
+    const workspacePath = join(root, "worktrees", "project-remediation");
+    let activeWriterRisk = "dirty_workspace_without_worker";
+    try {
+      await mkdir(workspacePath, { recursive: true });
+      const deps: CodexProjectAdmissionDeps = {
+        listJobs: async () => [{
+          jobId: "project-remediation",
+          tags: ["worker-role-producer"],
+          taskId: "project-remediation",
+          workspacePath,
+          promptPath: join(root, "remediation.md"),
+          accountNames: ["account-a"],
+          updatedAt: "2026-07-15T00:00:00.000Z",
+          manifestPath: join(root, "remediation.json"),
+        }],
+        buildOverviewItems: async () => [{
+          ok: true,
+          jobId: "project-remediation",
+          workspacePath,
+          workspaceDirty: true,
+          workerAlive: activeWriterRisk === "active_worker",
+          activeWriterRisk,
+          activeWriterRiskReasons: [activeWriterRisk],
+          lifecycleMarkerTypes: [],
+        }],
+      };
+      const gate = codexProjectAdmissionGate({
+        registryRootDir: join(root, "registry"),
+        scope: { projectId: "project", jobIdPrefixes: ["project-"] },
+        deps,
+        admittedInputPatchStart: {
+          jobId: "project-remediation",
+          workspacePath,
+        },
+      });
+
+      await expect(gate.evaluate({
+        operation: ProjectOperation.StartWorker,
+        jobId: "project-remediation",
+        workerRole: ProjectAdmissionWorkerRole.Producer,
+        workspacePath,
+      })).resolves.toMatchObject({ allowed: true, debt: [] });
+      await expect(gate.evaluate({
+        operation: ProjectOperation.StartWorker,
+        jobId: "project-other",
+        workerRole: ProjectAdmissionWorkerRole.Producer,
+        workspacePath,
+      })).resolves.toMatchObject({ allowed: false });
+
+      activeWriterRisk = "active_worker";
+      await expect(gate.evaluate({
+        operation: ProjectOperation.StartWorker,
+        jobId: "project-remediation",
+        workerRole: ProjectAdmissionWorkerRole.Producer,
+        workspacePath,
+      })).resolves.toMatchObject({
+        allowed: false,
+        debt: [expect.objectContaining({
+          reason: ProjectDebtReason.ActiveWriterConflict,
+        })],
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("keeps shared-worktree review markers separate from terminal job ledgers", async () => {
     const root = await mkdtemp(join(tmpdir(), "subscription-runtime-shared-review-admission-"));
     const sharedWorkspace = join(root, "worktrees", "project-producer-v1");

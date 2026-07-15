@@ -493,6 +493,9 @@ export async function projectControlRefillWorkerView(
             scope: controller.scope,
             startLaunch: reservedLaunch,
             startManifest: manifest,
+            ...(producerInputPatch
+              ? { startAdmissionWorkspaceMode: "admitted_input_patch" as const }
+              : {}),
             startWorkspaceLease: workspace,
             startSkipDoctor: booleanValue(args.skipDoctor) ?? false,
           });

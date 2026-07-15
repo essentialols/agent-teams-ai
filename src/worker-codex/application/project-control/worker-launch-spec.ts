@@ -168,7 +168,8 @@ function addWorkerLaunchCrossFieldIssues(context: {
 }): void {
   if (
     context.value.inputPatchHash === null &&
-    (context.value.reviewKind !== "implementation" ||
+    (context.value.reviewKind !== "implementation" &&
+      context.value.reviewKind !== "review" ||
       ("revision" in context.value && context.value.revision !== 0) ||
       ("retryCount" in context.value && context.value.retryCount !== 0) ||
       ("supersedes" in context.value && context.value.supersedes !== null))

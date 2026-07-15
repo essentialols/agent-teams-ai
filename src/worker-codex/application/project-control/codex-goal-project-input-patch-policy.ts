@@ -30,7 +30,8 @@ export function assertProjectInputPatchContract(input: {
   if (input.contract.inputPatchHash !== null) return;
   if (
     !input.builtin ||
-    input.contract.reviewKind !== "implementation" ||
+    (input.contract.reviewKind !== "implementation" &&
+      input.contract.reviewKind !== "review") ||
     input.contract.revision !== 0 ||
     input.contract.retryCount !== 0 ||
     input.contract.supersedes !== null

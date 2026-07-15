@@ -20,17 +20,17 @@ describe("worker launch spec", () => {
     });
   });
 
-  it("represents only a clean first implementation without an input patch", () => {
+  it("represents clean first implementations and canonical reviews without an input patch", () => {
     expect(parseWorkerLaunchRequest({
       ...workerLaunchRequest(),
       inputPatchHash: null,
     })).toMatchObject({ inputPatchHash: null, reviewKind: "implementation" });
 
-    expect(() => parseWorkerLaunchRequest({
+    expect(parseWorkerLaunchRequest({
       ...workerLaunchRequest(),
       inputPatchHash: null,
       reviewKind: "review",
-    })).toThrow("contract_inputPatchHash_null_invalid");
+    })).toMatchObject({ inputPatchHash: null, reviewKind: "review" });
     expect(() => parseWorkerLaunchSpec({
       ...workerLaunchSpec(),
       inputPatchHash: null,
@@ -38,7 +38,6 @@ describe("worker launch spec", () => {
     })).toThrow("contract_inputPatchHash_null_invalid");
 
     for (const record of [
-      { ...workerLaunchStateRecord(), inputPatchHash: null, reviewKind: "review" },
       { ...workerLaunchStateRecord(), inputPatchHash: null, reviewKind: "remediation" },
       { ...workerLaunchStateRecord(), inputPatchHash: null, revision: 1 },
     ]) {
@@ -49,6 +48,17 @@ describe("worker launch spec", () => {
         records: [record],
       })).toThrow("contract_inputPatchHash_null_invalid");
     }
+
+    expect(parseWorkerLaunchState({
+      schemaVersion: 1,
+      maxRetries: 0,
+      maxInFlight: 1,
+      records: [{
+        ...workerLaunchStateRecord(),
+        inputPatchHash: null,
+        reviewKind: "review",
+      }],
+    }).records[0]).toMatchObject({ inputPatchHash: null, reviewKind: "review" });
   });
 
   it("rejects version-family aliases and future formats fail closed", () => {

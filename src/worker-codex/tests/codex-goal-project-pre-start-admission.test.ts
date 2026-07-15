@@ -503,6 +503,30 @@ describe("builtin project pre-start admission", () => {
     })).resolves.toBeUndefined();
   });
 
+  it("accepts a clean builtin canonical review and validates its launch binding", async () => {
+    const fixture = await createBuiltinFixture();
+    const contract = withWorkKey({
+      ...fixture.contract,
+      inputPatchHash: null,
+      reviewKind: "review",
+    });
+    const plan = fixture.plan({ contract });
+    const manifest = {
+      ...fixture.storedManifest,
+      projectPreStartAdmission: plan.descriptor,
+    };
+
+    await prepareBuiltin(fixture, { contract });
+    await validateStoredProjectPreStartAdmission({
+      manifest,
+      scope: fixture.scope,
+    });
+    await expect(assertProjectPreStartAdmissionLaunchBinding({
+      manifest,
+      scope: fixture.scope,
+    })).resolves.toBeUndefined();
+  });
+
   it("keeps null input patches out of external and remediation admission", async () => {
     const external = await createFixture();
     const externalContract = {

@@ -28,7 +28,7 @@ const baseURL = process.env.NUXT_APP_BASE_URL || "/";
 const basePrefixedDocsPath = `${baseURL.replace(/\/?$/, "/")}docs`;
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const defaultSeoTitle = "Agent Teams - AI Agent Orchestration for Developers";
-const defaultSeoDescription = "Free, open-source desktop app for AI agent teams. Start with a free model with no auth, then connect Claude, Codex, or OpenCode when you need more models.";
+const defaultSeoDescription = "Free, open-source desktop app for AI agent teams across Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, and Kiro.";
 const defaultSeoImage = `${siteUrl.replace(/\/+$/, "")}/og-image-agent-teams-v6.png`;
 const robots = process.env.NUXT_PUBLIC_ROBOTS || "noindex, nofollow";
 

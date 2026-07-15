@@ -65,6 +65,9 @@ describe('TeamProvisioningOpenCodeDiagnosticsPolicy', () => {
     expect(hasStaleOpenCodeDiagnostics(['model not found in live OpenCode catalog'])).toBe(false);
     expect(hasRealOpenCodeFailureDiagnostic('provider unavailable: quota exceeded')).toBe(true);
     expect(
+      hasRealOpenCodeFailureDiagnostic("cursor-acp error: You've hit your Cursor usage limit")
+    ).toBe(true);
+    expect(
       hasRealOpenCodeLaunchDiagnostic(
         makeMember({ runtimeDiagnostic: 'OpenCode bridge reported member launch failure' })
       )
@@ -123,6 +126,22 @@ describe('TeamProvisioningOpenCodeDiagnosticsPolicy', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('promotes Cursor quota above persisted readiness noise', () => {
+    const cursorQuota = "cursor-acp error: You've hit your Cursor usage limit";
+    const member = makeMember({
+      hardFailureReason: 'model_unavailable',
+      diagnostics: [
+        'OpenCode command timed out after 10000ms',
+        'CLI-authenticated providers missing from live host (github-copilot)',
+        'OpenCode session status busy',
+        'opencode_app_mcp_tool_proof_persisted_cache_hit',
+        cursorQuota,
+      ],
+    });
+
+    expect(selectOpenCodePersistedFailureReasonFromDiagnostics(member)).toBe(cursorQuota);
   });
 
   it('filters stale overlay diagnostics and recognizes file lock timeouts', () => {

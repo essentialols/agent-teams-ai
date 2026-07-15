@@ -49,12 +49,12 @@
     {
       "id": "whatIsIt",
       "question": "Agent Teams la gi?",
-      "answer": "Ung dung desktop de dieu phoi cac doi agent AI voi lop dieu phoi cuc bo rieng. Agent co vai tro, lam viec tu chu, cong tac qua bang kanban va co the chay voi Claude, Codex hoac OpenCode."
+      "answer": "Ung dung desktop de dieu phoi cac doi agent AI voi lop dieu phoi cuc bo rieng. Agent co vai tro, lam viec tu chu, cong tac qua bang kanban va co the chay voi Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro."
     },
     {
       "id": "isFree",
       "question": "Co that su mien phi khong?",
-      "answer": "Co. Ung dung mien phi va ma nguon mo, ban co the bat dau voi model mien phi khong can xac thuc - khong dang ky, khong API key, khong can the tin dung. Neu can them model, ket noi Claude, Codex, OpenCode/OpenRouter hoac provider duoc ho tro."
+      "answer": "Co. Ung dung mien phi va ma nguon mo, ban co the bat dau voi model mien phi khong can xac thuc - khong dang ky, khong API key, khong can the tin dung. Neu can them model, ket noi Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro hoac provider duoc ho tro."
     },
     {
       "id": "platforms",
@@ -129,7 +129,7 @@
       "features": [
         "Model mien phi khong can xac thuc cho lan chay dau",
         "Khong can tai khoan hoac dang nhap provider de thu",
-        "Tuy chon ket noi Claude, Codex va OpenCode",
+        "Tuy chon ket noi Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro",
         "Khong gioi han doi agent",
         "Kanban cap nhat thoi gian thuc",
         "Review code voi diff",

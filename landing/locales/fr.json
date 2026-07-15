@@ -86,7 +86,7 @@
   },
   "pricing": {
     "sectionTitle": "Installation gratuite. Modèle gratuit inclus.",
-    "sectionSubtitle": "Commencez immédiatement avec un modèle gratuit sans authentification - sans compte, clé API ni carte bancaire. Connectez Claude, Codex, OpenCode/OpenRouter ou un autre provider seulement si vous voulez plus de modèles.",
+    "sectionSubtitle": "Commencez immédiatement avec un modèle gratuit sans authentification - sans compte, clé API ni carte bancaire. Connectez Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro ou un autre provider seulement si vous voulez plus de modèles.",
     "getStarted": "Télécharger",
     "popular": "Gratuit",
     "freeModelCallout": "Modèle gratuit sans authentification inclus",
@@ -159,9 +159,9 @@
   },
   "meta": {
     "homeTitle": "Agent Teams - Orchestration d'agents IA pour développeurs",
-    "homeDescription": "Application desktop gratuite et open source pour équipes d'agents IA. Commencez avec un modèle gratuit sans authentification, puis connectez Claude, Codex ou OpenCode si besoin.",
+    "homeDescription": "Application desktop gratuite et open source pour équipes d'agents IA. Commencez avec un modèle gratuit sans authentification, puis connectez Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro si besoin.",
     "downloadTitle": "Télécharger Agent Teams pour macOS, Windows et Linux",
-    "downloadDescription": "Téléchargez Agent Teams pour macOS, Windows et Linux. Application desktop gratuite et open source pour équipes d'agents Claude, Codex et OpenCode."
+    "downloadDescription": "Téléchargez Agent Teams pour macOS, Windows et Linux. Application desktop gratuite et open source pour équipes d'agents Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro."
   },
   "error": {
     "notFoundTitle": "Page introuvable",

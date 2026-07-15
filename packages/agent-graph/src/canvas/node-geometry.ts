@@ -32,7 +32,6 @@ function getAdaptiveTeamCardSize(node: GraphNode): GraphNodeVisualSize {
     height: TEAM_CARD_HEIGHT,
   };
 }
-
 export function getGraphNodeCardSize(node: GraphNode): GraphNodeVisualSize | null {
   switch (node.visualVariant) {
     case 'organization':

@@ -86,7 +86,7 @@
   },
   "pricing": {
     "sectionTitle": "ติดตั้งฟรี มาพร้อมโมเดลฟรี",
-    "sectionSubtitle": "เริ่มได้ทันทีด้วยโมเดลฟรีที่ไม่ต้องยืนยันตัวตน - ไม่ต้องมีบัญชี, API key หรือบัตรเครดิต เชื่อมต่อ Claude, Codex, OpenCode/OpenRouter หรือผู้ให้บริการอื่นเมื่อคุณต้องการโมเดลเพิ่มเติม",
+    "sectionSubtitle": "เริ่มได้ทันทีด้วยโมเดลฟรีที่ไม่ต้องยืนยันตัวตน - ไม่ต้องมีบัญชี, API key หรือบัตรเครดิต เชื่อมต่อ Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro หรือผู้ให้บริการอื่นเมื่อคุณต้องการโมเดลเพิ่มเติม",
     "getStarted": "ดาวน์โหลดเลย",
     "popular": "ฟรี",
     "freeModelCallout": "มาพร้อมโมเดลฟรีที่ไม่ต้องยืนยันตัวตน",
@@ -159,9 +159,9 @@
   },
   "meta": {
     "homeTitle": "Agent Teams - การจัดการทีมเอเจนต์ AI สำหรับนักพัฒนา",
-    "homeDescription": "แอปเดสก์ท็อปโอเพนซอร์สฟรีสำหรับทีมเอเจนต์ AI เริ่มต้นด้วยโมเดลฟรีที่ไม่ต้องยืนยันตัวตน จากนั้นเชื่อมต่อ Claude, Codex หรือ OpenCode เมื่อคุณต้องการโมเดลเพิ่มเติม",
+    "homeDescription": "แอปเดสก์ท็อปโอเพนซอร์สฟรีสำหรับทีมเอเจนต์ AI เริ่มต้นด้วยโมเดลฟรีที่ไม่ต้องยืนยันตัวตน จากนั้นเชื่อมต่อ Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro เมื่อคุณต้องการโมเดลเพิ่มเติม",
     "downloadTitle": "ดาวน์โหลด Agent Teams สำหรับ macOS, Windows และ Linux",
-    "downloadDescription": "ดาวน์โหลด Agent Teams สำหรับ macOS, Windows และ Linux แอปเดสก์ท็อปโอเพนซอร์สฟรีสำหรับทีมเอเจนต์ Claude, Codex และ OpenCode"
+    "downloadDescription": "ดาวน์โหลด Agent Teams สำหรับ macOS, Windows และ Linux แอปเดสก์ท็อปโอเพนซอร์สฟรีสำหรับทีมเอเจนต์ Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro"
   },
   "error": {
     "notFoundTitle": "ไม่พบหน้านี้",

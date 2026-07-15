@@ -86,7 +86,7 @@
   },
   "pricing": {
     "sectionTitle": "Percuma untuk dipasang. Model percuma disertakan.",
-    "sectionSubtitle": "Mula serta-merta dengan model percuma tanpa pengesahan - tiada akaun, kunci API, atau kad kredit. Sambungkan Claude, Codex, OpenCode/OpenRouter, atau akses pembekal lain hanya apabila anda mahukan lebih banyak model.",
+    "sectionSubtitle": "Mula serta-merta dengan model percuma tanpa pengesahan - tiada akaun, kunci API, atau kad kredit. Sambungkan Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro, atau akses pembekal lain hanya apabila anda mahukan lebih banyak model.",
     "getStarted": "Muat Turun Sekarang",
     "popular": "Percuma",
     "freeModelCallout": "Model percuma tanpa pengesahan disertakan",
@@ -159,9 +159,9 @@
   },
   "meta": {
     "homeTitle": "Agent Teams - Orkestrasi Agen AI untuk Pembangun",
-    "homeDescription": "Aplikasi desktop sumber terbuka percuma untuk pasukan agen AI. Mulakan dengan model percuma tanpa pengesahan, kemudian sambungkan Claude, Codex, atau OpenCode apabila anda perlukan lebih banyak model.",
+    "homeDescription": "Aplikasi desktop sumber terbuka percuma untuk pasukan agen AI. Mulakan dengan model percuma tanpa pengesahan, kemudian sambungkan Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro apabila anda perlukan lebih banyak model.",
     "downloadTitle": "Muat turun Agent Teams untuk macOS, Windows, dan Linux",
-    "downloadDescription": "Muat turun Agent Teams untuk macOS, Windows, dan Linux. Aplikasi desktop sumber terbuka percuma untuk pasukan agen Claude, Codex, dan OpenCode."
+    "downloadDescription": "Muat turun Agent Teams untuk macOS, Windows, dan Linux. Aplikasi desktop sumber terbuka percuma untuk pasukan agen Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro."
   },
   "error": {
     "notFoundTitle": "Halaman tidak ditemui",

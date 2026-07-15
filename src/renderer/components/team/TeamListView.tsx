@@ -474,11 +474,11 @@ const ActiveTeamCard = ({
         ) : team.partialLaunchFailure || team.teamLaunchState === 'partial_failure' ? (
           <p className="mt-2 text-[11px] text-amber-400">
             {team.missingMembers?.length
-              ? t('list.partial.stoppedWithCount', {
-                  count: team.missingMembers.length,
+              ? t('detail.offline.partialMissing', {
+                  missing: team.missingMembers.length,
                   expected: team.expectedMemberCount ?? team.missingMembers.length,
                 })
-              : t('list.partial.stopped')}
+              : t('detail.offline.partialFailed')}
           </p>
         ) : team.teamLaunchState === 'partial_skipped' ? (
           <p className="mt-2 text-[11px] text-sky-300">

@@ -1,4 +1,5 @@
 import {
+  addModelCatalogLaunchModels,
   extractJsonObjectFromCli,
   filterOutSettingsPathArgs,
   hasAuthoritativeCodexLaunchCatalog,
@@ -32,6 +33,54 @@ describe('TeamProvisioningRuntimeLaunchSelection', () => {
         models: [' gpt-5.5 ', { id: 'gpt-5.5-mini' }, { label: 'missing id' }, ''],
       })
     ).toEqual(new Set(['gpt-5.5', 'gpt-5.5-mini']));
+  });
+
+  it('does not expose hidden catalog models as valid launch selections', () => {
+    const modelIds = new Set<string>();
+    addModelCatalogLaunchModels(modelIds, {
+      schemaVersion: 1,
+      providerId: 'opencode',
+      source: 'static-fallback',
+      status: 'ready',
+      fetchedAt: '2026-07-13T00:00:00.000Z',
+      staleAt: '2026-07-13T00:10:00.000Z',
+      defaultModelId: 'xai/grok-code-fast-1',
+      defaultLaunchModel: 'xai/grok-code-fast-1',
+      models: [
+        {
+          id: 'xai/grok-code-fast-1',
+          launchModel: 'xai/grok-code-fast-1',
+          displayName: 'grok-code-fast-1',
+          hidden: false,
+          supportedReasoningEfforts: [],
+          defaultReasoningEffort: null,
+          inputModalities: ['text'],
+          supportsPersonality: false,
+          isDefault: true,
+          upgrade: false,
+          source: 'static-fallback',
+        },
+        {
+          id: 'xai/grok-imagine-image-quality',
+          launchModel: 'xai/grok-imagine-image-quality',
+          displayName: 'grok-imagine-image-quality',
+          hidden: true,
+          supportedReasoningEfforts: [],
+          defaultReasoningEffort: null,
+          inputModalities: ['text'],
+          supportsPersonality: false,
+          isDefault: false,
+          upgrade: false,
+          source: 'static-fallback',
+        },
+      ],
+      diagnostics: {
+        configReadState: 'ready',
+        appServerState: 'healthy',
+      },
+    });
+
+    expect(modelIds).toEqual(new Set(['xai/grok-code-fast-1']));
   });
 
   it('deduplicates selected model checks by model and effort', () => {

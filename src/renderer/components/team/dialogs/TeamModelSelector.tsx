@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import {
   CodexRuntimeUpdateDialog,
@@ -195,6 +195,15 @@ function getCuratedOpenCodeProviderTab(
     return { sourceId: normalizedSourceId, label: 'Xiaomi MiMo' };
   }
   return null;
+}
+
+function getRestorableOpenCodeSourceId(providerId: TeamProviderId, model: string): string | null {
+  if (providerId !== 'opencode') {
+    return null;
+  }
+
+  const sourceId = parseOpenCodeQualifiedModelRef(model)?.sourceId ?? null;
+  return sourceId && getCuratedOpenCodeProviderTab(sourceId) ? sourceId : null;
 }
 
 function getOpenCodeSourceInfo(model: string): OpenCodeSourceInfo | null {
@@ -904,19 +913,22 @@ export const TeamModelSelector: React.FC<TeamModelSelectorProps> = ({
 }) => {
   const { t } = useAppTranslation('team');
   const multimodelEnabled = useStore((s) => s.appConfig?.general?.multimodelEnabled ?? true);
+  const selectedProviderId =
+    disableGeminiOption && isGeminiUiFrozen() && providerId === 'gemini' ? 'anthropic' : providerId;
   const [recommendedOnly, setRecommendedOnly] = useState(false);
   const [freeOnly, setFreeOnly] = useState(false);
   const [modelQuery, setModelQuery] = useState('');
   const [openCodeSourceFilterOpen, setOpenCodeSourceFilterOpen] = useState(false);
   const [openCodeSourceQuery, setOpenCodeSourceQuery] = useState('');
-  const [selectedOpenCodeSourceIds, setSelectedOpenCodeSourceIds] = useState<Set<string>>(
-    () => new Set()
-  );
-  const selectedProviderId =
-    disableGeminiOption && isGeminiUiFrozen() && providerId === 'gemini' ? 'anthropic' : providerId;
+  const [selectedOpenCodeSourceIds, setSelectedOpenCodeSourceIds] = useState<Set<string>>(() => {
+    const sourceId = getRestorableOpenCodeSourceId(selectedProviderId, value);
+    return sourceId ? new Set([sourceId]) : new Set();
+  });
   const [inspectedProviderId, setInspectedProviderId] = useState<TeamProviderId | null>(null);
+  const providerTabsListRef = useRef<HTMLDivElement | null>(null);
   const previousEffectiveProviderIdRef = useRef<TeamProviderId>(selectedProviderId);
   const previousSelectedProviderIdRef = useRef<TeamProviderId>(selectedProviderId);
+  const previousModelSelectionRef = useRef({ providerId: selectedProviderId, value });
   const catalogHydrationRequestedRef = useRef<Set<TeamProviderId>>(new Set());
   const effectiveProviderId = inspectedProviderId ?? selectedProviderId;
   const isInspectingInactiveProvider = inspectedProviderId !== null;
@@ -1272,6 +1284,15 @@ export const TeamModelSelector: React.FC<TeamModelSelectorProps> = ({
     () => new Map(openCodeModelMetadata.map((metadata) => [metadata.option.value, metadata])),
     [openCodeModelMetadata]
   );
+  const availableOpenCodeSourceIds = useMemo(
+    () =>
+      new Set(
+        openCodeModelMetadata
+          .map((metadata) => metadata.sourceInfo?.id ?? null)
+          .filter((sourceId): sourceId is string => Boolean(sourceId))
+      ),
+    [openCodeModelMetadata]
+  );
   const hasRecommendedOpenCodeModels = useMemo(
     () => openCodeModelMetadata.some((metadata) => metadata.isRecommended),
     [openCodeModelMetadata]
@@ -1288,6 +1309,32 @@ export const TeamModelSelector: React.FC<TeamModelSelectorProps> = ({
     previousSelectedProviderIdRef.current = selectedProviderId;
     setInspectedProviderId(null);
   }, [selectedProviderId]);
+
+  useEffect(() => {
+    const previousSelection = previousModelSelectionRef.current;
+    if (previousSelection.providerId === selectedProviderId && previousSelection.value === value) {
+      return;
+    }
+    previousModelSelectionRef.current = { providerId: selectedProviderId, value };
+
+    if (selectedProviderId !== 'opencode') {
+      return;
+    }
+
+    const sourceId = getRestorableOpenCodeSourceId(selectedProviderId, value);
+    if (sourceId) {
+      setSelectedOpenCodeSourceIds((previous) =>
+        previous.size === 1 && previous.has(sourceId) ? previous : new Set([sourceId])
+      );
+      return;
+    }
+
+    // Keep the tab the user just opened while its model selection is still empty.
+    // A concrete non-curated route belongs to the general OpenCode tab.
+    if (value.trim()) {
+      setSelectedOpenCodeSourceIds(new Set());
+    }
+  }, [selectedProviderId, value]);
 
   useEffect(() => {
     if (recommendedOnly && (effectiveProviderId !== 'opencode' || !hasRecommendedOpenCodeModels)) {
@@ -1363,18 +1410,32 @@ export const TeamModelSelector: React.FC<TeamModelSelectorProps> = ({
   }, [effectiveProviderId, freeOnly, openCodeModelMetadata, recommendedOnly]);
 
   useEffect(() => {
-    if (selectedOpenCodeSourceIds.size === 0) {
+    if (
+      selectedOpenCodeSourceIds.size === 0 ||
+      effectiveProviderId !== 'opencode' ||
+      providerModelCatalogLoading ||
+      shouldAwaitRuntimeModelList ||
+      isOpenCodeCatalogHydrating(runtimeProviderStatus)
+    ) {
       return;
     }
 
-    const availableSourceIds = new Set(openCodeSourceOptions.map((source) => source.id));
     const nextSelectedSourceIds = new Set(
-      Array.from(selectedOpenCodeSourceIds).filter((sourceId) => availableSourceIds.has(sourceId))
+      Array.from(selectedOpenCodeSourceIds).filter((sourceId) =>
+        availableOpenCodeSourceIds.has(sourceId)
+      )
     );
     if (nextSelectedSourceIds.size !== selectedOpenCodeSourceIds.size) {
       setSelectedOpenCodeSourceIds(nextSelectedSourceIds);
     }
-  }, [openCodeSourceOptions, selectedOpenCodeSourceIds]);
+  }, [
+    availableOpenCodeSourceIds,
+    effectiveProviderId,
+    providerModelCatalogLoading,
+    runtimeProviderStatus,
+    selectedOpenCodeSourceIds,
+    shouldAwaitRuntimeModelList,
+  ]);
 
   const filteredOpenCodeSourceOptions = useMemo(() => {
     const query = openCodeSourceQuery.trim().toLowerCase();
@@ -1893,6 +1954,27 @@ export const TeamModelSelector: React.FC<TeamModelSelectorProps> = ({
       ? selectedOpenCodeSourceTab.id
       : effectiveProviderId;
 
+  useLayoutEffect(() => {
+    const tabsList = providerTabsListRef.current;
+    const activeTab = tabsList?.querySelector<HTMLElement>('[role="tab"][data-state="active"]');
+    if (!tabsList || !activeTab) {
+      return;
+    }
+
+    const tabsListRect = tabsList.getBoundingClientRect();
+    const activeTabRect = activeTab.getBoundingClientRect();
+    if (activeTabRect.left >= tabsListRect.left && activeTabRect.right <= tabsListRect.right) {
+      return;
+    }
+
+    const activeTabCenter =
+      activeTabRect.left - tabsListRect.left + tabsList.scrollLeft + activeTabRect.width / 2;
+    tabsList.scrollTo({
+      left: Math.max(0, activeTabCenter - tabsList.clientWidth / 2),
+      behavior: 'auto',
+    });
+  }, [activeProviderTabId, openCodeProviderTabs.length]);
+
   return (
     <div className="mb-5">
       <Label htmlFor={id} className="label-optional mb-1.5 block">
@@ -1938,7 +2020,11 @@ export const TeamModelSelector: React.FC<TeamModelSelectorProps> = ({
       >
         <div className="space-y-0">
           <div className="-mb-px border-b border-[var(--color-border-subtle)]">
-            <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-none bg-transparent p-0">
+            <TabsList
+              ref={providerTabsListRef}
+              data-testid="team-model-selector-provider-tabs"
+              className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-none bg-transparent p-0"
+            >
               {PROVIDERS.map((provider) => {
                 const providerDisabledReason = getProviderDisabledReason(provider.id);
                 const providerSelectable = isProviderSelectable(provider.id);

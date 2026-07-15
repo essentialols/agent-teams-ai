@@ -49,12 +49,12 @@
     {
       "id": "whatIsIt",
       "question": "Agent Teams nedir?",
-      "answer": "Yerel koordinasyon katmanimizla AI ajan ekiplerini yoneten bir masaustu uygulamasi. Ajanlar rollere sahiptir, otonom calisir, kanban panosu uzerinden is birligi yapar ve Claude, Codex ya da OpenCode ile calisabilir."
+      "answer": "Yerel koordinasyon katmanimizla AI ajan ekiplerini yoneten bir masaustu uygulamasi. Ajanlar rollere sahiptir, otonom calisir, kanban panosu uzerinden is birligi yapar ve Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro ile calisabilir."
     },
     {
       "id": "isFree",
       "question": "Gercekten ucretsiz mi?",
-      "answer": "Evet. Uygulama ucretsiz ve acik kaynaklidir. Kimlik dogrulama gerektirmeyen ucretsiz modelle baslayabilirsin - kayit, API anahtari veya kredi karti yok. Daha fazla model icin Claude, Codex, OpenCode/OpenRouter veya baska bir desteklenen provider bagla."
+      "answer": "Evet. Uygulama ucretsiz ve acik kaynaklidir. Kimlik dogrulama gerektirmeyen ucretsiz modelle baslayabilirsin - kayit, API anahtari veya kredi karti yok. Daha fazla model icin Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro veya baska bir desteklenen provider bagla."
     },
     {
       "id": "platforms",
@@ -129,7 +129,7 @@
       "features": [
         "Ilk calistirmalar icin kimlik dogrulamasiz ucretsiz model",
         "Denemek icin hesap veya provider girisi gerekmez",
-        "Claude, Codex ve OpenCode erisimi opsiyonel",
+        "Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro erisimi opsiyonel",
         "Sinirsiz ajan ekibi",
         "Gercek zamanli kanban panosu",
         "Diff gorunumlu kod inceleme",

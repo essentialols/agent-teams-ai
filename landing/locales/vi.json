@@ -86,7 +86,7 @@
   },
   "pricing": {
     "sectionTitle": "Cài đặt miễn phí. Bao gồm mô hình miễn phí.",
-    "sectionSubtitle": "Bắt đầu ngay lập tức với một mô hình miễn phí không cần xác thực - không cần tài khoản, API key hay thẻ tín dụng. Kết nối Claude, Codex, OpenCode/OpenRouter hoặc nhà cung cấp khác chỉ khi bạn muốn thêm mô hình.",
+    "sectionSubtitle": "Bắt đầu ngay lập tức với một mô hình miễn phí không cần xác thực - không cần tài khoản, API key hay thẻ tín dụng. Kết nối Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro hoặc nhà cung cấp khác chỉ khi bạn muốn thêm mô hình.",
     "getStarted": "Tải xuống ngay",
     "popular": "Miễn phí",
     "freeModelCallout": "Bao gồm mô hình miễn phí không cần xác thực",
@@ -159,9 +159,9 @@
   },
   "meta": {
     "homeTitle": "Agent Teams - Điều phối agent AI cho lập trình viên",
-    "homeDescription": "Ứng dụng máy tính mã nguồn mở miễn phí cho các đội ngũ agent AI. Bắt đầu với một mô hình miễn phí không cần xác thực, rồi kết nối Claude, Codex hoặc OpenCode khi bạn cần thêm mô hình.",
+    "homeDescription": "Ứng dụng máy tính mã nguồn mở miễn phí cho các đội ngũ agent AI. Bắt đầu với một mô hình miễn phí không cần xác thực, rồi kết nối Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro khi bạn cần thêm mô hình.",
     "downloadTitle": "Tải Agent Teams cho macOS, Windows và Linux",
-    "downloadDescription": "Tải Agent Teams cho macOS, Windows và Linux. Ứng dụng máy tính mã nguồn mở miễn phí cho các đội ngũ agent Claude, Codex và OpenCode."
+    "downloadDescription": "Tải Agent Teams cho macOS, Windows và Linux. Ứng dụng máy tính mã nguồn mở miễn phí cho các đội ngũ agent Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro."
   },
   "error": {
     "notFoundTitle": "Không tìm thấy trang",

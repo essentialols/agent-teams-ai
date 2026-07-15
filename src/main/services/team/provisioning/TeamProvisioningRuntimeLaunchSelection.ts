@@ -281,6 +281,9 @@ export function addModelCatalogLaunchModels(
   catalog: CliProviderModelCatalog
 ): void {
   for (const model of catalog.models ?? []) {
+    if (model.hidden) {
+      continue;
+    }
     const launchModel = model.launchModel?.trim();
     if (launchModel) {
       modelIds.add(launchModel);

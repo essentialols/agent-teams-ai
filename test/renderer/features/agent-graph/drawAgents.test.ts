@@ -119,7 +119,6 @@ describe('drawAgents', () => {
     expect(longCard?.width).toBeGreaterThan(shortCard!.width);
     expect(longCard?.width).toBeLessThanOrEqual(340);
   });
-
   it('renders hierarchy cards with semantic text detail across zoom levels', () => {
     const node: GraphNode = {
       id: 'team:alpha',

@@ -86,7 +86,7 @@
   },
   "pricing": {
     "sectionTitle": "Kurulumu ücretsiz. Ücretsiz model dahil.",
-    "sectionSubtitle": "Kimlik doğrulaması olmayan ücretsiz bir modelle hemen başlayın - hesap, API anahtarı veya kredi kartı gerekmez. Daha fazla model istediğinizde Claude, Codex, OpenCode/OpenRouter veya diğer sağlayıcı erişimini bağlayın.",
+    "sectionSubtitle": "Kimlik doğrulaması olmayan ücretsiz bir modelle hemen başlayın - hesap, API anahtarı veya kredi kartı gerekmez. Daha fazla model istediğinizde Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro veya diğer sağlayıcı erişimini bağlayın.",
     "getStarted": "Şimdi İndir",
     "popular": "Ücretsiz",
     "freeModelCallout": "Kimlik doğrulaması olmayan ücretsiz model dahil",
@@ -159,9 +159,9 @@
   },
   "meta": {
     "homeTitle": "Agent Teams - Geliştiriciler için Yapay Zeka Agent Orkestrasyonu",
-    "homeDescription": "Yapay zeka agent ekipleri için ücretsiz, açık kaynaklı masaüstü uygulaması. Kimlik doğrulaması olmayan ücretsiz bir modelle başlayın, ardından daha fazla modele ihtiyaç duyduğunuzda Claude, Codex veya OpenCode'u bağlayın.",
+    "homeDescription": "Yapay zeka agent ekipleri için ücretsiz, açık kaynaklı masaüstü uygulaması. Kimlik doğrulaması olmayan ücretsiz bir modelle başlayın, ardından daha fazla modele ihtiyaç duyduğunuzda Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro'u bağlayın.",
     "downloadTitle": "macOS, Windows ve Linux için Agent Teams'i indirin",
-    "downloadDescription": "macOS, Windows ve Linux için Agent Teams'i indirin. Claude, Codex ve OpenCode agent ekipleri için ücretsiz açık kaynaklı masaüstü uygulaması."
+    "downloadDescription": "macOS, Windows ve Linux için Agent Teams'i indirin. Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro agent ekipleri için ücretsiz açık kaynaklı masaüstü uygulaması."
   },
   "error": {
     "notFoundTitle": "Sayfa bulunamadı",

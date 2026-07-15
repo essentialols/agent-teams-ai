@@ -208,7 +208,7 @@ export const usePageSeo = (titleKey: string, descriptionKey: string, options: Pa
         { name: "googlebot", content: options.robots || "index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" },
         { property: "og:locale", content: ogLocale },
         ...ogAlternateLocales.map((content) => ({ property: "og:locale:alternate", content })),
-        { name: "keywords", content: "claude code, agent teams, AI agents, kanban board, code review, multi-agent orchestration, desktop app, free, open source" }
+        { name: "keywords", content: "claude code, codex, opencode, cursor, supergrok, github copilot, z.ai, minimax, kiro, agent teams, AI agents, kanban board, code review, multi-agent orchestration, desktop app, free, open source" }
       ],
       script: jsonLd.map((item) => ({
         type: "application/ld+json",

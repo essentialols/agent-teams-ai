@@ -11,7 +11,9 @@ import {
 import type { RuntimeProviderManagementDirectoryResponse } from '../../../../src/features/runtime-provider-management/contracts';
 import type { ElectronAPI } from '../../../../src/shared/types/api';
 
-function directoryResponse(): RuntimeProviderManagementDirectoryResponse {
+function directoryResponse(
+  providerId = 'zai-coding-plan'
+): RuntimeProviderManagementDirectoryResponse {
   return {
     schemaVersion: 1,
     runtimeId: 'opencode',
@@ -26,8 +28,8 @@ function directoryResponse(): RuntimeProviderManagementDirectoryResponse {
       nextCursor: null,
       entries: [
         {
-          providerId: 'zai-coding-plan',
-          displayName: 'Z.AI Coding Plan',
+          providerId,
+          displayName: providerId,
           state: 'available',
           connectedAuthHint: null,
           setupKind: 'connect-api-key',
@@ -94,7 +96,10 @@ describe('useRuntimeProviderQuickConnect', () => {
     current = null;
   });
 
-  it('loads the lightweight provider summary once after a short startup defer', async () => {
+  it('loads a lightweight summary before silently reconciling it with the live host', async () => {
+    loadProviderDirectory
+      .mockResolvedValueOnce(directoryResponse('zai-coding-plan'))
+      .mockResolvedValueOnce(directoryResponse('github-copilot'));
     await act(async () => root.render(React.createElement(Harness)));
     expect(loadProviderDirectory).not.toHaveBeenCalled();
 
@@ -115,6 +120,23 @@ describe('useRuntimeProviderQuickConnect', () => {
     });
     expect(current?.loaded).toBe(true);
     expect(current?.entries[0]?.providerId).toBe('zai-coding-plan');
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_000);
+    });
+
+    expect(loadProviderDirectory).toHaveBeenCalledTimes(2);
+    expect(loadProviderDirectory.mock.calls[1]?.[0]).toEqual({
+      runtimeId: 'opencode',
+      summary: false,
+      projectPath: '/tmp/test-project',
+      query: null,
+      filter: 'all',
+      limit: 250,
+      cursor: null,
+      refresh: false,
+    });
+    expect(current?.entries[0]?.providerId).toBe('github-copilot');
   });
 
   it('does not query OpenCode while the prerequisite is unavailable', async () => {
@@ -137,7 +159,11 @@ describe('useRuntimeProviderQuickConnect', () => {
     });
 
     expect(loadProviderDirectory).toHaveBeenCalledTimes(2);
-    expect(loadProviderDirectory.mock.calls[1]?.[0]).toMatchObject({ refresh: true });
+    expect(loadProviderDirectory.mock.calls[1]?.[0]).toMatchObject({
+      summary: false,
+      limit: 250,
+      refresh: true,
+    });
   });
 
   it('surfaces directory errors without discarding the last successful entries', async () => {
@@ -158,5 +184,24 @@ describe('useRuntimeProviderQuickConnect', () => {
 
     expect(current?.error).toBe('OpenCode probe failed');
     expect(current?.entries[0]?.providerId).toBe('zai-coding-plan');
+  });
+
+  it('keeps the fast snapshot when the delayed live reconciliation is unavailable', async () => {
+    loadProviderDirectory
+      .mockResolvedValueOnce(directoryResponse('github-copilot'))
+      .mockResolvedValueOnce({
+        schemaVersion: 1,
+        runtimeId: 'opencode',
+        error: { code: 'runtime-unhealthy', message: 'OpenCode host is starting', recoverable: true },
+      });
+
+    await act(async () => root.render(React.createElement(Harness)));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_200);
+    });
+
+    expect(loadProviderDirectory).toHaveBeenCalledTimes(2);
+    expect(current?.entries[0]?.providerId).toBe('github-copilot');
+    expect(current?.error).toBeNull();
   });
 });

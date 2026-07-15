@@ -2533,29 +2533,112 @@ controller.messages.sendMessage({
     expect(leadBriefing).toContain('anomalies=1');
   });
 
-  it('rejects payload and file task identity mismatches before an update can fork the row', async () => {
+  it('keeps a mismatched legacy task listable, gettable, and mutable by its file id', async () => {
     const claudeDir = makeClaudeDir();
     const controller = createController({ teamName: 'my-team', claudeDir });
-    const task = controller.taskBoard.createTask({ subject: 'Stable identity' });
+    const task = controller.taskBoard.createTask({ subject: 'Legacy mismatch' });
     const taskPath = path.join(claudeDir, 'tasks', 'my-team', `${task.id}.json`);
     const foreignTaskId = '11111111-1111-4111-8111-111111111111';
     const persistedTask = readTaskFile(claudeDir, task.id);
     persistedTask.id = foreignTaskId;
     fs.writeFileSync(taskPath, JSON.stringify(persistedTask, null, 2), 'utf8');
 
-    expect(() =>
-      controller.taskBoard.updateTaskFields(task.id, { description: 'must not fork' })
-    ).toThrow(`Task id "${foreignTaskId}" does not match file name "${task.id}"`);
+    expect(controller.taskBoard.listTasks().map((listedTask) => listedTask.id)).toContain(task.id);
+    expect(controller.taskBoard.getTask(task.id)).toMatchObject({
+      id: task.id,
+      subject: 'Legacy mismatch',
+    });
+    expect(() => controller.taskBoard.getTask(foreignTaskId)).toThrow(
+      `Non-canonical task reference "${foreignTaskId}"`
+    );
+
+    const updated = controller.taskBoard.updateTaskFields(task.id, {
+      description: 'Updated without forking the row',
+    });
+    expect(updated).toMatchObject({
+      id: task.id,
+      description: 'Updated without forking the row',
+    });
+    expect(controller.taskBoard.startTask(task.id, 'bob')).toMatchObject({
+      id: task.id,
+      status: 'in_progress',
+    });
+
+    expect(readTaskFile(claudeDir, task.id)).toMatchObject({
+      id: foreignTaskId,
+      description: 'Updated without forking the row',
+      status: 'in_progress',
+    });
     expect(fs.existsSync(path.join(claudeDir, 'tasks', 'my-team', `${foreignTaskId}.json`))).toBe(
       false
     );
+    expect(() =>
+      controller.taskBoard.createTask({ id: foreignTaskId, subject: 'Duplicate identity' })
+    ).toThrow(`Task id collision: "${foreignTaskId}"`);
 
     const leadBriefing = await controller.taskBoard.leadBriefing();
     expect(leadBriefing).toContain('Board anomalies:');
-    expect(leadBriefing).toContain(`unreadable_task (${foreignTaskId})`);
-    expect(leadBriefing).toContain(
-      `Task id "${foreignTaskId}" does not match file name "${task.id}"`
+    expect(leadBriefing).toContain(`task_id_mismatch (${task.id})`);
+    expect(leadBriefing).toContain(`contains id "${foreignTaskId}"`);
+    expect(leadBriefing).toContain(`use canonical task id "${task.id}"`);
+  });
+
+  it('fails closed when a mismatched payload id collides with another task file', async () => {
+    const claudeDir = makeClaudeDir();
+    const controller = createController({ teamName: 'my-team', claudeDir });
+    const mismatched = controller.taskBoard.createTask({ subject: 'Mismatched collision' });
+    const canonical = controller.taskBoard.createTask({ subject: 'Canonical collision target' });
+    const mismatchedPath = path.join(claudeDir, 'tasks', 'my-team', `${mismatched.id}.json`);
+    const mismatchedPayload = readTaskFile(claudeDir, mismatched.id);
+    mismatchedPayload.id = canonical.id;
+    fs.writeFileSync(mismatchedPath, JSON.stringify(mismatchedPayload, null, 2), 'utf8');
+    const beforeMismatched = fs.readFileSync(mismatchedPath, 'utf8');
+    const canonicalPath = path.join(claudeDir, 'tasks', 'my-team', `${canonical.id}.json`);
+    const beforeCanonical = fs.readFileSync(canonicalPath, 'utf8');
+
+    expect(controller.taskBoard.listTasks().map((taskRow) => taskRow.id)).toEqual(
+      expect.arrayContaining([mismatched.id, canonical.id])
     );
+    expect(() => controller.taskBoard.getTask(mismatched.id)).toThrow('Task identity collision');
+    expect(() =>
+      controller.taskBoard.updateTaskFields(mismatched.id, { description: 'wrong row' })
+    ).toThrow('Task identity collision');
+    expect(() =>
+      controller.taskBoard.updateTaskFields(canonical.id, { description: 'also unsafe' })
+    ).toThrow('Task identity collision');
+    expect(fs.readFileSync(mismatchedPath, 'utf8')).toBe(beforeMismatched);
+    expect(fs.readFileSync(canonicalPath, 'utf8')).toBe(beforeCanonical);
+
+    const leadBriefing = await controller.taskBoard.leadBriefing();
+    expect(leadBriefing).toContain(`task_id_mismatch (${mismatched.id})`);
+    expect(leadBriefing).toContain(`task_id_collision (${canonical.id})`);
+    expect(leadBriefing).toContain(`"${mismatched.id}.json"`);
+    expect(leadBriefing).toContain(`"${canonical.id}.json"`);
+  });
+
+  it('rejects ambiguous display-id mutations without changing either task file', () => {
+    const claudeDir = makeClaudeDir();
+    const controller = createController({ teamName: 'my-team', claudeDir });
+    const first = controller.taskBoard.createTask({ subject: 'First ambiguous task' });
+    const second = controller.taskBoard.createTask({ subject: 'Second ambiguous task' });
+    const taskPaths = [first.id, second.id].map((taskId) =>
+      path.join(claudeDir, 'tasks', 'my-team', `${taskId}.json`)
+    );
+
+    for (const taskPath of taskPaths) {
+      const payload = JSON.parse(fs.readFileSync(taskPath, 'utf8'));
+      payload.displayId = 'legacy-shared';
+      fs.writeFileSync(taskPath, JSON.stringify(payload, null, 2), 'utf8');
+    }
+    const before = taskPaths.map((taskPath) => fs.readFileSync(taskPath, 'utf8'));
+
+    expect(() => controller.taskBoard.getTask('legacy-shared')).toThrow(
+      'Ambiguous task reference "legacy-shared"'
+    );
+    expect(() =>
+      controller.taskBoard.updateTaskFields('legacy-shared', { description: 'wrong row' })
+    ).toThrow('Ambiguous task reference "legacy-shared"');
+    expect(taskPaths.map((taskPath) => fs.readFileSync(taskPath, 'utf8'))).toEqual(before);
   });
 
   it('caps large member briefings and points agents to drill-down tools', async () => {

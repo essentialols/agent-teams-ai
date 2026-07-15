@@ -7,6 +7,7 @@ const reviewStateHelpers = require('./reviewState.js');
 const TASK_STATUSES = new Set(['pending', 'in_progress', 'completed', 'deleted']);
 const UUID_TASK_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const TASK_STORAGE_IDENTITY = Symbol('taskStorageIdentity');
 
 function nowIso() {
   return new Date().toISOString();
@@ -42,22 +43,32 @@ function deriveDisplayId(taskId) {
   return looksLikeCanonicalTaskId(normalized) ? normalized.slice(0, 8).toLowerCase() : normalized;
 }
 
+function getPersistedTaskId(rawTask) {
+  return typeof rawTask?.id === 'string' || typeof rawTask?.id === 'number'
+    ? String(rawTask.id)
+    : '';
+}
+
+function attachTaskStorageIdentity(task, identity) {
+  Object.defineProperty(task, TASK_STORAGE_IDENTITY, {
+    configurable: false,
+    enumerable: false,
+    value: identity,
+    writable: false,
+  });
+  return task;
+}
+
 function normalizeTask(rawTask, filePath) {
   if (!rawTask || typeof rawTask !== 'object') {
     throw new Error(`Invalid task payload${filePath ? `: ${filePath}` : ''}`);
   }
 
-  const id =
-    typeof rawTask.id === 'string' || typeof rawTask.id === 'number' ? String(rawTask.id) : '';
-  if (!id) {
+  const persistedTaskId = getPersistedTaskId(rawTask);
+  if (!persistedTaskId) {
     throw new Error(`Task is missing id${filePath ? `: ${filePath}` : ''}`);
   }
-  if (filePath) {
-    const fileTaskId = path.basename(filePath, '.json');
-    if (id !== fileTaskId) {
-      throw new Error(`Task id "${id}" does not match file name "${fileTaskId}": ${filePath}`);
-    }
-  }
+  const id = filePath ? path.basename(filePath, '.json') : persistedTaskId;
 
   const task = {
     ...rawTask,
@@ -76,7 +87,13 @@ function normalizeTask(rawTask, filePath) {
   }
   task.status = String(task.status).trim();
 
-  return task;
+  return filePath
+    ? attachTaskStorageIdentity(task, {
+        canonicalTaskId: id,
+        persistedTaskId,
+        filePath,
+      })
+    : task;
 }
 
 function normalizeTaskReviewState(value) {
@@ -99,11 +116,11 @@ function normalizeCreationCommand(value) {
   return { namespace, scopeKey, operation, commandId, payloadHash };
 }
 
-function listTaskRows(paths, options = {}) {
+function scanTaskRows(paths) {
   ensureDir(paths.tasksDir);
   const entries = fs.readdirSync(paths.tasksDir);
-  const includeDeleted = options.includeDeleted === true;
-  const tasks = [];
+  const rows = [];
+  const identityRows = [];
   const anomalies = [];
 
   for (const fileName of entries) {
@@ -123,16 +140,29 @@ function listTaskRows(paths, options = {}) {
     }
     if (!rawTask) continue;
     if (rawTask.metadata && rawTask.metadata._internal === true) continue;
+    const canonicalTaskId = path.basename(fileName, '.json');
+    const persistedTaskId = getPersistedTaskId(rawTask);
+    if (persistedTaskId) {
+      identityRows.push({ canonicalTaskId, persistedTaskId, filePath });
+      if (persistedTaskId !== canonicalTaskId) {
+        anomalies.push({
+          code: 'task_id_mismatch',
+          taskId: canonicalTaskId,
+          filePath,
+          detail: `Task file "${canonicalTaskId}.json" contains id "${persistedTaskId}"; use canonical task id "${canonicalTaskId}" for lookup and mutation.`,
+        });
+      }
+    }
     try {
       const task = normalizeTask(rawTask, filePath);
-      if (includeDeleted || task.status !== 'deleted') {
-        tasks.push(task);
-      }
+      rows.push({
+        canonicalTaskId: task.id,
+        persistedTaskId,
+        filePath,
+        task,
+      });
     } catch (error) {
-      const taskId =
-        typeof rawTask?.id === 'string' || typeof rawTask?.id === 'number'
-          ? String(rawTask.id)
-          : path.basename(fileName, '.json');
+      const taskId = getPersistedTaskId(rawTask) || path.basename(fileName, '.json');
       anomalies.push({
         code: 'unreadable_task',
         taskId,
@@ -142,6 +172,35 @@ function listTaskRows(paths, options = {}) {
     }
   }
 
+  const identityClaims = new Map();
+  for (const row of identityRows) {
+    for (const claimedId of new Set([row.canonicalTaskId, row.persistedTaskId])) {
+      const claimants = identityClaims.get(claimedId) || [];
+      claimants.push(row);
+      identityClaims.set(claimedId, claimants);
+    }
+  }
+
+  const collidingTaskIds = new Set();
+  for (const [claimedId, claimants] of identityClaims) {
+    if (claimants.length < 2) continue;
+    const canonicalTaskIds = claimants.map((row) => row.canonicalTaskId).sort();
+    for (const taskId of canonicalTaskIds) {
+      collidingTaskIds.add(taskId);
+    }
+    anomalies.push({
+      code: 'task_id_collision',
+      taskId: claimedId,
+      detail: `Task identity "${claimedId}" is claimed by multiple files: ${canonicalTaskIds
+        .map((taskId) => `"${taskId}.json"`)
+        .join(', ')}.`,
+    });
+  }
+
+  return { rows, identityRows, anomalies, collidingTaskIds };
+}
+
+function sortTasks(tasks) {
   tasks.sort((a, b) => {
     const byDisplay = String(a.displayId || a.id).localeCompare(
       String(b.displayId || b.id),
@@ -157,7 +216,15 @@ function listTaskRows(paths, options = {}) {
       sensitivity: 'base',
     });
   });
+}
 
+function listTaskRows(paths, options = {}) {
+  const includeDeleted = options.includeDeleted === true;
+  const { rows, anomalies } = scanTaskRows(paths);
+  const tasks = rows
+    .map((row) => row.task)
+    .filter((task) => includeDeleted || task.status !== 'deleted');
+  sortTasks(tasks);
   return { tasks, anomalies };
 }
 
@@ -169,7 +236,14 @@ function listTasks(paths, options = {}) {
   return listTaskRows(paths, options).tasks;
 }
 
-function resolveTaskRef(paths, taskRef, options = {}) {
+function assertTaskRowHasUnambiguousIdentity(scan, row, taskRef) {
+  if (!scan.collidingTaskIds.has(row.canonicalTaskId)) return;
+  throw new Error(
+    `Task identity collision for "${String(taskRef)}": canonical task file "${row.canonicalTaskId}.json" shares an identity with another task file`
+  );
+}
+
+function resolveTaskRow(paths, taskRef, options = {}) {
   const normalizedRef = String(taskRef || '')
     .trim()
     .replace(/^#/, '');
@@ -178,41 +252,55 @@ function resolveTaskRef(paths, taskRef, options = {}) {
   }
 
   const includeDeleted = options.includeDeleted === true;
+  const scan = scanTaskRows(paths);
+  const exact = scan.rows.find((row) => row.canonicalTaskId === normalizedRef);
 
-  // Fast path: if taskRef looks like a canonical UUID, try direct file read first
-  if (looksLikeCanonicalTaskId(normalizedRef)) {
-    const taskPath = getTaskPath(paths, normalizedRef);
-    const rawTask = readJson(taskPath, null);
-    if (rawTask && (includeDeleted || rawTask.status !== 'deleted')) {
-      return normalizedRef;
+  if (exact) {
+    if (!includeDeleted && exact.task.status === 'deleted') {
+      throw new Error(`Task not found: ${normalizedRef}`);
     }
+    assertTaskRowHasUnambiguousIdentity(scan, exact, normalizedRef);
+    return exact;
   }
 
-  // Fallback: scan all tasks for displayId match or non-UUID refs
-  const tasks = listRawTasks(paths);
-  const exact = tasks.find((task) => task.id === normalizedRef);
-  if (exact && (includeDeleted || exact.status !== 'deleted')) {
-    return exact.id;
-  }
-
-  const byDisplay = tasks.find(
-    (task) => task.displayId === normalizedRef && (includeDeleted || task.status !== 'deleted')
+  const nonCanonicalIdentityClaims = scan.identityRows.filter(
+    (row) => row.persistedTaskId !== row.canonicalTaskId && row.persistedTaskId === normalizedRef
   );
-  if (byDisplay) {
-    return byDisplay.id;
+  if (nonCanonicalIdentityClaims.length > 0) {
+    throw new Error(
+      `Non-canonical task reference "${normalizedRef}" is persisted in ${nonCanonicalIdentityClaims
+        .map((row) => `"${row.canonicalTaskId}.json"`)
+        .sort()
+        .join(', ')}; use the canonical file task id instead`
+    );
+  }
+
+  const byDisplay = scan.rows.filter(
+    (row) =>
+      row.task.displayId === normalizedRef && (includeDeleted || row.task.status !== 'deleted')
+  );
+  if (byDisplay.length > 1) {
+    throw new Error(
+      `Ambiguous task reference "${normalizedRef}" matches task files: ${byDisplay
+        .map((row) => `"${row.canonicalTaskId}.json"`)
+        .sort()
+        .join(', ')}`
+    );
+  }
+  if (byDisplay.length === 1) {
+    assertTaskRowHasUnambiguousIdentity(scan, byDisplay[0], normalizedRef);
+    return byDisplay[0];
   }
 
   throw new Error(`Task not found: ${normalizedRef}`);
 }
 
+function resolveTaskRef(paths, taskRef, options = {}) {
+  return resolveTaskRow(paths, taskRef, options).canonicalTaskId;
+}
+
 function readTask(paths, taskRef, options = {}) {
-  const taskId = resolveTaskRef(paths, taskRef, options);
-  const taskPath = getTaskPath(paths, taskId);
-  const rawTask = readJson(taskPath, null);
-  if (!rawTask) {
-    throw new Error(`Task not found: ${String(taskRef)}`);
-  }
-  return normalizeTask(rawTask, taskPath);
+  return resolveTaskRow(paths, taskRef, options).task;
 }
 
 function appendHistoryEvent(events, event) {
@@ -340,7 +428,30 @@ function wouldCreateBlockCycle(paths, sourceId, targetId) {
 }
 
 function writeTask(paths, task) {
-  writeJson(getTaskPath(paths, task.id), task);
+  const storageIdentity = task[TASK_STORAGE_IDENTITY];
+  const canonicalTaskId = storageIdentity?.canonicalTaskId || String(task.id);
+  const persistedTaskId = storageIdentity?.persistedTaskId || canonicalTaskId;
+  if (String(task.id) !== canonicalTaskId) {
+    throw new Error(
+      `Task id is immutable: canonical task file "${canonicalTaskId}.json" cannot be written as "${String(task.id)}.json"`
+    );
+  }
+  const persistedTask =
+    persistedTaskId === canonicalTaskId ? task : { ...task, id: persistedTaskId };
+  writeJson(getTaskPath(paths, canonicalTaskId), persistedTask);
+}
+
+function assertTaskIdIsAvailable(paths, canonicalTaskId) {
+  const claimedRows = scanTaskRows(paths).identityRows.filter(
+    (row) => row.canonicalTaskId === canonicalTaskId || row.persistedTaskId === canonicalTaskId
+  );
+  if (claimedRows.length === 0) return;
+  throw new Error(
+    `Task id collision: "${canonicalTaskId}" is already claimed by ${claimedRows
+      .map((row) => `"${row.canonicalTaskId}.json"`)
+      .sort()
+      .join(', ')}`
+  );
 }
 
 function createTask(paths, input = {}) {
@@ -350,6 +461,7 @@ function createTask(paths, input = {}) {
   if (fs.existsSync(getTaskPath(paths, canonicalId))) {
     throw new Error(`Task already exists: ${canonicalId}`);
   }
+  assertTaskIdIsAvailable(paths, canonicalId);
   const creationCommand = input.creationCommand
     ? normalizeCreationCommand(input.creationCommand)
     : undefined;
@@ -548,7 +660,17 @@ function assertLegacyTaskMatchesCreationInput(task, input) {
 
 function updateTask(paths, taskRef, updater, options = {}) {
   const existingTask = readTask(paths, taskRef, { includeDeleted: true });
-  const nextTask = normalizeTask(updater({ ...existingTask }) || existingTask);
+  const updatedTask = updater({ ...existingTask }) || existingTask;
+  if (String(updatedTask.id) !== existingTask.id) {
+    throw new Error(
+      `Task id is immutable: canonical task file "${existingTask.id}.json" cannot be changed to "${String(updatedTask.id)}"`
+    );
+  }
+  const nextTask = normalizeTask(updatedTask);
+  const storageIdentity = existingTask[TASK_STORAGE_IDENTITY];
+  if (storageIdentity) {
+    attachTaskStorageIdentity(nextTask, storageIdentity);
+  }
   nextTask.updatedAt = nowIso();
   writeTask(paths, nextTask);
   return nextTask;

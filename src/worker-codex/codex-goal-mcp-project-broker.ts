@@ -333,13 +333,6 @@ function codexProjectControlPorts(
         const status = await collectCodexGoalStatus(
           statusInput(input.stopLaunch),
         );
-        const progressStale =
-          status.progressHeartbeatAgeMs !== undefined &&
-          status.progressHeartbeatAgeMs > 10 * 60_000;
-        const workerLiveness = resolveCodexGoalWorkerLiveness({
-          status,
-          progressStale,
-        });
         const brief = await buildCodexGoalBrief({
           jobId: input.stopLaunch.config.taskId,
           launch: input.stopLaunch,
@@ -348,15 +341,7 @@ function codexProjectControlPorts(
           staleAfterMs: 10 * 60_000,
           tailLines: 20,
         });
-        const stopPolicy = decideCodexGoalProjectStop({
-          workerAlive: workerLiveness.alive,
-          silentStale: brief.silentStale,
-          heartbeatOnlyNoOutput: brief.heartbeatOnlyNoOutput,
-          freshProgressAlive: workerLiveness.freshProgressAlive,
-          progressCpuActive: status.progressCpuActive,
-          appServerProcessAlive: status.appServerProcessAlive,
-          recommendedAction: status.recommendedAction,
-        });
+        const stopPolicy = decideCodexGoalProjectStop(brief.workerHealth);
         if (!stopPolicy.allowed) {
           throw new Error(stopPolicy.reason);
         }

@@ -20,6 +20,9 @@ export type CodexGoalProcessSnapshot = {
   readonly supervisorCommand?: string;
   readonly appServerAlive?: boolean;
   readonly appServerPid?: number;
+  readonly workloadProcessAlive?: boolean;
+  readonly workloadProcessPid?: number;
+  readonly workloadProcessCommand?: string;
 };
 
 export async function readCodexGoalProcessSnapshotRows(): Promise<
@@ -53,7 +56,10 @@ export async function inspectCodexGoalProcessSnapshot(
       summary.command !== undefined ||
       summary.supervisorCommand !== undefined ||
       summary.appServerAlive !== undefined ||
-      summary.appServerPid !== undefined
+      summary.appServerPid !== undefined ||
+      summary.workloadProcessAlive !== undefined ||
+      summary.workloadProcessPid !== undefined ||
+      summary.workloadProcessCommand !== undefined
     ) {
       return summary;
     }
@@ -115,6 +121,19 @@ function redactProcessSnapshot(
     ...(summary.appServerPid === undefined
       ? {}
       : { appServerPid: summary.appServerPid }),
+    ...(summary.workloadProcessAlive === undefined
+      ? {}
+      : { workloadProcessAlive: summary.workloadProcessAlive }),
+    ...(summary.workloadProcessPid === undefined
+      ? {}
+      : { workloadProcessPid: summary.workloadProcessPid }),
+    ...(summary.workloadProcessCommand === undefined
+      ? {}
+      : {
+          workloadProcessCommand: redactStatusText(
+            summary.workloadProcessCommand,
+          ),
+        }),
   };
 }
 
@@ -144,6 +163,18 @@ export function summarizeCodexGoalProcessTree(
   const commandRow = bestProcessCommandRow(activeRows.length > 0 ? activeRows : treeRows);
   const supervisorCommand = treeRows[0]?.command;
   const appServerRow = treeRows.find((row) => isCodexAppServerCommand(row.command));
+  const infrastructurePids = appServerRow === undefined
+    ? undefined
+    : codexInfrastructureProcessIds(appServerRow, rowsByParent);
+  const workloadRows = appServerRow === undefined
+    ? undefined
+    : processDescendants(appServerRow.pid, rowsByParent).filter(
+      (row) => !infrastructurePids?.has(row.pid),
+    );
+  const workloadCommandRow =
+    workloadRows === undefined || workloadRows.length === 0
+      ? undefined
+      : bestProcessCommandRow(workloadRows);
   return {
     alive: true,
     cpuActive: activeRows.length > 0 || totalCpu > processCpuActiveThreshold,
@@ -151,13 +182,64 @@ export function summarizeCodexGoalProcessTree(
     ...(supervisorCommand ? { supervisorCommand } : {}),
     appServerAlive: appServerRow !== undefined,
     ...(appServerRow ? { appServerPid: appServerRow.pid } : {}),
+    ...(workloadRows === undefined
+      ? {}
+      : { workloadProcessAlive: workloadRows.length > 0 }),
+    ...(workloadCommandRow === undefined
+      ? {}
+      : { workloadProcessPid: workloadCommandRow.pid }),
+    ...(workloadCommandRow?.command
+      ? { workloadProcessCommand: workloadCommandRow.command }
+      : {}),
   };
+}
+
+function processDescendants(
+  rootPid: number,
+  rowsByParent: ReadonlyMap<number, readonly CodexGoalProcessSnapshotRow[]>,
+): readonly CodexGoalProcessSnapshotRow[] {
+  const descendants: CodexGoalProcessSnapshotRow[] = [];
+  const queue = [...(rowsByParent.get(rootPid) ?? [])];
+  const seen = new Set<number>();
+  while (queue.length > 0) {
+    const row = queue.shift();
+    if (!row || seen.has(row.pid)) continue;
+    seen.add(row.pid);
+    descendants.push(row);
+    queue.push(...(rowsByParent.get(row.pid) ?? []));
+  }
+  return descendants;
 }
 
 function isCodexAppServerCommand(command: string): boolean {
   return /\bcodex\b[\s\S]*\bapp-server\b[\s\S]*--listen[\s\S]*stdio:\/\//.test(
     command,
   );
+}
+
+function codexInfrastructureProcessIds(
+  appServerRow: CodexGoalProcessSnapshotRow,
+  rowsByParent: ReadonlyMap<number, readonly CodexGoalProcessSnapshotRow[]>,
+): ReadonlySet<number> {
+  const infrastructurePids = new Set<number>([appServerRow.pid]);
+  const appServerQueue = [appServerRow.pid];
+  while (appServerQueue.length > 0) {
+    const parentPid = appServerQueue.shift();
+    if (parentPid === undefined) continue;
+    for (const child of rowsByParent.get(parentPid) ?? []) {
+      if (isCodexAppServerCommand(child.command)) {
+        infrastructurePids.add(child.pid);
+        appServerQueue.push(child.pid);
+      } else if (isCodexCodeModeHostExecutable(child.command)) {
+        infrastructurePids.add(child.pid);
+      }
+    }
+  }
+  return infrastructurePids;
+}
+
+function isCodexCodeModeHostExecutable(command: string): boolean {
+  return /^(?:\S*\/)?codex-code-mode-host(?:\s|$)/.test(command.trimStart());
 }
 
 function parseProcessSnapshotRows(

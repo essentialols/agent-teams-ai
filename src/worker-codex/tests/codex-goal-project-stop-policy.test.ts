@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import {
   AccessBoundary,
   NetworkAccessMode,
+  type WorkerHealthSnapshot,
 } from "@vioxen/subscription-runtime/worker-core";
 import { createCodexGoalMcpServer } from "../codex-goal-mcp";
 import {
@@ -23,32 +24,22 @@ const execFileAsync = promisify(execFile);
 
 describe("project worker stop policy", () => {
   it.each([
-    { workerAlive: false, silentStale: false, heartbeatOnlyNoOutput: false },
-    { workerAlive: true, silentStale: true, heartbeatOnlyNoOutput: false },
-    { workerAlive: true, silentStale: false, heartbeatOnlyNoOutput: true },
+    { alive: false, silentStale: false, heartbeatOnlyNoOutput: false },
+    { alive: true, silentStale: true, heartbeatOnlyNoOutput: false },
+    { alive: true, silentStale: false, heartbeatOnlyNoOutput: true },
   ])("allows only terminalizable worker evidence: %o", (evidence) => {
     expect(
-      decideCodexGoalProjectStop({
-        ...evidence,
-        freshProgressAlive: false,
-        progressCpuActive: false,
-        appServerProcessAlive: false,
-        recommendedAction: undefined,
-      }),
+      decideCodexGoalProjectStop(workerHealth(evidence)),
     ).toEqual({ allowed: true });
   });
 
   it("denies an alive worker even when no positive health signal is available", () => {
     expect(
-      decideCodexGoalProjectStop({
-        workerAlive: true,
+      decideCodexGoalProjectStop(workerHealth({
+        alive: true,
         silentStale: false,
         heartbeatOnlyNoOutput: false,
-        freshProgressAlive: false,
-        progressCpuActive: undefined,
-        appServerProcessAlive: undefined,
-        recommendedAction: undefined,
-      }),
+      })),
     ).toMatchObject({
       allowed: false,
       reason: "project_control_fresh_worker_stop_denied",
@@ -196,3 +187,27 @@ describe("project worker stop policy", () => {
     }
   });
 });
+
+function workerHealth(
+  overrides: Partial<WorkerHealthSnapshot> = {},
+): WorkerHealthSnapshot {
+  return {
+    alive: true,
+    freshProgressAlive: true,
+    stale: false,
+    silentStale: false,
+    heartbeatOnlyNoOutput: false,
+    blocked: true,
+    safeToContinue: false,
+    liveness: "alive",
+    progressFreshness: "fresh",
+    activeWriterRisk: {
+      kind: "active_worker",
+      risky: true,
+      reasons: ["worker_alive"],
+    },
+    reasons: ["worker_alive"],
+    evidence: [],
+    ...overrides,
+  };
+}

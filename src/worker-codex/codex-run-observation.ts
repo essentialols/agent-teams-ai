@@ -44,11 +44,11 @@ import {
   type CodexGoalStatus,
 } from "./codex-goal-ops";
 import { codexGoalProgressPath } from "./codex-goal-runner";
+import { isCodexGoalHeartbeatOnlyNoOutput } from "./application/codex-goal-decision";
 
 const defaultAuthRoot = "~/.cache/subscription-runtime/live-codex-auth";
 const defaultStaleAfterMs = 10 * 60_000;
 const defaultTailLines = 20;
-const heartbeatOnlyNoOutputAfterMs = 2 * 60_000;
 
 export type CodexRunObservationAdapterOptions = {
   readonly registryRootDir?: string;
@@ -130,11 +130,9 @@ export class CodexRunObservationAdapter implements RunObservationPort {
       status,
       progressStale,
     });
-    const heartbeatOnlyNoOutput = isHeartbeatOnlyNoOutput({
+    const heartbeatOnlyNoOutput = isCodexGoalHeartbeatOnlyNoOutput({
       status,
-      progressStale,
-      logUpdatedAgeMs,
-      workerAlive: workerLiveness.alive,
+      staleAfterMs: this.staleAfterMs,
     });
     const silentStale = Boolean(workerLiveness.alive && progressStale);
     if (workerLiveness.alive && logStale) {
@@ -601,30 +599,6 @@ function codexManualReviewReasons(
     return [status.recommendedAction];
   }
   return [];
-}
-
-function isHeartbeatOnlyNoOutput(input: {
-  readonly status: CodexGoalStatus;
-  readonly progressStale: boolean;
-  readonly logUpdatedAgeMs?: number | undefined;
-  readonly workerAlive: boolean;
-}): boolean {
-  const status = input.status;
-  const noOutputAgeMs = input.logUpdatedAgeMs ?? status.progressHeartbeatAgeMs;
-  return Boolean(
-    input.workerAlive &&
-      status.progressExists &&
-      status.progressStatus === "running" &&
-      !input.progressStale &&
-      status.appServerProcessAlive !== true &&
-      status.progressCpuActive !== true &&
-      noOutputAgeMs !== undefined &&
-      noOutputAgeMs >= heartbeatOnlyNoOutputAfterMs &&
-      status.resultExists === false &&
-      (status.logExists === false || status.logByteLength === 0) &&
-      status.workspaceDirty === false &&
-      (status.changedFiles ?? []).length === 0,
-  );
 }
 
 async function safeWorkspaceKey(workspacePath: string): Promise<string> {

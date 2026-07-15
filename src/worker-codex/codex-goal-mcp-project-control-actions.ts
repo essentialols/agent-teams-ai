@@ -755,27 +755,12 @@ export async function projectControlStopStoredJobView(
     staleAfterMs: 10 * 60_000,
     tailLines: 20,
   });
-  const progressStale =
-    status.progressHeartbeatAgeMs !== undefined &&
-    status.progressHeartbeatAgeMs > 10 * 60_000;
-  const workerLiveness = resolveCodexGoalWorkerLiveness({
-    status,
-    progressStale,
-  });
   const stopCommandPreview = loaded.launch.tmuxSession
     ? buildCodexGoalStopTmuxCommand(loaded.launch.tmuxSession).preview
     : status.progressPid === undefined
       ? "no direct process pid"
       : `kill -TERM ${status.progressPid}`;
-  const stopPolicy = decideCodexGoalProjectStop({
-    workerAlive: workerLiveness.alive,
-    silentStale: brief.silentStale,
-    heartbeatOnlyNoOutput: brief.heartbeatOnlyNoOutput,
-    freshProgressAlive: workerLiveness.freshProgressAlive,
-    progressCpuActive: status.progressCpuActive,
-    appServerProcessAlive: status.appServerProcessAlive,
-    recommendedAction: status.recommendedAction,
-  });
+  const stopPolicy = decideCodexGoalProjectStop(brief.workerHealth);
   if (!stopPolicy.allowed) {
     return {
       ok: false,

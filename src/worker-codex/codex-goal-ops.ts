@@ -141,6 +141,9 @@ export type CodexGoalStatus = {
   readonly progressCommand?: string;
   readonly appServerProcessAlive?: boolean;
   readonly appServerProcessPid?: number;
+  readonly workloadProcessAlive?: boolean;
+  readonly workloadProcessPid?: number;
+  readonly workloadProcessCommand?: string;
   readonly progressResultStatus?: string;
   readonly progressResultReason?: string;
   readonly progressAttemptCount?: number;
@@ -477,6 +480,15 @@ export async function collectCodexGoalStatus(
     ...(progressProcess.appServerPid === undefined
       ? {}
       : { appServerProcessPid: progressProcess.appServerPid }),
+    ...(progressProcess.workloadProcessAlive === undefined
+      ? {}
+      : { workloadProcessAlive: progressProcess.workloadProcessAlive }),
+    ...(progressProcess.workloadProcessPid === undefined
+      ? {}
+      : { workloadProcessPid: progressProcess.workloadProcessPid }),
+    ...(progressProcess.workloadProcessCommand === undefined
+      ? {}
+      : { workloadProcessCommand: progressProcess.workloadProcessCommand }),
     ...(progress.resultStatus === undefined
       ? {}
       : { progressResultStatus: progress.resultStatus }),

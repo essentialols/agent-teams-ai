@@ -1,12 +1,9 @@
-export type CodexGoalProjectStopPolicyInput = {
-  readonly workerAlive: boolean;
-  readonly silentStale: boolean;
-  readonly heartbeatOnlyNoOutput: boolean;
-  readonly freshProgressAlive: boolean;
-  readonly progressCpuActive: boolean | undefined;
-  readonly appServerProcessAlive: boolean | undefined;
-  readonly recommendedAction: string | undefined;
-};
+import type { WorkerHealthSnapshot } from "@vioxen/subscription-runtime/worker-core";
+
+export type CodexGoalProjectStopPolicyInput = Pick<
+  WorkerHealthSnapshot,
+  "alive" | "silentStale" | "heartbeatOnlyNoOutput"
+>;
 
 export type CodexGoalProjectStopPolicyDecision =
   | { readonly allowed: true }
@@ -25,22 +22,15 @@ export type CodexGoalProjectStopPolicyDecision =
 export function decideCodexGoalProjectStop(
   input: CodexGoalProjectStopPolicyInput,
 ): CodexGoalProjectStopPolicyDecision {
-  if (!input.workerAlive || input.silentStale || input.heartbeatOnlyNoOutput) {
+  if (!input.alive || input.silentStale || input.heartbeatOnlyNoOutput) {
     return { allowed: true };
   }
-
-  const hasPositiveHealthEvidence =
-    input.freshProgressAlive ||
-    input.progressCpuActive === true ||
-    input.appServerProcessAlive === true ||
-    input.recommendedAction === "wait_for_worker";
 
   return {
     allowed: false,
     reason: "project_control_fresh_worker_stop_denied",
     requiredState: "silent_stale_or_heartbeat_only_no_output",
-    safeMessage: hasPositiveHealthEvidence
-      ? "ProjectScopedControl cannot stop a worker with fresh positive health evidence. Keep monitoring or use an operator-owned emergency path."
-      : "ProjectScopedControl cannot stop an alive worker until stale or heartbeat-only no-output state is proven. A model-supplied force flag grants no kill authority.",
+    safeMessage:
+      "ProjectScopedControl cannot stop an alive worker until stale or heartbeat-only no-output state is proven. A model-supplied force flag grants no kill authority.",
   };
 }

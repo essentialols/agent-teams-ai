@@ -178,6 +178,134 @@ describe('TeamProvisioningInboxDuplicateMerge', () => {
     expect(unlink).not.toHaveBeenCalledWith(path.join(inboxDir, 'Alice-2.json'));
   });
 
+  it('keeps an id-less-only duplicate without rewriting the canonical inbox', async () => {
+    const inboxDir = '/fake/team/inboxes';
+    const reads = new Map<string, string>([
+      [
+        'Alice.json',
+        JSON.stringify(
+          [{ messageId: 'a', timestamp: '2026-01-01T00:00:00.000Z', text: 'canonical' }],
+          null,
+          2
+        ),
+      ],
+      [
+        'Alice-2.json',
+        JSON.stringify([
+          { timestamp: '2026-01-02T00:00:00.000Z', text: 'missing from' },
+          { from: 'bob', timestamp: '2026-01-03T00:00:00.000Z' },
+        ]),
+      ],
+    ]);
+    const ports = createPorts({
+      readDir: vi.fn(async () => ['Alice.json', 'Alice-2.json']),
+      readRegularFileUtf8: vi.fn(async (filePath) => reads.get(path.basename(filePath)) ?? null),
+    });
+
+    await mergeAndRemoveDuplicateInboxes({
+      inboxDir,
+      baseNames: new Set(['Alice']),
+      timeoutMs: 5_000,
+      maxBytes: 1_000_000,
+      ports,
+    });
+
+    expect(ports.writeFileUtf8).not.toHaveBeenCalled();
+    expect(ports.unlink).not.toHaveBeenCalled();
+  });
+
+  it('merges valid identities from mixed rows while preserving id-less and corrupt evidence', async () => {
+    const inboxDir = '/fake/team/inboxes';
+    const reads = new Map<string, string>([
+      [
+        'Alice.json',
+        JSON.stringify([{ messageId: 'a', timestamp: '2026-01-01T00:00:00.000Z', text: 'old' }]),
+      ],
+      [
+        'Alice-2.json',
+        JSON.stringify([
+          { messageId: 'b', timestamp: '2026-01-02T00:00:00.000Z', text: 'explicit id' },
+          {
+            from: 'bob',
+            timestamp: '2026-01-03T00:00:00.000Z',
+            text: 'legacy effective id',
+          },
+          { timestamp: '2026-01-04T00:00:00.000Z', text: 'unresolved id-less evidence' },
+          'corrupt string evidence',
+        ]),
+      ],
+    ]);
+    const ports = createPorts({
+      readDir: vi.fn(async () => ['Alice.json', 'Alice-2.json']),
+      readRegularFileUtf8: vi.fn(async (filePath) => reads.get(path.basename(filePath)) ?? null),
+    });
+
+    await mergeAndRemoveDuplicateInboxes({
+      inboxDir,
+      baseNames: new Set(['Alice']),
+      timeoutMs: 5_000,
+      maxBytes: 1_000_000,
+      ports,
+    });
+
+    expect(ports.writeFileUtf8).toHaveBeenCalledTimes(1);
+    const writeFileUtf8 = vi.mocked(ports.writeFileUtf8);
+    expect(JSON.parse(writeFileUtf8.mock.calls[0]?.[1] ?? '[]')).toEqual([
+      {
+        from: 'bob',
+        timestamp: '2026-01-03T00:00:00.000Z',
+        text: 'legacy effective id',
+      },
+      { messageId: 'b', timestamp: '2026-01-02T00:00:00.000Z', text: 'explicit id' },
+      { messageId: 'a', timestamp: '2026-01-01T00:00:00.000Z', text: 'old' },
+    ]);
+    expect(ports.unlink).not.toHaveBeenCalled();
+  });
+
+  it('does not grow or rewrite canonical inbox when a preserved mixed duplicate is merged repeatedly', async () => {
+    const inboxDir = '/fake/team/inboxes';
+    const files = new Map<string, string>([
+      ['Alice.json', '[]'],
+      [
+        'Alice-2.json',
+        JSON.stringify([
+          { messageId: 'b', timestamp: '2026-01-02T00:00:00.000Z', text: 'merge once' },
+          { timestamp: '2026-01-03T00:00:00.000Z', text: 'preserve without identity' },
+          'preserve corrupt string',
+        ]),
+      ],
+    ]);
+    const writeFileUtf8 = vi.fn(async (filePath: string, contents: string) => {
+      files.set(path.basename(filePath), contents);
+    });
+    const ports = createPorts({
+      readDir: vi.fn(async () => [...files.keys()]),
+      readRegularFileUtf8: vi.fn(
+        async (filePath: string) => files.get(path.basename(filePath)) ?? null
+      ),
+      writeFileUtf8,
+    });
+    const input = {
+      inboxDir,
+      baseNames: new Set(['Alice']),
+      timeoutMs: 5_000,
+      maxBytes: 1_000_000,
+      ports,
+    };
+
+    await mergeAndRemoveDuplicateInboxes(input);
+    const canonicalAfterFirstMerge = files.get('Alice.json');
+    await mergeAndRemoveDuplicateInboxes(input);
+
+    expect(JSON.parse(canonicalAfterFirstMerge ?? '[]')).toEqual([
+      { messageId: 'b', timestamp: '2026-01-02T00:00:00.000Z', text: 'merge once' },
+    ]);
+    expect(files.get('Alice.json')).toBe(canonicalAfterFirstMerge);
+    expect(files.has('Alice-2.json')).toBe(true);
+    expect(writeFileUtf8).toHaveBeenCalledTimes(1);
+    expect(ports.unlink).not.toHaveBeenCalled();
+  });
+
   it('merges valid rows from a mixed duplicate, preserves corrupt data, and reclaims empty files idempotently', async () => {
     const inboxDir = '/fake/team/inboxes';
     const files = new Map<string, string>([

@@ -1,5 +1,7 @@
 import * as path from 'path';
 
+import { getEffectiveInboxMessageId } from '../inboxMessageIdentity';
+
 import {
   createInboxJsonFileSet,
   mergeInboxMessageLists,
@@ -46,7 +48,9 @@ function parseDuplicateInboxMessageList(raw: string): ParsedDuplicateInboxMessag
     return null;
   }
 
-  const mergeableRows = parsed.filter((item) => item !== null && typeof item === 'object');
+  const mergeableRows = parsed.filter(
+    (item) => item !== null && typeof item === 'object' && getEffectiveInboxMessageId(item) !== null
+  );
   return {
     mergeableRows,
     removable: mergeableRows.length === parsed.length,
@@ -75,9 +79,9 @@ async function mergeSingleInboxBase(
 
   const canonicalList = parseInboxMessageListRaw(canonicalRaw);
   const duplicateLists: unknown[][] = [];
-  // Merge every row that the canonical inbox representation can preserve, but
-  // only remove duplicates whose complete contents were represented. A mixed
-  // valid/malformed file must remain as evidence of its unrepresentable data.
+  // Merge only rows with a stable effective identity. Identity-less objects
+  // cannot be deduped on a later launch, so copying them would grow canonical
+  // repeatedly. Remove a duplicate only when every row is safely represented.
   const removableDuplicateFiles: string[] = [];
   let hasMergeableRows = false;
   const duplicateFiles = [...mergePlan.duplicateFiles].sort((left, right) =>

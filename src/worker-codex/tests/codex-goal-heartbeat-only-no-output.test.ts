@@ -24,17 +24,17 @@ describe("Codex goal heartbeat-only no-output classification", () => {
     })).toBe(false);
   });
 
-  it("fails closed when app-server workload observation is unavailable", () => {
+  it("requires review when app-server workload observation is unavailable", () => {
     const { workloadProcessAlive: _workloadProcessAlive, ...status } =
       idleAppServerStatus();
 
     expect(isCodexGoalHeartbeatOnlyNoOutput({
       status,
       staleAfterMs: 10 * 60_000,
-    })).toBe(false);
+    })).toBe(true);
   });
 
-  it("fails closed for unknown or direct-pid-fallback process observations", () => {
+  it("requires review for unknown or idle direct-pid-fallback observations", () => {
     const {
       appServerProcessAlive: _appServerProcessAlive,
       workloadProcessAlive: _workloadProcessAlive,
@@ -45,11 +45,11 @@ describe("Codex goal heartbeat-only no-output classification", () => {
     expect(isCodexGoalHeartbeatOnlyNoOutput({
       status: unknownProcessStatus,
       staleAfterMs: 10 * 60_000,
-    })).toBe(false);
+    })).toBe(true);
     expect(isCodexGoalHeartbeatOnlyNoOutput({
       status: { ...unknownProcessStatus, progressCpuActive: false },
       staleAfterMs: 10 * 60_000,
-    })).toBe(false);
+    })).toBe(true);
   });
 
   it("requires explicit idle evidence for a non-app-server process", () => {

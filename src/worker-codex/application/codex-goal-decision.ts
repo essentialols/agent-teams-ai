@@ -165,18 +165,20 @@ export function isCodexGoalHeartbeatOnlyNoOutput(input: {
     runtimeActivityAgeMs !== undefined &&
       runtimeActivityAgeMs <= input.staleAfterMs,
   );
-  const idleObservedAppServer = Boolean(
+  const productiveAppServerActivity = Boolean(
     status.appServerProcessAlive === true &&
-      status.workloadProcessAlive === false &&
-      !recentRuntimeActivity,
+      (status.workloadProcessAlive === true || recentRuntimeActivity),
   );
-  const idleNonAppServerProcess = Boolean(
-    status.appServerProcessAlive === false &&
-      status.workloadProcessAlive !== true &&
-      status.progressCpuActive === false,
+  const productiveNonAppServerActivity = Boolean(
+    status.appServerProcessAlive !== true &&
+      (status.workloadProcessAlive === true || status.progressCpuActive === true),
   );
+  // A heartbeat proves only that the supervisor loop is alive. When no output
+  // has materialized, missing process-tree evidence must not silently turn an
+  // ambiguous worker into a healthy one. Protect only observed provider/workload
+  // activity; every other no-output shape requires inspection.
   const noOutputIsNotUsefulProgress =
-    idleObservedAppServer || idleNonAppServerProcess;
+    !productiveAppServerActivity && !productiveNonAppServerActivity;
   return Boolean(
     workerLiveness.alive &&
       status.progressExists &&

@@ -652,6 +652,7 @@ export const KanbanBoard = memo(function KanbanBoard({
       revealNextTasks,
       taskMap,
       teamName,
+      t,
     ]
   );
 

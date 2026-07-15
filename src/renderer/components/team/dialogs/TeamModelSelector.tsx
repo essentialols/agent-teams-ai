@@ -880,11 +880,7 @@ const ModelInfoTooltip = ({
   iconClassName,
 }: Readonly<{ content: string; iconClassName: string }>): React.JSX.Element => (
   <ModelTooltip content={content}>
-    <span
-      className="inline-flex shrink-0"
-      onClick={(event) => event.stopPropagation()}
-      onPointerDown={(event) => event.stopPropagation()}
-    >
+    <span aria-label={content} className="inline-flex shrink-0">
       <Info className={iconClassName} aria-hidden="true" />
     </span>
   </ModelTooltip>

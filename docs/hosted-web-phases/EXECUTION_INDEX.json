@@ -6,21 +6,35 @@
   "currentRouterRevision": "phase-01-p1-r2-router-r1",
   "currentRouterTerminalState": "HOLD",
   "canonicalAuthority": {
-    "canonicalSha": "666042037a9c91df572b1d8274bf6024f8d00f40",
-    "baseSha": "666042037a9c91df572b1d8274bf6024f8d00f40",
-    "phaseStartSha": "666042037a9c91df572b1d8274bf6024f8d00f40",
-    "headSha": "666042037a9c91df572b1d8274bf6024f8d00f40",
-    "clean": true,
-    "remoteEqual": true,
+    "packetBaseSha": "48d79e2b13e258fc82ad55723875f15d6e162872",
+    "packetBaseRole": "router-remediation-authoring-base-only",
+    "postIntegrationAuthoritySha": null,
+    "postIntegrationAuthorityShaState": "resolve-after-router-accept-policy-integration-push",
+    "postIntegrationAuthoritySource": "exact-broker-returned-and-pushed-commit",
+    "reviewAuthorityBinding": "postIntegrationAuthoritySha",
+    "remoteName": "origin",
+    "remoteBranch": "refactor/hosted-web-feature-boundaries",
+    "remoteRef": "refs/heads/refactor/hosted-web-feature-boundaries",
+    "remoteEqualityCommand": "git ls-remote origin refs/heads/refactor/hosted-web-feature-boundaries",
+    "rootImmutableAuthorityAttestationRequired": true,
+    "cleanPostIntegrationWorktreeRequired": true,
+    "remoteEqualityToPostIntegrationAuthorityRequired": true,
+    "reviewerNetworkRecheckAuthorized": false,
+    "upstreamTrackingEvidenceAuthorized": false,
+    "mustBeResolvedAndAttestedBeforeReviewerStart": true,
+    "missingOrMismatchedAttestationDisposition": "HOLD"
+  },
+  "reviewedProductSnapshotAuthority": {
+    "reviewedProductSnapshotSha": "666042037a9c91df572b1d8274bf6024f8d00f40",
+    "unchangedExactInputPathCount": 32,
+    "unchangedAtPostIntegrationAuthorityHeadRequired": true,
     "trueTwoParentMerge": true,
     "orderedParents": [
       "c3135d40c6e70e4b2ddc905dc815407397197634",
       "3b48f9391b4bff1d82bc85ef01a2d5e0e5b50e95"
     ],
     "pr252ConflictGateAccepted": true,
-    "p11dAccepted": true,
-    "mustBeReverifiedBeforeReviewerStart": true,
-    "driftDisposition": "HOLD"
+    "p11dAccepted": true
   },
   "orchestrationAuthority": {
     "rootRole": "sole-orchestrator",
@@ -64,10 +78,20 @@
         "rootRemainsSoleOrchestrator": true,
         "controllerV17HoldObservationOnly": true,
         "noSuccessorController": true,
-        "canonicalClean": true,
-        "canonicalRemoteEqual": true,
-        "canonicalAndRuntimeBindingsExact": true,
-        "orderedMergeParentsExact": true,
+        "postIntegrationAuthorityResolvedFromBrokerReturn": true,
+        "postIntegrationAuthorityPushed": true,
+        "postIntegrationAuthorityAttestationImmutable": true,
+        "postIntegrationWorktreeClean": true,
+        "postIntegrationAuthorityRemoteEqual": true,
+        "authorityAndRuntimeBindingsExact": true,
+        "reviewerWorktreeHeadExact": true,
+        "handoffAuthorityBindingsExact": true,
+        "remoteEqualityUsesExactLsRemoteRef": true,
+        "upstreamTrackingEvidenceForbidden": true,
+        "reviewerNetworkRecheckForbidden": true,
+        "reviewedProductSnapshotExact": true,
+        "reviewedProductSnapshotInputsUnchanged": true,
+        "reviewedProductSnapshotOrderedMergeParentsExact": true,
         "pr252ConflictGateAccepted": true,
         "p11dAccepted": true,
         "noReviewerActive": true,
@@ -102,6 +126,8 @@
       "reviewFindingDisposition": "REJECT",
       "runtimeIncidentClasses": ["admission", "provider", "environment", "no-strict-result"],
       "runtimeIncidentDisposition": "HOLD",
+      "missingAuthorityAttestationClassification": "runtime-admission-incident",
+      "remoteQueryOrNetworkFailureClassification": "runtime-environment-incident",
       "syntheticRejectForRuntimeIncidentAuthorized": false
     },
     "attemptPolicy": {
@@ -143,7 +169,9 @@
     }
   },
   "reviewCanonicalInputs": {
-    "canonicalSha": "666042037a9c91df572b1d8274bf6024f8d00f40",
+    "reviewedProductSnapshotSha": "666042037a9c91df572b1d8274bf6024f8d00f40",
+    "authorityShaBinding": "postIntegrationAuthoritySha",
+    "allInputBytesUnchangedAtPostIntegrationAuthorityHeadRequired": true,
     "p11aPaths": [
       ".codex-handoff/phase-01-p1-1a.json",
       "src/shared/contracts/hosted/app-error.ts",
@@ -237,6 +265,46 @@
     "model": "gpt-5.6-sol",
     "reasoningEffort": "xhigh",
     "serviceTier": "default",
+    "projectScopedControlOperation": "codex_goal_project_refill_worker",
+    "workerRole": "reviewer",
+    "sourceRemote": "origin",
+    "sourceBranch": "refactor/hosted-web-feature-boundaries",
+    "expectedSourceCommitBinding": "postIntegrationAuthoritySha",
+    "worktreeHeadShaBinding": "postIntegrationAuthoritySha",
+    "handoffAuthorityBindingSource": "postIntegrationAuthoritySha",
+    "handoffAuthorityFields": [
+      "baseSha",
+      "canonicalSha",
+      "planBundleCommit",
+      "phaseStartSha",
+      "headSha"
+    ],
+    "preStartAdmission": {
+      "mode": "serial-builtin",
+      "contract": {
+        "kind": "worker-launch",
+        "format": 1,
+        "canonicalShaBinding": "postIntegrationAuthoritySha",
+        "baseShaBinding": "postIntegrationAuthoritySha",
+        "phaseStartShaBinding": "postIntegrationAuthoritySha",
+        "packetRevision": "phase-01-p1-r2-review-r1",
+        "controllerPacket": "docs/hosted-web-phases/phase-01/controller-packet.md",
+        "lanePacket": "docs/hosted-web-phases/phase-01/lanes/p1-r2-review.md",
+        "phaseId": "phase-01",
+        "laneId": "p1-r2",
+        "inputPatchHash": null,
+        "reviewKind": "review"
+      }
+    },
+    "prepareVerifierAuthorized": false,
+    "forbiddenReviewerLaunchOperations": [
+      "codex_goal_project_prepare_verifier",
+      "prepare_verifier"
+    ],
+    "reviewedProductSnapshotSha": "666042037a9c91df572b1d8274bf6024f8d00f40",
+    "remoteEqualityAttestedBy": "root-pre-start-immutable-authority-attestation",
+    "remoteEqualityCommand": "git ls-remote origin refs/heads/refactor/hosted-web-feature-boundaries",
+    "reviewerRemoteEqualityRecheckAuthorized": false,
     "focusedCommand": "pnpm exec vitest run test/architecture/hosted-web/phase-1/contracts test/features/team-lifecycle",
     "writablePaths": [
       ".codex-handoff/phase-01-p1-r2.json",
@@ -245,7 +313,7 @@
     "evidenceId": "P1.R2.SEMANTIC_REVIEW",
     "repositoryWriterAuthority": "exact-two-result-paths-only",
     "repairAuthority": false,
-    "reviewerRetryOrRefillAuthority": false,
+    "reviewerSelfRetryOrRefillAuthority": false,
     "rootCorrectedAttemptAuthority": "at-most-one-under-runtime-incident-policy",
     "reviewerIntegrationAuthority": false,
     "dependenciesMaterializedBy": "broker",
@@ -312,6 +380,32 @@
   ],
   "requiredChecks": [
     {
+      "id": "packet-authoring-base-head",
+      "actor": "router-author",
+      "command": "test \"$(git rev-parse HEAD)\" = 48d79e2b13e258fc82ad55723875f15d6e162872"
+    },
+    {
+      "id": "post-integration-authority-explicit-remote-ref-equality",
+      "actor": "root-pre-start",
+      "command": "git ls-remote origin refs/heads/refactor/hosted-web-feature-boundaries",
+      "requiredShaBinding": "postIntegrationAuthoritySha",
+      "attestedBy": "root-pre-start-immutable-authority-attestation"
+    },
+    {
+      "id": "reviewer-local-authority-head",
+      "actor": "reviewer",
+      "command": "test \"$(git rev-parse HEAD)\" = \"$expectedSourceCommit\"",
+      "expectedSourceCommitBinding": "postIntegrationAuthoritySha"
+    },
+    {
+      "id": "reviewed-product-snapshot-topology",
+      "command": "git rev-list --parents -n 1 666042037a9c91df572b1d8274bf6024f8d00f40"
+    },
+    {
+      "id": "reviewed-product-snapshot-32-inputs-unchanged",
+      "commandSource": "docs/hosted-web-phases/phase-01/lanes/p1-r2-review.md#prettier-diff-and-exact-two-path-scope"
+    },
+    {
       "id": "focused-contracts-and-team-lifecycle",
       "command": "pnpm exec vitest run test/architecture/hosted-web/phase-1/contracts test/features/team-lifecycle"
     },
@@ -363,6 +457,8 @@
   "reviewerExecutionPolicy": {
     "workspace": "isolated-review-worktree-only",
     "network": false,
+    "githubAccess": false,
+    "remoteQuery": false,
     "fetch": false,
     "dependencyInstall": false,
     "appRuntimeServerOrTeamLaunch": false,
@@ -424,11 +520,11 @@
     "algorithm": "sha256",
     "controllerPacket": {
       "path": "docs/hosted-web-phases/phase-01/controller-packet.md",
-      "sha256": "99e7990851bc50e68c868a5e959b398718813708d2c80b9faa9247254909c50c"
+      "sha256": "9b4b27f5029df8e21214fe6d4a372cbfc3e6d6c6f6506351954243026c33291d"
     },
     "lanePacket": {
       "path": "docs/hosted-web-phases/phase-01/lanes/p1-r2-review.md",
-      "sha256": "87188330c82884bd88833d2a0142050a7f202a01204a53e3145aefc2e2eeda05"
+      "sha256": "8b089ab8337467da201be884fc8f52bfff6d6377f63722f6f8d1aa6d5f6778c3"
     }
   },
   "authorityTiers": {

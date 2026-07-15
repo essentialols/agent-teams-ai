@@ -5,10 +5,17 @@
 - Phase/current node: `phase-01` / `P1.R2`
 - Router revision: `phase-01-p1-r2-router-r1`
 - Lane packet revision: `phase-01-p1-r2-review-r1`
-- Canonical/base/phase start/`HEAD`:
+- Router remediation `packetBaseSha`:
+  `48d79e2b13e258fc82ad55723875f15d6e162872` (authoring base only)
+- Formal-review `postIntegrationAuthoritySha`: intentionally unresolved until the broker returns and
+  pushes the exact accepted policy-integration commit; never hardcode it to `packetBaseSha` or guess it
+- Authority state required before reviewer start: resolved by root from that broker result, clean, and
+  bound by immutable pre-start attestation to the sole result of
+  `git ls-remote origin refs/heads/refactor/hosted-web-feature-boundaries`; upstream-tracking
+  assumptions are not evidence
+- Reviewed product snapshot for the unchanged exact 32 inputs:
   `666042037a9c91df572b1d8274bf6024f8d00f40`
-- Canonical state: clean and remote-equal
-- Accepted merge topology: true two-parent merge with ordered parents
+- Reviewed product snapshot topology: true two-parent merge with ordered parents
   `[c3135d40c6e70e4b2ddc905dc815407397197634,
 3b48f9391b4bff1d82bc85ef01a2d5e0e5b50e95]`
 - Accepted predecessor gates: PR #252 conflict gate and P1.1D, both complete and accepted
@@ -26,9 +33,12 @@ policy-integrated, and pushed. No successor controller is authorized.
 
 ## Outcome
 
-Produce one independent formal `ACCEPT` or `REJECT` review of the canonical shared hosted kernel and
-team-lifecycle list semantics, with explicit P0/P1/P2 counts and exact gate evidence. `ACCEPT` is
-legal only at P0/P1/P2 `0/0/0`. Semantic, content, or review-gate findings produce `REJECT`.
+Produce one independent formal `ACCEPT` or `REJECT` review of the unchanged shared hosted kernel and
+team-lifecycle list semantics at reviewed product snapshot
+`666042037a9c91df572b1d8274bf6024f8d00f40`, from reviewer worktree authority `HEAD` equal to the
+resolved `postIntegrationAuthoritySha`, with explicit P0/P1/P2 counts and exact gate evidence.
+`ACCEPT` is legal only at P0/P1/P2 `0/0/0`. Semantic, content, or review-gate findings produce
+`REJECT`.
 
 Admission, provider, environment, or no-strict-result failures are runtime incidents and end `HOLD`;
 they must never be converted into a synthetic `REJECT`. A review completes only when root possesses
@@ -46,9 +56,19 @@ already integrated evidence paths.
 
 ## Immutable inputs and historical boundary
 
-Canonical `666042037a9c91df572b1d8274bf6024f8d00f40` is the sole review target, base, phase start,
-and `HEAD`. It must remain clean and remote-equal before reviewer start. Its exact parent order is
-binding and must be re-proved without fetch or rebinding.
+`packetBaseSha` `48d79e2b13e258fc82ad55723875f15d6e162872` proves only where this router
+remediation is authored. After the accepted router is policy-integrated and pushed, root resolves
+`postIntegrationAuthoritySha` from the exact commit returned and pushed by the broker. Reviewer
+`expectedSourceCommit`, worktree `HEAD`, canonical, base, plan bundle, and phase start all bind that
+resolved value. Before reviewer start, root must prove the resulting worktree clean and capture
+immutable evidence of exact equality between that value and the sole result of
+`git ls-remote origin refs/heads/refactor/hosted-web-feature-boundaries`. Neither an upstream-tracking
+ref nor a guessed/future SHA may substitute for the broker result and explicit remote-ref query.
+
+The review's exact 32 product inputs are separately bound to `reviewedProductSnapshotSha`
+`666042037a9c91df572b1d8274bf6024f8d00f40`. Every one must be byte-identical at the authority
+`HEAD` and the reviewed product snapshot. The snapshot's exact parent order is binding and must be
+re-proved locally without rebinding.
 
 The accepted PR #252 lane at
 [`lanes/pr252-base-conflict-resolution.md`](lanes/pr252-base-conflict-resolution.md) remains
@@ -56,7 +76,7 @@ byte-for-byte historical with SHA-256
 `f55c7d77f7cb54d90208fb6fe6f61e257fa75f0b063b5fd71e5677c83d148842`. It is not current
 authority and must not change in this router.
 
-The review input is exactly the 32 paths in
+The product review input is exactly the 32 paths in
 [`lanes/p1-r2-review.md`](lanes/p1-r2-review.md): 12 accepted P1.1A kernel paths, 9 accepted P1.1D
 paths, and 11 immutable semantic-corpus paths. No moving ref, prior rejected output, historical lane,
 or sibling research path may replace or expand that input.
@@ -75,18 +95,28 @@ after mechanically verified strict `ACCEPT` with P0/P1/P2 `0/0/0` and `mark_revi
 Root must prove in one pre-start snapshot:
 
 1. this exact seven-path router was independently accepted, policy-integrated, and pushed;
-2. `HEAD`, canonical, base, and phase start are the exact stored
-   `666042037a9c91df572b1d8274bf6024f8d00f40` review target;
-3. the canonical target is clean and remote-equal and has exactly the two ordered parents above;
-4. the PR #252 conflict gate and P1.1D remain accepted, with no reopened predecessor work;
-5. root remains sole orchestrator and `controller-v17` remains `HOLD`, observation-only;
-6. no P1.R2 reviewer exists or is active, and the fresh identity/job/worktree independence gate
+2. the broker returned and pushed one exact commit and root resolved it as
+   `postIntegrationAuthoritySha`, distinct in role from router `packetBaseSha`;
+3. reviewer `expectedSourceCommit`, worktree `HEAD`, canonical, base, plan bundle, and phase start all
+   bind that resolved authority SHA;
+4. the authority worktree is clean, and root's immutable pre-start attestation records the exact
+   broker result plus command, exit code, output, and equality proving the sole result of
+   `git ls-remote origin refs/heads/refactor/hosted-web-feature-boundaries` binds that SHA;
+5. `reviewedProductSnapshotSha` is
+   `666042037a9c91df572b1d8274bf6024f8d00f40`, has exactly the two ordered parents above, and every
+   one of the exact 32 inputs is byte-identical at the authority `HEAD` and that snapshot;
+6. the PR #252 conflict gate and P1.1D remain accepted, with no reopened predecessor work;
+7. root remains sole orchestrator and `controller-v17` remains `HOLD`, observation-only;
+8. no P1.R2 reviewer exists or is active, and the fresh identity/job/worktree independence gate
    passes;
-7. the request is exactly `gpt-5.6-sol`, `xhigh`, and `serviceTier: "default"`, with no Fast mode;
-8. the broker has materialized dependencies offline and the assignment forbids the worker from
-   installing, fetching, or updating them;
-9. the exact 32 inputs exist at canonical and both output paths are absent; and
-10. no product worker, P1.I, P1.F, Phase 2+, integration, or successor-controller activity exists.
+9. admission is exactly `codex_goal_project_refill_worker`, `workerRole: reviewer`, source
+   `origin/refactor/hosted-web-feature-boundaries`, `reviewKind: review`, `inputPatchHash: null`, and
+   never `prepare_verifier`;
+10. the request is exactly `gpt-5.6-sol`, `xhigh`, and `serviceTier: "default"`, with no Fast mode;
+11. the broker has materialized dependencies offline and the assignment forbids the worker from
+    installing, fetching, or updating them;
+12. the exact 32 inputs exist and both output paths are absent; and
+13. no product worker, P1.I, P1.F, Phase 2+, integration, or successor-controller activity exists.
 
 Any admission mismatch ends `HOLD` without launch. There is no replacement, fallback, refill, or
 profile substitution authority. One exact corrected attempt is the sole exception: root may
@@ -94,19 +124,30 @@ authorize it only for an admission, provider, environment, or no-strict-result r
 only after proving the affected attempt terminal or proving no runner exists, and never while
 another attempt is active. No corrected attempt follows a semantic, content, or gate `REJECT`.
 
+Root performs the exact ProjectScopedControl launch defined in the lane packet:
+`codex_goal_project_refill_worker`, `workerRole: reviewer`, `sourceRemote: origin`,
+`sourceBranch: refactor/hosted-web-feature-boundaries`, and `expectedSourceCommit` equal to the
+resolved `postIntegrationAuthoritySha`; serial built-in contract `canonicalSha`, `baseSha`, and
+`phaseStartSha` equal to that same authority; `inputPatchHash: null`; and `reviewKind: review`.
+`prepare_verifier` is forbidden. The reviewer performs no network or remote query.
+
 ## DAG, lane registry, and capacity
 
 The serial DAG is:
 
 ```text
-accepted canonical 66604203...
-  -> current seven-path router ACCEPT + policy integration + push
-    -> exactly one independent P1.R2 reviewer
+accepted product snapshot 66604203... with exact 32 unchanged inputs
+  -> seven-path router authored at packetBaseSha 48d79e2b...
+    -> current router ACCEPT + policy integration + push
+    -> broker returns/pushes exact postIntegrationAuthoritySha
+    -> root resolves + immutably attests exact remote-ref equality
+    -> codex_goal_project_refill_worker starts exactly one independent P1.R2 reviewer
       -> exact focused command + semantic/auth/error/cursor/kernel-size review
         -> typecheck + Prettier/diff + two-path scope + classified scans
           -> strict terminal result + broker-captured immutable output binding both exact paths
             -> semantic/content/gate finding -> REJECT -> HOLD
-            -> runtime incident -> HOLD; at most one serialized exact corrected attempt
+            -> authority-attestation/admission/environment runtime incident -> HOLD
+               at most one serialized exact corrected attempt
             -> ACCEPT 0/0/0 -> root mechanical verification -> mark_reviewed
               -> broker integrates and pushes exact two outputs -> HOLD
                 -X-> later docs router alone may authorize P1.I; it never reintegrates evidence
@@ -155,13 +196,18 @@ semantic/auth/error/cursor/kernel-size requirement and both negative diagnostics
 packet.
 
 `pnpm typecheck` must match the exact current accepted baseline: seven inherited Phase 0 diagnostics,
-zero diagnostics in the canonical P1 inputs or two reviewer outputs, and zero unexpected diagnostics.
+zero diagnostics in the reviewed product inputs or two reviewer outputs, and zero unexpected diagnostics.
 The exact seven file/code/location records are frozen in the lane packet; any drift fails.
 
-The lane's exact Prettier command, `git diff --check`, `git diff --cached --quiet`, clean tracked diff,
-and exact two-untracked-path status must pass. The secret, provider, and private-path scans must cover
-all 32 inputs and both outputs, record exit codes, and classify every lexical match. Any unsafe or
-unclassified value fails.
+The lane's local post-integration-authority-`HEAD`, reviewed-product-snapshot topology and
+byte-equality checks, exact
+Prettier command, `git diff --check`, `git diff --cached --quiet`, clean tracked diff, and exact
+two-untracked-path status must pass. Root's pre-start snapshot must record the exact `git ls-remote`
+command, exit code, output, equality result, broker-returned pushed commit, and clean state. The
+reviewer validates that immutable attestation and local `HEAD` without GitHub or network access. The
+secret, provider, and private-path scans must cover all 32 inputs
+and both outputs, record exit codes, and classify every lexical match. Any unsafe or unclassified
+value fails.
 
 The reviewer result and handoff must agree on provenance, independence, commands, observed counts,
 scope, disposition, findings, unverified claims, blocked successors, and terminal `HOLD`.
@@ -178,12 +224,15 @@ remain non-terminal observations even when all look healthy.
 
 Classify stops without collapsing execution failures into review findings:
 
-- A strict reviewer result establishing stale or mixed SHA, parent-order or accepted-predecessor
-  drift, canonical/input/output-scope drift, semantic/auth/error/cursor/kernel-size defects,
+- A strict reviewer result establishing reviewed-product-snapshot, parent-order, accepted-predecessor,
+  reviewed-input/output-scope drift,
+  semantic/auth/error/cursor/kernel-size defects,
   test/typecheck/Prettier/diff/scan failure, unsafe content, incomplete evidence content, or any other
   review gate finding is `REJECT` and `HOLD`. It authorizes no repair or retry.
-- Admission failure or drift, provider failure, environment failure, or absence of a strict terminal
-  result is a runtime incident and `HOLD`, never `REJECT`. It authorizes no concurrent duplicate.
+- Unresolved/mismatched authority, missing/invalid immutable authority attestation, authority checkout
+  mismatch, admission failure or drift, provider failure, root remote-query/network failure,
+  environment failure, or absence of a strict terminal result is a runtime incident and `HOLD`, never
+  `REJECT`. It authorizes no concurrent duplicate.
   Root may authorize at most one exact corrected attempt only after terminal/no-runner proof.
 - Any P1.I, P1.F, Phase 2+, product-worker, or successor-controller activity remains an immediate
   `HOLD` policy violation and creates no authority.
@@ -210,8 +259,9 @@ or result again. No successor controller is implied or authorized.
 P1.R2 review is complete only when root has both a strict terminal result and broker-captured
 immutable output binding both exact result paths from the sole active attempt; the handoff is valid;
 `P1.R2.SEMANTIC_REVIEW` is `target_verified`; every required check and scan is recorded; the
-disposition is explicit; P0/P1/P2 counts are complete; the canonical input is unchanged; and the
-work ends `HOLD`. No observation-only signal can satisfy this definition.
+disposition is explicit; P0/P1/P2 counts are complete; authority and snapshot bindings are exact;
+the 32 reviewed product inputs are unchanged; and the work ends `HOLD`. No observation-only signal
+can satisfy this definition.
 
 For `ACCEPT` 0/0/0, lifecycle completion additionally requires root mechanical verification of the
 terminal result, immutable output, and bound evidence bytes; `mark_reviewed`; and broker integration
@@ -232,7 +282,14 @@ const crypto = require('node:crypto')
 const fs = require('node:fs')
 const path = require('node:path')
 
-const canonical = '666042037a9c91df572b1d8274bf6024f8d00f40'
+const packetBase = '48d79e2b13e258fc82ad55723875f15d6e162872'
+const authorityBinding = 'postIntegrationAuthoritySha'
+const reviewedProductSnapshot = '666042037a9c91df572b1d8274bf6024f8d00f40'
+const remoteName = 'origin'
+const remoteBranch = 'refactor/hosted-web-feature-boundaries'
+const remoteRef = 'refs/heads/refactor/hosted-web-feature-boundaries'
+const remoteEqualityCommand = `git ls-remote ${remoteName} ${remoteRef}`
+const upstreamTrackingSyntax = '@' + '{upstream}'
 const parents = [
   'c3135d40c6e70e4b2ddc905dc815407397197634',
   '3b48f9391b4bff1d82bc85ef01a2d5e0e5b50e95',
@@ -274,15 +331,36 @@ assert.equal(index.currentRouterTerminalState, 'HOLD')
 assert.equal(index.currentExecutablePhase, 'phase-01')
 assert.equal(index.currentExecutableSubphase, 'P1.R2-semantic-review')
 assert(exact(index.currentExecutableNodes, ['P1.R2']))
-assert.equal(index.canonicalAuthority.canonicalSha, canonical)
-assert.equal(index.canonicalAuthority.baseSha, canonical)
-assert.equal(index.canonicalAuthority.phaseStartSha, canonical)
-assert.equal(index.canonicalAuthority.headSha, canonical)
-assert(index.canonicalAuthority.clean && index.canonicalAuthority.remoteEqual)
-assert(index.canonicalAuthority.trueTwoParentMerge)
-assert(exact(index.canonicalAuthority.orderedParents, parents))
-assert(index.canonicalAuthority.pr252ConflictGateAccepted)
-assert(index.canonicalAuthority.p11dAccepted)
+assert.equal(index.canonicalAuthority.packetBaseSha, packetBase)
+assert.equal(index.canonicalAuthority.packetBaseRole, 'router-remediation-authoring-base-only')
+assert.equal(index.canonicalAuthority.postIntegrationAuthoritySha, null)
+assert.equal(
+  index.canonicalAuthority.postIntegrationAuthorityShaState,
+  'resolve-after-router-accept-policy-integration-push'
+)
+assert.equal(
+  index.canonicalAuthority.postIntegrationAuthoritySource,
+  'exact-broker-returned-and-pushed-commit'
+)
+assert.equal(index.canonicalAuthority.reviewAuthorityBinding, authorityBinding)
+assert.equal(index.canonicalAuthority.remoteName, remoteName)
+assert.equal(index.canonicalAuthority.remoteBranch, remoteBranch)
+assert.equal(index.canonicalAuthority.remoteRef, remoteRef)
+assert.equal(index.canonicalAuthority.remoteEqualityCommand, remoteEqualityCommand)
+assert(index.canonicalAuthority.rootImmutableAuthorityAttestationRequired)
+assert(index.canonicalAuthority.cleanPostIntegrationWorktreeRequired)
+assert(index.canonicalAuthority.remoteEqualityToPostIntegrationAuthorityRequired)
+assert(!index.canonicalAuthority.reviewerNetworkRecheckAuthorized)
+assert(!index.canonicalAuthority.upstreamTrackingEvidenceAuthorized)
+assert(index.canonicalAuthority.mustBeResolvedAndAttestedBeforeReviewerStart)
+assert.equal(index.canonicalAuthority.missingOrMismatchedAttestationDisposition, 'HOLD')
+assert.equal(index.reviewedProductSnapshotAuthority.reviewedProductSnapshotSha, reviewedProductSnapshot)
+assert.equal(index.reviewedProductSnapshotAuthority.unchangedExactInputPathCount, 32)
+assert(index.reviewedProductSnapshotAuthority.unchangedAtPostIntegrationAuthorityHeadRequired)
+assert(index.reviewedProductSnapshotAuthority.trueTwoParentMerge)
+assert(exact(index.reviewedProductSnapshotAuthority.orderedParents, parents))
+assert(index.reviewedProductSnapshotAuthority.pr252ConflictGateAccepted)
+assert(index.reviewedProductSnapshotAuthority.p11dAccepted)
 
 assert.equal(index.orchestrationAuthority.rootRole, 'sole-orchestrator')
 assert.equal(index.orchestrationAuthority.durableController, 'controller-v17')
@@ -311,6 +389,19 @@ assert(exact(index.currentRoute.dependencyPolicy, {
 }))
 assert(index.currentRoute.launchGate.required.dependenciesBrokerMaterializedOffline)
 assert(index.currentRoute.launchGate.required.workerDependencyInstallDisabled)
+assert(index.currentRoute.launchGate.required.postIntegrationAuthorityResolvedFromBrokerReturn)
+assert(index.currentRoute.launchGate.required.postIntegrationAuthorityPushed)
+assert(index.currentRoute.launchGate.required.postIntegrationAuthorityAttestationImmutable)
+assert(index.currentRoute.launchGate.required.postIntegrationWorktreeClean)
+assert(index.currentRoute.launchGate.required.postIntegrationAuthorityRemoteEqual)
+assert(index.currentRoute.launchGate.required.reviewerWorktreeHeadExact)
+assert(index.currentRoute.launchGate.required.handoffAuthorityBindingsExact)
+assert(index.currentRoute.launchGate.required.remoteEqualityUsesExactLsRemoteRef)
+assert(index.currentRoute.launchGate.required.upstreamTrackingEvidenceForbidden)
+assert(index.currentRoute.launchGate.required.reviewerNetworkRecheckForbidden)
+assert(index.currentRoute.launchGate.required.reviewedProductSnapshotExact)
+assert(index.currentRoute.launchGate.required.reviewedProductSnapshotInputsUnchanged)
+assert(index.currentRoute.launchGate.required.reviewedProductSnapshotOrderedMergeParentsExact)
 assert(exact(index.currentRoute.completionProof.required, [
   'strict-terminal-result',
   'immutable-output',
@@ -337,6 +428,14 @@ assert(exact(index.currentRoute.resultClassification.runtimeIncidentClasses, [
   'no-strict-result',
 ]))
 assert.equal(index.currentRoute.resultClassification.runtimeIncidentDisposition, 'HOLD')
+assert.equal(
+  index.currentRoute.resultClassification.missingAuthorityAttestationClassification,
+  'runtime-admission-incident'
+)
+assert.equal(
+  index.currentRoute.resultClassification.remoteQueryOrNetworkFailureClassification,
+  'runtime-environment-incident'
+)
 assert(!index.currentRoute.resultClassification.syntheticRejectForRuntimeIncidentAuthorized)
 assert.equal(index.currentRoute.attemptPolicy.maxConcurrentAttempts, 1)
 assert.equal(index.currentRoute.attemptPolicy.maxCorrectedAttempts, 1)
@@ -367,20 +466,91 @@ assert.equal(
   'later-separately-reviewed-docs-router-only'
 )
 assert(!index.currentRoute.acceptedResultLifecycle.laterDocsRouterReintegratesEvidence)
+const reviewInputs = index.reviewCanonicalInputs
+assert.equal(reviewInputs.reviewedProductSnapshotSha, reviewedProductSnapshot)
+assert.equal(reviewInputs.authorityShaBinding, authorityBinding)
+assert(reviewInputs.allInputBytesUnchangedAtPostIntegrationAuthorityHeadRequired)
+assert.equal(reviewInputs.requiredP11aPathCount, 12)
+assert.equal(reviewInputs.requiredP11dPathCount, 9)
+assert.equal(reviewInputs.requiredSemanticCorpusPathCount, 11)
+assert.equal(reviewInputs.requiredTotalPathCount, 32)
+const exactInputPaths = [
+  ...reviewInputs.p11aPaths,
+  ...reviewInputs.p11dPaths,
+  ...reviewInputs.semanticCorpusPaths,
+]
+assert.equal(exactInputPaths.length, 32)
+assert.equal(new Set(exactInputPaths).size, 32)
 assert.equal(index.reviewAdmission.reviewerCount, 1)
 assert(index.reviewAdmission.freshIndependentReviewerRequired)
+assert.equal(index.reviewAdmission.projectScopedControlOperation, 'codex_goal_project_refill_worker')
+assert.equal(index.reviewAdmission.workerRole, 'reviewer')
+assert.equal(index.reviewAdmission.sourceRemote, remoteName)
+assert.equal(index.reviewAdmission.sourceBranch, remoteBranch)
+assert.equal(index.reviewAdmission.expectedSourceCommitBinding, authorityBinding)
+assert.equal(index.reviewAdmission.worktreeHeadShaBinding, authorityBinding)
+assert.equal(index.reviewAdmission.handoffAuthorityBindingSource, authorityBinding)
+assert(exact(index.reviewAdmission.handoffAuthorityFields, [
+  'baseSha',
+  'canonicalSha',
+  'planBundleCommit',
+  'phaseStartSha',
+  'headSha',
+]))
+assert.equal(index.reviewAdmission.preStartAdmission.mode, 'serial-builtin')
+assert(exact(index.reviewAdmission.preStartAdmission.contract, {
+  kind: 'worker-launch',
+  format: 1,
+  canonicalShaBinding: authorityBinding,
+  baseShaBinding: authorityBinding,
+  phaseStartShaBinding: authorityBinding,
+  packetRevision: 'phase-01-p1-r2-review-r1',
+  controllerPacket: 'docs/hosted-web-phases/phase-01/controller-packet.md',
+  lanePacket: 'docs/hosted-web-phases/phase-01/lanes/p1-r2-review.md',
+  phaseId: 'phase-01',
+  laneId: 'p1-r2',
+  inputPatchHash: null,
+  reviewKind: 'review',
+}))
+assert(!index.reviewAdmission.prepareVerifierAuthorized)
+assert(exact(index.reviewAdmission.forbiddenReviewerLaunchOperations, [
+  'codex_goal_project_prepare_verifier',
+  'prepare_verifier',
+]))
+assert.equal(index.reviewAdmission.reviewedProductSnapshotSha, reviewedProductSnapshot)
+assert.equal(
+  index.reviewAdmission.remoteEqualityAttestedBy,
+  'root-pre-start-immutable-authority-attestation'
+)
+assert.equal(index.reviewAdmission.remoteEqualityCommand, remoteEqualityCommand)
+assert(!index.reviewAdmission.reviewerRemoteEqualityRecheckAuthorized)
 assert.equal(index.reviewAdmission.focusedCommand, focused)
 assert(exact(index.reviewAdmission.writablePaths, outputs))
 assert.equal(index.reviewAdmission.evidenceId, 'P1.R2.SEMANTIC_REVIEW')
 assert.equal(index.reviewAdmission.dependenciesMaterializedBy, 'broker')
 assert.equal(index.reviewAdmission.dependencyMaterializationMode, 'offline')
 assert(!index.reviewAdmission.workerDependencyInstallAuthorized)
-assert(!index.reviewAdmission.reviewerRetryOrRefillAuthority)
+assert(!index.reviewAdmission.reviewerSelfRetryOrRefillAuthority)
 assert.equal(
   index.reviewAdmission.rootCorrectedAttemptAuthority,
   'at-most-one-under-runtime-incident-policy'
 )
 assert(!index.reviewAdmission.reviewerIntegrationAuthority)
+const packetBaseCheck = index.requiredChecks.find((check) => check.id === 'packet-authoring-base-head')
+assert.equal(packetBaseCheck.actor, 'router-author')
+assert(packetBaseCheck.command.includes(packetBase))
+const rootRemoteCheck = index.requiredChecks.find(
+  (check) => check.id === 'post-integration-authority-explicit-remote-ref-equality'
+)
+assert.equal(rootRemoteCheck.actor, 'root-pre-start')
+assert.equal(rootRemoteCheck.command, remoteEqualityCommand)
+assert.equal(rootRemoteCheck.requiredShaBinding, authorityBinding)
+const reviewerHeadCheck = index.requiredChecks.find(
+  (check) => check.id === 'reviewer-local-authority-head'
+)
+assert.equal(reviewerHeadCheck.actor, 'reviewer')
+assert.equal(reviewerHeadCheck.expectedSourceCommitBinding, authorityBinding)
+assert(!reviewerHeadCheck.command.includes(packetBase))
 assert(exact(index.requiredExactResults.focused, { testFiles: 5, passed: 14, total: 14 }))
 assert(exact(index.requiredExactResults.nativeTypeScript, {
   inherited: 7,
@@ -390,6 +560,10 @@ assert(exact(index.requiredExactResults.nativeTypeScript, {
 assert(exact(index.acceptance.acceptFindingCounts, { P0: 0, P1: 0, P2: 0 }))
 assert.equal(index.acceptance.reviewFindingDisposition, 'REJECT')
 assert.equal(index.acceptance.runtimeIncidentDisposition, 'HOLD')
+assert(!index.reviewerExecutionPolicy.network)
+assert(!index.reviewerExecutionPolicy.githubAccess)
+assert(!index.reviewerExecutionPolicy.remoteQuery)
+assert(!index.reviewerExecutionPolicy.fetch)
 assert(!index.reviewerExecutionPolicy.dependencyInstall)
 assert(!index.reviewerExecutionPolicy.stage)
 assert(!index.reviewerExecutionPolicy.commit)
@@ -429,6 +603,10 @@ for (const packet of [index.packetHashes.controllerPacket, index.packetHashes.la
   const actual = crypto.createHash('sha256').update(fs.readFileSync(packet.path)).digest('hex')
   assert.equal(actual, packet.sha256, `packet hash drift ${packet.path}`)
 }
+for (const routerPath of routerPaths) {
+  const text = fs.readFileSync(routerPath, 'utf8')
+  assert(!text.includes(upstreamTrackingSyntax), `upstream-tracking assumption ${routerPath}`)
+}
 for (const routerPath of routerPaths.filter((value) => value.endsWith('.md'))) {
   const text = fs.readFileSync(routerPath, 'utf8')
   assert(text.includes(revision), `missing revision ${routerPath}`)
@@ -441,9 +619,21 @@ for (const routerPath of routerPaths.filter((value) => value.endsWith('.md'))) {
 
 console.log('phase-01-p1-r2-router-r1: ok')
 NODE
-test "$(git rev-parse HEAD)" = 666042037a9c91df572b1d8274bf6024f8d00f40
+test "$(git rev-parse HEAD)" = 48d79e2b13e258fc82ad55723875f15d6e162872
 test "$(git rev-list --parents -n 1 HEAD)" = \
+  "48d79e2b13e258fc82ad55723875f15d6e162872 666042037a9c91df572b1d8274bf6024f8d00f40"
+test "$(git rev-list --parents -n 1 666042037a9c91df572b1d8274bf6024f8d00f40)" = \
   "666042037a9c91df572b1d8274bf6024f8d00f40 c3135d40c6e70e4b2ddc905dc815407397197634 3b48f9391b4bff1d82bc85ef01a2d5e0e5b50e95"
+mapfile -t review_input_paths < <(node -e \
+  "const i=require('./docs/hosted-web-phases/EXECUTION_INDEX.json').reviewCanonicalInputs; console.log([...i.p11aPaths,...i.p11dPaths,...i.semanticCorpusPaths].join('\\n'))")
+test "${#review_input_paths[@]}" -eq 32
+git diff --exit-code \
+  666042037a9c91df572b1d8274bf6024f8d00f40 \
+  48d79e2b13e258fc82ad55723875f15d6e162872 \
+  -- "${review_input_paths[@]}"
+git diff --exit-code \
+  48d79e2b13e258fc82ad55723875f15d6e162872 \
+  -- "${review_input_paths[@]}"
 git diff --cached --quiet
 actual_paths=$(git status --short | sed 's/^...//')
 expected_paths=$(printf '%s\n' \
@@ -466,6 +656,12 @@ pnpm exec prettier --check \
   docs/hosted-web-phases/phase-01/lanes/p1-r2-review.md
 git diff --check
 ```
+
+The docs-router `HEAD`, parent, and 32-input diff checks above use `packetBaseSha` only to verify this
+uncommitted seven-path authoring workspace. They do not resolve or attest formal-review authority.
+This router author must not pre-run the future root launch gate or bind remote equality to
+`packetBaseSha`; root performs that gate only after the broker returns and pushes
+`postIntegrationAuthoritySha`.
 
 Also scan exactly the seven router paths for secret values, auth/provider payloads, private user or
 real-project paths, and non-default service-tier authority. Classify required model/profile metadata,

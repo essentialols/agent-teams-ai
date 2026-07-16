@@ -63,6 +63,13 @@ export function registerCodexGoalProjectControlJobTools(server: McpServer): void
           .string()
           .regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i)
           .optional(),
+        mergeBinding: z.object({
+          sourceRemote: z.string().min(1),
+          sourceBranch: z.string().min(1),
+        }).strict().optional().describe(
+          "Atomically bind this worker to the current canonical target and exact remote merge source. Requires requireCanonicalRemoteHead=true and omitted canonicalSha/phaseStartSha; runtime pins both commits into the immutable admission receipt.",
+        ),
+        requireCanonicalRemoteHead: z.boolean().optional(),
         producerJobId: z.string().optional(),
         newBranch: z.string().optional(),
         promptBody: z.string().optional(),

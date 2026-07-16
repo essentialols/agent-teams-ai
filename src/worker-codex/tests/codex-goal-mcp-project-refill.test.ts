@@ -565,6 +565,7 @@ await writeFile(operationFilePath, JSON.stringify(operation, null, 2) + "\\n");
         sourceRef: expect.any(Object),
         newBranch: expect.any(Object),
         producerJobId: expect.any(Object),
+        mergeBinding: expect.any(Object),
       });
       const refillSchema = refillTool?.inputSchema.properties
         ?.preStartAdmission as TestJsonSchema;
@@ -586,9 +587,7 @@ await writeFile(operationFilePath, JSON.stringify(operation, null, 2) + "\\n");
       const declarativeFields = [
         "kind",
         "format",
-        "canonicalSha",
         "baseSha",
-        "phaseStartSha",
         "packetRevision",
         "controllerPacket",
         "lanePacket",
@@ -605,7 +604,7 @@ await writeFile(operationFilePath, JSON.stringify(operation, null, 2) + "\\n");
       ];
       expect(contractSchema?.required).toEqual(declarativeFields);
       expect(Object.keys(contractSchema?.properties ?? {}).sort()).toEqual(
-        [...declarativeFields].sort(),
+        [...declarativeFields, "canonicalSha", "phaseStartSha", "merge"].sort(),
       );
       expect(contractSchema).toMatchObject({
         type: "object",

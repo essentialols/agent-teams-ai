@@ -27,6 +27,9 @@ export function parseReviewedOutputMerge(
   assertSafeGitRefName(sourceBranch, "merge.sourceBranch");
   assertSafeGitCommitSha(sourceCommit);
   assertSafeGitCommitSha(expectedTargetCommit);
+  if (sourceCommit === expectedTargetCommit) {
+    throw new Error("reviewed_worker_output_merge_distinct_parents_required");
+  }
   if (!scope.allowedGitRemotes?.includes(sourceRemote)) {
     throw new Error("reviewed_worker_output_merge_source_remote_denied");
   }

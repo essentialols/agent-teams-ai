@@ -28,6 +28,7 @@ const WORK_KEY_FIELDS = [
   "inputPatchHash",
   "reviewKind",
   "revision",
+  "merge",
 ] as const;
 const STATE_IDENTITY_FIELDS = [
   "workKey",

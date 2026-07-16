@@ -1,8 +1,11 @@
 import {
   ReviewDecisionStatus,
+  type MergeIntegrationPlan,
   type ProjectAccessScope,
   type ProjectControlBroker,
 } from "@vioxen/subscription-runtime/worker-core";
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import type { CodexGoalJobManifest } from "./codex-goal-jobs";
 import type { CodexGoalLaunchInput } from "./codex-goal-ops";
 import type { CodexProjectControlBrokerInput } from "./codex-goal-mcp-project-broker";
@@ -93,6 +96,16 @@ export async function projectControlMarkReviewedView(
           workspacePath: workspace.canonicalWorkspacePath,
         },
       };
+      const admittedMerge = captureReviewedOutput
+        ? await readAdmittedMergeBinding(loaded.manifest, controller.scope)
+        : undefined;
+      const requestedMerge = args.merge
+        ? parseReviewedOutputMerge(controller.scope, args.merge)
+        : undefined;
+      const selectedMerge = selectReviewedOutputMerge(
+        admittedMerge,
+        requestedMerge,
+      );
       const broker = deps.codexProjectControlBroker({
         registryRootDir: controller.registryRootDir,
         controller: controller.controller,
@@ -120,13 +133,8 @@ export async function projectControlMarkReviewedView(
                 requiredChecks: parseProjectIntegrationChecks(
                   args.requiredChecks,
                 ),
-                ...(args.merge
-                  ? {
-                      merge: parseReviewedOutputMerge(
-                        controller.scope,
-                        args.merge,
-                      ),
-                    }
+                ...(selectedMerge
+                  ? { merge: selectedMerge }
                   : {}),
               },
             }
@@ -187,4 +195,63 @@ export async function projectControlMarkReviewedView(
       };
     },
   });
+}
+
+export async function readAdmittedMergeBinding(
+  manifest: CodexGoalJobManifest,
+  scope: ProjectAccessScope,
+): Promise<MergeIntegrationPlan | undefined> {
+  const descriptor = manifest.projectPreStartAdmission;
+  if (!descriptor || !("mode" in descriptor) || descriptor.mode !== "serial-builtin") {
+    return undefined;
+  }
+  let receipt: unknown;
+  let contractBody: Buffer;
+  try {
+    receipt = JSON.parse(await readFile(descriptor.receiptPath, "utf8"));
+    contractBody = await readFile(descriptor.contractPath);
+  } catch {
+    throw new Error("project_control_review_merge_receipt_invalid");
+  }
+  if (typeof receipt !== "object" || receipt === null || Array.isArray(receipt)) {
+    throw new Error("project_control_review_merge_receipt_invalid");
+  }
+  const receiptRecord = receipt as Readonly<Record<string, unknown>>;
+  const merge = receiptRecord.merge;
+  if (merge === undefined) return undefined;
+  const contractSha256 = createHash("sha256").update(contractBody).digest("hex");
+  if (receiptRecord.contractSha256 !== contractSha256) {
+    throw new Error("project_control_review_merge_receipt_invalid");
+  }
+  let contract: unknown;
+  try {
+    contract = JSON.parse(contractBody.toString("utf8"));
+  } catch {
+    throw new Error("project_control_review_merge_receipt_invalid");
+  }
+  if (
+    typeof contract !== "object" || contract === null || Array.isArray(contract) ||
+    JSON.stringify((contract as Readonly<Record<string, unknown>>).merge) !==
+      JSON.stringify(merge)
+  ) {
+    throw new Error("project_control_review_merge_receipt_invalid");
+  }
+  try {
+    return parseReviewedOutputMerge(
+      scope,
+      merge as NonNullable<ProjectControlMcpArgs["merge"]>,
+    );
+  } catch {
+    throw new Error("project_control_review_merge_receipt_invalid");
+  }
+}
+
+export function selectReviewedOutputMerge(
+  admitted: MergeIntegrationPlan | undefined,
+  requested: MergeIntegrationPlan | undefined,
+): MergeIntegrationPlan | undefined {
+  if (admitted && requested && JSON.stringify(admitted) !== JSON.stringify(requested)) {
+    throw new Error("project_control_review_merge_binding_mismatch");
+  }
+  return admitted ?? requested;
 }

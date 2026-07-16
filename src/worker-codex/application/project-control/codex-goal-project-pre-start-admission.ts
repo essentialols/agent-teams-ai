@@ -649,6 +649,7 @@ async function validateProjectPreStartAdmission(input: {
       ? { workspacePatchSha256: afterBinding.workspacePatchSha256 }
       : {}),
     workspaceHead,
+    ...(contract.merge ? { merge: contract.merge } : {}),
     ...(verifiedInputPatch
       ? {
           workspaceMode: "verified_input_patch",

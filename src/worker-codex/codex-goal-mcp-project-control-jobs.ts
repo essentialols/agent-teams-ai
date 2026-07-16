@@ -74,6 +74,10 @@ import {
   resolveProjectSourceReference,
   resolveProjectSourceRevision,
 } from "./application/project-control/codex-goal-project-source-revision";
+import {
+  finalizeProjectMergeBoundSource,
+  parseProjectMergeBindingRequest,
+} from "./application/project-control/codex-goal-project-merge-binding";
 import { assertProjectRefillInputPatchSource } from "./application/project-control/codex-goal-project-input-patch-policy";
 import {
   matchesProjectControlPrefix,
@@ -169,7 +173,7 @@ export async function projectControlRefillWorkerView(
   if (args.allowDangerFullAccess === true) {
     throw new Error("project_control_child_danger_full_access_denied");
   }
-  const promptBody = requiredRawString(args.promptBody, "promptBody");
+  let promptBody = requiredRawString(args.promptBody, "promptBody");
   const sourceWorkspacePath = projectControlPathArg(
     args,
     args.sourceWorkspacePath,
@@ -226,31 +230,12 @@ export async function projectControlRefillWorkerView(
     reasoningEffort: requested.reasoningEffort ?? "high",
     serviceTier: requested.serviceTier ?? "default",
   };
-  const preStartAdmission = planProjectPreStartAdmission({
-    value: args.preStartAdmission,
-    confirmed: booleanValue(args.confirmPreStartAdmission) === true,
-    scope: controller.scope,
-    manifest: baseCreateManifest,
-  });
-  if (boundedToolName === "codex_goal_project_refill_worker") {
-    if (role !== "adoption") {
-      assertProjectRefillInputPatchSource({
-        contract: preStartAdmission?.contract,
-        producerJobId,
-        workerRole: role,
-      });
-    }
-  }
-  const createManifest: CodexGoalJobManifestInput = {
-    ...baseCreateManifest,
-    ...(preStartAdmission
-      ? { projectPreStartAdmission: preStartAdmission.descriptor }
-      : {}),
-  };
-  assertProjectControlCreateManifestPaths({
-    scope: controller.scope,
-    registryRootDir: controller.registryRootDir,
-    manifest: createManifest,
+  const mergeBinding = parseProjectMergeBindingRequest({
+    value: args.mergeBinding,
+    admission: args.preStartAdmission,
+    requireCanonicalRemoteHead:
+      booleanValue(args.requireCanonicalRemoteHead) === true,
+    expectedSourceCommit: args.expectedSourceCommit,
   });
 
   const baseBranch = stringValue(args.baseBranch) ?? "origin/main";
@@ -266,23 +251,23 @@ export async function projectControlRefillWorkerView(
       controller.scope,
     );
   const realPath = await projectControlRealPathOutsideWorkspaceScope(
-    createManifest.workspacePath,
+    baseCreateManifest.workspacePath,
     controller.scope,
   );
   const expectedRealPath = await projectControlRealPathIfExists(
-    createManifest.workspacePath,
+    baseCreateManifest.workspacePath,
   );
   const requestedWorktreeAccessInput = {
     sourceWorkspacePath,
     ...(realSourceWorkspacePath ? { realSourceWorkspacePath } : {}),
-    path: createManifest.workspacePath,
+    path: baseCreateManifest.workspacePath,
     ...(realPath ? { realPath } : {}),
     ...(expectedRealPath ? { expectedRealPath } : {}),
     baseBranch,
     ...(sourceRef ? { sourceRef } : {}),
     ...(newBranch ? { newBranch } : {}),
     workerRole: role,
-    ...(createManifest.tags ? { tags: createManifest.tags } : {}),
+    ...(baseCreateManifest.tags ? { tags: baseCreateManifest.tags } : {}),
   };
 
   if (!args.confirmRefill) {
@@ -291,13 +276,13 @@ export async function projectControlRefillWorkerView(
       reason: "confirm_refill_required",
       mode: "project_control_refill_worker",
       controllerJobId: controller.controller.jobId,
-      targetJobId: createManifest.jobId,
+      targetJobId: baseCreateManifest.jobId,
       auditPath: projectControlAuditPath(controller.controller),
       workerRole: role,
       startWorker: booleanValue(args.startWorker) !== false,
       worktreePreview: requestedWorktreeAccessInput,
-      manifestPreview: createManifest as unknown as JsonObject,
-      promptPath: createManifest.promptPath,
+      manifestPreview: baseCreateManifest as unknown as JsonObject,
+      promptPath: baseCreateManifest.promptPath,
     };
   }
 
@@ -330,12 +315,45 @@ export async function projectControlRefillWorkerView(
     : requestedWorktreeAccessInput;
   const resolvedSource =
     await resolverBroker.resolveWorktreeRevision(worktreeAccessInput);
-  const sourceRevision = await resolveProjectSourceRevision({
+  const finalizedSource = await finalizeProjectMergeBoundSource({
+    binding: mergeBinding,
+    jobRootDir: baseCreateManifest.jobRootDir,
+    admission: args.preStartAdmission,
     resolvedSource,
-    remoteTrackingRef: sourceReference.remoteTrackingRef,
+    scope: controller.scope,
+    targetRemoteTrackingRef: sourceReference.remoteTrackingRef,
     ...(expectedSourceCommit ? { expectedSourceCommit } : {}),
     requireRemoteHead: canonicalSourceWorkspacePath !== undefined,
   });
+  const { merge, sourceRevision } = finalizedSource;
+  const preStartAdmission = planProjectPreStartAdmission({
+    value: finalizedSource.admission,
+    confirmed: booleanValue(args.confirmPreStartAdmission) === true,
+    scope: controller.scope,
+    manifest: baseCreateManifest,
+  });
+  if (
+    boundedToolName === "codex_goal_project_refill_worker" &&
+    role !== "adoption"
+  ) {
+    assertProjectRefillInputPatchSource({
+      contract: preStartAdmission?.contract,
+      producerJobId,
+      workerRole: role,
+    });
+  }
+  const createManifest: CodexGoalJobManifestInput = {
+    ...baseCreateManifest,
+    ...(preStartAdmission
+      ? { projectPreStartAdmission: preStartAdmission.descriptor }
+      : {}),
+  };
+  assertProjectControlCreateManifestPaths({
+    scope: controller.scope,
+    registryRootDir: controller.registryRootDir,
+    manifest: createManifest,
+  });
+  promptBody += finalizedSource.promptSuffix;
   const producerHandoff = producerJobId
     ? await resolveProducerHandoffForVerifier({
         registryRootDir: controller.registryRootDir,
@@ -787,10 +805,7 @@ async function materializeReviewedOutputAggregateArtifacts(input: {
 }> {
   const requestedJobRootParent = dirname(input.jobRootDir);
   const jobRootParentItem = await lstat(requestedJobRootParent);
-  if (
-    jobRootParentItem.isSymbolicLink() ||
-    !jobRootParentItem.isDirectory()
-  ) {
+  if (jobRootParentItem.isSymbolicLink() || !jobRootParentItem.isDirectory()) {
     throw new Error("reviewed_output_aggregate_artifact_root_unsafe");
   }
   const canonicalJobRootParent = await realpath(requestedJobRootParent);

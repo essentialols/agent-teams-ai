@@ -15,6 +15,7 @@ import {
 
 import { useAppTranslation } from '@features/localization/renderer';
 import { TerminalWorkspaceFloatingLauncher } from '@features/terminal-workspace/renderer';
+import { classifyAnalyticsError, recordTeamStop } from '@renderer/analytics/productAnalytics';
 import { api } from '@renderer/api';
 import { SessionPanel } from '@renderer/components/chat/session-panel';
 import { confirm } from '@renderer/components/common/ConfirmDialog';
@@ -551,7 +552,6 @@ const TeamOfflineStatusBanner = memo(function TeamOfflineStatusBanner({
       role="status"
       className="relative mb-2.5 flex min-h-11 items-center gap-2.5 overflow-hidden rounded-md border border-amber-500/20 bg-amber-500/[0.055] py-2 pl-3 pr-2.5"
     >
-      <span className="absolute inset-y-2 left-0 w-0.5 rounded-r-full bg-amber-400/80" />
       <span className="flex size-7 shrink-0 items-center justify-center rounded-md border border-amber-500/20 bg-amber-500/10 text-amber-600 dark:text-amber-300">
         <Power size={14} />
       </span>
@@ -2217,13 +2217,37 @@ export const TeamDetailView = memo(function TeamDetailView({
         isTeamAlive: data?.isAlive === true,
         request,
         members: nextMembers,
-        stopTeam: (nextTeamName) => api.teams.stop(nextTeamName),
+        stopTeam: async (nextTeamName) => {
+          try {
+            await api.teams.stop(nextTeamName);
+            recordTeamStop({
+              source: 'relaunch',
+              success: true,
+              memberCount: data?.members.length ?? null,
+              providerIds: data?.members.map((member) => member.providerId ?? null),
+              runtimeActive: data?.isAlive ?? null,
+              hadRunningTasks: data?.tasks.some((task) => task.status === 'in_progress') ?? null,
+              errorClass: 'none',
+            });
+          } catch (error) {
+            recordTeamStop({
+              source: 'relaunch',
+              success: false,
+              memberCount: data?.members.length ?? null,
+              providerIds: data?.members.map((member) => member.providerId ?? null),
+              runtimeActive: data?.isAlive ?? null,
+              hadRunningTasks: data?.tasks.some((task) => task.status === 'in_progress') ?? null,
+              errorClass: classifyAnalyticsError(error),
+            });
+            throw error;
+          }
+        },
         replaceMembers: (nextTeamName, nextRequest) =>
           api.teams.replaceMembers(nextTeamName, nextRequest),
         launchTeam,
       });
     },
-    [data?.isAlive, launchTeam, teamName]
+    [data?.isAlive, data?.members, data?.tasks, launchTeam, teamName]
   );
 
   const handleChangeLeadRuntime = useCallback(() => {
@@ -2357,15 +2381,33 @@ export const TeamDetailView = memo(function TeamDetailView({
     setStoppingTeam(true);
     try {
       await api.teams.stop(teamName);
+      recordTeamStop({
+        source: 'detail',
+        success: true,
+        memberCount: data?.members.length ?? null,
+        providerIds: data?.members.map((member) => member.providerId ?? null),
+        runtimeActive: data?.isAlive ?? null,
+        hadRunningTasks: data?.tasks.some((task) => task.status === 'in_progress') ?? null,
+        errorClass: 'none',
+      });
       // Backend sends 'disconnected' progress which triggers store refresh,
       // but refresh here too as a safety net (e.g. if progress event is missed).
       await refreshTeamData(teamName);
     } catch (err) {
+      recordTeamStop({
+        source: 'detail',
+        success: false,
+        memberCount: data?.members.length ?? null,
+        providerIds: data?.members.map((member) => member.providerId ?? null),
+        runtimeActive: data?.isAlive ?? null,
+        hadRunningTasks: data?.tasks.some((task) => task.status === 'in_progress') ?? null,
+        errorClass: classifyAnalyticsError(err),
+      });
       console.error('Failed to stop team:', err);
     } finally {
       setStoppingTeam(false);
     }
-  }, [teamName, refreshTeamData]);
+  }, [data?.isAlive, data?.members, data?.tasks, teamName, refreshTeamData]);
 
   // Pick up pending review request from GlobalTaskDetailDialog
   useEffect(() => {

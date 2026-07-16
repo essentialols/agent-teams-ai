@@ -1,4 +1,9 @@
-import { recordReviewSubmit } from '@renderer/analytics/productAnalytics';
+import {
+  classifyAnalyticsError,
+  elapsedMsSince,
+  recordReviewApplyEnd,
+  recordReviewSubmit,
+} from '@renderer/analytics/productAnalytics';
 import { api } from '@renderer/api';
 import {
   getReviewChangeSetIdentityToken,
@@ -1099,6 +1104,11 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
     },
 
     applyReview: async (teamName: string, taskId?: string, memberName?: string) => {
+      const applyStartedAtMs = Date.now();
+      let applyDecision: 'approve' | 'request_changes' | 'mixed' | 'unknown' = 'unknown';
+      let applyFilesCount: number | null = null;
+      let applyAcceptedCount: number | null = null;
+      let applyRejectedCount: number | null = null;
       set({ applying: true, applyError: null });
 
       try {
@@ -1133,6 +1143,7 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
           set({ applying: false });
           return;
         }
+        applyFilesCount = activeChangeSet.files.length;
 
         const decisions: FileReviewDecision[] = [];
         let acceptedCount = 0;
@@ -1194,12 +1205,24 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
 
         if (decisions.length === 0) {
           if (acceptedCount > 0) {
+            applyDecision = 'approve';
+            applyAcceptedCount = acceptedCount;
+            applyRejectedCount = rejectedCount;
             recordReviewSubmit({
               decision: 'approve',
               filesCount: activeChangeSet.files.length,
               acceptedCount,
               rejectedCount,
               requestChangesCount,
+            });
+            recordReviewApplyEnd({
+              success: true,
+              decision: applyDecision,
+              filesCount: activeChangeSet.files.length,
+              acceptedCount,
+              rejectedCount,
+              durationMs: elapsedMsSince(applyStartedAtMs),
+              errorClass: 'none',
             });
           }
           set({ applying: false });
@@ -1214,16 +1237,37 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
         };
 
         await api.review.applyDecisions(request);
+        applyDecision = acceptedCount > 0 && rejectedCount > 0 ? 'mixed' : 'request_changes';
+        applyAcceptedCount = acceptedCount;
+        applyRejectedCount = rejectedCount;
         recordReviewSubmit({
-          decision: acceptedCount > 0 && rejectedCount > 0 ? 'mixed' : 'request_changes',
+          decision: applyDecision,
           filesCount: activeChangeSet.files.length,
           acceptedCount,
           rejectedCount,
           requestChangesCount,
         });
+        recordReviewApplyEnd({
+          success: true,
+          decision: applyDecision,
+          filesCount: activeChangeSet.files.length,
+          acceptedCount,
+          rejectedCount,
+          durationMs: elapsedMsSince(applyStartedAtMs),
+          errorClass: 'none',
+        });
 
         set({ applying: false });
       } catch (error) {
+        recordReviewApplyEnd({
+          success: false,
+          decision: applyDecision,
+          filesCount: applyFilesCount ?? get().activeChangeSet?.files.length ?? null,
+          acceptedCount: applyAcceptedCount,
+          rejectedCount: applyRejectedCount,
+          durationMs: elapsedMsSince(applyStartedAtMs),
+          errorClass: classifyAnalyticsError(error),
+        });
         logger.error('applyReview error:', error);
         set({
           applying: false,
@@ -1259,6 +1303,16 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
         fileDecision === 'rejected' || Object.values(hunkDecs).some((d) => d === 'rejected');
       if (!hasRejected) return null;
 
+      const applyStartedAtMs = Date.now();
+      const acceptedCount =
+        fileDecision === 'accepted'
+          ? count
+          : Object.values(hunkDecs).filter((decision) => decision === 'accepted').length;
+      const rejectedCount =
+        fileDecision === 'rejected'
+          ? count
+          : Object.values(hunkDecs).filter((decision) => decision === 'rejected').length;
+
       try {
         const content = fileContents[file.filePath] ?? fileContents[filePath];
         const innerBaseCount = getFileHunkCount(
@@ -1292,8 +1346,26 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
             },
           ],
         });
+        recordReviewApplyEnd({
+          success: true,
+          decision: 'single_file',
+          filesCount: 1,
+          acceptedCount,
+          rejectedCount,
+          durationMs: elapsedMsSince(applyStartedAtMs),
+          errorClass: 'none',
+        });
         return result;
       } catch (error) {
+        recordReviewApplyEnd({
+          success: false,
+          decision: 'single_file',
+          filesCount: 1,
+          acceptedCount,
+          rejectedCount,
+          durationMs: elapsedMsSince(applyStartedAtMs),
+          errorClass: classifyAnalyticsError(error),
+        });
         logger.error('applySingleFileDecision error:', error);
         set({ applyError: mapReviewError(error) });
         return null;

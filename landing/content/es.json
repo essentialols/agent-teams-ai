@@ -49,12 +49,12 @@
     {
       "id": "whatIsIt",
       "question": "¿Qué es Agent Teams?",
-      "answer": "Una app de escritorio para orquestar equipos de agentes IA con nuestra propia capa local de coordinación. Cada agente tiene un rol, trabaja de forma autónoma, colabora a través de un tablero kanban y puede ejecutarse con Claude, Codex u OpenCode."
+      "answer": "Una app de escritorio para orquestar equipos de agentes IA con nuestra propia capa local de coordinación. Cada agente tiene un rol, trabaja de forma autónoma, colabora a través de un tablero kanban y puede ejecutarse con Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro."
     },
     {
       "id": "isFree",
       "question": "¿Es realmente gratis?",
-      "answer": "Sí. La app es gratuita y de código abierto, y puedes empezar con un modelo gratuito sin autenticación - sin registro, claves API ni tarjeta. Si quieres más modelos, conecta Claude, Codex, OpenCode/OpenRouter u otro proveedor compatible."
+      "answer": "Sí. La app es gratuita y de código abierto, y puedes empezar con un modelo gratuito sin autenticación - sin registro, claves API ni tarjeta. Si quieres más modelos, conecta Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro u otro proveedor compatible."
     },
     {
       "id": "platforms",
@@ -99,7 +99,7 @@
       "features": [
         "Modelo gratuito sin autenticación para los primeros usos",
         "No necesitas cuenta ni login de proveedor para probar",
-        "Acceso opcional a Claude, Codex y OpenCode",
+        "Acceso opcional a Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro",
         "Equipos de agentes ilimitados",
         "Tablero kanban con actualizaciones en tiempo real",
         "Revisión de código con vista diff",

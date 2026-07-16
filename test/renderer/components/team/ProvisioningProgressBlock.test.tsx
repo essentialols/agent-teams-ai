@@ -265,7 +265,7 @@ describe('ProvisioningProgressBlock', () => {
       root.render(
         React.createElement(ProvisioningProgressBlock, {
           title: 'Launching team',
-          message: 'Starting Claude CLI process',
+          message: 'Starting agent runtime process',
           currentStepIndex: 1,
           loading: true,
           defaultLiveOutputOpen: true,
@@ -306,7 +306,7 @@ describe('ProvisioningProgressBlock', () => {
     expect(copied).toContain('# Team provisioning diagnostics');
     expect(copied).toContain('## Quick triage');
     expect(copied).toContain('Title: Launching team');
-    expect(copied).toContain('Message: Starting Claude CLI process');
+    expect(copied).toContain('Message: Starting agent runtime process');
     expect(copied).toContain('PID: 321');
     expect(copied).toContain('Counts: warnings=1; launchDiagnostics=1; memberSnapshots=0; artifactFiles=0');
     expect(copied).toContain('Large-team signal: Large Codex team launch');

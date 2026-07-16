@@ -268,7 +268,11 @@ export class OpenCodeTeamRuntimeAdapter implements TeamLaunchRuntimeAdapter {
     let selectedModel = input.model?.trim() ?? '';
     let launchWarnings: string[] = [];
     if (!skipReadinessPreflight) {
-      const prepared = await this.prepare(input);
+      // A state-changing launch must never inherit a caller's compatibility-only
+      // preflight. Authless subscription bridges such as Cursor ACP are present
+      // in the catalog without an OpenCode credential and therefore require a
+      // real execution proof before launch, including controlled retries.
+      const prepared = await this.prepare({ ...input, runtimeOnly: false });
       if (!prepared.ok) {
         return blockedLaunchResult(input, prepared.reason, prepared.diagnostics, prepared.warnings);
       }
@@ -1092,6 +1096,10 @@ function isGenericOpenCodeFailureMessage(message: string): boolean {
     message.startsWith(
       'OpenCode bootstrap MCP did not complete required tools before assistant response:'
     ) ||
+    message.startsWith('OpenCode command timed out after') ||
+    message.startsWith('CLI-authenticated providers missing from live host') ||
+    message.startsWith('OpenCode session status') ||
+    (message.startsWith('opencode_app_mcp_tool_proof_') && message.includes('cache_hit')) ||
     isOpenCodeLaunchTimingDiagnostic(message)
   );
 }
@@ -1366,8 +1374,15 @@ function blockedLaunchResult(
   diagnostics: string[],
   warnings: string[] = []
 ): TeamRuntimeLaunchResult {
-  const hardFailureReason =
-    reason === 'unknown_error' && diagnostics[0]?.trim() ? diagnostics[0].trim() : reason;
+  const readinessFailure =
+    reason === 'unknown_error' ||
+    reason === 'model_unavailable' ||
+    reason === 'not_authenticated' ||
+    reason === 'mcp_unavailable' ||
+    reason === 'not_installed';
+  const hardFailureReason = readinessFailure
+    ? (firstDisplayableOpenCodeFailureMessage(diagnostics, { includeGeneric: false }) ?? reason)
+    : reason;
   const members = Object.fromEntries(
     input.expectedMembers.map((member) => [
       member.name,

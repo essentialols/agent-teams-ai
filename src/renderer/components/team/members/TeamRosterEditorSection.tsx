@@ -158,6 +158,8 @@ const TeamRosterEditorSectionImpl = ({
       taskSuggestions={taskSuggestions}
       teamSuggestions={teamSuggestions}
       onWorkflowSuggestionsNeeded={onWorkflowSuggestionsNeeded}
+      toolbarLeading={headerTop}
+      layoutVariant="flat"
       hideContent={hideMembersContent}
       existingMembers={existingMembers}
       defaultProviderId={defaultProviderId}
@@ -183,8 +185,8 @@ const TeamRosterEditorSectionImpl = ({
       onTeammateWorktreeDefaultChange={onTeammateWorktreeDefaultChange}
       headerExtra={
         <div className="space-y-3">
-          {headerTop}
           <LeadModelRow
+            projectPath={projectPath}
             providerId={providerId}
             model={model}
             effort={effort}
@@ -204,6 +206,7 @@ const TeamRosterEditorSectionImpl = ({
             modelUnavailableReasonByValue={modelUnavailableReasonByProvider?.[providerId]}
             showAnthropicContextLimit={hasAnthropicRuntime}
             disableAnthropicContextLimit={disableAnthropicContextLimit}
+            layoutVariant="flat"
           />
           {headerBottom}
         </div>

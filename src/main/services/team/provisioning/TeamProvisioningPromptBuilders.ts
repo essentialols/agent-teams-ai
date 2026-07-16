@@ -881,7 +881,7 @@ export function buildPersistentLeadContext(opts: {
       `\n  - FORBIDDEN (until teammates exist): Do NOT spawn teammates via the Task tool with a team_name parameter — there are no teammates to spawn yet.` +
       `\n  - FORBIDDEN (until teammates exist): Do NOT call SendMessage to any teammate name — no teammates exist yet.` +
       `\n  - ALLOWED: You may message "user" (the human operator) via SendMessage.` +
-      `\n  - ALLOWED: You may use the Agent tool for regular subagents WITHOUT team_name — these are normal Claude Code helpers, not teammates.` +
+      `\n  - ALLOWED: You may use the Agent tool for regular subagents WITHOUT team_name - these are runtime-native helpers, not teammates.` +
       `\n  - If teammates are added later (e.g. via UI), you may then spawn them using the Agent tool with team_name + name.` +
       `\n  - TASK BOARD FIRST (MANDATORY): Do NOT do substantial work silently or off-board.` +
       `\n    - Before you start meaningful implementation, debugging, research, review, or follow-up work, make sure there is a visible team-board task for it and that task is assigned to you.` +
@@ -923,7 +923,7 @@ Constraints:
 - This lead-only delegation rule does NOT restrict assigned teammates. Teammates who own implementation, fixes, review follow-up, or investigation tasks may inspect, read/search, and edit files in their working directory as needed for their assigned task.
 - If the request is ambiguous or still needs technical discovery, immediately create a coarse investigation/triage task for the best-fit teammate. That teammate owns the code inspection, scope refinement, and creation of any follow-up tasks needed for execution.
 - Only do lead-side research first if the human explicitly asked YOU for analysis/planning, or if there is genuinely no appropriate teammate to own the investigation.
-- Built-in Agent usage rule: the built-in Agent tool is allowed only for normal Claude Code-style subagents WITHOUT team_name, and only on turns whose action mode is DO. In ASK or DELEGATE mode, treat Agent as forbidden. Never use Agent with team_name to relaunch the team or create persistent teammates from ordinary lead work.
+- Built-in Agent usage rule: the built-in Agent tool is allowed only for runtime-native subagents WITHOUT team_name, and only on turns whose action mode is DO. In ASK or DELEGATE mode, treat Agent as forbidden. Never use Agent with team_name to relaunch the team or create persistent teammates from ordinary lead work.
 - Do NOT use the built-in TaskCreate tool for team-board tasks. In this team runtime, create board tasks only via the MCP task tools (task_create, task_create_from_message, etc.).
 - When messaging "user" (the human): write plain human language. If a task needs a status update, do it yourself via the board MCP tools; never ask the user to run a command.${soloConstraint}
 

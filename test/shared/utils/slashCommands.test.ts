@@ -51,7 +51,7 @@ describe('slashCommands', () => {
   });
 
   it('returns metadata for known commands only', () => {
-    expect(getKnownSlashCommand('MODEL')?.description).toContain('Claude model');
+    expect(getKnownSlashCommand('MODEL')?.description).toContain('active model');
     expect(getKnownSlashCommand('foo')).toBeNull();
   });
 

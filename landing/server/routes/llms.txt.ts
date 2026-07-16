@@ -28,7 +28,7 @@ export default defineEventHandler((event) => {
 
   return `# Agent Teams
 
-> Agent Teams is a free, open-source local desktop app for orchestrating AI agent teams across Claude, Codex, and OpenCode. It provides a live kanban board, agent-to-agent messaging, task logs, code review, downloads for macOS, Windows, and Linux, and local-first control.
+> Agent Teams is a free, open-source local desktop app for orchestrating AI agent teams across Claude Code, Codex, and OpenCode runtimes, with provider-backed access to Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, and Kiro. It provides a live kanban board, agent-to-agent messaging, task logs, code review, downloads for macOS, Windows, and Linux, and local-first control.
 
 ## Primary URLs
 

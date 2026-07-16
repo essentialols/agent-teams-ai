@@ -49,12 +49,12 @@
     {
       "id": "whatIsIt",
       "question": "Agent Teams คืออะไร?",
-      "answer": "แอปเดสก์ท็อปสำหรับจัดการทีมเอเจนต์ AI ด้วยชั้นประสานงานในเครื่อง เอเจนต์มีบทบาท ทำงานอัตโนมัติ ร่วมมือผ่านคัมบัง และใช้ Claude, Codex หรือ OpenCode ได้"
+      "answer": "แอปเดสก์ท็อปสำหรับจัดการทีมเอเจนต์ AI ด้วยชั้นประสานงานในเครื่อง เอเจนต์มีบทบาท ทำงานอัตโนมัติ ร่วมมือผ่านคัมบัง และใช้ Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro ได้"
     },
     {
       "id": "isFree",
       "question": "ฟรีจริงไหม?",
-      "answer": "ใช่ แอปฟรีและเป็น open source เริ่มด้วยโมเดลฟรีที่ไม่ต้อง auth ได้เลย - ไม่ต้องสมัคร ไม่ต้องใช้ API key หรือบัตรเครดิต ถ้าต้องการโมเดลเพิ่ม ให้เชื่อม Claude, Codex, OpenCode/OpenRouter หรือ provider ที่รองรับ"
+      "answer": "ใช่ แอปฟรีและเป็น open source เริ่มด้วยโมเดลฟรีที่ไม่ต้อง auth ได้เลย - ไม่ต้องสมัคร ไม่ต้องใช้ API key หรือบัตรเครดิต ถ้าต้องการโมเดลเพิ่ม ให้เชื่อม Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro หรือ provider ที่รองรับ"
     },
     {
       "id": "platforms",
@@ -125,7 +125,7 @@
       "name": "ฟรี",
       "price": "$0",
       "period": "",
-      "description": "ใช่ แอปฟรีและเป็น open source เริ่มด้วยโมเดลฟรีที่ไม่ต้อง auth ได้เลย - ไม่ต้องสมัคร ไม่ต้องใช้ API key หรือบัตรเครดิต ถ้าต้องการโมเดลเพิ่ม ให้เชื่อม Claude, Codex, OpenCode/OpenRouter หรือ provider ที่รองรับ",
+      "description": "ใช่ แอปฟรีและเป็น open source เริ่มด้วยโมเดลฟรีที่ไม่ต้อง auth ได้เลย - ไม่ต้องสมัคร ไม่ต้องใช้ API key หรือบัตรเครดิต ถ้าต้องการโมเดลเพิ่ม ให้เชื่อม Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro หรือ provider ที่รองรับ",
       "features": [
         "ทีมเอเจนต์",
         "บอร์ดคัมบัง",

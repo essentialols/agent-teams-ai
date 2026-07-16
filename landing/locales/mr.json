@@ -86,7 +86,7 @@
   },
   "pricing": {
     "sectionTitle": "इन्स्टॉल करण्यास मोफत. मोफत मॉडेल समाविष्ट.",
-    "sectionSubtitle": "ऑथशिवाय मोफत मॉडेलसह त्वरित सुरुवात करा - कोणतेही खाते, API की किंवा क्रेडिट कार्ड नाही. अधिक मॉडेल्स हवे असताना Claude, Codex, OpenCode/OpenRouter किंवा इतर प्रोव्हायडर प्रवेश कनेक्ट करा.",
+    "sectionSubtitle": "ऑथशिवाय मोफत मॉडेलसह त्वरित सुरुवात करा - कोणतेही खाते, API की किंवा क्रेडिट कार्ड नाही. अधिक मॉडेल्स हवे असताना Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro किंवा इतर प्रोव्हायडर प्रवेश कनेक्ट करा.",
     "getStarted": "आता डाउनलोड करा",
     "popular": "मोफत",
     "freeModelCallout": "ऑथशिवाय मोफत मॉडेल समाविष्ट",
@@ -159,9 +159,9 @@
   },
   "meta": {
     "homeTitle": "Agent Teams - डेव्हलपर्ससाठी AI एजंट ऑर्केस्ट्रेशन",
-    "homeDescription": "AI एजंट टीम्ससाठी मोफत, ओपन-सोर्स डेस्कटॉप अॅप. ऑथशिवाय मोफत मॉडेलसह सुरुवात करा, मग अधिक मॉडेल्सची गरज असताना Claude, Codex किंवा OpenCode कनेक्ट करा.",
+    "homeDescription": "AI एजंट टीम्ससाठी मोफत, ओपन-सोर्स डेस्कटॉप अॅप. ऑथशिवाय मोफत मॉडेलसह सुरुवात करा, मग अधिक मॉडेल्सची गरज असताना Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro कनेक्ट करा.",
     "downloadTitle": "macOS, Windows आणि Linux साठी Agent Teams डाउनलोड करा",
-    "downloadDescription": "macOS, Windows आणि Linux साठी Agent Teams डाउनलोड करा. Claude, Codex आणि OpenCode एजंट टीम्ससाठी मोफत ओपन-सोर्स डेस्कटॉप अॅप."
+    "downloadDescription": "macOS, Windows आणि Linux साठी Agent Teams डाउनलोड करा. Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro एजंट टीम्ससाठी मोफत ओपन-सोर्स डेस्कटॉप अॅप."
   },
   "error": {
     "notFoundTitle": "पृष्ठ सापडले नाही",

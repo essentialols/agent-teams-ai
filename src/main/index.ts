@@ -74,11 +74,21 @@ import {
   type RuntimeProviderManagementFeatureFacade,
 } from '@features/runtime-provider-management/main';
 import {
+  RUNTIME_PROVIDER_COMPANION_PROGRESS,
+  RUNTIME_PROVIDER_MANAGEMENT_OAUTH_PROGRESS,
+} from '@features/runtime-provider-management/contracts';
+import {
   createTerminalWorkspaceFeature,
   registerTerminalWorkspaceIpc,
   removeTerminalWorkspaceIpc,
   type TerminalWorkspaceFeatureFacade,
 } from '@features/terminal-workspace/main';
+import {
+  createTeamImportFeature,
+  registerTeamImportIpc,
+  removeTeamImportIpc,
+  type TeamImportFeatureFacade,
+} from '@features/team-import/main';
 import { TOKEN_USAGE_SNAPSHOT_CHANGED } from '@features/token-usage/contracts';
 import { createApplicationCommandLedgerFeature } from '@features/application-command-ledger/main';
 import { TaskBoardCommandFacade } from '@features/task-board-commands';
@@ -86,6 +96,7 @@ import {
   createTokenUsageFeature,
   registerTokenUsageIpc,
   removeTokenUsageIpc,
+  resolveClaudeMultimodelDataHomePath,
   TeamTaskUsageAttributionSource,
   type TokenUsageFeatureFacade,
 } from '@features/token-usage/main';
@@ -164,7 +175,7 @@ import { createLogger } from '@shared/utils/logger';
 import { isReviewPickupEscalationMessage } from '@shared/utils/teamAutomationMessages';
 import { isTeamInternalControlMessageEnvelope } from '@shared/utils/teamInternalControlMessages';
 import { createHash } from 'crypto';
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import { existsSync } from 'fs';
 import { join } from 'path';
 
@@ -1054,6 +1065,7 @@ let sshConnectionManager: SshConnectionManager;
 let codexAccountFeature: CodexAccountFeatureFacade | null = null;
 let codexModelCatalogFeature: CodexModelCatalogFeatureFacade | null = null;
 let recentProjectsFeature: RecentProjectsFeatureFacade;
+let teamImportFeature: TeamImportFeatureFacade;
 let organizationsFeature: OrganizationsFeatureFacade;
 let runtimeProviderManagementFeature: RuntimeProviderManagementFeatureFacade;
 let terminalWorkspaceFeature: TerminalWorkspaceFeatureFacade | null = null;
@@ -2166,12 +2178,23 @@ async function initializeServices(): Promise<void> {
     getLocalContext: () => contextRegistry.get('local'),
     logger: createLogger('Feature:RecentProjects'),
   });
+  teamImportFeature = createTeamImportFeature(teamDataService);
   organizationsFeature = createOrganizationsFeature({
     teamDataService,
     crossTeamService,
     logger: createLogger('Feature:Organizations'),
   });
-  runtimeProviderManagementFeature = createRuntimeProviderManagementFeature();
+  runtimeProviderManagementFeature = createRuntimeProviderManagementFeature({
+    openExternal: async (url) => {
+      await shell.openExternal(url);
+    },
+    emitOAuthProgress: (event) => {
+      safeSendToRenderer(mainWindow, RUNTIME_PROVIDER_MANAGEMENT_OAUTH_PROGRESS, event);
+    },
+    emitProgress: (event) => {
+      safeSendToRenderer(mainWindow, RUNTIME_PROVIDER_COMPANION_PROGRESS, event);
+    },
+  });
   terminalWorkspaceFeature = createTerminalWorkspaceFeature({
     teamsBasePath: getTeamsBasePath(),
     logger: createLogger('Feature:TerminalWorkspace'),
@@ -2187,6 +2210,7 @@ async function initializeServices(): Promise<void> {
     ),
     teamsBasePath: getTeamsBasePath(),
     claudeProjectsBasePath: getProjectsBasePath(),
+    openCodeDataHomePath: resolveClaudeMultimodelDataHomePath(),
     ccusageJsonPath: process.env.AGENT_TEAMS_TOKEN_USAGE_CCUSAGE_JSON,
     tokscaleJsonPath: process.env.AGENT_TEAMS_TOKEN_USAGE_TOKSCALE_JSON,
     ccusageCommand: readOptionalEnv('AGENT_TEAMS_TOKEN_USAGE_CCUSAGE_COMMAND'),
@@ -2725,6 +2749,7 @@ async function initializeServices(): Promise<void> {
   );
   registerCodexAccountIpc(ipcMain, codexAccountFeature);
   registerRecentProjectsIpc(ipcMain, recentProjectsFeature);
+  registerTeamImportIpc(ipcMain, teamImportFeature);
   registerOrganizationsIpc(ipcMain, organizationsFeature);
   registerRuntimeProviderManagementIpc(ipcMain, runtimeProviderManagementFeature);
   registerTerminalWorkspaceIpc(ipcMain, terminalWorkspaceFeature);
@@ -2941,6 +2966,7 @@ async function shutdownServices(): Promise<void> {
       removeIpcHandlers();
       removeCodexAccountIpc(ipcMain);
       removeRecentProjectsIpc(ipcMain);
+      removeTeamImportIpc(ipcMain);
       removeOrganizationsIpc(ipcMain);
       removeRuntimeProviderManagementIpc(ipcMain);
       removeTerminalWorkspaceIpc(ipcMain);

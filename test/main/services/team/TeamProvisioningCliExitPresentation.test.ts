@@ -122,7 +122,7 @@ describe('TeamProvisioningCliExitPresentation', () => {
     ).toEqual({
       message: 'Launch bootstrap was not confirmed',
       error:
-        'Bootstrap was not confirmed before the Codex runtime exited. Pending teammates: worker.',
+        'Bootstrap was not confirmed before the agent runtime exited. Pending teammates: worker.',
     });
 
     expect(

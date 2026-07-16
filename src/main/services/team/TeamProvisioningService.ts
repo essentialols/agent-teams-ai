@@ -37,6 +37,7 @@ import {
 import { createTeamProvisioningClaudePermissionSettingsDelegation } from './provisioning/TeamProvisioningClaudePermissionSettingsDelegation';
 import { type TeamProvisioningCompatibilityDelegation } from './provisioning/TeamProvisioningCompatibilityFacade';
 import { TeamProvisioningConfigFacade } from './provisioning/TeamProvisioningConfigFacade';
+import { buildLaunchMembersFromMeta } from './provisioning/TeamProvisioningConfigMaterialization';
 import { type TeamProvisioningConfigTaskActivityBoundary } from './provisioning/TeamProvisioningConfigTaskActivityBoundary';
 import { type TeamProvisioningCreateDeterministicSpawnFlowBoundary } from './provisioning/TeamProvisioningCreateDeterministicSpawnFlowPortsFactory';
 import { type ProvisioningEnvResolution } from './provisioning/TeamProvisioningEnvBuilder';
@@ -203,12 +204,78 @@ import type {
   TeamCreateResponse,
   TeamLaunchRequest,
   TeamLaunchResponse,
+  TeamMember,
   TeamProvisioningProgress,
 } from '@shared/types';
 
 const logger = createLogger('Service:TeamProvisioning');
 const { AGENT_TEAMS_NAMESPACED_LEAD_BOOTSTRAP_TOOL_NAMES, createController } =
   agentTeamsControllerModule;
+
+function mergeProvisioningMembersWithRemovalTombstones(
+  activeMembers: readonly TeamMember[],
+  existingMembers: readonly TeamMember[]
+): TeamMember[] {
+  const removedMembers = existingMembers.filter((member) => member.removedAt != null);
+  const removedNames = new Set(
+    removedMembers.map((member) => member.name.trim().toLowerCase()).filter(Boolean)
+  );
+  return [
+    ...activeMembers.filter((member) => !removedNames.has(member.name.trim().toLowerCase())),
+    ...removedMembers,
+  ];
+}
+
+function preserveProvisioningRemovalTombstones(store: TeamMembersMetaStore): TeamMembersMetaStore {
+  const getMeta = (store as Partial<TeamMembersMetaStore>).getMeta;
+  const rawWriteMembers = (store as Partial<TeamMembersMetaStore>).writeMembers;
+  if (typeof getMeta !== 'function' || typeof rawWriteMembers !== 'function') {
+    return store;
+  }
+  const writeMembers = rawWriteMembers.bind(store);
+
+  return new Proxy(store, {
+    get(target, property) {
+      if (property === 'writeMembers') {
+        return async (
+          teamName: string,
+          members: TeamMember[],
+          options?: { providerBackendId?: string }
+        ): Promise<void> => {
+          const existingMeta = await getMeta.call(target, teamName);
+          await writeMembers(
+            teamName,
+            mergeProvisioningMembersWithRemovalTombstones(members, existingMeta?.members ?? []),
+            options
+          );
+        };
+      }
+      const value = Reflect.get(target, property, target) as unknown;
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
+
+function preserveAuthoritativeMembersMetaResolution(
+  facade: TeamProvisioningConfigFacade,
+  store: TeamMembersMetaStore
+): void {
+  const fallback = facade.resolveLaunchExpectedMembers.bind(facade);
+  facade.resolveLaunchExpectedMembers = async (teamName, configRaw, leadProviderId) => {
+    try {
+      const meta = await store.getMeta(teamName);
+      if (meta) {
+        return {
+          members: buildLaunchMembersFromMeta(meta.members),
+          source: 'members-meta',
+        };
+      }
+    } catch {
+      // The extracted resolver owns warning and fallback behavior for unreadable metadata.
+    }
+    return fallback(teamName, configRaw, leadProviderId);
+  };
+}
 
 export class TeamProvisioningService extends TeamProvisioningServiceFacadeDelegates {
   protected readonly runtimeLaneCoordinator = createTeamRuntimeLaneCoordinator();
@@ -523,10 +590,24 @@ export class TeamProvisioningService extends TeamProvisioningServiceFacadeDelega
     createTeamProvisioningMemberLifecycleOperationUseCases({
       operationRunner: this.memberLifecycleOperationRunner,
     });
-  private readonly memberLifecycleHost = createTeamProvisioningMemberLifecycleHostFromPortGroups<
-    ProvisioningRun,
-    MixedSecondaryRuntimeLaneState
-  >(this.createMemberLifecycleHostPortGroups());
+  private readonly memberLifecycleHost = Object.assign(
+    createTeamProvisioningMemberLifecycleHostFromPortGroups<
+      ProvisioningRun,
+      MixedSecondaryRuntimeLaneState
+    >(this.createMemberLifecycleHostPortGroups()),
+    {
+      stopOpenCodeRuntimeAdapterTeam: (teamName: string, runId: string) =>
+        this.stopOpenCodeRuntimeAdapterTeam(teamName, runId),
+      setAliveRunId: (teamName: string, runId: string) =>
+        this.runTracking.setAliveRunId(teamName, runId),
+      deleteAliveRunId: (teamName: string) => this.runTracking.deleteAliveRunId(teamName),
+      isTeamAlive: (teamName: string) => this.isTeamAlive(teamName),
+      setRuntimeAdapterProgress: (
+        progress: TeamProvisioningProgress,
+        onProgress: (progress: TeamProvisioningProgress) => void
+      ) => this.runtimeAdapterProgressState.setRuntimeAdapterProgress(progress, onProgress),
+    }
+  );
   private readonly memberLifecycleController = new TeamProvisioningMemberLifecycleController(
     this.memberLifecycleHost,
     this.memberLifecycleOperationUseCases,
@@ -615,7 +696,13 @@ export class TeamProvisioningService extends TeamProvisioningServiceFacadeDelega
     private readonly attachmentStore: TeamAttachmentStore = new TeamAttachmentStore()
   ) {
     super();
+    (
+      this as unknown as {
+        membersMetaStore: TeamMembersMetaStore;
+      }
+    ).membersMetaStore = preserveProvisioningRemovalTombstones(this.membersMetaStore);
     createTeamProvisioningServiceComposition(this);
+    preserveAuthoritativeMembersMetaResolution(this.configFacade, this.membersMetaStore);
     scheduleStaleAnthropicTeamApiKeyHelperCleanup({ baseClaudeDir: getClaudeBasePath(), logger });
   }
 

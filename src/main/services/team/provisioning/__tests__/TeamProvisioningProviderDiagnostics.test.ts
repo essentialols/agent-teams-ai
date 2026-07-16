@@ -398,6 +398,30 @@ describe('TeamProvisioningProviderDiagnostics provider probes', () => {
       expect.objectContaining({ ok: true })
     );
   });
+
+  it('reports Gemini authentication without suggesting Anthropic credentials', async () => {
+    const ports = createFakePorts({
+      isAuthFailureWarning: vi.fn().mockReturnValue(true),
+      sleep: vi.fn().mockResolvedValue(undefined),
+      spawnProbe: vi.fn().mockResolvedValue({
+        exitCode: 1,
+        stdout: '',
+        stderr: 'Gemini provider is not authenticated',
+      }),
+    });
+
+    const result = await runProviderOneShotDiagnostic({
+      claudePath: '/fake/runtime',
+      cwd: '/repo',
+      env: { PATH: '/bin' },
+      providerId: 'gemini',
+      ports,
+    });
+
+    expect(result.warning).toContain('Authenticate Gemini');
+    expect(result.warning).not.toContain('Anthropic');
+    expect(result.warning).not.toContain('ANTHROPIC_API_KEY');
+  });
 });
 
 describe('TeamProvisioningProviderDiagnostics ports factory', () => {

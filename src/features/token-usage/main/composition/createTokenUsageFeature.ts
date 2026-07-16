@@ -5,10 +5,13 @@ import {
 import { ClaudeJsonlUsageImporter } from '../infrastructure/ClaudeJsonlUsageImporter';
 import { createCliUsageImporter } from '../infrastructure/CliUsageImporters';
 import { CodexJsonlUsageImporter } from '../infrastructure/CodexJsonlUsageImporter';
+import { CompositeTokenUsageRunSourceDiscovery } from '../infrastructure/CompositeTokenUsageRunSourceDiscovery';
 import { JsonTokenUsageBudgetNotificationStateRepository } from '../infrastructure/JsonTokenUsageBudgetNotificationStateRepository';
 import { JsonTokenUsageBudgetSettingsRepository } from '../infrastructure/JsonTokenUsageBudgetSettingsRepository';
 import { JsonTokenUsageLedgerRepository } from '../infrastructure/JsonTokenUsageLedgerRepository';
 import { createJsonFileUsageImporter } from '../infrastructure/JsonUsageImporters';
+import { OpenCodeSessionStoreRunSourceDiscovery } from '../infrastructure/OpenCodeSessionStoreRunSourceDiscovery';
+import { OpenCodeSqliteUsageImporter } from '../infrastructure/OpenCodeSqliteUsageImporter';
 import { TeamLaunchRunSourceDiscovery } from '../infrastructure/TeamLaunchRunSourceDiscovery';
 
 import type {
@@ -43,6 +46,7 @@ export interface CreateTokenUsageFeatureDeps {
   budgetNotificationStatePath?: string;
   teamsBasePath: string;
   claudeProjectsBasePath?: string;
+  openCodeDataHomePath?: string;
   importers?: readonly TokenUsageImporterPort[];
   ccusageJsonPath?: string;
   tokscaleJsonPath?: string;
@@ -80,9 +84,16 @@ export function createTokenUsageFeature(
           logger: deps.logger,
         })
       : undefined;
+  const teamLaunchDiscovery = new TeamLaunchRunSourceDiscovery(deps.teamsBasePath);
+  const discovery = deps.openCodeDataHomePath
+    ? new CompositeTokenUsageRunSourceDiscovery([
+        teamLaunchDiscovery,
+        new OpenCodeSessionStoreRunSourceDiscovery(deps.teamsBasePath, deps.openCodeDataHomePath),
+      ])
+    : teamLaunchDiscovery;
   const service: TokenUsageAnalyticsServicePort = new TokenUsageAnalyticsService({
     ledger: new JsonTokenUsageLedgerRepository(deps.ledgerPath),
-    discovery: new TeamLaunchRunSourceDiscovery(deps.teamsBasePath),
+    discovery,
     importers: buildImporters(deps),
     clock: { now: () => new Date() },
     budgets: budgetSettingsRepository,
@@ -104,6 +115,14 @@ export function createTokenUsageFeature(
 
 function buildImporters(deps: CreateTokenUsageFeatureDeps): TokenUsageImporterPort[] {
   const importers = [...(deps.importers ?? [])];
+  if (deps.openCodeDataHomePath) {
+    importers.push(
+      new OpenCodeSqliteUsageImporter({
+        runLookbackMs: 48 * 60 * 60 * 1000,
+        logger: deps.logger,
+      })
+    );
+  }
   if (deps.claudeProjectsBasePath) {
     importers.push(
       new ClaudeJsonlUsageImporter({

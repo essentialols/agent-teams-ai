@@ -86,7 +86,7 @@
   },
   "pricing": {
     "sectionTitle": "Bure kusakinisha. Modeli ya bure imejumuishwa.",
-    "sectionSubtitle": "Anza papo hapo na modeli ya bure bila uthibitishaji - hakuna akaunti, ufunguo wa API, au kadi ya mkopo. Unganisha Claude, Codex, OpenCode/OpenRouter, au ufikiaji wa mtoa huduma mwingine pale tu unapotaka modeli zaidi.",
+    "sectionSubtitle": "Anza papo hapo na modeli ya bure bila uthibitishaji - hakuna akaunti, ufunguo wa API, au kadi ya mkopo. Unganisha Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro, au ufikiaji wa mtoa huduma mwingine pale tu unapotaka modeli zaidi.",
     "getStarted": "Pakua Sasa",
     "popular": "Bure",
     "freeModelCallout": "Modeli ya bure bila uthibitishaji imejumuishwa",
@@ -159,9 +159,9 @@
   },
   "meta": {
     "homeTitle": "Agent Teams - Uratibu wa Wakala wa AI kwa Watengenezaji",
-    "homeDescription": "Programu ya eneo-kazi ya bure, chanzo huria kwa timu za wakala wa AI. Anza na modeli ya bure bila uthibitishaji, kisha unganisha Claude, Codex, au OpenCode unapohitaji modeli zaidi.",
+    "homeDescription": "Programu ya eneo-kazi ya bure, chanzo huria kwa timu za wakala wa AI. Anza na modeli ya bure bila uthibitishaji, kisha unganisha Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro unapohitaji modeli zaidi.",
     "downloadTitle": "Pakua Agent Teams kwa macOS, Windows, na Linux",
-    "downloadDescription": "Pakua Agent Teams kwa macOS, Windows, na Linux. Programu ya eneo-kazi ya bure ya chanzo huria kwa timu za wakala za Claude, Codex, na OpenCode."
+    "downloadDescription": "Pakua Agent Teams kwa macOS, Windows, na Linux. Programu ya eneo-kazi ya bure ya chanzo huria kwa timu za wakala za Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro."
   },
   "error": {
     "notFoundTitle": "Ukurasa haukupatikana",

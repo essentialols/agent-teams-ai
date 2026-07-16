@@ -49,12 +49,12 @@
     {
       "id": "whatIsIt",
       "question": "Agent Teams क्या है?",
-      "answer": "यह एक डेस्कटॉप ऐप है जो हमारी अपनी लोकल coordination layer के साथ AI agent teams को orchestrate करता है। हर agent की एक भूमिका होती है, वह स्वायत्त रूप से काम करता है, kanban board पर सहयोग करता है, और Claude, Codex या OpenCode पर चल सकता है।"
+      "answer": "यह एक डेस्कटॉप ऐप है जो हमारी अपनी लोकल coordination layer के साथ AI agent teams को orchestrate करता है। हर agent की एक भूमिका होती है, वह स्वायत्त रूप से काम करता है, kanban board पर सहयोग करता है, और Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro पर चल सकता है।"
     },
     {
       "id": "isFree",
       "question": "क्या यह सच में मुफ़्त है?",
-      "answer": "हाँ। ऐप मुफ़्त और ओपन सोर्स है, और आप बिना registration, API key या credit card के मुफ़्त no-auth model से शुरू कर सकते हैं। अगर और models चाहिए, तो Claude, Codex, OpenCode/OpenRouter या कोई दूसरा supported provider जोड़ें।"
+      "answer": "हाँ। ऐप मुफ़्त और ओपन सोर्स है, और आप बिना registration, API key या credit card के मुफ़्त no-auth model से शुरू कर सकते हैं। अगर और models चाहिए, तो Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro या कोई दूसरा supported provider जोड़ें।"
     },
     {
       "id": "platforms",
@@ -99,7 +99,7 @@
       "features": [
         "पहले runs के लिए मुफ़्त no-auth model",
         "Try करने के लिए account या provider login नहीं चाहिए",
-        "Claude, Codex और OpenCode provider access optional",
+        "Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro provider access optional",
         "असीमित एजेंट टीमें",
         "रियल-टाइम अपडेट के साथ कानबन बोर्ड",
         "diff व्यू के साथ कोड रिव्यू",

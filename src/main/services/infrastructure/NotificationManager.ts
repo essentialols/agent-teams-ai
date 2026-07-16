@@ -21,7 +21,11 @@ import { getAppDataPath, getHomeDir, getTeamsBasePath } from '@main/utils/pathDe
 import { safeSendToRenderer } from '@main/utils/safeWebContentsSend';
 import { stripMarkdown } from '@main/utils/textFormatting';
 import { stripAgentBlocks } from '@shared/constants/agentBlocks';
-import { getMemberColorByName, MEMBER_COLOR_HUE } from '@shared/constants/memberColors';
+import {
+  getMemberColorByName,
+  MEMBER_COLOR_HUE,
+  PARTICIPANT_IDENTITY_COLOR_PALETTE,
+} from '@shared/constants/memberColors';
 import { isLeadMember } from '@shared/utils/leadDetection';
 import { createLogger } from '@shared/utils/logger';
 import { nativeImage, Notification as ElectronNotification } from 'electron';
@@ -124,7 +128,7 @@ function setBoundedCacheEntry<K, V>(cache: Map<K, V>, key: K, value: V): void {
   }
   cache.set(key, value);
 }
-const PARTICIPANT_AVATAR_COUNT = 13;
+const PARTICIPANT_AVATAR_COUNT = PARTICIPANT_IDENTITY_COLOR_PALETTE.length;
 const LEAD_PARTICIPANT_AVATAR_NUMBER = 1;
 
 interface TeamNotificationAvatarMember {
@@ -996,7 +1000,7 @@ export class NotificationManager extends EventEmitter {
     const truncatedMessage = stripMarkdown(stored.message).slice(0, 200);
     const iconPath = isMac ? undefined : getAppIconPath();
     const notification = new NotificationClass({
-      title: 'Claude Code Error',
+      title: 'Agent Teams Error',
       ...(isMac ? { subtitle: stored.context.projectName } : {}),
       body: isMac ? truncatedMessage : `${stored.context.projectName}\n${truncatedMessage}`,
       sound: config.notifications.soundEnabled ? 'default' : undefined,
@@ -1016,7 +1020,7 @@ export class NotificationManager extends EventEmitter {
     notification.on('close', cleanup);
 
     notification.on('show', () => {
-      logger.debug(`[notification] shown: "Claude Code Error" — ${stored.context.projectName}`);
+      logger.debug(`[notification] shown: "Agent Teams Error" - ${stored.context.projectName}`);
     });
     notification.on('failed', (_, error) => {
       logger.warn(`[notification] failed: ${String(error)}`);

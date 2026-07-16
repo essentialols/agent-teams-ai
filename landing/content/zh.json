@@ -49,12 +49,12 @@
     {
       "id": "whatIsIt",
       "question": "什么是 Agent Teams？",
-      "answer": "一个桌面应用，通过我们自己的本地协调层来编排 AI 智能体团队。每个智能体都有角色，可自主工作，在看板上协作，并且可以运行 Claude、Codex 或 OpenCode。"
+      "answer": "一个桌面应用，通过我们自己的本地协调层来编排 AI 智能体团队。每个智能体都有角色，可自主工作，在看板上协作，并且可以运行 Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro。"
     },
     {
       "id": "isFree",
       "question": "真的免费吗？",
-      "answer": "是的。应用免费且开源，你可以从无需认证的免费模型开始，无需注册、API 密钥或信用卡。如果需要更多模型，可以连接 Claude、Codex、OpenCode/OpenRouter 或其他受支持的提供商。"
+      "answer": "是的。应用免费且开源，你可以从无需认证的免费模型开始，无需注册、API 密钥或信用卡。如果需要更多模型，可以连接 Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro 或其他受支持的提供商。"
     },
     {
       "id": "platforms",
@@ -99,7 +99,7 @@
       "features": [
         "用于首次运行的无需认证的免费模型",
         "试用无需账号或提供商登录",
-        "可选连接 Claude、Codex 和 OpenCode 提供商",
+        "可选连接 Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro 提供商",
         "无限智能体团队",
         "实时更新的看板",
         "带 diff 查看的代码审查",

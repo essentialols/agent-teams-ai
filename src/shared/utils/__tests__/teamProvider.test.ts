@@ -26,4 +26,9 @@ describe('inferTeamProviderIdFromModel', () => {
     expect(isTeamProviderId('opencode')).toBe(true);
     expect(normalizeOptionalTeamProviderId('opencode')).toBe('opencode');
   });
+
+  it('routes Kiro and Cursor models through OpenCode', () => {
+    expect(inferTeamProviderIdFromModel('kiro/auto')).toBe('opencode');
+    expect(inferTeamProviderIdFromModel('cursor-acp/auto')).toBe('opencode');
+  });
 });

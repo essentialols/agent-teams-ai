@@ -323,6 +323,28 @@ function promoteRunToReady<TRun extends TeamProvisioningTurnCompleteRun>(
   ports.setAliveRunId(run.teamName, run.runId);
 }
 
+export function writeTeammateLaunchFailureArtifactPackIfNeeded<
+  TRun extends TeamProvisioningTurnCompleteRun,
+>(
+  run: TRun,
+  hasSpawnFailures: boolean,
+  launchSnapshot: PersistedTeamLaunchSnapshot | null,
+  ports: Pick<
+    TeamProvisioningTurnCompletePorts<TRun, unknown>,
+    'writeLaunchFailureArtifactPackBestEffort'
+  >
+): void {
+  if (!hasSpawnFailures) {
+    return;
+  }
+  ports.writeLaunchFailureArtifactPackBestEffort(run, {
+    reason: run.isLaunch
+      ? 'launch_completed_with_teammate_errors'
+      : 'provisioning_completed_with_teammate_errors',
+    launchSnapshot,
+  });
+}
+
 async function maybeInjectGeminiPostLaunchHydration<TRun extends TeamProvisioningTurnCompleteRun>(
   run: TRun,
   ports: Pick<TeamProvisioningTurnCompletePorts<TRun, unknown>, 'injectGeminiPostLaunchHydration'>
@@ -445,6 +467,12 @@ export async function handleTeamProvisioningTurnComplete<
       hasSpawnFailures || hasPendingBootstrap ? 'warning' : undefined,
       ports
     );
+    writeTeammateLaunchFailureArtifactPackIfNeeded(
+      run,
+      hasSpawnFailures,
+      persistedLaunchSnapshot,
+      ports
+    );
     logger.info(`[${run.teamName}] Launch complete. Process alive for subsequent tasks.`);
 
     if (!run.deterministicBootstrap && shouldUseGeminiStagedLaunch(run.request.providerId)) {
@@ -541,14 +569,12 @@ export async function handleTeamProvisioningTurnComplete<
     hasSpawnFailures || hasPendingBootstrap ? 'warning' : undefined,
     ports
   );
-  if (hasSpawnFailures) {
-    ports.writeLaunchFailureArtifactPackBestEffort(run, {
-      reason: run.isLaunch
-        ? 'launch_completed_with_teammate_errors'
-        : 'provisioning_completed_with_teammate_errors',
-      launchSnapshot: persistedLaunchSnapshot,
-    });
-  }
+  writeTeammateLaunchFailureArtifactPackIfNeeded(
+    run,
+    hasSpawnFailures,
+    persistedLaunchSnapshot,
+    ports
+  );
   logger.info(`[${run.teamName}] Provisioning complete. Process alive for subsequent tasks.`);
 
   if (!run.deterministicBootstrap && shouldUseGeminiStagedLaunch(run.request.providerId)) {

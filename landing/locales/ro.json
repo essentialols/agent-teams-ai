@@ -86,7 +86,7 @@
   },
   "pricing": {
     "sectionTitle": "Gratuit de instalat. Model gratuit inclus.",
-    "sectionSubtitle": "Începe imediat cu un model gratuit fără autentificare - fără cont, cheie API sau card de credit. Conectează Claude, Codex, OpenCode/OpenRouter sau alt furnizor doar când vrei mai multe modele.",
+    "sectionSubtitle": "Începe imediat cu un model gratuit fără autentificare - fără cont, cheie API sau card de credit. Conectează Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro sau alt furnizor doar când vrei mai multe modele.",
     "getStarted": "Descarcă acum",
     "popular": "Gratuit",
     "freeModelCallout": "Model gratuit fără autentificare inclus",
@@ -159,9 +159,9 @@
   },
   "meta": {
     "homeTitle": "Agent Teams - Orchestrare de agenți AI pentru dezvoltatori",
-    "homeDescription": "Aplicație desktop gratuită și open-source pentru echipe de agenți AI. Începe cu un model gratuit fără autentificare, apoi conectează Claude, Codex sau OpenCode când ai nevoie de mai multe modele.",
+    "homeDescription": "Aplicație desktop gratuită și open-source pentru echipe de agenți AI. Începe cu un model gratuit fără autentificare, apoi conectează Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro când ai nevoie de mai multe modele.",
     "downloadTitle": "Descarcă Agent Teams pentru macOS, Windows și Linux",
-    "downloadDescription": "Descarcă Agent Teams pentru macOS, Windows și Linux. Aplicație desktop gratuită și open-source pentru echipe de agenți Claude, Codex și OpenCode."
+    "downloadDescription": "Descarcă Agent Teams pentru macOS, Windows și Linux. Aplicație desktop gratuită și open-source pentru echipe de agenți Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro."
   },
   "error": {
     "notFoundTitle": "Pagina nu a fost găsită",

@@ -14,6 +14,7 @@ describe('PostHog renderer configuration', () => {
     const source = readPostHogSource();
 
     expect(source).toContain('autocapture: false');
+    expect(source).toContain('debug: false');
     expect(source).toContain('capture_pageview: false');
     expect(source).toContain('capture_pageleave: false');
     expect(source).toContain('disable_external_dependency_loading: true');
@@ -29,5 +30,6 @@ describe('PostHog renderer configuration', () => {
     expect(source).toContain('bootstrap:');
     expect(source).toContain('persistence_name: POSTHOG_PERSISTENCE_NAME');
     expect(source).toContain('before_send:');
+    expect(source).not.toContain('.debug()');
   });
 });

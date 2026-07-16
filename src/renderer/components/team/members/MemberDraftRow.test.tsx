@@ -4,6 +4,10 @@ import { createRoot } from 'react-dom/client';
 import { ANTHROPIC_LONG_CONTEXT_PRICING_URL } from '@renderer/components/team/dialogs/AnthropicExtraUsageWarning';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('@features/runtime-provider-management/renderer', () => ({
+  OpenCodeLocalModelLimitsCard: () => React.createElement('div', null, 'local-model-limits-card'),
+}));
+
 vi.mock('@renderer/components/common/ProviderBrandLogo', () => ({
   ProviderBrandLogo: () => React.createElement('span', { 'data-testid': 'provider-logo' }),
 }));
@@ -117,6 +121,7 @@ vi.mock('@renderer/hooks/useTheme', () => ({
   useTheme: () => ({ isLight: false }),
 }));
 
+import { FLAT_ROSTER_GRID_COLUMNS } from './flatRosterLayout';
 import { MemberDraftRow } from './MemberDraftRow';
 import { createMemberDraft } from './membersEditorUtils';
 
@@ -162,6 +167,22 @@ describe('MemberDraftRow', () => {
 
   afterEach(() => {
     document.body.innerHTML = '';
+  });
+
+  it('uses the compact shared grid while keeping the editable name visibly field-like', () => {
+    const { host, root } = renderMemberDraftRow({ layoutVariant: 'flat' });
+    const row = host.querySelector<HTMLElement>('[data-role="member-row"]')!;
+    const nameInput = host.querySelector<HTMLInputElement>('input[type="text"]')!;
+
+    expect(row.className).toContain(FLAT_ROSTER_GRID_COLUMNS);
+    expect(nameInput.value).toBe('alice');
+    expect(nameInput.className).not.toContain('border-transparent');
+    expect(nameInput.className).not.toContain('shadow-none');
+    expect(nameInput.className).not.toContain('font-semibold');
+
+    act(() => {
+      root.unmount();
+    });
   });
 
   it('does not show the sync tooltip copy when model controls are unlocked', () => {
@@ -486,7 +507,7 @@ describe('MemberDraftRow', () => {
     });
   });
 
-  it('shows the OpenCode context config hint inside OpenCode teammate provider settings after effort', () => {
+  it('shows local OpenCode limit controls inside OpenCode teammate settings after effort', () => {
     const { host, root } = renderMemberDraftRow({
       member: createMemberDraft({
         id: 'member-1',
@@ -506,7 +527,7 @@ describe('MemberDraftRow', () => {
 
     const text = host.textContent ?? '';
     const effortIndex = text.indexOf('effort-selector');
-    const hintIndex = text.indexOf('OpenCode local models can use an OpenCode context budget');
+    const hintIndex = text.indexOf('local-model-limits-card');
 
     expect(hintIndex).toBeGreaterThan(-1);
     expect(effortIndex).toBeGreaterThan(-1);

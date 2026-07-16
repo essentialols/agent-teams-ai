@@ -118,7 +118,7 @@
       "teamName": "Nom de l'équipe"
     },
     "launchAfterCreate": {
-      "description": "Commencez immédiatement l'équipe par Claude local CLI.",
+      "description": "Démarrez immédiatement l'équipe à l'aide de ses environnements d'exécution d'agents configurés.",
       "label": "Exécuter la commande après créer"
     },
     "localOnly": "Disponible uniquement en mode Electron local.",
@@ -218,7 +218,7 @@
       "liveRenameBlocked": "Les coéquipiers existants ne peuvent pas être renommés tant que l'équipe est en direct. rebaptisé : {{names}}",
       "memberNameEmpty": "Le nom du membre ne peut pas être vide",
       "memberNameInvalid": "Le nom du membre doit commencer par l'alphanumérique, utiliser seulement [a-zA-Z0-9. -], max 128 caractères",
-      "memberNameNumericSuffix": "Nom du membre \"{{name}}\" n ' est pas autorisé (réservé à Claude CLI Auto-suffix). Utiliser \"{{base}}\" plutôt.",
+      "memberNameNumericSuffix": "Le nom de membre \"{{name}}\" n’est pas autorisé (réservé aux suffixes numériques gérés par le runtime). Utilisez plutôt \"{{base}}\".",
       "memberNameReserved": "Nom du membre \"{{name}}\" est réservé",
       "memberNamesUnique": "Les noms de membres doivent être uniques avant d'enregistrer",
       "newLiveTeammates": "Ajouter de nouveaux coéquipiers dans la boîte de dialogue dédiée Ajouter des membres pendant que l'équipe est en direct. Éditer l'équipe ne prend en charge que la mise à jour des coéquipiers existants.",
@@ -1334,13 +1334,13 @@
       "workingDirectory": "Répertoire de travail :"
     },
     "description": {
-      "createSchedule": "Programmer l'exécution automatique des tâches Claude",
+      "createSchedule": "Planifier l’exécution automatique des tâches des agents",
       "createScheduleForTeam": "Programmer les courses automatiques pour l'équipe \"{{team}}\"",
       "editSchedule": "Editing schedule for team \"{{team}}\"",
       "launchPrefix": "Équipe de démarrage",
-      "launchSuffix": "via Claude local CLI.",
+      "launchSuffix": "à l'aide de ses environnements d'exécution d'agents configurés.",
       "relaunchPrefix": "Arrêtez l'exécution actuelle pour",
-      "relaunchSuffix": "et recommencez par Claude local CLI."
+      "relaunchSuffix": "et redémarrez-la à l'aide de ses environnements d'exécution d'agents configurés."
     },
     "prepare": {
       "action": {
@@ -1363,7 +1363,7 @@
       "oneShotPrefix": "Cette invitation sera transmise à",
       "oneShotSuffix": "pour exécution à un seul coup",
       "saved": "Enregistrer",
-      "schedulePlaceholder": "Instructions pour que Claude exécute dans les délais...",
+      "schedulePlaceholder": "Instructions à exécuter par le responsable d’équipe selon la planification...",
       "teamLeadOptional": "Prompt pour tête d'équipe (facultatif)",
       "teamLeadPlaceholder": "Instructions pour diriger l'équipe..."
     },
@@ -1412,8 +1412,37 @@
       "description": "Gardez le flux de lancement concentré sur le chemin du projet et élargissez-le seulement lorsque vous voulez un contrôle supplémentaire."
     }
   },
+  "teamImport": {
+    "cancel": "Annuler",
+    "chooseFolder": "Choisir un dossier",
+    "createDraft": "Créer un brouillon d'équipe",
+    "createFailed": "Impossible de créer l'équipe importée",
+    "creating": "Création...",
+    "description": "Choisissez le dossier d'une équipe d'agents locale, puis examinez chaque instruction importée avant de créer un brouillon.",
+    "inspectFailed": "Impossible d'analyser le dossier sélectionné",
+    "invalidTeamName": "Utilisez des lettres minuscules, des chiffres et des tirets au format kebab-case, avec un maximum de 64 caractères.",
+    "leadPrompt": "Prompt du responsable",
+    "members": "Membres ({{count}})",
+    "projectPath": "Chemin du projet",
+    "scanning": "Analyse...",
+    "selectPrompt": "Choisissez un dossier pour afficher un aperçu de l'équipe importée.",
+    "skills": "Compétences détectées ({{count}})",
+    "summary": "Créer {{teamName}} avec {{count}} membres.",
+    "teamName": "Nom de l'équipe",
+    "teamNameRequired": "Le nom de l'équipe est requis.",
+    "teamNameReserved": "Ce nom d'équipe est réservé par le système d'exploitation.",
+    "title": "Importer une équipe d'agents",
+    "warningDuplicateMember": "{{fileName}} : le nom de membre en double {{name}} a été ignoré.",
+    "warningMemberInvalid": "{{fileName}} : le nom de membre {{name}} n'est pas valide.",
+    "warningMemberReserved": "{{fileName}} : le nom de membre {{name}} est réservé.",
+    "warningMemberReservedSuffix": "{{fileName}} : le nom de membre {{name}} utilise un suffixe automatique réservé.",
+    "warningMissingClaudeMd": "Aucun fichier .claude/CLAUDE.md ou CLAUDE.md n'a été trouvé ; le prompt du responsable sera vide.",
+    "warningUnknownTaskOwner": "La tâche {{description}} faisait référence au membre inconnu {{owner}} et a été importée sans propriétaire.",
+    "warningUnsafeTaskCall": "Impossible de réécrire l'appel Task en toute sécurité : {{call}}"
+  },
   "list": {
     "actions": {
+      "importTeam": "Importer depuis un dossier",
       "copyTeam": "Copier l'équipe",
       "createTeam": "Créer une équipe",
       "organizationMap": "Org Map",
@@ -1554,7 +1583,7 @@
       "crossTeamPlaceholder": "Message de l'équipe à {{team}}...",
       "teamFallback": "équipe",
       "placeholder": "Écrire un message... (Entrée à envoyer, Maj+Entrée pour une nouvelle ligne)",
-      "slashTip": "Astuce : Vous pouvez utiliser \"/\" pour exécuter n'importe quelle commande Claude.",
+      "slashTip": "Astuce : utilisez \"/\" pour exécuter les commandes prises en charge par le runtime du responsable d’équipe.",
       "charsLeft_few": "{{count}} Chars à gauche",
       "charsLeft_many": "{{count}} Chars à gauche"
     },
@@ -1953,7 +1982,7 @@
     },
     "empty": {
       "title": "Pas encore d'horaires",
-      "description": "Créez un planning pour exécuter automatiquement les tâches de Claude sur un planning cron."
+      "description": "Créez une planification pour exécuter automatiquement les tâches de l’équipe avec cron."
     },
     "title": "Tableaux",
     "status": {
@@ -2110,11 +2139,11 @@
         "openCodeAccessDenied": "Correction des permissions de dossier ou transfert du projet vers un dossier utilitaire. Exécuter en tant qu'administrateur n'est qu'une solution temporaire.",
         "openCodeBridgeNoOutput": "Redémarrez l'application et l'exécution OpenCode, puis réessayez. Si ça se répète, copiez le diagnostic.",
         "workingDirectoryMissing": "Choisissez un répertoire de travail existant, puis rouvrez cette boîte de dialogue.",
-        "authenticationRequired": "Authentifier le fournisseur requis dans Claude CLI, puis rouvre ce dialogue.",
+        "authenticationRequired": "Authentifiez le fournisseur requis dans l’environnement d’exécution configuré pour celui-ci, puis rouvrez cette boîte de dialogue.",
         "runtimeProviderNotConfigured": "Configurez l'exécution du fournisseur sélectionné, puis rouvrez cette boîte de dialogue.",
         "openCodeRuntimeMissing": "Installer ou réessayer OpenCode runtime à partir de la carte de statut du fournisseur, puis rouvrir cette boîte de dialogue.",
         "openCodeAppMcpUnreachable": "Reessayer le lancement pour actualiser l'application OpenCode MCP pont. Si elle se répète, redémarrez l'application et l'exécution OpenCode.",
-        "cliBinaryMissing": "Assurez-vous que le Claude local CLI binaire existe et peut être démarré, puis rouvrir cette boîte de dialogue.",
+        "cliBinaryMissing": "Vérifiez que l’environnement d’exécution local requis est installé et peut être démarré, puis rouvrez cette boîte de dialogue.",
         "default": "Résolvez le problème ci-dessus, puis rouvrez ce dialogue.",
         "openCodeNodeModulesSymlinkPermission": "Lancez Agent Teams AI en tant qu'administrateur, puis réessayez le launch."
       }

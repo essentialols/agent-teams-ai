@@ -10,6 +10,7 @@ import type { PersistedTeamLaunchSnapshot, TeamCreateRequest, TeamProviderId } f
 export interface TeamRuntimeLaneCoordinator {
   planProvisioningMembers(params: {
     leadProviderId?: TeamProviderId;
+    leadModel?: string;
     members: TeamCreateRequest['members'];
     baseCwd?: string;
     hasOpenCodeRuntimeAdapter: boolean;
@@ -25,6 +26,7 @@ export function createTeamRuntimeLaneCoordinator(): TeamRuntimeLaneCoordinator {
     planProvisioningMembers(params) {
       const lanePlan = fromProvisioningMembers(params.leadProviderId, params.members, {
         baseCwd: params.baseCwd,
+        leadModel: params.leadModel,
       });
       if (!lanePlan.ok) {
         throw new Error(lanePlan.message);

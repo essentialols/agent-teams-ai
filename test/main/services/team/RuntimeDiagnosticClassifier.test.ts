@@ -35,6 +35,16 @@ describe('RuntimeDiagnosticClassifier', () => {
     });
   });
 
+  it('classifies Cursor usage limits as exhausted quota', () => {
+    expect(
+      classifyRuntimeDiagnostic("cursor-acp error: You've hit your Cursor usage limit")
+    ).toMatchObject({
+      reasonCode: 'quota_exhausted',
+      actionRequired: true,
+      generic: false,
+    });
+  });
+
   it('classifies OpenCode free usage retry status as quota exhausted', () => {
     const selected = selectRuntimeDiagnosticClassification([
       'empty_assistant_turn',

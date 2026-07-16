@@ -1,9 +1,16 @@
 import {
+  isRuntimeProviderCompanionId,
+  RUNTIME_PROVIDER_COMPANION_CONNECT,
+  RUNTIME_PROVIDER_COMPANION_INSTALL,
+  RUNTIME_PROVIDER_COMPANION_STATUS,
+  RUNTIME_PROVIDER_MANAGEMENT_CONFIGURE_MODEL_LIMITS,
   RUNTIME_PROVIDER_MANAGEMENT_CONNECT,
   RUNTIME_PROVIDER_MANAGEMENT_CONNECT_API_KEY,
   RUNTIME_PROVIDER_MANAGEMENT_DIRECTORY,
   RUNTIME_PROVIDER_MANAGEMENT_FORGET,
   RUNTIME_PROVIDER_MANAGEMENT_MODELS,
+  RUNTIME_PROVIDER_MANAGEMENT_OAUTH_CANCEL,
+  RUNTIME_PROVIDER_MANAGEMENT_OAUTH_CODE,
   RUNTIME_PROVIDER_MANAGEMENT_SET_DEFAULT_MODEL,
   RUNTIME_PROVIDER_MANAGEMENT_SETUP_FORM,
   RUNTIME_PROVIDER_MANAGEMENT_TEST_MODEL,
@@ -13,6 +20,10 @@ import { createLogger } from '@shared/utils/logger';
 
 import type { RuntimeProviderManagementFeatureFacade } from '../../composition/createRuntimeProviderManagementFeature';
 import type {
+  RuntimeProviderCompanionInput,
+  RuntimeProviderCompanionStatusDto,
+  RuntimeProviderManagementCancelOAuthInput,
+  RuntimeProviderManagementConfigureModelLimitsInput,
   RuntimeProviderManagementConnectApiKeyInput,
   RuntimeProviderManagementConnectInput,
   RuntimeProviderManagementDirectoryResponse,
@@ -22,11 +33,14 @@ import type {
   RuntimeProviderManagementLoadModelsInput,
   RuntimeProviderManagementLoadSetupFormInput,
   RuntimeProviderManagementLoadViewInput,
+  RuntimeProviderManagementModelLimitsResponse,
   RuntimeProviderManagementModelsResponse,
   RuntimeProviderManagementModelTestResponse,
+  RuntimeProviderManagementOAuthControlResponse,
   RuntimeProviderManagementProviderResponse,
   RuntimeProviderManagementSetDefaultModelInput,
   RuntimeProviderManagementSetupFormResponse,
+  RuntimeProviderManagementSubmitOAuthCodeInput,
   RuntimeProviderManagementTestModelInput,
   RuntimeProviderManagementViewResponse,
 } from '@features/runtime-provider-management/contracts';
@@ -117,6 +131,44 @@ export function registerRuntimeProviderManagementIpc(
   ipcMain: IpcMain,
   feature: RuntimeProviderManagementFeatureFacade
 ): void {
+  const readCompanionInput = (
+    input: RuntimeProviderCompanionInput
+  ): RuntimeProviderCompanionInput => {
+    if (
+      !input ||
+      !isRuntimeProviderCompanionId(input.companionId) ||
+      (input.projectPath !== undefined &&
+        input.projectPath !== null &&
+        typeof input.projectPath !== 'string')
+    ) {
+      throw new Error('Unsupported runtime provider companion');
+    }
+    return input;
+  };
+  ipcMain.handle(
+    RUNTIME_PROVIDER_COMPANION_STATUS,
+    async (
+      _event,
+      input: RuntimeProviderCompanionInput
+    ): Promise<RuntimeProviderCompanionStatusDto> =>
+      feature.getCompanionStatus(readCompanionInput(input))
+  );
+  ipcMain.handle(
+    RUNTIME_PROVIDER_COMPANION_INSTALL,
+    async (
+      _event,
+      input: RuntimeProviderCompanionInput
+    ): Promise<RuntimeProviderCompanionStatusDto> =>
+      feature.installAndConnectCompanion(readCompanionInput(input))
+  );
+  ipcMain.handle(
+    RUNTIME_PROVIDER_COMPANION_CONNECT,
+    async (
+      _event,
+      input: RuntimeProviderCompanionInput
+    ): Promise<RuntimeProviderCompanionStatusDto> =>
+      feature.connectCompanion(readCompanionInput(input))
+  );
   ipcMain.handle(
     RUNTIME_PROVIDER_MANAGEMENT_VIEW,
     async (
@@ -308,9 +360,80 @@ export function registerRuntimeProviderManagementIpc(
       }
     }
   );
+
+  ipcMain.handle(
+    RUNTIME_PROVIDER_MANAGEMENT_CONFIGURE_MODEL_LIMITS,
+    async (
+      _event,
+      input: RuntimeProviderManagementConfigureModelLimitsInput
+    ): Promise<RuntimeProviderManagementModelLimitsResponse> => {
+      const validInput =
+        input?.runtimeId === 'opencode' &&
+        typeof input.providerId === 'string' &&
+        typeof input.modelId === 'string' &&
+        Number.isSafeInteger(input.contextTokens) &&
+        input.contextTokens > 0 &&
+        Number.isSafeInteger(input.outputTokens) &&
+        input.outputTokens > 0 &&
+        input.outputTokens <= input.contextTokens;
+      if (!validInput) {
+        return {
+          schemaVersion: 1,
+          runtimeId: 'opencode',
+          error: createUnexpectedRuntimeProviderIpcError(
+            'model-test-failed',
+            'Local model context limits are invalid'
+          ),
+        };
+      }
+      try {
+        return await feature.configureModelLimits(input);
+      } catch (error) {
+        const message = getRuntimeProviderIpcErrorMessage(
+          error,
+          'Failed to configure local model context limits'
+        );
+        logger.error('Failed to configure runtime provider model limits', message);
+        return {
+          schemaVersion: 1,
+          runtimeId: input.runtimeId,
+          error: createUnexpectedRuntimeProviderIpcError('model-test-failed', message),
+        };
+      }
+    }
+  );
+
+  ipcMain.handle(
+    RUNTIME_PROVIDER_MANAGEMENT_OAUTH_CODE,
+    async (
+      _event,
+      input: RuntimeProviderManagementSubmitOAuthCodeInput
+    ): Promise<RuntimeProviderManagementOAuthControlResponse> => {
+      if (!input || typeof input.operationId !== 'string' || typeof input.code !== 'string') {
+        return { ok: false, error: 'OAuth code request is invalid' };
+      }
+      return feature.submitOAuthCode(input);
+    }
+  );
+
+  ipcMain.handle(
+    RUNTIME_PROVIDER_MANAGEMENT_OAUTH_CANCEL,
+    async (
+      _event,
+      input: RuntimeProviderManagementCancelOAuthInput
+    ): Promise<RuntimeProviderManagementOAuthControlResponse> => {
+      if (!input || typeof input.operationId !== 'string') {
+        return { ok: false, error: 'OAuth cancel request is invalid' };
+      }
+      return feature.cancelOAuth(input);
+    }
+  );
 }
 
 export function removeRuntimeProviderManagementIpc(ipcMain: IpcMain): void {
+  ipcMain.removeHandler(RUNTIME_PROVIDER_COMPANION_STATUS);
+  ipcMain.removeHandler(RUNTIME_PROVIDER_COMPANION_INSTALL);
+  ipcMain.removeHandler(RUNTIME_PROVIDER_COMPANION_CONNECT);
   ipcMain.removeHandler(RUNTIME_PROVIDER_MANAGEMENT_VIEW);
   ipcMain.removeHandler(RUNTIME_PROVIDER_MANAGEMENT_DIRECTORY);
   ipcMain.removeHandler(RUNTIME_PROVIDER_MANAGEMENT_SETUP_FORM);
@@ -320,4 +443,7 @@ export function removeRuntimeProviderManagementIpc(ipcMain: IpcMain): void {
   ipcMain.removeHandler(RUNTIME_PROVIDER_MANAGEMENT_MODELS);
   ipcMain.removeHandler(RUNTIME_PROVIDER_MANAGEMENT_TEST_MODEL);
   ipcMain.removeHandler(RUNTIME_PROVIDER_MANAGEMENT_SET_DEFAULT_MODEL);
+  ipcMain.removeHandler(RUNTIME_PROVIDER_MANAGEMENT_CONFIGURE_MODEL_LIMITS);
+  ipcMain.removeHandler(RUNTIME_PROVIDER_MANAGEMENT_OAUTH_CODE);
+  ipcMain.removeHandler(RUNTIME_PROVIDER_MANAGEMENT_OAUTH_CANCEL);
 }

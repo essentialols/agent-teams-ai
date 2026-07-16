@@ -93,7 +93,7 @@ interface Props {
   readonly providers: CliProviderStatus[];
   readonly initialProviderId: CliProviderId;
   readonly initialRuntimeProviderId?: string | null;
-  readonly initialRuntimeProviderAction?: 'connect' | 'select' | null;
+  readonly initialRuntimeProviderAction?: 'connect' | 'reconnect' | 'select' | null;
   readonly projectPath?: string | null;
   readonly providerStatusLoading?: Partial<Record<CliProviderId, boolean>>;
   readonly disabled?: boolean;
@@ -177,6 +177,17 @@ const FIRST_PARTY_ANTHROPIC_HOSTS = new Set(['api.anthropic.com', 'api-staging.a
 
 function isApiKeyProviderId(providerId: CliProviderId): providerId is ApiKeyProviderId {
   return providerId === 'anthropic' || providerId === 'codex' || providerId === 'gemini';
+}
+
+function getProviderCatalogLabel(provider: CliProviderStatus): string {
+  switch (provider.providerId) {
+    case 'anthropic':
+      return 'Claude';
+    case 'codex':
+      return 'Codex';
+    default:
+      return provider.displayName;
+  }
 }
 
 function isCodexRuntimeInstalling(
@@ -488,6 +499,11 @@ function getCompactOpenCodeProviderDetailMessage(detailMessage?: string | null):
       ? trimmed.slice(0, firstInternalDetailIndex).trim()
       : trimmed;
   return compact || null;
+}
+
+function getOpenCodeVersionLabel(detailMessage?: string | null): string | null {
+  const version = /^version\s+([^\s]+)\s+-\s+connected\b/i.exec(detailMessage?.trim() ?? '')?.[1];
+  return version ? `OpenCode ${version}` : null;
 }
 
 function getCodexAccountPanelHint(
@@ -860,6 +876,8 @@ export const ProviderRuntimeSettingsDialog = ({
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
   const [connectionSaving, setConnectionSaving] = useState(false);
+  const [runtimeProviderOperationBlocking, setRuntimeProviderOperationBlocking] = useState(false);
+  const selectedProviderTabRef = useRef<HTMLButtonElement | null>(null);
   const [runtimeSaving, setRuntimeSaving] = useState(false);
   const [pendingConnectionAction, setPendingConnectionAction] =
     useState<PendingConnectionAction>(null);
@@ -1304,9 +1322,18 @@ export const ProviderRuntimeSettingsDialog = ({
     }
   }
   const showSelectedProviderSummary = Boolean(selectedProvider) && !connectionManagedRuntime;
+  const selectedOpenCodeVersionLabel =
+    selectedProvider?.providerId === 'opencode'
+      ? getOpenCodeVersionLabel(selectedProvider.detailMessage)
+      : null;
+  const selectedProviderSummaryLabel = selectedProvider
+    ? (selectedOpenCodeVersionLabel ?? getProviderUsageLabel(selectedProvider, t))
+    : null;
   const selectedProviderDetailMessage =
     selectedProvider?.providerId === 'opencode'
-      ? getCompactOpenCodeProviderDetailMessage(selectedProvider.detailMessage)
+      ? selectedOpenCodeVersionLabel
+        ? null
+        : getCompactOpenCodeProviderDetailMessage(selectedProvider.detailMessage)
       : (selectedProvider?.detailMessage ?? null);
   const selectedProviderDiagnostics =
     selectedProvider?.providerId === 'opencode'
@@ -1815,40 +1842,74 @@ export const ProviderRuntimeSettingsDialog = ({
     }
   };
 
+  useEffect(() => {
+    if (!open) return;
+    const frame = window.requestAnimationFrame(() => {
+      selectedProviderTabRef.current?.scrollIntoView({
+        block: 'nearest',
+        inline: 'center',
+        behavior: 'auto',
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [open, selectedProviderId]);
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[min(96vw,980px)] max-w-[min(96vw,980px)]">
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen && runtimeProviderOperationBlocking) return;
+        onOpenChange(nextOpen);
+      }}
+    >
+      <DialogContent
+        closeDisabled={runtimeProviderOperationBlocking}
+        className="w-[min(calc(100vw-2rem),980px)] max-w-[min(calc(100vw-2rem),980px)]"
+        onEscapeKeyDown={(event) => {
+          if (runtimeProviderOperationBlocking) event.preventDefault();
+        }}
+        onPointerDownOutside={(event) => {
+          if (runtimeProviderOperationBlocking) event.preventDefault();
+        }}
+      >
         <DialogHeader>
           <DialogTitle>{t('providerRuntime.title')}</DialogTitle>
           <DialogDescription>{t('providerRuntime.description')}</DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <div className="text-[11px] font-medium" style={{ color: 'var(--color-text-muted)' }}>
-              {t('providerRuntime.provider')}
-            </div>
+        <div className="min-w-0 space-y-4">
+          <div>
             <Tabs
               value={selectedProvider?.providerId ?? selectedProviderId}
-              onValueChange={(value) => setSelectedProviderId(value as CliProviderId)}
+              onValueChange={(value) => {
+                if (!runtimeProviderOperationBlocking) {
+                  setSelectedProviderId(value as CliProviderId);
+                }
+              }}
             >
               <div
-                className="-mx-1 border-b px-1"
+                className="-mx-1 overflow-x-auto border-b px-1"
                 style={{ borderColor: 'var(--color-border-subtle)' }}
               >
-                <TabsList className="gap-1 rounded-b-none">
+                <TabsList className="h-auto w-max min-w-full items-end justify-center gap-1.5 rounded-none bg-transparent p-0">
                   {providers.map((provider) => (
                     <TabsTrigger
                       key={provider.providerId}
+                      ref={
+                        provider.providerId === (selectedProvider?.providerId ?? selectedProviderId)
+                          ? selectedProviderTabRef
+                          : undefined
+                      }
                       value={provider.providerId}
-                      className="relative rounded-b-none data-[state=active]:z-10 data-[state=active]:-mb-px data-[state=active]:bg-[var(--color-surface)] data-[state=active]:shadow-none data-[state=active]:after:absolute data-[state=active]:after:inset-x-0 data-[state=active]:after:-bottom-px data-[state=active]:after:h-1 data-[state=active]:after:bg-[var(--color-surface)] data-[state=active]:after:content-['']"
+                      disabled={runtimeProviderOperationBlocking}
+                      className="relative h-10 min-w-[140px] rounded-b-none rounded-t-lg border border-b-0 border-[var(--color-border-subtle)] bg-white/[0.025] px-4 py-2 text-[var(--color-text-secondary)] shadow-none transition-[color,background-color,border-color] hover:border-[var(--color-border-emphasis)] hover:bg-white/[0.055] hover:text-[var(--color-text)] focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[var(--color-border-emphasis)] data-[state=active]:z-10 data-[state=active]:-mb-px data-[state=active]:border-[var(--color-border)] data-[state=active]:bg-[var(--color-surface)] data-[state=active]:text-[var(--color-text)] data-[state=active]:shadow-none data-[state=active]:after:absolute data-[state=active]:after:inset-x-0 data-[state=active]:after:-bottom-px data-[state=active]:after:h-px data-[state=active]:after:bg-[var(--color-surface)] data-[state=active]:after:content-['']"
                     >
                       <span className="inline-flex items-center gap-2">
                         <ProviderBrandLogo
                           providerId={provider.providerId}
                           className="size-4 shrink-0"
                         />
-                        <span>{provider.displayName}</span>
+                        <span>{getProviderCatalogLabel(provider)}</span>
                       </span>
                     </TabsTrigger>
                   ))}
@@ -1859,16 +1920,25 @@ export const ProviderRuntimeSettingsDialog = ({
 
           {showSelectedProviderSummary && selectedProvider ? (
             <div
-              className="rounded-lg border px-3 py-2.5"
-              style={{
-                borderColor: 'var(--color-border-subtle)',
-                backgroundColor: 'rgba(255, 255, 255, 0.025)',
-              }}
+              data-testid="provider-runtime-summary"
+              className={
+                selectedOpenCodeVersionLabel ? 'px-1 py-0.5' : 'rounded-lg border px-3 py-2.5'
+              }
+              style={
+                selectedOpenCodeVersionLabel
+                  ? undefined
+                  : {
+                      borderColor: 'var(--color-border-subtle)',
+                      backgroundColor: 'rgba(255, 255, 255, 0.025)',
+                    }
+              }
             >
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                <span className="text-sm font-medium" style={{ color: 'var(--color-text)' }}>
-                  {selectedProvider.displayName}
-                </span>
+                {!showRuntimeProviderManagement ? (
+                  <span className="text-sm font-medium" style={{ color: 'var(--color-text)' }}>
+                    {selectedProvider.displayName}
+                  </span>
+                ) : null}
                 <span
                   className="text-xs"
                   style={{
@@ -1878,7 +1948,7 @@ export const ProviderRuntimeSettingsDialog = ({
                     ),
                   }}
                 >
-                  {getProviderUsageLabel(selectedProvider, t)}
+                  {selectedProviderSummaryLabel}
                 </span>
                 {managedRuntimeSummary && !hideConnectionMethodMeta ? (
                   <span className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
@@ -1922,6 +1992,7 @@ export const ProviderRuntimeSettingsDialog = ({
                 initialProviderAction={initialRuntimeProviderAction}
                 disabled={disabled || selectedProviderLoading}
                 onProviderChanged={() => onRefreshProvider?.('opencode')}
+                onBlockingOperationChange={setRuntimeProviderOperationBlocking}
               />
             ) : (
               <div className="space-y-3">

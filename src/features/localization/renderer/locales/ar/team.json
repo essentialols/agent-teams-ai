@@ -118,7 +118,7 @@
       "teamName": "اسم الفريق"
     },
     "launchAfterCreate": {
-      "description": "ابدأوا بالفريق فوراً عبر (كلود) المحلي CLI.",
+      "description": "ابدأ الفريق فورًا باستخدام بيئات تشغيل الوكلاء المكوّنة له.",
       "label": "تشغيل القيادة بعد خلق"
     },
     "localOnly": "Available only in local Electron mode.",
@@ -218,7 +218,7 @@
       "liveRenameBlocked": "لا يمكن إعادة تسمية أعضاء الفريق الحاليين بينما الفريق على الهواء أعيدت تسميته: {{names}}",
       "memberNameEmpty": "اسم العضو لا يمكن أن يكون فارغا",
       "memberNameInvalid": "يجب أن يبدأ اسم العضو بالألبانوميريك، ويستخدم فقط [A-zA-Z0-9.]",
-      "memberNameNumericSuffix": "Member name \"{{name}}\" is not allowed (reserved for Claude CLI auto-suffix). Use \"{{base}}\" instead.",
+      "memberNameNumericSuffix": "اسم العضو \"{{name}}\" غير مسموح به (محجوز للواحق الرقمية التي تديرها بيئة التشغيل). استخدم \"{{base}}\" بدلاً منه.",
       "memberNameReserved": "اسم العضو{{name}}محجوز",
       "memberNamesUnique": "يجب أن تكون أسماء الأعضاء فريدة من نوعها قبل إنقاذها",
       "newLiveTeammates": "أضف فريقاً جديداً من جهاز الاتصال المخصص للأعضاء بينما الفريق على الهواء فريق (إديت) يدعم فقط تحديث زملاء الفريق الحاليين",
@@ -1334,13 +1334,13 @@
       "workingDirectory": "دليل العمل:"
     },
     "description": {
-      "createSchedule": "الجدول التلقائي",
+      "createSchedule": "جدولة التنفيذ التلقائي لمهام الوكلاء",
       "createScheduleForTeam": "Schedule automatic runs for team \"{{team}}\"",
       "editSchedule": "Editing schedule for team \"{{team}}\"",
       "launchPrefix": "فريق البداية",
-      "launchSuffix": "عن طريق كلود المحلية CLI.",
+      "launchSuffix": "باستخدام بيئات تشغيل الوكلاء المكوّنة له.",
       "relaunchPrefix": "أوقفوا الركض الحالي",
-      "relaunchSuffix": "و ابدأ من جديد عبر كلود المحلية CLI."
+      "relaunchSuffix": "وابدأه مرة أخرى باستخدام بيئات تشغيل الوكلاء المكوّنة له."
     },
     "prepare": {
       "action": {
@@ -1363,7 +1363,7 @@
       "oneShotPrefix": "هذه السرعة ستتم",
       "oneShotSuffix": "من أجل الإعدام بطلق ناري واحد",
       "saved": "منقذة",
-      "schedulePlaceholder": "تعليمات لكلود أن تنفذ في الموعد المحدد",
+      "schedulePlaceholder": "تعليمات لقائد الفريق لتنفيذها وفق الجدول...",
       "teamLeadOptional": "Prompt for team lead (optional)",
       "teamLeadPlaceholder": "تعليمات لقيادة الفريق"
     },
@@ -1412,8 +1412,37 @@
       "description": "حافظ على تدفق الإطلاق وركز على مسار المشروع ووسع هذا فقط عندما تريد السيطرة الإضافية"
     }
   },
+  "teamImport": {
+    "cancel": "إلغاء",
+    "chooseFolder": "اختيار مجلد",
+    "createDraft": "إنشاء مسودة فريق",
+    "createFailed": "تعذر إنشاء الفريق المستورد",
+    "creating": "جارٍ الإنشاء...",
+    "description": "اختر مجلد فريق وكلاء محليًا، ثم راجع جميع التعليمات المستوردة قبل إنشاء المسودة.",
+    "inspectFailed": "تعذر فحص المجلد المحدد",
+    "invalidTeamName": "استخدم أحرفًا إنجليزية صغيرة وأرقامًا وشرطات بتنسيق kebab-case، وبحد أقصى 64 حرفًا.",
+    "leadPrompt": "تعليمات قائد الفريق",
+    "members": "الأعضاء ({{count}})",
+    "projectPath": "مسار المشروع",
+    "scanning": "جارٍ الفحص...",
+    "selectPrompt": "اختر مجلدًا لمعاينة الفريق المستورد.",
+    "skills": "المهارات التي تم العثور عليها ({{count}})",
+    "summary": "إنشاء {{teamName}} بعدد أعضاء: {{count}}.",
+    "teamName": "اسم الفريق",
+    "teamNameRequired": "اسم الفريق مطلوب.",
+    "teamNameReserved": "اسم الفريق هذا محجوز من قِبل نظام التشغيل.",
+    "title": "استيراد فريق وكلاء",
+    "warningDuplicateMember": "{{fileName}}: تم تخطي اسم العضو المكرر {{name}}.",
+    "warningMemberInvalid": "{{fileName}}: اسم العضو {{name}} غير صالح.",
+    "warningMemberReserved": "{{fileName}}: اسم العضو {{name}} محجوز.",
+    "warningMemberReservedSuffix": "{{fileName}}: يستخدم اسم العضو {{name}} لاحقة تلقائية محجوزة.",
+    "warningMissingClaudeMd": "لم يتم العثور على .claude/CLAUDE.md أو CLAUDE.md؛ ستكون تعليمات قائد الفريق فارغة.",
+    "warningUnknownTaskOwner": "تشير المهمة {{description}} إلى العضو غير المعروف {{owner}} وتم استيرادها من دون مالك.",
+    "warningUnsafeTaskCall": "تعذر إعادة كتابة استدعاء Task بأمان: {{call}}"
+  },
   "list": {
     "actions": {
+      "importTeam": "استيراد من مجلد",
       "copyTeam": "فريق النسخ",
       "createTeam": "فريق الإنشاء",
       "organizationMap": "Org Map",
@@ -1554,7 +1583,7 @@
       "crossTeamPlaceholder": "رسالة عبرية إلى {{team}}...",
       "teamFallback": "فريق",
       "placeholder": "أكتب رسالة... (الانتر لإرسال، شيفت + إنتر لخط جديد)",
-      "slashTip": "يمكنك استخدام \"/\" لتشغيل أي أوامر كلود.",
+      "slashTip": "نصيحة: استخدم \"/\" لتشغيل الأوامر التي تدعمها بيئة تشغيل قائد الفريق.",
       "charsLeft_few": "{{count}} من اليسار",
       "charsLeft_many": "{{count}} من اليسار"
     },
@@ -1953,7 +1982,7 @@
     },
     "empty": {
       "title": "لا جداول بعد",
-      "description": "وضع جدول لإدارة مهام كلود تلقائياً على جدول زمني"
+      "description": "أنشئ جدولاً لتشغيل مهام الفريق تلقائياً وفق تعبير cron."
     },
     "title": "الجداول",
     "status": {
@@ -2110,11 +2139,11 @@
         "openCodeAccessDenied": "أصلح المطوّرات أو نقل المشروع إلى مطوّر مطلّع بالكتابة. العمل كمدير هو مجرد عمل مؤقت",
         "openCodeBridgeNoOutput": "اعيدي تشغيل التطبيق وفتحي الوقت ثم ارجعي إذا كرر، نسخ التشخيص.",
         "workingDirectoryMissing": "اختر دليل العمل الحالي ثم أعيد فتح هذا الرقم",
-        "authenticationRequired": "التحقق من المزود المطلوب في كلود CLIثم إعادة فتح هذا الهاتف",
+        "authenticationRequired": "قم بمصادقة المزوّد المطلوب في بيئة التشغيل المُعدّة له، ثم أعد فتح مربع الحوار هذا.",
         "runtimeProviderNotConfigured": "إئتمنْ على المزودِ المختارِ، ثمّ إعادة فتح هذا الهاتفِ.",
         "openCodeRuntimeMissing": "اثبت او اعيد تشغيل الكود المفتوح من بطاقة مركز المزود ثم اعيد فتح هذا الرقم",
         "openCodeAppMcpUnreachable": "البدء من جديد لتنشيط طلب الموافقة المفتوحة MCP الجسر إذا كرر، إعادة تشغيل التطبيق وفتح الوقت.",
-        "cliBinaryMissing": "تأكد من كلود المحلي CLI وجود ثنائي ويمكن البدء به، ثم إعادة فتح هذا الهاتف.",
+        "cliBinaryMissing": "تأكد من تثبيت بيئة التشغيل المحلية المطلوبة وإمكانية تشغيلها، ثم أعد فتح مربع الحوار هذا.",
         "default": "حل المسألة أعلاه، ثم إعادة فتح هذا الهاتف.",
         "openCodeNodeModulesSymlinkPermission": "شغّل Agent Teams AI كمسؤول، ثم أعد محاولة launch."
       }

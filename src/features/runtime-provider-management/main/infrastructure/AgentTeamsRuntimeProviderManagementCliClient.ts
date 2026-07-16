@@ -13,7 +13,8 @@ import {
 } from './openCodeWindowsNodeModulesJunction';
 
 import type {
-  RuntimeProviderManagementApi,
+  RuntimeProviderManagementCancelOAuthInput,
+  RuntimeProviderManagementConfigureModelLimitsInput,
   RuntimeProviderManagementConnectApiKeyInput,
   RuntimeProviderManagementConnectInput,
   RuntimeProviderManagementDirectoryResponse,
@@ -23,23 +24,41 @@ import type {
   RuntimeProviderManagementLoadModelsInput,
   RuntimeProviderManagementLoadSetupFormInput,
   RuntimeProviderManagementLoadViewInput,
+  RuntimeProviderManagementModelLimitsResponse,
   RuntimeProviderManagementModelsResponse,
   RuntimeProviderManagementModelTestResponse,
+  RuntimeProviderManagementOAuthControlResponse,
   RuntimeProviderManagementProviderResponse,
   RuntimeProviderManagementRuntimeId,
   RuntimeProviderManagementSetDefaultModelInput,
   RuntimeProviderManagementSetupFormResponse,
+  RuntimeProviderManagementSubmitOAuthCodeInput,
   RuntimeProviderManagementTestModelInput,
   RuntimeProviderManagementViewResponse,
+  RuntimeProviderOAuthProgressDto,
 } from '@features/runtime-provider-management/contracts';
+import type { RuntimeProviderManagementPort } from '@features/runtime-provider-management/core/application';
 import type { ChildProcessWithoutNullStreams } from 'child_process';
 
 const PROBE_COMMAND_TIMEOUT_MS = 90_000;
 const COMMAND_TIMEOUT_MS = PROBE_COMMAND_TIMEOUT_MS;
+const OAUTH_COMMAND_TIMEOUT_MS = 6 * 60_000;
+const OAUTH_CANCEL_FORCE_KILL_DELAY_MS = 2_000;
 const COMMAND_MAX_BUFFER_BYTES = 8 * 1024 * 1024;
 const SPAWN_OUTPUT_TRUNCATED_MARKER = '...[truncated runtime provider command output]';
 const COMMAND_ERROR_DETAIL_LIMIT = 1_600;
 const COMMAND_OUTPUT_PREVIEW_LIMIT = 1_200;
+const DIRECTORY_RESPONSE_CACHE_TTL_MS = 30_000;
+const DEFAULT_DIRECTORY_RESPONSE_CACHE_TTL_MS = 2 * 60_000;
+const MAX_DIRECTORY_RESPONSE_CACHE_ENTRIES = 32;
+const MODEL_RESPONSE_CACHE_TTL_MS = 30_000;
+const DEFAULT_MODEL_RESPONSE_CACHE_TTL_MS = 2 * 60_000;
+const MAX_MODEL_RESPONSE_CACHE_ENTRIES = 32;
+const RUNTIME_PROVIDER_OAUTH_EVENT_PREFIX = '@@agent-teams-runtime-provider-oauth@@';
+const OAUTH_OPERATION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/;
+const OAUTH_EVENT_IDENTITY_FIELD_LIMIT = 256;
+const OAUTH_EVENT_INSTRUCTIONS_LIMIT = 1_000;
+const OAUTH_INSTRUCTIONS_URL_PATTERN = /https?:\/\/[^\s<>"']+/gi;
 const ESCAPE_CHARACTER = String.fromCharCode(27);
 const BELL_CHARACTER = String.fromCharCode(7);
 const ANSI_ESCAPE_PATTERN = new RegExp(`${ESCAPE_CHARACTER}\\[[0-?]*[ -/]*[@-~]`, 'g');
@@ -73,7 +92,8 @@ type RuntimeProviderManagementErrorResponse =
   | RuntimeProviderManagementProviderResponse
   | RuntimeProviderManagementSetupFormResponse
   | RuntimeProviderManagementModelsResponse
-  | RuntimeProviderManagementModelTestResponse;
+  | RuntimeProviderManagementModelTestResponse
+  | RuntimeProviderManagementModelLimitsResponse;
 
 interface RuntimeProviderCommandContext {
   binaryPath: string;
@@ -84,6 +104,34 @@ interface RuntimeProviderCommandContext {
 interface RuntimeProviderCommandFailure {
   message: string;
   diagnostics?: RuntimeProviderManagementErrorDto['diagnostics'];
+}
+
+interface DirectoryResponseCacheEntry {
+  expiresAt: number;
+  response: RuntimeProviderManagementDirectoryResponse;
+}
+
+interface ModelResponseCacheEntry {
+  expiresAt: number;
+  response: RuntimeProviderManagementModelsResponse;
+}
+
+interface ModelResponseInFlightEntry {
+  controller: AbortController;
+  hasUngroupedSubscriber: boolean;
+  requestGroups: Set<string>;
+  promise: Promise<RuntimeProviderManagementModelsResponse>;
+}
+
+export interface RuntimeProviderOAuthClientDependencies {
+  openExternal?: (url: string) => Promise<void>;
+  emitOAuthProgress?: (event: RuntimeProviderOAuthProgressDto) => void;
+}
+
+interface ActiveRuntimeProviderOAuthOperation {
+  child: ChildProcessWithoutNullStreams;
+  providerId: string;
+  latestProgress: RuntimeProviderOAuthProgressDto | null;
 }
 
 class RuntimeProviderCommandOutputError extends Error {
@@ -447,6 +495,18 @@ function stripTerminalFormatting(value: string): string {
 
 function sanitizeRuntimeProviderText(value: string): string {
   return redactSensitiveText(stripTerminalFormatting(value));
+}
+
+function sanitizeOAuthInstructions(value: string): string | null {
+  const sanitized = sanitizeRuntimeProviderText(value)
+    .replace(OAUTH_INSTRUCTIONS_URL_PATTERN, '[authorization link hidden]')
+    .trim();
+  if (!sanitized) {
+    return null;
+  }
+  return sanitized.length > OAUTH_EVENT_INSTRUCTIONS_LIMIT
+    ? `${sanitized.slice(0, OAUTH_EVENT_INSTRUCTIONS_LIMIT).trimEnd()}...`
+    : sanitized;
 }
 
 function redactSensitiveText(value: string): string {
@@ -1098,7 +1158,488 @@ function readSpawnOutputSnapshot(
   };
 }
 
-export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProviderManagementApi {
+function isSafeOAuthAuthorizationUrl(value: string): boolean {
+  if (!value || value.length > 8_192) {
+    return false;
+  }
+  try {
+    const url = new URL(value);
+    if (url.username || url.password) {
+      return false;
+    }
+    if (url.protocol === 'https:') {
+      return true;
+    }
+    return (
+      url.protocol === 'http:' &&
+      (url.hostname === '127.0.0.1' || url.hostname === 'localhost' || url.hostname === '::1')
+    );
+  } catch {
+    return false;
+  }
+}
+
+function parseOAuthAuthorizationEvent(
+  line: string,
+  expected: {
+    operationId: string;
+    providerId: string;
+    runtimeId: RuntimeProviderManagementRuntimeId;
+    authOptionId: string;
+    methodIndex: number;
+  }
+): { authorizationUrl: string; progress: RuntimeProviderOAuthProgressDto } {
+  const raw = line.slice(RUNTIME_PROVIDER_OAUTH_EVENT_PREFIX.length);
+  const value = JSON.parse(raw) as unknown;
+  if (!isRecord(value)) {
+    throw new Error('Runtime returned an invalid OAuth authorization event');
+  }
+  const operationId = typeof value.operationId === 'string' ? value.operationId.trim() : '';
+  const providerId = typeof value.providerId === 'string' ? value.providerId.trim() : '';
+  const authOptionId = typeof value.authOptionId === 'string' ? value.authOptionId.trim() : '';
+  const displayName = typeof value.displayName === 'string' ? value.displayName.trim() : '';
+  const authorizationUrl =
+    typeof value.authorizationUrl === 'string' ? value.authorizationUrl.trim() : '';
+  const instructions = typeof value.instructions === 'string' ? value.instructions.trim() : '';
+  const completionMethod = value.completionMethod;
+  const methodIndex = value.methodIndex;
+  if (
+    value.schemaVersion !== 1 ||
+    value.event !== 'authorization' ||
+    operationId !== expected.operationId ||
+    providerId !== expected.providerId ||
+    !authOptionId ||
+    authOptionId !== expected.authOptionId ||
+    authOptionId.length > OAUTH_EVENT_IDENTITY_FIELD_LIMIT ||
+    !displayName ||
+    displayName.length > OAUTH_EVENT_IDENTITY_FIELD_LIMIT ||
+    !Number.isInteger(methodIndex) ||
+    (methodIndex as number) < 0 ||
+    (methodIndex as number) > 10_000 ||
+    methodIndex !== expected.methodIndex ||
+    (completionMethod !== 'auto' && completionMethod !== 'code') ||
+    !isSafeOAuthAuthorizationUrl(authorizationUrl)
+  ) {
+    throw new Error('Runtime returned an invalid OAuth authorization event');
+  }
+  return {
+    authorizationUrl,
+    progress: {
+      operationId,
+      runtimeId: expected.runtimeId,
+      providerId,
+      displayName,
+      authOptionId,
+      methodIndex,
+      phase: completionMethod === 'code' ? 'waiting-for-code' : 'waiting-for-browser',
+      completionMethod,
+      instructions: sanitizeOAuthInstructions(instructions),
+      message:
+        completionMethod === 'code'
+          ? 'Finish authorization, then paste the authorization code.'
+          : 'Your browser was opened. Finish authorization there.',
+    },
+  };
+}
+
+function getOAuthRuntimeEventType(line: string): string | null {
+  try {
+    const value = JSON.parse(line.slice(RUNTIME_PROVIDER_OAUTH_EVENT_PREFIX.length)) as unknown;
+    return isRecord(value) && typeof value.event === 'string' ? value.event : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseOAuthVerificationEvent(
+  line: string,
+  expected: {
+    operationId: string;
+    providerId: string;
+    runtimeId: RuntimeProviderManagementRuntimeId;
+    authOptionId: string;
+    methodIndex: number;
+  }
+): RuntimeProviderOAuthProgressDto {
+  const value = JSON.parse(line.slice(RUNTIME_PROVIDER_OAUTH_EVENT_PREFIX.length)) as unknown;
+  if (!isRecord(value)) {
+    throw new Error('Runtime returned an invalid OAuth verification event');
+  }
+  const operationId = typeof value.operationId === 'string' ? value.operationId.trim() : '';
+  const providerId = typeof value.providerId === 'string' ? value.providerId.trim() : '';
+  const authOptionId = typeof value.authOptionId === 'string' ? value.authOptionId.trim() : '';
+  const displayName = typeof value.displayName === 'string' ? value.displayName.trim() : '';
+  const methodIndex = value.methodIndex;
+  const completionMethod = value.completionMethod;
+  if (
+    value.schemaVersion !== 1 ||
+    value.event !== 'verification' ||
+    operationId !== expected.operationId ||
+    providerId !== expected.providerId ||
+    authOptionId !== expected.authOptionId ||
+    !displayName ||
+    displayName.length > OAUTH_EVENT_IDENTITY_FIELD_LIMIT ||
+    !Number.isInteger(methodIndex) ||
+    methodIndex !== expected.methodIndex ||
+    (completionMethod !== 'auto' && completionMethod !== 'code')
+  ) {
+    throw new Error('Runtime returned an invalid OAuth verification event');
+  }
+  return {
+    operationId,
+    runtimeId: expected.runtimeId,
+    providerId,
+    displayName,
+    authOptionId,
+    methodIndex,
+    phase: 'completing',
+    completionMethod,
+    instructions: null,
+    message: 'Authorization received. Verifying your plan...',
+  };
+}
+
+function collectOAuthSpawnOutput(input: {
+  child: ChildProcessWithoutNullStreams;
+  stdinValue: string;
+  onAuthorization: (line: string) => Promise<void>;
+}): Promise<{ stdout: string; stderr: string; code: number | null; stdinError: string | null }> {
+  return new Promise((resolve, reject) => {
+    const stdout = createBoundedSpawnOutputBuffer();
+    const stderr = createBoundedSpawnOutputBuffer();
+    let stdoutPending = '';
+    let stdinError: string | null = null;
+    let settled = false;
+    let authorizationChain = Promise.resolve();
+
+    const rejectWithOutput = (error: Error): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      killProcessTree(input.child, 'SIGKILL');
+      Object.assign(error, readSpawnOutputSnapshot(stdout, stderr));
+      reject(error);
+    };
+    const processLine = (line: string): void => {
+      if (line.startsWith(RUNTIME_PROVIDER_OAUTH_EVENT_PREFIX)) {
+        authorizationChain = authorizationChain.then(() => input.onAuthorization(line));
+        authorizationChain.catch((error: unknown) =>
+          rejectWithOutput(error instanceof Error ? error : new Error('OAuth authorization failed'))
+        );
+        return;
+      }
+      appendBoundedSpawnOutput(stdout, Buffer.from(`${line}\n`));
+    };
+    const timeout = setTimeout(() => {
+      rejectWithOutput(new Error('Runtime provider OAuth command timed out'));
+    }, OAUTH_COMMAND_TIMEOUT_MS);
+
+    input.child.stdout.on('data', (chunk: Buffer) => {
+      if (settled) return;
+      stdoutPending += chunk.toString('utf8');
+      if (Buffer.byteLength(stdoutPending, 'utf8') > COMMAND_MAX_BUFFER_BYTES) {
+        stdoutPending = '';
+        rejectWithOutput(new Error('Runtime provider OAuth event exceeded the output limit'));
+        return;
+      }
+      let newlineIndex = stdoutPending.indexOf('\n');
+      while (newlineIndex >= 0) {
+        const line = stdoutPending.slice(0, newlineIndex).replace(/\r$/, '');
+        stdoutPending = stdoutPending.slice(newlineIndex + 1);
+        processLine(line);
+        newlineIndex = stdoutPending.indexOf('\n');
+      }
+    });
+    input.child.stderr.on('data', (chunk: Buffer) => appendBoundedSpawnOutput(stderr, chunk));
+    input.child.stdin.once('error', (error: Error) => {
+      stdinError = error.message;
+    });
+    input.child.once('error', (error) => rejectWithOutput(error));
+    input.child.once('close', (code) => {
+      if (settled) return;
+      if (stdoutPending) {
+        processLine(stdoutPending.replace(/\r$/, ''));
+        stdoutPending = '';
+      }
+      void authorizationChain.then(
+        () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeout);
+          resolve({
+            stdout: readBoundedSpawnOutput(stdout),
+            stderr: readBoundedSpawnOutput(stderr),
+            code,
+            stdinError,
+          });
+        },
+        (error: unknown) =>
+          rejectWithOutput(error instanceof Error ? error : new Error('OAuth authorization failed'))
+      );
+    });
+
+    try {
+      input.child.stdin.write(`${input.stdinValue}\n`);
+    } catch (error) {
+      rejectWithOutput(
+        error instanceof Error
+          ? error
+          : new Error('Runtime provider OAuth command stdin write failed')
+      );
+    }
+  });
+}
+
+export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProviderManagementPort {
+  private readonly directoryResponseCache = new Map<string, DirectoryResponseCacheEntry>();
+  private readonly directoryResponseInFlight = new Map<
+    string,
+    Promise<RuntimeProviderManagementDirectoryResponse>
+  >();
+  private directoryResponseCacheGeneration = 0;
+  private readonly modelResponseCache = new Map<string, ModelResponseCacheEntry>();
+  private readonly modelResponseInFlight = new Map<string, ModelResponseInFlightEntry>();
+  private readonly activeModelRequestGroups = new Map<string, string>();
+  private modelResponseCacheGeneration = 0;
+  private readonly activeOAuthOperations = new Map<string, ActiveRuntimeProviderOAuthOperation>();
+  private readonly openExternal: (url: string) => Promise<void>;
+  private readonly emitOAuthProgress: (event: RuntimeProviderOAuthProgressDto) => void;
+
+  constructor(deps: RuntimeProviderOAuthClientDependencies = {}) {
+    this.openExternal =
+      deps.openExternal ??
+      (async () => {
+        throw new Error('OAuth browser integration is unavailable');
+      });
+    this.emitOAuthProgress = deps.emitOAuthProgress ?? (() => {});
+  }
+
+  private getDirectoryResponseCacheKey(
+    input: RuntimeProviderManagementLoadDirectoryInput,
+    projectPath: string | null
+  ): string {
+    return JSON.stringify([
+      input.runtimeId,
+      input.summary === true ? 'summary' : 'full',
+      projectPath,
+      input.query?.trim() || null,
+      input.filter ?? null,
+      input.limit ?? null,
+      input.cursor?.trim() || null,
+    ]);
+  }
+
+  private readDirectoryResponseCache(
+    cacheKey: string
+  ): RuntimeProviderManagementDirectoryResponse | null {
+    const cached = this.directoryResponseCache.get(cacheKey);
+    if (!cached) {
+      return null;
+    }
+    if (cached.expiresAt <= Date.now()) {
+      this.directoryResponseCache.delete(cacheKey);
+      return null;
+    }
+    // Refresh insertion order so the bounded map behaves as an LRU cache.
+    this.directoryResponseCache.delete(cacheKey);
+    this.directoryResponseCache.set(cacheKey, cached);
+    return cached.response;
+  }
+
+  private pruneDirectoryResponseCache(now = Date.now()): void {
+    for (const [key, entry] of this.directoryResponseCache) {
+      if (entry.expiresAt <= now) {
+        this.directoryResponseCache.delete(key);
+      }
+    }
+    while (this.directoryResponseCache.size >= MAX_DIRECTORY_RESPONSE_CACHE_ENTRIES) {
+      const oldestKey = this.directoryResponseCache.keys().next().value;
+      if (!oldestKey) {
+        break;
+      }
+      this.directoryResponseCache.delete(oldestKey);
+    }
+  }
+
+  private writeDirectoryResponseCache(
+    cacheKey: string,
+    response: RuntimeProviderManagementDirectoryResponse,
+    ttlMs: number,
+    cacheGeneration: number
+  ): RuntimeProviderManagementDirectoryResponse {
+    if (
+      cacheGeneration === this.directoryResponseCacheGeneration &&
+      response.directory &&
+      !response.error
+    ) {
+      this.directoryResponseCache.delete(cacheKey);
+      this.pruneDirectoryResponseCache();
+      this.directoryResponseCache.set(cacheKey, {
+        expiresAt: Date.now() + ttlMs,
+        response,
+      });
+    }
+    return response;
+  }
+
+  private invalidateDirectoryResponseCache(): void {
+    this.directoryResponseCacheGeneration += 1;
+    this.directoryResponseCache.clear();
+    this.directoryResponseInFlight.clear();
+  }
+
+  private getModelResponseCacheKey(
+    input: RuntimeProviderManagementLoadModelsInput,
+    projectPath: string | null
+  ): string {
+    const normalizedLimit =
+      typeof input.limit === 'number' && Number.isFinite(input.limit) && input.limit > 0
+        ? Math.floor(input.limit)
+        : null;
+    return JSON.stringify([
+      input.runtimeId,
+      projectPath,
+      input.providerId,
+      input.query?.trim() || null,
+      normalizedLimit,
+      input.cursor?.trim() || null,
+    ]);
+  }
+
+  private readModelResponseCache(cacheKey: string): RuntimeProviderManagementModelsResponse | null {
+    const cached = this.modelResponseCache.get(cacheKey);
+    if (!cached) {
+      return null;
+    }
+    if (cached.expiresAt <= Date.now()) {
+      this.modelResponseCache.delete(cacheKey);
+      return null;
+    }
+    // Refresh insertion order so the bounded map behaves as an LRU cache.
+    this.modelResponseCache.delete(cacheKey);
+    this.modelResponseCache.set(cacheKey, cached);
+    return cached.response;
+  }
+
+  private pruneModelResponseCache(now = Date.now()): void {
+    for (const [key, entry] of this.modelResponseCache) {
+      if (entry.expiresAt <= now) {
+        this.modelResponseCache.delete(key);
+      }
+    }
+    while (this.modelResponseCache.size >= MAX_MODEL_RESPONSE_CACHE_ENTRIES) {
+      const oldestKey = this.modelResponseCache.keys().next().value;
+      if (!oldestKey) {
+        break;
+      }
+      this.modelResponseCache.delete(oldestKey);
+    }
+  }
+
+  private writeModelResponseCache(
+    cacheKey: string,
+    response: RuntimeProviderManagementModelsResponse,
+    ttlMs: number,
+    cacheGeneration: number
+  ): RuntimeProviderManagementModelsResponse {
+    if (
+      cacheGeneration === this.modelResponseCacheGeneration &&
+      response.models &&
+      !response.error
+    ) {
+      this.modelResponseCache.delete(cacheKey);
+      this.pruneModelResponseCache();
+      this.modelResponseCache.set(cacheKey, {
+        expiresAt: Date.now() + ttlMs,
+        response,
+      });
+    }
+    return response;
+  }
+
+  private getModelResponseCacheTtlMs(input: RuntimeProviderManagementLoadModelsInput): number {
+    return !input.query?.trim() && !input.cursor?.trim()
+      ? DEFAULT_MODEL_RESPONSE_CACHE_TTL_MS
+      : MODEL_RESPONSE_CACHE_TTL_MS;
+  }
+
+  private invalidateModelResponseCache(abortInFlight = true): void {
+    this.modelResponseCacheGeneration += 1;
+    this.modelResponseCache.clear();
+    if (!abortInFlight) {
+      // Detach stale work from deduplication without disrupting callers that
+      // are already displaying it. A refresh can then start a fresh request
+      // immediately, and the detached response cannot repopulate the cache
+      // because its generation no longer matches.
+      this.modelResponseInFlight.clear();
+      this.activeModelRequestGroups.clear();
+      return;
+    }
+    for (const entry of this.modelResponseInFlight.values()) {
+      entry.controller.abort();
+    }
+    this.modelResponseInFlight.clear();
+    this.activeModelRequestGroups.clear();
+  }
+
+  private invalidateProviderResponseCaches(): void {
+    this.invalidateDirectoryResponseCache();
+    this.invalidateModelResponseCache();
+  }
+
+  private releaseSupersededModelRequest(requestGroupId: string, nextCacheKey: string): void {
+    const previousCacheKey = this.activeModelRequestGroups.get(requestGroupId);
+    if (!previousCacheKey || previousCacheKey === nextCacheKey) {
+      return;
+    }
+    this.activeModelRequestGroups.delete(requestGroupId);
+    const previousEntry = this.modelResponseInFlight.get(previousCacheKey);
+    if (!previousEntry) {
+      return;
+    }
+    previousEntry.requestGroups.delete(requestGroupId);
+    if (!previousEntry.hasUngroupedSubscriber && previousEntry.requestGroups.size === 0) {
+      previousEntry.controller.abort();
+    }
+  }
+
+  private registerModelRequestSubscriber(
+    entry: ModelResponseInFlightEntry,
+    cacheKey: string,
+    requestGroupId: string | null
+  ): void {
+    if (requestGroupId) {
+      entry.requestGroups.add(requestGroupId);
+      this.activeModelRequestGroups.set(requestGroupId, cacheKey);
+      return;
+    }
+    entry.hasUngroupedSubscriber = true;
+  }
+
+  private cleanupModelResponseInFlight(cacheKey: string, entry: ModelResponseInFlightEntry): void {
+    if (this.modelResponseInFlight.get(cacheKey) !== entry) {
+      return;
+    }
+    this.modelResponseInFlight.delete(cacheKey);
+    for (const requestGroupId of entry.requestGroups) {
+      if (this.activeModelRequestGroups.get(requestGroupId) === cacheKey) {
+        this.activeModelRequestGroups.delete(requestGroupId);
+      }
+    }
+  }
+
+  private getDirectoryResponseCacheTtlMs(
+    input: RuntimeProviderManagementLoadDirectoryInput
+  ): number {
+    const isDefaultDirectory =
+      !input.query?.trim() &&
+      (input.filter === undefined || input.filter === null || input.filter === 'all') &&
+      !input.cursor?.trim();
+    return isDefaultDirectory
+      ? DEFAULT_DIRECTORY_RESPONSE_CACHE_TTL_MS
+      : DIRECTORY_RESPONSE_CACHE_TTL_MS;
+  }
+
   async loadView(
     input: RuntimeProviderManagementLoadViewInput
   ): Promise<RuntimeProviderManagementViewResponse> {
@@ -1179,6 +1720,57 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
     input: RuntimeProviderManagementLoadDirectoryInput
   ): Promise<RuntimeProviderManagementDirectoryResponse> {
     const projectPath = normalizeProjectPath(input.projectPath);
+    const cacheKey = this.getDirectoryResponseCacheKey(input, projectPath);
+    const refreshInFlightKey = `refresh:${cacheKey}`;
+    const cachedInFlightKey = `cached:${cacheKey}`;
+    if (input.refresh) {
+      const existingRefresh = this.directoryResponseInFlight.get(refreshInFlightKey);
+      if (existingRefresh) {
+        return existingRefresh;
+      }
+      this.invalidateDirectoryResponseCache();
+      // A catalog refresh should make the next model picker read fresh data,
+      // but it must not turn an already-visible model load into an AbortError.
+      this.invalidateModelResponseCache(false);
+    } else {
+      const cached = this.readDirectoryResponseCache(cacheKey);
+      if (cached) {
+        return cached;
+      }
+      const existingRefresh = this.directoryResponseInFlight.get(refreshInFlightKey);
+      if (existingRefresh) {
+        return existingRefresh;
+      }
+    }
+
+    const inFlightKey = input.refresh ? refreshInFlightKey : cachedInFlightKey;
+    const existingRequest = this.directoryResponseInFlight.get(inFlightKey);
+    if (existingRequest) {
+      return existingRequest;
+    }
+
+    const request = this.loadProviderDirectoryUncached(
+      input,
+      projectPath,
+      cacheKey,
+      this.directoryResponseCacheGeneration
+    );
+    this.directoryResponseInFlight.set(inFlightKey, request);
+    try {
+      return await request;
+    } finally {
+      if (this.directoryResponseInFlight.get(inFlightKey) === request) {
+        this.directoryResponseInFlight.delete(inFlightKey);
+      }
+    }
+  }
+
+  private async loadProviderDirectoryUncached(
+    input: RuntimeProviderManagementLoadDirectoryInput,
+    projectPath: string | null,
+    cacheKey: string,
+    cacheGeneration: number
+  ): Promise<RuntimeProviderManagementDirectoryResponse> {
     const { binaryPath, env } = await resolveCliEnv();
     if (!binaryPath) {
       return missingRuntimeBinaryResponse<RuntimeProviderManagementDirectoryResponse>(
@@ -1188,6 +1780,9 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
     }
 
     const args = ['runtime', 'providers', 'directory', '--runtime', input.runtimeId, '--json'];
+    if (input.summary === true) {
+      args.push('--summary');
+    }
     appendOptionalArg(args, '--project-path', projectPath);
     appendOptionalArg(args, '--query', input.query ?? null);
     appendOptionalArg(args, '--filter', input.filter ?? null);
@@ -1213,10 +1808,15 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
         args,
         runtimeProviderCommandOptions({ env, timeout: COMMAND_TIMEOUT_MS }, projectPath)
       );
-      return extractJsonObjectWithContext<RuntimeProviderManagementDirectoryResponse>(
-        stdout,
-        context,
-        stderr
+      return this.writeDirectoryResponseCache(
+        cacheKey,
+        extractJsonObjectWithContext<RuntimeProviderManagementDirectoryResponse>(
+          stdout,
+          context,
+          stderr
+        ),
+        this.getDirectoryResponseCacheTtlMs(input),
+        cacheGeneration
       );
     } catch (error) {
       const failure = normalizeCommandFailure(error, context);
@@ -1235,10 +1835,15 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
                 args,
                 runtimeProviderCommandOptions({ env, timeout: COMMAND_TIMEOUT_MS }, projectPath)
               );
-              return extractJsonObjectWithContext<RuntimeProviderManagementDirectoryResponse>(
-                retryResult.stdout,
-                context,
-                retryResult.stderr
+              return this.writeDirectoryResponseCache(
+                cacheKey,
+                extractJsonObjectWithContext<RuntimeProviderManagementDirectoryResponse>(
+                  retryResult.stdout,
+                  context,
+                  retryResult.stderr
+                ),
+                this.getDirectoryResponseCacheTtlMs(input),
+                cacheGeneration
               );
             } catch {
               // Retry also failed; fall through to return the original error.
@@ -1319,12 +1924,46 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
   async connectProvider(
     input: RuntimeProviderManagementConnectInput
   ): Promise<RuntimeProviderManagementProviderResponse> {
+    this.invalidateProviderResponseCaches();
     const projectPath = normalizeProjectPath(input.projectPath);
     const { binaryPath, env } = await resolveCliEnv();
     if (!binaryPath) {
       return missingRuntimeBinaryResponse<RuntimeProviderManagementProviderResponse>(
         input.runtimeId,
         projectPath
+      );
+    }
+
+    const oauthOperationId = input.oauthOperationId?.trim() || '';
+    const oauthAuthOptionId = input.authOptionId?.trim() || '';
+    const oauthAuthMethodIndex = input.authMethodIndex;
+    const isOAuth = input.method === 'oauth';
+    if (isOAuth && !OAUTH_OPERATION_ID_PATTERN.test(oauthOperationId)) {
+      return errorResponse<RuntimeProviderManagementProviderResponse>(
+        input.runtimeId,
+        'OAuth operation id is invalid',
+        'auth-failed'
+      );
+    }
+    if (
+      isOAuth &&
+      (!oauthAuthOptionId ||
+        oauthAuthOptionId.length > OAUTH_EVENT_IDENTITY_FIELD_LIMIT ||
+        !Number.isInteger(oauthAuthMethodIndex) ||
+        oauthAuthMethodIndex! < 0 ||
+        oauthAuthMethodIndex! > 10_000)
+    ) {
+      return errorResponse<RuntimeProviderManagementProviderResponse>(
+        input.runtimeId,
+        'OAuth authentication method is invalid',
+        'auth-failed'
+      );
+    }
+    if (isOAuth && this.activeOAuthOperations.has(oauthOperationId)) {
+      return errorResponse<RuntimeProviderManagementProviderResponse>(
+        input.runtimeId,
+        'This OAuth operation is already running',
+        'auth-failed'
       );
     }
 
@@ -1337,7 +1976,7 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
         input.runtimeId,
         '--provider',
         input.providerId,
-        '--stdin-json',
+        isOAuth ? '--stdin-json-lines' : '--stdin-json',
         '--json',
       ],
       projectPath
@@ -1362,14 +2001,81 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
           projectPath
         )
       ) as ChildProcessWithoutNullStreams;
-      const result = await collectSpawnOutput(
-        child,
-        JSON.stringify({
-          method: input.method,
-          apiKey: input.apiKey ?? null,
-          metadata: input.metadata ?? {},
-        })
-      );
+      const stdinValue = JSON.stringify({
+        method: input.method,
+        apiKey: input.apiKey ?? null,
+        metadata: input.metadata ?? {},
+        ...(input.authMethodIndex !== undefined && input.authMethodIndex !== null
+          ? { authMethodIndex: input.authMethodIndex }
+          : {}),
+        ...(input.authOptionId ? { authOptionId: input.authOptionId } : {}),
+        ...(input.oauthOperationId ? { oauthOperationId: input.oauthOperationId } : {}),
+        ...(isOAuth ? { oauthProgressProtocol: 2 } : {}),
+      });
+      let result: Awaited<ReturnType<typeof collectSpawnOutput>>;
+      if (isOAuth) {
+        this.activeOAuthOperations.set(oauthOperationId, {
+          child,
+          providerId: input.providerId,
+          latestProgress: null,
+        });
+        this.emitOAuthProgress({
+          operationId: oauthOperationId,
+          runtimeId: input.runtimeId,
+          providerId: input.providerId,
+          displayName: input.providerId,
+          authOptionId: oauthAuthOptionId,
+          methodIndex: oauthAuthMethodIndex!,
+          phase: 'authorizing',
+          completionMethod: null,
+          instructions: null,
+          message: 'Preparing secure browser authorization...',
+        });
+        result = await collectOAuthSpawnOutput({
+          child,
+          stdinValue,
+          onAuthorization: async (line) => {
+            const active = this.activeOAuthOperations.get(oauthOperationId);
+            if (active?.child !== child) {
+              throw new Error('OAuth operation was cancelled');
+            }
+            if (getOAuthRuntimeEventType(line) === 'verification') {
+              if (!active.latestProgress || active.latestProgress.phase === 'cancelled') {
+                throw new Error('OAuth verification arrived before authorization');
+              }
+              const progress = parseOAuthVerificationEvent(line, {
+                operationId: oauthOperationId,
+                providerId: input.providerId,
+                runtimeId: input.runtimeId,
+                authOptionId: oauthAuthOptionId,
+                methodIndex: oauthAuthMethodIndex!,
+              });
+              active.latestProgress = progress;
+              this.emitOAuthProgress(progress);
+              return;
+            }
+            if (active.latestProgress !== null) {
+              throw new Error('OAuth operation returned duplicate authorization');
+            }
+            const authorization = parseOAuthAuthorizationEvent(line, {
+              operationId: oauthOperationId,
+              providerId: input.providerId,
+              runtimeId: input.runtimeId,
+              authOptionId: oauthAuthOptionId,
+              methodIndex: oauthAuthMethodIndex!,
+            });
+            await this.openExternal(authorization.authorizationUrl);
+            const current = this.activeOAuthOperations.get(oauthOperationId);
+            if (current?.child !== child || current.latestProgress !== null) {
+              throw new Error('OAuth operation was cancelled');
+            }
+            current.latestProgress = authorization.progress;
+            this.emitOAuthProgress(authorization.progress);
+          },
+        });
+      } else {
+        result = await collectSpawnOutput(child, stdinValue);
+      }
       if (result.code === 0) {
         return extractJsonObjectWithContext<RuntimeProviderManagementProviderResponse>(
           result.stdout,
@@ -1394,6 +2100,23 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
         );
       }
     } catch (error) {
+      if (isOAuth) {
+        const active = this.activeOAuthOperations.get(oauthOperationId);
+        if (active?.latestProgress?.phase !== 'cancelled') {
+          this.emitOAuthProgress({
+            operationId: oauthOperationId,
+            runtimeId: input.runtimeId,
+            providerId: input.providerId,
+            displayName: active?.latestProgress?.displayName ?? input.providerId,
+            authOptionId: oauthAuthOptionId,
+            methodIndex: oauthAuthMethodIndex!,
+            phase: 'failed',
+            completionMethod: active?.latestProgress?.completionMethod ?? null,
+            instructions: null,
+            message: 'Browser authorization did not complete.',
+          });
+        }
+      }
       const response = extractJsonObjectFromError<RuntimeProviderManagementProviderResponse>(error);
       if (response) {
         return response;
@@ -1402,12 +2125,106 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
         input.runtimeId,
         normalizeCommandFailure(error, context)
       );
+    } finally {
+      if (isOAuth) {
+        this.activeOAuthOperations.delete(oauthOperationId);
+      }
+      // Provider credentials can change before a long OAuth command exits. A
+      // dashboard read during that window may repopulate the cache with the old
+      // disconnected state, so always discard it after the command settles.
+      this.invalidateProviderResponseCaches();
     }
+  }
+
+  async submitOAuthCode(
+    input: RuntimeProviderManagementSubmitOAuthCodeInput
+  ): Promise<RuntimeProviderManagementOAuthControlResponse> {
+    const operationId = input.operationId?.trim() ?? '';
+    const code = input.code?.trim();
+    const active = this.activeOAuthOperations.get(operationId);
+    if (!active || active.latestProgress?.phase !== 'waiting-for-code') {
+      return { ok: false, error: 'OAuth operation is not waiting for a code' };
+    }
+    if (!code || code.length > 16_384) {
+      return { ok: false, error: 'Authorization code is invalid' };
+    }
+    try {
+      active.child.stdin.write(`${JSON.stringify({ type: 'oauth-code', operationId, code })}\n`);
+      const progress: RuntimeProviderOAuthProgressDto = {
+        ...active.latestProgress,
+        phase: 'completing',
+        instructions: null,
+        message: 'Completing secure authorization...',
+      };
+      active.latestProgress = progress;
+      this.emitOAuthProgress(progress);
+      return { ok: true };
+    } catch {
+      return { ok: false, error: 'Could not submit the authorization code' };
+    }
+  }
+
+  async cancelOAuth(
+    input: RuntimeProviderManagementCancelOAuthInput
+  ): Promise<RuntimeProviderManagementOAuthControlResponse> {
+    const operationId = input.operationId?.trim() ?? '';
+    const active = this.activeOAuthOperations.get(operationId);
+    if (!active) {
+      return { ok: false, error: 'OAuth operation is not running' };
+    }
+    const latest = active.latestProgress;
+    const progress: RuntimeProviderOAuthProgressDto = {
+      operationId,
+      runtimeId: latest?.runtimeId ?? 'opencode',
+      providerId: active.providerId,
+      displayName: latest?.displayName ?? active.providerId,
+      authOptionId: latest?.authOptionId ?? '',
+      methodIndex: latest?.methodIndex ?? -1,
+      phase: 'cancelled',
+      completionMethod: latest?.completionMethod ?? null,
+      instructions: null,
+      message: 'Authorization cancelled.',
+    };
+    active.latestProgress = progress;
+    this.emitOAuthProgress(progress);
+    // The provider may already have persisted its credential before the user
+    // closes the flow. Invalidate now, then wait for the child to settle and
+    // invalidate again before the renderer refreshes provider status.
+    this.invalidateProviderResponseCaches();
+    const child = active.child;
+    const settled = new Promise<void>((resolve) => {
+      let finished = false;
+      const finish = (): void => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(settlementTimeout);
+        resolve();
+      };
+      child.once('close', finish);
+      const settlementTimeout = setTimeout(finish, OAUTH_CANCEL_FORCE_KILL_DELAY_MS + 1_000);
+      settlementTimeout.unref?.();
+    });
+    killProcessTree(child, 'SIGTERM');
+    const forceKillTimer = setTimeout(() => {
+      const current = this.activeOAuthOperations.get(operationId);
+      if (current?.child === child && current.latestProgress?.phase === 'cancelled') {
+        killProcessTree(child, 'SIGKILL');
+      }
+    }, OAUTH_CANCEL_FORCE_KILL_DELAY_MS);
+    forceKillTimer.unref?.();
+    await settled;
+    this.invalidateProviderResponseCaches();
+    return { ok: true };
+  }
+
+  onOAuthProgress(_listener: (event: RuntimeProviderOAuthProgressDto) => void): () => void {
+    return () => {};
   }
 
   async connectWithApiKey(
     input: RuntimeProviderManagementConnectApiKeyInput
   ): Promise<RuntimeProviderManagementProviderResponse> {
+    this.invalidateProviderResponseCaches();
     const projectPath = normalizeProjectPath(input.projectPath);
     const { binaryPath, env } = await resolveCliEnv();
     if (!binaryPath) {
@@ -1484,12 +2301,15 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
         input.runtimeId,
         normalizeCommandFailure(error, context)
       );
+    } finally {
+      this.invalidateProviderResponseCaches();
     }
   }
 
   async forgetCredential(
     input: RuntimeProviderManagementForgetInput
   ): Promise<RuntimeProviderManagementProviderResponse> {
+    this.invalidateProviderResponseCaches();
     const projectPath = normalizeProjectPath(input.projectPath);
     const { binaryPath, env } = await resolveCliEnv();
     if (!binaryPath) {
@@ -1540,6 +2360,8 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
         input.runtimeId,
         normalizeCommandFailure(error, context)
       );
+    } finally {
+      this.invalidateProviderResponseCaches();
     }
   }
 
@@ -1547,6 +2369,57 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
     input: RuntimeProviderManagementLoadModelsInput
   ): Promise<RuntimeProviderManagementModelsResponse> {
     const projectPath = normalizeProjectPath(input.projectPath);
+    const cacheKey = this.getModelResponseCacheKey(input, projectPath);
+    const requestGroupId = input.requestGroupId?.trim() || null;
+    if (requestGroupId) {
+      this.releaseSupersededModelRequest(requestGroupId, cacheKey);
+    }
+
+    const cached = this.readModelResponseCache(cacheKey);
+    if (cached) {
+      if (requestGroupId && this.activeModelRequestGroups.get(requestGroupId) === cacheKey) {
+        this.activeModelRequestGroups.delete(requestGroupId);
+      }
+      return cached;
+    }
+
+    const existingRequest = this.modelResponseInFlight.get(cacheKey);
+    if (existingRequest) {
+      this.registerModelRequestSubscriber(existingRequest, cacheKey, requestGroupId);
+      return existingRequest.promise;
+    }
+
+    const controller = new AbortController();
+    const cacheGeneration = this.modelResponseCacheGeneration;
+    const promise = this.loadModelsUncached(
+      input,
+      projectPath,
+      cacheKey,
+      cacheGeneration,
+      controller.signal
+    );
+    const inFlightEntry: ModelResponseInFlightEntry = {
+      controller,
+      hasUngroupedSubscriber: false,
+      requestGroups: new Set<string>(),
+      promise,
+    };
+    this.registerModelRequestSubscriber(inFlightEntry, cacheKey, requestGroupId);
+    this.modelResponseInFlight.set(cacheKey, inFlightEntry);
+    try {
+      return await promise;
+    } finally {
+      this.cleanupModelResponseInFlight(cacheKey, inFlightEntry);
+    }
+  }
+
+  private async loadModelsUncached(
+    input: RuntimeProviderManagementLoadModelsInput,
+    projectPath: string | null,
+    cacheKey: string,
+    cacheGeneration: number,
+    signal: AbortSignal
+  ): Promise<RuntimeProviderManagementModelsResponse> {
     const { binaryPath, env } = await resolveCliEnv();
     if (!binaryPath) {
       return missingRuntimeBinaryResponse<RuntimeProviderManagementModelsResponse>(
@@ -1571,6 +2444,9 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
     if (typeof input.limit === 'number' && Number.isFinite(input.limit) && input.limit > 0) {
       args.push('--limit', String(Math.floor(input.limit)));
     }
+    if (input.cursor?.trim()) {
+      args.push('--cursor', input.cursor.trim());
+    }
     args = appendProjectPathArgs(args, projectPath);
     const context = createCommandContext(binaryPath, args, projectPath);
     const misconfigured = rejectWrongRuntimeBinary<RuntimeProviderManagementModelsResponse>(
@@ -1585,11 +2461,17 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
       const { stdout, stderr } = await execCli(binaryPath, args, {
         ...runtimeProviderCommandOptions({ env }, projectPath),
         timeout: COMMAND_TIMEOUT_MS,
+        signal,
       });
-      return extractJsonObjectWithContext<RuntimeProviderManagementModelsResponse>(
-        stdout,
-        context,
-        stderr
+      return this.writeModelResponseCache(
+        cacheKey,
+        extractJsonObjectWithContext<RuntimeProviderManagementModelsResponse>(
+          stdout,
+          context,
+          stderr
+        ),
+        this.getModelResponseCacheTtlMs(input),
+        cacheGeneration
       );
     } catch (error) {
       const response = extractJsonObjectFromError<RuntimeProviderManagementModelsResponse>(error);
@@ -1666,6 +2548,7 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
   async setDefaultModel(
     input: RuntimeProviderManagementSetDefaultModelInput
   ): Promise<RuntimeProviderManagementViewResponse> {
+    this.invalidateProviderResponseCaches();
     const projectPath = normalizeProjectPath(input.projectPath);
     const { binaryPath, env } = await resolveCliEnv();
     if (!binaryPath) {
@@ -1723,6 +2606,75 @@ export class AgentTeamsRuntimeProviderManagementCliClient implements RuntimeProv
         normalizeCommandFailure(error, context),
         'model-test-failed'
       );
+    } finally {
+      this.invalidateProviderResponseCaches();
+    }
+  }
+
+  async configureModelLimits(
+    input: RuntimeProviderManagementConfigureModelLimitsInput
+  ): Promise<RuntimeProviderManagementModelLimitsResponse> {
+    this.invalidateProviderResponseCaches();
+    const projectPath = normalizeProjectPath(input.projectPath);
+    const { binaryPath, env } = await resolveCliEnv();
+    if (!binaryPath) {
+      return missingRuntimeBinaryResponse<RuntimeProviderManagementModelLimitsResponse>(
+        input.runtimeId,
+        projectPath
+      );
+    }
+
+    const args = appendProjectPathArgs(
+      [
+        'runtime',
+        'providers',
+        'configure-model-limits',
+        '--runtime',
+        input.runtimeId,
+        '--provider',
+        input.providerId,
+        '--model',
+        input.modelId,
+        '--context-tokens',
+        String(input.contextTokens),
+        '--output-tokens',
+        String(input.outputTokens),
+        '--json',
+      ],
+      projectPath
+    );
+    const context = createCommandContext(binaryPath, args, projectPath);
+    const misconfigured = rejectWrongRuntimeBinary<RuntimeProviderManagementModelLimitsResponse>(
+      input.runtimeId,
+      context
+    );
+    if (misconfigured) {
+      return misconfigured;
+    }
+    try {
+      const { stdout, stderr } = await execCli(
+        binaryPath,
+        args,
+        runtimeProviderCommandOptions({ env, timeout: PROBE_COMMAND_TIMEOUT_MS }, projectPath)
+      );
+      return extractJsonObjectWithContext<RuntimeProviderManagementModelLimitsResponse>(
+        stdout,
+        context,
+        stderr
+      );
+    } catch (error) {
+      const response =
+        extractJsonObjectFromError<RuntimeProviderManagementModelLimitsResponse>(error);
+      if (response) {
+        return response;
+      }
+      return commandFailureResponse<RuntimeProviderManagementModelLimitsResponse>(
+        input.runtimeId,
+        normalizeCommandFailure(error, context),
+        'model-test-failed'
+      );
+    } finally {
+      this.invalidateProviderResponseCaches();
     }
   }
 }

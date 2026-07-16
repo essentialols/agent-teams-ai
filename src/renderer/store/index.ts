@@ -16,7 +16,6 @@ import {
 import { isTaskLogActivityChangeEvent } from '@renderer/utils/teamChangeEvents';
 import { isDisplayableCurrentTask } from '@renderer/utils/teamTaskDisplayState';
 import { createLogger } from '@shared/utils/logger';
-import { isVersionOlder, normalizeVersion } from '@shared/utils/version';
 import { create } from 'zustand';
 
 import { createChangeReviewSlice } from './slices/changeReviewSlice';
@@ -97,7 +96,7 @@ const TEAM_VISIBLE_IDLE_WATCHDOG_POLL_MS = 10_000;
 const TEAM_VISIBLE_IDLE_WATCHDOG_STALE_MS = 60_000;
 const TEAM_MESSAGE_FALLBACK_POLL_MS = 10_000;
 const TASK_LOG_ACTIVITY_PULSE_MS = 3_500;
-const STARTUP_RUNTIME_STATUS_IDLE_DELAY_MS = 30_000;
+const STARTUP_CODEX_RUNTIME_STATUS_IDLE_DELAY_MS = 30_000;
 const STARTUP_PROVIDER_STATUS_MIN_DELAY_MS = 2_000;
 const STARTUP_PROVIDER_STATUS_MAX_DELAY_MS = 30_000;
 const STARTUP_GLOBAL_TASKS_MIN_DELAY_MS = 5_000;
@@ -105,8 +104,6 @@ const STARTUP_GLOBAL_TASKS_MAX_DELAY_MS = 30_000;
 const ACTIVE_PROVISIONING_STATES_FOR_PROCESS_LITE: ReadonlySet<TeamProvisioningProgress['state']> =
   new Set(['validating', 'spawning', 'configuring', 'assembling', 'finalizing', 'verifying']);
 export const TEAM_PROCESS_LITE_FANOUT_STORAGE_KEY = 'team:processLiteFanout';
-const CURRENT_APP_VERSION =
-  typeof __APP_VERSION__ === 'string' ? normalizeVersion(__APP_VERSION__) : '0.0.0';
 const logger = createLogger('Store:index');
 const RELEVANT_TEAM_CHANGE_EVENT_TYPES = new Set<TeamChangeEvent['type']>([
   'task',
@@ -226,7 +223,7 @@ export function initializeNotificationListeners(): () => void {
   const cleanupFns: (() => void)[] = [];
   cleanupFns.push(installTeamRefreshFanoutDebugBridge());
   let cliStatusTimer: ReturnType<typeof setTimeout> | null = null;
-  let runtimeStatusTimer: ReturnType<typeof setTimeout> | null = null;
+  let codexRuntimeStatusTimer: ReturnType<typeof setTimeout> | null = null;
   let deferredProviderStatusCleanup: (() => void) | null = null;
   let deferredGlobalTasksCleanup: (() => void) | null = null;
   let disposed = false;
@@ -247,6 +244,13 @@ export function initializeNotificationListeners(): () => void {
     syncRendererTelemetry(loadedConfig?.general?.telemetryEnabled ?? true);
 
     if (api.cliInstaller) {
+      const multimodelEnabled = loadedConfig?.general?.multimodelEnabled ?? true;
+      if (multimodelEnabled && api.openCodeRuntime) {
+        // The dashboard provider gate only needs the lightweight runtime
+        // installer status. Start it immediately; the slower generic OpenCode
+        // provider hydration belongs to the idle provider batch below.
+        void useStore.getState().fetchOpenCodeRuntimeStatus();
+      }
       // Resolve the configured CLI flavor after config has loaded to avoid
       // bootstrapping multimodel placeholder state in Claude-only mode.
       type NavigatorWithUserAgentData = Navigator & { userAgentData?: { platform?: string } };
@@ -290,15 +294,12 @@ export function initializeNotificationListeners(): () => void {
         cliStatusTimer = null;
       }, delayMs);
     }
-    runtimeStatusTimer = setTimeout(() => {
-      if (api.openCodeRuntime) {
-        void useStore.getState().fetchOpenCodeRuntimeStatus();
-      }
+    codexRuntimeStatusTimer = setTimeout(() => {
       if (api.codexRuntime) {
         void useStore.getState().fetchCodexRuntimeStatus();
       }
-      runtimeStatusTimer = null;
-    }, STARTUP_RUNTIME_STATUS_IDLE_DELAY_MS);
+      codexRuntimeStatusTimer = null;
+    }, STARTUP_CODEX_RUNTIME_STATUS_IDLE_DELAY_MS);
 
     // Keep immediately visible startup data first; global task aggregation can
     // scan all team task files, so hydrate it after first paint/idle.
@@ -324,7 +325,7 @@ export function initializeNotificationListeners(): () => void {
   cleanupFns.push(() => {
     disposed = true;
     if (cliStatusTimer) clearTimeout(cliStatusTimer);
-    if (runtimeStatusTimer) clearTimeout(runtimeStatusTimer);
+    if (codexRuntimeStatusTimer) clearTimeout(codexRuntimeStatusTimer);
     if (deferredProviderStatusCleanup) deferredProviderStatusCleanup();
     if (deferredGlobalTasksCleanup) deferredGlobalTasksCleanup();
   });
@@ -2515,78 +2516,7 @@ export function initializeNotificationListeners(): () => void {
   // Listen for updater status events from main process
   if (api.updater?.onStatus) {
     const cleanup = api.updater.onStatus((_event: unknown, status: unknown) => {
-      const s = status as UpdaterStatus;
-      switch (s.type) {
-        case 'checking': {
-          // Don't downgrade status if we already know about an available/downloaded update
-          // or if a download is in progress (prevents UI flash during periodic re-checks)
-          const current = useStore.getState().updateStatus;
-          if (current !== 'available' && current !== 'downloaded' && current !== 'downloading') {
-            useStore.setState({ updateStatus: 'checking' });
-          }
-          break;
-        }
-        case 'available': {
-          // Don't downgrade from downloading/downloaded — the update is already
-          // in progress or ready to install (prevents periodic re-check from
-          // resetting the state after download completes)
-          const currentStatus = useStore.getState().updateStatus;
-          if (currentStatus === 'downloading' || currentStatus === 'downloaded') {
-            break;
-          }
-          const nextVersion = s.version ? normalizeVersion(s.version) : null;
-          if (!nextVersion || !isVersionOlder(CURRENT_APP_VERSION, nextVersion)) {
-            break;
-          }
-          const dismissed = useStore.getState().dismissedUpdateVersion;
-          useStore.setState({
-            updateStatus: 'available',
-            availableVersion: nextVersion,
-            releaseNotes: s.releaseNotes ?? null,
-            showUpdateDialog: nextVersion !== dismissed,
-          });
-          break;
-        }
-        case 'not-available': {
-          // Don't reset status if update is already downloading or downloaded
-          const notAvailCurrent = useStore.getState().updateStatus;
-          if (notAvailCurrent !== 'downloading' && notAvailCurrent !== 'downloaded') {
-            useStore.setState({ updateStatus: 'not-available' });
-          }
-          break;
-        }
-        case 'downloading':
-          useStore.setState({
-            updateStatus: 'downloading',
-            downloadProgress: s.progress?.percent ?? 0,
-          });
-          break;
-        case 'downloaded':
-          if (s.version && !isVersionOlder(CURRENT_APP_VERSION, normalizeVersion(s.version))) {
-            break;
-          }
-          useStore.setState({
-            updateStatus: 'downloaded',
-            downloadProgress: 100,
-            availableVersion: s.version
-              ? normalizeVersion(s.version)
-              : useStore.getState().availableVersion,
-          });
-          break;
-        case 'error': {
-          // Don't lose downloaded state due to a transient check error —
-          // the update is already on disk and ready to install
-          const errCurrent = useStore.getState().updateStatus;
-          if (errCurrent === 'downloaded') {
-            break;
-          }
-          useStore.setState({
-            updateStatus: 'error',
-            updateError: s.error ?? 'Unknown error',
-          });
-          break;
-        }
-      }
+      useStore.getState().handleUpdaterStatus(status as UpdaterStatus);
     });
     if (typeof cleanup === 'function') {
       cleanupFns.push(cleanup);

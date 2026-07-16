@@ -49,12 +49,12 @@
     {
       "id": "whatIsIt",
       "question": "Wat is Agent Teams?",
-      "answer": "Een desktop-app voor het orkestreren van AI-agentteams met onze eigen lokale coordinatielaag. Agents hebben rollen, werken autonoom, werken samen via kanban en kunnen draaien op Claude, Codex of OpenCode."
+      "answer": "Een desktop-app voor het orkestreren van AI-agentteams met onze eigen lokale coordinatielaag. Agents hebben rollen, werken autonoom, werken samen via kanban en kunnen draaien op Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro."
     },
     {
       "id": "isFree",
       "question": "Is het echt gratis?",
-      "answer": "Ja. De app is gratis en open source. Je kunt starten met een gratis model zonder auth - geen registratie, API keys of creditcard. Voor meer modellen koppel je Claude, Codex, OpenCode/OpenRouter of een andere ondersteunde provider."
+      "answer": "Ja. De app is gratis en open source. Je kunt starten met een gratis model zonder auth - geen registratie, API keys of creditcard. Voor meer modellen koppel je Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro of een andere ondersteunde provider."
     },
     {
       "id": "platforms",
@@ -125,7 +125,7 @@
       "name": "Gratis",
       "price": "$0",
       "period": "",
-      "description": "Ja. De app is gratis en open source. Je kunt starten met een gratis model zonder auth - geen registratie, API keys of creditcard. Voor meer modellen koppel je Claude, Codex, OpenCode/OpenRouter of een andere ondersteunde provider.",
+      "description": "Ja. De app is gratis en open source. Je kunt starten met een gratis model zonder auth - geen registratie, API keys of creditcard. Voor meer modellen koppel je Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro of een andere ondersteunde provider.",
       "features": [
         "Agent-teams",
         "Kanbanbord",

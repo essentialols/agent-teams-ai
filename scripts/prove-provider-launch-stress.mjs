@@ -112,6 +112,7 @@ async function preflightProviderLaunchStress(input) {
       ? await preflightOpenCodeLiveEnvironment({
           repoRoot: input.repoRoot,
           requiredModels: [env.PROVIDER_LAUNCH_STRESS_OPENCODE_MODEL],
+          env,
         })
       : { ok: true },
   };

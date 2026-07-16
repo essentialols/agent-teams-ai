@@ -49,12 +49,12 @@
     {
       "id": "whatIsIt",
       "question": "Agent Teams म्हणजे काय?",
-      "answer": "Local coordination layer सह AI agent teams orchestrate करणारा desktop app. Agents ना roles असतात, ते autonomous काम करतात, kanban board वर collaborate करतात आणि Claude, Codex किंवा OpenCode वर run होऊ शकतात."
+      "answer": "Local coordination layer सह AI agent teams orchestrate करणारा desktop app. Agents ना roles असतात, ते autonomous काम करतात, kanban board वर collaborate करतात आणि Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro वर run होऊ शकतात."
     },
     {
       "id": "isFree",
       "question": "हे खरंच free आहे का?",
-      "answer": "हो. App free आणि open source आहे. Auth न लागणाऱ्या free model ने सुरुवात करू शकता - registration, API key किंवा credit card नाही. जास्त models हवे असतील तर Claude, Codex, OpenCode/OpenRouter किंवा supported provider connect करा."
+      "answer": "हो. App free आणि open source आहे. Auth न लागणाऱ्या free model ने सुरुवात करू शकता - registration, API key किंवा credit card नाही. जास्त models हवे असतील तर Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro किंवा supported provider connect करा."
     },
     {
       "id": "platforms",
@@ -125,7 +125,7 @@
       "name": "Free",
       "price": "$0",
       "period": "",
-      "description": "हो. App free आणि open source आहे. Auth न लागणाऱ्या free model ने सुरुवात करू शकता - registration, API key किंवा credit card नाही. जास्त models हवे असतील तर Claude, Codex, OpenCode/OpenRouter किंवा supported provider connect करा.",
+      "description": "हो. App free आणि open source आहे. Auth न लागणाऱ्या free model ने सुरुवात करू शकता - registration, API key किंवा credit card नाही. जास्त models हवे असतील तर Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro किंवा supported provider connect करा.",
       "features": [
         "Agent teams",
         "Kanban board",

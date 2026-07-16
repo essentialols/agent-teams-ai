@@ -559,11 +559,19 @@ describe('OpenCodeRuntimeInstallerService resolver', () => {
       );
       const staleNvmDirectory = path.join(tempRoot!, 'nvm', 'v20.20.0');
       const staleNvmShimPath = path.join(staleNvmDirectory, 'opencode.cmd');
+      const staleNvmNativePath = path.join(
+        staleNvmDirectory,
+        'node_modules',
+        'opencode-ai',
+        'bin',
+        'opencode.exe'
+      );
       await mkdir(path.dirname(activeNativePath), { recursive: true });
-      await mkdir(staleNvmDirectory, { recursive: true });
+      await mkdir(path.dirname(staleNvmNativePath), { recursive: true });
       await writeFile(activeShimPath, 'active npm shim', { mode: 0o755 });
       await writeFile(activeNativePath, 'active native binary', { mode: 0o755 });
       await writeFile(staleNvmShimPath, 'stale nvm shim', { mode: 0o755 });
+      await writeFile(staleNvmNativePath, 'stale native binary', { mode: 0o755 });
       process.env.PATH = activeNpmDirectory;
       getCachedShellEnvMock.mockReturnValue({ PATH: staleNvmDirectory });
       execCliMock.mockImplementation(async (binaryPath: string) => ({
@@ -579,7 +587,7 @@ describe('OpenCodeRuntimeInstallerService resolver', () => {
         windowsHide: true,
       });
       expect(execCliMock).not.toHaveBeenCalledWith(
-        staleNvmShimPath,
+        staleNvmNativePath,
         expect.anything(),
         expect.anything()
       );

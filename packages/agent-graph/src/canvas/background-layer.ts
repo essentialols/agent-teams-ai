@@ -222,10 +222,11 @@ export function drawBackground(
   shootingStars: ShootingStarField,
   camera: { x: number; y: number; zoom: number },
   time: number,
-  options?: { showHexGrid?: boolean; showStarField?: boolean }
+  options?: { showHexGrid?: boolean; showDotGrid?: boolean; showStarField?: boolean }
 ): void {
   const showStars = options?.showStarField ?? true;
   const showHex = options?.showHexGrid ?? true;
+  const showDots = options?.showDotGrid ?? false;
 
   // Deep void background
   ctx.fillStyle = COLORS.void;
@@ -256,12 +257,36 @@ export function drawBackground(
   if (showHex) {
     drawHexGrid(ctx, w, h, camera, time);
   }
+  if (showDots) {
+    drawDotGrid(ctx, w, h, camera);
+  }
 
   if (showStars) {
     for (const shootingStar of shootingStars.active) {
       drawShootingStar(ctx, shootingStar);
     }
   }
+}
+
+function drawDotGrid(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  camera: { x: number; y: number; zoom: number }
+): void {
+  const spacing = Math.max(18, 34 * Math.min(1.5, Math.max(0.65, camera.zoom)));
+  const offsetX = ((camera.x % spacing) + spacing) % spacing;
+  const offsetY = ((camera.y % spacing) + spacing) % spacing;
+  ctx.save();
+  ctx.fillStyle = 'rgba(110, 154, 198, 0.105)';
+  for (let x = offsetX; x < w; x += spacing) {
+    for (let y = offsetY; y < h; y += spacing) {
+      ctx.beginPath();
+      ctx.arc(x, y, 0.65, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
 }
 
 function drawDepthParticle(

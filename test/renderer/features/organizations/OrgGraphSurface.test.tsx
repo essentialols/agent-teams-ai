@@ -14,8 +14,42 @@ vi.mock('@features/localization/renderer', () => ({
 }));
 
 vi.mock('@claude-teams/agent-graph', () => ({
-  GraphView: ({ renderTopToolbarContent }: { renderTopToolbarContent?: () => React.ReactNode }) => (
-    <div>{renderTopToolbarContent?.()}</div>
+  GraphView: ({
+    renderControls,
+  }: {
+    renderControls?: (controls: {
+      filters: {
+        showActivity: boolean;
+        showLogs: boolean;
+        showTasks: boolean;
+        showProcesses: boolean;
+        showEdges: boolean;
+        showSpaceEffects: boolean;
+        paused: boolean;
+      };
+      onFiltersChange: () => void;
+      onZoomIn: () => void;
+      onZoomOut: () => void;
+      onZoomToFit: () => void;
+    }) => React.ReactNode;
+  }) => (
+    <div>
+      {renderControls?.({
+        filters: {
+          showActivity: false,
+          showLogs: false,
+          showTasks: true,
+          showProcesses: false,
+          showEdges: true,
+          showSpaceEffects: false,
+          paused: false,
+        },
+        onFiltersChange: vi.fn(),
+        onZoomIn: vi.fn(),
+        onZoomOut: vi.fn(),
+        onZoomToFit: vi.fn(),
+      })}
+    </div>
   ),
 }));
 

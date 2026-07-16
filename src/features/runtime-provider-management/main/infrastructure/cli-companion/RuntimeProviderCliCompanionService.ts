@@ -31,8 +31,10 @@ const WINDOWS_ISOLATED_COMMAND_HELPER = String.raw`
 const { spawn } = require('node:child_process');
 const [command, ...args] = process.argv.slice(1);
 if (!command) process.exit(1);
+const childEnv = { ...process.env };
+delete childEnv.ELECTRON_RUN_AS_NODE;
 const child = spawn(command, args, {
-  env: process.env,
+  env: childEnv,
   shell: /\.(?:cmd|bat)$/i.test(command),
   windowsHide: true,
   stdio: ['ignore', 'pipe', 'pipe'],

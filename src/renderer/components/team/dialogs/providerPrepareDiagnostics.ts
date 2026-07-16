@@ -989,12 +989,7 @@ function looksLikeSingleModelCredentialFailure(result: TeamProvisioningPrepareRe
     combined.includes('credential') ||
     combined.includes('api key') ||
     combined.includes('apikey') ||
-    combined.includes('not_authenticated') ||
-    combined.includes('not licensed') ||
-    combined.includes('payment required') ||
-    combined.includes('available credits') ||
-    combined.includes('spending limit') ||
-    combined.includes('insufficient credits');
+    combined.includes('not_authenticated');
   const hasAuthStatus =
     combined.includes('unauthorized') ||
     combined.includes('forbidden') ||

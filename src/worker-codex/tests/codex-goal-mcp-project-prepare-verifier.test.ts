@@ -608,14 +608,14 @@ await writeFile(file, JSON.stringify(operation, null, 2) + "\\n");
         canonicalSha,
         patchSha256: handoff.manifest.artifacts.patch.sha256,
         executionMode: "sync",
-        accounts: allowedAccountIds,
+        accounts: ["account-c"],
       });
 
       const verifierManifestPath = codexGoalJobManifestPath({
         registryRootDir,
         jobId: "project-verifier",
       });
-      const verifierManifest = await readCodexGoalJob({
+      const initialVerifierManifest = await readCodexGoalJob({
         registryRootDir,
         jobId: "project-verifier",
       });
@@ -630,14 +630,14 @@ await writeFile(file, JSON.stringify(operation, null, 2) + "\\n");
         allowedAccountIds,
       });
       await authorizeProjectPreStartAdmissionLaunch({
-        manifest: verifierManifest,
+        manifest: initialVerifierManifest,
         scope,
         workspaceMode: "admitted_input_patch",
       });
       await writeFile(
         join(
-          verifierManifest.jobRootDir,
-          `${verifierManifest.taskId}.latest-result.json`,
+          initialVerifierManifest.jobRootDir,
+          `${initialVerifierManifest.taskId}.latest-result.json`,
         ),
         `${JSON.stringify({
           status: "blocked",
@@ -651,9 +651,33 @@ await writeFile(file, JSON.stringify(operation, null, 2) + "\\n");
       const journal = new InMemoryAttemptJournal();
       await recordUnavailableAttempt({
         journal,
-        taskId: verifierManifest.taskId,
-        workspacePath: verifierManifest.workspacePath,
+        taskId: initialVerifierManifest.taskId,
+        workspacePath: initialVerifierManifest.workspacePath,
         accountId: "account-c",
+      });
+
+      const repaired = await callToolJson(
+        client,
+        "brokered_project_manifest_repair",
+        {
+          registryRootDir,
+          controllerJobId: controller.jobId,
+          jobId: initialVerifierManifest.jobId,
+          accounts: allowedAccountIds,
+          confirmRepair: true,
+        },
+      );
+      expect(repaired, JSON.stringify(repaired)).toMatchObject({
+        ok: true,
+        manifest: { accounts: allowedAccountIds },
+        preStartAdmissionRebind: {
+          updated: true,
+          workspaceMode: "admitted_input_patch_continuation",
+        },
+      });
+      const verifierManifest = await readCodexGoalJob({
+        registryRootDir,
+        jobId: "project-verifier",
       });
 
       const stagedPatchBefore = await stagedPatchSha256(verifierWorkspacePath);

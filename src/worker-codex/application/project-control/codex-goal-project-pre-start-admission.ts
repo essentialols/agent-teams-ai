@@ -353,9 +353,12 @@ export async function rebindProjectPreStartAdmissionManifest(input: {
   readonly manifest: CodexGoalJobManifest;
   readonly scope: ProjectAccessScope;
   readonly workspaceMode:
-    "clean_capacity_continuation" | "reviewed_dirty_continuation";
+    | "clean_capacity_continuation"
+    | "reviewed_dirty_continuation"
+    | "admitted_input_patch_continuation";
 }): Promise<{
   readonly updated: boolean;
+  readonly workspaceMode: typeof input.workspaceMode;
   readonly previousManifestSha256: string;
   readonly manifestSha256: string;
 }> {
@@ -390,15 +393,19 @@ export async function rebindProjectPreStartAdmissionManifest(input: {
     input.manifest,
     descriptor,
   );
-  const dirtyContinuation =
+  const reviewedDirtyContinuation =
     input.workspaceMode === "reviewed_dirty_continuation";
+  const admittedInputPatchContinuation =
+    input.workspaceMode === "admitted_input_patch_continuation";
+  const dirtyContinuation =
+    reviewedDirtyContinuation || admittedInputPatchContinuation;
   const receiptStatusValid =
     receipt.status === "launch_authorized" ||
     receipt.status === "validated_not_launched";
   const workspaceBindingValid = dirtyContinuation
     ? binding.workspaceStatus !== ""
     : binding.workspaceStatus === "";
-  const inputPatchBindingValid = dirtyContinuation
+  const inputPatchBindingValid = reviewedDirtyContinuation
     ? true
     : projectInputPatchBindingMatches(binding, contract);
   const mismatches = [
@@ -434,7 +441,12 @@ export async function rebindProjectPreStartAdmissionManifest(input: {
   );
   const manifestSha256 = sha256(Buffer.from(JSON.stringify(input.manifest)));
   if (previousManifestSha256 === manifestSha256) {
-    return { updated: false, previousManifestSha256, manifestSha256 };
+    return {
+      updated: false,
+      workspaceMode: input.workspaceMode,
+      previousManifestSha256,
+      manifestSha256,
+    };
   }
   await writeJsonAtomically(descriptor.receiptPath, {
     ...receipt,
@@ -445,7 +457,12 @@ export async function rebindProjectPreStartAdmissionManifest(input: {
       repairedAt: new Date().toISOString(),
     },
   });
-  return { updated: true, previousManifestSha256, manifestSha256 };
+  return {
+    updated: true,
+    workspaceMode: input.workspaceMode,
+    previousManifestSha256,
+    manifestSha256,
+  };
 }
 
 function projectPreStartValidatorReceiptValid(input: {

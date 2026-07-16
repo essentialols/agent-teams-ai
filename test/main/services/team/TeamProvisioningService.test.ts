@@ -23303,14 +23303,14 @@ describe('TeamProvisioningService', () => {
 
   it('fails before spawning when deterministic launch exceeds the current primary teammate cap', async () => {
     allowConsoleLogs();
-    const members = Array.from({ length: 21 }, (_, index) => `member-${index + 1}`);
+    const members = Array.from({ length: 31 }, (_, index) => `member-${index + 1}`);
 
     await expect(
       startDeterministicLaunchCloseHarness({
         teamName: 'launch-too-many-primary-members',
         members,
       })
-    ).rejects.toThrow(/up to 20 primary teammates/);
+    ).rejects.toThrow(/up to 30 primary teammates/);
     expect(spawnCli).not.toHaveBeenCalled();
   });
 

@@ -56,13 +56,17 @@ import {
   codexGoalRuntimeEventObservability,
   createCodexGoalRuntimeEventWriter,
 } from "./codex-goal-runtime-events";
+import {
+  changedFilesFromSafeExecutionResult,
+  changedFilesFromWorkspace,
+  uniqueStrings,
+} from "./codex-goal-workspace-changes";
 export type {
   CodexGoalRuntimeEvent,
   CodexGoalRuntimeEventLevel,
 } from "./codex-goal-runtime-events";
 
 const execFileAsync = promisify(execFile);
-const gitStatusTimeoutMs = 5_000;
 const gitMetadataTimeoutMs = 5_000;
 
 export type CodexGoalAccountSlot = {
@@ -948,50 +952,6 @@ function workerReportFromSafeExecutionResult(
   if (result.status !== "completed") return undefined;
   if (!("result" in result) || result.result === undefined) return undefined;
   return normalizeWorkerReport(result.result.structuredOutput);
-}
-
-function changedFilesFromSafeExecutionResult(
-  result: SafeExecutionRunResult<FileBackendCodexWorkerResult>,
-): readonly string[] {
-  return uniqueStrings(result.attempts.flatMap((attempt) => attempt.changedFiles));
-}
-
-async function changedFilesFromWorkspace(
-  workspacePath: string,
-): Promise<{
-  readonly changedFiles: readonly string[];
-  readonly warning?: string;
-}> {
-  try {
-    const { stdout } = await execFileAsync("git", [
-      "-C",
-      workspacePath,
-      "status",
-      "--porcelain",
-      "--untracked-files=all",
-    ], { timeout: gitStatusTimeoutMs });
-    const changedFiles = stdout
-      .split(/\r?\n/)
-      .filter((line) => line.trim().length > 0)
-      .map((line) => statusPorcelainPath(line))
-      .filter((path) => path.length > 0);
-    return { changedFiles };
-  } catch {
-    return {
-      changedFiles: [],
-      warning: "workspace_changed_files_unavailable",
-    };
-  }
-}
-
-function statusPorcelainPath(line: string): string {
-  const path = line.length > 3 ? line.slice(3).trim() : line.trim();
-  const renameTarget = path.split(" -> ").at(-1);
-  return renameTarget?.trim() ?? path;
-}
-
-function uniqueStrings(values: readonly string[]): readonly string[] {
-  return [...new Set(values.filter((value) => value.trim()))];
 }
 
 async function writeCodexGoalProgress(

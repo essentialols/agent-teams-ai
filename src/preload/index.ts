@@ -1539,7 +1539,7 @@ const electronAPI: ElectronAPI = {
       scope: ReviewFileScope,
       filePath: string,
       content: string,
-      expectedCurrentContent?: string | null
+      expectedCurrentContent: string | null
     ) => {
       return invokeIpcWithResult<{ success: boolean }>(
         REVIEW_SAVE_EDITED_FILE,

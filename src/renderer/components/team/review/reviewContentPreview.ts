@@ -108,7 +108,7 @@ export function getReviewRejectBlockReason(
   if (requiresManualLedgerReview(file)) return 'manual-ledger-review';
 
   if (!fileContent) {
-    return file.snippets.length > 0 && !hasReviewSnippetText(file) ? 'baseline-unavailable' : null;
+    return 'baseline-unavailable';
   }
 
   const modified = getResolvedReviewModifiedContent(file, fileContent);

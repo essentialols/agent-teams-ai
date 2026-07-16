@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -7,6 +7,10 @@ let teamsBasePath: string;
 
 vi.mock('@main/utils/pathDecoder', () => ({
   getTeamsBasePath: () => teamsBasePath,
+}));
+
+vi.mock('@shared/utils/logger', () => ({
+  createLogger: () => ({ error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() }),
 }));
 
 describe('ReviewDecisionStore', () => {
@@ -43,6 +47,20 @@ describe('ReviewDecisionStore', () => {
       fileDecisions: { 'file-b': 'accepted' },
       hunkContextHashesByFile: undefined,
     });
+  });
+
+  it('rejects when durable decision persistence fails instead of reporting success', async () => {
+    const { ReviewDecisionStore } = await import('@main/services/team/ReviewDecisionStore');
+    const store = new ReviewDecisionStore();
+    await writeFile(path.join(teamsBasePath, 'blocked-team'), 'not-a-directory', 'utf8');
+
+    await expect(
+      store.save('blocked-team', 'task-123', {
+        scopeToken: 'task:123:req:a:src:one',
+        hunkDecisions: { 'file-a:0': 'rejected' },
+        fileDecisions: { 'file-a': 'rejected' },
+      })
+    ).rejects.toBeTruthy();
   });
 
   it('clears only the exact v2 scope file and leaves sibling variants intact', async () => {

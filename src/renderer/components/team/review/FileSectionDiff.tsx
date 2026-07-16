@@ -38,7 +38,7 @@ interface FileSectionDiffProps {
     afterContent: string
   ) => boolean | void;
   onFullyViewed: (filePath: string) => void;
-  onContentChanged: (filePath: string, content: string) => void;
+  onContentChanged: (filePath: string, content: string, previousContent?: string) => void;
   onEditorViewReady: (filePath: string, view: EditorView | null) => void;
   discardCounter: number;
   autoViewed: boolean;
@@ -217,7 +217,9 @@ export const FileSectionDiff = ({
               onHunkRejected={(idx, before, after) =>
                 onHunkRejected(file.filePath, idx, before, after)
               }
-              onContentChanged={(content) => onContentChanged(file.filePath, content)}
+              onContentChanged={(content, previousContent) =>
+                onContentChanged(file.filePath, content, previousContent)
+              }
               editorViewRef={localEditorViewRef}
               onViewChange={handleViewChange}
               onSelectionChange={
@@ -262,7 +264,9 @@ export const FileSectionDiff = ({
           usePortionCollapse={true}
           onHunkAccepted={(idx) => onHunkAccepted(file.filePath, idx)}
           onHunkRejected={(idx, before, after) => onHunkRejected(file.filePath, idx, before, after)}
-          onContentChanged={(content) => onContentChanged(file.filePath, content)}
+          onContentChanged={(content, previousContent) =>
+            onContentChanged(file.filePath, content, previousContent)
+          }
           editorViewRef={localEditorViewRef}
           onViewChange={handleViewChange}
           onSelectionChange={

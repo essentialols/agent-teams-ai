@@ -13,7 +13,7 @@ import {
   REVIEW_RESTORE_REJECTED_RENAME,
   REVIEW_SAVE_EDITED_FILE,
 } from '@preload/constants/ipcChannels';
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'fs/promises';
+import { link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -183,6 +183,23 @@ describe('review IPC path confinement', () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
+  async function getDisplayedSnapshotToken(
+    filePath: string,
+    snippets: unknown[] = []
+  ): Promise<string> {
+    const result = await ipcMain.invoke(
+      REVIEW_GET_FILE_CONTENT,
+      'safe-team',
+      'worker',
+      filePath,
+      snippets
+    );
+    if (!result.success) throw new Error(result.error);
+    const token = (result.data as { reviewSnapshotToken?: string }).reviewSnapshotToken;
+    if (!token) throw new Error('Review snapshot token was not returned');
+    return token;
+  }
+
   it('allows content reads inside configured project and member worktree roots', async () => {
     const projectResult = await ipcMain.invoke(
       REVIEW_GET_FILE_CONTENT,
@@ -272,6 +289,7 @@ describe('review IPC path confinement', () => {
 
   it('allows check, reject, and apply mutation paths inside the configured project', async () => {
     const scope = { teamName: 'safe-team', memberName: 'worker' };
+    const contentSnapshotToken = await getDisplayedSnapshotToken(projectFile);
     const checkResult = await ipcMain.invoke(
       REVIEW_CHECK_CONFLICT,
       scope,
@@ -288,6 +306,7 @@ describe('review IPC path confinement', () => {
           filePath: projectFile,
           fileDecision: 'rejected',
           hunkDecisions: { 0: 'rejected' },
+          contentSnapshotToken,
           snippets: [],
           originalFullContent: 'before\n',
           modifiedFullContent: 'project\n',
@@ -315,6 +334,65 @@ describe('review IPC path confinement', () => {
       'after\n'
     );
     expect(applier.applyReviewDecisions).toHaveBeenCalledTimes(1);
+  });
+
+  it('applies a non-ledger decision to the immutable displayed snapshot', async () => {
+    const contentSnapshotToken = await getDisplayedSnapshotToken(projectFile);
+    resolver.getFileContent.mockResolvedValueOnce({
+      filePath: projectFile,
+      relativePath: 'src/project.ts',
+      snippets: [],
+      linesAdded: 1,
+      linesRemoved: 1,
+      isNewFile: false,
+      originalFullContent: 'polluted-before\n',
+      modifiedFullContent: 'external-after-display\n',
+      contentSource: 'snippet-reconstruction',
+    });
+
+    const result = await ipcMain.invoke(REVIEW_APPLY_DECISIONS, {
+      teamName: 'safe-team',
+      memberName: 'worker',
+      decisions: [
+        {
+          filePath: projectFile,
+          fileDecision: 'rejected',
+          hunkDecisions: { 0: 'rejected' },
+          contentSnapshotToken,
+        },
+      ],
+    });
+
+    expect(result).toMatchObject({ success: true });
+    const [, fileContents] = applier.applyReviewDecisions.mock.calls.at(-1) as [
+      unknown,
+      Map<string, { originalFullContent: string | null; modifiedFullContent: string | null }>,
+    ];
+    expect(fileContents.get(projectFile)).toMatchObject({
+      originalFullContent: 'before\n',
+      modifiedFullContent: 'after\n',
+    });
+    expect(resolver.getFileContent).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails closed when a non-ledger reject has no displayed snapshot token', async () => {
+    const result = await ipcMain.invoke(REVIEW_APPLY_DECISIONS, {
+      teamName: 'safe-team',
+      memberName: 'worker',
+      decisions: [
+        {
+          filePath: projectFile,
+          fileDecision: 'rejected',
+          hunkDecisions: { 0: 'rejected' },
+        },
+      ],
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      error: 'Displayed review snapshot is unavailable; reload Changes before rejecting.',
+    });
+    expect(applier.applyReviewDecisions).not.toHaveBeenCalled();
   });
 
   it('requires task-scoped mutations to target a file in that reviewed task', async () => {
@@ -464,6 +542,7 @@ describe('review IPC path confinement', () => {
   });
 
   it('ignores renderer-forged lifecycle, contents, and relation metadata', async () => {
+    const contentSnapshotToken = await getDisplayedSnapshotToken(projectFile);
     const result = await ipcMain.invoke(REVIEW_APPLY_DECISIONS, {
       teamName: 'safe-team',
       memberName: 'worker',
@@ -472,6 +551,7 @@ describe('review IPC path confinement', () => {
           filePath: projectFile,
           fileDecision: 'rejected',
           hunkDecisions: { 0: 'rejected' },
+          contentSnapshotToken,
           isNewFile: true,
           originalFullContent: '',
           modifiedFullContent: 'forged\n',
@@ -523,6 +603,7 @@ describe('review IPC path confinement', () => {
       modifiedFullContent: 'created\n',
       contentSource: 'ledger-exact',
     });
+    const contentSnapshotToken = await getDisplayedSnapshotToken(projectFile);
 
     const result = await ipcMain.invoke(REVIEW_APPLY_DECISIONS, {
       teamName: 'safe-team',
@@ -532,6 +613,7 @@ describe('review IPC path confinement', () => {
           filePath: projectFile,
           fileDecision: 'rejected',
           hunkDecisions: { 0: 'rejected' },
+          contentSnapshotToken,
         },
       ],
     });
@@ -560,7 +642,7 @@ describe('review IPC path confinement', () => {
           },
         ],
       }),
-      ipcMain.invoke(REVIEW_SAVE_EDITED_FILE, scope, projectFile, 'forged\n'),
+      ipcMain.invoke(REVIEW_SAVE_EDITED_FILE, scope, projectFile, 'forged\n', 'project\n'),
     ]);
 
     expect(results).toHaveLength(5);
@@ -577,13 +659,15 @@ describe('review IPC path confinement', () => {
       REVIEW_SAVE_EDITED_FILE,
       { teamName: 'safe-team', memberName: 'worker', projectPath: outsideDir },
       outsideFile,
-      'forged\n'
+      'forged\n',
+      'outside\n'
     );
     const unrelated = await ipcMain.invoke(
       REVIEW_SAVE_EDITED_FILE,
       { teamName: 'safe-team', memberName: 'worker' },
       worktreeFile,
-      'unrelated\n'
+      'unrelated\n',
+      'worktree\n'
     );
 
     expect(forgedRoot).toMatchObject({
@@ -606,7 +690,8 @@ describe('review IPC path confinement', () => {
         memberName: 'other-worker',
       },
       projectFile,
-      'forged\n'
+      'forged\n',
+      'project\n'
     );
 
     expect(result).toMatchObject({
@@ -676,6 +761,30 @@ describe('review IPC path confinement', () => {
       'different\n'
     );
     expect(applier.saveEditedFile).toHaveBeenNthCalledWith(3, missingFile, 'created\n', null);
+  });
+
+  it('refuses to mutate a multiply-linked review path', async () => {
+    if (process.platform === 'win32') return;
+    const hardlinkPath = path.join(projectDir, 'src', 'hardlink.ts');
+    await link(outsideFile, hardlinkPath);
+    extractor.getAgentChanges.mockResolvedValueOnce({
+      files: [{ filePath: hardlinkPath, snippets: [], isNewFile: false }],
+    });
+
+    const result = await ipcMain.invoke(
+      REVIEW_SAVE_EDITED_FILE,
+      { teamName: 'safe-team', memberName: 'worker' },
+      hardlinkPath,
+      'mutated\n',
+      'outside\n'
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      error: 'Review mutation refuses symbolic or multiply-linked files',
+    });
+    await expect(readFile(outsideFile, 'utf8')).resolves.toBe('outside\n');
+    expect(applier.saveEditedFile).not.toHaveBeenCalled();
   });
 
   it('confines guarded Undo deletion to an authoritative reviewed file', async () => {

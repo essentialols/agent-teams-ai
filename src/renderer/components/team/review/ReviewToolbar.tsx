@@ -20,6 +20,7 @@ interface ReviewToolbarProps {
   onApply: () => void;
   onCollapseUnchangedChange: (collapse: boolean) => void;
   canRejectAll?: boolean;
+  canAcceptAll?: boolean;
   editedCount?: number;
   canUndo?: boolean;
   onUndo?: () => void;
@@ -37,6 +38,7 @@ export const ReviewToolbar = ({
   onApply,
   onCollapseUnchangedChange: _onCollapseUnchangedChange,
   canRejectAll = true,
+  canAcceptAll = true,
   instantApply = false,
   editedCount = 0,
   canUndo = false,
@@ -48,6 +50,7 @@ export const ReviewToolbar = ({
   const totalChanges = stats.pending + stats.accepted + stats.rejected;
   const reviewedCount = stats.accepted + stats.rejected;
   const rejectAllDisabled = applying || !canRejectAll;
+  const acceptAllDisabled = applying || !canAcceptAll;
 
   return (
     <div className="flex items-center gap-3 border-b border-border bg-surface-sidebar px-4 py-2">
@@ -170,14 +173,18 @@ export const ReviewToolbar = ({
             <TooltipTrigger asChild>
               <button
                 onClick={onAcceptAll}
-                disabled={applying}
+                disabled={acceptAllDisabled}
                 className="flex items-center gap-1 rounded bg-green-500/15 px-2.5 py-1 text-xs text-green-400 transition-colors hover:bg-green-500/25 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Check className="size-3" />
                 {t('review.toolbar.actions.acceptAll')}
               </button>
             </TooltipTrigger>
-            <TooltipContent side="bottom">{t('review.toolbar.tooltips.acceptAll')}</TooltipContent>
+            <TooltipContent side="bottom">
+              {canAcceptAll
+                ? t('review.toolbar.tooltips.acceptAll')
+                : 'Wait until every file has a safe, complete review snapshot.'}
+            </TooltipContent>
           </Tooltip>
 
           <Tooltip>

@@ -53,7 +53,7 @@ interface ContinuousScrollViewProps {
     afterContent: string
   ) => boolean | void;
   onFullyViewed: (filePath: string) => void;
-  onContentChanged: (filePath: string, content: string) => void;
+  onContentChanged: (filePath: string, content: string, previousContent?: string) => void;
   onDiscard: (filePath: string) => void;
   onSave: (filePath: string) => void;
   onReloadFromDisk: (filePath: string) => void;
@@ -291,6 +291,7 @@ export const ContinuousScrollView = ({
             <FileSectionHeader
               file={file}
               fileContent={content}
+              contentResolved={hasContent}
               fileDecision={effectiveDecision}
               externalChange={reviewExternalChangesByFile[filePath]}
               pathChangeLabel={pathChangeLabels?.[filePath]}

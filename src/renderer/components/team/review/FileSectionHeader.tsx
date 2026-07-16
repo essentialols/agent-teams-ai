@@ -21,6 +21,7 @@ import type { FileChangeSummary } from '@shared/types/review';
 interface FileSectionHeaderProps {
   file: FileChangeSummary;
   fileContent: FileChangeWithContent | null;
+  contentResolved: boolean;
   fileDecision: HunkDecision | undefined;
   externalChange?: { type: 'change' | 'add' | 'unlink' };
   pathChangeLabel?:
@@ -42,6 +43,7 @@ interface FileSectionHeaderProps {
 export const FileSectionHeader = ({
   file,
   fileContent,
+  contentResolved,
   fileDecision,
   externalChange,
   pathChangeLabel,
@@ -65,13 +67,16 @@ export const FileSectionHeader = ({
   const isPreviewOnly = isMissingOnDisk || isContentUnavailable;
   const manualLedgerReviewRequired = requiresManualLedgerReview(file);
   const rejectBlockReason = getReviewRejectBlockReason(file, fileContent);
-  const rejectDisabled = rejectBlockReason !== null || hasEdits || fileDecision === 'rejected';
-  const acceptDisabled = isReviewAcceptDisabled({
-    hasEdits,
-    isMissingOnDisk,
-    isContentUnavailable,
-    fileDecision,
-  });
+  const rejectDisabled =
+    !contentResolved || rejectBlockReason !== null || hasEdits || fileDecision === 'rejected';
+  const acceptDisabled =
+    !contentResolved ||
+    isReviewAcceptDisabled({
+      hasEdits,
+      isMissingOnDisk,
+      isContentUnavailable,
+      fileDecision,
+    });
   const draftDecisionDisabledLabel = t('review.fileHeader.disabled.saveOrDiscardDraft', {
     defaultValue: 'Save or discard manual edits before accepting or rejecting.',
   });

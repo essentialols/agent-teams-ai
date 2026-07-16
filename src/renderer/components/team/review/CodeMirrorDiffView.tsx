@@ -49,7 +49,7 @@ interface CodeMirrorDiffViewProps {
   /** Called whenever the internal EditorView is created or destroyed */
   onViewChange?: (view: EditorView | null) => void;
   /** Called when editor content changes (debounced, only when readOnly=false) */
-  onContentChanged?: (content: string) => void;
+  onContentChanged?: (content: string, previousContent?: string) => void;
   /** Cached EditorState to restore (preserves undo history between file switches) */
   initialState?: EditorState;
   /** Use portion collapse instead of CM's collapseUnchanged (Expand N / Expand All buttons) */
@@ -588,10 +588,11 @@ export const CodeMirrorDiffView = ({
             );
             if (isReviewRevert || consumeIgnoredReviewDocChange(update.view)) return;
             const content = update.state.doc.toString();
+            const previousContent = update.startState.doc.toString();
             userEditedRef.current = true;
             liveDocRef.current = content;
             lastEmittedContentRef.current = content;
-            onContentChangedRef.current?.(content);
+            onContentChangedRef.current?.(content, previousContent);
           }
         })
       );

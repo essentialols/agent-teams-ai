@@ -193,9 +193,28 @@ export class ReviewApplierService {
     original: string,
     modified: string,
     hunkIndices: number[],
-    _snippets: SnippetDiff[]
+    _snippets: SnippetDiff[],
+    hunkContextHashes?: Record<number, string>
   ): Promise<RejectResult> {
-    const rejectedBaseline = rejectReviewChunks(original, modified, hunkIndices);
+    let mappedHunkIndices = hunkIndices;
+    if (hunkContextHashes) {
+      const strictHunks = mapRejectedHunkIndicesByHashStrict(
+        original,
+        modified,
+        hunkIndices,
+        hunkContextHashes
+      );
+      if (!strictHunks.ok) {
+        return {
+          success: false,
+          newContent: modified,
+          hadConflicts: true,
+          conflictDescription: strictHunks.error,
+        };
+      }
+      mappedHunkIndices = strictHunks.indices;
+    }
+    const rejectedBaseline = rejectReviewChunks(original, modified, mappedHunkIndices);
     if (rejectedBaseline === null) {
       return {
         success: false,
@@ -465,6 +484,15 @@ export class ReviewApplierService {
             skipped++;
             continue;
           }
+          if (!decision.hunkContextHashes) {
+            conflicts++;
+            errors.push({
+              filePath: decision.filePath,
+              error: 'Partial reject requires stable hunk context hashes.',
+              code: 'conflict',
+            });
+            continue;
+          }
 
           const result = await this.rejectHunks(
             request.teamName,
@@ -472,7 +500,8 @@ export class ReviewApplierService {
             original,
             modified,
             rejectedHunkIndices,
-            fileContent.snippets
+            fileContent.snippets,
+            decision.hunkContextHashes
           );
 
           if (result.success) {
@@ -833,6 +862,9 @@ export class ReviewApplierService {
       const current = await this.readCurrentText(filePath);
       if (!current.missing) {
         const currentError = getCurrentTextReadError(current);
+        if (!currentError && current.content === original) {
+          return { handled: true, status: 'applied' };
+        }
         return {
           handled: true,
           status: 'conflict',
@@ -870,6 +902,19 @@ export class ReviewApplierService {
         error:
           'Ledger before content is unavailable; rejecting this change requires manual review.',
       };
+    }
+    const current = await this.readCurrentText(filePath);
+    const currentError = getCurrentTextReadError(current);
+    if (currentError) {
+      return {
+        handled: true,
+        status: 'error',
+        code: 'io-error',
+        error: currentError,
+      };
+    }
+    if (!current.missing && current.content === original) {
+      return { handled: true, status: 'applied' };
     }
     const guard = await this.checkLedgerCurrentHash(
       filePath,
@@ -1156,13 +1201,19 @@ export class ReviewApplierService {
     const oldCurrent = await this.readCurrentText(oldFilePath);
     const oldReadError = getCurrentTextReadError(oldCurrent);
     if (oldReadError) throw new Error(oldReadError);
-    if (oldCurrent.missing || oldCurrent.content !== oldContent) {
-      throw new Error('Original rename path changed after rejection; refusing Undo.');
-    }
-
     const newCurrent = await this.readCurrentText(newFilePath);
     const newReadError = getCurrentTextReadError(newCurrent);
     if (newReadError) throw new Error(newReadError);
+    if (oldCurrent.missing) {
+      if (!newCurrent.missing && newCurrent.content === newContent) {
+        // The prior attempt reached its terminal state but its IPC response was lost.
+        return;
+      }
+      throw new Error('Original rename path changed after rejection; refusing Undo.');
+    }
+    if (oldCurrent.content !== oldContent) {
+      throw new Error('Original rename path changed after rejection; refusing Undo.');
+    }
     const aliased =
       !newCurrent.missing && (await this.pathsReferToSameFile(oldFilePath, newFilePath));
 
@@ -1342,6 +1393,13 @@ export class ReviewApplierService {
   private async pathsReferToSameFile(firstPath: string, secondPath: string): Promise<boolean> {
     if (firstPath === secondPath) return true;
 
+    const firstNormalized = normalizePathForComparison(firstPath).normalize('NFC');
+    const secondNormalized = normalizePathForComparison(secondPath).normalize('NFC');
+    if (firstNormalized.toLowerCase() !== secondNormalized.toLowerCase()) {
+      // Equal inode alone can mean an arbitrary hardlink, not a case-only rename alias.
+      return false;
+    }
+
     try {
       const [first, second] = await Promise.all([lstat(firstPath), lstat(secondPath)]);
       return Boolean(
@@ -1392,7 +1450,7 @@ function mapRejectedHunkIndicesByHashStrict(
     return {
       ok: false,
       code: 'manual-review-required',
-      error: 'Ledger partial reject requires stable hunk context hashes.',
+      error: 'Partial reject requires stable hunk context hashes.',
     };
   }
 
@@ -1404,7 +1462,7 @@ function mapRejectedHunkIndicesByHashStrict(
       return {
         ok: false,
         code: 'manual-review-required',
-        error: 'Ledger partial reject is missing a hunk context hash.',
+        error: 'Partial reject is missing a hunk context hash.',
       };
     }
     const candidates = hashMap.get(hash);
@@ -1412,14 +1470,14 @@ function mapRejectedHunkIndicesByHashStrict(
       return {
         ok: false,
         code: 'conflict',
-        error: 'Ledger partial reject hunk context changed; please re-review.',
+        error: 'Partial reject hunk context changed; please re-review.',
       };
     }
     if (candidates.length > 1) {
       return {
         ok: false,
         code: 'conflict',
-        error: 'Ledger partial reject hunk context is ambiguous; please re-review.',
+        error: 'Partial reject hunk context is ambiguous; please re-review.',
       };
     }
     out.add(candidates[0]);

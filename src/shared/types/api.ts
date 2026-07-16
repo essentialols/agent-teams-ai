@@ -779,7 +779,7 @@ export interface ReviewAPI {
     scope: ReviewFileScope,
     filePath: string,
     content: string,
-    expectedCurrentContent?: string | null
+    expectedCurrentContent: string | null
   ) => Promise<{ success: boolean }>;
   deleteEditedFile: (
     scope: ReviewFileScope,

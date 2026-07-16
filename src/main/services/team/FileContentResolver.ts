@@ -94,7 +94,7 @@ export class FileContentResolver {
     // Fast path only for creation backed by explicit lifecycle evidence. Older legacy
     // summaries may label the first observed Write as write-new even when it overwrote
     // an existing file, so that label alone must never synthesize an empty baseline.
-    const hasProvenCreation = this.hasProvenCreationEvidence(snippets);
+    const hasProvenCreation = this.isNetNewFile(snippets);
     if (hasProvenCreation && currentContent !== null) {
       const result = {
         original: '',
@@ -107,7 +107,7 @@ export class FileContentResolver {
 
     // Strategy 1: Try file-history backup
     const historyResult = await this.tryFileHistoryBackup(teamName, memberName, filePath);
-    if (historyResult) {
+    if (historyResult !== null) {
       const result = {
         original: historyResult,
         modified: currentContent,
@@ -132,7 +132,7 @@ export class FileContentResolver {
     // Strategy 3 (Phase 4): Git fallback
     if (this.gitFallback) {
       const gitResult = await this.tryGitFallback(filePath, currentContent, snippets);
-      if (gitResult) {
+      if (gitResult !== null) {
         const result = {
           original: gitResult,
           modified: currentContent,
@@ -189,7 +189,7 @@ export class FileContentResolver {
       }
     }
 
-    const isNewFile = this.hasProvenCreationEvidence(snippets);
+    const isNewFile = this.isNetNewFile(snippets);
 
     return {
       filePath,
@@ -250,7 +250,7 @@ export class FileContentResolver {
         linesAdded,
         linesRemoved,
         // Re-evaluate lifecycle evidence instead of trusting persisted legacy summaries.
-        isNewFile: this.hasProvenCreationEvidence(file.snippets),
+        isNewFile: this.isNetNewFile(file.snippets),
         originalFullContent: resolved.original,
         modifiedFullContent: resolved.modified,
         contentSource: resolved.source,
@@ -528,6 +528,26 @@ export class FileContentResolver {
 
   private hasProvenCreationEvidence(snippets: SnippetDiff[]): boolean {
     return snippets.some((snippet) => !snippet.isError && this.isProvenCreationSnippet(snippet));
+  }
+
+  /**
+   * Whether the reviewed path is absent before the first ledger event and present
+   * after the last one. Looking for any intermediate create is insufficient:
+   * delete-existing -> recreate-same-path is a modification, not a new file.
+   */
+  private isNetNewFile(snippets: SnippetDiff[]): boolean {
+    const ledgerSnippets = snippets.filter((snippet) => !snippet.isError && snippet.ledger);
+    if (ledgerSnippets.length > 0) {
+      const first = ledgerSnippets[0]?.ledger;
+      const last = ledgerSnippets[ledgerSnippets.length - 1]?.ledger;
+      if (
+        typeof first?.beforeState?.exists === 'boolean' &&
+        typeof last?.afterState?.exists === 'boolean'
+      ) {
+        return first.beforeState.exists === false && last.afterState.exists === true;
+      }
+    }
+    return this.hasProvenCreationEvidence(snippets);
   }
 
   private isProvenCreationSnippet(snippet: SnippetDiff): boolean {

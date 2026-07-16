@@ -35,11 +35,7 @@ export class ReviewDecisionStore {
   }
 
   private getV2DirPath(teamName: string, scopeKey: string): string {
-    return path.join(
-      this.getLegacyDirPath(teamName),
-      'v2',
-      encodeURIComponent(scopeKey)
-    );
+    return path.join(this.getLegacyDirPath(teamName), 'v2', encodeURIComponent(scopeKey));
   }
 
   private getV2FilePath(teamName: string, scopeKey: string, scopeToken: string): string {
@@ -155,9 +151,7 @@ export class ReviewDecisionStore {
       .slice(16);
 
     await Promise.all(
-      staleFiles.map((entry) =>
-        fs.promises.unlink(entry.filePath).catch(() => undefined)
-      )
+      staleFiles.map((entry) => fs.promises.unlink(entry.filePath).catch(() => undefined))
     );
   }
 
@@ -167,8 +161,8 @@ export class ReviewDecisionStore {
     scopeToken?: string
   ): Promise<{
     hunkDecisions: Record<string, HunkDecision>;
-      fileDecisions: Record<string, HunkDecision>;
-      hunkContextHashesByFile?: Record<string, Record<number, string>>;
+    fileDecisions: Record<string, HunkDecision>;
+    hunkContextHashesByFile?: Record<string, Record<number, string>>;
   } | null> {
     if (scopeToken) {
       const exact = await this.loadFromPath(
@@ -204,13 +198,11 @@ export class ReviewDecisionStore {
         updatedAt: new Date().toISOString(),
       };
       const filePath = this.getV2FilePath(teamName, scopeKey, data.scopeToken);
-      await atomicWriteAsync(
-        filePath,
-        JSON.stringify(payload, null, 2)
-      );
+      await atomicWriteAsync(filePath, JSON.stringify(payload, null, 2));
       await this.pruneScopeDir(teamName, scopeKey);
     } catch (error) {
       logger.error(`Failed to save review decisions for ${teamName}/${scopeKey}: ${String(error)}`);
+      throw error;
     }
   }
 
@@ -243,6 +235,7 @@ export class ReviewDecisionStore {
         logger.error(
           `Failed to clear review decisions for ${teamName}/${scopeKey}: ${String(error)}`
         );
+        throw error;
       }
     }
   }

@@ -199,6 +199,66 @@ describe('FileContentResolver', () => {
     expect(content.contentSource).toBe('ledger-snapshot');
   });
 
+  it('treats delete-existing then recreate-same-path as a modification', async () => {
+    const { FileContentResolver } = await import('@main/services/team/FileContentResolver');
+    const resolver = new FileContentResolver({ findMemberLogPaths: vi.fn() } as never);
+    const filePath = '/tmp/recreated.txt';
+    const content = await resolver.getFileContent('team', 'member', filePath, [
+      {
+        toolUseId: 'delete-1',
+        filePath,
+        toolName: 'Bash',
+        type: 'shell-snapshot',
+        oldString: 'old\n',
+        newString: '',
+        replaceAll: false,
+        timestamp: '2026-03-01T10:00:00.000Z',
+        isError: false,
+        ledger: {
+          eventId: 'event-delete',
+          source: 'ledger-snapshot',
+          confidence: 'high',
+          originalFullContent: 'old\n',
+          modifiedFullContent: null,
+          beforeHash: 'old-hash',
+          afterHash: null,
+          operation: 'delete',
+          beforeState: { exists: true, sha256: 'old-hash' },
+          afterState: { exists: false },
+        },
+      },
+      {
+        toolUseId: 'create-2',
+        filePath,
+        toolName: 'Bash',
+        type: 'shell-snapshot',
+        oldString: '',
+        newString: 'new\n',
+        replaceAll: false,
+        timestamp: '2026-03-01T10:01:00.000Z',
+        isError: false,
+        ledger: {
+          eventId: 'event-create',
+          source: 'ledger-snapshot',
+          confidence: 'high',
+          originalFullContent: null,
+          modifiedFullContent: 'new\n',
+          beforeHash: null,
+          afterHash: 'new-hash',
+          operation: 'create',
+          beforeState: { exists: false },
+          afterState: { exists: true, sha256: 'new-hash' },
+        },
+      },
+    ]);
+
+    expect(content).toMatchObject({
+      isNewFile: false,
+      originalFullContent: 'old\n',
+      modifiedFullContent: 'new\n',
+    });
+  });
+
   it('does not synthesize empty text for metadata-only ledger lifecycle states', async () => {
     const fsPromises = await import('fs/promises');
     const readFile = fsPromises.readFile as unknown as ReturnType<typeof vi.fn>;

@@ -29,6 +29,7 @@ describe('CodeMirrorDiffView draft propagation', () => {
   it('publishes a draft synchronously and preserves it when editor extensions rebuild', async () => {
     const root = createRoot(container);
     const observed: string[] = [];
+    const observedPrevious: Array<string | undefined> = [];
     let view: EditorView | null = null;
     const requireView = (): EditorView => {
       if (!view) throw new Error('CodeMirror view was not mounted');
@@ -42,7 +43,10 @@ describe('CodeMirrorDiffView draft propagation', () => {
         readOnly={readOnly}
         showMergeControls={showMergeControls}
         collapseUnchanged={false}
-        onContentChanged={(content) => observed.push(content)}
+        onContentChanged={(content, previousContent) => {
+          observed.push(content);
+          observedPrevious.push(previousContent);
+        }}
         onViewChange={(nextView) => {
           view = nextView;
         }}
@@ -60,6 +64,7 @@ describe('CodeMirrorDiffView draft propagation', () => {
 
     // No timer/microtask advance: guards can see the draft before a collapse/reject click.
     expect(observed).toEqual([draft]);
+    expect(observedPrevious).toEqual(['const value = 2;\n']);
 
     // A parent hides review controls as soon as a draft exists. That prop-only update must not
     // recreate CodeMirror, otherwise the first keypress resets selection/history.

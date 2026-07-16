@@ -224,6 +224,8 @@ export interface FileReviewDecision {
   filePath: string;
   fileDecision: HunkDecision;
   hunkDecisions: Record<number, HunkDecision>;
+  /** Main-issued token for the exact full-content snapshot displayed by the renderer. */
+  contentSnapshotToken?: string;
   /** Optional stable hunk fingerprints (index → contextHash). Used to map decisions when indices drift. */
   hunkContextHashes?: Record<number, string>;
 }
@@ -265,6 +267,8 @@ export interface ApplyReviewResult {
 
 /** Полный file content для CodeMirror */
 export interface FileChangeWithContent extends FileChangeSummary {
+  /** Opaque main-process identity for this exact displayed content generation. */
+  reviewSnapshotToken?: string;
   originalFullContent: string | null;
   modifiedFullContent: string | null;
   contentSource:

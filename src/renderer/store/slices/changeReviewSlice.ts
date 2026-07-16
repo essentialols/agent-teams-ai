@@ -357,7 +357,11 @@ export interface ChangeReviewSlice {
   updateEditedContent: (filePath: string, content: string) => void;
   discardFileEdits: (filePath: string) => void;
   discardAllEdits: () => void;
-  saveEditedFile: (filePath: string, scope: ReviewFileScope) => Promise<void>;
+  saveEditedFile: (
+    filePath: string,
+    scope: ReviewFileScope,
+    expectedCurrentContent: string | null
+  ) => Promise<void>;
 
   // Task change availability
   checkTaskHasChanges: (
@@ -1323,6 +1327,7 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
               filePath: file.filePath,
               fileDecision,
               hunkDecisions: hunkDecs,
+              contentSnapshotToken: content?.reviewSnapshotToken,
               hunkContextHashes,
             });
           }
@@ -1466,6 +1471,7 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
       const hasRejected =
         fileDecision === 'rejected' || Object.values(hunkDecs).some((d) => d === 'rejected');
       if (!hasRejected) return null;
+      set({ applyError: null });
 
       const applyStartedAtMs = Date.now();
       const acceptedCount =
@@ -1502,6 +1508,7 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
               filePath: file.filePath,
               fileDecision,
               hunkDecisions: hunkDecs,
+              contentSnapshotToken: content?.reviewSnapshotToken,
               hunkContextHashes,
             },
           ],
@@ -1694,15 +1701,11 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
         const reviewKey = getReviewKeyForFilePath(s.activeChangeSet?.files, filePath);
         const prefix = `${reviewKey}:`;
         for (const key of Object.keys(nextHunkDecisions)) {
-          if (key.startsWith(prefix) && nextHunkDecisions[key] === 'rejected') {
-            delete nextHunkDecisions[key];
-          }
+          if (key.startsWith(prefix)) delete nextHunkDecisions[key];
         }
 
         const nextFileDecisions = { ...s.fileDecisions };
-        if (nextFileDecisions[reviewKey] === 'rejected') {
-          delete nextFileDecisions[reviewKey];
-        }
+        delete nextFileDecisions[reviewKey];
 
         const nextEditedContents = { ...s.editedContents };
         delete nextEditedContents[filePath];
@@ -1773,7 +1776,11 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
 
     discardAllEdits: () => set({ editedContents: {} }),
 
-    saveEditedFile: async (filePath: string, scope: ReviewFileScope) => {
+    saveEditedFile: async (
+      filePath: string,
+      scope: ReviewFileScope,
+      expectedCurrentContent: string | null
+    ) => {
       const state = get();
       const changeSetEpoch = state.changeSetEpoch;
       const scopeFingerprint = getReviewChangeSetIdentityToken(state.activeChangeSet);
@@ -1801,7 +1808,7 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
         },
       }));
       try {
-        await api.review.saveEditedFile(scope, canonicalFilePath, content);
+        await api.review.saveEditedFile(scope, canonicalFilePath, content, expectedCurrentContent);
         set((s) => {
           if (
             s.changeSetEpoch !== changeSetEpoch ||
@@ -1841,6 +1848,19 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
           delete nextHunkContextHashesByFile[reviewKey];
           for (const alias of aliases) delete nextHunkContextHashesByFile[alias];
 
+          // A manual Save finalizes the user's current file version. Previously stored
+          // decisions refer to the pre-edit diff and cannot be replayed or undone safely.
+          const decisionPrefixes = new Set([reviewKey, ...aliases].map((key) => `${key}:`));
+          const nextHunkDecisions = { ...s.hunkDecisions };
+          for (const key of Object.keys(nextHunkDecisions)) {
+            if ([...decisionPrefixes].some((prefix) => key.startsWith(prefix))) {
+              delete nextHunkDecisions[key];
+            }
+          }
+          const nextFileDecisions = { ...s.fileDecisions };
+          delete nextFileDecisions[reviewKey];
+          for (const alias of aliases) delete nextFileDecisions[alias];
+
           const nextReviewExternalChangesByFile = { ...s.reviewExternalChangesByFile };
           for (const alias of aliases) delete nextReviewExternalChangesByFile[alias];
 
@@ -1864,6 +1884,8 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
             editedContents: nextEdited,
             fileChunkCounts: nextFileChunkCounts,
             hunkContextHashesByFile: nextHunkContextHashesByFile,
+            hunkDecisions: nextHunkDecisions,
+            fileDecisions: nextFileDecisions,
             fileContents: nextContents,
             reviewExternalChangesByFile: nextReviewExternalChangesByFile,
             applying: false,

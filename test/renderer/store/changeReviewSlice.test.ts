@@ -1552,7 +1552,9 @@ describe('changeReviewSlice task changes', () => {
 
     const fetchPromise = store.getState().fetchFileContent('team-a', 'alice', '/repo/file.ts');
     await flushAsyncWork();
-    const savePromise = store.getState().saveEditedFile('/repo/file.ts', AGENT_REVIEW_SCOPE);
+    const savePromise = store
+      .getState()
+      .saveEditedFile('/repo/file.ts', AGENT_REVIEW_SCOPE, 'draft-before-save');
     await flushAsyncWork();
 
     savePending.resolve();
@@ -1604,18 +1606,25 @@ describe('changeReviewSlice task changes', () => {
       },
       fileChunkCounts: { '/repo/new.ts': 2 },
       hunkContextHashesByFile: { [changeKey]: { 0: 'ctx-rename' } },
+      hunkDecisions: { [`${changeKey}:0`]: 'rejected' },
+      fileDecisions: { [changeKey]: 'rejected' },
       editedContents: { '/repo/new.ts': 'saved-content' },
       fileContentVersionByPath: {},
     });
 
-    await store.getState().saveEditedFile('/repo/new.ts', AGENT_REVIEW_SCOPE);
+    await store
+      .getState()
+      .saveEditedFile('/repo/new.ts', AGENT_REVIEW_SCOPE, 'draft-before-save');
 
     expect(hoisted.saveEditedFile).toHaveBeenCalledWith(
       AGENT_REVIEW_SCOPE,
       '/repo/new.ts',
-      'saved-content'
+      'saved-content',
+      'draft-before-save'
     );
     expect(store.getState().hunkContextHashesByFile).toEqual({});
+    expect(store.getState().hunkDecisions).toEqual({});
+    expect(store.getState().fileDecisions).toEqual({});
     expect(store.getState().fileChunkCounts).toEqual({});
     expect(store.getState().fileContents['/repo/new.ts']?.modifiedFullContent).toBe(
       'saved-content'
@@ -1654,12 +1663,15 @@ describe('changeReviewSlice task changes', () => {
       fileContentVersionByPath: {},
     });
 
-    await store.getState().saveEditedFile(aliasPath, AGENT_REVIEW_SCOPE);
+    await store
+      .getState()
+      .saveEditedFile(aliasPath, AGENT_REVIEW_SCOPE, 'draft-before-save');
 
     expect(hoisted.saveEditedFile).toHaveBeenCalledWith(
       AGENT_REVIEW_SCOPE,
       canonicalPath,
-      'saved-content'
+      'saved-content',
+      'draft-before-save'
     );
     expect(store.getState().editedContents).toEqual({});
     expect(store.getState().fileChunkCounts).toEqual({});
@@ -1692,12 +1704,15 @@ describe('changeReviewSlice task changes', () => {
       fileContentVersionByPath: {},
     });
 
-    await store.getState().saveEditedFile(requestedPath, AGENT_REVIEW_SCOPE);
+    await store
+      .getState()
+      .saveEditedFile(requestedPath, AGENT_REVIEW_SCOPE, 'draft-before-save');
 
     expect(hoisted.saveEditedFile).toHaveBeenCalledWith(
       AGENT_REVIEW_SCOPE,
       requestedPath,
-      'saved-content'
+      'saved-content',
+      'draft-before-save'
     );
     expect(store.getState().fileContents[requestedPath]?.modifiedFullContent).toBe('saved-content');
     expect(store.getState().fileContents[canonicalPath]).toBeUndefined();
@@ -2120,7 +2135,9 @@ describe('changeReviewSlice task changes', () => {
       fileContentVersionByPath: {},
     });
 
-    const savePromise = store.getState().saveEditedFile('/repo/file.ts', TASK_A_REVIEW_SCOPE);
+    const savePromise = store
+      .getState()
+      .saveEditedFile('/repo/file.ts', TASK_A_REVIEW_SCOPE, 'task-a-base');
     await flushAsyncWork();
     const taskB = makeTaskChangeSet('task-b');
     store.setState({
@@ -2155,7 +2172,9 @@ describe('changeReviewSlice task changes', () => {
       fileContentVersionByPath: {},
     });
 
-    const savePromise = store.getState().saveEditedFile('/repo/file.ts', AGENT_REVIEW_SCOPE);
+    const savePromise = store
+      .getState()
+      .saveEditedFile('/repo/file.ts', AGENT_REVIEW_SCOPE, 'agent-change');
     await flushAsyncWork();
     store.getState().updateEditedContent('/repo/file.ts', 'newer-draft');
     pendingSave.resolve();

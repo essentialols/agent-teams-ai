@@ -308,11 +308,11 @@ export async function assertProjectPreStartAdmissionLaunchBinding(input: {
         : binding.workspaceStatus === "";
   const inputPatchBindingValid = dirtyContinuation
     ? true
-    : adoptionInput
-      ? contract.inputPatchHash === binding.workspacePatchSha256 &&
-        receipt.workspacePatchSha256 === binding.workspacePatchSha256
-      : verifiedInputPatch
-        ? verifiedInputPatchBindingValid(binding, verifiedInputPatch)
+    : verifiedInputPatch
+      ? verifiedInputPatchBindingValid(binding, verifiedInputPatch)
+      : adoptionInput
+        ? contract.inputPatchHash === binding.workspacePatchSha256 &&
+          receipt.workspacePatchSha256 === binding.workspacePatchSha256
         : projectInputPatchBindingMatches(binding, contract);
   const mismatches = [
     binding.workspaceHead !== contract.phaseStartSha
@@ -547,10 +547,10 @@ async function validateProjectPreStartAdmission(input: {
     descriptor,
   );
   const adoptionInput = isAdoptionManifest(input.manifest);
-  const beforeBindingValid = adoptionInput
-    ? contract.inputPatchHash === beforeBinding.workspacePatchSha256
-    : verifiedInputPatch
-      ? verifiedInputPatchBindingValid(beforeBinding, verifiedInputPatch)
+  const beforeBindingValid = verifiedInputPatch
+    ? verifiedInputPatchBindingValid(beforeBinding, verifiedInputPatch)
+    : adoptionInput
+      ? contract.inputPatchHash === beforeBinding.workspacePatchSha256
       : projectInputPatchBindingMatches(beforeBinding, contract);
   if (!beforeBindingValid) {
     if (adoptionInput) {
@@ -620,10 +620,10 @@ async function validateProjectPreStartAdmission(input: {
     input.manifest,
     descriptor,
   );
-  const afterBindingValid = adoptionInput
-    ? contract.inputPatchHash === afterBinding.workspacePatchSha256
-    : verifiedInputPatch
-      ? verifiedInputPatchBindingValid(afterBinding, verifiedInputPatch)
+  const afterBindingValid = verifiedInputPatch
+    ? verifiedInputPatchBindingValid(afterBinding, verifiedInputPatch)
+    : adoptionInput
+      ? contract.inputPatchHash === afterBinding.workspacePatchSha256
       : projectInputPatchBindingMatches(afterBinding, contract);
   if (!afterBindingValid) {
     throw new Error("project_control_pre_start_workspace_dirty");

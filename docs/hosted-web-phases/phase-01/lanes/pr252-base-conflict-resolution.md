@@ -1,241 +1,256 @@
-# PR #252 provenance-fallback same-job continuation lane
+# PR #252 stable latest-base conflict-resolution lane
 
 ## Authority
 
-- Phase/node: `phase-01` / `PR252-provenance-fallback-remediation`
-- Lane: `pr252-provenance-fallback-remediation`
-- Revision: `phase-01-pr252-provenance-fallback-router-r2`
-- Root: orchestrator only
-- Durable controller: `controller-v17`, exactly `live=true`; no replacement or restart
+- Phase/node: `phase-02` / `PR252.SYNC.PRODUCER`
+- Lane: `pr252-latest-base-conflict-resolution`
+- Revision: `pr252-latest-base-sync-router-v1`
+- Repository/PR: `777genius/agent-teams-ai#252`
+- Canonical product source:
+  `eee2389f7ee9300df93ef02d92e9ae114949aff4`
+- Product-wave disposition: accepted and integrated
 - Admission/integration owner: `ProjectScopedControl`
-- Producer continuation: the existing r3 job only
-- Reviewer: one fresh `codex_goal_project_prepare_verifier`, `workerRole: reviewer`,
-  `reviewKind: review`
-- Every future profile: `gpt-5.6-sol`, `xhigh`, `serviceTier: "default"`; omit `fastMode`
-- Conditional capacity: one same-job held r3 continuation, then one fresh independent reviewer
-- Router and continued-r3 terminal state: `HOLD`
+- Product capacity: at most one attempt/producer
+- Mechanical evaluator: controller directly; no mechanical reviewer
+- Semantic reviewer: one fresh independent combined
+  integration/architecture/security reviewer
+- Terminal state: `HOLD`
 
-No worker starts until this exact seven-document router is independently accepted, integrated, and
-pushed. This docs author starts none.
+This lane supersedes all earlier PR #252 fixed source/base pins, fixed five-path conflict lists,
+same-job continuation language, dirty-worktree patch preservation, and prior-worker reuse. It is
+stable across future base movement.
 
-## Immutable route inputs
+No observed base SHA is stored in this packet. The live base becomes authority only inside one
+immutable `pr252.latest-base-binding/v1` product-worker pre-start contract created by
+`ProjectScopedControl` at atomic prepare/start.
 
-The exact router authoring base is
-`c0ade7cb040c9dea97a38ee58e667f56c0e39b8e`. The continued producer is not a new worker. It is the
-same existing job and task
-`agent-teams-hosted-web-refactor-pr252-semantic-conflict-resolution-v17-r3` in workspace
-`/var/data/agent-teams-hosted-web-refactor/worktrees/pr252-semantic-conflict-resolution-v17-r3`.
-Its base and intentional `HEAD` are
-`3256ee3b5b8e81b144aa0a14eac1bca080c9b779`.
+## Admission binding
 
-Immediately before continuation, the workspace must still have an empty index, no untracked path,
-the exact five dirty paths below, and raw `git diff` SHA-256
-`9f5016c669ab777a80d1395352ee7e51d945e2409a3d43efa4735dea8d23b2a0`. Any drift ends `HOLD`.
+Before the worker starts, the controller/runtime atomically create and validate:
 
-Two rejected router outputs are retained only as terminal provenance:
-
-| Record                           | SHA-256                                                            | Disposition                                    |
-| -------------------------------- | ------------------------------------------------------------------ | ---------------------------------------------- |
-| Test-only correction router      | `daa462aba1b21cdf41a05575d3967d8314d5c9a734e76f4cda5678a136ba7902` | rejected; omitted required facade fix          |
-| Prior seven-doc tier declaration | `c5f33adf53ef93ab69789a0d1f2b2041ffb2e2694f852b32e8cb189edddc8660` | rejected solely for non-default tier authority |
-
-Neither rejected output is an implementation input, patch carrier, replay source, or integration
-candidate. The current router recreates the second output's non-tier contract on `c0ade7cb...` and
-authorizes only the default service tier.
-
-## Source and merge authority
-
-The recorded immutable source parent is
-`e9ffa30cc016ad3cb833fcc0a138fa4f026eb850`. The pinned active merge source and required second
-parent is `3b48f9391b4bff1d82bc85ef01a2d5e0e5b50e95` on
-`origin/refactor/team-provisioning-round2-reapply`.
-
-Immediately before integration, the broker reruns:
-
-```bash
-git ls-remote origin refs/heads/refactor/team-provisioning-round2-reapply
+```json
+{
+  "format": "pr252.latest-base-binding/v1",
+  "productAttemptId": "<unique attempt>",
+  "repository": "777genius/agent-teams-ai",
+  "pullRequestNumber": 252,
+  "routerAuthoritySha": "<active router commit, exact 40 hex>",
+  "canonicalHeadSha": "eee2389f7ee9300df93ef02d92e9ae114949aff4",
+  "materializationSourceSha": "eee2389f7ee9300df93ef02d92e9ae114949aff4",
+  "resolvedBaseSha": "<live PR base, exact lowercase 40 hex>",
+  "orderedParentShas": ["eee2389f7ee9300df93ef02d92e9ae114949aff4", "<same resolvedBaseSha>"],
+  "conflictPaths": ["<complete sorted actual conflict set>"],
+  "focusedTestCommands": ["<exact deterministic focused command>"],
+  "resolvedAt": "<RFC 3339>"
+}
 ```
 
-The single returned branch head must be exactly `3b48f9391b4bff1d82bc85ef01a2d5e0e5b50e95`.
-A missing, additional, or different result ends `HOLD`; fetching a replacement or silently rebinding
-is forbidden. The conflict route remains exactly the five owned paths below.
+`ProjectScopedControl` resolves the live PR base exactly once for this binding. It then uses the
+subscription runtime's builtin `worker-start-v1` and related execution primitives to materialize from
+canonical `eee2389f...`, applies the bound base as the ordered second parent, freezes mechanically
+merged non-conflict bytes, derives the exact conflict set, records the focused commands, and starts
+one fresh producer. The repository performs no raw lifecycle call.
 
-## Stored target and same-job continuation
-
-After this router's independent acceptance, integration, and push, `ProjectScopedControl` resolves
-its pushed full SHA exactly once as `storedRouterCommit`. That value binds the worker authority read,
-reviewer target, `mark_reviewed` target, integration target, and the true merge's first parent. It is
-not the r3 workspace `HEAD` and is never re-resolved.
-
-Immediately before continuation, the controller proves in one snapshot:
-
-1. This r2 router is accepted, integrated, pushed, and resolved once as `storedRouterCommit`.
-2. The exact r3 job and task exist, point to the exact workspace, are not active, and have no
-   continuation in flight.
-3. The job profile is `gpt-5.6-sol`, `xhigh`, and `serviceTier: "default"`.
-4. Workspace base and `HEAD` are `3256ee3b...`; the index is empty; untracked paths are empty.
-5. The dirty paths equal the exact ordered five-path list and raw patch hash equals `9f5016c6...`.
-6. Source parent, merge source, and exact five-conflict authority have not drifted.
-
-Any mismatch ends `HOLD`. If every check passes, `ProjectScopedControl` continues exactly the named
-r3 job once with `forceStart=true`, `confirmStart=true`, and `dependencyBootstrap=install`. It does
-not refill or create a job, task, prompt-owned workspace, worktree, or parallel producer. An
-already-running or duplicate result fails closed.
-
-The workspace `HEAD` intentionally stays at `3256ee3b...`. Every accepted router authority path is
-read with `git show <storedRouterCommit>:<path>`; fetch, checkout, reset, rebase, or any other `HEAD`
-movement is forbidden.
+The worker starts only when the complete contract exists and every equality holds. It cannot resolve
+or change the base, move `HEAD`, reuse an earlier workspace, apply an old patch, fetch a different
+source, alter the ordered parents, or widen the conflict set. Fast mode is prohibited.
 
 ## Mandatory reads
 
-Read accepted router bytes in this order:
+Read accepted router bytes and attempt inputs in this order:
 
 1. `AGENTS.md`
 2. `docs/hosted-web-phases/START_HERE.md`
 3. `docs/hosted-web-phases/EVIDENCE_LIFECYCLE.md`
 4. `docs/hosted-web-phases/README.md`
 5. `docs/hosted-web-phases/EXECUTION_INDEX.json`
-6. `docs/hosted-web-phases/phase-01/controller-packet.md`
-7. This lane packet
-8. `CLAUDE.md`
-9. `AGENT_CRITICAL_GUARDRAILS.md`
-10. `docs/hosted-web-phases/PACKET_STANDARD.md`
-11. The exact five current dirty workspace paths
+6. `docs/hosted-web-phases/phase-01/README.md`
+7. `docs/hosted-web-phases/phase-01/controller-packet.md`
+8. `docs/hosted-web-phases/phase-01/execution-dag.md`
+9. this lane packet
+10. `CLAUDE.md`
+11. `AGENT_CRITICAL_GUARDRAILS.md`
+12. `docs/FEATURE_ARCHITECTURE_STANDARD.md`
+13. `docs/hosted-web-phases/PACKET_STANDARD.md`
+14. `docs/hosted-web-phases/ORCHESTRATION_GUARDS.md`
+15. the immutable pre-start contract
+16. every exact `conflictPaths` path and the tests selected in `focusedTestCommands`
 
-The worker does not recursively inspect rejected job state or unrelated product, test, research, or
-evidence paths.
+Do not recursively inspect unrelated projects, workers, repositories, research, evidence, provider
+state, team state, or user/private directories.
 
-## Exact exclusive producer scope
+## Exact producer scope
 
-The complete ordered `ownedPaths` list and legal conflict set is:
+`conflictPaths` is the complete writable set. It comes from the actual attempt-bound ordered merge,
+so this stable lane contains no path pin.
 
-1. `src/features/task-board-commands/core/application/TaskBoardCommandFacade.ts`
-2. `src/main/services/team/TeamDataService.ts`
-3. `src/renderer/components/team/TeamDetailView.tsx`
-4. `test/features/task-board-commands/TaskBoardCommands.e2e.test.ts`
-5. `test/main/services/team/TeamDataService.test.ts`
+The producer may resolve merge markers inside those paths and nothing else. It must preserve every
+mechanically merged non-conflict byte. It may not:
 
-The existing five-path patch is preserved. New bytes are allowed only in paths 1 and 4 for the
-named facade correction and two exact E2E expectation corrections. Paths 2, 3, and 5 stay
-byte-identical to their `9f5016c6...` patch sections. Existing unrelated hunks in paths 1 and 4 also
-stay intact. There is no compile-coherence exception and no sixth path.
+- add, remove, rename, move, reformat, or compile-repair another path;
+- edit a neighboring barrel, index, test, fixture, generated output, docs file, config, dependency,
+  lockfile, registry, or repository-temporary file unless it is itself in `conflictPaths`;
+- replace the resolved tree with either whole parent;
+- import an old resolution, patch carrier, rejected output, or prior attempt tree; or
+- weaken a check, skip a test, hide a diagnostic, add a fallback, or perform unrelated cleanup.
 
-## Required facade semantics
+If preservation requires a non-conflict edit, report a blocker and end `HOLD`.
 
-1. Preserve the existing error classifier and existing `assertMatchingTask`; do not add a parallel
-   classifier, compatibility shim, or second matcher.
-2. Only after a create error is classified as `TaskBoardCreateDestinationConflictError`, if a known
-   task exists, call existing `assertMatchingTask` with that task, the exact requested task ID, and
-   the requested payload whose string subject is compared after trimming.
-3. Return the known task only after `assertMatchingTask` succeeds. Same ID alone never proves a
-   match.
-4. Preserve the existing terminal behavior and the no-known-task path. A missing known task cannot
-   become a success.
-5. Preserve mismatch behavior: ID mismatch or trimmed requested-subject mismatch throws
-   `TaskBoardCreateDestinationConflictError`, classifies `Terminal`, and never reports success.
-6. Preserve every other-error path byte-for-byte in behavior. Non-classified errors are not
-   reconciled or converted into success.
-7. Do not require or compare `creationCommand`, `payloadHash`, `createdBy`, or relations. Those are
-   not provenance requirements for this fallback.
-8. Do not weaken, widen, replace, or bypass `taskStore`. Keep its validation, persistence, writer
-   authority, and failure behavior intact.
+## Both-behavior contract
 
-## Required E2E semantics
+For each conflict path, the producer identifies the behavior contributed by:
 
-The suite has exactly ten cases before and after the correction. Do not add an eleventh case or
-remove, merge, skip, rename away, or broaden an existing case.
+1. canonical accepted product wave `eee2389f...`; and
+2. the exact attempt `resolvedBaseSha`.
 
-Correct exactly two existing cases and no others:
+The resolution must preserve both. That includes contracts, validation, error semantics, persistence,
+process/filesystem boundaries, UI behavior, task/team messaging semantics, and focused regressions
+that either parent intentionally carries. Overlap is resolved deliberately at the smallest conflict
+site.
 
-1. The direct known-task fallback case reports outcome `Executed`.
-2. The destination-reconciliation case reports outcome `Reconciled`.
+The following are failures:
 
-Both corrected cases must prove all of:
+- taking `ours` or `theirs` wholesale without a path-specific semantic proof;
+- silently deleting one behavior;
+- weakening types, guards, authorization, containment, or error handling;
+- preserving compilation while changing meaning;
+- changing a test expectation instead of preserving the tested behavior;
+- concealing an incompatibility behind optionality, a broad fallback, a compatibility shim, or a
+  skipped case; or
+- treating the successful mechanical merge of other paths as proof for a conflict.
 
-- `createdInAttempt: false`;
-- returned task status `Completed`;
-- `attemptCount: 1`;
-- exactly one task exists.
+When parent requirements are genuinely incompatible inside exact scope, the producer records the
+conflict and does not guess.
 
-The existing subject `UNRELATED SUBJECT` regression remains terminal. It has no success outcome,
-does not create a second task, and proves the known task cannot be returned when its ID or trimmed
-subject mismatches the request.
+## Focused tests
 
-## Continued-worker and reviewer gates
+`ProjectScopedControl` selects deterministic `focusedTestCommands` after the actual conflicts are
+known and before start. The set must cover:
 
-Run independently in the held continuation and the fresh reviewer materialization:
+- the nearest focused tests for every conflict path;
+- the relevant behavior inherited from each parent;
+- architecture or boundary ratchets directly implicated by a conflict; and
+- any regression test whose semantics the manual resolution could change.
 
-```bash
-git diff --cached --quiet
-test -z "$(git ls-files --others --exclude-standard)"
-pnpm exec vitest run test/features/task-board-commands/TaskBoardCommands.e2e.test.ts
-pnpm exec vitest run test/main/services/team/TeamDataService.test.ts
-node scripts/hosted-web/phase-0/final-gate/normalize-typescript-diagnostics.mjs --mode milestone
-pnpm lint:fast:files -- src/features/task-board-commands/core/application/TaskBoardCommandFacade.ts src/main/services/team/TeamDataService.ts src/renderer/components/team/TeamDetailView.tsx test/features/task-board-commands/TaskBoardCommands.e2e.test.ts test/main/services/team/TeamDataService.test.ts
-pnpm exec prettier --check src/features/task-board-commands/core/application/TaskBoardCommandFacade.ts src/main/services/team/TeamDataService.ts src/renderer/components/team/TeamDetailView.tsx test/features/task-board-commands/TaskBoardCommands.e2e.test.ts test/main/services/team/TeamDataService.test.ts
-git diff --check
-```
+The producer may not replace, omit, broaden away, or reinterpret a selected command. A selected test
+that cannot run is a failed gate, not a reason to change the command or install dependencies.
 
-Required exact results:
+## Producer mechanical gates
 
-- TaskBoardCommands E2E: `10/10` cases and tests pass;
-- TeamDataService: `127/127` tests pass;
-- native TypeScript: `7 inherited / 0 owned / 0 unexpected` diagnostics.
+Before result handoff, run and record all of:
 
-The seven inherited native diagnostics are exactly:
+1. full pre-start contract schema and equality validation;
+2. fresh live-base comparison to `resolvedBaseSha` without rebinding;
+3. canonical source and ordered-parent validation;
+4. exact conflict-set and conflict-only diff proof;
+5. byte equality for all mechanically merged non-conflict paths;
+6. zero unmerged index entries;
+7. zero unresolved merge markers;
+8. every exact `focusedTestCommands` command;
+9. `pnpm typecheck`;
+10. `pnpm lint:fast:files -- <exact changed TypeScript/TSX conflict paths>`, when non-empty;
+11. `pnpm exec prettier --check <exact changed text conflict paths>`;
+12. `git diff --check`;
+13. classified binary/symlink/NUL and conflict-marker scans over the exact conflict set;
+14. classified secret/credential/auth/provider payload and private/user/home/real-project path scans
+    over the exact conflict set and diff; and
+15. proof that no install/fetch/update, real-project, team launch/provisioning, product terminal/smoke,
+    provider/auth, raw lifecycle, other-repository, broad-docs, or Fast activity occurred.
 
-- `auth-artifacts-spike.test.ts`: TS7016 at 25:8; TS7031 at 66:31; TS18046 at 117:68; TS7031 at
-  413:48; TS7031 at 733:10;
-- `evidence-scanner.test.ts`: TS7016 at 12:8; and
-- `scan-runtime-surfaces.test.ts`: TS2352 at 162:44.
+Any command failure, moved/added/removed diagnostic, changed focused test count, unclassified match,
+scope mismatch, or non-conflict byte drift fails the attempt.
 
-Any added, removed, moved, or changed diagnostic fails.
+## Self-review and producer result
 
-Also prove exact workspace/job/base/patch bindings, five-path ownership, preserved patch sections,
-new-byte restriction, ten-case static count, exactly two corrected cases, classified-conflict
-control flow, existing matcher call, terminal `UNRELATED SUBJECT`, no provenance-field comparison,
-no task-store weakening, and classified conflict-marker, secret/auth/provider, private/user/real-
-project-path, and textual/non-binary scans over all five owned paths. Every match is classified.
+After all gates pass, the producer rereads the complete resolved diff and self-reviews:
 
-The worker self-reviews with explicit P0/P1/P2 counts, emits one immutable runtime-owned output with
-`nextAction: "integration-review"`, and returns `HOLD`. It does not start the reviewer or authorize
-integration.
+1. exact attempt/source/base/parents/conflict binding;
+2. both-parent behavior preservation per conflict;
+3. focused-test adequacy and results;
+4. complete-tree integration coherence;
+5. architecture and process-boundary compliance;
+6. security, path, auth/provider, and data-exposure behavior;
+7. exact scope/non-conflict immutability; and
+8. every mechanical command, exit, count, scan classification, and remaining risk.
 
-## Independent review
+The result is one immutable runtime-owned record containing at least the attempt ID, canonical and
+base SHAs, ordered parents, exact conflicts, exact resolved tree SHA, commands/exits, self-review,
+P0/P1/P2 findings, blockers, and `terminalState: HOLD`.
 
-After continued r3 `HOLD`, `ProjectScopedControl` admits exactly one fresh independent reviewer. The
-reviewer is independent of the router author, continued r3, rejected test-only router, rejected
-non-default-tier output, earlier PR252 reviewers/workers, and prior accepted workers. It uses
-`gpt-5.6-sol`, `xhigh`, `serviceTier: "default"`, and a request with no `fastMode` field.
+This lane's specific runtime-owned result contract replaces the generic packet-template repository
+`handoffPath`.
 
-The reviewer has no write, repair, refill, re-resolution, stage, merge, commit, or push authority. It
-reruns every check and scan and returns explicit `ACCEPT` or `REJECT`. Only `ACCEPT` with P0/P1/P2
-`0/0/0` permits broker integration.
+The producer writes no repository handoff manifest or evidence file, creates no commit, stages no
+unrelated byte, starts no reviewer, calls no integration primitive, and authorizes no successor.
 
-## Reviewed ordered integration
+## Direct controller rerun
 
-Immediately before integration, the broker reruns the exact `git ls-remote` command above and
-requires the pinned source `3b48f939...`. With a fresh independent `ACCEPT` and unchanged source,
-the broker creates only a true merge with ordered parents:
+After producer `HOLD`, the controller—not another worker—compares the live base, freshly
+materializes the exact producer tree, reruns the entire mechanical gate set through runtime execution
+primitives, and directly decides pass/fail. It proves the rerun tree SHA equals the producer result
+and records exact commands, exits, counts, and scans in controller/runtime state.
+
+There is no separate mechanical reviewer, verifier, code reviewer, refill worker, or mechanical review
+handoff. Failure ends the attempt `HOLD`.
+
+## Independent combined semantic review
+
+Only after the controller's direct mechanical pass and another base-equality check may one fresh
+independent reviewer start. The reviewer is independent of router, producer, invalidated attempt
+actors, and broker and has no repair/write/integration authority.
+
+This single reviewer covers integration, architecture, security, and semantics. It inspects both
+parents, every conflict resolution, the complete resolved tree, focused-test adequacy, producer
+self-review, and controller mechanical evidence. It must detect whole-side selection, lost behavior,
+scope escape, boundary violations, unsafe trust/path/process/data changes, hidden fallbacks, and
+evidence inconsistencies.
+
+Only exact `ACCEPT` with P0/P1/P2 `0/0/0`, bound to the same attempt/base/tree, permits broker
+promotion. The reviewer ends `HOLD`. `REJECT` permits no integration and no automatic retry.
+
+## Ordered broker integration
+
+Immediately before promotion, the broker proves:
+
+- the live PR base still equals attempt `resolvedBaseSha`;
+- the PR head still equals canonical `eee2389f...`;
+- the independent review is exact `ACCEPT 0/0/0`;
+- the accepted tree SHA equals the controller-rerun tree SHA; and
+- no competing attempt or successor is active.
+
+The broker creates only a true merge with exactly:
 
 ```text
-[storedRouterCommit, 3b48f9391b4bff1d82bc85ef01a2d5e0e5b50e95]
+parents[0] = eee2389f7ee9300df93ef02d92e9ae114949aff4
+parents[1] = attempt.resolvedBaseSha
+tree       = exact independently accepted resolved tree
 ```
 
-It proves the exact five conflicts, materializes pinned-source non-conflicts, applies only the
-accepted five-path output, reruns all producer/reviewer gates and scans on the final shape, runs the
-inherited final source-only command-identity test, creates a conventional merge commit, and pushes.
+It promotes and pushes that merge with expected-old-head protection. It then proves the remote PR
+head and GitHub PR head OID equal the merge commit, GitHub's base OID still equals
+`resolvedBaseSha`, and GitHub mergeability is resolved and non-conflicting for the exact pair.
+`UNKNOWN`, `CONFLICTING`, moved base/head, parent/tree mismatch, one-parent/squash/patch-only
+history, or push ambiguity is not success.
 
-A one-parent, squash, patch-only, reversed-parent, moving-source, extra-conflict, clean-rewrite,
-rejected-output replay, whole-blob-copy, non-default-tier, provenance-field, task-store-weakening, or
-gate-failing result is rejected and not pushed.
+Git commit SHA is the primary provenance. Supporting runtime/broker captures are not repository
+handoff manifests, and no hash-of-manifest bookkeeping is allowed.
+
+## Drift and replacement
+
+The binding is immutable. Later base drift never retargets a running, held, reviewed, or promotable
+attempt. It invalidates only that attempt and all attempt-bound outputs.
+
+After the invalidated attempt is terminal and capacity is empty, the controller may perform one new
+atomic prepare/start with a new attempt ID and live base. It uses this same
+`pr252.latest-base-binding/v1` format and `pr252-latest-base-sync-router-v1` packet. No docs/router
+revision, source pin, fixed conflict list, patch continuation, or old worker is needed.
 
 ## Stop and HOLD
 
-Stop on router authority, job/task/workspace, base/`HEAD`, patch, index, untracked path, scope, source,
-conflict-set, continuation request, duplicate activity, model/effort/tier, controller, matcher,
-semantic, test count/result, native diagnostic, scan, independence, review, or integration drift.
-P1.R2, P1.I, P1.F, and Phase 2+ remain blocked until the validated ordered merge is pushed.
+Stop on any router, head, base, attempt, full-SHA, parent-order, conflict-set, command, source, scope,
+byte, index, marker, test, diagnostic, format, scan, self-review, independence, semantic, tree,
+promotion, push, remote, or GitHub-proof mismatch.
 
-This router launches nothing and performs no fetch, stage, commit, merge, push, lifecycle action, or
-real-project access. End `HOLD`.
+The Phase 2 milestone and next phase remain blocked until the complete broker proof succeeds. Success
+only releases that gate; it does not launch either phase action. Runtime owns execution primitives
+only and never selects the DAG. End `HOLD`; launch no successor.

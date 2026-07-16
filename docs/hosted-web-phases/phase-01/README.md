@@ -1,62 +1,53 @@
-# Hosted Web Phase 1
+# Hosted Web Phase 1 navigation record
 
-Current authority is `phase-01-p1-f-environment-router-r3`; terminal state is `HOLD`.
+Phase 1 is complete. This directory retains the PR #252 routing paths because they are the established
+navigation boundary for base-sync control; it does not reopen a Phase 1 product node.
 
-## Accepted predecessor
+Current packet authority is `pr252-latest-base-sync-router-v1`. The Phase 2 product wave at
+`eee2389f7ee9300df93ef02d92e9ae114949aff4` is accepted and integrated. Only latest-base sync blocks
+the Phase 2 milestone and the next phase.
 
-P1.I was independently accepted with zero P0/P1/P2 findings and integrated by
-`agent-teams-hosted-web-refactor-p1-i-integration-apply-v17-r2` at
-`134f64f0c5c7bbbab0552eddf08df1508118f4bb`; the exact integration proof is
-`134f64f0c5c7bbbab0552eddf08df1508118f4bb^..134f64f0c5c7bbbab0552eddf08df1508118f4bb`.
-The canonical clean remote-equal authority is `20706bd067ce5ccbf13697700411904faa2a00c8`, the accepted
-ordered two-parent PR #252 merge. `20706bd067ce5ccbf13697700411904faa2a00c8^1` equals
-`134f64f0c5c7bbbab0552eddf08df1508118f4bb`, and the second parent is
-`6bf43f140878f8b79f7ee17349bd21b177df901d`. The five output bytes are identical at the integration
-commit and canonical merge. The second-parent-to-merge diff is accumulated current-base history,
-never the exact P1.I proof.
+## Supersession
 
-Immutable r1 patch `2f7338a1e7b41955d15106f5fb3994b17db6749158bde8134a0a8e23d2081615` was independently
-`REJECT`ed for that single P1 proof error. The r2 route preserves every other useful r1 requirement.
-Its patch `1b9d824436f076f751df91fe2d8abedb88995c5fe8a02f3fc0194921d669d5c1` was independently accepted,
-integrated, and pushed as `69c4219b7ce3c7ad99e469ecd537a42e4bb4d2b5`. Three clean P1.F attempts
-then ended `HOLD` only because network-disabled review could not query the remote and the sandbox could
-not spawn the normalizer child. The r3 route repairs that environment contract without weakening P1.F.
+The current route supersedes:
 
-The historical [`p1-i-integration.md`](lanes/p1-i-integration.md) packet and every frozen P1.I output
-are read-only. No P1.I repeat, regeneration, remediation, or reintegration is authorized.
+- every packet-authored or branch-authored PR #252 base/source pin;
+- every old same-job continuation, dirty-worktree reuse, or fixed conflict-path contract;
+- the earlier Phase 2 candidate/product-blocked language as current launch authority; and
+- every route that needed a new docs revision merely because the live PR base moved.
 
-## P1.F milestone freeze
+No currently observed base SHA is recorded as durable authority. The accepted Phase 2 product SHA is
+stable source authority; the base is per-attempt runtime authority.
 
-The current packet is [`p1-f-freeze.md`](lanes/p1-f-freeze.md). After this exact seven-path r3 router is
-independently accepted, broker-integrated, pushed, and root attests its exact pushed authority and
-clean remote equality, root may admit exactly one serial independent P1.F worker with the required
-immutable evidence inputs.
+## Current route
 
-The worker profile is only `gpt-5.6-sol`, reasoning effort `xhigh`, and
-`serviceTier: "default"`; Fast is prohibited. Root remains the sole orchestrator and `controller-v17`
-remains `HOLD` and observation-only.
+Read the detailed [controller packet](controller-packet.md), [execution DAG](execution-dag.md), and
+[latest-base conflict lane](lanes/pr252-base-conflict-resolution.md).
 
-The worker reads exactly the 74 paths in `EXECUTION_INDEX.json.phase1FreezeManifest.paths`, owns only
-`.codex-handoff/phase-01-p1-f.json` and
-`docs/research/hosted-web/phase-1/reviews/phase-1-freeze.md`, and records only the new evidence IDs
-`P1.F.FREEZE` and `P1.F.PHASE_EXIT`. It inspects the fresh root/broker remote attestation and MUST NOT
-run `git ls-remote` from the restricted worker sandbox. It independently verifies local canonical
-authority and ancestry, the exact P1.I integration range, ordered true-merge/current-base shape,
-first-parent equality, all five P1.I hashes, all 14 Phase 1 evidence IDs, and all 14 gate IDs.
+At atomic prepare/start, `ProjectScopedControl` resolves the live PR #252 base exactly once and
+records it as a full 40-hex `resolvedBaseSha` in
+`pr252.latest-base-binding/v1`. The runtime materializes the product attempt from canonical
+`eee2389f7ee9300df93ef02d92e9ae114949aff4`, records the actual conflict paths, and binds the same
+base as the ordered second parent. Symbolic names, abbreviated SHAs, observed prior bases, and
+re-resolution within an attempt are forbidden.
 
-Required independent reruns are 13/13 files and 60/60 Phase 1 tests, 1/1 and 3/3 focused ratchet tests,
-full lint exit zero, pinned Prettier over exactly 74 paths, exact-54 scratch-only rollback, and complete
-JSON/hash/link/diff/scope and classified secret/provider/private-path/text scans. Native TypeScript
-classification remains 7 inherited/0 resolved/0 unexpected. Only when sandbox spawn of the exact
-normalizer command fails may the reviewer use fresh immutable root-attested normalizer evidence, and
-it must inspect the command, script and compiler exit semantics, exact seven diagnostics, zero
-unexpected diagnostics, timestamp, capture hash, authority binding, and broker provenance.
+One product producer may resolve only those actual conflicts. It preserves both parent behaviors,
+runs all focused and mechanical checks, self-reviews, and returns `HOLD`. The controller directly
+reruns mechanical gates. One fresh independent integration/architecture/security semantic reviewer
+then returns `ACCEPT` or `REJECT`; there is no separate mechanical reviewer.
 
-The worker self-reviews and returns explicit `ACCEPT` or `REJECT`, always ending `HOLD`. `ACCEPT`
-requires P0/P1/P2 `0/0/0`; after root validation and `mark_reviewed`, the broker may integrate and push
-exactly the two P1.F outputs. `REJECT` permits no integration and only separately admitted remediation
-bounded to those same two paths and immutable findings.
+On `ACCEPT` with P0/P1/P2 `0/0/0`, the broker alone may build the exact reviewed tree as a true
+merge ordered
+`[eee2389f7ee9300df93ef02d92e9ae114949aff4, resolvedBaseSha]`, promote and push it, and prove
+GitHub sees the exact head/base pair as non-conflicting. A later base mismatch invalidates only the
+attempt and never this stable packet.
 
-After accepted exact-two integration and pushed-authority attestation, root may commission a separate
-Phase 2 JIT docs router. Phase 2 work remains blocked; P1.F cannot author or launch that successor.
-See [`execution-dag.md`](execution-dag.md).
+## Control boundary
+
+Git commit SHA is primary provenance. Do not add repository handoff manifests or hash-of-manifest
+bookkeeping. The runtime owns execution primitives only; the controller owns the entire DAG and every
+authorization decision.
+
+No real project, team launch/provisioning, product terminal/smoke, provider/auth, raw lifecycle,
+other-repository, broad-docs, or Fast activity is authorized. This router launches no worker or
+successor and ends `HOLD`.

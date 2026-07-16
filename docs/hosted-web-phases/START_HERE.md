@@ -1,49 +1,62 @@
-# Start here: Phase 2 JIT candidate
+# Start here: PR #252 latest-base sync
 
-- Status: `candidate-awaiting-independent-root-review`
+- Revision: `pr252-latest-base-sync-router-v1`
+- Product authority: `eee2389f7ee9300df93ef02d92e9ae114949aff4`, accepted and integrated
+- Current blocker: latest-base sync only
 - Terminal state: `HOLD`
 
-No Phase 2 product node is admissible from these unreviewed, unintegrated bytes.
+The Phase 2 milestone and next phase remain blocked until a reviewed true two-parent sync merge is
+pushed and GitHub proves PR #252 non-conflicting for the same attempt-bound head/base pair. Earlier
+Phase 2 candidate/product-launch wording and every stale PR #252 source pin are superseded.
 
 ## Mandatory read order
 
-Every Phase 2 actor reads these items completely and in this order:
+Every PR #252 latest-base-sync actor reads these items completely and in this order:
 
 1. repository [AGENTS.md](../../AGENTS.md);
 2. this file;
 3. [EVIDENCE_LIFECYCLE.md](EVIDENCE_LIFECYCLE.md);
 4. [hosted-web packet README](README.md);
 5. [EXECUTION_INDEX.json](EXECUTION_INDEX.json);
-6. [Phase 2 README](phase-02/README.md);
-7. [Phase 2 controller packet](phase-02/controller-packet.md);
-8. [Phase 2 execution DAG](phase-02/execution-dag.md);
-9. repository [CLAUDE.md](../../CLAUDE.md);
-10. [critical guardrails](../../AGENT_CRITICAL_GUARDRAILS.md);
-11. [feature architecture standard](../FEATURE_ARCHITECTURE_STANDARD.md);
-12. [packet standard](PACKET_STANDARD.md);
-13. [orchestration responsibility boundary](ORCHESTRATION_GUARDS.md);
-14. accepted predecessor handoff [phase-01-p1-f.json](../../.codex-handoff/phase-01-p1-f.json);
-15. accepted predecessor review [phase-1-freeze.md](../research/hosted-web/phase-1/reviews/phase-1-freeze.md);
-16. the assigned node packet; and
-17. that packet's numbered source and test reads, in order.
+6. [Phase 1 navigation record](phase-01/README.md);
+7. [controller packet](phase-01/controller-packet.md);
+8. [execution DAG](phase-01/execution-dag.md);
+9. [latest-base conflict lane](phase-01/lanes/pr252-base-conflict-resolution.md);
+10. repository [CLAUDE.md](../../CLAUDE.md);
+11. [critical guardrails](../../AGENT_CRITICAL_GUARDRAILS.md);
+12. [feature architecture standard](../FEATURE_ARCHITECTURE_STANDARD.md);
+13. [packet standard](PACKET_STANDARD.md);
+14. [orchestration responsibility boundary](ORCHESTRATION_GUARDS.md);
+15. the immutable `pr252.latest-base-binding/v1` pre-start contract; and
+16. the exact attempt-bound conflict paths and their nearest focused tests.
 
-Stop if a path, revision, dependency, ownership list or authority differs from the execution index.
-Return a blocker handoff with `terminalState: HOLD`; do not repair authority informally.
+Stop on any revision, authority, attempt ID, full SHA, conflict-path, parent-order, scope, or
+dependency mismatch. Return `HOLD`; do not repair authority informally.
 
-## Current admission rule
+## Admission rule
 
-The first eligible product node is `P2.F0.IDENTITY`, but only after an independent root reviewer
-accepts this exact 12-path router and the broker integrates and activates those reviewed bytes. The
-five lanes A-E additionally require accepted integration of the foundation node. Conditional DAG
-authorization is not current launch authority.
+The router author launches nothing. After these exact seven paths become active packet authority,
+`ProjectScopedControl` may atomically prepare/start one product attempt. During that single
+transition it resolves the live PR base once, records the exact full commit, materializes the product
+worker from `eee2389f7ee9300df93ef02d92e9ae114949aff4`, derives the actual conflict set, and binds the
+same base as ordered second parent.
 
-## Safety
+The producer edits only actual conflict paths, preserves both parent behaviors, runs focused tests and
+all mechanical gates, self-reviews, and ends `HOLD`. The controller reruns the complete mechanical
+gate set directly. There is no mechanical-review worker. Exactly one fresh independent combined
+integration/architecture/security semantic reviewer may follow.
 
-Use only deterministic unit tests and fresh marker-owned temporary roots. Never open or mutate a real
-project, use product terminal behavior, launch teams or providers, or inspect credentials. Filesystem
-tests reject unmarked, pre-existing, ambient, home and symlink-escaped roots before access and clean
-up only their own marker-verified roots.
+Only that review's `ACCEPT` with P0/P1/P2 `0/0/0` permits broker construction, promotion, push,
+and GitHub conflict proof of the exact ordered two-parent merge. A live-base mismatch at any later
+gate invalidates only the attempt; the same stable packet admits a new atomic attempt after the old
+one is terminal.
 
-All producers self-review and hand off on `HOLD`. Separate review is limited to architecture,
-security, integration and milestone roles. Documentation, research and evidence roles do not consume
-or satisfy product capacity.
+## Safety and provenance
+
+Use no real projects, agent-team launch/provisioning, product terminal, smoke flow, provider/auth
+flow, raw lifecycle operation, other repository, broad docs edit, or Fast mode. Runtime primitives do
+not choose the DAG.
+
+The merge commit SHA and its ordered parents are primary provenance. Runtime-owned attempt and review
+records may bind the attempt ID, tree SHA, commands, and findings, but no repository handoff manifest
+or hash-of-manifest ledger is created. All actors and this router end `HOLD`; launch no successor.

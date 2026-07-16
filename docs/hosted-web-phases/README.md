@@ -1,27 +1,49 @@
 # Hosted-web execution packets
 
-The current candidate is the [Phase 2 JIT packet](phase-02/README.md). It is documentation authority
-only. Phase 2 product work remains blocked until an independent root review accepts the exact router
-and the broker integrates and activates the reviewed bytes.
+Current authority is the stable [PR #252 latest-base sync gate](phase-01/controller-packet.md),
+revision `pr252-latest-base-sync-router-v1`. Start with [START_HERE.md](START_HERE.md) and treat
+[EXECUTION_INDEX.json](EXECUTION_INDEX.json) as the machine-readable source of truth.
 
-Start with [START_HERE.md](START_HERE.md) and use
-[EXECUTION_INDEX.json](EXECUTION_INDEX.json) as the machine-readable authority. The frozen
-[Phase 1 packet](phase-01/README.md) is historical predecessor material.
+The Phase 2 product wave at
+`eee2389f7ee9300df93ef02d92e9ae114949aff4` is accepted and integrated. The Phase 2 milestone and
+the next phase are blocked only by the PR #252 latest-base sync gate. The files under
+`phase-02/` remain read-only accepted product inputs; their earlier candidate/product-launch wording
+is superseded and is not current execution authority.
 
-## Ownership boundary
+## Stable latest-base rule
 
-This repository owns product architecture, controller and lane packets, execution DAGs and frozen
-evidence. The subscription runtime owns only execution, materialization, admission, evidence and
-integration primitives. It does not choose DAG order, capacity, dependencies, reviewers, retries or
-successors; those orchestration decisions remain in controller documents.
+No observed PR base SHA is a durable packet pin. At each atomic product-attempt prepare/start,
+`ProjectScopedControl` resolves the live PR #252 base exactly once and records the full 40-hex commit
+in the immutable `pr252.latest-base-binding/v1` product-worker pre-start contract. The runtime
+materializes from canonical `eee2389f7ee9300df93ef02d92e9ae114949aff4`, mechanically merges the
+bound base, records the exact actual conflict paths, and binds that same base as the ordered second
+parent.
 
-## Phase 2 shape
+Later base drift invalidates only the bound product attempt. Once that attempt is terminal, the
+controller may prepare one replacement under the same packet and format. Drift never revives an old
+source pin, reuses a dirty worker, or requires another docs/router version.
 
-The candidate DAG has one short serial product-source identity foundation. Only after that node is
-accepted and integrated may exactly five disjoint product lanes A-E run. The lanes own no barrel,
-index or composition file. Producers self-review; separate reviewers are used only for architecture,
-security, integration and milestone decisions. Documentation, research and evidence work never counts
-as product capacity.
+## Bounded route
 
-Every node ends in `HOLD`. This router neither launches product work nor claims review, integration,
-push, product behavior or milestone acceptance.
+The controller DAG permits one active product merge-resolution producer, writable only on the actual
+conflict paths. The producer preserves both the accepted Phase 2 wave behavior and the bound latest-base
+behavior, runs focused tests and every mechanical gate, self-reviews, and ends `HOLD`.
+`ProjectScopedControl` directly reruns the mechanical gates; there is no separate mechanical
+reviewer. One fresh independent reviewer then makes the combined integration, architecture, security,
+and semantic decision.
+
+Only an independent `ACCEPT` with P0/P1/P2 `0/0/0` lets the broker create the reviewed tree as a
+true two-parent merge ordered
+`[eee2389f7ee9300df93ef02d92e9ae114949aff4, resolvedBaseSha]`, promote and push it, and prove the
+exact pushed head/base pair is non-conflicting on GitHub. Git commit SHAs are primary provenance.
+Repository handoff manifests and hash-of-manifest bookkeeping are forbidden.
+
+## Ownership and stop boundary
+
+The subscription runtime owns execution primitives only. `ProjectScopedControl` owns the DAG,
+dependencies, admissions, mechanical-gate decisions, drift invalidation, semantic review policy,
+promotion authorization, and phase release.
+
+No route here authorizes real-project access, team launch/provisioning, product terminal or smoke
+flows, providers/auth, raw lifecycle calls, other repositories, broad docs work, or Fast mode. Every
+actor ends `HOLD`; this router author launches no successor.

@@ -1,47 +1,124 @@
 {
   "schemaVersion": 2,
-  "packetRevision": "phase-02-jit-router-r1",
+  "packetRevision": "pr252-latest-base-sync-router-v1",
   "currentPhase": "phase-02",
-  "status": "candidate-awaiting-independent-root-review",
+  "currentNode": "PR252.LATEST_BASE_SYNC",
+  "status": "product-wave-accepted-integrated-latest-base-sync-blocked",
   "terminalState": "HOLD",
   "authority": {
-    "routerBaseSha": "d5afa87e79b1f2badd69e65262e5699c0fb61de7",
-    "predecessorPhase": "phase-01",
-    "predecessorNode": "P1.F",
-    "predecessorIntegrationCommit": "d5afa87e79b1f2badd69e65262e5699c0fb61de7",
-    "predecessorDisposition": "ACCEPT",
-    "predecessorFindingCounts": {
-      "P0": 0,
-      "P1": 0,
-      "P2": 0
-    },
-    "predecessorHandoff": ".codex-handoff/phase-01-p1-f.json",
-    "predecessorReview": "docs/research/hosted-web/phase-1/reviews/phase-1-freeze.md",
-    "routerAcceptance": "unverified",
-    "routerIntegration": "unverified"
+    "repository": "777genius/agent-teams-ai",
+    "pullRequestNumber": 252,
+    "canonicalProductWaveSha": "eee2389f7ee9300df93ef02d92e9ae114949aff4",
+    "canonicalRemoteHeadSha": "eee2389f7ee9300df93ef02d92e9ae114949aff4",
+    "canonicalRemoteHeadEqualAtRouterAuthoring": true,
+    "routerAuthoringWorktreeCleanBeforePacketEdits": true,
+    "phase2ProductWaveDisposition": "accepted-integrated",
+    "latestBaseSha": null,
+    "latestBaseAuthority": "resolve-once-at-each-atomic-product-attempt-prepare-start",
+    "durableBasePinForbidden": true,
+    "stalePr252SourcePinsSuperseded": true,
+    "phase2CandidateLaunchWordingSuperseded": true
   },
-  "productAdmission": {
-    "blocked": true,
-    "reason": "This candidate router has not been independently reviewed and broker-integrated into canonical authority.",
-    "releaseCondition": "An independent root review accepts this exact 12-path router and the broker integrates and activates those reviewed bytes.",
-    "firstEligibleNode": "P2.F0.IDENTITY",
+  "phaseGate": {
+    "phase2ProductWaveComplete": true,
+    "phase2MilestoneBlocked": true,
+    "nextPhaseBlocked": true,
+    "onlyBlocker": "PR252.LATEST_BASE_SYNC",
+    "releaseCondition": "The broker pushes and proves a reviewed ordered two-parent merge for the attempt-bound live base, with GitHub reporting PR #252 non-conflicting at that same head and base.",
+    "routerAuthorLaunchAuthorized": false,
     "successorLaunchAuthorizedNow": false
   },
+  "latestBaseBindingContract": {
+    "format": "pr252.latest-base-binding/v1",
+    "owner": "ProjectScopedControl",
+    "storage": "immutable runtime-owned product-worker pre-start contract",
+    "repositoryArtifact": false,
+    "createdAt": "the atomic product-attempt prepare/start transition",
+    "fields": {
+      "format": {
+        "type": "literal",
+        "value": "pr252.latest-base-binding/v1"
+      },
+      "productAttemptId": {
+        "type": "non-empty-string"
+      },
+      "repository": {
+        "type": "literal",
+        "value": "777genius/agent-teams-ai"
+      },
+      "pullRequestNumber": {
+        "type": "literal",
+        "value": 252
+      },
+      "routerAuthoritySha": {
+        "type": "lowercase-40-hex-git-commit"
+      },
+      "canonicalHeadSha": {
+        "type": "literal",
+        "value": "eee2389f7ee9300df93ef02d92e9ae114949aff4"
+      },
+      "materializationSourceSha": {
+        "type": "literal",
+        "value": "eee2389f7ee9300df93ef02d92e9ae114949aff4"
+      },
+      "resolvedBaseSha": {
+        "type": "lowercase-40-hex-git-commit"
+      },
+      "orderedParentShas": {
+        "type": "tuple",
+        "items": ["eee2389f7ee9300df93ef02d92e9ae114949aff4", "same-value-as-resolvedBaseSha"]
+      },
+      "conflictPaths": {
+        "type": "sorted-distinct-repository-relative-path-array",
+        "minimumItems": 1
+      },
+      "focusedTestCommands": {
+        "type": "non-empty-array-of-exact-deterministic-repository-local-commands"
+      },
+      "resolvedAt": {
+        "type": "rfc3339-timestamp"
+      }
+    },
+    "invariants": [
+      "ProjectScopedControl reads the live PR #252 base exactly once while atomically preparing and starting one product attempt.",
+      "The resolved base is a full exact 40-hex commit SHA; a symbolic ref, branch name, abbreviated SHA, prior observation, or packet-authored value is invalid.",
+      "The product worktree is materialized from canonical eee2389f7ee9300df93ef02d92e9ae114949aff4, never from a router commit or the resolved base.",
+      "The exact resolvedBaseSha is orderedParentShas[1] and can never be re-resolved or substituted inside the attempt.",
+      "The runtime performs the ordered mechanical merge materialization before worker start and records its exact actual conflict paths in the same pre-start contract.",
+      "ProjectScopedControl selects and freezes the exact focused test commands after conflict discovery and before worker start.",
+      "Any later live-base inequality invalidates only this productAttemptId and all of its output; the stable packet and format remain valid for a new atomic attempt.",
+      "At most one product attempt is active, under review, or eligible for promotion at a time."
+    ]
+  },
+  "ownershipBoundary": {
+    "runtimeOwnsOnly": [
+      "subscription-runtime builtin worker-start-v1 atomic admission/start primitive",
+      "commit-object and worktree materialization primitives",
+      "command and evidence capture primitives",
+      "review admission primitives",
+      "merge-commit construction, promotion and push primitives"
+    ],
+    "controllerOwns": [
+      "the complete DAG and all dependency ordering",
+      "live-base resolution timing and attempt admission",
+      "worker count, role, scope and replacement decisions",
+      "mechanical gate selection and pass/fail evaluation",
+      "semantic review policy",
+      "base-drift invalidation",
+      "promotion authorization and phase-gate release"
+    ],
+    "rawLifecycleAuthorized": false
+  },
   "routerExclusiveOwnership": {
-    "pathCount": 12,
+    "pathCount": 7,
     "paths": [
       "docs/hosted-web-phases/EXECUTION_INDEX.json",
       "docs/hosted-web-phases/README.md",
       "docs/hosted-web-phases/START_HERE.md",
-      "docs/hosted-web-phases/phase-02/README.md",
-      "docs/hosted-web-phases/phase-02/controller-packet.md",
-      "docs/hosted-web-phases/phase-02/execution-dag.md",
-      "docs/hosted-web-phases/phase-02/lanes/p2-identity-foundation.md",
-      "docs/hosted-web-phases/phase-02/lanes/p2-a-workspace-identity.md",
-      "docs/hosted-web-phases/phase-02/lanes/p2-b-team-identity.md",
-      "docs/hosted-web-phases/phase-02/lanes/p2-c-workspace-binding.md",
-      "docs/hosted-web-phases/phase-02/lanes/p2-d-roster-identity.md",
-      "docs/hosted-web-phases/phase-02/lanes/p2-e-legacy-adoption.md"
+      "docs/hosted-web-phases/phase-01/README.md",
+      "docs/hosted-web-phases/phase-01/controller-packet.md",
+      "docs/hosted-web-phases/phase-01/execution-dag.md",
+      "docs/hosted-web-phases/phase-01/lanes/pr252-base-conflict-resolution.md"
     ]
   },
   "mandatoryReadOrder": [
@@ -50,361 +127,147 @@
     "docs/hosted-web-phases/EVIDENCE_LIFECYCLE.md",
     "docs/hosted-web-phases/README.md",
     "docs/hosted-web-phases/EXECUTION_INDEX.json",
-    "docs/hosted-web-phases/phase-02/README.md",
-    "docs/hosted-web-phases/phase-02/controller-packet.md",
-    "docs/hosted-web-phases/phase-02/execution-dag.md",
+    "docs/hosted-web-phases/phase-01/README.md",
+    "docs/hosted-web-phases/phase-01/controller-packet.md",
+    "docs/hosted-web-phases/phase-01/execution-dag.md",
+    "docs/hosted-web-phases/phase-01/lanes/pr252-base-conflict-resolution.md",
     "CLAUDE.md",
     "AGENT_CRITICAL_GUARDRAILS.md",
     "docs/FEATURE_ARCHITECTURE_STANDARD.md",
     "docs/hosted-web-phases/PACKET_STANDARD.md",
     "docs/hosted-web-phases/ORCHESTRATION_GUARDS.md",
-    ".codex-handoff/phase-01-p1-f.json",
-    "docs/research/hosted-web/phase-1/reviews/phase-1-freeze.md",
-    "the assigned node packet",
-    "the assigned node packet's numbered source and test reads"
+    "the immutable pr252.latest-base-binding/v1 pre-start contract",
+    "the exact attempt-bound conflict paths and their nearest focused tests"
   ],
-  "architectureBoundary": {
-    "principles": ["Clean Architecture", "DDD", "SOLID"],
-    "canonicalApi": "The Phase 2 team-lifecycle API facet is transport-neutral. Electron, IPC, HTTP, Fastify and renderer details remain input/output adapters.",
-    "coreForbiddenImports": [
-      "@main",
-      "electron",
-      "fastify",
-      "react",
-      "zustand",
-      "node:fs",
-      "node:path",
-      "child_process"
-    ],
-    "runtimeOwnership": [
-      "execution primitives",
-      "materialization primitives",
-      "admission primitives",
-      "evidence primitives",
-      "integration primitives"
-    ],
-    "controllerOwnership": [
-      "DAG ordering",
-      "lane selection and capacity",
-      "dependencies",
-      "review policy",
-      "retry and replacement decisions",
-      "successor authorization"
-    ],
-    "parallelSharedFileRule": "P2.A through P2.E own no barrel, index or composition file. Shared exports and wiring are serial P2.F0 or P2.I work only."
-  },
-  "capacity": {
-    "foundationNodeCount": 1,
-    "foundationProductCapacity": 1,
-    "parallelProductLaneCount": 5,
-    "parallelProductLaneIds": ["P2.A", "P2.B", "P2.C", "P2.D", "P2.E"],
-    "productCapacityDefinition": "A producer changing declared product source and focused tests in one exclusive lane.",
-    "excludedFromProductCapacity": [
-      "documentation workers",
-      "research workers",
-      "evidence workers",
-      "architecture reviewers",
-      "security reviewers",
-      "integration actors",
-      "milestone reviewers"
-    ],
-    "replacementRule": "A replacement must reuse the same lane ID, name the superseded attempt and receive a new controller admission; it never creates a sixth product lane."
-  },
-  "reviewPolicy": {
-    "producerSelfReviewRequired": true,
-    "separatePerLaneCodeReviewer": false,
-    "permittedSeparateReviewerRoles": ["architecture", "security", "integration", "milestone"],
-    "allHandoffsTerminalState": "HOLD"
-  },
   "nodes": [
     {
-      "id": "P2.F0.IDENTITY",
-      "kind": "product-foundation",
-      "packet": "docs/hosted-web-phases/phase-02/lanes/p2-identity-foundation.md",
-      "dependsOn": ["P2.ROUTER.INTEGRATED"],
-      "writablePaths": [
-        "src/shared/contracts/hosted/identifiers.ts",
-        "src/shared/contracts/hosted/index.ts",
-        "test/architecture/hosted-web/phase-1/contracts/identifiers.test.ts",
-        "test/architecture/hosted-web/phase-2/identity/canonical-identifiers.test.ts",
-        ".codex-handoff/phase-02-p2-f0.json"
+      "id": "PR252.SYNC.PRODUCER",
+      "kind": "bounded-product-merge-resolution",
+      "dependsOn": ["PR252.ROUTER.ACTIVE", "PR252.BINDING.ATOMIC"],
+      "capacity": 1,
+      "materializationSourceSha": "eee2389f7ee9300df93ef02d92e9ae114949aff4",
+      "writablePathRule": "exact-actual-conflictPaths-only",
+      "preserve": [
+        "accepted-integrated Phase 2 product-wave behavior from canonicalHeadSha",
+        "attempt-bound latest-base behavior from resolvedBaseSha",
+        "mechanically materialized non-conflicting merge bytes"
       ],
-      "handoff": ".codex-handoff/phase-02-p2-f0.json",
+      "requiredBeforeResult": [
+        "all focused tests selected for every actual conflict path",
+        "all product mechanical gates",
+        "complete producer self-review"
+      ],
+      "resultStorage": "immutable runtime-owned result keyed by productAttemptId",
+      "repositoryHandoffManifest": false,
       "terminalState": "HOLD"
     },
     {
-      "id": "P2.R0.ARCH_SECURITY",
-      "kind": "architecture-security-review",
-      "dependsOn": ["P2.F0.IDENTITY"],
-      "productCapacity": 0,
-      "writablePaths": [
-        "docs/research/hosted-web/phase-2/reviews/foundation-architecture-security.md",
-        ".codex-handoff/phase-02-p2-r0.json"
-      ],
-      "requiredReads": [
-        "P2.F0 packet",
-        "P2.F0 handoff",
-        "P2.F0 exact changed paths",
-        "Phase 2 controller architecture and foundation gates"
-      ],
-      "focusedChecks": [
-        "replay P2.F0 focused checks",
-        "identity derivation and dependency-boundary review",
-        "exact scope, diff, secret and private-path review"
-      ],
-      "acceptance": "ACCEPT only compatible opaque canonical identity bytes with complete self-review and zero unresolved P0/P1 finding.",
-      "handoff": ".codex-handoff/phase-02-p2-r0.json",
+      "id": "PR252.SYNC.CONTROLLER_MECHANICAL",
+      "kind": "direct-controller-mechanical-rerun",
+      "dependsOn": ["PR252.SYNC.PRODUCER"],
+      "worker": false,
+      "separateMechanicalReviewer": false,
+      "required": "ProjectScopedControl invokes runtime execution primitives and directly evaluates the complete mechanical gate set against the producer's exact resolved tree.",
       "terminalState": "HOLD"
     },
     {
-      "id": "P2.IF.INTEGRATION",
-      "kind": "foundation-integration",
-      "dependsOn": ["P2.R0.ARCH_SECURITY"],
-      "productCapacity": 0,
-      "materializesAcceptedPathsFrom": ["P2.F0.IDENTITY", "P2.R0.ARCH_SECURITY"],
-      "writablePaths": [
-        "docs/research/hosted-web/phase-2/foundation-integration.json",
-        ".codex-handoff/phase-02-p2-if.json"
+      "id": "PR252.SYNC.SEMANTIC_REVIEW",
+      "kind": "independent-integration-architecture-security-semantic-review",
+      "dependsOn": ["PR252.SYNC.CONTROLLER_MECHANICAL"],
+      "reviewerCount": 1,
+      "independentFrom": [
+        "router author",
+        "product producer",
+        "prior invalidated attempt actors",
+        "broker"
       ],
-      "requiredReads": [
-        "P2.F0 handoff and exact accepted blobs",
-        "P2.R0 review and handoff",
-        "Phase 2 controller foundation and integration gates"
-      ],
-      "focusedChecks": [
-        "accepted-hash reconciliation",
-        "clean materialization/integration attempt",
-        "P2.F0 focused checks at integrated authority",
-        "exact scope, diff, secret and private-path review"
-      ],
-      "acceptance": "Activate only byte-identical accepted F0 and R0 outputs plus the two declared integration evidence paths.",
-      "handoff": ".codex-handoff/phase-02-p2-if.json",
+      "writeOrRepairAuthority": false,
+      "requiredDisposition": "ACCEPT-with-P0-P1-P2-0-0-0",
+      "resultStorage": "immutable runtime-owned review result keyed by productAttemptId and accepted tree SHA",
+      "repositoryHandoffManifest": false,
       "terminalState": "HOLD"
     },
     {
-      "id": "P2.A",
-      "kind": "product-lane",
-      "packet": "docs/hosted-web-phases/phase-02/lanes/p2-a-workspace-identity.md",
-      "dependsOn": ["P2.IF.INTEGRATION"],
-      "writablePaths": [
-        "src/features/runtime-instance-context/contracts/runtime-instance-context.ts",
-        "src/features/runtime-instance-context/core/domain/RuntimeInstanceContext.ts",
-        "test/features/runtime-instance-context/RuntimeInstanceContext.test.ts",
-        "test/architecture/hosted-web/phase-2/runtime-instance-context-boundaries.test.ts",
-        ".codex-handoff/phase-02-p2-a.json"
+      "id": "PR252.SYNC.BROKER_PROMOTION_PROOF",
+      "kind": "broker-ordered-two-parent-merge-promotion-push-proof",
+      "dependsOn": ["PR252.SYNC.SEMANTIC_REVIEW"],
+      "orderedParents": ["eee2389f7ee9300df93ef02d92e9ae114949aff4", "attempt.resolvedBaseSha"],
+      "tree": "exact accepted reviewed resolved tree",
+      "requiredProof": [
+        "merge commit has exactly the ordered two parents",
+        "merge tree equals the accepted reviewed tree",
+        "remote PR head equals the merge commit after push",
+        "GitHub PR #252 head OID equals the merge commit and base OID still equals attempt.resolvedBaseSha",
+        "GitHub mergeability is resolved and non-conflicting for that exact head/base pair"
       ],
-      "handoff": ".codex-handoff/phase-02-p2-a.json",
-      "terminalState": "HOLD"
-    },
-    {
-      "id": "P2.B",
-      "kind": "product-lane",
-      "packet": "docs/hosted-web-phases/phase-02/lanes/p2-b-team-identity.md",
-      "dependsOn": ["P2.IF.INTEGRATION"],
-      "writablePaths": [
-        "src/features/internal-storage/contracts/teamIdentityStorageContracts.ts",
-        "src/features/internal-storage/main/infrastructure/worker/teamIdentityStorageSchema.ts",
-        "src/features/internal-storage/main/infrastructure/worker/teamIdentityStorageOps.ts",
-        "test/features/internal-storage/TeamIdentityStorage.test.ts",
-        ".codex-handoff/phase-02-p2-b.json"
-      ],
-      "handoff": ".codex-handoff/phase-02-p2-b.json",
-      "terminalState": "HOLD"
-    },
-    {
-      "id": "P2.C",
-      "kind": "product-lane",
-      "packet": "docs/hosted-web-phases/phase-02/lanes/p2-c-workspace-binding.md",
-      "dependsOn": ["P2.IF.INTEGRATION"],
-      "writablePaths": [
-        "src/features/workspace-registry/contracts/workspace-registration.ts",
-        "src/features/workspace-registry/core/domain/WorkspaceRegistration.ts",
-        "src/features/workspace-registry/core/application/AuthorizeWorkspaceOperation.ts",
-        "src/features/workspace-registry/main/infrastructure/ReadOnlyWorkspaceManifestAdapter.ts",
-        "test/features/workspace-registry/core/WorkspaceRegistration.test.ts",
-        "test/features/workspace-registry/core/AuthorizeWorkspaceOperation.test.ts",
-        "test/features/workspace-registry/main/ReadOnlyWorkspaceManifestAdapter.test.ts",
-        ".codex-handoff/phase-02-p2-c.json"
-      ],
-      "handoff": ".codex-handoff/phase-02-p2-c.json",
-      "terminalState": "HOLD"
-    },
-    {
-      "id": "P2.D",
-      "kind": "product-lane",
-      "packet": "docs/hosted-web-phases/phase-02/lanes/p2-d-roster-identity.md",
-      "dependsOn": ["P2.IF.INTEGRATION"],
-      "writablePaths": [
-        "src/features/team-lifecycle/core/application/ports/TeamIdentityPersistence.ts",
-        "src/features/team-lifecycle/main/infrastructure/TeamIdentityFileStore.ts",
-        "src/features/team-lifecycle/main/infrastructure/TeamDirectoryLifecycleAdapter.ts",
-        "src/features/team-lifecycle/main/infrastructure/TeamIdentityBackupCompatibility.ts",
-        "test/features/team-lifecycle/main/TeamDirectoryIdentity.test.ts",
-        "test/architecture/hosted-web/phase-2/team-directory-identity-boundaries.test.ts",
-        ".codex-handoff/phase-02-p2-d.json"
-      ],
-      "handoff": ".codex-handoff/phase-02-p2-d.json",
-      "terminalState": "HOLD"
-    },
-    {
-      "id": "P2.E",
-      "kind": "product-lane",
-      "packet": "docs/hosted-web-phases/phase-02/lanes/p2-e-legacy-adoption.md",
-      "dependsOn": ["P2.IF.INTEGRATION"],
-      "writablePaths": [
-        "src/features/team-lifecycle/contracts/team-lifecycle-read.ts",
-        "src/features/team-lifecycle/contracts/team-lifecycle-read-api.ts",
-        "src/features/team-lifecycle/core/application/GetTeamLifecycleSnapshot.ts",
-        "src/features/team-lifecycle/core/application/GetRuntimeStateProjection.ts",
-        "src/features/team-lifecycle/core/application/ListAliveTeamProjections.ts",
-        "src/features/team-lifecycle/main/infrastructure/LegacyTeamLifecycleReadSource.ts",
-        "src/features/team-lifecycle/main/adapters/input/TeamLifecycleReadApiAdapter.ts",
-        "test/features/team-lifecycle/TeamLifecycleReadApi.test.ts",
-        "test/architecture/hosted-web/phase-2/team-lifecycle-read-api-boundaries.test.ts",
-        ".codex-handoff/phase-02-p2-e.json"
-      ],
-      "handoff": ".codex-handoff/phase-02-p2-e.json",
-      "terminalState": "HOLD"
-    },
-    {
-      "id": "P2.R1.ARCH_SECURITY",
-      "kind": "architecture-security-review",
-      "dependsOn": ["P2.A", "P2.B", "P2.C", "P2.D", "P2.E"],
-      "productCapacity": 0,
-      "writablePaths": [
-        "docs/research/hosted-web/phase-2/reviews/parallel-wave-architecture-security.md",
-        ".codex-handoff/phase-02-p2-r1.json"
-      ],
-      "requiredReads": [
-        "P2.A through P2.E packets and handoffs",
-        "all exact A-E changed paths",
-        "P2.IF integrated foundation evidence",
-        "Phase 2 controller architecture and parallel wave gates"
-      ],
-      "focusedChecks": [
-        "replay every lane focused check",
-        "pairwise ownership and sibling-independence proof",
-        "root-admission and transport-neutrality negatives",
-        "exact scope, diff, secret and private-path review"
-      ],
-      "acceptance": "ACCEPT only five independently self-reviewed, pairwise-disjoint lanes satisfying the combined architecture and security gate.",
-      "handoff": ".codex-handoff/phase-02-p2-r1.json",
-      "terminalState": "HOLD"
-    },
-    {
-      "id": "P2.I.INTEGRATION",
-      "kind": "serial-integration",
-      "dependsOn": ["P2.R1.ARCH_SECURITY"],
-      "productCapacity": 0,
-      "materializesAcceptedPathsFrom": [
-        "P2.A",
-        "P2.B",
-        "P2.C",
-        "P2.D",
-        "P2.E",
-        "P2.R1.ARCH_SECURITY"
-      ],
-      "reservedWritablePaths": [
-        "src/features/runtime-instance-context/contracts/index.ts",
-        "src/features/runtime-instance-context/index.ts",
-        "src/features/workspace-registry/contracts/index.ts",
-        "src/features/workspace-registry/core/index.ts",
-        "src/features/workspace-registry/main/index.ts",
-        "src/features/workspace-registry/index.ts",
-        "src/features/internal-storage/main/infrastructure/worker/internalStorageSchema.ts",
-        "src/features/internal-storage/main/infrastructure/worker/internalStorageMigrations.ts",
-        "src/features/internal-storage/main/infrastructure/worker/internalStorageWorkerProtocol.ts",
-        "src/features/internal-storage/main/infrastructure/worker/InternalStorageWorkerCore.ts",
-        "src/features/internal-storage/main/composition/createInternalStorageFeature.ts",
-        "src/features/team-lifecycle/contracts/index.ts",
-        "src/features/team-lifecycle/core/application/index.ts",
-        "src/features/team-lifecycle/index.ts",
-        "src/main/composition/hosted/phase2ReadComposition.ts",
-        "src/main/ipc/teams.ts",
-        "src/main/http/teams.ts",
-        "src/renderer/api/httpClient.ts",
-        "test/architecture/hosted-web/phase-2/ipc-http-read-conformance.test.ts",
-        "docs/research/hosted-web/phase-2/integration-report.json",
-        ".codex-handoff/phase-02-p2-i.json"
-      ],
-      "requiredReads": [
-        "P2.A through P2.E accepted handoffs and exact blobs",
-        "P2.R1 review and handoff",
-        "P2.IF integrated foundation evidence",
-        "Phase 2 controller integration gate"
-      ],
-      "focusedChecks": [
-        "accepted-hash reconciliation",
-        "union of all lane focused checks",
-        "IPC/test-HTTP semantic conformance",
-        "typecheck, fast lint and exact-path Prettier",
-        "exact scope, diff, secret and private-path review"
-      ],
-      "acceptance": "Integrate only accepted lane/review bytes, own every shared export and composition edit, and keep hosted mutation absent.",
-      "handoff": ".codex-handoff/phase-02-p2-i.json",
-      "terminalState": "HOLD"
-    },
-    {
-      "id": "P2.F.MILESTONE",
-      "kind": "milestone-review",
-      "dependsOn": ["P2.I.INTEGRATION"],
-      "productCapacity": 0,
-      "writablePaths": [
-        "docs/research/hosted-web/phase-2/reviews/phase-2-jit-wave.md",
-        ".codex-handoff/phase-02-p2-f.json"
-      ],
-      "requiredReads": [
-        "complete integrated Phase 2 JIT wave and evidence",
-        "P2.I integration report and handoff",
-        "predecessor P1.F evidence",
-        "Phase 2 controller milestone gate"
-      ],
-      "focusedChecks": [
-        "fresh replay of integrated focused and conformance checks",
-        "evidence/hash/scope reconciliation",
-        "architecture, security and deferred-claim review"
-      ],
-      "acceptance": "Record a fresh ACCEPT or REJECT without product edits or successor authorization.",
-      "handoff": ".codex-handoff/phase-02-p2-f.json",
       "terminalState": "HOLD"
     }
   ],
-  "focusedChecks": {
-    "allProductNodes": [
-      "the packet's exact focused Vitest command",
-      "pnpm lint:fast:files -- <exact changed TypeScript paths>",
-      "pnpm typecheck",
-      "pnpm exec prettier --check <exact writable text paths>",
-      "git diff --check",
-      "exact ownership diff",
-      "secret and private-path scan"
+  "productMechanicalGates": [
+    "binding schema, exact-40-hex values, canonical source, ordered-parent and attempt-ID equality",
+    "fresh live-base comparison with attempt.resolvedBaseSha; inequality invalidates the attempt",
+    "exact actual-conflict scope and byte equality for every mechanically merged non-conflict path",
+    "zero unmerged index entries and zero unresolved conflict markers",
+    "all focused tests selected for every conflict path and both parent behaviors",
+    "pnpm typecheck",
+    "pnpm lint:fast:files -- <exact changed TypeScript and TSX conflict paths>",
+    "pnpm exec prettier --check <exact changed text conflict paths>",
+    "git diff --check",
+    "exact diff, binary, symlink, secret, credential, provider/auth payload and private/real-project path classification"
+  ],
+  "semanticReview": {
+    "singleCombinedReviewer": true,
+    "separateMechanicalReviewer": false,
+    "dimensions": [
+      "both-parent behavior preservation in every conflict resolution",
+      "integration coherence across the complete resolved tree",
+      "Clean Architecture, DDD, SOLID and documented feature-boundary compliance",
+      "security, trust-boundary, path, auth/provider and data-exposure regression review",
+      "focused-test adequacy and consistency with controller mechanical evidence",
+      "absence of whole-side selection, unrelated cleanup, scope widening or concealed behavior deletion"
     ],
-    "filesystemLanes": [
-      "fresh marker-owned temporary project/runtime roots only",
-      "reject unmarked, pre-existing, ambient, home, real-project and symlink-escaped roots before access",
-      "marker-checked narrow cleanup only"
-    ]
+    "acceptance": "One fresh independent reviewer returns ACCEPT with P0/P1/P2 0/0/0 for the exact attempt ID, base SHA and accepted tree SHA.",
+    "rejection": "No promotion; only the controller may decide whether to admit a bounded replacement attempt under this same router."
   },
-  "handoffContract": {
-    "schema": "docs/hosted-web-phases/PACKET_STANDARD.md",
-    "required": [
-      "exact base and packet revision",
-      "exact changed paths",
-      "commands and exit codes",
-      "self-review result",
-      "evidence and proof levels",
-      "unverified claims",
-      "blockers and findings",
-      "next controller action",
-      "terminalState HOLD"
+  "driftPolicy": {
+    "comparisonPoints": [
+      "before controller mechanical rerun",
+      "before semantic reviewer admission",
+      "immediately before broker merge construction and push",
+      "during post-push GitHub head/base conflict proof"
     ],
-    "forbiddenClaims": [
-      "independent acceptance",
-      "integration",
-      "push or remote equality",
-      "successor launch",
-      "Phase 2 milestone acceptance"
-    ]
+    "onMismatch": "invalidate-only-the-bound-product-attempt",
+    "reusePacketRevision": true,
+    "reuseBindingFormat": true,
+    "newDocsRouterRequired": false,
+    "replacementCapacity": "one-new-atomic-attempt-after-the-invalidated-attempt-is-terminal"
   },
-  "nextAction": "independent-root-review-and-broker-integration"
+  "provenancePolicy": {
+    "primary": "Git commit SHA",
+    "acceptedTreeBinding": "Git tree SHA plus productAttemptId in runtime-owned records",
+    "repositoryHandoffManifests": false,
+    "hashOfManifestBookkeeping": false
+  },
+  "phase2PacketDisposition": {
+    "pathsReadOnly": true,
+    "productInputsAcceptedIntegrated": true,
+    "candidateOrProductLaunchLanguageCurrentAuthority": false,
+    "currentAuthority": "this execution index and its exact six companion router paths"
+  },
+  "forbidden": [
+    "durable packet pinning of an observed PR base SHA",
+    "old same-job continuation or dirty-worktree reuse",
+    "product edits outside exact actual conflict paths",
+    "Phase 2 packet edits by this router",
+    "a separate mechanical reviewer",
+    "one-parent, squash, patch-only, reversed-parent or whole-side merge promotion",
+    "repository handoff manifests or manifest-hash provenance",
+    "real-project access",
+    "agent-team launch or provisioning",
+    "product terminal, smoke, provider, auth or raw lifecycle activity",
+    "other repositories, broad documentation work or Fast mode",
+    "runtime DAG selection or successor authorization"
+  ],
+  "nextAction": "HOLD_FOR_PROJECT_CONTROLLER_PACKET_INTEGRATION",
+  "launchSuccessor": false
 }

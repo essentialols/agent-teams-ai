@@ -2,12 +2,14 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { writeJsonFileSync } = require('./atomicFile.js');
+const { getTeamBoardLockContext } = require('./boardLock.js');
 const reviewStateHelpers = require('./reviewState.js');
 
 const TASK_STATUSES = new Set(['pending', 'in_progress', 'completed', 'deleted']);
 const UUID_TASK_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TASK_STORAGE_IDENTITY = Symbol('taskStorageIdentity');
+const TASK_SCAN_SNAPSHOTS = Symbol('taskScanSnapshots');
 
 function nowIso() {
   return new Date().toISOString();
@@ -53,10 +55,41 @@ function attachTaskStorageIdentity(task, identity) {
   Object.defineProperty(task, TASK_STORAGE_IDENTITY, {
     configurable: false,
     enumerable: false,
-    value: identity,
+    value: Object.freeze({ ...identity }),
     writable: false,
   });
   return task;
+}
+
+function cloneTaskValue(value, seen = new Map()) {
+  if (value === null || typeof value !== 'object') return value;
+  if (seen.has(value)) return seen.get(value);
+
+  const clone = Array.isArray(value)
+    ? []
+    : Object.create(Object.getPrototypeOf(value) || Object.prototype);
+  seen.set(value, clone);
+
+  for (const key of Reflect.ownKeys(value)) {
+    if (Array.isArray(value) && key === 'length') continue;
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor) continue;
+    if ('value' in descriptor) {
+      descriptor.value = cloneTaskValue(descriptor.value, seen);
+    }
+    Object.defineProperty(clone, key, descriptor);
+  }
+
+  return clone;
+}
+
+function cloneTaskForCaller(task) {
+  const clonedTask = cloneTaskValue(task);
+  const storageIdentity = clonedTask[TASK_STORAGE_IDENTITY];
+  if (storageIdentity && !Object.isFrozen(storageIdentity)) {
+    Object.freeze(storageIdentity);
+  }
+  return clonedTask;
 }
 
 function normalizeTask(rawTask, filePath) {
@@ -117,6 +150,14 @@ function normalizeCreationCommand(value) {
 }
 
 function scanTaskRows(paths) {
+  const lockContext = getTeamBoardLockContext(paths);
+  const snapshotKey = path.resolve(paths.tasksDir);
+  const lockSnapshots = lockContext?.get(TASK_SCAN_SNAPSHOTS);
+  const existingSnapshot = lockSnapshots?.get(snapshotKey);
+  if (existingSnapshot) {
+    return existingSnapshot;
+  }
+
   ensureDir(paths.tasksDir);
   const entries = fs.readdirSync(paths.tasksDir);
   const rows = [];
@@ -197,7 +238,41 @@ function scanTaskRows(paths) {
     });
   }
 
-  return { rows, identityRows, anomalies, collidingTaskIds };
+  const rowsByCanonicalId = new Map(rows.map((row) => [row.canonicalTaskId, row]));
+  const identityRowsByPersistedId = new Map();
+  for (const row of identityRows) {
+    const persistedRows = identityRowsByPersistedId.get(row.persistedTaskId) || [];
+    persistedRows.push(row);
+    identityRowsByPersistedId.set(row.persistedTaskId, persistedRows);
+  }
+  const rowsByDisplayId = new Map();
+  for (const row of rows) {
+    const displayRows = rowsByDisplayId.get(row.task.displayId) || [];
+    displayRows.push(row);
+    rowsByDisplayId.set(row.task.displayId, displayRows);
+  }
+
+  const snapshot = {
+    rows,
+    rowsByCanonicalId,
+    rowsByDisplayId,
+    identityRows,
+    identityRowsByPersistedId,
+    identityClaims,
+    anomalies,
+    collidingTaskIds,
+  };
+  if (lockContext) {
+    const snapshots = lockSnapshots || new Map();
+    snapshots.set(snapshotKey, snapshot);
+    lockContext.set(TASK_SCAN_SNAPSHOTS, snapshots);
+  }
+  return snapshot;
+}
+
+function invalidateTaskScanSnapshot(paths) {
+  const lockContext = getTeamBoardLockContext(paths);
+  lockContext?.get(TASK_SCAN_SNAPSHOTS)?.delete(path.resolve(paths.tasksDir));
 }
 
 function sortTasks(tasks) {
@@ -222,10 +297,10 @@ function listTaskRows(paths, options = {}) {
   const includeDeleted = options.includeDeleted === true;
   const { rows, anomalies } = scanTaskRows(paths);
   const tasks = rows
-    .map((row) => row.task)
+    .map((row) => cloneTaskForCaller(row.task))
     .filter((task) => includeDeleted || task.status !== 'deleted');
   sortTasks(tasks);
-  return { tasks, anomalies };
+  return { tasks, anomalies: anomalies.map((anomaly) => cloneTaskValue(anomaly)) };
 }
 
 function listRawTasks(paths) {
@@ -253,7 +328,7 @@ function resolveTaskRow(paths, taskRef, options = {}) {
 
   const includeDeleted = options.includeDeleted === true;
   const scan = scanTaskRows(paths);
-  const exact = scan.rows.find((row) => row.canonicalTaskId === normalizedRef);
+  const exact = scan.rowsByCanonicalId.get(normalizedRef);
 
   if (exact) {
     if (!includeDeleted && exact.task.status === 'deleted') {
@@ -263,7 +338,9 @@ function resolveTaskRow(paths, taskRef, options = {}) {
     return exact;
   }
 
-  const nonCanonicalIdentityClaims = scan.identityRows.filter(
+  const nonCanonicalIdentityClaims = (
+    scan.identityRowsByPersistedId.get(normalizedRef) || []
+  ).filter(
     (row) => row.persistedTaskId !== row.canonicalTaskId && row.persistedTaskId === normalizedRef
   );
   if (nonCanonicalIdentityClaims.length > 0) {
@@ -275,9 +352,8 @@ function resolveTaskRow(paths, taskRef, options = {}) {
     );
   }
 
-  const byDisplay = scan.rows.filter(
-    (row) =>
-      row.task.displayId === normalizedRef && (includeDeleted || row.task.status !== 'deleted')
+  const byDisplay = (scan.rowsByDisplayId.get(normalizedRef) || []).filter(
+    (row) => includeDeleted || row.task.status !== 'deleted'
   );
   if (byDisplay.length > 1) {
     throw new Error(
@@ -300,7 +376,7 @@ function resolveTaskRef(paths, taskRef, options = {}) {
 }
 
 function readTask(paths, taskRef, options = {}) {
-  return resolveTaskRow(paths, taskRef, options).task;
+  return cloneTaskForCaller(resolveTaskRow(paths, taskRef, options).task);
 }
 
 function appendHistoryEvent(events, event) {
@@ -438,13 +514,15 @@ function writeTask(paths, task) {
   }
   const persistedTask =
     persistedTaskId === canonicalTaskId ? task : { ...task, id: persistedTaskId };
-  writeJson(getTaskPath(paths, canonicalTaskId), persistedTask);
+  try {
+    writeJson(getTaskPath(paths, canonicalTaskId), persistedTask);
+  } finally {
+    invalidateTaskScanSnapshot(paths);
+  }
 }
 
 function assertTaskIdIsAvailable(paths, canonicalTaskId) {
-  const claimedRows = scanTaskRows(paths).identityRows.filter(
-    (row) => row.canonicalTaskId === canonicalTaskId || row.persistedTaskId === canonicalTaskId
-  );
+  const claimedRows = scanTaskRows(paths).identityClaims.get(canonicalTaskId) || [];
   if (claimedRows.length === 0) return;
   throw new Error(
     `Task id collision: "${canonicalTaskId}" is already claimed by ${claimedRows

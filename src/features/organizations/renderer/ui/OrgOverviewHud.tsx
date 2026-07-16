@@ -30,7 +30,10 @@ export function OrgOverviewHud({
 
   return (
     <TooltipProvider delayDuration={250}>
-      <div className="absolute inset-0 overflow-y-auto px-4 pb-6 pt-24">
+      <div
+        data-organization-overview-scroll
+        className="pointer-events-auto absolute inset-0 overflow-y-auto px-4 pb-6 pt-24"
+      >
         <div
           data-organization-overview-grid
           className="mx-auto grid min-h-full max-w-[750px] grid-cols-[repeat(auto-fit,minmax(238px,238px))] content-center justify-center gap-5"

@@ -102,6 +102,11 @@ describe('OrgOverviewHud', () => {
     });
 
     const card = host.querySelector<HTMLElement>('[data-organization-overview-card="acme"]');
+    expect(
+      host
+        .querySelector('[data-organization-overview-scroll]')
+        ?.classList.contains('pointer-events-auto')
+    ).toBe(true);
     expect(host.querySelector('[data-organization-overview-grid]')).not.toBeNull();
     expect(card?.classList.contains('absolute')).toBe(false);
     expect(card?.textContent).toContain('Acme Platform');

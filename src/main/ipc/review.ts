@@ -4,10 +4,12 @@
  * Паттерн: module-level state + guard + wrapReviewHandler (как teams.ts)
  */
 
+import { validateTaskId, validateTeamName } from '@main/ipc/guards';
 import { createIpcWrapper } from '@main/ipc/ipcWrapper';
 import { EditorFileWatcher } from '@main/services/editor';
 import { ReviewDecisionStore } from '@main/services/team/ReviewDecisionStore';
-import { validateFilePath } from '@main/utils/pathValidation';
+import { TeamConfigReader } from '@main/services/team/TeamConfigReader';
+import { isPathWithinRoot, matchesSensitivePattern } from '@main/utils/pathValidation';
 import { safeSendToRenderer } from '@main/utils/safeWebContentsSend';
 import {
   REVIEW_APPLY_DECISIONS,
@@ -46,21 +48,28 @@ import type {
   ApplyReviewResult,
   ChangeStats,
   ConflictCheckResult,
+  FileChangeSummary,
   FileChangeWithContent,
+  FileReviewDecision,
   HunkDecision,
   RejectResult,
+  ReviewFileScope,
   SnippetDiff,
   TaskChangeRequestOptions,
   TaskChangeSetV2,
   TeamTaskChangeSummariesResponse,
   TeamTaskChangeSummaryRequest,
 } from '@shared/types/review';
+import type { TeamConfig } from '@shared/types/team';
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from 'electron';
 
 const wrapReviewHandler = createIpcWrapper('IPC:review');
 const logger = createLogger('IPC:review');
 const TEAM_TASK_CHANGE_SUMMARY_IPC_RAW_REQUEST_LIMIT = 1_000;
 const TEAM_TASK_CHANGE_SUMMARY_IPC_UNIQUE_REQUEST_LIMIT = 201;
+const MAX_REVIEW_DECISIONS = 2_000;
+const MAX_REVIEW_SNIPPETS_PER_FILE = 10_000;
+const MAX_REVIEW_HUNK_DECISIONS_PER_FILE = 100_000;
 
 // --- Module-level state ---
 
@@ -68,6 +77,7 @@ let changeExtractor: ChangeExtractorService | null = null;
 let reviewApplier: ReviewApplierService | null = null;
 let fileContentResolver: FileContentResolver | null = null;
 let gitDiffFallback: GitDiffFallback | null = null;
+let reviewConfigReader: Pick<TeamConfigReader, 'getConfig'> = new TeamConfigReader();
 const reviewDecisionStore = new ReviewDecisionStore();
 const reviewFileWatcher = new EditorFileWatcher();
 let reviewWatcherProjectRoot: string | null = null;
@@ -88,6 +98,439 @@ function getContentResolver(): FileContentResolver {
   return fileContentResolver;
 }
 
+interface AuthorizedReviewRoot {
+  lexicalPath: string;
+  realPath: string;
+}
+
+interface ReviewPathAuthorization {
+  roots: AuthorizedReviewRoot[];
+  reviewedFiles: Map<string, FileChangeSummary> | null;
+  resolutionMemberName: string;
+}
+
+function assertNonEmptyString(value: unknown, field: string): asserts value is string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`Invalid ${field}: non-empty string required`);
+  }
+}
+
+function assertOptionalString(value: unknown, field: string): asserts value is string | undefined {
+  if (value !== undefined && typeof value !== 'string') {
+    throw new Error(`Invalid ${field}: string required`);
+  }
+}
+
+function normalizeReviewIdentity(value: string | undefined): string | undefined {
+  const normalized = value?.trim();
+  return normalized ? normalized : undefined;
+}
+
+function parseReviewFileScope(value: unknown): ReviewFileScope {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid review scope');
+  }
+  const raw = value as Record<string, unknown>;
+  const team = validateTeamName(raw.teamName);
+  if (!team.valid || !team.value) {
+    throw new Error(team.error ?? 'Invalid teamName');
+  }
+  assertOptionalString(raw.memberName, 'memberName');
+  assertOptionalString(raw.taskId, 'taskId');
+  const memberName = normalizeReviewIdentity(raw.memberName);
+  const taskId = normalizeReviewIdentity(raw.taskId);
+  if (taskId) {
+    const task = validateTaskId(taskId);
+    if (!task.valid || !task.value) {
+      throw new Error(task.error ?? 'Invalid taskId');
+    }
+  }
+  if (memberName && (memberName.length > 256 || memberName.includes('\0'))) {
+    throw new Error('Invalid memberName');
+  }
+  return {
+    teamName: team.value,
+    ...(memberName ? { memberName } : {}),
+    ...(taskId ? { taskId } : {}),
+  };
+}
+
+function collectConfiguredReviewRoots(config: TeamConfig): string[] {
+  const roots: string[] = [];
+  const add = (value: unknown): void => {
+    if (typeof value === 'string' && value.trim()) {
+      roots.push(value.trim());
+    }
+  };
+  add(config.projectPath);
+
+  const members = Array.isArray(config.members) ? config.members : [];
+  for (const member of members) {
+    add(member.cwd);
+  }
+  return [...new Set(roots.map((root) => path.resolve(path.normalize(root))))];
+}
+
+async function resolveAuthorizedReviewRoot(rootPath: string): Promise<AuthorizedReviewRoot | null> {
+  if (!path.isAbsolute(rootPath)) {
+    return null;
+  }
+  try {
+    const [rootStat, realPath] = await Promise.all([fs.stat(rootPath), fs.realpath(rootPath)]);
+    if (!rootStat.isDirectory()) {
+      return null;
+    }
+    return {
+      lexicalPath: path.resolve(path.normalize(rootPath)),
+      realPath: path.resolve(path.normalize(realPath)),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function normalizeReviewPathForIdentity(filePath: string): string {
+  const normalized = path.resolve(path.normalize(filePath));
+  return process.platform === 'win32' ? normalized.toLocaleLowerCase() : normalized;
+}
+
+function collectAuthoritativeReviewedFiles(
+  files: FileChangeSummary[]
+): Map<string, FileChangeSummary> {
+  const reviewedFiles = new Map<string, FileChangeSummary>();
+  const add = (filePath: string | null, owner: FileChangeSummary): void => {
+    if (filePath && path.isAbsolute(path.normalize(filePath))) {
+      reviewedFiles.set(normalizeReviewPathForIdentity(filePath), owner);
+    }
+  };
+
+  for (const file of files) {
+    add(file.filePath, file);
+    for (const snippet of file.snippets) {
+      add(snippet.filePath, file);
+    }
+  }
+  return reviewedFiles;
+}
+
+async function resolveReviewPathAuthorization(
+  scopeValue: unknown,
+  options: { requireIdentity?: boolean } = {}
+): Promise<{ scope: ReviewFileScope; authorization: ReviewPathAuthorization }> {
+  const scope = parseReviewFileScope(scopeValue);
+  if (options.requireIdentity && !scope.taskId && !scope.memberName) {
+    throw new Error('Review mutation requires taskId or memberName');
+  }
+  const config = await reviewConfigReader.getConfig(scope.teamName);
+  if (!config) {
+    throw new Error(`Review team config is unavailable: ${scope.teamName}`);
+  }
+
+  const roots = (
+    await Promise.all(collectConfiguredReviewRoots(config).map(resolveAuthorizedReviewRoot))
+  ).filter((root): root is AuthorizedReviewRoot => Boolean(root));
+  if (roots.length === 0) {
+    throw new Error('Review project/worktree root is unavailable');
+  }
+
+  let reviewedFiles: Map<string, FileChangeSummary> | null = null;
+  let resolutionMemberName = scope.memberName ?? '';
+  if (scope.taskId) {
+    const changeSet = await getChangeExtractor().getTaskChanges(scope.teamName, scope.taskId);
+    reviewedFiles = collectAuthoritativeReviewedFiles(changeSet.files);
+    const authoritativeMemberName = normalizeReviewIdentity(changeSet.scope?.memberName);
+    if (
+      scope.memberName &&
+      authoritativeMemberName &&
+      scope.memberName !== authoritativeMemberName
+    ) {
+      throw new Error('Review memberName does not match the authoritative task scope');
+    }
+    resolutionMemberName = authoritativeMemberName ?? '';
+  } else if (scope.memberName) {
+    const changeSet = await getChangeExtractor().getAgentChanges(scope.teamName, scope.memberName);
+    reviewedFiles = collectAuthoritativeReviewedFiles(changeSet.files);
+  }
+
+  return { scope, authorization: { roots, reviewedFiles, resolutionMemberName } };
+}
+
+async function resolveNearestExistingRealPath(filePath: string): Promise<string> {
+  let current = filePath;
+  for (;;) {
+    try {
+      return path.resolve(path.normalize(await fs.realpath(current)));
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') {
+        throw error;
+      }
+      const parent = path.dirname(current);
+      if (parent === current) {
+        throw new Error('No existing ancestor for review file path');
+      }
+      current = parent;
+    }
+  }
+}
+
+async function validateAuthorizedReviewFilePath(
+  authorization: ReviewPathAuthorization,
+  filePathValue: unknown,
+  options: { requireReviewedFile: boolean }
+): Promise<string> {
+  assertNonEmptyString(filePathValue, 'filePath');
+  if (!path.isAbsolute(path.normalize(filePathValue))) {
+    throw new Error('Review file path must be absolute');
+  }
+  const normalizedPath = path.resolve(path.normalize(filePathValue));
+  if (matchesSensitivePattern(normalizedPath)) {
+    throw new Error('Access to sensitive files is not allowed');
+  }
+  if (
+    options.requireReviewedFile &&
+    (!authorization.reviewedFiles ||
+      !authorization.reviewedFiles.has(normalizeReviewPathForIdentity(normalizedPath)))
+  ) {
+    throw new Error('File is not part of the reviewed scope');
+  }
+
+  let targetRealPath: string;
+  try {
+    const targetStat = await fs.lstat(normalizedPath);
+    targetRealPath = path.resolve(path.normalize(await fs.realpath(normalizedPath)));
+    const resolvedStat = targetStat.isSymbolicLink() ? await fs.stat(targetRealPath) : targetStat;
+    if (!resolvedStat.isFile()) {
+      throw new Error('Review target must be a regular file');
+    }
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== 'ENOENT' && code !== 'ENOTDIR') {
+      throw error;
+    }
+    targetRealPath = await resolveNearestExistingRealPath(path.dirname(normalizedPath));
+  }
+  if (matchesSensitivePattern(targetRealPath)) {
+    throw new Error('Access to sensitive files is not allowed');
+  }
+
+  const allowed = authorization.roots.some(
+    (root) =>
+      (isPathWithinRoot(normalizedPath, root.lexicalPath) ||
+        isPathWithinRoot(normalizedPath, root.realPath)) &&
+      isPathWithinRoot(targetRealPath, root.realPath)
+  );
+  if (!allowed) {
+    throw new Error('Review file path is outside the authoritative project/worktree');
+  }
+  return normalizedPath;
+}
+
+function getAuthoritativeReviewedFile(
+  authorization: ReviewPathAuthorization,
+  filePath: string
+): FileChangeSummary {
+  const file = authorization.reviewedFiles?.get(normalizeReviewPathForIdentity(filePath));
+  if (!file) {
+    throw new Error('File is not part of the reviewed scope');
+  }
+  return file;
+}
+
+async function resolveAuthoritativeFileContent(
+  scope: ReviewFileScope,
+  authorization: ReviewPathAuthorization,
+  filePath: string
+): Promise<FileChangeWithContent> {
+  const authoritativeFile = getAuthoritativeReviewedFile(authorization, filePath);
+  assertSnippetShapes(authoritativeFile.snippets);
+  await validateSnippetPaths(authorization, authoritativeFile.snippets, {
+    requireReviewedFile: true,
+  });
+  const resolved = await getContentResolver().getFileContent(
+    scope.teamName,
+    authorization.resolutionMemberName,
+    filePath,
+    authoritativeFile.snippets
+  );
+  return {
+    ...resolved,
+    filePath,
+    snippets: authoritativeFile.snippets,
+  };
+}
+
+function assertHunkIndices(value: unknown): asserts value is number[] {
+  if (
+    !Array.isArray(value) ||
+    value.length > MAX_REVIEW_HUNK_DECISIONS_PER_FILE ||
+    value.some((index) => !Number.isSafeInteger(index) || index < 0)
+  ) {
+    throw new Error('Invalid hunkIndices');
+  }
+}
+
+function assertSnippetShapes(value: unknown): asserts value is SnippetDiff[] {
+  if (!Array.isArray(value) || value.length > MAX_REVIEW_SNIPPETS_PER_FILE) {
+    throw new Error('Invalid snippets array');
+  }
+  for (const snippet of value) {
+    if (!snippet || typeof snippet !== 'object' || Array.isArray(snippet)) {
+      throw new Error('Invalid review snippet');
+    }
+    const raw = snippet as Record<string, unknown>;
+    for (const field of [
+      'toolUseId',
+      'filePath',
+      'toolName',
+      'type',
+      'oldString',
+      'newString',
+      'timestamp',
+    ]) {
+      if (typeof raw[field] !== 'string') {
+        throw new Error(`Invalid review snippet ${field}`);
+      }
+    }
+    if (typeof raw.replaceAll !== 'boolean' || typeof raw.isError !== 'boolean') {
+      throw new Error('Invalid review snippet flags');
+    }
+    if (raw.ledger !== undefined) {
+      if (!raw.ledger || typeof raw.ledger !== 'object' || Array.isArray(raw.ledger)) {
+        throw new Error('Invalid review ledger metadata');
+      }
+      const relation = (raw.ledger as Record<string, unknown>).relation;
+      if (relation !== undefined) {
+        if (!relation || typeof relation !== 'object' || Array.isArray(relation)) {
+          throw new Error('Invalid review relation');
+        }
+        const relationRaw = relation as Record<string, unknown>;
+        if (
+          (relationRaw.kind !== 'rename' && relationRaw.kind !== 'copy') ||
+          typeof relationRaw.oldPath !== 'string' ||
+          !relationRaw.oldPath ||
+          typeof relationRaw.newPath !== 'string' ||
+          !relationRaw.newPath
+        ) {
+          throw new Error('Invalid review relation');
+        }
+      }
+    }
+  }
+}
+
+async function validateSnippetPaths(
+  authorization: ReviewPathAuthorization,
+  snippets: SnippetDiff[],
+  options: { requireReviewedFile?: boolean } = {}
+): Promise<void> {
+  const requireReviewedFile = options.requireReviewedFile === true;
+  await Promise.all(
+    snippets.map((snippet) =>
+      validateAuthorizedReviewFilePath(authorization, snippet.filePath, {
+        requireReviewedFile,
+      })
+    )
+  );
+
+  for (const snippet of snippets) {
+    const relation = snippet.ledger?.relation;
+    if (!relation) continue;
+    const slashFilePath = snippet.filePath.replace(/\\/g, '/');
+    const relationPaths = [relation.oldPath, relation.newPath] as const;
+    if (relationPaths.every((relationPath) => path.isAbsolute(path.normalize(relationPath)))) {
+      for (const relationPath of relationPaths) {
+        await validateAuthorizedReviewFilePath(authorization, relationPath, {
+          requireReviewedFile,
+        });
+      }
+      continue;
+    }
+    if (relationPaths.some((relationPath) => path.isAbsolute(path.normalize(relationPath)))) {
+      throw new Error('Review relation paths must both be absolute or both be relative');
+    }
+
+    let resolvedRelationPaths: [string, string] | null = null;
+    for (const [anchorRelationPath, targetRelationPath] of [
+      [relation.oldPath, relation.newPath],
+      [relation.newPath, relation.oldPath],
+    ] as const) {
+      const slashAnchor = anchorRelationPath.replace(/\\/g, '/');
+      if (
+        slashFilePath === slashAnchor ||
+        slashFilePath.toLocaleLowerCase().endsWith(`/${slashAnchor.toLocaleLowerCase()}`)
+      ) {
+        const prefix = slashFilePath.slice(0, slashFilePath.length - slashAnchor.length);
+        const anchorPath = path.resolve(path.normalize(`${prefix}${slashAnchor}`));
+        const targetPath = path.resolve(
+          path.normalize(`${prefix}${targetRelationPath.replace(/\\/g, '/')}`)
+        );
+        resolvedRelationPaths =
+          anchorRelationPath === relation.oldPath
+            ? [anchorPath, targetPath]
+            : [targetPath, anchorPath];
+        break;
+      }
+    }
+    if (!resolvedRelationPaths) {
+      throw new Error('Review relation is not anchored to an authoritative snippet path');
+    }
+    for (const relationPath of resolvedRelationPaths) {
+      await validateAuthorizedReviewFilePath(authorization, relationPath, {
+        requireReviewedFile,
+      });
+    }
+  }
+}
+
+function assertReviewDecisionShape(value: unknown): asserts value is FileReviewDecision {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid review decision');
+  }
+  const raw = value as Record<string, unknown>;
+  assertNonEmptyString(raw.filePath, 'decision.filePath');
+  if (!['accepted', 'rejected', 'pending'].includes(String(raw.fileDecision))) {
+    throw new Error('Invalid fileDecision');
+  }
+  if (
+    !raw.hunkDecisions ||
+    typeof raw.hunkDecisions !== 'object' ||
+    Array.isArray(raw.hunkDecisions) ||
+    Object.keys(raw.hunkDecisions).length > MAX_REVIEW_HUNK_DECISIONS_PER_FILE
+  ) {
+    throw new Error('Invalid hunkDecisions');
+  }
+  for (const [index, decision] of Object.entries(raw.hunkDecisions)) {
+    if (!/^\d+$/.test(index) || !['accepted', 'rejected', 'pending'].includes(String(decision))) {
+      throw new Error('Invalid hunk decision');
+    }
+  }
+  if (raw.hunkContextHashes !== undefined) {
+    if (
+      !raw.hunkContextHashes ||
+      typeof raw.hunkContextHashes !== 'object' ||
+      Array.isArray(raw.hunkContextHashes) ||
+      Object.keys(raw.hunkContextHashes).length > MAX_REVIEW_HUNK_DECISIONS_PER_FILE
+    ) {
+      throw new Error('Invalid hunkContextHashes');
+    }
+    for (const [index, hash] of Object.entries(raw.hunkContextHashes)) {
+      if (!/^\d+$/.test(index) || typeof hash !== 'string' || hash.length === 0) {
+        throw new Error('Invalid hunk context hash');
+      }
+    }
+  }
+  if (raw.snippets !== undefined) assertSnippetShapes(raw.snippets);
+  for (const field of ['originalFullContent', 'modifiedFullContent']) {
+    if (raw[field] !== undefined && raw[field] !== null && typeof raw[field] !== 'string') {
+      throw new Error(`Invalid ${field}`);
+    }
+  }
+  if (raw.isNewFile !== undefined && typeof raw.isNewFile !== 'boolean') {
+    throw new Error('Invalid isNewFile');
+  }
+}
+
 // --- Forward-compatible config object ---
 
 export interface ReviewHandlerDeps {
@@ -95,6 +538,7 @@ export interface ReviewHandlerDeps {
   applier?: ReviewApplierService;
   contentResolver?: FileContentResolver;
   gitFallback?: GitDiffFallback;
+  configReader?: Pick<TeamConfigReader, 'getConfig'>;
 }
 
 export function initializeReviewHandlers(deps: ReviewHandlerDeps): void {
@@ -102,6 +546,7 @@ export function initializeReviewHandlers(deps: ReviewHandlerDeps): void {
   if (deps.applier) reviewApplier = deps.applier;
   if (deps.contentResolver) fileContentResolver = deps.contentResolver;
   if (deps.gitFallback) gitDiffFallback = deps.gitFallback;
+  reviewConfigReader = deps.configReader ?? new TeamConfigReader();
 }
 
 export function registerReviewHandlers(ipcMain: IpcMain): void {
@@ -289,38 +734,90 @@ async function handleGetChangeStats(
 
 async function handleCheckConflict(
   _event: IpcMainInvokeEvent,
-  filePath: string,
-  expectedModified: string
+  scopeValue: unknown,
+  filePathValue: unknown,
+  expectedModified: unknown
 ): Promise<IpcResult<ConflictCheckResult>> {
-  return wrapReviewHandler('checkConflict', () =>
-    getApplier().checkConflict(filePath, expectedModified)
-  );
+  return wrapReviewHandler('checkConflict', async () => {
+    if (typeof expectedModified !== 'string') {
+      throw new Error('Invalid expectedModified');
+    }
+    const { authorization } = await resolveReviewPathAuthorization(scopeValue, {
+      requireIdentity: true,
+    });
+    const filePath = await validateAuthorizedReviewFilePath(authorization, filePathValue, {
+      requireReviewedFile: true,
+    });
+    return getApplier().checkConflict(filePath, expectedModified);
+  });
 }
 
 async function handleRejectHunks(
   _event: IpcMainInvokeEvent,
-  teamName: string,
-  filePath: string,
-  original: string,
-  modified: string,
-  hunkIndices: number[],
-  snippets: SnippetDiff[]
+  scopeValue: unknown,
+  filePathValue: unknown,
+  hunkIndices: unknown
 ): Promise<IpcResult<RejectResult>> {
-  return wrapReviewHandler('rejectHunks', () =>
-    getApplier().rejectHunks(teamName, filePath, original, modified, hunkIndices, snippets)
-  );
+  return wrapReviewHandler('rejectHunks', async () => {
+    assertHunkIndices(hunkIndices);
+    const { scope, authorization } = await resolveReviewPathAuthorization(scopeValue, {
+      requireIdentity: true,
+    });
+    const filePath = await validateAuthorizedReviewFilePath(authorization, filePathValue, {
+      requireReviewedFile: true,
+    });
+    const authoritativeContent = await resolveAuthoritativeFileContent(
+      scope,
+      authorization,
+      filePath
+    );
+    if (
+      authoritativeContent.originalFullContent === null ||
+      authoritativeContent.modifiedFullContent === null
+    ) {
+      throw new Error('Authoritative review contents are unavailable');
+    }
+    return getApplier().rejectHunks(
+      scope.teamName,
+      filePath,
+      authoritativeContent.originalFullContent,
+      authoritativeContent.modifiedFullContent,
+      hunkIndices,
+      authoritativeContent.snippets
+    );
+  });
 }
 
 async function handleRejectFile(
   _event: IpcMainInvokeEvent,
-  teamName: string,
-  filePath: string,
-  original: string,
-  modified: string
+  scopeValue: unknown,
+  filePathValue: unknown
 ): Promise<IpcResult<RejectResult>> {
-  return wrapReviewHandler('rejectFile', () =>
-    getApplier().rejectFile(teamName, filePath, original, modified)
-  );
+  return wrapReviewHandler('rejectFile', async () => {
+    const { scope, authorization } = await resolveReviewPathAuthorization(scopeValue, {
+      requireIdentity: true,
+    });
+    const filePath = await validateAuthorizedReviewFilePath(authorization, filePathValue, {
+      requireReviewedFile: true,
+    });
+    const authoritativeContent = await resolveAuthoritativeFileContent(
+      scope,
+      authorization,
+      filePath
+    );
+    if (
+      authoritativeContent.originalFullContent === null ||
+      authoritativeContent.modifiedFullContent === null
+    ) {
+      throw new Error('Authoritative review contents are unavailable');
+    }
+    return getApplier().rejectFile(
+      scope.teamName,
+      filePath,
+      authoritativeContent.originalFullContent,
+      authoritativeContent.modifiedFullContent
+    );
+  });
 }
 
 async function handlePreviewReject(
@@ -338,53 +835,52 @@ async function handlePreviewReject(
 
 async function handleApplyDecisions(
   _event: IpcMainInvokeEvent,
-  request: ApplyReviewRequest
+  requestValue: unknown
 ): Promise<IpcResult<ApplyReviewResult>> {
-  if (!request || !Array.isArray(request.decisions)) {
+  if (!requestValue || typeof requestValue !== 'object' || Array.isArray(requestValue)) {
+    return { success: false, error: 'Invalid request object' };
+  }
+  const request = requestValue as ApplyReviewRequest;
+  if (!Array.isArray(request.decisions) || request.decisions.length > MAX_REVIEW_DECISIONS) {
     return { success: false, error: 'Invalid request: decisions array required' };
   }
   return wrapReviewHandler('applyDecisions', async () => {
-    // Build file contents map for the applier. Prefer renderer-provided context
-    // (snippets + full contents), falling back to resolver when missing.
+    const { scope, authorization } = await resolveReviewPathAuthorization(request, {
+      requireIdentity: true,
+    });
+    const validatedDecisions: FileReviewDecision[] = [];
     const fileContents = new Map<string, FileChangeWithContent>();
-    const memberName = request.memberName ?? '';
-
-    for (const d of request.decisions) {
-      const snippets = d.snippets ?? [];
-
-      // If renderer provided full contents, use them directly.
-      if (d.originalFullContent !== undefined || d.modifiedFullContent !== undefined) {
-        fileContents.set(d.filePath, {
-          filePath: d.filePath,
-          relativePath: d.filePath.split(/[\\/]/).filter(Boolean).slice(-3).join('/'),
-          snippets,
-          linesAdded: 0,
-          linesRemoved: 0,
-          isNewFile: d.isNewFile ?? snippets.some((s) => s.type === 'write-new'),
-          originalFullContent: d.originalFullContent ?? null,
-          modifiedFullContent: d.modifiedFullContent ?? null,
-          // Source is informational only; "unavailable" avoids lying.
-          contentSource: 'unavailable',
-        });
-        continue;
-      }
-
-      // Fallback: resolve in main process (best-effort; task mode may not have memberName).
-      const resolved = await getContentResolver().getFileContent(
-        request.teamName,
-        memberName,
-        d.filePath,
-        snippets
+    for (const decision of request.decisions) {
+      assertReviewDecisionShape(decision);
+      const filePath = await validateAuthorizedReviewFilePath(authorization, decision.filePath, {
+        requireReviewedFile: true,
+      });
+      fileContents.set(
+        filePath,
+        await resolveAuthoritativeFileContent(scope, authorization, filePath)
       );
-      fileContents.set(d.filePath, resolved);
+      validatedDecisions.push({
+        filePath,
+        fileDecision: decision.fileDecision,
+        hunkDecisions: decision.hunkDecisions,
+        ...(decision.hunkContextHashes ? { hunkContextHashes: decision.hunkContextHashes } : {}),
+      });
     }
+    const validatedRequest: ApplyReviewRequest = {
+      teamName: scope.teamName,
+      ...(scope.taskId ? { taskId: scope.taskId } : {}),
+      ...(authorization.resolutionMemberName
+        ? { memberName: authorization.resolutionMemberName }
+        : {}),
+      decisions: validatedDecisions,
+    };
 
-    const result = await getApplier().applyReviewDecisions(request, fileContents);
+    const result = await getApplier().applyReviewDecisions(validatedRequest, fileContents);
 
     // Invalidate resolved file content cache after applying decisions so subsequent
     // diff operations read the latest disk state (avoids "stuck" decisions in instant-apply flows).
     try {
-      for (const d of request.decisions) {
+      for (const d of validatedRequest.decisions) {
         getContentResolver().invalidateFile(d.filePath);
       }
     } catch (error) {
@@ -397,37 +893,59 @@ async function handleApplyDecisions(
 
 async function handleGetFileContent(
   _event: IpcMainInvokeEvent,
-  teamName: string,
-  memberName: string,
-  filePath: string,
-  snippets: SnippetDiff[] = []
+  teamNameValue: unknown,
+  memberNameValue: unknown,
+  filePathValue: unknown,
+  snippetsValue: unknown = []
 ): Promise<IpcResult<FileChangeWithContent>> {
-  return wrapReviewHandler('getFileContent', () =>
-    getContentResolver().getFileContent(teamName, memberName, filePath, snippets)
-  );
+  return wrapReviewHandler('getFileContent', async () => {
+    assertOptionalString(memberNameValue, 'memberName');
+    assertSnippetShapes(snippetsValue);
+    const { scope, authorization } = await resolveReviewPathAuthorization({
+      teamName: teamNameValue,
+      memberName: normalizeReviewIdentity(memberNameValue),
+    });
+    const filePath = await validateAuthorizedReviewFilePath(authorization, filePathValue, {
+      requireReviewedFile: false,
+    });
+    await validateSnippetPaths(authorization, snippetsValue);
+    return getContentResolver().getFileContent(
+      scope.teamName,
+      scope.memberName ?? '',
+      filePath,
+      snippetsValue
+    );
+  });
 }
 
 // --- Editable diff Handlers ---
 
 async function handleSaveEditedFile(
   _event: IpcMainInvokeEvent,
-  filePath: string,
-  content: string,
-  projectPath?: string
+  scopeValue: unknown,
+  filePathValue: unknown,
+  content: unknown,
+  expectedCurrentContent?: string | null
 ): Promise<IpcResult<{ success: boolean }>> {
-  if (!filePath || typeof content !== 'string') {
+  if (
+    typeof filePathValue !== 'string' ||
+    typeof content !== 'string' ||
+    (expectedCurrentContent !== undefined &&
+      expectedCurrentContent !== null &&
+      typeof expectedCurrentContent !== 'string')
+  ) {
     return { success: false, error: 'Invalid parameters' };
   }
-  const resolvedProjectPath = projectPath && typeof projectPath === 'string' ? projectPath : null;
-  const pathCheck = validateFilePath(filePath, resolvedProjectPath);
-  if (!pathCheck.valid) {
-    logger.error(`saveEditedFile blocked: ${String(pathCheck.error)} (path: ${String(filePath)})`);
-    return { success: false, error: `Path validation failed: ${String(pathCheck.error)}` };
-  }
   return wrapReviewHandler('saveEditedFile', async () => {
-    const result = await getApplier().saveEditedFile(pathCheck.normalizedPath!, content);
+    const { authorization } = await resolveReviewPathAuthorization(scopeValue, {
+      requireIdentity: true,
+    });
+    const filePath = await validateAuthorizedReviewFilePath(authorization, filePathValue, {
+      requireReviewedFile: true,
+    });
+    const result = await getApplier().saveEditedFile(filePath, content, expectedCurrentContent);
     // Invalidate cached content so next fetch reads the saved version from disk
-    getContentResolver().invalidateFile(pathCheck.normalizedPath!);
+    getContentResolver().invalidateFile(filePath);
     return result;
   });
 }

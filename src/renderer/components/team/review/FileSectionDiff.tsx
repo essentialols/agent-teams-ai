@@ -26,10 +26,17 @@ import type { FileChangeSummary } from '@shared/types/review';
 interface FileSectionDiffProps {
   file: FileChangeSummary;
   fileContent: FileChangeWithContent | null;
+  draftContent?: string;
   isLoading: boolean;
+  applying: boolean;
   collapseUnchanged: boolean;
-  onHunkAccepted: (filePath: string, hunkIndex: number) => void;
-  onHunkRejected: (filePath: string, hunkIndex: number) => void;
+  onHunkAccepted: (filePath: string, hunkIndex: number) => boolean | void;
+  onHunkRejected: (
+    filePath: string,
+    hunkIndex: number,
+    beforeContent: string,
+    afterContent: string
+  ) => boolean | void;
   onFullyViewed: (filePath: string) => void;
   onContentChanged: (filePath: string, content: string) => void;
   onEditorViewReady: (filePath: string, view: EditorView | null) => void;
@@ -44,7 +51,9 @@ interface FileSectionDiffProps {
 export const FileSectionDiff = ({
   file,
   fileContent,
+  draftContent,
   isLoading,
+  applying,
   collapseUnchanged,
   onHunkAccepted,
   onHunkRejected,
@@ -63,6 +72,30 @@ export const FileSectionDiff = ({
   const sentinelRef = useRef<HTMLDivElement>(null);
   const hasSnippetText = hasReviewSnippetText(file);
   const canRenderSnippetPreview = hasSnippetText && shouldRenderSnippetReviewPreview(file.snippets);
+  const baselineModified = getResolvedReviewModifiedContent(file, fileContent);
+  // Keep the live editor uncontrolled while it is mounted, but seed a recreated editor
+  // (for example after collapse/expand) from the latest draft instead of the disk baseline.
+  const initialModifiedRef = useRef<{
+    baseline: string | null;
+    discardCounter: number;
+    value: string | null;
+  }>({
+    baseline: null,
+    discardCounter: -1,
+    value: null,
+  });
+  if (
+    initialModifiedRef.current.baseline !== baselineModified ||
+    initialModifiedRef.current.discardCounter !== discardCounter
+  ) {
+    initialModifiedRef.current = {
+      baseline: baselineModified,
+      discardCounter,
+      value: draftContent ?? baselineModified,
+    };
+  }
+  const resolvedModified = initialModifiedRef.current.value;
+  const hasDraft = draftContent !== undefined;
 
   // Notify parent whenever CodeMirrorDiffView creates or destroys its EditorView.
   // This fires on every editor lifecycle event: initial mount, key-change remount,
@@ -114,9 +147,8 @@ export const FileSectionDiff = ({
 
   // Resolve modified content: prefer full content, fall back to write-type snippet
   // Only write-new/write-update snippets contain the full file - edit snippets are partial
-  const resolvedModified = getResolvedReviewModifiedContent(file, fileContent);
-
   const resolvedOriginal = fileContent?.originalFullContent ?? null;
+  const isNewFile = fileContent?.isNewFile ?? file.isNewFile;
   const isMissingOnDisk = isReviewFileMissingOnDisk(fileContent);
   const isContentUnavailable = isReviewTextContentUnavailable(file, fileContent);
   const hasLedgerManualAction = file.snippets.some(
@@ -133,9 +165,8 @@ export const FileSectionDiff = ({
   // - new files: original is legitimately empty
   // - otherwise: original must be known (non-null). If original is unknown, do not
   //   pretend it's empty; fall back to snippet-level diff.
-  const canRenderCodeMirror =
-    resolvedModified !== null && (file.isNewFile || resolvedOriginal !== null);
-  const originalForDiff = file.isNewFile ? '' : (resolvedOriginal ?? '');
+  const canRenderCodeMirror = resolvedModified !== null && (isNewFile || resolvedOriginal !== null);
+  const originalForDiff = isNewFile ? '' : (resolvedOriginal ?? '');
   const canRenderCodeMirrorSafely =
     canRenderCodeMirror &&
     shouldRenderCodeMirrorReviewDiff(originalForDiff, resolvedModified ?? '');
@@ -183,7 +214,9 @@ export const FileSectionDiff = ({
               collapseUnchanged={false}
               usePortionCollapse={true}
               onHunkAccepted={(idx) => onHunkAccepted(file.filePath, idx)}
-              onHunkRejected={(idx) => onHunkRejected(file.filePath, idx)}
+              onHunkRejected={(idx, before, after) =>
+                onHunkRejected(file.filePath, idx, before, after)
+              }
               onContentChanged={(content) => onContentChanged(file.filePath, content)}
               editorViewRef={localEditorViewRef}
               onViewChange={handleViewChange}
@@ -223,12 +256,12 @@ export const FileSectionDiff = ({
           original={originalForDiff}
           modified={resolvedModified}
           fileName={file.relativePath}
-          readOnly={hasLedgerManualAction}
-          showMergeControls={!isMissingOnDisk && !hasLedgerManualAction}
+          readOnly={hasLedgerManualAction || applying}
+          showMergeControls={!isMissingOnDisk && !hasLedgerManualAction && !hasDraft && !applying}
           collapseUnchanged={collapseUnchanged}
           usePortionCollapse={true}
           onHunkAccepted={(idx) => onHunkAccepted(file.filePath, idx)}
-          onHunkRejected={(idx) => onHunkRejected(file.filePath, idx)}
+          onHunkRejected={(idx, before, after) => onHunkRejected(file.filePath, idx, before, after)}
           onContentChanged={(content) => onContentChanged(file.filePath, content)}
           editorViewRef={localEditorViewRef}
           onViewChange={handleViewChange}

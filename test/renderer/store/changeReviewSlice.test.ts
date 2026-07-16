@@ -69,6 +69,9 @@ async function flushAsyncWork(): Promise<void> {
   await Promise.resolve();
 }
 
+const AGENT_REVIEW_SCOPE = { teamName: 'team-a', memberName: 'alice' };
+const TASK_A_REVIEW_SCOPE = { teamName: 'team-a', taskId: 'task-a' };
+
 function makeSnippet(
   overrides: Partial<{
     toolUseId: string;
@@ -1549,7 +1552,7 @@ describe('changeReviewSlice task changes', () => {
 
     const fetchPromise = store.getState().fetchFileContent('team-a', 'alice', '/repo/file.ts');
     await flushAsyncWork();
-    const savePromise = store.getState().saveEditedFile('/repo/file.ts');
+    const savePromise = store.getState().saveEditedFile('/repo/file.ts', AGENT_REVIEW_SCOPE);
     await flushAsyncWork();
 
     savePending.resolve();
@@ -1605,9 +1608,13 @@ describe('changeReviewSlice task changes', () => {
       fileContentVersionByPath: {},
     });
 
-    await store.getState().saveEditedFile('/repo/new.ts');
+    await store.getState().saveEditedFile('/repo/new.ts', AGENT_REVIEW_SCOPE);
 
-    expect(hoisted.saveEditedFile).toHaveBeenCalledWith('/repo/new.ts', 'saved-content', undefined);
+    expect(hoisted.saveEditedFile).toHaveBeenCalledWith(
+      AGENT_REVIEW_SCOPE,
+      '/repo/new.ts',
+      'saved-content'
+    );
     expect(store.getState().hunkContextHashesByFile).toEqual({});
     expect(store.getState().fileChunkCounts).toEqual({});
     expect(store.getState().fileContents['/repo/new.ts']?.modifiedFullContent).toBe(
@@ -1647,9 +1654,13 @@ describe('changeReviewSlice task changes', () => {
       fileContentVersionByPath: {},
     });
 
-    await store.getState().saveEditedFile(aliasPath, '/repo');
+    await store.getState().saveEditedFile(aliasPath, AGENT_REVIEW_SCOPE);
 
-    expect(hoisted.saveEditedFile).toHaveBeenCalledWith(canonicalPath, 'saved-content', '/repo');
+    expect(hoisted.saveEditedFile).toHaveBeenCalledWith(
+      AGENT_REVIEW_SCOPE,
+      canonicalPath,
+      'saved-content'
+    );
     expect(store.getState().editedContents).toEqual({});
     expect(store.getState().fileChunkCounts).toEqual({});
     expect(store.getState().hunkContextHashesByFile).toEqual({});
@@ -1681,9 +1692,13 @@ describe('changeReviewSlice task changes', () => {
       fileContentVersionByPath: {},
     });
 
-    await store.getState().saveEditedFile(requestedPath, '/repo');
+    await store.getState().saveEditedFile(requestedPath, AGENT_REVIEW_SCOPE);
 
-    expect(hoisted.saveEditedFile).toHaveBeenCalledWith(requestedPath, 'saved-content', '/repo');
+    expect(hoisted.saveEditedFile).toHaveBeenCalledWith(
+      AGENT_REVIEW_SCOPE,
+      requestedPath,
+      'saved-content'
+    );
     expect(store.getState().fileContents[requestedPath]?.modifiedFullContent).toBe('saved-content');
     expect(store.getState().fileContents[canonicalPath]).toBeUndefined();
   });
@@ -2033,5 +2048,279 @@ describe('changeReviewSlice task changes', () => {
     expect(store.getState().hunkContextHashesByFile).toEqual({});
     expect(store.getState().reviewUndoStack).toEqual([]);
     expect(store.getState().fileContentVersionByPath).toEqual({});
+  });
+
+  it('does not let a late persisted-decision read overwrite an interactive decision', async () => {
+    const store = createSliceStore();
+    const pending = deferred<{
+      hunkDecisions: Record<string, 'rejected'>;
+      fileDecisions: Record<string, 'rejected'>;
+    }>();
+    hoisted.loadDecisions.mockReturnValueOnce(pending.promise);
+    store.setState({
+      activeChangeSet: makeTaskChangeSet('task-a'),
+      fileChunkCounts: { '/repo/file.ts': 1 },
+      changeSetEpoch: 1,
+    });
+
+    const loadPromise = store.getState().loadDecisionsFromDisk('team-a', 'task-task-a', 'scope-a');
+    await flushAsyncWork();
+    store.getState().setHunkDecision('/repo/file.ts', 0, 'accepted');
+
+    pending.resolve({
+      hunkDecisions: { '/repo/file.ts:0': 'rejected' },
+      fileDecisions: { '/repo/file.ts': 'rejected' },
+    });
+    await loadPromise;
+
+    expect(store.getState().hunkDecisions).toEqual({ '/repo/file.ts:0': 'accepted' });
+    expect(store.getState().fileDecisions).toEqual({});
+  });
+
+  it('does not apply task A decisions after the review scope switches to task B', async () => {
+    const store = createSliceStore();
+    const pendingFresh = deferred<ReturnType<typeof makeTaskChangeSet>>();
+    hoisted.getTaskChanges.mockReturnValueOnce(pendingFresh.promise);
+    const taskA = makeTaskChangeSet('task-a');
+    const taskB = makeTaskChangeSet('task-b');
+    store.setState({
+      activeChangeSet: taskA,
+      hunkDecisions: { '/repo/file.ts:0': 'rejected' },
+      fileDecisions: { '/repo/file.ts': 'rejected' },
+      fileChunkCounts: { '/repo/file.ts': 1 },
+      changeSetEpoch: 1,
+    });
+
+    const applyPromise = store.getState().applyReview('team-a', 'task-a');
+    await flushAsyncWork();
+    store.setState({
+      activeChangeSet: taskB,
+      hunkDecisions: { '/repo/file.ts:0': 'accepted' },
+      fileDecisions: { '/repo/file.ts': 'accepted' },
+      changeSetEpoch: 2,
+      applying: false,
+    });
+    pendingFresh.resolve(taskA);
+    await applyPromise;
+
+    expect(hoisted.applyDecisions).not.toHaveBeenCalled();
+    expect(store.getState().activeChangeSet).toBe(taskB);
+    expect(store.getState().hunkDecisions).toEqual({ '/repo/file.ts:0': 'accepted' });
+    expect(store.getState().fileDecisions).toEqual({ '/repo/file.ts': 'accepted' });
+  });
+
+  it('does not let a late task A save clear a task B draft with the same file path', async () => {
+    const store = createSliceStore();
+    const pendingSave = deferred<void>();
+    hoisted.saveEditedFile.mockReturnValueOnce(pendingSave.promise);
+    store.setState({
+      activeChangeSet: makeTaskChangeSet('task-a'),
+      editedContents: { '/repo/file.ts': 'task-a-draft' },
+      changeSetEpoch: 1,
+      fileContentVersionByPath: {},
+    });
+
+    const savePromise = store.getState().saveEditedFile('/repo/file.ts', TASK_A_REVIEW_SCOPE);
+    await flushAsyncWork();
+    const taskB = makeTaskChangeSet('task-b');
+    store.setState({
+      activeChangeSet: taskB,
+      editedContents: { '/repo/file.ts': 'task-b-draft' },
+      changeSetEpoch: 2,
+      applying: false,
+    });
+    pendingSave.resolve();
+    await savePromise;
+
+    expect(store.getState().activeChangeSet).toBe(taskB);
+    expect(store.getState().editedContents).toEqual({ '/repo/file.ts': 'task-b-draft' });
+  });
+
+  it('keeps a newer draft when an older save resolves late', async () => {
+    const store = createSliceStore();
+    const pendingSave = deferred<void>();
+    hoisted.saveEditedFile.mockReturnValueOnce(pendingSave.promise);
+    store.setState({
+      activeChangeSet: makeAgentChangeSet(),
+      fileContents: {
+        '/repo/file.ts': {
+          ...makeFile(),
+          originalFullContent: 'before',
+          modifiedFullContent: 'agent-change',
+          contentSource: 'snippet-reconstruction',
+        },
+      },
+      editedContents: { '/repo/file.ts': 'first-draft' },
+      changeSetEpoch: 1,
+      fileContentVersionByPath: {},
+    });
+
+    const savePromise = store.getState().saveEditedFile('/repo/file.ts', AGENT_REVIEW_SCOPE);
+    await flushAsyncWork();
+    store.getState().updateEditedContent('/repo/file.ts', 'newer-draft');
+    pendingSave.resolve();
+    await savePromise;
+
+    expect(store.getState().editedContents).toEqual({ '/repo/file.ts': 'newer-draft' });
+    expect(store.getState().fileContents['/repo/file.ts'].modifiedFullContent).toBe('first-draft');
+    expect(store.getState().applying).toBe(false);
+  });
+
+  it('surfaces per-file apply errors returned without throwing', async () => {
+    const store = createSliceStore();
+    hoisted.applyDecisions.mockResolvedValueOnce({
+      applied: 0,
+      skipped: 1,
+      conflicts: 1,
+      errors: [{ filePath: '/repo/file.ts', error: 'File changed on disk', code: 'conflict' }],
+    });
+    store.setState({
+      activeChangeSet: makeAgentChangeSet(),
+      hunkDecisions: { '/repo/file.ts:0': 'rejected' },
+      fileChunkCounts: { '/repo/file.ts': 1 },
+      changeSetEpoch: 1,
+    });
+
+    const result = await store.getState().applyReview('team-a');
+
+    expect(result?.conflicts).toBe(1);
+    expect(store.getState().applyError).toBe('File changed on disk');
+    expect(store.getState().applying).toBe(false);
+  });
+
+  it('surfaces instant single-file apply errors returned without throwing', async () => {
+    const store = createSliceStore();
+    hoisted.applyDecisions.mockResolvedValueOnce({
+      applied: 0,
+      skipped: 1,
+      conflicts: 1,
+      errors: [{ filePath: '/repo/file.ts', error: 'Concurrent edit conflict', code: 'conflict' }],
+    });
+    store.setState({
+      activeChangeSet: makeAgentChangeSet(),
+      hunkDecisions: { '/repo/file.ts:0': 'rejected' },
+      fileChunkCounts: { '/repo/file.ts': 1 },
+      changeSetEpoch: 1,
+    });
+
+    const result = await store
+      .getState()
+      .applySingleFileDecision('team-a', '/repo/file.ts', undefined, 'alice');
+
+    expect(result?.conflicts).toBe(1);
+    expect(store.getState().applyError).toBe('Concurrent edit conflict');
+  });
+
+  it('flushes a pending debounced decision write before close cleanup can cancel it', async () => {
+    const store = createSliceStore();
+    store.setState({
+      activeChangeSet: makeAgentChangeSet(),
+      hunkDecisions: { '/repo/file.ts:0': 'accepted' },
+      fileDecisions: { '/repo/file.ts': 'accepted' },
+    });
+
+    store.getState().persistDecisions('team-a', 'agent-alice', 'scope-token');
+    expect(hoisted.saveDecisions).not.toHaveBeenCalled();
+
+    const flushed = await store
+      .getState()
+      .flushDecisionsToDisk('team-a', 'agent-alice', 'scope-token');
+    store.getState().clearChangeReviewCache();
+
+    expect(flushed).toBe(true);
+    expect(hoisted.saveDecisions).toHaveBeenCalledTimes(1);
+    expect(hoisted.saveDecisions).toHaveBeenCalledWith(
+      'team-a',
+      'agent-alice',
+      'scope-token',
+      { '/repo/file.ts:0': 'accepted' },
+      { '/repo/file.ts': 'accepted' },
+      { '/repo/file.ts': {} }
+    );
+  });
+
+  it('reports a failed decision flush so the dialog can remain open', async () => {
+    const store = createSliceStore();
+    hoisted.saveDecisions.mockRejectedValueOnce(new Error('disk full'));
+    store.setState({
+      activeChangeSet: makeAgentChangeSet(),
+      fileDecisions: { '/repo/file.ts': 'accepted' },
+    });
+    store.getState().persistDecisions('team-a', 'agent-alice', 'scope-token');
+
+    await expect(
+      store.getState().flushDecisionsToDisk('team-a', 'agent-alice', 'scope-token')
+    ).resolves.toBe(false);
+    vi.mocked(console.error).mockClear();
+  });
+
+  it('serializes a close flush behind an older in-flight decision write', async () => {
+    vi.useFakeTimers();
+    try {
+      const firstWrite = deferred<void>();
+      hoisted.saveDecisions
+        .mockReturnValueOnce(firstWrite.promise)
+        .mockResolvedValueOnce(undefined);
+      const store = createSliceStore();
+      store.setState({
+        activeChangeSet: makeAgentChangeSet(),
+        fileDecisions: { '/repo/file.ts': 'accepted' },
+      });
+
+      store.getState().persistDecisions('team-a', 'agent-alice', 'ordered-scope');
+      await vi.advanceTimersByTimeAsync(500);
+      expect(hoisted.saveDecisions).toHaveBeenCalledTimes(1);
+
+      store.setState({ fileDecisions: { '/repo/file.ts': 'rejected' } });
+      store.getState().persistDecisions('team-a', 'agent-alice', 'ordered-scope');
+      const flush = store.getState().flushDecisionsToDisk('team-a', 'agent-alice', 'ordered-scope');
+      await flushAsyncWork();
+      expect(hoisted.saveDecisions).toHaveBeenCalledTimes(1);
+
+      firstWrite.resolve();
+      await expect(flush).resolves.toBe(true);
+      expect(hoisted.saveDecisions).toHaveBeenCalledTimes(2);
+      expect(hoisted.saveDecisions).toHaveBeenLastCalledWith(
+        'team-a',
+        'agent-alice',
+        'ordered-scope',
+        {},
+        { '/repo/file.ts': 'rejected' },
+        { '/repo/file.ts': {} }
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('serializes decision clearing behind an older in-flight save', async () => {
+    vi.useFakeTimers();
+    try {
+      const firstWrite = deferred<void>();
+      hoisted.saveDecisions.mockReturnValueOnce(firstWrite.promise);
+      hoisted.clearDecisions.mockResolvedValueOnce(undefined);
+      const store = createSliceStore();
+      store.setState({
+        activeChangeSet: makeAgentChangeSet(),
+        fileDecisions: { '/repo/file.ts': 'accepted' },
+      });
+
+      store.getState().persistDecisions('team-a', 'agent-alice', 'clear-scope');
+      await vi.advanceTimersByTimeAsync(500);
+      expect(hoisted.saveDecisions).toHaveBeenCalledTimes(1);
+
+      const clear = store.getState().clearDecisionsFromDisk('team-a', 'agent-alice', 'clear-scope');
+      await flushAsyncWork();
+      expect(hoisted.clearDecisions).not.toHaveBeenCalled();
+
+      firstWrite.resolve();
+      await expect(clear).resolves.toBe(true);
+      expect(hoisted.clearDecisions).toHaveBeenCalledWith('team-a', 'agent-alice', 'clear-scope');
+      expect(hoisted.saveDecisions.mock.invocationCallOrder[0]).toBeLessThan(
+        hoisted.clearDecisions.mock.invocationCallOrder[0]
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

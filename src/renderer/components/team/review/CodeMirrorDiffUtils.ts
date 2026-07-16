@@ -7,11 +7,16 @@ import {
   rejectChunk,
   updateOriginalDoc,
 } from '@codemirror/merge';
-import { ChangeSet, type ChangeSpec, EditorState, type StateEffect } from '@codemirror/state';
+import {
+  ChangeSet,
+  type ChangeSpec,
+  EditorState,
+  type StateEffect,
+  Transaction,
+} from '@codemirror/state';
 import { type EditorView } from '@codemirror/view';
 import { buildHunkDecisionKey } from '@renderer/utils/reviewKey';
-import { computeDiffContextHash } from '@shared/utils/diffContextHash';
-import { structuredPatch } from 'diff';
+import { buildReviewChunkContextHashes } from '@shared/utils/reviewChunks';
 
 /**
  * Teaches CM history to undo acceptChunk operations (updateOriginalDoc effects).
@@ -66,7 +71,22 @@ export function rejectAllChunks(view: EditorView): boolean {
   // "restore the current doc to the original baseline" in one edit.
   view.dispatch({
     changes: [{ from: 0, to: view.state.doc.length, insert: orig.toString() }],
+    annotations: Transaction.userEvent.of('revert'),
   });
+  return true;
+}
+
+const ignoredReviewDocChangeViews = new WeakSet<EditorView>();
+
+/** Ignore one programmatic document change in the editable-draft listener. */
+export function ignoreNextReviewDocChange(view: EditorView): void {
+  ignoredReviewDocChangeViews.add(view);
+}
+
+/** Consume a one-shot programmatic-change marker for a review editor. */
+export function consumeIgnoredReviewDocChange(view: EditorView): boolean {
+  if (!ignoredReviewDocChangeViews.has(view)) return false;
+  ignoredReviewDocChangeViews.delete(view);
   return true;
 }
 
@@ -149,21 +169,11 @@ export function replayHunkDecisionsSmart(
   if (hunkContextHashes && Object.keys(hunkContextHashes).length > 0) {
     const original = getOriginalDoc(view.state).toString();
     const modified = view.state.doc.toString();
-    const patch = structuredPatch('file', 'file', original, modified);
-    const hunks = patch.hunks ?? [];
-    if (hunks.length === chunkCount) {
+    const hashes = buildReviewChunkContextHashes(original, modified);
+    if (Object.keys(hashes).length === chunkCount) {
       hashToIndices = new Map<string, number[]>();
-      for (let i = 0; i < hunks.length; i++) {
-        const hunk = hunks[i];
-        const oldSideContent = hunk.lines
-          .filter((l) => !l.startsWith('+'))
-          .map((l) => l.slice(1))
-          .join('\n');
-        const newSideContent = hunk.lines
-          .filter((l) => !l.startsWith('-'))
-          .map((l) => l.slice(1))
-          .join('\n');
-        const hash = computeDiffContextHash(oldSideContent, newSideContent);
+      for (const [rawIndex, hash] of Object.entries(hashes)) {
+        const i = Number(rawIndex);
         const arr = hashToIndices.get(hash);
         if (arr) arr.push(i);
         else hashToIndices.set(hash, [i]);

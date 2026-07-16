@@ -3,7 +3,7 @@ import React, { useCallback, useEffect, useRef } from 'react';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { foldGutter, foldKeymap, indentUnit, syntaxHighlighting } from '@codemirror/language';
 import { goToNextChunk, goToPreviousChunk, unifiedMergeView } from '@codemirror/merge';
-import { Compartment, EditorState, type Extension } from '@codemirror/state';
+import { Compartment, EditorState, type Extension, Transaction } from '@codemirror/state';
 import { oneDarkHighlightStyle } from '@codemirror/theme-one-dark';
 import { EditorView, keymap, lineNumbers } from '@codemirror/view';
 import { useAppTranslation } from '@features/localization/renderer';
@@ -16,7 +16,9 @@ import { baseEditorTheme } from '@renderer/utils/codemirrorTheme';
 
 import {
   acceptChunk,
+  consumeIgnoredReviewDocChange,
   getChunks,
+  ignoreNextReviewDocChange,
   mergeUndoSupport,
   mirrorEditsAfterResolve,
   rejectChunk,
@@ -34,8 +36,12 @@ interface CodeMirrorDiffViewProps {
   showMergeControls?: boolean;
   collapseUnchanged?: boolean;
   collapseMargin?: number;
-  onHunkAccepted?: (hunkIndex: number) => void;
-  onHunkRejected?: (hunkIndex: number) => void;
+  onHunkAccepted?: (hunkIndex: number) => boolean | void;
+  onHunkRejected?: (
+    hunkIndex: number,
+    beforeContent: string,
+    afterContent: string
+  ) => boolean | void;
   /** Called when the user scrolls to the end of the diff (auto-viewed) */
   onFullyViewed?: () => void;
   /** Ref to expose the EditorView for external navigation */
@@ -227,13 +233,18 @@ export const CodeMirrorDiffView = ({
   const onContentChangedRef = useRef(onContentChanged);
   const onViewChangeRef = useRef(onViewChange);
   const onSelectionChangeRef = useRef(onSelectionChange);
-  const debounceTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const showMergeControlsRef = useRef(showMergeControls);
+  const liveDocRef = useRef<string | null>(null);
+  const lastModifiedPropRef = useRef<string | null>(null);
+  const lastEmittedContentRef = useRef<string | null>(null);
+  const userEditedRef = useRef(false);
   useEffect(() => {
     onAcceptRef.current = onHunkAccepted;
     onRejectRef.current = onHunkRejected;
     onContentChangedRef.current = onContentChanged;
     onViewChangeRef.current = onViewChange;
     onSelectionChangeRef.current = onSelectionChange;
+    showMergeControlsRef.current = showMergeControls;
     externalViewRefHolder.current = externalViewRef;
   }, [
     onHunkAccepted,
@@ -241,6 +252,7 @@ export const CodeMirrorDiffView = ({
     onContentChanged,
     onViewChange,
     onSelectionChange,
+    showMergeControls,
     externalViewRef,
   ]);
 
@@ -270,6 +282,10 @@ export const CodeMirrorDiffView = ({
     toolbar.style.display = 'none';
     activeChunkIndexRef.current = null;
   }, []);
+
+  useEffect(() => {
+    if (!showMergeControls) hideFloatingToolbar();
+  }, [hideFloatingToolbar, showMergeControls]);
 
   const positionFloatingToolbar = useCallback((view: EditorView, clientY: number) => {
     const toolbar = floatingToolbarRef.current;
@@ -348,7 +364,7 @@ export const CodeMirrorDiffView = ({
       clientY: number,
       options?: { clientX?: number; followCursor?: boolean }
     ): void => {
-      if (!showMergeControls) {
+      if (!showMergeControlsRef.current) {
         hideFloatingToolbar();
         return;
       }
@@ -395,7 +411,6 @@ export const CodeMirrorDiffView = ({
       globalHunkOffset,
       hideFloatingToolbar,
       positionFloatingToolbar,
-      showMergeControls,
       totalReviewHunks,
     ]
   );
@@ -411,11 +426,19 @@ export const CodeMirrorDiffView = ({
       if (!chunk) return;
 
       if (decision === 'accept') {
+        if (onAcceptRef.current?.(activeChunkIndex) === false) return;
         acceptChunk(view, chunk.fromB);
-        onAcceptRef.current?.(activeChunkIndex);
       } else {
+        const beforeContent = view.state.doc.toString();
         rejectChunk(view, chunk.fromB);
-        onRejectRef.current?.(activeChunkIndex);
+        const afterContent = view.state.doc.toString();
+        if (onRejectRef.current?.(activeChunkIndex, beforeContent, afterContent) === false) {
+          ignoreNextReviewDocChange(view);
+          view.dispatch({
+            changes: { from: 0, to: view.state.doc.length, insert: beforeContent },
+          });
+          return;
+        }
       }
 
       scrollToNextChunk();
@@ -554,15 +577,21 @@ export const CodeMirrorDiffView = ({
       ])
     );
 
-    // Debounced content change listener (only when editable)
+    // Draft visibility must be synchronous: review guards run immediately after the
+    // CodeMirror transaction and cannot safely wait for a debounce window.
     if (!readOnly) {
       extensions.push(
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
-            clearTimeout(debounceTimer.current);
-            debounceTimer.current = setTimeout(() => {
-              onContentChangedRef.current?.(update.state.doc.toString());
-            }, 300);
+            const isReviewRevert = update.transactions.some(
+              (transaction) => transaction.annotation(Transaction.userEvent) === 'revert'
+            );
+            if (isReviewRevert || consumeIgnoredReviewDocChange(update.view)) return;
+            const content = update.state.doc.toString();
+            userEditedRef.current = true;
+            liveDocRef.current = content;
+            lastEmittedContentRef.current = content;
+            onContentChangedRef.current?.(content);
           }
         })
       );
@@ -582,46 +611,45 @@ export const CodeMirrorDiffView = ({
       })
     );
 
-    // External merge toolbar: follows cursor without depending on CodeMirror's widget DOM.
-    if (showMergeControls) {
-      extensions.push(
-        EditorView.domEventHandlers({
-          mouseleave() {
-            return false;
-          },
-          scroll(_event, view) {
-            const scrollerRect = view.scrollDOM.getBoundingClientRect();
-            const pointer = lastPointerRef.current;
-            const pointerInsideScroller =
-              pointer &&
-              pointer.x >= scrollerRect.left &&
-              pointer.x <= scrollerRect.right &&
-              pointer.y >= scrollerRect.top &&
-              pointer.y <= scrollerRect.bottom;
-            const targetY = pointerInsideScroller
-              ? pointer.y
-              : (scrollerRect.top + scrollerRect.bottom) / 2;
+    // Keep these extensions stable when a synchronous draft hides the toolbar. Rebuilding
+    // CodeMirror after the first typed character would reset selection and undo history.
+    extensions.push(
+      EditorView.domEventHandlers({
+        mouseleave() {
+          return false;
+        },
+        scroll(_event, view) {
+          const scrollerRect = view.scrollDOM.getBoundingClientRect();
+          const pointer = lastPointerRef.current;
+          const pointerInsideScroller =
+            pointer &&
+            pointer.x >= scrollerRect.left &&
+            pointer.x <= scrollerRect.right &&
+            pointer.y >= scrollerRect.top &&
+            pointer.y <= scrollerRect.bottom;
+          const targetY = pointerInsideScroller
+            ? pointer.y
+            : (scrollerRect.top + scrollerRect.bottom) / 2;
 
-            updateFloatingToolbar(view, targetY, {
-              clientX: pointerInsideScroller ? pointer.x : undefined,
-              followCursor: Boolean(pointerInsideScroller),
-            });
-            return false;
-          },
-        })
-      );
-
-      // Ensure at least one toolbar is visible (initial load + after accept/reject)
-      extensions.push(
-        EditorView.updateListener.of((update) => {
-          requestAnimationFrame(() => {
-            const v = update.view;
-            const scrollerRect = v.scrollDOM.getBoundingClientRect();
-            updateFloatingToolbar(v, (scrollerRect.top + scrollerRect.bottom) / 2);
+          updateFloatingToolbar(view, targetY, {
+            clientX: pointerInsideScroller ? pointer.x : undefined,
+            followCursor: Boolean(pointerInsideScroller),
           });
-        })
-      );
-    }
+          return false;
+        },
+      })
+    );
+
+    // Ensure at least one toolbar is visible (initial load + after accept/reject).
+    extensions.push(
+      EditorView.updateListener.of((update) => {
+        requestAnimationFrame(() => {
+          const v = update.view;
+          const scrollerRect = v.scrollDOM.getBoundingClientRect();
+          updateFloatingToolbar(v, (scrollerRect.top + scrollerRect.bottom) / 2);
+        });
+      })
+    );
 
     // Unified merge view (wrapped in compartment for dynamic collapse reconfigure)
     extensions.push(
@@ -646,7 +674,6 @@ export const CodeMirrorDiffView = ({
     return extensions;
   }, [
     readOnly,
-    showMergeControls,
     buildMergeExtension,
     usePortionCollapse,
     portionSize,
@@ -657,16 +684,20 @@ export const CodeMirrorDiffView = ({
   useEffect(() => {
     if (!containerRef.current) return;
 
-    // Destroy previous view
-    if (viewRef.current) {
-      viewRef.current.destroy();
-      viewRef.current = null;
+    const modifiedPropChanged = lastModifiedPropRef.current !== modified;
+    const initialDoc =
+      !modifiedPropChanged && liveDocRef.current !== null ? liveDocRef.current : modified;
+    lastModifiedPropRef.current = modified;
+    if (modifiedPropChanged) {
+      userEditedRef.current = false;
+      lastEmittedContentRef.current = null;
+      liveDocRef.current = modified;
     }
 
     const view = initialState
       ? new EditorView({ state: initialState, parent: containerRef.current })
       : new EditorView({
-          doc: modified,
+          doc: initialDoc,
           extensions: buildExtensions(),
           parent: containerRef.current,
         });
@@ -681,7 +712,12 @@ export const CodeMirrorDiffView = ({
     onViewChangeRef.current?.(view);
 
     return () => {
-      clearTimeout(debounceTimer.current);
+      const finalContent = view.state.doc.toString();
+      liveDocRef.current = finalContent;
+      if (userEditedRef.current && lastEmittedContentRef.current !== finalContent) {
+        lastEmittedContentRef.current = finalContent;
+        onContentChangedRef.current?.(finalContent);
+      }
       hideFloatingToolbar();
       view.destroy();
       viewRef.current = null;

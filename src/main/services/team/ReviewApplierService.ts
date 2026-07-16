@@ -1,13 +1,9 @@
-import { computeDiffContextHash } from '@shared/utils/diffContextHash';
-import { createLogger } from '@shared/utils/logger';
 import { isWindowsishPath, normalizePathForComparison } from '@shared/utils/platformPath';
+import { buildReviewChunkContextHashes, rejectReviewChunks } from '@shared/utils/reviewChunks';
+import { threeWayTextMerge } from '@shared/utils/threeWayTextMerge';
 import { createHash } from 'crypto';
-import { applyPatch, structuredPatch } from 'diff';
-import { mkdir, readFile, unlink, writeFile } from 'fs/promises';
-import { diff3Merge } from 'node-diff3';
+import { lstat, mkdir, readFile, rename, unlink, writeFile } from 'fs/promises';
 import { dirname } from 'path';
-
-import { HunkSnippetMatcher } from './HunkSnippetMatcher';
 
 import type {
   ApplyReviewRequest,
@@ -18,9 +14,6 @@ import type {
   RejectResult,
   SnippetDiff,
 } from '@shared/types';
-import type { StructuredPatchHunk } from 'diff';
-
-const logger = createLogger('Service:ReviewApplierService');
 
 type ApplyErrorCode = NonNullable<ApplyReviewResult['errors'][number]['code']>;
 type LedgerApplyOutcome =
@@ -37,6 +30,58 @@ function getCurrentTextReadError(result: CurrentTextReadResult): string | null {
   return 'error' in result ? result.error : null;
 }
 
+const fileMutationQueues = new Map<string, Promise<void>>();
+
+async function withFileMutationLock<T>(filePath: string, operation: () => Promise<T>): Promise<T> {
+  return withFileMutationLocks([filePath], operation);
+}
+
+async function withFileMutationLocks<T>(
+  filePaths: readonly string[],
+  operation: () => Promise<T>
+): Promise<T> {
+  const keys = [
+    ...new Set(
+      filePaths.map((filePath) => {
+        const normalized = normalizePathForComparison(filePath).normalize('NFC');
+        return process.platform === 'darwin' || process.platform === 'win32'
+          ? normalized.toLowerCase()
+          : normalized;
+      })
+    ),
+  ].sort();
+
+  const acquire = (index: number): Promise<T> => {
+    const key = keys[index];
+    return key ? withFileMutationKeyLock(key, () => acquire(index + 1)) : operation();
+  };
+
+  return acquire(0);
+}
+
+async function withFileMutationKeyLock<T>(key: string, operation: () => Promise<T>): Promise<T> {
+  const previous = fileMutationQueues.get(key) ?? Promise.resolve();
+  let release = (): void => undefined;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const queueTail = previous.then(
+    () => current,
+    () => current
+  );
+  fileMutationQueues.set(key, queueTail);
+
+  await previous.catch(() => undefined);
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (fileMutationQueues.get(key) === queueTail) {
+      fileMutationQueues.delete(key);
+    }
+  }
+}
+
 /**
  * Service for applying reject decisions from code review.
  *
@@ -48,8 +93,6 @@ function getCurrentTextReadError(result: CurrentTextReadResult): string | null {
  * - Batch review application
  */
 export class ReviewApplierService {
-  private readonly matcher = new HunkSnippetMatcher();
-
   /**
    * Check if the file on disk has been modified since the review was computed.
    * Compares current disk content against the expected modified content.
@@ -79,9 +122,7 @@ export class ReviewApplierService {
 
   /**
    * Reject specific hunks from a file's changes.
-   *
-   * PRIMARY approach: snippet-level replacement with positional reverse.
-   * FALLBACK: hunk-level inverse patch when snippet replacement fails.
+   * Uses the exact CodeMirror chunk model that produced the renderer indexes.
    */
   async rejectHunks(
     _teamName: string,
@@ -89,66 +130,73 @@ export class ReviewApplierService {
     original: string,
     modified: string,
     hunkIndices: number[],
-    snippets: SnippetDiff[]
+    _snippets: SnippetDiff[]
   ): Promise<RejectResult> {
-    // Try snippet-level reverse first (most accurate)
-    const snippetResult = this.trySnippetLevelReject(original, modified, hunkIndices, snippets);
-    if (snippetResult) {
-      try {
-        await writeFile(filePath, snippetResult.newContent, 'utf8');
-        return snippetResult;
-      } catch (err) {
-        return {
-          success: false,
-          newContent: modified,
-          hadConflicts: false,
-          conflictDescription: `Не удалось записать файл: ${String(err)}`,
-        };
-      }
+    const rejectedBaseline = rejectReviewChunks(original, modified, hunkIndices);
+    if (rejectedBaseline === null) {
+      return {
+        success: false,
+        newContent: modified,
+        hadConflicts: true,
+        conflictDescription: 'Не удалось применить reject: индекс CodeMirror chunk недействителен',
+      };
     }
 
-    // Fallback: hunk-level inverse patch
-    const patchResult = this.tryHunkLevelReject(original, modified, hunkIndices);
-    if (patchResult) {
-      try {
-        await writeFile(filePath, patchResult.newContent, 'utf8');
-        return patchResult;
-      } catch (err) {
+    return withFileMutationLock(filePath, async () => {
+      const current = await this.readCurrentText(filePath);
+      if (current.missing) {
         return {
           success: false,
-          newContent: modified,
-          hadConflicts: false,
-          conflictDescription: `Не удалось записать файл: ${String(err)}`,
+          newContent: '',
+          hadConflicts: true,
+          conflictDescription: 'Файл отсутствует на диске; partial reject отменён',
         };
       }
-    }
+      const currentError = getCurrentTextReadError(current);
+      if (currentError) {
+        return {
+          success: false,
+          newContent: '',
+          hadConflicts: false,
+          conflictDescription: currentError,
+        };
+      }
 
-    // Both approaches failed — try three-way merge as last resort
-    const mergeResult = threeWayMerge(original, modified, original);
-    if (!mergeResult.hasConflicts) {
+      let newContent = rejectedBaseline;
+      if (current.content !== modified) {
+        const mergeResult = threeWayTextMerge(modified, current.content, rejectedBaseline);
+        if (mergeResult.hasConflicts) {
+          return {
+            success: false,
+            newContent: current.content,
+            hadConflicts: true,
+            conflictDescription:
+              'Файл был изменён после вычисления review, и partial reject конфликтует с текущими изменениями',
+          };
+        }
+        newContent = mergeResult.content;
+      }
+
+      if (newContent === current.content) {
+        return { success: true, newContent, hadConflicts: false };
+      }
+
       try {
-        await writeFile(filePath, mergeResult.content, 'utf8');
+        await writeFile(filePath, newContent, 'utf8');
         return {
           success: true,
-          newContent: mergeResult.content,
+          newContent,
           hadConflicts: false,
         };
       } catch (err) {
         return {
           success: false,
-          newContent: modified,
+          newContent: current.content,
           hadConflicts: false,
           conflictDescription: `Не удалось записать файл: ${String(err)}`,
         };
       }
-    }
-
-    return {
-      success: false,
-      newContent: modified,
-      hadConflicts: true,
-      conflictDescription: 'Не удалось применить reject: все стратегии завершились неудачно',
-    };
+    });
   }
 
   /**
@@ -160,56 +208,58 @@ export class ReviewApplierService {
     original: string,
     modified: string
   ): Promise<RejectResult> {
-    // Check for conflicts first
-    const conflict = await this.checkConflict(filePath, modified);
-    if (conflict.hasConflict) {
-      // File was modified since review — try three-way merge
-      const currentContent = conflict.currentContent;
-      const mergeResult = threeWayMerge(modified, currentContent, original);
+    return withFileMutationLock(filePath, async () => {
+      // Check for conflicts first
+      const conflict = await this.checkConflict(filePath, modified);
+      if (conflict.hasConflict) {
+        // File was modified since review — try three-way merge
+        const currentContent = conflict.currentContent;
+        const mergeResult = threeWayTextMerge(modified, currentContent, original);
 
-      if (mergeResult.hasConflicts) {
-        return {
-          success: false,
-          newContent: currentContent,
-          hadConflicts: true,
-          conflictDescription:
-            'Файл был изменён после вычисления review, и три-сторонний merge обнаружил конфликты',
-        };
+        if (mergeResult.hasConflicts) {
+          return {
+            success: false,
+            newContent: currentContent,
+            hadConflicts: true,
+            conflictDescription:
+              'Файл был изменён после вычисления review, и три-сторонний merge обнаружил конфликты',
+          };
+        }
+
+        try {
+          await writeFile(filePath, mergeResult.content, 'utf8');
+          return {
+            success: true,
+            newContent: mergeResult.content,
+            hadConflicts: false,
+          };
+        } catch (err) {
+          return {
+            success: false,
+            newContent: currentContent,
+            hadConflicts: false,
+            conflictDescription: `Не удалось записать файл: ${String(err)}`,
+          };
+        }
       }
 
+      // No conflict — simply write original content
       try {
-        await writeFile(filePath, mergeResult.content, 'utf8');
+        await writeFile(filePath, original, 'utf8');
         return {
           success: true,
-          newContent: mergeResult.content,
+          newContent: original,
           hadConflicts: false,
         };
       } catch (err) {
         return {
           success: false,
-          newContent: currentContent,
+          newContent: modified,
           hadConflicts: false,
           conflictDescription: `Не удалось записать файл: ${String(err)}`,
         };
       }
-    }
-
-    // No conflict — simply write original content
-    try {
-      await writeFile(filePath, original, 'utf8');
-      return {
-        success: true,
-        newContent: original,
-        hadConflicts: false,
-      };
-    } catch (err) {
-      return {
-        success: false,
-        newContent: modified,
-        hadConflicts: false,
-        conflictDescription: `Не удалось записать файл: ${String(err)}`,
-      };
-    }
+    });
   }
 
   /**
@@ -222,21 +272,11 @@ export class ReviewApplierService {
     hunkIndices: number[],
     snippets: SnippetDiff[]
   ): Promise<{ preview: string; hasConflicts: boolean }> {
-    // Try snippet-level reverse
-    const snippetResult = this.trySnippetLevelReject(original, modified, hunkIndices, snippets);
-    if (snippetResult) {
-      return { preview: snippetResult.newContent, hasConflicts: false };
-    }
-
-    // Fallback: hunk-level inverse patch
-    const patchResult = this.tryHunkLevelReject(original, modified, hunkIndices);
-    if (patchResult) {
-      return { preview: patchResult.newContent, hasConflicts: patchResult.hadConflicts };
-    }
-
-    // Final fallback — three-way merge
-    const mergeResult = threeWayMerge(original, modified, original);
-    return { preview: mergeResult.content, hasConflicts: mergeResult.hasConflicts };
+    void snippets;
+    const rejected = rejectReviewChunks(original, modified, hunkIndices);
+    return rejected === null
+      ? { preview: modified, hasConflicts: true }
+      : { preview: rejected, hasConflicts: false };
   }
 
   /**
@@ -313,49 +353,18 @@ export class ReviewApplierService {
       }
 
       if (shouldDeleteNewFile) {
-        // If we have an expected modified baseline, guard against deleting a user-modified file.
-        if (modified !== null) {
-          const conflict = await this.checkConflict(decision.filePath, modified);
-          if (conflict.hasConflict) {
-            conflicts++;
-            errors.push({
-              filePath: decision.filePath,
-              error:
-                'File was modified since review was computed; refusing to delete new file automatically.',
-              code: 'conflict',
-            });
-            continue;
-          }
+        const outcome = await withFileMutationLock(decision.filePath, () =>
+          this.rejectNonLedgerNewFile(decision.filePath, modified)
+        );
+        if (outcome.status === 'applied') {
+          applied++;
         } else {
-          // No baseline — safest behavior is to only treat "already missing" as success.
-          try {
-            await readFile(decision.filePath, 'utf8');
-          } catch {
-            applied++;
-            continue;
-          }
+          if (outcome.status === 'conflict') conflicts++;
           errors.push({
             filePath: decision.filePath,
-            error: 'Cannot delete new file: expected modified content is unavailable.',
-            code: 'unavailable',
+            error: outcome.error,
+            code: outcome.code,
           });
-          continue;
-        }
-
-        try {
-          await unlink(decision.filePath);
-          applied++;
-        } catch (err) {
-          const msg = String(err);
-          if (msg.includes('ENOENT')) {
-            applied++;
-          } else {
-            errors.push({
-              filePath: decision.filePath,
-              error: `Failed to delete new file: ${msg}`,
-              code: 'io-error',
-            });
-          }
         }
         continue;
       }
@@ -394,22 +403,12 @@ export class ReviewApplierService {
             continue;
           }
 
-          const mappedRejected =
-            decision.hunkContextHashes && Object.keys(decision.hunkContextHashes).length > 0
-              ? mapRejectedHunkIndicesByHash(
-                  original,
-                  modified,
-                  rejectedHunkIndices,
-                  decision.hunkContextHashes
-                )
-              : rejectedHunkIndices;
-
           const result = await this.rejectHunks(
             request.teamName,
             decision.filePath,
             original,
             modified,
-            mappedRejected,
+            rejectedHunkIndices,
             fileContent.snippets
           );
 
@@ -437,12 +436,82 @@ export class ReviewApplierService {
   /**
    * Save edited file content directly to disk.
    */
-  async saveEditedFile(filePath: string, content: string): Promise<{ success: boolean }> {
-    await writeFile(filePath, content, 'utf8');
-    return { success: true };
+  async saveEditedFile(
+    filePath: string,
+    content: string,
+    expectedCurrentContent?: string | null
+  ): Promise<{ success: boolean }> {
+    return withFileMutationLock(filePath, async () => {
+      if (expectedCurrentContent !== undefined) {
+        const current = await this.readCurrentText(filePath);
+        const currentError = getCurrentTextReadError(current);
+        if (currentError) {
+          throw new Error(currentError);
+        }
+        const matchesExpected =
+          expectedCurrentContent === null
+            ? current.missing
+            : !current.missing && current.content === expectedCurrentContent;
+        if (!matchesExpected) {
+          throw new Error('File changed since review update; refusing to overwrite');
+        }
+      }
+      await writeFile(filePath, content, 'utf8');
+      return { success: true };
+    });
   }
 
   // ── Private: Rejection strategies ──
+
+  private async rejectNonLedgerNewFile(
+    filePath: string,
+    modified: string | null
+  ): Promise<
+    { status: 'applied' } | { status: 'conflict' | 'error'; error: string; code: ApplyErrorCode }
+  > {
+    if (modified === null) {
+      const current = await this.readCurrentText(filePath);
+      if (current.missing) return { status: 'applied' };
+      const currentError = getCurrentTextReadError(current);
+      return {
+        status: 'error',
+        error: currentError ?? 'Cannot delete new file: expected modified content is unavailable.',
+        code: currentError ? 'io-error' : 'unavailable',
+      };
+    }
+
+    const current = await this.readCurrentText(filePath);
+    if (current.missing) return { status: 'applied' };
+    const currentError = getCurrentTextReadError(current);
+    if (currentError) {
+      return { status: 'error', error: currentError, code: 'io-error' };
+    }
+    if (current.content !== modified) {
+      return {
+        status: 'conflict',
+        error:
+          'File was modified since review was computed; refusing to delete new file automatically.',
+        code: 'conflict',
+      };
+    }
+
+    try {
+      await unlink(filePath);
+      return { status: 'applied' };
+    } catch (err) {
+      const code =
+        err && typeof err === 'object' && 'code' in err
+          ? String((err as { code?: unknown }).code)
+          : '';
+      return code === 'ENOENT'
+        ? { status: 'applied' }
+        : {
+            status: 'error',
+            error: `Failed to delete new file: ${String(err)}`,
+            code: 'io-error',
+          };
+    }
+  }
 
   private async tryApplyLedgerDecision(
     filePath: string,
@@ -459,6 +528,30 @@ export class ReviewApplierService {
       return { handled: false };
     }
 
+    return withFileMutationLocks(this.resolveLedgerMutationPaths(filePath, ledgerSnippets), () =>
+      this.tryApplyLedgerDecisionLocked(
+        filePath,
+        original,
+        modified,
+        fileRejected,
+        allHunksRejected,
+        rejectedHunkIndices,
+        hunkContextHashes,
+        ledgerSnippets
+      )
+    );
+  }
+
+  private async tryApplyLedgerDecisionLocked(
+    filePath: string,
+    original: string | null,
+    modified: string | null,
+    fileRejected: boolean,
+    allHunksRejected: boolean,
+    rejectedHunkIndices: number[],
+    hunkContextHashes: Record<number, string> | undefined,
+    ledgerSnippets: SnippetDiff[]
+  ): Promise<LedgerApplyOutcome> {
     const firstLedger = ledgerSnippets[0]?.ledger;
     const lastLedger = ledgerSnippets[ledgerSnippets.length - 1]?.ledger;
     if (!firstLedger || !lastLedger) {
@@ -513,13 +606,6 @@ export class ReviewApplierService {
           error: strictHunks.error,
         };
       }
-      const guard = await this.checkLedgerCurrentHash(
-        filePath,
-        lastLedger.afterState?.sha256 ?? lastLedger.afterHash ?? undefined
-      );
-      if (!guard.ok) {
-        return guard.outcome;
-      }
       const patchResult = this.tryStrictHunkLevelReject(original, modified, strictHunks.indices);
       if (!patchResult) {
         return {
@@ -529,8 +615,53 @@ export class ReviewApplierService {
           error: 'Ledger partial reject could not be applied safely.',
         };
       }
+
+      const expectedHash = lastLedger.afterState?.sha256 ?? lastLedger.afterHash ?? undefined;
+      if (!expectedHash) {
+        return {
+          handled: true,
+          status: 'error',
+          code: 'manual-review-required',
+          error: 'Ledger expected content hash is unavailable; refusing automatic apply.',
+        };
+      }
+      const current = await this.readCurrentText(filePath);
+      if (current.missing) {
+        return {
+          handled: true,
+          status: 'conflict',
+          code: 'conflict',
+          error: 'File is missing on disk; refusing ledger apply.',
+        };
+      }
+      const currentError = getCurrentTextReadError(current);
+      if (currentError) {
+        return {
+          handled: true,
+          status: 'error',
+          code: 'io-error',
+          error: currentError,
+        };
+      }
+
+      let newContent = patchResult.newContent;
+      if (this.hashText(current.content) !== expectedHash) {
+        const mergeResult = threeWayTextMerge(modified, current.content, patchResult.newContent);
+        if (mergeResult.hasConflicts) {
+          return {
+            handled: true,
+            status: 'conflict',
+            code: 'conflict',
+            error: 'Current file edits conflict with the requested ledger hunk reject.',
+          };
+        }
+        newContent = mergeResult.content;
+      }
+      if (newContent === current.content) {
+        return { handled: true, status: 'applied' };
+      }
       try {
-        await writeFile(filePath, patchResult.newContent, 'utf8');
+        await writeFile(filePath, newContent, 'utf8');
         return { handled: true, status: 'applied' };
       } catch (err) {
         return {
@@ -678,6 +809,36 @@ export class ReviewApplierService {
     return snippets.find((snippet) => snippet.ledger?.relation)?.ledger?.relation;
   }
 
+  private resolveLedgerMutationPaths(filePath: string, snippets: SnippetDiff[]): string[] {
+    const paths = new Set<string>([filePath]);
+    for (const snippet of snippets) {
+      paths.add(snippet.filePath);
+    }
+
+    const relation = this.resolveLedgerRelation(snippets);
+    if (relation?.kind === 'rename') {
+      const newSnippet = snippets.find(
+        (snippet) =>
+          snippet.ledger?.operation === 'create' &&
+          this.pathMatchesRelationPath(snippet.filePath, relation.newPath)
+      );
+      const oldSnippet = snippets.find(
+        (snippet) =>
+          snippet.ledger?.operation === 'delete' &&
+          this.pathMatchesRelationPath(snippet.filePath, relation.oldPath)
+      );
+      const inferredOldPath = this.resolveRelatedLedgerPath(
+        newSnippet?.filePath,
+        relation.newPath,
+        relation.oldPath
+      );
+      if (oldSnippet?.filePath) paths.add(oldSnippet.filePath);
+      if (inferredOldPath) paths.add(inferredOldPath);
+    }
+
+    return [...paths];
+  }
+
   private async rejectLedgerRename(
     snippets: SnippetDiff[],
     relation: LedgerChangeRelation,
@@ -722,6 +883,7 @@ export class ReviewApplierService {
     }
 
     const newCurrent = await this.readCurrentText(newFilePath);
+    let aliasedCurrentContent: string | null = null;
     if (!newCurrent.missing) {
       const newCurrentError = getCurrentTextReadError(newCurrent);
       if (newCurrentError) {
@@ -738,6 +900,28 @@ export class ReviewApplierService {
           status: 'conflict',
           code: 'conflict',
           error: 'Renamed file was modified since review was computed; refusing ledger reject.',
+        };
+      }
+      if (await this.pathsReferToSameFile(oldFilePath, newFilePath)) {
+        aliasedCurrentContent = newCurrent.content;
+      }
+    }
+
+    // On case-insensitive filesystems a case-only rename exposes both spellings as one inode.
+    // Restore the old spelling/content in place; unlinking the "new" spelling would delete both.
+    if (aliasedCurrentContent !== null) {
+      try {
+        await rename(newFilePath, oldFilePath);
+        if (aliasedCurrentContent !== oldContent) {
+          await writeFile(oldFilePath, oldContent, 'utf8');
+        }
+        return { handled: true, status: 'applied' };
+      } catch (err) {
+        return {
+          handled: true,
+          status: 'error',
+          code: 'io-error',
+          error: `Failed to reject case-only ledger rename: ${String(err)}`,
         };
       }
     }
@@ -903,153 +1087,21 @@ export class ReviewApplierService {
     }
   }
 
+  private async pathsReferToSameFile(firstPath: string, secondPath: string): Promise<boolean> {
+    if (firstPath === secondPath) return true;
+
+    try {
+      const [first, second] = await Promise.all([lstat(firstPath), lstat(secondPath)]);
+      return Boolean(
+        first && second && first.ino !== 0 && first.ino === second.ino && first.dev === second.dev
+      );
+    } catch {
+      return false;
+    }
+  }
+
   private hashText(content: string): string {
     return createHash('sha256').update(content).digest('hex');
-  }
-
-  /**
-   * Snippet-level rejection: reverse specific snippets by position (most accurate).
-   *
-   * Uses HunkSnippetMatcher with content overlap analysis to map
-   * hunk indices → snippet indices, then reverses matched snippets.
-   */
-  private trySnippetLevelReject(
-    original: string,
-    modified: string,
-    hunkIndices: number[],
-    snippets: SnippetDiff[]
-  ): RejectResult | null {
-    // Safety: never use full-file Write snippets for snippet-level rejection.
-    // They are not localized, and matching a single hunk to a full-file write
-    // can incorrectly delete/overwrite large parts of the file.
-    const validSnippets = snippets.filter(
-      (s) =>
-        !s.isError &&
-        s.type !== 'write-new' &&
-        s.type !== 'write-update' &&
-        s.type !== 'notebook-edit' &&
-        s.type !== 'shell-snapshot' &&
-        s.type !== 'hook-snapshot'
-    );
-    if (validSnippets.length === 0) return null;
-
-    // Pass pre-filtered snippets — matcher returns indices relative to this array
-    const hunkToSnippets = this.matcher.matchHunksToSnippets(
-      original,
-      modified,
-      hunkIndices,
-      validSnippets
-    );
-
-    // Safety: if any requested hunk maps ambiguously, do NOT attempt snippet-level replacement.
-    // Fall back to hunk-level inverse patch which is positional and safer.
-    for (const hunkIdx of hunkIndices) {
-      const set = hunkToSnippets.get(hunkIdx);
-      if (set?.size !== 1) {
-        return null;
-      }
-    }
-
-    // Collect all unique snippet indices to reject
-    const snippetIndices = new Set<number>();
-    for (const indices of hunkToSnippets.values()) {
-      indices.forEach((idx) => snippetIndices.add(idx));
-    }
-
-    const snippetsToReject = Array.from(snippetIndices)
-      .map((idx) => validSnippets[idx])
-      .filter(Boolean);
-
-    if (snippetsToReject.length === 0) return null;
-
-    let content = modified;
-
-    // Find positions using disambiguation and sort descending for safe replacement
-    const positioned = snippetsToReject
-      .map((snippet) => {
-        const pos = this.matcher.findSnippetPosition(snippet, content);
-        return { snippet, pos };
-      })
-      .filter((item) => item.pos !== -1)
-      .sort((a, b) => b.pos - a.pos);
-
-    if (positioned.length !== snippetsToReject.length) {
-      // Some snippets' newStrings not found — can't do snippet-level
-      return null;
-    }
-
-    for (const { snippet, pos } of positioned) {
-      if (snippet.type === 'write-new') {
-        // Can't partially reject a file creation at snippet level
-        continue;
-      }
-
-      if (snippet.replaceAll) {
-        content = content.split(snippet.newString).join(snippet.oldString);
-      } else {
-        content =
-          content.substring(0, pos) +
-          snippet.oldString +
-          content.substring(pos + snippet.newString.length);
-      }
-    }
-
-    return {
-      success: true,
-      newContent: content,
-      hadConflicts: false,
-    };
-  }
-
-  /**
-   * Hunk-level rejection: create inverse patch for rejected hunks and apply it.
-   */
-  private tryHunkLevelReject(
-    original: string,
-    modified: string,
-    hunkIndices: number[]
-  ): RejectResult | null {
-    // Create structured patch
-    const patch = structuredPatch('file', 'file', original, modified);
-
-    if (!patch.hunks || patch.hunks.length === 0) return null;
-
-    // Validate hunk indices
-    const validIndices = hunkIndices.filter((idx) => idx >= 0 && idx < patch.hunks.length);
-    if (validIndices.length === 0) return null;
-
-    // Build a partial inverse patch: only reverse the rejected hunks
-    const inversedHunks: StructuredPatchHunk[] = [];
-    for (const idx of validIndices) {
-      const hunk = patch.hunks[idx];
-      if (!hunk) continue;
-      inversedHunks.push(invertHunk(hunk));
-    }
-
-    if (inversedHunks.length === 0) return null;
-
-    // Create a partial inverse patch with the inverted hunks
-    const inversePatch = {
-      oldFileName: 'file',
-      newFileName: 'file',
-      oldHeader: undefined,
-      newHeader: undefined,
-      hunks: inversedHunks,
-    };
-
-    // Apply the inverse patch to the modified content
-    const result = applyPatch(modified, inversePatch, { fuzzFactor: 2 });
-
-    if (result === false) {
-      logger.debug('Hunk-level inverse patch не удался');
-      return null;
-    }
-
-    return {
-      success: true,
-      newContent: result,
-      hadConflicts: false,
-    };
   }
 
   private tryStrictHunkLevelReject(
@@ -1057,89 +1109,22 @@ export class ReviewApplierService {
     modified: string,
     hunkIndices: number[]
   ): RejectResult | null {
-    const patch = structuredPatch('file', 'file', original, modified);
-
-    if (!patch.hunks || patch.hunks.length === 0) return null;
-
-    const validIndices = hunkIndices.filter((idx) => idx >= 0 && idx < patch.hunks.length);
-    if (validIndices.length !== hunkIndices.length || validIndices.length === 0) return null;
-
-    const inversedHunks: StructuredPatchHunk[] = [];
-    for (const idx of validIndices) {
-      const hunk = patch.hunks[idx];
-      if (!hunk) return null;
-      inversedHunks.push(invertHunk(hunk));
-    }
-
-    const inversePatch = {
-      oldFileName: 'file',
-      newFileName: 'file',
-      oldHeader: undefined,
-      newHeader: undefined,
-      hunks: inversedHunks,
-    };
-
-    const result = applyPatch(modified, inversePatch, { fuzzFactor: 0 });
-    if (result === false) {
-      logger.debug('Strict ledger hunk-level inverse patch не удался');
-      return null;
-    }
-
-    return {
-      success: true,
-      newContent: result,
-      hadConflicts: false,
-    };
+    const newContent = rejectReviewChunks(original, modified, hunkIndices);
+    return newContent === null ? null : { success: true, newContent, hadConflicts: false };
   }
 }
 
-function buildHunkHashIndexMap(original: string, modified: string): Map<string, number[]> {
-  const patch = structuredPatch('file', 'file', original, modified);
-  const hunks = patch.hunks ?? [];
+function buildReviewChunkHashIndexMap(original: string, modified: string): Map<string, number[]> {
   const map = new Map<string, number[]>();
-  for (let i = 0; i < hunks.length; i++) {
-    const hunk = hunks[i];
-    const oldSideContent = hunk.lines
-      .filter((l) => !l.startsWith('+'))
-      .map((l) => l.slice(1))
-      .join('\n');
-    const newSideContent = hunk.lines
-      .filter((l) => !l.startsWith('-'))
-      .map((l) => l.slice(1))
-      .join('\n');
-    const hash = computeDiffContextHash(oldSideContent, newSideContent);
+  for (const [rawIndex, hash] of Object.entries(
+    buildReviewChunkContextHashes(original, modified)
+  )) {
+    const index = Number(rawIndex);
     const arr = map.get(hash);
-    if (arr) arr.push(i);
-    else map.set(hash, [i]);
+    if (arr) arr.push(index);
+    else map.set(hash, [index]);
   }
   return map;
-}
-
-function mapRejectedHunkIndicesByHash(
-  original: string,
-  modified: string,
-  rejectedIndices: number[],
-  hunkContextHashes: Record<number, string>
-): number[] {
-  const hashMap = buildHunkHashIndexMap(original, modified);
-  const out = new Set<number>();
-
-  for (const idx of rejectedIndices) {
-    const hash = hunkContextHashes[idx];
-    if (!hash) {
-      out.add(idx);
-      continue;
-    }
-    const candidates = hashMap.get(hash);
-    if (candidates?.length === 1) {
-      out.add(candidates[0]);
-    } else {
-      // Ambiguous or missing — fall back to index to preserve prior behavior.
-      out.add(idx);
-    }
-  }
-
-  return [...out].sort((a, b) => a - b);
 }
 
 function mapRejectedHunkIndicesByHashStrict(
@@ -1159,7 +1144,7 @@ function mapRejectedHunkIndicesByHashStrict(
     };
   }
 
-  const hashMap = buildHunkHashIndexMap(original, modified);
+  const hashMap = buildReviewChunkHashIndexMap(original, modified);
   const out = new Set<number>();
   for (const idx of rejectedIndices) {
     const hash = hunkContextHashes[idx];
@@ -1190,27 +1175,6 @@ function mapRejectedHunkIndicesByHashStrict(
   return { ok: true, indices: [...out].sort((a, b) => a - b) };
 }
 
-// ── Module-level helpers ──
-
-/**
- * Invert a single hunk: swap added/removed lines, swap old/new start/lines.
- */
-function invertHunk(hunk: StructuredPatchHunk): StructuredPatchHunk {
-  const invertedLines = hunk.lines.map((line) => {
-    if (line.startsWith('+')) return '-' + line.substring(1);
-    if (line.startsWith('-')) return '+' + line.substring(1);
-    return line; // context lines remain unchanged
-  });
-
-  return {
-    oldStart: hunk.newStart,
-    oldLines: hunk.newLines,
-    newStart: hunk.oldStart,
-    newLines: hunk.oldLines,
-    lines: invertedLines,
-  };
-}
-
 /**
  * Three-way merge using node-diff3.
  *
@@ -1219,31 +1183,3 @@ function invertHunk(hunk: StructuredPatchHunk): StructuredPatchHunk {
  * @param theirs "their" version (desired state)
  * @returns merged content and conflict indicator
  */
-function threeWayMerge(
-  base: string,
-  ours: string,
-  theirs: string
-): { content: string; hasConflicts: boolean } {
-  const regions = diff3Merge(ours, base, theirs);
-  let hasConflicts = false;
-  const parts: string[] = [];
-
-  for (const region of regions) {
-    if (region.ok) {
-      parts.push(region.ok.join('\n'));
-    } else if (region.conflict) {
-      hasConflicts = true;
-      // Include conflict markers for visibility
-      parts.push('<<<<<<< current');
-      parts.push(region.conflict.a.join('\n'));
-      parts.push('=======');
-      parts.push(region.conflict.b.join('\n'));
-      parts.push('>>>>>>> original');
-    }
-  }
-
-  return {
-    content: parts.join('\n'),
-    hasConflicts,
-  };
-}

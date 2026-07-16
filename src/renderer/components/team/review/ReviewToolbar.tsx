@@ -152,7 +152,8 @@ export const ReviewToolbar = ({
           <TooltipTrigger asChild>
             <button
               onClick={onUndo}
-              className="flex items-center gap-1 rounded bg-zinc-500/15 px-2.5 py-1 text-xs text-zinc-300 transition-colors hover:bg-zinc-500/25"
+              disabled={applying}
+              className="flex items-center gap-1 rounded bg-zinc-500/15 px-2.5 py-1 text-xs text-zinc-300 transition-colors hover:bg-zinc-500/25 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Undo2 className="size-3" />
               {t('review.toolbar.actions.undo')}
@@ -169,7 +170,8 @@ export const ReviewToolbar = ({
             <TooltipTrigger asChild>
               <button
                 onClick={onAcceptAll}
-                className="flex items-center gap-1 rounded bg-green-500/15 px-2.5 py-1 text-xs text-green-400 transition-colors hover:bg-green-500/25"
+                disabled={applying}
+                className="flex items-center gap-1 rounded bg-green-500/15 px-2.5 py-1 text-xs text-green-400 transition-colors hover:bg-green-500/25 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Check className="size-3" />
                 {t('review.toolbar.actions.acceptAll')}

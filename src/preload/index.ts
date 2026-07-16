@@ -308,6 +308,7 @@ import type {
   RejectResult,
   ReplaceMembersRequest,
   RetryFailedOpenCodeSecondaryLanesResult,
+  ReviewFileScope,
   Schedule,
   ScheduleChangeEvent,
   ScheduleRun,
@@ -1499,31 +1500,19 @@ const electronAPI: ElectronAPI = {
       return invokeIpcWithResult<ApplyReviewResult>(REVIEW_APPLY_DECISIONS, request);
     },
     // Phase 2
-    checkConflict: async (filePath: string, expectedModified: string) => {
+    checkConflict: async (scope: ReviewFileScope, filePath: string, expectedModified: string) => {
       return invokeIpcWithResult<ConflictCheckResult>(
         REVIEW_CHECK_CONFLICT,
+        scope,
         filePath,
         expectedModified
       );
     },
-    rejectHunks: async (
-      filePath: string,
-      original: string,
-      modified: string,
-      hunkIndices: number[],
-      snippets: SnippetDiff[]
-    ) => {
-      return invokeIpcWithResult<RejectResult>(
-        REVIEW_REJECT_HUNKS,
-        filePath,
-        original,
-        modified,
-        hunkIndices,
-        snippets
-      );
+    rejectHunks: async (scope: ReviewFileScope, filePath: string, hunkIndices: number[]) => {
+      return invokeIpcWithResult<RejectResult>(REVIEW_REJECT_HUNKS, scope, filePath, hunkIndices);
     },
-    rejectFile: async (filePath: string, original: string, modified: string) => {
-      return invokeIpcWithResult<RejectResult>(REVIEW_REJECT_FILE, filePath, original, modified);
+    rejectFile: async (scope: ReviewFileScope, filePath: string) => {
+      return invokeIpcWithResult<RejectResult>(REVIEW_REJECT_FILE, scope, filePath);
     },
     previewReject: async (
       filePath: string,
@@ -1542,12 +1531,18 @@ const electronAPI: ElectronAPI = {
       );
     },
     // Editable diff
-    saveEditedFile: async (filePath: string, content: string, projectPath?: string) => {
+    saveEditedFile: async (
+      scope: ReviewFileScope,
+      filePath: string,
+      content: string,
+      expectedCurrentContent?: string | null
+    ) => {
       return invokeIpcWithResult<{ success: boolean }>(
         REVIEW_SAVE_EDITED_FILE,
+        scope,
         filePath,
         content,
-        projectPath
+        expectedCurrentContent
       );
     },
     watchFiles: async (projectPath: string, filePaths: string[]) => {

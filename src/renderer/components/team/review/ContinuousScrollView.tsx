@@ -40,10 +40,16 @@ interface ContinuousScrollViewProps {
   hunkContextHashesByFile: Record<string, Record<number, string>>;
   collapseUnchanged: boolean;
   applying: boolean;
+  filesApplying?: ReadonlySet<string>;
   autoViewed: boolean;
   discardCounters: Record<string, number>;
-  onHunkAccepted: (filePath: string, hunkIndex: number) => void;
-  onHunkRejected: (filePath: string, hunkIndex: number) => void;
+  onHunkAccepted: (filePath: string, hunkIndex: number) => boolean | void;
+  onHunkRejected: (
+    filePath: string,
+    hunkIndex: number,
+    beforeContent: string,
+    afterContent: string
+  ) => boolean | void;
   onFullyViewed: (filePath: string) => void;
   onContentChanged: (filePath: string, content: string) => void;
   onDiscard: (filePath: string) => void;
@@ -90,6 +96,7 @@ export const ContinuousScrollView = ({
   hunkContextHashesByFile,
   collapseUnchanged,
   applying,
+  filesApplying,
   autoViewed,
   discardCounters,
   onHunkAccepted,
@@ -266,6 +273,7 @@ export const ContinuousScrollView = ({
         const hasEdits = filePath in editedContents;
         const isViewed = viewedSet.has(filePath);
         const decision = fileDecisions[reviewKey] ?? fileDecisions[filePath];
+        const fileApplying = applying || filesApplying?.has(filePath) === true;
 
         const isCollapsed = collapsedFiles.has(filePath);
 
@@ -278,7 +286,7 @@ export const ContinuousScrollView = ({
               externalChange={reviewExternalChangesByFile[filePath]}
               pathChangeLabel={pathChangeLabels?.[filePath]}
               hasEdits={hasEdits}
-              applying={applying}
+              applying={fileApplying}
               isCollapsed={isCollapsed}
               onToggleCollapse={handleToggleCollapse}
               onDiscard={onDiscard}
@@ -294,7 +302,9 @@ export const ContinuousScrollView = ({
               <FileSectionDiff
                 file={file}
                 fileContent={content}
+                draftContent={editedContents[filePath]}
                 isLoading={!hasContent}
+                applying={fileApplying}
                 collapseUnchanged={collapseUnchanged}
                 onHunkAccepted={onHunkAccepted}
                 onHunkRejected={onHunkRejected}

@@ -26,6 +26,7 @@ import type {
   FileChangeWithContent,
   HunkDecision,
   RejectResult,
+  ReviewFileScope,
   SnippetDiff,
   TaskChangeRequestOptions,
   TaskChangeSetV2,
@@ -754,15 +755,17 @@ export interface ReviewAPI {
   ) => Promise<FileChangeWithContent>;
   applyDecisions: (request: ApplyReviewRequest) => Promise<ApplyReviewResult>;
   // Phase 2
-  checkConflict: (filePath: string, expectedModified: string) => Promise<ConflictCheckResult>;
-  rejectHunks: (
+  checkConflict: (
+    scope: ReviewFileScope,
     filePath: string,
-    original: string,
-    modified: string,
-    hunkIndices: number[],
-    snippets: SnippetDiff[]
+    expectedModified: string
+  ) => Promise<ConflictCheckResult>;
+  rejectHunks: (
+    scope: ReviewFileScope,
+    filePath: string,
+    hunkIndices: number[]
   ) => Promise<RejectResult>;
-  rejectFile: (filePath: string, original: string, modified: string) => Promise<RejectResult>;
+  rejectFile: (scope: ReviewFileScope, filePath: string) => Promise<RejectResult>;
   previewReject: (
     filePath: string,
     original: string,
@@ -772,9 +775,10 @@ export interface ReviewAPI {
   ) => Promise<{ preview: string; hasConflicts: boolean }>;
   // Editable diff
   saveEditedFile: (
+    scope: ReviewFileScope,
     filePath: string,
     content: string,
-    projectPath?: string
+    expectedCurrentContent?: string | null
   ) => Promise<{ success: boolean }>;
   watchFiles: (projectPath: string, filePaths: string[]) => Promise<void>;
   unwatchFiles: () => Promise<void>;

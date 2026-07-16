@@ -22,7 +22,7 @@ describe('FileContentResolver', () => {
     vi.useRealTimers();
   });
 
-  it('treats empty on-disk content as valid for write-new reconstruction', async () => {
+  it('treats explicit metadata creation as valid for write-new reconstruction', async () => {
     const fsPromises = await import('fs/promises');
     const readFile = fsPromises.readFile as unknown as ReturnType<typeof vi.fn>;
     readFile.mockResolvedValue('');
@@ -33,13 +33,13 @@ describe('FileContentResolver', () => {
       findMemberLogPaths: vi.fn().mockResolvedValue([]),
     };
 
-    const resolver = new FileContentResolver(logsFinder as any);
+    const resolver = new FileContentResolver(logsFinder as never);
 
     const snippets: SnippetDiff[] = [
       {
         toolUseId: 't1',
         filePath: '/tmp/empty-new.txt',
-        toolName: 'Write',
+        toolName: 'Edit',
         type: 'write-new',
         oldString: '',
         newString: '',
@@ -56,9 +56,82 @@ describe('FileContentResolver', () => {
     expect(content.contentSource).toBe('snippet-reconstruction');
   });
 
+  it('does not trust a stale first-seen Write label as creation evidence', async () => {
+    const fsPromises = await import('fs/promises');
+    const readFile = fsPromises.readFile as unknown as ReturnType<typeof vi.fn>;
+    readFile.mockResolvedValue('replacement\n');
+
+    const { FileContentResolver } = await import('@main/services/team/FileContentResolver');
+    const logsFinder = {
+      findMemberLogPaths: vi.fn().mockResolvedValue([]),
+    };
+    const resolver = new FileContentResolver(logsFinder as never);
+    const filePath = '/tmp/legacy-first-write.txt';
+    const snippets: SnippetDiff[] = [
+      {
+        toolUseId: 'legacy-write',
+        filePath,
+        toolName: 'Write',
+        type: 'write-new',
+        oldString: '',
+        newString: 'replacement\n',
+        replaceAll: false,
+        timestamp: '2026-03-01T10:00:00.000Z',
+        isError: false,
+      },
+    ];
+
+    const content = await resolver.getFileContent('team', 'member', filePath, snippets);
+
+    expect(content.isNewFile).toBe(false);
+    expect(content.originalFullContent).toBeNull();
+    expect(content.modifiedFullContent).toBe('replacement\n');
+    expect(content.contentSource).toBe('disk-current');
+    expect(logsFinder.findMemberLogPaths).toHaveBeenCalledTimes(1);
+  });
+
+  it('sanitizes stale aggregate isNewFile state without creation evidence', async () => {
+    const fsPromises = await import('fs/promises');
+    const readFile = fsPromises.readFile as unknown as ReturnType<typeof vi.fn>;
+    readFile.mockResolvedValue('replacement\n');
+
+    const { FileContentResolver } = await import('@main/services/team/FileContentResolver');
+    const resolver = new FileContentResolver({
+      findMemberLogPaths: vi.fn().mockResolvedValue([]),
+    } as never);
+    const filePath = '/tmp/stale-summary-write.txt';
+    const snippets: SnippetDiff[] = [
+      {
+        toolUseId: 'legacy-write',
+        filePath,
+        toolName: 'Write',
+        type: 'write-new',
+        oldString: '',
+        newString: 'replacement\n',
+        replaceAll: false,
+        timestamp: '2026-03-01T10:00:00.000Z',
+        isError: false,
+      },
+    ];
+
+    const contents = await resolver.resolveAllFileContents('team', 'member', [
+      {
+        filePath,
+        relativePath: 'stale-summary-write.txt',
+        snippets,
+        linesAdded: 1,
+        linesRemoved: 0,
+        isNewFile: true,
+      },
+    ]);
+
+    expect(contents.get(filePath)?.isNewFile).toBe(false);
+    expect(contents.get(filePath)?.originalFullContent).toBeNull();
+  });
+
   it('maps ledger create original content to empty string without disk reconstruction', async () => {
     const { FileContentResolver } = await import('@main/services/team/FileContentResolver');
-    const resolver = new FileContentResolver({ findMemberLogPaths: vi.fn() } as any);
+    const resolver = new FileContentResolver({ findMemberLogPaths: vi.fn() } as never);
 
     const content = await resolver.getFileContent('team', 'member', '/tmp/ledger-create.txt', [
       {
@@ -93,7 +166,7 @@ describe('FileContentResolver', () => {
 
   it('maps ledger delete modified content to empty string for diff display', async () => {
     const { FileContentResolver } = await import('@main/services/team/FileContentResolver');
-    const resolver = new FileContentResolver({ findMemberLogPaths: vi.fn() } as any);
+    const resolver = new FileContentResolver({ findMemberLogPaths: vi.fn() } as never);
 
     const content = await resolver.getFileContent('team', 'member', '/tmp/ledger-delete.txt', [
       {
@@ -132,7 +205,9 @@ describe('FileContentResolver', () => {
     readFile.mockResolvedValue('current disk content that must not become ledger text');
 
     const { FileContentResolver } = await import('@main/services/team/FileContentResolver');
-    const resolver = new FileContentResolver({ findMemberLogPaths: vi.fn().mockResolvedValue([]) } as any);
+    const resolver = new FileContentResolver({
+      findMemberLogPaths: vi.fn().mockResolvedValue([]),
+    } as never);
 
     const content = await resolver.getFileContent('team', 'member', '/tmp/binary-create.bin', [
       {
@@ -177,7 +252,7 @@ describe('FileContentResolver', () => {
       findMemberLogPaths: vi.fn().mockResolvedValue([]),
     };
 
-    const resolver = new FileContentResolver(logsFinder as any);
+    const resolver = new FileContentResolver(logsFinder as never);
 
     await resolver.resolveFileContent('team', 'member', '/tmp/cache-hit.txt', []);
     await resolver.resolveFileContent('team', 'member', '/tmp/cache-hit.txt', []);
@@ -196,7 +271,7 @@ describe('FileContentResolver', () => {
       findMemberLogPaths: vi.fn().mockResolvedValue([]),
     };
 
-    const resolver = new FileContentResolver(logsFinder as any);
+    const resolver = new FileContentResolver(logsFinder as never);
 
     await resolver.resolveFileContent('team', 'member', '/tmp/disk-change.txt', []);
     await resolver.resolveFileContent('team', 'member', '/tmp/disk-change.txt', []);
@@ -215,7 +290,7 @@ describe('FileContentResolver', () => {
       findMemberLogPaths: vi.fn().mockResolvedValue([]),
     };
 
-    const resolver = new FileContentResolver(logsFinder as any);
+    const resolver = new FileContentResolver(logsFinder as never);
     const firstSnippets: SnippetDiff[] = [];
     const secondSnippets: SnippetDiff[] = [
       {
@@ -248,7 +323,7 @@ describe('FileContentResolver', () => {
       findMemberLogPaths: vi.fn().mockResolvedValue([]),
     };
 
-    const resolver = new FileContentResolver(logsFinder as any);
+    const resolver = new FileContentResolver(logsFinder as never);
     const firstSnippets: SnippetDiff[] = [
       {
         toolUseId: 't-1',
@@ -292,7 +367,7 @@ describe('FileContentResolver', () => {
       findMemberLogPaths: vi.fn().mockResolvedValue([]),
     };
 
-    const resolver = new FileContentResolver(logsFinder as any);
+    const resolver = new FileContentResolver(logsFinder as never);
 
     const missing = await resolver.resolveFileContent(
       'team',
@@ -315,7 +390,7 @@ describe('FileContentResolver', () => {
   it('uses the same provisional TTL for all content sources in this pass', async () => {
     const { FileContentResolver } = await import('@main/services/team/FileContentResolver');
 
-    const resolver = new FileContentResolver({ findMemberLogPaths: vi.fn() } as any);
+    const resolver = new FileContentResolver({ findMemberLogPaths: vi.fn() } as never);
     const getCacheTtlForSource = (
       resolver as unknown as {
         getCacheTtlForSource: (source: string) => number;
@@ -342,7 +417,7 @@ describe('FileContentResolver', () => {
       findMemberLogPaths: vi.fn().mockResolvedValue([]),
     };
 
-    const resolver = new FileContentResolver(logsFinder as any);
+    const resolver = new FileContentResolver(logsFinder as never);
 
     await resolver.resolveFileContent('team', 'member', '/tmp/ttl-expiry.txt', []);
     vi.advanceTimersByTime(5_001);
@@ -361,7 +436,7 @@ describe('FileContentResolver', () => {
     const logsFinder = {
       findMemberLogPaths: vi.fn().mockResolvedValue([]),
     };
-    const resolver = new FileContentResolver(logsFinder as any);
+    const resolver = new FileContentResolver(logsFinder as never);
 
     await resolver.resolveFileContent('team', 'member', 'C:\\Repo\\SRC\\file.ts', []);
     resolver.invalidateFile('c:/repo/src/file.ts');

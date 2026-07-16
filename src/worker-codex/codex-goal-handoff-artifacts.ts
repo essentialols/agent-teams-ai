@@ -27,6 +27,7 @@ import {
 } from "@vioxen/subscription-runtime/worker-core";
 import { readGitBlobBatch } from "@vioxen/subscription-runtime/worker-local";
 import { assertGitPatchBlobsSecretSafe } from "./git-patch-secret-validator";
+import { withLiteralGitPathspecs } from "./git-literal-pathspecs";
 
 const execFileAsync = promisify(execFile);
 const maximumHandoffByteLimit = 64 * 1024 * 1024;
@@ -164,9 +165,11 @@ export async function materializeCodexGoalHandoffArtifacts(input: {
   if (patch !== confirmedPatch) {
     throw new Error("handoff_workspace_changed_during_materialization");
   }
-  const patchPath = join(jobRootDir, `${input.taskId}.handoff.patch`);
-  const summaryPath = join(jobRootDir, `${input.taskId}.handoff.summary.json`);
-  const manifestPath = join(jobRootDir, `${input.taskId}.handoff.manifest.json`);
+  const generation = sha256(confirmedPatch);
+  const artifactPrefix = `${input.taskId}.${generation}.handoff`;
+  const patchPath = join(jobRootDir, `${artifactPrefix}.patch`);
+  const summaryPath = join(jobRootDir, `${artifactPrefix}.summary.json`);
+  const manifestPath = join(jobRootDir, `${artifactPrefix}.manifest.json`);
   const totalFileBytes = await assertExactPatchSecretSafe({
     workspacePath,
     jobRootDir,
@@ -664,12 +667,16 @@ async function gitOutput(
   args: readonly string[],
   maxBuffer: number,
 ): Promise<string> {
-  const { stdout } = await execFileAsync("git", ["-c", "core.quotepath=false", ...args], {
-    cwd,
-    encoding: "utf8",
-    maxBuffer,
-    timeout: 15_000,
-  });
+  const { stdout } = await execFileAsync(
+    "git",
+    withLiteralGitPathspecs(["-c", "core.quotepath=false", ...args]),
+    {
+      cwd,
+      encoding: "utf8",
+      maxBuffer,
+      timeout: 15_000,
+    },
+  );
   return stdout;
 }
 

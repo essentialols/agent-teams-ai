@@ -112,7 +112,7 @@ const workerLaunchDeclarativeShape = {
   lanePacket: relativePathSchema,
   phaseId: phaseIdSchema,
   laneId: laneIdSchema,
-  inputPatchHash: sha256Schema,
+  inputPatchHash: sha256Schema.nullable(),
   reviewKind: z.enum(["implementation", "review", "remediation"]),
   ownedPaths: uniqueRelativePathsSchema(1),
   mandatoryDocs: uniqueRelativePathsSchema(1),
@@ -166,6 +166,21 @@ function addWorkerLaunchCrossFieldIssues(context: {
   readonly value: Readonly<Record<string, unknown>>;
   readonly issues: Array<Record<string, unknown>>;
 }): void {
+  if (
+    context.value.inputPatchHash === null &&
+    (context.value.reviewKind !== "implementation" &&
+      context.value.reviewKind !== "review" ||
+      ("revision" in context.value && context.value.revision !== 0) ||
+      ("retryCount" in context.value && context.value.retryCount !== 0) ||
+      ("supersedes" in context.value && context.value.supersedes !== null))
+  ) {
+    context.issues.push({
+      code: "custom",
+      input: context.value.inputPatchHash,
+      path: ["inputPatchHash"],
+      message: "contract_inputPatchHash_null_invalid",
+    });
+  }
   for (const packet of workerLaunchMissingPackets(context.value)) {
     context.issues.push({
       code: "custom",
@@ -177,13 +192,21 @@ function addWorkerLaunchCrossFieldIssues(context: {
 }
 
 /**
- * Stable controller input for a worker launch. `format: 1` identifies the
- * durable representation, not a planned WorkerLaunchV1/V2 type family.
- * Compatible changes update this format in place while runtime and
- * orchestrator are deployed together. A new format is introduced only for a
- * real breaking change that cannot be migrated safely for every consumer.
+ * Stable model-facing input. Runtime-owned identity, filesystem and ledger
+ * fields are deliberately absent: callers describe the work and the runtime
+ * materializes the execution binding from the admitted job manifest.
+ * `format: 1` identifies the durable representation, not a planned
+ * WorkerLaunchV1/V2 type family. Compatible changes update this format in
+ * place; a new format is introduced only for a genuine breaking change.
  */
 export const workerLaunchRequestSchema = z
+  .object({
+    ...workerLaunchDeclarativeShape,
+  })
+  .strict()
+  .check(addWorkerLaunchCrossFieldIssues);
+
+const workerLaunchMaterializationInputSchema = z
   .object({
     ...workerLaunchDeclarativeShape,
     jobId: workerLaunchMaterializedShape.jobId.optional(),
@@ -199,6 +222,18 @@ export const workerLaunchRequestSchema = z
   })
   .strict()
   .check(addWorkerLaunchCrossFieldIssues);
+
+/**
+ * The one stable ProjectScopedControl admission shape exposed to models.
+ * External validators and caller-supplied materialized state remain internal
+ * compatibility mechanisms and are not part of this public control surface.
+ */
+export const workerLaunchAdmissionSchema = z
+  .object({
+    mode: z.literal("serial-builtin"),
+    contract: workerLaunchRequestSchema,
+  })
+  .strict();
 
 export const workerLaunchSpecSchema = z
   .object({
@@ -220,7 +255,7 @@ const workerLaunchStateRecordSchema = z
     packetRevision: simpleIdSchema,
     controllerPacket: relativePathSchema,
     lanePacket: relativePathSchema,
-    inputPatchHash: sha256Schema,
+    inputPatchHash: sha256Schema.nullable(),
     reviewKind: z.enum(["implementation", "review", "remediation"]),
     revision: nonNegativeIntegerSchema,
     retryCount: nonNegativeIntegerSchema,
@@ -229,7 +264,8 @@ const workerLaunchStateRecordSchema = z
     supersededBy: sha256Schema.nullable().optional(),
     supersededFrom: sha256Schema.nullable().optional(),
   })
-  .strict();
+  .strict()
+  .check(addWorkerLaunchCrossFieldIssues);
 
 export const workerLaunchStateSchema = z
   .object({
@@ -241,11 +277,22 @@ export const workerLaunchStateSchema = z
   .strict();
 
 export type WorkerLaunchRequest = z.infer<typeof workerLaunchRequestSchema>;
+export type WorkerLaunchAdmission = z.infer<typeof workerLaunchAdmissionSchema>;
 export type WorkerLaunchSpec = z.infer<typeof workerLaunchSpecSchema>;
 export type WorkerLaunchState = z.infer<typeof workerLaunchStateSchema>;
 
 export function parseWorkerLaunchRequest(value: unknown): WorkerLaunchRequest {
   return parseWorkerLaunchValue(workerLaunchRequestSchema, value, "request");
+}
+
+export function parseWorkerLaunchMaterializationInput(
+  value: unknown,
+): Readonly<Record<string, unknown>> {
+  return parseWorkerLaunchValue(
+    workerLaunchMaterializationInputSchema,
+    value,
+    "request",
+  );
 }
 
 export function parseWorkerLaunchSpec(value: unknown): WorkerLaunchSpec {

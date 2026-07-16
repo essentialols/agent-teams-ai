@@ -19,6 +19,11 @@ export const projectScopedControllerToolGrants: readonly ControlledAgentToolGran
     "read",
   ),
   grant(
+    ControlledAgentToolName.ProjectRecoverOperations,
+    ControlledAgentToolGroup.WorkerLifecycle,
+    "write",
+  ),
+  grant(
     ControlledAgentToolName.ProjectControllerConsumeGuidance,
     ControlledAgentToolGroup.ControllerLifecycle,
     "write",
@@ -39,9 +44,19 @@ export const projectScopedControllerToolGrants: readonly ControlledAgentToolGran
     ControlledAgentToolGroup.WorkerLifecycle,
     "write",
   ),
+  grant(
+    ControlledAgentToolName.ProjectPrepareVerifier,
+    ControlledAgentToolGroup.WorkerLifecycle,
+    "write",
+  ),
   grant(ControlledAgentToolName.ProjectStop, ControlledAgentToolGroup.WorkerLifecycle, "write"),
   grant(
     ControlledAgentToolName.ProjectMarkReviewed,
+    ControlledAgentToolGroup.WorkerLifecycle,
+    "write",
+  ),
+  grant(
+    ControlledAgentToolName.ProjectRecordFailedNoOutput,
     ControlledAgentToolGroup.WorkerLifecycle,
     "write",
   ),

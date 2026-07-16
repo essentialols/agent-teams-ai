@@ -1,6 +1,5 @@
 import {
   ProjectAdmissionWorkerRole,
-  ReviewDecisionStatus,
   type ProjectAccessScope,
   type ProjectControlBroker,
 } from "@vioxen/subscription-runtime/worker-core";
@@ -35,6 +34,11 @@ import {
   assertProjectPreStartAdmissionLaunchBinding,
   validateStoredProjectPreStartAdmission,
 } from "./application/project-control/codex-goal-project-pre-start-admission";
+import { projectPreStartCapacityContinuationMode } from "./application/project-control/codex-goal-project-capacity-continuation";
+import {
+  terminalHandoffDependencyRecoveryRequested,
+  verifyTerminalHandoffRecovery,
+} from "./application/project-control/codex-goal-project-terminal-handoff-recovery";
 import { projectAdmissionWorkerRoleArg } from "./application/project-control/codex-goal-project-admission";
 import {
   assertProjectControlDependencyBootstrapReady,
@@ -49,6 +53,7 @@ import {
   assertSafeGitRefName,
   assertSafeGitRemoteName,
 } from "./codex-goal-mcp-project-git";
+import { resolveProjectSourceRevision } from "./application/project-control/codex-goal-project-source-revision";
 import {
   writeCodexGoalStopEvent,
   writeCodexGoalStoppedProgress,
@@ -57,7 +62,6 @@ import { buildCodexGoalBrief } from "./codex-goal-mcp-brief";
 import { codexGoalStateRootDir } from "./application/codex-goal-worker-control";
 import { codexGoalStatusInputFromLaunch as statusInput } from "./codex-goal-mcp-status-input";
 import { isSafeStartAction } from "./codex-goal-mcp-decision";
-import { ensureTerminalCodexGoalHandoffArtifacts } from "./application/ensure-codex-goal-handoff-artifacts";
 import {
   assertReviewedWorkerContinuationEnvironmentLocked,
   assertReviewedWorkerOutputStillMatchesLocked,
@@ -80,6 +84,13 @@ import type {
   ProjectControlMcpArgs,
 } from "./codex-goal-mcp-inputs";
 import { goalLaunchInput } from "./codex-goal-mcp-launch-input";
+import { localCodexProjectSafeExecutionJournal } from "./codex-goal-project-safe-execution-journal";
+import {
+  codexProjectContinuationReservationInput,
+  releaseCodexProjectAccount,
+  reserveCodexProjectAccount,
+} from "./application/project-control/codex-goal-project-account-reservation";
+import { decideCodexGoalProjectStop } from "./application/project-control/codex-goal-project-stop-policy";
 import {
   projectControlWorkspaceLocks,
   withValidatedProjectWorkspaceLock,
@@ -109,6 +120,10 @@ export type CodexGoalMcpProjectControlActionsDeps = {
   readonly codexProjectControlBroker: (
     input: Omit<CodexProjectControlBrokerInput, "admissionDeps">,
   ) => ProjectControlBroker;
+  readonly dependencyBootstrap?: typeof runDependencyBootstrap;
+  readonly safeExecutionJournal?: ReturnType<
+    typeof localCodexProjectSafeExecutionJournal
+  >;
 };
 
 export async function projectControlStartStoredJobView(
@@ -141,6 +156,12 @@ export async function projectControlStartStoredJobView(
     launch: await goalLaunchInput(codexGoalJobToArgs(manifest)),
   };
   const status = await collectCodexGoalStatus(statusInput(loaded.launch));
+  const reviewedOutputId = stringValue(args.reviewedOutputId);
+  const capacityContinuationMode = projectPreStartCapacityContinuationMode({
+    manifest: loaded.manifest,
+    ...(reviewedOutputId ? { reviewedOutputId } : {}),
+    status,
+  });
   const progressStale =
     status.progressHeartbeatAgeMs !== undefined &&
     status.progressHeartbeatAgeMs > 10 * 60_000;
@@ -148,7 +169,7 @@ export async function projectControlStartStoredJobView(
     status,
     progressStale,
   });
-  if (workerLiveness.alive) {
+  if (workerLiveness.alive && capacityContinuationMode === undefined) {
     return {
       ok: false,
       reason: "worker_already_running",
@@ -187,15 +208,31 @@ export async function projectControlStartStoredJobView(
       status,
     };
   }
-  const reviewedOutputId = stringValue(args.reviewedOutputId);
-  const dirtyContinuation = status.workspaceDirty === true;
-  if (dirtyContinuation) {
+  const workspaceDirty = status.workspaceDirty === true;
+  const cleanExplicitContinuation =
+    args.forceStart === true &&
+    !workspaceDirty &&
+    capacityContinuationMode === undefined &&
+    reviewedOutputId === undefined &&
+    loaded.manifest.projectPreStartAdmission !== undefined;
+  const terminalHandoffDependencyRecovery =
+    terminalHandoffDependencyRecoveryRequested({
+      status,
+      ...(reviewedOutputId ? { reviewedOutputId } : {}),
+      forceStart: args.forceStart === true,
+      ...(typeof args.dependencyBootstrap === "string"
+        ? { dependencyBootstrap: args.dependencyBootstrap }
+        : {}),
+      confirmDependencyBootstrap:
+        booleanValue(args.confirmDependencyBootstrap) === true,
+    });
+  if (workspaceDirty && capacityContinuationMode === undefined) {
     if (!args.forceStart) {
       throw new Error(
         "project_control_reviewed_dirty_continuation_force_required",
       );
     }
-    if (!reviewedOutputId) {
+    if (!reviewedOutputId && !terminalHandoffDependencyRecovery) {
       throw new Error(
         "project_control_reviewed_dirty_continuation_output_required",
       );
@@ -218,11 +255,19 @@ export async function projectControlStartStoredJobView(
       const lockedProgressStale =
         lockedStatus.progressHeartbeatAgeMs !== undefined &&
         lockedStatus.progressHeartbeatAgeMs > 10 * 60_000;
-      if (
-        resolveCodexGoalWorkerLiveness({
+      const lockedCapacityContinuationMode =
+        projectPreStartCapacityContinuationMode({
+          manifest: loaded.manifest,
+          ...(reviewedOutputId ? { reviewedOutputId } : {}),
           status: lockedStatus,
-          progressStale: lockedProgressStale,
-        }).alive
+        });
+      const lockedWorkerLiveness = resolveCodexGoalWorkerLiveness({
+        status: lockedStatus,
+        progressStale: lockedProgressStale,
+      });
+      if (
+        lockedWorkerLiveness.alive &&
+        lockedCapacityContinuationMode === undefined
       ) {
         return {
           ok: false,
@@ -232,8 +277,24 @@ export async function projectControlStartStoredJobView(
           status: lockedStatus,
         };
       }
-      if (lockedStatus.workspaceDirty === true !== dirtyContinuation) {
+      if ((lockedStatus.workspaceDirty === true) !== workspaceDirty) {
         throw new Error("project_control_workspace_state_changed_before_start");
+      }
+      if (lockedCapacityContinuationMode !== capacityContinuationMode) {
+        throw new Error("project_control_workspace_state_changed_before_start");
+      }
+      if (
+        terminalHandoffDependencyRecovery &&
+        !terminalHandoffDependencyRecoveryRequested({
+          status: lockedStatus,
+          forceStart: args.forceStart === true,
+          dependencyBootstrap: "install",
+          confirmDependencyBootstrap: true,
+        })
+      ) {
+        throw new Error(
+          "project_control_terminal_handoff_recovery_status_changed",
+        );
       }
       if (
         !isSafeStartAction(lockedStatus.recommendedAction) &&
@@ -252,15 +313,23 @@ export async function projectControlStartStoredJobView(
         rootDir: reviewedWorkerOutputRoot(controller.registryRootDir),
         locks,
       });
-      const reviewedContinuation = dirtyContinuation
-        ? await resolveReviewedWorkerContinuation({
-            store: reviewedOutputDeps.store,
-            projectId: controller.scope.projectId,
-            controllerJobId: controller.controller.jobId,
-            workerJobId: loaded.manifest.jobId,
-            taskId: loaded.launch.config.taskId,
-            workspacePath: loaded.launch.config.workspacePath,
-            reviewedOutputId: reviewedOutputId!,
+      const reviewedContinuation =
+        workspaceDirty && reviewedOutputId
+          ? await resolveReviewedWorkerContinuation({
+              store: reviewedOutputDeps.store,
+              projectId: controller.scope.projectId,
+              controllerJobId: controller.controller.jobId,
+              workerJobId: loaded.manifest.jobId,
+              taskId: loaded.launch.config.taskId,
+              workspacePath: workspace.canonicalWorkspacePath,
+              reviewedOutputId,
+            })
+          : undefined;
+      const terminalRecovery = terminalHandoffDependencyRecovery
+        ? await verifyTerminalHandoffRecovery({
+            producer: loaded.manifest,
+            workspacePath: workspace.canonicalWorkspacePath,
+            snapshotter: reviewedOutputDeps.snapshotter,
           })
         : undefined;
       if (reviewedContinuation) {
@@ -282,13 +351,61 @@ export async function projectControlStartStoredJobView(
           };
         }
       }
-      const dependencyPreflight = await runDependencyBootstrap({
+      if (capacityContinuationMode) {
+        await assertProjectPreStartAdmissionLaunchBinding({
+          manifest: loaded.manifest,
+          scope: controller.scope,
+          workspaceMode: capacityContinuationMode,
+        });
+      }
+      const canonicalLaunch: CodexGoalLaunchInput = {
+        ...loaded.launch,
+        config: {
+          ...loaded.launch.config,
+          workspacePath: workspace.canonicalWorkspacePath,
+        },
+      };
+      let capacitySupervisorReap;
+      if (lockedWorkerLiveness.alive && capacityContinuationMode) {
+        const reapBroker = deps.codexProjectControlBroker({
+          registryRootDir: controller.registryRootDir,
+          controller: controller.controller,
+          scope: controller.scope,
+          startLaunch: canonicalLaunch,
+          startManifest: loaded.manifest,
+          startAdmissionWorkspaceMode: capacityContinuationMode,
+          startWorkspaceLease: workspace,
+          stopLaunch: canonicalLaunch,
+        });
+        capacitySupervisorReap = await reapBroker.stopWorker({
+          jobId: loaded.manifest.jobId,
+          registryRoot: controller.registryRootDir,
+          workspacePath: loaded.manifest.workspacePath,
+          ...(canonicalLaunch.tmuxSession
+            ? { tmuxSession: canonicalLaunch.tmuxSession }
+            : {}),
+        });
+        const statusAfterReap = await collectCodexGoalStatus(
+          statusInput(canonicalLaunch),
+        );
+        const livenessAfterReap = resolveCodexGoalWorkerLiveness({
+          status: statusAfterReap,
+          progressStale: false,
+        });
+        if (livenessAfterReap.alive) {
+          throw new Error(
+            "project_control_terminal_capacity_supervisor_reap_failed",
+          );
+        }
+      }
+      const dependencyPreflight = await (
+        deps.dependencyBootstrap ?? runDependencyBootstrap
+      )({
         workspacePath: workspace.canonicalWorkspacePath,
         jobRootDir: loaded.manifest.jobRootDir,
         cacheNamespace: controller.scope.projectId,
         mode: projectControlDependencyBootstrapMode(args.dependencyBootstrap),
-        confirmInstall:
-          booleanValue(args.confirmDependencyBootstrap) === true,
+        confirmInstall: booleanValue(args.confirmDependencyBootstrap) === true,
       });
       assertProjectControlDependencyBootstrapReady(dependencyPreflight);
       if (reviewedContinuation) {
@@ -306,40 +423,93 @@ export async function projectControlStartStoredJobView(
           scope: controller.scope,
           workspaceMode: "reviewed_dirty_continuation",
         });
+      } else if (terminalRecovery) {
+        await verifyTerminalHandoffRecovery({
+          producer: loaded.manifest,
+          workspacePath: workspace.canonicalWorkspacePath,
+          snapshotter: reviewedOutputDeps.snapshotter,
+          expected: terminalRecovery,
+        });
+        await assertReviewedWorkerContinuationEnvironmentLocked(
+          reviewedOutputDeps,
+          workspace.lease,
+        );
+        await assertProjectPreStartAdmissionLaunchBinding({
+          manifest: loaded.manifest,
+          scope: controller.scope,
+          workspaceMode: "terminal_handoff_dependency_recovery",
+        });
+      } else if (capacityContinuationMode || cleanExplicitContinuation) {
+        await assertProjectPreStartAdmissionLaunchBinding({
+          manifest: loaded.manifest,
+          scope: controller.scope,
+          workspaceMode:
+            capacityContinuationMode ?? "clean_explicit_continuation",
+        });
       } else {
         await validateStoredProjectPreStartAdmission({
           manifest: loaded.manifest,
           scope: controller.scope,
         });
       }
-      const canonicalLaunch: CodexGoalLaunchInput = {
-        ...loaded.launch,
-        config: {
-          ...loaded.launch.config,
-          workspacePath: workspace.canonicalWorkspacePath,
-        },
-      };
-      const broker = deps.codexProjectControlBroker({
-        registryRootDir: controller.registryRootDir,
-        controller: controller.controller,
-        scope: controller.scope,
-        startLaunch: canonicalLaunch,
-        startWorkspaceLease: workspace,
-        startSkipDoctor: booleanValue(args.skipDoctor) ?? false,
+      const continuationReservation =
+        await codexProjectContinuationReservationInput({
+          status: lockedStatus,
+          launch: canonicalLaunch,
+          journal:
+            deps.safeExecutionJournal ??
+            localCodexProjectSafeExecutionJournal(canonicalLaunch),
+        });
+      const accountReservation = await reserveCodexProjectAccount({
+        manifest: loaded.manifest,
+        launch: canonicalLaunch,
+        ...continuationReservation,
       });
-      const result = await broker.startWorker({
-        jobId: loaded.manifest.jobId,
-        registryRoot: controller.registryRootDir,
-        workspacePath: loaded.manifest.workspacePath,
-        ...(loaded.launch.tmuxSession
-          ? { tmuxSession: loaded.launch.tmuxSession }
-          : {}),
-        accounts: loaded.manifest.accounts,
-        ...(dirtyContinuation
-          ? { workerRole: ProjectAdmissionWorkerRole.Adoption }
-          : {}),
-        ...(loaded.manifest.tags ? { tags: loaded.manifest.tags } : {}),
-      });
+      const reservedLaunch = accountReservation.launch;
+      const startAdmissionWorkspaceMode = reviewedContinuation
+        ? ("reviewed_dirty_continuation" as const)
+        : terminalRecovery
+          ? ("terminal_handoff_dependency_recovery" as const)
+          : (capacityContinuationMode ??
+            (cleanExplicitContinuation
+              ? ("clean_explicit_continuation" as const)
+              : undefined));
+      let result;
+      try {
+        const broker = deps.codexProjectControlBroker({
+          registryRootDir: controller.registryRootDir,
+          controller: controller.controller,
+          scope: controller.scope,
+          startLaunch: reservedLaunch,
+          startManifest: loaded.manifest,
+          ...(startAdmissionWorkspaceMode
+            ? { startAdmissionWorkspaceMode }
+            : {}),
+          startWorkspaceLease: workspace,
+          startSkipDoctor: booleanValue(args.skipDoctor) ?? false,
+          ...(reviewedContinuation ? { reviewedContinuation } : {}),
+        });
+        result = await broker.startWorker({
+          jobId: loaded.manifest.jobId,
+          registryRoot: controller.registryRootDir,
+          workspacePath: loaded.manifest.workspacePath,
+          ...(reservedLaunch.tmuxSession
+            ? { tmuxSession: reservedLaunch.tmuxSession }
+            : {}),
+          accounts: [accountReservation.accountId],
+          ...(reviewedContinuation || terminalRecovery
+            ? { workerRole: ProjectAdmissionWorkerRole.Adoption }
+            : {}),
+          ...(loaded.manifest.tags ? { tags: loaded.manifest.tags } : {}),
+        });
+      } catch (error) {
+        await releaseCodexProjectAccount({
+          manifest: loaded.manifest,
+          launch: reservedLaunch,
+          reason: "worker_start_failed",
+        });
+        throw error;
+      }
       return {
         ok: true,
         mode: "project_control_start",
@@ -351,12 +521,27 @@ export async function projectControlStartStoredJobView(
         tmuxSession: loaded.launch.tmuxSession,
         statusBefore: lockedStatus,
         dependencyPreflight: dependencyPreflight as unknown as JsonObject,
+        accountReservation: {
+          mode: accountReservation.mode,
+          accountId: accountReservation.accountId,
+          ...(accountReservation.mode === "exclusive"
+            ? {
+                fencingToken: accountReservation.fencingToken,
+                expiresAt: accountReservation.expiresAt,
+              }
+            : {}),
+        },
+        ...(capacitySupervisorReap
+          ? {
+              capacitySupervisorReap:
+                capacitySupervisorReap as unknown as JsonObject,
+            }
+          : {}),
         result: result as unknown as JsonObject,
       };
     },
   });
 }
-
 export async function projectControlCreateWorktreeView(
   args: ProjectControlMcpArgs,
   deps: CodexGoalMcpProjectControlActionsDeps,
@@ -375,6 +560,10 @@ export async function projectControlCreateWorktreeView(
   const newBranch = stringValue(args.newBranch);
   if (newBranch) assertSafeGitRefName(newBranch, "newBranch");
   const effectiveSourceRef = sourceRef ?? baseBranch;
+  const expectedSourceCommit = stringValue(args.expectedSourceCommit);
+  if (expectedSourceCommit && !effectiveSourceRef) {
+    throw new Error("project_control_pinned_source_ref_required");
+  }
   const workerRole = projectAdmissionWorkerRoleArg(args.workerRole);
   const realSourceWorkspacePath =
     await projectControlRealPathOutsideWorkspaceScope(
@@ -425,9 +614,15 @@ export async function projectControlCreateWorktreeView(
   const resolvedSource =
     await resolverBroker.resolveWorktreeRevision(worktreeAccessInput);
   assertSafeGitCommitSha(resolvedSource.revision);
+  const sourceRevision = await resolveProjectSourceRevision({
+    resolvedSource,
+    remoteTrackingRef: effectiveSourceRef ?? "HEAD",
+    ...(expectedSourceCommit ? { expectedSourceCommit } : {}),
+  });
   const createWorktreeInput: CodexGoalProjectCreateWorktreeInput = {
     ...worktreeAccessInput,
-    expectedRevision: resolvedSource.revision,
+    expectedRevision: sourceRevision.revision,
+    ...(sourceRevision.pinned ? { sourceRevisionPinned: true } : {}),
     expectedSourceRealPath: resolvedSource.sourceRealPath,
   };
   const broker = deps.codexProjectControlBroker({
@@ -452,8 +647,7 @@ export async function projectControlCreateWorktreeView(
         workspacePath: workspace.canonicalWorkspacePath,
         cacheNamespace: controller.scope.projectId,
         mode: projectControlDependencyBootstrapMode(args.dependencyBootstrap),
-        confirmInstall:
-          booleanValue(args.confirmDependencyBootstrap) === true,
+        confirmInstall: booleanValue(args.confirmDependencyBootstrap) === true,
       }),
   });
   assertProjectControlDependencyBootstrapReady(dependencyPreflight);
@@ -612,36 +806,26 @@ export async function projectControlStopStoredJobView(
     staleAfterMs: 10 * 60_000,
     tailLines: 20,
   });
-  const progressStale =
-    status.progressHeartbeatAgeMs !== undefined &&
-    status.progressHeartbeatAgeMs > 10 * 60_000;
-  const workerLiveness = resolveCodexGoalWorkerLiveness({
-    status,
-    progressStale,
-  });
   const stopCommandPreview = loaded.launch.tmuxSession
     ? buildCodexGoalStopTmuxCommand(loaded.launch.tmuxSession).preview
     : status.progressPid === undefined
       ? "no direct process pid"
       : `kill -TERM ${status.progressPid}`;
-  if (
-    workerLiveness.alive &&
-    !brief.silentStale &&
-    !brief.heartbeatOnlyNoOutput &&
-    !args.forceStop
-  ) {
+  const stopPolicy = decideCodexGoalProjectStop(brief.workerHealth);
+  if (!stopPolicy.allowed) {
     return {
       ok: false,
-      reason: "worker_not_silent_stale_or_heartbeat_only_no_output",
+      reason: stopPolicy.reason,
       controllerJobId: controller.controller.jobId,
       jobId: loaded.manifest.jobId,
       ...(loaded.launch.tmuxSession
         ? { tmuxSession: loaded.launch.tmuxSession }
         : {}),
-      requiredOverride: "forceStop",
+      requiredState: stopPolicy.requiredState,
       stopCommand: stopCommandPreview,
       status,
       brief,
+      safeMessage: stopPolicy.safeMessage,
     };
   }
   if (!args.confirmStop) {
@@ -660,170 +844,87 @@ export async function projectControlStopStoredJobView(
     };
   }
 
-  const broker = deps.codexProjectControlBroker({
-    registryRootDir: controller.registryRootDir,
-    controller: controller.controller,
+  return await withValidatedProjectWorkspaceLock({
+    locks: projectControlWorkspaceLocks(controller.registryRootDir),
     scope: controller.scope,
-    stopLaunch: loaded.launch,
-  });
-  const realWorkspacePath = await projectControlRealPathOutsideWorkspaceScope(
-    loaded.launch.config.workspacePath,
-    controller.scope,
-  );
-  const result = await broker.stopWorker({
-    jobId: loaded.manifest.jobId,
-    registryRoot: controller.registryRootDir,
-    workspacePath: loaded.launch.config.workspacePath,
-    ...(realWorkspacePath ? { realWorkspacePath } : {}),
-    ...(loaded.launch.tmuxSession
-      ? { tmuxSession: loaded.launch.tmuxSession }
-      : {}),
-  });
-  await writeCodexGoalStoppedProgress({
-    progressPath:
-      loaded.launch.config.progressPath ??
-      codexGoalProgressPath({
-        jobRootDir: loaded.launch.config.jobRootDir,
+    requestedWorkspacePath: loaded.manifest.workspacePath,
+    owner: `project-stop:${controller.controller.jobId}:${loaded.manifest.jobId}`,
+    effect: async (workspace) => {
+      const lockedLaunch: CodexGoalLaunchInput = {
+        ...loaded.launch,
+        config: {
+          ...loaded.launch.config,
+          workspacePath: workspace.canonicalWorkspacePath,
+        },
+      };
+      const broker = deps.codexProjectControlBroker({
+        registryRootDir: controller.registryRootDir,
+        controller: controller.controller,
+        scope: controller.scope,
+        stopLaunch: lockedLaunch,
+      });
+      const realWorkspacePath =
+        await projectControlRealPathOutsideWorkspaceScope(
+          loaded.launch.config.workspacePath,
+          controller.scope,
+        );
+      const result = await broker.stopWorker({
+        jobId: loaded.manifest.jobId,
+        registryRoot: controller.registryRootDir,
+        workspacePath: loaded.launch.config.workspacePath,
+        ...(realWorkspacePath ? { realWorkspacePath } : {}),
+        ...(loaded.launch.tmuxSession
+          ? { tmuxSession: loaded.launch.tmuxSession }
+          : {}),
+      });
+      await writeCodexGoalStoppedProgress({
+        progressPath:
+          loaded.launch.config.progressPath ??
+          codexGoalProgressPath({
+            jobRootDir: loaded.launch.config.jobRootDir,
+            taskId: loaded.launch.config.taskId,
+          }),
         taskId: loaded.launch.config.taskId,
-      }),
-    taskId: loaded.launch.config.taskId,
-    status: "stopped",
+        status: "stopped",
+      });
+      const statusAfter = await collectCodexGoalStatus(
+        statusInput(lockedLaunch),
+      );
+      const stopEventPath = await writeCodexGoalStopEvent({
+        jobId: loaded.manifest.jobId,
+        taskId: loaded.launch.config.taskId,
+        jobRootDir: loaded.launch.config.jobRootDir,
+        ...(loaded.launch.tmuxSession
+          ? { tmuxSession: loaded.launch.tmuxSession }
+          : {}),
+        stopCommand: String(result.resourceId ?? stopCommandPreview),
+        forceStop: Boolean(args.forceStop),
+        statusBefore: status,
+        statusAfter,
+        brief,
+      });
+      const accountReservationReleased = await releaseCodexProjectAccount({
+        manifest: loaded.manifest,
+        launch: lockedLaunch,
+        reason: "worker_stopped",
+      });
+      return {
+        ok: true,
+        mode: "project_control_stop",
+        controllerJobId: controller.controller.jobId,
+        registryRootDir: controller.registryRootDir,
+        auditPath: projectControlAuditPath(controller.controller),
+        jobId: loaded.manifest.jobId,
+        taskId: loaded.launch.config.taskId,
+        ...(loaded.launch.tmuxSession
+          ? { tmuxSession: loaded.launch.tmuxSession }
+          : {}),
+        stopEventPath,
+        accountReservationReleased,
+        statusBefore: status,
+        statusAfter,
+        result: result as unknown as JsonObject,
+      };
+    },
   });
-  const statusAfter = await collectCodexGoalStatus(statusInput(loaded.launch));
-  const stopEventPath = await writeCodexGoalStopEvent({
-    jobId: loaded.manifest.jobId,
-    taskId: loaded.launch.config.taskId,
-    jobRootDir: loaded.launch.config.jobRootDir,
-    ...(loaded.launch.tmuxSession
-      ? { tmuxSession: loaded.launch.tmuxSession }
-      : {}),
-    stopCommand: String(result.resourceId ?? stopCommandPreview),
-    forceStop: Boolean(args.forceStop),
-    statusBefore: status,
-    statusAfter,
-    brief,
-  });
-  return {
-    ok: true,
-    mode: "project_control_stop",
-    controllerJobId: controller.controller.jobId,
-    registryRootDir: controller.registryRootDir,
-    auditPath: projectControlAuditPath(controller.controller),
-    jobId: loaded.manifest.jobId,
-    taskId: loaded.launch.config.taskId,
-    ...(loaded.launch.tmuxSession
-      ? { tmuxSession: loaded.launch.tmuxSession }
-      : {}),
-    stopEventPath,
-    statusBefore: status,
-    statusAfter,
-    result: result as unknown as JsonObject,
-  };
-}
-
-export async function projectControlMarkReviewedView(
-  args: ProjectControlMcpArgs,
-  deps: CodexGoalMcpProjectControlActionsDeps,
-): Promise<JsonObject> {
-  const controller = await deps.loadProjectControlController(args);
-  const loaded = await deps.loadJobLaunch({
-    registryRootDir: controller.registryRootDir,
-    jobId: requiredRawString(args.jobId, "jobId"),
-  });
-  const captureReviewedOutput =
-    booleanValue(args.captureReviewedOutput) === true;
-  if (!captureReviewedOutput) {
-    await ensureTerminalCodexGoalHandoffArtifacts({ launch: loaded.launch });
-  }
-  const reviewNote = stringValue(args.note) ?? "project_control_reviewed";
-  const broker = deps.codexProjectControlBroker({
-    registryRootDir: controller.registryRootDir,
-    controller: controller.controller,
-    scope: controller.scope,
-    reviewLaunch: loaded.launch,
-    reviewNote,
-    ...(captureReviewedOutput
-      ? {
-          reviewedOutputCapture: {
-            projectId: controller.scope.projectId,
-            controllerJobId: controller.controller.jobId,
-            expectedPatchSha256: requiredRawString(
-              args.expectedPatchSha256,
-              "expectedPatchSha256",
-            ),
-            decision: requiredReviewDecision(args.reviewDecision),
-            reviewedBy:
-              stringValue(args.reviewedBy) ?? controller.controller.jobId,
-            reason: stringValue(args.reviewReason) ?? reviewNote,
-            approvedFiles: requiredStringArrayArg(
-              args.approvedFiles,
-              "approvedFiles",
-            ),
-            requiredChecks: parseProjectIntegrationChecks(args.requiredChecks),
-            ...(args.merge
-              ? { merge: parseReviewedOutputMerge(controller.scope, args.merge) }
-              : {}),
-          },
-        }
-      : {}),
-  });
-  const realWorkspacePath = await projectControlRealPathOutsideWorkspaceScope(
-    loaded.launch.config.workspacePath,
-    controller.scope,
-  );
-  const result = await broker.writeReviewMarker({
-    jobId: loaded.manifest.jobId,
-    registryRoot: controller.registryRootDir,
-    workspacePath: loaded.launch.config.workspacePath,
-    ...(realWorkspacePath ? { realWorkspacePath } : {}),
-    ...(loaded.launch.tmuxSession
-      ? { tmuxSession: loaded.launch.tmuxSession }
-      : {}),
-    markerType: "review",
-    note: reviewNote,
-  });
-  return {
-    ok: true,
-    mode: "project_control_mark_reviewed",
-    controllerJobId: controller.controller.jobId,
-    registryRootDir: controller.registryRootDir,
-    auditPath: projectControlAuditPath(controller.controller),
-    jobId: loaded.manifest.jobId,
-    ...(captureReviewedOutput && result.resourceId
-      ? { reviewedOutputId: result.resourceId }
-      : {}),
-    result: result as unknown as JsonObject,
-  };
-}
-
-function parseReviewedOutputMerge(
-  scope: ProjectAccessScope,
-  value: NonNullable<ProjectControlMcpArgs["merge"]>,
-) {
-  const sourceRemote = requiredRawString(value.sourceRemote, "merge.sourceRemote");
-  const sourceBranch = requiredRawString(value.sourceBranch, "merge.sourceBranch");
-  const sourceCommit = requiredRawString(value.sourceCommit, "merge.sourceCommit")
-    .toLowerCase();
-  const expectedTargetCommit = requiredRawString(
-    value.expectedTargetCommit,
-    "merge.expectedTargetCommit",
-  ).toLowerCase();
-  assertSafeGitRemoteName(sourceRemote, "merge.sourceRemote");
-  assertSafeGitRefName(sourceBranch, "merge.sourceBranch");
-  assertSafeGitCommitSha(sourceCommit);
-  assertSafeGitCommitSha(expectedTargetCommit);
-  if (!scope.allowedGitRemotes?.includes(sourceRemote)) {
-    throw new Error("reviewed_worker_output_merge_source_remote_denied");
-  }
-  if (!scope.allowedBranches?.includes(sourceBranch)) {
-    throw new Error("reviewed_worker_output_merge_source_branch_denied");
-  }
-  return { sourceRemote, sourceBranch, sourceCommit, expectedTargetCommit };
-}
-
-function requiredReviewDecision(value: unknown): ReviewDecisionStatus {
-  if (value === "approved") return ReviewDecisionStatus.Approved;
-  if (value === "rejected") return ReviewDecisionStatus.Rejected;
-  if (value === "needs_human") return ReviewDecisionStatus.NeedsHuman;
-  throw new Error("reviewed_worker_output_review_decision_required");
 }

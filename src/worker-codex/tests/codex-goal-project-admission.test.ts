@@ -15,15 +15,17 @@ import {
 } from "../application/project-control/codex-goal-project-admission";
 
 describe("Codex project admission snapshot", () => {
-  it("denies a second writer from the current string risk view without using stale cache", async () => {
+  it("admits a disjoint writer and denies a writer targeting the active workspace", async () => {
     const root = await mkdtemp(join(tmpdir(), "subscription-runtime-active-writer-admission-"));
     const workspacePath = join(root, "worktrees", "project-producer");
+    const disjointWorkspacePath = join(root, "worktrees", "project-disjoint-producer");
     const previousCacheTtl = process.env.SUBSCRIPTION_RUNTIME_PROJECT_ADMISSION_CACHE_TTL_MS;
     let activeWriter = false;
 
     try {
       process.env.SUBSCRIPTION_RUNTIME_PROJECT_ADMISSION_CACHE_TTL_MS = "120000";
       await mkdir(workspacePath, { recursive: true });
+      await mkdir(disjointWorkspacePath, { recursive: true });
       const deps: CodexProjectAdmissionDeps = {
         listJobs: async () => [{
           jobId: "project-producer",
@@ -57,12 +59,20 @@ describe("Codex project admission snapshot", () => {
       await expect(gate.evaluate({
         operation: ProjectOperation.StartWorker,
         workerRole: ProjectAdmissionWorkerRole.Producer,
+        workspacePath: disjointWorkspacePath,
       })).resolves.toMatchObject({ allowed: true });
 
       activeWriter = true;
       await expect(gate.evaluate({
         operation: ProjectOperation.StartWorker,
         workerRole: ProjectAdmissionWorkerRole.Producer,
+        workspacePath: disjointWorkspacePath,
+      })).resolves.toMatchObject({ allowed: true });
+
+      await expect(gate.evaluate({
+        operation: ProjectOperation.StartWorker,
+        workerRole: ProjectAdmissionWorkerRole.Producer,
+        workspacePath,
       })).resolves.toMatchObject({
         allowed: false,
         debt: [expect.objectContaining({
@@ -76,6 +86,80 @@ describe("Codex project admission snapshot", () => {
       } else {
         process.env.SUBSCRIPTION_RUNTIME_PROJECT_ADMISSION_CACHE_TTL_MS = previousCacheTtl;
       }
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("admits only the verified input-patch target through its self debt", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subscription-runtime-admitted-patch-start-"));
+    const workspacePath = join(root, "worktrees", "project-remediation");
+    let activeWriterRisk = "dirty_workspace_without_worker";
+    try {
+      await mkdir(workspacePath, { recursive: true });
+      const deps: CodexProjectAdmissionDeps = {
+        listJobs: async () => [{
+          jobId: "project-remediation",
+          tags: ["worker-role-producer"],
+          taskId: "project-remediation",
+          workspacePath,
+          promptPath: join(root, "remediation.md"),
+          accountNames: ["account-a"],
+          updatedAt: "2026-07-15T00:00:00.000Z",
+          manifestPath: join(root, "remediation.json"),
+        }],
+        buildOverviewItems: async () => [{
+          ok: true,
+          jobId: "project-remediation",
+          workspacePath,
+          workspaceDirty: true,
+          workerAlive: activeWriterRisk === "active_worker",
+          activeWriterRisk,
+          activeWriterRiskReasons: [activeWriterRisk],
+          lifecycleMarkerTypes: [],
+        }],
+      };
+      const gate = codexProjectAdmissionGate({
+        registryRootDir: join(root, "registry"),
+        scope: { projectId: "project", jobIdPrefixes: ["project-"] },
+        deps,
+        admittedInputPatchTarget: {
+          jobId: "project-remediation",
+          workspacePath,
+        },
+      });
+
+      await expect(gate.evaluate({
+        operation: ProjectOperation.StartWorker,
+        jobId: "project-remediation",
+        workerRole: ProjectAdmissionWorkerRole.Producer,
+        workspacePath,
+      })).resolves.toMatchObject({ allowed: true, debt: [] });
+      await expect(gate.evaluate({
+        operation: ProjectOperation.CreateWorktree,
+        jobId: "project-remediation",
+        workerRole: ProjectAdmissionWorkerRole.Producer,
+        workspacePath,
+      })).resolves.toMatchObject({ allowed: true, debt: [] });
+      await expect(gate.evaluate({
+        operation: ProjectOperation.StartWorker,
+        jobId: "project-other",
+        workerRole: ProjectAdmissionWorkerRole.Producer,
+        workspacePath,
+      })).resolves.toMatchObject({ allowed: false });
+
+      activeWriterRisk = "active_worker";
+      await expect(gate.evaluate({
+        operation: ProjectOperation.StartWorker,
+        jobId: "project-remediation",
+        workerRole: ProjectAdmissionWorkerRole.Producer,
+        workspacePath,
+      })).resolves.toMatchObject({
+        allowed: false,
+        debt: [expect.objectContaining({
+          reason: ProjectDebtReason.ActiveWriterConflict,
+        })],
+      });
+    } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
@@ -244,13 +328,7 @@ describe("Codex project admission snapshot", () => {
         scope,
         deps,
       });
-      expect(liveSnapshot.debt).toEqual([
-        expect.objectContaining({
-          reason: ProjectDebtReason.ActiveWriterConflict,
-          subject: reviewer.jobId,
-          severity: "blocking",
-        }),
-      ]);
+      expect(liveSnapshot.debt).toEqual([]);
       await expect(codexProjectAdmissionGate({
         registryRootDir: join(root, "registry"),
         scope,
@@ -278,11 +356,6 @@ describe("Codex project admission snapshot", () => {
         },
       });
       expect(staleSnapshot.debt).toEqual(expect.arrayContaining([
-        expect.objectContaining({
-          reason: ProjectDebtReason.ActiveWriterConflict,
-          subject: reviewer.jobId,
-          severity: "blocking",
-        }),
         expect.objectContaining({
           reason: ProjectDebtReason.StaleDirtyWorker,
           subject: workspacePath,
@@ -338,6 +411,8 @@ describe("Codex project admission snapshot", () => {
       const deps = (input: {
         readonly currentUpdatedAt: string;
         readonly consumingUpdatedAt?: string;
+        readonly activeWriterRisk?: string;
+        readonly workspaceConflict?: boolean;
       }): CodexProjectAdmissionDeps => ({
         listJobs: async () => [
           summary("project-router-r1", input.currentUpdatedAt),
@@ -351,6 +426,12 @@ describe("Codex project admission snapshot", () => {
           workspacePath,
           workspaceDirty: true,
           workerAlive: false,
+          activeWriterRisk:
+            input.activeWriterRisk ?? "dirty_workspace_without_worker",
+          activeWriterRiskReasons: [
+            input.activeWriterRisk ?? "dirty_workspace_without_worker",
+          ],
+          workspaceConflict: input.workspaceConflict ?? false,
           resultStatus: "completed",
           tags: ["worker-role-producer"],
         }],
@@ -365,9 +446,42 @@ describe("Codex project admission snapshot", () => {
         }),
       });
       expect(consumed.counts).toMatchObject({
+        activeWriterConflicts: 0,
         consumedDirtyWorkspaces: 1,
         incompleteConsumedOutputRecords: 0,
       });
+
+      const stateMismatch = await buildCodexProjectAdmissionSnapshot({
+        registryRootDir: join(root, "registry"),
+        scope,
+        deps: deps({
+          currentUpdatedAt: "2026-07-13T13:30:00.000Z",
+          consumingUpdatedAt: "2026-07-13T13:32:00.000Z",
+          activeWriterRisk: "state_mismatch",
+        }),
+      });
+      expect(stateMismatch.debt).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          reason: ProjectDebtReason.ActiveWriterConflict,
+          severity: "blocking",
+        }),
+      ]));
+
+      const workspaceConflict = await buildCodexProjectAdmissionSnapshot({
+        registryRootDir: join(root, "registry"),
+        scope,
+        deps: deps({
+          currentUpdatedAt: "2026-07-13T13:30:00.000Z",
+          consumingUpdatedAt: "2026-07-13T13:32:00.000Z",
+          workspaceConflict: true,
+        }),
+      });
+      expect(workspaceConflict.debt).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          reason: ProjectDebtReason.ActiveWriterConflict,
+          severity: "blocking",
+        }),
+      ]));
 
       const newerDirtyJob = await buildCodexProjectAdmissionSnapshot({
         registryRootDir: join(root, "registry"),

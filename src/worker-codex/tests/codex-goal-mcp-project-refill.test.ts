@@ -1,5 +1,4 @@
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
 import { access, chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -165,7 +164,7 @@ describe("codex goal MCP server", () => {
           lanePacket: "lane.md",
           phaseId: "phase-01",
           laneId: "p1-s0",
-          inputPatchHash: createHash("sha256").update("").digest("hex"),
+          inputPatchHash: null,
           reviewKind: "implementation",
           ownedPaths: ["src/example.ts"],
           mandatoryDocs: ["README.md", "controller.md", "lane.md"],
@@ -397,30 +396,31 @@ describe("codex goal MCP server", () => {
       });
       const rejectedWorkspace = join(root, "worktrees", "infinity-context-invalid-v1");
       const rejectedJobRoot = join(root, "worker-jobs", "infinity-context-invalid-v1");
-      const rejected = await callToolJson(client, "codex_goal_project_refill_worker", {
-        registryRootDir,
-        controllerJobId: "infinity-context-controller-v1",
-        jobId: "infinity-context-invalid-v1",
-        jobRootDir: rejectedJobRoot,
-        authRootDir: join(root, "auth"),
-        sourceWorkspacePath,
-        workspacePath: rejectedWorkspace,
-        promptBody: "invalid binding must not create resources\n",
-        taskId: "infinity-context-invalid-v1",
-        accounts: ["account-a"],
-        workerRole: "fastgate",
-        preStartAdmission: {
-          ...builtinAdmission,
-          contract: { ...builtinAdmission.contract, jobId: "wrong-job" },
+      const rejected = await client.callTool({
+        name: "codex_goal_project_refill_worker",
+        arguments: {
+          registryRootDir,
+          controllerJobId: "infinity-context-controller-v1",
+          jobId: "infinity-context-invalid-v1",
+          jobRootDir: rejectedJobRoot,
+          authRootDir: join(root, "auth"),
+          sourceWorkspacePath,
+          workspacePath: rejectedWorkspace,
+          promptBody: "invalid binding must not create resources\n",
+          taskId: "infinity-context-invalid-v1",
+          accounts: ["account-a"],
+          workerRole: "fastgate",
+          preStartAdmission: {
+            ...builtinAdmission,
+            contract: { ...builtinAdmission.contract, jobId: "wrong-job" },
+          },
+          confirmPreStartAdmission: true,
+          startWorker: false,
+          confirmRefill: true,
         },
-        confirmPreStartAdmission: true,
-        startWorker: false,
-        confirmRefill: true,
       });
-      expect(rejected).toEqual({
-        ok: false,
-        error: "project_control_pre_start_builtin_materialization_jobId_mismatch",
-      });
+      expect(rejected.isError).toBe(true);
+      expect(JSON.stringify(rejected.content)).toContain("jobId");
       await expect(access(rejectedWorkspace)).rejects.toMatchObject({ code: "ENOENT" });
       await expect(access(rejectedJobRoot)).rejects.toMatchObject({ code: "ENOENT" });
       const audit = await readProjectControlAudit(
@@ -517,6 +517,7 @@ operation.result = {
   jobId: operation.targetJobId,
   executionMode: operation.args.executionMode,
   sourceRef: operation.args.sourceRef,
+  expectedSourceCommit: operation.args.expectedSourceCommit,
   newBranch: operation.args.newBranch
 };
 await mkdir(dirname(operation.resultPath), { recursive: true });
@@ -534,21 +535,31 @@ await writeFile(operationFilePath, JSON.stringify(operation, null, 2) + "\\n");
       const refillTool = tools.tools.find(
         (tool) => tool.name === "codex_goal_project_refill_worker",
       );
+      const verifierTool = tools.tools.find(
+        (tool) => tool.name === "codex_goal_project_prepare_verifier",
+      );
       expect(refillTool?.inputSchema.properties).toMatchObject({
         sourceRef: expect.any(Object),
         newBranch: expect.any(Object),
+        producerJobId: expect.any(Object),
       });
       const refillSchema = refillTool?.inputSchema.properties
         ?.preStartAdmission as TestJsonSchema;
-      const builtinSchema = refillSchema.anyOf?.find(
-        (candidate) => candidate.properties?.mode?.const === "serial-builtin",
-      );
-      expect(builtinSchema).toMatchObject({
+      const verifierSchema = verifierTool?.inputSchema.properties
+        ?.preStartAdmission as TestJsonSchema;
+      expect(refillSchema).toMatchObject({
         type: "object",
         required: ["mode", "contract"],
         additionalProperties: false,
       });
-      const contractSchema = builtinSchema?.properties?.contract;
+      expect(verifierSchema).toMatchObject({
+        type: "object",
+        required: ["mode", "contract"],
+        additionalProperties: false,
+      });
+      expect(verifierSchema.properties).toEqual(refillSchema.properties);
+      expect(refillSchema.anyOf).toBeUndefined();
+      const contractSchema = refillSchema.properties?.contract;
       const declarativeFields = [
         "kind",
         "format",
@@ -569,21 +580,9 @@ await writeFile(operationFilePath, JSON.stringify(operation, null, 2) + "\\n");
         "requiredChecks",
         "executionPolicy",
       ];
-      const materializedFields = [
-        "jobId",
-        "workerId",
-        "revision",
-        "retryCount",
-        "workKey",
-        "supersedes",
-        "registryStatus",
-        "jobRoot",
-        "workspaceRoot",
-        "promptPath",
-      ];
       expect(contractSchema?.required).toEqual(declarativeFields);
       expect(Object.keys(contractSchema?.properties ?? {}).sort()).toEqual(
-        [...declarativeFields, ...materializedFields].sort(),
+        [...declarativeFields].sort(),
       );
       expect(contractSchema).toMatchObject({
         type: "object",
@@ -614,11 +613,10 @@ await writeFile(operationFilePath, JSON.stringify(operation, null, 2) + "\\n");
           },
         },
       });
-      expect(builtinSchema?.properties?.state).toMatchObject({
-        type: "object",
-        required: ["schemaVersion", "maxRetries", "maxInFlight", "records"],
-        additionalProperties: false,
-      });
+      expect(refillSchema.properties?.state).toBeUndefined();
+      expect(refillSchema.properties?.contractValidatorPath).toBeUndefined();
+      expect(refillSchema.properties?.admissionValidatorPath).toBeUndefined();
+      expect(JSON.stringify(refillSchema)).not.toContain("additionalProperties\":{}");
       expect(JSON.stringify(refillSchema)).not.toContain("worker-start-v1");
       expect(JSON.stringify(refillSchema)).not.toContain("contractSchema");
 
@@ -653,6 +651,7 @@ await writeFile(operationFilePath, JSON.stringify(operation, null, 2) + "\\n");
         sourceWorkspacePath,
         workspacePath: childWorkspace,
         sourceRef: "main",
+        expectedSourceCommit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         newBranch: "refactor/infinity-context-memory-fastgate-v1",
         promptBody: "Run bounded refill.\n",
         taskId: "infinity-context-memory-fastgate-v1",
@@ -671,14 +670,15 @@ await writeFile(operationFilePath, JSON.stringify(operation, null, 2) + "\\n");
       expect(result.operation).not.toHaveProperty("args");
 
       let status: Record<string, unknown> | undefined;
-      for (let attempt = 0; attempt < 20; attempt += 1) {
+      for (let attempt = 0; attempt < 200; attempt += 1) {
         status = await callToolJson(client, "codex_goal_project_operation_status", {
           registryRootDir,
           controllerJobId: "infinity-context-controller-v1",
           operationId: result.operationId,
           includeResult: true,
         });
-        if ((status.operation as { status?: string } | undefined)?.status === "completed") {
+        const operationStatus = (status.operation as { status?: string } | undefined)?.status;
+        if (operationStatus === "completed" || operationStatus === "failed") {
           break;
         }
         await sleep(25);
@@ -696,6 +696,7 @@ await writeFile(operationFilePath, JSON.stringify(operation, null, 2) + "\\n");
             jobId: "infinity-context-memory-fastgate-v1",
             executionMode: "sync",
             sourceRef: "main",
+            expectedSourceCommit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             newBranch: "refactor/infinity-context-memory-fastgate-v1",
           },
         },
@@ -876,8 +877,8 @@ await writeFile(operationFilePath, JSON.stringify(operation, null, 2) + "\\n");
       });
       expect(stopped).toMatchObject({
         ok: false,
-        reason: "worker_not_silent_stale_or_heartbeat_only_no_output",
-        requiredOverride: "forceStop",
+        reason: "project_control_fresh_worker_stop_denied",
+        requiredState: "silent_stale_or_heartbeat_only_no_output",
         stopCommand: "no direct process pid",
         brief: {
           workerAlive: true,

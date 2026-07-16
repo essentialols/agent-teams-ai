@@ -1,10 +1,11 @@
-import { basename, resolve } from "node:path";
+import { basename, dirname, relative, resolve, sep } from "node:path";
 
 import {
   ProjectDebtReason,
   type ProjectAdmissionSnapshot,
   type ProjectDebtItem,
 } from "../domain/project-admission";
+import type { TerminalOutputBackup } from "../domain/terminal-output-decision";
 
 const CONSUMED_OUTPUT_TERMINAL_STATUSES = new Set([
   "integrated",
@@ -27,6 +28,11 @@ export type ConsumedOutputRecord = {
   readonly workspace?: string;
   readonly resolvedWorkspace?: string;
   readonly commitSha?: string;
+  readonly backup?: TerminalOutputBackup;
+  readonly backupEvidenceValid?: boolean;
+  readonly backupWorkspaceDirty?: boolean;
+  readonly preexistingWorkspacePatchValid?: boolean;
+  readonly reclassifiableAsFailedNoOutput?: boolean;
   readonly hasAuthoredOutput: boolean;
   readonly valid: boolean;
   readonly evidence: readonly string[];
@@ -57,6 +63,7 @@ export type ConsumedOutputLedgerSourcePort = {
   }>;
   pathExists(path: string): Promise<boolean>;
   pathSize(path: string): Promise<number | undefined>;
+  pathSha256(path: string): Promise<string | undefined>;
   resolveWorkspacePath(path: string): Promise<string | undefined>;
 };
 
@@ -129,7 +136,7 @@ export async function consumedOutputRecordFromJson(input: {
   readonly ledgerPath: string;
   readonly source: Pick<
     ConsumedOutputLedgerSourcePort,
-    "pathExists" | "pathSize" | "resolveWorkspacePath"
+    "pathExists" | "pathSize" | "pathSha256" | "resolveWorkspacePath"
   >;
 }): Promise<ConsumedOutputRecord | null> {
   if (!isRecord(input.value)) return null;
@@ -149,7 +156,10 @@ export async function consumedOutputRecordFromJson(input: {
   const evidence: string[] = [];
   const backup = isRecord(input.value.backup) ? input.value.backup : undefined;
   const workspace = backup ? stringValue(backup.workspace) : undefined;
+  const terminalBackup = terminalOutputBackup(backup);
   const closedAt = stringValue(input.value.closedAt);
+  const hasActiveClaim = isRecord(input.value.claim) ||
+    input.value.active === true || input.value.claimed === true;
   if (!closedAt) evidence.push("terminal consumed-output record is missing closedAt");
   if (!backup) evidence.push("terminal consumed-output record is missing backup");
   if (!workspace) evidence.push("terminal consumed-output backup is missing workspace");
@@ -164,14 +174,25 @@ export async function consumedOutputRecordFromJson(input: {
     : {
       ok: false,
       hasAuthoredOutput: false,
+      workspaceDirty: false,
       evidence: ["backup metadata is missing"],
     };
+  const preexistingWorkspacePatch = await preexistingWorkspacePatchEvidence(
+    input.value,
+    input.source,
+  );
+  evidence.push(...preexistingWorkspacePatch.evidence);
   evidence.push(...backupEvidence.evidence);
   const commit = integratedOutputCommit(input.value);
   const hasAuthoredOutput = backupEvidence.hasAuthoredOutput ||
     (status === "integrated" && commit !== undefined);
   if (status === NO_OUTPUT_STATUS) {
-    evidence.push(...failedNoOutputEvidence(input.value, hasAuthoredOutput));
+    evidence.push(...failedNoOutputEvidence(
+      input.value,
+      hasAuthoredOutput,
+      backupEvidence.workspaceDirty,
+      preexistingWorkspacePatch.valid,
+    ));
   } else if (status === REVIEWED_NO_CHANGE_STATUS) {
     evidence.push(...reviewedNoChangeEvidence(input.value, hasAuthoredOutput));
   } else if (!hasAuthoredOutput) {
@@ -185,6 +206,14 @@ export async function consumedOutputRecordFromJson(input: {
   const resolvedWorkspace = workspace
     ? await input.source.resolveWorkspacePath(workspace)
     : undefined;
+  const reclassifiableAsFailedNoOutput = Boolean(
+    closedAt &&
+      terminalBackup &&
+      !hasActiveClaim &&
+      backupEvidence.ok &&
+      !backupEvidence.hasAuthoredOutput &&
+      !backupEvidence.workspaceDirty,
+  );
   return {
     jobId,
     status,
@@ -193,6 +222,11 @@ export async function consumedOutputRecordFromJson(input: {
     ...(workspace ? { workspace } : {}),
     ...(resolvedWorkspace ? { resolvedWorkspace } : {}),
     ...(commit ? { commitSha: commit } : {}),
+    ...(terminalBackup ? { backup: terminalBackup } : {}),
+    backupEvidenceValid: backupEvidence.ok,
+    backupWorkspaceDirty: backupEvidence.workspaceDirty,
+    preexistingWorkspacePatchValid: preexistingWorkspacePatch.valid,
+    reclassifiableAsFailedNoOutput,
     hasAuthoredOutput,
     valid: evidence.length === 0,
     evidence: evidence.length === 0
@@ -299,14 +333,18 @@ async function consumedOutputBackupEvidence(
 ): Promise<{
   readonly ok: boolean;
   readonly hasAuthoredOutput: boolean;
+  readonly workspaceDirty: boolean;
   readonly evidence: readonly string[];
 }> {
   const evidence: string[] = [];
   const statusPath = stringValue(backup.statusPath);
+  let statusSize: number | undefined;
   if (!statusPath) {
     evidence.push("backup is missing statusPath");
   } else if (!await source.pathExists(statusPath)) {
     evidence.push(`backup statusPath is missing: ${statusPath}`);
+  } else {
+    statusSize = await source.pathSize(statusPath);
   }
   const payloadPaths = [
     stringValue(backup.patchPath),
@@ -325,6 +363,7 @@ async function consumedOutputBackupEvidence(
   return {
     ok: evidence.length === 0,
     hasAuthoredOutput: payloadSizes.some((size) => size !== undefined && size > 0),
+    workspaceDirty: statusSize !== undefined && statusSize > 0,
     evidence,
   };
 }
@@ -332,6 +371,8 @@ async function consumedOutputBackupEvidence(
 function failedNoOutputEvidence(
   value: Record<string, unknown>,
   hasAuthoredOutput: boolean,
+  backupWorkspaceDirty: boolean,
+  preexistingWorkspacePatchValid: boolean,
 ): readonly string[] {
   const evidence: string[] = [];
   const failure = isRecord(value.failure) ? value.failure : undefined;
@@ -347,7 +388,78 @@ function failedNoOutputEvidence(
   if (hasAuthoredOutput) {
     evidence.push("failed_no_output record contradicts non-empty authored output evidence");
   }
+  if (backupWorkspaceDirty && !preexistingWorkspacePatchValid) {
+    evidence.push("failed_no_output record contradicts non-empty workspace status evidence");
+  }
   return evidence;
+}
+
+async function preexistingWorkspacePatchEvidence(
+  value: Record<string, unknown>,
+  source: Pick<ConsumedOutputLedgerSourcePort, "pathSize" | "pathSha256">,
+): Promise<{ readonly valid: boolean; readonly evidence: readonly string[] }> {
+  const candidate = isRecord(value.preexistingWorkspacePatch)
+    ? value.preexistingWorkspacePatch
+    : undefined;
+  if (!candidate) return { valid: false, evidence: [] };
+  const path = stringValue(candidate.path);
+  const expectedSha256 = stringValue(candidate.sha256)?.toLowerCase();
+  if (!path || !expectedSha256 || !/^[a-f0-9]{64}$/.test(expectedSha256)) {
+    return {
+      valid: false,
+      evidence: ["preexisting workspace patch metadata is invalid"],
+    };
+  }
+  const backup = isRecord(value.backup) ? value.backup : undefined;
+  const statusPath = backup ? stringValue(backup.statusPath) : undefined;
+  if (!statusPath || !pathInsideOrEqual(path, dirname(statusPath))) {
+    return {
+      valid: false,
+      evidence: ["preexisting workspace patch is outside terminal backup"],
+    };
+  }
+  // The scoped command verifies payload bytes before publishing the immutable
+  // decision. Admission readers only inspect metadata and never open payloads.
+  const size = await source.pathSize(path);
+  if (size === undefined || size <= 0) {
+    return {
+      valid: false,
+      evidence: [`preexisting workspace patch is missing or empty: ${path}`],
+    };
+  }
+  const actualSha256 = await source.pathSha256(path);
+  if (actualSha256 !== expectedSha256) {
+    return {
+      valid: false,
+      evidence: [`preexisting workspace patch hash mismatch: ${path}`],
+    };
+  }
+  return { valid: true, evidence: [] };
+}
+
+function pathInsideOrEqual(path: string, root: string): boolean {
+  const pathRelative = relative(resolve(root), resolve(path));
+  return pathRelative === "" ||
+    (pathRelative !== ".." && !pathRelative.startsWith(`..${sep}`));
+}
+
+function terminalOutputBackup(
+  value: Record<string, unknown> | undefined,
+): TerminalOutputBackup | undefined {
+  if (!value) return undefined;
+  const workspace = stringValue(value.workspace);
+  const statusPath = stringValue(value.statusPath);
+  if (!workspace || !statusPath) return undefined;
+  const patchPath = stringValue(value.patchPath);
+  const numstatPath = stringValue(value.numstatPath);
+  const untrackedArchivePath = stringValue(value.untrackedArchivePath);
+  return {
+    workspace,
+    statusPath,
+    ...(patchPath ? { patchPath } : {}),
+    ...(numstatPath ? { numstatPath } : {}),
+    ...(untrackedArchivePath ? { untrackedArchivePath } : {}),
+  };
 }
 
 function reviewedNoChangeEvidence(

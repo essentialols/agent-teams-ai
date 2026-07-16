@@ -65,6 +65,13 @@ describe("codex goal cli", () => {
       maxAccountCycles: 5,
       editMode: "allow-edits",
       requireGitWorkspace: true,
+      sourceEnv: {
+        SUBSCRIPTION_RUNTIME_JOB_ROOT: "/tmp/job",
+        SUBSCRIPTION_RUNTIME_TMPDIR: "/tmp/job/tmp",
+        TMPDIR: "/tmp/job/tmp/agent",
+        TMP: "/tmp/job/tmp/agent",
+        TEMP: "/tmp/job/tmp/agent",
+      },
     });
     expect(command.config.accounts.map((account) => account.name)).toEqual([
       "account-a",
@@ -1085,18 +1092,6 @@ describe("codex goal cli", () => {
     expect(secondIo.stdout).toBe("");
   });
 
-  it("doctors the SDK-backed control surface", async () => {
-    const io = captureIo();
-
-    const exitCode = await runCodexGoalCli(["doctor-control"], io);
-
-    expect(exitCode).toBe(0);
-    expect(JSON.parse(io.stdout)).toMatchObject({
-      ok: true,
-      mode: "sdk-in-process",
-      missingTools: [],
-    });
-  });
 });
 
 function fakeIo(

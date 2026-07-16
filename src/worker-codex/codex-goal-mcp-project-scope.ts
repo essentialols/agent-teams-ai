@@ -9,6 +9,7 @@ import type { ProjectControlMcpArgs } from "./codex-goal-mcp-inputs";
 export {
   projectControlCanonicalWorkspacePath,
   projectControlRealPathIfExists,
+  projectControlRealPathOutsideReadScope,
   projectControlRealPathOutsideWorkspaceScope,
 } from "./application/project-control/codex-goal-project-workspace-scope";
 import {

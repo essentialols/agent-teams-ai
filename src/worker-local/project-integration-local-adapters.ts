@@ -19,6 +19,11 @@ import {
   commitParents,
   type LocalGitMergeRuntime,
 } from "./project-integration-local-merge-coordinator";
+import {
+  inspectLocalPatchOutputTree,
+  localWorkerOutputTargetCommit,
+  rollbackLocalWorkerOutput,
+} from "./project-integration-local-output-rollback";
 
 import { LocalFileWorkspaceLockStore } from "@vioxen/subscription-runtime/store-local-file";
 import {
@@ -105,12 +110,14 @@ export class LocalGitIntegrationAdapter implements GitPort {
     const workspacePath = await canonicalDirectory(
       input.attempt.targetWorkspacePath,
     );
+    let changedFiles: readonly string[];
     if (input.workerOutput.commitSha) {
-      const changedFiles = await this.gitNullTerminatedPaths([
+      changedFiles = await this.gitNullTerminatedPaths([
         "diff-tree",
         "--no-commit-id",
         "--name-only",
         "-r",
+        "--no-renames",
         "-z",
         input.workerOutput.commitSha,
       ], workspacePath);
@@ -144,7 +151,19 @@ export class LocalGitIntegrationAdapter implements GitPort {
           : { controllerArchiveRoot: this.options.controllerArchiveRoot }),
       });
       await assertPatchSha256(patchPath, input.workerOutput.patchSha256);
-      const changedFiles = await this.patchChangedFiles(patchPath, workspacePath);
+      const targetCommit = input.workerOutput.targetCommit ??
+        input.workerOutput.baseCommit ??
+        (await this.git(["rev-parse", "HEAD"], workspacePath)).stdout.trim();
+      const patchOutput = await inspectLocalPatchOutputTree({
+        runtime: this.mergeRuntime(),
+        workspacePath,
+        baseCommit: localWorkerOutputTargetCommit({
+          ...input.workerOutput,
+          baseCommit: targetCommit,
+        }),
+        patchPath,
+      });
+      changedFiles = patchOutput.changedFiles;
       await assertPatchSha256(patchPath, input.workerOutput.patchSha256);
       assertFilesWithinExpected(changedFiles, input.attempt.expectedFiles);
       const forwardCheck = await this.tryGit(
@@ -175,9 +194,11 @@ export class LocalGitIntegrationAdapter implements GitPort {
     } else {
       throw new Error("local_git_integration_worker_output_source_required");
     }
-    return {
-      changedFiles: (await this.getStatus({ workspacePath })).dirtyFiles,
-    };
+    const status = await this.getStatus({ workspacePath });
+    if (status.dirtyFiles.length > 0) {
+      assertFilesWithinExpected(status.dirtyFiles, input.attempt.expectedFiles);
+    }
+    return { changedFiles };
   }
 
   private async canonicalWorkerPatch(
@@ -325,7 +346,21 @@ export class LocalGitIntegrationAdapter implements GitPort {
       this.mergeRuntime(),
       workspacePath,
       input.attempt.merge?.expectedTargetCommit,
+      input.attempt.workerOutput.changedFiles,
     );
+  }
+
+  async rollbackWorkerOutput(input: {
+    readonly attempt: IntegrationAttempt;
+  }): Promise<void> {
+    const workspacePath = await canonicalDirectory(
+      input.attempt.targetWorkspacePath,
+    );
+    await rollbackLocalWorkerOutput({
+      runtime: this.mergeRuntime(),
+      attempt: input.attempt,
+      workspacePath,
+    });
   }
 
   async push(input: {
@@ -390,8 +425,8 @@ export class LocalGitIntegrationAdapter implements GitPort {
 
   private mergeRuntime(): LocalGitMergeRuntime {
     return {
-      git: (args, cwd) => this.git(args, cwd),
-      tryGit: (args, cwd) => this.tryGit(args, cwd),
+      git: (args, cwd, env) => this.git(args, cwd, env),
+      tryGit: (args, cwd, env) => this.tryGit(args, cwd, env),
       gitNullTerminatedPaths: (args, cwd) =>
         this.gitNullTerminatedPaths(args, cwd),
       getStatus: (workspacePath) => this.getStatus({ workspacePath }),

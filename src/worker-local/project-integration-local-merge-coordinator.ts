@@ -1,7 +1,7 @@
 import {
   IntegrationError,
   IntegrationErrorReason,
-  assertFilesWithinExpected,
+  normalizeProjectRelativePath,
   type GitApplyWorkerOutputResult,
   type GitCommitResult,
   type GitWorkspaceStatus,
@@ -29,10 +29,12 @@ export type LocalGitMergeRuntime = {
   readonly git: (
     args: readonly string[],
     cwd: string,
+    env?: Readonly<Record<string, string | undefined>>,
   ) => Promise<LocalGitCommandResult>;
   readonly tryGit: (
     args: readonly string[],
     cwd: string,
+    env?: Readonly<Record<string, string | undefined>>,
   ) => Promise<LocalGitCommandResult>;
   readonly gitNullTerminatedPaths: (
     args: readonly string[],
@@ -59,6 +61,9 @@ export type LocalGitMergeRuntime = {
   ) => Promise<readonly string[]>;
 };
 
+const emptyPatchSha256 =
+  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
 export async function applyReviewedMerge(input: {
   readonly runtime: LocalGitMergeRuntime;
   readonly workspacePath: string;
@@ -76,6 +81,14 @@ export async function applyReviewedMerge(input: {
   }
   if (!input.workerOutput.changedFiles) {
     throw new Error("local_git_integration_merge_changed_files_required");
+  }
+  if (
+    input.workerOutput.changedFiles.length > 0 &&
+    !sameFiles(input.workerOutput.changedFiles, input.attempt.expectedFiles)
+  ) {
+    throw new Error(
+      "local_git_integration_merge_reviewed_conflict_set_mismatch",
+    );
   }
   if (input.allowAlreadyApplied === true) {
     throw new Error("local_git_integration_merge_replay_forbidden");
@@ -95,9 +108,10 @@ export async function applyReviewedMerge(input: {
     remote: merge.sourceRemote,
     branch: merge.sourceBranch,
   });
-  if (remoteHead?.toLowerCase() !== merge.sourceCommit) {
-    throw new Error("local_git_integration_merge_source_head_mismatch");
+  if (!remoteHead) {
+    throw new Error("local_git_integration_merge_source_missing");
   }
+  const expectedFetchedHead = remoteHead.toLowerCase();
 
   let mergeStarted = false;
   try {
@@ -113,8 +127,42 @@ export async function applyReviewedMerge(input: {
     const fetchedHead = (
       await runtime.git(["rev-parse", "FETCH_HEAD"], workspacePath)
     ).stdout.trim().toLowerCase();
-    if (fetchedHead !== merge.sourceCommit) {
+    if (fetchedHead !== expectedFetchedHead) {
       throw new Error("local_git_integration_merge_fetched_head_mismatch");
+    }
+    const stableRemoteHead = await runtime.remoteBranchCommit({
+      workspacePath,
+      remote: merge.sourceRemote,
+      branch: merge.sourceBranch,
+    });
+    if (stableRemoteHead?.toLowerCase() !== fetchedHead) {
+      throw new Error("local_git_integration_merge_source_head_changed");
+    }
+    const sourceExists = await runtime.tryGit(
+      ["cat-file", "-e", `${merge.sourceCommit}^{commit}`],
+      workspacePath,
+    );
+    if (sourceExists.exitCode !== 0) {
+      throw new Error("local_git_integration_merge_source_commit_unreachable");
+    }
+    const sourceIsAncestor = await runtime.tryGit(
+      ["merge-base", "--is-ancestor", merge.sourceCommit, fetchedHead],
+      workspacePath,
+    );
+    if (sourceIsAncestor.exitCode !== 0) {
+      throw new Error("local_git_integration_merge_source_commit_not_ancestor");
+    }
+    const statusAfterFetch = await runtime.getStatus(workspacePath);
+    if (statusAfterFetch.dirtyFiles.length > 0) {
+      throw new Error("local_git_integration_merge_target_changed_during_fetch");
+    }
+    const targetHeadAfterFetch = (
+      await runtime.git(["rev-parse", "HEAD"], workspacePath)
+    ).stdout.trim().toLowerCase();
+    if (targetHeadAfterFetch !== merge.expectedTargetCommit) {
+      throw new Error(
+        "local_git_integration_merge_target_head_changed_during_fetch",
+      );
     }
 
     const mergeResult = await runtime.tryGit(
@@ -141,6 +189,34 @@ export async function applyReviewedMerge(input: {
           uniqueSorted(input.workerOutput.changedFiles).join(",")
         };actual=${conflictFiles.join(",")}`,
       );
+    }
+    const mergeFootprint = (await runtime.getStatus(workspacePath)).dirtyFiles;
+    if (!includesAllFiles(mergeFootprint, conflictFiles)) {
+      throw new Error(
+        "local_git_integration_merge_conflicts_missing_from_source_footprint",
+      );
+    }
+    if (conflictFiles.length === 0) {
+      if (input.workerOutput.changedFiles.length !== 0) {
+        throw new Error(
+          "local_git_integration_clean_merge_reviewed_changes_must_be_empty",
+        );
+      }
+      if (!sameFiles(mergeFootprint, input.attempt.expectedFiles)) {
+        throw new Error(
+          `local_git_integration_clean_merge_footprint_mismatch:expected=${
+            uniqueSorted(input.attempt.expectedFiles).join(",")
+          };actual=${uniqueSorted(mergeFootprint).join(",")}`,
+        );
+      }
+      if (input.workerOutput.patchSha256 !== emptyPatchSha256) {
+        throw new Error(
+          "local_git_integration_clean_merge_empty_patch_hash_required",
+        );
+      }
+      const patchPath = await runtime.canonicalWorkerPatch(input.workerOutput);
+      await runtime.assertPatchSha256(patchPath, emptyPatchSha256);
+      return { changedFiles: mergeFootprint };
     }
     await restoreConflictFilesToFirstParent(
       runtime,
@@ -186,7 +262,13 @@ export async function applyReviewedMerge(input: {
       );
     }
     const changedFiles = (await runtime.getStatus(workspacePath)).dirtyFiles;
-    assertFilesWithinExpected(changedFiles, input.attempt.expectedFiles);
+    if (!sameFiles(changedFiles, mergeFootprint)) {
+      throw new Error(
+        `local_git_integration_merge_footprint_changed:expected=${
+          uniqueSorted(mergeFootprint).join(",")
+        };actual=${uniqueSorted(changedFiles).join(",")}`,
+      );
+    }
     return { changedFiles };
   } catch (error) {
     if (mergeStarted || await hasMergeHead(runtime, workspacePath)) {
@@ -195,6 +277,7 @@ export async function applyReviewedMerge(input: {
           runtime,
           workspacePath,
           merge.expectedTargetCommit,
+          input.workerOutput.changedFiles,
         );
       } catch (rollbackError) {
         throw new IntegrationError({
@@ -211,8 +294,25 @@ export async function abortPendingMerge(
   runtime: Pick<LocalGitMergeRuntime, "git" | "tryGit" | "getStatus">,
   workspacePath: string,
   expectedTargetCommit: string | undefined,
+  reviewedConflictFiles: readonly string[] = [],
 ): Promise<void> {
-  if (await hasMergeHead(runtime, workspacePath)) {
+  const normalizedConflictFiles = uniqueSorted(
+    reviewedConflictFiles.map(normalizeProjectRelativePath),
+  );
+  const mergeInProgress = await hasMergeHead(runtime, workspacePath);
+  if (
+    mergeInProgress &&
+    expectedTargetCommit &&
+    normalizedConflictFiles.length > 0
+  ) {
+    await restoreExactFilesToCommit(
+      runtime,
+      workspacePath,
+      expectedTargetCommit,
+      normalizedConflictFiles,
+    );
+  }
+  if (mergeInProgress) {
     await runtime.git(["merge", "--abort"], workspacePath);
   }
   if (expectedTargetCommit) {
@@ -222,10 +322,41 @@ export async function abortPendingMerge(
     if (head !== expectedTargetCommit) {
       throw new Error("local_git_integration_merge_abort_head_mismatch");
     }
+    if (normalizedConflictFiles.length > 0) {
+      await restoreExactFilesToCommit(
+        runtime,
+        workspacePath,
+        expectedTargetCommit,
+        normalizedConflictFiles,
+      );
+    }
   }
   const status = await runtime.getStatus(workspacePath);
   if (status.dirtyFiles.length > 0) {
     throw new Error("local_git_integration_merge_abort_left_dirty_workspace");
+  }
+}
+
+async function restoreExactFilesToCommit(
+  runtime: Pick<LocalGitMergeRuntime, "git" | "tryGit">,
+  workspacePath: string,
+  commitSha: string,
+  files: readonly string[],
+): Promise<void> {
+  for (const file of files) {
+    const tracked = await runtime.tryGit(
+      ["cat-file", "-e", `${commitSha}:${file}`],
+      workspacePath,
+    );
+    if (tracked.exitCode === 0) {
+      await runtime.git(["checkout", commitSha, "--", file], workspacePath);
+      continue;
+    }
+    await runtime.git(
+      ["rm", "-f", "--ignore-unmatch", "--", file],
+      workspacePath,
+    );
+    await runtime.git(["clean", "-f", "--", file], workspacePath);
   }
 }
 
@@ -373,6 +504,14 @@ function sameFiles(left: readonly string[], right: readonly string[]): boolean {
   const normalizedRight = uniqueSorted(right);
   return normalizedLeft.length === normalizedRight.length &&
     normalizedLeft.every((file, index) => file === normalizedRight[index]);
+}
+
+function includesAllFiles(
+  files: readonly string[],
+  requiredFiles: readonly string[],
+): boolean {
+  const actual = new Set(uniqueSorted(files));
+  return uniqueSorted(requiredFiles).every((file) => actual.has(file));
 }
 
 function sameCommits(left: readonly string[], right: readonly string[]): boolean {

@@ -1,5 +1,4 @@
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,6 +13,7 @@ import {
 } from "@vioxen/subscription-runtime/worker-core";
 import {
   ConfiguredCommitIdentityAdapter,
+  captureLocalTerminalOutputBackup,
   LocalConsumedOutputLedgerWriter,
   LocalGitIntegrationAdapter,
   LocalIntegratedOutputLedgerAdapter,
@@ -21,9 +21,17 @@ import {
   LocalWorkspaceIntegrationLock,
   SimpleSecretScanner,
 } from "../index";
+import {
+  createCleanMergeFixture,
+  createGitFixture,
+  createMergeFixture,
+  git,
+  gitOutput,
+  tempRoots,
+} from "./project-integration-local-adapters.fixture";
+import { writeWorkerCommitPatch } from "./project-integration-local-patch.fixture";
 
 const execFileAsync = promisify(execFile);
-const tempRoots: string[] = [];
 
 afterEach(async () => {
   await Promise.all(
@@ -110,11 +118,13 @@ describe("local project integration adapters", () => {
     };
 
     await expect(adapter.applyWorkerOutput({ attempt, workerOutput }))
-      .resolves.toEqual({ changedFiles: ["src/memory.ts"] });
+      .resolves.toEqual({
+        changedFiles: ["src/base-change.ts", "src/memory.ts"],
+      });
     const commit = await adapter.commit({
       workspacePath: fixture.workspacePath,
       message: "merge: integrate current base",
-      files: ["src/memory.ts"],
+      files: ["src/base-change.ts", "src/memory.ts"],
       identity: { name: "Integrator", email: "integrator@example.com" },
       expectedParentCommits: [fixture.targetCommit, fixture.sourceCommit],
     });
@@ -126,7 +136,7 @@ describe("local project integration adapters", () => {
     await expect(adapter.commit({
       workspacePath: fixture.workspacePath,
       message: "merge: integrate current base",
-      files: ["src/memory.ts"],
+      files: ["src/base-change.ts", "src/memory.ts"],
       identity: { name: "Integrator", email: "integrator@example.com" },
       expectedParentCommits: [fixture.targetCommit, fixture.sourceCommit],
     })).resolves.toEqual(commit);
@@ -134,6 +144,237 @@ describe("local project integration adapters", () => {
       join(fixture.workspacePath, "src", "memory.ts"),
       "utf8",
     )).resolves.toBe("export const value = 3;\n");
+  });
+
+  it("applies a reviewed clean merge from an immutable empty patch", async () => {
+    const fixture = await createCleanMergeFixture();
+    const adapter = new LocalGitIntegrationAdapter({
+      allowedPatchRoots: [fixture.rootDir],
+    });
+    const attempt = {
+      targetWorkspacePath: fixture.workspacePath,
+      expectedFiles: ["src/from-base.ts"],
+      merge: {
+        sourceRemote: "origin",
+        sourceBranch: "base",
+        sourceCommit: fixture.sourceCommit,
+        expectedTargetCommit: fixture.targetCommit,
+      },
+    };
+    const workerOutput = {
+      workerJobId: "clean-merge-reviewer",
+      workspacePath: fixture.workspacePath,
+      patchPath: fixture.patchPath,
+      patchSha256: fixture.patchSha256,
+      baseCommit: fixture.targetCommit,
+      changedFiles: [],
+    };
+
+    await expect(adapter.applyWorkerOutput({ attempt, workerOutput }))
+      .resolves.toEqual({ changedFiles: ["src/from-base.ts"] });
+    const commit = await adapter.commit({
+      workspacePath: fixture.workspacePath,
+      message: "merge: integrate reviewed clean base",
+      files: ["src/from-base.ts"],
+      identity: { name: "Integrator", email: "integrator@example.com" },
+      expectedParentCommits: [fixture.targetCommit, fixture.sourceCommit],
+    });
+    expect(commit.parentCommits).toEqual([
+      fixture.targetCommit,
+      fixture.sourceCommit,
+    ]);
+  });
+
+  it("aborts a clean merge whose actual footprint was not reviewed", async () => {
+    const fixture = await createCleanMergeFixture();
+    const adapter = new LocalGitIntegrationAdapter({
+      allowedPatchRoots: [fixture.rootDir],
+    });
+
+    await expect(adapter.applyWorkerOutput({
+      attempt: {
+        targetWorkspacePath: fixture.workspacePath,
+        expectedFiles: ["src/unreviewed.ts"],
+        merge: {
+          sourceRemote: "origin",
+          sourceBranch: "base",
+          sourceCommit: fixture.sourceCommit,
+          expectedTargetCommit: fixture.targetCommit,
+        },
+      },
+      workerOutput: {
+        workerJobId: "clean-merge-reviewer",
+        workspacePath: fixture.workspacePath,
+        patchPath: fixture.patchPath,
+        patchSha256: fixture.patchSha256,
+        baseCommit: fixture.targetCommit,
+        changedFiles: [],
+      },
+    })).rejects.toThrow(
+      "local_git_integration_clean_merge_footprint_mismatch",
+    );
+    expect((await gitOutput(fixture.workspacePath, ["rev-parse", "HEAD"])).trim())
+      .toBe(fixture.targetCommit);
+    expect(await gitOutput(fixture.workspacePath, ["status", "--porcelain"]))
+      .toBe("");
+  });
+
+  it("restores reviewed conflicts after a post-patch merge failure", async () => {
+    const fixture = await createMergeFixture();
+    const adapter = new LocalGitIntegrationAdapter({
+      allowedPatchRoots: [fixture.rootDir],
+    });
+    const attempt = {
+      targetWorkspacePath: fixture.workspacePath,
+      expectedFiles: ["src/memory.ts"],
+      merge: {
+        sourceRemote: "origin",
+        sourceBranch: "base",
+        sourceCommit: fixture.sourceCommit,
+        expectedTargetCommit: fixture.targetCommit,
+      },
+    };
+    const workerOutput = {
+      workerJobId: "merge-resolution-worker",
+      workspacePath: fixture.workspacePath,
+      patchPath: fixture.patchPath,
+      patchSha256: fixture.patchSha256,
+      baseCommit: fixture.targetCommit,
+      changedFiles: ["src/memory.ts"],
+    };
+
+    await adapter.applyWorkerOutput({ attempt, workerOutput });
+    await git(fixture.workspacePath, ["reset", "--hard", fixture.targetCommit]);
+    await writeFile(
+      join(fixture.workspacePath, "src", "memory.ts"),
+      "export const value = 3;\n",
+    );
+    await expect(execFileAsync("git", ["rev-parse", "--verify", "MERGE_HEAD"], {
+      cwd: fixture.workspacePath,
+    })).rejects.toBeDefined();
+    await adapter.abortMerge({
+      attempt: { ...attempt, workerOutput } as unknown as IntegrationAttempt,
+    });
+
+    expect((await gitOutput(fixture.workspacePath, ["rev-parse", "HEAD"])).trim())
+      .toBe(fixture.targetCommit);
+    expect(await gitOutput(fixture.workspacePath, ["status", "--porcelain"]))
+      .toBe("");
+    await expect(readFile(
+      join(fixture.workspacePath, "src", "memory.ts"),
+      "utf8",
+    )).resolves.toBe("export const value = 4;\n");
+    await expect(readFile(
+      join(fixture.workspacePath, "src", "base-change.ts"),
+      "utf8",
+    )).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("merges the reviewed ancestor when the remote branch has advanced", async () => {
+    const fixture = await createMergeFixture();
+    await git(fixture.workspacePath, ["checkout", "base"]);
+    await writeFile(
+      join(fixture.workspacePath, "src", "after-review.ts"),
+      "export const afterReview = true;\n",
+    );
+    await git(fixture.workspacePath, ["add", "src/after-review.ts"]);
+    await git(fixture.workspacePath, ["commit", "-m", "feat: advance base"]);
+    const advancedHead = (await gitOutput(
+      fixture.workspacePath,
+      ["rev-parse", "HEAD"],
+    )).trim();
+    await git(fixture.workspacePath, ["push", "origin", "base"]);
+    await git(fixture.workspacePath, ["checkout", "main"]);
+
+    const adapter = new LocalGitIntegrationAdapter({
+      allowedPatchRoots: [fixture.rootDir],
+    });
+    const attempt = {
+      targetWorkspacePath: fixture.workspacePath,
+      expectedFiles: ["src/memory.ts"],
+      merge: {
+        sourceRemote: "origin",
+        sourceBranch: "base",
+        sourceCommit: fixture.sourceCommit,
+        expectedTargetCommit: fixture.targetCommit,
+      },
+    };
+    const workerOutput = {
+      workerJobId: "merge-resolution-worker",
+      workspacePath: fixture.workspacePath,
+      patchPath: fixture.patchPath,
+      patchSha256: fixture.patchSha256,
+      baseCommit: fixture.targetCommit,
+      changedFiles: ["src/memory.ts"],
+    };
+
+    await expect(adapter.applyWorkerOutput({ attempt, workerOutput }))
+      .resolves.toEqual({
+        changedFiles: ["src/base-change.ts", "src/memory.ts"],
+      });
+    const commit = await adapter.commit({
+      workspacePath: fixture.workspacePath,
+      message: "merge: integrate reviewed base ancestor",
+      files: ["src/base-change.ts", "src/memory.ts"],
+      identity: { name: "Integrator", email: "integrator@example.com" },
+      expectedParentCommits: [fixture.targetCommit, fixture.sourceCommit],
+    });
+
+    expect(commit.parentCommits).toEqual([
+      fixture.targetCommit,
+      fixture.sourceCommit,
+    ]);
+    expect(commit.parentCommits).not.toContain(advancedHead);
+    await expect(readFile(
+      join(fixture.workspacePath, "src", "after-review.ts"),
+      "utf8",
+    )).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects a reviewed source after the remote branch was rewritten", async () => {
+    const fixture = await createMergeFixture();
+    await git(fixture.workspacePath, ["checkout", "--orphan", "rewritten-base"]);
+    await git(fixture.workspacePath, ["rm", "-rf", "."]);
+    await writeFile(join(fixture.workspacePath, "REWRITTEN.md"), "rewritten\n");
+    await git(fixture.workspacePath, ["add", "REWRITTEN.md"]);
+    await git(fixture.workspacePath, ["commit", "-m", "feat: rewrite base"]);
+    await git(fixture.workspacePath, [
+      "push",
+      "--force",
+      "origin",
+      "HEAD:base",
+    ]);
+    await git(fixture.workspacePath, ["checkout", "main"]);
+
+    const adapter = new LocalGitIntegrationAdapter({
+      allowedPatchRoots: [fixture.rootDir],
+    });
+    await expect(adapter.applyWorkerOutput({
+      attempt: {
+        targetWorkspacePath: fixture.workspacePath,
+        expectedFiles: ["src/memory.ts"],
+        merge: {
+          sourceRemote: "origin",
+          sourceBranch: "base",
+          sourceCommit: fixture.sourceCommit,
+          expectedTargetCommit: fixture.targetCommit,
+        },
+      },
+      workerOutput: {
+        workerJobId: "merge-resolution-worker",
+        workspacePath: fixture.workspacePath,
+        patchPath: fixture.patchPath,
+        patchSha256: fixture.patchSha256,
+        baseCommit: fixture.targetCommit,
+        changedFiles: ["src/memory.ts"],
+      },
+    })).rejects.toThrow(
+      "local_git_integration_merge_source_commit_not_ancestor",
+    );
+    expect((await gitOutput(fixture.workspacePath, ["rev-parse", "HEAD"])).trim())
+      .toBe(fixture.targetCommit);
+    expect(await gitOutput(fixture.workspacePath, ["status", "--porcelain"]))
+      .toBe("");
   });
 
   it("refuses to adopt an existing merge commit with different provenance", async () => {
@@ -165,7 +406,7 @@ describe("local project integration adapters", () => {
     await adapter.commit({
       workspacePath: fixture.workspacePath,
       message: "merge: integrate current base",
-      files: ["src/memory.ts"],
+      files: ["src/base-change.ts", "src/memory.ts"],
       identity: { name: "Integrator", email: "integrator@example.com" },
       expectedParentCommits: [fixture.targetCommit, fixture.sourceCommit],
     });
@@ -173,7 +414,7 @@ describe("local project integration adapters", () => {
     await expect(adapter.commit({
       workspacePath: fixture.workspacePath,
       message: "merge: different message",
-      files: ["src/memory.ts"],
+      files: ["src/base-change.ts", "src/memory.ts"],
       identity: { name: "Integrator", email: "integrator@example.com" },
       expectedParentCommits: [fixture.targetCommit, fixture.sourceCommit],
     })).rejects.toMatchObject({
@@ -190,7 +431,7 @@ describe("local project integration adapters", () => {
     await expect(adapter.applyWorkerOutput({
       attempt: {
         targetWorkspacePath: fixture.workspacePath,
-        expectedFiles: ["src/memory.ts"],
+        expectedFiles: ["src/not-the-conflict.ts"],
         merge: {
           sourceRemote: "origin",
           sourceBranch: "base",
@@ -221,13 +462,10 @@ describe("local project integration adapters", () => {
     const fixture = await createGitFixture();
     const patchRoot = join(fixture.rootDir, "worker-jobs");
     await mkdir(patchRoot);
-    const patchPath = join(patchRoot, "worker-output.patch");
-    const patch = await gitOutput(fixture.workspacePath, [
-      "show",
-      "--format=",
-      fixture.workerCommitSha,
-    ]);
-    await writeFile(patchPath, patch);
+    const { patchPath } = await writeWorkerCommitPatch(
+      fixture,
+      join(patchRoot, "worker-output.patch"),
+    );
 
     const adapter = new LocalGitIntegrationAdapter({
       allowedPatchRoots: [patchRoot],
@@ -247,12 +485,10 @@ describe("local project integration adapters", () => {
 
   it("rejects patch paths outside exact expected files before mutating the target", async () => {
     const fixture = await createGitFixture();
-    const patchPath = join(fixture.rootDir, "worker-output.patch");
-    await writeFile(patchPath, await gitOutput(fixture.workspacePath, [
-      "show",
-      "--format=",
-      fixture.workerCommitSha,
-    ]));
+    const { patchPath } = await writeWorkerCommitPatch(
+      fixture,
+      join(fixture.rootDir, "worker-output.patch"),
+    );
     const adapter = new LocalGitIntegrationAdapter({
       allowedPatchRoots: [fixture.rootDir],
     });
@@ -278,13 +514,10 @@ describe("local project integration adapters", () => {
 
   it("rejects an attempt-owned patch when its stored SHA-256 no longer matches", async () => {
     const fixture = await createGitFixture();
-    const patchPath = join(fixture.rootDir, "snapshot.patch");
-    const patch = await gitOutput(fixture.workspacePath, [
-      "show",
-      "--format=",
-      fixture.workerCommitSha,
-    ]);
-    const patchSha256 = createHash("sha256").update(patch).digest("hex");
+    const { patch, patchPath, patchSha256 } = await writeWorkerCommitPatch(
+      fixture,
+      join(fixture.rootDir, "snapshot.patch"),
+    );
     await writeFile(patchPath, `${patch}\nsubstituted\n`);
     const adapter = new LocalGitIntegrationAdapter({
       allowedPatchRoots: [fixture.rootDir],
@@ -307,12 +540,10 @@ describe("local project integration adapters", () => {
 
   it("recognizes a fully applied patch only when idempotent recovery is allowed", async () => {
     const fixture = await createGitFixture();
-    const patchPath = join(fixture.rootDir, "worker-output.patch");
-    await writeFile(patchPath, await gitOutput(fixture.workspacePath, [
-      "show",
-      "--format=",
-      fixture.workerCommitSha,
-    ]));
+    const { patchPath } = await writeWorkerCommitPatch(
+      fixture,
+      join(fixture.rootDir, "worker-output.patch"),
+    );
     await git(fixture.workspacePath, ["apply", patchPath]);
     const adapter = new LocalGitIntegrationAdapter({
       allowedPatchRoots: [fixture.rootDir],
@@ -376,13 +607,10 @@ describe("local project integration adapters", () => {
     const fixture = await createGitFixture();
     const patchRoot = join(fixture.rootDir, "worker-jobs");
     await mkdir(patchRoot);
-    const patchPath = join(patchRoot, "worker-output.patch");
-    const patch = await gitOutput(fixture.workspacePath, [
-      "show",
-      "--format=",
-      fixture.workerCommitSha,
-    ]);
-    await writeFile(patchPath, patch);
+    const { patchPath } = await writeWorkerCommitPatch(
+      fixture,
+      join(patchRoot, "worker-output.patch"),
+    );
     const adapter = new LocalGitIntegrationAdapter({
       allowedPatchRoots: [
         join(fixture.rootDir, "removed-legacy-root"),
@@ -409,14 +637,9 @@ describe("local project integration adapters", () => {
     const siblingJobRoot = join(jobsRoot, "worker-2");
     await mkdir(workerJobRoot, { recursive: true });
     await mkdir(siblingJobRoot, { recursive: true });
-    const patch = await gitOutput(fixture.workspacePath, [
-      "show",
-      "--format=",
-      fixture.workerCommitSha,
-    ]);
     const approvedPatch = join(workerJobRoot, "worker-output.patch");
     const siblingPatch = join(siblingJobRoot, "worker-output.patch");
-    await writeFile(approvedPatch, patch);
+    const { patch } = await writeWorkerCommitPatch(fixture, approvedPatch);
     await writeFile(siblingPatch, patch);
     const adapter = new LocalGitIntegrationAdapter({
       workerJobRootParent: jobsRoot,
@@ -535,14 +758,22 @@ describe("local project integration adapters", () => {
     });
     await expect(readFile(preparation.patchPath, "utf8"))
       .resolves.toContain("export const value = 2");
+    await expect(adapter.preflightFinalize({ preparation }))
+      .resolves.toBeUndefined();
 
     const first = await adapter.finalize({
       preparation,
       pushedAt: "2026-07-12T00:00:00.000Z",
     });
+    await expect(adapter.preflightFinalize({ preparation }))
+      .rejects.toThrow("consumed_output_ledger_terminal_conflict");
+    await expect(adapter.preflightFinalize({
+      preparation,
+      pushedAt: "2026-07-12T00:00:00.000Z",
+    })).resolves.toBeUndefined();
     const replay = await adapter.finalize({
       preparation,
-      pushedAt: "2026-07-12T00:01:00.000Z",
+      pushedAt: "2026-07-12T00:00:00.000Z",
     });
     expect(first.idempotentReplay).toBe(false);
     expect(replay.idempotentReplay).toBe(true);
@@ -576,6 +807,51 @@ describe("local project integration adapters", () => {
       ledgerRoot,
       decision: { ...base, archivePath: "/archive/two" },
     })).rejects.toThrow("consumed_output_ledger_terminal_conflict");
+    await expect(writer.record({
+      ledgerRoot,
+      decision: { ...base, note: "different approval evidence" },
+    })).rejects.toThrow("consumed_output_ledger_terminal_conflict");
+    await expect(writer.record({
+      ledgerRoot,
+      decision: { ...base, closedAt: "2026-07-12T00:01:00.000Z" },
+    })).rejects.toThrow("consumed_output_ledger_terminal_conflict");
+    await expect(writer.record({
+      ledgerRoot,
+      decision: {
+        ...base,
+        preexistingWorkspacePatch: {
+          path: "/archive/one/preexisting.patch",
+          sha256: "a".repeat(64),
+        },
+      },
+    })).rejects.toThrow("consumed_output_ledger_terminal_conflict");
+  });
+
+  it("preserves invalid UTF-8 patch bytes and rejects byte-distinct replay", async () => {
+    const fixture = await createGitFixture();
+    const archiveRoot = join(fixture.rootDir, "archives");
+    const sourcePatchPath = join(fixture.rootDir, "source.patch");
+    const firstBytes = Buffer.from([0x64, 0x69, 0x66, 0x66, 0x0a, 0x80]);
+    const secondBytes = Buffer.from([0x64, 0x69, 0x66, 0x66, 0x0a, 0x81]);
+    await writeFile(sourcePatchPath, firstBytes);
+
+    const captured = await captureLocalTerminalOutputBackup({
+      archiveRoot,
+      archiveName: "binary-patch",
+      workspacePath: fixture.workspacePath,
+      changedFiles: [],
+      sourcePatchPath,
+    });
+    await expect(readFile(captured.patchPath)).resolves.toEqual(firstBytes);
+
+    await writeFile(sourcePatchPath, secondBytes);
+    await expect(captureLocalTerminalOutputBackup({
+      archiveRoot,
+      archiveName: "binary-patch",
+      workspacePath: fixture.workspacePath,
+      changedFiles: [],
+      sourcePatchPath,
+    })).rejects.toThrow("integrated_output_ledger_preparation_conflict");
   });
 
   it("preserves a rejected attempt when a later attempt integrates the same worker", async () => {
@@ -722,113 +998,3 @@ describe("local project integration adapters", () => {
     });
   });
 });
-
-async function createGitFixture(): Promise<{
-  readonly rootDir: string;
-  readonly workspacePath: string;
-  readonly workerCommitSha: string;
-}> {
-  const rootDir = await mkdtemp(join(tmpdir(), "project-integration-adapters-"));
-  tempRoots.push(rootDir);
-  const workspacePath = join(rootDir, "workspace");
-  const remotePath = join(rootDir, "remote.git");
-  await mkdir(workspacePath);
-  try {
-    await git(workspacePath, ["init"]);
-    await git(workspacePath, ["checkout", "-b", "main"]);
-    await git(workspacePath, ["config", "user.email", "test@example.com"]);
-    await git(workspacePath, ["config", "user.name", "Test User"]);
-    await mkdir(join(workspacePath, "src"));
-    await writeFile(join(workspacePath, "src", "memory.ts"), "export const value = 1;\n");
-    await git(workspacePath, ["add", "."]);
-    await git(workspacePath, ["commit", "-m", "chore: initial"]);
-    await execFileAsync("git", ["init", "--bare", remotePath]);
-    await git(workspacePath, ["remote", "add", "origin", remotePath]);
-    await git(workspacePath, ["checkout", "-b", "worker"]);
-    await writeFile(join(workspacePath, "src", "memory.ts"), "export const value = 2;\n");
-    await git(workspacePath, ["add", "."]);
-    await git(workspacePath, ["commit", "-m", "fix: worker output"]);
-    const workerCommitSha = (await gitOutput(workspacePath, ["rev-parse", "HEAD"])).trim();
-    await git(workspacePath, ["checkout", "main"]);
-    return { rootDir, workspacePath, workerCommitSha };
-  } catch (error) {
-    await rm(rootDir, { recursive: true, force: true });
-    throw error;
-  }
-}
-
-async function createMergeFixture(): Promise<{
-  readonly rootDir: string;
-  readonly workspacePath: string;
-  readonly sourceCommit: string;
-  readonly targetCommit: string;
-  readonly patchPath: string;
-  readonly patchSha256: string;
-}> {
-  const rootDir = await mkdtemp(join(tmpdir(), "project-integration-merge-"));
-  tempRoots.push(rootDir);
-  const workspacePath = join(rootDir, "workspace");
-  const remotePath = join(rootDir, "remote.git");
-  await mkdir(join(workspacePath, "src"), { recursive: true });
-  await git(workspacePath, ["init", "-b", "main"]);
-  await git(workspacePath, ["config", "user.email", "test@example.com"]);
-  await git(workspacePath, ["config", "user.name", "Test User"]);
-  await writeFile(
-    join(workspacePath, "src", "memory.ts"),
-    "export const value = 1;\n",
-  );
-  await git(workspacePath, ["add", "."]);
-  await git(workspacePath, ["commit", "-m", "chore: initial"]);
-  await execFileAsync("git", ["init", "--bare", remotePath]);
-  await git(workspacePath, ["remote", "add", "origin", remotePath]);
-  await git(workspacePath, ["checkout", "-b", "base"]);
-  await writeFile(
-    join(workspacePath, "src", "memory.ts"),
-    "export const value = 2;\n",
-  );
-  await git(workspacePath, ["add", "."]);
-  await git(workspacePath, ["commit", "-m", "feat: update base"]);
-  const sourceCommit = (await gitOutput(
-    workspacePath,
-    ["rev-parse", "HEAD"],
-  )).trim();
-  await git(workspacePath, ["push", "origin", "base"]);
-  await git(workspacePath, ["checkout", "main"]);
-  await writeFile(
-    join(workspacePath, "src", "memory.ts"),
-    "export const value = 4;\n",
-  );
-  await git(workspacePath, ["add", "."]);
-  await git(workspacePath, ["commit", "-m", "feat: update target"]);
-  const targetCommit = (await gitOutput(
-    workspacePath,
-    ["rev-parse", "HEAD"],
-  )).trim();
-  await git(workspacePath, ["push", "origin", "main"]);
-  await writeFile(
-    join(workspacePath, "src", "memory.ts"),
-    "export const value = 3;\n",
-  );
-  const patch = await gitOutput(workspacePath, ["diff", "--binary"]);
-  const patchPath = join(rootDir, "reviewed-resolution.patch");
-  await writeFile(patchPath, patch);
-  const patchSha256 = createHash("sha256").update(patch).digest("hex");
-  await git(workspacePath, ["checkout", "--", "src/memory.ts"]);
-  return {
-    rootDir,
-    workspacePath,
-    sourceCommit,
-    targetCommit,
-    patchPath,
-    patchSha256,
-  };
-}
-
-async function git(cwd: string, args: readonly string[]): Promise<void> {
-  await execFileAsync("git", [...args], { cwd });
-}
-
-async function gitOutput(cwd: string, args: readonly string[]): Promise<string> {
-  const { stdout } = await execFileAsync("git", [...args], { cwd });
-  return stdout;
-}

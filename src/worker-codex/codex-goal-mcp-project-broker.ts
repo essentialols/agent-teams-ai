@@ -25,23 +25,30 @@ import {
   type CodexGoalLaunchInput,
 } from "./codex-goal-ops";
 import { writeCodexGoalReviewMarker } from "./codex-goal-mcp-lifecycle-markers";
-import {
-  codexGoalStatusInputFromLaunch as statusInput,
-} from "./codex-goal-mcp-status-input";
+import { buildCodexGoalBrief } from "./codex-goal-mcp-brief";
+import { codexGoalStatusInputFromLaunch as statusInput } from "./codex-goal-mcp-status-input";
 import {
   codexProjectAdmissionGate,
   type CodexProjectAdmissionDeps,
 } from "./application/project-control/codex-goal-project-admission";
+import {
+  withProjectPreStartAdmissionLaunchAuthorization,
+} from "./application/project-control/codex-goal-project-pre-start-launch-authorization";
+import type { ProjectPreStartAdmissionLaunchWorkspaceMode } from "./application/project-control/codex-goal-project-pre-start-admission";
+import {
+  assertCodexGoalProjectJobNotTerminal,
+} from "./application/project-control/codex-goal-consumed-output-ledger-io";
+import { decideCodexGoalProjectStop } from "./application/project-control/codex-goal-project-stop-policy";
 import type {
   CaptureReviewedWorkerOutputInput,
   ReviewedWorkerOutputSnapshot,
 } from "./reviewed-worker-output";
 import {
-  captureReviewedWorkerOutput,
+  assertReviewedWorkerOutputStillMatchesLocked,
+  captureReviewedWorkerOutputLocked,
   commitReviewedWorkerOutputReviewAttestation,
   localReviewedWorkerOutputDeps,
   reviewedWorkerOutputRoot,
-  verifyReviewedWorkerOutputStillMatches,
 } from "./reviewed-worker-output";
 import type { ProjectControlWorkspaceLease } from "./codex-goal-project-workspace-lock";
 import {
@@ -50,14 +57,13 @@ import {
 } from "./application/project-control/codex-goal-project-control-contracts";
 import { projectControlRealPathOutsideWorkspaceScope } from "./application/project-control/codex-goal-project-workspace-scope";
 import {
+  applyVerifiedInputPatch,
   assertGitCurrentBranch,
   execGit,
   execGitStdout,
 } from "./codex-goal-mcp-project-git";
 
-export type {
-  CodexGoalProjectCreateWorktreeInput,
-} from "./application/project-control/codex-goal-project-control-contracts";
+export type { CodexGoalProjectCreateWorktreeInput } from "./application/project-control/codex-goal-project-control-contracts";
 
 export type CodexGoalProjectIntegrateCommitInput = {
   readonly workspacePath: string;
@@ -92,7 +98,6 @@ export async function resolveBoundProjectWorktreeSource(input: {
   }
   return sourceRealPath;
 }
-
 export type CodexProjectControlBrokerInput = {
   readonly registryRootDir: string;
   readonly controller: CodexGoalJobManifest;
@@ -104,10 +109,13 @@ export type CodexProjectControlBrokerInput = {
   readonly integrateCommitInput?: CodexGoalProjectIntegrateCommitInput;
   readonly pushBranchInput?: CodexGoalProjectPushBranchInput;
   readonly startLaunch?: CodexGoalLaunchInput;
+  readonly startManifest?: CodexGoalJobManifest;
+  readonly startAdmissionWorkspaceMode?: ProjectPreStartAdmissionLaunchWorkspaceMode;
   readonly startWorkspaceLease?: ProjectControlWorkspaceLease;
   readonly startSkipDoctor?: boolean;
   readonly stopLaunch?: CodexGoalLaunchInput;
   readonly reviewLaunch?: CodexGoalLaunchInput;
+  readonly reviewWorkspaceLease?: ProjectControlWorkspaceLease;
   readonly reviewNote?: string;
   readonly reviewedOutputCapture?: Omit<
     CaptureReviewedWorkerOutputInput,
@@ -130,6 +138,21 @@ export function createCodexProjectControlBroker(
         registryRootDir: input.registryRootDir,
         scope: input.scope,
         deps: input.admissionDeps,
+        ...((input.startAdmissionWorkspaceMode === "admitted_input_patch" &&
+              input.startManifest &&
+              input.startWorkspaceLease) ||
+            (input.createWorktreeInput?.inputPatch &&
+              input.createWorktreeInput.jobId)
+          ? {
+              admittedInputPatchTarget: {
+                jobId: input.startManifest?.jobId ??
+                  input.createWorktreeInput?.jobId ?? "",
+                workspacePath: input.startWorkspaceLease
+                  ?.canonicalWorkspacePath ??
+                  input.createWorktreeInput?.path ?? "",
+              },
+            }
+          : {}),
       }),
     },
   );
@@ -160,14 +183,26 @@ function codexProjectControlPorts(
         if (!input.reviewLaunch) {
           throw new Error("project_control_review_launch_required");
         }
-        const status = await collectCodexGoalStatus(statusInput(input.reviewLaunch));
+        if (
+          !input.reviewWorkspaceLease ||
+          input.reviewWorkspaceLease.canonicalWorkspacePath !==
+            input.reviewLaunch.config.workspacePath
+        ) {
+          throw new Error("project_control_review_workspace_lease_required");
+        }
+        const status = await collectCodexGoalStatus(
+          statusInput(input.reviewLaunch),
+        );
         let reviewedOutput: ReviewedWorkerOutputSnapshot | undefined;
         const reviewedOutputDeps = localReviewedWorkerOutputDeps({
           rootDir: reviewedWorkerOutputRoot(input.registryRootDir),
         });
         if (input.reviewedOutputCapture) {
           assertReviewedOutputWorkerStopped(input.reviewLaunch, status);
-          reviewedOutput = await captureReviewedWorkerOutput(
+          await reviewedOutputDeps.continuationEnvironment.sanitizeDependencyRootLinks({
+            workspacePath: input.reviewLaunch.config.workspacePath,
+          });
+          reviewedOutput = await captureReviewedWorkerOutputLocked(
             reviewedOutputDeps,
             {
               ...input.reviewedOutputCapture,
@@ -175,11 +210,15 @@ function codexProjectControlPorts(
               taskId: input.reviewLaunch.config.taskId,
               workspacePath: input.reviewLaunch.config.workspacePath,
             },
+            input.reviewWorkspaceLease.lease,
           );
           const statusAfterCapture = await collectCodexGoalStatus(
             statusInput(input.reviewLaunch),
           );
-          assertReviewedOutputWorkerStopped(input.reviewLaunch, statusAfterCapture);
+          assertReviewedOutputWorkerStopped(
+            input.reviewLaunch,
+            statusAfterCapture,
+          );
         }
         const reviewPath = await writeCodexGoalReviewMarker({
           jobId: marker.jobId,
@@ -190,14 +229,18 @@ function codexProjectControlPorts(
           ...(reviewedOutput ? { reviewedOutput } : {}),
         });
         if (reviewedOutput) {
-          await verifyReviewedWorkerOutputStillMatches(
+          await assertReviewedWorkerOutputStillMatchesLocked(
             reviewedOutputDeps,
             reviewedOutput,
+            input.reviewWorkspaceLease.lease,
           );
           const statusBeforeAttestation = await collectCodexGoalStatus(
             statusInput(input.reviewLaunch),
           );
-          assertReviewedOutputWorkerStopped(input.reviewLaunch, statusBeforeAttestation);
+          assertReviewedOutputWorkerStopped(
+            input.reviewLaunch,
+            statusBeforeAttestation,
+          );
           await commitReviewedWorkerOutputReviewAttestation({
             store: reviewedOutputDeps.store,
             markerVerifier: reviewedOutputDeps.markerVerifier,
@@ -224,6 +267,17 @@ function codexProjectControlPorts(
           throw new Error("project_control_start_workspace_lease_mismatch");
         }
         const start = async () => {
+          await assertCodexGoalProjectJobNotTerminal({
+            roots: input.scope.consumedOutputLedgerRoots ?? [],
+            projectId: input.scope.projectId,
+            controllerJobId: input.controller.jobId,
+            jobId: input.startManifest?.jobId ?? startLaunch.config.taskId,
+            taskId: startLaunch.config.taskId,
+            workspacePath: startLaunch.config.workspacePath,
+            ...(input.reviewedContinuation
+              ? { reviewedContinuation: input.reviewedContinuation }
+              : {}),
+          });
           await prepareCodexGoalLaunchPaths(startLaunch);
           if (!input.startSkipDoctor) {
             const doctor = await doctorCodexGoal({
@@ -233,20 +287,38 @@ function codexProjectControlPorts(
                 : {}),
             });
             if (!doctor.ok) {
-              throw new Error(`project_control_doctor_failed:${JSON.stringify(doctor)}`);
+              throw new Error(
+                `project_control_doctor_failed:${JSON.stringify(doctor)}`,
+              );
             }
+          }
+          if (!input.startManifest && input.scope.preStartAdmission?.required) {
+            throw new Error("project_control_start_manifest_required");
           }
           const previousBrokeredStart =
             process.env.SUBSCRIPTION_RUNTIME_PROJECT_CONTROL_BROKERED_START;
           process.env.SUBSCRIPTION_RUNTIME_PROJECT_CONTROL_BROKERED_START = "1";
           let command: Awaited<ReturnType<typeof startCodexGoalTmux>>;
           try {
-            command = await startCodexGoalTmux(startLaunch);
+            command = input.startManifest
+              ? await withProjectPreStartAdmissionLaunchAuthorization(
+                {
+                  manifest: input.startManifest,
+                  scope: input.scope,
+                  ...(input.startAdmissionWorkspaceMode
+                    ? { workspaceMode: input.startAdmissionWorkspaceMode }
+                    : {}),
+                },
+                async () => await startCodexGoalTmux(startLaunch),
+              )
+              : await startCodexGoalTmux(startLaunch);
           } finally {
             if (previousBrokeredStart === undefined) {
-              delete process.env.SUBSCRIPTION_RUNTIME_PROJECT_CONTROL_BROKERED_START;
+              delete process.env
+                .SUBSCRIPTION_RUNTIME_PROJECT_CONTROL_BROKERED_START;
             } else {
-              process.env.SUBSCRIPTION_RUNTIME_PROJECT_CONTROL_BROKERED_START = previousBrokeredStart;
+              process.env.SUBSCRIPTION_RUNTIME_PROJECT_CONTROL_BROKERED_START =
+                previousBrokeredStart;
             }
           }
           return operationResult(command.preview);
@@ -257,22 +329,48 @@ function codexProjectControlPorts(
         if (!input.stopLaunch) {
           throw new Error("project_control_stop_launch_required");
         }
-        const status = await collectCodexGoalStatus(statusInput(input.stopLaunch));
+        const status = await collectCodexGoalStatus(
+          statusInput(input.stopLaunch),
+        );
+        const brief = await buildCodexGoalBrief({
+          jobId: input.stopLaunch.config.taskId,
+          launch: input.stopLaunch,
+          status,
+          accounts: [],
+          staleAfterMs: 10 * 60_000,
+          tailLines: 20,
+        });
+        const capacityContinuation =
+          input.startAdmissionWorkspaceMode ===
+            "admitted_input_patch_continuation" ||
+          input.startAdmissionWorkspaceMode === "clean_capacity_continuation";
+        const stopPolicy = decideCodexGoalProjectStop({
+          ...brief.workerHealth,
+          terminalCapacityPause: capacityContinuation,
+        });
+        if (!stopPolicy.allowed) {
+          throw new Error(stopPolicy.reason);
+        }
         if (input.stopLaunch.tmuxSession) {
           if (status.tmuxAlive === false) {
             return noopOperationResult(
-              buildCodexGoalStopTmuxCommand(input.stopLaunch.tmuxSession).preview,
+              buildCodexGoalStopTmuxCommand(input.stopLaunch.tmuxSession)
+                .preview,
               "Worker tmux session is already gone.",
             );
           }
           try {
-            const command = await stopCodexGoalTmux(input.stopLaunch.tmuxSession);
+            const command = await stopCodexGoalTmux(
+              input.stopLaunch.tmuxSession,
+            );
             return operationResult(command.preview);
           } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
+            const message =
+              error instanceof Error ? error.message : String(error);
             if (/can't find session|no server running/i.test(message)) {
               return noopOperationResult(
-                buildCodexGoalStopTmuxCommand(input.stopLaunch.tmuxSession).preview,
+                buildCodexGoalStopTmuxCommand(input.stopLaunch.tmuxSession)
+                  .preview,
                 "Worker tmux session is already gone.",
               );
             }
@@ -283,7 +381,10 @@ function codexProjectControlPorts(
         if (command.status === "terminated") {
           return operationResult(command.preview);
         }
-        if (command.status === "process_gone" || command.status === "pid_missing") {
+        if (
+          command.status === "process_gone" ||
+          command.status === "pid_missing"
+        ) {
           return noopOperationResult(
             command.preview,
             command.status === "process_gone"
@@ -304,23 +405,30 @@ function codexProjectControlPorts(
           input.scope,
         );
         if (outsideScope) {
-          throw new Error("project_control_source_workspace_real_path_outside_scope");
+          throw new Error(
+            "project_control_source_workspace_real_path_outside_scope",
+          );
         }
-        const sourceRef = worktreeInput.sourceRef ?? worktreeInput.baseBranch ?? "HEAD";
-        const revision = (await execGitStdout([
-          "-C",
-          sourceWorkspacePath,
-          "rev-parse",
-          "--verify",
-          `${sourceRef}^{commit}`,
-        ])).trim();
+        const sourceRef =
+          worktreeInput.sourceRef ?? worktreeInput.baseBranch ?? "HEAD";
+        const revision = (
+          await execGitStdout([
+            "-C",
+            sourceWorkspacePath,
+            "rev-parse",
+            "--verify",
+            `${sourceRef}^{commit}`,
+          ])
+        ).trim();
         return { revision, sourceRealPath: sourceWorkspacePath };
       },
       async createWorktree() {
         if (!input.createWorktreeInput) {
           throw new Error("project_control_worktree_input_required");
         }
-        if (await codexProjectControlPathExists(input.createWorktreeInput.path)) {
+        if (
+          await codexProjectControlPathExists(input.createWorktreeInput.path)
+        ) {
           return noopOperationResult(
             input.createWorktreeInput.path,
             "existing worktree candidate delegated for exact identity validation",
@@ -328,41 +436,69 @@ function codexProjectControlPorts(
         }
         const sourceWorkspacePath = await resolveBoundProjectWorktreeSource({
           sourceWorkspacePath: input.createWorktreeInput.sourceWorkspacePath,
-          expectedSourceRealPath: input.createWorktreeInput.expectedSourceRealPath,
+          expectedSourceRealPath:
+            input.createWorktreeInput.expectedSourceRealPath,
           scope: input.scope,
         });
         await mkdir(dirname(input.createWorktreeInput.path), {
           recursive: true,
           mode: 0o700,
         });
-        const sourceRef =
-          input.createWorktreeInput.sourceRef ?? input.createWorktreeInput.baseBranch;
         const newBranch = input.createWorktreeInput.newBranch;
         const existingBranch = newBranch
-          ? (await execGitStdout([
-              "-C",
-              sourceWorkspacePath,
-              "for-each-ref",
-              "--format=%(refname)",
-              `refs/heads/${newBranch}`,
-            ])).trim()
+          ? (
+              await execGitStdout([
+                "-C",
+                sourceWorkspacePath,
+                "for-each-ref",
+                "--format=%(refname)",
+                `refs/heads/${newBranch}`,
+              ])
+            ).trim()
           : "";
         const args = [
           "-C",
           sourceWorkspacePath,
           "worktree",
           "add",
-          ...(newBranch && !existingBranch
-            ? ["-b", newBranch]
-            : []),
+          ...(newBranch && !existingBranch ? ["-b", newBranch] : []),
           input.createWorktreeInput.path,
           ...(existingBranch && newBranch
             ? [newBranch]
             : newBranch
               ? [input.createWorktreeInput.expectedRevision]
-              : [sourceRef ?? input.createWorktreeInput.expectedRevision]),
+              : input.createWorktreeInput.sourceRevisionPinned
+                ? [input.createWorktreeInput.expectedRevision]
+                : [
+                    input.createWorktreeInput.sourceRef ??
+                      input.createWorktreeInput.baseBranch ??
+                      input.createWorktreeInput.expectedRevision,
+                  ]),
         ];
         await execGit(args);
+        if (input.createWorktreeInput.inputPatch) {
+          try {
+            await applyVerifiedInputPatch({
+              workspacePath: input.createWorktreeInput.path,
+              patchPath: input.createWorktreeInput.inputPatch.path,
+              expectedSha256: input.createWorktreeInput.inputPatch.sha256,
+              expectedBaseCommit:
+                input.createWorktreeInput.inputPatch.baseCommit,
+              expectedTargetCommit: input.createWorktreeInput.expectedRevision,
+              changedPaths: input.createWorktreeInput.inputPatch.changedPaths,
+            });
+          } catch (error) {
+            await execGit([
+              "-C",
+              sourceWorkspacePath,
+              "worktree",
+              "remove",
+              "--force",
+              input.createWorktreeInput.path,
+            ]).catch(() => undefined);
+            throw error;
+          }
+        }
         return operationResult(input.createWorktreeInput.path);
       },
     },
@@ -429,7 +565,8 @@ function assertReviewedOutputWorkerStopped(
   launch: CodexGoalLaunchInput,
   status: Awaited<ReturnType<typeof collectCodexGoalStatus>>,
 ): void {
-  const progressStale = status.progressHeartbeatAgeMs !== undefined &&
+  const progressStale =
+    status.progressHeartbeatAgeMs !== undefined &&
     status.progressHeartbeatAgeMs > 10 * 60_000;
   const liveness = resolveCodexGoalWorkerLiveness({ status, progressStale });
   if (liveness.alive) {
@@ -452,7 +589,9 @@ async function appendProjectControlAuditEvent(
   });
 }
 
-export function projectControlAuditPath(controller: CodexGoalJobManifest): string {
+export function projectControlAuditPath(
+  controller: CodexGoalJobManifest,
+): string {
   return join(
     controller.jobRootDir,
     `${controller.taskId}.project-control-events.jsonl`,

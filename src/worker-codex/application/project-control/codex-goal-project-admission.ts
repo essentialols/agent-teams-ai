@@ -47,6 +47,15 @@ type CodexProjectAdmissionInput = {
   readonly registryRootDir: string;
   readonly scope: ProjectAccessScope;
   readonly deps: CodexProjectAdmissionDeps;
+  readonly admittedInputPatchTarget?: {
+    readonly jobId: string;
+    readonly workspacePath: string;
+  };
+};
+
+type CodexProjectAdmissionSnapshotInput = CodexProjectAdmissionInput & {
+  readonly requestedWorkspacePath?: string;
+  readonly blockAnyLiveWriter?: boolean;
 };
 
 export function projectAdmissionDetailView(input: {
@@ -94,7 +103,17 @@ export function codexProjectAdmissionGate(
     async evaluate(request) {
       // Admission protects a mutation. A cached pre-launch snapshot can no
       // longer prove that another writer did not start in the meantime.
-      const snapshot = await buildCodexProjectAdmissionSnapshot(input);
+      const observedSnapshot = await buildCodexProjectAdmissionSnapshot({
+        ...input,
+        ...(request.workspacePath
+          ? { requestedWorkspacePath: request.workspacePath }
+          : { blockAnyLiveWriter: true }),
+      });
+      const snapshot = await withoutAdmittedInputPatchStartDebt({
+        snapshot: observedSnapshot,
+        request,
+        binding: input.admittedInputPatchTarget,
+      });
       return evaluateProjectAdmission({
         request: {
           ...request,
@@ -103,6 +122,47 @@ export function codexProjectAdmissionGate(
         snapshot,
       });
     },
+  };
+}
+
+async function withoutAdmittedInputPatchStartDebt(input: {
+  readonly snapshot: ProjectAdmissionSnapshot;
+  readonly request: {
+    readonly operation: ProjectOperation;
+    readonly jobId?: string;
+    readonly workspacePath?: string;
+  };
+  readonly binding: CodexProjectAdmissionInput["admittedInputPatchTarget"];
+}): Promise<ProjectAdmissionSnapshot> {
+  const { binding, request } = input;
+  if (
+    !binding ||
+    (request.operation !== ProjectOperation.StartWorker &&
+      request.operation !== ProjectOperation.CreateWorktree) ||
+    request.jobId !== binding.jobId ||
+    !request.workspacePath ||
+    !await admissionWorkspacePathsMatch(
+      request.workspacePath,
+      binding.workspacePath,
+    )
+  ) {
+    return input.snapshot;
+  }
+  const debt: ProjectDebtItem[] = [];
+  for (const item of input.snapshot.debt) {
+    const selfInactiveWorkspace =
+      item.reason === ProjectDebtReason.InactiveDirtyWorkspace &&
+      await admissionWorkspacePathsMatch(item.subject, binding.workspacePath);
+    const selfDirtyWithoutRunner =
+      item.reason === ProjectDebtReason.ActiveWriterConflict &&
+      item.subject === binding.jobId &&
+      item.evidence.includes("dirty_workspace_without_worker");
+    if (!selfInactiveWorkspace && !selfDirtyWithoutRunner) debt.push(item);
+  }
+  return {
+    ...input.snapshot,
+    debt,
+    counts: projectAdmissionDebtCounts(debt),
   };
 }
 
@@ -124,7 +184,7 @@ export async function readCodexProjectAdmissionSnapshot(
 }
 
 export async function buildCodexProjectAdmissionSnapshot(
-  input: CodexProjectAdmissionInput,
+  input: CodexProjectAdmissionSnapshotInput,
 ): Promise<ProjectAdmissionSnapshot> {
   const debt: ProjectDebtItem[] = [];
   const knownWorkspacePaths = new Set<string>();
@@ -183,6 +243,10 @@ export async function buildCodexProjectAdmissionSnapshot(
       item,
       consumedOutput,
       summariesByJobId,
+      ...(input.requestedWorkspacePath
+        ? { requestedWorkspacePath: input.requestedWorkspacePath }
+        : {}),
+      blockAnyLiveWriter: input.blockAnyLiveWriter ?? false,
     }));
   }
   const roots = uniqueProjectControlStrings([
@@ -313,6 +377,8 @@ async function debtFromOverviewItem(input: {
   readonly item: JsonObject;
   readonly consumedOutput: ConsumedOutputLedger;
   readonly summariesByJobId: ReadonlyMap<string, CodexGoalJobSummary>;
+  readonly requestedWorkspacePath?: string;
+  readonly blockAnyLiveWriter: boolean;
 }): Promise<ProjectDebtItem[]> {
   const { item } = input;
   const jobId = stringValue(item.jobId) ?? "unknown-job";
@@ -326,22 +392,33 @@ async function debtFromOverviewItem(input: {
     }];
   }
   const debt: ProjectDebtItem[] = [];
+  const workerAlive = item.workerAlive === true;
+  const sameRequestedWorkspace = workerAlive && workspacePath !== undefined &&
+    input.requestedWorkspacePath !== undefined &&
+    await admissionWorkspacePathsMatch(
+      workspacePath,
+      input.requestedWorkspacePath,
+    );
   if (
-    item.workerAlive === true ||
-    hasActiveWriterRisk(item.activeWriterRisk) ||
+    (workerAlive && (input.blockAnyLiveWriter || sameRequestedWorkspace)) ||
+    hasBlockingActiveWriterRisk(item.activeWriterRisk, workerAlive) ||
     item.workspaceConflict === true
   ) {
     debt.push({
       reason: ProjectDebtReason.ActiveWriterConflict,
       subject: jobId,
       severity: "blocking",
-      evidence: safeStringArray(item.activeWriterRiskReasons)
-        .concat(["active writer conflict risk"]),
+      evidence: uniqueProjectControlStrings([
+        ...safeStringArray(item.activeWriterRiskReasons),
+        ...(sameRequestedWorkspace
+          ? [`requested workspace already has active worker: ${workspacePath}`]
+          : []),
+        "active writer conflict risk",
+      ]),
     });
   }
   if (item.workspaceDirty !== true) return debt;
   const subject = workspacePath ?? jobId;
-  const workerAlive = item.workerAlive === true;
   const stale = item.silentStale === true || item.workerFreshProgressAlive === false;
   if (workerAlive && stale) {
     debt.push({
@@ -370,7 +447,7 @@ async function debtFromOverviewItem(input: {
       ...(resolvedWorkspacePath ? { resolvedWorkspacePath } : {}),
     })
   ) {
-    return debt;
+    return withoutInactiveDirtyWorkspaceConflict(debt, item);
   }
   // A refill may intentionally reuse an inactive job's physical worktree. Only
   // a registered newer job on that same worktree can consume the older entry.
@@ -384,7 +461,7 @@ async function debtFromOverviewItem(input: {
       ...(resolvedWorkspacePath ? { resolvedWorkspacePath } : {}),
     })
   ) {
-    return debt;
+    return withoutInactiveDirtyWorkspaceConflict(debt, item);
   }
   const consumed = consumedOutputRecordFor({
     ledger: input.consumedOutput,
@@ -415,6 +492,21 @@ async function debtFromOverviewItem(input: {
   return debt;
 }
 
+function withoutInactiveDirtyWorkspaceConflict(
+  debt: readonly ProjectDebtItem[],
+  item: JsonObject,
+): ProjectDebtItem[] {
+  if (
+    item.workspaceConflict === true ||
+    stringValue(item.activeWriterRisk) !== "dirty_workspace_without_worker"
+  ) {
+    return [...debt];
+  }
+  return debt.filter(
+    (entry) => entry.reason !== ProjectDebtReason.ActiveWriterConflict,
+  );
+}
+
 const activeWriterRiskKinds = new Set<string>([
   "none",
   "active_worker",
@@ -424,14 +516,34 @@ const activeWriterRiskKinds = new Set<string>([
   "unknown",
 ] satisfies readonly ActiveWriterRiskKind[]);
 
-function hasActiveWriterRisk(value: unknown): boolean {
+function hasBlockingActiveWriterRisk(
+  value: unknown,
+  workerAlive: boolean,
+): boolean {
   // Keep accepting the former boolean overview shape while current status
-  // views publish a typed risk kind. Unknown non-empty strings fail closed.
+  // views publish a typed risk kind. A healthy active worker is only a conflict
+  // when admission targets its workspace; uncertain states still fail closed.
   if (value === true) return true;
   const kind = stringValue(value);
   if (kind === undefined) return false;
   if (!activeWriterRiskKinds.has(kind)) return true;
-  return kind !== "none";
+  if (kind === "none") return false;
+  if (kind === "active_worker") return !workerAlive;
+  return true;
+}
+
+async function admissionWorkspacePathsMatch(
+  left: string,
+  right: string,
+): Promise<boolean> {
+  if (resolve(left) === resolve(right)) return true;
+  const [leftRealPath, rightRealPath] = await Promise.all([
+    optionalRealPathForAdmission(left),
+    optionalRealPathForAdmission(right),
+  ]);
+  return leftRealPath !== undefined &&
+    rightRealPath !== undefined &&
+    leftRealPath === rightRealPath;
 }
 
 function workspaceConsumedByAnotherJob(input: {

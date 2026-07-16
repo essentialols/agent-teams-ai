@@ -269,11 +269,12 @@ describe("codex goal MCP server", () => {
         promptPath: join(childJobRoot, "prompt.md"),
         taskId: "infinity-context-child-v1",
         accounts: ["account-a"],
+        serviceTier: "fast",
         confirmCreate: true,
       });
       expect(created).toMatchObject({
         ok: true,
-        manifest: { accounts: ["account-a"] },
+        manifest: { accounts: ["account-a"], serviceTier: "fast" },
       });
 
       await writeFakeAuth(authRootDir, "account-b", {
@@ -283,22 +284,30 @@ describe("codex goal MCP server", () => {
         registryRootDir,
         controllerJobId: "infinity-context-controller-v1",
         jobId: "infinity-context-child-v1",
+        serviceTier: "default",
       });
       expect(preview).toMatchObject({
         ok: false,
         reason: "confirm_repair_required",
-        proposedPatch: { accounts: ["account-a", "account-b"] },
+        proposedPatch: {
+          accounts: ["account-a", "account-b"],
+          serviceTier: "default",
+        },
       });
 
       const repaired = await callToolJson(client, "brokered_project_manifest_repair", {
         registryRootDir,
         controllerJobId: "infinity-context-controller-v1",
         jobId: "infinity-context-child-v1",
+        serviceTier: "default",
         confirmRepair: true,
       });
       expect(repaired).toMatchObject({
         ok: true,
-        manifest: { accounts: ["account-a", "account-b"] },
+        manifest: {
+          accounts: ["account-a", "account-b"],
+          serviceTier: "default",
+        },
       });
 
       const denied = await callToolJson(client, "brokered_project_manifest_repair", {

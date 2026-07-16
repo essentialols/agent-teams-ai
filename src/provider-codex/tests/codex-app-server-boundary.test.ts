@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   codexAppServerSandboxPolicy,
   codexAppServerThreadRuntimePolicy,
+  codexAgentTempRootFromEnv,
+  codexAgentTempWritableRootsFromEnv,
   codexExtraWritableRootsFromEnv,
   mergeDeveloperInstructions,
 } from "../codex-app-server-policy";
@@ -34,6 +36,54 @@ describe("Codex app-server boundary helpers", () => {
         SUBSCRIPTION_RUNTIME_CODEX_EXTRA_WRITABLE_ROOTS: "/outside",
       }),
     ).toEqual([]);
+  });
+
+  it("keeps only the exact agent scratch root writable for scoped workers", () => {
+    const sourceEnv = {
+      SUBSCRIPTION_RUNTIME_JOB_ROOT: "/jobs/job-1",
+      SUBSCRIPTION_RUNTIME_TMPDIR: "/jobs/job-1/tmp",
+      TMPDIR: "/jobs/job-1/tmp/agent",
+      SUBSCRIPTION_RUNTIME_CODEX_SUPPRESS_EXTRA_WRITABLE_ROOTS: "1",
+      SUBSCRIPTION_RUNTIME_CODEX_EXTRA_WRITABLE_ROOTS: "/outside",
+    };
+    expect(codexAgentTempRootFromEnv(sourceEnv)).toBe("/jobs/job-1/tmp/agent");
+    expect(codexAgentTempWritableRootsFromEnv(sourceEnv)).toEqual([
+      "/jobs/job-1/tmp/agent",
+    ]);
+    expect(codexAppServerSandboxPolicy({
+      sandboxMode: "workspace-write",
+      workspacePath: "/work/repo",
+      sourceEnv,
+    })).toMatchObject({
+      writableRoots: ["/work/repo", "/jobs/job-1/tmp/agent"],
+      excludeTmpdirEnvVar: false,
+    });
+    expect(codexAppServerThreadRuntimePolicy({
+      workspacePath: "/work/repo",
+      sandboxMode: "workspace-write",
+      sourceEnv,
+      baseDeveloperInstructions: null,
+    })).toMatchObject({
+      runtimeWorkspaceRoots: ["/work/repo", "/jobs/job-1/tmp/agent"],
+    });
+    expect(codexAppServerThreadRuntimePolicy({
+      workspacePath: "/work/repo",
+      sourceEnv,
+      baseDeveloperInstructions: null,
+    })).toMatchObject({ runtimeWorkspaceRoots: ["/work/repo"] });
+  });
+
+  it("rejects malformed or overbroad agent scratch roots", () => {
+    const invalidEnvironments = [
+      { SUBSCRIPTION_RUNTIME_JOB_ROOT: "/jobs/job-1", SUBSCRIPTION_RUNTIME_TMPDIR: "/jobs/job-1-evil/tmp", TMPDIR: "/jobs/job-1-evil/tmp/agent" },
+      { SUBSCRIPTION_RUNTIME_JOB_ROOT: "/jobs/job-1", SUBSCRIPTION_RUNTIME_TMPDIR: "/jobs/job-1", TMPDIR: "/jobs/job-1/agent" },
+      { SUBSCRIPTION_RUNTIME_JOB_ROOT: "/jobs/job-1", SUBSCRIPTION_RUNTIME_TMPDIR: "/jobs/job-1/tmp", TMPDIR: "/jobs/job-1/tmp" },
+      { SUBSCRIPTION_RUNTIME_JOB_ROOT: "/jobs/job-1", SUBSCRIPTION_RUNTIME_TMPDIR: "/jobs/job-1/tmp", TMPDIR: "/jobs/job-1/tmp/agent/deeper" },
+      { SUBSCRIPTION_RUNTIME_JOB_ROOT: "jobs/job-1", SUBSCRIPTION_RUNTIME_TMPDIR: "jobs/job-1/tmp", TMPDIR: "jobs/job-1/tmp/agent" },
+    ];
+    for (const sourceEnv of invalidEnvironments) {
+      expect(codexAgentTempWritableRootsFromEnv(sourceEnv)).toEqual([]);
+    }
   });
 
   it("builds the app-server thread runtime policy before execution starts", () => {

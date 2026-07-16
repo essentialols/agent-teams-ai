@@ -1,19 +1,42 @@
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import { dirname, join } from "node:path";
 import { execPath } from "node:process";
 import { fileURLToPath } from "node:url";
+import {
+  DurableJsonPublishStatus,
+  type ProjectControlOperationClaimEnvironment,
+  type ProjectControlOperationExecutionClaim,
+  type ProjectControlOperationUpdateLockEnvironment,
+  durablePublishJsonFile,
+  durableReplaceJsonFile,
+  tryAcquireProjectControlOperationClaim,
+  withProjectControlOperationUpdateLock,
+} from "./project-control-operation-file-store";
+
+export {
+  recoverProjectControlOperations,
+  type ProjectControlOperationRecoverySummary,
+} from "./project-control-operation-recovery";
 
 export type ProjectControlOperationToolName =
-  | "codex_goal_project_refill_worker";
+  | "codex_goal_project_refill_worker"
+  | "codex_goal_project_prepare_verifier";
 
 export enum ProjectControlOperationStatus {
   Queued = "queued",
   Running = "running",
   Completed = "completed",
   Failed = "failed",
+}
+
+export enum ProjectControlOperationRunDisposition {
+  Executed = "executed",
+  Reconciled = "reconciled",
+  AlreadyRunning = "already_running",
+  TerminalReplay = "terminal_replay",
 }
 
 export type JsonValue =
@@ -48,6 +71,20 @@ export type ProjectControlOperationRecord = {
   readonly runningAt?: string;
   readonly completedAt?: string;
   readonly failedAt?: string;
+  readonly attemptCount?: number;
+  readonly lastAttempt?: {
+    readonly attemptId: string;
+    readonly claimId: string;
+    readonly number: number;
+    readonly startedAt: string;
+    readonly recovery: boolean;
+    readonly recoveredFromStatus?: ProjectControlOperationStatus;
+  };
+  readonly recovery?: {
+    readonly count: number;
+    readonly lastRecoveredAt: string;
+    readonly lastRecoveredFromStatus: ProjectControlOperationStatus;
+  };
   readonly result?: JsonRecord;
   readonly error?: string;
 };
@@ -62,6 +99,12 @@ export type ProjectControlOperationView = Omit<
 export type ProjectControlOperationRunResult = {
   readonly ok: boolean;
   readonly operation: ProjectControlOperationRecord;
+  readonly disposition?: ProjectControlOperationRunDisposition;
+};
+
+export type ProjectControlOperationCreationResult = {
+  readonly operation: ProjectControlOperationRecord;
+  readonly created: boolean;
 };
 
 export function projectControlOperationsRoot(controllerJobRootDir: string): string {
@@ -83,37 +126,68 @@ export async function createProjectControlOperation(input: {
   readonly args: JsonRecord;
   readonly targetJobId?: string;
 }): Promise<ProjectControlOperationRecord> {
+  return (await createOrReuseProjectControlOperation(input)).operation;
+}
+
+export async function createOrReuseProjectControlOperation(input: {
+  readonly operationsRootDir: string;
+  readonly controllerJobId: string;
+  readonly toolName: ProjectControlOperationToolName;
+  readonly args: JsonRecord;
+  readonly targetJobId?: string;
+}): Promise<ProjectControlOperationCreationResult> {
   const requestDigest = projectControlOperationRequestDigest(input);
-  // Structural launch failures are deterministic for an unchanged request.
-  // External-state failures remain retryable; corrected input gets a new digest.
-  const blockedBy = await identicalFailedOperation({
+  const existing = await identicalNonTerminalOrProtectedFailure({
     operationsRootDir: input.operationsRootDir,
     requestDigest,
   });
-  if (blockedBy) {
+  if (existing?.status === ProjectControlOperationStatus.Failed) {
     throw new Error(
-      `project_control_operation_identical_failed_request_blocked:${blockedBy.operationId}`,
+      `project_control_operation_identical_failed_request_blocked:${existing.operationId}`,
     );
   }
-  const operationId = `project-control-${compactTimestamp(new Date())}-${randomUUID().slice(0, 8)}`;
-  const operationDir = join(input.operationsRootDir, operationId);
-  const now = new Date().toISOString();
-  const record: ProjectControlOperationRecord = {
-    operationId,
-    toolName: input.toolName,
-    status: ProjectControlOperationStatus.Queued,
-    controllerJobId: input.controllerJobId,
-    ...(input.targetJobId === undefined ? {} : { targetJobId: input.targetJobId }),
-    createdAt: now,
-    updatedAt: now,
-    requestDigest,
-    args: input.args,
-    operationFilePath: join(operationDir, "operation.json"),
-    resultPath: join(operationDir, "result.json"),
-    logPath: join(operationDir, "runner.log"),
-  };
-  await writeProjectControlOperation(record);
-  return record;
+  if (existing) return { operation: existing, created: false };
+
+  for (let generation = 1; generation <= 10_000; generation += 1) {
+    const operationId = deterministicProjectControlOperationId(
+      requestDigest,
+      generation,
+    );
+    const operationDir = join(input.operationsRootDir, operationId);
+    const operationFilePath = join(operationDir, "operation.json");
+    const current = await readProjectControlOperationIfExists(operationFilePath);
+    if (current) {
+      const reusable = reusableIdenticalOperation(current, requestDigest);
+      if (reusable) return reusable;
+      continue;
+    }
+    const now = new Date().toISOString();
+    const record: ProjectControlOperationRecord = {
+      operationId,
+      toolName: input.toolName,
+      status: ProjectControlOperationStatus.Queued,
+      controllerJobId: input.controllerJobId,
+      ...(input.targetJobId === undefined ? {} : { targetJobId: input.targetJobId }),
+      createdAt: now,
+      updatedAt: now,
+      requestDigest,
+      args: input.args,
+      operationFilePath,
+      resultPath: join(operationDir, "result.json"),
+      logPath: join(operationDir, "runner.log"),
+    };
+    const publication = await durablePublishJsonFile({
+      path: operationFilePath,
+      value: record,
+    });
+    if (publication === DurableJsonPublishStatus.Published) {
+      return { operation: record, created: true };
+    }
+    const winner = await readProjectControlOperation(operationFilePath);
+    const reusable = reusableIdenticalOperation(winner, requestDigest);
+    if (reusable) return reusable;
+  }
+  throw new Error("project_control_operation_generation_exhausted");
 }
 
 export async function readProjectControlOperation(
@@ -135,16 +209,58 @@ export async function patchProjectControlOperation(input: {
   readonly operationFilePath: string;
   readonly patch: Partial<Omit<ProjectControlOperationRecord, "operationId" | "operationFilePath">>;
 }): Promise<ProjectControlOperationRecord> {
-  const current = await readProjectControlOperation(input.operationFilePath);
-  const record: ProjectControlOperationRecord = {
-    ...current,
-    ...input.patch,
-    operationId: current.operationId,
-    operationFilePath: current.operationFilePath,
-    updatedAt: new Date().toISOString(),
-  };
-  await writeProjectControlOperation(record);
-  return record;
+  return updateProjectControlOperation({
+    operationFilePath: input.operationFilePath,
+    update: () => input.patch,
+  });
+}
+
+export async function updateProjectControlOperation(input: {
+  readonly operationFilePath: string;
+  readonly beforePersist?: () => Promise<void>;
+  readonly persistFence?: (effect: () => Promise<void>) => Promise<void>;
+  readonly updateLockEnvironment?: ProjectControlOperationUpdateLockEnvironment;
+  readonly update: (
+    current: ProjectControlOperationRecord,
+  ) => Promise<Partial<Omit<ProjectControlOperationRecord, "operationId" | "operationFilePath">>> |
+    Partial<Omit<ProjectControlOperationRecord, "operationId" | "operationFilePath">>;
+}): Promise<ProjectControlOperationRecord> {
+  return withProjectControlOperationUpdateLock({
+    operationFilePath: input.operationFilePath,
+    ...(input.updateLockEnvironment === undefined
+      ? {}
+      : { environment: input.updateLockEnvironment }),
+    effect: async (lockFence) => {
+      const current = await readProjectControlOperation(input.operationFilePath);
+      const patch = await input.update(current);
+      const record = monotonicProjectControlOperationUpdate(current, patch);
+      if (record === current) return current;
+      await input.beforePersist?.();
+      return lockFence.runIfOwned(async () => {
+        const persist = async (): Promise<ProjectControlOperationRecord> => {
+          // Detached runners from an older runtime may not participate in this
+          // process's update lock. Re-read at the persistence boundary so their
+          // terminal result cannot be replaced by a stale parent snapshot.
+          const latest = await readProjectControlOperation(input.operationFilePath);
+          const latestRecord = monotonicProjectControlOperationUpdate(latest, patch);
+          if (latestRecord === latest) return latest;
+          await writeProjectControlOperation(latestRecord);
+          return latestRecord;
+        };
+        if (input.persistFence) {
+          let persisted: ProjectControlOperationRecord | undefined;
+          await input.persistFence(async () => {
+            persisted = await persist();
+          });
+          if (!persisted) {
+            throw new Error("project_control_operation_persist_fence_skipped");
+          }
+          return persisted;
+        }
+        return persist();
+      });
+    },
+  });
 }
 
 export async function startProjectControlOperationRunner(input: {
@@ -189,57 +305,285 @@ export async function runProjectControlOperationFile(input: {
     toolName: ProjectControlOperationToolName,
     args: JsonRecord,
   ) => Promise<unknown>;
+  readonly recovery?: boolean;
+  readonly claimEnvironment?: ProjectControlOperationClaimEnvironment;
+  readonly heartbeatIntervalMs?: number;
 }): Promise<ProjectControlOperationRunResult> {
-  const initial = await patchProjectControlOperation({
+  const observed = await readProjectControlOperation(input.operationFilePath);
+  if (operationIsTerminal(observed)) {
+    return terminalReplay(observed);
+  }
+  if (operationRunnerIsActive(observed, input.claimEnvironment)) {
+    return {
+      ok: true,
+      operation: observed,
+      disposition: ProjectControlOperationRunDisposition.AlreadyRunning,
+    };
+  }
+
+  const claim = await tryAcquireProjectControlOperationClaim({
+    operationId: observed.operationId,
     operationFilePath: input.operationFilePath,
-    patch: {
-      status: ProjectControlOperationStatus.Running,
-      runningAt: new Date().toISOString(),
-      runner: {
-        hostname: hostname(),
-        pid: process.pid,
-        command: process.argv,
-        startedAt: new Date().toISOString(),
-      },
-    },
+    ...(input.claimEnvironment === undefined
+      ? {}
+      : { environment: input.claimEnvironment }),
   });
+  if (!claim) {
+    return {
+      ok: true,
+      operation: await readProjectControlOperation(input.operationFilePath),
+      disposition: ProjectControlOperationRunDisposition.AlreadyRunning,
+    };
+  }
+
+  const leaseDurationMs = input.claimEnvironment?.leaseDurationMs ?? 5 * 60_000;
+  const heartbeatIntervalMs = input.heartbeatIntervalMs ??
+    Math.max(1_000, Math.floor(leaseDurationMs / 3));
+  const heartbeat = setInterval(() => {
+    void claim.renew().catch(() => undefined);
+  }, heartbeatIntervalMs);
+  heartbeat.unref();
+
   try {
-    const result = await input.invokeTool(initial.toolName, {
-      ...initial.args,
-      executionMode: "sync",
-    });
-    const resultRecord = jsonRecordFromUnknown(result);
-    await mkdir(dirname(initial.resultPath), { recursive: true, mode: 0o700 });
-    await writeFile(initial.resultPath, `${JSON.stringify(resultRecord, null, 2)}\n`, {
-      encoding: "utf8",
-      mode: 0o600,
-    });
-    const ok = resultRecord.ok !== false;
-    const finishedAt = new Date().toISOString();
-    const operation = await patchProjectControlOperation({
+    const current = await readProjectControlOperation(input.operationFilePath);
+    if (operationIsTerminal(current)) return terminalReplay(current);
+
+    const persistedResult = await readProjectControlOperationResult(current.resultPath);
+    if (persistedResult) {
+      const recoveredAt = operationNow(input.claimEnvironment).toISOString();
+      const operation = await finalizeProjectControlOperation({
+        operationFilePath: input.operationFilePath,
+        result: persistedResult,
+        claim,
+        recovery: {
+          count: (current.recovery?.count ?? 0) + 1,
+          lastRecoveredAt: recoveredAt,
+          lastRecoveredFromStatus: current.status,
+        },
+        ...(input.claimEnvironment === undefined
+          ? {}
+          : { claimEnvironment: input.claimEnvironment }),
+      });
+      return {
+        ok: operation.status === ProjectControlOperationStatus.Completed,
+        operation,
+        disposition: ProjectControlOperationRunDisposition.Reconciled,
+      };
+    }
+
+    const startedAt = operationNow(input.claimEnvironment).toISOString();
+    const initial = await updateProjectControlOperation({
       operationFilePath: input.operationFilePath,
-      patch: {
-        status: ok
-          ? ProjectControlOperationStatus.Completed
-          : ProjectControlOperationStatus.Failed,
-        ...(ok ? { completedAt: finishedAt } : { failedAt: finishedAt }),
-        result: resultRecord,
-        ...(ok ? {} : { error: projectControlOperationError(resultRecord) }),
+      persistFence: (effect) => runWithExecutionClaimCurrent(claim, effect),
+      update: (latest) => {
+        const recovery = input.recovery === true ||
+          latest.status === ProjectControlOperationStatus.Running ||
+          (latest.attemptCount ?? 0) > 0;
+        const attemptNumber = (latest.attemptCount ?? 0) + 1;
+        return {
+          status: ProjectControlOperationStatus.Running,
+          runningAt: startedAt,
+          attemptCount: attemptNumber,
+          lastAttempt: {
+            attemptId: randomUUID(),
+            claimId: claim.record.claimId,
+            number: attemptNumber,
+            startedAt,
+            recovery,
+            ...(recovery ? { recoveredFromStatus: latest.status } : {}),
+          },
+          ...(recovery
+            ? {
+                recovery: {
+                  count: (latest.recovery?.count ?? 0) + 1,
+                  lastRecoveredAt: startedAt,
+                  lastRecoveredFromStatus: latest.status,
+                },
+              }
+            : {}),
+          runner: {
+            hostname: input.claimEnvironment?.hostname ?? hostname(),
+            pid: input.claimEnvironment?.pid ?? process.pid,
+            command: process.argv,
+            startedAt,
+          },
+        };
       },
     });
-    return { ok, operation };
+    if (operationIsTerminal(initial)) {
+      return terminalReplay(initial);
+    }
+    await assertExecutionClaimCurrent(claim);
+    let resultRecord: JsonRecord;
+    try {
+      const result = await input.invokeTool(initial.toolName, {
+        ...initial.args,
+        executionMode: "sync",
+      });
+      resultRecord = jsonRecordFromUnknown(result);
+    } catch (error) {
+      const operation = await updateProjectControlOperation({
+        operationFilePath: input.operationFilePath,
+        persistFence: (effect) => runWithExecutionClaimCurrent(claim, effect),
+        update: () => ({
+          status: ProjectControlOperationStatus.Failed,
+          failedAt: operationNow(input.claimEnvironment).toISOString(),
+          error: error instanceof Error
+            ? error.message
+            : "project_control_operation_failed",
+        }),
+      });
+      return {
+        ok: operation.status === ProjectControlOperationStatus.Completed,
+        operation,
+        disposition: ProjectControlOperationRunDisposition.Executed,
+      };
+    }
+
+    const publication = await runWithExecutionClaimCurrent(
+      claim,
+      () => durablePublishJsonFile({
+        path: initial.resultPath,
+        value: resultRecord,
+      }),
+    );
+    if (publication === DurableJsonPublishStatus.AlreadyExists) {
+      resultRecord = await requiredProjectControlOperationResult(initial.resultPath);
+    }
+    const operation = await finalizeProjectControlOperation({
+      operationFilePath: input.operationFilePath,
+      result: resultRecord,
+      claim,
+      ...(input.claimEnvironment === undefined
+        ? {}
+        : { claimEnvironment: input.claimEnvironment }),
+    });
+    return {
+      ok: operation.status === ProjectControlOperationStatus.Completed,
+      operation,
+      disposition: ProjectControlOperationRunDisposition.Executed,
+    };
+  } finally {
+    clearInterval(heartbeat);
+    await claim.release();
+  }
+}
+
+async function finalizeProjectControlOperation(input: {
+  readonly operationFilePath: string;
+  readonly result: JsonRecord;
+  readonly claim: ProjectControlOperationExecutionClaim;
+  readonly claimEnvironment?: ProjectControlOperationClaimEnvironment;
+  readonly recovery?: ProjectControlOperationRecord["recovery"];
+}): Promise<ProjectControlOperationRecord> {
+  const ok = input.result.ok !== false;
+  const finishedAt = operationNow(input.claimEnvironment).toISOString();
+  return updateProjectControlOperation({
+    operationFilePath: input.operationFilePath,
+    persistFence: (effect) =>
+      runWithExecutionClaimCurrent(input.claim, effect),
+    update: () => ({
+      status: ok
+        ? ProjectControlOperationStatus.Completed
+        : ProjectControlOperationStatus.Failed,
+      ...(ok ? { completedAt: finishedAt } : { failedAt: finishedAt }),
+      ...(input.recovery === undefined ? {} : { recovery: input.recovery }),
+      result: input.result,
+      ...(ok ? {} : { error: projectControlOperationError(input.result) }),
+    }),
+  });
+}
+
+async function assertExecutionClaimCurrent(
+  claim: ProjectControlOperationExecutionClaim,
+): Promise<void> {
+  if (!await claim.revalidate() || !await claim.renew()) {
+    throw new Error("project_control_operation_execution_claim_lost");
+  }
+}
+
+async function runWithExecutionClaimCurrent<T>(
+  claim: ProjectControlOperationExecutionClaim,
+  effect: () => Promise<T>,
+): Promise<T> {
+  const fenced = await claim.runIfCurrent(effect);
+  if (!fenced.executed) {
+    throw new Error("project_control_operation_execution_claim_lost");
+  }
+  return fenced.value;
+}
+
+async function readProjectControlOperationResult(
+  resultPath: string,
+): Promise<JsonRecord | undefined> {
+  try {
+    const value = JSON.parse(await readFile(resultPath, "utf8")) as unknown;
+    if (!isRecord(value)) {
+      throw new Error("project_control_operation_result_invalid");
+    }
+    return jsonRecordFromUnknown(value);
   } catch (error) {
-    const operation = await patchProjectControlOperation({
-      operationFilePath: input.operationFilePath,
-      patch: {
-        status: ProjectControlOperationStatus.Failed,
-        failedAt: new Date().toISOString(),
-        error: error instanceof Error
-          ? error.message
-          : "project_control_operation_failed",
-      },
-    });
-    return { ok: false, operation };
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+async function requiredProjectControlOperationResult(
+  resultPath: string,
+): Promise<JsonRecord> {
+  const result = await readProjectControlOperationResult(resultPath);
+  if (!result) throw new Error("project_control_operation_result_missing");
+  return result;
+}
+
+function terminalReplay(
+  operation: ProjectControlOperationRecord,
+): ProjectControlOperationRunResult {
+  return {
+    ok: operation.status === ProjectControlOperationStatus.Completed,
+    operation,
+    disposition: ProjectControlOperationRunDisposition.TerminalReplay,
+  };
+}
+
+function operationIsTerminal(operation: ProjectControlOperationRecord): boolean {
+  return operation.status === ProjectControlOperationStatus.Completed ||
+    operation.status === ProjectControlOperationStatus.Failed;
+}
+
+function operationRunnerIsActive(
+  operation: ProjectControlOperationRecord,
+  environment: ProjectControlOperationClaimEnvironment | undefined,
+): boolean {
+  if (!operation.runner) return false;
+  const localHostname = environment?.hostname ?? hostname();
+  const localPid = environment?.pid ?? process.pid;
+  if (
+    operation.runner.hostname === localHostname &&
+    operation.runner.pid === localPid
+  ) {
+    return false;
+  }
+  if (operation.runner.hostname === localHostname) {
+    return (environment?.isProcessAlive ?? localProcessIsAlive)(operation.runner.pid);
+  }
+  const leaseDurationMs = environment?.leaseDurationMs ?? 5 * 60_000;
+  return Date.parse(operation.runner.startedAt) + leaseDurationMs >
+    operationNow(environment).getTime();
+}
+
+function operationNow(
+  environment: ProjectControlOperationClaimEnvironment | undefined,
+): Date {
+  return environment?.now?.() ?? new Date();
+}
+
+function localProcessIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
   }
 }
 
@@ -269,13 +613,10 @@ function defaultCodexGoalCliPath(): string {
 async function writeProjectControlOperation(
   record: ProjectControlOperationRecord,
 ): Promise<void> {
-  await mkdir(dirname(record.operationFilePath), { recursive: true, mode: 0o700 });
-  const tmpPath = `${record.operationFilePath}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(tmpPath, `${JSON.stringify(record, null, 2)}\n`, {
-    encoding: "utf8",
-    mode: 0o600,
+  await durableReplaceJsonFile({
+    path: record.operationFilePath,
+    value: record,
   });
-  await rename(tmpPath, record.operationFilePath);
 }
 
 function parseProjectControlOperationRecord(
@@ -324,6 +665,59 @@ function parseProjectControlOperationRecord(
     ...(typeof value.runningAt === "string" ? { runningAt: value.runningAt } : {}),
     ...(typeof value.completedAt === "string" ? { completedAt: value.completedAt } : {}),
     ...(typeof value.failedAt === "string" ? { failedAt: value.failedAt } : {}),
+    ...(typeof value.attemptCount === "number"
+      ? { attemptCount: requiredNonNegativeInteger(value.attemptCount, "attemptCount") }
+      : {}),
+    ...(isRecord(value.lastAttempt)
+      ? {
+          lastAttempt: {
+            attemptId: requiredString(
+              value.lastAttempt.attemptId,
+              "lastAttempt.attemptId",
+            ),
+            claimId: requiredString(
+              value.lastAttempt.claimId,
+              "lastAttempt.claimId",
+            ),
+            number: requiredPositiveInteger(
+              value.lastAttempt.number,
+              "lastAttempt.number",
+            ),
+            startedAt: requiredString(
+              value.lastAttempt.startedAt,
+              "lastAttempt.startedAt",
+            ),
+            recovery: requiredBoolean(
+              value.lastAttempt.recovery,
+              "lastAttempt.recovery",
+            ),
+            ...(value.lastAttempt.recoveredFromStatus === undefined
+              ? {}
+              : {
+                  recoveredFromStatus: projectControlOperationStatus(
+                    value.lastAttempt.recoveredFromStatus,
+                  ),
+                }),
+          },
+        }
+      : {}),
+    ...(isRecord(value.recovery)
+      ? {
+          recovery: {
+            count: requiredPositiveInteger(
+              value.recovery.count,
+              "recovery.count",
+            ),
+            lastRecoveredAt: requiredString(
+              value.recovery.lastRecoveredAt,
+              "recovery.lastRecoveredAt",
+            ),
+            lastRecoveredFromStatus: projectControlOperationStatus(
+              value.recovery.lastRecoveredFromStatus,
+            ),
+          },
+        }
+      : {}),
     ...(isRecord(value.result) ? { result: jsonRecordFromUnknown(value.result) } : {}),
     ...(typeof value.error === "string" ? { error: value.error } : {}),
   };
@@ -342,7 +736,12 @@ function projectControlOperationStatus(value: unknown): ProjectControlOperationS
 }
 
 function projectControlOperationToolName(value: unknown): ProjectControlOperationToolName {
-  if (value === "codex_goal_project_refill_worker") return value;
+  if (
+    value === "codex_goal_project_refill_worker" ||
+    value === "codex_goal_project_prepare_verifier"
+  ) {
+    return value;
+  }
   throw new Error("project_control_operation_tool_invalid");
 }
 
@@ -352,7 +751,7 @@ function projectControlOperationError(result: JsonRecord): string {
   return "project_control_operation_result_not_ok";
 }
 
-async function identicalFailedOperation(input: {
+async function identicalNonTerminalOrProtectedFailure(input: {
   readonly operationsRootDir: string;
   readonly requestDigest: string;
 }): Promise<ProjectControlOperationRecord | undefined> {
@@ -377,11 +776,97 @@ async function identicalFailedOperation(input: {
   return candidates
     .filter((candidate): candidate is ProjectControlOperationRecord =>
       candidate !== undefined &&
-      candidate.status === ProjectControlOperationStatus.Failed &&
       candidate.requestDigest === input.requestDigest &&
-      retryProtectedOperationError(candidate.error)
+      (!operationIsTerminal(candidate) ||
+        (candidate.status === ProjectControlOperationStatus.Failed &&
+          retryProtectedOperationError(candidate.error)))
     )
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
+}
+
+function reusableIdenticalOperation(
+  operation: ProjectControlOperationRecord,
+  requestDigest: string,
+): ProjectControlOperationCreationResult | undefined {
+  if (operation.requestDigest !== requestDigest) {
+    throw new Error("project_control_operation_identity_collision");
+  }
+  if (!operationIsTerminal(operation)) {
+    return { operation, created: false };
+  }
+  if (
+    operation.status === ProjectControlOperationStatus.Failed &&
+    retryProtectedOperationError(operation.error)
+  ) {
+    throw new Error(
+      `project_control_operation_identical_failed_request_blocked:${operation.operationId}`,
+    );
+  }
+  return undefined;
+}
+
+async function readProjectControlOperationIfExists(
+  operationFilePath: string,
+): Promise<ProjectControlOperationRecord | undefined> {
+  try {
+    return await readProjectControlOperation(operationFilePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+function deterministicProjectControlOperationId(
+  requestDigest: string,
+  generation: number,
+): string {
+  return `project-control-${requestDigest}-${generation}`;
+}
+
+function monotonicProjectControlOperationUpdate(
+  current: ProjectControlOperationRecord,
+  patch: Partial<Omit<ProjectControlOperationRecord, "operationId" | "operationFilePath">>,
+): ProjectControlOperationRecord {
+  if (Object.keys(patch).length === 0) return current;
+  if (operationIsTerminal(current)) return current;
+  if (
+    current.status === ProjectControlOperationStatus.Running &&
+    patch.status === ProjectControlOperationStatus.Queued
+  ) {
+    return current;
+  }
+  if (
+    patch.status === ProjectControlOperationStatus.Running &&
+    patch.attemptCount !== undefined &&
+    current.attemptCount !== undefined &&
+    patch.attemptCount <= current.attemptCount
+  ) {
+    return current;
+  }
+  const attemptCount = patch.attemptCount === undefined
+    ? current.attemptCount
+    : Math.max(current.attemptCount ?? 0, patch.attemptCount);
+  const recovery = patch.recovery === undefined ||
+      (current.recovery?.count ?? 0) >= patch.recovery.count
+    ? current.recovery
+    : patch.recovery;
+  return {
+    ...current,
+    ...patch,
+    operationId: current.operationId,
+    operationFilePath: current.operationFilePath,
+    ...(attemptCount === undefined ? {} : { attemptCount }),
+    ...(recovery === undefined ? {} : { recovery }),
+    updatedAt: monotonicOperationTimestamp(current.updatedAt),
+  };
+}
+
+function monotonicOperationTimestamp(previous: string): string {
+  const now = Date.now();
+  const previousTime = Date.parse(previous);
+  return new Date(Number.isFinite(previousTime) && previousTime >= now
+    ? previousTime + 1
+    : now).toISOString();
 }
 
 function retryProtectedOperationError(error: string | undefined): boolean {
@@ -448,14 +933,27 @@ function requiredNumber(value: unknown, name: string): number {
   return value;
 }
 
+function requiredNonNegativeInteger(value: unknown, name: string): number {
+  const parsed = requiredNumber(value, name);
+  if (!Number.isInteger(parsed) || parsed < 0) throw new Error(`${name}_invalid`);
+  return parsed;
+}
+
+function requiredPositiveInteger(value: unknown, name: string): number {
+  const parsed = requiredNumber(value, name);
+  if (!Number.isInteger(parsed) || parsed < 1) throw new Error(`${name}_invalid`);
+  return parsed;
+}
+
+function requiredBoolean(value: unknown, name: string): boolean {
+  if (typeof value !== "boolean") throw new Error(`${name}_required`);
+  return value;
+}
+
 function assertProjectControlOperationId(value: string): void {
   if (!/^[A-Za-z0-9_.:-]+$/.test(value)) {
     throw new Error("project_control_operation_id_invalid");
   }
-}
-
-function compactTimestamp(date: Date): string {
-  return date.toISOString().replace(/[-:.]/g, "").replace("T", "T").replace("Z", "Z");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

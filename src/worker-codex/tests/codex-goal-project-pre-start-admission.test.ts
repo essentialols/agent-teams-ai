@@ -1,41 +1,41 @@
-import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import {
   access,
   mkdir,
-  mkdtemp,
   readFile,
   rm,
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  AccessBoundary,
-  NetworkAccessMode,
-  type ProjectAccessScope,
-} from "@vioxen/subscription-runtime/worker-core";
-import type {
-  CodexGoalJobManifest,
-  CodexGoalJobManifestInput,
-} from "../codex-goal-jobs";
+import type { ProjectAccessScope } from "@vioxen/subscription-runtime/worker-core";
 import { parseCodexGoalProjectAccessScopeJson } from "../codex-goal-access-plan";
 import { projectControlCreateCodexGoalJobView } from "../codex-goal-mcp-project-control-jobs";
 import {
   assertProjectPreStartAdmissionLaunchBinding,
   planProjectPreStartAdmission,
   prepareProjectPreStartAdmission,
+  rebindProjectPreStartAdmissionManifest,
   validateStoredProjectPreStartAdmission,
 } from "../application/project-control/codex-goal-project-pre-start-admission";
+import {
+  authorizeProjectPreStartAdmissionLaunch,
+  withProjectPreStartAdmissionLaunchAuthorization,
+} from "../application/project-control/codex-goal-project-pre-start-launch-authorization";
 
-const roots: string[] = [];
+import {
+  cleanupProjectPreStartAdmissionFixtures,
+  createBuiltinFixture,
+  createFixture,
+  declarativeContract,
+  prepareBuiltin,
+  sha256,
+  withWorkKey,
+} from "./codex-goal-project-pre-start-admission-fixture";
 
 afterEach(async () => {
-  await Promise.all(
-    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
-  );
+  await cleanupProjectPreStartAdmissionFixtures();
 });
 
 describe("project pre-start admission", () => {
@@ -480,6 +480,112 @@ describe("builtin project pre-start admission", () => {
       .rejects.toThrow("project_control_pre_start_workspace_dirty");
   });
 
+  it("accepts a clean first builtin implementation and validates its launch binding", async () => {
+    const fixture = await createBuiltinFixture();
+    const contract = withWorkKey({
+      ...fixture.contract,
+      inputPatchHash: null,
+    });
+    const plan = fixture.plan({ contract });
+    const manifest = {
+      ...fixture.storedManifest,
+      projectPreStartAdmission: plan.descriptor,
+    };
+
+    await prepareBuiltin(fixture, { contract });
+    await validateStoredProjectPreStartAdmission({
+      manifest,
+      scope: fixture.scope,
+    });
+    await expect(assertProjectPreStartAdmissionLaunchBinding({
+      manifest,
+      scope: fixture.scope,
+    })).resolves.toBeUndefined();
+  });
+
+  it("accepts a clean builtin canonical review and validates its launch binding", async () => {
+    const fixture = await createBuiltinFixture();
+    const contract = withWorkKey({
+      ...fixture.contract,
+      inputPatchHash: null,
+      reviewKind: "review",
+    });
+    const plan = fixture.plan({ contract });
+    const manifest = {
+      ...fixture.storedManifest,
+      projectPreStartAdmission: plan.descriptor,
+    };
+
+    await prepareBuiltin(fixture, { contract });
+    await validateStoredProjectPreStartAdmission({
+      manifest,
+      scope: fixture.scope,
+    });
+    await expect(assertProjectPreStartAdmissionLaunchBinding({
+      manifest,
+      scope: fixture.scope,
+    })).resolves.toBeUndefined();
+  });
+
+  it("keeps null input patches out of external and remediation admission", async () => {
+    const external = await createFixture();
+    const externalContract = {
+      ...external.contract,
+      inputPatchHash: null,
+      reviewKind: "review",
+    };
+    const externalPlan = external.plan({
+      contract: externalContract,
+      state: {
+        ...external.state,
+        records: [{
+          ...external.state.records[0],
+          inputPatchHash: null,
+          reviewKind: "review",
+        }],
+      },
+    });
+    await expect(prepareProjectPreStartAdmission({
+      plan: externalPlan,
+      manifest: {
+        ...external.manifest,
+        projectPreStartAdmission: externalPlan.descriptor,
+      },
+      scope: external.scope,
+    })).rejects.toThrow("project_control_pre_start_input_patch_hash_required");
+
+    const remediation = await createBuiltinFixture();
+    const remediationContract = withWorkKey({
+      ...remediation.contract,
+      inputPatchHash: null,
+      reviewKind: "remediation",
+    });
+    await expect(prepareBuiltin(remediation, { contract: remediationContract }))
+      .rejects.toThrow("contract_inputPatchHash_null_invalid");
+  });
+
+  it("accepts only the staged patch bound by inputPatchHash", async () => {
+    const fixture = await createBuiltinFixture();
+    await mkdir(join(fixture.workspacePath, "src"), { recursive: true });
+    await writeFile(join(fixture.workspacePath, "src", "example.ts"), "export const value = 1;\n");
+    execFileSync("git", ["add", "src/example.ts"], { cwd: fixture.workspacePath });
+    const stagedPatch = execFileSync(
+      "git",
+      ["diff", "--cached", "--binary", "HEAD", "--"],
+      { cwd: fixture.workspacePath },
+    );
+    const contract = withWorkKey({
+      ...fixture.contract,
+      inputPatchHash: sha256(stagedPatch),
+    });
+
+    await expect(prepareBuiltin(fixture, { contract })).resolves.toBeDefined();
+
+    await writeFile(join(fixture.workspacePath, "src", "unstaged.ts"), "unstaged\n");
+    await expect(prepareBuiltin(fixture, { contract }))
+      .rejects.toThrow("project_control_pre_start_workspace_dirty");
+  });
+
   it("rebinds prompt and workspace HEAD immediately before launch", async () => {
     const fixture = await createBuiltinFixture();
     const plan = fixture.plan();
@@ -502,7 +608,9 @@ describe("builtin project pre-start admission", () => {
     await expect(assertProjectPreStartAdmissionLaunchBinding({
       manifest: { ...manifest, description: "manifest changed after receipt" },
       scope: fixture.scope,
-    })).rejects.toThrow("project_control_pre_start_launch_binding_mismatch");
+    })).rejects.toThrow(
+      "project_control_pre_start_launch_binding_mismatch:manifest_sha256",
+    );
     await writeFile(join(fixture.workspacePath, "DIRTY.txt"), "dirty\n");
     await expect(assertProjectPreStartAdmissionLaunchBinding({
       manifest: { ...manifest, description: "manifest changed after receipt" },
@@ -528,6 +636,18 @@ describe("builtin project pre-start admission", () => {
       manifest: dirtyManifest,
       scope: dirtyFixture.scope,
     });
+    await authorizeProjectPreStartAdmissionLaunch({
+      manifest: dirtyManifest,
+      scope: dirtyFixture.scope,
+    });
+    await expect(readFile(dirtyPlan.descriptor.receiptPath, "utf8")).resolves
+      .toContain('"status": "launch_authorized"');
+    await expect(validateStoredProjectPreStartAdmission({
+      manifest: dirtyManifest,
+      scope: dirtyFixture.scope,
+    })).rejects.toThrow(
+      "project_control_pre_start_admission_already_authorized",
+    );
     await writeFile(join(dirtyFixture.workspacePath, "DIRTY.txt"), "dirty\n");
     await expect(assertProjectPreStartAdmissionLaunchBinding({
       manifest: dirtyManifest,
@@ -572,309 +692,181 @@ describe("builtin project pre-start admission", () => {
       workspaceMode: "reviewed_dirty_continuation",
     })).rejects.toThrow("project_control_pre_start_launch_binding_mismatch");
   });
-});
 
-async function prepareBuiltin(
-  fixture: Awaited<ReturnType<typeof createBuiltinFixture>>,
-  overrides: Record<string, unknown>,
-) {
-  const contract = (overrides.contract ?? fixture.contract) as Record<string, unknown>;
-  const state = overrides.state ?? {
-    ...fixture.state,
-    records: fixture.state.records.map((record) => ({
-      ...record,
-      ...Object.fromEntries(Object.keys(record).map((field) => [
-        field,
-        field in contract ? contract[field] : record[field as keyof typeof record],
-      ])),
-      status: "queued",
-      supersededBy: null,
-      supersededFrom: null,
-    })),
-  };
-  const plan = fixture.plan({ ...overrides, contract, state });
-  return prepareProjectPreStartAdmission({
-    plan,
-    manifest: { ...fixture.manifest, projectPreStartAdmission: plan.descriptor },
-    scope: fixture.scope,
-  });
-}
+  it("rebinds only the repaired manifest for an authorized reviewed dirty continuation", async () => {
+    const fixture = await createBuiltinFixture();
+    const plan = fixture.plan();
+    const manifest = {
+      ...fixture.storedManifest,
+      projectPreStartAdmission: plan.descriptor,
+    };
+    await prepareProjectPreStartAdmission({
+      plan,
+      manifest,
+      scope: fixture.scope,
+    });
+    await authorizeProjectPreStartAdmissionLaunch({
+      manifest,
+      scope: fixture.scope,
+    });
+    await writeFile(join(fixture.workspacePath, "reviewed-change.ts"), "dirty\n");
 
-async function createBuiltinFixture() {
-  const base = await createFixture();
-  await mkdir(join(base.workspacePath, "sandbox"));
-  await writeFile(join(base.workspacePath, "controller.md"), "controller\n");
-  await writeFile(join(base.workspacePath, "lane.md"), "lane\n");
-  execFileSync("git", ["add", "controller.md", "lane.md"], { cwd: base.workspacePath });
-  execFileSync("git", ["commit", "--quiet", "-m", "test: packets"], {
-    cwd: base.workspacePath,
-  });
-  const phaseStartSha = execFileSync("git", ["rev-parse", "HEAD"], {
-    cwd: base.workspacePath,
-    encoding: "utf8",
-  }).trim();
-  const contract = withWorkKey({
-    kind: "worker-launch",
-    format: 1,
-    ...base.contract,
-    canonicalSha: phaseStartSha,
-    baseSha: phaseStartSha,
-    phaseStartSha,
-    packetRevision: "phase-01-s0-r1",
-    controllerPacket: "controller.md",
-    lanePacket: "lane.md",
-    ownedPaths: ["src/example.ts"],
-    mandatoryDocs: ["README.md", "controller.md", "lane.md"],
-    mandatoryScripts: [],
-    mandatoryFixtures: [],
-    requiredChecks: [{
-      id: "focused",
-      cwd: "scripts",
-      command: "node --check contract-validator.mjs",
-    }],
-    executionPolicy: {
-      mode: "sandbox-only",
-      sandboxRoot: join(base.workspacePath, "sandbox"),
-      forbiddenRealProjects: [join(base.root, "forbidden-project")],
-    },
-  });
-  const stateIdentityFields = [
-    "workKey",
-    "jobId",
-    "workerId",
-    "phaseId",
-    "laneId",
-    "baseSha",
-    "phaseStartSha",
-    "packetRevision",
-    "controllerPacket",
-    "lanePacket",
-    "inputPatchHash",
-    "reviewKind",
-    "revision",
-    "retryCount",
-    "supersedes",
-  ] as const;
-  const stateRecord = Object.fromEntries(
-    stateIdentityFields.map((field) => [field, contract[field]]),
-  );
-  const state = {
-    schemaVersion: 1,
-    maxRetries: 2,
-    maxInFlight: 1,
-    records: [{ ...stateRecord, status: "queued", supersededBy: null, supersededFrom: null }],
-  };
-  const scope: ProjectAccessScope = {
-    projectId: "project",
-    deniedRoots: [join(base.root, "denied")],
-    preStartAdmission: {
-      required: true,
-      mode: "serial-builtin",
-    },
-  };
-  return {
-    ...base,
-    contract,
-    state,
-    scope,
-    plan(overrides: Record<string, unknown> = {}) {
-      return planProjectPreStartAdmission({
-        value: {
-          mode: "serial-builtin",
-          contract,
-          state,
-          ...overrides,
-        },
-        confirmed: true,
-        scope,
-        manifest: base.manifest,
-      })!;
-    },
-  };
-}
+    const repairedManifest = {
+      ...manifest,
+      serviceTier: "default" as const,
+    };
+    await expect(
+      assertProjectPreStartAdmissionLaunchBinding({
+        manifest: repairedManifest,
+        scope: fixture.scope,
+        workspaceMode: "reviewed_dirty_continuation",
+      }),
+    ).rejects.toThrow(
+      "project_control_pre_start_launch_binding_mismatch:manifest_sha256",
+    );
 
-function withWorkKey<T extends Record<string, unknown>>(contract: T): T & { workKey: string } {
-  const workKey = sha256(Buffer.from(JSON.stringify({
-    kind: contract.kind,
-    format: contract.format,
-    phaseId: contract.phaseId,
-    laneId: contract.laneId,
-    baseSha: contract.baseSha,
-    phaseStartSha: contract.phaseStartSha,
-    packetRevision: contract.packetRevision,
-    inputPatchHash: contract.inputPatchHash,
-    reviewKind: contract.reviewKind,
-    revision: contract.revision,
-  })));
-  return { ...contract, workKey };
-}
+    const rebound = await rebindProjectPreStartAdmissionManifest({
+      manifest: repairedManifest,
+      scope: fixture.scope,
+      workspaceMode: "reviewed_dirty_continuation",
+    });
+    expect(rebound).toMatchObject({ updated: true });
+    expect(rebound.previousManifestSha256).not.toBe(rebound.manifestSha256);
+    await expect(
+      assertProjectPreStartAdmissionLaunchBinding({
+        manifest: repairedManifest,
+        scope: fixture.scope,
+        workspaceMode: "reviewed_dirty_continuation",
+      }),
+    ).resolves.toBeUndefined();
 
-function declarativeContract(contract: Record<string, unknown>): Record<string, unknown> {
-  const computed = new Set([
-    "jobId",
-    "workerId",
-    "registryStatus",
-    "jobRoot",
-    "workspaceRoot",
-    "promptPath",
-    "workKey",
-    "revision",
-    "retryCount",
-    "supersedes",
-  ]);
-  return Object.fromEntries(
-    Object.entries(contract).filter(([field]) => !computed.has(field)),
-  );
-}
+    const receipt = JSON.parse(
+      await readFile(plan.descriptor.receiptPath, "utf8"),
+    ) as Record<string, unknown>;
+    expect(receipt).toMatchObject({
+      manifestSha256: rebound.manifestSha256,
+      manifestRepair: {
+        previousManifestSha256: rebound.previousManifestSha256,
+        manifestSha256: rebound.manifestSha256,
+        repairedAt: expect.any(String),
+      },
+    });
+    await expect(
+      rebindProjectPreStartAdmissionManifest({
+        manifest: repairedManifest,
+        scope: fixture.scope,
+        workspaceMode: "reviewed_dirty_continuation",
+      }),
+    ).resolves.toMatchObject({ updated: false });
 
-async function createFixture(
-  options: { readonly admissionValidatorBody?: string } = {},
-) {
-  const root = await mkdtemp(join(tmpdir(), "project-pre-start-admission-"));
-  roots.push(root);
-  const workspacePath = join(root, "workspace");
-  const jobRootDir = join(root, "jobs", "project-worker");
-  await mkdir(join(workspacePath, "scripts"), { recursive: true });
-  await mkdir(jobRootDir, { recursive: true });
-  execFileSync("git", ["init", "--quiet"], { cwd: workspacePath });
-  execFileSync("git", ["config", "user.email", "test@example.com"], {
-    cwd: workspacePath,
-  });
-  execFileSync("git", ["config", "user.name", "Test"], { cwd: workspacePath });
-  await writeFile(join(workspacePath, "README.md"), "fixture\n");
-  execFileSync("git", ["add", "."], { cwd: workspacePath });
-  execFileSync("git", ["commit", "--quiet", "-m", "test: fixture"], {
-    cwd: workspacePath,
+    await writeFile(fixture.manifest.promptPath, "tampered prompt\n");
+    await expect(
+      rebindProjectPreStartAdmissionManifest({
+        manifest: { ...repairedManifest, description: "another repair" },
+        scope: fixture.scope,
+        workspaceMode: "reviewed_dirty_continuation",
+      }),
+    ).rejects.toThrow(
+      "project_control_pre_start_manifest_rebind_mismatch:prompt_sha256",
+    );
   });
 
-  const contractValidatorPath = join(
-    workspacePath,
-    "scripts",
-    "contract-validator.mjs",
-  );
-  const admissionValidatorPath = join(
-    workspacePath,
-    "scripts",
-    "admission-validator.mjs",
-  );
-  await writeFile(
-    contractValidatorPath,
-    `
-import { readFileSync } from "node:fs";
-const path = process.argv[process.argv.indexOf("--contract") + 1];
-JSON.parse(readFileSync(path, "utf8"));
-`,
-  );
-  await writeFile(
-    admissionValidatorPath,
-    options.admissionValidatorBody ??
-      `
-import { readFileSync } from "node:fs";
-const contract = JSON.parse(readFileSync(process.argv[process.argv.indexOf("--contract") + 1], "utf8"));
-const state = JSON.parse(readFileSync(process.argv[process.argv.indexOf("--state") + 1], "utf8"));
-if (state.records.filter((record) => record.workKey === contract.workKey).length !== 1) process.exit(2);
-`,
-  );
-  execFileSync("git", ["add", "scripts"], { cwd: workspacePath });
-  execFileSync("git", ["commit", "--quiet", "-m", "test: validators"], {
-    cwd: workspacePath,
-  });
-  const workspaceHead = execFileSync("git", ["rev-parse", "HEAD"], {
-    cwd: workspacePath,
-    encoding: "utf8",
-  }).trim();
-  const contractValidatorSha = sha256(await readFile(contractValidatorPath));
-  const admissionValidatorSha = sha256(await readFile(admissionValidatorPath));
-  const promptPath = join(jobRootDir, "prompt.md");
-  await writeFile(promptPath, "bounded prompt\n");
-  const manifest: CodexGoalJobManifestInput = {
-    jobId: "project-worker",
-    jobRootDir,
-    workspacePath,
-    promptPath,
-    taskId: "project-worker",
-    accounts: ["account-a"],
-    accessBoundary: AccessBoundary.IsolatedWorkspaceWrite,
-    networkAccess: NetworkAccessMode.Restricted,
-  };
-  const storedManifest: CodexGoalJobManifest = {
-    ...manifest,
-    schemaVersion: 1,
-    createdAt: "2026-07-12T00:00:00.000Z",
-    updatedAt: "2026-07-12T00:00:00.000Z",
-  };
-  const contract = {
-    jobId: manifest.jobId,
-    workerId: "worker-1",
-    jobRoot: jobRootDir,
-    workspaceRoot: workspacePath,
-    promptPath,
-    registryStatus: "queued",
-    workKey: "a".repeat(64),
-    phaseId: "phase-01",
-    laneId: "p1-s0",
-    baseSha: "b".repeat(40),
-    phaseStartSha: workspaceHead,
-    packetRevision: "r1",
-    controllerPacket: "controller.md",
-    lanePacket: "lane.md",
-    inputPatchHash: "d".repeat(64),
-    reviewKind: "implementation",
-    revision: 0,
-    retryCount: 0,
-    supersedes: null,
-  };
-  const state = {
-    schemaVersion: 1,
-    maxRetries: 0,
-    maxInFlight: 1,
-    records: [{ ...contract, status: "queued", registryStatus: undefined }],
-  };
-  const scope: ProjectAccessScope = {
-    projectId: "project",
-    preStartAdmission: {
-      required: true,
-      mode: "serial",
-      validatorBundle: [
-        {
-          path: "scripts/contract-validator.mjs",
-          sha256: contractValidatorSha,
-        },
-        {
-          path: "scripts/admission-validator.mjs",
-          sha256: admissionValidatorSha,
-        },
-      ],
-    },
-  };
-  return {
-    root,
-    workspacePath,
-    contractValidatorPath,
-    contractValidatorSha,
-    admissionValidatorSha,
-    manifest,
-    storedManifest,
-    contract,
-    state,
-    scope,
-    plan(overrides: Record<string, unknown> = {}, selectedScope = scope) {
-      return planProjectPreStartAdmission({
-        value: {
-          contractValidatorPath: "scripts/contract-validator.mjs",
-          admissionValidatorPath: "scripts/admission-validator.mjs",
-          contract,
-          state,
-          ...overrides,
-        },
-        confirmed: true,
-        scope: selectedScope,
+  it("rolls back failed startup authorization and permits one reviewed-dirty restart", async () => {
+    const fixture = await createBuiltinFixture();
+    const plan = fixture.plan();
+    const manifest = {
+      ...fixture.storedManifest,
+      projectPreStartAdmission: plan.descriptor,
+    };
+    await prepareProjectPreStartAdmission({
+      plan,
+      manifest,
+      scope: fixture.scope,
+    });
+
+    await expect(withProjectPreStartAdmissionLaunchAuthorization({
         manifest,
-      })!;
-    },
-  };
-}
+        scope: fixture.scope,
+      }, async () => {
+        throw new Error("provider_startup_failed");
+      })).rejects.toThrow("provider_startup_failed");
+    await expect(validateStoredProjectPreStartAdmission({
+      manifest,
+      scope: fixture.scope,
+    })).resolves.toBeUndefined();
 
-function sha256(value: Uint8Array): string {
-  return createHash("sha256").update(value).digest("hex");
-}
+    await authorizeProjectPreStartAdmissionLaunch({
+      manifest,
+      scope: fixture.scope,
+    });
+    await writeFile(join(fixture.workspacePath, "reviewed-change.ts"), "dirty\n");
+    await authorizeProjectPreStartAdmissionLaunch({
+      manifest,
+      scope: fixture.scope,
+      workspaceMode: "reviewed_dirty_continuation",
+    });
+    await expect(
+      withProjectPreStartAdmissionLaunchAuthorization(
+        {
+          manifest,
+          scope: fixture.scope,
+          workspaceMode: "terminal_handoff_dependency_recovery",
+        },
+        async () => {
+          throw new Error("dependency_recovery_startup_failed");
+        },
+      ),
+    ).rejects.toThrow("dependency_recovery_startup_failed");
+    await authorizeProjectPreStartAdmissionLaunch({
+      manifest,
+      scope: fixture.scope,
+      workspaceMode: "terminal_handoff_dependency_recovery",
+    });
+
+    const receipt = JSON.parse(
+      await readFile(plan.descriptor.receiptPath, "utf8"),
+    ) as Record<string, unknown>;
+    expect(receipt).toMatchObject({
+      status: "launch_authorized",
+      launchAuthorizationCount: 3,
+    });
+  });
+
+  it("upgrades a legacy validated receipt only for a reviewed dirty continuation", async () => {
+    const fixture = await createBuiltinFixture();
+    const plan = fixture.plan();
+    const manifest = {
+      ...fixture.storedManifest,
+      projectPreStartAdmission: plan.descriptor,
+    };
+    await prepareProjectPreStartAdmission({
+      plan,
+      manifest,
+      scope: fixture.scope,
+    });
+    await writeFile(join(fixture.workspacePath, "reviewed-change.ts"), "dirty\n");
+
+    await expect(assertProjectPreStartAdmissionLaunchBinding({
+      manifest,
+      scope: fixture.scope,
+    })).rejects.toThrow("project_control_pre_start_launch_binding_mismatch");
+    await expect(assertProjectPreStartAdmissionLaunchBinding({
+      manifest,
+      scope: fixture.scope,
+      workspaceMode: "reviewed_dirty_continuation",
+    })).resolves.toBeUndefined();
+
+    await authorizeProjectPreStartAdmissionLaunch({
+      manifest,
+      scope: fixture.scope,
+      workspaceMode: "reviewed_dirty_continuation",
+    });
+    const receipt = JSON.parse(
+      await readFile(plan.descriptor.receiptPath, "utf8"),
+    ) as Record<string, unknown>;
+    expect(receipt).toMatchObject({
+      status: "launch_authorized",
+      launchAuthorizationCount: 1,
+    });
+  });
+});

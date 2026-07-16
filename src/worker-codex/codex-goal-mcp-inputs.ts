@@ -13,6 +13,7 @@ import {
   type WorkerControlIntent,
   type WorkerControlPriority,
 } from "@vioxen/subscription-runtime/worker-core";
+import type { WorkerLaunchAdmission } from "./application/project-control/worker-launch-spec";
 import type { CodexGoalRunConfig } from "./codex-goal-runner";
 import type { CodexGoalOutputFormat } from "./codex-goal-ops";
 import { resolveCodexGoalJobRegistryRoot } from "./codex-goal-jobs";
@@ -142,6 +143,7 @@ export type ProjectControlMcpArgs = GoalMcpArgs & JobRegistryMcpArgs & {
   readonly sourceWorkspacePath?: string;
   readonly baseBranch?: string;
   readonly sourceRef?: string;
+  readonly expectedSourceCommit?: string;
   readonly newBranch?: string;
   readonly workspacePath?: string;
   readonly branch?: string;
@@ -162,7 +164,7 @@ export type ProjectControlMcpArgs = GoalMcpArgs & JobRegistryMcpArgs & {
   readonly overwrite?: boolean;
   readonly promptBody?: string;
   readonly confirmRefill?: boolean;
-  readonly preStartAdmission?: unknown;
+  readonly preStartAdmission?: WorkerLaunchAdmission;
   readonly confirmPreStartAdmission?: boolean;
   readonly confirmRepair?: boolean;
   readonly startWorker?: boolean;
@@ -175,6 +177,9 @@ export type ProjectControlMcpArgs = GoalMcpArgs & JobRegistryMcpArgs & {
   readonly executionMode?: string;
   readonly operationId?: string;
   readonly includeResult?: boolean;
+  readonly confirmRecoverOperations?: boolean;
+  readonly producerJobId?: string;
+  readonly requireCanonicalRemoteHead?: boolean;
   readonly captureReviewedOutput?: boolean;
   readonly reviewedOutputId?: string;
   readonly expectedPatchSha256?: string;
@@ -183,6 +188,13 @@ export type ProjectControlMcpArgs = GoalMcpArgs & JobRegistryMcpArgs & {
   readonly reviewReason?: string;
   readonly approvedFiles?: readonly string[] | string;
   readonly requiredChecks?: readonly unknown[];
+  readonly terminalAttemptId?: string;
+  readonly failureCategory?: string;
+  readonly failureCode?: string;
+  readonly confirmFailedNoOutput?: boolean;
+  readonly preexistingWorkspacePatchPath?: string;
+  readonly preexistingWorkspacePatchSha256?: string;
+  readonly confirmPreexistingWorkspacePatch?: boolean;
   readonly merge?: {
     readonly sourceRemote?: string;
     readonly sourceBranch?: string;

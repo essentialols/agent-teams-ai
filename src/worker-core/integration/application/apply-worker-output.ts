@@ -1,5 +1,5 @@
 import {
-  assertFilesWithinExpected,
+  assertIntegrationAppliedFiles,
   integrationAppliedFiles,
   markWorkerOutputApplied,
   normalizeProjectRelativePath,
@@ -64,7 +64,7 @@ export async function applyWorkerOutput(
           : sameFiles(allowedPreExistingDirtyFiles, attempt.expectedFiles) &&
             sameFiles(status.dirtyFiles, attempt.expectedFiles),
       });
-      assertFilesWithinExpected(result.changedFiles, attempt.expectedFiles);
+      assertIntegrationAppliedFiles(attempt, result.changedFiles);
       const now = nowIso(deps.clock);
       updated = markWorkerOutputApplied(attempt, {
         changedFiles: result.changedFiles,

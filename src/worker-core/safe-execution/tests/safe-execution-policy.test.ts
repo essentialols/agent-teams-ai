@@ -130,11 +130,11 @@ describe("safe execution policy decisions", () => {
     expect(safeExecutionFinalStatusForFailure("quota_limited")).toBe("partial");
   });
 
-  it("skips control delivery only for account recovery continuations", () => {
+  it("delivers guidance while rotating an unavailable account", () => {
     expect(shouldDeliverSafeExecutionControlForContinuation("unknown_error"))
       .toBe(true);
     expect(shouldDeliverSafeExecutionControlForContinuation("account_unavailable"))
-      .toBe(false);
+      .toBe(true);
     expect(shouldDeliverSafeExecutionControlForContinuation("model_unavailable"))
       .toBe(false);
     expect(shouldDeliverSafeExecutionControlForContinuation("reconnect_required"))

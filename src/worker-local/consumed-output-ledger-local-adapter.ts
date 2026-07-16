@@ -1,6 +1,5 @@
 import { execFile } from "node:child_process";
 import {
-  copyFile,
   link,
   mkdir,
   readFile,
@@ -9,7 +8,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { promisify } from "node:util";
+import { isDeepStrictEqual, promisify } from "node:util";
 import type {
   ConsumedOutputLedgerWriterPort,
   IntegratedOutputLedgerPort,
@@ -71,6 +70,65 @@ export class LocalConsumedOutputLedgerWriter
   }
 }
 
+export type LocalTerminalOutputBackupCapture = {
+  readonly archivePath: string;
+  readonly statusPath: string;
+  readonly patchPath: string;
+  readonly numstatPath: string;
+  readonly hasAuthoredOutput: boolean;
+};
+
+export async function captureLocalTerminalOutputBackup(input: {
+  readonly archiveRoot: string;
+  readonly archiveName: string;
+  readonly workspacePath: string;
+  readonly changedFiles: readonly string[];
+  readonly sourcePatchPath?: string;
+  readonly gitBinaryPath?: string;
+}): Promise<LocalTerminalOutputBackupCapture> {
+  const archivePath = join(input.archiveRoot, safeLedgerName(input.archiveName));
+  await mkdir(archivePath, { recursive: true });
+  const statusPath = join(archivePath, "git-status.txt");
+  const patchPath = join(archivePath, "tracked.diff");
+  const numstatPath = join(archivePath, "tracked.numstat");
+  await publishExactText(statusPath, await localGitOutput({
+    cwd: input.workspacePath,
+    args: ["status", "--short"],
+    ...(input.gitBinaryPath ? { gitBinaryPath: input.gitBinaryPath } : {}),
+  }));
+  if (input.sourcePatchPath) {
+    await publishExactFile(patchPath, input.sourcePatchPath);
+  } else {
+    await publishExactBytes(
+      patchPath,
+      input.changedFiles.length === 0
+        ? Buffer.alloc(0)
+        : await localGitOutputBytes({
+            cwd: input.workspacePath,
+            args: ["diff", "--binary", "--", ...input.changedFiles],
+            ...(input.gitBinaryPath ? { gitBinaryPath: input.gitBinaryPath } : {}),
+          }),
+    );
+  }
+  await publishExactText(
+    numstatPath,
+    input.changedFiles.length === 0
+      ? ""
+      : await localGitOutput({
+          cwd: input.workspacePath,
+          args: ["diff", "--numstat", "--", ...input.changedFiles],
+          ...(input.gitBinaryPath ? { gitBinaryPath: input.gitBinaryPath } : {}),
+        }),
+  );
+  return {
+    archivePath,
+    statusPath,
+    patchPath,
+    numstatPath,
+    hasAuthoredOutput: await anyFileHasBytes([patchPath, numstatPath]),
+  };
+}
+
 export type LocalIntegratedOutputLedgerAdapterOptions = {
   readonly ledgerRoots: readonly string[];
   readonly archiveRoot: string;
@@ -100,7 +158,7 @@ export class LocalIntegratedOutputLedgerAdapter
       input.attempt.workerOutput.workspacePath,
       ["status", "--short"],
     ));
-    await publishExactText(patchPath, await this.gitOutput(
+    await publishExactBytes(patchPath, await this.gitOutputBytes(
       input.attempt.targetWorkspacePath,
       ["show", "--format=", "--binary", input.commitSha, "--", ...input.attempt.workerOutput.changedFiles],
     ));
@@ -127,10 +185,14 @@ export class LocalIntegratedOutputLedgerAdapter
 
   async preflightFinalize(input: {
     readonly preparation: IntegratedOutputLedgerPreparation;
+    readonly pushedAt?: string;
   }): Promise<void> {
     await this.writer.assertCanRecord({
       ledgerRoot: this.requiredLedgerRoot(),
-      decision: integratedDecision(input.preparation, "1970-01-01T00:00:00.000Z"),
+      decision: integratedDecision(
+        input.preparation,
+        input.pushedAt ?? "1970-01-01T00:00:00.000Z",
+      ),
     });
   }
 
@@ -155,56 +217,24 @@ export class LocalIntegratedOutputLedgerAdapter
     readonly attempt: IntegrationAttempt;
   }): Promise<RejectedOutputLedgerPreparation> {
     const ledgerRoot = this.requiredLedgerRoot();
-    const archivePath = join(
-      this.options.archiveRoot,
-      `${safeLedgerName(input.attempt.workerOutput.workerJobId)}-rejected-${safeLedgerName(input.attempt.attemptId)}`,
-    );
-    await mkdir(archivePath, { recursive: true });
-    const statusPath = join(archivePath, "git-status.txt");
-    const patchPath = join(archivePath, "tracked.diff");
-    const numstatPath = join(archivePath, "tracked.numstat");
-    await publishExactText(statusPath, await this.gitOutput(
-      input.attempt.workerOutput.workspacePath,
-      ["status", "--short"],
-    ));
-    if (input.attempt.workerOutput.patchPath) {
-      await publishExactFile(
-        patchPath,
-        input.attempt.workerOutput.patchPath,
-      );
-    } else {
-      await publishExactText(
-        patchPath,
-        input.attempt.workerOutput.changedFiles.length === 0
-          ? ""
-          : await this.gitOutput(input.attempt.workerOutput.workspacePath, [
-              "diff",
-              "--binary",
-              "--",
-              ...input.attempt.workerOutput.changedFiles,
-            ]),
-      );
-    }
-    await publishExactText(
-      numstatPath,
-      input.attempt.workerOutput.changedFiles.length === 0
-        ? ""
-        : await this.gitOutput(input.attempt.workerOutput.workspacePath, [
-            "diff",
-            "--numstat",
-            "--",
-            ...input.attempt.workerOutput.changedFiles,
-          ]),
-    );
+    const captured = await captureLocalTerminalOutputBackup({
+      archiveRoot: this.options.archiveRoot,
+      archiveName:
+        `${input.attempt.workerOutput.workerJobId}-rejected-${input.attempt.attemptId}`,
+      workspacePath: input.attempt.workerOutput.workspacePath,
+      changedFiles: input.attempt.workerOutput.changedFiles,
+      ...(input.attempt.workerOutput.patchPath
+        ? { sourcePatchPath: input.attempt.workerOutput.patchPath }
+        : {}),
+      ...(this.options.gitBinaryPath
+        ? { gitBinaryPath: this.options.gitBinaryPath }
+        : {}),
+    });
     const preparation: RejectedOutputLedgerPreparation = {
       attemptId: input.attempt.attemptId,
       workerJobId: input.attempt.workerOutput.workerJobId,
       workerWorkspacePath: input.attempt.workerOutput.workspacePath,
-      archivePath,
-      statusPath,
-      patchPath,
-      numstatPath,
-      hasAuthoredOutput: await anyFileHasBytes([patchPath, numstatPath]),
+      ...captured,
     };
     await publishExactJson(
       join(
@@ -279,6 +309,54 @@ export class LocalIntegratedOutputLedgerAdapter
     );
     return result.stdout;
   }
+
+  private async gitOutputBytes(
+    cwd: string,
+    args: readonly string[],
+  ): Promise<Buffer> {
+    const result = await execFileAsync(
+      this.options.gitBinaryPath ?? "git",
+      [...args],
+      {
+        cwd,
+        encoding: "buffer",
+        maxBuffer: 10 * 1024 * 1024,
+        timeout: 60_000,
+      },
+    );
+    return result.stdout;
+  }
+}
+
+async function localGitOutput(input: {
+  readonly cwd: string;
+  readonly args: readonly string[];
+  readonly gitBinaryPath?: string;
+}): Promise<string> {
+  const result = await execFileAsync(
+    input.gitBinaryPath ?? "git",
+    [...input.args],
+    { cwd: input.cwd, maxBuffer: 10 * 1024 * 1024, timeout: 60_000 },
+  );
+  return result.stdout;
+}
+
+async function localGitOutputBytes(input: {
+  readonly cwd: string;
+  readonly args: readonly string[];
+  readonly gitBinaryPath?: string;
+}): Promise<Buffer> {
+  const result = await execFileAsync(
+    input.gitBinaryPath ?? "git",
+    [...input.args],
+    {
+      cwd: input.cwd,
+      encoding: "buffer",
+      maxBuffer: 10 * 1024 * 1024,
+      timeout: 60_000,
+    },
+  );
+  return result.stdout;
 }
 
 function sameTerminalDecision(
@@ -286,15 +364,8 @@ function sameTerminalDecision(
   decision: TerminalOutputDecision,
 ): boolean {
   try {
-    const existing = JSON.parse(existingJson) as Record<string, unknown>;
-    return existing.jobId === decision.jobId &&
-      (existing.attemptId ?? undefined) === (decision.attemptId ?? undefined) &&
-      existing.status === decision.status &&
-      (existing.commitSha ?? undefined) === (decision.commitSha ?? undefined) &&
-      (existing.archivePath ?? undefined) === (decision.archivePath ?? undefined) &&
-      JSON.stringify(existing.failure) === JSON.stringify(decision.failure) &&
-      JSON.stringify(existing.output) === JSON.stringify(decision.output) &&
-      JSON.stringify(existing.backup) === JSON.stringify(decision.backup);
+    const existing: unknown = JSON.parse(existingJson);
+    return isDeepStrictEqual(existing, ledgerRecord(decision));
   } catch {
     return false;
   }
@@ -305,19 +376,7 @@ async function publishExactJson(path: string, value: unknown): Promise<void> {
 }
 
 async function publishExactFile(path: string, sourcePath: string): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  const tmpPath = `${path}.${process.pid}.${Date.now()}.tmp`;
-  await copyFile(sourcePath, tmpPath);
-  try {
-    await link(tmpPath, path);
-  } catch (error) {
-    if (!isNodeErrorCode(error, "EEXIST")) throw error;
-    if (await readFile(path, "utf8") !== await readFile(sourcePath, "utf8")) {
-      throw new Error("integrated_output_ledger_preparation_conflict");
-    }
-  } finally {
-    await unlink(tmpPath).catch(() => undefined);
-  }
+  await publishExactBytes(path, await readFile(sourcePath));
 }
 
 async function anyFileHasBytes(paths: readonly string[]): Promise<boolean> {
@@ -328,6 +387,10 @@ async function anyFileHasBytes(paths: readonly string[]): Promise<boolean> {
 }
 
 async function publishExactText(path: string, contents: string): Promise<void> {
+  await publishExactBytes(path, Buffer.from(contents));
+}
+
+async function publishExactBytes(path: string, contents: Buffer): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const tmpPath = `${path}.${process.pid}.${Date.now()}.tmp`;
   await writeFile(tmpPath, contents, { flag: "wx" });
@@ -335,7 +398,7 @@ async function publishExactText(path: string, contents: string): Promise<void> {
     await link(tmpPath, path);
   } catch (error) {
     if (!isNodeErrorCode(error, "EEXIST")) throw error;
-    if (await readFile(path, "utf8") !== contents) {
+    if (!(await readFile(path)).equals(contents)) {
       throw new Error("integrated_output_ledger_preparation_conflict");
     }
   } finally {

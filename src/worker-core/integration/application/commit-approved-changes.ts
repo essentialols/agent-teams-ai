@@ -1,7 +1,7 @@
 import {
   IntegrationAttemptStatus,
   SecretScanStatus,
-  assertFilesWithinExpected,
+  assertIntegrationCommitFiles,
   assertStatus,
   integrationAppliedFiles,
   markCommitCreated,
@@ -85,20 +85,7 @@ export async function commitApprovedChanges(
         evidence: ["no_changed_files"],
       });
     }
-    assertFilesWithinExpected(dirtyFiles, attempt.expectedFiles);
-    if (
-      attempt.merge &&
-      observedDirtyFiles.length > 0 &&
-      !sameFiles(dirtyFiles, integrationAppliedFiles(attempt))
-    ) {
-      throw new IntegrationError({
-        reason: IntegrationErrorReason.UnexpectedFiles,
-        evidence: [
-          `expected:${integrationAppliedFiles(attempt).join(",")}`,
-          `actual:${dirtyFiles.join(",")}`,
-        ],
-      });
-    }
+    assertIntegrationCommitFiles(attempt, dirtyFiles);
     const scan = await deps.scanner.scanFiles({
       workspacePath: attempt.targetWorkspacePath,
       files: dirtyFiles,
@@ -150,11 +137,4 @@ export async function commitApprovedChanges(
   } finally {
     await deps.locks.release(lock);
   }
-}
-
-function sameFiles(left: readonly string[], right: readonly string[]): boolean {
-  const normalizedLeft = [...new Set(left.map(normalizeProjectRelativePath))].sort();
-  const normalizedRight = [...new Set(right.map(normalizeProjectRelativePath))].sort();
-  return normalizedLeft.length === normalizedRight.length &&
-    normalizedLeft.every((file, index) => file === normalizedRight[index]);
 }

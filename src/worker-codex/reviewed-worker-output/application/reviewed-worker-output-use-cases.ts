@@ -37,76 +37,93 @@ export async function captureReviewedWorkerOutput(
   deps: ReviewedWorkerOutputDeps,
   input: CaptureReviewedWorkerOutputInput,
 ): Promise<ReviewedWorkerOutputSnapshot> {
-  const expectedPatchSha256 = normalizeSha256(input.expectedPatchSha256);
-  const approvedFiles = normalizeReviewedFiles(input.approvedFiles);
   const lock = await deps.locks.acquire({
     workspacePath: input.workspacePath,
     owner: `reviewed-output:${input.controllerJobId}:${input.workerJobId}`,
   });
   try {
-    const captured = await deps.snapshotter.capture({
-      workspacePath: lock.workspacePath,
-    });
-    const changedFiles = normalizeReviewedFiles(captured.changedFiles);
-    assertFilesWithinExpected(changedFiles, approvedFiles);
-    const patchSha256 = sha256(captured.patch);
-    if (patchSha256 !== expectedPatchSha256) {
-      throw new Error("reviewed_worker_output_patch_hash_mismatch");
-    }
-    const reviewDecision = reviewedOutputDecision({
-      decision: input.decision,
-      reviewedBy: input.reviewedBy,
-      reason: input.reason,
-      approvedFiles,
-      requiredChecks: input.requiredChecks,
-    });
-    const merge = normalizeReviewedOutputMerge(input.merge);
-    const capturedAt = (deps.clock ?? { now: () => new Date() })
-      .now()
-      .toISOString();
-    const reviewedOutputId = reviewedWorkerOutputId({
-      format: reviewedWorkerOutputFormat,
-      formatRevision: 1,
-      projectId: input.projectId,
-      controllerJobId: input.controllerJobId,
-      workerJobId: input.workerJobId,
-      taskId: input.taskId,
-      sourceWorkspacePath: input.workspacePath,
-      baseCommit: captured.baseCommit,
-      patchSha256,
-      changedFiles,
-      reviewDecision,
-      ...(merge ? { merge } : {}),
-    });
-    return await deps.store.create({
-      snapshot: {
-        format: reviewedWorkerOutputFormat,
-        formatRevision: 1,
-        reviewedOutputId,
-        projectId: input.projectId,
-        controllerJobId: input.controllerJobId,
-        workerJobId: input.workerJobId,
-        taskId: input.taskId,
-        sourceWorkspacePath: input.workspacePath,
-        patchSha256,
-        patchByteLength: Buffer.byteLength(captured.patch),
-        baseCommit: captured.baseCommit,
-        changedFiles,
-        reviewDecision,
-        ...(merge ? { merge } : {}),
-        capturedAt,
-      },
-      patch: captured.patch,
-    });
+    return await captureReviewedWorkerOutputLocked(deps, input, lock);
   } finally {
     await deps.locks.release(lock);
   }
 }
 
-function normalizeReviewedFiles(paths: readonly string[]): readonly string[] {
+export async function captureReviewedWorkerOutputLocked(
+  deps: Pick<ReviewedWorkerOutputDeps, "snapshotter" | "store" | "clock">,
+  input: CaptureReviewedWorkerOutputInput,
+  lock: WorkspaceLock,
+): Promise<ReviewedWorkerOutputSnapshot> {
+  const expectedPatchSha256 = normalizeSha256(input.expectedPatchSha256);
+  const approvedFiles = normalizeReviewedFiles(input.approvedFiles);
+  const merge = normalizeReviewedOutputMerge(input.merge);
+  const captured = await deps.snapshotter.capture({
+    workspacePath: lock.workspacePath,
+    ...(merge ? { allowEmptyPatch: true } : {}),
+  });
+  const changedFiles = normalizeReviewedFiles(captured.changedFiles, {
+    allowEmpty: merge !== undefined,
+  });
+  if (changedFiles.length > 0) {
+    assertFilesWithinExpected(changedFiles, approvedFiles);
+  }
+  const patchSha256 = sha256(captured.patch);
+  if (patchSha256 !== expectedPatchSha256) {
+    throw new Error("reviewed_worker_output_patch_hash_mismatch");
+  }
+  const reviewDecision = reviewedOutputDecision({
+    decision: input.decision,
+    reviewedBy: input.reviewedBy,
+    reason: input.reason,
+    approvedFiles,
+    requiredChecks: input.requiredChecks,
+  });
+  const capturedAt = (deps.clock ?? { now: () => new Date() })
+    .now()
+    .toISOString();
+  const reviewedOutputId = reviewedWorkerOutputId({
+    format: reviewedWorkerOutputFormat,
+    formatRevision: 1,
+    projectId: input.projectId,
+    controllerJobId: input.controllerJobId,
+    workerJobId: input.workerJobId,
+    taskId: input.taskId,
+    sourceWorkspacePath: lock.workspacePath,
+    baseCommit: captured.baseCommit,
+    patchSha256,
+    changedFiles,
+    reviewDecision,
+    ...(merge ? { merge } : {}),
+  });
+  return await deps.store.create({
+    snapshot: {
+      format: reviewedWorkerOutputFormat,
+      formatRevision: 1,
+      reviewedOutputId,
+      projectId: input.projectId,
+      controllerJobId: input.controllerJobId,
+      workerJobId: input.workerJobId,
+      taskId: input.taskId,
+      sourceWorkspacePath: lock.workspacePath,
+      patchSha256,
+      patchByteLength: Buffer.byteLength(captured.patch),
+      baseCommit: captured.baseCommit,
+      changedFiles,
+      reviewDecision,
+      ...(merge ? { merge } : {}),
+      capturedAt,
+    },
+    patch: captured.patch,
+  });
+}
+
+function normalizeReviewedFiles(
+  paths: readonly string[],
+  options: { readonly allowEmpty?: boolean } = {},
+): readonly string[] {
   if (paths.length > maxReviewedInputFiles) {
     throw new Error("reviewed_worker_output_changed_file_limit_exceeded");
   }
+  if (paths.length === 0 && options.allowEmpty === true) return [];
   const normalized = normalizeExpectedFiles(paths);
   if (normalized.length > maxReviewedChangedFiles) {
     throw new Error("reviewed_worker_output_changed_file_limit_exceeded");
@@ -207,8 +224,11 @@ export async function assertReviewedWorkerOutputStillMatchesLocked(
 ): Promise<void> {
   const current = await deps.snapshotter.capture({
     workspacePath: workspace.workspacePath,
+    ...(snapshot.merge ? { allowEmptyPatch: true } : {}),
   });
-  const currentChangedFiles = normalizeExpectedFiles(current.changedFiles);
+  const currentChangedFiles = current.changedFiles.length === 0
+    ? []
+    : normalizeExpectedFiles(current.changedFiles);
   if (
     current.baseCommit !== snapshot.baseCommit ||
     sha256(current.patch) !== snapshot.patchSha256 ||
@@ -305,6 +325,20 @@ export async function resolveReviewedWorkerContinuation(input: {
 }): Promise<ReviewedWorkerOutputSnapshot> {
   const snapshot = await input.store.get(normalizeSha256(input.reviewedOutputId));
   if (!snapshot) throw new Error("reviewed_worker_output_not_found");
+  assertReviewedWorkerContinuationContext(snapshot, input);
+  return snapshot;
+}
+
+export function assertReviewedWorkerContinuationContext(
+  snapshot: ReviewedWorkerOutputSnapshot,
+  input: {
+    readonly projectId: string;
+    readonly controllerJobId: string;
+    readonly workerJobId: string;
+    readonly taskId: string;
+    readonly workspacePath: string;
+  },
+): void {
   if (snapshot.projectId !== input.projectId) {
     throw new Error("reviewed_worker_output_project_mismatch");
   }
@@ -317,13 +351,12 @@ export async function resolveReviewedWorkerContinuation(input: {
   if (snapshot.taskId !== input.taskId) {
     throw new Error("reviewed_worker_output_task_mismatch");
   }
-  if (snapshot.sourceWorkspacePath !== input.workspacePath) {
-    throw new Error("reviewed_worker_output_workspace_mismatch");
-  }
   if (snapshot.reviewDecision.decision !== ReviewDecisionStatus.Rejected) {
     throw new Error("reviewed_worker_output_rejected_continuation_required");
   }
-  return snapshot;
+  if (snapshot.sourceWorkspacePath !== input.workspacePath) {
+    throw new Error("reviewed_worker_output_workspace_mismatch");
+  }
 }
 
 function normalizeSha256(value: string): string {

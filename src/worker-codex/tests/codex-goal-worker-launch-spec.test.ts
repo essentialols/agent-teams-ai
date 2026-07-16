@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   parseWorkerLaunchRequest,
   parseWorkerLaunchSpec,
+  parseWorkerLaunchState,
 } from "../index";
 
 describe("worker launch spec", () => {
@@ -17,6 +18,47 @@ describe("worker launch spec", () => {
       format: 1,
       registryStatus: "queued",
     });
+  });
+
+  it("represents clean first implementations and canonical reviews without an input patch", () => {
+    expect(parseWorkerLaunchRequest({
+      ...workerLaunchRequest(),
+      inputPatchHash: null,
+    })).toMatchObject({ inputPatchHash: null, reviewKind: "implementation" });
+
+    expect(parseWorkerLaunchRequest({
+      ...workerLaunchRequest(),
+      inputPatchHash: null,
+      reviewKind: "review",
+    })).toMatchObject({ inputPatchHash: null, reviewKind: "review" });
+    expect(() => parseWorkerLaunchSpec({
+      ...workerLaunchSpec(),
+      inputPatchHash: null,
+      revision: 1,
+    })).toThrow("contract_inputPatchHash_null_invalid");
+
+    for (const record of [
+      { ...workerLaunchStateRecord(), inputPatchHash: null, reviewKind: "remediation" },
+      { ...workerLaunchStateRecord(), inputPatchHash: null, revision: 1 },
+    ]) {
+      expect(() => parseWorkerLaunchState({
+        schemaVersion: 1,
+        maxRetries: 0,
+        maxInFlight: 1,
+        records: [record],
+      })).toThrow("contract_inputPatchHash_null_invalid");
+    }
+
+    expect(parseWorkerLaunchState({
+      schemaVersion: 1,
+      maxRetries: 0,
+      maxInFlight: 1,
+      records: [{
+        ...workerLaunchStateRecord(),
+        inputPatchHash: null,
+        reviewKind: "review",
+      }],
+    }).records[0]).toMatchObject({ inputPatchHash: null, reviewKind: "review" });
   });
 
   it("rejects version-family aliases and future formats fail closed", () => {
@@ -122,5 +164,29 @@ function workerLaunchSpec() {
     jobRoot: "/tmp/subscription-runtime-worker-job",
     workspaceRoot: "/tmp/subscription-runtime-worker-workspace",
     promptPath: "/tmp/subscription-runtime-worker-job/prompt.md",
+  };
+}
+
+function workerLaunchStateRecord() {
+  const spec = workerLaunchSpec();
+  return {
+    workKey: spec.workKey,
+    jobId: spec.jobId,
+    workerId: spec.workerId,
+    phaseId: spec.phaseId,
+    laneId: spec.laneId,
+    baseSha: spec.baseSha,
+    phaseStartSha: spec.phaseStartSha,
+    packetRevision: spec.packetRevision,
+    controllerPacket: spec.controllerPacket,
+    lanePacket: spec.lanePacket,
+    inputPatchHash: spec.inputPatchHash,
+    reviewKind: spec.reviewKind,
+    revision: spec.revision,
+    retryCount: spec.retryCount,
+    supersedes: spec.supersedes,
+    status: "queued" as const,
+    supersededBy: null,
+    supersededFrom: null,
   };
 }

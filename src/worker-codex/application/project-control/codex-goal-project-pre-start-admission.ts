@@ -1,35 +1,49 @@
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  access,
   mkdir,
   lstat,
   readFile,
-  realpath,
   rename,
   rm,
   writeFile,
 } from "node:fs/promises";
-import { isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
-import { promisify } from "node:util";
+import { join } from "node:path";
 import type { ProjectAccessScope } from "@vioxen/subscription-runtime/worker-core";
 import type {
   CodexGoalJobManifest,
   CodexGoalJobManifestInput,
   CodexGoalProjectPreStartAdmission,
 } from "../../codex-goal-jobs";
-import { captureGitWorkspacePatch } from "../../codex-goal-runtime-result-io";
 import {
   materializeBuiltinWorkerLaunchSpec,
   validateBuiltinWorkerLaunchSpec,
 } from "./codex-goal-project-builtin-pre-start-admission";
+import type { ProjectPreStartAdmissionLaunchWorkspaceMode } from "./codex-goal-project-pre-start-admission-types";
+export type {
+  ProjectPreStartAdmissionDirtyContinuationMode,
+  ProjectPreStartAdmissionLaunchWorkspaceMode,
+} from "./codex-goal-project-pre-start-admission-types";
+import {
+  assertProjectInputPatchContract,
+  projectInputPatchBindingMatches,
+} from "./codex-goal-project-input-patch-policy";
+import {
+  captureProjectPreStartBinding,
+  readVerifiedInputPatchFromExistingReceipt,
+  verifiedInputPatchBindingValid,
+  verifiedInputPatchFromReceipt,
+} from "./codex-goal-project-pre-start-binding";
+import {
+  configuredValidator,
+  runValidator,
+  snapshotValidatorBundle,
+} from "./codex-goal-project-pre-start-validator-bundle";
 
-const execFileAsync = promisify(execFile);
 const ADMISSION_DIRECTORY = "pre-start-admission";
-const VALIDATOR_TIMEOUT_MS = 60_000;
 const MAX_CONTRACT_BYTES = 256 * 1024;
 const MAX_STATE_BYTES = 1024 * 1024;
 const MAX_STATE_RECORDS = 1;
-const MAX_VALIDATOR_BYTES = 2 * 1024 * 1024;
 const MAX_PROMPT_BYTES = 1024 * 1024;
 
 type JsonObject = Readonly<Record<string, unknown>>;
@@ -104,7 +118,10 @@ export function planProjectPreStartAdmission(input: {
   if (materialized.state.maxInFlight !== 1) {
     throw new Error("project_control_pre_start_serial_maxInFlight_expected_1");
   }
-  if (!Array.isArray(materialized.state.records) || materialized.state.records.length !== 1) {
+  if (
+    !Array.isArray(materialized.state.records) ||
+    materialized.state.records.length !== 1
+  ) {
     throw new Error("project_control_pre_start_serial_single_record_required");
   }
   assertContractBindings(materialized.contract, input.manifest);
@@ -135,7 +152,15 @@ export async function prepareProjectPreStartAdmission(input: {
   readonly plan: PlannedProjectPreStartAdmission;
   readonly manifest: CodexGoalJobManifestInput;
   readonly scope: ProjectAccessScope;
+  readonly verifiedInputPatchArtifactSha256?: string;
+  readonly verifiedInputPatchStagedSha256?: string;
 }): Promise<{ readonly createdPaths: readonly string[] }> {
+  if (
+    input.verifiedInputPatchArtifactSha256 === undefined &&
+    input.verifiedInputPatchStagedSha256 !== undefined
+  ) {
+    throw new Error("project_control_pre_start_verified_input_patch_mismatch");
+  }
   assertDescriptorPaths(input.plan.descriptor, input.manifest.jobRootDir);
   const createdPaths: string[] = [];
   try {
@@ -168,6 +193,17 @@ export async function prepareProjectPreStartAdmission(input: {
         projectPreStartAdmission: input.plan.descriptor,
       },
       scope: input.scope,
+      ...(input.verifiedInputPatchArtifactSha256
+        ? {
+            verifiedInputPatch: {
+              artifactSha256: input.verifiedInputPatchArtifactSha256,
+              stagedPatchSha256: requiredSha256(
+                input.verifiedInputPatchStagedSha256,
+                "verifiedInputPatchStagedSha256",
+              ),
+            },
+          }
+        : {}),
     });
     if (createdPaths.length > 0) {
       createdPaths.push(input.plan.descriptor.receiptPath);
@@ -195,57 +231,220 @@ export async function validateStoredProjectPreStartAdmission(input: {
 export async function assertProjectPreStartAdmissionLaunchBinding(input: {
   readonly manifest: CodexGoalJobManifest;
   readonly scope: ProjectAccessScope;
-  readonly workspaceMode?:
-    | "clean_first_launch"
-    | "reviewed_dirty_continuation"
-    | "adoption_input";
+  readonly expectedInputPatchArtifactSha256?: string;
+  readonly workspaceMode?: ProjectPreStartAdmissionLaunchWorkspaceMode;
 }): Promise<void> {
   const descriptor = input.manifest.projectPreStartAdmission;
   if (!descriptor) {
-    if (input.scope.preStartAdmission?.required) {
+    if (
+      input.scope.preStartAdmission?.required ||
+      input.workspaceMode === "admitted_input_patch" ||
+      input.expectedInputPatchArtifactSha256 !== undefined
+    ) {
       throw new Error("project_control_pre_start_admission_required");
     }
     return;
   }
   assertDescriptorPaths(descriptor, input.manifest.jobRootDir);
   await assertArtifactRootSecure(input.manifest.jobRootDir);
-  const contract = await readJsonObject(descriptor.contractPath, "contract", MAX_CONTRACT_BYTES);
-  const state = await readJsonObject(descriptor.statePath, "state", MAX_STATE_BYTES);
-  const receipt = await readJsonObject(descriptor.receiptPath, "receipt", 64 * 1024);
+  const contract = await readJsonObject(
+    descriptor.contractPath,
+    "contract",
+    MAX_CONTRACT_BYTES,
+  );
+  const state = await readJsonObject(
+    descriptor.statePath,
+    "state",
+    MAX_STATE_BYTES,
+  );
+  const receipt = await readJsonObject(
+    descriptor.receiptPath,
+    "receipt",
+    64 * 1024,
+  );
+  assertProjectInputPatchContract({
+    builtin: isBuiltinDescriptor(descriptor),
+    contract,
+  });
   assertContractBindings(contract, input.manifest);
   assertQueuedStateBinding(contract, state, input.manifest.jobId);
-  const binding = await currentBinding(input.manifest, descriptor);
+  const binding = await captureProjectPreStartBinding(
+    input.manifest,
+    descriptor,
+  );
   const validatorReceiptValid = projectPreStartValidatorReceiptValid({
     descriptor,
     receipt,
     scope: input.scope,
   });
-  const adoptionInput =
-    input.workspaceMode === "adoption_input" &&
-    isAdoptionManifest(input.manifest);
+  const verifiedInputPatch = verifiedInputPatchFromReceipt(receipt, contract);
+  const adoptionInput = isAdoptionManifest(input.manifest);
+  const dirtyContinuation =
+    input.workspaceMode === "reviewed_dirty_continuation" ||
+    input.workspaceMode === "terminal_handoff_dependency_recovery";
+  const admittedInputPatchContinuation =
+    input.workspaceMode === "admitted_input_patch_continuation";
+  const cleanCapacityContinuation =
+    input.workspaceMode === "clean_capacity_continuation";
+  const cleanExplicitContinuation =
+    input.workspaceMode === "clean_explicit_continuation";
+  const receiptStatusValid =
+    adoptionInput ||
+    dirtyContinuation ||
+    admittedInputPatchContinuation ||
+    cleanCapacityContinuation ||
+    cleanExplicitContinuation
+      ? receipt.status === "launch_authorized" ||
+        receipt.status === "validated_not_launched"
+      : receipt.status === "validated_not_launched";
   const workspaceBindingValid =
-    input.workspaceMode === "reviewed_dirty_continuation"
+    adoptionInput ||
+    input.workspaceMode === "admitted_input_patch" ||
+    admittedInputPatchContinuation ||
+    dirtyContinuation
       ? binding.workspaceStatus !== ""
-      : adoptionInput || binding.workspaceStatus === "";
-  const inputPatchBindingValid = !adoptionInput || (
-    contract.inputPatchHash === binding.workspacePatchSha256 &&
-    receipt.workspacePatchSha256 === binding.workspacePatchSha256
-  );
-  if (
-    binding.workspaceHead !== contract.phaseStartSha ||
-    !workspaceBindingValid ||
-    receipt.status !== "validated_not_launched" ||
-    receipt.jobId !== input.manifest.jobId ||
-    receipt.workKey !== contract.workKey ||
-    receipt.contractSha256 !== binding.contractSha256 ||
-    receipt.stateSha256 !== binding.stateSha256 ||
-    receipt.promptSha256 !== binding.promptSha256 ||
-    receipt.manifestSha256 !== sha256(Buffer.from(JSON.stringify(input.manifest))) ||
-    !inputPatchBindingValid ||
-    !validatorReceiptValid
-  ) {
-    throw new Error("project_control_pre_start_launch_binding_mismatch");
+      : verifiedInputPatch
+        ? verifiedInputPatchBindingValid(binding, verifiedInputPatch)
+        : binding.workspaceStatus === "";
+  const inputPatchBindingValid = adoptionInput
+    ? contract.inputPatchHash === binding.workspacePatchSha256 &&
+      receipt.workspacePatchSha256 === binding.workspacePatchSha256
+    : dirtyContinuation ||
+      (verifiedInputPatch
+        ? verifiedInputPatchBindingValid(binding, verifiedInputPatch)
+        : projectInputPatchBindingMatches(binding, contract));
+  const mismatches = [
+    binding.workspaceHead !== contract.phaseStartSha
+      ? "workspace_head"
+      : undefined,
+    admittedInputPatchContinuation && verifiedInputPatch === undefined
+      ? "input_patch_artifact"
+      : undefined,
+    input.expectedInputPatchArtifactSha256 !== undefined &&
+    verifiedInputPatch?.artifactSha256 !==
+      input.expectedInputPatchArtifactSha256
+      ? "input_patch_artifact"
+      : undefined,
+    !inputPatchBindingValid ? "input_patch_binding" : undefined,
+    !workspaceBindingValid ? "workspace_binding" : undefined,
+    !receiptStatusValid ? "receipt_status" : undefined,
+    receipt.jobId !== input.manifest.jobId ? "job_id" : undefined,
+    receipt.workKey !== contract.workKey ? "work_key" : undefined,
+    receipt.contractSha256 !== binding.contractSha256
+      ? "contract_sha256"
+      : undefined,
+    receipt.stateSha256 !== binding.stateSha256 ? "state_sha256" : undefined,
+    receipt.promptSha256 !== binding.promptSha256 ? "prompt_sha256" : undefined,
+    receipt.manifestSha256 !==
+    sha256(Buffer.from(JSON.stringify(input.manifest)))
+      ? "manifest_sha256"
+      : undefined,
+    !validatorReceiptValid ? "validator_receipt" : undefined,
+  ].filter((value): value is string => value !== undefined);
+  if (mismatches.length > 0) {
+    throw new Error(
+      `project_control_pre_start_launch_binding_mismatch:${mismatches.join(",")}`,
+    );
   }
+}
+
+export async function rebindProjectPreStartAdmissionManifest(input: {
+  readonly manifest: CodexGoalJobManifest;
+  readonly scope: ProjectAccessScope;
+  readonly workspaceMode:
+    "clean_capacity_continuation" | "reviewed_dirty_continuation";
+}): Promise<{
+  readonly updated: boolean;
+  readonly previousManifestSha256: string;
+  readonly manifestSha256: string;
+}> {
+  const descriptor = input.manifest.projectPreStartAdmission;
+  if (!descriptor) {
+    throw new Error("project_control_pre_start_admission_required");
+  }
+  assertDescriptorPaths(descriptor, input.manifest.jobRootDir);
+  await assertArtifactRootSecure(input.manifest.jobRootDir);
+  const contract = await readJsonObject(
+    descriptor.contractPath,
+    "contract",
+    MAX_CONTRACT_BYTES,
+  );
+  const state = await readJsonObject(
+    descriptor.statePath,
+    "state",
+    MAX_STATE_BYTES,
+  );
+  const receipt = await readJsonObject(
+    descriptor.receiptPath,
+    "receipt",
+    64 * 1024,
+  );
+  assertProjectInputPatchContract({
+    builtin: isBuiltinDescriptor(descriptor),
+    contract,
+  });
+  assertContractBindings(contract, input.manifest);
+  assertQueuedStateBinding(contract, state, input.manifest.jobId);
+  const binding = await captureProjectPreStartBinding(
+    input.manifest,
+    descriptor,
+  );
+  const dirtyContinuation =
+    input.workspaceMode === "reviewed_dirty_continuation";
+  const receiptStatusValid =
+    receipt.status === "launch_authorized" ||
+    receipt.status === "validated_not_launched";
+  const workspaceBindingValid = dirtyContinuation
+    ? binding.workspaceStatus !== ""
+    : binding.workspaceStatus === "";
+  const inputPatchBindingValid = dirtyContinuation
+    ? true
+    : projectInputPatchBindingMatches(binding, contract);
+  const mismatches = [
+    binding.workspaceHead !== contract.phaseStartSha
+      ? "workspace_head"
+      : undefined,
+    !inputPatchBindingValid ? "input_patch_binding" : undefined,
+    !workspaceBindingValid ? "workspace_binding" : undefined,
+    !receiptStatusValid ? "receipt_status" : undefined,
+    receipt.jobId !== input.manifest.jobId ? "job_id" : undefined,
+    receipt.workKey !== contract.workKey ? "work_key" : undefined,
+    receipt.contractSha256 !== binding.contractSha256
+      ? "contract_sha256"
+      : undefined,
+    receipt.stateSha256 !== binding.stateSha256 ? "state_sha256" : undefined,
+    receipt.promptSha256 !== binding.promptSha256 ? "prompt_sha256" : undefined,
+    !projectPreStartValidatorReceiptValid({
+      descriptor,
+      receipt,
+      scope: input.scope,
+    })
+      ? "validator_receipt"
+      : undefined,
+  ].filter((value): value is string => value !== undefined);
+  if (mismatches.length > 0) {
+    throw new Error(
+      `project_control_pre_start_manifest_rebind_mismatch:${mismatches.join(",")}`,
+    );
+  }
+  const previousManifestSha256 = requiredSha256(
+    receipt.manifestSha256,
+    "manifestSha256",
+  );
+  const manifestSha256 = sha256(Buffer.from(JSON.stringify(input.manifest)));
+  if (previousManifestSha256 === manifestSha256) {
+    return { updated: false, previousManifestSha256, manifestSha256 };
+  }
+  await writeJsonAtomically(descriptor.receiptPath, {
+    ...receipt,
+    manifestSha256,
+    manifestRepair: {
+      previousManifestSha256,
+      manifestSha256,
+      repairedAt: new Date().toISOString(),
+    },
+  });
+  return { updated: true, previousManifestSha256, manifestSha256 };
 }
 
 function projectPreStartValidatorReceiptValid(input: {
@@ -265,11 +464,15 @@ function projectPreStartValidatorReceiptValid(input: {
     input.descriptor.admissionValidatorPath,
     input.scope,
   );
-  return input.receipt.validatorKind === "external" &&
-    input.receipt.contractValidatorPath === input.descriptor.contractValidatorPath &&
-    input.receipt.admissionValidatorPath === input.descriptor.admissionValidatorPath &&
+  return (
+    input.receipt.validatorKind === "external" &&
+    input.receipt.contractValidatorPath ===
+      input.descriptor.contractValidatorPath &&
+    input.receipt.admissionValidatorPath ===
+      input.descriptor.admissionValidatorPath &&
     input.receipt.contractValidatorSha256 === contractValidator.sha256 &&
-    input.receipt.admissionValidatorSha256 === admissionValidator.sha256;
+    input.receipt.admissionValidatorSha256 === admissionValidator.sha256
+  );
 }
 
 export async function removeProjectPreStartAdmissionPaths(
@@ -281,10 +484,15 @@ export async function removeProjectPreStartAdmissionPaths(
 async function validateProjectPreStartAdmission(input: {
   readonly manifest: CodexGoalJobManifest | CodexGoalJobManifestInput;
   readonly scope: ProjectAccessScope;
+  readonly verifiedInputPatch?: {
+    readonly artifactSha256: string;
+    readonly stagedPatchSha256: string;
+  };
 }): Promise<void> {
   const descriptor = input.manifest.projectPreStartAdmission;
   if (!descriptor)
     throw new Error("project_control_pre_start_admission_required");
+  await assertProjectPreStartAdmissionNotAuthorized(descriptor);
   assertDescriptorPaths(descriptor, input.manifest.jobRootDir);
   await assertArtifactRootSecure(input.manifest.jobRootDir);
   const contract = await readJsonObject(
@@ -297,18 +505,36 @@ async function validateProjectPreStartAdmission(input: {
     "state",
     MAX_STATE_BYTES,
   );
+  assertProjectInputPatchContract({
+    builtin: isBuiltinDescriptor(descriptor),
+    contract,
+  });
   assertContractBindings(contract, input.manifest);
   assertQueuedStateBinding(contract, state, input.manifest.jobId);
-  const beforeBinding = await currentBinding(input.manifest, descriptor);
-  const adoptionInput = isAdoptionManifest(input.manifest);
-  if (beforeBinding.workspaceStatus !== "" && !adoptionInput) {
-    throw new Error("project_control_pre_start_workspace_dirty");
-  }
+  const verifiedInputPatch =
+    input.verifiedInputPatch ??
+    (await readVerifiedInputPatchFromExistingReceipt(descriptor, contract));
   if (
-    adoptionInput &&
-    contract.inputPatchHash !== beforeBinding.workspacePatchSha256
+    verifiedInputPatch &&
+    verifiedInputPatch.artifactSha256 !== contract.inputPatchHash
   ) {
-    throw new Error("project_control_pre_start_input_patch_hash_mismatch");
+    throw new Error("project_control_pre_start_verified_input_patch_mismatch");
+  }
+  const beforeBinding = await captureProjectPreStartBinding(
+    input.manifest,
+    descriptor,
+  );
+  const adoptionInput = isAdoptionManifest(input.manifest);
+  const beforeBindingValid = adoptionInput
+    ? contract.inputPatchHash === beforeBinding.workspacePatchSha256
+    : verifiedInputPatch
+      ? verifiedInputPatchBindingValid(beforeBinding, verifiedInputPatch)
+      : projectInputPatchBindingMatches(beforeBinding, contract);
+  if (!beforeBindingValid) {
+    if (adoptionInput) {
+      throw new Error("project_control_pre_start_input_patch_hash_mismatch");
+    }
+    throw new Error("project_control_pre_start_workspace_dirty");
   }
   let validatorReceipt: JsonObject;
   if (isBuiltinDescriptor(descriptor)) {
@@ -340,8 +566,14 @@ async function validateProjectPreStartAdmission(input: {
       scope: input.scope,
       expectedHead: requiredString(contract.phaseStartSha, "phaseStartSha"),
     });
-    const contractValidator = join(snapshotRoot, descriptor.contractValidatorPath);
-    const admissionValidator = join(snapshotRoot, descriptor.admissionValidatorPath);
+    const contractValidator = join(
+      snapshotRoot,
+      descriptor.contractValidatorPath,
+    );
+    const admissionValidator = join(
+      snapshotRoot,
+      descriptor.admissionValidatorPath,
+    );
     await runValidator(
       "contract",
       contractValidator,
@@ -362,12 +594,22 @@ async function validateProjectPreStartAdmission(input: {
       admissionValidatorSha256: admissionValidatorConfig.sha256,
     };
   }
-  const afterBinding = await currentBinding(input.manifest, descriptor);
-  if (afterBinding.workspaceStatus !== "" && !adoptionInput) {
+  const afterBinding = await captureProjectPreStartBinding(
+    input.manifest,
+    descriptor,
+  );
+  const afterBindingValid = adoptionInput
+    ? contract.inputPatchHash === afterBinding.workspacePatchSha256
+    : verifiedInputPatch
+      ? verifiedInputPatchBindingValid(afterBinding, verifiedInputPatch)
+      : projectInputPatchBindingMatches(afterBinding, contract);
+  if (!afterBindingValid) {
     throw new Error("project_control_pre_start_workspace_dirty");
   }
   if (JSON.stringify(beforeBinding) !== JSON.stringify(afterBinding)) {
-    throw new Error("project_control_pre_start_binding_changed_during_validation");
+    throw new Error(
+      "project_control_pre_start_binding_changed_during_validation",
+    );
   }
 
   const workspaceHead = afterBinding.workspaceHead;
@@ -385,9 +627,38 @@ async function validateProjectPreStartAdmission(input: {
       ? { workspacePatchSha256: afterBinding.workspacePatchSha256 }
       : {}),
     workspaceHead,
+    ...(verifiedInputPatch
+      ? {
+          workspaceMode: "verified_input_patch",
+          inputPatchArtifactSha256: verifiedInputPatch.artifactSha256,
+          expectedWorkspaceStagedPatchSha256:
+            verifiedInputPatch.stagedPatchSha256,
+          workspaceStagedPatchSha256: afterBinding.workspaceStagedPatchSha256,
+        }
+      : {}),
     validatedAt: new Date().toISOString(),
   };
+  await assertProjectPreStartAdmissionNotAuthorized(descriptor);
   await writeJsonAtomically(descriptor.receiptPath, receipt);
+}
+
+async function assertProjectPreStartAdmissionNotAuthorized(
+  descriptor: CodexGoalProjectPreStartAdmission,
+): Promise<void> {
+  try {
+    await access(descriptor.receiptPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  const receipt = await readJsonObject(
+    descriptor.receiptPath,
+    "receipt",
+    64 * 1024,
+  );
+  if (receipt.status === "launch_authorized") {
+    throw new Error("project_control_pre_start_admission_already_authorized");
+  }
 }
 
 function parseProjectPreStartAdmissionInput(
@@ -396,9 +667,16 @@ function parseProjectPreStartAdmissionInput(
   if (!isObject(value))
     throw new Error("project_control_pre_start_admission_invalid");
   const builtin = value.mode === "serial-builtin";
-  const allowedFields = new Set(builtin
-    ? ["mode", "contract", "state"]
-    : ["contractValidatorPath", "admissionValidatorPath", "contract", "state"]);
+  const allowedFields = new Set(
+    builtin
+      ? ["mode", "contract", "state"]
+      : [
+          "contractValidatorPath",
+          "admissionValidatorPath",
+          "contract",
+          "state",
+        ],
+  );
   for (const field of Object.keys(value)) {
     if (!allowedFields.has(field)) {
       throw new Error(
@@ -406,8 +684,11 @@ function parseProjectPreStartAdmissionInput(
       );
     }
   }
-  if (!isObject(value.contract) || (!builtin && !isObject(value.state)) ||
-    (value.state !== undefined && !isObject(value.state))) {
+  if (
+    !isObject(value.contract) ||
+    (!builtin && !isObject(value.state)) ||
+    (value.state !== undefined && !isObject(value.state))
+  ) {
     throw new Error(
       "project_control_pre_start_admission_json_objects_required",
     );
@@ -441,7 +722,10 @@ function assertBuiltinScope(scope: ProjectAccessScope): void {
 
 function isBuiltinInput(
   input: ProjectPreStartAdmissionInput,
-): input is Extract<ProjectPreStartAdmissionInput, { readonly mode: "serial-builtin" }> {
+): input is Extract<
+  ProjectPreStartAdmissionInput,
+  { readonly mode: "serial-builtin" }
+> {
   return "mode" in input && input.mode === "serial-builtin";
 }
 
@@ -454,109 +738,6 @@ function isBuiltinDescriptor(
   return "mode" in descriptor && descriptor.mode === "serial-builtin";
 }
 
-function configuredValidator(
-  path: string,
-  scope: ProjectAccessScope,
-): { readonly path: string; readonly sha256: string } {
-  assertNormalizedRelativePath(path);
-  if (scope.preStartAdmission?.mode !== "serial") {
-    throw new Error("project_control_pre_start_serial_mode_required");
-  }
-  const configured = scope.preStartAdmission.validatorBundle.find(
-    (candidate) => candidate.path === path,
-  );
-  if (!configured) {
-    throw new Error(`project_control_pre_start_validator_not_allowed:${path}`);
-  }
-  return configured;
-}
-
-function assertNormalizedRelativePath(path: string): void {
-  if (
-    !path ||
-    isAbsolute(path) ||
-    path.includes("\\") ||
-    normalize(path) !== path ||
-    path === "." ||
-    path === ".." ||
-    path.startsWith(`..${sep}`)
-  ) {
-    throw new Error("project_control_pre_start_validator_path_invalid");
-  }
-}
-
-async function snapshotValidatorBundle(input: {
-  readonly workspacePath: string;
-  readonly jobRootDir: string;
-  readonly scope: ProjectAccessScope;
-  readonly expectedHead: string;
-}): Promise<string> {
-  const workspace = await realpath(input.workspacePath);
-  const bundle = input.scope.preStartAdmission?.mode === "serial"
-    ? input.scope.preStartAdmission.validatorBundle
-    : [];
-  if (bundle.length < 2) {
-    throw new Error("project_control_pre_start_validator_bundle_required");
-  }
-  const paths = bundle.map(({ path }) => path);
-  await assertWorkspaceBinding(workspace, input.expectedHead, paths);
-  const snapshotRoot = join(input.jobRootDir, ADMISSION_DIRECTORY, "validator-bundle");
-  await mkdir(snapshotRoot, { recursive: true, mode: 0o700 });
-  if ((await lstat(snapshotRoot)).isSymbolicLink()) {
-    throw new Error("project_control_pre_start_validator_snapshot_symlink_denied");
-  }
-  const canonicalSnapshotRoot = await realpath(snapshotRoot);
-  for (const configured of bundle) {
-    assertNormalizedRelativePath(configured.path);
-    const source = await realpath(resolve(workspace, configured.path));
-    const relationToWorkspace = relative(workspace, source);
-    if (relationToWorkspace.startsWith(`..${sep}`) || isAbsolute(relationToWorkspace)) {
-      throw new Error("project_control_pre_start_validator_outside_workspace");
-    }
-    const bytes = await readFile(source);
-    if (bytes.byteLength > MAX_VALIDATOR_BYTES || sha256(bytes) !== configured.sha256) {
-      throw new Error("project_control_pre_start_validator_digest_mismatch");
-    }
-    const destination = join(snapshotRoot, configured.path);
-    await mkdir(resolve(destination, ".."), { recursive: true, mode: 0o700 });
-    const canonicalParent = await realpath(resolve(destination, ".."));
-    const parentRelation = relative(canonicalSnapshotRoot, canonicalParent);
-    if (parentRelation.startsWith(`..${sep}`) || isAbsolute(parentRelation)) {
-      throw new Error("project_control_pre_start_validator_snapshot_escape");
-    }
-    try {
-      await writeFile(destination, bytes, { mode: 0o500, flag: "wx" });
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      if ((await lstat(destination)).isSymbolicLink()) {
-        throw new Error("project_control_pre_start_validator_snapshot_symlink_denied");
-      }
-      if (sha256(await readFile(destination)) !== configured.sha256) {
-        throw new Error("project_control_pre_start_validator_snapshot_mismatch");
-      }
-    }
-  }
-  await assertWorkspaceBinding(workspace, input.expectedHead, paths);
-  return snapshotRoot;
-}
-
-async function assertWorkspaceBinding(
-  workspace: string,
-  expectedHead: string,
-  paths: readonly string[],
-): Promise<void> {
-  const head = (await execFileAsync("git", ["-C", workspace, "rev-parse", "HEAD"], {
-    encoding: "utf8",
-    timeout: VALIDATOR_TIMEOUT_MS,
-  })).stdout.trim();
-  if (head !== expectedHead) throw new Error("project_control_pre_start_workspace_head_mismatch");
-  const status = (await execFileAsync("git", ["-C", workspace, "status", "--porcelain", "--", ...paths], {
-    encoding: "utf8",
-    timeout: VALIDATOR_TIMEOUT_MS,
-  })).stdout.trim();
-  if (status) throw new Error("project_control_pre_start_validator_bundle_dirty");
-}
-
 async function assertArtifactRootSecure(jobRootDir: string): Promise<void> {
   if ((await lstat(jobRootDir)).isSymbolicLink()) {
     throw new Error("project_control_pre_start_job_root_symlink_denied");
@@ -566,32 +747,6 @@ async function assertArtifactRootSecure(jobRootDir: string): Promise<void> {
   if ((await lstat(admissionRoot)).isSymbolicLink()) {
     throw new Error("project_control_pre_start_artifact_root_symlink_denied");
   }
-}
-
-async function currentBinding(
-  manifest: CodexGoalJobManifest | CodexGoalJobManifestInput,
-  descriptor: CodexGoalProjectPreStartAdmission,
-) {
-  const workspaceHead = (await execFileAsync("git", ["-C", manifest.workspacePath, "rev-parse", "HEAD"], {
-    encoding: "utf8",
-    timeout: VALIDATOR_TIMEOUT_MS,
-  })).stdout.trim();
-  const workspaceStatus = (await execFileAsync(
-    "git",
-    ["-C", manifest.workspacePath, "status", "--porcelain", "--untracked-files=all"],
-    { encoding: "utf8", timeout: VALIDATOR_TIMEOUT_MS },
-  )).stdout.trim();
-  const workspacePatchSha256 = sha256(Buffer.from(
-    await captureGitWorkspacePatch({ workspacePath: manifest.workspacePath }),
-  ));
-  return {
-    workspaceHead,
-    workspaceStatus,
-    workspacePatchSha256,
-    contractSha256: sha256(Buffer.from(await readBoundedFile(descriptor.contractPath, MAX_CONTRACT_BYTES, "contract"))),
-    stateSha256: sha256(Buffer.from(await readBoundedFile(descriptor.statePath, MAX_STATE_BYTES, "state"))),
-    promptSha256: sha256(Buffer.from(await readBoundedFile(manifest.promptPath, MAX_PROMPT_BYTES, "prompt"))),
-  };
 }
 
 function isAdoptionManifest(
@@ -678,24 +833,6 @@ function assertQueuedStateBinding(
     if (record[field] !== contract[field]) {
       throw new Error(`project_control_pre_start_state_${field}_mismatch`);
     }
-  }
-}
-
-async function runValidator(
-  kind: "contract" | "admission",
-  validatorPath: string,
-  args: readonly string[],
-  cwd: string,
-): Promise<void> {
-  try {
-    await execFileAsync(process.execPath, [validatorPath, ...args], {
-      cwd,
-      encoding: "utf8",
-      timeout: VALIDATOR_TIMEOUT_MS,
-      maxBuffer: 256 * 1024,
-    });
-  } catch {
-    throw new Error(`project_control_pre_start_${kind}_validation_failed`);
   }
 }
 
@@ -792,6 +929,14 @@ function requiredString(value: unknown, field: string): string {
     throw new Error(`project_control_pre_start_${field}_required`);
   }
   return value;
+}
+
+function requiredSha256(value: unknown, field: string): string {
+  const parsed = requiredString(value, field).toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(parsed)) {
+    throw new Error(`project_control_pre_start_${field}_invalid`);
+  }
+  return parsed;
 }
 
 function isObject(value: unknown): value is JsonObject {

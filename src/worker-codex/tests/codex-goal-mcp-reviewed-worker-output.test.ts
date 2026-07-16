@@ -40,6 +40,7 @@ describe("Codex project reviewed worker output", () => {
     );
     roots.push(root);
     const registryRootDir = join(root, "worker-jobs", "registry");
+    const ledgerRoot = join(root, "control", "consumed-output-ledger");
     const controllerJobId = "project-controller";
     const workerJobId = "project-worker";
     const controllerJobRoot = join(root, "worker-jobs", controllerJobId);
@@ -60,7 +61,7 @@ describe("Codex project reviewed worker output", () => {
         join(workerWorkspacePath, "package.json"),
         '{"private":true}\n',
       ),
-      writeFile(join(workerWorkspacePath, ".gitignore"), "node_modules\n"),
+      writeFile(join(workerWorkspacePath, ".gitignore"), "/node_modules\n"),
     ]);
     await git(workerWorkspacePath, ["add", "."]);
     await git(workerWorkspacePath, ["commit", "-m", "test: base"]);
@@ -71,6 +72,20 @@ describe("Codex project reviewed worker output", () => {
     const patch = await captureGitWorkspacePatch({
       workspacePath: workerWorkspacePath,
     });
+    const generatedDependencies = join(
+      workerWorkspacePath,
+      "mcp-server",
+      "node_modules",
+    );
+    const foreignGeneratedDependencies = join(
+      root,
+      "foreign-generated-dependencies",
+    );
+    await Promise.all([
+      mkdir(join(workerWorkspacePath, "mcp-server"), { recursive: true }),
+      mkdir(foreignGeneratedDependencies, { recursive: true }),
+    ]);
+    await symlink(foreignGeneratedDependencies, generatedDependencies);
 
     const server = createCodexGoalMcpServer();
     const client = new Client({
@@ -117,6 +132,7 @@ describe("Codex project reviewed worker output", () => {
           workspaceRoots: [targetWorkspacePath],
           worktreeRoots: [join(root, "worktrees")],
           registryRoot: registryRootDir,
+          consumedOutputLedgerRoots: [ledgerRoot],
           jobIdPrefixes: ["project-"],
           tmuxSessionPrefixes: ["project-"],
           allowedAccountIds: ["account-a"],
@@ -155,6 +171,9 @@ describe("Codex project reviewed worker output", () => {
       });
       const reviewedOutputId = String(reviewed.reviewedOutputId);
       expect(reviewedOutputId).toMatch(/^[a-f0-9]{64}$/);
+      await expect(access(generatedDependencies)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
       await expect(
         access(join(workerJobRoot, `${workerJobId}.result.json`)),
       ).rejects.toMatchObject({ code: "ENOENT" });
@@ -234,6 +253,44 @@ describe("Codex project reviewed worker output", () => {
       const rejectedOutputId = String(rejected.reviewedOutputId);
       expect(rejectedOutputId).toMatch(/^[a-f0-9]{64}$/);
       expect(rejectedOutputId).not.toBe(reviewedOutputId);
+      expect(rejected).toMatchObject({
+        consumedOutputLedger: {
+          decision: {
+            jobId: workerJobId,
+            attemptId: rejectedOutputId,
+            status: "rejected",
+          },
+          idempotentReplay: false,
+        },
+      });
+      const rejectedReplay = await callToolJson(
+        client,
+        "codex_goal_project_mark_reviewed",
+        {
+          registryRootDir,
+          controllerJobId,
+          jobId: workerJobId,
+          captureReviewedOutput: true,
+          expectedPatchSha256: sha256(patch),
+          reviewDecision: "rejected",
+          reviewedBy: controllerJobId,
+          reviewReason: "The same worker must remediate this exact patch.",
+          approvedFiles: ["docs/packet.md"],
+          requiredChecks: [],
+          note: "REJECT",
+        },
+      );
+      expect(rejectedReplay).toMatchObject({
+        reviewedOutputId: rejectedOutputId,
+        consumedOutputLedger: {
+          decision: {
+            jobId: workerJobId,
+            attemptId: rejectedOutputId,
+            status: "rejected",
+          },
+          idempotentReplay: true,
+        },
+      });
       await expect(
         callToolJson(client, "codex_goal_project_open_integration_attempt", {
           registryRootDir,

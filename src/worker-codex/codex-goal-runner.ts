@@ -33,6 +33,10 @@ import {
   FileBackendCodexSafeExecutor,
   type FileBackendCodexSafeExecutorOptions,
 } from "./file-backend-codex-safe-executor";
+import {
+  ensureCodexAgentTempRoot,
+  removeCodexAgentTempRoot,
+} from "../provider-codex/codex-runtime-temp";
 import { migrateLegacyCodexAccountCapacity } from "./application/codex-account-capacity-store";
 import type {
   CodexWorkerExecutionEngine,
@@ -52,13 +56,17 @@ import {
   codexGoalRuntimeEventObservability,
   createCodexGoalRuntimeEventWriter,
 } from "./codex-goal-runtime-events";
+import {
+  changedFilesFromSafeExecutionResult,
+  changedFilesFromWorkspace,
+  uniqueStrings,
+} from "./codex-goal-workspace-changes";
 export type {
   CodexGoalRuntimeEvent,
   CodexGoalRuntimeEventLevel,
 } from "./codex-goal-runtime-events";
 
 const execFileAsync = promisify(execFile);
-const gitStatusTimeoutMs = 5_000;
 const gitMetadataTimeoutMs = 5_000;
 
 export type CodexGoalAccountSlot = {
@@ -241,6 +249,9 @@ export async function runCodexGoal(
   );
   const stateRootDir = config.stateRootDir ?? join(config.jobRootDir, "state");
   await mkdir(stateRootDir, { recursive: true, mode: 0o700 });
+  const agentTempRoot = await ensureCodexAgentTempRoot({
+    sourceEnv: config.sourceEnv,
+  });
 
   const controlInbox = new WorkerControlService({
     store: new LocalFileWorkerControlInboxStore({ rootDir: stateRootDir }),
@@ -251,17 +262,23 @@ export async function runCodexGoal(
     activeAttemptRegistry,
   });
 
-  const executor = (
-    deps.createExecutor ??
-    ((options) => new FileBackendCodexSafeExecutor(options))
-  )(buildCodexGoalExecutorOptions({
-    config,
-    stateRootDir,
-    encryptionKey,
-    observability,
-    controlInbox,
-    activeAttemptRegistry,
-  }));
+  let executor: CodexGoalExecutor;
+  try {
+    executor = (
+      deps.createExecutor ??
+      ((options) => new FileBackendCodexSafeExecutor(options))
+    )(buildCodexGoalExecutorOptions({
+      config,
+      stateRootDir,
+      encryptionKey,
+      observability,
+      controlInbox,
+      activeAttemptRegistry,
+    }));
+  } catch (error) {
+    await removeCodexAgentTempRoot(agentTempRoot);
+    throw error;
+  }
 
   try {
     interruptMonitor.start({
@@ -338,7 +355,21 @@ export async function runCodexGoal(
   } finally {
     await progressHeartbeat.stop();
     await interruptMonitor.stop();
-    await executor.dispose();
+    try {
+      await executor.dispose();
+    } finally {
+      const cleanupWarning = await removeCodexAgentTempRoot(agentTempRoot);
+      if (cleanupWarning) {
+        try {
+          await runtimeEvents.write("agent_temp_cleanup_warning", {
+            level: "warning",
+            reason: cleanupWarning,
+          });
+        } catch {
+          // Cleanup observability must never mask the executor result.
+        }
+      }
+    }
     await runtimeEvents.write("runner_disposed", {
       jobId: config.jobId ?? config.taskId,
     });
@@ -698,7 +729,12 @@ async function codexRuntimeResultInput(input: {
   readonly result: SafeExecutionRunResult<FileBackendCodexWorkerResult>;
   readonly baseCommit?: string;
 }): Promise<RuntimeResultEnvelopeInput> {
-  const changedFiles = changedFilesFromSafeExecutionResult(input.result);
+  const reportedChangedFiles = changedFilesFromSafeExecutionResult(input.result);
+  const workspace = await changedFilesFromWorkspace(input.config.workspacePath);
+  const changedFiles = uniqueStrings([
+    ...reportedChangedFiles,
+    ...workspace.changedFiles,
+  ]);
   const workerReport = workerReportFromSafeExecutionResult(input.result);
   const reason = "reason" in input.result ? input.result.reason : undefined;
   const status = runtimeStatusFromSafeExecutionResult({
@@ -733,6 +769,7 @@ async function codexRuntimeResultInput(input: {
     changedFiles: exactChangedFiles,
     evidence: [
       ...runtimeEvidenceFromSafeExecutionResult(input.result),
+      ...(workspace.warning ? [workspace.warning] : []),
       ...artifacts.map((artifact) => `patch_preserved:${artifact.path ?? ""}`),
       ...(handoff?.errorCode === undefined
         ? []
@@ -938,50 +975,6 @@ function workerReportFromSafeExecutionResult(
   if (result.status !== "completed") return undefined;
   if (!("result" in result) || result.result === undefined) return undefined;
   return normalizeWorkerReport(result.result.structuredOutput);
-}
-
-function changedFilesFromSafeExecutionResult(
-  result: SafeExecutionRunResult<FileBackendCodexWorkerResult>,
-): readonly string[] {
-  return uniqueStrings(result.attempts.flatMap((attempt) => attempt.changedFiles));
-}
-
-async function changedFilesFromWorkspace(
-  workspacePath: string,
-): Promise<{
-  readonly changedFiles: readonly string[];
-  readonly warning?: string;
-}> {
-  try {
-    const { stdout } = await execFileAsync("git", [
-      "-C",
-      workspacePath,
-      "status",
-      "--porcelain",
-      "--untracked-files=all",
-    ], { timeout: gitStatusTimeoutMs });
-    const changedFiles = stdout
-      .split(/\r?\n/)
-      .filter((line) => line.trim().length > 0)
-      .map((line) => statusPorcelainPath(line))
-      .filter((path) => path.length > 0);
-    return { changedFiles };
-  } catch {
-    return {
-      changedFiles: [],
-      warning: "workspace_changed_files_unavailable",
-    };
-  }
-}
-
-function statusPorcelainPath(line: string): string {
-  const path = line.length > 3 ? line.slice(3).trim() : line.trim();
-  const renameTarget = path.split(" -> ").at(-1);
-  return renameTarget?.trim() ?? path;
-}
-
-function uniqueStrings(values: readonly string[]): readonly string[] {
-  return [...new Set(values.filter((value) => value.trim()))];
 }
 
 async function writeCodexGoalProgress(

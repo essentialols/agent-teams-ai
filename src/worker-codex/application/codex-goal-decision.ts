@@ -31,10 +31,12 @@ type CodexGoalStatusView = WorkerLivenessStatus & {
   readonly progressHeartbeatAgeMs?: number;
   readonly logUpdatedAt?: string;
   readonly lastRuntimeEvent?: string;
+  readonly lastRuntimeEventAt?: string;
   readonly logExists?: boolean;
   readonly logByteLength?: number;
   readonly progressCpuActive?: boolean;
   readonly appServerProcessAlive?: boolean;
+  readonly workloadProcessAlive?: boolean;
   readonly progressExists?: boolean;
 };
 
@@ -144,7 +146,7 @@ export function codexGoalBriefHealthStatus(input: {
   return "unknown";
 }
 
-export function isHeartbeatOnlyNoOutputBrief(input: {
+export function isCodexGoalHeartbeatOnlyNoOutput(input: {
   readonly status: CodexGoalStatusView;
   readonly staleAfterMs: number;
 }): boolean {
@@ -158,15 +160,25 @@ export function isHeartbeatOnlyNoOutputBrief(input: {
     status,
     progressStale,
   });
-  const executorStartedOnlyNoOutput = Boolean(
-    status.lastRuntimeEvent === "executor_started" &&
-      status.resultExists === false &&
-      (status.logExists === false || status.logByteLength === 0),
+  const runtimeActivityAgeMs = isoAgeMs(status.lastRuntimeEventAt);
+  const recentRuntimeActivity = Boolean(
+    runtimeActivityAgeMs !== undefined &&
+      runtimeActivityAgeMs <= input.staleAfterMs,
   );
-  const healthyAppServer = status.progressProcessAlive === true &&
-    status.appServerProcessAlive === true;
-  const noOutputIsNotUsefulProgress = !healthyAppServer &&
-    (status.progressCpuActive !== true || executorStartedOnlyNoOutput);
+  const productiveAppServerActivity = Boolean(
+    status.appServerProcessAlive === true &&
+      (status.workloadProcessAlive === true || recentRuntimeActivity),
+  );
+  const productiveNonAppServerActivity = Boolean(
+    status.appServerProcessAlive !== true &&
+      (status.workloadProcessAlive === true || status.progressCpuActive === true),
+  );
+  // A heartbeat proves only that the supervisor loop is alive. When no output
+  // has materialized, missing process-tree evidence must not silently turn an
+  // ambiguous worker into a healthy one. Protect only observed provider/workload
+  // activity; every other no-output shape requires inspection.
+  const noOutputIsNotUsefulProgress =
+    !productiveAppServerActivity && !productiveNonAppServerActivity;
   return Boolean(
     workerLiveness.alive &&
       status.progressExists &&
@@ -181,6 +193,13 @@ export function isHeartbeatOnlyNoOutputBrief(input: {
       status.workspaceDirty === false &&
       (status.changedFiles ?? []).length === 0,
   );
+}
+
+export function isHeartbeatOnlyNoOutputBrief(input: {
+  readonly status: CodexGoalStatusView;
+  readonly staleAfterMs: number;
+}): boolean {
+  return isCodexGoalHeartbeatOnlyNoOutput(input);
 }
 
 export function buildCodexGoalDecision(input: {

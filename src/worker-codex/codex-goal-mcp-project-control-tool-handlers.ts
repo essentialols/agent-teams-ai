@@ -12,14 +12,19 @@ import {
 import {
   projectControlCreateWorktreeView,
   projectControlIntegrateCommitView,
-  projectControlMarkReviewedView,
   projectControlPushBranchView,
   projectControlStartStoredJobView,
   projectControlStopStoredJobView,
 } from "./codex-goal-mcp-project-control-actions";
+import { projectControlMarkReviewedView } from "./codex-goal-mcp-project-control-review";
+import {
+  projectControlRecordFailedNoOutputView,
+} from "./codex-goal-mcp-project-control-terminal-output";
 import {
   projectControlCreateCodexGoalJobView,
   projectControlOperationStatusView,
+  projectControlPrepareVerifierView,
+  projectControlRecoverOperationsView,
   projectControlRefillWorkerView,
 } from "./codex-goal-mcp-project-control-jobs";
 import {
@@ -114,8 +119,16 @@ export async function projectControlRefillWorker(args: ProjectControlMcpArgs) {
   return mcpJson(await projectControlRefillWorkerView(args, projectControlJobsDeps()));
 }
 
+export async function projectControlPrepareVerifier(args: ProjectControlMcpArgs) {
+  return mcpJson(await projectControlPrepareVerifierView(args, projectControlJobsDeps()));
+}
+
 export async function projectControlOperationStatus(args: ProjectControlMcpArgs) {
   return mcpJson(await projectControlOperationStatusView(args, projectControlJobsDeps()));
+}
+
+export async function projectControlRecoverOperations(args: ProjectControlMcpArgs) {
+  return mcpJson(await projectControlRecoverOperationsView(args, projectControlJobsDeps()));
 }
 
 function projectControlActionDeps() {
@@ -148,4 +161,13 @@ export async function projectControlStopStoredJob(args: ProjectControlMcpArgs) {
 
 export async function projectControlMarkReviewed(args: ProjectControlMcpArgs) {
   return mcpJson(await projectControlMarkReviewedView(args, projectControlActionDeps()));
+}
+
+export async function projectControlRecordFailedNoOutput(
+  args: ProjectControlMcpArgs,
+) {
+  return mcpJson(await projectControlRecordFailedNoOutputView(
+    args,
+    projectControlActionDeps(),
+  ));
 }

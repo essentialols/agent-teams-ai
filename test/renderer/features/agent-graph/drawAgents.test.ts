@@ -141,8 +141,9 @@ describe('drawAgents', () => {
     drawAgents(medium.ctx, [node], 0, null, null, null, 0.4);
     drawAgents(close.ctx, [node], 0, null, null, null, 1);
 
-    expect(far.roundRectCalls).toHaveLength(0);
-    expect(far.fillTextCalls).toHaveLength(0);
+    expect(far.roundRectCalls).toHaveLength(1);
+    expect(far.fillTextCalls.some((call) => call.text === 'Platform Engineering')).toBe(true);
+    expect(far.fillTextCalls.some((call) => call.text.includes('online · 2 active'))).toBe(true);
     expect(medium.fillTextCalls.some((call) => call.text === 'Platform Engineering')).toBe(true);
     expect(medium.fillTextCalls.some((call) => call.text.includes('online · 2 active'))).toBe(true);
     expect(close.fillTextCalls.some((call) => call.text === 'Platform Engineering')).toBe(true);

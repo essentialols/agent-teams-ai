@@ -37,7 +37,7 @@ describe('edge hit detection', () => {
 
     expect(findNodeAt(0, 0, [task], 0.3)).toBeNull();
     expect(findNodeAt(0, 0, [task], 0.8)).toBe(task.id);
-    expect(findNodeAt(0, 0, [team], 0.1)).toBeNull();
+    expect(findNodeAt(0, 0, [team], 0.1)).toBe(team.id);
     expect(findNodeAt(0, 0, [layoutOnly], 1)).toBeNull();
   });
 

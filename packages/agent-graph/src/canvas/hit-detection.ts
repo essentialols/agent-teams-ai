@@ -3,10 +3,10 @@
  * Adapted from agent-flow's hit-detection.ts (Apache 2.0).
  */
 
-import { BEAM, HIT_DETECTION, KANBAN_ZONE, NODE, TASK_PILL } from '../constants/canvas-constants';
+import { BEAM, HIT_DETECTION, NODE } from '../constants/canvas-constants';
 
 import { bezierPoint, computeControlPoints, computeOrthogonalRoute } from './draw-edges';
-import { getGraphNodeCardSize } from './node-geometry';
+import { getGraphNodeCardSize, getGraphNodeRenderBounds } from './node-geometry';
 import { getGraphSemanticZoomLevel, shouldRenderNodeAtZoom } from './semantic-zoom';
 
 import type { GraphEdge, GraphNode } from '../ports/types';
@@ -31,13 +31,12 @@ export function findNodeAt(
     const y = node.y ?? 0;
     const cardSize = getGraphNodeCardSize(node);
     if (cardSize) {
-      const halfW = cardSize.width / 2 + HIT_DETECTION.agentPadding;
-      const halfH = cardSize.height / 2 + HIT_DETECTION.agentPadding;
+      const bounds = getGraphNodeRenderBounds(node, zoom);
       if (
-        worldX >= x - halfW &&
-        worldX <= x + halfW &&
-        worldY >= y - halfH &&
-        worldY <= y + halfH
+        worldX >= bounds.left - HIT_DETECTION.agentPadding &&
+        worldX <= bounds.right + HIT_DETECTION.agentPadding &&
+        worldY >= bounds.top - HIT_DETECTION.agentPadding &&
+        worldY <= bounds.bottom + HIT_DETECTION.agentPadding
       ) {
         hit = node.id;
         if (node.kind === 'lead') return hit;
@@ -60,14 +59,12 @@ export function findNodeAt(
         break;
       }
       case 'task': {
-        const halfW = TASK_PILL.width / 2 + HIT_DETECTION.taskPadding;
-        const taskHeight = node.isOverflowStack ? KANBAN_ZONE.overflowHeight : TASK_PILL.height;
-        const halfH = taskHeight / 2 + HIT_DETECTION.taskPadding;
+        const bounds = getGraphNodeRenderBounds(node, zoom);
         if (
-          worldX >= x - halfW &&
-          worldX <= x + halfW &&
-          worldY >= y - halfH &&
-          worldY <= y + halfH
+          worldX >= bounds.left - HIT_DETECTION.taskPadding &&
+          worldX <= bounds.right + HIT_DETECTION.taskPadding &&
+          worldY >= bounds.top - HIT_DETECTION.taskPadding &&
+          worldY <= bounds.bottom + HIT_DETECTION.taskPadding
         ) {
           hit = node.id;
         }

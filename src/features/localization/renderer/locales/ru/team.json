@@ -2671,7 +2671,7 @@
   "organizations": {
     "map": {
       "allOrganizationsTitle": "Все организации",
-      "defaultTitle": "Карта организации",
+      "defaultTitle": "Organization Map",
       "organizationPlaceholder": "Организация",
       "loading": "Загрузка карты организации...",
       "noOrganizationData": "Нет данных организации",
@@ -2866,7 +2866,7 @@
         }
       },
       "canvas": {
-        "organizationMap": "Карта организации",
+        "organizationMap": "Organization Map",
         "allOrganizations": "Все организации",
         "unassignedTeams": "Неразмещенные команды",
         "agents": "{{count}} агентов",

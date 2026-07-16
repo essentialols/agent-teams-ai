@@ -30,7 +30,7 @@ describe('semantic zoom', () => {
     expect(getGraphSemanticZoomLevel(0.62)).toBe('detail');
   });
 
-  it('progressively reveals hierarchy depth without showing teams in overview', () => {
+  it('progressively reveals hierarchy depth while preserving compact team context', () => {
     expect(shouldRenderOverviewHierarchyNode(hierarchyNode(), 0.05)).toBe(true);
     expect(shouldRenderOverviewHierarchyNode(hierarchyNode({ hierarchyDepth: 1 }), 0.05)).toBe(
       false
@@ -49,7 +49,7 @@ describe('semantic zoom', () => {
         hierarchyNode({ visualVariant: 'team', hierarchyDepth: 3 }),
         0.2
       )
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it('keeps emphasized tasks visible while delaying regular tasks until detail zoom', () => {
@@ -58,6 +58,7 @@ describe('semantic zoom', () => {
     expect(shouldRenderTaskAtZoom(0.8)).toBe(true);
     expect(shouldRenderTaskAtZoom(0.4, false, 'summary')).toBe(true);
     expect(shouldRenderTaskAtZoom(0.2, false, 'summary')).toBe(false);
+    expect(shouldRenderTaskAtZoom(0.1, false, 'overview')).toBe(true);
   });
 
   it('keeps hierarchy communication particles animated at overview zoom', () => {

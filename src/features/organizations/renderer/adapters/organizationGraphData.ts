@@ -1502,7 +1502,7 @@ function buildHierarchicalOrganizationGraphData(
     context.renderedAgentTeamIds.has(node.id)
   );
   const hierarchyTaskNodes = renderedAgentTeamNodes.flatMap((node) =>
-    buildAgentTaskNodes(node, text, { taskZoomVisibility: 'summary' })
+    buildAgentTaskNodes(node, text, { taskZoomVisibility: 'overview' })
   );
   const hierarchyNodes = [...hierarchyStructureNodes, ...hierarchyTaskNodes];
   const graphNodeIds = new Set(hierarchyNodes.map((node) => node.id));
@@ -1589,7 +1589,7 @@ export function buildOrganizationGraphData(
   );
   const agentNodes = renderedAgentTeamNodes.flatMap((node) =>
     buildAgentTaskNodes(node, text, {
-      taskZoomVisibility: context.layoutMode === 'grid-under-lead' ? 'summary' : 'detail',
+      taskZoomVisibility: 'overview',
     })
   );
   const nodes = [...orgNodes, ...agentNodes];

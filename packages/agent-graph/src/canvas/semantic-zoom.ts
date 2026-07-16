@@ -19,7 +19,11 @@ export function shouldRenderOverviewHierarchyNode(
   isEmphasized = false
 ): boolean {
   if (isEmphasized) return true;
-  if (node.visualVariant === 'team') return false;
+  // Team cards carry the most useful leaf-level signal in organization maps.
+  // Keep them as compact overview badges instead of dropping the entire team
+  // (and its visible active-task context) when the camera crosses the overview
+  // threshold.
+  if (node.visualVariant === 'team') return true;
 
   const depth = Math.max(0, node.hierarchyDepth ?? 0);
   if (zoom < 0.09) return node.visualVariant === 'organization' && depth === 0;

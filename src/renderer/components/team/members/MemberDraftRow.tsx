@@ -53,6 +53,8 @@ import {
   Workflow as WorkflowIcon,
 } from 'lucide-react';
 
+import { FLAT_ROSTER_GRID_COLUMNS } from './flatRosterLayout';
+
 import type { MemberDraft } from './membersEditorTypes';
 import type { InlineChip } from '@renderer/types/inlineChip';
 import type { MentionSuggestion } from '@renderer/types/mention';
@@ -124,6 +126,7 @@ interface MemberDraftRowProps {
     onClick: () => void;
     disabled?: boolean;
   };
+  layoutVariant?: 'default' | 'flat';
 }
 
 export const MemberDraftRow = ({
@@ -176,6 +179,7 @@ export const MemberDraftRow = ({
   onMcpPolicyChange,
   agentTeamsMcpLocked = false,
   lockedModelAction,
+  layoutVariant = 'default',
 }: MemberDraftRowProps): React.JSX.Element => {
   const { t } = useAppTranslation('team');
   const { isLight } = useTheme();
@@ -186,6 +190,7 @@ export const MemberDraftRow = ({
   const [workflowExpanded, setWorkflowExpanded] = useState(false);
   const [modelExpanded, setModelExpanded] = useState(false);
   const [mcpExpanded, setMcpExpanded] = useState(false);
+  const isFlatRoster = layoutVariant === 'flat';
 
   // Pre-warm file list cache when workflow section is expanded
   useFileListCacheWarmer(workflowExpanded && projectPath ? projectPath : null);
@@ -470,20 +475,39 @@ export const MemberDraftRow = ({
 
   return (
     <div
-      className={`relative grid grid-cols-1 gap-2 rounded-md p-2 shadow-sm md:grid-cols-[minmax(0,1fr)_156px_auto] ${isRemoved ? 'opacity-55' : ''}`}
+      className={cn(
+        'relative grid grid-cols-1 gap-2 md:items-start',
+        isFlatRoster
+          ? cn(
+              'hover:bg-[var(--color-surface-raised)]/45 rounded-sm px-4 py-2 transition-colors',
+              FLAT_ROSTER_GRID_COLUMNS
+            )
+          : 'rounded-md p-2 shadow-sm md:grid-cols-[minmax(0,1fr)_156px_auto]',
+        isRemoved && 'opacity-55'
+      )}
+      data-role="member-row"
       style={{
-        backgroundColor: isLight
-          ? 'color-mix(in srgb, var(--color-surface-raised) 22%, white 78%)'
-          : 'var(--color-surface-raised)',
-        boxShadow: isLight ? '0 1px 2px rgba(15, 23, 42, 0.06)' : '0 1px 2px rgba(0, 0, 0, 0.28)',
+        backgroundColor: isFlatRoster
+          ? undefined
+          : isLight
+            ? 'color-mix(in srgb, var(--color-surface-raised) 22%, white 78%)'
+            : 'var(--color-surface-raised)',
+        boxShadow: isFlatRoster
+          ? undefined
+          : isLight
+            ? '0 1px 2px rgba(15, 23, 42, 0.06)'
+            : '0 1px 2px rgba(0, 0, 0, 0.28)',
       }}
     >
       <div
-        className="absolute inset-y-0 left-0 w-1 rounded-l-md"
+        className={cn(
+          'absolute inset-y-0 left-0 w-1',
+          isFlatRoster ? 'my-2 rounded-full' : 'rounded-l-md'
+        )}
         style={{ backgroundColor: memberColorSet.border }}
         aria-hidden="true"
       />
-      <div className="space-y-0.5">
+      <div className="min-w-0 space-y-0.5">
         <div className="flex items-center gap-2">
           {avatarSrc ? (
             <img
@@ -507,7 +531,14 @@ export const MemberDraftRow = ({
       </div>
       <div>
         {lockRole ? (
-          <div className="flex h-8 items-center rounded-md border border-[var(--color-border)] bg-transparent px-3 text-xs text-[var(--color-text)] opacity-80">
+          <div
+            className={cn(
+              'flex h-8 items-center text-xs text-[var(--color-text)] opacity-80',
+              isFlatRoster
+                ? 'px-1'
+                : 'rounded-md border border-[var(--color-border)] bg-transparent px-3'
+            )}
+          >
             {lockedRoleLabel ||
               member.customRole ||
               member.roleSelection ||
@@ -525,9 +556,19 @@ export const MemberDraftRow = ({
           />
         )}
       </div>
-      <div className="space-y-1">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-start">
-          <div className="w-full min-w-0 space-y-1 sm:w-[150px] sm:min-w-[150px]">
+      <div className="min-w-0 space-y-1">
+        <div
+          className={cn(
+            'flex flex-col gap-2 sm:flex-row sm:items-start',
+            isFlatRoster && 'sm:flex-wrap sm:gap-1.5'
+          )}
+        >
+          <div
+            className={cn(
+              'w-full min-w-0 space-y-1',
+              isFlatRoster ? 'sm:w-[170px] sm:min-w-[170px]' : 'sm:w-[150px] sm:min-w-[150px]'
+            )}
+          >
             <HoverTooltip
               content={modelButtonTooltipContent}
               title={modelButtonTitle}
@@ -592,11 +633,12 @@ export const MemberDraftRow = ({
                 content={worktreeIsolationDescription}
                 title={worktreeIsolationDescription}
                 className="shrink-0"
-                contentClassName="max-w-64"
+                contentClassName={cn('max-w-64', isFlatRoster && 'right-0 left-auto translate-x-0')}
               >
                 <div
                   className={cn(
-                    'flex h-8 cursor-pointer items-center gap-1.5 rounded-md border border-[var(--color-border)] px-2 text-xs text-[var(--color-text-secondary)]',
+                    'flex h-8 cursor-pointer items-center gap-1.5 text-xs text-[var(--color-text-secondary)]',
+                    isFlatRoster ? 'px-1' : 'rounded-md border border-[var(--color-border)] px-2',
                     worktreeIsolationDisabled && 'cursor-not-allowed opacity-50'
                   )}
                   aria-describedby={worktreeIsolationDescriptionId}
@@ -617,7 +659,7 @@ export const MemberDraftRow = ({
                       worktreeIsolationDisabled && 'cursor-not-allowed'
                     )}
                   >
-                    <GitBranch className="size-3.5 shrink-0" />
+                    {!isFlatRoster ? <GitBranch className="size-3.5 shrink-0" /> : null}
                     <span>{t('memberDraft.worktree.label')}</span>
                   </Label>
                 </div>
@@ -633,10 +675,10 @@ export const MemberDraftRow = ({
               title={workflowTooltipText}
               dismissOnClick
               className="shrink-0"
-              contentClassName="max-w-64"
+              contentClassName={cn('max-w-64', isFlatRoster && 'right-0 left-auto translate-x-0')}
             >
               <Button
-                variant="outline"
+                variant={isFlatRoster ? 'ghost' : 'outline'}
                 size="sm"
                 className={cn(
                   'relative size-8 shrink-0 px-0',
@@ -661,10 +703,10 @@ export const MemberDraftRow = ({
               title={mcpTooltipText}
               dismissOnClick
               className="shrink-0"
-              contentClassName="max-w-64"
+              contentClassName={cn('max-w-64', isFlatRoster && 'right-0 left-auto translate-x-0')}
             >
               <Button
-                variant="outline"
+                variant={isFlatRoster ? 'ghost' : 'outline'}
                 size="sm"
                 className={cn(
                   'relative size-8 shrink-0 px-0',
@@ -693,7 +735,7 @@ export const MemberDraftRow = ({
           ) : null}
           {hideActionButton ? null : isRemoved ? (
             <Button
-              variant="outline"
+              variant={isFlatRoster ? 'ghost' : 'outline'}
               size="sm"
               className="size-8 shrink-0 px-0"
               aria-label={t('memberDraft.actions.restoreAria', {
@@ -706,9 +748,12 @@ export const MemberDraftRow = ({
             </Button>
           ) : (
             <Button
-              variant="outline"
+              variant={isFlatRoster ? 'ghost' : 'outline'}
               size="sm"
-              className="size-8 shrink-0 border-red-500/40 px-0 text-red-300 hover:bg-red-500/10 hover:text-red-200"
+              className={cn(
+                'size-8 shrink-0 px-0 text-red-300 hover:bg-red-500/10 hover:text-red-200',
+                !isFlatRoster && 'border-red-500/40'
+              )}
               aria-label={t('memberDraft.actions.removeAria', {
                 name: member.name || t('memberDraft.nameFallback', { index: index + 1 }),
               })}

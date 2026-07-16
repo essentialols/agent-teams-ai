@@ -123,6 +123,22 @@ describe('OrgOverviewHud', () => {
     });
     expect(onSelectNode).toHaveBeenCalledWith('group:runtime', true);
 
+    onSelectNode.mockClear();
+    const onWindowKeyDown = vi.fn();
+    window.addEventListener('keydown', onWindowKeyDown);
+    const spaceEvent = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: ' ',
+    });
+    act(() => {
+      card?.dispatchEvent(spaceEvent);
+    });
+    window.removeEventListener('keydown', onWindowKeyDown);
+    expect(spaceEvent.defaultPrevented).toBe(true);
+    expect(onWindowKeyDown).not.toHaveBeenCalled();
+    expect(onSelectNode).toHaveBeenCalledWith('org:acme', true);
+
     act(() => root.unmount());
   });
 });

@@ -59,6 +59,7 @@ export function OrgOverviewHud({
                     (event.key === 'Enter' || event.key === ' ')
                   ) {
                     event.preventDefault();
+                    event.stopPropagation();
                     onSelectNode(summary.rootNodeId, true);
                   }
                 }}

@@ -1,5 +1,7 @@
 import * as path from 'path';
 
+import { getEffectiveInboxMessageId } from '../inboxMessageIdentity';
+
 import {
   createInboxJsonFileSet,
   mergeInboxMessageLists,
@@ -26,7 +28,16 @@ export interface MergeAndRemoveDuplicateInboxesInput {
   ports: DuplicateInboxMergePorts;
 }
 
-function parseRemovableDuplicateInboxMessageList(raw: string): unknown[] | null {
+interface ParsedDuplicateInboxMessageList {
+  mergeableRows: unknown[];
+  removable: boolean;
+}
+
+function parseDuplicateInboxMessageList(raw: string): ParsedDuplicateInboxMessageList | null {
+  if (raw.trim().length === 0) {
+    return { mergeableRows: [], removable: true };
+  }
+
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw) as unknown;
@@ -37,7 +48,13 @@ function parseRemovableDuplicateInboxMessageList(raw: string): unknown[] | null 
     return null;
   }
 
-  return parsed.every((item) => item !== null && typeof item === 'object') ? parsed : null;
+  const mergeableRows = parsed.filter(
+    (item) => item !== null && typeof item === 'object' && getEffectiveInboxMessageId(item) !== null
+  );
+  return {
+    mergeableRows,
+    removable: mergeableRows.length === parsed.length,
+  };
 }
 
 async function mergeSingleInboxBase(
@@ -62,11 +79,15 @@ async function mergeSingleInboxBase(
 
   const canonicalList = parseInboxMessageListRaw(canonicalRaw);
   const duplicateLists: unknown[][] = [];
-  // Only duplicates whose complete content made it into the merged canonical
-  // list may be removed; unreadable or malformed duplicates still hold data
-  // that would otherwise be destroyed unmerged.
+  // Merge only rows with a stable effective identity. Identity-less objects
+  // cannot be deduped on a later launch, so copying them would grow canonical
+  // repeatedly. Remove a duplicate only when every row is safely represented.
   const removableDuplicateFiles: string[] = [];
-  for (const dupFile of mergePlan.duplicateFiles) {
+  let hasMergeableRows = false;
+  const duplicateFiles = [...mergePlan.duplicateFiles].sort((left, right) =>
+    left < right ? -1 : left > right ? 1 : 0
+  );
+  for (const dupFile of duplicateFiles) {
     const dupPath = path.join(input.inboxDir, dupFile);
     let dupRaw: string | null | undefined;
     try {
@@ -81,21 +102,33 @@ async function mergeSingleInboxBase(
       continue;
     }
 
-    const duplicateList = parseRemovableDuplicateInboxMessageList(dupRaw);
+    const duplicateList = parseDuplicateInboxMessageList(dupRaw);
     if (!duplicateList) {
       continue;
     }
 
-    removableDuplicateFiles.push(dupFile);
-    duplicateLists.push(duplicateList);
+    if (duplicateList.removable) {
+      removableDuplicateFiles.push(dupFile);
+    }
+    if (duplicateList.mergeableRows.length > 0) {
+      hasMergeableRows = true;
+      duplicateLists.push(duplicateList.mergeableRows);
+    }
+  }
+
+  if (!hasMergeableRows && removableDuplicateFiles.length === 0) {
+    return;
   }
 
   const mergedDeduped = mergeInboxMessageLists(canonicalList, duplicateLists);
+  const mergedRaw = JSON.stringify(mergedDeduped, null, 2);
 
-  try {
-    await input.ports.writeFileUtf8(canonicalPath, JSON.stringify(mergedDeduped, null, 2));
-  } catch {
-    return;
+  if (mergedRaw !== canonicalRaw) {
+    try {
+      await input.ports.writeFileUtf8(canonicalPath, mergedRaw);
+    } catch {
+      return;
+    }
   }
 
   for (const dupFile of removableDuplicateFiles) {

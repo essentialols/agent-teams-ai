@@ -52,7 +52,7 @@
 </tr>
 <tr>
 <td width="50%">
-  <img width="1312" height="824" alt="image" src="https://github.com/user-attachments/assets/3b5d1a00-5e10-4e0a-902c-214c1266793d" />
+  <img width="1312" height="826" alt="image" src="https://github.com/user-attachments/assets/9b7339c3-9390-45c1-83ce-423ec9deb6d7" />
 </td>
 <td width="50%">
   <img width="1312" height="820" alt="image" src="https://github.com/user-attachments/assets/e78c2229-5d40-4615-bbee-79b0bc611d51" />

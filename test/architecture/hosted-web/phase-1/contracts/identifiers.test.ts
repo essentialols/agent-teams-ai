@@ -14,3 +14,10 @@ test('hosted identifiers parse each kind without deriving a production team iden
   expect(() => hosted.parseActorId(invalid.rawCrossKindActorId)).toThrow();
   expect(() => hosted.parseSyntheticTeamId(value.actorId)).toThrow();
 });
+
+test('the Phase 1 synthetic team parser stays an explicit compatibility surface', () => {
+  expect(hosted.parseSyntheticTeamId('team_fixture-name')).toBe('team_fixture-name');
+  expect(() => hosted.parseTeamId('team_fixture-name')).toThrow(
+    'hosted-contract-canonical-identifier-invalid'
+  );
+});

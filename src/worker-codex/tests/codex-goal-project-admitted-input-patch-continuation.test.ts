@@ -302,11 +302,13 @@ describe("admitted input-patch capacity continuation", () => {
     });
     expect(reservedLaunch?.config.accounts).toEqual([{ name: "account-g" }]);
     expect(reservedLaunch?.config.maxAccountCycles).toBe(2);
-    expect(sha256(execFileSync(
-      "git",
-      ["diff", "--cached", "--binary", "--no-ext-diff"],
-      { cwd: workspacePath },
-    ))).toBe(patchSha256);
+    expect(
+      sha256(
+        execFileSync("git", ["diff", "--cached", "--binary", "--no-ext-diff"], {
+          cwd: workspacePath,
+        }),
+      ),
+    ).toBe(patchSha256);
 
     await writeFile(join(workspacePath, "UNTRACKED.txt"), "drift\n");
     await expect(projectControlStartStoredJobView(args, deps)).rejects.toThrow(
@@ -330,19 +332,25 @@ describe("clean pre-start capacity continuation", () => {
       progressResultReason: "account_unavailable",
     } as const;
     expect(isCleanPreStartAdmissionCapacityContinuation(status)).toBe(true);
-    expect(isCleanPreStartAdmissionCapacityContinuation({
-      ...status,
-      workspaceDirty: true,
-    })).toBe(false);
-    expect(isCleanPreStartAdmissionCapacityContinuation({
-      ...status,
-      resultReason: "provider_failure",
-      progressResultReason: "provider_failure",
-    })).toBe(false);
-    expect(isCleanPreStartAdmissionCapacityContinuation({
-      ...status,
-      progressResultStatus: "blocked",
-    })).toBe(false);
+    expect(
+      isCleanPreStartAdmissionCapacityContinuation({
+        ...status,
+        workspaceDirty: true,
+      }),
+    ).toBe(false);
+    expect(
+      isCleanPreStartAdmissionCapacityContinuation({
+        ...status,
+        resultReason: "provider_failure",
+        progressResultReason: "provider_failure",
+      }),
+    ).toBe(false);
+    expect(
+      isCleanPreStartAdmissionCapacityContinuation({
+        ...status,
+        progressResultStatus: "blocked",
+      }),
+    ).toBe(false);
   });
 
   it("continues the same clean admitted job on the next journaled account", async () => {
@@ -424,22 +432,28 @@ describe("clean pre-start capacity continuation", () => {
       jobRootDir: manifest.jobRootDir,
     });
     const writeCapacityResult = async () => {
-      await writeFile(resultPath, `${JSON.stringify({
-        status: "blocked",
-        reason: "account_unavailable",
-        changedFiles: [],
-        evidence: ["safe_execution_status:waiting_capacity"],
-        blockers: ["account_unavailable"],
-        nextAction: "wait",
-      })}\n`);
-      await writeFile(progressPath, `${JSON.stringify({
-        schemaVersion: 1,
-        taskId: manifest.taskId,
-        status: "blocked",
-        resultStatus: "waiting_capacity",
-        reason: "account_unavailable",
-        updatedAt: new Date().toISOString(),
-      })}\n`);
+      await writeFile(
+        resultPath,
+        `${JSON.stringify({
+          status: "blocked",
+          reason: "account_unavailable",
+          changedFiles: [],
+          evidence: ["safe_execution_status:waiting_capacity"],
+          blockers: ["account_unavailable"],
+          nextAction: "wait",
+        })}\n`,
+      );
+      await writeFile(
+        progressPath,
+        `${JSON.stringify({
+          schemaVersion: 1,
+          taskId: manifest.taskId,
+          status: "blocked",
+          resultStatus: "waiting_capacity",
+          reason: "account_unavailable",
+          updatedAt: new Date().toISOString(),
+        })}\n`,
+      );
     };
     await writeCapacityResult();
 
@@ -497,12 +511,15 @@ describe("clean pre-start capacity continuation", () => {
         return {
           stopWorker: async () => {
             capacitySupervisorReapCalls += 1;
-            await writeFile(progressPath, `${JSON.stringify({
-              schemaVersion: 1,
-              taskId: manifest.taskId,
-              status: "stopped",
-              updatedAt: new Date().toISOString(),
-            })}\n`);
+            await writeFile(
+              progressPath,
+              `${JSON.stringify({
+                schemaVersion: 1,
+                taskId: manifest.taskId,
+                status: "stopped",
+                updatedAt: new Date().toISOString(),
+              })}\n`,
+            );
             return { status: "applied" };
           },
           startWorker: async () => ({ status: "started" }),
@@ -522,31 +539,43 @@ describe("clean pre-start capacity continuation", () => {
     );
     await rm(join(manifest.workspacePath, "DIRTY.txt"));
 
-    await writeFile(resultPath, `${JSON.stringify({
-      status: "blocked",
-      reason: "provider_failure",
-      changedFiles: [],
-      blockers: ["provider_failure"],
-      nextAction: "inspect",
-    })}\n`);
-    await expect(projectControlStartStoredJobView({
-      ...args,
-      forceStart: true,
-    }, deps)).rejects.toThrow(
-      "project_control_pre_start_admission_already_authorized",
+    await writeFile(
+      resultPath,
+      `${JSON.stringify({
+        status: "blocked",
+        reason: "provider_failure",
+        changedFiles: [],
+        blockers: ["provider_failure"],
+        nextAction: "inspect",
+      })}\n`,
     );
+    await expect(
+      projectControlStartStoredJobView(
+        {
+          ...args,
+          forceStart: true,
+        },
+        deps,
+      ),
+    ).resolves.toMatchObject({ ok: true });
+    expect(startAdmissionWorkspaceMode).toBe("clean_explicit_continuation");
     await writeCapacityResult();
 
-    await writeFile(progressPath, `${JSON.stringify({
-      schemaVersion: 1,
-      taskId: manifest.taskId,
-      status: "blocked",
-      resultStatus: "waiting_capacity",
-      reason: "account_unavailable",
-      updatedAt: new Date().toISOString(),
-      pid: process.pid,
-    })}\n`);
-    await expect(projectControlStartStoredJobView(args, deps)).resolves.toMatchObject({
+    await writeFile(
+      progressPath,
+      `${JSON.stringify({
+        schemaVersion: 1,
+        taskId: manifest.taskId,
+        status: "blocked",
+        resultStatus: "waiting_capacity",
+        reason: "account_unavailable",
+        updatedAt: new Date().toISOString(),
+        pid: process.pid,
+      })}\n`,
+    );
+    await expect(
+      projectControlStartStoredJobView(args, deps),
+    ).resolves.toMatchObject({
       ok: true,
       capacitySupervisorReap: { status: "applied" },
       accountReservation: { accountId: "account-g" },

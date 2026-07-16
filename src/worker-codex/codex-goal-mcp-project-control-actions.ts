@@ -121,7 +121,9 @@ export type CodexGoalMcpProjectControlActionsDeps = {
     input: Omit<CodexProjectControlBrokerInput, "admissionDeps">,
   ) => ProjectControlBroker;
   readonly dependencyBootstrap?: typeof runDependencyBootstrap;
-  readonly safeExecutionJournal?: ReturnType<typeof localCodexProjectSafeExecutionJournal>;
+  readonly safeExecutionJournal?: ReturnType<
+    typeof localCodexProjectSafeExecutionJournal
+  >;
 };
 
 export async function projectControlStartStoredJobView(
@@ -207,6 +209,12 @@ export async function projectControlStartStoredJobView(
     };
   }
   const workspaceDirty = status.workspaceDirty === true;
+  const cleanExplicitContinuation =
+    args.forceStart === true &&
+    !workspaceDirty &&
+    capacityContinuationMode === undefined &&
+    reviewedOutputId === undefined &&
+    loaded.manifest.projectPreStartAdmission !== undefined;
   const terminalHandoffDependencyRecovery =
     terminalHandoffDependencyRecoveryRequested({
       status,
@@ -269,7 +277,7 @@ export async function projectControlStartStoredJobView(
           status: lockedStatus,
         };
       }
-      if (lockedStatus.workspaceDirty === true !== workspaceDirty) {
+      if ((lockedStatus.workspaceDirty === true) !== workspaceDirty) {
         throw new Error("project_control_workspace_state_changed_before_start");
       }
       if (lockedCapacityContinuationMode !== capacityContinuationMode) {
@@ -319,10 +327,10 @@ export async function projectControlStartStoredJobView(
           : undefined;
       const terminalRecovery = terminalHandoffDependencyRecovery
         ? await verifyTerminalHandoffRecovery({
-              producer: loaded.manifest,
-              workspacePath: workspace.canonicalWorkspacePath,
-              snapshotter: reviewedOutputDeps.snapshotter,
-            })
+            producer: loaded.manifest,
+            workspacePath: workspace.canonicalWorkspacePath,
+            snapshotter: reviewedOutputDeps.snapshotter,
+          })
         : undefined;
       if (reviewedContinuation) {
         const sanitized =
@@ -397,8 +405,7 @@ export async function projectControlStartStoredJobView(
         jobRootDir: loaded.manifest.jobRootDir,
         cacheNamespace: controller.scope.projectId,
         mode: projectControlDependencyBootstrapMode(args.dependencyBootstrap),
-        confirmInstall:
-          booleanValue(args.confirmDependencyBootstrap) === true,
+        confirmInstall: booleanValue(args.confirmDependencyBootstrap) === true,
       });
       assertProjectControlDependencyBootstrapReady(dependencyPreflight);
       if (reviewedContinuation) {
@@ -432,11 +439,12 @@ export async function projectControlStartStoredJobView(
           scope: controller.scope,
           workspaceMode: "terminal_handoff_dependency_recovery",
         });
-      } else if (capacityContinuationMode) {
+      } else if (capacityContinuationMode || cleanExplicitContinuation) {
         await assertProjectPreStartAdmissionLaunchBinding({
           manifest: loaded.manifest,
           scope: controller.scope,
-          workspaceMode: capacityContinuationMode,
+          workspaceMode:
+            capacityContinuationMode ?? "clean_explicit_continuation",
         });
       } else {
         await validateStoredProjectPreStartAdmission({
@@ -448,7 +456,8 @@ export async function projectControlStartStoredJobView(
         await codexProjectContinuationReservationInput({
           status: lockedStatus,
           launch: canonicalLaunch,
-          journal: deps.safeExecutionJournal ??
+          journal:
+            deps.safeExecutionJournal ??
             localCodexProjectSafeExecutionJournal(canonicalLaunch),
         });
       const accountReservation = await reserveCodexProjectAccount({
@@ -458,10 +467,13 @@ export async function projectControlStartStoredJobView(
       });
       const reservedLaunch = accountReservation.launch;
       const startAdmissionWorkspaceMode = reviewedContinuation
-        ? "reviewed_dirty_continuation" as const
+        ? ("reviewed_dirty_continuation" as const)
         : terminalRecovery
-        ? "terminal_handoff_dependency_recovery" as const
-        : capacityContinuationMode;
+          ? ("terminal_handoff_dependency_recovery" as const)
+          : (capacityContinuationMode ??
+            (cleanExplicitContinuation
+              ? ("clean_explicit_continuation" as const)
+              : undefined));
       let result;
       try {
         const broker = deps.codexProjectControlBroker({
@@ -514,13 +526,16 @@ export async function projectControlStartStoredJobView(
           accountId: accountReservation.accountId,
           ...(accountReservation.mode === "exclusive"
             ? {
-              fencingToken: accountReservation.fencingToken,
-              expiresAt: accountReservation.expiresAt,
-            }
+                fencingToken: accountReservation.fencingToken,
+                expiresAt: accountReservation.expiresAt,
+              }
             : {}),
         },
         ...(capacitySupervisorReap
-          ? { capacitySupervisorReap: capacitySupervisorReap as unknown as JsonObject }
+          ? {
+              capacitySupervisorReap:
+                capacitySupervisorReap as unknown as JsonObject,
+            }
           : {}),
         result: result as unknown as JsonObject,
       };
@@ -632,8 +647,7 @@ export async function projectControlCreateWorktreeView(
         workspacePath: workspace.canonicalWorkspacePath,
         cacheNamespace: controller.scope.projectId,
         mode: projectControlDependencyBootstrapMode(args.dependencyBootstrap),
-        confirmInstall:
-          booleanValue(args.confirmDependencyBootstrap) === true,
+        confirmInstall: booleanValue(args.confirmDependencyBootstrap) === true,
       }),
   });
   assertProjectControlDependencyBootstrapReady(dependencyPreflight);
@@ -843,71 +857,74 @@ export async function projectControlStopStoredJobView(
           workspacePath: workspace.canonicalWorkspacePath,
         },
       };
-  const broker = deps.codexProjectControlBroker({
-    registryRootDir: controller.registryRootDir,
-    controller: controller.controller,
-    scope: controller.scope,
-    stopLaunch: lockedLaunch,
-  });
-  const realWorkspacePath = await projectControlRealPathOutsideWorkspaceScope(
-    loaded.launch.config.workspacePath,
-    controller.scope,
-  );
-  const result = await broker.stopWorker({
-    jobId: loaded.manifest.jobId,
-    registryRoot: controller.registryRootDir,
-    workspacePath: loaded.launch.config.workspacePath,
-    ...(realWorkspacePath ? { realWorkspacePath } : {}),
-    ...(loaded.launch.tmuxSession
-      ? { tmuxSession: loaded.launch.tmuxSession }
-      : {}),
-  });
-  await writeCodexGoalStoppedProgress({
-    progressPath:
-      loaded.launch.config.progressPath ??
-      codexGoalProgressPath({
-        jobRootDir: loaded.launch.config.jobRootDir,
+      const broker = deps.codexProjectControlBroker({
+        registryRootDir: controller.registryRootDir,
+        controller: controller.controller,
+        scope: controller.scope,
+        stopLaunch: lockedLaunch,
+      });
+      const realWorkspacePath =
+        await projectControlRealPathOutsideWorkspaceScope(
+          loaded.launch.config.workspacePath,
+          controller.scope,
+        );
+      const result = await broker.stopWorker({
+        jobId: loaded.manifest.jobId,
+        registryRoot: controller.registryRootDir,
+        workspacePath: loaded.launch.config.workspacePath,
+        ...(realWorkspacePath ? { realWorkspacePath } : {}),
+        ...(loaded.launch.tmuxSession
+          ? { tmuxSession: loaded.launch.tmuxSession }
+          : {}),
+      });
+      await writeCodexGoalStoppedProgress({
+        progressPath:
+          loaded.launch.config.progressPath ??
+          codexGoalProgressPath({
+            jobRootDir: loaded.launch.config.jobRootDir,
+            taskId: loaded.launch.config.taskId,
+          }),
         taskId: loaded.launch.config.taskId,
-      }),
-    taskId: loaded.launch.config.taskId,
-    status: "stopped",
-  });
-  const statusAfter = await collectCodexGoalStatus(statusInput(lockedLaunch));
-  const stopEventPath = await writeCodexGoalStopEvent({
-    jobId: loaded.manifest.jobId,
-    taskId: loaded.launch.config.taskId,
-    jobRootDir: loaded.launch.config.jobRootDir,
-    ...(loaded.launch.tmuxSession
-      ? { tmuxSession: loaded.launch.tmuxSession }
-      : {}),
-    stopCommand: String(result.resourceId ?? stopCommandPreview),
-    forceStop: Boolean(args.forceStop),
-    statusBefore: status,
-    statusAfter,
-    brief,
-  });
-  const accountReservationReleased = await releaseCodexProjectAccount({
-    manifest: loaded.manifest,
-    launch: lockedLaunch,
-    reason: "worker_stopped",
-  });
-  return {
-    ok: true,
-    mode: "project_control_stop",
-    controllerJobId: controller.controller.jobId,
-    registryRootDir: controller.registryRootDir,
-    auditPath: projectControlAuditPath(controller.controller),
-    jobId: loaded.manifest.jobId,
-    taskId: loaded.launch.config.taskId,
-    ...(loaded.launch.tmuxSession
-      ? { tmuxSession: loaded.launch.tmuxSession }
-      : {}),
-    stopEventPath,
-    accountReservationReleased,
-    statusBefore: status,
-    statusAfter,
-    result: result as unknown as JsonObject,
-  };
+        status: "stopped",
+      });
+      const statusAfter = await collectCodexGoalStatus(
+        statusInput(lockedLaunch),
+      );
+      const stopEventPath = await writeCodexGoalStopEvent({
+        jobId: loaded.manifest.jobId,
+        taskId: loaded.launch.config.taskId,
+        jobRootDir: loaded.launch.config.jobRootDir,
+        ...(loaded.launch.tmuxSession
+          ? { tmuxSession: loaded.launch.tmuxSession }
+          : {}),
+        stopCommand: String(result.resourceId ?? stopCommandPreview),
+        forceStop: Boolean(args.forceStop),
+        statusBefore: status,
+        statusAfter,
+        brief,
+      });
+      const accountReservationReleased = await releaseCodexProjectAccount({
+        manifest: loaded.manifest,
+        launch: lockedLaunch,
+        reason: "worker_stopped",
+      });
+      return {
+        ok: true,
+        mode: "project_control_stop",
+        controllerJobId: controller.controller.jobId,
+        registryRootDir: controller.registryRootDir,
+        auditPath: projectControlAuditPath(controller.controller),
+        jobId: loaded.manifest.jobId,
+        taskId: loaded.launch.config.taskId,
+        ...(loaded.launch.tmuxSession
+          ? { tmuxSession: loaded.launch.tmuxSession }
+          : {}),
+        stopEventPath,
+        accountReservationReleased,
+        statusBefore: status,
+        statusAfter,
+        result: result as unknown as JsonObject,
+      };
     },
   });
 }

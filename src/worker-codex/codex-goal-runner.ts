@@ -7,21 +7,16 @@ import { promisify } from "node:util";
 import type { ObservabilityPort } from "@vioxen/subscription-runtime/core";
 import type { ProviderTaskControls } from "@vioxen/subscription-runtime/core";
 import {
+  ActiveAttemptInterruptMonitor,
   AccessBoundary,
+  InMemoryActiveAttemptRegistry,
+  LaunchPlanStatus,
   type NetworkAccessMode,
   type ProjectAccessScope,
-} from "@vioxen/subscription-runtime/worker-core";
-import type {
-  SafeExecutionPolicy,
-  SafeExecutionRunResult,
-  TaskEffectMode,
-} from "@vioxen/subscription-runtime/worker-core";
-import type {
-  CodexReasoningEffort,
-  CodexServiceTier,
-} from "@vioxen/subscription-runtime/provider-codex";
-import {
-  LaunchPlanStatus,
+  type SafeExecutionPolicy,
+  type SafeExecutionRunResult,
+  type TaskEffectMode,
+  WorkerControlService,
   isSubscriptionWorkerError,
   normalizeWorkerReport,
   type RuntimeRecommendedAction,
@@ -29,6 +24,11 @@ import {
   type RuntimeResultStatus,
   type WorkerReport,
 } from "@vioxen/subscription-runtime/worker-core";
+import type {
+  CodexReasoningEffort,
+  CodexServiceTier,
+} from "@vioxen/subscription-runtime/provider-codex";
+import { LocalFileWorkerControlInboxStore } from "@vioxen/subscription-runtime/store-local-file";
 import {
   FileBackendCodexSafeExecutor,
   type FileBackendCodexSafeExecutorOptions,
@@ -242,6 +242,15 @@ export async function runCodexGoal(
   const stateRootDir = config.stateRootDir ?? join(config.jobRootDir, "state");
   await mkdir(stateRootDir, { recursive: true, mode: 0o700 });
 
+  const controlInbox = new WorkerControlService({
+    store: new LocalFileWorkerControlInboxStore({ rootDir: stateRootDir }),
+  });
+  const activeAttemptRegistry = new InMemoryActiveAttemptRegistry();
+  const interruptMonitor = new ActiveAttemptInterruptMonitor({
+    control: controlInbox,
+    activeAttemptRegistry,
+  });
+
   const executor = (
     deps.createExecutor ??
     ((options) => new FileBackendCodexSafeExecutor(options))
@@ -250,9 +259,16 @@ export async function runCodexGoal(
     stateRootDir,
     encryptionKey,
     observability,
+    controlInbox,
+    activeAttemptRegistry,
   }));
 
   try {
+    interruptMonitor.start({
+      jobId: config.jobId ?? config.taskId,
+      taskId: config.taskId,
+      workspaceId: config.workspacePath,
+    });
     progressHeartbeat.start();
     await runtimeEvents.write("executor_started", {
       jobId: config.jobId ?? config.taskId,
@@ -321,6 +337,7 @@ export async function runCodexGoal(
     throw error;
   } finally {
     await progressHeartbeat.stop();
+    await interruptMonitor.stop();
     await executor.dispose();
     await runtimeEvents.write("runner_disposed", {
       jobId: config.jobId ?? config.taskId,
@@ -333,6 +350,8 @@ export function buildCodexGoalExecutorOptions(input: {
   readonly stateRootDir: string;
   readonly encryptionKey: Uint8Array;
   readonly observability?: ObservabilityPort;
+  readonly controlInbox?: WorkerControlService;
+  readonly activeAttemptRegistry?: InMemoryActiveAttemptRegistry;
 }): FileBackendCodexSafeExecutorOptions {
   const { config } = input;
   const accessLaunchPlan = buildCodexGoalAccessLaunchPlan(config);
@@ -345,6 +364,10 @@ export function buildCodexGoalExecutorOptions(input: {
     ...(config.executorId ? { executorId: config.executorId } : {}),
     authRootDir: config.authRootDir,
     ...(input.observability ? { observability: input.observability } : {}),
+    ...(input.controlInbox ? { controlInbox: input.controlInbox } : {}),
+    ...(input.activeAttemptRegistry
+      ? { activeAttemptRegistry: input.activeAttemptRegistry }
+      : {}),
     stateRootDir: input.stateRootDir,
     accountCapacityStore: migrateLegacyCodexAccountCapacity({
       authRootDir: config.authRootDir,

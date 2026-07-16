@@ -10,11 +10,16 @@ describe("project refill input patch policy", () => {
     })).toThrow("project_control_refill_input_patch_source_required");
   });
 
-  it("allows only producer refill to consume immutable input patch evidence", () => {
+  it("allows producer and adoption refill to consume immutable input patch evidence", () => {
     expect(() => assertProjectRefillInputPatchSource({
       contract: { inputPatchHash: "a".repeat(64) },
       producerJobId: "project-rejected-producer",
       workerRole: "producer",
+    })).not.toThrow();
+    expect(() => assertProjectRefillInputPatchSource({
+      contract: { inputPatchHash: "a".repeat(64) },
+      producerJobId: "project-rejected-producer",
+      workerRole: "adoption",
     })).not.toThrow();
     expect(() => assertProjectRefillInputPatchSource({
       contract: { inputPatchHash: "a".repeat(64) },

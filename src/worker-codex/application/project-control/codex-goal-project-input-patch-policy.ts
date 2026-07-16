@@ -18,7 +18,7 @@ export function assertProjectRefillInputPatchSource(input: {
   if (!producerJobId) {
     throw new Error("project_control_refill_input_patch_source_required");
   }
-  if (input.workerRole !== "producer") {
+  if (input.workerRole !== "producer" && input.workerRole !== "adoption") {
     throw new Error("project_control_refill_input_patch_producer_role_required");
   }
 }

@@ -558,6 +558,7 @@ await writeFile(file, JSON.stringify(operation, null, 2) + "\\n");
       ]);
       await git(producerWorkspacePath, ["config", "user.name", "Test User"]);
       await writeFile(join(producerWorkspacePath, "feature.txt"), "producer\n");
+      await writeFile(join(producerWorkspacePath, "added.txt"), "added\n");
       const handoff = await materializeCodexGoalHandoffArtifacts({
         workerJobId: "project-producer",
         taskId: "project-producer",
@@ -609,6 +610,7 @@ await writeFile(file, JSON.stringify(operation, null, 2) + "\\n");
         patchSha256: handoff.manifest.artifacts.patch.sha256,
         executionMode: "sync",
         accounts: ["account-c"],
+        ownedPaths: ["feature.txt", "added.txt"],
       });
 
       const verifierManifestPath = codexGoalJobManifestPath({
@@ -634,6 +636,9 @@ await writeFile(file, JSON.stringify(operation, null, 2) + "\\n");
         scope,
         workspaceMode: "admitted_input_patch",
       });
+      expect(await stagedPatchSha256(verifierWorkspacePath)).not.toBe(
+        handoff.manifest.artifacts.patch.sha256,
+      );
       await writeFile(
         join(
           initialVerifierManifest.jobRootDir,
@@ -761,7 +766,9 @@ await writeFile(file, JSON.stringify(operation, null, 2) + "\\n");
       expect(await stagedPatchSha256(verifierWorkspacePath)).toBe(
         stagedPatchBefore,
       );
-      expect(stagedPatchBefore).toBe(handoff.manifest.artifacts.patch.sha256);
+      expect(stagedPatchBefore).not.toBe(
+        handoff.manifest.artifacts.patch.sha256,
+      );
       expect(await readFile(verifierManifestPath, "utf8")).toBe(manifestBefore);
       expect(await directoryEntries(registryRootDir)).toEqual(
         registryEntriesBefore,
@@ -872,6 +879,7 @@ async function prepareVerifier(input: {
   readonly jobId?: string;
   readonly baseBranch?: string;
   readonly accounts?: readonly string[];
+  readonly ownedPaths?: readonly string[];
 }): Promise<Record<string, unknown>> {
   const jobId = input.jobId ?? "project-verifier";
   const response = await input.client.callTool({
@@ -904,7 +912,7 @@ async function prepareVerifier(input: {
           laneId: "review",
           inputPatchHash: input.patchSha256,
           reviewKind: "review",
-          ownedPaths: ["feature.txt"],
+          ownedPaths: input.ownedPaths ?? ["feature.txt"],
           mandatoryDocs: ["README.md", "controller.md", "lane.md"],
           mandatoryScripts: [],
           mandatoryFixtures: [],

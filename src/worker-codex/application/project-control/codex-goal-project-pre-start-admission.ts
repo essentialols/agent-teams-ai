@@ -393,6 +393,7 @@ export async function rebindProjectPreStartAdmissionManifest(input: {
     input.manifest,
     descriptor,
   );
+  const verifiedInputPatch = verifiedInputPatchFromReceipt(receipt, contract);
   const reviewedDirtyContinuation =
     input.workspaceMode === "reviewed_dirty_continuation";
   const admittedInputPatchContinuation =
@@ -407,7 +408,10 @@ export async function rebindProjectPreStartAdmissionManifest(input: {
     : binding.workspaceStatus === "";
   const inputPatchBindingValid = reviewedDirtyContinuation
     ? true
-    : projectInputPatchBindingMatches(binding, contract);
+    : admittedInputPatchContinuation
+      ? verifiedInputPatch !== undefined &&
+        verifiedInputPatchBindingValid(binding, verifiedInputPatch)
+      : projectInputPatchBindingMatches(binding, contract);
   const mismatches = [
     binding.workspaceHead !== contract.phaseStartSha
       ? "workspace_head"

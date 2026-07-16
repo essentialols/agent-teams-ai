@@ -181,6 +181,42 @@ describe("local project integration adapters", () => {
     expect(unchanged).toContain(fixture.workerCommitSha);
   });
 
+  it("rejects a non-ancestor promotion without changing the remote", async () => {
+    const fixture = await createGitFixture();
+    const adapter = new LocalGitIntegrationAdapter();
+    const expectedRemoteCommit = (await gitOutput(
+      fixture.workspacePath,
+      ["rev-parse", "HEAD"],
+    )).trim();
+    await git(fixture.workspacePath, ["push", "origin", "main:canonical"]);
+    await git(fixture.workspacePath, ["checkout", "--orphan", "unrelated"]);
+    await git(fixture.workspacePath, ["rm", "-rf", "."]);
+    await writeFile(
+      join(fixture.workspacePath, "UNRELATED.md"),
+      "unrelated history\n",
+    );
+    await git(fixture.workspacePath, ["add", "UNRELATED.md"]);
+    await git(fixture.workspacePath, ["commit", "-m", "test: unrelated history"]);
+    const unrelatedCommit = (await gitOutput(
+      fixture.workspacePath,
+      ["rev-parse", "HEAD"],
+    )).trim();
+
+    await expect(adapter.push({
+      workspacePath: fixture.workspacePath,
+      remote: "origin",
+      branch: "canonical",
+      commitSha: unrelatedCommit,
+      force: false,
+      expectedRemoteCommit,
+    })).rejects.toThrow("local_git_integration_promotion_not_fast_forward");
+    const unchanged = await gitOutput(
+      fixture.workspacePath,
+      ["ls-remote", "origin", "refs/heads/canonical"],
+    );
+    expect(unchanged).toContain(expectedRemoteCommit);
+  });
+
   it("applies an immutable conflict resolution and creates an exact two-parent merge", async () => {
     const fixture = await createMergeFixture();
     const adapter = new LocalGitIntegrationAdapter({

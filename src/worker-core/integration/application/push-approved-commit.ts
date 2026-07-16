@@ -166,7 +166,7 @@ async function replayOrPromotePushedCommit(
       evidence: [currentBranch, attempt.targetBranch],
     });
   }
-  const expectedTarget = attempt.workerOutput.targetCommit;
+  const expectedTarget = expectedPromotionTarget(attempt);
   const remoteCommit = await deps.git.remoteBranchCommit({
     workspacePath: attempt.targetWorkspacePath,
     remote,
@@ -215,6 +215,25 @@ async function replayOrPromotePushedCommit(
     commitSha: attempt.commitCandidate.commitSha,
   });
   return updated;
+}
+
+function expectedPromotionTarget(
+  attempt: IntegrationAttempt,
+): string | undefined {
+  const mergeTarget = attempt.merge?.expectedTargetCommit;
+  const workerTarget = attempt.workerOutput.targetCommit;
+  if (
+    mergeTarget &&
+    workerTarget &&
+    mergeTarget.toLowerCase() !== workerTarget.toLowerCase()
+  ) {
+    throw new IntegrationError({
+      reason: IntegrationErrorReason.InvalidMergePlan,
+      message: "integration_promotion_target_mismatch",
+      evidence: [mergeTarget, workerTarget],
+    });
+  }
+  return mergeTarget ?? workerTarget;
 }
 
 async function replayIntegratedOutputLedger(

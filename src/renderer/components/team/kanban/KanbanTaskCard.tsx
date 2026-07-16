@@ -59,6 +59,7 @@ interface KanbanTaskCardProps {
   hasReviewers: boolean;
   compact?: boolean;
   flat?: boolean;
+  showSeparator?: boolean;
   taskMap: Map<string, TeamTask>;
   memberColorMap: Map<string, string>;
   hasLiveTaskLogs?: boolean;
@@ -584,7 +585,11 @@ const TaskPrimaryActions = memo(function TaskPrimaryActions({
   const { t } = useAppTranslation('team');
 
   return (
-    <div className="flex min-w-0 flex-nowrap gap-2">
+    <div
+      className={
+        toolbarMode ? 'flex min-w-0 flex-col items-center gap-1' : 'flex min-w-0 flex-nowrap gap-2'
+      }
+    >
       {columnId === 'todo' ? (
         <>
           <TaskActionIconButton
@@ -658,7 +663,11 @@ const TaskPrimaryActions = memo(function TaskPrimaryActions({
               {t('kanban.taskCard.manualReview')}
             </div>
           ) : null}
-          <div className="flex flex-wrap items-center gap-2">
+          <div
+            className={
+              toolbarMode ? 'flex flex-col items-center gap-1' : 'flex flex-wrap items-center gap-2'
+            }
+          >
             <TaskActionIconButton
               label={t('kanban.taskCard.approve')}
               icon={<CheckCircle2 size={11} />}
@@ -710,6 +719,7 @@ export const KanbanTaskCard = memo(
     hasReviewers,
     compact,
     flat = false,
+    showSeparator = false,
     taskMap,
     memberColorMap,
     hasLiveTaskLogs = false,
@@ -772,8 +782,11 @@ export const KanbanTaskCard = memo(
     const renderActionControls = (toolbarMode: boolean): React.JSX.Element => (
       <div
         data-kanban-task-toolbar={toolbarMode ? 'true' : undefined}
+        data-orientation={toolbarMode ? 'vertical' : undefined}
         className={
-          toolbarMode ? 'flex items-center gap-1' : 'flex items-center justify-between gap-2'
+          toolbarMode
+            ? 'flex flex-col items-center gap-1'
+            : 'flex items-center justify-between gap-2'
         }
       >
         <TaskPrimaryActions
@@ -793,7 +806,7 @@ export const KanbanTaskCard = memo(
 
         <div
           className={`flex shrink-0 flex-nowrap items-center gap-1.5 ${
-            toolbarMode ? 'border-l border-[var(--color-border)] pl-1' : ''
+            toolbarMode ? 'flex-col border-t border-[var(--color-border)] pt-1' : ''
           }`}
         >
           <TaskMetaActions
@@ -818,6 +831,7 @@ export const KanbanTaskCard = memo(
     const cardContent = (
       <div
         data-task-id={task.id}
+        data-task-separator={flat && showSeparator ? 'true' : undefined}
         className={`kanban-task-card relative cursor-pointer ${
           flat
             ? `kanban-task-card-flat group rounded-none bg-transparent py-3 pl-3 pr-1.5 ${
@@ -1004,11 +1018,11 @@ export const KanbanTaskCard = memo(
       >
         <HoverCardTrigger asChild>{cardContent}</HoverCardTrigger>
         <HoverCardContent
-          side="top"
-          align="end"
+          side="left"
+          align="start"
           sideOffset={0}
           avoidCollisions={false}
-          className="kanban-task-card-toolbar w-auto min-w-0 rounded-b-none border-b-0 bg-[var(--color-surface-raised)] p-1 shadow-none"
+          className="kanban-task-card-toolbar w-auto min-w-0 rounded-r-none border-r-0 bg-[var(--color-surface-raised)] p-1 shadow-none"
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
         >
@@ -1025,6 +1039,7 @@ export const KanbanTaskCard = memo(
     prev.hasReviewers === next.hasReviewers &&
     prev.compact === next.compact &&
     prev.flat === next.flat &&
+    prev.showSeparator === next.showSeparator &&
     areTaskMapDependenciesEqual(prev.task, next.task, prev.taskMap, next.taskMap) &&
     prev.memberColorMap === next.memberColorMap &&
     prev.hasLiveTaskLogs === next.hasLiveTaskLogs &&

@@ -75,8 +75,17 @@ vi.mock('@renderer/components/ui/hover-card', () => ({
     React.createElement(React.Fragment, null, children),
   HoverCardTrigger: ({ children }: { children: React.ReactNode }) =>
     React.createElement(React.Fragment, null, children),
-  HoverCardContent: ({ children, className }: { children: React.ReactNode; className?: string }) =>
-    React.createElement('div', { className }, children),
+  HoverCardContent: ({
+    children,
+    className,
+    side,
+    align,
+  }: {
+    children: React.ReactNode;
+    className?: string;
+    side?: string;
+    align?: string;
+  }) => React.createElement('div', { className, 'data-side': side, 'data-align': align }, children),
 }));
 
 vi.mock('@renderer/components/ui/tooltip', () => ({
@@ -687,10 +696,11 @@ describe('KanbanTaskCard flat board appearance', () => {
   });
 
   it('uses the inherited column accent without removing task content or actions', async () => {
-    const { host, root } = await renderTaskCard({ flat: true });
+    const { host, root } = await renderTaskCard({ flat: true, showSeparator: true });
 
     const card = host.querySelector<HTMLElement>('[data-task-id="task-1"]');
     expect(card?.className).toContain('kanban-task-card-flat');
+    expect(card?.dataset.taskSeparator).toBe('true');
     expect(card?.className).not.toContain('border-l-2');
     expect(card?.style.borderLeftColor).toBe('');
     expect(card?.className).not.toContain('bg-[var(--color-surface-raised)]');
@@ -701,6 +711,13 @@ describe('KanbanTaskCard flat board appearance', () => {
     const toolbar = host.querySelector('[data-kanban-task-toolbar="true"]');
     expect(toolbar).not.toBeNull();
     expect(card?.contains(toolbar ?? null)).toBe(false);
+    expect(toolbar?.getAttribute('data-orientation')).toBe('vertical');
+    expect(toolbar?.className).toContain('flex-col');
+    const toolbarContent = toolbar?.parentElement;
+    expect(toolbarContent?.getAttribute('data-side')).toBe('left');
+    expect(toolbarContent?.getAttribute('data-align')).toBe('start');
+    expect(toolbarContent?.className).toContain('rounded-r-none');
+    expect(toolbarContent?.className).toContain('border-r-0');
     const metadataCommentBadge = card?.querySelector('[data-testid="unread-comments-badge"]');
     expect(metadataCommentBadge?.previousElementSibling?.textContent).toContain('#abcd1234');
     expect(getLastUnreadBadgeProps()).toMatchObject({
@@ -750,10 +767,11 @@ describe('KanbanTaskCard flat board appearance', () => {
   );
 
   it('keeps the raised standalone appearance when flat mode is not requested', async () => {
-    const { host, root } = await renderTaskCard();
+    const { host, root } = await renderTaskCard({ showSeparator: true });
 
     const card = host.querySelector<HTMLElement>('[data-task-id="task-1"]');
     expect(card?.className).not.toContain('kanban-task-card-flat');
+    expect(card?.dataset.taskSeparator).toBeUndefined();
     expect(card?.className).toContain('bg-[var(--color-surface-raised)]');
     expect(card?.className).toContain('border-[var(--color-border)]');
     expect(host.querySelector('h5')?.className).not.toContain('h-8');

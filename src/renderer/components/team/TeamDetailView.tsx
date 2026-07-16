@@ -3271,6 +3271,7 @@ export const TeamDetailView = memo(function TeamDetailView({
                 badge={filteredTasks.length}
                 defaultOpen
                 forceOpen={isKanbanSearchActive}
+                contentWrapperClassName="-mx-4 w-[calc(100%+2rem)]"
                 action={
                   <Button
                     variant="ghost"

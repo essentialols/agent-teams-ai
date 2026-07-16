@@ -117,6 +117,19 @@ export function shouldUndoLatestDecisionSnapshot(input: {
   );
 }
 
+export function shouldUndoRemovedNewFile(input: {
+  removedAt: number;
+  lastReviewActionAt: number;
+  lastEditorInteractionAt: number;
+  hasSnapshot: boolean;
+}): boolean {
+  return (
+    input.hasSnapshot &&
+    input.removedAt >= input.lastReviewActionAt &&
+    input.lastEditorInteractionAt <= input.removedAt
+  );
+}
+
 export function getReviewCloseBlockReason(input: {
   busy: boolean;
   draftCount: number;
@@ -175,6 +188,17 @@ export function restoreReviewDecisionRecordsForFile(
     if (decision) fileDecisions[alias] = decision;
   }
   return { hunkDecisions, fileDecisions };
+}
+
+export function restoreReviewDecisionRecordsForFiles(
+  files: readonly FileChangeSummary[],
+  current: ReviewDecisionRecords,
+  snapshot: ReviewDecisionRecords
+): ReviewDecisionRecords {
+  return files.reduce(
+    (restored, file) => restoreReviewDecisionRecordsForFile(file, restored, snapshot),
+    current
+  );
 }
 
 export function reconcileReviewDecisionRecordsAfterApply(
@@ -1293,10 +1317,29 @@ export const ChangeReviewDialog = ({
       setUndoInFlight(true);
       try {
         const failed: ReviewDiskUndoSnapshot[] = [];
+        const restoredFiles: FileChangeSummary[] = [];
         for (const snapshot of diskSnapshots) {
-          if (!(await restoreDiskSnapshot(snapshot))) failed.push(snapshot);
+          if (!(await restoreDiskSnapshot(snapshot))) {
+            failed.push(snapshot);
+            continue;
+          }
+          const file =
+            snapshot.file ??
+            activeChangeSet?.files.find(
+              (candidate) =>
+                normalizePathForComparison(candidate.filePath) ===
+                normalizePathForComparison(snapshot.filePath)
+            );
+          if (file) restoredFiles.push(file);
         }
         if (failed.length > 0) {
+          const state = useStore.getState();
+          const decisionSnapshot = state.reviewUndoStack.at(-1);
+          if (decisionSnapshot && restoredFiles.length > 0) {
+            useStore.setState(
+              restoreReviewDecisionRecordsForFiles(restoredFiles, state, decisionSnapshot)
+            );
+          }
           diskSnapshots.splice(0, diskSnapshots.length, ...failed);
           return;
         }
@@ -1746,11 +1789,18 @@ export const ChangeReviewDialog = ({
           lastHunkAt,
           lastFileActionAtRef.current
         );
-        const newFileWasLastAction = lastNewFileRemoveAtRef.current >= lastReviewActionAt;
+        const latestEditorInteractionAt = Object.values(lastEditorInteractionAtRef.current).reduce(
+          (max, value) => Math.max(max, value),
+          0
+        );
+        const newFileWasLastAction = shouldUndoRemovedNewFile({
+          removedAt: lastNewFileRemoveAtRef.current,
+          lastReviewActionAt,
+          lastEditorInteractionAt: latestEditorInteractionAt,
+          hasSnapshot: removedStack.length > 0,
+        });
         const isInEditor = !!document.activeElement?.closest('.cm-editor');
-        const lastViewConnected = !!lastFocusedEditorRef.current?.dom.isConnected;
-        const shouldPreferEditorUndo = isInEditor && lastViewConnected;
-        if (newFileWasLastAction && removedStack.length > 0 && !shouldPreferEditorUndo) {
+        if (newFileWasLastAction) {
           e.preventDefault();
           e.stopPropagation();
           const snap = removedStack[removedStack.length - 1];
@@ -1817,10 +1867,6 @@ export const ChangeReviewDialog = ({
           return;
         }
 
-        const latestEditorInteractionAt = Object.values(lastEditorInteractionAtRef.current).reduce(
-          (max, value) => Math.max(max, value),
-          0
-        );
         const bulkWasLastAction = shouldUndoLatestDecisionSnapshot({
           snapshotActionAt: lastBulkActionAtRef.current,
           lastHunkAt,

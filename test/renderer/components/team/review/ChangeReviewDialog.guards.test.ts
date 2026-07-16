@@ -9,7 +9,9 @@ import {
   reconcileReviewDecisionRecordsAfterApply,
   resolveReviewFileIsNew,
   restoreReviewDecisionRecordsForFile,
+  restoreReviewDecisionRecordsForFiles,
   shouldUndoLatestDecisionSnapshot,
+  shouldUndoRemovedNewFile,
 } from '../../../../../src/renderer/components/team/review/ChangeReviewDialog';
 
 function makeFile(filePath: string, changeKey?: string) {
@@ -162,6 +164,43 @@ describe('ChangeReviewDialog interaction guards', () => {
     expect(result.fileDecisions).toEqual({ [first.filePath]: 'rejected' });
   });
 
+  it('restores decisions only for files whose bulk disk Undo succeeded', () => {
+    const first = makeFile('/repo/first.ts');
+    const second = makeFile('/repo/second.ts');
+    const restored = restoreReviewDecisionRecordsForFiles(
+      [first],
+      {
+        hunkDecisions: {
+          [`${first.filePath}:0`]: 'rejected',
+          [`${second.filePath}:0`]: 'rejected',
+        },
+        fileDecisions: {
+          [first.filePath]: 'rejected',
+          [second.filePath]: 'rejected',
+        },
+      },
+      {
+        hunkDecisions: {
+          [`${first.filePath}:0`]: 'accepted',
+          [`${second.filePath}:0`]: 'accepted',
+        },
+        fileDecisions: {
+          [first.filePath]: 'accepted',
+          [second.filePath]: 'accepted',
+        },
+      }
+    );
+
+    expect(restored.hunkDecisions).toEqual({
+      [`${first.filePath}:0`]: 'accepted',
+      [`${second.filePath}:0`]: 'rejected',
+    });
+    expect(restored.fileDecisions).toEqual({
+      [first.filePath]: 'accepted',
+      [second.filePath]: 'rejected',
+    });
+  });
+
   it('keeps file Accept timestamps identical so Cmd+Z chooses persisted decision Undo', () => {
     const action = buildFileAcceptActionTime(1234);
     expect(action).toEqual({ bulkAt: 1234, fileAt: 1234 });
@@ -173,5 +212,32 @@ describe('ChangeReviewDialog interaction guards', () => {
         lastEditorInteractionAt: 1200,
       })
     ).toBe(true);
+  });
+
+  it('undoes a removed new file unless a newer editor interaction happened', () => {
+    expect(
+      shouldUndoRemovedNewFile({
+        removedAt: 200,
+        lastReviewActionAt: 200,
+        lastEditorInteractionAt: 100,
+        hasSnapshot: true,
+      })
+    ).toBe(true);
+    expect(
+      shouldUndoRemovedNewFile({
+        removedAt: 200,
+        lastReviewActionAt: 200,
+        lastEditorInteractionAt: 201,
+        hasSnapshot: true,
+      })
+    ).toBe(false);
+    expect(
+      shouldUndoRemovedNewFile({
+        removedAt: 200,
+        lastReviewActionAt: 200,
+        lastEditorInteractionAt: 100,
+        hasSnapshot: false,
+      })
+    ).toBe(false);
   });
 });

@@ -67,11 +67,13 @@ import {
 } from "./codex-goal-mcp-project-scope";
 import {
   assertSafeGitRefName,
-  resolveCanonicalRemoteWorktreeSource,
   stagedPatchSha256ForRevision,
 } from "./codex-goal-mcp-project-git";
 import { publishImmutableTextArtifact } from "./local-immutable-text-artifact";
-import { resolveProjectSourceRevision } from "./application/project-control/codex-goal-project-source-revision";
+import {
+  resolveProjectSourceReference,
+  resolveProjectSourceRevision,
+} from "./application/project-control/codex-goal-project-source-revision";
 import { assertProjectRefillInputPatchSource } from "./application/project-control/codex-goal-project-input-patch-policy";
 import {
   matchesProjectControlPrefix,
@@ -311,25 +313,26 @@ export async function projectControlRefillWorkerView(
           controller.scope,
         )
       : undefined;
-  const canonicalSource = canonicalSourceWorkspacePath
-    ? resolveCanonicalRemoteWorktreeSource({
-        requestedRef: baseBranch,
-        scope: controller.scope,
-      })
-    : undefined;
-  const worktreeAccessInput = canonicalSource
+  const sourceReference = resolveProjectSourceReference({
+    requestedRef: canonicalSourceWorkspacePath
+      ? baseBranch
+      : (sourceRef ?? baseBranch),
+    scope: controller.scope,
+    remoteVerificationRequired:
+      canonicalSourceWorkspacePath !== undefined ||
+      expectedSourceCommit !== undefined,
+  });
+  const worktreeAccessInput = sourceReference.remoteVerified
     ? {
         ...requestedWorktreeAccessInput,
-        sourceRef: canonicalSource.worktreeSourceRef,
+        sourceRef: sourceReference.worktreeSourceRef,
       }
     : requestedWorktreeAccessInput;
   const resolvedSource =
     await resolverBroker.resolveWorktreeRevision(worktreeAccessInput);
   const sourceRevision = await resolveProjectSourceRevision({
     resolvedSource,
-    remoteTrackingRef: canonicalSource
-      ? canonicalSource.remoteTrackingRef
-      : (sourceRef ?? baseBranch),
+    remoteTrackingRef: sourceReference.remoteTrackingRef,
     ...(expectedSourceCommit ? { expectedSourceCommit } : {}),
     requireRemoteHead: canonicalSourceWorkspacePath !== undefined,
   });
@@ -996,25 +999,26 @@ async function projectControlRefillWorkerBoundedView(
       ...(sourceRef ? { sourceRef } : {}),
       ...(newBranch ? { newBranch } : {}),
     };
-    const canonicalSource = canonicalSourceWorkspacePath
-      ? resolveCanonicalRemoteWorktreeSource({
-          requestedRef: baseBranch,
-          scope: controller.scope,
-        })
-      : undefined;
-    const worktreeAccessInput = canonicalSource
+    const sourceReference = resolveProjectSourceReference({
+      requestedRef: canonicalSourceWorkspacePath
+        ? baseBranch
+        : (sourceRef ?? baseBranch),
+      scope: controller.scope,
+      remoteVerificationRequired:
+        canonicalSourceWorkspacePath !== undefined ||
+        expectedSourceCommit !== undefined,
+    });
+    const worktreeAccessInput = sourceReference.remoteVerified
       ? {
           ...requestedWorktreeAccessInput,
-          sourceRef: canonicalSource.worktreeSourceRef,
+          sourceRef: sourceReference.worktreeSourceRef,
         }
       : requestedWorktreeAccessInput;
     const resolvedSource =
       await resolverBroker.resolveWorktreeRevision(worktreeAccessInput);
     const sourceRevision = await resolveProjectSourceRevision({
       resolvedSource,
-      remoteTrackingRef: canonicalSource
-        ? canonicalSource.remoteTrackingRef
-        : (sourceRef ?? baseBranch),
+      remoteTrackingRef: sourceReference.remoteTrackingRef,
       ...(expectedSourceCommit ? { expectedSourceCommit } : {}),
       requireRemoteHead: canonicalSourceWorkspacePath !== undefined,
     });

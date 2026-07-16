@@ -14,6 +14,7 @@ import {
   resolveCanonicalRemoteHead,
   resolveCanonicalRemoteWorktreeSource,
 } from "../application/project-control/codex-goal-project-git";
+import { resolveProjectSourceReference } from "../application/project-control/codex-goal-project-source-revision";
 import {
   readVerifiableProducerHandoff,
   readVerifiedProducerHandoff,
@@ -311,6 +312,22 @@ describe("project verifier handoff", () => {
       requestedRef: "release/private",
       scope,
     })).toThrow("project_control_denied:branch_denied");
+  });
+
+  it("normalizes a local slash branch before pinned remote verification", () => {
+    expect(resolveProjectSourceReference({
+      requestedRef: "refactor/hosted-web-feature-boundaries",
+      scope: {
+        projectId: "project",
+        allowedBranches: ["refactor/hosted-web-*"],
+        allowedGitRemotes: ["origin"],
+      },
+      remoteVerificationRequired: true,
+    })).toEqual({
+      remoteTrackingRef: "origin/refactor/hosted-web-feature-boundaries",
+      worktreeSourceRef: "refactor/hosted-web-feature-boundaries",
+      remoteVerified: true,
+    });
   });
 
   it("materializes a pinned remote commit without mutating local tracking refs", async () => {

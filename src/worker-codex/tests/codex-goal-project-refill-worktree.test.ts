@@ -151,7 +151,7 @@ describe("project refill worktree identity", () => {
           controllerJobId: "pinned-controller",
           sourceWorkspacePath: fixture.sourceWorkspacePath,
           path: pinnedWorktree,
-          baseBranch: "origin/main",
+          baseBranch: "main",
           expectedSourceCommit,
           confirmCreateWorktree: true,
         },

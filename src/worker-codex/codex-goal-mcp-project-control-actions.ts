@@ -53,7 +53,10 @@ import {
   assertSafeGitRefName,
   assertSafeGitRemoteName,
 } from "./codex-goal-mcp-project-git";
-import { resolveProjectSourceRevision } from "./application/project-control/codex-goal-project-source-revision";
+import {
+  resolveProjectSourceReference,
+  resolveProjectSourceRevision,
+} from "./application/project-control/codex-goal-project-source-revision";
 import {
   writeCodexGoalStopEvent,
   writeCodexGoalStoppedProgress,
@@ -596,6 +599,13 @@ export async function projectControlCreateWorktreeView(
     controller.scope,
   );
   const expectedRealPath = await projectControlRealPathIfExists(path);
+  const sourceReference = effectiveSourceRef
+    ? resolveProjectSourceReference({
+        requestedRef: effectiveSourceRef,
+        scope: controller.scope,
+        remoteVerificationRequired: expectedSourceCommit !== undefined,
+      })
+    : undefined;
   const worktreeAccessInput = {
     sourceWorkspacePath,
     ...(realSourceWorkspacePath ? { realSourceWorkspacePath } : {}),
@@ -603,7 +613,11 @@ export async function projectControlCreateWorktreeView(
     ...(realPath ? { realPath } : {}),
     ...(expectedRealPath ? { expectedRealPath } : {}),
     ...(baseBranch ? { baseBranch } : {}),
-    ...(sourceRef ? { sourceRef } : {}),
+    ...(sourceReference?.remoteVerified
+      ? { sourceRef: sourceReference.worktreeSourceRef }
+      : sourceRef
+        ? { sourceRef }
+        : {}),
     ...(newBranch ? { newBranch } : {}),
     ...(workerRole ? { workerRole } : {}),
   };
@@ -637,7 +651,7 @@ export async function projectControlCreateWorktreeView(
   assertSafeGitCommitSha(resolvedSource.revision);
   const sourceRevision = await resolveProjectSourceRevision({
     resolvedSource,
-    remoteTrackingRef: effectiveSourceRef ?? "HEAD",
+    remoteTrackingRef: sourceReference?.remoteTrackingRef ?? "HEAD",
     ...(expectedSourceCommit ? { expectedSourceCommit } : {}),
   });
   const createWorktreeInput: CodexGoalProjectCreateWorktreeInput = {

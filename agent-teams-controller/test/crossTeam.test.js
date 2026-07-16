@@ -227,6 +227,56 @@ describe('crossTeam module', () => {
       expect(sentMessages).toHaveLength(1);
     });
 
+    it('does not treat a member-targeted outbox entry as a duplicate of a lead delivery', () => {
+      const claudeDir = makeClaudeDir({
+        'team-a': {
+          name: 'team-a',
+          members: [{ name: 'team-lead', agentType: 'team-lead' }],
+        },
+        'team-b': {
+          name: 'team-b',
+          members: [{ name: 'team-lead', agentType: 'team-lead' }],
+        },
+      });
+
+      // Pre-seed the shared outbox with a member-aware (TypeScript-transport)
+      // entry addressed to a specific non-lead member, same text/summary.
+      const outboxPath = path.join(claudeDir, 'teams', 'team-a', 'sent-cross-team.json');
+      fs.writeFileSync(
+        outboxPath,
+        JSON.stringify(
+          [
+            {
+              messageId: 'ts-member-entry',
+              fromTeam: 'team-a',
+              fromMember: 'lead',
+              toTeam: 'team-b',
+              toMember: 'alice',
+              text: 'Please review the API contract',
+              summary: 'Review request',
+              timestamp: new Date().toISOString(),
+            },
+          ],
+          null,
+          2
+        )
+      );
+
+      const controller = createController({ teamName: 'team-a', claudeDir });
+      const result = controller.crossTeam.sendCrossTeamMessage({
+        toTeam: 'team-b',
+        fromMember: 'lead',
+        text: 'Please review the API contract',
+        summary: 'Review request',
+      });
+
+      // Lead delivery must NOT be suppressed by the member-targeted entry.
+      expect(result.deduplicated).toBeUndefined();
+      const inboxPath = path.join(claudeDir, 'teams', 'team-b', 'inboxes', 'team-lead.json');
+      const inbox = JSON.parse(fs.readFileSync(inboxPath, 'utf8'));
+      expect(inbox).toHaveLength(1);
+    });
+
     it('allows resending after dedupe window expires', () => {
       const claudeDir = makeClaudeDir({
         'team-a': {

@@ -2016,7 +2016,10 @@ describe('TeamModelSelector disabled Codex models', () => {
       await Promise.resolve();
     });
 
-    expect(storeState.fetchCliProviderStatus).toHaveBeenCalledWith('anthropic', { silent: false });
+    expect(storeState.fetchCliProviderStatus).toHaveBeenCalledWith('anthropic', {
+      silent: false,
+      checkReason: 'launch_preflight',
+    });
     expect(onValueChange).not.toHaveBeenCalledWith('');
     expect(host.textContent).not.toContain('Mythos 5');
 

@@ -43,7 +43,9 @@
 </tr>
 <tr>
 <td width="50%">
-  <img src="docs/screenshots/7.png" alt="Code review with hunk-level controls" width="100%" />
+  <!-- <img src="docs/screenshots/7.png" alt="Code review with hunk-level controls" width="100%" /> -->
+  <img width="1312" height="824" alt="image" src="https://github.com/user-attachments/assets/74f4c6fe-9a0e-4631-a283-b894ed9a0263" />
+
 </td>
 <td width="50%">
   <!-- <img src="docs/screenshots/4.png" alt="Create an AI team with roles and models" width="100%" /> -->

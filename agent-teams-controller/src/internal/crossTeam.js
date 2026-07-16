@@ -134,7 +134,20 @@ function buildCrossTeamDedupeKey(fromTeam, fromMember, toTeam, text, summary, ta
   ].join('||');
 }
 
-function findRecentDuplicate(outboxList, dedupeKey) {
+function isDuplicateCandidateForLead(entry, leadName) {
+  // The controller only ever delivers to the target team lead, so an outbox
+  // entry addressed to a specific non-lead member (written by the member-aware
+  // TypeScript transport, which records `toMember`) is NOT a duplicate of a
+  // lead-bound delivery even when its member-blind dedup key matches. Skipping
+  // it can only cause an extra (idempotent-at-worst) delivery, never a dropped
+  // one, so this errs on the safe side of the silent-loss guardrail.
+  const toMember = typeof entry?.toMember === 'string' ? entry.toMember.trim() : '';
+  if (!toMember) return true;
+  if (!leadName) return true;
+  return normalizeForDedupe(toMember) === normalizeForDedupe(leadName);
+}
+
+function findRecentDuplicate(outboxList, dedupeKey, leadName) {
   if (!Array.isArray(outboxList) || !dedupeKey) return null;
   const cutoff = Date.now() - CROSS_TEAM_DEDUPE_WINDOW_MS;
   for (let i = outboxList.length - 1; i >= 0; i -= 1) {
@@ -142,6 +155,9 @@ function findRecentDuplicate(outboxList, dedupeKey) {
     const ts = Date.parse(entry && entry.timestamp ? entry.timestamp : '');
     if (!Number.isFinite(ts) || ts < cutoff) {
       break;
+    }
+    if (!isDuplicateCandidateForLead(entry, leadName)) {
+      continue;
     }
     if (getCrossTeamMessageDedupeKey(entry) === dedupeKey) {
       return entry;
@@ -219,7 +235,7 @@ function sendCrossTeamMessage(context, flags) {
   withFileLockSync(outboxPath, () => {
     const outbox = readJson(outboxPath, []);
     const outList = Array.isArray(outbox) ? outbox : [];
-    duplicate = findRecentDuplicate(outList, dedupeKey);
+    duplicate = findRecentDuplicate(outList, dedupeKey, leadName);
     if (duplicate) {
       return;
     }

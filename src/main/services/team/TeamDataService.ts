@@ -115,8 +115,13 @@ const MEMBER_RUNTIME_ADVISORY_SNAPSHOT_BUDGET_MS = 250;
 const GLOBAL_TASK_TEAM_CONFIG_CONCURRENCY = 12;
 const TEAM_NOTIFICATION_CONTEXT_CACHE_MAX_AGE_MS = 5_000;
 const MAX_MESSAGES_PAGE_LIVE_OVERLAY_PAYLOAD = 200;
+const SAFE_DIAGNOSTIC_IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const MIXED_TEAM_LIVE_MUTATION_BLOCK_MESSAGE =
   'Live roster mutation on a running mixed team is not supported in V1. Stop the team, edit the roster, then relaunch.';
+
+function toSafeDiagnosticIdentifier(value: string): string {
+  return SAFE_DIAGNOSTIC_IDENTIFIER_PATTERN.test(value) ? value : 'redacted';
+}
 
 type RuntimeAgentTeamsController = Omit<
   AgentTeamsController,
@@ -2275,16 +2280,24 @@ export class TeamDataService {
     }
     this.invalidateGlobalTaskProjectionCache();
 
-    // Controller's maybeNotifyAssignedOwner skips the lead (owner === lead).
-    // For user-created tasks with startImmediately, ensure the lead also gets notified.
-    if (shouldStart && createdInAttempt) {
+    // Controller's maybeNotifyAssignedOwner skips the lead (owner === lead). Base notification on
+    // the resolved task so reconciled/replayed durable commands repair a missing notification.
+    if (task.status === 'in_progress' && task.owner) {
       try {
         const leadName = await this.resolveLeadName(teamName);
-        if (this.isLeadOwner(task.owner!, leadName)) {
-          await this.sendUserTaskStartNotification(teamName, task);
+        if (this.isLeadOwner(task.owner, leadName)) {
+          if (request.command) {
+            await this.sendDurableUserTaskStartNotification(teamName, task, leadName);
+          } else {
+            await this.sendUserTaskStartNotification(teamName, task);
+          }
         }
       } catch {
-        /* best-effort */
+        if (request.command) {
+          logger.warn(
+            `[TeamDataService] category=post_commit_notification code=task_start_notification_failed team=${toSafeDiagnosticIdentifier(teamName)} task=${toSafeDiagnosticIdentifier(task.id)}`
+          );
+        }
       }
     }
 
@@ -2384,36 +2397,52 @@ export class TeamDataService {
   private async sendUserTaskStartNotification(teamName: string, task: TeamTask): Promise<void> {
     if (!task.owner) return;
     try {
-      const parts = [`**start working on task now** ${this.getTaskLabel(task)} "${task.subject}"`];
-      if (task.description?.trim()) {
-        parts.push(`\nDetails:\n${task.description.trim()}`);
-      }
-      if (task.prompt?.trim()) {
-        parts.push(`\nInstructions:\n${task.prompt.trim()}`);
-      }
-      parts.push(
-        '',
-        wrapAgentBlock(
-          [
-            `Begin work on this task immediately. Keep it moving until it is completed or clearly blocked. Do not leave it idle.`,
-            `To fetch the full task context (description, comments, attachments) use:`,
-            `task_get { teamName: "${teamName}", taskId: "${task.id}" }`,
-            `When done, update task status:`,
-            `task_complete { teamName: "${teamName}", taskId: "${task.id}" }`,
-          ].join('\n')
-        )
-      );
-      await this.sendMessage(teamName, {
-        member: task.owner,
-        from: 'user',
-        text: parts.join('\n'),
-        taskRefs: task.descriptionTaskRefs,
-        summary: `Start working on ${this.getTaskLabel(task)}`,
-        source: 'system_notification',
-      });
+      await this.sendMessage(teamName, this.buildUserTaskStartNotification(teamName, task));
     } catch {
       // Best-effort notification
     }
+  }
+
+  private async sendDurableUserTaskStartNotification(
+    teamName: string,
+    task: TeamTask,
+    leadName: string
+  ): Promise<void> {
+    await this.sendRuntimeRecipientMessage(teamName, {
+      ...this.buildUserTaskStartNotification(teamName, task),
+      member: leadName,
+      messageId: `task-start:${teamName}:${task.id}`,
+    });
+  }
+
+  private buildUserTaskStartNotification(teamName: string, task: TeamTask): SendMessageRequest {
+    const parts = [`**start working on task now** ${this.getTaskLabel(task)} "${task.subject}"`];
+    if (task.description?.trim()) {
+      parts.push(`\nDetails:\n${task.description.trim()}`);
+    }
+    if (task.prompt?.trim()) {
+      parts.push(`\nInstructions:\n${task.prompt.trim()}`);
+    }
+    parts.push(
+      '',
+      wrapAgentBlock(
+        [
+          `Begin work on this task immediately. Keep it moving until it is completed or clearly blocked. Do not leave it idle.`,
+          `To fetch the full task context (description, comments, attachments) use:`,
+          `task_get { teamName: "${teamName}", taskId: "${task.id}" }`,
+          `When done, update task status:`,
+          `task_complete { teamName: "${teamName}", taskId: "${task.id}" }`,
+        ].join('\n')
+      )
+    );
+    return {
+      member: task.owner!,
+      from: 'user',
+      text: parts.join('\n'),
+      taskRefs: task.descriptionTaskRefs,
+      summary: `Start working on ${this.getTaskLabel(task)}`,
+      source: 'system_notification',
+    };
   }
 
   async updateTaskStatus(

@@ -1,6 +1,9 @@
 export { KeyedMutex } from '../core/application/KeyedMutex';
 export type { MemberWorkSyncStorageGateway } from '../core/application/ports';
-export { archiveFileWithGenerations } from './adapters/output/TeamScopedLegacyJsonSource';
+export {
+  archiveFileWithGenerations,
+  listPreSqliteArchiveGenerations,
+} from './adapters/output/TeamScopedLegacyJsonSource';
 export { BackendSelectingTaskCommentNotificationJournalStore } from './composition/BackendSelectingTaskCommentNotificationJournalStore';
 export { BackendSelectingTaskStallJournalStore } from './composition/BackendSelectingTaskStallJournalStore';
 export type {

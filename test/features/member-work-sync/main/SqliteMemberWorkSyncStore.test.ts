@@ -516,7 +516,10 @@ describe('SqliteMemberWorkSyncStore', () => {
     ): Promise<void> {
       await new MemberWorkSyncSqliteImporter({
         gateway,
-        jsonStore: { readSnapshotForImport: async () => snapshot },
+        jsonStore: {
+          readSnapshotForImport: async () => snapshot,
+          readArchivedSnapshotForImport: async () => null,
+        },
       }).ensureImported('team-a');
     }
 

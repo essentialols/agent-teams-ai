@@ -1,9 +1,3 @@
-import * as fs from 'fs/promises';
-import * as os from 'os';
-import * as path from 'path';
-import Database from 'better-sqlite3-node';
-import { afterEach, describe, expect, it } from 'vitest';
-
 import { COMMENT_JOURNAL_STORE_ID } from '@features/internal-storage/contracts/internalStorageContracts';
 import { ImportLegacyJsonStoreUseCase } from '@features/internal-storage/core/application/ImportLegacyJsonStoreUseCase';
 import { KeyedMutex } from '@features/internal-storage/core/application/KeyedMutex';
@@ -11,9 +5,16 @@ import { areCommentJournalRecordSetsEquivalent } from '@features/internal-storag
 import { CommentJournalLegacyJsonSource } from '@features/internal-storage/main/adapters/output/CommentJournalLegacyJsonSource';
 import { SqliteTaskCommentNotificationJournalStore } from '@features/internal-storage/main/adapters/output/SqliteTaskCommentNotificationJournalStore';
 import { InternalStorageWorkerCore } from '@features/internal-storage/main/infrastructure/worker/InternalStorageWorkerCore';
+import Database from 'better-sqlite3-node';
+import * as fs from 'fs/promises';
+import * as os from 'os';
+import * as path from 'path';
+import { afterEach, describe, expect, it } from 'vitest';
+
 import { getCommentNotificationJournalPath } from '../../../src/main/services/team/JsonTaskCommentNotificationJournalStore';
 import { TeamTaskCommentNotificationJournal } from '../../../src/main/services/team/TeamTaskCommentNotificationJournal';
 import { setClaudeBasePathOverride } from '../../../src/main/utils/pathDecoder';
+
 import { InProcessGateway } from './helpers/InProcessGateway';
 
 import type { TaskCommentNotificationJournalEntry } from '../../../src/main/services/team/TaskCommentNotificationJournalStore';
@@ -61,9 +62,11 @@ describe('SqliteTaskCommentNotificationJournalStore', () => {
       source: new CommentJournalLegacyJsonSource(),
       loadExisting: (teamName) => gateway.loadCommentJournalEntries(teamName),
       replaceAll: (teamName, records) => gateway.replaceCommentJournalEntries(teamName, records),
+      recordIdentity: (record) => record.key,
       areEquivalent: areCommentJournalRecordSetsEquivalent,
       recordImport: (teamName, entryCount) =>
         gateway.recordStoreImport(COMMENT_JOURNAL_STORE_ID, teamName, entryCount),
+      hasRecordedImport: (teamName) => gateway.hasStoreImport(COMMENT_JOURNAL_STORE_ID, teamName),
     });
     return new SqliteTaskCommentNotificationJournalStore({
       gateway,
@@ -123,6 +126,42 @@ describe('SqliteTaskCommentNotificationJournalStore', () => {
     await expect(fs.access(`${journalPath}.pre-sqlite`)).resolves.toBeUndefined();
   });
 
+  it('recovers cumulative archive generations and skips replay after restoring the marker', async () => {
+    const { store, gateway } = await makeStore();
+    const journalPath = getCommentNotificationJournalPath('demo');
+    const first = makeEntry();
+    const changed = makeEntry({
+      key: 'task-b:comment-1',
+      taskId: 'task-b',
+      state: 'pending_send',
+    });
+    const changedLater = { ...changed, state: 'sent' as const, sentAt: '2026-07-07T10:02:00.000Z' };
+    const addedLater = makeEntry({
+      key: 'task-c:comment-1',
+      taskId: 'task-c',
+      state: 'pending_send',
+    });
+    await fs.writeFile(`${journalPath}.pre-sqlite`, JSON.stringify([first, changed]));
+    await fs.writeFile(`${journalPath}.pre-sqlite-2`, JSON.stringify([changedLater, addedLater]));
+
+    expect(await store.read('demo')).toEqual([first, changedLater, addedLater]);
+
+    await store.withEntries('demo', (entries) => {
+      const entry = entries.find((candidate) => candidate.key === addedLater.key);
+      if (entry) {
+        entry.state = 'sent';
+        entry.sentAt = '2026-07-07T10:03:00.000Z';
+      }
+      return { result: undefined, changed: true };
+    });
+    const freshStore = makeStoreOnGateway(gateway);
+    expect(await freshStore.read('demo')).toEqual([
+      first,
+      changedLater,
+      { ...addedLater, state: 'sent', sentAt: '2026-07-07T10:03:00.000Z' },
+    ]);
+  });
+
   it('supports async mutators and persists in-place mutations', async () => {
     const { store } = await makeStore();
     await store.ensureInitialized('demo');
@@ -157,7 +196,7 @@ describe('SqliteTaskCommentNotificationJournalStore', () => {
 
     // New session: a fresh importer re-imports because the file exists.
     const freshStore = makeStoreOnGateway(gateway);
-    expect(await freshStore.read('demo')).toEqual([downgradeEntry]);
+    expect(await freshStore.read('demo')).toEqual([makeEntry(), downgradeEntry]);
 
     const teamDir = path.dirname(journalPath);
     const archives = (await fs.readdir(teamDir)).filter((name) => name.includes('.pre-sqlite'));

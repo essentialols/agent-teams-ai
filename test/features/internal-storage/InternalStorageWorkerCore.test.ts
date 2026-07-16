@@ -1,14 +1,12 @@
+import { INTERNAL_STORAGE_SCHEMA_VERSION } from '@features/internal-storage/main/infrastructure/worker/internalStorageMigrations';
+import * as schema from '@features/internal-storage/main/infrastructure/worker/internalStorageSchema';
+import { InternalStorageWorkerCore } from '@features/internal-storage/main/infrastructure/worker/InternalStorageWorkerCore';
+import Database from 'better-sqlite3-node';
+import { getTableColumns, getTableName } from 'drizzle-orm';
 import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
-import Database from 'better-sqlite3-node';
 import { afterEach, describe, expect, it } from 'vitest';
-
-import { getTableColumns, getTableName } from 'drizzle-orm';
-
-import { InternalStorageWorkerCore } from '@features/internal-storage/main/infrastructure/worker/InternalStorageWorkerCore';
-import { INTERNAL_STORAGE_SCHEMA_VERSION } from '@features/internal-storage/main/infrastructure/worker/internalStorageMigrations';
-import * as schema from '@features/internal-storage/main/infrastructure/worker/internalStorageSchema';
 
 import type {
   InternalStorageBackendInfo,
@@ -255,6 +253,12 @@ describe('InternalStorageWorkerCore', () => {
     const dbPath = await makeTmpDbPath();
     const core = track(makeCore(dbPath));
 
+    expect(
+      core.handle('storeImports.has', {
+        storeId: 'stall-monitor-journal',
+        teamName: 'demo',
+      })
+    ).toBe(false);
     core.handle('storeImports.record', {
       storeId: 'stall-monitor-journal',
       teamName: 'demo',
@@ -266,8 +270,18 @@ describe('InternalStorageWorkerCore', () => {
       entryCount: 5,
     });
 
-    // No throw on the duplicate key is the contract; the row is an audit trail.
-    expect(core.handle('ping', {})).toBeTruthy();
+    expect(
+      core.handle('storeImports.has', {
+        storeId: 'stall-monitor-journal',
+        teamName: 'demo',
+      })
+    ).toBe(true);
+    expect(
+      core.handle('storeImports.has', {
+        storeId: 'comment-notification-journal',
+        teamName: 'demo',
+      })
+    ).toBe(false);
   });
 
   it('rejects unknown ops', async () => {

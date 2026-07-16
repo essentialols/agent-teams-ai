@@ -171,6 +171,10 @@ export class InternalStorageWorkerClient
     await this.call('storeImports.record', { storeId, teamName, entryCount });
   }
 
+  async hasStoreImport(storeId: string, teamName: string): Promise<boolean> {
+    return (await this.call('storeImports.has', { storeId, teamName })) === true;
+  }
+
   async statusRead(
     teamName: string,
     memberKey: string

@@ -1,10 +1,16 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, type Mock, vi } from 'vitest';
 
-import { answerOpenCodeRuntimePermission } from '../TeamProvisioningOpenCodeRuntimePermissionAnswerBoundary';
+import {
+  answerOpenCodeRuntimePermission,
+  type TeamProvisioningOpenCodeRuntimePermissionAnswerBoundaryPorts,
+} from '../TeamProvisioningOpenCodeRuntimePermissionAnswerBoundary';
+
+type AnswerRuntimeToolApproval =
+  TeamProvisioningOpenCodeRuntimePermissionAnswerBoundaryPorts['answerRuntimeToolApproval'];
 
 describe('TeamProvisioningOpenCodeRuntimePermissionAnswerBoundary', () => {
   it('routes runtime-control permission answers through the existing runtime approval answer path', async () => {
-    const answerRuntimeToolApproval = vi.fn(async () => undefined);
+    const answerRuntimeToolApproval = vi.fn<AnswerRuntimeToolApproval>(async () => undefined);
 
     await expect(
       answerOpenCodeRuntimePermission(
@@ -14,7 +20,7 @@ describe('TeamProvisioningOpenCodeRuntimePermissionAnswerBoundary', () => {
           laneId: 'lane-1',
           cwd: '/repo',
           memberName: 'Builder',
-          requestId: 'opencode:run-1:provider-request-1',
+          requestId: 'provider-request-1',
           decision: 'reject',
           expectedMembers: [
             {
@@ -85,81 +91,60 @@ describe('TeamProvisioningOpenCodeRuntimePermissionAnswerBoundary', () => {
     );
   });
 
-  it('preserves an opaque provider request id with a different run-like segment', async () => {
-    const answerRuntimeToolApproval = vi.fn(async () => undefined);
+  it('does not reinterpret a normalized provider id that resembles an app request id', async () => {
+    const answerRuntimeToolApproval = vi.fn<AnswerRuntimeToolApproval>(async () => undefined);
 
     await answerOpenCodeRuntimePermission(
-      runtimePermissionPayload('opencode:run-previous:provider-request-1'),
+      runtimePermissionPayload('opencode:run-1:provider-request-1'),
       runtimePermissionPorts(answerRuntimeToolApproval)
     );
 
-    expectNormalizedRequestIds(
-      answerRuntimeToolApproval,
-      'opencode:run-previous:provider-request-1',
-      'opencode:run-1:opencode:run-previous:provider-request-1'
-    );
-  });
-
-  it('removes only the outer request prefix and preserves opaque provider content', async () => {
-    const answerRuntimeToolApproval = vi.fn(async () => undefined);
-
-    await answerOpenCodeRuntimePermission(
-      runtimePermissionPayload('opencode:run1:opencode:foo', 'run1'),
-      runtimePermissionPorts(answerRuntimeToolApproval)
-    );
-
-    expectNormalizedRequestIds(
-      answerRuntimeToolApproval,
-      'opencode:foo',
-      'opencode:run1:opencode:foo'
-    );
-  });
-
-  it('normalizes at most one outer request prefix', async () => {
-    const answerRuntimeToolApproval = vi.fn(async () => undefined);
-
-    await answerOpenCodeRuntimePermission(
-      runtimePermissionPayload('opencode:run-1:opencode:run-1:provider-request-1'),
-      runtimePermissionPorts(answerRuntimeToolApproval)
-    );
-
-    expectNormalizedRequestIds(
+    expectRequestIds(
       answerRuntimeToolApproval,
       'opencode:run-1:provider-request-1',
       'opencode:run-1:opencode:run-1:provider-request-1'
     );
   });
 
-  it('keeps normalization idempotent when the normalized app id is processed again', async () => {
-    const answerRuntimeToolApproval = vi.fn(async () => undefined);
-    const ports = runtimePermissionPorts(answerRuntimeToolApproval);
+  it('preserves an opaque provider request id with a different run-like segment', async () => {
+    const answerRuntimeToolApproval = vi.fn<AnswerRuntimeToolApproval>(async () => undefined);
 
     await answerOpenCodeRuntimePermission(
       runtimePermissionPayload('opencode:run-previous:provider-request-1'),
-      ports
-    );
-    await answerOpenCodeRuntimePermission(
-      runtimePermissionPayload('opencode:run-1:provider-request-1'),
-      ports
+      runtimePermissionPorts(answerRuntimeToolApproval)
     );
 
-    expect(answerRuntimeToolApproval).toHaveBeenCalledTimes(2);
-    expectNormalizedRequestIds(
+    expectRequestIds(
       answerRuntimeToolApproval,
-      'provider-request-1',
-      'opencode:run-1:provider-request-1'
+      'opencode:run-previous:provider-request-1',
+      'opencode:run-1:opencode:run-previous:provider-request-1'
+    );
+  });
+
+  it('preserves repeated app-like segments in an opaque provider request id', async () => {
+    const answerRuntimeToolApproval = vi.fn<AnswerRuntimeToolApproval>(async () => undefined);
+
+    await answerOpenCodeRuntimePermission(
+      runtimePermissionPayload('opencode:run-1:opencode:run-1:provider-request-1'),
+      runtimePermissionPorts(answerRuntimeToolApproval)
+    );
+
+    expectRequestIds(
+      answerRuntimeToolApproval,
+      'opencode:run-1:opencode:run-1:provider-request-1',
+      'opencode:run-1:opencode:run-1:opencode:run-1:provider-request-1'
     );
   });
 
   it('preserves an already-bare provider request id', async () => {
-    const answerRuntimeToolApproval = vi.fn(async () => undefined);
+    const answerRuntimeToolApproval = vi.fn<AnswerRuntimeToolApproval>(async () => undefined);
 
     await answerOpenCodeRuntimePermission(
       runtimePermissionPayload('provider-request-1'),
       runtimePermissionPorts(answerRuntimeToolApproval)
     );
 
-    expectNormalizedRequestIds(
+    expectRequestIds(
       answerRuntimeToolApproval,
       'provider-request-1',
       'opencode:run-1:provider-request-1'
@@ -167,22 +152,18 @@ describe('TeamProvisioningOpenCodeRuntimePermissionAnswerBoundary', () => {
   });
 
   it('preserves an opaque provider request id that starts with opencode', async () => {
-    const answerRuntimeToolApproval = vi.fn(async () => undefined);
+    const answerRuntimeToolApproval = vi.fn<AnswerRuntimeToolApproval>(async () => undefined);
 
     await answerOpenCodeRuntimePermission(
       runtimePermissionPayload('opencode:foo'),
       runtimePermissionPorts(answerRuntimeToolApproval)
     );
 
-    expectNormalizedRequestIds(
-      answerRuntimeToolApproval,
-      'opencode:foo',
-      'opencode:run-1:opencode:foo'
-    );
+    expectRequestIds(answerRuntimeToolApproval, 'opencode:foo', 'opencode:run-1:opencode:foo');
   });
 
   it.each([null, 42, {}, []])('rejects malformed request id value %j', async (requestId) => {
-    const answerRuntimeToolApproval = vi.fn(async () => undefined);
+    const answerRuntimeToolApproval = vi.fn<AnswerRuntimeToolApproval>(async () => undefined);
 
     await expect(
       answerOpenCodeRuntimePermission(
@@ -193,27 +174,22 @@ describe('TeamProvisioningOpenCodeRuntimePermissionAnswerBoundary', () => {
     expect(answerRuntimeToolApproval).not.toHaveBeenCalled();
   });
 
-  it.each([
-    'opencode:',
-    'opencode::provider-request-1',
-    'opencode: :provider-request-1',
-    'opencode:run-previous:',
-    'opencode:run-1:',
-    'opencode:run-previous:   ',
-  ])('rejects malformed request id prefix %j', async (requestId) => {
-    const answerRuntimeToolApproval = vi.fn(async () => undefined);
+  it.each(['opencode:', 'opencode::provider-request-1', 'opencode:run-1:'])(
+    'preserves non-empty opaque provider request id %j',
+    async (requestId) => {
+      const answerRuntimeToolApproval = vi.fn<AnswerRuntimeToolApproval>(async () => undefined);
 
-    await expect(
-      answerOpenCodeRuntimePermission(
+      await answerOpenCodeRuntimePermission(
         runtimePermissionPayload(requestId),
         runtimePermissionPorts(answerRuntimeToolApproval)
-      )
-    ).rejects.toThrow('OpenCode runtime payload malformed requestId');
-    expect(answerRuntimeToolApproval).not.toHaveBeenCalled();
-  });
+      );
+
+      expectRequestIds(answerRuntimeToolApproval, requestId, `opencode:run-1:${requestId}`);
+    }
+  );
 
   it.each(['', '   '])('rejects empty request id value %j', async (requestId) => {
-    const answerRuntimeToolApproval = vi.fn(async () => undefined);
+    const answerRuntimeToolApproval = vi.fn<AnswerRuntimeToolApproval>(async () => undefined);
 
     await expect(
       answerOpenCodeRuntimePermission(
@@ -225,10 +201,10 @@ describe('TeamProvisioningOpenCodeRuntimePermissionAnswerBoundary', () => {
   });
 });
 
-function runtimePermissionPayload(requestId: unknown, runId = 'run-1'): Record<string, unknown> {
+function runtimePermissionPayload(requestId: unknown): Record<string, unknown> {
   return {
     teamName: 'Team',
-    runId,
+    runId: 'run-1',
     laneId: 'lane-1',
     cwd: '/repo',
     memberName: 'Builder',
@@ -237,27 +213,32 @@ function runtimePermissionPayload(requestId: unknown, runId = 'run-1'): Record<s
   };
 }
 
-function runtimePermissionPorts(answerRuntimeToolApproval: ReturnType<typeof vi.fn>) {
+function runtimePermissionPorts(
+  answerRuntimeToolApproval: Mock<AnswerRuntimeToolApproval>
+): TeamProvisioningOpenCodeRuntimePermissionAnswerBoundaryPorts {
   return {
     answerRuntimeToolApproval,
     nowIso: () => '2026-01-01T00:00:00.000Z',
   };
 }
 
-function expectNormalizedRequestIds(
-  answerRuntimeToolApproval: ReturnType<typeof vi.fn>,
+function expectRequestIds(
+  answerRuntimeToolApproval: Mock<AnswerRuntimeToolApproval>,
   providerRequestId: string,
   appRequestId: string
 ): void {
-  expect(answerRuntimeToolApproval).toHaveBeenLastCalledWith(
-    expect.objectContaining({
-      providerRequestId,
-      approval: expect.objectContaining({
-        requestId: appRequestId,
-        toolInput: expect.objectContaining({ providerRequestId }),
-        runtimePermission: expect.objectContaining({ providerRequestId }),
-      }),
-    }),
-    expect.any(Boolean)
-  );
+  const lastCall = answerRuntimeToolApproval.mock.lastCall;
+  expect(lastCall).toBeDefined();
+  if (!lastCall) {
+    throw new Error('Expected answerRuntimeToolApproval to be called');
+  }
+  expect(lastCall[0]).toMatchObject({
+    providerRequestId,
+    approval: {
+      requestId: appRequestId,
+      toolInput: { providerRequestId },
+      runtimePermission: { providerRequestId },
+    },
+  });
+  expect(lastCall[1]).toEqual(expect.any(Boolean));
 }

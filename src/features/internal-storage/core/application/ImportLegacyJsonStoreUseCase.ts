@@ -7,22 +7,25 @@ export interface ImportLegacyJsonStoreDeps<TRecord> {
   source: LegacyJsonStoreSource<TRecord>;
   loadExisting(teamName: string): Promise<TRecord[]>;
   replaceAll(teamName: string, records: TRecord[]): Promise<void>;
+  recordIdentity(record: TRecord): string;
   /** Order-insensitive equivalence used to verify the import round-trip. */
   areEquivalent(imported: TRecord[], expected: TRecord[]): boolean;
   recordImport(teamName: string, entryCount: number): Promise<void>;
+  hasRecordedImport(teamName: string): Promise<boolean>;
 }
 
 /**
  * One-time, idempotent migration of a legacy per-team JSON store into SQLite.
  *
- * The legacy file's presence is the single trigger: it covers first import,
- * a crash before archiving (re-import is safe because replaceAll clears the
- * team's rows first) and an app downgrade that recreated the JSON file (the
- * fresher JSON then wins). Sequence per team:
+ * A live legacy file always triggers an overlay import, covering first import,
+ * a crash before archiving, and an app downgrade that recreated JSON. When the
+ * durable SQLite import marker is missing, immutable archives also participate
+ * so a recreated database can recover them. Sequence per team:
  *
- *   1. read legacy JSON (absent -> done)
- *   2. replace team rows in SQLite (single transaction)
- *   3. read back and verify against the source
+ *   1. read live legacy JSON; when it is absent and no durable import marker
+ *      survived, recover every archived generation
+ *   2. overlay the source on existing team rows and replace in one transaction
+ *   3. read back and verify the complete merged snapshot
  *   4. only then archive the JSON file (rename, never delete)
  *
  * A failure at any step leaves the JSON file untouched, so the legacy backend
@@ -61,21 +64,61 @@ export class ImportLegacyJsonStoreUseCase<TRecord> {
   }
 
   private async importTeamOnce(teamName: string): Promise<void> {
-    const legacyRecords = await this.deps.source.read(teamName);
-    if (legacyRecords === null) {
+    const activeRecords = await this.deps.source.read(teamName);
+    const hasRecordedImport = await this.deps.hasRecordedImport(teamName);
+    if (activeRecords === null && hasRecordedImport) {
       this.importedTeams.add(teamName);
       return;
     }
 
-    await this.deps.replaceAll(teamName, legacyRecords);
+    // A missing marker means the canonical database may have just been
+    // recreated after corruption. Overlay archives before any still-live file:
+    // a crash during a multi-step archive can leave both halves on disk.
+    const archivedRecords = hasRecordedImport
+      ? null
+      : await this.deps.source.readArchives(teamName);
+    const legacyRecords = [...(archivedRecords ?? []), ...(activeRecords ?? [])];
+    if (activeRecords === null && archivedRecords === null) {
+      this.importedTeams.add(teamName);
+      return;
+    }
+
+    const merged = overlayRecords(
+      await this.deps.loadExisting(teamName),
+      legacyRecords,
+      this.deps.recordIdentity
+    );
+    await this.deps.replaceAll(teamName, merged);
 
     const roundTrip = await this.deps.loadExisting(teamName);
-    if (!this.deps.areEquivalent(roundTrip, legacyRecords)) {
+    if (!this.deps.areEquivalent(roundTrip, merged)) {
       throw new InternalStorageImportVerificationError(this.deps.storeId, teamName);
     }
 
-    await this.deps.recordImport(teamName, legacyRecords.length);
-    await this.deps.source.archive(teamName);
+    await this.deps.recordImport(teamName, merged.length);
+    if (activeRecords !== null) {
+      await this.deps.source.archive(teamName);
+    }
     this.importedTeams.add(teamName);
   }
+}
+
+/**
+ * Legacy journals are snapshots, but an archive generation can be incomplete
+ * after a crash or downgrade. Treat each generation as an overlay: newer rows
+ * replace the same identity while absent identities remain intact.
+ */
+function overlayRecords<TRecord>(
+  existing: readonly TRecord[],
+  incoming: readonly TRecord[],
+  identity: (record: TRecord) => string
+): TRecord[] {
+  const merged = new Map<string, TRecord>();
+  for (const record of existing) {
+    merged.set(identity(record), record);
+  }
+  for (const record of incoming) {
+    merged.set(identity(record), record);
+  }
+  return [...merged.values()];
 }

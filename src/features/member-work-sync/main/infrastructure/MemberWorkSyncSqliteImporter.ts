@@ -3,7 +3,10 @@ import { archiveFileWithGenerations } from '@features/internal-storage/main';
 
 import { areSnapshotRecordSetsEquivalent, snapshotToRecords } from './memberWorkSyncSqliteMappers';
 
-import type { JsonMemberWorkSyncStore } from './JsonMemberWorkSyncStore';
+import type {
+  JsonMemberWorkSyncStore,
+  MemberWorkSyncStoreSnapshot,
+} from './JsonMemberWorkSyncStore';
 import type {
   MemberWorkSyncMetricEventRecord,
   MemberWorkSyncOutboxItemRecord,
@@ -16,7 +19,10 @@ import type { MemberWorkSyncStorageGateway } from '@features/internal-storage/ma
 export interface MemberWorkSyncSqliteImporterDeps {
   gateway: MemberWorkSyncStorageGateway;
   /** Owns all legacy file-format knowledge (v1, v2 per-member, indexes). */
-  jsonStore: Pick<JsonMemberWorkSyncStore, 'readSnapshotForImport'>;
+  jsonStore: Pick<
+    JsonMemberWorkSyncStore,
+    'readSnapshotForImport' | 'readArchivedSnapshotForImport'
+  >;
   logger?: { warn(message: string, metadata?: Record<string, unknown>): void };
 }
 
@@ -24,7 +30,8 @@ export interface MemberWorkSyncSqliteImporterDeps {
  * One-time, idempotent JSON -> SQLite import for a team's member-work-sync
  * state. This is message-delivery state, so the sequence is strict:
  *
- *   1. read the currently surviving legacy snapshot (absent -> done)
+ *   1. read the currently surviving legacy snapshot; when the durable import
+ *      marker was lost, also rebuild and overlay archived generations
  *   2. overlay it on the canonical SQLite rows and replace the merged team in
  *      one transaction
  *   3. read back and verify the complete content
@@ -122,11 +129,25 @@ export class MemberWorkSyncSqliteImporter {
   }
 
   private async importTeamOnce(teamName: string): Promise<void> {
-    const snapshot = await this.deps.jsonStore.readSnapshotForImport(teamName);
-    if (snapshot === null) {
+    const activeSnapshot = await this.deps.jsonStore.readSnapshotForImport(teamName);
+    const hasRecordedImport = await this.deps.gateway.hasStoreImport(
+      MEMBER_WORK_SYNC_STORE_ID,
+      teamName
+    );
+    if (activeSnapshot === null && hasRecordedImport) {
       this.importedTeams.add(teamName);
       return;
     }
+
+    const archivedSnapshot = hasRecordedImport
+      ? null
+      : await this.deps.jsonStore.readArchivedSnapshotForImport(teamName);
+    if (activeSnapshot === null && archivedSnapshot === null) {
+      this.importedTeams.add(teamName);
+      return;
+    }
+    const usedArchivedSnapshot = archivedSnapshot !== null;
+    const snapshot = combineSnapshots(archivedSnapshot, activeSnapshot);
 
     // Canonicalize the routing column to the import argument: legacy entries
     // may carry a differently-cased teamName, and rows keyed by it would be
@@ -155,8 +176,10 @@ export class MemberWorkSyncSqliteImporter {
       teamName,
       records.statuses.length + records.reportIntents.length + records.outboxItems.length
     );
-    for (const filePath of snapshot.filesToArchive) {
-      await archiveFileWithGenerations(filePath);
+    if (activeSnapshot) {
+      for (const filePath of snapshot.filesToArchive) {
+        await archiveFileWithGenerations(filePath);
+      }
     }
     this.deps.logger?.warn('member-work-sync legacy JSON imported into sqlite', {
       teamName,
@@ -164,8 +187,25 @@ export class MemberWorkSyncSqliteImporter {
       reportIntents: records.reportIntents.length,
       outboxItems: records.outboxItems.length,
       metricEvents: records.metricEvents.length,
-      archivedFiles: snapshot.filesToArchive.length,
+      archivedFiles: activeSnapshot ? snapshot.filesToArchive.length : 0,
+      recoveredFromArchives: usedArchivedSnapshot,
     });
     this.importedTeams.add(teamName);
   }
+}
+
+function combineSnapshots(
+  archived: MemberWorkSyncStoreSnapshot | null,
+  active: MemberWorkSyncStoreSnapshot | null
+): MemberWorkSyncStoreSnapshot {
+  if (!archived && !active) {
+    throw new Error('Cannot combine absent member-work-sync snapshots');
+  }
+  return {
+    statuses: [...(archived?.statuses ?? []), ...(active?.statuses ?? [])],
+    reportIntents: [...(archived?.reportIntents ?? []), ...(active?.reportIntents ?? [])],
+    outboxItems: [...(archived?.outboxItems ?? []), ...(active?.outboxItems ?? [])],
+    metricEvents: [...(archived?.metricEvents ?? []), ...(active?.metricEvents ?? [])],
+    filesToArchive: active?.filesToArchive ?? [],
+  };
 }

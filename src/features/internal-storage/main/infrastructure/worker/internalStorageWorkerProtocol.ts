@@ -28,6 +28,11 @@ export type InternalStorageWorkerRequest =
       op: 'storeImports.record';
       payload: { storeId: string; teamName: string; entryCount: number };
     }
+  | {
+      id: string;
+      op: 'storeImports.has';
+      payload: { storeId: string; teamName: string };
+    }
   // Member-work-sync ops share one wire shape; the typed client methods and
   // the worker-side dispatcher (memberWorkSyncWorkerOps) own the payloads.
   | { id: string; op: `appCommandLedger.${string}`; payload: unknown }

@@ -37,6 +37,8 @@ export interface InternalStorageGateway {
   ensureCommentJournalInitialized(teamName: string): Promise<void>;
   /** Audit trail: records a completed legacy-JSON import. */
   recordStoreImport(storeId: string, teamName: string, entryCount: number): Promise<void>;
+  /** Durable marker used to avoid replaying immutable archives on healthy restarts. */
+  hasStoreImport(storeId: string, teamName: string): Promise<boolean>;
   /** WAL checkpoint + close; the worker is terminated afterwards. */
   close(): Promise<void>;
 }
@@ -122,6 +124,7 @@ export interface MemberWorkSyncStorageGateway {
   listTeamSnapshot(teamName: string): Promise<MemberWorkSyncTeamSnapshotRecords>;
   importTeam(teamName: string, snapshot: MemberWorkSyncTeamSnapshotRecords): Promise<void>;
   recordStoreImport(storeId: string, teamName: string, entryCount: number): Promise<void>;
+  hasStoreImport(storeId: string, teamName: string): Promise<boolean>;
 }
 
 /**
@@ -132,5 +135,11 @@ export interface MemberWorkSyncStorageGateway {
 export interface LegacyJsonStoreSource<TRecord> {
   /** Returns null when no legacy file exists (nothing to import). */
   read(teamName: string): Promise<TRecord[] | null>;
+  /**
+   * Reads every immutable pre-SQLite generation, oldest first. Implementations
+   * preserve duplicate encounter order so the importer can overlay newer
+   * generations without treating omissions as deletions.
+   */
+  readArchives(teamName: string): Promise<TRecord[] | null>;
   archive(teamName: string): Promise<void>;
 }

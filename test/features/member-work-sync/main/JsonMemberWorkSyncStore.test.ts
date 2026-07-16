@@ -1,3 +1,4 @@
+import { archiveFileWithGenerations } from '@features/internal-storage/main';
 import { JsonMemberWorkSyncStore } from '@features/member-work-sync/main/infrastructure/JsonMemberWorkSyncStore';
 import { MemberWorkSyncStorePaths } from '@features/member-work-sync/main/infrastructure/MemberWorkSyncStorePaths';
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'fs/promises';
@@ -1998,5 +1999,97 @@ describe('JsonMemberWorkSyncStore', () => {
         'legacy_fallback_used:outbox_v1',
       ])
     );
+  });
+
+  it('rebuilds cumulative state from every pre-sqlite file generation', async () => {
+    const statusFor = (
+      memberName: string,
+      overrides: Partial<MemberWorkSyncStatus> = {}
+    ): MemberWorkSyncStatus => {
+      const base = makeStatus({});
+      return makeStatus({
+        memberName,
+        agenda: { ...base.agenda, memberName },
+        ...overrides,
+      });
+    };
+    const archiveCurrentSnapshot = async (): Promise<void> => {
+      const snapshot = await store.readSnapshotForImport('team-a');
+      expect(snapshot).not.toBeNull();
+      for (const filePath of snapshot?.filesToArchive ?? []) {
+        await archiveFileWithGenerations(filePath);
+      }
+    };
+
+    await store.write(statusFor('alice'));
+    await store.write(statusFor('bob'));
+    await store.ensurePending({
+      id: 'nudge-alice',
+      teamName: 'team-a',
+      memberName: 'alice',
+      agendaFingerprint: 'agenda:v1:alice',
+      payloadHash: 'hash-alice',
+      payload: makeNudgePayload({ to: 'alice' }),
+      nowIso: '2026-04-29T00:00:00.000Z',
+    });
+    await store.ensurePending({
+      id: 'nudge-bob',
+      teamName: 'team-a',
+      memberName: 'bob',
+      agendaFingerprint: 'agenda:v1:bob',
+      payloadHash: 'hash-bob-old',
+      payload: makeNudgePayload({ to: 'bob' }),
+      nowIso: '2026-04-29T00:00:00.000Z',
+    });
+    await archiveCurrentSnapshot();
+
+    await store.write(
+      statusFor('bob', {
+        state: 'caught_up',
+        evaluatedAt: '2026-04-29T00:10:00.000Z',
+      })
+    );
+    await store.write(statusFor('carol'));
+    await store.ensurePending({
+      id: 'nudge-bob',
+      teamName: 'team-a',
+      memberName: 'bob',
+      agendaFingerprint: 'agenda:v2:bob',
+      payloadHash: 'hash-bob-new',
+      payload: makeNudgePayload({ to: 'bob' }),
+      nowIso: '2026-04-29T00:10:00.000Z',
+    });
+    await store.ensurePending({
+      id: 'nudge-carol',
+      teamName: 'team-a',
+      memberName: 'carol',
+      agendaFingerprint: 'agenda:v1:carol',
+      payloadHash: 'hash-carol',
+      payload: makeNudgePayload({ to: 'carol' }),
+      nowIso: '2026-04-29T00:10:00.000Z',
+    });
+    await archiveCurrentSnapshot();
+
+    await expect(store.readSnapshotForImport('team-a')).resolves.toBeNull();
+    const recovered = await store.readArchivedSnapshotForImport('team-a');
+
+    expect(recovered?.statuses.map((status) => status.memberName).sort()).toEqual([
+      'alice',
+      'bob',
+      'carol',
+    ]);
+    expect(recovered?.statuses.find((status) => status.memberName === 'bob')).toMatchObject({
+      state: 'caught_up',
+      evaluatedAt: '2026-04-29T00:10:00.000Z',
+    });
+    expect(recovered?.outboxItems.map((item) => item.id).sort()).toEqual([
+      'nudge-alice',
+      'nudge-bob',
+      'nudge-carol',
+    ]);
+    expect(recovered?.outboxItems.find((item) => item.id === 'nudge-bob')?.payloadHash).toBe(
+      'hash-bob-new'
+    );
+    expect(recovered?.filesToArchive).toEqual([]);
   });
 });

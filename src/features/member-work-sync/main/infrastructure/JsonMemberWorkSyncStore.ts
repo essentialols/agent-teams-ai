@@ -1,3 +1,4 @@
+import { listPreSqliteArchiveGenerations } from '@features/internal-storage/main';
 import { withFileLock } from '@main/services/team/fileLock';
 import { atomicWriteAsync, renamePathWithRetry } from '@main/utils/atomicWrite';
 import { createHash } from 'crypto';
@@ -1189,6 +1190,21 @@ export class JsonMemberWorkSyncStore
     return snapshot;
   }
 
+  /**
+   * Rebuilds the import snapshot from immutable pre-SQLite files. Every
+   * generation of each logical JSON file is applied oldest-to-newest so a
+   * smaller, partially archived generation cannot delete earlier identities.
+   */
+  async readArchivedSnapshotForImport(
+    teamName: string
+  ): Promise<MemberWorkSyncStoreSnapshot | null> {
+    let snapshot: MemberWorkSyncStoreSnapshot | null = null;
+    await this.enqueue(teamName, async () => {
+      snapshot = await this.readArchivedSnapshotForImportUnqueued(teamName);
+    });
+    return snapshot;
+  }
+
   private async readSnapshotForImportUnqueued(
     teamName: string
   ): Promise<MemberWorkSyncStoreSnapshot | null> {
@@ -1290,6 +1306,158 @@ export class JsonMemberWorkSyncStore
       outboxItems: [...outboxItems.values()],
       metricEvents: [...metricEvents.values()],
       filesToArchive,
+    };
+  }
+
+  private async readArchivedSnapshotForImportUnqueued(
+    teamName: string
+  ): Promise<MemberWorkSyncStoreSnapshot | null> {
+    const teamKey = normalizeTeamKey(teamName);
+    const memberNames = await this.scanMemberNames(teamName);
+    const archivePathsByFile = new Map<string, string[]>();
+    let archiveCount = 0;
+
+    const archivePaths = async (filePath: string): Promise<string[]> => {
+      const cached = archivePathsByFile.get(filePath);
+      if (cached) {
+        return cached;
+      }
+      const paths = (await listPreSqliteArchiveGenerations(filePath)).map(
+        (archive) => archive.filePath
+      );
+      archivePathsByFile.set(filePath, paths);
+      archiveCount += paths.length;
+      return paths;
+    };
+    const readArchiveFiles = async <T>(
+      filePath: string,
+      guard: (value: unknown) => value is T,
+      fallback: T
+    ): Promise<T[]> => {
+      const files: T[] = [];
+      for (const archivedPath of await archivePaths(filePath)) {
+        files.push(await readJsonFile(archivedPath, guard, fallback));
+      }
+      return files;
+    };
+
+    const statuses = new Map<string, MemberWorkSyncStatus>();
+    const legacyStatusFiles = await readArchiveFiles(
+      this.paths.getLegacyStatusPath(teamName),
+      isLegacyStatusFile,
+      { schemaVersion: 1, members: {}, metrics: { recentEvents: [] } }
+    );
+    for (const legacyStatus of legacyStatusFiles) {
+      for (const [memberKey, status] of Object.entries(legacyStatus.members)) {
+        if (normalizeTeamKey(status.teamName) !== teamKey) {
+          continue;
+        }
+        statuses.set(
+          normalizeMemberKey(status.memberName) || normalizeMemberKey(memberKey),
+          status
+        );
+      }
+    }
+    for (const memberName of memberNames) {
+      const memberStatusFiles = await readArchiveFiles<MemberStatusFile | null>(
+        this.paths.getMemberStatusPath(teamName, memberName),
+        (value): value is MemberStatusFile | null => value === null || isMemberStatusFile(value),
+        null
+      );
+      for (const memberStatus of memberStatusFiles) {
+        if (memberStatus && normalizeTeamKey(memberStatus.status.teamName) === teamKey) {
+          statuses.set(normalizeMemberKey(memberStatus.status.memberName), memberStatus.status);
+        }
+      }
+    }
+
+    const reportIntents = new Map<string, MemberWorkSyncReportIntent>();
+    for (const legacyReports of await readArchiveFiles(
+      this.paths.getLegacyPendingReportsPath(teamName),
+      isLegacyPendingReportFile,
+      { schemaVersion: 1, intents: {} }
+    )) {
+      for (const intent of Object.values(legacyReports.intents)) {
+        if (isReportIntentOwnedBy(teamName, intent.memberName, intent)) {
+          reportIntents.set(intent.id, intent);
+        }
+      }
+    }
+    for (const memberName of memberNames) {
+      for (const memberReports of await readArchiveFiles(
+        this.paths.getMemberReportsPath(teamName, memberName),
+        isMemberReportsFile,
+        { schemaVersion: 2, intents: {} }
+      )) {
+        for (const intent of Object.values(memberReports.intents)) {
+          if (isReportIntentOwnedBy(teamName, memberName, intent)) {
+            reportIntents.set(intent.id, intent);
+          }
+        }
+      }
+    }
+
+    const outboxItems = new Map<string, MemberWorkSyncOutboxItem>();
+    for (const legacyOutbox of await readArchiveFiles(
+      this.paths.getLegacyOutboxPath(teamName),
+      isLegacyOutboxFile,
+      { schemaVersion: 1, items: {} }
+    )) {
+      for (const item of Object.values(legacyOutbox.items)) {
+        if (isOutboxItemOwnedBy(teamName, item.memberName, item)) {
+          outboxItems.set(item.id, item);
+        }
+      }
+    }
+    for (const memberName of memberNames) {
+      for (const memberOutbox of await readArchiveFiles(
+        this.paths.getMemberOutboxPath(teamName, memberName),
+        isMemberOutboxFile,
+        { schemaVersion: 2, items: {} }
+      )) {
+        for (const item of Object.values(memberOutbox.items)) {
+          if (isOutboxItemOwnedBy(teamName, memberName, item)) {
+            outboxItems.set(item.id, item);
+          }
+        }
+      }
+    }
+
+    const metricEvents = new Map<string, MemberWorkSyncMetricEvent>();
+    for (const legacyStatus of legacyStatusFiles) {
+      for (const event of legacyStatus.metrics?.recentEvents ?? []) {
+        if (normalizeTeamKey(event.teamName) === teamKey) {
+          metricEvents.set(event.id, event);
+        }
+      }
+    }
+    for (const metricsIndex of await readArchiveFiles(
+      this.paths.getMetricsIndexPath(teamName),
+      isMetricsIndexFile,
+      emptyMetricsIndex()
+    )) {
+      for (const event of metricsIndex.recentEvents) {
+        if (normalizeTeamKey(event.teamName) === teamKey) {
+          metricEvents.set(event.id, event);
+        }
+      }
+    }
+
+    // The routing indexes are archived with the payload files. They do not
+    // contain complete records, but their presence still constitutes an
+    // archived snapshot (including a legitimately empty one).
+    await archivePaths(this.paths.getOutboxIndexPath(teamName));
+    await archivePaths(this.paths.getPendingReportsIndexPath(teamName));
+
+    if (archiveCount === 0) {
+      return null;
+    }
+    return {
+      statuses: [...statuses.values()],
+      reportIntents: [...reportIntents.values()],
+      outboxItems: [...outboxItems.values()],
+      metricEvents: [...metricEvents.values()],
+      filesToArchive: [],
     };
   }
 

@@ -243,6 +243,10 @@ export class InProcessGateway
     return Promise.resolve();
   }
 
+  hasStoreImport(storeId: string, teamName: string): Promise<boolean> {
+    return Promise.resolve(this.core.handle('storeImports.has', { storeId, teamName }) === true);
+  }
+
   close(): Promise<void> {
     this.core.close();
     return Promise.resolve();

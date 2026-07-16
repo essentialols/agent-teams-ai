@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 
 import {
@@ -113,6 +113,10 @@ export class InternalStorageWorkerCore {
         this.recordStoreImport(typed.storeId, typed.teamName, typed.entryCount);
         return null;
       }
+      case 'storeImports.has': {
+        const typed = payload as { storeId: string; teamName: string };
+        return this.hasStoreImport(typed.storeId, typed.teamName);
+      }
       case 'close':
         this.close();
         return null;
@@ -221,6 +225,17 @@ export class InternalStorageWorkerCore {
         set: { importedAt, entryCount },
       })
       .run();
+  }
+
+  private hasStoreImport(storeId: string, teamName: string): boolean {
+    const { orm } = this.open();
+    return (
+      orm
+        .select({ storeId: storeImports.storeId })
+        .from(storeImports)
+        .where(and(eq(storeImports.storeId, storeId), eq(storeImports.teamName, teamName)))
+        .all().length > 0
+    );
   }
 
   close(): void {

@@ -1,4 +1,5 @@
 import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 import type { LegacyJsonStoreSource } from '../../../core/application/ports';
 
@@ -40,6 +41,20 @@ export class TeamScopedLegacyJsonSource<TRecord> implements LegacyJsonStoreSourc
     return this.options.parse(raw, teamName);
   }
 
+  async readArchives(teamName: string): Promise<TRecord[] | null> {
+    const archives = await listPreSqliteArchiveGenerations(this.options.getFilePath(teamName));
+    if (archives.length === 0) {
+      return null;
+    }
+
+    const records: TRecord[] = [];
+    for (const archive of archives) {
+      const raw = await fs.promises.readFile(archive.filePath, 'utf8');
+      records.push(...this.options.parse(raw, teamName));
+    }
+    return records;
+  }
+
   async archive(teamName: string): Promise<void> {
     await archiveFileWithGenerations(this.options.getFilePath(teamName));
   }
@@ -62,10 +77,55 @@ export async function archiveFileWithGenerations(filePath: string): Promise<void
   }
 }
 
+export interface PreSqliteArchiveGeneration {
+  filePath: string;
+  generation: number;
+}
+
+/** Lists exact archive siblings in numeric generation order. */
+export async function listPreSqliteArchiveGenerations(
+  filePath: string
+): Promise<PreSqliteArchiveGeneration[]> {
+  const directory = path.dirname(filePath);
+  const archiveName = `${path.basename(filePath)}${PRE_SQLITE_ARCHIVE_SUFFIX}`;
+  let names: string[];
+  try {
+    names = await fs.promises.readdir(directory);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return [];
+    }
+    throw error;
+  }
+
+  const generations: PreSqliteArchiveGeneration[] = [];
+  for (const name of names) {
+    if (name === archiveName) {
+      generations.push({ filePath: path.join(directory, name), generation: 1 });
+      continue;
+    }
+    const prefix = `${archiveName}-`;
+    if (!name.startsWith(prefix)) {
+      continue;
+    }
+    const generationText = name.slice(prefix.length);
+    if (!/^\d+$/.test(generationText)) {
+      continue;
+    }
+    const generation = Number(generationText);
+    if (Number.isSafeInteger(generation) && generation >= 2) {
+      generations.push({ filePath: path.join(directory, name), generation });
+    }
+  }
+  return generations.sort((left, right) => left.generation - right.generation);
+}
+
 async function pickFreeArchivePath(filePath: string): Promise<string> {
   const base = `${filePath}${PRE_SQLITE_ARCHIVE_SUFFIX}`;
-  for (let attempt = 0; attempt < MAX_ARCHIVE_ATTEMPTS; attempt += 1) {
-    const candidate = attempt === 0 ? base : `${base}-${attempt + 1}`;
+  const existing = await listPreSqliteArchiveGenerations(filePath);
+  const firstGeneration = (existing.at(-1)?.generation ?? 0) + 1;
+  for (let generation = firstGeneration; generation <= MAX_ARCHIVE_ATTEMPTS; generation += 1) {
+    const candidate = generation === 1 ? base : `${base}-${generation}`;
     try {
       await fs.promises.access(candidate);
     } catch {

@@ -100,9 +100,11 @@ export function createInternalStorageFeature(
     source: new StallJournalLegacyJsonSource(),
     loadExisting: (teamName) => client.loadStallJournalEntries(teamName),
     replaceAll: (teamName, records) => client.replaceStallJournalEntries(teamName, records),
+    recordIdentity: (record) => record.epochKey,
     areEquivalent: areStallJournalRecordSetsEquivalent,
     recordImport: (teamName, entryCount) =>
       client.recordStoreImport(STALL_JOURNAL_STORE_ID, teamName, entryCount),
+    hasRecordedImport: (teamName) => client.hasStoreImport(STALL_JOURNAL_STORE_ID, teamName),
   });
   const sqliteStallStore = new SqliteTaskStallJournalStore({
     gateway: client,
@@ -115,9 +117,11 @@ export function createInternalStorageFeature(
     source: new CommentJournalLegacyJsonSource(),
     loadExisting: (teamName) => client.loadCommentJournalEntries(teamName),
     replaceAll: (teamName, records) => client.replaceCommentJournalEntries(teamName, records),
+    recordIdentity: (record) => record.key,
     areEquivalent: areCommentJournalRecordSetsEquivalent,
     recordImport: (teamName, entryCount) =>
       client.recordStoreImport(COMMENT_JOURNAL_STORE_ID, teamName, entryCount),
+    hasRecordedImport: (teamName) => client.hasStoreImport(COMMENT_JOURNAL_STORE_ID, teamName),
   });
   const sqliteCommentStore = new SqliteTaskCommentNotificationJournalStore({
     gateway: client,

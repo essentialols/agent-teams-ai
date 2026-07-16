@@ -1,9 +1,3 @@
-import * as fs from 'fs/promises';
-import * as os from 'os';
-import * as path from 'path';
-import Database from 'better-sqlite3-node';
-import { afterEach, describe, expect, it } from 'vitest';
-
 import { STALL_JOURNAL_STORE_ID } from '@features/internal-storage/contracts/internalStorageContracts';
 import { ImportLegacyJsonStoreUseCase } from '@features/internal-storage/core/application/ImportLegacyJsonStoreUseCase';
 import { KeyedMutex } from '@features/internal-storage/core/application/KeyedMutex';
@@ -11,9 +5,16 @@ import { SqliteTaskStallJournalStore } from '@features/internal-storage/main/ada
 import { areStallJournalRecordSetsEquivalent } from '@features/internal-storage/main/adapters/output/stallJournalEntryRecordMapper';
 import { StallJournalLegacyJsonSource } from '@features/internal-storage/main/adapters/output/StallJournalLegacyJsonSource';
 import { InternalStorageWorkerCore } from '@features/internal-storage/main/infrastructure/worker/InternalStorageWorkerCore';
+import Database from 'better-sqlite3-node';
+import * as fs from 'fs/promises';
+import * as os from 'os';
+import * as path from 'path';
+import { afterEach, describe, expect, it } from 'vitest';
+
 import { getStallMonitorJournalPath } from '../../../src/main/services/team/stallMonitor/JsonTaskStallJournalStore';
 import { TeamTaskStallJournal } from '../../../src/main/services/team/stallMonitor/TeamTaskStallJournal';
 import { setClaudeBasePathOverride } from '../../../src/main/utils/pathDecoder';
+
 import { InProcessGateway } from './helpers/InProcessGateway';
 
 import type { TaskStallJournalEntry } from '../../../src/main/services/team/stallMonitor/TeamTaskStallTypes';
@@ -50,21 +51,27 @@ describe('SqliteTaskStallJournalStore', () => {
       createDatabase: (file) => new Database(file),
     });
     const gateway = new InProcessGateway(core);
+    return { store: makeStoreOnGateway(gateway), gateway };
+  }
+
+  function makeStoreOnGateway(gateway: InProcessGateway): SqliteTaskStallJournalStore {
     const importer = new ImportLegacyJsonStoreUseCase({
       storeId: STALL_JOURNAL_STORE_ID,
       source: new StallJournalLegacyJsonSource(),
       loadExisting: (teamName) => gateway.loadStallJournalEntries(teamName),
       replaceAll: (teamName, records) => gateway.replaceStallJournalEntries(teamName, records),
+      recordIdentity: (record) => record.epochKey,
       areEquivalent: areStallJournalRecordSetsEquivalent,
       recordImport: (teamName, entryCount) =>
         gateway.recordStoreImport(STALL_JOURNAL_STORE_ID, teamName, entryCount),
+      hasRecordedImport: (teamName) => gateway.hasStoreImport(STALL_JOURNAL_STORE_ID, teamName),
     });
     const store = new SqliteTaskStallJournalStore({
       gateway,
       importer,
       mutex: new KeyedMutex(),
     });
-    return { store, gateway };
+    return store;
   }
 
   afterEach(async () => {
@@ -117,6 +124,54 @@ describe('SqliteTaskStallJournalStore', () => {
     expect(finalEntries).toEqual(['task-a:epoch-1', 'task-b:epoch-1']);
   });
 
+  it('recovers cumulative archive generations and skips replay after restoring the marker', async () => {
+    const { store, gateway } = await makeStore();
+    const journalPath = getStallMonitorJournalPath('demo');
+    const first = makeJournalEntry();
+    const changed = makeJournalEntry({
+      epochKey: 'task-b:epoch-1',
+      taskId: 'task-b',
+    });
+    const changedLater = makeJournalEntry({
+      ...changed,
+      state: 'alerted',
+      consecutiveScans: 3,
+      alertedAt: '2026-07-07T10:02:00.000Z',
+    });
+    const addedLater = makeJournalEntry({
+      epochKey: 'task-c:epoch-1',
+      taskId: 'task-c',
+    });
+    await fs.writeFile(`${journalPath}.pre-sqlite`, JSON.stringify([first, changed]));
+    await fs.writeFile(`${journalPath}.pre-sqlite-2`, JSON.stringify([changedLater, addedLater]));
+
+    const recovered = await store.update('demo', (entries) => ({
+      entries,
+      result: [...entries],
+      changed: false,
+    }));
+    expect(recovered).toEqual([first, changedLater, addedLater]);
+
+    await store.update('demo', (entries) => ({
+      entries: entries.map((entry) =>
+        entry.epochKey === addedLater.epochKey
+          ? { ...entry, consecutiveScans: 5, updatedAt: '2026-07-07T10:03:00.000Z' }
+          : entry
+      ),
+      result: undefined,
+    }));
+    const freshStore = makeStoreOnGateway(gateway);
+    const afterRestart = await freshStore.update('demo', (entries) => ({
+      entries,
+      result: [...entries],
+      changed: false,
+    }));
+    expect(afterRestart.find((entry) => entry.epochKey === addedLater.epochKey)).toMatchObject({
+      consecutiveScans: 5,
+      updatedAt: '2026-07-07T10:03:00.000Z',
+    });
+  });
+
   it('re-imports when a downgrade recreated the JSON file, keeping every archive generation', async () => {
     const { store, gateway } = await makeStore();
     const journalPath = getStallMonitorJournalPath('demo');
@@ -138,9 +193,11 @@ describe('SqliteTaskStallJournalStore', () => {
       source: new StallJournalLegacyJsonSource(),
       loadExisting: (teamName) => gateway.loadStallJournalEntries(teamName),
       replaceAll: (teamName, records) => gateway.replaceStallJournalEntries(teamName, records),
+      recordIdentity: (record) => record.epochKey,
       areEquivalent: areStallJournalRecordSetsEquivalent,
       recordImport: (teamName, entryCount) =>
         gateway.recordStoreImport(STALL_JOURNAL_STORE_ID, teamName, entryCount),
+      hasRecordedImport: (teamName) => gateway.hasStoreImport(STALL_JOURNAL_STORE_ID, teamName),
     });
     const freshStore = new SqliteTaskStallJournalStore({
       gateway,
@@ -154,7 +211,7 @@ describe('SqliteTaskStallJournalStore', () => {
       changed: false,
     }));
 
-    expect(seen).toEqual([downgradeEntry]);
+    expect(seen).toEqual([makeJournalEntry(), downgradeEntry]);
     const teamDir = path.dirname(journalPath);
     const archives = (await fs.readdir(teamDir)).filter((name) => name.includes('.pre-sqlite'));
     const sortedArchives = [...archives].sort((a, b) => a.localeCompare(b));

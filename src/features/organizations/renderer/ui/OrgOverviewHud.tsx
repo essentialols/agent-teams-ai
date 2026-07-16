@@ -41,7 +41,9 @@ export function OrgOverviewHud({
               <article
                 key={summary.organizationId}
                 data-organization-overview-card={summary.organizationId}
-                className={`pointer-events-auto relative w-[238px] cursor-pointer overflow-hidden rounded-xl border bg-[rgba(7,14,29,0.97)] shadow-2xl shadow-black/35 backdrop-blur-xl transition-[opacity,transform,filter] duration-200 ${
+                role="button"
+                tabIndex={0}
+                className={`pointer-events-auto relative w-[238px] cursor-pointer overflow-hidden rounded-xl border bg-[rgba(7,14,29,0.97)] shadow-2xl shadow-black/35 backdrop-blur-xl transition-[opacity,transform,filter] duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300/70 ${
                   isDimmed ? 'opacity-60 saturate-50' : 'opacity-100 hover:scale-[1.015]'
                 }`}
                 style={{
@@ -51,6 +53,15 @@ export function OrgOverviewHud({
                 onMouseEnter={() => setHoveredRootNodeId(summary.rootNodeId)}
                 onMouseLeave={() => setHoveredRootNodeId(null)}
                 onClick={() => onSelectNode(summary.rootNodeId, true)}
+                onKeyDown={(event) => {
+                  if (
+                    event.target === event.currentTarget &&
+                    (event.key === 'Enter' || event.key === ' ')
+                  ) {
+                    event.preventDefault();
+                    onSelectNode(summary.rootNodeId, true);
+                  }
+                }}
               >
                 <header className="flex items-start justify-between gap-3 border-b border-white/[0.07] px-4 pb-2.5 pt-3">
                   <div className="min-w-0">

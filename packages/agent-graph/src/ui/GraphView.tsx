@@ -1506,7 +1506,9 @@ export function GraphView({
         onDoubleClick={handleDoubleClick}
       />
 
-      {customControls ?? (
+      {renderControls ? (
+        customControls
+      ) : (
         <GraphControls
           filters={filters}
           onFiltersChange={setFilters}

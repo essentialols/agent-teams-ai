@@ -42,6 +42,8 @@ interface OrgGraphToolbarProps extends GraphControlRenderProps {
     tasks: string;
     connections: string;
     animation: string;
+    zoomIn: string;
+    zoomOut: string;
   };
 }
 
@@ -81,7 +83,7 @@ export function OrgGraphToolbar({
   return (
     <TooltipProvider delayDuration={250}>
       <div className="pointer-events-none absolute inset-x-3 top-3 z-30 flex justify-center">
-        <div className="pointer-events-auto flex max-w-[calc(100vw-2rem)] items-center gap-1 rounded-xl border border-sky-300/15 bg-[color-mix(in_srgb,var(--color-surface-overlay)_94%,transparent)] p-1 shadow-xl shadow-black/25 backdrop-blur-xl">
+        <div className="pointer-events-auto flex max-w-[calc(100vw-2rem)] flex-wrap items-center justify-center gap-1 rounded-xl border border-sky-300/15 bg-[color-mix(in_srgb,var(--color-surface-overlay)_94%,transparent)] p-1 shadow-xl shadow-black/25 backdrop-blur-xl sm:flex-nowrap">
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -100,7 +102,7 @@ export function OrgGraphToolbar({
           </Tooltip>
 
           <span className="mx-0.5 h-5 w-px bg-white/10" />
-          <div className="flex min-w-0 items-center rounded-lg bg-black/15 p-0.5">
+          <div className="flex min-w-0 max-w-full items-center overflow-x-auto rounded-lg bg-black/15 p-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {viewModes.map(({ mode, label }) => (
               <Button
                 key={mode}
@@ -228,26 +230,36 @@ export function OrgGraphToolbar({
           </Tooltip>
           <span className="mx-0.5 hidden h-5 w-px bg-white/10 lg:block" />
           <div className="hidden items-center lg:flex">
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              aria-label="Zoom out"
-              className={iconButtonClass}
-              onClick={onZoomOut}
-            >
-              <ZoomOut size={13} />
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              aria-label="Zoom in"
-              className={iconButtonClass}
-              onClick={onZoomIn}
-            >
-              <ZoomIn size={13} />
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label={labels.zoomOut}
+                  className={iconButtonClass}
+                  onClick={onZoomOut}
+                >
+                  <ZoomOut size={13} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">{labels.zoomOut}</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label={labels.zoomIn}
+                  className={iconButtonClass}
+                  onClick={onZoomIn}
+                >
+                  <ZoomIn size={13} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">{labels.zoomIn}</TooltipContent>
+            </Tooltip>
           </div>
         </div>
       </div>

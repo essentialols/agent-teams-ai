@@ -281,9 +281,7 @@ function drawDotGrid(
   ctx.fillStyle = 'rgba(110, 154, 198, 0.105)';
   for (let x = offsetX; x < w; x += spacing) {
     for (let y = offsetY; y < h; y += spacing) {
-      ctx.beginPath();
-      ctx.arc(x, y, 0.65, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.fillRect(x - 0.65, y - 0.65, 1.3, 1.3);
     }
   }
   ctx.restore();

@@ -64,7 +64,7 @@ vi.mock('@claude-teams/agent-graph', () => ({
           showProcesses: false,
           showEdges: true,
           showSpaceEffects: false,
-          paused: false,
+          paused: true,
         },
         onFiltersChange: vi.fn(),
         onZoomIn: vi.fn(),
@@ -146,6 +146,11 @@ describe('OrgGraphSurface', () => {
     ]);
     expect(modeButtons[1]?.getAttribute('aria-pressed')).toBe('true');
     expect(host.querySelector('[data-organization-overview-hud]')).toBeNull();
+    expect(
+      host.querySelector<HTMLButtonElement>(
+        'button[aria-label="organizations.graph.toolbar.reset"]'
+      )?.disabled
+    ).toBe(false);
 
     await act(async () => {
       modeButtons[0]?.dispatchEvent(new MouseEvent('click', { bubbles: true }));

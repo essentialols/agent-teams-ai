@@ -2860,6 +2860,23 @@
         "attention": "{{count}} need attention",
         "teamsOnline": "{{onlineCount}}/{{teamCount}} teams online"
       },
+      "toolbar": {
+        "filters": "Map filters",
+        "fit": "Fit meaningful overview",
+        "reset": "Reset search, focus, and filters",
+        "tasks": "Tasks",
+        "connections": "Connections",
+        "animation": "Animation",
+        "zoomIn": "Zoom in",
+        "zoomOut": "Zoom out"
+      },
+      "legend": {
+        "organization": "Organization",
+        "group": "Group",
+        "hierarchy": "Hierarchy",
+        "connection": "Connection",
+        "online": "Online"
+      },
       "focus": {
         "searchLabel": "Search organization map",
         "searchPlaceholder": "Organization, group, team, or task...",

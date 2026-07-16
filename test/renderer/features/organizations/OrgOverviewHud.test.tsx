@@ -108,6 +108,13 @@ describe('OrgOverviewHud', () => {
     expect(card?.textContent).toContain('1 groups · 1 teams · 4 agents');
     expect(card?.textContent).toContain('2 active tasks');
 
+    act(() => {
+      card?.focus();
+      card?.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Enter' }));
+    });
+    expect(onSelectNode).toHaveBeenCalledWith('org:acme', true);
+    onSelectNode.mockClear();
+
     const group = Array.from(card?.querySelectorAll('button') ?? []).find((button) =>
       button.textContent?.includes('Runtime')
     );

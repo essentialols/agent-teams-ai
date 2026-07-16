@@ -613,7 +613,8 @@ export const OrgGraphSurface = ({
           collapsedNodeIds.size > 0 ||
           activeViewMode !== 'hierarchy' ||
           !controls.filters.showTasks ||
-          !controls.filters.showEdges
+          !controls.filters.showEdges ||
+          controls.filters.paused
         }
         onViewModeChange={changeViewMode}
         onSearchToggle={() => setIsSearchOpen((value) => !value)}
@@ -634,13 +635,15 @@ export const OrgGraphSurface = ({
         }}
         labels={{
           search: t('organizations.graph.focus.searchLabel'),
-          filters: 'Фильтры карты',
-          fit: 'Смысловой обзор',
+          filters: t('organizations.graph.toolbar.filters'),
+          fit: t('organizations.graph.toolbar.fit'),
           minimap: t('organizations.graph.canvas.minimap'),
-          reset: 'Сбросить поиск, фокус и фильтры',
-          tasks: 'Задачи',
-          connections: 'Связи',
-          animation: 'Анимация',
+          reset: t('organizations.graph.toolbar.reset'),
+          tasks: t('organizations.graph.toolbar.tasks'),
+          connections: t('organizations.graph.toolbar.connections'),
+          animation: t('organizations.graph.toolbar.animation'),
+          zoomIn: t('organizations.graph.toolbar.zoomIn'),
+          zoomOut: t('organizations.graph.toolbar.zoomOut'),
         }}
       />
     ),

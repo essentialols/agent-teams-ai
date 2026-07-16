@@ -209,6 +209,23 @@ describe('GraphView pan interactions', () => {
     expect((hoisted.graphControlsProps?.filters as { showEdges: boolean }).showEdges).toBe(true);
   });
 
+  it('preserves an explicit null returned by a custom controls renderer', async () => {
+    const renderControls = vi.fn(() => null);
+
+    await act(async () => {
+      root.render(
+        React.createElement(GraphView, {
+          data: { teamName: 'demo-team', nodes: [], edges: [], particles: [] },
+          config: { animationEnabled: false },
+          renderControls,
+        })
+      );
+    });
+
+    expect(renderControls).toHaveBeenCalledOnce();
+    expect(hoisted.graphControlsProps).toBeNull();
+  });
+
   it('can opt out of animated space effects through config', async () => {
     await act(async () => {
       root.render(

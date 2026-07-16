@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  getReviewRejectBlockReason,
+  getEffectiveReviewFileDecision,
   getResolvedReviewModifiedContent,
-  isReviewRejectable,
+  getReviewRejectBlockReason,
+  isReviewAcceptDisabled,
   isReviewFileMissingOnDisk,
+  isReviewRejectable,
   isReviewTextContentUnavailable,
   shouldRenderCurrentDiskContextPreview,
 } from '../../../../../src/renderer/components/team/review/reviewContentPreview';
@@ -104,5 +106,53 @@ describe('reviewContentPreview', () => {
 
     expect(getReviewRejectBlockReason(file, content)).toBeNull();
     expect(isReviewRejectable(file, content)).toBe(true);
+  });
+
+  it('allows Accept to restore a missing file only when it has a persisted rejection', () => {
+    expect(
+      isReviewAcceptDisabled({
+        hasEdits: false,
+        isMissingOnDisk: true,
+        isContentUnavailable: false,
+        fileDecision: 'rejected',
+      })
+    ).toBe(false);
+    expect(
+      isReviewAcceptDisabled({
+        hasEdits: false,
+        isMissingOnDisk: true,
+        isContentUnavailable: false,
+        fileDecision: 'pending',
+      })
+    ).toBe(true);
+  });
+
+  it('treats all rejected hunks as an effective file rejection after reopen', () => {
+    const file = makeFile({
+      isNewFile: false,
+      changeKey: 'rename:old->new',
+    });
+    expect(
+      getEffectiveReviewFileDecision(
+        file,
+        2,
+        {
+          'rename:old->new:0': 'rejected',
+          '/repo/calc112/calc.js:1': 'rejected',
+        },
+        undefined
+      )
+    ).toBe('rejected');
+    expect(
+      getEffectiveReviewFileDecision(
+        file,
+        2,
+        {
+          'rename:old->new:0': 'rejected',
+          '/repo/calc112/calc.js:1': 'pending',
+        },
+        undefined
+      )
+    ).toBeUndefined();
   });
 });

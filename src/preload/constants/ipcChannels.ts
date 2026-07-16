@@ -600,6 +600,9 @@ export const REVIEW_FILE_CHANGE = 'review:fileChange';
 
 /** Save edited file content to disk */
 export const REVIEW_SAVE_EDITED_FILE = 'review:saveEditedFile';
+export const REVIEW_DELETE_EDITED_FILE = 'review:deleteEditedFile';
+export const REVIEW_RESTORE_REJECTED_RENAME = 'review:restoreRejectedRename';
+export const REVIEW_REAPPLY_REJECTED_RENAME = 'review:reapplyRejectedRename';
 
 /** Get git file change log */
 export const REVIEW_GET_GIT_FILE_LOG = 'review:getGitFileLog';

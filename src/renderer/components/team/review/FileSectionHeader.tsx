@@ -9,6 +9,7 @@ import { ChevronDown, ChevronRight, FilePlus, GitBranch, Loader2, Save, Undo2 } 
 import {
   getResolvedReviewModifiedContent,
   getReviewRejectBlockReason,
+  isReviewAcceptDisabled,
   isReviewFileMissingOnDisk,
   isReviewTextContentUnavailable,
   requiresManualLedgerReview,
@@ -64,7 +65,13 @@ export const FileSectionHeader = ({
   const isPreviewOnly = isMissingOnDisk || isContentUnavailable;
   const manualLedgerReviewRequired = requiresManualLedgerReview(file);
   const rejectBlockReason = getReviewRejectBlockReason(file, fileContent);
-  const rejectDisabled = rejectBlockReason !== null || hasEdits;
+  const rejectDisabled = rejectBlockReason !== null || hasEdits || fileDecision === 'rejected';
+  const acceptDisabled = isReviewAcceptDisabled({
+    hasEdits,
+    isMissingOnDisk,
+    isContentUnavailable,
+    fileDecision,
+  });
   const draftDecisionDisabledLabel = t('review.fileHeader.disabled.saveOrDiscardDraft', {
     defaultValue: 'Save or discard manual edits before accepting or rejecting.',
   });
@@ -275,7 +282,7 @@ export const FileSectionHeader = ({
                   <span>
                     <button
                       onClick={() => onAcceptFile(file.filePath)}
-                      disabled={applying || isPreviewOnly || hasEdits}
+                      disabled={applying || acceptDisabled}
                       className={[
                         'rounded px-2 py-1 text-xs font-medium transition-colors disabled:opacity-50',
                         fileDecision === 'accepted'
@@ -287,7 +294,7 @@ export const FileSectionHeader = ({
                     </button>
                   </span>
                 </TooltipTrigger>
-                {(isPreviewOnly || hasEdits) && (
+                {acceptDisabled && (
                   <TooltipContent side="bottom">
                     {hasEdits
                       ? draftDecisionDisabledLabel
@@ -316,7 +323,7 @@ export const FileSectionHeader = ({
                     </button>
                   </span>
                 </TooltipTrigger>
-                {rejectDisabled && (
+                {rejectDisabled && fileDecision !== 'rejected' && (
                   <TooltipContent side="bottom">
                     {hasEdits
                       ? draftDecisionDisabledLabel
@@ -371,7 +378,7 @@ export const FileSectionHeader = ({
               <TooltipTrigger asChild>
                 <button
                   onClick={() => onSave(file.filePath)}
-                  disabled={applying}
+                  disabled={applying || !!externalChange}
                   className="flex items-center gap-1 rounded bg-green-500/15 px-2 py-1 text-xs text-green-400 transition-colors hover:bg-green-500/25 disabled:opacity-50"
                 >
                   {applying ? (
@@ -383,7 +390,11 @@ export const FileSectionHeader = ({
                 </button>
               </TooltipTrigger>
               <TooltipContent side="bottom">
-                <span>{t('review.fileHeader.actions.saveFileTooltip')}</span>
+                <span>
+                  {externalChange
+                    ? `${t('review.fileHeader.actions.reloadFromDisk')} / ${t('review.fileHeader.actions.keepMyDraft')}`
+                    : t('review.fileHeader.actions.saveFileTooltip')}
+                </span>
                 <kbd className="ml-2 rounded border border-border bg-surface-raised px-1 py-0.5 font-mono text-[10px] text-text-muted">
                   {shortcutLabel('⌘ S', 'Ctrl+S')}
                 </kbd>

@@ -6,9 +6,11 @@ import {
 import {
   REVIEW_APPLY_DECISIONS,
   REVIEW_CHECK_CONFLICT,
+  REVIEW_DELETE_EDITED_FILE,
   REVIEW_GET_FILE_CONTENT,
   REVIEW_REJECT_FILE,
   REVIEW_REJECT_HUNKS,
+  REVIEW_RESTORE_REJECTED_RENAME,
   REVIEW_SAVE_EDITED_FILE,
 } from '@preload/constants/ipcChannels';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'fs/promises';
@@ -66,6 +68,9 @@ describe('review IPC path confinement', () => {
     rejectFile: ReturnType<typeof vi.fn>;
     applyReviewDecisions: ReturnType<typeof vi.fn>;
     saveEditedFile: ReturnType<typeof vi.fn>;
+    deleteEditedFile: ReturnType<typeof vi.fn>;
+    restoreRejectedRename: ReturnType<typeof vi.fn>;
+    reapplyRejectedRename: ReturnType<typeof vi.fn>;
   };
   let resolver: {
     getFileContent: ReturnType<typeof vi.fn>;
@@ -130,6 +135,9 @@ describe('review IPC path confinement', () => {
         }
         return { success: true };
       }),
+      deleteEditedFile: vi.fn().mockResolvedValue({ success: true }),
+      restoreRejectedRename: vi.fn().mockResolvedValue({ success: true }),
+      reapplyRejectedRename: vi.fn().mockResolvedValue({ success: true }),
     };
     resolver = {
       getFileContent: vi
@@ -668,5 +676,152 @@ describe('review IPC path confinement', () => {
       'different\n'
     );
     expect(applier.saveEditedFile).toHaveBeenNthCalledWith(3, missingFile, 'created\n', null);
+  });
+
+  it('confines guarded Undo deletion to an authoritative reviewed file', async () => {
+    const scope = { teamName: 'safe-team', memberName: 'worker' };
+    const allowed = await ipcMain.invoke(
+      REVIEW_DELETE_EDITED_FILE,
+      scope,
+      projectFile,
+      'restored\n'
+    );
+    const unrelated = await ipcMain.invoke(
+      REVIEW_DELETE_EDITED_FILE,
+      scope,
+      worktreeFile,
+      'restored\n'
+    );
+    const invalid = await ipcMain.invoke(REVIEW_DELETE_EDITED_FILE, scope, projectFile, null);
+
+    expect(allowed).toEqual({ success: true, data: { success: true } });
+    expect(unrelated).toMatchObject({
+      success: false,
+      error: 'File is not part of the reviewed scope',
+    });
+    expect(invalid).toEqual({ success: false, error: 'Invalid parameters' });
+    expect(applier.deleteEditedFile).toHaveBeenCalledTimes(1);
+    expect(applier.deleteEditedFile).toHaveBeenCalledWith(projectFile, 'restored\n');
+  });
+
+  it('restores a rejected rename only from authoritative review metadata', async () => {
+    const oldFile = path.join(projectDir, 'src', 'old.ts');
+    const relation = { kind: 'rename' as const, oldPath: oldFile, newPath: projectFile };
+    const expectation = {
+      eventId: 'rename-old',
+      beforeHash: null,
+      afterHash: null,
+      relation,
+    };
+    const snippets = [
+      {
+        toolUseId: 'rename-old',
+        filePath: oldFile,
+        toolName: 'Bash' as const,
+        type: 'shell-snapshot' as const,
+        oldString: 'before\n',
+        newString: '',
+        replaceAll: false,
+        timestamp: '2026-07-17T10:00:00.000Z',
+        isError: false,
+        ledger: {
+          eventId: 'rename-old',
+          source: 'ledger-snapshot' as const,
+          confidence: 'high' as const,
+          originalFullContent: 'before\n',
+          modifiedFullContent: null,
+          beforeHash: null,
+          afterHash: null,
+          operation: 'delete' as const,
+          relation,
+        },
+      },
+      {
+        toolUseId: 'rename-new',
+        filePath: projectFile,
+        toolName: 'Bash' as const,
+        type: 'shell-snapshot' as const,
+        oldString: '',
+        newString: 'after\n',
+        replaceAll: false,
+        timestamp: '2026-07-17T10:00:01.000Z',
+        isError: false,
+        ledger: {
+          eventId: 'rename-new',
+          source: 'ledger-snapshot' as const,
+          confidence: 'high' as const,
+          originalFullContent: null,
+          modifiedFullContent: 'after\n',
+          beforeHash: null,
+          afterHash: null,
+          operation: 'create' as const,
+          relation,
+        },
+      },
+    ];
+    extractor.getAgentChanges.mockResolvedValueOnce({
+      files: [{ filePath: projectFile, snippets, isNewFile: false }],
+    });
+    resolver.getFileContent.mockResolvedValueOnce({
+      filePath: projectFile,
+      relativePath: 'src/project.ts',
+      snippets,
+      linesAdded: 1,
+      linesRemoved: 1,
+      isNewFile: false,
+      originalFullContent: 'before\n',
+      modifiedFullContent: 'after\n',
+      contentSource: 'ledger-snapshot',
+    });
+
+    const result = await ipcMain.invoke(
+      REVIEW_RESTORE_REJECTED_RENAME,
+      { teamName: 'safe-team', memberName: 'worker' },
+      projectFile,
+      expectation
+    );
+
+    expect(result).toEqual({ success: true, data: { success: true } });
+    expect(applier.restoreRejectedRename).toHaveBeenCalledWith(
+      projectFile,
+      'before\n',
+      'after\n',
+      snippets
+    );
+    expect(resolver.invalidateFile).toHaveBeenCalledWith(oldFile);
+    expect(resolver.invalidateFile).toHaveBeenCalledWith(projectFile);
+
+    applier.restoreRejectedRename.mockClear();
+    extractor.getAgentChanges.mockResolvedValueOnce({
+      files: [{ filePath: projectFile, snippets, isNewFile: false }],
+    });
+    const stale = await ipcMain.invoke(
+      REVIEW_RESTORE_REJECTED_RENAME,
+      { teamName: 'safe-team', memberName: 'worker' },
+      projectFile,
+      { ...expectation, eventId: 'stale-event' }
+    );
+
+    expect(stale).toEqual({
+      success: false,
+      error: 'Review changes were updated; refusing stale rename recovery',
+    });
+    expect(applier.restoreRejectedRename).not.toHaveBeenCalled();
+
+    applier.restoreRejectedRename.mockRejectedValueOnce(new Error('rollback incomplete'));
+    resolver.invalidateFile.mockClear();
+    extractor.getAgentChanges.mockResolvedValueOnce({
+      files: [{ filePath: projectFile, snippets, isNewFile: false }],
+    });
+    const failed = await ipcMain.invoke(
+      REVIEW_RESTORE_REJECTED_RENAME,
+      { teamName: 'safe-team', memberName: 'worker' },
+      projectFile,
+      expectation
+    );
+
+    expect(failed).toEqual({ success: false, error: 'rollback incomplete' });
+    expect(resolver.invalidateFile).toHaveBeenCalledWith(oldFile);
+    expect(resolver.invalidateFile).toHaveBeenCalledWith(projectFile);
   });
 });

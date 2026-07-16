@@ -38,6 +38,20 @@ import { FileEditTimeline } from './FileEditTimeline';
 import { buildInitialReviewFileScrollKey } from './initialReviewFileScroll';
 import { KeyboardShortcutsHelp } from './KeyboardShortcutsHelp';
 import { buildPathChangeLabels } from './pathChangeLabels';
+import {
+  appendOrderedReviewAction,
+  getReviewCloseBlockReason,
+  getReviewRenameRecoveryExpectation,
+  hasReviewFileRejections,
+  hasUnresolvedReviewExternalChange,
+  isReviewActionLocked,
+  isReviewFileFullyRejected,
+  popOrderedReviewAction,
+  reconcileReviewDecisionRecordsAfterApply,
+  resolveReviewFileIsNew,
+  restoreReviewDecisionRecordsForFile,
+  restoreReviewDecisionRecordsForFiles,
+} from './reviewActionState';
 import { getResolvedReviewModifiedContent, isReviewRejectable } from './reviewContentPreview';
 import { resolveReviewFilePath } from './reviewFilePathResolution';
 import { ReviewFileTree } from './ReviewFileTree';
@@ -45,12 +59,13 @@ import { ReviewToolbar } from './ReviewToolbar';
 import { ScopeWarningBanner } from './ScopeWarningBanner';
 import { ViewedProgressBar } from './ViewedProgressBar';
 
+import type { ReviewDecisionRecords } from './reviewActionState';
 import type { EditorView } from '@codemirror/view';
 import type {
   FileChangeSummary,
-  FileChangeWithContent,
   HunkDecision,
   ReviewFileScope,
+  ReviewRenameRecoveryExpectation,
   TaskChangeSetV2,
 } from '@shared/types';
 import type { EditorSelectionAction, EditorSelectionInfo } from '@shared/types/editor';
@@ -58,7 +73,6 @@ import type { EditorSelectionAction, EditorSelectionInfo } from '@shared/types/e
 interface RecentHunkUndoAction {
   filePath: string;
   originalIndex: number;
-  at: number;
 }
 
 interface ReviewDiskUndoSnapshot {
@@ -69,157 +83,21 @@ interface ReviewDiskUndoSnapshot {
   file?: FileChangeSummary;
   fileIndex?: number;
   restoreConflict?: string;
-}
-
-interface ReviewDecisionRecords {
-  hunkDecisions: Record<string, HunkDecision>;
-  fileDecisions: Record<string, HunkDecision>;
+  restoreMode?: 'content' | 'delete-file' | 'restore-rejected-rename' | 'reapply-rejected-rename';
+  renameExpectation?: ReviewRenameRecoveryExpectation;
 }
 
 interface RecentDiskUndoAction {
   snapshot: ReviewDiskUndoSnapshot;
-  at: number;
   originalIndex?: number;
   file?: FileChangeSummary;
   decisionSnapshot?: ReviewDecisionRecords;
 }
 
-export function isReviewActionLocked(state: {
-  applying: boolean;
-  fileApplyCount: number;
-  undoing: boolean;
-  closing: boolean;
-}): boolean {
-  return state.applying || state.fileApplyCount > 0 || state.undoing || state.closing;
-}
-
-export function canRunScopedNewFileUndo(
-  currentEpoch: number,
-  snapshotEpoch: number,
-  snapshotIsStackTop: boolean
-): boolean {
-  return currentEpoch === snapshotEpoch && snapshotIsStackTop;
-}
-
-export function buildFileAcceptActionTime(now: number): { bulkAt: number; fileAt: number } {
-  return { bulkAt: now, fileAt: now };
-}
-
-export function shouldUndoLatestDecisionSnapshot(input: {
-  snapshotActionAt: number;
-  lastHunkAt: number;
-  lastFileAt: number;
-  lastEditorInteractionAt: number;
-}): boolean {
-  return (
-    input.snapshotActionAt >= Math.max(input.lastHunkAt, input.lastFileAt) &&
-    input.lastEditorInteractionAt <= input.snapshotActionAt
-  );
-}
-
-export function shouldUndoRemovedNewFile(input: {
-  removedAt: number;
-  lastReviewActionAt: number;
-  lastEditorInteractionAt: number;
-  hasSnapshot: boolean;
-}): boolean {
-  return (
-    input.hasSnapshot &&
-    input.removedAt >= input.lastReviewActionAt &&
-    input.lastEditorInteractionAt <= input.removedAt
-  );
-}
-
-export function getReviewCloseBlockReason(input: {
-  busy: boolean;
-  draftCount: number;
-}): string | null {
-  if (input.busy) return 'Wait for the current review action to finish.';
-  if (input.draftCount > 0) return 'Save or discard manual edits before closing Changes.';
-  return null;
-}
-
-export function resolveReviewFileIsNew(
-  file: FileChangeSummary,
-  content: FileChangeWithContent | null | undefined
-): boolean {
-  return content?.isNewFile ?? file.isNewFile;
-}
-
-export function partitionReviewFilesByApplyErrors(
-  files: readonly FileChangeSummary[],
-  errorPaths: readonly string[] | null
-): { successful: FileChangeSummary[]; failed: FileChangeSummary[] } {
-  if (errorPaths === null) return { successful: [], failed: [...files] };
-  const normalizedErrors = new Set(errorPaths.map(normalizePathForComparison));
-  const requestedPaths = new Set(files.map((file) => normalizePathForComparison(file.filePath)));
-  const hasUnknownError = [...normalizedErrors].some((filePath) => !requestedPaths.has(filePath));
-  if (hasUnknownError) {
-    return { successful: [], failed: [...files] };
-  }
-  return {
-    successful: files.filter(
-      (file) => !normalizedErrors.has(normalizePathForComparison(file.filePath))
-    ),
-    failed: files.filter((file) => normalizedErrors.has(normalizePathForComparison(file.filePath))),
-  };
-}
-
-export function restoreReviewDecisionRecordsForFile(
-  file: FileChangeSummary,
-  current: ReviewDecisionRecords,
-  snapshot: ReviewDecisionRecords
-): ReviewDecisionRecords {
-  const aliases = [getFileReviewKey(file), file.filePath];
-  const matchesHunkAlias = (key: string): boolean =>
-    aliases.some((alias) => key.startsWith(`${alias}:`));
-  const hunkDecisions = { ...current.hunkDecisions };
-  for (const key of Object.keys(hunkDecisions)) {
-    if (matchesHunkAlias(key)) delete hunkDecisions[key];
-  }
-  for (const [key, decision] of Object.entries(snapshot.hunkDecisions)) {
-    if (matchesHunkAlias(key)) hunkDecisions[key] = decision;
-  }
-
-  const fileDecisions = { ...current.fileDecisions };
-  for (const alias of aliases) delete fileDecisions[alias];
-  for (const alias of aliases) {
-    const decision = snapshot.fileDecisions[alias];
-    if (decision) fileDecisions[alias] = decision;
-  }
-  return { hunkDecisions, fileDecisions };
-}
-
-export function restoreReviewDecisionRecordsForFiles(
-  files: readonly FileChangeSummary[],
-  current: ReviewDecisionRecords,
-  snapshot: ReviewDecisionRecords
-): ReviewDecisionRecords {
-  return files.reduce(
-    (restored, file) => restoreReviewDecisionRecordsForFile(file, restored, snapshot),
-    current
-  );
-}
-
-export function reconcileReviewDecisionRecordsAfterApply(
-  files: readonly FileChangeSummary[],
-  errorPaths: readonly string[] | null,
-  current: ReviewDecisionRecords,
-  snapshot: ReviewDecisionRecords
-): ReviewDecisionRecords & {
-  successful: FileChangeSummary[];
-  failed: FileChangeSummary[];
-} {
-  const partition = partitionReviewFilesByApplyErrors(files, errorPaths);
-  let reconciled: ReviewDecisionRecords = {
-    hunkDecisions: { ...current.hunkDecisions },
-    fileDecisions: { ...current.fileDecisions },
-  };
-  for (const file of partition.failed) {
-    reconciled = restoreReviewDecisionRecordsForFile(file, reconciled, snapshot);
-  }
-  return { ...partition, ...reconciled };
-}
+type ReviewUndoAction =
+  | { kind: 'bulk' }
+  | { kind: 'disk'; action: RecentDiskUndoAction }
+  | { kind: 'hunk'; action: RecentHunkUndoAction };
 
 function alignDiskUndoSnapshotWithAppliedContent(
   snapshot: ReviewDiskUndoSnapshot,
@@ -234,6 +112,10 @@ function alignDiskUndoSnapshotWithAppliedContent(
     return;
   }
   snapshot.beforeContent = merged.content;
+}
+
+function isLedgerRenameReviewFile(file: FileChangeSummary | undefined): boolean {
+  return Boolean(file?.snippets.some((snippet) => snippet.ledger?.relation?.kind === 'rename'));
 }
 
 const REVIEW_LOCAL_WRITE_COOLDOWN_MS = 2000;
@@ -349,7 +231,6 @@ export const ChangeReviewDialog = ({
     rejectAllFile,
     applyReview,
     applySingleFileDecision,
-    removeReviewFile,
     addReviewFile,
     editedContents,
     updateEditedContent,
@@ -366,7 +247,6 @@ export const ChangeReviewDialog = ({
     fileChunkCounts,
     pushReviewUndoSnapshot,
     undoBulkReview,
-    reviewUndoStack,
     hunkContextHashesByFile,
     changeSetEpoch,
     globalTasks,
@@ -403,6 +283,7 @@ export const ChangeReviewDialog = ({
   const [discardCounters, setDiscardCounters] = useState<Record<string, number>>({});
   const [filesApplying, setFilesApplying] = useState<Set<string>>(() => new Set());
   const [undoing, setUndoing] = useState(false);
+  const [reviewUndoDepth, setReviewUndoDepth] = useState(0);
   const [closing, setClosing] = useState(false);
   const reviewScope = useMemo<ReviewFileScope>(
     () => ({ teamName, taskId, memberName }),
@@ -438,29 +319,17 @@ export const ChangeReviewDialog = ({
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   // Last focused CM editor - for Cmd+Z outside editor
   const lastFocusedEditorRef = useRef<EditorView | null>(null);
-  // Timestamp of last bulk accept/reject-all operation (for Ctrl/Cmd+Z UX)
-  const lastBulkActionAtRef = useRef<number>(0);
-  // Track recent per-hunk actions so Ctrl/Cmd+Z can clear persisted decisions (reopen-safe)
-  const lastHunkActionAtRef = useRef<Record<string, number>>({});
+  // Ordered review action history. This is the source of truth for Ctrl/Cmd+Z routing.
+  // Per-kind stacks below retain the actual recovery payloads.
+  const reviewUndoActionsRef = useRef<ReviewUndoAction[]>([]);
+  const reviewRedoBlockedRef = useRef(false);
   const hunkDecisionUndoStackRef = useRef<Record<string, number[]>>({});
   const recentHunkUndoActionsRef = useRef<RecentHunkUndoAction[]>([]);
-  const lastEditorInteractionAtRef = useRef<Record<string, number>>({});
   const fileApplyInFlightRef = useRef(new Set<string>());
   const undoInFlightRef = useRef(false);
   const closingRef = useRef(false);
   const recentDiskUndoActionsRef = useRef<RecentDiskUndoAction[]>([]);
   const bulkDiskUndoStackRef = useRef<ReviewDiskUndoSnapshot[][]>([]);
-  const lastFileActionAtRef = useRef<number>(0);
-  const removedNewFileUndoStackRef = useRef<
-    {
-      file: FileChangeSummary;
-      index: number;
-      restoreContent: string;
-      removedAt: number;
-      changeSetEpoch: number;
-    }[]
-  >([]);
-  const lastNewFileRemoveAtRef = useRef<number>(0);
   const recentReviewWritesRef = useRef(new Map<string, number>());
 
   // Proxy ref for useDiffNavigation (points to active file's editor)
@@ -526,20 +395,44 @@ export const ChangeReviewDialog = ({
     bulkDiskUndoStackRef.current = [];
     recentHunkUndoActionsRef.current = [];
     hunkDecisionUndoStackRef.current = {};
-    lastHunkActionAtRef.current = {};
-    lastEditorInteractionAtRef.current = {};
-    removedNewFileUndoStackRef.current = [];
-    lastBulkActionAtRef.current = 0;
-    lastFileActionAtRef.current = 0;
-    lastNewFileRemoveAtRef.current = 0;
+    reviewUndoActionsRef.current = [];
+    reviewRedoBlockedRef.current = false;
     lastFocusedEditorRef.current = null;
     recentReviewWritesRef.current.clear();
     undoInFlightRef.current = false;
     closingRef.current = false;
     setUndoing(false);
+    setReviewUndoDepth(0);
     setClosing(false);
     setFilesApplying(new Set());
   }, [changeSetEpoch, scopeKey, teamName]);
+
+  const pushReviewUndoAction = useCallback((action: ReviewUndoAction): void => {
+    const stack = appendOrderedReviewAction(reviewUndoActionsRef.current, action);
+    reviewUndoActionsRef.current = stack;
+    reviewRedoBlockedRef.current = false;
+    setReviewUndoDepth(stack.length);
+  }, []);
+
+  const completeReviewUndoAction = useCallback((action: ReviewUndoAction): boolean => {
+    const result = popOrderedReviewAction(reviewUndoActionsRef.current, action);
+    if (!result.popped) return false;
+    reviewUndoActionsRef.current = result.stack;
+    reviewRedoBlockedRef.current = true;
+    setReviewUndoDepth(result.stack.length);
+    return true;
+  }, []);
+
+  const clearReviewActionHistory = useCallback((): void => {
+    recentDiskUndoActionsRef.current = [];
+    bulkDiskUndoStackRef.current = [];
+    recentHunkUndoActionsRef.current = [];
+    hunkDecisionUndoStackRef.current = {};
+    reviewUndoActionsRef.current = [];
+    reviewRedoBlockedRef.current = false;
+    useStore.setState({ reviewUndoStack: [] });
+    setReviewUndoDepth(0);
+  }, []);
 
   const reviewActionsBusy = isReviewActionLocked({
     applying,
@@ -653,9 +546,18 @@ export const ChangeReviewDialog = ({
         const fileDecision = fileDecisions[reviewKey] ?? fileDecisions[file.filePath] ?? 'pending';
         if (fileDecision !== 'pending') return false;
         if (file.filePath in editedContents) return false;
+        const count = getFileHunkCount(file.filePath, file.snippets.length, fileChunkCounts);
+        if (
+          isReviewFileFullyRejected(file, count, {
+            hunkDecisions,
+            fileDecisions,
+          })
+        ) {
+          return false;
+        }
         return isReviewRejectable(file, fileContents[file.filePath] ?? null);
       }),
-    [editedContents, fileContents, fileDecisions, sortedFiles]
+    [editedContents, fileChunkCounts, fileContents, fileDecisions, hunkDecisions, sortedFiles]
   );
   const canRejectAll = rejectablePendingFiles.length > 0;
 
@@ -703,6 +605,7 @@ export const ChangeReviewDialog = ({
         return;
       }
 
+      clearReviewActionHistory();
       state.clearReviewFileExternalChange(file.filePath);
       state.invalidateResolvedFileContent(file.filePath);
       void state.fetchFileContent(teamName, memberName, file.filePath);
@@ -717,7 +620,7 @@ export const ChangeReviewDialog = ({
       unsubscribe();
       void api.review.unwatchFiles();
     };
-  }, [open, projectPath, sortedFiles, teamName, memberName]);
+  }, [clearReviewActionHistory, open, projectPath, sortedFiles, teamName, memberName]);
 
   // Tree click → scroll to file
   const handleTreeFileClick = useCallback(
@@ -728,34 +631,36 @@ export const ChangeReviewDialog = ({
     [scrollToFile]
   );
 
-  // Double rAF to ensure DOM/layout is ready before scrolling (reduces nesting in keydown handler)
-  const scheduleScrollToFile = useCallback(
-    (path: string) => {
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => scrollToFile(path));
-      });
-    },
-    [scrollToFile]
-  );
-
   // Accept/Reject all across all files
   const handleAcceptAll = useCallback(() => {
     if (!activeChangeSet || hasReviewActionInFlight()) return;
     const currentDrafts = useStore.getState().editedContents;
     pushReviewUndoSnapshot();
-    bulkDiskUndoStackRef.current.push([]);
-    lastBulkActionAtRef.current = Date.now();
+    const acceptedFiles = new Set<string>();
     for (const file of activeChangeSet.files) {
       if (file.filePath in currentDrafts) continue;
-      acceptAllFile(file.filePath);
+      if (acceptAllFile(file.filePath)) acceptedFiles.add(file.filePath);
     }
+    if (acceptedFiles.size === 0) {
+      undoBulkReview();
+      return;
+    }
+    bulkDiskUndoStackRef.current.push([]);
+    pushReviewUndoAction({ kind: 'bulk' });
     requestAnimationFrame(() => {
       for (const [filePath, view] of editorViewMapRef.current.entries()) {
-        if (filePath in currentDrafts) continue;
+        if (!acceptedFiles.has(filePath)) continue;
         acceptAllChunks(view);
       }
     });
-  }, [activeChangeSet, acceptAllFile, hasReviewActionInFlight, pushReviewUndoSnapshot]);
+  }, [
+    activeChangeSet,
+    acceptAllFile,
+    hasReviewActionInFlight,
+    pushReviewUndoAction,
+    pushReviewUndoSnapshot,
+    undoBulkReview,
+  ]);
 
   const handleRejectAll = useCallback(() => {
     if (!activeChangeSet || hasReviewActionInFlight()) return;
@@ -772,7 +677,6 @@ export const ChangeReviewDialog = ({
     pushReviewUndoSnapshot();
     const diskUndoSnapshots: ReviewDiskUndoSnapshot[] = [];
     bulkDiskUndoStackRef.current.push(diskUndoSnapshots);
-    lastBulkActionAtRef.current = Date.now();
     for (const file of requestedFiles) {
       const content = fileContents[file.filePath] ?? null;
       const isNewFile = resolveReviewFileIsNew(file, content);
@@ -784,7 +688,8 @@ export const ChangeReviewDialog = ({
           beforeContent,
           afterContent,
           changeSetEpoch,
-          file: isNewFile ? file : undefined,
+          file,
+          renameExpectation: getReviewRenameRecoveryExpectation(file) ?? undefined,
           fileIndex: isNewFile
             ? activeChangeSet.files.findIndex((candidate) => candidate.filePath === file.filePath)
             : undefined,
@@ -852,7 +757,7 @@ export const ChangeReviewDialog = ({
           setUndoInFlight(true);
           await Promise.all(
             diskUndoSnapshots.map(async (snapshot) => {
-              if (snapshot.afterContent === null) return;
+              if (snapshot.afterContent === null || isLedgerRenameReviewFile(snapshot.file)) return;
               const appliedContent = await readCurrentReviewDiskContent(
                 snapshot.filePath,
                 snapshot.afterContent
@@ -863,13 +768,9 @@ export const ChangeReviewDialog = ({
 
           if (useStore.getState().changeSetEpoch !== changeSetEpoch) return;
           for (const file of successfulFiles) {
-            const content = fileContents[file.filePath] ?? null;
-            const isNewFile = resolveReviewFileIsNew(file, content);
             markRecentReviewWrite(file.filePath);
-            if (isNewFile) {
-              removeReviewFile(file.filePath);
-            }
           }
+          pushReviewUndoAction({ kind: 'bulk' });
         } finally {
           for (const file of requestedFiles) {
             fileApplyInFlightRef.current.delete(file.filePath);
@@ -887,6 +788,7 @@ export const ChangeReviewDialog = ({
     } else {
       for (const file of requestedFiles) fileApplyInFlightRef.current.delete(file.filePath);
       setFilesApplying(new Set());
+      pushReviewUndoAction({ kind: 'bulk' });
     }
   }, [
     activeChangeSet,
@@ -903,28 +805,231 @@ export const ChangeReviewDialog = ({
     fetchFileContent,
     hasReviewActionInFlight,
     markRecentReviewWrite,
-    removeReviewFile,
     rollbackEditorContent,
+    pushReviewUndoAction,
     setUndoInFlight,
     undoBulkReview,
   ]);
 
   // File-level accept/reject (Cursor-style)
+  const handleRestoreRejectedFileAsAccepted = useCallback(
+    async (filePath: string): Promise<void> => {
+      if (hasReviewDraft(filePath) || hasReviewActionInFlight()) return;
+      const operationEpoch = changeSetEpoch;
+      const file = activeChangeSet?.files.find((candidate) => candidate.filePath === filePath);
+      if (!file) return;
+      const content = fileContents[filePath] ?? null;
+      const normalizedFilePath = normalizePathForComparison(filePath);
+      const sessionSnapshot =
+        [...recentDiskUndoActionsRef.current]
+          .reverse()
+          .find(
+            (action) =>
+              action.originalIndex === undefined &&
+              normalizePathForComparison(action.snapshot.filePath) === normalizedFilePath
+          )?.snapshot ??
+        [...bulkDiskUndoStackRef.current]
+          .reverse()
+          .flatMap((snapshots) => snapshots)
+          .find((snapshot) => normalizePathForComparison(snapshot.filePath) === normalizedFilePath);
+      const hasAuthoritativeAgentContent =
+        content?.contentSource === 'ledger-exact' || content?.contentSource === 'ledger-snapshot';
+      const canReconstructCreatedFile = resolveReviewFileIsNew(file, content);
+      const desiredContent =
+        sessionSnapshot?.beforeContent ??
+        (hasAuthoritativeAgentContent || canReconstructCreatedFile
+          ? getResolvedReviewModifiedContent(file, content)
+          : null);
+      if (desiredContent === null) {
+        useStore.setState({
+          applyError:
+            'Agent content is unavailable after reopen; restore it from Git or rerun the change.',
+        });
+        return;
+      }
+
+      const decisionSnapshot: ReviewDecisionRecords = {
+        hunkDecisions: { ...useStore.getState().hunkDecisions },
+        fileDecisions: { ...useStore.getState().fileDecisions },
+      };
+      useStore.setState({ applyError: null });
+      fileApplyInFlightRef.current.add(filePath);
+      setFileApplying(filePath, true);
+      try {
+        let rejectedDiskContent =
+          sessionSnapshot?.afterContent ?? content?.originalFullContent ?? '';
+        let restoredDiskContent = desiredContent;
+        let restoreMode: ReviewDiskUndoSnapshot['restoreMode'] = 'content';
+        let rollbackRestoredDisk: (() => Promise<unknown>) | null = null;
+        let renameExpectation: ReviewRenameRecoveryExpectation | null = null;
+
+        if (isLedgerRenameReviewFile(file)) {
+          renameExpectation =
+            sessionSnapshot?.renameExpectation ?? getReviewRenameRecoveryExpectation(file);
+          if (!renameExpectation) {
+            throw new Error('Rename recovery metadata is unavailable; refusing an unsafe restore.');
+          }
+          await api.review.restoreRejectedRename(reviewScope, filePath, renameExpectation);
+          restoreMode = 'reapply-rejected-rename';
+          rollbackRestoredDisk = () =>
+            api.review.reapplyRejectedRename(reviewScope, filePath, renameExpectation!);
+        } else if (resolveReviewFileIsNew(file, content)) {
+          const current = await api.review.checkConflict(reviewScope, filePath, '');
+          const isMissing = current.hasConflict && current.conflictContent === null;
+          if (!isMissing) {
+            throw new Error('A file now exists at this path; refusing to overwrite it.');
+          }
+          await api.review.saveEditedFile(reviewScope, filePath, desiredContent, null);
+          rejectedDiskContent = '';
+          restoreMode = 'delete-file';
+          rollbackRestoredDisk = () =>
+            api.review.deleteEditedFile(reviewScope, filePath, desiredContent);
+        } else {
+          const baseline = sessionSnapshot?.afterContent ?? content?.originalFullContent;
+          if (baseline === null || baseline === undefined) {
+            throw new Error('Original file content is unavailable; unable to restore safely.');
+          }
+          const current = await api.review.checkConflict(reviewScope, filePath, baseline);
+          if (current.hasConflict && current.conflictContent === null) {
+            throw new Error('File is missing on disk; unable to restore safely.');
+          }
+          rejectedDiskContent = current.currentContent;
+          const merged = threeWayTextMerge(baseline, current.currentContent, desiredContent);
+          if (merged.hasConflicts) {
+            throw new Error('Agent changes conflict with edits made after rejection.');
+          }
+          restoredDiskContent = merged.content;
+          await api.review.saveEditedFile(
+            reviewScope,
+            filePath,
+            restoredDiskContent,
+            current.currentContent
+          );
+          rollbackRestoredDisk = () =>
+            api.review.saveEditedFile(
+              reviewScope,
+              filePath,
+              rejectedDiskContent,
+              restoredDiskContent
+            );
+        }
+
+        if (useStore.getState().changeSetEpoch !== operationEpoch) return;
+        restoreFileDecisions(file, { hunkDecisions: {}, fileDecisions: {} });
+        if (!acceptAllFile(filePath)) {
+          restoreFileDecisions(file, decisionSnapshot);
+          try {
+            await rollbackRestoredDisk?.();
+          } catch (rollbackError) {
+            const detail =
+              rollbackError instanceof Error ? rollbackError.message : 'unknown rollback error';
+            throw new Error(
+              `Review state changed while restoring the file, and disk rollback failed: ${detail}`
+            );
+          }
+          throw new Error('Review state changed while restoring the file; disk was rolled back.');
+        }
+
+        const snapshot: ReviewDiskUndoSnapshot = {
+          filePath,
+          beforeContent: rejectedDiskContent,
+          afterContent: restoredDiskContent,
+          changeSetEpoch: operationEpoch,
+          file,
+          restoreMode,
+          renameExpectation: renameExpectation ?? undefined,
+        };
+        const undoAction: RecentDiskUndoAction = {
+          snapshot,
+          file,
+          decisionSnapshot,
+        };
+        recentDiskUndoActionsRef.current.push(undoAction);
+        pushReviewUndoAction({ kind: 'disk', action: undoAction });
+        markRecentReviewWrite(filePath);
+        clearReviewFileExternalChange(filePath);
+        useStore.getState().invalidateResolvedFileContent(filePath);
+        setDiscardCounters((previous) => ({
+          ...previous,
+          [filePath]: (previous[filePath] ?? 0) + 1,
+        }));
+        void fetchFileContent(teamName, memberName, filePath);
+      } catch (error) {
+        if (useStore.getState().changeSetEpoch === operationEpoch) {
+          useStore.setState({
+            applyError: error instanceof Error ? error.message : 'Unable to restore the file.',
+          });
+          useStore.getState().invalidateResolvedFileContent(filePath);
+          setDiscardCounters((previous) => ({
+            ...previous,
+            [filePath]: (previous[filePath] ?? 0) + 1,
+          }));
+          void fetchFileContent(teamName, memberName, filePath);
+        }
+      } finally {
+        fileApplyInFlightRef.current.delete(filePath);
+        if (useStore.getState().changeSetEpoch === operationEpoch) {
+          setFileApplying(filePath, false);
+        }
+      }
+    },
+    [
+      acceptAllFile,
+      activeChangeSet,
+      changeSetEpoch,
+      clearReviewFileExternalChange,
+      fetchFileContent,
+      fileContents,
+      hasReviewActionInFlight,
+      hasReviewDraft,
+      markRecentReviewWrite,
+      memberName,
+      pushReviewUndoAction,
+      restoreFileDecisions,
+      reviewScope,
+      setFileApplying,
+      teamName,
+    ]
+  );
+
   const handleAcceptFile = useCallback(
     (filePath: string) => {
       if (hasReviewDraft(filePath) || hasReviewActionInFlight()) return;
+      const file = activeChangeSet?.files.find((candidate) => candidate.filePath === filePath);
+      if (!file) return;
+      const state = useStore.getState();
+      const count = getFileHunkCount(file.filePath, file.snippets.length, state.fileChunkCounts);
+      if (
+        hasReviewFileRejections(file, count, {
+          hunkDecisions: state.hunkDecisions,
+          fileDecisions: state.fileDecisions,
+        })
+      ) {
+        void handleRestoreRejectedFileAsAccepted(filePath);
+        return;
+      }
       pushReviewUndoSnapshot();
+      if (!acceptAllFile(filePath)) {
+        undoBulkReview();
+        return;
+      }
       bulkDiskUndoStackRef.current.push([]);
-      const actionTime = buildFileAcceptActionTime(Date.now());
-      lastBulkActionAtRef.current = actionTime.bulkAt;
-      lastFileActionAtRef.current = actionTime.fileAt;
-      acceptAllFile(filePath);
+      pushReviewUndoAction({ kind: 'bulk' });
       const view = editorViewMapRef.current.get(filePath);
       if (view) {
         requestAnimationFrame(() => acceptAllChunks(view));
       }
     },
-    [acceptAllFile, hasReviewActionInFlight, hasReviewDraft, pushReviewUndoSnapshot]
+    [
+      acceptAllFile,
+      activeChangeSet,
+      hasReviewActionInFlight,
+      hasReviewDraft,
+      handleRestoreRejectedFileAsAccepted,
+      pushReviewUndoAction,
+      pushReviewUndoSnapshot,
+      undoBulkReview,
+    ]
   );
 
   const handleRejectFile = useCallback(
@@ -936,9 +1041,19 @@ export const ChangeReviewDialog = ({
       try {
         const file = activeChangeSet?.files.find((f) => f.filePath === filePath);
         if (!file) return;
+        const state = useStore.getState();
+        const count = getFileHunkCount(file.filePath, file.snippets.length, state.fileChunkCounts);
+        if (
+          isReviewFileFullyRejected(file, count, {
+            hunkDecisions: state.hunkDecisions,
+            fileDecisions: state.fileDecisions,
+          })
+        ) {
+          return;
+        }
         const decisionSnapshot = {
-          hunkDecisions: { ...useStore.getState().hunkDecisions },
-          fileDecisions: { ...useStore.getState().fileDecisions },
+          hunkDecisions: { ...state.hunkDecisions },
+          fileDecisions: { ...state.fileDecisions },
         };
         const isNew = resolveReviewFileIsNew(file, fileContents[filePath]);
         const view = editorViewMapRef.current.get(filePath);
@@ -948,7 +1063,6 @@ export const ChangeReviewDialog = ({
         const afterContent = isNew ? null : (fileContents[filePath]?.originalFullContent ?? null);
 
         // Mark rejected in store + update CM view immediately for feedback
-        lastFileActionAtRef.current = Date.now();
         rejectAllFile(filePath);
         if (view) {
           rejectAllChunks(view);
@@ -969,19 +1083,27 @@ export const ChangeReviewDialog = ({
                   normalizePathForComparison(filePath)
               );
             if (!hasErrorForFile) {
-              // Keep undo payload so Ctrl/Cmd+Z can restore the file (and re-add it to the review list).
               const restoreContent =
                 getResolvedReviewModifiedContent(file, fileContents[filePath] ?? null) ?? '';
               const index = activeChangeSet?.files.findIndex((f) => f.filePath === filePath) ?? 0;
-              removedNewFileUndoStackRef.current.push({
+              const snapshot: ReviewDiskUndoSnapshot = {
+                filePath,
+                beforeContent: restoreContent,
+                afterContent: null,
+                fileIndex: Math.max(0, index),
                 file,
-                index: Math.max(0, index),
-                restoreContent,
-                removedAt: Date.now(),
                 changeSetEpoch: operationEpoch,
-              });
-              lastNewFileRemoveAtRef.current = Date.now();
-              removeReviewFile(filePath);
+              };
+              const undoAction: RecentDiskUndoAction = {
+                snapshot,
+                file,
+                decisionSnapshot,
+              };
+              recentDiskUndoActionsRef.current.push(undoAction);
+              pushReviewUndoAction({ kind: 'disk', action: undoAction });
+              markRecentReviewWrite(filePath);
+              useStore.getState().invalidateResolvedFileContent(filePath);
+              void fetchFileContent(teamName, memberName, filePath);
             } else {
               restoreFileDecisions(file, decisionSnapshot);
               if (beforeContent != null) rollbackEditorContent(filePath, beforeContent);
@@ -1011,14 +1133,19 @@ export const ChangeReviewDialog = ({
                   beforeContent,
                   afterContent,
                   changeSetEpoch: operationEpoch,
+                  file,
+                  renameExpectation: getReviewRenameRecoveryExpectation(file) ?? undefined,
                 };
-                alignDiskUndoSnapshotWithAppliedContent(snapshot, actualAfterContent);
-                recentDiskUndoActionsRef.current.push({
+                if (!isLedgerRenameReviewFile(file)) {
+                  alignDiskUndoSnapshotWithAppliedContent(snapshot, actualAfterContent);
+                }
+                const undoAction: RecentDiskUndoAction = {
                   snapshot,
-                  at: lastFileActionAtRef.current,
                   file,
                   decisionSnapshot,
-                });
+                };
+                recentDiskUndoActionsRef.current.push(undoAction);
+                pushReviewUndoAction({ kind: 'disk', action: undoAction });
               }
               markRecentReviewWrite(filePath);
             } else {
@@ -1048,7 +1175,6 @@ export const ChangeReviewDialog = ({
       taskId,
       memberName,
       markRecentReviewWrite,
-      removeReviewFile,
       fileContents,
       fetchFileContent,
       changeSetEpoch,
@@ -1058,6 +1184,7 @@ export const ChangeReviewDialog = ({
       restoreFileDecisions,
       rollbackEditorContent,
       hasReviewDraft,
+      pushReviewUndoAction,
     ]
   );
 
@@ -1068,19 +1195,16 @@ export const ChangeReviewDialog = ({
         return false;
       }
       const originalIndex = setHunkDecision(filePath, hunkIndex, 'accepted');
-      lastHunkActionAtRef.current[filePath] = Date.now();
       if (!hunkDecisionUndoStackRef.current[filePath]) {
         hunkDecisionUndoStackRef.current[filePath] = [];
       }
       hunkDecisionUndoStackRef.current[filePath].push(originalIndex);
-      recentHunkUndoActionsRef.current.push({
-        filePath,
-        originalIndex,
-        at: Date.now(),
-      });
+      const undoAction: RecentHunkUndoAction = { filePath, originalIndex };
+      recentHunkUndoActionsRef.current.push(undoAction);
+      pushReviewUndoAction({ kind: 'hunk', action: undoAction });
       return true;
     },
-    [hasReviewActionInFlight, hasReviewDraft, setHunkDecision]
+    [hasReviewActionInFlight, hasReviewDraft, pushReviewUndoAction, setHunkDecision]
   );
 
   const handleHunkRejected = useCallback(
@@ -1092,17 +1216,12 @@ export const ChangeReviewDialog = ({
       fileApplyInFlightRef.current.add(filePath);
       setFileApplying(filePath, true);
       const originalIndex = setHunkDecision(filePath, hunkIndex, 'rejected');
-      const actionAt = Date.now();
-      lastHunkActionAtRef.current[filePath] = actionAt;
       if (!hunkDecisionUndoStackRef.current[filePath]) {
         hunkDecisionUndoStackRef.current[filePath] = [];
       }
       hunkDecisionUndoStackRef.current[filePath].push(originalIndex);
-      recentHunkUndoActionsRef.current.push({
-        filePath,
-        originalIndex,
-        at: actionAt,
-      });
+      const hunkUndoAction: RecentHunkUndoAction = { filePath, originalIndex };
+      recentHunkUndoActionsRef.current.push(hunkUndoAction);
       if (REVIEW_INSTANT_APPLY) {
         void (async () => {
           try {
@@ -1122,13 +1241,19 @@ export const ChangeReviewDialog = ({
                 beforeContent,
                 afterContent,
                 changeSetEpoch: operationEpoch,
+                file: activeChangeSet?.files.find((file) => file.filePath === filePath),
               };
-              alignDiskUndoSnapshotWithAppliedContent(snapshot, actualAfterContent);
-              recentDiskUndoActionsRef.current.push({
+              snapshot.renameExpectation =
+                getReviewRenameRecoveryExpectation(snapshot.file) ?? undefined;
+              if (!isLedgerRenameReviewFile(snapshot.file)) {
+                alignDiskUndoSnapshotWithAppliedContent(snapshot, actualAfterContent);
+              }
+              const diskUndoAction: RecentDiskUndoAction = {
                 snapshot,
                 originalIndex,
-                at: actionAt,
-              });
+              };
+              recentDiskUndoActionsRef.current.push(diskUndoAction);
+              pushReviewUndoAction({ kind: 'disk', action: diskUndoAction });
               markRecentReviewWrite(filePath);
               return;
             }
@@ -1153,6 +1278,7 @@ export const ChangeReviewDialog = ({
       } else {
         fileApplyInFlightRef.current.delete(filePath);
         setFileApplying(filePath, false);
+        pushReviewUndoAction({ kind: 'hunk', action: hunkUndoAction });
       }
       return true;
     },
@@ -1172,11 +1298,14 @@ export const ChangeReviewDialog = ({
       readCurrentReviewDiskContent,
       dropHunkUndoMetadata,
       rollbackEditorContent,
+      activeChangeSet,
+      pushReviewUndoAction,
     ]
   );
 
   const handleContentChanged = useCallback(
     (filePath: string, content: string) => {
+      reviewRedoBlockedRef.current = false;
       updateEditedContent(filePath, content);
     },
     [updateEditedContent]
@@ -1194,28 +1323,53 @@ export const ChangeReviewDialog = ({
   const handleSaveFile = useCallback(
     async (filePath: string) => {
       if (hasReviewActionInFlight()) return;
+      const initialState = useStore.getState();
+      if (!(filePath in initialState.editedContents)) return;
+      const hasUnresolvedExternalChange = hasUnresolvedReviewExternalChange(
+        filePath,
+        initialState.reviewExternalChangesByFile
+      );
+      if (hasUnresolvedExternalChange) {
+        useStore.setState({
+          applyError: 'Choose Reload from disk or Keep my draft before saving this file.',
+        });
+        return;
+      }
+      const operationEpoch = initialState.changeSetEpoch;
       await saveEditedFile(filePath, reviewScope);
-      if (!useStore.getState().applyError) {
+      const state = useStore.getState();
+      if (state.changeSetEpoch === operationEpoch && !state.applyError) {
+        clearReviewActionHistory();
         markRecentReviewWrite(filePath);
       }
     },
-    [hasReviewActionInFlight, saveEditedFile, reviewScope, markRecentReviewWrite]
+    [
+      clearReviewActionHistory,
+      hasReviewActionInFlight,
+      saveEditedFile,
+      reviewScope,
+      markRecentReviewWrite,
+    ]
   );
 
   const handleRestoreMissingFile = useCallback(
     (filePath: string, content: string) => {
       if (hasReviewActionInFlight()) return;
+      const operationEpoch = useStore.getState().changeSetEpoch;
       updateEditedContent(filePath, content);
       // Ensure editedContents is set before saveEditedFile reads it.
       void Promise.resolve().then(async () => {
         await saveEditedFile(filePath, reviewScope);
-        if (!useStore.getState().applyError) {
+        const state = useStore.getState();
+        if (state.changeSetEpoch === operationEpoch && !state.applyError) {
+          clearReviewActionHistory();
           markRecentReviewWrite(filePath);
         }
       });
     },
     [
       hasReviewActionInFlight,
+      clearReviewActionHistory,
       updateEditedContent,
       saveEditedFile,
       reviewScope,
@@ -1226,11 +1380,19 @@ export const ChangeReviewDialog = ({
   const handleReloadFromDisk = useCallback(
     (filePath: string) => {
       if (hasReviewActionInFlight()) return;
+      clearReviewActionHistory();
       reloadReviewFileFromDisk(filePath);
       setDiscardCounters((prev) => ({ ...prev, [filePath]: (prev[filePath] ?? 0) + 1 }));
       void fetchFileContent(teamName, memberName, filePath);
     },
-    [hasReviewActionInFlight, reloadReviewFileFromDisk, fetchFileContent, teamName, memberName]
+    [
+      clearReviewActionHistory,
+      hasReviewActionInFlight,
+      reloadReviewFileFromDisk,
+      fetchFileContent,
+      teamName,
+      memberName,
+    ]
   );
 
   const handleKeepDraft = useCallback(
@@ -1257,13 +1419,42 @@ export const ChangeReviewDialog = ({
         useStore.setState({ applyError: snapshot.restoreConflict });
         return false;
       }
+      useStore.setState({ applyError: null });
       try {
-        await api.review.saveEditedFile(
-          reviewScope,
-          snapshot.filePath,
-          snapshot.beforeContent,
-          snapshot.afterContent
-        );
+        const restoreMode =
+          snapshot.restoreMode ??
+          (isLedgerRenameReviewFile(snapshot.file) ? 'restore-rejected-rename' : 'content');
+        if (restoreMode === 'restore-rejected-rename') {
+          if (!snapshot.renameExpectation) {
+            throw new Error('Rename recovery metadata is unavailable; refusing an unsafe restore.');
+          }
+          await api.review.restoreRejectedRename(
+            reviewScope,
+            snapshot.filePath,
+            snapshot.renameExpectation
+          );
+        } else if (restoreMode === 'reapply-rejected-rename') {
+          if (!snapshot.renameExpectation) {
+            throw new Error('Rename recovery metadata is unavailable; refusing an unsafe restore.');
+          }
+          await api.review.reapplyRejectedRename(
+            reviewScope,
+            snapshot.filePath,
+            snapshot.renameExpectation
+          );
+        } else if (restoreMode === 'delete-file') {
+          if (snapshot.afterContent === null) {
+            throw new Error('Undo delete snapshot is missing the expected file content.');
+          }
+          await api.review.deleteEditedFile(reviewScope, snapshot.filePath, snapshot.afterContent);
+        } else {
+          await api.review.saveEditedFile(
+            reviewScope,
+            snapshot.filePath,
+            snapshot.beforeContent,
+            snapshot.afterContent
+          );
+        }
         if (useStore.getState().changeSetEpoch !== snapshot.changeSetEpoch) return false;
         if (snapshot.afterContent === null && snapshot.file) {
           addReviewFile(snapshot.file, {
@@ -1294,6 +1485,12 @@ export const ChangeReviewDialog = ({
                 ? error.message
                 : 'Unable to undo because the file changed on disk.',
           });
+          useStore.getState().invalidateResolvedFileContent(snapshot.filePath);
+          setDiscardCounters((previous) => ({
+            ...previous,
+            [snapshot.filePath]: (previous[snapshot.filePath] ?? 0) + 1,
+          }));
+          void fetchFileContent(teamName, memberName, snapshot.filePath);
         }
         return false;
       }
@@ -1310,8 +1507,8 @@ export const ChangeReviewDialog = ({
   );
 
   // Undo last bulk review operation (Accept All / Reject All)
-  const handleUndoBulk = useCallback(async () => {
-    if (hasReviewActionInFlight() || editedCount > 0) return;
+  const handleUndoBulk = useCallback(async (): Promise<boolean> => {
+    if (hasReviewActionInFlight() || editedCount > 0) return false;
     const diskSnapshots = bulkDiskUndoStackRef.current.at(-1) ?? [];
     if (diskSnapshots.length > 0) {
       setUndoInFlight(true);
@@ -1341,7 +1538,7 @@ export const ChangeReviewDialog = ({
             );
           }
           diskSnapshots.splice(0, diskSnapshots.length, ...failed);
-          return;
+          return false;
         }
       } finally {
         setUndoInFlight(false);
@@ -1360,6 +1557,7 @@ export const ChangeReviewDialog = ({
         return next;
       });
     }
+    return restored;
   }, [
     activeChangeSet,
     editedCount,
@@ -1370,13 +1568,13 @@ export const ChangeReviewDialog = ({
   ]);
 
   const handleUndoRecentDiskAction = useCallback(
-    async (action: RecentDiskUndoAction): Promise<void> => {
+    async (action: RecentDiskUndoAction): Promise<boolean> => {
       if (undoInFlightRef.current || fileApplyInFlightRef.current.has(action.snapshot.filePath)) {
-        return;
+        return false;
       }
       setUndoInFlight(true);
       try {
-        if (!(await restoreDiskSnapshot(action.snapshot))) return;
+        if (!(await restoreDiskSnapshot(action.snapshot))) return false;
         const diskIndex = recentDiskUndoActionsRef.current.lastIndexOf(action);
         if (diskIndex !== -1) recentDiskUndoActionsRef.current.splice(diskIndex, 1);
 
@@ -1401,12 +1599,57 @@ export const ChangeReviewDialog = ({
         } else if (action.file && action.decisionSnapshot) {
           restoreFileDecisions(action.file, action.decisionSnapshot);
         }
+        return true;
       } finally {
         setUndoInFlight(false);
       }
     },
     [clearHunkDecisionByOriginalIndex, restoreDiskSnapshot, restoreFileDecisions, setUndoInFlight]
   );
+
+  const handleUndoHunkAction = useCallback(
+    (action: RecentHunkUndoAction): boolean => {
+      const actionIndex = recentHunkUndoActionsRef.current.lastIndexOf(action);
+      if (actionIndex === -1) return false;
+      recentHunkUndoActionsRef.current.splice(actionIndex, 1);
+
+      const fileStack = hunkDecisionUndoStackRef.current[action.filePath];
+      const stackIndex = fileStack?.lastIndexOf(action.originalIndex) ?? -1;
+      if (fileStack && stackIndex !== -1) fileStack.splice(stackIndex, 1);
+      if (fileStack?.length === 0) delete hunkDecisionUndoStackRef.current[action.filePath];
+
+      clearHunkDecisionByOriginalIndex(action.filePath, action.originalIndex);
+      // Remount instead of using CodeMirror's native undo history. Native redo could
+      // otherwise replay the visual edit without restoring the persisted decision.
+      setDiscardCounters((previous) => ({
+        ...previous,
+        [action.filePath]: (previous[action.filePath] ?? 0) + 1,
+      }));
+      return true;
+    },
+    [clearHunkDecisionByOriginalIndex]
+  );
+
+  const handleUndoLatestReviewAction = useCallback(async (): Promise<void> => {
+    if (hasReviewActionInFlight() || editedCount > 0) return;
+    const action = reviewUndoActionsRef.current.at(-1);
+    if (!action) return;
+
+    const restored =
+      action.kind === 'bulk'
+        ? await handleUndoBulk()
+        : action.kind === 'disk'
+          ? await handleUndoRecentDiskAction(action.action)
+          : handleUndoHunkAction(action.action);
+    if (restored) completeReviewUndoAction(action);
+  }, [
+    completeReviewUndoAction,
+    editedCount,
+    handleUndoBulk,
+    handleUndoHunkAction,
+    handleUndoRecentDiskAction,
+    hasReviewActionInFlight,
+  ]);
 
   // Selection change handler (debounced for non-empty, immediate for clear)
   const handleSelectionChange = useCallback((info: EditorSelectionInfo | null) => {
@@ -1523,13 +1766,8 @@ export const ChangeReviewDialog = ({
   // Save active file (for Cmd+S keyboard shortcut)
   const handleSaveActiveFile = useCallback(() => {
     if (!activeFilePath || hasReviewActionInFlight()) return;
-    void (async () => {
-      await saveEditedFile(activeFilePath, reviewScope);
-      if (!useStore.getState().applyError) {
-        markRecentReviewWrite(activeFilePath);
-      }
-    })();
-  }, [activeFilePath, hasReviewActionInFlight, saveEditedFile, reviewScope, markRecentReviewWrite]);
+    void handleSaveFile(activeFilePath);
+  }, [activeFilePath, handleSaveFile, hasReviewActionInFlight]);
 
   // Continuous navigation options for cross-file hunk navigation
   const continuousOptions = useMemo(
@@ -1734,255 +1972,68 @@ export const ChangeReviewDialog = ({
     };
   }, [open, getEditorFilePathForTarget]);
 
-  useEffect(() => {
-    if (!open) return;
-
-    const markEditorInteraction = (target: EventTarget | null): void => {
-      const element = target instanceof Element ? target : null;
-      if (!element?.closest?.('.cm-editor')) return;
-      const filePath = getEditorFilePathForTarget(element);
-      if (!filePath) return;
-      lastEditorInteractionAtRef.current[filePath] = Date.now();
-    };
-
-    const handleMouseDown = (e: MouseEvent): void => {
-      markEditorInteraction(e.target);
-    };
-
-    const handleKeyDown = (e: KeyboardEvent): void => {
-      if ((e.metaKey || e.ctrlKey) && e.code === 'KeyZ' && !e.shiftKey) return;
-      markEditorInteraction(e.target);
-    };
-
-    document.addEventListener('mousedown', handleMouseDown, true);
-    document.addEventListener('keydown', handleKeyDown, true);
-    return () => {
-      document.removeEventListener('mousedown', handleMouseDown, true);
-      document.removeEventListener('keydown', handleKeyDown, true);
-    };
-  }, [open, getEditorFilePathForTarget]);
-
-  // Cmd+Z: undo in last focused editor, or fall back to bulk review undo
+  // Review actions use one ordered stack. Manual draft edits keep CodeMirror's native history.
   useEffect(() => {
     if (!open) return;
     const handler = (e: KeyboardEvent): void => {
-      if ((e.metaKey || e.ctrlKey) && e.code === 'KeyZ' && !e.shiftKey) {
-        // Don't intercept native undo in input/textarea
-        const tag = document.activeElement?.tagName;
-        if (tag === 'INPUT' || tag === 'TEXTAREA') return;
-        if (hasReviewActionInFlight()) {
+      if (!(e.metaKey || e.ctrlKey) || e.code !== 'KeyZ') return;
+
+      const tag = document.activeElement?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      const activeElement = document.activeElement;
+      const editorFilePath = getEditorFilePathForTarget(activeElement);
+      const hasDraftInFocusedEditor = editorFilePath ? hasReviewDraft(editorFilePath) : false;
+
+      if (e.shiftKey) {
+        if (reviewRedoBlockedRef.current && !hasDraftInFocusedEditor) {
+          // A review Undo remounts the diff and intentionally drops native CM redo.
+          // Swallow Shift+Z so it cannot replay only the visual half of the action.
           e.preventDefault();
           e.stopPropagation();
+          useStore.setState({
+            applyError: 'Redo is unavailable for review actions; repeat Accept or Reject instead.',
+          });
+        }
+        return;
+      }
+
+      if (hasDraftInFocusedEditor) return;
+      if (hasReviewActionInFlight()) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+
+      if (reviewUndoActionsRef.current.length > 0) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (editedCount > 0) {
+          useStore.setState({
+            applyError: 'Save or discard manual edits before undoing a review action.',
+          });
           return;
         }
+        void handleUndoLatestReviewAction();
+        return;
+      }
 
-        // Prefer bulk undo (Accept All / Reject All) shortly after bulk action,
-        // even if focus is inside a CM editor (focus often remains there after clicking buttons).
-        // Undo: rejected NEW file (deleted from disk + removed from review list)
-        const removedStack = removedNewFileUndoStackRef.current;
-        const lastHunkAt = Object.values(lastHunkActionAtRef.current).reduce(
-          (max, v) => Math.max(max, v),
-          0
-        );
-        const lastReviewActionAt = Math.max(
-          lastBulkActionAtRef.current,
-          lastHunkAt,
-          lastFileActionAtRef.current
-        );
-        const latestEditorInteractionAt = Object.values(lastEditorInteractionAtRef.current).reduce(
-          (max, value) => Math.max(max, value),
-          0
-        );
-        const newFileWasLastAction = shouldUndoRemovedNewFile({
-          removedAt: lastNewFileRemoveAtRef.current,
-          lastReviewActionAt,
-          lastEditorInteractionAt: latestEditorInteractionAt,
-          hasSnapshot: removedStack.length > 0,
-        });
-        const isInEditor = !!document.activeElement?.closest('.cm-editor');
-        if (newFileWasLastAction) {
-          e.preventDefault();
-          e.stopPropagation();
-          const snap = removedStack[removedStack.length - 1];
-          if (
-            !canRunScopedNewFileUndo(
-              useStore.getState().changeSetEpoch,
-              snap.changeSetEpoch,
-              removedStack[removedStack.length - 1] === snap
-            )
-          ) {
-            return;
-          }
-          const restoredContent: FileChangeWithContent = {
-            ...snap.file,
-            originalFullContent: '',
-            modifiedFullContent: snap.restoreContent,
-            contentSource: 'snippet-reconstruction',
-          };
-          setUndoInFlight(true);
-          void (async () => {
-            try {
-              if (
-                !canRunScopedNewFileUndo(
-                  useStore.getState().changeSetEpoch,
-                  snap.changeSetEpoch,
-                  removedStack[removedStack.length - 1] === snap
-                )
-              ) {
-                return;
-              }
-              await api.review.saveEditedFile(
-                reviewScope,
-                snap.file.filePath,
-                snap.restoreContent,
-                null
-              );
-              if (
-                !canRunScopedNewFileUndo(
-                  useStore.getState().changeSetEpoch,
-                  snap.changeSetEpoch,
-                  removedStack[removedStack.length - 1] === snap
-                )
-              ) {
-                return;
-              }
-              if (removedStack[removedStack.length - 1] === snap) removedStack.pop();
-              addReviewFile(snap.file, { index: snap.index, content: restoredContent });
-              setActiveFilePath(snap.file.filePath);
-              scheduleScrollToFile(snap.file.filePath);
-              markRecentReviewWrite(snap.file.filePath);
-            } catch (error) {
-              if (useStore.getState().changeSetEpoch === snap.changeSetEpoch) {
-                useStore.setState({
-                  applyError:
-                    error instanceof Error ? error.message : 'Unable to restore the rejected file.',
-                });
-              }
-            } finally {
-              if (useStore.getState().changeSetEpoch === snap.changeSetEpoch) {
-                setUndoInFlight(false);
-              }
-            }
-          })();
-          return;
-        }
-
-        const bulkWasLastAction = shouldUndoLatestDecisionSnapshot({
-          snapshotActionAt: lastBulkActionAtRef.current,
-          lastHunkAt,
-          lastFileAt: lastFileActionAtRef.current,
-          lastEditorInteractionAt: latestEditorInteractionAt,
-        });
-        if (bulkWasLastAction && useStore.getState().reviewUndoStack.length > 0) {
-          e.preventDefault();
-          e.stopPropagation();
-          void handleUndoBulk();
-          return;
-        }
-
-        const recentDiskAction = recentDiskUndoActionsRef.current.at(-1);
-        const diskWasLastAction =
-          recentDiskAction &&
-          recentDiskAction.at >=
-            Math.max(lastBulkActionAtRef.current, lastHunkAt, lastFileActionAtRef.current) &&
-          (lastEditorInteractionAtRef.current[recentDiskAction.snapshot.filePath] ?? 0) <=
-            recentDiskAction.at;
-        if (recentDiskAction && diskWasLastAction) {
-          e.preventDefault();
-          e.stopPropagation();
-          void handleUndoRecentDiskAction(recentDiskAction);
-          return;
-        }
-
-        const recentHunkAction =
-          recentHunkUndoActionsRef.current[recentHunkUndoActionsRef.current.length - 1];
-        const hunkOutsideEditor =
-          recentHunkAction &&
-          !isInEditor &&
-          recentHunkAction.at >=
-            Math.max(lastBulkActionAtRef.current, lastFileActionAtRef.current) &&
-          (lastEditorInteractionAtRef.current[recentHunkAction.filePath] ?? 0) <=
-            recentHunkAction.at &&
-          !!editorViewMapRef.current.get(recentHunkAction.filePath)?.dom.isConnected;
-        if (hunkOutsideEditor) {
-          const action = recentHunkUndoActionsRef.current.pop()!;
-          const view = editorViewMapRef.current.get(action.filePath)!;
-          const fileStack = hunkDecisionUndoStackRef.current[action.filePath];
-          if (fileStack) {
-            const stackIndex = fileStack.lastIndexOf(action.originalIndex);
-            if (stackIndex !== -1) {
-              fileStack.splice(stackIndex, 1);
-            }
-            if (fileStack.length === 0) {
-              delete hunkDecisionUndoStackRef.current[action.filePath];
-            }
-          }
-          e.preventDefault();
-          e.stopPropagation();
-          undo(view);
-          clearHunkDecisionByOriginalIndex(action.filePath, action.originalIndex);
-          return;
-        }
-
-        // If the last action was a hunk keep/undo (accept/reject) and we're undoing immediately,
-        // we must also clear the persisted decision. Otherwise reopening the dialog will replay it.
-        if (document.activeElement?.closest('.cm-editor')) {
-          const lastView = lastFocusedEditorRef.current;
-          const fp = activeFilePathRef.current;
-          const stack = fp ? hunkDecisionUndoStackRef.current[fp] : undefined;
-          const lastAt = fp ? (lastHunkActionAtRef.current[fp] ?? 0) : 0;
-          const hunkWasLastEditorAction = fp
-            ? (lastEditorInteractionAtRef.current[fp] ?? 0) <= lastAt
-            : false;
-
-          if (
-            fp &&
-            stack &&
-            stack.length > 0 &&
-            hunkWasLastEditorAction &&
-            lastView?.dom.isConnected
-          ) {
-            e.preventDefault();
-            e.stopPropagation();
-            undo(lastView);
-            const originalIndex = stack.pop()!;
-            for (let i = recentHunkUndoActionsRef.current.length - 1; i >= 0; i--) {
-              const action = recentHunkUndoActionsRef.current[i];
-              if (action.filePath === fp && action.originalIndex === originalIndex) {
-                recentHunkUndoActionsRef.current.splice(i, 1);
-                break;
-              }
-            }
-            clearHunkDecisionByOriginalIndex(fp, originalIndex);
-            return;
-          }
-
-          // Otherwise, let CM handle its own undo
-          return;
-        }
-
-        // Otherwise try to undo in the last focused CM editor
-        const lastView = lastFocusedEditorRef.current;
-        if (lastView?.dom.isConnected) {
-          e.preventDefault();
-          e.stopPropagation();
-          undo(lastView);
-        }
+      if (activeElement?.closest('.cm-editor')) return;
+      const lastView = lastFocusedEditorRef.current;
+      if (lastView?.dom.isConnected) {
+        e.preventDefault();
+        e.stopPropagation();
+        undo(lastView);
       }
     };
     document.addEventListener('keydown', handler, true);
     return () => document.removeEventListener('keydown', handler, true);
   }, [
     open,
+    getEditorFilePathForTarget,
+    editedCount,
+    handleUndoLatestReviewAction,
     hasReviewActionInFlight,
-    handleUndoBulk,
-    handleUndoRecentDiskAction,
-    clearHunkDecisionByOriginalIndex,
-    addReviewFile,
-    markRecentReviewWrite,
-    reviewScope,
-    scheduleScrollToFile,
-    setUndoInFlight,
+    hasReviewDraft,
   ]);
 
   // Cmd+N IPC listener (forwarded from main process)
@@ -1997,7 +2048,7 @@ export const ChangeReviewDialog = ({
       const cursorPos = view.state.selection.main.head;
       const idx = computeChunkIndexAtPos(view.state, cursorPos);
       const beforeContent = view.state.doc.toString();
-      rejectChunk(view);
+      if (!rejectChunk(view)) return;
       const afterContent = view.state.doc.toString();
       if (handleHunkRejected(fp, idx, beforeContent, afterContent) === false) {
         ignoreNextReviewDocChange(view);
@@ -2162,8 +2213,8 @@ export const ChangeReviewDialog = ({
           canRejectAll={canRejectAll}
           instantApply={REVIEW_INSTANT_APPLY}
           editedCount={editedCount}
-          canUndo={reviewUndoStack.length > 0 && editedCount === 0}
-          onUndo={handleUndoBulk}
+          canUndo={reviewUndoDepth > 0 && editedCount === 0}
+          onUndo={() => void handleUndoLatestReviewAction()}
         />
       )}
 

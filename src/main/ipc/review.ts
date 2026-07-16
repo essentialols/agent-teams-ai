@@ -15,6 +15,7 @@ import {
   REVIEW_APPLY_DECISIONS,
   REVIEW_CHECK_CONFLICT,
   REVIEW_CLEAR_DECISIONS,
+  REVIEW_DELETE_EDITED_FILE,
   REVIEW_FILE_CHANGE,
   REVIEW_GET_AGENT_CHANGES,
   REVIEW_GET_CHANGE_STATS,
@@ -25,8 +26,10 @@ import {
   REVIEW_INVALIDATE_TASK_CHANGE_SUMMARIES,
   REVIEW_LOAD_DECISIONS,
   REVIEW_PREVIEW_REJECT,
+  REVIEW_REAPPLY_REJECTED_RENAME,
   REVIEW_REJECT_FILE,
   REVIEW_REJECT_HUNKS,
+  REVIEW_RESTORE_REJECTED_RENAME,
   REVIEW_SAVE_DECISIONS,
   REVIEW_SAVE_EDITED_FILE,
   REVIEW_UNWATCH_FILES,
@@ -54,6 +57,7 @@ import type {
   HunkDecision,
   RejectResult,
   ReviewFileScope,
+  ReviewRenameRecoveryExpectation,
   SnippetDiff,
   TaskChangeRequestOptions,
   TaskChangeSetV2,
@@ -152,6 +156,52 @@ function parseReviewFileScope(value: unknown): ReviewFileScope {
     teamName: team.value,
     ...(memberName ? { memberName } : {}),
     ...(taskId ? { taskId } : {}),
+  };
+}
+
+function parseReviewRenameRecoveryExpectation(value: unknown): ReviewRenameRecoveryExpectation {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid rename recovery expectation');
+  }
+  const raw = value as Record<string, unknown>;
+  const relation = raw.relation;
+  if (!relation || typeof relation !== 'object' || Array.isArray(relation)) {
+    throw new Error('Invalid rename recovery relation');
+  }
+  const relationRaw = relation as Record<string, unknown>;
+  if (
+    typeof raw.eventId !== 'string' ||
+    !raw.eventId ||
+    raw.eventId.length > 512 ||
+    (raw.beforeHash !== null && typeof raw.beforeHash !== 'string') ||
+    (raw.afterHash !== null && typeof raw.afterHash !== 'string') ||
+    relationRaw.kind !== 'rename' ||
+    typeof relationRaw.oldPath !== 'string' ||
+    !relationRaw.oldPath ||
+    relationRaw.oldPath.length > 4096 ||
+    relationRaw.oldPath.includes('\0') ||
+    typeof relationRaw.newPath !== 'string' ||
+    !relationRaw.newPath ||
+    relationRaw.newPath.length > 4096 ||
+    relationRaw.newPath.includes('\0')
+  ) {
+    throw new Error('Invalid rename recovery expectation');
+  }
+  if (
+    (typeof raw.beforeHash === 'string' && raw.beforeHash.length > 512) ||
+    (typeof raw.afterHash === 'string' && raw.afterHash.length > 512)
+  ) {
+    throw new Error('Invalid rename recovery expectation');
+  }
+  return {
+    eventId: raw.eventId,
+    beforeHash: raw.beforeHash,
+    afterHash: raw.afterHash,
+    relation: {
+      kind: 'rename',
+      oldPath: relationRaw.oldPath,
+      newPath: relationRaw.newPath,
+    },
   };
 }
 
@@ -360,6 +410,43 @@ async function resolveAuthoritativeFileContent(
   };
 }
 
+function assertExpectedAuthoritativeRename(
+  content: FileChangeWithContent,
+  expectation: ReviewRenameRecoveryExpectation
+): void {
+  const renameLedger = content.snippets.find(
+    (snippet) => snippet.ledger?.relation?.kind === 'rename'
+  )?.ledger;
+  const relation = renameLedger?.relation;
+  if (!renameLedger || relation?.kind !== 'rename') {
+    throw new Error('Review file is not an authoritative ledger rename');
+  }
+  if (
+    renameLedger.eventId !== expectation.eventId ||
+    (renameLedger.beforeHash ?? null) !== expectation.beforeHash ||
+    (renameLedger.afterHash ?? null) !== expectation.afterHash ||
+    relation.oldPath !== expectation.relation.oldPath ||
+    relation.newPath !== expectation.relation.newPath
+  ) {
+    throw new Error('Review changes were updated; refusing stale rename recovery');
+  }
+}
+
+function invalidateAuthoritativeReviewContent(content: FileChangeWithContent): void {
+  const paths = new Set([content.filePath]);
+  for (const snippet of content.snippets) {
+    paths.add(snippet.filePath);
+    const relation = snippet.ledger?.relation;
+    if (relation) {
+      paths.add(relation.oldPath);
+      paths.add(relation.newPath);
+    }
+  }
+  for (const filePath of paths) {
+    getContentResolver().invalidateFile(filePath);
+  }
+}
+
 function assertHunkIndices(value: unknown): asserts value is number[] {
   if (
     !Array.isArray(value) ||
@@ -565,6 +652,9 @@ export function registerReviewHandlers(ipcMain: IpcMain): void {
   ipcMain.handle(REVIEW_GET_FILE_CONTENT, handleGetFileContent);
   // Editable diff
   ipcMain.handle(REVIEW_SAVE_EDITED_FILE, handleSaveEditedFile);
+  ipcMain.handle(REVIEW_DELETE_EDITED_FILE, handleDeleteEditedFile);
+  ipcMain.handle(REVIEW_RESTORE_REJECTED_RENAME, handleRestoreRejectedRename);
+  ipcMain.handle(REVIEW_REAPPLY_REJECTED_RENAME, handleReapplyRejectedRename);
   ipcMain.handle(REVIEW_WATCH_FILES, handleWatchReviewFiles);
   ipcMain.handle(REVIEW_UNWATCH_FILES, handleUnwatchReviewFiles);
   // Phase 4
@@ -591,6 +681,9 @@ export function removeReviewHandlers(ipcMain: IpcMain): void {
   ipcMain.removeHandler(REVIEW_GET_FILE_CONTENT);
   // Editable diff
   ipcMain.removeHandler(REVIEW_SAVE_EDITED_FILE);
+  ipcMain.removeHandler(REVIEW_DELETE_EDITED_FILE);
+  ipcMain.removeHandler(REVIEW_RESTORE_REJECTED_RENAME);
+  ipcMain.removeHandler(REVIEW_REAPPLY_REJECTED_RENAME);
   ipcMain.removeHandler(REVIEW_WATCH_FILES);
   ipcMain.removeHandler(REVIEW_UNWATCH_FILES);
   // Phase 4
@@ -947,6 +1040,95 @@ async function handleSaveEditedFile(
     // Invalidate cached content so next fetch reads the saved version from disk
     getContentResolver().invalidateFile(filePath);
     return result;
+  });
+}
+
+async function handleDeleteEditedFile(
+  _event: IpcMainInvokeEvent,
+  scopeValue: unknown,
+  filePathValue: unknown,
+  expectedCurrentContent: unknown
+): Promise<IpcResult<{ success: boolean }>> {
+  if (typeof expectedCurrentContent !== 'string') {
+    return { success: false, error: 'Invalid parameters' };
+  }
+  return wrapReviewHandler('deleteEditedFile', async () => {
+    const { authorization } = await resolveReviewPathAuthorization(scopeValue, {
+      requireIdentity: true,
+    });
+    const filePath = await validateAuthorizedReviewFilePath(authorization, filePathValue, {
+      requireReviewedFile: true,
+    });
+    const result = await getApplier().deleteEditedFile(filePath, expectedCurrentContent);
+    getContentResolver().invalidateFile(filePath);
+    return result;
+  });
+}
+
+async function handleRestoreRejectedRename(
+  _event: IpcMainInvokeEvent,
+  scopeValue: unknown,
+  filePathValue: unknown,
+  expectationValue: unknown
+): Promise<IpcResult<{ success: boolean }>> {
+  return wrapReviewHandler('restoreRejectedRename', async () => {
+    const expectation = parseReviewRenameRecoveryExpectation(expectationValue);
+    const { scope, authorization } = await resolveReviewPathAuthorization(scopeValue, {
+      requireIdentity: true,
+    });
+    const filePath = await validateAuthorizedReviewFilePath(authorization, filePathValue, {
+      requireReviewedFile: true,
+    });
+    const authoritativeContent = await resolveAuthoritativeFileContent(
+      scope,
+      authorization,
+      filePath
+    );
+    assertExpectedAuthoritativeRename(authoritativeContent, expectation);
+
+    try {
+      return await getApplier().restoreRejectedRename(
+        filePath,
+        authoritativeContent.originalFullContent,
+        authoritativeContent.modifiedFullContent,
+        authoritativeContent.snippets
+      );
+    } finally {
+      invalidateAuthoritativeReviewContent(authoritativeContent);
+    }
+  });
+}
+
+async function handleReapplyRejectedRename(
+  _event: IpcMainInvokeEvent,
+  scopeValue: unknown,
+  filePathValue: unknown,
+  expectationValue: unknown
+): Promise<IpcResult<{ success: boolean }>> {
+  return wrapReviewHandler('reapplyRejectedRename', async () => {
+    const expectation = parseReviewRenameRecoveryExpectation(expectationValue);
+    const { scope, authorization } = await resolveReviewPathAuthorization(scopeValue, {
+      requireIdentity: true,
+    });
+    const filePath = await validateAuthorizedReviewFilePath(authorization, filePathValue, {
+      requireReviewedFile: true,
+    });
+    const authoritativeContent = await resolveAuthoritativeFileContent(
+      scope,
+      authorization,
+      filePath
+    );
+    assertExpectedAuthoritativeRename(authoritativeContent, expectation);
+
+    try {
+      return await getApplier().reapplyRejectedRename(
+        filePath,
+        authoritativeContent.originalFullContent,
+        authoritativeContent.snippets
+      );
+    } finally {
+      invalidateAuthoritativeReviewContent(authoritativeContent);
+    }
   });
 }
 

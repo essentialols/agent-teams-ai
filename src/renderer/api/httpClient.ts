@@ -1385,6 +1385,15 @@ export class HttpAPIClient implements ElectronAPI {
     saveEditedFile: async (): Promise<never> => {
       throw new Error('Review is not available in browser mode');
     },
+    deleteEditedFile: async (): Promise<never> => {
+      throw new Error('Review is not available in browser mode');
+    },
+    restoreRejectedRename: async (): Promise<never> => {
+      throw new Error('Review is not available in browser mode');
+    },
+    reapplyRejectedRename: async (): Promise<never> => {
+      throw new Error('Review is not available in browser mode');
+    },
     watchFiles: async (): Promise<never> => {
       throw new Error('Review file watching is not available in browser mode');
     },

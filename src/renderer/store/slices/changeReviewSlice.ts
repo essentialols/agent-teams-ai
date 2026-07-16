@@ -313,7 +313,8 @@ export interface ChangeReviewSlice {
   setFileChunkCount: (filePath: string, count: number) => void;
   pushReviewUndoSnapshot: () => void;
   undoBulkReview: () => boolean;
-  acceptAllFile: (filePath: string) => void;
+  /** Accept only still-pending hunks. Returns false when the file has nothing pending. */
+  acceptAllFile: (filePath: string) => boolean;
   rejectAllFile: (filePath: string) => void;
   acceptAll: () => void;
   rejectAll: () => void;
@@ -1013,18 +1014,51 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
     acceptAllFile: (filePath: string) => {
       const state = get();
       const file = findReviewFileByPath(state.activeChangeSet?.files, filePath);
-      if (!file) return;
+      if (!file) return false;
 
       const count = getFileHunkCount(file.filePath, file.snippets.length, state.fileChunkCounts);
       const newHunkDecisions = { ...state.hunkDecisions };
       const reviewKey = getFileReviewKey(file);
+      const fileDecision =
+        state.fileDecisions[reviewKey] ?? state.fileDecisions[file.filePath] ?? 'pending';
+      if (fileDecision !== 'pending') return false;
+
+      if (count === 0) {
+        set({
+          fileDecisions: { ...state.fileDecisions, [reviewKey]: 'accepted' },
+        });
+        return true;
+      }
+
+      let acceptedPending = false;
+      let hasRejected = false;
       for (let i = 0; i < count; i++) {
-        newHunkDecisions[buildHunkDecisionKey(reviewKey, i)] = 'accepted';
+        const key = buildHunkDecisionKey(reviewKey, i);
+        const decision =
+          state.hunkDecisions[key] ??
+          state.hunkDecisions[buildHunkDecisionKey(file.filePath, i)] ??
+          'pending';
+        if (decision === 'rejected') {
+          hasRejected = true;
+        } else if (decision === 'pending') {
+          newHunkDecisions[key] = 'accepted';
+          acceptedPending = true;
+        }
+      }
+
+      if (!acceptedPending) return false;
+
+      const newFileDecisions = { ...state.fileDecisions };
+      if (hasRejected) {
+        delete newFileDecisions[reviewKey];
+      } else {
+        newFileDecisions[reviewKey] = 'accepted';
       }
       set({
         hunkDecisions: newHunkDecisions,
-        fileDecisions: { ...state.fileDecisions, [reviewKey]: 'accepted' },
+        fileDecisions: newFileDecisions,
       });
+      return true;
     },
 
     rejectAllFile: (filePath: string) => {

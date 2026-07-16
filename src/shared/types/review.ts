@@ -243,6 +243,14 @@ export interface ReviewFileScope {
   memberName?: string;
 }
 
+/** Immutable ledger identity used to reject stale rename recovery requests. */
+export interface ReviewRenameRecoveryExpectation {
+  eventId: string;
+  beforeHash: string | null;
+  afterHash: string | null;
+  relation: LedgerChangeRelation;
+}
+
 /** Результат применения review */
 export interface ApplyReviewResult {
   applied: number;

@@ -1,4 +1,6 @@
-import type { FileChangeWithContent } from '@shared/types';
+import { buildHunkDecisionKey, getFileReviewKey } from '@renderer/utils/reviewKey';
+
+import type { FileChangeWithContent, HunkDecision } from '@shared/types';
 import type { FileChangeSummary } from '@shared/types/review';
 
 export type ReviewRejectBlockReason =
@@ -11,6 +13,26 @@ type ReviewContentAvailability = Pick<
   FileChangeWithContent,
   'contentSource' | 'originalFullContent' | 'modifiedFullContent'
 >;
+
+export function getEffectiveReviewFileDecision(
+  file: FileChangeSummary,
+  hunkCount: number,
+  hunkDecisions: Record<string, HunkDecision>,
+  fileDecision: HunkDecision | undefined
+): HunkDecision | undefined {
+  if (fileDecision === 'accepted' || fileDecision === 'rejected' || hunkCount === 0) {
+    return fileDecision;
+  }
+  const reviewKey = getFileReviewKey(file);
+  const allRejected = Array.from({ length: hunkCount }, (_, index) => {
+    return (
+      hunkDecisions[buildHunkDecisionKey(reviewKey, index)] ??
+      hunkDecisions[buildHunkDecisionKey(file.filePath, index)] ??
+      'pending'
+    );
+  }).every((decision) => decision === 'rejected');
+  return allRejected ? 'rejected' : fileDecision;
+}
 
 export function hasReviewSnippetText(file: Pick<FileChangeSummary, 'snippets'>): boolean {
   return file.snippets.some(
@@ -85,6 +107,19 @@ export function isReviewRejectable(
   fileContent: ReviewContentAvailability | null
 ): boolean {
   return getReviewRejectBlockReason(file, fileContent) === null;
+}
+
+export function isReviewAcceptDisabled(input: {
+  hasEdits: boolean;
+  isMissingOnDisk: boolean;
+  isContentUnavailable: boolean;
+  fileDecision: HunkDecision | undefined;
+}): boolean {
+  return (
+    input.hasEdits ||
+    input.isContentUnavailable ||
+    (input.isMissingOnDisk && input.fileDecision !== 'rejected')
+  );
 }
 
 export function shouldRenderCurrentDiskContextPreview(

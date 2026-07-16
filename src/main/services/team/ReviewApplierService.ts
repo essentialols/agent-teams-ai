@@ -94,6 +94,69 @@ async function withFileMutationKeyLock<T>(key: string, operation: () => Promise<
  */
 export class ReviewApplierService {
   /**
+   * Restore the agent side of a previously rejected ledger rename.
+   * Both paths are guarded by the same mutation lock and verified before mutation.
+   */
+  async restoreRejectedRename(
+    filePath: string,
+    original: string | null,
+    modified: string | null,
+    snippets: SnippetDiff[]
+  ): Promise<{ success: true }> {
+    const ledgerSnippets = snippets.filter((snippet) => snippet.ledger && !snippet.isError);
+    const relation = this.resolveLedgerRelation(ledgerSnippets);
+    if (relation?.kind !== 'rename') {
+      throw new Error('Review file is not a ledger rename.');
+    }
+
+    return withFileMutationLocks(
+      this.resolveLedgerMutationPaths(filePath, ledgerSnippets),
+      async () => {
+        await this.restoreRejectedLedgerRename(ledgerSnippets, relation, original, modified);
+        return { success: true };
+      }
+    );
+  }
+
+  /** Re-apply the rejected side of a rename when undoing a later restore/accept action. */
+  async reapplyRejectedRename(
+    filePath: string,
+    original: string | null,
+    snippets: SnippetDiff[]
+  ): Promise<{ success: true }> {
+    const ledgerSnippets = snippets.filter((snippet) => snippet.ledger && !snippet.isError);
+    const relation = this.resolveLedgerRelation(ledgerSnippets);
+    if (relation?.kind !== 'rename') {
+      throw new Error('Review file is not a ledger rename.');
+    }
+    const hasUnavailableState = ledgerSnippets.some(
+      (snippet) =>
+        snippet.ledger?.beforeState?.unavailableReason ||
+        snippet.ledger?.afterState?.unavailableReason
+    );
+
+    return withFileMutationLocks(
+      this.resolveLedgerMutationPaths(filePath, ledgerSnippets),
+      async () => {
+        const outcome = await this.rejectLedgerRename(
+          ledgerSnippets,
+          relation,
+          original,
+          hasUnavailableState
+        );
+        if (outcome.handled && (outcome.status === 'applied' || outcome.status === 'skipped')) {
+          return { success: true };
+        }
+        throw new Error(
+          outcome.handled && 'error' in outcome
+            ? outcome.error
+            : 'Ledger rename reject was not handled.'
+        );
+      }
+    );
+  }
+
+  /**
    * Check if the file on disk has been modified since the review was computed.
    * Compares current disk content against the expected modified content.
    */
@@ -457,6 +520,23 @@ export class ReviewApplierService {
         }
       }
       await writeFile(filePath, content, 'utf8');
+      return { success: true };
+    });
+  }
+
+  /** Delete a reviewed file only when its content still matches the Undo snapshot. */
+  async deleteEditedFile(
+    filePath: string,
+    expectedCurrentContent: string
+  ): Promise<{ success: boolean }> {
+    return withFileMutationLock(filePath, async () => {
+      const current = await this.readCurrentText(filePath);
+      const currentError = getCurrentTextReadError(current);
+      if (currentError) throw new Error(currentError);
+      if (current.missing || current.content !== expectedCurrentContent) {
+        throw new Error('File changed since review update; refusing to delete');
+      }
+      await unlink(filePath);
       return { success: true };
     });
   }
@@ -910,13 +990,23 @@ export class ReviewApplierService {
     // On case-insensitive filesystems a case-only rename exposes both spellings as one inode.
     // Restore the old spelling/content in place; unlinking the "new" spelling would delete both.
     if (aliasedCurrentContent !== null) {
+      let renamed = false;
       try {
         await rename(newFilePath, oldFilePath);
+        renamed = true;
         if (aliasedCurrentContent !== oldContent) {
           await writeFile(oldFilePath, oldContent, 'utf8');
         }
         return { handled: true, status: 'applied' };
       } catch (err) {
+        if (renamed) {
+          try {
+            await rename(oldFilePath, newFilePath);
+            await writeFile(newFilePath, aliasedCurrentContent, 'utf8');
+          } catch {
+            // Best effort rollback; the caller invalidates both paths before refreshing.
+          }
+        }
         return {
           handled: true,
           status: 'error',
@@ -927,17 +1017,20 @@ export class ReviewApplierService {
     }
 
     const oldCurrent = await this.readCurrentText(oldFilePath);
+    const oldCurrentError = oldCurrent.missing ? null : getCurrentTextReadError(oldCurrent);
+    if (oldCurrentError) {
+      return {
+        handled: true,
+        status: 'error',
+        code: 'io-error',
+        error: oldCurrentError,
+      };
+    }
+    const oldMatchesExpected =
+      !oldCurrent.missing &&
+      (oldHash ? this.hashText(oldCurrent.content) === oldHash : oldCurrent.content === oldContent);
     if (!oldCurrent.missing) {
-      const oldCurrentError = getCurrentTextReadError(oldCurrent);
-      if (oldCurrentError) {
-        return {
-          handled: true,
-          status: 'error',
-          code: 'io-error',
-          error: oldCurrentError,
-        };
-      }
-      if (!oldHash || this.hashText(oldCurrent.content) !== oldHash) {
+      if (!oldMatchesExpected) {
         return {
           handled: true,
           status: 'conflict',
@@ -947,22 +1040,158 @@ export class ReviewApplierService {
       }
     }
 
+    if (newCurrent.missing) {
+      return oldMatchesExpected
+        ? { handled: true, status: 'applied' }
+        : {
+            handled: true,
+            status: 'conflict',
+            code: 'conflict',
+            error: 'Renamed target path is missing; refusing to recreate the original path.',
+          };
+    }
+
+    let createdOldPath = false;
     try {
       if (oldCurrent.missing) {
         await mkdir(dirname(oldFilePath), { recursive: true });
-        await writeFile(oldFilePath, oldContent, 'utf8');
+        await writeFile(oldFilePath, oldContent, { encoding: 'utf8', flag: 'wx' });
+        createdOldPath = true;
       }
-      if (!newCurrent.missing) {
-        await unlink(newFilePath);
+
+      const newBeforeDelete = await this.readCurrentText(newFilePath);
+      const newBeforeDeleteError = getCurrentTextReadError(newBeforeDelete);
+      if (
+        newBeforeDelete.missing ||
+        newBeforeDeleteError ||
+        this.hashText(newBeforeDelete.content) !== newHash
+      ) {
+        throw new Error(
+          newBeforeDeleteError ?? 'Renamed target changed during reject; refusing to delete it.'
+        );
       }
+      await unlink(newFilePath);
       return { handled: true, status: 'applied' };
     } catch (err) {
+      if (createdOldPath) {
+        try {
+          const createdOld = await this.readCurrentText(oldFilePath);
+          if (!createdOld.missing && createdOld.content === oldContent) {
+            await unlink(oldFilePath);
+          }
+        } catch {
+          // Best effort rollback; preserve the original error for the renderer.
+        }
+      }
       return {
         handled: true,
         status: 'error',
         code: 'io-error',
         error: `Failed to reject ledger rename: ${String(err)}`,
       };
+    }
+  }
+
+  private async restoreRejectedLedgerRename(
+    snippets: SnippetDiff[],
+    relation: LedgerChangeRelation,
+    original: string | null,
+    modified: string | null
+  ): Promise<void> {
+    const oldSnippet =
+      snippets.find(
+        (snippet) =>
+          snippet.ledger?.operation === 'delete' &&
+          this.pathMatchesRelationPath(snippet.filePath, relation.oldPath)
+      ) ?? snippets.find((snippet) => snippet.ledger?.operation === 'delete');
+    const newSnippet =
+      snippets.find(
+        (snippet) =>
+          snippet.ledger?.operation === 'create' &&
+          this.pathMatchesRelationPath(snippet.filePath, relation.newPath)
+      ) ?? snippets.find((snippet) => snippet.ledger?.operation === 'create');
+    const oldFilePath =
+      oldSnippet?.filePath ??
+      this.resolveRelatedLedgerPath(newSnippet?.filePath, relation.newPath, relation.oldPath);
+    const newFilePath = newSnippet?.filePath;
+    const oldContent = oldSnippet?.ledger?.originalFullContent ?? original;
+    const newContent = newSnippet?.ledger?.modifiedFullContent ?? modified;
+
+    if (!oldFilePath || !newFilePath || oldContent === null || newContent === null) {
+      throw new Error('Ledger rename recovery metadata is incomplete.');
+    }
+    if (
+      snippets.some(
+        (snippet) =>
+          snippet.ledger?.beforeState?.unavailableReason ||
+          snippet.ledger?.afterState?.unavailableReason
+      )
+    ) {
+      throw new Error('Ledger rename recovery content is unavailable.');
+    }
+
+    const oldCurrent = await this.readCurrentText(oldFilePath);
+    const oldReadError = getCurrentTextReadError(oldCurrent);
+    if (oldReadError) throw new Error(oldReadError);
+    if (oldCurrent.missing || oldCurrent.content !== oldContent) {
+      throw new Error('Original rename path changed after rejection; refusing Undo.');
+    }
+
+    const newCurrent = await this.readCurrentText(newFilePath);
+    const newReadError = getCurrentTextReadError(newCurrent);
+    if (newReadError) throw new Error(newReadError);
+    const aliased =
+      !newCurrent.missing && (await this.pathsReferToSameFile(oldFilePath, newFilePath));
+
+    if (aliased) {
+      if (newCurrent.content !== oldContent) {
+        throw new Error('Case-only rename content changed after rejection; refusing Undo.');
+      }
+      let renamed = false;
+      try {
+        await rename(oldFilePath, newFilePath);
+        renamed = true;
+        if (oldContent !== newContent) await writeFile(newFilePath, newContent, 'utf8');
+        return;
+      } catch (error) {
+        if (renamed) {
+          try {
+            await rename(newFilePath, oldFilePath);
+            await writeFile(oldFilePath, oldContent, 'utf8');
+          } catch {
+            // Preserve the original failure; the caller will refresh both paths from disk.
+          }
+        }
+        throw new Error(`Failed to restore case-only ledger rename: ${String(error)}`);
+      }
+    }
+
+    if (!newCurrent.missing) {
+      throw new Error('Renamed target path already exists; refusing Undo.');
+    }
+
+    try {
+      await mkdir(dirname(newFilePath), { recursive: true });
+      await writeFile(newFilePath, newContent, { encoding: 'utf8', flag: 'wx' });
+      const oldBeforeDelete = await this.readCurrentText(oldFilePath);
+      if (
+        oldBeforeDelete.missing ||
+        getCurrentTextReadError(oldBeforeDelete) ||
+        oldBeforeDelete.content !== oldContent
+      ) {
+        throw new Error('Original rename path changed during Undo.');
+      }
+      await unlink(oldFilePath);
+    } catch (error) {
+      try {
+        const createdTarget = await this.readCurrentText(newFilePath);
+        if (!createdTarget.missing && createdTarget.content === newContent) {
+          await unlink(newFilePath);
+        }
+      } catch {
+        // Best effort rollback; preserve the first error for the renderer.
+      }
+      throw new Error(`Failed to restore ledger rename: ${String(error)}`);
     }
   }
 

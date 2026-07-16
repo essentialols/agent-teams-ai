@@ -1,18 +1,20 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  buildFileAcceptActionTime,
-  canRunScopedNewFileUndo,
+  appendOrderedReviewAction,
   getReviewCloseBlockReason,
+  getReviewRenameRecoveryExpectation,
+  hasReviewFileRejections,
+  hasUnresolvedReviewExternalChange,
   isReviewActionLocked,
+  isReviewFileFullyRejected,
   partitionReviewFilesByApplyErrors,
+  popOrderedReviewAction,
   reconcileReviewDecisionRecordsAfterApply,
   resolveReviewFileIsNew,
   restoreReviewDecisionRecordsForFile,
   restoreReviewDecisionRecordsForFiles,
-  shouldUndoLatestDecisionSnapshot,
-  shouldUndoRemovedNewFile,
-} from '../../../../../src/renderer/components/team/review/ChangeReviewDialog';
+} from '../../../../../src/renderer/components/team/review/reviewActionState';
 
 function makeFile(filePath: string, changeKey?: string) {
   return {
@@ -53,6 +55,20 @@ describe('ChangeReviewDialog interaction guards', () => {
     expect(getReviewCloseBlockReason({ busy: false, draftCount: 0 })).toBeNull();
   });
 
+  it('blocks saving a draft until a matching external disk change is resolved', () => {
+    expect(
+      hasUnresolvedReviewExternalChange('/repo/src/file.ts', {
+        '/repo/src/other.ts': { type: 'change' },
+        '/repo/src/file.ts': { type: 'unlink' },
+      })
+    ).toBe(true);
+    expect(
+      hasUnresolvedReviewExternalChange('/repo/src/file.ts', {
+        '/repo/src/other.ts': { type: 'change' },
+      })
+    ).toBe(false);
+  });
+
   it('prefers resolved content when legacy summary new-file metadata disagrees', () => {
     const file = makeFile('/repo/file.ts');
     expect(
@@ -66,10 +82,88 @@ describe('ChangeReviewDialog interaction guards', () => {
     ).toBe(true);
   });
 
-  it('rejects stale new-file Undo before any disk call can start', () => {
-    expect(canRunScopedNewFileUndo(4, 3, true)).toBe(false);
-    expect(canRunScopedNewFileUndo(3, 3, false)).toBe(false);
-    expect(canRunScopedNewFileUndo(3, 3, true)).toBe(true);
+  it('recognizes persisted full or partial rejection so file Accept can restore disk', () => {
+    const file = makeFile('/repo/file.ts');
+    expect(
+      hasReviewFileRejections(file, 2, {
+        hunkDecisions: {},
+        fileDecisions: { '/repo/file.ts': 'rejected' },
+      })
+    ).toBe(true);
+    expect(
+      hasReviewFileRejections(file, 2, {
+        hunkDecisions: {
+          '/repo/file.ts:0': 'rejected',
+          '/repo/file.ts:1': 'pending',
+        },
+        fileDecisions: {},
+      })
+    ).toBe(true);
+    expect(
+      hasReviewFileRejections(file, 2, {
+        hunkDecisions: {
+          '/repo/file.ts:0': 'accepted',
+          '/repo/file.ts:1': 'pending',
+        },
+        fileDecisions: {},
+      })
+    ).toBe(false);
+  });
+
+  it('distinguishes a complete rejection from a partial rejection', () => {
+    const file = makeFile('/repo/file.ts');
+    expect(
+      isReviewFileFullyRejected(file, 2, {
+        hunkDecisions: { '/repo/file.ts:0': 'rejected', '/repo/file.ts:1': 'pending' },
+        fileDecisions: {},
+      })
+    ).toBe(false);
+    expect(
+      isReviewFileFullyRejected(file, 2, {
+        hunkDecisions: { '/repo/file.ts:0': 'rejected', '/repo/file.ts:1': 'rejected' },
+        fileDecisions: {},
+      })
+    ).toBe(true);
+  });
+
+  it('captures immutable ledger identity for guarded rename recovery', () => {
+    const file = {
+      ...makeFile('/repo/new.ts'),
+      snippets: [
+        {
+          toolUseId: 'rename-1',
+          filePath: '/repo/new.ts',
+          toolName: 'Bash' as const,
+          type: 'shell-snapshot' as const,
+          oldString: '',
+          newString: 'new',
+          replaceAll: false,
+          timestamp: '2026-07-17T10:00:00.000Z',
+          isError: false,
+          ledger: {
+            eventId: 'event-1',
+            source: 'ledger-snapshot' as const,
+            confidence: 'high' as const,
+            originalFullContent: 'old',
+            modifiedFullContent: 'new',
+            beforeHash: 'before-hash',
+            afterHash: 'after-hash',
+            relation: {
+              kind: 'rename' as const,
+              oldPath: '/repo/old.ts',
+              newPath: '/repo/new.ts',
+            },
+          },
+        },
+      ],
+    };
+
+    expect(getReviewRenameRecoveryExpectation(file)).toEqual({
+      eventId: 'event-1',
+      beforeHash: 'before-hash',
+      afterHash: 'after-hash',
+      relation: { kind: 'rename', oldPath: '/repo/old.ts', newPath: '/repo/new.ts' },
+    });
   });
 
   it('partitions a mixed Reject All result so only successful files are finalized', () => {
@@ -201,43 +295,25 @@ describe('ChangeReviewDialog interaction guards', () => {
     });
   });
 
-  it('keeps file Accept timestamps identical so Cmd+Z chooses persisted decision Undo', () => {
-    const action = buildFileAcceptActionTime(1234);
-    expect(action).toEqual({ bulkAt: 1234, fileAt: 1234 });
-    expect(
-      shouldUndoLatestDecisionSnapshot({
-        snapshotActionAt: action.bulkAt,
-        lastHunkAt: 1200,
-        lastFileAt: action.fileAt,
-        lastEditorInteractionAt: 1200,
-      })
-    ).toBe(true);
+  it('undoes review actions strictly in LIFO order across multiple levels', () => {
+    const first = { kind: 'hunk', id: 1 };
+    const second = { kind: 'disk', id: 2 };
+    let stack = appendOrderedReviewAction([], first);
+    stack = appendOrderedReviewAction(stack, second);
+
+    const wrongOrder = popOrderedReviewAction(stack, first);
+    expect(wrongOrder).toEqual({ stack: [first, second], popped: false });
+
+    const undoSecond = popOrderedReviewAction(stack, second);
+    expect(undoSecond).toEqual({ stack: [first], popped: true });
+    const undoFirst = popOrderedReviewAction(undoSecond.stack, first);
+    expect(undoFirst).toEqual({ stack: [], popped: true });
   });
 
-  it('undoes a removed new file unless a newer editor interaction happened', () => {
-    expect(
-      shouldUndoRemovedNewFile({
-        removedAt: 200,
-        lastReviewActionAt: 200,
-        lastEditorInteractionAt: 100,
-        hasSnapshot: true,
-      })
-    ).toBe(true);
-    expect(
-      shouldUndoRemovedNewFile({
-        removedAt: 200,
-        lastReviewActionAt: 200,
-        lastEditorInteractionAt: 201,
-        hasSnapshot: true,
-      })
-    ).toBe(false);
-    expect(
-      shouldUndoRemovedNewFile({
-        removedAt: 200,
-        lastReviewActionAt: 200,
-        lastEditorInteractionAt: 100,
-        hasSnapshot: false,
-      })
-    ).toBe(false);
+  it('bounds ordered review history without changing the newest action', () => {
+    const actions = ['first', 'second', 'third'];
+    let stack: string[] = [];
+    for (const action of actions) stack = appendOrderedReviewAction(stack, action, 2);
+    expect(stack).toEqual(['second', 'third']);
   });
 });

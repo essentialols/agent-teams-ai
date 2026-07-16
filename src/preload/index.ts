@@ -80,6 +80,7 @@ import {
   REVIEW_APPLY_DECISIONS,
   REVIEW_CHECK_CONFLICT,
   REVIEW_CLEAR_DECISIONS,
+  REVIEW_DELETE_EDITED_FILE,
   REVIEW_FILE_CHANGE,
   REVIEW_GET_AGENT_CHANGES,
   REVIEW_GET_CHANGE_STATS,
@@ -90,8 +91,10 @@ import {
   REVIEW_INVALIDATE_TASK_CHANGE_SUMMARIES,
   REVIEW_LOAD_DECISIONS,
   REVIEW_PREVIEW_REJECT,
+  REVIEW_REAPPLY_REJECTED_RENAME,
   REVIEW_REJECT_FILE,
   REVIEW_REJECT_HUNKS,
+  REVIEW_RESTORE_REJECTED_RENAME,
   REVIEW_SAVE_DECISIONS,
   REVIEW_SAVE_EDITED_FILE,
   REVIEW_UNWATCH_FILES,
@@ -309,6 +312,7 @@ import type {
   ReplaceMembersRequest,
   RetryFailedOpenCodeSecondaryLanesResult,
   ReviewFileScope,
+  ReviewRenameRecoveryExpectation,
   Schedule,
   ScheduleChangeEvent,
   ScheduleRun,
@@ -1543,6 +1547,42 @@ const electronAPI: ElectronAPI = {
         filePath,
         content,
         expectedCurrentContent
+      );
+    },
+    deleteEditedFile: async (
+      scope: ReviewFileScope,
+      filePath: string,
+      expectedCurrentContent: string
+    ) => {
+      return invokeIpcWithResult<{ success: boolean }>(
+        REVIEW_DELETE_EDITED_FILE,
+        scope,
+        filePath,
+        expectedCurrentContent
+      );
+    },
+    restoreRejectedRename: async (
+      scope: ReviewFileScope,
+      filePath: string,
+      expectation: ReviewRenameRecoveryExpectation
+    ) => {
+      return invokeIpcWithResult<{ success: boolean }>(
+        REVIEW_RESTORE_REJECTED_RENAME,
+        scope,
+        filePath,
+        expectation
+      );
+    },
+    reapplyRejectedRename: async (
+      scope: ReviewFileScope,
+      filePath: string,
+      expectation: ReviewRenameRecoveryExpectation
+    ) => {
+      return invokeIpcWithResult<{ success: boolean }>(
+        REVIEW_REAPPLY_REJECTED_RENAME,
+        scope,
+        filePath,
+        expectation
       );
     },
     watchFiles: async (projectPath: string, filePaths: string[]) => {

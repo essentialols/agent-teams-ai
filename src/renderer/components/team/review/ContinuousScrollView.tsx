@@ -4,6 +4,7 @@ import { useAppTranslation } from '@features/localization/renderer';
 import { useLazyFileContent } from '@renderer/hooks/useLazyFileContent';
 import { useVisibleFileSection } from '@renderer/hooks/useVisibleFileSection';
 import { useStore } from '@renderer/store';
+import { getFileHunkCount } from '@renderer/store/slices/changeReviewSlice';
 import { getFileReviewKey } from '@renderer/utils/reviewKey';
 
 import {
@@ -15,6 +16,7 @@ import {
 import { FileSectionDiff } from './FileSectionDiff';
 import { FileSectionHeader } from './FileSectionHeader';
 import { FullDiffLoadingBanner } from './FullDiffLoadingBanner';
+import { getEffectiveReviewFileDecision } from './reviewContentPreview';
 
 import type { EditorView } from '@codemirror/view';
 import type { FileChangeWithContent, HunkDecision } from '@shared/types';
@@ -126,6 +128,7 @@ export const ContinuousScrollView = ({
 }: ContinuousScrollViewProps): React.ReactElement => {
   const { t } = useAppTranslation('team');
   const setFileChunkCount = useStore((s) => s.setFileChunkCount);
+  const fileChunkCounts = useStore((s) => s.fileChunkCounts);
   const [localCollapsedFiles, setLocalCollapsedFiles] = useState<Set<string>>(() => new Set());
   const collapsedFiles = collapsedFilesProp ?? localCollapsedFiles;
 
@@ -273,6 +276,12 @@ export const ContinuousScrollView = ({
         const hasEdits = filePath in editedContents;
         const isViewed = viewedSet.has(filePath);
         const decision = fileDecisions[reviewKey] ?? fileDecisions[filePath];
+        const effectiveDecision = getEffectiveReviewFileDecision(
+          file,
+          getFileHunkCount(filePath, file.snippets.length, fileChunkCounts),
+          hunkDecisions,
+          decision
+        );
         const fileApplying = applying || filesApplying?.has(filePath) === true;
 
         const isCollapsed = collapsedFiles.has(filePath);
@@ -282,7 +291,7 @@ export const ContinuousScrollView = ({
             <FileSectionHeader
               file={file}
               fileContent={content}
-              fileDecision={decision}
+              fileDecision={effectiveDecision}
               externalChange={reviewExternalChangesByFile[filePath]}
               pathChangeLabel={pathChangeLabels?.[filePath]}
               hasEdits={hasEdits}

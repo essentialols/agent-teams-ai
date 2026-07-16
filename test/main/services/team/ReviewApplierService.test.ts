@@ -259,6 +259,26 @@ describe('ReviewApplierService', () => {
     expect(writeFile).toHaveBeenCalledTimes(1);
   });
 
+  it('deletes an Undo-restored file only when its content still matches', async () => {
+    const fsPromises = await import('fs/promises');
+    const readFile = fsPromises.readFile as unknown as ReturnType<typeof vi.fn>;
+    const unlink = fsPromises.unlink as unknown as ReturnType<typeof vi.fn>;
+    const filePath = '/tmp/restored-new-file.ts';
+    readFile.mockResolvedValue('restored\n');
+    unlink.mockResolvedValue(undefined);
+    const { ReviewApplierService } = await import('@main/services/team/ReviewApplierService');
+    const service = new ReviewApplierService();
+
+    await expect(service.deleteEditedFile(filePath, 'stale\n')).rejects.toThrow(
+      'refusing to delete'
+    );
+    expect(unlink).not.toHaveBeenCalled();
+    await expect(service.deleteEditedFile(filePath, 'restored\n')).resolves.toEqual({
+      success: true,
+    });
+    expect(unlink).toHaveBeenCalledWith(filePath);
+  });
+
   it('deletes a newly created file when fully rejected', async () => {
     const fsPromises = await import('fs/promises');
     const readFile = fsPromises.readFile as unknown as ReturnType<typeof vi.fn>;
@@ -844,8 +864,167 @@ describe('ReviewApplierService', () => {
 
     expect(res).toMatchObject({ applied: 1, conflicts: 0 });
     expect(mkdir).toHaveBeenCalledWith('/repo/src', { recursive: true });
-    expect(writeFile).toHaveBeenCalledWith(oldPath, oldContent, 'utf8');
+    expect(writeFile).toHaveBeenCalledWith(oldPath, oldContent, {
+      encoding: 'utf8',
+      flag: 'wx',
+    });
     expect(unlink).toHaveBeenCalledWith(newPath);
+  });
+
+  it('refuses to resurrect the old rename path when both paths disappeared externally', async () => {
+    const fsPromises = await import('fs/promises');
+    const readFile = fsPromises.readFile as unknown as ReturnType<typeof vi.fn>;
+    const writeFile = fsPromises.writeFile as unknown as ReturnType<typeof vi.fn>;
+    const unlink = fsPromises.unlink as unknown as ReturnType<typeof vi.fn>;
+    const oldPath = '/repo/src/old.ts';
+    const newPath = '/repo/src/new.ts';
+    const oldContent = 'old\n';
+    const newContent = 'new\n';
+    readFile.mockRejectedValue(Object.assign(new Error('missing'), { code: 'ENOENT' }));
+    const relation = { kind: 'rename' as const, oldPath: 'src/old.ts', newPath: 'src/new.ts' };
+    const change = buildLedgerRenameChange(oldPath, newPath, oldContent, newContent, relation);
+    const { ReviewApplierService } = await import('@main/services/team/ReviewApplierService');
+
+    await expect(
+      new ReviewApplierService().reapplyRejectedRename(newPath, oldContent, change.snippets)
+    ).rejects.toThrow('Renamed target path is missing');
+    expect(writeFile).not.toHaveBeenCalled();
+    expect(unlink).not.toHaveBeenCalled();
+  });
+
+  it('removes a newly restored old path if the rename target changes before deletion', async () => {
+    const fsPromises = await import('fs/promises');
+    const readFile = fsPromises.readFile as unknown as ReturnType<typeof vi.fn>;
+    const writeFile = fsPromises.writeFile as unknown as ReturnType<typeof vi.fn>;
+    const unlink = fsPromises.unlink as unknown as ReturnType<typeof vi.fn>;
+    const mkdir = fsPromises.mkdir as unknown as ReturnType<typeof vi.fn>;
+    const oldPath = '/repo/src/old.ts';
+    const newPath = '/repo/src/new.ts';
+    const oldContent = 'old\n';
+    const newContent = 'new\n';
+    const files = new Map([[newPath, newContent]]);
+    let newPathReads = 0;
+    readFile.mockImplementation(async (filePath: string) => {
+      if (filePath === newPath && ++newPathReads === 2) {
+        files.set(newPath, 'external\n');
+      }
+      const content = files.get(filePath);
+      if (content === undefined) throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+      return content;
+    });
+    mkdir.mockResolvedValue(undefined);
+    writeFile.mockImplementation(async (filePath: string, content: string, options: unknown) => {
+      if (
+        typeof options === 'object' &&
+        options !== null &&
+        'flag' in options &&
+        options.flag === 'wx' &&
+        files.has(filePath)
+      ) {
+        throw Object.assign(new Error('exists'), { code: 'EEXIST' });
+      }
+      files.set(filePath, content);
+    });
+    unlink.mockImplementation(async (filePath: string) => {
+      if (!files.delete(filePath)) throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+    });
+    const relation = { kind: 'rename' as const, oldPath: 'src/old.ts', newPath: 'src/new.ts' };
+    const change = buildLedgerRenameChange(oldPath, newPath, oldContent, newContent, relation);
+    const { ReviewApplierService } = await import('@main/services/team/ReviewApplierService');
+
+    await expect(
+      new ReviewApplierService().reapplyRejectedRename(newPath, oldContent, change.snippets)
+    ).rejects.toThrow('Renamed target changed during reject');
+    expect(files.has(oldPath)).toBe(false);
+    expect(files.get(newPath)).toBe('external\n');
+    expect(unlink).toHaveBeenCalledWith(oldPath);
+    expect(unlink).not.toHaveBeenCalledWith(newPath);
+  });
+
+  it('undoes a rejected ledger rename by restoring the target and removing the old path', async () => {
+    const fsPromises = await import('fs/promises');
+    const readFile = fsPromises.readFile as unknown as ReturnType<typeof vi.fn>;
+    const writeFile = fsPromises.writeFile as unknown as ReturnType<typeof vi.fn>;
+    const unlink = fsPromises.unlink as unknown as ReturnType<typeof vi.fn>;
+    const mkdir = fsPromises.mkdir as unknown as ReturnType<typeof vi.fn>;
+    const oldPath = '/repo/src/old.ts';
+    const newPath = '/repo/src/new.ts';
+    const oldContent = 'old\n';
+    const newContent = 'new\n';
+    const files = new Map([[oldPath, oldContent]]);
+    readFile.mockImplementation(async (filePath: string) => {
+      const content = files.get(filePath);
+      if (content === undefined) throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+      return content;
+    });
+    mkdir.mockResolvedValue(undefined);
+    writeFile.mockImplementation(async (filePath: string, content: string, options: unknown) => {
+      if (
+        typeof options === 'object' &&
+        options !== null &&
+        'flag' in options &&
+        options.flag === 'wx' &&
+        files.has(filePath)
+      ) {
+        throw Object.assign(new Error('exists'), { code: 'EEXIST' });
+      }
+      files.set(filePath, content);
+    });
+    unlink.mockImplementation(async (filePath: string) => {
+      if (!files.delete(filePath)) throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+    });
+
+    const relation = { kind: 'rename' as const, oldPath: 'src/old.ts', newPath: 'src/new.ts' };
+    const change = buildLedgerRenameChange(oldPath, newPath, oldContent, newContent, relation);
+    const { ReviewApplierService } = await import('@main/services/team/ReviewApplierService');
+    const service = new ReviewApplierService();
+
+    await expect(
+      service.restoreRejectedRename(newPath, oldContent, newContent, change.snippets)
+    ).resolves.toEqual({ success: true });
+    expect(files.get(newPath)).toBe(newContent);
+    expect(files.has(oldPath)).toBe(false);
+    expect(writeFile).toHaveBeenCalledWith(newPath, newContent, {
+      encoding: 'utf8',
+      flag: 'wx',
+    });
+    expect(unlink).toHaveBeenCalledWith(oldPath);
+
+    await expect(
+      service.reapplyRejectedRename(newPath, oldContent, change.snippets)
+    ).resolves.toEqual({ success: true });
+    expect(files.get(oldPath)).toBe(oldContent);
+    expect(files.has(newPath)).toBe(false);
+  });
+
+  it('refuses rename Undo when the restored old path changed externally', async () => {
+    const fsPromises = await import('fs/promises');
+    const readFile = fsPromises.readFile as unknown as ReturnType<typeof vi.fn>;
+    const writeFile = fsPromises.writeFile as unknown as ReturnType<typeof vi.fn>;
+    const unlink = fsPromises.unlink as unknown as ReturnType<typeof vi.fn>;
+    const oldPath = '/repo/src/old.ts';
+    const newPath = '/repo/src/new.ts';
+    const oldContent = 'old\n';
+    const newContent = 'new\n';
+    readFile.mockImplementation(async (filePath: string) => {
+      if (filePath === oldPath) return 'external edit\n';
+      throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+    });
+
+    const relation = { kind: 'rename' as const, oldPath: 'src/old.ts', newPath: 'src/new.ts' };
+    const change = buildLedgerRenameChange(oldPath, newPath, oldContent, newContent, relation);
+    const { ReviewApplierService } = await import('@main/services/team/ReviewApplierService');
+
+    await expect(
+      new ReviewApplierService().restoreRejectedRename(
+        newPath,
+        oldContent,
+        newContent,
+        change.snippets
+      )
+    ).rejects.toThrow('Original rename path changed after rejection');
+    expect(writeFile).not.toHaveBeenCalled();
+    expect(unlink).not.toHaveBeenCalled();
   });
 
   it('ledger case-only rename reject restores the aliased file without unlinking it', async () => {
@@ -945,6 +1124,65 @@ describe('ReviewApplierService', () => {
     expect(result).toMatchObject({ applied: 1, conflicts: 0, errors: [] });
     expect(rename).toHaveBeenCalledWith(newPath, oldPath);
     expect(writeFile).toHaveBeenCalledWith(oldPath, oldContent, 'utf8');
+    expect(unlink).not.toHaveBeenCalled();
+  });
+
+  it('rolls a case-only rename back if restoring the old content fails', async () => {
+    const fsPromises = await import('fs/promises');
+    const readFile = fsPromises.readFile as unknown as ReturnType<typeof vi.fn>;
+    const writeFile = fsPromises.writeFile as unknown as ReturnType<typeof vi.fn>;
+    const lstat = fsPromises.lstat as unknown as ReturnType<typeof vi.fn>;
+    const rename = fsPromises.rename as unknown as ReturnType<typeof vi.fn>;
+    const oldPath = '/repo/src/Foo.ts';
+    const newPath = '/repo/src/foo.ts';
+    const oldContent = 'export const value = 1;\n';
+    const newContent = 'export const value = 2;\n';
+    readFile.mockResolvedValue(newContent);
+    lstat.mockResolvedValue({ dev: 42, ino: 777 });
+    rename.mockResolvedValue(undefined);
+    writeFile.mockResolvedValue(undefined);
+    writeFile.mockRejectedValueOnce(new Error('disk full'));
+    const relation = { kind: 'rename' as const, oldPath: 'src/Foo.ts', newPath: 'src/foo.ts' };
+    const change = buildLedgerRenameChange(oldPath, newPath, oldContent, newContent, relation);
+    const { ReviewApplierService } = await import('@main/services/team/ReviewApplierService');
+
+    await expect(
+      new ReviewApplierService().reapplyRejectedRename(newPath, oldContent, change.snippets)
+    ).rejects.toThrow('Failed to reject case-only ledger rename');
+    expect(rename).toHaveBeenNthCalledWith(1, newPath, oldPath);
+    expect(rename).toHaveBeenNthCalledWith(2, oldPath, newPath);
+    expect(writeFile).toHaveBeenLastCalledWith(newPath, newContent, 'utf8');
+  });
+
+  it('undoes a rejected case-only ledger rename without creating a second file', async () => {
+    const fsPromises = await import('fs/promises');
+    const readFile = fsPromises.readFile as unknown as ReturnType<typeof vi.fn>;
+    const writeFile = fsPromises.writeFile as unknown as ReturnType<typeof vi.fn>;
+    const lstat = fsPromises.lstat as unknown as ReturnType<typeof vi.fn>;
+    const rename = fsPromises.rename as unknown as ReturnType<typeof vi.fn>;
+    const unlink = fsPromises.unlink as unknown as ReturnType<typeof vi.fn>;
+    const oldPath = '/repo/src/Foo.ts';
+    const newPath = '/repo/src/foo.ts';
+    const oldContent = 'export const value = 1;\n';
+    const newContent = 'export const value = 2;\n';
+    readFile.mockResolvedValue(oldContent);
+    lstat.mockResolvedValue({ dev: 42, ino: 777 });
+    rename.mockResolvedValue(undefined);
+    writeFile.mockResolvedValue(undefined);
+    const relation = { kind: 'rename' as const, oldPath: 'src/Foo.ts', newPath: 'src/foo.ts' };
+    const change = buildLedgerRenameChange(oldPath, newPath, oldContent, newContent, relation);
+    const { ReviewApplierService } = await import('@main/services/team/ReviewApplierService');
+
+    await expect(
+      new ReviewApplierService().restoreRejectedRename(
+        newPath,
+        oldContent,
+        newContent,
+        change.snippets
+      )
+    ).resolves.toEqual({ success: true });
+    expect(rename).toHaveBeenCalledWith(oldPath, newPath);
+    expect(writeFile).toHaveBeenCalledWith(newPath, newContent, 'utf8');
     expect(unlink).not.toHaveBeenCalled();
   });
 
@@ -1176,7 +1414,10 @@ describe('ReviewApplierService', () => {
 
     expect(res).toMatchObject({ applied: 1, conflicts: 0 });
     expect(mkdir).toHaveBeenCalledWith('C:/Repo/src', { recursive: true });
-    expect(writeFile).toHaveBeenCalledWith(expectedOldPath, oldContent, 'utf8');
+    expect(writeFile).toHaveBeenCalledWith(expectedOldPath, oldContent, {
+      encoding: 'utf8',
+      flag: 'wx',
+    });
     expect(unlink).toHaveBeenCalledWith(newPath);
   });
 

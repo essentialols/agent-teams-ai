@@ -2323,4 +2323,73 @@ describe('changeReviewSlice task changes', () => {
       vi.useRealTimers();
     }
   });
+
+  it('accepts only pending hunks and preserves rejected disk decisions', () => {
+    const store = createSliceStore();
+    store.setState({
+      activeChangeSet: makeAgentChangeSet(),
+      fileChunkCounts: { '/repo/file.ts': 3 },
+      hunkDecisions: {
+        '/repo/file.ts:0': 'rejected',
+        '/repo/file.ts:1': 'accepted',
+      },
+      fileDecisions: {},
+    });
+
+    expect(store.getState().acceptAllFile('/repo/file.ts')).toBe(true);
+    expect(store.getState().hunkDecisions).toEqual({
+      '/repo/file.ts:0': 'rejected',
+      '/repo/file.ts:1': 'accepted',
+      '/repo/file.ts:2': 'accepted',
+    });
+    expect(store.getState().fileDecisions).toEqual({});
+  });
+
+  it('does not turn a rejected file back into accepted without undoing its disk mutation', () => {
+    const store = createSliceStore();
+    store.setState({
+      activeChangeSet: makeAgentChangeSet(),
+      fileChunkCounts: { '/repo/file.ts': 1 },
+      hunkDecisions: { '/repo/file.ts:0': 'rejected' },
+      fileDecisions: { '/repo/file.ts': 'rejected' },
+    });
+
+    expect(store.getState().acceptAllFile('/repo/file.ts')).toBe(false);
+    expect(store.getState().hunkDecisions).toEqual({ '/repo/file.ts:0': 'rejected' });
+    expect(store.getState().fileDecisions).toEqual({ '/repo/file.ts': 'rejected' });
+  });
+
+  it('accepts a reviewable file with no text chunks at file level', () => {
+    const store = createSliceStore();
+    store.setState({
+      activeChangeSet: makeAgentChangeSet(),
+      fileChunkCounts: { '/repo/file.ts': 0 },
+      hunkDecisions: {},
+      fileDecisions: {},
+    });
+
+    expect(store.getState().acceptAllFile('/repo/file.ts')).toBe(true);
+    expect(store.getState().hunkDecisions).toEqual({});
+    expect(store.getState().fileDecisions).toEqual({ '/repo/file.ts': 'accepted' });
+  });
+
+  it('preserves legacy path-keyed rejection when a ledger changeKey is present', () => {
+    const store = createSliceStore();
+    const changeSet = makeAgentChangeSet();
+    const ledgerFile = { ...changeSet.files[0], changeKey: 'rename:old->new' };
+    changeSet.files[0] = ledgerFile;
+    store.setState({
+      activeChangeSet: changeSet,
+      fileChunkCounts: { '/repo/file.ts': 2 },
+      hunkDecisions: { '/repo/file.ts:0': 'rejected' },
+      fileDecisions: {},
+    });
+
+    expect(store.getState().acceptAllFile('/repo/file.ts')).toBe(true);
+    expect(store.getState().hunkDecisions).toEqual({
+      '/repo/file.ts:0': 'rejected',
+      'rename:old->new:1': 'accepted',
+    });
+    expect(store.getState().fileDecisions).toEqual({});
+  });
 });

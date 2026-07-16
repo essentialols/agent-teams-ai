@@ -27,6 +27,7 @@ import type {
   HunkDecision,
   RejectResult,
   ReviewFileScope,
+  ReviewRenameRecoveryExpectation,
   SnippetDiff,
   TaskChangeRequestOptions,
   TaskChangeSetV2,
@@ -779,6 +780,21 @@ export interface ReviewAPI {
     filePath: string,
     content: string,
     expectedCurrentContent?: string | null
+  ) => Promise<{ success: boolean }>;
+  deleteEditedFile: (
+    scope: ReviewFileScope,
+    filePath: string,
+    expectedCurrentContent: string
+  ) => Promise<{ success: boolean }>;
+  restoreRejectedRename: (
+    scope: ReviewFileScope,
+    filePath: string,
+    expectation: ReviewRenameRecoveryExpectation
+  ) => Promise<{ success: boolean }>;
+  reapplyRejectedRename: (
+    scope: ReviewFileScope,
+    filePath: string,
+    expectation: ReviewRenameRecoveryExpectation
   ) => Promise<{ success: boolean }>;
   watchFiles: (projectPath: string, filePaths: string[]) => Promise<void>;
   unwatchFiles: () => Promise<void>;

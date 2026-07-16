@@ -99,14 +99,19 @@ export function registerCodexGoalProjectControlJobTools(server: McpServer): void
         ...goalInputSchema(),
         ...jobRegistryInputSchema(),
         controllerJobId: z.string().optional(),
-        producerJobId: z.string(),
+        producerJobId: z.string().optional(),
+        reviewedOutputIds: z
+          .array(z.string().regex(/^[a-fA-F0-9]{64}$/))
+          .min(1)
+          .max(10)
+          .optional(),
         sourceWorkspacePath: z.string().optional(),
         baseBranch: z.string().optional(),
         newBranch: z.string().optional(),
         promptBody: z.string().optional(),
         preStartAdmission: workerLaunchAdmissionSchema
           .describe(
-            "Declarative verifier launch admission. Runtime computes job identity, workKey, paths and state. phaseStartSha must match canonical source HEAD; inputPatchHash must match the terminal producer handoff.",
+            "Declarative verifier launch admission. Runtime computes job identity, workKey, paths and state. phaseStartSha must match canonical source HEAD; inputPatchHash must match the terminal producer handoff or exact ordered reviewed-output aggregate artifact.",
           )
           .optional(),
         confirmPreStartAdmission: z.boolean().optional(),

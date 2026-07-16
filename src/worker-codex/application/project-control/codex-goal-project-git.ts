@@ -13,7 +13,7 @@ import {
 import { withLiteralGitPathspecs } from "../../git-literal-pathspecs";
 
 const execFileAsync = promisify(execFile);
-const MAX_STAGED_PATCH_BYTES = 16 * 1024 * 1024;
+export const MAX_STAGED_PATCH_BYTES = 16 * 1024 * 1024;
 
 export async function stagedPatchSha256(
   workspacePath: string,

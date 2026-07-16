@@ -317,6 +317,30 @@ export class LocalReviewedWorkerOutputStore implements ReviewedWorkerOutputStore
     return snapshot;
   }
 
+  async readPatch(snapshot: ReviewedWorkerOutputSnapshot): Promise<string> {
+    const itemDir = this.itemDir(snapshot.reviewedOutputId);
+    const expectedPatchPath = join(itemDir, "output.patch");
+    if (snapshot.patchPath !== expectedPatchPath) {
+      throw new Error("reviewed_worker_output_patch_path_mismatch");
+    }
+    const item = await lstat(expectedPatchPath);
+    if (
+      item.isSymbolicLink() ||
+      !item.isFile() ||
+      item.size > maxReviewedPatchBytes
+    ) {
+      throw new Error("reviewed_worker_output_artifact_unsafe");
+    }
+    const patch = await readFile(expectedPatchPath, "utf8");
+    if (
+      Buffer.byteLength(patch) !== snapshot.patchByteLength ||
+      sha256(patch) !== snapshot.patchSha256
+    ) {
+      throw new Error("reviewed_worker_output_manifest_patch_hash_mismatch");
+    }
+    return patch;
+  }
+
   private async readSnapshot(
     reviewedOutputId: string,
   ): Promise<ReviewedWorkerOutputSnapshot | undefined> {

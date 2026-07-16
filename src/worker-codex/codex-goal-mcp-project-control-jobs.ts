@@ -1,6 +1,13 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  realpath,
+  rm,
+  rmdir,
+  writeFile,
+} from "node:fs/promises";
 import { hostname } from "node:os";
-import { dirname } from "node:path";
+import { basename, dirname, join } from "node:path";
 import {
   AccessBoundary,
   NetworkAccessMode,
@@ -63,6 +70,7 @@ import {
   resolveCanonicalRemoteWorktreeSource,
   stagedPatchSha256ForRevision,
 } from "./codex-goal-mcp-project-git";
+import { publishImmutableTextArtifact } from "./local-immutable-text-artifact";
 import { resolveProjectSourceRevision } from "./application/project-control/codex-goal-project-source-revision";
 import { assertProjectRefillInputPatchSource } from "./application/project-control/codex-goal-project-input-patch-policy";
 import {
@@ -112,6 +120,15 @@ import {
   reserveCodexProjectAccount,
   type CodexProjectAccountReservation,
 } from "./application/project-control/codex-goal-project-account-reservation";
+import {
+  resolveReviewedOutputAggregate,
+  reviewedOutputAggregateView,
+  type ReviewedOutputAggregate,
+} from "./application/project-control/reviewed-output-aggregate-materializer";
+import {
+  LocalReviewedWorkerOutputStore,
+  reviewedWorkerOutputRoot,
+} from "./reviewed-worker-output";
 
 type JsonObject = Readonly<Record<string, unknown>>;
 
@@ -181,6 +198,12 @@ export async function projectControlRefillWorkerView(
   }
   const role = projectControlWorkerRole(args.workerRole);
   const producerJobId = stringValue(args.producerJobId);
+  const reviewedOutputIds = reviewedOutputIdValues(args.reviewedOutputIds);
+  assertVerifierInputSource({
+    operationToolName: boundedToolName,
+    producerJobId,
+    reviewedOutputIds,
+  });
   const accessBoundary =
     requested.accessBoundary ?? AccessBoundary.IsolatedWorkspaceWrite;
   const baseCreateManifest: CodexGoalJobManifestInput = {
@@ -319,23 +342,68 @@ export async function projectControlRefillWorkerView(
           boundedToolName === "codex_goal_project_prepare_verifier",
       })
     : undefined;
+  const reviewedOutputAggregate = reviewedOutputIds
+    ? await resolveLocalReviewedOutputAggregate({
+        registryRootDir: controller.registryRootDir,
+        projectId: controller.scope.projectId,
+        reviewedOutputIds,
+        expectedBaseCommit: sourceRevision.revision,
+      })
+    : undefined;
   assertProjectPreStartAdmissionSourceRevision({
     plan: preStartAdmission,
     sourceRevision: sourceRevision.revision,
   });
-  const producerInputPatch = producerHandoff
-    ? {
-        path: producerHandoff.patchPath,
-        sha256: producerHandoff.patchSha256,
+  let aggregateArtifactCreatedPaths: readonly string[] = [];
+  let aggregateInputPatch:
+    | {
+        readonly path: string;
+        readonly sha256: string;
+        readonly stagedSha256: string;
+        readonly baseCommit: string;
+        readonly changedPaths: readonly string[];
+      }
+    | undefined;
+  if (reviewedOutputAggregate) {
+    const artifacts = await materializeReviewedOutputAggregateArtifacts({
+      jobRootDir: createManifest.jobRootDir,
+      aggregate: reviewedOutputAggregate,
+    });
+    aggregateArtifactCreatedPaths = artifacts.createdPaths;
+    try {
+      aggregateInputPatch = {
+        path: artifacts.patchPath,
+        sha256: reviewedOutputAggregate.patchSha256,
         stagedSha256: await stagedPatchSha256ForRevision({
           workspacePath: resolvedSource.sourceRealPath,
           revision: sourceRevision.revision,
-          patchPath: producerHandoff.patchPath,
+          patchPath: artifacts.patchPath,
         }),
-        baseCommit: producerHandoff.baseCommit,
-        changedPaths: producerHandoff.changedPaths,
-      }
-    : undefined;
+        baseCommit: reviewedOutputAggregate.baseCommit,
+        changedPaths: reviewedOutputAggregate.changedFiles,
+      };
+    } catch (error) {
+      await removeReviewedOutputAggregateArtifacts(
+        aggregateArtifactCreatedPaths,
+      );
+      throw error;
+    }
+  }
+  const producerInputPatch =
+    aggregateInputPatch ??
+    (producerHandoff
+      ? {
+          path: producerHandoff.patchPath,
+          sha256: producerHandoff.patchSha256,
+          stagedSha256: await stagedPatchSha256ForRevision({
+            workspacePath: resolvedSource.sourceRealPath,
+            revision: sourceRevision.revision,
+            patchPath: producerHandoff.patchPath,
+          }),
+          baseCommit: producerHandoff.baseCommit,
+          changedPaths: producerHandoff.changedPaths,
+        }
+      : undefined);
   const createWorktreeInput: CodexGoalProjectCreateWorktreeInput = {
     jobId: requested.jobId,
     ...worktreeAccessInput,
@@ -436,6 +504,7 @@ export async function projectControlRefillWorkerView(
     });
   } catch (error) {
     await removeProjectPreStartAdmissionPaths(admissionCreatedPaths);
+    await removeReviewedOutputAggregateArtifacts(aggregateArtifactCreatedPaths);
     const rolledBack = await rollbackProjectRefillPartial({
       expectedSourceRealPath: createWorktreeInput.expectedSourceRealPath,
       workspacePath: createManifest.workspacePath,
@@ -566,6 +635,13 @@ export async function projectControlRefillWorkerView(
       ? { canonicalRemoteHead: sourceRevision.remoteHead }
       : {}),
     ...(producerHandoff ? { producerHandoff } : {}),
+    ...(reviewedOutputAggregate
+      ? {
+          reviewedOutputAggregate: reviewedOutputAggregateView(
+            reviewedOutputAggregate,
+          ),
+        }
+      : {}),
     prompt,
     accountCapacityFacts,
     ...(accountReservation
@@ -598,7 +674,31 @@ export async function projectControlPrepareVerifierView(
   args: ProjectControlMcpArgs,
   deps: CodexGoalMcpProjectControlJobsDeps,
 ): Promise<JsonObject> {
-  requiredRawString(args.producerJobId, "producerJobId");
+  const producerJobId = stringValue(args.producerJobId);
+  const reviewedOutputIds = reviewedOutputIdValues(args.reviewedOutputIds);
+  assertVerifierInputSource({
+    operationToolName: "codex_goal_project_prepare_verifier",
+    producerJobId,
+    reviewedOutputIds,
+  });
+  if (reviewedOutputIds && booleanValue(args.confirmRefill) !== true) {
+    const controller = await deps.loadProjectControlController(args);
+    const aggregate = await resolveLocalReviewedOutputAggregate({
+      registryRootDir: controller.registryRootDir,
+      projectId: controller.scope.projectId,
+      reviewedOutputIds,
+    });
+    return {
+      ok: false,
+      reason: "confirm_refill_required",
+      mode: "project_control_prepare_verifier_preview",
+      controllerJobId: controller.controller.jobId,
+      targetJobId: stringValue(args.jobId),
+      requiredInputPatchHash: aggregate.patchSha256,
+      reviewedOutputAggregate: reviewedOutputAggregateView(aggregate),
+      requiredConfirmation: "confirmRefill",
+    };
+  }
   if (args.preStartAdmission === undefined) {
     throw new Error("project_control_verifier_pre_start_admission_required");
   }
@@ -619,6 +719,141 @@ export async function projectControlPrepareVerifierView(
     ...result,
     mode: "project_control_prepare_verifier",
   };
+}
+
+function reviewedOutputIdValues(value: unknown): readonly string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+    throw new Error("reviewed_output_aggregate_ids_invalid");
+  }
+  return value;
+}
+
+function assertVerifierInputSource(input: {
+  readonly operationToolName: ProjectControlOperationToolName;
+  readonly producerJobId: string | undefined;
+  readonly reviewedOutputIds: readonly string[] | undefined;
+}): void {
+  if (input.operationToolName !== "codex_goal_project_prepare_verifier") {
+    if (input.reviewedOutputIds) {
+      throw new Error(
+        "project_control_reviewed_output_aggregate_verifier_only",
+      );
+    }
+    return;
+  }
+  if (input.producerJobId && input.reviewedOutputIds) {
+    throw new Error("project_control_verifier_input_source_conflict");
+  }
+  if (!input.producerJobId && !input.reviewedOutputIds) {
+    throw new Error("project_control_verifier_input_source_required");
+  }
+}
+
+async function resolveLocalReviewedOutputAggregate(input: {
+  readonly registryRootDir: string;
+  readonly projectId: string;
+  readonly reviewedOutputIds: readonly string[];
+  readonly expectedBaseCommit?: string;
+}): Promise<ReviewedOutputAggregate> {
+  const store = new LocalReviewedWorkerOutputStore({
+    rootDir: reviewedWorkerOutputRoot(input.registryRootDir),
+  });
+  return await resolveReviewedOutputAggregate(
+    {
+      store,
+      readPatch: async (snapshot) => await store.readPatch(snapshot),
+    },
+    {
+      projectId: input.projectId,
+      reviewedOutputIds: input.reviewedOutputIds,
+      ...(input.expectedBaseCommit
+        ? { expectedBaseCommit: input.expectedBaseCommit }
+        : {}),
+    },
+  );
+}
+
+async function materializeReviewedOutputAggregateArtifacts(input: {
+  readonly jobRootDir: string;
+  readonly aggregate: ReviewedOutputAggregate;
+}): Promise<{
+  readonly patchPath: string;
+  readonly provenancePath: string;
+  readonly createdPaths: readonly string[];
+}> {
+  const requestedJobRootParent = dirname(input.jobRootDir);
+  const jobRootParentItem = await lstat(requestedJobRootParent);
+  if (
+    jobRootParentItem.isSymbolicLink() ||
+    !jobRootParentItem.isDirectory()
+  ) {
+    throw new Error("reviewed_output_aggregate_artifact_root_unsafe");
+  }
+  const canonicalJobRootParent = await realpath(requestedJobRootParent);
+  const requestedJobRoot = join(
+    canonicalJobRootParent,
+    basename(input.jobRootDir),
+  );
+  await mkdir(requestedJobRoot, { recursive: true, mode: 0o700 });
+  const jobRootItem = await lstat(requestedJobRoot);
+  if (jobRootItem.isSymbolicLink() || !jobRootItem.isDirectory()) {
+    throw new Error("reviewed_output_aggregate_artifact_root_unsafe");
+  }
+  const canonicalJobRoot = await realpath(requestedJobRoot);
+  if (dirname(canonicalJobRoot) !== canonicalJobRootParent) {
+    throw new Error("reviewed_output_aggregate_artifact_root_unsafe");
+  }
+  const root = join(canonicalJobRoot, "reviewed-output-aggregate");
+  await mkdir(root, { recursive: true, mode: 0o700 });
+  const rootItem = await lstat(root);
+  if (rootItem.isSymbolicLink() || !rootItem.isDirectory()) {
+    throw new Error("reviewed_output_aggregate_artifact_root_unsafe");
+  }
+  const canonicalRoot = await realpath(root);
+  if (dirname(canonicalRoot) !== canonicalJobRoot) {
+    throw new Error("reviewed_output_aggregate_artifact_root_unsafe");
+  }
+  const patchPath = join(canonicalRoot, "input.patch");
+  const provenancePath = join(canonicalRoot, "provenance.json");
+  const createdPaths: string[] = [];
+  try {
+    const patchArtifact = await publishImmutableTextArtifact({
+      path: patchPath,
+      content: input.aggregate.patch,
+      existingPathUnsafeError: "reviewed_output_aggregate_artifact_unsafe",
+      contentMismatchError: "reviewed_output_aggregate_immutable_conflict",
+    });
+    if (patchArtifact.created) {
+      createdPaths.push(patchPath);
+    }
+    const provenance = `${JSON.stringify(
+      reviewedOutputAggregateView(input.aggregate),
+      null,
+      2,
+    )}\n`;
+    const provenanceArtifact = await publishImmutableTextArtifact({
+      path: provenancePath,
+      content: provenance,
+      existingPathUnsafeError: "reviewed_output_aggregate_artifact_unsafe",
+      contentMismatchError: "reviewed_output_aggregate_immutable_conflict",
+    });
+    if (provenanceArtifact.created) {
+      createdPaths.push(provenancePath);
+    }
+    return { patchPath, provenancePath, createdPaths };
+  } catch (error) {
+    await removeReviewedOutputAggregateArtifacts(createdPaths);
+    throw error;
+  }
+}
+
+async function removeReviewedOutputAggregateArtifacts(
+  paths: readonly string[],
+): Promise<void> {
+  for (const path of [...paths].reverse()) await rm(path, { force: true });
+  const root = paths[0] ? dirname(paths[0]) : undefined;
+  if (root) await rmdir(root).catch(() => undefined);
 }
 
 async function resolveProducerHandoffForVerifier(input: {

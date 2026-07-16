@@ -180,6 +180,7 @@ export type ProjectControlMcpArgs = GoalMcpArgs & JobRegistryMcpArgs & {
   readonly includeResult?: boolean;
   readonly confirmRecoverOperations?: boolean;
   readonly producerJobId?: string;
+  readonly reviewedOutputIds?: readonly string[];
   readonly requireCanonicalRemoteHead?: boolean;
   readonly captureReviewedOutput?: boolean;
   readonly reviewedOutputId?: string;

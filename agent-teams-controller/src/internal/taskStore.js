@@ -10,6 +10,19 @@ const UUID_TASK_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TASK_STORAGE_IDENTITY = Symbol('taskStorageIdentity');
 const TASK_SCAN_SNAPSHOTS = Symbol('taskScanSnapshots');
+const DEFAULT_TASK_SCAN_SNAPSHOT_TTL_MS = 250;
+const DEFAULT_TASK_SCAN_SNAPSHOT_LIMIT = 32;
+const unlockedTaskScanSnapshots = new Map();
+
+function monotonicNowMs() {
+  return Number(process.hrtime.bigint()) / 1_000_000;
+}
+
+let taskScanSnapshotCacheConfig = Object.freeze({
+  clock: monotonicNowMs,
+  ttlMs: DEFAULT_TASK_SCAN_SNAPSHOT_TTL_MS,
+  maxEntries: DEFAULT_TASK_SCAN_SNAPSHOT_LIMIT,
+});
 
 function nowIso() {
   return new Date().toISOString();
@@ -149,15 +162,7 @@ function normalizeCreationCommand(value) {
   return { namespace, scopeKey, operation, commandId, payloadHash };
 }
 
-function scanTaskRows(paths) {
-  const lockContext = getTeamBoardLockContext(paths);
-  const snapshotKey = path.resolve(paths.tasksDir);
-  const lockSnapshots = lockContext?.get(TASK_SCAN_SNAPSHOTS);
-  const existingSnapshot = lockSnapshots?.get(snapshotKey);
-  if (existingSnapshot) {
-    return existingSnapshot;
-  }
-
+function buildTaskScanSnapshot(paths) {
   ensureDir(paths.tasksDir);
   const entries = fs.readdirSync(paths.tasksDir);
   const rows = [];
@@ -252,7 +257,7 @@ function scanTaskRows(paths) {
     rowsByDisplayId.set(row.task.displayId, displayRows);
   }
 
-  const snapshot = {
+  return {
     rows,
     rowsByCanonicalId,
     rowsByDisplayId,
@@ -262,17 +267,108 @@ function scanTaskRows(paths) {
     anomalies,
     collidingTaskIds,
   };
-  if (lockContext) {
-    const snapshots = lockSnapshots || new Map();
-    snapshots.set(snapshotKey, snapshot);
-    lockContext.set(TASK_SCAN_SNAPSHOTS, snapshots);
+}
+
+function readUnlockedTaskScanSnapshot(snapshotKey) {
+  const cached = unlockedTaskScanSnapshots.get(snapshotKey);
+  if (!cached) return null;
+
+  const ageMs = readTaskScanSnapshotCacheClock() - cached.cachedAtMs;
+  if (ageMs < 0 || ageMs >= taskScanSnapshotCacheConfig.ttlMs) {
+    unlockedTaskScanSnapshots.delete(snapshotKey);
+    return null;
   }
+
+  unlockedTaskScanSnapshots.delete(snapshotKey);
+  unlockedTaskScanSnapshots.set(snapshotKey, cached);
+  return cached.snapshot;
+}
+
+function cacheUnlockedTaskScanSnapshot(snapshotKey, snapshot) {
+  unlockedTaskScanSnapshots.delete(snapshotKey);
+  unlockedTaskScanSnapshots.set(snapshotKey, {
+    cachedAtMs: readTaskScanSnapshotCacheClock(),
+    snapshot,
+  });
+
+  while (unlockedTaskScanSnapshots.size > taskScanSnapshotCacheConfig.maxEntries) {
+    const oldestSnapshotKey = unlockedTaskScanSnapshots.keys().next().value;
+    unlockedTaskScanSnapshots.delete(oldestSnapshotKey);
+  }
+}
+
+function scanUnlockedTaskRows(paths, snapshotKey) {
+  const cachedSnapshot = readUnlockedTaskScanSnapshot(snapshotKey);
+  if (cachedSnapshot) return cachedSnapshot;
+
+  const snapshot = buildTaskScanSnapshot(paths);
+  cacheUnlockedTaskScanSnapshot(snapshotKey, snapshot);
+  return snapshot;
+}
+
+function readTaskScanSnapshotCacheClock() {
+  const clockMs = taskScanSnapshotCacheConfig.clock();
+  if (!Number.isFinite(clockMs)) {
+    throw new Error('Task scan snapshot cache clock must return a finite number');
+  }
+  return clockMs;
+}
+
+function scanTaskRows(paths) {
+  const lockContext = getTeamBoardLockContext(paths);
+  const snapshotKey = path.resolve(paths.tasksDir);
+  if (!lockContext) {
+    return scanUnlockedTaskRows(paths, snapshotKey);
+  }
+
+  const lockSnapshots = lockContext.get(TASK_SCAN_SNAPSHOTS);
+  const existingSnapshot = lockSnapshots?.get(snapshotKey);
+  if (existingSnapshot) {
+    return existingSnapshot;
+  }
+
+  const snapshot = buildTaskScanSnapshot(paths);
+  const snapshots = lockSnapshots || new Map();
+  snapshots.set(snapshotKey, snapshot);
+  lockContext.set(TASK_SCAN_SNAPSHOTS, snapshots);
   return snapshot;
 }
 
 function invalidateTaskScanSnapshot(paths) {
+  const snapshotKey = path.resolve(paths.tasksDir);
+  unlockedTaskScanSnapshots.delete(snapshotKey);
   const lockContext = getTeamBoardLockContext(paths);
-  lockContext?.get(TASK_SCAN_SNAPSHOTS)?.delete(path.resolve(paths.tasksDir));
+  lockContext?.get(TASK_SCAN_SNAPSHOTS)?.delete(snapshotKey);
+}
+
+// Standalone reads may share a full directory scan for at most 250 ms by default. The hard
+// TTL intentionally does not depend on filesystem metadata, so every external change becomes
+// observable on the first read after expiry even if an atomic replacement preserves metadata.
+function configureTaskScanSnapshotCache(options = {}) {
+  const clock = options.clock ?? monotonicNowMs;
+  const ttlMs = options.ttlMs ?? DEFAULT_TASK_SCAN_SNAPSHOT_TTL_MS;
+  const maxEntries = options.maxEntries ?? DEFAULT_TASK_SCAN_SNAPSHOT_LIMIT;
+  if (typeof clock !== 'function') {
+    throw new Error('Task scan snapshot cache clock must be a function');
+  }
+  if (!Number.isFinite(ttlMs) || ttlMs <= 0) {
+    throw new Error('Task scan snapshot cache ttlMs must be a positive finite number');
+  }
+  if (!Number.isSafeInteger(maxEntries) || maxEntries <= 0) {
+    throw new Error('Task scan snapshot cache maxEntries must be a positive safe integer');
+  }
+
+  const previousConfig = taskScanSnapshotCacheConfig;
+  taskScanSnapshotCacheConfig = Object.freeze({ clock, ttlMs, maxEntries });
+  unlockedTaskScanSnapshots.clear();
+
+  let restored = false;
+  return function restoreTaskScanSnapshotCacheConfig() {
+    if (restored) return;
+    restored = true;
+    unlockedTaskScanSnapshots.clear();
+    taskScanSnapshotCacheConfig = previousConfig;
+  };
 }
 
 function sortTasks(tasks) {
@@ -1192,6 +1288,7 @@ module.exports = {
   addTaskComment,
   appendHistoryEvent,
   buildTaskReference,
+  configureTaskScanSnapshotCache,
   createTask,
   deriveDisplayId,
   formatTaskBriefing,

@@ -7,8 +7,20 @@ const taskStore = require('../src/internal/taskStore.js');
 
 describe('taskStore validated scan snapshots', () => {
   const tempDirs = [];
+  let cacheClockMs;
+  let restoreTaskScanSnapshotCacheConfig;
+
+  beforeEach(() => {
+    cacheClockMs = 1_000;
+    restoreTaskScanSnapshotCacheConfig = taskStore.configureTaskScanSnapshotCache({
+      clock: () => cacheClockMs,
+      ttlMs: 100,
+      maxEntries: 32,
+    });
+  });
 
   afterEach(() => {
+    restoreTaskScanSnapshotCacheConfig();
     vi.restoreAllMocks();
     for (const dir of tempDirs.splice(0)) {
       fs.rmSync(dir, { recursive: true, force: true });
@@ -105,6 +117,148 @@ describe('taskStore validated scan snapshots', () => {
     });
 
     expect(counts).toEqual({ readdir: 1, read: 3, parse: 3 });
+  });
+
+  it('shares one full scan across hot standalone get, list, and resolve reads inside the TTL', () => {
+    const paths = makePaths();
+    const firstId = makeTaskId(1);
+    const secondId = makeTaskId(2);
+    writeTaskRow(paths, firstId);
+    writeTaskRow(paths, secondId);
+    const counts = instrumentTaskScans(paths);
+
+    expect(taskStore.readTask(paths, firstId).id).toBe(firstId);
+    expect(taskStore.listTasks(paths).map((task) => task.id)).toEqual([firstId, secondId]);
+    expect(taskStore.resolveTaskRef(paths, secondId.slice(0, 8))).toBe(secondId);
+    cacheClockMs += 99;
+    expect(taskStore.readTask(paths, secondId).id).toBe(secondId);
+
+    expect(counts).toEqual({ readdir: 1, read: 2, parse: 2 });
+  });
+
+  it('detects a cross-file identity collision on the first standalone lookup', () => {
+    const paths = makePaths();
+    const firstId = makeTaskId(1);
+    const secondId = makeTaskId(2);
+    writeTaskRow(paths, firstId);
+    writeTaskRow(paths, secondId, { id: firstId });
+    const counts = instrumentTaskScans(paths);
+
+    expect(() => taskStore.readTask(paths, firstId)).toThrow('Task identity collision');
+
+    expect(counts).toEqual({ readdir: 1, read: 2, parse: 2 });
+  });
+
+  it('invalidates the standalone snapshot immediately after its own write', () => {
+    const paths = makePaths();
+    const taskId = makeTaskId(1);
+    writeTaskRow(paths, taskId);
+    const counts = instrumentTaskScans(paths);
+
+    expect(taskStore.readTask(paths, taskId).description).toBe('Description 00000001');
+    taskStore.updateTaskFields(paths, taskId, { description: 'Fresh after own write' });
+    expect(taskStore.readTask(paths, taskId).description).toBe('Fresh after own write');
+
+    expect(counts).toEqual({ readdir: 2, read: 2, parse: 2 });
+  });
+
+  it('observes an equal-size external atomic replacement on the first read after TTL expiry', () => {
+    const paths = makePaths();
+    const taskId = makeTaskId(1);
+    const originalTask = writeTaskRow(paths, taskId, { subject: 'before' });
+    const taskPath = path.join(paths.tasksDir, `${taskId}.json`);
+    const originalSize = fs.statSync(taskPath).size;
+    const directoryStat = fs.statSync(paths.tasksDir);
+    const counts = instrumentTaskScans(paths);
+
+    expect(taskStore.readTask(paths, taskId).subject).toBe('before');
+
+    const replacementPath = path.join(paths.tasksDir, '.external-replacement');
+    fs.writeFileSync(
+      replacementPath,
+      JSON.stringify({ ...originalTask, subject: 'after!' }, null, 2),
+      'utf8'
+    );
+    expect(fs.statSync(replacementPath).size).toBe(originalSize);
+    fs.renameSync(replacementPath, taskPath);
+    fs.utimesSync(paths.tasksDir, directoryStat.atime, directoryStat.mtime);
+
+    expect(taskStore.readTask(paths, taskId).subject).toBe('before');
+    cacheClockMs += 100;
+    expect(taskStore.readTask(paths, taskId).subject).toBe('after!');
+
+    expect(counts).toEqual({ readdir: 2, read: 2, parse: 2 });
+  });
+
+  it('detects a new cross-file duplicate on the first read after TTL expiry', () => {
+    const paths = makePaths();
+    const firstId = makeTaskId(1);
+    const secondId = makeTaskId(2);
+    writeTaskRow(paths, firstId);
+    const secondTask = writeTaskRow(paths, secondId);
+    const counts = instrumentTaskScans(paths);
+
+    expect(taskStore.readTask(paths, firstId).id).toBe(firstId);
+
+    const replacementPath = path.join(paths.tasksDir, '.external-duplicate');
+    fs.writeFileSync(
+      replacementPath,
+      JSON.stringify({ ...secondTask, id: firstId }, null, 2),
+      'utf8'
+    );
+    fs.renameSync(replacementPath, path.join(paths.tasksDir, `${secondId}.json`));
+
+    expect(taskStore.readTask(paths, firstId).id).toBe(firstId);
+    cacheClockMs += 100;
+    expect(() => taskStore.readTask(paths, firstId)).toThrow('Task identity collision');
+
+    expect(counts).toEqual({ readdir: 2, read: 4, parse: 4 });
+  });
+
+  it('keeps the shared snapshot LRU bounded and isolates cloned task and anomaly outputs', () => {
+    restoreTaskScanSnapshotCacheConfig();
+    restoreTaskScanSnapshotCacheConfig = taskStore.configureTaskScanSnapshotCache({
+      clock: () => cacheClockMs,
+      ttlMs: 100,
+      maxEntries: 2,
+    });
+    const firstPaths = makePaths();
+    const secondPaths = makePaths();
+    const thirdPaths = makePaths();
+    const firstId = makeTaskId(1);
+    const mismatchId = makeTaskId(2);
+    writeTaskRow(firstPaths, firstId, {
+      comments: [{ id: 'comment-1', text: 'Original comment' }],
+    });
+    writeTaskRow(secondPaths, mismatchId, { id: makeTaskId(20) });
+    writeTaskRow(thirdPaths, makeTaskId(3));
+    const originalReaddirSync = fs.readdirSync;
+    const readdirCounts = new Map();
+    vi.spyOn(fs, 'readdirSync').mockImplementation(function countDirectoryScans(filePath, ...args) {
+      const directory = path.resolve(String(filePath));
+      readdirCounts.set(directory, (readdirCounts.get(directory) || 0) + 1);
+      return originalReaddirSync.call(this, filePath, ...args);
+    });
+
+    const firstRows = taskStore.listTaskRows(firstPaths);
+    firstRows.tasks[0].comments[0].text = 'Poisoned task clone';
+    taskStore.readTask(secondPaths, mismatchId);
+    const secondRows = taskStore.listTaskRows(secondPaths, { includeDeleted: true });
+    secondRows.anomalies[0].detail = 'Poisoned anomaly clone';
+
+    expect(
+      taskStore.listTaskRows(secondPaths, { includeDeleted: true }).anomalies[0].detail
+    ).toContain(`contains id "${makeTaskId(20)}"`);
+    expect(taskStore.readTask(firstPaths, firstId).comments[0].text).toBe('Original comment');
+    taskStore.readTask(thirdPaths, makeTaskId(3));
+    taskStore.readTask(firstPaths, firstId);
+    taskStore.readTask(secondPaths, mismatchId);
+
+    expect(Object.fromEntries(readdirCounts)).toEqual({
+      [path.resolve(firstPaths.tasksDir)]: 1,
+      [path.resolve(secondPaths.tasksDir)]: 2,
+      [path.resolve(thirdPaths.tasksDir)]: 1,
+    });
   });
 
   it('invalidates immediately after a successful write so later reads rescan fresh rows', () => {

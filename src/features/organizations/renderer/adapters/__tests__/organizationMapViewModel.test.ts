@@ -14,6 +14,7 @@ describe('organization map overview summaries', () => {
       nodes: [
         { id: 'org:product', kind: 'organization', label: 'Product', color: '#38bdf8' },
         { id: 'group:platform', kind: 'container', label: 'Platform' },
+        { id: 'group:runtime', kind: 'container', label: 'Runtime systems' },
         { id: 'group:ops', kind: 'container', label: 'Operations' },
         {
           id: 'team:runtime',
@@ -62,13 +63,21 @@ describe('organization map overview summaries', () => {
         {
           id: 'r3',
           sourceNodeId: 'group:platform',
-          targetNodeId: 'team:runtime',
+          targetNodeId: 'group:runtime',
           kind: 'contains',
           sourceKind: 'manual',
           weight: 1,
         },
         {
           id: 'r4',
+          sourceNodeId: 'group:runtime',
+          targetNodeId: 'team:runtime',
+          kind: 'contains',
+          sourceKind: 'manual',
+          weight: 1,
+        },
+        {
+          id: 'r5',
           sourceNodeId: 'group:ops',
           targetNodeId: 'team:support',
           kind: 'contains',
@@ -92,7 +101,7 @@ describe('organization map overview summaries', () => {
 
     expect(summary).toMatchObject({
       organizationId: 'product',
-      groupCount: 2,
+      groupCount: 3,
       teamCount: 2,
       onlineTeamCount: 1,
       agentCount: 7,

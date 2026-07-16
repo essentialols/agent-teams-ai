@@ -53,6 +53,7 @@ export interface OrganizationMapViewModel {
 }
 
 interface DescendantOverviewStats {
+  groupCount: number;
   teamCount: number;
   onlineTeamCount: number;
   agentCount: number;
@@ -67,7 +68,14 @@ function collectOverviewStats(
   seen = new Set<string>()
 ): DescendantOverviewStats {
   if (seen.has(nodeId)) {
-    return { teamCount: 0, onlineTeamCount: 0, agentCount: 0, activeTaskCount: 0, taskCount: 0 };
+    return {
+      groupCount: 0,
+      teamCount: 0,
+      onlineTeamCount: 0,
+      agentCount: 0,
+      activeTaskCount: 0,
+      taskCount: 0,
+    };
   }
   seen.add(nodeId);
 
@@ -75,6 +83,7 @@ function collectOverviewStats(
   if (node?.kind === 'team') {
     const team = node.team;
     return {
+      groupCount: 0,
       teamCount: 1,
       onlineTeamCount: team?.isOnline ? 1 : 0,
       agentCount: team?.memberCount ?? 0,
@@ -89,6 +98,7 @@ function collectOverviewStats(
     (total, childNodeId) => {
       const child = collectOverviewStats(childNodeId, nodeById, childNodeIdsByParentId, seen);
       return {
+        groupCount: total.groupCount + child.groupCount,
         teamCount: total.teamCount + child.teamCount,
         onlineTeamCount: total.onlineTeamCount + child.onlineTeamCount,
         agentCount: total.agentCount + child.agentCount,
@@ -96,7 +106,14 @@ function collectOverviewStats(
         taskCount: total.taskCount + child.taskCount,
       };
     },
-    { teamCount: 0, onlineTeamCount: 0, agentCount: 0, activeTaskCount: 0, taskCount: 0 }
+    {
+      groupCount: node ? 1 : 0,
+      teamCount: 0,
+      onlineTeamCount: 0,
+      agentCount: 0,
+      activeTaskCount: 0,
+      taskCount: 0,
+    }
   );
 }
 
@@ -136,7 +153,7 @@ function buildOrganizationOverviews(
         rootNodeId: rootNode.id,
         name: organization.name || getNodeDisplayLabel(rootNode),
         color: rootNode.color ?? '#4f8cff',
-        groupCount: groups.length,
+        groupCount: Math.max(0, stats.groupCount - 1),
         teamCount: stats.teamCount,
         onlineTeamCount: stats.onlineTeamCount,
         agentCount: stats.agentCount,

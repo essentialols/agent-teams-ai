@@ -14,6 +14,7 @@ import { createCodexRuntimeTempRoot } from "./codex-runtime-temp";
 import { classifyCodexFailure } from "./failure-classifier";
 import { pruneCodexChildEnv } from "./codex-cli-domain";
 import { composeCodexPrompt } from "./codex-prompt-composer";
+import { codexProviderEgressCliConfigArgs } from "./codex-provider-egress-policy";
 import { parseCodexStructuredOutput } from "./structured-output";
 
 export type CodexReasoningEffort =
@@ -309,6 +310,7 @@ export function buildCodexJsonExecArgs(input: {
     "features.shell_snapshot=false",
     "--config",
     "features.skill_mcp_dependency_install=false",
+    ...codexProviderEgressCliConfigArgs(),
     ...(input.outputSchemaPath ? ["--output-schema", input.outputSchemaPath] : []),
     "--ephemeral",
     "--ignore-user-config",

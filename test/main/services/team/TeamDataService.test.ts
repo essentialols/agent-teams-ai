@@ -720,18 +720,20 @@ describe('TeamDataService draft metadata', () => {
 
     for (let restart = 0; restart < 2; restart += 1) {
       const provisioning = new TeamProvisioningService();
-      const report = await (
+      const resolution = await (
         provisioning as unknown as {
-          probeLaunchCompatibility(
-            teamName: string,
-            rawConfig: string,
-            providerId: string
-          ): Promise<{ rosterSource: string; members: Array<{ name: string }> }>;
+          configFacade: {
+            resolveLaunchExpectedMembers(
+              teamName: string,
+              rawConfig: string,
+              providerId: string
+            ): Promise<{ source: string; members: Array<{ name: string }> }>;
+          };
         }
-      ).probeLaunchCompatibility('restart-team', configRaw, 'codex');
+      ).configFacade.resolveLaunchExpectedMembers('restart-team', configRaw, 'codex');
 
-      expect(report.rosterSource).toBe('members-meta');
-      expect(report.members.map((member) => member.name)).toEqual(['bob']);
+      expect(resolution.source).toBe('members-meta');
+      expect(resolution.members.map((member) => member.name)).toEqual(['bob']);
     }
   });
 });

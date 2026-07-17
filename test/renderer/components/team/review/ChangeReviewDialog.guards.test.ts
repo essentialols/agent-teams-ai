@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   appendOrderedReviewAction,
   getReviewCloseBlockReason,
+  getReviewDecisionHydrationGuard,
   getReviewRenameRecoveryExpectation,
   hasReviewFileRejections,
   hasUnresolvedReviewExternalChange,
@@ -11,6 +12,7 @@ import {
   partitionReviewFilesByApplyErrors,
   popOrderedReviewAction,
   reconcileReviewDecisionRecordsAfterApply,
+  resolveDraftBaselineAfterSave,
   resolveReviewFileIsNew,
   restoreReviewDecisionRecordsForFile,
   restoreReviewDecisionRecordsForFiles,
@@ -55,6 +57,42 @@ describe('ChangeReviewDialog interaction guards', () => {
     expect(getReviewCloseBlockReason({ busy: true, draftCount: 0 })).toContain('current');
     expect(getReviewCloseBlockReason({ busy: false, draftCount: 1 })).toContain('Save or discard');
     expect(getReviewCloseBlockReason({ busy: false, draftCount: 0 })).toBeNull();
+  });
+
+  it('distinguishes pending, ready, and failed persisted-decision hydration', () => {
+    expect(
+      getReviewDecisionHydrationGuard({
+        expectedScopeKey: 'scope-a',
+        hydratedScopeKey: null,
+        status: 'idle',
+      })
+    ).toBe('pending');
+    expect(
+      getReviewDecisionHydrationGuard({
+        expectedScopeKey: 'scope-a',
+        hydratedScopeKey: 'scope-b',
+        status: 'loaded',
+      })
+    ).toBe('pending');
+    expect(
+      getReviewDecisionHydrationGuard({
+        expectedScopeKey: 'scope-a',
+        hydratedScopeKey: 'scope-a',
+        status: 'loaded',
+      })
+    ).toBe('ready');
+    expect(
+      getReviewDecisionHydrationGuard({
+        expectedScopeKey: 'scope-a',
+        hydratedScopeKey: 'scope-a',
+        status: 'error',
+      })
+    ).toBe('error');
+  });
+
+  it('rebases a draft that changes while Save is in flight onto the saved bytes', () => {
+    expect(resolveDraftBaselineAfterSave('saved A', 'newer B')).toBe('saved A');
+    expect(resolveDraftBaselineAfterSave('saved A', undefined)).toBeUndefined();
   });
 
   it('blocks saving a draft until a matching external disk change is resolved', () => {

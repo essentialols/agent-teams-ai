@@ -198,7 +198,7 @@ export const ContinuousScrollView = ({
   // cascading re-replays on every render (useEffect in FileSectionDiff has no deps).
   // When a view is destroyed/recreated (discard, lazy remount), the identity changes
   // and replay runs once for the new instance.
-  const replayedViewsRef = useRef(new Set<EditorView>());
+  const replayedViewsRef = useRef(new WeakSet<EditorView>());
 
   const handleEditorViewReady = useCallback(
     (filePath: string, view: EditorView | null) => {

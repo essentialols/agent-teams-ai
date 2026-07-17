@@ -160,14 +160,6 @@ function buildPersistDecisionScopeKey(
   return scopeToken ? `${teamName}:${scopeKey}:${scopeToken}` : `${teamName}:${scopeKey}`;
 }
 
-function clearAllPersistDecisionTimers(): void {
-  for (const timer of persistDebounceTimers.values()) {
-    clearTimeout(timer);
-  }
-  persistDebounceTimers.clear();
-  pendingPersistDecisionWrites.clear();
-}
-
 function applyTaskChangePresenceCacheUpdate(
   taskChangePresenceByKey: Record<string, Exclude<TaskChangePresenceState, 'unknown'>>,
   cacheKey: string,
@@ -253,6 +245,8 @@ export interface ChangeReviewSlice {
   collapseUnchanged: boolean;
   applyError: string | null;
   applying: boolean;
+  decisionHydrationScopeKey: string | null;
+  decisionHydrationStatus: 'idle' | 'loading' | 'loaded' | 'error';
 
   // Editable diff state
   editedContents: Record<string, string>;
@@ -526,6 +520,8 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
       hunkContextHashesByFile: {},
       applyError: null,
       applying: false,
+      decisionHydrationScopeKey: null,
+      decisionHydrationStatus: 'idle',
       editedContents: {},
       changeSetEpoch: s.changeSetEpoch + 1,
       fileContentVersionByPath: {},
@@ -551,6 +547,8 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
       fileContents: {},
       fileContentsLoading: {},
       editedContents: {},
+      decisionHydrationScopeKey: null,
+      decisionHydrationStatus: 'idle',
       changeSetEpoch: s.changeSetEpoch + 1,
       fileContentVersionByPath: {},
       reviewExternalChangesByFile: {},
@@ -617,6 +615,8 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
     collapseUnchanged: true,
     applyError: null,
     applying: false,
+    decisionHydrationScopeKey: null,
+    decisionHydrationStatus: 'idle',
 
     // Editable diff initial state
     editedContents: {},
@@ -708,7 +708,6 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
       latestAgentChangesRequestToken++;
       latestTaskChangesRequestToken++;
       latestDecisionLoadRequestToken++;
-      clearAllPersistDecisionTimers();
       set((s) => ({
         activeChangeSet: null,
         changeSetLoading: false,
@@ -727,6 +726,8 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
         reviewExternalChangesByFile: {},
         applyError: null,
         applying: false,
+        decisionHydrationScopeKey: null,
+        decisionHydrationStatus: 'idle',
         editedContents: {},
       }));
     },
@@ -735,7 +736,6 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
       latestAgentChangesRequestToken++;
       latestTaskChangesRequestToken++;
       latestDecisionLoadRequestToken++;
-      clearAllPersistDecisionTimers();
       set((s) => ({
         activeChangeSet: null,
         changeSetLoading: false,
@@ -754,6 +754,8 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
         reviewExternalChangesByFile: {},
         applyError: null,
         applying: false,
+        decisionHydrationScopeKey: null,
+        decisionHydrationStatus: 'idle',
         editedContents: {},
       }));
     },
@@ -762,7 +764,6 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
       latestAgentChangesRequestToken++;
       latestTaskChangesRequestToken++;
       latestDecisionLoadRequestToken++;
-      clearAllPersistDecisionTimers();
       set((s) => ({
         activeChangeSet: null,
         changeSetLoading: false,
@@ -781,6 +782,8 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
         reviewExternalChangesByFile: {},
         applyError: null,
         applying: false,
+        decisionHydrationScopeKey: null,
+        decisionHydrationStatus: 'idle',
         editedContents: {},
       }));
     },
@@ -789,10 +792,19 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
 
     loadDecisionsFromDisk: async (teamName: string, scopeKey: string, scopeToken: string) => {
       const requestToken = ++latestDecisionLoadRequestToken;
+      const hydrationScopeKey = buildPersistDecisionScopeKey(teamName, scopeKey, scopeToken);
       const startState = get();
       const changeSetEpoch = startState.changeSetEpoch;
       const initialHunkDecisions = startState.hunkDecisions;
       const initialFileDecisions = startState.fileDecisions;
+      const preserveInMemoryRecovery =
+        startState.decisionHydrationStatus === 'error' &&
+        (Object.keys(initialHunkDecisions).length > 0 ||
+          Object.keys(initialFileDecisions).length > 0);
+      set({
+        decisionHydrationScopeKey: hydrationScopeKey,
+        decisionHydrationStatus: 'loading',
+      });
       try {
         const data = await api.review.loadDecisions(teamName, scopeKey, scopeToken);
         if (requestToken !== latestDecisionLoadRequestToken) return;
@@ -803,6 +815,22 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
           latest.hunkDecisions !== initialHunkDecisions ||
           latest.fileDecisions !== initialFileDecisions
         ) {
+          set({
+            decisionHydrationScopeKey: hydrationScopeKey,
+            decisionHydrationStatus: 'error',
+            applyError:
+              'Review changed before saved decisions loaded. Reload Changes before continuing.',
+          });
+          return;
+        }
+        if (preserveInMemoryRecovery) {
+          // A choice that beat or survived a failed hydration is newer than disk.
+          // Retry verifies the store is readable, then keeps that user-owned state.
+          set({
+            decisionHydrationScopeKey: hydrationScopeKey,
+            decisionHydrationStatus: 'loaded',
+            applyError: null,
+          });
           return;
         }
         const normalized = normalizePersistedReviewState(latest.activeChangeSet?.files ?? [], {
@@ -816,6 +844,9 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
           hunkDecisions: normalized.hunkDecisions,
           fileDecisions: normalized.fileDecisions,
           hunkContextHashesByFile: normalized.hunkContextHashesByFile,
+          decisionHydrationScopeKey: hydrationScopeKey,
+          decisionHydrationStatus: 'loaded',
+          applyError: null,
         });
       } catch (error) {
         if (requestToken !== latestDecisionLoadRequestToken) return;
@@ -825,13 +856,19 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
           latest.hunkDecisions !== initialHunkDecisions ||
           latest.fileDecisions !== initialFileDecisions
         ) {
+          set({
+            decisionHydrationScopeKey: hydrationScopeKey,
+            decisionHydrationStatus: 'error',
+            applyError:
+              'Review changed while saved decisions failed to load. Reload Changes before continuing.',
+          });
           return;
         }
         logger.error('loadDecisionsFromDisk error:', error);
         set({
-          hunkDecisions: {},
-          fileDecisions: {},
-          hunkContextHashesByFile: {},
+          decisionHydrationScopeKey: hydrationScopeKey,
+          decisionHydrationStatus: 'error',
+          applyError: 'Unable to load saved review decisions. Reload Changes before reviewing.',
         });
       }
     },

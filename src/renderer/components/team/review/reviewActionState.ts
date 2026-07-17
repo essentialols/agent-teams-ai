@@ -54,6 +54,26 @@ export function getReviewCloseBlockReason(input: {
   return null;
 }
 
+export function getReviewDecisionHydrationGuard(input: {
+  expectedScopeKey: string | null;
+  hydratedScopeKey: string | null;
+  status: 'idle' | 'loading' | 'loaded' | 'error';
+}): 'not-required' | 'pending' | 'ready' | 'error' {
+  if (input.expectedScopeKey === null) return 'not-required';
+  if (input.hydratedScopeKey !== input.expectedScopeKey) return 'pending';
+  if (input.status === 'loaded') return 'ready';
+  if (input.status === 'error') return 'error';
+  return 'pending';
+}
+
+/** A draft that survives an async Save must rebase onto the bytes that Save published. */
+export function resolveDraftBaselineAfterSave(
+  savedContent: string,
+  remainingDraft: string | undefined
+): string | undefined {
+  return remainingDraft === undefined ? undefined : savedContent;
+}
+
 export function resolveReviewFileIsNew(
   file: FileChangeSummary,
   content: FileChangeWithContent | null | undefined

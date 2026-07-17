@@ -63,6 +63,57 @@ describe('ReviewDecisionStore', () => {
     ).rejects.toBeTruthy();
   });
 
+  it('rejects path-like scope identities before touching the filesystem', async () => {
+    const { ReviewDecisionStore } = await import('@main/services/team/ReviewDecisionStore');
+    const store = new ReviewDecisionStore();
+
+    await expect(
+      store.save('../outside', 'task-123', {
+        scopeToken: 'token',
+        hunkDecisions: {},
+        fileDecisions: {},
+      })
+    ).rejects.toThrow('Invalid review decision team name');
+    await expect(store.clear('demo', '..')).rejects.toThrow('Invalid review decision scope key');
+  });
+
+  it('surfaces a corrupt persisted payload instead of treating it as empty decisions', async () => {
+    const { ReviewDecisionStore } = await import('@main/services/team/ReviewDecisionStore');
+    const store = new ReviewDecisionStore();
+    const legacyDir = path.join(teamsBasePath, 'demo', 'review-decisions');
+    await mkdir(legacyDir, { recursive: true });
+    await writeFile(path.join(legacyDir, 'task-123.json'), '{not-json', 'utf8');
+
+    await expect(store.load('demo', 'task-123')).rejects.toBeTruthy();
+    await expect(readFile(path.join(legacyDir, 'task-123.json'), 'utf8')).resolves.toBe(
+      '{not-json'
+    );
+  });
+
+  it('can explicitly discard a corrupt legacy snapshot for recovery', async () => {
+    const { ReviewDecisionStore } = await import('@main/services/team/ReviewDecisionStore');
+    const store = new ReviewDecisionStore();
+    const legacyPath = path.join(teamsBasePath, 'demo', 'review-decisions', 'task-123.json');
+    await mkdir(path.dirname(legacyPath), { recursive: true });
+    await writeFile(legacyPath, '{not-json', 'utf8');
+
+    await expect(store.clear('demo', 'task-123', 'scope-token')).resolves.toBeUndefined();
+    await expect(readFile(legacyPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('rejects malformed decision values before persisting them', async () => {
+    const { ReviewDecisionStore } = await import('@main/services/team/ReviewDecisionStore');
+    const store = new ReviewDecisionStore();
+
+    await expect(
+      store.save('demo', 'task-123', {
+        scopeToken: 'token',
+        hunkDecisions: { '/repo/file.ts:0': 'surprise' as never },
+        fileDecisions: {},
+      })
+    ).rejects.toThrow('Invalid review decisions payload');
+  });
+
   it('clears only the exact v2 scope file and leaves sibling variants intact', async () => {
     const { ReviewDecisionStore } = await import('@main/services/team/ReviewDecisionStore');
     const store = new ReviewDecisionStore();
@@ -104,9 +155,7 @@ describe('ReviewDecisionStore', () => {
       'utf8'
     );
 
-    await expect(
-      store.load('demo', 'task-123', 'task:123:req:legacy:src:one')
-    ).resolves.toEqual({
+    await expect(store.load('demo', 'task-123', 'task:123:req:legacy:src:one')).resolves.toEqual({
       hunkDecisions: { 'file-a:0': 'rejected' },
       fileDecisions: { 'file-a': 'rejected' },
       hunkContextHashesByFile: undefined,
@@ -133,14 +182,12 @@ describe('ReviewDecisionStore', () => {
     const entries = await fsEntries(scopeDir);
     expect(entries).toHaveLength(1);
 
-    const payload = JSON.parse(await readFile(path.join(scopeDir, entries[0]!), 'utf8')) as {
-      version?: number;
-      scopeKey?: string;
-      scopeToken?: string;
-    };
-    expect(payload.version).toBe(2);
-    expect(payload.scopeKey).toBe('task-123');
-    expect(payload.scopeToken).toBe('task:123:req:a:src:one');
+    const payload: unknown = JSON.parse(await readFile(path.join(scopeDir, entries[0]!), 'utf8'));
+    expect(payload).toMatchObject({
+      version: 2,
+      scopeKey: 'task-123',
+      scopeToken: 'task:123:req:a:src:one',
+    });
   });
 });
 

@@ -9,6 +9,7 @@ import { createIpcWrapper } from '@main/ipc/ipcWrapper';
 import { EditorFileWatcher } from '@main/services/editor';
 import { ReviewDecisionStore } from '@main/services/team/ReviewDecisionStore';
 import { TeamConfigReader } from '@main/services/team/TeamConfigReader';
+import { cleanupAtomicCreateTempLinks } from '@main/utils/atomicWrite';
 import { isPathWithinRoot, matchesSensitivePattern } from '@main/utils/pathValidation';
 import { safeSendToRenderer } from '@main/utils/safeWebContentsSend';
 import {
@@ -84,7 +85,9 @@ let fileContentResolver: FileContentResolver | null = null;
 let gitDiffFallback: GitDiffFallback | null = null;
 let reviewConfigReader: Pick<TeamConfigReader, 'getConfig'> = new TeamConfigReader();
 const reviewDecisionStore = new ReviewDecisionStore();
-const reviewFileWatcher = new EditorFileWatcher();
+// Review is backed by a point-in-time diff. Unlike the editor watcher, ignoring
+// the first few seconds can silently miss an external write and make Undo unsafe.
+const reviewFileWatcher = new EditorFileWatcher({ ignoreStartupChanges: false });
 let reviewWatcherProjectRoot: string | null = null;
 let reviewMainWindowRef: BrowserWindow | null = null;
 
@@ -115,7 +118,7 @@ function registerDisplayedReviewSnapshot(
     if (snapshot.expiresAt <= now) displayedReviewSnapshots.delete(token);
   }
   while (displayedReviewSnapshots.size >= MAX_DISPLAYED_REVIEW_SNAPSHOTS) {
-    const oldestToken = displayedReviewSnapshots.keys().next().value as string | undefined;
+    const oldestToken = displayedReviewSnapshots.keys().next().value;
     if (!oldestToken) break;
     displayedReviewSnapshots.delete(oldestToken);
   }
@@ -412,22 +415,20 @@ async function validateAuthorizedReviewFilePath(
   }
   if (
     options.requireReviewedFile &&
-    (!authorization.reviewedFiles ||
-      !authorization.reviewedFiles.has(normalizeReviewPathForIdentity(normalizedPath)))
+    !authorization.reviewedFiles?.has(normalizeReviewPathForIdentity(normalizedPath))
   ) {
     throw new Error('File is not part of the reviewed scope');
   }
 
   let targetRealPath: string;
+  let targetStat: Awaited<ReturnType<typeof fs.lstat>> | null = null;
+  let resolvedStat: Awaited<ReturnType<typeof fs.stat>> | null = null;
   try {
-    const targetStat = await fs.lstat(normalizedPath);
+    targetStat = await fs.lstat(normalizedPath);
     targetRealPath = path.resolve(path.normalize(await fs.realpath(normalizedPath)));
-    const resolvedStat = targetStat.isSymbolicLink() ? await fs.stat(targetRealPath) : targetStat;
+    resolvedStat = targetStat.isSymbolicLink() ? await fs.stat(targetRealPath) : targetStat;
     if (!resolvedStat.isFile()) {
       throw new Error('Review target must be a regular file');
-    }
-    if (options.rejectHardlinks && (targetStat.isSymbolicLink() || resolvedStat.nlink > 1)) {
-      throw new Error('Review mutation refuses symbolic or multiply-linked files');
     }
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
@@ -448,6 +449,28 @@ async function validateAuthorizedReviewFilePath(
   );
   if (!allowed) {
     throw new Error('Review file path is outside the authoritative project/worktree');
+  }
+  if (options.rejectHardlinks && targetStat && resolvedStat) {
+    if (!targetStat.isSymbolicLink() && resolvedStat.nlink > 1) {
+      await cleanupAtomicCreateTempLinks(normalizedPath);
+      targetStat = await fs.lstat(normalizedPath);
+      targetRealPath = path.resolve(path.normalize(await fs.realpath(normalizedPath)));
+      resolvedStat = targetStat.isSymbolicLink() ? await fs.stat(targetRealPath) : targetStat;
+      const stillAllowed =
+        !matchesSensitivePattern(targetRealPath) &&
+        authorization.roots.some(
+          (root) =>
+            (isPathWithinRoot(normalizedPath, root.lexicalPath) ||
+              isPathWithinRoot(normalizedPath, root.realPath)) &&
+            isPathWithinRoot(targetRealPath, root.realPath)
+        );
+      if (!stillAllowed || !resolvedStat.isFile()) {
+        throw new Error('Review file path changed during authorization');
+      }
+    }
+    if (targetStat.isSymbolicLink() || resolvedStat.nlink > 1) {
+      throw new Error('Review mutation refuses symbolic or multiply-linked files');
+    }
   }
   return normalizedPath;
 }

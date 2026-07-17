@@ -11,6 +11,7 @@ import {
   REVIEW_REJECT_FILE,
   REVIEW_REJECT_HUNKS,
   REVIEW_RESTORE_REJECTED_RENAME,
+  REVIEW_SAVE_DECISIONS,
   REVIEW_SAVE_EDITED_FILE,
 } from '@preload/constants/ipcChannels';
 import { link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'fs/promises';
@@ -199,6 +200,23 @@ describe('review IPC path confinement', () => {
     if (!token) throw new Error('Review snapshot token was not returned');
     return token;
   }
+
+  it('rejects path traversal in persisted review decision identities', async () => {
+    const result = await ipcMain.invoke(
+      REVIEW_SAVE_DECISIONS,
+      '../outside',
+      'task-123',
+      'scope-token',
+      {},
+      {},
+      null
+    );
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain('Invalid review decision team name');
+    }
+  });
 
   it('allows content reads inside configured project and member worktree roots', async () => {
     const projectResult = await ipcMain.invoke(
@@ -784,6 +802,51 @@ describe('review IPC path confinement', () => {
       error: 'Review mutation refuses symbolic or multiply-linked files',
     });
     await expect(readFile(outsideFile, 'utf8')).resolves.toBe('outside\n');
+    expect(applier.saveEditedFile).not.toHaveBeenCalled();
+  });
+
+  it('recovers an app-owned crash-left atomic-create link before mutation', async () => {
+    if (process.platform === 'win32') return;
+    const crashTemp = path.join(
+      path.dirname(projectFile),
+      '.review-create.00000000-0000-0000-0000-000000000000.tmp'
+    );
+    await link(projectFile, crashTemp);
+
+    const result = await ipcMain.invoke(
+      REVIEW_SAVE_EDITED_FILE,
+      { teamName: 'safe-team', memberName: 'worker' },
+      projectFile,
+      'restored\n',
+      'project\n'
+    );
+
+    expect(result).toMatchObject({ success: true });
+    await expect(readFile(crashTemp, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(applier.saveEditedFile).toHaveBeenCalledWith(projectFile, 'restored\n', 'project\n');
+  });
+
+  it('does not clean hardlinks until the target is authorized inside a review root', async () => {
+    if (process.platform === 'win32') return;
+    const outsideCrashTemp = path.join(
+      outsideDir,
+      '.review-create.11111111-1111-1111-1111-111111111111.tmp'
+    );
+    await link(outsideFile, outsideCrashTemp);
+    extractor.getAgentChanges.mockResolvedValueOnce({
+      files: [{ filePath: outsideFile, snippets: [], isNewFile: false }],
+    });
+
+    const result = await ipcMain.invoke(
+      REVIEW_SAVE_EDITED_FILE,
+      { teamName: 'safe-team', memberName: 'worker' },
+      outsideFile,
+      'mutated\n',
+      'outside\n'
+    );
+
+    expect(result).toMatchObject({ success: false });
+    await expect(readFile(outsideCrashTemp, 'utf8')).resolves.toBe('outside\n');
     expect(applier.saveEditedFile).not.toHaveBeenCalled();
   });
 

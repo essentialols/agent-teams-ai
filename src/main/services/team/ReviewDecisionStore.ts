@@ -1,14 +1,19 @@
+import { atomicWriteAsync, unlinkPathDurably } from '@main/utils/atomicWrite';
 import { getTeamsBasePath } from '@main/utils/pathDecoder';
 import { createLogger } from '@shared/utils/logger';
 import { createHash } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { atomicWriteAsync } from './atomicWrite';
-
 import type { HunkDecision } from '@shared/types';
 
 const logger = createLogger('ReviewDecisionStore');
+const TEAM_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,127}$/;
+const SCOPE_KEY_PATTERN = /^(?:task|agent)-[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/;
+const MAX_STORED_DECISIONS_BYTES = 32 * 1024 * 1024;
+const MAX_STORED_DECISION_ENTRIES = 200_000;
+const MAX_STORED_CONTEXT_FILES = 2_000;
+const MAX_STORED_KEY_LENGTH = 32_768;
 
 export interface ReviewDecisionsData {
   scopeToken?: string;
@@ -25,7 +30,24 @@ interface ReviewDecisionsDataV2 extends ReviewDecisionsData {
   scopeToken: string;
 }
 
+class InvalidReviewDecisionDataError extends Error {}
+
 export class ReviewDecisionStore {
+  private assertSafeScope(teamName: string, scopeKey: string, scopeToken?: string): void {
+    if (typeof teamName !== 'string' || !TEAM_NAME_PATTERN.test(teamName)) {
+      throw new Error('Invalid review decision team name');
+    }
+    if (typeof scopeKey !== 'string' || !SCOPE_KEY_PATTERN.test(scopeKey)) {
+      throw new Error('Invalid review decision scope key');
+    }
+    if (
+      scopeToken !== undefined &&
+      (typeof scopeToken !== 'string' || scopeToken.length === 0 || scopeToken.includes('\0'))
+    ) {
+      throw new Error('Invalid review decision scope token');
+    }
+  }
+
   private getLegacyDirPath(teamName: string): string {
     return path.join(getTeamsBasePath(), teamName, 'review-decisions');
   }
@@ -58,7 +80,62 @@ export class ReviewDecisionStore {
       return null;
     }
 
+    if (
+      !this.isDecisionRecord(data.hunkDecisions) ||
+      !this.isDecisionRecord(data.fileDecisions) ||
+      !this.isContextHashRecord(data.hunkContextHashesByFile)
+    ) {
+      return null;
+    }
+
     return data as ReviewDecisionsData | ReviewDecisionsDataV2;
+  }
+
+  private isDecisionRecord(value: unknown): value is Record<string, HunkDecision> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const entries = Object.entries(value);
+    return (
+      entries.length <= MAX_STORED_DECISION_ENTRIES &&
+      entries.every(
+        ([key, decision]) =>
+          key.length > 0 &&
+          key.length <= MAX_STORED_KEY_LENGTH &&
+          (decision === 'accepted' || decision === 'rejected' || decision === 'pending')
+      )
+    );
+  }
+
+  private isContextHashRecord(
+    value: unknown
+  ): value is Record<string, Record<number, string>> | undefined {
+    if (value === undefined) return true;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const files = Object.entries(value as Record<string, unknown>);
+    if (files.length > MAX_STORED_CONTEXT_FILES) return false;
+    let totalHashes = 0;
+    for (const [filePath, hashes] of files) {
+      if (
+        filePath.length === 0 ||
+        filePath.length > MAX_STORED_KEY_LENGTH ||
+        !hashes ||
+        typeof hashes !== 'object' ||
+        Array.isArray(hashes)
+      ) {
+        return false;
+      }
+      const entries = Object.entries(hashes);
+      totalHashes += entries.length;
+      if (totalHashes > MAX_STORED_DECISION_ENTRIES) return false;
+      if (
+        entries.some(
+          ([index, hash]) =>
+            !/^(0|[1-9]\d*)$/.test(index) || typeof hash !== 'string' || hash.length > 256
+        )
+      ) {
+        return false;
+      }
+    }
+    return true;
   }
 
   private extractDecisions(
@@ -89,33 +166,72 @@ export class ReviewDecisionStore {
 
   private async loadFromPath(
     filePath: string,
-    scopeToken?: string
+    scopeToken?: string,
+    expectedScopeKey?: string
   ): Promise<{
     hunkDecisions: Record<string, HunkDecision>;
     fileDecisions: Record<string, HunkDecision>;
     hunkContextHashesByFile?: Record<string, Record<number, string>>;
   } | null> {
+    let handle: fs.promises.FileHandle | null = null;
     let raw: string;
     try {
-      raw = await fs.promises.readFile(filePath, 'utf8');
+      const pathStats = await fs.promises.lstat(filePath);
+      if (pathStats.isSymbolicLink()) {
+        throw new Error('Unsafe review decisions symlink');
+      }
+      handle = await fs.promises.open(filePath, 'r');
+      const stats = await handle.stat();
+      if (
+        !stats.isFile() ||
+        stats.nlink !== 1 ||
+        stats.size > MAX_STORED_DECISIONS_BYTES ||
+        stats.dev !== pathStats.dev ||
+        stats.ino !== pathStats.ino
+      ) {
+        throw new Error('Unsafe or oversized review decisions file');
+      }
+      raw = await handle.readFile({ encoding: 'utf8' });
+      const latestPathStats = await fs.promises.lstat(filePath);
+      if (
+        latestPathStats.isSymbolicLink() ||
+        latestPathStats.dev !== stats.dev ||
+        latestPathStats.ino !== stats.ino
+      ) {
+        throw new Error('Review decisions changed while being read');
+      }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         return null;
       }
       logger.error(`Failed to read review decisions at ${filePath}: ${String(error)}`);
-      return null;
+      throw error;
+    } finally {
+      try {
+        await handle?.close();
+      } catch {
+        // The read is complete; close failure does not make the parsed snapshot ambiguous.
+      }
     }
 
     let parsed: unknown;
     try {
       parsed = JSON.parse(raw) as unknown;
-    } catch {
+    } catch (error) {
       logger.error(`Corrupted review decisions file at ${filePath}`);
-      return null;
+      throw new InvalidReviewDecisionDataError(`Corrupted review decisions file at ${filePath}`, {
+        cause: error,
+      });
     }
 
     const data = this.parseStoredData(parsed);
-    return data ? this.extractDecisions(data, scopeToken) : null;
+    if (!data) {
+      throw new InvalidReviewDecisionDataError(`Invalid review decisions payload at ${filePath}`);
+    }
+    if ('version' in data && data.version === 2 && data.scopeKey !== expectedScopeKey) {
+      throw new InvalidReviewDecisionDataError(`Mismatched review decision scope at ${filePath}`);
+    }
+    return this.extractDecisions(data, scopeToken);
   }
 
   private async pruneScopeDir(teamName: string, scopeKey: string): Promise<void> {
@@ -164,17 +280,19 @@ export class ReviewDecisionStore {
     fileDecisions: Record<string, HunkDecision>;
     hunkContextHashesByFile?: Record<string, Record<number, string>>;
   } | null> {
+    this.assertSafeScope(teamName, scopeKey, scopeToken);
     if (scopeToken) {
       const exact = await this.loadFromPath(
         this.getV2FilePath(teamName, scopeKey, scopeToken),
-        scopeToken
+        scopeToken,
+        scopeKey
       );
       if (exact) {
         return exact;
       }
     }
 
-    return this.loadFromPath(this.getLegacyFilePath(teamName, scopeKey), scopeToken);
+    return this.loadFromPath(this.getLegacyFilePath(teamName, scopeKey), scopeToken, scopeKey);
   }
 
   async save(
@@ -187,6 +305,14 @@ export class ReviewDecisionStore {
       hunkContextHashesByFile?: Record<string, Record<number, string>>;
     }
   ): Promise<void> {
+    this.assertSafeScope(teamName, scopeKey, data.scopeToken);
+    if (
+      !this.isDecisionRecord(data.hunkDecisions) ||
+      !this.isDecisionRecord(data.fileDecisions) ||
+      !this.isContextHashRecord(data.hunkContextHashesByFile)
+    ) {
+      throw new Error('Invalid review decisions payload');
+    }
     try {
       const payload: ReviewDecisionsDataV2 = {
         version: 2,
@@ -198,7 +324,14 @@ export class ReviewDecisionStore {
         updatedAt: new Date().toISOString(),
       };
       const filePath = this.getV2FilePath(teamName, scopeKey, data.scopeToken);
-      await atomicWriteAsync(filePath, JSON.stringify(payload, null, 2));
+      const serialized = JSON.stringify(payload, null, 2);
+      if (Buffer.byteLength(serialized, 'utf8') > MAX_STORED_DECISIONS_BYTES) {
+        throw new Error('Review decisions payload exceeds the durable storage limit');
+      }
+      await atomicWriteAsync(filePath, serialized, {
+        durability: 'strict',
+        syncDirectory: true,
+      });
       await this.pruneScopeDir(teamName, scopeKey);
     } catch (error) {
       logger.error(`Failed to save review decisions for ${teamName}/${scopeKey}: ${String(error)}`);
@@ -207,17 +340,29 @@ export class ReviewDecisionStore {
   }
 
   async clear(teamName: string, scopeKey: string, scopeToken?: string): Promise<void> {
+    this.assertSafeScope(teamName, scopeKey, scopeToken);
     try {
       if (scopeToken) {
-        await fs.promises
-          .unlink(this.getV2FilePath(teamName, scopeKey, scopeToken))
-          .catch((error: NodeJS.ErrnoException) => {
+        await unlinkPathDurably(this.getV2FilePath(teamName, scopeKey, scopeToken)).catch(
+          (error: NodeJS.ErrnoException) => {
             if (error.code !== 'ENOENT') throw error;
-          });
+          }
+        );
         const legacyPath = this.getLegacyFilePath(teamName, scopeKey);
-        const legacy = await this.loadFromPath(legacyPath, scopeToken);
+        let legacy;
+        try {
+          legacy = await this.loadFromPath(legacyPath, scopeToken, scopeKey);
+        } catch (error) {
+          if (!(error instanceof InvalidReviewDecisionDataError)) throw error;
+          // Explicit recovery: a corrupt coarse legacy snapshot cannot safely serve
+          // any exact token, so discarding it is the only deterministic clear action.
+          await unlinkPathDurably(legacyPath).catch((unlinkError: NodeJS.ErrnoException) => {
+            if (unlinkError.code !== 'ENOENT') throw unlinkError;
+          });
+          return;
+        }
         if (legacy) {
-          await fs.promises.unlink(legacyPath).catch((error: NodeJS.ErrnoException) => {
+          await unlinkPathDurably(legacyPath).catch((error: NodeJS.ErrnoException) => {
             if (error.code !== 'ENOENT') throw error;
           });
         }

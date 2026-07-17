@@ -1,10 +1,18 @@
+import {
+  atomicCreateAsync,
+  atomicWriteAsync,
+  cleanupAtomicCreateTempLinks,
+  renamePathWithRetry,
+  unlinkPathDurably,
+} from '@main/utils/atomicWrite';
 import { isWindowsishPath, normalizePathForComparison } from '@shared/utils/platformPath';
 import { buildReviewChunkContextHashes, rejectReviewChunks } from '@shared/utils/reviewChunks';
 import { threeWayTextMerge } from '@shared/utils/threeWayTextMerge';
 import { createHash } from 'crypto';
-import { lstat, mkdir, readFile, rename, unlink, writeFile } from 'fs/promises';
+import { lstat, mkdir, readFile } from 'fs/promises';
 import { dirname } from 'path';
 
+import type { AtomicCreateResult } from '@main/utils/atomicWrite';
 import type {
   ApplyReviewRequest,
   ApplyReviewResult,
@@ -264,7 +272,7 @@ export class ReviewApplierService {
       }
 
       try {
-        await writeFile(filePath, newContent, 'utf8');
+        await this.atomicReplaceTextFile(filePath, current.content, newContent);
         return {
           success: true,
           newContent,
@@ -291,11 +299,28 @@ export class ReviewApplierService {
     modified: string
   ): Promise<RejectResult> {
     return withFileMutationLock(filePath, async () => {
-      // Check for conflicts first
-      const conflict = await this.checkConflict(filePath, modified);
-      if (conflict.hasConflict) {
+      const current = await this.readCurrentText(filePath);
+      if (current.missing) {
+        return {
+          success: false,
+          newContent: '',
+          hadConflicts: true,
+          conflictDescription: 'Файл отсутствует на диске; reject отменён',
+        };
+      }
+      const currentError = getCurrentTextReadError(current);
+      if (currentError) {
+        return {
+          success: false,
+          newContent: '',
+          hadConflicts: false,
+          conflictDescription: currentError,
+        };
+      }
+
+      if (current.content !== modified) {
         // File was modified since review — try three-way merge
-        const currentContent = conflict.currentContent;
+        const currentContent = current.content;
         const mergeResult = threeWayTextMerge(modified, currentContent, original);
 
         if (mergeResult.hasConflicts) {
@@ -309,7 +334,7 @@ export class ReviewApplierService {
         }
 
         try {
-          await writeFile(filePath, mergeResult.content, 'utf8');
+          await this.atomicReplaceTextFile(filePath, currentContent, mergeResult.content);
           return {
             success: true,
             newContent: mergeResult.content,
@@ -327,7 +352,7 @@ export class ReviewApplierService {
 
       // No conflict — simply write original content
       try {
-        await writeFile(filePath, original, 'utf8');
+        await this.atomicReplaceTextFile(filePath, modified, original);
         return {
           success: true,
           newContent: original,
@@ -531,39 +556,43 @@ export class ReviewApplierService {
   async saveEditedFile(
     filePath: string,
     content: string,
-    expectedCurrentContent?: string | null
+    expectedCurrentContent: string | null
   ): Promise<{ success: boolean }> {
     return withFileMutationLock(filePath, async () => {
-      if (expectedCurrentContent !== undefined) {
-        const current = await this.readCurrentText(filePath);
-        const currentError = getCurrentTextReadError(current);
-        if (currentError) {
-          throw new Error(currentError);
-        }
-        const matchesExpected =
-          expectedCurrentContent === null
-            ? current.missing
-            : !current.missing && current.content === expectedCurrentContent;
-        if (!matchesExpected) {
-          throw new Error('File changed since review update; refusing to overwrite');
-        }
-        if (expectedCurrentContent === null) {
-          try {
-            await writeFile(filePath, content, { encoding: 'utf8', flag: 'wx' });
-          } catch (error) {
-            const code =
-              error && typeof error === 'object' && 'code' in error
-                ? String((error as { code?: unknown }).code)
-                : '';
-            if (code === 'EEXIST') {
-              throw new Error('File changed since review update; refusing to overwrite');
-            }
-            throw error;
-          }
-          return { success: true };
-        }
+      const current = await this.readCurrentText(filePath);
+      const currentError = getCurrentTextReadError(current);
+      if (currentError) {
+        throw new Error(currentError);
       }
-      await writeFile(filePath, content, 'utf8');
+      if (expectedCurrentContent !== null && !current.missing && current.content === content) {
+        // Idempotent retry after an atomic replacement succeeded but its IPC response
+        // was lost. Missing-file restoration intentionally stays non-idempotent because
+        // an identical file may have been created independently and must not be claimed.
+        return { success: true };
+      }
+      const matchesExpected =
+        expectedCurrentContent === null
+          ? current.missing
+          : !current.missing && current.content === expectedCurrentContent;
+      if (!matchesExpected) {
+        throw new Error('File changed since review update; refusing to overwrite');
+      }
+      if (expectedCurrentContent === null) {
+        try {
+          await atomicCreateAsync(filePath, content);
+        } catch (error) {
+          const code =
+            error && typeof error === 'object' && 'code' in error
+              ? String((error as { code?: unknown }).code)
+              : '';
+          if (code === 'EEXIST') {
+            throw new Error('File changed since review update; refusing to overwrite');
+          }
+          throw error;
+        }
+        return { success: true };
+      }
+      await this.atomicReplaceTextFile(filePath, expectedCurrentContent, content);
       return { success: true };
     });
   }
@@ -577,10 +606,14 @@ export class ReviewApplierService {
       const current = await this.readCurrentText(filePath);
       const currentError = getCurrentTextReadError(current);
       if (currentError) throw new Error(currentError);
-      if (current.missing || current.content !== expectedCurrentContent) {
+      if (current.missing) {
+        // Idempotent retry after a successful delete whose IPC response was lost.
+        return { success: true };
+      }
+      if (current.content !== expectedCurrentContent) {
         throw new Error('File changed since review update; refusing to delete');
       }
-      await unlink(filePath);
+      await this.deleteExpectedTextFile(filePath, expectedCurrentContent);
       return { success: true };
     });
   }
@@ -620,7 +653,7 @@ export class ReviewApplierService {
     }
 
     try {
-      await unlink(filePath);
+      await this.deleteExpectedTextFile(filePath, current.content);
       return { status: 'applied' };
     } catch (err) {
       const code =
@@ -785,7 +818,7 @@ export class ReviewApplierService {
         return { handled: true, status: 'applied' };
       }
       try {
-        await writeFile(filePath, newContent, 'utf8');
+        await this.atomicReplaceTextFile(filePath, current.content, newContent);
         return { handled: true, status: 'applied' };
       } catch (err) {
         return {
@@ -834,7 +867,7 @@ export class ReviewApplierService {
         };
       }
       try {
-        await unlink(filePath);
+        await this.deleteExpectedTextFile(filePath, current.content);
         return { handled: true, status: 'applied' };
       } catch (err) {
         const msg = String(err);
@@ -875,7 +908,7 @@ export class ReviewApplierService {
       }
       try {
         await mkdir(dirname(filePath), { recursive: true });
-        await writeFile(filePath, original, { encoding: 'utf8', flag: 'wx' });
+        await atomicCreateAsync(filePath, original);
         return { handled: true, status: 'applied' };
       } catch (err) {
         const code =
@@ -924,7 +957,7 @@ export class ReviewApplierService {
       return guard.outcome;
     }
     try {
-      await writeFile(filePath, original, 'utf8');
+      await this.atomicReplaceTextFile(filePath, current.content, original);
       return { handled: true, status: 'applied' };
     } catch (err) {
       return {
@@ -1060,17 +1093,16 @@ export class ReviewApplierService {
     if (aliasedCurrentContent !== null) {
       let renamed = false;
       try {
-        await rename(newFilePath, oldFilePath);
+        await renamePathWithRetry(newFilePath, oldFilePath, { syncDirectories: true });
         renamed = true;
         if (aliasedCurrentContent !== oldContent) {
-          await writeFile(oldFilePath, oldContent, 'utf8');
+          await this.atomicReplaceTextFile(oldFilePath, aliasedCurrentContent, oldContent);
         }
         return { handled: true, status: 'applied' };
       } catch (err) {
         if (renamed) {
           try {
-            await rename(oldFilePath, newFilePath);
-            await writeFile(newFilePath, aliasedCurrentContent, 'utf8');
+            await renamePathWithRetry(oldFilePath, newFilePath, { syncDirectories: true });
           } catch {
             // Best effort rollback; the caller invalidates both paths before refreshing.
           }
@@ -1119,12 +1151,11 @@ export class ReviewApplierService {
           };
     }
 
-    let createdOldPath = false;
+    let createdOldPath: AtomicCreateResult | null = null;
     try {
       if (oldCurrent.missing) {
         await mkdir(dirname(oldFilePath), { recursive: true });
-        await writeFile(oldFilePath, oldContent, { encoding: 'utf8', flag: 'wx' });
-        createdOldPath = true;
+        createdOldPath = await atomicCreateAsync(oldFilePath, oldContent);
       }
 
       const newBeforeDelete = await this.readCurrentText(newFilePath);
@@ -1138,15 +1169,12 @@ export class ReviewApplierService {
           newBeforeDeleteError ?? 'Renamed target changed during reject; refusing to delete it.'
         );
       }
-      await unlink(newFilePath);
+      await this.deleteExpectedTextFile(newFilePath, newBeforeDelete.content);
       return { handled: true, status: 'applied' };
     } catch (err) {
       if (createdOldPath) {
         try {
-          const createdOld = await this.readCurrentText(oldFilePath);
-          if (!createdOld.missing && createdOld.content === oldContent) {
-            await unlink(oldFilePath);
-          }
+          await this.deleteCreatedTextFileIfOwned(oldFilePath, oldContent, createdOldPath);
         } catch {
           // Best effort rollback; preserve the original error for the renderer.
         }
@@ -1223,15 +1251,16 @@ export class ReviewApplierService {
       }
       let renamed = false;
       try {
-        await rename(oldFilePath, newFilePath);
+        await renamePathWithRetry(oldFilePath, newFilePath, { syncDirectories: true });
         renamed = true;
-        if (oldContent !== newContent) await writeFile(newFilePath, newContent, 'utf8');
+        if (oldContent !== newContent) {
+          await this.atomicReplaceTextFile(newFilePath, oldContent, newContent);
+        }
         return;
       } catch (error) {
         if (renamed) {
           try {
-            await rename(newFilePath, oldFilePath);
-            await writeFile(oldFilePath, oldContent, 'utf8');
+            await renamePathWithRetry(newFilePath, oldFilePath, { syncDirectories: true });
           } catch {
             // Preserve the original failure; the caller will refresh both paths from disk.
           }
@@ -1244,9 +1273,10 @@ export class ReviewApplierService {
       throw new Error('Renamed target path already exists; refusing Undo.');
     }
 
+    let createdTargetPath: AtomicCreateResult | null = null;
     try {
       await mkdir(dirname(newFilePath), { recursive: true });
-      await writeFile(newFilePath, newContent, { encoding: 'utf8', flag: 'wx' });
+      createdTargetPath = await atomicCreateAsync(newFilePath, newContent);
       const oldBeforeDelete = await this.readCurrentText(oldFilePath);
       if (
         oldBeforeDelete.missing ||
@@ -1255,15 +1285,14 @@ export class ReviewApplierService {
       ) {
         throw new Error('Original rename path changed during Undo.');
       }
-      await unlink(oldFilePath);
+      await this.deleteExpectedTextFile(oldFilePath, oldBeforeDelete.content);
     } catch (error) {
-      try {
-        const createdTarget = await this.readCurrentText(newFilePath);
-        if (!createdTarget.missing && createdTarget.content === newContent) {
-          await unlink(newFilePath);
+      if (createdTargetPath) {
+        try {
+          await this.deleteCreatedTextFileIfOwned(newFilePath, newContent, createdTargetPath);
+        } catch {
+          // Best effort rollback; preserve the first error for the renderer.
         }
-      } catch {
-        // Best effort rollback; preserve the first error for the renderer.
       }
       throw new Error(`Failed to restore ledger rename: ${String(error)}`);
     }
@@ -1388,6 +1417,82 @@ export class ReviewApplierService {
       }
       return { missing: false, content: '', error: `Не удалось прочитать файл: ${String(err)}` };
     }
+  }
+
+  private async atomicReplaceTextFile(
+    filePath: string,
+    expectedCurrentContent: string,
+    nextContent: string
+  ): Promise<void> {
+    const initial = await this.assertSafeExpectedFile(filePath, expectedCurrentContent);
+    await atomicWriteAsync(filePath, nextContent, {
+      mode: initial.mode & 0o7777,
+      durability: 'strict',
+      syncDirectory: true,
+      beforeCommit: async () => {
+        const latest = await this.assertSafeExpectedFile(filePath, expectedCurrentContent);
+        if (latest.dev !== initial.dev || latest.ino !== initial.ino) {
+          throw new Error('File changed during review update; refusing to overwrite');
+        }
+      },
+    });
+  }
+
+  private async assertSafeExpectedFile(
+    filePath: string,
+    expectedCurrentContent: string
+  ): Promise<{ dev: number; ino: number; mode: number }> {
+    let stats;
+    try {
+      stats = await lstat(filePath);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT' || code === 'ENOTDIR') {
+        throw Object.assign(new Error('File changed during review update; refusing to overwrite'), {
+          code,
+        });
+      }
+      throw error;
+    }
+    if (stats.isSymbolicLink() || !stats.isFile() || stats.nlink > 1) {
+      throw new Error('Review mutation refuses symbolic or multiply-linked files');
+    }
+    const current = await this.readCurrentText(filePath);
+    const currentError = getCurrentTextReadError(current);
+    if (current.missing || currentError || current.content !== expectedCurrentContent) {
+      throw new Error(currentError ?? 'File changed during review update; refusing to overwrite');
+    }
+    return { dev: stats.dev, ino: stats.ino, mode: stats.mode };
+  }
+
+  private async deleteExpectedTextFile(
+    filePath: string,
+    expectedCurrentContent: string
+  ): Promise<void> {
+    try {
+      const initial = await this.assertSafeExpectedFile(filePath, expectedCurrentContent);
+      const latest = await this.assertSafeExpectedFile(filePath, expectedCurrentContent);
+      if (latest.dev !== initial.dev || latest.ino !== initial.ino) {
+        throw new Error('File changed during review delete; refusing to remove it');
+      }
+      await unlinkPathDurably(filePath);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') throw error;
+    }
+  }
+
+  private async deleteCreatedTextFileIfOwned(
+    filePath: string,
+    expectedCurrentContent: string,
+    identity: AtomicCreateResult
+  ): Promise<void> {
+    await cleanupAtomicCreateTempLinks(filePath);
+    const current = await this.assertSafeExpectedFile(filePath, expectedCurrentContent);
+    if (current.dev !== identity.dev || current.ino !== identity.ino) {
+      throw new Error('Created review file was replaced; refusing rollback delete');
+    }
+    await unlinkPathDurably(filePath);
   }
 
   private async pathsReferToSameFile(firstPath: string, secondPath: string): Promise<boolean> {

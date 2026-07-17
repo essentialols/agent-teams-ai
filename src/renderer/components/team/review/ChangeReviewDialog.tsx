@@ -4,6 +4,7 @@ import { rejectChunk } from '@codemirror/merge';
 import { useAppTranslation } from '@features/localization/renderer';
 import { api, isElectronMode } from '@renderer/api';
 import { EditorSelectionMenu } from '@renderer/components/team/editor/EditorSelectionMenu';
+import { Button } from '@renderer/components/ui/button';
 import { useContinuousScrollNav } from '@renderer/hooks/useContinuousScrollNav';
 import { useDiffNavigation } from '@renderer/hooks/useDiffNavigation';
 import { useViewedFiles } from '@renderer/hooks/useViewedFiles';
@@ -40,6 +41,7 @@ import { buildPathChangeLabels } from './pathChangeLabels';
 import {
   appendOrderedReviewAction,
   getReviewCloseBlockReason,
+  getReviewDecisionHydrationGuard,
   getReviewRenameRecoveryExpectation,
   hasReviewFileRejections,
   hasUnresolvedReviewExternalChange,
@@ -47,6 +49,7 @@ import {
   isReviewFileFullyRejected,
   popOrderedReviewAction,
   reconcileReviewDecisionRecordsAfterApply,
+  resolveDraftBaselineAfterSave,
   resolveReviewFileIsNew,
   restoreReviewDecisionRecordsForFile,
   restoreReviewDecisionRecordsForFiles,
@@ -109,7 +112,7 @@ interface RecentDiskUndoAction {
 
 interface RecentReviewWrite {
   at: number;
-  expectedContent?: string | null;
+  expectedContent: string | null;
 }
 
 type ReviewUndoAction =
@@ -267,6 +270,8 @@ export const ChangeReviewDialog = ({
     undoBulkReview,
     hunkContextHashesByFile,
     changeSetEpoch,
+    decisionHydrationScopeKey,
+    decisionHydrationStatus,
     globalTasks,
   } = useStore();
 
@@ -293,6 +298,17 @@ export const ChangeReviewDialog = ({
       changeSet: activeChangeSet,
     });
   }, [activeChangeSet, memberName, mode, taskChangeRequestOptions, taskId]);
+  const decisionHydrationKey = decisionScopeToken
+    ? `${teamName}:${decisionScopeKey}:${decisionScopeToken}`
+    : null;
+  const decisionHydrationGuard = getReviewDecisionHydrationGuard({
+    expectedScopeKey: decisionHydrationKey,
+    hydratedScopeKey: decisionHydrationScopeKey,
+    status: decisionHydrationStatus,
+  });
+  const decisionHydrationReady = decisionHydrationGuard === 'ready';
+  const decisionHydrationFailed = decisionHydrationGuard === 'error';
+  const decisionHydrationPending = decisionHydrationGuard === 'pending';
 
   // Active file from scroll-spy (replaces selectedReviewFilePath for continuous scroll)
   const [activeFilePath, setActiveFilePath] = useState<string | null>(null);
@@ -358,7 +374,7 @@ export const ChangeReviewDialog = ({
   const activeFilePathRef = useRef<string | null>(null);
 
   const markRecentReviewWrite = useCallback(
-    (filePath: string, expectedContent?: string | null): void => {
+    (filePath: string, expectedContent: string | null): void => {
       recentReviewWritesRef.current.set(normalizePathForComparison(filePath), {
         at: Date.now(),
         expectedContent,
@@ -436,7 +452,26 @@ export const ChangeReviewDialog = ({
   }, [changeSetEpoch, scopeKey, teamName]);
 
   const pushReviewUndoAction = useCallback((action: ReviewUndoAction): void => {
-    const stack = appendOrderedReviewAction(reviewUndoActionsRef.current, action);
+    const previous = reviewUndoActionsRef.current;
+    const stack = appendOrderedReviewAction(previous, action);
+    for (const dropped of previous) {
+      if (stack.includes(dropped)) continue;
+      if (dropped.kind === 'bulk') {
+        bulkDiskUndoStackRef.current.shift();
+      } else if (dropped.kind === 'disk') {
+        const index = recentDiskUndoActionsRef.current.indexOf(dropped.action);
+        if (index !== -1) recentDiskUndoActionsRef.current.splice(index, 1);
+      } else {
+        const index = recentHunkUndoActionsRef.current.indexOf(dropped.action);
+        if (index !== -1) recentHunkUndoActionsRef.current.splice(index, 1);
+        const fileStack = hunkDecisionUndoStackRef.current[dropped.action.filePath];
+        const fileIndex = fileStack?.indexOf(dropped.action.originalIndex) ?? -1;
+        if (fileStack && fileIndex !== -1) fileStack.splice(fileIndex, 1);
+        if (fileStack?.length === 0) {
+          delete hunkDecisionUndoStackRef.current[dropped.action.filePath];
+        }
+      }
+    }
     reviewUndoActionsRef.current = stack;
     reviewRedoBlockedRef.current = false;
     setReviewUndoDepth(stack.length);
@@ -462,23 +497,68 @@ export const ChangeReviewDialog = ({
     setReviewUndoDepth(0);
   }, []);
 
-  const reviewActionsBusy = isReviewActionLocked({
+  const clearReviewActionHistoryForFile = useCallback(
+    (filePath: string): void => {
+      const actions = reviewUndoActionsRef.current;
+      if (actions.some((action) => action.kind === 'bulk')) {
+        // Bulk decision snapshots span files and cannot be safely split after the fact.
+        clearReviewActionHistory();
+        return;
+      }
+      const normalizedPath = normalizePathForComparison(filePath);
+      const retained = actions.filter((action) => {
+        const actionPath =
+          action.kind === 'disk'
+            ? action.action.snapshot.filePath
+            : action.kind === 'hunk'
+              ? action.action.filePath
+              : null;
+        return actionPath === null || normalizePathForComparison(actionPath) !== normalizedPath;
+      });
+      reviewUndoActionsRef.current = retained;
+      recentDiskUndoActionsRef.current = retained.flatMap((action) =>
+        action.kind === 'disk' ? [action.action] : []
+      );
+      recentHunkUndoActionsRef.current = retained.flatMap((action) =>
+        action.kind === 'hunk' ? [action.action] : []
+      );
+      hunkDecisionUndoStackRef.current = {};
+      for (const action of recentHunkUndoActionsRef.current) {
+        const fileActions = hunkDecisionUndoStackRef.current[action.filePath] ?? [];
+        fileActions.push(action.originalIndex);
+        hunkDecisionUndoStackRef.current[action.filePath] = fileActions;
+      }
+      reviewRedoBlockedRef.current = false;
+      setReviewUndoDepth(retained.length);
+    },
+    [clearReviewActionHistory]
+  );
+
+  const reviewMutationBusy = isReviewActionLocked({
     applying,
     fileApplyCount: filesApplying.size,
     undoing,
     closing,
   });
+  const reviewActionsBusy =
+    reviewMutationBusy || (decisionHydrationKey !== null && !decisionHydrationReady);
 
-  const hasReviewActionInFlight = useCallback(
-    () =>
+  const hasReviewActionInFlight = useCallback(() => {
+    const state = useStore.getState();
+    const hydrationReady =
+      decisionHydrationKey === null ||
+      (state.decisionHydrationScopeKey === decisionHydrationKey &&
+        state.decisionHydrationStatus === 'loaded');
+    return (
+      !hydrationReady ||
       isReviewActionLocked({
-        applying: useStore.getState().applying,
+        applying: state.applying,
         fileApplyCount: fileApplyInFlightRef.current.size,
         undoing: undoInFlightRef.current,
         closing: closingRef.current,
-      }),
-    []
-  );
+      })
+    );
+  }, [decisionHydrationKey]);
 
   const hasReviewDraft = useCallback(
     (filePath: string): boolean => filePath in useStore.getState().editedContents,
@@ -535,6 +615,14 @@ export const ChangeReviewDialog = ({
     () => sortItemsAsTree(activeChangeSet?.files ?? [], (f) => f.relativePath),
     [activeChangeSet]
   );
+  // A content-derived key avoids tearing down/recreating the main-process watcher
+  // when Zustand returns a new array containing the exact same review paths.
+  const watchedReviewFilePathsKey = useMemo(
+    () => sortedFiles.map((file) => file.filePath).join('\0'),
+    [sortedFiles]
+  );
+  const watchedReviewFilePathsKeyRef = useRef(watchedReviewFilePathsKey);
+  watchedReviewFilePathsKeyRef.current = watchedReviewFilePathsKey;
   const loadingFiles = useMemo(
     () => sortedFiles.filter((file) => fileContentsLoading[file.filePath]),
     [sortedFiles, fileContentsLoading]
@@ -644,7 +732,7 @@ export const ChangeReviewDialog = ({
           state.markReviewFileExternallyChanged(file.filePath, changeType);
           return;
         }
-        clearReviewActionHistory();
+        clearReviewActionHistoryForFile(file.filePath);
         // External bytes invalidate both the diff snapshot and every decision keyed to it.
         state.clearReviewStateForFile(file.filePath);
         void state.fetchFileContent(teamName, memberName, file.filePath);
@@ -652,21 +740,19 @@ export const ChangeReviewDialog = ({
 
       const recentWrite = recentReviewWritesRef.current.get(normalizedPath);
       if (recentWrite && Date.now() - recentWrite.at < REVIEW_LOCAL_WRITE_COOLDOWN_MS) {
-        if (recentWrite.expectedContent === undefined) return;
-        const verifyExpectedWrite = async (attempt: number): Promise<void> => {
+        const verifyExpectedWrite = async (): Promise<void> => {
           if (disposed) return;
           const pathBusy = [...fileApplyInFlightRef.current].some(
             (filePath) => normalizePathForComparison(filePath) === normalizedPath
           );
-          if (
-            (pathBusy || undoInFlightRef.current || useStore.getState().applying) &&
-            attempt < 100
-          ) {
-            window.setTimeout(() => void verifyExpectedWrite(attempt + 1), 25);
+          if (pathBusy || undoInFlightRef.current || useStore.getState().applying) {
+            // A slow fsync, antivirus hook, or network volume can legitimately take
+            // longer than the old 2.5s cap. Verify only after our mutation settles.
+            window.setTimeout(() => void verifyExpectedWrite(), 25);
             return;
           }
           const latest = recentReviewWritesRef.current.get(normalizedPath);
-          if (!latest || latest.expectedContent === undefined) return;
+          if (!latest) return;
           try {
             const result = await api.review.checkConflict(
               reviewScope,
@@ -684,23 +770,29 @@ export const ChangeReviewDialog = ({
           recentReviewWritesRef.current.delete(normalizedPath);
           processExternalChange();
         };
-        void verifyExpectedWrite(0);
+        void verifyExpectedWrite();
         return;
       }
       processExternalChange();
     });
 
-    void api.review.watchFiles(
-      projectPath,
-      sortedFiles.map((file) => file.filePath)
-    );
+    const initialWatchedFilePaths = watchedReviewFilePathsKeyRef.current
+      ? watchedReviewFilePathsKeyRef.current.split('\0')
+      : [];
+    void api.review.watchFiles(projectPath, initialWatchedFilePaths);
 
     return () => {
       disposed = true;
       unsubscribe();
       void api.review.unwatchFiles();
     };
-  }, [clearReviewActionHistory, open, projectPath, reviewScope, sortedFiles, teamName, memberName]);
+  }, [clearReviewActionHistoryForFile, open, projectPath, reviewScope, teamName, memberName]);
+
+  useEffect(() => {
+    if (!open || !projectPath || !isElectronMode()) return;
+    const watchedFilePaths = watchedReviewFilePathsKey ? watchedReviewFilePathsKey.split('\0') : [];
+    void api.review.watchFiles(projectPath, watchedFilePaths);
+  }, [open, projectPath, watchedReviewFilePathsKey]);
 
   // Tree click → scroll to file
   const handleTreeFileClick = useCallback(
@@ -808,7 +900,7 @@ export const ChangeReviewDialog = ({
           for (const snapshot of diskUndoSnapshots) {
             markRecentReviewWrite(
               snapshot.filePath,
-              isLedgerRenameReviewFile(snapshot.file) ? undefined : snapshot.afterContent
+              isLedgerRenameReviewFile(snapshot.file) ? null : snapshot.afterContent
             );
           }
           const result = await applyReview(teamName, taskId, memberName);
@@ -880,7 +972,12 @@ export const ChangeReviewDialog = ({
                 normalizePathForComparison(candidate.filePath) ===
                 normalizePathForComparison(file.filePath)
             );
-            markRecentReviewWrite(file.filePath, snapshot?.afterContent);
+            if (snapshot) {
+              markRecentReviewWrite(
+                file.filePath,
+                isLedgerRenameReviewFile(snapshot.file) ? null : snapshot.afterContent
+              );
+            }
           }
           pushReviewUndoAction({ kind: 'bulk' });
         } finally {
@@ -981,10 +1078,7 @@ export const ChangeReviewDialog = ({
       useStore.setState({ applyError: null });
       fileApplyInFlightRef.current.add(filePath);
       setFileApplying(filePath, true);
-      markRecentReviewWrite(
-        filePath,
-        isLedgerRenameReviewFile(file) ? undefined : isExpectedDeletion ? null : desiredContent
-      );
+      markRecentReviewWrite(filePath, isExpectedDeletion ? null : desiredContent);
       try {
         let rejectedDiskContent =
           sessionSnapshot?.afterContent ?? content?.originalFullContent ?? '';
@@ -1250,7 +1344,10 @@ export const ChangeReviewDialog = ({
         if (REVIEW_INSTANT_APPLY) {
           // Reject a whole file should apply immediately (restore original on disk),
           // and NEW-file reject should delete it.
-          markRecentReviewWrite(filePath, isNew ? null : (afterContent ?? undefined));
+          markRecentReviewWrite(
+            filePath,
+            isNew || isLedgerRenameReviewFile(file) ? null : afterContent
+          );
           const result = await applySingleFileDecision(teamName, filePath, taskId, memberName);
           if (useStore.getState().changeSetEpoch !== operationEpoch) return;
 
@@ -1330,7 +1427,7 @@ export const ChangeReviewDialog = ({
                 recentDiskUndoActionsRef.current.push(undoAction);
                 pushReviewUndoAction({ kind: 'disk', action: undoAction });
               }
-              markRecentReviewWrite(filePath, afterContent ?? undefined);
+              markRecentReviewWrite(filePath, isLedgerRenameReviewFile(file) ? null : afterContent);
             } else {
               restoreFileDecisions(file, decisionSnapshot);
               if (beforeContent != null) rollbackEditorContent(filePath, beforeContent);
@@ -1606,13 +1703,23 @@ export const ChangeReviewDialog = ({
       await saveEditedFile(filePath, reviewScope, expectedCurrentContent);
       const state = useStore.getState();
       if (state.changeSetEpoch === operationEpoch && !state.applyError) {
-        draftDiskBaselineRef.current.delete(baselineKey);
-        clearReviewActionHistory();
+        const nextBaseline = resolveDraftBaselineAfterSave(
+          contentToSave,
+          state.editedContents[filePath]
+        );
+        if (nextBaseline === undefined) {
+          draftDiskBaselineRef.current.delete(baselineKey);
+        } else {
+          // A newer edit arrived while Save was in flight. Its next CAS baseline is
+          // the exact content that this completed Save just published.
+          draftDiskBaselineRef.current.set(baselineKey, nextBaseline);
+        }
+        clearReviewActionHistoryForFile(filePath);
         markRecentReviewWrite(filePath, contentToSave);
       }
     },
     [
-      clearReviewActionHistory,
+      clearReviewActionHistoryForFile,
       hasReviewActionInFlight,
       saveEditedFile,
       reviewScope,
@@ -1633,15 +1740,23 @@ export const ChangeReviewDialog = ({
         await saveEditedFile(filePath, reviewScope, null);
         const state = useStore.getState();
         if (state.changeSetEpoch === operationEpoch && !state.applyError) {
-          draftDiskBaselineRef.current.delete(baselineKey);
-          clearReviewActionHistory();
+          const nextBaseline = resolveDraftBaselineAfterSave(
+            content,
+            state.editedContents[filePath]
+          );
+          if (nextBaseline === undefined) {
+            draftDiskBaselineRef.current.delete(baselineKey);
+          } else {
+            draftDiskBaselineRef.current.set(baselineKey, nextBaseline);
+          }
+          clearReviewActionHistoryForFile(filePath);
           markRecentReviewWrite(filePath, content);
         }
       });
     },
     [
       hasReviewActionInFlight,
-      clearReviewActionHistory,
+      clearReviewActionHistoryForFile,
       updateEditedContent,
       saveEditedFile,
       reviewScope,
@@ -1653,13 +1768,13 @@ export const ChangeReviewDialog = ({
     (filePath: string) => {
       if (hasReviewActionInFlight()) return;
       draftDiskBaselineRef.current.delete(normalizePathForComparison(filePath));
-      clearReviewActionHistory();
+      clearReviewActionHistoryForFile(filePath);
       reloadReviewFileFromDisk(filePath);
       setDiscardCounters((prev) => ({ ...prev, [filePath]: (prev[filePath] ?? 0) + 1 }));
       void fetchFileContent(teamName, memberName, filePath);
     },
     [
-      clearReviewActionHistory,
+      clearReviewActionHistoryForFile,
       hasReviewActionInFlight,
       reloadReviewFileFromDisk,
       fetchFileContent,
@@ -1735,11 +1850,9 @@ export const ChangeReviewDialog = ({
           snapshot.restoreMode ??
           (isLedgerRenameReviewFile(snapshot.file) ? 'restore-rejected-rename' : 'content');
         const expectedRestoredContent =
-          restoreMode === 'delete-file'
+          restoreMode === 'delete-file' || restoreMode === 'reapply-rejected-rename'
             ? null
-            : restoreMode === 'restore-rejected-rename' || restoreMode === 'reapply-rejected-rename'
-              ? undefined
-              : snapshot.beforeContent;
+            : snapshot.beforeContent;
         markRecentReviewWrite(snapshot.filePath, expectedRestoredContent);
         if (restoreMode === 'restore-rejected-rename') {
           if (!snapshot.renameExpectation) {
@@ -1996,7 +2109,11 @@ export const ChangeReviewDialog = ({
   }, []);
 
   // Scroll repositioning - re-query coords when parent scrolls (rAF-throttled)
-  const hasData = !changeSetLoading && !changeSetError && !!activeChangeSet;
+  const hasData =
+    !changeSetLoading &&
+    !changeSetError &&
+    !!activeChangeSet &&
+    (decisionHydrationKey === null || decisionHydrationReady);
   useEffect(() => {
     if (!hasData) return;
     const container = scrollContainerRef.current;
@@ -2045,6 +2162,20 @@ export const ChangeReviewDialog = ({
 
   const requestClose = useCallback(async (): Promise<void> => {
     const state = useStore.getState();
+    if (decisionHydrationKey) {
+      const matchesCurrentHydration = state.decisionHydrationScopeKey === decisionHydrationKey;
+      if (matchesCurrentHydration && state.decisionHydrationStatus === 'error') {
+        // The persisted state is unknown. Close without overwriting or clearing its last good copy.
+        onOpenChange(false);
+        return;
+      }
+      if (!matchesCurrentHydration || state.decisionHydrationStatus !== 'loaded') {
+        useStore.setState({
+          applyError: 'Wait for saved review decisions to finish loading before closing Changes.',
+        });
+        return;
+      }
+    }
     const blockReason = getReviewCloseBlockReason({
       busy: hasReviewActionInFlight(),
       draftCount: Object.keys(state.editedContents).length,
@@ -2085,11 +2216,45 @@ export const ChangeReviewDialog = ({
   }, [
     decisionScopeKey,
     decisionScopeToken,
+    decisionHydrationKey,
     flushDecisionsToDisk,
     hasReviewActionInFlight,
     onOpenChange,
     persistDecisions,
     clearDecisionsFromDisk,
+    teamName,
+  ]);
+
+  const handleDiscardSavedDecisionState = useCallback(async (): Promise<void> => {
+    if (!decisionScopeToken || !decisionHydrationKey || reviewMutationBusy) return;
+    closingRef.current = true;
+    setClosing(true);
+    try {
+      const cleared = await clearDecisionsFromDisk(teamName, decisionScopeKey, decisionScopeToken);
+      if (!cleared) {
+        useStore.setState({
+          applyError: 'Unable to discard the unreadable saved review state.',
+        });
+        return;
+      }
+      const state = useStore.getState();
+      if (state.decisionHydrationScopeKey !== decisionHydrationKey) return;
+      // Keep any in-memory choice that raced an earlier load. Only the explicitly
+      // discarded disk copy is reset; the current review can now become authoritative.
+      useStore.setState({
+        decisionHydrationStatus: 'loaded',
+        applyError: null,
+      });
+    } finally {
+      closingRef.current = false;
+      setClosing(false);
+    }
+  }, [
+    clearDecisionsFromDisk,
+    decisionHydrationKey,
+    decisionScopeKey,
+    decisionScopeToken,
+    reviewMutationBusy,
     teamName,
   ]);
 
@@ -2219,7 +2384,7 @@ export const ChangeReviewDialog = ({
     // Never persist a decision before its instant disk mutation has completed.
     // On failure the decision is reconciled/rolled back first; when the busy state
     // clears this effect runs again with the authoritative post-operation state.
-    if (reviewActionsBusy) return;
+    if (!decisionHydrationReady || reviewActionsBusy) return;
     if (hasDecisions) {
       hadDecisionsRef.current = true;
       persistDecisions(teamName, decisionScopeKey, decisionScopeToken);
@@ -2240,6 +2405,7 @@ export const ChangeReviewDialog = ({
     persistDecisions,
     clearDecisionsFromDisk,
     reviewActionsBusy,
+    decisionHydrationReady,
   ]);
 
   // Scroll to initialFilePath once data is loaded
@@ -2516,7 +2682,7 @@ export const ChangeReviewDialog = ({
         </div>
         <button
           onClick={() => void requestClose()}
-          disabled={reviewActionsBusy}
+          disabled={reviewMutationBusy || decisionHydrationPending}
           className="rounded p-1 text-text-muted transition-colors hover:bg-surface-raised hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
@@ -2531,26 +2697,30 @@ export const ChangeReviewDialog = ({
       />
 
       {/* Review toolbar */}
-      {!changeSetLoading && !changeSetError && activeChangeSet && hasReviewFiles && (
-        <ReviewToolbar
-          stats={reviewStats}
-          changeStats={changeStats}
-          collapseUnchanged={collapseUnchanged}
-          applying={reviewActionsBusy}
-          autoViewed={autoViewed}
-          onAutoViewedChange={setAutoViewed}
-          onAcceptAll={handleAcceptAll}
-          onRejectAll={handleRejectAll}
-          onApply={handleApply}
-          onCollapseUnchangedChange={setCollapseUnchanged}
-          canAcceptAll={canAcceptAll}
-          canRejectAll={canRejectAll}
-          instantApply={REVIEW_INSTANT_APPLY}
-          editedCount={editedCount}
-          canUndo={reviewUndoDepth > 0 && editedCount === 0}
-          onUndo={() => void handleUndoLatestReviewAction()}
-        />
-      )}
+      {!changeSetLoading &&
+        !changeSetError &&
+        decisionHydrationReady &&
+        activeChangeSet &&
+        hasReviewFiles && (
+          <ReviewToolbar
+            stats={reviewStats}
+            changeStats={changeStats}
+            collapseUnchanged={collapseUnchanged}
+            applying={reviewActionsBusy}
+            autoViewed={autoViewed}
+            onAutoViewedChange={setAutoViewed}
+            onAcceptAll={handleAcceptAll}
+            onRejectAll={handleRejectAll}
+            onApply={handleApply}
+            onCollapseUnchangedChange={setCollapseUnchanged}
+            canAcceptAll={canAcceptAll}
+            canRejectAll={canRejectAll}
+            instantApply={REVIEW_INSTANT_APPLY}
+            editedCount={editedCount}
+            canUndo={reviewUndoDepth > 0 && editedCount === 0}
+            onUndo={() => void handleUndoLatestReviewAction()}
+          />
+        )}
 
       {/* Scope info / warnings + confidence badge */}
       {shouldShowScopeBanner && taskChangeSet && (
@@ -2570,7 +2740,7 @@ export const ChangeReviewDialog = ({
 
       {/* Content */}
       <div className="flex flex-1 overflow-hidden">
-        {changeSetLoading && <ChangesLoadingAnimation />}
+        {(changeSetLoading || decisionHydrationPending) && <ChangesLoadingAnimation />}
 
         {changeSetError && (
           <div className="flex w-full items-center justify-center text-sm text-red-400">
@@ -2578,119 +2748,156 @@ export const ChangeReviewDialog = ({
           </div>
         )}
 
-        {!changeSetLoading && !changeSetError && activeChangeSet && hasReviewFiles && (
-          <>
-            {/* File tree */}
-            <div className="w-64 shrink-0 overflow-y-auto border-r border-border bg-surface-sidebar">
-              <ReviewFileTree
-                files={activeChangeSet.files}
-                fileContents={fileContents}
-                pathChangeLabels={pathChangeLabels}
-                selectedFilePath={null}
-                onSelectFile={handleTreeFileClick}
-                viewedSet={viewedSet}
-                onMarkViewed={markViewed}
-                onUnmarkViewed={unmarkViewed}
-                activeFilePath={activeFilePath ?? undefined}
-              />
-
-              {/* Edit Timeline for active file */}
-              {activeFile?.timeline && activeFile.timeline.events.length > 0 && (
-                <div className="border-t border-border">
-                  <button
-                    onClick={() => setTimelineOpen(!timelineOpen)}
-                    className="flex w-full items-center gap-1.5 px-3 py-2 text-xs text-text-secondary hover:text-text"
-                  >
-                    <Clock className="size-3.5" />
-                    <span>
-                      {t('review.timeline.titleWithCount', {
-                        count: activeFile.timeline.events.length,
-                      })}
-                    </span>
-                    <ChevronDown
-                      className={cn(
-                        'ml-auto size-3 transition-transform',
-                        timelineOpen && 'rotate-180'
-                      )}
-                    />
-                  </button>
-                  {timelineOpen && (
-                    <FileEditTimeline
-                      timeline={activeFile.timeline}
-                      onEventClick={(idx) => diffNav.goToHunk(idx)}
-                      activeSnippetIndex={diffNav.currentHunkIndex}
-                    />
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Continuous scroll diff content with selection menu */}
-            <div
-              ref={diffContentRef}
-              className="relative flex min-h-0 flex-1 flex-col overflow-hidden"
-            >
-              <ContinuousScrollView
-                files={sortedFiles}
-                fileContents={fileContents}
-                fileContentsLoading={fileContentsLoading}
-                globalDiffLoadingState={globalDiffLoadingState}
-                reviewExternalChangesByFile={reviewExternalChangesByFile}
-                viewedSet={viewedSet}
-                editedContents={editedContents}
-                hunkDecisions={hunkDecisions}
-                fileDecisions={fileDecisions}
-                hunkContextHashesByFile={hunkContextHashesByFile}
-                collapseUnchanged={collapseUnchanged}
-                applying={reviewActionsBusy}
-                filesApplying={filesApplying}
-                autoViewed={autoViewed}
-                discardCounters={discardCounters}
-                onHunkAccepted={handleHunkAccepted}
-                onHunkRejected={handleHunkRejected}
-                onFullyViewed={handleFullyViewed}
-                onContentChanged={handleContentChanged}
-                onDiscard={handleDiscardFile}
-                onSave={handleSaveFile}
-                onReloadFromDisk={handleReloadFromDisk}
-                onKeepDraft={handleKeepDraft}
-                onAcceptFile={handleAcceptFile}
-                onRejectFile={handleRejectFile}
-                onRestoreMissingFile={handleRestoreMissingFile}
-                pathChangeLabels={pathChangeLabels}
-                collapsedFiles={collapsedFiles}
-                onToggleCollapse={toggleCollapsedFile}
-                onVisibleFileChange={handleVisibleFileChange}
-                scrollContainerRef={scrollContainerRef}
-                editorViewMapRef={editorViewMapRef}
-                isProgrammaticScroll={isProgrammaticScroll}
-                teamName={teamName}
-                memberName={memberName}
-                fetchFileContent={fetchFileContent}
-                onSelectionChange={onEditorAction ? handleSelectionChange : undefined}
-                globalHunkOffsets={reviewHunkOrder.offsets}
-                totalReviewHunks={reviewHunkOrder.total}
-              />
-              {selectionInfo && onEditorAction && (
-                <EditorSelectionMenu
-                  info={selectionInfo}
-                  containerRect={containerRect}
-                  onSendMessage={() => {
-                    onEditorAction(buildSelectionAction('sendMessage', selectionInfo));
-                    setSelectionInfo(null);
-                  }}
-                  onCreateTask={() => {
-                    onEditorAction(buildSelectionAction('createTask', selectionInfo));
-                    setSelectionInfo(null);
-                  }}
+        {!changeSetLoading &&
+          !changeSetError &&
+          decisionHydrationReady &&
+          activeChangeSet &&
+          hasReviewFiles && (
+            <>
+              {/* File tree */}
+              <div className="w-64 shrink-0 overflow-y-auto border-r border-border bg-surface-sidebar">
+                <ReviewFileTree
+                  files={activeChangeSet.files}
+                  fileContents={fileContents}
+                  pathChangeLabels={pathChangeLabels}
+                  selectedFilePath={null}
+                  onSelectFile={handleTreeFileClick}
+                  viewedSet={viewedSet}
+                  onMarkViewed={markViewed}
+                  onUnmarkViewed={unmarkViewed}
+                  activeFilePath={activeFilePath ?? undefined}
                 />
-              )}
-            </div>
-          </>
-        )}
 
-        {!changeSetLoading && !changeSetError && activeChangeSet && !hasReviewFiles && (
-          <TaskChangesEmptyState changeSet={taskChangeSet} />
+                {/* Edit Timeline for active file */}
+                {activeFile?.timeline && activeFile.timeline.events.length > 0 && (
+                  <div className="border-t border-border">
+                    <button
+                      onClick={() => setTimelineOpen(!timelineOpen)}
+                      className="flex w-full items-center gap-1.5 px-3 py-2 text-xs text-text-secondary hover:text-text"
+                    >
+                      <Clock className="size-3.5" />
+                      <span>
+                        {t('review.timeline.titleWithCount', {
+                          count: activeFile.timeline.events.length,
+                        })}
+                      </span>
+                      <ChevronDown
+                        className={cn(
+                          'ml-auto size-3 transition-transform',
+                          timelineOpen && 'rotate-180'
+                        )}
+                      />
+                    </button>
+                    {timelineOpen && (
+                      <FileEditTimeline
+                        timeline={activeFile.timeline}
+                        onEventClick={(idx) => diffNav.goToHunk(idx)}
+                        activeSnippetIndex={diffNav.currentHunkIndex}
+                      />
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Continuous scroll diff content with selection menu */}
+              <div
+                ref={diffContentRef}
+                className="relative flex min-h-0 flex-1 flex-col overflow-hidden"
+              >
+                <ContinuousScrollView
+                  files={sortedFiles}
+                  fileContents={fileContents}
+                  fileContentsLoading={fileContentsLoading}
+                  globalDiffLoadingState={globalDiffLoadingState}
+                  reviewExternalChangesByFile={reviewExternalChangesByFile}
+                  viewedSet={viewedSet}
+                  editedContents={editedContents}
+                  hunkDecisions={hunkDecisions}
+                  fileDecisions={fileDecisions}
+                  hunkContextHashesByFile={hunkContextHashesByFile}
+                  collapseUnchanged={collapseUnchanged}
+                  applying={reviewActionsBusy}
+                  filesApplying={filesApplying}
+                  autoViewed={autoViewed}
+                  discardCounters={discardCounters}
+                  onHunkAccepted={handleHunkAccepted}
+                  onHunkRejected={handleHunkRejected}
+                  onFullyViewed={handleFullyViewed}
+                  onContentChanged={handleContentChanged}
+                  onDiscard={handleDiscardFile}
+                  onSave={handleSaveFile}
+                  onReloadFromDisk={handleReloadFromDisk}
+                  onKeepDraft={handleKeepDraft}
+                  onAcceptFile={handleAcceptFile}
+                  onRejectFile={handleRejectFile}
+                  onRestoreMissingFile={handleRestoreMissingFile}
+                  pathChangeLabels={pathChangeLabels}
+                  collapsedFiles={collapsedFiles}
+                  onToggleCollapse={toggleCollapsedFile}
+                  onVisibleFileChange={handleVisibleFileChange}
+                  scrollContainerRef={scrollContainerRef}
+                  editorViewMapRef={editorViewMapRef}
+                  isProgrammaticScroll={isProgrammaticScroll}
+                  teamName={teamName}
+                  memberName={memberName}
+                  fetchFileContent={fetchFileContent}
+                  onSelectionChange={onEditorAction ? handleSelectionChange : undefined}
+                  globalHunkOffsets={reviewHunkOrder.offsets}
+                  totalReviewHunks={reviewHunkOrder.total}
+                />
+                {selectionInfo && onEditorAction && (
+                  <EditorSelectionMenu
+                    info={selectionInfo}
+                    containerRect={containerRect}
+                    onSendMessage={() => {
+                      onEditorAction(buildSelectionAction('sendMessage', selectionInfo));
+                      setSelectionInfo(null);
+                    }}
+                    onCreateTask={() => {
+                      onEditorAction(buildSelectionAction('createTask', selectionInfo));
+                      setSelectionInfo(null);
+                    }}
+                  />
+                )}
+              </div>
+            </>
+          )}
+
+        {!changeSetLoading &&
+          !changeSetError &&
+          decisionHydrationReady &&
+          activeChangeSet &&
+          !hasReviewFiles && <TaskChangesEmptyState changeSet={taskChangeSet} />}
+
+        {decisionHydrationFailed && (
+          <div className="flex w-full flex-col items-center justify-center gap-3 px-6 text-center text-sm text-red-400">
+            <p>Saved review decisions could not be loaded. The stored copy was left untouched.</p>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={reviewMutationBusy}
+                onClick={() => {
+                  if (decisionScopeToken) {
+                    void loadDecisionsFromDisk(teamName, decisionScopeKey, decisionScopeToken);
+                  }
+                }}
+              >
+                Retry
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={reviewMutationBusy}
+                onClick={() => void handleDiscardSavedDecisionState()}
+                className="border-red-500/30 text-red-300 hover:bg-red-500/10"
+              >
+                Discard saved state
+              </Button>
+            </div>
+          </div>
         )}
       </div>
     </div>

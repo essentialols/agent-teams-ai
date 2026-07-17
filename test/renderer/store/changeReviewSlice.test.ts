@@ -1612,9 +1612,7 @@ describe('changeReviewSlice task changes', () => {
       fileContentVersionByPath: {},
     });
 
-    await store
-      .getState()
-      .saveEditedFile('/repo/new.ts', AGENT_REVIEW_SCOPE, 'draft-before-save');
+    await store.getState().saveEditedFile('/repo/new.ts', AGENT_REVIEW_SCOPE, 'draft-before-save');
 
     expect(hoisted.saveEditedFile).toHaveBeenCalledWith(
       AGENT_REVIEW_SCOPE,
@@ -1663,9 +1661,7 @@ describe('changeReviewSlice task changes', () => {
       fileContentVersionByPath: {},
     });
 
-    await store
-      .getState()
-      .saveEditedFile(aliasPath, AGENT_REVIEW_SCOPE, 'draft-before-save');
+    await store.getState().saveEditedFile(aliasPath, AGENT_REVIEW_SCOPE, 'draft-before-save');
 
     expect(hoisted.saveEditedFile).toHaveBeenCalledWith(
       AGENT_REVIEW_SCOPE,
@@ -1704,9 +1700,7 @@ describe('changeReviewSlice task changes', () => {
       fileContentVersionByPath: {},
     });
 
-    await store
-      .getState()
-      .saveEditedFile(requestedPath, AGENT_REVIEW_SCOPE, 'draft-before-save');
+    await store.getState().saveEditedFile(requestedPath, AGENT_REVIEW_SCOPE, 'draft-before-save');
 
     expect(hoisted.saveEditedFile).toHaveBeenCalledWith(
       AGENT_REVIEW_SCOPE,
@@ -2090,6 +2084,53 @@ describe('changeReviewSlice task changes', () => {
 
     expect(store.getState().hunkDecisions).toEqual({ '/repo/file.ts:0': 'accepted' });
     expect(store.getState().fileDecisions).toEqual({});
+    expect(store.getState().decisionHydrationStatus).toBe('error');
+  });
+
+  it('exposes exact-scope decision hydration as loading before it becomes ready', async () => {
+    const store = createSliceStore();
+    const pending = deferred<null>();
+    hoisted.loadDecisions.mockReturnValueOnce(pending.promise);
+    store.setState({ activeChangeSet: makeAgentChangeSet(), changeSetEpoch: 1 });
+
+    const load = store.getState().loadDecisionsFromDisk('team-a', 'agent-alice', 'hydration-scope');
+
+    expect(store.getState().decisionHydrationStatus).toBe('loading');
+    expect(store.getState().decisionHydrationScopeKey).toBe('team-a:agent-alice:hydration-scope');
+
+    pending.resolve(null);
+    await load;
+    expect(store.getState().decisionHydrationStatus).toBe('loaded');
+  });
+
+  it('preserves in-memory decisions and marks hydration failed on a read error', async () => {
+    const store = createSliceStore();
+    hoisted.loadDecisions.mockRejectedValueOnce(new Error('disk unavailable'));
+    store.setState({
+      activeChangeSet: makeAgentChangeSet(),
+      hunkDecisions: { '/repo/file.ts:0': 'rejected' },
+      fileDecisions: { '/repo/file.ts': 'rejected' },
+      changeSetEpoch: 1,
+    });
+
+    await store.getState().loadDecisionsFromDisk('team-a', 'agent-alice', 'failed-hydration');
+    vi.mocked(console.error).mockClear();
+
+    expect(store.getState().hunkDecisions).toEqual({ '/repo/file.ts:0': 'rejected' });
+    expect(store.getState().fileDecisions).toEqual({ '/repo/file.ts': 'rejected' });
+    expect(store.getState().decisionHydrationStatus).toBe('error');
+    expect(store.getState().applyError).toContain('Unable to load');
+
+    hoisted.loadDecisions.mockResolvedValueOnce({
+      hunkDecisions: { '/repo/file.ts:0': 'accepted' },
+      fileDecisions: { '/repo/file.ts': 'accepted' },
+    });
+    await store.getState().loadDecisionsFromDisk('team-a', 'agent-alice', 'failed-hydration');
+
+    expect(store.getState().hunkDecisions).toEqual({ '/repo/file.ts:0': 'rejected' });
+    expect(store.getState().fileDecisions).toEqual({ '/repo/file.ts': 'rejected' });
+    expect(store.getState().decisionHydrationStatus).toBe('loaded');
+    expect(store.getState().applyError).toBeNull();
   });
 
   it('does not apply task A decisions after the review scope switches to task B', async () => {
@@ -2256,6 +2297,32 @@ describe('changeReviewSlice task changes', () => {
       { '/repo/file.ts': 'accepted' },
       { '/repo/file.ts': {} }
     );
+  });
+
+  it('does not cancel another exact-scope persistence timer when volatile review state resets', async () => {
+    vi.useFakeTimers();
+    try {
+      const store = createSliceStore();
+      store.setState({
+        activeChangeSet: makeAgentChangeSet(),
+        hunkDecisions: { '/repo/file.ts:0': 'accepted' },
+      });
+      store.getState().persistDecisions('team-a', 'agent-alice', 'surviving-scope');
+
+      store.getState().clearChangeReviewCache();
+      await vi.advanceTimersByTimeAsync(500);
+
+      expect(hoisted.saveDecisions).toHaveBeenCalledWith(
+        'team-a',
+        'agent-alice',
+        'surviving-scope',
+        { '/repo/file.ts:0': 'accepted' },
+        {},
+        { '/repo/file.ts': {} }
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('reports a failed decision flush so the dialog can remain open', async () => {

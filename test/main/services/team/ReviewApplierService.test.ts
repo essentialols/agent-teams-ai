@@ -7,6 +7,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { FileChangeWithContent, LedgerChangeRelation, SnippetDiff } from '@shared/types';
 
+const atomicWriteMocks = vi.hoisted(() => ({
+  atomicCreateAsync: vi.fn(),
+  atomicWriteAsync: vi.fn(),
+  cleanupAtomicCreateTempLinks: vi.fn(),
+  renamePathWithRetry: vi.fn(),
+  unlinkPathDurably: vi.fn(),
+}));
+
 vi.mock('fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('fs/promises')>();
   const readFile = vi.fn();
@@ -30,9 +38,51 @@ vi.mock('fs/promises', async (importOriginal) => {
   };
 });
 
+vi.mock('@main/utils/atomicWrite', () => atomicWriteMocks);
+
+function regularFileStats(dev = 1, ino = 1) {
+  return {
+    dev,
+    ino,
+    mode: 0o100644,
+    nlink: 1,
+    isFile: () => true,
+    isSymbolicLink: () => false,
+  };
+}
+
 describe('ReviewApplierService', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.resetAllMocks();
+    const fsPromises = await import('fs/promises');
+    const lstat = fsPromises.lstat as unknown as ReturnType<typeof vi.fn>;
+    const rename = fsPromises.rename as unknown as ReturnType<typeof vi.fn>;
+    const unlink = fsPromises.unlink as unknown as ReturnType<typeof vi.fn>;
+    const writeFile = fsPromises.writeFile as unknown as ReturnType<typeof vi.fn>;
+    lstat.mockResolvedValue(regularFileStats());
+    atomicWriteMocks.atomicWriteAsync.mockImplementation(
+      async (
+        filePath: string,
+        content: string,
+        options?: { beforeCommit?: () => Promise<void> }
+      ) => {
+        await options?.beforeCommit?.();
+        await writeFile(filePath, content, 'utf8');
+      }
+    );
+    atomicWriteMocks.atomicCreateAsync.mockImplementation(
+      async (filePath: string, content: string) => {
+        await writeFile(filePath, content, { encoding: 'utf8', flag: 'wx' });
+        const stats = await lstat(filePath);
+        return { dev: stats.dev, ino: stats.ino };
+      }
+    );
+    atomicWriteMocks.renamePathWithRetry.mockImplementation(
+      async (sourcePath: string, targetPath: string) => rename(sourcePath, targetPath)
+    );
+    atomicWriteMocks.unlinkPathDurably.mockImplementation(async (filePath: string) =>
+      unlink(filePath)
+    );
   });
 
   it('previewReject avoids write-update snippet-level replacement', async () => {
@@ -282,6 +332,108 @@ describe('ReviewApplierService', () => {
     await expect(service.saveEditedFile(filePath, 'restored\n', null)).rejects.toThrow(
       'refusing to overwrite'
     );
+  });
+
+  it('treats an already-published replacement as an idempotent Save retry', async () => {
+    const fsPromises = await import('fs/promises');
+    const readFile = fsPromises.readFile as unknown as ReturnType<typeof vi.fn>;
+    readFile.mockResolvedValue('saved\n');
+    const { ReviewApplierService } = await import('@main/services/team/ReviewApplierService');
+
+    await expect(
+      new ReviewApplierService().saveEditedFile('/tmp/idempotent-save.txt', 'saved\n', 'before\n')
+    ).resolves.toEqual({ success: true });
+    expect(atomicWriteMocks.atomicWriteAsync).not.toHaveBeenCalled();
+  });
+
+  it('does not claim an independently recreated missing file even when bytes match', async () => {
+    const fsPromises = await import('fs/promises');
+    const readFile = fsPromises.readFile as unknown as ReturnType<typeof vi.fn>;
+    readFile.mockResolvedValue('restored\n');
+    const { ReviewApplierService } = await import('@main/services/team/ReviewApplierService');
+
+    await expect(
+      new ReviewApplierService().saveEditedFile(
+        '/tmp/independent-recreation.txt',
+        'restored\n',
+        null
+      )
+    ).rejects.toThrow('refusing to overwrite');
+    expect(atomicWriteMocks.atomicCreateAsync).not.toHaveBeenCalled();
+  });
+
+  it('uses strict atomic replacement, preserves mode, and repeats the CAS guard', async () => {
+    const fsPromises = await import('fs/promises');
+    const readFile = fsPromises.readFile as unknown as ReturnType<typeof vi.fn>;
+    const lstat = fsPromises.lstat as unknown as ReturnType<typeof vi.fn>;
+    readFile.mockResolvedValue('before\n');
+    lstat.mockResolvedValue({ ...regularFileStats(), mode: 0o100755 });
+    const { ReviewApplierService } = await import('@main/services/team/ReviewApplierService');
+
+    await new ReviewApplierService().saveEditedFile(
+      '/tmp/executable-save.sh',
+      'after\n',
+      'before\n'
+    );
+
+    expect(atomicWriteMocks.atomicWriteAsync).toHaveBeenCalledWith(
+      '/tmp/executable-save.sh',
+      'after\n',
+      expect.objectContaining({
+        mode: 0o755,
+        durability: 'strict',
+        syncDirectory: true,
+        beforeCommit: expect.any(Function),
+      })
+    );
+    expect(lstat).toHaveBeenCalledTimes(2);
+  });
+
+  it('refuses atomic replacement when the target inode changes before publish', async () => {
+    const fsPromises = await import('fs/promises');
+    const readFile = fsPromises.readFile as unknown as ReturnType<typeof vi.fn>;
+    const writeFile = fsPromises.writeFile as unknown as ReturnType<typeof vi.fn>;
+    const lstat = fsPromises.lstat as unknown as ReturnType<typeof vi.fn>;
+    readFile.mockResolvedValue('before\n');
+    lstat
+      .mockResolvedValueOnce(regularFileStats(1, 10))
+      .mockResolvedValueOnce(regularFileStats(1, 11));
+    const { ReviewApplierService } = await import('@main/services/team/ReviewApplierService');
+
+    await expect(
+      new ReviewApplierService().saveEditedFile('/tmp/inode-race.txt', 'after\n', 'before\n')
+    ).rejects.toThrow('changed during review update');
+    expect(writeFile).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when reject cannot read the current file', async () => {
+    const fsPromises = await import('fs/promises');
+    const readFile = fsPromises.readFile as unknown as ReturnType<typeof vi.fn>;
+    readFile.mockRejectedValue(Object.assign(new Error('permission denied'), { code: 'EACCES' }));
+    const { ReviewApplierService } = await import('@main/services/team/ReviewApplierService');
+
+    const result = await new ReviewApplierService().rejectFile(
+      'team',
+      '/tmp/unreadable.txt',
+      'original\n',
+      'modified\n'
+    );
+
+    expect(result).toMatchObject({ success: false, hadConflicts: false });
+    expect(result.conflictDescription).toContain('Не удалось прочитать файл');
+    expect(atomicWriteMocks.atomicWriteAsync).not.toHaveBeenCalled();
+  });
+
+  it('makes Undo delete idempotent when the file is already absent', async () => {
+    const fsPromises = await import('fs/promises');
+    const readFile = fsPromises.readFile as unknown as ReturnType<typeof vi.fn>;
+    readFile.mockRejectedValue(Object.assign(new Error('missing'), { code: 'ENOENT' }));
+    const { ReviewApplierService } = await import('@main/services/team/ReviewApplierService');
+
+    await expect(
+      new ReviewApplierService().deleteEditedFile('/tmp/already-deleted.txt', 'created\n')
+    ).resolves.toEqual({ success: true });
+    expect(atomicWriteMocks.unlinkPathDurably).not.toHaveBeenCalled();
   });
 
   it('deletes an Undo-restored file only when its content still matches', async () => {
@@ -1078,7 +1230,7 @@ describe('ReviewApplierService', () => {
     const oldContent = 'export const value = 1;\n';
     const newContent = 'export const value = 2;\n';
     readFile.mockResolvedValue(newContent);
-    lstat.mockResolvedValue({ dev: 42, ino: 777 });
+    lstat.mockResolvedValue(regularFileStats(42, 777));
     realpath.mockResolvedValue(newPath);
     rename.mockResolvedValue(undefined);
     writeFile.mockResolvedValue(undefined);
@@ -1176,7 +1328,7 @@ describe('ReviewApplierService', () => {
     const oldContent = 'export const value = 1;\n';
     const newContent = 'export const value = 2;\n';
     readFile.mockResolvedValue(newContent);
-    lstat.mockResolvedValue({ dev: 42, ino: 777 });
+    lstat.mockResolvedValue(regularFileStats(42, 777));
     rename.mockResolvedValue(undefined);
     writeFile.mockResolvedValue(undefined);
     writeFile.mockRejectedValueOnce(new Error('disk full'));
@@ -1189,7 +1341,7 @@ describe('ReviewApplierService', () => {
     ).rejects.toThrow('Failed to reject case-only ledger rename');
     expect(rename).toHaveBeenNthCalledWith(1, newPath, oldPath);
     expect(rename).toHaveBeenNthCalledWith(2, oldPath, newPath);
-    expect(writeFile).toHaveBeenLastCalledWith(newPath, newContent, 'utf8');
+    expect(writeFile).not.toHaveBeenCalledWith(newPath, newContent, 'utf8');
   });
 
   it('undoes a rejected case-only ledger rename without creating a second file', async () => {
@@ -1204,7 +1356,7 @@ describe('ReviewApplierService', () => {
     const oldContent = 'export const value = 1;\n';
     const newContent = 'export const value = 2;\n';
     readFile.mockResolvedValue(oldContent);
-    lstat.mockResolvedValue({ dev: 42, ino: 777 });
+    lstat.mockResolvedValue(regularFileStats(42, 777));
     rename.mockResolvedValue(undefined);
     writeFile.mockResolvedValue(undefined);
     const relation = { kind: 'rename' as const, oldPath: 'src/Foo.ts', newPath: 'src/foo.ts' };

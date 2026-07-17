@@ -1420,6 +1420,15 @@ export class HttpAPIClient implements ElectronAPI {
     clearDecisions: async (): Promise<never> => {
       throw new Error('Review is not available in browser mode');
     },
+    loadDraftHistory: async (): Promise<never> => {
+      throw new Error('Review is not available in browser mode');
+    },
+    saveDraftHistoryEntry: async (): Promise<never> => {
+      throw new Error('Review is not available in browser mode');
+    },
+    clearDraftHistory: async (): Promise<never> => {
+      throw new Error('Review is not available in browser mode');
+    },
     // Phase 4 stubs
     getGitFileLog: async (): Promise<never> => {
       throw new Error('Review is not available in browser mode');

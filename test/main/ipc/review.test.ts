@@ -7,13 +7,16 @@ import {
   REVIEW_APPLY_DECISIONS,
   REVIEW_CHECK_CONFLICT,
   REVIEW_CLEAR_DECISIONS,
+  REVIEW_CLEAR_DRAFT_HISTORY,
   REVIEW_DELETE_EDITED_FILE,
   REVIEW_GET_FILE_CONTENT,
   REVIEW_LOAD_DECISIONS,
+  REVIEW_LOAD_DRAFT_HISTORY,
   REVIEW_REJECT_FILE,
   REVIEW_REJECT_HUNKS,
   REVIEW_RESTORE_REJECTED_RENAME,
   REVIEW_SAVE_DECISIONS,
+  REVIEW_SAVE_DRAFT_HISTORY_ENTRY,
   REVIEW_SAVE_EDITED_FILE,
 } from '@preload/constants/ipcChannels';
 import { link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'fs/promises';
@@ -226,6 +229,83 @@ describe('review IPC path confinement', () => {
     if (!result.success) {
       expect(result.error).toContain('Invalid review decision team name');
     }
+  });
+
+  it('persists and clears exact-scope manual editor history through IPC', async () => {
+    const entry = {
+      filePath: projectFile,
+      codec: 'codemirror-history-v1' as const,
+      revision: 1,
+      diskBaseline: 'project\n',
+      editorState: {
+        doc: 'project edited\n',
+        selection: { ranges: [{ anchor: 15, head: 15 }], main: 0 },
+        history: { done: [{ changes: ['edit'] }], undone: [] },
+      },
+    };
+    const saved = await ipcMain.invoke(
+      REVIEW_SAVE_DRAFT_HISTORY_ENTRY,
+      'safe-team',
+      'agent-worker',
+      'scope-token-a',
+      entry
+    );
+    expect(saved).toMatchObject({
+      success: true,
+      data: { ...entry, updatedAt: expect.any(String) },
+    });
+
+    const loaded = await ipcMain.invoke(
+      REVIEW_LOAD_DRAFT_HISTORY,
+      'safe-team',
+      'agent-worker',
+      'scope-token-a'
+    );
+    expect(loaded).toMatchObject({
+      success: true,
+      data: { entries: { [projectFile]: { ...entry } } },
+    });
+    const sibling = await ipcMain.invoke(
+      REVIEW_LOAD_DRAFT_HISTORY,
+      'safe-team',
+      'agent-worker',
+      'scope-token-b'
+    );
+    expect(sibling).toEqual({ success: true, data: null });
+
+    const invalidClear = await ipcMain.invoke(
+      REVIEW_CLEAR_DRAFT_HISTORY,
+      'safe-team',
+      'agent-worker',
+      'scope-token-a',
+      ''
+    );
+    expect(invalidClear.success).toBe(false);
+    await expect(
+      ipcMain.invoke(
+        REVIEW_LOAD_DRAFT_HISTORY,
+        'safe-team',
+        'agent-worker',
+        'scope-token-a'
+      )
+    ).resolves.toMatchObject({ success: true, data: { entries: { [projectFile]: entry } } });
+
+    const cleared = await ipcMain.invoke(
+      REVIEW_CLEAR_DRAFT_HISTORY,
+      'safe-team',
+      'agent-worker',
+      'scope-token-a',
+      projectFile
+    );
+    expect(cleared).toEqual({ success: true, data: undefined });
+    await expect(
+      ipcMain.invoke(
+        REVIEW_LOAD_DRAFT_HISTORY,
+        'safe-team',
+        'agent-worker',
+        'scope-token-a'
+      )
+    ).resolves.toEqual({ success: true, data: null });
   });
 
   it('replays a prepared review mutation before hydrating decisions and clears it only after ack', async () => {

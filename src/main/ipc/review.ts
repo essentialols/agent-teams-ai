@@ -4,6 +4,7 @@
  * Паттерн: module-level state + guard + wrapReviewHandler (как teams.ts)
  */
 
+import { ReviewDraftHistoryStore } from '@features/change-review-history/main';
 import { validateTaskId, validateTeamName } from '@main/ipc/guards';
 import { createIpcWrapper } from '@main/ipc/ipcWrapper';
 import { EditorFileWatcher } from '@main/services/editor';
@@ -17,6 +18,7 @@ import {
   REVIEW_APPLY_DECISIONS,
   REVIEW_CHECK_CONFLICT,
   REVIEW_CLEAR_DECISIONS,
+  REVIEW_CLEAR_DRAFT_HISTORY,
   REVIEW_DELETE_EDITED_FILE,
   REVIEW_FILE_CHANGE,
   REVIEW_GET_AGENT_CHANGES,
@@ -27,12 +29,14 @@ import {
   REVIEW_GET_TEAM_TASK_CHANGE_SUMMARIES,
   REVIEW_INVALIDATE_TASK_CHANGE_SUMMARIES,
   REVIEW_LOAD_DECISIONS,
+  REVIEW_LOAD_DRAFT_HISTORY,
   REVIEW_PREVIEW_REJECT,
   REVIEW_REAPPLY_REJECTED_RENAME,
   REVIEW_REJECT_FILE,
   REVIEW_REJECT_HUNKS,
   REVIEW_RESTORE_REJECTED_RENAME,
   REVIEW_SAVE_DECISIONS,
+  REVIEW_SAVE_DRAFT_HISTORY_ENTRY,
   REVIEW_SAVE_EDITED_FILE,
   REVIEW_UNWATCH_FILES,
   REVIEW_WATCH_FILES,
@@ -43,6 +47,10 @@ import { createHash, randomUUID } from 'crypto';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
+import type {
+  ReviewDraftHistoryEntry,
+  ReviewDraftHistorySnapshot,
+} from '@features/change-review-history/contracts';
 import type { ChangeExtractorService } from '@main/services/team/ChangeExtractorService';
 import type { FileContentResolver } from '@main/services/team/FileContentResolver';
 import type { GitDiffFallback } from '@main/services/team/GitDiffFallback';
@@ -87,6 +95,7 @@ let fileContentResolver: FileContentResolver | null = null;
 let gitDiffFallback: GitDiffFallback | null = null;
 let reviewConfigReader: Pick<TeamConfigReader, 'getConfig'> = new TeamConfigReader();
 const reviewDecisionStore = new ReviewDecisionStore();
+const reviewDraftHistoryStore = new ReviewDraftHistoryStore();
 const reviewMutationJournal = new ReviewMutationJournalStore();
 const reviewDecisionPersistenceQueues = new Map<string, Promise<void>>();
 // Review is backed by a point-in-time diff. Unlike the editor watcher, ignoring
@@ -852,6 +861,9 @@ export function registerReviewHandlers(ipcMain: IpcMain): void {
   ipcMain.handle(REVIEW_LOAD_DECISIONS, handleLoadDecisions);
   ipcMain.handle(REVIEW_SAVE_DECISIONS, handleSaveDecisions);
   ipcMain.handle(REVIEW_CLEAR_DECISIONS, handleClearDecisions);
+  ipcMain.handle(REVIEW_LOAD_DRAFT_HISTORY, handleLoadDraftHistory);
+  ipcMain.handle(REVIEW_SAVE_DRAFT_HISTORY_ENTRY, handleSaveDraftHistoryEntry);
+  ipcMain.handle(REVIEW_CLEAR_DRAFT_HISTORY, handleClearDraftHistory);
 }
 
 export function removeReviewHandlers(ipcMain: IpcMain): void {
@@ -881,6 +893,9 @@ export function removeReviewHandlers(ipcMain: IpcMain): void {
   ipcMain.removeHandler(REVIEW_LOAD_DECISIONS);
   ipcMain.removeHandler(REVIEW_SAVE_DECISIONS);
   ipcMain.removeHandler(REVIEW_CLEAR_DECISIONS);
+  ipcMain.removeHandler(REVIEW_LOAD_DRAFT_HISTORY);
+  ipcMain.removeHandler(REVIEW_SAVE_DRAFT_HISTORY_ENTRY);
+  ipcMain.removeHandler(REVIEW_CLEAR_DRAFT_HISTORY);
   reviewFileWatcher.stop();
   reviewWatcherProjectRoot = null;
 }
@@ -1691,6 +1706,54 @@ async function handleClearDecisions(
       // Explicit discard intentionally revokes replay before removing saved decisions.
       await reviewMutationJournal.clearScope(teamName, persistenceScope);
       await reviewDecisionStore.clear(teamName, scopeKey, scopeToken);
+    });
+  });
+}
+
+async function handleLoadDraftHistory(
+  _event: IpcMainInvokeEvent,
+  teamName: string,
+  scopeKey: string,
+  scopeToken: string
+): Promise<IpcResult<ReviewDraftHistorySnapshot | null>> {
+  return wrapReviewHandler('loadDraftHistory', async () => {
+    const persistenceScope = { scopeKey, scopeToken };
+    return withReviewDecisionPersistenceLock(teamName, persistenceScope, () =>
+      reviewDraftHistoryStore.load(teamName, scopeKey, scopeToken)
+    );
+  });
+}
+
+async function handleSaveDraftHistoryEntry(
+  _event: IpcMainInvokeEvent,
+  teamName: string,
+  scopeKey: string,
+  scopeToken: string,
+  entry: Omit<ReviewDraftHistoryEntry, 'updatedAt'>
+): Promise<IpcResult<ReviewDraftHistoryEntry>> {
+  return wrapReviewHandler('saveDraftHistoryEntry', async () => {
+    const persistenceScope = { scopeKey, scopeToken };
+    return withReviewDecisionPersistenceLock(teamName, persistenceScope, () =>
+      reviewDraftHistoryStore.saveEntry(teamName, scopeKey, scopeToken, entry)
+    );
+  });
+}
+
+async function handleClearDraftHistory(
+  _event: IpcMainInvokeEvent,
+  teamName: string,
+  scopeKey: string,
+  scopeToken: string,
+  filePath: string | null = null
+): Promise<IpcResult<void>> {
+  return wrapReviewHandler('clearDraftHistory', async () => {
+    const persistenceScope = { scopeKey, scopeToken };
+    await withReviewDecisionPersistenceLock(teamName, persistenceScope, async () => {
+      if (filePath !== null) {
+        await reviewDraftHistoryStore.clearEntry(teamName, scopeKey, scopeToken, filePath);
+      } else {
+        await reviewDraftHistoryStore.clearScope(teamName, scopeKey, scopeToken);
+      }
     });
   });
 }

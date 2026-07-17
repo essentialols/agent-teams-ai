@@ -105,6 +105,10 @@ import type {
 import type { TerminalAPI } from './terminal';
 import type { TmuxAPI } from './tmux';
 import type { WaterfallData } from './visualization';
+import type {
+  ReviewDraftHistoryEntry,
+  ReviewDraftHistorySnapshot,
+} from '@features/change-review-history/contracts';
 import type { CodexAccountElectronApi } from '@features/codex-account/contracts';
 import type { CodexRuntimeAPI } from '@features/codex-runtime-installer/contracts';
 import type { MemberLogStreamApi } from '@features/member-log-stream/contracts';
@@ -822,6 +826,23 @@ export interface ReviewAPI {
     hunkContextHashesByFile?: Record<string, Record<number, string>>
   ) => Promise<void>;
   clearDecisions: (teamName: string, scopeKey: string, scopeToken?: string) => Promise<void>;
+  loadDraftHistory: (
+    teamName: string,
+    scopeKey: string,
+    scopeToken: string
+  ) => Promise<ReviewDraftHistorySnapshot | null>;
+  saveDraftHistoryEntry: (
+    teamName: string,
+    scopeKey: string,
+    scopeToken: string,
+    entry: Omit<ReviewDraftHistoryEntry, 'updatedAt'>
+  ) => Promise<ReviewDraftHistoryEntry>;
+  clearDraftHistory: (
+    teamName: string,
+    scopeKey: string,
+    scopeToken: string,
+    filePath?: string
+  ) => Promise<void>;
   onCmdN?: (callback: () => void) => (() => void) | undefined;
   // Phase 4
   getGitFileLog: (

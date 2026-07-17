@@ -80,6 +80,7 @@ import {
   REVIEW_APPLY_DECISIONS,
   REVIEW_CHECK_CONFLICT,
   REVIEW_CLEAR_DECISIONS,
+  REVIEW_CLEAR_DRAFT_HISTORY,
   REVIEW_DELETE_EDITED_FILE,
   REVIEW_FILE_CHANGE,
   REVIEW_GET_AGENT_CHANGES,
@@ -90,12 +91,14 @@ import {
   REVIEW_GET_TEAM_TASK_CHANGE_SUMMARIES,
   REVIEW_INVALIDATE_TASK_CHANGE_SUMMARIES,
   REVIEW_LOAD_DECISIONS,
+  REVIEW_LOAD_DRAFT_HISTORY,
   REVIEW_PREVIEW_REJECT,
   REVIEW_REAPPLY_REJECTED_RENAME,
   REVIEW_REJECT_FILE,
   REVIEW_REJECT_HUNKS,
   REVIEW_RESTORE_REJECTED_RENAME,
   REVIEW_SAVE_DECISIONS,
+  REVIEW_SAVE_DRAFT_HISTORY_ENTRY,
   REVIEW_SAVE_EDITED_FILE,
   REVIEW_UNWATCH_FILES,
   REVIEW_WATCH_FILES,
@@ -262,6 +265,10 @@ import {
   CONFIG_UPDATE_TRIGGER,
 } from './constants/ipcChannels';
 
+import type {
+  ReviewDraftHistoryEntry,
+  ReviewDraftHistorySnapshot,
+} from '@features/change-review-history/contracts';
 import type {
   AddMemberRequest,
   AddTaskCommentRequest,
@@ -1631,6 +1638,42 @@ const electronAPI: ElectronAPI = {
         teamName,
         scopeKey,
         scopeToken ?? null
+      );
+    },
+    loadDraftHistory: async (teamName: string, scopeKey: string, scopeToken: string) => {
+      return invokeIpcWithResult<ReviewDraftHistorySnapshot | null>(
+        REVIEW_LOAD_DRAFT_HISTORY,
+        teamName,
+        scopeKey,
+        scopeToken
+      );
+    },
+    saveDraftHistoryEntry: async (
+      teamName: string,
+      scopeKey: string,
+      scopeToken: string,
+      entry: Omit<ReviewDraftHistoryEntry, 'updatedAt'>
+    ) => {
+      return invokeIpcWithResult<ReviewDraftHistoryEntry>(
+        REVIEW_SAVE_DRAFT_HISTORY_ENTRY,
+        teamName,
+        scopeKey,
+        scopeToken,
+        entry
+      );
+    },
+    clearDraftHistory: async (
+      teamName: string,
+      scopeKey: string,
+      scopeToken: string,
+      filePath?: string
+    ) => {
+      return invokeIpcWithResult<void>(
+        REVIEW_CLEAR_DRAFT_HISTORY,
+        teamName,
+        scopeKey,
+        scopeToken,
+        filePath ?? null
       );
     },
     onCmdN: (callback: () => void): (() => void) => {

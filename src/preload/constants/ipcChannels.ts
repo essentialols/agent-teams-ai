@@ -616,6 +616,15 @@ export const REVIEW_SAVE_DECISIONS = 'review:saveDecisions';
 /** Clear review decisions from disk */
 export const REVIEW_CLEAR_DECISIONS = 'review:clearDecisions';
 
+/** Load the exact-scope durable CodeMirror manual-edit history. */
+export const REVIEW_LOAD_DRAFT_HISTORY = 'review:loadDraftHistory';
+
+/** Atomically publish one file's latest durable editor-history checkpoint. */
+export const REVIEW_SAVE_DRAFT_HISTORY_ENTRY = 'review:saveDraftHistoryEntry';
+
+/** Remove one file (or the whole exact scope) from durable editor history. */
+export const REVIEW_CLEAR_DRAFT_HISTORY = 'review:clearDraftHistory';
+
 // =============================================================================
 // Editor Channels
 // =============================================================================

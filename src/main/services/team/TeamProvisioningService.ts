@@ -630,6 +630,7 @@ export class TeamProvisioningService extends TeamProvisioningServiceFacadeDelega
   protected readonly outputRecoveryFacade!: TeamProvisioningOutputRecoveryFacade<ProvisioningRun>;
   protected readonly deterministicCreateSpawnFlowBoundary!: TeamProvisioningCreateDeterministicSpawnFlowBoundary<ProvisioningRun>;
   private readonly deterministicLaunchFlowBoundary!: TeamProvisioningLaunchDeterministicFlowBoundary<MixedSecondaryRuntimeLaneState>;
+  // Provider model discovery and runtime-status fallback stay behind the extracted prepare facade.
   protected readonly prepareFacade!: TeamProvisioningPrepareFacade;
   protected readonly verificationProbePorts!: TeamProvisioningVerificationProbePorts<ProvisioningRun>;
   protected readonly processExitPorts!: TeamProvisioningProcessExitPorts<ProvisioningRun>;

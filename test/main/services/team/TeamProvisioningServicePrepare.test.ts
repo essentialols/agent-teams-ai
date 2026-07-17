@@ -3743,7 +3743,7 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
     ).resolves.toBe('opencode/big-pickle');
   });
 
-  // Keep provider fallback coverage at the extracted coordinator boundary.
+  // Exercise provider fallback through the extracted prepare coordinator, never the service facade.
   it('materializes pure OpenCode runtime adapter Default selections before launch', async () => {
     execCliMock.mockImplementation(async (_binaryPath: string | null, args: string[]) => {
       if (args[0] === 'model' && args[1] === 'list' && args.includes('opencode')) {

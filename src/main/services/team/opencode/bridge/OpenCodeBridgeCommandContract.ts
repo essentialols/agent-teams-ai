@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 
+import type { OpenCodeExecutionProof } from '../readiness/OpenCodeExecutionProof';
 import type {
   OpenCodeAppManagedBootstrapCandidate,
   OpenCodeBootstrapEvidenceSource,
@@ -71,6 +72,7 @@ export interface OpenCodeLaunchTeamCommandBody {
   expectedCapabilitySnapshotId: string | null;
   manifestHighWatermark: number | null;
   capabilitySnapshotRecoveryAttemptId?: string;
+  executionProof?: OpenCodeExecutionProof;
 }
 
 export interface OpenCodeRuntimePermissionCommandData {
@@ -229,6 +231,7 @@ export interface OpenCodeSendMessageCommandBody {
     | 'task_comment_notification'
     | 'task_stall_remediation'
     | 'member_work_sync_nudge'
+    | 'runtime_recovery_nudge'
     | 'agent_error';
   taskRefs?: { taskId: string; displayId: string; teamName: string }[];
   agent?: string;

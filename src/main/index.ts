@@ -85,6 +85,10 @@ import {
   removeTeamImportIpc,
   type TeamImportFeatureFacade,
 } from '@features/team-import/main';
+import {
+  createTeamRuntimeRecoveryFeature,
+  type TeamRuntimeRecoveryFeatureFacade,
+} from '@features/team-runtime-recovery/main';
 import { TOKEN_USAGE_SNAPSHOT_CHANGED } from '@features/token-usage/contracts';
 import {
   createTokenUsageFeature,
@@ -192,7 +196,6 @@ import {
 import { applyAgentTeamsIdentityEnv } from './services/identity/AgentTeamsIdentityStore';
 import { startEventLoopLagMonitor } from './services/infrastructure/EventLoopLagMonitor';
 import { HttpServer } from './services/infrastructure/HttpServer';
-import { clearAutoResumeService } from './services/team/AutoResumeService';
 import { agentTeamsMcpHttpServer } from './services/team/AgentTeamsMcpHttpServer';
 import { LaunchIoGovernor } from './services/team/LaunchIoGovernor';
 import { OpenCodeBridgeCommandClient } from './services/team/opencode/bridge/OpenCodeBridgeCommandClient';
@@ -1082,6 +1085,7 @@ let runtimeProviderManagementFeature: RuntimeProviderManagementFeatureFacade;
 let terminalWorkspaceFeature: TerminalWorkspaceFeatureFacade | null = null;
 let tokenUsageFeature: TokenUsageFeatureFacade | null = null;
 let memberWorkSyncFeature: MemberWorkSyncFeatureFacade | null = null;
+let teamRuntimeRecoveryFeature: TeamRuntimeRecoveryFeatureFacade | null = null;
 let teamDataService: TeamDataService;
 let teamProvisioningService: TeamProvisioningService;
 let launchIoGovernor: LaunchIoGovernor | null = null;
@@ -1214,6 +1218,10 @@ function notifyCoreTeamChangeObservers(event: TeamChangeEvent): void {
       {
         name: 'memberWorkSyncFeature',
         notify: (teamChange) => memberWorkSyncFeature?.noteTeamChange(teamChange),
+      },
+      {
+        name: 'teamRuntimeRecoveryFeature',
+        notify: (teamChange) => teamRuntimeRecoveryFeature?.noteTeamChange(teamChange),
       },
       { name: 'team-message-feed-invalidation', notify: invalidateTeamChangeMessageFeed },
     ],
@@ -1683,6 +1691,7 @@ async function handleModeSwitch(mode: 'local' | 'ssh'): Promise<void> {
  * Used for renderer-initiated switches where the renderer already handles state.
  */
 export function rewireContextEvents(context: ServiceContext): void {
+  void teamRuntimeRecoveryFeature?.cancelAll('context_changed');
   wireFileWatcherEvents(context);
 }
 
@@ -1874,6 +1883,32 @@ async function initializeServices(): Promise<void> {
       },
     })
   );
+  teamRuntimeRecoveryFeature = createTeamRuntimeRecoveryFeature({
+    teamsBasePath: getTeamsBasePath(),
+    configManager,
+    getCurrentContextId: () => contextRegistry.getActive().id,
+    listActiveTeamNames: async () => teamProvisioningService.getAliveTeams(),
+    isTeamActive: async (teamName) => teamProvisioningService.isTeamAlive(teamName),
+    getRuntimeState: (teamName) => teamProvisioningService.getRuntimeState(teamName),
+    getRuntimeSnapshot: (teamName) => teamProvisioningService.getTeamAgentRuntimeSnapshot(teamName),
+    getLeadName: (teamName) => teamDataService.getLeadMemberName(teamName),
+    getTeamDisplayName: (teamName) => teamDataService.getTeamDisplayName(teamName),
+    getInboxMessages: (teamName, memberName) =>
+      teamInboxReader.getMessagesFor(teamName, memberName),
+    inboxWriter: teamInboxWriter,
+    relay: (teamName, memberName, options) =>
+      teamProvisioningService.relayInboxFileToLiveRecipient(teamName, memberName, options),
+    getTask: (teamName, taskId) => teamDataService.getTask(teamName, taskId),
+    getMemberAdvisory: (teamName, memberName, options) =>
+      teamMemberRuntimeAdvisoryService.getMemberAdvisory(teamName, memberName, options),
+    getOpenCodeBusyStatus: (input) =>
+      teamProvisioningService.getOpenCodeMemberDeliveryBusyStatus(input),
+    addNotification: (payload) => notificationManager.addTeamNotification(payload),
+    logger: createLogger('Feature:TeamRuntimeRecovery'),
+  });
+  teamProvisioningService.setRuntimeRecoveryFailureObserver((failure) =>
+    teamRuntimeRecoveryFeature?.observeLeadFailure(failure)
+  );
   teamProvisioningService.setMemberRuntimeAdvisoryInvalidator((teamName, memberName) => {
     teamDataService?.invalidateMemberRuntimeAdvisory(teamName, memberName);
     getTeamDataWorkerClient().invalidateMemberRuntimeAdvisory(teamName, memberName);
@@ -1887,6 +1922,7 @@ async function initializeServices(): Promise<void> {
       publishStartupStatus({ phase, message })
     )
   );
+  teamRuntimeRecoveryFeature.start();
   scheduleStartupTask(() => {
     void cleanupOpenCodeHostsForLifecycle('startup').catch((error: unknown) =>
       logger.warn(`[OpenCode] Startup host cleanup failed: ${String(error)}`)
@@ -2030,6 +2066,10 @@ async function initializeServices(): Promise<void> {
             name: 'memberWorkSyncFeature',
             notify: (teamChange) => memberWorkSyncFeature?.noteTeamChange(teamChange),
           },
+          {
+            name: 'teamRuntimeRecoveryFeature',
+            notify: (teamChange) => teamRuntimeRecoveryFeature?.noteTeamChange(teamChange),
+          },
         ],
         logger
       );
@@ -2048,6 +2088,10 @@ async function initializeServices(): Promise<void> {
         {
           name: 'memberWorkSyncFeature',
           notify: (teamChange) => memberWorkSyncFeature?.noteTeamChange(teamChange),
+        },
+        {
+          name: 'teamRuntimeRecoveryFeature',
+          notify: (teamChange) => teamRuntimeRecoveryFeature?.noteTeamChange(teamChange),
         },
         {
           name: 'teammateToolTrackerOffline',
@@ -2777,9 +2821,11 @@ async function shutdownServices(): Promise<void> {
     clearStartupTimers();
     clearInboxNotifyTimers();
 
-    // Clear pending auto-resume timers before anything else. Dangling timers can
-    // keep the event loop alive and fire against a torn-down provisioning service.
-    clearAutoResumeService();
+    await runShutdownStep('team runtime recovery scheduler cleanup', async () => {
+      teamProvisioningService?.setRuntimeRecoveryFailureObserver(null);
+      await teamRuntimeRecoveryFeature?.dispose();
+      teamRuntimeRecoveryFeature = null;
+    });
 
     // Kill all team CLI processes via SIGKILL before anything else.
     // This must happen before the OS closes stdin pipes on app exit, because

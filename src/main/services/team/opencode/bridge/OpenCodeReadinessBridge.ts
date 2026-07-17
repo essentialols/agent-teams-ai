@@ -1,5 +1,7 @@
 import { randomUUID } from 'crypto';
 
+import { normalizeOpenCodeProjectIdentity } from '../readiness/OpenCodeProjectIdentity';
+
 import {
   OPEN_CODE_DELIVERY_ACCEPTANCE_CONTRACT_VERSION,
   stableHash,
@@ -76,6 +78,14 @@ export interface OpenCodeReadinessBridgeCommandBody {
   requireExecutionProbe: boolean;
 }
 
+function openCodeReadinessArtifactKey(input: OpenCodeReadinessBridgeCommandBody): string {
+  return JSON.stringify([
+    normalizeOpenCodeProjectIdentity(input.projectPath),
+    input.selectedModel?.trim() ?? null,
+    input.requireExecutionProbe,
+  ]);
+}
+
 const DEFAULT_READINESS_TIMEOUT_MS = 300_000;
 const DEFAULT_LAUNCH_TIMEOUT_MS = 120_000;
 const NATIVE_SUBSCRIPTION_CLI_LAUNCH_TIMEOUT_PER_MEMBER_MS = 90_000;
@@ -144,6 +154,10 @@ export class OpenCodeReadinessBridge implements OpenCodeTeamRuntimeBridgePort {
     string,
     OpenCodeBridgeRuntimeSnapshot
   >();
+  private readonly lastRuntimeSnapshotsByReadinessKey = new Map<
+    string,
+    OpenCodeBridgeRuntimeSnapshot
+  >();
 
   constructor(
     private readonly bridge: OpenCodeReadinessBridgeCommandExecutor,
@@ -162,11 +176,21 @@ export class OpenCodeReadinessBridge implements OpenCodeTeamRuntimeBridgePort {
     });
 
     if (result.ok) {
-      this.lastRuntimeSnapshotsByProjectPath.set(input.projectPath, result.runtime);
+      this.lastRuntimeSnapshotsByProjectPath.set(
+        normalizeOpenCodeProjectIdentity(input.projectPath),
+        result.runtime
+      );
+      this.lastRuntimeSnapshotsByReadinessKey.set(
+        openCodeReadinessArtifactKey(input),
+        result.runtime
+      );
       return result.data;
     }
 
-    this.lastRuntimeSnapshotsByProjectPath.delete(input.projectPath);
+    this.lastRuntimeSnapshotsByProjectPath.delete(
+      normalizeOpenCodeProjectIdentity(input.projectPath)
+    );
+    this.lastRuntimeSnapshotsByReadinessKey.delete(openCodeReadinessArtifactKey(input));
     const supportDiagnostic = buildOpenCodeBridgeSupportDiagnostic({
       result,
       projectPath: input.projectPath,
@@ -185,8 +209,26 @@ export class OpenCodeReadinessBridge implements OpenCodeTeamRuntimeBridgePort {
     });
   }
 
-  getLastOpenCodeRuntimeSnapshot(projectPath: string): OpenCodeBridgeRuntimeSnapshot | null {
-    return this.lastRuntimeSnapshotsByProjectPath.get(projectPath) ?? null;
+  getLastOpenCodeRuntimeSnapshot(
+    projectPath: string,
+    selectedModel?: string | null,
+    requireExecutionProbe?: boolean
+  ): OpenCodeBridgeRuntimeSnapshot | null {
+    if (requireExecutionProbe !== undefined) {
+      return (
+        this.lastRuntimeSnapshotsByReadinessKey.get(
+          openCodeReadinessArtifactKey({
+            projectPath,
+            selectedModel: selectedModel ?? null,
+            requireExecutionProbe,
+          })
+        ) ?? null
+      );
+    }
+    return (
+      this.lastRuntimeSnapshotsByProjectPath.get(normalizeOpenCodeProjectIdentity(projectPath)) ??
+      null
+    );
   }
 
   async launchOpenCodeTeam(

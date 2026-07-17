@@ -15,6 +15,7 @@ import {
   localReviewedWorkerOutputDeps,
   reviewedWorkerOutputRoot,
 } from "./reviewed-worker-output";
+import { codexGoalStatusInputFromLaunch } from "./application/codex-goal-status-input";
 import {
   booleanValue,
   requiredRawString,
@@ -34,8 +35,15 @@ import {
   parseReviewedOutputMerge,
   requiredReviewDecision,
 } from "./codex-goal-mcp-project-control-reviewed-output";
-import { recordRejectedReviewedOutput } from "./codex-goal-mcp-project-control-reviewed-rejection";
+import {
+  recordRejectedReviewedOutput,
+  recordRejectedUncapturedOutput,
+} from "./codex-goal-mcp-project-control-reviewed-rejection";
 import { projectControlRealPathOutsideWorkspaceScope } from "./codex-goal-mcp-project-scope";
+import {
+  collectCodexGoalStatus,
+  resolveCodexGoalWorkerLiveness,
+} from "./codex-goal-ops";
 
 type JsonObject = Readonly<Record<string, unknown>>;
 
@@ -75,11 +83,19 @@ export async function projectControlMarkReviewedView(
   });
   const captureReviewedOutput =
     booleanValue(args.captureReviewedOutput) === true;
-  const reviewDecision = captureReviewedOutput
-    ? requiredReviewDecision(args.reviewDecision)
-    : undefined;
-  if (!captureReviewedOutput) {
-    await ensureTerminalCodexGoalHandoffArtifacts({ launch: loaded.launch });
+  const reviewDecision =
+    args.reviewDecision === undefined
+      ? undefined
+      : requiredReviewDecision(args.reviewDecision);
+  if (captureReviewedOutput && reviewDecision === undefined) {
+    throw new Error("review_decision_required");
+  }
+  if (
+    !captureReviewedOutput &&
+    reviewDecision !== undefined &&
+    reviewDecision !== ReviewDecisionStatus.Rejected
+  ) {
+    throw new Error("project_control_reviewed_output_capture_required");
   }
   const reviewNote = stringValue(args.note) ?? "project_control_reviewed";
   return await withValidatedProjectWorkspaceLock({
@@ -96,6 +112,28 @@ export async function projectControlMarkReviewedView(
           workspacePath: workspace.canonicalWorkspacePath,
         },
       };
+      const terminalStatus = captureReviewedOutput
+        ? undefined
+        : reviewDecision === ReviewDecisionStatus.Rejected
+          ? await collectCodexGoalStatus(
+              codexGoalStatusInputFromLaunch(lockedLaunch),
+            )
+          : await ensureTerminalCodexGoalHandoffArtifacts({
+              launch: lockedLaunch,
+            });
+      if (reviewDecision === ReviewDecisionStatus.Rejected && terminalStatus) {
+        if (resolveCodexGoalWorkerLiveness({ status: terminalStatus }).alive) {
+          throw new Error("uncaptured_rejected_output_worker_still_alive");
+        }
+        if (
+          terminalStatus.workspaceDirty !== true ||
+          (terminalStatus.changedFiles ?? []).length === 0
+        ) {
+          throw new Error(
+            "uncaptured_rejected_output_authored_output_required",
+          );
+        }
+      }
       const admittedMerge = captureReviewedOutput
         ? await readAdmittedMergeBinding(loaded.manifest, controller.scope)
         : undefined;
@@ -172,6 +210,18 @@ export async function projectControlMarkReviewedView(
           jobRootDir: loaded.manifest.jobRootDir,
           workspacePath: workspace.canonicalWorkspacePath,
           snapshot,
+        });
+      } else if (
+        !captureReviewedOutput &&
+        reviewDecision === ReviewDecisionStatus.Rejected
+      ) {
+        consumedOutputLedger = await recordRejectedUncapturedOutput({
+          scope: controller.scope,
+          jobId: loaded.manifest.jobId,
+          jobRootDir: loaded.manifest.jobRootDir,
+          workspacePath: workspace.canonicalWorkspacePath,
+          closedAt: loaded.manifest.updatedAt,
+          reason: stringValue(args.reviewReason) ?? reviewNote,
         });
       }
       const accountReservationReleased = await releaseCodexProjectAccount({

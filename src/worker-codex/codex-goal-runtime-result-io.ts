@@ -183,14 +183,15 @@ async function gitUntrackedPatch(input: {
   readonly workspacePath: string;
 }): Promise<string> {
   const paths = await gitUntrackedPaths(input);
-  const patches = await Promise.all(paths.map((path) =>
-    gitDiff({
+  const patches: string[] = [];
+  for (const path of paths) {
+    patches.push(await gitDiff({
       gitBinaryPath: input.gitBinaryPath,
       workspacePath: input.workspacePath,
       args: ["diff", "--binary", "--no-index", "--", "/dev/null", path],
       allowDifferenceExitCode: true,
-    })
-  ));
+    }));
+  }
   return patches.join("\n");
 }
 

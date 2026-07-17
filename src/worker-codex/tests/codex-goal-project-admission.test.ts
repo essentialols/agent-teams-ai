@@ -1,6 +1,8 @@
+import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import {
   ProjectAdmissionWorkerRole,
@@ -13,6 +15,8 @@ import {
   codexProjectAdmissionGate,
   type CodexProjectAdmissionDeps,
 } from "../application/project-control/codex-goal-project-admission";
+
+const execFileAsync = promisify(execFile);
 
 describe("Codex project admission snapshot", () => {
   it("admits a disjoint writer and denies a writer targeting the active workspace", async () => {
@@ -260,7 +264,47 @@ describe("Codex project admission snapshot", () => {
       })).resolves.toMatchObject({ allowed: false });
       await expect(gate(deps()).evaluate(
         request(ProjectOperation.CreateJob),
-      )).resolves.toMatchObject({ allowed: false });
+      )).resolves.toMatchObject({
+        allowed: false,
+        debt: expect.arrayContaining([
+          expect.objectContaining({
+            reason: ProjectDebtReason.UnconsumedCompletedJob,
+            subject: siblingWorkspacePath,
+          }),
+          expect.objectContaining({
+            reason: ProjectDebtReason.ActiveWriterConflict,
+            subject: "project-held-sibling",
+          }),
+        ]),
+      });
+
+      const orphanJobId = "project-orphan-remediation";
+      const orphanWorkspacePath = join(worktreeRoot, orphanJobId);
+      await mkdir(orphanWorkspacePath, { recursive: true });
+      await execFileAsync("git", ["init"], { cwd: orphanWorkspacePath });
+      await writeFile(join(orphanWorkspacePath, "seeded.txt"), "seeded output\n");
+      const orphanGate = codexProjectAdmissionGate({
+        registryRootDir: join(root, "registry"),
+        scope: {
+          projectId: "project",
+          jobIdPrefixes: ["project-"],
+          worktreeRoots: [worktreeRoot],
+        },
+        deps: {
+          listJobs: async () => [],
+          buildOverviewItems: async () => [],
+        },
+        admittedInputPatchTarget: {
+          jobId: orphanJobId,
+          workspacePath: orphanWorkspacePath,
+        },
+      });
+      await expect(orphanGate.evaluate({
+        operation: ProjectOperation.CreateJob,
+        jobId: orphanJobId,
+        workerRole: ProjectAdmissionWorkerRole.Producer,
+        workspacePath: orphanWorkspacePath,
+      })).resolves.toMatchObject({ allowed: true, debt: [] });
 
       await expect(gate(deps(targetOverview(), {
         ...heldSiblingOverview,

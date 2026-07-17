@@ -111,6 +111,10 @@ export type CodexProjectControlBrokerInput = {
   readonly createManifest?: CodexGoalJobManifestInput;
   readonly createOverwrite?: boolean;
   readonly createWorktreeInput?: CodexGoalProjectCreateWorktreeInput;
+  readonly admittedInputPatchTarget?: {
+    readonly jobId: string;
+    readonly workspacePath: string;
+  };
   readonly integrateCommitInput?: CodexGoalProjectIntegrateCommitInput;
   readonly pushBranchInput?: CodexGoalProjectPushBranchInput;
   readonly startLaunch?: CodexGoalLaunchInput;
@@ -132,6 +136,19 @@ export type CodexProjectControlBrokerInput = {
 export function createCodexProjectControlBroker(
   input: CodexProjectControlBrokerInput,
 ): ProjectControlBroker {
+  const admittedInputPatchTarget =
+    input.admittedInputPatchTarget ??
+    ((input.startAdmissionWorkspaceMode === "admitted_input_patch" &&
+        input.startManifest &&
+        input.startWorkspaceLease) ||
+      (input.createWorktreeInput?.inputPatch && input.createWorktreeInput.jobId)
+      ? {
+          jobId: input.startManifest?.jobId ??
+            input.createWorktreeInput?.jobId ?? "",
+          workspacePath: input.startWorkspaceLease?.canonicalWorkspacePath ??
+            input.createWorktreeInput?.path ?? "",
+        }
+      : undefined);
   return new ProjectControlBroker(
     {
       boundary: AccessBoundary.ProjectScopedControl,
@@ -157,20 +174,8 @@ export function createCodexProjectControlBroker(
               },
             }
           : {}),
-        ...((input.startAdmissionWorkspaceMode === "admitted_input_patch" &&
-              input.startManifest &&
-              input.startWorkspaceLease) ||
-            (input.createWorktreeInput?.inputPatch &&
-              input.createWorktreeInput.jobId)
-          ? {
-              admittedInputPatchTarget: {
-                jobId: input.startManifest?.jobId ??
-                  input.createWorktreeInput?.jobId ?? "",
-                workspacePath: input.startWorkspaceLease
-                  ?.canonicalWorkspacePath ??
-                  input.createWorktreeInput?.path ?? "",
-              },
-            }
+        ...(admittedInputPatchTarget
+          ? { admittedInputPatchTarget }
           : {}),
       }),
     },

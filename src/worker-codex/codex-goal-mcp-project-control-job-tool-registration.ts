@@ -71,6 +71,13 @@ export function registerCodexGoalProjectControlJobTools(server: McpServer): void
         ),
         requireCanonicalRemoteHead: z.boolean().optional(),
         producerJobId: z.string().optional(),
+        reviewedOutputId: z
+          .string()
+          .regex(/^[a-fA-F0-9]{64}$/)
+          .optional()
+          .describe(
+            "Attested rejected output from producerJobId to materialize as immutable remediation input. Requires workerRole=producer and a remediation admission contract.",
+          ),
         newBranch: z.string().optional(),
         promptBody: z.string().optional(),
         preStartAdmission: workerLaunchAdmissionSchema

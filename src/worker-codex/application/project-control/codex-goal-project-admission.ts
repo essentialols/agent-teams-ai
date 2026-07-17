@@ -113,7 +113,7 @@ export function codexProjectAdmissionGate(
           ? { requestedWorkspacePath: request.workspacePath }
           : { blockAnyLiveWriter: true }),
       });
-      const inputPatchSnapshot = await withoutAdmittedInputPatchStartDebt({
+      const inputPatchSnapshot = await withoutAdmittedInputPatchDebt({
         snapshot: observedSnapshot,
         request,
         binding: input.admittedInputPatchTarget,
@@ -191,7 +191,7 @@ async function withoutCapacityContinuationSiblingDebt(input: {
   };
 }
 
-async function withoutAdmittedInputPatchStartDebt(input: {
+async function withoutAdmittedInputPatchDebt(input: {
   readonly snapshot: ProjectAdmissionSnapshot;
   readonly request: {
     readonly operation: ProjectOperation;
@@ -204,7 +204,8 @@ async function withoutAdmittedInputPatchStartDebt(input: {
   if (
     !binding ||
     (request.operation !== ProjectOperation.StartWorker &&
-      request.operation !== ProjectOperation.CreateWorktree) ||
+      request.operation !== ProjectOperation.CreateWorktree &&
+      request.operation !== ProjectOperation.CreateJob) ||
     request.jobId !== binding.jobId ||
     !request.workspacePath ||
     !await admissionWorkspacePathsMatch(
@@ -216,6 +217,13 @@ async function withoutAdmittedInputPatchStartDebt(input: {
   }
   const debt: ProjectDebtItem[] = [];
   for (const item of input.snapshot.debt) {
+    const selfOrphanWorkspace =
+      item.reason === ProjectDebtReason.OrphanLegacyWorkspace &&
+      await admissionWorkspacePathsMatch(item.subject, binding.workspacePath);
+    if (request.operation === ProjectOperation.CreateJob) {
+      if (!selfOrphanWorkspace) debt.push(item);
+      continue;
+    }
     const selfDebt = await admissionBindingHasSelfDebt({
       item,
       binding,
@@ -235,6 +243,7 @@ async function withoutAdmittedInputPatchStartDebt(input: {
       item.evidence.includes("dirty_workspace_without_worker");
     if (
       !selfInactiveWorkspace &&
+      !selfOrphanWorkspace &&
       !selfDirtyWithoutRunner &&
       !unrelatedHeldOutput &&
       !unrelatedInactiveOutputRisk

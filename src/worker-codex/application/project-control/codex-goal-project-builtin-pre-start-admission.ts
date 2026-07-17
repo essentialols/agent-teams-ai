@@ -125,7 +125,9 @@ export async function validateBuiltinWorkerLaunchSpec(input: {
   const contract = parseWorkerLaunchSpec(input.contract);
   const state = parseWorkerLaunchState(input.state);
   assertSerialState(contract, state, {
-    allowRemediation: isAdoptionManifest(input.manifest),
+    allowRemediation:
+      isAdoptionManifest(input.manifest) ||
+      isImmutableInputPatchProducer(input.manifest, contract),
   });
   await assertWorkerLaunchFilesystem(contract, input.manifest, input.scope);
 }
@@ -168,6 +170,16 @@ function isAdoptionManifest(
   manifest: CodexGoalJobManifest | CodexGoalJobManifestInput,
 ): boolean {
   return manifest.tags?.includes("worker-role-adoption") === true;
+}
+
+function isImmutableInputPatchProducer(
+  manifest: CodexGoalJobManifest | CodexGoalJobManifestInput,
+  contract: WorkerLaunchSpec,
+): boolean {
+  return (
+    manifest.tags?.includes("worker-role-producer") === true &&
+    contract.inputPatchHash !== null
+  );
 }
 
 function computeWorkerLaunchWorkKey(

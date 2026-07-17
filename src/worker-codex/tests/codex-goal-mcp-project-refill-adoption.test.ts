@@ -22,7 +22,7 @@ import {
 } from "./codex-goal-mcp-test-support";
 
 describe("project refill adoption", () => {
-  it("binds a tracked producer artifact separately from the staged adoption patch", async () => {
+  it("seeds a remediation producer from an attested rejected output", async () => {
     const root = await mkdtemp(
       join(tmpdir(), "subscription-runtime-project-refill-adoption-patch-"),
     );
@@ -33,6 +33,7 @@ describe("project refill adoption", () => {
     const producerWorkspace = join(root, "worktrees", "project-producer");
     const childWorkspace = join(root, "worktrees", "project-adoption");
     const childJobRoot = join(root, "worker-jobs", "project-adoption");
+    const consumedOutputLedgerRoot = join(root, "worker-jobs", "consumed");
     const authRootDir = join(root, "auth");
     const server = createCodexGoalMcpServer();
     const client = new Client({
@@ -100,11 +101,12 @@ describe("project refill adoption", () => {
       await writeFile(
         join(producerJobRoot, "project-producer.latest-result.json"),
         `${JSON.stringify({
-          status: "done",
+          status: "failed",
+          reason: "unknown_error",
           changedFiles: handoff.changedPaths,
-          evidence: [],
-          blockers: [],
-          nextAction: "review_completed",
+          evidence: ["immutable_handoff_captured"],
+          blockers: ["model_capacity"],
+          nextAction: "preserve_patch",
           artifacts: handoff.artifacts,
           details: { baseCommit: handoff.baseCommit },
         })}\n`,
@@ -155,6 +157,7 @@ describe("project refill adoption", () => {
           workspaceRoots: [sourceWorkspacePath],
           worktreeRoots: [join(root, "worktrees")],
           registryRoot: registryRootDir,
+          consumedOutputLedgerRoots: [consumedOutputLedgerRoot],
           authRoot: authRootDir,
           jobIdPrefixes: ["project-"],
           tmuxSessionPrefixes: ["project-"],
@@ -166,6 +169,26 @@ describe("project refill adoption", () => {
         },
       });
       if (controller.ok !== true) throw new Error(JSON.stringify(controller));
+      const reviewed = await callToolJson(
+        client,
+        "codex_goal_project_mark_reviewed",
+        {
+          registryRootDir,
+          controllerJobId: "project-controller",
+          jobId: "project-producer",
+          captureReviewedOutput: true,
+          expectedPatchSha256: artifactSha256,
+          reviewDecision: "rejected",
+          reviewedBy: "previous-project-controller",
+          reviewReason: "Preserve the exact failed attempt for bounded remediation.",
+          approvedFiles: ["README.md"],
+          requiredChecks: [],
+          note: "FORMAL REJECT",
+        },
+      );
+      if (reviewed.ok !== true) throw new Error(JSON.stringify(reviewed));
+      const reviewedOutputId = String(reviewed.reviewedOutputId);
+      expect(reviewedOutputId).toMatch(/^[a-f0-9]{64}$/);
 
       const result = await callToolJson(
         client,
@@ -174,6 +197,7 @@ describe("project refill adoption", () => {
           registryRootDir,
           controllerJobId: "project-controller",
           producerJobId: "project-producer",
+          reviewedOutputId,
           jobId: "project-adoption",
           jobRootDir: childJobRoot,
           authRootDir,
@@ -184,7 +208,7 @@ describe("project refill adoption", () => {
           promptBody: "Adopt and remediate immutable producer output.\n",
           taskId: "project-adoption",
           accounts: ["account-a"],
-          workerRole: "adoption",
+          workerRole: "producer",
           preStartAdmission: {
             mode: "serial-builtin",
             contract: {
@@ -227,8 +251,15 @@ describe("project refill adoption", () => {
       expect(result).toMatchObject({
         ok: true,
         mode: "project_control_refill_worker",
-        workerRole: "adoption",
+        workerRole: "producer",
         worktree: { status: "applied" },
+        rejectedReviewedOutput: {
+          reviewedOutputId,
+          controllerJobId: "project-controller",
+          workerJobId: "project-producer",
+          patchSha256: artifactSha256,
+          decision: "rejected",
+        },
       });
       await expect(
         readFile(join(childWorkspace, "README.md"), "utf8"),

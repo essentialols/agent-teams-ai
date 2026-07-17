@@ -135,6 +135,10 @@ import {
   LocalReviewedWorkerOutputStore,
   reviewedWorkerOutputRoot,
 } from "./reviewed-worker-output";
+import {
+  rejectedReviewedOutputRemediationView,
+  resolveRejectedReviewedOutputRemediation,
+} from "./application/project-control/rejected-reviewed-output-remediation";
 
 type JsonObject = Readonly<Record<string, unknown>>;
 
@@ -204,6 +208,7 @@ export async function projectControlRefillWorkerView(
   }
   const role = projectControlWorkerRole(args.workerRole);
   const producerJobId = stringValue(args.producerJobId);
+  const reviewedOutputId = stringValue(args.reviewedOutputId);
   const reviewedOutputIds = reviewedOutputIdValues(args.reviewedOutputIds);
   assertVerifierInputSource({
     operationToolName: boundedToolName,
@@ -339,6 +344,7 @@ export async function projectControlRefillWorkerView(
     assertProjectRefillInputPatchSource({
       contract: preStartAdmission?.contract,
       producerJobId,
+      reviewedOutputId,
       workerRole: role,
     });
   }
@@ -354,7 +360,7 @@ export async function projectControlRefillWorkerView(
     manifest: createManifest,
   });
   promptBody += finalizedSource.promptSuffix;
-  const producerHandoff = producerJobId
+  const producerHandoff = producerJobId && !reviewedOutputId
     ? await resolveProducerHandoffForVerifier({
         registryRootDir: controller.registryRootDir,
         producerJobId,
@@ -369,6 +375,27 @@ export async function projectControlRefillWorkerView(
         projectId: controller.scope.projectId,
         reviewedOutputIds,
         expectedBaseCommit: sourceRevision.revision,
+      })
+    : undefined;
+  const rejectedReviewedOutputStore = reviewedOutputId && producerJobId
+    ? new LocalReviewedWorkerOutputStore({
+        rootDir: reviewedWorkerOutputRoot(controller.registryRootDir),
+      })
+    : undefined;
+  const rejectedReviewedOutput =
+    reviewedOutputId && producerJobId && rejectedReviewedOutputStore
+    ? await resolveRejectedReviewedOutputRemediation({
+        store: rejectedReviewedOutputStore,
+        readPatch: async (snapshot) =>
+          await rejectedReviewedOutputStore.readPatch(snapshot),
+        stagedPatchSha256ForRevision,
+      }, {
+        projectId: controller.scope.projectId,
+        reviewedOutputId,
+        expectedWorkerJobId: producerJobId,
+        expectedBaseCommit: sourceRevision.revision,
+        expectedPatchSha256: preStartAdmission?.contract.inputPatchHash,
+        sourceWorkspacePath: resolvedSource.sourceRealPath,
       })
     : undefined;
   assertProjectPreStartAdmissionSourceRevision({
@@ -412,6 +439,7 @@ export async function projectControlRefillWorkerView(
   }
   const producerInputPatch =
     aggregateInputPatch ??
+    rejectedReviewedOutput?.inputPatch ??
     (producerHandoff
       ? {
           path: producerHandoff.patchPath,
@@ -500,6 +528,14 @@ export async function projectControlRefillWorkerView(
       scope: controller.scope,
       createManifest,
       createOverwrite: booleanValue(args.overwrite) ?? false,
+      ...(producerInputPatch
+        ? {
+            admittedInputPatchTarget: {
+              jobId: createManifest.jobId,
+              workspacePath: createManifest.workspacePath,
+            },
+          }
+        : {}),
     });
     const createResult = await createOrReuseProjectJob({
       broker: createBroker,
@@ -521,7 +557,7 @@ export async function projectControlRefillWorkerView(
       scope: controller.scope,
       manifest,
       expectedCanonicalWorkspacePath,
-      admittedInputPatch: Boolean(producerHandoff),
+      admittedInputPatch: Boolean(producerInputPatch),
     });
   } catch (error) {
     await removeProjectPreStartAdmissionPaths(admissionCreatedPaths);
@@ -660,6 +696,13 @@ export async function projectControlRefillWorkerView(
       ? {
           reviewedOutputAggregate: reviewedOutputAggregateView(
             reviewedOutputAggregate,
+          ),
+        }
+      : {}),
+    ...(rejectedReviewedOutput
+      ? {
+          rejectedReviewedOutput: rejectedReviewedOutputRemediationView(
+            rejectedReviewedOutput.snapshot,
           ),
         }
       : {}),
@@ -983,6 +1026,7 @@ async function projectControlRefillWorkerBoundedView(
     assertProjectRefillInputPatchSource({
       contract: preStartAdmission?.contract,
       producerJobId: stringValue(args.producerJobId),
+      reviewedOutputId: stringValue(args.reviewedOutputId),
       workerRole: projectControlWorkerRole(args.workerRole),
     });
   }

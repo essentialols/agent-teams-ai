@@ -1,29 +1,77 @@
+import { assertReviewMutationTransition } from '@features/review-mutations';
 import { atomicWriteAsync, unlinkPathDurably } from '@main/utils/atomicWrite';
 import { getTeamsBasePath } from '@main/utils/pathDecoder';
 import { createHash, randomUUID } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 
+import type { ReviewMutationKind, ReviewMutationPhase } from '@features/review-mutations/contracts';
 import type {
   FileChangeWithContent,
   FileReviewDecision,
-  HunkDecision,
   ReviewDecisionPersistenceScope,
+  ReviewDirectDiskMutationStep,
   ReviewFileScope,
+  ReviewPersistedStateSnapshot,
 } from '@shared/types';
 
-const JOURNAL_VERSION = 1;
+const JOURNAL_VERSION = 2;
 const MAX_JOURNAL_BYTES = 32 * 1024 * 1024;
 const MAX_JOURNAL_RECORDS_PER_SCOPE = 64;
 const TEAM_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,127}$/;
 const SCOPE_KEY_PATTERN = /^(?:task|agent)-[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/;
 
-export type ReviewMutationJournalPhase = 'prepared' | 'committed' | 'failed';
-
 export interface ReviewMutationJournalRecord {
+  version: 2;
+  id: string;
+  phase: ReviewMutationPhase;
+  kind: ReviewMutationKind;
+  teamName: string;
+  persistenceScope: ReviewDecisionPersistenceScope;
+  reviewScope: ReviewFileScope;
+  decisions: (FileReviewDecision & { reviewKey: string })[];
+  fileContents: FileChangeWithContent[];
+  decisionStatuses?: ('pending' | 'applied')[];
+  /** Exact path postimages captured before an applied decision is checkpointed. */
+  decisionPostimages?: (ReviewMutationJournalPathPostimage[] | null)[];
+  diskSteps?: ReviewMutationJournalDiskStep[];
+  persistedState?: ReviewPersistedStateSnapshot;
+  expectedDecisionRevision?: number;
+  createdAt: string;
+  updatedAt: string;
+  /** A handled application failure blocks automatic recovery until explicit retry/discard. */
+  blocked?: boolean;
+  failure?: string;
+}
+
+export interface PrepareReviewMutationInput {
+  teamName: string;
+  persistenceScope: ReviewDecisionPersistenceScope;
+  reviewScope: ReviewFileScope;
+  kind: ReviewMutationKind;
+  decisions: (FileReviewDecision & { reviewKey: string })[];
+  fileContents: FileChangeWithContent[];
+  diskSteps?: ReviewMutationJournalDiskStep[];
+  persistedState?: ReviewPersistedStateSnapshot;
+  expectedDecisionRevision?: number;
+}
+
+export type ReviewMutationJournalDiskStep = ReviewDirectDiskMutationStep & {
+  status: 'pending' | 'applied';
+  /** Main-resolved immutable rename evidence needed after the renderer is gone. */
+  authoritativeContent?: FileChangeWithContent;
+};
+
+export interface ReviewMutationJournalPathPostimage {
+  filePath: string;
+  /** Null means the path must be absent. Existing text is stored by digest only. */
+  sha256: string | null;
+}
+
+interface LegacyReviewMutationJournalRecord {
   version: 1;
   id: string;
-  phase: ReviewMutationJournalPhase;
+  phase: 'prepared' | 'committed' | 'failed';
   teamName: string;
   persistenceScope: ReviewDecisionPersistenceScope;
   reviewScope: ReviewFileScope;
@@ -32,14 +80,6 @@ export interface ReviewMutationJournalRecord {
   createdAt: string;
   updatedAt: string;
   failure?: string;
-}
-
-export interface PrepareReviewMutationInput {
-  teamName: string;
-  persistenceScope: ReviewDecisionPersistenceScope;
-  reviewScope: ReviewFileScope;
-  decision: FileReviewDecision & { reviewKey: string };
-  fileContent: FileChangeWithContent;
 }
 
 export class ReviewMutationJournalStore {
@@ -97,23 +137,46 @@ export class ReviewMutationJournalStore {
     if (input.reviewScope.teamName !== input.teamName) {
       throw new Error('Review mutation journal review scope mismatch');
     }
-    if (!input.decision.reviewKey || input.fileContent.filePath !== input.decision.filePath) {
+    const hasDecisionBatch = input.decisions.length > 0;
+    const hasDirectSteps = (input.diskSteps?.length ?? 0) > 0;
+    const isDecisionOnlyHistoryMutation =
+      !hasDecisionBatch &&
+      !hasDirectSteps &&
+      (input.kind === 'undo' || input.kind === 'redo') &&
+      !!input.persistedState;
+    if (
+      (!isDecisionOnlyHistoryMutation && hasDecisionBatch === hasDirectSteps) ||
+      (hasDecisionBatch &&
+        (input.decisions.length !== input.fileContents.length ||
+          input.decisions.some(
+            (decision, index) =>
+              !decision.reviewKey || input.fileContents[index]?.filePath !== decision.filePath
+          ))) ||
+      (hasDirectSteps && input.fileContents.length > 0)
+    ) {
       throw new Error('Invalid review mutation journal decision');
     }
     const existing = await this.list(input.teamName, input.persistenceScope);
-    if (existing.length >= MAX_JOURNAL_RECORDS_PER_SCOPE) {
-      throw new Error('Too many pending review mutation journal records');
+    if (existing.length > 0) {
+      throw new Error('A review mutation is already pending for this decision scope');
     }
     const now = new Date().toISOString();
     const record: ReviewMutationJournalRecord = {
       version: JOURNAL_VERSION,
       id: randomUUID(),
       phase: 'prepared',
+      kind: input.kind,
       teamName: input.teamName,
       persistenceScope: input.persistenceScope,
       reviewScope: input.reviewScope,
-      decision: input.decision,
-      fileContent: input.fileContent,
+      decisions: input.decisions,
+      fileContents: input.fileContents,
+      decisionStatuses: hasDecisionBatch
+        ? input.decisions.map(() => 'pending' as const)
+        : undefined,
+      diskSteps: input.diskSteps,
+      persistedState: input.persistedState,
+      expectedDecisionRevision: input.expectedDecisionRevision,
       createdAt: now,
       updatedAt: now,
     };
@@ -121,23 +184,60 @@ export class ReviewMutationJournalStore {
     return record;
   }
 
-  async markCommitted(record: ReviewMutationJournalRecord): Promise<ReviewMutationJournalRecord> {
-    const committed: ReviewMutationJournalRecord = {
+  async transition(
+    record: ReviewMutationJournalRecord,
+    expectedPhase: ReviewMutationPhase,
+    nextPhase: ReviewMutationPhase
+  ): Promise<ReviewMutationJournalRecord> {
+    assertReviewMutationTransition(expectedPhase, nextPhase);
+    const current = this.parseRecord(
+      await this.readRecord(this.getRecordPath(record)),
+      record.id,
+      record.teamName,
+      record.persistenceScope
+    );
+    if (record.phase !== expectedPhase || current.phase !== expectedPhase) {
+      throw new Error(
+        `Review mutation phase changed concurrently: expected ${expectedPhase}, found ${current.phase}`
+      );
+    }
+    const transitioned: ReviewMutationJournalRecord = {
       ...record,
-      phase: 'committed',
+      phase: nextPhase,
       updatedAt: new Date().toISOString(),
+      blocked: undefined,
       failure: undefined,
     };
-    await this.writeRecord(committed);
-    return committed;
+    await this.writeRecord(transitioned);
+    return transitioned;
+  }
+
+  async checkpoint(record: ReviewMutationJournalRecord): Promise<ReviewMutationJournalRecord> {
+    const current = this.parseRecord(
+      await this.readRecord(this.getRecordPath(record)),
+      record.id,
+      record.teamName,
+      record.persistenceScope
+    );
+    if (current.phase !== record.phase) {
+      throw new Error(
+        `Review mutation phase changed concurrently: expected ${record.phase}, found ${current.phase}`
+      );
+    }
+    const checkpointed: ReviewMutationJournalRecord = {
+      ...record,
+      updatedAt: new Date().toISOString(),
+    };
+    await this.writeRecord(checkpointed);
+    return checkpointed;
   }
 
   async markFailed(record: ReviewMutationJournalRecord, error: unknown): Promise<void> {
     const message = error instanceof Error ? error.message : 'Unknown review mutation failure';
     await this.writeRecord({
       ...record,
-      phase: 'failed',
       updatedAt: new Date().toISOString(),
+      blocked: true,
       failure: message.slice(0, 2_000),
     });
   }
@@ -233,43 +333,6 @@ export class ReviewMutationJournalStore {
     }
   }
 
-  async acknowledge(
-    teamName: string,
-    persistenceScope: ReviewDecisionPersistenceScope,
-    hunkDecisions: Record<string, HunkDecision>,
-    fileDecisions: Record<string, HunkDecision>
-  ): Promise<void> {
-    const records = await this.list(teamName, persistenceScope);
-    await Promise.all(
-      records
-        .filter(
-          (record) =>
-            record.phase === 'committed' &&
-            this.decisionPatchMatches(record, hunkDecisions, fileDecisions)
-        )
-        .map((record) => this.remove(record))
-    );
-  }
-
-  private decisionPatchMatches(
-    record: ReviewMutationJournalRecord,
-    hunkDecisions: Record<string, HunkDecision>,
-    fileDecisions: Record<string, HunkDecision>
-  ): boolean {
-    const { reviewKey, filePath, fileDecision } = record.decision;
-    const actualFileDecision = fileDecisions[reviewKey] ?? fileDecisions[filePath] ?? 'pending';
-    if (actualFileDecision !== fileDecision) return false;
-
-    for (const [index, expected] of Object.entries(record.decision.hunkDecisions)) {
-      const actual =
-        hunkDecisions[`${reviewKey}:${index}`] ??
-        hunkDecisions[`${filePath}:${index}`] ??
-        'pending';
-      if (actual !== expected) return false;
-    }
-    return true;
-  }
-
   private parseRecord(
     parsed: unknown,
     expectedId: string,
@@ -279,10 +342,145 @@ export class ReviewMutationJournalStore {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
       throw new Error('Invalid review mutation journal record');
     }
+    const maybeLegacy = parsed as Partial<LegacyReviewMutationJournalRecord>;
+    if (maybeLegacy.version === 1) {
+      return this.parseLegacyRecord(maybeLegacy, expectedId, expectedTeamName, expectedScope);
+    }
     const record = parsed as Partial<ReviewMutationJournalRecord>;
     const recordPersistenceScope = record.persistenceScope;
     if (
       record.version !== JOURNAL_VERSION ||
+      record.id !== expectedId ||
+      !/^[a-f0-9-]+$/i.test(expectedId) ||
+      (record.phase !== 'prepared' &&
+        record.phase !== 'disk_applied' &&
+        record.phase !== 'decisions_committed' &&
+        record.phase !== 'complete') ||
+      (record.kind !== 'reject' &&
+        record.kind !== 'restore' &&
+        record.kind !== 'rename' &&
+        record.kind !== 'bulk' &&
+        record.kind !== 'undo' &&
+        record.kind !== 'redo') ||
+      record.teamName !== expectedTeamName ||
+      recordPersistenceScope?.scopeKey !== expectedScope.scopeKey ||
+      recordPersistenceScope?.scopeToken !== expectedScope.scopeToken ||
+      record.reviewScope?.teamName !== expectedTeamName ||
+      !Array.isArray(record.decisions) ||
+      !Array.isArray(record.fileContents) ||
+      !this.hasValidPayload(record) ||
+      typeof record.createdAt !== 'string' ||
+      typeof record.updatedAt !== 'string' ||
+      (record.expectedDecisionRevision !== undefined &&
+        (!Number.isSafeInteger(record.expectedDecisionRevision) ||
+          record.expectedDecisionRevision < 0)) ||
+      (record.blocked !== undefined && typeof record.blocked !== 'boolean') ||
+      (record.failure !== undefined && typeof record.failure !== 'string')
+    ) {
+      throw new Error('Invalid review mutation journal record');
+    }
+    const parsedRecord = record as ReviewMutationJournalRecord;
+    return parsedRecord.decisions.length > 0 && !parsedRecord.decisionStatuses
+      ? { ...parsedRecord, decisionStatuses: parsedRecord.decisions.map(() => 'pending') }
+      : parsedRecord;
+  }
+
+  private hasValidPayload(record: Partial<ReviewMutationJournalRecord>): boolean {
+    const decisions = record.decisions ?? [];
+    const fileContents = record.fileContents ?? [];
+    const diskSteps = record.diskSteps ?? [];
+    const hasDecisionBatch = decisions.length > 0;
+    const hasDirectSteps = diskSteps.length > 0;
+    if (!hasDecisionBatch && !hasDirectSteps) {
+      return (
+        (record.kind === 'undo' || record.kind === 'redo') &&
+        !!record.persistedState &&
+        fileContents.length === 0
+      );
+    }
+    if (hasDecisionBatch === hasDirectSteps) return false;
+    if (hasDecisionBatch) {
+      const statuses = record.decisionStatuses;
+      const postimages = record.decisionPostimages;
+      return (
+        decisions.length === fileContents.length &&
+        (statuses === undefined ||
+          (statuses.length === decisions.length &&
+            statuses.every((status) => status === 'pending' || status === 'applied'))) &&
+        (postimages === undefined ||
+          (postimages.length === decisions.length &&
+            postimages.every((paths) => {
+              if (paths === null) return true;
+              if (!Array.isArray(paths) || paths.length === 0 || paths.length > 2_000) return false;
+              const seen = new Set<string>();
+              return paths.every((pathState) => {
+                if (
+                  !pathState ||
+                  typeof pathState.filePath !== 'string' ||
+                  pathState.filePath.length === 0 ||
+                  pathState.filePath.length > 32_768 ||
+                  (pathState.sha256 !== null &&
+                    (typeof pathState.sha256 !== 'string' ||
+                      !/^[a-f0-9]{64}$/.test(pathState.sha256))) ||
+                  seen.has(pathState.filePath)
+                ) {
+                  return false;
+                }
+                seen.add(pathState.filePath);
+                return true;
+              });
+            }))) &&
+        decisions.every(
+          (decision, index) =>
+            typeof decision?.reviewKey === 'string' &&
+            decision.reviewKey.length > 0 &&
+            decision.reviewKey.length <= 32_768 &&
+            fileContents[index]?.filePath === decision.filePath
+        )
+      );
+    }
+    if (fileContents.length > 0) return false;
+    const ids = new Set<string>();
+    return diskSteps.every((step) => {
+      if (
+        !step ||
+        typeof step.id !== 'string' ||
+        step.id.length === 0 ||
+        step.id.length > 256 ||
+        ids.has(step.id) ||
+        (step.status !== 'pending' && step.status !== 'applied') ||
+        typeof step.filePath !== 'string' ||
+        step.filePath.length === 0 ||
+        step.filePath.length > 32_768
+      ) {
+        return false;
+      }
+      ids.add(step.id);
+      if (step.type === 'write') {
+        return (
+          (typeof step.expectedContent === 'string' || step.expectedContent === null) &&
+          typeof step.content === 'string'
+        );
+      }
+      if (step.type === 'delete') return typeof step.expectedContent === 'string';
+      return (
+        (step.type === 'restore-rejected-rename' || step.type === 'reapply-rejected-rename') &&
+        !!step.expectation &&
+        typeof step.expectation === 'object' &&
+        !!step.authoritativeContent &&
+        step.authoritativeContent.filePath === step.filePath
+      );
+    });
+  }
+
+  private parseLegacyRecord(
+    record: Partial<LegacyReviewMutationJournalRecord>,
+    expectedId: string,
+    expectedTeamName: string,
+    expectedScope: ReviewDecisionPersistenceScope
+  ): ReviewMutationJournalRecord {
+    const recordPersistenceScope = record.persistenceScope;
+    if (
       record.id !== expectedId ||
       !/^[a-f0-9-]+$/i.test(expectedId) ||
       (record.phase !== 'prepared' && record.phase !== 'committed' && record.phase !== 'failed') ||
@@ -300,6 +498,21 @@ export class ReviewMutationJournalStore {
     ) {
       throw new Error('Invalid review mutation journal record');
     }
-    return record as ReviewMutationJournalRecord;
+    return {
+      version: JOURNAL_VERSION,
+      id: record.id,
+      phase: record.phase === 'committed' ? 'disk_applied' : 'prepared',
+      kind: 'reject',
+      teamName: record.teamName,
+      persistenceScope: recordPersistenceScope,
+      reviewScope: record.reviewScope,
+      decisions: [record.decision],
+      fileContents: [record.fileContent],
+      decisionStatuses: ['pending'],
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+      blocked: record.phase === 'failed' ? true : undefined,
+      failure: record.failure,
+    };
   }
 }

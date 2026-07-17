@@ -20,23 +20,34 @@ function makeInput() {
     teamName: 'demo',
     persistenceScope,
     reviewScope: { teamName: 'demo', taskId: 'task-1' },
-    decision: {
-      filePath: '/repo/file.ts',
-      reviewKey: 'change-key',
-      fileDecision: 'pending' as const,
-      hunkDecisions: { 0: 'rejected' as const, 1: 'pending' as const },
-      hunkContextHashes: { 0: 'context-a', 1: 'context-b' },
-    },
-    fileContent: {
-      filePath: '/repo/file.ts',
-      relativePath: 'file.ts',
-      snippets: [],
-      linesAdded: 1,
-      linesRemoved: 1,
-      isNewFile: false,
-      originalFullContent: 'before',
-      modifiedFullContent: 'after',
-      contentSource: 'ledger-exact' as const,
+    kind: 'reject' as const,
+    decisions: [
+      {
+        filePath: '/repo/file.ts',
+        reviewKey: 'change-key',
+        fileDecision: 'pending' as const,
+        hunkDecisions: { 0: 'rejected' as const, 1: 'pending' as const },
+        hunkContextHashes: { 0: 'context-a', 1: 'context-b' },
+      },
+    ],
+    fileContents: [
+      {
+        filePath: '/repo/file.ts',
+        relativePath: 'file.ts',
+        snippets: [],
+        linesAdded: 1,
+        linesRemoved: 1,
+        isNewFile: false,
+        originalFullContent: 'before',
+        modifiedFullContent: 'after',
+        contentSource: 'ledger-exact' as const,
+      },
+    ],
+    persistedState: {
+      hunkDecisions: { 'change-key:0': 'rejected' as const },
+      fileDecisions: {},
+      reviewActionHistory: [],
+      reviewRedoHistory: [],
     },
   };
 }
@@ -50,19 +61,59 @@ describe('ReviewMutationJournalStore', () => {
     await rm(teamsBasePath, { recursive: true, force: true });
   });
 
-  it('durably tracks prepared and committed mutations until an exact decision snapshot acks them', async () => {
+  it('durably tracks every forward-only phase until complete is removed', async () => {
     const { ReviewMutationJournalStore } =
       await import('@main/services/team/ReviewMutationJournalStore');
     const store = new ReviewMutationJournalStore();
     const prepared = await store.prepare(makeInput());
 
     await expect(store.list('demo', persistenceScope)).resolves.toEqual([prepared]);
-    const committed = await store.markCommitted(prepared);
-    await store.acknowledge('demo', persistenceScope, { 'change-key:0': 'accepted' }, {});
-    await expect(store.list('demo', persistenceScope)).resolves.toEqual([committed]);
-
-    await store.acknowledge('demo', persistenceScope, { 'change-key:0': 'rejected' }, {});
+    const diskApplied = await store.transition(prepared, 'prepared', 'disk_applied');
+    const decisionsCommitted = await store.transition(
+      diskApplied,
+      'disk_applied',
+      'decisions_committed'
+    );
+    const complete = await store.transition(decisionsCommitted, 'decisions_committed', 'complete');
+    await expect(store.list('demo', persistenceScope)).resolves.toEqual([complete]);
+    await store.remove(complete);
     await expect(store.list('demo', persistenceScope)).resolves.toEqual([]);
+  });
+
+  it('persists a decision-only Redo record with no artificial disk step', async () => {
+    const { ReviewMutationJournalStore } =
+      await import('@main/services/team/ReviewMutationJournalStore');
+    const store = new ReviewMutationJournalStore();
+    const action = {
+      id: 'redo-hunk',
+      createdAt: '2026-07-17T12:00:00.000Z',
+      kind: 'hunk' as const,
+      action: { filePath: '/repo/file.ts', originalIndex: 0 },
+    };
+    const prepared = await store.prepare({
+      teamName: 'demo',
+      persistenceScope,
+      reviewScope: { teamName: 'demo', taskId: 'task-123' },
+      kind: 'redo',
+      decisions: [],
+      fileContents: [],
+      diskSteps: [],
+      persistedState: {
+        hunkDecisions: { 'file:0': 'accepted' },
+        fileDecisions: {},
+        reviewActionHistory: [action],
+        reviewRedoHistory: [],
+      },
+      expectedDecisionRevision: 4,
+    });
+
+    expect(prepared).toMatchObject({
+      kind: 'redo',
+      phase: 'prepared',
+      diskSteps: [],
+      expectedDecisionRevision: 4,
+    });
+    await expect(store.list('demo', persistenceScope)).resolves.toEqual([prepared]);
   });
 
   it('keeps failed mutations visible until explicit scoped discard', async () => {
@@ -73,10 +124,21 @@ describe('ReviewMutationJournalStore', () => {
     await store.markFailed(prepared, new Error('disk failed'));
 
     await expect(store.list('demo', persistenceScope)).resolves.toMatchObject([
-      { phase: 'failed', failure: 'disk failed' },
+      { phase: 'prepared', blocked: true, failure: 'disk failed' },
     ]);
     await store.clearScope('demo', persistenceScope);
     await expect(store.list('demo', persistenceScope)).resolves.toEqual([]);
+  });
+
+  it('refuses to create a second operation before the pending WAL is drained', async () => {
+    const { ReviewMutationJournalStore } =
+      await import('@main/services/team/ReviewMutationJournalStore');
+    const store = new ReviewMutationJournalStore();
+    await store.prepare(makeInput());
+
+    await expect(store.prepare(makeInput())).rejects.toThrow(
+      'A review mutation is already pending for this decision scope'
+    );
   });
 
   it('rejects a record whose embedded id does not match its durable filename', async () => {
@@ -90,6 +152,36 @@ describe('ReviewMutationJournalStore', () => {
     parsed.id = 'different-id';
     await writeFile(recordPath, JSON.stringify(parsed), 'utf8');
 
+    await expect(store.list('demo', persistenceScope)).rejects.toThrow(
+      'Invalid review mutation journal record'
+    );
+  });
+
+  it('round-trips only validated SHA-256 decision postimages', async () => {
+    const { ReviewMutationJournalStore } =
+      await import('@main/services/team/ReviewMutationJournalStore');
+    const store = new ReviewMutationJournalStore();
+    const prepared = await store.prepare(makeInput());
+    const checkpointed = await store.checkpoint({
+      ...prepared,
+      decisionStatuses: ['applied'],
+      decisionPostimages: [
+        [
+          {
+            filePath: '/repo/file.ts',
+            sha256: createHash('sha256').update('after').digest('hex'),
+          },
+        ],
+      ],
+    });
+    await expect(store.list('demo', persistenceScope)).resolves.toEqual([checkpointed]);
+
+    const recordPath = findRecordPath(teamsBasePath, prepared.id);
+    const parsed = JSON.parse(await readFile(recordPath, 'utf8')) as {
+      decisionPostimages: { sha256: string | null }[][];
+    };
+    parsed.decisionPostimages[0]![0]!.sha256 = 'not-a-digest';
+    await writeFile(recordPath, JSON.stringify(parsed), 'utf8');
     await expect(store.list('demo', persistenceScope)).rejects.toThrow(
       'Invalid review mutation journal record'
     );

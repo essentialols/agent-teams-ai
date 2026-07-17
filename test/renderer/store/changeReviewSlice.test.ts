@@ -4,6 +4,8 @@ import { create } from 'zustand';
 import { createChangeReviewSlice } from '../../../src/renderer/store/slices/changeReviewSlice';
 import { buildTaskChangePresenceKey } from '../../../src/renderer/utils/taskChangeRequest';
 
+import type { ReviewRedoAction } from '@shared/types';
+
 const hoisted = vi.hoisted(() => ({
   getTaskChanges: vi.fn(),
   getAgentChanges: vi.fn(),
@@ -177,6 +179,12 @@ describe('changeReviewSlice task changes', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     hoisted.capturePostHogEvent.mockClear();
+    hoisted.saveDecisions.mockImplementation((...args: unknown[]) =>
+      Promise.resolve({ revision: (typeof args[7] === 'number' ? args[7] : 0) + 1 })
+    );
+    hoisted.clearDecisions.mockImplementation((...args: unknown[]) =>
+      Promise.resolve({ revision: (typeof args[3] === 'number' ? args[3] : 0) + 1 })
+    );
   });
 
   it('does not cache errors as negative task-change results', async () => {
@@ -1863,6 +1871,14 @@ describe('changeReviewSlice task changes', () => {
         scopeKey: 'agent-alice',
         scopeToken: expect.stringContaining('agent:alice:content:'),
       },
+      expectedDecisionRevision: 0,
+      persistedState: {
+        hunkDecisions: { '/repo/a.ts:0': 'rejected' },
+        fileDecisions: { '/repo/a.ts': 'rejected' },
+        hunkContextHashesByFile: {},
+        reviewActionHistory: [],
+        reviewRedoHistory: [],
+      },
       decisions: [
         expect.objectContaining({
           filePath: '/repo/a.ts',
@@ -2221,7 +2237,66 @@ describe('changeReviewSlice task changes', () => {
       { '/repo/file.ts:0': 'accepted' },
       {},
       { '/repo/file.ts': {} },
-      history
+      history,
+      expect.any(Number),
+      []
+    );
+  });
+
+  it('hydrates and deep-clones the durable Redo branch before a queued save', async () => {
+    const store = createSliceStore();
+    const action = {
+      id: 'redo-action',
+      createdAt: '2026-07-17T12:00:00.000Z',
+      kind: 'hunk' as const,
+      action: { filePath: '/repo/file.ts', originalIndex: 0 },
+    };
+    const redoHistory: ReviewRedoAction[] = [
+      {
+        action,
+        decisionSnapshot: {
+          hunkDecisions: { '/repo/file.ts:0': 'accepted' as const },
+          fileDecisions: {},
+        },
+        hunkContextHashesByFile: { '/repo/file.ts': { 0: 'hash' } },
+      },
+    ];
+    store.setState({ activeChangeSet: makeAgentChangeSet(), changeSetEpoch: 1 });
+    hoisted.loadDecisions.mockResolvedValueOnce({
+      hunkDecisions: {},
+      fileDecisions: {},
+      reviewActionHistory: [],
+      reviewRedoHistory: redoHistory,
+      revision: 4,
+    });
+
+    await store.getState().loadDecisionsFromDisk('team-a', 'agent-alice', 'redo-scope');
+    expect(store.getState().reviewRedoHistory).toEqual(redoHistory);
+    store.getState().persistDecisions('team-a', 'agent-alice', 'redo-scope');
+    redoHistory[0]!.decisionSnapshot.hunkDecisions['/repo/file.ts:0'] = 'rejected';
+    redoHistory[0]!.hunkContextHashesByFile!['/repo/file.ts']![0] = 'changed';
+    await expect(
+      store.getState().flushDecisionsToDisk('team-a', 'agent-alice', 'redo-scope')
+    ).resolves.toBe(true);
+
+    expect(hoisted.saveDecisions).toHaveBeenLastCalledWith(
+      'team-a',
+      'agent-alice',
+      'redo-scope',
+      {},
+      {},
+      { '/repo/file.ts': {} },
+      [],
+      4,
+      [
+        expect.objectContaining({
+          decisionSnapshot: {
+            hunkDecisions: { '/repo/file.ts:0': 'accepted' },
+            fileDecisions: {},
+          },
+          hunkContextHashesByFile: { '/repo/file.ts': { 0: 'hash' } },
+        }),
+      ]
     );
   });
 
@@ -2397,6 +2472,8 @@ describe('changeReviewSlice task changes', () => {
       { '/repo/file.ts:0': 'accepted' },
       { '/repo/file.ts': 'accepted' },
       { '/repo/file.ts': {} },
+      [],
+      expect.any(Number),
       []
     );
   });
@@ -2421,11 +2498,73 @@ describe('changeReviewSlice task changes', () => {
         { '/repo/file.ts:0': 'accepted' },
         {},
         { '/repo/file.ts': {} },
+        [],
+        expect.any(Number),
         []
       );
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('uses the revision of the queued scope after the UI switches to another scope', async () => {
+    vi.useFakeTimers();
+    try {
+      const store = createSliceStore();
+      store.setState({
+        activeChangeSet: makeAgentChangeSet(),
+        fileDecisions: { '/repo/file.ts': 'accepted' },
+        decisionHydrationScopeKey: 'team-a:agent-alice:scope-a',
+        decisionHydrationStatus: 'loaded',
+      });
+      store.getState().recordDecisionRevision('team-a', 'agent-alice', 'scope-a', 4);
+      store.getState().persistDecisions('team-a', 'agent-alice', 'scope-a');
+
+      store.setState({ decisionHydrationScopeKey: 'team-a:agent-alice:scope-b' });
+      store.getState().recordDecisionRevision('team-a', 'agent-alice', 'scope-b', 99);
+      await vi.advanceTimersByTimeAsync(500);
+
+      expect(hoisted.saveDecisions).toHaveBeenCalledWith(
+        'team-a',
+        'agent-alice',
+        'scope-a',
+        {},
+        { '/repo/file.ts': 'accepted' },
+        { '/repo/file.ts': {} },
+        [],
+        4,
+        []
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('deep-clones queued Undo history before later in-memory reconciliation', async () => {
+    const store = createSliceStore();
+    const history = [
+      {
+        id: 'disk-action',
+        createdAt: '2026-07-17T12:00:00.000Z',
+        kind: 'disk' as const,
+        action: {
+          snapshot: {
+            filePath: '/repo/file.ts',
+            beforeContent: 'before\n',
+            afterContent: 'predicted\n',
+          },
+        },
+      },
+    ];
+    store.setState({ activeChangeSet: makeAgentChangeSet(), reviewActionHistory: history });
+    store.getState().persistDecisions('team-a', 'agent-alice', 'clone-scope');
+    history[0]!.action.snapshot.afterContent = 'mutated-after-queue\n';
+
+    await store.getState().flushDecisionsToDisk('team-a', 'agent-alice', 'clone-scope');
+
+    expect(hoisted.saveDecisions.mock.calls[0]?.[6]).toMatchObject([
+      { action: { snapshot: { afterContent: 'predicted\n' } } },
+    ]);
   });
 
   it('reports a failed decision flush so the dialog can remain open', async () => {
@@ -2446,10 +2585,10 @@ describe('changeReviewSlice task changes', () => {
   it('serializes a close flush behind an older in-flight decision write', async () => {
     vi.useFakeTimers();
     try {
-      const firstWrite = deferred<void>();
+      const firstWrite = deferred<{ revision: number }>();
       hoisted.saveDecisions
         .mockReturnValueOnce(firstWrite.promise)
-        .mockResolvedValueOnce(undefined);
+        .mockResolvedValueOnce({ revision: 2 });
       const store = createSliceStore();
       store.setState({
         activeChangeSet: makeAgentChangeSet(),
@@ -2466,7 +2605,7 @@ describe('changeReviewSlice task changes', () => {
       await flushAsyncWork();
       expect(hoisted.saveDecisions).toHaveBeenCalledTimes(1);
 
-      firstWrite.resolve();
+      firstWrite.resolve({ revision: 1 });
       await expect(flush).resolves.toBe(true);
       expect(hoisted.saveDecisions).toHaveBeenCalledTimes(2);
       expect(hoisted.saveDecisions).toHaveBeenLastCalledWith(
@@ -2476,6 +2615,8 @@ describe('changeReviewSlice task changes', () => {
         {},
         { '/repo/file.ts': 'rejected' },
         { '/repo/file.ts': {} },
+        [],
+        expect.any(Number),
         []
       );
     } finally {
@@ -2486,9 +2627,9 @@ describe('changeReviewSlice task changes', () => {
   it('serializes decision clearing behind an older in-flight save', async () => {
     vi.useFakeTimers();
     try {
-      const firstWrite = deferred<void>();
+      const firstWrite = deferred<{ revision: number }>();
       hoisted.saveDecisions.mockReturnValueOnce(firstWrite.promise);
-      hoisted.clearDecisions.mockResolvedValueOnce(undefined);
+      hoisted.clearDecisions.mockResolvedValueOnce({ revision: 2 });
       const store = createSliceStore();
       store.setState({
         activeChangeSet: makeAgentChangeSet(),
@@ -2503,9 +2644,14 @@ describe('changeReviewSlice task changes', () => {
       await flushAsyncWork();
       expect(hoisted.clearDecisions).not.toHaveBeenCalled();
 
-      firstWrite.resolve();
+      firstWrite.resolve({ revision: 1 });
       await expect(clear).resolves.toBe(true);
-      expect(hoisted.clearDecisions).toHaveBeenCalledWith('team-a', 'agent-alice', 'clear-scope');
+      expect(hoisted.clearDecisions).toHaveBeenCalledWith(
+        'team-a',
+        'agent-alice',
+        'clear-scope',
+        1
+      );
       expect(hoisted.saveDecisions.mock.invocationCallOrder[0]).toBeLessThan(
         hoisted.clearDecisions.mock.invocationCallOrder[0]
       );

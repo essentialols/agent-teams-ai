@@ -237,6 +237,15 @@ export interface ReviewDecisionPersistenceScope {
   scopeToken: string;
 }
 
+/** Exact renderer state committed by main only after the related disk mutation. */
+export interface ReviewPersistedStateSnapshot {
+  hunkDecisions: Record<string, HunkDecision>;
+  fileDecisions: Record<string, HunkDecision>;
+  hunkContextHashesByFile?: Record<string, Record<number, string>>;
+  reviewActionHistory: ReviewUndoAction[];
+  reviewRedoHistory: ReviewRedoAction[];
+}
+
 /** Complete inverse decision state carried by a durable review action. */
 export interface ReviewDecisionSnapshot {
   hunkDecisions: Record<string, HunkDecision>;
@@ -288,6 +297,16 @@ export type ReviewUndoAction =
       action: { filePath: string; originalIndex: number };
     });
 
+/** Durable forward state captured when an Accept/Reject action is undone. */
+export interface ReviewRedoAction {
+  /** The original action moves back to the Undo stack after Redo commits. */
+  action: ReviewUndoAction;
+  /** Exact decision state produced by the original action. */
+  decisionSnapshot: ReviewDecisionSnapshot;
+  /** Stable hunk fingerprints from the original post-action state. */
+  hunkContextHashesByFile?: Record<string, Record<number, string>>;
+}
+
 /** Запрос на применение review */
 export interface ApplyReviewRequest {
   teamName: string;
@@ -295,7 +314,50 @@ export interface ApplyReviewRequest {
   memberName?: string;
   /** Exact durable decision scope used to close disk/decision crash windows. */
   decisionPersistenceScope?: ReviewDecisionPersistenceScope;
+  /**
+   * Full post-operation state. Main persists it only after every requested disk
+   * effect reaches its postimage. Required for durable mutations.
+   */
+  persistedState?: ReviewPersistedStateSnapshot;
+  /** CAS guard for the exact decision snapshot the renderer hydrated. */
+  expectedDecisionRevision?: number;
   decisions: FileReviewDecision[];
+}
+
+export type ReviewDirectDiskMutationStep =
+  | {
+      id: string;
+      type: 'write';
+      filePath: string;
+      expectedContent: string | null;
+      content: string;
+    }
+  | {
+      id: string;
+      type: 'delete';
+      filePath: string;
+      expectedContent: string;
+    }
+  | {
+      id: string;
+      type: 'restore-rejected-rename' | 'reapply-rejected-rename';
+      filePath: string;
+      expectation: ReviewRenameRecoveryExpectation;
+    };
+
+/** Main-authoritative Restore/Rename/Undo transaction. */
+export interface ExecuteReviewMutationRequest {
+  scope: ReviewFileScope;
+  decisionPersistenceScope: ReviewDecisionPersistenceScope;
+  kind: 'restore' | 'rename' | 'undo' | 'redo';
+  diskSteps: ReviewDirectDiskMutationStep[];
+  persistedState: ReviewPersistedStateSnapshot;
+  /** CAS guard preventing an old renderer from overwriting newer durable state. */
+  expectedDecisionRevision: number;
+  /** Required for Undo so a stale renderer cannot pop a newer durable action. */
+  expectedTopActionId?: string;
+  /** Required for Redo so a stale renderer cannot replay a different durable branch. */
+  expectedTopRedoActionId?: string;
 }
 
 /** Authoritative team/task scope used by main to resolve a review file root. */
@@ -323,6 +385,8 @@ export interface ApplyReviewResult {
     error: string;
     code?: 'conflict' | 'unavailable' | 'manual-review-required' | 'io-error';
   }[];
+  /** Revision committed together with the disk mutation. */
+  decisionRevision?: number;
 }
 
 /** Полный file content для CodeMirror */

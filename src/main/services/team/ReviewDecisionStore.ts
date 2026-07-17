@@ -4,8 +4,17 @@ import { createLogger } from '@shared/utils/logger';
 import { createHash } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
+import { isDeepStrictEqual } from 'util';
 
-import type { FileReviewDecision, HunkDecision, ReviewUndoAction } from '@shared/types';
+import type {
+  FileChangeSummary,
+  FileReviewDecision,
+  HunkDecision,
+  ReviewDiskUndoAction,
+  ReviewDiskUndoSnapshot,
+  ReviewRedoAction,
+  ReviewUndoAction,
+} from '@shared/types';
 
 const logger = createLogger('ReviewDecisionStore');
 const TEAM_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,127}$/;
@@ -24,6 +33,8 @@ export interface ReviewDecisionsData {
   hunkContextHashesByFile?: Record<string, Record<number, string>>;
   /** Ordered, self-contained Accept/Reject Undo history for this exact scope. */
   reviewActionHistory?: ReviewUndoAction[];
+  /** Durable forward branch created by Undo and cleared by a new review action. */
+  reviewRedoHistory?: ReviewRedoAction[];
   updatedAt: string;
 }
 
@@ -40,9 +51,112 @@ interface ReviewDecisionsDataV3 extends ReviewDecisionsData {
   reviewActionHistory: ReviewUndoAction[];
 }
 
+interface ReviewDecisionsDataV4 extends ReviewDecisionsData {
+  version: 4;
+  scopeKey: string;
+  scopeToken: string;
+  reviewActionHistory: ReviewUndoAction[];
+  revision: number;
+  lastMutationId?: string;
+}
+
+interface ReviewDecisionsDataV5 extends ReviewDecisionsData {
+  version: 5;
+  scopeKey: string;
+  scopeToken: string;
+  reviewActionHistory: ReviewUndoAction[];
+  reviewRedoHistory: ReviewRedoAction[];
+  revision: number;
+  lastMutationId?: string;
+}
+
+type StoredReviewDiskUndoSnapshotV6 = Omit<
+  ReviewDiskUndoSnapshot,
+  'beforeContent' | 'afterContent' | 'file'
+> & {
+  beforeBlob: string;
+  afterBlob: string | null;
+  fileRef?: string;
+};
+
+type StoredReviewDiskUndoActionV6 = Omit<ReviewDiskUndoAction, 'snapshot' | 'file'> & {
+  snapshot: StoredReviewDiskUndoSnapshotV6;
+  fileRef?: string;
+};
+
+type StoredReviewUndoActionV6 =
+  | (Omit<Extract<ReviewUndoAction, { kind: 'bulk' }>, 'diskSnapshots'> & {
+      diskSnapshots: StoredReviewDiskUndoSnapshotV6[];
+    })
+  | (Omit<Extract<ReviewUndoAction, { kind: 'disk' }>, 'action'> & {
+      action: StoredReviewDiskUndoActionV6;
+    })
+  | Extract<ReviewUndoAction, { kind: 'hunk' }>;
+
+type StoredReviewRedoActionV6 = Omit<ReviewRedoAction, 'action'> & {
+  action: StoredReviewUndoActionV6;
+};
+
+interface StoredReviewDecisionsDataV6 extends Omit<
+  ReviewDecisionsData,
+  'reviewActionHistory' | 'reviewRedoHistory'
+> {
+  version: 6;
+  scopeKey: string;
+  scopeToken: string;
+  reviewActionHistory: StoredReviewUndoActionV6[];
+  reviewRedoHistory: StoredReviewRedoActionV6[];
+  textBlobs: Record<string, string>;
+  fileSummaryBlobs: Record<string, FileChangeSummary>;
+  revision: number;
+  lastMutationId?: string;
+}
+
+interface ParsedReviewDecisionsDataV6 extends ReviewDecisionsData {
+  version: 6;
+  scopeKey: string;
+  scopeToken: string;
+  reviewActionHistory: ReviewUndoAction[];
+  reviewRedoHistory: ReviewRedoAction[];
+  revision: number;
+  lastMutationId?: string;
+}
+
+export interface LoadedReviewDecisions {
+  hunkDecisions: Record<string, HunkDecision>;
+  fileDecisions: Record<string, HunkDecision>;
+  hunkContextHashesByFile?: Record<string, Record<number, string>>;
+  reviewActionHistory: ReviewUndoAction[];
+  reviewRedoHistory: ReviewRedoAction[];
+  revision: number;
+}
+
+interface InternalLoadedReviewDecisions extends LoadedReviewDecisions {
+  lastMutationId?: string;
+}
+
 class InvalidReviewDecisionDataError extends Error {}
 
 export class ReviewDecisionStore {
+  assertValidSnapshot(data: {
+    hunkDecisions: Record<string, HunkDecision>;
+    fileDecisions: Record<string, HunkDecision>;
+    hunkContextHashesByFile?: Record<string, Record<number, string>>;
+    reviewActionHistory?: ReviewUndoAction[];
+    reviewRedoHistory?: ReviewRedoAction[];
+  }): void {
+    if (
+      !this.isDecisionRecord(data.hunkDecisions) ||
+      !this.isDecisionRecord(data.fileDecisions) ||
+      !this.isContextHashRecord(data.hunkContextHashesByFile) ||
+      !this.isReviewActionHistory(data.reviewActionHistory ?? []) ||
+      !this.isReviewRedoHistory(data.reviewRedoHistory ?? []) ||
+      !this.hasDisjointReviewActionIds(data.reviewActionHistory ?? [], data.reviewRedoHistory ?? [])
+    ) {
+      throw new Error('Invalid review decisions payload');
+    }
+  }
+
   private assertSafeScope(teamName: string, scopeKey: string, scopeToken?: string): void {
     if (typeof teamName !== 'string' || !TEAM_NAME_PATTERN.test(teamName)) {
       throw new Error('Invalid review decision team name');
@@ -78,9 +192,213 @@ export class ReviewDecisionStore {
     return path.join(this.getV2DirPath(teamName, scopeKey), `${scopeHash}.json`);
   }
 
+  private hashHistoryBlob(kind: 'text' | 'file-summary', value: string): string {
+    return createHash('sha256').update(kind).update('\0').update(value).digest('hex');
+  }
+
+  private encodeHistoryV6(
+    undoHistory: readonly ReviewUndoAction[],
+    redoHistory: readonly ReviewRedoAction[]
+  ): Pick<
+    StoredReviewDecisionsDataV6,
+    'reviewActionHistory' | 'reviewRedoHistory' | 'textBlobs' | 'fileSummaryBlobs'
+  > {
+    const textBlobs: Record<string, string> = {};
+    const fileSummaryBlobs: Record<string, FileChangeSummary> = {};
+    const addText = (content: string): string => {
+      const ref = this.hashHistoryBlob('text', content);
+      const existing = textBlobs[ref];
+      if (existing !== undefined && existing !== content) {
+        throw new Error('Review history content hash collision');
+      }
+      textBlobs[ref] = content;
+      return ref;
+    };
+    const addFileSummary = (file: FileChangeSummary): string => {
+      const serialized = JSON.stringify(file);
+      const ref = this.hashHistoryBlob('file-summary', serialized);
+      const existing = fileSummaryBlobs[ref];
+      if (existing !== undefined && JSON.stringify(existing) !== serialized) {
+        throw new Error('Review history file-summary hash collision');
+      }
+      fileSummaryBlobs[ref] = file;
+      return ref;
+    };
+    const encodeSnapshot = (snapshot: ReviewDiskUndoSnapshot): StoredReviewDiskUndoSnapshotV6 => {
+      const { beforeContent, afterContent, file, ...metadata } = snapshot;
+      return {
+        ...metadata,
+        beforeBlob: addText(beforeContent),
+        afterBlob: afterContent === null ? null : addText(afterContent),
+        ...(file ? { fileRef: addFileSummary(file) } : {}),
+      };
+    };
+    const encodeAction = (action: ReviewUndoAction): StoredReviewUndoActionV6 => {
+      if (action.kind === 'hunk') return action;
+      if (action.kind === 'bulk') {
+        return {
+          ...action,
+          diskSnapshots: action.diskSnapshots.map(encodeSnapshot),
+        };
+      }
+      const { snapshot, file, ...actionMetadata } = action.action;
+      return {
+        ...action,
+        action: {
+          ...actionMetadata,
+          snapshot: encodeSnapshot(snapshot),
+          ...(file ? { fileRef: addFileSummary(file) } : {}),
+        },
+      };
+    };
+
+    return {
+      reviewActionHistory: undoHistory.map(encodeAction),
+      reviewRedoHistory: redoHistory.map((entry) => ({
+        ...entry,
+        action: encodeAction(entry.action),
+      })),
+      textBlobs,
+      fileSummaryBlobs,
+    };
+  }
+
+  private decodeHistoryV6(data: {
+    reviewActionHistory?: unknown;
+    reviewRedoHistory?: unknown;
+    textBlobs?: unknown;
+    fileSummaryBlobs?: unknown;
+  }): { undo: ReviewUndoAction[]; redo: ReviewRedoAction[] } | null {
+    if (
+      !Array.isArray(data.reviewActionHistory) ||
+      data.reviewActionHistory.length > MAX_STORED_REVIEW_ACTIONS ||
+      !Array.isArray(data.reviewRedoHistory) ||
+      data.reviewRedoHistory.length > MAX_STORED_REVIEW_ACTIONS ||
+      !data.textBlobs ||
+      typeof data.textBlobs !== 'object' ||
+      Array.isArray(data.textBlobs) ||
+      !data.fileSummaryBlobs ||
+      typeof data.fileSummaryBlobs !== 'object' ||
+      Array.isArray(data.fileSummaryBlobs)
+    ) {
+      return null;
+    }
+    const textEntries = Object.entries(data.textBlobs as Record<string, unknown>);
+    const fileEntries = Object.entries(data.fileSummaryBlobs as Record<string, unknown>);
+    if (
+      textEntries.length + fileEntries.length > MAX_STORED_DECISION_ENTRIES ||
+      textEntries.some(
+        ([ref, content]) =>
+          !/^[a-f0-9]{64}$/.test(ref) ||
+          typeof content !== 'string' ||
+          this.hashHistoryBlob('text', content) !== ref
+      ) ||
+      fileEntries.some(([ref, file]) => {
+        if (!/^[a-f0-9]{64}$/.test(ref) || !this.isFileSummary(file)) return true;
+        try {
+          return this.hashHistoryBlob('file-summary', JSON.stringify(file)) !== ref;
+        } catch {
+          return true;
+        }
+      })
+    ) {
+      return null;
+    }
+    const textBlobs = data.textBlobs as Record<string, string>;
+    const fileSummaryBlobs = data.fileSummaryBlobs as Record<string, FileChangeSummary>;
+    const hasOwn = (record: object, key: string): boolean =>
+      Object.prototype.hasOwnProperty.call(record, key);
+    const usedTextRefs = new Set<string>();
+    const usedFileRefs = new Set<string>();
+    let decodedSnapshotCount = 0;
+    const decodeSnapshot = (value: unknown): ReviewDiskUndoSnapshot | null => {
+      decodedSnapshotCount++;
+      if (decodedSnapshotCount > MAX_STORED_DECISION_ENTRIES) return null;
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+      const candidate = value as Partial<StoredReviewDiskUndoSnapshotV6>;
+      if (
+        typeof candidate.beforeBlob !== 'string' ||
+        !hasOwn(textBlobs, candidate.beforeBlob) ||
+        (candidate.afterBlob !== null &&
+          (typeof candidate.afterBlob !== 'string' || !hasOwn(textBlobs, candidate.afterBlob))) ||
+        (candidate.fileRef !== undefined &&
+          (typeof candidate.fileRef !== 'string' || !hasOwn(fileSummaryBlobs, candidate.fileRef)))
+      ) {
+        return null;
+      }
+      usedTextRefs.add(candidate.beforeBlob);
+      if (candidate.afterBlob !== null) usedTextRefs.add(candidate.afterBlob);
+      if (candidate.fileRef) usedFileRefs.add(candidate.fileRef);
+      const { beforeBlob, afterBlob, fileRef, ...metadata } = candidate;
+      return {
+        ...metadata,
+        beforeContent: textBlobs[beforeBlob]!,
+        afterContent: afterBlob === null ? null : textBlobs[afterBlob]!,
+        ...(fileRef ? { file: fileSummaryBlobs[fileRef]! } : {}),
+      } as ReviewDiskUndoSnapshot;
+    };
+    const decodeAction = (value: unknown): ReviewUndoAction | null => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+      const candidate = value as Partial<StoredReviewUndoActionV6>;
+      if (candidate.kind === 'hunk') return candidate as ReviewUndoAction;
+      if (candidate.kind === 'bulk') {
+        if (!Array.isArray(candidate.diskSnapshots)) return null;
+        const diskSnapshots = candidate.diskSnapshots.map(decodeSnapshot);
+        if (diskSnapshots.some((snapshot) => !snapshot)) return null;
+        return { ...candidate, diskSnapshots } as ReviewUndoAction;
+      }
+      if (candidate.kind !== 'disk' || !candidate.action || typeof candidate.action !== 'object') {
+        return null;
+      }
+      const storedAction = candidate.action as Partial<StoredReviewDiskUndoActionV6>;
+      const snapshot = decodeSnapshot(storedAction.snapshot);
+      if (
+        !snapshot ||
+        (storedAction.fileRef !== undefined &&
+          (typeof storedAction.fileRef !== 'string' ||
+            !hasOwn(fileSummaryBlobs, storedAction.fileRef)))
+      ) {
+        return null;
+      }
+      if (storedAction.fileRef) usedFileRefs.add(storedAction.fileRef);
+      const { fileRef, ...actionMetadata } = storedAction;
+      return {
+        ...candidate,
+        action: {
+          ...actionMetadata,
+          snapshot,
+          ...(fileRef ? { file: fileSummaryBlobs[fileRef]! } : {}),
+        },
+      } as ReviewUndoAction;
+    };
+    const undo = data.reviewActionHistory.map(decodeAction);
+    const redo = data.reviewRedoHistory.map((value): ReviewRedoAction | null => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+      const candidate = value as Partial<StoredReviewRedoActionV6>;
+      const action = decodeAction(candidate.action);
+      return action ? ({ ...candidate, action } as ReviewRedoAction) : null;
+    });
+    if (
+      undo.some((action) => !action) ||
+      redo.some((entry) => !entry) ||
+      usedTextRefs.size !== textEntries.length ||
+      usedFileRefs.size !== fileEntries.length
+    ) {
+      return null;
+    }
+    return { undo: undo as ReviewUndoAction[], redo: redo as ReviewRedoAction[] };
+  }
+
   private parseStoredData(
     parsed: unknown
-  ): ReviewDecisionsData | ReviewDecisionsDataV2 | ReviewDecisionsDataV3 | null {
+  ):
+    | ReviewDecisionsData
+    | ReviewDecisionsDataV2
+    | ReviewDecisionsDataV3
+    | ReviewDecisionsDataV4
+    | ReviewDecisionsDataV5
+    | ParsedReviewDecisionsDataV6
+    | null {
     if (!parsed || typeof parsed !== 'object') {
       return null;
     }
@@ -90,9 +408,18 @@ export class ReviewDecisionStore {
       scopeKey?: unknown;
       scopeToken?: unknown;
       reviewActionHistory?: unknown;
+      reviewRedoHistory?: unknown;
+      revision?: unknown;
+      lastMutationId?: unknown;
+      textBlobs?: unknown;
+      fileSummaryBlobs?: unknown;
     };
     const isExactScope =
-      (data.version === 2 || data.version === 3) &&
+      (data.version === 2 ||
+        data.version === 3 ||
+        data.version === 4 ||
+        data.version === 5 ||
+        data.version === 6) &&
       typeof data.scopeKey === 'string' &&
       typeof data.scopeToken === 'string';
 
@@ -100,21 +427,73 @@ export class ReviewDecisionStore {
       return null;
     }
 
+    if (data.version === 6) {
+      const decoded = this.decodeHistoryV6(data);
+      if (
+        !decoded ||
+        !this.isDecisionRecord(data.hunkDecisions) ||
+        !this.isDecisionRecord(data.fileDecisions) ||
+        !this.isContextHashRecord(data.hunkContextHashesByFile) ||
+        !this.isReviewActionHistory(decoded.undo) ||
+        !this.isReviewRedoHistory(decoded.redo) ||
+        !this.hasDisjointReviewActionIds(decoded.undo, decoded.redo) ||
+        !Number.isSafeInteger(data.revision) ||
+        (data.revision as number) < 1 ||
+        (data.lastMutationId !== undefined &&
+          (typeof data.lastMutationId !== 'string' ||
+            data.lastMutationId.length === 0 ||
+            data.lastMutationId.length > 256))
+      ) {
+        return null;
+      }
+      return {
+        ...(data as ReviewDecisionsData),
+        version: 6,
+        scopeKey: data.scopeKey as string,
+        scopeToken: data.scopeToken as string,
+        reviewActionHistory: decoded.undo,
+        reviewRedoHistory: decoded.redo,
+        revision: data.revision as number,
+        ...(typeof data.lastMutationId === 'string' ? { lastMutationId: data.lastMutationId } : {}),
+      };
+    }
+
     if (
       !this.isDecisionRecord(data.hunkDecisions) ||
       !this.isDecisionRecord(data.fileDecisions) ||
       !this.isContextHashRecord(data.hunkContextHashesByFile) ||
-      (data.version === 3 && !this.isReviewActionHistory(data.reviewActionHistory))
+      ((data.version === 3 || data.version === 4 || data.version === 5) &&
+        !this.isReviewActionHistory(data.reviewActionHistory)) ||
+      (data.version === 5 && !this.isReviewRedoHistory(data.reviewRedoHistory)) ||
+      (data.version === 5 &&
+        !this.hasDisjointReviewActionIds(
+          data.reviewActionHistory as ReviewUndoAction[],
+          data.reviewRedoHistory as ReviewRedoAction[]
+        )) ||
+      ((data.version === 4 || data.version === 5) &&
+        (!Number.isSafeInteger(data.revision) ||
+          (data.revision as number) < 1 ||
+          (data.lastMutationId !== undefined &&
+            (typeof data.lastMutationId !== 'string' ||
+              data.lastMutationId.length === 0 ||
+              data.lastMutationId.length > 256))))
     ) {
       return null;
     }
 
-    return data as ReviewDecisionsData | ReviewDecisionsDataV2 | ReviewDecisionsDataV3;
+    return data as
+      | ReviewDecisionsData
+      | ReviewDecisionsDataV2
+      | ReviewDecisionsDataV3
+      | ReviewDecisionsDataV4
+      | ReviewDecisionsDataV5
+      | ParsedReviewDecisionsDataV6;
   }
 
   private isReviewActionHistory(value: unknown): value is ReviewUndoAction[] {
     if (!Array.isArray(value) || value.length > MAX_STORED_REVIEW_ACTIONS) return false;
     const ids = new Set<string>();
+    let diskSnapshotCount = 0;
     return value.every((action) => {
       if (!action || typeof action !== 'object' || Array.isArray(action)) return false;
       const candidate = action as Partial<ReviewUndoAction>;
@@ -134,17 +513,59 @@ export class ReviewDecisionStore {
         return this.isHunkUndoAction(candidate.action);
       }
       if (candidate.kind === 'disk') {
-        return this.isDiskUndoAction(candidate.action);
+        diskSnapshotCount++;
+        return (
+          diskSnapshotCount <= MAX_STORED_DECISION_ENTRIES &&
+          this.isDiskUndoAction(candidate.action)
+        );
       }
       if (candidate.kind === 'bulk') {
+        if (!Array.isArray(candidate.diskSnapshots)) return false;
+        diskSnapshotCount += candidate.diskSnapshots.length;
         return (
+          diskSnapshotCount <= MAX_STORED_DECISION_ENTRIES &&
           this.isDecisionSnapshot(candidate.decisionSnapshot) &&
-          Array.isArray(candidate.diskSnapshots) &&
           candidate.diskSnapshots.every((snapshot) => this.isDiskUndoSnapshot(snapshot))
         );
       }
       return false;
     });
+  }
+
+  private isReviewRedoHistory(value: unknown): value is ReviewRedoAction[] {
+    if (!Array.isArray(value) || value.length > MAX_STORED_REVIEW_ACTIONS) return false;
+    const ids = new Set<string>();
+    let diskSnapshotCount = 0;
+    return value.every((entry) => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false;
+      const candidate = entry as Partial<ReviewRedoAction>;
+      if (
+        !candidate.action ||
+        !this.isReviewActionHistory([candidate.action]) ||
+        ids.has(candidate.action.id) ||
+        !this.isDecisionSnapshot(candidate.decisionSnapshot) ||
+        !this.isContextHashRecord(candidate.hunkContextHashesByFile)
+      ) {
+        return false;
+      }
+      diskSnapshotCount +=
+        candidate.action.kind === 'bulk'
+          ? candidate.action.diskSnapshots.length
+          : candidate.action.kind === 'disk'
+            ? 1
+            : 0;
+      if (diskSnapshotCount > MAX_STORED_DECISION_ENTRIES) return false;
+      ids.add(candidate.action.id);
+      return true;
+    });
+  }
+
+  private hasDisjointReviewActionIds(
+    undoHistory: readonly ReviewUndoAction[],
+    redoHistory: readonly ReviewRedoAction[]
+  ): boolean {
+    const undoIds = new Set(undoHistory.map((action) => action.id));
+    return redoHistory.every((entry) => !undoIds.has(entry.action.id));
   }
 
   private isDecisionSnapshot(value: unknown): boolean {
@@ -296,14 +717,15 @@ export class ReviewDecisionStore {
   }
 
   private extractDecisions(
-    data: ReviewDecisionsData | ReviewDecisionsDataV2 | ReviewDecisionsDataV3,
+    data:
+      | ReviewDecisionsData
+      | ReviewDecisionsDataV2
+      | ReviewDecisionsDataV3
+      | ReviewDecisionsDataV4
+      | ReviewDecisionsDataV5
+      | ParsedReviewDecisionsDataV6,
     scopeToken?: string
-  ): {
-    hunkDecisions: Record<string, HunkDecision>;
-    fileDecisions: Record<string, HunkDecision>;
-    hunkContextHashesByFile?: Record<string, Record<number, string>>;
-    reviewActionHistory: ReviewUndoAction[];
-  } | null {
+  ): InternalLoadedReviewDecisions | null {
     const hunkDecisions: Record<string, HunkDecision> =
       data.hunkDecisions && typeof data.hunkDecisions === 'object' ? data.hunkDecisions : {};
     const fileDecisions: Record<string, HunkDecision> =
@@ -320,20 +742,35 @@ export class ReviewDecisionStore {
     }
 
     const reviewActionHistory =
-      'version' in data && data.version === 3 ? data.reviewActionHistory : [];
-    return { hunkDecisions, fileDecisions, hunkContextHashesByFile, reviewActionHistory };
+      'version' in data &&
+      (data.version === 3 || data.version === 4 || data.version === 5 || data.version === 6)
+        ? data.reviewActionHistory
+        : [];
+    const reviewRedoHistory =
+      'version' in data && (data.version === 5 || data.version === 6) ? data.reviewRedoHistory : [];
+    return {
+      hunkDecisions,
+      fileDecisions,
+      hunkContextHashesByFile,
+      reviewActionHistory,
+      reviewRedoHistory,
+      revision:
+        'version' in data && (data.version === 4 || data.version === 5 || data.version === 6)
+          ? data.revision
+          : 0,
+      ...('version' in data &&
+      (data.version === 4 || data.version === 5 || data.version === 6) &&
+      data.lastMutationId
+        ? { lastMutationId: data.lastMutationId }
+        : {}),
+    };
   }
 
   private async loadFromPath(
     filePath: string,
     scopeToken?: string,
     expectedScopeKey?: string
-  ): Promise<{
-    hunkDecisions: Record<string, HunkDecision>;
-    fileDecisions: Record<string, HunkDecision>;
-    hunkContextHashesByFile?: Record<string, Record<number, string>>;
-    reviewActionHistory: ReviewUndoAction[];
-  } | null> {
+  ): Promise<InternalLoadedReviewDecisions | null> {
     let handle: fs.promises.FileHandle | null = null;
     let raw: string;
     try {
@@ -391,7 +828,11 @@ export class ReviewDecisionStore {
     }
     if (
       'version' in data &&
-      (data.version === 2 || data.version === 3) &&
+      (data.version === 2 ||
+        data.version === 3 ||
+        data.version === 4 ||
+        data.version === 5 ||
+        data.version === 6) &&
       data.scopeKey !== expectedScopeKey
     ) {
       throw new InvalidReviewDecisionDataError(`Mismatched review decision scope at ${filePath}`);
@@ -436,16 +877,11 @@ export class ReviewDecisionStore {
     );
   }
 
-  async load(
+  private async loadInternal(
     teamName: string,
     scopeKey: string,
     scopeToken?: string
-  ): Promise<{
-    hunkDecisions: Record<string, HunkDecision>;
-    fileDecisions: Record<string, HunkDecision>;
-    hunkContextHashesByFile?: Record<string, Record<number, string>>;
-    reviewActionHistory: ReviewUndoAction[];
-  } | null> {
+  ): Promise<InternalLoadedReviewDecisions | null> {
     this.assertSafeScope(teamName, scopeKey, scopeToken);
     if (scopeToken) {
       const exact = await this.loadFromPath(
@@ -461,6 +897,17 @@ export class ReviewDecisionStore {
     return this.loadFromPath(this.getLegacyFilePath(teamName, scopeKey), scopeToken, scopeKey);
   }
 
+  async load(
+    teamName: string,
+    scopeKey: string,
+    scopeToken?: string
+  ): Promise<LoadedReviewDecisions | null> {
+    const loaded = await this.loadInternal(teamName, scopeKey, scopeToken);
+    if (!loaded) return null;
+    const { lastMutationId: _lastMutationId, ...publicSnapshot } = loaded;
+    return publicSnapshot;
+  }
+
   async save(
     teamName: string,
     scopeKey: string,
@@ -470,38 +917,82 @@ export class ReviewDecisionStore {
       fileDecisions: Record<string, HunkDecision>;
       hunkContextHashesByFile?: Record<string, Record<number, string>>;
       reviewActionHistory?: ReviewUndoAction[];
+      reviewRedoHistory?: ReviewRedoAction[];
+      expectedRevision?: number;
+      mutationId?: string;
     }
-  ): Promise<void> {
+  ): Promise<number> {
     this.assertSafeScope(teamName, scopeKey, data.scopeToken);
+    this.assertValidSnapshot(data);
     if (
-      !this.isDecisionRecord(data.hunkDecisions) ||
-      !this.isDecisionRecord(data.fileDecisions) ||
-      !this.isContextHashRecord(data.hunkContextHashesByFile) ||
-      !this.isReviewActionHistory(data.reviewActionHistory ?? [])
+      (data.expectedRevision !== undefined &&
+        (!Number.isSafeInteger(data.expectedRevision) || data.expectedRevision < 0)) ||
+      (data.mutationId !== undefined &&
+        (typeof data.mutationId !== 'string' ||
+          data.mutationId.length === 0 ||
+          data.mutationId.length > 256))
     ) {
-      throw new Error('Invalid review decisions payload');
+      throw new Error('Invalid review decision revision metadata');
     }
     try {
-      const payload: ReviewDecisionsDataV3 = {
-        version: 3,
-        scopeKey,
-        scopeToken: data.scopeToken,
+      const current = await this.loadInternal(teamName, scopeKey, data.scopeToken);
+      const currentRevision = current?.revision ?? 0;
+      const targetSnapshot = {
         hunkDecisions: data.hunkDecisions,
         fileDecisions: data.fileDecisions,
         hunkContextHashesByFile: data.hunkContextHashesByFile,
         reviewActionHistory: data.reviewActionHistory ?? [],
+        reviewRedoHistory: data.reviewRedoHistory ?? [],
+      };
+      if (data.expectedRevision !== undefined && data.expectedRevision !== currentRevision) {
+        if (
+          data.mutationId &&
+          current?.lastMutationId === data.mutationId &&
+          isDeepStrictEqual(
+            {
+              hunkDecisions: current.hunkDecisions,
+              fileDecisions: current.fileDecisions,
+              hunkContextHashesByFile: current.hunkContextHashesByFile,
+              reviewActionHistory: current.reviewActionHistory,
+              reviewRedoHistory: current.reviewRedoHistory,
+            },
+            targetSnapshot
+          )
+        ) {
+          return currentRevision;
+        }
+        throw new Error('Review decisions changed; refusing stale state overwrite');
+      }
+      const revision = currentRevision + 1;
+      const compactedHistory = this.encodeHistoryV6(
+        targetSnapshot.reviewActionHistory,
+        targetSnapshot.reviewRedoHistory
+      );
+      const payload: StoredReviewDecisionsDataV6 = {
+        version: 6,
+        scopeKey,
+        scopeToken: data.scopeToken,
+        hunkDecisions: targetSnapshot.hunkDecisions,
+        fileDecisions: targetSnapshot.fileDecisions,
+        hunkContextHashesByFile: targetSnapshot.hunkContextHashesByFile,
+        ...compactedHistory,
+        revision,
+        ...(data.mutationId ? { lastMutationId: data.mutationId } : {}),
         updatedAt: new Date().toISOString(),
       };
       const filePath = this.getV2FilePath(teamName, scopeKey, data.scopeToken);
       const serialized = JSON.stringify(payload, null, 2);
       if (Buffer.byteLength(serialized, 'utf8') > MAX_STORED_DECISIONS_BYTES) {
-        throw new Error('Review decisions payload exceeds the durable storage limit');
+        throw new Error(
+          'Review Undo/Redo history exceeds the 128 MiB durable storage limit. Start a new review scope or reduce retained history before retrying.'
+        );
       }
       await atomicWriteAsync(filePath, serialized, {
         durability: 'strict',
         syncDirectory: true,
       });
       await this.pruneScopeDir(teamName, scopeKey);
+      return revision;
     } catch (error) {
       logger.error(`Failed to save review decisions for ${teamName}/${scopeKey}: ${String(error)}`);
       throw error;
@@ -522,11 +1013,13 @@ export class ReviewDecisionStore {
     ) {
       throw new Error('Invalid review decision patch key');
     }
-    const current = (await this.load(teamName, scopeKey, scopeToken)) ?? {
+    const current: LoadedReviewDecisions = (await this.load(teamName, scopeKey, scopeToken)) ?? {
       hunkDecisions: {},
       fileDecisions: {},
       hunkContextHashesByFile: {},
       reviewActionHistory: [],
+      reviewRedoHistory: [],
+      revision: 0,
     };
     const hunkDecisions = { ...current.hunkDecisions };
     const fileDecisions = { ...current.fileDecisions };
@@ -556,6 +1049,7 @@ export class ReviewDecisionStore {
       fileDecisions,
       hunkContextHashesByFile,
       reviewActionHistory: current.reviewActionHistory,
+      reviewRedoHistory: current.reviewRedoHistory,
     });
   }
 

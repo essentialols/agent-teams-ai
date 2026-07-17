@@ -250,6 +250,27 @@ export class LocalGitIntegrationAdapter implements GitPort {
     };
   }
 
+  async changedFilesSinceCommit(input: {
+    readonly workspacePath: string;
+    readonly commit: string;
+  }): Promise<readonly string[]> {
+    const workspacePath = await canonicalDirectory(input.workspacePath);
+    if (!/^[a-f0-9]{40,64}$/i.test(input.commit)) {
+      throw new Error("local_git_integration_commit_invalid");
+    }
+    const changedFiles = await this.gitNullTerminatedPaths(
+      ["diff", "--name-only", "--no-renames", "-z", input.commit, "--"],
+      workspacePath,
+    );
+    const untrackedFiles = await this.gitNullTerminatedPaths(
+      ["ls-files", "--others", "--exclude-standard", "-z"],
+      workspacePath,
+    );
+    return uniqueSorted([...changedFiles, ...untrackedFiles]).map(
+      normalizeProjectRelativePath,
+    );
+  }
+
   async commit(input: {
     readonly workspacePath: string;
     readonly message: string;

@@ -40,6 +40,11 @@ export interface GitPort {
     readonly workspacePath: string;
   }): Promise<GitDiffCheckResult> | GitDiffCheckResult;
 
+  changedFilesSinceCommit(input: {
+    readonly workspacePath: string;
+    readonly commit: string;
+  }): Promise<readonly string[]> | readonly string[];
+
   commit(input: {
     readonly workspacePath: string;
     readonly message: string;

@@ -271,6 +271,8 @@ export class FakeGit implements GitPort {
   lastPushedBranch: string | undefined;
   lastExpectedRemoteCommit: string | undefined;
   abortMergeError: Error | undefined;
+  changedSinceCommitFiles: readonly string[] | undefined;
+  lastChangedSinceCommit: string | undefined;
 
   getStatus() {
     this.calls.push("status");
@@ -290,6 +292,12 @@ export class FakeGit implements GitPort {
   diffCheck() {
     this.calls.push("diffCheck");
     return { ok: true };
+  }
+
+  changedFilesSinceCommit(input: { readonly commit: string }) {
+    this.calls.push("changedSinceCommit");
+    this.lastChangedSinceCommit = input.commit;
+    return this.changedSinceCommitFiles ?? this.dirtyFiles;
   }
 
   commit(input: {

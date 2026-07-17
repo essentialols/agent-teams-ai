@@ -828,6 +828,10 @@ describe("project integration use cases", () => {
   it("records an exact ordered two-parent merge commit", async () => {
     const fixture = createFixture();
     fixture.git.appliedFiles = ["src/base-change.ts", "src/memory.ts"];
+    fixture.git.changedSinceCommitFiles = [
+      "src/clean-target-only.ts",
+      "src/memory.ts",
+    ];
     const opened = await openProjectIntegrationAttempt(
       fixture.deps(),
       mergeInput(),
@@ -853,10 +857,8 @@ describe("project integration use cases", () => {
       "src/base-change.ts",
       "src/memory.ts",
     ]);
-    expect(fixture.scanner.lastFiles).toEqual([
-      "src/base-change.ts",
-      "src/memory.ts",
-    ]);
+    expect(fixture.git.lastChangedSinceCommit).toBe(MERGE_SOURCE_COMMIT);
+    expect(fixture.scanner.lastFiles).toEqual(["src/memory.ts"]);
   });
 
   it("fails closed when a merge commit reports different parents", async () => {

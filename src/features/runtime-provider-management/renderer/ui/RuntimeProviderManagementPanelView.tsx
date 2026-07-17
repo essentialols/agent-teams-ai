@@ -27,6 +27,10 @@ import {
   getOpenCodeTeamModelRecommendation,
   isOpenCodeTeamModelRecommended,
 } from '@renderer/utils/openCodeModelRecommendations';
+import {
+  getOpenCodeModelRoutePresentationStatus,
+  isOpenCodeModelExplicitlyFree,
+} from '@shared/utils/opencodeModelRoute';
 import { isOpenCodeWindowsNodeModulesSymlinkPermissionDiagnostic } from '@shared/utils/openCodeWindowsAccessDenied';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import {
@@ -1738,8 +1742,10 @@ function ModelBadges({
 }): JSX.Element | null {
   const { t } = useAppTranslation('settings');
   const modelRecommendation = getOpenCodeTeamModelRecommendation(model.modelId);
-  const localRoute = model.routeKind === 'configured_local';
-  const connectedRoute = model.routeKind === 'connected_provider';
+  const routeStatus = getOpenCodeModelRoutePresentationStatus(model);
+  const localRoute = routeStatus === 'local';
+  const configuredRoute = routeStatus === 'configured';
+  const connectedRoute = routeStatus === 'connected';
   const freeModel = isFreeRuntimeProviderModel(model);
   const verified =
     model.proofState === 'verified' ||
@@ -1760,6 +1766,7 @@ function ModelBadges({
     !usedForNewTeams &&
     !modelRecommendation &&
     !localRoute &&
+    !configuredRoute &&
     !connectedRoute &&
     !verified &&
     !needsTest &&
@@ -1820,14 +1827,19 @@ function ModelBadges({
         <Badge className="bg-sky-400/15 px-1.5 py-0 text-[10px] text-sky-200">beta</Badge>
       ) : null}
       {localRoute ? (
-        <>
-          <Badge className="bg-cyan-400/15 px-1.5 py-0 text-[10px] text-cyan-200">
-            {t('runtimeProvider.badges.local')}
-          </Badge>
-          <Badge className="bg-sky-400/15 px-1.5 py-0 text-[10px] text-sky-200">
-            {t('runtimeProvider.badges.knownRoute')}
-          </Badge>
-        </>
+        <Badge className="bg-cyan-400/15 px-1.5 py-0 text-[10px] text-cyan-200">
+          {t('runtimeProvider.badges.local')}
+        </Badge>
+      ) : null}
+      {configuredRoute ? (
+        <Badge className="bg-sky-400/15 px-1.5 py-0 text-[10px] text-sky-200">
+          {t('runtimeProvider.badges.configured')}
+        </Badge>
+      ) : null}
+      {localRoute || configuredRoute ? (
+        <Badge className="bg-sky-400/15 px-1.5 py-0 text-[10px] text-sky-200">
+          {t('runtimeProvider.badges.knownRoute')}
+        </Badge>
       ) : null}
       {connectedRoute ? (
         <Badge className="bg-emerald-400/15 px-1.5 py-0 text-[10px] text-emerald-100">
@@ -1864,16 +1876,7 @@ function ModelBadges({
 }
 
 function isFreeRuntimeProviderModel(model: RuntimeProviderModelDto): boolean {
-  const normalizedModelId = model.modelId.trim().toLowerCase();
-  return (
-    model.free ||
-    model.routeKind === 'builtin_free' ||
-    model.accessKind === 'builtin_free' ||
-    normalizedModelId === 'opencode/big-pickle' ||
-    normalizedModelId.includes(':free') ||
-    normalizedModelId.endsWith('-free') ||
-    normalizedModelId.endsWith('/free')
-  );
+  return isOpenCodeModelExplicitlyFree(model);
 }
 
 function isUnknownOpenCodeModelRoute(model: RuntimeProviderModelDto): boolean {
@@ -1944,13 +1947,14 @@ function getDisabledActionReason(input: {
 
 function getOpenCodeModelSearchText(model: RuntimeProviderModelDto): string {
   const recommendation = getOpenCodeTeamModelRecommendation(model.modelId);
+  const routeStatus = getOpenCodeModelRoutePresentationStatus(model);
   return [
     model.providerId,
     model.modelId,
     model.displayName,
     model.sourceLabel,
     model.accessKind,
-    model.routeKind,
+    routeStatus ?? '',
     model.proofState,
     model.catalogStatus,
     model.availability,

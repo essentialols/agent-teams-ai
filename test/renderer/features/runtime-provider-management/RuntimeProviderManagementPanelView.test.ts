@@ -833,6 +833,74 @@ describe('RuntimeProviderManagementPanelView', () => {
     );
   });
 
+  it('renders Kiro as configured instead of local or free across route badges and search', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const kiroModel = {
+      providerId: 'kiro',
+      modelId: 'kiro/auto',
+      displayName: 'auto',
+      sourceLabel: 'Kiro',
+      free: true,
+      default: false,
+      availability: 'available' as const,
+      accessKind: 'credentialed' as const,
+      routeKind: 'configured_local' as const,
+      proofState: 'verified' as const,
+      requiresExecutionProof: false,
+      accessReason: null,
+    };
+
+    await act(async () => {
+      root.render(
+        React.createElement(RuntimeProviderManagementPanelView, {
+          state: createState({
+            view: {
+              ...createState().view!,
+              configuredModels: [kiroModel],
+            },
+          }),
+          actions: createActions(),
+          disabled: false,
+          projectPath: '/tmp/project',
+        })
+      );
+      await Promise.resolve();
+    });
+
+    await selectOpenCodeTab(host, 'Models');
+
+    const row = host.querySelector<HTMLElement>(
+      '[data-testid="configured-opencode-model-row-kiro/auto"]'
+    );
+    expect(row?.textContent).toContain('configured');
+    expect(row?.textContent).toContain('known route');
+    expect(row?.textContent).not.toContain('local');
+    expect(row?.textContent).not.toContain('free');
+
+    const searchInput = host.querySelector<HTMLInputElement>(
+      'input[placeholder="Search model routes"]'
+    );
+    expect(searchInput).not.toBeNull();
+
+    await act(async () => {
+      setInputValue(searchInput!, 'local');
+      await Promise.resolve();
+    });
+    expect(
+      host.querySelector('[data-testid="configured-opencode-model-row-kiro/auto"]')
+    ).toBeNull();
+
+    await act(async () => {
+      setInputValue(searchInput!, 'configured');
+      await Promise.resolve();
+    });
+    expect(
+      host.querySelector('[data-testid="configured-opencode-model-row-kiro/auto"]')
+    ).not.toBeNull();
+  });
+
   it('can set an all-projects OpenCode default from the model scope controls', async () => {
     const host = document.createElement('div');
     document.body.appendChild(host);

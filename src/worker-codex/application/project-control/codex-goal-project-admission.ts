@@ -162,13 +162,27 @@ async function withoutCapacityContinuationSiblingDebt(input: {
       item,
       binding,
     });
+    const selfInactiveWorkspace =
+      item.reason === ProjectDebtReason.InactiveDirtyWorkspace &&
+      await admissionWorkspacePathsMatch(item.subject, binding.workspacePath);
+    const selfDirtyWithoutRunner =
+      item.reason === ProjectDebtReason.ActiveWriterConflict &&
+      item.subject === binding.jobId &&
+      item.evidence.includes("dirty_workspace_without_worker");
     const unrelatedHeldOutput =
       item.reason === ProjectDebtReason.UnconsumedCompletedJob && !selfDebt;
     const unrelatedInactiveOutputRisk =
       item.reason === ProjectDebtReason.ActiveWriterConflict &&
       !selfDebt &&
       item.evidence.includes("dirty_workspace_without_worker");
-    if (!unrelatedHeldOutput && !unrelatedInactiveOutputRisk) debt.push(item);
+    if (
+      !selfInactiveWorkspace &&
+      !selfDirtyWithoutRunner &&
+      !unrelatedHeldOutput &&
+      !unrelatedInactiveOutputRisk
+    ) {
+      debt.push(item);
+    }
   }
   return {
     ...input.snapshot,

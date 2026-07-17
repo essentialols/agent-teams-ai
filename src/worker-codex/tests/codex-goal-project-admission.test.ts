@@ -373,9 +373,13 @@ describe("Codex project admission snapshot", () => {
             ok: true,
             jobId: "project-continuation",
             workspacePath: continuationWorkspace,
-            workspaceDirty: false,
+            workspaceDirty: true,
             workerAlive: false,
-            activeWriterRisk: "none",
+            activeWriterRisk: "dirty_workspace_without_worker",
+            activeWriterRiskReasons: ["dirty_workspace_without_worker"],
+            resultStatus: "blocked",
+            resultReason: "account_unavailable",
+            recommendedAction: "continue_after_capacity",
           },
           {
             ok: true,
@@ -437,6 +441,73 @@ describe("Codex project admission snapshot", () => {
       })).resolves.toMatchObject({
         allowed: false,
         reason: "output_debt_present",
+      });
+
+      const completedTargetGate = codexProjectAdmissionGate({
+        ...input,
+        deps: {
+          ...deps,
+          buildOverviewItems: async () => [{
+            ok: true,
+            jobId: "project-continuation",
+            workspacePath: continuationWorkspace,
+            workspaceDirty: true,
+            workerAlive: false,
+            activeWriterRisk: "dirty_workspace_without_worker",
+            activeWriterRiskReasons: ["dirty_workspace_without_worker"],
+            resultStatus: "completed",
+            recommendedAction: "review_completed",
+            lifecycleMarkerTypes: ["review"],
+          }],
+        },
+        capacityContinuationTarget: {
+          jobId: "project-continuation",
+          workspacePath: continuationWorkspace,
+        },
+      });
+      await expect(completedTargetGate.evaluate({
+        operation: ProjectOperation.StartWorker,
+        jobId: "project-continuation",
+        workerRole: ProjectAdmissionWorkerRole.Producer,
+        workspacePath: continuationWorkspace,
+      })).resolves.toMatchObject({
+        allowed: false,
+        reason: "output_debt_present",
+        debt: [expect.objectContaining({
+          reason: ProjectDebtReason.UnconsumedCompletedJob,
+        })],
+      });
+
+      const liveTargetGate = codexProjectAdmissionGate({
+        ...input,
+        deps: {
+          ...deps,
+          buildOverviewItems: async () => [{
+            ok: true,
+            jobId: "project-continuation",
+            workspacePath: continuationWorkspace,
+            workspaceDirty: true,
+            workerAlive: true,
+            activeWriterRisk: "active_worker",
+            activeWriterRiskReasons: ["active worker overlaps workspace"],
+          }],
+        },
+        capacityContinuationTarget: {
+          jobId: "project-continuation",
+          workspacePath: continuationWorkspace,
+        },
+      });
+      await expect(liveTargetGate.evaluate({
+        operation: ProjectOperation.StartWorker,
+        jobId: "project-continuation",
+        workerRole: ProjectAdmissionWorkerRole.Producer,
+        workspacePath: continuationWorkspace,
+      })).resolves.toMatchObject({
+        allowed: false,
+        reason: "output_debt_present",
+        debt: [expect.objectContaining({
+          reason: ProjectDebtReason.ActiveWriterConflict,
+        })],
       });
     } finally {
       await rm(root, { recursive: true, force: true });

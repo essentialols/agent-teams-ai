@@ -259,6 +259,7 @@ export function createTeamProvisioningCancellationBoundary<
       // 'spawning', after the primary lane came up) orphans the primary runtime
       // process.
       ports.killTeamProcess(run.child);
+      let failedStop: PromiseRejectedResult | undefined;
       if (ports.getTrackedRunId(run.teamName) === run.runId) {
         const stops: Promise<void>[] = [];
         const primaryRun = ports.runtimeAdapterRunByTeam.get(run.teamName);
@@ -269,12 +270,21 @@ export function createTeamProvisioningCancellationBoundary<
           stops.push(ports.stopMixedSecondaryRuntimeLanes(run.teamName));
         }
         if (stops.length > 0) {
-          void Promise.all(stops);
+          const stopResults = await Promise.allSettled(stops);
+          failedStop = stopResults.find(
+            (result): result is PromiseRejectedResult => result.status === 'rejected'
+          );
         }
       }
-      const progress = ports.updateProgress(run, 'cancelled', 'Provisioning cancelled by user');
-      run.onProgress(progress);
-      ports.cleanupRun(run);
+      try {
+        const progress = ports.updateProgress(run, 'cancelled', 'Provisioning cancelled by user');
+        run.onProgress(progress);
+      } finally {
+        ports.cleanupRun(run);
+      }
+      if (failedStop) {
+        throw failedStop.reason;
+      }
     },
 
     isCancellableRuntimeAdapterProgress(progress) {

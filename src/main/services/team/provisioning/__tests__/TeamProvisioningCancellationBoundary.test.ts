@@ -57,6 +57,20 @@ function makeAdapter(): TeamLaunchRuntimeAdapter {
   } as unknown as TeamLaunchRuntimeAdapter;
 }
 
+function createDeferred<T>(): {
+  promise: Promise<T>;
+  resolve(value: T | PromiseLike<T>): void;
+  reject(reason?: unknown): void;
+} {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((innerResolve, innerReject) => {
+    resolve = innerResolve;
+    reject = innerReject;
+  });
+  return { promise, resolve, reject };
+}
+
 function makePorts(
   input: {
     run?: TestRun;
@@ -227,6 +241,127 @@ describe('TeamProvisioningCancellationBoundary', () => {
         message: 'Provisioning cancelled by user',
       })
     );
+    expect(ports.cleanupRun).toHaveBeenCalledWith(run);
+  });
+
+  it('awaits every owned runtime lane stop before cancelled progress and cleanup', async () => {
+    const primaryStop = createDeferred<void>();
+    const secondaryStops = createDeferred<void>();
+    const events: string[] = [];
+    const run = makeRun({
+      onProgress: vi.fn(() => {
+        events.push('cancelled progress');
+      }),
+    });
+    const ports = makePorts({
+      run,
+      trackedRunId: run.runId,
+      hasSecondaryRuntimeRuns: true,
+    });
+    ports.stopOpenCodeRuntimeAdapterTeam.mockImplementation(async () => {
+      await primaryStop.promise;
+      events.push('primary stopped');
+    });
+    ports.stopMixedSecondaryRuntimeLanes.mockImplementation(async () => {
+      await secondaryStops.promise;
+      events.push('secondaries stopped');
+    });
+    ports.cleanupRun.mockImplementation(() => {
+      events.push('cleanup');
+    });
+    const boundary = createTeamProvisioningCancellationBoundary(ports);
+
+    const cancellation = boundary.cancelProvisioning(run.runId);
+
+    expect(ports.stopOpenCodeRuntimeAdapterTeam).toHaveBeenCalledWith(run.teamName, run.runId);
+    expect(ports.stopMixedSecondaryRuntimeLanes).toHaveBeenCalledWith(run.teamName);
+    expect(events).toEqual([]);
+
+    secondaryStops.resolve();
+    await secondaryStops.promise;
+    await Promise.resolve();
+
+    expect(events).toEqual(['secondaries stopped']);
+    expect(ports.updateProgress).not.toHaveBeenCalled();
+    expect(ports.cleanupRun).not.toHaveBeenCalled();
+
+    primaryStop.resolve();
+    await cancellation;
+
+    expect(events).toEqual([
+      'secondaries stopped',
+      'primary stopped',
+      'cancelled progress',
+      'cleanup',
+    ]);
+  });
+
+  it('awaits remaining stops and performs required cleanup before rejecting a stop failure', async () => {
+    const primaryStop = createDeferred<void>();
+    const secondaryStops = createDeferred<void>();
+    const events: string[] = [];
+    const run = makeRun({
+      onProgress: vi.fn(() => {
+        events.push('cancelled progress');
+      }),
+    });
+    const ports = makePorts({
+      run,
+      trackedRunId: run.runId,
+      hasSecondaryRuntimeRuns: true,
+    });
+    ports.stopOpenCodeRuntimeAdapterTeam.mockImplementation(async () => {
+      try {
+        await primaryStop.promise;
+      } catch (error) {
+        events.push('primary stop failed');
+        throw error;
+      }
+    });
+    ports.stopMixedSecondaryRuntimeLanes.mockImplementation(async () => {
+      await secondaryStops.promise;
+      events.push('secondaries stopped');
+    });
+    ports.cleanupRun.mockImplementation(() => {
+      events.push('cleanup');
+    });
+    const boundary = createTeamProvisioningCancellationBoundary(ports);
+    let cancellationSettled = false;
+    const cancellation = boundary.cancelProvisioning(run.runId).then(
+      () => {
+        cancellationSettled = true;
+        return { status: 'fulfilled' as const };
+      },
+      (error: unknown) => {
+        cancellationSettled = true;
+        events.push('cancellation rejected');
+        return { status: 'rejected' as const, error };
+      }
+    );
+
+    primaryStop.reject(new Error('primary stop failed'));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(events).toEqual(['primary stop failed']);
+    expect(cancellationSettled).toBe(false);
+    expect(ports.updateProgress).not.toHaveBeenCalled();
+    expect(ports.cleanupRun).not.toHaveBeenCalled();
+
+    secondaryStops.resolve();
+    const result = await cancellation;
+
+    expect(result).toMatchObject({
+      status: 'rejected',
+      error: expect.objectContaining({ message: 'primary stop failed' }),
+    });
+    expect(events).toEqual([
+      'primary stop failed',
+      'secondaries stopped',
+      'cancelled progress',
+      'cleanup',
+      'cancellation rejected',
+    ]);
     expect(ports.cleanupRun).toHaveBeenCalledWith(run);
   });
 

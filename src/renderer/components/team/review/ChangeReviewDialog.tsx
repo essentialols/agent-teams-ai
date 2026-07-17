@@ -1375,6 +1375,17 @@ export const ChangeReviewDialog = ({
   const handleHunkAccepted = useCallback(
     (filePath: string, hunkIndex: number) => {
       if (hasReviewDraft(filePath) || hasReviewActionInFlight()) {
+        // Older navigation adapters ignored the callback's `false` result and still
+        // mutated CodeMirror. Restore the guarded document after that synchronous call.
+        const view = editorViewMapRef.current.get(filePath);
+        const guardedContent = view?.state.doc.toString();
+        if (view && guardedContent !== undefined) {
+          queueMicrotask(() => {
+            if (view.dom.isConnected && view.state.doc.toString() !== guardedContent) {
+              rollbackEditorContent(filePath, guardedContent);
+            }
+          });
+        }
         return false;
       }
       const originalIndex = setHunkDecision(filePath, hunkIndex, 'accepted');
@@ -1387,13 +1398,28 @@ export const ChangeReviewDialog = ({
       pushReviewUndoAction({ kind: 'hunk', action: undoAction });
       return true;
     },
-    [hasReviewActionInFlight, hasReviewDraft, pushReviewUndoAction, setHunkDecision]
+    [
+      hasReviewActionInFlight,
+      hasReviewDraft,
+      pushReviewUndoAction,
+      rollbackEditorContent,
+      setHunkDecision,
+    ]
   );
 
   const handleHunkRejected = useCallback(
-    (filePath: string, hunkIndex: number, beforeContent: string, afterContent: string) => {
+    (filePath: string, hunkIndex: number, beforeContent?: string, afterContent?: string) => {
       if (hasReviewDraft(filePath) || hasReviewActionInFlight()) {
         return false;
+      }
+      if (beforeContent === undefined || afterContent === undefined) {
+        // Backward-compatible path for older navigation adapters that supplied only
+        // file/index. Perform the CodeMirror mutation here so disk Undo gets exact bytes.
+        const view = editorViewMapRef.current.get(filePath);
+        if (!view?.dom.isConnected) return false;
+        beforeContent = view.state.doc.toString();
+        if (!rejectChunk(view)) return false;
+        afterContent = view.state.doc.toString();
       }
       const operationEpoch = changeSetEpoch;
       fileApplyInFlightRef.current.add(filePath);

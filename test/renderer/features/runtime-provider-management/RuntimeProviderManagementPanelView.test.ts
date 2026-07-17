@@ -2853,6 +2853,81 @@ describe('RuntimeProviderManagementPanelView', () => {
     expect(actions.useModelForNewTeams).not.toHaveBeenCalled();
   });
 
+  it('marks deprecated catalog models and prevents selecting them for new teams', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const actions = createActions();
+    const connectedProvider = {
+      providerId: 'google',
+      displayName: 'Google',
+      state: 'connected' as const,
+      ownership: ['managed'] as const,
+      recommended: false,
+      modelCount: 1,
+      defaultModelId: null,
+      authMethods: ['api'] as const,
+      actions: [
+        {
+          id: 'use' as const,
+          label: 'Use',
+          enabled: true,
+          disabledReason: null,
+          requiresSecret: false,
+          ownershipScope: 'runtime' as const,
+        },
+      ],
+      detail: null,
+    };
+    const state = createState({
+      view: {
+        ...createState().view!,
+        providers: [connectedProvider],
+      },
+      providers: [connectedProvider],
+      selectedProviderId: 'google',
+      modelPickerProviderId: 'google',
+      modelPickerMode: 'use',
+      models: [
+        {
+          providerId: 'google',
+          modelId: 'google/gemini-old',
+          displayName: 'gemini-old',
+          sourceLabel: 'Google',
+          free: false,
+          default: false,
+          catalogStatus: 'deprecated',
+          availability: 'untested',
+        },
+      ],
+    });
+
+    await act(async () => {
+      root.render(
+        React.createElement(RuntimeProviderManagementPanelView, {
+          state,
+          actions,
+          disabled: false,
+          projectPath: '/tmp/project',
+        })
+      );
+      await Promise.resolve();
+    });
+
+    const row = host.querySelector<HTMLElement>(
+      '[data-testid="runtime-provider-model-row-google/gemini-old"]'
+    );
+    expect(row?.textContent).toContain('deprecated');
+    expect(row?.getAttribute('aria-disabled')).toBe('true');
+    expect(row?.getAttribute('aria-label')).toContain('OpenCode marks this model as deprecated');
+
+    await act(async () => {
+      row?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(actions.useModelForNewTeams).not.toHaveBeenCalled();
+  });
+
   it('virtualizes large provider model lists while keeping the full scroll range', async () => {
     const host = document.createElement('div');
     document.body.appendChild(host);

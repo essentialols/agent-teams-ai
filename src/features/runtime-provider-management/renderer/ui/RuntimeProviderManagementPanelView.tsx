@@ -1752,6 +1752,7 @@ function ModelBadges({
     model.availability === 'unavailable' ||
     model.availability === 'not-authenticated';
   const unknown = model.accessKind === 'unknown_model' || model.accessKind === 'no_model';
+  const lifecycleStatus = model.catalogStatus ?? 'active';
 
   if (
     !freeModel &&
@@ -1763,7 +1764,8 @@ function ModelBadges({
     !verified &&
     !needsTest &&
     !failed &&
-    !unknown
+    !unknown &&
+    lifecycleStatus === 'active'
   ) {
     return null;
   }
@@ -1809,6 +1811,13 @@ function ModelBadges({
         <Badge className="bg-emerald-400/15 px-1.5 py-0 text-[10px] text-emerald-200">
           {t('runtimeProvider.badges.free')}
         </Badge>
+      ) : null}
+      {lifecycleStatus === 'deprecated' ? (
+        <Badge className="bg-red-400/15 px-1.5 py-0 text-[10px] text-red-200">deprecated</Badge>
+      ) : lifecycleStatus === 'alpha' ? (
+        <Badge className="bg-violet-400/15 px-1.5 py-0 text-[10px] text-violet-200">alpha</Badge>
+      ) : lifecycleStatus === 'beta' ? (
+        <Badge className="bg-sky-400/15 px-1.5 py-0 text-[10px] text-sky-200">beta</Badge>
       ) : null}
       {localRoute ? (
         <>
@@ -1877,6 +1886,7 @@ function canTestOpenCodeModelRoute(model: RuntimeProviderModelDto): boolean {
 
 function canUseOpenCodeModelRoute(model: RuntimeProviderModelDto): boolean {
   return (
+    model.catalogStatus !== 'deprecated' &&
     !isUnknownOpenCodeModelRoute(model) &&
     model.accessKind !== 'not_authenticated' &&
     model.accessKind !== 'execution_failed' &&
@@ -1888,6 +1898,9 @@ function getOpenCodeRouteUnavailableTitle(
   model: RuntimeProviderModelDto,
   t: SettingsT
 ): string | undefined {
+  if (model.catalogStatus === 'deprecated') {
+    return 'OpenCode marks this model as deprecated. Refresh the catalog and choose an active model.';
+  }
   if (isUnknownOpenCodeModelRoute(model)) {
     return t('runtimeProvider.models.routeUnavailableUnknown');
   }
@@ -1939,6 +1952,7 @@ function getOpenCodeModelSearchText(model: RuntimeProviderModelDto): string {
     model.accessKind,
     model.routeKind,
     model.proofState,
+    model.catalogStatus,
     model.availability,
     model.accessReason ?? '',
     isFreeRuntimeProviderModel(model) ? 'free' : '',
@@ -1990,8 +2004,10 @@ function ModelRow({
   readonly actions: RuntimeProviderManagementActions;
 }): JSX.Element {
   const { t } = useAppTranslation('settings');
+  const modelDisabled = disabled || !canUseOpenCodeModelRoute(model);
+  const unavailableTitle = getOpenCodeRouteUnavailableTitle(model, t);
   const chooseModel = (): void => {
-    if (!disabled) {
+    if (!modelDisabled) {
       actions.useModelForNewTeams(model.modelId);
     }
   };
@@ -2009,13 +2025,14 @@ function ModelRow({
 
   return (
     <div
-      role={disabled ? undefined : 'button'}
-      tabIndex={disabled ? -1 : 0}
-      aria-disabled={disabled || undefined}
-      aria-pressed={disabled ? undefined : selected}
+      role={modelDisabled ? undefined : 'button'}
+      tabIndex={modelDisabled ? -1 : 0}
+      aria-disabled={modelDisabled || undefined}
+      aria-pressed={modelDisabled ? undefined : selected}
+      aria-label={unavailableTitle}
       data-testid={`runtime-provider-model-row-${model.modelId}`}
       className={`rounded-md border px-3 py-2.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45 ${
-        disabled ? 'cursor-default' : 'cursor-pointer'
+        modelDisabled ? 'cursor-default' : 'cursor-pointer'
       }`}
       onClick={(event) => {
         event.stopPropagation();

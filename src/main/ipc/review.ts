@@ -5,11 +5,16 @@
  */
 
 import { ReviewDraftHistoryStore } from '@features/change-review-history/main';
+import { ReviewMutationCoordinator } from '@features/review-mutations/main';
 import { validateTaskId, validateTeamName } from '@main/ipc/guards';
 import { createIpcWrapper } from '@main/ipc/ipcWrapper';
 import { EditorFileWatcher } from '@main/services/editor';
 import { ReviewDecisionStore } from '@main/services/team/ReviewDecisionStore';
-import { ReviewMutationJournalStore } from '@main/services/team/ReviewMutationJournalStore';
+import {
+  type ReviewMutationJournalDiskStep,
+  type ReviewMutationJournalRecord,
+  ReviewMutationJournalStore,
+} from '@main/services/team/ReviewMutationJournalStore';
 import { TeamConfigReader } from '@main/services/team/TeamConfigReader';
 import { cleanupAtomicCreateTempLinks } from '@main/utils/atomicWrite';
 import { isPathWithinRoot, matchesSensitivePattern } from '@main/utils/pathValidation';
@@ -20,6 +25,7 @@ import {
   REVIEW_CLEAR_DECISIONS,
   REVIEW_CLEAR_DRAFT_HISTORY,
   REVIEW_DELETE_EDITED_FILE,
+  REVIEW_EXECUTE_MUTATION,
   REVIEW_FILE_CHANGE,
   REVIEW_GET_AGENT_CHANGES,
   REVIEW_GET_CHANGE_STATS,
@@ -62,6 +68,7 @@ import type {
   ApplyReviewResult,
   ChangeStats,
   ConflictCheckResult,
+  ExecuteReviewMutationRequest,
   FileChangeSummary,
   FileChangeWithContent,
   FileReviewDecision,
@@ -69,6 +76,7 @@ import type {
   RejectResult,
   ReviewDecisionPersistenceScope,
   ReviewFileScope,
+  ReviewPersistedStateSnapshot,
   ReviewRenameRecoveryExpectation,
   ReviewUndoAction,
   SnippetDiff,
@@ -87,6 +95,7 @@ const TEAM_TASK_CHANGE_SUMMARY_IPC_UNIQUE_REQUEST_LIMIT = 201;
 const MAX_REVIEW_DECISIONS = 2_000;
 const MAX_REVIEW_SNIPPETS_PER_FILE = 10_000;
 const MAX_REVIEW_HUNK_DECISIONS_PER_FILE = 100_000;
+const MAX_REVIEW_MUTATION_STEPS = 2_000;
 
 // --- Module-level state ---
 
@@ -98,6 +107,7 @@ let reviewConfigReader: Pick<TeamConfigReader, 'getConfig'> = new TeamConfigRead
 const reviewDecisionStore = new ReviewDecisionStore();
 const reviewDraftHistoryStore = new ReviewDraftHistoryStore();
 const reviewMutationJournal = new ReviewMutationJournalStore();
+const reviewMutationCoordinator = new ReviewMutationCoordinator(reviewMutationJournal);
 const reviewDecisionPersistenceQueues = new Map<string, Promise<void>>();
 // Review is backed by a point-in-time diff. Unlike the editor watcher, ignoring
 // the first few seconds can silently miss an external write and make Undo unsafe.
@@ -848,6 +858,7 @@ export function registerReviewHandlers(ipcMain: IpcMain): void {
   ipcMain.handle(REVIEW_REJECT_FILE, handleRejectFile);
   ipcMain.handle(REVIEW_PREVIEW_REJECT, handlePreviewReject);
   ipcMain.handle(REVIEW_APPLY_DECISIONS, handleApplyDecisions);
+  ipcMain.handle(REVIEW_EXECUTE_MUTATION, handleExecuteReviewMutation);
   ipcMain.handle(REVIEW_GET_FILE_CONTENT, handleGetFileContent);
   // Editable diff
   ipcMain.handle(REVIEW_SAVE_EDITED_FILE, handleSaveEditedFile);
@@ -880,6 +891,7 @@ export function removeReviewHandlers(ipcMain: IpcMain): void {
   ipcMain.removeHandler(REVIEW_REJECT_FILE);
   ipcMain.removeHandler(REVIEW_PREVIEW_REJECT);
   ipcMain.removeHandler(REVIEW_APPLY_DECISIONS);
+  ipcMain.removeHandler(REVIEW_EXECUTE_MUTATION);
   ipcMain.removeHandler(REVIEW_GET_FILE_CONTENT);
   // Editable diff
   ipcMain.removeHandler(REVIEW_SAVE_EDITED_FILE);
@@ -1200,35 +1212,21 @@ async function handleApplyDecisions(
     if (!persistenceScope) {
       result = await getApplier().applyReviewDecisions(validatedRequest, fileContents);
     } else {
-      result = { applied: 0, skipped: 0, conflicts: 0, errors: [] };
       if (validatedDecisions.some((decision) => !decision.reviewKey)) {
         throw new Error('Durable review mutation requires a stable reviewKey');
       }
-      for (const decision of validatedDecisions) {
-        const fileContent = fileContents.get(decision.filePath);
-        if (!fileContent) {
-          result.skipped++;
-          continue;
-        }
-        try {
-          const one = await applyDecisionWithDurableJournal(
-            scope,
-            persistenceScope,
-            decision as FileReviewDecision & { reviewKey: string },
-            fileContent
-          );
-          result.applied += one.applied;
-          result.skipped += one.skipped;
-          result.conflicts += one.conflicts;
-          result.errors.push(...one.errors);
-        } catch (error) {
-          result.errors.push({
-            filePath: decision.filePath,
-            error: error instanceof Error ? error.message : 'Unexpected review mutation failure',
-            code: 'io-error',
-          });
-        }
+      if (!request.persistedState) {
+        throw new Error('Durable review mutation requires an exact post-operation state');
       }
+      reviewDecisionStore.assertValidSnapshot(request.persistedState);
+      assertPersistedStateIncludesDecisions(request.persistedState, validatedDecisions);
+      result = await applyDecisionsWithDurableJournal(
+        scope,
+        persistenceScope,
+        validatedDecisions as (FileReviewDecision & { reviewKey: string })[],
+        fileContents,
+        request.persistedState
+      );
     }
 
     // Invalidate resolved file content cache after applying decisions so subsequent
@@ -1245,38 +1243,135 @@ async function handleApplyDecisions(
   });
 }
 
-async function applyDecisionWithDurableJournal(
-  scope: ReviewFileScope,
-  persistenceScope: ReviewDecisionPersistenceScope,
-  decision: FileReviewDecision & { reviewKey: string },
-  fileContent: FileChangeWithContent
-): Promise<ApplyReviewResult> {
-  return withReviewDecisionPersistenceLock(scope.teamName, persistenceScope, async () => {
-    const durableDecisions = await reviewDecisionStore.load(
-      scope.teamName,
-      persistenceScope.scopeKey,
-      persistenceScope.scopeToken
-    );
-    if (durableDecisions) {
-      await reviewMutationJournal.acknowledge(
-        scope.teamName,
-        persistenceScope,
-        durableDecisions.hunkDecisions,
-        durableDecisions.fileDecisions
-      );
+class ReviewMutationApplyResultError extends Error {
+  constructor(readonly result: ApplyReviewResult) {
+    super(result.errors[0]?.error ?? 'Review mutation could not be applied safely');
+  }
+}
+
+function assertPersistedStateIncludesDecisions(
+  state: ReviewPersistedStateSnapshot,
+  decisions: readonly FileReviewDecision[]
+): void {
+  for (const decision of decisions) {
+    const reviewKey = decision.reviewKey;
+    if (!reviewKey) throw new Error('Durable review mutation requires a stable reviewKey');
+    const actualFileDecision =
+      state.fileDecisions[reviewKey] ?? state.fileDecisions[decision.filePath] ?? 'pending';
+    if (actualFileDecision !== decision.fileDecision) {
+      throw new Error('Durable review state does not match the requested file decision');
     }
-    const record = await reviewMutationJournal.prepare({
-      teamName: scope.teamName,
-      persistenceScope,
-      reviewScope: scope,
-      decision,
-      fileContent,
-    });
-    let result: ApplyReviewResult;
+    for (const [index, expected] of Object.entries(decision.hunkDecisions)) {
+      const actual =
+        state.hunkDecisions[`${reviewKey}:${index}`] ??
+        state.hunkDecisions[`${decision.filePath}:${index}`] ??
+        'pending';
+      if (actual !== expected) {
+        throw new Error('Durable review state does not match the requested hunk decision');
+      }
+    }
+  }
+}
+
+async function readReviewMutationPostimages(
+  decisions: readonly FileReviewDecision[]
+): Promise<Map<string, string | null>> {
+  const postimages = new Map<string, string | null>();
+  for (const decision of decisions) {
     try {
-      result = await getApplier().applyReviewDecisions(
+      postimages.set(decision.filePath, await fs.readFile(decision.filePath, 'utf8'));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        postimages.set(decision.filePath, null);
+      } else {
+        throw error;
+      }
+    }
+  }
+  return postimages;
+}
+
+function reconcileLatestReviewActionPostimages(
+  state: ReviewPersistedStateSnapshot,
+  postimages: ReadonlyMap<string, string | null>
+): ReviewPersistedStateSnapshot {
+  const latest = state.reviewActionHistory.at(-1);
+  if (!latest) return state;
+  const resolvePostimage = (filePath: string): string | null | undefined => {
+    for (const [candidatePath, content] of postimages) {
+      if (
+        normalizeReviewPathForIdentity(candidatePath) === normalizeReviewPathForIdentity(filePath)
+      ) {
+        return content;
+      }
+    }
+    return undefined;
+  };
+
+  let reconciled = latest;
+  if (latest.kind === 'disk') {
+    const snapshot = latest.action.snapshot;
+    const actual = snapshot.renameExpectation ? undefined : resolvePostimage(snapshot.filePath);
+    if (actual !== undefined) {
+      reconciled = {
+        ...latest,
+        action: {
+          ...latest.action,
+          snapshot: { ...snapshot, afterContent: actual },
+        },
+      };
+    }
+  } else if (latest.kind === 'bulk') {
+    reconciled = {
+      ...latest,
+      diskSnapshots: latest.diskSnapshots.map((snapshot) => {
+        const actual = snapshot.renameExpectation ? undefined : resolvePostimage(snapshot.filePath);
+        return actual === undefined ? snapshot : { ...snapshot, afterContent: actual };
+      }),
+    };
+  }
+  if (reconciled === latest) return state;
+  return {
+    ...state,
+    reviewActionHistory: [...state.reviewActionHistory.slice(0, -1), reconciled],
+  };
+}
+
+function mergeReviewApplyResults(
+  current: ApplyReviewResult,
+  next: ApplyReviewResult
+): ApplyReviewResult {
+  return {
+    applied: current.applied + next.applied,
+    skipped: current.skipped + next.skipped,
+    conflicts: current.conflicts + next.conflicts,
+    errors: [...current.errors, ...next.errors],
+  };
+}
+
+async function applyJournalDecisionBatchDisk(
+  record: ReviewMutationJournalRecord,
+  onResult?: (result: ApplyReviewResult) => void
+): Promise<ReviewMutationJournalRecord> {
+  let current = record;
+  let aggregate: ApplyReviewResult = { applied: 0, skipped: 0, conflicts: 0, errors: [] };
+  const scope = parseReviewFileScope(current.reviewScope);
+  const initialStatuses =
+    current.decisionStatuses ?? current.decisions.map(() => 'pending' as const);
+
+  for (let index = 0; index < current.decisions.length; index++) {
+    if (initialStatuses[index] === 'applied') continue;
+    const decision = current.decisions[index];
+    const fileContent = current.fileContents[index];
+    if (!decision || !fileContent || fileContent.filePath !== decision.filePath) {
+      throw new Error('Review mutation recovery content is unavailable');
+    }
+
+    let stepResult: ApplyReviewResult;
+    try {
+      stepResult = await getApplier().applyReviewDecisions(
         {
-          teamName: scope.teamName,
+          teamName: current.teamName,
           ...(scope.taskId ? { taskId: scope.taskId } : {}),
           ...(scope.memberName ? { memberName: scope.memberName } : {}),
           decisions: [decision],
@@ -1284,41 +1379,280 @@ async function applyDecisionWithDurableJournal(
         new Map([[decision.filePath, fileContent]])
       );
     } catch (error) {
-      await reviewMutationJournal.markFailed(record, error).catch((journalError) => {
+      await reviewMutationJournal.markFailed(current, error).catch((journalError) => {
         logger.error('Unable to mark failed review mutation journal:', journalError);
       });
       throw error;
     }
 
-    if (result.errors.length > 0) {
-      if (result.conflicts > 0) {
-        await reviewMutationJournal.remove(record);
-      } else {
-        await reviewMutationJournal.markFailed(record, result.errors[0]?.error).catch((error) => {
+    aggregate = mergeReviewApplyResults(aggregate, stepResult);
+    onResult?.(aggregate);
+    if (stepResult.errors.length > 0) {
+      await reviewMutationJournal
+        .markFailed(current, stepResult.errors[0]?.error)
+        .catch((error) => {
           logger.error('Unable to preserve failed review mutation journal:', error);
         });
-      }
-      return result;
+      throw new ReviewMutationApplyResultError(aggregate);
     }
 
-    try {
-      await reviewMutationJournal.markCommitted(record);
-    } catch (error) {
-      // The prepared record remains replayable. Do not turn a completed disk mutation
-      // into a UI failure that would discard its in-memory Undo snapshot.
-      logger.error('Unable to mark review mutation journal committed:', error);
-    }
-    try {
-      await reviewDecisionStore.mergeFileDecisionPatch(
-        scope.teamName,
-        persistenceScope.scopeKey,
-        persistenceScope.scopeToken,
-        decision
+    const decisionStatuses = [...(current.decisionStatuses ?? initialStatuses)];
+    decisionStatuses[index] = 'applied';
+    let persistedState = current.persistedState;
+    if (persistedState) {
+      persistedState = reconcileLatestReviewActionPostimages(
+        persistedState,
+        await readReviewMutationPostimages([decision])
       );
-    } catch (error) {
-      logger.error('Immediate review decision persistence failed; journal retained:', error);
     }
-    return result;
+    current = await reviewMutationJournal.checkpoint({
+      ...current,
+      decisionStatuses,
+      persistedState,
+    });
+    invalidateAuthoritativeReviewContent(fileContent);
+  }
+
+  return current;
+}
+
+async function commitReviewMutationDecisions(
+  record: Awaited<ReturnType<ReviewMutationJournalStore['list']>>[number]
+): Promise<void> {
+  const { teamName, persistenceScope } = record;
+  if (record.persistedState) {
+    await reviewDecisionStore.save(teamName, persistenceScope.scopeKey, {
+      scopeToken: persistenceScope.scopeToken,
+      ...record.persistedState,
+    });
+    return;
+  }
+  // Version-1 journal compatibility. Once recovered, the record is completed and removed.
+  for (const decision of record.decisions) {
+    await reviewDecisionStore.mergeFileDecisionPatch(
+      teamName,
+      persistenceScope.scopeKey,
+      persistenceScope.scopeToken,
+      decision
+    );
+  }
+}
+
+async function applyDecisionsWithDurableJournal(
+  scope: ReviewFileScope,
+  persistenceScope: ReviewDecisionPersistenceScope,
+  decisions: (FileReviewDecision & { reviewKey: string })[],
+  fileContents: Map<string, FileChangeWithContent>,
+  persistedState: ReviewPersistedStateSnapshot
+): Promise<ApplyReviewResult> {
+  return withReviewDecisionPersistenceLock(scope.teamName, persistenceScope, async () => {
+    try {
+      await recoverReviewMutationJournal(scope.teamName, persistenceScope);
+      let result: ApplyReviewResult | null = null;
+      await reviewMutationCoordinator.execute(
+        {
+          teamName: scope.teamName,
+          persistenceScope,
+          reviewScope: scope,
+          kind: decisions.length > 1 ? 'bulk' : 'reject',
+          decisions,
+          fileContents: decisions.map((decision) => {
+            const content = fileContents.get(decision.filePath);
+            if (!content) throw new Error('Review mutation content is unavailable');
+            return content;
+          }),
+          persistedState,
+        },
+        {
+          applyDisk: (record) =>
+            applyJournalDecisionBatchDisk(record, (nextResult) => {
+              result = nextResult;
+            }),
+          commitDecisions: commitReviewMutationDecisions,
+        }
+      );
+      return result ?? { applied: 0, skipped: 0, conflicts: 0, errors: [] };
+    } catch (error) {
+      if (error instanceof ReviewMutationApplyResultError) return error.result;
+      throw error;
+    }
+  });
+}
+
+async function normalizeDirectReviewMutationSteps(
+  request: ExecuteReviewMutationRequest,
+  scope: ReviewFileScope,
+  authorization: ReviewPathAuthorization
+): Promise<ReviewMutationJournalDiskStep[]> {
+  const ids = new Set<string>();
+  const normalized: ReviewMutationJournalDiskStep[] = [];
+  for (const step of request.diskSteps) {
+    if (
+      !step ||
+      typeof step.id !== 'string' ||
+      step.id.length === 0 ||
+      step.id.length > 256 ||
+      ids.has(step.id)
+    ) {
+      throw new Error('Invalid or duplicate review mutation step id');
+    }
+    ids.add(step.id);
+    const filePath = await validateAuthorizedReviewFilePath(authorization, step.filePath, {
+      requireReviewedFile: true,
+      rejectHardlinks: true,
+    });
+    if (step.type === 'write') {
+      if (
+        typeof step.content !== 'string' ||
+        (step.expectedContent !== null && typeof step.expectedContent !== 'string')
+      ) {
+        throw new Error('Invalid review write mutation');
+      }
+      normalized.push({ ...step, filePath, status: 'pending' });
+      continue;
+    }
+    if (step.type === 'delete') {
+      if (typeof step.expectedContent !== 'string') {
+        throw new Error('Invalid review delete mutation');
+      }
+      normalized.push({ ...step, filePath, status: 'pending' });
+      continue;
+    }
+    if (step.type !== 'restore-rejected-rename' && step.type !== 'reapply-rejected-rename') {
+      throw new Error('Invalid review mutation step');
+    }
+    const expectation = parseReviewRenameRecoveryExpectation(step.expectation);
+    const authoritativeContent = await resolveAuthoritativeFileContent(
+      scope,
+      authorization,
+      filePath
+    );
+    await validateSnippetPaths(authorization, authoritativeContent.snippets, {
+      requireReviewedFile: true,
+      rejectHardlinks: true,
+    });
+    assertExpectedAuthoritativeRename(authoritativeContent, expectation);
+    normalized.push({
+      ...step,
+      filePath,
+      expectation,
+      authoritativeContent,
+      status: 'pending',
+    });
+  }
+  return normalized;
+}
+
+async function applyDirectReviewMutationDisk(
+  record: ReviewMutationJournalRecord
+): Promise<ReviewMutationJournalRecord> {
+  let current = record;
+  const steps = current.diskSteps;
+  if (!steps?.length) throw new Error('Review mutation disk plan is unavailable');
+  for (let index = 0; index < steps.length; index++) {
+    const step = current.diskSteps?.[index];
+    if (!step || step.status === 'applied') continue;
+    try {
+      if (step.type === 'write') {
+        await getApplier().saveEditedFile(step.filePath, step.content, step.expectedContent);
+      } else if (step.type === 'delete') {
+        await getApplier().deleteEditedFile(step.filePath, step.expectedContent);
+      } else {
+        const content = step.authoritativeContent;
+        if (!content) throw new Error('Rename recovery content is unavailable');
+        if (step.type === 'restore-rejected-rename') {
+          await getApplier().restoreRejectedRename(
+            step.filePath,
+            content.originalFullContent,
+            content.modifiedFullContent,
+            content.snippets
+          );
+        } else {
+          await getApplier().reapplyRejectedRename(
+            step.filePath,
+            content.originalFullContent,
+            content.snippets
+          );
+        }
+      }
+    } catch (error) {
+      await reviewMutationJournal.markFailed(current, error).catch((journalError) => {
+        logger.error('Unable to mark failed direct review mutation:', journalError);
+      });
+      throw error;
+    }
+    const nextSteps = current.diskSteps!.map((candidate, candidateIndex) =>
+      candidateIndex === index ? { ...candidate, status: 'applied' as const } : candidate
+    );
+    current = await reviewMutationJournal.checkpoint({ ...current, diskSteps: nextSteps });
+    if (step.authoritativeContent) {
+      invalidateAuthoritativeReviewContent(step.authoritativeContent);
+    } else {
+      getContentResolver().invalidateFile(step.filePath);
+    }
+  }
+  return current;
+}
+
+async function handleExecuteReviewMutation(
+  _event: IpcMainInvokeEvent,
+  requestValue: unknown
+): Promise<IpcResult<void>> {
+  if (!requestValue || typeof requestValue !== 'object' || Array.isArray(requestValue)) {
+    return { success: false, error: 'Invalid review mutation request' };
+  }
+  const request = requestValue as ExecuteReviewMutationRequest;
+  if (
+    (request.kind !== 'restore' && request.kind !== 'rename' && request.kind !== 'undo') ||
+    !Array.isArray(request.diskSteps) ||
+    request.diskSteps.length === 0 ||
+    request.diskSteps.length > MAX_REVIEW_MUTATION_STEPS
+  ) {
+    return { success: false, error: 'Invalid review mutation request' };
+  }
+  return wrapReviewHandler('executeMutation', async () => {
+    const { scope, authorization } = await resolveReviewPathAuthorization(request.scope, {
+      requireIdentity: true,
+    });
+    const persistenceScope = parseDecisionPersistenceScope(request.decisionPersistenceScope, scope);
+    if (!persistenceScope) throw new Error('Review mutation requires an exact decision scope');
+    reviewDecisionStore.assertValidSnapshot(request.persistedState);
+
+    await withReviewDecisionPersistenceLock(scope.teamName, persistenceScope, async () => {
+      await recoverReviewMutationJournal(scope.teamName, persistenceScope);
+      // Recovery can change disk state and invalidate authoritative review content.
+      // Resolve this operation only after every older WAL record is complete.
+      const diskSteps = await normalizeDirectReviewMutationSteps(request, scope, authorization);
+      if (request.kind === 'undo') {
+        if (!request.expectedTopActionId) {
+          throw new Error('Review Undo requires the expected durable action id');
+        }
+        const current = await reviewDecisionStore.load(
+          scope.teamName,
+          persistenceScope.scopeKey,
+          persistenceScope.scopeToken
+        );
+        if (current?.reviewActionHistory.at(-1)?.id !== request.expectedTopActionId) {
+          throw new Error('Review history changed; refusing stale Undo');
+        }
+      }
+      await reviewMutationCoordinator.execute(
+        {
+          teamName: scope.teamName,
+          persistenceScope,
+          reviewScope: scope,
+          kind: request.kind,
+          decisions: [],
+          fileContents: [],
+          diskSteps,
+          persistedState: request.persistedState,
+        },
+        {
+          applyDisk: applyDirectReviewMutationDisk,
+          commitDecisions: commitReviewMutationDecisions,
+        }
+      );
+    });
   });
 }
 
@@ -1547,17 +1881,31 @@ async function handleGetGitFileLog(
 function assertRecoverableJournalContent(
   record: Awaited<ReturnType<ReviewMutationJournalStore['list']>>[number]
 ): void {
-  assertReviewDecisionShape(record.decision);
-  assertSnippetShapes(record.fileContent.snippets);
-  if (
-    record.fileContent.filePath !== record.decision.filePath ||
-    (record.fileContent.originalFullContent !== null &&
-      typeof record.fileContent.originalFullContent !== 'string') ||
-    (record.fileContent.modifiedFullContent !== null &&
-      typeof record.fileContent.modifiedFullContent !== 'string') ||
-    typeof record.fileContent.isNewFile !== 'boolean'
-  ) {
-    throw new Error('Invalid review mutation recovery content');
+  if (record.diskSteps?.length) {
+    if (!record.persistedState) {
+      throw new Error('Review mutation recovery state is unavailable');
+    }
+    reviewDecisionStore.assertValidSnapshot(record.persistedState);
+    return;
+  }
+  if (record.decisions.length === 0 || record.decisions.length !== record.fileContents.length) {
+    throw new Error('Invalid review mutation recovery batch');
+  }
+  for (const [index, decision] of record.decisions.entries()) {
+    const fileContent = record.fileContents[index];
+    assertReviewDecisionShape(decision);
+    assertSnippetShapes(fileContent?.snippets);
+    if (
+      !fileContent ||
+      fileContent.filePath !== decision.filePath ||
+      (fileContent.originalFullContent !== null &&
+        typeof fileContent.originalFullContent !== 'string') ||
+      (fileContent.modifiedFullContent !== null &&
+        typeof fileContent.modifiedFullContent !== 'string') ||
+      typeof fileContent.isNewFile !== 'boolean'
+    ) {
+      throw new Error('Invalid review mutation recovery content');
+    }
   }
 }
 
@@ -1567,7 +1915,7 @@ async function recoverReviewMutationJournal(
 ): Promise<void> {
   const records = await reviewMutationJournal.list(teamName, persistenceScope);
   for (const record of records) {
-    if (record.phase === 'failed') {
+    if (record.blocked) {
       throw new Error(
         'A previous review update did not finish safely. Retry recovery or discard saved review state.'
       );
@@ -1582,60 +1930,55 @@ async function recoverReviewMutationJournal(
       throw new Error('Review mutation recovery scope mismatch');
     }
     parseDecisionPersistenceScope(persistenceScope, scope);
-    const decision: FileReviewDecision & { reviewKey: string } = {
-      ...record.decision,
-    };
-    const fileContent: FileChangeWithContent = {
-      ...record.fileContent,
-    };
-    if (record.phase === 'prepared') {
+    if (record.diskSteps?.length) {
       const { authorization } = await resolveReviewPathAuthorization(scope, {
         requireIdentity: true,
       });
-      const filePath = await validateAuthorizedReviewFilePath(
-        authorization,
-        record.decision.filePath,
-        { requireReviewedFile: false, rejectHardlinks: true }
-      );
-      await validateSnippetPaths(authorization, record.fileContent.snippets, {
-        requireReviewedFile: false,
-        rejectHardlinks: true,
-      });
-      if (filePath !== path.resolve(path.normalize(record.fileContent.filePath))) {
-        throw new Error('Review mutation recovery file mismatch');
-      }
-      decision.filePath = filePath;
-      fileContent.filePath = filePath;
-      const result = await getApplier().applyReviewDecisions(
-        {
-          teamName,
-          ...(scope.taskId ? { taskId: scope.taskId } : {}),
-          ...(scope.memberName ? { memberName: scope.memberName } : {}),
-          decisions: [decision],
-        },
-        new Map([[decision.filePath, fileContent]])
-      );
-      if (result.errors.length > 0) {
-        await reviewMutationJournal.markFailed(record, result.errors[0]?.error).catch((error) => {
-          logger.error('Unable to mark failed review mutation recovery:', error);
+      for (const step of record.diskSteps) {
+        const filePath = await validateAuthorizedReviewFilePath(authorization, step.filePath, {
+          requireReviewedFile: false,
+          rejectHardlinks: true,
         });
-        throw new Error(
-          result.errors[0]?.error ?? 'A previous review update could not be recovered safely.'
-        );
+        if (filePath !== path.resolve(path.normalize(step.filePath))) {
+          throw new Error('Review mutation recovery file mismatch');
+        }
+        if (step.authoritativeContent) {
+          await validateSnippetPaths(authorization, step.authoritativeContent.snippets, {
+            requireReviewedFile: false,
+            rejectHardlinks: true,
+          });
+        }
       }
-      await reviewMutationJournal.markCommitted(record).catch((error) => {
-        // The prepared record remains safe to replay idempotently on the next load.
-        logger.error('Unable to commit recovered review mutation journal:', error);
+      await reviewMutationCoordinator.resume(record, {
+        applyDisk: applyDirectReviewMutationDisk,
+        commitDecisions: commitReviewMutationDecisions,
       });
-      invalidateAuthoritativeReviewContent(fileContent);
+      continue;
     }
-
-    await reviewDecisionStore.mergeFileDecisionPatch(
-      teamName,
-      persistenceScope.scopeKey,
-      persistenceScope.scopeToken,
-      decision
-    );
+    await reviewMutationCoordinator.resume(record, {
+      applyDisk: async (current) => {
+        const { authorization } = await resolveReviewPathAuthorization(scope, {
+          requireIdentity: true,
+        });
+        for (const [index, savedDecision] of current.decisions.entries()) {
+          const savedContent = current.fileContents[index];
+          const filePath = await validateAuthorizedReviewFilePath(
+            authorization,
+            savedDecision.filePath,
+            { requireReviewedFile: false, rejectHardlinks: true }
+          );
+          await validateSnippetPaths(authorization, savedContent.snippets, {
+            requireReviewedFile: false,
+            rejectHardlinks: true,
+          });
+          if (filePath !== path.resolve(path.normalize(savedContent.filePath))) {
+            throw new Error('Review mutation recovery file mismatch');
+          }
+        }
+        return applyJournalDecisionBatchDisk(current);
+      },
+      commitDecisions: commitReviewMutationDecisions,
+    });
   }
 }
 
@@ -1684,12 +2027,6 @@ async function handleSaveDecisions(
         hunkContextHashesByFile: hunkContextHashesByFile ?? undefined,
         reviewActionHistory,
       });
-      await reviewMutationJournal.acknowledge(
-        teamName,
-        persistenceScope,
-        hunkDecisions,
-        fileDecisions
-      );
     });
   });
 }

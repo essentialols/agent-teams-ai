@@ -64,6 +64,7 @@ import type {
   HunkDecision,
   ReviewDecisionPersistenceScope,
   ReviewFileScope,
+  ReviewPersistedStateSnapshot,
   ReviewUndoAction,
   TaskChangePresenceState,
   TaskChangeSet,
@@ -98,6 +99,29 @@ function buildApplyDecisionPersistenceScope(
   return {
     scopeKey: mode === 'task' ? `task-${taskId}` : `agent-${memberName}`,
     scopeToken,
+  };
+}
+
+function buildReviewPersistedStateSnapshot(
+  state: {
+    hunkDecisions: Record<string, HunkDecision>;
+    fileDecisions: Record<string, HunkDecision>;
+    hunkContextHashesByFile: Record<string, Record<number, string>>;
+    reviewActionHistory: ReviewUndoAction[];
+  },
+  decisions: readonly FileReviewDecision[]
+): ReviewPersistedStateSnapshot {
+  const hunkContextHashesByFile = { ...state.hunkContextHashesByFile };
+  for (const decision of decisions) {
+    if (decision.reviewKey && decision.hunkContextHashes) {
+      hunkContextHashesByFile[decision.reviewKey] = decision.hunkContextHashes;
+    }
+  }
+  return {
+    hunkDecisions: { ...state.hunkDecisions },
+    fileDecisions: { ...state.fileDecisions },
+    hunkContextHashesByFile,
+    reviewActionHistory: [...state.reviewActionHistory],
   };
 }
 
@@ -1451,6 +1475,7 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
             taskId,
             memberName
           ),
+          persistedState: buildReviewPersistedStateSnapshot(get(), decisions),
           decisions,
         };
 
@@ -1587,6 +1612,14 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
                 innerBaseCount
               )
             : undefined;
+        const decision: FileReviewDecision = {
+          filePath: file.filePath,
+          reviewKey,
+          fileDecision,
+          hunkDecisions: hunkDecs,
+          contentSnapshotToken: content?.reviewSnapshotToken,
+          hunkContextHashes,
+        };
         const result = await api.review.applyDecisions({
           teamName,
           taskId,
@@ -1597,16 +1630,8 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
             taskId,
             memberName
           ),
-          decisions: [
-            {
-              filePath: file.filePath,
-              reviewKey,
-              fileDecision,
-              hunkDecisions: hunkDecs,
-              contentSnapshotToken: content?.reviewSnapshotToken,
-              hunkContextHashes,
-            },
-          ],
+          persistedState: buildReviewPersistedStateSnapshot(get(), [decision]),
+          decisions: [decision],
         });
         if (!isCurrentScope()) return result;
         if (result.errors.length > 0) {

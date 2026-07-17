@@ -20,23 +20,33 @@ function makeInput() {
     teamName: 'demo',
     persistenceScope,
     reviewScope: { teamName: 'demo', taskId: 'task-1' },
-    decision: {
-      filePath: '/repo/file.ts',
-      reviewKey: 'change-key',
-      fileDecision: 'pending' as const,
-      hunkDecisions: { 0: 'rejected' as const, 1: 'pending' as const },
-      hunkContextHashes: { 0: 'context-a', 1: 'context-b' },
-    },
-    fileContent: {
-      filePath: '/repo/file.ts',
-      relativePath: 'file.ts',
-      snippets: [],
-      linesAdded: 1,
-      linesRemoved: 1,
-      isNewFile: false,
-      originalFullContent: 'before',
-      modifiedFullContent: 'after',
-      contentSource: 'ledger-exact' as const,
+    kind: 'reject' as const,
+    decisions: [
+      {
+        filePath: '/repo/file.ts',
+        reviewKey: 'change-key',
+        fileDecision: 'pending' as const,
+        hunkDecisions: { 0: 'rejected' as const, 1: 'pending' as const },
+        hunkContextHashes: { 0: 'context-a', 1: 'context-b' },
+      },
+    ],
+    fileContents: [
+      {
+        filePath: '/repo/file.ts',
+        relativePath: 'file.ts',
+        snippets: [],
+        linesAdded: 1,
+        linesRemoved: 1,
+        isNewFile: false,
+        originalFullContent: 'before',
+        modifiedFullContent: 'after',
+        contentSource: 'ledger-exact' as const,
+      },
+    ],
+    persistedState: {
+      hunkDecisions: { 'change-key:0': 'rejected' as const },
+      fileDecisions: {},
+      reviewActionHistory: [],
     },
   };
 }
@@ -50,18 +60,22 @@ describe('ReviewMutationJournalStore', () => {
     await rm(teamsBasePath, { recursive: true, force: true });
   });
 
-  it('durably tracks prepared and committed mutations until an exact decision snapshot acks them', async () => {
+  it('durably tracks every forward-only phase until complete is removed', async () => {
     const { ReviewMutationJournalStore } =
       await import('@main/services/team/ReviewMutationJournalStore');
     const store = new ReviewMutationJournalStore();
     const prepared = await store.prepare(makeInput());
 
     await expect(store.list('demo', persistenceScope)).resolves.toEqual([prepared]);
-    const committed = await store.markCommitted(prepared);
-    await store.acknowledge('demo', persistenceScope, { 'change-key:0': 'accepted' }, {});
-    await expect(store.list('demo', persistenceScope)).resolves.toEqual([committed]);
-
-    await store.acknowledge('demo', persistenceScope, { 'change-key:0': 'rejected' }, {});
+    const diskApplied = await store.transition(prepared, 'prepared', 'disk_applied');
+    const decisionsCommitted = await store.transition(
+      diskApplied,
+      'disk_applied',
+      'decisions_committed'
+    );
+    const complete = await store.transition(decisionsCommitted, 'decisions_committed', 'complete');
+    await expect(store.list('demo', persistenceScope)).resolves.toEqual([complete]);
+    await store.remove(complete);
     await expect(store.list('demo', persistenceScope)).resolves.toEqual([]);
   });
 
@@ -73,10 +87,21 @@ describe('ReviewMutationJournalStore', () => {
     await store.markFailed(prepared, new Error('disk failed'));
 
     await expect(store.list('demo', persistenceScope)).resolves.toMatchObject([
-      { phase: 'failed', failure: 'disk failed' },
+      { phase: 'prepared', blocked: true, failure: 'disk failed' },
     ]);
     await store.clearScope('demo', persistenceScope);
     await expect(store.list('demo', persistenceScope)).resolves.toEqual([]);
+  });
+
+  it('refuses to create a second operation before the pending WAL is drained', async () => {
+    const { ReviewMutationJournalStore } =
+      await import('@main/services/team/ReviewMutationJournalStore');
+    const store = new ReviewMutationJournalStore();
+    await store.prepare(makeInput());
+
+    await expect(store.prepare(makeInput())).rejects.toThrow(
+      'A review mutation is already pending for this decision scope'
+    );
   });
 
   it('rejects a record whose embedded id does not match its durable filename', async () => {

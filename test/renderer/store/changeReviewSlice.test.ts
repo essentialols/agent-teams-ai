@@ -1863,6 +1863,12 @@ describe('changeReviewSlice task changes', () => {
         scopeKey: 'agent-alice',
         scopeToken: expect.stringContaining('agent:alice:content:'),
       },
+      persistedState: {
+        hunkDecisions: { '/repo/a.ts:0': 'rejected' },
+        fileDecisions: { '/repo/a.ts': 'rejected' },
+        hunkContextHashesByFile: {},
+        reviewActionHistory: [],
+      },
       decisions: [
         expect.objectContaining({
           filePath: '/repo/a.ts',

@@ -43,6 +43,22 @@ interface ReviewDecisionsDataV3 extends ReviewDecisionsData {
 class InvalidReviewDecisionDataError extends Error {}
 
 export class ReviewDecisionStore {
+  assertValidSnapshot(data: {
+    hunkDecisions: Record<string, HunkDecision>;
+    fileDecisions: Record<string, HunkDecision>;
+    hunkContextHashesByFile?: Record<string, Record<number, string>>;
+    reviewActionHistory?: ReviewUndoAction[];
+  }): void {
+    if (
+      !this.isDecisionRecord(data.hunkDecisions) ||
+      !this.isDecisionRecord(data.fileDecisions) ||
+      !this.isContextHashRecord(data.hunkContextHashesByFile) ||
+      !this.isReviewActionHistory(data.reviewActionHistory ?? [])
+    ) {
+      throw new Error('Invalid review decisions payload');
+    }
+  }
+
   private assertSafeScope(teamName: string, scopeKey: string, scopeToken?: string): void {
     if (typeof teamName !== 'string' || !TEAM_NAME_PATTERN.test(teamName)) {
       throw new Error('Invalid review decision team name');
@@ -473,14 +489,7 @@ export class ReviewDecisionStore {
     }
   ): Promise<void> {
     this.assertSafeScope(teamName, scopeKey, data.scopeToken);
-    if (
-      !this.isDecisionRecord(data.hunkDecisions) ||
-      !this.isDecisionRecord(data.fileDecisions) ||
-      !this.isContextHashRecord(data.hunkContextHashesByFile) ||
-      !this.isReviewActionHistory(data.reviewActionHistory ?? [])
-    ) {
-      throw new Error('Invalid review decisions payload');
-    }
+    this.assertValidSnapshot(data);
     try {
       const payload: ReviewDecisionsDataV3 = {
         version: 3,

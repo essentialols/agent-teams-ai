@@ -9,6 +9,7 @@ import {
   REVIEW_CLEAR_DECISIONS,
   REVIEW_CLEAR_DRAFT_HISTORY,
   REVIEW_DELETE_EDITED_FILE,
+  REVIEW_EXECUTE_MUTATION,
   REVIEW_GET_FILE_CONTENT,
   REVIEW_LOAD_DECISIONS,
   REVIEW_LOAD_DRAFT_HISTORY,
@@ -334,7 +335,7 @@ describe('review IPC path confinement', () => {
     ).resolves.toEqual({ success: true, data: null });
   });
 
-  it('replays a prepared review mutation before hydrating decisions and clears it only after ack', async () => {
+  it('replays and completes a prepared review mutation before hydrating decisions', async () => {
     const { ReviewMutationJournalStore } =
       await import('@main/services/team/ReviewMutationJournalStore');
     const journal = new ReviewMutationJournalStore();
@@ -346,24 +347,29 @@ describe('review IPC path confinement', () => {
       teamName: 'safe-team',
       persistenceScope,
       reviewScope: { teamName: 'safe-team', memberName: 'worker' },
-      decision: {
-        filePath: projectFile,
-        reviewKey: 'stable-change-key',
-        fileDecision: 'pending',
-        hunkDecisions: { 0: 'rejected' },
-        hunkContextHashes: { 0: 'context-hash' },
-      },
-      fileContent: {
-        filePath: projectFile,
-        relativePath: 'project.ts',
-        snippets: [],
-        linesAdded: 1,
-        linesRemoved: 1,
-        isNewFile: false,
-        originalFullContent: 'before\n',
-        modifiedFullContent: 'after\n',
-        contentSource: 'ledger-exact',
-      },
+      kind: 'reject',
+      decisions: [
+        {
+          filePath: projectFile,
+          reviewKey: 'stable-change-key',
+          fileDecision: 'pending',
+          hunkDecisions: { 0: 'rejected' },
+          hunkContextHashes: { 0: 'context-hash' },
+        },
+      ],
+      fileContents: [
+        {
+          filePath: projectFile,
+          relativePath: 'project.ts',
+          snippets: [],
+          linesAdded: 1,
+          linesRemoved: 1,
+          isNewFile: false,
+          originalFullContent: 'before\n',
+          modifiedFullContent: 'after\n',
+          contentSource: 'ledger-exact',
+        },
+      ],
     });
     applier.applyReviewDecisions.mockClear();
 
@@ -384,9 +390,7 @@ describe('review IPC path confinement', () => {
       },
     });
     expect(applier.applyReviewDecisions).toHaveBeenCalledTimes(1);
-    await expect(journal.list('safe-team', persistenceScope)).resolves.toMatchObject([
-      { phase: 'committed', decision: { reviewKey: 'stable-change-key' } },
-    ]);
+    await expect(journal.list('safe-team', persistenceScope)).resolves.toEqual([]);
 
     const saved = await ipcMain.invoke(
       REVIEW_SAVE_DECISIONS,
@@ -413,23 +417,28 @@ describe('review IPC path confinement', () => {
       teamName: 'safe-team',
       persistenceScope,
       reviewScope: { teamName: 'safe-team', memberName: 'worker' },
-      decision: {
-        filePath: projectFile,
-        reviewKey: projectFile,
-        fileDecision: 'rejected',
-        hunkDecisions: { 0: 'rejected' },
-      },
-      fileContent: {
-        filePath: projectFile,
-        relativePath: 'project.ts',
-        snippets: [],
-        linesAdded: 1,
-        linesRemoved: 1,
-        isNewFile: false,
-        originalFullContent: 'before\n',
-        modifiedFullContent: 'after\n',
-        contentSource: 'ledger-exact',
-      },
+      kind: 'reject',
+      decisions: [
+        {
+          filePath: projectFile,
+          reviewKey: projectFile,
+          fileDecision: 'rejected',
+          hunkDecisions: { 0: 'rejected' },
+        },
+      ],
+      fileContents: [
+        {
+          filePath: projectFile,
+          relativePath: 'project.ts',
+          snippets: [],
+          linesAdded: 1,
+          linesRemoved: 1,
+          isNewFile: false,
+          originalFullContent: 'before\n',
+          modifiedFullContent: 'after\n',
+          contentSource: 'ledger-exact',
+        },
+      ],
     });
     await journal.markFailed(prepared, new Error('write failed'));
 
@@ -448,6 +457,187 @@ describe('review IPC path confinement', () => {
       persistenceScope.scopeToken
     );
     expect(clear).toEqual({ success: true, data: undefined });
+    await expect(journal.list('safe-team', persistenceScope)).resolves.toEqual([]);
+  });
+
+  it('commits disk Undo and the popped action history through one durable mutation', async () => {
+    const persistenceScope = {
+      scopeKey: 'agent-worker',
+      scopeToken: 'agent:worker:content:undo-transaction',
+    };
+    const action = {
+      id: 'disk-action-1',
+      createdAt: '2026-07-17T12:00:00.000Z',
+      kind: 'disk' as const,
+      action: {
+        snapshot: {
+          filePath: projectFile,
+          beforeContent: 'restored\n',
+          afterContent: 'project\n',
+        },
+        originalIndex: 0,
+      },
+    };
+    await ipcMain.invoke(
+      REVIEW_SAVE_DECISIONS,
+      'safe-team',
+      persistenceScope.scopeKey,
+      persistenceScope.scopeToken,
+      { [`${projectFile}:0`]: 'rejected' },
+      {},
+      null,
+      [action]
+    );
+
+    const result = await ipcMain.invoke(REVIEW_EXECUTE_MUTATION, {
+      scope: { teamName: 'safe-team', memberName: 'worker' },
+      decisionPersistenceScope: persistenceScope,
+      kind: 'undo',
+      expectedTopActionId: action.id,
+      diskSteps: [
+        {
+          id: `${action.id}:0`,
+          type: 'write',
+          filePath: projectFile,
+          expectedContent: 'project\n',
+          content: 'restored\n',
+        },
+      ],
+      persistedState: {
+        hunkDecisions: {},
+        fileDecisions: {},
+        hunkContextHashesByFile: {},
+        reviewActionHistory: [],
+      },
+    });
+
+    expect(result).toEqual({ success: true, data: undefined });
+    expect(applier.saveEditedFile).toHaveBeenCalledWith(projectFile, 'restored\n', 'project\n');
+    await expect(
+      ipcMain.invoke(
+        REVIEW_LOAD_DECISIONS,
+        'safe-team',
+        persistenceScope.scopeKey,
+        persistenceScope.scopeToken
+      )
+    ).resolves.toMatchObject({
+      success: true,
+      data: { hunkDecisions: {}, fileDecisions: {}, reviewActionHistory: [] },
+    });
+    const { ReviewMutationJournalStore } =
+      await import('@main/services/team/ReviewMutationJournalStore');
+    await expect(
+      new ReviewMutationJournalStore().list('safe-team', persistenceScope)
+    ).resolves.toEqual([]);
+  });
+
+  it('refuses a stale durable Undo before touching disk', async () => {
+    const persistenceScope = {
+      scopeKey: 'agent-worker',
+      scopeToken: 'agent:worker:content:stale-undo',
+    };
+    await ipcMain.invoke(
+      REVIEW_SAVE_DECISIONS,
+      'safe-team',
+      persistenceScope.scopeKey,
+      persistenceScope.scopeToken,
+      {},
+      {},
+      null,
+      [
+        {
+          id: 'newer-action',
+          createdAt: '2026-07-17T12:00:00.000Z',
+          kind: 'hunk',
+          action: { filePath: projectFile, originalIndex: 0 },
+        },
+      ]
+    );
+    applier.saveEditedFile.mockClear();
+
+    const result = await ipcMain.invoke(REVIEW_EXECUTE_MUTATION, {
+      scope: { teamName: 'safe-team', memberName: 'worker' },
+      decisionPersistenceScope: persistenceScope,
+      kind: 'undo',
+      expectedTopActionId: 'stale-action',
+      diskSteps: [
+        {
+          id: 'stale-action:0',
+          type: 'write',
+          filePath: projectFile,
+          expectedContent: 'project\n',
+          content: 'restored\n',
+        },
+      ],
+      persistedState: {
+        hunkDecisions: {},
+        fileDecisions: {},
+        reviewActionHistory: [],
+      },
+    });
+
+    expect(result).toEqual({
+      success: false,
+      error: 'Review history changed; refusing stale Undo',
+    });
+    expect(applier.saveEditedFile).not.toHaveBeenCalled();
+  });
+
+  it('resumes a multi-file Undo from the first uncheckpointed disk step', async () => {
+    const { ReviewMutationJournalStore } =
+      await import('@main/services/team/ReviewMutationJournalStore');
+    const journal = new ReviewMutationJournalStore();
+    const persistenceScope = {
+      scopeKey: 'agent-worker',
+      scopeToken: 'agent:worker:content:partial-undo',
+    };
+    await journal.prepare({
+      teamName: 'safe-team',
+      persistenceScope,
+      reviewScope: { teamName: 'safe-team', memberName: 'worker' },
+      kind: 'undo',
+      decisions: [],
+      fileContents: [],
+      diskSteps: [
+        {
+          id: 'bulk-undo:0',
+          type: 'write',
+          filePath: projectFile,
+          expectedContent: 'project\n',
+          content: 'restored-project\n',
+          status: 'applied',
+        },
+        {
+          id: 'bulk-undo:1',
+          type: 'write',
+          filePath: worktreeFile,
+          expectedContent: 'worktree\n',
+          content: 'restored-worktree\n',
+          status: 'pending',
+        },
+      ],
+      persistedState: {
+        hunkDecisions: {},
+        fileDecisions: {},
+        reviewActionHistory: [],
+      },
+    });
+    applier.saveEditedFile.mockClear();
+
+    const recovered = await ipcMain.invoke(
+      REVIEW_LOAD_DECISIONS,
+      'safe-team',
+      persistenceScope.scopeKey,
+      persistenceScope.scopeToken
+    );
+
+    expect(recovered).toMatchObject({ success: true, data: { reviewActionHistory: [] } });
+    expect(applier.saveEditedFile).toHaveBeenCalledTimes(1);
+    expect(applier.saveEditedFile).toHaveBeenCalledWith(
+      worktreeFile,
+      'restored-worktree\n',
+      'worktree\n'
+    );
     await expect(journal.list('safe-team', persistenceScope)).resolves.toEqual([]);
   });
 
@@ -639,6 +829,12 @@ describe('review IPC path confinement', () => {
       teamName: 'safe-team',
       memberName: 'worker',
       decisionPersistenceScope: persistenceScope,
+      persistedState: {
+        hunkDecisions: { 'stable-change-key:0': 'rejected' },
+        fileDecisions: { 'stable-change-key': 'rejected' },
+        hunkContextHashesByFile: {},
+        reviewActionHistory: [],
+      },
       decisions: [
         {
           filePath: projectFile,
@@ -665,9 +861,160 @@ describe('review IPC path confinement', () => {
       },
     });
     const journal = new ReviewMutationJournalStore();
-    await expect(journal.list('safe-team', persistenceScope)).resolves.toMatchObject([
-      { phase: 'committed', decision: { reviewKey: 'stable-change-key' } },
+    await expect(journal.list('safe-team', persistenceScope)).resolves.toEqual([]);
+  });
+
+  it('checkpoints each Bulk file and resumes from the first unfinished decision', async () => {
+    const { ReviewMutationJournalStore } =
+      await import('@main/services/team/ReviewMutationJournalStore');
+    extractor.getAgentChanges.mockResolvedValue({
+      files: [
+        { filePath: projectFile, snippets: [], isNewFile: false },
+        { filePath: worktreeFile, snippets: [], isNewFile: false },
+      ],
+    });
+    const projectToken = await getDisplayedSnapshotToken(projectFile);
+    const worktreeToken = await getDisplayedSnapshotToken(worktreeFile);
+    const persistenceScope = {
+      scopeKey: 'agent-worker',
+      scopeToken: 'agent:worker:content:bulk-checkpoints',
+    };
+    applier.applyReviewDecisions
+      .mockResolvedValueOnce({ applied: 1, skipped: 0, conflicts: 0, errors: [] })
+      .mockRejectedValueOnce(new Error('simulated process stop'));
+
+    const result = await ipcMain.invoke(REVIEW_APPLY_DECISIONS, {
+      teamName: 'safe-team',
+      memberName: 'worker',
+      decisionPersistenceScope: persistenceScope,
+      persistedState: {
+        hunkDecisions: {},
+        fileDecisions: { 'project-change': 'rejected', 'worktree-change': 'rejected' },
+        hunkContextHashesByFile: {},
+        reviewActionHistory: [],
+      },
+      decisions: [
+        {
+          filePath: projectFile,
+          reviewKey: 'project-change',
+          fileDecision: 'rejected',
+          hunkDecisions: {},
+          contentSnapshotToken: projectToken,
+        },
+        {
+          filePath: worktreeFile,
+          reviewKey: 'worktree-change',
+          fileDecision: 'rejected',
+          hunkDecisions: {},
+          contentSnapshotToken: worktreeToken,
+        },
+      ],
+    });
+
+    expect(result).toMatchObject({ success: false, error: 'simulated process stop' });
+    expect(applier.applyReviewDecisions).toHaveBeenCalledTimes(2);
+    expect(applier.applyReviewDecisions.mock.calls[0]?.[0].decisions).toHaveLength(1);
+    expect(applier.applyReviewDecisions.mock.calls[1]?.[0].decisions).toHaveLength(1);
+
+    const journal = new ReviewMutationJournalStore();
+    const [blocked] = await journal.list('safe-team', persistenceScope);
+    expect(blocked).toMatchObject({
+      phase: 'prepared',
+      decisionStatuses: ['applied', 'pending'],
+      blocked: true,
+    });
+    await journal.checkpoint({ ...blocked, blocked: undefined, failure: undefined });
+    applier.applyReviewDecisions.mockClear();
+    applier.applyReviewDecisions.mockResolvedValue({
+      applied: 1,
+      skipped: 0,
+      conflicts: 0,
+      errors: [],
+    });
+
+    const recovered = await ipcMain.invoke(
+      REVIEW_LOAD_DECISIONS,
+      'safe-team',
+      persistenceScope.scopeKey,
+      persistenceScope.scopeToken
+    );
+
+    expect(recovered).toMatchObject({
+      success: true,
+      data: {
+        fileDecisions: { 'project-change': 'rejected', 'worktree-change': 'rejected' },
+      },
+    });
+    expect(applier.applyReviewDecisions).toHaveBeenCalledTimes(1);
+    expect(applier.applyReviewDecisions.mock.calls[0]?.[0].decisions).toEqual([
+      expect.objectContaining({ filePath: worktreeFile, reviewKey: 'worktree-change' }),
     ]);
+    await expect(journal.list('safe-team', persistenceScope)).resolves.toEqual([]);
+  });
+
+  it('commits the actual disk postimage into durable Undo history', async () => {
+    const contentSnapshotToken = await getDisplayedSnapshotToken(projectFile);
+    const persistenceScope = {
+      scopeKey: 'agent-worker',
+      scopeToken: 'agent:worker:content:actual-postimage',
+    };
+    const action = {
+      id: 'reject-action-with-postimage',
+      createdAt: '2026-07-17T12:00:00.000Z',
+      kind: 'disk' as const,
+      action: {
+        snapshot: {
+          filePath: projectFile,
+          beforeContent: 'project\n',
+          afterContent: 'renderer-prediction\n',
+        },
+        originalIndex: 0,
+      },
+    };
+    applier.applyReviewDecisions.mockImplementationOnce(async () => {
+      await writeFile(projectFile, 'actual-three-way-result\n', 'utf8');
+      return { applied: 1, skipped: 0, conflicts: 0, errors: [] };
+    });
+
+    const result = await ipcMain.invoke(REVIEW_APPLY_DECISIONS, {
+      teamName: 'safe-team',
+      memberName: 'worker',
+      decisionPersistenceScope: persistenceScope,
+      persistedState: {
+        hunkDecisions: { 'stable-change-key:0': 'rejected' },
+        fileDecisions: {},
+        hunkContextHashesByFile: {},
+        reviewActionHistory: [action],
+      },
+      decisions: [
+        {
+          filePath: projectFile,
+          reviewKey: 'stable-change-key',
+          fileDecision: 'pending',
+          hunkDecisions: { 0: 'rejected' },
+          contentSnapshotToken,
+        },
+      ],
+    });
+
+    expect(result).toMatchObject({ success: true, data: { applied: 1, errors: [] } });
+    const loaded = await ipcMain.invoke(
+      REVIEW_LOAD_DECISIONS,
+      'safe-team',
+      persistenceScope.scopeKey,
+      persistenceScope.scopeToken
+    );
+    expect(loaded).toMatchObject({
+      success: true,
+      data: {
+        reviewActionHistory: [
+          {
+            id: action.id,
+            action: { snapshot: { afterContent: 'actual-three-way-result\n' } },
+          },
+        ],
+      },
+    });
   });
 
   it('rejects a durable decision scope that does not match the authoritative review identity', async () => {

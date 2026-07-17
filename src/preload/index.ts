@@ -82,6 +82,7 @@ import {
   REVIEW_CLEAR_DECISIONS,
   REVIEW_CLEAR_DRAFT_HISTORY,
   REVIEW_DELETE_EDITED_FILE,
+  REVIEW_EXECUTE_MUTATION,
   REVIEW_FILE_CHANGE,
   REVIEW_GET_AGENT_CHANGES,
   REVIEW_GET_CHANGE_STATS,
@@ -299,6 +300,7 @@ import type {
   CrossTeamSendRequest,
   CrossTeamSendResult,
   ElectronAPI,
+  ExecuteReviewMutationRequest,
   FileChangeWithContent,
   GlobalTask,
   HttpServerStatus,
@@ -1510,6 +1512,9 @@ const electronAPI: ElectronAPI = {
     },
     applyDecisions: async (request: ApplyReviewRequest) => {
       return invokeIpcWithResult<ApplyReviewResult>(REVIEW_APPLY_DECISIONS, request);
+    },
+    executeMutation: async (request: ExecuteReviewMutationRequest) => {
+      return invokeIpcWithResult<void>(REVIEW_EXECUTE_MUTATION, request);
     },
     // Phase 2
     checkConflict: async (scope: ReviewFileScope, filePath: string, expectedModified: string) => {

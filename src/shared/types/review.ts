@@ -237,6 +237,14 @@ export interface ReviewDecisionPersistenceScope {
   scopeToken: string;
 }
 
+/** Exact renderer state committed by main only after the related disk mutation. */
+export interface ReviewPersistedStateSnapshot {
+  hunkDecisions: Record<string, HunkDecision>;
+  fileDecisions: Record<string, HunkDecision>;
+  hunkContextHashesByFile?: Record<string, Record<number, string>>;
+  reviewActionHistory: ReviewUndoAction[];
+}
+
 /** Complete inverse decision state carried by a durable review action. */
 export interface ReviewDecisionSnapshot {
   hunkDecisions: Record<string, HunkDecision>;
@@ -295,7 +303,44 @@ export interface ApplyReviewRequest {
   memberName?: string;
   /** Exact durable decision scope used to close disk/decision crash windows. */
   decisionPersistenceScope?: ReviewDecisionPersistenceScope;
+  /**
+   * Full post-operation state. Main persists it only after every requested disk
+   * effect reaches its postimage. Required for durable mutations.
+   */
+  persistedState?: ReviewPersistedStateSnapshot;
   decisions: FileReviewDecision[];
+}
+
+export type ReviewDirectDiskMutationStep =
+  | {
+      id: string;
+      type: 'write';
+      filePath: string;
+      expectedContent: string | null;
+      content: string;
+    }
+  | {
+      id: string;
+      type: 'delete';
+      filePath: string;
+      expectedContent: string;
+    }
+  | {
+      id: string;
+      type: 'restore-rejected-rename' | 'reapply-rejected-rename';
+      filePath: string;
+      expectation: ReviewRenameRecoveryExpectation;
+    };
+
+/** Main-authoritative Restore/Rename/Undo transaction. */
+export interface ExecuteReviewMutationRequest {
+  scope: ReviewFileScope;
+  decisionPersistenceScope: ReviewDecisionPersistenceScope;
+  kind: 'restore' | 'rename' | 'undo';
+  diskSteps: ReviewDirectDiskMutationStep[];
+  persistedState: ReviewPersistedStateSnapshot;
+  /** Required for Undo so a stale renderer cannot pop a newer durable action. */
+  expectedTopActionId?: string;
 }
 
 /** Authoritative team/task scope used by main to resolve a review file root. */

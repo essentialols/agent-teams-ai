@@ -584,6 +584,9 @@ export const REVIEW_PREVIEW_REJECT = 'review:previewReject';
 /** Применить batch решений review */
 export const REVIEW_APPLY_DECISIONS = 'review:applyDecisions';
 
+/** Execute Restore/Rename/Undo through the durable review mutation state machine. */
+export const REVIEW_EXECUTE_MUTATION = 'review:executeMutation';
+
 /** Получить полное содержимое файла для diff view */
 export const REVIEW_GET_FILE_CONTENT = 'review:getFileContent';
 

@@ -1,7 +1,6 @@
 import {
   atomicCreateAsync,
   atomicWriteAsync,
-  cleanupAtomicCreateTempLinks,
   renamePathWithRetry,
   unlinkPathDurably,
 } from '@main/utils/atomicWrite';
@@ -12,7 +11,6 @@ import { createHash } from 'crypto';
 import { lstat, mkdir, readFile } from 'fs/promises';
 import { dirname } from 'path';
 
-import type { AtomicCreateResult } from '@main/utils/atomicWrite';
 import type {
   ApplyReviewRequest,
   ApplyReviewResult,
@@ -1064,58 +1062,10 @@ export class ReviewApplierService {
     }
 
     const newCurrent = await this.readCurrentText(newFilePath);
-    let aliasedCurrentContent: string | null = null;
-    if (!newCurrent.missing) {
-      const newCurrentError = getCurrentTextReadError(newCurrent);
-      if (newCurrentError) {
-        return {
-          handled: true,
-          status: 'error',
-          code: 'io-error',
-          error: newCurrentError,
-        };
-      }
-      if (this.hashText(newCurrent.content) !== newHash) {
-        return {
-          handled: true,
-          status: 'conflict',
-          code: 'conflict',
-          error: 'Renamed file was modified since review was computed; refusing ledger reject.',
-        };
-      }
-      if (await this.pathsReferToSameFile(oldFilePath, newFilePath)) {
-        aliasedCurrentContent = newCurrent.content;
-      }
+    const newCurrentError = newCurrent.missing ? null : getCurrentTextReadError(newCurrent);
+    if (newCurrentError) {
+      return { handled: true, status: 'error', code: 'io-error', error: newCurrentError };
     }
-
-    // On case-insensitive filesystems a case-only rename exposes both spellings as one inode.
-    // Restore the old spelling/content in place; unlinking the "new" spelling would delete both.
-    if (aliasedCurrentContent !== null) {
-      let renamed = false;
-      try {
-        await renamePathWithRetry(newFilePath, oldFilePath, { syncDirectories: true });
-        renamed = true;
-        if (aliasedCurrentContent !== oldContent) {
-          await this.atomicReplaceTextFile(oldFilePath, aliasedCurrentContent, oldContent);
-        }
-        return { handled: true, status: 'applied' };
-      } catch (err) {
-        if (renamed) {
-          try {
-            await renamePathWithRetry(oldFilePath, newFilePath, { syncDirectories: true });
-          } catch {
-            // Best effort rollback; the caller invalidates both paths before refreshing.
-          }
-        }
-        return {
-          handled: true,
-          status: 'error',
-          code: 'io-error',
-          error: `Failed to reject case-only ledger rename: ${String(err)}`,
-        };
-      }
-    }
-
     const oldCurrent = await this.readCurrentText(oldFilePath);
     const oldCurrentError = oldCurrent.missing ? null : getCurrentTextReadError(oldCurrent);
     if (oldCurrentError) {
@@ -1129,6 +1079,70 @@ export class ReviewApplierService {
     const oldMatchesExpected =
       !oldCurrent.missing &&
       (oldHash ? this.hashText(oldCurrent.content) === oldHash : oldCurrent.content === oldContent);
+    const newMatchesExpected = !newCurrent.missing && this.hashText(newCurrent.content) === newHash;
+    const aliased =
+      !oldCurrent.missing &&
+      !newCurrent.missing &&
+      (await this.pathsReferToSameFile(oldFilePath, newFilePath));
+
+    if (aliased) {
+      if (!newMatchesExpected && !oldMatchesExpected) {
+        return {
+          handled: true,
+          status: 'conflict',
+          code: 'conflict',
+          error: 'Case-only rename content changed; refusing ledger reject.',
+        };
+      }
+      const currentContent = newMatchesExpected ? newCurrent.content : oldCurrent.content;
+      try {
+        await renamePathWithRetry(newFilePath, oldFilePath, { syncDirectories: true });
+        if (currentContent !== oldContent) {
+          await this.atomicReplaceTextFile(oldFilePath, currentContent, oldContent);
+        }
+        return { handled: true, status: 'applied' };
+      } catch (error) {
+        return {
+          handled: true,
+          status: 'error',
+          code: 'io-error',
+          error: `Failed to reject case-only ledger rename: ${String(error)}`,
+        };
+      }
+    }
+
+    if (newCurrent.missing) {
+      if (oldMatchesExpected) return { handled: true, status: 'applied' };
+      // Crash after the durable path move but before the content replacement.
+      if (!oldCurrent.missing && this.hashText(oldCurrent.content) === newHash) {
+        try {
+          await this.atomicReplaceTextFile(oldFilePath, oldCurrent.content, oldContent);
+          return { handled: true, status: 'applied' };
+        } catch (error) {
+          return {
+            handled: true,
+            status: 'error',
+            code: 'io-error',
+            error: `Failed to finish interrupted ledger rename reject: ${String(error)}`,
+          };
+        }
+      }
+      return {
+        handled: true,
+        status: 'conflict',
+        code: 'conflict',
+        error: 'Renamed target path is missing; refusing to recreate the original path.',
+      };
+    }
+    if (!newMatchesExpected) {
+      return {
+        handled: true,
+        status: 'conflict',
+        code: 'conflict',
+        error: 'Renamed file was modified since review was computed; refusing ledger reject.',
+      };
+    }
+    // Compatibility recovery for the old create-then-delete implementation.
     if (!oldCurrent.missing) {
       if (!oldMatchesExpected) {
         return {
@@ -1138,52 +1152,31 @@ export class ReviewApplierService {
           error: 'Original rename path already exists with different content; refusing overwrite.',
         };
       }
+      try {
+        await this.deleteExpectedTextFile(newFilePath, newCurrent.content);
+        return { handled: true, status: 'applied' };
+      } catch (error) {
+        return {
+          handled: true,
+          status: 'error',
+          code: 'io-error',
+          error: `Failed to finish legacy ledger rename reject: ${String(error)}`,
+        };
+      }
     }
 
-    if (newCurrent.missing) {
-      return oldMatchesExpected
-        ? { handled: true, status: 'applied' }
-        : {
-            handled: true,
-            status: 'conflict',
-            code: 'conflict',
-            error: 'Renamed target path is missing; refusing to recreate the original path.',
-          };
-    }
-
-    let createdOldPath: AtomicCreateResult | null = null;
     try {
-      if (oldCurrent.missing) {
-        await mkdir(dirname(oldFilePath), { recursive: true });
-        createdOldPath = await atomicCreateAsync(oldFilePath, oldContent);
+      await renamePathWithRetry(newFilePath, oldFilePath, { syncDirectories: true });
+      if (newCurrent.content !== oldContent) {
+        await this.atomicReplaceTextFile(oldFilePath, newCurrent.content, oldContent);
       }
-
-      const newBeforeDelete = await this.readCurrentText(newFilePath);
-      const newBeforeDeleteError = getCurrentTextReadError(newBeforeDelete);
-      if (
-        newBeforeDelete.missing ||
-        newBeforeDeleteError ||
-        this.hashText(newBeforeDelete.content) !== newHash
-      ) {
-        throw new Error(
-          newBeforeDeleteError ?? 'Renamed target changed during reject; refusing to delete it.'
-        );
-      }
-      await this.deleteExpectedTextFile(newFilePath, newBeforeDelete.content);
       return { handled: true, status: 'applied' };
-    } catch (err) {
-      if (createdOldPath) {
-        try {
-          await this.deleteCreatedTextFileIfOwned(oldFilePath, oldContent, createdOldPath);
-        } catch {
-          // Best effort rollback; preserve the original error for the renderer.
-        }
-      }
+    } catch (error) {
       return {
         handled: true,
         status: 'error',
         code: 'io-error',
-        error: `Failed to reject ledger rename: ${String(err)}`,
+        error: `Failed to reject ledger rename: ${String(error)}`,
       };
     }
   }
@@ -1232,9 +1225,32 @@ export class ReviewApplierService {
     const newCurrent = await this.readCurrentText(newFilePath);
     const newReadError = getCurrentTextReadError(newCurrent);
     if (newReadError) throw new Error(newReadError);
+    const aliased =
+      !oldCurrent.missing &&
+      !newCurrent.missing &&
+      (await this.pathsReferToSameFile(oldFilePath, newFilePath));
+
+    if (aliased) {
+      if (newCurrent.content === newContent) return;
+      if (newCurrent.content !== oldContent) {
+        throw new Error('Case-only rename content changed after rejection; refusing Undo.');
+      }
+      try {
+        await renamePathWithRetry(oldFilePath, newFilePath, { syncDirectories: true });
+        if (oldContent !== newContent) {
+          await this.atomicReplaceTextFile(newFilePath, oldContent, newContent);
+        }
+        return;
+      } catch (error) {
+        throw new Error(`Failed to restore case-only ledger rename: ${String(error)}`);
+      }
+    }
+
     if (oldCurrent.missing) {
-      if (!newCurrent.missing && newCurrent.content === newContent) {
-        // The prior attempt reached its terminal state but its IPC response was lost.
+      if (!newCurrent.missing && newCurrent.content === newContent) return;
+      // Crash after the path move but before publishing the target content.
+      if (!newCurrent.missing && newCurrent.content === oldContent) {
+        await this.atomicReplaceTextFile(newFilePath, oldContent, newContent);
         return;
       }
       throw new Error('Original rename path changed after rejection; refusing Undo.');
@@ -1242,58 +1258,16 @@ export class ReviewApplierService {
     if (oldCurrent.content !== oldContent) {
       throw new Error('Original rename path changed after rejection; refusing Undo.');
     }
-    const aliased =
-      !newCurrent.missing && (await this.pathsReferToSameFile(oldFilePath, newFilePath));
-
-    if (aliased) {
-      if (newCurrent.content !== oldContent) {
-        throw new Error('Case-only rename content changed after rejection; refusing Undo.');
-      }
-      let renamed = false;
-      try {
-        await renamePathWithRetry(oldFilePath, newFilePath, { syncDirectories: true });
-        renamed = true;
-        if (oldContent !== newContent) {
-          await this.atomicReplaceTextFile(newFilePath, oldContent, newContent);
-        }
-        return;
-      } catch (error) {
-        if (renamed) {
-          try {
-            await renamePathWithRetry(newFilePath, oldFilePath, { syncDirectories: true });
-          } catch {
-            // Preserve the original failure; the caller will refresh both paths from disk.
-          }
-        }
-        throw new Error(`Failed to restore case-only ledger rename: ${String(error)}`);
-      }
-    }
-
     if (!newCurrent.missing) {
       throw new Error('Renamed target path already exists; refusing Undo.');
     }
 
-    let createdTargetPath: AtomicCreateResult | null = null;
     try {
-      await mkdir(dirname(newFilePath), { recursive: true });
-      createdTargetPath = await atomicCreateAsync(newFilePath, newContent);
-      const oldBeforeDelete = await this.readCurrentText(oldFilePath);
-      if (
-        oldBeforeDelete.missing ||
-        getCurrentTextReadError(oldBeforeDelete) ||
-        oldBeforeDelete.content !== oldContent
-      ) {
-        throw new Error('Original rename path changed during Undo.');
+      await renamePathWithRetry(oldFilePath, newFilePath, { syncDirectories: true });
+      if (oldContent !== newContent) {
+        await this.atomicReplaceTextFile(newFilePath, oldContent, newContent);
       }
-      await this.deleteExpectedTextFile(oldFilePath, oldBeforeDelete.content);
     } catch (error) {
-      if (createdTargetPath) {
-        try {
-          await this.deleteCreatedTextFileIfOwned(newFilePath, newContent, createdTargetPath);
-        } catch {
-          // Best effort rollback; preserve the first error for the renderer.
-        }
-      }
       throw new Error(`Failed to restore ledger rename: ${String(error)}`);
     }
   }
@@ -1480,19 +1454,6 @@ export class ReviewApplierService {
       const code = (error as NodeJS.ErrnoException).code;
       if (code !== 'ENOENT' && code !== 'ENOTDIR') throw error;
     }
-  }
-
-  private async deleteCreatedTextFileIfOwned(
-    filePath: string,
-    expectedCurrentContent: string,
-    identity: AtomicCreateResult
-  ): Promise<void> {
-    await cleanupAtomicCreateTempLinks(filePath);
-    const current = await this.assertSafeExpectedFile(filePath, expectedCurrentContent);
-    if (current.dev !== identity.dev || current.ino !== identity.ino) {
-      throw new Error('Created review file was replaced; refusing rollback delete');
-    }
-    await unlinkPathDurably(filePath);
   }
 
   private async pathsReferToSameFile(firstPath: string, secondPath: string): Promise<boolean> {

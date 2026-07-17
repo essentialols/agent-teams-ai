@@ -227,7 +227,7 @@ describe('ProviderModelBadges', () => {
       />
     );
 
-    expect(host.textContent).toContain('GPT-5.6');
+    expect(host.textContent).toContain('gpt-5.6');
     expect(host.textContent).not.toContain('Free');
   });
 

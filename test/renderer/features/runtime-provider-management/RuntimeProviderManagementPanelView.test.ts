@@ -3292,7 +3292,7 @@ describe('RuntimeProviderManagementPanelView', () => {
                 free: true,
                 default: false,
                 availability: 'untested',
-                routeKind: 'connected_provider',
+                routeKind: 'builtin_free',
               },
               {
                 providerId: 'openrouter',

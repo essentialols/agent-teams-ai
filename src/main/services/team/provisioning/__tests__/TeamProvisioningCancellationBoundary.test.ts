@@ -218,8 +218,10 @@ describe('TeamProvisioningCancellationBoundary', () => {
     expect(basePorts.cleanupRun).toHaveBeenCalledWith(run);
   });
 
-  it('cancels an active direct provisioning run and leaves cleanup behind the ports', async () => {
-    const run = makeRun();
+  it('cancels a validating direct run and rolls back its owned runtime resources', async () => {
+    const run = makeRun({
+      progress: progress({ state: 'validating', message: 'Validating' }),
+    });
     const ports = makePorts({
       run,
       trackedRunId: run.runId,
@@ -232,6 +234,8 @@ describe('TeamProvisioningCancellationBoundary', () => {
     expect(run.cancelRequested).toBe(true);
     expect(run.processKilled).toBe(true);
     expect(run.child?.killed).toBe(true);
+    expect(ports.killTeamProcess).toHaveBeenCalledWith(run.child);
+    expect(ports.stopOpenCodeRuntimeAdapterTeam).toHaveBeenCalledWith(run.teamName, run.runId);
     expect(ports.stopMixedSecondaryRuntimeLanes).toHaveBeenCalledWith(run.teamName);
     expect(run.onProgress).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -242,6 +246,7 @@ describe('TeamProvisioningCancellationBoundary', () => {
       })
     );
     expect(ports.cleanupRun).toHaveBeenCalledWith(run);
+    expect(ports.runs.has(run.runId)).toBe(false);
   });
 
   it('awaits every owned runtime lane stop before cancelled progress and cleanup', async () => {
@@ -365,18 +370,31 @@ describe('TeamProvisioningCancellationBoundary', () => {
     expect(ports.cleanupRun).toHaveBeenCalledWith(run);
   });
 
-  it('rejects direct run cancellation after the provisioning window closes', async () => {
-    const run = makeRun({ progress: progress({ state: 'ready' }) });
-    const ports = makePorts({ run });
-    const boundary = createTeamProvisioningCancellationBoundary(ports);
+  it.each(['ready', 'disconnected', 'failed', 'cancelled'] as const)(
+    'rejects direct run cancellation in the %s state',
+    async (state) => {
+      const run = makeRun({ progress: progress({ state }) });
+      const ports = makePorts({
+        run,
+        trackedRunId: run.runId,
+        hasSecondaryRuntimeRuns: true,
+      });
+      const boundary = createTeamProvisioningCancellationBoundary(ports);
 
-    await expect(boundary.cancelProvisioning(run.runId)).rejects.toThrow(
-      'Provisioning cannot be cancelled in current state'
-    );
+      await expect(boundary.cancelProvisioning(run.runId)).rejects.toThrow(
+        'Provisioning cannot be cancelled in current state'
+      );
 
-    expect(run.cancelRequested).toBe(false);
-    expect(ports.cleanupRun).not.toHaveBeenCalled();
-  });
+      expect(run.cancelRequested).toBe(false);
+      expect(run.processKilled).toBe(false);
+      expect(ports.killTeamProcess).not.toHaveBeenCalled();
+      expect(ports.stopOpenCodeRuntimeAdapterTeam).not.toHaveBeenCalled();
+      expect(ports.stopMixedSecondaryRuntimeLanes).not.toHaveBeenCalled();
+      expect(run.onProgress).not.toHaveBeenCalled();
+      expect(ports.cleanupRun).not.toHaveBeenCalled();
+      expect(ports.runs.get(run.runId)).toBe(run);
+    }
+  );
 
   it('routes runtime-adapter-only cancellation through the runtime cancellation port', async () => {
     const adapter = makeAdapter();

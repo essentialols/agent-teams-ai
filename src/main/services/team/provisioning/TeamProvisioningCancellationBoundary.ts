@@ -131,6 +131,7 @@ export interface TeamProvisioningCancellationBoundaryServiceHostOptions<
 }
 
 const CANCELLABLE_PROVISIONING_STATES: ReadonlySet<TeamProvisioningProgress['state']> = new Set([
+  'validating',
   'spawning',
   'configuring',
   'assembling',

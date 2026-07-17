@@ -492,6 +492,9 @@ jobs:
         with:
           node-version-file: .node-version
 
+      - name: Verify runtime lock pins on the release ref
+        run: node ./scripts/ci/verify-runtime-lock.mjs
+
       - name: Verify anonymous runtime bootstrap before packaging
         run: node ./scripts/ci/verify-public-runtime-bootstrap.mjs
 

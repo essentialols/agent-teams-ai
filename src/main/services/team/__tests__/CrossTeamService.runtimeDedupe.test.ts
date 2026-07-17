@@ -248,7 +248,7 @@ describe('CrossTeamService runtime delivery dedupe', () => {
     expect(messaging.relayInboxFileToLiveRecipient).not.toHaveBeenCalled();
   });
 
-  it('delivers distinct caller message ids in the same conversation', async () => {
+  it('delivers distinct runtime messages that carry distinct conversation identities', async () => {
     vi.useFakeTimers({ now: new Date('2026-07-09T00:00:00.000Z') });
     const { service, inboxWriter, messaging, sentToInbox } = createService();
 
@@ -264,11 +264,13 @@ describe('CrossTeamService runtime delivery dedupe', () => {
       deliveredToInbox: true,
     });
     vi.advanceTimersByTime(3_001);
+    // A genuinely distinct logical delivery carries its own idempotencyKey, hence
+    // its own conversationId. It must be delivered, not deduped.
     await expect(
       service.send(
         runtimeRequest({
           messageId: 'runtime-message-2',
-          conversationId: 'runtime-idempotency-1',
+          conversationId: 'runtime-idempotency-2',
         })
       )
     ).resolves.toMatchObject({
@@ -288,5 +290,48 @@ describe('CrossTeamService runtime delivery dedupe', () => {
       'team-lead',
       { onlyMessageId: 'runtime-message-2' }
     );
+  });
+
+  it('dedupes a cross-run runtime retry that reuses the conversation identity with a new run-scoped message id', async () => {
+    vi.useFakeTimers({ now: new Date('2026-07-09T00:00:00.000Z') });
+    const { service, inboxWriter, sentToInbox } = createService();
+
+    // Run R1: destinationMessageId is hash(idempotencyKey, runId, team) - run-scoped.
+    await expect(
+      service.send(
+        runtimeRequest({
+          messageId: 'runtime-delivery-run1-abc',
+          conversationId: 'runtime-idempotency-1',
+        })
+      )
+    ).resolves.toMatchObject({
+      messageId: 'runtime-delivery-run1-abc',
+      deliveredToInbox: true,
+    });
+
+    // Run R2 relaunch re-delivers the SAME logical message: same idempotencyKey
+    // (=conversationId) but a DIFFERENT run-scoped destinationMessageId. The
+    // journal does not carry cross-team entries across runs, so the outbox
+    // conversationId proof must dedupe it - otherwise the target inbox receives
+    // the message twice.
+    vi.advanceTimersByTime(3_001);
+    await expect(
+      service.send(
+        runtimeRequest({
+          messageId: 'runtime-delivery-run2-def',
+          conversationId: 'runtime-idempotency-1',
+          text: 'Same logical delivery, relaunched under a new run',
+        })
+      )
+    ).resolves.toMatchObject({
+      messageId: 'runtime-delivery-run1-abc',
+      deliveredToInbox: true,
+      deduplicated: true,
+    });
+
+    expect(inboxWriter.sendMessage).toHaveBeenCalledTimes(1);
+    expect(sentToInbox.map((entry) => entry.message.messageId)).toEqual([
+      'runtime-delivery-run1-abc',
+    ]);
   });
 });

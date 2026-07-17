@@ -145,13 +145,24 @@ function hasMatchingStableIdentity(
   callerMessageId?: string
 ): boolean {
   const normalizedCallerMessageId = String(callerMessageId ?? '').trim();
-  if (normalizedCallerMessageId) {
-    return (
-      stableMessageId(left) === normalizedCallerMessageId &&
-      stableMessageId(right) === normalizedCallerMessageId
-    );
+  if (
+    normalizedCallerMessageId &&
+    stableMessageId(left) === normalizedCallerMessageId &&
+    stableMessageId(right) === normalizedCallerMessageId
+  ) {
+    return true;
   }
 
+  // conversationId is the cross-run duplicate proof. On the runtime cross-team
+  // path the caller messageId is the run-scoped destinationMessageId
+  // (hash of idempotencyKey + runId + teamName), so the SAME logical delivery
+  // gets a DIFFERENT messageId after a relaunch while conversationId
+  // (= idempotencyKey) stays stable. The RuntimeDeliveryJournal deliberately
+  // does not carry cross-team entries across runs and relies on this fallback
+  // ("Cross-team sends retain run-scoped message ids and use conversationId for
+  // duplicate proof"). Skipping it would double-deliver on relaunch. Distinct
+  // logical messages carry distinct idempotencyKeys, hence distinct
+  // conversationIds, so this cannot over-dedupe them.
   const leftConversationId = stableConversationId(left);
   const rightConversationId = stableConversationId(right);
   return Boolean(

@@ -154,16 +154,49 @@ describe('CrossTeamOutbox runtime delivery dedupe', () => {
     expect(onBeforeAppend).toHaveBeenCalledTimes(1);
   });
 
-  it('does not dedupe distinct caller message ids in the same conversation', async () => {
+  it('dedupes a cross-run retry that reuses the conversation identity with a new run-scoped caller message id', async () => {
     const outbox = new CrossTeamOutbox();
     const onBeforeAppend = vi.fn(async () => {});
+    // Runtime cross-team caller messageId is the run-scoped destinationMessageId
+    // (hash of idempotencyKey + runId + team); conversationId is the stable
+    // idempotencyKey. A relaunch re-delivers the SAME logical message with a new
+    // run-scoped id but the same conversationId - it must dedupe.
     const first = makeMessage({
-      messageId: 'runtime-message-1',
+      messageId: 'runtime-delivery-run1-abc',
       conversationId: 'runtime-idempotency-1',
     });
     const second = makeMessage({
-      messageId: 'runtime-message-2',
+      messageId: 'runtime-delivery-run2-def',
       conversationId: 'runtime-idempotency-1',
+    });
+
+    await expect(
+      outbox.appendIfNotRecent('source-team', first, onBeforeAppend, undefined, {
+        stableIdentity: true,
+        callerMessageId: first.messageId,
+      })
+    ).resolves.toEqual({ duplicate: null });
+    await expect(
+      outbox.appendIfNotRecent('source-team', second, onBeforeAppend, undefined, {
+        stableIdentity: true,
+        callerMessageId: second.messageId,
+      })
+    ).resolves.toEqual({ duplicate: first });
+
+    await expect(outbox.read('source-team')).resolves.toEqual([first]);
+    expect(onBeforeAppend).toHaveBeenCalledTimes(1);
+  });
+
+  it('delivers distinct runtime messages that carry distinct conversation identities', async () => {
+    const outbox = new CrossTeamOutbox();
+    const onBeforeAppend = vi.fn(async () => {});
+    const first = makeMessage({
+      messageId: 'runtime-delivery-run1-abc',
+      conversationId: 'runtime-idempotency-1',
+    });
+    const second = makeMessage({
+      messageId: 'runtime-delivery-run1-def',
+      conversationId: 'runtime-idempotency-2',
     });
 
     for (const message of [first, second]) {

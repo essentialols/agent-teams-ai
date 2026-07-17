@@ -1,24 +1,26 @@
 import { CrossTeamService } from '@main/services/team/CrossTeamService';
+import { TeamInboxWriter } from '@main/services/team/TeamInboxWriter';
 import {
   CROSS_TEAM_SENT_SOURCE,
   CROSS_TEAM_SOURCE,
   parseCrossTeamPrefix,
 } from '@shared/constants/crossTeam';
+import * as agentTeamsController from 'agent-teams-controller';
 import * as fs from 'fs';
+import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { TeamConfigReader } from '@main/services/team/TeamConfigReader';
 import type { TeamDataService } from '@main/services/team/TeamDataService';
-import type { TeamInboxWriter } from '@main/services/team/TeamInboxWriter';
 import type { TeamProvisioningService } from '@main/services/team/TeamProvisioningService';
 import type { CrossTeamSendRequest, TeamConfig } from '@shared/types';
 
 vi.mock('@main/utils/pathDecoder', () => ({
-  getTeamsBasePath: () => '/tmp/cross-team-test-nonexistent-dir-' + process.pid,
-  getClaudeBasePath: () => '/tmp/cross-team-test-nonexistent-dir-' + process.pid,
+  getTeamsBasePath: () => `${process.cwd()}/.cross-team-test-nonexistent-dir-${process.pid}/teams`,
+  getClaudeBasePath: () => `${process.cwd()}/.cross-team-test-nonexistent-dir-${process.pid}`,
 }));
 
-const MOCK_TEAMS_BASE_PATH = '/tmp/cross-team-test-nonexistent-dir-' + process.pid;
+const MOCK_TEAMS_BASE_PATH = `${process.cwd()}/.cross-team-test-nonexistent-dir-${process.pid}`;
 
 vi.mock('@shared/utils/logger', () => ({
   createLogger: () => ({
@@ -45,6 +47,48 @@ function makeConfig(overrides: Partial<TeamConfig> = {}): TeamConfig {
     members: [{ name: 'team-lead', agentType: 'team-lead' }],
     ...overrides,
   };
+}
+
+function writeControllerTeam(teamName: string, config: TeamConfig): void {
+  const teamDir = path.join(MOCK_TEAMS_BASE_PATH, 'teams', teamName);
+  fs.mkdirSync(path.join(teamDir, 'inboxes'), { recursive: true });
+  fs.mkdirSync(path.join(MOCK_TEAMS_BASE_PATH, 'tasks', teamName), { recursive: true });
+  fs.writeFileSync(path.join(teamDir, 'config.json'), JSON.stringify(config));
+}
+
+function createFilesystemCrossTeamService(
+  messaging: TeamProvisioningService | null = null
+): CrossTeamService {
+  const filesystemConfigReader = {
+    getConfig(teamName: string): Promise<TeamConfig | null> {
+      const configPath = path.join(MOCK_TEAMS_BASE_PATH, 'teams', teamName, 'config.json');
+      try {
+        return Promise.resolve(JSON.parse(fs.readFileSync(configPath, 'utf8')) as TeamConfig);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return Promise.resolve(null);
+        throw error;
+      }
+    },
+  };
+  const filesystemDataService = {
+    getLeadMemberName: vi.fn().mockResolvedValue(null),
+    listTeams: vi.fn().mockResolvedValue([]),
+  };
+
+  return new CrossTeamService(
+    filesystemConfigReader as TeamConfigReader,
+    filesystemDataService as unknown as TeamDataService,
+    new TeamInboxWriter(),
+    messaging
+  );
+}
+
+function readFixtureArray(filePath: string): unknown[] {
+  const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as unknown;
+  if (!Array.isArray(parsed)) {
+    throw new Error(`Expected fixture array at ${filePath}`);
+  }
+  return parsed;
 }
 
 describe('CrossTeamService', () => {
@@ -168,7 +212,7 @@ describe('CrossTeamService', () => {
 
       const sentMessagesPath = `${MOCK_TEAMS_BASE_PATH}/teams/team-a/sentMessages.json`;
       const raw = fs.readFileSync(sentMessagesPath, 'utf8');
-      const sentRows = JSON.parse(raw) as Array<Record<string, unknown>>;
+      const sentRows = JSON.parse(raw) as Record<string, unknown>[];
       expect(sentRows).toHaveLength(1);
       expect(sentRows[0]?.from).toBe('team-lead');
       expect(sentRows[0]?.source).toBe(CROSS_TEAM_SENT_SOURCE);
@@ -227,20 +271,20 @@ describe('CrossTeamService', () => {
 
     it('writes sender copy before triggering live relay', async () => {
       const order: string[] = [];
-      inboxWriter.sendMessage.mockImplementation(async (teamName: string) => {
+      inboxWriter.sendMessage.mockImplementation((teamName: string) => {
         order.push(`write:${teamName}`);
-        return { deliveredToInbox: true, messageId: 'mock-id' };
+        return Promise.resolve({ deliveredToInbox: true, messageId: 'mock-id' });
       });
-      provisioning.registerPendingCrossTeamReplyExpectation.mockImplementation(async () => {
+      provisioning.registerPendingCrossTeamReplyExpectation.mockImplementation(() => {
         order.push('register:team-a->team-b');
       });
-      provisioning.clearPendingCrossTeamReplyExpectation.mockImplementation(async () => {
+      provisioning.clearPendingCrossTeamReplyExpectation.mockImplementation(() => {
         order.push('clear:team-a->team-b');
       });
       provisioning.isTeamAlive.mockReturnValue(true);
-      provisioning.relayLeadInboxMessages.mockImplementation(async () => {
+      provisioning.relayLeadInboxMessages.mockImplementation(() => {
         order.push('relay:team-b');
-        return 0;
+        return Promise.resolve(0);
       });
 
       await service.send(makeRequest());
@@ -427,12 +471,12 @@ describe('CrossTeamService', () => {
 
     it('writes runtime-required sender copy only after live runtime proof', async () => {
       const sentMessagesPath = `${MOCK_TEAMS_BASE_PATH}/teams/team-a/sentMessages.json`;
-      provisioning.relayInboxFileToLiveRecipient.mockImplementation(async () => {
+      provisioning.relayInboxFileToLiveRecipient.mockImplementation(() => {
         expect(fs.existsSync(sentMessagesPath)).toBe(false);
-        return {
+        return Promise.resolve({
           kind: 'native_lead',
           relayed: 1,
-        };
+        });
       });
 
       const result = await service.send(makeRequest({ requireRuntimeDelivery: true }));
@@ -506,17 +550,19 @@ describe('CrossTeamService', () => {
     });
 
     it('rejects when target not found', async () => {
-      configReader.getConfig.mockImplementation(async (teamName: string) =>
-        teamName === 'team-b' ? null : makeConfig()
+      configReader.getConfig.mockImplementation((teamName: string) =>
+        Promise.resolve(teamName === 'team-b' ? null : makeConfig())
       );
       await expect(service.send(makeRequest())).rejects.toThrow('Target team not found');
     });
 
     it('rejects when target is deleted', async () => {
-      configReader.getConfig.mockImplementation(async (teamName: string) =>
-        teamName === 'to-be-deleted'
-          ? makeConfig({ name: 'to-be-deleted', deletedAt: '2024-01-01T00:00:00Z' })
-          : makeConfig()
+      configReader.getConfig.mockImplementation((teamName: string) =>
+        Promise.resolve(
+          teamName === 'to-be-deleted'
+            ? makeConfig({ name: 'to-be-deleted', deletedAt: '2024-01-01T00:00:00Z' })
+            : makeConfig()
+        )
       );
       await expect(service.send(makeRequest({ toTeam: 'to-be-deleted' }))).rejects.toThrow(
         'Target team not found'
@@ -530,10 +576,12 @@ describe('CrossTeamService', () => {
     });
 
     it('rejects when source is deleted', async () => {
-      configReader.getConfig.mockImplementation(async (teamName: string) =>
-        teamName === 'deleted-source'
-          ? makeConfig({ name: 'deleted-source', deletedAt: '2024-01-01T00:00:00Z' })
-          : makeConfig()
+      configReader.getConfig.mockImplementation((teamName: string) =>
+        Promise.resolve(
+          teamName === 'deleted-source'
+            ? makeConfig({ name: 'deleted-source', deletedAt: '2024-01-01T00:00:00Z' })
+            : makeConfig()
+        )
       );
       await expect(service.send(makeRequest({ fromTeam: 'deleted-source' }))).rejects.toThrow(
         'Source team not found'
@@ -565,10 +613,12 @@ describe('CrossTeamService', () => {
     });
 
     it('uses from format "team.member"', async () => {
-      configReader.getConfig.mockImplementation(async (teamName: string) =>
-        teamName === 'alpha'
-          ? makeConfig({ name: 'alpha', members: [{ name: 'researcher' }] })
-          : makeConfig()
+      configReader.getConfig.mockImplementation((teamName: string) =>
+        Promise.resolve(
+          teamName === 'alpha'
+            ? makeConfig({ name: 'alpha', members: [{ name: 'researcher' }] })
+            : makeConfig()
+        )
       );
       await service.send(makeRequest({ fromTeam: 'alpha', fromMember: 'researcher' }));
 
@@ -607,6 +657,300 @@ describe('CrossTeamService', () => {
       expect(second.deduplicated).toBe(true);
       expect(second.messageId).toBe(first.messageId);
       expect(inboxWriter.sendMessage).toHaveBeenCalledTimes(1);
+    });
+
+    describe('real filesystem transport interoperability', () => {
+      it('keeps route and recipient dedupe shared in both JS/TS orders and reverse direction', async () => {
+        const sourceTeam = 'fixture-source';
+        const targetTeam = 'fixture-target';
+        writeControllerTeam(
+          sourceTeam,
+          makeConfig({ name: sourceTeam, members: [{ name: 'team-lead', agentType: 'team-lead' }] })
+        );
+        writeControllerTeam(
+          targetTeam,
+          makeConfig({
+            name: targetTeam,
+            members: [
+              { name: 'Captain', agentType: 'team-lead' },
+              { name: 'worker', agentType: 'developer' },
+            ],
+          })
+        );
+        const filesystemService = createFilesystemCrossTeamService();
+        const sourceController = agentTeamsController.createController({
+          teamName: sourceTeam,
+          claudeDir: MOCK_TEAMS_BASE_PATH,
+        });
+        const targetController = agentTeamsController.createController({
+          teamName: targetTeam,
+          claudeDir: MOCK_TEAMS_BASE_PATH,
+        });
+        const taskRefs = [{ taskId: 'task-1', displayId: '#1', teamName: sourceTeam }];
+        const sharedRequest = {
+          fromTeam: sourceTeam,
+          fromMember: 'team-lead',
+          toTeam: targetTeam,
+          text: 'Coordinate the shared delivery',
+          summary: 'Cross-path recipient parity',
+          taskRefs,
+        } satisfies CrossTeamSendRequest;
+
+        const jsFirst = sourceController.crossTeam.sendCrossTeamMessage(sharedRequest) as {
+          messageId: string;
+        };
+        const tsLeadRetry = await filesystemService.send({
+          ...sharedRequest,
+          toMember: 'Captain',
+        });
+        const tsWorker = await filesystemService.send({ ...sharedRequest, toMember: 'worker' });
+        const tsWorkerRetry = await filesystemService.send({
+          ...sharedRequest,
+          toMember: 'worker',
+        });
+
+        expect(tsLeadRetry).toMatchObject({
+          messageId: jsFirst.messageId,
+          deduplicated: true,
+          toMember: 'Captain',
+        });
+        expect(tsWorker).toMatchObject({ deliveredToInbox: true, toMember: 'worker' });
+        expect(tsWorker.messageId).not.toBe(jsFirst.messageId);
+        expect(tsWorkerRetry).toMatchObject({
+          messageId: tsWorker.messageId,
+          deduplicated: true,
+          toMember: 'worker',
+        });
+
+        const tsFirst = await createFilesystemCrossTeamService().send({
+          ...sharedRequest,
+          toMember: 'Captain',
+          text: 'TypeScript writes this shared row first',
+        });
+        const jsLeadRetry = sourceController.crossTeam.sendCrossTeamMessage({
+          ...sharedRequest,
+          text: 'TypeScript writes this shared row first',
+        }) as { messageId: string; deduplicated?: boolean };
+        expect(jsLeadRetry).toMatchObject({
+          messageId: tsFirst.messageId,
+          deduplicated: true,
+        });
+
+        const reverseRequest = {
+          fromTeam: targetTeam,
+          fromMember: 'Captain',
+          toTeam: sourceTeam,
+          toMember: 'team-lead',
+          text: sharedRequest.text,
+          summary: sharedRequest.summary,
+        } satisfies CrossTeamSendRequest;
+        const reverseFirst = await filesystemService.send(reverseRequest);
+        const reverseRetry = targetController.crossTeam.sendCrossTeamMessage(reverseRequest) as {
+          messageId: string;
+          deduplicated?: boolean;
+        };
+        expect(reverseFirst).toMatchObject({ deliveredToInbox: true, toMember: 'team-lead' });
+        expect(reverseRetry).toMatchObject({
+          messageId: reverseFirst.messageId,
+          deduplicated: true,
+        });
+
+        const captainInbox = readFixtureArray(
+          path.join(MOCK_TEAMS_BASE_PATH, 'teams', targetTeam, 'inboxes', 'Captain.json')
+        );
+        const workerInbox = readFixtureArray(
+          path.join(MOCK_TEAMS_BASE_PATH, 'teams', targetTeam, 'inboxes', 'worker.json')
+        );
+        const reverseInbox = readFixtureArray(
+          path.join(MOCK_TEAMS_BASE_PATH, 'teams', sourceTeam, 'inboxes', 'team-lead.json')
+        );
+        expect(captainInbox).toHaveLength(2);
+        expect(workerInbox).toHaveLength(1);
+        expect(reverseInbox).toHaveLength(1);
+
+        const sourceOutbox = readFixtureArray(
+          path.join(MOCK_TEAMS_BASE_PATH, 'teams', sourceTeam, 'sent-cross-team.json')
+        ) as { toMember?: string }[];
+        const targetOutbox = readFixtureArray(
+          path.join(MOCK_TEAMS_BASE_PATH, 'teams', targetTeam, 'sent-cross-team.json')
+        );
+        expect(sourceOutbox.map((message) => message.toMember)).toEqual([
+          'Captain',
+          'worker',
+          'Captain',
+        ]);
+        expect(targetOutbox).toHaveLength(1);
+      });
+
+      it('deduplicates exactly at five minutes and delivers immediately after the boundary', async () => {
+        const sourceTeam = 'fixture-boundary-source';
+        const targetTeam = 'fixture-boundary-target';
+        writeControllerTeam(sourceTeam, makeConfig({ name: sourceTeam }));
+        writeControllerTeam(targetTeam, makeConfig({ name: targetTeam }));
+        const filesystemService = createFilesystemCrossTeamService();
+        const firstTimestamp = Date.parse('2026-07-16T12:00:00.000Z');
+        const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(firstTimestamp);
+        const request = {
+          fromTeam: sourceTeam,
+          fromMember: 'team-lead',
+          toTeam: targetTeam,
+          text: 'Boundary fixture delivery',
+          summary: 'Five minute edge',
+        } satisfies CrossTeamSendRequest;
+
+        const first = await filesystemService.send({
+          ...request,
+          messageId: 'boundary-first',
+          timestamp: new Date(firstTimestamp).toISOString(),
+        });
+        nowSpy.mockReturnValue(firstTimestamp + 5 * 60 * 1_000);
+        const atBoundary = await filesystemService.send({
+          ...request,
+          messageId: 'boundary-retry',
+          timestamp: new Date(firstTimestamp + 5 * 60 * 1_000).toISOString(),
+        });
+        nowSpy.mockReturnValue(firstTimestamp + 5 * 60 * 1_000 + 1);
+        const afterBoundary = await filesystemService.send({
+          ...request,
+          messageId: 'boundary-after',
+          timestamp: new Date(firstTimestamp + 5 * 60 * 1_000 + 1).toISOString(),
+        });
+
+        expect(atBoundary).toMatchObject({ messageId: first.messageId, deduplicated: true });
+        expect(afterBoundary).toMatchObject({ messageId: 'boundary-after' });
+        expect(afterBoundary.deduplicated).toBeUndefined();
+        expect(
+          readFixtureArray(
+            path.join(MOCK_TEAMS_BASE_PATH, 'teams', targetTeam, 'inboxes', 'team-lead.json')
+          )
+        ).toHaveLength(2);
+        expect(
+          readFixtureArray(
+            path.join(MOCK_TEAMS_BASE_PATH, 'teams', sourceTeam, 'sent-cross-team.json')
+          )
+        ).toHaveLength(2);
+      });
+
+      it('maps legacy rows to the lead while preserving corrupt and partial shared state', async () => {
+        const sourceTeam = 'fixture-corrupt-source';
+        const targetTeam = 'fixture-corrupt-target';
+        writeControllerTeam(sourceTeam, makeConfig({ name: sourceTeam }));
+        writeControllerTeam(
+          targetTeam,
+          makeConfig({
+            name: targetTeam,
+            members: [
+              { name: 'Captain', agentType: 'team-lead' },
+              { name: 'worker', agentType: 'developer' },
+            ],
+          })
+        );
+        const now = Date.parse('2026-07-16T12:00:00.000Z');
+        vi.spyOn(Date, 'now').mockReturnValue(now);
+        const outboxPath = path.join(
+          MOCK_TEAMS_BASE_PATH,
+          'teams',
+          sourceTeam,
+          'sent-cross-team.json'
+        );
+        const legacyRow = {
+          messageId: 'legacy-lead-row',
+          fromTeam: sourceTeam,
+          fromMember: 'team-lead',
+          toTeam: targetTeam,
+          text: 'Legacy fixture route',
+          timestamp: new Date(now - 1_000).toISOString(),
+        };
+        const seededRows: unknown[] = [
+          legacyRow,
+          {
+            ...legacyRow,
+            messageId: 'stale-row',
+            timestamp: new Date(now - 6 * 60 * 1_000).toISOString(),
+          },
+          { ...legacyRow, messageId: 'timestamp-less-row', timestamp: undefined },
+          null,
+          'malformed-row',
+          { timestamp: new Date(now - 500).toISOString() },
+        ];
+        fs.writeFileSync(outboxPath, JSON.stringify(seededRows, null, 2));
+        const filesystemService = createFilesystemCrossTeamService();
+        const request = {
+          fromTeam: sourceTeam,
+          fromMember: 'team-lead',
+          toTeam: targetTeam,
+          text: legacyRow.text,
+        } satisfies CrossTeamSendRequest;
+
+        const leadRetry = await filesystemService.send({ ...request, toMember: 'Captain' });
+        const workerDelivery = await filesystemService.send({ ...request, toMember: 'worker' });
+
+        expect(leadRetry).toMatchObject({
+          messageId: legacyRow.messageId,
+          deduplicated: true,
+          toMember: 'Captain',
+        });
+        expect(workerDelivery).toMatchObject({ deliveredToInbox: true, toMember: 'worker' });
+        expect(
+          fs.existsSync(
+            path.join(MOCK_TEAMS_BASE_PATH, 'teams', targetTeam, 'inboxes', 'Captain.json')
+          )
+        ).toBe(false);
+        expect(
+          readFixtureArray(
+            path.join(MOCK_TEAMS_BASE_PATH, 'teams', targetTeam, 'inboxes', 'worker.json')
+          )
+        ).toHaveLength(1);
+        const persistedRows = readFixtureArray(outboxPath);
+        expect(persistedRows.slice(0, seededRows.length)).toEqual(
+          JSON.parse(JSON.stringify(seededRows))
+        );
+        expect(persistedRows).toHaveLength(seededRows.length + 1);
+      });
+
+      it('keeps successful inbox and outbox delivery when the sender copy is corrupt', async () => {
+        const sourceTeam = 'fixture-sender-copy-source';
+        const targetTeam = 'fixture-sender-copy-target';
+        writeControllerTeam(sourceTeam, makeConfig({ name: sourceTeam }));
+        writeControllerTeam(targetTeam, makeConfig({ name: targetTeam }));
+        const sentMessagesPath = path.join(
+          MOCK_TEAMS_BASE_PATH,
+          'teams',
+          sourceTeam,
+          'sentMessages.json'
+        );
+        const corruptSenderState = '{not valid json';
+        fs.writeFileSync(sentMessagesPath, corruptSenderState);
+        const filesystemService = createFilesystemCrossTeamService(
+          provisioning as unknown as TeamProvisioningService
+        );
+
+        const result = await filesystemService.send({
+          fromTeam: sourceTeam,
+          fromMember: 'team-lead',
+          toTeam: targetTeam,
+          text: 'Receiver delivery survives sender-copy failure',
+          conversationId: 'sender-copy-failure-conversation',
+        });
+
+        expect(result).toMatchObject({ deliveredToInbox: true, toMember: 'team-lead' });
+        expect(
+          readFixtureArray(
+            path.join(MOCK_TEAMS_BASE_PATH, 'teams', targetTeam, 'inboxes', 'team-lead.json')
+          )
+        ).toHaveLength(1);
+        expect(
+          readFixtureArray(
+            path.join(MOCK_TEAMS_BASE_PATH, 'teams', sourceTeam, 'sent-cross-team.json')
+          )
+        ).toHaveLength(1);
+        expect(fs.readFileSync(sentMessagesPath, 'utf8')).toBe(corruptSenderState);
+        expect(provisioning.clearPendingCrossTeamReplyExpectation).toHaveBeenCalledWith(
+          sourceTeam,
+          targetTeam,
+          'sender-copy-failure-conversation'
+        );
+      });
     });
   });
 

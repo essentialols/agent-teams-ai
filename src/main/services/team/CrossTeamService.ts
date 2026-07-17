@@ -199,7 +199,7 @@ export class CrossTeamService {
         });
       },
       undefined,
-      { stableIdentity: stableDedupeIdentity }
+      { stableIdentity: stableDedupeIdentity, legacyToMember: leadName }
     );
 
     if (duplicate) {
@@ -379,6 +379,15 @@ export class CrossTeamService {
           replyToConversationId: input.replyToConversationId,
         });
       }
+    } catch (e: unknown) {
+      logger.warn(
+        `Failed to write sender copy for ${input.fromTeam}: ${
+          e instanceof Error ? e.message : String(e)
+        }`
+      );
+    }
+
+    try {
       this.messaging?.clearPendingCrossTeamReplyExpectation(
         input.fromTeam,
         input.toTeam,
@@ -386,7 +395,7 @@ export class CrossTeamService {
       );
     } catch (e: unknown) {
       logger.warn(
-        `Failed to write sender copy for ${input.fromTeam}: ${
+        `Failed to clear pending cross-team reply expectation for ${input.fromTeam}: ${
           e instanceof Error ? e.message : String(e)
         }`
       );

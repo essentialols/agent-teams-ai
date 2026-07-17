@@ -1,3 +1,4 @@
+import { buildOpenCodeSecondaryLaneId } from '@features/team-runtime-lanes';
 import {
   listTmuxPaneRuntimeInfoForCurrentPlatform,
   sendKeysToTmuxPaneForCurrentPlatform,
@@ -58,7 +59,11 @@ import {
   createPersistOpenCodeMemberRestartSystemMessageUseCase,
   type OpenCodeMemberRestartSystemMessageInput,
 } from './TeamProvisioningOpenCodeMemberRestartSystemMessageUseCase';
-import { MEMBER_BOOTSTRAP_STALL_MS } from './TeamProvisioningOpenCodeRuntimeEvidencePolicy';
+import {
+  hasOpenCodeRuntimeHandle,
+  hasOpenCodeRuntimeLivenessMarker,
+  MEMBER_BOOTSTRAP_STALL_MS,
+} from './TeamProvisioningOpenCodeRuntimeEvidencePolicy';
 import {
   createNodePreparePrimaryOwnedMemberRestartRuntimeUseCase,
   type PreparePrimaryOwnedMemberRestartRuntimeInput,
@@ -118,6 +123,7 @@ import type {
   TeamCreateRequest,
   TeamProviderBackendId,
   TeamProviderId,
+  TeamProvisioningProgress,
 } from '@shared/types';
 
 const logger = createLogger('Service:TeamProvisioning');
@@ -133,6 +139,40 @@ const APP_TEAM_RUNTIME_DISALLOWED_TOOLS =
 type RuntimeAdapterRunEntry = NonNullable<
   ReturnType<TeamProvisioningMemberLifecycleHost['runtimeAdapterRunByTeam']['get']>
 >;
+
+interface OpenCodeAggregateRestartPorts {
+  stopOpenCodeRuntimeAdapterTeam(teamName: string, runId: string): Promise<void>;
+  setAliveRunId(teamName: string, runId: string): void;
+  deleteAliveRunId(teamName: string): void;
+  isTeamAlive(teamName: string): boolean;
+  setRuntimeAdapterProgress(
+    progress: TeamProvisioningProgress,
+    onProgress: (progress: TeamProvisioningProgress) => void
+  ): TeamProvisioningProgress;
+}
+
+interface OpenCodeAggregateProvisioningRun extends ProvisioningRun {
+  effectiveMembers: TeamCreateRequest['members'];
+  expectedMembers: string[];
+  progress: TeamProvisioningProgress;
+  onProgress: (progress: TeamProvisioningProgress) => void;
+}
+
+function hasRetainableOpenCodeRuntimeMember(
+  result: MixedSecondaryRuntimeLaneState['result']
+): boolean {
+  if (!result) return false;
+  return Object.values(result.members).some(
+    (member) =>
+      member.launchState !== 'failed_to_start' &&
+      member.hardFailure !== true &&
+      (member.runtimeAlive === true ||
+        member.bootstrapConfirmed === true ||
+        (member.pendingPermissionRequestIds?.length ?? 0) > 0 ||
+        hasOpenCodeRuntimeHandle(member) ||
+        (member.agentToolAccepted === true && hasOpenCodeRuntimeLivenessMarker(member)))
+  );
+}
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -1472,7 +1512,30 @@ export class TeamProvisioningMemberLifecycleController {
     teamName: string,
     memberName: string
   ): Promise<void> {
-    const run = this.getMutableAliveRunOrThrow(teamName);
+    const runId = this.getAliveRunId(teamName);
+    const run = runId ? this.runs.get(runId) : undefined;
+    const persistedRuntimeMembers = this.readPersistedRuntimeMembers(teamName).filter((member) => {
+      const candidateName = typeof member.name === 'string' ? member.name.trim() : '';
+      return candidateName.length > 0 && matchesMemberNameOrBase(candidateName, memberName);
+    });
+    const liveRuntimeByMember = await this.getLiveTeamAgentRuntimeMetadata(teamName).catch(
+      () => new Map<string, LiveTeamAgentRuntimeMetadata>()
+    );
+
+    // Process-backed teammates can outlive the mutable provisioning run that created them.
+    // Persisted member-scoped identity is sufficient for the exact-runtime stop boundary.
+    if (!run || run.processKilled || run.cancelRequested) {
+      await this.stopPrimaryOwnedRosterRuntime({
+        teamName,
+        memberName,
+        persistedRuntimeMembers,
+        liveRuntimeByMember,
+        actionLabel: `Detach for teammate "${memberName}"`,
+      });
+      this.invalidateRuntimeSnapshotCaches(teamName);
+      return;
+    }
+
     const leadProviderId = resolveTeamProviderId(run.request.providerId);
     const config = await this.readConfigForStrictDecision(teamName);
     const metaMembers = await this.membersMetaStore.getMembers(teamName).catch(() => []);
@@ -1494,13 +1557,6 @@ export class TeamProvisioningMemberLifecycleController {
       );
     }
 
-    const persistedRuntimeMembers = this.readPersistedRuntimeMembers(teamName).filter((member) => {
-      const candidateName = typeof member.name === 'string' ? member.name.trim() : '';
-      return candidateName.length > 0 && matchesMemberNameOrBase(candidateName, memberName);
-    });
-    const liveRuntimeByMember = await this.getLiveTeamAgentRuntimeMetadata(teamName).catch(
-      () => new Map<string, LiveTeamAgentRuntimeMetadata>()
-    );
     this.assertRunStillCurrentAndAlive(run, teamName);
     await this.stopPrimaryOwnedRosterRuntime({
       teamName,
@@ -1600,6 +1656,13 @@ export class TeamProvisioningMemberLifecycleController {
       await this.reattachOpenCodeOwnedMemberLaneUnlocked(teamName, memberName, {
         reason: 'manual_restart',
       });
+      return;
+    }
+    if (
+      desiredProviderId === 'opencode' &&
+      leadProviderId === 'opencode' &&
+      (await this.restartPureOpenCodeAggregatePrimaryMember(teamName, memberName))
+    ) {
       return;
     }
     if (run.pendingMemberRestarts.has(memberName)) {
@@ -1791,6 +1854,104 @@ export class TeamProvisioningMemberLifecycleController {
       }
       throw error;
     }
+  }
+
+  private async restartPureOpenCodeAggregatePrimaryMember(
+    teamName: string,
+    memberName: string
+  ): Promise<boolean> {
+    const ports = this.host as unknown as Partial<OpenCodeAggregateRestartPorts>;
+    if (
+      !ports.stopOpenCodeRuntimeAdapterTeam ||
+      !ports.setAliveRunId ||
+      !ports.deleteAliveRunId ||
+      !ports.isTeamAlive ||
+      !ports.setRuntimeAdapterProgress
+    ) {
+      return false;
+    }
+
+    const runId = this.getAliveRunId(teamName);
+    const run = (runId ? this.runs.get(runId) : null) as OpenCodeAggregateProvisioningRun | null;
+    if (
+      !run ||
+      run.processKilled ||
+      run.cancelRequested ||
+      resolveTeamProviderId(run.request.providerId) !== 'opencode' ||
+      run.mixedSecondaryLanes.length === 0
+    ) {
+      return false;
+    }
+    const normalizedMemberName = memberName.trim().toLowerCase();
+    const primaryMember = run.effectiveMembers.find(
+      (member) => member.name.trim().toLowerCase() === normalizedMemberName
+    );
+    if (!primaryMember) {
+      return false;
+    }
+    if (run.pendingMemberRestarts.has(memberName)) {
+      throw new Error(`Restart for teammate "${memberName}" is already in progress`);
+    }
+    if (!this.getOpenCodeRuntimeAdapter()) {
+      throw new Error('OpenCode runtime adapter is not available for member restart.');
+    }
+
+    const currentPrimaryRun = this.runtimeAdapterRunByTeam.get(teamName);
+    if (currentPrimaryRun?.providerId === 'opencode' && currentPrimaryRun.runId === run.runId) {
+      await ports.stopOpenCodeRuntimeAdapterTeam.call(this.host, teamName, run.runId);
+      ports.setAliveRunId.call(this.host, teamName, run.runId);
+    }
+
+    run.effectiveMembers = run.effectiveMembers.filter(
+      (member) => member.name.trim().toLowerCase() !== normalizedMemberName
+    );
+    run.expectedMembers = run.expectedMembers.filter(
+      (name) => name.trim().toLowerCase() !== normalizedMemberName
+    );
+    const lane: MixedSecondaryRuntimeLaneState = {
+      laneId: buildOpenCodeSecondaryLaneId(primaryMember),
+      providerId: 'opencode',
+      member: { ...primaryMember },
+      runId: null,
+      state: 'queued',
+      result: null,
+      warnings: [],
+      diagnostics: ['controlled_reattach:manual_restart', 'migrated_from_failed_primary_lane'],
+    };
+    run.mixedSecondaryLanes.push(lane);
+    this.persistOpenCodeMemberRestartSystemMessage({
+      teamName,
+      leadName: this.getRunLeadName(run),
+      leadSessionId: run.detectedSessionId?.trim() || run.runId,
+      displayName: run.request.displayName?.trim() || run.teamName,
+      member: primaryMember,
+      reason: 'manual_restart',
+    });
+    this.invalidateRuntimeSnapshotCaches(teamName);
+    this.resetRuntimeToolActivity(run, memberName);
+    this.clearMemberSpawnToolTracking(run, memberName);
+    await this.launchSingleMixedSecondaryLane(run, lane);
+    await this.persistLaunchStateSnapshot(run, this.getMixedSecondaryLaunchPhase(run));
+    if (ports.isTeamAlive.call(this.host, teamName)) {
+      const memberRestartRetained = hasRetainableOpenCodeRuntimeMember(lane.result);
+      run.progress = ports.setRuntimeAdapterProgress.call(
+        this.host,
+        {
+          ...run.progress,
+          state: 'ready',
+          message: memberRestartRetained
+            ? 'OpenCode member lane restart is ready'
+            : 'OpenCode team is running with unavailable members',
+          messageSeverity: memberRestartRetained ? undefined : 'warning',
+          updatedAt: nowIso(),
+          error: undefined,
+        },
+        run.onProgress
+      );
+    } else {
+      ports.deleteAliveRunId.call(this.host, teamName);
+    }
+    return true;
   }
 
   private async restartPureOpenCodePrimaryMemberWithoutTrackedRun(
@@ -2319,7 +2480,7 @@ export class TeamProvisioningMemberLifecycleController {
     const leadProviderId = resolveTeamProviderId(run.request.providerId);
     if (leadProviderId === 'opencode' && (run.mixedSecondaryLanes?.length ?? 0) === 0) {
       throw new Error(
-        'OpenCode secondary lane reattach requires an active OpenCode worktree lane run.'
+        'OpenCode secondary lane reattach requires an active OpenCode member lane run.'
       );
     }
     if (!this.getOpenCodeRuntimeAdapter()) {

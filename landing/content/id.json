@@ -49,12 +49,12 @@
     {
       "id": "APA ITU",
       "question": "Apa Agent Teams?",
-      "answer": "Aplikasi desktop untuk mendalangi AI tim agen dengan lapisan koordinasi lokal kita sendiri. Agen memiliki peran, bekerja sendiri, berkolaborasi melalui papan kanban, dan dapat berjalan dengan Claude, Codex, atau OpenCode."
+      "answer": "Aplikasi desktop untuk mendalangi AI tim agen dengan lapisan koordinasi lokal kita sendiri. Agen memiliki peran, bekerja sendiri, berkolaborasi melalui papan kanban, dan dapat berjalan dengan Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro."
     },
     {
       "id": "isfree",
       "question": "Apakah benar-benar gratis?",
-      "answer": "Ya. Aplikasi ini bebas dan open source, dan Anda dapat mulai dengan model bebas tanpa auth - tanpa registrasi, API kunci, atau kartu kredit. Jika Anda ingin lebih banyak model, hubungkan Claude, Codex, OpenCode/OpenRouter, atau penyedia lain yang didukung."
+      "answer": "Ya. Aplikasi ini bebas dan open source, dan Anda dapat mulai dengan model bebas tanpa auth - tanpa registrasi, API kunci, atau kartu kredit. Jika Anda ingin lebih banyak model, hubungkan Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro, atau penyedia lain yang didukung."
     },
     {
       "id": "platform",
@@ -129,7 +129,7 @@
       "features": [
         "Model bebas tanpa auth untuk pertama kali berjalan",
         "Tak ada akun atau log masuk penyedia yang diperlukan untuk mencoba",
-        "Opsional Claude, Codex, dan OpenCode Akses penyedia",
+        "Opsional Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro Akses penyedia",
         "Tim agen tak terbatas",
         "Kanban papan dengan pemutakhiran real-time",
         "Ulasan kode dengan tilikan diff",

@@ -55,7 +55,7 @@ export type TeamRuntimeLanePlan =
       soloMember: PlannedRuntimeMember;
     }
   | {
-      mode: 'pure_opencode_worktree_root_lanes';
+      mode: 'pure_opencode_member_lanes';
       primaryMembers: PlannedRuntimeMember[];
       allMembers: PlannedRuntimeMember[];
       sideLanes: {
@@ -149,6 +149,7 @@ export function createOpenCodeSoloRuntimeMember(baseCwd?: string): PlannedRuntim
 
 export function planTeamRuntimeLanes(params: {
   leadProviderId?: TeamProviderId;
+  leadModel?: string;
   members: readonly RuntimeLanePlannerMemberInput[];
   baseCwd?: string;
 }): TeamRuntimeLanePlanResult {
@@ -180,19 +181,28 @@ export function planTeamRuntimeLanes(params: {
         },
       };
     }
-    const worktreeRootMembers = allMembers.filter((member) => {
+    const leadModel =
+      params.leadModel?.trim() ||
+      allMembers.find((member) => member.model?.trim())?.model?.trim() ||
+      null;
+    const secondaryLaneMembers = allMembers.filter((member) => {
       const memberCwd = member.cwd?.trim();
-      return Boolean(memberCwd && (!normalizedBaseCwd || memberCwd !== normalizedBaseCwd));
+      const memberModel = member.model?.trim();
+      const usesDistinctModel = Boolean(memberModel && leadModel && memberModel !== leadModel);
+      const usesDistinctRoot = Boolean(
+        memberCwd && (!normalizedBaseCwd || memberCwd !== normalizedBaseCwd)
+      );
+      return usesDistinctModel || usesDistinctRoot;
     });
-    if (worktreeRootMembers.length > 0 && allMembers.length > 1) {
-      const worktreeRootMemberNames = new Set(worktreeRootMembers.map((member) => member.name));
+    if (secondaryLaneMembers.length > 0) {
+      const secondaryLaneMemberNames = new Set(secondaryLaneMembers.map((member) => member.name));
       return {
         ok: true,
         plan: {
-          mode: 'pure_opencode_worktree_root_lanes',
-          primaryMembers: allMembers.filter((member) => !worktreeRootMemberNames.has(member.name)),
+          mode: 'pure_opencode_member_lanes',
+          primaryMembers: allMembers.filter((member) => !secondaryLaneMemberNames.has(member.name)),
           allMembers,
-          sideLanes: worktreeRootMembers.map((member) => ({
+          sideLanes: secondaryLaneMembers.map((member) => ({
             laneId: buildOpenCodeSecondaryLaneId(member),
             providerId: 'opencode',
             member,
@@ -250,17 +260,22 @@ export function isOpenCodeSideLanePlan(
   plan: TeamRuntimeLanePlan
 ): plan is Extract<
   TeamRuntimeLanePlan,
-  { mode: 'mixed_opencode_side_lanes' | 'pure_opencode_worktree_root_lanes' }
+  { mode: 'mixed_opencode_side_lanes' | 'pure_opencode_member_lanes' }
 > {
-  return (
-    plan.mode === 'mixed_opencode_side_lanes' || plan.mode === 'pure_opencode_worktree_root_lanes'
-  );
+  return plan.mode === 'mixed_opencode_side_lanes' || plan.mode === 'pure_opencode_member_lanes';
 }
 
 export function isPureOpenCodeLanePlan(
   plan: TeamRuntimeLanePlan
-): plan is Extract<TeamRuntimeLanePlan, { mode: 'pure_opencode' | 'pure_opencode_solo' }> {
-  return plan.mode === 'pure_opencode' || plan.mode === 'pure_opencode_solo';
+): plan is Extract<
+  TeamRuntimeLanePlan,
+  { mode: 'pure_opencode' | 'pure_opencode_solo' | 'pure_opencode_member_lanes' }
+> {
+  return (
+    plan.mode === 'pure_opencode' ||
+    plan.mode === 'pure_opencode_solo' ||
+    plan.mode === 'pure_opencode_member_lanes'
+  );
 }
 
 export function isPureOpenCodeSoloLanePlan(
@@ -269,19 +284,20 @@ export function isPureOpenCodeSoloLanePlan(
   return plan.mode === 'pure_opencode_solo';
 }
 
-export function isPureOpenCodeWorktreeRootLanePlan(
+export function isPureOpenCodeMemberLanePlan(
   plan: TeamRuntimeLanePlan
-): plan is Extract<TeamRuntimeLanePlan, { mode: 'pure_opencode_worktree_root_lanes' }> {
-  return plan.mode === 'pure_opencode_worktree_root_lanes';
+): plan is Extract<TeamRuntimeLanePlan, { mode: 'pure_opencode_member_lanes' }> {
+  return plan.mode === 'pure_opencode_member_lanes';
 }
 
 export function fromProvisioningMembers(
   leadProviderId: TeamProviderId | undefined,
   members: readonly TeamProvisioningMemberInput[],
-  options: { baseCwd?: string } = {}
+  options: { baseCwd?: string; leadModel?: string } = {}
 ): TeamRuntimeLanePlanResult {
   return planTeamRuntimeLanes({
     leadProviderId,
+    leadModel: options.leadModel,
     baseCwd: options.baseCwd,
     members: members.map((member) => ({
       name: member.name,

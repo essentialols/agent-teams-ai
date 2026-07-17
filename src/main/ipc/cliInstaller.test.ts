@@ -143,7 +143,7 @@ function setupHandlers(service: CliInstallerService): ReturnType<typeof createIp
 }
 
 describe('cliInstaller IPC provider runtime scheduling', () => {
-  test('runs provider status requests sequentially by default', async () => {
+  test('runs shared provider status requests sequentially while OpenCode stays independent', async () => {
     const started: CliProviderId[] = [];
     const deferredByProvider = new Map<CliProviderId, Deferred<CliProviderStatus | null>>();
     const service = createInstallerService({
@@ -162,19 +162,18 @@ describe('cliInstaller IPC provider runtime scheduling', () => {
     );
 
     await flushMicrotasks();
-    expect(started).toEqual(['anthropic']);
+    expect(started).toHaveLength(2);
+    expect(started).toEqual(expect.arrayContaining(['anthropic', 'opencode']));
+    deferredByProvider.get('opencode')?.resolve(createProviderStatus('opencode'));
 
     deferredByProvider.get('anthropic')?.resolve(createProviderStatus('anthropic'));
     await flushMicrotasks();
-    expect(started).toEqual(['anthropic', 'codex']);
+    expect(started).toEqual(expect.arrayContaining(['anthropic', 'opencode', 'codex']));
 
     deferredByProvider.get('codex')?.resolve(createProviderStatus('codex'));
     await flushMicrotasks();
-    expect(started).toEqual(['anthropic', 'codex', 'opencode']);
-
-    deferredByProvider.get('opencode')?.resolve(createProviderStatus('opencode'));
-    await flushMicrotasks();
-    expect(started).toEqual(['anthropic', 'codex', 'opencode', 'gemini']);
+    expect(started).toHaveLength(4);
+    expect(started).toEqual(expect.arrayContaining(['anthropic', 'opencode', 'codex', 'gemini']));
 
     deferredByProvider.get('gemini')?.resolve(createProviderStatus('gemini'));
 
@@ -203,12 +202,10 @@ describe('cliInstaller IPC provider runtime scheduling', () => {
     );
 
     await flushMicrotasks();
-    expect(started).toEqual(['anthropic', 'codex', 'opencode']);
+    expect(started).toHaveLength(4);
+    expect(started).toEqual(expect.arrayContaining(['anthropic', 'codex', 'opencode', 'gemini']));
 
     deferredByProvider.get('anthropic')?.resolve(createProviderStatus('anthropic'));
-    await flushMicrotasks();
-    expect(started).toEqual(['anthropic', 'codex', 'opencode', 'gemini']);
-
     deferredByProvider.get('codex')?.resolve(createProviderStatus('codex'));
     deferredByProvider.get('opencode')?.resolve(createProviderStatus('opencode'));
     deferredByProvider.get('gemini')?.resolve(createProviderStatus('gemini'));
@@ -305,22 +302,20 @@ describe('cliInstaller IPC provider runtime scheduling', () => {
     );
 
     await flushMicrotasks();
-    expect(started).toEqual(['anthropic']);
+    expect(started).toHaveLength(2);
+    expect(started).toEqual(expect.arrayContaining(['anthropic', 'opencode']));
 
     initializeCliInstallerHandlers(replacementService);
+    deferredByProvider.get('opencode')?.resolve(createProviderStatus('opencode'));
 
     deferredByProvider.get('anthropic')?.resolve(createProviderStatus('anthropic'));
     await flushMicrotasks();
-    expect(started).toEqual(['anthropic', 'codex']);
+    expect(started).toEqual(expect.arrayContaining(['anthropic', 'opencode', 'codex']));
 
     deferredByProvider.get('codex')?.resolve(createProviderStatus('codex'));
     await flushMicrotasks();
-    expect(started).toEqual(['anthropic', 'codex', 'opencode']);
-
-    deferredByProvider.get('opencode')?.resolve(createProviderStatus('opencode'));
-    await flushMicrotasks();
-
-    expect(started).toEqual(['anthropic', 'codex', 'opencode', 'gemini']);
+    expect(started).toHaveLength(4);
+    expect(started).toEqual(expect.arrayContaining(['anthropic', 'opencode', 'codex', 'gemini']));
     expect(replacementService.getProviderStatus).not.toHaveBeenCalled();
 
     deferredByProvider.get('gemini')?.resolve(createProviderStatus('gemini'));
@@ -347,19 +342,18 @@ describe('cliInstaller IPC provider runtime scheduling', () => {
     );
 
     await flushMicrotasks();
-    expect(started).toEqual(['anthropic']);
+    expect(started).toHaveLength(2);
+    expect(started).toEqual(expect.arrayContaining(['anthropic', 'opencode']));
+    deferredByProvider.get('opencode')?.resolve(createProviderStatus('opencode'));
 
     deferredByProvider.get('anthropic')?.reject(new Error('provider failed'));
     await flushMicrotasks();
-    expect(started).toEqual(['anthropic', 'codex']);
+    expect(started).toEqual(expect.arrayContaining(['anthropic', 'opencode', 'codex']));
 
     deferredByProvider.get('codex')?.resolve(createProviderStatus('codex'));
     await flushMicrotasks();
-    expect(started).toEqual(['anthropic', 'codex', 'opencode']);
-
-    deferredByProvider.get('opencode')?.resolve(createProviderStatus('opencode'));
-    await flushMicrotasks();
-    expect(started).toEqual(['anthropic', 'codex', 'opencode', 'gemini']);
+    expect(started).toHaveLength(4);
+    expect(started).toEqual(expect.arrayContaining(['anthropic', 'opencode', 'codex', 'gemini']));
 
     deferredByProvider.get('gemini')?.resolve(createProviderStatus('gemini'));
 

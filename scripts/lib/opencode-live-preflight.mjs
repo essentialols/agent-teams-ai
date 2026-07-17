@@ -11,16 +11,23 @@ const OPENCODE_HEALTH_FETCH_TIMEOUT_MS = 1_000;
 
 export async function preflightOpenCodeLiveEnvironment(input) {
   const repoRoot = input.repoRoot;
+  const sourceEnv = input.env ?? process.env;
   const requiredModels = Array.isArray(input.requiredModels)
     ? input.requiredModels.map((model) => String(model).trim()).filter(Boolean)
     : [];
-  const opencodeBin = process.env.OPENCODE_BIN?.trim() || '/opt/homebrew/bin/opencode';
+  const opencodeBin =
+    sourceEnv.CLAUDE_MULTIMODEL_OPENCODE_BIN_PATH?.trim() ||
+    sourceEnv.OPENCODE_BIN?.trim() ||
+    '/opt/homebrew/bin/opencode';
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-live-preflight-'));
   const xdgDataHome = path.join(tempRoot, 'xdg-data');
+  const useManagedAppCredentials =
+    sourceEnv.OPENCODE_E2E_USE_REAL_APP_CREDENTIALS === '1' &&
+    Boolean(sourceEnv.CLAUDE_AGENT_TEAMS_ORCHESTRATOR_CLI_PATH?.trim());
   const env = {
-    ...process.env,
-    XDG_DATA_HOME: xdgDataHome,
-    OPENCODE_DISABLE_AUTOUPDATE: process.env.OPENCODE_DISABLE_AUTOUPDATE ?? '1',
+    ...sourceEnv,
+    ...(useManagedAppCredentials ? {} : { XDG_DATA_HOME: xdgDataHome }),
+    OPENCODE_DISABLE_AUTOUPDATE: sourceEnv.OPENCODE_DISABLE_AUTOUPDATE ?? '1',
   };
 
   try {
@@ -28,7 +35,9 @@ export async function preflightOpenCodeLiveEnvironment(input) {
       return skip(`OpenCode binary not found at ${opencodeBin}`);
     }
 
-    const models = runOpenCodeCommand(opencodeBin, ['models'], repoRoot, env);
+    const models = shouldUseManagedAppCredentials(env)
+      ? runManagedOpenCodeModels(requiredModels, repoRoot, env)
+      : runOpenCodeCommand(opencodeBin, ['models'], repoRoot, env);
     if (!models.ok) {
       return skip(`opencode models failed: ${models.output}`);
     }
@@ -62,6 +71,69 @@ export async function preflightOpenCodeLiveEnvironment(input) {
   }
 }
 
+function shouldUseManagedAppCredentials(env) {
+  return (
+    env.OPENCODE_E2E_USE_REAL_APP_CREDENTIALS === '1' &&
+    Boolean(env.CLAUDE_AGENT_TEAMS_ORCHESTRATOR_CLI_PATH?.trim())
+  );
+}
+
+function runManagedOpenCodeModels(requiredModels, cwd, env) {
+  const providers = Array.from(
+    new Set(
+      requiredModels
+        .map((model) => model.slice(0, model.indexOf('/')))
+        .filter(Boolean)
+    )
+  );
+  const availableModels = [];
+  for (const provider of providers) {
+    const result = runOpenCodeCommand(
+      env.CLAUDE_AGENT_TEAMS_ORCHESTRATOR_CLI_PATH,
+      [
+        'runtime',
+        'providers',
+        'models',
+        '--runtime',
+        'opencode',
+        '--provider',
+        provider,
+        '--project-path',
+        cwd,
+        '--limit',
+        '100',
+        '--json',
+      ],
+      cwd,
+      env,
+      90_000
+    );
+    if (!result.ok) {
+      return result;
+    }
+    try {
+      const payload = JSON.parse(result.output);
+      const models = payload?.models?.models;
+      if (!Array.isArray(models)) {
+        return { ok: false, output: `managed provider ${provider} returned no model list` };
+      }
+      for (const model of models) {
+        if (typeof model?.modelId === 'string' && model.modelId.trim()) {
+          availableModels.push(model.modelId.trim());
+        }
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        output: `managed provider ${provider} returned invalid JSON: ${compactOutput(
+          error instanceof Error ? error.message : String(error)
+        )}`,
+      };
+    }
+  }
+  return { ok: true, output: `${availableModels.join('\n')}\n` };
+}
+
 export function exitForSkippedPreflight(result) {
   if (result.ok) {
     return false;
@@ -70,12 +142,12 @@ export function exitForSkippedPreflight(result) {
   process.exit(process.env.OPENCODE_E2E_STRICT === '1' ? 1 : 0);
 }
 
-function runOpenCodeCommand(opencodeBin, args, cwd, env) {
+function runOpenCodeCommand(opencodeBin, args, cwd, env, timeout = 20_000) {
   const result = spawnSync(opencodeBin, args, {
     cwd,
     env,
     encoding: 'utf8',
-    timeout: 20_000,
+    timeout,
     maxBuffer: 256_000,
   });
   if (result.status === 0) {
@@ -314,6 +386,8 @@ export const __opencodeLivePreflightTestHooks = {
   findMissingOpenCodeModels,
   isHealthyOpenCodeHostResponse,
   parseOpenCodeModels,
+  runManagedOpenCodeModels,
+  shouldUseManagedAppCredentials,
   stopChild,
   taskkillProcessTree,
 };

@@ -1819,7 +1819,6 @@ describe('TeamProvisioningService', () => {
         updatedAt: expect.any(String),
       });
     });
-
   });
 
   describe('provisioning status', () => {
@@ -8144,14 +8143,16 @@ describe('TeamProvisioningService', () => {
       const getConfig = vi.fn(async () => {
         throw new Error('verified config read should not be used for delivery routing');
       });
-      const getConfigSnapshot = vi.fn(async (): Promise<TeamConfig> => ({
-        name: 'team-a',
-        projectPath: '/repo',
-        members: [
-          { name: 'team-lead', providerId: 'codex', model: 'gpt-5.4' },
-          { name: 'bob', providerId: 'opencode', model: 'minimax-m2.5-free' },
-        ],
-      }));
+      const getConfigSnapshot = vi.fn(
+        async (): Promise<TeamConfig> => ({
+          name: 'team-a',
+          projectPath: '/repo',
+          members: [
+            { name: 'team-lead', providerId: 'codex', model: 'gpt-5.4' },
+            { name: 'bob', providerId: 'opencode', model: 'minimax-m2.5-free' },
+          ],
+        })
+      );
       const svc = new TeamProvisioningService({
         getConfig,
         getConfigSnapshot,
@@ -8213,22 +8214,26 @@ describe('TeamProvisioningService', () => {
       const getConfig = vi.fn(async () => {
         throw new Error('verified config read should not be used for lane member resolution');
       });
-      const getConfigSnapshot = vi.fn(async (): Promise<TeamConfig> => ({
-        name: 'team-a',
-        projectPath: '/repo',
-        members: [
-          { name: 'team-lead', providerId: 'codex', model: 'gpt-5.4' },
-          { name: 'bob', providerId: 'opencode', model: 'minimax-m2.5-free' },
-          { name: 'alice', providerId: 'codex', model: 'gpt-5.4' },
-        ],
-      }));
+      const getConfigSnapshot = vi.fn(
+        async (): Promise<TeamConfig> => ({
+          name: 'team-a',
+          projectPath: '/repo',
+          members: [
+            { name: 'team-lead', providerId: 'codex', model: 'gpt-5.4' },
+            { name: 'bob', providerId: 'opencode', model: 'minimax-m2.5-free' },
+            { name: 'alice', providerId: 'codex', model: 'gpt-5.4' },
+          ],
+        })
+      );
       const getMeta = vi.fn(async () => ({
         launchIdentity: { providerId: 'codex' },
         providerId: 'codex',
       }));
-      const getMembers = vi.fn(async (): Promise<TeamMember[]> => [
-        { name: 'bob', providerId: 'opencode', model: 'opencode/minimax-m2.5-free' },
-      ]);
+      const getMembers = vi.fn(
+        async (): Promise<TeamMember[]> => [
+          { name: 'bob', providerId: 'opencode', model: 'opencode/minimax-m2.5-free' },
+        ]
+      );
       const readOpenCodeMemberDirectory = vi.fn(async () => ({
         config: await getConfigSnapshot(),
         teamMeta: await getMeta(),
@@ -16520,6 +16525,43 @@ describe('TeamProvisioningService', () => {
 
       expect(opencodeDetach).not.toHaveBeenCalled();
       expect(stopPrimaryRuntime).not.toHaveBeenCalled();
+    });
+
+    it('detaches a persisted teammate runtime when mutable alive-run tracking is absent', async () => {
+      const teamName = 'offline-primary-detach';
+      const svc = createServiceWithConfig({
+        name: 'Offline Primary Detach Team',
+        members: [
+          { name: 'team-lead', agentType: 'team-lead', providerId: 'anthropic' },
+          {
+            name: 'forge',
+            role: 'Developer',
+            providerId: 'codex',
+            agentType: 'general-purpose',
+          },
+        ],
+      });
+      const stopPrimaryRuntime = vi.fn(async () => {});
+      memberLifecycleUseCasesHarness(svc).stopPrimaryOwnedRosterRuntime = stopPrimaryRuntime;
+      stubMemberLifecyclePersistedRuntimeMembers(svc, [
+        {
+          name: 'forge',
+          agentId: 'forge@offline-primary-detach',
+          backendType: 'process',
+          tmuxPaneId: 'process:72501',
+          runtimePid: 72501,
+        },
+      ]);
+
+      await expect(svc.detachLiveRosterMember(teamName, 'forge')).resolves.toBeUndefined();
+
+      expect(stopPrimaryRuntime).toHaveBeenCalledWith(
+        expect.objectContaining({
+          teamName,
+          memberName: 'forge',
+          actionLabel: 'Detach for teammate "forge"',
+        })
+      );
     });
 
     it('launches direct process teammate restarts with normal MCP settings inheritance', async () => {

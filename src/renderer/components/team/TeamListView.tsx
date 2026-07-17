@@ -22,7 +22,6 @@ import {
 } from '@renderer/components/ui/tooltip';
 import {
   getTeamColorSet,
-  getThemedBadge,
   getThemedBorder,
   type TeamColorSet,
 } from '@renderer/constants/teamColors';
@@ -54,6 +53,7 @@ import {
   Loader2,
   Network,
   Play,
+  Plus,
   RotateCcw,
   Search,
   Square,
@@ -94,6 +94,9 @@ const CreateTeamDialog = lazy(() =>
 );
 const LaunchTeamDialog = lazy(() =>
   import('./dialogs/LaunchTeamDialog').then((m) => ({ default: m.LaunchTeamDialog }))
+);
+const ImportTeamDialog = lazy(() =>
+  import('@features/team-import/renderer').then((m) => ({ default: m.ImportTeamDialog }))
 );
 
 const TEAM_SECTION_INITIAL_VISIBLE_COUNT = 24;
@@ -172,7 +175,7 @@ function resolveLaunchDialogMembers(members: readonly TeamMemberSnapshot[]): Res
   });
 }
 
-function renderMemberChips(members: TeamSummaryMember[], isLight: boolean): React.JSX.Element {
+function renderMemberNames(members: TeamSummaryMember[]): React.JSX.Element {
   const teamColorMap = buildMemberColorMap(members);
   return (
     <>
@@ -182,16 +185,8 @@ function renderMemberChips(members: TeamSummaryMember[], isLight: boolean): Reac
         return (
           <span key={m.name} className="inline-flex items-center gap-1">
             <span
-              className="rounded px-1.5 py-0.5 text-[10px] font-medium tracking-wide"
-              style={
-                memberColor
-                  ? {
-                      backgroundColor: getThemedBadge(memberColor, isLight),
-                      color: memberColor.text,
-                      border: `1px solid ${memberColor.border}40`,
-                    }
-                  : undefined
-              }
+              className="text-[10px] font-medium tracking-wide"
+              style={memberColor ? { color: memberColor.text } : undefined}
             >
               {m.name}
             </span>
@@ -382,21 +377,21 @@ const ActiveTeamCard = ({
         }
       }}
     >
-      <div className="pointer-events-none absolute right-4 top-4 z-10">
-        <StatusBadge status={status} t={t} />
-      </div>
       <div className="flex flex-1 flex-col">
         <div className="space-y-2">
-          <div className="flex items-start gap-2.5 pr-44">
+          <div className="flex min-w-0 items-start gap-2.5">
             <div className="flex size-8 shrink-0 items-center justify-center rounded-md border border-[var(--color-border)] bg-[var(--color-surface-overlay)] transition-colors group-hover:border-[var(--color-border-emphasis)]">
               <UsersRound
                 className="size-4 transition-colors"
                 style={{ color: getThemedBorder(teamColorSet, isLight) }}
               />
             </div>
-            <h3 className="min-w-0 flex-1 break-words text-sm font-semibold leading-snug text-[var(--color-text)]">
+            <h3 className="line-clamp-2 min-w-0 flex-1 break-words text-sm font-semibold leading-snug text-[var(--color-text)]">
               {team.displayName}
             </h3>
+            <div className="pointer-events-none shrink-0">
+              <StatusBadge status={status} t={t} />
+            </div>
           </div>
           <div className="flex min-h-6 items-center justify-between gap-2">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -480,11 +475,11 @@ const ActiveTeamCard = ({
         ) : team.partialLaunchFailure || team.teamLaunchState === 'partial_failure' ? (
           <p className="mt-2 text-[11px] text-amber-400">
             {team.missingMembers?.length
-              ? t('list.partial.stoppedWithCount', {
-                  count: team.missingMembers.length,
+              ? t('detail.offline.partialMissing', {
+                  missing: team.missingMembers.length,
                   expected: team.expectedMemberCount ?? team.missingMembers.length,
                 })
-              : t('list.partial.stopped')}
+              : t('detail.offline.partialFailed')}
           </p>
         ) : team.teamLaunchState === 'partial_skipped' ? (
           <p className="mt-2 text-[11px] text-sky-300">
@@ -498,7 +493,7 @@ const ActiveTeamCard = ({
         ) : null}
         <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2">
           {team.members && team.members.length > 0 ? (
-            renderMemberChips(team.members, isLight)
+            renderMemberNames(team.members)
           ) : team.memberCount === 0 ? (
             <Badge variant="secondary" className="text-[10px] font-normal">
               {t('list.solo')}
@@ -524,6 +519,7 @@ export const TeamListView = memo(function TeamListView(): React.JSX.Element {
   const { t: tCommon } = useAppTranslation('common');
   const electronMode = isElectronMode();
   const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [showImportDialog, setShowImportDialog] = useState(false);
   const [copyData, setCopyData] = useState<TeamCopyData | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [filter, setFilter] = useState<TeamListFilterState>(EMPTY_TEAM_FILTER);
@@ -1116,6 +1112,25 @@ export const TeamListView = memo(function TeamListView(): React.JSX.Element {
     </Suspense>
   );
 
+  const importDialogElement = showImportDialog && (
+    <Suspense
+      fallback={
+        <div className="flex items-center justify-center p-6 text-sm text-text-muted" role="status">
+          {tCommon('states.loading')}
+        </div>
+      }
+    >
+      <ImportTeamDialog
+        open={showImportDialog}
+        onClose={() => setShowImportDialog(false)}
+        onImported={() => {
+          setShowImportDialog(false);
+          void fetchTeams();
+        }}
+      />
+    </Suspense>
+  );
+
   const launchDialogElement = launchDialogOpen && (
     <Suspense
       fallback={
@@ -1164,6 +1179,7 @@ export const TeamListView = memo(function TeamListView(): React.JSX.Element {
           <Button
             variant="outline"
             size="sm"
+            className="gap-1.5"
             onClick={() =>
               openTab({ type: 'organizations', label: t('organizations.map.defaultTitle') })
             }
@@ -1174,9 +1190,20 @@ export const TeamListView = memo(function TeamListView(): React.JSX.Element {
           <Button
             variant="outline"
             size="sm"
+            className="gap-1.5"
+            disabled={!canCreate}
+            onClick={() => setShowImportDialog(true)}
+          >
+            <FolderOpen size={13} />
+            {t('list.actions.importTeam')}
+          </Button>
+          <Button
+            size="sm"
+            className="gap-1.5"
             disabled={!canCreate}
             onClick={() => setShowCreateDialog(true)}
           >
+            <Plus size={13} />
             {t('list.actions.createTeam')}
           </Button>
         </div>
@@ -1245,7 +1272,11 @@ export const TeamListView = memo(function TeamListView(): React.JSX.Element {
 
     if (teamsWithProvisioning.length === 0) {
       return (
-        <TeamEmptyState canCreate={canCreate} onCreateTeam={() => setShowCreateDialog(true)} />
+        <TeamEmptyState
+          canCreate={canCreate}
+          onCreateTeam={() => setShowCreateDialog(true)}
+          onImportTeam={() => setShowImportDialog(true)}
+        />
       );
     }
 
@@ -1473,7 +1504,7 @@ export const TeamListView = memo(function TeamListView(): React.JSX.Element {
                     </p>
                     {team.members && team.members.length > 0 && (
                       <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2">
-                        {renderMemberChips(team.members, isLight)}
+                        {renderMemberNames(team.members)}
                       </div>
                     )}
                   </div>
@@ -1492,6 +1523,7 @@ export const TeamListView = memo(function TeamListView(): React.JSX.Element {
         {renderHeader()}
         {renderContent()}
         {createDialogElement}
+        {importDialogElement}
         {launchDialogElement}
       </div>
     </TooltipProvider>

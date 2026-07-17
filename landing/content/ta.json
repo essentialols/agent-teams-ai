@@ -49,12 +49,12 @@
     {
       "id": "whatIsIt",
       "question": "Agent Teams என்றால் என்ன?",
-      "answer": "உள்ளூர் coordination layer உடன் AI agent குழுக்களை இயக்கும் desktop app. Agents-க்கு roles இருக்கும், அவை autonomous ஆக வேலை செய்யும், kanban board மூலம் collaborate செய்யும், Claude, Codex அல்லது OpenCode-ல் இயங்கும்."
+      "answer": "உள்ளூர் coordination layer உடன் AI agent குழுக்களை இயக்கும் desktop app. Agents-க்கு roles இருக்கும், அவை autonomous ஆக வேலை செய்யும், kanban board மூலம் collaborate செய்யும், Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro-ல் இயங்கும்."
     },
     {
       "id": "isFree",
       "question": "இது உண்மையில் இலவசமா?",
-      "answer": "ஆம். App இலவசமும் open source-மும். Auth இல்லாத free model-ல் தொடங்கலாம் - பதிவு, API key, credit card எதுவும் தேவையில்லை. மேலும் models வேண்டுமெனில் Claude, Codex, OpenCode/OpenRouter அல்லது supported provider-ஐ இணைக்கவும்."
+      "answer": "ஆம். App இலவசமும் open source-மும். Auth இல்லாத free model-ல் தொடங்கலாம் - பதிவு, API key, credit card எதுவும் தேவையில்லை. மேலும் models வேண்டுமெனில் Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro அல்லது supported provider-ஐ இணைக்கவும்."
     },
     {
       "id": "platforms",
@@ -125,7 +125,7 @@
       "name": "இலவசம்",
       "price": "$0",
       "period": "",
-      "description": "ஆம். App இலவசமும் open source-மும். Auth இல்லாத free model-ல் தொடங்கலாம் - பதிவு, API key, credit card எதுவும் தேவையில்லை. மேலும் models வேண்டுமெனில் Claude, Codex, OpenCode/OpenRouter அல்லது supported provider-ஐ இணைக்கவும்.",
+      "description": "ஆம். App இலவசமும் open source-மும். Auth இல்லாத free model-ல் தொடங்கலாம் - பதிவு, API key, credit card எதுவும் தேவையில்லை. மேலும் models வேண்டுமெனில் Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro அல்லது supported provider-ஐ இணைக்கவும்.",
       "features": [
         "Agent குழுக்கள்",
         "Kanban board",

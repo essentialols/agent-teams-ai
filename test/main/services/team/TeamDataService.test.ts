@@ -10,6 +10,7 @@ import { getEffectiveInboxMessageId } from '../../../../src/main/services/team/i
 import { buildTaskChangePresenceDescriptor } from '../../../../src/main/services/team/taskChangePresenceUtils';
 import { TeamConfigReader } from '../../../../src/main/services/team/TeamConfigReader';
 import { TeamDataService } from '../../../../src/main/services/team/TeamDataService';
+import { TeamProvisioningService } from '../../../../src/main/services/team/TeamProvisioningService';
 import { TeamTaskReader } from '../../../../src/main/services/team/TeamTaskReader';
 import { encodePath, setClaudeBasePathOverride } from '../../../../src/main/utils/pathDecoder';
 
@@ -500,6 +501,64 @@ describe('TeamDataService task projection cache invalidation', () => {
 });
 
 describe('TeamDataService draft metadata', () => {
+  it('rejects an existing draft without overwriting its artifacts', async () => {
+    const claudeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'team-data-draft-collision-'));
+    tempPaths.push(claudeRoot);
+    setClaudeBasePathOverride(claudeRoot);
+    const teamDir = path.join(claudeRoot, 'teams', 'draft-team');
+    const tasksDir = path.join(claudeRoot, 'tasks', 'draft-team');
+    await fs.mkdir(teamDir, { recursive: true });
+    await fs.mkdir(tasksDir, { recursive: true });
+    const existingMeta = '{"displayName":"Existing Draft"}';
+    await fs.writeFile(path.join(teamDir, 'team.meta.json'), existingMeta, 'utf8');
+    await fs.writeFile(path.join(tasksDir, '1.json'), '{"subject":"Existing task"}', 'utf8');
+
+    await expect(
+      new TeamDataService().createTeamConfig({
+        teamName: 'draft-team',
+        members: [{ name: 'replacement' }],
+      })
+    ).rejects.toThrow('Team already exists');
+
+    await expect(fs.readFile(path.join(teamDir, 'team.meta.json'), 'utf8')).resolves.toBe(
+      existingMeta
+    );
+    await expect(fs.readFile(path.join(tasksDir, '1.json'), 'utf8')).resolves.toContain(
+      'Existing task'
+    );
+  });
+
+  it('rejects an orphaned tasks directory instead of creating a hybrid draft', async () => {
+    const claudeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'team-data-task-collision-'));
+    tempPaths.push(claudeRoot);
+    setClaudeBasePathOverride(claudeRoot);
+    await fs.mkdir(path.join(claudeRoot, 'tasks', 'draft-team'), { recursive: true });
+
+    await expect(
+      new TeamDataService().createTeamConfig({ teamName: 'draft-team', members: [] })
+    ).rejects.toThrow('Team already exists');
+    await expect(fs.access(path.join(claudeRoot, 'teams', 'draft-team'))).rejects.toThrow();
+  });
+
+  it('allows exactly one of two concurrent creates for the same team name', async () => {
+    const claudeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'team-data-create-race-'));
+    tempPaths.push(claudeRoot);
+    setClaudeBasePathOverride(claudeRoot);
+    const service = new TeamDataService();
+
+    const results = await Promise.allSettled([
+      service.createTeamConfig({ teamName: 'draft-team', members: [{ name: 'alpha' }] }),
+      service.createTeamConfig({ teamName: 'draft-team', members: [{ name: 'beta' }] }),
+    ]);
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+    const members = JSON.parse(
+      await fs.readFile(path.join(claudeRoot, 'teams', 'draft-team', 'members.meta.json'), 'utf8')
+    ) as { members: { name: string }[] };
+    expect([['alpha'], ['beta']]).toContainEqual(members.members.map((member) => member.name));
+  });
+
   it('round-trips create config metadata through getSavedRequest', async () => {
     const claudeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'team-data-saved-request-'));
     tempPaths.push(claudeRoot);
@@ -606,6 +665,76 @@ describe('TeamDataService draft metadata', () => {
         },
       ],
     });
+  });
+
+  it('persists a migrated removal tombstone and makes repeated removal restart-safe', async () => {
+    const claudeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'team-data-remove-restart-'));
+    tempPaths.push(claudeRoot);
+    setClaudeBasePathOverride(claudeRoot);
+    const teamDir = path.join(claudeRoot, 'teams', 'restart-team');
+    await fs.mkdir(path.join(teamDir, 'inboxes'), { recursive: true });
+    const configRaw = JSON.stringify({
+      name: 'restart-team',
+      members: [
+        { name: 'team-lead', agentType: 'team-lead', role: 'Lead' },
+        { name: 'user', role: 'Reserved recipient' },
+        { name: 'alice', role: 'Developer' },
+        { name: 'bob', role: 'Reviewer' },
+      ],
+    });
+    await fs.writeFile(path.join(teamDir, 'config.json'), configRaw);
+    await Promise.all(
+      [
+        'alice',
+        'bob',
+        'team-lead',
+        'user',
+        'alice-provisioner',
+        'alice-2',
+        'cross_team::other-team',
+        'cross_team_send',
+        'other-team.external',
+        'a0123456789abcdef',
+      ].map((name) => fs.writeFile(path.join(teamDir, 'inboxes', `${name}.json`), '[]'))
+    );
+
+    await new TeamDataService().removeMember('restart-team', 'alice');
+    await expect(
+      new TeamDataService().removeMember('restart-team', 'alice')
+    ).resolves.toBeUndefined();
+
+    const persisted = JSON.parse(
+      await fs.readFile(path.join(teamDir, 'members.meta.json'), 'utf8')
+    );
+    expect(persisted.members).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'alice',
+          role: 'Developer',
+          removedAt: expect.any(Number),
+        }),
+        expect.objectContaining({ name: 'bob', role: 'Reviewer' }),
+      ])
+    );
+    expect(persisted.members).toHaveLength(2);
+
+    for (let restart = 0; restart < 2; restart += 1) {
+      const provisioning = new TeamProvisioningService();
+      const resolution = await (
+        provisioning as unknown as {
+          configFacade: {
+            resolveLaunchExpectedMembers(
+              teamName: string,
+              rawConfig: string,
+              providerId: string
+            ): Promise<{ source: string; members: Array<{ name: string }> }>;
+          };
+        }
+      ).configFacade.resolveLaunchExpectedMembers('restart-team', configRaw, 'codex');
+
+      expect(resolution.source).toBe('members-meta');
+      expect(resolution.members.map((member) => member.name)).toEqual(['bob']);
+    }
   });
 });
 

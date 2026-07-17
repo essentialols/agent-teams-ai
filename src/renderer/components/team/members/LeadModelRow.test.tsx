@@ -5,6 +5,10 @@ import { getTeamColorSet } from '@renderer/constants/teamColors';
 import { resolveTeamLeadColorName } from '@shared/utils/teamMemberColors';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('@features/runtime-provider-management/renderer', () => ({
+  OpenCodeLocalModelLimitsCard: () => React.createElement('div', null, 'local-model-limits-card'),
+}));
+
 vi.mock('@renderer/components/common/ProviderBrandLogo', () => ({
   ProviderBrandLogo: () => React.createElement('span', { 'data-testid': 'provider-logo' }),
 }));
@@ -118,6 +122,7 @@ vi.mock('../../ui/button', () => ({
     ),
 }));
 
+import { FLAT_ROSTER_GRID_COLUMNS } from './flatRosterLayout';
 import { ANTHROPIC_LONG_CONTEXT_PRICING_URL, LeadModelRow } from './LeadModelRow';
 
 function renderLeadModelRow(overrides: Partial<React.ComponentProps<typeof LeadModelRow>> = {}): {
@@ -167,6 +172,22 @@ describe('LeadModelRow', () => {
     expect(host.textContent).toContain('lead');
     expect(host.textContent).toContain('Team Lead');
     expect(stripe?.getAttribute('style')).toContain(expectedBorder);
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it('keeps the Team Lead role static in the flat roster layout', () => {
+    const { host, root } = renderLeadModelRow({ layoutVariant: 'flat' });
+    const row = host.querySelector<HTMLElement>('[data-role="lead-row"]')!;
+    const columns = Array.from(row.children);
+
+    expect(host.textContent).toContain('Team Lead');
+    expect(host.querySelector('[role="combobox"]')).toBeNull();
+    expect(row.className).toContain(FLAT_ROSTER_GRID_COLUMNS);
+    expect(columns[2]?.textContent).toBe('Team Lead');
+    expect(columns[3]?.textContent).toContain('Sync model with teammates');
 
     act(() => {
       root.unmount();
@@ -281,7 +302,7 @@ describe('LeadModelRow', () => {
     });
   });
 
-  it('shows the OpenCode context config hint inside OpenCode provider settings after effort', () => {
+  it('shows local OpenCode limit controls inside OpenCode provider settings after effort', () => {
     const { host, root } = renderLeadModelRow({
       providerId: 'opencode',
       model: 'local/model',
@@ -297,7 +318,7 @@ describe('LeadModelRow', () => {
 
     const text = host.textContent ?? '';
     const effortIndex = text.indexOf('effort-selector');
-    const hintIndex = text.indexOf('OpenCode local models can use an OpenCode context budget');
+    const hintIndex = text.indexOf('local-model-limits-card');
 
     expect(hintIndex).toBeGreaterThan(-1);
     expect(effortIndex).toBeGreaterThan(-1);

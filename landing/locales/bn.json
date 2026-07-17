@@ -86,7 +86,7 @@
   },
   "pricing": {
     "sectionTitle": "ইনস্টল করার জন্য মুক্ত। ফ্রি মডেল সহ।",
-    "sectionSubtitle": "অনুমতি ছাড়া একটি মুক্ত মডেল দিয়ে অবিলম্বে শুরু করুন API চাবি বা ক্রেডিট কার্ড। সংযোগ স্থাপন করুন Claude, Codex, OpenCode/OpenRouterআপনি যখন আরো মডেল চান তখন অন্য পরিসেবা ব্যবহার করুন ।",
+    "sectionSubtitle": "অনুমতি ছাড়া একটি মুক্ত মডেল দিয়ে অবিলম্বে শুরু করুন API চাবি বা ক্রেডিট কার্ড। সংযোগ স্থাপন করুন Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiroআপনি যখন আরো মডেল চান তখন অন্য পরিসেবা ব্যবহার করুন ।",
     "getStarted": "মেইল ডাউনলোড করো",
     "popular": "মুক্ত",
     "freeModelCallout": "মাউন্ট করার যোগ্য মডেল উপস্থিত নেই",
@@ -159,9 +159,9 @@
   },
   "meta": {
     "homeTitle": "Agent Teams - AI ডেভেলপারের জন্য এজেন্ট অর্পেশন",
-    "homeDescription": "মুক্ত, ওপেন সোর্স ডেস্কটপ অ্যাপ্লিকেশন AI এজেন্ট টিম. কোনো পরিচয় সহ মুক্ত মডেলের সাথে আরম্ভ করা হবে না Claude, Codexঅথবা OpenCode যখন তোমার আরও মডেল দরকার.",
+    "homeDescription": "মুক্ত, ওপেন সোর্স ডেস্কটপ অ্যাপ্লিকেশন AI এজেন্ট টিম. কোনো পরিচয় সহ মুক্ত মডেলের সাথে আরম্ভ করা হবে না Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro যখন তোমার আরও মডেল দরকার.",
     "downloadTitle": "ডাউনলোড করা হয়েছে Agent Teams ম্যাকমাসো, Windows, লিনাক্স এবং লিনাক্সের জন্য",
-    "downloadDescription": "ডাউনলোড করা হয়েছে Agent Teams ম্যাককোনস, উইন্ডোজ এবং লিনাক্সের জন্য। ডেস্কটপ শেয়ার ব্যবস্থা Claude, Codexএবং OpenCode এজেন্ট টিম."
+    "downloadDescription": "ডাউনলোড করা হয়েছে Agent Teams ম্যাককোনস, উইন্ডোজ এবং লিনাক্সের জন্য। ডেস্কটপ শেয়ার ব্যবস্থা Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro এজেন্ট টিম."
   },
   "error": {
     "notFoundTitle": "পৃষ্ঠা পাওয়া যায়নি",

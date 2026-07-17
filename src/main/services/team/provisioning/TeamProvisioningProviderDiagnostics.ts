@@ -364,6 +364,39 @@ export async function probeProviderRuntimeControlPlane({
   }
 }
 
+function buildProviderAuthenticationHint(
+  providerId: TeamProviderId,
+  cliCommandLabel: string,
+  attempt: number
+): string {
+  const attemptsSuffix = attempt > 1 ? ` (failed after ${attempt} attempts)` : '';
+  switch (providerId) {
+    case 'anthropic':
+      return (
+        `${cliCommandLabel} \`-p\` mode is not authenticated. ` +
+        (cliCommandLabel === 'claude'
+          ? 'Run `claude auth login` (or start `claude` and run `/login`) to authenticate. '
+          : `Authenticate Anthropic in ${cliCommandLabel} and retry. `) +
+        `For automation/headless use, set ANTHROPIC_API_KEY.${attemptsSuffix}`
+      );
+    case 'codex':
+      return (
+        'Codex provider is not authenticated for `-p` mode. ' +
+        `Authenticate Codex in ${cliCommandLabel} and retry.${attemptsSuffix}`
+      );
+    case 'gemini':
+      return (
+        'Gemini provider is not authenticated for runtime use. ' +
+        `Authenticate Gemini in ${cliCommandLabel} and retry.${attemptsSuffix}`
+      );
+    case 'opencode':
+      return (
+        'OpenCode provider is not authenticated for runtime use. ' +
+        `Authenticate the selected OpenCode provider and retry.${attemptsSuffix}`
+      );
+  }
+}
+
 export async function runProviderOneShotDiagnostic({
   claudePath,
   cwd,
@@ -467,16 +500,7 @@ export async function runProviderOneShotDiagnostic({
       const normalizedOutput =
         ports.normalizeApiRetryErrorMessage(combinedOutput) || combinedOutput.trim();
       const hint = isAuthFailure
-        ? resolvedProviderId === 'codex'
-          ? 'Codex provider is not authenticated for `-p` mode. ' +
-            `Authenticate Codex in ${cliCommandLabel} and retry.` +
-            (attempt > 1 ? ` (failed after ${attempt} attempts)` : '')
-          : `${cliCommandLabel} \`-p\` mode is not authenticated. ` +
-            (cliCommandLabel === 'claude'
-              ? 'Run `claude auth login` (or start `claude` and run `/login`) to authenticate. '
-              : `Authenticate Anthropic in ${cliCommandLabel} and retry. `) +
-            'For automation/headless use, set ANTHROPIC_API_KEY.' +
-            (attempt > 1 ? ` (failed after ${attempt} attempts)` : '')
+        ? buildProviderAuthenticationHint(resolvedProviderId, cliCommandLabel, attempt)
         : normalizedOutput
           ? `${cliCommandLabel} preflight check failed (exit code ${pingProbe.exitCode ?? 'unknown'}). Details: ${normalizedOutput}`
           : `${cliCommandLabel} preflight check failed (exit code ${pingProbe.exitCode ?? 'unknown'}).`;

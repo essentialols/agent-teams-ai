@@ -779,6 +779,48 @@ describe('cli child process helpers', () => {
       }
     });
 
+    it('kills the launcher process tree when an execCli request is aborted', async () => {
+      setPlatform('darwin');
+      const execFileMock = child.execFile as unknown as Mock;
+      const spawnSyncMock = child.spawnSync as unknown as Mock;
+      const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true);
+      const childProcess = new EventEmitter() as EventEmitter & {
+        pid: number;
+        stdout: EventEmitter;
+        stderr: EventEmitter;
+      };
+      childProcess.pid = 200;
+      childProcess.stdout = new EventEmitter();
+      childProcess.stderr = new EventEmitter();
+      spawnSyncMock.mockReturnValue({
+        status: 0,
+        stdout: ['200 1', '201 200', '202 201'].join('\n'),
+      });
+      execFileMock.mockImplementation(() => childProcess);
+      const controller = new AbortController();
+
+      try {
+        const result = execCli('/tmp/cli-dev', ['runtime', 'providers', 'models'], {
+          signal: controller.signal,
+        });
+        childProcess.stdout.emit('data', Buffer.from('partial stdout'));
+        controller.abort();
+
+        await expect(result).rejects.toMatchObject({
+          name: 'AbortError',
+          killed: true,
+          signal: 'SIGTERM',
+          stdout: 'partial stdout',
+        });
+        expect(execFileMock.mock.calls[0][2]).not.toHaveProperty('signal');
+        expect(killSpy.mock.calls.map(([pid]) => pid)).toEqual(
+          expect.arrayContaining([200, 201, 202])
+        );
+      } finally {
+        killSpy.mockRestore();
+      }
+    });
+
     it('bounds stdout and stderr snapshots on manual execFile timeout', async () => {
       setPlatform('darwin');
       vi.useFakeTimers();

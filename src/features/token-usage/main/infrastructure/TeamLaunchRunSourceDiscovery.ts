@@ -293,9 +293,12 @@ function buildRunsForTeam(
         {
           id: `team:${teamName}:lead:${leadSessionId}:source`,
           appRunId: `team:${teamName}:lead:${leadSessionId}`,
-          sourceType: 'cli_log',
+          sourceType: providerId === 'opencode' ? 'runtime_trace' : 'cli_log',
           nativeSessionId: leadSessionId,
-          nativeLogPath: resolveClaudeNativeLogPath(leadMember?.cwd ?? projectPath, leadSessionId),
+          nativeLogPath:
+            providerId === 'opencode'
+              ? undefined
+              : resolveClaudeNativeLogPath(leadMember?.cwd ?? projectPath, leadSessionId),
           discoveredAt: fallbackIso,
         },
       ],
@@ -432,10 +435,13 @@ function buildMemberRun(
             sourceType:
               runtimeKind === 'codex' || runtimeKind === 'opencode' ? 'runtime_trace' : 'cli_log',
             nativeSessionId,
-            nativeLogPath: resolveClaudeNativeLogPath(
-              memberState.cwd ?? configMember?.cwd ?? projectPath,
-              nativeSessionId
-            ),
+            nativeLogPath:
+              runtimeKind === 'opencode'
+                ? undefined
+                : resolveClaudeNativeLogPath(
+                    memberState.cwd ?? configMember?.cwd ?? projectPath,
+                    nativeSessionId
+                  ),
             discoveredAt: memberState.lastEvaluatedAt ?? fallbackIso,
           },
         ]
@@ -515,10 +521,13 @@ function buildRuntimeSessionRun(
         sourceType:
           runtimeKind === 'codex' || runtimeKind === 'opencode' ? 'runtime_trace' : 'cli_log',
         nativeSessionId: runtimeSession.runId,
-        nativeLogPath: resolveClaudeNativeLogPath(
-          runtimeSession.cwd ?? configMember?.cwd ?? projectPath,
-          runtimeSession.runId
-        ),
+        nativeLogPath:
+          runtimeKind === 'opencode'
+            ? undefined
+            : resolveClaudeNativeLogPath(
+                runtimeSession.cwd ?? configMember?.cwd ?? projectPath,
+                runtimeSession.runId
+              ),
         discoveredAt: runtimeSession.lastSeenAt || fallbackIso,
       },
     ],

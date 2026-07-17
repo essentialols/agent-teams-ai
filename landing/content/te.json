@@ -49,12 +49,12 @@
     {
       "id": "whatIsIt",
       "question": "Agent Teams అంటే ఏమిటి?",
-      "answer": "మా local coordination layer తో AI agent teams ని orchestrate చేసే desktop app. Agents కు roles ఉంటాయి, autonomous గా పని చేస్తాయి, kanban board ద్వారా collaborate చేస్తాయి, Claude, Codex లేదా OpenCode మీద run అవుతాయి."
+      "answer": "మా local coordination layer తో AI agent teams ని orchestrate చేసే desktop app. Agents కు roles ఉంటాయి, autonomous గా పని చేస్తాయి, kanban board ద్వారా collaborate చేస్తాయి, Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro మీద run అవుతాయి."
     },
     {
       "id": "isFree",
       "question": "ఇది నిజంగా free నా?",
-      "answer": "అవును. App free మరియు open source. Auth అవసరం లేని free model తో మొదలుపెట్టవచ్చు - registration, API key, credit card అవసరం లేదు. మరిన్ని models కోసం Claude, Codex, OpenCode/OpenRouter లేదా supported provider connect చేయండి."
+      "answer": "అవును. App free మరియు open source. Auth అవసరం లేని free model తో మొదలుపెట్టవచ్చు - registration, API key, credit card అవసరం లేదు. మరిన్ని models కోసం Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro లేదా supported provider connect చేయండి."
     },
     {
       "id": "platforms",
@@ -125,7 +125,7 @@
       "name": "Free",
       "price": "$0",
       "period": "",
-      "description": "అవును. App free మరియు open source. Auth అవసరం లేని free model తో మొదలుపెట్టవచ్చు - registration, API key, credit card అవసరం లేదు. మరిన్ని models కోసం Claude, Codex, OpenCode/OpenRouter లేదా supported provider connect చేయండి.",
+      "description": "అవును. App free మరియు open source. Auth అవసరం లేని free model తో మొదలుపెట్టవచ్చు - registration, API key, credit card అవసరం లేదు. మరిన్ని models కోసం Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro లేదా supported provider connect చేయండి.",
       "features": [
         "Agent టీమ్‌లు",
         "Kanban board",

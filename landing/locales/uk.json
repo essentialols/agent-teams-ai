@@ -86,7 +86,7 @@
   },
   "pricing": {
     "sectionTitle": "Безплатне встановлення. Безплатна модель включена.",
-    "sectionSubtitle": "Почніть одразу з безплатною моделлю без автентифікації — без облікового запису, API-ключа чи кредитної картки. Підключайте Claude, Codex, OpenCode/OpenRouter чи доступ до інших провайдерів, лише коли захочете більше моделей.",
+    "sectionSubtitle": "Почніть одразу з безплатною моделлю без автентифікації — без облікового запису, API-ключа чи кредитної картки. Підключайте Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro чи доступ до інших провайдерів, лише коли захочете більше моделей.",
     "getStarted": "Завантажити зараз",
     "popular": "Безплатно",
     "freeModelCallout": "Безплатна модель без автентифікації включена",
@@ -159,9 +159,9 @@
   },
   "meta": {
     "homeTitle": "Agent Teams - Оркестрування AI-агентів для розробників",
-    "homeDescription": "Безплатний десктопний застосунок з відкритим кодом для команд AI-агентів. Почніть із безплатної моделі без автентифікації, а потім підключайте Claude, Codex чи OpenCode, коли потрібно більше моделей.",
+    "homeDescription": "Безплатний десктопний застосунок з відкритим кодом для команд AI-агентів. Почніть із безплатної моделі без автентифікації, а потім підключайте Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro, коли потрібно більше моделей.",
     "downloadTitle": "Завантажте Agent Teams для macOS, Windows та Linux",
-    "downloadDescription": "Завантажте Agent Teams для macOS, Windows та Linux. Безплатний десктопний застосунок з відкритим кодом для команд агентів Claude, Codex та OpenCode."
+    "downloadDescription": "Завантажте Agent Teams для macOS, Windows та Linux. Безплатний десктопний застосунок з відкритим кодом для команд агентів Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro."
   },
   "error": {
     "notFoundTitle": "Сторінку не знайдено",

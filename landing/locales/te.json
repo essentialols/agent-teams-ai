@@ -86,7 +86,7 @@
   },
   "pricing": {
     "sectionTitle": "ఇన్‌స్టాల్ చేయడానికి ఉచితం. ఉచిత మోడల్ చేర్చబడింది.",
-    "sectionSubtitle": "auth లేకుండా ఉచిత మోడల్‌తో వెంటనే ప్రారంభించండి - ఖాతా, API కీ లేదా క్రెడిట్ కార్డు అవసరం లేదు. మీకు మరిన్ని మోడల్‌లు కావలసినప్పుడు మాత్రమే Claude, Codex, OpenCode/OpenRouter లేదా ఇతర ప్రొవైడర్ యాక్సెస్‌ను కనెక్ట్ చేయండి.",
+    "sectionSubtitle": "auth లేకుండా ఉచిత మోడల్‌తో వెంటనే ప్రారంభించండి - ఖాతా, API కీ లేదా క్రెడిట్ కార్డు అవసరం లేదు. మీకు మరిన్ని మోడల్‌లు కావలసినప్పుడు మాత్రమే Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro లేదా ఇతర ప్రొవైడర్ యాక్సెస్‌ను కనెక్ట్ చేయండి.",
     "getStarted": "ఇప్పుడే డౌన్‌లోడ్ చేయండి",
     "popular": "ఉచితం",
     "freeModelCallout": "auth లేని ఉచిత మోడల్ చేర్చబడింది",
@@ -159,9 +159,9 @@
   },
   "meta": {
     "homeTitle": "Agent Teams - డెవలపర్ల కోసం AI ఏజెంట్ ఆర్కెస్ట్రేషన్",
-    "homeDescription": "AI ఏజెంట్ టీమ్‌ల కోసం ఉచిత, ఓపెన్ సోర్స్ డెస్క్‌టాప్ యాప్. auth లేని ఉచిత మోడల్‌తో ప్రారంభించి, మీకు మరిన్ని మోడల్‌లు కావలసినప్పుడు Claude, Codex లేదా OpenCode ను కనెక్ట్ చేయండి.",
+    "homeDescription": "AI ఏజెంట్ టీమ్‌ల కోసం ఉచిత, ఓపెన్ సోర్స్ డెస్క్‌టాప్ యాప్. auth లేని ఉచిత మోడల్‌తో ప్రారంభించి, మీకు మరిన్ని మోడల్‌లు కావలసినప్పుడు Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro ను కనెక్ట్ చేయండి.",
     "downloadTitle": "macOS, Windows మరియు Linux కోసం Agent Teams డౌన్‌లోడ్ చేయండి",
-    "downloadDescription": "macOS, Windows మరియు Linux కోసం Agent Teams డౌన్‌లోడ్ చేయండి. Claude, Codex మరియు OpenCode ఏజెంట్ టీమ్‌ల కోసం ఉచిత ఓపెన్ సోర్స్ డెస్క్‌టాప్ యాప్."
+    "downloadDescription": "macOS, Windows మరియు Linux కోసం Agent Teams డౌన్‌లోడ్ చేయండి. Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro ఏజెంట్ టీమ్‌ల కోసం ఉచిత ఓపెన్ సోర్స్ డెస్క్‌టాప్ యాప్."
   },
   "error": {
     "notFoundTitle": "పేజీ కనుగొనబడలేదు",

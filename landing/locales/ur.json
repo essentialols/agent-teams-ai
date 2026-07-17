@@ -86,7 +86,7 @@
   },
   "pricing": {
     "sectionTitle": "نصب کرنے کے لیے مفت۔ آزاد ماڈل شامل تھا۔",
-    "sectionSubtitle": "ایک مفت ماڈل کے ساتھ فوری طور پر شروع کریں API کلیدی یا کریڈٹ کارڈ ۔ پرنٹ Claude, Codex, OpenCode/OpenRouter.",
+    "sectionSubtitle": "ایک مفت ماڈل کے ساتھ فوری طور پر شروع کریں API کلیدی یا کریڈٹ کارڈ ۔ پرنٹ Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro.",
     "getStarted": "اب ڈاؤن لوڈ کریں",
     "popular": "مفت",
     "freeModelCallout": "مفت ماڈل جس میں کوئی Auth شامل نہیں ہے۔",
@@ -159,9 +159,9 @@
   },
   "meta": {
     "homeTitle": "Agent Teams - AI ترقی‌پذیر اشخاص کیلئے ایجنٹ اور انتخاب",
-    "homeDescription": "مفت، اوپن-source ڈیسک ٹاپ ایپ کے لیے AI ایجنٹ ٹیمیں. ایک آزاد ماڈل سے شروع کریں بغیر Auth، پھر رابطہ کریں Claude, Codex) OpenCode جب آپ کو مزید ماڈل کی ضرورت ہے.",
+    "homeDescription": "مفت، اوپن-source ڈیسک ٹاپ ایپ کے لیے AI ایجنٹ ٹیمیں. ایک آزاد ماڈل سے شروع کریں بغیر Auth، پھر رابطہ کریں Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro جب آپ کو مزید ماڈل کی ضرورت ہے.",
     "downloadTitle": "گر تے ہوئے Agent Teams میکوز، ونڈوز اور لینکس کے لیے",
-    "downloadDescription": "گر تے ہوئے Agent Teams میکوز، ونڈوز اور لینکس کے لیے. فری اوپن ڈیسک ٹاپ ایپ کے لیے Claude, Codex، اور OpenCode ایجنٹ ٹیمیں."
+    "downloadDescription": "گر تے ہوئے Agent Teams میکوز، ونڈوز اور لینکس کے لیے. فری اوپن ڈیسک ٹاپ ایپ کے لیے Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro ایجنٹ ٹیمیں."
   },
   "error": {
     "notFoundTitle": "صفحہ نہیں پائی گئی",

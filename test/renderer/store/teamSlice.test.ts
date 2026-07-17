@@ -14,6 +14,7 @@ import {
   selectResolvedMemberForTeamName,
   selectResolvedMembersForTeamName,
   selectTeamDataForName,
+  selectTeamMessages,
 } from '../../../src/renderer/store/slices/teamSlice';
 import {
   __resetTeamRefreshFanoutDiagnosticsForTests,
@@ -139,8 +140,7 @@ type TestTabInput = Omit<AppState['paneLayout']['panes'][number]['tabs'][number]
 
 type TestTab = AppState['paneLayout']['panes'][number]['tabs'][number];
 
-type TeamTaskFixture = Omit<Partial<TeamTaskWithKanban>, 'id'> &
-  Pick<TeamTaskWithKanban, 'id'>;
+type TeamTaskFixture = Omit<Partial<TeamTaskWithKanban>, 'id'> & Pick<TeamTaskWithKanban, 'id'>;
 
 type GlobalTaskFixture = Omit<Partial<GlobalTask>, 'id' | 'teamName'> &
   Pick<GlobalTask, 'id' | 'teamName'>;
@@ -203,19 +203,20 @@ function createTeamMemberSnapshotFixture(member: TeamMemberSnapshotFixture): Tea
 }
 
 function createSliceStore() {
-  return create<TeamSliceHarnessState>()((set, get, store) =>
-    ({
-      ...createTeamSlice(set as never, get as never, store as never),
-      paneLayout: createPaneLayout(),
-      openTab: vi.fn(),
-      setActiveTab: vi.fn(),
-      updateTabLabel: vi.fn(),
-      getAllPaneTabs: vi.fn(() => []),
-      warmTaskChangeSummaries: vi.fn(async () => undefined),
-      invalidateTaskChangePresence: vi.fn(),
-      fetchTeams: vi.fn(async () => undefined),
-      fetchAllTasks: vi.fn(async () => undefined),
-    }) satisfies TeamSliceHarnessState
+  return create<TeamSliceHarnessState>()(
+    (set, get, store) =>
+      ({
+        ...createTeamSlice(set as never, get as never, store as never),
+        paneLayout: createPaneLayout(),
+        openTab: vi.fn(),
+        setActiveTab: vi.fn(),
+        updateTabLabel: vi.fn(),
+        getAllPaneTabs: vi.fn(() => []),
+        warmTaskChangeSummaries: vi.fn(async () => undefined),
+        invalidateTaskChangePresence: vi.fn(),
+        fetchTeams: vi.fn(async () => undefined),
+        fetchAllTasks: vi.fn(async () => undefined),
+      }) satisfies TeamSliceHarnessState
   );
 }
 
@@ -588,6 +589,31 @@ describe('teamSlice actions', () => {
     expect(store.getState().sendMessageError).toBe(
       'Message was written but not verified (race). Please try again.'
     );
+  });
+
+  it('keeps queued optimistic messages unread until live delivery is confirmed', async () => {
+    const store = createSliceStore();
+    hoisted.sendMessage
+      .mockResolvedValueOnce({ deliveredToInbox: true, messageId: 'm-queued' })
+      .mockResolvedValueOnce({
+        deliveredToInbox: false,
+        deliveredViaStdin: true,
+        messageId: 'm-live',
+      });
+
+    await store.getState().sendTeamMessage('my-team', { member: 'alice', text: 'queued' });
+    expect(
+      selectTeamMessages(store.getState(), 'my-team').find(
+        (message) => message.messageId === 'm-queued'
+      )?.read
+    ).toBe(false);
+
+    await store.getState().sendTeamMessage('my-team', { member: 'alice', text: 'live' });
+    expect(
+      selectTeamMessages(store.getState(), 'my-team').find(
+        (message) => message.messageId === 'm-live'
+      )?.read
+    ).toBe(true);
   });
 
   it('keeps send dialog result non-terminal when OpenCode runtime delivery fails after inbox persistence', async () => {

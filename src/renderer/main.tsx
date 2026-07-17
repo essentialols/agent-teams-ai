@@ -26,7 +26,6 @@ declare global {
 
 // Prepare Sentry before React renders. Actual init waits for telemetry config.
 initSentryRenderer();
-void bootstrapRendererTelemetryFromConfig();
 registerDynamicImportRecovery();
 
 let root: ReactDOM.Root | null = null;
@@ -185,6 +184,9 @@ function stopEnhancedSplashScene(): void {
 
 function mountApp(): void {
   if (root) return;
+
+  // The main process reports ready only after config and telemetry IPC handlers exist.
+  void bootstrapRendererTelemetryFromConfig();
 
   // React 18 StrictMode intentionally mounts/unmounts effects twice in dev,
   // which can start duplicate IPC init chains. Make initialization a one-time

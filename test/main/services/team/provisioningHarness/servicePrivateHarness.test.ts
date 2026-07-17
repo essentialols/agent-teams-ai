@@ -67,9 +67,7 @@ describe('team provisioning private harness seams', () => {
 
     expect(privateHarness(service).aliveRunByTeam.get('team-a')).toBe('run-1');
     expect(provisioningConfigFacadeHarness(service)).toBe(serviceSeams.configFacade);
-    expect(memberLifecycleControllerHarness(service)).toBe(
-      serviceSeams.memberLifecycleController
-    );
+    expect(memberLifecycleControllerHarness(service)).toBe(serviceSeams.memberLifecycleController);
     expect(memberLifecycleHostHarness(service)).toBe(serviceSeams.memberLifecycleHost);
     expect(outputRecoveryFacadeHarness(service)).toBe(serviceSeams.outputRecoveryFacade);
     expect(providerRuntimeHarness(service)).toBe(serviceSeams.providerRuntime);
@@ -116,9 +114,7 @@ describe('team provisioning private harness seams', () => {
     expect(serviceSeams.aliveRunByTeam.get('team-a')).toBe(aliveRun.runId);
     expect(serviceSeams.aliveRunByTeam.get('team-c')).toBe('alive-run-id-only');
     expect(serviceSeams.runs.has('alive-run-id-only')).toBe(false);
-    expect(getRegisteredProvisioningRunId(service, 'team-b')).toBe(
-      activeProvisioningRun.runId
-    );
+    expect(getRegisteredProvisioningRunId(service, 'team-b')).toBe(activeProvisioningRun.runId);
     expect(getRegisteredProvisioningRunId(service, 'team-a')).toBe('runtime-adapter-run-1');
     expect(serviceSeams.runtimeAdapterProgressByRunId.get('runtime-adapter-run-1')).toEqual({
       runId: 'runtime-adapter-run-1',
@@ -127,9 +123,8 @@ describe('team provisioning private harness seams', () => {
   });
 
   it('stubs persisted member and project-path seams with vi mocks', () => {
-    const runtimeMembers: ReturnType<
-      TeamProvisioningConfigFacade['readPersistedRuntimeMembers']
-    > = [{ name: 'alice', agentId: 'alice@team-a' }];
+    const runtimeMembers: ReturnType<TeamProvisioningConfigFacade['readPersistedRuntimeMembers']> =
+      [{ name: 'alice', agentId: 'alice@team-a' }];
     const service = {
       configFacade: {},
       memberLifecycleHost: {},
@@ -144,9 +139,9 @@ describe('team provisioning private harness seams', () => {
     expect(provisioningConfigFacadeHarness(service).readPersistedTeamProjectPath('team-a')).toBe(
       '/workspace/harness-project'
     );
-    expect(
-      vi.isMockFunction(memberLifecycleHostHarness(service).readPersistedRuntimeMembers)
-    ).toBe(true);
+    expect(vi.isMockFunction(memberLifecycleHostHarness(service).readPersistedRuntimeMembers)).toBe(
+      true
+    );
     expect(
       vi.isMockFunction(provisioningConfigFacadeHarness(service).readPersistedTeamProjectPath)
     ).toBe(true);

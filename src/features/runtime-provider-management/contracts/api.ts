@@ -1,4 +1,8 @@
 import type {
+  RuntimeProviderCompanionInput,
+  RuntimeProviderCompanionStatusDto,
+  RuntimeProviderManagementCancelOAuthInput,
+  RuntimeProviderManagementConfigureModelLimitsInput,
   RuntimeProviderManagementConnectApiKeyInput,
   RuntimeProviderManagementConnectInput,
   RuntimeProviderManagementDirectoryResponse,
@@ -7,16 +11,30 @@ import type {
   RuntimeProviderManagementLoadModelsInput,
   RuntimeProviderManagementLoadSetupFormInput,
   RuntimeProviderManagementLoadViewInput,
+  RuntimeProviderManagementModelLimitsResponse,
   RuntimeProviderManagementModelsResponse,
   RuntimeProviderManagementModelTestResponse,
+  RuntimeProviderManagementOAuthControlResponse,
   RuntimeProviderManagementProviderResponse,
   RuntimeProviderManagementSetDefaultModelInput,
   RuntimeProviderManagementSetupFormResponse,
+  RuntimeProviderManagementSubmitOAuthCodeInput,
   RuntimeProviderManagementTestModelInput,
   RuntimeProviderManagementViewResponse,
+  RuntimeProviderOAuthProgressDto,
 } from './types';
 
 export interface RuntimeProviderManagementApi {
+  getCompanionStatus(
+    input: RuntimeProviderCompanionInput
+  ): Promise<RuntimeProviderCompanionStatusDto>;
+  installAndConnectCompanion(
+    input: RuntimeProviderCompanionInput
+  ): Promise<RuntimeProviderCompanionStatusDto>;
+  connectCompanion(
+    input: RuntimeProviderCompanionInput
+  ): Promise<RuntimeProviderCompanionStatusDto>;
+  onCompanionProgress(listener: (event: RuntimeProviderCompanionStatusDto) => void): () => void;
   loadView(
     input: RuntimeProviderManagementLoadViewInput
   ): Promise<RuntimeProviderManagementViewResponse>;
@@ -44,4 +62,14 @@ export interface RuntimeProviderManagementApi {
   setDefaultModel(
     input: RuntimeProviderManagementSetDefaultModelInput
   ): Promise<RuntimeProviderManagementViewResponse>;
+  configureModelLimits(
+    input: RuntimeProviderManagementConfigureModelLimitsInput
+  ): Promise<RuntimeProviderManagementModelLimitsResponse>;
+  submitOAuthCode(
+    input: RuntimeProviderManagementSubmitOAuthCodeInput
+  ): Promise<RuntimeProviderManagementOAuthControlResponse>;
+  cancelOAuth(
+    input: RuntimeProviderManagementCancelOAuthInput
+  ): Promise<RuntimeProviderManagementOAuthControlResponse>;
+  onOAuthProgress(listener: (event: RuntimeProviderOAuthProgressDto) => void): () => void;
 }

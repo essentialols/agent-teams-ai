@@ -86,7 +86,7 @@
   },
   "pricing": {
     "sectionTitle": "Grátis para instalar. Modelo grátis incluído.",
-    "sectionSubtitle": "Comece na hora com um modelo gratuito sem autenticação - sem conta, chave de API ou cartão. Conecte Claude, Codex, OpenCode/OpenRouter ou outros provedores só quando quiser mais modelos.",
+    "sectionSubtitle": "Comece na hora com um modelo gratuito sem autenticação - sem conta, chave de API ou cartão. Conecte Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro ou outros provedores só quando quiser mais modelos.",
     "getStarted": "Baixar agora",
     "popular": "Grátis",
     "freeModelCallout": "Modelo gratuito sem autenticação incluído",
@@ -159,9 +159,9 @@
   },
   "meta": {
     "homeTitle": "Agent Teams - Orquestração de agentes IA para desenvolvedores",
-    "homeDescription": "App desktop gratuito e open source para equipes de agentes IA. Comece com um modelo gratuito sem autenticação, depois conecte Claude, Codex ou OpenCode quando precisar.",
+    "homeDescription": "App desktop gratuito e open source para equipes de agentes IA. Comece com um modelo gratuito sem autenticação, depois conecte Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro quando precisar.",
     "downloadTitle": "Baixar Agent Teams para macOS, Windows e Linux",
-    "downloadDescription": "Baixe o Agent Teams para macOS, Windows e Linux. App desktop gratuito e open source para equipes de agentes Claude, Codex e OpenCode."
+    "downloadDescription": "Baixe o Agent Teams para macOS, Windows e Linux. App desktop gratuito e open source para equipes de agentes Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro."
   },
   "error": {
     "notFoundTitle": "Página não encontrada",

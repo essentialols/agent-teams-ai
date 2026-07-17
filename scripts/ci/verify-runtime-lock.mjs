@@ -25,6 +25,8 @@ const sourceRepository =
 const releaseRepository =
   typeof lock.releaseRepository === 'string' ? lock.releaseRepository.trim() : '';
 const releaseTag = typeof lock.releaseTag === 'string' ? lock.releaseTag.trim() : '';
+const runtimeSourceRepository = '777genius/agent_teams_orchestrator';
+const publicRuntimeReleaseRepository = '777genius/agent_teams_orchestrator_binaries';
 
 if (!version) {
   fail('version is required');
@@ -34,26 +36,36 @@ if (!sourceRef || sourceRef !== `v${version}`) {
   fail(`sourceRef must match version. Expected v${version}, got ${sourceRef || '<empty>'}`);
 }
 
-if (!sourceRepository) {
-  fail('sourceRepository is required');
-}
-
-if (releaseRepository !== sourceRepository) {
+if (sourceRepository !== runtimeSourceRepository) {
   fail(
-    `releaseRepository must point at the runtime source repository (${sourceRepository}), got ${releaseRepository || '<empty>'}.`
+    `sourceRepository must point at the canonical runtime source repository (${runtimeSourceRepository}), got ${sourceRepository || '<empty>'}.`
   );
 }
 
-if (releaseTag !== sourceRef) {
+if (releaseRepository !== publicRuntimeReleaseRepository) {
   fail(
-    `releaseTag must point at the runtime release tag (${sourceRef}), got ${releaseTag || '<empty>'}.`
+    `releaseRepository must point at the public runtime binary repository (${publicRuntimeReleaseRepository}), got ${releaseRepository || '<empty>'}.`
   );
 }
+
+if (releaseTag !== `runtime-${sourceRef}`) {
+  fail(
+    `releaseTag must point at the namespaced public runtime release tag (runtime-${sourceRef}), got ${releaseTag || '<empty>'}.`
+  );
+}
+
+const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 
 for (const [platform, asset] of Object.entries(lock.assets ?? {})) {
   const file = typeof asset.file === 'string' ? asset.file : '';
   if (!file.includes(`-v${version}.`)) {
     fail(`asset ${platform} file must include -v${version}: ${file || '<empty>'}`);
+  }
+  const sha256 = typeof asset.sha256 === 'string' ? asset.sha256.trim().toLowerCase() : '';
+  if (!SHA256_PATTERN.test(sha256)) {
+    fail(
+      `asset ${platform} must pin a 64-hex sha256 of the published archive, got ${asset.sha256 ?? '<missing>'}.`
+    );
   }
 }
 

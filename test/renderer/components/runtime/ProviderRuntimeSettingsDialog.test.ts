@@ -183,17 +183,24 @@ vi.mock('@renderer/components/ui/tabs', () => ({
       { 'data-value': value, 'data-on-change': Boolean(onValueChange) },
       children
     ),
-  TabsList: ({ children }: React.PropsWithChildren) => React.createElement('div', null, children),
+  TabsList: ({
+    children,
+    className,
+  }: React.PropsWithChildren<{ className?: string }>) =>
+    React.createElement('div', { role: 'tablist', className }, children),
   TabsTrigger: ({
     children,
     value,
     onClick,
-  }: React.PropsWithChildren<{ value: string; onClick?: () => void }>) =>
+    className,
+  }: React.PropsWithChildren<{ value: string; onClick?: () => void; className?: string }>) =>
     React.createElement(
       'button',
       {
         type: 'button',
+        role: 'tab',
         'data-value': value,
+        className,
         onClick,
       },
       children
@@ -606,6 +613,18 @@ describe('ProviderRuntimeSettingsDialog', () => {
 
     expect(host.querySelector('[data-testid="provider-logo-anthropic"]')).not.toBeNull();
     expect(host.querySelector('[data-testid="provider-logo-codex"]')).not.toBeNull();
+    const providerTabs = [...host.querySelectorAll<HTMLElement>('[role="tab"]')].map((tab) =>
+      tab.textContent?.trim()
+    );
+    expect(providerTabs).toContain('Claude');
+    expect(providerTabs).toContain('Codex');
+    expect(host.querySelector<HTMLElement>('[role="tablist"]')?.className).toContain(
+      'bg-transparent'
+    );
+    for (const providerTab of host.querySelectorAll<HTMLElement>('[role="tab"]')) {
+      expect(providerTab.className).toContain('border-[var(--color-border-subtle)]');
+      expect(providerTab.className).toContain('bg-white/[0.025]');
+    }
   });
 
   it('renders anthropic connection cards and can switch to API key mode', async () => {
@@ -2186,6 +2205,40 @@ describe('ProviderRuntimeSettingsDialog', () => {
     expect(host.textContent).not.toContain('managed teammate agent');
     expect(host.textContent).not.toContain('behavior abc123');
     expect(host.textContent).not.toContain('Desktop currently exposes status only.');
+  });
+
+  it('summarizes OpenCode readiness without dumping duplicate provider ids', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const provider = {
+      ...createOpenCodeProvider(),
+      detailMessage:
+        'version 1.17.18 - connected xai, zai-coding-plan, z.ai-coding-plan, minimax-coding-plan - managed profile',
+    };
+
+    await act(async () => {
+      root.render(
+        React.createElement(ProviderRuntimeSettingsDialog, {
+          open: true,
+          onOpenChange: vi.fn(),
+          providers: [provider],
+          initialProviderId: 'opencode',
+          onSelectBackend: vi.fn(),
+        })
+      );
+    });
+
+    expect(host.textContent).toContain('OpenCode 1.17.18');
+    expect(host.textContent).not.toContain('Using opencode managed');
+    expect(host.textContent).not.toContain('is ready');
+    expect(host.textContent).not.toContain('z.ai-coding-plan');
+    expect(host.querySelector('[data-testid="provider-runtime-summary"]')?.className).toContain(
+      'px-1'
+    );
+    expect(host.querySelector('[data-testid="provider-runtime-summary"]')?.className).not.toContain(
+      'rounded-lg'
+    );
   });
 
   it('shows OpenCode inventory fallback as models available instead of disconnected', async () => {

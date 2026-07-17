@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useAppTranslation } from '@features/localization/renderer';
+import { CopyButton } from '@renderer/components/common/CopyButton';
 import { Badge } from '@renderer/components/ui/badge';
 import { Button } from '@renderer/components/ui/button';
 import { Checkbox } from '@renderer/components/ui/checkbox';
@@ -27,11 +28,15 @@ import {
   isOpenCodeTeamModelRecommended,
 } from '@renderer/utils/openCodeModelRecommendations';
 import { isOpenCodeWindowsNodeModulesSymlinkPermissionDiagnostic } from '@shared/utils/openCodeWindowsAccessDenied';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   AlertTriangle,
   Check,
   CheckCircle2,
   ClipboardList,
+  ExternalLink,
+  Eye,
+  EyeOff,
   KeyRound,
   Loader2,
   RefreshCcw,
@@ -42,9 +47,9 @@ import {
 
 import {
   formatProviderState,
-  formatRuntimeState,
   getProviderAction,
   getProviderModelsLabel,
+  getRuntimeProviderSetupPresentation,
 } from '../../core/domain';
 
 import { ProviderBrandIcon } from './providerBrandIcons';
@@ -55,12 +60,13 @@ import type {
 } from '../hooks/useRuntimeProviderManagement';
 import type {
   RuntimeProviderConnectionDto,
-  RuntimeProviderDefaultModelSourceDto,
   RuntimeProviderDefaultScopeDto,
   RuntimeProviderDirectoryEntryDto,
   RuntimeProviderManagementErrorDiagnosticsDto,
   RuntimeProviderModelDto,
   RuntimeProviderModelTestResultDto,
+  RuntimeProviderSetupAuthOptionDto,
+  RuntimeProviderSetupFormDto,
   RuntimeProviderSetupPromptDto,
 } from '@features/runtime-provider-management/contracts';
 import type { ProjectPathProject } from '@renderer/components/team/dialogs/projectPathProjects';
@@ -82,6 +88,7 @@ interface ProviderActionsProps {
   readonly busy: boolean;
   readonly disabled: boolean;
   readonly onStartConnect: () => void;
+  readonly onStartReconnect: () => void;
   readonly onForget: () => void;
 }
 
@@ -106,21 +113,45 @@ type OpenCodeSettingsSection = 'models' | 'providers';
 type SettingsT = ReturnType<typeof useAppTranslation>['t'];
 
 const NO_PROJECT_CONTEXT_VALUE = '__runtime-provider-no-project-context__';
+const PROVIDER_MODEL_VIRTUALIZATION_THRESHOLD = 40;
+const PROVIDER_MODEL_ROW_ESTIMATE_PX = 112;
 
 function getDirectoryAction(
   provider: RuntimeProviderDirectoryEntryDto,
   actionId: RuntimeProviderConnectionDto['actions'][number]['id']
-) {
+): RuntimeProviderConnectionDto['actions'][number] | null {
   return provider.actions.find((action) => action.id === actionId) ?? null;
 }
 
+function getManagedActionLabel(
+  t: SettingsT,
+  action: RuntimeProviderConnectionDto['actions'][number],
+  connectedAuthHint: string | null | undefined
+): string {
+  if (action.id === 'forget') {
+    return t('runtimeProvider.actions.removeManagedCredential');
+  }
+  if (action.id !== 'reconnect') {
+    return action.label;
+  }
+  if (action.requiresSecret) {
+    return t('runtimeProvider.actions.replaceCredential');
+  }
+  if (connectedAuthHint === 'oauth' || action.label === 'Sign in again') {
+    return t('runtimeProvider.actions.signInAgain');
+  }
+  return t('runtimeProvider.actions.reconnect');
+}
+
 function formatDirectorySetupKind(provider: RuntimeProviderDirectoryEntryDto): string {
+  if (provider.state === 'connected' || provider.setupKind === 'connected') {
+    return 'Connected';
+  }
   if (provider.metadata.configuredAuthless) {
     return 'Configured local';
   }
   switch (provider.setupKind) {
-    case 'connected':
-      return 'Connected';
+    case 'connect-oauth':
     case 'connect-api-key':
       return 'Connect';
     case 'configure-manually':
@@ -190,23 +221,6 @@ function getContextControlHint(
     : t('runtimeProvider.defaults.projectHint', { project: projectName });
 }
 
-function getDefaultModelSourceLabel(
-  source: RuntimeProviderDefaultModelSourceDto | null | undefined
-): string | null {
-  switch (source) {
-    case 'project':
-      return 'project override';
-    case 'all_projects':
-      return 'all projects';
-    case 'opencode_config':
-      return 'OpenCode config';
-    case 'fallback':
-      return 'fallback';
-    default:
-      return null;
-  }
-}
-
 function isDefaultForScope(
   model: RuntimeProviderModelDto,
   state: RuntimeProviderManagementState,
@@ -270,12 +284,14 @@ function directoryEntryMatchesQuery(
 }
 
 function directorySetupKindClassName(provider: RuntimeProviderDirectoryEntryDto): string {
+  if (provider.state === 'connected' || provider.setupKind === 'connected') {
+    return 'border-emerald-300/70 bg-emerald-600 text-emerald-50';
+  }
   if (provider.metadata.configuredAuthless) {
     return 'border-cyan-400/35 bg-cyan-400/10 text-cyan-100';
   }
   switch (provider.setupKind) {
-    case 'connected':
-      return 'border-emerald-300/70 bg-emerald-600 text-emerald-50';
+    case 'connect-oauth':
     case 'connect-api-key':
     case 'available-readonly':
       return 'border-sky-400/30 bg-sky-400/10 text-sky-200';
@@ -355,12 +371,37 @@ function setupFormCanSubmit(state: RuntimeProviderManagementState, providerId: s
   if (!form?.supported) {
     return false;
   }
-  if (form.secret?.required && !state.apiKeyValue.trim()) {
+  const authOption = resolveSelectedSetupAuthOption(form, state.selectedAuthOptionId);
+  if (authOption && !authOption.supported) {
     return false;
   }
-  return form.prompts
+  const secret = authOption?.secret ?? form.secret;
+  const prompts = authOption?.prompts ?? form.prompts;
+  if (secret?.required && !state.apiKeyValue.trim()) {
+    return false;
+  }
+  return prompts
     .filter((prompt) => setupPromptVisible(prompt, state.setupMetadata))
     .every((prompt) => !prompt.required || Boolean(state.setupMetadata[prompt.key]?.trim()));
+}
+
+function resolveSelectedSetupAuthOption(
+  form: RuntimeProviderSetupFormDto,
+  authOptionId: string | null
+): RuntimeProviderSetupAuthOptionDto | null {
+  if (!form.authOptions?.length) {
+    return null;
+  }
+  return (
+    form.authOptions.find((option) => option.id === authOptionId) ?? form.authOptions[0] ?? null
+  );
+}
+
+function extractOAuthDeviceCode(instructions: string | null | undefined): string | null {
+  if (!instructions) {
+    return null;
+  }
+  return /\b[A-Z0-9]{4}-[A-Z0-9]{4}\b/.exec(instructions)?.[0] ?? null;
 }
 
 function eventStartedInInteractiveChild(
@@ -370,38 +411,131 @@ function eventStartedInInteractiveChild(
   if (!(target instanceof HTMLElement) || target === currentTarget) {
     return false;
   }
-  return Boolean(target.closest('button, input, select, textarea, a, [role="button"], [tabindex]'));
+  const interactiveAncestor = target.closest(
+    'form, button, input, select, textarea, a, [role="button"], [tabindex]'
+  );
+  return interactiveAncestor !== null && interactiveAncestor !== currentTarget;
 }
 
-function ProviderSetupFormPanel({
+export function ProviderSetupFormPanel({
   provider,
   state,
   busy,
   disabled,
+  preparing = false,
   actions,
 }: {
-  readonly provider: RuntimeProviderConnectionDto;
+  readonly provider: Pick<RuntimeProviderConnectionDto, 'providerId' | 'displayName'>;
   readonly state: RuntimeProviderManagementState;
   readonly busy: boolean;
   readonly disabled: boolean;
+  readonly preparing?: boolean;
   readonly actions: RuntimeProviderManagementActions;
 }): JSX.Element {
   const { t } = useAppTranslation('settings');
   const form = state.setupForm?.providerId === provider.providerId ? state.setupForm : null;
-  const loading = state.setupFormLoading && state.activeFormProviderId === provider.providerId;
+  const loading =
+    preparing || (state.setupFormLoading && state.activeFormProviderId === provider.providerId);
   const error = state.setupFormError;
   const errorDiagnostics = state.setupFormErrorDiagnostics;
   const submitError =
     state.activeFormProviderId === provider.providerId ? state.setupSubmitError : null;
   const submitErrorDiagnostics =
     state.activeFormProviderId === provider.providerId ? state.setupSubmitErrorDiagnostics : null;
-  const canSubmit = setupFormCanSubmit(state, provider.providerId);
+  const authOption = form ? resolveSelectedSetupAuthOption(form, state.selectedAuthOptionId) : null;
+  const secret = authOption?.secret ?? form?.secret ?? null;
+  const prompts = authOption?.prompts ?? form?.prompts ?? [];
+  const selectedMethod = authOption?.method ?? form?.method ?? null;
+  const presentation = form
+    ? getRuntimeProviderSetupPresentation({
+        form,
+        intent: state.connectionIntent,
+        selectedAuthOptionId: state.selectedAuthOptionId,
+      })
+    : null;
+  const oauthInProgress = selectedMethod === 'oauth' && busy;
+  const oauthProgress = oauthInProgress ? state.oauthProgress : null;
+  const oauthDeviceCode = extractOAuthDeviceCode(oauthProgress?.instructions);
+  const oauthDeviceCodeDestination =
+    oauthProgress?.providerId === 'xai'
+      ? 'xAI'
+      : (oauthProgress?.displayName ?? provider.displayName);
+  const isXiaomiTokenPlan = provider.providerId.startsWith('xiaomi-token-plan-');
+  const expectedSecretPrefix = isXiaomiTokenPlan
+    ? 'tp-'
+    : provider.providerId === 'minimax-coding-plan'
+      ? 'sk-cp-'
+      : null;
+  const secretValue = state.apiKeyValue.trim();
+  const secretPrefixInvalid = Boolean(
+    expectedSecretPrefix && secretValue && !secretValue.startsWith(expectedSecretPrefix)
+  );
+  const canSubmit = setupFormCanSubmit(state, provider.providerId) && !secretPrefixInvalid;
+  const [secretVisible, setSecretVisible] = useState(false);
+  const selectedAuthLabel = authOption?.label.toLowerCase() ?? '';
+  const reconnectKind = presentation?.kind ?? 'default';
+  const setupTitle =
+    reconnectKind === 'replace-api-credential'
+      ? t('runtimeProvider.reconnect.apiTitle', {
+          provider: form?.displayName ?? provider.displayName,
+        })
+      : reconnectKind === 'reauthorize-oauth'
+        ? t('runtimeProvider.reconnect.oauthTitle', {
+            provider: form?.displayName ?? provider.displayName,
+          })
+        : form?.title;
+  const submitLabel =
+    reconnectKind === 'replace-api-credential'
+      ? t('runtimeProvider.reconnect.replaceAndVerify')
+      : reconnectKind === 'reauthorize-oauth'
+        ? presentation?.prefersBrowserCode
+          ? t('runtimeProvider.reconnect.getBrowserCode')
+          : t('runtimeProvider.reconnect.continueInBrowser')
+        : selectedMethod === 'api'
+          ? 'Connect'
+          : selectedMethod === 'oauth'
+            ? selectedAuthLabel.includes('browser code')
+              ? 'Get browser code'
+              : 'Continue in browser'
+            : (form?.submitLabel ?? 'Connect');
+  const formDescription =
+    reconnectKind === 'replace-api-credential'
+      ? t('runtimeProvider.reconnect.apiDescription')
+      : reconnectKind === 'reauthorize-oauth'
+        ? t('runtimeProvider.reconnect.oauthDescription')
+        : provider.providerId === 'xai' && selectedMethod === 'api'
+          ? 'Paste an xAI API key. This uses xAI API billing, not your SuperGrok subscription quota.'
+          : provider.providerId === 'xai' &&
+              selectedMethod === 'oauth' &&
+              !selectedAuthLabel.includes('browser code')
+            ? 'Continue in your browser to sign in with your SuperGrok subscription. OpenCode handles authorization and token refresh.'
+            : form?.description;
+
+  useEffect(() => {
+    setSecretVisible(false);
+  }, [authOption?.id, provider.providerId]);
+
+  const submitForm = (): void => {
+    if (oauthProgress?.phase === 'waiting-for-code') {
+      if (state.oauthCodeValue.trim()) {
+        void actions.submitOAuthCode();
+      }
+      return;
+    }
+    if (disabled || busy || loading || oauthInProgress || !canSubmit) {
+      return;
+    }
+    void actions.submitConnect(provider.providerId);
+  };
 
   return (
-    <div
+    <form
       className="mt-3 rounded-md border p-3"
       style={{ borderColor: 'var(--color-border-subtle)' }}
-      onClick={(event) => event.stopPropagation()}
+      onSubmit={(event) => {
+        event.preventDefault();
+        submitForm();
+      }}
     >
       {loading ? (
         <div className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)]">
@@ -411,43 +545,137 @@ function ProviderSetupFormPanel({
       ) : null}
 
       {!loading && error ? (
-        <RuntimeProviderErrorAlert
-          message={error}
-          diagnostics={errorDiagnostics}
-          testId="runtime-provider-setup-form-error"
-        />
+        <div className="space-y-2">
+          <RuntimeProviderErrorAlert
+            message={error}
+            diagnostics={errorDiagnostics}
+            testId="runtime-provider-setup-form-error"
+          />
+          <div className="flex justify-end">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() =>
+                state.connectionIntent === 'reconnect'
+                  ? actions.startReconnect(provider.providerId)
+                  : actions.startConnect(provider.providerId)
+              }
+            >
+              <RefreshCcw className="mr-1.5 size-3.5" />
+              Retry setup
+            </Button>
+          </div>
+        </div>
       ) : null}
 
       {!loading && form ? (
         <div className="space-y-3">
           <div>
-            <div className="text-xs font-medium text-[var(--color-text)]">{form.title}</div>
-            {form.description ? (
+            <div className="text-xs font-medium text-[var(--color-text)]">
+              {setupTitle ?? form.title}
+            </div>
+            {formDescription ? (
               <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
-                {form.description}
+                {formDescription}
               </div>
+            ) : null}
+            {isXiaomiTokenPlan ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-2 h-7 px-2.5 text-[11px]"
+                onClick={() => void actions.openProviderCredentialPage(provider.providerId)}
+              >
+                Open Dedicated API Key page
+                <ExternalLink className="ml-1.5 size-3" />
+              </Button>
             ) : null}
           </div>
 
-          {form.secret ? (
+          {form.authOptions && form.authOptions.length > 1 ? (
             <div className="space-y-1.5">
-              <Label htmlFor={`runtime-provider-key-${provider.providerId}`} className="text-xs">
-                {form.secret.label}
-              </Label>
-              <Input
-                id={`runtime-provider-key-${provider.providerId}`}
-                type="password"
-                value={state.apiKeyValue}
-                disabled={disabled || busy || !form.supported}
-                onChange={(event) => actions.setApiKeyValue(event.target.value)}
-                placeholder={form.secret.placeholder ?? 'Paste API key'}
-                className="h-9 text-sm"
-                autoFocus
-              />
+              <Label className="text-xs">Sign-in method</Label>
+              <Select
+                value={authOption?.id ?? ''}
+                disabled={disabled || busy}
+                onValueChange={actions.setAuthOption}
+              >
+                <SelectTrigger className="h-9 text-sm" data-testid="runtime-provider-auth-method">
+                  <SelectValue placeholder="Choose a sign-in method" />
+                </SelectTrigger>
+                <SelectContent>
+                  {form.authOptions.map((option) => (
+                    <SelectItem key={option.id} value={option.id} disabled={!option.supported}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {authOption?.disabledReason ? (
+                <div className="text-[11px] text-[var(--color-text-muted)]">
+                  {authOption.disabledReason}
+                </div>
+              ) : null}
             </div>
           ) : null}
 
-          {form.prompts
+          {secret ? (
+            <div className="space-y-1.5">
+              <Label htmlFor={`runtime-provider-key-${provider.providerId}`} className="text-xs">
+                {secret.label}
+                {secret.required ? ' *' : ''}
+              </Label>
+              <div className="relative">
+                <Input
+                  id={`runtime-provider-key-${provider.providerId}`}
+                  type={secretVisible ? 'text' : 'password'}
+                  value={state.apiKeyValue}
+                  disabled={disabled || busy || !form.supported}
+                  onChange={(event) => actions.setApiKeyValue(event.target.value)}
+                  placeholder={secret.placeholder ?? 'Paste API key'}
+                  className="h-9 pr-10 text-sm"
+                  autoComplete="new-password"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  aria-invalid={secretPrefixInvalid || undefined}
+                  aria-describedby={
+                    expectedSecretPrefix && secretValue
+                      ? `runtime-provider-key-help-${provider.providerId}`
+                      : undefined
+                  }
+                  autoFocus
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-0 top-0 size-9 text-[var(--color-text-muted)]"
+                  aria-label={secretVisible ? 'Hide key' : 'Show key'}
+                  disabled={disabled || busy}
+                  onClick={() => setSecretVisible((visible) => !visible)}
+                >
+                  {secretVisible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                </Button>
+              </div>
+              {expectedSecretPrefix && secretValue ? (
+                <div
+                  id={`runtime-provider-key-help-${provider.providerId}`}
+                  className={cn(
+                    'text-[11px]',
+                    secretPrefixInvalid ? 'text-red-300' : 'text-emerald-300'
+                  )}
+                >
+                  {secretPrefixInvalid
+                    ? `This plan requires a key starting with ${expectedSecretPrefix}`
+                    : 'Token Plan key format detected'}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          {prompts
             .filter((prompt) => setupPromptVisible(prompt, state.setupMetadata))
             .map((prompt) => (
               <div key={prompt.key} className="space-y-1.5">
@@ -456,6 +684,7 @@ function ProviderSetupFormPanel({
                   className="text-xs"
                 >
                   {prompt.label}
+                  {prompt.required ? ' *' : ''}
                 </Label>
                 {prompt.type === 'select' ? (
                   <Select
@@ -472,7 +701,14 @@ function ProviderSetupFormPanel({
                     <SelectContent>
                       {prompt.options.map((option) => (
                         <SelectItem key={option.value} value={option.value}>
-                          {option.label}
+                          <span className="flex flex-col">
+                            <span>{option.label}</span>
+                            {option.hint ? (
+                              <span className="text-[10px] text-[var(--color-text-muted)]">
+                                {option.hint}
+                              </span>
+                            ) : null}
+                          </span>
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -488,6 +724,9 @@ function ProviderSetupFormPanel({
                     }
                     placeholder={prompt.placeholder ?? undefined}
                     className="h-9 text-sm"
+                    autoComplete={prompt.secret ? 'new-password' : 'off'}
+                    autoCapitalize="none"
+                    spellCheck={false}
                   />
                 )}
               </div>
@@ -496,6 +735,82 @@ function ProviderSetupFormPanel({
           {form.disabledReason && !form.supported ? (
             <div className="rounded-md border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-[var(--color-text-muted)]">
               {form.disabledReason}
+            </div>
+          ) : null}
+
+          {oauthInProgress ? (
+            <div
+              className="rounded-md border border-white/10 bg-white/[0.03] px-3 py-2.5 text-xs"
+              data-testid="runtime-provider-oauth-progress"
+              role="status"
+              aria-live="polite"
+              aria-busy="true"
+            >
+              <div className="flex items-center gap-2 text-[var(--color-text)]">
+                <Loader2 className="size-3.5 animate-spin" />
+                {oauthProgress?.message ?? 'Preparing secure browser authorization...'}
+              </div>
+              {oauthProgress?.instructions && !oauthDeviceCode ? (
+                <div className="mt-1.5 text-[11px] text-[var(--color-text-muted)]">
+                  {oauthProgress.instructions}
+                </div>
+              ) : null}
+              {oauthDeviceCode ? (
+                <div
+                  className="mt-3 flex w-full flex-col items-stretch gap-3 border-l-2 border-sky-400/60 bg-gradient-to-r from-sky-400/[0.08] to-transparent px-3 py-3 sm:flex-row sm:items-end sm:justify-between sm:gap-4 sm:px-4"
+                  data-testid="runtime-provider-oauth-device-code"
+                >
+                  <div className="min-w-0">
+                    <div className="text-[11px] font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
+                      Enter this code in {oauthDeviceCodeDestination}
+                    </div>
+                    <div className="mt-1 break-all font-mono text-xl font-bold tracking-[0.12em] text-sky-100 min-[380px]:text-2xl min-[380px]:tracking-[0.18em] sm:text-3xl">
+                      {oauthDeviceCode}
+                    </div>
+                    <div className="mt-1.5 flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]">
+                      <span className="size-1.5 animate-pulse rounded-full bg-sky-300" />
+                      Waiting for confirmation - this updates automatically
+                    </div>
+                  </div>
+                  <div className="self-end rounded-md border border-white/10 bg-white/[0.04] p-1 sm:mb-1 sm:self-auto">
+                    <CopyButton text={oauthDeviceCode} inline />
+                  </div>
+                </div>
+              ) : null}
+              {oauthProgress?.phase === 'waiting-for-code' ? (
+                <div className="mt-3 flex gap-2">
+                  <Input
+                    aria-label="Authorization code"
+                    value={state.oauthCodeValue}
+                    onChange={(event) => actions.setOAuthCodeValue(event.target.value)}
+                    placeholder="Paste authorization code"
+                    className="h-9 text-sm"
+                    autoComplete="one-time-code"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    autoFocus
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={!state.oauthCodeValue.trim()}
+                    onClick={() => void actions.submitOAuthCode()}
+                  >
+                    Continue
+                  </Button>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+          {busy && selectedMethod !== 'oauth' ? (
+            <div
+              className="rounded-md border border-sky-400/20 bg-sky-400/[0.05] px-3 py-2 text-[11px] text-[var(--color-text-secondary)]"
+              role="status"
+              aria-live="polite"
+              aria-busy="true"
+            >
+              Securely saving your credential and verifying one model request. Keep this window open
+              until verification finishes.
             </div>
           ) : null}
         </div>
@@ -516,111 +831,19 @@ function ProviderSetupFormPanel({
           type="button"
           size="sm"
           variant="ghost"
-          disabled={busy}
+          disabled={busy && !oauthInProgress}
           onClick={actions.cancelConnect}
         >
           {t('runtimeProvider.actions.cancel')}
         </Button>
-        <Button
-          type="button"
-          size="sm"
-          disabled={disabled || busy || loading || !canSubmit}
-          onClick={() => void actions.submitConnect(provider.providerId)}
-        >
-          {busy ? <Loader2 className="mr-1 size-3.5 animate-spin" /> : null}
-          {form?.submitLabel ?? 'Connect'}
-        </Button>
+        {!oauthInProgress ? (
+          <Button type="submit" size="sm" disabled={disabled || busy || loading || !canSubmit}>
+            {busy ? <Loader2 className="mr-1 size-3.5 animate-spin" /> : null}
+            {submitLabel}
+          </Button>
+        ) : null}
       </div>
-    </div>
-  );
-}
-
-function RuntimeSummary({
-  state,
-  onRefresh,
-  disabled,
-}: Pick<RuntimeProviderManagementPanelViewProps, 'state' | 'disabled'> & {
-  onRefresh: () => void;
-}): JSX.Element {
-  const { t } = useAppTranslation('settings');
-  const runtime = state.view?.runtime;
-  const loadingWithoutRuntime = state.loading && !runtime;
-  const defaultSourceLabel = getDefaultModelSourceLabel(state.view?.defaultModelSource);
-  return (
-    <div
-      className="rounded-lg border p-3"
-      aria-busy={state.loading}
-      style={{
-        borderColor: 'var(--color-border-subtle)',
-        backgroundColor: 'rgba(255, 255, 255, 0.025)',
-      }}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-sm font-medium" style={{ color: 'var(--color-text)' }}>
-            {t('runtimeProvider.summary.title')}
-          </div>
-          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
-            <Badge
-              variant="outline"
-              className={`border-white/10 ${loadingWithoutRuntime ? 'bg-white/[0.04]' : ''}`}
-            >
-              {runtime
-                ? formatRuntimeState(runtime)
-                : state.loading
-                  ? 'Checking runtime'
-                  : 'Unavailable'}
-            </Badge>
-            {runtime?.version ? (
-              <span style={{ color: 'var(--color-text-secondary)' }}>v{runtime.version}</span>
-            ) : null}
-            {state.view?.defaultModel ? (
-              <span className="break-all" style={{ color: 'var(--color-text-secondary)' }}>
-                {t('runtimeProvider.summary.defaultModel', { model: state.view.defaultModel })}
-              </span>
-            ) : null}
-            {defaultSourceLabel ? (
-              <span style={{ color: 'var(--color-text-muted)' }}>
-                {t('runtimeProvider.summary.source', { source: defaultSourceLabel })}
-              </span>
-            ) : null}
-          </div>
-          {state.loading ? (
-            <div
-              className="mt-2 flex items-center gap-2 text-xs"
-              style={{ color: 'var(--color-text-secondary)' }}
-            >
-              <Loader2 className="size-3.5 animate-spin" />
-              <span>{t('runtimeProvider.summary.loading')}</span>
-            </div>
-          ) : null}
-          {state.view?.diagnostics.length ? (
-            <div
-              className="mt-2 space-y-1 text-[11px]"
-              style={{ color: 'var(--color-text-muted)' }}
-            >
-              {state.view.diagnostics.slice(0, 3).map((diagnostic, index) => (
-                <div key={`diagnostic-${index}`}>{diagnostic}</div>
-              ))}
-            </div>
-          ) : null}
-        </div>
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          disabled={disabled || state.loading}
-          onClick={onRefresh}
-        >
-          {state.loading ? (
-            <Loader2 className="mr-1 size-3.5 animate-spin" />
-          ) : (
-            <RefreshCcw className="mr-1 size-3.5" />
-          )}
-          {state.loading ? 'Checking...' : 'Refresh'}
-        </Button>
-      </div>
-    </div>
+    </form>
   );
 }
 
@@ -741,7 +964,7 @@ function formatRuntimeProviderDiagnosticsCopyText(
   }
   const hints = diagnostics.hints ?? [];
 
-  const fields: Array<[string, string | number | null]> = [
+  const fields: [string, string | number | null][] = [
     ['Error code', diagnostics.errorCode ?? null],
     ['Summary', diagnostics.summary],
     ['Likely cause', diagnostics.likelyCause],
@@ -773,8 +996,8 @@ function formatRuntimeProviderDiagnosticsCopyText(
 
 function getRuntimeProviderDiagnosticRows(
   diagnostics: RuntimeProviderManagementErrorDiagnosticsDto
-): Array<[string, string]> {
-  const rows: Array<[string, string | number | null]> = [
+): [string, string][] {
+  const rows: [string, string | number | null][] = [
     ['Code', diagnostics.errorCode ?? null],
     ['Binary', diagnostics.binaryPath],
     ['Command', diagnostics.command],
@@ -1042,9 +1265,12 @@ function ProviderActions({
   busy,
   disabled,
   onStartConnect,
+  onStartReconnect,
   onForget,
 }: ProviderActionsProps): JSX.Element {
+  const { t } = useAppTranslation('settings');
   const connect = getProviderAction(provider, 'connect');
+  const reconnect = getProviderAction(provider, 'reconnect');
   const forget = getProviderAction(provider, 'forget');
   const configure = getProviderAction(provider, 'configure');
 
@@ -1070,6 +1296,26 @@ function ProviderActions({
           {connect.label}
         </Button>
       ) : null}
+      {reconnect ? (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={disabled || busy || !reconnect.enabled}
+          title={reconnect.disabledReason ?? undefined}
+          onClick={(event) => {
+            event.stopPropagation();
+            onStartReconnect();
+          }}
+        >
+          {busy ? (
+            <Loader2 className="mr-1 size-3.5 animate-spin" />
+          ) : (
+            <RefreshCcw className="mr-1 size-3.5" />
+          )}
+          {getManagedActionLabel(t, reconnect, provider.connectedAuthHint)}
+        </Button>
+      ) : null}
       {forget ? (
         <Button
           type="button"
@@ -1087,7 +1333,7 @@ function ProviderActions({
           ) : (
             <Trash2 className="mr-1 size-3.5" />
           )}
-          {forget.label}
+          {getManagedActionLabel(t, forget, provider.connectedAuthHint)}
         </Button>
       ) : null}
       {configure ? (
@@ -1123,6 +1369,7 @@ function ProviderRow({
     provider.modelCount > 0 && (provider.state === 'connected' || test?.enabled === true);
   const clickable = !disabled && (canOpenConnect || canSelectModels);
   const visuallyActive = active && (canSelectModels || formOpen);
+  const rowInteractive = clickable && !formOpen && !(active && canSelectModels);
   const handleActivate = (): void => {
     if (!clickable) {
       return;
@@ -1146,22 +1393,24 @@ function ProviderRow({
 
   return (
     <div
-      role={clickable ? 'button' : undefined}
-      tabIndex={clickable ? 0 : -1}
+      role={rowInteractive ? 'button' : undefined}
+      tabIndex={rowInteractive ? 0 : -1}
       data-testid={`runtime-provider-row-${provider.providerId}`}
-      className={`rounded-lg border p-3 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/40 ${
-        clickable
-          ? 'cursor-pointer hover:border-sky-300/60 hover:bg-sky-400/[0.08] hover:shadow-[0_0_0_1px_rgba(125,211,252,0.18)]'
-          : 'cursor-default'
-      } ${
-        visuallyActive
-          ? 'border-sky-300/70 bg-sky-400/[0.075] shadow-[0_0_0_1px_rgba(125,211,252,0.22)]'
-          : 'border-[var(--color-border-subtle)] bg-white/[0.02]'
-      }`}
-      onClick={handleActivate}
+      className="border-b bg-transparent transition-colors last:border-b-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-400/40"
+      style={{ borderColor: 'var(--color-border-subtle)' }}
+      onClick={(event) => {
+        if (rowInteractive && !eventStartedInInteractiveChild(event.currentTarget, event.target)) {
+          handleActivate();
+        }
+      }}
       onKeyDown={handleKeyDown}
     >
-      <div className="grid w-full grid-cols-[1fr_auto] items-start gap-3">
+      <div
+        data-testid={`runtime-provider-row-${provider.providerId}-header`}
+        className={`grid w-full grid-cols-[1fr_auto] items-start gap-3 px-3 py-3.5 transition-colors ${
+          rowInteractive ? 'cursor-pointer hover:bg-sky-400/[0.06]' : 'cursor-default'
+        } ${visuallyActive ? 'bg-sky-400/[0.075]' : 'bg-transparent'}`}
+      >
         <div className="min-w-0 text-left">
           <div className="flex flex-wrap items-center gap-2">
             <ProviderBrandIcon provider={provider} />
@@ -1197,7 +1446,7 @@ function ProviderRow({
               </Badge>
             ))}
           </div>
-          {provider.detail ? (
+          {provider.detail && provider.state !== 'connected' ? (
             <div className="mt-1 text-xs" style={{ color: 'var(--color-text-muted)' }}>
               {provider.detail}
             </div>
@@ -1209,29 +1458,36 @@ function ProviderRow({
             busy={busy}
             disabled={disabled}
             onStartConnect={() => actions.startConnect(provider.providerId)}
+            onStartReconnect={() => actions.startReconnect(provider.providerId)}
             onForget={() => void actions.forgetProvider(provider.providerId)}
           />
         </div>
       </div>
 
-      {formOpen ? (
-        <ProviderSetupFormPanel
-          provider={provider}
-          state={state}
-          busy={busy}
-          disabled={disabled}
-          actions={actions}
-        />
-      ) : null}
-
-      {active && canSelectModels ? (
-        <ProviderModelList
-          state={state}
-          actions={actions}
-          provider={provider}
-          disabled={disabled || busy}
-          hasProjectContext={hasProjectContext}
-        />
+      {formOpen || (active && canSelectModels) ? (
+        <div
+          data-testid={`runtime-provider-row-${provider.providerId}-content`}
+          className="border-l-2 border-sky-300/30 bg-white/[0.012] px-3 pb-3.5"
+        >
+          {formOpen ? (
+            <ProviderSetupFormPanel
+              provider={provider}
+              state={state}
+              busy={busy}
+              disabled={disabled}
+              actions={actions}
+            />
+          ) : null}
+          {active && canSelectModels ? (
+            <ProviderModelList
+              state={state}
+              actions={actions}
+              provider={provider}
+              disabled={disabled || busy}
+              hasProjectContext={hasProjectContext}
+            />
+          ) : null}
+        </div>
       ) : null}
     </div>
   );
@@ -1258,6 +1514,7 @@ function DirectoryProviderRow({
 }): JSX.Element {
   const { t } = useAppTranslation('settings');
   const connect = getDirectoryAction(provider, 'connect');
+  const reconnect = getDirectoryAction(provider, 'reconnect');
   const configure = getDirectoryAction(provider, 'configure');
   const forget = getDirectoryAction(provider, 'forget');
   const test = getDirectoryAction(provider, 'test');
@@ -1269,6 +1526,7 @@ function DirectoryProviderRow({
       test?.enabled === true);
   const clickable = !disabled && (canOpenConnect || canSelectModels);
   const visuallyActive = active && (canSelectModels || formOpen);
+  const rowInteractive = clickable && !formOpen && !(active && canSelectModels);
   const handleActivate = (): void => {
     if (!clickable) {
       return;
@@ -1282,19 +1540,16 @@ function DirectoryProviderRow({
 
   return (
     <div
-      role={clickable ? 'button' : undefined}
-      tabIndex={clickable ? 0 : -1}
+      role={rowInteractive ? 'button' : undefined}
+      tabIndex={rowInteractive ? 0 : -1}
       data-testid={`runtime-provider-directory-row-${provider.providerId}`}
-      className={`rounded-lg border p-3 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/40 ${
-        clickable
-          ? 'cursor-pointer hover:border-sky-300/60 hover:bg-sky-400/[0.08]'
-          : 'cursor-default'
-      } ${
-        visuallyActive
-          ? 'border-sky-300/70 bg-sky-400/[0.075] shadow-[0_0_0_1px_rgba(125,211,252,0.22)]'
-          : 'border-[var(--color-border-subtle)] bg-white/[0.02]'
-      }`}
-      onClick={handleActivate}
+      className="border-b bg-transparent transition-colors last:border-b-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-400/40"
+      style={{ borderColor: 'var(--color-border-subtle)' }}
+      onClick={(event) => {
+        if (rowInteractive && !eventStartedInInteractiveChild(event.currentTarget, event.target)) {
+          handleActivate();
+        }
+      }}
       onKeyDown={(event) => {
         if (!clickable || (event.key !== 'Enter' && event.key !== ' ')) {
           return;
@@ -1306,7 +1561,12 @@ function DirectoryProviderRow({
         handleActivate();
       }}
     >
-      <div className="grid grid-cols-[1fr_auto] gap-3">
+      <div
+        data-testid={`runtime-provider-directory-row-${provider.providerId}-header`}
+        className={`grid grid-cols-[1fr_auto] gap-3 px-3 py-3.5 transition-colors ${
+          rowInteractive ? 'cursor-pointer hover:bg-sky-400/[0.06]' : 'cursor-default'
+        } ${visuallyActive ? 'bg-sky-400/[0.075]' : 'bg-transparent'}`}
+      >
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <ProviderBrandIcon provider={provider} />
@@ -1336,7 +1596,7 @@ function DirectoryProviderRow({
               </Badge>
             ))}
           </div>
-          {provider.detail ? (
+          {provider.detail && provider.state !== 'connected' ? (
             <div className="mt-1 text-xs text-[var(--color-text-muted)]">{provider.detail}</div>
           ) : null}
         </div>
@@ -1361,6 +1621,26 @@ function DirectoryProviderRow({
               {connect.label}
             </Button>
           ) : null}
+          {reconnect ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={disabled || busy || !reconnect.enabled}
+              title={reconnect.disabledReason ?? undefined}
+              onClick={(event) => {
+                event.stopPropagation();
+                actions.startReconnect(provider.providerId);
+              }}
+            >
+              {busy ? (
+                <Loader2 className="mr-1 size-3.5 animate-spin" />
+              ) : (
+                <RefreshCcw className="mr-1 size-3.5" />
+              )}
+              {getManagedActionLabel(t, reconnect, provider.connectedAuthHint)}
+            </Button>
+          ) : null}
           {forget ? (
             <Button
               type="button"
@@ -1378,7 +1658,7 @@ function DirectoryProviderRow({
               ) : (
                 <Trash2 className="mr-1 size-3.5" />
               )}
-              {forget.label}
+              {getManagedActionLabel(t, forget, provider.connectedAuthHint)}
             </Button>
           ) : null}
           {configure ? (
@@ -1396,24 +1676,30 @@ function DirectoryProviderRow({
         </div>
       </div>
 
-      {formOpen ? (
-        <ProviderSetupFormPanel
-          provider={directoryEntryToProviderConnection(provider)}
-          state={state}
-          busy={busy}
-          disabled={disabled}
-          actions={actions}
-        />
-      ) : null}
-
-      {active && canSelectModels ? (
-        <ProviderModelList
-          state={state}
-          actions={actions}
-          provider={directoryEntryToProviderConnection(provider)}
-          disabled={disabled || busy}
-          hasProjectContext={hasProjectContext}
-        />
+      {formOpen || (active && canSelectModels) ? (
+        <div
+          data-testid={`runtime-provider-directory-row-${provider.providerId}-content`}
+          className="border-l-2 border-sky-300/30 bg-white/[0.012] px-3 pb-3.5"
+        >
+          {formOpen ? (
+            <ProviderSetupFormPanel
+              provider={directoryEntryToProviderConnection(provider)}
+              state={state}
+              busy={busy}
+              disabled={disabled}
+              actions={actions}
+            />
+          ) : null}
+          {active && canSelectModels ? (
+            <ProviderModelList
+              state={state}
+              actions={actions}
+              provider={directoryEntryToProviderConnection(provider)}
+              disabled={disabled || busy}
+              hasProjectContext={hasProjectContext}
+            />
+          ) : null}
+        </div>
       ) : null}
     </div>
   );
@@ -1769,6 +2055,7 @@ function OpenCodeModelScopeControls({
   projectPath,
   projects,
   loading,
+  disabled,
   error,
   onProjectContextChange,
 }: {
@@ -1777,6 +2064,7 @@ function OpenCodeModelScopeControls({
   readonly projectPath: string | null | undefined;
   readonly projects: readonly ProjectPathProject[];
   readonly loading: boolean;
+  readonly disabled: boolean;
   readonly error: string | null;
   readonly onProjectContextChange?: (projectPath: string | null) => void;
 }): JSX.Element {
@@ -1838,6 +2126,7 @@ function OpenCodeModelScopeControls({
                   ? 'bg-[var(--color-surface-raised)] text-[var(--color-text)] shadow-sm'
                   : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]'
               }`}
+              disabled={disabled}
               onClick={() => onDefaultScopeChange(scope)}
             >
               {scope === 'all_projects'
@@ -1856,7 +2145,7 @@ function OpenCodeModelScopeControls({
           <div className="mt-1">
             <Select
               value={selectedValue}
-              disabled={loading || !onProjectContextChange}
+              disabled={disabled || loading || !onProjectContextChange}
               onValueChange={(value) => {
                 onProjectContextChange?.(value === NO_PROJECT_CONTEXT_VALUE ? null : value);
               }}
@@ -2123,6 +2412,10 @@ function ProviderModelList({
 }): JSX.Element {
   const { t } = useAppTranslation('settings');
   const pickerOpen = state.modelPickerProviderId === provider.providerId;
+  const modelListRef = useRef<HTMLDivElement | null>(null);
+  const requestedModelCursorRef = useRef<string | null>(null);
+  const modelPageScrollTopRef = useRef(0);
+  const modelPageUserScrolledRef = useRef(false);
   const [recommendedOnly, setRecommendedOnly] = useState(false);
   const [freeOnly, setFreeOnly] = useState(false);
   const hasRecommendedModels = useMemo(
@@ -2146,10 +2439,16 @@ function ProviderModelList({
     }
   }, [hasFreeModels]);
 
+  const normalizedModelQuery = state.modelQuery.trim().toLowerCase();
   const visibleModels = useMemo(
     () =>
       state.models
         .map((model, index) => ({ model, index }))
+        .filter(
+          ({ model }) =>
+            !normalizedModelQuery ||
+            getOpenCodeModelSearchText(model).includes(normalizedModelQuery)
+        )
         .filter(({ model }) => !recommendedOnly || isOpenCodeTeamModelRecommended(model.modelId))
         .filter(({ model }) => !freeOnly || isFreeRuntimeProviderModel(model))
         .sort((left, right) => {
@@ -2160,7 +2459,7 @@ function ProviderModelList({
           return recommendationOrder || left.index - right.index;
         })
         .map(({ model }) => model),
-    [freeOnly, recommendedOnly, state.models]
+    [freeOnly, normalizedModelQuery, recommendedOnly, state.models]
   );
   const emptyModelListMessage = recommendedOnly
     ? freeOnly
@@ -2169,10 +2468,132 @@ function ProviderModelList({
     : freeOnly
       ? t('runtimeProvider.models.emptyFree')
       : t('runtimeProvider.models.empty');
+  const shouldVirtualize =
+    pickerOpen && visibleModels.length > PROVIDER_MODEL_VIRTUALIZATION_THRESHOLD;
+  const modelVirtualizer = useVirtualizer({
+    count: shouldVirtualize ? visibleModels.length : 0,
+    enabled: shouldVirtualize,
+    getScrollElement: () => modelListRef.current,
+    estimateSize: () => PROVIDER_MODEL_ROW_ESTIMATE_PX,
+    getItemKey: (index) => visibleModels[index]?.modelId ?? index,
+    overscan: 5,
+  });
+
+  useEffect(() => {
+    if (!shouldVirtualize) {
+      return;
+    }
+    // Probe results and wrapped diagnostics can change a row's height after it
+    // mounts. ResizeObserver normally catches that; explicitly remeasuring the
+    // mounted window also keeps the list correct without ResizeObserver.
+    modelListRef.current
+      ?.querySelectorAll<HTMLElement>('[data-runtime-provider-model-virtual-row]')
+      .forEach((row) => modelVirtualizer.measureElement(row));
+  }, [modelVirtualizer, shouldVirtualize, state.modelResults, state.testingModelIds]);
+
+  const requestNextModelPage = useCallback((): void => {
+    const cursor = state.modelsNextCursor;
+    if (
+      !pickerOpen ||
+      !cursor ||
+      state.modelsLoading ||
+      state.modelsLoadingMore ||
+      Boolean(state.modelsError) ||
+      requestedModelCursorRef.current === cursor
+    ) {
+      return;
+    }
+    requestedModelCursorRef.current = cursor;
+    modelPageScrollTopRef.current = modelListRef.current?.scrollTop ?? 0;
+    modelPageUserScrolledRef.current = false;
+    void actions
+      .loadMoreModels()
+      .catch(() => undefined)
+      .finally(() => {
+        if (requestedModelCursorRef.current === cursor) {
+          requestedModelCursorRef.current = null;
+        }
+        const modelList = modelListRef.current;
+        const scrollTopBeforeLoad = modelPageScrollTopRef.current;
+        if (!modelList) {
+          return;
+        }
+        window.requestAnimationFrame(() => {
+          if (
+            modelList === modelListRef.current &&
+            !modelPageUserScrolledRef.current &&
+            modelList.scrollTop === 0 &&
+            scrollTopBeforeLoad > 0
+          ) {
+            modelList.scrollTop = scrollTopBeforeLoad;
+          }
+        });
+      });
+  }, [
+    actions,
+    pickerOpen,
+    state.modelsError,
+    state.modelsLoading,
+    state.modelsLoadingMore,
+    state.modelsNextCursor,
+  ]);
+
+  const loadNextModelPageNearEnd = useCallback(
+    (element: HTMLDivElement): void => {
+      const remainingScrollDistance =
+        element.scrollHeight - element.scrollTop - element.clientHeight;
+      if (remainingScrollDistance <= Math.max(element.clientHeight, 240)) {
+        requestNextModelPage();
+      }
+    },
+    [requestNextModelPage]
+  );
+
+  useEffect(() => {
+    const element = modelListRef.current;
+    if (
+      !element ||
+      !state.modelsNextCursor ||
+      state.modelsLoading ||
+      state.modelsLoadingMore ||
+      state.modelsError
+    ) {
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => loadNextModelPageNearEnd(element));
+    return () => window.cancelAnimationFrame(frame);
+  }, [
+    loadNextModelPageNearEnd,
+    state.modelsError,
+    state.models.length,
+    state.modelsLoading,
+    state.modelsLoadingMore,
+    state.modelsNextCursor,
+    visibleModels.length,
+  ]);
+
+  const renderModel = (model: RuntimeProviderModelDto): JSX.Element => (
+    <ModelRow
+      provider={provider}
+      model={model}
+      selected={state.selectedModelId === model.modelId}
+      disabled={disabled}
+      hasProjectContext={hasProjectContext}
+      testing={state.testingModelIds.includes(model.modelId)}
+      result={state.modelResults[model.modelId]}
+      actions={actions}
+    />
+  );
 
   return (
-    <div className="mt-4 space-y-3 border-t border-white/10 pt-3">
-      <div className="flex flex-wrap items-center gap-2">
+    <div className="space-y-3 border-t border-white/10 pt-3">
+      <div
+        data-testid="runtime-provider-model-toolbar"
+        className="flex flex-wrap items-center gap-2"
+      >
+        <div className="mr-1 shrink-0 text-xs font-semibold text-[var(--color-text)]">
+          {t('runtimeProvider.tabs.models')}
+        </div>
         <div className="relative min-w-[220px] flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[var(--color-text-muted)]" />
           <Input
@@ -2229,6 +2650,11 @@ function ProviderModelList({
             </Label>
           </div>
         ) : null}
+        {state.modelsTotalCount !== null ? (
+          <div className="ml-auto text-xs tabular-nums text-[var(--color-text-muted)]">
+            {state.models.length} / {state.modelsTotalCount}
+          </div>
+        ) : null}
       </div>
 
       {state.modelsError ? (
@@ -2240,29 +2666,58 @@ function ProviderModelList({
       ) : null}
 
       <div
+        ref={modelListRef}
         data-testid="runtime-provider-model-list"
-        className="space-y-2 overflow-y-auto pr-1"
+        className={cn(!shouldVirtualize && 'space-y-2', 'overflow-y-auto pr-1')}
         style={{ maxHeight: 300 }}
+        onScroll={(event) => {
+          if (state.modelsLoadingMore && event.nativeEvent.isTrusted) {
+            modelPageUserScrolledRef.current = true;
+          }
+          loadNextModelPageNearEnd(event.currentTarget);
+        }}
       >
         {!pickerOpen || state.modelsLoading ? <RuntimeProviderModelLoadingSkeleton /> : null}
         {pickerOpen && !state.modelsLoading && visibleModels.length === 0 && !state.modelsError ? (
           <div className="text-sm text-[var(--color-text-muted)]">{emptyModelListMessage}</div>
         ) : null}
-        {pickerOpen
-          ? visibleModels.map((model) => (
-              <ModelRow
-                key={model.modelId}
-                provider={provider}
-                model={model}
-                selected={state.selectedModelId === model.modelId}
-                disabled={disabled}
-                hasProjectContext={hasProjectContext}
-                testing={state.testingModelIds.includes(model.modelId)}
-                result={state.modelResults[model.modelId]}
-                actions={actions}
-              />
-            ))
-          : null}
+        {pickerOpen && shouldVirtualize ? (
+          <div
+            data-testid="runtime-provider-model-virtual-list"
+            className="relative w-full"
+            style={{ height: modelVirtualizer.getTotalSize() }}
+          >
+            {modelVirtualizer.getVirtualItems().map((virtualRow) => {
+              const model = visibleModels[virtualRow.index];
+              if (!model) {
+                return null;
+              }
+              return (
+                <div
+                  key={virtualRow.key}
+                  ref={modelVirtualizer.measureElement}
+                  data-index={virtualRow.index}
+                  data-runtime-provider-model-virtual-row
+                  className="absolute left-0 top-0 w-full pb-2"
+                  style={{ transform: `translateY(${virtualRow.start}px)` }}
+                >
+                  {renderModel(model)}
+                </div>
+              );
+            })}
+          </div>
+        ) : pickerOpen ? (
+          visibleModels.map((model) => <div key={model.modelId}>{renderModel(model)}</div>)
+        ) : null}
+        {pickerOpen && state.modelsLoadingMore ? (
+          <div
+            data-testid="runtime-provider-model-loading-more"
+            className="flex items-center justify-center gap-2 py-3 text-xs text-[var(--color-text-muted)]"
+          >
+            <Loader2 className="size-3.5 animate-spin" />
+            {state.models.length} / {state.modelsTotalCount ?? state.models.length}
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -2300,11 +2755,17 @@ export function RuntimeProviderManagementPanelView({
   const useDirectoryRows =
     state.directorySupported &&
     (state.directoryLoaded || state.directoryLoading || state.directoryEntries.length > 0);
+  const directoryStarting =
+    state.directorySupported &&
+    !state.directoryLoaded &&
+    state.directoryEntries.length === 0 &&
+    !state.directoryError;
   const visibleDirectoryRows = state.directoryEntries.filter((provider) =>
     directoryEntryMatchesQuery(provider, providerQuery)
   );
-  const providerCountLabel =
-    state.directoryTotalCount !== null
+  const providerCountLabel = state.directorySummary
+    ? t('runtimeProvider.providers.countFallback')
+    : state.directoryTotalCount !== null
       ? formatOpenCodeProviderCount(state.directoryTotalCount)
       : state.directorySupported
         ? t('runtimeProvider.providers.catalog')
@@ -2313,11 +2774,16 @@ export function RuntimeProviderManagementPanelView({
   const modelsLoading = state.loading && launchableModelCount === 0;
   const activeSection = selectedSection ?? 'providers';
   const hasProjectContext = Boolean(projectPath?.trim());
+  const activeAuthOption = state.setupForm?.authOptions?.find(
+    (option) => option.id === state.selectedAuthOptionId
+  );
+  const activeSetupMethod = activeAuthOption?.method ?? state.setupForm?.method ?? null;
+  const blockingCredentialWrite = Boolean(
+    state.savingProviderId && activeSetupMethod && activeSetupMethod !== 'oauth'
+  );
 
   return (
     <div className="space-y-3">
-      <RuntimeSummary state={state} disabled={disabled} onRefresh={() => void actions.refresh()} />
-
       {state.error ? (
         <RuntimeProviderErrorAlert
           message={state.error}
@@ -2342,12 +2808,20 @@ export function RuntimeProviderManagementPanelView({
 
       <Tabs
         value={activeSection}
-        onValueChange={(value) => setSelectedSection(value as OpenCodeSettingsSection)}
+        onValueChange={(value) => {
+          if (blockingCredentialWrite) return;
+          const section = value as OpenCodeSettingsSection;
+          setSelectedSection(section);
+          if (section === 'models' && !state.view && !state.loading) {
+            void actions.refresh();
+          }
+        }}
       >
-        <div className="border-b border-white/10">
+        <div className="flex items-center justify-between gap-2 border-b border-white/10">
           <TabsList className="gap-1 rounded-b-none">
             <TabsTrigger
               value="models"
+              disabled={blockingCredentialWrite}
               className="rounded-b-none data-[state=active]:bg-[var(--color-surface)]"
             >
               {t('runtimeProvider.tabs.models')}
@@ -2359,6 +2833,7 @@ export function RuntimeProviderManagementPanelView({
             </TabsTrigger>
             <TabsTrigger
               value="providers"
+              disabled={blockingCredentialWrite}
               className="rounded-b-none data-[state=active]:bg-[var(--color-surface)]"
             >
               {t('runtimeProvider.tabs.providers')}
@@ -2369,6 +2844,23 @@ export function RuntimeProviderManagementPanelView({
               ) : null}
             </TabsTrigger>
           </TabsList>
+          {activeSection === 'models' ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="mb-1"
+              disabled={disabled || state.loading}
+              onClick={() => void actions.refresh()}
+            >
+              {state.loading ? (
+                <Loader2 className="mr-1 size-3.5 animate-spin" />
+              ) : (
+                <RefreshCcw className="mr-1 size-3.5" />
+              )}
+              {t('providerRuntime.actions.refresh')}
+            </Button>
+          ) : null}
         </div>
 
         <TabsContent value="models" className="mt-3 space-y-3">
@@ -2378,6 +2870,7 @@ export function RuntimeProviderManagementPanelView({
             projectPath={projectPath}
             projects={projectContextProjects}
             loading={projectContextLoading}
+            disabled={blockingCredentialWrite}
             error={projectContextError}
             onProjectContextChange={onProjectContextChange}
           />
@@ -2411,20 +2904,40 @@ export function RuntimeProviderManagementPanelView({
         </TabsContent>
 
         <TabsContent value="providers" className="mt-3 space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="min-w-0">
-              <div className="text-sm font-medium text-[var(--color-text)]">
-                {t('runtimeProvider.tabs.providers')}
-              </div>
-              <div className="text-xs text-[var(--color-text-muted)]">
-                {t('runtimeProvider.providers.description', { count: providerCountLabel })}
-              </div>
+          <div className="grid gap-2 sm:grid-cols-[minmax(180px,0.9fr)_minmax(260px,1.4fr)_auto] sm:items-center">
+            <div
+              className="min-w-0 truncate text-xs text-[var(--color-text-muted)]"
+              title={t('runtimeProvider.providers.description', { count: providerCountLabel })}
+            >
+              {providerCountLabel}
             </div>
+            {state.providers.length > 0 || state.directorySupported ? (
+              <div className="relative min-w-0">
+                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[var(--color-text-muted)]" />
+                <Input
+                  data-testid="runtime-provider-search"
+                  value={state.providerQuery}
+                  disabled={disabled || state.loading}
+                  onChange={(event) => actions.setProviderQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && state.providerQuery.trim().length >= 2) {
+                      actions.searchAllProviders(state.providerQuery.trim());
+                    }
+                  }}
+                  placeholder={t('runtimeProvider.providers.searchPlaceholder')}
+                  className="h-9 pr-3 text-sm"
+                  style={{ paddingLeft: 40 }}
+                />
+              </div>
+            ) : null}
             {state.directorySupported ? (
               <Button
                 type="button"
                 size="sm"
                 variant="ghost"
+                title={
+                  state.directorySummary ? 'Load the full OpenCode provider catalog' : undefined
+                }
                 disabled={disabled || state.directoryLoading || state.directoryRefreshing}
                 onClick={() => void actions.refreshDirectory()}
               >
@@ -2438,26 +2951,6 @@ export function RuntimeProviderManagementPanelView({
             ) : null}
           </div>
 
-          {state.providers.length > 0 || state.directorySupported ? (
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[var(--color-text-muted)]" />
-              <Input
-                data-testid="runtime-provider-search"
-                value={state.providerQuery}
-                disabled={disabled || state.loading}
-                onChange={(event) => actions.setProviderQuery(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' && state.providerQuery.trim().length >= 2) {
-                    actions.searchAllProviders(state.providerQuery.trim());
-                  }
-                }}
-                placeholder={t('runtimeProvider.providers.searchPlaceholder')}
-                className="h-9 pr-3 text-sm"
-                style={{ paddingLeft: 40 }}
-              />
-            </div>
-          ) : null}
-
           {state.directoryError ? (
             <RuntimeProviderErrorAlert
               message={state.directoryError}
@@ -2466,10 +2959,15 @@ export function RuntimeProviderManagementPanelView({
             />
           ) : null}
 
-          <div className="max-h-[min(52vh,640px)] space-y-2 overflow-y-auto pr-1">
+          <div
+            data-testid="runtime-provider-catalog-list"
+            className="max-h-[min(52vh,640px)] overflow-y-auto border-y"
+            style={{ borderColor: 'var(--color-border-subtle)' }}
+          >
             {useDirectoryRows ? (
               <>
-                {state.directoryLoading && state.directoryEntries.length === 0 ? (
+                {(state.directoryLoading || directoryStarting) &&
+                state.directoryEntries.length === 0 ? (
                   <RuntimeProviderLoadingPlaceholder />
                 ) : null}
                 {visibleDirectoryRows.map((provider) => (
@@ -2554,7 +3052,10 @@ export function RuntimeProviderManagementPanelView({
             </div>
           ) : null}
 
-          {!useDirectoryRows && !state.loading && state.providers.length === 0 ? (
+          {!useDirectoryRows &&
+          !directoryStarting &&
+          !state.loading &&
+          state.providers.length === 0 ? (
             <div
               className="rounded-lg border p-3 text-sm"
               style={{

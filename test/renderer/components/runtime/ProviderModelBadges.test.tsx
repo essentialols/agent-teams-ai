@@ -360,8 +360,9 @@ describe('ProviderModelBadges', () => {
       <ProviderModelBadges providerId="codex" models={models} collapseAfter={15} />
     );
 
-    expect(host.textContent).toContain('model-15');
-    expect(host.textContent).not.toContain('model-16');
+    expect(host.textContent).toContain('model-18');
+    expect(host.textContent).toContain('model-04');
+    expect(host.textContent).not.toContain('model-03');
     expect(host.textContent).toContain('+3 more');
 
     const moreButton = Array.from(host.querySelectorAll('button')).find((button) =>
@@ -373,7 +374,7 @@ describe('ProviderModelBadges', () => {
       moreButton?.click();
     });
 
-    expect(host.textContent).toContain('model-18');
+    expect(host.textContent).toContain('model-01');
     expect(host.textContent).toContain('Hide');
     const list = host.firstElementChild?.firstElementChild as HTMLElement | null;
     expect(list?.style.maxHeight).toBe('');
@@ -388,7 +389,7 @@ describe('ProviderModelBadges', () => {
       hideButton?.click();
     });
 
-    expect(host.textContent).not.toContain('model-16');
+    expect(host.textContent).not.toContain('model-03');
     expect(host.textContent).toContain('+3 more');
   });
 
@@ -417,8 +418,8 @@ describe('ProviderModelBadges', () => {
         />
       );
 
-      expect(host.textContent).toContain('model-05');
-      expect(host.textContent).not.toContain('model-06');
+      expect(host.textContent).toContain('model-14');
+      expect(host.textContent).not.toContain('model-13');
       expect(host.textContent).toContain('+13 more');
     } finally {
       if (originalOffsetTop) {

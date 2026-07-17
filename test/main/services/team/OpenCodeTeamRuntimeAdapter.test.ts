@@ -87,6 +87,27 @@ describe('OpenCodeTeamRuntimeAdapter', () => {
     });
   });
 
+  it('surfaces Cursor quota instead of generic readiness diagnostics on launch', async () => {
+    const cursorQuota = "cursor-acp error: You've hit your Cursor usage limit";
+    const bridge = bridgePort(
+      readiness({
+        state: 'model_unavailable',
+        launchAllowed: false,
+        diagnostics: [
+          'OpenCode command timed out after 10000ms',
+          'CLI-authenticated providers missing from live host (github-copilot)',
+          'OpenCode session status busy',
+          cursorQuota,
+        ],
+      })
+    );
+    const adapter = new OpenCodeTeamRuntimeAdapter(bridge);
+
+    const result = await adapter.launch(launchInput({ model: 'cursor-acp/auto' }));
+
+    expect(result.members.alice?.hardFailureReason).toBe(cursorQuota);
+  });
+
   it('still runs readiness when a legacy caller asks to skip OpenCode preflight', async () => {
     const launchOpenCodeTeam = vi.fn<
       NonNullable<OpenCodeTeamRuntimeBridgePort['launchOpenCodeTeam']>
@@ -159,6 +180,27 @@ describe('OpenCodeTeamRuntimeAdapter', () => {
     expect(result.members.alice?.diagnostics).toContain(
       'warning:member_reconcile: alice: sample reconcile diagnostic'
     );
+  });
+
+  it('requires execution proof when a runtime-only caller starts a real launch', async () => {
+    const bridge = bridgePort(readiness({ state: 'ready', launchAllowed: true }), {
+      getLastOpenCodeRuntimeSnapshot: vi.fn(() => runtimeSnapshot('cap-authless-launch')),
+      launchOpenCodeTeam: vi.fn(async () => successfulOpenCodeLaunchData()),
+    });
+    const adapter = new OpenCodeTeamRuntimeAdapter(bridge);
+
+    await adapter.launch(
+      launchInput({
+        model: 'cursor-acp/auto',
+        runtimeOnly: true,
+      })
+    );
+
+    expect(bridge.checkOpenCodeTeamLaunchReadiness).toHaveBeenCalledWith({
+      projectPath: '/repo',
+      selectedModel: 'cursor-acp/auto',
+      requireExecutionProbe: true,
+    });
   });
 
   it('launches isolated worktrees with the member worktree as the OpenCode project path', async () => {
@@ -587,6 +629,42 @@ describe('OpenCodeTeamRuntimeAdapter', () => {
       launchState: 'failed_to_start',
       hardFailureReason: concreteReason,
     });
+  });
+
+  it('prefers actionable provider errors over timeout and inventory diagnostics', async () => {
+    const actionableReason =
+      'Latest assistant message msg_456 failed with APIError - This model is not available on the chat endpoint';
+    const launchOpenCodeTeam = vi.fn<
+      NonNullable<OpenCodeTeamRuntimeBridgePort['launchOpenCodeTeam']>
+    >(
+      async () =>
+        ({
+          runId: 'run-1',
+          teamLaunchState: 'failed',
+          members: {
+            alice: {
+              sessionId: 'oc-session-1',
+              launchState: 'failed',
+              model: 'xai/grok-imagine-image-quality',
+              diagnostics: [
+                'OpenCode command timed out after 10000ms',
+                'CLI-authenticated providers missing from live host (github-copilot)',
+                actionableReason,
+              ],
+              evidence: [],
+            },
+          },
+          warnings: [],
+          diagnostics: [],
+        }) satisfies OpenCodeLaunchTeamCommandData
+    );
+    const adapter = new OpenCodeTeamRuntimeAdapter(
+      bridgePort(readiness({ state: 'ready', launchAllowed: true }), { launchOpenCodeTeam })
+    );
+
+    const result = await adapter.launch(launchInput());
+
+    expect(result.members.alice?.hardFailureReason).toBe(actionableReason);
   });
 
   it('falls back to bridge error diagnostics when member failure details are generic', async () => {

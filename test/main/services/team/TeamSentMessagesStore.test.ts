@@ -43,7 +43,7 @@ describe('TeamSentMessagesStore', () => {
               name: 'model',
               command: '/model',
               args: 'sonnet',
-              knownDescription: 'Select or change the Claude model.',
+              knownDescription: 'Select or change the active model.',
             },
           },
           {
@@ -76,7 +76,7 @@ describe('TeamSentMessagesStore', () => {
         name: 'model',
         command: '/model',
         args: 'sonnet',
-        knownDescription: 'Select or change the Claude model.',
+        knownDescription: 'Select or change the active model.',
       },
     });
     expect(messages[1]).toMatchObject({

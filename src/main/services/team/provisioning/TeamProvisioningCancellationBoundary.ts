@@ -47,6 +47,7 @@ export interface TeamProvisioningCancellationBoundaryPorts<
   deleteAliveRunId(teamName: string): void;
   hasSecondaryRuntimeRuns(teamName: string): boolean;
   stopMixedSecondaryRuntimeLanes(teamName: string): Promise<void>;
+  stopOpenCodeRuntimeAdapterTeam(teamName: string, runId: string): Promise<void>;
   killTeamProcess(child: TRun['child']): void;
   updateProgress(
     run: TRun,
@@ -101,6 +102,7 @@ export interface TeamProvisioningCancellationBoundaryServiceHost<
   >;
   hasSecondaryRuntimeRuns: TeamProvisioningCancellationBoundaryPorts<TRun>['hasSecondaryRuntimeRuns'];
   stopMixedSecondaryRuntimeLanes: TeamProvisioningCancellationBoundaryPorts<TRun>['stopMixedSecondaryRuntimeLanes'];
+  stopOpenCodeRuntimeAdapterTeam: TeamProvisioningCancellationBoundaryPorts<TRun>['stopOpenCodeRuntimeAdapterTeam'];
   cleanupRun: TeamProvisioningCancellationBoundaryPorts<TRun>['cleanupRun'];
   toolApprovalFacade: {
     clearOpenCodeRuntimeToolApprovals: TeamProvisioningCancellationBoundaryPorts<TRun>['clearOpenCodeRuntimeToolApprovals'];
@@ -129,6 +131,7 @@ export interface TeamProvisioningCancellationBoundaryServiceHostOptions<
 }
 
 const CANCELLABLE_PROVISIONING_STATES: ReadonlySet<TeamProvisioningProgress['state']> = new Set([
+  'validating',
   'spawning',
   'configuring',
   'assembling',
@@ -153,6 +156,8 @@ export function createTeamProvisioningCancellationBoundaryPortsFromService<
     deleteAliveRunId: (teamName) => service.runTracking.deleteAliveRunId(teamName),
     hasSecondaryRuntimeRuns: (teamName) => service.hasSecondaryRuntimeRuns(teamName),
     stopMixedSecondaryRuntimeLanes: (teamName) => service.stopMixedSecondaryRuntimeLanes(teamName),
+    stopOpenCodeRuntimeAdapterTeam: (teamName, runId) =>
+      service.stopOpenCodeRuntimeAdapterTeam(teamName, runId),
     killTeamProcess:
       options.killTeamProcess ??
       (killTeamProcessDefault as TeamProvisioningCancellationBoundaryPorts<TRun>['killTeamProcess']),
@@ -248,16 +253,39 @@ export function createTeamProvisioningCancellationBoundary<
 
       run.cancelRequested = true;
       run.processKilled = true;
+      // For a pure-OpenCode aggregate run, run.child is null so killTeamProcess is a
+      // no-op — the runtime lanes are adapter-managed. Mirror dev's
+      // stopOpenCodeAggregateRuntimeLanes: stop the owned primary OpenCode adapter
+      // lane AND any secondary lanes, otherwise cancelling mid-launch (state
+      // 'spawning', after the primary lane came up) orphans the primary runtime
+      // process.
       ports.killTeamProcess(run.child);
-      if (
-        ports.getTrackedRunId(run.teamName) === run.runId &&
-        ports.hasSecondaryRuntimeRuns(run.teamName)
-      ) {
-        void ports.stopMixedSecondaryRuntimeLanes(run.teamName);
+      let failedStop: PromiseRejectedResult | undefined;
+      if (ports.getTrackedRunId(run.teamName) === run.runId) {
+        const stops: Promise<void>[] = [];
+        const primaryRun = ports.runtimeAdapterRunByTeam.get(run.teamName);
+        if (primaryRun?.providerId === 'opencode' && primaryRun.runId === run.runId) {
+          stops.push(ports.stopOpenCodeRuntimeAdapterTeam(run.teamName, run.runId));
+        }
+        if (ports.hasSecondaryRuntimeRuns(run.teamName)) {
+          stops.push(ports.stopMixedSecondaryRuntimeLanes(run.teamName));
+        }
+        if (stops.length > 0) {
+          const stopResults = await Promise.allSettled(stops);
+          failedStop = stopResults.find(
+            (result): result is PromiseRejectedResult => result.status === 'rejected'
+          );
+        }
       }
-      const progress = ports.updateProgress(run, 'cancelled', 'Provisioning cancelled by user');
-      run.onProgress(progress);
-      ports.cleanupRun(run);
+      try {
+        const progress = ports.updateProgress(run, 'cancelled', 'Provisioning cancelled by user');
+        run.onProgress(progress);
+      } finally {
+        ports.cleanupRun(run);
+      }
+      if (failedStop) {
+        throw failedStop.reason;
+      }
     },
 
     isCancellableRuntimeAdapterProgress(progress) {

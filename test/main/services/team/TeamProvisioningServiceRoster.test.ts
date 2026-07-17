@@ -4,6 +4,7 @@ import {
   resolveLaunchExpectedMembers,
   type TeamProvisioningLaunchExpectedMembersPorts,
 } from '@main/services/team/provisioning/TeamProvisioningLaunchExpectedMembers';
+import { TeamProvisioningService } from '@main/services/team/TeamProvisioningService';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { TeamMember } from '@shared/types';
@@ -105,6 +106,83 @@ describe('team provisioning launch roster discovery', () => {
 
     expect(result.source).toBe('members-meta');
     expect(result.members.map((member) => member.name)).toEqual(['Alice']);
+  });
+
+  it.each([
+    ['tombstone-only', [{ name: 'alice', agentType: 'general-purpose', removedAt: 123 }]],
+    ['empty', []],
+  ])('treats valid %s members.meta.json as authoritative across restarts', async (_label, meta) => {
+    const listInboxNames = vi.fn(async () => ['alice']);
+    const configRaw = JSON.stringify({ members: [{ name: 'alice', role: 'developer' }] });
+
+    for (let restart = 0; restart < 2; restart += 1) {
+      const service = new TeamProvisioningService(
+        {} as never,
+        { listInboxNames } as never,
+        {
+          getMeta: vi.fn(async () => ({ version: 1, members: meta })),
+          getMembers: vi.fn(async () => meta),
+          writeMembers: vi.fn(async () => undefined),
+        } as never
+      );
+      const report = await (
+        service as unknown as {
+          resolveLaunchExpectedMembers(
+            teamName: string,
+            rawConfig: string,
+            providerId?: string
+          ): Promise<{ source: string; members: { name: string }[] }>;
+        }
+      ).resolveLaunchExpectedMembers('t', configRaw, 'codex');
+
+      expect(report).toMatchObject({ source: 'members-meta', members: [] });
+    }
+    expect(listInboxNames).not.toHaveBeenCalled();
+  });
+
+  it('preserves removal tombstones when launch persistence rewrites the active roster', async () => {
+    const writeMembers = vi.fn(
+      async (_teamName: string, _members: unknown[], _options?: unknown) => undefined
+    );
+    const service = new TeamProvisioningService(
+      {} as never,
+      {} as never,
+      {
+        getMeta: vi.fn(async () => ({
+          version: 1,
+          members: [
+            { name: 'alice', role: 'Developer', removedAt: 123 },
+            { name: 'bob', role: 'Reviewer' },
+          ],
+        })),
+        getMembers: vi.fn(async () => []),
+        writeMembers,
+      } as never
+    );
+
+    await (
+      service as unknown as {
+        persistMembersMeta(
+          teamName: string,
+          request: { members: { name: string; role: string }[] }
+        ): Promise<void>;
+      }
+    ).persistMembersMeta('t', {
+      members: [
+        { name: 'alice', role: 'stale config role' },
+        { name: 'bob', role: 'Reviewer' },
+      ],
+    });
+
+    expect(writeMembers).toHaveBeenCalledWith(
+      't',
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'alice', role: 'Developer', removedAt: 123 }),
+        expect.objectContaining({ name: 'bob', role: 'Reviewer' }),
+      ]),
+      { providerBackendId: undefined }
+    );
+    expect(writeMembers.mock.calls[0]?.[1]).toHaveLength(2);
   });
 
   it('config fallback never returns reserved names (user/team-lead)', async () => {

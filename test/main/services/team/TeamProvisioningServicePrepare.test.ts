@@ -735,7 +735,7 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
         CLAUDE_TEAM_ANTHROPIC_AUTH_MODE: 'api_key_helper',
         CLAUDE_TEAM_ANTHROPIC_API_KEY_HELPER_SETTINGS_PATH:
           '/tmp/team-runtime-auth/demo/runtime-settings-anthropic.json',
-        ANTHROPIC_API_KEY: 'sk-ant-direct-restart-should-not-leak',
+        ANTHROPIC_API_KEY: 'test-fixture-literal',
         ANTHROPIC_AUTH_TOKEN: 'direct-restart-token-should-not-leak',
         CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR: '3',
         CLAUDE_CODE_OAUTH_TOKEN: 'direct-restart-oauth-token-should-not-leak',
@@ -753,7 +753,7 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
     expect(assignments).toContain("CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR=''");
     expect(assignments).toContain("CLAUDE_CODE_OAUTH_TOKEN=''");
     expect(assignments).toContain("CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR=''");
-    expect(assignments).not.toContain('sk-ant-direct-restart-should-not-leak');
+    expect(assignments).not.toContain('test-fixture-literal');
     expect(assignments).not.toContain('direct-restart-token-should-not-leak');
     expect(assignments).not.toContain('direct-restart-oauth-token-should-not-leak');
   });
@@ -917,8 +917,8 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
         CLAUDE_CODE_CODEX_FORCED_LOGIN_METHOD: 'chatgpt',
         CODEX_CLI_PATH: '/Users/tester/.local/bin/codex',
         CODEX_HOME: '/Users/tester/.codex',
-        OPENAI_API_KEY: 'sk-openai-should-not-leak',
-        CODEX_API_KEY: 'sk-codex-should-not-leak',
+        OPENAI_API_KEY: 'test-fixture-literal',
+        CODEX_API_KEY: 'test-fixture-literal',
         GEMINI_API_KEY: 'gemini-should-not-leak',
         ANTHROPIC_API_KEY: 'sk-ant-should-not-leak',
         ANTHROPIC_AUTH_TOKEN: 'ant-token-should-not-leak',
@@ -3675,6 +3675,75 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
     ).resolves.toBe('opencode/big-pickle');
   });
 
+  it('falls back to OpenCode runtime status when the model list has no default model', async () => {
+    execCliMock.mockImplementation(async (_binaryPath: string | null, args: string[]) => {
+      if (args[0] === 'model' && args[1] === 'list' && args.includes('opencode')) {
+        return {
+          stdout: JSON.stringify({
+            schemaVersion: 1,
+            providers: {
+              opencode: {
+                defaultModel: null,
+                models: [
+                  {
+                    id: 'opencode/big-pickle',
+                    label: 'Big Pickle',
+                    description: 'Free OpenCode model',
+                  },
+                ],
+              },
+            },
+          }),
+          stderr: '',
+          exitCode: 0,
+        };
+      }
+      if (args[0] === 'runtime' && args[1] === 'status' && args.includes('opencode')) {
+        return {
+          stdout: JSON.stringify({
+            providers: {
+              opencode: {
+                providerId: 'opencode',
+                modelCatalog: {
+                  schemaVersion: 1,
+                  providerId: 'opencode',
+                  source: 'app-server',
+                  status: 'ready',
+                  fetchedAt: new Date(0).toISOString(),
+                  staleAt: new Date(60_000).toISOString(),
+                  defaultModelId: 'opencode/big-pickle',
+                  defaultLaunchModel: 'opencode/big-pickle',
+                  models: [],
+                  diagnostics: {
+                    configReadState: 'ready',
+                    appServerState: 'healthy',
+                  },
+                },
+              },
+            },
+          }),
+          stderr: '',
+          exitCode: 0,
+        };
+      }
+      return defaultExecCliMockImplementation(_binaryPath, args);
+    });
+
+    const svc = new TeamProvisioningService();
+
+    await expect(
+      prepareCoordinatorHarness(svc).resolveProviderDefaultModel(
+        '/fake/claude',
+        tempRoot,
+        'opencode',
+        { PATH: '/usr/bin' },
+        [],
+        false
+      )
+    ).resolves.toBe('opencode/big-pickle');
+  });
+
+  // Exercise provider fallback through the extracted prepare coordinator, never the service facade.
   it('materializes pure OpenCode runtime adapter Default selections before launch', async () => {
     execCliMock.mockImplementation(async (_binaryPath: string | null, args: string[]) => {
       if (args[0] === 'model' && args[1] === 'list' && args.includes('opencode')) {
@@ -4148,8 +4217,8 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
               CLAUDE_CODE_CODEX_FORCED_LOGIN_METHOD: 'chatgpt',
               CODEX_CLI_PATH: '/opt/codex',
               CODEX_HOME: '/Users/tester/.codex',
-              CODEX_API_KEY: 'sk-codex-should-not-leak',
-              OPENAI_API_KEY: 'sk-openai-should-not-leak',
+              CODEX_API_KEY: 'test-fixture-literal',
+              OPENAI_API_KEY: 'test-fixture-literal',
             },
             authSource: 'codex_runtime',
             geminiRuntimeAuth: null,

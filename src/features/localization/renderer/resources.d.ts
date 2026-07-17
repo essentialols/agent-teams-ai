@@ -550,7 +550,7 @@ export default interface Resources {
         runNow: 'Run now';
       };
       empty: {
-        description: 'Create a schedule on any team to automate Claude task execution with cron expressions. Schedules from all teams will appear here.';
+        description: 'Create a schedule on any team to automate team task execution with cron expressions. Schedules from all teams will appear here.';
         noMatches: 'No schedules match the current filters';
         title: 'No scheduled tasks';
       };
@@ -1022,11 +1022,13 @@ export default interface Resources {
         configuredLocalCount_one: '{{count}} configured local';
         configuredLocalCount_other: '{{count}} configured local';
         configuredLocalTitle: 'Local OpenCode routes imported from your OpenCode config.';
-        connectedCount: 'Providers: {{connected}}/{{denominator}} connected';
+        connectToGetStarted: 'Connect a provider to get started';
+        connectedCount: 'Providers: {{connected}} connected';
         freeModels: 'Free models';
         freeModelsTitle: 'OpenCode includes free model options such as Big Pickle when available in your setup. OpenRouter through OpenCode can also expose free models, but not every OpenCode/OpenRouter model is free. Availability and limits may change.';
         loadingModels: 'Loading models...';
         modelsUnavailable: 'Models unavailable for this runtime build';
+        readyToRunAgents: 'Ready to run agents';
         runtime: 'Runtime: {{runtime}}';
         verifiedCount: '{{count}} verified';
         verifiedCount_few: '{{count}} verified';
@@ -1034,6 +1036,89 @@ export default interface Resources {
         verifiedCount_one: '{{count}} verified';
         verifiedCount_other: '{{count}} verified';
         verifiedTitle: 'OpenCode routes with a successful execution proof.';
+      };
+      quickConnect: {
+        alsoConnectOpenCode: 'Also connect through OpenCode';
+        browseAll: 'Browse all providers';
+        cancel: 'Cancel';
+        checkAndConnect: 'Check & connect';
+        checkingOpenCode: 'Checking OpenCode';
+        checkingPlan: 'Checking plan status';
+        chooseRegion: 'Choose region';
+        claudeConnected: 'Connected through your local Claude CLI session.';
+        claudeDescription: 'Use your Claude plan through the Claude CLI.';
+        cliNotInstalled: 'CLI not installed';
+        codexConnected: 'Connected through your local Codex CLI session.';
+        codexDescription: 'Use your ChatGPT plan through the Codex CLI.';
+        connectAllPlans: 'Connect all my plans';
+        connectPlan: 'Connect plan';
+        connectSuperGrok: 'Connect SuperGrok';
+        connected: 'Connected';
+        continue: 'Continue';
+        copilotDescription: 'Use GitHub Copilot through OpenCode. Agent Teams verifies a compatible model for your plan, including Copilot Free.';
+        copyCommand: 'Copy command';
+        cursorConnected: 'Cursor account connected';
+        cursorDescription: 'Use your Cursor subscription through the managed OpenCode Cursor plugin.';
+        description: 'Connect any plans you use, then mix them in the same Agent Team.';
+        done: 'Done';
+        installAndConnect: 'Install & connect';
+        installOpenCode: 'Install OpenCode';
+        installOpenCodeFirst: 'Install OpenCode to browse and connect these providers';
+        installingOpenCode: 'Installing OpenCode';
+        kimiDescription: 'Use a Kimi Code membership key through OpenCode and consume membership quota.';
+        kiroConnected: 'Kiro account connected';
+        kiroDescription: 'Use your Kiro subscription through the managed OpenCode Kiro plugin.';
+        kiroManualFallback: 'Official manual fallback';
+        kiroSetupDescription: 'Agent Teams installs the official Kiro CLI, opens browser sign-in, and verifies kiro/auto through OpenCode.';
+        kiroSetupProgress: 'Setup progress';
+        kiroSetupTitle: 'Connect Amazon Q Developer / Kiro';
+        manualSetup: 'Manual setup required';
+        miniMaxDescription: 'Use the dedicated MiniMax Token Plan quota through OpenCode.';
+        needsSignIn: 'Needs sign in';
+        notInCatalog: 'Not found in OpenCode';
+        openAiApiConnected: 'Available through Codex. OpenCode currently uses API billing.';
+        openAiConnectCodex: 'Connect Codex for Plus/Pro, or use OpenCode as an additional route.';
+        openAiConnectedBoth: 'Available through Codex and also connected through OpenCode.';
+        openAiTitle: 'OpenAI Plus / Pro';
+        openAiViaCodex: 'Already available through Codex. OpenCode is optional.';
+        openCodeChecking: 'Checking that OpenCode is installed and ready...';
+        openCodeError: 'OpenCode could not start. Repair or reinstall it, then retry.';
+        openCodeErrorTitle: 'OpenCode needs attention';
+        openCodeInstalling: 'Installing the managed OpenCode runtime...';
+        openCodeInstallingPercent: 'Installing the managed OpenCode runtime - {{percent}}%';
+        openCodeRequired: 'Install OpenCode to connect and use these providers with Agent Teams.';
+        openCodeTitle: 'Preparing OpenCode';
+        openKiroGuide: 'Open official guide';
+        pasteBaseUrl: 'Paste Dedicated Base URL';
+        planConnected: 'Plan connected';
+        planCredentialUnverified: 'Plan credential not verified';
+        providerStatusError: 'Could not load OpenCode provider status. Your saved credentials were not changed.';
+        readyToConnect: 'Available to connect';
+        refreshOpenCode: 'Refresh status';
+        regionNotSelected: 'Region not selected';
+        requiresOpenCode: 'Requires OpenCode';
+        retryInstall: 'Retry installation';
+        retryOpenCode: 'Repair OpenCode';
+        signIn: 'Sign in';
+        signInRequired: 'Sign in required';
+        statusUnavailable: 'Status unavailable';
+        superGrokConnected: 'SuperGrok OAuth saved';
+        superGrokDescription: 'Use your SuperGrok subscription through OpenCode OAuth.';
+        switchToSuperGrok: 'Switch to SuperGrok';
+        title: 'Optional providers & plans';
+        unavailable: 'Unavailable';
+        updateForSuperGrok: 'Update OpenCode for OAuth';
+        updateOpenCode: 'Update OpenCode';
+        xaiApiConnected: 'xAI API connected - not SuperGrok';
+        xiaomiBaseUrlHint: 'Copy either the OpenAI-compatible /v1 URL or the Anthropic-compatible /anthropic URL. Your API key is entered securely in the next step.';
+        xiaomiBaseUrlLabel: 'Dedicated Base URL';
+        xiaomiDescription: 'Use Xiaomi MiMo Token Plan quota through the regional OpenCode endpoint shown in your plan dashboard.';
+        xiaomiOpenPlanPage: 'Open Token Plan page';
+        xiaomiRegionAutomatic: 'No region selection needed - it is detected from the URL.';
+        xiaomiRegionDetected: '{{region}} endpoint detected';
+        xiaomiSetupDescription: 'Paste the Dedicated Base URL from your Token Plan page. Agent Teams detects the correct OpenCode provider automatically.';
+        xiaomiSetupTitle: 'Connect Xiaomi MiMo Token Plan';
+        zaiDescription: 'Use the dedicated Z.AI Coding Plan quota through OpenCode.';
       };
       runtime: {
         configuredHealthCheckFailed: 'The configured {{runtime}} failed its startup health check.';
@@ -1054,6 +1139,7 @@ export default interface Resources {
         installing: 'Installing';
         openCodeTitle: 'Install OpenCode runtime into app data';
         retryInstall: 'Retry install';
+        update: 'Update';
       };
       troubleshoot: {
         again: 'again';
@@ -1098,7 +1184,7 @@ export default interface Resources {
           pending_other: '{{count}} pending';
         };
       };
-      emptyDescription: 'Recent Claude and Codex activity will appear here.';
+      emptyDescription: 'Recent agent activity will appear here.';
       failedToLoad: 'Failed to load projects';
       loadMore: 'Load more';
       noMatches: 'No matches for "{{query}}"';
@@ -1113,8 +1199,8 @@ export default interface Resources {
     };
     tokenUsage: {
       actions: {
-        openTeam: 'Open {{team}}';
         openTask: 'Open task {{task}}';
+        openTeam: 'Open {{team}}';
         refresh: 'Refresh';
       };
       aria: {
@@ -1156,12 +1242,6 @@ export default interface Resources {
       controls: {
         includeCacheTokens: 'Include cache tokens';
       };
-      tabs: {
-        activity: 'Activity';
-        breakdowns: 'Breakdowns';
-        overview: 'Overview';
-        runs: 'Runs';
-      };
       dateRange: {
         allCollectedUsage: 'All collected app usage';
         customRange: 'Custom range';
@@ -1200,6 +1280,7 @@ export default interface Resources {
       labels: {
         cost: 'Cost';
         days: '{{count}} days';
+        eventCount: '{{count}} events';
         less: 'Less';
         more: 'More';
         notAvailable: 'n/a';
@@ -1209,7 +1290,6 @@ export default interface Resources {
         runCount: '{{count}} runs';
         share: 'Share';
         sourceCount: '{{count}} sources';
-        eventCount: '{{count}} events';
         streakCount: '{{count}} day streak';
         tokens: 'tokens';
         tokensCost: '{{tokens}} tokens / {{cost}}';
@@ -1241,7 +1321,6 @@ export default interface Resources {
         burnRate: 'Burn rate';
         commandPeriods: 'Command periods';
         commandSpend: 'Command spend';
-        taskSpend: 'Task spend';
         commands: 'Commands';
         expensiveRuns: 'Expensive runs';
         modelUsage: 'Model usage';
@@ -1250,6 +1329,7 @@ export default interface Resources {
         runtimeMix: 'Runtime mix';
         sessions: 'Sessions';
         sources: 'Source events';
+        taskSpend: 'Task spend';
         tasks: 'Tasks';
         teams: 'Teams';
         usageTrend: 'Usage trend';
@@ -1267,6 +1347,12 @@ export default interface Resources {
         logParsed: 'Log parsed';
         sdkExact: 'SDK exact';
         tokenizerEstimated: 'Tokenizer est.';
+      };
+      tabs: {
+        activity: 'Activity';
+        breakdowns: 'Breakdowns';
+        overview: 'Overview';
+        runs: 'Runs';
       };
       title: 'Usage';
       tooltips: {
@@ -2444,8 +2530,8 @@ export default interface Resources {
       };
       privacy: {
         telemetry: {
-          description: 'Help improve the app by sending anonymous crash and performance data';
-          label: 'Send crash reports';
+          description: 'Help improve the app by sending anonymous crash, performance, and product usage data. Session replay is not recorded.';
+          label: 'Send anonymous telemetry';
         };
         title: 'Privacy';
       };
@@ -3060,6 +3146,10 @@ export default interface Resources {
     runtimeProvider: {
       actions: {
         cancel: 'Cancel';
+        reconnect: 'Reconnect';
+        removeManagedCredential: 'Remove managed credential';
+        replaceCredential: 'Replace credential';
+        signInAgain: 'Sign in again';
         test: 'Test';
       };
       badges: {
@@ -3147,6 +3237,15 @@ export default interface Resources {
         recommended: 'Recommended';
         refreshCatalog: 'Refresh catalog';
         searchPlaceholder: 'Search providers';
+      };
+      reconnect: {
+        apiDescription: 'Enter the new credential. The current managed credential stays active unless the replacement passes model verification.';
+        apiTitle: 'Replace {{provider}} credential';
+        continueInBrowser: 'Continue in browser';
+        getBrowserCode: 'Get browser code';
+        oauthDescription: 'Use this to switch accounts or repair authorization. The current managed sign-in is restored if verification fails.';
+        oauthTitle: 'Sign in to {{provider}} again';
+        replaceAndVerify: 'Replace and verify';
       };
       setup: {
         loading: 'Loading provider setup...';
@@ -3527,7 +3626,7 @@ export default interface Resources {
         teamName: 'Team name';
       };
       launchAfterCreate: {
-        description: 'Start the team immediately via local Claude CLI.';
+        description: 'Start the team immediately using its configured agent runtimes.';
         label: 'Run command after create';
       };
       localOnly: 'Available only in local Electron mode.';
@@ -3618,6 +3717,7 @@ export default interface Resources {
         remove: 'Remove';
         stop: 'Stop';
         task: 'Task';
+        usage: 'Usage';
         visualize: 'Visualize';
       };
       context: {
@@ -3681,6 +3781,7 @@ export default interface Resources {
         editUnavailableProvisioning: 'Edit team is unavailable while provisioning is still in progress';
         openBuiltInEditor: 'Open project in built-in editor';
         openTeamGraph: 'Open team graph';
+        openTeamUsage: 'Open usage dashboard';
         stopTeam: 'Stop team';
       };
       waitingForProvisioning: 'Team data will appear once provisioning completes';
@@ -3710,7 +3811,7 @@ export default interface Resources {
         liveRenameBlocked: 'Existing teammates cannot be renamed while the team is live. renamed: {{names}}';
         memberNameEmpty: 'Member name cannot be empty';
         memberNameInvalid: 'Member name must start with alphanumeric, use only [a-zA-Z0-9._-], max 128 chars';
-        memberNameNumericSuffix: 'Member name "{{name}}" is not allowed (reserved for Claude CLI auto-suffix). Use "{{base}}" instead.';
+        memberNameNumericSuffix: 'Member name "{{name}}" is not allowed (reserved for runtime-managed numeric suffixes). Use "{{base}}" instead.';
         memberNameReserved: 'Member name "{{name}}" is reserved';
         memberNamesUnique: 'Member names must be unique before saving';
         newLiveTeammates: 'Add new teammates from the dedicated Add member dialog while the team is live. Edit Team only supports updating existing teammates.';
@@ -4045,13 +4146,13 @@ export default interface Resources {
         workingDirectory: 'Working directory:';
       };
       description: {
-        createSchedule: 'Schedule automatic Claude task execution';
+        createSchedule: 'Schedule automatic agent task execution';
         createScheduleForTeam: 'Schedule automatic runs for team "{{team}}"';
         editSchedule: 'Editing schedule for team "{{team}}"';
         launchPrefix: 'Start team';
-        launchSuffix: 'via local Claude CLI.';
+        launchSuffix: 'using its configured agent runtimes.';
         relaunchPrefix: 'Stop the current run for';
-        relaunchSuffix: 'and start it again via local Claude CLI.';
+        relaunchSuffix: 'and start it again using its configured agent runtimes.';
       };
       errors: {
         launchFailed: 'Failed to launch team';
@@ -4086,7 +4187,7 @@ export default interface Resources {
         oneShotPrefix: 'This prompt will be passed to';
         oneShotSuffix: 'for one-shot execution';
         saved: 'Saved';
-        schedulePlaceholder: 'Instructions for Claude to execute on schedule...';
+        schedulePlaceholder: 'Instructions for the team lead to execute on schedule...';
         teamLeadOptional: 'Prompt for team lead (optional)';
         teamLeadPlaceholder: 'Instructions for team lead...';
       };
@@ -4133,6 +4234,7 @@ export default interface Resources {
         deleteForever: 'Delete forever';
         deletePermanently: 'Delete permanently';
         deleteTeam: 'Delete team';
+        importTeam: 'Import from folder';
         launchTeam: 'Launch team';
         launching: 'Launching...';
         organizationMap: 'Org Map';
@@ -4254,7 +4356,7 @@ export default interface Resources {
       };
       anthropicContext: {
         defaultSetting: 'default context setting';
-        description: "Anthropic context is team-wide for this launch: {{mode}}. Use the lead runtime panel's Limit context checkbox to change it.";
+        description: 'Anthropic context is team-wide for this launch: {{mode}}. Use Limit context to 200K tokens to avoid long-context behavior.';
         limitEnabled: '200K limit enabled';
       };
       mcp: {
@@ -4513,7 +4615,7 @@ export default interface Resources {
         charsLeft_other: '{{count}} chars left';
         crossTeamPlaceholder: 'Cross-team message to {{team}}...';
         placeholder: 'Write a message... (Enter to send, Shift+Enter for new line)';
-        slashTip: 'Tip: You can use "/" to run any Claude commands.';
+        slashTip: 'Tip: Use "/" to run commands supported by the team lead\'s runtime.';
         teamFallback: 'team';
         teamLaunchingPlaceholder: 'Team is launching... message will be queued for inbox delivery.';
       };
@@ -4758,15 +4860,20 @@ export default interface Resources {
       searchModels: 'Search models';
       unavailableInRuntime: 'Unavailable in current runtime';
     };
-    openCodeContextConfigHint: {
-      and: 'and';
-      compactionConfig: 'Compaction config';
-      description: 'Add matching limits to the OpenCode config for the provider and model used by this teammate. This helps OpenCode compact and prune before local models overflow their context window.';
-      promptInstructionsSuffix: 'are weaker because the request is assembled before the model reads them.';
-      providerLimits: 'Provider limits';
-      replacePrefix: 'Replace';
-      replaceSuffix: 'with the provider and model IDs from your OpenCode setup. Prompt instructions like';
-      summary: 'OpenCode local models can use an OpenCode context budget instead of prompt-only limits.';
+    openCodeLocalModelLimits: {
+      applyAndVerify: 'Apply & verify';
+      applying: 'Applying & verifying...';
+      contextWindow: 'Context window';
+      detected: 'Detected from OpenCode: {{contextTokens}} context tokens and {{outputTokens}} max output tokens.';
+      invalidLimits: 'Enter positive whole numbers. Max output cannot exceed the context window.';
+      managedOnly: 'Saved only in the Agent Teams managed profile. Your OpenCode and project config files stay unchanged.';
+      manualRequired: 'OpenCode did not report complete limits. Enter the values supported by your local model server.';
+      maxOutput: 'Max output';
+      projectRequired: 'Choose a project before configuring local model limits.';
+      saved: 'Saved in Agent Teams: {{contextTokens}} context tokens and {{outputTokens}} max output tokens.';
+      title: 'Local model context budget';
+      unknownError: 'OpenCode did not return a configuration result.';
+      verified: 'Saved in Agent Teams and verified through OpenCode.';
     };
     organizations: {
       editor: {
@@ -4847,6 +4954,56 @@ export default interface Resources {
         actions: {
           createTeamIn: 'Create team in {{label}}';
         };
+        layout: {
+          switchToHierarchy: 'Switch to hierarchy chart';
+          switchToNested: 'Switch to nested map';
+        };
+        view: {
+          hierarchy: 'Hierarchy';
+          overview: 'Overview';
+          relations: 'Relations';
+          structure: 'Structure';
+        };
+        overviewCard: {
+          activeTasks: '{{count}} active tasks';
+          attention: '{{count}} need attention';
+          summary: '{{groupCount}} groups · {{teamCount}} teams · {{agentCount}} agents';
+          teamsOnline: '{{onlineCount}}/{{teamCount}} teams online';
+        };
+        toolbar: {
+          animation: 'Animation';
+          connections: 'Connections';
+          filters: 'Map filters';
+          fit: 'Fit meaningful overview';
+          reset: 'Reset search, focus, and filters';
+          tasks: 'Tasks';
+          zoomIn: 'Zoom in';
+          zoomOut: 'Zoom out';
+        };
+        legend: {
+          connection: 'Connection';
+          group: 'Group';
+          hierarchy: 'Hierarchy';
+          online: 'Online';
+          organization: 'Organization';
+        };
+        focus: {
+          clearFocus: 'Clear focus';
+          clearSearch: 'Clear search';
+          collapseBranch: 'Collapse branch';
+          connectedOnly: 'Connected ({{count}})';
+          expandBranch: 'Expand branch';
+          kind: {
+            container: 'group';
+            organization: 'organization';
+            team: 'team';
+          };
+          noResults: 'No results found';
+          pathToRoot: 'Path to root';
+          searchLabel: 'Search organization map';
+          searchPlaceholder: 'Organization, group, team, or task...';
+          taskMatch: 'Task: {{task}}';
+        };
         canvas: {
           activeAgents: '{{count}} active agents';
           activeAgents_few: '{{count}} active agents';
@@ -4872,6 +5029,9 @@ export default interface Resources {
           orgsAndTeams: '{{orgCount}} orgs - {{teamCount}} teams';
           teamReference: 'team reference';
           teamRole: '{{memberCount}} agents - {{activeCount}} active';
+          groupSummary: '{{teamCount}} teams · {{activeTeamCount}} active · {{taskCount}} tasks';
+          teamSummary: '{{status}} · {{activeTaskCount}} active · {{taskCount}} tasks';
+          minimap: 'Organization map navigation';
           teams: '{{count}} teams';
           teams_few: '{{count}} teams';
           teams_many: '{{count}} teams';
@@ -5134,8 +5294,8 @@ export default interface Resources {
           workingDirectoryMissing: 'Working directory missing';
         };
         failureHints: {
-          authenticationRequired: 'Authenticate the required provider in Claude CLI, then reopen this dialog.';
-          cliBinaryMissing: 'Make sure the local Claude CLI binary exists and can be started, then reopen this dialog.';
+          authenticationRequired: 'Authenticate the required provider in its configured runtime, then reopen this dialog.';
+          cliBinaryMissing: 'Make sure the required local runtime is installed and can be started, then reopen this dialog.';
           default: 'Resolve the issue above, then reopen this dialog.';
           openCodeAccessDenied: 'Fix folder permissions or move the project to a user-writable folder. Running as administrator is only a temporary workaround.';
           openCodeAppMcpUnreachable: 'Retry launch to refresh the OpenCode app MCP bridge. If it repeats, restart the app and OpenCode runtime.';
@@ -5574,7 +5734,7 @@ export default interface Resources {
         warmUpTime: 'Warm-up time';
       };
       empty: {
-        description: 'Create a schedule to run Claude tasks automatically on a cron schedule.';
+        description: 'Create a schedule to run team tasks automatically on a cron schedule.';
         title: 'No schedules yet';
       };
       nextRun: 'Next: {{next}}';
@@ -5931,6 +6091,34 @@ export default interface Resources {
       };
       teamPrefix: 'Team:';
       unassigned: 'Unassigned';
+    };
+    teamImport: {
+      cancel: 'Cancel';
+      chooseFolder: 'Choose folder';
+      createDraft: 'Create draft team';
+      createFailed: 'Failed to create the imported team';
+      creating: 'Creating...';
+      description: 'Choose a local agent team folder, then review every imported instruction before creating a draft.';
+      inspectFailed: 'Failed to inspect the selected folder';
+      invalidTeamName: 'Use kebab-case letters, numbers, and dashes, up to 64 characters.';
+      leadPrompt: 'Lead prompt';
+      members: 'Members ({{count}})';
+      projectPath: 'Project path';
+      scanning: 'Scanning...';
+      selectPrompt: 'Choose a folder to preview the imported team.';
+      skills: 'Skills found ({{count}})';
+      summary: 'Create {{teamName}} with {{count}} members.';
+      teamName: 'Team name';
+      teamNameRequired: 'Team name is required.';
+      teamNameReserved: 'This team name is reserved by the operating system.';
+      title: 'Import agent team';
+      warningDuplicateMember: '{{fileName}}: duplicate member name {{name}} was skipped.';
+      warningMemberInvalid: '{{fileName}}: member name {{name}} is invalid.';
+      warningMemberReserved: '{{fileName}}: member name {{name}} is reserved.';
+      warningMemberReservedSuffix: '{{fileName}}: member name {{name}} uses a reserved auto-suffix.';
+      warningMissingClaudeMd: 'No .claude/CLAUDE.md or CLAUDE.md was found; the lead prompt will be empty.';
+      warningUnknownTaskOwner: 'Task {{description}} referenced unknown member {{owner}} and was imported without an owner.';
+      warningUnsafeTaskCall: 'Could not safely rewrite Task call: {{call}}';
     };
     terminalWorkspace: {
       backgroundModeImage: 'Image';

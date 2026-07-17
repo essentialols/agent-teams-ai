@@ -4055,7 +4055,7 @@ packages:
     version: 0.1.0
 
   '@terminal-platform/runtime-types@file:vendor/terminal-platform/sdk/terminal-platform-runtime-types-0.1.0.tgz':
-    resolution: {integrity: sha512-l4JUyJ2WHox+NxEayWkegWVSHn+qnTpCaTXfLVRy8EobV3/UwjJ21xoi6Acm0WdCDUqsUyPIOAiJjD9M2GaV/Q==, tarball: file:vendor/terminal-platform/sdk/terminal-platform-runtime-types-0.1.0.tgz}
+    resolution: {integrity: sha512-q3BAz3OBU/rXWC1c361S4ozecUGQbMO+B4UPNzOTHzckChSKgi1jbc3nZ4VXiSDLYR0ot6+cs8zVuNNN0eIdkQ==, tarball: file:vendor/terminal-platform/sdk/terminal-platform-runtime-types-0.1.0.tgz}
     version: 0.1.0
 
   '@terminal-platform/workspace-adapter-websocket@file:vendor/terminal-platform/sdk/terminal-platform-workspace-adapter-websocket-0.1.0.tgz':
@@ -4063,15 +4063,15 @@ packages:
     version: 0.1.0
 
   '@terminal-platform/workspace-contracts@file:vendor/terminal-platform/sdk/terminal-platform-workspace-contracts-0.1.0.tgz':
-    resolution: {integrity: sha512-w6ojDcjApCSoAfiNEYGjCZ9QmBZRejDncagEkNoxFh8/eUCaxIbpchALFpKLcTQ0fxnDi3LxFOkQ/E1lZc9kVQ==, tarball: file:vendor/terminal-platform/sdk/terminal-platform-workspace-contracts-0.1.0.tgz}
+    resolution: {integrity: sha512-PwB/oE7xB4i5pzgD5J6F89Pfi1hdUE+sz4PzavvviDYa3YN2TvyODuEzgGtDz4cwgAiYOtoJxAWVs3cArp6i/g==, tarball: file:vendor/terminal-platform/sdk/terminal-platform-workspace-contracts-0.1.0.tgz}
     version: 0.1.0
 
   '@terminal-platform/workspace-core@file:vendor/terminal-platform/sdk/terminal-platform-workspace-core-0.1.0.tgz':
-    resolution: {integrity: sha512-3MkYLnMxfJFiscX2QnDByBKs5wWnfJI/Txs6DrRaZwjyMFUt5Es/Hvn62TtafYnxdoDpscletAkAT9bYlfeNmQ==, tarball: file:vendor/terminal-platform/sdk/terminal-platform-workspace-core-0.1.0.tgz}
+    resolution: {integrity: sha512-NXefBY9XOZWtyciMa+aJIJ6Fb9ss6R1kMfEBCDazK+k2VhaFdpD6+7tPK4hNQjxO2s/Cfl7P6EdvnVP0sgymLQ==, tarball: file:vendor/terminal-platform/sdk/terminal-platform-workspace-core-0.1.0.tgz}
     version: 0.1.0
 
   '@terminal-platform/workspace-elements@file:vendor/terminal-platform/sdk/terminal-platform-workspace-elements-0.1.0.tgz':
-    resolution: {integrity: sha512-ksGejh9J/THvoZVdXkjDcYGmAlni+cK5agWMJdYylQPlJLMkcvpQL/YbMQZmn7Bu4Iu3KzHijj5W5jEscVREoA==, tarball: file:vendor/terminal-platform/sdk/terminal-platform-workspace-elements-0.1.0.tgz}
+    resolution: {integrity: sha512-CTk2Q1O2AaZlfvdMb7CAfYlR02JDxr+2t9pKINYq68s2SJQEMaf0ztZBAPbK0ryqt/aVulC2Z5aJLgmOIcU5/Q==, tarball: file:vendor/terminal-platform/sdk/terminal-platform-workspace-elements-0.1.0.tgz}
     version: 0.1.0
 
   '@terminal-platform/workspace-gateway-node@file:vendor/terminal-platform/sdk/terminal-platform-workspace-gateway-node-0.1.0.tgz':
@@ -4079,7 +4079,7 @@ packages:
     version: 0.1.0
 
   '@terminal-platform/workspace-react@file:vendor/terminal-platform/sdk/terminal-platform-workspace-react-0.1.0.tgz':
-    resolution: {integrity: sha512-DtcWxD1L3cdD0wIQlMvjyzw3gGI6E4z/iMbm3i/qtfz5oGxd2Kc8vVmPNZ8lnX5lYtNY2XylbpGOXavn2HuQQg==, tarball: file:vendor/terminal-platform/sdk/terminal-platform-workspace-react-0.1.0.tgz}
+    resolution: {integrity: sha512-ZOi4EOQIA7OW6PZns50/xJEcPGh1bS9uKD/ikaPrAC/T05ZUeMCzsByZfp76lQCaYtAp8xaXl6qTISqiou5Kqw==, tarball: file:vendor/terminal-platform/sdk/terminal-platform-workspace-react-0.1.0.tgz}
     version: 0.1.0
     peerDependencies:
       react: '>=19.0.0 <20'

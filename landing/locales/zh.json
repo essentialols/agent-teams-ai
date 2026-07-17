@@ -86,7 +86,7 @@
   },
   "pricing": {
     "sectionTitle": "免费安装。内置免费模型。",
-    "sectionSubtitle": "可立即使用无需认证的免费模型 - 无需账号、API 密钥或信用卡。只有在需要更多模型时，才连接 Claude、Codex、OpenCode/OpenRouter 或其他提供商。",
+    "sectionSubtitle": "可立即使用无需认证的免费模型 - 无需账号、API 密钥或信用卡。只有在需要更多模型时，才连接 Claude Code, Codex, OpenCode/OpenRouter, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro 或其他提供商。",
     "getStarted": "立即下载",
     "popular": "免费",
     "freeModelCallout": "已包含无需认证的免费模型",
@@ -159,9 +159,9 @@
   },
   "meta": {
     "homeTitle": "Agent Teams - 面向开发者的 AI 智能体编排",
-    "homeDescription": "面向 AI 智能体团队的免费开源桌面应用。先使用无需认证的免费模型，需要更多模型时再连接 Claude、Codex 或 OpenCode。",
+    "homeDescription": "面向 AI 智能体团队的免费开源桌面应用。先使用无需认证的免费模型，需要更多模型时再连接 Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro。",
     "downloadTitle": "下载适用于 macOS、Windows 和 Linux 的 Agent Teams",
-    "downloadDescription": "下载适用于 macOS、Windows 和 Linux 的 Agent Teams。面向 Claude、Codex 和 OpenCode 智能体团队的免费开源桌面应用。"
+    "downloadDescription": "下载适用于 macOS、Windows 和 Linux 的 Agent Teams。面向 Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro 智能体团队的免费开源桌面应用。"
   },
   "error": {
     "notFoundTitle": "页面未找到",

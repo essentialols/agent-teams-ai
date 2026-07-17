@@ -118,7 +118,7 @@
       "teamName": "Teamnaam"
     },
     "launchAfterCreate": {
-      "description": "Start het team meteen via lokale Claude CLI.",
+      "description": "Start het team onmiddellijk met de ervoor geconfigureerde agentruntimes.",
       "label": "Commando uitvoeren na aanmaken"
     },
     "localOnly": "Alleen beschikbaar in lokale Electron-modus.",
@@ -218,7 +218,7 @@
       "liveRenameBlocked": "Bestaande teamleden kunnen niet worden hernoemd terwijl het team live is. Hernoemd: {{names}}",
       "memberNameEmpty": "Ledennaam mag niet leeg zijn",
       "memberNameInvalid": "Ledennaam moet beginnen met een alfanumeriek teken, gebruik alleen [a-zA-Z0-9._-], max. 128 tekens",
-      "memberNameNumericSuffix": "Ledennaam \"{{name}}\" is niet toegestaan (gereserveerd voor de automatische suffix van Claude CLI). Gebruik in plaats daarvan \"{{base}}\".",
+      "memberNameNumericSuffix": "Ledennaam \"{{name}}\" is niet toegestaan (gereserveerd voor runtimebeheerde numerieke achtervoegsels). Gebruik in plaats daarvan \"{{base}}\".",
       "memberNameReserved": "Ledennaam \"{{name}}\" is gereserveerd",
       "memberNamesUnique": "Ledennamen moeten uniek zijn voordat je opslaat",
       "newLiveTeammates": "Voeg nieuwe teamleden toe via het speciale dialoogvenster Lid toevoegen terwijl het team live is. Team bewerken ondersteunt alleen het bijwerken van bestaande teamleden.",
@@ -1334,13 +1334,13 @@
       "workingDirectory": "Werkdirectory:"
     },
     "description": {
-      "createSchedule": "Plan automatische uitvoering van Claude-taken",
+      "createSchedule": "Plan automatische uitvoering van agenttaken",
       "createScheduleForTeam": "Plan automatische uitvoeringen voor team \"{{team}}\"",
       "editSchedule": "Planning bewerken voor team \"{{team}}\"",
       "launchPrefix": "Start team",
-      "launchSuffix": "via lokale Claude CLI.",
+      "launchSuffix": "met de ervoor geconfigureerde agentruntimes.",
       "relaunchPrefix": "Stop de huidige uitvoering voor",
-      "relaunchSuffix": "en start het opnieuw via lokale Claude CLI."
+      "relaunchSuffix": "en start het opnieuw met de ervoor geconfigureerde agentruntimes."
     },
     "prepare": {
       "action": {
@@ -1363,7 +1363,7 @@
       "oneShotPrefix": "Deze prompt wordt doorgegeven aan",
       "oneShotSuffix": "voor eenmalige uitvoering",
       "saved": "Opgeslagen",
-      "schedulePlaceholder": "Instructies voor Claude om volgens planning uit te voeren...",
+      "schedulePlaceholder": "Instructies die de teamlead volgens planning moet uitvoeren...",
       "teamLeadOptional": "Prompt voor teamlead (optioneel)",
       "teamLeadPlaceholder": "Instructies voor teamlead..."
     },
@@ -1412,8 +1412,37 @@
       "description": "Houd de startflow gericht op het projectpad en klap dit alleen uit wanneer je extra controle wilt."
     }
   },
+  "teamImport": {
+    "cancel": "Annuleren",
+    "chooseFolder": "Map kiezen",
+    "createDraft": "Conceptteam maken",
+    "createFailed": "Het geïmporteerde team kon niet worden gemaakt",
+    "creating": "Bezig met maken...",
+    "description": "Kies een lokale map van een agentteam en controleer alle geïmporteerde instructies voordat je een concept maakt.",
+    "inspectFailed": "De geselecteerde map kon niet worden gecontroleerd",
+    "invalidTeamName": "Gebruik kleine letters, cijfers en koppeltekens in kebab-case, met maximaal 64 tekens.",
+    "leadPrompt": "Leadprompt",
+    "members": "Leden ({{count}})",
+    "projectPath": "Projectpad",
+    "scanning": "Bezig met scannen...",
+    "selectPrompt": "Kies een map om een voorbeeld van het geïmporteerde team te bekijken.",
+    "skills": "Gevonden skills ({{count}})",
+    "summary": "Maak {{teamName}} met {{count}} leden.",
+    "teamName": "Teamnaam",
+    "teamNameRequired": "Teamnaam is verplicht.",
+    "teamNameReserved": "Deze teamnaam is gereserveerd door het besturingssysteem.",
+    "title": "Agentteam importeren",
+    "warningDuplicateMember": "{{fileName}}: de dubbele lidnaam {{name}} is overgeslagen.",
+    "warningMemberInvalid": "{{fileName}}: de lidnaam {{name}} is ongeldig.",
+    "warningMemberReserved": "{{fileName}}: de lidnaam {{name}} is gereserveerd.",
+    "warningMemberReservedSuffix": "{{fileName}}: de lidnaam {{name}} gebruikt een gereserveerd automatisch achtervoegsel.",
+    "warningMissingClaudeMd": ".claude/CLAUDE.md en CLAUDE.md zijn niet gevonden; de leadprompt blijft leeg.",
+    "warningUnknownTaskOwner": "Taak {{description}} verwees naar het onbekende lid {{owner}} en is zonder eigenaar geïmporteerd.",
+    "warningUnsafeTaskCall": "De Task-aanroep kon niet veilig worden herschreven: {{call}}"
+  },
   "list": {
     "actions": {
+      "importTeam": "Importeren uit map",
       "copyTeam": "Team kopiëren",
       "createTeam": "Team aanmaken",
       "organizationMap": "Org Map",
@@ -1554,7 +1583,7 @@
       "crossTeamPlaceholder": "Bericht tussen teams naar {{team}}...",
       "teamFallback": "team",
       "placeholder": "Schrijf een bericht... (Enter om te verzenden, Shift+Enter voor nieuwe regel)",
-      "slashTip": "Tip: Je kunt \"/\" gebruiken om Claude-commando's uit te voeren.",
+      "slashTip": "Tip: Gebruik \"/\" om opdrachten uit te voeren die door de runtime van de teamlead worden ondersteund.",
       "charsLeft_few": "{{count}} tekens over",
       "charsLeft_many": "{{count}} tekens over"
     },
@@ -1953,7 +1982,7 @@
     },
     "empty": {
       "title": "Nog geen planningen",
-      "description": "Maak een planning aan om Claude-taken automatisch op een cron-schema uit te voeren."
+      "description": "Maak een planning aan om teamtaken automatisch volgens een cron-schema uit te voeren."
     },
     "title": "Planningen",
     "status": {
@@ -2110,11 +2139,11 @@
         "openCodeAccessDenied": "Herstel de mapmachtigingen of verplaats het project naar een door de gebruiker beschrijfbare map. Als administrator uitvoeren is slechts een tijdelijke oplossing.",
         "openCodeBridgeNoOutput": "Start de app en de OpenCode-runtime opnieuw en probeer het opnieuw. Als het zich herhaalt, kopieer dan de diagnostiek.",
         "workingDirectoryMissing": "Kies een bestaande werkdirectory en open dit dialoogvenster opnieuw.",
-        "authenticationRequired": "Authenticeer de vereiste provider in Claude CLI en open dit dialoogvenster opnieuw.",
+        "authenticationRequired": "Verifieer de vereiste provider in de daarvoor geconfigureerde runtime en open dit dialoogvenster opnieuw.",
         "runtimeProviderNotConfigured": "Configureer de geselecteerde provider-runtime en open dit dialoogvenster opnieuw.",
         "openCodeRuntimeMissing": "Installeer of probeer de OpenCode-runtime opnieuw vanuit de providerstatuskaart en open dit dialoogvenster opnieuw.",
         "openCodeAppMcpUnreachable": "Probeer de start opnieuw om de OpenCode-app-MCP-bridge te vernieuwen. Als het zich herhaalt, start dan de app en de OpenCode-runtime opnieuw.",
-        "cliBinaryMissing": "Zorg ervoor dat de lokale Claude CLI-binary bestaat en kan worden gestart, en open dit dialoogvenster opnieuw.",
+        "cliBinaryMissing": "Controleer of de vereiste lokale runtime is geïnstalleerd en kan worden gestart en open dit dialoogvenster opnieuw.",
         "default": "Los het bovenstaande probleem op en open dit dialoogvenster opnieuw.",
         "openCodeNodeModulesSymlinkPermission": "Voer Agent Teams AI uit als administrator en probeer de start opnieuw."
       }

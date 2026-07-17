@@ -1035,6 +1035,54 @@ controller.messages.sendMessage({
     expect(second.linkedCommentsCreated).toBe(0);
   });
 
+  it('holds the board lock while reconcileArtifacts syncs linked comments', () => {
+    const taskStore = require('../src/internal/taskStore.js');
+    const { getTeamBoardLockContext } = require('../src/internal/boardLock.js');
+
+    const claudeDir = makeClaudeDir();
+    const controller = createController({ teamName: 'my-team', claudeDir });
+    const task = controller.tasks.createTask({ subject: 'Locked reconcile', owner: 'bob' });
+    const paths = { teamDir: path.join(claudeDir, 'teams', 'my-team') };
+
+    const inboxDir = path.join(claudeDir, 'teams', 'my-team', 'inboxes');
+    fs.mkdirSync(inboxDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(inboxDir, 'bob.json'),
+      JSON.stringify(
+        [
+          {
+            from: 'alice',
+            to: 'bob',
+            summary: `Please revisit #${task.displayId}`,
+            messageId: 'lock-m-1',
+            timestamp: '2026-02-23T10:00:00.000Z',
+            read: false,
+            text: 'Sync this comment under the lock.',
+          },
+        ],
+        null,
+        2
+      )
+    );
+
+    const original = taskStore.addTaskComment;
+    let lockHeldDuringWrite = null;
+    const spy = vi.spyOn(taskStore, 'addTaskComment').mockImplementation((...args) => {
+      // The write must run under the board lock so a concurrent cross-process
+      // mutation cannot be clobbered by reconcile's read-modify-write.
+      lockHeldDuringWrite = getTeamBoardLockContext(paths) !== undefined;
+      return original(...args);
+    });
+
+    try {
+      const result = controller.maintenance.reconcileArtifacts({ reason: 'manual' });
+      expect(result.linkedCommentsCreated).toBe(1);
+      expect(lockHeldDuringWrite).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('tracks lifecycle history and intervals without duplicate same-status transitions', () => {
     const claudeDir = makeClaudeDir();
     const controller = createController({ teamName: 'my-team', claudeDir });

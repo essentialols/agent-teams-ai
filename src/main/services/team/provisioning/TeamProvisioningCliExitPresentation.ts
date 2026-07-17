@@ -202,7 +202,7 @@ export function buildDeterministicBootstrapExitFailure(
     return {
       message: 'Launch bootstrap was not confirmed',
       error:
-        'Codex runtime exited before deterministic team bootstrap started. No team_bootstrap event was received.',
+        'Agent runtime exited before deterministic team bootstrap started. No team_bootstrap event was received.',
     };
   }
 
@@ -212,13 +212,13 @@ export function buildDeterministicBootstrapExitFailure(
       : run.lastDeterministicBootstrapEvent;
     return {
       message: 'Launch bootstrap was not confirmed',
-      error: `Codex runtime exited during deterministic team bootstrap before teammate spawning started. Last bootstrap event: ${lastStage}.`,
+      error: `Agent runtime exited during deterministic team bootstrap before teammate spawning started. Last bootstrap event: ${lastStage}.`,
     };
   }
 
   return {
     message: 'Launch bootstrap was not confirmed',
-    error: `Bootstrap was not confirmed before the Codex runtime exited. Pending teammates: ${formatPendingBootstrapMemberNames(run)}.`,
+    error: `Bootstrap was not confirmed before the agent runtime exited. Pending teammates: ${formatPendingBootstrapMemberNames(run)}.`,
   };
 }
 
@@ -233,8 +233,7 @@ export function buildCliExitFailurePresentation(
       return {
         error:
           `${options.cliCommandLabel} reports it is not authenticated ("Please run /login"). ` +
-          'Run the CLI in a normal terminal and complete login, then retry. ' +
-          'For automation/headless use, set `ANTHROPIC_API_KEY` for `-p` mode.',
+          'Open the Dashboard, authenticate the required provider, and retry.',
       };
     }
     const sanitized = buildSanitizedCliExitError(run);
@@ -249,7 +248,7 @@ export function buildCliExitFailurePresentation(
 
   if (code === 1) {
     return {
-      error: `${options.cliCommandLabel} exited with code 1 without user-facing stdout/stderr. Typical causes: missing auth/onboarding, interactive TTY requirements, or an early bootstrap/runtime crash. Check \`~/.claude/debug/latest\` for the real stack and retry.`,
+      error: `${options.cliCommandLabel} exited with code 1 without user-facing stdout/stderr. Typical causes: missing auth/onboarding, interactive TTY requirements, or an early bootstrap/runtime crash. Open runtime diagnostics and retry.`,
     };
   }
 

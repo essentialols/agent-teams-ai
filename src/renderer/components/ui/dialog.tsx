@@ -26,31 +26,39 @@ const DialogOverlay = React.forwardRef<
 ));
 DialogOverlay.displayName = DialogPrimitive.Overlay.displayName;
 
+type DialogContentProps = React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & {
+  closeDisabled?: boolean;
+};
+
 const DialogContent = React.forwardRef<
   React.ComponentRef<typeof DialogPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, children, ...props }, ref) => {
+  DialogContentProps
+>(({ className, children, closeDisabled = false, ...props }, ref) => {
   const { t } = useAppTranslation('common');
 
   return (
     <DialogPortal>
       <DialogOverlay />
       <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div className="pointer-events-auto relative">
-          <DialogPrimitive.Close className="absolute -right-4 -top-4 z-10 rounded-full bg-[var(--color-surface-raised)] p-1.5 opacity-70 shadow-lg ring-1 ring-[var(--color-border)] transition-opacity hover:opacity-100 focus:outline-none focus:ring-1 focus:ring-[var(--color-border-emphasis)] disabled:pointer-events-none">
-            <X className="size-4 text-[var(--color-text-muted)]" />
-            <span className="sr-only">{t('actions.close')}</span>
-          </DialogPrimitive.Close>
+        <div className="pointer-events-auto relative w-full max-w-full">
           <DialogPrimitive.Content
             ref={ref}
             className={cn(
-              'grid w-full max-w-lg gap-4 border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 sm:rounded-lg',
+              'relative mx-auto grid w-full max-w-lg grid-cols-[minmax(0,1fr)] gap-4 border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 sm:rounded-lg',
               'max-h-[90vh] min-h-0 overflow-y-auto overflow-x-hidden',
               'focus:outline-none',
               className
             )}
             {...props}
           >
+            <DialogPrimitive.Close
+              disabled={closeDisabled}
+              aria-disabled={closeDisabled}
+              className="absolute right-3 top-3 z-10 rounded-full bg-[var(--color-surface-raised)] p-1.5 opacity-70 shadow-sm ring-1 ring-[var(--color-border)] transition-opacity hover:opacity-100 focus:outline-none focus:ring-1 focus:ring-[var(--color-border-emphasis)] disabled:pointer-events-none disabled:opacity-30"
+            >
+              <X className="size-4 text-[var(--color-text-muted)]" />
+              <span className="sr-only">{t('actions.close')}</span>
+            </DialogPrimitive.Close>
             {children}
           </DialogPrimitive.Content>
         </div>

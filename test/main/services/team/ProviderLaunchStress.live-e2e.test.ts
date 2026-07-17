@@ -427,7 +427,7 @@ async function runPostLaunchWorkProofCheck(
       const hasMarkerComment = current.comments?.some((comment) =>
         comment.text.includes(`${marker}:done`)
       );
-      return Boolean(hasMarkerComment || current.status === 'completed');
+      return Boolean(hasMarkerComment && current.status === 'completed');
     },
     POST_LAUNCH_WORK_TIMEOUT_MS,
     2_000,

@@ -22,7 +22,7 @@ export enum LiveInboxRelayKind {
 export interface LiveInboxRelayResult {
   kind: LiveInboxRelayKind;
   relayed: number;
-  /** Exact scoped message confirmed by the recent native-lead delivery ledger. */
+  /** Exact scoped message confirmed by a native-lead relay or its recent-delivery ledger. */
   recentlyDeliveredMessageId?: string;
   diagnostics?: string[];
   lastDelivery?: OpenCodeMemberInboxDelivery;
@@ -95,9 +95,9 @@ export async function relayInboxFileToLiveRecipientWithPorts(
         : await ports.relayLeadInboxMessages(teamName)
       : 0;
     const recentlyDeliveredMessageId =
-      relayed === 0 &&
       leadOptions?.onlyMessageId &&
-      ports.wasRecentlyDeliveredToLead(teamName, leadOptions.onlyMessageId)
+      (relayed > 0 ||
+        (relayed === 0 && ports.wasRecentlyDeliveredToLead(teamName, leadOptions.onlyMessageId)))
         ? leadOptions.onlyMessageId
         : undefined;
     return {

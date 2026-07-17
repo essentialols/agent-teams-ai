@@ -62,9 +62,10 @@ function createService() {
     isTeamAlive: vi.fn(() => false),
     relayInboxFileToLiveRecipient: vi.fn<
       TeamCrossTeamMessagingApi['relayInboxFileToLiveRecipient']
-    >(async () => ({
-      kind: 'opencode_member',
+    >(async (_teamName, _memberName, options) => ({
+      kind: 'native_lead',
       relayed: 1,
+      ...(options?.onlyMessageId ? { recentlyDeliveredMessageId: options.onlyMessageId } : {}),
     })),
     relayLeadInboxMessages: vi.fn(async () => 0),
   };
@@ -173,7 +174,8 @@ describe('CrossTeamService runtime delivery dedupe', () => {
     const { service, messaging } = createService();
     vi.mocked(messaging.relayInboxFileToLiveRecipient).mockResolvedValue({
       kind: 'native_lead',
-      relayed: 0,
+      relayed: 1,
+      recentlyDeliveredMessageId: 'unrelated-message',
       diagnostics: ['unrelated native lead relay completed for another message'],
     });
 
@@ -294,7 +296,7 @@ describe('CrossTeamService runtime delivery dedupe', () => {
 
   it('dedupes a cross-run runtime retry that reuses the conversation identity with a new run-scoped message id', async () => {
     vi.useFakeTimers({ now: new Date('2026-07-09T00:00:00.000Z') });
-    const { service, inboxWriter, sentToInbox } = createService();
+    const { service, inboxWriter, messaging, sentToInbox } = createService();
 
     // Run R1: destinationMessageId is hash(idempotencyKey, runId, team) - run-scoped.
     await expect(
@@ -333,5 +335,12 @@ describe('CrossTeamService runtime delivery dedupe', () => {
     expect(sentToInbox.map((entry) => entry.message.messageId)).toEqual([
       'runtime-delivery-run1-abc',
     ]);
+    expect(messaging.relayInboxFileToLiveRecipient).toHaveBeenCalledTimes(2);
+    expect(messaging.relayInboxFileToLiveRecipient).toHaveBeenNthCalledWith(
+      2,
+      'target-team',
+      'team-lead',
+      { onlyMessageId: 'runtime-delivery-run1-abc' }
+    );
   });
 });

@@ -95,8 +95,10 @@ describe('TeamProvisioningLiveInboxRelayRouting', () => {
     ).resolves.toEqual({
       kind: LiveInboxRelayKind.NativeLead,
       relayed: 1,
+      recentlyDeliveredMessageId: 'message-1',
     });
     expect(relayLeadInboxMessages).toHaveBeenCalledWith('team-a', { onlyMessageId: 'message-1' });
+    expect(ports.wasRecentlyDeliveredToLead).not.toHaveBeenCalled();
   });
 
   it('returns exact recent delivery proof for a scoped native lead message', async () => {

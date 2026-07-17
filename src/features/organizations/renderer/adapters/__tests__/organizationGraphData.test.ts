@@ -736,7 +736,9 @@ describe('buildOrganizationGraphData', () => {
     const graph = buildOrganizationGraphData(viewModel);
 
     expect(
-      graph.nodes.filter((node) => !node.layoutOnly).map((node) => [node.id, node.kind, node.state])
+      graph.nodes
+        .filter((node) => !node.layoutOnly)
+        .map((node) => [node.id, node.kind, node.state])
     ).toEqual([
       ['team:alpha', 'member', 'active'],
       ['team:beta', 'member', 'terminated'],
@@ -768,7 +770,8 @@ describe('buildOrganizationGraphData', () => {
     expect(graph.particles).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          edgeId: 'org-message:communicates:team:alpha:team:beta:team:alpha->team:beta',
+          edgeId:
+            'org-message:communicates:team:alpha:team:beta:team:alpha->team:beta',
           kind: 'inbox_message',
           preview: 'Need QA help',
         }),

@@ -80,6 +80,8 @@ describe("Codex provider adapter", () => {
       "--config",
       'approval_policy="never"',
       "--config",
+      'cli_auth_credentials_store="file"',
+      "--config",
       'model_reasoning_effort="low"',
       "--config",
       'model_verbosity="low"',

@@ -284,6 +284,8 @@ export function buildCodexJsonExecArgs(input: {
     "--config",
     'approval_policy="never"',
     "--config",
+    'cli_auth_credentials_store="file"',
+    "--config",
     `model_reasoning_effort=${JSON.stringify(input.reasoningEffort)}`,
     ...(input.serviceTier
       ? [

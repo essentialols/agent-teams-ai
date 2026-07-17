@@ -42,12 +42,14 @@ describe('ReviewDecisionStore', () => {
       fileDecisions: { 'file-a': 'rejected' },
       hunkContextHashesByFile: undefined,
       reviewActionHistory: [],
+      revision: 1,
     });
     await expect(store.load('demo', 'task-123', 'task:123:req:b:src:two')).resolves.toEqual({
       hunkDecisions: { 'file-b:0': 'accepted' },
       fileDecisions: { 'file-b': 'accepted' },
       hunkContextHashesByFile: undefined,
       reviewActionHistory: [],
+      revision: 1,
     });
   });
 
@@ -139,6 +141,7 @@ describe('ReviewDecisionStore', () => {
       fileDecisions: { 'file-b': 'accepted' },
       hunkContextHashesByFile: undefined,
       reviewActionHistory: [],
+      revision: 1,
     });
   });
 
@@ -163,10 +166,11 @@ describe('ReviewDecisionStore', () => {
       fileDecisions: { 'file-a': 'rejected' },
       hunkContextHashesByFile: undefined,
       reviewActionHistory: [],
+      revision: 0,
     });
   });
 
-  it('writes versioned v3 payloads under the scoped directory', async () => {
+  it('writes revisioned v4 payloads under the scoped directory', async () => {
     const { ReviewDecisionStore } = await import('@main/services/team/ReviewDecisionStore');
     const store = new ReviewDecisionStore();
 
@@ -188,9 +192,80 @@ describe('ReviewDecisionStore', () => {
 
     const payload: unknown = JSON.parse(await readFile(path.join(scopeDir, entries[0]!), 'utf8'));
     expect(payload).toMatchObject({
-      version: 3,
+      version: 4,
       scopeKey: 'task-123',
       scopeToken: 'task:123:req:a:src:one',
+      revision: 1,
+    });
+  });
+
+  it('rejects stale CAS writes and makes a committed mutation retry idempotent', async () => {
+    const { ReviewDecisionStore } = await import('@main/services/team/ReviewDecisionStore');
+    const store = new ReviewDecisionStore();
+    const scopeToken = 'task:123:req:cas:src:one';
+    const target = {
+      scopeToken,
+      hunkDecisions: { 'file:0': 'rejected' as const },
+      fileDecisions: {},
+      expectedRevision: 0,
+      mutationId: 'mutation-1',
+    };
+
+    await expect(store.save('demo', 'task-123', target)).resolves.toBe(1);
+    await expect(store.save('demo', 'task-123', target)).resolves.toBe(1);
+    await expect(
+      store.save('demo', 'task-123', {
+        ...target,
+        mutationId: 'mutation-2',
+      })
+    ).rejects.toThrow('Review decisions changed; refusing stale state overwrite');
+    await expect(
+      store.save('demo', 'task-123', {
+        ...target,
+        hunkDecisions: { 'file:0': 'accepted' },
+      })
+    ).rejects.toThrow('Review decisions changed; refusing stale state overwrite');
+  });
+
+  it('migrates a legacy revision zero snapshot through the first CAS write', async () => {
+    const { ReviewDecisionStore } = await import('@main/services/team/ReviewDecisionStore');
+    const store = new ReviewDecisionStore();
+    const scopeToken = 'task:123:req:v3:src:one';
+    const scopeDir = path.join(
+      teamsBasePath,
+      'demo',
+      'review-decisions',
+      'v2',
+      encodeURIComponent('task-123')
+    );
+    await mkdir(scopeDir, { recursive: true });
+    const { createHash } = await import('crypto');
+    const scopeHash = createHash('sha256').update(scopeToken).digest('hex');
+    await writeFile(
+      path.join(scopeDir, `${scopeHash}.json`),
+      JSON.stringify({
+        version: 3,
+        scopeKey: 'task-123',
+        scopeToken,
+        hunkDecisions: { 'file:0': 'accepted' },
+        fileDecisions: {},
+        reviewActionHistory: [],
+        updatedAt: '2026-07-17T00:00:00.000Z',
+      }),
+      'utf8'
+    );
+
+    await expect(
+      store.save('demo', 'task-123', {
+        scopeToken,
+        hunkDecisions: {},
+        fileDecisions: {},
+        expectedRevision: 0,
+      })
+    ).resolves.toBe(1);
+    await expect(store.load('demo', 'task-123', scopeToken)).resolves.toMatchObject({
+      hunkDecisions: {},
+      revision: 1,
     });
   });
 
@@ -250,6 +325,7 @@ describe('ReviewDecisionStore', () => {
           action: { filePath: '/repo/stable.ts', originalIndex: 0 },
         },
       ],
+      revision: 2,
     });
   });
 
@@ -309,6 +385,7 @@ describe('ReviewDecisionStore', () => {
       fileDecisions: {},
       hunkContextHashesByFile: undefined,
       reviewActionHistory: [],
+      revision: 0,
     });
   });
 

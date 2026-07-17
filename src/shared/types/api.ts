@@ -761,7 +761,7 @@ export interface ReviewAPI {
     snippets?: SnippetDiff[]
   ) => Promise<FileChangeWithContent>;
   applyDecisions: (request: ApplyReviewRequest) => Promise<ApplyReviewResult>;
-  executeMutation: (request: ExecuteReviewMutationRequest) => Promise<void>;
+  executeMutation: (request: ExecuteReviewMutationRequest) => Promise<{ decisionRevision: number }>;
   // Phase 2
   checkConflict: (
     scope: ReviewFileScope,
@@ -820,6 +820,7 @@ export interface ReviewAPI {
      */
     hunkContextHashesByFile?: Record<string, Record<number, string>>;
     reviewActionHistory: ReviewUndoAction[];
+    revision: number;
   } | null>;
   saveDecisions: (
     teamName: string,
@@ -828,9 +829,15 @@ export interface ReviewAPI {
     hunkDecisions: Record<string, HunkDecision>,
     fileDecisions: Record<string, HunkDecision>,
     hunkContextHashesByFile?: Record<string, Record<number, string>>,
-    reviewActionHistory?: ReviewUndoAction[]
-  ) => Promise<void>;
-  clearDecisions: (teamName: string, scopeKey: string, scopeToken?: string) => Promise<void>;
+    reviewActionHistory?: ReviewUndoAction[],
+    expectedRevision?: number
+  ) => Promise<{ revision: number }>;
+  clearDecisions: (
+    teamName: string,
+    scopeKey: string,
+    scopeToken?: string,
+    expectedRevision?: number
+  ) => Promise<{ revision: number }>;
   loadDraftHistory: (
     teamName: string,
     scopeKey: string,

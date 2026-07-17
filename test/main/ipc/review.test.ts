@@ -223,12 +223,14 @@ describe('review IPC path confinement', () => {
       'scope-token',
       {},
       {},
-      null
+      null,
+      [],
+      0
     );
 
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error).toContain('Invalid review decision team name');
+      expect(result.error).toContain('Invalid review');
     }
   });
 
@@ -247,9 +249,10 @@ describe('review IPC path confinement', () => {
       { [`${projectFile}:0`]: 'accepted' },
       {},
       null,
-      [action]
+      [action],
+      0
     );
-    expect(saved).toEqual({ success: true, data: undefined });
+    expect(saved).toEqual({ success: true, data: { revision: 1 } });
 
     const loaded = await ipcMain.invoke(
       REVIEW_LOAD_DECISIONS,
@@ -264,6 +267,7 @@ describe('review IPC path confinement', () => {
         fileDecisions: {},
         hunkContextHashesByFile: undefined,
         reviewActionHistory: [action],
+        revision: 1,
       },
     });
   });
@@ -387,6 +391,7 @@ describe('review IPC path confinement', () => {
         fileDecisions: {},
         hunkContextHashesByFile: { 'stable-change-key': { 0: 'context-hash' } },
         reviewActionHistory: [],
+        revision: 1,
       },
     });
     expect(applier.applyReviewDecisions).toHaveBeenCalledTimes(1);
@@ -399,9 +404,11 @@ describe('review IPC path confinement', () => {
       persistenceScope.scopeToken,
       { 'stable-change-key:0': 'rejected' },
       {},
-      { 'stable-change-key': { 0: 'context-hash' } }
+      { 'stable-change-key': { 0: 'context-hash' } },
+      [],
+      1
     );
-    expect(saved).toEqual({ success: true, data: undefined });
+    expect(saved).toEqual({ success: true, data: { revision: 2 } });
     await expect(journal.list('safe-team', persistenceScope)).resolves.toEqual([]);
   });
 
@@ -456,7 +463,7 @@ describe('review IPC path confinement', () => {
       persistenceScope.scopeKey,
       persistenceScope.scopeToken
     );
-    expect(clear).toEqual({ success: true, data: undefined });
+    expect(clear).toEqual({ success: true, data: { revision: 0 } });
     await expect(journal.list('safe-team', persistenceScope)).resolves.toEqual([]);
   });
 
@@ -486,7 +493,8 @@ describe('review IPC path confinement', () => {
       { [`${projectFile}:0`]: 'rejected' },
       {},
       null,
-      [action]
+      [action],
+      0
     );
 
     const result = await ipcMain.invoke(REVIEW_EXECUTE_MUTATION, {
@@ -509,9 +517,10 @@ describe('review IPC path confinement', () => {
         hunkContextHashesByFile: {},
         reviewActionHistory: [],
       },
+      expectedDecisionRevision: 1,
     });
 
-    expect(result).toEqual({ success: true, data: undefined });
+    expect(result).toEqual({ success: true, data: { decisionRevision: 2 } });
     expect(applier.saveEditedFile).toHaveBeenCalledWith(projectFile, 'restored\n', 'project\n');
     await expect(
       ipcMain.invoke(
@@ -551,7 +560,8 @@ describe('review IPC path confinement', () => {
           kind: 'hunk',
           action: { filePath: projectFile, originalIndex: 0 },
         },
-      ]
+      ],
+      0
     );
     applier.saveEditedFile.mockClear();
 
@@ -574,6 +584,7 @@ describe('review IPC path confinement', () => {
         fileDecisions: {},
         reviewActionHistory: [],
       },
+      expectedDecisionRevision: 1,
     });
 
     expect(result).toEqual({
@@ -581,6 +592,78 @@ describe('review IPC path confinement', () => {
       error: 'Review history changed; refusing stale Undo',
     });
     expect(applier.saveEditedFile).not.toHaveBeenCalled();
+  });
+
+  it('refuses a delayed CAS clear after a newer WAL commit', async () => {
+    const persistenceScope = {
+      scopeKey: 'agent-worker',
+      scopeToken: 'agent:worker:content:stale-clear',
+    };
+    const action = {
+      id: 'stale-clear-action',
+      createdAt: '2026-07-17T12:00:00.000Z',
+      kind: 'disk' as const,
+      action: {
+        snapshot: {
+          filePath: projectFile,
+          beforeContent: 'restored\n',
+          afterContent: 'project\n',
+        },
+      },
+    };
+    await ipcMain.invoke(
+      REVIEW_SAVE_DECISIONS,
+      'safe-team',
+      persistenceScope.scopeKey,
+      persistenceScope.scopeToken,
+      {},
+      {},
+      null,
+      [action],
+      0
+    );
+    await ipcMain.invoke(REVIEW_EXECUTE_MUTATION, {
+      scope: { teamName: 'safe-team', memberName: 'worker' },
+      decisionPersistenceScope: persistenceScope,
+      kind: 'undo',
+      expectedTopActionId: action.id,
+      expectedDecisionRevision: 1,
+      diskSteps: [
+        {
+          id: `${action.id}:0`,
+          type: 'write',
+          filePath: projectFile,
+          expectedContent: 'project\n',
+          content: 'restored\n',
+        },
+      ],
+      persistedState: {
+        hunkDecisions: {},
+        fileDecisions: {},
+        hunkContextHashesByFile: {},
+        reviewActionHistory: [],
+      },
+    });
+
+    const staleClear = await ipcMain.invoke(
+      REVIEW_CLEAR_DECISIONS,
+      'safe-team',
+      persistenceScope.scopeKey,
+      persistenceScope.scopeToken,
+      1
+    );
+    expect(staleClear).toEqual({
+      success: false,
+      error: 'Review decisions changed; refusing stale state overwrite',
+    });
+    await expect(
+      ipcMain.invoke(
+        REVIEW_LOAD_DECISIONS,
+        'safe-team',
+        persistenceScope.scopeKey,
+        persistenceScope.scopeToken
+      )
+    ).resolves.toMatchObject({ success: true, data: { revision: 2 } });
   });
 
   it('resumes a multi-file Undo from the first uncheckpointed disk step', async () => {
@@ -638,6 +721,66 @@ describe('review IPC path confinement', () => {
       'restored-worktree\n',
       'worktree\n'
     );
+    await expect(journal.list('safe-team', persistenceScope)).resolves.toEqual([]);
+  });
+
+  it('does not increment revision twice after a crash following the decision commit', async () => {
+    const { ReviewDecisionStore } = await import('@main/services/team/ReviewDecisionStore');
+    const { ReviewMutationJournalStore } =
+      await import('@main/services/team/ReviewMutationJournalStore');
+    const journal = new ReviewMutationJournalStore();
+    const store = new ReviewDecisionStore();
+    const persistenceScope = {
+      scopeKey: 'agent-worker',
+      scopeToken: 'agent:worker:content:decision-commit-crash',
+    };
+    const persistedState = {
+      hunkDecisions: { 'stable-change:0': 'accepted' as const },
+      fileDecisions: {},
+      hunkContextHashesByFile: {},
+      reviewActionHistory: [],
+    };
+    const prepared = await journal.prepare({
+      teamName: 'safe-team',
+      persistenceScope,
+      reviewScope: { teamName: 'safe-team', memberName: 'worker' },
+      kind: 'undo',
+      decisions: [],
+      fileContents: [],
+      diskSteps: [
+        {
+          id: 'already-applied:0',
+          type: 'write',
+          filePath: projectFile,
+          expectedContent: 'project\n',
+          content: 'restored\n',
+          status: 'applied',
+        },
+      ],
+      persistedState,
+      expectedDecisionRevision: 0,
+    });
+    const diskApplied = await journal.transition(prepared, 'prepared', 'disk_applied');
+    await store.save('safe-team', persistenceScope.scopeKey, {
+      scopeToken: persistenceScope.scopeToken,
+      ...persistedState,
+      expectedRevision: 0,
+      mutationId: diskApplied.id,
+    });
+    applier.saveEditedFile.mockClear();
+
+    const recovered = await ipcMain.invoke(
+      REVIEW_LOAD_DECISIONS,
+      'safe-team',
+      persistenceScope.scopeKey,
+      persistenceScope.scopeToken
+    );
+
+    expect(recovered).toMatchObject({
+      success: true,
+      data: { hunkDecisions: { 'stable-change:0': 'accepted' }, revision: 1 },
+    });
+    expect(applier.saveEditedFile).not.toHaveBeenCalled();
     await expect(journal.list('safe-team', persistenceScope)).resolves.toEqual([]);
   });
 
@@ -829,6 +972,7 @@ describe('review IPC path confinement', () => {
       teamName: 'safe-team',
       memberName: 'worker',
       decisionPersistenceScope: persistenceScope,
+      expectedDecisionRevision: 0,
       persistedState: {
         hunkDecisions: { 'stable-change-key:0': 'rejected' },
         fileDecisions: { 'stable-change-key': 'rejected' },
@@ -887,6 +1031,7 @@ describe('review IPC path confinement', () => {
       teamName: 'safe-team',
       memberName: 'worker',
       decisionPersistenceScope: persistenceScope,
+      expectedDecisionRevision: 0,
       persistedState: {
         hunkDecisions: {},
         fileDecisions: { 'project-change': 'rejected', 'worktree-change': 'rejected' },
@@ -980,6 +1125,7 @@ describe('review IPC path confinement', () => {
       teamName: 'safe-team',
       memberName: 'worker',
       decisionPersistenceScope: persistenceScope,
+      expectedDecisionRevision: 0,
       persistedState: {
         hunkDecisions: { 'stable-change-key:0': 'rejected' },
         fileDecisions: {},

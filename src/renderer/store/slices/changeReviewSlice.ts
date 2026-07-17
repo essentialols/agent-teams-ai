@@ -50,6 +50,7 @@ let latestDecisionLoadRequestToken = 0;
 const persistDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const pendingPersistDecisionWrites = new Map<string, () => Promise<void>>();
 const persistDecisionWriteChains = new Map<string, Promise<void>>();
+const decisionRevisionByScope = new Map<string, number>();
 const PERSIST_DEBOUNCE_MS = 500;
 
 import type { AppState } from '../types';
@@ -303,6 +304,7 @@ export interface ChangeReviewSlice {
   applying: boolean;
   decisionHydrationScopeKey: string | null;
   decisionHydrationStatus: 'idle' | 'loading' | 'loaded' | 'error';
+  decisionRevision: number;
 
   // Editable diff state
   editedContents: Record<string, string>;
@@ -345,11 +347,23 @@ export interface ChangeReviewSlice {
     scopeKey: string,
     scopeToken: string
   ) => Promise<boolean>;
+  quiesceDecisionPersistence: (
+    teamName: string,
+    scopeKey: string,
+    scopeToken: string
+  ) => Promise<boolean>;
   clearDecisionsFromDisk: (
     teamName: string,
     scopeKey: string,
-    scopeToken?: string
+    scopeToken?: string,
+    forceDiscard?: boolean
   ) => Promise<boolean>;
+  recordDecisionRevision: (
+    teamName: string,
+    scopeKey: string,
+    scopeToken: string,
+    revision: number
+  ) => void;
 
   // Phase 2 actions
   /**
@@ -580,6 +594,7 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
       applying: false,
       decisionHydrationScopeKey: null,
       decisionHydrationStatus: 'idle',
+      decisionRevision: 0,
       editedContents: {},
       changeSetEpoch: s.changeSetEpoch + 1,
       fileContentVersionByPath: {},
@@ -608,6 +623,7 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
       editedContents: {},
       decisionHydrationScopeKey: null,
       decisionHydrationStatus: 'idle',
+      decisionRevision: 0,
       changeSetEpoch: s.changeSetEpoch + 1,
       fileContentVersionByPath: {},
       reviewExternalChangesByFile: {},
@@ -677,6 +693,7 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
     applying: false,
     decisionHydrationScopeKey: null,
     decisionHydrationStatus: 'idle',
+    decisionRevision: 0,
 
     // Editable diff initial state
     editedContents: {},
@@ -789,6 +806,7 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
         applying: false,
         decisionHydrationScopeKey: null,
         decisionHydrationStatus: 'idle',
+        decisionRevision: 0,
         editedContents: {},
       }));
     },
@@ -818,6 +836,7 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
         applying: false,
         decisionHydrationScopeKey: null,
         decisionHydrationStatus: 'idle',
+        decisionRevision: 0,
         editedContents: {},
       }));
     },
@@ -847,6 +866,7 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
         applying: false,
         decisionHydrationScopeKey: null,
         decisionHydrationStatus: 'idle',
+        decisionRevision: 0,
         editedContents: {},
       }));
     },
@@ -873,6 +893,7 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
         if (requestToken !== latestDecisionLoadRequestToken) return;
         const latest = get();
         if (latest.changeSetEpoch !== changeSetEpoch) return;
+        decisionRevisionByScope.set(hydrationScopeKey, data?.revision ?? 0);
         // A user decision made while the disk read was in flight must win over persisted state.
         if (
           latest.hunkDecisions !== initialHunkDecisions ||
@@ -892,6 +913,7 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
           set({
             decisionHydrationScopeKey: hydrationScopeKey,
             decisionHydrationStatus: 'loaded',
+            decisionRevision: data?.revision ?? 0,
             applyError: null,
           });
           return;
@@ -910,6 +932,7 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
           reviewActionHistory: data?.reviewActionHistory ?? [],
           decisionHydrationScopeKey: hydrationScopeKey,
           decisionHydrationStatus: 'loaded',
+          decisionRevision: data?.revision ?? 0,
           applyError: null,
         });
       } catch (error) {
@@ -976,18 +999,30 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
 
       const persistedHunkDecisions = { ...hunkDecisions };
       const persistedFileDecisions = { ...fileDecisions };
-      const persistedHashes = { ...mergedHashes };
-      const persistedReviewActionHistory = [...reviewActionHistory];
+      const persistedHashes = Object.fromEntries(
+        Object.entries(mergedHashes).map(([filePath, hashes]) => [filePath, { ...hashes }])
+      );
+      const persistedReviewActionHistory = structuredClone(reviewActionHistory);
       const write = async (): Promise<void> => {
-        await api.review.saveDecisions(
+        const expectedRevision = decisionRevisionByScope.get(scopeStorageKey) ?? 0;
+        const saved = await api.review.saveDecisions(
           teamName,
           scopeKey,
           scopeToken,
           persistedHunkDecisions,
           persistedFileDecisions,
           persistedHashes,
-          persistedReviewActionHistory
+          persistedReviewActionHistory,
+          expectedRevision
         );
+        decisionRevisionByScope.set(scopeStorageKey, saved.revision);
+        const latest = get();
+        if (
+          latest.decisionHydrationScopeKey === scopeStorageKey &&
+          latest.decisionHydrationStatus === 'loaded'
+        ) {
+          set({ decisionRevision: saved.revision });
+        }
       };
       pendingPersistDecisionWrites.set(scopeStorageKey, write);
 
@@ -1022,17 +1057,62 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
       }
     },
 
-    clearDecisionsFromDisk: async (teamName: string, scopeKey: string, scopeToken?: string) => {
+    quiesceDecisionPersistence: async (teamName: string, scopeKey: string, scopeToken: string) => {
+      const scopeStorageKey = buildPersistDecisionScopeKey(teamName, scopeKey, scopeToken);
+      // Drop a debounced post-click snapshot: the WAL will commit that state only
+      // after its disk effects. Already-started older writes must finish first.
+      clearPersistDecisionTimer(scopeStorageKey);
+      try {
+        await persistDecisionWriteChains.get(scopeStorageKey);
+        const revision = decisionRevisionByScope.get(scopeStorageKey) ?? 0;
+        if (get().decisionHydrationScopeKey === scopeStorageKey) {
+          set({ decisionRevision: revision });
+        }
+        return true;
+      } catch (error) {
+        logger.error('quiesceDecisionPersistence error:', error);
+        return false;
+      }
+    },
+
+    clearDecisionsFromDisk: async (
+      teamName: string,
+      scopeKey: string,
+      scopeToken?: string,
+      forceDiscard = false
+    ) => {
       const scopeStorageKey = buildPersistDecisionScopeKey(teamName, scopeKey, scopeToken);
       clearPersistDecisionTimer(scopeStorageKey);
       try {
-        await enqueuePersistDecisionWrite(scopeStorageKey, () =>
-          api.review.clearDecisions(teamName, scopeKey, scopeToken)
-        );
+        await enqueuePersistDecisionWrite(scopeStorageKey, async () => {
+          const cleared = await api.review.clearDecisions(
+            teamName,
+            scopeKey,
+            scopeToken,
+            forceDiscard ? undefined : (decisionRevisionByScope.get(scopeStorageKey) ?? 0)
+          );
+          decisionRevisionByScope.set(scopeStorageKey, cleared.revision);
+          if (get().decisionHydrationScopeKey === scopeStorageKey) {
+            set({ decisionRevision: cleared.revision });
+          }
+        });
         return true;
       } catch (error) {
         logger.error('clearDecisionsFromDisk error:', error);
         return false;
+      }
+    },
+
+    recordDecisionRevision: (
+      teamName: string,
+      scopeKey: string,
+      scopeToken: string,
+      revision: number
+    ) => {
+      const scopeStorageKey = buildPersistDecisionScopeKey(teamName, scopeKey, scopeToken);
+      decisionRevisionByScope.set(scopeStorageKey, revision);
+      if (get().decisionHydrationScopeKey === scopeStorageKey) {
+        set({ decisionRevision: revision });
       }
     },
 
@@ -1465,22 +1545,42 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
           return null;
         }
 
+        const decisionPersistenceScope = buildApplyDecisionPersistenceScope(
+          activeChangeSet,
+          startState.activeTaskChangeRequestOptions,
+          taskId,
+          memberName
+        );
+        if (
+          decisionPersistenceScope &&
+          !(await get().quiesceDecisionPersistence(
+            teamName,
+            decisionPersistenceScope.scopeKey,
+            decisionPersistenceScope.scopeToken
+          ))
+        ) {
+          throw new Error('Unable to finish saving the previous review state. Retry Apply.');
+        }
         const request: ApplyReviewRequest = {
           teamName,
           taskId,
           memberName,
-          decisionPersistenceScope: buildApplyDecisionPersistenceScope(
-            activeChangeSet,
-            startState.activeTaskChangeRequestOptions,
-            taskId,
-            memberName
-          ),
+          decisionPersistenceScope,
           persistedState: buildReviewPersistedStateSnapshot(get(), decisions),
+          ...(decisionPersistenceScope ? { expectedDecisionRevision: get().decisionRevision } : {}),
           decisions,
         };
 
         const result = await api.review.applyDecisions(request);
         if (!isCurrentScope()) return result;
+        if (result.decisionRevision !== undefined && decisionPersistenceScope) {
+          get().recordDecisionRevision(
+            teamName,
+            decisionPersistenceScope.scopeKey,
+            decisionPersistenceScope.scopeToken,
+            result.decisionRevision
+          );
+        }
         if (result.errors.length > 0) {
           set({
             applying: false,
@@ -1620,20 +1720,40 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
           contentSnapshotToken: content?.reviewSnapshotToken,
           hunkContextHashes,
         };
+        const decisionPersistenceScope = buildApplyDecisionPersistenceScope(
+          activeChangeSet,
+          startState.activeTaskChangeRequestOptions,
+          taskId,
+          memberName
+        );
+        if (
+          decisionPersistenceScope &&
+          !(await get().quiesceDecisionPersistence(
+            teamName,
+            decisionPersistenceScope.scopeKey,
+            decisionPersistenceScope.scopeToken
+          ))
+        ) {
+          throw new Error('Unable to finish saving the previous review state. Retry Apply.');
+        }
         const result = await api.review.applyDecisions({
           teamName,
           taskId,
           memberName,
-          decisionPersistenceScope: buildApplyDecisionPersistenceScope(
-            activeChangeSet,
-            startState.activeTaskChangeRequestOptions,
-            taskId,
-            memberName
-          ),
+          decisionPersistenceScope,
           persistedState: buildReviewPersistedStateSnapshot(get(), [decision]),
+          ...(decisionPersistenceScope ? { expectedDecisionRevision: get().decisionRevision } : {}),
           decisions: [decision],
         });
         if (!isCurrentScope()) return result;
+        if (result.decisionRevision !== undefined && decisionPersistenceScope) {
+          get().recordDecisionRevision(
+            teamName,
+            decisionPersistenceScope.scopeKey,
+            decisionPersistenceScope.scopeToken,
+            result.decisionRevision
+          );
+        }
         if (result.errors.length > 0) {
           set({ applyError: result.errors.map((entry) => entry.error).join('\n') });
           recordReviewApplyEnd({

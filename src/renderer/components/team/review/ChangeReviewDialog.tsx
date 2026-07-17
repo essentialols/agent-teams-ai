@@ -326,6 +326,8 @@ export const ChangeReviewDialog = ({
     loadDecisionsFromDisk,
     persistDecisions,
     flushDecisionsToDisk,
+    quiesceDecisionPersistence,
+    recordDecisionRevision,
     clearDecisionsFromDisk,
     resetAllReviewState,
     fileChunkCounts,
@@ -1561,6 +1563,9 @@ export const ChangeReviewDialog = ({
         }
 
         if (useStore.getState().changeSetEpoch !== operationEpoch) return;
+        if (!(await quiesceDecisionPersistence(teamName, decisionScopeKey, decisionScopeToken))) {
+          throw new Error('Unable to finish saving the previous review state. Retry Restore.');
+        }
         restoreFileDecisions(file, { hunkDecisions: {}, fileDecisions: {} });
         if (!acceptAllFile(filePath)) {
           restoreFileDecisions(file, decisionSnapshot);
@@ -1583,7 +1588,7 @@ export const ChangeReviewDialog = ({
         const preparedAction = pushReviewUndoAction({ kind: 'disk', action: undoAction });
         try {
           const state = useStore.getState();
-          await api.review.executeMutation({
+          const committed = await api.review.executeMutation({
             scope: reviewScope,
             decisionPersistenceScope: {
               scopeKey: decisionScopeKey,
@@ -1597,7 +1602,14 @@ export const ChangeReviewDialog = ({
               hunkContextHashesByFile: state.hunkContextHashesByFile,
               reviewActionHistory: reviewUndoActionsRef.current,
             },
+            expectedDecisionRevision: state.decisionRevision,
           });
+          recordDecisionRevision(
+            teamName,
+            decisionScopeKey,
+            decisionScopeToken,
+            committed.decisionRevision
+          );
         } catch (error) {
           restoreFileDecisions(file, decisionSnapshot);
           discardLatestReviewAction(preparedAction);
@@ -1645,6 +1657,8 @@ export const ChangeReviewDialog = ({
       decisionScopeToken,
       discardLatestReviewAction,
       pushReviewUndoAction,
+      quiesceDecisionPersistence,
+      recordDecisionRevision,
       restoreFileDecisions,
       reviewExternalChangesByFile,
       reviewScope,
@@ -2320,6 +2334,9 @@ export const ChangeReviewDialog = ({
         }
         setUndoInFlight(true);
         try {
+          if (!(await quiesceDecisionPersistence(teamName, decisionScopeKey, decisionScopeToken))) {
+            throw new Error('Unable to finish saving the previous review state. Retry Undo.');
+          }
           const state = useStore.getState();
           const persistedState: ReviewPersistedStateSnapshot = {
             hunkDecisions: action.decisionSnapshot.hunkDecisions,
@@ -2327,7 +2344,7 @@ export const ChangeReviewDialog = ({
             hunkContextHashesByFile: state.hunkContextHashesByFile,
             reviewActionHistory: reviewUndoActionsRef.current.slice(0, -1),
           };
-          await api.review.executeMutation({
+          const committed = await api.review.executeMutation({
             scope: reviewScope,
             decisionPersistenceScope: {
               scopeKey: decisionScopeKey,
@@ -2337,7 +2354,14 @@ export const ChangeReviewDialog = ({
             diskSteps: buildUndoDiskMutationSteps(action.id, diskSnapshots),
             persistedState,
             expectedTopActionId: action.id,
+            expectedDecisionRevision: state.decisionRevision,
           });
+          recordDecisionRevision(
+            teamName,
+            decisionScopeKey,
+            decisionScopeToken,
+            committed.decisionRevision
+          );
           refreshAfterDurableUndo(diskSnapshots);
         } catch (error) {
           useStore.setState({
@@ -2374,9 +2398,12 @@ export const ChangeReviewDialog = ({
       decisionScopeToken,
       editedCount,
       hasReviewActionInFlight,
+      quiesceDecisionPersistence,
+      recordDecisionRevision,
       refreshAfterDurableUndo,
       reviewScope,
       setUndoInFlight,
+      teamName,
     ]
   );
 
@@ -2397,6 +2424,9 @@ export const ChangeReviewDialog = ({
       }
       setUndoInFlight(true);
       try {
+        if (!(await quiesceDecisionPersistence(teamName, decisionScopeKey, decisionScopeToken))) {
+          throw new Error('Unable to finish saving the previous review state. Retry Undo.');
+        }
         const state = useStore.getState();
         let hunkDecisions = { ...state.hunkDecisions };
         let fileDecisions = { ...state.fileDecisions };
@@ -2419,7 +2449,7 @@ export const ChangeReviewDialog = ({
           hunkDecisions = restored.hunkDecisions;
           fileDecisions = restored.fileDecisions;
         }
-        await api.review.executeMutation({
+        const committed = await api.review.executeMutation({
           scope: reviewScope,
           decisionPersistenceScope: {
             scopeKey: decisionScopeKey,
@@ -2434,7 +2464,14 @@ export const ChangeReviewDialog = ({
             reviewActionHistory: reviewUndoActionsRef.current.slice(0, -1),
           },
           expectedTopActionId: action.id,
+          expectedDecisionRevision: state.decisionRevision,
         });
+        recordDecisionRevision(
+          teamName,
+          decisionScopeKey,
+          decisionScopeToken,
+          committed.decisionRevision
+        );
         useStore.setState({ hunkDecisions, fileDecisions });
         refreshAfterDurableUndo([diskAction.snapshot]);
         return true;
@@ -2454,9 +2491,12 @@ export const ChangeReviewDialog = ({
       activeChangeSet,
       decisionScopeKey,
       decisionScopeToken,
+      quiesceDecisionPersistence,
+      recordDecisionRevision,
       refreshAfterDurableUndo,
       reviewScope,
       setUndoInFlight,
+      teamName,
     ]
   );
 
@@ -2668,7 +2708,8 @@ export const ChangeReviewDialog = ({
         const cleared = await clearDecisionsFromDisk(
           teamName,
           decisionScopeKey,
-          decisionScopeToken
+          decisionScopeToken,
+          true
         );
         if (!cleared) {
           useStore.setState({

@@ -1218,6 +1218,12 @@ async function handleApplyDecisions(
       if (!request.persistedState) {
         throw new Error('Durable review mutation requires an exact post-operation state');
       }
+      if (
+        !Number.isSafeInteger(request.expectedDecisionRevision) ||
+        (request.expectedDecisionRevision as number) < 0
+      ) {
+        throw new Error('Durable review mutation requires an exact decision revision');
+      }
       reviewDecisionStore.assertValidSnapshot(request.persistedState);
       assertPersistedStateIncludesDecisions(request.persistedState, validatedDecisions);
       result = await applyDecisionsWithDurableJournal(
@@ -1225,7 +1231,8 @@ async function handleApplyDecisions(
         persistenceScope,
         validatedDecisions as (FileReviewDecision & { reviewKey: string })[],
         fileContents,
-        request.persistedState
+        request.persistedState,
+        request.expectedDecisionRevision as number
       );
     }
 
@@ -1424,6 +1431,8 @@ async function commitReviewMutationDecisions(
     await reviewDecisionStore.save(teamName, persistenceScope.scopeKey, {
       scopeToken: persistenceScope.scopeToken,
       ...record.persistedState,
+      expectedRevision: record.expectedDecisionRevision,
+      mutationId: record.id,
     });
     return;
   }
@@ -1438,16 +1447,37 @@ async function commitReviewMutationDecisions(
   }
 }
 
+async function assertCurrentReviewDecisionRevision(
+  teamName: string,
+  persistenceScope: ReviewDecisionPersistenceScope,
+  expectedRevision: number
+): Promise<void> {
+  const current = await reviewDecisionStore.load(
+    teamName,
+    persistenceScope.scopeKey,
+    persistenceScope.scopeToken
+  );
+  if ((current?.revision ?? 0) !== expectedRevision) {
+    throw new Error('Review decisions changed; refusing stale state overwrite');
+  }
+}
+
 async function applyDecisionsWithDurableJournal(
   scope: ReviewFileScope,
   persistenceScope: ReviewDecisionPersistenceScope,
   decisions: (FileReviewDecision & { reviewKey: string })[],
   fileContents: Map<string, FileChangeWithContent>,
-  persistedState: ReviewPersistedStateSnapshot
+  persistedState: ReviewPersistedStateSnapshot,
+  expectedDecisionRevision: number
 ): Promise<ApplyReviewResult> {
   return withReviewDecisionPersistenceLock(scope.teamName, persistenceScope, async () => {
     try {
       await recoverReviewMutationJournal(scope.teamName, persistenceScope);
+      await assertCurrentReviewDecisionRevision(
+        scope.teamName,
+        persistenceScope,
+        expectedDecisionRevision
+      );
       let result: ApplyReviewResult | null = null;
       await reviewMutationCoordinator.execute(
         {
@@ -1462,6 +1492,7 @@ async function applyDecisionsWithDurableJournal(
             return content;
           }),
           persistedState,
+          expectedDecisionRevision,
         },
         {
           applyDisk: (record) =>
@@ -1471,7 +1502,15 @@ async function applyDecisionsWithDurableJournal(
           commitDecisions: commitReviewMutationDecisions,
         }
       );
-      return result ?? { applied: 0, skipped: 0, conflicts: 0, errors: [] };
+      const committed = await reviewDecisionStore.load(
+        scope.teamName,
+        persistenceScope.scopeKey,
+        persistenceScope.scopeToken
+      );
+      return {
+        ...(result ?? { applied: 0, skipped: 0, conflicts: 0, errors: [] }),
+        decisionRevision: committed?.revision ?? expectedDecisionRevision,
+      };
     } catch (error) {
       if (error instanceof ReviewMutationApplyResultError) return error.result;
       throw error;
@@ -1597,7 +1636,7 @@ async function applyDirectReviewMutationDisk(
 async function handleExecuteReviewMutation(
   _event: IpcMainInvokeEvent,
   requestValue: unknown
-): Promise<IpcResult<void>> {
+): Promise<IpcResult<{ decisionRevision: number }>> {
   if (!requestValue || typeof requestValue !== 'object' || Array.isArray(requestValue)) {
     return { success: false, error: 'Invalid review mutation request' };
   }
@@ -1617,9 +1656,20 @@ async function handleExecuteReviewMutation(
     const persistenceScope = parseDecisionPersistenceScope(request.decisionPersistenceScope, scope);
     if (!persistenceScope) throw new Error('Review mutation requires an exact decision scope');
     reviewDecisionStore.assertValidSnapshot(request.persistedState);
+    if (
+      !Number.isSafeInteger(request.expectedDecisionRevision) ||
+      request.expectedDecisionRevision < 0
+    ) {
+      throw new Error('Review mutation requires an exact decision revision');
+    }
 
-    await withReviewDecisionPersistenceLock(scope.teamName, persistenceScope, async () => {
+    return withReviewDecisionPersistenceLock(scope.teamName, persistenceScope, async () => {
       await recoverReviewMutationJournal(scope.teamName, persistenceScope);
+      await assertCurrentReviewDecisionRevision(
+        scope.teamName,
+        persistenceScope,
+        request.expectedDecisionRevision
+      );
       // Recovery can change disk state and invalidate authoritative review content.
       // Resolve this operation only after every older WAL record is complete.
       const diskSteps = await normalizeDirectReviewMutationSteps(request, scope, authorization);
@@ -1646,12 +1696,19 @@ async function handleExecuteReviewMutation(
           fileContents: [],
           diskSteps,
           persistedState: request.persistedState,
+          expectedDecisionRevision: request.expectedDecisionRevision,
         },
         {
           applyDisk: applyDirectReviewMutationDisk,
           commitDecisions: commitReviewMutationDecisions,
         }
       );
+      const committed = await reviewDecisionStore.load(
+        scope.teamName,
+        persistenceScope.scopeKey,
+        persistenceScope.scopeToken
+      );
+      return { decisionRevision: committed?.revision ?? request.expectedDecisionRevision };
     });
   });
 }
@@ -1993,6 +2050,7 @@ async function handleLoadDecisions(
     fileDecisions: Record<string, HunkDecision>;
     hunkContextHashesByFile?: Record<string, Record<number, string>>;
     reviewActionHistory: ReviewUndoAction[];
+    revision: number;
   } | null>
 > {
   return wrapReviewHandler('loadDecisions', async () => {
@@ -2015,18 +2073,25 @@ async function handleSaveDecisions(
   hunkDecisions: Record<string, HunkDecision>,
   fileDecisions: Record<string, HunkDecision>,
   hunkContextHashesByFile: Record<string, Record<number, string>> | null = null,
-  reviewActionHistory: ReviewUndoAction[] = []
-): Promise<IpcResult<void>> {
+  reviewActionHistory: ReviewUndoAction[] = [],
+  expectedRevision: number | undefined = undefined
+): Promise<IpcResult<{ revision: number }>> {
   return wrapReviewHandler('saveDecisions', async () => {
+    if (!Number.isSafeInteger(expectedRevision) || (expectedRevision as number) < 0) {
+      throw new Error('Saving review decisions requires an exact decision revision');
+    }
     const persistenceScope = { scopeKey, scopeToken };
-    await withReviewDecisionPersistenceLock(teamName, persistenceScope, async () => {
-      await reviewDecisionStore.save(teamName, scopeKey, {
+    return withReviewDecisionPersistenceLock(teamName, persistenceScope, async () => {
+      await recoverReviewMutationJournal(teamName, persistenceScope);
+      const revision = await reviewDecisionStore.save(teamName, scopeKey, {
         scopeToken,
         hunkDecisions,
         fileDecisions,
         hunkContextHashesByFile: hunkContextHashesByFile ?? undefined,
         reviewActionHistory,
+        expectedRevision: expectedRevision as number,
       });
+      return { revision };
     });
   });
 }
@@ -2035,18 +2100,35 @@ async function handleClearDecisions(
   _event: IpcMainInvokeEvent,
   teamName: string,
   scopeKey: string,
-  scopeToken: string | null = null
-): Promise<IpcResult<void>> {
+  scopeToken: string | null = null,
+  expectedRevision: number | undefined = undefined
+): Promise<IpcResult<{ revision: number }>> {
   return wrapReviewHandler('clearDecisions', async () => {
     if (!scopeToken) {
       await reviewDecisionStore.clear(teamName, scopeKey);
-      return;
+      return { revision: 0 };
     }
     const persistenceScope = { scopeKey, scopeToken };
-    await withReviewDecisionPersistenceLock(teamName, persistenceScope, async () => {
-      // Explicit discard intentionally revokes replay before removing saved decisions.
-      await reviewMutationJournal.clearScope(teamName, persistenceScope);
-      await reviewDecisionStore.clear(teamName, scopeKey, scopeToken);
+    return withReviewDecisionPersistenceLock(teamName, persistenceScope, async () => {
+      if (expectedRevision === undefined) {
+        // Only the explicit "discard unreadable state" UI uses this recovery escape hatch.
+        await reviewMutationJournal.clearScope(teamName, persistenceScope);
+        await reviewDecisionStore.clear(teamName, scopeKey, scopeToken);
+        return { revision: 0 };
+      }
+      if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
+        throw new Error('Clearing review decisions requires an exact decision revision');
+      }
+      await recoverReviewMutationJournal(teamName, persistenceScope);
+      const revision = await reviewDecisionStore.save(teamName, scopeKey, {
+        scopeToken,
+        hunkDecisions: {},
+        fileDecisions: {},
+        hunkContextHashesByFile: {},
+        reviewActionHistory: [],
+        expectedRevision,
+      });
+      return { revision };
     });
   });
 }

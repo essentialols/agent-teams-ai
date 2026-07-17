@@ -308,6 +308,8 @@ export interface ApplyReviewRequest {
    * effect reaches its postimage. Required for durable mutations.
    */
   persistedState?: ReviewPersistedStateSnapshot;
+  /** CAS guard for the exact decision snapshot the renderer hydrated. */
+  expectedDecisionRevision?: number;
   decisions: FileReviewDecision[];
 }
 
@@ -339,6 +341,8 @@ export interface ExecuteReviewMutationRequest {
   kind: 'restore' | 'rename' | 'undo';
   diskSteps: ReviewDirectDiskMutationStep[];
   persistedState: ReviewPersistedStateSnapshot;
+  /** CAS guard preventing an old renderer from overwriting newer durable state. */
+  expectedDecisionRevision: number;
   /** Required for Undo so a stale renderer cannot pop a newer durable action. */
   expectedTopActionId?: string;
 }
@@ -368,6 +372,8 @@ export interface ApplyReviewResult {
     error: string;
     code?: 'conflict' | 'unavailable' | 'manual-review-required' | 'io-error';
   }[];
+  /** Revision committed together with the disk mutation. */
+  decisionRevision?: number;
 }
 
 /** Полный file content для CodeMirror */

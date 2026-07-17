@@ -34,6 +34,7 @@ export interface ReviewMutationJournalRecord {
   decisionStatuses?: ('pending' | 'applied')[];
   diskSteps?: ReviewMutationJournalDiskStep[];
   persistedState?: ReviewPersistedStateSnapshot;
+  expectedDecisionRevision?: number;
   createdAt: string;
   updatedAt: string;
   /** A handled application failure blocks automatic recovery until explicit retry/discard. */
@@ -50,6 +51,7 @@ export interface PrepareReviewMutationInput {
   fileContents: FileChangeWithContent[];
   diskSteps?: ReviewMutationJournalDiskStep[];
   persistedState?: ReviewPersistedStateSnapshot;
+  expectedDecisionRevision?: number;
 }
 
 export type ReviewMutationJournalDiskStep = ReviewDirectDiskMutationStep & {
@@ -161,6 +163,7 @@ export class ReviewMutationJournalStore {
         : undefined,
       diskSteps: input.diskSteps,
       persistedState: input.persistedState,
+      expectedDecisionRevision: input.expectedDecisionRevision,
       createdAt: now,
       updatedAt: now,
     };
@@ -354,6 +357,9 @@ export class ReviewMutationJournalStore {
       !this.hasValidPayload(record) ||
       typeof record.createdAt !== 'string' ||
       typeof record.updatedAt !== 'string' ||
+      (record.expectedDecisionRevision !== undefined &&
+        (!Number.isSafeInteger(record.expectedDecisionRevision) ||
+          record.expectedDecisionRevision < 0)) ||
       (record.blocked !== undefined && typeof record.blocked !== 'boolean') ||
       (record.failure !== undefined && typeof record.failure !== 'string')
     ) {

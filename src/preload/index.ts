@@ -1514,7 +1514,7 @@ const electronAPI: ElectronAPI = {
       return invokeIpcWithResult<ApplyReviewResult>(REVIEW_APPLY_DECISIONS, request);
     },
     executeMutation: async (request: ExecuteReviewMutationRequest) => {
-      return invokeIpcWithResult<void>(REVIEW_EXECUTE_MUTATION, request);
+      return invokeIpcWithResult<{ decisionRevision: number }>(REVIEW_EXECUTE_MUTATION, request);
     },
     // Phase 2
     checkConflict: async (scope: ReviewFileScope, filePath: string, expectedModified: string) => {
@@ -1619,6 +1619,7 @@ const electronAPI: ElectronAPI = {
         fileDecisions: Record<string, HunkDecision>;
         hunkContextHashesByFile?: Record<string, Record<number, string>>;
         reviewActionHistory: ReviewUndoAction[];
+        revision: number;
       } | null>(REVIEW_LOAD_DECISIONS, teamName, scopeKey, scopeToken ?? null);
     },
     saveDecisions: async (
@@ -1628,9 +1629,10 @@ const electronAPI: ElectronAPI = {
       hunkDecisions: Record<string, HunkDecision>,
       fileDecisions: Record<string, HunkDecision>,
       hunkContextHashesByFile?: Record<string, Record<number, string>>,
-      reviewActionHistory?: ReviewUndoAction[]
+      reviewActionHistory?: ReviewUndoAction[],
+      expectedRevision?: number
     ) => {
-      return invokeIpcWithResult<void>(
+      return invokeIpcWithResult<{ revision: number }>(
         REVIEW_SAVE_DECISIONS,
         teamName,
         scopeKey,
@@ -1638,15 +1640,22 @@ const electronAPI: ElectronAPI = {
         hunkDecisions,
         fileDecisions,
         hunkContextHashesByFile ?? null,
-        reviewActionHistory ?? []
+        reviewActionHistory ?? [],
+        expectedRevision
       );
     },
-    clearDecisions: async (teamName: string, scopeKey: string, scopeToken?: string) => {
-      return invokeIpcWithResult<void>(
+    clearDecisions: async (
+      teamName: string,
+      scopeKey: string,
+      scopeToken?: string,
+      expectedRevision?: number
+    ) => {
+      return invokeIpcWithResult<{ revision: number }>(
         REVIEW_CLEAR_DECISIONS,
         teamName,
         scopeKey,
-        scopeToken ?? null
+        scopeToken ?? null,
+        expectedRevision
       );
     },
     loadDraftHistory: async (teamName: string, scopeKey: string, scopeToken: string) => {

@@ -4,6 +4,7 @@ import { createLogger } from '@shared/utils/logger';
 import { createHash } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
+import { isDeepStrictEqual } from 'util';
 
 import type { FileReviewDecision, HunkDecision, ReviewUndoAction } from '@shared/types';
 
@@ -38,6 +39,27 @@ interface ReviewDecisionsDataV3 extends ReviewDecisionsData {
   scopeKey: string;
   scopeToken: string;
   reviewActionHistory: ReviewUndoAction[];
+}
+
+interface ReviewDecisionsDataV4 extends ReviewDecisionsData {
+  version: 4;
+  scopeKey: string;
+  scopeToken: string;
+  reviewActionHistory: ReviewUndoAction[];
+  revision: number;
+  lastMutationId?: string;
+}
+
+export interface LoadedReviewDecisions {
+  hunkDecisions: Record<string, HunkDecision>;
+  fileDecisions: Record<string, HunkDecision>;
+  hunkContextHashesByFile?: Record<string, Record<number, string>>;
+  reviewActionHistory: ReviewUndoAction[];
+  revision: number;
+}
+
+interface InternalLoadedReviewDecisions extends LoadedReviewDecisions {
+  lastMutationId?: string;
 }
 
 class InvalidReviewDecisionDataError extends Error {}
@@ -96,7 +118,12 @@ export class ReviewDecisionStore {
 
   private parseStoredData(
     parsed: unknown
-  ): ReviewDecisionsData | ReviewDecisionsDataV2 | ReviewDecisionsDataV3 | null {
+  ):
+    | ReviewDecisionsData
+    | ReviewDecisionsDataV2
+    | ReviewDecisionsDataV3
+    | ReviewDecisionsDataV4
+    | null {
     if (!parsed || typeof parsed !== 'object') {
       return null;
     }
@@ -106,9 +133,11 @@ export class ReviewDecisionStore {
       scopeKey?: unknown;
       scopeToken?: unknown;
       reviewActionHistory?: unknown;
+      revision?: unknown;
+      lastMutationId?: unknown;
     };
     const isExactScope =
-      (data.version === 2 || data.version === 3) &&
+      (data.version === 2 || data.version === 3 || data.version === 4) &&
       typeof data.scopeKey === 'string' &&
       typeof data.scopeToken === 'string';
 
@@ -120,12 +149,24 @@ export class ReviewDecisionStore {
       !this.isDecisionRecord(data.hunkDecisions) ||
       !this.isDecisionRecord(data.fileDecisions) ||
       !this.isContextHashRecord(data.hunkContextHashesByFile) ||
-      (data.version === 3 && !this.isReviewActionHistory(data.reviewActionHistory))
+      ((data.version === 3 || data.version === 4) &&
+        !this.isReviewActionHistory(data.reviewActionHistory)) ||
+      (data.version === 4 &&
+        (!Number.isSafeInteger(data.revision) ||
+          (data.revision as number) < 1 ||
+          (data.lastMutationId !== undefined &&
+            (typeof data.lastMutationId !== 'string' ||
+              data.lastMutationId.length === 0 ||
+              data.lastMutationId.length > 256))))
     ) {
       return null;
     }
 
-    return data as ReviewDecisionsData | ReviewDecisionsDataV2 | ReviewDecisionsDataV3;
+    return data as
+      | ReviewDecisionsData
+      | ReviewDecisionsDataV2
+      | ReviewDecisionsDataV3
+      | ReviewDecisionsDataV4;
   }
 
   private isReviewActionHistory(value: unknown): value is ReviewUndoAction[] {
@@ -312,14 +353,13 @@ export class ReviewDecisionStore {
   }
 
   private extractDecisions(
-    data: ReviewDecisionsData | ReviewDecisionsDataV2 | ReviewDecisionsDataV3,
+    data:
+      | ReviewDecisionsData
+      | ReviewDecisionsDataV2
+      | ReviewDecisionsDataV3
+      | ReviewDecisionsDataV4,
     scopeToken?: string
-  ): {
-    hunkDecisions: Record<string, HunkDecision>;
-    fileDecisions: Record<string, HunkDecision>;
-    hunkContextHashesByFile?: Record<string, Record<number, string>>;
-    reviewActionHistory: ReviewUndoAction[];
-  } | null {
+  ): InternalLoadedReviewDecisions | null {
     const hunkDecisions: Record<string, HunkDecision> =
       data.hunkDecisions && typeof data.hunkDecisions === 'object' ? data.hunkDecisions : {};
     const fileDecisions: Record<string, HunkDecision> =
@@ -336,20 +376,26 @@ export class ReviewDecisionStore {
     }
 
     const reviewActionHistory =
-      'version' in data && data.version === 3 ? data.reviewActionHistory : [];
-    return { hunkDecisions, fileDecisions, hunkContextHashesByFile, reviewActionHistory };
+      'version' in data && (data.version === 3 || data.version === 4)
+        ? data.reviewActionHistory
+        : [];
+    return {
+      hunkDecisions,
+      fileDecisions,
+      hunkContextHashesByFile,
+      reviewActionHistory,
+      revision: 'version' in data && data.version === 4 ? data.revision : 0,
+      ...('version' in data && data.version === 4 && data.lastMutationId
+        ? { lastMutationId: data.lastMutationId }
+        : {}),
+    };
   }
 
   private async loadFromPath(
     filePath: string,
     scopeToken?: string,
     expectedScopeKey?: string
-  ): Promise<{
-    hunkDecisions: Record<string, HunkDecision>;
-    fileDecisions: Record<string, HunkDecision>;
-    hunkContextHashesByFile?: Record<string, Record<number, string>>;
-    reviewActionHistory: ReviewUndoAction[];
-  } | null> {
+  ): Promise<InternalLoadedReviewDecisions | null> {
     let handle: fs.promises.FileHandle | null = null;
     let raw: string;
     try {
@@ -407,7 +453,7 @@ export class ReviewDecisionStore {
     }
     if (
       'version' in data &&
-      (data.version === 2 || data.version === 3) &&
+      (data.version === 2 || data.version === 3 || data.version === 4) &&
       data.scopeKey !== expectedScopeKey
     ) {
       throw new InvalidReviewDecisionDataError(`Mismatched review decision scope at ${filePath}`);
@@ -452,16 +498,11 @@ export class ReviewDecisionStore {
     );
   }
 
-  async load(
+  private async loadInternal(
     teamName: string,
     scopeKey: string,
     scopeToken?: string
-  ): Promise<{
-    hunkDecisions: Record<string, HunkDecision>;
-    fileDecisions: Record<string, HunkDecision>;
-    hunkContextHashesByFile?: Record<string, Record<number, string>>;
-    reviewActionHistory: ReviewUndoAction[];
-  } | null> {
+  ): Promise<InternalLoadedReviewDecisions | null> {
     this.assertSafeScope(teamName, scopeKey, scopeToken);
     if (scopeToken) {
       const exact = await this.loadFromPath(
@@ -477,6 +518,17 @@ export class ReviewDecisionStore {
     return this.loadFromPath(this.getLegacyFilePath(teamName, scopeKey), scopeToken, scopeKey);
   }
 
+  async load(
+    teamName: string,
+    scopeKey: string,
+    scopeToken?: string
+  ): Promise<LoadedReviewDecisions | null> {
+    const loaded = await this.loadInternal(teamName, scopeKey, scopeToken);
+    if (!loaded) return null;
+    const { lastMutationId: _lastMutationId, ...publicSnapshot } = loaded;
+    return publicSnapshot;
+  }
+
   async save(
     teamName: string,
     scopeKey: string,
@@ -486,19 +538,57 @@ export class ReviewDecisionStore {
       fileDecisions: Record<string, HunkDecision>;
       hunkContextHashesByFile?: Record<string, Record<number, string>>;
       reviewActionHistory?: ReviewUndoAction[];
+      expectedRevision?: number;
+      mutationId?: string;
     }
-  ): Promise<void> {
+  ): Promise<number> {
     this.assertSafeScope(teamName, scopeKey, data.scopeToken);
     this.assertValidSnapshot(data);
+    if (
+      (data.expectedRevision !== undefined &&
+        (!Number.isSafeInteger(data.expectedRevision) || data.expectedRevision < 0)) ||
+      (data.mutationId !== undefined &&
+        (typeof data.mutationId !== 'string' ||
+          data.mutationId.length === 0 ||
+          data.mutationId.length > 256))
+    ) {
+      throw new Error('Invalid review decision revision metadata');
+    }
     try {
-      const payload: ReviewDecisionsDataV3 = {
-        version: 3,
-        scopeKey,
-        scopeToken: data.scopeToken,
+      const current = await this.loadInternal(teamName, scopeKey, data.scopeToken);
+      const currentRevision = current?.revision ?? 0;
+      const targetSnapshot = {
         hunkDecisions: data.hunkDecisions,
         fileDecisions: data.fileDecisions,
         hunkContextHashesByFile: data.hunkContextHashesByFile,
         reviewActionHistory: data.reviewActionHistory ?? [],
+      };
+      if (data.expectedRevision !== undefined && data.expectedRevision !== currentRevision) {
+        if (
+          data.mutationId &&
+          current?.lastMutationId === data.mutationId &&
+          isDeepStrictEqual(
+            {
+              hunkDecisions: current.hunkDecisions,
+              fileDecisions: current.fileDecisions,
+              hunkContextHashesByFile: current.hunkContextHashesByFile,
+              reviewActionHistory: current.reviewActionHistory,
+            },
+            targetSnapshot
+          )
+        ) {
+          return currentRevision;
+        }
+        throw new Error('Review decisions changed; refusing stale state overwrite');
+      }
+      const revision = currentRevision + 1;
+      const payload: ReviewDecisionsDataV4 = {
+        version: 4,
+        scopeKey,
+        scopeToken: data.scopeToken,
+        ...targetSnapshot,
+        revision,
+        ...(data.mutationId ? { lastMutationId: data.mutationId } : {}),
         updatedAt: new Date().toISOString(),
       };
       const filePath = this.getV2FilePath(teamName, scopeKey, data.scopeToken);
@@ -511,6 +601,7 @@ export class ReviewDecisionStore {
         syncDirectory: true,
       });
       await this.pruneScopeDir(teamName, scopeKey);
+      return revision;
     } catch (error) {
       logger.error(`Failed to save review decisions for ${teamName}/${scopeKey}: ${String(error)}`);
       throw error;
@@ -531,11 +622,12 @@ export class ReviewDecisionStore {
     ) {
       throw new Error('Invalid review decision patch key');
     }
-    const current = (await this.load(teamName, scopeKey, scopeToken)) ?? {
+    const current: LoadedReviewDecisions = (await this.load(teamName, scopeKey, scopeToken)) ?? {
       hunkDecisions: {},
       fileDecisions: {},
       hunkContextHashesByFile: {},
       reviewActionHistory: [],
+      revision: 0,
     };
     const hunkDecisions = { ...current.hunkDecisions };
     const fileDecisions = { ...current.fileDecisions };

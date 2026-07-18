@@ -653,6 +653,7 @@ export async function projectControlCreateWorktreeView(
   const sourceRevision = await resolveProjectSourceRevision({
     resolvedSource,
     remoteTrackingRef: effectiveSourceRef ?? "HEAD",
+    scope: controller.scope,
     ...(expectedSourceCommit ? { expectedSourceCommit } : {}),
   });
   const createWorktreeInput: CodexGoalProjectCreateWorktreeInput = {

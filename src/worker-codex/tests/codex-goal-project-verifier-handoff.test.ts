@@ -18,6 +18,7 @@ import {
   readVerifiableProducerHandoff,
   readVerifiedProducerHandoff,
 } from "../application/project-control/codex-goal-project-verifier-handoff";
+import { resolveProjectSourceRevision } from "../application/project-control/codex-goal-project-source-revision";
 
 const execFileAsync = promisify(execFile);
 const roots: string[] = [];
@@ -311,6 +312,55 @@ describe("project verifier handoff", () => {
       requestedRef: "release/private",
       scope,
     })).toThrow("project_control_denied:branch_denied");
+  });
+
+  it.each([
+    "refactor/hosted-web-feature-boundaries",
+    "origin/refactor/hosted-web-feature-boundaries",
+  ])("materializes a pinned slash branch from %s", async (sourceRef) => {
+    const root = await temporaryRoot("pinned-slash-source-");
+    const remotePath = join(root, "remote.git");
+    const workspacePath = join(root, "source");
+    await git(root, ["init", "--bare", remotePath]);
+    await initRepository(workspacePath);
+    await git(workspacePath, [
+      "switch",
+      "-c",
+      "refactor/hosted-web-feature-boundaries",
+    ]);
+    await git(workspacePath, ["remote", "add", "origin", remotePath]);
+    await git(workspacePath, [
+      "push",
+      "-u",
+      "origin",
+      "HEAD:refactor/hosted-web-feature-boundaries",
+    ]);
+    const expectedCommit = await gitText(workspacePath, ["rev-parse", "HEAD"]);
+
+    const resolved = await resolveProjectSourceRevision({
+      resolvedSource: {
+        revision: expectedCommit,
+        sourceRealPath: workspacePath,
+      },
+      remoteTrackingRef: sourceRef,
+      scope: {
+        projectId: "project",
+        allowedBranches: ["refactor/hosted-web-feature-boundaries"],
+        allowedGitRemotes: ["origin"],
+      },
+      expectedSourceCommit: expectedCommit,
+      requireRemoteHead: true,
+    });
+
+    expect(resolved).toMatchObject({
+      revision: expectedCommit,
+      pinned: true,
+      remoteHead: {
+        remote: "origin",
+        branch: "refactor/hosted-web-feature-boundaries",
+        oid: expectedCommit,
+      },
+    });
   });
 
   it("materializes a pinned remote commit without mutating local tracking refs", async () => {

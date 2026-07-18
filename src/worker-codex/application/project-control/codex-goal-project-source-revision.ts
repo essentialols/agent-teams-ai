@@ -1,7 +1,9 @@
+import type { ProjectAccessScope } from "@vioxen/subscription-runtime/worker-core";
 import {
   assertCanonicalRemoteRevision,
   materializePinnedRemoteCommit,
   resolveCanonicalRemoteHead,
+  resolveCanonicalRemoteWorktreeSource,
   type CanonicalRemoteHead,
 } from "./codex-goal-project-git";
 
@@ -18,13 +20,21 @@ export async function resolveProjectSourceRevision(input: {
     readonly sourceRealPath: string;
   };
   readonly remoteTrackingRef: string;
+  readonly scope: ProjectAccessScope;
   readonly expectedSourceCommit?: string;
   readonly requireRemoteHead?: boolean;
 }): Promise<ResolvedProjectSourceRevision> {
+  const remoteTrackingRef =
+    input.expectedSourceCommit || input.requireRemoteHead
+      ? resolveCanonicalRemoteWorktreeSource({
+          requestedRef: input.remoteTrackingRef,
+          scope: input.scope,
+        }).remoteTrackingRef
+      : input.remoteTrackingRef;
   const pinnedRemote = input.expectedSourceCommit
     ? await materializePinnedRemoteCommit({
         workspacePath: input.resolvedSource.sourceRealPath,
-        remoteTrackingRef: input.remoteTrackingRef,
+        remoteTrackingRef,
         expectedCommit: input.expectedSourceCommit,
       })
     : undefined;
@@ -32,7 +42,7 @@ export async function resolveProjectSourceRevision(input: {
     ? (pinnedRemote ??
       (await resolveCanonicalRemoteHead({
         workspacePath: input.resolvedSource.sourceRealPath,
-        remoteTrackingRef: input.remoteTrackingRef,
+        remoteTrackingRef,
       })))
     : undefined;
   if (remoteHead && !pinnedRemote) {

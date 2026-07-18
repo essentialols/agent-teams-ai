@@ -307,6 +307,7 @@ export async function projectControlRefillWorkerView(
     remoteTrackingRef: canonicalSource
       ? canonicalSource.remoteTrackingRef
       : (sourceRef ?? baseBranch),
+    scope: controller.scope,
     ...(expectedSourceCommit ? { expectedSourceCommit } : {}),
     requireRemoteHead: canonicalSourceWorkspacePath !== undefined,
   });
@@ -780,6 +781,7 @@ async function projectControlRefillWorkerBoundedView(
       remoteTrackingRef: canonicalSource
         ? canonicalSource.remoteTrackingRef
         : (sourceRef ?? baseBranch),
+      scope: controller.scope,
       ...(expectedSourceCommit ? { expectedSourceCommit } : {}),
       requireRemoteHead: canonicalSourceWorkspacePath !== undefined,
     });

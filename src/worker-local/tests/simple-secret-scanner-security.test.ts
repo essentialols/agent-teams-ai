@@ -151,6 +151,8 @@ describe("SimpleSecretScanner security", () => {
     const relativePath = "src/large-generated.test.ts";
     const safePrefix = "x".repeat(1024 * 1024 + 64);
     await writeFile(join(workspacePath, relativePath), safePrefix, "utf8");
+    await git(workspacePath, ["add", relativePath]);
+    await git(workspacePath, ["commit", "-m", "test: add large safe file"]);
     const scanner = new SimpleSecretScanner();
 
     await expect(scanner.scanFiles({
@@ -172,6 +174,49 @@ describe("SimpleSecretScanner security", () => {
       status: SecretScanStatus.Failed,
       safeMessage: `secret_like_content:${relativePath}`,
     });
+
+    await git(workspacePath, ["add", relativePath]);
+    await git(workspacePath, ["commit", "-m", "test: add large secret fixture"]);
+    await writeFile(join(workspacePath, relativePath), safePrefix, "utf8");
+
+    await expect(scanner.scanFiles({
+      workspacePath,
+      files: [relativePath],
+    })).resolves.toEqual({
+      status: SecretScanStatus.Failed,
+      safeMessage: `secret_like_content:${relativePath}`,
+    });
+  });
+
+  it("fails closed above the two MiB current and base blob bound", async () => {
+    const workspacePath = await createGitFixture();
+    const relativePath = "src/above-default-bound.test.ts";
+    await writeFile(
+      join(workspacePath, relativePath),
+      "x".repeat(2 * 1024 * 1024 + 1),
+      "utf8",
+    );
+    const scanner = new SimpleSecretScanner();
+
+    await expect(scanner.scanFiles({
+      workspacePath,
+      files: [relativePath],
+    })).resolves.toEqual({
+      status: SecretScanStatus.Failed,
+      safeMessage: `secret_scan_file_too_large:${relativePath}`,
+    });
+
+    await git(workspacePath, ["add", relativePath]);
+    await git(workspacePath, ["commit", "-m", "test: add oversized base blob"]);
+    await rm(join(workspacePath, relativePath));
+
+    await expect(scanner.scanFiles({
+      workspacePath,
+      files: [relativePath],
+    })).resolves.toEqual({
+      status: SecretScanStatus.Failed,
+      safeMessage: "secret_scan_file_too_large",
+    });
   });
 
   it("enforces the remaining aggregate current-file budget before allocation", async () => {
@@ -185,6 +230,26 @@ describe("SimpleSecretScanner security", () => {
     }).scanFiles({
       workspacePath,
       files: ["src/first.txt", "src/second.txt"],
+    })).resolves.toEqual({
+      status: SecretScanStatus.Failed,
+      safeMessage: "secret_scan_total_file_bytes_exceeded",
+    });
+  });
+
+  it("counts both tracked base and current content against the aggregate budget", async () => {
+    const workspacePath = await createGitFixture();
+    const relativePath = "src/base-and-current.txt";
+    await writeFile(join(workspacePath, relativePath), "a".repeat(40));
+    await git(workspacePath, ["add", relativePath]);
+    await git(workspacePath, ["commit", "-m", "test: add bounded base blob"]);
+    await writeFile(join(workspacePath, relativePath), "b".repeat(40));
+
+    await expect(new SimpleSecretScanner({
+      maxFileBytes: 64,
+      maxTotalFileBytes: 64,
+    }).scanFiles({
+      workspacePath,
+      files: [relativePath],
     })).resolves.toEqual({
       status: SecretScanStatus.Failed,
       safeMessage: "secret_scan_total_file_bytes_exceeded",
